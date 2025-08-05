@@ -14,7 +14,8 @@
 - **分布式链路追踪 Tracing**：以网络为中心的面向服务请求的分布式链路追踪，能够清晰的划分系统调用层级关系，节点关联关系，耗时记账等，支持在大规模分布式系统中的跨节点追踪，提供微服务调用的全景视图，保障系统在复杂场景下的稳定性。
 - **开源技术生态融合**：无缝对接主流开源可观测技术栈，如 Prometheus、Grafana、Pyroscope、Elasticsearch等。支持独立物理机和云原生部署，自动感知 K8S 容器资源/标签/注解，自动关联操作系统内核事件指标，消除数据孤岛。通过零侵扰、内核可编程方式兼容主流硬件平台和内核版本，确保其适应性、应用性。
 
-
+# 软件架构
+![](./docs/architecture.svg)
 
 # 快速上手
 
@@ -39,18 +40,12 @@
     $ docker compose --project-directory ./build/docker up
     ```
 
-# 软件架构
-![](./docs/huatuo-arch-v2.png)
-
-# 开源协议
-该项目采用 Apache License 2.0 协议开源，BPF 代码采用 GPL 协议。
-
 # 内核版本
 理论支持 4.18 之后的所有版本，主要测试内核、和操作系统发行版如下：
 
 |  HUATUO      |  内核版本 |  操作系统发行版     |
 | :---  |    :----  |  :--- |
-| 1.0      | 4.18.x      | Centos 8.5   |
+| 1.0      | 4.18.x      | Centos 8.x   |
 | 1.0      | 5.10.x      | OpenEuler 22.03/Anolis OS 8.10  |
 | 1.0      | 6.6.x       | OpenEuler 24.03/Anolis OS 23.3 |
 | 1.0      | 6.8.x       | Ubuntu 24.04 |
@@ -68,3 +63,5 @@
 @[nashuiliang](https://github.com/nashuiliang)  
 @[fanzu8](https://github.com/fanzuba)  
 
+# 开源协议
+该项目采用 Apache License 2.0 协议开源，BPF 代码采用 GPL 协议。
