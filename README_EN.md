@@ -105,4 +105,12 @@ Metrics collection involves various indicators from per subsystem, including CPU
 
 
 # Contact Us
-You can report bugs, provide suggestions, or engage in discussions via Github Issues and Github Discussions. Alternatively, you can contact us using the following ways:
+You can report bugs, provide suggestions, or engage in discussions via Issues and Discussions. Alternatively, you can contact us using the following ways:
+
+@[hao022](https://github.com/hao022)  
+@[nashuiliang](https://github.com/nashuiliang)  
+@[fanzu8](https://github.com/fanzuba)
+
+# License
+
+HUATUO is licensed under [Apache License, Version 2.0](LICENSE).
