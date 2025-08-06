@@ -1,4 +1,4 @@
-FROM golang:1.22.4-alpine AS base
+FROM golang:1.23.0-alpine AS base
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 RUN apk add --no-cache \
         make \
