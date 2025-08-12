@@ -18,8 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"math"
 	"os/exec"
+	"path"
 	"runtime"
 	"strconv"
 	"strings"
@@ -39,7 +40,15 @@ func init() {
 	tracing.RegisterEventTracing("cpuidle", newCPUIdle)
 }
 
+var cgrp cgroups.Cgroup
+
 func newCPUIdle() (*tracing.EventTracingAttr, error) {
+	var err error
+	cgrp, err = cgroups.NewCgroupManager()
+	if err != nil {
+		return nil, err
+	}
+
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuIdleTracing{},
 		Internal:    20,
@@ -47,55 +56,21 @@ func newCPUIdle() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-// GetCPUCoresInCgroup function returns the number of cgroup cores
-func GetCPUCoresInCgroup(cgroupPath string) (uint64, error) {
-	periodPath := cgroupPath + "/cpu.cfs_period_us"
-	quotaPath := cgroupPath + "/cpu.cfs_quota_us"
-
-	period, err := readIntFromFile(periodPath)
+func getCPUCoresInCgroup(cgroupPath string) (uint64, error) {
+	cpuCFSInfo, err := cgrp.CpuQuotaAndPeriod(cgroupPath)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("get cgroup [%s] quota and period failed: %w", cgroupPath, err)
 	}
 
-	quota, err := readIntFromFile(quotaPath)
-	if err != nil {
-		return 0, err
-	}
-
-	if quota == -1 {
+	if cpuCFSInfo.Quota == math.MaxUint64 {
 		return uint64(runtime.NumCPU()), nil
 	}
 
-	if period == 0 {
-		return 0, fmt.Errorf("period not zero")
-	}
-
-	return uint64(quota / period), nil
-}
-
-func readIntFromFile(filePath string) (int, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return 0, err
-	}
-
-	str := strings.TrimSpace(string(data))
-	value, err := strconv.Atoi(str)
-	if err != nil {
-		return 0, err
-	}
-
-	return value, nil
+	return (cpuCFSInfo.Quota / cpuCFSInfo.Period), nil
 }
 
 func readCPUUsage(path string) (map[string]uint64, error) {
-	// FIXME!!!
-	cgr, err := cgroups.NewCgroupManager()
-	if err != nil {
-		return nil, err
-	}
-
-	usage, err := cgr.CpuUsage(path)
+	usage, err := cgrp.CpuUsage(path)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +93,7 @@ func calculateCPUUsage(info *containerCPUInfo, currUsage map[string]uint64) erro
 	deltaUser := currUsage["user"] - info.prevUsage["user"]
 	deltaSys := currUsage["system"] - info.prevUsage["system"]
 
-	cpuCores, err := GetCPUCoresInCgroup(info.path)
+	cpuCores, err := getCPUCoresInCgroup(info.path)
 	if err != nil {
 		return fmt.Errorf("get cgroup cpu err")
 	}
@@ -298,23 +273,27 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 	defer cancel()
 
 	log.Infof("cpuidle exec tracerperf ctid %v dur %v", containerID, durstr)
-	cmd := exec.CommandContext(cmdctx, "./tracer/perf.bin", "--casename", "cpuidle.o", "--container-id", containerID, "--dur", durstr)
+	cmd := exec.CommandContext(cmdctx, path.Join(tracing.TaskBinDir, "perf.bin"), "--casename", "cpuidle.o", "--container-id", containerID, "--dur", durstr)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Errorf("cpuidle cmd output %v", strings.TrimSuffix(string(output), "\n"))
+		log.Debugf("cpuidle cmd output %v", strings.TrimSuffix(string(output), "\n"))
 		return fmt.Errorf("cpuidle tracerperf exec err: %w", err)
 	}
 
+	if len(output) == 0 {
+		log.Infof("cpuidle: output of perf is null")
+		return nil
+	}
+
 	// parse json
-	log.Infof("cpuidle parse json")
 	tracerData := CPUIdleTracingData{}
 	err = json.Unmarshal(output, &tracerData.FlameData)
 	if err != nil {
+		log.Debugf("cpuidle: parse failed output: %v", strings.TrimSuffix(string(output), "\n"))
 		return fmt.Errorf("parse JSON err: %w", err)
 	}
 
 	// save
-	log.Infof("cpuidle upload ES")
 	log.Debugf("cpuidle FlameData %v", tracerData.FlameData)
 	tracerData.NowUser = cpuIdleIdMap[containerID].nowUsageP["cpuUser"]
 	tracerData.UserThreshold = conf.Get().Tracing.Cpuidle.CgUserth
@@ -329,6 +308,5 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 	tracerData.DeltaUsage = cpuIdleIdMap[containerID].deltaUser + cpuIdleIdMap[containerID].deltaSys
 	tracerData.DeltaUsageTH = conf.Get().Tracing.Cpuidle.CgDeltaUsageth
 	storage.Save("cpuidle", containerID, tracerTime, &tracerData)
-	log.Infof("cpuidle upload ES end")
 	return err
 }
