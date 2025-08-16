@@ -107,7 +107,7 @@ func (c *cpuUtilCollector) cpuMetricUpdate(cpuMetric *cpuMetric, container *pod.
 	deltaTotal := usageTotal - cpuMetric.lastCPUTotal
 	deltaUsrTime := usageUsr - cpuMetric.lastUsrTime
 	deltaSysTime := usageSys - cpuMetric.lastSysTime
-	deltaUsageSum := float64(cpuCount) * float64(now.Sub(cpuMetric.lasTimestamp).Nanoseconds())
+	deltaUsageSum := float64(cpuCount) * float64(now.Sub(cpuMetric.lasTimestamp).Microseconds())
 
 	if (float64(deltaTotal) > deltaUsageSum) || (float64(deltaUsrTime+deltaSysTime) > deltaUsageSum) {
 		cpuMetric.lastUsrTime = usageUsr
