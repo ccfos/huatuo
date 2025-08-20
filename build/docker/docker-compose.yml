@@ -22,6 +22,8 @@ services:
     image: grafana/grafana-oss:${GRAFANA_VERSION:-12.0.3}
     container_name: grafana
     network_mode: host
+    environment:
+      GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource ${INFINITY_DATA_SOURCE:-3.4.1}"
     volumes:
       - ./grafana/datasources/elasticsearch.yaml:/etc/grafana/provisioning/datasources/elasticsearch.yaml:ro
       - ./grafana/datasources/prometheus.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro
