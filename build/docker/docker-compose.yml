@@ -19,7 +19,7 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
   grafana:
-    image: grafana/grafana-oss:${GRAFANA_VERSION:-11.0.0}
+    image: grafana/grafana-oss:${GRAFANA_VERSION:-12.0.3}
     container_name: grafana
     network_mode: host
     volumes:
