@@ -1,0 +1,15 @@
+apiVersion: 1
+datasources:
+  - id: 10
+    uid: "huatuo-bamai-infinity-auto-flamegraph"
+    orgId: 1
+    name: "huatuo-bamai-infinity"
+    type: "yesoreyeram-infinity-datasource"
+    url: ""
+    basicAuth: false
+    basicAuthUser: ""
+    isDefault: false
+    jsonData:
+      global_queries: []
+    readOnly: false
+    apiVersion: ""

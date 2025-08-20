@@ -27,6 +27,7 @@ services:
     volumes:
       - ./grafana/datasources/elasticsearch.yaml:/etc/grafana/provisioning/datasources/elasticsearch.yaml:ro
       - ./grafana/datasources/prometheus.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro
+      - ./grafana/datasources/infinity.yaml:/etc/grafana/provisioning/datasources/infinity.yaml:ro
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
       - prometheus
