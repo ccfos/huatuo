@@ -1,97 +1,97 @@
 {
-    "annotations": {
-      "list": [
-        {
-          "builtIn": 1,
-          "datasource": {
-            "type": "grafana",
-            "uid": "-- Grafana --"
-          },
-          "enable": true,
-          "hide": true,
-          "iconColor": "rgba(0, 211, 255, 1)",
-          "name": "Annotations & Alerts",
-          "type": "dashboard"
-        }
-      ]
-    },
-    "editable": true,
-    "fiscalYearStartMonth": 0,
-    "graphTooltip": 0,
-    "id": 12,
-    "links": [],
-    "panels": [
+  "annotations": {
+    "list": [
       {
+        "builtIn": 1,
         "datasource": {
-          "type": "yesoreyeram-infinity-datasource",
-          "uid": "huatuo-bamai-infinity-auto-flamegraph"
+          "type": "grafana",
+          "uid": "-- Grafana --"
         },
-        "fieldConfig": {
-          "defaults": {},
-          "overrides": []
-        },
-        "gridPos": {
-          "h": 12,
-          "w": 14,
-          "x": 0,
-          "y": 0
-        },
-        "id": 1,
-        "options": {},
-        "pluginVersion": "12.0.3",
-        "targets": [
-          {
-            "columns": [],
-            "datasource": {
-              "type": "yesoreyeram-infinity-datasource",
-              "uid": "huatuo-bamai-infinity-auto-flamegraph"
-            },
-            "filters": [],
-            "format": "table",
-            "global_query_id": "",
-            "parser": "backend",
-            "refId": "A",
-            "root_selector": "$.hits.hits[0]._source.tracer_data.flamedata",
-            "source": "url",
-            "type": "json",
-            "url": "http://elastic:huatuo-bamai@localhost:9200/huatuo_bamai/_search?pretty&filter_path=hits.hits",
-            "url_options": {
-              "body_content_type": "application/json",
-              "body_type": "raw",
-              "data": "{\n  \"query\":{\n    \"match\":{\n      \"_id\": \"$id\"\n      }\n  }\n}",
-              "method": "POST"
-            }
-          }
-        ],
-        "title": "New panel",
-        "type": "flamegraph"
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
       }
-    ],
-    "preload": false,
-    "schemaVersion": 41,
-    "tags": [],
-    "templating": {
-      "list": [
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 12,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "huatuo-bamai-infinity-auto-flamegraph"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {},
+      "pluginVersion": "12.0.3",
+      "targets": [
         {
-          "current": {
-            "text": "",
-            "value": ""
+          "columns": [],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "huatuo-bamai-infinity-auto-flamegraph"
           },
-          "label": "id",
-          "name": "id",
-          "options": [],
-          "query": "",
-          "type": "custom"
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "$.hits.hits[0]._source.tracer_data.flamedata",
+          "source": "url",
+          "type": "json",
+          "url": "http://elastic:huatuo-bamai@localhost:9200/huatuo_bamai/_search?pretty&filter_path=hits.hits",
+          "url_options": {
+            "body_content_type": "application/json",
+            "body_type": "raw",
+            "data": "{\n  \"query\":{\n    \"match\":{\n      \"_id\": \"$id\"\n      }\n  }\n}",
+            "method": "POST"
+          }
         }
-      ]
-    },
-    "time": {
-      "from": "now-1d",
-      "to": "now"
-    },
-    "timepicker": {},
-    "timezone": "browser",
-    "title": "autotracing-flamegraph-redirect",
-    "uid": "autotracing-flamegraph-redirect",
-    "version": 1
-  }
+      ],
+      "title": "New panel",
+      "type": "flamegraph"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 41,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "label": "id",
+        "name": "id",
+        "options": [],
+        "query": "",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "autotracing-flamegraph-redirect",
+  "uid": "autotracing-flamegraph-redirect",
+  "version": 1
+}
