@@ -10296,9 +10296,16 @@
   "templating": {
     "list": [
       {
+        "allValue": [
+          "*"
+        ],
         "current": {
-          "text": "All",
-          "value": "$__all"
+          "text": [
+            "example"
+          ],
+          "value": [
+            "example"
+          ]
         },
         "datasource": {
           "type": "elasticsearch",
@@ -10315,9 +10322,16 @@
         "type": "query"
       },
       {
+        "allValue": [
+          "*"
+        ],
         "current": {
-          "text": "All",
-          "value": "$__all"
+          "text": [
+            "*"
+          ],
+          "value": [
+            "*"
+          ]
         },
         "datasource": {
           "type": "elasticsearch",
