@@ -26,7 +26,6 @@
   "graphTooltip": 0,
   "id": 1,
   "links": [],
-  "liveNow": false,
   "panels": [
     {
       "datasource": {
@@ -44,8 +43,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -64,6 +62,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -75,7 +74,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -104,7 +103,7 @@
           "timeField": "uploaded_time"
         }
       ],
-      "title": "case总数",
+      "title": "内核事件总数",
       "transformations": [
         {
           "id": "organize",
@@ -163,8 +162,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -183,6 +181,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -194,7 +193,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -282,8 +281,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -302,6 +300,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -313,7 +312,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -401,8 +400,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -421,6 +419,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -432,7 +431,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -520,8 +519,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -540,6 +538,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -551,7 +550,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -580,7 +579,7 @@
           "timeField": "uploaded_time"
         }
       ],
-      "title": "ctnDLoad",
+      "title": "container loadavg",
       "transformations": [
         {
           "id": "organize",
@@ -639,8 +638,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -659,6 +657,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -670,7 +669,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -758,8 +757,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -772,12 +770,13 @@
         "x": 21,
         "y": 0
       },
-      "id": 90,
+      "id": 94,
       "options": {
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -789,7 +788,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -813,12 +812,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
       ],
-      "title": "netrecvlat",
+      "title": "waitrate",
       "transformations": [
         {
           "id": "organize",
@@ -877,8 +876,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -897,6 +895,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -908,7 +907,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -996,8 +995,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -1016,6 +1014,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -1027,7 +1026,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -1115,8 +1114,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -1129,131 +1127,13 @@
         "x": 6,
         "y": 5
       },
-      "id": 82,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "sum"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "11.0.0",
-      "targets": [
-        {
-          "alias": "",
-          "bucketAggs": [
-            {
-              "field": "uploaded_time",
-              "id": "2",
-              "settings": {
-                "interval": "auto"
-              },
-              "type": "date_histogram"
-            }
-          ],
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "metrics": [
-            {
-              "id": "1",
-              "type": "count"
-            }
-          ],
-          "query": "tracer_name:cgroupusage AND region:$region AND hostname:$hostname",
-          "refId": "A",
-          "timeField": "uploaded_time"
-        }
-      ],
-      "title": "cgroupusage",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "_id": true,
-              "_index": true,
-              "_type": true,
-              "uploaded_time": true
-            },
-            "indexByName": {
-              "_id": 2,
-              "_index": 3,
-              "_type": 4,
-              "container_host_ns": 5,
-              "container_hostname": 6,
-              "container_id": 7,
-              "container_level": 8,
-              "container_type": 9,
-              "es_index_time": 10,
-              "highlight": 11,
-              "hostname": 12,
-              "region": 13,
-              "sort": 14,
-              "time": 15,
-              "tracer_data.deltauser": 16,
-              "tracer_data.deltauserth": 17,
-              "tracer_data.flamedata": 18,
-              "tracer_data.nowsys": 19,
-              "tracer_data.nowuser": 20,
-              "tracer_data.systhreshold": 21,
-              "tracer_data.userthreshold": 22,
-              "tracer_name": 23,
-              "tracer_time": 0,
-              "uploaded_time": 1
-            },
-            "renameByName": {}
-          }
-        }
-      ],
-      "transparent": true,
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "elasticsearch",
-        "uid": "huatuo-bamai-es"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 3,
-        "x": 9,
-        "y": 5
-      },
       "id": 91,
       "options": {
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -1265,7 +1145,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -1353,8 +1233,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -1364,7 +1243,7 @@
       "gridPos": {
         "h": 5,
         "w": 3,
-        "x": 12,
+        "x": 9,
         "y": 5
       },
       "id": 93,
@@ -1373,6 +1252,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -1384,7 +1264,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -1472,8 +1352,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -1483,7 +1362,7 @@
       "gridPos": {
         "h": 5,
         "w": 3,
-        "x": 15,
+        "x": 12,
         "y": 5
       },
       "id": 92,
@@ -1492,6 +1371,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -1503,7 +1383,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -1591,8 +1471,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -1602,7 +1481,7 @@
       "gridPos": {
         "h": 5,
         "w": 3,
-        "x": 18,
+        "x": 15,
         "y": 5
       },
       "id": 88,
@@ -1611,6 +1490,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -1622,7 +1502,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -1710,8 +1590,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -1721,15 +1600,16 @@
       "gridPos": {
         "h": 5,
         "w": 3,
-        "x": 21,
+        "x": 18,
         "y": 5
       },
-      "id": 94,
+      "id": 90,
       "options": {
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "sum"
@@ -1741,7 +1621,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "11.0.0",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -1765,12 +1645,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
       ],
-      "title": "waitrate",
+      "title": "netrecvlat",
       "transformations": [
         {
           "id": "organize",
@@ -1822,6 +1702,84 @@
       "fieldConfig": {
         "defaults": {
           "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 3,
+        "x": 21,
+        "y": 5
+      },
+      "id": 149,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "/^Count$/",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "alias": "",
+          "bucketAggs": [
+            {
+              "field": "uploaded_time",
+              "id": "2",
+              "settings": {
+                "interval": "auto"
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "((tracer_name:netdev_events AND (tracer_data.linkstatus:linkStatusCarrierDown OR tracer_data.linkstatus:linkStatusAdminDown)) OR tracer_name:lacp) AND region:$region AND hostname:$hostname",
+          "refId": "A",
+          "timeField": "uploaded_time"
+        }
+      ],
+      "title": "netdev",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
             "fixedColor": "blue",
             "mode": "fixed"
           },
@@ -1832,6 +1790,7 @@
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 0,
             "gradientMode": "none",
@@ -1862,8 +1821,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               }
             ]
           }
@@ -1885,12 +1843,12 @@
           "showLegend": false
         },
         "tooltip": {
-          "maxHeight": 600,
+          "hideZeros": false,
           "mode": "single",
           "sort": "none"
         }
       },
-      "pluginVersion": "8.3.7",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "",
@@ -1919,7 +1877,7 @@
           "timeField": "uploaded_time"
         }
       ],
-      "title": "case触发时间点",
+      "title": "事件触发时间点",
       "transformations": [
         {
           "id": "organize",
@@ -2009,12 +1967,12 @@
           "values": false
         },
         "tooltip": {
-          "maxHeight": 600,
+          "hideZeros": false,
           "mode": "single",
           "sort": "none"
         }
       },
-      "pluginVersion": "8.3.7",
+      "pluginVersion": "12.0.3",
       "targets": [
         {
           "alias": "cgroupusage",
@@ -2367,7 +2325,7 @@
           "timeField": "uploaded_time"
         }
       ],
-      "title": "case占比",
+      "title": "事件占比",
       "transformations": [
         {
           "id": "organize",
@@ -2411,11 +2369,7 @@
       "type": "piechart"
     },
     {
-      "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
+      "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -2423,1356 +2377,583 @@
         "y": 20
       },
       "id": 112,
-      "panels": [
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 4,
-            "x": 0,
-            "y": 21
-          },
-          "id": 113,
-          "options": {
-            "code": {
-              "language": "plaintext",
-              "showLineNumbers": false,
-              "showMiniMap": false
-            },
-            "content": "触发条件：（原cgroupusage）  \n1、sys > 45%   \n2、user > 75% && user单位时间(10s)波动 > 30%  \n3、usage > 90% && usage单位时间(10s)波动 > 30%  \n以上条件符合其中一",
-            "mode": "markdown"
-          },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:cgroupusage AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cpuidle阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
-          "transparent": true,
-          "type": "text"
-        },
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 4,
-            "x": 4,
-            "y": 21
-          },
-          "id": 114,
-          "options": {
-            "colorMode": "value",
-            "graphMode": "none",
-            "justifyMode": "auto",
-            "orientation": "auto",
-            "reduceOptions": {
-              "calcs": [
-                "sum"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "showPercentChange": false,
-            "textMode": "auto",
-            "wideLayout": true
-          },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cpuidle",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
-          "type": "stat"
-        },
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 16,
-            "x": 8,
-            "y": 21
-          },
-          "id": 115,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": false
-            },
-            "tooltip": {
-              "maxHeight": 600,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cpuidle",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "custom": {
-                "align": "auto",
-                "cellOptions": {
-                  "type": "auto"
-                },
-                "filterable": true,
-                "inspect": false
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "点击跳转火焰图"
-                },
-                "properties": [
-                  {
-                    "id": "links",
-                    "value": [
-                      {
-                        "title": "",
-                        "url": "http://10.67.167.19:8091/d/e8094663-66af-4392-a3e2-1d85a72a82e4/huatuo-relay-flamegraph?orgId=1&var-id=${__data.fields.点击跳转火焰图}"
-                      }
-                    ]
-                  },
-                  {
-                    "id": "custom.width",
-                    "value": 205
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "container_hostname"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 297
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "hostname"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 369
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "deltauser阈值"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 116
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "deltauser"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 120
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "sys阈值"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 108
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "nowsys"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 103
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "user阈值"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 139
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 24,
-            "x": 0,
-            "y": 30
-          },
-          "id": 116,
-          "options": {
-            "cellHeight": "sm",
-            "footer": {
-              "countRows": false,
-              "fields": "",
-              "reducer": [
-                "sum"
-              ],
-              "show": false
-            },
-            "showHeader": true,
-            "sortBy": []
-          },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "settings": {
-                    "size": "100"
-                  },
-                  "type": "raw_data"
-                }
-              ],
-              "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cpuidle",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": false,
-                  "_index": true,
-                  "_type": true,
-                  "container_host_ns": true,
-                  "container_hostname": false,
-                  "container_id": true,
-                  "container_level": true,
-                  "container_type": true,
-                  "es_index_time": true,
-                  "highlight": true,
-                  "hostname": false,
-                  "region": true,
-                  "sort": true,
-                  "time": true,
-                  "tracer_data.flamedata": true,
-                  "tracer_name": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 17,
-                  "tracer_data.deltauserth": 16,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 20,
-                  "tracer_data.nowuser": 22,
-                  "tracer_data.systhreshold": 19,
-                  "tracer_data.userthreshold": 21,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {
-                  "_id": "点击跳转火焰图",
-                  "tracer_data.deltauser": "deltauser",
-                  "tracer_data.deltauserth": "deltauser阈值",
-                  "tracer_data.flamedata": "",
-                  "tracer_data.nowsys": "nowsys",
-                  "tracer_data.nowuser": "nowuser",
-                  "tracer_data.systhreshold": "sys阈值",
-                  "tracer_data.userthreshold": "user阈值"
-                }
-              }
-            }
-          ],
-          "type": "table"
-        }
-      ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
-      "title": "cpuidle(原cgroupusage)",
+      "panels": [],
+      "title": "cpuidle",
       "type": "row"
     },
     {
-      "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
       },
       "gridPos": {
-        "h": 1,
-        "w": 24,
+        "h": 9,
+        "w": 4,
         "x": 0,
         "y": 21
       },
-      "id": 7,
-      "panels": [
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 4,
-            "x": 0,
-            "y": 22
-          },
-          "id": 4,
-          "options": {
-            "code": {
-              "language": "plaintext",
-              "showLineNumbers": false,
-              "showMiniMap": false
-            },
-            "content": "触发条件：  \n1、sys > 45%   \n2、user > 75% && user单位时间(10s)波动 > 30%  \n以上条件符合其中一",
-            "mode": "markdown"
-          },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:cgroupusage AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cgroupusage阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
-          "transparent": true,
-          "type": "text"
+      "id": 113,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
         },
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+        "content": "触发条件：\n\n1、sys > 45%   \n2、user > 75% && user 单位时间(10s)波动 > 30%  \n3、usage > 90% && usage单位时间(10s)波动 > 30%  \n以上条件符合其中一",
+        "mode": "markdown"
+      },
+      "pluginVersion": "12.0.3",
+      "title": "cpuidle阈值说明",
+      "transparent": true,
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
           },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
               }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 4,
-            "x": 4,
-            "y": 22
-          },
-          "id": 98,
-          "options": {
-            "colorMode": "value",
-            "graphMode": "none",
-            "justifyMode": "auto",
-            "orientation": "auto",
-            "reduceOptions": {
-              "calcs": [
-                "sum"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "showPercentChange": false,
-            "textMode": "auto",
-            "wideLayout": true
-          },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:cgroupusage AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cgroupusage",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
-          "type": "stat"
+            ]
+          }
         },
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 16,
-            "x": 8,
-            "y": 22
-          },
-          "id": 5,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": false
-            },
-            "tooltip": {
-              "maxHeight": 600,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:cgroupusage AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 4,
+        "x": 4,
+        "y": 21
+      },
+      "id": 114,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
           ],
-          "title": "cgroupusage",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
-          "type": "timeseries"
+          "fields": "",
+          "values": false
         },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
         {
+          "alias": "",
+          "bucketAggs": [
+            {
+              "field": "uploaded_time",
+              "id": "2",
+              "settings": {
+                "interval": "auto"
+              },
+              "type": "date_histogram"
+            }
+          ],
           "datasource": {
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "custom": {
-                "align": "auto",
-                "cellOptions": {
-                  "type": "auto"
-                },
-                "inspect": false
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
+          "refId": "A",
+          "timeField": "uploaded_time"
+        }
+      ],
+      "title": "cpuidle",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "_id": true,
+              "_index": true,
+              "_type": true,
+              "uploaded_time": true
             },
-            "overrides": [
+            "indexByName": {
+              "_id": 2,
+              "_index": 3,
+              "_type": 4,
+              "container_host_ns": 5,
+              "container_hostname": 6,
+              "container_id": 7,
+              "container_level": 8,
+              "container_type": 9,
+              "es_index_time": 10,
+              "highlight": 11,
+              "hostname": 12,
+              "region": 13,
+              "sort": 14,
+              "time": 15,
+              "tracer_data.deltauser": 16,
+              "tracer_data.deltauserth": 17,
+              "tracer_data.flamedata": 18,
+              "tracer_data.nowsys": 19,
+              "tracer_data.nowuser": 20,
+              "tracer_data.systhreshold": 21,
+              "tracer_data.userthreshold": 22,
+              "tracer_name": 23,
+              "tracer_time": 0,
+              "uploaded_time": 1
+            },
+            "renameByName": {}
+          }
+        }
+      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
               {
-                "matcher": {
-                  "id": "byName",
-                  "options": "点击跳转火焰图"
-                },
-                "properties": [
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 8,
+        "y": 21
+      },
+      "id": 115,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "alias": "",
+          "bucketAggs": [
+            {
+              "field": "uploaded_time",
+              "id": "2",
+              "settings": {
+                "interval": "auto"
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
+          "refId": "A",
+          "timeField": "uploaded_time"
+        }
+      ],
+      "title": "cpuidle",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "_id": true,
+              "_index": true,
+              "_type": true,
+              "uploaded_time": true
+            },
+            "indexByName": {
+              "_id": 2,
+              "_index": 3,
+              "_type": 4,
+              "container_host_ns": 5,
+              "container_hostname": 6,
+              "container_id": 7,
+              "container_level": 8,
+              "container_type": 9,
+              "es_index_time": 10,
+              "highlight": 11,
+              "hostname": 12,
+              "region": 13,
+              "sort": 14,
+              "time": 15,
+              "tracer_data.deltauser": 16,
+              "tracer_data.deltauserth": 17,
+              "tracer_data.flamedata": 18,
+              "tracer_data.nowsys": 19,
+              "tracer_data.nowuser": 20,
+              "tracer_data.systhreshold": 21,
+              "tracer_data.userthreshold": 22,
+              "tracer_name": 23,
+              "tracer_time": 0,
+              "uploaded_time": 1
+            },
+            "renameByName": {}
+          }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "点击跳转火焰图"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
                   {
-                    "id": "links",
-                    "value": [
-                      {
-                        "title": "",
-                        "url": "http://10.67.167.19:8091/d/e8094663-66af-4392-a3e2-1d85a72a82e4/huatuo-relay-flamegraph?orgId=1&var-id=${__data.fields.点击跳转火焰图}"
-                      }
-                    ]
-                  },
-                  {
-                    "id": "custom.width",
-                    "value": 205
+                    "targetBlank": true,
+                    "title": "auto跳转火焰图",
+                    "url": "http://localhost:3000/d/autotracing-flamegraph-redirect/autotracing-flamegraph-redirect?orgId=1&var-id=${__data.fields.点击跳转火焰图}"
                   }
                 ]
               },
               {
-                "matcher": {
-                  "id": "byName",
-                  "options": "container_hostname"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 297
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "hostname"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 369
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "deltauser阈值"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 116
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "deltauser"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 120
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "sys阈值"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 108
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "nowsys"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 103
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "user阈值"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 139
-                  }
-                ]
+                "id": "custom.width",
+                "value": 205
               }
             ]
           },
-          "gridPos": {
-            "h": 10,
-            "w": 24,
-            "x": 0,
-            "y": 31
-          },
-          "id": 3,
-          "options": {
-            "cellHeight": "sm",
-            "footer": {
-              "countRows": false,
-              "fields": "",
-              "reducer": [
-                "sum"
-              ],
-              "show": false
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "container_hostname"
             },
-            "showHeader": true,
-            "sortBy": []
-          },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "settings": {
-                    "size": "500"
-                  },
-                  "type": "raw_data"
-                }
-              ],
-              "query": "tracer_name:cgroupusage AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cgroupusage",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": false,
-                  "_index": true,
-                  "_type": true,
-                  "container_host_ns": true,
-                  "container_hostname": false,
-                  "container_id": true,
-                  "container_level": true,
-                  "container_type": true,
-                  "es_index_time": true,
-                  "highlight": true,
-                  "hostname": false,
-                  "region": true,
-                  "sort": true,
-                  "time": true,
-                  "tracer_data.flamedata": true,
-                  "tracer_name": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 17,
-                  "tracer_data.deltauserth": 16,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 20,
-                  "tracer_data.nowuser": 22,
-                  "tracer_data.systhreshold": 19,
-                  "tracer_data.userthreshold": 21,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {
-                  "_id": "点击跳转火焰图",
-                  "tracer_data.deltauser": "deltauser",
-                  "tracer_data.deltauserth": "deltauser阈值",
-                  "tracer_data.flamedata": "",
-                  "tracer_data.nowsys": "nowsys",
-                  "tracer_data.nowuser": "nowuser",
-                  "tracer_data.systhreshold": "sys阈值",
-                  "tracer_data.userthreshold": "user阈值"
-                }
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 297
               }
-            }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "hostname"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 369
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deltauser阈值"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 116
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "deltauser"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sys阈值"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 108
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nowsys"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 103
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "user阈值"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 139
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "id": 116,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
           ],
-          "type": "table"
-        }
-      ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "12.0.3",
       "targets": [
         {
+          "alias": "",
+          "bucketAggs": [],
           "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
           },
-          "refId": "A"
+          "metrics": [
+            {
+              "id": "1",
+              "settings": {
+                "size": "100"
+              },
+              "type": "raw_data"
+            }
+          ],
+          "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
+          "refId": "A",
+          "timeField": "uploaded_time"
         }
       ],
-      "title": "cgroupusage",
-      "type": "row"
+      "title": "cpuidle",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "_id": false,
+              "_index": true,
+              "_type": true,
+              "container_host_ns": true,
+              "container_hostname": false,
+              "container_id": true,
+              "container_level": true,
+              "container_type": true,
+              "es_index_time": true,
+              "highlight": true,
+              "hostname": false,
+              "region": true,
+              "sort": true,
+              "time": true,
+              "tracer_data.flamedata": true,
+              "tracer_name": true,
+              "uploaded_time": true
+            },
+            "indexByName": {
+              "_id": 2,
+              "_index": 3,
+              "_type": 4,
+              "container_host_ns": 5,
+              "container_hostname": 6,
+              "container_id": 7,
+              "container_level": 8,
+              "container_type": 9,
+              "es_index_time": 10,
+              "highlight": 11,
+              "hostname": 12,
+              "region": 13,
+              "sort": 14,
+              "time": 15,
+              "tracer_data.deltauser": 17,
+              "tracer_data.deltauserth": 16,
+              "tracer_data.flamedata": 18,
+              "tracer_data.nowsys": 20,
+              "tracer_data.nowuser": 22,
+              "tracer_data.systhreshold": 19,
+              "tracer_data.userthreshold": 21,
+              "tracer_name": 23,
+              "tracer_time": 0,
+              "uploaded_time": 1
+            },
+            "renameByName": {
+              "_id": "点击跳转火焰图",
+              "tracer_data.deltauser": "deltauser",
+              "tracer_data.deltauserth": "deltauser阈值",
+              "tracer_data.flamedata": "",
+              "tracer_data.nowsys": "nowsys",
+              "tracer_data.nowuser": "nowuser",
+              "tracer_data.systhreshold": "sys阈值",
+              "tracer_data.userthreshold": "user阈值"
+            }
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 40
       },
       "id": 118,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
           },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 23
+            "y": 79
           },
           "id": 119,
           "options": {
+            "code": {
+              "language": "plaintext",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            },
             "content": "触发条件：   \n1、sys > 50%  \n2、sys单位时间(1s)波动 > 30%   \n以上条件符合其中一",
             "mode": "markdown"
           },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
+          "pluginVersion": "12.0.3",
           "title": "cpusys阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -3802,7 +2983,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 23
+            "y": 79
           },
           "id": 120,
           "options": {
@@ -3810,6 +2991,7 @@
             "graphMode": "none",
             "justifyMode": "auto",
             "orientation": "auto",
+            "percentChangeColorMode": "standard",
             "reduceOptions": {
               "calcs": [
                 "sum"
@@ -3817,9 +2999,11 @@
               "fields": "",
               "values": false
             },
-            "textMode": "auto"
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -3902,9 +3086,13 @@
                 "mode": "palette-classic"
               },
               "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
+                "barWidthFactor": 0.6,
                 "drawStyle": "line",
                 "fillOpacity": 0,
                 "gradientMode": "none",
@@ -3913,6 +3101,7 @@
                   "tooltip": false,
                   "viz": false
                 },
+                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -3945,7 +3134,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 23
+            "y": 79
           },
           "id": 121,
           "options": {
@@ -3956,10 +3145,12 @@
               "showLegend": true
             },
             "tooltip": {
-              "mode": "single"
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -4045,7 +3236,8 @@
                 "align": "auto",
                 "cellOptions": {
                   "type": "auto"
-                }
+                },
+                "inspect": false
               },
               "mappings": [],
               "thresholds": {
@@ -4072,8 +3264,9 @@
                     "id": "links",
                     "value": [
                       {
-                        "title": "",
-                        "url": "http://10.67.167.19:8091/d/e8094663-66af-4392-a3e2-1d85a72a82e4/huatuo-relay-flamegraph?orgId=1&var-id=${__data.fields.点击跳转火焰图}"
+                        "targetBlank": true,
+                        "title": "auto 跳转火焰图",
+                        "url": "http://localhost:3000/d/autotracing-flamegraph-redirect/autotracing-flamegraph-redirect?orgId=1&var-id=${__data.fields.点击跳转火焰图}"
                       }
                     ]
                   },
@@ -4173,11 +3366,13 @@
             "h": 10,
             "w": 24,
             "x": 0,
-            "y": 32
+            "y": 88
           },
           "id": 122,
           "options": {
+            "cellHeight": "sm",
             "footer": {
+              "countRows": false,
               "fields": "",
               "reducer": [
                 "sum"
@@ -4187,7 +3382,7 @@
             "showHeader": true,
             "sortBy": []
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -4280,710 +3475,29 @@
           "type": "table"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
-      "title": "cpusys(Flamegraph)",
-      "type": "row"
-    },
-    {
-      "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 23
-      },
-      "id": 9,
-      "panels": [
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 4,
-            "x": 0,
-            "y": 24
-          },
-          "id": 15,
-          "options": {
-            "code": {
-              "language": "plaintext",
-              "showLineNumbers": false,
-              "showMiniMap": false
-            },
-            "content": "触发条件：   \n1、sys > 50%  \n2、sys单位时间(1s)波动 > 30%  \n以上条件符合其中一",
-            "mode": "markdown"
-          },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cpusys阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
-          "transparent": true,
-          "type": "text"
-        },
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 4,
-            "x": 4,
-            "y": 24
-          },
-          "id": 99,
-          "options": {
-            "colorMode": "value",
-            "graphMode": "none",
-            "justifyMode": "auto",
-            "orientation": "auto",
-            "reduceOptions": {
-              "calcs": [
-                "sum"
-              ],
-              "fields": "",
-              "values": false
-            },
-            "showPercentChange": false,
-            "textMode": "auto",
-            "wideLayout": true
-          },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cpusys",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
-          "type": "stat"
-        },
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 16,
-            "x": 8,
-            "y": 24
-          },
-          "id": 45,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "maxHeight": 600,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cpusys",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "custom": {
-                "align": "auto",
-                "cellOptions": {
-                  "type": "auto"
-                },
-                "inspect": false
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "hostname"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 263
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "tracer_time"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 232
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "deltasys"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 89
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "deltasys阈值"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 105
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "sys阈值"
-                },
-                "properties": [
-                  {
-                    "id": "custom.width",
-                    "value": 87
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 12,
-            "x": 0,
-            "y": 33
-          },
-          "id": 44,
-          "options": {
-            "cellHeight": "sm",
-            "footer": {
-              "countRows": false,
-              "fields": "",
-              "reducer": [
-                "sum"
-              ],
-              "show": false
-            },
-            "showHeader": true,
-            "sortBy": []
-          },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "settings": {
-                    "size": "500"
-                  },
-                  "type": "raw_data"
-                }
-              ],
-              "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cpusys",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "es_index_time": true,
-                  "highlight": true,
-                  "region": true,
-                  "sort": true,
-                  "time": true,
-                  "tracer_data.in_known_list": true,
-                  "tracer_data.known_issue": true,
-                  "tracer_data.stack": true,
-                  "tracer_name": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "es_index_time": 5,
-                  "highlight": 6,
-                  "hostname": 7,
-                  "region": 8,
-                  "sort": 9,
-                  "time": 10,
-                  "tracer_data.delta_sys": 12,
-                  "tracer_data.delta_sys_th": 13,
-                  "tracer_data.in_known_list": 14,
-                  "tracer_data.known_issue": 15,
-                  "tracer_data.now_sys": 17,
-                  "tracer_data.stack": 18,
-                  "tracer_data.sys_threshold": 16,
-                  "tracer_name": 11,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {
-                  "tracer_data.delta_sys": "deltasys",
-                  "tracer_data.delta_sys_th": "deltasys阈值",
-                  "tracer_data.now_sys": "nowsys",
-                  "tracer_data.sys_threshold": "sys阈值"
-                }
-              }
-            }
-          ],
-          "type": "table"
-        },
-        {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 12,
-            "x": 12,
-            "y": 33
-          },
-          "id": 97,
-          "options": {
-            "dedupStrategy": "none",
-            "enableLogDetails": true,
-            "prettifyLogMessage": true,
-            "showCommonLabels": false,
-            "showLabels": false,
-            "showTime": false,
-            "sortOrder": "Descending",
-            "wrapLogMessage": true
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "settings": {
-                    "size": "500"
-                  },
-                  "type": "raw_data"
-                }
-              ],
-              "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "cpusys",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "es_index_time": true,
-                  "highlight": true,
-                  "region": true,
-                  "sort": true,
-                  "time": true,
-                  "tracer_data.delta_sys_th": false,
-                  "tracer_data.in_known_list": true,
-                  "tracer_data.known_issue": true,
-                  "tracer_data.stack": false,
-                  "tracer_name": true,
-                  "tracer_time": false,
-                  "uploaded_time": false
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "es_index_time": 5,
-                  "highlight": 6,
-                  "hostname": 7,
-                  "region": 9,
-                  "sort": 10,
-                  "time": 11,
-                  "tracer_data.delta_sys": 14,
-                  "tracer_data.delta_sys_th": 13,
-                  "tracer_data.in_known_list": 17,
-                  "tracer_data.known_issue": 18,
-                  "tracer_data.now_sys": 16,
-                  "tracer_data.stack": 8,
-                  "tracer_data.sys_threshold": 15,
-                  "tracer_name": 12,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {
-                  "tracer_data.delta_sys": "deltasys",
-                  "tracer_data.delta_sys_th": "deltasys阈值",
-                  "tracer_data.now_sys": "nowsys",
-                  "tracer_data.sys_threshold": "sys阈值"
-                }
-              }
-            }
-          ],
-          "type": "logs"
-        }
-      ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
       "title": "cpusys",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 41
       },
       "id": 23,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
           },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 44
+            "y": 196
           },
           "id": 21,
           "options": {
@@ -4991,75 +3505,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:directreclaim AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
           "title": "directreclaim阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -5089,7 +3535,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 44
+            "y": 196
           },
           "id": 100,
           "options": {
@@ -5232,7 +3678,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 44
+            "y": 196
           },
           "id": 47,
           "options": {
@@ -5456,7 +3902,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 53
+            "y": 205
           },
           "id": 48,
           "options": {
@@ -5551,42 +3997,29 @@
           "type": "table"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
       "title": "directreclaim",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 42
       },
       "id": 25,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
           },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 26
+            "y": 176
           },
           "id": 11,
           "options": {
@@ -5594,75 +4027,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:ctnDLoad AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
-          "title": "ctnDLoad",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
+          "title": "loadavg",
           "transparent": true,
           "type": "text"
         },
@@ -5692,7 +4057,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 26
+            "y": 176
           },
           "id": 101,
           "options": {
@@ -5738,7 +4103,7 @@
               "timeField": "uploaded_time"
             }
           ],
-          "title": "ctnDLoad",
+          "title": "loadavg",
           "transformations": [
             {
               "id": "organize",
@@ -5835,7 +4200,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 26
+            "y": 176
           },
           "id": 50,
           "options": {
@@ -5878,7 +4243,7 @@
               "timeField": "uploaded_time"
             }
           ],
-          "title": "ctnDLoad",
+          "title": "loadavg",
           "transformations": [
             {
               "id": "organize",
@@ -6017,7 +4382,7 @@
             "h": 9,
             "w": 14,
             "x": 0,
-            "y": 35
+            "y": 185
           },
           "id": 51,
           "options": {
@@ -6059,7 +4424,7 @@
               "timeField": "uploaded_time"
             }
           ],
-          "title": "ctnDLoad",
+          "title": "loadavg",
           "transformations": [
             {
               "id": "organize",
@@ -6113,11 +4478,16 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
+          "description": "",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 10,
             "x": 14,
-            "y": 35
+            "y": 185
           },
           "id": 52,
           "options": {
@@ -6153,7 +4523,7 @@
               "timeField": "uploaded_time"
             }
           ],
-          "title": "ctnDLoad",
+          "title": "loadavg",
           "transformations": [
             {
               "id": "organize",
@@ -6205,43 +4575,30 @@
           "type": "logs"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
-      "title": "ctnDLoad",
+      "title": "loadavg",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 43
       },
       "id": 27,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
           "description": "",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 27
+            "y": 195
           },
           "id": 19,
           "options": {
@@ -6249,75 +4606,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:dropwatch AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
           "title": "dropwatch阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -6347,7 +4636,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 27
+            "y": 195
           },
           "id": 102,
           "options": {
@@ -6490,7 +4779,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 27
+            "y": 195
           },
           "id": 53,
           "options": {
@@ -6609,7 +4898,7 @@
             "h": 9,
             "w": 18,
             "x": 0,
-            "y": 36
+            "y": 204
           },
           "id": 54,
           "options": {
@@ -6708,11 +4997,15 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 6,
             "x": 18,
-            "y": 36
+            "y": 204
           },
           "id": 55,
           "options": {
@@ -6797,42 +5090,29 @@
           "type": "logs"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
       "title": "dropwatch",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 44
       },
       "id": 29,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
           },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 28
+            "y": 196
           },
           "id": 17,
           "options": {
@@ -6840,75 +5120,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:hungtask AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
           "title": "hungtask阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -6938,7 +5150,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 28
+            "y": 196
           },
           "id": 103,
           "options": {
@@ -7081,7 +5293,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 28
+            "y": 196
           },
           "id": 56,
           "options": {
@@ -7215,7 +5427,7 @@
             "h": 9,
             "w": 13,
             "x": 0,
-            "y": 37
+            "y": 205
           },
           "id": 57,
           "options": {
@@ -7311,11 +5523,15 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 11,
             "x": 13,
-            "y": 37
+            "y": 205
           },
           "id": 58,
           "options": {
@@ -7392,43 +5608,30 @@
           "type": "logs"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
       "title": "hungtask",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 45
       },
       "id": 31,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
           "description": "",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 48
+            "y": 200
           },
           "id": 16,
           "options": {
@@ -7436,75 +5639,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
           "title": "iotracer阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -7534,7 +5669,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 48
+            "y": 200
           },
           "id": 104,
           "options": {
@@ -7677,7 +5812,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 48
+            "y": 200
           },
           "id": 59,
           "options": {
@@ -7825,7 +5960,7 @@
             "h": 9,
             "w": 15,
             "x": 0,
-            "y": 57
+            "y": 209
           },
           "id": 61,
           "options": {
@@ -7917,11 +6052,15 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 9,
             "x": 15,
-            "y": 57
+            "y": 209
           },
           "id": 60,
           "options": {
@@ -8001,42 +6140,29 @@
           "type": "logs"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
       "title": "iotracer",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 29
+        "y": 46
       },
       "id": 33,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
           },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 30
+            "y": 216
           },
           "id": 18,
           "options": {
@@ -8044,75 +6170,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:memburst AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
           "title": "memburst阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -8142,7 +6200,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 30
+            "y": 216
           },
           "id": 105,
           "options": {
@@ -8285,7 +6343,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 30
+            "y": 216
           },
           "id": 62,
           "options": {
@@ -8446,7 +6504,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 39
+            "y": 225
           },
           "id": 63,
           "options": {
@@ -8534,124 +6592,38 @@
           "type": "table"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
       "title": "memburst",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 47
       },
       "id": 35,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
           "description": "",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 5,
             "x": 0,
-            "y": 31
+            "y": 217
           },
           "id": 12,
           "options": {
-            "code": {
-              "language": "plaintext",
-              "showLineNumbers": false,
-              "showMiniMap": false
-            },
             "content": "网络收方向延迟 事件触发条件(or)：\n- 1、网卡 -> 驱动收 > 5ms\n- 2、网卡 -> 协议栈收 > 10ms\n- 3、网卡 -> 用户态拷贝数据 > 115ms\n\n事件几乎都来自 3 (用户主动读取数据的时间超过了阈值)。\n\n过滤延迟发生的位置 where\n- 1 TO_NETIF_RCV\n- 2 TO_TCPV4_RCV\n- 3 TO_USER_COPY",
             "mode": "markdown"
           },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
+          "pluginVersion": "8.3.7",
           "title": "netrecvlat阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -8681,7 +6653,7 @@
             "h": 9,
             "w": 4,
             "x": 5,
-            "y": 31
+            "y": 217
           },
           "id": 106,
           "options": {
@@ -8696,11 +6668,9 @@
               "fields": "",
               "values": false
             },
-            "showPercentChange": false,
-            "textMode": "auto",
-            "wideLayout": true
+            "textMode": "auto"
           },
-          "pluginVersion": "11.0.0",
+          "pluginVersion": "8.3.7",
           "targets": [
             {
               "alias": "",
@@ -8783,9 +6753,6 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
@@ -8797,7 +6764,6 @@
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -8830,7 +6796,7 @@
             "h": 9,
             "w": 15,
             "x": 9,
-            "y": 31
+            "y": 217
           },
           "id": 65,
           "options": {
@@ -8841,9 +6807,7 @@
               "showLegend": true
             },
             "tooltip": {
-              "maxHeight": 600,
-              "mode": "single",
-              "sort": "none"
+              "mode": "single"
             }
           },
           "pluginVersion": "8.3.7",
@@ -8934,8 +6898,7 @@
                 "cellOptions": {
                   "type": "auto"
                 },
-                "filterable": true,
-                "inspect": false
+                "filterable": true
               },
               "mappings": [],
               "thresholds": {
@@ -9150,13 +7113,11 @@
             "h": 9,
             "w": 13,
             "x": 0,
-            "y": 40
+            "y": 226
           },
           "id": 66,
           "options": {
-            "cellHeight": "sm",
             "footer": {
-              "countRows": false,
               "fields": "",
               "reducer": [
                 "sum"
@@ -9171,7 +7132,7 @@
               }
             ]
           },
-          "pluginVersion": "11.0.0",
+          "pluginVersion": "8.3.7",
           "targets": [
             {
               "alias": "",
@@ -9272,11 +7233,15 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 11,
             "x": 13,
-            "y": 40
+            "y": 226
           },
           "id": 67,
           "options": {
@@ -9362,42 +7327,29 @@
           "type": "logs"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
       "title": "netrecvlat",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 31
+        "y": 48
       },
       "id": 37,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
           },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 32
+            "y": 200
           },
           "id": 13,
           "options": {
@@ -9405,75 +7357,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:oom AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
           "title": "oom阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -9503,7 +7387,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 32
+            "y": 200
           },
           "id": 107,
           "options": {
@@ -9646,7 +7530,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 32
+            "y": 200
           },
           "id": 68,
           "options": {
@@ -9790,7 +7674,7 @@
             "h": 9,
             "w": 11,
             "x": 0,
-            "y": 41
+            "y": 209
           },
           "id": 69,
           "options": {
@@ -9885,11 +7769,15 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 13,
             "x": 11,
-            "y": 41
+            "y": 209
           },
           "id": 70,
           "options": {
@@ -9969,118 +7857,38 @@
           "type": "logs"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
       "title": "oom",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 49
       },
       "id": 39,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+          "description": "",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
           },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 33
+            "y": 219
           },
           "id": 10,
           "options": {
-            "content": "# Title\n\nFor markdown syntax help: [commonmark.org/help](https://commonmark.org/help/)",
+            "content": "软中断被关闭时长 > 100ms",
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:softirq AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
           "title": "softirq阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -10110,7 +7918,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 33
+            "y": 219
           },
           "id": 108,
           "options": {
@@ -10253,7 +8061,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 33
+            "y": 219
           },
           "id": 71,
           "options": {
@@ -10435,7 +8243,7 @@
             "h": 9,
             "w": 16,
             "x": 0,
-            "y": 42
+            "y": 228
           },
           "id": 72,
           "options": {
@@ -10527,11 +8335,15 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 8,
             "x": 16,
-            "y": 42
+            "y": 228
           },
           "id": 73,
           "options": {
@@ -10616,42 +8428,29 @@
           "type": "logs"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
       "title": "softirq",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 50
       },
       "id": 41,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
           },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 34
+            "y": 186
           },
           "id": 14,
           "options": {
@@ -10659,75 +8458,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:softlockup AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
           "title": "softlockup阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -10757,7 +8488,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 34
+            "y": 186
           },
           "id": 109,
           "options": {
@@ -10900,7 +8631,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 34
+            "y": 186
           },
           "id": 74,
           "options": {
@@ -11018,7 +8749,7 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 43
+            "y": 195
           },
           "id": 75,
           "options": {
@@ -11102,11 +8833,15 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 9,
             "w": 20,
             "x": 4,
-            "y": 43
+            "y": 195
           },
           "id": 76,
           "options": {
@@ -11186,123 +8921,37 @@
           "type": "logs"
         }
       ],
-      "targets": [
-        {
-          "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
-          },
-          "refId": "A"
-        }
-      ],
       "title": "softlockup",
       "type": "row"
     },
     {
       "collapsed": true,
-      "datasource": {
-        "type": "datasource",
-        "uid": "grafana"
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 51
       },
       "id": 43,
       "panels": [
         {
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
           },
           "gridPos": {
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 35
+            "y": 185
           },
           "id": 20,
           "options": {
-            "code": {
-              "language": "plaintext",
-              "showLineNumbers": false,
-              "showMiniMap": false
-            },
             "content": "每个容器对近30分钟的waitrate率计算出均值mean和标准差std，如果当前的waitrate大于mean+std*factor则报警\n0级、新1、新2级的factor分别为30,40,60",
             "mode": "markdown"
           },
-          "pluginVersion": "11.0.0",
-          "targets": [
-            {
-              "alias": "",
-              "bucketAggs": [
-                {
-                  "field": "uploaded_time",
-                  "id": "2",
-                  "settings": {
-                    "interval": "auto"
-                  },
-                  "type": "date_histogram"
-                }
-              ],
-              "datasource": {
-                "type": "elasticsearch",
-                "uid": "huatuo-bamai-es"
-              },
-              "metrics": [
-                {
-                  "id": "1",
-                  "type": "count"
-                }
-              ],
-              "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
-              "refId": "A",
-              "timeField": "uploaded_time"
-            }
-          ],
+          "pluginVersion": "8.3.7",
           "title": "waitrate阈值说明",
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "_id": true,
-                  "_index": true,
-                  "_type": true,
-                  "uploaded_time": true
-                },
-                "indexByName": {
-                  "_id": 2,
-                  "_index": 3,
-                  "_type": 4,
-                  "container_host_ns": 5,
-                  "container_hostname": 6,
-                  "container_id": 7,
-                  "container_level": 8,
-                  "container_type": 9,
-                  "es_index_time": 10,
-                  "highlight": 11,
-                  "hostname": 12,
-                  "region": 13,
-                  "sort": 14,
-                  "time": 15,
-                  "tracer_data.deltauser": 16,
-                  "tracer_data.deltauserth": 17,
-                  "tracer_data.flamedata": 18,
-                  "tracer_data.nowsys": 19,
-                  "tracer_data.nowuser": 20,
-                  "tracer_data.systhreshold": 21,
-                  "tracer_data.userthreshold": 22,
-                  "tracer_name": 23,
-                  "tracer_time": 0,
-                  "uploaded_time": 1
-                },
-                "renameByName": {}
-              }
-            }
-          ],
           "transparent": true,
           "type": "text"
         },
@@ -11332,7 +8981,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 35
+            "y": 185
           },
           "id": 110,
           "options": {
@@ -11347,11 +8996,9 @@
               "fields": "",
               "values": false
             },
-            "showPercentChange": false,
-            "textMode": "auto",
-            "wideLayout": true
+            "textMode": "auto"
           },
-          "pluginVersion": "11.0.0",
+          "pluginVersion": "8.3.7",
           "targets": [
             {
               "alias": "",
@@ -11434,9 +9081,6 @@
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
@@ -11448,7 +9092,6 @@
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -11481,7 +9124,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 35
+            "y": 185
           },
           "id": 77,
           "options": {
@@ -11492,9 +9135,7 @@
               "showLegend": true
             },
             "tooltip": {
-              "maxHeight": 600,
-              "mode": "single",
-              "sort": "none"
+              "mode": "single"
             }
           },
           "pluginVersion": "8.3.7",
@@ -11583,8 +9224,7 @@
                 "align": "auto",
                 "cellOptions": {
                   "type": "auto"
-                },
-                "inspect": false
+                }
               },
               "mappings": [],
               "thresholds": {
@@ -11602,13 +9242,11 @@
             "h": 10,
             "w": 13,
             "x": 0,
-            "y": 44
+            "y": 194
           },
           "id": 78,
           "options": {
-            "cellHeight": "sm",
             "footer": {
-              "countRows": false,
               "fields": "",
               "reducer": [
                 "sum"
@@ -11617,7 +9255,7 @@
             },
             "showHeader": true
           },
-          "pluginVersion": "11.0.0",
+          "pluginVersion": "8.3.7",
           "targets": [
             {
               "alias": "",
@@ -11695,11 +9333,15 @@
             "type": "elasticsearch",
             "uid": "huatuo-bamai-es"
           },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "gridPos": {
             "h": 10,
             "w": 11,
             "x": 13,
-            "y": 44
+            "y": 194
           },
           "id": 79,
           "options": {
@@ -11779,40 +9421,890 @@
           "type": "logs"
         }
       ],
-      "targets": [
+      "title": "waitrate",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 52
+      },
+      "id": 129,
+      "panels": [
         {
           "datasource": {
-            "type": "datasource",
-            "uid": "grafana"
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
           },
-          "refId": "A"
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 14,
+            "w": 3,
+            "x": 0,
+            "y": 186
+          },
+          "id": 137,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "sum"
+              ],
+              "fields": "/^Count$/",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_time",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:linkStatusCarrierDown AND region:$region AND hostname:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_time"
+            }
+          ],
+          "title": "Carrier Down",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 12,
+            "x": 3,
+            "y": 186
+          },
+          "id": 131,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_time",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:linkStatusCarrierDown AND region:$region AND hostname:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_time"
+            }
+          ],
+          "title": "网卡Down（物理层 Carrier Down）",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 3,
+            "y": 192
+          },
+          "id": 143,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "settings": {
+                    "size": "500"
+                  },
+                  "type": "raw_data"
+                }
+              ],
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:linkStatusCarrierDown AND region:$region AND hostname:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_time"
+            }
+          ],
+          "title": "details",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "_id": true,
+                  "_type": true,
+                  "es_index_time": true,
+                  "highlight": true,
+                  "sort": true,
+                  "tracer_name": true,
+                  "tracer_time": true,
+                  "tracer_type": true,
+                  "uploaded_time": true
+                },
+                "indexByName": {},
+                "renameByName": {
+                  "tracer_data.ifname": "ifname",
+                  "tracer_data.index": "index",
+                  "tracer_data.linkstatus": "linkstatus",
+                  "tracer_data.mac": "mac",
+                  "tracer_data.start": "isstart"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 13,
+            "w": 3,
+            "x": 0,
+            "y": 200
+          },
+          "id": 139,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "sum"
+              ],
+              "fields": "/^Count$/",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_time",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:linkStatusAdminDown AND region:$region AND hostname:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_time"
+            }
+          ],
+          "title": "Admin Down",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 12,
+            "x": 3,
+            "y": 200
+          },
+          "id": 133,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_time",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus: linkStatusAdminDown AND region:$region AND hostname:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_time"
+            }
+          ],
+          "title": "网卡Down（管理 Admin Down）",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 3,
+            "y": 206
+          },
+          "id": 145,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "settings": {
+                    "size": "500"
+                  },
+                  "type": "raw_data"
+                }
+              ],
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus: linkStatusAdminDown AND region:$region AND hostname:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_time"
+            }
+          ],
+          "title": "details",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {}
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 13,
+            "w": 3,
+            "x": 0,
+            "y": 213
+          },
+          "id": 141,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "sum"
+              ],
+              "fields": "/^Count$/",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_time",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:lacp AND region:$region AND hostname:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_time"
+            }
+          ],
+          "title": "lacp",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 12,
+            "x": 3,
+            "y": 213
+          },
+          "id": 135,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_time",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "tracer_name:lacp AND region:$region AND hostname:$hostname",
+              "refId": "A",
+              "timeField": "uploaded_time"
+            }
+          ],
+          "title": "聚合网卡 lacp 异常",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 3,
+            "y": 218
+          },
+          "id": 147,
+          "options": {
+            "footer": {
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true
+          },
+          "pluginVersion": "8.3.7",
+          "targets": [
+            {
+              "alias": "",
+              "bucketAggs": [],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "metrics": [
+                {
+                  "id": "1",
+                  "settings": {
+                    "size": "500"
+                  },
+                  "type": "raw_data"
+                }
+              ],
+              "query": "tracer_name:lacp AND region:$region AND hostname:$hostname&size=100",
+              "refId": "A",
+              "timeField": "uploaded_time"
+            }
+          ],
+          "title": "details",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "_id": true,
+                  "_index": true,
+                  "_type": true,
+                  "es_index_time": true,
+                  "highlight": true,
+                  "sort": true,
+                  "tracer_name": true,
+                  "tracer_time": true,
+                  "tracer_type": true,
+                  "uploaded_time": true
+                },
+                "indexByName": {},
+                "renameByName": {
+                  "tracer_data.content": "content"
+                }
+              }
+            }
+          ],
+          "type": "table"
         }
       ],
-      "title": "waitrate",
+      "title": "netdev",
       "type": "row"
     }
   ],
-  "refresh": false,
-  "schemaVersion": 39,
+  "preload": false,
+  "refresh": "",
+  "schemaVersion": 41,
   "tags": [],
   "templating": {
     "list": [
       {
         "current": {
-          "selected": false,
-          "text": [
-            "example"
-          ],
-          "value": [
-            "example"
-          ]
+          "text": "All",
+          "value": "$__all"
         },
         "datasource": {
           "type": "elasticsearch",
           "uid": "huatuo-bamai-es"
         },
         "definition": "{\"find\": \"terms\", \"field\": \"region\", \"size\": 100}",
-        "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "region",
@@ -11820,26 +10312,18 @@
         "query": "{\"find\": \"terms\", \"field\": \"region\", \"size\": 100}",
         "refresh": 1,
         "regex": "",
-        "skipUrlSync": false,
-        "sort": 0,
         "type": "query"
       },
       {
         "current": {
-          "selected": false,
-          "text": [
-            ""
-          ],
-          "value": [
-            ""
-          ]
+          "text": "All",
+          "value": "$__all"
         },
         "datasource": {
           "type": "elasticsearch",
           "uid": "huatuo-bamai-es"
         },
         "definition": "{\"find\": \"terms\", \"field\": \"hostname\", \"query\": \"region:$region\", \"size\":20000}",
-        "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "hostname",
@@ -11847,32 +10331,27 @@
         "query": "{\"find\": \"terms\", \"field\": \"hostname\", \"query\": \"region:$region\", \"size\":20000}",
         "refresh": 1,
         "regex": "",
-        "skipUrlSync": false,
-        "sort": 0,
         "type": "query"
       },
       {
+        "baseFilters": [],
         "datasource": {
           "type": "elasticsearch",
           "uid": "huatuo-bamai-es"
         },
         "filters": [],
-        "hide": 0,
         "name": "filter",
-        "skipUrlSync": false,
         "type": "adhoc"
       }
     ]
   },
   "time": {
-    "from": "now-6h",
+    "from": "now-2y",
     "to": "now"
   },
-  "timeRangeUpdatedDuringEditOrView": false,
   "timepicker": {},
   "timezone": "",
   "title": "HuaTuo 根因定位 AutoTracing 大盘",
   "uid": "autotracing-event",
-  "version": 1,
-  "weekStart": ""
+  "version": 1
 }
