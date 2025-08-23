@@ -1,22 +1,33 @@
-为帮助大家快速体验、部署 HUATUO, 该文档分别从“极速体验”，“快速开始”，“编译部署”三部分说明。
+
+---
+> 为帮助大家快速体验、部署 HUATUO, 该文档分别从 [极速体验](#1-极速体验)，[快速开始](#2-快速开始)，[编译部署](#3-编译部署) 三部分说明。
+
+---
 
 ## 1 极速体验
 
-该部分可以帮助你快速了解前端效果。你可以直接在前端大盘进行一些查询操作，如查看异常事件概览、异常事件上下文信息、指标曲线等：
+该部分可以帮助你快速了解前端效果。你可以直接在前端大盘进行一些查询操作，如查看异常事件概览、异常事件上下文信息、指标曲线等，免登陆访问大盘示例：
 
-- [Events, AutoTracing 大盘（完善中）, http://console.huatuo.tech](http://console.huatuo.tech/public-dashboards/0e4a67cd787a476d93e634b8a6b77b9d)
-- [宿主机大盘（待补充）]()
-- [容器大盘（待补充）]()
+- [Events, AutoTracing 大盘（完善中）](http://console.huatuo.tech/public-dashboards/a6342b13a1ee4feaba0ebd0876ac6b70)
+  ![autotrcing-event demo diagram​](./img/quickstart-autotrcing-event.png)
+  示例中，跳转火焰图页面需登录，账户：huatuo 密码：huatuo1024
+
+- [宿主机 Metrics 大盘（完善中）](http://console.huatuo.tech/public-dashboards/418491ef0af5491ea5ea8562494291be)
+  ![metrics-host demo diagram](./img/quickstart-metrics-host.png)
+
+- [容器 Metrics 大盘（完善中）](http://console.huatuo.tech/public-dashboards/3ecd5127881044e885d3e5ca16ce518a)
+ ![metrics-container demo diagram](./img/quickstart-metrics-container.png)
+
+## 2 快速开始
 
 ![HUATUO 组件数据流示意图](./img/quickstart-data-flow.png)
 
-## 2 快速开始
 ### 2.1 快速运行 
 如果你想了解底层原理，将 HUATUO 部署到自己的监控系统。你可以通过 docker 启动已经编译好的容器镜像（注意：该方式默认关闭了获取容器信息功能，和 ES 存储功能）。
 
 - **直接运行**：
     ```bash
-    $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /run:/run huatuo/huatuo-bamai:latest
+    $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
     ```
 
 - **获取指标**：在另外一个终端获取指标
@@ -48,7 +59,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 ### 3.2 运行
 - 运行容器：
     ```bash
-    $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /run:/run huatuo/huatuo-bamai:latest
+    $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
     ```
 
 - 或从容器 `/home/huatuo-bamai` 路径下拷贝出所有文件后本地手动运行：
