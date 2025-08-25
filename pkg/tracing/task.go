@@ -20,9 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -45,8 +43,6 @@ const (
 	// StatusNotExist represents a task that has either never been created or has been removed.
 	StatusNotExist = "not_exist"
 )
-
-var TaskBinDir = "./tracer"
 
 type TaskStorageType int
 
@@ -86,9 +82,6 @@ var (
 )
 
 func init() {
-	if exePath, err := os.Executable(); err == nil {
-		TaskBinDir = filepath.Dir(exePath)
-	}
 	go tasksGarbageCollect()
 }
 
