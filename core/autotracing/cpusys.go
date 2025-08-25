@@ -131,7 +131,7 @@ func runPerfSystemWide(parent context.Context, timeOut int64) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, time.Duration(timeOut+30)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "perf"),
+	cmd := exec.CommandContext(ctx, path.Join(conf.CoreBinDir, "perf"),
 		"--bpf-obj", "cpuidle.o",
 		"--duration", strconv.FormatInt(timeOut, 10))
 

@@ -17,6 +17,7 @@ package conf
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -26,6 +27,24 @@ import (
 
 	"github.com/pelletier/go-toml"
 )
+
+var (
+	lock       = sync.Mutex{}
+	configFile = ""
+	config     = &CommonConf{}
+
+	// Region is host and containers belong to.
+	Region string
+
+	// CoreBinDir is the directory where cmd binaries are stored (including bamai, profiler etc.).
+	CoreBinDir = ""
+)
+
+func init() {
+	if exePath, err := os.Executable(); err == nil {
+		CoreBinDir = filepath.Dir(exePath)
+	}
+}
 
 // CommonConf global common configuration
 type CommonConf struct {
@@ -229,15 +248,6 @@ type CommonConf struct {
 		DockerAPIVersion         string `default:"1.24"`
 	}
 }
-
-var (
-	lock       = sync.Mutex{}
-	configFile = ""
-	config     = &CommonConf{}
-
-	// Region is host and containers belong to.
-	Region string
-)
 
 // LoadConfig load conf file
 func LoadConfig(path string) error {

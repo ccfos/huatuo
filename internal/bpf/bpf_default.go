@@ -27,16 +27,13 @@ import (
 	"strconv"
 	"strings"
 
+	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/types"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"golang.org/x/sys/unix"
-)
-
-const (
-	bpfFileDirectory = "./bpf"
 )
 
 // InitBpfManager initializes the bpf manager.
@@ -83,7 +80,7 @@ func LoadBpfFromBytes(bpfName string, bpfBytes []byte, consts map[string]any) (B
 
 // LoadBpf the bpf and return the bpf.
 func LoadBpf(bpfName string, consts map[string]any) (BPF, error) {
-	f, err := os.Open(filepath.Join(bpfFileDirectory, bpfName))
+	f, err := os.Open(filepath.Join(conf.CoreBinDir, "../bpf", bpfName))
 	if err != nil {
 		return nil, err
 	}
