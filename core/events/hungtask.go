@@ -26,6 +26,8 @@ import (
 	"huatuo-bamai/internal/utils/kmsgutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
+
+	"github.com/cloudflare/backoff"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/hungtask.c -o $BPF_DIR/hungtask.o
@@ -44,7 +46,9 @@ type HungTaskTracerData struct {
 }
 
 type hungTaskTracing struct {
-	metric []*metric.Data
+	metric                 []*metric.Data
+	bo                     *backoff.Backoff
+	nextCaptureAllowedTime time.Time
 }
 
 func init() {
@@ -58,11 +62,14 @@ func init() {
 }
 
 func newHungTask() (*tracing.EventTracingAttr, error) {
+	bo := backoff.NewWithoutJitter(3*time.Hour, 10*time.Minute)
+	bo.SetDecay(1 * time.Hour)
 	return &tracing.EventTracingAttr{
 		TracingData: &hungTaskTracing{
 			metric: []*metric.Data{
 				metric.NewGaugeData("counter", 0, "hungtask counter", nil),
 			},
+			bo: bo,
 		},
 		Internal: 10,
 		Flag:     tracing.FlagMetric | tracing.FlagTracing,
@@ -103,6 +110,14 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 			if err := reader.ReadInto(&data); err != nil {
 				return fmt.Errorf("hungtask ReadFromPerfEvent: %w", err)
 			}
+
+			now := time.Now()
+			if now.Before(c.nextCaptureAllowedTime) {
+				hungtaskCounter++
+				continue
+			}
+
+			c.nextCaptureAllowedTime = now.Add(c.bo.Duration())
 
 			cpusBT, err := kmsgutil.GetAllCPUsBT()
 			if err != nil {

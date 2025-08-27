@@ -4,6 +4,7 @@ go 1.23.0
 
 require (
 	github.com/cilium/ebpf v0.16.0
+	github.com/cloudflare/backoff v0.0.0-20240920015135-e46b80a3a7d0
 	github.com/containerd/cgroups/v3 v3.0.3
 	github.com/deckarep/golang-set v1.8.0
 	github.com/docker/docker v27.4.1+incompatible

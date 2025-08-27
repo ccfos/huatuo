@@ -9,8 +9,6 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-BPF_RATELIMIT_IN_MAP(rate, 1200, 1, 0);
-
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
 	__uint(key_size, sizeof(int));
@@ -26,9 +24,6 @@ SEC("tracepoint/sched/sched_process_hang")
 int tracepoint_sched_process_hang(struct trace_event_raw_sched_process_hang *ctx)
 {
 	struct hungtask_info info = {};
-
-	if (bpf_ratelimited_in_map(ctx, rate))
-		return 0;
 
 	info.pid = ctx->pid;
 	BPF_CORE_READ_STR_INTO(&info.comm, ctx, comm);
