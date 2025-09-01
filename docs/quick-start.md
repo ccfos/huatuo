@@ -75,7 +75,6 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
       [Pod]
         KubeletPodListURL = "http://127.0.0.1:10255/pods"
         KubeletPodListHTTPSURL = "https://127.0.0.1:10250/pods"
-        KubeletPodCACertPath = "/etc/kubernetes/ca.pem"
         KubeletPodClientCertPath = "/var/lib/kubelet/pki/kubelet-client-current.pem"
     ```
 
