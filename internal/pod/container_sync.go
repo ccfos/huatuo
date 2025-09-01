@@ -17,7 +17,6 @@ package pod
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,7 +53,6 @@ type PodContainerInitCtx struct {
 	PodListReadOnlyPort   string
 	PodListAuthorizedPort string
 	PodClientCertPath     string
-	PodCACertPath         string
 	podClientCertPath     string
 	podClientCertKey      string
 }
@@ -75,22 +73,11 @@ func kubeletHttpAuthorizationRequest(ctx *PodContainerInitCtx) (*http.Client, er
 			ctx.podClientCertPath, ctx.podClientCertKey, err)
 	}
 
-	caCert, err := os.ReadFile(ctx.PodCACertPath)
-	if err != nil {
-		return nil, fmt.Errorf("reading ca certificate: %w", err)
-	}
-
-	caCertPool := x509.NewCertPool()
-	if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
-		return nil, fmt.Errorf("parse/append a series of pem")
-	}
-
 	client := &http.Client{
 		Timeout: kubeletReqTimeout,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
 				Certificates:       []tls.Certificate{cert},
-				RootCAs:            caCertPool,
 				InsecureSkipVerify: true, // #nosec G402
 			},
 		},
