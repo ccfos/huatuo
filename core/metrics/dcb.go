@@ -54,8 +54,8 @@ const (
 )
 
 const (
-	SizeofDcbmsg  = 4
-	SizeofIEEEPfc = 133
+	sizeofDcbmsg  = 4
+	sizeofIEEEPfc = 133
 )
 
 type dcbMsg struct {
@@ -65,11 +65,11 @@ type dcbMsg struct {
 }
 
 func (msg *dcbMsg) Len() int {
-	return SizeofDcbmsg
+	return sizeofDcbmsg
 }
 
 func (msg *dcbMsg) Serialize() []byte {
-	return (*(*[SizeofDcbmsg]byte)(unsafe.Pointer(msg)))[:]
+	return (*(*[sizeofDcbmsg]byte)(unsafe.Pointer(msg)))[:]
 }
 
 type ieeePfc struct {
@@ -81,8 +81,8 @@ type ieeePfc struct {
 	Indications [IEEE_8021QAZ_MAX_TCS]uint64 // count of the received pfc frames
 }
 
-func DeserializeIEEEPfc(b []byte) *ieeePfc {
-	return (*ieeePfc)(unsafe.Pointer(&b[0:SizeofIEEEPfc][0]))
+func deserializeIEEEPfc(b []byte) *ieeePfc {
+	return (*ieeePfc)(unsafe.Pointer(&b[0:sizeofIEEEPfc][0]))
 }
 
 func doDcbRequest(ifname string) ([][]byte, error) {
@@ -101,11 +101,14 @@ func parseAttributes(attrs []syscall.NetlinkRouteAttr) (*ieeePfc, error) {
 		switch a.Attr.Type {
 		case DCB_ATTR_IFNAME:
 		case DCB_ATTR_IEEE:
-			subattrs, _ := nl.ParseRouteAttr(a.Value)
+			subattrs, err := nl.ParseRouteAttr(a.Value)
+			if err != nil {
+				return nil, fmt.Errorf("parse attr: %w", err)
+			}
 			for _, s := range subattrs {
 				switch s.Attr.Type {
 				case DCB_ATTR_IEEE_PFC:
-					return DeserializeIEEEPfc(s.Value), nil
+					return deserializeIEEEPfc(s.Value), nil
 				case DCB_ATTR_IEEE_PEER_PFC:
 				}
 			}
@@ -121,7 +124,7 @@ func (dcb *dcbCollector) Update() ([]*metric.Data, error) {
 	for _, ifname := range conf.Get().Tracing.Netdev.Whitelist {
 		msgs, err := doDcbRequest(ifname)
 		if err != nil {
-			if errors.Is(err, unix.ENOTSUP) {
+			if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.ENODEV) {
 				continue
 			}
 
@@ -129,7 +132,7 @@ func (dcb *dcbCollector) Update() ([]*metric.Data, error) {
 		}
 
 		for _, m := range msgs {
-			attrs, err := nl.ParseRouteAttr(m[SizeofDcbmsg:])
+			attrs, err := nl.ParseRouteAttr(m[sizeofDcbmsg:])
 			if err != nil {
 				return nil, err
 			}
