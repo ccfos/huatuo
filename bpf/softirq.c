@@ -29,15 +29,25 @@ struct {
 SEC("tracepoint/irq/softirq_raise")
 int probe_softirq_raise(struct trace_event_raw_softirq *ctx)
 {
-	struct softirq_lat lat = {
-		.timestamp = bpf_ktime_get_ns(),
-	};
+	struct softirq_lat *lat;
 	u32 vec = ctx->vec;
 
 	if (vec >= NR_SOFTIRQS)
 		return 0;
 
-	bpf_map_update_elem(&softirq_percpu_lats, &vec, &lat, COMPAT_BPF_ANY);
+	lat = bpf_map_lookup_elem(&softirq_percpu_lats, &vec);
+	if (!lat) {
+		struct softirq_lat lat_init = {
+			.timestamp = bpf_ktime_get_ns(),
+		};
+		bpf_map_update_elem(&softirq_percpu_lats, &vec, &lat_init, COMPAT_BPF_ANY);
+
+		return 0;
+	}
+
+	lat->timestamp = bpf_ktime_get_ns();
+	bpf_map_update_elem(&softirq_percpu_lats, &vec, lat, COMPAT_BPF_ANY);
+
 	return 0;
 }
 
