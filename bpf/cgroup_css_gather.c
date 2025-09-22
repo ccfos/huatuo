@@ -25,8 +25,8 @@ struct {
 
 char __license[] SEC("license") = "GPL";
 
-SEC("kprobe/cgroup_clone_children_read")
-int bpf_cgroup_clone_children_read_prog(struct pt_regs *ctx)
+SEC("kprobe/cgroup_clone_children_read_or_memory_current_read")
+int bpf_cgroup_subsys_state_prog(struct pt_regs *ctx)
 {
 	struct cgroup_subsys_state *css = (void *)PT_REGS_PARM1(ctx);
 	struct cgroup *cgrp		= BPF_CORE_READ(css, cgroup);

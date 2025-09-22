@@ -95,12 +95,12 @@ type CommonConf struct {
 			PerfRunTimeOut         int64
 		}
 
-		// Cpusys for cpusys configuration
-		Cpusys struct {
-			CPUSysth           uint64
-			CPUSysDelta        int64
-			CPUSysStep         int64
-			CPUSysToolduration int64
+		// CPUSys for cpusys configuration
+		CPUSys struct {
+			SysThreshold      int64
+			DeltaSysThreshold int64
+			Interval          int64
+			PerfRunTimeOut    int64
 		}
 
 		// Waitrate for waitrate.go
@@ -224,7 +224,6 @@ type CommonConf struct {
 	Pod struct {
 		KubeletPodListURL        string `default:"http://127.0.0.1:10255/pods"`
 		KubeletPodListHTTPSURL   string `default:"https://127.0.0.1:10250/pods"`
-		KubeletPodCACertPath     string `default:"/etc/kubernetes/ca.pem"`
 		KubeletPodClientCertPath string `default:"/var/lib/kubelet/pki/kubelet-client-current.pem"`
 		DockerAPIVersion         string `default:"1.24"`
 	}

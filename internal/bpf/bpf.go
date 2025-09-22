@@ -18,6 +18,10 @@ import (
 	"context"
 )
 
+type Option struct {
+	KeepaliveTimeout int
+}
+
 // The BPF APIs
 //
 //	The bpf manager has the following APIs:

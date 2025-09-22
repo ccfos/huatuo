@@ -25,3 +25,8 @@ type CpuQuota struct {
 	Quota  uint64
 	Period uint64
 }
+
+type MemoryUsage struct {
+	Usage      uint64
+	MaxLimited uint64
+}

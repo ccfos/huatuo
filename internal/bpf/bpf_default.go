@@ -28,19 +28,17 @@ import (
 	"strings"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/pkg/types"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 	"golang.org/x/sys/unix"
 )
 
-const (
-	bpfFileDirectory = "./bpf"
-)
+var DefaultBpfObjDir = "bpf"
 
 // InitBpfManager initializes the bpf manager.
-func InitBpfManager() error {
-	// unlimit
+func InitBpfManager(opt *Option) error {
 	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
 		Cur: unix.RLIM_INFINITY,
 		Max: unix.RLIM_INFINITY,
@@ -70,6 +68,7 @@ type defaultBPF struct {
 	programSpecs    map[uint32]programSpec
 	mapName2IDs     map[string]uint32
 	programName2IDs map[string]uint32
+	innerPerfEvent  *perfEventPMU
 }
 
 // _ is a type assertion
@@ -82,7 +81,7 @@ func LoadBpfFromBytes(bpfName string, bpfBytes []byte, consts map[string]any) (B
 
 // LoadBpf the bpf and return the bpf.
 func LoadBpf(bpfName string, consts map[string]any) (BPF, error) {
-	f, err := os.Open(filepath.Join(bpfFileDirectory, bpfName))
+	f, err := os.Open(filepath.Join(DefaultBpfObjDir, bpfName))
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +295,6 @@ func (b *defaultBPF) AttachWithOptions(opts []AttachOption) error {
 				return fmt.Errorf("attach raw tracepoint with options %v: %w", opt, err)
 			}
 		case ebpf.PerfEvent:
-			// SamplePeriod/SamplePeriod
 			if err = b.attachPerfEvent(progID, opt.PerfEvent.SamplePeriod, opt.PerfEvent.SampleFreq); err != nil {
 				return fmt.Errorf("attach perf event with options %v: %w", opt, err)
 			}
@@ -452,9 +450,32 @@ func (b *defaultBPF) attachRawTracepoint(progID uint32, symbol string) error {
 	return nil
 }
 
-func (b *defaultBPF) attachPerfEvent(progID uint32, samplePeriod, sampleFrequency uint64) error {
-	// TODO implement
-	return fmt.Errorf("not implemented")
+func (b *defaultBPF) attachPerfEvent(progID uint32, samplePeriod, sampleFreq uint64) error {
+	if b.innerPerfEvent != nil {
+		return fmt.Errorf("bpf %s duplicated symbol: %s", b, perfEventPmuSysbmol)
+	}
+
+	if samplePeriod != 0 {
+		return types.ErrNotSupported
+	}
+
+	if sampleFreq == 0 {
+		return types.ErrArgsInvalid
+	}
+
+	spec := b.programSpecs[progID]
+	event, err := attachPerfEventPMU(&perfEventPMUOption{
+		samplePeriodFreq: sampleFreq,
+		sampleType:       sampleTypeFreq,
+		program:          spec.bProg,
+	})
+	if err != nil {
+		return fmt.Errorf("attach bpf perfevent PERF_COUNT_SW_CPU_CLOCK: %w", err)
+	}
+
+	b.innerPerfEvent = event
+	log.Debugf("attach bpf perfevent: %v", spec.bProg)
+	return nil
 }
 
 // Detach all programs.
@@ -464,6 +485,10 @@ func (b *defaultBPF) Detach() error {
 			err := l.Close()
 			log.Infof("detach %s in %v: %v", spec.sectionName, spec.bProg, err)
 		}
+	}
+
+	if b.innerPerfEvent != nil {
+		_ = b.innerPerfEvent.detach()
 	}
 
 	return nil

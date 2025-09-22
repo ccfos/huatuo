@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	_ "huatuo-bamai/core/autotracing"
 	_ "huatuo-bamai/core/events"
@@ -32,6 +34,7 @@ import (
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/services"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/internal/utils/pidutil"
 	"huatuo-bamai/pkg/tracing"
 
@@ -86,20 +89,14 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("storage.InitDefaultClients: %w", err)
 	}
 
-	// init the bpf manager.
-	if err := bpf.InitBpfManager(); err != nil {
+	if err := bpf.InitBpfManager(&bpf.Option{}); err != nil {
 		return fmt.Errorf("failed to init bpf manager: %w", err)
-	}
-
-	if err := pod.ContainerCgroupCssInit(); err != nil {
-		return fmt.Errorf("init pod cgroup metadata: %w", err)
 	}
 
 	podListInitCtx := pod.PodContainerInitCtx{
 		PodListReadOnlyPort:   conf.Get().Pod.KubeletPodListURL,
 		PodListAuthorizedPort: conf.Get().Pod.KubeletPodListHTTPSURL,
 		PodClientCertPath:     conf.Get().Pod.KubeletPodClientCertPath,
-		PodCACertPath:         conf.Get().Pod.KubeletPodCACertPath,
 	}
 
 	if err := pod.ContainerPodMgrInit(&podListInitCtx); err != nil {
@@ -131,6 +128,13 @@ func mainAction(ctx *cli.Context) error {
 
 	waitExit := make(chan os.Signal, 1)
 	signal.Notify(waitExit, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
+
+	if ctx.Bool("dry-run") {
+		time.Sleep(2 * time.Second)
+		log.Infof("huatuo-bamai exit gracefully by syscall.SIGTERM")
+		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+	}
+
 	for {
 		s := <-waitExit
 		switch s {
@@ -159,6 +163,30 @@ var (
 	AppUsage   = "An In-depth Observation of Linux Kernel Application"
 )
 
+const (
+	optionBpfObjDir  = "bpf-dir"
+	optionToolBinDir = "tools-bin-dir"
+	optionConfigDir  = "config-dir"
+)
+
+func buildOptionDir(optionDir string, ctx *cli.Context) string {
+	dir := ctx.String(optionDir)
+	if filepath.IsAbs(dir) {
+		return dir
+	}
+
+	if ctx.IsSet(optionDir) {
+		return dir
+	}
+
+	runningDir, err := executil.RunningDir()
+	if err != nil {
+		panic("find running dir")
+	}
+
+	return filepath.Join(runningDir, "../", dir)
+}
+
 func main() {
 	app := cli.NewApp()
 	app.Usage = AppUsage
@@ -183,6 +211,21 @@ func main() {
 			Usage: "huatuo-bamai config file",
 		},
 		&cli.StringFlag{
+			Name:  optionConfigDir,
+			Value: "conf",
+			Usage: "huatuo config dir",
+		},
+		&cli.StringFlag{
+			Name:  optionBpfObjDir,
+			Value: "bpf",
+			Usage: "bpf obj dir",
+		},
+		&cli.StringFlag{
+			Name:  optionToolBinDir,
+			Value: "bin",
+			Usage: "tools bin dir",
+		},
+		&cli.StringFlag{
 			Name:     "region",
 			Required: true,
 			Usage:    "the host and containers are in this region",
@@ -195,11 +238,19 @@ func main() {
 			Name:  "log-debug",
 			Usage: "enable debug output for logging",
 		},
+		&cli.BoolFlag{
+			Name:  "dry-run",
+			Usage: "for loading tests, exit gracefully",
+		},
 	}
 
 	app.Before = func(ctx *cli.Context) error {
-		if err := conf.LoadConfig(ctx.String("config")); err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
+		bpf.DefaultBpfObjDir = buildOptionDir(optionBpfObjDir, ctx)
+		tracing.TaskBinDir = buildOptionDir(optionToolBinDir, ctx)
+
+		configDir := buildOptionDir(optionConfigDir, ctx)
+		if err := conf.LoadConfig(filepath.Join(configDir, ctx.String("config"))); err != nil {
+			return fmt.Errorf("load config: %w", err)
 		}
 
 		// set Region
@@ -235,6 +286,10 @@ func main() {
 		if ctx.Bool("log-debug") {
 			log.SetLevel("Debug")
 		}
+
+		// print dirs
+		log.Debugf("option %s: %s, %s: %s, %s: %s", optionBpfObjDir, bpf.DefaultBpfObjDir,
+			optionToolBinDir, tracing.TaskBinDir, optionConfigDir, configDir)
 
 		return nil
 	}

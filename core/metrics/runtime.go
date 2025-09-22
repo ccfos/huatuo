@@ -15,108 +15,90 @@
 package collector
 
 import (
+	"slices"
 	"time"
 
 	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/parseutil"
+	"huatuo-bamai/internal/cgroups/stats"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 
 	"github.com/prometheus/procfs"
 )
 
-const (
-	// CLK_TCK is a constant on Linux for all architectures except alpha and ia64.
-	// See e.g.
-	// https://git.musl-libc.org/cgit/musl/tree/src/conf/sysconf.c#n30
-	// https://github.com/containerd/cgroups/pull/12
-	// https://lore.kernel.org/lkml/agtlq6$iht$1@penguin.transmeta.com/
-	userHZ int64 = 100
-)
-
 type runtimeCollector struct {
-	oldStat *procfs.ProcStat
-	oldTs   int64
+	cgroup     cgroups.Cgroup
+	usage      *stats.CpuUsage
+	latestTime time.Time
 }
+
+var runTimePath string
 
 func init() {
-	tracing.RegisterEventTracing("runtime", newQosCollector)
+	tracing.RegisterEventTracing("runtime", newRuntimeCollector)
 }
 
-func newQosCollector() (*tracing.EventTracingAttr, error) {
+func newRuntimeCollector() (*tracing.EventTracingAttr, error) {
+	mgr, _ := cgroups.NewCgroupManager()
+
+	runTimePath = "huatuo-bamai"
+	if cgroups.CgroupMode() == cgroups.Unified {
+		runTimePath = "huatuo.slice/huatuo-bamai.slice/"
+	}
+
 	return &tracing.EventTracingAttr{
-		TracingData: &runtimeCollector{},
 		Flag:        tracing.FlagMetric,
+		TracingData: &runtimeCollector{cgroup: mgr},
 	}, nil
 }
 
 func (c *runtimeCollector) Update() ([]*metric.Data, error) {
-	runtimeMetric := make([]*metric.Data, 0)
+	return slices.Concat(c.memoryUsage(), c.cpuUsage()), nil
+}
 
+func (c *runtimeCollector) cpuUsage() []*metric.Data {
+	usage, err := c.cgroup.CpuUsage(runTimePath)
+	if err != nil {
+		return nil
+	}
+
+	if c.usage == nil {
+		c.usage = usage
+		c.latestTime = time.Now()
+		return nil
+	}
+
+	now := time.Now()
+	updateInterval := uint64(now.Sub(c.latestTime).Microseconds())
+
+	userPercentage := 100 * (usage.User - c.usage.User) / updateInterval
+	sysPercentage := 100 * (usage.System - c.usage.System) / updateInterval
+	usagePercentage := 100 * (usage.Usage - c.usage.Usage) / updateInterval
+
+	// update the time and usage
+	c.usage = usage
+	c.latestTime = now
+
+	return []*metric.Data{
+		metric.NewGaugeData("cpu_user", float64(userPercentage), "user cpu", nil),
+		metric.NewGaugeData("cpu_sys", float64(sysPercentage), "sys cpu", nil),
+		metric.NewGaugeData("cpu_total", float64(usagePercentage), "total cpu", nil),
+	}
+}
+
+func (c *runtimeCollector) memoryUsage() []*metric.Data {
 	p, err := procfs.Self()
 	if err != nil {
-		return nil, err
-	}
-
-	runtimeMetric = append(runtimeMetric, getCPUMetric(c, &p)...)
-	runtimeMetric = append(runtimeMetric, getMemoryMetric(&p)...)
-
-	return runtimeMetric, nil
-}
-
-func getCPUMetric(c *runtimeCollector, p *procfs.Proc) []*metric.Data {
-	stat, err := p.Stat()
-	if err != nil {
-		log.Warnf("not get process stat: %v", err)
-		return nil
-	}
-	ts := time.Now().Unix()
-
-	if c.oldStat == nil {
-		c.oldStat = &stat
-	}
-
-	if c.oldTs == 0 {
-		c.oldTs = ts
 		return nil
 	}
 
-	data := make([]*metric.Data, 2)
-	duration := ts - c.oldTs
-
-	// huatuo-bamai.cpu.user(*100)
-	user := float64(stat.UTime-c.oldStat.UTime) / float64(userHZ*duration)
-	data[0] = metric.NewGaugeData("cpu_user", user*100, "user cpu", nil)
-
-	// huatuo-bamai.cpu.sys(*100)
-	sys := float64(stat.STime-c.oldStat.STime) / float64(userHZ*duration)
-	data[1] = metric.NewGaugeData("cpu_sys", sys*100, "sys cpu", nil)
-
-	// save stat
-	c.oldStat = &stat
-	c.oldTs = ts
-
-	return data
-}
-
-func getMemoryMetric(p *procfs.Proc) []*metric.Data {
-	data := make([]*metric.Data, 3)
 	status, err := p.NewStatus()
 	if err != nil {
-		log.Warnf("not get process status: %v", err)
 		return nil
 	}
 
-	data[0] = metric.NewGaugeData("memory_vss", float64(status.VmSize)/1024, "memory vss", nil)
-	data[1] = metric.NewGaugeData("memory_rss", float64(status.VmRSS)/1024, "memory rss", nil)
-
-	rssI, err := parseutil.ReadUint(cgroups.RootFsFilePath("memory") + "/huatuo-bamai/memory.usage_in_bytes")
-	if err != nil {
-		log.Warnf("can't ParseUint, err: %v", err)
-		return nil
+	return []*metric.Data{
+		metric.NewGaugeData("memory_vss", float64(status.VmSize)/1024, "memory vss", nil),
+		metric.NewGaugeData("memory_rss", float64(status.VmRSS)/1024, "memory rss", nil),
 	}
-	data[2] = metric.NewGaugeData("memory_cgroup_rss", float64(rssI)/1024, "memory cgroup rss", nil)
-
-	return data
 }

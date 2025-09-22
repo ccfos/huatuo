@@ -24,7 +24,6 @@ import (
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/utils/bpfutil"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/runqlat_tracing.c -o $BPF_DIR/runqlat_tracing.o
@@ -45,7 +44,7 @@ var (
 
 func startRunqlatTracerWork(ctx context.Context) error {
 	// load bpf.
-	b, err := bpf.LoadBpf(bpfutil.ThisBpfOBJ(), nil)
+	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}

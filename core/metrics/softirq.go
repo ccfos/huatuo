@@ -22,7 +22,6 @@ import (
 	"strconv"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/utils/bpfutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 
@@ -168,7 +167,7 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 }
 
 func (s *softirqLatency) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpfutil.ThisBpfOBJ(), nil)
+	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}

@@ -15,11 +15,12 @@
 package autotracing
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -44,139 +45,156 @@ func newCpuSys() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-// CPUStats structure that records cpu usage
-type CPUStats struct {
+type cpuUsage struct {
 	system uint64
 	total  uint64
 }
 
-func CpuSysDetect(ctx context.Context) (uint64, int64, error) {
-	var (
-		percpuStats CPUStats
-		pervSys     uint64
-		deltaSys    int64
-		err         error
-	)
-	sysdelta := conf.Get().Tracing.Cpusys.CPUSysDelta
-	sysstep := conf.Get().Tracing.Cpusys.CPUSysStep
-	systh := conf.Get().Tracing.Cpusys.CPUSysth
-	for {
-		select {
-		case <-ctx.Done():
-			return 0, 0, types.ErrExitByCancelCtx
-		case <-time.After(time.Duration(sysstep) * time.Second):
-			if percpuStats.total == 0 {
-				percpuStats, err = getCPUStats()
-				if err != nil {
-					return 0, 0, fmt.Errorf("get cpuStats err %w", err)
-				}
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			cpuStats, err := getCPUStats()
-			if err != nil {
-				return 0, 0, err
-			}
-			systotal := cpuStats.total - percpuStats.total
-			if systotal == 0 {
-				return 0, 0, fmt.Errorf("systotal is ZERO")
-			}
-			sys := (cpuStats.system - percpuStats.system) * 100 / systotal
-			if pervSys != 0 {
-				deltaSys = int64(sys - pervSys)
-			}
-
-			log.Debugf("cpusys alarm sys %v pervsys %v deltasys %v", sys, pervSys, deltaSys)
-			pervSys = sys
-			percpuStats = cpuStats
-
-			if sys > systh || deltaSys > sysdelta {
-				return sys, deltaSys, nil
-			}
-		}
-	}
+type cpuSysTracing struct {
+	usage           *cpuUsage
+	sysPercent      int64
+	sysPercentDelta int64
 }
-
-func getCPUStats() (CPUStats, error) {
-	statData, err := os.ReadFile("/proc/stat")
-	if err != nil {
-		return CPUStats{}, err
-	}
-
-	lines := strings.Split(string(statData), "\n")
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) < 5 {
-			continue
-		}
-
-		if fields[0] == "cpu" {
-			var cpuStats CPUStats
-			for i := 1; i < len(fields); i++ {
-				value, err := strconv.ParseUint(fields[i], 10, 64)
-				if err != nil {
-					return CPUStats{}, err
-				}
-				cpuStats.total += value
-				if i == 3 {
-					cpuStats.system = value
-				}
-			}
-			return cpuStats, nil
-		}
-	}
-	return CPUStats{}, fmt.Errorf("failed to parse /proc/stat")
-}
-
-type cpuSysTracing struct{}
 
 type CpuSysTracingData struct {
-	NowSys       string                 `json:"now_sys"`
-	SysThreshold string                 `json:"sys_threshold"`
-	DeltaSys     string                 `json:"delta_sys"`
-	DeltaSysTh   string                 `json:"delta_sys_th"`
-	FlameData    []flamegraph.FrameData `json:"flamedata"`
+	NowSys            int64                  `json:"now_sys"`
+	SysThreshold      int64                  `json:"sys_threshold"`
+	DeltaSys          int64                  `json:"deltasys"`
+	DeltaSysThreshold int64                  `json:"deltasys_threshold"`
+	FlameData         []flamegraph.FrameData `json:"flamedata"`
 }
 
-// Start the tcpconnlat task.
-func (c *cpuSysTracing) Start(ctx context.Context) error {
-	// TODO: Verify the conditions for startup.
-	cpuSys, delta, err := CpuSysDetect(ctx)
+type cpuSysThreshold struct {
+	delta int64
+	usage int64
+}
+
+func cpuSysUsage() (*cpuUsage, error) {
+	f, err := os.Open("/proc/stat")
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Scan()
+	fields := strings.Fields(scanner.Text())[1:]
+
+	var total, sys uint64
+	for i, field := range fields {
+		val, err := strconv.ParseUint(field, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+
+		total += val
+		if i == 2 {
+			sys = val
+		}
+	}
+
+	return &cpuUsage{system: sys, total: total}, nil
+}
+
+func (c *cpuSysTracing) updateCpuSysUsage() error {
+	usage, err := cpuSysUsage()
 	if err != nil {
 		return err
 	}
 
-	tracerTime := time.Now()
-	dur := conf.Get().Tracing.Cpusys.CPUSysToolduration
-	durstr := strconv.FormatInt(dur, 10)
+	if c.usage == nil {
+		c.usage = usage
+		return nil
+	}
 
-	// exec tracerperf
-	cmdctx, cancel := context.WithTimeout(ctx, time.Duration(dur+30)*time.Second)
+	sysUsageDelta := usage.system - c.usage.system
+	sysTotalDelta := usage.total - c.usage.total
+	sysPercentage := int64(100 * sysUsageDelta / sysTotalDelta)
+
+	c.sysPercentDelta = sysPercentage - c.sysPercent
+	c.sysPercent = sysPercentage
+	c.usage = usage
+	return nil
+}
+
+func (c *cpuSysTracing) shouldCareThisEvent(threshold *cpuSysThreshold) bool {
+	log.Debugf("sys %d, sys delta: %d", c.sysPercent, c.sysPercentDelta)
+
+	if c.sysPercent > threshold.usage || c.sysPercentDelta > threshold.delta {
+		return true
+	}
+
+	return false
+}
+
+func runPerfSystemWide(parent context.Context, timeOut int64) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, time.Duration(timeOut+30)*time.Second)
 	defer cancel()
 
-	log.Infof("cpusys exec tracerperf dur %v", durstr)
-	cmd := exec.CommandContext(cmdctx, "./tracer/perf.bin", "--casename", "cpusys.o", "--dur", durstr)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Errorf("cpusys cmd output %v", strings.TrimSuffix(string(output), "\n"))
-		return fmt.Errorf("cpusys tracerperf exec err: %w", err)
+	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "perf"),
+		"--bpf-obj", "cpuidle.o",
+		"--duration", strconv.FormatInt(timeOut, 10))
+
+	return cmd.CombinedOutput()
+}
+
+func (c *cpuSysTracing) buildAndSaveCPUSystem(traceTime time.Time, threshold *cpuSysThreshold, flamedata []byte) error {
+	tracerData := CpuSysTracingData{
+		NowSys:            c.sysPercent,
+		SysThreshold:      threshold.usage,
+		DeltaSys:          c.sysPercentDelta,
+		DeltaSysThreshold: threshold.delta,
 	}
 
-	// parse json
-	log.Infof("cpusys parse json")
-	tracerData := CpuSysTracingData{}
-	err = json.Unmarshal(output, &tracerData.FlameData)
-	if err != nil {
-		return fmt.Errorf("parse JSON err: %w", err)
+	if err := json.Unmarshal(flamedata, &tracerData.FlameData); err != nil {
+		return err
 	}
 
-	// save
-	log.Infof("cpusys upload ES")
-	tracerData.NowSys = fmt.Sprintf("%d", cpuSys)
-	tracerData.SysThreshold = fmt.Sprintf("%d", conf.Get().Tracing.Cpusys.CPUSysth)
-	tracerData.DeltaSys = fmt.Sprintf("%d", delta)
-	tracerData.DeltaSysTh = fmt.Sprintf("%d", conf.Get().Tracing.Cpusys.CPUSysDelta)
-	storage.Save("cpusys", "", tracerTime, &tracerData)
-	log.Infof("cpusys upload ES end")
-	return err
+	log.Debugf("cpuidle flamedata %v", tracerData.FlameData)
+	storage.Save("cpusys", "", traceTime, &tracerData)
+	return nil
+}
+
+func (c *cpuSysTracing) Start(ctx context.Context) error {
+	interval := conf.Get().Tracing.CPUSys.Interval
+	perfRunTimeOut := conf.Get().Tracing.CPUSys.PerfRunTimeOut
+
+	threshold := &cpuSysThreshold{
+		delta: conf.Get().Tracing.CPUSys.DeltaSysThreshold,
+		usage: conf.Get().Tracing.CPUSys.SysThreshold,
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return types.ErrExitByCancelCtx
+		case <-time.After(time.Duration(interval) * time.Second):
+			if err := c.updateCpuSysUsage(); err != nil {
+				return err
+			}
+
+			if ok := c.shouldCareThisEvent(threshold); !ok {
+				continue
+			}
+
+			traceTime := time.Now()
+
+			log.Infof("start perf system wide, cpu sys: %d, delta: %d, perf_run_timeout: %d",
+				c.sysPercent, c.sysPercentDelta, perfRunTimeOut)
+			flamedata, err := runPerfSystemWide(ctx, perfRunTimeOut)
+			if err != nil {
+				log.Debugf("perf err: %v, output: %v", err, string(flamedata))
+				return err
+			}
+
+			if len(flamedata) == 0 {
+				log.Infof("perf output is null for system usage")
+				continue
+			}
+
+			if err := c.buildAndSaveCPUSystem(traceTime, threshold, flamedata); err != nil {
+				return err
+			}
+		}
+	}
 }

@@ -21,4 +21,8 @@ var (
 	ErrExitByCancelCtx = errors.New("exit by cancelCtx")
 	// ErrDisconnectedHuatuo defined an error that is disconnected to huatuo
 	ErrDisconnectedHuatuo = errors.New("disconnected to huatuo")
+	// ErrNotSupported indicates that a feature is not supported.
+	ErrNotSupported = errors.New("not supported")
+	// Not valid args for function
+	ErrArgsInvalid = errors.New("args invalid")
 )

@@ -44,6 +44,8 @@ const (
 	StatusNotExist = "not_exist"
 )
 
+var TaskBinDir = "bin"
+
 type TaskStorageType int
 
 const (

@@ -66,4 +66,4 @@ echo "Elasticsearch is ready."
 
 # Run huatuo-bamai
 cd $RUN_PATH
-exec ./huatuo-bamai --region example --config huatuo-bamai.conf
+exec ./bin/huatuo-bamai --region example --config huatuo-bamai.conf

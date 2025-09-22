@@ -25,7 +25,6 @@ import (
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/storage"
-	"huatuo-bamai/internal/utils/bpfutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 
@@ -56,7 +55,7 @@ func newLACPTracing() (*tracing.EventTracingAttr, error) {
 }
 
 func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
-	b, err := bpf.LoadBpf(bpfutil.ThisBpfOBJ(), nil)
+	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}

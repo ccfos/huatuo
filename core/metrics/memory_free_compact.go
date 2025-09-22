@@ -21,7 +21,6 @@ import (
 	"fmt"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/utils/bpfutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -88,7 +87,7 @@ func (c *memoryHost) Update() ([]*metric.Data, error) {
 // Start detect work, load bpf and wait data form perfevent
 func (c *memoryHost) Start(ctx context.Context) error {
 	var err error
-	c.bpf, err = bpf.LoadBpf(bpfutil.ThisBpfOBJ(), nil)
+	c.bpf, err = bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}

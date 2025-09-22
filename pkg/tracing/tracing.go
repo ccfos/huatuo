@@ -81,10 +81,16 @@ func (c *EventTracing) doStart() {
 	c.cancelCtx = cancel
 	defer c.cancelCtx()
 
-	if err := c.ic.Start(ctx); err != nil &&
-		!(errors.Is(err, types.ErrExitByCancelCtx) ||
-			errors.Is(err, types.ErrDisconnectedHuatuo)) {
-		log.Errorf("start tracing %s: %v", c.name, err)
+	if err := c.ic.Start(ctx); err != nil {
+		if !(errors.Is(err, types.ErrExitByCancelCtx) ||
+			errors.Is(err, types.ErrDisconnectedHuatuo) ||
+			errors.Is(err, types.ErrNotSupported)) {
+			log.Errorf("start tracing %s: %v", c.name, err)
+		}
+
+		if errors.Is(err, types.ErrNotSupported) {
+			c.exit = true
+		}
 	}
 }
 

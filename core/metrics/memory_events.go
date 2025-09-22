@@ -33,10 +33,7 @@ func init() {
 }
 
 func newMemEvents() (*tracing.EventTracingAttr, error) {
-	cgroup, err := cgroups.NewCgroupManager()
-	if err != nil {
-		return nil, err
-	}
+	cgroup, _ := cgroups.NewCgroupManager()
 
 	return &tracing.EventTracingAttr{
 		TracingData: &memEventsCollector{

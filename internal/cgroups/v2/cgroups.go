@@ -132,3 +132,17 @@ func (c *CgroupV2) MemoryStatRaw(path string) (map[string]uint64, error) {
 func (c *CgroupV2) MemoryEventRaw(path string) (map[string]uint64, error) {
 	return parseutil.RawKV(paths.Path(path, "memory.events"))
 }
+
+func (c *CgroupV2) MemoryUsage(path string) (*stats.MemoryUsage, error) {
+	usage, err := parseutil.ReadUint(paths.Path(path, "memory.current"))
+	if err != nil {
+		return nil, err
+	}
+
+	maxLimited, err := parseutil.ReadUint(paths.Path(path, "memory.max"))
+	if err != nil {
+		return nil, err
+	}
+
+	return &stats.MemoryUsage{Usage: usage, MaxLimited: maxLimited}, nil
+}

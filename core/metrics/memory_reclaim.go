@@ -22,7 +22,6 @@ import (
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/utils/bpfutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -108,7 +107,7 @@ func (c *memoryCgroup) Update() ([]*metric.Data, error) {
 
 func (c *memoryCgroup) Start(ctx context.Context) error {
 	var err error
-	c.bpf, err = bpf.LoadBpf(bpfutil.ThisBpfOBJ(), nil)
+	c.bpf, err = bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}

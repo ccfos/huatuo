@@ -25,14 +25,13 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
-	"huatuo-bamai/internal/utils/bpfutil"
 	"huatuo-bamai/pkg/tracing"
 )
 
 type memoryReclaimTracing struct{}
 
 type memoryReclaimPerfEvent struct {
-	Comm      [bpfutil.TaskCommLen]byte
+	Comm      [bpf.TaskCommLen]byte
 	Deltatime uint64
 	CSS       uint64
 	Pid       uint64
@@ -61,7 +60,7 @@ func newMemoryReclaim() (*tracing.EventTracingAttr, error) {
 
 // Start detect work, load bpf and wait data form perfevent
 func (c *memoryReclaimTracing) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpfutil.ThisBpfOBJ(), map[string]any{
+	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), map[string]any{
 		"deltath": conf.Get().Tracing.MemoryReclaim.Deltath,
 	})
 	if err != nil {

@@ -17,7 +17,6 @@ package pod
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,70 +41,69 @@ const (
 )
 
 var (
-	kubeletPodListAuthorizationEnabled = false
-	kubeletRunningEnabled              = false
-	kubeletPodListURL                  string
-	kubeletHttpsClient                 *http.Client
-	kubeletTimeTicker                  *time.Ticker
-	kubeletDoneCancel                  context.CancelFunc
-	kubeletPodCgroupDriver             = "cgroupfs"
+	kubeletPodListRunningEnabled = false
+	kubeletPodListURL            string
+	kubeletPodListClient         *http.Client
+	kubeletTimeTicker            *time.Ticker
+	kubeletDoneCancel            context.CancelFunc
+	kubeletPodCgroupDriver       = "cgroupfs"
 )
 
 type PodContainerInitCtx struct {
 	PodListReadOnlyPort   string
 	PodListAuthorizedPort string
 	PodClientCertPath     string
-	PodCACertPath         string
 	podClientCertPath     string
 	podClientCertKey      string
 }
 
-func kubeletPodListPortUpdate(ctx *PodContainerInitCtx) error {
+func kubeletHttpRequest(ctx *PodContainerInitCtx) (*http.Client, error) {
 	client := &http.Client{
 		Timeout: kubeletReqTimeout,
 	}
-	if _, err := kubeletDoRequest(client, ctx.PodListReadOnlyPort); err == nil {
-		kubeletPodListAuthorizationEnabled = false
-		kubeletPodListURL = ctx.PodListReadOnlyPort
-		kubeletRunningEnabled = true
-		return nil
-	}
 
+	_, err := kubeletDoRequest(client, ctx.PodListReadOnlyPort)
+	return client, err
+}
+
+func kubeletHttpAuthorizationRequest(ctx *PodContainerInitCtx) (*http.Client, error) {
 	cert, err := tls.LoadX509KeyPair(ctx.podClientCertPath, ctx.podClientCertKey)
 	if err != nil {
-		return fmt.Errorf("loading client key pair [%s,%s]: %w",
+		return nil, fmt.Errorf("loading client key pair [%s,%s]: %w",
 			ctx.podClientCertPath, ctx.podClientCertKey, err)
 	}
 
-	caCert, err := os.ReadFile(ctx.PodCACertPath)
-	if err != nil {
-		return fmt.Errorf("reading CA certificate: %w", err)
-	}
-
-	caCertPool := x509.NewCertPool()
-	if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
-		return fmt.Errorf("parse/append a series of pem")
-	}
-
-	client.Transport = &http.Transport{
-		TLSClientConfig: &tls.Config{
-			Certificates:       []tls.Certificate{cert},
-			RootCAs:            caCertPool,
-			InsecureSkipVerify: true, // #nosec G402
+	client := &http.Client{
+		Timeout: kubeletReqTimeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				Certificates:       []tls.Certificate{cert},
+				InsecureSkipVerify: true, // #nosec G402
+			},
 		},
 	}
 
-	if _, err := kubeletDoRequest(client, ctx.PodListAuthorizedPort); err != nil {
-		kubeletPodListAuthorizationEnabled = false
-		kubeletRunningEnabled = false
+	_, err = kubeletDoRequest(client, ctx.PodListAuthorizedPort)
+	return client, err
+}
+
+func kubeletPodListPortUpdate(ctx *PodContainerInitCtx) error {
+	if client, err := kubeletHttpRequest(ctx); err == nil {
+		kubeletPodListURL = ctx.PodListReadOnlyPort
+		kubeletPodListClient = client
+		kubeletPodListRunningEnabled = true
+		return nil
+	}
+
+	client, err := kubeletHttpAuthorizationRequest(ctx)
+	if err != nil {
 		return fmt.Errorf("podlist https: %w", err)
 	}
 
 	// update https instance cache
-	kubeletHttpsClient = client
+	kubeletPodListClient = client
 	kubeletPodListURL = ctx.PodListAuthorizedPort
-	kubeletPodListAuthorizationEnabled = true
-	kubeletRunningEnabled = true
+	kubeletPodListRunningEnabled = true
 	return nil
 }
 
@@ -122,13 +120,21 @@ func ContainerPodMgrInit(ctx *PodContainerInitCtx) error {
 		ctx.podClientCertPath, ctx.podClientCertKey = s[0], s[1]
 	}
 
-	_ = kubeletCgroupDriver()
+	_ = kubeletCgroupDriverUpdate()
 
 	err := kubeletPodListPortUpdate(ctx)
 	if !errors.Is(err, syscall.ECONNREFUSED) {
+		// success or other error codes except connect refused
+		// only init css metadata collect when kubelet available.
+		if err == nil {
+			return containerCgroupCssInit()
+		}
+
 		return err
 	}
 
+	// syscall.ECONNREFUSED:
+	// I hope k8s will be available in the future. :)
 	doneCtx, cancel := context.WithCancel(context.Background())
 
 	kubeletDoneCancel = cancel
@@ -139,7 +145,8 @@ func ContainerPodMgrInit(ctx *PodContainerInitCtx) error {
 			case <-t.C:
 				if err := kubeletPodListPortUpdate(ctx); err == nil {
 					log.Infof("kubelet is running now")
-					_ = kubeletCgroupDriver()
+					_ = kubeletCgroupDriverUpdate()
+					_ = containerCgroupCssInit()
 					ContainerPodMgrClose()
 					break
 				}
@@ -241,19 +248,11 @@ func kubeletSyncContainers() error {
 }
 
 func kubeletGetPodList() (corev1.PodList, error) {
-	if !kubeletRunningEnabled {
+	if !kubeletPodListRunningEnabled {
 		return corev1.PodList{}, fmt.Errorf("kubelet not running")
 	}
 
-	if !kubeletPodListAuthorizationEnabled {
-		client := &http.Client{
-			Timeout: kubeletReqTimeout,
-		}
-
-		return kubeletDoRequest(client, kubeletPodListURL)
-	}
-
-	return kubeletDoRequest(kubeletHttpsClient, kubeletPodListURL)
+	return kubeletDoRequest(kubeletPodListClient, kubeletPodListURL)
 }
 
 func kubeletDoRequest(client *http.Client, kubeletPodListURL string) (corev1.PodList, error) {
@@ -390,7 +389,7 @@ func isRuningPod(pod *corev1.Pod) bool {
 	return true
 }
 
-func kubeletCgroupDriver() error {
+func kubeletCgroupDriverUpdate() error {
 	data, err := os.ReadFile(kubeletDefaultConfPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", kubeletDefaultConfPath, err)

@@ -16,16 +16,18 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/storage"
-	"huatuo-bamai/internal/utils/bpfutil"
-	"huatuo-bamai/internal/utils/symbolutil"
+	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/pkg/types"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/softirq_tracing.c -o $BPF_DIR/softirq_tracing.o
@@ -33,11 +35,11 @@ import (
 type softirqTracing struct{}
 
 type softirqPerfEvent struct {
-	Stack     [symbolutil.KsymbolStackMaxDepth]uint64
+	Stack     [symbol.KsymbolStackMaxDepth]uint64
 	StackSize int64
 	Now       uint64
 	StallTime uint64
-	Comm      [bpfutil.TaskCommLen]byte
+	Comm      [bpf.TaskCommLen]byte
 	Pid       uint32
 	CPU       uint32
 }
@@ -68,7 +70,7 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 func (c *softirqTracing) Start(ctx context.Context) error {
 	softirqThresh := conf.Get().Tracing.Softirq.ThresholdTime
 
-	b, err := bpf.LoadBpf(bpfutil.ThisBpfOBJ(), map[string]any{"softirq_thresh": softirqThresh})
+	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), map[string]any{"softirq_thresh": softirqThresh})
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}
@@ -79,6 +81,10 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 
 	reader, err := attachIrqAndEventPipe(childCtx, b)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return types.ErrNotSupported
+		}
+
 		return fmt.Errorf("attach irq and event pipe: %w", err)
 	}
 	defer reader.Close()
@@ -130,7 +136,7 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 
 // softirqDumpTrace is an interface for dump stacks in this case with offset and module info
 func softirqDumpTrace(addrs []uint64) string {
-	stacks := symbolutil.DumpKernelBackTrace(addrs, symbolutil.KsymbolStackMaxDepth)
+	stacks := symbol.DumpKernelBackTrace(addrs, symbol.KsymbolStackMaxDepth)
 	return strings.Join(stacks.BackTrace, "\n")
 }
 

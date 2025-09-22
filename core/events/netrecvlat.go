@@ -27,7 +27,6 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
-	"huatuo-bamai/internal/utils/bpfutil"
 	"huatuo-bamai/internal/utils/netutil"
 	"huatuo-bamai/internal/utils/procfsutil"
 	"huatuo-bamai/pkg/tracing"
@@ -57,7 +56,7 @@ type NetTracingData struct {
 
 // from bpf perf
 type netRcvPerfEvent struct {
-	Comm    [bpfutil.TaskCommLen]byte
+	Comm    [bpf.TaskCommLen]byte
 	Latency uint64
 	TgidPid uint64
 	PktLen  uint64
@@ -131,7 +130,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 		"to_tcpv4":         toTCPV4 * 1000 * 1000,
 		"to_user_copy":     toUserCopy * 1000 * 1000,
 	}
-	b, err := bpf.LoadBpf(bpfutil.ThisBpfOBJ(), args)
+	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), args)
 	if err != nil {
 		return err
 	}

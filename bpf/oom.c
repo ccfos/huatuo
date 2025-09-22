@@ -49,9 +49,9 @@ int kprobe_oom_kill_process(struct pt_regs *ctx)
 	BPF_CORE_READ_STR_INTO(&info.victim_comm, victim_task, comm);
 
 	info.victim_memcg_css =
-	    (u64)BPF_CORE_READ(victim_task, cgroups, subsys[4]);
+	    (u64)BPF_CORE_READ(victim_task, cgroups, subsys[memory_cgrp_id]);
 	info.trigger_memcg_css =
-	    (u64)BPF_CORE_READ(trigger_task, cgroups, subsys[4]);
+	    (u64)BPF_CORE_READ(trigger_task, cgroups, subsys[memory_cgrp_id]);
 
 	bpf_perf_event_output(ctx, &oom_perf_events, COMPAT_BPF_F_CURRENT_CPU,
 			      &info, sizeof(info));
