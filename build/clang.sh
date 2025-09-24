@@ -15,8 +15,9 @@ SRC=
 OBJ=
 INCLUDES=
 DEFAULT_INCLUDES="-I include -I include/4.18.0-193.6.3.el8_2.x86_64"
+ARCH=$(uname --machine | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/')
 COMPILE_OPTIONS=
-DEFAULT_COMPILE_OPTIONS="-Wall -O2 -g -target bpf -D__TARGET_ARCH_x86 -mcpu=v1 -c"
+DEFAULT_COMPILE_OPTIONS="-Wall -O2 -g -target bpf -D__TARGET_ARCH_${ARCH} -mcpu=v1 -c"
 
 while getopts 'hs:o:C:I:' opt
 do

@@ -27,16 +27,13 @@ struct oom_info {
 };
 
 SEC("kprobe/oom_kill_process")
-int kprobe_oom_kill_process(struct pt_regs *ctx)
+int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 {
-	struct oom_control *oc;
 	struct oom_info info = {};
 	struct task_struct *trigger_task, *victim_task;
 
 	if (bpf_ratelimited_in_map(ctx, rate))
 		return 0;
-
-	oc = (void *)ctx->di;
 
 	if (!oc)
 		return 0;
