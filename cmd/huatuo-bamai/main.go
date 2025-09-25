@@ -140,6 +140,7 @@ func mainAction(ctx *cli.Context) error {
 		switch s {
 		case syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM:
 			log.Infof("huatuo-bamai exit by signal %d", s)
+			_ = mgr.MgrTracingEventStopAll()
 			bpf.CloseBpfManager()
 			pod.ContainerPodMgrClose()
 			return nil
