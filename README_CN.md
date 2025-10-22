@@ -46,7 +46,7 @@
     $ docker compose --project-directory ./build/docker up
     ```
   
-  更详细的信息参考：[快速开始](./docs/quick-start.md) 或 [https://huatuo.tech/quickstart/](https://huatuo.tech/quickstart/)
+  更详细的信息参考：[快速开始](./docs/quick-start_CN.md) 或 [https://huatuo.tech/quickstart/](https://huatuo.tech/quickstart/)
 
 # 内核版本
 

@@ -1,6 +1,7 @@
+English | [简体中文](./quick-start_CN.md)
 
 ---
-> To help users quickly experience and deploy HUATUO, this document is divided into three sections: [Quick Experience](#1-Quick Experience)，[Quick Start](#2-Quick Start)，[Compilation & Deployment](#3-Compilation & Deployment).
+> To help users quickly experience and deploy HUATUO, this document is divided into three sections: [Quick Experience](#1-quick-experience)，[Quick Start](#2-quick-start)，[Compilation & Deployment](#3-compilation--deployment).
 
 ---
 
