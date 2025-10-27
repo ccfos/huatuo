@@ -1,37 +1,39 @@
-### 概述
-HUATUO 已支持自动追踪指标如下：
+English | [简体中文](./autotracing_CN.md)
 
-| 追踪名称        | 核心功能               | 场景                                   |
-| ---------------| --------------------- |-------------------------------------- |
-| cpusys        | 宿主 sys 突增检测       | 由于系统负载异常导致业务毛刺问题            |
-| cpuidle       | 容器 cpu idle 掉底检测，提供调用栈，火焰图，进程上下文信息等 | 容器 cpu 使用异常，帮助业务描绘进程热点 |
-| dload          | 跟踪容器loadavg状态进程状态，自动抓取容器 D 状态进程调用信息 | 系统 D 状态突增通常和资源不可用或者锁被长期持有相关，R 状态进程数量突增往往是业务代码设计不合理导致 |
-| waitrate       | 容器资源争抢检测，容器调度被争抢时提供正在争抢的容器信息 | 容器被争抢可能会引起业务毛刺，已存在争抢指标缺乏具体正在争抢的容器信息，通过 waitrate 追踪可以获取参与争抢的容器信息，给混部资源隔离提供参考 |
-| memburst       | 记录内存突发分配时上下文信息 | 宿主机短时间内大量分配内存，检测宿主机上短时间内大量分配内存事件。突发性内存分配可能引发直接回收或者 oom 等 |
-| iotracing       | 检测宿主磁盘 IO 延迟异常。输出访问的文件名和路径、磁盘设备、inode 号、容器等上下文信息 | 频繁出现磁盘 IO 带宽打满、磁盘访问突增，进而导致应用请求延迟或者系统性能抖动 |
+### Overview
+HUATUO currently supports automatic tracing for the following metrics:
+
+| Tracing Name        | Core Function               | Scenario                                  |
+| --------------------| --------------------------- |------------------------------------------ |
+| cpusys              | Host sys surge detection      | Service glitches caused by abnormal system load            |
+| cpuidle             | Container CPU idle drop detection, providing call stacks, flame graphs, process context info, etc. | Abnormal container CPU usage, helping identify process hotspots |
+| dload               | Tracks container loadavg and process states, automatically captures D-state process call info in containers | System D-state surges are often related to unavailable resources or long-held locks; R-state process surges often indicate poor business logic design |
+| waitrate            | Container resource contention detection; provides info on contending containers during scheduling conflicts | Container contention can cause service glitches; existing metrics lack specific contending container details; waitrate tracing provides this info for mixed-deployment resource isolation reference |
+| memburst            | Records context info during sudden memory allocations | Detects short-term, large memory allocation events on the host, which may trigger direct reclaim or OOM |
+| iotracing           | Detects abnormal host disk I/O latency. Outputs context info like accessed filenames/paths, disk devices, inode numbers, containers, etc. | Frequent disk I/O bandwidth saturation or access surges leading to application request latency or system performance jitter |
 
 ### CPUSYS
-系统态 CPU 时间反映内核执行开销，包括系统调用、中断处理、内核线程调度、内存管理及锁竞争等操作。该指标异常升高，通常表明存在内核级性能瓶颈：高频系统调用、硬件设备异常、锁争用或内存回收压力（kswapd 直接回收）等。
+System mode CPU time reflects kernel execution overhead, including system calls, interrupt handling, kernel thread scheduling, memory management, lock contention, etc. Abnormal increases in this metric typically indicate kernel-level performance bottlenecks: frequent system calls, hardware device exceptions, lock contention, or memory reclaim pressure (e.g., kswapd direct reclaim).
 
-cpusys 检测到该指标异常时，自动会触发抓取系统的调用栈并生成火焰图，帮助定位问题根因。 既考虑到系统 cpu sys 达到阈值，或者sys 突发毛刺带来的问题，其中触发条件如下：
-- CPU Sys 使用率 > 阈值 A
-- CPU Sys 使用率单位时间内增长 > 阈值 B
+When cpusys detects an anomaly in this metric, it automatically captures system call stacks and generates flame graphs to help identify the root cause. It considers both sustained high CPU Sys usage and sudden Sys spikes, with trigger conditions including:
+- CPU Sys usage > Threshold A
+- CPU Sys usage increase over a unit time > Threshold B
 
 ### CPUIDLE
-K8S 容器环境，CPU idle 时间（即 CPU 处于空闲状态的时间比例）的突然下降通常表明容器内进程正在过度消耗 CPU 资源，可能引发业务延迟、调度争抢甚至整体系统性能下降。
+In K8S container environments, a sudden drop in CPU idle time (i.e., the proportion of time the CPU is idle) usually indicates that processes within the container are excessively consuming CPU resources, potentially causing business latency, scheduling contention, or even overall system performance degradation.
 
-cpuidle 自动会触发抓取调用栈生成火焰图，触发条件：
-- CPU Sys 使用率 > 阈值 A
-- CPU User 使用率 > 阈值 B && CPU User 使用率单位时间增长 > 阈值 C
-- CPU Usage > 阈值 D && CPU Usage 单位时间增长 > 阈值 E
+cpuidle automatically triggers the capture of call stacks to generate flame graphs. Trigger conditions:
+- CPU Sys usage > Threshold A
+- CPU User usage > Threshold B && CPU User usage increase over unit time > Threshold C
+- CPU Usage > Threshold D && CPU Usage increase over unit time > Threshold E
 
 ### DLOAD
-D 状态是一种特殊的进程状态，指进程因等待内核或硬件资源而进入的一种特殊阻塞状态。与普通睡眠（S 状态）不同，D 状态进程无法被强制终止（包括 SIGKILL），也不会响应中断信号。该状态通常发生在 I/O 操作（如直接读写磁盘）、硬件驱动故障时。系统 D 状态突增往往和资源不可用或者锁被长期持有导致，可运行进程突增往往是业务代码设计不合理导致。dload 借助 netlink 获取容器 running + uninterruptible 进程数量，通过滑动窗口算法计算出过去 1 分钟内容器 D 进程对负载做出的贡献值，当平滑计算后的 D 状态进程负载值超过阈值的时候，表示容器内的 D 状态进程数量出现异常，开始触发收集容器运行情况、D 状态进程信息。
+The D state is a special process state where a process is blocked waiting for kernel or hardware resources. Unlike normal sleep (S state), D-state processes cannot be forcibly terminated (even with SIGKILL) and do not respond to interrupt signals. This state typically occurs during I/O operations (e.g., direct disk read/write) or hardware driver failures. System D-state surges often relate to unavailable resources or long-held locks, while runnable process surges often indicate poor business logic design. dload uses netlink to obtain the count of running + uninterruptible processes in a container, calculates the D-state process contribution to the load over the past 1 minute via a sliding window algorithm. When the smoothed D-state process load value exceeds the threshold, it triggers the collection of container runtime status and D-state process information.
 
 ### MemBurst
-memburst 用于检测宿主机上短时间内大量分配内存的情况，突发性内存分配可能引发直接回收甚至 OOM，所以一旦突发性内存分配就需要记录相关信息。
+memburst detects short-term, large memory allocation events on the host. Sudden memory allocations may trigger direct reclaim or even OOM, so context information is recorded when such allocations occur.
 
 ### IOTracing
-当 I/O 带宽被占满 或 磁盘访问量突增 时，系统可能因 I/O 资源竞争而出现 请求延迟升高、性能抖动，甚至影响整个系统的稳定性。
+When I/O bandwidth is saturated or disk access surges suddenly, the system may experience increased request latency, performance jitter, or even overall instability due to I/O resource contention.
 
-iotracing 在宿主磁盘负载高、IO 延迟异常时，输出异常时 IO 访问的文件名和路径、磁盘设备、inode 号，容器名等上下文信息。
+iotracing outputs context information—such as accessed filenames/paths, disk devices, inode numbers, and container names—during periods of high host disk load or abnormal I/O latency.
