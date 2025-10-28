@@ -1,23 +1,25 @@
-### 概述
+English | [简体中文](./how-to-add-metrcis_CN.md)
 
-Metrics 类型用于采集系统性能等指标数据，可输出为 Prometheus 格式，作为服务端对外提供数据，通过接口 `/metrics` (`curl localhost:<port>/metrics`) 获取。
+### Overview
 
-- **类型**：指标数据采集
-- **功能**：采集各子系统的性能指标数据
-- **特点**：
-  - metrics 主要用于采集系统的性能指标，如 CPU 使用率、内存使用率、网络等，适合用于监控系统的性能指标，支持实时分析和长期趋势观察。
-  - 指标数据可以来自常规 procfs/sysfs 采集，也可以从 tracing (autotracing, event) 类型生成指标数据
-  - Prometheus 格式输出，便于无缝集成到 Prometheus 观测体系
+The Metrics type is used to collect system performance and other indicator data. It can output in Prometheus format, serving as a data provider through the `/metrics` (`curl localhost:<port>/metrics`) .
+
+- **Type**：Metrics collection
+- **Function**：Collects performance metrics  from various subsystems
+- **Characteristics**：
+  - Metrics are primarily used to collect system performance metrics such as CPU usage, memory usage, network statistics, etc. They are suitable for monitoring system performance and support real-time analysis and long-term trend observation.
+  - Metrics can come from regular procfs/sysfs collection or be generated from tracing types (autotracing, event).
+  - Outputs in Prometheus format for seamless integration into the Prometheus observability ecosystem.
  
-- **已集成**：
+- **Already Integrated**：
     - cpu (sys, usr, util, load, nr_running...)
     - memory（vmstat, memory_stat, directreclaim, asyncreclaim...）
     - IO (d2c, q2c, freeze, flush...)
-    - 网络（arp, socket mem, qdisc, netstat, netdev, socketstat...）
+    - Network（arp, socket mem, qdisc, netstat, netdev, socketstat...）
 
-### 如何添加统计指标
+### How to Add Statistical Metrics
 
-只需实现 `Collector` 接口并完成注册，即可将指标添加到系统中。
+Simply implement the `Collector` interface and complete registration to add metrics to the system.
 
 ```go
 type Collector interface {
@@ -26,15 +28,15 @@ type Collector interface {
 }
 ```
 
-#### 1. 创建结构体
-在 `core/metrics` 目录下创建实现 `Collector` 接口的结构体：
+#### 1. Create a Structure
+Create a structure that implements the `Collector` interface in the `core/metrics` directory:
 
 ```go
 type exampleMetric struct{
 }
 ```
 
-#### 2. 注册回调函数
+#### 2. Register Callback Function
 ```go
 func init() {
     tracing.RegisterEventTracing("example", newExample)
@@ -43,13 +45,13 @@ func init() {
 func newExample() (*tracing.EventTracingAttr, error) {
     return &tracing.EventTracingAttr{
         TracingData: &exampleMetric{},
-        Flag: tracing.FlagMetric, // 标记为 Metric 类型
+        Flag: tracing.FlagMetric, // Mark as Metric type
     }, nil
 }
 
 ```
 
-#### 3. 实现 `Update` 方法
+#### 3. Implement the `Update` Method
 
 ```go
 func (c *exampleMetric) Update() ([]*metric.Data, error) {
@@ -62,4 +64,4 @@ func (c *exampleMetric) Update() ([]*metric.Data, error) {
 }
 ```
 
-在项目 `core/metrics` 目录下已集成了多种实际场景的 `Metrics` 示例，以及框架提供的丰富底层接口，包括 bpf prog, map 数据交互、容器信息等，更多详情可参考对应代码实现。
+The `core/metrics` directory in the project has integrated various practical  `Metrics` examples, along with rich underlying interfaces provided by the framework, including BPF program and map data interaction, container information, etc. For more details, refer to the corresponding code implementations.
