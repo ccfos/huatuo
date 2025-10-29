@@ -1,16 +1,18 @@
-### 概述
+English | [简体中文](./how-to-add-events_CN.md)
 
-- **类型**：异常事件驱动（tracing/event）
-- **功能**：常态运行在系统达到预设阈值后抓取上下文信息
-- **特点**：
-    - 与 `autotracing` 不同，`event` 是常态运行，而不是在异常时再触发。
-    - 事件数据会实时存储在本地并存储到远端ES，同时你也可以生成Prometheus 统计指标进行观测。
-    - 适合用于**常态监控**和**实时分析**，能够及时发现系统中的异常行为， `event` 类型的采集对系统性能影响可忽略。
-- **已集成**：软中断异常（softirq）、内存异常分配（oom）、软锁定（softlockup）、D 状态进程（hungtask）、内存回收（memreclaim）、异常丢包（dropwatch）、网络入向延迟（netrecvlat） 等
+### Overview
 
-### 如何添加事件指标
-只需实现 `ITracingEvent` 接口并完成注册，即可将事件添加到系统。
->`AutoTracing` 与 `Event` 类型在框架实现上没有任何区别，只是针对不同的场景进行了实际应用的区分。
+- **Type**: Exception event-driven（tracing/event）
+- **Function**：Continuously runs in the system and captures context information when preset thresholds are reached
+- **Characteristics**: 
+    - Unlike `autotracing`, `event` runs continuously rather than being triggered only when exceptions occur.
+    - Event data is stored locally in real-time and also sent to remote ES. You can also generate Prometheus metrics for observation.
+    - Suitable for **continuous monitoring** and **real-time analysis**, enabling timely detection of abnormal behaviors in the system. The performance impact of `event` type collection is negligible.
+- **Already Integrated**: Soft interrupt abnormalities（softirq）、abnormal memory allocation（oom）、soft lockups（softlockup）、D-state processes（hungtask）、memory reclaim（memreclaim）、abnormal packet loss（dropwatch）、network inbound latency (netrecvlat), etc.
+
+### How to Add Event Metrics
+Simply implement the `ITracingEvent` interface and complete registration to add events to the system.
+>There is no implementation difference between `AutoTracing` and `Event` in the framework; they are only differentiated based on practical application scenarios.
 
 ```go
 // ITracingEvent represents a tracing/event
@@ -19,12 +21,12 @@ type ITracingEvent interface {
 }
 ```
 
-#### 1. 创建 Event 结构体
+#### 1. Create Event Structure
 ```go
 type exampleTracing struct{}
 ```
 
-#### 2. 注册回调函数
+#### 2. Register Callback Function
 ```go
 func init() {
     tracing.RegisterEventTracing("example", newExample)
@@ -33,24 +35,24 @@ func init() {
 func newExample() (*tracing.EventTracingAttr, error) {
     return &tracing.EventTracingAttr{
         TracingData: &exampleTracing{},
-        Internal:    10, // 再次开启 tracing 的间隔时间 seconds
-        Flag:        tracing.FlagTracing, // 标记为 tracing 类型；| tracing.FlagMetric（可选）
+        Internal:    10, // Interval in seconds before re-enabling tracing
+        Flag:        tracing.FlagTracing, // Mark as tracing type; | tracing.FlagMetric (optional)
     }, nil
 }
 ```
 
-#### 3. 实现接口 ITracingEvent
+#### 3. Implement the ITracingEvent Interface
 ```go
 func (t *exampleTracing) Start(ctx context.Context) error {
     // do something
     ...
 
-    // 存储数据到 ES 和 本地
+    // Store data to ES and locally
     storage.Save("example", ccontainerID, time.Now(), tracerData)
 }
 ```
 
-另外也可同时实现接口 Collector 以 Prometheus 格式输出 （可选）
+Additionally, you can optionally implement the Collector interface to output in Prometheus format:
 
 ```go
 func (c *exampleTracing) Update() ([]*metric.Data, error) {
@@ -61,4 +63,4 @@ func (c *exampleTracing) Update() ([]*metric.Data, error) {
 }
 ```
 
-在项目 `core/events` 目录下已集成了多种实际场景的 `events` 示例，以及框架提供的丰富底层接口，包括 bpf prog, map 数据交互、容器信息等，更多详情可参考对应代码实现。
+The `core/events` directory in the project has integrated various practical `events` examples, along with rich underlying interfaces provided by the framework, including BPF program and map data interaction, container information, etc. For more details, refer to the corresponding code implementations.
