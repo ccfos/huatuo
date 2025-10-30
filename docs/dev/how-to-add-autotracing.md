@@ -1,15 +1,17 @@
-### 概述
-- **类型**：异常事件驱动（tracing/autotracing）
-- **功能**：自动跟踪系统异常状态，并在异常发生时再触发抓取现场上下文信息
-- **特点**：
-    - 当系统出现异常时，`autotracing` 会自动触发，捕获相关的上下文信息
-    - 事件数据会实时存储在本地并存储到远端ES，同时你也可以生成Prometheus 统计指标进行观测。
-    - 适用于获取现场时**性能开销较大的场景**，例如检测到指标上升到一定阈值、上升速度过快再触发抓取
-- **已集成**：cpu 异常使用跟踪（cpu idle）、D状态跟踪（dload）、容器内外部争抢（waitrate）、内存突发分配（memburst）、磁盘异常跟踪（iotracer）
+English | [简体中文](./how-to-add-autotracing_CN.md)
 
-### 如何添加 Autotracing ？
-`AutoTracing` 只需实现 `ITracingEvent` 接口并完成注册，即可将事件添加到系统中。
->`AutoTracing` 与 `Event` 类型在框架实现上没有任何区别，只是针对不同的场景进行了实际应用的区分。
+### Overview
+- **Type**：Exception event-driven（tracing/autotracing）
+- **Function**：Automatically tracks system abnormal states and triggers context information capture when exceptions occur
+- **Characteristics**：
+    - When system abnormalities occur, `autotracing` automatically triggers and captures relevant context information
+    - Event data is stored locally in real-time and also sent to remote ES, while you can also generate Prometheus metrics for observation
+    - Suitable for **significant performance overhead**， such as triggering capture when detecting metrics rising above certain thresholds or rising too rapidly
+- **Already Integrated**：abnormal usage tracking (cpu idle), D-state tracking (dload), container internal/external contention (waitrate), sudden memory allocation (memburst), disk abnormal tracking (iotracer)
+
+### How to Add Autotracing
+`AutoTracing` only requires implementing the `ITracingEvent` interface and completing registration to add events to the system.
+>There is no implementation difference between `AutoTracing` and `Event` in the framework; they are only differentiated based on practical application scenarios.
 
 ```go
 // ITracingEvent represents a autotracing or event
@@ -18,12 +20,12 @@ type ITracingEvent interface {
 }
 ```
 
-#### 1. 创建结构体
+#### 1. Create Structure
 ```go
 type exampleTracing struct{}
 ```
 
-#### 2. 注册回调函数
+#### 2. Register Callback Function
 ```go
 func init() {
     tracing.RegisterEventTracing("example", newExample)
@@ -32,24 +34,24 @@ func init() {
 func newExample() (*tracing.EventTracingAttr, error) {
     return &tracing.EventTracingAttr{
         TracingData: &exampleTracing{},
-        Internal:    10, // 再次开启 tracing 的间隔时间 seconds
-        Flag:        tracing.FlagTracing, // 标记为 tracing 类型； | tracing.FlagMetric（可选）
+        Internal:    10, // Interval in seconds before re-enabling tracing
+        Flag:        tracing.FlagTracing, // Mark as tracing type; | tracing.FlagMetric (optional)
     }, nil
 }
 ```
 
-#### 3. 实现接口 ITracingEvent
+#### 3. Implement ITracingEvent
 ```go
 func (t *exampleTracing) Start(ctx context.Context) error {
     // detect your care about 
     ...
 
-    // 存储数据到 ES 和 本地
+    // Store data to ES and locally
     storage.Save("example", ccontainerID, time.Now(), tracerData)
 }
 ```
 
-另外也可同时实现接口 Collector 以 Prometheus 格式输出 （可选）
+Additionally, you can optionally implement the Collector interface to output in Prometheus format:
 
 ```go
 func (c *exampleTracing) Update() ([]*metric.Data, error) {
@@ -60,4 +62,4 @@ func (c *exampleTracing) Update() ([]*metric.Data, error) {
 }
 ```
 
-在项目 `core/autotracing` 目录下已集成了多种实际场景的 `autotracing` 示例，以及框架提供的丰富底层接口，包括 bpf prog，map 数据交互、容器信息等，更多详情可参考对应代码实现。
+The `core/autotracing` directory in the project has integrated various practical `autotracing` 示examples, along with rich underlying interfaces provided by the framework, including BPF program and map data interaction, container information, etc. For more details, refer to the corresponding code implementations.
