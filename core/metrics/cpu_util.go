@@ -43,7 +43,7 @@ type cpuUtilCollector struct {
 	cgroup  cgroups.Cgroup
 
 	// included struct for used in multi modules
-	hostCPUCount  int
+	hostCPUCount  int64
 	hostCPUMetric cpuMetric
 
 	mutex sync.Mutex
@@ -67,14 +67,14 @@ func newCPUUtil() (*tracing.EventTracingAttr, error) {
 				metric.NewGaugeData("sys", 0, "sys for container and host", nil),
 				metric.NewGaugeData("total", 0, "total for container and host", nil),
 			},
-			hostCPUCount: runtime.NumCPU(),
+			hostCPUCount: int64(runtime.NumCPU()),
 			cgroup:       cgroup,
 		},
 		Flag: tracing.FlagMetric,
 	}, nil
 }
 
-func (c *cpuUtilCollector) cpuMetricUpdate(cpuMetric *cpuMetric, container *pod.Container, cpuCount int) error {
+func (c *cpuUtilCollector) cpuMetricUpdate(cpuMetric *cpuMetric, container *pod.Container, cpuCount int64) error {
 	var (
 		utilUsr    float64
 		utilSys    float64
@@ -158,19 +158,24 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			continue
 		}
 
+		var cpuCores int64
 		if cpuQuota.Quota == math.MaxUint64 {
+			cpuCores = int64(runtime.NumCPU())
+		} else {
+			cpuCores = int64(cpuQuota.Quota / cpuQuota.Period)
+		}
+
+		if cpuCores <= 0 {
 			continue
 		}
 
-		count := int(cpuQuota.Quota / cpuQuota.Period)
-
 		containerMetric := container.LifeResouces("collector_cpu_util").(*cpuMetric)
-		if err := c.cpuMetricUpdate(containerMetric, container, count); err != nil {
+		if err := c.cpuMetricUpdate(containerMetric, container, cpuCores); err != nil {
 			log.Infof("failed to update cpu info of %s, %v", container, err)
 			continue
 		}
 
-		metrics = append(metrics, metric.NewContainerGaugeData(container, "count", float64(count), "cpu count for containers", nil),
+		metrics = append(metrics, metric.NewContainerGaugeData(container, "count", float64(cpuCores), "cpu count for containers", nil),
 			metric.NewContainerGaugeData(container, "usr", containerMetric.utilUsr, "usr for container and host", nil),
 			metric.NewContainerGaugeData(container, "sys", containerMetric.utilSys, "sys for container and host", nil),
 			metric.NewContainerGaugeData(container, "total", containerMetric.utilTotal, "total for container and host", nil))

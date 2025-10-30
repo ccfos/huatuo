@@ -21,6 +21,7 @@ import (
 	"math"
 	"os/exec"
 	"path"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -155,12 +156,14 @@ func updateContainerCpuUsage(container *containerCPUInfo) error {
 		return err
 	}
 
-	if cpuQuotaPeriod.Quota == math.MaxUint64 {
-		return fmt.Errorf("cpu too large")
+	var cpuCores int64
+	if cpuQuotaPeriod.Quota == math.MaxUint64 { // no limit
+		cpuCores = int64(runtime.NumCPU())
+	} else {
+		cpuCores = int64(cpuQuotaPeriod.Quota / cpuQuotaPeriod.Period)
 	}
 
-	cpuCores := int64(cpuQuotaPeriod.Quota / cpuQuotaPeriod.Period)
-	if cpuCores == 0 {
+	if cpuCores <= 0 {
 		return fmt.Errorf("cpu too small")
 	}
 
