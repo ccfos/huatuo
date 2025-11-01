@@ -1,5 +1,4 @@
 FROM golang:1.23.0-alpine AS base
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 RUN apk add --no-cache make clang15 libbpf-dev bpftool curl git
 
 ENV PATH=$PATH:/usr/lib/llvm15/bin

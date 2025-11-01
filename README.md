@@ -35,7 +35,7 @@ English | [简体中文](./README_CN.md)
 
   Launch the Elasticsearch, Prometheus, Grafana, and huatuo services using docker compose. Once the services are running, access [http://localhost:3000](http://localhost:3000/) via your web browser.
 
-        $ docker compose --project-directory ./build/docker
+        $ docker compose --project-directory ./build/docker up
 
   ![](./docs/img/quickstart-components.png)  
 
