@@ -300,7 +300,7 @@ struct iov_iter___new {
 
 static int bpf_file_read_write(struct pt_regs *ctx)
 {
-	struct kiocb *iocb = (struct kiocb *)ctx->di;
+	struct kiocb *iocb = (struct kiocb *)PT_REGS_PARM1(ctx);
 	struct io_data data = {};
 	struct io_data *entry = NULL;
 	struct dentry *dentry;
@@ -330,7 +330,7 @@ static int bpf_file_read_write(struct pt_regs *ctx)
 		entry->inode = key.inode;
 	}
 
-	from = (struct iov_iter *)ctx->si;
+	from = (struct iov_iter *)PT_REGS_PARM2(ctx);
 	count = BPF_CORE_READ(from, count);
 
 	if (bpf_core_field_exists(from->type)) {
