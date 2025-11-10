@@ -57,6 +57,7 @@ u32 get_event_size(u32 last_data_loc)
 	return size;
 }
 
+#ifdef __TARGET_ARCH_x86
 SEC("tracepoint/mce/mce_record")
 void probe_mce_record(struct trace_event_raw_mce_record *ctx)
 {
@@ -81,6 +82,7 @@ void probe_mce_record(struct trace_event_raw_mce_record *ctx)
 	bpf_perf_event_output(ctx, &ras_event_map, COMPAT_BPF_F_CURRENT_CPU,
 			      event, sizeof(struct report_event));
 }
+#endif
 
 SEC("tracepoint/ras/mc_event")
 void probe_ras_mc_event(struct trace_event_raw_mc_event *ctx)
