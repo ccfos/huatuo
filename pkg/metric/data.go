@@ -73,24 +73,10 @@ func IsNoDataError(err error) bool {
 	return errors.Is(err, ErrNoData)
 }
 
-// NewGaugeData creates a new instance of Data.
-//
-// Parameters:
-//
-//	name string - The name of the metric.
-//	value float64 - The value of the metric.
-//	help string - The help information for the metric, describing its purpose or meaning.
-//	label map[string]string - The labels for the metric, used to add additional dimensions to the metric.
-//
-// Returns:
-//
-//	*Data - A pointer to the newly created Data instance.
-//
-// NOTE: the default label `Host` will be added if it is not present in the label map.
-func NewGaugeData(name string, value float64, help string, label map[string]string) *Data {
+func newData(name string, value float64, typ int, help string, label map[string]string) *Data {
 	data := &Data{
 		metricName: name,
-		metricType: MetricTypeGauge,
+		metricType: typ,
 		Value:      value,
 		help:       help,
 	}
@@ -114,14 +100,46 @@ func NewGaugeData(name string, value float64, help string, label map[string]stri
 	return data
 }
 
-// NewContainerGaugeData creates a new instance of container Data.
+// NewGaugeData creates a new instance of Data.
 //
-// NOTE: the default labels 'LabelContainerHost...' will be added if it is not present.
-// in the label map.
-func NewContainerGaugeData(container *pod.Container, name string, value float64, help string, label map[string]string) *Data {
+// Parameters:
+//
+//	name string - The name of the metric.
+//	value float64 - The value of the metric.
+//	help string - The help information for the metric, describing its purpose or meaning.
+//	label map[string]string - The labels for the metric, used to add additional dimensions to the metric.
+//
+// Returns:
+//
+//	*Data - A pointer to the newly created Data instance.
+//
+// NOTE: the default label `Host` will be added if it is not present in the label map.
+func NewGaugeData(name string, value float64, help string, label map[string]string) *Data {
+	return newData(name, value, MetricTypeGauge, help, label)
+}
+
+// NewCounterData creates a new instance of Data.
+//
+// Parameters:
+//
+//	name string - The name of the metric.
+//	value float64 - The value of the metric.
+//	help string - The help information for the metric, describing its purpose or meaning.
+//	label map[string]string - The labels for the metric, used to add additional dimensions to the metric.
+//
+// Returns:
+//
+//	*Data - A pointer to the newly created Data instance.
+//
+// NOTE: the default label `Host` will be added if it is not present in the label map.
+func NewCounterData(name string, value float64, help string, label map[string]string) *Data {
+	return newData(name, value, MetricTypeCounter, help, label)
+}
+
+func newContainerData(container *pod.Container, name string, value float64, typ int, help string, label map[string]string) *Data {
 	data := &Data{
 		metricName: fmt.Sprintf("container_%s", name),
-		metricType: MetricTypeGauge,
+		metricType: typ,
 		Value:      value,
 		help:       help,
 	}
@@ -158,6 +176,22 @@ func NewContainerGaugeData(container *pod.Container, name string, value float64,
 	}
 
 	return data
+}
+
+// NewContainerGaugeData creates a new instance of container Data.
+//
+// NOTE: the default labels 'LabelContainerHost...' will be added if it is not present.
+// in the label map.
+func NewContainerGaugeData(container *pod.Container, name string, value float64, help string, label map[string]string) *Data {
+	return newContainerData(container, name, value, MetricTypeGauge, help, label)
+}
+
+// NewContainerCounterData creates a new instance of container Data.
+//
+// NOTE: the default labels 'LabelContainerHost...' will be added if it is not present.
+// in the label map.
+func NewContainerCounterData(container *pod.Container, name string, value float64, help string, label map[string]string) *Data {
+	return newContainerData(container, name, value, MetricTypeCounter, help, label)
 }
 
 // convert 'Data' to prometheus Metric
