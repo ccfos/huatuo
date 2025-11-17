@@ -55,12 +55,14 @@ func parseContainerCSS(containerID string) (map[string]uint64, error) {
 }
 
 const (
-	cgroupSubsysCount             = 13
-	kubeletContainerIDKnodeMaxlen = 64
+	cgroupSubsysCount                 = 13
+	kubeletContainerIDKnodeNameMaxlen = 85
+	kubeletContainerIDKnodeNameMinlen = 64
 )
 
 var (
-	kubeletContainerIDRegexp  = regexp.MustCompile(`[^a-zA-Z0-9]+`)
+	// used to extract container id from cgroup name
+	kubeletContainerIDRegexp  = regexp.MustCompile(`(?:cri-containerd-)?([0-9a-f]{64})(?:\.scope)?`)
 	cgroupv1SubSysName        = []string{"cpu", "cpuacct", "cpuset", "memory", "blkio"}
 	cgroupv1NotifyFile        = "cgroup.clone_children"
 	cgroupv2NotifyFile        = "memory.current"
@@ -70,10 +72,6 @@ var (
 	// avoid GC
 	_cgroupCssBpfInternal *bpf.BPF
 )
-
-func isValidKnodeName(name string) bool {
-	return !kubeletContainerIDRegexp.MatchString(name)
-}
 
 type containerCssMetaData struct {
 	CSS         uint64
@@ -90,7 +88,7 @@ type containerCssPerfEvent struct {
 	CgroupRoot  int32
 	CgroupLevel int32
 	CSS         [cgroupSubsysCount]uint64
-	KnodeName   [kubeletContainerIDKnodeMaxlen + 2]byte
+	KnodeName   [kubeletContainerIDKnodeNameMaxlen + 2]byte
 }
 
 func cgroupListCssDataByKnode(containerID string) []*containerCssMetaData {
@@ -108,7 +106,8 @@ func cgroupListCssDataByKnode(containerID string) []*containerCssMetaData {
 
 func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent) error {
 	knodeName := strings.TrimRight(string(data.KnodeName[:]), "\x00")
-	if !isValidKnodeName(knodeName) {
+	containerID := extractContainerID(knodeName)
+	if containerID == "" {
 		return fmt.Errorf("knode name is not containterID")
 	}
 
@@ -123,7 +122,7 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent) error {
 				Cgroup:      data.Cgroup,
 				CgroupRoot:  data.CgroupRoot,
 				CgroupLevel: data.CgroupLevel,
-				ContainerID: knodeName,
+				ContainerID: containerID,
 				SubSys:      sysName,
 			}
 			log.Debugf("update container css data: %+v", m)
@@ -136,7 +135,8 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent) error {
 
 func cgroupDeleteCssData(data *containerCssPerfEvent) error {
 	knodeName := strings.TrimRight(string(data.KnodeName[:]), "\x00")
-	if !isValidKnodeName(knodeName) {
+	containerID := extractContainerID(knodeName)
+	if containerID == "" {
 		return fmt.Errorf("knode name is not containterID")
 	}
 
@@ -191,8 +191,9 @@ func cgroupRootNotify(realRoot, name string) error {
 		if err != nil {
 			return err
 		}
-
-		if !d.IsDir() || len(d.Name()) != kubeletContainerIDKnodeMaxlen {
+		// for containerd, the length of cgroup name is 85
+		// for docker, it is 64
+		if !d.IsDir() || len(d.Name()) < kubeletContainerIDKnodeNameMinlen {
 			return nil
 		}
 
@@ -329,4 +330,12 @@ func containerCgroupCssInit() error {
 	}
 
 	return nil
+}
+
+func extractContainerID(fileName string) string {
+	got := kubeletContainerIDRegexp.FindStringSubmatch(fileName)
+	if len(got) > 0 {
+		return got[1]
+	}
+	return ""
 }

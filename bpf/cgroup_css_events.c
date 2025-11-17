@@ -6,7 +6,8 @@
 
 #include "bpf_common.h"
 
-#define CGROUP_KNODE_NAME_MAXLEN 64
+#define CGROUP_KNODE_NAME_MAXLEN 85
+#define CGROUP_KNODE_NAME_MINLEN 64
 
 struct cgroup_perf_event_t {
 	u64 cgroup;
@@ -37,7 +38,7 @@ bpf_cgroup_event_class_prog(struct bpf_raw_tracepoint_args *ctx, u64 type)
 	knode_len =
 	    bpf_probe_read_str(&data.knode_name, sizeof(data.knode_name),
 			       BPF_CORE_READ(cgrp, kn, name));
-	if (knode_len != CGROUP_KNODE_NAME_MAXLEN + 1)
+	if (knode_len < CGROUP_KNODE_NAME_MINLEN + 1)
 		return 0;
 
 	data.ops_type	  = type;
