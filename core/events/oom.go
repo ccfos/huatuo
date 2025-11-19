@@ -145,40 +145,53 @@ func (c *oomCollector) Start(ctx context.Context) error {
 				VictimContainerID:  cssToCtMap[data.VictimMemcgCSS],
 			}
 
-			if caseData.TriggerContainerID == "" {
-				caseData.TriggerContainerID = "None"
-				caseData.TriggerContainerHostname = "Non-Container Cgroup"
-			} else {
-				caseData.TriggerContainerHostname = cts[caseData.TriggerContainerID].Hostname
-				if caseData.TriggerContainerHostname == "" {
-					caseData.TriggerContainerHostname = "unknown"
-				}
-			}
+			triggerContainer := cts[caseData.TriggerContainerID]
+			caseData.TriggerContainerID, caseData.TriggerContainerHostname = formatContainerMeta(
+				caseData.TriggerContainerID, triggerContainer,
+			)
 			mutex.Lock()
-			if caseData.VictimContainerID == "" {
+			victimContainer := cts[caseData.VictimContainerID]
+			caseData.VictimContainerID, caseData.VictimContainerHostname = formatContainerMeta(
+				caseData.VictimContainerID, victimContainer,
+			)
+			if victimContainer == nil {
 				hostOOMCounter++
-				caseData.VictimContainerID = "None"
-				caseData.VictimContainerHostname = "Non-Container Cgroup"
 			} else {
-				victimID := cts[caseData.VictimContainerID].ID
-				if val, exists := containerOOMCounter[victimID]; exists {
-					val.count++
-					val.victimProcessName = val.victimProcessName + "," + caseData.VictimProcessName
-					containerOOMCounter[victimID] = val
-				} else {
-					containerOOMCounter[victimID] = oomMetric{
-						count:             1,
-						victimProcessName: caseData.VictimProcessName,
-					}
-				}
-				caseData.VictimContainerHostname = cts[caseData.VictimContainerID].Hostname
-				if caseData.VictimContainerHostname == "" {
-					caseData.VictimContainerHostname = "unknown"
-				}
+				updateVictimMetric(victimContainer.ID, caseData.VictimProcessName)
 			}
 			mutex.Unlock()
 
 			storage.Save("oom", "", time.Now(), caseData)
 		}
 	}
+}
+
+const (
+	nonContainerID        = "None"
+	nonContainerHostname  = "Non-Container Cgroup"
+	unknownHostnamePrefix = "unknown"
+)
+
+func formatContainerMeta(containerID string, container *pod.Container) (string, string) {
+	if containerID == "" || container == nil {
+		return nonContainerID, nonContainerHostname
+	}
+	return containerID, hostnameOrUnknown(container.Hostname)
+}
+
+func hostnameOrUnknown(host string) string {
+	if host == "" {
+		return unknownHostnamePrefix
+	}
+	return host
+}
+
+func updateVictimMetric(containerID, processName string) {
+	if val, exists := containerOOMCounter[containerID]; exists {
+		val.count++
+		val.victimProcessName = val.victimProcessName + "," + processName
+		containerOOMCounter[containerID] = val
+		return
+	}
+	containerOOMCounter[containerID] = oomMetric{count: 1, victimProcessName: processName}
 }
