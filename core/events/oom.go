@@ -128,16 +128,12 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			if err := reader.ReadInto(&data); err != nil {
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
-			cssToCtMap, err := pod.GetCSSToContainerID("memory")
-			if err != nil {
-				log.Errorf("failed to GetCSSToContainerID, err: %v", err)
-				continue
-			}
 			cts, err := pod.GetAllContainers()
 			if err != nil {
 				log.Errorf("Can't get GetAllContainers, err: %v", err)
 				return err
 			}
+			cssToCtMap := pod.BuildCSSToContainerID(cts, "memory")
 			caseData := &OOMTracingData{
 				TriggerMemcgCSS:    fmt.Sprintf("0x%x", data.TriggerMemcgCSS),
 				TriggerPid:         data.TriggerPid,

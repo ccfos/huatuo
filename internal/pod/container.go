@@ -187,21 +187,13 @@ func GetContainerByCSS(css uint64, subsys string) (*Container, error) {
 	return nil, nil
 }
 
-// GetCSSToContainerID Build mapping from css address to container id
-// Usage: return_val = GetCSSToContainerID('cpu')
-//
-//	container_id = return_val[0xffffffffc0601000]
-func GetCSSToContainerID(subsys string) (map[uint64]string, error) {
-	containers, err := GetAllContainers()
-	if err != nil {
-		return nil, err
-	}
-	cssToContainerMap := make(map[uint64]string)
+// BuildCSSToContainerID builds a css-address map from the provided containers.
+func BuildCSSToContainerID(containers map[string]*Container, subsys string) map[uint64]string {
+	cssToContainerMap := make(map[uint64]string, len(containers))
 	for _, container := range containers {
 		if addr, ok := container.CSS[subsys]; ok {
 			cssToContainerMap[addr] = container.ID
 		}
 	}
-
-	return cssToContainerMap, nil
+	return cssToContainerMap
 }
