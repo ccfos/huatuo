@@ -160,12 +160,13 @@ func (c *oomCollector) Start(ctx context.Context) error {
 				caseData.VictimContainerID = "None"
 				caseData.VictimContainerHostname = "Non-Container Cgroup"
 			} else {
-				if val, exists := containerOOMCounter[cts[caseData.VictimContainerID].ID]; exists {
+				victimID := cts[caseData.VictimContainerID].ID
+				if val, exists := containerOOMCounter[victimID]; exists {
 					val.count++
 					val.victimProcessName = val.victimProcessName + "," + caseData.VictimProcessName
-					containerOOMCounter[cts[caseData.VictimContainerID].ID] = val
+					containerOOMCounter[victimID] = val
 				} else {
-					containerOOMCounter[cts[caseData.VictimContainerID].ID] = oomMetric{
+					containerOOMCounter[victimID] = oomMetric{
 						count:             1,
 						victimProcessName: caseData.VictimProcessName,
 					}
