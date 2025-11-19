@@ -26,6 +26,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/netutil"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -184,7 +185,7 @@ func (c *dropWatchTracing) formatEvent(event *perfEventT) *DropWatchTracingData 
 	// tracer data
 	data := &DropWatchTracingData{
 		Type:          typeMap[event.Type],
-		Comm:          strings.TrimRight(string(event.Comm[:]), "\x00"),
+		Comm:          bytesutil.CString(event.Comm[:]),
 		Pid:           event.TgidPid >> 32,
 		Saddr:         saddr,
 		Daddr:         daddr,

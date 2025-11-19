@@ -26,6 +26,7 @@ import (
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/internal/utils/bytesutil"
 
 	ingestv1 "github.com/grafana/pyroscope/api/gen/proto/go/ingester/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
@@ -152,7 +153,7 @@ func parsedata(b bpf.BPF) error {
 			}
 		}
 
-		sttitle := strings.TrimRight(string(kv.Key.Name[:]), "\x00")
+		sttitle := bytesutil.CString(kv.Key.Name[:])
 		index, functionNames = findOrAdd(sttitle, functionNames)
 		sample.FunctionIds = append(sample.FunctionIds, int32(index))
 

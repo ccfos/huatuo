@@ -27,6 +27,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/netutil"
 	"huatuo-bamai/internal/utils/procfsutil"
 	"huatuo-bamai/pkg/tracing"
@@ -168,7 +169,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			var pid uint64
 			var containerID string
 			if pd.TgidPid != 0 {
-				comm = strings.TrimRight(string(pd.Comm[:]), "\x00")
+				comm = bytesutil.CString(pd.Comm[:])
 				pid = pd.TgidPid >> 32
 
 				// check if its netns same as host netns

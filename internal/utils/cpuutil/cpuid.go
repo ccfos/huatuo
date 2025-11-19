@@ -14,9 +14,7 @@
 
 package cpuutil
 
-import (
-	"strings"
-)
+import "huatuo-bamai/internal/utils/bytesutil"
 
 // Cpuid aims to get the content of the CPUID register
 func Cpuid(arg1, arg2 uint32) (eax, ebx, ecx, edx uint32) // implemented in cpuidlow_amd64.s
@@ -40,8 +38,7 @@ func KVMSig() bool {
 	// function: KVM_CPUID_SIGNATURE (0x40000000)
 	_, ebx, ecx, edx := Cpuid(0x40000000, 0)
 
-	sig := string(uint32ToBytes(ebx, ecx, edx))
-	sig = strings.TrimRight(sig, "\x00")
+	sig := bytesutil.CString(uint32ToBytes(ebx, ecx, edx))
 
 	return sig == "KVMKVMKVM"
 }

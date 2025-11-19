@@ -18,12 +18,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kmsgutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
@@ -134,7 +134,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 
 			storage.Save("hungtask", "", time.Now(), &HungTaskTracerData{
 				Pid:                   data.Pid,
-				Comm:                  strings.TrimRight(string(data.Comm[:]), "\x00"),
+				Comm:                  bytesutil.CString(data.Comm[:]),
 				CPUsStack:             cpusBT,
 				BlockedProcessesStack: blockedProcessesBT,
 			})

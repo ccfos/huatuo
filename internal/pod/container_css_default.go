@@ -33,6 +33,7 @@ import (
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/types"
 
 	mapset "github.com/deckarep/golang-set"
@@ -105,7 +106,7 @@ func cgroupListCssDataByKnode(containerID string) []*containerCssMetaData {
 }
 
 func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent) error {
-	knodeName := strings.TrimRight(string(data.KnodeName[:]), "\x00")
+	knodeName := bytesutil.CString(data.KnodeName[:])
 	containerID := extractContainerID(knodeName)
 	if containerID == "" {
 		return fmt.Errorf("knode name is not containterID")
@@ -134,7 +135,7 @@ func cgroupUpdateOrCreateCssData(data *containerCssPerfEvent) error {
 }
 
 func cgroupDeleteCssData(data *containerCssPerfEvent) error {
-	knodeName := strings.TrimRight(string(data.KnodeName[:]), "\x00")
+	knodeName := bytesutil.CString(data.KnodeName[:])
 	containerID := extractContainerID(knodeName)
 	if containerID == "" {
 		return fmt.Errorf("knode name is not containterID")

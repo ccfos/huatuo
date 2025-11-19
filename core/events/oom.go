@@ -17,7 +17,6 @@ package events
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -137,11 +137,11 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			caseData := &OOMTracingData{
 				TriggerMemcgCSS:    fmt.Sprintf("0x%x", data.TriggerMemcgCSS),
 				TriggerPid:         data.TriggerPid,
-				TriggerProcessName: strings.TrimRight(string(data.TriggerProcessName[:]), "\x00"),
+				TriggerProcessName: bytesutil.CString(data.TriggerProcessName[:]),
 				TriggerContainerID: cssToCtMap[data.TriggerMemcgCSS],
 				VictimMemcgCSS:     fmt.Sprintf("0x%x", data.VictimMemcgCSS),
 				VictimPid:          data.VictimPid,
-				VictimProcessName:  strings.TrimRight(string(data.VictimProcessName[:]), "\x00"),
+				VictimProcessName:  bytesutil.CString(data.VictimProcessName[:]),
 				VictimContainerID:  cssToCtMap[data.VictimMemcgCSS],
 			}
 

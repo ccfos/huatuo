@@ -16,11 +16,11 @@ package events
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/tracing"
 )
 
@@ -85,8 +85,8 @@ func (c *txqueueTimeout) Start(ctx context.Context) error {
 
 			data := txqueueTracingData{
 				QueueIndex: event.QueueIndex,
-				Name:       strings.TrimRight(string(event.Name[:]), "\x00"),
-				Driver:     strings.TrimRight(string(event.Driver[:]), "\x00"),
+				Name:       bytesutil.CString(event.Name[:]),
+				Driver:     bytesutil.CString(event.Driver[:]),
 			}
 
 			storage.Save("netdev_txqueue_timeout", "", time.Now(), data)

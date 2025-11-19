@@ -17,7 +17,6 @@ package events
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
@@ -25,6 +24,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/tracing"
 )
 
@@ -132,7 +132,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 			// save storage
 			tracingData := &MemoryReclaimTracingData{
 				Pid:       data.Pid,
-				Comm:      strings.Trim(string(data.Comm[:]), "\x00"),
+				Comm:      bytesutil.CString(data.Comm[:]),
 				Deltatime: data.Deltatime,
 			}
 
