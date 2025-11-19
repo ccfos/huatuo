@@ -56,6 +56,8 @@ func newMemoryReclaim() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
+const cssCacheTTL = 5 * time.Second
+
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim_events.c -o $BPF_DIR/memory_reclaim_events.o
 
 // Start detect work, load bpf and wait data form perfevent
@@ -79,6 +81,21 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 
 	b.WaitDetachByBreaker(childCtx, cancel)
 
+	var (
+		cssToContainer map[uint64]*pod.Container
+		cacheTime      time.Time
+	)
+
+	refreshContainerCache := func() error {
+		containers, err := pod.GetAllContainers()
+		if err != nil {
+			return err
+		}
+		cssToContainer = pod.BuildCSSToContainer(containers, "cpu")
+		cacheTime = time.Now()
+		return nil
+	}
+
 	for {
 		select {
 		case <-childCtx.Done():
@@ -89,17 +106,27 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
 
-			container, err := pod.GetContainerByCSS(data.CSS, "cpu")
-			if err != nil {
-				return fmt.Errorf("GetContainerByCSS by CSS %d: %w", data.CSS, err)
+			if cssToContainer == nil || time.Since(cacheTime) > cssCacheTTL {
+				if err := refreshContainerCache(); err != nil {
+					log.Errorf("refresh container cache: %v", err)
+					continue
+				}
 			}
 
-			// We only care about the container and nothing else.
-			// Though it may be unfair, that's just how life is.
-			//
-			// -- Tonghao Zhang, tonghao@bamaicloud.com
+			container := cssToContainer[data.CSS]
 			if container == nil {
-				continue
+				if err := refreshContainerCache(); err != nil {
+					log.Errorf("refresh container cache: %v", err)
+					continue
+				}
+				container = cssToContainer[data.CSS]
+				if container == nil {
+					// We only care about the container and nothing else.
+					// Though it may be unfair, that's just how life is.
+					//
+					// -- Tonghao Zhang, tonghao@bamaicloud.com
+					continue
+				}
 			}
 
 			// save storage
