@@ -169,30 +169,23 @@ func GetContainerByNetNamespaceInode(inode uint64) (*Container, error) {
 	return nil, nil
 }
 
-// GetContainerByCSS returns the special container by the css address.
-func GetContainerByCSS(css uint64, subsys string) (*Container, error) {
-	all, err := GetAllContainers()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, c := range all {
-		if addr, ok := c.CSS[subsys]; ok {
-			if addr == css {
-				return c, nil
-			}
-		}
-	}
-
-	return nil, nil
-}
-
 // BuildCSSToContainerID builds a css-address map from the provided containers.
 func BuildCSSToContainerID(containers map[string]*Container, subsys string) map[uint64]string {
 	cssToContainerMap := make(map[uint64]string, len(containers))
 	for _, container := range containers {
 		if addr, ok := container.CSS[subsys]; ok {
 			cssToContainerMap[addr] = container.ID
+		}
+	}
+	return cssToContainerMap
+}
+
+// BuildCSSToContainer builds a css-address map from the provided containers to container pointers.
+func BuildCSSToContainer(containers map[string]*Container, subsys string) map[uint64]*Container {
+	cssToContainerMap := make(map[uint64]*Container, len(containers))
+	for _, container := range containers {
+		if addr, ok := container.CSS[subsys]; ok {
+			cssToContainerMap[addr] = container
 		}
 	}
 	return cssToContainerMap

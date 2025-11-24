@@ -68,6 +68,12 @@ func startRunqlatTracerWork(ctx context.Context) error {
 		default:
 			var css uint64
 
+			containers, err := pod.GetNormalContainers()
+			if err != nil {
+				return fmt.Errorf("get normal containers: %w", err)
+			}
+			cssToContainer := pod.BuildCSSToContainer(containers, "cpu")
+
 			items, err := b.DumpMapByName("cpu_tg_metric")
 			if err != nil {
 				return fmt.Errorf("failed to dump cpu_tg_metric: %w", err)
@@ -77,7 +83,7 @@ func startRunqlatTracerWork(ctx context.Context) error {
 				if err = binary.Read(buf, binary.LittleEndian, &css); err != nil {
 					return fmt.Errorf("can't read cpu_tg_metric key: %w", err)
 				}
-				container, _ := pod.GetContainerByCSS(css, "cpu")
+				container := cssToContainer[css]
 				if container == nil {
 					continue
 				}
