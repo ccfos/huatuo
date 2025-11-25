@@ -1,5 +1,6 @@
 FROM golang:1.23.0-alpine AS base
-RUN apk add --no-cache make clang15 libbpf-dev bpftool curl git
+RUN apk add --no-cache make clang15 libbpf-dev bpftool \
+                       curl git binutils-gold musl-dev
 
 ENV PATH=$PATH:/usr/lib/llvm15/bin
 
