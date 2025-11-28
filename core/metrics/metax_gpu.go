@@ -92,7 +92,7 @@ func (m *metaxGpuCollector) Update() ([]*metric.Data, error) {
 }
 
 /*
-  GPU metrics
+   GPU metrics
 */
 
 func metaxGetGpuMetrics(gpu uint) ([]*metric.Data, error) {
@@ -293,7 +293,7 @@ func metaxGetGpuMetrics(gpu uint) ([]*metric.Data, error) {
 }
 
 /*
-  Die metrics
+   Die metrics
 */
 
 var (
