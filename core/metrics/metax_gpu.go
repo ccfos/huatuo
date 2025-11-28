@@ -605,7 +605,7 @@ func metaxRegisterSmlLibraryFunctions(libc uintptr) {
 }
 
 /*
-   MetaX SML call
+   MetaX SML API call
 */
 
 type metaxSmlReturnCode uint
