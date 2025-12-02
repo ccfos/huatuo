@@ -46,8 +46,8 @@ spec:
           mountPath: /var
         - name: etc
           mountPath: /etc
-        - name: record
-          mountPath: /home/huatuo-bamai/record
+        - name: huatuo-local
+          mountPath: /home/huatuo-bamai/huatuo-local
         - name: huatuo-bamai-config-volume
           mountPath: /home/huatuo-bamai/conf/huatuo-bamai.conf
           subPath: huatuo-bamai.conf
@@ -67,9 +67,9 @@ spec:
       - name: etc
         hostPath:
           path: /etc
-      - name: record
+      - name: huatuo-local
         hostPath:
-          path: /var/log/huatuo/record
+          path: /var/log/huatuo/huatuo-local
           type: DirectoryOrCreate
       - name: huatuo-bamai-config-volume
         configMap:
