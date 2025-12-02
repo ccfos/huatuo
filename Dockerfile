@@ -19,7 +19,9 @@ RUN sed -i 's/"http:\/\/127.0.0.1:9200"/""/' ${RUN_PATH}/conf/huatuo-bamai.conf
 # final public image
 FROM debian:12-slim AS run
 ARG RUN_PATH=${RUN_PATH:-/home/huatuo-bamai}
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl libelf1 && \
+    rm -rf /var/lib/apt/lists/*
 COPY --from=build ${RUN_PATH} ${RUN_PATH}
 WORKDIR ${RUN_PATH}
 CMD ["./bin/huatuo-bamai", "--region", "example", "--config", "huatuo-bamai.conf"]
