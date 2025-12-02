@@ -17,9 +17,9 @@ RUN make && mkdir -p ${RUN_PATH} && cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/
 RUN sed -i 's/"http:\/\/127.0.0.1:9200"/""/' ${RUN_PATH}/conf/huatuo-bamai.conf
 
 # final public image
-FROM alpine:3.22.0 AS run
+FROM debian:12-slim AS run
 ARG RUN_PATH=${RUN_PATH:-/home/huatuo-bamai}
-RUN apk add --no-cache curl
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 COPY --from=build ${RUN_PATH} ${RUN_PATH}
 WORKDIR ${RUN_PATH}
 CMD ["./bin/huatuo-bamai", "--region", "example", "--config", "huatuo-bamai.conf"]
