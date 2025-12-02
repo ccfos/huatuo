@@ -15,6 +15,9 @@ services:
     image: prom/prometheus:${PROMETHEUS_VERSION:-v2.53.3}
     container_name: prometheus
     network_mode: host
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.listen-address=${PROMETHEUS_WEB_LISTEN_ADDRESS:-0.0.0.0:9090}'
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
@@ -23,6 +26,7 @@ services:
     container_name: grafana
     network_mode: host
     environment:
+      GF_SERVER_HTTP_PORT: ${GF_SERVER_HTTP_PORT:-3000}
       GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource ${INFINITY_DATA_SOURCE:-3.4.1}"
     volumes:
       - ./grafana/datasources/elasticsearch.yaml:/etc/grafana/provisioning/datasources/elasticsearch.yaml:ro
