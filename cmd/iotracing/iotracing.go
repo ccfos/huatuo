@@ -40,6 +40,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/procfsutil"
 	"huatuo-bamai/pkg/types"
 )
@@ -261,10 +262,10 @@ func parseIOData(pid uint32, fileTable *PriorityQueue) {
 			continue
 		}
 
-		dir3 := strings.Trim(string(data.Dentry3Name[:]), "\x00")
-		dir2 := strings.Trim(string(data.Dentry2Name[:]), "\x00")
-		dir1 := strings.Trim(string(data.Dentry1Name[:]), "\x00")
-		filename := strings.Trim(string(data.FileName[:]), "\x00")
+		dir3 := bytesutil.ToString(data.Dentry3Name[:])
+		dir2 := bytesutil.ToString(data.Dentry2Name[:])
+		dir1 := bytesutil.ToString(data.Dentry1Name[:])
+		filename := bytesutil.ToString(data.FileName[:])
 		filepath := strings.TrimLeft(fmt.Sprintf("%s/%s/%s/%s", dir3, dir2, dir1, filename), "/")
 
 		var q2c, d2c uint64
@@ -298,7 +299,7 @@ func parseIOData(pid uint32, fileTable *PriorityQueue) {
 		ProcessData.FileStat = append(ProcessData.FileStat, filesInfo)
 
 		if comm == "" {
-			comm = strings.TrimRight(string(data.Comm[:]), "\x00")
+			comm = bytesutil.ToString(data.Comm[:])
 		}
 	}
 
@@ -575,7 +576,7 @@ func mainAction(ctx *cli.Context) error {
 					}
 				}
 				var stackInfo IOStack
-				stackInfo.Comm = strings.TrimRight(string(event.Comm[:]), "\x00")
+				stackInfo.Comm = bytesutil.ToString(event.Comm[:])
 				stackInfo.ContainerHostname = containerHostname
 				stackInfo.Pid = event.Pid
 				stackInfo.Latency = event.Cost / 1000

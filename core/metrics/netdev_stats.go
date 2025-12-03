@@ -52,13 +52,13 @@ func newNetdevCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netdevCollector) Update() ([]*metric.Data, error) {
-	filter := newFieldFilter(conf.Get().MetricCollector.Netdev.IgnoredDevices,
-		conf.Get().MetricCollector.Netdev.AcceptDevices)
+	filter := newFieldFilter(conf.Get().MetricCollector.NetdevStats.DeviceExcluded,
+		conf.Get().MetricCollector.NetdevStats.DeviceIncluded)
 
 	log.Debugf("Updating netdev metrics by filter: %v", filter)
 
 	// normal containers
-	containers, err := pod.GetNormalContainers()
+	containers, err := pod.NormalContainers()
 	if err != nil {
 		return nil, fmt.Errorf("GetNormalContainers: %w", err)
 	}
@@ -82,10 +82,10 @@ func (c *netdevCollector) Update() ([]*metric.Data, error) {
 				tags := map[string]string{"device": dev}
 				if container != nil {
 					metrics = append(metrics,
-						metric.NewContainerGaugeData(container, key+"_total", float64(val), fmt.Sprintf("Network device statistic %s.", key), tags))
+						metric.NewContainerCounterData(container, key+"_total", float64(val), fmt.Sprintf("Network device statistic %s.", key), tags))
 				} else {
 					metrics = append(metrics,
-						metric.NewGaugeData(key+"_total", float64(val), fmt.Sprintf("Network device statistic %s.", key), tags))
+						metric.NewCounterData(key+"_total", float64(val), fmt.Sprintf("Network device statistic %s.", key), tags))
 				}
 			}
 		}
@@ -96,7 +96,7 @@ func (c *netdevCollector) Update() ([]*metric.Data, error) {
 }
 
 func (c *netdevCollector) getStats(container *pod.Container, filter *fieldFilter) (netdevStats, error) {
-	if conf.Get().MetricCollector.Netdev.EnableNetlink {
+	if conf.Get().MetricCollector.NetdevStats.EnableNetlink {
 		return c.netlinkStats(container, filter)
 	}
 	return c.procStats(container, filter)

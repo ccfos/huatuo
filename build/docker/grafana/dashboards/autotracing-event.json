@@ -1645,12 +1645,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
       ],
-      "title": "netrecvlat",
+      "title": "net_rx_latency",
       "transformations": [
         {
           "id": "organize",
@@ -1764,7 +1764,7 @@
               "type": "count"
             }
           ],
-          "query": "region:$region AND hostname:$hostname AND ((tracer_name:netdev_events AND (tracer_data.linkstatus:*linkstatus_admindown* OR tracer_data.linkstatus:*linkstatus_carrierdown*)) OR tracer_name:lacp)",
+          "query": "region:$region AND hostname:$hostname AND ((tracer_name:netdev_events AND (tracer_data.linkstatus:*linkstatus_admindown* OR tracer_data.linkstatus:*linkstatus_carrierdown*)) OR tracer_name:netdev_bonding_lacp)",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2190,7 +2190,7 @@
           "timeField": "uploaded_time"
         },
         {
-          "alias": "netrecvlat",
+          "alias": "net_rx_latency",
           "bucketAggs": [
             {
               "field": "uploaded_time",
@@ -2212,7 +2212,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
           "refId": "I",
           "timeField": "uploaded_time"
         },
@@ -6669,7 +6669,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "title": "netrecvlat阈值说明",
+          "title": "net_rx_latency阈值说明",
           "transparent": true,
           "type": "text"
         },
@@ -6740,12 +6740,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "netrecvlat",
+          "title": "net_rx_latency",
           "transformations": [
             {
               "id": "organize",
@@ -6881,12 +6881,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "netrecvlat",
+          "title": "net_rx_latency",
           "transformations": [
             {
               "id": "organize",
@@ -7196,12 +7196,12 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "netrecvlat",
+          "title": "net_rx_latency",
           "transformations": [
             {
               "id": "organize",
@@ -7318,12 +7318,12 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "netrecvlat",
+          "title": "net_rx_latency",
           "transformations": [
             {
               "id": "organize",
@@ -7373,7 +7373,7 @@
           "type": "logs"
         }
       ],
-      "title": "netrecvlat",
+      "title": "net_rx_latency",
       "type": "row"
     },
     {
@@ -10284,12 +10284,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:lacp AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:netdev_bonding_lacp AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "lacp",
+          "title": "netdev_bonding_lacp",
           "type": "stat"
         },
         {
@@ -10395,7 +10395,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:lacp AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:netdev_bonding_lacp AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -10474,7 +10474,7 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:lacp AND region:$region AND hostname:$hostname&size=100",
+              "query": "tracer_name:netdev_bonding_lacp AND region:$region AND hostname:$hostname&size=100",
               "refId": "A",
               "timeField": "uploaded_time"
             }

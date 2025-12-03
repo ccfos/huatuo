@@ -7,7 +7,7 @@ HUATUO currently supports the following exception context capture events:
 | ------------------| -------------------------------- |----------------------------------------------|
 | softirq           | Detects delayed response or prolonged disabling of host soft interrupts, and outputs kernel call stacks and process information when soft interrupts are disabled for extended periods., etc. | This type of issue severely impacts network transmission/reception, leading to business spikes or timeout issues |
 | dropwatch         | Detects TCP packet loss and outputs host and network context information when packet loss occurs | This type of issue mainly causes business spikes and latency |
-| netrecvlat        | Captures latency events in network receive path from driver, protocol stack, to user-space receive process | For network latency issues in the receive direction where the exact delay location is unclear, netrecvlat calculates latency at the driver, protocol stack, and user copy paths using skb NIC ingress timestamps, filters timeout packets via preset thresholds, and locates the delay position |
+| net_rx_latency        | Captures latency events in network receive path from driver, protocol stack, to user-space receive process | For network latency issues in the receive direction where the exact delay location is unclear, net_rx_latency calculates latency at the driver, protocol stack, and user copy paths using skb NIC ingress timestamps, filters timeout packets via preset thresholds, and locates the delay position |
 | oom               | Detects OOM events on the host or within containers | When OOM occurs at host level or container dimension, captures process information triggering OOM, killed process information, and container details to troubleshoot memory leaks, abnormal exits, etc. |
 | softlockup        | When a softlockup occurs on the system, collects target process information and CPU details, and retrieves kernel stack information from all CPUs | System softlockup events |
 | hungtask          | Provides count of all D-state processes in the system and kernel stack information | Used to locate transient D-state process scenarios, preserving the scene for later problem tracking |
@@ -186,11 +186,11 @@ The local host also stores identical data:
 
 **Feature Introduction**
 
-Online business network latency issues are difficult to locate, as problems can occur in any direction or stage. For example, receive direction latency might be caused by issues in drivers, protocol stack, or user programs. Therefore, we developed netrecvlat detection functionality, leveraging skb NIC ingress timestamps to check latency at driver, protocol stack, and user-space layers. When receive latency reaches thresholds, eBPF captures network context information (five-tuple, latency location, process info, etc.). Receive path: **NIC -> Driver -> Protocol Stack -> User Active Receive**
+Online business network latency issues are difficult to locate, as problems can occur in any direction or stage. For example, receive direction latency might be caused by issues in drivers, protocol stack, or user programs. Therefore, we developed net_rx_latency detection functionality, leveraging skb NIC ingress timestamps to check latency at driver, protocol stack, and user-space layers. When receive latency reaches thresholds, eBPF captures network context information (five-tuple, latency location, process info, etc.). Receive path: **NIC -> Driver -> Protocol Stack -> User Active Receive**
 
 **Example**
 
-A business container received packets from the kernel with a latency over 90 seconds, tracked via netrecvlat, ES query output:
+A business container received packets from the kernel with a latency over 90 seconds, tracked via net_rx_latency, ES query output:
 
 ```
 {
@@ -224,7 +224,7 @@ A business container received packets from the kernel with a latency over 90 sec
     "region": "***",
     "container_level": "1",
     "container_id": "***",
-    "tracer_name": "netrecvlat"
+    "tracer_name": "net_rx_latency"
   },
   "fields": {
     "time": [
@@ -253,7 +253,7 @@ The local host also stores identical data:
   "uploaded_time": "2025-06-11T15:54:46.129136232+08:00",
   "time": "2025-06-11 15:54:46.129 +0800",
   "tracer_time": "2025-06-11 15:54:46.129 +0800",
-  "tracer_name": "netrecvlat",
+  "tracer_name": "net_rx_latency",
   "tracer_data": {
     "comm": "nginx",
     "pid": 2921092,

@@ -88,7 +88,7 @@ type containersCPUIdleMap map[string]*containerCPUInfo
 var containersCPUIdle = make(containersCPUIdleMap)
 
 func updateContainersCPUIdle() error {
-	containers, err := pod.GetNormalContainers()
+	containers, err := pod.NormalContainers()
 	if err != nil {
 		return err
 	}
@@ -282,17 +282,17 @@ type CPUIdleTracingData struct {
 }
 
 func (c *cpuIdleTracing) Start(ctx context.Context) error {
-	interval := conf.Get().Tracing.CPUIdle.Interval
-	perfRunTimeOut := conf.Get().Tracing.CPUIdle.PerfRunTimeOut
+	interval := conf.Get().AutoTracing.CPUIdle.Interval
+	perfRunTimeOut := conf.Get().AutoTracing.CPUIdle.PerfRunTimeOut
 
 	threshold := &cpuIdleThreshold{
-		deltaUser:              conf.Get().Tracing.CPUIdle.DeltaUserThreshold,
-		deltaSys:               conf.Get().Tracing.CPUIdle.DeltaSysThreshold,
-		deltaTotal:             conf.Get().Tracing.CPUIdle.DeltaUsageThreshold,
-		usageUser:              conf.Get().Tracing.CPUIdle.UserThreshold,
-		usageSys:               conf.Get().Tracing.CPUIdle.SysThreshold,
-		usageTotal:             conf.Get().Tracing.CPUIdle.UsageThreshold,
-		intervalContinuousPerf: conf.Get().Tracing.CPUIdle.IntervalContinuousPerf,
+		deltaUser:              conf.Get().AutoTracing.CPUIdle.DeltaUserThreshold,
+		deltaSys:               conf.Get().AutoTracing.CPUIdle.DeltaSysThreshold,
+		deltaTotal:             conf.Get().AutoTracing.CPUIdle.DeltaUsageThreshold,
+		usageUser:              conf.Get().AutoTracing.CPUIdle.UserThreshold,
+		usageSys:               conf.Get().AutoTracing.CPUIdle.SysThreshold,
+		usageTotal:             conf.Get().AutoTracing.CPUIdle.UsageThreshold,
+		intervalContinuousPerf: conf.Get().AutoTracing.CPUIdle.IntervalContinuousRun,
 	}
 
 	for {

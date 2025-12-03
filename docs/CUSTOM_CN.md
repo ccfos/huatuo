@@ -25,7 +25,7 @@
      - 与 `autotracing` 不同，`event` 是常态运行，而不是在异常时再触发。
      - 数据同样会实时上报到 ES 并存储在本地，也可通过 Prometheus 格式进行监控。
      - 适合用于常态监控和实时分析，能够及时发现系统中的异常行为， `event` 类型的采集对系统性能影响可忽略。
-   - **已集成**：软中断异常（softirq）、内存异常分配（oom）、软锁定（softlockup）、D 状态进程（hungtask）、内存回收（memreclaim）、异常丢包（dropwatch）、网络入向延迟（netrecvlat）。
+   - **已集成**：软中断异常（softirq）、内存异常分配（oom）、软锁定（softlockup）、D 状态进程（hungtask）、内存回收（memreclaim）、异常丢包（dropwatch）、网络入向延迟（net_rx_latency）。
 
 - **Metrics**
    - **类型**：指标数据采集。

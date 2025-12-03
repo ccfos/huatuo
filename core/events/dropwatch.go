@@ -26,6 +26,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/netutil"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -184,7 +185,7 @@ func (c *dropWatchTracing) formatEvent(event *perfEventT) *DropWatchTracingData 
 	// tracer data
 	data := &DropWatchTracingData{
 		Type:          typeMap[event.Type],
-		Comm:          strings.TrimRight(string(event.Comm[:]), "\x00"),
+		Comm:          bytesutil.ToString(event.Comm[:]),
 		Pid:           event.TgidPid >> 32,
 		Saddr:         saddr,
 		Daddr:         daddr,
@@ -226,7 +227,7 @@ func (c *dropWatchTracing) ignore(data *DropWatchTracingData) bool {
 	// 3. neigh_invalidate/ffffffff96d388b0
 	// 4. neigh_timer_handler/ffffffff96d3a870
 	// 5. ...
-	if conf.Get().Tracing.Dropwatch.IgnoreNeighInvalidate {
+	if conf.Get().EventTracing.Dropwatch.ExcludedNeighInvalidate {
 		if len(stack) >= 3 && strings.HasPrefix(stack[2], "neigh_invalidate/") {
 			return true
 		}

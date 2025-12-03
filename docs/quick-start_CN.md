@@ -35,7 +35,7 @@
     ```bash
     $ curl -s localhost:19704/metrics
     ```
-- **查看异常事件 (Events, AutoTracing)**：HUATUO 会将采集到的内核异常事件信息在 ES 存储一份（已关闭），同时在本地目录 `./record` 留存一份。注意：通常该路径下没有任何文件（正常状态的系统不会触发事件采集），你可以通过构造异常场景或者修改配置文件阈值产生事件。
+- **查看异常事件 (Events, AutoTracing)**：HUATUO 会将采集到的内核异常事件信息在 ES 存储一份（已关闭），同时在本地目录 `huatuo-local` 留存一份。注意：通常该路径下没有任何文件（正常状态的系统不会触发事件采集），你可以通过构造异常场景或者修改配置文件阈值产生事件。
 
 ### 2.2 快速搭建
 如果你想更进一步了解 HUATUO 运行机制、架构设计、监控大盘、自定义部署等。通过 docker compose，可以快速地在本地搭建部署一套完整的环境。
@@ -81,7 +81,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 
 - #### 配置存储
     - **指标存储 (Metric)**: 所有的指标都存储在 prometheus，你可以通过访问 :19704/metrics 接口获取指标。 
-    - **异常事件存储 (Events, AutoTracing)**: 所有的内核事件，和 Autotracing 事件都存储在 ES。注意：如果配置为空表示不启动 ES 存储，只在本地目录 `./record` 存储事件。
+    - **异常事件存储 (Events, AutoTracing)**: 所有的内核事件，和 Autotracing 事件都存储在 ES。注意：如果配置为空表示不启动 ES 存储，只在本地目录 `huatuo-local` 存储事件。
 
         ES 存储配置如下：
         ```yaml
@@ -99,7 +99,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
         # RotationSize: the maximum size in Megabytes of a record file before it gets rotated for per subsystem
         # MaxRotation: the maximum number of old log files to retain for per subsystem
         [Storage.LocalFile]
-            Path = "./record"
+            Path = "huatuo-local"
             RotationSize = 100
             MaxRotation = 10
         ```

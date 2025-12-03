@@ -41,7 +41,7 @@ func (c *mountPointStatCollector) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
-	filter := newFieldFilter("", conf.Get().MetricCollector.MountPointStat.IncludedMountPoints)
+	filter := newFieldFilter("", conf.Get().MetricCollector.MountPointStat.MountPointsIncluded)
 
 	metrics := []*metric.Data{}
 	for _, v := range mountinfo {

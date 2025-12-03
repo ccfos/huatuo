@@ -17,12 +17,12 @@ package events
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kmsgutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
@@ -63,7 +63,7 @@ func newSoftLockup() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &softLockupTracing{
 			data: []*metric.Data{
-				metric.NewGaugeData("counter", 0, "softlockup counter", nil),
+				metric.NewCounterData("total", 0, "softlockup counter", nil),
 			},
 			backoff: bo,
 		},
@@ -124,7 +124,7 @@ func (c *softLockupTracing) Start(ctx context.Context) error {
 			storage.Save("softlockup", "", time.Now(), &SoftLockupTracerData{
 				CPU:       data.CPU,
 				Pid:       data.Pid,
-				Comm:      strings.TrimRight(string(data.Comm[:]), "\x00"),
+				Comm:      bytesutil.ToString(data.Comm[:]),
 				CPUsStack: bt,
 			})
 		}

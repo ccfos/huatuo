@@ -106,7 +106,7 @@ func (c *arpCollector) updateHostArp() []*metric.Data {
 func (c *arpCollector) Update() ([]*metric.Data, error) {
 	data := []*metric.Data{}
 
-	containers, err := pod.GetNormalContainers()
+	containers, err := pod.NormalContainers()
 	if err != nil {
 		return nil, fmt.Errorf("GetNormalContainers: %w", err)
 	}

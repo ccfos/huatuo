@@ -25,7 +25,7 @@ import (
 )
 
 func init() {
-	tracing.RegisterEventTracing("rdma_link", newRdmaLink)
+	tracing.RegisterEventTracing("netdev_rdma_link", newRdmaLink)
 }
 
 type rdmaLink struct {
@@ -62,7 +62,7 @@ func (r *rdmaLink) Update() ([]*metric.Data, error) {
 
 		for _, s := range stats.RdmaPortStatistics {
 			for lable, val := range s.Statistics {
-				data = append(data, metric.NewGaugeData(lable, float64(val),
+				data = append(data, metric.NewCounterData(lable, float64(val),
 					fmt.Sprintf("rdma device statistic %s.", lable), tags))
 			}
 		}

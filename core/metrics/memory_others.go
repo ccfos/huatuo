@@ -53,7 +53,7 @@ func parseValueWithKey(cgroupPath, cgroupFile, key string) (uint64, error) {
 }
 
 func (c *memOthersCollector) Update() ([]*metric.Data, error) {
-	containers, err := pod.GetNormalContainers()
+	containers, err := pod.NormalContainers()
 	if err != nil {
 		return nil, fmt.Errorf("Can't get normal container: %w", err)
 	}

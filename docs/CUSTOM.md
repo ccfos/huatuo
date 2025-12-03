@@ -25,7 +25,7 @@ HuaTuo framework provides three data collection modes: `autotracing`, `event`, a
     - Unlike `autotracing`, `event` continuously operates within the system context, rather than being triggered by anomalies.
     - Data is also stored to ES and locally, and can be monitored in Prometheus format.
     - Suitable for continuous monitoring and real-time analysis, enabling timely detection of abnormal behaviors. The performance impact of `event` collection is negligible.
-  - **Integrated Features**: Soft interrupt anomalies (softirq), memory allocation anomalies (oom), soft lockups (softlockup), D-state processes (hungtask), memory reclamation (memreclaim), packet droped abnormal (dropwatch), network ingress latency (netrecvlat).
+  - **Integrated Features**: Soft interrupt anomalies (softirq), memory allocation anomalies (oom), soft lockups (softlockup), D-state processes (hungtask), memory reclamation (memreclaim), packet droped abnormal (dropwatch), network ingress latency (net_rx_latency).
 
 - **Metrics**
   - **Type**: Metric collection.

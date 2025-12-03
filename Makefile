@@ -20,7 +20,7 @@ GO_BUILD_STATIC_WITH_VERSION := $(GO_BUILD_STATIC) \
 all: gen-deps gen sync build
 
 gen-deps:
-	# maybe need to install libbpf-devel
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 gen:
 	@BPF_DIR=$(BPF_DIR) BPF_COMPILE=$(BPF_COMPILE) BPF_INCLUDE=$(BPF_INCLUDE) \
@@ -43,19 +43,19 @@ $(APP_CMD_OUTPUT)/bin/%: $(APP_CMD_DIR)/% CMD_FORCE
 
 CMD_FORCE:;
 
-check: imports fmt golangci-lint
+check: gen-deps imports fmt golangci-lint
 
 imports:
-	goimports -w -local huatuo-bamai  $(shell find . -type f -name '*.go' -not -path "./vendor/*")
+	@goimports -w -local huatuo-bamai  $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
 fmt: fmt-rewrite-rules
-	gofumpt -l -w $(shell find . -type f -name '*.go' -not -path "./vendor/*")
+	@gofumpt -l -w $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
 fmt-rewrite-rules:
-	gofmt -w -r 'interface{} -> any' $(shell find . -type f -name '*.go' -not -path "./vendor/*")
+	@gofmt -w -r 'interface{} -> any' $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
 golangci-lint:
-	golangci-lint run -v ./... --timeout=5m --config .golangci.yaml
+	@golangci-lint run -v ./... --timeout=5m --config .golangci.yaml
 
 vendor:
 	$(GO) mod tidy

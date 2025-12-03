@@ -55,7 +55,7 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 		return nil, nil
 	}
 
-	containers, err := pod.GetContainersByType(pod.ContainerTypeNormal)
+	containers, err := pod.ContainersByType(pod.ContainerTypeNormal)
 	if err != nil {
 		return nil, err
 	}

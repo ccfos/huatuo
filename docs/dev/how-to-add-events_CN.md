@@ -8,7 +8,7 @@
     - 与 `autotracing` 不同，`event` 是常态运行，而不是在异常时再触发。
     - 事件数据会实时存储在本地并存储到远端ES，同时你也可以生成Prometheus 统计指标进行观测。
     - 适合用于**常态监控**和**实时分析**，能够及时发现系统中的异常行为， `event` 类型的采集对系统性能影响可忽略。
-- **已集成**：软中断异常（softirq）、内存异常分配（oom）、软锁定（softlockup）、D 状态进程（hungtask）、内存回收（memreclaim）、异常丢包（dropwatch）、网络入向延迟（netrecvlat） 等
+- **已集成**：软中断异常（softirq）、内存异常分配（oom）、软锁定（softlockup）、D 状态进程（hungtask）、内存回收（memreclaim）、异常丢包（dropwatch）、网络入向延迟（net_rx_latency） 等
 
 ### 如何添加事件指标
 只需实现 `ITracingEvent` 接口并完成注册，即可将事件添加到系统。

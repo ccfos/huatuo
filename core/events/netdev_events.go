@@ -159,8 +159,8 @@ func (netdev *netdevTracing) Update() ([]*metric.Data, error) {
 
 	for typ, value := range netdev.linkStatusEventCounts {
 		for ifname, count := range value {
-			metrics = append(metrics, metric.NewGaugeData(
-				typ.String(), float64(count), typ.String(),
+			metrics = append(metrics, metric.NewCounterData(
+				typ.String()+"_total", float64(count), typ.String(),
 				map[string]string{
 					"device":           ifname,
 					"driver":           netdev.netdevInfoStore[ifname].driver,
@@ -187,7 +187,7 @@ func (netdev *netdevTracing) checkAndInitLinkStatus() error {
 
 	for _, link := range links {
 		ifname := link.Attrs().Name
-		if !slices.Contains(conf.Get().Tracing.Netdev.Whitelist,
+		if !slices.Contains(conf.Get().EventTracing.Netdev.DeviceList,
 			ifname) {
 			continue
 		}

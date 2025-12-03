@@ -269,7 +269,7 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 }
 
 
-static void init_io_data(struct io_data *entry, struct dentry *root_dentry,
+static __always_inline  void init_io_data(struct io_data *entry, struct dentry *root_dentry,
 			  struct dentry *dentry, struct inode *inode)
 {
 	u64 t = bpf_get_current_pid_tgid();
@@ -298,9 +298,9 @@ struct iov_iter___new {
 	bool data_source;
 } __attribute__((preserve_access_index));
 
-static int bpf_file_read_write(struct pt_regs *ctx)
+static __always_inline  int bpf_file_read_write(struct pt_regs *ctx)
 {
-	struct kiocb *iocb = (struct kiocb *)ctx->di;
+	struct kiocb *iocb = (struct kiocb *)PT_REGS_PARM1(ctx);
 	struct io_data data = {};
 	struct io_data *entry = NULL;
 	struct dentry *dentry;
@@ -330,7 +330,7 @@ static int bpf_file_read_write(struct pt_regs *ctx)
 		entry->inode = key.inode;
 	}
 
-	from = (struct iov_iter *)ctx->si;
+	from = (struct iov_iter *)PT_REGS_PARM2(ctx);
 	count = BPF_CORE_READ(from, count);
 
 	if (bpf_core_field_exists(from->type)) {
@@ -379,7 +379,7 @@ int bpf_ext4_file_write_iter(struct pt_regs *ctx)
 	return bpf_file_read_write(ctx);
 }
 
-int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
+static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 {
 	struct vm_fault *vm = (struct vm_fault *)PT_REGS_PARM1(ctx);
 	struct vm_area_struct *vma = BPF_CORE_READ(vm, vma);
@@ -492,7 +492,7 @@ struct {
 	__uint(value_size, sizeof(int));
 } iodelay_perf_events SEC(".maps");
 
-static int detect_io_schedule(struct pt_regs *ctx)
+static __always_inline  int detect_io_schedule(struct pt_regs *ctx)
 {
     struct iodelay_entry entry = {};
 	u64 id = bpf_get_current_pid_tgid();
@@ -520,7 +520,7 @@ int bpf_io_schedule_timeout(struct pt_regs *ctx)
 	return detect_io_schedule(ctx);
 }
 
-static int detect_io_schedule_return(struct pt_regs *ctx)
+static __always_inline  int detect_io_schedule_return(struct pt_regs *ctx)
 {
 	struct iodelay_entry *entry;
 	u64 id = bpf_get_current_pid_tgid();

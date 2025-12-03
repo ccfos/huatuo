@@ -27,6 +27,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/netutil"
 	"huatuo-bamai/internal/utils/procfsutil"
 	"huatuo-bamai/pkg/tracing"
@@ -34,7 +35,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/netrecvlat.c -o $BPF_DIR/netrecvlat.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/net_rx_latency.c -o $BPF_DIR/net_rx_latency.o
 
 type netRecvLatTracing struct{}
 
@@ -96,7 +97,7 @@ var toWhere = []string{
 }
 
 func init() {
-	tracing.RegisterEventTracing("netrecvlat", newNetRcvLat)
+	tracing.RegisterEventTracing("net_rx_latency", newNetRcvLat)
 }
 
 func newNetRcvLat() (*tracing.EventTracingAttr, error) {
@@ -108,21 +109,21 @@ func newNetRcvLat() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netRecvLatTracing) Start(ctx context.Context) error {
-	toNetIf := conf.Get().Tracing.NetRecvLat.ToNetIf       // ms, before RPS to a core recv(__netif_receive_skb)
-	toTCPV4 := conf.Get().Tracing.NetRecvLat.ToTCPV4       // ms, before RPS to TCP recv(tcp_v4_rcv)
-	toUserCopy := conf.Get().Tracing.NetRecvLat.ToUserCopy // ms, before RPS to user recv(skb_copy_datagram_iovec)
+	toNetIf := conf.Get().EventTracing.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
+	toTCPV4 := conf.Get().EventTracing.NetRxLatency.Driver2TCP          // ms, before RPS to TCP recv(tcp_v4_rcv)
+	toUserCopy := conf.Get().EventTracing.NetRxLatency.Driver2Userspace // ms, before RPS to user recv(skb_copy_datagram_iovec)
 
 	if toNetIf == 0 || toTCPV4 == 0 || toUserCopy == 0 {
-		return fmt.Errorf("netrecvlat threshold [%v %v %v]ms invalid", toNetIf, toTCPV4, toUserCopy)
+		return fmt.Errorf("net_rx_latency threshold [%v %v %v]ms invalid", toNetIf, toTCPV4, toUserCopy)
 	}
-	log.Infof("netrecvlat start, latency threshold [%v %v %v]ms", toNetIf, toTCPV4, toUserCopy)
+	log.Infof("net_rx_latency start, latency threshold [%v %v %v]ms", toNetIf, toTCPV4, toUserCopy)
 
 	monoWallOffset, err := estMonoWallOffset()
 	if err != nil {
 		return fmt.Errorf("estimate monoWallOffset failed: %w", err)
 	}
 
-	log.Infof("netrecvlat offset of mono to walltime: %v ns", monoWallOffset)
+	log.Infof("net_rx_latency offset of mono to walltime: %v ns", monoWallOffset)
 
 	args := map[string]any{
 		"mono_wall_offset": monoWallOffset,
@@ -168,7 +169,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			var pid uint64
 			var containerID string
 			if pd.TgidPid != 0 {
-				comm = strings.TrimRight(string(pd.Comm[:]), "\x00")
+				comm = bytesutil.ToString(pd.Comm[:])
 				pid = pd.TgidPid >> 32
 
 				// check if its netns same as host netns
@@ -202,8 +203,8 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 
 			// known issue filter
 			caseName, _ := conf.KnownIssueSearch(title, "", "")
-			if caseName == "netrecvlat" {
-				log.Debugf("netrecvlat known issue")
+			if caseName == "net_rx_latency" {
+				log.Debugf("net_rx_latency known issue")
 				continue
 			}
 
@@ -221,10 +222,10 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				AckSeq:  ackSeq,
 				PktLen:  pktLen,
 			}
-			log.Debugf("netrecvlat tracerData: %+v", tracerData)
+			log.Debugf("net_rx_latency tracerData: %+v", tracerData)
 
 			// save storage
-			storage.Save("netrecvlat", containerID, tracerTime, tracerData)
+			storage.Save("net_rx_latency", containerID, tracerTime, tracerData)
 		}
 	}
 }
@@ -239,19 +240,19 @@ func ignore(pid uint64, comm string, hostNetnsInode uint64) (containerID string,
 		}
 		return "", skip, fmt.Errorf("get netns inode of pid %v failed: %w", pid, err)
 	}
-	if conf.Get().Tracing.NetRecvLat.IgnoreHost && dstInode == hostNetnsInode {
+	if conf.Get().EventTracing.NetRxLatency.ExcludedHostNetnamespace && dstInode == hostNetnsInode {
 		log.Debugf("ignore %s:%v the same netns as host", comm, pid)
 		return "", true, nil
 	}
 
 	// check container level
 	var container *pod.Container
-	if container, err = pod.GetContainerByNetNamespaceInode(dstInode); err != nil {
+	if container, err = pod.ContainerByNetNamespaceInode(dstInode); err != nil {
 		log.Warnf("get container info by netns inode %v pid %v, failed: %v", dstInode, pid, err)
 	}
 	if container != nil {
-		for _, level := range conf.Get().Tracing.NetRecvLat.IgnoreContainerLevel {
-			if container.Qos.Int() == level {
+		for _, level := range conf.Get().EventTracing.NetRxLatency.ExcludedContainerQos {
+			if strings.EqualFold(container.Qos.String(), level) {
 				log.Debugf("ignore container %+v", container)
 				skip = true
 				break

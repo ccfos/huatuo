@@ -6,7 +6,6 @@ linters:
     - gosimple
     - ineffassign # Detects when assignments to existing variables are not used
     - unconvert   # Remove unnecessary type conversions
-    - exportloopref # Checks for pointers to enclosing loop variables
     - tenv        # Detects using os.Setenv instead of t.Setenv since Go 1.17
     - dupword     # Checks for duplicate words in the source code
     - gofmt       # Gofmt checks whether code was gofmt-ed

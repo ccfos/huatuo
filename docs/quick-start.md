@@ -35,7 +35,7 @@ If you want to understand the underlying principles and deploy HUATUO to your ow
     ```bash
     $ curl -s localhost:19704/metrics
     ```
-- **View Exception Events (Events, AutoTracing)**：HUATUO stores collected kernel exception event information in ES (disabled by default) while retaining a copy in the local directory `./record`. Note: Typically, no files exist in this path (systems in normal state don't trigger event collection). You can generate events by creating exception scenarios or modifying configuration thresholds.
+- **View Exception Events (Events, AutoTracing)**：HUATUO stores collected kernel exception event information in ES (disabled by default) while retaining a copy in the local directory `huatuo-local`. Note: Typically, no files exist in this path (systems in normal state don't trigger event collection). You can generate events by creating exception scenarios or modifying configuration thresholds.
 
 ### 2.2 Quick Setup
 If you want to further understand HUATUO's operational mechanisms, architecture design, monitoring dashboard, and custom deployment, you can quickly set up a complete local environment using docker compose.
@@ -81,7 +81,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 
 - #### Storage Configuration
     - **Metric Storage (Metric)**: All metrics are stored in Prometheus. You can access the :19704/metrics interface to obtain metrics.
-    - **Exception Event Storage (Events, AutoTracing)**: All kernel events and AutoTracing events are stored in ES. Note: If the configuration is empty, ES storage is not activated, and events are only stored in the local directory `./record`.
+    - **Exception Event Storage (Events, AutoTracing)**: All kernel events and AutoTracing events are stored in ES. Note: If the configuration is empty, ES storage is not activated, and events are only stored in the local directory `huatuo-local`.
 
        ES storage configuration is as follows:
         ```yaml
@@ -99,7 +99,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
         # RotationSize: the maximum size in Megabytes of a record file before it gets rotated for per subsystem
         # MaxRotation: the maximum number of old log files to retain for per subsystem
         [Storage.LocalFile]
-            Path = "./record"
+            Path = "huatuo-local"
             RotationSize = 100
             MaxRotation = 10
         ```

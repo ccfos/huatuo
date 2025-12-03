@@ -17,7 +17,6 @@ package events
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
@@ -25,6 +24,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/tracing"
 )
 
@@ -56,12 +56,14 @@ func newMemoryReclaim() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
+const cssCacheTTL = 5 * time.Second
+
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim_events.c -o $BPF_DIR/memory_reclaim_events.o
 
 // Start detect work, load bpf and wait data form perfevent
 func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), map[string]any{
-		"deltath": conf.Get().Tracing.MemoryReclaim.Deltath,
+		"deltath": conf.Get().EventTracing.MemoryReclaim.BlockedThreshold,
 	})
 	if err != nil {
 		return err
@@ -79,6 +81,21 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 
 	b.WaitDetachByBreaker(childCtx, cancel)
 
+	var (
+		cssToContainer map[uint64]*pod.Container
+		cacheTime      time.Time
+	)
+
+	refreshContainerCache := func() error {
+		containers, err := pod.Containers()
+		if err != nil {
+			return err
+		}
+		cssToContainer = pod.BuildCssContainers(containers, pod.SubSysCPU)
+		cacheTime = time.Now()
+		return nil
+	}
+
 	for {
 		select {
 		case <-childCtx.Done():
@@ -89,23 +106,33 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
 
-			container, err := pod.GetContainerByCSS(data.CSS, "cpu")
-			if err != nil {
-				return fmt.Errorf("GetContainerByCSS by CSS %d: %w", data.CSS, err)
+			if cssToContainer == nil || time.Since(cacheTime) > cssCacheTTL {
+				if err := refreshContainerCache(); err != nil {
+					log.Errorf("refresh container cache: %v", err)
+					continue
+				}
 			}
 
-			// We only care about the container and nothing else.
-			// Though it may be unfair, that's just how life is.
-			//
-			// -- Tonghao Zhang, tonghao@bamaicloud.com
+			container := cssToContainer[data.CSS]
 			if container == nil {
-				continue
+				if err := refreshContainerCache(); err != nil {
+					log.Errorf("refresh container cache: %v", err)
+					continue
+				}
+				container = cssToContainer[data.CSS]
+				if container == nil {
+					// We only care about the container and nothing else.
+					// Though it may be unfair, that's just how life is.
+					//
+					// -- Tonghao Zhang, tonghao@bamaicloud.com
+					continue
+				}
 			}
 
 			// save storage
 			tracingData := &MemoryReclaimTracingData{
 				Pid:       data.Pid,
-				Comm:      strings.Trim(string(data.Comm[:]), "\x00"),
+				Comm:      bytesutil.ToString(data.Comm[:]),
 				Deltatime: data.Deltatime,
 			}
 

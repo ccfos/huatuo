@@ -36,8 +36,7 @@ import (
 )
 
 const (
-	kubeletReqTimeout      = 5 * time.Second
-	kubeletDefaultConfPath = "/var/lib/kubelet/config.yaml"
+	kubeletReqTimeout = 5 * time.Second
 )
 
 var (
@@ -47,26 +46,41 @@ var (
 	kubeletTimeTicker            *time.Ticker
 	kubeletDoneCancel            context.CancelFunc
 	kubeletPodCgroupDriver       = "cgroupfs"
+	kubeletDefaultConfigPath     = []string{"/var/lib/kubelet/config.yaml", "/var/lib/kubelet/ack-managed-config.yaml"}
 )
 
 type PodContainerInitCtx struct {
-	PodListReadOnlyPort   string
-	PodListAuthorizedPort string
-	PodClientCertPath     string
-	podClientCertPath     string
-	podClientCertKey      string
+	PodReadOnlyPort   uint32
+	PodAuthorizedPort uint32
+	PodClientCertPath string
+
+	// this is used internally.
+	podClientCertPath string
+	podClientCertKey  string
 }
 
-func kubeletHttpRequest(ctx *PodContainerInitCtx) (*http.Client, error) {
+func kubeletPodListReadOnlyURL(port uint32) string {
+	return fmt.Sprintf("http://127.0.0.1:%d/pods", port)
+}
+
+func kubeletPodListAuthorizedURL(port uint32) string {
+	return fmt.Sprintf("https://127.0.0.1:%d/pods", port)
+}
+
+func kubeletConfigAuthorizedURL(port uint32) string {
+	return fmt.Sprintf("https://127.0.0.1:%d/configz", port)
+}
+
+func kubeletPodListHttpRequest(ctx *PodContainerInitCtx) (*http.Client, error) {
 	client := &http.Client{
 		Timeout: kubeletReqTimeout,
 	}
 
-	_, err := kubeletDoRequest(client, ctx.PodListReadOnlyPort)
+	_, err := kubeletPodListDoRequest(client, kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort))
 	return client, err
 }
 
-func kubeletHttpAuthorizationRequest(ctx *PodContainerInitCtx) (*http.Client, error) {
+func kubeletPodListAuthorizationRequest(ctx *PodContainerInitCtx) (*http.Client, error) {
 	cert, err := tls.LoadX509KeyPair(ctx.podClientCertPath, ctx.podClientCertKey)
 	if err != nil {
 		return nil, fmt.Errorf("loading client key pair [%s,%s]: %w",
@@ -83,33 +97,41 @@ func kubeletHttpAuthorizationRequest(ctx *PodContainerInitCtx) (*http.Client, er
 		},
 	}
 
-	_, err = kubeletDoRequest(client, ctx.PodListAuthorizedPort)
+	_, err = kubeletPodListDoRequest(client, kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort))
 	return client, err
 }
 
-func kubeletPodListPortUpdate(ctx *PodContainerInitCtx) error {
-	if client, err := kubeletHttpRequest(ctx); err == nil {
-		kubeletPodListURL = ctx.PodListReadOnlyPort
+func kubeletPodListPortCacheUpdate(ctx *PodContainerInitCtx) error {
+	if client, err := kubeletPodListHttpRequest(ctx); err == nil {
+		kubeletPodListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
 		kubeletPodListClient = client
 		kubeletPodListRunningEnabled = true
 		return nil
 	}
 
-	client, err := kubeletHttpAuthorizationRequest(ctx)
+	// try to fallback https.
+	client, err := kubeletPodListAuthorizationRequest(ctx)
 	if err != nil {
 		return fmt.Errorf("podlist https: %w", err)
 	}
 
 	// update https instance cache
 	kubeletPodListClient = client
-	kubeletPodListURL = ctx.PodListAuthorizedPort
+	kubeletPodListURL = kubeletPodListAuthorizedURL(ctx.PodAuthorizedPort)
 	kubeletPodListRunningEnabled = true
 	return nil
 }
 
 func ContainerPodMgrInit(ctx *PodContainerInitCtx) error {
-	if ctx.PodListReadOnlyPort == "" && ctx.PodListAuthorizedPort == "" {
-		log.Warnf("pod sync is not working, we manually turned off this.")
+	if ctx.PodReadOnlyPort == 0 && ctx.PodAuthorizedPort == 0 {
+		log.Warnf("pod sync is not working, we manually turned off this, readonlyport == 0, and authorizedport == 0")
+		return nil
+	}
+
+	// if user enable the only authorized port, the cert path must be not
+	// empty.
+	if ctx.PodReadOnlyPort == 0 && ctx.PodAuthorizedPort != 0 && ctx.PodClientCertPath == "" {
+		log.Errorf("when you enable only the authorized port, you should populate cert path.")
 		return nil
 	}
 
@@ -120,13 +142,12 @@ func ContainerPodMgrInit(ctx *PodContainerInitCtx) error {
 		ctx.podClientCertPath, ctx.podClientCertKey = s[0], s[1]
 	}
 
-	_ = kubeletCgroupDriverUpdate()
-
-	err := kubeletPodListPortUpdate(ctx)
+	err := kubeletPodListPortCacheUpdate(ctx)
 	if !errors.Is(err, syscall.ECONNREFUSED) {
 		// success or other error codes except connect refused
 		// only init css metadata collect when kubelet available.
 		if err == nil {
+			_ = kubeletCgroupDriverCacheUpdate(ctx)
 			return containerCgroupCssInit()
 		}
 
@@ -143,9 +164,9 @@ func ContainerPodMgrInit(ctx *PodContainerInitCtx) error {
 		for {
 			select {
 			case <-t.C:
-				if err := kubeletPodListPortUpdate(ctx); err == nil {
+				if err := kubeletPodListPortCacheUpdate(ctx); err == nil {
 					log.Infof("kubelet is running now")
-					_ = kubeletCgroupDriverUpdate()
+					_ = kubeletCgroupDriverCacheUpdate(ctx)
 					_ = containerCgroupCssInit()
 					ContainerPodMgrClose()
 					break
@@ -252,25 +273,15 @@ func kubeletGetPodList() (corev1.PodList, error) {
 		return corev1.PodList{}, fmt.Errorf("kubelet not running")
 	}
 
-	return kubeletDoRequest(kubeletPodListClient, kubeletPodListURL)
+	return kubeletPodListDoRequest(kubeletPodListClient, kubeletPodListURL)
 }
 
-func kubeletDoRequest(client *http.Client, kubeletPodListURL string) (corev1.PodList, error) {
+func kubeletPodListDoRequest(client *http.Client, kubeletPodListURL string) (corev1.PodList, error) {
 	podList := corev1.PodList{}
-	req, err := http.NewRequest(http.MethodGet, kubeletPodListURL, http.NoBody)
+
+	body, err := httpDoRequest(client, kubeletPodListURL)
 	if err != nil {
 		return podList, err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return podList, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return podList, fmt.Errorf("http: %s, status: %d, body: %s", kubeletPodListURL, resp.StatusCode, string(body))
 	}
 
 	if err := json.Unmarshal(body, &podList); err != nil {
@@ -278,6 +289,41 @@ func kubeletDoRequest(client *http.Client, kubeletPodListURL string) (corev1.Pod
 	}
 
 	return podList, nil
+}
+
+func kubeletConfigDoRequest(client *http.Client, kubeletConfigURL string) (kubeletconfig.KubeletConfiguration, error) {
+	config := kubeletconfig.KubeletConfiguration{}
+
+	body, err := httpDoRequest(client, kubeletConfigURL)
+	if err != nil {
+		return config, err
+	}
+
+	if err := json.Unmarshal(body, &config); err != nil {
+		return config, fmt.Errorf("http: %s, Unmarshal: %w, body: %s", kubeletConfigURL, err, string(body))
+	}
+
+	return config, nil
+}
+
+func httpDoRequest(client *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("http: %s, status: %d, body: %s", url, resp.StatusCode, string(body))
+	}
+
+	return body, nil
 }
 
 // func updateKubeletContainer(containerID string, container *corev1.Container, containerStatus *corev1.ContainerStatus, pod *corev1.Pod, css map[string]uint64) error {
@@ -389,24 +435,46 @@ func isRuningPod(pod *corev1.Pod) bool {
 	return true
 }
 
-func kubeletCgroupDriverUpdate() error {
-	data, err := os.ReadFile(kubeletDefaultConfPath)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", kubeletDefaultConfPath, err)
+func kubeletConfigDefault() (kubeletconfig.KubeletConfiguration, error) {
+	empty := kubeletconfig.KubeletConfiguration{}
+
+	for _, name := range kubeletDefaultConfigPath {
+		config := kubeletconfig.KubeletConfiguration{}
+
+		data, err := os.ReadFile(name)
+		if err != nil {
+			continue
+		}
+
+		if err := yaml.Unmarshal(data, &config); err != nil {
+			continue
+		}
+
+		return config, nil
 	}
 
-	var config kubeletconfig.KubeletConfiguration
+	return empty, fmt.Errorf("not found kubelet config")
+}
 
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return err
-	}
+func kubeletCgroupDriverCacheUpdate(ctx *PodContainerInitCtx) error {
+	var (
+		config kubeletconfig.KubeletConfiguration
+		err    error
+	)
 
-	// cgroupfs as default of kubelet
-	// config.CgroupDriver is read from config file, which may be any
-	// string, such as systemdxxx (in this case, kubelet use cgroupfs)
-	if config.CgroupDriver == "systemd" {
+	config, err = kubeletConfigDoRequest(kubeletPodListClient, kubeletConfigAuthorizedURL(ctx.PodAuthorizedPort))
+	if err == nil {
 		kubeletPodCgroupDriver = config.CgroupDriver
+		return nil
 	}
 
+	log.Debugf("kubelet config port is not available, try to read config files: %v", kubeletDefaultConfigPath)
+
+	config, err = kubeletConfigDefault()
+	if err != nil {
+		panic("we cant not find any cgroup driver of kubelet after requesting configz and default files")
+	}
+
+	kubeletPodCgroupDriver = config.CgroupDriver
 	return nil
 }

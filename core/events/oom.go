@@ -17,14 +17,13 @@ package events
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -32,8 +31,8 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/oom.c -o $BPF_DIR/oom.o
 
 type perfEventData struct {
-	TriggerProcessName [16]byte
-	VictimProcessName  [16]byte
+	TriggerProcessName [bpf.TaskCommLen]byte
+	VictimProcessName  [bpf.TaskCommLen]byte
 	TriggerPid         int32
 	VictimPid          int32
 	TriggerMemcgCSS    uint64
@@ -46,12 +45,11 @@ type OOMTracingData struct {
 	TriggerContainerHostname string `json:"trigger_container_hostname"`
 	TriggerPid               int32  `json:"trigger_pid"`
 	TriggerProcessName       string `json:"trigger_process_name"`
-
-	VictimMemcgCSS          string `json:"victim_memcg_css"`
-	VictimContainerID       string `json:"victim_container_id"`
-	VictimContainerHostname string `json:"victim_container_hostname"`
-	VictimPid               int32  `json:"victim_pid"`
-	VictimProcessName       string `json:"victim_process_name"`
+	VictimMemcgCSS           string `json:"victim_memcg_css"`
+	VictimContainerID        string `json:"victim_container_id"`
+	VictimContainerHostname  string `json:"victim_container_hostname"`
+	VictimPid                int32  `json:"victim_pid"`
+	VictimProcessName        string `json:"victim_process_name"`
 }
 
 type oomMetric struct {
@@ -60,6 +58,12 @@ type oomMetric struct {
 }
 
 type oomCollector struct{}
+
+var (
+	outOfMemoryCounterHost      float64
+	outOfMemoryCounterContainer = make(map[string]*oomMetric)
+	mutex                       sync.Mutex
+)
 
 func init() {
 	tracing.RegisterEventTracing("oom", newOOMCollector)
@@ -73,29 +77,25 @@ func newOOMCollector() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-var (
-	hostOOMCounter      float64
-	containerOOMCounter = make(map[string]oomMetric)
-	mutex               sync.Mutex
-)
-
 func (c *oomCollector) Update() ([]*metric.Data, error) {
-	containers, err := pod.GetNormalContainers()
+	containers, err := pod.NormalContainers()
 	if err != nil {
 		return nil, fmt.Errorf("get normal container: %w", err)
 	}
+
 	metrics := []*metric.Data{}
+
 	mutex.Lock()
-	metrics = append(metrics, metric.NewGaugeData("host_counter", hostOOMCounter, "host oom counter", nil))
+
+	metrics = append(metrics, metric.NewCounterData("host_total", outOfMemoryCounterHost, "host oom counter", nil))
 	for _, container := range containers {
-		if val, exists := containerOOMCounter[container.ID]; exists {
+		if val, exists := outOfMemoryCounterContainer[container.ID]; exists {
 			metrics = append(metrics,
-				metric.NewContainerGaugeData(container, "counter", float64(val.count), "containers oom counter", map[string]string{"process": val.victimProcessName}),
+				metric.NewContainerCounterData(container, "total", float64(val.count), "containers oom counter", map[string]string{"process": val.victimProcessName}),
 			)
 		}
 	}
 
-	containerOOMCounter = make(map[string]oomMetric)
 	mutex.Unlock()
 	return metrics, nil
 }
@@ -128,60 +128,52 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			if err := reader.ReadInto(&data); err != nil {
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
-			cssToCtMap, err := pod.GetCSSToContainerID("memory")
+
+			containers, err := pod.Containers()
 			if err != nil {
-				log.Errorf("failed to GetCSSToContainerID, err: %v", err)
-				continue
+				return fmt.Errorf("fetching the containers, err: %w", err)
 			}
-			cts, err := pod.GetAllContainers()
-			if err != nil {
-				log.Errorf("Can't get GetAllContainers, err: %v", err)
-				return err
-			}
-			caseData := &OOMTracingData{
+
+			cssContainers := pod.BuildCssContainersID(containers, pod.SubSysMemory)
+			oomData := &OOMTracingData{
 				TriggerMemcgCSS:    fmt.Sprintf("0x%x", data.TriggerMemcgCSS),
 				TriggerPid:         data.TriggerPid,
-				TriggerProcessName: strings.TrimRight(string(data.TriggerProcessName[:]), "\x00"),
-				TriggerContainerID: cssToCtMap[data.TriggerMemcgCSS],
+				TriggerProcessName: bytesutil.ToString(data.TriggerProcessName[:]),
+				TriggerContainerID: cssContainers[data.TriggerMemcgCSS],
 				VictimMemcgCSS:     fmt.Sprintf("0x%x", data.VictimMemcgCSS),
 				VictimPid:          data.VictimPid,
-				VictimProcessName:  strings.TrimRight(string(data.VictimProcessName[:]), "\x00"),
-				VictimContainerID:  cssToCtMap[data.VictimMemcgCSS],
+				VictimProcessName:  bytesutil.ToString(data.VictimProcessName[:]),
+				VictimContainerID:  cssContainers[data.VictimMemcgCSS],
 			}
 
-			if caseData.TriggerContainerID == "" {
-				caseData.TriggerContainerID = "None"
-				caseData.TriggerContainerHostname = "Non-Container Cgroup"
-			} else {
-				caseData.TriggerContainerHostname = cts[caseData.TriggerContainerID].Hostname
-				if caseData.TriggerContainerHostname == "" {
-					caseData.TriggerContainerHostname = "unknown"
-				}
+			// leave the hostname empty if this is not container.
+			if container, ok := containers[oomData.TriggerContainerID]; ok {
+				oomData.TriggerContainerHostname = container.Hostname
 			}
+
+			// update victim hostname and metric counters
 			mutex.Lock()
-			if caseData.VictimContainerID == "" {
-				hostOOMCounter++
-				caseData.VictimContainerID = "None"
-				caseData.VictimContainerHostname = "Non-Container Cgroup"
+
+			if container, ok := containers[oomData.VictimContainerID]; ok {
+				oomData.VictimContainerHostname = container.Hostname
+				containerCounterUpdate(container.ID, oomData.VictimProcessName)
 			} else {
-				if val, exists := containerOOMCounter[cts[caseData.VictimContainerID].ID]; exists {
-					val.count++
-					val.victimProcessName = val.victimProcessName + "," + caseData.VictimProcessName
-					containerOOMCounter[cts[caseData.VictimContainerID].ID] = val
-				} else {
-					containerOOMCounter[cts[caseData.VictimContainerID].ID] = oomMetric{
-						count:             1,
-						victimProcessName: caseData.VictimProcessName,
-					}
-				}
-				caseData.VictimContainerHostname = cts[caseData.VictimContainerID].Hostname
-				if caseData.VictimContainerHostname == "" {
-					caseData.VictimContainerHostname = "unknown"
-				}
+				outOfMemoryCounterHost++
 			}
+
 			mutex.Unlock()
 
-			storage.Save("oom", "", time.Now(), caseData)
+			storage.Save("oom", "", time.Now(), oomData)
 		}
 	}
+}
+
+func containerCounterUpdate(containerID, processName string) {
+	if val, exists := outOfMemoryCounterContainer[containerID]; exists {
+		val.count++
+		val.victimProcessName = processName
+		return
+	}
+
+	outOfMemoryCounterContainer[containerID] = &oomMetric{count: 1, victimProcessName: processName}
 }

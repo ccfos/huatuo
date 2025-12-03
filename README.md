@@ -4,7 +4,7 @@ English | [简体中文](./README_CN.md)
 
 # What is HUATUO
 
-**HUATUO** is a cloud-native operating system observability project open-sourced by **DIDI** and incubated under the **CCF**. It focuses on providing deep, kernel-level observability for complex cloud-native. By integrating linux kernel dynamic tracking such as **kprobe**, **tracepoint**, **ftrace** and **eBPF**, it has achieved multi-dimensional kernel observability, such as more refined metrics, kernel runtime exception contexts, and automatic tracking. HUATUO has been deployed at scale in Didi's production environment and plays a critical role in troubleshooting system failure, enhancing the high availability and performance of the cloud-native operating system. Through continuous evolution, HUATUO aims to advance eBPF in observability toward lower overhead and greater efficiency. For more information: [https://huatuo.tech](https://huatuo.tech/).
+**HUATUO** is a cloud-native operating system observability project open-sourced by **DIDI** and incubated under the **CCF**. It focuses on providing deep, kernel-level observability for complex cloud-native. By integrating linux kernel dynamic tracking such as **kprobe**, **tracepoint**, **ftrace** and **eBPF**, it has achieved multi-dimensional kernel observability, such as more refined metrics, kernel runtime exception contexts, and automatic tracking. HUATUO has been deployed at scale in Didi's production environment and plays a critical role in troubleshooting system failure, enhancing the high availability and performance of the cloud-native operating system. Through continuous evolution, HUATUO aims to advance eBPF in observability toward lower overhead and greater efficiency. For more information: [https://huatuo.tech](https://huatuo.tech/)
 
 # Key Features
 
@@ -41,6 +41,10 @@ English | [简体中文](./README_CN.md)
 
   For more information, please refer to: [Quick Start](./docs/quick-start.md) or [https://huatuo.tech/quickstart/](https://huatuo.tech/quickstart/)
 
+- **NOTE**
+
+  Do not deploy images with the latest tag to production environment, as this is a development and testing image.
+
 # Kernel Versions
 
 Supports kernel versions from 4.18 and later.
@@ -50,19 +54,19 @@ Supports kernel versions from 4.18 and later.
 | 1.0.0  | 4.18.x         | CentOS 8.x                                    |
 | 1.0.0  | 5.4.x          | OpenCloudOS V8/Ubuntu 20.04                   |
 | 1.0.0  | 5.10.x         | OpenEuler 22.03/Anolis OS 8.10                |
+| 1.0.0  | 5.15.x         | Ubuntu 22.04                                  |
 | 1.0.0  | 6.6.x          | OpenEuler 24.03/Anolis OS 23.3/OpenCloudOS V9 |
 | 1.0.0  | 6.8.x          | Ubuntu 24.04                                  |
 | 1.0.0  | 6.14.x         | Fedora 42                                     |
 
 # Documentation
 
-For more information, visit [https://huatuo.tech](https://huatuo.tech/).
+For more information, visit [https://huatuo.tech](https://huatuo.tech/)
 
 # Contact Us
+- WeChat Group and Official Account:
 
-@[hao022](https://github.com/hao022)
-@[nashuiliang](https://github.com/nashuiliang)
-@[fanzu8](https://github.com/fanzuba)
+![](./docs/img/contact-weixin.png)
 
 # License
 

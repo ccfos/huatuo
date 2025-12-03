@@ -42,7 +42,7 @@ const tcHMajMask = 0xFFFF0000
 type qdiscCollector struct{}
 
 func init() {
-	tracing.RegisterEventTracing("qdisc", newQdiscCollector)
+	tracing.RegisterEventTracing("netdev_qdisc", newQdiscCollector)
 }
 
 func newQdiscCollector() (*tracing.EventTracingAttr, error) {
@@ -63,8 +63,8 @@ func newQdiscCollector() (*tracing.EventTracingAttr, error) {
 // 2: qidsc <kind> handle1 parent1
 // 3: qidsc <kind> handle2 parent1
 func (c *qdiscCollector) Update() ([]*metric.Data, error) {
-	filter := newFieldFilter(conf.Get().MetricCollector.Qdisc.IgnoredDevices,
-		conf.Get().MetricCollector.Qdisc.AcceptDevices)
+	filter := newFieldFilter(conf.Get().MetricCollector.Qdisc.DeviceExcluded,
+		conf.Get().MetricCollector.Qdisc.DeviceIncluded)
 
 	allQdisc, err := qdisc.Get()
 	if err != nil {
@@ -110,15 +110,15 @@ func (c *qdiscCollector) Update() ([]*metric.Data, error) {
 		for _, oneQdisc := range netdevQdisc {
 			tags := map[string]string{"device": oneQdisc.ifaceName, "kind": oneQdisc.kind}
 			metrics = append(metrics,
-				metric.NewGaugeData("bytes_total", float64(oneQdisc.bytes),
+				metric.NewCounterData("bytes_total", float64(oneQdisc.bytes),
 					"Number of bytes sent.", tags),
-				metric.NewGaugeData("packets_total", float64(oneQdisc.packets),
+				metric.NewCounterData("packets_total", float64(oneQdisc.packets),
 					"Number of packets sent.", tags),
-				metric.NewGaugeData("drops_total", float64(oneQdisc.drops),
+				metric.NewCounterData("drops_total", float64(oneQdisc.drops),
 					"Number of packet drops.", tags),
-				metric.NewGaugeData("requeues_total", float64(oneQdisc.requeues),
+				metric.NewCounterData("requeues_total", float64(oneQdisc.requeues),
 					"Number of packets dequeued, not transmitted, and requeued.", tags),
-				metric.NewGaugeData("overlimits_total", float64(oneQdisc.overlimits),
+				metric.NewCounterData("overlimits_total", float64(oneQdisc.overlimits),
 					"Number of packet overlimits.", tags),
 				metric.NewGaugeData("current_queue_length", float64(oneQdisc.qlen),
 					"Number of packets currently in queue to be sent.", tags),

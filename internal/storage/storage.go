@@ -75,7 +75,7 @@ func createBaseDocument(tracerName, containerID string, tracerTime time.Time, tr
 
 	// container information.
 	if containerID != "" {
-		container, err := pod.GetContainerByID(containerID)
+		container, err := pod.ContainerByID(containerID)
 		if err != nil {
 			log.Infof("get container by %s: %v", containerID, err)
 			return nil

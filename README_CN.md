@@ -3,7 +3,7 @@
 ![](./docs/huatuo-logo-v3.png)
 
 # 什么是 HUATUO
-**HUATUO（华佗）**是由**滴滴**开源并依托 **CCF 开源发展技术委员会**孵化的云原生操作系统可观测性项目，专注于为复杂云原生环境提供操作系统内核级深度观测能力。该项目基于 [eBPF](https://docs.kernel.org/userspace-api/ebpf/syscall.html) 技术，通过整合 [kprobe](https://www.kernel.org/doc/html/latest/trace/kprobes.html)、 [tracepoint](https://www.kernel.org/doc/html/latest/trace/tracepoints.html)、 [ftrace](https://www.kernel.org/doc/html/latest/trace/ftrace.html)  等内核动态追踪技术，实现了多维度的内核观测能力：**1.** 更精细化的内核子系统埋点指标 Metric **2.** 异常事件驱动的内核运行时上下文捕获 Events **3.** 针对系统突发毛刺的自动追踪 AutoTracing、AutoProfiling。该项目逐步构建了完整的 Linux 内核深度可观测体系架构。目前，HUATUO 已在滴滴生产环境中实现规模化部署，在诸多故障场景中发挥关键作用，有效保障了云原生操作系统的高可用性和性能优化。通过持续的技术演进，希望 HUATUO 能够推动 eBPF 技术在云原生可观测领域向更细粒度、更低开销、更高时效性的方向发展。更多信息访问官网 [https://huatuo.tech](https://huatuo.tech/)。
+**HUATUO（华佗）**是由**滴滴**开源并依托 **CCF 开源发展技术委员会**孵化的云原生操作系统可观测性项目，专注于为复杂云原生环境提供操作系统内核级深度观测能力。该项目基于 [eBPF](https://docs.kernel.org/userspace-api/ebpf/syscall.html) 技术，通过整合 [kprobe](https://www.kernel.org/doc/html/latest/trace/kprobes.html)、 [tracepoint](https://www.kernel.org/doc/html/latest/trace/tracepoints.html)、 [ftrace](https://www.kernel.org/doc/html/latest/trace/ftrace.html)  等内核动态追踪技术，实现了多维度的内核观测能力：**1.** 更精细化的内核子系统埋点指标 Metric **2.** 异常事件驱动的内核运行时上下文捕获 Events **3.** 针对系统突发毛刺的自动追踪 AutoTracing、AutoProfiling。该项目逐步构建了完整的 Linux 内核深度可观测体系架构。目前，HUATUO 已在滴滴生产环境中实现规模化部署，在诸多故障场景中发挥关键作用，有效保障了云原生操作系统的高可用性和性能优化。通过持续的技术演进，希望 HUATUO 能够推动 eBPF 技术在云原生可观测领域向更细粒度、更低开销、更高时效性的方向发展。更多信息访问官网 [https://huatuo.tech](https://huatuo.tech/)
 
 
 # 核心特性
@@ -48,18 +48,22 @@
   
   更详细的信息参考：[快速开始](./docs/quick-start_CN.md) 或 [https://huatuo.tech/quickstart/](https://huatuo.tech/quickstart/)
 
+- **注意**
+  不要在生产环境部署latest容器镜像，这是一个开发测试分支。请部署正式发版的镜像或者二进制。
+
 # 内核版本
 
 理论支持 4.18 之后的所有版本，主要测试内核、和操作系统发行版如下：
 
 |  HUATUO      |  内核版本 |  操作系统发行版     |
 | :---  |    :----  |  :--- |
-| 1.0      | 4.18.x      | CentOS 8.x   |
-| 1.0      | 5.4.x       | OpenCloudOS V8/Ubuntu 20.04 |
-| 1.0      | 5.10.x      | OpenEuler 22.03/Anolis OS 8.10 |
+| 1.0      | 4.18.x      | CentOS 8.x                                    |
+| 1.0      | 5.4.x       | OpenCloudOS V8/Ubuntu 20.04                   |
+| 1.0      | 5.10.x      | OpenEuler 22.03/Anolis OS 8.10                |
+| 1.0      | 5.15.x      | Ubuntu 22.04                                  |
 | 1.0      | 6.6.x       | OpenEuler 24.03/Anolis OS 23.3/OpenCloudOS V9 |
-| 1.0      | 6.8.x       | Ubuntu 24.04 |
-| 1.0      | 6.14.x      | Fedora 42 |
+| 1.0      | 6.8.x       | Ubuntu 24.04                                  |
+| 1.0      | 6.14.x      | Fedora 42                                     |
 
 
 # 文档
@@ -68,10 +72,9 @@
 
 
 # 联系我们
+- 微信群（备注姓名+单位）和公众号：
 
-@[hao022](https://github.com/hao022)  
-@[nashuiliang](https://github.com/nashuiliang)  
-@[fanzu8](https://github.com/fanzuba)  
+![](./docs/img/contact-weixin.png)
 
 
 # 点星历史

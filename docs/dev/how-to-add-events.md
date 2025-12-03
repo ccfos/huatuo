@@ -8,7 +8,7 @@ English | [简体中文](./how-to-add-events_CN.md)
     - Unlike `autotracing`, `event` runs continuously rather than being triggered only when exceptions occur.
     - Event data is stored locally in real-time and also sent to remote ES. You can also generate Prometheus metrics for observation.
     - Suitable for **continuous monitoring** and **real-time analysis**, enabling timely detection of abnormal behaviors in the system. The performance impact of `event` type collection is negligible.
-- **Already Integrated**: Soft interrupt abnormalities（softirq）、abnormal memory allocation（oom）、soft lockups（softlockup）、D-state processes（hungtask）、memory reclaim（memreclaim）、abnormal packet loss（dropwatch）、network inbound latency (netrecvlat), etc.
+- **Already Integrated**: Soft interrupt abnormalities（softirq）、abnormal memory allocation（oom）、soft lockups（softlockup）、D-state processes（hungtask）、memory reclaim（memreclaim）、abnormal packet loss（dropwatch）、network inbound latency (net_rx_latency), etc.
 
 ### How to Add Event Metrics
 Simply implement the `ITracingEvent` interface and complete registration to add events to the system.

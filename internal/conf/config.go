@@ -29,34 +29,23 @@ import (
 
 // CommonConf global common configuration
 type CommonConf struct {
-	LogLevel string `default:"Info"`
-	LogFile  string
+	Log struct {
+		Level string `default:"Info"`
+		File  string
+	}
 
-	// Blacklist for tracing and metrics
-	Blacklist []string
+	// BlackList for tracing and metrics
+	BlackList []string
 
-	// APIServer addr
+	// huatuo-bamai server listen addr
 	APIServer struct {
 		TCPAddr string `default:":19704"`
 	}
 
-	// HuaTuo config
-	HuaTuoConf struct {
-		UserName         string
-		PassWord         string
-		UnixAddr         string
-		ServerIP         string
-		APIVersion       string
-		ReqTimeout       int
-		OnlyOneSession   bool `default:"true"`
-		KeepaliveEnable  bool `default:"true"`
-		KeepaliveTimeout int
-	}
-
 	// RuntimeCgroup for huatuo-bamai resource
+	// limit cpu num 0.5 2.0
+	// limit memory (MB)
 	RuntimeCgroup struct {
-		// limit cpu num 0.5 2.0
-		// limit memory (MB)
 		LimitInitCPU float64 `default:"0.5"`
 		LimitCPU     float64 `default:"2.0"`
 		LimitMem     int64   `default:"2048"`
@@ -64,154 +53,133 @@ type CommonConf struct {
 
 	// Storage for huatuo-bamai tracer storage
 	Storage struct {
-		// ES configurations
 		ES struct {
-			Address, Username, Password, Index string
+			Address            string `default:"http://127.0.0.1:9200"`
+			Username, Password string
+			Index              string `default:"huatuo_bamai"`
 		}
 
-		// LocalFile record file configuration
 		LocalFile struct {
-			Path         string `default:"record"`
+			Path         string `default:"huatuo-local"`
 			RotationSize int    `default:"100"`
 			MaxRotation  int    `default:"10"`
 		}
 	}
 
+	// Will be exported, utill next version is ok.
 	TaskConfig struct {
 		MaxRunningTask int `default:"10"`
 	}
 
-	Tracing struct {
-		// CPUIdle for cpuidle configuration
+	AutoTracing struct {
 		CPUIdle struct {
-			UserThreshold          int64
-			SysThreshold           int64
-			UsageThreshold         int64
-			DeltaUserThreshold     int64
-			DeltaSysThreshold      int64
-			DeltaUsageThreshold    int64
-			Interval               int64
-			IntervalContinuousPerf int64
-			PerfRunTimeOut         int64
+			UserThreshold         int64 `default:"75"`
+			SysThreshold          int64 `default:"45"`
+			UsageThreshold        int64 `default:"90"`
+			DeltaUserThreshold    int64 `default:"45"`
+			DeltaSysThreshold     int64 `default:"20"`
+			DeltaUsageThreshold   int64 `default:"55"`
+			Interval              int64 `default:"10"`
+			IntervalContinuousRun int64 `default:"1800"`
+			PerfRunTimeOut        int64 `default:"10"`
 		}
 
-		// CPUSys for cpusys configuration
 		CPUSys struct {
-			SysThreshold      int64
-			DeltaSysThreshold int64
-			Interval          int64
-			PerfRunTimeOut    int64
+			SysThreshold      int64 `default:"45"`
+			DeltaSysThreshold int64 `default:"20"`
+			Interval          int64 `default:"10"`
+			PerfRunTimeOut    int64 `default:"10"`
 		}
 
-		// Waitrate for waitrate.go
-		Waitrate struct {
-			SpikeThreshold map[string]float64
-			SlopeThreshold map[string]float64
-			SampleConfig   map[string]int
-		}
-
-		// Softirq for softirq thresh configuration
-		Softirq struct {
-			ThresholdTime uint64
-		}
-
-		// Dload for dload thresh configuration
 		Dload struct {
-			ThresholdLoad float64
-			MonitorGap    int
+			ThresholdLoad float64 `default:"5.0"`
+			MonitorGap    int     `default:"180"`
 		}
 
-		// IOTracing for iotracer thresh configuration
 		IOTracing struct {
-			IOScheduleThreshold uint64
-			ReadThreshold       uint64
-			WriteThreshold      uint64
-			IOutilThreshold     uint64
-			IOwaitThreshold     uint64
-			PeriodSecond        uint64
-			MaxStackNumber      int
-			TopProcessCount     int
-			TopFilesPerProcess  int
+			SchedThreshold        uint64
+			ReadThreshold         uint64
+			WriteThreshold        uint64
+			UtilThreshold         uint64
+			WaitThreshold         uint64
+			PeriodSecond          uint64
+			CallStackMaxDepth     int
+			DumpProcessMaxNum     int
+			DumpFilePerProcMaxNum int
 		}
 
-		// MemoryReclaim for MemoryReclaim configuration
-		MemoryReclaim struct {
-			Deltath uint64
-		}
-
-		// MemoryBurst configuration
 		MemoryBurst struct {
-			HistoryWindowLength int
-			SampleInterval      int
-			SilencePeriod       int
-			TopNProcesses       int
-			BurstRatio          float64
-			AnonThreshold       int
+			DeltaMemoryBurst      int `default:"100"`
+			DeltaAnonThreshold    int `default:"70"`
+			Interval              int `default:"10"`
+			IntervalContinuousRun int `default:"1800"`
+			SlidingWindowLength   int `default:"60"`
+			DumpProcessMaxNum     int `default:"10"`
+		}
+	}
+
+	EventTracing struct {
+		Softirq struct {
+			// 10ms
+			DisabledThreshold uint64 `default:"10000000"`
 		}
 
-		// NetRecvLat configuration
-		NetRecvLat struct {
-			ToNetIf              uint64
-			ToTCPV4              uint64
-			ToUserCopy           uint64
-			IgnoreHost           bool
-			IgnoreContainerLevel []int
+		MemoryReclaim struct {
+			// 900ms
+			BlockedThreshold uint64 `default:"900000000"`
 		}
 
-		// Dropwatch configuration
+		NetRxLatency struct {
+			Driver2NetRx             uint64 `default:"5"`
+			Driver2TCP               uint64 `default:"10"`
+			Driver2Userspace         uint64 `default:"115"`
+			ExcludedHostNetnamespace bool   `default:"true"`
+			ExcludedContainerQos     []string
+		}
+
 		Dropwatch struct {
-			IgnoreNeighInvalidate bool
+			ExcludedNeighInvalidate bool `default:"true"`
 		}
 
-		// Netdev configuration
 		Netdev struct {
-			Whitelist []string
-		}
-		Fastfork struct {
-			RedisInfoCollectionInterval uint32 `default:"3600"`
-			EnableForkProbe             uint32 `default:"1"`
-			EnablePtsepProbe            uint32 `default:"1"`
-			EnableWaitptsepProbe        uint32 `default:"1"`
+			DeviceList []string
 		}
 	}
 
 	MetricCollector struct {
-		Netdev struct {
-			// Use `netlink` instead of `procfs net/dev` to get netdev statistic.
-			// Only support the host environment to use `netlink` now!
-			EnableNetlink bool
-			// IgnoredDevices: Ignore special devices in this netdev statistic.
-			// AcceptDevices: Accept special devices in this netdev statistic.
-			// These configurations use `Regexp`.
-			// 'IgnoredDevices' has higher priority than 'AcceptDevices'.
-			IgnoredDevices, AcceptDevices string
+		NetdevStats struct {
+			EnableNetlink  bool `default:"false"`
+			DeviceExcluded string
+			DeviceIncluded string
+		}
+		NetdevDCB struct {
+			DeviceList []string
+		}
+		NetdevHW struct {
+			DeviceList []string
 		}
 		Qdisc struct {
-			// IgnoredDevices: Ignore special devices in this qdisc statistic.
-			// AcceptDevices: Accept special devices in this qdisc statistic.
-			// These configurations use `Regexp`.
-			// 'IgnoredDevices' has higher priority than 'AcceptDevices'.
-			IgnoredDevices, AcceptDevices string
+			DeviceExcluded string
+			DeviceIncluded string
 		}
 		Vmstat struct {
-			IncludedMetrics, ExcludedMetrics string
+			Included string
+			Excluded string
 		}
 		MemoryStat struct {
-			IncludedMetrics, ExcludedMetrics string
+			Included string
+			Excluded string
 		}
 		MemoryEvents struct {
-			IncludedMetrics, ExcludedMetrics string
+			Included string
+			Excluded string
 		}
 		Netstat struct {
-			// ExcludedMetrics: Ignore keys in this netstat statistic.
-			// IncludedMetrics: Accept keys in this netstat statistic.
-			// The 'key' format: protocol + '_' + netstat_name. eg: TcpExt_TCPSynRetrans.
-			// These configurations use `Regexp`.
-			// 'ExcludedMetrics' has higher priority than 'IncludedMetrics'.
-			ExcludedMetrics, IncludedMetrics string
+			Included string
+			Excluded string
 		}
 		MountPointStat struct {
-			IncludedMountPoints string
+			MountPointsIncluded string
 		}
 	}
 
@@ -222,10 +190,10 @@ type CommonConf struct {
 
 	// Pod configuration
 	Pod struct {
-		KubeletPodListURL        string `default:"http://127.0.0.1:10255/pods"`
-		KubeletPodListHTTPSURL   string `default:"https://127.0.0.1:10250/pods"`
-		KubeletPodClientCertPath string `default:"/var/lib/kubelet/pki/kubelet-client-current.pem"`
-		DockerAPIVersion         string `default:"1.24"`
+		KubeletReadOnlyPort   uint32 `default:"10255"`
+		KubeletAuthorizedPort uint32 `default:"10250"`
+		KubeletClientCertPath string
+		DockerAPIVersion      string `default:"1.24"`
 	}
 }
 
