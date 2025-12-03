@@ -81,7 +81,7 @@ func (m *metaxGpuCollector) Update() ([]*metric.Data, error) {
 
 	// Metrics
 	for _, gpu := range gpus {
-		gpuMetrics, err := metaxGetGpuMetrics(uint(gpu))
+		gpuMetrics, err := metaxGetGpuMetrics(uint32(gpu))
 		if err != nil {
 			return nil, fmt.Errorf("failed to get gpu %d metrics: %v", gpu, err)
 		}
@@ -95,7 +95,7 @@ func (m *metaxGpuCollector) Update() ([]*metric.Data, error) {
    GPU metrics
 */
 
-func metaxGetGpuMetrics(gpu uint) ([]*metric.Data, error) {
+func metaxGetGpuMetrics(gpu uint32) ([]*metric.Data, error) {
 	var metrics []*metric.Data
 
 	// GPU info
@@ -282,7 +282,7 @@ func metaxGetGpuMetrics(gpu uint) ([]*metric.Data, error) {
 
 	// Die
 	for die := 0; die < int(gpuInfo.dieCount); die++ {
-		dieMetrics, err := metaxGetDieMetrics(gpu, uint(die), gpuInfo.series)
+		dieMetrics, err := metaxGetDieMetrics(gpu, uint32(die), gpuInfo.series)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get die %d metrics: %v", die, err)
 		}
@@ -331,7 +331,7 @@ var metaxGpuClocksThrottleBitReasonMap = map[int]string{
 	12: "other",
 }
 
-func metaxGetDieMetrics(gpu, die uint, series metaxGpuSeries) ([]*metric.Data, error) {
+func metaxGetDieMetrics(gpu, die uint32, series metaxGpuSeries) ([]*metric.Data, error) {
 	var metrics []*metric.Data
 
 	// Die status
@@ -524,28 +524,28 @@ func getBitsFromLsbToMsb(x uint64) []uint8 {
 var (
 	mxSmlGetErrorString                    func(metaxSmlReturnCode) string
 	mxSmlInit                              func() metaxSmlReturnCode
-	mxSmlGetMacaVersion                    func(*byte, *uint) metaxSmlReturnCode
-	mxSmlGetDeviceCount                    func() uint
-	mxSmlGetPfDeviceCount                  func() uint
-	mxSmlGetDeviceInfo                     func(uint, *metaxSmlDeviceInfo) metaxSmlReturnCode
-	mxSmlGetDeviceDieCount                 func(uint, *uint) metaxSmlReturnCode
-	mxSmlGetDeviceState                    func(uint, *int) metaxSmlReturnCode
-	mxSmlGetBoardPowerInfo                 func(uint, *uint, *metaxSmlBoardWayElectricInfo) metaxSmlReturnCode
-	mxSmlGetPcieInfo                       func(uint, *metaxSmlPcieInfo) metaxSmlReturnCode
-	mxSmlGetPcieMaxLinkInfo                func(uint, *metaxSmlPcieInfo) metaxSmlReturnCode
-	mxSmlGetPcieThroughput                 func(uint, *metaxSmlPcieThroughput) metaxSmlReturnCode
-	mxSmlGetMetaXLinkInfo_v2               func(uint, *uint, *metaxSmlSingleMetaxlinkInfo) metaxSmlReturnCode
-	mxSmlGetMetaXLinkBandwidth             func(uint, metaxSmlMetaxlinkType, *uint, *metaxSmlMetaXLinkBandwidth) metaxSmlReturnCode
-	mxSmlGetMetaXLinkTrafficStat           func(uint, metaxSmlMetaxlinkType, *uint, *metaxSmlMetaxlinkTrafficStat) metaxSmlReturnCode
-	mxSmlGetMetaXLinkAer                   func(uint, *uint, *metaxSmlMetaxlinkAer) metaxSmlReturnCode
-	mxSmlGetDieUnavailableReason           func(uint, uint, *metaxSmlDeviceUnavailableReasonInfo) metaxSmlReturnCode
-	mxSmlGetDieTemperatureInfo             func(uint, uint, metaxSmlTemperatureSensor, *int) metaxSmlReturnCode
-	mxSmlGetDieIpUsage                     func(uint, uint, metaxSmlUsageIp, *int) metaxSmlReturnCode
-	mxSmlGetDieMemoryInfo                  func(uint, uint, *metaxSmlMemoryInfo) metaxSmlReturnCode
-	mxSmlGetDieClocks                      func(uint, uint, metaxSmlClockIp, *uint, *uint) metaxSmlReturnCode
-	mxSmlGetDieCurrentClocksThrottleReason func(uint, uint, *uint64) metaxSmlReturnCode
-	mxSmlGetCurrentDieDpmIpPerfLevel       func(uint, uint, metaxSmlDpmIp, *uint) metaxSmlReturnCode
-	mxSmlGetDieTotalEccErrors              func(uint, uint, *metaxSmlEccErrorCount) metaxSmlReturnCode
+	mxSmlGetMacaVersion                    func(*byte, *uint32) metaxSmlReturnCode
+	mxSmlGetDeviceCount                    func() uint32
+	mxSmlGetPfDeviceCount                  func() uint32
+	mxSmlGetDeviceInfo                     func(uint32, *metaxSmlDeviceInfo) metaxSmlReturnCode
+	mxSmlGetDeviceDieCount                 func(uint32, *uint32) metaxSmlReturnCode
+	mxSmlGetDeviceState                    func(uint32, *int) metaxSmlReturnCode
+	mxSmlGetBoardPowerInfo                 func(uint32, *uint32, *metaxSmlBoardWayElectricInfo) metaxSmlReturnCode
+	mxSmlGetPcieInfo                       func(uint32, *metaxSmlPcieInfo) metaxSmlReturnCode
+	mxSmlGetPcieMaxLinkInfo                func(uint32, *metaxSmlPcieInfo) metaxSmlReturnCode
+	mxSmlGetPcieThroughput                 func(uint32, *metaxSmlPcieThroughput) metaxSmlReturnCode
+	mxSmlGetMetaXLinkInfo_v2               func(uint32, *uint32, *metaxSmlSingleMetaxlinkInfo) metaxSmlReturnCode
+	mxSmlGetMetaXLinkBandwidth             func(uint32, metaxSmlMetaxlinkType, *uint32, *metaxSmlMetaXLinkBandwidth) metaxSmlReturnCode
+	mxSmlGetMetaXLinkTrafficStat           func(uint32, metaxSmlMetaxlinkType, *uint32, *metaxSmlMetaxlinkTrafficStat) metaxSmlReturnCode
+	mxSmlGetMetaXLinkAer                   func(uint32, *uint32, *metaxSmlMetaxlinkAer) metaxSmlReturnCode
+	mxSmlGetDieUnavailableReason           func(uint32, uint32, *metaxSmlDeviceUnavailableReasonInfo) metaxSmlReturnCode
+	mxSmlGetDieTemperatureInfo             func(uint32, uint32, metaxSmlTemperatureSensor, *int) metaxSmlReturnCode
+	mxSmlGetDieIpUsage                     func(uint32, uint32, metaxSmlUsageIp, *int) metaxSmlReturnCode
+	mxSmlGetDieMemoryInfo                  func(uint32, uint32, *metaxSmlMemoryInfo) metaxSmlReturnCode
+	mxSmlGetDieClocks                      func(uint32, uint32, metaxSmlClockIp, *uint32, *uint32) metaxSmlReturnCode
+	mxSmlGetDieCurrentClocksThrottleReason func(uint32, uint32, *uint64) metaxSmlReturnCode
+	mxSmlGetCurrentDieDpmIpPerfLevel       func(uint32, uint32, metaxSmlDpmIp, *uint32) metaxSmlReturnCode
+	mxSmlGetDieTotalEccErrors              func(uint32, uint32, *metaxSmlEccErrorCount) metaxSmlReturnCode
 )
 
 func metaxGetSmlLibraryPath() (string, error) {
@@ -608,7 +608,7 @@ func metaxRegisterSmlLibraryFunctions(libc uintptr) {
    MetaX SML API call
 */
 
-type metaxSmlReturnCode uint
+type metaxSmlReturnCode uint32
 
 const (
 	metaxSmlReturnCodeSuccess metaxSmlReturnCode = iota
@@ -645,8 +645,8 @@ func metaxInitSml() error {
 
 func metaxGetMacaVersion() (string, error) {
 	var (
-		size uint = 128
-		buf       = make([]byte, size)
+		size uint32 = 128
+		buf         = make([]byte, size)
 	)
 	if returnCode := mxSmlGetMacaVersion(&buf[0], &size); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return "", metaxSmlOperationNotSupportedErr
@@ -657,11 +657,11 @@ func metaxGetMacaVersion() (string, error) {
 	return string(buf), nil
 }
 
-func metaxGetNativeAndVfGpuCount() uint {
+func metaxGetNativeAndVfGpuCount() uint32 {
 	return mxSmlGetDeviceCount()
 }
 
-func metaxGetPfGpuCount() uint {
+func metaxGetPfGpuCount() uint32 {
 	return mxSmlGetPfDeviceCount()
 }
 
@@ -692,10 +692,10 @@ type metaxGpuInfo struct {
 	uuid     string
 	bdf      string
 	mode     metaxGpuMode
-	dieCount uint
+	dieCount uint32
 }
 
-type metaxSmlDeviceBrand uint
+type metaxSmlDeviceBrand uint32
 
 const (
 	metaxSmlDeviceBrandUnknown metaxSmlDeviceBrand = iota
@@ -704,7 +704,7 @@ const (
 	metaxSmlDeviceBrandG
 )
 
-type metaxSmlDeviceVirtualizationMode uint
+type metaxSmlDeviceVirtualizationMode uint32
 
 const (
 	metaxSmlDeviceVirtualizationModeNone metaxSmlDeviceVirtualizationMode = iota
@@ -713,11 +713,11 @@ const (
 )
 
 type metaxSmlDeviceInfo struct {
-	deviceId   uint
-	typ        uint // DEPRECATED
+	deviceId   uint32
+	typ        uint32 // DEPRECATED
 	bdfId      [32]byte
-	gpuId      uint
-	nodeId     uint
+	gpuId      uint32
+	nodeId     uint32
 	uuid       [96]byte
 	brand      metaxSmlDeviceBrand
 	mode       metaxSmlDeviceVirtualizationMode
@@ -737,7 +737,7 @@ var metaxGpuModeMap = map[metaxSmlDeviceVirtualizationMode]metaxGpuMode{
 	metaxSmlDeviceVirtualizationModeVf:   metaxGpuModeVf,
 }
 
-func metaxGetGpuInfo(gpu uint) (metaxGpuInfo, error) {
+func metaxGetGpuInfo(gpu uint32) (metaxGpuInfo, error) {
 	var info metaxSmlDeviceInfo
 	if returnCode := mxSmlGetDeviceInfo(gpu, &info); returnCode != metaxSmlReturnCodeSuccess {
 		return metaxGpuInfo{}, fmt.Errorf("mxSmlGetDeviceInfo failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
@@ -753,7 +753,7 @@ func metaxGetGpuInfo(gpu uint) (metaxGpuInfo, error) {
 		return metaxGpuInfo{}, fmt.Errorf("invalid gpu mode: %v", info.mode)
 	}
 
-	var dieCount uint
+	var dieCount uint32
 	if returnCode := mxSmlGetDeviceDieCount(gpu, &dieCount); returnCode != metaxSmlReturnCodeSuccess {
 		return metaxGpuInfo{}, fmt.Errorf("mxSmlGetDeviceDieCount failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
 	}
@@ -771,7 +771,7 @@ func metaxGetGpuInfo(gpu uint) (metaxGpuInfo, error) {
 // metaxGetGpuStatus
 // 0: not available
 // 1: available
-func metaxGetGpuStatus(gpu uint) (int, error) {
+func metaxGetGpuStatus(gpu uint32) (int, error) {
 	var value int
 	if returnCode := mxSmlGetDeviceState(gpu, &value); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return 0, metaxSmlOperationNotSupportedErr
@@ -783,19 +783,19 @@ func metaxGetGpuStatus(gpu uint) (int, error) {
 }
 
 type metaxGpuBoardWayElectricInfo struct {
-	voltage uint // voltage in mV.
-	current uint // current in mA.
-	power   uint // power in mW.
+	voltage uint32 // voltage in mV.
+	current uint32 // current in mA.
+	power   uint32 // power in mW.
 }
 
 type metaxSmlBoardWayElectricInfo metaxGpuBoardWayElectricInfo
 
-func metaxListGpuBoardWayElectricInfos(gpu uint) ([]metaxGpuBoardWayElectricInfo, error) {
+func metaxListGpuBoardWayElectricInfos(gpu uint32) ([]metaxGpuBoardWayElectricInfo, error) {
 	const maxBoardWays = 3
 
 	var (
-		size uint = maxBoardWays
-		arr       = make([]metaxSmlBoardWayElectricInfo, size)
+		size uint32 = maxBoardWays
+		arr         = make([]metaxSmlBoardWayElectricInfo, size)
 	)
 	if returnCode := mxSmlGetBoardPowerInfo(gpu, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return nil, metaxSmlOperationNotSupportedErr
@@ -823,12 +823,12 @@ func metaxListGpuBoardWayElectricInfos(gpu uint) ([]metaxGpuBoardWayElectricInfo
 
 type metaxGpuPcieLinkInfo struct {
 	speed float64 // speed in GT/s.
-	width uint    // width in lanes.
+	width uint32  // width in lanes.
 }
 
 type metaxSmlPcieInfo metaxGpuPcieLinkInfo
 
-func metaxGetGpuPcieLinkInfo(gpu uint) (metaxGpuPcieLinkInfo, error) {
+func metaxGetGpuPcieLinkInfo(gpu uint32) (metaxGpuPcieLinkInfo, error) {
 	var obj metaxSmlPcieInfo
 	if returnCode := mxSmlGetPcieInfo(gpu, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return metaxGpuPcieLinkInfo{}, metaxSmlOperationNotSupportedErr
@@ -842,7 +842,7 @@ func metaxGetGpuPcieLinkInfo(gpu uint) (metaxGpuPcieLinkInfo, error) {
 	}, nil
 }
 
-func metaxGetGpuPcieLinkMaxInfo(gpu uint) (metaxGpuPcieLinkInfo, error) {
+func metaxGetGpuPcieLinkMaxInfo(gpu uint32) (metaxGpuPcieLinkInfo, error) {
 	var obj metaxSmlPcieInfo
 	if returnCode := mxSmlGetPcieMaxLinkInfo(gpu, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return metaxGpuPcieLinkInfo{}, metaxSmlOperationNotSupportedErr
@@ -863,7 +863,7 @@ type metaxGpuPcieThroughputInfo struct {
 
 type metaxSmlPcieThroughput metaxGpuPcieThroughputInfo
 
-func metaxGetGpuPcieThroughputInfo(gpu uint) (metaxGpuPcieThroughputInfo, error) {
+func metaxGetGpuPcieThroughputInfo(gpu uint32) (metaxGpuPcieThroughputInfo, error) {
 	var obj metaxSmlPcieThroughput
 	if returnCode := mxSmlGetPcieThroughput(gpu, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return metaxGpuPcieThroughputInfo{}, metaxSmlOperationNotSupportedErr
@@ -883,7 +883,7 @@ func metaxGetGpuPcieThroughputInfo(gpu uint) (metaxGpuPcieThroughputInfo, error)
 
 const metaxSmlMetaxlinkMaxNumber = 7
 
-type metaxSmlMetaxlinkType uint
+type metaxSmlMetaxlinkType uint32
 
 const (
 	metaxSmlMetaxlinkTypeReceive metaxSmlMetaxlinkType = iota
@@ -892,15 +892,15 @@ const (
 
 type metaxGpuMetaxlinkLinkInfo struct {
 	speed float64 // speed in GT/s.
-	width uint    // width in lanes.
+	width uint32  // width in lanes.
 }
 
 type metaxSmlSingleMetaxlinkInfo metaxGpuMetaxlinkLinkInfo
 
-func metaxListGpuMetaxlinkLinkInfos(gpu uint) ([]metaxGpuMetaxlinkLinkInfo, error) {
+func metaxListGpuMetaxlinkLinkInfos(gpu uint32) ([]metaxGpuMetaxlinkLinkInfo, error) {
 	var (
-		size uint = metaxSmlMetaxlinkMaxNumber
-		arr       = make([]metaxSmlSingleMetaxlinkInfo, size)
+		size uint32 = metaxSmlMetaxlinkMaxNumber
+		arr         = make([]metaxSmlSingleMetaxlinkInfo, size)
 	)
 	if returnCode := mxSmlGetMetaXLinkInfo_v2(gpu, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return nil, metaxSmlOperationNotSupportedErr
@@ -926,7 +926,7 @@ type metaxGpuMetaxlinkThroughputInfo struct {
 	transmitRate int // transmitRate in MB/s.
 }
 
-func metaxListGpuMetaxlinkThroughputInfos(gpu uint) ([]metaxGpuMetaxlinkThroughputInfo, error) {
+func metaxListGpuMetaxlinkThroughputInfos(gpu uint32) ([]metaxGpuMetaxlinkThroughputInfo, error) {
 	receiveRates, err := metaxListGpuMetaxlinkThroughputParts(gpu, metaxSmlMetaxlinkTypeReceive)
 	if metaxIsSmlOperationNotSupportedError(err) {
 		return nil, err
@@ -962,10 +962,10 @@ type metaxSmlMetaXLinkBandwidth struct {
 	responseBandwidth int // responseBandwidth in MB/s.
 }
 
-func metaxListGpuMetaxlinkThroughputParts(gpu uint, typ metaxSmlMetaxlinkType) ([]int, error) {
+func metaxListGpuMetaxlinkThroughputParts(gpu uint32, typ metaxSmlMetaxlinkType) ([]int, error) {
 	var (
-		size uint = metaxSmlMetaxlinkMaxNumber
-		arr       = make([]metaxSmlMetaXLinkBandwidth, size)
+		size uint32 = metaxSmlMetaxlinkMaxNumber
+		arr         = make([]metaxSmlMetaXLinkBandwidth, size)
 	)
 	if returnCode := mxSmlGetMetaXLinkBandwidth(gpu, typ, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return nil, metaxSmlOperationNotSupportedErr
@@ -988,7 +988,7 @@ type metaxGpuMetaxlinkTrafficStatInfo struct {
 	transmit int64 // transmit in bytes.
 }
 
-func metaxListGpuMetaxlinkTrafficStatInfos(gpu uint) ([]metaxGpuMetaxlinkTrafficStatInfo, error) {
+func metaxListGpuMetaxlinkTrafficStatInfos(gpu uint32) ([]metaxGpuMetaxlinkTrafficStatInfo, error) {
 	receives, err := metaxListGpuMetaxlinkTrafficStatParts(gpu, metaxSmlMetaxlinkTypeReceive)
 	if metaxIsSmlOperationNotSupportedError(err) {
 		return nil, err
@@ -1024,10 +1024,10 @@ type metaxSmlMetaxlinkTrafficStat struct {
 	responseTrafficStat int64 // responseTrafficStat in bytes.
 }
 
-func metaxListGpuMetaxlinkTrafficStatParts(gpu uint, typ metaxSmlMetaxlinkType) ([]int64, error) {
+func metaxListGpuMetaxlinkTrafficStatParts(gpu uint32, typ metaxSmlMetaxlinkType) ([]int64, error) {
 	var (
-		size uint = metaxSmlMetaxlinkMaxNumber
-		arr       = make([]metaxSmlMetaxlinkTrafficStat, size)
+		size uint32 = metaxSmlMetaxlinkMaxNumber
+		arr         = make([]metaxSmlMetaxlinkTrafficStat, size)
 	)
 	if returnCode := mxSmlGetMetaXLinkTrafficStat(gpu, typ, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return nil, metaxSmlOperationNotSupportedErr
@@ -1052,10 +1052,10 @@ type metaxGpuMetaxlinkAerErrorsInfo struct {
 
 type metaxSmlMetaxlinkAer metaxGpuMetaxlinkAerErrorsInfo
 
-func metaxListGpuMetaxlinkAerErrorsInfos(gpu uint) ([]metaxGpuMetaxlinkAerErrorsInfo, error) {
+func metaxListGpuMetaxlinkAerErrorsInfos(gpu uint32) ([]metaxGpuMetaxlinkAerErrorsInfo, error) {
 	var (
-		size uint = metaxSmlMetaxlinkMaxNumber
-		arr       = make([]metaxSmlMetaxlinkAer, size)
+		size uint32 = metaxSmlMetaxlinkMaxNumber
+		arr         = make([]metaxSmlMetaxlinkAer, size)
 	)
 	if returnCode := mxSmlGetMetaXLinkAer(gpu, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return nil, metaxSmlOperationNotSupportedErr
@@ -1085,7 +1085,7 @@ type metaxSmlDeviceUnavailableReasonInfo struct {
 	unavailableReason [64]byte
 }
 
-func metaxGetDieStatus(gpu, die uint) (int, error) {
+func metaxGetDieStatus(gpu, die uint32) (int, error) {
 	var obj metaxSmlDeviceUnavailableReasonInfo
 	if returnCode := mxSmlGetDieUnavailableReason(gpu, die, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return 0, metaxSmlOperationNotSupportedErr
@@ -1096,14 +1096,14 @@ func metaxGetDieStatus(gpu, die uint) (int, error) {
 	return obj.unavailableCode, nil
 }
 
-type metaxSmlTemperatureSensor uint
+type metaxSmlTemperatureSensor uint32
 
 const (
 	metaxSmlTemperatureSensorHotspot metaxSmlTemperatureSensor = iota
 )
 
 // metaxGetDieTemperature in ℃.
-func metaxGetDieTemperature(gpu, die uint, sensor metaxSmlTemperatureSensor) (float64, error) {
+func metaxGetDieTemperature(gpu, die uint32, sensor metaxSmlTemperatureSensor) (float64, error) {
 	var value int
 	if returnCode := mxSmlGetDieTemperatureInfo(gpu, die, sensor, &value); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return 0, metaxSmlOperationNotSupportedErr
@@ -1114,7 +1114,7 @@ func metaxGetDieTemperature(gpu, die uint, sensor metaxSmlTemperatureSensor) (fl
 	return float64(value) / 100, nil
 }
 
-type metaxSmlUsageIp uint
+type metaxSmlUsageIp uint32
 
 const (
 	metaxSmlUsageIpDla metaxSmlUsageIp = iota // metaxSmlUsageIpDla only valid for metaxSmlDeviceBrandN.
@@ -1125,7 +1125,7 @@ const (
 )
 
 // metaxGetDieUtilization in [0, 100].
-func metaxGetDieUtilization(gpu, die uint, ip metaxSmlUsageIp) (int, error) {
+func metaxGetDieUtilization(gpu, die uint32, ip metaxSmlUsageIp) (int, error) {
 	var value int
 	if returnCode := mxSmlGetDieIpUsage(gpu, die, ip, &value); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return 0, metaxSmlOperationNotSupportedErr
@@ -1150,7 +1150,7 @@ type metaxSmlMemoryInfo struct {
 	xttUse       int64 // xttUse in KB.
 }
 
-func metaxGetDieMemoryInfo(gpu, die uint) (metaxDieMemoryInfo, error) {
+func metaxGetDieMemoryInfo(gpu, die uint32) (metaxDieMemoryInfo, error) {
 	var obj metaxSmlMemoryInfo
 	if returnCode := mxSmlGetDieMemoryInfo(gpu, die, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return metaxDieMemoryInfo{}, metaxSmlOperationNotSupportedErr
@@ -1164,7 +1164,7 @@ func metaxGetDieMemoryInfo(gpu, die uint) (metaxDieMemoryInfo, error) {
 	}, nil
 }
 
-type metaxSmlClockIp uint
+type metaxSmlClockIp uint32
 
 const (
 	metaxSmlClockIpCsc metaxSmlClockIp = iota
@@ -1182,12 +1182,12 @@ const (
 )
 
 // metaxListDieClocks in MHz.
-func metaxListDieClocks(gpu, die uint, ip metaxSmlClockIp) ([]uint, error) {
+func metaxListDieClocks(gpu, die uint32, ip metaxSmlClockIp) ([]uint32, error) {
 	const maxClocksSize = 8
 
 	var (
-		size uint = maxClocksSize
-		arr       = make([]uint, size)
+		size uint32 = maxClocksSize
+		arr         = make([]uint32, size)
 	)
 	if returnCode := mxSmlGetDieClocks(gpu, die, ip, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return nil, metaxSmlOperationNotSupportedErr
@@ -1196,7 +1196,7 @@ func metaxListDieClocks(gpu, die uint, ip metaxSmlClockIp) ([]uint, error) {
 	}
 
 	actualSize := int(size)
-	result := make([]uint, actualSize)
+	result := make([]uint32, actualSize)
 
 	for i := 0; i < actualSize; i++ {
 		result[i] = arr[i]
@@ -1205,7 +1205,7 @@ func metaxListDieClocks(gpu, die uint, ip metaxSmlClockIp) ([]uint, error) {
 	return result, nil
 }
 
-func metaxGetDieClocksThrottleStatus(gpu, die uint) (uint64, error) {
+func metaxGetDieClocksThrottleStatus(gpu, die uint32) (uint64, error) {
 	var value uint64
 	if returnCode := mxSmlGetDieCurrentClocksThrottleReason(gpu, die, &value); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return 0, metaxSmlOperationNotSupportedErr
@@ -1216,7 +1216,7 @@ func metaxGetDieClocksThrottleStatus(gpu, die uint) (uint64, error) {
 	return value, nil
 }
 
-type metaxSmlDpmIp uint
+type metaxSmlDpmIp uint32
 
 const (
 	metaxSmlDpmIpDla metaxSmlDpmIp = iota
@@ -1238,8 +1238,8 @@ const (
 	metaxSmlDpmIpReserved
 )
 
-func metaxGetDieDpmPerformanceLevel(gpu, die uint, ip metaxSmlDpmIp) (uint, error) {
-	var value uint
+func metaxGetDieDpmPerformanceLevel(gpu, die uint32, ip metaxSmlDpmIp) (uint32, error) {
+	var value uint32
 	if returnCode := mxSmlGetCurrentDieDpmIpPerfLevel(gpu, die, ip, &value); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return 0, metaxSmlOperationNotSupportedErr
 	} else if returnCode != metaxSmlReturnCodeSuccess {
@@ -1250,16 +1250,16 @@ func metaxGetDieDpmPerformanceLevel(gpu, die uint, ip metaxSmlDpmIp) (uint, erro
 }
 
 type metaxDieEccMemoryInfo struct {
-	sramCorrectableErrorsCount   uint
-	sramUncorrectableErrorsCount uint
-	dramCorrectableErrorsCount   uint
-	dramUncorrectableErrorsCount uint
-	retiredPagesCount            uint
+	sramCorrectableErrorsCount   uint32
+	sramUncorrectableErrorsCount uint32
+	dramCorrectableErrorsCount   uint32
+	dramUncorrectableErrorsCount uint32
+	retiredPagesCount            uint32
 }
 
 type metaxSmlEccErrorCount metaxDieEccMemoryInfo
 
-func metaxGetDieEccMemoryInfo(gpu, die uint) (metaxDieEccMemoryInfo, error) {
+func metaxGetDieEccMemoryInfo(gpu, die uint32) (metaxDieEccMemoryInfo, error) {
 	var obj metaxSmlEccErrorCount
 	if returnCode := mxSmlGetDieTotalEccErrors(gpu, die, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
 		return metaxDieEccMemoryInfo{}, metaxSmlOperationNotSupportedErr
