@@ -144,9 +144,11 @@ func metaxCollectGpuMetrics(ctx context.Context, gpu uint32) ([]*metric.Data, er
 			return fmt.Errorf("failed to get gpu status: %v", err)
 		} else {
 			mu.Lock()
-			metric.NewGaugeData("available", float64(gpuStatus), "GPU availability, 0 means not available, 1 means available.", map[string]string{
-				"gpu": strconv.Itoa(int(gpu)),
-			})
+			metrics = append(metrics,
+				metric.NewGaugeData("available", float64(gpuStatus), "GPU availability, 0 means not available, 1 means available.", map[string]string{
+					"gpu": strconv.Itoa(int(gpu)),
+				}),
+			)
 			mu.Unlock()
 		}
 		return nil
