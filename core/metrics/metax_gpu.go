@@ -116,7 +116,7 @@ func (m *metaxGpuCollector) Update() ([]*metric.Data, error) {
 
 func metaxCollectGpuMetrics(ctx context.Context, gpu uint32) ([]*metric.Data, error) {
 	var metrics []*metric.Data
-	eg, sctx := errgroup.WithContext(ctx)
+	eg, subCtx := errgroup.WithContext(ctx)
 	var mu sync.Mutex
 
 	// GPU info
@@ -351,7 +351,7 @@ func metaxCollectGpuMetrics(ctx context.Context, gpu uint32) ([]*metric.Data, er
 	// Die
 	for die := 0; die < int(gpuInfo.dieCount); die++ {
 		eg.Go(func() error {
-			dieMetrics, err := metaxCollectDieMetrics(sctx, gpu, uint32(die), gpuInfo.series)
+			dieMetrics, err := metaxCollectDieMetrics(subCtx, gpu, uint32(die), gpuInfo.series)
 			if err != nil {
 				return fmt.Errorf("failed to collect die %d metrics: %v", die, err)
 			}
