@@ -750,16 +750,23 @@ func metaxGetSmlReturnCodeDescription(returnCode metaxSmlReturnCode) string {
 	return mxSmlGetErrorString(returnCode)
 }
 
+func metaxCheckSmlReturnCode(operation string, returnCode metaxSmlReturnCode) error {
+	switch returnCode {
+	case metaxSmlReturnCodeSuccess:
+		return nil
+	case metaxSmlReturnCodeOperationNotSupported:
+		return metaxSmlOperationNotSupportedErr
+	default:
+		return fmt.Errorf("%s failed: %s", operation, metaxGetSmlReturnCodeDescription(returnCode))
+	}
+}
+
 /*
    Init
 */
 
 func metaxInitSml() error {
-	if returnCode := mxSmlInit(); returnCode != metaxSmlReturnCodeSuccess {
-		return fmt.Errorf("mxSmlInit failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
-	}
-
-	return nil
+	return metaxCheckSmlReturnCode("mxSmlInit", mxSmlInit())
 }
 
 /*
@@ -771,10 +778,8 @@ func metaxGetMacaVersion() (string, error) {
 		size uint32 = 128
 		buf         = make([]byte, size)
 	)
-	if returnCode := mxSmlGetMacaVersion(&buf[0], &size); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return "", metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return "", fmt.Errorf("mxSmlGetMacaVersion failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetMacaVersion", mxSmlGetMacaVersion(&buf[0], &size)); err != nil {
+		return "", err
 	}
 
 	return string(buf), nil
@@ -862,8 +867,8 @@ var metaxGpuModeMap = map[metaxSmlDeviceVirtualizationMode]metaxGpuMode{
 
 func metaxGetGpuInfo(gpu uint32) (metaxGpuInfo, error) {
 	var info metaxSmlDeviceInfo
-	if returnCode := mxSmlGetDeviceInfo(gpu, &info); returnCode != metaxSmlReturnCodeSuccess {
-		return metaxGpuInfo{}, fmt.Errorf("mxSmlGetDeviceInfo failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetDeviceInfo", mxSmlGetDeviceInfo(gpu, &info)); err != nil {
+		return metaxGpuInfo{}, err
 	}
 
 	series, ok := metaxGpuSeriesMap[info.brand]
@@ -877,8 +882,8 @@ func metaxGetGpuInfo(gpu uint32) (metaxGpuInfo, error) {
 	}
 
 	var dieCount uint32
-	if returnCode := mxSmlGetDeviceDieCount(gpu, &dieCount); returnCode != metaxSmlReturnCodeSuccess {
-		return metaxGpuInfo{}, fmt.Errorf("mxSmlGetDeviceDieCount failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetDeviceDieCount", mxSmlGetDeviceDieCount(gpu, &dieCount)); err != nil {
+		return metaxGpuInfo{}, err
 	}
 
 	return metaxGpuInfo{
@@ -896,10 +901,8 @@ func metaxGetGpuInfo(gpu uint32) (metaxGpuInfo, error) {
 // 1: available
 func metaxGetGpuStatus(gpu uint32) (int, error) {
 	var value int
-	if returnCode := mxSmlGetDeviceState(gpu, &value); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return 0, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return 0, fmt.Errorf("mxSmlGetDeviceState failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetDeviceState", mxSmlGetDeviceState(gpu, &value)); err != nil {
+		return 0, err
 	}
 
 	return value, nil
@@ -920,10 +923,8 @@ func metaxListGpuBoardWayElectricInfos(gpu uint32) ([]metaxGpuBoardWayElectricIn
 		size uint32 = maxBoardWays
 		arr         = make([]metaxSmlBoardWayElectricInfo, size)
 	)
-	if returnCode := mxSmlGetBoardPowerInfo(gpu, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return nil, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return nil, fmt.Errorf("mxSmlGetBoardPowerInfo failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetBoardPowerInfo", mxSmlGetBoardPowerInfo(gpu, &size, &arr[0])); err != nil {
+		return nil, err
 	}
 
 	actualSize := int(size)
@@ -953,10 +954,8 @@ type metaxSmlPcieInfo metaxGpuPcieLinkInfo
 
 func metaxGetGpuPcieLinkInfo(gpu uint32) (metaxGpuPcieLinkInfo, error) {
 	var obj metaxSmlPcieInfo
-	if returnCode := mxSmlGetPcieInfo(gpu, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return metaxGpuPcieLinkInfo{}, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return metaxGpuPcieLinkInfo{}, fmt.Errorf("mxSmlGetPcieInfo failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetPcieInfo", mxSmlGetPcieInfo(gpu, &obj)); err != nil {
+		return metaxGpuPcieLinkInfo{}, err
 	}
 
 	return metaxGpuPcieLinkInfo{
@@ -967,10 +966,8 @@ func metaxGetGpuPcieLinkInfo(gpu uint32) (metaxGpuPcieLinkInfo, error) {
 
 func metaxGetGpuPcieLinkMaxInfo(gpu uint32) (metaxGpuPcieLinkInfo, error) {
 	var obj metaxSmlPcieInfo
-	if returnCode := mxSmlGetPcieMaxLinkInfo(gpu, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return metaxGpuPcieLinkInfo{}, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return metaxGpuPcieLinkInfo{}, fmt.Errorf("mxSmlGetPcieMaxLinkInfo failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetPcieMaxLinkInfo", mxSmlGetPcieMaxLinkInfo(gpu, &obj)); err != nil {
+		return metaxGpuPcieLinkInfo{}, err
 	}
 
 	return metaxGpuPcieLinkInfo{
@@ -988,10 +985,8 @@ type metaxSmlPcieThroughput metaxGpuPcieThroughputInfo
 
 func metaxGetGpuPcieThroughputInfo(gpu uint32) (metaxGpuPcieThroughputInfo, error) {
 	var obj metaxSmlPcieThroughput
-	if returnCode := mxSmlGetPcieThroughput(gpu, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return metaxGpuPcieThroughputInfo{}, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return metaxGpuPcieThroughputInfo{}, fmt.Errorf("mxSmlGetPcieThroughput failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetPcieThroughput", mxSmlGetPcieThroughput(gpu, &obj)); err != nil {
+		return metaxGpuPcieThroughputInfo{}, err
 	}
 
 	return metaxGpuPcieThroughputInfo{
@@ -1025,10 +1020,8 @@ func metaxListGpuMetaxlinkLinkInfos(gpu uint32) ([]metaxGpuMetaxlinkLinkInfo, er
 		size uint32 = metaxSmlMetaxlinkMaxNumber
 		arr         = make([]metaxSmlSingleMetaxlinkInfo, size)
 	)
-	if returnCode := mxSmlGetMetaXLinkInfo_v2(gpu, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return nil, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return nil, fmt.Errorf("mxSmlGetMetaXLinkInfo_v2 failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetMetaXLinkInfo_v2", mxSmlGetMetaXLinkInfo_v2(gpu, &size, &arr[0])); err != nil {
+		return nil, err
 	}
 
 	actualSize := int(size)
@@ -1090,10 +1083,8 @@ func metaxListGpuMetaxlinkThroughputParts(gpu uint32, typ metaxSmlMetaxlinkType)
 		size uint32 = metaxSmlMetaxlinkMaxNumber
 		arr         = make([]metaxSmlMetaXLinkBandwidth, size)
 	)
-	if returnCode := mxSmlGetMetaXLinkBandwidth(gpu, typ, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return nil, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return nil, fmt.Errorf("mxSmlGetMetaXLinkBandwidth failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetMetaXLinkBandwidth", mxSmlGetMetaXLinkBandwidth(gpu, typ, &size, &arr[0])); err != nil {
+		return nil, err
 	}
 
 	actualSize := int(size)
@@ -1152,10 +1143,8 @@ func metaxListGpuMetaxlinkTrafficStatParts(gpu uint32, typ metaxSmlMetaxlinkType
 		size uint32 = metaxSmlMetaxlinkMaxNumber
 		arr         = make([]metaxSmlMetaxlinkTrafficStat, size)
 	)
-	if returnCode := mxSmlGetMetaXLinkTrafficStat(gpu, typ, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return nil, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return nil, fmt.Errorf("mxSmlGetMetaXLinkTrafficStat failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetMetaXLinkTrafficStat", mxSmlGetMetaXLinkTrafficStat(gpu, typ, &size, &arr[0])); err != nil {
+		return nil, err
 	}
 
 	actualSize := int(size)
@@ -1180,10 +1169,8 @@ func metaxListGpuMetaxlinkAerErrorsInfos(gpu uint32) ([]metaxGpuMetaxlinkAerErro
 		size uint32 = metaxSmlMetaxlinkMaxNumber
 		arr         = make([]metaxSmlMetaxlinkAer, size)
 	)
-	if returnCode := mxSmlGetMetaXLinkAer(gpu, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return nil, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return nil, fmt.Errorf("mxSmlGetMetaXLinkAer failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetMetaXLinkAer", mxSmlGetMetaXLinkAer(gpu, &size, &arr[0])); err != nil {
+		return nil, err
 	}
 
 	actualSize := int(size)
@@ -1210,10 +1197,8 @@ type metaxSmlDeviceUnavailableReasonInfo struct {
 
 func metaxGetDieStatus(gpu, die uint32) (int, error) {
 	var obj metaxSmlDeviceUnavailableReasonInfo
-	if returnCode := mxSmlGetDieUnavailableReason(gpu, die, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return 0, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return 0, fmt.Errorf("mxSmlGetDieUnavailableReason failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetDieUnavailableReason", mxSmlGetDieUnavailableReason(gpu, die, &obj)); err != nil {
+		return 0, err
 	}
 
 	return obj.unavailableCode, nil
@@ -1228,10 +1213,8 @@ const (
 // metaxGetDieTemperature in ℃.
 func metaxGetDieTemperature(gpu, die uint32, sensor metaxSmlTemperatureSensor) (float64, error) {
 	var value int
-	if returnCode := mxSmlGetDieTemperatureInfo(gpu, die, sensor, &value); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return 0, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return 0, fmt.Errorf("mxSmlGetDieTemperatureInfo failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetDieTemperatureInfo", mxSmlGetDieTemperatureInfo(gpu, die, sensor, &value)); err != nil {
+		return 0, err
 	}
 
 	return float64(value) / 100, nil
@@ -1250,10 +1233,8 @@ const (
 // metaxGetDieUtilization in [0, 100].
 func metaxGetDieUtilization(gpu, die uint32, ip metaxSmlUsageIp) (int, error) {
 	var value int
-	if returnCode := mxSmlGetDieIpUsage(gpu, die, ip, &value); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return 0, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return 0, fmt.Errorf("mxSmlGetDieIpUsage failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetDieIpUsage", mxSmlGetDieIpUsage(gpu, die, ip, &value)); err != nil {
+		return 0, err
 	}
 
 	return value, nil
@@ -1275,10 +1256,8 @@ type metaxSmlMemoryInfo struct {
 
 func metaxGetDieMemoryInfo(gpu, die uint32) (metaxDieMemoryInfo, error) {
 	var obj metaxSmlMemoryInfo
-	if returnCode := mxSmlGetDieMemoryInfo(gpu, die, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return metaxDieMemoryInfo{}, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return metaxDieMemoryInfo{}, fmt.Errorf("mxSmlGetDieMemoryInfo failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetDieMemoryInfo", mxSmlGetDieMemoryInfo(gpu, die, &obj)); err != nil {
+		return metaxDieMemoryInfo{}, err
 	}
 
 	return metaxDieMemoryInfo{
@@ -1312,10 +1291,8 @@ func metaxListDieClocks(gpu, die uint32, ip metaxSmlClockIp) ([]uint32, error) {
 		size uint32 = maxClocksSize
 		arr         = make([]uint32, size)
 	)
-	if returnCode := mxSmlGetDieClocks(gpu, die, ip, &size, &arr[0]); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return nil, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return nil, fmt.Errorf("mxSmlGetDieClocks failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetDieClocks", mxSmlGetDieClocks(gpu, die, ip, &size, &arr[0])); err != nil {
+		return nil, err
 	}
 
 	actualSize := int(size)
@@ -1330,10 +1307,8 @@ func metaxListDieClocks(gpu, die uint32, ip metaxSmlClockIp) ([]uint32, error) {
 
 func metaxGetDieClocksThrottleStatus(gpu, die uint32) (uint64, error) {
 	var value uint64
-	if returnCode := mxSmlGetDieCurrentClocksThrottleReason(gpu, die, &value); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return 0, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return 0, fmt.Errorf("mxSmlGetDieCurrentClocksThrottleReason failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetDieCurrentClocksThrottleReason", mxSmlGetDieCurrentClocksThrottleReason(gpu, die, &value)); err != nil {
+		return 0, err
 	}
 
 	return value, nil
@@ -1363,10 +1338,8 @@ const (
 
 func metaxGetDieDpmPerformanceLevel(gpu, die uint32, ip metaxSmlDpmIp) (uint32, error) {
 	var value uint32
-	if returnCode := mxSmlGetCurrentDieDpmIpPerfLevel(gpu, die, ip, &value); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return 0, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return 0, fmt.Errorf("mxSmlGetCurrentDieDpmIpPerfLevel failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetCurrentDieDpmIpPerfLevel", mxSmlGetCurrentDieDpmIpPerfLevel(gpu, die, ip, &value)); err != nil {
+		return 0, err
 	}
 
 	return value, nil
@@ -1384,10 +1357,8 @@ type metaxSmlEccErrorCount metaxDieEccMemoryInfo
 
 func metaxGetDieEccMemoryInfo(gpu, die uint32) (metaxDieEccMemoryInfo, error) {
 	var obj metaxSmlEccErrorCount
-	if returnCode := mxSmlGetDieTotalEccErrors(gpu, die, &obj); returnCode == metaxSmlReturnCodeOperationNotSupported {
-		return metaxDieEccMemoryInfo{}, metaxSmlOperationNotSupportedErr
-	} else if returnCode != metaxSmlReturnCodeSuccess {
-		return metaxDieEccMemoryInfo{}, fmt.Errorf("mxSmlGetDieTotalEccErrors failed: %s", metaxGetSmlReturnCodeDescription(returnCode))
+	if err := metaxCheckSmlReturnCode("mxSmlGetDieTotalEccErrors", mxSmlGetDieTotalEccErrors(gpu, die, &obj)); err != nil {
+		return metaxDieEccMemoryInfo{}, err
 	}
 
 	return metaxDieEccMemoryInfo{
