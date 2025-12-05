@@ -56,15 +56,15 @@ func newMetaxGpuCollector() (*tracing.EventTracingAttr, error) {
 func (m *metaxGpuCollector) Update() ([]*metric.Data, error) {
 	var metrics []*metric.Data
 
-	// MACA version
-	if macaVersion, err := metaxGetMacaVersion(); metaxIsSmlOperationNotSupportedError(err) {
+	// SDK version
+	if sdkVersion, err := metaxGetSdkVersion(); metaxIsSmlOperationNotSupportedError(err) {
 
 	} else if err != nil {
-		return nil, fmt.Errorf("failed to get maca version: %v", err)
+		return nil, fmt.Errorf("failed to get sdk version: %v", err)
 	} else {
 		metrics = append(metrics,
-			metric.NewGaugeData("maca_sdk_info", 1, "GPU MACA SDK info.", map[string]string{
-				"version": macaVersion,
+			metric.NewGaugeData("sdk_info", 1, "GPU SDK info.", map[string]string{
+				"version": sdkVersion,
 			}),
 		)
 	}
@@ -82,6 +82,21 @@ func (m *metaxGpuCollector) Update() ([]*metric.Data, error) {
 	const pfGpuIndexOffset = 100
 	for i := pfGpuIndexOffset; i < pfGpuIndexOffset+pfGpuCount; i++ {
 		gpus = append(gpus, i)
+	}
+
+	// Driver version
+	if len(gpus) > 0 {
+		if driverVersion, err := metaxGetGpuVersion(uint32(gpus[0]), metaxSmlDeviceVersionUnitDriver); metaxIsSmlOperationNotSupportedError(err) {
+
+		} else if err != nil {
+			return nil, fmt.Errorf("failed to get driver version: %v", err)
+		} else {
+			metrics = append(metrics,
+				metric.NewGaugeData("driver_info", 1, "GPU driver info.", map[string]string{
+					"version": driverVersion,
+				}),
+			)
+		}
 	}
 
 	// Metrics
@@ -121,12 +136,13 @@ func metaxCollectGpuMetrics(ctx context.Context, gpu uint32) ([]*metric.Data, er
 	}
 	metrics = append(metrics,
 		metric.NewGaugeData("info", 1, "GPU info.", map[string]string{
-			"gpu":       strconv.Itoa(int(gpu)),
-			"model":     gpuInfo.model,
-			"uuid":      gpuInfo.uuid,
-			"bdf":       gpuInfo.bdf,
-			"mode":      string(gpuInfo.mode),
-			"die_count": strconv.Itoa(int(gpuInfo.dieCount)),
+			"gpu":          strconv.Itoa(int(gpu)),
+			"model":        gpuInfo.model,
+			"uuid":         gpuInfo.uuid,
+			"bios_version": gpuInfo.biosVersion,
+			"bdf":          gpuInfo.bdf,
+			"mode":         string(gpuInfo.mode),
+			"die_count":    strconv.Itoa(int(gpuInfo.dieCount)),
 		}),
 	)
 
@@ -155,7 +171,7 @@ func metaxCollectGpuMetrics(ctx context.Context, gpu uint32) ([]*metric.Data, er
 		return nil, fmt.Errorf("failed to get pcie link info: %v", err)
 	} else {
 		metrics = append(metrics,
-			metric.NewGaugeData("pcie_link_speed_gt_per_second", pcieLinkInfo.speed, "GPU PCIe current link speed.", map[string]string{
+			metric.NewGaugeData("pcie_link_speed_gt_per_second", float64(pcieLinkInfo.speed), "GPU PCIe current link speed.", map[string]string{
 				"gpu": strconv.Itoa(int(gpu)),
 			}),
 			metric.NewGaugeData("pcie_link_width_lanes", float64(pcieLinkInfo.width), "GPU PCIe current link width.", map[string]string{
@@ -188,7 +204,7 @@ func metaxCollectGpuMetrics(ctx context.Context, gpu uint32) ([]*metric.Data, er
 	} else {
 		for i, info := range metaxlinkLinkInfos {
 			metrics = append(metrics,
-				metric.NewGaugeData("metaxlink_link_speed_gt_per_second", info.speed, "GPU MetaXLink current link speed.", map[string]string{
+				metric.NewGaugeData("metaxlink_link_speed_gt_per_second", float64(info.speed), "GPU MetaXLink current link speed.", map[string]string{
 					"gpu":       strconv.Itoa(int(gpu)),
 					"metaxlink": strconv.Itoa(i + 1),
 				}),
@@ -419,7 +435,9 @@ func metaxCollectDieMetrics(gpu, die uint32, series metaxGpuSeries) ([]*metric.D
 		bits := getBitsFromLsbToMsb(clocksThrottleStatus)
 
 		for i, v := range bits {
-			if i > len(metaxGpuClocksThrottleBitReasonMap) {
+			bit := i + 1
+
+			if bit > len(metaxGpuClocksThrottleBitReasonMap) {
 				break
 			}
 
@@ -432,7 +450,7 @@ func metaxCollectDieMetrics(gpu, die uint32, series metaxGpuSeries) ([]*metric.D
 				metric.NewGaugeData("clocks_throttling", float64(v), "Reason(s) for GPU clocks throttling.", map[string]string{
 					"gpu":    strconv.Itoa(int(gpu)),
 					"die":    strconv.Itoa(int(die)),
-					"reason": metaxGpuClocksThrottleBitReasonMap[i],
+					"reason": metaxGpuClocksThrottleBitReasonMap[bit],
 				}),
 			)
 		}
@@ -516,6 +534,7 @@ var (
 	mxSmlGetPfDeviceCount                  func() uint32
 	mxSmlGetDeviceInfo                     func(uint32, *metaxSmlDeviceInfo) metaxSmlReturnCode
 	mxSmlGetDeviceDieCount                 func(uint32, *uint32) metaxSmlReturnCode
+	mxSmlGetDeviceVersion                  func(uint32, metaxSmlDeviceVersionUnit, *byte, *uint32) metaxSmlReturnCode
 	mxSmlGetBoardPowerInfo                 func(uint32, *uint32, *metaxSmlBoardWayElectricInfo) metaxSmlReturnCode
 	mxSmlGetPcieInfo                       func(uint32, *metaxSmlPcieInfo) metaxSmlReturnCode
 	mxSmlGetPcieThroughput                 func(uint32, *metaxSmlPcieThroughput) metaxSmlReturnCode
@@ -570,6 +589,7 @@ func metaxRegisterSmlLibraryFunctions(libc uintptr) {
 	purego.RegisterLibFunc(&mxSmlGetPfDeviceCount, libc, "mxSmlGetPfDeviceCount")
 	purego.RegisterLibFunc(&mxSmlGetDeviceInfo, libc, "mxSmlGetDeviceInfo")
 	purego.RegisterLibFunc(&mxSmlGetDeviceDieCount, libc, "mxSmlGetDeviceDieCount")
+	purego.RegisterLibFunc(&mxSmlGetDeviceVersion, libc, "mxSmlGetDeviceVersion")
 	purego.RegisterLibFunc(&mxSmlGetBoardPowerInfo, libc, "mxSmlGetBoardPowerInfo")
 	purego.RegisterLibFunc(&mxSmlGetPcieInfo, libc, "mxSmlGetPcieInfo")
 	purego.RegisterLibFunc(&mxSmlGetPcieThroughput, libc, "mxSmlGetPcieThroughput")
@@ -633,7 +653,7 @@ func metaxInitSml() error {
    Basic
 */
 
-func metaxGetMacaVersion() (string, error) {
+func metaxGetSdkVersion() (string, error) {
 	var (
 		size uint32 = 128
 		buf         = make([]byte, size)
@@ -675,12 +695,13 @@ const (
 )
 
 type metaxGpuInfo struct {
-	series   metaxGpuSeries
-	model    string
-	uuid     string
-	bdf      string
-	mode     metaxGpuMode
-	dieCount uint32
+	series      metaxGpuSeries
+	model       string
+	uuid        string
+	biosVersion string
+	bdf         string
+	mode        metaxGpuMode
+	dieCount    uint32
 }
 
 type metaxSmlDeviceBrand uint32
@@ -736,6 +757,13 @@ func metaxGetGpuInfo(gpu uint32) (metaxGpuInfo, error) {
 		return metaxGpuInfo{}, fmt.Errorf("invalid gpu series: %v", info.brand)
 	}
 
+	biosVersion, err := metaxGetGpuVersion(gpu, metaxSmlDeviceVersionUnitBios)
+	if metaxIsSmlOperationNotSupportedError(err) {
+		biosVersion = "none"
+	} else if err != nil {
+		return metaxGpuInfo{}, fmt.Errorf("failed to get bios version: %v", err)
+	}
+
 	mode, ok := metaxGpuModeMap[info.mode]
 	if !ok {
 		return metaxGpuInfo{}, fmt.Errorf("invalid gpu mode: %v", info.mode)
@@ -747,13 +775,35 @@ func metaxGetGpuInfo(gpu uint32) (metaxGpuInfo, error) {
 	}
 
 	return metaxGpuInfo{
-		series:   series,
-		model:    string(bytes.TrimRight(info.deviceName[:], "\x00")),
-		uuid:     string(bytes.TrimRight(info.uuid[:], "\x00")),
-		bdf:      string(bytes.TrimRight(info.bdfId[:], "\x00")),
-		mode:     mode,
-		dieCount: dieCount,
+		series:      series,
+		model:       string(bytes.TrimRight(info.deviceName[:], "\x00")),
+		uuid:        string(bytes.TrimRight(info.uuid[:], "\x00")),
+		biosVersion: biosVersion,
+		bdf:         string(bytes.TrimRight(info.bdfId[:], "\x00")),
+		mode:        mode,
+		dieCount:    dieCount,
 	}, nil
+}
+
+type metaxSmlDeviceVersionUnit uint32
+
+const (
+	metaxSmlDeviceVersionUnitBios metaxSmlDeviceVersionUnit = iota
+	metaxSmlDeviceVersionUnitDriver
+)
+
+func metaxGetGpuVersion(gpu uint32, unit metaxSmlDeviceVersionUnit) (string, error) {
+	const versionMaximumSize = 64
+
+	var (
+		size uint32 = versionMaximumSize
+		buf         = make([]byte, size)
+	)
+	if err := metaxCheckSmlReturnCode("mxSmlGetDeviceVersion", mxSmlGetDeviceVersion(gpu, unit, &buf[0], &size)); err != nil {
+		return "", err
+	}
+
+	return string(bytes.TrimRight(buf, "\x00")), nil
 }
 
 // metaxGetGpuStatus
@@ -798,7 +848,7 @@ func metaxListGpuBoardWayElectricInfos(gpu uint32) ([]metaxGpuBoardWayElectricIn
 */
 
 type metaxGpuPcieLinkInfo struct {
-	speed float64 // speed in GT/s.
+	speed float32 // speed in GT/s.
 	width uint32  // width in lanes.
 }
 
@@ -849,7 +899,7 @@ const (
 )
 
 type metaxGpuMetaxlinkLinkInfo struct {
-	speed float64 // speed in GT/s.
+	speed float32 // speed in GT/s.
 	width uint32  // width in lanes.
 }
 
