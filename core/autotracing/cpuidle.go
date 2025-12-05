@@ -47,7 +47,7 @@ func newCPUIdle() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuIdleTracing{},
-		Internal:    20,
+		Interval:    20,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
@@ -189,11 +189,11 @@ func updateContainerCpuUsage(container *containerCPUInfo) error {
 		return fmt.Errorf("cpu usage no changed")
 	}
 
-	updateElasped := time.Since(container.updateTime).Microseconds()
+	updateElapsed := time.Since(container.updateTime).Microseconds()
 
-	container.nowUsagePercentage.user = 100 * delta.user / updateElasped / cpuCores
-	container.nowUsagePercentage.sys = 100 * delta.sys / updateElasped / cpuCores
-	container.nowUsagePercentage.total = 100 * delta.total / updateElasped / cpuCores
+	container.nowUsagePercentage.user = 100 * delta.user / updateElapsed / cpuCores
+	container.nowUsagePercentage.sys = 100 * delta.sys / updateElapsed / cpuCores
+	container.nowUsagePercentage.total = 100 * delta.total / updateElapsed / cpuCores
 
 	if container.prevUsagePercentage == (cpuStats{}) {
 		container.prevUsagePercentage = container.nowUsagePercentage

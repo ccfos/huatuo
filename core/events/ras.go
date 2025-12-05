@@ -95,7 +95,7 @@ func init() {
 func newRasTracing() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &rasTracing{},
-		Internal:    60,
+		Interval:    60,
 		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }

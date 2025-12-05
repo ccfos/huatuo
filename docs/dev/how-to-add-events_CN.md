@@ -35,7 +35,7 @@ func init() {
 func newExample() (*tracing.EventTracingAttr, error) {
     return &tracing.EventTracingAttr{
         TracingData: &exampleTracing{},
-        Internal:    10, // 再次开启 tracing 的间隔时间 seconds
+        Interval:    10, // 再次开启 tracing 的间隔时间 seconds
         Flag:        tracing.FlagTracing, // 标记为 tracing 类型；| tracing.FlagMetric（可选）
     }, nil
 }

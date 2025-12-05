@@ -26,7 +26,7 @@ const (
 )
 
 type EventTracingAttr struct {
-	Internal    int
+	Interval    int
 	Flag        uint32
 	TracingData any
 }

@@ -67,7 +67,7 @@ func newSoftLockup() (*tracing.EventTracingAttr, error) {
 			},
 			backoff: bo,
 		},
-		Internal: 10,
+		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }

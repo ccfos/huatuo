@@ -40,7 +40,7 @@ var IOstat ioTracing
 func newIoTracing() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &IOstat,
-		Internal:    5,
+		Interval:    5,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
@@ -49,12 +49,12 @@ func newIoTracing() (*tracing.EventTracingAttr, error) {
 
 // IOStatusData the data struct need to upload to es
 type IOStatusData struct {
-	TrigerType int           `json:"triger_type"`
-	Reason     string        `json:"reason"`
-	Dev        string        `json:"dev"`
-	Status     IODevStatus   `json:"status"`
-	Pdata      []ProcessData `json:"pdata"`
-	IOStack    []IOStack     `json:"io_stack"`
+	TriggerType int           `json:"trigger_type"`
+	Reason      string        `json:"reason"`
+	Dev         string        `json:"dev"`
+	Status      IODevStatus   `json:"status"`
+	Pdata       []ProcessData `json:"pdata"`
+	IOStack     []IOStack     `json:"io_stack"`
 }
 
 // IOStack record io_schedule backtrace
@@ -163,12 +163,12 @@ type ioDevStat struct {
 }
 
 const (
-	ioTrigerNone = iota
-	ioTrigerUtilFull
-	ioTrigerReadFull
-	ioTrigerWriteFull
-	ioTrigerReadLatency
-	ioTrigerWriteLatency
+	ioTriggerNone = iota
+	ioTriggerUtilFull
+	ioTriggerReadFull
+	ioTriggerWriteFull
+	ioTriggerReadLatency
+	ioTriggerWriteLatency
 )
 
 func parseDiskStatsData(data []byte) []ioDevStat {
@@ -214,23 +214,23 @@ func checkThreshold(disk string, old, now IODevStatus) (int, string) {
 	if old.IOutil > IOstat.config.ioutilThreshold && now.IOutil > IOstat.config.ioutilThreshold {
 		if strings.HasPrefix(disk, "nvme") {
 			if old.RThroughput > IOstat.config.readThreshold*1024*1024 && now.RThroughput > IOstat.config.readThreshold*1024*1024 {
-				return ioTrigerReadFull, fmt.Sprintf("io.util %d,%d > %d, and read throughput %d > 2000MB/s", old.IOutil, now.IOutil, IOstat.config.ioutilThreshold, now.RThroughput)
+				return ioTriggerReadFull, fmt.Sprintf("io.util %d,%d > %d, and read throughput %d > 2000MB/s", old.IOutil, now.IOutil, IOstat.config.ioutilThreshold, now.RThroughput)
 			}
 			if old.WThroughput > IOstat.config.writeThreshold*1024*1024 && now.WThroughput > IOstat.config.writeThreshold*1024*1024 {
-				return ioTrigerWriteFull, fmt.Sprintf("io.util %d,%d > %d, and write throughput %d > 1500MB/s", old.IOutil, now.IOutil, IOstat.config.ioutilThreshold, now.WThroughput)
+				return ioTriggerWriteFull, fmt.Sprintf("io.util %d,%d > %d, and write throughput %d > 1500MB/s", old.IOutil, now.IOutil, IOstat.config.ioutilThreshold, now.WThroughput)
 			}
 		} else {
-			return ioTrigerUtilFull, fmt.Sprintf("%s:io.util %d,%d > %d", disk, old.IOutil, now.IOutil, IOstat.config.ioutilThreshold)
+			return ioTriggerUtilFull, fmt.Sprintf("%s:io.util %d,%d > %d", disk, old.IOutil, now.IOutil, IOstat.config.ioutilThreshold)
 		}
 	}
 
 	if old.Riowait/1000 > IOstat.config.iowaitThreshold && now.Riowait/1000 > IOstat.config.iowaitThreshold {
-		return ioTrigerReadLatency, fmt.Sprintf("read iowait %d,%d > %dms ", old.Riowait/1000, now.Riowait/1000, IOstat.config.iowaitThreshold)
+		return ioTriggerReadLatency, fmt.Sprintf("read iowait %d,%d > %dms ", old.Riowait/1000, now.Riowait/1000, IOstat.config.iowaitThreshold)
 	}
 	if old.Wiowait/1000 > IOstat.config.iowaitThreshold && now.Wiowait/1000 > IOstat.config.iowaitThreshold {
-		return ioTrigerWriteLatency, fmt.Sprintf("write iowait %d,%d > %dms ", old.Wiowait/1000, now.Wiowait/1000, IOstat.config.iowaitThreshold)
+		return ioTriggerWriteLatency, fmt.Sprintf("write iowait %d,%d > %dms ", old.Wiowait/1000, now.Wiowait/1000, IOstat.config.iowaitThreshold)
 	}
-	return ioTrigerNone, ""
+	return ioTriggerNone, ""
 }
 
 func detectDiskStats(ctx context.Context) error {
@@ -266,8 +266,8 @@ func detectDiskStats(ctx context.Context) error {
 					status.QueueSize = 100 * (data.timeInQueue - old.timeInQueue) / 1000 // aqu-sz*100
 
 					tType, reason := checkThreshold(data.disk, lastDevIOStatus[data.dev], status)
-					if tType != ioTrigerNone {
-						IOstat.esData.TrigerType = tType
+					if tType != ioTriggerNone {
+						IOstat.esData.TriggerType = tType
 						IOstat.esData.Reason = fmt.Sprintf("[%s %s]: %s", data.disk, data.dev, reason)
 						IOstat.esData.Dev = data.disk + " " + data.dev
 						IOstat.esData.Status = status

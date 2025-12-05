@@ -43,7 +43,7 @@ func newRunqlatCollector() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: collector,
-		Internal:    10,
+		Interval:    10,
 		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }

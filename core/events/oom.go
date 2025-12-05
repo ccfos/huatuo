@@ -72,7 +72,7 @@ func init() {
 func newOOMCollector() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &oomCollector{},
-		Internal:    10,
+		Interval:    10,
 		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }

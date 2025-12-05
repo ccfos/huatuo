@@ -63,7 +63,7 @@ func init() {
 func newSoftirq() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &softirqTracing{},
-		Internal:    10,
+		Interval:    10,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }

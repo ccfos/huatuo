@@ -116,7 +116,7 @@ func newNetdevTracing() (*tracing.EventTracingAttr, error) {
 			linkStatusEventCounts: initMap,
 			name:                  "netdev_events",
 		},
-		Internal: 10,
+		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }

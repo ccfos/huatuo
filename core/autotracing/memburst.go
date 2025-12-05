@@ -32,13 +32,13 @@ import (
 )
 
 func init() {
-	tracing.RegisterEventTracing("membust", newMemBurst)
+	tracing.RegisterEventTracing("memburst", newMemBurst)
 }
 
 func newMemBurst() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &memBurstTracing{},
-		Internal:    10,
+		Interval:    10,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }

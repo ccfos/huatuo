@@ -50,7 +50,7 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 			cpuPossible: cpuPossible,
 			cpuOnline:   cpuOnline,
 		},
-		Internal: 10,
+		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }

@@ -40,7 +40,7 @@ func init() {
 func newCpuSys() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuSysTracing{},
-		Internal:    20,
+		Interval:    20,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }

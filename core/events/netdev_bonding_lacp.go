@@ -49,7 +49,7 @@ func init() {
 func newLACPTracing() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &lacpTracing{},
-		Internal:    60,
+		Interval:    60,
 		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }
