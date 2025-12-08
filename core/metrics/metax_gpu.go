@@ -392,11 +392,11 @@ func metaxCollectDieMetrics(gpu, die uint32, series metaxGpuSeries) ([]*metric.D
 		return nil, fmt.Errorf("failed to get memory info: %v", err)
 	} else {
 		metrics = append(metrics,
-			metric.NewGaugeData("memory_total_bytes", float64(memoryInfo.total)*1000, "Total vram.", map[string]string{
+			metric.NewGaugeData("memory_total_bytes", float64(memoryInfo.total)*1024, "Total vram.", map[string]string{
 				"gpu": strconv.Itoa(int(gpu)),
 				"die": strconv.Itoa(int(die)),
 			}),
-			metric.NewGaugeData("memory_used_bytes", float64(memoryInfo.used)*1000, "Used vram.", map[string]string{
+			metric.NewGaugeData("memory_used_bytes", float64(memoryInfo.used)*1024, "Used vram.", map[string]string{
 				"gpu": strconv.Itoa(int(gpu)),
 				"die": strconv.Itoa(int(die)),
 			}),
