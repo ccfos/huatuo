@@ -307,15 +307,15 @@ func metaxCollectGpuMetrics(ctx context.Context, gpu uint32) ([]*metric.Data, er
 
 var (
 	metaxGpuUtilizationIpMap = map[string]metaxSmlUsageIp{
-		"vpue":  metaxSmlUsageIpVpue,
-		"vpud":  metaxSmlUsageIpVpud,
-		"xcore": metaxSmlUsageIpXcore,
+		"encoder": metaxSmlUsageIpVpue,
+		"decoder": metaxSmlUsageIpVpud,
+		"xcore":   metaxSmlUsageIpXcore,
 	}
 	metaxGpuClockIpMap = map[string]metaxSmlClockIp{
-		"vpue":   metaxSmlClockIpVpue,
-		"vpud":   metaxSmlClockIpVpud,
-		"xcore":  metaxSmlClockIpXcore,
-		"memory": metaxSmlClockIpMc0,
+		"encoder": metaxSmlClockIpVpue,
+		"decoder": metaxSmlClockIpVpud,
+		"xcore":   metaxSmlClockIpXcore,
+		"memory":  metaxSmlClockIpMc0,
 	}
 	metaxGpuDpmIpMap = map[string]metaxSmlDpmIp{
 		"xcore": metaxSmlDpmIpXcore,
