@@ -514,14 +514,6 @@ func metaxCollectDieMetrics(gpu, die uint32, series metaxGpuSeries) ([]*metric.D
 	return metrics, nil
 }
 
-func getBitsFromLsbToMsb(x uint64) []uint8 {
-	bits := make([]uint8, 64)
-	for i := 0; i < 64; i++ {
-		bits[i] = uint8((x >> i) & 1)
-	}
-	return bits
-}
-
 /*
    MetaX SML API
 */
@@ -662,7 +654,7 @@ func metaxGetSdkVersion() (string, error) {
 		return "", err
 	}
 
-	return string(bytes.TrimRight(buf, "\x00")), nil
+	return cString(buf), nil
 }
 
 func metaxGetNativeAndVfGpuCount() uint32 {
@@ -776,10 +768,10 @@ func metaxGetGpuInfo(gpu uint32) (metaxGpuInfo, error) {
 
 	return metaxGpuInfo{
 		series:      series,
-		model:       string(bytes.TrimRight(info.deviceName[:], "\x00")),
-		uuid:        string(bytes.TrimRight(info.uuid[:], "\x00")),
+		model:       cString(info.deviceName[:]),
+		uuid:        cString(info.uuid[:]),
 		biosVersion: biosVersion,
-		bdf:         string(bytes.TrimRight(info.bdfId[:], "\x00")),
+		bdf:         cString(info.bdfId[:]),
 		mode:        mode,
 		dieCount:    dieCount,
 	}, nil
@@ -803,12 +795,8 @@ func metaxGetGpuVersion(gpu uint32, unit metaxSmlDeviceVersionUnit) (string, err
 		return "", err
 	}
 
-	return string(bytes.TrimRight(buf, "\x00")), nil
+	return cString(buf), nil
 }
-
-// metaxGetGpuStatus
-// 0: not available
-// 1: available
 
 type metaxGpuBoardWayElectricInfo struct {
 	voltage uint32 // voltage in mV.
@@ -1258,4 +1246,20 @@ func metaxGetDieEccMemoryInfo(gpu, die uint32) (metaxDieEccMemoryInfo, error) {
 		dramUncorrectableErrorsCount: obj.dramUncorrectableErrorsCount,
 		retiredPagesCount:            obj.retiredPagesCount,
 	}, nil
+}
+
+/*
+   Util
+*/
+
+func cString(bs []byte) string {
+	return string(bytes.TrimRight(bs, "\x00"))
+}
+
+func getBitsFromLsbToMsb(x uint64) []uint8 {
+	bits := make([]uint8, 64)
+	for i := 0; i < 64; i++ {
+		bits[i] = uint8((x >> i) & 1)
+	}
+	return bits
 }
