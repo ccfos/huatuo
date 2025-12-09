@@ -15,7 +15,6 @@
 package collector
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1253,7 +1252,12 @@ func metaxGetDieEccMemoryInfo(gpu, die uint32) (metaxDieEccMemoryInfo, error) {
 */
 
 func cString(bs []byte) string {
-	return string(bytes.TrimRight(bs, "\x00"))
+	for i, b := range bs {
+		if b == 0 {
+			return string(bs[:i])
+		}
+	}
+	return string(bs)
 }
 
 func getBitsFromLsbToMsb(x uint64) []uint8 {
