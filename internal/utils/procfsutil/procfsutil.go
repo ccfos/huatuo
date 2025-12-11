@@ -25,18 +25,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// CheckFilesystemSupport checks if the given filesystem is supported.
+// FsSupported checks if the given filesystem is supported.
 // It reads the /proc/filesystems file to determine supported filesystems.
 // Parameters:
 //   - filesystem: the filesystem type to check
 //
 // Returns:
 //   - bool: whether the filesystem is supported
-//   - error: any error encountered
-func CheckFilesystemSupport(filesystem string) (bool, error) {
+func FsSupported(filesystem string) bool {
 	file, err := os.Open("/proc/filesystems")
 	if err != nil {
-		return false, err
+		return false
 	}
 	defer file.Close()
 
@@ -44,11 +43,11 @@ func CheckFilesystemSupport(filesystem string) (bool, error) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.Contains(line, filesystem) {
-			return true, nil
+			return true
 		}
 	}
 
-	return false, scanner.Err()
+	return false
 }
 
 // NetNSInode returns the inode of the network namespace.

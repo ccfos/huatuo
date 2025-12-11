@@ -17,7 +17,7 @@ package main
 // IODataStat represents the statistics of an IO operation,
 // containing a pointer to the IOBpfData and the IO size in bytes.
 type IODataStat struct {
-	Data   *IOBpfData
+	Data   *IOData
 	IOSize uint64
 }
 

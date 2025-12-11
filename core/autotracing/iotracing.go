@@ -18,10 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/prometheus/procfs/blockdevice"
 
 	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
@@ -35,29 +35,26 @@ func init() {
 	tracing.RegisterEventTracing("iotracing", newIoTracing)
 }
 
-var IOstat ioTracing
-
 func newIoTracing() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
-		TracingData: &IOstat,
+		TracingData: &ioTracing{},
 		Interval:    5,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
 
+type ioTracing struct{}
+
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
 
-// IOStatusData the data struct need to upload to es
+// IOStatusData contains IO status information.
 type IOStatusData struct {
-	TriggerType int           `json:"trigger_type"`
-	Reason      string        `json:"reason"`
-	Dev         string        `json:"dev"`
-	Status      IODevStatus   `json:"status"`
-	Pdata       []ProcessData `json:"pdata"`
-	IOStack     []IOStack     `json:"io_stack"`
+	Reason      *ReasonSnapshot `json:"reason"`
+	ProcessData []ProcFileData  `json:"process_io_data"`
+	IOStack     []IOStack       `json:"timeout_io_stack"`
 }
 
-// IOStack record io_schedule backtrace
+// IOStack records io_schedule backtrace.
 type IOStack struct {
 	Pid               uint32       `json:"pid"`
 	Comm              string       `json:"comm"`
@@ -66,8 +63,8 @@ type IOStack struct {
 	Stack             symbol.Stack `json:"stack"`
 }
 
-// ProcessData record same process info
-type ProcessData struct {
+// ProcFileData records process information.
+type ProcFileData struct {
 	Pid               uint32   `json:"pid"`
 	Comm              string   `json:"comm"`
 	ContainerHostname string   `json:"container_hostname"`
@@ -76,234 +73,200 @@ type ProcessData struct {
 	DiskRead          uint64   `json:"disk_read"`
 	DiskWrite         uint64   `json:"disk_write"`
 	FileStat          []string `json:"file_stat"`
-	FileCount         uint32   `json:"file_count"`
+	FileCount         uint64   `json:"file_count"`
 }
 
-// IODevStatus record the io status when the collection is triggered
-type IODevStatus struct {
-	RThroughput uint64 `json:"read_bps"`
-	WThroughput uint64 `json:"write_bps"`
-	Riowait     uint64 `json:"read_iowait"`
-	Wiowait     uint64 `json:"write_iowait"`
-	IOutil      uint64 `json:"io_util"`
-	QueueSize   uint64 `json:"queue_size"`
-	Riops       uint64 `json:"read_iops"`
-	Wiops       uint64 `json:"write_iops"`
+// DiskStatus represents calculated delta metrics
+// Only includes currently used fields; extensible for more
+type DiskStatus struct {
+	ReadBps    uint64 `json:"read_bps"`
+	ReadIOps   uint64 `json:"read_iops"`
+	ReadAwait  uint64 `json:"read_await"`
+	WriteBps   uint64 `json:"write_bps"`
+	WriteIOps  uint64 `json:"write_iops"`
+	WriteAwait uint64 `json:"write_await"`
+	IOutil     uint64 `json:"io_util"`
+	QueueSize  uint64 `json:"queue_size"`
+	// Additional fields can be added as needed
 }
 
-type ioTracing struct {
-	fileAlarmString string
-	esData          IOStatusData
-	config          ioStatConfig
+type ReasonSnapshot struct {
+	Type     string     `json:"type"`
+	Device   string     `json:"device"`
+	Iostatus DiskStatus `json:"iostatus"`
 }
 
-type ioStatConfig struct {
-	readThreshold   uint64
-	writeThreshold  uint64
-	ioutilThreshold uint64
-	iowaitThreshold uint64
-	periodSecond    uint64
+// IoThresholds holds threshold values independently
+type IoThresholds struct {
+	RbpsThreshold  uint64
+	WbpsThreshold  uint64
+	UtilThreshold  uint64
+	AwaitThreshold uint64
+	nvme           bool
 }
 
-// LatencyInfo io latency info
-type LatencyInfo struct {
-	Count  uint64
-	MaxD2C uint64
-	SumD2C uint64
-	MaxQ2C uint64
-	SumQ2C uint64
-}
-
-// IOBpfData bpf data for io_source_map
-type IOBpfData struct {
-	Tgid            uint32
-	Pid             uint32
-	Dev             uint32
-	Flag            uint32
-	FsWriteBytes    uint64
-	FsReadBytes     uint64
-	BlockWriteBytes uint64
-	BlockReadBytes  uint64
-	InodeNum        uint64
-	Blkcg           uint64
-	Latency         LatencyInfo
-	Comm            [16]byte
-	FileName        [64]byte
-	Dentry1Name     [64]byte
-	Dentry2Name     [64]byte
-	Dentry3Name     [64]byte
-}
-
-// IODelayData io schedule info from iodelay_perf_events
-type IODelayData struct {
-	Stack     [symbol.KsymbolStackMinDepth]uint64
-	TimeStamp uint64
-	Cost      uint64
-	StackSize uint32
-	Pid       uint32
-	Tid       uint32
-	CPU       uint32
-	Comm      [16]byte
-}
-
-type ioDevStat struct {
-	dev         string
-	disk        string
-	rios        uint64
-	rsector     uint64
-	rticks      uint64
-	wios        uint64
-	wsector     uint64
-	wticks      uint64
-	ioTicks     uint64
-	timeInQueue uint64
-	_rmerge     uint64
-	_wmerge     uint64
-	_inFlight   uint64
-}
+type thresholdReason int
 
 const (
-	ioTriggerNone = iota
-	ioTriggerUtilFull
-	ioTriggerReadFull
-	ioTriggerWriteFull
-	ioTriggerReadLatency
-	ioTriggerWriteLatency
+	ioReasonNone thresholdReason = iota
+	ioReasonUtil
+	ioReasonReadBps
+	ioReasonWriteBps
+	ioReasonReadAwait
+	ioReasonWriteAwait
 )
 
-func parseDiskStatsData(data []byte) []ioDevStat {
-	var devData []ioDevStat
-	dataSlice := strings.Split(string(data), "\n")
-	for _, str := range dataSlice {
-		var d ioDevStat
-		item := strings.Fields(str)
-		// Kernel 4.18-5.4 has 18 fields, kernel 5.5+ has 20 fields
-		if len(item) != 18 && len(item) != 20 {
-			continue
-		}
-		if strings.HasPrefix(item[2], "md") {
-			continue
-		}
-		d.dev = item[0] + ":" + item[1]
-		d.disk = item[2]
-		d.rios, _ = strconv.ParseUint(item[3], 10, 64)
-		d.rsector, _ = strconv.ParseUint(item[5], 10, 64)
-		d.rticks, _ = strconv.ParseUint(item[6], 10, 64)
-		d.wios, _ = strconv.ParseUint(item[7], 10, 64)
-		d.wsector, _ = strconv.ParseUint(item[9], 10, 64)
-		d.wticks, _ = strconv.ParseUint(item[10], 10, 64)
-		d.ioTicks, _ = strconv.ParseUint(item[12], 10, 64)
-		d.timeInQueue, _ = strconv.ParseUint(item[13], 10, 64)
-		d._inFlight, _ = strconv.ParseUint(item[11], 10, 64)
-		d._rmerge, _ = strconv.ParseUint(item[4], 10, 64)
-		d._wmerge, _ = strconv.ParseUint(item[8], 10, 64)
-		devData = append(devData, d)
+func (threshold thresholdReason) String() string {
+	switch threshold {
+	case ioReasonNone:
+		return "not_threshold"
+	case ioReasonUtil:
+		return "ioutil"
+	case ioReasonReadBps:
+		return "read_bps"
+	case ioReasonWriteBps:
+		return "write_bps"
+	case ioReasonReadAwait:
+		return "read_await"
+	case ioReasonWriteAwait:
+		return "write_await"
+	default:
+		return "unknown"
 	}
-	return devData
 }
 
-// Check I/O status and determine whether I/O field collection needs to be triggered.
-// The data is judged twice, and if both exceed the threshold, it indicates that the abnormal condition
-// lasted for at least 2 seconds. The judging conditions are as follows:
-//
-//	io.util > threshold: If the disk is an nvme disk, the read/write bandwidth is less than 20MB/s,
-//	it is considered an exception, or a large number of I/OS (read >2000MB/s or write >1500MB/s) may occur.
-//	other types of disks are used, data collection is directly triggered.
-//	the I/O latency is determined by checking whether the read/write latency exceeds the threshold
-func checkThreshold(disk string, old, now IODevStatus) (int, string) {
-	if old.IOutil > IOstat.config.ioutilThreshold && now.IOutil > IOstat.config.ioutilThreshold {
-		if strings.HasPrefix(disk, "nvme") {
-			if old.RThroughput > IOstat.config.readThreshold*1024*1024 && now.RThroughput > IOstat.config.readThreshold*1024*1024 {
-				return ioTriggerReadFull, fmt.Sprintf("io.util %d,%d > %d, and read throughput %d > 2000MB/s", old.IOutil, now.IOutil, IOstat.config.ioutilThreshold, now.RThroughput)
+func shouldIoThreshold(prev, curr DiskStatus, thresholds IoThresholds) thresholdReason {
+	if prev.IOutil > thresholds.UtilThreshold &&
+		curr.IOutil > thresholds.UtilThreshold {
+		if thresholds.nvme {
+			// https://man7.org/linux/man-pages/man1/iostat.1.html
+			if prev.ReadBps > thresholds.RbpsThreshold*1024*1024 &&
+				curr.ReadBps > thresholds.RbpsThreshold*1024*1024 {
+				return ioReasonReadBps
 			}
-			if old.WThroughput > IOstat.config.writeThreshold*1024*1024 && now.WThroughput > IOstat.config.writeThreshold*1024*1024 {
-				return ioTriggerWriteFull, fmt.Sprintf("io.util %d,%d > %d, and write throughput %d > 1500MB/s", old.IOutil, now.IOutil, IOstat.config.ioutilThreshold, now.WThroughput)
+			if prev.WriteBps > thresholds.WbpsThreshold*1024*1024 &&
+				curr.WriteBps > thresholds.WbpsThreshold*1024*1024 {
+				return ioReasonWriteBps
 			}
 		} else {
-			return ioTriggerUtilFull, fmt.Sprintf("%s:io.util %d,%d > %d", disk, old.IOutil, now.IOutil, IOstat.config.ioutilThreshold)
+			return ioReasonUtil
 		}
 	}
 
-	if old.Riowait/1000 > IOstat.config.iowaitThreshold && now.Riowait/1000 > IOstat.config.iowaitThreshold {
-		return ioTriggerReadLatency, fmt.Sprintf("read iowait %d,%d > %dms ", old.Riowait/1000, now.Riowait/1000, IOstat.config.iowaitThreshold)
+	if prev.ReadAwait > thresholds.AwaitThreshold &&
+		curr.ReadAwait > thresholds.AwaitThreshold {
+		return ioReasonReadAwait
 	}
-	if old.Wiowait/1000 > IOstat.config.iowaitThreshold && now.Wiowait/1000 > IOstat.config.iowaitThreshold {
-		return ioTriggerWriteLatency, fmt.Sprintf("write iowait %d,%d > %dms ", old.Wiowait/1000, now.Wiowait/1000, IOstat.config.iowaitThreshold)
+
+	if prev.WriteAwait > thresholds.AwaitThreshold &&
+		curr.WriteAwait > thresholds.AwaitThreshold {
+		return ioReasonWriteAwait
 	}
-	return ioTriggerNone, ""
+
+	return ioReasonNone
 }
 
-func detectDiskStats(ctx context.Context) error {
-	lastDevIOData := make(map[string]ioDevStat)
-	lastDevIOStatus := make(map[string]IODevStatus)
-	ticker := time.NewTicker(1 * time.Second)
+func ReadDiskStats() ([]blockdevice.Diskstats, error) {
+	fs, err := blockdevice.NewDefaultFS()
+	if err != nil {
+		return nil, err
+	}
+
+	return fs.ProcDiskstats()
+}
+
+// blockdevice.Diskstats is heavy (168 bytes); consider passing it by pointer
+func buildDiskMetric(prev, curr *blockdevice.Diskstats, intervalSeconds uint64) DiskStatus {
+	deltaReadIOs := curr.ReadIOs - prev.ReadIOs
+	deltaWriteIOs := curr.WriteIOs - prev.WriteIOs
+
+	metrics := DiskStatus{
+		IOutil:    (curr.IOsTotalTicks - prev.IOsTotalTicks) / (intervalSeconds * 10),
+		QueueSize: (curr.WeightedIOTicks - prev.WeightedIOTicks) / (intervalSeconds * 1000),
+		ReadBps:   ((curr.ReadSectors - prev.ReadSectors) * 512) / intervalSeconds,
+		WriteBps:  ((curr.WriteSectors - prev.WriteSectors) * 512) / intervalSeconds,
+		ReadIOps:  deltaReadIOs / intervalSeconds,
+		WriteIOps: deltaWriteIOs / intervalSeconds,
+	}
+
+	if deltaReadIOs > 0 {
+		// milliseconds
+		metrics.ReadAwait = (curr.ReadTicks - prev.ReadTicks) / deltaReadIOs
+	}
+	if deltaWriteIOs > 0 {
+		metrics.WriteAwait = (curr.WriteTicks - prev.WriteTicks) / deltaWriteIOs
+	}
+
+	return metrics
+}
+
+func waittingDiskEvents(ctx context.Context, intervalSeconds uint64, thresholds IoThresholds) (*ReasonSnapshot, error) {
+	lastRawStats := make(map[string]*blockdevice.Diskstats)
+	lastMetrics := make(map[string]DiskStatus)
+	ticker := time.NewTicker(time.Duration(int64(intervalSeconds)) * time.Second)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return types.ErrExitByCancelCtx
+			return nil, types.ErrExitByCancelCtx
 		case <-ticker.C:
-			diskStats, err := os.ReadFile("/proc/diskstats")
+			currentRawStats, err := ReadDiskStats()
 			if err != nil {
-				return err
+				return nil, err
 			}
 
-			devIOData := parseDiskStatsData(diskStats)
-			for _, data := range devIOData {
-				if old, ok := lastDevIOData[data.dev]; ok {
-					var status IODevStatus
-					status.Riops = data.rios - old.rios
-					status.Wiops = data.wios - old.wios
-					if status.Riops > 0 {
-						status.Riowait = (data.rticks - old.rticks) * 1000 / status.Riops // us
-					}
-					if status.Wiops > 0 {
-						status.Wiowait = (data.wticks - old.wticks) * 1000 / status.Wiops
-					}
-					status.RThroughput = (data.rsector - old.rsector) * 512
-					status.WThroughput = (data.wsector - old.wsector) * 512
-					status.IOutil = 100 * (data.ioTicks - old.ioTicks) / 1000            // time period 1000ms
-					status.QueueSize = 100 * (data.timeInQueue - old.timeInQueue) / 1000 // aqu-sz*100
+			for i := range currentRawStats {
+				// ignore each iteration copies 168 bytes
+				curr := &currentRawStats[i]
 
-					tType, reason := checkThreshold(data.disk, lastDevIOStatus[data.dev], status)
-					if tType != ioTriggerNone {
-						IOstat.esData.TriggerType = tType
-						IOstat.esData.Reason = fmt.Sprintf("[%s %s]: %s", data.disk, data.dev, reason)
-						IOstat.esData.Dev = data.disk + " " + data.dev
-						IOstat.esData.Status = status
-						IOstat.fileAlarmString = fmt.Sprintf("#iotracer# dev=[%s %s] reason=[%s] r=%dbytes/s w=%dbytes/s r.iowait=%dus w.iowait=%dus io.util=%d aqu-sz=%d\n",
-							data.disk, data.dev, reason, status.RThroughput, status.WThroughput, status.Riowait, status.Wiowait, status.IOutil, status.QueueSize)
-						return nil
-					}
-					lastDevIOStatus[data.dev] = status
+				if strings.HasPrefix(curr.DeviceName, "md") {
+					continue
 				}
-				lastDevIOData[data.dev] = data
+
+				if prev, ok := lastRawStats[curr.DeviceName]; ok {
+					metric := buildDiskMetric(prev, curr, intervalSeconds)
+
+					log.Debugf("%s ioutils: %d, avgqu-sz: %d, rkB/s: %d, wkB/s: %d, r/s: %d, w/s: %d, r_awaitt: %d, w_await: %d",
+						curr.DeviceName, metric.IOutil, metric.QueueSize,
+						metric.ReadBps/1024, metric.WriteBps/1024,
+						metric.ReadIOps, metric.WriteIOps,
+						metric.ReadAwait, metric.WriteAwait)
+
+					thresholds.nvme = strings.HasPrefix(curr.DeviceName, "nvme")
+					reasonType := shouldIoThreshold(lastMetrics[curr.DeviceName], metric, thresholds)
+					if reasonType != ioReasonNone {
+						return &ReasonSnapshot{
+							Type:     reasonType.String(),
+							Device:   curr.DeviceName,
+							Iostatus: metric,
+						}, nil
+					}
+
+					lastMetrics[curr.DeviceName] = metric
+				}
+
+				// store the pointers
+				lastRawStats[curr.DeviceName] = curr
 			}
 		}
 	}
 }
 
-func loadConfig() {
-	IOstat.config.ioutilThreshold = conf.Get().AutoTracing.IOTracing.UtilThreshold
-	IOstat.config.iowaitThreshold = conf.Get().AutoTracing.IOTracing.WaitThreshold
-	IOstat.config.readThreshold = conf.Get().AutoTracing.IOTracing.ReadThreshold
-	IOstat.config.writeThreshold = conf.Get().AutoTracing.IOTracing.WriteThreshold
-
-	IOstat.config.periodSecond = conf.Get().AutoTracing.IOTracing.PeriodSecond
-	if IOstat.config.periodSecond == 0 {
-		IOstat.config.periodSecond = 10
+// Start do the io tracer work
+func (c *ioTracing) Start(ctx context.Context) error {
+	thresholds := IoThresholds{
+		RbpsThreshold:  conf.Get().AutoTracing.IOTracing.RbpsThreshold,
+		WbpsThreshold:  conf.Get().AutoTracing.IOTracing.WbpsThreshold,
+		UtilThreshold:  conf.Get().AutoTracing.IOTracing.UtilThreshold,
+		AwaitThreshold: conf.Get().AutoTracing.IOTracing.AwaitThreshold,
 	}
-	IOstat.esData = IOStatusData{}
-	log.Debugf("iotracer.config: %+v\n", IOstat.config)
-}
 
-func startIOTracerWork(ctx context.Context) error {
-	loadConfig()
-
-	// Detect the I/O status and determine whether data collection is required
-	if err := detectDiskStats(ctx); err != nil {
+	reasonSnapshot, err := waittingDiskEvents(ctx, 5, thresholds)
+	if err != nil {
 		return err
 	}
+
+	log.Debugf("wait disk events with reason snapshot: %+v", reasonSnapshot)
 
 	taskID := tracing.NewTask("iotracing", 40*time.Second, tracing.TaskStorageStdout, []string{"--json"})
 
@@ -313,36 +276,27 @@ func startIOTracerWork(ctx context.Context) error {
 			return types.ErrExitByCancelCtx
 		case <-time.After(1 * time.Second):
 			result := tracing.Result(taskID)
-			if result.TaskStatus == tracing.StatusCompleted {
+
+			log.Debugf("tracing tool result: %+v", result)
+
+			switch result.TaskStatus {
+			case tracing.StatusCompleted:
 				if result.TaskErr != nil {
-					return fmt.Errorf("task error: %w", result.TaskErr)
+					return result.TaskErr
 				}
-				var ioStatusData IOStatusData
-				err := json.Unmarshal(result.TaskData, &ioStatusData)
-				if err != nil {
+
+				ioStatusData := IOStatusData{
+					Reason: reasonSnapshot,
+				}
+				if err := json.Unmarshal(result.TaskData, &ioStatusData); err != nil {
 					return fmt.Errorf("failed to unmarshal ioStatusData: %w", err)
 				}
-				submitData(&ioStatusData)
-				return nil
-			}
 
-			if result.TaskStatus == tracing.StatusFailed {
-				return fmt.Errorf("task failed: %w", result.TaskErr)
+				storage.Save("iotracing", "", time.Now(), &ioStatusData)
+				return nil
+			case tracing.StatusFailed:
+				return result.TaskErr
 			}
 		}
 	}
-}
-
-func submitData(ioStatusData *IOStatusData) {
-	IOstat.esData.Pdata = ioStatusData.Pdata
-	IOstat.esData.IOStack = ioStatusData.IOStack
-
-	log.Info(IOstat.fileAlarmString)
-	log.Debugf("submitData: %+v\n", IOstat.esData)
-	storage.Save("iotracer", "", time.Now(), &IOstat.esData)
-}
-
-// Start do the io tracer work
-func (c *ioTracing) Start(ctx context.Context) error {
-	return startIOTracerWork(ctx)
 }

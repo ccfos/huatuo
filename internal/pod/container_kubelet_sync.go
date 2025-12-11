@@ -46,7 +46,11 @@ var (
 	kubeletTimeTicker            *time.Ticker
 	kubeletDoneCancel            context.CancelFunc
 	kubeletPodCgroupDriver       = "cgroupfs"
-	kubeletDefaultConfigPath     = []string{"/var/lib/kubelet/config.yaml", "/var/lib/kubelet/ack-managed-config.yaml"}
+	kubeletDefaultConfigPath     = []string{
+		"/var/lib/kubelet/config.yaml",
+		"/var/lib/kubelet/ack-managed-config.yaml",
+		"/host/etc/kubernetes/kubelet/config.json",
+	}
 )
 
 type PodContainerInitCtx struct {
