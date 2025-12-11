@@ -10,12 +10,20 @@ APP_COMMIT ?= $(shell git describe --dirty --long --always)
 APP_BUILD_TIME=$(shell date "+%Y%m%d%H%M%S")
 APP_VERSION="2.1.0"
 
-GO_BUILD_STATIC := CGO_ENABLED=1 $(GO) build -tags "netgo osusergo" -gcflags=all="-N -l" \
+GO_BUILD_STATIC := CGO_ENABLED=0 $(GO) build \
+	-tags "netgo osusergo staticbuild" \
+	-gcflags=all="-N -l" \
 	-ldflags "-extldflags -static
-GO_BUILD_STATIC_WITH_VERSION := $(GO_BUILD_STATIC) \
+# as static as possible
+GO_BUILD_SHARED := CGO_ENABLED=1 $(GO) build \
+	-tags "netgo osusergo" \
+	-gcflags=all="-N -l" \
+	-ldflags "
+WITH_VERSION := \
 	-X main.AppVersion=$(APP_VERSION) \
 	-X main.AppGitCommit=$(APP_COMMIT) \
 	-X main.AppBuildTime=$(APP_BUILD_TIME)"
+BUILD_CMD := $(GO_BUILD_STATIC) $(WITH_VERSION)
 
 all: gen sync build
 
@@ -39,7 +47,10 @@ sync:
 
 build: $(APP_CMD_BIN_TARGETS)
 $(APP_CMD_OUTPUT)/bin/%: $(APP_CMD_DIR)/% CMD_FORCE
-	$(GO_BUILD_STATIC_WITH_VERSION) -o $@ ./$<
+	$(BUILD_CMD) -o $@ ./$<
+
+build-shared: BUILD_CMD := $(GO_BUILD_SHARED) $(WITH_VERSION)
+build-shared: build
 
 CMD_FORCE:;
 
@@ -65,4 +76,4 @@ vendor:
 clean:
 	rm -rf _output $(shell find . -type f -name "*.o")
 
-.PHONY: all gen-deps gen sync build check imports golint fmt golangci-lint vendor clean CMD_FORCE
+.PHONY: all gen-deps gen sync build build-shared check imports golint fmt golangci-lint vendor clean CMD_FORCE
