@@ -1,0 +1,2 @@
+bpf/include/vmlinux_arm64.h linguist-vendored
+bpf/include/vmlinux_x86.h linguist-vendored
