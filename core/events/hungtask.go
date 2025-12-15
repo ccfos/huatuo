@@ -73,7 +73,7 @@ func newHungTask() (*tracing.EventTracingAttr, error) {
 			},
 			backoff: bo,
 		},
-		Internal: 10,
+		Interval: 10,
 		Flag:     tracing.FlagMetric | tracing.FlagTracing,
 	}, nil
 }

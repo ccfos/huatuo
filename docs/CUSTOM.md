@@ -69,7 +69,7 @@ func init() {
 func newExample() (*tracing.EventTracingAttr, error) {
     return &tracing.EventTracingAttr{
         TracingData: &exampleTracing{},
-        Internal:    10, // Interval for enable tracing again (in seconds)
+        Interval:    10, // Interval for enable tracing again (in seconds)
         Flag:        tracing.FlagTracing, // mark as tracing type
     }, nil
 }

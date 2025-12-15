@@ -45,7 +45,7 @@ func NewTracingEvent(tracing *EventTracingAttr, name string) *EventTracing {
 	return &EventTracing{
 		ic:       tracing.TracingData.(ITracingEvent),
 		name:     name,
-		interval: tracing.Internal,
+		interval: tracing.Interval,
 		flag:     tracing.Flag,
 	}
 }

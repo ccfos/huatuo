@@ -1526,12 +1526,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
       ],
-      "title": "iotracer",
+      "title": "iotracing",
       "transformations": [
         {
           "id": "organize",
@@ -2136,7 +2136,7 @@
           "timeField": "uploaded_time"
         },
         {
-          "alias": "iotracer",
+          "alias": "iotracing",
           "bucketAggs": [
             {
               "field": "uploaded_time",
@@ -2158,7 +2158,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
           "refId": "G",
           "timeField": "uploaded_time"
         },
@@ -5685,7 +5685,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "title": "iotracer阈值说明",
+          "title": "iotracing 阈值说明",
           "transparent": true,
           "type": "text"
         },
@@ -5756,12 +5756,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "iotracer",
+          "title": "iotracing",
           "transformations": [
             {
               "id": "organize",
@@ -5896,12 +5896,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "iotracer",
+          "title": "iotracing",
           "transformations": [
             {
               "id": "organize",
@@ -6038,12 +6038,12 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "iotracer",
+          "title": "iotracing",
           "transformations": [
             {
               "id": "organize",
@@ -6137,12 +6137,12 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "iotracer",
+          "title": "iotracing",
           "transformations": [
             {
               "id": "organize",
@@ -6186,7 +6186,7 @@
           "type": "logs"
         }
       ],
-      "title": "iotracer",
+      "title": "iotracing",
       "type": "row"
     },
     {

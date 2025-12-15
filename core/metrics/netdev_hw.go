@@ -97,7 +97,7 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 			ifaceList:           ifaceIndex,
 			ifaceSwDropCounters: make(map[string]uint64),
 		},
-		Internal: 10,
+		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }

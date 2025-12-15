@@ -36,7 +36,7 @@ func init() {
 		ForceQuote:      true,
 		FullTimestamp:   true,
 		TimestampFormat: rfc3339NanoFixed,
-		DisableSorting:  true,
+		DisableSorting:  false,
 	})
 
 	logger.SetOutput(os.Stdout)

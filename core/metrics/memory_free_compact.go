@@ -38,7 +38,7 @@ func newMemoryHost() (*tracing.EventTracingAttr, error) {
 	}
 	return &tracing.EventTracingAttr{
 		TracingData: mm,
-		Internal:    10,
+		Interval:    10,
 		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }

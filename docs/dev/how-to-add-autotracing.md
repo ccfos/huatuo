@@ -34,7 +34,7 @@ func init() {
 func newExample() (*tracing.EventTracingAttr, error) {
     return &tracing.EventTracingAttr{
         TracingData: &exampleTracing{},
-        Internal:    10, // Interval in seconds before re-enabling tracing
+        Interval:    10, // Interval in seconds before re-enabling tracing
         Flag:        tracing.FlagTracing, // Mark as tracing type; | tracing.FlagMetric (optional)
     }, nil
 }

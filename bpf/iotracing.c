@@ -10,8 +10,9 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define PAGE_SIZE 4096
 
 // Device filter configuration
-volatile const u32 FILTER_DEVS[16] = {};  // Device array for filtering, 0 means no filter
-volatile const u32 FILTER_DEV_COUNT = 0; // Number of devices to filter
+volatile const u32 FILTER_DEVS[16] = {};
+volatile const u32 FILTER_DEV_COUNT = 0;
+volatile const u64 FILTER_EVENT_TIMEOUT = 100000000;
 
 /*
  * Check if device should be filtered
@@ -355,26 +356,14 @@ static __always_inline  int bpf_file_read_write(struct pt_regs *ctx)
 	return 0;
 }
 
-SEC("kprobe/xfs_file_read_iter")
-int bpf_xfs_file_read_iter(struct pt_regs *ctx)
+SEC("kprobe/anyfs_file_read_iter")
+int bpf_anyfs_file_read_iter(struct pt_regs *ctx)
 {
 	return bpf_file_read_write(ctx);
 }
 
-SEC("kprobe/xfs_file_write_iter")
-int bpf_xfs_file_write_iter(struct pt_regs *ctx)
-{
-	return bpf_file_read_write(ctx);
-}
-
-SEC("kprobe/ext4_file_read_iter")
-int bpf_ext4_file_read_iter(struct pt_regs *ctx)
-{
-	return bpf_file_read_write(ctx);
-}
-
-SEC("kprobe/ext4_file_write_iter")
-int bpf_ext4_file_write_iter(struct pt_regs *ctx)
+SEC("kprobe/anyfs_file_write_iter")
+int bpf_anyfs_file_write_iter(struct pt_regs *ctx)
 {
 	return bpf_file_read_write(ctx);
 }
@@ -416,18 +405,11 @@ static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 
 	return 0;
 }
-SEC("kprobe/xfs_filemap_page_mkwrite")
-int bpf_xfs_filemap_page_mkwrite(struct pt_regs *ctx)
+SEC("kprobe/anyfs_filemap_page_mkwrite")
+int bpf_anyfs_filemap_page_mkwrite(struct pt_regs *ctx)
 {
 	return bpf_filemap_page_mkwrite(ctx);
 }
-
-SEC("kprobe/ext4_page_mkwrite")
-int bpf_ext4_page_mkwrite(struct pt_regs *ctx)
-{
-	return bpf_filemap_page_mkwrite(ctx);
-}
-
 
 SEC("kprobe/filemap_fault")
 int bpf_filemap_fault(struct pt_regs *ctx)
@@ -531,8 +513,7 @@ static __always_inline  int detect_io_schedule_return(struct pt_regs *ctx)
 	if (!entry)
 		return 0;
 
-	/* slow io latency at least 100ms */
-	if (now - entry->ts > 100 * 1000 * 1000) {
+	if (now - entry->ts > FILTER_EVENT_TIMEOUT) {
 		entry->pid = (id >> 32) & 0xffffffff;
 		entry->tid = pid;
 		entry->cost = now - entry->ts;

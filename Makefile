@@ -17,7 +17,7 @@ GO_BUILD_STATIC_WITH_VERSION := $(GO_BUILD_STATIC) \
 	-X main.AppGitCommit=$(APP_COMMIT) \
 	-X main.AppBuildTime=$(APP_BUILD_TIME)"
 
-all: gen-deps gen sync build
+all: gen sync build
 
 gen-deps:
 	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest

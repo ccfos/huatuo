@@ -33,7 +33,7 @@ func init() {
 func newMemoryCgroup() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &memoryCgroup{},
-		Internal:    10,
+		Interval:    10,
 		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }

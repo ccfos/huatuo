@@ -22,7 +22,6 @@ import (
 	"os"
 	"path"
 	"sync"
-	"time"
 
 	"huatuo-bamai/internal/rotator"
 )
@@ -46,6 +45,21 @@ func newLocalFileStorage(path string, maxRotation, rotationSize int) (*localFile
 	}, nil
 }
 
+// Write the document data into local file.
+func (f *localFileStorage) Write(doc *document) error {
+	buffer := &bytes.Buffer{}
+	encoder := json.NewEncoder(buffer)
+
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "\t")
+
+	if err := encoder.Encode(doc); err != nil {
+		return fmt.Errorf("json Marshal by %s: %w", doc.TracerName, err)
+	}
+
+	return f.write(doc.TracerName, buffer.Bytes())
+}
+
 // newFileWriter create a file rotator
 func (f *localFileStorage) newFileWriter(filename string) io.Writer {
 	filepath := path.Join(f.localPath, filename)
@@ -60,8 +74,8 @@ func (f *localFileStorage) newFileWriter(filename string) io.Writer {
 	return f.files[filename]
 }
 
-func (f *localFileStorage) fileWriter(tracerName string) io.Writer {
-	if writer, ok := f.files[tracerName]; ok {
+func (f *localFileStorage) fileWriterByName(name string) io.Writer {
+	if writer, ok := f.files[name]; ok {
 		return writer
 	}
 
@@ -72,65 +86,10 @@ func (f *localFileStorage) fileWriter(tracerName string) io.Writer {
 		_ = os.MkdirAll(f.localPath, 0o755)
 	}
 
-	return f.newFileWriter(tracerName)
+	return f.newFileWriter(name)
 }
 
-func (f *localFileStorage) write(tracerName string, content []byte) error {
-	_, err := f.fileWriter(tracerName).Write(content)
+func (f *localFileStorage) write(name string, content []byte) error {
+	_, err := f.fileWriterByName(name).Write(content)
 	return err
-}
-
-// writeTitle writes the title into the tracerName file.
-func (f *localFileStorage) writeTitle(tracerName string, doc *document) error {
-	str := fmt.Sprintf("%s Host=%s Region=%s ", time.Now().Format("2006-01-02 15:04:05"), doc.Hostname, doc.Region)
-
-	// container
-	if doc.ContainerID != "" {
-		str += fmt.Sprintf("ContainerHost=%s ContainerID=%s ContainerType=%s ContainerLevel=%s ", doc.ContainerHostname,
-			doc.ContainerID, doc.ContainerType, doc.ContainerQos)
-	}
-
-	return f.write(tracerName, []byte(str+"\n"))
-}
-
-// writeDocument writes the details into the tracerName file.
-func (f *localFileStorage) writeDocument(tracerName string, doc *document) error {
-	buffer := &bytes.Buffer{}
-	encoder := json.NewEncoder(buffer)
-
-	// disable escapeHTML
-	encoder.SetEscapeHTML(false)
-	// indent
-	encoder.SetIndent("", "  ")
-
-	// encode
-	if err := encoder.Encode(doc); err != nil {
-		return fmt.Errorf("json Marshal by %s: %w", tracerName, err)
-	}
-
-	// write
-	return f.write(tracerName, buffer.Bytes())
-}
-
-// Write the data into local file.
-//
-// The datas format:
-//
-//	<title>
-//	<document>
-//
-// The title format:
-//
-//	<Time> Host=<Host> Region=<Region> ContainerHost=<Container Hostname> ContainerID=<Container ID>
-//		ContainerType=<Container Type> ContainerLevel=<Container Level>
-func (f *localFileStorage) Write(doc *document) error {
-	tracerName := doc.TracerName
-
-	// write title.
-	if err := f.writeTitle(tracerName, doc); err != nil {
-		return err
-	}
-
-	// write document.
-	return f.writeDocument(tracerName, doc)
 }

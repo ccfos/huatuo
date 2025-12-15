@@ -51,7 +51,7 @@ func init() {
 func newMemoryReclaim() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &memoryReclaimTracing{},
-		Internal:    5,
+		Interval:    5,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }

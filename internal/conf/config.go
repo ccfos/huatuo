@@ -97,15 +97,13 @@ type CommonConf struct {
 		}
 
 		IOTracing struct {
-			SchedThreshold        uint64
-			ReadThreshold         uint64
-			WriteThreshold        uint64
-			UtilThreshold         uint64
-			WaitThreshold         uint64
-			PeriodSecond          uint64
-			CallStackMaxDepth     int
-			DumpProcessMaxNum     int
-			DumpFilePerProcMaxNum int
+			RbpsThreshold       uint64 `default:"2000"`
+			WbpsThreshold       uint64 `default:"1500"`
+			UtilThreshold       uint64 `default:"90"`
+			AwaitThreshold      uint64 `default:"100"`
+			RunIOTracingTimeout uint64 `default:"10"`
+			MaxProcDump         int    `default:"10"`
+			MaxFilesPerProcDump int    `default:"5"`
 		}
 
 		MemoryBurst struct {
