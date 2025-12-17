@@ -1,23 +1,21 @@
+# basic image
 FROM golang:1.23.0-alpine AS base
-RUN apk add --no-cache make clang15 libbpf-dev bpftool \
-                       curl git binutils-gold musl-dev
-
+RUN apk add --no-cache make clang15 libbpf-dev bpftool curl git
 ENV PATH=$PATH:/usr/lib/llvm15/bin
 
-# build huatuo components
+# build huatuo
 FROM base AS build
-ARG BUILD_PATH=${BUILD_PATH:-/go/huatuo-bamai}
-ARG RUN_PATH=${RUN_PATH:-/home/huatuo-bamai}
+ARG BUILD_PATH="/go/huatuo-bamai"
+ARG RUN_PATH="/home/huatuo-bamai"
 WORKDIR ${BUILD_PATH}
 COPY . .
 RUN make && mkdir -p ${RUN_PATH} && cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/
-
-# disable ES in huatuo-bamai.conf
+# disable es in huatuo-bamai.conf
 RUN sed -i 's/"http:\/\/127.0.0.1:9200"/""/' ${RUN_PATH}/conf/huatuo-bamai.conf
 
-# final public image
+# release huatuo
 FROM alpine:3.22.0 AS run
-ARG RUN_PATH=${RUN_PATH:-/home/huatuo-bamai}
+ARG RUN_PATH="/home/huatuo-bamai"
 RUN apk add --no-cache curl
 COPY --from=build ${RUN_PATH} ${RUN_PATH}
 WORKDIR ${RUN_PATH}

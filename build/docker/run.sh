@@ -1,4 +1,19 @@
 #!/bin/sh
+#
+# Copyright 2025 The HuaTuo Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 
 ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-localhost}
 ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-huatuo-bamai}
@@ -7,7 +22,23 @@ RUN_PATH=${RUN_PATH:-/home/huatuo-bamai}
 
 # Wait for Elasticsearch to be ready
 wait_for_elasticsearch() {
-    args="-s -D- -m15 -w '%{http_code}' http://${ELASTICSEARCH_HOST}:9200/"
+    target_url="http://${ELASTICSEARCH_HOST}:9200/"
+
+    # Try to extract Elasticsearch address from config file
+    if [ -f "huatuo-bamai.conf" ]; then
+        # Extract Address from [Storage.ES] section
+        # sed: range from [Storage.ES] to next section start [
+        # grep: find Address line
+        # awk: extract text between double quotes
+        conf_addr=$(sed -n '/\[Storage\.ES\]/,/\[.*\]/p' huatuo-bamai.conf | grep '^[[:space:]]*Address' | head -n 1 | awk -F'"' '{print $2}')
+        
+        if [ -n "$conf_addr" ]; then
+            echo "Found Elasticsearch address in config: $conf_addr"
+            target_url="${conf_addr}/"
+        fi
+    fi
+
+    args="-s -D- -m15 -w '%{http_code}' ${target_url}"
     if [ -n "${ELASTIC_PASSWORD}" ]; then
         args="$args -u elastic:${ELASTIC_PASSWORD}"
     fi

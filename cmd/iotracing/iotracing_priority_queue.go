@@ -14,6 +14,10 @@
 
 package main
 
+import (
+	"container/heap"
+)
+
 // IODataStat represents the statistics of an IO operation,
 // containing a pointer to the IOBpfData and the IO size in bytes.
 type IODataStat struct {
@@ -53,4 +57,26 @@ func (pq *PriorityQueue) Pop() any {
 	item := old[n-1]
 	*pq = old[0 : n-1]
 	return item
+}
+
+type FileTable struct {
+	data map[uint32]*PriorityQueue
+}
+
+func NewFileTable() *FileTable {
+	return &FileTable{
+		data: make(map[uint32]*PriorityQueue),
+	}
+}
+
+func (f *FileTable) Update(key uint32, item *IODataStat) {
+	if _, ok := f.data[key]; !ok {
+		f.data[key] = &PriorityQueue{}
+	}
+
+	heap.Push(f.data[key], item)
+}
+
+func (f *FileTable) QueueByKey(key uint32) *PriorityQueue {
+	return f.data[key]
 }
