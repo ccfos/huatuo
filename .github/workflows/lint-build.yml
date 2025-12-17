@@ -1,0 +1,40 @@
+name: Lint & Build
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint-build:
+    name: Lint & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker Image (only for lint-build)
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile.devel
+          push: false
+          load: true
+          tags: huatuo-dev:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Do Lint & Check Build
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            huatuo-dev:latest \
+            sh -c "git config --global --add safe.directory /workspace && make gen && make --trace check && make build"
