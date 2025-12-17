@@ -12,8 +12,10 @@ WORKDIR ${BUILD_PATH}
 COPY . .
 RUN make && mkdir -p ${RUN_PATH} && cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/
 
-# disable ES in huatuo-bamai.conf
-RUN sed -i 's/"http:\/\/127.0.0.1:9200"/""/' ${RUN_PATH}/conf/huatuo-bamai.conf
+# disable ES and kubelet fetching pods in huatuo-bamai.conf
+RUN sed -i -e 's/# Address.*/Address=""/g' \
+  -e '$a\    KubeletReadOnlyPort=0' \
+  -e '$a\    KubeletAuthorizedPort=0' huatuo-bamai.conf
 
 # final public image
 FROM alpine:3.22.0 AS run
