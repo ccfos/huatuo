@@ -23,9 +23,6 @@ IMAGE_LATEST := huatuo/huatuo-bamai:latest
 
 all: gen sync build
 
-gen-deps:
-	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-
 gen:
 	@BPF_DIR=$(BPF_DIR) BPF_COMPILE=$(BPF_COMPILE) BPF_INCLUDE=$(BPF_INCLUDE) go generate -x ./...
 
@@ -46,7 +43,7 @@ docker-build:
 docker-clean:
 	@docker rmi $(IMAGE_LATEST) || true
 
-check: gen-deps imports fmt golangci-lint
+check: imports fmt golangci-lint
 
 imports:
 	@goimports -w -local huatuo-bamai  $(shell find . -type f -name '*.go' -not -path "./vendor/*")
@@ -66,4 +63,4 @@ vendor:
 clean:
 	rm -rf _output $(shell find . -type f -name "*.o")
 
-.PHONY: all gen-deps gen sync build check imports golint fmt golangci-lint vendor clean CMD_FORCE docker-build docker-clean
+.PHONY: all gen sync build check imports golint fmt golangci-lint vendor clean CMD_FORCE docker-build docker-clean
