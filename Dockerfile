@@ -1,6 +1,7 @@
 # basic image
 FROM golang:1.23.0-alpine AS base
-RUN apk add --no-cache make clang15 libbpf-dev bpftool curl git
+# RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+RUN apk add --no-cache make clang15 libbpf-dev curl git
 ENV PATH=$PATH:/usr/lib/llvm15/bin
 
 # build huatuo
@@ -10,8 +11,10 @@ ARG RUN_PATH="/home/huatuo-bamai"
 WORKDIR ${BUILD_PATH}
 COPY . .
 RUN make && mkdir -p ${RUN_PATH} && cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/
-# disable es in huatuo-bamai.conf
-RUN sed -i 's/"http:\/\/127.0.0.1:9200"/""/' ${RUN_PATH}/conf/huatuo-bamai.conf
+# disable es and kubelet fetching pods in huatuo-bamai.conf
+RUN sed -i -e 's/# Address.*/Address=""/g' \
+  -e '$a\    KubeletReadOnlyPort=0' \
+  -e '$a\    KubeletAuthorizedPort=0' ${RUN_PATH}/conf/huatuo-bamai.conf
 
 # release huatuo
 FROM alpine:3.22.0 AS run
