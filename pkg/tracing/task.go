@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"os/exec"
+	"path"
 	"sync"
 	"time"
 
@@ -150,7 +151,7 @@ func runTask(ctx context.Context, task *task) {
 	task.status = StatusRunning
 	log.Infof("task %s %s started", task.execBinary, task.id)
 
-	cmd := exec.CommandContext(ctx, task.execBinary, task.execArgs...)
+	cmd := exec.CommandContext(ctx, path.Join(TaskBinDir, task.execBinary), task.execArgs...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		task.status = StatusFailed
