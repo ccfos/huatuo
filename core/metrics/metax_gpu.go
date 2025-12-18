@@ -58,7 +58,7 @@ func (m *metaxGpuCollector) Update() ([]*metric.Data, error) {
 	if err != nil {
 		var smlError *metaxSmlError
 		if errors.As(err, &smlError) {
-			log.Errorf("re-init sml and retrying because sml error: %v", err)
+			log.Errorf("re-initing sml and retrying because sml error: %v", err)
 
 			if err := metaxInitSml(); err != nil {
 				return nil, fmt.Errorf("failed to re-init sml: %v", err)
