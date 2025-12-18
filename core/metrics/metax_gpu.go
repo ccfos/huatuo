@@ -54,7 +54,23 @@ func newMetaxGpuCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (m *metaxGpuCollector) Update() ([]*metric.Data, error) {
-	return metaxCollectMetrics(context.Background())
+	metrics, err := metaxCollectMetrics(context.Background())
+	if err != nil {
+		var smlError *metaxSmlError
+		if errors.As(err, &smlError) {
+			log.Errorf("re-init sml and retrying because sml error: %v", err)
+
+			if err := metaxInitSml(); err != nil {
+				return nil, fmt.Errorf("failed to re-init sml: %v", err)
+			}
+
+			return metaxCollectMetrics(context.Background())
+		}
+
+		return nil, err
+	}
+
+	return metrics, nil
 }
 
 func metaxCollectMetrics(ctx context.Context) ([]*metric.Data, error) {
@@ -632,24 +648,38 @@ const (
 	metaxSmlReturnCodeOperationNotSupported
 )
 
-var metaxSmlOperationNotSupportedErr = errors.New("sml operation not supported on specified device")
-
-func metaxIsSmlOperationNotSupportedError(err error) bool {
-	return errors.Is(err, metaxSmlOperationNotSupportedErr)
-}
-
 func metaxGetSmlReturnCodeDescription(returnCode metaxSmlReturnCode) string {
 	return mxSmlGetErrorString(returnCode)
 }
 
+type metaxSmlError struct {
+	operation string
+	code      metaxSmlReturnCode
+	message   string
+}
+
+func (e *metaxSmlError) Error() string {
+	return fmt.Sprintf("%s failed: %s", e.operation, e.message)
+}
+
+func metaxIsSmlOperationNotSupportedError(err error) bool {
+	var smlError *metaxSmlError
+	if errors.As(err, &smlError) {
+		return smlError.code == metaxSmlReturnCodeOperationNotSupported
+	}
+
+	return false
+}
+
 func metaxCheckSmlReturnCode(operation string, returnCode metaxSmlReturnCode) error {
-	switch returnCode {
-	case metaxSmlReturnCodeSuccess:
+	if returnCode == metaxSmlReturnCodeSuccess {
 		return nil
-	case metaxSmlReturnCodeOperationNotSupported:
-		return metaxSmlOperationNotSupportedErr
-	default:
-		return fmt.Errorf("%s failed: %s", operation, metaxGetSmlReturnCodeDescription(returnCode))
+	}
+
+	return &metaxSmlError{
+		operation: operation,
+		code:      returnCode,
+		message:   metaxGetSmlReturnCodeDescription(returnCode),
 	}
 }
 
