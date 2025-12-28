@@ -1,0 +1,115 @@
+name: Arch & Kernel Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # Build amd64/arm64 artifacts
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64] # arm64 too slow
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (only needed for arm64)
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build compile image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.devel
+          load: true
+          platforms: linux/${{ matrix.arch }}
+          tags: huatuo-build:${{ matrix.arch }}
+
+      - name: Compile in container
+        run: |
+          mkdir -p _output/${{ matrix.arch }}
+          docker run --rm \
+            -v "${{ github.workspace }}:/huatuo-src:ro" \
+            -v "${{ github.workspace }}/_output/${{ matrix.arch }}:/_output" \
+            -w /workspace \
+            huatuo-build:${{ matrix.arch }} \
+            sh -c "cp -r /huatuo-src/* . \
+              && make clean && make --trace \
+              && mv _output/* /_output/"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: output-${{ matrix.arch }}
+          path: _output/${{ matrix.arch }}
+
+
+  # Test for supported arch & kernel
+  test:
+    name: Test
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+        kernel: # https://quay.io/repository/lvh-images/kind?tab=tags
+          - 4.19-20251222.013332
+          - 5.4-20251222.013332
+          - 5.10-20251222.013332
+          - 5.15-20251222.013332
+          - 6.6-20251222.013332
+          - 6.12-20251222.013332
+        include: # arm64 too slow (cpu cannot host-passthrough)
+          - arch: arm64
+            kernel: 6.12-20250616.013250
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v6
+        with:
+          name: output-${{ matrix.arch }}
+          path: _output/${{ matrix.arch }}
+
+      - name: Derive kernel # for arm64, otherwise "find: ‘/kernels/arm64//boot/’: No such file or directory"
+        id: kernel
+        run: |
+          if [[ "${{ matrix.arch }}" == "arm64" ]]; then
+            echo "kernel-version=${{ matrix.kernel }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "kernel-version=" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Provision LVH VM
+        uses: cilium/little-vm-helper@v0.0.28
+        with:
+          image: kind # https://quay.io/organization/lvh-images
+          arch: ${{ matrix.arch }}
+          image-version: ${{ matrix.kernel }}
+          kernel-version: ${{ steps.kernel.outputs.kernel-version }}
+          install-dependencies: true
+          cpu-kind: ''
+          host-mount: ./
+          mem: 4G
+          cpu: 2
+          test-name: huatuo-run
+          cmd: |
+            echo "================ Test in VM [$(uname -a)] ================"
+            bash -c "/host/build/ci/test-in-vm.sh ${{ matrix.arch }}"

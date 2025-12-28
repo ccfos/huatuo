@@ -1,7 +1,7 @@
 FROM golang:1.23.0-alpine AS base
 # RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 RUN apk add --no-cache make clang15 libbpf-dev curl git \
-    musl-dev # for golangci-lint
+    musl-dev binutils-gold # for golangci-lint
 
 ENV GOPATH="/go"
 ENV GOROOT="/usr/local/go"
