@@ -54,7 +54,7 @@ $ docker compose --project-directory ./build/docker up
 为隔离开发者本地环境和简化编译流程，我们提供容器化编译方式，你可以直接通过 docker build，构建完成的镜像（包含底层采集器 huatuo-bamai、bpf obj、工具等）。在项目根目录运行：
 
 ```bash
-$ docker build --network host -t huatuo/huatuo-bamai:latest .
+$ docker build --target run --network host -t huatuo/huatuo-bamai:latest .
 ```
 
 ### 3.2 运行

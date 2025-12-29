@@ -54,7 +54,7 @@ This command pulls the latest images and starts components including [elasticsea
 To isolate the developer's local environment and simplify the compilation process, we provide containerized compilation. You can directly use docker build to construct the completed image (including the underlying collector huatuo-bamai, BPF objects, tools, etc.). Run the following command in the project root directory:
 
 ```bash
-$ docker build --network host -t huatuo/huatuo-bamai:latest .
+$ docker build --target run --network host -t huatuo/huatuo-bamai:latest .
 ```
 
 ### 3.2 Execution

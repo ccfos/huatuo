@@ -33,7 +33,8 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile.devel
+          file: Dockerfile
+          target: base
           load: true
           platforms: linux/${{ matrix.arch }}
           tags: huatuo-build:${{ matrix.arch }}
