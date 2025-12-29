@@ -90,17 +90,17 @@ func metaxCollectMetrics(ctx context.Context) ([]*metric.Data, error) {
 		)
 	}
 
-	var gpus []int
+	var gpus []uint32
 
 	// Native and VF GPUs
-	nativeAndVfGpuCount := int(metaxGetNativeAndVfGpuCount())
-	for i := 0; i < nativeAndVfGpuCount; i++ {
+	nativeAndVfGpuCount := metaxGetNativeAndVfGpuCount()
+	for i := uint32(0); i < nativeAndVfGpuCount; i++ {
 		gpus = append(gpus, i)
 	}
 
 	// PF GPUs
-	pfGpuCount := int(metaxGetPfGpuCount())
-	const pfGpuIndexOffset = 100
+	pfGpuCount := metaxGetPfGpuCount()
+	const pfGpuIndexOffset = uint32(100)
 	for i := pfGpuIndexOffset; i < pfGpuIndexOffset+pfGpuCount; i++ {
 		gpus = append(gpus, i)
 	}
@@ -108,7 +108,7 @@ func metaxCollectMetrics(ctx context.Context) ([]*metric.Data, error) {
 	// Driver version
 	if len(gpus) > 0 {
 		operationGetDriverVersion := "get driver version"
-		if driverVersion, err := metaxGetGpuVersion(ctx, uint32(gpus[0]), metaxSmlDeviceVersionUnitDriver); metaxIsSmlOperationNotSupportedError(err) {
+		if driverVersion, err := metaxGetGpuVersion(ctx, gpus[0], metaxSmlDeviceVersionUnitDriver); metaxIsSmlOperationNotSupportedError(err) {
 			log.Debugf("operation %s not supported on gpu 0", operationGetDriverVersion)
 		} else if err != nil {
 			return nil, fmt.Errorf("failed to %s: %w", operationGetDriverVersion, err)
@@ -126,7 +126,7 @@ func metaxCollectMetrics(ctx context.Context) ([]*metric.Data, error) {
 	var mu sync.Mutex
 	for _, gpu := range gpus {
 		eg.Go(func() error {
-			gpuMetrics, err := metaxCollectGpuMetrics(subCtx, uint32(gpu))
+			gpuMetrics, err := metaxCollectGpuMetrics(subCtx, gpu)
 			if err != nil {
 				return fmt.Errorf("failed to collect gpu %d metrics: %w", gpu, err)
 			}
@@ -310,9 +310,9 @@ func metaxCollectGpuMetrics(ctx context.Context, gpu uint32) ([]*metric.Data, er
 	// Die
 	eg, subCtx := errgroup.WithContext(ctx)
 	var mu sync.Mutex
-	for die := 0; die < int(gpuInfo.dieCount); die++ {
+	for die := uint32(0); die < gpuInfo.dieCount; die++ {
 		eg.Go(func() error {
-			dieMetrics, err := metaxCollectDieMetrics(subCtx, gpu, uint32(die), gpuInfo.series)
+			dieMetrics, err := metaxCollectDieMetrics(subCtx, gpu, die, gpuInfo.series)
 			if err != nil {
 				return fmt.Errorf("failed to collect die %d metrics: %w", die, err)
 			}
@@ -469,14 +469,15 @@ func metaxCollectDieMetrics(ctx context.Context, gpu, die uint32, series metaxGp
 		bits := getBitsFromLsbToMsb(clocksThrottleStatus)
 
 		for i, v := range bits {
+			if v == 0 {
+				// Metrics are not exported when not throttling.
+				continue
+			}
+
 			bit := i + 1
 
 			if _, ok := metaxGpuClocksThrottleBitReasonMap[bit]; !ok {
-				break
-			}
-
-			if v == 0 {
-				// Metrics are not exported when not throttling.
+				log.Warnf("gpu %d die %d is clocks throttling for unknown reason bit %d", gpu, die, bit)
 				continue
 			}
 
@@ -571,8 +572,8 @@ var (
 	mxSmlGetMetaXLinkTrafficStat           func(uint32, metaxSmlMetaxlinkType, *uint32, *metaxSmlMetaxlinkTrafficStat) metaxSmlReturnCode
 	mxSmlGetMetaXLinkAer                   func(uint32, *uint32, *metaxSmlMetaxlinkAer) metaxSmlReturnCode
 	mxSmlGetDieUnavailableReason           func(uint32, uint32, *metaxSmlDeviceUnavailableReasonInfo) metaxSmlReturnCode
-	mxSmlGetDieTemperatureInfo             func(uint32, uint32, metaxSmlTemperatureSensor, *int) metaxSmlReturnCode
-	mxSmlGetDieIpUsage                     func(uint32, uint32, metaxSmlUsageIp, *int) metaxSmlReturnCode
+	mxSmlGetDieTemperatureInfo             func(uint32, uint32, metaxSmlTemperatureSensor, *int32) metaxSmlReturnCode
+	mxSmlGetDieIpUsage                     func(uint32, uint32, metaxSmlUsageIp, *int32) metaxSmlReturnCode
 	mxSmlGetDieMemoryInfo                  func(uint32, uint32, *metaxSmlMemoryInfo) metaxSmlReturnCode
 	mxSmlGetDieClocks                      func(uint32, uint32, metaxSmlClockIp, *uint32, *uint32) metaxSmlReturnCode
 	mxSmlGetDieCurrentClocksThrottleReason func(uint32, uint32, *uint64) metaxSmlReturnCode
@@ -937,8 +938,8 @@ func metaxGetGpuPcieLinkInfo(ctx context.Context, gpu uint32) (metaxGpuPcieLinkI
 }
 
 type metaxGpuPcieThroughputInfo struct {
-	receiveRate  int // receiveRate in MB/s.
-	transmitRate int // transmitRate in MB/s.
+	receiveRate  int32 // receiveRate in MB/s.
+	transmitRate int32 // transmitRate in MB/s.
 }
 
 type metaxSmlPcieThroughput metaxGpuPcieThroughputInfo
@@ -1010,8 +1011,8 @@ func metaxListGpuMetaxlinkLinkInfos(ctx context.Context, gpu uint32) ([]metaxGpu
 }
 
 type metaxGpuMetaxlinkThroughputInfo struct {
-	receiveRate  int // receiveRate in MB/s.
-	transmitRate int // transmitRate in MB/s.
+	receiveRate  int32 // receiveRate in MB/s.
+	transmitRate int32 // transmitRate in MB/s.
 }
 
 func metaxListGpuMetaxlinkThroughputInfos(ctx context.Context, gpu uint32) ([]metaxGpuMetaxlinkThroughputInfo, error) {
@@ -1050,11 +1051,11 @@ func metaxListGpuMetaxlinkThroughputInfos(ctx context.Context, gpu uint32) ([]me
 }
 
 type metaxSmlMetaXLinkBandwidth struct {
-	requestBandwidth  int // requestBandwidth in MB/s.
-	responseBandwidth int // responseBandwidth in MB/s.
+	requestBandwidth  int32 // requestBandwidth in MB/s.
+	responseBandwidth int32 // responseBandwidth in MB/s.
 }
 
-func metaxListGpuMetaxlinkThroughputParts(ctx context.Context, gpu uint32, typ metaxSmlMetaxlinkType) ([]int, error) {
+func metaxListGpuMetaxlinkThroughputParts(ctx context.Context, gpu uint32, typ metaxSmlMetaxlinkType) ([]int32, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -1070,7 +1071,7 @@ func metaxListGpuMetaxlinkThroughputParts(ctx context.Context, gpu uint32, typ m
 	}
 
 	actualSize := int(size)
-	result := make([]int, actualSize)
+	result := make([]int32, actualSize)
 
 	for i := 0; i < actualSize; i++ {
 		result[i] = arr[i].requestBandwidth
@@ -1150,8 +1151,8 @@ func metaxListGpuMetaxlinkTrafficStatParts(ctx context.Context, gpu uint32, typ 
 }
 
 type metaxGpuMetaxlinkAerErrorsInfo struct {
-	correctableErrorsCount   int
-	uncorrectableErrorsCount int
+	correctableErrorsCount   int32
+	uncorrectableErrorsCount int32
 }
 
 type metaxSmlMetaxlinkAer metaxGpuMetaxlinkAerErrorsInfo
@@ -1189,11 +1190,11 @@ func metaxListGpuMetaxlinkAerErrorsInfos(ctx context.Context, gpu uint32) ([]met
 */
 
 type metaxSmlDeviceUnavailableReasonInfo struct {
-	unavailableCode   int
+	unavailableCode   int32
 	unavailableReason [64]byte
 }
 
-func metaxGetDieStatus(ctx context.Context, gpu, die uint32) (int, error) {
+func metaxGetDieStatus(ctx context.Context, gpu, die uint32) (int32, error) {
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
@@ -1222,7 +1223,7 @@ func metaxGetDieTemperature(ctx context.Context, gpu, die uint32, sensor metaxSm
 	default:
 	}
 
-	var value int
+	var value int32
 	if err := metaxCheckSmlReturnCode("mxSmlGetDieTemperatureInfo", mxSmlGetDieTemperatureInfo(gpu, die, sensor, &value)); err != nil {
 		return 0, err
 	}
@@ -1241,14 +1242,14 @@ const (
 )
 
 // metaxGetDieUtilization in [0, 100].
-func metaxGetDieUtilization(ctx context.Context, gpu, die uint32, ip metaxSmlUsageIp) (int, error) {
+func metaxGetDieUtilization(ctx context.Context, gpu, die uint32, ip metaxSmlUsageIp) (int32, error) {
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	default:
 	}
 
-	var value int
+	var value int32
 	if err := metaxCheckSmlReturnCode("mxSmlGetDieIpUsage", mxSmlGetDieIpUsage(gpu, die, ip, &value)); err != nil {
 		return 0, err
 	}
@@ -1430,8 +1431,9 @@ func cString(bs []byte) string {
 }
 
 func getBitsFromLsbToMsb(x uint64) []uint8 {
-	bits := make([]uint8, 64)
-	for i := 0; i < 64; i++ {
+	size := 64
+	bits := make([]uint8, size)
+	for i := 0; i < size; i++ {
 		bits[i] = uint8((x >> i) & 1)
 	}
 	return bits
