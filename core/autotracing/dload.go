@@ -43,7 +43,7 @@ func init() {
 func newDload() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &dloadTracing{},
-		Internal:    30,
+		Interval:    30,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
@@ -68,7 +68,7 @@ type DloadTracingData struct {
 	NrIoWait          uint64  `json:"nr_iowait"`
 	LoadAvg           float64 `json:"load_avg"`
 	DLoadAvg          float64 `json:"dload_avg"`
-	KnowIssue         string  `json:"known_issue"`
+	KnownIssue        string  `json:"known_issue"`
 	InKnownList       uint64  `json:"in_known_list"`
 	Stack             string  `json:"stack"`
 }
@@ -85,7 +85,7 @@ type containersDloadMap map[string]*containerDloadInfo
 var containersDloads = make(containersDloadMap)
 
 func updateContainersDload() error {
-	containers, err := pod.GetAllContainers()
+	containers, err := pod.Containers()
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func detectDloadContainer(thresh float64, interval int) (*containerDloadInfo, ca
 
 			timeStart := dload.container.StartedAt.Add(time.Second * time.Duration(interval))
 			if time.Now().Before(timeStart) {
-				log.Debugf("%s were just started, we'll start monitoring it later.", dload.container.Hostname)
+				log.Debugf("%s was just started, we'll start monitoring it later.", dload.container.Hostname)
 				continue
 			}
 
@@ -185,10 +185,10 @@ func buildAndSaveDloadContainer(thresh float64, container *containerDloadInfo, l
 	// Check if this is caused by known issues.
 	knownIssue, inKnownList := conf.KnownIssueSearch(stackCgrp, containerHostNamespace, "")
 	if knownIssue != "" {
-		data.KnowIssue = knownIssue
+		data.KnownIssue = knownIssue
 		data.InKnownList = inKnownList
 	} else {
-		data.KnowIssue = "none"
+		data.KnownIssue = "none"
 		data.InKnownList = inKnownList
 	}
 
@@ -341,8 +341,8 @@ type dloadTracing struct{}
 
 // Start detect work, monitor the load of containers
 func (c *dloadTracing) Start(ctx context.Context) error {
-	thresh := conf.Get().Tracing.Dload.ThresholdLoad
-	interval := conf.Get().Tracing.Dload.MonitorGap
+	thresh := conf.Get().AutoTracing.Dload.ThresholdLoad
+	interval := conf.Get().AutoTracing.Dload.MonitorGap
 
 	for {
 		select {

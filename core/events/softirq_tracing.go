@@ -26,6 +26,7 @@ import (
 	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
@@ -62,13 +63,13 @@ func init() {
 func newSoftirq() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &softirqTracing{},
-		Internal:    10,
+		Interval:    10,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
 
 func (c *softirqTracing) Start(ctx context.Context) error {
-	softirqThresh := conf.Get().Tracing.Softirq.ThresholdTime
+	softirqThresh := conf.Get().EventTracing.Softirq.DisabledThreshold
 
 	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), map[string]any{"softirq_thresh": softirqThresh})
 	if err != nil {
@@ -101,7 +102,7 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 			if err := reader.ReadInto(&data); err != nil {
 				return fmt.Errorf("Read From Perf Event fail: %w", err)
 			}
-			comm := fmt.Sprintf("%s", data.Comm)
+			comm := bytesutil.ToString(data.Comm[:])
 			index := strings.Index(comm, "ksoftirqd")
 
 			if index == 0 {
@@ -124,7 +125,7 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 			storage.Save("softirq_tracing", "", time.Now(), &SoftirqTracingData{
 				OffTime:   data.StallTime,
 				Threshold: softirqThresh,
-				Comm:      strings.TrimRight(comm, "\x00"),
+				Comm:      comm,
 				Pid:       data.Pid,
 				CPU:       data.CPU,
 				Now:       data.Now,

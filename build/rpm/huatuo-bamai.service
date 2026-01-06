@@ -1,0 +1,39 @@
+[Unit]
+Description=Huatuo Bamai - Cloud-native OS Observability Service
+Documentation=https://huatuo.tech/
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/huatuo-bamai
+ExecStart=/opt/huatuo-bamai/bin/huatuo-bamai --region example --config huatuo-bamai.conf
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=huatuo-bamai
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/log /var/lib/huatuo-bamai /var/run /tmp
+ProtectHome=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=32768
+
+# Disable cgroup resource management
+Delegate=yes
+MemoryAccounting=false
+CPUAccounting=false
+BlockIOAccounting=false
+TasksAccounting=false
+
+[Install]
+WantedBy=multi-user.target

@@ -67,8 +67,8 @@ func newVMStatCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *vmStatCollector) Update() ([]*metric.Data, error) {
-	filter := newFieldFilter(conf.Get().MetricCollector.Vmstat.ExcludedMetrics,
-		conf.Get().MetricCollector.Vmstat.IncludedMetrics)
+	filter := newFieldFilter(conf.Get().MetricCollector.Vmstat.Excluded,
+		conf.Get().MetricCollector.Vmstat.Included)
 
 	file, err := os.Open("/proc/vmstat")
 	if err != nil {

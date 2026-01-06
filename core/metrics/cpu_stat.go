@@ -143,7 +143,7 @@ func (c *cpuStatCollector) cpuMetricUpdate(cpu *cpuStat, container *pod.Containe
 func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 	metrics := []*metric.Data{}
 
-	containers, err := pod.GetContainersByType(pod.ContainerTypeNormal | pod.ContainerTypeSidecar)
+	containers, err := pod.ContainersByType(pod.ContainerTypeNormal | pod.ContainerTypeSidecar)
 	if err != nil {
 		return nil, err
 	}

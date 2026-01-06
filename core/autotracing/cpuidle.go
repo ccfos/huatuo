@@ -21,6 +21,7 @@ import (
 	"math"
 	"os/exec"
 	"path"
+	"runtime"
 	"strconv"
 	"time"
 
@@ -46,7 +47,7 @@ func newCPUIdle() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuIdleTracing{},
-		Internal:    20,
+		Interval:    20,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
@@ -87,7 +88,7 @@ type containersCPUIdleMap map[string]*containerCPUInfo
 var containersCPUIdle = make(containersCPUIdleMap)
 
 func updateContainersCPUIdle() error {
-	containers, err := pod.GetNormalContainers()
+	containers, err := pod.NormalContainers()
 	if err != nil {
 		return err
 	}
@@ -155,12 +156,14 @@ func updateContainerCpuUsage(container *containerCPUInfo) error {
 		return err
 	}
 
-	if cpuQuotaPeriod.Quota == math.MaxUint64 {
-		return fmt.Errorf("cpu too large")
+	var cpuCores int64
+	if cpuQuotaPeriod.Quota == math.MaxUint64 { // no limit
+		cpuCores = int64(runtime.NumCPU())
+	} else {
+		cpuCores = int64(cpuQuotaPeriod.Quota / cpuQuotaPeriod.Period)
 	}
 
-	cpuCores := int64(cpuQuotaPeriod.Quota / cpuQuotaPeriod.Period)
-	if cpuCores == 0 {
+	if cpuCores <= 0 {
 		return fmt.Errorf("cpu too small")
 	}
 
@@ -186,11 +189,11 @@ func updateContainerCpuUsage(container *containerCPUInfo) error {
 		return fmt.Errorf("cpu usage no changed")
 	}
 
-	updateElasped := time.Since(container.updateTime).Microseconds()
+	updateElapsed := time.Since(container.updateTime).Microseconds()
 
-	container.nowUsagePercentage.user = 100 * delta.user / updateElasped / cpuCores
-	container.nowUsagePercentage.sys = 100 * delta.sys / updateElasped / cpuCores
-	container.nowUsagePercentage.total = 100 * delta.total / updateElasped / cpuCores
+	container.nowUsagePercentage.user = 100 * delta.user / updateElapsed / cpuCores
+	container.nowUsagePercentage.sys = 100 * delta.sys / updateElapsed / cpuCores
+	container.nowUsagePercentage.total = 100 * delta.total / updateElapsed / cpuCores
 
 	if container.prevUsagePercentage == (cpuStats{}) {
 		container.prevUsagePercentage = container.nowUsagePercentage
@@ -279,17 +282,17 @@ type CPUIdleTracingData struct {
 }
 
 func (c *cpuIdleTracing) Start(ctx context.Context) error {
-	interval := conf.Get().Tracing.CPUIdle.Interval
-	perfRunTimeOut := conf.Get().Tracing.CPUIdle.PerfRunTimeOut
+	interval := conf.Get().AutoTracing.CPUIdle.Interval
+	perfRunTimeOut := conf.Get().AutoTracing.CPUIdle.PerfRunTimeOut
 
 	threshold := &cpuIdleThreshold{
-		deltaUser:              conf.Get().Tracing.CPUIdle.DeltaUserThreshold,
-		deltaSys:               conf.Get().Tracing.CPUIdle.DeltaSysThreshold,
-		deltaTotal:             conf.Get().Tracing.CPUIdle.DeltaUsageThreshold,
-		usageUser:              conf.Get().Tracing.CPUIdle.UserThreshold,
-		usageSys:               conf.Get().Tracing.CPUIdle.SysThreshold,
-		usageTotal:             conf.Get().Tracing.CPUIdle.UsageThreshold,
-		intervalContinuousPerf: conf.Get().Tracing.CPUIdle.IntervalContinuousPerf,
+		deltaUser:              conf.Get().AutoTracing.CPUIdle.DeltaUserThreshold,
+		deltaSys:               conf.Get().AutoTracing.CPUIdle.DeltaSysThreshold,
+		deltaTotal:             conf.Get().AutoTracing.CPUIdle.DeltaUsageThreshold,
+		usageUser:              conf.Get().AutoTracing.CPUIdle.UserThreshold,
+		usageSys:               conf.Get().AutoTracing.CPUIdle.SysThreshold,
+		usageTotal:             conf.Get().AutoTracing.CPUIdle.UsageThreshold,
+		intervalContinuousPerf: conf.Get().AutoTracing.CPUIdle.IntervalContinuousRun,
 	}
 
 	for {

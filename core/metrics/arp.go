@@ -86,10 +86,27 @@ func parseNetstatCache(filePath string) (NetStat, error) {
 	return netStat, nil
 }
 
-func (c *arpCollector) Update() ([]*metric.Data, error) {
-	arpMetric := []*metric.Data{}
+func (c *arpCollector) updateHostArp() []*metric.Data {
+	count, err := fileLineCounter("/proc/1/net/arp")
+	if err != nil {
+		return nil
+	}
 
-	containers, err := pod.GetNormalContainers()
+	stat, err := parseNetstatCache(arpCachePath)
+	if err != nil {
+		return nil
+	}
+
+	c.metric[0].Value = float64(count - 1)
+	c.metric[1].Value = float64(stat.Stats["entries"])
+
+	return c.metric
+}
+
+func (c *arpCollector) Update() ([]*metric.Data, error) {
+	data := []*metric.Data{}
+
+	containers, err := pod.NormalContainers()
 	if err != nil {
 		return nil, fmt.Errorf("GetNormalContainers: %w", err)
 	}
@@ -100,22 +117,8 @@ func (c *arpCollector) Update() ([]*metric.Data, error) {
 			return nil, err
 		}
 
-		arpMetric = append(arpMetric, metric.NewContainerGaugeData(container, "entries", float64(count-1), "arp for container and host", nil))
+		data = append(data, metric.NewContainerGaugeData(container, "entries", float64(count-1), "arp for container and host", nil))
 	}
 
-	count, err := fileLineCounter("/proc/1/net/arp")
-	if err != nil {
-		return nil, err
-	}
-
-	stat, err := parseNetstatCache(arpCachePath)
-	if err != nil {
-		return nil, err
-	}
-
-	c.metric[0].Value = float64(count - 1)
-	c.metric[1].Value = float64(stat.Stats["entries"])
-
-	arpMetric = append(arpMetric, c.metric...)
-	return arpMetric, nil
+	return append(data, c.updateHostArp()...), nil
 }

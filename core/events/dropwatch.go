@@ -26,6 +26,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/netutil"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -113,7 +114,7 @@ func init() {
 func newDropWatch() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &dropWatchTracing{},
-		Internal:    10,
+		Interval:    10,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
@@ -164,8 +165,8 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 
 func (c *dropWatchTracing) formatEvent(event *perfEventT) *DropWatchTracingData {
 	// hostname
-	saddr := netutil.InetNtop(event.Saddr).String()
-	daddr := netutil.InetNtop(event.Daddr).String()
+	saddr := netutil.Inetv4Ntop(event.Saddr).String()
+	daddr := netutil.Inetv4Ntop(event.Daddr).String()
 	srcHostname := "<nil>"
 	destHostname := "<nil>"
 	h, err := net.LookupAddr(saddr)
@@ -184,16 +185,16 @@ func (c *dropWatchTracing) formatEvent(event *perfEventT) *DropWatchTracingData 
 	// tracer data
 	data := &DropWatchTracingData{
 		Type:          typeMap[event.Type],
-		Comm:          strings.TrimRight(string(event.Comm[:]), "\x00"),
+		Comm:          bytesutil.ToString(event.Comm[:]),
 		Pid:           event.TgidPid >> 32,
 		Saddr:         saddr,
 		Daddr:         daddr,
-		Sport:         netutil.InetNtohs(event.Sport),
-		Dport:         netutil.InetNtohs(event.Dport),
+		Sport:         netutil.Ntohs(event.Sport),
+		Dport:         netutil.Ntohs(event.Dport),
 		SrcHostname:   srcHostname,
 		DestHostname:  destHostname,
-		Seq:           netutil.InetNtohl(event.Seq),
-		AckSeq:        netutil.InetNtohl(event.AckSeq),
+		Seq:           netutil.Ntohl(event.Seq),
+		AckSeq:        netutil.Ntohl(event.AckSeq),
 		QueueMapping:  event.QueueMapping,
 		PktLen:        event.PktLen,
 		State:         tcpstateMap[event.State],
@@ -226,7 +227,7 @@ func (c *dropWatchTracing) ignore(data *DropWatchTracingData) bool {
 	// 3. neigh_invalidate/ffffffff96d388b0
 	// 4. neigh_timer_handler/ffffffff96d3a870
 	// 5. ...
-	if conf.Get().Tracing.Dropwatch.IgnoreNeighInvalidate {
+	if conf.Get().EventTracing.Dropwatch.ExcludedNeighInvalidate {
 		if len(stack) >= 3 && strings.HasPrefix(stack[2], "neigh_invalidate/") {
 			return true
 		}

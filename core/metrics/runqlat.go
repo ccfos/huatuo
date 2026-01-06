@@ -43,7 +43,7 @@ func newRunqlatCollector() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: collector,
-		Internal:    10,
+		Interval:    10,
 		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }
@@ -55,7 +55,7 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 		return nil, nil
 	}
 
-	containers, err := pod.GetContainersByType(pod.ContainerTypeNormal)
+	containers, err := pod.ContainersByType(pod.ContainerTypeNormal)
 	if err != nil {
 		return nil, err
 	}

@@ -18,12 +18,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kmsgutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
@@ -48,14 +48,14 @@ type HungTaskTracerData struct {
 
 type hungTaskTracing struct {
 	data            []*metric.Data
-	bo              *backoff.Backoff
+	backoff         *backoff.Backoff
 	nextAllowedTime time.Time
 }
 
 func init() {
-	// Some OS distributions such as Fedora-42 may disable this feature.
-	hungTaskSysctl := "/proc/sys/kernel/hung_task_timeout_secs"
-	if _, err := os.Stat(hungTaskSysctl); err != nil {
+	// OS such as Fedora-42 may disable this feature.
+	sysctl := "/proc/sys/kernel/hung_task_timeout_secs"
+	if _, err := os.Stat(sysctl); err != nil {
 		return
 	}
 
@@ -65,14 +65,15 @@ func init() {
 func newHungTask() (*tracing.EventTracingAttr, error) {
 	bo := backoff.NewWithoutJitter(3*time.Hour, 10*time.Minute)
 	bo.SetDecay(1 * time.Hour)
+
 	return &tracing.EventTracingAttr{
 		TracingData: &hungTaskTracing{
 			data: []*metric.Data{
-				metric.NewGaugeData("counter", 0, "hungtask counter", nil),
+				metric.NewCounterData("total", 0, "hungtask counter", nil),
 			},
-			bo: bo,
+			backoff: bo,
 		},
-		Internal: 10,
+		Interval: 10,
 		Flag:     tracing.FlagMetric | tracing.FlagTracing,
 	}, nil
 }
@@ -119,7 +120,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			c.nextAllowedTime = now.Add(c.bo.Duration())
+			c.nextAllowedTime = now.Add(c.backoff.Duration())
 
 			cpusBT, err := kmsgutil.GetAllCPUsBT()
 			if err != nil {
@@ -133,7 +134,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 
 			storage.Save("hungtask", "", time.Now(), &HungTaskTracerData{
 				Pid:                   data.Pid,
-				Comm:                  strings.TrimRight(string(data.Comm[:]), "\x00"),
+				Comm:                  bytesutil.ToString(data.Comm[:]),
 				CPUsStack:             cpusBT,
 				BlockedProcessesStack: blockedProcessesBT,
 			})

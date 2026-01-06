@@ -1,0 +1,53 @@
+name: Bug 反馈
+description: 应用崩溃或异常，或者某些地方不符合预期。
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢对项目的支持与关注!
+  - type: checkboxes
+    attributes:
+      label: 这个问题是否已经存在？
+      options:
+        - label: 我已经搜索过[现有的问题](https://github.com/ccfos/huatuo/issues)
+          required: true
+  - type: textarea
+    attributes:
+      label: 部署环境
+      description: 请详细描述部署环境，如内核版本、架构、操作系统、HUATUO 版本或者 commit-id 等
+      placeholder: |
+        内核版本：...
+        OS 发行版：...
+        HUATUO 版本：...
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 如何复现
+      description: 请详细告诉我们复现方法，如涉及代码，可提供一个最小代码示例，并使用反引号```附上它
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 修复建议或方案
+      description: 如果必要，可提供可能的修复办法，如涉及代码，可提供一个最小代码示例，并使用反引号```附上它
+      placeholder: |
+        修复建议或方案 ...
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: 其他
+      description: 其他描述，如涉及代码，可提供一个最小代码示例，并使用反引号```附上它
+      placeholder: |
+        其他 ...
+    validations:
+      required: false
+    validations:
+      required: false

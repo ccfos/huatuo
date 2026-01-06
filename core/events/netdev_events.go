@@ -27,6 +27,7 @@ import (
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 
+	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -68,23 +69,33 @@ func flags2status(flags, change uint32) []linkStatusType {
 	return status
 }
 
+type netdevInfo struct {
+	flags           uint32
+	driver          string
+	driverVersion   string
+	firmwareVersion string
+}
+
 type netdevTracing struct {
-	name                      string
-	linkUpdateCh              chan netlink.LinkUpdate
-	linkDoneCh                chan struct{}
-	mu                        sync.Mutex
-	ifFlagsMap                map[string]uint32                 // [ifname]ifinfomsg::if_flags
-	metricsLinkStatusCountMap map[linkStatusType]map[string]int // [netdevEventType][ifname]count
+	name                  string
+	linkUpdateCh          chan netlink.LinkUpdate
+	linkDoneCh            chan struct{}
+	mu                    sync.Mutex
+	netdevInfoStore       map[string]*netdevInfo            // [ifname]ifinfomsg::netdevInfo
+	linkStatusEventCounts map[linkStatusType]map[string]int // [netdevEventType][ifname]count
 }
 
 type netdevEventData struct {
-	linkFlags   uint32
-	flagsChange uint32
-	Ifname      string `json:"ifname"`
-	Index       int    `json:"index"`
-	LinkStatus  string `json:"linkstatus"`
-	Mac         string `json:"mac"`
-	AtStart     bool   `json:"start"` // true: be scanned at start, false: event trigger
+	linkFlags       uint32
+	flagsChange     uint32
+	Ifname          string `json:"ifname"`
+	Index           int    `json:"index"`
+	LinkStatus      string `json:"linkstatus"`
+	Mac             string `json:"mac"`
+	AtStart         bool   `json:"start"` // true: be scanned at start, false: event trigger
+	Driver          string `json:"driver"`
+	DriverVersion   string `json:"driver_version"`
+	FirmwareVersion string `json:"firmware_version"`
 }
 
 func init() {
@@ -99,29 +110,29 @@ func newNetdevTracing() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: &netdevTracing{
-			linkUpdateCh:              make(chan netlink.LinkUpdate),
-			linkDoneCh:                make(chan struct{}),
-			ifFlagsMap:                make(map[string]uint32),
-			metricsLinkStatusCountMap: initMap,
-			name:                      "netdev_events",
+			linkUpdateCh:          make(chan netlink.LinkUpdate),
+			linkDoneCh:            make(chan struct{}),
+			netdevInfoStore:       make(map[string]*netdevInfo),
+			linkStatusEventCounts: initMap,
+			name:                  "netdev_events",
 		},
-		Internal: 10,
+		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }
 
-func (nt *netdevTracing) Start(ctx context.Context) (err error) {
-	if err := nt.checkLinkStatus(); err != nil {
+func (netdev *netdevTracing) Start(ctx context.Context) (err error) {
+	if err := netdev.checkAndInitLinkStatus(); err != nil {
 		return err
 	}
 
-	if err := netlink.LinkSubscribe(nt.linkUpdateCh, nt.linkDoneCh); err != nil {
+	if err := netlink.LinkSubscribe(netdev.linkUpdateCh, netdev.linkDoneCh); err != nil {
 		return err
 	}
-	defer nt.close()
+	defer netdev.close()
 
 	for {
-		update, ok := <-nt.linkUpdateCh
+		update, ok := <-netdev.linkUpdateCh
 		if !ok {
 			return nil
 		}
@@ -130,66 +141,91 @@ func (nt *netdevTracing) Start(ctx context.Context) (err error) {
 			return fmt.Errorf("NLMSG_ERROR")
 		case unix.RTM_NEWLINK:
 			ifname := update.Link.Attrs().Name
-			if _, ok := nt.ifFlagsMap[ifname]; !ok {
+			if _, ok := netdev.netdevInfoStore[ifname]; !ok {
 				// new interface
 				continue
 			}
-			nt.handleEvent(&update)
+			netdev.handleEvent(&update)
 		}
 	}
 }
 
 // Update implement Collector
-func (nt *netdevTracing) Update() ([]*metric.Data, error) {
-	nt.mu.Lock()
-	defer nt.mu.Unlock()
+func (netdev *netdevTracing) Update() ([]*metric.Data, error) {
+	netdev.mu.Lock()
+	defer netdev.mu.Unlock()
 
 	var metrics []*metric.Data
 
-	for typ, value := range nt.metricsLinkStatusCountMap {
+	for typ, value := range netdev.linkStatusEventCounts {
 		for ifname, count := range value {
-			metrics = append(metrics, metric.NewGaugeData(
-				typ.String(), float64(count), typ.String(), map[string]string{"device": ifname}))
+			metrics = append(metrics, metric.NewCounterData(
+				typ.String()+"_total", float64(count), typ.String(),
+				map[string]string{
+					"device":           ifname,
+					"driver":           netdev.netdevInfoStore[ifname].driver,
+					"driver_version":   netdev.netdevInfoStore[ifname].driverVersion,
+					"firmware_version": netdev.netdevInfoStore[ifname].firmwareVersion,
+				}))
 		}
 	}
 
 	return metrics, nil
 }
 
-func (nt *netdevTracing) checkLinkStatus() error {
+func (netdev *netdevTracing) checkAndInitLinkStatus() error {
 	links, err := netlink.LinkList()
 	if err != nil {
 		return err
 	}
 
+	eth, err := ethtool.NewEthtool()
+	if err != nil {
+		return err
+	}
+	defer eth.Close()
+
 	for _, link := range links {
 		ifname := link.Attrs().Name
-		if !slices.Contains(conf.Get().Tracing.Netdev.Whitelist,
+		if !slices.Contains(conf.Get().EventTracing.Netdev.DeviceList,
 			ifname) {
 			continue
 		}
 
+		drvInfo, err := eth.DriverInfo(ifname)
+		if err != nil {
+			continue
+		}
+
 		flags := link.Attrs().RawFlags
-		nt.ifFlagsMap[ifname] = flags
+		netdev.netdevInfoStore[ifname] = &netdevInfo{
+			flags:           flags,
+			driver:          drvInfo.Driver,
+			driverVersion:   drvInfo.Version,
+			firmwareVersion: drvInfo.FwVersion,
+		}
 
 		data := &netdevEventData{
-			linkFlags: flags,
-			Ifname:    ifname,
-			Index:     link.Attrs().Index,
-			Mac:       link.Attrs().HardwareAddr.String(),
-			AtStart:   true,
+			linkFlags:       flags,
+			Ifname:          ifname,
+			Index:           link.Attrs().Index,
+			Mac:             link.Attrs().HardwareAddr.String(),
+			AtStart:         true,
+			Driver:          drvInfo.Driver,
+			DriverVersion:   drvInfo.Version,
+			FirmwareVersion: drvInfo.FwVersion,
 		}
-		nt.record(data)
+		netdev.updateAndSaveEvent(data)
 	}
 
 	return nil
 }
 
-func (nt *netdevTracing) record(data *netdevEventData) {
+func (netdev *netdevTracing) updateAndSaveEvent(data *netdevEventData) {
 	for _, status := range flags2status(data.linkFlags, data.flagsChange) {
-		nt.mu.Lock()
-		nt.metricsLinkStatusCountMap[status][data.Ifname]++
-		nt.mu.Unlock()
+		netdev.mu.Lock()
+		netdev.linkStatusEventCounts[status][data.Ifname]++
+		netdev.mu.Unlock()
 
 		if data.LinkStatus == "" {
 			data.LinkStatus = status.String()
@@ -200,30 +236,34 @@ func (nt *netdevTracing) record(data *netdevEventData) {
 
 	if !data.AtStart && data.LinkStatus != "" {
 		log.Infof("%s %+v", data.LinkStatus, data)
-		storage.Save(nt.name, "", time.Now(), data)
+		storage.Save(netdev.name, "", time.Now(), data)
 	}
 }
 
-func (nt *netdevTracing) handleEvent(ev *netlink.LinkUpdate) {
+func (netdev *netdevTracing) handleEvent(ev *netlink.LinkUpdate) {
 	ifname := ev.Link.Attrs().Name
 
 	currFlags := ev.Attrs().RawFlags
-	lastFlags := nt.ifFlagsMap[ifname]
+	lastFlags := netdev.netdevInfoStore[ifname].flags
 	change := currFlags ^ lastFlags
-	nt.ifFlagsMap[ifname] = currFlags
+
+	netdev.netdevInfoStore[ifname].flags = currFlags
 
 	data := &netdevEventData{
-		linkFlags:   currFlags,
-		flagsChange: change,
-		Ifname:      ifname,
-		Index:       ev.Link.Attrs().Index,
-		Mac:         ev.Link.Attrs().HardwareAddr.String(),
-		AtStart:     false,
+		linkFlags:       currFlags,
+		flagsChange:     change,
+		Ifname:          ifname,
+		Index:           ev.Link.Attrs().Index,
+		Mac:             ev.Link.Attrs().HardwareAddr.String(),
+		AtStart:         false,
+		Driver:          netdev.netdevInfoStore[ifname].driver,
+		DriverVersion:   netdev.netdevInfoStore[ifname].driverVersion,
+		FirmwareVersion: netdev.netdevInfoStore[ifname].firmwareVersion,
 	}
-	nt.record(data)
+	netdev.updateAndSaveEvent(data)
 }
 
-func (nt *netdevTracing) close() {
-	close(nt.linkDoneCh)
-	close(nt.linkUpdateCh)
+func (netdev *netdevTracing) close() {
+	close(netdev.linkDoneCh)
+	close(netdev.linkUpdateCh)
 }

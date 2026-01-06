@@ -91,7 +91,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "autotracing-flamegraph-redirect",
-  "uid": "autotracing-flamegraph-redirect",
+  "title": "autotracing-flame-redirect",
+  "uid": "autotracing-flame-redirect",
   "version": 1
 }

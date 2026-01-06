@@ -32,13 +32,13 @@ import (
 )
 
 func init() {
-	tracing.RegisterEventTracing("membust", newMemBurst)
+	tracing.RegisterEventTracing("memburst", newMemBurst)
 }
 
 func newMemBurst() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &memBurstTracing{},
-		Internal:    10,
+		Interval:    10,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
@@ -177,12 +177,12 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 func (c *memBurstTracing) Start(ctx context.Context) error {
 	var err error
 
-	historyWindowLength := conf.Get().Tracing.MemoryBurst.HistoryWindowLength
-	sampleInterval := conf.Get().Tracing.MemoryBurst.SampleInterval
-	silencePeriod := conf.Get().Tracing.MemoryBurst.SilencePeriod
-	topNProcesses := conf.Get().Tracing.MemoryBurst.TopNProcesses
-	burstRatio := conf.Get().Tracing.MemoryBurst.BurstRatio
-	anonThreshold := conf.Get().Tracing.MemoryBurst.AnonThreshold
+	historyWindowLength := conf.Get().AutoTracing.MemoryBurst.SlidingWindowLength
+	sampleInterval := conf.Get().AutoTracing.MemoryBurst.Interval
+	silencePeriod := conf.Get().AutoTracing.MemoryBurst.IntervalContinuousRun
+	topNProcesses := conf.Get().AutoTracing.MemoryBurst.DumpProcessMaxNum
+	burstRatio := (float64(conf.Get().AutoTracing.MemoryBurst.DeltaMemoryBurst)/100.0 + 1)
+	anonThreshold := conf.Get().AutoTracing.MemoryBurst.DeltaAnonThreshold
 
 	memInfo, err := readMemInfo(map[string]bool{"MemTotal": true})
 	if err != nil {

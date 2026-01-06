@@ -102,7 +102,7 @@ func (s *Server) Run(addr string) error {
 		return fmt.Errorf("set sockopt addr reuse %w", err)
 	}
 
-	// for tracing 'netrecvlat' keep the skb timestamp enabled,
+	// for tracing 'net_rx_latency' keep the skb timestamp enabled,
 	// kernel func net_enable_timestamp() is system wide, can enable by set SOF_TIMESTAMPING_RX_SOFTWARE,
 	// ref: https://www.kernel.org/doc/html/latest/networking/timestamping.html.
 	flags := unix.SOF_TIMESTAMPING_RX_SOFTWARE

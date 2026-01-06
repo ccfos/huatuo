@@ -16,6 +16,7 @@ package netutil
 
 import (
 	"encoding/binary"
+	"math/bits"
 	"net"
 
 	"github.com/vishvananda/netlink/nl"
@@ -23,37 +24,56 @@ import (
 
 var NativeEndian = nl.NativeEndian()
 
-// InetNtop is same as the inet_ntop(IPv4)
-func InetNtop(ip uint32) net.IP {
-	buf := make([]byte, net.IPv4len)
-	NativeEndian.PutUint32(buf, ip)
-	return net.IPv4(buf[0], buf[1], buf[2], buf[3])
+// Inetv4Ntop, inet_ntop
+// convert IPv4 addresses (in network byte order) from binary to text.
+//
+// https://man7.org/linux/man-pages/man3/inet_ntop.3.html
+func Inetv4Ntop(addr uint32) net.IP {
+	return net.IPv4(
+		byte(addr>>24),
+		byte(addr>>16),
+		byte(addr>>8),
+		byte(addr),
+	).To4()
 }
 
-// InetNtohs is same as the ntohs
-func InetNtohs(val uint16) uint16 {
-	buf := make([]byte, 2)
-	binary.BigEndian.PutUint16(buf, val)
-	return NativeEndian.Uint16(buf)
+// Ntohs
+// converts the unsigned short integer netshort from network byte order to host byte order.
+//
+// https://linux.die.net/man/3/ntohs
+func Ntohs(val uint16) uint16 {
+	if NativeEndian == binary.LittleEndian {
+		return (val >> 8) | (val << 8)
+	}
+	return val
 }
 
-// InetNtohl is same as the ntohl
-func InetNtohl(val uint32) uint32 {
-	buf := make([]byte, 4)
-	binary.BigEndian.PutUint32(buf, val)
-	return NativeEndian.Uint32(buf)
+// Ntohl
+// converts the unsigned integer netlong from network byte order to host byte order.
+//
+// https://linux.die.net/man/3/ntohs
+func Ntohl(val uint32) uint32 {
+	if NativeEndian == binary.LittleEndian {
+		return bits.ReverseBytes32(val)
+	}
+
+	return val
 }
 
-// InetHtons is same as the htons
-func InetHtons(val uint16) uint16 {
-	buf := make([]byte, 2)
-	NativeEndian.PutUint16(buf, val)
-	return binary.BigEndian.Uint16(buf)
+// Htons
+// converts the unsigned short integer hostshort from host byte order to network byte order.
+func Htons(val uint16) uint16 {
+	if NativeEndian == binary.LittleEndian {
+		return (val >> 8) | (val << 8)
+	}
+	return val
 }
 
-// InetHtonl is same as the htonl
-func InetHtonl(val uint32) uint32 {
-	buf := make([]byte, 4)
-	NativeEndian.PutUint32(buf, val)
-	return binary.BigEndian.Uint32(buf)
+// Htonl
+// converts the unsigned integer hostlong from host byte order to network byte order.
+func Htonl(val uint32) uint32 {
+	if NativeEndian == binary.LittleEndian {
+		return bits.ReverseBytes32(val)
+	}
+	return val
 }

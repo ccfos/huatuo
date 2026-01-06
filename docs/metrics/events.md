@@ -1,28 +1,30 @@
-### 总览
-HUATUO 目前支持的异常上下文捕获事件如下：
+English | [简体中文](./events_CN.md)
 
-| 事件名称        | 核心功能               | 场景                                    |
-| ---------------| --------------------- |----------------------------------------|
-| softirq        | 宿主软中断延迟响应或长期关闭，输出长时间关闭软中断的内核调用栈，进程信息等 | 该类问题会严重影响网络收发，进而导致业务毛刺或者超时等其他问题 |
-| dropwatch      | TCP 数据包丢包检测，输出发生丢包时主机、网络上下文信息等 | 该类问题主要会引起业务毛刺和延迟 |
-| netrecvlat     | 在网络收方向获取数据包从驱动、协议栈、到用户主动收过程的延迟事件 | 网络延迟问题中有一类是数据传输阶段收方向存在延迟，但不清楚是延迟位置，netrecvlat 根据 skb 入网卡时间戳依次在驱动、协议栈和用户拷贝数据等路径计算延迟，通过预先设定的阈值过滤超时的数据包，定位延迟位置 |
-| oom            | 检测宿主或容器内 oom 事件 | 当宿主机层面或者容器维度发生 oom 事件时，能够获取触发 oom 的进程信息、被 kill 的进程信息以及容器信息，便于定位进程内存泄漏、异常退出等问题 |
-| softlockup     | 当系统上发生 softlockup 时，收集目标进程信息以及 cpu 信息，同时获取各个 cpu 上的内核栈信息 | 系统发生 softlockup |
-| hungtask       | 提供系统内所有 D 状态进程数量、内核栈信息 | 用于定位瞬时出现 D 进程的场景，能及时保留现场便于后期问题跟踪 |
-| memreclaim     | 进程进入直接回收的耗时，超过时间阈值，记录进程信息 | 内存压力过大时，如果此时进程申请内存，有可能进入直接回收，此时处于同步回收阶段，可能会造成业务进程的卡顿，此时记录进程进入直接回收的时间，有助于我们判断此进程被直接回收影响的剧烈程度 |
-| netdev         | 检测网卡状态变化 | 网卡抖动、bond 环境下 slave 异常等 |
-| lacp           | 检测 lacp 状态变化 | bond 模式 4 下，监控 lacp 协商状态 |
+### Overview
+HUATUO currently supports the following exception context capture events:
+
+| Event Name        | Core Functionality               | Scenarios                                    |
+| ------------------| -------------------------------- |----------------------------------------------|
+| softirq           | Detects delayed response or prolonged disabling of host soft interrupts, and outputs kernel call stacks and process information when soft interrupts are disabled for extended periods., etc. | This type of issue severely impacts network transmission/reception, leading to business spikes or timeout issues |
+| dropwatch         | Detects TCP packet loss and outputs host and network context information when packet loss occurs | This type of issue mainly causes business spikes and latency |
+| net_rx_latency        | Captures latency events in network receive path from driver, protocol stack, to user-space receive process | For network latency issues in the receive direction where the exact delay location is unclear, net_rx_latency calculates latency at the driver, protocol stack, and user copy paths using skb NIC ingress timestamps, filters timeout packets via preset thresholds, and locates the delay position |
+| oom               | Detects OOM events on the host or within containers | When OOM occurs at host level or container dimension, captures process information triggering OOM, killed process information, and container details to troubleshoot memory leaks, abnormal exits, etc. |
+| softlockup        | When a softlockup occurs on the system, collects target process information and CPU details, and retrieves kernel stack information from all CPUs | System softlockup events |
+| hungtask          | Provides count of all D-state processes in the system and kernel stack information | Used to locate transient D-state process scenarios, preserving the scene for later problem tracking |
+| memreclaim        | Records process information when memory reclamation exceeds time threshold | When memory pressure is excessively high, if a process requests memory at this time, it may enter direct reclamation (synchronous phase), potentially causing business process stalls. Recording the direct reclamation entry time helps assess the severity of impact on the process |
+| netdev            | Detects network device status changes | Network card flapping, slave abnormalities in bond environments, etc. |
+| lacp              | Detects LACP status changes | Detects LACP negotiation status in bond mode 4 |
 
 
-### 软中断关闭过长检测
+### Detect the long-term disabling of soft interrupts
 
-**功能介绍**
+**Feature Introduction**
 
-Linux 内核存在进程上下文，中断上下文，软中断上下文，NMI 上下文等概念，这些上下文之间可能存在共享数据情况，因此为了确保数据的一致性，正确性，内核代码可能会关闭软中断或者硬中断。从理论角度，单次关闭中断或者软中断时间不能太长，但高频的系统调用，陷入内核态频繁执行关闭中断或软中断，同样会造"长时间关闭"的现象，拖慢了系统的响应。“关闭中断，软中断时间过长”这类问题非常隐蔽，且定位手段有限，同时影响又非常大，体现在业务应用上一般为接收数据超时。针对这种场景我们基于BPF技术构建了检测硬件中断，软件中断关闭过长的能力。
+The Linux kernel contains various contexts such as process context, interrupt context, soft interrupt context, and NMI context. These contexts may share data, so to ensure data consistency and correctness, kernel code might disable soft or hard interrupts. Theoretically, the duration of single interrupt or soft interrupt disabling shouldn't be too long. However, high-frequency system calls entering kernel mode and frequently executing interrupt disabling can also create a "long-term disable" phenomenon, slowing down system response. Issues related to "long interrupt or soft interrupt disabling" are very subtle with limited troubleshooting methods, yet have significant impact, typically manifesting as receive data timeouts in business applications. For this scenario, we built BPF-based detection capabilities for long hardware and software interrupt disables.
 
-**示例**
+**Example**
 
-如下为抓取到的关闭中断过长的实例，这些信息被自动上传到 ES.
+Below is an example of captured  instances with overly long disabling interrupts, automatically uploaded to ES:
 
 ```
 {
@@ -64,7 +66,7 @@ Linux 内核存在进程上下文，中断上下文，软中断上下文，NMI �
 }
 ```
 
-本地物理机也会存储一份相同的数据：
+The local host also stores identical data:
 
 ```
 2025-06-11 16:05:16 *** Region=***
@@ -88,15 +90,15 @@ Linux 内核存在进程上下文，中断上下文，软中断上下文，NMI �
 }
 ```
 
-### 协议栈丢包检测
+### Protocol Stack Packet Loss Detection
 
-**功能介绍**
+**Feature Introduction**
 
-在数据包收发过程中由于各类原因，可能出现丢包的现象，丢包可能会导致业务请求延迟，甚至超时。dropwatch 借助 eBPF 观测内核网络数据包丢弃情况，输出丢包网络上下文，如：源目的地址，源目的端口，seq, seqack, pid, comm, stack 信息等。dorpwatch 主要用于检测 TCP 协议相关的丢包，通过预先埋点过滤数据包，确定丢包位置以便于排查丢包根因。
+During packet transmission and reception, packets may be lost due to various reasons, potentially causing business request delays or even timeouts. dropwatch uses eBPF to observe kernel network packet discards, outputting packet loss network context such as source/destination addresses, source/destination ports, seq, seqack, pid, comm, stack information, etc. dropwatch mainly detects TCP protocol-related packet loss, using pre-set probes to filter packets and determine packet loss locations for root cause analysis.
 
-**示例**
+**Example**
 
-通过 dropwatch 抓取到的相关信息会自动上传到 ES。如下为抓取到的一案例：kubelet 在发送 SYN 时，由于设备丢包，导致数据包发送失败。
+Information captured by dropwatch is automatically uploaded to ES. Below is an example where kubelet failed to send data packet due to device packet loss:
 
 ```
 {
@@ -147,7 +149,7 @@ Linux 内核存在进程上下文，中断上下文，软中断上下文，NMI �
 }
 ```
 
-本地物理机也会存储一份相同的数据：
+The local host also stores identical data:
 
 ```
 2025-06-11 16:58:15 Host=*** Region=***
@@ -180,15 +182,15 @@ Linux 内核存在进程上下文，中断上下文，软中断上下文，NMI �
 }
 ```
 
-### 协议栈收包延迟
+### Protocol Stack Receive Latency
 
-**功能介绍**
+**Feature Introduction**
 
-线上业务网络延迟问题是比较难定位的，任何方向，任何的阶段都有可能出现问题。比如收方向的延迟，驱动、协议栈、用户程序等都有可能出现问题，因此我们开发了 netrecvlat 检测功能，借助 skb 入网卡的时间戳，在驱动，协议栈层，用户态层检查延迟时间，当收包延迟达到阈值时，借助 eBPF 获取网络上下文信息（五元组、延迟位置、进程信息等）。收方向传输路径示意：**网卡 -> 驱动 -> 协议栈 -> 用户主动收**
+Online business network latency issues are difficult to locate, as problems can occur in any direction or stage. For example, receive direction latency might be caused by issues in drivers, protocol stack, or user programs. Therefore, we developed net_rx_latency detection functionality, leveraging skb NIC ingress timestamps to check latency at driver, protocol stack, and user-space layers. When receive latency reaches thresholds, eBPF captures network context information (five-tuple, latency location, process info, etc.). Receive path: **NIC -> Driver -> Protocol Stack -> User Active Receive**
 
-**示例**
+**Example**
 
-一个业务容器从内核收包延迟超过 90s，通过 netrecvlat 追踪，ES 查询输出如下：
+A business container received packets from the kernel with a latency over 90 seconds, tracked via net_rx_latency, ES query output:
 
 ```
 {
@@ -222,7 +224,7 @@ Linux 内核存在进程上下文，中断上下文，软中断上下文，NMI �
     "region": "***",
     "container_level": "1",
     "container_id": "***",
-    "tracer_name": "netrecvlat"
+    "tracer_name": "net_rx_latency"
   },
   "fields": {
     "time": [
@@ -236,7 +238,7 @@ Linux 内核存在进程上下文，中断上下文，软中断上下文，NMI �
 }
 ```
 
-本地物理机也会存储一份相同的数据：
+The local host also stores identical data:
 
 ```
 2025-06-11 15:54:46 Host=*** Region=*** ContainerHost=***.docker ContainerID=*** ContainerType=normal ContainerLevel=1
@@ -251,7 +253,7 @@ Linux 内核存在进程上下文，中断上下文，软中断上下文，NMI �
   "uploaded_time": "2025-06-11T15:54:46.129136232+08:00",
   "time": "2025-06-11 15:54:46.129 +0800",
   "tracer_time": "2025-06-11 15:54:46.129 +0800",
-  "tracer_name": "netrecvlat",
+  "tracer_name": "net_rx_latency",
   "tracer_data": {
     "comm": "nginx",
     "pid": 2921092,
@@ -269,15 +271,15 @@ Linux 内核存在进程上下文，中断上下文，软中断上下文，NMI �
 }
 ```
 
-### 物理机、容器内存超用
+### Host/Container Memory Overused
 
-**功能介绍**
+**Feature Introduction**
 
-程序运行时申请的内存超过了系统或进程可用的内存上限，导致系统或应用程序崩溃。常见于内存泄漏、大数据处理或资源配置不足的场景。通过在 oom 的内核流程插入 BPF 钩子，获取 oom 上下文的详细信息并传递到用户态。这些信息包括进程信息、被 kill 的进程信息、容器信息。
+When programs request more memory than available system or process limits during runtime, it can cause system or application crashes. Common in memory leaks, big data processing, or insufficient resource configuration scenarios. By inserting BPF hooks in the OOM kernel flow, detailed OOM context information is captured and passed to user space, including process information, killed process information, and container details.
 
-**示例**
+**Example**
 
-一个容器内发生 oom 时，被抓取的信息如下：
+When OOM occurs in a container, captured information:
 
 ```
 {
@@ -318,21 +320,21 @@ Linux 内核存在进程上下文，中断上下文，软中断上下文，NMI �
 }
 ```
 
-另外 oom event 还实现了 `Collector` 接口，这样还会通过 Prometheus 统计宿主 oom 发生的次数，并区分宿主机和容器的事件。
+Additionally, oom event implements `Collector` interface, which enables collecting statistics on host OOM occurrences via Prometheus, distinguishing between events from the host and containers.
 
-### 内核 softlockup
+### Kernel Softlockup
 
-**功能介绍**
+**Feature Introduction**
 
-softlockup 是 Linux 内核检测到的一种异常状态，指某个 CPU 核心上的内核线程（或进程）长时间占用 CPU 且不调度，导致系统无法正常响应其他任务。如内核代码 bug、cpu 过载、设备驱动问题等都会导致 softlockup。当系统发生 softlockup 时，收集目标进程的信息以及 cpu 信息，获取各个 cpu 上的内核栈信息同时保存问题的发生次数。
+Softlockup is an abnormal state detected by the Linux kernel where a kernel thread (or process) on a CPU core occupies the CPU for a long time without scheduling, preventing the system from responding normally to other tasks. Causes include kernel code bugs, CPU overload, device driver issues, and others. When a softlockup occurs in the system, information about the target process and CPU is collected, kernel stack information from all CPUs is retrieved, and the number of occurrences of the issue is recorded.
 
-### 进程阻塞
+### Process Blocking
 
-**功能介绍**
+**Feature Introduction**
 
-D 状态进程（也称为不可中断睡眠状态，Uninterruptible）是一种特殊的进程状态，表示进程因等待某些系统资源而阻塞，且不能被信号或外部中断唤醒。常见场景如：磁盘 I/O 操作、内核阻塞、硬件故障等。hungtask 捕获系统内所有 D 状态进程的内核栈并保存 D 进程的数量。用于定位瞬间出现一些 D 进程的场景，可以在现场消失后仍然分析到问题根因。
+A D-state process (also known as Uninterruptible Sleep) is a special process state indicating that the process is blocked while waiting for certain system resources and cannot be awakened by signals or external interrupts. Common scenarios include disk I/O operations, kernel blocking, hardware failures, etc. hungtask captures the kernel stacks of all D-state processes within the system and records the count of such processes. It is used to locate transient scenarios where D-state processes appear momentarily, enabling root cause analysis even after the scenario has resolved.
 
-**示例**
+**Example**
 
 ```
 {
@@ -371,17 +373,19 @@ D 状态进程（也称为不可中断睡眠状态，Uninterruptible）是一种
 }
 ```
 
-另外 hungtask event 还实现了 `Collector` 接口，这样还会通过 Prometheus 统计宿主 hungtask 发生的次数。
+Additionally, the hungtask event implements the `Collector` interface, which also enables collecting statistics on host hungtask occurrences via Prometheus.
 
-### 容器、物理机内存回收
+### Container/Host Memory Reclamation
 
-**功能介绍**
+**Feature Introduction**
 
-内存压力过大时，如果此时进程申请内存，有可能进入直接回收，此时处于同步回收阶段，可能会造成业务进程的卡顿，在此记录进程进入直接回收的时间，有助于我们判断此进程被直接回收影响的剧烈程度。memreclaim event 计算同一个进程在 1s 周期，若进程处在直接回收状态超过 900ms， 则记录其上下文信息。
+When memory pressure is excessively high, if a process requests memory at this time, it may enter direct reclamation. This phase involves synchronous reclamation and may cause business process stalls. Recording the time when a process enters direct reclamation helps us assess the severity of impact from direct reclamation on that process. The memreclaim event calculates whether the same process remains in direct reclamation for over 900ms within a 1-second cycle; if so, it records the process's contextual information.
 
-**示例**
 
-业务容器的 chrome 进程进入直接回收状态，ES 查询输出如下：
+
+**Example**
+
+When a business container's chrome process enters direct reclamation, the ES query output is as follows:
 
 ```
 {
@@ -420,15 +424,15 @@ D 状态进程（也称为不可中断睡眠状态，Uninterruptible）是一种
 }
 ```
 
-### 网络设备状态
+### Network Device Status
 
-**功能介绍**
+**Feature Introduction**
 
-网卡状态变化通常容易造成严重的网络问题，直接影响整机网络质量，如 down/up, MTU 改变等。以 down 状态为例，可能是有权限的进程操作、底层线缆、光模块、对端交换机等问题导致，netdev event 用于检测网络设备的状态变化，目前已实现网卡 down, up 的监控，并区分管理员或底层原因导致的网卡状态变化。
+Network card status changes often cause severe network issues, directly impacting overall host network quality, such as down/up states, MTU changes, etc. Taking the down state as an example, possible causes include operations by privileged processes, underlying cable issues, optical module failures, peer switch problems, etc. The netdev event is designed to detect network device status changes and currently implements monitoring for network card down/up events, distinguishing between administrator-initiated and underlying cause-induced status changes.
 
-**示例**
+**Example**
 
-一次管理员操作导致 eth1 网卡 down 时，ES 查询到事件输出如下：
+When an administrator operation causes the eth1 network card to go down, the ES query event output is as follows:
 
 ```
 {
@@ -465,15 +469,15 @@ D 状态进程（也称为不可中断睡眠状态，Uninterruptible）是一种
 }
 ```
 
-### LACP 协议状态
+### LACP Protocol Status
 
-**功能介绍**
+**Feature Introduction**
 
-Bond 是 Linux 系统内核提供的一种将多个物理网络接口绑定为一个逻辑接口的技术。通过绑定，可以实现带宽叠加、故障切换或负载均衡。LACP 是 IEEE 802.3ad 标准定义的协议，用于动态管理链路聚合组（LAG）。目前没有优雅获取物理机LACP 协议协商异常事件的方法，HUATUO 实现了 lacp event，通过 BPF 在协议关键路径插桩检测到链路聚合状态发生变化时，触发事件记录相关信息。
+Bond is a technology provided by the Linux system kernel that bundles multiple physical network interfaces into a single logical interface. Through bonding, bandwidth aggregation, failover, or load balancing can be achieved. LACP is a protocol defined by the IEEE 802.3ad standard for dynamically managing Link Aggregation Groups (LAG). Currently, there is no elegant method to obtain physical host LACP protocol negotiation exception events. HUATUO implements the lacp event, which uses BPF to instrument key protocol paths. When a change in link aggregation status is detected, it triggers an event to record relevant information.
 
-**示例**
+**Example**
 
-在宿主网卡 eth1 出现物理层 down/up 抖动时，lacp 动态协商状态异常，ES 查询输出如下：
+When the host network card eth1 experiences physical layer down/up fluctuations, the LACP dynamic negotiation status becomes abnormal. The ES query output is as follows:
 
 ```
 {

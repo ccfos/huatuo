@@ -48,7 +48,7 @@ func newSockstatCollector() (*tracing.EventTracingAttr, error) {
 func (c *sockstatCollector) Update() ([]*metric.Data, error) {
 	log.Debugf("Updating sockstat metrics")
 
-	containers, err := pod.GetNormalContainers()
+	containers, err := pod.NormalContainers()
 	if err != nil {
 		return nil, err
 	}

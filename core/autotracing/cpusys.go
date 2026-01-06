@@ -40,7 +40,7 @@ func init() {
 func newCpuSys() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuSysTracing{},
-		Internal:    20,
+		Interval:    20,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
@@ -156,12 +156,12 @@ func (c *cpuSysTracing) buildAndSaveCPUSystem(traceTime time.Time, threshold *cp
 }
 
 func (c *cpuSysTracing) Start(ctx context.Context) error {
-	interval := conf.Get().Tracing.CPUSys.Interval
-	perfRunTimeOut := conf.Get().Tracing.CPUSys.PerfRunTimeOut
+	interval := conf.Get().AutoTracing.CPUSys.Interval
+	perfRunTimeOut := conf.Get().AutoTracing.CPUSys.PerfRunTimeOut
 
 	threshold := &cpuSysThreshold{
-		delta: conf.Get().Tracing.CPUSys.DeltaSysThreshold,
-		usage: conf.Get().Tracing.CPUSys.SysThreshold,
+		delta: conf.Get().AutoTracing.CPUSys.DeltaSysThreshold,
+		usage: conf.Get().AutoTracing.CPUSys.SysThreshold,
 	}
 
 	for {

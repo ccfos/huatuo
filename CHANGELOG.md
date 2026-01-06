@@ -1,0 +1,1 @@
+docs/CHANGELOG/CHANGELOG-next.md

@@ -574,7 +574,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:ctnDLoad AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:dload AND region:$region AND hostname:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1407,7 +1407,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:softirq AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:softirq_tracing AND region:$region AND hostname:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1526,12 +1526,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
       ],
-      "title": "iotracer",
+      "title": "iotracing",
       "transformations": [
         {
           "id": "organize",
@@ -1645,12 +1645,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
       ],
-      "title": "netrecvlat",
+      "title": "net_rx_latency",
       "transformations": [
         {
           "id": "organize",
@@ -1764,7 +1764,7 @@
               "type": "count"
             }
           ],
-          "query": "((tracer_name:netdev_events AND (tracer_data.linkstatus:linkStatusCarrierDown OR tracer_data.linkstatus:linkStatusAdminDown)) OR tracer_name:lacp) AND region:$region AND hostname:$hostname",
+          "query": "region:$region AND hostname:$hostname AND ((tracer_name:netdev_events AND (tracer_data.linkstatus:*linkstatus_admindown* OR tracer_data.linkstatus:*linkstatus_carrierdown*)) OR tracer_name:netdev_bonding_lacp)",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2136,7 +2136,7 @@
           "timeField": "uploaded_time"
         },
         {
-          "alias": "iotracer",
+          "alias": "iotracing",
           "bucketAggs": [
             {
               "field": "uploaded_time",
@@ -2158,7 +2158,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
           "refId": "G",
           "timeField": "uploaded_time"
         },
@@ -2190,7 +2190,7 @@
           "timeField": "uploaded_time"
         },
         {
-          "alias": "netrecvlat",
+          "alias": "net_rx_latency",
           "bucketAggs": [
             {
               "field": "uploaded_time",
@@ -2212,7 +2212,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
           "refId": "I",
           "timeField": "uploaded_time"
         },
@@ -2715,9 +2715,8 @@
                 "id": "links",
                 "value": [
                   {
-                    "targetBlank": true,
-                    "title": "auto跳转火焰图",
-                    "url": "/d/autotracing-flamegraph-redirect/autotracing-flamegraph-redirect?orgId=1&var-id=${__data.fields.点击跳转火焰图}"
+                    "title": "火焰图跳转",
+                    "url": "/d/autotracing-flame-redirect/autotracing-flame-redirect?var-id=${__data.fields.点击跳转火焰图}"
                   }
                 ]
               },
@@ -2940,7 +2939,7 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 79
+            "y": 41
           },
           "id": 119,
           "options": {
@@ -2983,7 +2982,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 79
+            "y": 41
           },
           "id": 120,
           "options": {
@@ -3134,7 +3133,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 79
+            "y": 41
           },
           "id": 121,
           "options": {
@@ -3265,8 +3264,8 @@
                     "value": [
                       {
                         "targetBlank": true,
-                        "title": "auto 跳转火焰图",
-                        "url": "/d/autotracing-flamegraph-redirect/autotracing-flamegraph-redirect?orgId=1&var-id=${__data.fields.点击跳转火焰图}"
+                        "title": "火焰图跳转",
+                        "url": "/d/autotracing-flame-redirect/autotracing-flame-redirect?var-id=${__data.fields.点击跳转火焰图}"
                       }
                     ]
                   },
@@ -3366,7 +3365,7 @@
             "h": 10,
             "w": 24,
             "x": 0,
-            "y": 88
+            "y": 50
           },
           "id": 122,
           "options": {
@@ -3497,7 +3496,7 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 196
+            "y": 181
           },
           "id": 21,
           "options": {
@@ -3535,7 +3534,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 196
+            "y": 181
           },
           "id": 100,
           "options": {
@@ -3678,7 +3677,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 196
+            "y": 181
           },
           "id": 47,
           "options": {
@@ -3902,7 +3901,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 205
+            "y": 190
           },
           "id": 48,
           "options": {
@@ -4019,14 +4018,19 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 176
+            "y": 43
           },
           "id": 11,
           "options": {
+            "code": {
+              "language": "plaintext",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            },
             "content": "触发条件：\n",
             "mode": "markdown"
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "title": "loadavg",
           "transparent": true,
           "type": "text"
@@ -4057,7 +4061,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 176
+            "y": 43
           },
           "id": 101,
           "options": {
@@ -4065,6 +4069,7 @@
             "graphMode": "none",
             "justifyMode": "auto",
             "orientation": "auto",
+            "percentChangeColorMode": "standard",
             "reduceOptions": {
               "calcs": [
                 "sum"
@@ -4072,9 +4077,11 @@
               "fields": "",
               "values": false
             },
-            "textMode": "auto"
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -4098,7 +4105,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:ctnDLoad AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:dload AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -4157,9 +4164,13 @@
                 "mode": "palette-classic"
               },
               "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
+                "barWidthFactor": 0.6,
                 "drawStyle": "line",
                 "fillOpacity": 0,
                 "gradientMode": "none",
@@ -4168,6 +4179,7 @@
                   "tooltip": false,
                   "viz": false
                 },
+                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -4200,7 +4212,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 176
+            "y": 43
           },
           "id": 50,
           "options": {
@@ -4211,10 +4223,12 @@
               "showLegend": true
             },
             "tooltip": {
-              "mode": "single"
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -4301,7 +4315,8 @@
                 "cellOptions": {
                   "type": "auto"
                 },
-                "filterable": true
+                "filterable": true,
+                "inspect": false
               },
               "mappings": [],
               "thresholds": {
@@ -4382,11 +4397,13 @@
             "h": 9,
             "w": 14,
             "x": 0,
-            "y": 185
+            "y": 130
           },
           "id": 51,
           "options": {
+            "cellHeight": "sm",
             "footer": {
+              "countRows": false,
               "fields": "",
               "reducer": [
                 "sum"
@@ -4401,7 +4418,7 @@
               }
             ]
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -4419,7 +4436,7 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:ctnDLoad AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:dload AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -4487,11 +4504,12 @@
             "h": 9,
             "w": 10,
             "x": 14,
-            "y": 185
+            "y": 130
           },
           "id": 52,
           "options": {
             "dedupStrategy": "none",
+            "enableInfiniteScrolling": false,
             "enableLogDetails": true,
             "prettifyLogMessage": false,
             "showCommonLabels": false,
@@ -4500,7 +4518,7 @@
             "sortOrder": "Descending",
             "wrapLogMessage": true
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -4518,7 +4536,7 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:ctnDLoad AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:dload AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -4598,7 +4616,7 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 195
+            "y": 181
           },
           "id": 19,
           "options": {
@@ -4636,7 +4654,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 195
+            "y": 181
           },
           "id": 102,
           "options": {
@@ -4779,7 +4797,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 195
+            "y": 181
           },
           "id": 53,
           "options": {
@@ -4892,13 +4910,40 @@
                 ]
               }
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "hostname"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 319
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "tracer_data.stack"
+                },
+                "properties": [
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "json-view"
+                    }
+                  }
+                ]
+              }
+            ]
           },
           "gridPos": {
             "h": 9,
             "w": 18,
             "x": 0,
-            "y": 204
+            "y": 190
           },
           "id": 54,
           "options": {
@@ -4909,7 +4954,8 @@
               ],
               "show": false
             },
-            "showHeader": true
+            "showHeader": true,
+            "sortBy": []
           },
           "pluginVersion": "8.3.7",
           "targets": [
@@ -5005,7 +5051,7 @@
             "h": 9,
             "w": 6,
             "x": 18,
-            "y": 204
+            "y": 190
           },
           "id": 55,
           "options": {
@@ -5112,7 +5158,7 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 196
+            "y": 200
           },
           "id": 17,
           "options": {
@@ -5150,7 +5196,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 196
+            "y": 200
           },
           "id": 103,
           "options": {
@@ -5293,7 +5339,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 196
+            "y": 200
           },
           "id": 56,
           "options": {
@@ -5427,7 +5473,7 @@
             "h": 9,
             "w": 13,
             "x": 0,
-            "y": 205
+            "y": 209
           },
           "id": 57,
           "options": {
@@ -5531,7 +5577,7 @@
             "h": 9,
             "w": 11,
             "x": 13,
-            "y": 205
+            "y": 209
           },
           "id": 58,
           "options": {
@@ -5631,7 +5677,7 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 200
+            "y": 185
           },
           "id": 16,
           "options": {
@@ -5639,7 +5685,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "title": "iotracer阈值说明",
+          "title": "iotracing 阈值说明",
           "transparent": true,
           "type": "text"
         },
@@ -5669,7 +5715,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 200
+            "y": 185
           },
           "id": 104,
           "options": {
@@ -5710,12 +5756,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "iotracer",
+          "title": "iotracing",
           "transformations": [
             {
               "id": "organize",
@@ -5812,7 +5858,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 200
+            "y": 185
           },
           "id": 59,
           "options": {
@@ -5850,12 +5896,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "iotracer",
+          "title": "iotracing",
           "transformations": [
             {
               "id": "organize",
@@ -5960,7 +6006,7 @@
             "h": 9,
             "w": 15,
             "x": 0,
-            "y": 209
+            "y": 194
           },
           "id": 61,
           "options": {
@@ -5992,12 +6038,12 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "iotracer",
+          "title": "iotracing",
           "transformations": [
             {
               "id": "organize",
@@ -6060,7 +6106,7 @@
             "h": 9,
             "w": 9,
             "x": 15,
-            "y": 209
+            "y": 194
           },
           "id": 60,
           "options": {
@@ -6091,12 +6137,12 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:iotracer AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "iotracer",
+          "title": "iotracing",
           "transformations": [
             {
               "id": "organize",
@@ -6140,7 +6186,7 @@
           "type": "logs"
         }
       ],
-      "title": "iotracer",
+      "title": "iotracing",
       "type": "row"
     },
     {
@@ -6162,7 +6208,7 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 216
+            "y": 201
           },
           "id": 18,
           "options": {
@@ -6200,7 +6246,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 216
+            "y": 201
           },
           "id": 105,
           "options": {
@@ -6343,7 +6389,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 216
+            "y": 201
           },
           "id": 62,
           "options": {
@@ -6504,7 +6550,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 225
+            "y": 210
           },
           "id": 63,
           "options": {
@@ -6615,7 +6661,7 @@
             "h": 9,
             "w": 5,
             "x": 0,
-            "y": 217
+            "y": 202
           },
           "id": 12,
           "options": {
@@ -6623,7 +6669,7 @@
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",
-          "title": "netrecvlat阈值说明",
+          "title": "net_rx_latency阈值说明",
           "transparent": true,
           "type": "text"
         },
@@ -6653,7 +6699,7 @@
             "h": 9,
             "w": 4,
             "x": 5,
-            "y": 217
+            "y": 202
           },
           "id": 106,
           "options": {
@@ -6694,12 +6740,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "netrecvlat",
+          "title": "net_rx_latency",
           "transformations": [
             {
               "id": "organize",
@@ -6796,7 +6842,7 @@
             "h": 9,
             "w": 15,
             "x": 9,
-            "y": 217
+            "y": 202
           },
           "id": 65,
           "options": {
@@ -6835,12 +6881,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "netrecvlat",
+          "title": "net_rx_latency",
           "transformations": [
             {
               "id": "organize",
@@ -7113,7 +7159,7 @@
             "h": 9,
             "w": 13,
             "x": 0,
-            "y": 226
+            "y": 211
           },
           "id": 66,
           "options": {
@@ -7150,12 +7196,12 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "netrecvlat",
+          "title": "net_rx_latency",
           "transformations": [
             {
               "id": "organize",
@@ -7241,7 +7287,7 @@
             "h": 9,
             "w": 11,
             "x": 13,
-            "y": 226
+            "y": 211
           },
           "id": 67,
           "options": {
@@ -7272,12 +7318,12 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:netrecvlat AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "netrecvlat",
+          "title": "net_rx_latency",
           "transformations": [
             {
               "id": "organize",
@@ -7327,7 +7373,7 @@
           "type": "logs"
         }
       ],
-      "title": "netrecvlat",
+      "title": "net_rx_latency",
       "type": "row"
     },
     {
@@ -7349,7 +7395,7 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 200
+            "y": 185
           },
           "id": 13,
           "options": {
@@ -7387,7 +7433,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 200
+            "y": 185
           },
           "id": 107,
           "options": {
@@ -7530,7 +7576,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 200
+            "y": 185
           },
           "id": 68,
           "options": {
@@ -7674,7 +7720,7 @@
             "h": 9,
             "w": 11,
             "x": 0,
-            "y": 209
+            "y": 194
           },
           "id": 69,
           "options": {
@@ -7777,7 +7823,7 @@
             "h": 9,
             "w": 13,
             "x": 11,
-            "y": 209
+            "y": 194
           },
           "id": 70,
           "options": {
@@ -7880,14 +7926,19 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 219
+            "y": 50
           },
           "id": 10,
           "options": {
+            "code": {
+              "language": "plaintext",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            },
             "content": "软中断被关闭时长 > 100ms",
             "mode": "markdown"
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "title": "softirq阈值说明",
           "transparent": true,
           "type": "text"
@@ -7918,7 +7969,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 219
+            "y": 50
           },
           "id": 108,
           "options": {
@@ -7926,6 +7977,7 @@
             "graphMode": "none",
             "justifyMode": "auto",
             "orientation": "auto",
+            "percentChangeColorMode": "standard",
             "reduceOptions": {
               "calcs": [
                 "sum"
@@ -7933,9 +7985,11 @@
               "fields": "",
               "values": false
             },
-            "textMode": "auto"
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -7959,7 +8013,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:softirq AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:softirq_tracing AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -8018,9 +8072,13 @@
                 "mode": "palette-classic"
               },
               "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
+                "barWidthFactor": 0.6,
                 "drawStyle": "line",
                 "fillOpacity": 0,
                 "gradientMode": "none",
@@ -8029,6 +8087,7 @@
                   "tooltip": false,
                   "viz": false
                 },
+                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -8061,7 +8120,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 219
+            "y": 50
           },
           "id": 71,
           "options": {
@@ -8072,10 +8131,12 @@
               "showLegend": true
             },
             "tooltip": {
-              "mode": "single"
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -8162,7 +8223,8 @@
                 "cellOptions": {
                   "type": "auto"
                 },
-                "filterable": true
+                "filterable": true,
+                "inspect": false
               },
               "mappings": [],
               "thresholds": {
@@ -8243,11 +8305,13 @@
             "h": 9,
             "w": 16,
             "x": 0,
-            "y": 228
+            "y": 177
           },
           "id": 72,
           "options": {
+            "cellHeight": "sm",
             "footer": {
+              "countRows": false,
               "fields": "",
               "reducer": [
                 "sum"
@@ -8262,7 +8326,7 @@
               }
             ]
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -8280,8 +8344,35 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:softirq AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:softirq_tracing AND region:$region AND hostname:$hostname",
               "refId": "A",
+              "timeField": "uploaded_time"
+            },
+            {
+              "alias": "",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_time",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "hide": false,
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "",
+              "refId": "B",
               "timeField": "uploaded_time"
             }
           ],
@@ -8343,11 +8434,12 @@
             "h": 9,
             "w": 8,
             "x": 16,
-            "y": 228
+            "y": 177
           },
           "id": 73,
           "options": {
             "dedupStrategy": "none",
+            "enableInfiniteScrolling": false,
             "enableLogDetails": true,
             "prettifyLogMessage": false,
             "showCommonLabels": false,
@@ -8356,7 +8448,7 @@
             "sortOrder": "Descending",
             "wrapLogMessage": true
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -8374,8 +8466,35 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:softirq AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:softirq_tracing AND region:$region AND hostname:$hostname",
               "refId": "A",
+              "timeField": "uploaded_time"
+            },
+            {
+              "alias": "",
+              "bucketAggs": [
+                {
+                  "field": "uploaded_time",
+                  "id": "2",
+                  "settings": {
+                    "interval": "auto"
+                  },
+                  "type": "date_histogram"
+                }
+              ],
+              "datasource": {
+                "type": "elasticsearch",
+                "uid": "huatuo-bamai-es"
+              },
+              "hide": false,
+              "metrics": [
+                {
+                  "id": "1",
+                  "type": "count"
+                }
+              ],
+              "query": "",
+              "refId": "B",
               "timeField": "uploaded_time"
             }
           ],
@@ -8450,7 +8569,7 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 186
+            "y": 171
           },
           "id": 14,
           "options": {
@@ -8488,7 +8607,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 186
+            "y": 171
           },
           "id": 109,
           "options": {
@@ -8631,7 +8750,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 186
+            "y": 171
           },
           "id": 74,
           "options": {
@@ -8749,7 +8868,7 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 195
+            "y": 180
           },
           "id": 75,
           "options": {
@@ -8841,7 +8960,7 @@
             "h": 9,
             "w": 20,
             "x": 4,
-            "y": 195
+            "y": 180
           },
           "id": 76,
           "options": {
@@ -8943,14 +9062,19 @@
             "h": 9,
             "w": 4,
             "x": 0,
-            "y": 185
+            "y": 52
           },
           "id": 20,
           "options": {
+            "code": {
+              "language": "plaintext",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            },
             "content": "每个容器对近30分钟的waitrate率计算出均值mean和标准差std，如果当前的waitrate大于mean+std*factor则报警\n0级、新1、新2级的factor分别为30,40,60",
             "mode": "markdown"
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "title": "waitrate阈值说明",
           "transparent": true,
           "type": "text"
@@ -8981,7 +9105,7 @@
             "h": 9,
             "w": 4,
             "x": 4,
-            "y": 185
+            "y": 52
           },
           "id": 110,
           "options": {
@@ -8989,6 +9113,7 @@
             "graphMode": "none",
             "justifyMode": "auto",
             "orientation": "auto",
+            "percentChangeColorMode": "standard",
             "reduceOptions": {
               "calcs": [
                 "sum"
@@ -8996,9 +9121,11 @@
               "fields": "",
               "values": false
             },
-            "textMode": "auto"
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -9081,9 +9208,13 @@
                 "mode": "palette-classic"
               },
               "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
+                "barWidthFactor": 0.6,
                 "drawStyle": "line",
                 "fillOpacity": 0,
                 "gradientMode": "none",
@@ -9092,6 +9223,7 @@
                   "tooltip": false,
                   "viz": false
                 },
+                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -9124,7 +9256,7 @@
             "h": 9,
             "w": 16,
             "x": 8,
-            "y": 185
+            "y": 52
           },
           "id": 77,
           "options": {
@@ -9135,10 +9267,12 @@
               "showLegend": true
             },
             "tooltip": {
-              "mode": "single"
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -9224,7 +9358,8 @@
                 "align": "auto",
                 "cellOptions": {
                   "type": "auto"
-                }
+                },
+                "inspect": false
               },
               "mappings": [],
               "thresholds": {
@@ -9242,11 +9377,13 @@
             "h": 10,
             "w": 13,
             "x": 0,
-            "y": 194
+            "y": 61
           },
           "id": 78,
           "options": {
+            "cellHeight": "sm",
             "footer": {
+              "countRows": false,
               "fields": "",
               "reducer": [
                 "sum"
@@ -9255,7 +9392,7 @@
             },
             "showHeader": true
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -9341,11 +9478,12 @@
             "h": 10,
             "w": 11,
             "x": 13,
-            "y": 194
+            "y": 61
           },
           "id": 79,
           "options": {
             "dedupStrategy": "none",
+            "enableInfiniteScrolling": false,
             "enableLogDetails": true,
             "prettifyLogMessage": false,
             "showCommonLabels": false,
@@ -9354,7 +9492,7 @@
             "sortOrder": "Descending",
             "wrapLogMessage": false
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -9457,14 +9595,14 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 14,
+            "h": 5,
             "w": 3,
             "x": 0,
-            "y": 186
+            "y": 53
           },
           "id": 137,
           "options": {
-            "colorMode": "background",
+            "colorMode": "value",
             "graphMode": "none",
             "justifyMode": "auto",
             "orientation": "auto",
@@ -9504,7 +9642,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:linkStatusCarrierDown AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:*linkstatus_carrierdown* AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9572,10 +9710,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 6,
-            "w": 12,
+            "h": 5,
+            "w": 21,
             "x": 3,
-            "y": 186
+            "y": 53
           },
           "id": 131,
           "options": {
@@ -9615,7 +9753,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:linkStatusCarrierDown AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:*linkstatus_carrierdown* AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9655,13 +9793,38 @@
                 ]
               }
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "hostname"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 341
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "index"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 83
+                  }
+                ]
+              }
+            ]
           },
           "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 3,
-            "y": 192
+            "h": 6,
+            "w": 24,
+            "x": 0,
+            "y": 58
           },
           "id": 143,
           "options": {
@@ -9674,7 +9837,8 @@
               ],
               "show": false
             },
-            "showHeader": true
+            "showHeader": true,
+            "sortBy": []
           },
           "pluginVersion": "12.0.3",
           "targets": [
@@ -9694,28 +9858,49 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:linkStatusCarrierDown AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:*linkstatus_carrierdown* AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "details",
+          "title": "Carrier Down details",
           "transformations": [
             {
               "id": "organize",
               "options": {
                 "excludeByName": {
                   "_id": true,
+                  "_index": true,
                   "_type": true,
                   "es_index_time": true,
                   "highlight": true,
                   "sort": true,
+                  "time": true,
                   "tracer_name": true,
-                  "tracer_time": true,
+                  "tracer_time": false,
                   "tracer_type": true,
                   "uploaded_time": true
                 },
-                "indexByName": {},
+                "indexByName": {
+                  "_id": 1,
+                  "_index": 2,
+                  "_type": 3,
+                  "es_index_time": 4,
+                  "highlight": 5,
+                  "hostname": 7,
+                  "region": 8,
+                  "sort": 9,
+                  "time": 10,
+                  "tracer_data.ifname": 11,
+                  "tracer_data.index": 12,
+                  "tracer_data.linkstatus": 13,
+                  "tracer_data.mac": 14,
+                  "tracer_data.start": 15,
+                  "tracer_name": 16,
+                  "tracer_time": 6,
+                  "tracer_type": 17,
+                  "uploaded_time": 0
+                },
                 "renameByName": {
                   "tracer_data.ifname": "ifname",
                   "tracer_data.index": "index",
@@ -9751,14 +9936,14 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 13,
+            "h": 5,
             "w": 3,
             "x": 0,
-            "y": 200
+            "y": 64
           },
           "id": 139,
           "options": {
-            "colorMode": "background",
+            "colorMode": "value",
             "graphMode": "area",
             "justifyMode": "auto",
             "orientation": "auto",
@@ -9798,7 +9983,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:linkStatusAdminDown AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus:*linkstatus_admindown* AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9866,10 +10051,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 6,
-            "w": 12,
+            "h": 5,
+            "w": 21,
             "x": 3,
-            "y": 200
+            "y": 64
           },
           "id": 133,
           "options": {
@@ -9909,7 +10094,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:netdev_events AND tracer_data.linkstatus: linkStatusAdminDown AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus: *linkstatus_admindown* AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9947,10 +10132,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 7,
-            "w": 12,
-            "x": 3,
-            "y": 206
+            "h": 6,
+            "w": 24,
+            "x": 0,
+            "y": 69
           },
           "id": 145,
           "options": {
@@ -9983,16 +10168,48 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:netdev_events AND tracer_data.linkstatus: linkStatusAdminDown AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:netdev_events AND tracer_data.linkstatus: *linkstatus_admindown* AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "details",
+          "title": "Admin Down details",
           "transformations": [
             {
               "id": "organize",
-              "options": {}
+              "options": {
+                "excludeByName": {
+                  "_id": true,
+                  "_index": true,
+                  "_type": true,
+                  "es_index_time": true,
+                  "highlight": true,
+                  "sort": true,
+                  "time": true,
+                  "uploaded_time": true
+                },
+                "indexByName": {
+                  "_id": 1,
+                  "_index": 2,
+                  "_type": 3,
+                  "es_index_time": 4,
+                  "highlight": 5,
+                  "hostname": 7,
+                  "region": 8,
+                  "sort": 9,
+                  "time": 10,
+                  "tracer_data.ifname": 11,
+                  "tracer_data.index": 12,
+                  "tracer_data.linkstatus": 13,
+                  "tracer_data.mac": 14,
+                  "tracer_data.start": 15,
+                  "tracer_name": 16,
+                  "tracer_time": 6,
+                  "tracer_type": 17,
+                  "uploaded_time": 0
+                },
+                "renameByName": {}
+              }
             }
           ],
           "type": "table"
@@ -10020,14 +10237,14 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 13,
+            "h": 5,
             "w": 3,
             "x": 0,
-            "y": 213
+            "y": 75
           },
           "id": 141,
           "options": {
-            "colorMode": "background",
+            "colorMode": "value",
             "graphMode": "none",
             "justifyMode": "auto",
             "orientation": "auto",
@@ -10067,12 +10284,12 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:lacp AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:netdev_bonding_lacp AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "lacp",
+          "title": "netdev_bonding_lacp",
           "type": "stat"
         },
         {
@@ -10136,9 +10353,9 @@
           },
           "gridPos": {
             "h": 5,
-            "w": 12,
+            "w": 21,
             "x": 3,
-            "y": 213
+            "y": 75
           },
           "id": 135,
           "options": {
@@ -10178,7 +10395,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:lacp AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:netdev_bonding_lacp AND region:$region AND hostname:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -10200,7 +10417,8 @@
                 "align": "auto",
                 "cellOptions": {
                   "type": "auto"
-                }
+                },
+                "inspect": false
               },
               "mappings": [],
               "thresholds": {
@@ -10219,23 +10437,26 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 3,
-            "y": 218
+            "h": 6,
+            "w": 24,
+            "x": 0,
+            "y": 80
           },
           "id": 147,
           "options": {
+            "cellHeight": "sm",
             "footer": {
+              "countRows": false,
               "fields": "",
               "reducer": [
                 "sum"
               ],
               "show": false
             },
-            "showHeader": true
+            "showHeader": true,
+            "sortBy": []
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "alias": "",
@@ -10253,12 +10474,12 @@
                   "type": "raw_data"
                 }
               ],
-              "query": "tracer_name:lacp AND region:$region AND hostname:$hostname&size=100",
+              "query": "tracer_name:netdev_bonding_lacp AND region:$region AND hostname:$hostname&size=100",
               "refId": "A",
               "timeField": "uploaded_time"
             }
           ],
-          "title": "details",
+          "title": "lacp details",
           "transformations": [
             {
               "id": "organize",
@@ -10300,12 +10521,8 @@
           "*"
         ],
         "current": {
-          "text": [
-            "example"
-          ],
-          "value": [
-            "example"
-          ]
+          "text": "All",
+          "value": "$__all"
         },
         "datasource": {
           "type": "elasticsearch",
@@ -10326,12 +10543,8 @@
           "*"
         ],
         "current": {
-          "text": [
-            "*"
-          ],
-          "value": [
-            "*"
-          ]
+          "text": "All",
+          "value": "$__all"
         },
         "datasource": {
           "type": "elasticsearch",

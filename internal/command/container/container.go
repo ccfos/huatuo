@@ -23,7 +23,7 @@ import (
 	"huatuo-bamai/internal/pod"
 )
 
-func getContainers(serverAddr, containerID string) ([]pod.Container, error) {
+func getContainers(serverAddr, containerID string) ([]*pod.Container, error) {
 	client := &http.Client{
 		Timeout: 3 * time.Second,
 	}
@@ -52,7 +52,12 @@ func getContainers(serverAddr, containerID string) ([]pod.Container, error) {
 		return nil, fmt.Errorf("unmarshal resp.body failed: %w", err)
 	}
 
-	return containers, nil
+	res := make([]*pod.Container, 0, len(containers))
+	for i := range containers {
+		res = append(res, &containers[i])
+	}
+
+	return res, nil
 }
 
 // GetContainerByID get container by container id
@@ -66,10 +71,10 @@ func GetContainerByID(serverAddr, containerID string) (*pod.Container, error) {
 		return nil, fmt.Errorf("container not found: %s", containerID)
 	}
 
-	return &containers[0], nil
+	return containers[0], nil
 }
 
 // GetAllContainers get all containers
-func GetAllContainers(serverAddr string) ([]pod.Container, error) {
+func GetAllContainers(serverAddr string) ([]*pod.Container, error) {
 	return getContainers(serverAddr, "")
 }
