@@ -1,0 +1,45 @@
+name: OS Distro QEMU Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # start VMs and test in them
+  qemu-vm:
+    name: Test in VM (${{ matrix.os }})
+    runs-on: ubuntu-24.04
+    env:
+      VM_NAME: "huatuo-os-distro-vm"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu24.04, ubuntu22.04] # osinfo-query os
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Host Init
+        run: |
+          .github/workflows/scripts/qemu-0-host-init.sh ${{ matrix.os }}
+
+      - name: Start VM
+        timeout-minutes: 30
+        run: |
+          .github/workflows/scripts/qemu-1-start-vm.sh ${{ matrix.os }} ${VM_NAME}
+
+      - name: Run in VM
+        timeout-minutes: 60
+        run: |
+          echo "=================== Test in VM ==================="
+          ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          root@${VM_NAME} "bash -s -- ${{ matrix.os }}" \
+          < .github/workflows/scripts/qemu-2-run-in-vm.sh
