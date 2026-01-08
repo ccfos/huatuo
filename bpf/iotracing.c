@@ -8,7 +8,8 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-#define DNAME_INLINE_LEN 64
+#define FILEPATH_MAX_DEPTH 8
+#define DNAME_INLINE_LEN 32
 #define PAGE_SIZE 4096
 
 // Device filter configuration
@@ -74,10 +75,7 @@ struct io_data {
 	u64 blkcg_gq;
 	struct latency_info latency;
 	char comm[COMPAT_TASK_COMM_LEN];
-	char filename[DNAME_INLINE_LEN];
-	char d1name[DNAME_INLINE_LEN];
-	char d2name[DNAME_INLINE_LEN];
-	char d3name[DNAME_INLINE_LEN];
+	char filepath[FILEPATH_MAX_DEPTH][DNAME_INLINE_LEN];
 };
 
 struct {
@@ -280,20 +278,21 @@ init_io_data(struct io_data *entry, struct dentry *root_dentry,
 	entry->tgid = t & 0xffffffff;
 
 	bpf_get_current_comm(entry->comm, COMPAT_TASK_COMM_LEN);
-	bpf_probe_read_str(entry->filename, DNAME_INLINE_LEN,
+  for (int i = 0; i < FILEPATH_MAX_DEPTH; i++) {
+    if (dentry == NULL)
+      break;
+    entry->filepath[i][0] = 0;
+    bpf_probe_read_str(entry->filepath[i], DNAME_INLINE_LEN,
 			   BPF_CORE_READ(dentry, d_name.name));
-
-	dentry = BPF_CORE_READ(dentry, d_parent);
-	bpf_probe_read_str(entry->d1name, DNAME_INLINE_LEN,
-			   BPF_CORE_READ(dentry, d_name.name));
-
-	dentry = BPF_CORE_READ(dentry, d_parent);
-	bpf_probe_read_str(entry->d2name, DNAME_INLINE_LEN,
-			   BPF_CORE_READ(dentry, d_name.name));
-
-	dentry = BPF_CORE_READ(dentry, d_parent);
-	bpf_probe_read_str(entry->d3name, DNAME_INLINE_LEN,
-			   BPF_CORE_READ(dentry, d_name.name));
+    if (entry->filepath[i][0] == 0)
+      break;
+    if (entry->filepath[i][DNAME_INLINE_LEN - 2] != 0) {
+      entry->filepath[i][DNAME_INLINE_LEN - 2] = '.';
+      entry->filepath[i][DNAME_INLINE_LEN - 3] = '.';
+      entry->filepath[i][DNAME_INLINE_LEN - 4] = '.';
+    }
+    dentry = BPF_CORE_READ(dentry, d_parent);
+  }
 }
 
 struct iov_iter___new {
