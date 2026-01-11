@@ -35,7 +35,7 @@ $(APP_CMD_OUTPUT)/bin/%: $(APP_CMD_DIR)/% force
 	$(GO_BUILD_STATIC_WITH_VERSION) -o $@ ./$<
 
 docker-build:
-	@docker build --network=host --no-cache -t $(IMAGE_LATEST) -f Dockerfile .
+	@docker build --target run --network=host --no-cache -t $(IMAGE_LATEST) -f Dockerfile .
 
 docker-clean:
 	@docker rmi $(IMAGE_LATEST) || true

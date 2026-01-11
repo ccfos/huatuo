@@ -21,8 +21,8 @@ WORKSPACE_DIR=$(git rev-parse --show-toplevel)
 
 set -ex
 
-docker build --no-cache --quiet --network host -t huatuo/huatuo-dev:latest \
-	-f ${WORKSPACE_DIR}/Dockerfile.devel ${WORKSPACE_DIR}
+docker build --target devel --no-cache --quiet --network host -t huatuo/huatuo-dev:latest \
+	-f ${WORKSPACE_DIR}/Dockerfile ${WORKSPACE_DIR}
 docker run -it --rm --privileged --network host \
 	-v ${WORKSPACE_DIR}:/workspace -w /workspace huatuo/huatuo-dev:latest \
 	sh -c "git config --global --add safe.directory /workspace && make gen && make check && make build"

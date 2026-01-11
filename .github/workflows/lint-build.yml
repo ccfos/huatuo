@@ -24,7 +24,8 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
-          file: ./Dockerfile.devel
+          file: ./Dockerfile
+          target: lint-vendor-check
           push: false
           load: true
           tags: huatuo-dev:latest
