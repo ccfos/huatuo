@@ -23,7 +23,7 @@ import (
 	"path"
 	"sync"
 
-	rotator "huatuo-bamai/internal/file_rotator"
+	"huatuo-bamai/internal/filerotate"
 )
 
 type localFileStorage struct {
@@ -66,7 +66,7 @@ func (f *localFileStorage) newFileWriter(filename string) io.Writer {
 
 	writer, ok := fileWriterMap.Load(filepath)
 	if !ok {
-		writer = rotator.NewSizeRotator(filepath, f.localMaxRotation, f.localRotationSize)
+		writer = filerotate.NewFileRotator(filepath, f.localMaxRotation, f.localRotationSize)
 		fileWriterMap.Store(filepath, writer)
 	}
 

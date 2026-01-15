@@ -113,10 +113,7 @@ type IOData struct {
 	Blkcg           uint64
 	Latency         LatencyInfo
 	Comm            [16]byte
-	FileName        [64]byte
-	Dentry1Name     [64]byte
-	Dentry2Name     [64]byte
-	Dentry3Name     [64]byte
+	FilePath        [8][32]byte
 }
 
 // IODelayData contains IO schedule info from iodelay_perf_events.
@@ -132,12 +129,15 @@ type IODelayData struct {
 }
 
 func (data *IOData) FilePathName() string {
-	fileName := strings.TrimLeft(fmt.Sprintf("%s/%s/%s/%s",
-		bytesutil.ToString(data.Dentry3Name[:]),
-		bytesutil.ToString(data.Dentry2Name[:]),
-		bytesutil.ToString(data.Dentry1Name[:]),
-		bytesutil.ToString(data.FileName[:])),
-		"/")
+	names := make([]string, 0, len(data.FilePath))
+	for i := len(data.FilePath) - 1; i >= 0; i-- {
+		s := strings.TrimSpace(bytesutil.ToString(data.FilePath[i][:]))
+		if s == "" || s == "/" {
+			continue
+		}
+		names = append(names, s)
+	}
+	fileName := "/" + strings.Join(names, "/")
 
 	if data.InodeNum == 0 {
 		fileName = "[direct IO]"

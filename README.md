@@ -1,6 +1,6 @@
 English | [简体中文](./README_CN.md)
 
-![](./docs/huatuo-logo-v3.png)
+![](/docs/img/huatuo-logo-v3.png)
 
 # What is HUATUO
 
@@ -17,7 +17,7 @@ English | [简体中文](./README_CN.md)
 
 # Software Architecture
 
-![](./docs/img/huatuo-arch.png)
+![](/docs/img/huatuo-arch.png)
 
 # Getting Started
 
@@ -37,9 +37,9 @@ English | [简体中文](./README_CN.md)
 
         $ docker compose --project-directory ./build/docker up
 
-  ![](./docs/img/quickstart-components.png)  
+  ![](/docs/img/quickstart-components.png)  
 
-  For more information, please refer to: [Quick Start](./docs/quick-start.md) or [https://huatuo.tech/quickstart/](https://huatuo.tech/quickstart/)
+  For more information, please refer to: [Quick Start](/docs/users/en/quick-start.md) or [https://huatuo.tech/quickstart/](https://huatuo.tech/quickstart/)
 
 - **NOTE**
 
@@ -66,7 +66,7 @@ For more information, visit [https://huatuo.tech](https://huatuo.tech/)
 # Contact Us
 - WeChat Group and Official Account:
 
-![](./docs/img/contact-weixin.png)
+![](/docs/img/contact-weixin.png)
 
 # License
 

@@ -14,6 +14,7 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define SOFTIRQ_THRESH 5000000UL
 
 volatile const u64 softirq_thresh = SOFTIRQ_THRESH;
+bool idle_polling = true;
 
 #define TICK 1000
 BPF_RATELIMIT(rate, 1, COMPAT_CPU_NUM *TICK * 1000);
@@ -76,7 +77,7 @@ void probe_account_process_tick(struct pt_regs *ctx)
 	if (!ts)
 		return;
 
-	if (!ts->start_trace)
+	if (!ts->start_trace && !idle_polling)
 		return;
 
 	// update soft timer timestamps
@@ -124,6 +125,9 @@ void probe_tick_stop(struct trace_event_raw_tick_stop *ctx)
 {
 	struct timer_softirq_run_ts *ts;
 	int key = 0;
+
+	if (idle_polling)
+		idle_polling = false;
 
 	ts = bpf_map_lookup_elem(&timerts_map, &key);
 	if (!ts)
