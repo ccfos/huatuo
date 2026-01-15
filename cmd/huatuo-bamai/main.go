@@ -32,6 +32,7 @@ import (
 	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/services"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/utils/executil"
@@ -82,6 +83,7 @@ func mainAction(ctx *cli.Context) error {
 		LocalPath:         conf.Get().Storage.LocalFile.Path,
 		LocalMaxRotation:  conf.Get().Storage.LocalFile.MaxRotation,
 		LocalRotationSize: conf.Get().Storage.LocalFile.RotationSize,
+		StorageDisabled:   ctx.Bool("disable-storage"),
 		Region:            conf.Region,
 	}
 
@@ -94,9 +96,10 @@ func mainAction(ctx *cli.Context) error {
 	}
 
 	podListInitCtx := pod.PodContainerInitCtx{
-		PodReadOnlyPort:   conf.Get().Pod.KubeletReadOnlyPort,
-		PodAuthorizedPort: conf.Get().Pod.KubeletAuthorizedPort,
-		PodClientCertPath: conf.Get().Pod.KubeletClientCertPath,
+		PodReadOnlyPort:      conf.Get().Pod.KubeletReadOnlyPort,
+		PodAuthorizedPort:    conf.Get().Pod.KubeletAuthorizedPort,
+		PodClientCertPath:    conf.Get().Pod.KubeletClientCertPath,
+		PodContainerDisabled: ctx.Bool("disable-kubelet"),
 	}
 
 	if err := pod.ContainerPodMgrInit(&podListInitCtx); err != nil {
@@ -231,6 +234,16 @@ func main() {
 			Required: true,
 			Usage:    "the host and containers are in this region",
 		},
+		&cli.BoolFlag{
+			Name:  "disable-kubelet",
+			Value: false,
+			Usage: "disable kubelet(testing only). Not recommended for production use.",
+		},
+		&cli.BoolFlag{
+			Name:  "disable-storage",
+			Value: false,
+			Usage: "disable storage backends(testing only). Not recommended for production use.",
+		},
 		&cli.StringSliceFlag{
 			Name:  "disable-tracing",
 			Usage: "disable tracing. This is related to Blacklist in config, and complement each other",
@@ -242,6 +255,14 @@ func main() {
 		&cli.BoolFlag{
 			Name:  "dry-run",
 			Usage: "for loading tests, exit gracefully",
+		},
+		&cli.StringFlag{
+			Name:  "procfs",
+			Usage: "procfs mountpoint",
+		},
+		&cli.StringFlag{
+			Name:  "sysfs",
+			Usage: "sysfs mountpoint",
 		},
 	}
 
@@ -282,6 +303,14 @@ func main() {
 
 			conf.Set("Blacklist", definedTracers)
 			log.Infof("The tracer black list by cli: %v", conf.Get().BlackList)
+		}
+
+		// mountpoint (test only)
+		if ctx.String("procfs") != "" {
+			procfs.DefaultProcMountPoint = ctx.String("procfs")
+		}
+		if ctx.String("sysfs") != "" {
+			procfs.DefaultSysMountPoint = ctx.String("sysfs")
 		}
 
 		if ctx.Bool("log-debug") {

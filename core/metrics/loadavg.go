@@ -18,11 +18,11 @@ import (
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/paths"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 
 	"github.com/google/cadvisor/utils/cpuload/netlink"
-	"github.com/prometheus/procfs"
 )
 
 type loadavgCollector struct {

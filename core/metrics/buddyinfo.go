@@ -18,8 +18,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/prometheus/procfs"
-
+	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )

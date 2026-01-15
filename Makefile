@@ -59,6 +59,9 @@ vendor:
 clean:
 	@rm -rf _output $(shell find . -type f -name "*.o")
 
+integration:
+	@bash integration/integration.sh
+
 force:;
 
-.PHONY: all gen sync build check imports fmt golangci-lint vendor clean force docker-build docker-clean
+.PHONY: all gen sync build check imports fmt golangci-lint vendor clean integration force docker-build docker-clean

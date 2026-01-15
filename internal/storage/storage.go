@@ -106,10 +106,18 @@ type InitContext struct {
 	LocalMaxRotation  int
 	Region            string
 	Hostname          string
+
+	StorageDisabled bool
 }
 
 // InitDefaultClients initializes the default clients, that includes local-file, elasticsearch.
 func InitDefaultClients(initCtx *InitContext) (err error) {
+	// Storage disabled, directly return
+	if initCtx.StorageDisabled {
+		log.Infof("elasticsearch and local storage diabled, use null device: %+v", initCtx)
+		return nil
+	}
+
 	// ES client
 	if initCtx.EsAddresses == "" || initCtx.EsUsername == "" || initCtx.EsPassword == "" {
 		log.Warnf("elasticsearch storage config invalid, use null device: %+v", initCtx)
