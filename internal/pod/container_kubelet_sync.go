@@ -54,9 +54,10 @@ var (
 )
 
 type PodContainerInitCtx struct {
-	PodReadOnlyPort   uint32
-	PodAuthorizedPort uint32
-	PodClientCertPath string
+	PodReadOnlyPort      uint32
+	PodAuthorizedPort    uint32
+	PodClientCertPath    string
+	PodContainerDisabled bool
 
 	// this is used internally.
 	podClientCertPath string
@@ -127,6 +128,12 @@ func kubeletPodListPortCacheUpdate(ctx *PodContainerInitCtx) error {
 }
 
 func ContainerPodMgrInit(ctx *PodContainerInitCtx) error {
+	// Pod sync disabled, directly return
+	if ctx.PodContainerDisabled {
+		log.Infof("skip pod sync: pod container from kubelet is disabled")
+		return nil
+	}
+
 	if ctx.PodReadOnlyPort == 0 && ctx.PodAuthorizedPort == 0 {
 		log.Warnf("pod sync is not working, we manually turned off this, readonlyport == 0, and authorizedport == 0")
 		return nil
