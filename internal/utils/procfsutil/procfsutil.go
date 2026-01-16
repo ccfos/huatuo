@@ -39,7 +39,8 @@ func FsSupported(filesystem string) bool {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.Contains(line, filesystem) {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[len(fields)-1] == filesystem {
 			return true
 		}
 	}
