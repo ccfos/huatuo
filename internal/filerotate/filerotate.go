@@ -61,6 +61,9 @@ type fileRotator struct {
 	logger *lumberjack.Logger
 }
 
+// Ensure fileRotator implements io.WriteCloser at compile time.
+var _ io.WriteCloser = (*fileRotator)(nil)
+
 // NewFileRotator create a rotatable logger
 func NewFileRotator(path string, maxRotation, rotationSize int) io.WriteCloser {
 	return &fileRotator{
