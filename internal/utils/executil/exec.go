@@ -18,7 +18,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"runtime"
+
+	"golang.org/x/sys/unix"
 )
 
 func RunningDir() (string, error) {
@@ -31,12 +33,20 @@ func RunningDir() (string, error) {
 }
 
 func HostnameByPid(pid uint32) (string, error) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/root/proc/sys/kernel/hostname", pid))
+	var empty string
+	fd, err := os.Open(fmt.Sprintf("/proc/%d/ns/uts", pid))
 	if err != nil {
-		return "", err
+		return empty, err
 	}
+	defer fd.Close()
 
-	return strings.TrimSpace(string(data)), nil
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if err := unix.Setns(int(fd.Fd()), unix.CLONE_NEWUTS); err != nil {
+		return empty, err
+	}
+	return os.Hostname()
 }
 
 func ProcNameByPid(pid uint32) (string, error) {
