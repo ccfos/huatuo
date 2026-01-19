@@ -1,17 +1,20 @@
 #include "vmlinux.h"
-#include "bpf_common.h"
+
+#include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-#include <bpf/bpf_core_read.h>
+
+#include "bpf_common.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-#define DNAME_INLINE_LEN 64
+#define FILEPATH_MAX_DEPTH 8
+#define DNAME_INLINE_LEN 32
 #define PAGE_SIZE 4096
 
 // Device filter configuration
-volatile const u32 FILTER_DEVS[16] = {};
-volatile const u32 FILTER_DEV_COUNT = 0;
+volatile const u32 FILTER_DEVS[16]	= {};
+volatile const u32 FILTER_DEV_COUNT	= 0;
 volatile const u64 FILTER_EVENT_TIMEOUT = 100000000;
 
 /*
@@ -72,10 +75,7 @@ struct io_data {
 	u64 blkcg_gq;
 	struct latency_info latency;
 	char comm[COMPAT_TASK_COMM_LEN];
-	char filename[DNAME_INLINE_LEN];
-	char d1name[DNAME_INLINE_LEN];
-	char d2name[DNAME_INLINE_LEN];
-	char d3name[DNAME_INLINE_LEN];
+	char filepath[FILEPATH_MAX_DEPTH][DNAME_INLINE_LEN];
 };
 
 struct {
@@ -99,10 +99,9 @@ struct {
 	__uint(value_size, sizeof(u64));
 } request_struct_map SEC(".maps");
 
-
-#define REQ_OP_BITS	8
-#define REQ_OP_MASK	((1 << REQ_OP_BITS) - 1)
-#define REQ_META	(1ULL << __REQ_META)
+#define REQ_OP_BITS 8
+#define REQ_OP_MASK ((1 << REQ_OP_BITS) - 1)
+#define REQ_META (1ULL << __REQ_META)
 
 static __always_inline int is_write_request(u32 cmd_flags)
 {
@@ -146,7 +145,7 @@ static __always_inline int get_partition_number(struct request *req)
 		int partno;
 
 		new_part = (struct block_device___new *)part;
-		partno = BPF_CORE_READ(new_part, bd_dev);
+		partno	 = BPF_CORE_READ(new_part, bd_dev);
 		return partno & 0xff;
 	}
 }
@@ -154,14 +153,14 @@ static __always_inline int get_partition_number(struct request *req)
 SEC("kprobe/rq_qos_issue")
 int bpf_rq_qos_issue(struct pt_regs *ctx)
 {
-	struct request *req = (struct request *)PT_REGS_PARM2(ctx);
-	struct hash_key key = {};
+	struct request *req	  = (struct request *)PT_REGS_PARM2(ctx);
+	struct hash_key key	  = {};
 	struct io_start_info info = {};
-    struct bio *bio;
+	struct bio *bio;
 	struct inode *inode;
 	struct gendisk *disk;
 	u32 cmd_flags;
-    int partno;
+	int partno;
 	int devn[2];
 
 	bio = BPF_CORE_READ(req, bio);
@@ -175,22 +174,22 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 	if (bpf_probe_read(devn, sizeof(devn), disk))
 		return -1;
 
-	partno = get_partition_number(req);
-	key.dev = (devn[0] & 0xfff) << 20 | (devn[1] & 0xff) + partno;
+	partno	   = get_partition_number(req);
+	key.dev	   = (devn[0] & 0xfff) << 20 | (devn[1] & 0xff) + partno;
 	key.sector = BPF_CORE_READ(req, __sector);
 
 	if (!should_process_device(key.dev))
 		return 0;
 
-	inode = BPF_CORE_READ(bio, bi_io_vec, bv_page, mapping, host);
+	inode	   = BPF_CORE_READ(bio, bi_io_vec, bv_page, mapping, host);
 	info.inode = BPF_CORE_READ(inode, i_ino);
 	if (info.inode == 0)
 		info.dev = key.dev;
 	else
 		info.dev = BPF_CORE_READ(inode, i_sb, s_dev);
 
-	info.pid = bpf_get_current_pid_tgid() >> 32;
-	info.bi_blkg = BPF_CORE_READ(bio, bi_blkg);
+	info.pid      = bpf_get_current_pid_tgid() >> 32;
+	info.bi_blkg  = BPF_CORE_READ(bio, bi_blkg);
 	info.data_len = BPF_CORE_READ(req, __data_len);
 	bpf_get_current_comm(info.comm, COMPAT_TASK_COMM_LEN);
 	bpf_map_update_elem(&start_info_map, &key, &info, COMPAT_BPF_ANY);
@@ -201,15 +200,15 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 SEC("kprobe/rq_qos_done")
 int bpf_rq_qos_done(struct pt_regs *ctx)
 {
-	struct request *req = (struct request *)PT_REGS_PARM2(ctx);
+	struct request *req	   = (struct request *)PT_REGS_PARM2(ctx);
 	struct io_start_info *info = NULL;
-	struct hash_key info_key = {};
-	struct io_key io_key = {};
-	struct io_data data = {};
+	struct hash_key info_key   = {};
+	struct io_key io_key	   = {};
+	struct io_data data	   = {};
 	struct io_data *entry;
-    struct gendisk *disk;
-    u32 cmd_flags;
-    int partno;
+	struct gendisk *disk;
+	u32 cmd_flags;
+	int partno;
 	int devn[2];
 	u64 now;
 
@@ -218,8 +217,8 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 	if (bpf_probe_read(devn, sizeof(devn), disk))
 		return -1;
 
-	partno = get_partition_number(req);
-	info_key.dev = (devn[0] & 0xfff) << 20 | (devn[1] & 0xff) + partno;
+	partno		= get_partition_number(req);
+	info_key.dev	= (devn[0] & 0xfff) << 20 | (devn[1] & 0xff) + partno;
 	info_key.sector = BPF_CORE_READ(req, __sector);
 
 	if (!should_process_device(info_key.dev))
@@ -229,7 +228,7 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 	if (!info)
 		return 0;
 
-	io_key.dev = info->dev;
+	io_key.dev   = info->dev;
 	io_key.inode = info->inode;
 	/* for direct IO, set pid value in key */
 	if (io_key.inode == 0)
@@ -256,9 +255,9 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 
 	if (entry == &data) {
 		entry->blkcg_gq = (u64)info->bi_blkg;
-		entry->pid = info->pid;
-		entry->dev = info->dev;
-		entry->inode = info->inode;
+		entry->pid	= info->pid;
+		entry->dev	= info->dev;
+		entry->inode	= info->inode;
 		bpf_probe_read_str(entry->comm, COMPAT_TASK_COMM_LEN,
 				   info->comm);
 		bpf_map_update_elem(&io_source_map, &io_key, &data,
@@ -269,40 +268,42 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 	return 0;
 }
 
-
-static __always_inline  void init_io_data(struct io_data *entry, struct dentry *root_dentry,
-			  struct dentry *dentry, struct inode *inode)
+static __always_inline void
+init_io_data(struct io_data *entry, struct dentry *root_dentry,
+	     struct dentry *dentry, struct inode *inode)
 {
 	u64 t = bpf_get_current_pid_tgid();
 
-	entry->pid = t >> 32;
+	entry->pid  = t >> 32;
 	entry->tgid = t & 0xffffffff;
 
 	bpf_get_current_comm(entry->comm, COMPAT_TASK_COMM_LEN);
-	bpf_probe_read_str(entry->filename, DNAME_INLINE_LEN,
-			   BPF_CORE_READ(dentry, d_name.name));
+	for (int i = 0; i < FILEPATH_MAX_DEPTH; i++) {
+		if (dentry == NULL)
+			break;
 
-	dentry = BPF_CORE_READ(dentry, d_parent);
-	bpf_probe_read_str(entry->d1name, DNAME_INLINE_LEN,
-			   BPF_CORE_READ(dentry, d_name.name));
-
-	dentry = BPF_CORE_READ(dentry, d_parent);
-	bpf_probe_read_str(entry->d2name, DNAME_INLINE_LEN,
-			   BPF_CORE_READ(dentry, d_name.name));
-
-	dentry = BPF_CORE_READ(dentry, d_parent);
-	bpf_probe_read_str(entry->d3name, DNAME_INLINE_LEN,
-			   BPF_CORE_READ(dentry, d_name.name));
+		entry->filepath[i][0] = 0;
+		bpf_probe_read_str(entry->filepath[i], DNAME_INLINE_LEN,
+				   BPF_CORE_READ(dentry, d_name.name));
+		if (entry->filepath[i][0] == 0)
+			break;
+		if (entry->filepath[i][DNAME_INLINE_LEN - 2] != 0) {
+			entry->filepath[i][DNAME_INLINE_LEN - 2] = '.';
+			entry->filepath[i][DNAME_INLINE_LEN - 3] = '.';
+			entry->filepath[i][DNAME_INLINE_LEN - 4] = '.';
+		}
+		dentry = BPF_CORE_READ(dentry, d_parent);
+	}
 }
 
 struct iov_iter___new {
 	bool data_source;
 } __attribute__((preserve_access_index));
 
-static __always_inline  int bpf_file_read_write(struct pt_regs *ctx)
+static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 {
-	struct kiocb *iocb = (struct kiocb *)PT_REGS_PARM1(ctx);
-	struct io_data data = {};
+	struct kiocb *iocb    = (struct kiocb *)PT_REGS_PARM1(ctx);
+	struct io_data data   = {};
 	struct io_data *entry = NULL;
 	struct dentry *dentry;
 	struct dentry *root_dentry;
@@ -312,9 +313,9 @@ static __always_inline  int bpf_file_read_write(struct pt_regs *ctx)
 	size_t count;
 	unsigned int type;
 
-	inode = BPF_CORE_READ(iocb, ki_filp, f_inode);
+	inode	  = BPF_CORE_READ(iocb, ki_filp, f_inode);
 	key.inode = BPF_CORE_READ(inode, i_ino);
-	key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	key.dev	  = BPF_CORE_READ(inode, i_sb, s_dev);
 
 	if (!should_process_device(key.dev))
 		return 0;
@@ -323,15 +324,15 @@ static __always_inline  int bpf_file_read_write(struct pt_regs *ctx)
 	if (!entry)
 		entry = &data;
 
-	dentry = BPF_CORE_READ(iocb, ki_filp, f_path.dentry);
+	dentry	    = BPF_CORE_READ(iocb, ki_filp, f_path.dentry);
 	root_dentry = BPF_CORE_READ(iocb, ki_filp, f_path.mnt, mnt_root);
 	if (entry->tgid == 0) {
 		init_io_data(entry, root_dentry, dentry, inode);
-		entry->dev = key.dev;
+		entry->dev   = key.dev;
 		entry->inode = key.inode;
 	}
 
-	from = (struct iov_iter *)PT_REGS_PARM2(ctx);
+	from  = (struct iov_iter *)PT_REGS_PARM2(ctx);
 	count = BPF_CORE_READ(from, count);
 
 	if (bpf_core_field_exists(from->type)) {
@@ -340,7 +341,7 @@ static __always_inline  int bpf_file_read_write(struct pt_regs *ctx)
 		struct iov_iter___new *from_new;
 
 		from_new = (struct iov_iter___new *)from;
-		type = BPF_CORE_READ(from_new, data_source);
+		type	 = BPF_CORE_READ(from_new, data_source);
 	}
 
 	type = type & 0x1;
@@ -351,7 +352,8 @@ static __always_inline  int bpf_file_read_write(struct pt_regs *ctx)
 
 	entry->flag = BPF_CORE_READ(iocb, ki_flags);
 	if (entry == &data)
-		bpf_map_update_elem(&io_source_map, &key, &data, COMPAT_BPF_ANY);
+		bpf_map_update_elem(&io_source_map, &key, &data,
+				    COMPAT_BPF_ANY);
 
 	return 0;
 }
@@ -370,16 +372,16 @@ int bpf_anyfs_file_write_iter(struct pt_regs *ctx)
 
 static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 {
-	struct vm_fault *vm = (struct vm_fault *)PT_REGS_PARM1(ctx);
+	struct vm_fault *vm	   = (struct vm_fault *)PT_REGS_PARM1(ctx);
 	struct vm_area_struct *vma = BPF_CORE_READ(vm, vma);
-    struct io_data *entry = NULL;
-    struct io_data data = {};
-	struct io_key key = {};
+	struct io_data *entry	   = NULL;
+	struct io_data data	   = {};
+	struct io_key key	   = {};
 	struct inode *inode;
 
-	inode = BPF_CORE_READ(vma, vm_file, f_inode);
+	inode	  = BPF_CORE_READ(vma, vm_file, f_inode);
 	key.inode = BPF_CORE_READ(inode, i_ino);
-	key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	key.dev	  = BPF_CORE_READ(inode, i_sb, s_dev);
 
 	if (!should_process_device(key.dev))
 		return 0;
@@ -392,16 +394,17 @@ static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 		struct dentry *dentry;
 		struct dentry *root_dentry;
 
-		dentry = BPF_CORE_READ(vma, vm_file, f_path.dentry);
+		dentry	    = BPF_CORE_READ(vma, vm_file, f_path.dentry);
 		root_dentry = BPF_CORE_READ(vma, vm_file, f_path.mnt, mnt_root);
 		init_io_data(entry, root_dentry, dentry, inode);
-		entry->dev = key.dev;
+		entry->dev   = key.dev;
 		entry->inode = key.inode;
 	}
 
 	entry->fs_write_bytes += PAGE_SIZE;
 	if (entry == &data)
-		bpf_map_update_elem(&io_source_map, &key, &data, COMPAT_BPF_ANY);
+		bpf_map_update_elem(&io_source_map, &key, &data,
+				    COMPAT_BPF_ANY);
 
 	return 0;
 }
@@ -414,16 +417,16 @@ int bpf_anyfs_filemap_page_mkwrite(struct pt_regs *ctx)
 SEC("kprobe/filemap_fault")
 int bpf_filemap_fault(struct pt_regs *ctx)
 {
-	struct vm_fault *vm = (struct vm_fault *)PT_REGS_PARM1(ctx);
+	struct vm_fault *vm	   = (struct vm_fault *)PT_REGS_PARM1(ctx);
 	struct vm_area_struct *vma = BPF_CORE_READ(vm, vma);
-    struct io_data *entry = NULL;
-    struct io_data data = {};
-	struct io_key key = {};
+	struct io_data *entry	   = NULL;
+	struct io_data data	   = {};
+	struct io_key key	   = {};
 	struct inode *inode;
 
-	inode = BPF_CORE_READ(vma, vm_file, f_inode);
+	inode	  = BPF_CORE_READ(vma, vm_file, f_inode);
 	key.inode = BPF_CORE_READ(inode, i_ino);
-	key.dev = BPF_CORE_READ(inode, i_sb, s_dev);
+	key.dev	  = BPF_CORE_READ(inode, i_sb, s_dev);
 
 	if (!should_process_device(key.dev))
 		return 0;
@@ -436,16 +439,17 @@ int bpf_filemap_fault(struct pt_regs *ctx)
 		struct dentry *dentry;
 		struct dentry *root_dentry;
 
-		dentry = BPF_CORE_READ(vma, vm_file, f_path.dentry);
+		dentry	    = BPF_CORE_READ(vma, vm_file, f_path.dentry);
 		root_dentry = BPF_CORE_READ(vma, vm_file, f_path.mnt, mnt_root);
 		init_io_data(entry, root_dentry, dentry, inode);
-		entry->dev = key.dev;
+		entry->dev   = key.dev;
 		entry->inode = key.inode;
 	}
 	entry->fs_read_bytes += PAGE_SIZE;
 
 	if (entry == &data)
-		bpf_map_update_elem(&io_source_map, &key, &data, COMPAT_BPF_ANY);
+		bpf_map_update_elem(&io_source_map, &key, &data,
+				    COMPAT_BPF_ANY);
 
 	return 0;
 }
@@ -474,27 +478,24 @@ struct {
 	__uint(value_size, sizeof(int));
 } iodelay_perf_events SEC(".maps");
 
-static __always_inline  int detect_io_schedule(struct pt_regs *ctx)
+static __always_inline int detect_io_schedule(struct pt_regs *ctx)
 {
-    struct iodelay_entry entry = {};
-	u64 id = bpf_get_current_pid_tgid();
-	u32 pid = id & 0xffffffff;
+	struct iodelay_entry entry = {};
+	u64 id			   = bpf_get_current_pid_tgid();
+	u32 pid			   = id & 0xffffffff;
 
 	entry.ts = bpf_ktime_get_ns();
 	bpf_get_current_comm(entry.comm, COMPAT_TASK_COMM_LEN);
 
-	entry.stack_size = bpf_get_stack(ctx, entry.stack,
-					 sizeof(entry.stack), 0);
+	entry.stack_size =
+	    bpf_get_stack(ctx, entry.stack, sizeof(entry.stack), 0);
 	bpf_map_update_elem(&io_schedule_stack, &pid, &entry, COMPAT_BPF_ANY);
 
 	return 0;
 }
 
 SEC("kprobe/io_schedule")
-int bpf_io_schedule(struct pt_regs *ctx)
-{
-	return detect_io_schedule(ctx);
-}
+int bpf_io_schedule(struct pt_regs *ctx) { return detect_io_schedule(ctx); }
 
 SEC("kprobe/io_schedule_timeout")
 int bpf_io_schedule_timeout(struct pt_regs *ctx)
@@ -502,10 +503,10 @@ int bpf_io_schedule_timeout(struct pt_regs *ctx)
 	return detect_io_schedule(ctx);
 }
 
-static __always_inline  int detect_io_schedule_return(struct pt_regs *ctx)
+static __always_inline int detect_io_schedule_return(struct pt_regs *ctx)
 {
 	struct iodelay_entry *entry;
-	u64 id = bpf_get_current_pid_tgid();
+	u64 id	= bpf_get_current_pid_tgid();
 	u32 pid = id & 0xffffffff;
 	u64 now = bpf_ktime_get_ns();
 
@@ -514,8 +515,8 @@ static __always_inline  int detect_io_schedule_return(struct pt_regs *ctx)
 		return 0;
 
 	if (now - entry->ts > FILTER_EVENT_TIMEOUT) {
-		entry->pid = (id >> 32) & 0xffffffff;
-		entry->tid = pid;
+		entry->pid  = (id >> 32) & 0xffffffff;
+		entry->tid  = pid;
 		entry->cost = now - entry->ts;
 		bpf_perf_event_output(ctx, &iodelay_perf_events,
 				      COMPAT_BPF_F_CURRENT_CPU, entry,

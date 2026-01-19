@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/procfsutil"
+	"huatuo-bamai/internal/utils/netutil"
 
 	corev1 "k8s.io/api/core/v1"
 	kubeletconfig "k8s.io/kubelet/config/v1beta1"
@@ -54,9 +54,10 @@ var (
 )
 
 type PodContainerInitCtx struct {
-	PodReadOnlyPort   uint32
-	PodAuthorizedPort uint32
-	PodClientCertPath string
+	PodReadOnlyPort      uint32
+	PodAuthorizedPort    uint32
+	PodClientCertPath    string
+	PodContainerDisabled bool
 
 	// this is used internally.
 	podClientCertPath string
@@ -127,6 +128,12 @@ func kubeletPodListPortCacheUpdate(ctx *PodContainerInitCtx) error {
 }
 
 func ContainerPodMgrInit(ctx *PodContainerInitCtx) error {
+	// Pod sync disabled, directly return
+	if ctx.PodContainerDisabled {
+		log.Infof("skip pod sync: pod container from kubelet is disabled")
+		return nil
+	}
+
 	if ctx.PodReadOnlyPort == 0 && ctx.PodAuthorizedPort == 0 {
 		log.Warnf("pod sync is not working, we manually turned off this, readonlyport == 0, and authorizedport == 0")
 		return nil
@@ -356,7 +363,7 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 	}
 
 	// net namespace
-	nsInode, err := procfsutil.NetNSInodeByPid(initPid)
+	nsInode, err := netutil.NetNSInodeByPid(initPid)
 	if err != nil {
 		return fmt.Errorf("failed to get net namespace inode by pid: %w", err)
 	}

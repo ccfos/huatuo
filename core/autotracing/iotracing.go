@@ -21,10 +21,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/prometheus/procfs/blockdevice"
-
 	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/procfs/blockdevice"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/tracing"

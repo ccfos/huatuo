@@ -165,8 +165,8 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 
 func (c *dropWatchTracing) formatEvent(event *perfEventT) *DropWatchTracingData {
 	// hostname
-	saddr := netutil.InetNtop(event.Saddr).String()
-	daddr := netutil.InetNtop(event.Daddr).String()
+	saddr := netutil.Inetv4Ntop(event.Saddr).String()
+	daddr := netutil.Inetv4Ntop(event.Daddr).String()
 	srcHostname := "<nil>"
 	destHostname := "<nil>"
 	h, err := net.LookupAddr(saddr)
@@ -189,12 +189,12 @@ func (c *dropWatchTracing) formatEvent(event *perfEventT) *DropWatchTracingData 
 		Pid:           event.TgidPid >> 32,
 		Saddr:         saddr,
 		Daddr:         daddr,
-		Sport:         netutil.InetNtohs(event.Sport),
-		Dport:         netutil.InetNtohs(event.Dport),
+		Sport:         netutil.Ntohs(event.Sport),
+		Dport:         netutil.Ntohs(event.Dport),
 		SrcHostname:   srcHostname,
 		DestHostname:  destHostname,
-		Seq:           netutil.InetNtohl(event.Seq),
-		AckSeq:        netutil.InetNtohl(event.AckSeq),
+		Seq:           netutil.Ntohl(event.Seq),
+		AckSeq:        netutil.Ntohl(event.AckSeq),
 		QueueMapping:  event.QueueMapping,
 		PktLen:        event.PktLen,
 		State:         tcpstateMap[event.State],

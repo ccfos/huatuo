@@ -53,8 +53,8 @@ const (
 )
 
 var (
-	esExporter        writer
-	localFileExporter writer
+	esExporter        writer = &null{}
+	localFileExporter writer = &null{}
 	storageInitCtx    InitContext
 )
 
@@ -106,25 +106,40 @@ type InitContext struct {
 	LocalMaxRotation  int
 	Region            string
 	Hostname          string
+
+	StorageDisabled bool
 }
 
 // InitDefaultClients initializes the default clients, that includes local-file, elasticsearch.
 func InitDefaultClients(initCtx *InitContext) (err error) {
-	// the es client
+	// Storage disabled, directly return
+	if initCtx.StorageDisabled {
+		log.Infof("elasticsearch and local storage diabled, use null device: %+v", initCtx)
+		return nil
+	}
+
+	// ES client
 	if initCtx.EsAddresses == "" || initCtx.EsUsername == "" || initCtx.EsPassword == "" {
-		esExporter = &null{}
 		log.Warnf("elasticsearch storage config invalid, use null device: %+v", initCtx)
 	} else {
-		esExporter, err = newESClient(initCtx.EsAddresses, initCtx.EsUsername, initCtx.EsPassword, initCtx.EsIndex)
+		esclient, err := newESClient(initCtx.EsAddresses, initCtx.EsUsername, initCtx.EsPassword, initCtx.EsIndex)
 		if err != nil {
 			return err
 		}
+
+		esExporter = esclient
 	}
 
-	// the local-file client
-	localFileExporter, err = newLocalFileStorage(initCtx.LocalPath, initCtx.LocalMaxRotation, initCtx.LocalRotationSize)
-	if err != nil {
-		return err
+	// Local-file client
+	if initCtx.LocalPath == "" {
+		log.Warnf("localfile storage config invalid, use null device: %+v", initCtx)
+	} else {
+		localFileClient, err := newLocalFileStorage(initCtx.LocalPath, initCtx.LocalMaxRotation, initCtx.LocalRotationSize)
+		if err != nil {
+			return err
+		}
+
+		localFileExporter = localFileClient
 	}
 
 	storageInitCtx = *initCtx

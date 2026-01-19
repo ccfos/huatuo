@@ -1,9 +1,9 @@
 简体中文 | [English](./README.md)
 
-![](./docs/huatuo-logo-v3.png)
+![](/docs/img/huatuo-logo-v3.png)
 
 # 什么是 HUATUO
-**HUATUO（华佗）**是由**滴滴**开源并依托 **CCF 开源发展技术委员会**孵化的云原生操作系统可观测性项目，专注于为复杂云原生环境提供操作系统内核级深度观测能力。该项目基于 [eBPF](https://docs.kernel.org/userspace-api/ebpf/syscall.html) 技术，通过整合 [kprobe](https://www.kernel.org/doc/html/latest/trace/kprobes.html)、 [tracepoint](https://www.kernel.org/doc/html/latest/trace/tracepoints.html)、 [ftrace](https://www.kernel.org/doc/html/latest/trace/ftrace.html)  等内核动态追踪技术，实现了多维度的内核观测能力：**1.** 更精细化的内核子系统埋点指标 Metric **2.** 异常事件驱动的内核运行时上下文捕获 Events **3.** 针对系统突发毛刺的自动追踪 AutoTracing、AutoProfiling。该项目逐步构建了完整的 Linux 内核深度可观测体系架构。目前，HUATUO 已在滴滴生产环境中实现规模化部署，在诸多故障场景中发挥关键作用，有效保障了云原生操作系统的高可用性和性能优化。通过持续的技术演进，希望 HUATUO 能够推动 eBPF 技术在云原生可观测领域向更细粒度、更低开销、更高时效性的方向发展。更多信息访问官网 [https://huatuo.tech](https://huatuo.tech/)
+**HUATUO（华佗）**是由**滴滴**开源并依托 **CCF (中国计算机学会)** 孵化的操作系统深度可观测项目，专注为复杂云原生通用计算，AI 计算，裸金属基础服务等提供操作系统内核级深度观测能力。该项目基于 [eBPF](https://docs.kernel.org/userspace-api/ebpf/syscall.html) 技术，通过整合 [kprobe](https://www.kernel.org/doc/html/latest/trace/kprobes.html)、 [tracepoint](https://www.kernel.org/doc/html/latest/trace/tracepoints.html)、 [ftrace](https://www.kernel.org/doc/html/latest/trace/ftrace.html)  等内核动态追踪技术，实现了多维度的内核观测能力：**1.** 更精细化的内核子系统埋点指标 Metric **2.** 异常事件驱动的内核运行时上下文捕获 Events **3.** 针对系统突发毛刺的自动追踪 AutoTracing、AutoProfiling。该项目逐步构建了完整的 Linux 内核深度可观测体系架构。目前，HUATUO 已在滴滴生产环境中实现规模化部署，在诸多故障场景中发挥关键作用，有效保障了云原生操作系统的高可用性和性能优化。通过持续的技术演进，希望 HUATUO 能够推动 eBPF 技术在云原生可观测领域向更细粒度、更低开销、更高时效性的方向发展。更多信息访问官网 [https://huatuo.tech](https://huatuo.tech/)
 
 
 # 核心特性
@@ -15,7 +15,7 @@
 - **开源技术生态融合**：无缝对接主流开源可观测技术栈，如 Prometheus、Grafana、Pyroscope、Elasticsearch等。支持独立物理机和云原生部署，自动感知 K8S 容器资源/标签/注解，自动关联操作系统内核事件指标，消除数据孤岛。通过零侵扰、内核可编程方式兼容主流硬件平台和内核版本，确保其适应性、应用性。
 
 # 软件架构
-![](./docs/img/huatuo-arch.png)
+![](/docs/img/huatuo-arch.png)
 
 # 快速上手
 
@@ -32,7 +32,7 @@
 
 - **快速搭建**
   如果你想更进一步了解 HUATUO 运行机制，架构设计等，可在本地很方便地搭建 HUATUO 完整运行的所有组件，我们提供容器镜像以及简单配置，方便用户开发者快速了解 HUATUO。
-    ![](./docs/img/quickstart-components.png)
+    ![](/docs/img/quickstart-components.png)
   
     <div style="text-align: center; margin: 8px 0 20px 0; color: #777;">
     <small>
@@ -46,7 +46,7 @@
     $ docker compose --project-directory ./build/docker up
     ```
   
-  更详细的信息参考：[快速开始](./docs/quick-start_CN.md) 或 [https://huatuo.tech/quickstart/](https://huatuo.tech/quickstart/)
+  更详细的信息参考：[快速开始](/docs/users/zh/quick-start.md) 或 [https://huatuo.tech/quickstart/](https://huatuo.tech/quickstart/)
 
 - **注意**
   不要在生产环境部署latest容器镜像，这是一个开发测试分支。请部署正式发版的镜像或者二进制。
@@ -74,12 +74,7 @@
 # 联系我们
 - 微信群（备注姓名+单位）和公众号：
 
-![](./docs/img/contact-weixin.png)
-
-
-# 点星历史
-
-[![Star History Chart](https://api.star-history.com/svg?repos=ccfos/huatuo&type=Date)](https://www.star-history.com/#ccfos/huatuo&Date)
+![](/docs/img/contact-weixin.png)
 
 
 # 开源协议

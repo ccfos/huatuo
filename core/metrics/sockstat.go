@@ -26,10 +26,9 @@ import (
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
-
-	"github.com/prometheus/procfs"
 )
 
 type sockstatCollector struct{}
@@ -80,7 +79,7 @@ func (c *sockstatCollector) procStatMetrics(container *pod.Container) ([]*metric
 	}
 
 	// NOTE: non-standard using procfs.NewFS.
-	fs, err := procfs.NewFS(filepath.Join("/proc", strconv.Itoa(pid)))
+	fs, err := procfs.NewFS(filepath.Join(procfs.DefaultProcMountPoint, strconv.Itoa(pid)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open procfs: %w", err)
 	}

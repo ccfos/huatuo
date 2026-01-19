@@ -18,10 +18,9 @@ import (
 	"fmt"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
-
-	"github.com/prometheus/procfs"
 )
 
 const (

@@ -29,7 +29,6 @@ import (
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/netutil"
-	"huatuo-bamai/internal/utils/procfsutil"
 	"huatuo-bamai/pkg/tracing"
 
 	"golang.org/x/sys/unix"
@@ -149,7 +148,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	b.WaitDetachByBreaker(childCtx, cancel)
 
 	// save host netns
-	hostNetNsInode, err := procfsutil.NetNSInodeByPid(1)
+	hostNetNsInode, err := netutil.NetNSInodeByPid(1)
 	if err != nil {
 		return fmt.Errorf("get host netns inode: %w", err)
 	}
@@ -188,9 +187,9 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			where := toWhere[pd.Where]
 			lat := pd.Latency / 1000 / 1000 // ms
 			state := tcpStateMap[pd.State]
-			saddr, daddr := netutil.InetNtop(pd.Saddr).String(), netutil.InetNtop(pd.Daddr).String()
-			sport, dport := netutil.InetNtohs(pd.Sport), netutil.InetNtohs(pd.Dport)
-			seq, ackSeq := netutil.InetNtohl(pd.Seq), netutil.InetNtohl(pd.AckSeq)
+			saddr, daddr := netutil.Inetv4Ntop(pd.Saddr).String(), netutil.Inetv4Ntop(pd.Daddr).String()
+			sport, dport := netutil.Ntohs(pd.Sport), netutil.Ntohs(pd.Dport)
+			seq, ackSeq := netutil.Ntohl(pd.Seq), netutil.Ntohl(pd.AckSeq)
 			pktLen := pd.PktLen
 
 			title := fmt.Sprintf("comm=%s:%d to=%s lat(ms)=%v state=%s saddr=%s sport=%d daddr=%s dport=%d seq=%d ackSeq=%d pktLen=%d",
@@ -232,7 +231,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 
 func ignore(pid uint64, comm string, hostNetnsInode uint64) (containerID string, skip bool, err error) {
 	// check if its netns same as host netns
-	dstInode, err := procfsutil.NetNSInodeByPid(int(pid))
+	dstInode, err := netutil.NetNSInodeByPid(int(pid))
 	if err != nil {
 		// ignore the missing program
 		if errors.Is(err, syscall.ENOENT) {

@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/conf"
-	"huatuo-bamai/internal/utils/pidutil"
+	"huatuo-bamai/internal/pidfile"
 
 	dockertypes "github.com/docker/docker/api/types"
 	dockerclient "github.com/docker/docker/client"
@@ -151,5 +151,5 @@ func containerInitPidInContainerd(containerID string) (int, error) {
 	// kata ?
 	filePath := filepath.Join(containerdStateDir, "io.containerd.runtime.v2.task", "k8s.io", containerID, "init.pid")
 
-	return pidutil.Read(filePath)
+	return pidfile.Read(filePath)
 }
