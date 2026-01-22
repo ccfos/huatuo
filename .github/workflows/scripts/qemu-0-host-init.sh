@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
 OS_DISTRO=${1:-ubuntu24.04}
 
@@ -12,8 +13,8 @@ case "$OS_DISTRO" in
 #   centos*)
 #     # TODO:
   *)
-    echo "[ERROR] Unsupported OS distro: '$OS_DISTRO'" >&2
-    echo "[ERROR] Supported distros: ubuntu*" >&2
+    echo -e "❌ Unsupported OS distro: '$OS_DISTRO'" >&2
+    echo -e " Supported distros: ubuntu*" >&2
     exit 1
     ;;
 esac
