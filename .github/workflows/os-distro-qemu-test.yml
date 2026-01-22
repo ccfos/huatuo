@@ -37,8 +37,8 @@ jobs:
       - name: Run in VM
         timeout-minutes: 60
         run: |
-          echo "=================== Test in VM ==================="
           ssh \
+          -i ${HOME}/.ssh/id_ed25519_vm \
           -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null \
           root@${VM_NAME} "bash -s -- ${{ matrix.os }}" \
