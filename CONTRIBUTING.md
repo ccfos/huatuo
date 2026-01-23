@@ -24,9 +24,15 @@ Development happens on [GitHub](https://github.com/ccfos/huatuo) and contributio
 
 ## Developer Certificate of Origin
 
-The HUATUO project requires that all contributions to project repositories carry the Developer Certificate of Origin. This is as simple as appending a footer to your commits:
+The HUATUO project requires that all contributions to project repositories carry the Developer Certificate of Origin. This is as simple as appending a footer to your commits, a standard commit message is as follows:
 
 ```
+fix: resolve authentication bug
+
+The login token was not being validated properly.
+
+Closes #123
+
 Signed-off-by: Your Name <name@example.org>
 ```
 
