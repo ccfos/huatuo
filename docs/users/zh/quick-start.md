@@ -10,17 +10,17 @@ weight: 1
 
 ### 1. 极速体验
 
-你可以直接在官网免登陆访问前端监控大盘示例，如内核指标、异常事件、火焰图等。
+你可以直接登陆[示例网站](http://console.huatuo.tech)访问前端监控大盘示例，如内核指标、异常事件、火焰图等（账户：huatuo 密码：huatuo1024）。
 
-- [Events, AutoTracing 大盘（持续完善）](http://console.huatuo.tech/public-dashboards/a6342b13a1ee4feaba0ebd0876ac6b70): 示例中，跳转火焰图页面需登录，账户：huatuo 密码：huatuo1024
+- [Events, AutoTracing 大盘（持续完善）](http://console.huatuo.tech/d/autotracing-event)
 
     ![autotrcing-event demo diagram​](/docs/img/quickstart-autotrcing-event.png)
 
-- [宿主机 Metrics 大盘（持续完善）](http://console.huatuo.tech/public-dashboards/418491ef0af5491ea5ea8562494291be)
+- [宿主机 Metrics 大盘（持续完善）](http://console.huatuo.tech/d/metrics-host)
 
     ![metrics-host demo diagram](/docs/img/quickstart-metrics-host.png)
 
-- [容器 Metrics 大盘（持续完善）](http://console.huatuo.tech/public-dashboards/3ecd5127881044e885d3e5ca16ce518a)
+- [容器 Metrics 大盘（持续完善）](http://console.huatuo.tech/d/metrics-container)
     
     ![metrics-container demo diagram](/docs/img/quickstart-metrics-container.png)
 

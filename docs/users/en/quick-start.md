@@ -10,21 +10,20 @@ weight: 1
 
 ### 1. Quick Experience
 
-This section helps you quickly explore the frontend capabilities. You can directly perform various query operations on the frontend dashboard, such as viewing exception event overviews, exception event context information, metric curves, etc. Access the dashboard example without login:
+This section helps you quickly explore the frontend capabilities. You can directly access [demo station](http://console.huatuo.tech), such as viewing exception event overviews, exception event context information, metric curves, etc. (Account: huatuo passwd: huatuo1024).
 
-- [Events, AutoTracing Dashboard（improvements in progress）](http://console.huatuo.tech/public-dashboards/a6342b13a1ee4feaba0ebd0876ac6b70)
-  ![autotrcing-event demo diagram​](/img/quickstart-autotrcing-event.png)
-  In the example, jumping to the flame graph page requires login. Account: huatuo Password: huatuo1024
+- [Events, AutoTracing Dashboard（improvements in progress）](http://console.huatuo.tech/d/autotracing-event)
+  ![autotrcing-event demo diagram​](/docs/img/quickstart-autotrcing-event.png)
 
-- [Host Metrics Dashboard（improvements in progress）](http://console.huatuo.tech/public-dashboards/418491ef0af5491ea5ea8562494291be)
-  ![metrics-host demo diagram](/img/quickstart-metrics-host.png)
+- [Host Metrics Dashboard（improvements in progress）](http://console.huatuo.tech/d/metrics-host)
+  ![metrics-host demo diagram](/docs/img/quickstart-metrics-host.png)
 
-- [Container Metrics Dashboard（improvements in progress）](http://console.huatuo.tech/public-dashboards/3ecd5127881044e885d3e5ca16ce518a)
- ![metrics-container demo diagram](/img/quickstart-metrics-container.png)
+- [Container Metrics Dashboard（improvements in progress）](http://console.huatuo.tech/d/metrics-container)
+ ![metrics-container demo diagram](/docs/img/quickstart-metrics-container.png)
 
 ### 2. Quick Start
 
-![HUATUO Component Data Flow Diagram](/img/quickstart-data-flow.png)
+![HUATUO Component Data Flow Diagram](/docs/img/quickstart-data-flow.png)
 
 #### 2.1 Quick Run
 If you want to understand the underlying principles and deploy HUATUO to your own monitoring system, you can start pre-compiled container images via Docker (Note: This method disables container information retrieval and ES storage functionality by default).
@@ -49,7 +48,7 @@ $ docker compose --project-directory ./build/docker up
 
 This command pulls the latest images and starts components including [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com)，huatuo-bamai. After successful command execution, open your browser and visit [http://localhost:3000](http://localhost:3000) to access the monitoring dashboard (Grafana default admin account: admin, password: admin; Since your system is in normal state, the Events and AutoTracing dashboards typically won't display data).
 
-![HUATUO huatuo-bamai Component Operation Diagram](/img/quickstart-components.png)
+![HUATUO huatuo-bamai Component Operation Diagram](/docs/img/quickstart-components.png)
 
 
 #### 3. Compilation & Deployment
