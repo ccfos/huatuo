@@ -1,0 +1,33 @@
+# HELP huatuo_bamai_vmstat_balloon_deflate 
+# TYPE huatuo_bamai_vmstat_balloon_deflate gauge
+huatuo_bamai_vmstat_balloon_deflate{host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_vmstat_balloon_inflate 
+# TYPE huatuo_bamai_vmstat_balloon_inflate gauge
+huatuo_bamai_vmstat_balloon_inflate{host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_vmstat_balloon_migrate 
+# TYPE huatuo_bamai_vmstat_balloon_migrate gauge
+huatuo_bamai_vmstat_balloon_migrate{host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_vmstat_swap_ra 
+# TYPE huatuo_bamai_vmstat_swap_ra gauge
+huatuo_bamai_vmstat_swap_ra{host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_vmstat_swap_ra_hit 
+# TYPE huatuo_bamai_vmstat_swap_ra_hit gauge
+huatuo_bamai_vmstat_swap_ra_hit{host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_vmstat_thp_split_pmd 
+# TYPE huatuo_bamai_vmstat_thp_split_pmd gauge
+huatuo_bamai_vmstat_thp_split_pmd{host="huatuo-dev",region="dev"} 3902
+# HELP huatuo_bamai_vmstat_thp_split_pud 
+# TYPE huatuo_bamai_vmstat_thp_split_pud gauge
+huatuo_bamai_vmstat_thp_split_pud{host="huatuo-dev",region="dev"} 28
+# HELP huatuo_bamai_vmstat_thp_swpout 
+# TYPE huatuo_bamai_vmstat_thp_swpout gauge
+huatuo_bamai_vmstat_thp_swpout{host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_vmstat_thp_swpout_fallback 
+# TYPE huatuo_bamai_vmstat_thp_swpout_fallback gauge
+huatuo_bamai_vmstat_thp_swpout_fallback{host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_vmstat_thp_zero_page_alloc 
+# TYPE huatuo_bamai_vmstat_thp_zero_page_alloc gauge
+huatuo_bamai_vmstat_thp_zero_page_alloc{host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_vmstat_thp_zero_page_alloc_failed 
+# TYPE huatuo_bamai_vmstat_thp_zero_page_alloc_failed gauge
+huatuo_bamai_vmstat_thp_zero_page_alloc_failed{host="huatuo-dev",region="dev"} 1

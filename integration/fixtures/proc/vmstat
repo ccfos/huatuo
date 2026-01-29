@@ -1,0 +1,11 @@
+thp_split_pmd 3902
+thp_split_pud 28
+thp_zero_page_alloc 0
+thp_zero_page_alloc_failed 1
+thp_swpout 0
+thp_swpout_fallback 0
+balloon_inflate 0
+balloon_deflate 0
+balloon_migrate 0
+swap_ra 0
+swap_ra_hit 0
