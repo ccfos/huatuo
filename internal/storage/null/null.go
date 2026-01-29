@@ -12,10 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package storage
+package null
 
-type null struct{}
+import (
+	"huatuo-bamai/internal/storage/types"
+)
 
-func (n *null) Write(doc *document) error {
+type StorageClient struct{}
+
+func (s *StorageClient) Write(doc *types.Document) error {
 	return nil
 }
