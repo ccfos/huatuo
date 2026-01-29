@@ -12,6 +12,7 @@ function print_sys_info() {
 	fi
 
 	echo "$PATH" | tr ':' '\n' | awk '{printf "  %s\n", $0}'
+	env | sort
 
 	lscpu || true
 
@@ -49,6 +50,7 @@ function prapre_test_env() {
 	esac
 
 	go install github.com/vektra/mockery/v2@latest
+	export PATH="${GOPATH}/bin:${GOROOT}/bin:${PATH}"
 	git config --global --add safe.directory /mnt/host
 }
 
