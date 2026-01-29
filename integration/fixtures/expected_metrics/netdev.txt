@@ -1,0 +1,80 @@
+# HELP huatuo_bamai_netdev_receive_bytes_total Network device statistic receive_bytes.
+# TYPE huatuo_bamai_netdev_receive_bytes_total counter
+huatuo_bamai_netdev_receive_bytes_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_bytes_total{device="eth0",host="huatuo-dev",region="dev"} 1.08926392622e+11
+huatuo_bamai_netdev_receive_bytes_total{device="eth1",host="huatuo-dev",region="dev"} 1111
+# HELP huatuo_bamai_netdev_receive_compressed_total Network device statistic receive_compressed.
+# TYPE huatuo_bamai_netdev_receive_compressed_total counter
+huatuo_bamai_netdev_receive_compressed_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_compressed_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_compressed_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_receive_dropped_total Network device statistic receive_dropped.
+# TYPE huatuo_bamai_netdev_receive_dropped_total counter
+huatuo_bamai_netdev_receive_dropped_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_dropped_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_dropped_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_receive_errors_total Network device statistic receive_errors.
+# TYPE huatuo_bamai_netdev_receive_errors_total counter
+huatuo_bamai_netdev_receive_errors_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_errors_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_errors_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_receive_fifo_total Network device statistic receive_fifo.
+# TYPE huatuo_bamai_netdev_receive_fifo_total counter
+huatuo_bamai_netdev_receive_fifo_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_fifo_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_fifo_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_receive_frame_total Network device statistic receive_frame.
+# TYPE huatuo_bamai_netdev_receive_frame_total counter
+huatuo_bamai_netdev_receive_frame_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_frame_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_frame_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_receive_multicast_total Network device statistic receive_multicast.
+# TYPE huatuo_bamai_netdev_receive_multicast_total counter
+huatuo_bamai_netdev_receive_multicast_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_multicast_total{device="eth0",host="huatuo-dev",region="dev"} 2.969693e+06
+huatuo_bamai_netdev_receive_multicast_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_receive_packets_total Network device statistic receive_packets.
+# TYPE huatuo_bamai_netdev_receive_packets_total counter
+huatuo_bamai_netdev_receive_packets_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_receive_packets_total{device="eth0",host="huatuo-dev",region="dev"} 6.27327598e+08
+huatuo_bamai_netdev_receive_packets_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_transmit_bytes_total Network device statistic transmit_bytes.
+# TYPE huatuo_bamai_netdev_transmit_bytes_total counter
+huatuo_bamai_netdev_transmit_bytes_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_bytes_total{device="eth0",host="huatuo-dev",region="dev"} 2.40224614183e+11
+huatuo_bamai_netdev_transmit_bytes_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_transmit_carrier_total Network device statistic transmit_carrier.
+# TYPE huatuo_bamai_netdev_transmit_carrier_total counter
+huatuo_bamai_netdev_transmit_carrier_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_carrier_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_carrier_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_transmit_colls_total Network device statistic transmit_colls.
+# TYPE huatuo_bamai_netdev_transmit_colls_total counter
+huatuo_bamai_netdev_transmit_colls_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_colls_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_colls_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_transmit_compressed_total Network device statistic transmit_compressed.
+# TYPE huatuo_bamai_netdev_transmit_compressed_total counter
+huatuo_bamai_netdev_transmit_compressed_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_compressed_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_compressed_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_transmit_dropped_total Network device statistic transmit_dropped.
+# TYPE huatuo_bamai_netdev_transmit_dropped_total counter
+huatuo_bamai_netdev_transmit_dropped_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_dropped_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_dropped_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_transmit_errors_total Network device statistic transmit_errors.
+# TYPE huatuo_bamai_netdev_transmit_errors_total counter
+huatuo_bamai_netdev_transmit_errors_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_errors_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_errors_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_transmit_fifo_total Network device statistic transmit_fifo.
+# TYPE huatuo_bamai_netdev_transmit_fifo_total counter
+huatuo_bamai_netdev_transmit_fifo_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_fifo_total{device="eth0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_fifo_total{device="eth1",host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_netdev_transmit_packets_total Network device statistic transmit_packets.
+# TYPE huatuo_bamai_netdev_transmit_packets_total counter
+huatuo_bamai_netdev_transmit_packets_total{device="docker0",host="huatuo-dev",region="dev"} 0
+huatuo_bamai_netdev_transmit_packets_total{device="eth0",host="huatuo-dev",region="dev"} 7.50643009e+08
+huatuo_bamai_netdev_transmit_packets_total{device="eth1",host="huatuo-dev",region="dev"} 0
