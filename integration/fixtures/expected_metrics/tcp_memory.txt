@@ -1,0 +1,12 @@
+# HELP huatuo_bamai_tcp_memory_limit_pages tcp mem limit(pages)
+# TYPE huatuo_bamai_tcp_memory_limit_pages gauge
+huatuo_bamai_tcp_memory_limit_pages{host="huatuo-dev",region="dev"} 1.234077e+07
+# HELP huatuo_bamai_tcp_memory_usage_bytes tcp mem usage(bytes)
+# TYPE huatuo_bamai_tcp_memory_usage_bytes gauge
+huatuo_bamai_tcp_memory_usage_bytes{host="huatuo-dev",region="dev"} 40960
+# HELP huatuo_bamai_tcp_memory_usage_pages tcp mem usage(pages)
+# TYPE huatuo_bamai_tcp_memory_usage_pages gauge
+huatuo_bamai_tcp_memory_usage_pages{host="huatuo-dev",region="dev"} 10
+# HELP huatuo_bamai_tcp_memory_usage_percent tcp mem usage percent
+# TYPE huatuo_bamai_tcp_memory_usage_percent gauge
+huatuo_bamai_tcp_memory_usage_percent{host="huatuo-dev",region="dev"} 8.103222084197339e-07
