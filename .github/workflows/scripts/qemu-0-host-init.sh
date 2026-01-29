@@ -5,17 +5,14 @@ ARCH=${1:-amd64}
 OS_DISTRO=${2:-ubuntu24.04}
 
 case "$ARCH" in
-amd64)
-	;;
-arm64)
-	;;
+amd64) ;;
+arm64) ;;
 *)
 	echo -e "❌ Unsupported ARCH: '$ARCH'" >&2
 	echo -e " Supported ARCHs: amd64, arm64" >&2
 	exit 1
 	;;
 esac
-
 
 case "$OS_DISTRO" in
 ubuntu*)
@@ -29,4 +26,3 @@ ubuntu*)
 	exit 1
 	;;
 esac
-
