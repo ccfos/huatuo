@@ -15,52 +15,44 @@
 package storage
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
+	"sync"
 	"time"
 
+	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/storage/elasticsearch"
+	"huatuo-bamai/internal/storage/localfile"
+	"huatuo-bamai/internal/storage/null"
+	"huatuo-bamai/internal/storage/types"
 )
 
-// standard document.
-type document struct {
-	Hostname     string    `json:"hostname"`
-	Region       string    `json:"region"`
-	UploadedTime time.Time `json:"uploaded_time"`
-	// equal to `TracerTime`, supported the old version.
-	Time string `json:"time"`
-
-	ContainerID            string `json:"container_id,omitempty"`
-	ContainerHostname      string `json:"container_hostname,omitempty"`
-	ContainerHostNamespace string `json:"container_host_namespace,omitempty"`
-	ContainerType          string `json:"container_type,omitempty"`
-	ContainerQos           string `json:"container_qos,omitempty"`
-
-	TracerName    string `json:"tracer_name,omitempty"`
-	TracerID      string `json:"tracer_id,omitempty"`
-	TracerTime    string `json:"tracer_time"`
-	TracerRunType string `json:"tracer_type,omitempty"`
-	TracerData    any    `json:"tracer_data,omitempty"`
-}
-
-type writer interface {
-	Write(doc *document) error
+//go:generate mockery --name=Writer --dir=. --filename=mock_writer_test.go --inpackage --case=underscore
+type Writer interface {
+	Write(doc *types.Document) error
 }
 
 const (
-	docTracerRunAuto = "auto"
-	docTracerRunTask = "task"
+	docTracerRunAuto   = "auto"
+	docTracerRunTask   = "task"
+	docTracerRunManual = "manual"
 )
 
 var (
-	esExporter        writer = &null{}
-	localFileExporter writer = &null{}
-	storageInitCtx    InitContext
+	esExporter         Writer = &null.StorageClient{}
+	localFileExporter  Writer = &null.StorageClient{}
+	storageInitCtx     InitContext
+	profilerExporterMu sync.RWMutex
 )
 
-func createBaseDocument(tracerName, containerID string, tracerTime time.Time, tracerData any) *document {
+var containerLookupFunc = pod.ContainerByID
+
+func createBaseDocument(tracerName, containerID string, tracerTime time.Time, tracerData any) *types.Document {
 	// TODO: support for !didi.
-	doc := &document{
+	doc := &types.Document{
 		ContainerID:  containerID,
 		UploadedTime: time.Now(),
 		TracerName:   tracerName,
@@ -75,7 +67,7 @@ func createBaseDocument(tracerName, containerID string, tracerTime time.Time, tr
 
 	// container information.
 	if containerID != "" {
-		container, err := pod.ContainerByID(containerID)
+		container, err := containerLookupFunc(containerID)
 		if err != nil {
 			log.Infof("get container by %s: %v", containerID, err)
 			return nil
@@ -85,6 +77,57 @@ func createBaseDocument(tracerName, containerID string, tracerTime time.Time, tr
 			return nil
 		}
 
+		doc.ContainerID = container.ID[:12]
+		doc.ContainerHostname = container.Hostname
+		doc.ContainerHostNamespace = container.LabelHostNamespace()
+		doc.ContainerType = container.Type.String()
+		doc.ContainerQos = container.Qos.String()
+	}
+
+	return doc
+}
+
+func CreateProfilerDocument(pctxMetaData map[string]string, pctxContainerID, pctxServerAddr string) *types.Document {
+	// TODO: support for !didi.
+	var doc *types.Document
+	hostname, _ := os.Hostname()
+	uploadedTime := time.Now()
+	tracerTime := time.Now()
+	// equal to `TracerTime`, supported the old version.
+	time := tracerTime.Format("2006-01-02 15:04:05.000 -0700")
+
+	tracerId := pctxMetaData["tracer_id"]
+	if tracerId == "" {
+		doc = &types.Document{
+			Hostname:      hostname,
+			UploadedTime:  uploadedTime,
+			TracerRunType: docTracerRunManual,
+			TracerID:      tracerId,
+			TracerTime:    time,
+			Time:          time,
+		}
+	} else {
+		doc = &types.Document{
+			Hostname:      hostname,
+			UploadedTime:  uploadedTime,
+			Region:        pctxMetaData["region"],
+			TracerRunType: pctxMetaData["tracer_type"],
+			TracerName:    pctxMetaData["tracer_name"],
+			TracerID:      tracerId,
+		}
+	}
+
+	containerID := pctxContainerID
+	if containerID != "" {
+		container, err := container.GetContainerByID(pctxServerAddr, containerID)
+		if err != nil {
+			log.Infof("get container by %s: %v", containerID, err)
+			return nil
+		}
+		if container == nil {
+			log.Infof("the container %s is not found", containerID)
+			return nil
+		}
 		doc.ContainerID = container.ID[:12]
 		doc.ContainerHostname = container.Hostname
 		doc.ContainerHostNamespace = container.LabelHostNamespace()
@@ -122,7 +165,7 @@ func InitDefaultClients(initCtx *InitContext) (err error) {
 	if initCtx.EsAddresses == "" || initCtx.EsUsername == "" || initCtx.EsPassword == "" {
 		log.Warnf("elasticsearch storage config invalid, use null device: %+v", initCtx)
 	} else {
-		esclient, err := newESClient(initCtx.EsAddresses, initCtx.EsUsername, initCtx.EsPassword, initCtx.EsIndex)
+		esclient, err := elasticsearch.NewStorageClient(initCtx.EsAddresses, initCtx.EsUsername, initCtx.EsPassword, initCtx.EsIndex)
 		if err != nil {
 			return err
 		}
@@ -134,7 +177,7 @@ func InitDefaultClients(initCtx *InitContext) (err error) {
 	if initCtx.LocalPath == "" {
 		log.Warnf("localfile storage config invalid, use null device: %+v", initCtx)
 	} else {
-		localFileClient, err := newLocalFileStorage(initCtx.LocalPath, initCtx.LocalMaxRotation, initCtx.LocalRotationSize)
+		localFileClient, err := localfile.NewStorageClient(initCtx.LocalPath, initCtx.LocalMaxRotation, initCtx.LocalRotationSize)
 		if err != nil {
 			return err
 		}
@@ -147,6 +190,26 @@ func InitDefaultClients(initCtx *InitContext) (err error) {
 
 	log.Info("InitDefaultClients includes engines: elasticsearch, local-file")
 	return nil
+}
+
+// InitProfilerClients initializes the profiler client of profiling tools
+func InitProfilerClients(esAddress, esUsername, esPassword, esIndex string) (w Writer, err error) {
+	profilerExporterMu.Lock()
+	defer profilerExporterMu.Unlock()
+
+	// ES client
+	var profilerEsExportor Writer
+	if esAddress == "" || esUsername == "" || esPassword == "" {
+		return nil, fmt.Errorf("elasticsearch storage config invalid, please input correct config")
+	} else {
+		profilerEsExportor, err = elasticsearch.NewStorageClient(esAddress, esUsername, esPassword, esIndex)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	log.Info("InitProfilerClients includes engines: elasticsearch")
+	return profilerEsExportor, nil
 }
 
 // Save data to the default clients.
@@ -176,6 +239,29 @@ type TracerBasicData struct {
 // SaveTaskOutput saves the tracer output data
 func SaveTaskOutput(tracerName, tracerID, containerID string, tracerTime time.Time, tracerData string) {
 	document := createBaseDocument(tracerName, containerID, tracerTime, &TracerBasicData{Output: tracerData})
+	if document == nil {
+		return
+	}
+
+	document.TracerRunType = docTracerRunTask
+	document.TracerID = tracerID
+
+	// save into es.
+	if err := esExporter.Write(document); err != nil {
+		log.Infof("failed to save %#v into es: %v", document, err)
+	}
+}
+
+// SaveTaskJSONOutput saves the tracer output data
+func SaveTaskJSONOutput(tracerName, tracerID, containerID string, tracerTime time.Time, tracerData string) {
+	// unmarshal tracerData
+	var tracerDataMap map[string]any
+	if err := json.Unmarshal([]byte(tracerData), &tracerDataMap); err != nil {
+		log.Infof("failed to unmarshal tracerData: %v", err)
+		return
+	}
+
+	document := createBaseDocument(tracerName, containerID, tracerTime, tracerDataMap)
 	if document == nil {
 		return
 	}
