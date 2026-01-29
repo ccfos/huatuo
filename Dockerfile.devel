@@ -11,10 +11,12 @@ ENV GOROOT="/usr/local/go"
 ENV GOPROXY="https://goproxy.cn,https://goproxy.io,direct"
 ENV PATH="${GOPATH}/bin:${GOROOT}/bin:/usr/lib/llvm15/bin:${PATH}"
 
-# For golang 1.23.0
-# gofumpt@v0.8.0, https://github.com/mvdan/gofumpt/blob/master/CHANGELOG.md
-# goimports@v0.36.0
+# For golang 1.24.0
+# gofumpt@v0.9.0, https://github.com/mvdan/gofumpt/blob/master/CHANGELOG.md
+# goimports@v0.41.0
 # golangci-lint https://github.com/golangci/golangci-lint/blob/main/CHANGELOG-v1.md
-RUN go install mvdan.cc/gofumpt@v0.8.0 && \
-    go install golang.org/x/tools/cmd/goimports@v0.36.0 && \
-    go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
+RUN go install mvdan.cc/gofumpt@v0.9.0 && \
+    go install golang.org/x/tools/cmd/goimports@v0.41.0 && \
+    go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.4 && \
+    go install github.com/vektra/mockery/v2@latest && \
+    go install mvdan.cc/sh/v3/cmd/shfmt@latest

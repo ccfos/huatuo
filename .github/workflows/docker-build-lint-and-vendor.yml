@@ -30,11 +30,15 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Make build, check and vendor
         run: |
-          docker run --rm -v ${{ github.workspace }}:/workspace -w /workspace huatuo-dev:latest \
-            sh -c "git config --global --add safe.directory /workspace && \
-                   make bpf-build && \
-                   make build && \
-                   make --trace check && \
-                   make vendor && \
-                   git diff --exit-code
-                   "
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            huatuo-dev:latest \
+            sh -xec '
+              git config --global --add safe.directory /workspace
+              make bpf-build
+              make build
+              make --trace check
+              make vendor
+              git diff --exit-code
+            '
