@@ -1,51 +1,66 @@
-#!/bin/bash
-set -Eeuo pipefail
+#!/usr/bin/env bash
+set -xeuo pipefail
 
-echo -e "\n==================== SYSTEM INFORMATION ====================\n"
+ARCH=${1:-amd64}
+OS_DISTRO=${2:-ubuntu24.04}
 
-echo -e "------- OS Information:"
-uname -a
-if [ -f /etc/os-release ]; then
-	echo -e "\n/etc/os-release contents:"
-	cat /etc/os-release
-fi
+function print_sys_info() {
+    # sys info
+	uname -a
+	if [ -f /etc/os-release ]; then
+		cat /etc/os-release
+	fi
 
-echo -e "\n------- PATH Environment Variable:"
-echo "$PATH" | tr ':' '\n' | awk '{printf "  %s\n", $0}'
+	echo "$PATH" | tr ':' '\n' | awk '{printf "  %s\n", $0}'
 
-echo -e "\n------- CPU Information:"
-lscpu 2>/dev/null || echo "lscpu: not installed or failed"
+	lscpu || true
+	
+    free -h
 
-echo -e "\n------- Memory Information:"
-free -h
+	ip addr show || true
+	ip route show || true
 
-echo -e "\n------- Network Information:"
-echo -e "\nNetwork Interfaces:"
-ip addr show 2>/dev/null || echo "ip: not installed"
-echo -e "\nRouting Table:"
-ip route show 2>/dev/null || echo "ip: not installed"
+	df -h
 
-echo -e "\n------- Disk Usage:"
-df -h
+    # tool chains
+    go version || ture
+    go env || true
 
-echo -e "\n==================== TOOLCHAIN INFORMATION ====================\n"
+    docker version || true
+    sudo docker info || true
+    crictl version || true
 
-echo -e "------- Go Environment:"
-if command -v go &>/dev/null; then
-	go version
-	echo -e "\nGo environment variables:"
-	go env | grep -E "^(GO|GOROOT|GOPATH|GOVERSION)"
-else
-	echo "go: not installed"
-fi
+	kubectl get pods -A || true
+    systemctl status kubelet || true
+	ps -ef | grep kubelet | grep -v grep || true
 
-echo -e "\n------- Docker Information:"
-if command -v docker &>/dev/null; then
-	docker version 2>/dev/null || true
-	echo -e "\nDocker system info:"
-	sudo docker info 2>/dev/null || true
-else
-	echo "docker: not installed"
-fi
+    curl -k --cert /var/lib/kubelet/pki/kubelet-client-current.pem \
+        --key /var/lib/kubelet/pki/kubelet-client-current.pem \
+        --header "Content-Type: application/json" \
+        'https://127.0.0.1:10250/pods/' || true
+}
 
-echo -e "\n==================== END OF SYSTEM REPORT ====================\n"
+function prapre_test_env() {
+    case $OS_DISTRO in
+        ubuntu*)
+            apt update
+            apt install make libbpf-dev clang git -y
+            ;;
+    esac
+    
+    go install github.com/vektra/mockery/v2@latest
+    git config --global --add safe.directory /mnt/host
+}
+
+
+print_sys_info
+prapre_test_env
+
+cd /mnt/host && pwd
+ls -alh /mnt/host
+
+echo -e "\n\n⬅️ integration test..."
+
+make integration
+
+echo -e "✅ integration test ok."
