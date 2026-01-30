@@ -15,6 +15,7 @@ enum lat_zone {
 };
 
 struct softirq_lat {
+	u64 enable;
 	u64 timestamp;
 	u64 total_latency[LAT_ZONE_MAX];
 };
@@ -39,14 +40,17 @@ int probe_softirq_raise(struct trace_event_raw_softirq *ctx)
 	if (!lat) {
 		struct softirq_lat lat_init = {
 			.timestamp = bpf_ktime_get_ns(),
+			.enable = 1,
 		};
 		bpf_map_update_elem(&softirq_percpu_lats, &vec, &lat_init, COMPAT_BPF_ANY);
 
 		return 0;
 	}
 
-	lat->timestamp = bpf_ktime_get_ns();
-	bpf_map_update_elem(&softirq_percpu_lats, &vec, lat, COMPAT_BPF_ANY);
+	if (!lat->enable) {
+		lat->timestamp = bpf_ktime_get_ns();
+		lat->enable = 1;
+	}
 
 	return 0;
 }
@@ -64,6 +68,9 @@ int probe_softirq_entry(struct trace_event_raw_softirq *ctx)
 	if (!lat)
 		return 0;
 
+	if (!lat->enable)
+		return 0;
+
 	u64 latency = bpf_ktime_get_ns() - lat->timestamp;
 
 	if (latency < 10 * NSEC_PER_USEC) {
@@ -75,6 +82,9 @@ int probe_softirq_entry(struct trace_event_raw_softirq *ctx)
 	} else {
 		__sync_fetch_and_add(&lat->total_latency[LAT_ZONE3], 1);
 	}
+
+	lat->enable = 0;
+
 	return 0;
 }
 

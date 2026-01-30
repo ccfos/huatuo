@@ -65,6 +65,7 @@ type softirqLatency struct {
 }
 
 type softirqLatencyData struct {
+	Enable       uint64
 	Timestamp    uint64
 	TotalLatency [4]uint64
 }
