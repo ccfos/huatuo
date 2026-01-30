@@ -29,6 +29,8 @@ var (
 	defaultDevMountPoint = "/dev"
 )
 
+// defaultPaths defines resolvers for default mount points of /proc, /sys, and /dev.
+// functions are used to allow runtime overrides (e.g. via RootPrefix in tests).
 var defaultPaths = map[string]func() string{
 	"proc": func() string { return defaultProcMountPoint },
 	"sys":  func() string { return defaultSysMountPoint },
