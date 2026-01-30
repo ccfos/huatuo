@@ -28,13 +28,13 @@ jobs:
             os: ubuntu20.04
             runner: ubuntu-24.04
 
-          # arm64
-          - arch: arm64
-            os: ubuntu24.04
-            runner: ubuntu-22.04-arm # faster
-          - arch: arm64
-            os: ubuntu22.04
-            runner: ubuntu-22.04-arm # faster
+        #   # arm64 (too slow)
+        #   - arch: arm64
+        #     os: ubuntu24.04
+        #     runner: ubuntu-22.04-arm
+        #   - arch: arm64
+        #     os: ubuntu22.04
+        #     runner: ubuntu-22.04-arm
 
     steps:
       - name: Checkout
