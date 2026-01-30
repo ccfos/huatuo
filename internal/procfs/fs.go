@@ -29,10 +29,10 @@ var (
 	defaultDevMountPoint = "/dev"
 )
 
-var defaultPaths = map[string]string{
-	"proc": defaultProcMountPoint,
-	"sys":  defaultSysMountPoint,
-	"dev":  defaultDevMountPoint,
+var defaultPaths = map[string]func() string{
+	"proc": func() string { return defaultProcMountPoint },
+	"sys":  func() string { return defaultSysMountPoint },
+	"dev":  func() string { return defaultDevMountPoint },
 }
 
 type FS = procfs.FS
@@ -73,8 +73,8 @@ func Path(p ...string) string {
 
 // DefaultPathByType returns the default path with types.
 func DefaultPathByType(pathType string) string {
-	if p, ok := defaultPaths[pathType]; ok {
-		return p
+	if fn, ok := defaultPaths[pathType]; ok {
+		return fn()
 	}
 
 	return ""
