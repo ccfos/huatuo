@@ -3,6 +3,7 @@ set -xeuo pipefail
 
 ARCH=${1:-amd64}
 OS_DISTRO=${2:-ubuntu24.04}
+GOLANG_VERSION="1.24.0"
 
 function print_sys_info() {
 	# sys info
@@ -41,6 +42,17 @@ function print_sys_info() {
 		'https://127.0.0.1:10250/pods/' || true
 }
 
+function install_golang() {
+	local GOLANG_URL="https://go.dev/dl/go$GOLANG_VERSION.linux-$ARCH.tar.gz"
+	local GOLANG_TAR="go$GOLANG_VERSION.linux-$ARCH.tar.gz"
+
+	wget -q -O "$GOLANG_TAR" "$GOLANG_URL"
+	rm -rf /usr/local/go
+	tar -C /usr/local -xzf "$GOLANG_TAR" && rm "$GOLANG_TAR"
+	export PATH="/usr/local/go/bin:${PATH}"    # golang
+	export PATH="$(go env GOPATH)/bin:${PATH}" # installed tools
+}
+
 function prapre_test_env() {
 	case $OS_DISTRO in
 	ubuntu*)
@@ -49,15 +61,12 @@ function prapre_test_env() {
 		;;
 	esac
 
-	export GOROOT=$(go env GOROOT)
-	export GOPATH=$(go env GOPATH)
-	export PATH="${GOPATH}/bin:${GOROOT}/bin:${PATH}"
-
 	go install github.com/vektra/mockery/v2@latest && which mockery
 	git config --global --add safe.directory /mnt/host
 }
 
 print_sys_info
+install_golang
 prapre_test_env
 
 cd /mnt/host && pwd
