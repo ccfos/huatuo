@@ -154,21 +154,17 @@ func ksymbolSearch(key uint64) Symbol {
 // DumpKernelBackTrace converts the kernel stack address to the kernel symbol
 // and returns the Stack structure
 func DumpKernelBackTrace(stack []uint64, maxDepth int) Stack {
-	var addrs []uint64
 	var s Stack
 
 	for i, addr := range stack {
 		if addr == 0 || i >= maxDepth {
 			break
 		}
-		addrs = append(addrs, addr)
-	}
-
-	for _, addr := range addrs {
 		sym := ksymbolSearch(addr)
 		if sym.Name != "" {
-			s.BackTrace = append(s.BackTrace, fmt.Sprintf("%s/%x %s",
-				sym.Name, sym.Addr, sym.Module))
+			offset := addr - sym.Addr
+			s.BackTrace = append(s.BackTrace, fmt.Sprintf("%s/+%d %s",
+				sym.Name, offset, sym.Module))
 		}
 	}
 	return s
