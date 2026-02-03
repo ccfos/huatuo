@@ -15,35 +15,23 @@
 
 package sml
 
-import (
-	"errors"
-	"fmt"
+//nolint:errname
+const (
+	Success           Return = iota // 0: Success
+	_Reserved1                      // 1: Reserved
+	_Reserved2                      // 2: Reserved
+	ErrorNotSupported               // 3: Operation not supported
 )
 
-type SmlError struct {
-	symbol string
-	code   Return
+// String returns the string representation of a Return.
+func (r Return) String() string {
+	return errorStringFunc(r)
 }
 
-func (e *SmlError) Error() string {
-	return fmt.Sprintf("%s failed: %s", e.symbol, e.code.String())
-}
+// errorStringFunc can be assigned if the system metax-sml library is in use.
+var errorStringFunc = defaultErrorStringFunc
 
-// IsNotSupported reports whether err represents an unsupported operation.
-func IsNotSupported(err error) bool {
-	var smlErr *SmlError
-	return errors.As(err, &smlErr) &&
-		smlErr.code == ErrorNotSupported
-}
-
-// checkReturnCode converts a return code to an error.
-func checkReturnCode(symbol string, code Return) error {
-	if code == Success {
-		return nil
-	}
-
-	return &SmlError{
-		symbol: symbol,
-		code:   code,
-	}
+// defaultErrorStringFunc provides a basic implementation for Return string representation.
+var defaultErrorStringFunc = func(r Return) string {
+	return mxSmlGetErrorString(r)
 }

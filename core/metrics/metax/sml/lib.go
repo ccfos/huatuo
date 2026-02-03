@@ -23,7 +23,7 @@ import (
 	"github.com/ebitengine/purego"
 )
 
-// library represents the SML shared library (purego version)
+// library represents the SML shared library
 type library struct {
 	sync.Mutex
 	path     string

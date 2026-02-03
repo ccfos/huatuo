@@ -142,8 +142,8 @@ func (l *library) listGpuBoardWayElectricInfos(ctx context.Context, gpuId uint32
 	actualSize := int(size)
 	result := make([]device.BoardWayElectricInfo, actualSize)
 
-	for i := 0; i < actualSize; i++ {
-		result[i] = device.BoardWayElectricInfo(arr[i])
+	for i := range result {
+		result[i] = arr[i]
 	}
 
 	return result, nil
@@ -162,7 +162,7 @@ func (l *library) getGpuPcieLinkInfo(ctx context.Context, gpuId uint32) (device.
 		return device.PcieLinkInfo{}, err
 	}
 
-	return device.PcieLinkInfo(obj), nil
+	return obj, nil
 }
 
 // getGpuPcieThroughputInfo returns PCIe throughput information for a GPU
@@ -178,7 +178,7 @@ func (l *library) getGpuPcieThroughputInfo(ctx context.Context, gpuId uint32) (d
 		return device.PcieThroughputInfo{}, err
 	}
 
-	return device.PcieThroughputInfo(obj), nil
+	return obj, nil
 }
 
 // listGpuMetaxlinkLinkInfos returns MetaXLink link information for a GPU
@@ -200,8 +200,8 @@ func (l *library) listGpuMetaxlinkLinkInfos(ctx context.Context, gpuId uint32) (
 	actualSize := int(size)
 	result := make([]device.MetaXLinkLinkInfo, actualSize)
 
-	for i := range actualSize {
-		result[i] = device.MetaXLinkLinkInfo(arr[i])
+	for i := range result {
+		result[i] = arr[i]
 	}
 
 	return result, nil
@@ -231,7 +231,7 @@ func (l *library) listGpuMetaxlinkThroughputInfos(ctx context.Context, gpuId uin
 
 	result := make([]device.MetaXLinkThroughputInfo, len(receiveRates))
 
-	for i := 0; i < len(result); i++ {
+	for i := range result {
 		result[i] = device.MetaXLinkThroughputInfo{
 			ReceiveRate:  receiveRates[i],
 			TransmitRate: transmitRates[i],
@@ -260,7 +260,7 @@ func (l *library) listGpuMetaxlinkThroughputParts(ctx context.Context, gpuId uin
 	actualSize := int(size)
 	result := make([]int32, actualSize)
 
-	for i := 0; i < actualSize; i++ {
+	for i := range result {
 		result[i] = arr[i].RequestBandwidth
 	}
 
@@ -291,7 +291,7 @@ func (l *library) listGpuMetaxlinkTrafficStatInfos(ctx context.Context, gpuId ui
 
 	result := make([]device.MetaXLinkTrafficStatInfo, len(receives))
 
-	for i := 0; i < len(result); i++ {
+	for i := range result {
 		result[i] = device.MetaXLinkTrafficStatInfo{
 			Receive:  receives[i],
 			Transmit: transmits[i],
@@ -320,7 +320,7 @@ func (l *library) listGpuMetaxlinkTrafficStatParts(ctx context.Context, gpuId ui
 	actualSize := int(size)
 	result := make([]int64, actualSize)
 
-	for i := 0; i < actualSize; i++ {
+	for i := range result {
 		result[i] = arr[i].RequestTrafficStat
 	}
 
@@ -346,8 +346,8 @@ func (l *library) listGpuMetaxlinkAerErrorsInfos(ctx context.Context, gpuId uint
 	actualSize := int(size)
 	result := make([]device.MetaXLinkAerInfo, actualSize)
 
-	for i := 0; i < actualSize; i++ {
-		result[i] = device.MetaXLinkAerInfo(arr[i])
+	for i := range result {
+		result[i] = arr[i]
 	}
 
 	return result, nil
@@ -441,7 +441,7 @@ func (l *library) listDieClocks(ctx context.Context, gpuId, dieId uint32, ip gpu
 	actualSize := int(size)
 	result := make([]uint32, actualSize)
 
-	for i := 0; i < actualSize; i++ {
+	for i := range result {
 		result[i] = arr[i]
 	}
 
@@ -493,7 +493,7 @@ func (l *library) getDieEccMemoryInfo(ctx context.Context, gpuId, dieId uint32) 
 		return device.DieEccMemoryInfo{}, err
 	}
 
-	return device.DieEccMemoryInfo(obj), nil
+	return obj, nil
 }
 
 func (l *library) getErrorString(code Return) string {

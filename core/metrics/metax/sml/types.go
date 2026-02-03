@@ -20,13 +20,18 @@ import (
 	"huatuo-bamai/core/metrics/metax/gpu"
 )
 
+// MetaX SML RETURN CODE
+type Return int32
+
 // MetaX SML API Struct
-type SmlPcieInfo = device.PcieLinkInfo
-type SmlMetaXLinkAer = device.MetaXLinkAerInfo
-type SmlPcieThroughput = device.PcieThroughputInfo
-type SmlSingleMetaXLinkInfo = device.MetaXLinkLinkInfo
-type SmlBoardWayElectricInfo = device.BoardWayElectricInfo
-type SmlEccErrorCount = device.DieEccMemoryInfo
+type (
+	SmlPcieInfo             = device.PcieLinkInfo
+	SmlMetaXLinkAer         = device.MetaXLinkAerInfo
+	SmlPcieThroughput       = device.PcieThroughputInfo
+	SmlSingleMetaXLinkInfo  = device.MetaXLinkLinkInfo
+	SmlBoardWayElectricInfo = device.BoardWayElectricInfo
+	SmlEccErrorCount        = device.DieEccMemoryInfo
+)
 
 // SmlMetaXLinkTrafficStat describes MetaXLink traffic statistics.
 type SmlMetaXLinkTrafficStat struct {
