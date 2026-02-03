@@ -126,6 +126,7 @@ func metaxCollectMetrics(ctx context.Context) ([]*metric.Data, error) {
 	eg, subCtx := errgroup.WithContext(ctx)
 	var mu sync.Mutex
 	for _, gpu := range gpus {
+		gpu := gpu
 		eg.Go(func() error {
 			gpuMetrics, err := metaxCollectGpuMetrics(subCtx, gpu)
 			if err != nil {
@@ -145,6 +146,7 @@ func metaxCollectMetrics(ctx context.Context) ([]*metric.Data, error) {
 	return metrics, nil
 }
 
+// metaxCollectGpuMetrics gathers raw GPU metrics for a single GPU.
 func metaxCollectGpuMetrics(ctx context.Context, gpuId uint32) ([]*metric.Data, error) {
 	var metrics []*metric.Data
 
@@ -322,6 +324,7 @@ func metaxCollectGpuMetrics(ctx context.Context, gpuId uint32) ([]*metric.Data, 
 	eg, subCtx := errgroup.WithContext(ctx)
 	var mu sync.Mutex
 	for die := uint32(0); die < gpuInfo.DieCount; die++ {
+		die := die
 		eg.Go(func() error {
 			dieMetrics, err := metaxCollectDieMetrics(subCtx, gpuId, die, gpuInfo.Series)
 			if err != nil {
@@ -341,6 +344,7 @@ func metaxCollectGpuMetrics(ctx context.Context, gpuId uint32) ([]*metric.Data, 
 	return metrics, nil
 }
 
+// metaxCollectDieMetrics collects raw metrics for a specific GPU die.
 func metaxCollectDieMetrics(ctx context.Context, gpuId, dieId uint32, series gpu.Series) ([]*metric.Data, error) {
 	var metrics []*metric.Data
 
@@ -542,6 +546,7 @@ func metaxCollectDieMetrics(ctx context.Context, gpuId, dieId uint32, series gpu
 	return metrics, nil
 }
 
+// getBitsFromLsbToMsb extracts each bit of a uint64 value, ordered from LSB to MSB.
 func getBitsFromLsbToMsb(x uint64) []uint8 {
 	size := 64
 	bits := make([]uint8, size)
