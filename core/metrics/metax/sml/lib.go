@@ -1,4 +1,5 @@
 // Copyright 2026 The HuaTuo Authors
+// Copyright 2026 The MetaX Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -94,10 +95,7 @@ func (l *library) close() (rerr error) {
 	return nil
 }
 
-/*
- * symbol registration
- */
-
+// symbol registration
 func (l *library) registerSmlLibSymbols(handle uintptr) {
 	purego.RegisterLibFunc(&mxSmlInit, handle, "mxSmlInit")
 	purego.RegisterLibFunc(&mxSmlGetErrorString, handle, "mxSmlGetErrorString")

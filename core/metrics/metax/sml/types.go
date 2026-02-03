@@ -1,4 +1,5 @@
 // Copyright 2026 The HuaTuo Authors
+// Copyright 2026 The MetaX Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,10 +20,7 @@ import (
 	"huatuo-bamai/core/metrics/metax/gpu"
 )
 
-/*
-   MetaX SML API Struct
-*/
-
+// MetaX SML API Struct
 type SmlPcieInfo = device.PcieLinkInfo
 type SmlMetaXLinkAer = device.MetaXLinkAerInfo
 type SmlPcieThroughput = device.PcieThroughputInfo
@@ -58,10 +56,7 @@ type SmlMemoryInfo struct {
 	_         int64 // xttUse in KB, not used yet.
 }
 
-/*
-   MetaX SML API RAW SYMBOLS
-*/
-
+// MetaX SML API RAW SYMBOLS
 var (
 	// Error and initialization symbols
 	mxSmlInit           func() Return

@@ -1,4 +1,5 @@
 // Copyright 2026 The HuaTuo Authors
+// Copyright 2026 The MetaX Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,10 +15,7 @@
 
 package sml
 
-/*
- * library & refcount
- */
-
+// library & refcount: a reference counter updated only on successful operations.
 type refcount int32
 
 func (r *refcount) IncOnNoError(err error) {
