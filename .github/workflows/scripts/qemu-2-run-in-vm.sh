@@ -57,7 +57,7 @@ function prapre_test_env() {
 	case $OS_DISTRO in
 	ubuntu*)
 		apt update
-		apt install make libbpf-dev clang git -y
+		apt install make libbpf-dev clang git gcc -y
 		;;
 	esac
 
