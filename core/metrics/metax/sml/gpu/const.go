@@ -16,7 +16,7 @@
 package gpu
 
 import (
-	"huatuo-bamai/core/metrics/metax/device"
+	"huatuo-bamai/core/metrics/metax/sml/device"
 )
 
 // Series represents device product series.

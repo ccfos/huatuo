@@ -20,18 +20,18 @@ import (
 	"fmt"
 )
 
-type SmlError struct {
+type Error struct {
 	symbol string
 	code   Return
 }
 
-func (e *SmlError) Error() string {
+func (e *Error) Error() string {
 	return fmt.Sprintf("%s failed: %s", e.symbol, e.code.String())
 }
 
 // IsNotSupported reports whether err represents an unsupported operation.
 func IsNotSupported(err error) bool {
-	var smlErr *SmlError
+	var smlErr *Error
 	return errors.As(err, &smlErr) &&
 		smlErr.code == ErrorNotSupported
 }
@@ -42,7 +42,7 @@ func checkReturnCode(symbol string, code Return) error {
 		return nil
 	}
 
-	return &SmlError{
+	return &Error{
 		symbol: symbol,
 		code:   code,
 	}

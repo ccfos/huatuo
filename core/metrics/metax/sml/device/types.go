@@ -74,13 +74,9 @@ type PcieThroughputInfo struct {
 	TransmitRate int32 // TX MB/s.
 }
 
-/*
-   MetaXLink
-*/
-
+// MetaXLink describes MetaX interconnect links.
 const MetaXLinkMaxNumber = 7 // Max link count.
 
-// MetaXLinkType defines traffic direction.
 type MetaXLinkType uint32
 
 const (

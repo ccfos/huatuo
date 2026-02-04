@@ -19,8 +19,8 @@ import (
 	"context"
 	"fmt"
 
-	"huatuo-bamai/core/metrics/metax/device"
-	"huatuo-bamai/core/metrics/metax/gpu"
+	"huatuo-bamai/core/metrics/metax/sml/device"
+	"huatuo-bamai/core/metrics/metax/sml/gpu"
 )
 
 // getSDKVersion returns the SDK version
@@ -133,7 +133,7 @@ func (l *library) listGpuBoardWayElectricInfos(ctx context.Context, gpuId uint32
 
 	var (
 		size uint32 = maxBoardWays
-		arr         = make([]SmlBoardWayElectricInfo, size)
+		arr         = make([]BoardWayElectricInfo, size)
 	)
 	if err := checkReturnCode("mxSmlGetBoardPowerInfo", mxSmlGetBoardPowerInfo(gpuId, &size, &arr[0])); err != nil {
 		return nil, err
@@ -157,7 +157,7 @@ func (l *library) getGpuPcieLinkInfo(ctx context.Context, gpuId uint32) (device.
 	default:
 	}
 
-	var obj SmlPcieInfo
+	var obj PcieInfo
 	if err := checkReturnCode("mxSmlGetPcieInfo", mxSmlGetPcieInfo(gpuId, &obj)); err != nil {
 		return device.PcieLinkInfo{}, err
 	}
@@ -173,7 +173,7 @@ func (l *library) getGpuPcieThroughputInfo(ctx context.Context, gpuId uint32) (d
 	default:
 	}
 
-	var obj SmlPcieThroughput
+	var obj PcieThroughput
 	if err := checkReturnCode("mxSmlGetPcieThroughput", mxSmlGetPcieThroughput(gpuId, &obj)); err != nil {
 		return device.PcieThroughputInfo{}, err
 	}
@@ -191,7 +191,7 @@ func (l *library) listGpuMetaxlinkLinkInfos(ctx context.Context, gpuId uint32) (
 
 	var (
 		size uint32 = device.MetaXLinkMaxNumber
-		arr         = make([]SmlSingleMetaXLinkInfo, size)
+		arr         = make([]SingleMetaXLinkInfo, size)
 	)
 	if err := checkReturnCode("mxSmlGetMetaXLinkInfo_v2", mxSmlGetMetaXLinkInfo_v2(gpuId, &size, &arr[0])); err != nil {
 		return nil, err
@@ -251,7 +251,7 @@ func (l *library) listGpuMetaxlinkThroughputParts(ctx context.Context, gpuId uin
 
 	var (
 		size uint32 = device.MetaXLinkMaxNumber
-		arr         = make([]SmlMetaXLinkBandwidth, size)
+		arr         = make([]MetaXLinkBandwidth, size)
 	)
 	if err := checkReturnCode("mxSmlGetMetaXLinkBandwidth", mxSmlGetMetaXLinkBandwidth(gpuId, typ, &size, &arr[0])); err != nil {
 		return nil, err
@@ -311,7 +311,7 @@ func (l *library) listGpuMetaxlinkTrafficStatParts(ctx context.Context, gpuId ui
 
 	var (
 		size uint32 = device.MetaXLinkMaxNumber
-		arr         = make([]SmlMetaXLinkTrafficStat, size)
+		arr         = make([]MetaXLinkTrafficStat, size)
 	)
 	if err := checkReturnCode("mxSmlGetMetaXLinkTrafficStat", mxSmlGetMetaXLinkTrafficStat(gpuId, typ, &size, &arr[0])); err != nil {
 		return nil, err
@@ -337,7 +337,7 @@ func (l *library) listGpuMetaxlinkAerErrorsInfos(ctx context.Context, gpuId uint
 
 	var (
 		size uint32 = device.MetaXLinkMaxNumber
-		arr         = make([]SmlMetaXLinkAer, size)
+		arr         = make([]MetaXLinkAer, size)
 	)
 	if err := checkReturnCode("mxSmlGetMetaXLinkAer", mxSmlGetMetaXLinkAer(gpuId, &size, &arr[0])); err != nil {
 		return nil, err
@@ -361,7 +361,7 @@ func (l *library) getDieStatus(ctx context.Context, gpuId, die uint32) (int32, e
 	default:
 	}
 
-	var obj SmlDeviceUnavailableReasonInfo
+	var obj DeviceUnavailableReasonInfo
 	if err := checkReturnCode("mxSmlGetDieUnavailableReason", mxSmlGetDieUnavailableReason(gpuId, die, &obj)); err != nil {
 		return 0, err
 	}
@@ -409,7 +409,7 @@ func (l *library) getDieMemoryInfo(ctx context.Context, gpuId, dieId uint32) (de
 	default:
 	}
 
-	var obj SmlMemoryInfo
+	var obj MemoryInfo
 	if err := checkReturnCode("mxSmlGetDieMemoryInfo", mxSmlGetDieMemoryInfo(gpuId, dieId, &obj)); err != nil {
 		return device.DieMemoryInfo{}, err
 	}
@@ -488,7 +488,7 @@ func (l *library) getDieEccMemoryInfo(ctx context.Context, gpuId, dieId uint32) 
 	default:
 	}
 
-	var obj SmlEccErrorCount
+	var obj EccErrorCount
 	if err := checkReturnCode("mxSmlGetDieTotalEccErrors", mxSmlGetDieTotalEccErrors(gpuId, dieId, &obj)); err != nil {
 		return device.DieEccMemoryInfo{}, err
 	}

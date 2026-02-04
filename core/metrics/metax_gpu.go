@@ -24,9 +24,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"huatuo-bamai/core/metrics/metax/device"
-	"huatuo-bamai/core/metrics/metax/gpu"
 	"huatuo-bamai/core/metrics/metax/sml"
+	"huatuo-bamai/core/metrics/metax/sml/device"
+	"huatuo-bamai/core/metrics/metax/sml/gpu"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
@@ -54,7 +54,7 @@ func (m *metaxGpuCollector) Update() ([]*metric.Data, error) {
 	ctx := context.Background()
 	metrics, err := metaxCollectMetrics(ctx)
 	if err != nil {
-		var smlError *sml.SmlError
+		var smlError *sml.Error
 		if errors.As(err, &smlError) {
 			log.Errorf("re-initing sml and retrying because sml error: %v", err)
 
