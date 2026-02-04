@@ -126,7 +126,8 @@ func metaxCollectMetrics(ctx context.Context) ([]*metric.Data, error) {
 	eg, subCtx := errgroup.WithContext(ctx)
 	var mu sync.Mutex
 	for _, gpu := range gpus {
-		gpu := gpu
+		// Since Go 1.22, loop variables are scoped per iteration,
+		// so closures capture the correct gpu value without rebinding.
 		eg.Go(func() error {
 			gpuMetrics, err := metaxCollectGpuMetrics(subCtx, gpu)
 			if err != nil {
@@ -324,7 +325,8 @@ func metaxCollectGpuMetrics(ctx context.Context, gpuId uint32) ([]*metric.Data, 
 	eg, subCtx := errgroup.WithContext(ctx)
 	var mu sync.Mutex
 	for die := uint32(0); die < gpuInfo.DieCount; die++ {
-		die := die
+		// Since Go 1.22, loop variables are scoped per iteration,
+		// so closures capture the correct gpu value without rebinding.
 		eg.Go(func() error {
 			dieMetrics, err := metaxCollectDieMetrics(subCtx, gpuId, die, gpuInfo.Series)
 			if err != nil {
