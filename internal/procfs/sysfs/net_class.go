@@ -14,12 +14,19 @@
 
 package sysfs
 
-import "fmt"
+func DefaultNetClass() (NetClass, error) {
+	fs, err := NewDefaultFS()
+	if err != nil {
+		return nil, err
+	}
+
+	return fs.NetClass()
+}
 
 func DefaultNetClassDevices() ([]string, error) {
 	fs, err := NewDefaultFS()
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize FS: %w", err)
+		return nil, err
 	}
 
 	return fs.NetClassDevices()
