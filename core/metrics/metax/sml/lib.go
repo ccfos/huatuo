@@ -16,27 +16,38 @@
 package sml
 
 import (
-	"fmt"
 	"runtime"
 	"sync"
+
+	"huatuo-bamai/core/metrics/metax/dl"
 
 	"github.com/ebitengine/purego"
 )
 
-// library represents the SML shared library
-type library struct {
-	sync.Mutex
-	path     string
-	handle   uintptr
-	refcount refcount
+// dynamicLibrary abstracts a dynamically loaded shared library.
+// It is responsible only for managing the dlopen/dlclose lifecycle.
+type dynamicLibrary interface {
+	Open() error
+	Close() error
+	Handle() uintptr
 }
 
-// global singleton
+// library represents the SML shared library.
+// It coordinates reference counting and symbol registration,
+// while delegating loading/unloading to dynamicLibrary.
+type library struct {
+	sync.Mutex
+	refcount refcount
+	dl       dynamicLibrary
+}
+
+// global singleton instance
 var libsml = newLibrary()
 
 func newLibrary() *library {
+	path := defaultSmlLibraryPath()
 	return &library{
-		path: defaultSmlLibraryPath(),
+		dl: dl.New(path, purego.RTLD_NOW|purego.RTLD_GLOBAL),
 	}
 }
 
@@ -49,6 +60,8 @@ func defaultSmlLibraryPath() string {
 	}
 }
 
+// load initializes the shared library and registers all required symbols.
+// Multiple calls are reference-counted and idempotent.
 func (l *library) load() (rerr error) {
 	l.Lock()
 	defer l.Unlock()
@@ -58,26 +71,18 @@ func (l *library) load() (rerr error) {
 		return nil
 	}
 
-	if l.path == "" {
-		return fmt.Errorf("GOOS=%s is not supported", runtime.GOOS)
+	if err := l.dl.Open(); err != nil {
+		return err
 	}
 
-	handle, err := purego.Dlopen(
-		l.path,
-		purego.RTLD_NOW|purego.RTLD_GLOBAL,
-	)
-	if err != nil {
-		return fmt.Errorf("dlopen %s failed: %w", l.path, err)
-	}
-
-	l.handle = handle
-
-	// register all symbols
-	l.registerSmlLibSymbols(handle)
+	// Register all symbols after successful loading.
+	l.registerSmlLibSymbols(l.dl.Handle())
 
 	return nil
 }
 
+// close decrements the reference count and unloads the library
+// when the last reference is released.
 func (l *library) close() (rerr error) {
 	l.Lock()
 	defer l.Unlock()
@@ -87,15 +92,11 @@ func (l *library) close() (rerr error) {
 		return nil
 	}
 
-	if err := purego.Dlclose(l.handle); err != nil {
-		return err
-	}
-
-	l.handle = 0
-	return nil
+	return l.dl.Close()
 }
 
-// symbol registration
+// registerSmlLibSymbols registers all required SML symbols
+// from the loaded shared library.
 func (l *library) registerSmlLibSymbols(handle uintptr) {
 	purego.RegisterLibFunc(&mxSmlInit, handle, "mxSmlInit")
 	purego.RegisterLibFunc(&mxSmlGetErrorString, handle, "mxSmlGetErrorString")
