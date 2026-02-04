@@ -127,7 +127,7 @@ check_metrics_from_file() {
 bamai_config() {
 	cat >"${HUATUO_TEST_TMPDIR}/bamai.conf" <<'EOF'
 # the blacklist for tracing and metrics
-BlackList = ["softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq"]
+BlackList = ["softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "metax_gpu"]
 EOF
 }
 
