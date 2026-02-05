@@ -32,24 +32,29 @@ func rightCheck(t *testing.T, fs FS, err error) {
 func TestRootPrefixUpdatesMountPoints(t *testing.T) {
 	tmpRoot := t.TempDir()
 	originalPrefix := strings.TrimSuffix(DefaultPath(), "proc")
+
 	RootPrefix(tmpRoot)
 	defer func() { RootPrefix(originalPrefix) }()
-	expectedProc := filepath.Join(tmpRoot, "/proc")
-	expectedSys := filepath.Join(tmpRoot, "/sys")
-	expectedDev := filepath.Join(tmpRoot, "/dev")
 
-	assert.Equal(t, expectedProc, defaultProcMountPoint)
-	assert.Equal(t, expectedSys, defaultSysMountPoint)
-	assert.Equal(t, expectedDev, defaultDevMountPoint)
+	wantedProc := filepath.Join(tmpRoot, "/proc")
+	wantedSys := filepath.Join(tmpRoot, "/sys")
+	wantedDev := filepath.Join(tmpRoot, "/dev")
+
+	assert.Equal(t, wantedProc, defaultProcMountPoint)
+	assert.Equal(t, wantedSys, defaultSysMountPoint)
+	assert.Equal(t, wantedDev, defaultDevMountPoint)
 }
 
 func TestNewDefaultFS_Filesystem(t *testing.T) {
 	tmpRoot := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpRoot, "proc"), 0o755))
 	originalPrefix := strings.TrimSuffix(DefaultPath(), "proc")
+
 	RootPrefix(tmpRoot)
 	defer func() { RootPrefix(originalPrefix) }()
+
 	fs, err := NewDefaultFS()
+
 	rightCheck(t, fs, err)
 }
 
@@ -99,23 +104,32 @@ func TestNewFS(t *testing.T) {
 func TestPath(t *testing.T) {
 	tempRoot := t.TempDir()
 	originalPrefix := strings.TrimSuffix(DefaultPath(), "proc")
+
 	RootPrefix(tempRoot)
 	defer func() { RootPrefix(originalPrefix) }()
 
-	expectedBase := filepath.Join(tempRoot, "/proc")
-	assert.Equal(t, expectedBase, DefaultPath())
+	wantedBase := filepath.Join(tempRoot, "/proc")
+	assert.Equal(t, wantedBase, DefaultPath())
 
-	expectedPath := filepath.Join(expectedBase, "dira", "dirb")
-	assert.Equal(t, Path("dira", "dirb"), expectedPath)
+	wantedPath := filepath.Join(wantedBase, "dira", "dirb")
+	assert.Equal(t, Path("dira", "dirb"), wantedPath)
 }
 
 func TestDefaultPathByType(t *testing.T) {
-	defaultMounts := []string{"/proc", "/sys", "/dev"}
-	for _, mount := range defaultMounts {
-		typ := strings.TrimPrefix(mount, "/")
-		assert.Equal(t, mount, DefaultPathByType(typ))
+	defaultMounts := []struct {
+		typ   string
+		mount string
+	}{
+		{typ: "sys", mount: defaultSysMountPoint},
+		{typ: "proc", mount: defaultProcMountPoint},
+		{typ: "dev", mount: defaultDevMountPoint},
+		{typ: "/dev", mount: ""},
+		{typ: "unknown", mount: ""},
 	}
-	assert.Equal(t, "", DefaultPathByType("unknown"))
+
+	for _, mount := range defaultMounts {
+		assert.Equal(t, mount.mount, DefaultPathByType(mount.typ))
+	}
 }
 
 // Integration Tests (Real Environment)
