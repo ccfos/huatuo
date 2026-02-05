@@ -109,10 +109,10 @@ func TestPath(t *testing.T) {
 	defer func() { RootPrefix(originalPrefix) }()
 
 	wantedBase := filepath.Join(tempRoot, "/proc")
-	assert.Equal(t, wantedBase, DefaultPath())
+	assert.Equal(t, wantedBase, Path(""))
 
 	wantedPath := filepath.Join(wantedBase, "dira", "dirb")
-	assert.Equal(t, Path("dira", "dirb"), wantedPath)
+	assert.Equal(t, wantedPath, Path("dira", "dirb"))
 }
 
 func TestDefaultPathByType(t *testing.T) {
