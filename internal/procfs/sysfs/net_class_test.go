@@ -204,9 +204,7 @@ func TestDefaultNetClassDevices_Integration(t *testing.T) {
 	}
 
 	devices, err := DefaultNetClassDevices()
-	if err != nil {
-		t.Skipf("/sys/class/net not available: %v", err)
-	}
+	assert.NoError(t, err)
 
 	assert.NotEmpty(t, devices, "should have at least one network device")
 	t.Logf("Found %d devices: %v", len(devices), devices)
@@ -218,9 +216,7 @@ func TestDefaultNetClass_Integration(t *testing.T) {
 	}
 
 	netClass, err := DefaultNetClass()
-	if err != nil {
-		t.Skipf("/sys/class/net not available: %v", err)
-	}
+	assert.NoError(t, err)
 
 	assert.NotNil(t, netClass, "should have a valid NetClass object")
 	t.Logf("Got NetClass: %+v", netClass)

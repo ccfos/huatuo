@@ -133,8 +133,6 @@ func TestNewDefaultFS_Integration(t *testing.T) {
 	}
 
 	fs, err := NewDefaultFS()
-	if err != nil {
-		t.Skipf("/sys not available: %v", err)
-	}
+	assert.NoError(t, err)
 	assert.NotNil(t, fs)
 }

@@ -106,9 +106,6 @@ func TestNewProc_Integration(t *testing.T) {
 	}
 
 	proc, err := NewProc(1)
-	if err != nil {
-		t.Skipf("PID 1 not available: %v", err)
-	}
 	rightProcCheck(t, proc, err)
 
 	proc, err = NewProc(999999999)
@@ -121,8 +118,5 @@ func TestSelf_Integration(t *testing.T) {
 	}
 
 	proc, err := Self()
-	if err != nil {
-		t.Skipf("self process not available: %v", err)
-	}
 	rightProcCheck(t, proc, err)
 }
