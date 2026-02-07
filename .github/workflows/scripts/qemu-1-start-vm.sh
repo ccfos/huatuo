@@ -23,9 +23,10 @@ SSH_OPTS=(
 	-o ConnectTimeout=3
 )
 
-# for local validate
-# 1: local validate, 0: workflow
-LOCAL_VALIDATE=${LOCAL_VALIDATE:-0}
+# for local validate, workflow ignore it
+# "$value": local image path, "": workflow default
+# your qcow2 image should be in ${LOCAL_IMG_PATH}/${OS_IMAGE}
+LOCAL_IMG_PATH=${LOCAL_IMG_PATH:-""}
 
 function cloud_user_data() {
 	# generate ssh keys for passwordless login
@@ -57,12 +58,17 @@ growpart:
   mode: auto
   devices: ['/']
   ignore_growroot_disabled: false
-
-# runcmd:
-#   - mkdir -p /mnt/host
-#   - echo "hostshare /mnt/host 9p trans=virtio,version=9p2000.L,access=any,_netdev 0 0" >> /etc/fstab
-#   - mount -a
 EOF
+
+	if [ -n "$LOCAL_IMG_PATH" ]; then
+		tee -a ${CLOUD_USER_DATA} >/dev/null <<EOF
+runcmd:
+  - mkdir -p ${VM_ROOT}
+  - echo "hostshare ${VM_ROOT} 9p trans=virtio,version=9p2000.L,access=any,_netdev 0 0" >> /etc/fstab
+  - mount -a
+EOF
+	fi
+
 	touch "$CLOUD_META_DATA"
 
 	# validate cloud-init user-data
@@ -72,9 +78,9 @@ EOF
 function prepare_qcow2_image() {
 	sudo mkdir -p ${LIBVIRT_IMAGE_DIR}
 
-	if [ $LOCAL_VALIDATE -eq 1 ]; then
-		echo -e "LOCAL_VALIDATE=${LOCAL_VALIDATE}, cp ./assets/${ARCH}/${OS_IMAGE} ${LIBVIRT_IMAGE_DIR}/"
-		sudo cp ./assets/${ARCH}/${OS_IMAGE} ${LIBVIRT_IMAGE_DIR}/
+	if [ -n "$LOCAL_IMG_PATH" ]; then
+		echo -e "LOCAL_IMG_PATH=${LOCAL_IMG_PATH}, cp ${LOCAL_IMG_PATH}/${OS_IMAGE} ${LIBVIRT_IMAGE_DIR}/"
+		sudo cp ${LOCAL_IMG_PATH}/${OS_IMAGE} ${LIBVIRT_IMAGE_DIR}/
 	else
 		docker pull huatuo/os-distro-test:${OS_DISTRO}.${ARCH}
 		cid=$(docker create huatuo/os-distro-test:${OS_DISTRO}.${ARCH})
@@ -82,7 +88,6 @@ function prepare_qcow2_image() {
 		zstd --decompress -f --rm --threads=0 ${OS_IMAGE}.zst
 
 		sudo mv ${OS_IMAGE} ${LIBVIRT_IMAGE_DIR}/
-
 	fi
 
 	sudo chown libvirt-qemu:kvm ${LIBVIRT_IMAGE_DIR}/${OS_IMAGE}
@@ -105,6 +110,13 @@ function install_vm() {
 	echo -e "install vm ${VM_NAME} from qcow2 [${LIBVIRT_IMAGE_DIR}/${OS_IMAGE}], resize to ${VM_DISK_SIZE}"
 
 	# install vm
+	VIRT_LOCAL_ARG=()
+	if [ -n "$LOCAL_IMG_PATH" ]; then
+		VIRT_LOCAL_ARG=(
+			--filesystem source="$(pwd)",target=hostshare,type=mount,accessmode=passthrough
+		)
+	fi
+
 	VIRT_COMMON_ARG=(
 		--name "${VM_NAME}"
 		--os-variant "${OS_DISTRO}"
@@ -112,7 +124,6 @@ function install_vm() {
 		--memory "${VM_MEMORY_MB}"
 		--disk path="${LIBVIRT_IMAGE_DIR}/${OS_IMAGE}",bus=virtio,cache=none,format=qcow2
 		--network network=default,model=virtio,mac=${VM_MAC}
-		# --filesystem source="$(pwd)",target=hostshare,type=mount,accessmode=passthrough
 		--import
 		--graphics none
 		--noautoconsole
@@ -120,6 +131,7 @@ function install_vm() {
 	VIRT_X86_64_ARG=(
 		"${VIRT_COMMON_ARG[@]}"
 		--cloud-init user-data=${CLOUD_USER_DATA}
+		"${VIRT_LOCAL_ARG[@]}"
 	)
 	VIRT_ARM64_ARG=(
 		"${VIRT_COMMON_ARG[@]}"
@@ -128,6 +140,7 @@ function install_vm() {
 		# --cpu cortex-a57
 		--disk path="${CLOUD_INIT_ISO}",device=cdrom
 		--boot loader=/usr/share/AAVMF/AAVMF_CODE.fd,loader.readonly=yes,loader.type=pflash,nvram.template=/usr/share/AAVMF/AAVMF_VARS.fd
+		"${VIRT_LOCAL_ARG[@]}"
 	)
 
 	case "$ARCH" in
@@ -184,24 +197,24 @@ function wait_for_k8s_ready() {
 }
 
 function rsync_workspace_to_vm() {
-	echo -e "rsync workspace → vm ${VM_NAME}:/mnt/host..."
+	echo -e "rsync workspace → vm ${VM_NAME}:${VM_ROOT}..."
 
-	if [ $LOCAL_VALIDATE -eq 1 ]; then
-		echo -e "LOCAL_VALIDATE=${LOCAL_VALIDATE}, skip rsync."
+	if [ -n "$LOCAL_IMG_PATH" ]; then
+		echo -e "LOCAL_IMG_PATH=${LOCAL_IMG_PATH}, skip rsync."
 		return 0
 	fi
 
-	ssh "${SSH_OPTS[@]}" "root@${VM_IP}" "mkdir -p /mnt/host"
+	ssh "${SSH_OPTS[@]}" "root@${VM_IP}" "mkdir -p ${VM_ROOT}"
 
 	rsync -az --delete \
 		--numeric-ids \
 		-e "ssh ${SSH_OPTS[*]}" \
-		./ root@${VM_IP}:/mnt/host/
+		./ root@${VM_IP}:${VM_ROOT}/
 
-	ssh "${SSH_OPTS[@]}" "root@${VM_IP}" "ls -lah /mnt/host"
+	ssh "${SSH_OPTS[@]}" "root@${VM_IP}" "ls -lah ${VM_ROOT}"
 }
 
-echo -e "\n\n------- ARCH: $ARCH OS_DISTRO: $OS_DISTRO"
+echo -e "\n\nARCH: $ARCH OS_DISTRO: $OS_DISTRO"
 case "$OS_DISTRO" in
 ubuntu*)
 	u_version=${OS_DISTRO#ubuntu}
@@ -227,4 +240,4 @@ wait_for_k8s_ready
 echo -e "✅ k8s is ready."
 
 rsync_workspace_to_vm
-echo -e "✅ rsync to VM path ${VM_NAME}:/mnt/host done."
+echo -e "✅ rsync to VM path ${VM_NAME}:${VM_ROOT} done."
