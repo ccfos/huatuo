@@ -4,16 +4,17 @@ FROM golang:1.24-alpine3.22 AS base
 # To accelerate the build process, you may uncomment this section.
 # RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 #
-RUN apk add --no-cache make clang15 libbpf-dev curl git
+RUN apk add --no-cache build-base make clang15 libbpf-dev curl git
 ENV PATH=$PATH:/usr/lib/llvm15/bin
 
 # Build release version
 FROM base AS build
+ARG BUILD_MODE=static
 ARG BUILD_PATH="/go/huatuo-bamai"
 ARG RUN_PATH="/home/huatuo-bamai"
 WORKDIR ${BUILD_PATH}
 COPY . .
-RUN make && mkdir -p ${RUN_PATH} && cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/
+RUN make BUILD_MODE=${BUILD_MODE} && mkdir -p ${RUN_PATH} && cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/
 # Disable the elasticsearch and kubelet fetching pods.
 RUN sed -i -e 's/# Address.*/Address=""/g' \
   -e '$a\    KubeletReadOnlyPort=0' \
