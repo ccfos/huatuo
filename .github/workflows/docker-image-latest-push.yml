@@ -21,11 +21,22 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build and push
+      - name: Build and push (static)
         uses: docker/build-push-action@v2
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64/v8
           push: ${{ github.event_name != 'pull_request' }}
+          tags: huatuo/huatuo-bamai-static:latest
+
+      - name: Build and push (nostatic)
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64/v8
+          push: ${{ github.event_name != 'pull_request' }}
+          build-args: |
+            BUILD_MODE=nostatic
           tags: huatuo/huatuo-bamai:latest
