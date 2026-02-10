@@ -17,7 +17,6 @@ package sysfs
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"huatuo-bamai/internal/procfs"
@@ -91,8 +90,8 @@ func TestDefaultNetClassDevices_Filesystem(t *testing.T) {
 		},
 	}
 
-	originalPrefix := strings.TrimSuffix(DefaultPath(), "sys")
-	defer func() { procfs.RootPrefix(originalPrefix) }()
+	originalPrefix := filepath.Dir(DefaultPath())
+	defer procfs.RootPrefix(originalPrefix)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -183,8 +182,8 @@ func TestDefaultNetClass_Filesystem(t *testing.T) {
 		},
 	}
 
-	originalPrefix := strings.TrimSuffix(DefaultPath(), "sys")
-	defer func() { procfs.RootPrefix(originalPrefix) }()
+	originalPrefix := filepath.Dir(DefaultPath())
+	defer procfs.RootPrefix(originalPrefix)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

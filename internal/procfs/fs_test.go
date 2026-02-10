@@ -17,7 +17,6 @@ package procfs
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,10 +30,10 @@ func rightCheck(t *testing.T, fs FS, err error) {
 
 func TestRootPrefixUpdatesMountPoints(t *testing.T) {
 	tmpRoot := t.TempDir()
-	originalPrefix := strings.TrimSuffix(DefaultPath(), "proc")
+	originalPrefix := filepath.Dir(DefaultPath())
 
 	RootPrefix(tmpRoot)
-	defer func() { RootPrefix(originalPrefix) }()
+	defer RootPrefix(originalPrefix)
 
 	wantedProc := filepath.Join(tmpRoot, "/proc")
 	wantedSys := filepath.Join(tmpRoot, "/sys")
@@ -48,10 +47,11 @@ func TestRootPrefixUpdatesMountPoints(t *testing.T) {
 func TestNewDefaultFS_Filesystem(t *testing.T) {
 	tmpRoot := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpRoot, "proc"), 0o755))
-	originalPrefix := strings.TrimSuffix(DefaultPath(), "proc")
+
+	originalPrefix := filepath.Dir(DefaultPath())
 
 	RootPrefix(tmpRoot)
-	defer func() { RootPrefix(originalPrefix) }()
+	defer RootPrefix(originalPrefix)
 
 	fs, err := NewDefaultFS()
 
@@ -103,10 +103,10 @@ func TestNewFS(t *testing.T) {
 
 func TestPath(t *testing.T) {
 	tempRoot := t.TempDir()
-	originalPrefix := strings.TrimSuffix(DefaultPath(), "proc")
+	originalPrefix := filepath.Dir(DefaultPath())
 
 	RootPrefix(tempRoot)
-	defer func() { RootPrefix(originalPrefix) }()
+	defer RootPrefix(originalPrefix)
 
 	wantedBase := filepath.Join(tempRoot, "/proc")
 	assert.Equal(t, wantedBase, Path(""))

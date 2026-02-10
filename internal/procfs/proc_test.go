@@ -17,7 +17,6 @@ package procfs
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,8 +35,8 @@ var errorProcCheck = func(t *testing.T, proc Proc, err error) {
 
 func TestNewProc_Filesystem(t *testing.T) {
 	tmpRoot := t.TempDir()
-	originalPrefix := strings.TrimSuffix(DefaultPath(), "proc")
-	defer func() { RootPrefix(originalPrefix) }()
+	originalPrefix := filepath.Dir(DefaultPath())
+	defer RootPrefix(originalPrefix)
 
 	tests := []struct {
 		name     string
@@ -78,9 +77,9 @@ func TestNewProc_Filesystem(t *testing.T) {
 
 func TestSelf_Filesystem(t *testing.T) {
 	tmpRoot := t.TempDir()
-	originalPrefix := strings.TrimSuffix(DefaultPath(), "proc")
+	originalPrefix := filepath.Dir(DefaultPath())
 	RootPrefix(tmpRoot)
-	defer func() { RootPrefix(originalPrefix) }()
+	defer RootPrefix(originalPrefix)
 
 	// case 1: empty self symlink
 	procPath := filepath.Join(tmpRoot, "proc")

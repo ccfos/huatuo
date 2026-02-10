@@ -17,7 +17,6 @@ package blockdevice
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"huatuo-bamai/internal/procfs"
@@ -51,8 +50,8 @@ func setupFile(t *testing.T, tmpDir, mount string, content []byte) {
 }
 
 func TestNewDefaultFS_Filesystem(t *testing.T) {
-	originalPrefix := strings.TrimSuffix(procfs.DefaultPath(), "proc")
-	defer func() { procfs.RootPrefix(originalPrefix) }()
+	originalPrefix := filepath.Dir(procfs.DefaultPath())
+	defer procfs.RootPrefix(originalPrefix)
 
 	tests := []struct {
 		name     string
@@ -71,8 +70,7 @@ func TestNewDefaultFS_Filesystem(t *testing.T) {
 		{
 			name: "both directories do not exist",
 			setup: func(t *testing.T) string {
-				tmpDir := t.TempDir()
-				return tmpDir
+				return t.TempDir()
 			},
 			validate: errorFSCheck,
 		},
@@ -106,8 +104,5 @@ func TestNewDefaultFS_Integration(t *testing.T) {
 	}
 
 	fs, err := NewDefaultFS()
-	if err != nil {
-		t.Skipf("/proc or /sys not available: %v", err)
-	}
 	rightFSCheck(t, fs, err)
 }

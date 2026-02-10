@@ -16,7 +16,6 @@ package sysfs
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"huatuo-bamai/internal/procfs"
@@ -75,8 +74,10 @@ func TestNewDefaultFS_Filesystem(t *testing.T) {
 			wantErr: false,
 		},
 	}
-	originalPrefix := strings.TrimSuffix(DefaultPath(), "sys")
-	defer func() { procfs.RootPrefix(originalPrefix) }()
+
+	originalPrefix := filepath.Dir(DefaultPath())
+	defer procfs.RootPrefix(originalPrefix)
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			procfs.RootPrefix(tt.setup(t))
