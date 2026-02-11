@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"huatuo-bamai/internal/procfs"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -34,7 +36,7 @@ func RunningDir() (string, error) {
 
 func HostnameByPid(pid uint32) (string, error) {
 	var empty string
-	fd, err := os.Open(fmt.Sprintf("/proc/%d/ns/uts", pid))
+	fd, err := os.Open(procfs.Path(fmt.Sprintf("%d", pid), "ns/uts"))
 	if err != nil {
 		return empty, err
 	}
@@ -50,7 +52,7 @@ func HostnameByPid(pid uint32) (string, error) {
 }
 
 func ProcNameByPid(pid uint32) (string, error) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	data, err := os.ReadFile(procfs.Path(fmt.Sprintf("%d", pid), "cmdline"))
 	if err != nil {
 		return "", err
 	}
