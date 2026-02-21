@@ -1,3 +1,10 @@
+#ifndef __VMLINUX_H__
+#define __VMLINUX_H__
+
+#ifndef BPF_NO_PRESERVE_ACCESS_INDEX
+#pragma clang attribute push (__attribute__((preserve_access_index)), apply_to = record)
+#endif
+
 typedef signed char __s8;
 
 typedef unsigned char __u8;
@@ -91532,3 +91539,4 @@ struct xa_limit {
 	u32 min;
 };
 
+#endif /* __VMLINUX_H__ */
