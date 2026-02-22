@@ -1,6 +1,7 @@
 #include "vmlinux.h"
 
 #include "bpf_common.h"
+#include "bpf_net_namespace.h"
 #include "bpf_netdevice.h"
 #include "bpf_ratelimit.h"
 #include "vmlinux_net.h"
@@ -35,6 +36,7 @@ struct perf_event_t {
 	u8 type;
 	u16 pad0;
 	u32 pad1;
+	u64 net_cookie;
 	char comm[COMPAT_TASK_COMM_LEN];
 };
 
@@ -179,6 +181,7 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 	data->dev_name[0]	 = '-';
 	data->dev_flags		 = 0;
 	data->ifindex		 = 0;
+	data->net_cookie	 = net_get_netns_cookie(skb);
 	data->stack_size =
 		bpf_get_stack(ctx, data->stack, sizeof(data->stack), 0);
 

@@ -87,6 +87,7 @@ type perfEventT struct {
 	Type               uint8                               `json:"type"`
 	Pad0               uint16                              `json:"pad0"`
 	Pad1               uint32                              `json:"pad1"`
+	NetCookie          uint64                              `json:"net_cookie"`
 	Comm               [bpf.TaskCommLen]byte               `json:"comm"`
 }
 
@@ -110,6 +111,7 @@ type DropWatchTracingData struct {
 	NetdevLinkStatus   []string `json:"netdev_linkstatus"`
 	NetdevName         string   `json:"netdev_name"`
 	NetdevIfindex      uint32   `json:"netdev_ifindex"`
+	NetCookie          uint64   `json:"net_cookie"`
 }
 
 type dropWatchTracing struct{}
@@ -212,6 +214,7 @@ func (c *dropWatchTracing) formatEvent(event *perfEventT) *DropWatchTracingData 
 		NetdevName:         bytesutil.ToString(event.NetdevName[:]),
 		NetdevLinkStatus:   linkstatus.FlagsRaw(event.NetdevFlags),
 		NetdevIfindex:      event.NetdevIfindex,
+		NetCookie:          event.NetCookie,
 	}
 
 	log.Debugf(logPrefix+"tracing data: %v", data)
