@@ -10474,7 +10474,8 @@ struct net {
 	};
 	int sctp_ecn_enable;
 	struct list_head xfrm_inexact_bins;
-	long: 64;
+	// compat kernel version
+	u64 net_cookie;
 	long: 64;
 	long: 64;
 };
