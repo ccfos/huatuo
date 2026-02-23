@@ -91540,4 +91540,8 @@ struct xa_limit {
 	u32 min;
 };
 
+#ifndef BPF_NO_PRESERVE_ACCESS_INDEX
+#pragma clang attribute pop
+#endif
+
 #endif /* __VMLINUX_H__ */
