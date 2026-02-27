@@ -59,6 +59,7 @@ func NewRegister(blackListed []string) (map[string]*EventTracingAttr, error) {
 			attr, err = factory()
 			if err != nil {
 				if errors.Is(err, types.ErrNotSupported) {
+					err = nil // reset the error if it is the last error in the loop.
 					continue
 				}
 
