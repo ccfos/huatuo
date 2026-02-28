@@ -152,6 +152,7 @@ integration_test_teardown() {
 	local exit_code=$1
 
 	huatuo_bamai_stop || true
+	huatuo_bamai_log_check || true
 
 	# Print details on failure
 	if [ "${exit_code}" -ne 0 ]; then
