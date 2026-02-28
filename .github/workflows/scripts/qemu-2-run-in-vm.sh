@@ -98,8 +98,8 @@ check_command_deps
 cd /mnt/host && pwd
 ls -alh /mnt/host
 
-echo -e "\n\n⬅️ integration test..."
+echo -e "\n\n⬅️ test..."
 
-make integration
+make test
 
-echo -e "✅ integration test ok."
+echo -e "✅ test ok."
