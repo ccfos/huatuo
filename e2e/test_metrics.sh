@@ -14,21 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-export BASEDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+set -euo pipefail
 
-# Run the core integration tests.
-unshare --uts --mount bash -c '
-	mount --make-rprivate /
-	echo "huatuo-dev" > /proc/sys/kernel/hostname
-	hostname huatuo-dev 2>/dev/null || true
+source ${ROOT_DIR}/integration/lib.sh
 
-	set -euo pipefail
-	source "${BASEDIR}/utils.sh"
+test_huatuo_bamai_metrics() {
+	log_info "⬅️ test huatuo-bamai metrics"
+	for i in {1..10}; do
+		huatuo_bamai_metrics >/dev/null
+		sleep 0.2
+	done
+	log_info "✅ test huatuo-bamai metrics ok"
+}
 
-	# Always cleanup the tests.
-	trap "test_teardown \$?" EXIT
-
-	test_setup
-	test_metrics
-	# more tests ...
-	'
+test_huatuo_bamai_metrics
