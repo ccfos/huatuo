@@ -82,8 +82,15 @@ clean:
 mock-build:
 	@go generate -run "mockery.*" -x ./...
 
+test: all mock-build
+	@bash integration/run.sh
+	@bash integration/e2e/run.sh
+
 integration: all mock-build
-	@bash integration/integration.sh
+	@bash integration/run.sh
+
+e2e: all
+	@bash integration/e2e/run.sh
 
 force:;
 
