@@ -24,8 +24,8 @@ import (
 
 func resetRegisterState() {
 	factories = make(map[string]func() (*EventTracingAttr, error))
-	tracingEventAttrMap = make(map[string]*EventTracingAttr)
-	tracingOnce = sync.Once{}
+	tracingEventAttrCache = make(map[string]*EventTracingAttr)
+	tracingOnceCache = sync.Once{}
 }
 
 func TestNewRegister(t *testing.T) {

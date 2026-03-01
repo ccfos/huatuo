@@ -35,9 +35,9 @@ type EventTracingAttr struct {
 }
 
 var (
-	factories           = make(map[string]func() (*EventTracingAttr, error))
-	tracingEventAttrMap = make(map[string]*EventTracingAttr)
-	tracingOnce         sync.Once
+	factories             = make(map[string]func() (*EventTracingAttr, error))
+	tracingEventAttrCache = make(map[string]*EventTracingAttr)
+	tracingOnceCache      sync.Once
 )
 
 func RegisterEventTracing(name string, factory func() (*EventTracingAttr, error)) {
@@ -47,7 +47,7 @@ func RegisterEventTracing(name string, factory func() (*EventTracingAttr, error)
 func NewRegister(blackListed []string) (map[string]*EventTracingAttr, error) {
 	var err error
 
-	tracingOnce.Do(func() {
+	tracingOnceCache.Do(func() {
 		tracingMap := make(map[string]*EventTracingAttr)
 		var attr *EventTracingAttr
 
@@ -72,12 +72,12 @@ func NewRegister(blackListed []string) (map[string]*EventTracingAttr, error) {
 			}
 			tracingMap[name] = attr
 		}
-		tracingEventAttrMap = tracingMap
+		tracingEventAttrCache = tracingMap
 	})
 
 	if err != nil {
 		return nil, err
 	}
 
-	return tracingEventAttrMap, nil
+	return tracingEventAttrCache, nil
 }
