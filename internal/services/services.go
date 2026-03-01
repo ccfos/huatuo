@@ -129,6 +129,7 @@ func Start(addr string, mgrTracing *tracing.MgrTracingEvent, promRegistry *prome
 	s.AddHandler("GET", "/task/result", TaskResult)
 	s.AddHandler("POST", "/task/stop", TaskStop)
 	s.AddHandler("GET", "/containers/json", ContainersList)
+	s.AddHandler("GET", "/tracing/json", TracingList)
 
 	// will be removed
 	s.AddHandler("GET", "/tracer", TracerList)

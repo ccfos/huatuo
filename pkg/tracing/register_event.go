@@ -34,9 +34,17 @@ type EventTracingAttr struct {
 	TracingData any
 }
 
+const (
+	statusDisabled  = "disabled"
+	statusActive    = "active"
+	statusInactive  = "inactive"
+	statusInitError = "initError"
+)
+
 var (
 	factories             = make(map[string]func() (*EventTracingAttr, error))
 	tracingEventAttrCache = make(map[string]*EventTracingAttr)
+	tracingStatusCache    = make(map[string]string)
 	tracingOnceCache      sync.Once
 )
 
@@ -53,16 +61,20 @@ func NewRegister(blackListed []string) (map[string]*EventTracingAttr, error) {
 
 		for name, factory := range factories {
 			if slices.Contains(blackListed, name) {
+				tracingStatusCache[name] = statusDisabled
 				continue
 			}
 
 			attr, err = factory()
 			if err != nil {
 				if errors.Is(err, types.ErrNotSupported) {
-					err = nil // reset the error if it is the last error in the loop.
+					tracingStatusCache[name] = statusInactive
+					// reset the error for the last error in the loop.
+					err = nil
 					continue
 				}
 
+				tracingStatusCache[name] = statusInitError
 				err = fmt.Errorf("traing name: %s, err: [%w]", name, err)
 				return
 			}
@@ -70,8 +82,11 @@ func NewRegister(blackListed []string) (map[string]*EventTracingAttr, error) {
 				err = fmt.Errorf("traing name: %s, invalid flag", name)
 				return
 			}
+
+			tracingStatusCache[name] = statusActive
 			tracingMap[name] = attr
 		}
+
 		tracingEventAttrCache = tracingMap
 	})
 
@@ -80,4 +95,8 @@ func NewRegister(blackListed []string) (map[string]*EventTracingAttr, error) {
 	}
 
 	return tracingEventAttrCache, nil
+}
+
+func EventTracingStatus() map[string]string {
+	return tracingStatusCache
 }
