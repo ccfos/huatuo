@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	TaskCommLen      = 16
-	NetdeviceLenSize = 16
+	TaskCommLen   = 16
+	NetdevNameLen = 16
 )
 
 func ThisBpfOBJ() string {

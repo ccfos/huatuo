@@ -80,7 +80,7 @@ type perfEventT struct {
 	Stack              [symbol.KsymbolStackMaxDepth]uint64 `json:"stack"`
 	NetdevQueueMapping uint32                              `json:"netdev_queue_mapping"`
 	NetdevFlags        uint32                              `json:"netdev_flags"`
-	NetdevName         [bpf.NetdeviceLenSize]byte          `json:"netdev_name"`
+	NetdevName         [bpf.NetdevNameLen]byte             `json:"netdev_name"`
 	NetdevIfindex      uint32                              `json:"netdev_ifindex"`
 	SkMaxAckBacklog    uint32                              `json:"sk_max_ack_backlog"`
 	SkState            uint8                               `json:"sk_state"`
