@@ -35,9 +35,9 @@ var instance *Server
 
 // Server http server instance
 type Server struct {
-	server       *gin.Engine
-	mgrTracing   *tracing.MgrTracingEvent
-	promRegistry *prometheus.Registry
+	server         *gin.Engine
+	tracingManager *tracing.TracingManager
+	promRegistry   *prometheus.Registry
 }
 
 // RateLimiter define a rate limiter
@@ -118,9 +118,9 @@ func (s *Server) Run(addr string) error {
 }
 
 // Start start API service
-func Start(addr string, mgrTracing *tracing.MgrTracingEvent, promRegistry *prometheus.Registry) {
+func Start(addr string, mgrTracing *tracing.TracingManager, promRegistry *prometheus.Registry) {
 	s := NewServer()
-	s.mgrTracing = mgrTracing
+	s.tracingManager = mgrTracing
 	s.promRegistry = promRegistry
 
 	s.AddHandler("POST", "/config", config.Config)

@@ -36,7 +36,7 @@ func (trace *tracingHitCollector) Update() ([]*metric.Data, error) {
 	var runningTracers int
 	hitMetric := make([]*metric.Data, 0)
 
-	for _, info := range instance.mgrTracing.MgrTracingInfoDump() {
+	for _, info := range instance.tracingManager.Dump() {
 		hitMetric = append(hitMetric, metric.NewGaugeData("hitcount", float64(info.HitCount),
 			"tracing hit count", map[string]string{"tracing": info.Name}))
 		if info.Running {

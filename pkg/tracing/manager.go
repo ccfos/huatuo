@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,13 +20,13 @@ import (
 	"sync"
 )
 
-type MgrTracingEvent struct {
+type TracingManager struct {
 	tracingEvents map[string]*EventTracing
 	mu            sync.Mutex
 	blackListed   []string
 }
 
-func NewMgrTracingEvent(blackListed []string) (*MgrTracingEvent, error) {
+func NewManager(blackListed []string) (*TracingManager, error) {
 	tracings, err := NewRegister(blackListed)
 	if err != nil {
 		return nil, err
@@ -40,12 +40,12 @@ func NewMgrTracingEvent(blackListed []string) (*MgrTracingEvent, error) {
 		tracingEvents[key] = NewTracingEvent(trace, key)
 	}
 
-	return &MgrTracingEvent{tracingEvents: tracingEvents, blackListed: blackListed}, nil
+	return &TracingManager{tracingEvents: tracingEvents, blackListed: blackListed}, nil
 }
 
-func (mgr *MgrTracingEvent) MgrTracingEventStartAll() error {
+func (mgr *TracingManager) Start() error {
 	for name := range mgr.tracingEvents {
-		if err := mgr.MgrTracingEventStart(name); err != nil {
+		if err := mgr.StartByName(name); err != nil {
 			return err
 		}
 	}
@@ -53,7 +53,7 @@ func (mgr *MgrTracingEvent) MgrTracingEventStartAll() error {
 	return nil
 }
 
-func (mgr *MgrTracingEvent) MgrTracingEventStart(name string) error {
+func (mgr *TracingManager) StartByName(name string) error {
 	te, ok := mgr.tracingEvents[name]
 	if !ok {
 		return fmt.Errorf("%q not found", name)
@@ -74,16 +74,16 @@ func (mgr *MgrTracingEvent) MgrTracingEventStart(name string) error {
 	return te.Start()
 }
 
-func (mgr *MgrTracingEvent) MgrTracingEventStopAll() error {
+func (mgr *TracingManager) Stop() error {
 	for name := range mgr.tracingEvents {
-		if err := mgr.MgrTracingEventStop(name); err != nil {
+		if err := mgr.StopByName(name); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (mgr *MgrTracingEvent) MgrTracingEventStop(name string) error {
+func (mgr *TracingManager) StopByName(name string) error {
 	te, ok := mgr.tracingEvents[name]
 	if !ok {
 		return fmt.Errorf("%q not found", name)
@@ -99,8 +99,8 @@ func (mgr *MgrTracingEvent) MgrTracingEventStop(name string) error {
 	return nil
 }
 
-// MgrTracingInfoDump gets all tracer info
-func (mgr *MgrTracingEvent) MgrTracingInfoDump() map[string]*EventTracingInfo {
+// Dump gets all tracer info
+func (mgr *TracingManager) Dump() map[string]*EventTracingInfo {
 	dump := make(map[string]*EventTracingInfo)
 	for name, c := range mgr.tracingEvents {
 		mgr.mu.Lock()

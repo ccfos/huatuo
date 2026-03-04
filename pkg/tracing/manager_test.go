@@ -61,7 +61,7 @@ func TestNewMgrTracingEvent(t *testing.T) {
 		return newAttr(FlagMetric), nil
 	})
 
-	mgr, err := NewMgrTracingEvent(nil)
+	mgr, err := NewManager(nil)
 	if err != nil {
 		t.Errorf("NewMgrTracingEvent() error=%v", err)
 		return
@@ -85,13 +85,13 @@ func TestNewMgrTracingEvent(t *testing.T) {
 func TestMgrTracingEventStart(t *testing.T) {
 	tests := []struct {
 		name     string
-		setup    func() (*MgrTracingEvent, string)
+		setup    func() (*TracingManager, string)
 		validate func(*testing.T, error)
 	}{
 		{
 			name: "not found",
-			setup: func() (*MgrTracingEvent, string) {
-				return &MgrTracingEvent{tracingEvents: map[string]*EventTracing{}, blackListed: nil}, "trace-not-found"
+			setup: func() (*TracingManager, string) {
+				return &TracingManager{tracingEvents: map[string]*EventTracing{}, blackListed: nil}, "trace-not-found"
 			},
 			validate: func(t *testing.T, err error) {
 				if err == nil {
@@ -105,8 +105,8 @@ func TestMgrTracingEventStart(t *testing.T) {
 		},
 		{
 			name: "blacklisted",
-			setup: func() (*MgrTracingEvent, string) {
-				return &MgrTracingEvent{
+			setup: func() (*TracingManager, string) {
+				return &TracingManager{
 					tracingEvents: map[string]*EventTracing{
 						"trace-2026": {name: "trace-2026"},
 					},
@@ -125,8 +125,8 @@ func TestMgrTracingEventStart(t *testing.T) {
 		},
 		{
 			name: "already running",
-			setup: func() (*MgrTracingEvent, string) {
-				return &MgrTracingEvent{
+			setup: func() (*TracingManager, string) {
+				return &TracingManager{
 					tracingEvents: map[string]*EventTracing{
 						"trace-2026": {name: "trace-2026", isRunning: true},
 					},
@@ -147,8 +147,8 @@ func TestMgrTracingEventStart(t *testing.T) {
 
 	for i := range tests {
 		t.Run(tests[i].name, func(t *testing.T) {
-			mgr, targetName := tests[i].setup()
-			err := mgr.MgrTracingEventStart(targetName)
+			mgr, name := tests[i].setup()
+			err := mgr.StartByName(name)
 			tests[i].validate(t, err)
 		})
 	}
@@ -165,13 +165,13 @@ func TestMgrTracingEventStartAndStopSuccess(t *testing.T) {
 		name:     "trace-2026",
 		interval: 1,
 	}
-	mgr := &MgrTracingEvent{
+	mgr := &TracingManager{
 		tracingEvents: map[string]*EventTracing{"trace-2026": te},
 		blackListed:   nil,
 		mu:            sync.Mutex{},
 	}
 
-	startErr := mgr.MgrTracingEventStart("trace-2026")
+	startErr := mgr.StartByName("trace-2026")
 	if startErr != nil {
 		t.Errorf("MgrTracingEventStart() error=%v", startErr)
 		return
@@ -182,7 +182,7 @@ func TestMgrTracingEventStartAndStopSuccess(t *testing.T) {
 		return
 	}
 
-	stopErr := mgr.MgrTracingEventStop("trace-2026")
+	stopErr := mgr.StopByName("trace-2026")
 	if stopErr != nil {
 		t.Errorf("MgrTracingEventStop() error=%v", stopErr)
 	}
@@ -191,13 +191,13 @@ func TestMgrTracingEventStartAndStopSuccess(t *testing.T) {
 func TestMgrTracingEventStop(t *testing.T) {
 	tests := []struct {
 		name     string
-		setup    func() (*MgrTracingEvent, string)
+		setup    func() (*TracingManager, string)
 		validate func(*testing.T, error)
 	}{
 		{
 			name: "not found",
-			setup: func() (*MgrTracingEvent, string) {
-				return &MgrTracingEvent{tracingEvents: map[string]*EventTracing{}}, "trace-not-found"
+			setup: func() (*TracingManager, string) {
+				return &TracingManager{tracingEvents: map[string]*EventTracing{}}, "trace-not-found"
 			},
 			validate: func(t *testing.T, err error) {
 				if err == nil {
@@ -211,8 +211,8 @@ func TestMgrTracingEventStop(t *testing.T) {
 		},
 		{
 			name: "not running",
-			setup: func() (*MgrTracingEvent, string) {
-				return &MgrTracingEvent{
+			setup: func() (*TracingManager, string) {
+				return &TracingManager{
 					tracingEvents: map[string]*EventTracing{
 						"trace-2026": {name: "trace-2026", isRunning: false},
 					},
@@ -230,8 +230,8 @@ func TestMgrTracingEventStop(t *testing.T) {
 		},
 		{
 			name: "running",
-			setup: func() (*MgrTracingEvent, string) {
-				return &MgrTracingEvent{
+			setup: func() (*TracingManager, string) {
+				return &TracingManager{
 					tracingEvents: map[string]*EventTracing{
 						"trace-2026": {name: "trace-2026", isRunning: true, cancelCtx: func() {}},
 					},
@@ -247,8 +247,8 @@ func TestMgrTracingEventStop(t *testing.T) {
 
 	for i := range tests {
 		t.Run(tests[i].name, func(t *testing.T) {
-			mgr, targetName := tests[i].setup()
-			err := mgr.MgrTracingEventStop(targetName)
+			mgr, name := tests[i].setup()
+			err := mgr.StopByName(name)
 			tests[i].validate(t, err)
 		})
 	}
@@ -267,7 +267,7 @@ func TestMgrTracingInfoDump(t *testing.T) {
 		{nameKey: "trace-2027", wantName: "trace-2027", wantRun: false, wantHit: 1, wantIntvl: 5, wantFlag: FlagMetric | FlagTracing},
 	}
 
-	mgr := &MgrTracingEvent{
+	mgr := &TracingManager{
 		tracingEvents: map[string]*EventTracing{},
 	}
 	for i := range tests {
@@ -280,7 +280,7 @@ func TestMgrTracingInfoDump(t *testing.T) {
 		}
 	}
 
-	info := mgr.MgrTracingInfoDump()
+	info := mgr.Dump()
 	if len(info) != len(tests) {
 		t.Errorf("MgrTracingInfoDump len=%d, want %d", len(info), len(tests))
 		return

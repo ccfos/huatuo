@@ -112,12 +112,12 @@ func mainAction(ctx *cli.Context) error {
 		return err
 	}
 
-	mgr, err := tracing.NewMgrTracingEvent(blacklisted)
+	mgr, err := tracing.NewManager(blacklisted)
 	if err != nil {
 		return err
 	}
 
-	if err := mgr.MgrTracingEventStartAll(); err != nil {
+	if err := mgr.Start(); err != nil {
 		return err
 	}
 
@@ -143,7 +143,7 @@ func mainAction(ctx *cli.Context) error {
 		switch s {
 		case syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM:
 			log.Infof("huatuo-bamai exit by signal %d", s)
-			_ = mgr.MgrTracingEventStopAll()
+			_ = mgr.Stop()
 			bpf.CloseBpfManager()
 			pod.ContainerPodMgrClose()
 			return nil

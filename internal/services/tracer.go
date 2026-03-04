@@ -34,7 +34,7 @@ type TracerStopReq struct {
 
 // TracerList shows all case info.
 func TracerList(ctx *gin.Context) {
-	ctx.JSON(http.StatusOK, instance.mgrTracing.MgrTracingInfoDump())
+	ctx.JSON(http.StatusOK, instance.tracingManager.Dump())
 }
 
 // TracerStart starts the special case.
@@ -45,7 +45,7 @@ func TracerStart(ctx *gin.Context) {
 		return
 	}
 
-	if err := instance.mgrTracing.MgrTracingEventStart(startTracerReq.Name); err != nil {
+	if err := instance.tracingManager.StartByName(startTracerReq.Name); err != nil {
 		ctx.JSON(http.StatusBadRequest, request.ErrorResponse{Message: err.Error()})
 		return
 	}
@@ -61,7 +61,7 @@ func TracerStop(ctx *gin.Context) {
 		return
 	}
 
-	if err := instance.mgrTracing.MgrTracingEventStop(stopTracerReq.Name); err != nil {
+	if err := instance.tracingManager.StopByName(stopTracerReq.Name); err != nil {
 		ctx.JSON(http.StatusBadRequest, request.ErrorResponse{Message: err.Error()})
 		return
 	}
@@ -71,7 +71,7 @@ func TracerStop(ctx *gin.Context) {
 
 // TracerStopAll stops all tracers.
 func TracerStopAll(ctx *gin.Context) {
-	if err := instance.mgrTracing.MgrTracingEventStopAll(); err != nil {
+	if err := instance.tracingManager.Stop(); err != nil {
 		ctx.JSON(http.StatusBadRequest, request.ErrorResponse{Message: err.Error()})
 		return
 	}
