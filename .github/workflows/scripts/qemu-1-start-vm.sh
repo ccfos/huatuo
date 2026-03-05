@@ -4,8 +4,8 @@ set -euo pipefail
 ARCH=${1:-"amd64"}
 OS_DISTRO=${2:-"ubuntu24.04"}
 VM_NAME=${3:-"huatuo-os-distro-test-vm"}
-VM_MAC="4A:6F:6C:69:6E:2E"
-VM_IP="192.168.122.100"
+VM_MAC=${4:-"4A:6F:6C:69:6E:2E"}
+VM_IP=${5:-"192.168.122.100"}
 VM_VCPUS=4
 VM_MEMORY_MB=$((16 * 1024))
 VM_DISK_SIZE="20G"
@@ -61,7 +61,7 @@ growpart:
 EOF
 
 	if [ -n "$LOCAL_IMG_PATH" ]; then
-		tee -a ${CLOUD_USER_DATA} >/dev/null <<EOF
+		tee -a ${CLOUD_USER_DATA} >>/dev/null <<EOF
 runcmd:
   - mkdir -p ${VM_ROOT}
   - echo "hostshare ${VM_ROOT} 9p trans=virtio,version=9p2000.L,access=any,_netdev 0 0" >> /etc/fstab
@@ -103,6 +103,7 @@ function prepare_qcow2_image() {
 }
 
 function install_vm() {
+	sudo chmod 666 /dev/kvm # vm nested virtualization needed
 	sudo virsh net-update default add ip-dhcp-host \
 		"<host mac='${VM_MAC}' ip='${VM_IP}'/>" --live --config
 	echo "${VM_IP} ${VM_NAME}" | sudo tee -a /etc/hosts
@@ -131,6 +132,7 @@ function install_vm() {
 	VIRT_X86_64_ARG=(
 		"${VIRT_COMMON_ARG[@]}"
 		--cloud-init user-data=${CLOUD_USER_DATA}
+		--accelerate
 		"${VIRT_LOCAL_ARG[@]}"
 	)
 	VIRT_ARM64_ARG=(

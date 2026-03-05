@@ -68,14 +68,32 @@ function print_sys_info() {
 }
 
 function install_golang() {
-	local GOLANG_URL="https://go.dev/dl/go$GOLANG_VERSION.linux-$ARCH.tar.gz"
-	local GOLANG_TAR="go$GOLANG_VERSION.linux-$ARCH.tar.gz"
+	local GOLANG_URL="https://mirrors.aliyun.com/golang/go${GOLANG_VERSION}.linux-${ARCH}.tar.gz"
+	local GOLANG_TAR="go${GOLANG_VERSION}.linux-${ARCH}.tar.gz"
 
-	wget -q -O "$GOLANG_TAR" "$GOLANG_URL"
-	rm -rf /usr/local/go
-	tar -C /usr/local -xzf "$GOLANG_TAR" && rm "$GOLANG_TAR"
-	export PATH="/usr/local/go/bin:${PATH}"    # golang
-	export PATH="$(go env GOPATH)/bin:${PATH}" # installed tools
+	local need_install=1
+
+	if command -v go >/dev/null 2>&1; then
+		local goversion
+		goversion=$(go version | awk '{print $3}' | sed 's/^go//')
+		[[ "$goversion" == "$GOLANG_VERSION" ]] && need_install=0
+	fi
+
+	if [[ $need_install -eq 1 ]]; then
+		echo "installing go ${GOLANG_VERSION}..."
+
+		wget -q -O "$GOLANG_TAR" "$GOLANG_URL"
+		rm -rf /usr/local/go
+		tar -C /usr/local -xzf "$GOLANG_TAR"
+		rm -f "$GOLANG_TAR"
+	else
+		echo "go ${GOLANG_VERSION} already installed"
+	fi
+
+	export PATH="/usr/local/go/bin:${PATH}"                      # golang
+	export PATH="$(/usr/local/go/bin/go env GOPATH)/bin:${PATH}" # installed tools
+
+	go env -w GOPROXY=https://goproxy.cn,direct
 }
 
 function prapre_test_env() {
