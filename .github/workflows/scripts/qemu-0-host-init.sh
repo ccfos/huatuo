@@ -18,7 +18,7 @@ case "$OS_DISTRO" in
 ubuntu*)
 	# Install dependencies
 	sudo apt-get update -y
-	sudo apt-get install -y cloud-image-utils virt-manager qemu-utils
+	sudo apt-get install -y cloud-image-utils virt-manager qemu-utils cloud-init rsync
 	;;
 *)
 	echo -e "❌ Unsupported OS distro: '$OS_DISTRO'" >&2
