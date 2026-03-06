@@ -69,13 +69,13 @@ linkstatus_carrierup — Physical link restored
 linkstatus_carrierdown — Physical link failure
 ```
 
-NIC Packet Loss:
+#### NIC Packet Loss
 
 ```bash
 huatuo_bamai_buddyinfo_blocks{host="hostname",region="xxx",device="eth0",driver="ixgbe"} 0
 ```
 
-NIC RDMA PFC Congestion Metrics:
+#### NIC RDMA PFC Congestion
 ```bash
 # HELP huatuo_bamai_netdev_dcb_pfc_received_total count of the received pfc frames
 # TYPE huatuo_bamai_netdev_dcb_pfc_received_total counter
@@ -99,7 +99,7 @@ huatuo_bamai_netdev_dcb_pfc_send_total{device="enp6s0f0np0",host="hostname",prio
 huatuo_bamai_netdev_dcb_pfc_send_total{device="enp6s0f0np0",host="hostname",prio="7",region="xxx"} 0
 ```
 
-Linux Kernel RAS Hardware Fault:
+#### RAS Hardware Faults
 
 ```bash
 huatuo_bamai_ras_hw_total{host="hostname",region="xxx"} 0
