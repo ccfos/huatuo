@@ -4,7 +4,7 @@ type: docs
 description:
 author: HUATUO Team
 date: 2026-02-25
-weight: 4
+weight: 5
 ---
 
 当前版本支持的 GPU 平台:

@@ -14,19 +14,19 @@ weight: 1
 
 - [Events, AutoTracing 大盘（持续完善）](http://console.huatuo.tech/d/autotracing-event)
 
-    ![autotrcing-event demo diagram​](/img/quickstart-autotrcing-event.png)
+    ![autotrcing-event demo diagram​](/docs/img/quickstart-autotrcing-event.png)
 
 - [宿主机 Metrics 大盘（持续完善）](http://console.huatuo.tech/d/metrics-host)
 
-    ![metrics-host demo diagram](/img/quickstart-metrics-host.png)
+    ![metrics-host demo diagram](/docs/img/quickstart-metrics-host.png)
 
 - [容器 Metrics 大盘（持续完善）](http://console.huatuo.tech/d/metrics-container)
     
-    ![metrics-container demo diagram](/img/quickstart-metrics-container.png)
+    ![metrics-container demo diagram](/docs/img/quickstart-metrics-container.png)
 
 ### 2. 容器启动
 
-![HUATUO 组件数据流示意图](/img/quickstart-data-flow.png)
+![HUATUO 组件数据流示意图](/docs/img/quickstart-data-flow.png)
 
 #### 2.1 Docker 启动
 
@@ -53,7 +53,7 @@ $ curl -s localhost:19704/metrics
 $ docker compose --project-directory ./build/docker up
 ```
 
-![HUATUO 组件之 huatuo-bamai 运行示意图](/img/quickstart-components.png)
+![HUATUO 组件之 huatuo-bamai 运行示意图](/docs/img/quickstart-components.png)
 
 
 ### 3. 编译部署

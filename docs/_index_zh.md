@@ -31,4 +31,4 @@ cascade:
 # 联系我们
 - 微信群（备注姓名+单位）和公众号：
 
-![](/img/contact-weixin.png)
+![](/docs/img/contact-weixin.png)
