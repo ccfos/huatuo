@@ -39,7 +39,7 @@ type cpuUtilStat struct {
 
 type cpuUtilCollector struct {
 	cgroup       cgroups.Cgroup
-	numCores     int64
+	numCores     float64
 	cpuDataCache cpuUtilStat
 	mutex        sync.Mutex
 }
@@ -57,14 +57,14 @@ func newCpuCollector() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuUtilCollector{
-			numCores: int64(runtime.NumCPU()),
+			numCores: float64(runtime.NumCPU()),
 			cgroup:   cgroup,
 		},
 		Flag: tracing.FlagMetric,
 	}, nil
 }
 
-func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, container *pod.Container, cpuCoreNumber int64) error {
+func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, container *pod.Container, numCores float64) error {
 	var (
 		usrUtil    float64
 		sysUtil    float64
@@ -93,7 +93,7 @@ func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, container *pod.Co
 	deltaTotalTime := stat.Usage - cache.lastUsage.Usage
 	deltaUsrTime := stat.User - cache.lastUsage.User
 	deltaSysTime := stat.System - cache.lastUsage.System
-	deltaRealWorldTime := float64(cpuCoreNumber) * float64(now.Sub(cache.lastTimestamp).Microseconds())
+	deltaRealWorldTime := numCores * float64(now.Sub(cache.lastTimestamp).Microseconds())
 
 	if (float64(deltaTotalTime) > deltaRealWorldTime) || (float64(deltaUsrTime+deltaSysTime) > deltaRealWorldTime) {
 		cache.lastUsage = *stat
@@ -140,11 +140,11 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			continue
 		}
 
-		var numCores int64
+		var numCores float64
 		if cpuQuota.Quota == math.MaxUint64 {
-			numCores = int64(runtime.NumCPU())
+			numCores = float64(runtime.NumCPU())
 		} else {
-			numCores = int64(cpuQuota.Quota / cpuQuota.Period)
+			numCores = float64(cpuQuota.Quota) / float64(cpuQuota.Period)
 		}
 
 		if numCores <= 0 {
@@ -157,7 +157,7 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			continue
 		}
 
-		metrics = append(metrics, metric.NewContainerGaugeData(container, "cores", float64(numCores), "cpu core number for containers", nil),
+		metrics = append(metrics, metric.NewContainerGaugeData(container, "cores", numCores, "cpu core number for containers", nil),
 			metric.NewContainerGaugeData(container, "usr", containerDataCache.usrUtil, "cpu usr for the containers", nil),
 			metric.NewContainerGaugeData(container, "sys", containerDataCache.sysUtil, "cpu sys for the containers", nil),
 			metric.NewContainerGaugeData(container, "total", containerDataCache.totalUtil, "cpu total for the containers", nil))
