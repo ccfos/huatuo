@@ -17,6 +17,7 @@ package parseutil
 import (
 	"bufio"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -29,17 +30,27 @@ func ReadUint(path string) (uint64, error) {
 		return 0, err
 	}
 
+	val := strings.TrimSpace(string(v))
+	if val == "max" {
+		return math.MaxUint64, nil
+	}
+
 	return strconv.ParseUint(strings.TrimSpace(string(v)), 10, 64)
 }
 
-// ReadInt64 read single value in file
+// ReadInt read single value in file
 func ReadInt(path string) (int64, error) {
 	v, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
 
-	return strconv.ParseInt(strings.TrimSpace(string(v)), 10, 64)
+	val := strings.TrimSpace(string(v))
+	if val == "max" {
+		return math.MaxInt64, nil
+	}
+
+	return strconv.ParseInt(strings.TrimSpace(val), 10, 64)
 }
 
 func parseKV(raw string) (string, uint64, error) {

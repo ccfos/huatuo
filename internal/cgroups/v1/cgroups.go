@@ -99,6 +99,10 @@ func (c *CgroupV1) Pids(path string) ([]int32, error) {
 	return pids.Tasks(paths.Path(subsysCpu, path), "tasks")
 }
 
+func (c *CgroupV1) Procs(path string) ([]int32, error) {
+	return pids.Tasks(paths.Path(subsysCpu, path), "cgroup.procs")
+}
+
 func (c *CgroupV1) CpuUsage(path string) (*stats.CpuUsage, error) {
 	statPath := paths.Path(subsysCpu, path, "cpuacct.stat")
 	raw, err := parseutil.RawKV(statPath)

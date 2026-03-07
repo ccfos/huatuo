@@ -43,8 +43,10 @@ func (c *CgroupV2) Name() string {
 	return c.name
 }
 
+const Postfix = ".slice"
+
 func (c *CgroupV2) NewRuntime(path string, spec *specs.LinuxResources) error {
-	m, err := extv2.NewSystemd("/", path+".slice", -1, extv2.ToResources(spec))
+	m, err := extv2.NewSystemd("/", path+Postfix, -1, extv2.ToResources(spec))
 	if err != nil {
 		return fmt.Errorf("cgroup2 new systemd: %w", err)
 	}
@@ -86,6 +88,10 @@ func (c *CgroupV2) AddProc(pid uint64) error {
 
 func (c *CgroupV2) Pids(path string) ([]int32, error) {
 	return pids.Tasks(paths.Path(path), "cgroup.threads")
+}
+
+func (c *CgroupV2) Procs(path string) ([]int32, error) {
+	return pids.Tasks(paths.Path(path), "cgroup.procs")
 }
 
 func (c *CgroupV2) CpuStatRaw(path string) (map[string]uint64, error) {
