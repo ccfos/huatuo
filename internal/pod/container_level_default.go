@@ -18,6 +18,7 @@ package pod
 
 import (
 	"encoding/json"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -53,13 +54,13 @@ func parseContainerQos(typ ContainerType, pod *corev1.Pod) (ContainerQos, error)
 func (p ContainerQos) String() string {
 	switch p {
 	case containerQosBurstable:
-		return string(corev1.PodQOSBurstable)
+		return strings.ToLower(string(corev1.PodQOSBurstable))
 	case containerQosBestEffort:
-		return string(corev1.PodQOSBestEffort)
+		return strings.ToLower(string(corev1.PodQOSBestEffort))
 	case containerQosGuaranteed:
-		return string(corev1.PodQOSGuaranteed)
+		return strings.ToLower(string(corev1.PodQOSGuaranteed))
 	default:
-		return "Unknown"
+		return "unknown"
 	}
 }
 

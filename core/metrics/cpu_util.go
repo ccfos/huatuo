@@ -157,7 +157,7 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			continue
 		}
 
-		metrics = append(metrics, metric.NewContainerGaugeData(container, "cores", numCores, "cpu core number for containers", nil),
+		metrics = append(metrics, metric.NewContainerGaugeData(container, "cores", numCores, "cpu core number for the containers", nil),
 			metric.NewContainerGaugeData(container, "usr", containerDataCache.usrUtil, "cpu usr for the containers", nil),
 			metric.NewContainerGaugeData(container, "sys", containerDataCache.sysUtil, "cpu sys for the containers", nil),
 			metric.NewContainerGaugeData(container, "total", containerDataCache.totalUtil, "cpu total for the containers", nil))

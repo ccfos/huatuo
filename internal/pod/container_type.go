@@ -34,12 +34,12 @@ const (
 const ContainerTypeAll = ContainerType(uint32(_containerTypeAll) - 1)
 
 var containerType2String = map[ContainerType]string{
-	ContainerTypeSidecar:   "Sidecar",
-	ContainerTypeDaemonSet: "DaemonSet",
-	ContainerTypeNormal:    "Normal",
-	ContainerTypeNode:      "Node",
-	ContainerTypeStatic:    "Static",
-	ContainerTypeUnknown:   "Unknown",
+	ContainerTypeSidecar:   "sidecar",
+	ContainerTypeDaemonSet: "daemonSet",
+	ContainerTypeNormal:    "normal",
+	ContainerTypeNode:      "node",
+	ContainerTypeStatic:    "static",
+	ContainerTypeUnknown:   "unknown",
 }
 
 func (t ContainerType) String() string {
