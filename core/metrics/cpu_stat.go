@@ -69,7 +69,7 @@ func newCPUStat() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func (c *cpuStatCollector) cpuMetricUpdate(cpu *cpuStat, container *pod.Container) error {
+func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Container) error {
 	var (
 		deltaThrottledSum     uint64
 		deltaHierarchyWaitSum uint64
@@ -149,19 +149,20 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 	}
 
 	for _, container := range containers {
-		containerMetric := container.LifeResouces("collector_cpu_stat").(*cpuStat)
-		if err := c.cpuMetricUpdate(containerMetric, container); err != nil {
+		containerDataCache := container.LifeResouces("collector_cpu_stat").(*cpuStat)
+		if err := c.updateDataCache(containerDataCache, container); err != nil {
 			log.Infof("failed to update cpu info of %s, %v", container, err)
 			continue
 		}
 
-		metrics = append(metrics, metric.NewContainerGaugeData(container, "wait_rate", containerMetric.waitrateHierarchy, "wait rate for containers", nil),
-			metric.NewContainerGaugeData(container, "inner_wait_rate", containerMetric.waitrateInner, "inner wait rate for container", nil),
-			metric.NewContainerGaugeData(container, "exter_wait_rate", containerMetric.waitrateExter, "exter wait rate for container", nil),
-			metric.NewContainerGaugeData(container, "throttle_wait_rate", containerMetric.waitrateThrottled, "throttle wait rate for container", nil),
-			metric.NewContainerGaugeData(container, "nr_throttled", float64(containerMetric.nrThrottled), "throttle nr for container", nil),
-			metric.NewContainerGaugeData(container, "nr_bursts", float64(containerMetric.nrBursts), "burst nr for container", nil),
-			metric.NewContainerGaugeData(container, "burst_time", float64(containerMetric.burstTime), "burst time for container", nil),
+		metrics = append(metrics, metric.NewContainerGaugeData(container, "wait_rate", containerDataCache.waitrateHierarchy, "wait rate for the containers", nil),
+			metric.NewContainerGaugeData(container, "inner_wait_rate", containerDataCache.waitrateInner, "inner wait rate for the containers", nil),
+			metric.NewContainerGaugeData(container, "exter_wait_rate", containerDataCache.waitrateExter, "exter wait rate for the containers", nil),
+			metric.NewContainerGaugeData(container, "throttle_wait_rate", containerDataCache.waitrateThrottled, "throttle wait rate for the containers", nil),
+			metric.NewContainerGaugeData(container, "nr_throttled", float64(containerDataCache.nrThrottled), "throttle nr for the containers", nil),
+			metric.NewContainerGaugeData(container, "throttled_time", float64(containerDataCache.throttledTime), "throttle time for the containers", nil),
+			metric.NewContainerGaugeData(container, "nr_bursts", float64(containerDataCache.nrBursts), "burst nr for the containers", nil),
+			metric.NewContainerGaugeData(container, "burst_time", float64(containerDataCache.burstTime), "burst time for the containers", nil),
 		)
 	}
 
