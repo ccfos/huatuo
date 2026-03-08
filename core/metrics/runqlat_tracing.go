@@ -19,11 +19,13 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"time"
+	"reflect"
+	"sync/atomic"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/pkg/metric"
+	"huatuo-bamai/pkg/tracing"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/runqlat_tracing.c -o $BPF_DIR/runqlat_tracing.o
@@ -31,22 +33,35 @@ import (
 type latencyBpfData struct {
 	NumVoluntarySwitch   uint64
 	NumInVoluntarySwitch uint64
-	NumLatency01         uint64
-	NumLatency02         uint64
-	NumLatency03         uint64
-	NumLatency04         uint64
+	NumLatencyZone0      uint64
+	NumLatencyZone1      uint64
+	NumLatencyZone2      uint64
+	NumLatencyZone3      uint64
 }
 
-var (
-	globalRunqlat  latencyBpfData
-	runqlatRunning bool
-)
+type runqlatCollector struct {
+	running     atomic.Bool
+	bpf         bpf.BPF
+	runqlatHost latencyBpfData
+}
 
-func startRunqlatTracerWork(ctx context.Context) error {
-	// load bpf.
+func init() {
+	tracing.RegisterEventTracing("runqlat", newRunqlatCollector)
+	_ = pod.RegisterContainerLifeResources("runqlat", reflect.TypeOf(&latencyBpfData{}))
+}
+
+func newRunqlatCollector() (*tracing.EventTracingAttr, error) {
+	return &tracing.EventTracingAttr{
+		TracingData: &runqlatCollector{},
+		Interval:    10,
+		Flag:        tracing.FlagTracing | tracing.FlagMetric,
+	}, nil
+}
+
+func (c *runqlatCollector) Start(ctx context.Context) error {
 	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
-		return fmt.Errorf("load bpf: %w", err)
+		return err
 	}
 	defer b.Close()
 
@@ -59,67 +74,88 @@ func startRunqlatTracerWork(ctx context.Context) error {
 
 	b.WaitDetachByBreaker(childCtx, cancel)
 
-	runqlatRunning = true
+	c.bpf = b
+	c.running.Store(true)
 
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-			var css uint64
+	// wait stop
+	<-childCtx.Done()
+	c.running.Store(false)
+	return nil
+}
 
-			containers, err := pod.NormalContainers()
-			if err != nil {
-				return fmt.Errorf("get normal containers: %w", err)
-			}
-			cssToContainer := pod.BuildCssContainers(containers, pod.SubSysCPU)
+func (c *runqlatCollector) updateContainerDataCache(cssContainers map[uint64]*pod.Container) error {
+	items, err := c.bpf.DumpMapByName("cpu_tg_metric")
+	if err != nil {
+		return fmt.Errorf("dump bpf map, %w", err)
+	}
 
-			items, err := b.DumpMapByName("cpu_tg_metric")
-			if err != nil {
-				return fmt.Errorf("failed to dump cpu_tg_metric: %w", err)
-			}
-			for _, v := range items {
-				buf := bytes.NewReader(v.Key)
-				if err = binary.Read(buf, binary.LittleEndian, &css); err != nil {
-					return fmt.Errorf("can't read cpu_tg_metric key: %w", err)
-				}
-				container := cssToContainer[css]
-				if container == nil {
-					continue
-				}
+	var css uint64
 
-				buf = bytes.NewReader(v.Value)
-				if err = binary.Read(buf, binary.LittleEndian, container.LifeResouces("runqlat").(*latencyBpfData)); err != nil {
-					return fmt.Errorf("can't read cpu_tg_metric value: %w", err)
-				}
-			}
+	for _, v := range items {
+		buf := bytes.NewReader(v.Key)
 
-			item, err := b.ReadMap(b.MapIDByName("cpu_host_metric"), []byte{0, 0, 0, 0})
-			if err != nil {
-				return fmt.Errorf("failed to read cpu_host_metric: %w", err)
-			}
-			buf := bytes.NewReader(item)
-			if err = binary.Read(buf, binary.LittleEndian, &globalRunqlat); err != nil {
-				log.Errorf("can't read cpu_host_metric: %v", err)
-				return err
-			}
-
-			time.Sleep(2 * time.Second)
+		if err := binary.Read(buf, binary.LittleEndian, &css); err != nil {
+			return fmt.Errorf("read cpu_tg_metric key: %w", err)
 		}
+
+		container, ok := cssContainers[css]
+		if !ok {
+			continue
+		}
+
+		buf = bytes.NewReader(v.Value)
+		if err := binary.Read(buf, binary.LittleEndian, container.LifeResouces("runqlat").(*latencyBpfData)); err != nil {
+			return fmt.Errorf("read cpu_tg_metric value: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (c *runqlatCollector) fetchHostRunqlat() []*metric.Data {
+	item, err := c.bpf.ReadMap(c.bpf.MapIDByName("cpu_host_metric"), []byte{0, 0, 0, 0})
+	if err != nil {
+		return nil
+	}
+
+	buf := bytes.NewReader(item)
+	if err = binary.Read(buf, binary.LittleEndian, &c.runqlatHost); err != nil {
+		return nil
+	}
+
+	return []*metric.Data{
+		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone0), "cpu run queue latency for the host", map[string]string{"zone": "0"}),
+		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone1), "cpu run queue latency for the host", map[string]string{"zone": "1"}),
+		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone2), "cpu run queue latency for the host", map[string]string{"zone": "2"}),
+		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone3), "cpu run queue latency for the host", map[string]string{"zone": "3"}),
 	}
 }
 
-// Start runqlat work, load bpf and wait data form perfevent
-func (c *runqlatCollector) Start(ctx context.Context) error {
-	err := startRunqlatTracerWork(ctx)
-
-	containers, _ := pod.ContainersByType(pod.ContainerTypeNormal)
-	for _, container := range containers {
-		runqlatData := container.LifeResouces("runqlat").(*latencyBpfData)
-		*runqlatData = latencyBpfData{}
+func (c *runqlatCollector) Update() ([]*metric.Data, error) {
+	if !c.running.Load() {
+		return nil, nil
 	}
 
-	runqlatRunning = false
+	containers, err := pod.ContainersByType(pod.ContainerTypeNormal)
+	if err != nil {
+		return nil, err
+	}
 
-	return err
+	cssContainer := pod.BuildCssContainers(containers, pod.SubSysCPU)
+
+	// update all containers cache data
+	_ = c.updateContainerDataCache(cssContainer)
+
+	data := []*metric.Data{}
+	for _, container := range containers {
+		cache := container.LifeResouces("runqlat").(*latencyBpfData)
+
+		data = append(data,
+			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone0), "cpu run queue latency for the containers", map[string]string{"zone": "0"}),
+			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone1), "cpu run queue latency for the containers", map[string]string{"zone": "1"}),
+			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone2), "cpu run queue latency for the containers", map[string]string{"zone": "2"}),
+			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone3), "cpu run queue latency for the containers", map[string]string{"zone": "3"}))
+	}
+
+	return append(data, c.fetchHostRunqlat()...), nil
 }
