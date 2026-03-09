@@ -8,21 +8,33 @@ case "$ARCH" in
 amd64) ;;
 arm64) ;;
 *)
-	echo -e "❌ Unsupported ARCH: '$ARCH'" >&2
-	echo -e " Supported ARCHs: amd64, arm64" >&2
+	echo -e "❌ Unsupported ARCH: '$ARCH', Supported ARCHs: amd64, arm64" >&2
 	exit 1
 	;;
 esac
 
 case "$OS_DISTRO" in
 ubuntu*)
-	# Install dependencies
-	sudo apt-get update -y
-	sudo apt-get install -y cloud-image-utils virt-manager qemu-utils cloud-init rsync
+	PACKAGES=("cloud-image-utils" "virt-manager" "qemu-utils" "cloud-init" "rsync")
+	MISSING_PACKAGES=()
+
+	for pkg in "${PACKAGES[@]}"; do
+		if dpkg --status "$pkg" &>/dev/null; then
+			echo "$pkg is already installed."
+		else
+			echo "$pkg is missing."
+			MISSING_PACKAGES+=("$pkg")
+		fi
+	done
+
+	if [ "${#MISSING_PACKAGES[@]}" -gt 0 ]; then
+		echo "installing missing packages: ${MISSING_PACKAGES[*]}"
+		sudo apt-get update
+		sudo apt-get install -y "${MISSING_PACKAGES[@]}"
+	fi
 	;;
 *)
-	echo -e "❌ Unsupported OS distro: '$OS_DISTRO'" >&2
-	echo -e " Supported distros: ubuntu*" >&2
+	echo -e "❌ Unsupported OS distro: '$OS_DISTRO', only ubuntu* is supported." >&2
 	exit 1
 	;;
 esac

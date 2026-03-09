@@ -99,8 +99,23 @@ function install_golang() {
 function prapre_test_env() {
 	case $OS_DISTRO in
 	ubuntu*)
-		apt update >/dev/null
-		apt install make libbpf-dev clang git gcc jq -y >/dev/null
+		packages=("make" "libbpf-dev" "clang" "git" "gcc" "jq")
+		missing_packages=()
+
+		for pkg in "${packages[@]}"; do
+			if dpkg --status "$pkg" &>/dev/null; then
+				echo "$pkg is already installed."
+			else
+				echo "$pkg is missing."
+				missing_packages+=("$pkg")
+			fi
+		done
+
+		if [ "${#missing_packages[@]}" -gt 0 ]; then
+			echo "installing missing packages: ${missing_packages[*]}"
+			sudo apt-get update
+			sudo apt-get install -y "${missing_packages[@]}"
+		fi
 		;;
 	esac
 
