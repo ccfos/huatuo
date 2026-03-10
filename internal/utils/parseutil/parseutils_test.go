@@ -17,9 +17,32 @@ package parseutil
 import (
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 )
+
+func createTempFile(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tmp-file")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("createTempFile: %v", err)
+	}
+	return path
+}
+
+func mapsEqual(a, b map[string]uint64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
 
 func TestReadUint(t *testing.T) {
 	tests := []struct {
@@ -38,8 +61,7 @@ func TestReadUint(t *testing.T) {
 			path := createTempFile(t, tt.content)
 			got, err := ReadUint(path)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ReadUint() error = %v, wantErr %v", err, tt.wantErr)
-				return
+				t.Fatalf("ReadUint() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if got != tt.want {
 				t.Errorf("ReadUint() = %v, want %v", got, tt.want)
@@ -72,8 +94,7 @@ func TestReadInt(t *testing.T) {
 			path := createTempFile(t, tt.content)
 			got, err := ReadInt(path)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ReadInt() error = %v, wantErr %v", err, tt.wantErr)
-				return
+				t.Fatalf("ReadInt() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if got != tt.want {
 				t.Errorf("ReadInt() = %v, want %v", got, tt.want)
@@ -125,8 +146,7 @@ func TestRawKV(t *testing.T) {
 			path := createTempFile(t, tt.content)
 			got, err := RawKV(path)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("RawKV() error = %v, wantErr %v", err, tt.wantErr)
-				return
+				t.Fatalf("RawKV() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !mapsEqual(got, tt.want) {
 				t.Errorf("RawKV() = %v, want %v", got, tt.want)
@@ -183,8 +203,7 @@ func TestKV(t *testing.T) {
 			path := createTempFile(t, tt.content)
 			gotKey, gotVal, err := KV(path)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("KV() error = %v, wantErr %v", err, tt.wantErr)
-				return
+				t.Fatalf("KV() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if gotKey != tt.wantKey || gotVal != tt.wantVal {
 				t.Errorf("KV() = %v, %v, want %v, %v", gotKey, gotVal, tt.wantKey, tt.wantVal)
@@ -197,31 +216,4 @@ func TestKV(t *testing.T) {
 			t.Errorf("KV() expected error, got nil")
 		}
 	})
-}
-
-// Helper to create temp file with content
-func createTempFile(t *testing.T, content string) string {
-	t.Helper()
-	file, err := os.CreateTemp("", "parseutil_test_*")
-	if err != nil {
-		t.Errorf("create temp directory: %v", err)
-	}
-	defer file.Close()
-	if _, err := file.WriteString(content); err != nil {
-		t.Errorf("write file: %v", err)
-	}
-	return file.Name()
-}
-
-// Helper to compare maps
-func mapsEqual(a, b map[string]uint64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-	return true
 }
