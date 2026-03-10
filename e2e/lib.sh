@@ -75,11 +75,14 @@ assert_kubelet_pod_count() {
 		assert_eq "$actual" "$expect" "$desc"
 	}
 
-	wait_until \
+	if ! wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
 		"$desc" \
-		_assert
+		_assert; then
+		# wait timeout, dump pods from kubelet
+		kubelet_pods_json
+	fi
 }
 
 assert_huatuo_bamai_pod_count() {
@@ -90,11 +93,14 @@ assert_huatuo_bamai_pod_count() {
 		assert_eq "$actual" "$expect" "$desc"
 	}
 
-	wait_until \
+	if ! wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
 		"$desc" \
-		_assert
+		_assert; then
+		# wait timeout, dump pods from huatuo-bamai
+		curl "${CURL_TIMEOUT[@]}" ${HUATUO_BAMAI_PODS_API}
+	fi
 }
 
 e2e_test_teardown() {
