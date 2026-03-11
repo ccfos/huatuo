@@ -160,7 +160,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 		default:
 			var pd netRcvPerfEvent
 			if err := reader.ReadInto(&pd); err != nil {
-				return fmt.Errorf("read rrom perf event fail: %w", err)
+				return fmt.Errorf("read from perf event fail: %w", err)
 			}
 			tracerTime := time.Now()
 

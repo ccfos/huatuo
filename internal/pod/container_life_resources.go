@@ -48,7 +48,7 @@ func createContainerLifeResources(c *Container) {
 	lifeResourcesTpl.Range(func(key, anythingType any) bool {
 		// create container life resource
 		typ := anythingType.(reflect.Type)
-		c.lifeResouces[key.(string)] = reflect.New(typ.Elem()).Interface()
+		c.lifeResources[key.(string)] = reflect.New(typ.Elem()).Interface()
 		return true
 	})
 }
