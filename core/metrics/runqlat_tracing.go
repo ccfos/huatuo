@@ -104,7 +104,7 @@ func (c *runqlatCollector) updateContainerDataCache(cssContainers map[uint64]*po
 		}
 
 		buf = bytes.NewReader(v.Value)
-		if err := binary.Read(buf, binary.LittleEndian, container.LifeResouces("runqlat").(*latencyBpfData)); err != nil {
+		if err := binary.Read(buf, binary.LittleEndian, container.LifeResources("runqlat").(*latencyBpfData)); err != nil {
 			return fmt.Errorf("read cpu_tg_metric value: %w", err)
 		}
 	}
@@ -148,7 +148,7 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 
 	data := []*metric.Data{}
 	for _, container := range containers {
-		cache := container.LifeResouces("runqlat").(*latencyBpfData)
+		cache := container.LifeResources("runqlat").(*latencyBpfData)
 
 		data = append(data,
 			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone0), "cpu run queue latency for the containers", map[string]string{"zone": "0"}),

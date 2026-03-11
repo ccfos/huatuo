@@ -45,7 +45,7 @@ func CollectorDo(ctx *gin.Context) {
 				Timeout:             30 * time.Second,
 			})
 
-		log.Infof("The prometheus Metrics HTTP server is startting: %v", collectorPromHandler)
+		log.Infof("The prometheus Metrics HTTP server is starting: %v", collectorPromHandler)
 	})
 
 	collectorPromHandler.ServeHTTP(ctx.Writer, ctx.Request)

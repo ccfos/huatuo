@@ -149,7 +149,7 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 	}
 
 	for _, container := range containers {
-		containerDataCache := container.LifeResouces("collector_cpu_stat").(*cpuStat)
+		containerDataCache := container.LifeResources("collector_cpu_stat").(*cpuStat)
 		if err := c.updateDataCache(containerDataCache, container); err != nil {
 			log.Infof("failed to update cpu info of %s, %v", container, err)
 			continue

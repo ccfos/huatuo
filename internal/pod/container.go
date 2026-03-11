@@ -49,16 +49,16 @@ type Container struct {
 	StartedAt         time.Time         `json:"started_at"`
 	SyncedAt          time.Time         `json:"synced_at"`
 	Labels            map[string]any    `json:"labels"` // custom labels
-	lifeResouces      map[string]any
+	lifeResources     map[string]any
 }
 
 func (c *Container) String() string {
 	return fmt.Sprintf("%s:%s/%s/%s:%s/%s", c.ID, c.Hostname, c.Name, c.Type, c.Qos, c.IPAddress)
 }
 
-// LifeResouces returns the life resouces of container.
-func (c *Container) LifeResouces(key string) any {
-	return c.lifeResouces[key]
+// LifeResources returns the life resources of container.
+func (c *Container) LifeResources(key string) any {
+	return c.lifeResources[key]
 }
 
 // LabelHostNamespace returns namespace label

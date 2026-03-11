@@ -413,7 +413,7 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 		CgroupCss:         css,
 		StartedAt:         startedAt,
 		SyncedAt:          time.Now(),
-		lifeResouces:      make(map[string]any),
+		lifeResources:     make(map[string]any),
 		Labels:            labels,
 	}
 
@@ -514,7 +514,7 @@ func kubeletConfigCacheUpdate(ctx *PodContainerInitCtx) error {
 
 	config, err = kubeletConfigFileDefault()
 	if err != nil {
-		panic("we cant not find any cgroup driver of kubelet after requesting configz and default files")
+		panic("we cannot find any cgroup driver of kubelet after requesting configz and default files")
 	}
 
 	return nil
