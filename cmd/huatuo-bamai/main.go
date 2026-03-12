@@ -91,7 +91,7 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("storage.InitDefaultClients: %w", err)
 	}
 
-	if err := bpf.InitBpfManager(&bpf.Option{}); err != nil {
+	if err := bpf.NewManager(&bpf.Option{}); err != nil {
 		return fmt.Errorf("failed to init bpf manager: %w", err)
 	}
 
@@ -144,7 +144,7 @@ func mainAction(ctx *cli.Context) error {
 		case syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM:
 			log.Infof("huatuo-bamai exit by signal %d", s)
 			_ = mgr.Stop()
-			bpf.CloseBpfManager()
+			bpf.Close()
 			pod.ContainerPodMgrClose()
 			return nil
 		case syscall.SIGUSR1:

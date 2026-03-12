@@ -489,12 +489,12 @@ func mainAction(ctx *cli.Context) error {
 		return err
 	}
 
-	if err := bpf.InitBpfManager(&bpf.Option{
+	if err := bpf.NewManager(&bpf.Option{
 		KeepaliveTimeout: int(tracingCmd.config.durationSecond),
 	}); err != nil {
 		return fmt.Errorf("init bpf: %w", err)
 	}
-	defer bpf.CloseBpfManager()
+	defer bpf.Close()
 
 	// load bpf
 	b, err := bpf.LoadBpfFromBytes("iotracing.o", iotracing, tracingCmd.filters)

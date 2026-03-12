@@ -37,16 +37,16 @@ import (
 
 var DefaultBpfObjDir = "bpf"
 
-// InitBpfManager initializes the bpf manager.
-func InitBpfManager(opt *Option) error {
+// NewManager initializes the bpf manager.
+func NewManager(opt *Option) error {
 	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
 		Cur: unix.RLIM_INFINITY,
 		Max: unix.RLIM_INFINITY,
 	})
 }
 
-// CloseBpfManager closes the bpf manager.
-func CloseBpfManager() {}
+// Close closes the bpf manager.
+func Close() {}
 
 type mapSpec struct {
 	name string
