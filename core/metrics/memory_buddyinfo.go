@@ -28,7 +28,7 @@ type buddyInfoCollector struct {
 }
 
 func init() {
-	tracing.RegisterEventTracing("buddyinfo", newBuddyInfo)
+	tracing.RegisterEventTracing("memory_buddyinfo", newBuddyInfo)
 }
 
 func newBuddyInfo() (*tracing.EventTracingAttr, error) {
@@ -58,7 +58,7 @@ func (c *buddyInfoCollector) Update() ([]*metric.Data, error) {
 		for size, value := range entry.Sizes {
 			buddyLabel["node"] = entry.Node
 			buddyLabel["zone"] = entry.Zone
-			buddyLabel["size"] = strconv.Itoa(size)
+			buddyLabel["order"] = strconv.Itoa(size)
 
 			metrics = append(metrics,
 				metric.NewGaugeData("blocks", value, "buddy info", buddyLabel))
