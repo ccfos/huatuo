@@ -161,12 +161,10 @@ type CommonConf struct {
 			DeviceIncluded string
 		}
 		Vmstat struct {
-			Included string
-			Excluded string
-		}
-		MemoryStat struct {
-			Included string
-			Excluded string
+			IncludedOnHost      string
+			ExcludedOnHost      string
+			IncludedOnContainer string
+			ExcludedOnContainer string
 		}
 		MemoryEvents struct {
 			Included string
