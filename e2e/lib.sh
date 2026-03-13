@@ -82,6 +82,8 @@ assert_kubelet_pod_count() {
 		_assert; then
 		# wait timeout, dump pods from kubelet
 		kubelet_pods_json
+
+		fatal "❌ wait timeout, kubelet pod count not expected"
 	fi
 }
 
@@ -100,6 +102,8 @@ assert_huatuo_bamai_pod_count() {
 		_assert; then
 		# wait timeout, dump pods from huatuo-bamai
 		curl "${CURL_TIMEOUT[@]}" ${HUATUO_BAMAI_PODS_API}
+
+		fatal "❌ wait timeout, huatuo-bamai pod count not expected"
 	fi
 }
 
