@@ -9,272 +9,1250 @@ weight: 1
 
 当前版本支持的指标:
 
-|子系统|指标|描述|单位|统计纬度|指标来源|
-|---|----|---|---|---|---|
-|cpu|cpu_util_sys|cpu 系统态利用率|%|宿主|基于 cgroup cpuacct.stat 和 cpuacct.usage 计算|
-|cpu|cpu_util_usr|cpu 用户态利用率|%|宿主|基于 cgroup cpuacct.stat 和 cpuacct.usage 计算|
-|cpu|cpu_util_total|容器 cpu 总利用率|%|宿主|基于 cgroup cpuacct.stat 和 cpuacct.usage 计算|
-|cpu|cpu_util_container_sys|容器 cpu 系统态利用率|%|容器|基于 cgroup cpuacct.stat 和 cpuacct.usage 计算|
-|cpu|cpu_util_container_usr|容器 cpu 用户态利用率|%|容器|基于 cgroup cpuacct.stat 和 cpuacct.usage 计算|
-|cpu|cpu_util_container_total|容器 cpu 总利用率|%|容器|基于 cgroup cpuacct.stat 和 cpuacct.usage 计算|
-|cpu|cpu_stat_container_burst_time|累计墙时（以纳秒为单位），周期内突发超出配额的时间|纳秒(ns)|容器|基于 cpu.stat 读取|
-|cpu|cpu_stat_container_nr_bursts|周期内突发次数|计数|容器|基于 cpu.stat 读取|
-|cpu|cpu_stat_container_nr_throttled|cgroup 被 throttled/limited 的次数|计数|容器|基于 cpu.stat 读取|
-|cpu|cpu_stat_container_exter_wait_rate|容器外进程导致的等待率|%|容器|基于 cpu.stat 读取的 throttled_time hierarchy_wait_sum inner_wait_sum 计算|
-|cpu|cpu_stat_container_inner_wait_rate|容器内部进程导致的等待率|%|容器|基于 cpu.stat 读取的 throttled_time hierarchy_wait_sum inner_wait_sum 计算|
-|cpu|cpu_stat_container_throttle_wait_rate|容器被限制而引起的等待率|%|容器|基于 cpu.stat 读取的 throttled_time hierarchy_wait_sum inner_wait_sum 计算|
-|cpu|cpu_stat_container_wait_rate|总的等待率: exter_wait_rate + inner_wait_rate + throttle_wait_rate|%|容器|基于 cpu.stat 读取的 throttled_time hierarchy_wait_sum inner_wait_sum 计算|
-|cpu|loadavg_container_container_nr_running|容器中运行的任务数量|计数|容器|从内核通过 netlink 获取|
-|cpu|loadavg_container_container_nr_uninterruptible|容器中不可中断任务的数量|计数|容器|从内核通过 netlink 获取|
-|cpu|loadavg_load1|系统过去 1 分钟的平均负载|计数|宿主|procfs|
-|cpu|loadavg_load5|系统过去 5 分钟的平均负载|计数|宿主|procfs|
-|cpu|loadavg_load15|系统过去 15 分钟的平均负载|计数|宿主|procfs|
-|cpu|softirq_latency|在不同时间域发生的 NET_RX/NET_TX 中断延迟次数：<br>0~10 us<br>100us ~ 1ms<br>10us ~ 100us<br>1ms ~ inf|计数|宿主|BPF 软中断埋点统计|
-|cpu|runqlat_container_nlat_01|容器中进程调度延迟在 0~10 毫秒内的次数|计数|容器|bpf 调度切换埋点统计|
-|cpu|runqlat_container_nlat_02|容器中进程调度延迟在 10~20 毫秒之间的次数|计数|容器|bpf 调度切换埋点统计|
-|cpu|runqlat_container_nlat_03|容器中进程调度延迟在 20~50 毫秒之间的次数|计数|容器|bpf 调度切换埋点统计|
-|cpu|runqlat_container_nlat_04|容器中进程调度延迟超过 50 毫秒的次数|计数|容器|bpf 调度切换埋点统计|
-|cpu|runqlat_g_nlat_01|宿主中进程调度延迟在范围内 0～10 毫秒的次数|计数|宿主|bpf 调度切换埋点统计|
-|cpu|runqlat_g_nlat_02|宿主中进程调度延迟在范围内 10～20 毫秒的次数|计数|宿主|bpf 调度切换埋点统计|
-|cpu|runqlat_g_nlat_03|宿主中进程调度延迟在范围内 20～50 毫秒的次数|计数|宿主|bpf 调度切换埋点统计|
-|cpu|runqlat_g_nlat_04|宿主中进程调度延迟超过 50 毫秒的次数|计数|宿主|bpf 调度切换埋点统计|
-|cpu|reschedipi_oversell_probability|vm 中 cpu 超卖检测|0-1|宿主|bpf 调度 ipi 埋点统计|
-|memory|buddyinfo_blocks|内核伙伴系统内存分配|页计数|宿主|procfs|
-|memory|memory_events_container_watermark_inc|内存水位计数|计数|容器|memory.events|
-|memory|memory_events_container_watermark_dec|内存水位计数|计数|容器|memory.events|
-|memory|memory_others_container_local_direct_reclaim_time|cgroup 中页分配速度|纳秒(ns)|容器|memory.local_direct_reclaim_time|
-|memory|memory_others_container_directstall_time|直接回收时间|纳秒(ns)|容器|memory.directstall_stat|
-|memory|memory_others_container_asyncreclaim_time|异步回收时间|纳秒(ns)|容器|memory.asynreclaim_stat|
-|memory|memory_stat_container_writeback|匿名/文件 cache sync 到磁盘排队字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_unevictable|无法回收的内存（如 mlocked）|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_shmem|共享内存字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgsteal_kswapd|kswapd 和 cswapd 回收的内存字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgsteal_globalkswapd|由 kswapd 回收的字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgsteal_globaldirect|过页面分配直接回收的内存字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgsteal_direct|页分配和 try_charge 期间直接回收的内存字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgsteal_cswapd|由 cswapd 回收的字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgscan_kswapd|kswapd 和 cswapd 扫描的内存字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgscan_globalkswapd|kswapd 扫描的内存字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgscan_globaldirect|扫描内存中通过直接回收在页面分配期间的字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgscan_direct|扫描内存的字节数，在页面分配和 try_charge 期间通过直接回收的字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgscan_cswapd|由 cswapd 扫描内存的字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgrefill|内存中扫描的字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_pgdeactivate|内存中未激活的部分被添加到非活动列表中|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_inactive_file|文件内存中不活跃的 LRU 列表的字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_inactive_anon|匿名和交换缓存内存中不活跃的 LRU 列表的字节数|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_dirty|等待写入磁盘的字节|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_active_file|活跃内存中文件内存的大小|字节(Bytes)|容器|memory.stat|
-|memory|memory_stat_container_active_anon|活跃内存中匿名和交换内存的大小|字节(Bytes)|容器|memory.stat|
-|memory|mountpoint_perm_ro|挂在点是否为只读|布尔(bool)|宿主|procfs|
-|memory|vmstat_allocstall_normal|宿主在 normal 域直接回收|计数|宿主|/proc/vmstat|
-|memory|vmstat_allocstall_movable|宿主在 movable 域直接回收|计数|宿主|/proc/vmstat|
-|memory|vmstat_compact_stall|内存压缩计数|计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_active_anon|活跃的匿名页数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_active_file|活跃的文件页数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_boost_pages|kswapd boosting 页数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_dirty|脏页数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_free_pages|释放的页数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_inactive_anon|非活跃的匿名页数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_inactive_file|非活跃的文件页数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_kswapd_boost|kswapd boosting 次数计数|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_mlock|锁定的页面数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_shmem|共享内存页面数|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_slab_reclaimable|可回收的 slab 页数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_slab_unreclaimable|无法回收的 slab 页数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_unevictable|不可驱逐页面数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_nr_writeback|写入页面数|页计数|宿主|/proc/vmstat|
-|memory|vmstat_numa_pages_migrated|NUMA 迁移中的页面数|页计数|宿主|/proc/vmstat|
-|memory|vmstat_pgdeactivate|页数被停用进入非活动 LRU|页计数|宿主|/proc/vmstat|
-|memory|vmstat_pgrefill|扫描的活跃 LRU 页面数|页计数|宿主|/proc/vmstat|
-|memory|vmstat_pgscan_direct|扫描的页数|页计数|宿主|/proc/vmstat|
-|memory|vmstat_pgscan_kswapd|扫描的页面数量，由 kswapd 回收的数量|页计数|宿主|/proc/vmstat|
-|memory|vmstat_pgsteal_direct|直接回收的页面|页计数|宿主|/proc/vmstat|
-|memory|vmstat_pgsteal_kswapd|被 kswapd 回收的数量|页计数|宿主|/proc/vmstat|
-|memory|hungtask_counter|hungtask 事件计数|计数|宿主|BPF 埋点统计|
-|memory|oom_host_counter|oom 事件计数|计数|宿主|BPF 埋点统计|
-|memory|oom_container_counter|oom 事件计数|计数|容器|BPF 埋点统计|
-|memory|softlockup_counter|softlockup 事件计数|计数|宿主|BPF 埋点统计|
-|memory|memory_free_compaction|内存压缩的速度|纳秒(ns)|宿主|bpf 埋点统计|
-|memory|memory_free_allocstall|内存中主机直接回收速度|纳秒(ns)|宿主|bpf 埋点统计|
-|memory|memory_cgroup_container_directstall|cgroup 尝试直接回收的计数|计数|容器|bpf 埋点统计|
-|IO|iolatency_disk_d2c|磁盘访问时的 io 延迟统计，包括驱动程序和硬件组件消耗的时间|计数|宿主|bpf 埋点统计|
-|IO|iolatency_disk_q2c|磁盘访问整个 I/O 生命周期时的 I/O 延迟统计|计数|宿主|bpf 埋点统计|
-|IO|iolatency_container_d2c|磁盘访问时的 I/O 延迟统计，包括驱动程序和硬件组件消耗的时间|计数|容器|bpf 埋点统计|
-|IO|iolatency_container_q2c|磁盘访问整个 I/O 生命周期时的 I/O 延迟统计|计数|容器|bpf 埋点统计|
-|IO|iolatency_disk_flush|磁盘 RAID 设备刷新操作延迟统计|计数|宿主|bpf 埋点统计|
-|IO|iolatency_container_flush|磁盘 RAID 设备上由容器引起的刷新操作延迟统计|计数|容器|bpf 埋点统计|
-|IO|iolatency_disk_freeze|磁盘 freese 事件|计数|宿主|bpf 埋点统计|
-|network|tcp_mem_limit_pages|系统 TCP 总内存大小限制|页计数|系统|procfs|
-|network|tcp_mem_usage_bytes|系统使用的 TCP 内存总字节数|字节(Bytes)|系统|tcp_mem_usage_pages \* page_size|
-|network|tcp_mem_usage_pages|系统使用的 TCP 内存总量|页计数|系统|procfs|
-|network|tcp_mem_usage_percent|系统使用的 TCP 内存百分比（相对 TCP 内存总限制）|%|系统|tcp_mem_usage_pages / tcp_mem_limit_pages|
-|network|arp_entries|arp 缓存条目数量|计数|宿主，容器|procfs|
-|network|arp_total|总 arp 缓存条目数|计数|系统|procfs|
-|network|qdisc_backlog|待发送的字节数|字节(Bytes)|宿主|netlink qdisc 统计|
-|network|qdisc_bytes_total|已发送的字节数|字节(Bytes)|宿主|netlink qdisc 统计|
-|network|qdisc_current_queue_length|排队等待发送的包数量|计数|宿主|netlink qdisc 统计|
-|network|qdisc_drops_total|丢弃的数据包数量|计数|宿主|netlink qdisc 统计|
-|network|qdisc_overlimits_total|排队数据包里超限的数量|计数|宿主|netlink qdisc 统计|
-|network|qdisc_packets_total|已发送的包数量|计数|宿主|netlink qdisc 统计|
-|network|qdisc_requeues_total|重新入队的数量|计数|宿主|netlink qdisc 统计|
-|network|ethtool_hardware_rx_dropped_errors|接口接收丢包统计|计数|宿主|硬件驱动相关, 如 mlx, ixgbe, bnxt_en, etc.|
-|network|netdev_receive_bytes_total|接口接收的字节数|字节(Bytes)|宿主，容器|procfs|
-|network|netdev_receive_compressed_total|接口接收的压缩包数量|计数|宿主，容器|procfs|
-|network|netdev_receive_dropped_total|接口接收丢弃的包数量|计数|宿主，容器|procfs|
-|network|netdev_receive_errors_total|接口接收检测到错误的包数量|计数|宿主，容器|procfs|
-|network|netdev_receive_fifo_total|接口接收 fifo 缓冲区错误数量|计数|宿主，容器|procfs|
-|network|netdev_receive_frame_total|接口接收帧对齐错误|计数|宿主，容器|procfs|
-|network|netdev_receive_multicast_total|多播数据包已接收的包数量，对于硬件接口，此统计通常在设备层计算（与 rx_packets 不同），因此可能包括未到达的数据包|计数|宿主，容器|procfs|
-|network|netdev_receive_packets_total|接口接收到的有效数据包数量|计数|宿主，容器|procfs|
-|network|netdev_transmit_bytes_total|接口发送的字节数|字节(Bytes)|宿主，容器|procfs|
-|network|netdev_transmit_carrier_total|接口发送过程中由于载波丢失导致的帧传输错误数量|计数|宿主，容器|procfs|
-|network|netdev_transmit_colls_total|接口发送碰撞计数|计数|宿主，容器|procfs|
-|network|netdev_transmit_compressed_total|接口发送压缩数据包数量|计数|宿主，容器|procfs|
-|network|netdev_transmit_dropped_total|数据包在传输过程中丢失的数量，如资源不足|计数|宿主，容器|procfs|
-|network|netdev_transmit_errors_total|发送错误计数|计数|宿主，容器|procfs|
-|network|netdev_transmit_fifo_total|帧传输错误数量|计数|宿主，容器|procfs|
-|network|netdev_transmit_packets_total|发送数据包计数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_ArpFilter|因 ARP 过滤规则而被拒绝的 ARP 请求/响应包数量|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_BusyPollRxPackets|通过 busy polling​​ 机制接收到的网络数据包数量|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_DelayedACKLocked|由于用户态锁住了sock，而无法发送delayed ack的次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_DelayedACKLost|当收到已确认的包时，它将被更新。延迟 ACK 丢失可能会引起这个问题，但其他原因也可能触发，例如网络中重复的包。|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_DelayedACKs|延迟的 ACK 定时器已过期。TCP 堆栈将发送一个纯 ACK 数据包并退出延迟 ACK 模式|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_EmbryonicRsts|收到初始 SYN_RECV 套接字的重置|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_IPReversePathFilter|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_ListenDrops|当内核收到客户端的 SYN 请求时，如果 TCP 接受队列已满，内核将丢弃 SYN 并将 TcpExtListenOverflows 加 1。同时，内核也会将 TcpExtListenDrops 加 1。当一个 TCP 套接字处于监听状态，且内核需要丢弃一个数据包时，内核会始终将 TcpExtListenDrops 加 1。因此，增加 TcpExtListenOverflows 会导致 TcpExtListenDrops 同时增加，但 TcpExtListenDrops 也会在没有 TcpExtListenOverflows 增加的情况下增加，例如内存分配失败也会导致 TcpExtListenDrops 增加。|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_ListenOverflows|当内核收到客户端的 SYN 请求时，如果 TCP 接受队列已满，内核将丢弃 SYN 并将 TcpExtListenOverflows 加 1。同时，内核也会将 TcpExtListenDrops 加 1。当一个 TCP 套接字处于监听状态，且内核需要丢弃一个数据包时，内核会始终将 TcpExtListenDrops 加 1。因此，增加 TcpExtListenOverflows 会导致 TcpExtListenDrops 同时增加，但 TcpExtListenDrops 也会在没有 TcpExtListenOverflows 增加的情况下增加，例如内存分配失败也会导致 TcpExtListenDrops 增加。|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_LockDroppedIcmps|由于套接字被锁定，ICMP 数据包被丢弃|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_OfoPruned|协议栈尝试在乱序队列中丢弃数据包|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_OutOfWindowIcmps|ICMP 数据包因超出窗口而被丢弃|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_PAWSActive|数据包在 Syn-Sent 状态被 PAWS 丢弃|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_PAWSEstab|数据包在除 Syn-Sent 之外的所有状态下都会被 PAWS 丢弃|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_PFMemallocDrop|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_PruneCalled|协议栈尝试回收套接字内存。更新此计数器后，将尝试合并乱序队列和接收队列。如果内存仍然不足，将尝试丢弃乱序队列中的数据包（并更新 TcpExtOfoPruned 计数器）。|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_RcvPruned|在从顺序错误的队列中‘collapse’和丢弃数据包后，如果实际使用的内存仍然大于最大允许内存，则此计数器将被更新。这意味着‘prune’失败|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_SyncookiesFailed|MSS 从 SYN cookie 解码出来的无效。当这个计数器更新时，接收到的数据包不会被当作 SYN cookie 处理，并且 TcpExtSyncookiesRecv 计数器不会更新|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_SyncookiesRecv|接收了多少个 SYN cookies 的回复数据包|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_SyncookiesSent|发送了多少个 SYN cookies|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPACKSkippedChallenge|ACK 为 challenge ACK 时，将跳过 ACK|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPACKSkippedFinWait2|ACK 在 Fin-Wait-2 状态被跳过，原因可能是 PAWS 检查失败或接收到的序列号超出窗口|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPACKSkippedPAWS|由于 PAWS（保护包装序列号）检查失败，ACK 被跳过|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPACKSkippedSeq|序列号超出窗口范围，时间戳通过 PAWS 检查，TCP 状态不是 Syn-Recv、Fin-Wait-2 和 Time-Wait|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPACKSkippedSynRecv|ACK 在 Syn-Recv 状态中被跳过。Syn-Recv 状态表示协议栈收到一个 SYN 并回复 SYN+ACK|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPACKSkippedTimeWait|CK 在 Time-Wait 状态中被跳过，原因可能是 PAWS 检查失败或接收到的序列号超出窗口|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPAbortFailed|内核 TCP 层将在满足 RFC2525 2.17 节时发送 RST。如果在处理过程中发生内部错误，TcpExtTCPAbortFailed 将增加|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPAbortOnClose|用户模式程序缓冲区中有数据时关闭的套接字数量|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPAbortOnData|TCP 层有正在传输的数据，但需要关闭连接|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPAbortOnLinger|当 TCP 连接进入 FIN_WAIT_2 状态时，内核不会等待来自另一侧的 fin 包，而是发送 RST 并立即删除套接字|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPAbortOnMemory|当一个应用程序关闭 TCP 连接时，内核仍然需要跟踪该连接，让它完成 TCP 断开过程|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPAbortOnTimeout|此计数器将在任何 TCP 计时器到期时增加。在这种情况下，内核不会发送 RST，而是放弃连接|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPAckCompressed|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPAutoCorking|发送数据包时，TCP 层会尝试将小数据包合并成更大的一个|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPBacklogDrop|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPChallengeACK|challenge ack 发送的数量|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPDSACKIgnoredNoUndo|当 DSACK 块无效时，这两个计数器中的一个将被更新。哪个计数器将被更新取决于 TCP 套接字的 undo_marker 标志|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPDSACKIgnoredOld|当 DSACK 块无效时，这两个计数器中的一个将被更新。哪个计数器将被更新取决于 TCP 套接字的 undo_marker 标志|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPDSACKOfoRecv|收到一个 DSACK，表示收到一个顺序错误的重复数据包|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPDSACKOfoSent|收到一个乱序的重复数据包，因此向发送者发送 DSACK|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPDSACKOldSent|收到一个已确认的重复数据包，因此向发送者发送 DSACK|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPDSACKRecv|收到一个 DSACK，表示收到了一个已确认的重复数据包|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPDSACKUndo|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPDeferAcceptDrop|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPDelivered|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPDeliveredCE|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPFastOpenActive|当 TCP 栈在 SYN-SENT 状态接收到一个 ACK 包，并且 ACK 包确认了 SYN 包中的数据，理解 TFO cookie 已被对方接受，然后它更新这个计数器|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPFastOpenActiveFail|Fast Open 失败|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPFastOpenBlackhole|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPFastOpenCookieReqd|客户端想要请求 TFO cookie 的次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPFastOpenListenOverflow|挂起的 Fast Open 请求数量大于 fastopenq->max_qlen 时，协议栈将拒绝 Fast Open 请求并更新此计数器|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPFastOpenPassive|指示 TCP 堆栈接受 Fast Open 请求的次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPFastOpenPassiveFail|协议栈拒绝 Fast Open 的次数，这是由于 TFO cookie 无效或 在创建套接字过程中发现错误所引起的|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPFastRetrans|快速重传|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPFromZeroWindowAdv|TCP 接收窗口设置为非零值|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPFullUndo|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPHPAcks|如果数据包设置了 ACK 标志且没有数据，则是一个纯 ACK 数据包，如果内核在快速路径中处理它，TcpExtTCPHPAcks 将增加 1|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPHPHits|如果 TCP 数据包包含数据（这意味着它不是一个纯 ACK 数据包），并且此数据包在快速路径中处理，TcpExtTCPHPHits 将增加 1|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPHystartDelayCwnd|CWND 检测到的包延迟总和。将此值除以 TcpExtTCPHystartDelayDetect，即为通过包延迟检测到的平均 CWND|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPHystartDelayDetect|检测到数据包延迟阈值次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPHystartTrainCwnd|TCP Hystart 训练中使用的拥塞窗口大小，将此值除以 TcpExtTCPHystartTrainDetect 得到由 ACK 训练长度检测到的平均 CWND|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPHystartTrainDetect|TCP Hystart 训练检测的次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPKeepAlive|此计数器指示已发送的保活数据包。默认情况下不会启用保活功能。用户空间程序可以通过设置 SO_KEEPALIVE 套接字选项来启用它。|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPLossFailures|丢失数据包而进行恢复失败的次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPLossProbeRecovery|检测到丢失的数据包恢复的次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPLossProbes|TCP 检测到丢失的数据包数量，通常用于检测网络拥塞或丢包|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPLossUndo|TCP重传数据包成功到达目标端口，但之前已经由于超时或拥塞丢失，因此被视为“撤销”丢失的数据包数量|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPLostRetransmit|丢包重传个数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPMD5Failure|校验错误|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPMD5NotFound|校验错误|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPMD5Unexpected|校验错误|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPMTUPFail|使用 DSACK 无需慢启动即可恢复拥塞窗口|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPMTUPSuccess|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPMemoryPressures|到达 tcp 内存压力位 low 的次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPMemoryPressuresChrono|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPMinTTLDrop|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPOFODrop|TCP 层接收到一个乱序的数据包，但内存不足，因此丢弃它。此类数据包不会计入 TcpExtTCPOFOQueue 计数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPOFOMerge|接收到的顺序错误的包与上一个包有重叠。重叠部分将被丢弃。所有 TcpExtTCPOFOMerge 包也将计入 TcpExtTCPOFOQueue|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPOFOQueue|TCP 层接收到一个乱序的数据包，并且有足够的内存来排队它|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPOrigDataSent|发送原始数据（不包括重传但包括 SYN 中的数据）的包数量。此计数器与 TcpOutSegs 不同，因为 TcpOutSegs 还跟踪纯 ACK。TCPOrigDataSent 更有助于跟踪 TCP 重传率|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPPartialUndo|检测到一些错误的重传，在我们快速重传的同时，收到了部分确认，因此能够部分撤销我们的一些 CWND 减少|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPPureAcks|如果数据包设置了 ACK 标志且没有数据，则是一个纯 ACK 数据包，如果内核在快速路径中处理它，TcpExtTCPHPAcks 将增加 1，如果内核在慢速路径中处理它，TcpExtTCPPureAcks 将增加 1|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPRcvCoalesce|当数据包被 TCP 层接收但未被应用程序读取时，TCP 层会尝试合并它们。这个计数器表示在这种情况下合并了多少个数据包。如果启用了 GRO，GRO 会合并大量数据包，这些数据包不会被计算到 TcpExtTCPRcvCoalesce 中|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPRcvCollapsed|在“崩溃”过程中释放了多少个 skbs|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPRenoFailures|TCP_CA_Disorder 阶段进入并经历 RTO 的重传失败次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPRenoRecovery|当拥塞控制进入恢复状态时，如果使用 sack，TcpExtTCPSackRecovery 增加 1，如果不使用 sack，TcpExtTCPRenoRecovery 增加 1。这两个计数器意味着协议栈开始重传丢失的数据包|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPRenoRecoveryFail|进入恢复阶段并 RTO 的连接数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPRenoReorder|重排序数据包被快速恢复检测到。只有在 SACK 被禁用时才会使用|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPReqQFullDoCookies|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPReqQFullDrop|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPRetransFail|尝试将重传数据包发送到下层，但下层返回错误|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSACKDiscard|有多少个 SACK 块无效。如果无效的 SACK 块是由 ACK 记录引起的，tcp 栈只会忽略它，而不会更新此计数器|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSACKReneging|一个数据包被 SACK 确认，但接收方已丢弃此数据包，因此发送方需要重传此数据包|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSACKReorder|SACK 检测到的重排序数据包|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSYNChallenge|响应 SYN 数据包发送的 Challenge ack 数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSackFailures|TCP_CA_Disorder 阶段进入并经历 RTO 的重传失败次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSackMerged|skb 已合并计数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSackRecovery|当拥塞控制进入恢复状态时，如果使用 sack，TcpExtTCPSackRecovery 增加 1，如果不使用 sack，TcpExtTCPRenoRecovery 增加 1。这两个计数器意味着 TCP 栈开始重传丢失的数据包|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSackRecoveryFail|SACK 恢复失败的次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSackShiftFallback|skb 应该被移动或合并，但由于某些原因，TCP 堆栈没有这样做|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSackShifted|skb 被移位|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSlowStartRetrans|重新传输一个数据包，拥塞控制状态为“丢失”|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSpuriousRTOs|虚假重传超时|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSpuriousRtxHostQueues|当 TCP 栈想要重传一个数据包，发现该数据包并未在网络中丢失，但数据包尚未发送，TCP 栈将放弃重传并更新此计数器。这可能会发生在数据包在 qdisc 或驱动程序队列中停留时间过长的情况下|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPSynRetrans|SYN 和 SYN/ACK 重传次数，将重传分解为 SYN、快速重传、超时重传等|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPTSReorder|tcp 栈在接收到时间截包而进行乱序包阀值调整的次数|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPTimeWaitOverflow|TIME_WAIT 状态的套接字因超出限制而无法分配的数量|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPTimeouts|TCP 超时事件|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPToZeroWindowAdv|TCP 接收窗口从非零值设置为零|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPWantZeroWindowAdv|根据当前内存使用情况，TCP 栈尝试将接收窗口设置为零。但接收窗口可能仍然是一个非零值|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPWinProbe|定期发送的 ACK 数据包数量，以确保打开窗口的反向 ACK 数据包没有丢失|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TCPWqueueTooBig|\-|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TW|TCP 套接字在快速计时器中完成 time wait 状态|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TWKilled|TCP 套接字在慢速计时器中完成 time wait 状态|计数|宿主，容器|procfs|
-|network|netstat_TcpExt_TWRecycled|等待套接字通过时间戳回收|计数|宿主，容器|procfs|
-|network|netstat_Tcp_ActiveOpens|TCP 层发送一个 SYN，进入 SYN-SENT 状态。每当 TcpActiveOpens 增加 1 时，TcpOutSegs 应该始终增加 1|计数|宿主，容器|procfs|
-|network|netstat_Tcp_AttemptFails|TCP 连接从 SYN-SENT 状态或 SYN-RCVD 状态直接过渡到 CLOSED 状态次数，加上 TCP 连接从 SYN-RCVD 状态直接过渡到 LISTEN 状态次数|计数|宿主，容器|procfs|
-|network|netstat_Tcp_CurrEstab|TCP 连接数，当前状态为 ESTABLISHED 或 CLOSE-WAIT|计数|宿主，容器|procfs|
-|network|netstat_Tcp_EstabResets|TCP 连接从 ESTABLISHED 状态或 CLOSE-WAIT 状态直接过渡到 CLOSED 状态次数|计数|宿主，容器|procfs|
-|network|netstat_Tcp_InCsumErrors|TCP 校验和错误|计数|宿主，容器|procfs|
-|network|netstat_Tcp_InErrs|错误接收到的段总数（例如，错误的 TCP 校验和）|计数|宿主，容器|procfs|
-|network|netstat_Tcp_InSegs|TCP 层接收到的数据包数量。如 RFC1213 所述，包括接收到的错误数据包，如校验和错误、无效 TCP 头等|计数|宿主，容器|procfs|
-|network|netstat_Tcp_MaxConn|可以支持的总 TCP 连接数限制，在最大连接数动态的实体中，此对象应包含值-1|计数|宿主，容器|procfs|
-|network|netstat_Tcp_OutRsts|TCP 段中包含 RST 标志的数量|计数|宿主，容器|procfs|
-|network|netstat_Tcp_OutSegs|发送的总段数，包括当前连接上的段，但不包括仅包含重传字节的段|计数|宿主，容器|procfs|
-|network|netstat_Tcp_PassiveOpens|TCP 连接从监听状态直接过渡到 SYN-RCVD 状态的次数|计数|宿主，容器|procfs|
-|network|netstat_Tcp_RetransSegs|总重传段数 - 即包含一个或多个先前已传输字节的 TCP 段传输的数量|计数|宿主，容器|procfs|
-|network|netstat_Tcp_RtoAlgorithm|The algorithm used to determine the timeout value used for retransmitting unacknowledged octets|计数|宿主，容器|procfs|
-|network|netstat_Tcp_RtoMax|TCP 实现允许的重传超时最大值，以毫秒为单位|毫秒|宿主，容器|procfs|
-|network|netstat_Tcp_RtoMin|TCP 实现允许的重传超时最小值，以毫秒为单位|毫秒|宿主，容器|procfs|
-|network|sockstat_FRAG_inuse|\-|计数|宿主，容器|procfs|
-|network|sockstat_FRAG_memory|\-|页计数|宿主，容器|procfs|
-|network|sockstat_RAW_inuse|使用的 RAW 套接字数量|计数|宿主，容器|procfs|
-|network|sockstat_TCP_alloc|TCP 已分配的套接字数量|计数|宿主，容器|procfs|
-|network|sockstat_TCP_inuse|已建立的 TCP 套接字数量|计数|宿主，容器|procfs|
-|network|sockstat_TCP_mem|系统使用的 TCP 内存总量|页计数|系统|procfs|
-|network|sockstat_TCP_mem_bytes|系统使用的 TCP 内存总量|字节(Bytes)|系统|sockstat_TCP_mem \* page_size|
-|network|sockstat_TCP_orphan|TCP 等待关闭的连接数|计数|宿主，容器|procfs|
-|network|sockstat_TCP_tw|TCP 套接字终止数量|计数|宿主，容器|procfs|
-|network|sockstat_UDPLITE_inuse|\-|计数|宿主，容器|procfs|
-|network|sockstat_UDP_inuse|使用的 UDP 套接字数量|计数|宿主，容器|procfs|
-|network|sockstat_UDP_mem|系统使用的 UDP 内存总量|页计数|系统|procfs|
-|network|sockstat_UDP_mem_bytes|系统使用的 UDP 内存字节数总和|字节(Bytes)|系统|sockstat_UDP_mem \* page_size|
-|network|sockstat_sockets_used|系统使用 socket 数量|计数|系统|procfs|
+## CPU 系统
+
+### 调度延迟
+
+如下指标可以观测进程调度延迟状态，即一个进程从变得可运行的时刻（即被放进运行队列），到它真正开始在 CPU 上执行的这段时间。
+
+```bash
+# HELP huatuo_bamai_runqlat_container_latency cpu run queue latency for the containers
+# TYPE huatuo_bamai_runqlat_container_latency gauge
+huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev",zone="0"} 226
+huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev",zone="1"} 0
+huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev",zone="2"} 0
+huatuo_bamai_runqlat_container_latency{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev",zone="3"} 0
+
+# HELP huatuo_bamai_runqlat_latency cpu run queue latency for the host
+# TYPE huatuo_bamai_runqlat_latency gauge
+huatuo_bamai_runqlat_latency{host="hostname",region="dev",zone="0"} 35100
+huatuo_bamai_runqlat_latency{host="hostname",region="dev",zone="1"} 0
+huatuo_bamai_runqlat_latency{host="hostname",region="dev",zone="2"} 0
+huatuo_bamai_runqlat_latency{host="hostname",region="dev",zone="3"} 0
+```
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|runqlat_container_latency|进程调度延迟计数：<br>zone0, 0~10ms<br>zone1, 10-20ms <br>zone2, 20-50ms <br>zone3, 50+ms|计数|容器| eBPF |container_host, container_hostnamespace, container_level, container_name, container_type, host, region, zone |
+|runqlat_latency|进程调度延迟计数：<br>zone0, 0~10ms<br>zone1, 10-20ms <br>zone2, 20-50ms <br>zone3, 50+ms |计数|物理机| eBPF | host, region, zone|
+
+### 中断延迟
+
+系统中各类软中断在不同CPU上的响应延迟指标（当前只采集了 NET_RX/NET_TX）。
+
+```bash
+# HELP huatuo_bamai_softirq_latency softirq latency
+# TYPE huatuo_bamai_softirq_latency gauge
+huatuo_bamai_softirq_latency{cpuid="0",host="hostname",region="dev",type="NET_RX",zone="0"} 125
+huatuo_bamai_softirq_latency{cpuid="0",host="hostname",region="dev",type="NET_RX",zone="1"} 2
+huatuo_bamai_softirq_latency{cpuid="0",host="hostname",region="dev",type="NET_RX",zone="2"} 0
+huatuo_bamai_softirq_latency{cpuid="0",host="hostname",region="dev",type="NET_RX",zone="3"} 0
+huatuo_bamai_softirq_latency{cpuid="0",host="hostname",region="dev",type="NET_TX",zone="0"} 0
+huatuo_bamai_softirq_latency{cpuid="0",host="hostname",region="dev",type="NET_TX",zone="1"} 0
+huatuo_bamai_softirq_latency{cpuid="0",host="hostname",region="dev",type="NET_TX",zone="2"} 0
+huatuo_bamai_softirq_latency{cpuid="0",host="hostname",region="dev",type="NET_TX",zone="3"} 0
+huatuo_bamai_softirq_latency{cpuid="1",host="hostname",region="dev",type="NET_RX",zone="0"} 110
+huatuo_bamai_softirq_latency{cpuid="1",host="hostname",region="dev",type="NET_RX",zone="1"} 0
+huatuo_bamai_softirq_latency{cpuid="1",host="hostname",region="dev",type="NET_RX",zone="2"} 1
+huatuo_bamai_softirq_latency{cpuid="1",host="hostname",region="dev",type="NET_RX",zone="3"} 0
+huatuo_bamai_softirq_latency{cpuid="1",host="hostname",region="dev",type="NET_TX",zone="0"} 0
+huatuo_bamai_softirq_latency{cpuid="1",host="hostname",region="dev",type="NET_TX",zone="1"} 0
+huatuo_bamai_softirq_latency{cpuid="1",host="hostname",region="dev",type="NET_TX",zone="2"} 0
+```
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|softirq_latency|软中断响应延迟在不同 zone 的计数：<br>zone0, 0-10us<br>zone1, 10-100us<br>zone2, 100-1000us<br>zone3, 1+ms |计数|物理机| eBPF |cpuid, host, region, type, zone|
+
+
+### 资源利用率
+
+通过如下指标可以观测，物理机，容器的 CPU 资源使用情况，prometheus 指标格式：
+```bash
+# HELP huatuo_bamai_cpu_util_sys cpu sys for the host
+# TYPE huatuo_bamai_cpu_util_sys gauge
+huatuo_bamai_cpu_util_sys{host="hostname",region="dev"} 6.268857848549965e-06
+# HELP huatuo_bamai_cpu_util_total cpu total for the host
+# TYPE huatuo_bamai_cpu_util_total gauge
+huatuo_bamai_cpu_util_total{host="hostname",region="dev"} 1.7736934944144352e-05
+# HELP huatuo_bamai_cpu_util_usr cpu usr for the host
+# TYPE huatuo_bamai_cpu_util_usr gauge
+huatuo_bamai_cpu_util_usr{host="hostname",region="dev"} 1.1468077095594387e-05
+
+# HELP huatuo_bamai_cpu_util_container_sys cpu sys for the containers
+# TYPE huatuo_bamai_cpu_util_container_sys gauge
+huatuo_bamai_cpu_util_container_sys{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1.6708593420881415e-07
+# HELP huatuo_bamai_cpu_util_container_total cpu total for the containers
+# TYPE huatuo_bamai_cpu_util_container_total gauge
+huatuo_bamai_cpu_util_container_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 3.379584661890774e-07
+# HELP huatuo_bamai_cpu_util_container_usr cpu usr for the containers
+# TYPE huatuo_bamai_cpu_util_container_usr gauge
+huatuo_bamai_cpu_util_container_usr{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1.7087253017325962e-07
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|cpu_util_sys| CPU 内核态利用率|%| 物理机 | host, region |
+|cpu_util_usr| CPU 用户态利用率|%| 物理机 | host, region |
+|cpu_util_total| CPU 总利用率  |%| 物理机 | host, region |
+|cpu_util_container_sys| CPU 内核态利用率|%|容器|container_host,container_hostnamespace,container_level,container_name,container_type,host,region |
+|cpu_util_container_usr| CPU 用户态利用率|%|容器|container_host,container_hostnamespace,container_level,container_name,container_type,host,region |
+|cpu_util_container_total| CPU 总利用率|%|容器|container_host,container_hostnamespace,container_level,container_name,container_type,host,region |
+
+### 资源配置
+
+通过如下指标可以了解容器 CPU 资源配置情况，prometheus 指标格式：
+```bash
+# HELP huatuo_bamai_cpu_util_container_cores cpu core number for the containers
+# TYPE huatuo_bamai_cpu_util_container_cores gauge
+huatuo_bamai_cpu_util_container_cores{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="Burstable",container_name="coredns",container_type="Normal",host="hostname",region="dev"} 6
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|cpu_util_container_cores| CPU 核心数|个| 容器 | container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+
+### 资源争抢
+
+这些指标体现了容器争抢，被限制等状态，prometheus 指标格式：
+```bash
+# HELP huatuo_bamai_cpu_stat_container_nr_throttled throttle nr for the containers
+# TYPE huatuo_bamai_cpu_stat_container_nr_throttled gauge
+huatuo_bamai_cpu_stat_container_nr_throttled{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_cpu_stat_container_throttled_time throttle time for the containers
+# TYPE huatuo_bamai_cpu_stat_container_throttled_time gauge
+huatuo_bamai_cpu_stat_container_throttled_time{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|cpu_stat_container_nr_throttled| 当前 cgroup 被 throttled 限制的次数|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|cpu_stat_container_throttled_time| 当前 cgroup 被 throttled 限制的总时间|纳秒|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+Ref:
+- https://docs.kernel.org/scheduler/sched-bwc.html#statistics
+- https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#cpu-interface-files
+
+此外，滴滴内核支持如下争抢指标，未来会开放：
+```bash
+# HELP huatuo_bamai_cpu_stat_container_wait_rate wait rate for the containers
+# TYPE huatuo_bamai_cpu_stat_container_wait_rate gauge
+huatuo_bamai_cpu_stat_container_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_cpu_stat_container_throttle_wait_rate throttle wait rate for the containers
+# TYPE huatuo_bamai_cpu_stat_container_throttle_wait_rate gauge
+huatuo_bamai_cpu_stat_container_throttle_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_cpu_stat_container_inner_wait_rate inner wait rate for the containers
+# TYPE huatuo_bamai_cpu_stat_container_inner_wait_rate gauge
+huatuo_bamai_cpu_stat_container_inner_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_cpu_stat_container_exter_wait_rate exter wait rate for the containers
+# TYPE huatuo_bamai_cpu_stat_container_exter_wait_rate gauge
+huatuo_bamai_cpu_stat_container_exter_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+```
+
+### 资源突发
+
+如下指标体现了容器出现资源突发使用状态：
+
+```bash
+# HELP huatuo_bamai_cpu_stat_container_nr_bursts burst nr for the containers
+# TYPE huatuo_bamai_cpu_stat_container_nr_bursts gauge
+huatuo_bamai_cpu_stat_container_nr_bursts{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_cpu_stat_container_burst_time burst time for the containers
+# TYPE huatuo_bamai_cpu_stat_container_burst_time gauge
+huatuo_bamai_cpu_stat_container_burst_time{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|cpu_stat_container_burst_time| 所有在各个周期中超过 quota 部分所累计使用的真实墙钟时间|纳秒|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|cpu_stat_container_nr_bursts| 发生超额使用的周期数量|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+
+### 资源负载
+
+这些指标体现物理机、容器负载状态。
+```bash
+# HELP huatuo_bamai_loadavg_load1 system load average, 1 minute
+# TYPE huatuo_bamai_loadavg_load1 gauge
+huatuo_bamai_loadavg_load1{host="hostname",region="dev"} 0.3
+# HELP huatuo_bamai_loadavg_load15 system load average, 15 minutes
+# TYPE huatuo_bamai_loadavg_load15 gauge
+huatuo_bamai_loadavg_load15{host="hostname",region="dev"} 0.22
+# HELP huatuo_bamai_loadavg_load5 system load average, 5 minutes
+# TYPE huatuo_bamai_loadavg_load5 gauge
+huatuo_bamai_loadavg_load5{host="hostname",region="dev"} 0.2
+# HELP huatuo_bamai_loadavg_container_nr_running nr_running of container
+# TYPE huatuo_bamai_loadavg_container_nr_running gauge
+huatuo_bamai_loadavg_container_nr_running{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1
+# HELP huatuo_bamai_loadavg_container_nr_uninterruptible nr_uninterruptible of container
+# TYPE huatuo_bamai_loadavg_container_nr_uninterruptible gauge
+huatuo_bamai_loadavg_container_nr_uninterruptible{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象|标签|备注|
+|---|---|---|---|---|---|
+|loadavg_load1|系统过去 1 分钟的平均负载|计数|物理机| host, region ||
+|loadavg_load5|系统过去 5 分钟的平均负载|计数|物理机| host, region ||
+|loadavg_load15|系统过去 15 分钟的平均负载|计数|物理机| host, region ||
+|loadavg_container_container_nr_running|容器中运行的任务数量|计数|容器| host, region | 只支持 cgroup v1|
+|loadavg_container_container_nr_uninterruptible|容器中不可中断任务的数量|计数|容器| host, region |只支持 cgroup v1|
+
+## 内存系统
+
+### 资源回收
+
+系统内存回收行为可能导致进程被阻塞。通过这些指标可以了解系统内存状态。
+```bash
+# HELP huatuo_bamai_memory_free_allocpages_stall time stalled in alloc pages
+# TYPE huatuo_bamai_memory_free_allocpages_stall gauge
+huatuo_bamai_memory_free_allocpages_stall{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_free_compaction_stall time stalled in memory compaction
+# TYPE huatuo_bamai_memory_free_compaction_stall gauge
+huatuo_bamai_memory_free_compaction_stall{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_reclaim_container_directstall counter of cgroup reclaim when try_charge
+# TYPE huatuo_bamai_memory_reclaim_container_directstall gauge
+huatuo_bamai_memory_reclaim_container_directstall{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|memory_free_allocpages_stall|系统在分配内存页过程中的耗时计数| 纳秒|物理机| eBPF | host, region|
+|memory_free_compaction_stall|系统在规整内存页过程中的耗时计数| 纳秒|物理机| eBPF | host, region|
+|memory_reclaim_container_directstall|容器直接内存事件次数| 计数| 容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+### 资源状态
+
+通过如下指标可以了解整体系统、容器的内存状态。
+
+```bash
+# HELP huatuo_bamai_memory_vmstat_container_active_anon cgroup memory.stat active_anon
+# TYPE huatuo_bamai_memory_vmstat_container_active_anon gauge
+huatuo_bamai_memory_vmstat_container_active_anon{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1.47456e+07
+# HELP huatuo_bamai_memory_vmstat_container_active_file cgroup memory.stat active_file
+# TYPE huatuo_bamai_memory_vmstat_container_active_file gauge
+huatuo_bamai_memory_vmstat_container_active_file{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 2.3617536e+07
+# HELP huatuo_bamai_memory_vmstat_container_file_dirty cgroup memory.stat file_dirty
+# TYPE huatuo_bamai_memory_vmstat_container_file_dirty gauge
+huatuo_bamai_memory_vmstat_container_file_dirty{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_file_writeback cgroup memory.stat file_writeback
+# TYPE huatuo_bamai_memory_vmstat_container_file_writeback gauge
+huatuo_bamai_memory_vmstat_container_file_writeback{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_inactive_anon cgroup memory.stat inactive_anon
+# TYPE huatuo_bamai_memory_vmstat_container_inactive_anon gauge
+huatuo_bamai_memory_vmstat_container_inactive_anon{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_inactive_file cgroup memory.stat inactive_file
+# TYPE huatuo_bamai_memory_vmstat_container_inactive_file gauge
+huatuo_bamai_memory_vmstat_container_inactive_file{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 65536
+# HELP huatuo_bamai_memory_vmstat_container_pgdeactivate cgroup memory.stat pgdeactivate
+# TYPE huatuo_bamai_memory_vmstat_container_pgdeactivate gauge
+huatuo_bamai_memory_vmstat_container_pgdeactivate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_pgrefill cgroup memory.stat pgrefill
+# TYPE huatuo_bamai_memory_vmstat_container_pgrefill gauge
+huatuo_bamai_memory_vmstat_container_pgrefill{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_pgscan_direct cgroup memory.stat pgscan_direct
+# TYPE huatuo_bamai_memory_vmstat_container_pgscan_direct gauge
+huatuo_bamai_memory_vmstat_container_pgscan_direct{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_pgscan_kswapd cgroup memory.stat pgscan_kswapd
+# TYPE huatuo_bamai_memory_vmstat_container_pgscan_kswapd gauge
+huatuo_bamai_memory_vmstat_container_pgscan_kswapd{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_pgsteal_direct cgroup memory.stat pgsteal_direct
+# TYPE huatuo_bamai_memory_vmstat_container_pgsteal_direct gauge
+huatuo_bamai_memory_vmstat_container_pgsteal_direct{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_pgsteal_kswapd cgroup memory.stat pgsteal_kswapd
+# TYPE huatuo_bamai_memory_vmstat_container_pgsteal_kswapd gauge
+huatuo_bamai_memory_vmstat_container_pgsteal_kswapd{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_shmem cgroup memory.stat shmem
+# TYPE huatuo_bamai_memory_vmstat_container_shmem gauge
+huatuo_bamai_memory_vmstat_container_shmem{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_shmem_thp cgroup memory.stat shmem_thp
+# TYPE huatuo_bamai_memory_vmstat_container_shmem_thp gauge
+huatuo_bamai_memory_vmstat_container_shmem_thp{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_container_unevictable cgroup memory.stat unevictable
+# TYPE huatuo_bamai_memory_vmstat_container_unevictable gauge
+huatuo_bamai_memory_vmstat_container_unevictable{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|memory_vmstat_container_active_file|活跃的文件内存数|字节, Bytes | 容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_vmstat_container_active_anon|活跃的匿名内存数|字节, Bytes | 容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_vmstat_container_inactive_file|非活跃的文件内存数|字节, Bytes | 容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_vmstat_container_inactive_anon|非活跃的匿名内存数|字节, Bytes | 容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_vmstat_container_file_dirty|已修改且还未写入磁盘的文件内存大小|字节, Bytes |容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_vmstat_container_file_writeback|已修改且正等待写入磁盘的文件内存大小|字节, Bytes |容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_vmstat_container_dirty|已修改且还未写入磁盘的内存大小|字节, Bytes |容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_vmstat_container_writeback|已修改且正等待写入磁盘的文件，匿名内存大小|字节, Bytes |容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_vmstat_container_pgdeactivate|将页面从 active LRU 移动到 inactive LRU 的数量|页数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|memory_vmstat_container_pgrefill|在 active LRU 链表上被扫描的页面总数|页数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|memory_vmstat_container_pgscan_direct|直接回收时，在 inactive LRU 上扫描过的页面总数|页数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|memory_vmstat_container_pgscan_kswapd|kswapd 在 inactive LRU 链表上扫描过的页面总数|页数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|memory_vmstat_container_pgsteal_direct|直接回收时，成功从 inactive LRU 回收的页面总数|页数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|memory_vmstat_container_pgsteal_kswapd|kswapd 成功从 inactive LRU 回收的页面总数|页数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|memory_vmstat_container_unevictable|不可回收的页面字节数|字节, Bytes|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+
+
+物理机内存资源指标：
+```bash
+# HELP huatuo_bamai_memory_vmstat_allocstall_device /proc/vmstat allocstall_device
+# TYPE huatuo_bamai_memory_vmstat_allocstall_device gauge
+huatuo_bamai_memory_vmstat_allocstall_device{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_allocstall_dma /proc/vmstat allocstall_dma
+# TYPE huatuo_bamai_memory_vmstat_allocstall_dma gauge
+huatuo_bamai_memory_vmstat_allocstall_dma{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_allocstall_dma32 /proc/vmstat allocstall_dma32
+# TYPE huatuo_bamai_memory_vmstat_allocstall_dma32 gauge
+huatuo_bamai_memory_vmstat_allocstall_dma32{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_allocstall_movable /proc/vmstat allocstall_movable
+# TYPE huatuo_bamai_memory_vmstat_allocstall_movable gauge
+huatuo_bamai_memory_vmstat_allocstall_movable{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_allocstall_normal /proc/vmstat allocstall_normal
+# TYPE huatuo_bamai_memory_vmstat_allocstall_normal gauge
+huatuo_bamai_memory_vmstat_allocstall_normal{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_nr_active_anon /proc/vmstat nr_active_anon
+# TYPE huatuo_bamai_memory_vmstat_nr_active_anon gauge
+huatuo_bamai_memory_vmstat_nr_active_anon{host="hostname",region="dev"} 155449
+# HELP huatuo_bamai_memory_vmstat_nr_active_file /proc/vmstat nr_active_file
+# TYPE huatuo_bamai_memory_vmstat_nr_active_file gauge
+huatuo_bamai_memory_vmstat_nr_active_file{host="hostname",region="dev"} 212425
+# HELP huatuo_bamai_memory_vmstat_nr_dirty /proc/vmstat nr_dirty
+# TYPE huatuo_bamai_memory_vmstat_nr_dirty gauge
+huatuo_bamai_memory_vmstat_nr_dirty{host="hostname",region="dev"} 19047
+# HELP huatuo_bamai_memory_vmstat_nr_dirty_background_threshold /proc/vmstat nr_dirty_background_threshold
+# TYPE huatuo_bamai_memory_vmstat_nr_dirty_background_threshold gauge
+huatuo_bamai_memory_vmstat_nr_dirty_background_threshold{host="hostname",region="dev"} 379858
+# HELP huatuo_bamai_memory_vmstat_nr_dirty_threshold /proc/vmstat nr_dirty_threshold
+# TYPE huatuo_bamai_memory_vmstat_nr_dirty_threshold gauge
+huatuo_bamai_memory_vmstat_nr_dirty_threshold{host="hostname",region="dev"} 760646
+# HELP huatuo_bamai_memory_vmstat_nr_free_pages /proc/vmstat nr_free_pages
+# TYPE huatuo_bamai_memory_vmstat_nr_free_pages gauge
+huatuo_bamai_memory_vmstat_nr_free_pages{host="hostname",region="dev"} 3.20535e+06
+# HELP huatuo_bamai_memory_vmstat_nr_inactive_anon /proc/vmstat nr_inactive_anon
+# TYPE huatuo_bamai_memory_vmstat_nr_inactive_anon gauge
+huatuo_bamai_memory_vmstat_nr_inactive_anon{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_nr_inactive_file /proc/vmstat nr_inactive_file
+# TYPE huatuo_bamai_memory_vmstat_nr_inactive_file gauge
+huatuo_bamai_memory_vmstat_nr_inactive_file{host="hostname",region="dev"} 428518
+# HELP huatuo_bamai_memory_vmstat_nr_mlock /proc/vmstat nr_mlock
+# TYPE huatuo_bamai_memory_vmstat_nr_mlock gauge
+huatuo_bamai_memory_vmstat_nr_mlock{host="hostname",region="dev"} 6821
+# HELP huatuo_bamai_memory_vmstat_nr_shmem /proc/vmstat nr_shmem
+# TYPE huatuo_bamai_memory_vmstat_nr_shmem gauge
+huatuo_bamai_memory_vmstat_nr_shmem{host="hostname",region="dev"} 541
+# HELP huatuo_bamai_memory_vmstat_nr_shmem_hugepages /proc/vmstat nr_shmem_hugepages
+# TYPE huatuo_bamai_memory_vmstat_nr_shmem_hugepages gauge
+huatuo_bamai_memory_vmstat_nr_shmem_hugepages{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_nr_shmem_pmdmapped /proc/vmstat nr_shmem_pmdmapped
+# TYPE huatuo_bamai_memory_vmstat_nr_shmem_pmdmapped gauge
+huatuo_bamai_memory_vmstat_nr_shmem_pmdmapped{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_nr_slab_reclaimable /proc/vmstat nr_slab_reclaimable
+# TYPE huatuo_bamai_memory_vmstat_nr_slab_reclaimable gauge
+huatuo_bamai_memory_vmstat_nr_slab_reclaimable{host="hostname",region="dev"} 22322
+# HELP huatuo_bamai_memory_vmstat_nr_slab_unreclaimable /proc/vmstat nr_slab_unreclaimable
+# TYPE huatuo_bamai_memory_vmstat_nr_slab_unreclaimable gauge
+huatuo_bamai_memory_vmstat_nr_slab_unreclaimable{host="hostname",region="dev"} 24168
+# HELP huatuo_bamai_memory_vmstat_nr_unevictable /proc/vmstat nr_unevictable
+# TYPE huatuo_bamai_memory_vmstat_nr_unevictable gauge
+huatuo_bamai_memory_vmstat_nr_unevictable{host="hostname",region="dev"} 6839
+# HELP huatuo_bamai_memory_vmstat_nr_writeback /proc/vmstat nr_writeback
+# TYPE huatuo_bamai_memory_vmstat_nr_writeback gauge
+huatuo_bamai_memory_vmstat_nr_writeback{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_nr_writeback_temp /proc/vmstat nr_writeback_temp
+# TYPE huatuo_bamai_memory_vmstat_nr_writeback_temp gauge
+huatuo_bamai_memory_vmstat_nr_writeback_temp{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_numa_pages_migrated /proc/vmstat numa_pages_migrated
+# TYPE huatuo_bamai_memory_vmstat_numa_pages_migrated gauge
+huatuo_bamai_memory_vmstat_numa_pages_migrated{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_pgdeactivate /proc/vmstat pgdeactivate
+# TYPE huatuo_bamai_memory_vmstat_pgdeactivate gauge
+huatuo_bamai_memory_vmstat_pgdeactivate{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_pgrefill /proc/vmstat pgrefill
+# TYPE huatuo_bamai_memory_vmstat_pgrefill gauge
+huatuo_bamai_memory_vmstat_pgrefill{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_pgscan_direct /proc/vmstat pgscan_direct
+# TYPE huatuo_bamai_memory_vmstat_pgscan_direct gauge
+huatuo_bamai_memory_vmstat_pgscan_direct{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_pgscan_direct_throttle /proc/vmstat pgscan_direct_throttle
+# TYPE huatuo_bamai_memory_vmstat_pgscan_direct_throttle gauge
+huatuo_bamai_memory_vmstat_pgscan_direct_throttle{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_pgscan_kswapd /proc/vmstat pgscan_kswapd
+# TYPE huatuo_bamai_memory_vmstat_pgscan_kswapd gauge
+huatuo_bamai_memory_vmstat_pgscan_kswapd{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_pgsteal_direct /proc/vmstat pgsteal_direct
+# TYPE huatuo_bamai_memory_vmstat_pgsteal_direct gauge
+huatuo_bamai_memory_vmstat_pgsteal_direct{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_pgsteal_kswapd /proc/vmstat pgsteal_kswapd
+# TYPE huatuo_bamai_memory_vmstat_pgsteal_kswapd gauge
+huatuo_bamai_memory_vmstat_pgsteal_kswapd{host="hostname",region="dev"} 0
+```
+
+- 页面状态与 LRU 分布, Page state & LRU
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|nr_free_pages|空闲页面总数（伙伴系统可直接分配）。|页面| 物理机|  host, region|
+|nr_inactive_anon|非活跃匿名页面数|页面| 物理机| host, region|
+|nr_inactive_file|活跃文件页面数|页面| 物理机| host, region|
+|nr_active_anon|活跃匿名页面数|页面| 物理机| host, region|
+|nr_active_file|活跃文件页面数|页面| 物理机| host, region|
+|nr_unevictable|不可回收页面数（mlocked、hugetlbfs 等）|页面| 物理机| host, region|
+|nr_mlock|被 mlock() 锁定的页面数|页面| 物理机| host, region|
+|nr_shmem|tmpfs / shmem 使用的页面数|页面| 物理机| host, region|
+|nr_slab_reclaimable|可回收的 slab 缓存对象|页面| 物理机| host, region|
+|nr_slab_unreclaimable|不可回收的 slab 缓存对象|页面| 物理机| host, region|
+
+- 脏页与写回控制, Dirty & writeback thresholds
+
+|指标|意义|单位|对象|标签 |
+|---|---|---|---|---|
+|nr_dirty|当前脏页数|页面| 物理机| host, region|
+|nr_writeback|正在写回的页面数|页面| 物理机| host, region|
+|nr_dirty_threshold|脏页达到此阈值时开始强制写回（dirty_background_ratio / dirty_ratio 决定）|页面| 物理机| host, region|
+|nr_dirty_background_threshold|后台写回开始的阈值|页面| 物理机| host, region|
+|nr_dirty_background_threshold|后台写回开始的阈值|页面| 物理机| host, region|
+
+- 页面错误与换页, Page fault & swapping
+
+|指标|意义|单位|对象|标签 |
+|---|---|---|---|---|
+|pgfault|总缺页异常次数|计数| 物理机| host, region|
+|pgmajfault|主缺页异常次数|计数| 物理机| host, region|
+|pgpgin|从块设备读入的页面数|页面| 物理机| host, region|
+|pgpgout|写出到块设备的页面数|页面| 物理机 | host, region|
+|pswpin/pswpout|换入/换出的页面数（swap）|页面| 物理机| host, region|
+
+- 回收与扫描, Reclaim & scanning
+
+|指标|意义|单位|对象|标签 |
+|---|---|---|---|---|
+|pgscan_kswapd/direct/khugepaged|kswapd/直接回收/khugepaged 扫描的页面数|页面数| 物理机| host, region|
+|pgsteal_kswapd/direct/khugepaged|回收成功的页面数|页面数| 物理机| host, region|
+
+- 透明大页, THP
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|thp_fault_alloc|缺页时成功分配 THP 的次数|计数| 物理机| host, region|
+|thp_fault_fallback|缺页时分配 THP 失败而回落普通页的次数|计数| 物理机| host, region|
+|thp_collapse_alloc|khugepaged 折叠成 THP 的成功次数|计数| 物理机| host, region|
+|thp_collapse_alloc_failed|khugepaged 折叠 THP 的失败次数|计数| 物理机| host, region|
+
+- NUMA 相关统计, NUMA balancing & allocation
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|numa_hit|进程希望从某个节点分配内存，并且成功在该节点上分配到的页面总数。|计数| 物理机|  host, region|
+|numa_miss|进程原本希望从其他节点分配，但由于目标节点内存不足等原因，最终在本节点分配成功的页面数。|计数| 物理机| host, region|
+|numa_foreign|进程原本希望从本节点分配内存，但最终在其他节点分配成功的页面数。|计数| 物理机| host, region|
+|numa_local|进程在本地节点上成功分配到的页面总数。|计数| 物理机| host, region|
+|numa_other|进程在远程节点上分配到的页面总数。|计数| 物理机| host, region|
+|numa_pages_migrated|由于自动 NUMA 平衡而成功迁移的页面总数|计数| 物理机| host, region|
+
+Ref:
+- https://docs.kernel.org/admin-guide/cgroup-v2.html
+- https://docs.kernel.org/admin-guide/cgroup-v1/memory.html
+- https://docs.kernel.org/admin-guide/mm/transhuge.html
+
+### 资源事件
+
+容器级别的内存事件指标。
+
+```bash
+# HELP huatuo_bamai_memory_events_container_high memory events high
+# TYPE huatuo_bamai_memory_events_container_high gauge
+huatuo_bamai_memory_events_container_high{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_events_container_low memory events low
+# TYPE huatuo_bamai_memory_events_container_low gauge
+huatuo_bamai_memory_events_container_low{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_events_container_max memory events max
+# TYPE huatuo_bamai_memory_events_container_max gauge
+huatuo_bamai_memory_events_container_max{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_events_container_oom memory events oom
+# TYPE huatuo_bamai_memory_events_container_oom gauge
+huatuo_bamai_memory_events_container_oom{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_events_container_oom_group_kill memory events oom_group_kill
+# TYPE huatuo_bamai_memory_events_container_oom_group_kill gauge
+huatuo_bamai_memory_events_container_oom_group_kill{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_memory_events_container_oom_kill memory events oom_kill
+# TYPE huatuo_bamai_memory_events_container_oom_kill gauge
+huatuo_bamai_memory_events_container_oom_kill{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|memory_events_container_low|使用量低于 memory.low，但由于系统内存压力大，仍被主动回收的次数。说明 memory.low 被过度承诺。|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_events_container_high|内存使用量超过 memory.high（软限制），导致进程被节流并强制走直接回收的次数。|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_events_container_max|内存使用量达到或即将超过 memory.max（硬限制），触发内存分配失败检查的次数。|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_events_container_oom|内存使用量达到 memory.max 限制，导致内存分配失败，进入 OOM 路径的次数。|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_events_container_oom_kill|cgroup 内因达到内存限制而被 OOM killer 杀死的进程数。|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_events_container_oom_group_kill|整个 cgroup 被 OOM killer 杀死的次数。|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+### Buddyinfo
+
+展示 Buddy 分配器（内核页分配器核心算法）在每个 NUMA 节点（Node）和每个内存区域（Zone）中的空闲内存块分布情况。
+
+```bash
+# HELP huatuo_bamai_memory_buddyinfo_blocks buddy info
+# TYPE huatuo_bamai_memory_buddyinfo_blocks gauge
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="0",region="dev",zone="DMA"} 0
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="0",region="dev",zone="DMA32"} 3
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="0",region="dev",zone="Normal"} 7
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="1",region="dev",zone="DMA"} 0
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="1",region="dev",zone="DMA32"} 1
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="1",region="dev",zone="Normal"} 36
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="10",region="dev",zone="DMA"} 2
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="10",region="dev",zone="DMA32"} 743
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="10",region="dev",zone="Normal"} 2265
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="2",region="dev",zone="DMA"} 0
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="2",region="dev",zone="DMA32"} 3
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="2",region="dev",zone="Normal"} 10
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="3",region="dev",zone="DMA"} 0
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="3",region="dev",zone="DMA32"} 2
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="3",region="dev",zone="Normal"} 224
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="4",region="dev",zone="DMA"} 0
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="4",region="dev",zone="DMA32"} 1
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="4",region="dev",zone="Normal"} 376
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="5",region="dev",zone="DMA"} 0
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="5",region="dev",zone="DMA32"} 1
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="5",region="dev",zone="Normal"} 165
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="6",region="dev",zone="DMA"} 0
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="6",region="dev",zone="DMA32"} 3
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="6",region="dev",zone="Normal"} 118
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="7",region="dev",zone="DMA"} 0
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="7",region="dev",zone="DMA32"} 4
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="7",region="dev",zone="Normal"} 172
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="8",region="dev",zone="DMA"} 1
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="8",region="dev",zone="DMA32"} 4
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="8",region="dev",zone="Normal"} 35
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="9",region="dev",zone="DMA"} 2
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="9",region="dev",zone="DMA32"} 4
+huatuo_bamai_memory_buddyinfo_blocks{host="hostname",node="0",order="9",region="dev",zone="Normal"} 25
+```
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|---|
+|memory_buddyinfo_blocks| buddy 内存页空闲情况。|内存页|物理机| procfs | host, node, order, region, zone |
+
+
+## 网络系统
+
+#### TCP 内存
+
+如下指标描述 TCP 协议栈占用系统内存状态。
+
+```bash
+# HELP huatuo_bamai_tcp_memory_limit_pages tcp memory pages limit
+# TYPE huatuo_bamai_tcp_memory_limit_pages gauge
+huatuo_bamai_tcp_memory_limit_pages{host="hostname",region="dev"} 380526
+# HELP huatuo_bamai_tcp_memory_usage_bytes tcp memory bytes usage
+# TYPE huatuo_bamai_tcp_memory_usage_bytes gauge
+huatuo_bamai_tcp_memory_usage_bytes{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_tcp_memory_usage_pages tcp memory pages usage
+# TYPE huatuo_bamai_tcp_memory_usage_pages gauge
+huatuo_bamai_tcp_memory_usage_pages{host="hostname",region="dev"} 0
+# HELP huatuo_bamai_tcp_memory_usage_percent tcp memory usage percent
+# TYPE huatuo_bamai_tcp_memory_usage_percent gauge
+huatuo_bamai_tcp_memory_usage_percent{host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象|标签 |
+|---|---|---|---|---|
+|tcp_memory_limit_pages| 系统可使用的 TCP 总内存大小|内存页|物理机| host, region |
+|tcp_memory_usage_bytes| 系统已使用的 TCP 内存大小|字节|物理机| host, region |
+|tcp_memory_usage_pages| 系统已使用的 TCP 内存大小|内存页|物理机| host, region |
+|tcp_memory_usage_percent|系统已使用的 TCP 内存百分比（相对 TCP 内存总限制）|%|物理机| host, region |
+
+### 邻居项
+
+如下指标描述邻居项使用状态。
+
+```bash
+# HELP huatuo_bamai_arp_container_entries arp entries in container netns
+# TYPE huatuo_bamai_arp_container_entries gauge
+huatuo_bamai_arp_container_entries{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1
+# HELP huatuo_bamai_arp_entries host init namespace
+# TYPE huatuo_bamai_arp_entries gauge
+huatuo_bamai_arp_entries{host="hostname",region="dev"} 5
+# HELP huatuo_bamai_arp_total all entries in arp_cache for containers and host netns
+# TYPE huatuo_bamai_arp_total gauge
+huatuo_bamai_arp_total{host="hostname",region="dev"} 12
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|arp_entries| 宿主机网络命名空间 arp 条目数量|计数|宿主命名空间|host, region|
+|arp_total| 物理机所有网络命名空间 arp 条目数量总和|计数|物理机|host, region|
+|arp_container_entries| 容器网络命名空间 arp 条目数量|计数|容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+### Qdisc
+
+Qdisc 是内核网络子系统重要模块。通过观测该模块，可以清楚的看到网络报文处理，延迟情况。
+
+```bash
+# HELP huatuo_bamai_netdev_qdisc_backlog Number of bytes currently in queue to be sent.
+# TYPE huatuo_bamai_netdev_qdisc_backlog gauge
+huatuo_bamai_netdev_qdisc_backlog{device="ens2",host="hostname",kind="fq_codel",region="dev"} 0
+# HELP huatuo_bamai_netdev_qdisc_bytes_total Number of bytes sent.
+# TYPE huatuo_bamai_netdev_qdisc_bytes_total counter
+huatuo_bamai_netdev_qdisc_bytes_total{device="ens2",host="hostname",kind="fq_codel",region="dev"} 2.578235443e+09
+# HELP huatuo_bamai_netdev_qdisc_current_queue_length Number of packets currently in queue to be sent.
+# TYPE huatuo_bamai_netdev_qdisc_current_queue_length gauge
+huatuo_bamai_netdev_qdisc_current_queue_length{device="ens2",host="hostname",kind="fq_codel",region="dev"} 0
+# HELP huatuo_bamai_netdev_qdisc_drops_total Number of packet drops.
+# TYPE huatuo_bamai_netdev_qdisc_drops_total counter
+huatuo_bamai_netdev_qdisc_drops_total{device="ens2",host="hostname",kind="fq_codel",region="dev"} 0
+# HELP huatuo_bamai_netdev_qdisc_overlimits_total Number of packet overlimits.
+# TYPE huatuo_bamai_netdev_qdisc_overlimits_total counter
+huatuo_bamai_netdev_qdisc_overlimits_total{device="ens2",host="hostname",kind="fq_codel",region="dev"} 0
+# HELP huatuo_bamai_netdev_qdisc_packets_total Number of packets sent.
+# TYPE huatuo_bamai_netdev_qdisc_packets_total counter
+huatuo_bamai_netdev_qdisc_packets_total{device="ens2",host="hostname",kind="fq_codel",region="dev"} 6.867714e+06
+# HELP huatuo_bamai_netdev_qdisc_requeues_total Number of packets dequeued, not transmitted, and requeued.
+# TYPE huatuo_bamai_netdev_qdisc_requeues_total counter
+huatuo_bamai_netdev_qdisc_requeues_total{device="ens2",host="hostname",kind="fq_codel",region="dev"} 0
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|qdisc_backlog|后备排队待发送的包数|字节|物理机| device, host, kind, region |
+|qdisc_current_queue_length|当前排队的包量|计数|物理机| device, host, kind, region |
+|qdisc_overlimits_total|超限次数|计数|物理机| device, host, kind, region |
+|qdisc_requeues_total|由于网卡/驱动暂时无法发送而被重新入队的次数|计数|物理机| device, host, kind, region |
+|qdisc_drops_total|主动丢弃的包数（因队列满、限速策略等原因）|计数|物理机| device, host, kind, region |
+|qdisc_bytes_total|已发送的包量|字节|物理机| device, host, kind, region |
+|qdisc_packets_total|已发送的包数|计数|物理机| device, host, kind, region |
+
+### 硬件丢包
+
+网络设备硬件接收方向丢包数。
+
+```bash
+# HELP huatuo_bamai_netdev_hw_rx_dropped count of packets dropped at hardware level
+# TYPE huatuo_bamai_netdev_hw_rx_dropped gauge
+huatuo_bamai_netdev_hw_rx_dropped{device="eth0",driver="mlx5_core",host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|netdev_hw_rx_dropped|网卡硬件接收方向丢包|计数|物理机|eBPF| device, driver, host, region |
+
+
+### 网络设备
+
+```bash
+# HELP huatuo_bamai_netdev_container_receive_bytes_total Network device statistic receive_bytes.
+# TYPE huatuo_bamai_netdev_container_receive_bytes_total counter
+huatuo_bamai_netdev_container_receive_bytes_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 6.4400018e+07
+# HELP huatuo_bamai_netdev_container_receive_compressed_total Network device statistic receive_compressed.
+# TYPE huatuo_bamai_netdev_container_receive_compressed_total counter
+huatuo_bamai_netdev_container_receive_compressed_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_receive_dropped_total Network device statistic receive_dropped.
+# TYPE huatuo_bamai_netdev_container_receive_dropped_total counter
+huatuo_bamai_netdev_container_receive_dropped_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_receive_errors_total Network device statistic receive_errors.
+# TYPE huatuo_bamai_netdev_container_receive_errors_total counter
+huatuo_bamai_netdev_container_receive_errors_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_receive_fifo_total Network device statistic receive_fifo.
+# TYPE huatuo_bamai_netdev_container_receive_fifo_total counter
+huatuo_bamai_netdev_container_receive_fifo_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_receive_frame_total Network device statistic receive_frame.
+# TYPE huatuo_bamai_netdev_container_receive_frame_total counter
+huatuo_bamai_netdev_container_receive_frame_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_receive_multicast_total Network device statistic receive_multicast.
+# TYPE huatuo_bamai_netdev_container_receive_multicast_total counter
+huatuo_bamai_netdev_container_receive_multicast_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_receive_packets_total Network device statistic receive_packets.
+# TYPE huatuo_bamai_netdev_container_receive_packets_total counter
+huatuo_bamai_netdev_container_receive_packets_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 693155
+# HELP huatuo_bamai_netdev_container_transmit_bytes_total Network device statistic transmit_bytes.
+# TYPE huatuo_bamai_netdev_container_transmit_bytes_total counter
+huatuo_bamai_netdev_container_transmit_bytes_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 6.2347911e+07
+# HELP huatuo_bamai_netdev_container_transmit_carrier_total Network device statistic transmit_carrier.
+# TYPE huatuo_bamai_netdev_container_transmit_carrier_total counter
+huatuo_bamai_netdev_container_transmit_carrier_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_transmit_colls_total Network device statistic transmit_colls.
+# TYPE huatuo_bamai_netdev_container_transmit_colls_total counter
+huatuo_bamai_netdev_container_transmit_colls_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_transmit_compressed_total Network device statistic transmit_compressed.
+# TYPE huatuo_bamai_netdev_container_transmit_compressed_total counter
+huatuo_bamai_netdev_container_transmit_compressed_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_transmit_dropped_total Network device statistic transmit_dropped.
+# TYPE huatuo_bamai_netdev_container_transmit_dropped_total counter
+huatuo_bamai_netdev_container_transmit_dropped_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_transmit_errors_total Network device statistic transmit_errors.
+# TYPE huatuo_bamai_netdev_container_transmit_errors_total counter
+huatuo_bamai_netdev_container_transmit_errors_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_transmit_fifo_total Network device statistic transmit_fifo.
+# TYPE huatuo_bamai_netdev_container_transmit_fifo_total counter
+huatuo_bamai_netdev_container_transmit_fifo_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netdev_container_transmit_packets_total Network device statistic transmit_packets.
+# TYPE huatuo_bamai_netdev_container_transmit_packets_total counter
+huatuo_bamai_netdev_container_transmit_packets_total{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",device="eth0",host="hostname",region="dev"} 660218
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|netdev_receive_bytes_total|成功接收的总字节数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_receive_packets_total|成功接收的数据包总数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_receive_compressed_total|接收到的已压缩数据包数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_receive_frame_total|接收帧错误数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_receive_errors_total|接收错误总数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_receive_dropped_total|由于各种原因被内核或驱动丢弃的接收包数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_receive_fifo_total|接收FIFO/环形缓冲区溢出错误数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_transmit_bytes_total|成功发送的总字节数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_transmit_packets_total|成功发送的数据包总数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_transmit_errors_total|发送错误总数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_transmit_dropped_total|发送过程中被丢弃的包数（队列满、策略丢弃等）|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_transmit_fifo_total|发送FIFO/环形缓冲区错误数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_transmit_carrier_total|载波错误次数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netdev_transmit_compressed_total|发送的已压缩数据包数|计数|物理机或者容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+### TCP
+
+```bash
+# HELP huatuo_bamai_netstat_container_TcpExt_ArpFilter statistic TcpExtArpFilter.
+# TYPE huatuo_bamai_netstat_container_TcpExt_ArpFilter gauge
+huatuo_bamai_netstat_container_TcpExt_ArpFilter{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_BusyPollRxPackets statistic TcpExtBusyPollRxPackets.
+# TYPE huatuo_bamai_netstat_container_TcpExt_BusyPollRxPackets gauge
+huatuo_bamai_netstat_container_TcpExt_BusyPollRxPackets{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_DelayedACKLocked statistic TcpExtDelayedACKLocked.
+# TYPE huatuo_bamai_netstat_container_TcpExt_DelayedACKLocked gauge
+huatuo_bamai_netstat_container_TcpExt_DelayedACKLocked{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_DelayedACKLost statistic TcpExtDelayedACKLost.
+# TYPE huatuo_bamai_netstat_container_TcpExt_DelayedACKLost gauge
+huatuo_bamai_netstat_container_TcpExt_DelayedACKLost{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_DelayedACKs statistic TcpExtDelayedACKs.
+# TYPE huatuo_bamai_netstat_container_TcpExt_DelayedACKs gauge
+huatuo_bamai_netstat_container_TcpExt_DelayedACKs{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 4650
+# HELP huatuo_bamai_netstat_container_TcpExt_EmbryonicRsts statistic TcpExtEmbryonicRsts.
+# TYPE huatuo_bamai_netstat_container_TcpExt_EmbryonicRsts gauge
+huatuo_bamai_netstat_container_TcpExt_EmbryonicRsts{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_IPReversePathFilter statistic TcpExtIPReversePathFilter.
+# TYPE huatuo_bamai_netstat_container_TcpExt_IPReversePathFilter gauge
+huatuo_bamai_netstat_container_TcpExt_IPReversePathFilter{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_ListenDrops statistic TcpExtListenDrops.
+# TYPE huatuo_bamai_netstat_container_TcpExt_ListenDrops gauge
+huatuo_bamai_netstat_container_TcpExt_ListenDrops{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_ListenOverflows statistic TcpExtListenOverflows.
+# TYPE huatuo_bamai_netstat_container_TcpExt_ListenOverflows gauge
+huatuo_bamai_netstat_container_TcpExt_ListenOverflows{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_LockDroppedIcmps statistic TcpExtLockDroppedIcmps.
+# TYPE huatuo_bamai_netstat_container_TcpExt_LockDroppedIcmps gauge
+huatuo_bamai_netstat_container_TcpExt_LockDroppedIcmps{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_OfoPruned statistic TcpExtOfoPruned.
+# TYPE huatuo_bamai_netstat_container_TcpExt_OfoPruned gauge
+huatuo_bamai_netstat_container_TcpExt_OfoPruned{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_OutOfWindowIcmps statistic TcpExtOutOfWindowIcmps.
+# TYPE huatuo_bamai_netstat_container_TcpExt_OutOfWindowIcmps gauge
+huatuo_bamai_netstat_container_TcpExt_OutOfWindowIcmps{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_PAWSActive statistic TcpExtPAWSActive.
+# TYPE huatuo_bamai_netstat_container_TcpExt_PAWSActive gauge
+huatuo_bamai_netstat_container_TcpExt_PAWSActive{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_PAWSEstab statistic TcpExtPAWSEstab.
+# TYPE huatuo_bamai_netstat_container_TcpExt_PAWSEstab gauge
+huatuo_bamai_netstat_container_TcpExt_PAWSEstab{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_PFMemallocDrop statistic TcpExtPFMemallocDrop.
+# TYPE huatuo_bamai_netstat_container_TcpExt_PFMemallocDrop gauge
+huatuo_bamai_netstat_container_TcpExt_PFMemallocDrop{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_PruneCalled statistic TcpExtPruneCalled.
+# TYPE huatuo_bamai_netstat_container_TcpExt_PruneCalled gauge
+huatuo_bamai_netstat_container_TcpExt_PruneCalled{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_RcvPruned statistic TcpExtRcvPruned.
+# TYPE huatuo_bamai_netstat_container_TcpExt_RcvPruned gauge
+huatuo_bamai_netstat_container_TcpExt_RcvPruned{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_SyncookiesFailed statistic TcpExtSyncookiesFailed.
+# TYPE huatuo_bamai_netstat_container_TcpExt_SyncookiesFailed gauge
+huatuo_bamai_netstat_container_TcpExt_SyncookiesFailed{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_SyncookiesRecv statistic TcpExtSyncookiesRecv.
+# TYPE huatuo_bamai_netstat_container_TcpExt_SyncookiesRecv gauge
+huatuo_bamai_netstat_container_TcpExt_SyncookiesRecv{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_SyncookiesSent statistic TcpExtSyncookiesSent.
+# TYPE huatuo_bamai_netstat_container_TcpExt_SyncookiesSent gauge
+huatuo_bamai_netstat_container_TcpExt_SyncookiesSent{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedChallenge statistic TcpExtTCPACKSkippedChallenge.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedChallenge gauge
+huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedChallenge{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedFinWait2 statistic TcpExtTCPACKSkippedFinWait2.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedFinWait2 gauge
+huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedFinWait2{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedPAWS statistic TcpExtTCPACKSkippedPAWS.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedPAWS gauge
+huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedPAWS{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedSeq statistic TcpExtTCPACKSkippedSeq.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedSeq gauge
+huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedSeq{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedSynRecv statistic TcpExtTCPACKSkippedSynRecv.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedSynRecv gauge
+huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedSynRecv{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedTimeWait statistic TcpExtTCPACKSkippedTimeWait.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedTimeWait gauge
+huatuo_bamai_netstat_container_TcpExt_TCPACKSkippedTimeWait{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAOBad statistic TcpExtTCPAOBad.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAOBad gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAOBad{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAODroppedIcmps statistic TcpExtTCPAODroppedIcmps.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAODroppedIcmps gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAODroppedIcmps{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAOGood statistic TcpExtTCPAOGood.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAOGood gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAOGood{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAOKeyNotFound statistic TcpExtTCPAOKeyNotFound.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAOKeyNotFound gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAOKeyNotFound{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAORequired statistic TcpExtTCPAORequired.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAORequired gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAORequired{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAbortFailed statistic TcpExtTCPAbortFailed.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAbortFailed gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAbortFailed{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAbortOnClose statistic TcpExtTCPAbortOnClose.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAbortOnClose gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAbortOnClose{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAbortOnData statistic TcpExtTCPAbortOnData.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAbortOnData gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAbortOnData{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAbortOnLinger statistic TcpExtTCPAbortOnLinger.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAbortOnLinger gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAbortOnLinger{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAbortOnMemory statistic TcpExtTCPAbortOnMemory.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAbortOnMemory gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAbortOnMemory{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAbortOnTimeout statistic TcpExtTCPAbortOnTimeout.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAbortOnTimeout gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAbortOnTimeout{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAckCompressed statistic TcpExtTCPAckCompressed.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAckCompressed gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAckCompressed{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPAutoCorking statistic TcpExtTCPAutoCorking.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPAutoCorking gauge
+huatuo_bamai_netstat_container_TcpExt_TCPAutoCorking{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPBacklogCoalesce statistic TcpExtTCPBacklogCoalesce.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPBacklogCoalesce gauge
+huatuo_bamai_netstat_container_TcpExt_TCPBacklogCoalesce{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 3
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPBacklogDrop statistic TcpExtTCPBacklogDrop.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPBacklogDrop gauge
+huatuo_bamai_netstat_container_TcpExt_TCPBacklogDrop{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPChallengeACK statistic TcpExtTCPChallengeACK.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPChallengeACK gauge
+huatuo_bamai_netstat_container_TcpExt_TCPChallengeACK{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDSACKIgnoredDubious statistic TcpExtTCPDSACKIgnoredDubious.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDSACKIgnoredDubious gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDSACKIgnoredDubious{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDSACKIgnoredNoUndo statistic TcpExtTCPDSACKIgnoredNoUndo.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDSACKIgnoredNoUndo gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDSACKIgnoredNoUndo{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDSACKIgnoredOld statistic TcpExtTCPDSACKIgnoredOld.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDSACKIgnoredOld gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDSACKIgnoredOld{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDSACKOfoRecv statistic TcpExtTCPDSACKOfoRecv.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDSACKOfoRecv gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDSACKOfoRecv{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDSACKOfoSent statistic TcpExtTCPDSACKOfoSent.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDSACKOfoSent gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDSACKOfoSent{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDSACKOldSent statistic TcpExtTCPDSACKOldSent.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDSACKOldSent gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDSACKOldSent{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDSACKRecv statistic TcpExtTCPDSACKRecv.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDSACKRecv gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDSACKRecv{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDSACKRecvSegs statistic TcpExtTCPDSACKRecvSegs.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDSACKRecvSegs gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDSACKRecvSegs{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDSACKUndo statistic TcpExtTCPDSACKUndo.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDSACKUndo gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDSACKUndo{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDeferAcceptDrop statistic TcpExtTCPDeferAcceptDrop.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDeferAcceptDrop gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDeferAcceptDrop{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDelivered statistic TcpExtTCPDelivered.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDelivered gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDelivered{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 3.28098e+06
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPDeliveredCE statistic TcpExtTCPDeliveredCE.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPDeliveredCE gauge
+huatuo_bamai_netstat_container_TcpExt_TCPDeliveredCE{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFastOpenActive statistic TcpExtTCPFastOpenActive.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFastOpenActive gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFastOpenActive{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFastOpenActiveFail statistic TcpExtTCPFastOpenActiveFail.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFastOpenActiveFail gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFastOpenActiveFail{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFastOpenBlackhole statistic TcpExtTCPFastOpenBlackhole.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFastOpenBlackhole gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFastOpenBlackhole{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFastOpenCookieReqd statistic TcpExtTCPFastOpenCookieReqd.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFastOpenCookieReqd gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFastOpenCookieReqd{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFastOpenListenOverflow statistic TcpExtTCPFastOpenListenOverflow.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFastOpenListenOverflow gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFastOpenListenOverflow{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFastOpenPassive statistic TcpExtTCPFastOpenPassive.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFastOpenPassive gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFastOpenPassive{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFastOpenPassiveAltKey statistic TcpExtTCPFastOpenPassiveAltKey.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFastOpenPassiveAltKey gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFastOpenPassiveAltKey{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFastOpenPassiveFail statistic TcpExtTCPFastOpenPassiveFail.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFastOpenPassiveFail gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFastOpenPassiveFail{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFastRetrans statistic TcpExtTCPFastRetrans.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFastRetrans gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFastRetrans{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFromZeroWindowAdv statistic TcpExtTCPFromZeroWindowAdv.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFromZeroWindowAdv gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFromZeroWindowAdv{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPFullUndo statistic TcpExtTCPFullUndo.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPFullUndo gauge
+huatuo_bamai_netstat_container_TcpExt_TCPFullUndo{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPHPAcks statistic TcpExtTCPHPAcks.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPHPAcks gauge
+huatuo_bamai_netstat_container_TcpExt_TCPHPAcks{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 616667
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPHPHits statistic TcpExtTCPHPHits.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPHPHits gauge
+huatuo_bamai_netstat_container_TcpExt_TCPHPHits{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 9913
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPHystartDelayCwnd statistic TcpExtTCPHystartDelayCwnd.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPHystartDelayCwnd gauge
+huatuo_bamai_netstat_container_TcpExt_TCPHystartDelayCwnd{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPHystartDelayDetect statistic TcpExtTCPHystartDelayDetect.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPHystartDelayDetect gauge
+huatuo_bamai_netstat_container_TcpExt_TCPHystartDelayDetect{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPHystartTrainCwnd statistic TcpExtTCPHystartTrainCwnd.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPHystartTrainCwnd gauge
+huatuo_bamai_netstat_container_TcpExt_TCPHystartTrainCwnd{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPHystartTrainDetect statistic TcpExtTCPHystartTrainDetect.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPHystartTrainDetect gauge
+huatuo_bamai_netstat_container_TcpExt_TCPHystartTrainDetect{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPKeepAlive statistic TcpExtTCPKeepAlive.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPKeepAlive gauge
+huatuo_bamai_netstat_container_TcpExt_TCPKeepAlive{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 20
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPLossFailures statistic TcpExtTCPLossFailures.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPLossFailures gauge
+huatuo_bamai_netstat_container_TcpExt_TCPLossFailures{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPLossProbeRecovery statistic TcpExtTCPLossProbeRecovery.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPLossProbeRecovery gauge
+huatuo_bamai_netstat_container_TcpExt_TCPLossProbeRecovery{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPLossProbes statistic TcpExtTCPLossProbes.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPLossProbes gauge
+huatuo_bamai_netstat_container_TcpExt_TCPLossProbes{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPLossUndo statistic TcpExtTCPLossUndo.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPLossUndo gauge
+huatuo_bamai_netstat_container_TcpExt_TCPLossUndo{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPLostRetransmit statistic TcpExtTCPLostRetransmit.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPLostRetransmit gauge
+huatuo_bamai_netstat_container_TcpExt_TCPLostRetransmit{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPMD5Failure statistic TcpExtTCPMD5Failure.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPMD5Failure gauge
+huatuo_bamai_netstat_container_TcpExt_TCPMD5Failure{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPMD5NotFound statistic TcpExtTCPMD5NotFound.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPMD5NotFound gauge
+huatuo_bamai_netstat_container_TcpExt_TCPMD5NotFound{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPMD5Unexpected statistic TcpExtTCPMD5Unexpected.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPMD5Unexpected gauge
+huatuo_bamai_netstat_container_TcpExt_TCPMD5Unexpected{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPMTUPFail statistic TcpExtTCPMTUPFail.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPMTUPFail gauge
+huatuo_bamai_netstat_container_TcpExt_TCPMTUPFail{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPMTUPSuccess statistic TcpExtTCPMTUPSuccess.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPMTUPSuccess gauge
+huatuo_bamai_netstat_container_TcpExt_TCPMTUPSuccess{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPMemoryPressures statistic TcpExtTCPMemoryPressures.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPMemoryPressures gauge
+huatuo_bamai_netstat_container_TcpExt_TCPMemoryPressures{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPMemoryPressuresChrono statistic TcpExtTCPMemoryPressuresChrono.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPMemoryPressuresChrono gauge
+huatuo_bamai_netstat_container_TcpExt_TCPMemoryPressuresChrono{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPMigrateReqFailure statistic TcpExtTCPMigrateReqFailure.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPMigrateReqFailure gauge
+huatuo_bamai_netstat_container_TcpExt_TCPMigrateReqFailure{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPMigrateReqSuccess statistic TcpExtTCPMigrateReqSuccess.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPMigrateReqSuccess gauge
+huatuo_bamai_netstat_container_TcpExt_TCPMigrateReqSuccess{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPMinTTLDrop statistic TcpExtTCPMinTTLDrop.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPMinTTLDrop gauge
+huatuo_bamai_netstat_container_TcpExt_TCPMinTTLDrop{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPOFODrop statistic TcpExtTCPOFODrop.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPOFODrop gauge
+huatuo_bamai_netstat_container_TcpExt_TCPOFODrop{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPOFOMerge statistic TcpExtTCPOFOMerge.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPOFOMerge gauge
+huatuo_bamai_netstat_container_TcpExt_TCPOFOMerge{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPOFOQueue statistic TcpExtTCPOFOQueue.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPOFOQueue gauge
+huatuo_bamai_netstat_container_TcpExt_TCPOFOQueue{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPOrigDataSent statistic TcpExtTCPOrigDataSent.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPOrigDataSent gauge
+huatuo_bamai_netstat_container_TcpExt_TCPOrigDataSent{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 2.675557e+06
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPPLBRehash statistic TcpExtTCPPLBRehash.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPPLBRehash gauge
+huatuo_bamai_netstat_container_TcpExt_TCPPLBRehash{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPPartialUndo statistic TcpExtTCPPartialUndo.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPPartialUndo gauge
+huatuo_bamai_netstat_container_TcpExt_TCPPartialUndo{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPPureAcks statistic TcpExtTCPPureAcks.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPPureAcks gauge
+huatuo_bamai_netstat_container_TcpExt_TCPPureAcks{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 2.095262e+06
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPRcvCoalesce statistic TcpExtTCPRcvCoalesce.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPRcvCoalesce gauge
+huatuo_bamai_netstat_container_TcpExt_TCPRcvCoalesce{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 3
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPRcvCollapsed statistic TcpExtTCPRcvCollapsed.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPRcvCollapsed gauge
+huatuo_bamai_netstat_container_TcpExt_TCPRcvCollapsed{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPRcvQDrop statistic TcpExtTCPRcvQDrop.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPRcvQDrop gauge
+huatuo_bamai_netstat_container_TcpExt_TCPRcvQDrop{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPRenoFailures statistic TcpExtTCPRenoFailures.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPRenoFailures gauge
+huatuo_bamai_netstat_container_TcpExt_TCPRenoFailures{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPRenoRecovery statistic TcpExtTCPRenoRecovery.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPRenoRecovery gauge
+huatuo_bamai_netstat_container_TcpExt_TCPRenoRecovery{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPRenoRecoveryFail statistic TcpExtTCPRenoRecoveryFail.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPRenoRecoveryFail gauge
+huatuo_bamai_netstat_container_TcpExt_TCPRenoRecoveryFail{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPRenoReorder statistic TcpExtTCPRenoReorder.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPRenoReorder gauge
+huatuo_bamai_netstat_container_TcpExt_TCPRenoReorder{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPReqQFullDoCookies statistic TcpExtTCPReqQFullDoCookies.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPReqQFullDoCookies gauge
+huatuo_bamai_netstat_container_TcpExt_TCPReqQFullDoCookies{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPReqQFullDrop statistic TcpExtTCPReqQFullDrop.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPReqQFullDrop gauge
+huatuo_bamai_netstat_container_TcpExt_TCPReqQFullDrop{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPRetransFail statistic TcpExtTCPRetransFail.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPRetransFail gauge
+huatuo_bamai_netstat_container_TcpExt_TCPRetransFail{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSACKDiscard statistic TcpExtTCPSACKDiscard.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSACKDiscard gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSACKDiscard{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSACKReneging statistic TcpExtTCPSACKReneging.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSACKReneging gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSACKReneging{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSACKReorder statistic TcpExtTCPSACKReorder.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSACKReorder gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSACKReorder{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSYNChallenge statistic TcpExtTCPSYNChallenge.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSYNChallenge gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSYNChallenge{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSackFailures statistic TcpExtTCPSackFailures.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSackFailures gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSackFailures{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSackMerged statistic TcpExtTCPSackMerged.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSackMerged gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSackMerged{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSackRecovery statistic TcpExtTCPSackRecovery.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSackRecovery gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSackRecovery{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSackRecoveryFail statistic TcpExtTCPSackRecoveryFail.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSackRecoveryFail gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSackRecoveryFail{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSackShiftFallback statistic TcpExtTCPSackShiftFallback.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSackShiftFallback gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSackShiftFallback{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSackShifted statistic TcpExtTCPSackShifted.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSackShifted gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSackShifted{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSlowStartRetrans statistic TcpExtTCPSlowStartRetrans.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSlowStartRetrans gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSlowStartRetrans{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSpuriousRTOs statistic TcpExtTCPSpuriousRTOs.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSpuriousRTOs gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSpuriousRTOs{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSpuriousRtxHostQueues statistic TcpExtTCPSpuriousRtxHostQueues.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSpuriousRtxHostQueues gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSpuriousRtxHostQueues{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPSynRetrans statistic TcpExtTCPSynRetrans.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPSynRetrans gauge
+huatuo_bamai_netstat_container_TcpExt_TCPSynRetrans{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPTSReorder statistic TcpExtTCPTSReorder.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPTSReorder gauge
+huatuo_bamai_netstat_container_TcpExt_TCPTSReorder{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPTimeWaitOverflow statistic TcpExtTCPTimeWaitOverflow.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPTimeWaitOverflow gauge
+huatuo_bamai_netstat_container_TcpExt_TCPTimeWaitOverflow{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPTimeouts statistic TcpExtTCPTimeouts.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPTimeouts gauge
+huatuo_bamai_netstat_container_TcpExt_TCPTimeouts{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPToZeroWindowAdv statistic TcpExtTCPToZeroWindowAdv.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPToZeroWindowAdv gauge
+huatuo_bamai_netstat_container_TcpExt_TCPToZeroWindowAdv{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPWantZeroWindowAdv statistic TcpExtTCPWantZeroWindowAdv.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPWantZeroWindowAdv gauge
+huatuo_bamai_netstat_container_TcpExt_TCPWantZeroWindowAdv{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPWinProbe statistic TcpExtTCPWinProbe.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPWinProbe gauge
+huatuo_bamai_netstat_container_TcpExt_TCPWinProbe{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPWqueueTooBig statistic TcpExtTCPWqueueTooBig.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPWqueueTooBig gauge
+huatuo_bamai_netstat_container_TcpExt_TCPWqueueTooBig{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TCPZeroWindowDrop statistic TcpExtTCPZeroWindowDrop.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TCPZeroWindowDrop gauge
+huatuo_bamai_netstat_container_TcpExt_TCPZeroWindowDrop{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TW statistic TcpExtTW.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TW gauge
+huatuo_bamai_netstat_container_TcpExt_TW{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 720624
+# HELP huatuo_bamai_netstat_container_TcpExt_TWKilled statistic TcpExtTWKilled.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TWKilled gauge
+huatuo_bamai_netstat_container_TcpExt_TWKilled{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TWRecycled statistic TcpExtTWRecycled.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TWRecycled gauge
+huatuo_bamai_netstat_container_TcpExt_TWRecycled{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 2461
+# HELP huatuo_bamai_netstat_container_TcpExt_TcpDuplicateDataRehash statistic TcpExtTcpDuplicateDataRehash.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TcpDuplicateDataRehash gauge
+huatuo_bamai_netstat_container_TcpExt_TcpDuplicateDataRehash{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_netstat_container_TcpExt_TcpTimeoutRehash statistic TcpExtTcpTimeoutRehash.
+# TYPE huatuo_bamai_netstat_container_TcpExt_TcpTimeoutRehash gauge
+huatuo_bamai_netstat_container_TcpExt_TcpTimeoutRehash{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|netstat_TcpExt_ArpFilter|因 ARP 过滤规则而被丢弃的数据包数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_BusyPollRxPackets|通过 busy polling 机制接收到的数据包数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_DelayedACKLocked|由于用户态进程锁住了 socket，而无法发送 delayed ACK 的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_DelayedACKLost|延迟 ACK 丢失导致重传的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_DelayedACKs|尝试发送 delayed ACK 的次数，包括未成功发送的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_EmbryonicRsts|在 SYN_RECV 状态收到带 RST/SYN 标记的包个数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_ListenDrops|因全连接队列满丢弃的连接总数（含ListenOverflows）|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_ListenOverflows|表示在 TCP 监听队列中发生的溢出次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_OfoPruned|乱序队列因内存不足被修剪的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_OutOfWindowIcmps|收到的与当前 TCP 窗口无关的 ICMP 错误报文数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_PruneCalled|因内存不足触发缓存清理的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_RcvPruned|接收队列因内存不足被修剪（丢弃数据包）的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_SyncookiesFailed|验证失败的 SYN cookie 数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_SyncookiesRecv|表示接收的 SYN cookie 的数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_SyncookiesSent|表示发送的 SYN cookie 的数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPACKSkippedChallenge|在处理 Challenge ACK 过程中跳过的其他 ACK 数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPACKSkippedFinWait2|在 FIN-WAIT-2 状态下跳过的 ACK 数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPACKSkippedPAWS|因 PAWS 检查失败而跳过的 ACK 数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPACKSkippedSeq|因为序列号检查而跳过的 ACK 数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPACKSkippedTimeWait|在 TIME-WAIT 状态下跳过的 ACK 数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPAbortOnClose|用户态程序在缓冲区内还有数据时关闭连接的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPAbortOnData|收到未知数据导致被关闭的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPAbortOnLinger|在LINGER状态下等待超时后中止连接的数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPAbortOnMemory|因内存问题关闭连接的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPAbortOnTimeout|因各种计时器的重传次数超过上限而关闭连接的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPLossFailures|丢失数据包而进行恢复失败的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPLossProbeRecovery|检测到丢失的数据包恢复的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPLossProbes|TCP 检测到丢失的数据包数量，通常用于检测网络拥塞或丢包|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPLossUndo|在恢复过程中检测到丢失而撤销的次数|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|netstat_TcpExt_TCPLostRetransmit|丢包重传的数量|计数|宿主，容器|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+备注：TcpExt 扩展指标非常多，可按需参考官方文档。
+
+Ref:
+- https://www.kernel.org/doc/html/latest/networking/snmp_counter.html
+
+### Socket
+
+```bash
+# HELP huatuo_bamai_sockstat_container_FRAG_inuse Number of FRAG sockets in state inuse.
+# TYPE huatuo_bamai_sockstat_container_FRAG_inuse gauge
+huatuo_bamai_sockstat_container_FRAG_inuse{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_sockstat_container_FRAG_memory Number of FRAG sockets in state memory.
+# TYPE huatuo_bamai_sockstat_container_FRAG_memory gauge
+huatuo_bamai_sockstat_container_FRAG_memory{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_sockstat_container_RAW_inuse Number of RAW sockets in state inuse.
+# TYPE huatuo_bamai_sockstat_container_RAW_inuse gauge
+huatuo_bamai_sockstat_container_RAW_inuse{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_sockstat_container_TCP_alloc Number of TCP sockets in state alloc.
+# TYPE huatuo_bamai_sockstat_container_TCP_alloc gauge
+huatuo_bamai_sockstat_container_TCP_alloc{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 171
+# HELP huatuo_bamai_sockstat_container_TCP_inuse Number of TCP sockets in state inuse.
+# TYPE huatuo_bamai_sockstat_container_TCP_inuse gauge
+huatuo_bamai_sockstat_container_TCP_inuse{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 1
+# HELP huatuo_bamai_sockstat_container_TCP_orphan Number of TCP sockets in state orphan.
+# TYPE huatuo_bamai_sockstat_container_TCP_orphan gauge
+huatuo_bamai_sockstat_container_TCP_orphan{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_sockstat_container_TCP_tw Number of TCP sockets in state tw.
+# TYPE huatuo_bamai_sockstat_container_TCP_tw gauge
+huatuo_bamai_sockstat_container_TCP_tw{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 75
+# HELP huatuo_bamai_sockstat_container_UDPLITE_inuse Number of UDPLITE sockets in state inuse.
+# TYPE huatuo_bamai_sockstat_container_UDPLITE_inuse gauge
+huatuo_bamai_sockstat_container_UDPLITE_inuse{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_sockstat_container_UDP_inuse Number of UDP sockets in state inuse.
+# TYPE huatuo_bamai_sockstat_container_UDP_inuse gauge
+huatuo_bamai_sockstat_container_UDP_inuse{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_sockstat_container_sockets_used Number of IPv4 sockets in use.
+# TYPE huatuo_bamai_sockstat_container_sockets_used gauge
+huatuo_bamai_sockstat_container_sockets_used{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 7
+# HELP huatuo_bamai_sockstat_sockets_used Number of IPv4 sockets in use.
+# TYPE huatuo_bamai_sockstat_sockets_used gauge
+huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
+```
+
+|指标|意义|单位|对象| 标签 |
+|---|---|---|---|---|
+|sockstat_sockets_used|系统层面当前正在使用的 socket 描述符总数|计数|系统||
+|sockstat_TCP_inuse|当前处于 TCP 连接状态（如 ESTABLISHED、LISTEN 等，除 TIME_WAIT 外）的 socket 数量|计数|宿主，容器||
+|sockstat_TCP_orphan|通常表示应用已关闭但 TCP 连接仍未结束|计数|宿主，容器||
+|sockstat_TCP_tw|当前处于 TIME_WAIT 状态的 TCP socket 数量|计数|宿主，容器||
+|sockstat_TCP_alloc|当前已分配的 TCP socket 对象总数|计数|宿主，容器||
+|sockstat_TCP_mem|TCP 套接字当前占用的内核内存页数|内存页|系统||
+|sockstat_UDP_inuse|当前已绑定了本地端口的 UDP socket 数量|计数|宿主，容器||
+
+## IO
+
+即将开源。
+
+### 队列
+
+### 硬件
+
+## 通用系统
+
+### Soft Lockup
+
+```bash
+# HELP huatuo_bamai_softlockup_total softlockup counter
+# TYPE huatuo_bamai_softlockup_total counter
+huatuo_bamai_softlockup_total{host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|softlockup_total|系统 softlockup 事件计数|计数|物理机|BPF|
+
+### HungTask
+```bash
+# HELP huatuo_bamai_hungtask_total hungtask counter
+# TYPE huatuo_bamai_hungtask_total counter
+huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
+```
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|hungtask_total|系统 hungtask 事件计数|计数|物理机|BPF|
+
+
+## GPU
+
+当前版本支持的 GPU 平台:
+- MetaX
+
+|指标|描述|单位|统计纬度|指标来源|
+|----|---|---|---|---|
+|metax_gpu_sdk_info|GPU SDK 信息|-|version|sml.GetSDKVersion|
+|metax_gpu_driver_info|GPU 驱动信息|-|version|sml.GetGPUVersion with driver unit|
+|metax_gpu_info|GPU 基本信息|-|gpu|
+|metax_gpu_board_power_watts|GPU 板级功耗|瓦特（W）|gpu|sml.ListGPUBoardWayElectricInfos|
+|metax_gpu_pcie_link_speed_gt_per_second|GPU PCIe 当前链路速率|GT/s|gpu|sml.GetGPUPcieLinkInfo|
+|metax_gpu_pcie_link_width_lanes|GPU PCIe 当前链路宽度|链路宽度（通道数）|gpu|sml.GetGPUPcieLinkInfo|
+|metax_gpu_pcie_receive_bytes_per_second|GPU PCIe 接收吞吐率|Bps|gpu|sml.GetGPUPcieThroughputInfo|
+|metax_gpu_pcie_transmit_bytes_per_second|GPU PCIe 发送吞吐率|Bps|gpu|sml.GetGPUPcieThroughputInfo|
+|metax_gpu_metaxlink_link_speed_gt_per_second|GPU MetaXLink 当前链路速率|GT/s|gpu, metaxlink|sml.ListGPUMetaXLinkLinkInfos|
+|metax_gpu_metaxlink_link_width_lanes|GPU MetaXLink 当前链路宽度|链路宽度（通道数）|gpu, metaxlink|sml.ListGPUMetaXLinkLinkInfos|
+|metax_gpu_metaxlink_receive_bytes_per_second|GPU MetaXLink 接收吞吐率|Bps|gpu, metaxlink|sml.ListGPUMetaXLinkThroughputInfos|
+|metax_gpu_metaxlink_transmit_bytes_per_second|GPU MetaXLink 发送吞吐率|Bps|gpu, metaxlink|sml.ListGPUMetaXLinkThroughputInfos|
+|metax_gpu_metaxlink_receive_bytes_total|GPU MetaXLink 接收数据总量|字节|gpu, metaxlink|sml.ListGPUMetaXLinkTrafficStatInfos|
+|metax_gpu_metaxlink_transmit_bytes_total|GPU MetaXLink 发送数据总量|字节|gpu, metaxlink|sml.ListGPUMetaXLinkTrafficStatInfos|
+|metax_gpu_metaxlink_aer_errors_total|GPU MetaXLink AER 错误次数|计数|gpu, metaxlink, error_type|sml.ListGPUMetaXLinkAerErrorsInfos|
+|metax_gpu_status|GPU 状态|-|gpu, die|sml.GetDieStatus|
+|metax_gpu_temperature_celsius|GPU 温度|摄氏度|gpu, die|sml.GetDieTemperature|
+|metax_gpu_utilization_percent|GPU 利用率（0–100）|%|gpu, die, ip|sml.GetDieUtilization|
+|metax_gpu_memory_total_bytes|显存总容量|字节|gpu, die|sml.GetDieMemoryInfo|
+|metax_gpu_memory_used_bytes|已使用显存容量|字节|gpu, die|sml.GetDieMemoryInfo|
+|metax_gpu_clock_mhz|GPU 时钟频率|兆赫兹（MHz）|gpu, die, ip|sml.ListDieClocks|
+|metax_gpu_clocks_throttling|GPU 时钟降频原因|-|gpu, die, reason|sml.GetDieClocksThrottleStatus|
+|metax_gpu_dpm_performance_level|GPU DPM 性能等级|-|gpu, die, ip|sml.GetDieDPMPerformanceLevel|
+|metax_gpu_ecc_memory_errors_total|GPU ECC 内存错误次数|计数|gpu, die, memory_type, error_type|sml.GetDieECCMemoryInfo|
+|metax_gpu_ecc_memory_retired_pages_total|GPU ECC 内存退役页数|计数|gpu, die|sml.GetDieECCMemoryInfo|
+
