@@ -110,20 +110,13 @@ func (c *qdiscCollector) Update() ([]*metric.Data, error) {
 		for _, oneQdisc := range netdevQdisc {
 			tags := map[string]string{"device": oneQdisc.ifaceName, "kind": oneQdisc.kind}
 			metrics = append(metrics,
-				metric.NewCounterData("bytes_total", float64(oneQdisc.bytes),
-					"Number of bytes sent.", tags),
-				metric.NewCounterData("packets_total", float64(oneQdisc.packets),
-					"Number of packets sent.", tags),
-				metric.NewCounterData("drops_total", float64(oneQdisc.drops),
-					"Number of packet drops.", tags),
-				metric.NewCounterData("requeues_total", float64(oneQdisc.requeues),
-					"Number of packets dequeued, not transmitted, and requeued.", tags),
-				metric.NewCounterData("overlimits_total", float64(oneQdisc.overlimits),
-					"Number of packet overlimits.", tags),
-				metric.NewGaugeData("current_queue_length", float64(oneQdisc.qlen),
-					"Number of packets currently in queue to be sent.", tags),
-				metric.NewGaugeData("backlog", float64(oneQdisc.backlog),
-					"Number of bytes currently in queue to be sent.", tags),
+				metric.NewCounterData("bytes_total", float64(oneQdisc.bytes), "number of bytes sent.", tags),
+				metric.NewCounterData("packets_total", float64(oneQdisc.packets), "number of packets sent.", tags),
+				metric.NewCounterData("drops_total", float64(oneQdisc.drops), "number of packet drops.", tags),
+				metric.NewCounterData("requeues_total", float64(oneQdisc.requeues), "number of packets dequeued, not transmitted, and requeued.", tags),
+				metric.NewCounterData("overlimits_total", float64(oneQdisc.overlimits), "number of packet overlimits.", tags),
+				metric.NewGaugeData("current_queue_length", float64(oneQdisc.qlen), "number of packets currently in queue to be sent.", tags),
+				metric.NewGaugeData("backlog", float64(oneQdisc.backlog), "number of bytes currently in queue to be sent.", tags),
 			)
 		}
 	}
