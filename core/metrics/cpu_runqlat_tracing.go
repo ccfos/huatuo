@@ -28,7 +28,7 @@ import (
 	"huatuo-bamai/pkg/tracing"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/runqlat_tracing.c -o $BPF_DIR/runqlat_tracing.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/cpu_runqlat_tracing.c -o $BPF_DIR/cpu_runqlat_tracing.o
 
 type latencyBpfData struct {
 	NumVoluntarySwitch   uint64
