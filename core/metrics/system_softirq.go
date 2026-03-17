@@ -55,7 +55,7 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/softirq.c -o $BPF_DIR/softirq.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/system_softirq.c -o $BPF_DIR/system_softirq.o
 
 type softirqLatency struct {
 	bpf         bpf.BPF
