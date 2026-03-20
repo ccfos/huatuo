@@ -129,7 +129,7 @@ huatuo_bamai_pod_count() {
 	local regex=$1
 	curl -sf "${CURL_TIMEOUT[@]}" ${HUATUO_BAMAI_PODS_API} |
 		jq --arg re "$regex" '
-      [ .[]
+      [ .data[]
         | select(.hostname != null)
         | select(.hostname | test($re))
       ] | length
