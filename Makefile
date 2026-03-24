@@ -3,6 +3,7 @@ ROOT_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 BPF_DIR := $(ROOT_DIR)/bpf
 BPF_COMPILE := $(ROOT_DIR)/build/clang.sh
 BPF_INCLUDE := "-I$(BPF_DIR)/include"
+BPF_SRCS := $(shell find $(BPF_DIR) -type f \( -name "*.c" -o -name "*.h" \))
 
 APP_COMMIT ?= $(shell git describe --dirty --long --always)
 APP_BUILD_TIME = $(shell date "+%Y%m%d%H%M%S")
@@ -35,13 +36,27 @@ endif
 
 IMAGE := $(IMAGE_REPO):$(IMAGE_TAG)
 
+BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
+
 all: bpf-build sync build
 
 build-nostatic:
 	@$(MAKE) BUILD_MODE=nostatic all
 
-bpf-build:
-	@BPF_DIR=$(BPF_DIR) BPF_COMPILE=$(BPF_COMPILE) BPF_INCLUDE=$(BPF_INCLUDE) go generate -run "BPF_COMPILE" -x ./...
+bpf-build: $(BPF_BUILD_STAMP)
+$(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
+	@find . -name "*.go" \
+		! -path "./vendor/*" \
+		! -path "./.git/*" \
+		! -path "./third_party/*" \
+		-exec grep -l "//go:generate.*BPF_COMPILE" {} \; | \
+		xargs -n1 dirname | sort -u | \
+		xargs -P $(shell nproc) -n 1 -I {} sh -c ' \
+			export BPF_DIR=$(BPF_DIR); \
+			export BPF_COMPILE=$(BPF_COMPILE); \
+			export BPF_INCLUDE=$(BPF_INCLUDE); \
+			go generate {}'
+	@mkdir -p $(APP_CMD_OUTPUT) && touch $@
 
 sync:
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
