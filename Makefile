@@ -97,9 +97,13 @@ clean:
 mock-build:
 	@go generate -run "mockery.*" -x ./...
 
-test: all mock-build
+test: unit all mock-build
 	@bash integration/run.sh
 	@bash e2e/run.sh
+
+unit: bpf-build
+	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
+	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
 integration: all mock-build
 	@bash integration/run.sh
@@ -109,4 +113,4 @@ e2e: all
 
 force:;
 
-.PHONY: all build-nostatic bpf-build mock-build sync build check import-fmt golangci-lint vendor clean integration force docker-build docker-clean
+.PHONY: all build-nostatic bpf-build mock-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e force docker-build docker-clean
