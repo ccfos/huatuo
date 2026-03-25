@@ -21,6 +21,11 @@ GO_VERSION_LDFLAGS := \
 
 GO_BUILD_STATIC := $(GO_BUILD_FLAGS) -ldflags "-extldflags -static $(GO_VERSION_LDFLAGS)"
 GO_BUILD_NOSTATIC := $(GO_BUILD_FLAGS) -ldflags "$(GO_VERSION_LDFLAGS)"
+GO_SRCS := $(shell find . -name "*.go" \
+	! -name "*_test.go" \
+	! -path "./.git/*"\
+	! -path "./vendor/*") \
+	go.mod go.sum
 
 BUILD_MODE ?= static
 
@@ -51,7 +56,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 		! -path "./third_party/*" \
 		-exec grep -l "//go:generate.*BPF_COMPILE" {} \; | \
 		xargs -n1 dirname | sort -u | \
-		xargs -P $(shell nproc) -n 1 -I {} sh -c ' \
+		xargs -P $(shell nproc) -I {} sh -c ' \
 			export BPF_DIR=$(BPF_DIR); \
 			export BPF_COMPILE=$(BPF_COMPILE); \
 			export BPF_INCLUDE=$(BPF_INCLUDE); \
@@ -64,8 +69,10 @@ sync:
 	@cp *.conf $(APP_CMD_OUTPUT)/conf/
 
 build: $(APP_CMD_BIN_TARGETS)
-$(APP_CMD_OUTPUT)/bin/%: $(APP_CMD_DIR)/% force
-	$(GO_BUILD_IMPL) -o $@ ./$<
+$(APP_CMD_BIN_TARGETS): $(GO_SRCS)
+$(APP_CMD_OUTPUT)/bin/%:
+	@mkdir -p $(APP_CMD_OUTPUT)/bin
+	$(GO_BUILD_IMPL) -o $@ ./$(APP_CMD_DIR)/$*
 
 docker-build:
 	@docker build --network=host --no-cache --build-arg BUILD_MODE=$(BUILD_MODE) -t $(IMAGE) -f Dockerfile .
@@ -97,9 +104,7 @@ clean:
 mock-build:
 	@go generate -run "mockery.*" -x ./...
 
-test: unit all mock-build
-	@bash integration/run.sh
-	@bash e2e/run.sh
+test: unit integration e2e
 
 unit: bpf-build
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
@@ -111,6 +116,5 @@ integration: all mock-build
 e2e: all
 	@bash e2e/run.sh
 
-force:;
 
-.PHONY: all build-nostatic bpf-build mock-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e force docker-build docker-clean
+.PHONY: all build-nostatic bpf-build mock-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean
