@@ -21,10 +21,8 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
-	"syscall"
 	"testing"
 	"time"
 
@@ -38,26 +36,6 @@ import (
 // TODO: move the func to internal/testutils
 func RequireRoot(tb testing.TB) bool {
 	return os.Geteuid() == 0
-}
-
-// cmd.Process.Pid is accessed directly instead of os.Getpid() to avoid
-// adding the test process itself into the cgroup, which would skew resource
-// accounting for all subsequent assertions.
-func StartCatProcess(t *testing.T) *exec.Cmd {
-	t.Helper()
-	cmd := exec.Command("cat")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-	if err := cmd.Start(); err != nil {
-		t.Errorf("start cat process: %v", err)
-		return nil
-	}
-	t.Cleanup(func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		_ = cmd.Wait()
-	})
-	return cmd
 }
 
 func SetupRuntimeCgroupWithClean(t *testing.T) (Cgroup, string) {
@@ -310,12 +288,9 @@ func TestCgroupInterfaces(t *testing.T) {
 	})
 
 	t.Run("AddProcAndPidsAndProcs", func(t *testing.T) {
-		catCmd := StartCatProcess(t)
-		if catCmd == nil || catCmd.Process == nil {
-			t.Fatalf("There is no procs")
-		}
-		if err := cgr.AddProc(uint64(catCmd.Process.Pid)); err != nil {
-			t.Fatalf("AddProc(%d): %v", catCmd.Process.Pid, err)
+		pid := os.Getpid()
+		if err := cgr.AddProc(uint64(pid)); err != nil {
+			t.Fatalf("AddProc(%d): %v", pid, err)
 		}
 		processes, err := cgr.Pids(runtimePath)
 		if err != nil {
@@ -325,8 +300,8 @@ func TestCgroupInterfaces(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Procs: %v", err)
 		}
-		if !slices.Contains(procs, int32(catCmd.Process.Pid)) {
-			t.Fatalf("Procs need to contain %v", catCmd.Process.Pid)
+		if !slices.Contains(procs, int32(pid)) {
+			t.Fatalf("Procs need to contain %v", pid)
 		}
 		if len(processes) == 0 {
 			t.Errorf("Pids: got empty process list, want at least one pid")
