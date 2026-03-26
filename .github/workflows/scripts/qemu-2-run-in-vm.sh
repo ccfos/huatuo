@@ -119,7 +119,7 @@ function prapre_test_env() {
 		;;
 	esac
 
-	go install github.com/vektra/mockery/v2@latest && which mockery
+	which mockery || go install github.com/vektra/mockery/v2@latest
 	git config --global --add safe.directory /mnt/host
 }
 
