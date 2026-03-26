@@ -54,7 +54,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 		! -path "./vendor/*" \
 		! -path "./.git/*" \
 		! -path "./third_party/*" \
-		-exec grep -l "//go:generate.*BPF_COMPILE" {} \; | \
+		-exec grep -l "^[[:space:]]*//go:generate" {} \; | \
 		xargs -n1 dirname | sort -u | \
 		xargs -P $(shell nproc) -I {} sh -c ' \
 			export BPF_DIR=$(BPF_DIR); \
