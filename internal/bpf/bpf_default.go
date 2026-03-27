@@ -470,7 +470,7 @@ func (b *defaultBPF) attachPerfEvent(progID uint32, samplePeriod, sampleFreq uin
 	}
 
 	spec := b.programSpecs[progID]
-	event, err := attachPerfEventPMU(&perfEventPMUOption{
+	event, err := attachPerfEventPMU(&pmuOption{
 		samplePeriodFreq: sampleFreq,
 		sampleType:       sampleTypeFreq,
 		program:          spec.bProg,

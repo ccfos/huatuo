@@ -32,12 +32,12 @@ func TestAttachPerfEventPMU(t *testing.T) {
 
 	cases := []struct {
 		name   string
-		opt    *perfEventPMUOption
+		opt    *pmuOption
 		wantOK bool
 	}{
 		{
 			name: "ok freq sampling",
-			opt: &perfEventPMUOption{
+			opt: &pmuOption{
 				sampleType:       sampleTypeFreq,
 				samplePeriodFreq: 1,
 				program:          prog,
@@ -48,7 +48,7 @@ func TestAttachPerfEventPMU(t *testing.T) {
 			// sampleType 0 is undefined; current implementation falls through
 			// to freq because only sampleTypePeriod clears PerfBitFreq.
 			name: "undefined sample type defaults to freq behavior",
-			opt: &perfEventPMUOption{
+			opt: &pmuOption{
 				sampleType:       0,
 				samplePeriodFreq: 1,
 				program:          prog,
@@ -62,7 +62,7 @@ func TestAttachPerfEventPMU(t *testing.T) {
 		},
 		{
 			name: "nil program",
-			opt: &perfEventPMUOption{
+			opt: &pmuOption{
 				sampleType:       sampleTypeFreq,
 				samplePeriodFreq: 1,
 				program:          nil,
@@ -71,7 +71,7 @@ func TestAttachPerfEventPMU(t *testing.T) {
 		},
 		{
 			name: "closed program",
-			opt: &perfEventPMUOption{
+			opt: &pmuOption{
 				sampleType:       sampleTypeFreq,
 				samplePeriodFreq: 1,
 				program: func() *ebpf.Program {
@@ -84,7 +84,7 @@ func TestAttachPerfEventPMU(t *testing.T) {
 		},
 		{
 			name: "zero sample freq",
-			opt: &perfEventPMUOption{
+			opt: &pmuOption{
 				sampleType:       sampleTypeFreq,
 				samplePeriodFreq: 0,
 				program:          prog,
@@ -113,7 +113,7 @@ func TestAttachPerfEventPMU(t *testing.T) {
 func TestAttachPerfEventPMU_AttachTwice(t *testing.T) {
 	prog := newTestProgram(t)
 
-	opt := &perfEventPMUOption{
+	opt := &pmuOption{
 		sampleType:       sampleTypeFreq,
 		samplePeriodFreq: 1,
 		program:          prog,
@@ -177,7 +177,7 @@ func TestAttach_DirectSyscall(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			fd, err := attach(c.attr, c.progFD, 0)
+			fd, err := perfEventOpenWithBPF(c.attr, c.progFD, 0)
 			if c.wantOK {
 				skipPerfEventPMUIfNotAvailable(t, err)
 				require.NoError(t, err)
@@ -218,7 +218,7 @@ func TestPerfEventPMU_DetachTwice(t *testing.T) {
 func TestPerfEventPMU_DetachValidFDs(t *testing.T) {
 	prog := newTestProgram(t)
 
-	opt := &perfEventPMUOption{
+	opt := &pmuOption{
 		sampleType:       sampleTypeFreq,
 		samplePeriodFreq: 1,
 		program:          prog,
