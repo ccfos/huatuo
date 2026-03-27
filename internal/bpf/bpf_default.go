@@ -76,11 +76,17 @@ var _ BPF = (*defaultBPF)(nil)
 
 // LoadBpfFromBytes loads the bpf from bytes.
 func LoadBpfFromBytes(bpfName string, bpfBytes []byte, consts map[string]any) (BPF, error) {
+	if err := validateName(bpfName); err != nil {
+		return nil, err
+	}
 	return loadBpfFromReader(bpfName, bytes.NewReader(bpfBytes), consts)
 }
 
 // LoadBpf the bpf and return the bpf.
 func LoadBpf(bpfName string, consts map[string]any) (BPF, error) {
+	if err := validateName(bpfName); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(filepath.Join(DefaultBpfObjDir, bpfName))
 	if err != nil {
 		return nil, err

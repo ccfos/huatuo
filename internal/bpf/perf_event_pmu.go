@@ -59,6 +59,15 @@ func attach(attr *unix.PerfEventAttr, progFD, cpuId int) (int, error) {
 }
 
 func attachPerfEventPMU(opt *perfEventPMUOption) (*perfEventPMU, error) {
+	if opt == nil {
+		return nil, unix.EINVAL
+	}
+	if opt.program == nil {
+		return nil, unix.EINVAL
+	}
+	if opt.samplePeriodFreq == 0 {
+		return nil, unix.EINVAL
+	}
 	attr := unix.PerfEventAttr{
 		Type:   unix.PERF_TYPE_SOFTWARE,
 		Size:   unix.PERF_ATTR_SIZE_VER0,
