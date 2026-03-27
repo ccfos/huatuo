@@ -27,7 +27,7 @@ If any expected metric is missing, the test fails.
 Run the integration test from the project root:
 
 ```bash
-bash integration/integration.sh
+bash integration/run.sh
 ```
 or
 ```bash
@@ -70,6 +70,6 @@ New *.txt files are automatically picked up by the test.
 
 ### Step 3: Run the Test
 ```bash
-bash integration/integration.sh
+bash integration/run.sh
 ```
 The test fails if any expected metric is missing or mismatched.
