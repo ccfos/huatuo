@@ -27,7 +27,7 @@ weight: 4
 
 请在项目根目录下执行集成测试：
 ```bash
-bash integration/integration.sh
+bash integration/run.sh
 ```
 或通过 Makefile 执行：
 ```bash
@@ -62,6 +62,6 @@ integration/fixtures/expected_metrics/
 
 ### 第三步：运行测试
 ```bash
-bash integration/integration.sh
+bash integration/run.sh
 ```
 当任意一个预期指标缺失或不匹配时，测试将失败。
