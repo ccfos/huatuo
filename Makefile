@@ -54,7 +54,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 		! -path "./vendor/*" \
 		! -path "./.git/*" \
 		! -path "./third_party/*" \
-		-exec grep -l "^[[:space:]]*//go:generate" {} \; | \
+		-exec grep -l "^[[:space:]]*//go:generate.*BPF_COMPILE" {} \; | \
 		xargs -n1 dirname | sort -u | \
 		xargs -P $(shell nproc) -I {} sh -c ' \
 			export BPF_DIR=$(BPF_DIR); \
@@ -106,7 +106,7 @@ mock-build:
 
 test: unit integration e2e
 
-unit: bpf-build
+unit: bpf-build mock-build
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 

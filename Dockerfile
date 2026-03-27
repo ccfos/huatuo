@@ -11,10 +11,12 @@ ARG RUN_PATH="/home/huatuo-bamai"
 ARG BUILD_MODE
 WORKDIR ${BUILD_PATH}
 ENV PATH=$PATH:/usr/lib/llvm15/bin
-COPY . .
+# RUN sed -i 's@http://deb.debian.org@https://mirrors.tuna.tsinghua.edu.cn@g' \
+#         /etc/apt/sources.list.d/*.sources
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    make clang libbpf-dev bpftool curl git binutils-gold musl-tools &&\
-    make BUILD_MODE=${BUILD_MODE} &&\
+    make clang libbpf-dev bpftool curl git binutils-gold musl-tools
+COPY . .
+RUN make BUILD_MODE=${BUILD_MODE} &&\
     mkdir -p ${RUN_PATH} &&\
     cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/ &&\
     sed -i -e 's/# Address.*/Address=""/g' \
