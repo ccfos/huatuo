@@ -40,7 +40,7 @@ func RequireRoot(tb testing.TB) bool {
 
 func SetupRuntimeCgroupWithClean(t *testing.T) (Cgroup, string) {
 	t.Helper()
-	cgr, err := NewCgroupManager()
+	cgr, err := NewManager()
 	if err != nil {
 		t.Errorf("New: %v", err)
 		return nil, ""
@@ -237,7 +237,7 @@ func TestCgroupManager(t *testing.T) {
 		t.Fatalf("CgroupMode(): got %d, not a known Mode constant", int(mode))
 	}
 
-	mgr, err := NewCgroupManager()
+	mgr, err := NewManager()
 	if err != nil {
 		t.Fatalf("NewCgroupManager() mode %v: got error %v, want nil", mode, err)
 	}
@@ -251,7 +251,7 @@ func TestCgroupInterfaces(t *testing.T) {
 		t.Fatalf("Cgroup test requires root privileges")
 	}
 
-	cgr, err := NewCgroupManager()
+	cgr, err := NewManager()
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -266,7 +266,7 @@ func pidStack(pid int32) string {
 func cgroupHostTasks(where int, path string) ([]int32, error) {
 	switch where {
 	case taskCgroupType:
-		cgroup, err := cgroups.NewCgroupManager()
+		cgroup, err := cgroups.NewManager()
 		if err != nil {
 			return nil, err
 		}

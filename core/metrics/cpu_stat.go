@@ -56,7 +56,7 @@ func init() {
 }
 
 func newCPUStat() (*tracing.EventTracingAttr, error) {
-	cgroup, err := cgroups.NewCgroupManager()
+	cgroup, err := cgroups.NewManager()
 	if err != nil {
 		return nil, err
 	}

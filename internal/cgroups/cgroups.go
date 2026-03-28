@@ -73,7 +73,7 @@ type Cgroup interface {
 	MemoryUsage(path string) (*stats.MemoryUsage, error)
 }
 
-func NewCgroupManager() (Cgroup, error) {
+func NewManager() (Cgroup, error) {
 	// https://github.com/systemd/systemd/blob/main/docs/CGROUP_DELEGATION.md
 	//
 	// Legacy — this is the traditional cgroup v1 mode. In this mode the various

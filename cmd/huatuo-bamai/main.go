@@ -53,7 +53,7 @@ func mainAction(ctx *cli.Context) error {
 	defer pidfile.UnLock(ctx.App.Name)
 
 	// init cpu quota
-	cgr, err := cgroups.NewCgroupManager()
+	cgr, err := cgroups.NewManager()
 	if err != nil {
 		return err
 	}
