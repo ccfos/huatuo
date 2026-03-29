@@ -73,15 +73,15 @@ type CommonConf struct {
 
 	AutoTracing struct {
 		CPUIdle struct {
-			UserThreshold         int64 `default:"75"`
-			SysThreshold          int64 `default:"45"`
-			UsageThreshold        int64 `default:"90"`
-			DeltaUserThreshold    int64 `default:"45"`
-			DeltaSysThreshold     int64 `default:"20"`
-			DeltaUsageThreshold   int64 `default:"55"`
-			Interval              int64 `default:"10"`
-			IntervalContinuousRun int64 `default:"1800"`
-			PerfRunTimeOut        int64 `default:"10"`
+			UserThreshold       int64 `default:"75"`
+			SysThreshold        int64 `default:"45"`
+			UsageThreshold      int64 `default:"90"`
+			DeltaUserThreshold  int64 `default:"45"`
+			DeltaSysThreshold   int64 `default:"20"`
+			DeltaUsageThreshold int64 `default:"55"`
+			Interval            int64 `default:"10"`
+			IntervalTracing     int64 `default:"1800"`
+			PerfRunTimeOut      int64 `default:"10"`
 		}
 
 		CPUSys struct {

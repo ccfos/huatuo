@@ -73,13 +73,13 @@ type containerCPUInfo struct {
 }
 
 type cpuIdleThreshold struct {
-	deltaUser              int64
-	deltaSys               int64
-	deltaTotal             int64
-	usageUser              int64
-	usageSys               int64
-	usageTotal             int64
-	intervalContinuousPerf int64
+	deltaUser       int64
+	deltaSys        int64
+	deltaTotal      int64
+	usageUser       int64
+	usageSys        int64
+	usageTotal      int64
+	intervalTracing int64
 }
 
 // containersCPUIdleMap is the container information
@@ -212,7 +212,7 @@ func shouldCareThisCPUIdle(container *containerCPUInfo, threshold *cpuIdleThresh
 	nowtime := time.Now()
 	intervalContinuousPerf := nowtime.Sub(container.traceTime)
 
-	if int64(intervalContinuousPerf.Seconds()) > threshold.intervalContinuousPerf {
+	if int64(intervalContinuousPerf.Seconds()) > threshold.intervalTracing {
 		if (container.nowUsagePercentage.user > threshold.usageUser &&
 			container.deltaUsagePercentage.user > threshold.deltaUser) ||
 			(container.nowUsagePercentage.sys > threshold.usageSys &&
@@ -286,13 +286,13 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 	perfRunTimeOut := conf.Get().AutoTracing.CPUIdle.PerfRunTimeOut
 
 	threshold := &cpuIdleThreshold{
-		deltaUser:              conf.Get().AutoTracing.CPUIdle.DeltaUserThreshold,
-		deltaSys:               conf.Get().AutoTracing.CPUIdle.DeltaSysThreshold,
-		deltaTotal:             conf.Get().AutoTracing.CPUIdle.DeltaUsageThreshold,
-		usageUser:              conf.Get().AutoTracing.CPUIdle.UserThreshold,
-		usageSys:               conf.Get().AutoTracing.CPUIdle.SysThreshold,
-		usageTotal:             conf.Get().AutoTracing.CPUIdle.UsageThreshold,
-		intervalContinuousPerf: conf.Get().AutoTracing.CPUIdle.IntervalContinuousRun,
+		deltaUser:       conf.Get().AutoTracing.CPUIdle.DeltaUserThreshold,
+		deltaSys:        conf.Get().AutoTracing.CPUIdle.DeltaSysThreshold,
+		deltaTotal:      conf.Get().AutoTracing.CPUIdle.DeltaUsageThreshold,
+		usageUser:       conf.Get().AutoTracing.CPUIdle.UserThreshold,
+		usageSys:        conf.Get().AutoTracing.CPUIdle.SysThreshold,
+		usageTotal:      conf.Get().AutoTracing.CPUIdle.UsageThreshold,
+		intervalTracing: conf.Get().AutoTracing.CPUIdle.IntervalTracing,
 	}
 
 	for {
