@@ -108,12 +108,12 @@ type CommonConf struct {
 		}
 
 		MemoryBurst struct {
-			DeltaMemoryBurst      int `default:"100"`
-			DeltaAnonThreshold    int `default:"70"`
-			Interval              int `default:"10"`
-			IntervalContinuousRun int `default:"1800"`
-			SlidingWindowLength   int `default:"60"`
-			DumpProcessMaxNum     int `default:"10"`
+			DeltaMemoryBurst    int `default:"100"`
+			DeltaAnonThreshold  int `default:"70"`
+			Interval            int `default:"10"`
+			IntervalTracing     int `default:"1800"`
+			SlidingWindowLength int `default:"60"`
+			DumpProcessMaxNum   int `default:"10"`
 		}
 	}
 

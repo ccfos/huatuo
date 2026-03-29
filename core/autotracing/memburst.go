@@ -179,7 +179,7 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 
 	historyWindowLength := conf.Get().AutoTracing.MemoryBurst.SlidingWindowLength
 	sampleInterval := conf.Get().AutoTracing.MemoryBurst.Interval
-	silencePeriod := conf.Get().AutoTracing.MemoryBurst.IntervalContinuousRun
+	intervalTracing := conf.Get().AutoTracing.MemoryBurst.IntervalTracing
 	topNProcesses := conf.Get().AutoTracing.MemoryBurst.DumpProcessMaxNum
 	burstRatio := (float64(conf.Get().AutoTracing.MemoryBurst.DeltaMemoryBurst)/100.0 + 1)
 	anonThreshold := conf.Get().AutoTracing.MemoryBurst.DeltaAnonThreshold
@@ -233,7 +233,7 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 
 		currentTime := time.Now()
 		diff := currentTime.Sub(lastReportTime).Seconds()
-		if diff < float64(silencePeriod) {
+		if diff < float64(intervalTracing) {
 			continue
 		}
 
