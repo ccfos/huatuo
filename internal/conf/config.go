@@ -92,8 +92,9 @@ type CommonConf struct {
 		}
 
 		Dload struct {
-			ThresholdLoad float64 `default:"5.0"`
-			MonitorGap    int     `default:"180"`
+			ThresholdLoad   int64 `default:"5"`
+			Interval        int64 `default:"10"`
+			IntervalTracing int64 `default:"1800"`
 		}
 
 		IOTracing struct {

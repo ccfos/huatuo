@@ -57,10 +57,11 @@ type containerDloadInfo struct {
 	avgnuni   [2]uint64
 	loaduni   [2]float64
 	alive     bool
+	traceTime time.Time
 }
 
 type DloadTracingData struct {
-	Threshold         float64 `json:"threshold"`
+	Threshold         uint64  `json:"threshold"`
 	NrSleeping        uint64  `json:"nr_sleeping"`
 	NrRunning         uint64  `json:"nr_running"`
 	NrStopped         uint64  `json:"nr_stopped"`
@@ -110,7 +111,25 @@ func updateContainersDload() error {
 	return nil
 }
 
-func detectDloadContainer(thresh float64, interval int) (*containerDloadInfo, cadvisorV1.LoadStats, error) {
+func shouldCareThisLoadEvent(container *containerDloadInfo, threshold *dloadThreshold) bool {
+	nowtime := time.Now()
+	intervalTracing := nowtime.Sub(container.traceTime)
+
+	if int64(intervalTracing.Seconds()) > threshold.intervalTracing {
+		if container.loaduni[0] > float64(threshold.thresh) {
+			container.traceTime = nowtime
+			return true
+		}
+	}
+
+	if debugDload {
+		return true
+	}
+
+	return false
+}
+
+func detectDloadContainer(threshold *dloadThreshold) (*containerDloadInfo, cadvisorV1.LoadStats, error) {
 	empty := cadvisorV1.LoadStats{}
 
 	n, err := netlink.New()
@@ -119,31 +138,24 @@ func detectDloadContainer(thresh float64, interval int) (*containerDloadInfo, ca
 	}
 	defer n.Stop()
 
-	for containerId, dload := range containersDloads {
-		if !dload.alive {
-			delete(containersDloads, containerId)
+	for id, container := range containersDloads {
+		if !container.alive {
+			delete(containersDloads, id)
 		} else {
-			dload.alive = false
+			container.alive = false
 
-			timeStart := dload.container.StartedAt.Add(time.Second * time.Duration(interval))
-			if time.Now().Before(timeStart) {
-				log.Debugf("%s was just started, we'll start monitoring it later.", dload.container.Hostname)
-				continue
-			}
-
-			stats, err := n.GetCpuLoad(dload.name, dload.path)
+			stats, err := n.GetCpuLoad(container.name, container.path)
 			if err != nil {
-				log.Debugf("failed to get %s load, probably the container has been deleted: %s", dload.container.Hostname, err)
+				log.Debugf("failed to get %s load, probably the container has been deleted: %s", container.container.Hostname, err)
 				continue
 			}
 
-			updateLoad(dload, stats.NrRunning, stats.NrUninterruptible)
+			updateLoad(container, stats.NrRunning, stats.NrUninterruptible)
 
-			if dload.loaduni[0] > thresh || debugDload {
+			if shouldCareThisLoadEvent(container, threshold) {
 				log.Infof("dload event: Threshold=%0.2f %+v, LoadAvg=%0.2f, DLoadAvg=%0.2f",
-					thresh, stats, dload.load[0], dload.loaduni[0])
-
-				return dload, stats, nil
+					float64(threshold.thresh), stats, container.load[0], container.loaduni[0])
+				return container, stats, nil
 			}
 		}
 	}
@@ -151,7 +163,7 @@ func detectDloadContainer(thresh float64, interval int) (*containerDloadInfo, ca
 	return nil, empty, fmt.Errorf("no dload containers")
 }
 
-func buildAndSaveDloadContainer(thresh float64, container *containerDloadInfo, loadstat cadvisorV1.LoadStats) error {
+func buildAndSaveDloadContainer(thresh *dloadThreshold, container *containerDloadInfo, loadstat cadvisorV1.LoadStats) error {
 	cgrpPath := container.name
 	containerID := container.container.ID
 	containerHostNamespace := container.container.LabelHostNamespace()
@@ -178,7 +190,7 @@ func buildAndSaveDloadContainer(thresh float64, container *containerDloadInfo, l
 		NrIoWait:          loadstat.NrIoWait,
 		LoadAvg:           container.load[0],
 		DLoadAvg:          container.loaduni[0],
-		Threshold:         thresh,
+		Threshold:         uint64(thresh.thresh),
 		Stack:             fmt.Sprintf("%s%s", stackCgrp, stackHost),
 	}
 
@@ -339,23 +351,32 @@ func dumpUninterruptibleTaskStack(where int, path string, all bool) (string, err
 
 type dloadTracing struct{}
 
+type dloadThreshold struct {
+	thresh          int64
+	intervalTracing int64
+}
+
 // Start detect work, monitor the load of containers
 func (c *dloadTracing) Start(ctx context.Context) error {
-	thresh := conf.Get().AutoTracing.Dload.ThresholdLoad
-	interval := conf.Get().AutoTracing.Dload.MonitorGap
+	interval := conf.Get().AutoTracing.Dload.Interval
+
+	thresh := &dloadThreshold{
+		thresh:          conf.Get().AutoTracing.Dload.ThresholdLoad,
+		intervalTracing: conf.Get().AutoTracing.Dload.IntervalTracing,
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
 		default:
-			time.Sleep(5 * time.Second)
+			time.Sleep(time.Duration(interval) * time.Second)
 
 			if err := updateContainersDload(); err != nil {
 				return err
 			}
 
-			container, loadstat, err := detectDloadContainer(thresh, interval)
+			container, loadstat, err := detectDloadContainer(thresh)
 			if err != nil {
 				continue
 			}

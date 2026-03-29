@@ -125,7 +125,7 @@ func detectCPUIdleContainer(threshold *cpuIdleThreshold) (*containerCPUInfo, err
 
 			log.Debugf("container [%s], usage: %v", container.path, container.nowUsagePercentage)
 
-			if shouldCareThisEvent(container, threshold) {
+			if shouldCareThisCPUIdle(container, threshold) {
 				return container, nil
 			}
 		}
@@ -208,7 +208,7 @@ func updateContainerCpuUsage(container *containerCPUInfo) error {
 	return nil
 }
 
-func shouldCareThisEvent(container *containerCPUInfo, threshold *cpuIdleThreshold) bool {
+func shouldCareThisCPUIdle(container *containerCPUInfo, threshold *cpuIdleThreshold) bool {
 	nowtime := time.Now()
 	intervalContinuousPerf := nowtime.Sub(container.traceTime)
 
