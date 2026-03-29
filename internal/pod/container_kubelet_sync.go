@@ -69,7 +69,7 @@ type kubeletConfigz struct {
 	Kubeletconfig kubeletConfiguration `json:"kubeletconfig"`
 }
 
-type PodContainerInitCtx struct {
+type ManagerInitCtx struct {
 	PodReadOnlyPort      uint32
 	PodAuthorizedPort    uint32
 	PodClientCertPath    string
@@ -92,7 +92,7 @@ func kubeletConfigAuthorizedURL(port uint32) string {
 	return fmt.Sprintf("https://127.0.0.1:%d/configz", port)
 }
 
-func kubeletPodListHttpRequest(ctx *PodContainerInitCtx) (*http.Client, error) {
+func kubeletPodListHttpRequest(ctx *ManagerInitCtx) (*http.Client, error) {
 	client := &http.Client{
 		Timeout: kubeletReqTimeout,
 	}
@@ -101,7 +101,7 @@ func kubeletPodListHttpRequest(ctx *PodContainerInitCtx) (*http.Client, error) {
 	return client, err
 }
 
-func kubeletPodListAuthorizationRequest(ctx *PodContainerInitCtx) (*http.Client, error) {
+func kubeletPodListAuthorizationRequest(ctx *ManagerInitCtx) (*http.Client, error) {
 	cert, err := tls.LoadX509KeyPair(ctx.podClientCertPath, ctx.podClientCertKey)
 	if err != nil {
 		return nil, fmt.Errorf("loading client key pair [%s,%s]: %w",
@@ -122,7 +122,7 @@ func kubeletPodListAuthorizationRequest(ctx *PodContainerInitCtx) (*http.Client,
 	return client, err
 }
 
-func kubeletPodListPortCacheUpdate(ctx *PodContainerInitCtx) error {
+func kubeletPodListPortCacheUpdate(ctx *ManagerInitCtx) error {
 	if client, err := kubeletPodListHttpRequest(ctx); err == nil {
 		kubeletPodListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
 		kubeletPodListClient = client
@@ -143,7 +143,7 @@ func kubeletPodListPortCacheUpdate(ctx *PodContainerInitCtx) error {
 	return nil
 }
 
-func ContainerPodMgrInit(ctx *PodContainerInitCtx) error {
+func ManagerInit(ctx *ManagerInitCtx) error {
 	// Pod sync disabled, directly return
 	if ctx.PodContainerDisabled {
 		log.Infof("skip pod sync: pod container from kubelet is disabled")
@@ -195,7 +195,7 @@ func ContainerPodMgrInit(ctx *PodContainerInitCtx) error {
 					log.Infof("kubelet is running now")
 					_ = kubeletConfigCacheUpdate(ctx)
 					_ = containerCgroupCssInit()
-					ContainerPodMgrClose()
+					ManagerRelease()
 					break
 				}
 			case <-doneCtx.Done():
@@ -207,7 +207,7 @@ func ContainerPodMgrInit(ctx *PodContainerInitCtx) error {
 	return nil
 }
 
-func ContainerPodMgrClose() {
+func ManagerRelease() {
 	if kubeletTimeTicker != nil {
 		kubeletTimeTicker.Stop()
 		kubeletTimeTicker = nil
@@ -487,7 +487,7 @@ func kubeletConfigFileDefault() (kubeletConfiguration, error) {
 //
 // CgroupDriver
 // ContainerRuntimeEndpoint
-func kubeletConfigCacheUpdate(ctx *PodContainerInitCtx) error {
+func kubeletConfigCacheUpdate(ctx *ManagerInitCtx) error {
 	var (
 		config kubeletConfiguration
 		err    error

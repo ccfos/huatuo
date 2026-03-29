@@ -95,14 +95,14 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("failed to init bpf manager: %w", err)
 	}
 
-	podListInitCtx := pod.PodContainerInitCtx{
+	mgrInitCtx := pod.ManagerInitCtx{
 		PodReadOnlyPort:      conf.Get().Pod.KubeletReadOnlyPort,
 		PodAuthorizedPort:    conf.Get().Pod.KubeletAuthorizedPort,
 		PodClientCertPath:    conf.Get().Pod.KubeletClientCertPath,
 		PodContainerDisabled: ctx.Bool("disable-kubelet"),
 	}
 
-	if err := pod.ContainerPodMgrInit(&podListInitCtx); err != nil {
+	if err := pod.ManagerInit(&mgrInitCtx); err != nil {
 		return fmt.Errorf("init podlist and sync module: %w", err)
 	}
 
@@ -145,7 +145,7 @@ func mainAction(ctx *cli.Context) error {
 			log.Infof("huatuo-bamai exit by signal %d", s)
 			_ = mgr.Stop()
 			bpf.Close()
-			pod.ContainerPodMgrClose()
+			pod.ManagerRelease()
 			return nil
 		case syscall.SIGUSR1:
 			return nil
