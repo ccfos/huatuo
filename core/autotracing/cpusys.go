@@ -157,7 +157,7 @@ func (c *cpuSysTracing) buildAndSaveCPUSystem(traceTime time.Time, threshold *cp
 
 func (c *cpuSysTracing) Start(ctx context.Context) error {
 	interval := conf.Get().AutoTracing.CPUSys.Interval
-	perfRunTimeOut := conf.Get().AutoTracing.CPUSys.PerfRunTimeOut
+	perfRunTimeOut := conf.Get().AutoTracing.CPUSys.RunTracingToolTimeout
 
 	threshold := &cpuSysThreshold{
 		delta: conf.Get().AutoTracing.CPUSys.DeltaSysThreshold,

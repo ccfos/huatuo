@@ -260,6 +260,8 @@ func (c *ioTracing) Start(ctx context.Context) error {
 		AwaitThreshold: conf.Get().AutoTracing.IOTracing.AwaitThreshold,
 	}
 
+	runIotracingToolTimeout := conf.Get().AutoTracing.IOTracing.RunTracingToolTimeout
+
 	reasonSnapshot, err := waittingDiskEvents(ctx, 5, thresholds)
 	if err != nil {
 		return err
@@ -267,7 +269,8 @@ func (c *ioTracing) Start(ctx context.Context) error {
 
 	log.Debugf("wait disk events with reason snapshot: %+v", reasonSnapshot)
 
-	taskID := tracing.NewTask("iotracing", 40*time.Second, tracing.TaskStorageStdout, []string{"--json"})
+	taskID := tracing.NewTask("iotracing", time.Duration(runIotracingToolTimeout)*time.Second,
+		tracing.TaskStorageStdout, []string{"--json"})
 
 	for {
 		select {

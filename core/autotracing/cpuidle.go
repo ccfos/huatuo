@@ -283,7 +283,7 @@ type CPUIdleTracingData struct {
 
 func (c *cpuIdleTracing) Start(ctx context.Context) error {
 	interval := conf.Get().AutoTracing.CPUIdle.Interval
-	perfRunTimeOut := conf.Get().AutoTracing.CPUIdle.PerfRunTimeOut
+	perfRunTimeOut := conf.Get().AutoTracing.CPUIdle.RunTracingToolTimeout
 
 	threshold := &cpuIdleThreshold{
 		deltaUser:       conf.Get().AutoTracing.CPUIdle.DeltaUserThreshold,
