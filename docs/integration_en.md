@@ -11,7 +11,7 @@ This integration test validates that **huatuo-bamai** can start correctly with m
 
 The test runs the real `huatuo-bamai` binary and verifies the `/metrics`endpoint output without relying on the host kernel or hardware.
 
-## What the Script Does
+### What the Script Does
 The integration test performs the following steps:
 
 1. Generates a temporary `bamai.conf`
@@ -23,7 +23,7 @@ The integration test performs the following steps:
 
 If any expected metric is missing, the test fails.
 
-## How to Run
+### How to Run
 Run the integration test from the project root:
 
 ```bash
@@ -33,19 +33,19 @@ or
 ```bash
 make integration
 ```
-### On Failure
+#### On Failure
 
 - The `huatuo-bamai` service metrics and logs are printed to stdout
 - The temporary working directory is kept for debugging
 
-### On Success
+#### On Success
 
 - Output the list of successfully validated metrics
 
 ---
 
-## How to Add New Metrics Tests
-### Step 1: Add or Update Fixture Data
+### How to Add New Metrics Tests
+#### 1: Add or Update Fixture Data
 
 If the metric depends on /proc or /sys, add or update mock data under:
 ```bash
@@ -53,7 +53,7 @@ integration/fixtures/
 ```
 
 The directory structure should match the real kernel filesystem layout.
-### Step 2: Add Expected Metrics
+#### 2: Add Expected Metrics
 
 Create a new file under:
 ```bash
@@ -68,7 +68,7 @@ and must match the /metrics output exactly.
 
 New *.txt files are automatically picked up by the test.
 
-### Step 3: Run the Test
+#### 3: Run the Test
 ```bash
 bash integration/run.sh
 ```
