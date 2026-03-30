@@ -70,6 +70,6 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           token: ${{ secrets.HUATUO_RELEASE_TOKEN }}
-          body_path: docs/CHANGELOG/CHANGELOG-${{ github.ref_name }}.md
+          body_path: docs/CHANGELOG/CHANGELOG-${{ github.ref_name }}-en.md
           files: |
             huatuo-bamai-static-${{ github.ref_name }}-linux-*.tar.gz
