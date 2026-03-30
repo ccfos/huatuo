@@ -4,7 +4,7 @@ type: docs
 description:
 author: HUATUO Team
 date: 2026-03-04
-weight: 4
+weight: 5
 ---
 
 集成测试用于验证 ``huatuo-bamai``在使用模拟的 ``/proc`` 和 ``/sys`` 文件系统时，能够正确启动并对外暴露符合预期的``Prometheus``指标。

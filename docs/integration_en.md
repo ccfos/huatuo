@@ -4,7 +4,7 @@ type: docs
 description:
 author: HUATUO Team
 date: 2026-03-04
-weight: 4
+weight: 5
 ---
 
 This integration test validates that **huatuo-bamai** can start correctly with mocked `/proc` and `/sys` filesystems and expose the expected **Prometheus metrics**.
