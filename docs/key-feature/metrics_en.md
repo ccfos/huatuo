@@ -1,5 +1,5 @@
 ---
-title: Metrics Description
+title: Metrics
 type: docs
 description:
 author: HUATUO Team

@@ -7,515 +7,288 @@ date: 2026-01-11
 weight: 2
 ---
 
+The HUATUO platform uses eBPF technology to detect various abnormal events in the Linux kernel in real time, helping users quickly locate issues related to the system, applications, and hardware.
 
-HUATUO currently supports the following exception context capture events:
+## Supported Events
 
-| Event Name        | Core Functionality               | Scenarios                                    |
-| ------------------| -------------------------------- |----------------------------------------------|
-| softirq           | Detects delayed response or prolonged disabling of host soft interrupts, and outputs kernel call stacks and process information when soft interrupts are disabled for extended periods., etc. | This type of issue severely impacts network transmission/reception, leading to business spikes or timeout issues |
-| dropwatch         | Detects TCP packet loss and outputs host and network context information when packet loss occurs | This type of issue mainly causes business spikes and latency |
-| net_rx_latency        | Captures latency events in network receive path from driver, protocol stack, to user-space receive process | For network latency issues in the receive direction where the exact delay location is unclear, net_rx_latency calculates latency at the driver, protocol stack, and user copy paths using skb NIC ingress timestamps, filters timeout packets via preset thresholds, and locates the delay position |
-| oom               | Detects OOM events on the host or within containers | When OOM occurs at host level or container dimension, captures process information triggering OOM, killed process information, and container details to troubleshoot memory leaks, abnormal exits, etc. |
-| softlockup        | When a softlockup occurs on the system, collects target process information and CPU details, and retrieves kernel stack information from all CPUs | System softlockup events |
-| hungtask          | Provides count of all D-state processes in the system and kernel stack information | Used to locate transient D-state process scenarios, preserving the scene for later problem tracking |
-| memreclaim        | Records process information when memory reclamation exceeds time threshold | When memory pressure is excessively high, if a process requests memory at this time, it may enter direct reclamation (synchronous phase), potentially causing business process stalls. Recording the direct reclamation entry time helps assess the severity of impact on the process |
-| netdev            | Detects network device status changes | Network card flapping, slave abnormalities in bond environments, etc. |
-| lacp              | Detects LACP status changes | Detects LACP negotiation status in bond mode 4 |
+| Event Name             | Core Function                                                | Typical Scenarios                                            |
+| ---------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| softirq                | Detects excessively long softirq disable time in the kernel, outputs call stack and process information | Resolves system stalls, network latency, and scheduling delays |
+| softlockup             | Detects softlockup events and provides target process and kernel stack information | Locates and resolves system softlockup issues                |
+| hungtask               | Detects hungtask events, outputs all D-state processes and their stack information | Captures transient mass D-state process scenarios and preserves fault scenes |
+| oom                    | Detects OOM events in the host or containers                 | Focuses on memory exhaustion issues and provides detailed fault snapshots |
+| memory_reclaim_events  | Detects direct memory reclaim events, records reclaim duration, process and container information | Resolves business stalls caused by memory pressure           |
+| ras                    | Detects hardware faults in CPU, Memory, PCIe, etc.           | Timely awareness of hardware failures to reduce business impact |
+| dropwatch              | Detects packet drops in the kernel network protocol stack, outputs call stack and network context | Resolves business jitters and latency caused by protocol stack packet drops |
+| net_rx_latency         | Detects latency events in the protocol stack receive path (driver → protocol → user space) | Resolves business timeouts and jitters caused by receive latency |
+| netdev_events          | Detects network device link status changes                   | Detects physical link failures on network cards              |
+| netdev_bonding_lacp    | Detects bonding LACP protocol status changes                 | Identifies fault boundaries between physical machines and switches |
+| netdev_txqueue_timeout | Detects network card transmit queue timeout events           | Locates hardware failures in network card transmit queues    |
 
+## Event Details
 
-### Detect the long-term disabling of soft interrupts
+### Common Fields
 
-**Feature Introduction**
+- **hostname**: Physical machine hostname
+- **region**: Availability zone where the physical machine is located
+- **uploaded_time**: Data upload time
+- **container_id**: Container ID if the event is associated with a container
+- **container_hostname**: Container hostname if the event is associated with a container
+- **container_host_namespace**: Kubernetes namespace of the container if the event is associated with a container
+- **container_type**: Container type, e.g., `normal` for regular containers, `sidecar` for sidecar containers, etc.
+- **container_qos**: Container QoS level
+- **tracer_name**: Event name
+- **tracer_id**: Tracing ID for this event
+- **tracer_time**: Time when tracing was triggered
+- **tracer_type**: Trigger type — manual or automatic
+- **tracer_data**: Tracer-specific private data
 
-The Linux kernel contains various contexts such as process context, interrupt context, soft interrupt context, and NMI context. These contexts may share data, so to ensure data consistency and correctness, kernel code might disable soft or hard interrupts. Theoretically, the duration of single interrupt or soft interrupt disabling shouldn't be too long. However, high-frequency system calls entering kernel mode and frequently executing interrupt disabling can also create a "long-term disable" phenomenon, slowing down system response. Issues related to "long interrupt or soft interrupt disabling" are very subtle with limited troubleshooting methods, yet have significant impact, typically manifesting as receive data timeouts in business applications. For this scenario, we built BPF-based detection capabilities for long hardware and software interrupt disables.
+### 1. softirq
 
-**Example**
+**Description**  
+Detects when the kernel disables interrupts for too long. Records the kernel call stack during the disable period, current process information, and other key data to help analyze interrupt-related latency issues.
 
-Below is an example of captured  instances with overly long disabling interrupts, automatically uploaded to ES:
+**Data Storage**  
+Event data is automatically stored in Elasticsearch or as files on the physical machine disk.
 
-```json
-{
-  "_index": "***_2025-06-11",
-  "_type": "_doc",
-  "_id": "***",
-  "_score": 0,
-  "_source": {
-    "uploaded_time": "2025-06-11T16:05:16.251152703+08:00",
-    "hostname": "***",
-    "tracer_data": {
-      "comm": "observe-agent",
-      "stack": "stack:\nscheduler_tick/ffffffffa471dbc0 [kernel]\nupdate_process_times/ffffffffa4789240 [kernel]\ntick_sched_handle.isra.8/ffffffffa479afa0 [kernel]\ntick_sched_timer/ffffffffa479b000 [kernel]\n__hrtimer_run_queues/ffffffffa4789b60 [kernel]\nhrtimer_interrupt/ffffffffa478a610 [kernel]\n__sysvec_apic_timer_interrupt/ffffffffa4661a60 [kernel]\nasm_call_sysvec_on_stack/ffffffffa5201130 [kernel]\nsysvec_apic_timer_interrupt/ffffffffa5090500 [kernel]\nasm_sysvec_apic_timer_interrupt/ffffffffa5200d30 [kernel]\ndump_stack/ffffffffa506335e [kernel]\ndump_header/ffffffffa5058eb0 [kernel]\noom_kill_process.cold.9/ffffffffa505921a [kernel]\nout_of_memory/ffffffffa48a1740 [kernel]\nmem_cgroup_out_of_memory/ffffffffa495ff70 [kernel]\ntry_charge/ffffffffa4964ff0 [kernel]\nmem_cgroup_charge/ffffffffa4968de0 [kernel]\n__add_to_page_cache_locked/ffffffffa4895c30 [kernel]\nadd_to_page_cache_lru/ffffffffa48961a0 [kernel]\npagecache_get_page/ffffffffa4897ad0 [kernel]\ngrab_cache_page_write_begin/ffffffffa4899d00 [kernel]\niomap_write_begin/ffffffffa49fddc0 [kernel]\niomap_write_actor/ffffffffa49fe980 [kernel]\niomap_apply/ffffffffa49fbd20 [kernel]\niomap_file_buffered_write/ffffffffa49fc040 [kernel]\nxfs_file_buffered_aio_write/ffffffffc0f3bed0 [xfs]\nnew_sync_write/ffffffffa497ffb0 [kernel]\nvfs_write/ffffffffa4982520 [kernel]\nksys_write/ffffffffa4982880 [kernel]\ndo_syscall_64/ffffffffa508d190 [kernel]\nentry_SYSCALL_64_after_hwframe/ffffffffa5200078 [kernel]",
-      "now": 5532940660025295,
-      "offtime": 237328905,
-      "cpu": 1,
-      "threshold": 100000000,
-      "pid": 688073
-    },
-    "tracer_time": "2025-06-11 16:05:16.251 +0800",
-    "tracer_type": "auto",
-    "time": "2025-06-11 16:05:16.251 +0800",
-    "region": "***",
-    "tracer_name": "softirq",
-    "es_index_time": 1749629116268
-  },
-  "fields": {
-    "time": [
-      "2025-06-11T08:05:16.251Z"
-    ]
-  },
-  "_ignored": [
-    "tracer_data.stack"
-  ],
-  "_version": 1,
-  "sort": [
-    1749629116251
-  ]
-}
-```
-
-The local host also stores identical data:
-
-```json
-2025-06-11 16:05:16 *** Region=***
-{
-  "hostname": "***",
-  "region": "***",
-  "uploaded_time": "2025-06-11T16:05:16.251152703+08:00",
-  "time": "2025-06-11 16:05:16.251 +0800",
-  "tracer_name": "softirq",
-  "tracer_time": "2025-06-11 16:05:16.251 +0800",
-  "tracer_type": "auto",
-  "tracer_data": {
-    "offtime": 237328905,
-    "threshold": 100000000,
-    "comm": "observe-agent",
-    "pid": 688073,
-    "cpu": 1,
-    "now": 5532940660025295,
-    "stack": "stack:\nscheduler_tick/ffffffffa471dbc0 [kernel]\nupdate_process_times/ffffffffa4789240 [kernel]\ntick_sched_handle.isra.8/ffffffffa479afa0 [kernel]\ntick_sched_timer/ffffffffa479b000 [kernel]\n__hrtimer_run_queues/ffffffffa4789b60 [kernel]\nhrtimer_interrupt/ffffffffa478a610 [kernel]\n__sysvec_apic_timer_interrupt/ffffffffa4661a60 [kernel]\nasm_call_sysvec_on_stack/ffffffffa5201130 [kernel]\nsysvec_apic_timer_interrupt/ffffffffa5090500 [kernel]\nasm_sysvec_apic_timer_interrupt/ffffffffa5200d30 [kernel]\ndump_stack/ffffffffa506335e [kernel]\ndump_header/ffffffffa5058eb0 [kernel]\noom_kill_process.cold.9/ffffffffa505921a [kernel]\nout_of_memory/ffffffffa48a1740 [kernel]\nmem_cgroup_out_of_memory/ffffffffa495ff70 [kernel]\ntry_charge/ffffffffa4964ff0 [kernel]\nmem_cgroup_charge/ffffffffa4968de0 [kernel]\n__add_to_page_cache_locked/ffffffffa4895c30 [kernel]\nadd_to_page_cache_lru/ffffffffa48961a0 [kernel]\npagecache_get_page/ffffffffa4897ad0 [kernel]\ngrab_cache_page_write_begin/ffffffffa4899d00 [kernel]\niomap_write_begin/ffffffffa49fddc0 [kernel]\niomap_write_actor/ffffffffa49fe980 [kernel]\niomap_apply/ffffffffa49fbd20 [kernel]\niomap_file_buffered_write/ffffffffa49fc040 [kernel]\nxfs_file_buffered_aio_write/ffffffffc0f3bed0 [xfs]\nnew_sync_write/ffffffffa497ffb0 [kernel]\nvfs_write/ffffffffa4982520 [kernel]\nksys_write/ffffffffa4982880 [kernel]\ndo_syscall_64/ffffffffa508d190 [kernel]\nentry_SYSCALL_64_after_hwframe/ffffffffa5200078 [kernel]"
-  }
-}
-```
-
-### Protocol Stack Packet Loss Detection
-
-**Feature Introduction**
-
-During packet transmission and reception, packets may be lost due to various reasons, potentially causing business request delays or even timeouts. dropwatch uses eBPF to observe kernel network packet discards, outputting packet loss network context such as source/destination addresses, source/destination ports, seq, seqack, pid, comm, stack information, etc. dropwatch mainly detects TCP protocol-related packet loss, using pre-set probes to filter packets and determine packet loss locations for root cause analysis.
-
-**Example**
-
-Information captured by dropwatch is automatically uploaded to ES. Below is an example where kubelet failed to send data packet due to device packet loss:
+**Sample Data**
 
 ```json
 {
-  "_index": "***_2025-06-11",
-  "_type": "_doc",
-  "_id": "***",
-  "_score": 0,
-  "_source": {
-    "uploaded_time": "2025-06-11T16:58:15.100223795+08:00",
-    "hostname": "***",
-    "tracer_data": {
-      "comm": "kubelet",
-      "stack": "kfree_skb/ffffffff9a0cd5c0 [kernel]\nkfree_skb/ffffffff9a0cd5c0 [kernel]\nkfree_skb_list/ffffffff9a0cd670 [kernel]\n__dev_queue_xmit/ffffffff9a0ea020 [kernel]\nip_finish_output2/ffffffff9a18a720 [kernel]\n__ip_queue_xmit/ffffffff9a18d280 [kernel]\n__tcp_transmit_skb/ffffffff9a1ad890 [kernel]\ntcp_connect/ffffffff9a1ae610 [kernel]\ntcp_v4_connect/ffffffff9a1b3450 [kernel]\n__inet_stream_connect/ffffffff9a1d25f0 [kernel]\ninet_stream_connect/ffffffff9a1d2860 [kernel]\n__sys_connect/ffffffff9a0c1170 [kernel]\n__x64_sys_connect/ffffffff9a0c1240 [kernel]\ndo_syscall_64/ffffffff9a2ea9f0 [kernel]\nentry_SYSCALL_64_after_hwframe/ffffffff9a400078 [kernel]",
-      "saddr": "10.79.68.62",
-      "pid": 1687046,
-      "type": "common_drop",
-      "queue_mapping": 11,
-      "dport": 2052,
-      "pkt_len": 74,
-      "ack_seq": 0,
-      "daddr": "10.179.142.26",
-      "state": "SYN_SENT",
-      "src_hostname": "***",
-      "sport": 15402,
-      "dest_hostname": "***",
-      "seq": 1902752773,
-      "max_ack_backlog": 0
-    },
-    "tracer_time": "2025-06-11 16:58:15.099 +0800",
-    "tracer_type": "auto",
-    "time": "2025-06-11 16:58:15.099 +0800",
-    "region": "***",
-    "tracer_name": "dropwatch",
-    "es_index_time": 1749632295120
-  },
-  "fields": {
-    "time": [
-      "2025-06-11T08:58:15.099Z"
-    ]
-  },
-  "_ignored": [
-    "tracer_data.stack"
-  ],
-  "_version": 1,
-  "sort": [
-    1749632295099
-  ]
+	"uploaded_time": "2025-06-11T16:05:16.251152703+08:00",
+	"hostname": "***",
+	"tracer_data": {
+		"comm": "***-agent",
+		"stack": "scheduler_tick/...",
+		"now": 5532940660025295,
+		"offtime": 237328905,
+		"cpu": 1,
+		"threshold": 100000000,
+		"pid": 688073
+	},
+	"tracer_time": "2025-06-11 16:05:16.251 +0800",
+	"tracer_type": "auto",
+	"time": "2025-06-11 16:05:16.251 +0800",
+	"region": "***",
+	"tracer_name": "softirq"
 }
 ```
 
-The local host also stores identical data:
+**Fields**
+
+- **comm**: Name of the process that triggered the event
+- **pid**: Process ID that triggered the event
+- **saddr / daddr**: Source IP / Destination IP
+- **sport / dport**: Source port / Destination port
+- **seq / ack_seq**: TCP sequence number / Acknowledgment sequence number
+- **state**: TCP connection state (e.g., ESTABLISHED)
+- **pkt_len**: Packet length (bytes)
+- **where**: Location where the latency occurred (e.g., TO_USER_COPY indicates user-space copy stage)
+- **latency_ms**: Actual latency (milliseconds)
+
+### 2. dropwatch
+
+**Description** Detects packet drop behavior in the kernel network protocol stack. Outputs the call stack and network address information at the time of the drop to help troubleshoot business anomalies caused by network packet loss.
+
+**Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
+
+**Sample Data**
 
 ```json
-2025-06-11 16:58:15 Host=*** Region=***
-{
-  "hostname": "***",
-  "region": "***",
-  "uploaded_time": "2025-06-11T16:58:15.100223795+08:00",
-  "time": "2025-06-11 16:58:15.099 +0800",
-  "tracer_name": "dropwatch",
-  "tracer_time": "2025-06-11 16:58:15.099 +0800",
-  "tracer_type": "auto",
-  "tracer_data": {
-    "type": "common_drop",
-    "comm": "kubelet",
-    "pid": 1687046,
-    "saddr": "10.79.68.62",
-    "daddr": "10.179.142.26",
-    "sport": 15402,
-    "dport": 2052,
-    "src_hostname": ***",
-    "dest_hostname": "***",
-    "max_ack_backlog": 0,
-    "seq": 1902752773,
-    "ack_seq": 0,
-    "queue_mapping": 11,
-    "pkt_len": 74,
-    "state": "SYN_SENT",
-    "stack": "kfree_skb/ffffffff9a0cd5c0 [kernel]\nkfree_skb/ffffffff9a0cd5c0 [kernel]\nkfree_skb_list/ffffffff9a0cd670 [kernel]\n__dev_queue_xmit/ffffffff9a0ea020 [kernel]\nip_finish_output2/ffffffff9a18a720 [kernel]\n__ip_queue_xmit/ffffffff9a18d280 [kernel]\n__tcp_transmit_skb/ffffffff9a1ad890 [kernel]\ntcp_connect/ffffffff9a1ae610 [kernel]\ntcp_v4_connect/ffffffff9a1b3450 [kernel]\n__inet_stream_connect/ffffffff9a1d25f0 [kernel]\ninet_stream_connect/ffffffff9a1d2860 [kernel]\n__sys_connect/ffffffff9a0c1170 [kernel]\n__x64_sys_connect/ffffffff9a0c1240 [kernel]\ndo_syscall_64/ffffffff9a2ea9f0 [kernel]\nentry_SYSCALL_64_after_hwframe/ffffffff9a400078 [kernel]"
-  }
+"tracer_data": {
+	"comm": "kubelet",
+	"stack": "kfree_skb/...",
+	"saddr": "10.79.68.62",
+	"pid": 1687046,
+	"type": "common_drop",
+	"queue_mapping": ...
 }
 ```
 
-### Protocol Stack Receive Latency
+**Fields**
 
-**Feature Introduction**
+- **comm**: Name of the process that triggered the packet drop
+- **stack**: Kernel call stack at the time of the drop
+- **saddr**: Source IP address
+- **pid**: Process ID
+- **type**: Drop type (e.g., common_drop)
+- **queue_mapping**: Network card queue mapping information (specific values depend on the actual drop scenario)
 
-Online business network latency issues are difficult to locate, as problems can occur in any direction or stage. For example, receive direction latency might be caused by issues in drivers, protocol stack, or user programs. Therefore, we developed net_rx_latency detection functionality, leveraging skb NIC ingress timestamps to check latency at driver, protocol stack, and user-space layers. When receive latency reaches thresholds, eBPF captures network context information (five-tuple, latency location, process info, etc.). Receive path: **NIC -> Driver -> Protocol Stack -> User Active Receive**
+### 3. net_rx_latency
 
-**Example**
+**Description** Detects latency events in the protocol stack receive path (network card driver → kernel protocol stack → user-space active receive). Triggers when the overall latency of a single packet from the network card to user-space reception exceeds the threshold (default 90 seconds). Records detailed network context information (such as 5-tuple, TCP sequence number, latency location, etc.) to help diagnose business timeouts and jitters caused by protocol stack or application receive delays.
 
-A business container received packets from the kernel with a latency over 90 seconds, tracked via net_rx_latency, ES query output:
+**Typical Scenarios** Resolves network performance issues caused by protocol stack receive latency or slow application response.
+
+**Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
+
+**Sample Data**
 
 ```json
-{
-  "_index": "***_2025-06-11",
-  "_type": "_doc",
-  "_id": "***",
-  "_score": 0,
-  "_source": {
-    "tracer_data": {
-      "dport": 49000,
-      "pkt_len": 26064,
-      "comm": "nginx",
-      "ack_seq": 689410995,
-      "saddr": "10.156.248.76",
-      "pid": 2921092,
-      "where": "TO_USER_COPY",
-      "state": "ESTABLISHED",
-      "daddr": "10.134.72.4",
-      "sport": 9213,
-      "seq": 1009085774,
-      "latency_ms": 95973
-    },
-    "container_host_namespace": "***",
-    "container_hostname": "***.docker",
-    "es_index_time": 1749628496541,
-    "uploaded_time": "2025-06-11T15:54:56.404864955+08:00",
-    "hostname": "***",
-    "container_type": "normal",
-    "tracer_time": "2025-06-11 15:54:56.404 +0800",
-    "time": "2025-06-11 15:54:56.404 +0800",
-    "region": "***",
-    "container_level": "1",
-    "container_id": "***",
-    "tracer_name": "net_rx_latency"
-  },
-  "fields": {
-    "time": [
-      "2025-06-11T07:54:56.404Z"
-    ]
-  },
-  "_version": 1,
-  "sort": [
-    1749628496404
-  ]
+"tracer_data": {
+	"comm": "nginx",
+	"pid": 2921092,
+	"saddr": "10.156.248.76",
+	"daddr": "10.134.72.4",
+	"sport": 9213,
+	"dport": 49000,
+	"seq": 1009085774,
+	"ack_seq": 689410995,
+	"state": "ESTABLISHED",
+	"pkt_len": 26064,
+	"where": "TO_USER_COPY",
+	"latency_ms": 95973
 }
 ```
 
-The local host also stores identical data:
+**Fields**
+
+- **comm**: Name of the process that triggered the event
+- **pid**: Process ID that triggered the event
+- **saddr / daddr**: Source IP / Destination IP
+- **sport / dport**: Source port / Destination port
+- **seq / ack_seq**: TCP sequence number / Acknowledgment sequence number
+- **state**: TCP connection state (e.g., ESTABLISHED)
+- **pkt_len**: Packet length (bytes)
+- **where**: Location where the latency occurred (e.g., TO_USER_COPY indicates user-space copy stage)
+- **latency_ms**: Actual latency (milliseconds)
+
+### 4. oom
+
+**Description** Detects OOM (Out of Memory) events occurring on the host or inside containers. Records information about the process killed by the OOM Killer (victim) and the process that triggered the OOM (trigger), along with corresponding container and memory cgroup details, providing a complete fault snapshot.
+
+**Typical Scenarios** Focuses on memory exhaustion issues on physical machines or containers to quickly locate business failures caused by unavailable memory.
+
+**Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
+
+**Sample Data**
 
 ```json
-2025-06-11 15:54:46 Host=*** Region=*** ContainerHost=***.docker ContainerID=*** ContainerType=normal ContainerLevel=1
-{
-  "hostname": "***",
-  "region": "***",
-  "container_id": "***",
-  "container_hostname": "***.docker",
-  "container_host_namespace": "***",
-  "container_type": "normal",
-  "container_level": "1",
-  "uploaded_time": "2025-06-11T15:54:46.129136232+08:00",
-  "time": "2025-06-11 15:54:46.129 +0800",
-  "tracer_time": "2025-06-11 15:54:46.129 +0800",
-  "tracer_name": "net_rx_latency",
-  "tracer_data": {
-    "comm": "nginx",
-    "pid": 2921092,
-    "where": "TO_USER_COPY",
-    "latency_ms": 95973,
-    "state": "ESTABLISHED",
-    "saddr": "10.156.248.76",
-    "daddr": "10.134.72.4",
-    "sport": 9213,
-    "dport": 49000,
-    "seq": 1009024958,
-    "ack_seq": 689410995,
-    "pkt_len": 20272
-  }
+"tracer_data": {
+	"victim_process_name": "java",
+	"victim_pid": 3218745,
+	"victim_container_hostname": "***.docker",
+	"victim_container_id": "***",
+	"victim_memcg_css": "0xff4b8d8be3818000",
+	"trigger_process_name": "java",
+	"trigger_pid": 3218804,
+	"trigger_container_hostname": "***.docker",
+	"trigger_container_id": "***",
+	"trigger_memcg_css": "0xff4b8d8be3818000"
 }
 ```
 
-### Host/Container Memory Overused
+**Fields**
 
-**Feature Introduction**
+- **victim_process_name / victim_pid**: Name and PID of the process killed by the OOM Killer
+- **victim_container_hostname / victim_container_id**: Hostname and container ID where the killed process resides
+- **victim_memcg_css**: Memory cgroup pointer (hex) of the killed process
+- **trigger_process_name / trigger_pid**: Name and PID of the process that triggered OOM
+- **trigger_container_hostname / trigger_container_id**: Hostname and container ID where the triggering process resides
+- **trigger_memcg_css**: Memory cgroup pointer (hex) of the triggering process
 
-When programs request more memory than available system or process limits during runtime, it can cause system or application crashes. Common in memory leaks, big data processing, or insufficient resource configuration scenarios. By inserting BPF hooks in the OOM kernel flow, detailed OOM context information is captured and passed to user space, including process information, killed process information, and container details.
+### 5. softlockup
 
-**Example**
+**Description** Detects softlockup events (CPU unable to schedule for a long time, default threshold approximately 1 second). Provides information about the target process causing the lockup, the CPU where it occurred, the kernel call stack of that CPU, and records the number of occurrences.
 
-When OOM occurs in a container, captured information:
+**Typical Scenarios** Resolves system freezes or response anomalies caused by softlockup.
+
+**Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
+
+### 6. hungtask
+
+**Description** Detects hungtask events, captures kernel stacks of all processes in D state (uninterruptible sleep), and records the total number of D-state processes and backtrace information for each CPU to preserve the fault scene.
+
+**Typical Scenarios** Locates transient scenarios where a large number of D-state processes appear, facilitating subsequent problem tracking and analysis.
+
+**Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
+
+**Sample Data**
 
 ```json
-{
-  "_index": "***_cases_2025-06-11",
-  "_type": "_doc",
-  "_id": "***",
-  "_score": 0,
-  "_source": {
-    "uploaded_time": "2025-06-11T17:09:07.236482841+08:00",
-    "hostname": "***",
-    "tracer_data": {
-      "victim_process_name": "java",
-      "trigger_memcg_css": "0xff4b8d8be3818000",
-      "victim_container_hostname": "***.docker",
-      "victim_memcg_css": "0xff4b8d8be3818000",
-      "trigger_process_name": "java",
-      "victim_pid": 3218745,
-      "trigger_pid": 3218804,
-      "trigger_container_hostname": "***.docker",
-      "victim_container_id": "***",
-      "trigger_container_id": "***",
-    "tracer_time": "2025-06-11 17:09:07.236 +0800",
-    "tracer_type": "auto",
-    "time": "2025-06-11 17:09:07.236 +0800",
-    "region": "***",
-    "tracer_name": "oom",
-    "es_index_time": 1749632947258
-  },
-  "fields": {
-    "time": [
-      "2025-06-11T09:09:07.236Z"
-    ]
-  },
-  "_version": 1,
-  "sort": [
-    1749632947236
-  ]
+"tracer_data": {
+	"cpus_stack": "2025-06-10 09:57:14 sysrq: Show backtrace of all active CPUs\nNMI backtrace for cpu 33\n...",
+	"pid": 2567042,
+	"d_process_count": "...",
+	"blocked_processes_stack": "..."
 }
 ```
 
-Additionally, oom event implements `Collector` interface, which enables collecting statistics on host OOM occurrences via Prometheus, distinguishing between events from the host and containers.
+**Fields**
 
-### Kernel Softlockup
+- **cpus_stack**: NMI backtrace information for all CPUs (multi-line text containing timestamps and stack content)
+- **pid**: PID of the process that triggered the hungtask detection
+- **d_process_count**: Total number of D-state processes in the current system
+- **blocked_processes_stack**: Kernel stack information of D-state processes
 
-**Feature Introduction**
+### 7. memory_reclaim_events
 
-Softlockup is an abnormal state detected by the Linux kernel where a kernel thread (or process) on a CPU core occupies the CPU for a long time without scheduling, preventing the system from responding normally to other tasks. Causes include kernel code bugs, CPU overload, device driver issues, and others. When a softlockup occurs in the system, information about the target process and CPU is collected, kernel stack information from all CPUs is retrieved, and the number of occurrences of the issue is recorded.
+**Description** Detects direct memory reclaim events. Triggers when the direct reclaim time of the same process exceeds the threshold (default approximately 900 ms) within 1 second. Records the reclaim duration, process, and container information.
 
-### Process Blocking
+**Typical Scenarios** Resolves business process stalls caused by excessive system memory pressure.
 
-**Feature Introduction**
+**Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
 
-A D-state process (also known as Uninterruptible Sleep) is a special process state indicating that the process is blocked while waiting for certain system resources and cannot be awakened by signals or external interrupts. Common scenarios include disk I/O operations, kernel blocking, hardware failures, etc. hungtask captures the kernel stacks of all D-state processes within the system and records the count of such processes. It is used to locate transient scenarios where D-state processes appear momentarily, enabling root cause analysis even after the scenario has resolved.
-
-**Example**
+**Sample Data**
 
 ```json
-{
-  "_index": "***_2025-06-10",
-  "_type": "_doc",
-  "_id": "8yyOV5cBGoYArUxjSdvr",
-  "_score": 0,
-  "_source": {
-    "uploaded_time": "2025-06-10T09:57:12.202191192+08:00",
-    "hostname": "***",
-    "tracer_data": {
-      "cpus_stack": "2025-06-10 09:57:14 sysrq: Show backtrace of all active CPUs\n2025-06-10 09:57:14 NMI backtrace for cpu 33\n2025-06-10 09:57:14 CPU: 33 PID: 768309 Comm: huatuo-bamai Kdump: loaded Tainted: G S      W  OEL    5.10.0-216.0.0.115.v1.0.x86_64 #1\n2025-06-10 09:57:14 Hardware name: Inspur SA5212M5/YZMB-00882-104, BIOS 4.1.12 11/27/2019\n2025-06-10 09:57:14 Call Trace:\n2025-06-10 09:57:14  dump_stack+0x57/0x6e\n2025-06-10 09:57:14  nmi_cpu_backtrace.cold.0+0x30/0x65\n2025-06-10 09:57:14  ? lapic_can_unplug_cpu+0x80/0x80\n2025-06-10 09:57:14  nmi_trigger_cpumask_backtrace+0xdf/0xf0\n2025-06-10 09:57:14  arch_trigger_cpumask_backtrace+0x15/0x20\n2025-06-10 09:57:14  sysrq_handle_showallcpus+0x14/0x90\n2025-06-10 09:57:14  __handle_sysrq.cold.8+0x77/0xe8\n2025-06-10 09:57:14  write_sysrq_trigger+0x3d/0x60\n2025-06-10 09:57:14  proc_reg_write+0x38/0x80\n2025-06-10 09:57:14  vfs_write+0xdb/0x250\n2025-06-10 09:57:14  ksys_write+0x59/0xd0\n2025-06-10 09:57:14  do_syscall_64+0x39/0x80\n2025-06-10 09:57:14  entry_SYSCALL_64_after_hwframe+0x62/0xc7\n2025-06-10 09:57:14 RIP: 0033:0x4088ae\n2025-06-10 09:57:14 Code: 48 83 ec 38 e8 13 00 00 00 48 83 c4 38 5d c3 cc cc cc cc cc cc cc cc cc cc cc cc cc 49 89 f2 48 89 fa 48 89 ce 48 89 df 0f 05 <48> 3d 01 f0 ff ff 76 15 48 f7 d8 48 89 c1 48 c7 c0 ff ff ff ff 48\n2025-06-10 09:57:14 RSP: 002b:000000c000adcc60 EFLAGS: 00000212 ORIG_RAX: 0000000000000001\n2025-06-10 09:57:14 RAX: ffffffffffffffda RBX: 0000000000000013 RCX: 00000000004088ae\n2025-06-10 09:57:14 RDX: 0000000000000001 RSI: 000000000274ab18 RDI: 0000000000000013\n2025-06-10 09:57:14 RBP: 000000c000adcca0 R08: 0000000000000000 R09: 0000000000000000\n2025-06-10 09:57:14 R10: 0000000000000000 R11: 0000000000000212 R12: 000000c000adcdc0\n2025-06-10 09:57:14 R13: 0000000000000002 R14: 000000c000caa540 R15: 0000000000000000\n2025-06-10 09:57:14 Sending NMI from CPU 33 to CPUs 0-32,34-95:\n2025-06-10 09:57:14 NMI backtrace for cpu 52 skipped: idling at intel_idle+0x6f/0xc0\n2025-06-10 09:57:14 NMI backtrace for cpu 54 skipped: idling at intel_idle+0x6f/0xc0\n2025-06-10 09:57:14 NMI backtrace for cpu 7 skipped: idling at intel_idle+0x6f/0xc0\n2025-06-10 09:57:14 NMI backtrace for cpu 81 skipped: idling at intel_idle+0x6f/0xc0\n2025-06-10 09:57:14 NMI backtrace for cpu 60 skipped: idling at intel_idle+0x6f/0xc0\n2025-06-10 09:57:14 NMI backtrace for cpu 2 skipped: idling at intel_idle+0x6f/0xc0\n2025-06-10 09:57:14 NMI backtrace for cpu 21 skipped: idling at intel_idle+0x6f/0xc0\n2025-06-10 09:57:14 NMI backtrace for cpu 69 skipped: idling at intel_idle+0x6f/0xc0\n2025-06-10 09:57:14 NMI backtrace for cpu 58 skipped: idling at intel_idle+0x6f/
-      ...
-      "pid": 2567042
-    },
-    "tracer_time": "2025-06-10 09:57:12.202 +0800",
-    "tracer_type": "auto",
-    "time": "2025-06-10 09:57:12.202 +0800",
-    "region": "***",
-    "tracer_name": "hungtask",
-    "es_index_time": 1749520632297
-  },
-  "fields": {
-    "time": [
-      "2025-06-10T01:57:12.202Z"
-    ]
-  },
-  "_ignored": [
-    "tracer_data.blocked_processes_stack",
-    "tracer_data.cpus_stack"
-  ],
-  "_version": 1,
-  "sort": [
-    1749520632202
-  ]
+"tracer_data": {
+	"comm": "chrome",
+	"pid": 1896137,
+	"deltatime": 1412702917
 }
 ```
 
-Additionally, the hungtask event implements the `Collector` interface, which also enables collecting statistics on host hungtask occurrences via Prometheus.
+**Fields**
 
-### Container/Host Memory Reclamation
+- **comm**: Name of the process that triggered memory reclaim
+- **pid**: PID of the process that triggered reclaim
+- **deltatime**: Direct reclaim duration (nanoseconds)
 
-**Feature Introduction**
+### 8. netdev_events
 
-When memory pressure is excessively high, if a process requests memory at this time, it may enter direct reclamation. This phase involves synchronous reclamation and may cause business process stalls. Recording the time when a process enters direct reclamation helps us assess the severity of impact from direct reclamation on that process. The memreclaim event calculates whether the same process remains in direct reclamation for over 900ms within a 1-second cycle; if so, it records the process's contextual information.
+**Description** Detects network card link status change events (including down/up, MTU changes, AdminDown, CarrierDown, etc.). Outputs interface name, status description, MAC address, and other information.
 
+**Typical Scenarios** Timely detection of physical link issues on network cards to resolve business unavailability caused by network card failures.
 
+**Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
 
-**Example**
-
-When a business container's chrome process enters direct reclamation, the ES query output is as follows:
+**Sample Data**
 
 ```json
-{
-  "_index": "***_cases_2025-06-11",
-  "_type": "_doc",
-  "_id": "***",
-  "_score": 0,
-  "_source": {
-    "tracer_data": {
-      "comm": "chrome",
-      "deltatime": 1412702917,
-      "pid": 1896137
-    },
-    "container_host_namespace": "***",
-    "container_hostname": "***.docker",
-    "es_index_time": 1749641583290,
-    "uploaded_time": "2025-06-11T19:33:03.26754495+08:00",
-    "hostname": "***",
-    "container_type": "normal",
-    "tracer_time": "2025-06-11 19:33:03.267 +0800",
-    "time": "2025-06-11 19:33:03.267 +0800",
-    "region": "***",
-    "container_level": "102",
-    "container_id": "921d0ec0a20c",
-    "tracer_name": "directreclaim"
-  },
-  "fields": {
-    "time": [
-      "2025-06-11T11:33:03.267Z"
-    ]
-  },
-  "_version": 1,
-  "sort": [
-    1749641583267
-  ]
+"tracer_data": {
+	"ifname": "eth1",
+	"linkstatus": "linkStatusAdminDown, linkStatusCarrierDown",
+	"mac": "5c:6f:69:34:dc:72",
+	"index": 3,
+	"start": false
 }
 ```
 
-### Network Device Status
+**Fields**
 
-**Feature Introduction**
+- **ifname**: Network interface name (e.g., eth1)
+- **linkstatus**: Detailed link status description
+- **mac**: Network card MAC address
+- **index**: Interface index
+- **start**: Whether the interface is in start state (true/false)
 
-Network card status changes often cause severe network issues, directly impacting overall host network quality, such as down/up states, MTU changes, etc. Taking the down state as an example, possible causes include operations by privileged processes, underlying cable issues, optical module failures, peer switch problems, etc. The netdev event is designed to detect network device status changes and currently implements monitoring for network card down/up events, distinguishing between administrator-initiated and underlying cause-induced status changes.
+### 9. netdev_bonding_lacp
 
-**Example**
+**Description** Detects status changes of the LACP (Link Aggregation Control Protocol) in bonding mode. Records detailed bonding configuration information, including mode, MII status, Actor/Partner information, slave link status, etc. (outputs the complete content of /proc/net/bonding/bondX).
 
-When an administrator operation causes the eth1 network card to go down, the ES query event output is as follows:
+**Typical Scenarios** Identifies faults on the physical machine or switch side in bonding mode and resolves LACP negotiation jitter issues.
+
+**Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
+
+**Sample Data** (the content field contains the full text)
 
 ```json
-{
-  "_index": "***_cases_2025-05-30",
-  "_type": "_doc",
-  "_id": "***",
-  "_score": 0,
-  "_source": {
-    "uploaded_time": "2025-05-30T17:47:50.406913037+08:00",
-    "hostname": "localhost.localdomain",
-    "tracer_data": {
-      "ifname": "eth1",
-      "start": false,
-      "index": 3,
-      "linkstatus": "linkStatusAdminDown, linkStatusCarrierDown",
-      "mac": "5c:6f:69:34:dc:72"
-    },
-    "tracer_time": "2025-05-30 17:47:50.406 +0800",
-    "tracer_type": "auto",
-    "time": "2025-05-30 17:47:50.406 +0800",
-    "region": "***",
-    "tracer_name": "netdev_event",
-    "es_index_time": 1748598470407
-  },
-  "fields": {
-    "time": [
-      "2025-05-30T09:47:50.406Z"
-    ]
-  },
-  "_version": 1,
-  "sort": [
-    1748598470406
-  ]
+"tracer_data": {
+	"content": "/proc/net/bonding/bond0\nEthernet Channel Bonding Driver: v4.18.0...\nBonding Mode: IEEE 802.3ad Dynamic link aggregation\nMII Status: down\n..."
 }
 ```
 
-### LACP Protocol Status
+**Fields**
 
-**Feature Introduction**
-
-Bond is a technology provided by the Linux system kernel that bundles multiple physical network interfaces into a single logical interface. Through bonding, bandwidth aggregation, failover, or load balancing can be achieved. LACP is a protocol defined by the IEEE 802.3ad standard for dynamically managing Link Aggregation Groups (LAG). Currently, there is no elegant method to obtain physical host LACP protocol negotiation exception events. HUATUO implements the lacp event, which uses BPF to instrument key protocol paths. When a change in link aggregation status is detected, it triggers an event to record relevant information.
-
-**Example**
-
-When the host network card eth1 experiences physical layer down/up fluctuations, the LACP dynamic negotiation status becomes abnormal. The ES query output is as follows:
-
-```json
-{
-  "_index": "***_cases_2025-05-30",
-  "_type": "_doc",
-  "_id": "***",
-  "_score": 0,
-  "_source": {
-    "uploaded_time": "2025-05-30T17:47:48.513318579+08:00",
-    "hostname": "***",
-    "tracer_data": {
-      "content": "/proc/net/bonding/bond0\nEthernet Channel Bonding Driver: v4.18.0 (Apr 7, 2025)\n\nBonding Mode: load balancing (round-robin)\nMII Status: down\nMII Polling Interval (ms): 0\nUp Delay (ms): 0\nDown Delay (ms): 0\nPeer Notification Delay (ms): 0\n/proc/net/bonding/bond4\nEthernet Channel Bonding Driver: v4.18.0 (Apr 7, 2025)\n\nBonding Mode: IEEE 802.3ad Dynamic link aggregation\nTransmit Hash Policy: layer3+4 (1)\nMII Status: up\nMII Polling Interval (ms): 100\nUp Delay (ms): 0\nDown Delay (ms): 0\nPeer Notification Delay (ms): 1000\n\n802.3ad info\nLACP rate: fast\nMin links: 0\nAggregator selection policy (ad_select): stable\nSystem priority: 65535\nSystem MAC address: 5c:6f:69:34:dc:72\nActive Aggregator Info:\n\tAggregator ID: 1\n\tNumber of ports: 2\n\tActor Key: 21\n\tPartner Key: 50013\n\tPartner Mac Address: 00:00:5e:00:01:01\n\nSlave Interface: eth0\nMII Status: up\nSpeed: 25000 Mbps\nDuplex: full\nLink Failure Count: 0\nPermanent HW addr: 5c:6f:69:34:dc:72\nSlave queue ID: 0\nSlave active: 1\nSlave sm_vars: 0x172\nAggregator ID: 1\nAggregator active: 1\nActor Churn State: none\nPartner Churn State: none\nActor Churned Count: 0\nPartner Churned Count: 0\ndetails actor lacp pdu:\n    system priority: 65535\n    system mac address: 5c:6f:69:34:dc:72\n    port key: 21\n    port priority: 255\n    port number: 1\n    port state: 63\ndetails partner lacp pdu:\n    system priority: 200\n    system mac address: 00:00:5e:00:01:01\n    oper key: 50013\n    port priority: 32768\n    port number: 16397\n    port state: 63\n\nSlave Interface: eth1\nMII Status: up\nSpeed: 25000 Mbps\nDuplex: full\nLink Failure Count: 17\nPermanent HW addr: 5c:6f:69:34:dc:73\nSlave queue ID: 0\nSlave active: 0\nSlave sm_vars: 0x172\nAggregator ID: 1\nAggregator active: 1\nActor Churn State: monitoring\nPartner Churn State: monitoring\nActor Churned Count: 2\nPartner Churned Count: 2\ndetails actor lacp pdu:\n    system priority: 65535\n    system mac address: 5c:6f:69:34:dc:72\n    port key: 21\n    port priority: 255\n    port number: 2\n    port state: 15\ndetails partner lacp pdu:\n    system priority: 200\n    system mac address: 00:00:5e:00:01:01\n    oper key: 50013\n    port priority: 32768\n    port number: 32781\n    port state: 31\n"
-    },
-    "tracer_time": "2025-05-30 17:47:48.513 +0800",
-    "tracer_type": "auto",
-    "time": "2025-05-30 17:47:48.513 +0800",
-    "region": "***",
-    "tracer_name": "lacp",
-    "es_index_time": 1748598468514
-  },
-  "fields": {
-    "time": [
-      "2025-05-30T09:47:48.513Z"
-    ]
-  },
-  "_ignored": [
-    "tracer_data.content"
-  ],
-  "_version": 1,
-  "sort": [
-    1748598468513
-  ]
-}
-```
+- **content**: Complete bonding interface status information (multi-line text containing LACP negotiation details for all slaves)
