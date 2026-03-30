@@ -1,1 +1,1 @@
-docs/CHANGELOG/CHANGELOG-next.md
+docs/CHANGELOG_en.md
