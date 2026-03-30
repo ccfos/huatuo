@@ -72,4 +72,4 @@ jobs:
           token: ${{ secrets.HUATUO_RELEASE_TOKEN }}
           body_path: docs/CHANGELOG/CHANGELOG-${{ github.ref_name }}-en.md
           files: |
-            huatuo-bamai-static-${{ github.ref_name }}-linux-*.tar.gz
+            huatuo-bamai-${{ github.ref_name }}-static-linux-*.tar.gz
