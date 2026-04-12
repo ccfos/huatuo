@@ -1108,9 +1108,62 @@ huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
 
 ## IO
 
+`iolatency` tracks disk I/O latency distribution. A simple way to read it is: break one disk request into stages, then count how many requests fall into each latency bucket.
+
+- `q2c`: from entering the queue to completion, covering the full I/O lifecycle
+- `d2c`: from driver dispatch to completion, closer to device-side latency
+- `freeze`: number of disk freeze events
+
+The current version exposes both host-level and container-level metrics.
+
 ### Queue
 
+These metrics always include the common labels `host` and `region`. Container
+metrics also always include `container_host`, `container_name`,
+`container_type`, `container_level`, and `container_hostnamespace`.
+
+```bash
+# HELP huatuo_bamai_iolatency_disk_q2c disk q2c latency
+# TYPE huatuo_bamai_iolatency_disk_q2c gauge
+huatuo_bamai_iolatency_disk_q2c{disk="8:0",host="hostname",latency="20ms - 30ms",region="dev"} 12
+# HELP huatuo_bamai_iolatency_disk_d2c disk d2c latency
+# TYPE huatuo_bamai_iolatency_disk_d2c gauge
+huatuo_bamai_iolatency_disk_d2c{disk="8:0",host="hostname",latency="30ms - 50ms",region="dev"} 3
+# HELP huatuo_bamai_iolatency_container_q2c container q2c latency
+# TYPE huatuo_bamai_iolatency_container_q2c gauge
+huatuo_bamai_iolatency_container_q2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",latency="20ms - 30ms",region="dev"} 7
+# HELP huatuo_bamai_iolatency_container_d2c container d2c latency
+# TYPE huatuo_bamai_iolatency_container_d2c gauge
+huatuo_bamai_iolatency_container_d2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",latency="30ms - 50ms",region="dev"} 2
+```
+
+|Metric|Description|Unit|Scope|Labels|
+|---|---|---|---|---|
+|iolatency_disk_q2c|Host disk latency statistics for the full I/O lifecycle, from queueing to completion|count|Host|host, region, disk, latency|
+|iolatency_disk_d2c|Host disk latency statistics from driver dispatch to completion, closer to device processing time|count|Host|host, region, disk, latency|
+|iolatency_container_q2c|Container-caused latency statistics for the full I/O lifecycle, from queueing to completion|count|Container|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, latency|
+|iolatency_container_d2c|Container-caused latency statistics from driver dispatch to completion|count|Container|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, latency|
+
+The `latency` label currently uses 6 buckets:
+
+- `20ms - 30ms`
+- `30ms - 50ms`
+- `50ms - 100ms`
+- `100ms - 200ms`
+- `200ms - 400ms`
+- `400ms - `
+
 ### Hardware
+
+```bash
+# HELP huatuo_bamai_iolatency_disk_freeze disk freeze count
+# TYPE huatuo_bamai_iolatency_disk_freeze gauge
+huatuo_bamai_iolatency_disk_freeze{disk="8:0",host="hostname",region="dev"} 4
+```
+
+|Metric|Description|Unit|Scope|Labels|
+|---|---|---|---|---|
+|iolatency_disk_freeze|Host disk freeze event count|count|Host|host, region, disk|
 
 ## General System
 

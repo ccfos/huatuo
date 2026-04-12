@@ -1191,11 +1191,63 @@ huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
 
 ## IO
 
-即将开源。
+`iolatency` 用来统计磁盘 I/O 延迟分布。可以把它理解成“把一次磁盘请求拆成几个阶段，再分别看每个阶段卡了多久”。
+
+- `q2c`：从请求进入队列到完成，反映整个 I/O 生命周期延迟
+- `d2c`：从驱动层下发到完成，更接近磁盘和驱动本身的耗时
+- `freeze`：磁盘冻结事件次数
+
+当前版本同时提供宿主机维度和容器维度指标。
 
 ### 队列
 
+这些指标都会自动带上公共标签 `host` 和 `region`。其中容器维度指标还会固定带上
+`container_host`、`container_name`、`container_type`、`container_level`、
+`container_hostnamespace` 这几个容器标签。
+
+```bash
+# HELP huatuo_bamai_iolatency_disk_q2c disk q2c latency
+# TYPE huatuo_bamai_iolatency_disk_q2c gauge
+huatuo_bamai_iolatency_disk_q2c{disk="8:0",host="hostname",latency="20ms - 30ms",region="dev"} 12
+# HELP huatuo_bamai_iolatency_disk_d2c disk d2c latency
+# TYPE huatuo_bamai_iolatency_disk_d2c gauge
+huatuo_bamai_iolatency_disk_d2c{disk="8:0",host="hostname",latency="30ms - 50ms",region="dev"} 3
+# HELP huatuo_bamai_iolatency_container_q2c container q2c latency
+# TYPE huatuo_bamai_iolatency_container_q2c gauge
+huatuo_bamai_iolatency_container_q2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",latency="20ms - 30ms",region="dev"} 7
+# HELP huatuo_bamai_iolatency_container_d2c container d2c latency
+# TYPE huatuo_bamai_iolatency_container_d2c gauge
+huatuo_bamai_iolatency_container_d2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",latency="30ms - 50ms",region="dev"} 2
+```
+
+|指标|意义|单位|对象|标签|
+|---|---|---|---|---|
+|iolatency_disk_q2c|宿主机磁盘整体 I/O 生命周期延迟统计，从入队到完成|计数|宿主|host, region, disk, latency|
+|iolatency_disk_d2c|宿主机磁盘驱动到完成阶段的延迟统计，更接近设备处理耗时|计数|宿主|host, region, disk, latency|
+|iolatency_container_q2c|容器触发的整体 I/O 生命周期延迟统计，从入队到完成|计数|容器|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, latency|
+|iolatency_container_d2c|容器触发的驱动到完成阶段延迟统计|计数|容器|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, latency|
+
+`latency` 标签当前分为 6 个桶：
+
+- `20ms - 30ms`
+- `30ms - 50ms`
+- `50ms - 100ms`
+- `100ms - 200ms`
+- `200ms - 400ms`
+- `400ms - `
+
 ### 硬件
+
+```bash
+# HELP huatuo_bamai_iolatency_disk_freeze disk freeze count
+# TYPE huatuo_bamai_iolatency_disk_freeze gauge
+huatuo_bamai_iolatency_disk_freeze{disk="8:0",host="hostname",region="dev"} 4
+```
+
+|指标|意义|单位|对象|标签|
+|---|---|---|---|---|
+|iolatency_disk_freeze|宿主机磁盘 freeze 事件次数|计数|宿主|host, region, disk|
+
 
 ## 通用系统
 
@@ -1255,4 +1307,3 @@ huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
 |metax_gpu_dpm_performance_level|GPU DPM 性能等级|-|gpu, die, ip|sml.GetDieDPMPerformanceLevel|
 |metax_gpu_ecc_memory_errors_total|GPU ECC 内存错误次数|计数|gpu, die, memory_type, error_type|sml.GetDieECCMemoryInfo|
 |metax_gpu_ecc_memory_retired_pages_total|GPU ECC 内存退役页数|计数|gpu, die|sml.GetDieECCMemoryInfo|
-
