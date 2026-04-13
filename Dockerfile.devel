@@ -18,5 +18,5 @@ ENV PATH="${GOPATH}/bin:${GOROOT}/bin:/usr/lib/llvm15/bin:${PATH}"
 RUN go install mvdan.cc/gofumpt@v0.9.0 && \
     go install golang.org/x/tools/cmd/goimports@v0.41.0 && \
     go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.4 && \
-    go install github.com/vektra/mockery/v2@latest && \
-    go install mvdan.cc/sh/v3/cmd/shfmt@latest
+    go install github.com/vektra/mockery/v2@v2.53.6 && \
+    go install mvdan.cc/sh/v3/cmd/shfmt@v3.11.0
