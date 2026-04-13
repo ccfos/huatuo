@@ -116,7 +116,6 @@ func (c *iolatencyTracing) getContainerIOLatencyMetrics() ([]*metric.Data, error
 				map[string]string{"latency": latencyLabels[zone]},
 			))
 		}
-
 	}
 
 	return containerMetrics, nil
