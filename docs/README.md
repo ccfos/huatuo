@@ -1,1 +1,1 @@
-These documents are synchronized to website [http://huatuo.tech/docs/](http://huatuo.tech/docs/).
+These documents are synchronized to website [http://docs.huatuo.tech](http://docs.huatuo.tech/).

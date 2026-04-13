@@ -1,5 +1,5 @@
 ---
-title: Deploy
+title: Deployments
 type: docs
 description: 
 author: HUATUO Team

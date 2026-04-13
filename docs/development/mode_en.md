@@ -1,5 +1,5 @@
 ---
-title: Collection Framework
+title: Framework
 type: docs
 description:
 author: HUATUO Team

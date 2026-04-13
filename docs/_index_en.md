@@ -1,5 +1,5 @@
 ---
-title: "latest"
+title: "Latest"
 type: docs
 description:
 author: HUATUO Team

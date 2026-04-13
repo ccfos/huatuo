@@ -70,7 +70,16 @@ jobs:
           allow_empty_commit: true
           user_name: 'huatuo-teams[bot]'
           user_email: 'huatuo-teams[bot]@users.noreply.github.com'
-      - name: deploy server
+      - name: deploy server, docs web
+        uses: easingthemes/ssh-deploy@main
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.REMOTE_WEB_SSH_KEY }}
+          ARGS: "-avz --delete"
+          SOURCE: ${{ env.WEB_ROOT_DIR }}/docs/public/
+          REMOTE_HOST: ${{ secrets.REMOTE_WEB_HOST }}
+          REMOTE_USER: ${{ secrets.REMOTE_WEB_USER }}
+          TARGET: ${{ secrets.REMOTE_DOC_TARGET }}
+      - name: deploy server, main web
         uses: easingthemes/ssh-deploy@main
         env:
           SSH_PRIVATE_KEY: ${{ secrets.REMOTE_WEB_SSH_KEY }}
