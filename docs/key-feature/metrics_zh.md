@@ -1208,33 +1208,24 @@ huatuo_bamai_sockstat_sockets_used{host="hostname",region="dev"} 409
 ```bash
 # HELP huatuo_bamai_iolatency_disk_q2c disk q2c latency
 # TYPE huatuo_bamai_iolatency_disk_q2c gauge
-huatuo_bamai_iolatency_disk_q2c{disk="8:0",host="hostname",latency="20ms - 30ms",region="dev"} 12
+huatuo_bamai_iolatency_disk_q2c{disk="8:0",host="hostname",region="dev",zone="0"} 12
 # HELP huatuo_bamai_iolatency_disk_d2c disk d2c latency
 # TYPE huatuo_bamai_iolatency_disk_d2c gauge
-huatuo_bamai_iolatency_disk_d2c{disk="8:0",host="hostname",latency="30ms - 50ms",region="dev"} 3
+huatuo_bamai_iolatency_disk_d2c{disk="8:0",host="hostname",region="dev",zone="1"} 3
 # HELP huatuo_bamai_iolatency_container_q2c container q2c latency
 # TYPE huatuo_bamai_iolatency_container_q2c gauge
-huatuo_bamai_iolatency_container_q2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",latency="20ms - 30ms",region="dev"} 7
+huatuo_bamai_iolatency_container_q2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev",zone="0"} 7
 # HELP huatuo_bamai_iolatency_container_d2c container d2c latency
 # TYPE huatuo_bamai_iolatency_container_d2c gauge
-huatuo_bamai_iolatency_container_d2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",latency="30ms - 50ms",region="dev"} 2
+huatuo_bamai_iolatency_container_d2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev",zone="1"} 2
 ```
 
 |指标|意义|单位|对象|标签|
 |---|---|---|---|---|
-|iolatency_disk_q2c|宿主机磁盘整体 I/O 生命周期延迟统计，从入队到完成|计数|宿主|host, region, disk, latency|
-|iolatency_disk_d2c|宿主机磁盘驱动到完成阶段的延迟统计，更接近设备处理耗时|计数|宿主|host, region, disk, latency|
-|iolatency_container_q2c|容器触发的整体 I/O 生命周期延迟统计，从入队到完成|计数|容器|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, latency|
-|iolatency_container_d2c|容器触发的驱动到完成阶段延迟统计|计数|容器|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, latency|
-
-`latency` 标签当前分为 6 个桶：
-
-- `20ms - 30ms`
-- `30ms - 50ms`
-- `50ms - 100ms`
-- `100ms - 200ms`
-- `200ms - 400ms`
-- `400ms - `
+|iolatency_disk_q2c|宿主机磁盘整体 I/O 生命周期延迟统计，从入队到完成。分桶为：zone0 20-30ms，zone1 30-50ms，zone2 50-100ms，zone3 100-200ms，zone4 200-400ms，zone5 400ms+|计数|宿主|host, region, disk, zone|
+|iolatency_disk_d2c|宿主机磁盘驱动到完成阶段的延迟统计，更接近设备处理耗时。分桶为：zone0 20-30ms，zone1 30-50ms，zone2 50-100ms，zone3 100-200ms，zone4 200-400ms，zone5 400ms+|计数|宿主|host, region, disk, zone|
+|iolatency_container_q2c|容器触发的整体 I/O 生命周期延迟统计，从入队到完成。分桶为：zone0 20-30ms，zone1 30-50ms，zone2 50-100ms，zone3 100-200ms，zone4 200-400ms，zone5 400ms+|计数|容器|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, zone|
+|iolatency_container_d2c|容器触发的驱动到完成阶段延迟统计。分桶为：zone0 20-30ms，zone1 30-50ms，zone2 50-100ms，zone3 100-200ms，zone4 200-400ms，zone5 400ms+|计数|容器|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, zone|
 
 ### 硬件
 

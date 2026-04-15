@@ -235,7 +235,7 @@
               "exemplar": true,
               "expr": "increase(huatuo_bamai_iolatency_container_q2c{container_host=~\"$container_host\",region=\"$region\"}[5m])",
               "interval": "",
-              "legendFormat": "{{container_host}} [{{latency}}]",
+              "legendFormat": "{{container_host}} [zone={{zone}}]",
               "refId": "A"
             }
           ],
@@ -338,7 +338,7 @@
               "exemplar": true,
               "expr": "increase(huatuo_bamai_iolatency_container_d2c{container_host=~\"$container_host\",region=\"$region\"}[5m])",
               "interval": "",
-              "legendFormat": "{{container_host}} [{{latency}}]",
+              "legendFormat": "{{container_host}} [zone={{zone}}]",
               "range": true,
               "refId": "A"
             }
