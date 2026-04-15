@@ -378,7 +378,7 @@
               "exemplar": true,
               "expr": "increase(huatuo_bamai_iolatency_disk_q2c{host=~\"$host\",region=\"$region\"}[5m])",
               "interval": "",
-              "legendFormat": "{{host}},disk={{disk}} [{{latency}}]",
+              "legendFormat": "{{host}},disk={{disk}} [zone={{zone}}]",
               "refId": "A"
             }
           ],
@@ -476,7 +476,7 @@
               "exemplar": true,
               "expr": "increase(huatuo_bamai_iolatency_disk_d2c{host=~\"$host\",region=\"$region\"}[5m])",
               "interval": "",
-              "legendFormat": "{{host}},disk={{disk}} [{{latency}}]",
+              "legendFormat": "{{host}},disk={{disk}} [zone={{zone}}]",
               "refId": "A"
             }
           ],

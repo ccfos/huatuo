@@ -16,19 +16,11 @@ package collector
 
 import (
 	"fmt"
+	"strconv"
 
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/pkg/metric"
 )
-
-var latencyLabels = []string{
-	"20ms - 30ms",
-	"30ms - 50ms",
-	"50ms - 100ms",
-	"100ms - 200ms",
-	"200ms - 400ms",
-	"400ms - ",
-}
 
 // DiskEntry stores disk latency histogram buckets and freeze counts.
 type DiskEntry struct {
@@ -99,7 +91,7 @@ func (c *iolatencyTracing) getContainerIOLatencyMetrics() ([]*metric.Data, error
 				"q2c",
 				float64(cnt),
 				"container q2c latency",
-				map[string]string{"latency": latencyLabels[zone]},
+				map[string]string{"zone": strconv.Itoa(zone)},
 			))
 		}
 
@@ -113,7 +105,7 @@ func (c *iolatencyTracing) getContainerIOLatencyMetrics() ([]*metric.Data, error
 				"d2c",
 				float64(cnt),
 				"container d2c latency",
-				map[string]string{"latency": latencyLabels[zone]},
+				map[string]string{"zone": strconv.Itoa(zone)},
 			))
 		}
 	}
@@ -142,7 +134,7 @@ func (c *iolatencyTracing) getDiskIOLatencyMetrics() ([]*metric.Data, error) {
 				"disk_q2c",
 				float64(cnt),
 				"disk q2c latency",
-				map[string]string{"disk": diskDev, "latency": latencyLabels[zone]},
+				map[string]string{"disk": diskDev, "zone": strconv.Itoa(zone)},
 			))
 		}
 
@@ -155,7 +147,7 @@ func (c *iolatencyTracing) getDiskIOLatencyMetrics() ([]*metric.Data, error) {
 				"disk_d2c",
 				float64(cnt),
 				"disk d2c latency",
-				map[string]string{"disk": diskDev, "latency": latencyLabels[zone]},
+				map[string]string{"disk": diskDev, "zone": strconv.Itoa(zone)},
 			))
 		}
 

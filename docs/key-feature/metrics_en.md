@@ -1125,33 +1125,24 @@ metrics also always include `container_host`, `container_name`,
 ```bash
 # HELP huatuo_bamai_iolatency_disk_q2c disk q2c latency
 # TYPE huatuo_bamai_iolatency_disk_q2c gauge
-huatuo_bamai_iolatency_disk_q2c{disk="8:0",host="hostname",latency="20ms - 30ms",region="dev"} 12
+huatuo_bamai_iolatency_disk_q2c{disk="8:0",host="hostname",region="dev",zone="0"} 12
 # HELP huatuo_bamai_iolatency_disk_d2c disk d2c latency
 # TYPE huatuo_bamai_iolatency_disk_d2c gauge
-huatuo_bamai_iolatency_disk_d2c{disk="8:0",host="hostname",latency="30ms - 50ms",region="dev"} 3
+huatuo_bamai_iolatency_disk_d2c{disk="8:0",host="hostname",region="dev",zone="1"} 3
 # HELP huatuo_bamai_iolatency_container_q2c container q2c latency
 # TYPE huatuo_bamai_iolatency_container_q2c gauge
-huatuo_bamai_iolatency_container_q2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",latency="20ms - 30ms",region="dev"} 7
+huatuo_bamai_iolatency_container_q2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev",zone="0"} 7
 # HELP huatuo_bamai_iolatency_container_d2c container d2c latency
 # TYPE huatuo_bamai_iolatency_container_d2c gauge
-huatuo_bamai_iolatency_container_d2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",latency="30ms - 50ms",region="dev"} 2
+huatuo_bamai_iolatency_container_d2c{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev",zone="1"} 2
 ```
 
 |Metric|Description|Unit|Scope|Labels|
 |---|---|---|---|---|
-|iolatency_disk_q2c|Host disk latency statistics for the full I/O lifecycle, from queueing to completion|count|Host|host, region, disk, latency|
-|iolatency_disk_d2c|Host disk latency statistics from driver dispatch to completion, closer to device processing time|count|Host|host, region, disk, latency|
-|iolatency_container_q2c|Container-caused latency statistics for the full I/O lifecycle, from queueing to completion|count|Container|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, latency|
-|iolatency_container_d2c|Container-caused latency statistics from driver dispatch to completion|count|Container|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, latency|
-
-The `latency` label currently uses 6 buckets:
-
-- `20ms - 30ms`
-- `30ms - 50ms`
-- `50ms - 100ms`
-- `100ms - 200ms`
-- `200ms - 400ms`
-- `400ms - `
+|iolatency_disk_q2c|Host disk latency statistics for the full I/O lifecycle, from queueing to completion. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Host|host, region, disk, zone|
+|iolatency_disk_d2c|Host disk latency statistics from driver dispatch to completion, closer to device processing time. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Host|host, region, disk, zone|
+|iolatency_container_q2c|Container-caused latency statistics for the full I/O lifecycle, from queueing to completion. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Container|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, zone|
+|iolatency_container_d2c|Container-caused latency statistics from driver dispatch to completion. Buckets: zone0 20-30ms, zone1 30-50ms, zone2 50-100ms, zone3 100-200ms, zone4 200-400ms, zone5 400ms+|count|Container|host, region, container_host, container_name, container_type, container_level, container_hostnamespace, zone|
 
 ### Hardware
 
