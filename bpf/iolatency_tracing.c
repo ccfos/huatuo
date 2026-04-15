@@ -234,9 +234,9 @@ int kprobe_done_bio(struct pt_regs *ctx)
 }
 
 SEC("kprobe/blk_mq_freeze_queue")
-int kprobe_freeze_queue(struct pt_regs *regs)
+int kprobe_freeze_queue(struct pt_regs *ctx)
 {
-	struct request_queue *q = (void *)regs->di;
+	struct request_queue *q = (struct request_queue *)PT_REGS_PARM1(ctx);
 	struct blkcg_gq *blkg;
 	struct blkgq_entry *blkgq_entry;
 	struct disk_entry *disk_entry;
