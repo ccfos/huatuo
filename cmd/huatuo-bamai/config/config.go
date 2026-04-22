@@ -21,29 +21,28 @@ import (
 	"huatuo-bamai/core/events"
 	collector "huatuo-bamai/core/metrics"
 	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/internal/log"
 )
 
-// LogConf holds log configuration.
-type LogConf struct {
+// Log holds log configuration.
+type Log struct {
 	Level string `default:"Info"`
 	File  string
 }
 
-// APIServerConf holds api server configuration.
-type APIServerConf struct {
+// APIServer holds api server configuration.
+type APIServer struct {
 	TCPAddr string `default:":19704"`
 }
 
-// RuntimeCgroupConf holds runtime cgroup configuration.
-type RuntimeCgroupConf struct {
+// RuntimeCgroup holds runtime cgroup configuration.
+type RuntimeCgroup struct {
 	LimitInitCPU float64 `default:"0.5"`
 	LimitCPU     float64 `default:"2.0"`
 	LimitMem     int64   `default:"2048"`
 }
 
-// StorageConf holds storage configuration.
-type StorageConf struct {
+// Storage holds storage configuration.
+type Storage struct {
 	ES struct {
 		Address            string `default:"http://127.0.0.1:9200"`
 		Username, Password string
@@ -57,66 +56,61 @@ type StorageConf struct {
 	}
 }
 
-// TaskConfigConf holds task related configuration.
-type TaskConfigConf struct {
+// Task holds task related configuration.
+type Task struct {
 	MaxRunningTask int `default:"10"`
 }
 
-// PodConf holds pod configuration.
-type PodConf struct {
+// Pod holds pod configuration.
+type Pod struct {
 	KubeletReadOnlyPort   uint32 `default:"10255"`
 	KubeletAuthorizedPort uint32 `default:"10250"`
 	KubeletClientCertPath string
 	DockerAPIVersion      string `default:"1.24"`
 }
 
-// HuaTuoConfig is the global huatuo configuration.
-type HuaTuoConfig struct {
-	Log             LogConf
+// BamaiConfig is the global huatuo-bamai configuration.
+type BamaiConfig struct {
+	Log             Log
 	BlackList       []string
-	APIServer       APIServerConf
-	RuntimeCgroup   RuntimeCgroupConf
-	Storage         StorageConf
-	TaskConfig      TaskConfigConf
+	APIServer       APIServer
+	RuntimeCgroup   RuntimeCgroup
+	Storage         Storage
+	TaskConfig      Task
 	AutoTracing     autotracing.Config
 	EventTracing    events.Config
 	MetricCollector collector.Config
-	Pod             PodConf
+	Pod             Pod
 }
 
 var (
 	configFile = ""
-	cfg        = &HuaTuoConfig{}
-
-	// Region is host and containers belong to.
-	Region string
+	cfg        = &BamaiConfig{}
+	Region     string
 )
 
 // Load loads the config file and updates module level configs.
 func Load(path string) error {
-	cfg = &HuaTuoConfig{}
+	cfg = &BamaiConfig{}
 	if err := internalconfig.Load(path, cfg); err != nil {
 		return err
 	}
 
 	cfg.RuntimeCgroup.LimitMem *= 1024 * 1024
 	configFile = path
-	applyModuleConfigs()
-
-	log.Infof("Loadconfig:\n%+v\n", cfg)
+	setCoreModuleConfig()
 	return nil
 }
 
-// Get returns the global configuration.
-func Get() *HuaTuoConfig {
+// Get returns the bamai configuration.
+func Get() *BamaiConfig {
 	return cfg
 }
 
 // Set updates a config field by dot-separated key.
 func Set(key string, val any) {
 	internalconfig.Set(cfg, canonicalKey(key), val)
-	applyModuleConfigs()
-	log.Infof("Config: set %s = %v", key, val)
+	setCoreModuleConfig()
 }
 
 // Sync writes the config back to the current config file.
@@ -135,8 +129,8 @@ func canonicalKey(key string) string {
 	}
 }
 
-func applyModuleConfigs() {
-	autotracing.SetConfig(&cfg.AutoTracing)
-	events.SetConfig(&cfg.EventTracing)
-	collector.SetConfig(&cfg.MetricCollector)
+func setCoreModuleConfig() {
+	autotracing.Set(&cfg.AutoTracing)
+	events.Set(&cfg.EventTracing)
+	collector.Set(&cfg.MetricCollector)
 }

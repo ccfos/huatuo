@@ -59,8 +59,8 @@ type Config struct {
 
 var cfg = &Config{}
 
-// SetConfig updates the package level config.
-func SetConfig(c *Config) {
+// Set updates the package level config.
+func Set(c *Config) {
 	if c == nil {
 		cfg = &Config{}
 		return
