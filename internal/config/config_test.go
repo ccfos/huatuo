@@ -1,3 +1,17 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package config
 
 import (
@@ -28,16 +42,12 @@ func writeConfigFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-// TestCoreBinDir 验证内部通用配置工具的基础环境初始化。
-// 场景包括：启动时自动识别二进制目录，且该目录不会是空字符串。
 func TestCoreBinDir(t *testing.T) {
 	if CoreBinDir == "" {
 		t.Errorf("CoreBinDir should not be empty")
 	}
 }
 
-// TestLoad 验证严格 TOML 加载行为。
-// 场景包括：正常加载旧格式 TOML、加载嵌套字段、类型不匹配时报错、严格模式下未知字段时报错。
 func TestLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -132,8 +142,6 @@ unexpected_key = "strict-mode"
 	}
 }
 
-// TestSyncAndSet 验证通用配置工具的写回和点路径更新能力。
-// 场景包括：先写回配置再重新加载、更新顶层字段、更新嵌套字段，以及写回内容中不丢字段。
 func TestSyncAndSet(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "sync-config.toml")
