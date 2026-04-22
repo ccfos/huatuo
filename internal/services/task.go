@@ -58,7 +58,7 @@ func NewTask(ctx *gin.Context) {
 		return
 	}
 
-	if tracing.RunningTaskCount() > config.Get().TaskConfig.MaxRunningTask {
+	if tracing.RunningTaskCount() > config.Get().Task.MaxRunningTask {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "too many running tasks"})
 		return
 	}

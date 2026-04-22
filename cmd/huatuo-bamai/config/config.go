@@ -23,64 +23,53 @@ import (
 	internalconfig "huatuo-bamai/internal/config"
 )
 
-// Log holds log configuration.
-type Log struct {
-	Level string `default:"Info"`
-	File  string
-}
-
-// APIServer holds api server configuration.
-type APIServer struct {
-	TCPAddr string `default:":19704"`
-}
-
-// RuntimeCgroup holds runtime cgroup configuration.
-type RuntimeCgroup struct {
-	LimitInitCPU float64 `default:"0.5"`
-	LimitCPU     float64 `default:"2.0"`
-	LimitMem     int64   `default:"2048"`
-}
-
-// Storage holds storage configuration.
-type Storage struct {
-	ES struct {
-		Address            string `default:"http://127.0.0.1:9200"`
-		Username, Password string
-		Index              string `default:"huatuo_bamai"`
-	}
-
-	LocalFile struct {
-		Path         string `default:"huatuo-local"`
-		RotationSize int    `default:"100"`
-		MaxRotation  int    `default:"10"`
-	}
-}
-
-// Task holds task related configuration.
-type Task struct {
-	MaxRunningTask int `default:"10"`
-}
-
-// Pod holds pod configuration.
-type Pod struct {
-	KubeletReadOnlyPort   uint32 `default:"10255"`
-	KubeletAuthorizedPort uint32 `default:"10250"`
-	KubeletClientCertPath string
-	DockerAPIVersion      string `default:"1.24"`
-}
-
 // BamaiConfig is the global huatuo-bamai configuration.
 type BamaiConfig struct {
-	Log             Log
-	BlackList       []string
-	APIServer       APIServer
-	RuntimeCgroup   RuntimeCgroup
-	Storage         Storage
-	TaskConfig      Task
+	BlackList []string
+
+	Log struct {
+		Level string `default:"Info"`
+		File  string
+	}
+
+	APIServer struct {
+		TCPAddr string `default:":19704"`
+	}
+
+	RuntimeCgroup struct {
+		LimitInitCPU float64 `default:"0.5"`
+		LimitCPU     float64 `default:"2.0"`
+		LimitMem     int64   `default:"2048"`
+	}
+
+	Storage struct {
+		ES struct {
+			Address            string `default:"http://127.0.0.1:9200"`
+			Username, Password string
+			Index              string `default:"huatuo_bamai"`
+		}
+
+		LocalFile struct {
+			Path         string `default:"huatuo-local"`
+			RotationSize int    `default:"100"`
+			MaxRotation  int    `default:"10"`
+		}
+	}
+
+	Task struct {
+		MaxRunningTask int `default:"10"`
+	}
+
+	Pod struct {
+		KubeletReadOnlyPort   uint32 `default:"10255"`
+		KubeletAuthorizedPort uint32 `default:"10250"`
+		KubeletClientCertPath string
+		DockerAPIVersion      string `default:"1.24"`
+	}
+
 	AutoTracing     autotracing.Config
 	EventTracing    events.Config
 	MetricCollector collector.Config
-	Pod             Pod
 }
 
 var (
