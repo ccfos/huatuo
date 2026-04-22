@@ -15,8 +15,6 @@
 package config
 
 import (
-	"strings"
-
 	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/core/events"
 	collector "huatuo-bamai/core/metrics"
@@ -98,24 +96,13 @@ func Get() *BamaiConfig {
 
 // Set updates a config field by dot-separated key.
 func Set(key string, val any) {
-	internalconfig.Set(cfg, canonicalKey(key), val)
+	internalconfig.Set(cfg, key, val)
 	setCoreModuleConfig()
 }
 
 // Sync writes the config back to the current config file.
 func Sync() error {
 	return internalconfig.Sync(configFile, cfg)
-}
-
-func canonicalKey(key string) string {
-	switch {
-	case key == "Blacklist":
-		return "BlackList"
-	case strings.HasPrefix(key, "Blacklist."):
-		return "BlackList." + strings.TrimPrefix(key, "Blacklist.")
-	default:
-		return key
-	}
 }
 
 func setCoreModuleConfig() {
