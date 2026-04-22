@@ -247,7 +247,7 @@ func main() {
 		},
 		&cli.StringSliceFlag{
 			Name:  "disable-tracing",
-			Usage: "disable tracing. This is related to Blacklist in config, and complement each other",
+			Usage: "disable tracing. Multiple values supported, comma-separated. This option works with the BlackList in the config file.",
 		},
 		&cli.BoolFlag{
 			Name:  "log-debug",
@@ -295,10 +295,9 @@ func main() {
 		// tracer
 		disabledTracing := ctx.StringSlice("disable-tracing")
 		if len(disabledTracing) > 0 {
-			definedTracers := config.Get().BlackList
-			definedTracers = append(definedTracers, disabledTracing...)
+			disabledTracing = append(config.Get().BlackList, disabledTracing...)
+			config.Set("BlackList", disabledTracing)
 
-			config.Set("Blacklist", definedTracers)
 			log.Infof("The tracer black list by cli: %v", config.Get().BlackList)
 		}
 
