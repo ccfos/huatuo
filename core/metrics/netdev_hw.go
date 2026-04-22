@@ -26,7 +26,6 @@ import (
 	"sync/atomic"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs/sysfs"
 	"huatuo-bamai/internal/utils/parseutil"
@@ -75,7 +74,7 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 		}
 
 		// skip processing if the interface is not in the whitelist or the driver is not allowed
-		if !slices.Contains(conf.Get().MetricCollector.NetdevHW.DeviceList, iface) ||
+		if !slices.Contains(cfg.NetdevHW.DeviceList, iface) ||
 			!slices.Contains(deviceDriverList, drv.Driver) {
 			log.Debugf("%s is skipped (not in whitelist or driver not allowed)", iface)
 			continue

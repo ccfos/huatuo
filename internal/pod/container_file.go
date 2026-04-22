@@ -24,7 +24,6 @@ import (
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/pidfile"
 
 	dockertypes "github.com/docker/docker/api/types"
@@ -47,14 +46,17 @@ var (
 	// Containerd State Dir. More information see https://github.com/containerd/containerd/blob/main/docs/cri/config.md
 	containerdStateDir           string
 	initContainerProviderEnvOnce sync.Once
+
+	// dockerAPIVersion is set from ManagerInitCtx.
+	dockerAPIVersion string
 )
 
-func initContainerProviderEnv(containerEnv string) {
+func initContainerProviderEnv(containerEnv, apiVersion string) {
 	initContainerProviderEnvOnce.Do(func() {
 		var err error
 		switch containerEnv {
 		case "docker":
-			err = initDockerProviderEnv()
+			err = initDockerProviderEnv(apiVersion)
 		case "containerd":
 			err = initContainerdProviderEnv()
 		default:
@@ -67,8 +69,8 @@ func initContainerProviderEnv(containerEnv string) {
 	})
 }
 
-func initDockerProviderEnv() error {
-	client, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithVersion(conf.Get().Pod.DockerAPIVersion))
+func initDockerProviderEnv(apiVersion string) error {
+	client, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithVersion(apiVersion))
 	if err != nil {
 		return fmt.Errorf("create docker client, err: %w", err)
 	}

@@ -21,7 +21,6 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs/blockdevice"
 	"huatuo-bamai/internal/storage"
@@ -254,13 +253,13 @@ func waittingDiskEvents(ctx context.Context, intervalSeconds uint64, thresholds 
 // Start do the io tracer work
 func (c *ioTracing) Start(ctx context.Context) error {
 	thresholds := IoThresholds{
-		RbpsThreshold:  conf.Get().AutoTracing.IOTracing.RbpsThreshold,
-		WbpsThreshold:  conf.Get().AutoTracing.IOTracing.WbpsThreshold,
-		UtilThreshold:  conf.Get().AutoTracing.IOTracing.UtilThreshold,
-		AwaitThreshold: conf.Get().AutoTracing.IOTracing.AwaitThreshold,
+		RbpsThreshold:  cfg.IOTracing.RbpsThreshold,
+		WbpsThreshold:  cfg.IOTracing.WbpsThreshold,
+		UtilThreshold:  cfg.IOTracing.UtilThreshold,
+		AwaitThreshold: cfg.IOTracing.AwaitThreshold,
 	}
 
-	runIotracingToolTimeout := conf.Get().AutoTracing.IOTracing.RunTracingToolTimeout
+	runIotracingToolTimeout := cfg.IOTracing.RunTracingToolTimeout
 
 	reasonSnapshot, err := waittingDiskEvents(ctx, 5, thresholds)
 	if err != nil {

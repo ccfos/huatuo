@@ -24,7 +24,6 @@ import (
 	"strconv"
 	"strings"
 
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
@@ -59,8 +58,7 @@ func (c *netstatCollector) Update() ([]*metric.Data, error) {
 	// append init namespace into containers
 	containers[""] = nil
 
-	filter := newFieldFilter(conf.Get().MetricCollector.Netstat.Excluded,
-		conf.Get().MetricCollector.Netstat.Included)
+	filter := newFieldFilter(cfg.Netstat.Excluded, cfg.Netstat.Included)
 
 	var metrics []*metric.Data
 	for _, container := range containers {

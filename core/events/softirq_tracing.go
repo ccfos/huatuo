@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/utils/bytesutil"
@@ -69,7 +68,7 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *softirqTracing) Start(ctx context.Context) error {
-	softirqThresh := conf.Get().EventTracing.Softirq.DisabledThreshold
+	softirqThresh := cfg.Softirq.DisabledThreshold
 
 	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), map[string]any{"softirq_thresh": softirqThresh})
 	if err != nil {

@@ -27,7 +27,6 @@ import (
 
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/stats"
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
@@ -282,17 +281,17 @@ type CPUIdleTracingData struct {
 }
 
 func (c *cpuIdleTracing) Start(ctx context.Context) error {
-	interval := conf.Get().AutoTracing.CPUIdle.Interval
-	perfRunTimeOut := conf.Get().AutoTracing.CPUIdle.RunTracingToolTimeout
+	interval := cfg.CPUIdle.Interval
+	perfRunTimeOut := cfg.CPUIdle.RunTracingToolTimeout
 
 	threshold := &cpuIdleThreshold{
-		deltaUser:       conf.Get().AutoTracing.CPUIdle.DeltaUserThreshold,
-		deltaSys:        conf.Get().AutoTracing.CPUIdle.DeltaSysThreshold,
-		deltaTotal:      conf.Get().AutoTracing.CPUIdle.DeltaUsageThreshold,
-		usageUser:       conf.Get().AutoTracing.CPUIdle.UserThreshold,
-		usageSys:        conf.Get().AutoTracing.CPUIdle.SysThreshold,
-		usageTotal:      conf.Get().AutoTracing.CPUIdle.UsageThreshold,
-		intervalTracing: conf.Get().AutoTracing.CPUIdle.IntervalTracing,
+		deltaUser:       cfg.CPUIdle.DeltaUserThreshold,
+		deltaSys:        cfg.CPUIdle.DeltaSysThreshold,
+		deltaTotal:      cfg.CPUIdle.DeltaUsageThreshold,
+		usageUser:       cfg.CPUIdle.UserThreshold,
+		usageSys:        cfg.CPUIdle.SysThreshold,
+		usageTotal:      cfg.CPUIdle.UsageThreshold,
+		intervalTracing: cfg.CPUIdle.IntervalTracing,
 	}
 
 	for {

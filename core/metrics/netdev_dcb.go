@@ -21,7 +21,6 @@ import (
 	"syscall"
 	"unsafe"
 
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 
@@ -121,7 +120,7 @@ func parseAttributes(attrs []syscall.NetlinkRouteAttr) (*ieeePfc, error) {
 func (dcb *dcbCollector) Update() ([]*metric.Data, error) {
 	data := []*metric.Data{}
 
-	for _, ifname := range conf.Get().MetricCollector.NetdevDCB.DeviceList {
+	for _, ifname := range cfg.NetdevDCB.DeviceList {
 		msgs, err := doDcbRequest(ifname)
 		if err != nil {
 			if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.ENODEV) {

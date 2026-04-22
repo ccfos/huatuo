@@ -74,6 +74,7 @@ type ManagerInitCtx struct {
 	PodAuthorizedPort    uint32
 	PodClientCertPath    string
 	PodContainerDisabled bool
+	DockerAPIVersion     string
 
 	// this is used internally.
 	podClientCertPath string
@@ -144,6 +145,8 @@ func kubeletPodListPortCacheUpdate(ctx *ManagerInitCtx) error {
 }
 
 func ManagerInit(ctx *ManagerInitCtx) error {
+	dockerAPIVersion = ctx.DockerAPIVersion
+
 	// Pod sync disabled, directly return
 	if ctx.PodContainerDisabled {
 		log.Infof("skip pod sync: pod container from kubelet is disabled")
@@ -435,7 +438,7 @@ func parseContainerIDInPodStatus(data string) (string, error) {
 	}
 
 	// init the container provider
-	initContainerProviderEnv(parts[0])
+	initContainerProviderEnv(parts[0], dockerAPIVersion)
 
 	return parts[1], nil
 }

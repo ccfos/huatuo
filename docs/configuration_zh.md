@@ -654,7 +654,7 @@ BlackList = ["netdev_hw", "metax_gpu"]
 
 - **ExcludedContainerQos**：排除的容器 QoS 级别列表。
 
-  默认 [""]。 不监控指定 QoS 级别的容器网络接收延迟（对应 Kubernetes Pod QoS：Guaranteed、Burstable、BestEffort）。 
+  默认 [""]。 不监控指定 QoS 级别的容器网络接收延迟（对应 Kubernetes Pod QoS：Guaranteed、Burstable、BestEffort）。
 
   **说明**：通常排除 BestEffort 容器以减少噪声。
 

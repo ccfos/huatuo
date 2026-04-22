@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
@@ -63,7 +62,7 @@ const cssCacheTTL = 5 * time.Second
 // Start detect work, load bpf and wait data form perfevent
 func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), map[string]any{
-		"deltath": conf.Get().EventTracing.MemoryReclaim.BlockedThreshold,
+		"deltath": cfg.MemoryReclaim.BlockedThreshold,
 	})
 	if err != nil {
 		return err

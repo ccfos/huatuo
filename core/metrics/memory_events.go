@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
@@ -43,8 +42,7 @@ func newMemEvents() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *memEventsCollector) Update() ([]*metric.Data, error) {
-	filter := newFieldFilter(conf.Get().MetricCollector.MemoryEvents.Excluded,
-		conf.Get().MetricCollector.MemoryEvents.Included)
+	filter := newFieldFilter(cfg.MemoryEvents.Excluded, cfg.MemoryEvents.Included)
 
 	containers, err := pod.NormalContainers()
 	if err != nil {

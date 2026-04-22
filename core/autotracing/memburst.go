@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/pkg/tracing"
@@ -177,12 +176,12 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 func (c *memBurstTracing) Start(ctx context.Context) error {
 	var err error
 
-	historyWindowLength := conf.Get().AutoTracing.MemoryBurst.SlidingWindowLength
-	sampleInterval := conf.Get().AutoTracing.MemoryBurst.Interval
-	intervalTracing := conf.Get().AutoTracing.MemoryBurst.IntervalTracing
-	topNProcesses := conf.Get().AutoTracing.MemoryBurst.DumpProcessMaxNum
-	burstRatio := (float64(conf.Get().AutoTracing.MemoryBurst.DeltaMemoryBurst)/100.0 + 1)
-	anonThreshold := conf.Get().AutoTracing.MemoryBurst.DeltaAnonThreshold
+	historyWindowLength := cfg.MemoryBurst.SlidingWindowLength
+	sampleInterval := cfg.MemoryBurst.Interval
+	intervalTracing := cfg.MemoryBurst.IntervalTracing
+	topNProcesses := cfg.MemoryBurst.DumpProcessMaxNum
+	burstRatio := (float64(cfg.MemoryBurst.DeltaMemoryBurst) / 100.0) + 1
+	anonThreshold := cfg.MemoryBurst.DeltaAnonThreshold
 
 	memInfo, err := readMemInfo(map[string]bool{"MemTotal": true})
 	if err != nil {
