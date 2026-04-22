@@ -310,7 +310,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
   Default: 10s.
 
-- **IntervalContinuousRun** (or IntervalTracing): Minimum interval between runs (seconds).
+- **IntervalTracing**: Minimum interval between runs (seconds).
 
   Default: 1800s (30 minutes).
 
@@ -415,8 +415,6 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 - **IntervalTracing**: Minimum time between consecutive tracings.
 
   Default: 1800s (30 minutes).
-
-  
 
 #### 6.4 IOTracing AutoTracing — Container IO Performance Profiling
 

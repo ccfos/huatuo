@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/storage"
@@ -156,12 +155,12 @@ func (c *cpuSysTracing) buildAndSaveCPUSystem(traceTime time.Time, threshold *cp
 }
 
 func (c *cpuSysTracing) Start(ctx context.Context) error {
-	interval := conf.Get().AutoTracing.CPUSys.Interval
-	perfRunTimeOut := conf.Get().AutoTracing.CPUSys.RunTracingToolTimeout
+	interval := cfg.CPUSys.Interval
+	perfRunTimeOut := cfg.CPUSys.RunTracingToolTimeout
 
 	threshold := &cpuSysThreshold{
-		delta: conf.Get().AutoTracing.CPUSys.DeltaSysThreshold,
-		usage: conf.Get().AutoTracing.CPUSys.SysThreshold,
+		delta: cfg.CPUSys.DeltaSysThreshold,
+		usage: cfg.CPUSys.SysThreshold,
 	}
 
 	for {

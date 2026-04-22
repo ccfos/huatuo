@@ -23,12 +23,12 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/netutil"
+	"huatuo-bamai/internal/utils/patternutil"
 	"huatuo-bamai/pkg/tracing"
 
 	"golang.org/x/sys/unix"
@@ -108,9 +108,9 @@ func newNetRcvLat() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netRecvLatTracing) Start(ctx context.Context) error {
-	toNetIf := conf.Get().EventTracing.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
-	toTCPV4 := conf.Get().EventTracing.NetRxLatency.Driver2TCP          // ms, before RPS to TCP recv(tcp_v4_rcv)
-	toUserCopy := conf.Get().EventTracing.NetRxLatency.Driver2Userspace // ms, before RPS to user recv(skb_copy_datagram_iovec)
+	toNetIf := cfg.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
+	toTCPV4 := cfg.NetRxLatency.Driver2TCP          // ms, before RPS to TCP recv(tcp_v4_rcv)
+	toUserCopy := cfg.NetRxLatency.Driver2Userspace // ms, before RPS to user recv(skb_copy_datagram_iovec)
 
 	if toNetIf == 0 || toTCPV4 == 0 || toUserCopy == 0 {
 		return fmt.Errorf("net_rx_latency threshold [%v %v %v]ms invalid", toNetIf, toTCPV4, toUserCopy)
@@ -201,7 +201,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			}
 
 			// known issue filter
-			caseName, _ := conf.KnownIssueSearch(title, "", "")
+			caseName, _ := patternutil.KnownIssueSearch(cfg.PatternList, title, "", "")
 			if caseName == "net_rx_latency" {
 				log.Debugf("net_rx_latency known issue")
 				continue
@@ -239,7 +239,7 @@ func ignore(pid uint64, comm string, hostNetnsInode uint64) (containerID string,
 		}
 		return "", skip, fmt.Errorf("get netns inode of pid %v failed: %w", pid, err)
 	}
-	if conf.Get().EventTracing.NetRxLatency.ExcludedHostNetnamespace && dstInode == hostNetnsInode {
+	if cfg.NetRxLatency.ExcludedHostNetnamespace && dstInode == hostNetnsInode {
 		log.Debugf("ignore %s:%v the same netns as host", comm, pid)
 		return "", true, nil
 	}
@@ -250,7 +250,7 @@ func ignore(pid uint64, comm string, hostNetnsInode uint64) (containerID string,
 		log.Warnf("get container info by netns inode %v pid %v, failed: %v", dstInode, pid, err)
 	}
 	if container != nil {
-		for _, level := range conf.Get().EventTracing.NetRxLatency.ExcludedContainerQos {
+		for _, level := range cfg.NetRxLatency.ExcludedContainerQos {
 			if strings.EqualFold(container.Qos.String(), level) {
 				log.Debugf("ignore container %+v", container)
 				skip = true

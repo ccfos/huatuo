@@ -24,12 +24,12 @@ import (
 	"syscall"
 	"time"
 
+	"huatuo-bamai/cmd/huatuo-bamai/config"
 	_ "huatuo-bamai/core/autotracing"
 	_ "huatuo-bamai/core/events"
 	_ "huatuo-bamai/core/metrics"
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pidfile"
 	"huatuo-bamai/internal/pod"
@@ -60,8 +60,8 @@ func mainAction(ctx *cli.Context) error {
 
 	if err := cgr.NewRuntime(ctx.App.Name,
 		cgroups.ToSpec(
-			conf.Get().RuntimeCgroup.LimitInitCPU,
-			conf.Get().RuntimeCgroup.LimitMem,
+			config.Get().RuntimeCgroup.LimitInitCPU,
+			config.Get().RuntimeCgroup.LimitMem,
 		),
 	); err != nil {
 		return fmt.Errorf("new runtime cgroup: %w", err)
@@ -76,15 +76,15 @@ func mainAction(ctx *cli.Context) error {
 
 	// initialize the storage clients.
 	storageInitCtx := storage.InitContext{
-		EsAddresses:       conf.Get().Storage.ES.Address,
-		EsUsername:        conf.Get().Storage.ES.Username,
-		EsPassword:        conf.Get().Storage.ES.Password,
-		EsIndex:           conf.Get().Storage.ES.Index,
-		LocalPath:         conf.Get().Storage.LocalFile.Path,
-		LocalMaxRotation:  conf.Get().Storage.LocalFile.MaxRotation,
-		LocalRotationSize: conf.Get().Storage.LocalFile.RotationSize,
+		EsAddresses:       config.Get().Storage.ES.Address,
+		EsUsername:        config.Get().Storage.ES.Username,
+		EsPassword:        config.Get().Storage.ES.Password,
+		EsIndex:           config.Get().Storage.ES.Index,
+		LocalPath:         config.Get().Storage.LocalFile.Path,
+		LocalMaxRotation:  config.Get().Storage.LocalFile.MaxRotation,
+		LocalRotationSize: config.Get().Storage.LocalFile.RotationSize,
 		StorageDisabled:   ctx.Bool("disable-storage"),
-		Region:            conf.Region,
+		Region:            config.Region,
 	}
 
 	if err := storage.InitDefaultClients(&storageInitCtx); err != nil {
@@ -96,18 +96,19 @@ func mainAction(ctx *cli.Context) error {
 	}
 
 	mgrInitCtx := pod.ManagerInitCtx{
-		PodReadOnlyPort:      conf.Get().Pod.KubeletReadOnlyPort,
-		PodAuthorizedPort:    conf.Get().Pod.KubeletAuthorizedPort,
-		PodClientCertPath:    conf.Get().Pod.KubeletClientCertPath,
+		PodReadOnlyPort:      config.Get().Pod.KubeletReadOnlyPort,
+		PodAuthorizedPort:    config.Get().Pod.KubeletAuthorizedPort,
+		PodClientCertPath:    config.Get().Pod.KubeletClientCertPath,
 		PodContainerDisabled: ctx.Bool("disable-kubelet"),
+		DockerAPIVersion:     config.Get().Pod.DockerAPIVersion,
 	}
 
 	if err := pod.ManagerInit(&mgrInitCtx); err != nil {
 		return fmt.Errorf("init podlist and sync module: %w", err)
 	}
 
-	blacklisted := conf.Get().BlackList
-	prom, err := InitMetricsCollector(blacklisted, conf.Region)
+	blacklisted := config.Get().BlackList
+	prom, err := InitMetricsCollector(blacklisted, config.Region)
 	if err != nil {
 		return err
 	}
@@ -122,10 +123,10 @@ func mainAction(ctx *cli.Context) error {
 	}
 
 	log.Infof("Initialize the Metrics collector: %v", prom)
-	services.Start(conf.Get().APIServer.TCPAddr, mgr, prom)
+	services.Start(config.Get().APIServer.TCPAddr, mgr, prom)
 
 	// update cpu quota
-	if err := cgr.UpdateRuntime(cgroups.ToSpec(conf.Get().RuntimeCgroup.LimitCPU, 0)); err != nil {
+	if err := cgr.UpdateRuntime(cgroups.ToSpec(config.Get().RuntimeCgroup.LimitCPU, 0)); err != nil {
 		return fmt.Errorf("update runtime: %w", err)
 	}
 
@@ -267,20 +268,20 @@ func main() {
 		tracing.TaskBinDir = buildOptionDir(optionToolBinDir, ctx)
 
 		configDir := buildOptionDir(optionConfigDir, ctx)
-		if err := conf.LoadConfig(filepath.Join(configDir, ctx.String("config"))); err != nil {
+		if err := config.Load(filepath.Join(configDir, ctx.String("config"))); err != nil {
 			return fmt.Errorf("load config: %w", err)
 		}
 
 		// set Region
-		conf.Region = ctx.String("region")
+		config.Region = ctx.String("region")
 
 		// log level
-		if conf.Get().Log.Level != "" {
-			log.SetLevel(conf.Get().Log.Level)
+		if config.Get().Log.Level != "" {
+			log.SetLevel(config.Get().Log.Level)
 			log.Infof("log level [%s] configured in file, use it", log.GetLevel())
 		}
 
-		logFile := conf.Get().Log.File
+		logFile := config.Get().Log.File
 		if logFile != "" {
 			file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
 			if err == nil {
@@ -294,11 +295,11 @@ func main() {
 		// tracer
 		disabledTracing := ctx.StringSlice("disable-tracing")
 		if len(disabledTracing) > 0 {
-			definedTracers := conf.Get().BlackList
+			definedTracers := config.Get().BlackList
 			definedTracers = append(definedTracers, disabledTracing...)
 
-			conf.Set("Blacklist", definedTracers)
-			log.Infof("The tracer black list by cli: %v", conf.Get().BlackList)
+			config.Set("Blacklist", definedTracers)
+			log.Infof("The tracer black list by cli: %v", config.Get().BlackList)
 		}
 
 		// mountpoint (test only)

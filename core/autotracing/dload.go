@@ -23,10 +23,10 @@ import (
 
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/paths"
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/utils/patternutil"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 
@@ -195,7 +195,7 @@ func buildAndSaveDloadContainer(thresh *dloadThreshold, container *containerDloa
 	}
 
 	// Check if this is caused by known issues.
-	knownIssue, inKnownList := conf.KnownIssueSearch(stackCgrp, containerHostNamespace, "")
+	knownIssue, inKnownList := patternutil.KnownIssueSearch(cfg.PatternList, stackCgrp, containerHostNamespace, "")
 	if knownIssue != "" {
 		data.KnownIssue = knownIssue
 		data.InKnownList = inKnownList
@@ -358,11 +358,11 @@ type dloadThreshold struct {
 
 // Start detect work, monitor the load of containers
 func (c *dloadTracing) Start(ctx context.Context) error {
-	interval := conf.Get().AutoTracing.Dload.Interval
+	interval := cfg.Dload.Interval
 
 	thresh := &dloadThreshold{
-		thresh:          conf.Get().AutoTracing.Dload.ThresholdLoad,
-		intervalTracing: conf.Get().AutoTracing.Dload.IntervalTracing,
+		thresh:          cfg.Dload.ThresholdLoad,
+		intervalTracing: cfg.Dload.IntervalTracing,
 	}
 
 	for {

@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"time"
 
-	"huatuo-bamai/internal/conf"
+	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/pkg/tracing"
 
 	"github.com/gin-gonic/gin"
@@ -58,7 +58,7 @@ func NewTask(ctx *gin.Context) {
 		return
 	}
 
-	if tracing.RunningTaskCount() > conf.Get().TaskConfig.MaxRunningTask {
+	if tracing.RunningTaskCount() > config.Get().TaskConfig.MaxRunningTask {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "too many running tasks"})
 		return
 	}

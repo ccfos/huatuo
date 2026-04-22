@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"reflect"
 
-	"huatuo-bamai/internal/conf"
+	appconfig "huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/request"
 
@@ -42,9 +42,9 @@ func Config(ctx *gin.Context) {
 		if reflect.ValueOf(v).Kind() == reflect.Float64 {
 			v = int(v.(float64))
 		}
-		conf.Set(k, v)
+		appconfig.Set(k, v)
 	}
-	if err := conf.Sync(); err != nil {
+	if err := appconfig.Sync(); err != nil {
 		log.Warnf("config sync error: %v", err)
 		ctx.JSON(http.StatusInternalServerError, request.ErrorResponse{Message: err.Error()})
 		return

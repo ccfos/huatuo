@@ -23,7 +23,6 @@ import (
 	"os"
 	"strconv"
 
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
@@ -51,8 +50,7 @@ func newNetdevCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netdevCollector) Update() ([]*metric.Data, error) {
-	filter := newFieldFilter(conf.Get().MetricCollector.NetdevStats.DeviceExcluded,
-		conf.Get().MetricCollector.NetdevStats.DeviceIncluded)
+	filter := newFieldFilter(cfg.NetdevStats.DeviceExcluded, cfg.NetdevStats.DeviceIncluded)
 
 	log.Debugf("Updating netdev metrics by filter: %v", filter)
 
@@ -95,7 +93,7 @@ func (c *netdevCollector) Update() ([]*metric.Data, error) {
 }
 
 func (c *netdevCollector) getStats(container *pod.Container, filter *fieldFilter) (netdevStats, error) {
-	if conf.Get().MetricCollector.NetdevStats.EnableNetlink {
+	if cfg.NetdevStats.EnableNetlink {
 		return c.netlinkStats(container, filter)
 	}
 	return c.procStats(container, filter)

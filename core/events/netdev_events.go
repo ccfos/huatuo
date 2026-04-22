@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"huatuo-bamai/internal/conf"
 	"huatuo-bamai/internal/linkstatus"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/storage"
@@ -151,7 +150,7 @@ func (netdev *netdevTracing) checkAndInitLinkStatus() error {
 
 	for _, link := range links {
 		ifname := link.Attrs().Name
-		if !slices.Contains(conf.Get().EventTracing.Netdev.DeviceList,
+		if !slices.Contains(cfg.Netdev.DeviceList,
 			ifname) {
 			continue
 		}
