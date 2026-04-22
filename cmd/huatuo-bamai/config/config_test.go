@@ -1,3 +1,17 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package config
 
 import (
@@ -19,8 +33,6 @@ func writeConfigFile(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-// TestLoad 验证 cmd 层直接使用底层 tracing/metrics 配置结构后仍可加载配置。
-// 场景包括：BlackList 正常读取、RuntimeCgroup.LimitMem 仍按 MB 转字节、AutoTracing/EventTracing.PatternList 直连，以及 MetricCollector 直接使用 Vmstat 结构。
 func TestLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := writeConfigFile(t, tmpDir, "huatuo-bamai.conf", `
@@ -76,8 +88,6 @@ ExcludedOnContainer = "writeback"
 	}
 }
 
-// TestSetAndSync 验证 Set/Sync 在直接使用底层配置结构后可正常读写。
-// 场景包括：兼容错误大小写的 Blacklist 键、更新 AutoTracing/EventTracing.PatternList、更新 Vmstat 字段，以及写回后重新加载仍可读。
 func TestSetAndSync(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := writeConfigFile(t, tmpDir, "huatuo-bamai.conf", `
