@@ -114,7 +114,7 @@ ExcludedOnContainer = "writeback"
 		return
 	}
 
-	Set("Blacklist", []string{"netdev_hw", "metax_gpu"})
+	Set("BlackList", []string{"netdev_hw", "metax_gpu"})
 	Set("AutoTracing.PatternList", [][]string{{"cpuidle", "perf"}})
 	Set("EventTracing.PatternList", [][]string{{"dropwatch", "kfree_skb"}})
 	Set("MetricCollector.Vmstat.IncludedOnHost", "pgsteal_direct")
