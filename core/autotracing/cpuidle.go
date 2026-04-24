@@ -93,6 +93,10 @@ func updateContainersCPUIdle() error {
 	}
 
 	for _, container := range containers {
+		if ignoreContainer(container, cfg.CPUIdle.Filter) {
+			continue
+		}
+
 		if _, ok := containersCPUIdle[container.ID]; ok {
 			containersCPUIdle[container.ID].path = container.CgroupPath
 			containersCPUIdle[container.ID].alive = true

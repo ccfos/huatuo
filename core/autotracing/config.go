@@ -26,6 +26,7 @@ type Config struct {
 		Interval              int64 `default:"10"`
 		IntervalTracing       int64 `default:"1800"`
 		RunTracingToolTimeout int64 `default:"10"`
+		Filter                filter
 	}
 
 	CPUSys struct {
@@ -61,6 +62,17 @@ type Config struct {
 	}
 
 	PatternList [][]string
+}
+
+type filter struct {
+	Exclude []filterRule
+	Include []filterRule
+}
+
+type filterRule struct {
+	Field     string
+	Pattern   string
+	MatchType string
 }
 
 var cfg = &Config{}
