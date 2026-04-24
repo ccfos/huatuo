@@ -124,6 +124,17 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 
 	log.Infof("net_rx_latency offset of mono to walltime: %v ns", monoWallOffset)
 
+	// Enable skb software RX timestamps before starting the tracer.
+	tsfd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	if err != nil {
+		return fmt.Errorf("create timestamp socket: %w", err)
+	}
+	defer syscall.Close(tsfd)
+	if err := syscall.SetsockoptInt(tsfd, syscall.SOL_SOCKET, syscall.SO_TIMESTAMPING,
+		unix.SOF_TIMESTAMPING_RX_SOFTWARE); err != nil {
+		return fmt.Errorf("enable skb rx timestamp: %w", err)
+	}
+
 	args := map[string]any{
 		"mono_wall_offset": monoWallOffset,
 		"to_netif":         toNetIf * 1000 * 1000,

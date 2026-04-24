@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
+	"huatuo-bamai/cmd/huatuo-bamai/handlers"
 	_ "huatuo-bamai/core/autotracing"
 	_ "huatuo-bamai/core/events"
 	_ "huatuo-bamai/core/metrics"
@@ -34,7 +35,6 @@ import (
 	"huatuo-bamai/internal/pidfile"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/services"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/tracing"
@@ -123,7 +123,7 @@ func mainAction(ctx *cli.Context) error {
 	}
 
 	log.Infof("Initialize the Metrics collector: %v", prom)
-	services.Start(config.Get().APIServer.TCPAddr, mgr, prom)
+	handlers.Start(config.Get().APIServer.TCPAddr, mgr, prom)
 
 	// update cpu quota
 	if err := cgr.UpdateRuntime(cgroups.ToSpec(config.Get().RuntimeCgroup.LimitCPU, 0)); err != nil {

@@ -47,14 +47,24 @@ func getContainers(serverAddr, containerID string) ([]*pod.Container, error) {
 		return nil, fmt.Errorf("get container failed, status code: %d", resp.StatusCode)
 	}
 
-	var containers []pod.Container
-	if err := json.NewDecoder(resp.Body).Decode(&containers); err != nil {
-		return nil, fmt.Errorf("unmarshal resp.body failed: %w", err)
+	type containersResp struct {
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Data    []pod.Container `json:"data"`
 	}
 
-	res := make([]*pod.Container, 0, len(containers))
-	for i := range containers {
-		res = append(res, &containers[i])
+	var ctResp containersResp
+	if err := json.NewDecoder(resp.Body).Decode(&ctResp); err != nil {
+		return nil, fmt.Errorf("containersResp decode failed: %w", err)
+	}
+
+	if ctResp.Code != 0 {
+		return nil, fmt.Errorf("get container failed, code: %d, message: %s", ctResp.Code, ctResp.Message)
+	}
+
+	res := make([]*pod.Container, 0, len(ctResp.Data))
+	for i := range ctResp.Data {
+		res = append(res, &ctResp.Data[i])
 	}
 
 	return res, nil
