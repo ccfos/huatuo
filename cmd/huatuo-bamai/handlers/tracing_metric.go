@@ -12,39 +12,56 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package services
+package handlers
 
 import (
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )
 
-type tracingHitCollector struct{}
+var tracingStatusCollector = &tracingHitCollector{}
 
-func init() {
-	tracing.RegisterEventTracing("tracing_status", newTracingHit)
+type tracingHitCollector struct {
+	mgrTracing *tracing.TracingManager
 }
 
-func newTracingHit() (*tracing.EventTracingAttr, error) {
-	return &tracing.EventTracingAttr{
-		TracingData: &tracingHitCollector{},
-		Flag:        tracing.FlagMetric,
-	}, nil
+func NewTracingHitCollector(mgrTracing *tracing.TracingManager) *tracingHitCollector {
+	return &tracingHitCollector{mgrTracing: mgrTracing}
+}
+
+func init() {
+	tracing.RegisterEventTracing("tracing_status", func() (*tracing.EventTracingAttr, error) {
+		return &tracing.EventTracingAttr{
+			TracingData: tracingStatusCollector,
+			Flag:        tracing.FlagMetric,
+		}, nil
+	})
+}
+
+func SetTracingManager(mgrTracing *tracing.TracingManager) {
+	tracingStatusCollector.mgrTracing = mgrTracing
 }
 
 func (trace *tracingHitCollector) Update() ([]*metric.Data, error) {
 	var runningTracers int
 	hitMetric := make([]*metric.Data, 0)
 
-	for _, info := range instance.tracingManager.Dump() {
-		hitMetric = append(hitMetric, metric.NewGaugeData("hitcount", float64(info.HitCount),
-			"tracing hit count", map[string]string{"tracing": info.Name}))
+	if trace.mgrTracing == nil {
+		return hitMetric, nil
+	}
+
+	for _, info := range trace.mgrTracing.Dump() {
+		hitMetric = append(hitMetric, metric.NewGaugeData(
+			"hitcount",
+			float64(info.HitCount),
+			"tracing hit count",
+			map[string]string{"tracing": info.Name},
+		))
 		if info.Running {
 			runningTracers++
 		}
 	}
 
-	// huatuo-bamai.running_tracer.cnt
 	hitMetric = append(hitMetric, metric.NewGaugeData("running", float64(runningTracers), "running tracing number", nil))
 	return hitMetric, nil
 }

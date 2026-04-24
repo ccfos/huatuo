@@ -12,42 +12,52 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package config
+package handlers
 
 import (
 	"net/http"
 	"reflect"
 
-	appconfig "huatuo-bamai/cmd/huatuo-bamai/config"
+	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/request"
-
-	"github.com/gin-gonic/gin"
+	"huatuo-bamai/internal/server"
+	"huatuo-bamai/internal/server/response"
 )
 
-// Request set params for tracer
-type Request struct {
+type ConfigHandler struct {
+	Handlers []server.Handle
+}
+
+type ConfigRequest struct {
 	Config map[string]any `json:"config"`
 }
 
-// Config set config param and sync to file
-func Config(ctx *gin.Context) {
-	req := Request{}
-	if err := ctx.BindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, request.ErrorResponse{Message: err.Error()})
-		return
+func NewConfigHandler() *ConfigHandler {
+	h := &ConfigHandler{}
+	h.Handlers = []server.Handle{
+		{Typ: server.HttpPut, Uri: "/config", Handle: h.update},
+	}
+	return h
+}
+
+func (h *ConfigHandler) update(ctx *server.Context) error {
+	req := ConfigRequest{}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
 	for k, v := range req.Config {
 		if reflect.ValueOf(v).Kind() == reflect.Float64 {
 			v = int(v.(float64))
 		}
-		appconfig.Set(k, v)
+		config.Set(k, v)
 	}
-	if err := appconfig.Sync(); err != nil {
+
+	if err := config.Sync(); err != nil {
 		log.Warnf("config sync error: %v", err)
-		ctx.JSON(http.StatusInternalServerError, request.ErrorResponse{Message: err.Error()})
-		return
+		return response.ErrInternal.WithMessage(err.Error())
 	}
-	ctx.JSON(http.StatusNoContent, nil)
+
+	ctx.Status(http.StatusNoContent)
+	return nil
 }
