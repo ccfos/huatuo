@@ -15,6 +15,7 @@
 package collector
 
 import (
+	filter "huatuo-bamai/internal/pattern"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
@@ -44,11 +45,11 @@ func (c *mountPointCollector) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
-	filter := newFieldFilter("", cfg.MountPointStat.MountPointsIncluded)
+	f := filter.NewFilter(cfg.MountPointStat.MountPointsIncluded, "")
 
 	metrics := []*metric.Data{}
 	for _, v := range mountinfo {
-		if filter.ignored(v.MountPoint) {
+		if f.Ignored(v.MountPoint) {
 			continue
 		}
 
