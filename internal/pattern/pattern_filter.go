@@ -27,32 +27,39 @@ const (
 )
 
 type Filter struct {
-	Excluded *Rule
-	Included *Rule
+	Excluded []*Rule
+	Included []*Rule
 }
 
 func NewFilter(included, excluded string) *Filter {
 	f := &Filter{}
 
 	if included != "" {
-		f.Included = &Rule{Pattern: included}
+		f.Included = []*Rule{{Pattern: included}}
 	}
 
 	if excluded != "" {
-		f.Excluded = &Rule{Pattern: excluded}
+		f.Excluded = []*Rule{{Pattern: excluded}}
 	}
 
 	return f
 }
 
 func (f *Filter) Ignored(value string) bool {
-	if f.Included != nil &&
-		!f.Included.match(value) {
+	anyMatch := func(rules []*Rule) bool {
+		for _, r := range rules {
+			if r.match(value) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if len(f.Included) > 0 && !anyMatch(f.Included) {
 		return true
 	}
 
-	if f.Excluded != nil &&
-		f.Excluded.match(value) {
+	if len(f.Excluded) > 0 && anyMatch(f.Excluded) {
 		return true
 	}
 
@@ -60,15 +67,20 @@ func (f *Filter) Ignored(value string) bool {
 }
 
 func (f *Filter) IgnoreContainer(container *pod.Container) bool {
-	if f.Included != nil &&
-		f.Included.Field != "" &&
-		!f.Included.matchContainer(container) {
+	anyMatch := func(rules []*Rule) bool {
+		for _, r := range rules {
+			if r.Field != "" && r.matchContainer(container) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if len(f.Included) > 0 && !anyMatch(f.Included) {
 		return true
 	}
 
-	if f.Excluded != nil &&
-		f.Excluded.Field != "" &&
-		f.Excluded.matchContainer(container) {
+	if len(f.Excluded) > 0 && anyMatch(f.Excluded) {
 		return true
 	}
 
