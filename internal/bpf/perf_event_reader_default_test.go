@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/testutils"
+	testutils "huatuo-bamai/internal/testing"
 	"huatuo-bamai/pkg/types"
 
 	"github.com/cilium/ebpf"

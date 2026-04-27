@@ -24,7 +24,7 @@ import (
 	"strconv"
 
 	"huatuo-bamai/internal/log"
-	filter "huatuo-bamai/internal/pattern"
+	"huatuo-bamai/internal/pattern"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
@@ -90,7 +90,7 @@ func (c *netdevCollector) Update() ([]*metric.Data, error) {
 }
 
 func (c *netdevCollector) getStats(container *pod.Container) (netdevStats, error) {
-	f := filter.NewFilter(cfg.NetdevStats.DeviceIncluded, cfg.NetdevStats.DeviceExcluded)
+	f := pattern.NewFilter(cfg.NetdevStats.DeviceIncluded, cfg.NetdevStats.DeviceExcluded)
 
 	if cfg.NetdevStats.EnableNetlink {
 		return c.netlinkStats(container, f)
@@ -98,7 +98,7 @@ func (c *netdevCollector) getStats(container *pod.Container) (netdevStats, error
 	return c.procStats(container, f)
 }
 
-func (c *netdevCollector) netlinkStats(container *pod.Container, f *filter.Filter) (netdevStats, error) {
+func (c *netdevCollector) netlinkStats(container *pod.Container, f *pattern.Filter) (netdevStats, error) {
 	pid := container.InitPidOrInitnsPid()
 	path := procfs.Path(strconv.Itoa(pid), "ns/net")
 
@@ -204,7 +204,7 @@ func (c *netdevCollector) netlinkStats(container *pod.Container, f *filter.Filte
 	return metrics, nil
 }
 
-func (c *netdevCollector) procStats(container *pod.Container, f *filter.Filter) (netdevStats, error) {
+func (c *netdevCollector) procStats(container *pod.Container, f *pattern.Filter) (netdevStats, error) {
 	pid := container.InitPidOrInitnsPid()
 
 	fs, err := procfs.NewProc(pid)

@@ -24,9 +24,9 @@ import (
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/paths"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/pattern"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
-	"huatuo-bamai/internal/utils/patternutil"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 
@@ -70,7 +70,6 @@ type DloadTracingData struct {
 	LoadAvg           float64 `json:"load_avg"`
 	DLoadAvg          float64 `json:"dload_avg"`
 	KnownIssue        string  `json:"known_issue"`
-	InKnownList       uint64  `json:"in_known_list"`
 	Stack             string  `json:"stack"`
 }
 
@@ -166,7 +165,6 @@ func detectDloadContainer(threshold *dloadThreshold) (*containerDloadInfo, cadvi
 func buildAndSaveDloadContainer(thresh *dloadThreshold, container *containerDloadInfo, loadstat cadvisorV1.LoadStats) error {
 	cgrpPath := container.name
 	containerID := container.container.ID
-	containerHostNamespace := container.container.LabelHostNamespace()
 
 	stackCgrp, err := dumpUninterruptibleTaskStack(taskCgroupType, cgrpPath, debugDload)
 	if err != nil {
@@ -195,14 +193,8 @@ func buildAndSaveDloadContainer(thresh *dloadThreshold, container *containerDloa
 	}
 
 	// Check if this is caused by known issues.
-	knownIssue, inKnownList := patternutil.KnownIssueSearch(cfg.PatternList, stackCgrp, containerHostNamespace, "")
-	if knownIssue != "" {
-		data.KnownIssue = knownIssue
-		data.InKnownList = inKnownList
-	} else {
-		data.KnownIssue = "none"
-		data.InKnownList = inKnownList
-	}
+	knownIssue, _ := pattern.Match(cfg.PatternList, stackCgrp)
+	data.KnownIssue = knownIssue
 
 	storage.Save("dload", containerID, time.Now(), data)
 	return nil

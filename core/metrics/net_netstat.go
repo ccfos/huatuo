@@ -25,7 +25,7 @@ import (
 	"strings"
 
 	"huatuo-bamai/internal/log"
-	filter "huatuo-bamai/internal/pattern"
+	"huatuo-bamai/internal/pattern"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
@@ -59,7 +59,7 @@ func (c *netstatCollector) Update() ([]*metric.Data, error) {
 	// append init namespace into containers
 	containers[""] = nil
 
-	f := filter.NewFilter(cfg.Netstat.Included, cfg.Netstat.Excluded)
+	f := pattern.NewFilter(cfg.Netstat.Included, cfg.Netstat.Excluded)
 
 	var metrics []*metric.Data
 	for _, container := range containers {
@@ -74,7 +74,7 @@ func (c *netstatCollector) Update() ([]*metric.Data, error) {
 	return metrics, nil
 }
 
-func buildNetAndSnmpStat(container *pod.Container, f *filter.Filter) ([]*metric.Data, error) {
+func buildNetAndSnmpStat(container *pod.Container, f *pattern.Filter) ([]*metric.Data, error) {
 	pid := container.InitPidOrInitnsPid()
 
 	netStats, err := parseNetStat(procfs.Path(strconv.Itoa(pid), "net", "netstat"))
