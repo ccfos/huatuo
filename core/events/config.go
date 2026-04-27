@@ -40,7 +40,7 @@ type Config struct {
 		DeviceList []string
 	}
 
-	PatternList [][]string
+	IssuesList [][]string
 }
 
 var cfg = &Config{}

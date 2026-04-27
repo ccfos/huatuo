@@ -193,7 +193,7 @@ func buildAndSaveDloadContainer(thresh *dloadThreshold, container *containerDloa
 	}
 
 	// Check if this is caused by known issues.
-	knownIssue, _ := pattern.Match(cfg.PatternList, stackCgrp)
+	knownIssue, _ := pattern.Match(cfg.IssuesList, stackCgrp)
 	data.KnownIssue = knownIssue
 
 	storage.Save("dload", containerID, time.Now(), data)

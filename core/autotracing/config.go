@@ -63,7 +63,8 @@ type Config struct {
 		DumpProcessMaxNum   int `default:"10"`
 	}
 
-	PatternList [][]string
+	// IssuesList for known issue filtering
+	IssuesList [][]string
 }
 
 var cfg = &Config{}
