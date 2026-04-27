@@ -18,6 +18,8 @@ import (
 	"fmt"
 
 	"huatuo-bamai/internal/cgroups"
+	filter "huatuo-bamai/internal/pattern"
+
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
@@ -63,7 +65,7 @@ func (c *memoryVmStat) Update() ([]*metric.Data, error) {
 }
 
 func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
-	filter := newFieldFilter(cfg.Vmstat.ExcludedOnContainer, cfg.Vmstat.IncludedOnContainer)
+	f := filter.NewFilter(cfg.Vmstat.IncludedOnContainer, cfg.Vmstat.ExcludedOnContainer)
 
 	containers, err := pod.NormalContainers()
 	if err != nil {
@@ -79,7 +81,7 @@ func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
 		}
 
 		for m, v := range raw {
-			if filter.ignored(m) {
+			if f.Ignored(m) {
 				log.Debugf("Ignoring the cgroup memory.stat: %s", m)
 				continue
 			}
@@ -92,7 +94,7 @@ func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
 }
 
 func (c *memoryVmStat) hostVmstat() ([]*metric.Data, error) {
-	filter := newFieldFilter(cfg.Vmstat.ExcludedOnHost, cfg.Vmstat.IncludedOnHost)
+	f := filter.NewFilter(cfg.Vmstat.IncludedOnHost, cfg.Vmstat.ExcludedOnHost)
 
 	raw, err := parseutil.RawKV(procfs.Path("vmstat"))
 	if err != nil {
@@ -101,7 +103,7 @@ func (c *memoryVmStat) hostVmstat() ([]*metric.Data, error) {
 
 	var metrics []*metric.Data
 	for m, v := range raw {
-		if filter.ignored(m) {
+		if f.Ignored(m) {
 			log.Debugf("Ignoring the host vmstat: %s", m)
 			continue
 		}

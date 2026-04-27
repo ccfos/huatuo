@@ -24,6 +24,7 @@ import (
 	"strconv"
 
 	"huatuo-bamai/internal/log"
+	filter "huatuo-bamai/internal/pattern"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
@@ -50,10 +51,6 @@ func newNetdevCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netdevCollector) Update() ([]*metric.Data, error) {
-	filter := newFieldFilter(cfg.NetdevStats.DeviceExcluded, cfg.NetdevStats.DeviceIncluded)
-
-	log.Debugf("Updating netdev metrics by filter: %v", filter)
-
 	// normal containers
 	containers, err := pod.NormalContainers()
 	if err != nil {
@@ -64,12 +61,13 @@ func (c *netdevCollector) Update() ([]*metric.Data, error) {
 	if containers == nil {
 		containers = make(map[string]*pod.Container)
 	}
+
 	// append host into containers
 	containers[""] = nil
 
 	var metrics []*metric.Data
 	for _, container := range containers {
-		devStats, err := c.getStats(container, filter)
+		devStats, err := c.getStats(container)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't get netdev statistic for container %v: %w", container, err)
 		}
@@ -88,18 +86,19 @@ func (c *netdevCollector) Update() ([]*metric.Data, error) {
 		}
 	}
 
-	log.Debugf("Updated netdev metrics by filter %v: %v", filter, metrics)
 	return metrics, nil
 }
 
-func (c *netdevCollector) getStats(container *pod.Container, filter *fieldFilter) (netdevStats, error) {
+func (c *netdevCollector) getStats(container *pod.Container) (netdevStats, error) {
+	f := filter.NewFilter(cfg.NetdevStats.DeviceIncluded, cfg.NetdevStats.DeviceExcluded)
+
 	if cfg.NetdevStats.EnableNetlink {
-		return c.netlinkStats(container, filter)
+		return c.netlinkStats(container, f)
 	}
-	return c.procStats(container, filter)
+	return c.procStats(container, f)
 }
 
-func (c *netdevCollector) netlinkStats(container *pod.Container, filter *fieldFilter) (netdevStats, error) {
+func (c *netdevCollector) netlinkStats(container *pod.Container, f *filter.Filter) (netdevStats, error) {
 	pid := container.InitPidOrInitnsPid()
 	path := procfs.Path(strconv.Itoa(pid), "ns/net")
 
@@ -157,8 +156,7 @@ func (c *netdevCollector) netlinkStats(container *pod.Container, filter *fieldFi
 				RXOtherhostDropped: 0,
 			}
 		}
-
-		if filter.ignored(name) {
+		if f.Ignored(name) {
 			log.Debugf("Ignoring device: %s", name)
 			continue
 		}
@@ -203,11 +201,10 @@ func (c *netdevCollector) netlinkStats(container *pod.Container, filter *fieldFi
 			"receive_nohandler":   stats.RXNoHandler,
 		}
 	}
-
 	return metrics, nil
 }
 
-func (c *netdevCollector) procStats(container *pod.Container, filter *fieldFilter) (netdevStats, error) {
+func (c *netdevCollector) procStats(container *pod.Container, f *filter.Filter) (netdevStats, error) {
 	pid := container.InitPidOrInitnsPid()
 
 	fs, err := procfs.NewProc(pid)
@@ -223,8 +220,7 @@ func (c *netdevCollector) procStats(container *pod.Container, filter *fieldFilte
 	metrics := netdevStats{}
 	for name := range netdev {
 		stats := netdev[name]
-
-		if filter.ignored(name) {
+		if f.Ignored(name) {
 			log.Debugf("Ignoring device: %s", name)
 			continue
 		}

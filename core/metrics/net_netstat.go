@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"huatuo-bamai/internal/log"
+	filter "huatuo-bamai/internal/pattern"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
@@ -58,23 +59,22 @@ func (c *netstatCollector) Update() ([]*metric.Data, error) {
 	// append init namespace into containers
 	containers[""] = nil
 
-	filter := newFieldFilter(cfg.Netstat.Excluded, cfg.Netstat.Included)
+	f := filter.NewFilter(cfg.Netstat.Included, cfg.Netstat.Excluded)
 
 	var metrics []*metric.Data
 	for _, container := range containers {
-		m, err := buildNetAndSnmpStat(container, filter)
+		m, err := buildNetAndSnmpStat(container, f)
 		if err != nil {
 			log.Errorf("netstat/snmp metrics for container %v: %v", container, err)
 			continue
 		}
 		metrics = append(metrics, m...)
 	}
-
-	log.Debugf("Updated netstat metrics by filter %v: %v", filter, metrics)
+	log.Debugf("Updated netstat metrics by filter %v: %v", f, metrics)
 	return metrics, nil
 }
 
-func buildNetAndSnmpStat(container *pod.Container, filter *fieldFilter) ([]*metric.Data, error) {
+func buildNetAndSnmpStat(container *pod.Container, f *filter.Filter) ([]*metric.Data, error) {
 	pid := container.InitPidOrInitnsPid()
 
 	netStats, err := parseNetStat(procfs.Path(strconv.Itoa(pid), "net", "netstat"))
@@ -102,8 +102,7 @@ func buildNetAndSnmpStat(container *pod.Container, filter *fieldFilter) ([]*metr
 			}
 
 			key := protocol + "_" + name
-
-			if filter.ignored(key) {
+			if f.Ignored(key) {
 				log.Debugf("Ignoring netstat metric %s", key)
 				continue
 			}
