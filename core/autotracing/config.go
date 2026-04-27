@@ -14,7 +14,7 @@
 
 package autotracing
 
-import filter "huatuo-bamai/internal/pattern"
+import "huatuo-bamai/internal/pattern"
 
 // Config holds autotracing configuration.
 type Config struct {
@@ -28,7 +28,7 @@ type Config struct {
 		Interval              int64 `default:"10"`
 		IntervalTracing       int64 `default:"1800"`
 		RunTracingToolTimeout int64 `default:"10"`
-		Filter                *filter.Filter
+		Filter                *pattern.Filter
 	}
 
 	CPUSys struct {

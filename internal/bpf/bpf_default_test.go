@@ -29,7 +29,7 @@ import (
 	"strings"
 	"testing"
 
-	"huatuo-bamai/internal/testutils"
+	testutils "huatuo-bamai/internal/testing"
 
 	"github.com/cilium/ebpf"
 	"github.com/stretchr/testify/assert"

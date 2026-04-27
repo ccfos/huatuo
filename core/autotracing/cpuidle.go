@@ -29,7 +29,7 @@ import (
 	"huatuo-bamai/internal/cgroups/stats"
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/log"
-	filter "huatuo-bamai/internal/pattern"
+	"huatuo-bamai/internal/pattern"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/pkg/tracing"
@@ -87,7 +87,7 @@ type containersCPUIdleMap map[string]*containerCPUInfo
 
 var containersCPUIdle = make(containersCPUIdleMap)
 
-func updateContainersCPUIdle(f *filter.Filter) error {
+func updateContainersCPUIdle(f *pattern.Filter) error {
 	containers, err := pod.NormalContainers()
 	if err != nil {
 		return err

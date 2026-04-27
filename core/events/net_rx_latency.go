@@ -24,11 +24,11 @@ import (
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/pattern"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/netutil"
-	"huatuo-bamai/internal/utils/patternutil"
 	"huatuo-bamai/pkg/tracing"
 
 	"golang.org/x/sys/unix"
@@ -212,8 +212,8 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			}
 
 			// known issue filter
-			caseName, _ := patternutil.KnownIssueSearch(cfg.PatternList, title, "", "")
-			if caseName == "net_rx_latency" {
+			_, found := pattern.Match(cfg.PatternList, title)
+			if found {
 				log.Debugf("net_rx_latency known issue")
 				continue
 			}

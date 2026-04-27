@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"huatuo-bamai/internal/cgroups"
-	filter "huatuo-bamai/internal/pattern"
+	"huatuo-bamai/internal/pattern"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
@@ -65,7 +65,7 @@ func (c *memoryVmStat) Update() ([]*metric.Data, error) {
 }
 
 func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
-	f := filter.NewFilter(cfg.Vmstat.IncludedOnContainer, cfg.Vmstat.ExcludedOnContainer)
+	f := pattern.NewFilter(cfg.Vmstat.IncludedOnContainer, cfg.Vmstat.ExcludedOnContainer)
 
 	containers, err := pod.NormalContainers()
 	if err != nil {
@@ -94,7 +94,7 @@ func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
 }
 
 func (c *memoryVmStat) hostVmstat() ([]*metric.Data, error) {
-	f := filter.NewFilter(cfg.Vmstat.IncludedOnHost, cfg.Vmstat.ExcludedOnHost)
+	f := pattern.NewFilter(cfg.Vmstat.IncludedOnHost, cfg.Vmstat.ExcludedOnHost)
 
 	raw, err := parseutil.RawKV(procfs.Path("vmstat"))
 	if err != nil {
