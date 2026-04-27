@@ -212,7 +212,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			}
 
 			// known issue filter
-			_, found := pattern.Match(cfg.PatternList, title)
+			_, found := pattern.Match(cfg.IssuesList, title)
 			if found {
 				log.Debugf("net_rx_latency known issue")
 				continue
