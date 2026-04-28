@@ -316,6 +316,29 @@ BlackList = ["netdev_hw", "metax_gpu"]
 2. SysThreshold 与 DeltaSysThreshold 同时满足；或
 3. UsageThreshold 与 DeltaUsageThreshold 同时满足。
 
+**Filter 容器过滤**：通过 Include/Exclude 规则数组控制监控范围。
+
+```bash
+    # 每条规则包含 Field（过滤字段）和 Pattern（正则）
+    # Field: container_host_namespace | container_hostname | container_qos
+    #
+    # [[AutoTracing.CPUIdle.Filter.Exclude]]
+    #     Field = "container_qos"
+    #     Pattern = "besteffort"
+    # [[AutoTracing.CPUIdle.Filter.Include]]
+    #     Field = "container_host_namespace"
+    #     Pattern = "^application-"
+```
+
+- **Filter**：容器过滤规则。使用 `[[double-bracket]]` 语法定义多条规则，每条含 `Field`（过滤字段）和 `Pattern`（正则）。过滤逻辑：
+
+  - 无规则：监控所有容器
+  - 仅 `Exclude`：黑名单，排除匹配的容器
+  - 仅 `Include`：白名单，仅监控匹配的容器
+  - 两者并存：匹配 Include 且不匹配 Exclude
+
+  默认无规则，监控所有容器。
+
 #### 6.2 CPUSys 自动追踪 — 宿主机突发高系统 CPU 使用场景
 
 ```bash
@@ -557,6 +580,19 @@ BlackList = ["netdev_hw", "metax_gpu"]
 
   **说明**：控制输出数据量，避免单次事件产生过多诊断信息。
 
+#### 6.6 已知问题过滤（IssuesList）
+
+```bash
+# IssuesList for known issue filtering in autotracing
+IssuesList = []
+```
+
+- **IssuesList**：已知问题过滤器。格式 `[["问题名称", "正则"], ...]`。采集到的堆栈匹配正则时标记为对应问题名称，默认 `[]`。当前用于 dload 追踪。
+
+  示例：`IssuesList = [["known_issue1", "softlockup"], ["known_issue2", "alloc_pages.*failed"]]`
+
+**注意**：当前仅支持 `dload` 追踪的已知问题过滤，其他事件暂不支持。
+
 ### 7. 事件追踪配置
 
 该 section 负责内核关键事件的捕获与延迟监控，包括软中断、内存回收、网络接收延迟、网卡事件及丢包监控等，是 HUATUO 内核级异常上下文采集的核心模块。
@@ -705,6 +741,19 @@ BlackList = ["netdev_hw", "metax_gpu"]
   默认 true。 
 
   **说明**：邻居表相关丢包通常为正常行为，排除可减少误报。
+
+#### 7.6 已知问题过滤（IssuesList）
+
+```bash
+# IssuesList for known issue filtering in event tracing
+IssuesList = []
+```
+
+- **IssuesList**：已知问题过滤器。格式和用法同 AutoTracing 的 `IssuesList`。匹配事件上下文，标记为对应问题名称，默认 `[]`。
+
+  示例：`IssuesList = [["known_issue1", "comm=ignored_process"]]`
+
+**注意**：当前仅支持 `net_rx_latency` 事件的过滤，其他事件暂不支持。
 
 ### 8. 指标采集器配置
 
