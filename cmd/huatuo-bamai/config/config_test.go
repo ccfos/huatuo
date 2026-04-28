@@ -42,10 +42,10 @@ BlackList = ["netdev_hw", "metax_gpu"]
 LimitMem = 2
 
 [AutoTracing]
-PatternList = [["dload", "jbd2"]]
+IssuesList = [["dload", "jbd2"]]
 
 [EventTracing]
-PatternList = [["net_rx_latency", "kernel_sched_tick"]]
+IssuesList = [["net_rx_latency", "kernel_sched_tick"]]
 
 [EventTracing.NetRxLatency]
 ExcludedContainerQos = ["bestEffort"]
@@ -71,11 +71,11 @@ ExcludedOnContainer = "writeback"
 	if Get().RuntimeCgroup.LimitMem != 2*1024*1024 {
 		t.Errorf("LimitMem should be converted to bytes, got %d", Get().RuntimeCgroup.LimitMem)
 	}
-	if len(Get().AutoTracing.PatternList) != 1 {
-		t.Errorf("unexpected AutoTracing.PatternList length: %d", len(Get().AutoTracing.PatternList))
+	if len(Get().AutoTracing.IssuesList) != 1 {
+		t.Errorf("unexpected AutoTracing.IssuesList length: %d", len(Get().AutoTracing.IssuesList))
 	}
-	if len(Get().EventTracing.PatternList) != 1 {
-		t.Errorf("unexpected EventTracing.PatternList length: %d", len(Get().EventTracing.PatternList))
+	if len(Get().EventTracing.IssuesList) != 1 {
+		t.Errorf("unexpected EventTracing.IssuesList length: %d", len(Get().EventTracing.IssuesList))
 	}
 	if Get().MetricCollector.Vmstat.IncludedOnHost != "pgscan_direct" {
 		t.Errorf("unexpected Vmstat.IncludedOnHost: %q", Get().MetricCollector.Vmstat.IncludedOnHost)
@@ -94,10 +94,10 @@ func TestSetAndSync(t *testing.T) {
 BlackList = ["netdev_hw"]
 
 [AutoTracing]
-PatternList = [["dload", "jbd2"]]
+IssuesList = [["dload", "jbd2"]]
 
 [EventTracing]
-PatternList = [["net_rx_latency", "kernel_sched_tick"]]
+IssuesList = [["net_rx_latency", "kernel_sched_tick"]]
 
 [MetricCollector.Vmstat]
 IncludedOnHost = "pgscan_direct"
@@ -115,8 +115,8 @@ ExcludedOnContainer = "writeback"
 	}
 
 	Set("BlackList", []string{"netdev_hw", "metax_gpu"})
-	Set("AutoTracing.PatternList", [][]string{{"cpuidle", "perf"}})
-	Set("EventTracing.PatternList", [][]string{{"dropwatch", "kfree_skb"}})
+	Set("AutoTracing.IssuesList", [][]string{{"cpuidle", "perf"}})
+	Set("EventTracing.IssuesList", [][]string{{"dropwatch", "kfree_skb"}})
 	Set("MetricCollector.Vmstat.IncludedOnHost", "pgsteal_direct")
 	Set("MetricCollector.Vmstat.IncludedOnContainer", "workingset_refault_file")
 
@@ -139,11 +139,11 @@ ExcludedOnContainer = "writeback"
 	if Get().MetricCollector.Vmstat.IncludedOnContainer != "workingset_refault_file" {
 		t.Errorf("unexpected Vmstat.IncludedOnContainer after reload: %q", Get().MetricCollector.Vmstat.IncludedOnContainer)
 	}
-	if len(Get().AutoTracing.PatternList) != 1 || len(Get().AutoTracing.PatternList[0]) != 2 || Get().AutoTracing.PatternList[0][0] != "cpuidle" {
-		t.Errorf("unexpected AutoTracing.PatternList after reload: %#v", Get().AutoTracing.PatternList)
+	if len(Get().AutoTracing.IssuesList) != 1 || len(Get().AutoTracing.IssuesList[0]) != 2 || Get().AutoTracing.IssuesList[0][0] != "cpuidle" {
+		t.Errorf("unexpected AutoTracing.IssuesList after reload: %#v", Get().AutoTracing.IssuesList)
 	}
-	if len(Get().EventTracing.PatternList) != 1 || len(Get().EventTracing.PatternList[0]) != 2 || Get().EventTracing.PatternList[0][0] != "dropwatch" {
-		t.Errorf("unexpected EventTracing.PatternList after reload: %#v", Get().EventTracing.PatternList)
+	if len(Get().EventTracing.IssuesList) != 1 || len(Get().EventTracing.IssuesList[0]) != 2 || Get().EventTracing.IssuesList[0][0] != "dropwatch" {
+		t.Errorf("unexpected EventTracing.IssuesList after reload: %#v", Get().EventTracing.IssuesList)
 	}
 
 	raw, err := os.ReadFile(path)
@@ -151,11 +151,11 @@ ExcludedOnContainer = "writeback"
 		t.Errorf("read synced config: %v", err)
 		return
 	}
-	if !strings.Contains(string(raw), "[AutoTracing]") || !strings.Contains(string(raw), "PatternList = [[\"cpuidle\", \"perf\"]]") {
-		t.Errorf("synced config should persist AutoTracing.PatternList, got %s", string(raw))
+	if !strings.Contains(string(raw), "[AutoTracing]") || !strings.Contains(string(raw), "IssuesList = [[\"cpuidle\", \"perf\"]]") {
+		t.Errorf("synced config should persist AutoTracing.IssuesList, got %s", string(raw))
 	}
-	if !strings.Contains(string(raw), "[EventTracing]") || !strings.Contains(string(raw), "PatternList = [[\"dropwatch\", \"kfree_skb\"]]") {
-		t.Errorf("synced config should persist EventTracing.PatternList, got %s", string(raw))
+	if !strings.Contains(string(raw), "[EventTracing]") || !strings.Contains(string(raw), "IssuesList = [[\"dropwatch\", \"kfree_skb\"]]") {
+		t.Errorf("synced config should persist EventTracing.IssuesList, got %s", string(raw))
 	}
 	if !strings.Contains(string(raw), "[MetricCollector.Vmstat]") || !strings.Contains(string(raw), "IncludedOnContainer = \"workingset_refault_file\"") {
 		t.Errorf("synced config should persist MetricCollector.Vmstat.IncludedOnContainer, got %s", string(raw))
