@@ -46,44 +46,29 @@ func NewFilter(included, excluded string) *Filter {
 }
 
 func (f *Filter) Ignored(value string) bool {
-	anyMatch := func(rules []*Rule) bool {
-		for _, r := range rules {
-			if r.match(value) {
-				return true
-			}
-		}
-		return false
-	}
-
-	if len(f.Included) > 0 && !anyMatch(f.Included) {
-		return true
-	}
-
-	if len(f.Excluded) > 0 && anyMatch(f.Excluded) {
-		return true
-	}
-
-	return false
+	return shouldIgnore(f, value, (*Rule).match)
 }
 
 func (f *Filter) IgnoreContainer(container *pod.Container) bool {
-	anyMatch := func(rules []*Rule) bool {
-		for _, r := range rules {
-			if r.Field != "" && r.matchContainer(container) {
-				return true
-			}
+	return shouldIgnore(f, container, (*Rule).matchContainer)
+}
+
+func anyMatch[T any](rules []*Rule, match func(*Rule, T) bool, arg T) bool {
+	for _, r := range rules {
+		if match(r, arg) {
+			return true
 		}
-		return false
 	}
+	return false
+}
 
-	if len(f.Included) > 0 && !anyMatch(f.Included) {
+func shouldIgnore[T any](f *Filter, arg T, match func(*Rule, T) bool) bool {
+	if len(f.Included) > 0 && !anyMatch(f.Included, match, arg) {
 		return true
 	}
-
-	if len(f.Excluded) > 0 && anyMatch(f.Excluded) {
+	if len(f.Excluded) > 0 && anyMatch(f.Excluded, match, arg) {
 		return true
 	}
-
 	return false
 }
 
@@ -93,6 +78,10 @@ type Rule struct {
 }
 
 func (r *Rule) matchContainer(container *pod.Container) bool {
+	if r.Field == "" {
+		return false
+	}
+
 	return r.match(r.containerFieldValue(container))
 }
 
