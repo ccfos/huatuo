@@ -324,6 +324,29 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 2. Both SysThreshold and DeltaSysThreshold are met, or
 3. Both UsageThreshold and DeltaUsageThreshold are met.
 
+**Filter Container Filtering**: Use Include/Exclude rule arrays to control monitoring scope.
+
+```bash
+    # Each rule contains Field (filter field) and Pattern (regex).
+    # Field: container_host_namespace | container_hostname | container_qos
+    #
+    # [[AutoTracing.CPUIdle.Filter.Exclude]]
+    #     Field = "container_qos"
+    #     Pattern = "besteffort"
+    # [[AutoTracing.CPUIdle.Filter.Include]]
+    #     Field = "container_host_namespace"
+    #     Pattern = "^application-"
+```
+
+- **Filter**: Container filtering rules. Defined using `[[double-bracket]]` syntax with multiple rules, each containing `Field` (filter field) and `Pattern` (regex). Filtering logic:
+
+  - No rules: monitor all containers
+  - `Exclude` only: blacklist, skip matched containers
+  - `Include` only: whitelist, only monitor matched containers
+  - Both: must match Include AND not match Exclude
+
+  Default: no rules, all containers monitored.
+
 #### 6.2 CPUSys Automatic Tracing — Sudden High System CPU on Host
 
 ```bash
@@ -559,6 +582,19 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
   Default: 10.
 
+#### 6.6 Known Issue Filtering (IssuesList)
+
+```bash
+# IssuesList for known issue filtering in autotracing
+IssuesList = []
+```
+
+- **IssuesList**: Known issue filter. Format: `[["name", "regex"], ...]`. When a collected stack trace matches the regex, it is labeled with the issue name. Default `[]`.
+
+  Example: `IssuesList = [["known_issue1", "softlockup"], ["known_issue2", "alloc_pages.*failed"]]`
+
+**Note**: Current only supports `dload` tracing of known issues filtering, other events are not supported.
+
 ### 7. Event Tracing
 
 This section is responsible for capturing key kernel events and monitoring latency, including softirq, memory reclaim, network receive latency, network device events, and packet drop monitoring. It is the core module for kernel-level anomaly context collection in HUATUO.
@@ -711,6 +747,19 @@ This section is responsible for capturing key kernel events and monitoring laten
   Default: true.
 
   **Description**: Neighbor table related drops are usually normal behavior; excluding them reduces false positives.
+
+#### 7.6 Known Issue Filtering (IssuesList)
+
+```bash
+# IssuesList for known issue filtering in event tracing
+IssuesList = []
+```
+
+- **IssuesList**: Known issue filter. Same format and usage as AutoTracing `IssuesList`. Matches event titles against regex patterns, labeling them with the issue name. Default `[]`.
+
+  Example: `IssuesList = [["known_issue1", "comm=ignored_process"]]`
+
+**Note**: Current only supports `net_rx_latency` tracing of known issues filtering, other events are not supported.
 
 ### 8. Metric Collector
 
