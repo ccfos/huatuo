@@ -13,20 +13,18 @@ weight: 4
 
 The configuration file uses **TOML** format and includes multiple sections such as global blacklist, logging, runtime resource limits, storage configuration, and AutoTracing. Each configuration item comes with detailed comments explaining its purpose, default value, and important notes. This document provides a clear and detailed English explanation for **every configuration item** to help users understand and safely customize the settings.
 
-**Note**: Most parameters in the configuration file are provided as commented defaults (starting with `#`). To enable them, remove the `#` and adjust the values according to your environment. Changes take effect only after restarting the `huatuo-bamai` process. In production environments, follow the principle of minimalism and avoid enabling high-overhead features unnecessarily.
+**Note**: Most parameters are provided as commented defaults (prefixed with `#`). Uncomment and adjust as needed. Changes take effect after restarting `huatuo-bamai`. In production, avoid enabling high-overhead features unnecessarily.
 
 ### 2. Global Blacklist
 
 ```bash
-# The global blacklist for tracing and metrics
+# Global blacklist for tracing and metrics
 BlackList = ["netdev_hw", "metax_gpu"]
 ```
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
-  Used to exclude specific modules or hardware from tracing and metric collection, preventing irrelevant noise or high-overhead probes. The default value is ["netdev_hw", "metax_gpu"], which globally disables tracing and metrics related to network device hardware layer (netdev_hw) and Metax GPU.
-
-  **Description**: Adding items to the blacklist can effectively reduce resource consumption, especially in specific hardware environments. It supports array format and can be extended based on actual business needs.
+  Modules or hardware to exclude from tracing and metric collection. Default: `["netdev_hw", "metax_gpu"]`, which disables tracing and metrics for the network device hardware layer and Metax GPU. Supports arrays, extend as needed.
 
 ### 3. Logging
 
@@ -34,12 +32,11 @@ BlackList = ["netdev_hw", "metax_gpu"]
 # Log Configuration
 #
 # - Level
-# The log level for huatuo-bamai: Debug, Info, Warn, Error, Panic.
+# Log level: Debug, Info, Warn, Error, Panic.
 # Default: Info
 #
 # - File
-# Store logs to where the logging file is. If it is empty, don't write log
-# to any file.
+# Log file path. If empty, logs go to stdout.
 # Default: empty
 #
 [Log]
@@ -47,11 +44,7 @@ BlackList = ["netdev_hw", "metax_gpu"]
     # File = ""
 ```
 
-- **Level**: Log level.
-
-  Default: Info. Possible values: Debug, Info, Warn, Error, Panic.
-
-  **Description**: Controls the verbosity of huatuo-bamai logs. In production, Info or Warn is recommended to reduce log volume. Use Debug only for troubleshooting, as it generates substantial output.
+- **Level**: Log verbosity. Values: Debug, Info, Warn, Error, Panic. Default: Info. Use Info or Warn in production; Debug for troubleshooting.
 
 - **File**: Log file path.
 
@@ -71,11 +64,11 @@ BlackList = ["netdev_hw", "metax_gpu"]
 # Default is 0.5 CPU.
 #
 # - LimitCPU
-# The CPU resource restricted once the process starts.
+# CPU limit at runtime.
 # Default is 2.0 CPU.
 #
 # - LimitMem
-# The memory resource limitted for huatuo-bamai process.
+# Memory limit in MB.
 # Default is 2048MB.
 #
 [RuntimeCgroup]
@@ -117,8 +110,8 @@ BlackList = ["netdev_hw", "metax_gpu"]
 [Storage]
     # Elasticsearch Storage
     #
-    # Disable ES storage if one of Address, Username, Password is empty.
-    # Store the tracing and events data of linux kernel to ES.
+    # Disable ES storage if any of Address, Username, Password is empty.
+    # Store kernel tracing and event data to Elasticsearch.
     #
     # - Address
     # Default address is :9200 of localhost. ...
@@ -178,7 +171,7 @@ BlackList = ["netdev_hw", "metax_gpu"]
 #
 # - RotationSize
 # The maximum size in Megabytes of a record file before it gets rotated
-# for per linux kernel tracer.
+# per kernel tracer.
 # Default: 100MB
 #
 # - MaxRotation
@@ -222,7 +215,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 [AutoTracing]
     # cpuidle
     #
-    # For a high cpu usage all of a sudden in containers.
+    # For sudden high CPU usage in containers.
     #
     # - UserThreshold
     # User CPU usage threshold, when cpu usage reaches this threshold, cpu
@@ -257,18 +250,18 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
     #
     # - IntervalTracing
     # Time since last run. Avoid frequently executing this tracing to prevent
-    # damage to the system.
+    # performance impact.
     # Default: 1800s
     #
     # - RunTracingToolTimeout
-    # The executing time of this tracing program.
+    # Execution timeout of this tracing tool (seconds).
     # Default: 10s
     # 
-    # NOTE:
-    # Running this performance tool, when:
-    # 1. UserThreshold and DeltaUserThreshold are true, or
-    # 2. SysThreshold and DeltaSysThreshold are true, or
-    # 3. UsageThreshold and DeltaUsageThreshold
+# NOTE:
+# Profiling triggers when:
+# 1. UserThreshold AND DeltaUserThreshold are exceeded, or
+# 2. SysThreshold AND DeltaSysThreshold are exceeded, or
+# 3. UsageThreshold AND DeltaUsageThreshold are exceeded
     #
     [AutoTracing.CPUIdle]
         # UserThreshold = 75
@@ -352,7 +345,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 ```bash
 # cpusys
 #
-# For a high system cpu usage all of a sudden on host machine.
+# For sudden high system cpu usage on the host machine.
 #
 # - SysThreshold
 # System CPU usage threshold, when reaching this threshold, cpu performance
@@ -368,12 +361,12 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 # Default: 10s
 #
 # - RunTracingToolTimeout
-# The executing time of this tracing program.
+# Execution timeout of this tracing tool (seconds).
 # Default: 10s
 #
 # NOTE:
-# Running this performance tool, when:
-# SysThreshold and DeltaSysThreshold are true.
+# Profiling triggers when:
+# SysThreshold AND DeltaSysThreshold are exceeded.
 #
 [AutoTracing.CPUSys]
 	# SysThreshold = 45
@@ -408,9 +401,8 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 # linux tasks D state profiling for containers.
 #
 # - ThresholdLoad
-# The loadavg threshold value, when reaching this threshold, dload profiling
-# is triggered.
-# Defalut: 5
+# Load average threshold. When exceeded, D-state profiling triggers.
+# Default: 5
 #
 # - Interval
 # The sample interval of the load for all containers.
@@ -418,7 +410,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 #
 # - IntervalTracing
 # Time since last run. Avoid frequently executing this tracing to prevent
-# damage to the system.
+# performance impact.
 # Default: 1800s
 #
 [AutoTracing.Dload]
@@ -447,18 +439,17 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 # io profiling for containers.
 #
 # - WbpsThreshold
-# Max write bytes per second, when reaching this threshold, iotracing is triggered.
-# Please note that if it is an NVMe device, it must also meet the UtilThreshold.
+# Max write bytes per second threshold. When exceeded, iotracing is triggered.
+# For NVMe devices, UtilThreshold must also be met.
 # Default: 1500 MB/s
 #
 # - RbpsThreshold
-# Max read bytes per second, when reaching this threshold, iotracing is triggered.
-# Please note that if it is an NVMe device, it must also meet the UtilThreshold.
+# Max read bytes per second threshold. When exceeded, iotracing is triggered.
+# For NVMe devices, UtilThreshold must also be met.
 # Default: 2000 MB/s
 #
 # - UtilThreshold
-# Disk utilization, Percentage of time the disk is busy. If this is consistently
-# above 80-90%, the disk may be a bottleneck.
+# Disk utilization (%). Consistently above 80-90% indicates a bottleneck.
 # Default: 90%
 #
 # - AwaitThreshold
@@ -466,7 +457,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 # Default: 100ms
 #
 # - RunTracingToolTimeout
-# The executing time of this tracing tool.
+# Execution timeout of this tracing tool (seconds).
 # Default: 10s
 #
 # - MaxProcDump
@@ -524,29 +515,29 @@ This module detects sudden memory usage spikes on the host and automatically cap
 ```bash
 # memory burst
 #
-# If there is a memory used burst on the host, capture this kernel context.
+# Capture kernel context on sudden host memory usage spikes.
 #
 # - Interval
-# The sample interval of the memory used.
+# Memory usage sampling interval (seconds).
 # Default: 10s
 #
 # - DeltaMemoryBurst
-# A certain percentage of memory burst used. 100% that means, e.g.,
-# memory used increased from 200MB to 400MB.
+# Growth percentage threshold for memory usage. 100% means, e.g.,
+# memory usage increased from 200MB to 400MB.
 # Default: 100%
 #
 # - DeltaAnonThreshold
-# A certain percentage of anon memory burst used. 100% that means, e.g.,
-# anon memory used increased from 200MB to 400MB.
+# Growth percentage threshold for anonymous memory. 100% means, e.g.,
+# anon memory increased from 200MB to 400MB.
 # Default: 70%
 #
 # - IntervalTracing
 # Time since last run. Avoid frequently executing this tracing
-# to prevent damage to the system.
+# to prevent performance impact.
 # Default: 1800s
 #
 # - DumpProcessMaxNum
-# How many processes to dump when this event is triggered.
+# Number of processes to dump when triggered.
 # Default: 10
 #
 [AutoTracing.MemoryBurst]
@@ -593,7 +584,7 @@ IssuesList = []
 
   Example: `IssuesList = [["known_issue1", "softlockup"], ["known_issue2", "alloc_pages.*failed"]]`
 
-**Note**: Current only supports `dload` tracing of known issues filtering, other events are not supported.
+**Note**: Only supports `dload` tracing of known issues filtering, other events are not supported.
 
 ### 7. Event Tracing
 
@@ -606,7 +597,7 @@ This section is responsible for capturing key kernel events and monitoring laten
 [EventTracing]
 	# softirq
 	#
-	# tracing the softirq disabled events of linux kernel.
+	# Trace softirq disabled events in the Linux kernel.
 	#
 	# - DisabledThreshold
 	# When the disable duration of softirq exceeds the threshold, huatuo-bamai
@@ -670,7 +661,7 @@ This section is responsible for capturing key kernel events and monitoring laten
 # Default: [].
 #
 # - ExcludedHostNetnamespace
-# Don't care the skbs, packets in the host net namespace.
+# Exclude packets in the host network namespace.
 # Default: true
 #
 [EventTracing.NetRxLatency]
@@ -707,11 +698,11 @@ This section is responsible for capturing key kernel events and monitoring laten
 ```bash
 # netdev events
 #
-# monitor the net device events.
+# Monitor network device events.
 #
 # - DeviceList
-# The net devices we take care of.
-# Default: [] is empty, meaning no devices.
+# The net devices we monitor.
+# Default: [] (empty, meaning no devices).
 #
 [EventTracing.Netdev]
 	DeviceList = ["eth0", "eth1", "bond4", "lo"]
@@ -731,7 +722,7 @@ This section is responsible for capturing key kernel events and monitoring laten
 # monitor packets dropped events in the Linux kernel.
 #
 # - ExcludedNeighInvalidate
-# Don't care of neigh_invalidate drop events.
+# Exclude neigh_invalidate drop events.
 # Default: true
 #
 [EventTracing.Dropwatch]
@@ -755,7 +746,7 @@ IssuesList = []
 
   Example: `IssuesList = [["known_issue1", "comm=ignored_process"]]`
 
-**Note**: Current only supports `net_rx_latency` tracing of known issues filtering, other events are not supported.
+**Note**: Only supports `net_rx_latency` tracing of known issues filtering, other events are not supported.
 
 ### 8. Metric Collector
 
@@ -810,8 +801,8 @@ This section defines collection rules for various system and network metrics. Al
 # Collecting the DCB PFC (Priority-based Flow Control).
 #
 # - DeviceList
-# The net devices we take care of.
-# Default: [] is empty, meaning no devices.
+# The net devices we monitor.
+# Default: [] (empty, meaning no devices).
 #
 [MetricCollector.NetdevDCB]
 	DeviceList = ["eth0", "eth1"]
@@ -829,8 +820,8 @@ This section defines collection rules for various system and network metrics. Al
 # Collecting the hardware statistic of net devices, e.g, rx_dropped.
 #
 # - DeviceList
-# The net devices we take care of.
-# Default: [] is empty, meaning no devices.
+# The net devices we monitor.
+# Default: [] (empty, meaning no devices).
 #
 [MetricCollector.NetdevHW]
 	DeviceList = ["eth0", "eth1"]
