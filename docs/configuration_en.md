@@ -324,16 +324,16 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 2. Both SysThreshold and DeltaSysThreshold are met, or
 3. Both UsageThreshold and DeltaUsageThreshold are met.
 
-**Filter Container Filtering**: Use Include/Exclude rule arrays to control monitoring scope.
+**Filter Container Filtering**: Use Included/Excluded rule arrays to control monitoring scope.
 
 ```bash
     # Each rule contains Field (filter field) and Pattern (regex).
     # Field: container_host_namespace | container_hostname | container_qos
     #
-    # [[AutoTracing.CPUIdle.Filter.Exclude]]
+    # [[AutoTracing.CPUIdle.Filter.Excluded]]
     #     Field = "container_qos"
     #     Pattern = "besteffort"
-    # [[AutoTracing.CPUIdle.Filter.Include]]
+    # [[AutoTracing.CPUIdle.Filter.Included]]
     #     Field = "container_host_namespace"
     #     Pattern = "^application-"
 ```
@@ -341,9 +341,9 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 - **Filter**: Container filtering rules. Defined using `[[double-bracket]]` syntax with multiple rules, each containing `Field` (filter field) and `Pattern` (regex). Filtering logic:
 
   - No rules: monitor all containers
-  - `Exclude` only: blacklist, skip matched containers
-  - `Include` only: whitelist, only monitor matched containers
-  - Both: must match Include AND not match Exclude
+  - `Excluded` only: blacklist, skip matched containers
+  - `Included` only: whitelist, only monitor matched containers
+  - Both: must match Included AND not match Excluded
 
   Default: no rules, all containers monitored.
 
@@ -665,13 +665,9 @@ This section is responsible for capturing key kernel events and monitoring laten
 # Default: 115ms
 #
 # - ExcludedContainerQos
-# Don't care the containers which qos level is in ExcludedContainerQos.
-# This is a string slice in vendor/k8s.io/api/core/v1/types.go
-# - PodQOSGuaranteed = "Guaranteed"
-# - PodQOSBurstable = "Burstable"
-# - PodQOSBestEffort = "BestEffort"
-#
-# Default: []
+# Blacklist: skip containers whose qos level matches.
+# Values: "guaranteed", "burstable", "besteffort" (case-insensitive).
+# Default: [].
 #
 # - ExcludedHostNetnamespace
 # Don't care the skbs, packets in the host net namespace.
@@ -682,7 +678,7 @@ This section is responsible for capturing key kernel events and monitoring laten
 	# Driver2TCP = 10
 	# Driver2Userspace = 115
 	# ExcludedContainerQos = []
-	ExcludedContainerQos = ["bestEffort"]
+	ExcludedContainerQos = ["besteffort"]
 	# ExcludedHostNetnamespace = true
 ```
 
@@ -698,7 +694,7 @@ This section is responsible for capturing key kernel events and monitoring laten
 
   Default: 115ms.
 
-- **ExcludedContainerQos**: List of container QoS levels to exclude from monitoring.
+- **ExcludedContainerQos**: Container QoS levels to exclude (blacklist).
 
   Default: []. Corresponds to Kubernetes Pod QoS levels (Guaranteed, Burstable, BestEffort).
 
@@ -763,7 +759,12 @@ IssuesList = []
 
 ### 8. Metric Collector
 
-This section defines collection rules for various system and network metrics, supporting fine-grained include/exclude filters for both host and container environments.
+This section defines collection rules for various system and network metrics. All `Included`/`Excluded` fields share the same filter logic (regex):
+
+- No rules: all items are collected
+- Excluded only: blacklist, matched items are skipped
+- Included only: whitelist, only matched items are collected
+- Both: must match Included AND not match Excluded
 
 #### 8.1 Netdev Statistics
 
@@ -779,12 +780,13 @@ This section defines collection rules for various system and network metrics, su
 	#
 	# - DeviceIncluded
 	# Accept special devices in netdev statistic.
-	# Default: [] is empty, meaning include all.
+	# Default: "" (empty), meaning include all.
 	#
 	# - DeviceExcluded
-	# Exclude special devices in netdev statistic. 'DeviceExcluded' has higher
-	# priority than 'DeviceIncluded'.
-	# Default: [] is empty, meaning ignore nothing.
+	# Exclude special devices in netdev statistic.
+	# Default: "" (empty), meaning exclude nothing.
+	#
+	# Filter logic see MetricCollector section header.
 	#
 	[MetricCollector.NetdevStats]
 		# EnableNetlink = false
@@ -796,13 +798,9 @@ This section defines collection rules for various system and network metrics, su
 
   Default: false. Currently only supported on the host.
 
-- **DeviceIncluded**: Specific devices to include in statistics.
+- **DeviceIncluded**: Regex to include specific devices. Default: include all.
 
-  Default: include all.
-
-- **DeviceExcluded**: Regular expression to exclude devices.
-
-  Default excludes loopback, docker, and veth interfaces. DeviceExcluded has higher priority.
+- **DeviceExcluded**: Regex to exclude devices. Example: "^(lo)|(docker\\w*)|(veth\\w*)$", meaning exclude loopback, docker, and veth interfaces.
 
 #### 8.2 Netdev DCB Collection
 
@@ -847,15 +845,15 @@ This section defines collection rules for various system and network metrics, su
 ```bash
 # Qdisc
 #
-# - DeviceIncluded
-# - DeviceExcluded same as above.
+# - DeviceIncluded / DeviceExcluded
+# Same as above.
 #
 [MetricCollector.Qdisc]
 	# DeviceIncluded = ""
 	DeviceExcluded = "^(lo)|(docker\\w*)|(veth\\w*)$"
 ```
 
-- **DeviceIncluded / DeviceExcluded**: Same logic as NetdevStats, used to control which network devices’ queue disciplines are monitored.
+- **DeviceIncluded / DeviceExcluded**: Same as above.
 
 #### 8.5 vmstat Metric Collection
 
@@ -863,11 +861,8 @@ This section defines collection rules for various system and network metrics, su
 # vmstat
 #
 # This metric supports host vmstat and cgroup vmstat.
-# - IncludedOnHost
-# - ExcludedOnHost same as above, for the host /proc/vmstat.
-#
-# - IncludedOnContainer
-# - ExcludedOnContainer as above, for the cgroup, containers memory.stat.
+# - IncludedOnHost / ExcludedOnHost: same as above, for host /proc/vmstat.
+# - IncludedOnContainer / ExcludedOnContainer: same, for cgroup containers memory.stat.
 #
 [MetricCollector.Vmstat]
 	IncludedOnHost = "allocstall|nr_active_anon|nr_active_file|nr_boost_pages|nr_dirty|nr_free_pages|nr_inactive_anon|nr_inactive_file|nr_kswapd_boost|nr_mlock|nr_shmem|nr_slab_reclaimable|nr_slab_unreclaimable|nr_unevictable|nr_writeback|numa_pages_migrated|pgdeactivate|pgrefill|pgscan_direct|pgscan_kswapd|pgsteal_direct|pgsteal_kswapd"
@@ -876,17 +871,17 @@ This section defines collection rules for various system and network metrics, su
 	ExcludedOnContainer = "total"
 ```
 
-- **IncludedOnHost / ExcludedOnHost**: Include/exclude fields for host /proc/vmstat.
+- **IncludedOnHost / ExcludedOnHost**: Filter fields for host /proc/vmstat.
 
-- **IncludedOnContainer / ExcludedOnContainer**: Include/exclude fields for container cgroup memory.stat.
+- **IncludedOnContainer / ExcludedOnContainer**: Filter fields for container cgroup memory.stat.
 
 #### 8.6 Other Metric Collections
 
 ```bash
 # MemoryEvents/Netstat/MountPointStat
 #
-# - Included
-# - Excluded same as above, DeviceInclude, DeviceExclude.
+# - Included / Excluded: same as above.
+# - MountPointsIncluded: whitelist only (no Excluded), same logic.
 #
 [MetricCollector.MemoryEvents]
 	Included = "watermark_inc|watermark_dec"
@@ -897,12 +892,12 @@ This section defines collection rules for various system and network metrics, su
 
 # MountPointStat
 [MetricCollector.MountPointStat]
-	MountPointsIncluded = "(^/home$$   )|(^/   $$)|(^/boot$)"
+	MountPointsIncluded = "(^/home$)|(^/$)|(^/boot$)"
 ```
 
-- **Included / Excluded**: Control which fields are collected for MemoryEvents and Netstat.
+- **Included / Excluded**: Same as above.
 
-- **MountPointsIncluded**: Regular expression for mount points to collect statistics. Default example includes root, /home, and /boot.
+- **MountPointsIncluded**: Regex for mount points to collect. Default includes /, /home, /boot.
 
 ### 9. Pod
 
