@@ -316,6 +316,29 @@ BlackList = ["netdev_hw", "metax_gpu"]
 2. SysThreshold 与 DeltaSysThreshold 同时满足；或
 3. UsageThreshold 与 DeltaUsageThreshold 同时满足。
 
+**Filter 容器过滤**：通过 Included/Excluded 规则数组控制监控范围。
+
+```bash
+    # 每条规则包含 Field（过滤字段）和 Pattern（正则）
+    # Field: container_host_namespace | container_hostname | container_qos
+    #
+    # [[AutoTracing.CPUIdle.Filter.Excluded]]
+    #     Field = "container_qos"
+    #     Pattern = "besteffort"
+    # [[AutoTracing.CPUIdle.Filter.Included]]
+    #     Field = "container_host_namespace"
+    #     Pattern = "^application-"
+```
+
+- **Filter**：容器过滤规则。使用 `[[double-bracket]]` 语法定义多条规则，每条含 `Field`（过滤字段）和 `Pattern`（正则）。过滤逻辑：
+
+  - 无规则：监控所有容器
+  - 仅 `Excluded`：黑名单，排除匹配的容器
+  - 仅 `Included`：白名单，仅监控匹配的容器
+  - 两者并存：匹配 Included 且不匹配 Excluded
+
+  默认无规则，监控所有容器。
+
 #### 6.2 CPUSys 自动追踪 — 宿主机突发高系统 CPU 使用场景
 
 ```bash
@@ -557,6 +580,19 @@ BlackList = ["netdev_hw", "metax_gpu"]
 
   **说明**：控制输出数据量，避免单次事件产生过多诊断信息。
 
+#### 6.6 已知问题过滤（IssuesList）
+
+```bash
+# IssuesList for known issue filtering in autotracing
+IssuesList = []
+```
+
+- **IssuesList**：已知问题过滤器。格式 `[["问题名称", "正则"], ...]`。采集到的堆栈匹配正则时标记为对应问题名称，默认 `[]`。当前用于 dload 追踪。
+
+  示例：`IssuesList = [["known_issue1", "softlockup"], ["known_issue2", "alloc_pages.*failed"]]`
+
+**注意**：当前仅支持 `dload` 追踪的已知问题过滤，其他事件暂不支持。
+
 ### 7. 事件追踪配置
 
 该 section 负责内核关键事件的捕获与延迟监控，包括软中断、内存回收、网络接收延迟、网卡事件及丢包监控等，是 HUATUO 内核级异常上下文采集的核心模块。
@@ -619,13 +655,9 @@ BlackList = ["netdev_hw", "metax_gpu"]
 # Default: 115ms
 #
 # - ExcludedContainerQos
-# Don't care the containers which qos level is in ExcludedContainerQos.
-# This is a string slice in vendor/k8s.io/api/core/v1/types.go
-# - PodQOSGuaranteed = "Guaranteed"
-# - PodQOSBurstable = "Burstable"
-# - PodQOSBestEffort = "BestEffort"
-#
-# Default: []
+# Blacklist: skip containers whose qos level matches.
+# Values: "guaranteed", "burstable", "besteffort" (case-insensitive).
+# Default: [].
 #
 # - ExcludedHostNetnamespace
 # Don't care the skbs, packets in the host net namespace.
@@ -636,7 +668,7 @@ BlackList = ["netdev_hw", "metax_gpu"]
 	# Driver2TCP = 10
 	# Driver2Userspace = 115
 	# ExcludedContainerQos = []
-	ExcludedContainerQos = ["bestEffort"]
+	ExcludedContainerQos = ["besteffort"]
 	# ExcludedHostNetnamespace = true
 ```
 
@@ -652,9 +684,9 @@ BlackList = ["netdev_hw", "metax_gpu"]
 
   默认 115ms。 例如 skb_copy_datagram_iovec 等函数的延迟监控。
 
-- **ExcludedContainerQos**：排除的容器 QoS 级别列表。
+- **ExcludedContainerQos**：排除的容器 QoS 级别，黑名单模式。
 
-  默认 [""]。 不监控指定 QoS 级别的容器网络接收延迟（对应 Kubernetes Pod QoS：Guaranteed、Burstable、BestEffort）。
+  默认 [""]。 不监控指定 QoS 级别的容器网络接收延迟（对应 Kubernetes Pod QoS：Guaranteed、Burstable、BestEffort，大小写不敏感）。
 
   **说明**：通常排除 BestEffort 容器以减少噪声。
 
@@ -706,9 +738,27 @@ BlackList = ["netdev_hw", "metax_gpu"]
 
   **说明**：邻居表相关丢包通常为正常行为，排除可减少误报。
 
+#### 7.6 已知问题过滤（IssuesList）
+
+```bash
+# IssuesList for known issue filtering in event tracing
+IssuesList = []
+```
+
+- **IssuesList**：已知问题过滤器。格式和用法同 AutoTracing 的 `IssuesList`。匹配事件上下文，标记为对应问题名称，默认 `[]`。
+
+  示例：`IssuesList = [["known_issue1", "comm=ignored_process"]]`
+
+**注意**：当前仅支持 `net_rx_latency` 事件的过滤，其他事件暂不支持。
+
 ### 8. 指标采集器配置
 
-该 section 定义各类系统与网络指标的采集规则，支持精细的包含/排除过滤，适用于宿主机与容器环境。
+该 section 定义各类系统与网络指标的采集规则。所有 `Included`/`Excluded` 字段底层共用同一套过滤逻辑（正则表达式）：
+
+- 无规则：全部采集
+- 仅 Excluded：黑名单，匹配即跳过
+- 仅 Included：白名单，仅采集匹配项
+- 两者并存：必须匹配 Included 且不匹配 Excluded
 
 #### 8.1 网卡统计
 
@@ -724,12 +774,13 @@ BlackList = ["netdev_hw", "metax_gpu"]
 	#
 	# - DeviceIncluded
 	# Accept special devices in netdev statistic.
-	# Default: [] is empty, meaning include all.
+	# Default: "" (empty), meaning include all.
 	#
 	# - DeviceExcluded
-	# Exclude special devices in netdev statistic. 'DeviceExcluded' has higher
-	# priority than 'DeviceIncluded'.
-	# Default: [] is empty, meaning ignore nothing.
+	# Exclude special devices in netdev statistic.
+	# Default: "" (empty), meaning exclude nothing.
+	#
+	# Filter logic see MetricCollector section header.
 	#
 	[MetricCollector.NetdevStats]
 		# EnableNetlink = false
@@ -743,15 +794,9 @@ BlackList = ["netdev_hw", "metax_gpu"]
 
   **说明**：netlink 方式通常更高效，但需内核支持。
 
-- **DeviceIncluded**：需要纳入统计的特定网卡设备（正则或列表）。
+- **DeviceIncluded**：需要纳入统计的网卡设备正则。默认空（全部采集）。
 
-  默认空（包含所有）。
-
-- **DeviceExcluded**：需要排除的网卡设备正则。
-
-  默认排除 lo、docker、veth 等虚拟接口。 
-
-  **说明**：DeviceExcluded 优先级高于 DeviceIncluded，常用于过滤噪声接口。
+- **DeviceExcluded**：需排除的网卡设备正则。如：排除 lo、docker、veth 等虚拟接口。
 
 #### 8.2 网卡 DCB（Data Center Bridging）采集
 
@@ -800,15 +845,15 @@ BlackList = ["netdev_hw", "metax_gpu"]
 ```bash
 # Qdisc
 #
-# - DeviceIncluded
-# - DeviceExcluded same as above.
+# - DeviceIncluded / DeviceExcluded
+# Same as above.
 #
 [MetricCollector.Qdisc]
 	# DeviceIncluded = ""
 	DeviceExcluded = "^(lo)|(docker\\w*)|(veth\\w*)$"
 ```
 
-- **DeviceIncluded / DeviceExcluded**：同 NetdevStats，控制需要监控队列规则的网卡范围。 
+- **DeviceIncluded / DeviceExcluded**：同 MetricCollector 描述的过滤逻辑。
 
   **说明**：用于诊断流量整形、调度延迟等问题。
 
@@ -818,11 +863,8 @@ BlackList = ["netdev_hw", "metax_gpu"]
 # vmstat
 #
 # This metric supports host vmstat and cgroup vmstat.
-# - IncludedOnHost
-# - ExcludedOnHost same as above, for the host /proc/vmstat.
-#
-# - IncludedOnContainer
-# - ExcludedOnContainer as above, for the cgroup, containers memory.stat.
+# - IncludedOnHost / ExcludedOnHost: same filter logic, for host /proc/vmstat.
+# - IncludedOnContainer / ExcludedOnContainer: same, for cgroup containers memory.stat.
 #
 [MetricCollector.Vmstat]
 	IncludedOnHost = "allocstall|nr_active_anon|nr_active_file|nr_boost_pages|nr_dirty|nr_free_pages|nr_inactive_anon|nr_inactive_file|nr_kswapd_boost|nr_mlock|nr_shmem|nr_slab_reclaimable|nr_slab_unreclaimable|nr_unevictable|nr_writeback|numa_pages_migrated|pgdeactivate|pgrefill|pgscan_direct|pgscan_kswapd|pgsteal_direct|pgsteal_kswapd"
@@ -831,9 +873,9 @@ BlackList = ["netdev_hw", "metax_gpu"]
 	ExcludedOnContainer = "total"
 ```
 
-- **IncludedOnHost / ExcludedOnHost**：宿主机 /proc/vmstat 的包含/排除字段列表（正则支持）。
+- **IncludedOnHost / ExcludedOnHost**：宿主机 /proc/vmstat 的过滤字段正则。
 
-- **IncludedOnContainer / ExcludedOnContainer**：容器 cgroup memory.stat 的包含/排除字段列表。 
+- **IncludedOnContainer / ExcludedOnContainer**：容器 cgroup memory.stat 的过滤字段正则。
 
   **说明**：精细控制 vmstat 指标采集，支持主机与容器差异化配置，避免采集无关字段。
 
@@ -842,8 +884,8 @@ BlackList = ["netdev_hw", "metax_gpu"]
 ```bash
 # MemoryEvents/Netstat/MountPointStat
 #
-# - Included
-# - Excluded same as above, DeviceInclude, DeviceExclude.
+# - Included / Excluded: same as above.
+# - MountPointsIncluded: whitelist only (no Excluded), same logic.
 #
 [MetricCollector.MemoryEvents]
 	Included = "watermark_inc|watermark_dec"
@@ -857,9 +899,9 @@ BlackList = ["netdev_hw", "metax_gpu"]
 	MountPointsIncluded = "(^/home$)|(^/$)|(^/boot$)"
 ```
 
-- **Included / Excluded**（MemoryEvents、Netstat）：同上，控制内存事件、水印变化、Netstat 等指标的过滤。
+- **Included / Excluded**（MemoryEvents、Netstat）：同上过滤逻辑。
 
-- **MountPointsIncluded**：需要采集挂载点统计的路径正则。默认示例包含根目录、/home、/boot。
+- **MountPointsIncluded**：采集挂载点统计的路径正则。默认示例含 /、/home、/boot。
 
   **说明**：用于监控关键文件系统使用情况。
 
