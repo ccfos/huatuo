@@ -175,19 +175,19 @@ graph TB
 
     ```bash
     {
-        "hostname": "hostname",
-        "region": "nmg02",
-        "uploaded_time": "2026-03-01T15:41:13.027353585+08:00",
-        "time": "2026-03-01 15:41:13.027 +0800",
+        "hostname": "localhost",
+        "region": "xxx",
+        "uploaded_time": "2026-05-11T16:58:47.328548319+08:00",
+        "time": "2026-05-11 16:58:47.328 +0800",
         "tracer_name": "ras",
-        "tracer_time": "2026-03-01 15:41:13.027 +0800",
+        "tracer_time": "2026-05-11 16:58:47.328 +0800",
         "tracer_type": "auto",
         "tracer_data": {
             "dev": "MEM",
             "event": "EDAC",
-            "type": "CORRECTED",
-            "timestamp": 26870134986481080,
-            "info": "1 CORRECTED err: memory read error on CPU_SrcID#0_MC#1_Chan#0_DIMM#0 (mc: 1 location:0:0:-1 address: 0x3ddc84140 grain:32 syndrome:0x0  err_code:0x0101:0x0090 ProcessorSocketId:0x0 MemoryControllerId:0x1 PhysicalRankId:0x0 Row:0x15da Column:0x100 Bank:0x3 BankGroup:0x1 retry_rd_err_log[0001a209 00000000 00800000 0440d001 000015da] correrrcnt[0001 0000 0000 0000 0000 0000 0000 0000])"
+            "type": "Corrected",
+            "timestamp": 537792166031,
+            "info": "{\"err_count\":0,\"err_type\":\"Corrected\",\"err_msg\":\"memory read error\",\"label\":\"CPU_SrcID#0_Ha#0_Chan#0_DIMM#0\",\"mc_index\":0,\"top_layer\":0,\"mid_layer\":0,\"low_layer\":-1,\"addr\":7860269056,\"grain\":128,\"syndrome\":0,\"driver\":\" area:DRAM err_code:0000:009f socket:0 ha:0 channel_mask:1 rank:0\"}"
         }
     }
     ```
