@@ -166,10 +166,11 @@ func ManagerInit(ctx *ManagerInitCtx) error {
 	}
 
 	s := strings.Split(ctx.PodClientCertPath, ",")
+	cert := strings.TrimSpace(s[0])
 	if len(s) == 1 {
-		ctx.podClientCertPath, ctx.podClientCertKey = s[0], s[0]
+		ctx.podClientCertPath, ctx.podClientCertKey = cert, cert
 	} else if len(s) >= 2 {
-		ctx.podClientCertPath, ctx.podClientCertKey = s[0], s[1]
+		ctx.podClientCertPath, ctx.podClientCertKey = cert, strings.TrimSpace(s[1])
 	}
 
 	err := kubeletPodListPortCacheUpdate(ctx)
@@ -524,7 +525,10 @@ func kubeletConfigCacheUpdate(ctx *ManagerInitCtx) error {
 
 	config, err = kubeletConfigFileDefault()
 	if err != nil {
-		panic("we cannot find any cgroup driver of kubelet after requesting configz and default files")
+		panic(fmt.Sprintf(
+			"we cannot find any cgroup driver of kubelet after requesting configz and default files: %v",
+			err,
+		))
 	}
 
 	return nil
