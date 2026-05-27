@@ -50,6 +50,10 @@ For more information, visit: [https://huatuo.tech](https://huatuo.tech)
 
 ![](/docs/img/hardware-errors-huatuo-framework.png)
 
+# Ecosystem
+
+![](/docs/img/huatuo-ecosystem.svg)
+
 # Getting Started
 
 - **Quick Run**
