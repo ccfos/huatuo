@@ -18,8 +18,7 @@ package dcmi
 import "fmt"
 
 const (
-	Success           Return = iota // 0: Success
-	ErrorNotSupported               // 1: Operation not supported
+	Success Return = iota // 0: Success
 )
 
 // String returns the string representation of a Return.

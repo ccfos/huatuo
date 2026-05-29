@@ -102,4 +102,13 @@ func (l *library) registerDcmiLibSymbols(handle uintptr) {
 	purego.RegisterLibFunc(&dcGetDeviceHealth, handle, "dcmi_get_device_health")
 	purego.RegisterLibFunc(&dcGetCardList, handle, "dcmi_get_card_list")
 	purego.RegisterLibFunc(&dcGetDeviceNumInCard, handle, "dcmi_get_device_num_in_card")
+	purego.RegisterLibFunc(&dcGetDevicePowerInfo, handle, "dcmi_get_device_power_info")
+	purego.RegisterLibFunc(&dcGetDeviceTemperature, handle, "dcmi_get_device_temperature")
+	purego.RegisterLibFunc(&dcGetDeviceVoltage, handle, "dcmi_get_device_voltage")
+	purego.RegisterLibFunc(&dcGetDeviceUtilizationRate, handle, "dcmi_get_device_utilization_rate")
+	purego.RegisterLibFunc(&dcGetDeviceFrequency, handle, "dcmi_get_device_frequency")
+	purego.RegisterLibFunc(&dcGetDeviceNetWorkHealth, handle, "dcmi_get_device_network_health")
+	purego.RegisterLibFunc(&dcGetDeviceHbmInfo, handle, "dcmi_get_device_hbm_info")
+	purego.RegisterLibFunc(&dcGetDeviceEccInfo, handle, "dcmi_get_device_ecc_info")
+	purego.RegisterLibFunc(&dcGetDevicePcieInfoV2, handle, "dcmi_get_device_pcie_info_v2")
 }

@@ -16,7 +16,6 @@
 package dcmi
 
 import (
-	"errors"
 	"fmt"
 )
 
@@ -27,13 +26,6 @@ type Error struct {
 
 func (e *Error) Error() string {
 	return fmt.Sprintf("%s failed: %s", e.symbol, e.code.String())
-}
-
-// IsNotSupported reports whether err represents an unsupported operation.
-func IsNotSupported(err error) bool {
-	var dcmiErr *Error
-	return errors.As(err, &dcmiErr) &&
-		dcmiErr.code == ErrorNotSupported
 }
 
 // checkReturnCode converts a return code to an error.
