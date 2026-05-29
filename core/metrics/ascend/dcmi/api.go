@@ -17,7 +17,16 @@ package dcmi
 
 // API provides the public interface for Ascend NPU monitoring.
 var (
-	DcGetDeviceHealth    = libdcmi.DcGetDeviceHealth
-	DcGetCardList        = libdcmi.DcGetCardList
-	DcGetDeviceNumInCard = libdcmi.DcGetDeviceNumInCard
+	DcGetDeviceHealth         = libdcmi.DcGetDeviceHealth
+	DcGetCardList             = libdcmi.DcGetCardList
+	DcGetDeviceNumInCard      = libdcmi.DcGetDeviceNumInCard
+	DcGetDevicePowerInfo      = libdcmi.DcGetDevicePowerInfo
+	DcGetDeviceTemperature    = libdcmi.DcGetDeviceTemperature
+	DcGetDeviceVoltage        = libdcmi.DcGetDeviceVoltage
+	DcGetDeviceUtilizationRate = libdcmi.DcGetDeviceUtilizationRate
+	DcGetDeviceFrequency      = libdcmi.DcGetDeviceFrequency
+	DcGetDeviceNetWorkHealth  = libdcmi.DcGetDeviceNetWorkHealth
+	DcGetHbmInfo             = libdcmi.DcGetHbmInfo
+	DcGetDeviceEccInfo       = libdcmi.DcGetDeviceEccInfo
+	DcGetPCIeBusInfo         = libdcmi.DcGetPCIeBusInfo
 )
