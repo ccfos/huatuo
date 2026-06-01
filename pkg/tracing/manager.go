@@ -101,11 +101,12 @@ func (mgr *TracingManager) StopByName(name string) error {
 
 // Dump gets all tracer info
 func (mgr *TracingManager) Dump() map[string]*EventTracingInfo {
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+
 	dump := make(map[string]*EventTracingInfo)
 	for name, c := range mgr.tracingEvents {
-		mgr.mu.Lock()
 		dump[name] = c.Info()
-		mgr.mu.Unlock()
 	}
 	return dump
 }

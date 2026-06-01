@@ -251,6 +251,6 @@ func StopTask(taskID string) error {
 		task.cancelFunc()
 	}
 	taskLifeTmpCache.Delete(taskID)
-	log.Infof("task %s stoped", task.id)
+	log.Infof("task %s stopped", task.id)
 	return nil
 }
