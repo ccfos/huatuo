@@ -55,9 +55,7 @@ func newPerfEventReader(ctx context.Context, array *ebpf.Map, perCPUBuffer int) 
 // Close the perfEventReader.
 func (r *perfEventReader) Close() error {
 	r.cancelCtx()
-	r.rd.Close()
-
-	return nil
+	return r.rd.Close()
 }
 
 // ReadInto reads the eBPF perf_event into pdata.
