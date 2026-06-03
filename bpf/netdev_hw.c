@@ -32,8 +32,8 @@ int BPF_KPROBE(carrier_down_count_show, struct device *dev)
 	u32 key			  = BPF_CORE_READ(netdev, ifindex);
 	u64 value		  = 0;
 
-	if (bpf_core_field_exists(netdev->rx_dropped))
-		value = BPF_CORE_READ(netdev, rx_dropped.counter);
+	if (bpf_core_field_exists(netdev->stats.rx_dropped))
+		value = BPF_CORE_READ(netdev, stats.rx_dropped);
 
 	bpf_map_update_elem(&rx_sw_dropped_stats, &key, &value, COMPAT_BPF_ANY);
 	return 0;

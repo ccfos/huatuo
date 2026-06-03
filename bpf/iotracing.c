@@ -121,8 +121,11 @@ struct block_device___new {
  */
 static __always_inline struct gendisk *get_request_disk(struct request *req)
 {
-	if (bpf_core_field_exists(req->rq_disk)) {
-		return BPF_CORE_READ(req, rq_disk);
+	// kernel 7.0+: rq_disk removed, use req->part->bd_disk instead
+	if (bpf_core_field_exists(req->part)) {
+		struct gendisk *disk = NULL;
+			disk = BPF_CORE_READ(req, part, bd_disk);
+			return disk;
 	} else {
 		struct request_queue___new *q;
 
@@ -138,8 +141,10 @@ static __always_inline int get_partition_number(struct request *req)
 {
 	void *part = BPF_CORE_READ(req, part);
 
-	if (bpf_core_field_exists(((struct hd_struct *)part)->partno)) {
-		return BPF_CORE_READ((struct hd_struct *)part, partno);
+	/* kernel 7.0+: hd_struct removed, extract partno from bd_dev */
+	if (bpf_core_field_exists(((struct block_device *)part)->bd_dev)) {
+		dev_t dev = BPF_CORE_READ((struct block_device *)part, bd_dev);
+		return (dev & 0xff) | ((dev >> 12) << 8);  /* extract partition number */
 	} else {
 		struct block_device___new *new_part;
 		int partno;
@@ -335,8 +340,9 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 	from  = (struct iov_iter *)PT_REGS_PARM2(ctx);
 	count = BPF_CORE_READ(from, count);
 
-	if (bpf_core_field_exists(from->type)) {
-		type = BPF_CORE_READ(from, type);
+	// kernel 7.0+: iov_iter.type removed, use iter.flags
+		if (bpf_core_field_exists(from->iter_type)) {
+		type = BPF_CORE_READ(from, iter_type);
 	} else {
 		struct iov_iter___new *from_new;
 

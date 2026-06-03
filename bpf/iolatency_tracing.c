@@ -113,7 +113,7 @@ static __always_inline int q2c_latency_index(struct bio *bio, u64 now)
 {
 	u64 bi_issue, val;
 
-	if (bpf_probe_read(&val, sizeof(val), &bio->bi_issue))
+	if (bpf_probe_read(&val, sizeof(val), &bio->issue_time_ns))
 		return -1;
 
 	bi_issue = val & TIMESTAMP_MASK;

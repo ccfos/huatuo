@@ -123,8 +123,8 @@ long get_task_state(struct task_struct *task)
 	if (task == NULL)
 		return -1;
 
-	if (bpf_core_field_exists(task->state))
-		state = BPF_CORE_READ(task, state);
+	if (bpf_core_field_exists(task->__state))
+		state = BPF_CORE_READ(task, __state);
 	else {
 		struct task_struct___5_14 *task_new = (struct task_struct___5_14 *)task;
 		state = (long)BPF_CORE_READ(task_new, __state);

@@ -93,13 +93,10 @@ static void sk_get_type_and_protocol(struct sock *sk, u16 *protocol, u16 *type)
 	//              sk_protocol  : 8,
 	//              sk_type      : 16;
 	// }
-	if (bpf_core_field_exists(sk->__sk_flags_offset)) {
-		u32 sk_flags;
-
-		bpf_probe_read(&sk_flags, sizeof(sk_flags),
-			       &sk->__sk_flags_offset);
-		*protocol = sk_flags >> SK_FL_PROTO_SHIFT;
-		*type	  = sk_flags >> SK_FL_TYPE_SHIFT;
+	// kernel 7.0+: __sk_flags_offset removed, use direct fields
+	if (bpf_core_field_exists(sk->sk_protocol)) {
+		*protocol = BPF_CORE_READ(sk, sk_protocol);
+		*type = BPF_CORE_READ(sk, sk_type);
 		return;
 	}
 

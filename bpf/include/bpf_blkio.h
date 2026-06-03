@@ -13,11 +13,7 @@ static __always_inline u64 ktime_ns_mask()
 	return bpf_ktime_get_ns() & TIMESTAMP_MASK;
 }
 
-/* Local struct definitions for kernel 5.12+ compatibility.
- * In newer kernels, bio->bi_disk was moved to bio->bi_bdev->bd_disk.
- * These local structs with preserve_access_index enable BPF CO-RE to
- * correctly relocate field offsets at load time.
- */
+/* Local struct definitions for CO-RE compatibility across kernel versions */
 struct block_device___compat {
 	struct gendisk *bd_disk;
 	u32 bd_dev;
@@ -31,10 +27,8 @@ static __always_inline struct gendisk *bio_disk(struct bio *bio)
 {
 	struct gendisk *disk = NULL;
 
-	if (bpf_core_field_exists(bio->bi_disk)) {
-		BPF_CORE_READ_INTO(&disk, bio, bi_disk);
-	} else {
-		/* Kernel 5.12+: bio->bi_disk moved to bio->bi_bdev->bd_disk */
+	/* kernel 7.0+: bi_disk removed, use bi_bdev->bd_disk */
+	if (bpf_core_field_exists(bio->bi_bdev)) {
 		struct bio___compat *bio_new = (struct bio___compat *)bio;
 		struct block_device *bdev;
 
@@ -51,16 +45,15 @@ static __always_inline u8 bio_partno(struct bio *bio)
 {
 	u8 partno = 0;
 
-	if (bpf_core_field_exists(bio->bi_partno)) {
-		BPF_CORE_READ_INTO(&partno, bio, bi_partno);
-	} else {
-		/* Kernel 5.12+: bi_partno moved to bio->bi_bdev->bd_dev */
+	/* kernel 7.0+: bi_partno removed, extract from bi_bdev->bd_dev */
+	if (bpf_core_field_exists(bio->bi_bdev)) {
 		struct bio___compat *bio_new = (struct bio___compat *)bio;
-		struct block_device___compat *bdev;
+		struct block_device *bdev;
 
 		BPF_CORE_READ_INTO(&bdev, bio_new, bi_bdev);
 		if (bdev) {
-			BPF_CORE_READ_INTO(&partno, bdev, bd_dev);
+			dev_t dev = BPF_CORE_READ(bdev, bd_dev);
+			partno = (dev & 0xff) | ((dev >> 12) << 8);
 		}
 	}
 
