@@ -5,6 +5,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "bpf_common.h"
+#include "bpf_compat_7_0.h"
 
 // defaultly, we use task_group address as key to operate map.
 #define TG_ADDR_KEY
@@ -123,11 +124,14 @@ long get_task_state(struct task_struct *task)
 	if (task == NULL)
 		return -1;
 
-	if (bpf_core_field_exists(task->state))
-		state = BPF_CORE_READ(task, state);
-	else {
-		struct task_struct___5_14 *task_new = (struct task_struct___5_14 *)task;
-		state = (long)BPF_CORE_READ(task_new, __state);
+	{
+		struct task_struct___7_0 *task7 = (struct task_struct___7_0 *)task;
+		if (bpf_core_field_exists(task7->__state)) {
+			state = BPF_CORE_READ(task7, __state);
+		} else {
+			struct task_struct___5_14 *task_new = (struct task_struct___5_14 *)task;
+			state = (long)BPF_CORE_READ(task_new, __state);
+		}
 	}
 
 	return state;
