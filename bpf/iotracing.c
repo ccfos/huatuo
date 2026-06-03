@@ -141,10 +141,12 @@ static __always_inline int get_partition_number(struct request *req)
 {
 	void *part = BPF_CORE_READ(req, part);
 
-	/* kernel 7.0+: hd_struct removed, extract partno from bd_dev */
-	if (bpf_core_field_exists(((struct block_device *)part)->bd_dev)) {
+	/* kernel 7.0+: hd_struct removed, try bd_partno first, fallback to bd_dev */
+	if (bpf_core_field_exists(((struct block_device *)part)->bd_partno)) {
+		return BPF_CORE_READ((struct block_device *)part, bd_partno);
+	} else if (bpf_core_field_exists(((struct block_device *)part)->bd_dev)) {
 		dev_t dev = BPF_CORE_READ((struct block_device *)part, bd_dev);
-		return (dev & 0xff) | ((dev >> 12) << 8);  /* extract partition number */
+		return MINOR(dev);  /* minor number as approximation */
 	} else {
 		struct block_device___new *new_part;
 		int partno;

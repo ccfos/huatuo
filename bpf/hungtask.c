@@ -26,9 +26,13 @@ int tracepoint_sched_process_hang(struct trace_event_raw_sched_process_hang *ctx
 	struct hungtask_info info = {};
 
 	info.pid = ctx->pid;
-	/* kernel 7.0+: comm is __data_loc_comm, use __data offset */
-	bpf_probe_read_str(&info.comm, sizeof(info.comm),
-			   (void *)ctx + (ctx->__data_loc_comm & 0xffff));
+	/* kernel 7.0+: comm is __data_loc_comm */
+	if (bpf_core_field_exists(ctx->__data_loc_comm)) {
+		bpf_probe_read_str(&info.comm, sizeof(info.comm),
+				   (void *)ctx + (ctx->__data_loc_comm & 0xffff));
+	} else {
+		BPF_CORE_READ_STR_INTO(&info.comm, ctx, comm);
+	}
 	bpf_perf_event_output(ctx, &hungtask_perf_events,
 			      COMPAT_BPF_F_CURRENT_CPU, &info, sizeof(info));
 	return 0;

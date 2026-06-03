@@ -27,8 +27,11 @@ static __always_inline struct gendisk *bio_disk(struct bio *bio)
 {
 	struct gendisk *disk = NULL;
 
-	/* kernel 7.0+: bi_disk removed, use bi_bdev->bd_disk */
-	if (bpf_core_field_exists(bio->bi_bdev)) {
+	/* Prefer bi_disk when present (kernel < 5.12) */
+	if (bpf_core_field_exists(bio->bi_disk)) {
+		BPF_CORE_READ_INTO(&disk, bio, bi_disk);
+	} else if (bpf_core_field_exists(bio->bi_bdev)) {
+		/* kernel 5.12+: bi_disk moved to bi_bdev->bd_disk */
 		struct bio___compat *bio_new = (struct bio___compat *)bio;
 		struct block_device *bdev;
 
@@ -45,15 +48,23 @@ static __always_inline u8 bio_partno(struct bio *bio)
 {
 	u8 partno = 0;
 
-	/* kernel 7.0+: bi_partno removed, extract from bi_bdev->bd_dev */
-	if (bpf_core_field_exists(bio->bi_bdev)) {
+	/* Prefer bi_partno when present (kernel < 5.12) */
+	if (bpf_core_field_exists(bio->bi_partno)) {
+		BPF_CORE_READ_INTO(&partno, bio, bi_partno);
+	} else if (bpf_core_field_exists(bio->bi_bdev)) {
+		/* kernel 5.12+: bi_partno moved, use bi_bdev */
 		struct bio___compat *bio_new = (struct bio___compat *)bio;
 		struct block_device *bdev;
 
 		BPF_CORE_READ_INTO(&bdev, bio_new, bi_bdev);
 		if (bdev) {
-			dev_t dev = BPF_CORE_READ(bdev, bd_dev);
-			partno = (dev & 0xff) | ((dev >> 12) << 8);
+			/* kernel 7.0+: try bd_partno first */
+			if (bpf_core_field_exists(bdev->bd_partno)) {
+				BPF_CORE_READ_INTO(&partno, bdev, bd_partno);
+			} else {
+				dev_t dev = BPF_CORE_READ(bdev, bd_dev);
+				partno = MINOR(dev);
+			}
 		}
 	}
 
