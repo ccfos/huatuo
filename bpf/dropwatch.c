@@ -1,6 +1,7 @@
 #include "vmlinux.h"
 
 #include "bpf_common.h"
+#include "bpf_compat_7_0.h"
 #include "bpf_net_namespace.h"
 #include "bpf_netdevice.h"
 #include "bpf_ratelimit.h"
@@ -93,14 +94,13 @@ static void sk_get_type_and_protocol(struct sock *sk, u16 *protocol, u16 *type)
 	//              sk_protocol  : 8,
 	//              sk_type      : 16;
 	// }
-	if (bpf_core_field_exists(sk->__sk_flags_offset)) {
-		u32 sk_flags;
-
-		bpf_probe_read(&sk_flags, sizeof(sk_flags),
-			       &sk->__sk_flags_offset);
-		*protocol = sk_flags >> SK_FL_PROTO_SHIFT;
-		*type	  = sk_flags >> SK_FL_TYPE_SHIFT;
-		return;
+	{
+		struct sock___7_0 *sk7 = (struct sock___7_0 *)sk;
+		if (bpf_core_field_exists(sk7->sk_protocol)) {
+			*protocol = BPF_CORE_READ(sk7, sk_protocol);
+			*type	  = BPF_CORE_READ(sk7, sk_type);
+			return;
+		}
 	}
 
 	// struct sock {

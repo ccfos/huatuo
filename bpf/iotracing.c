@@ -5,6 +5,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "bpf_common.h"
+#include "bpf_compat_7_0.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -121,11 +122,17 @@ struct block_device___new {
  */
 static __always_inline struct gendisk *get_request_disk(struct request *req)
 {
-	if (bpf_core_field_exists(req->rq_disk)) {
-		return BPF_CORE_READ(req, rq_disk);
-	} else {
+	struct request___7_0 *req7 = (struct request___7_0 *)req;
+	
+	if (bpf_core_field_exists(req7->part)) {
+		struct block_device *bdev = BPF_CORE_READ(req7, part);
+		if (bdev) {
+			struct block_device___7_0 *bdev7 = (struct block_device___7_0 *)bdev;
+			return BPF_CORE_READ(bdev7, bd_disk);
+		}
+	}
+	{
 		struct request_queue___new *q;
-
 		q = (struct request_queue___new *)BPF_CORE_READ(req, q);
 		return BPF_CORE_READ(q, disk);
 	}
@@ -137,13 +144,15 @@ static __always_inline struct gendisk *get_request_disk(struct request *req)
 static __always_inline int get_partition_number(struct request *req)
 {
 	void *part = BPF_CORE_READ(req, part);
+	struct block_device___7_0 *bdev7 = (struct block_device___7_0 *)part;
 
-	if (bpf_core_field_exists(((struct hd_struct *)part)->partno)) {
-		return BPF_CORE_READ((struct hd_struct *)part, partno);
-	} else {
+	if (bpf_core_field_exists(bdev7->bd_dev)) {
+		dev_t dev = BPF_CORE_READ(bdev7, bd_dev);
+		return dev & 0xff;
+	}
+	{
 		struct block_device___new *new_part;
 		int partno;
-
 		new_part = (struct block_device___new *)part;
 		partno	 = BPF_CORE_READ(new_part, bd_dev);
 		return partno & 0xff;
@@ -335,13 +344,15 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 	from  = (struct iov_iter *)PT_REGS_PARM2(ctx);
 	count = BPF_CORE_READ(from, count);
 
-	if (bpf_core_field_exists(from->type)) {
-		type = BPF_CORE_READ(from, type);
-	} else {
-		struct iov_iter___new *from_new;
-
-		from_new = (struct iov_iter___new *)from;
-		type	 = BPF_CORE_READ(from_new, data_source);
+	{
+		struct iov_iter___7_0 *from7 = (struct iov_iter___7_0 *)from;
+		if (bpf_core_field_exists(from7->iter_type)) {
+			type = BPF_CORE_READ(from7, iter_type);
+		} else {
+			struct iov_iter___new *from_new;
+			from_new = (struct iov_iter___new *)from;
+			type	 = BPF_CORE_READ(from_new, data_source);
+		}
 	}
 
 	type = type & 0x1;
