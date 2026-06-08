@@ -5,6 +5,10 @@
 #define NULL ((void *)0)
 #endif
 
+#ifndef __noinline
+#define __noinline __attribute__((noinline))
+#endif
+
 /* define COMPAT_XXX for compat old kernel vmlinux.h */
 #define COMPAT_BPF_F_CURRENT_CPU 0xffffffffULL
 
@@ -15,6 +19,7 @@
 /* include/uapi/linux/perf_event.h */
 #define PERF_MAX_STACK_DEPTH	127
 #define PERF_MIN_STACK_DEPTH	16
+#define PERF_STACK_DEPTH	20
 
 /* flags for both BPF_FUNC_get_stackid and BPF_FUNC_get_stack. */
 #define COMPAT_BPF_F_USER_STACK 256

@@ -7,7 +7,12 @@
 #define IFNAMSIZ        16
 
 #define ETH_P_IP        0x0800          /* Internet Protocol packet     */
+#define ETH_P_IPV6      0x86DD
+#define ETH_P_ARP       0x0806
 #define AF_INET         2       /* Internet IP Protocol         */
+#define AF_INET6        10
+#define IPPROTO_TCP     6
+#define TCP_CLOSE       7
 
 #define IP_MF           0x2000          /* Flag: "More Fragments"       */
 #define IP_OFFSET       0x1FFF          /* "Fragment Offset" part       */
@@ -22,5 +27,11 @@ static inline unsigned char *skb_network_header(struct sk_buff *skb)
 static inline unsigned char *skb_transport_header(struct sk_buff *skb)
 {
     return BPF_CORE_READ(skb, head) + BPF_CORE_READ(skb, transport_header);
+}
+
+// skb_mac_header - return the MAC header pointer from sk_buff
+static inline unsigned char *skb_mac_header(struct sk_buff *skb)
+{
+    return BPF_CORE_READ(skb, head) + BPF_CORE_READ(skb, mac_header);
 }
 #endif
