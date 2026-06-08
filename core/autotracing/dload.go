@@ -77,10 +77,9 @@ const (
 	taskCgroupType = 2
 )
 
-const debugDload = false
-
 type containersDloadMap map[string]*containerDloadInfo
 
+// containersDloads is only accessed from the single dloadTracing.Start goroutine.
 var containersDloads = make(containersDloadMap)
 
 func updateContainersDload() error {
@@ -120,7 +119,7 @@ func shouldCareThisLoadEvent(container *containerDloadInfo, threshold *dloadThre
 		}
 	}
 
-	if debugDload {
+	if threshold.debug {
 		return true
 	}
 
@@ -165,16 +164,16 @@ func buildAndSaveDloadContainer(thresh *dloadThreshold, container *containerDloa
 	cgrpPath := container.name
 	containerID := container.container.ID
 
-	stackCgrp, err := dumpUninterruptibleTaskStack(taskCgroupType, cgrpPath, debugDload)
+	stackCgrp, err := dumpUninterruptibleTaskStack(taskCgroupType, cgrpPath, thresh.debug)
 	if err != nil {
 		return err
 	}
 
-	if stackCgrp == "" {
+	if stackCgrp == "" && !thresh.debug {
 		return nil
 	}
 
-	stackHost, err := dumpUninterruptibleTaskStack(taskHostType, "", debugDload)
+	stackHost, err := dumpUninterruptibleTaskStack(taskHostType, "", thresh.debug)
 	if err != nil {
 		return err
 	}
@@ -301,7 +300,7 @@ func cgroupHostTasks(where int, path string) ([]int32, error) {
 }
 
 func dumpUninterruptibleTaskStack(where int, path string, all bool) (string, error) {
-	var appended bool = false
+	var appended bool
 
 	stacks := new(bytes.Buffer)
 
@@ -353,15 +352,24 @@ type dloadTracing struct{}
 type dloadThreshold struct {
 	thresh          int64
 	intervalTracing int64
+	debug           bool
 }
 
-// Start detect work, monitor the load of containers
+// Start detect work, monitor the load of containers.
+// CGROUPSTATS_CMD_GET netlink API only works with cgroup v1.
 func (c *dloadTracing) Start(ctx context.Context) error {
+	if cgroups.CgroupMode() != cgroups.Legacy {
+		log.Infof("dload: skipping on cgroup v2 (netlink CGROUPSTATS_CMD_GET requires cgroup v1)")
+		<-ctx.Done()
+		return types.ErrExitByCancelCtx
+	}
+
 	interval := cfg.Dload.Interval
 
 	thresh := &dloadThreshold{
 		thresh:          cfg.Dload.ThresholdLoad,
 		intervalTracing: cfg.Dload.IntervalTracing,
+		debug:           cfg.Dload.EnableDebug,
 	}
 
 	for {

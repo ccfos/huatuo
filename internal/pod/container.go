@@ -160,6 +160,16 @@ func ContainerByNetNamespaceInode(inode uint64) (*Container, error) {
 	return nil, nil
 }
 
+// GetCSSToContainerID builds a mapping from cgroup subsystem address to container ID.
+func GetCSSToContainerID(subsys string) (map[uint64]string, error) {
+	containers, err := Containers()
+	if err != nil {
+		return nil, err
+	}
+
+	return BuildCssContainersID(containers, subsys), nil
+}
+
 // BuildCssContainersID builds a css-address map from the provided containers.
 func BuildCssContainersID(containers map[string]*Container, subsys string) map[uint64]string {
 	cssToContainerMap := make(map[uint64]string, len(containers))

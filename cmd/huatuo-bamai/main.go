@@ -78,7 +78,7 @@ func mainAction(ctx *cli.Context) error {
 	}
 
 	if !ctx.Bool("disable-storage") {
-		if err := initStorage(config.Region, config.Get()); err != nil {
+		if err := initStorage(ctx.String("region"), config.Get()); err != nil {
 			return err
 		}
 	}
@@ -100,7 +100,7 @@ func mainAction(ctx *cli.Context) error {
 	}
 
 	blacklisted := config.Get().BlackList
-	prom, err := InitMetricsCollector(blacklisted, config.Region)
+	prom, err := InitMetricsCollector(blacklisted, ctx.String("region"))
 	if err != nil {
 		return err
 	}
@@ -229,9 +229,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 			},
 		)
 	}
-	if esStore != nil {
-		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
-	}
+	tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
 
 	return nil
 }
@@ -254,7 +252,8 @@ func main() {
 	app.Usage = AppUsage
 
 	if AppVersion == "" {
-		panic("the value of AppVersion must be specified")
+		log.Error("the value of AppVersion must be specified")
+		os.Exit(1)
 	}
 
 	v := []string{
@@ -304,7 +303,7 @@ func main() {
 		},
 		&cli.StringSliceFlag{
 			Name:  "disable-tracing",
-			Usage: "disable tracing. Multiple values supported, comma-separated. This option works with the BlackList in the config file.",
+			Usage: "disable tracing. This is related to BlackList in config, and complement each other",
 		},
 		&cli.BoolFlag{
 			Name:  "log-debug",
@@ -329,9 +328,6 @@ func main() {
 			return fmt.Errorf("load config: %w", err)
 		}
 
-		// set Region
-		config.Region = ctx.String("region")
-
 		// log level
 		if config.Get().Log.Level != "" {
 			log.SetLevel(config.Get().Log.Level)
@@ -352,8 +348,10 @@ func main() {
 		// tracer
 		disabledTracing := ctx.StringSlice("disable-tracing")
 		if len(disabledTracing) > 0 {
-			disabledTracing = append(config.Get().BlackList, disabledTracing...)
-			config.Set("BlackList", disabledTracing)
+			definedTracers := config.Get().BlackList
+			definedTracers = append(definedTracers, disabledTracing...)
+
+			config.Set("BlackList", definedTracers)
 
 			log.Infof("The tracer black list by cli: %v", config.Get().BlackList)
 		}

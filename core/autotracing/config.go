@@ -19,8 +19,8 @@ import "huatuo-bamai/internal/matcher"
 // ContainerFilterConfig is the serializable form of a container filter.
 // It is converted to a *matcher.ContainerMatcher at runtime.
 type ContainerFilterConfig struct {
-	Include []*matcher.Rule `toml:"include,omitempty"`
-	Exclude []*matcher.Rule `toml:"exclude,omitempty"`
+	Included []*matcher.Rule `toml:"Included,omitempty"`
+	Excluded []*matcher.Rule `toml:"Excluded,omitempty"`
 }
 
 // Build compiles the config into a ContainerMatcher.
@@ -29,7 +29,7 @@ func (c *ContainerFilterConfig) Build() (*matcher.ContainerMatcher, error) {
 	if c == nil {
 		return nil, nil
 	}
-	return matcher.NewContainerMatcherFromRules(c.Include, c.Exclude)
+	return matcher.NewContainerMatcherFromRules(c.Included, c.Excluded)
 }
 
 // Config holds autotracing configuration.
@@ -44,7 +44,7 @@ type Config struct {
 		Interval              int64                  `default:"10"`
 		IntervalTracing       int64                  `default:"1800"`
 		RunTracingToolTimeout int64                  `default:"10"`
-		Filter                *ContainerFilterConfig `toml:"filter"`
+		Filter                *ContainerFilterConfig `toml:"Filter"`
 	}
 
 	CPUSys struct {
@@ -58,6 +58,7 @@ type Config struct {
 		ThresholdLoad   int64 `default:"5"`
 		Interval        int64 `default:"10"`
 		IntervalTracing int64 `default:"1800"`
+		EnableDebug     bool  `default:"false"`
 	}
 
 	IOTracing struct {
@@ -83,13 +84,10 @@ type Config struct {
 	IssuesList [][]string
 }
 
-var cfg = &Config{}
+var cfg *Config
 
-// Set updates the package level config.
-func Set(c *Config) {
-	if c == nil {
-		cfg = &Config{}
-		return
-	}
+// SetConfig sets the autotracing config and initializes default values for map fields.
+func SetConfig(c *Config) {
 	cfg = c
+
 }

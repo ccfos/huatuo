@@ -11,22 +11,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 package autotracing
 
 import (
 	"bufio"
 	"context"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/tracing"
-
-	"github.com/shirou/gopsutil/process"
 )
 
 func init() {
@@ -41,58 +37,12 @@ func newMemBurst() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-type memBurstTracing struct{}
-
-type MemoryTracingData struct {
-	TopMemoryUsage []ProcessMemoryInfo `json:"top_memory_usage"`
-}
-
-// ProcessMemoryInfo holds process information for sorting
-type ProcessMemoryInfo struct {
-	PID         int32  `json:"pid"`
-	ProcessName string `json:"process_name"`
-	MemorySize  uint64 `json:"memory_size"`
-}
-
-// ByMemory is used to sorting processes by memory usage
-type ByMemory []ProcessMemoryInfo
-
-func (a ByMemory) Len() int           { return len(a) }
-func (a ByMemory) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a ByMemory) Less(i, j int) bool { return a[i].MemorySize > a[j].MemorySize }
-
-// getTopMemoryProcesses returns the top N processes consuming the most memory.
-func getTopMemoryProcesses(topN int) ([]ProcessMemoryInfo, error) {
-	processes, err := process.Processes()
-	if err != nil {
-		return nil, err
+type (
+	memBurstTracing   struct{}
+	MemoryTracingData struct {
+		TopMemoryUsage []*processMemInfo `json:"top_memory_usage"`
 	}
-
-	var pmInfos []ProcessMemoryInfo
-	for _, p := range processes {
-		memInfo, err := p.MemoryInfo()
-		if err != nil {
-			continue
-		}
-		name, err := p.Name()
-		if err != nil {
-			continue
-		}
-		pmInfos = append(pmInfos, ProcessMemoryInfo{
-			PID:         p.Pid,
-			ProcessName: name,
-			MemorySize:  memInfo.RSS,
-		})
-	}
-
-	// Sort the processes by memory usage
-	sort.Sort(ByMemory(pmInfos))
-
-	if len(pmInfos) < topN {
-		return pmInfos, nil
-	}
-	return pmInfos[:topN], nil
-}
+)
 
 // pass required keys and readMemInfo will return their values according to /proc/meminfo
 func readMemInfo(requiredKeys map[string]bool) (map[string]int, error) {
@@ -101,17 +51,14 @@ func readMemInfo(requiredKeys map[string]bool) (map[string]int, error) {
 		return nil, err
 	}
 	defer file.Close()
-
 	results := make(map[string]int)
 	scanner := bufio.NewScanner(file)
-
 	for scanner.Scan() {
 		line := scanner.Text()
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
 		}
-
 		key := strings.Trim(fields[0], ":")
 		if _, ok := requiredKeys[key]; ok {
 			value, err := strconv.Atoi(strings.Trim(fields[1], " kB"))
@@ -119,56 +66,48 @@ func readMemInfo(requiredKeys map[string]bool) (map[string]int, error) {
 				return nil, err
 			}
 			results[key] = value
-
 			if len(results) == len(requiredKeys) {
 				break
 			}
 		}
 	}
-
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-
 	return results, nil
 }
 
 func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 	memTotal int, history []int, historyWindowLength, topNProcesses int,
 	burstRatio float64, anonThreshold int,
-) ([]ProcessMemoryInfo, error) {
+) ([]*processMemInfo, error) {
 	memInfo, err := readMemInfo(map[string]bool{
 		"Active(anon)":   true,
 		"Inactive(anon)": true,
 	})
 	if err != nil {
 		log.Errorf("Error reading memory info: %v\n", err)
-		return []ProcessMemoryInfo{}, nil
+		return []*processMemInfo{}, nil
 	}
-
 	currentSum := memInfo["Active(anon)"] + memInfo["Inactive(anon)"]
 	history[*currentIndex] = currentSum
-
 	if *currentIndex == historyWindowLength-1 {
 		*isHistoryFull = true
 	}
-
 	*currentIndex = (*currentIndex + 1) % historyWindowLength
-
 	log.Debugf("Checked memory status. active_anon=%v KiB inactive_anon=%v KiB\n", memInfo["Active(anon)"], memInfo["Inactive(anon)"])
-
 	if *isHistoryFull {
 		oldestSum := history[*currentIndex] // current index is the oldest element
 		if float64(currentSum) >= burstRatio*float64(oldestSum) && currentSum >= (anonThreshold*memTotal/100) {
-			topProcesses, err := getTopMemoryProcesses(topNProcesses)
+			topProcesses, err := topMemoryProcesses(topNProcesses, memoryRSS)
 			if err == nil {
 				return topProcesses, nil
 			}
 			log.Errorf("Fail to getTopMemoryProcesses")
-			return []ProcessMemoryInfo{}, err
+			return []*processMemInfo{}, err
 		}
 	}
-	return []ProcessMemoryInfo{}, nil
+	return []*processMemInfo{}, nil
 }
 
 // Core function
@@ -179,7 +118,7 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 	sampleInterval := cfg.MemoryBurst.Interval
 	intervalTracing := cfg.MemoryBurst.IntervalTracing
 	topNProcesses := cfg.MemoryBurst.DumpProcessMaxNum
-	burstRatio := (float64(cfg.MemoryBurst.DeltaMemoryBurst) / 100.0) + 1
+	burstRatio := (float64(cfg.MemoryBurst.DeltaMemoryBurst)/100.0 + 1)
 	anonThreshold := cfg.MemoryBurst.DeltaAnonThreshold
 
 	memInfo, err := readMemInfo(map[string]bool{"MemTotal": true})
@@ -191,54 +130,45 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 	history := make([]int, historyWindowLength) // circular buffer
 	var currentIndex int
 	var isHistoryFull bool // don't check memory burst until we have enough data
-	var topProcesses []ProcessMemoryInfo
+	var topProcesses []*processMemInfo
 	lastReportTime := time.Now().Add(-24 * time.Hour)
-
 	_, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historyWindowLength, topNProcesses, burstRatio, anonThreshold)
 	if err != nil {
 		log.Errorf("Fail to checkAndRecordMemoryUsage")
 		return err
 	}
-
 	for {
 		ticker := time.NewTicker(time.Duration(sampleInterval) * time.Second)
 		stoppedByUser := false
-
 		for range ticker.C {
 			topProcesses, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historyWindowLength, topNProcesses, burstRatio, anonThreshold)
 			if err != nil {
 				log.Errorf("Fail to checkAndRecordMemoryUsage")
 				return err
 			}
-
 			select {
 			case <-ctx.Done():
 				log.Info("Caller request to stop")
 				stoppedByUser = true
 			default:
 			}
-
 			if len(topProcesses) > 0 || stoppedByUser {
 				break
 			}
 		}
-
 		ticker.Stop()
-
 		if stoppedByUser {
 			break
 		}
-
 		currentTime := time.Now()
 		diff := currentTime.Sub(lastReportTime).Seconds()
 		if diff < float64(intervalTracing) {
 			continue
 		}
-
 		lastReportTime = currentTime
-
 		if err := tracing.Save(&tracing.WriteRequest{
 			TracerName:    "memburst",
+			ContainerID:   "",
 			TracerTime:    time.Now(),
 			TracerData:    &MemoryTracingData{TopMemoryUsage: topProcesses},
 			TracerRunType: tracing.TracerRunTypeAutotracing,
@@ -246,6 +176,5 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 			log.Warnf("failed to save tracing data: %v", err)
 		}
 	}
-
 	return nil
 }
