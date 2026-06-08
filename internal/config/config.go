@@ -26,8 +26,10 @@ import (
 )
 
 var (
-	// CoreBinDir is the directory where cmd binaries are stored.
+	// CoreBinDir is the directory where cmd binaries are stored (including bamai, profiler etc.).
 	CoreBinDir = ""
+	// CoreBpfDir is the directory where BPF object files are stored.
+	CoreBpfDir = ""
 
 	lock = sync.Mutex{}
 )
@@ -35,6 +37,7 @@ var (
 func init() {
 	if exePath, err := os.Executable(); err == nil {
 		CoreBinDir = filepath.Dir(exePath)
+		CoreBpfDir = filepath.Join(filepath.Dir(CoreBinDir), "bpf")
 	}
 }
 
@@ -63,7 +66,8 @@ func Sync(path string, src any) error {
 	return toml.NewEncoder(f).Encode(src)
 }
 
-// Set modifies a field in cfg by dot-separated key.
+// Set modifies a field in cfg (a pointer to a struct) by dot-separated key.
+// Panics if the key is invalid or the value type doesn't match.
 func Set(cfg any, key string, val any) {
 	lock.Lock()
 	defer lock.Unlock()

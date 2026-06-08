@@ -17,107 +17,25 @@ package events
 import (
 	"context"
 	"fmt"
-	"net"
+	"os"
+	"os/exec"
+	"path"
 	"strings"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/linkstatus"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/symbol"
-	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/internal/utils/netutil"
+	"huatuo-bamai/internal/packet"
+	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/pkg/types"
+
+	internalconfig "huatuo-bamai/internal/config"
 )
-
-const (
-	tracerName = "dropwatch"
-	logPrefix  = tracerName + ": "
-
-	// type
-	typeTCPCommonDrop               = 1
-	typeTCPSynFlood                 = 2
-	typeTCPListenOverflowHandshake1 = 3
-	typeTCPListenOverflowHandshake3 = 4
-)
-
-// from include/net/tcp_states.h
-var tcpstateMap = []string{
-	"<nil>", // 0
-	"ESTABLISHED",
-	"SYN_SENT",
-	"SYN_RECV",
-	"FIN_WAIT1",
-	"FIN_WAIT2",
-	"TIME_WAIT",
-	"CLOSE",
-	"CLOSE_WAIT",
-	"LAST_ACK",
-	"LISTEN",
-	"CLOSING",
-	"NEW_SYN_RECV",
-}
-
-var typeMap = map[uint8]string{
-	typeTCPCommonDrop:               "common_drop",
-	typeTCPSynFlood:                 "syn_flood",
-	typeTCPListenOverflowHandshake1: "listen_overflow_handshake1",
-	typeTCPListenOverflowHandshake3: "listen_overflow_handshake3",
-}
-
-type perfEventT struct {
-	TgidPid            uint64                              `json:"tgid_pid"`
-	Saddr              uint32                              `json:"saddr"`
-	Daddr              uint32                              `json:"daddr"`
-	Sport              uint16                              `json:"sport"`
-	Dport              uint16                              `json:"dport"`
-	Seq                uint32                              `json:"seq"`
-	AckSeq             uint32                              `json:"ack_seq"`
-	PktLen             uint32                              `json:"pkt_len"`
-	StackSize          int64                               `json:"stack_size"`
-	Stack              [symbol.KsymStackMaxDepth]uint64    `json:"stack"`
-	NetdevQueueMapping uint32                              `json:"netdev_queue_mapping"`
-	NetdevFlags        uint32                              `json:"netdev_flags"`
-	NetdevName         [bpf.NetdevNameLen]byte             `json:"netdev_name"`
-	NetdevIfindex      uint32                              `json:"netdev_ifindex"`
-	SkMaxAckBacklog    uint32                              `json:"sk_max_ack_backlog"`
-	SkState            uint8                               `json:"sk_state"`
-	Type               uint8                               `json:"type"`
-	Pad0               uint16                              `json:"pad0"`
-	Pad1               uint32                              `json:"pad1"`
-	NetCookie          uint64                              `json:"net_cookie"`
-	Comm               [bpf.TaskCommLen]byte               `json:"comm"`
-}
-
-type DropWatchTracingData struct {
-	Type               string   `json:"type"`
-	Comm               string   `json:"comm"`
-	Pid                uint64   `json:"pid"`
-	Saddr              string   `json:"saddr"`
-	Daddr              string   `json:"daddr"`
-	Sport              uint16   `json:"sport"`
-	Dport              uint16   `json:"dport"`
-	SrcHostname        string   `json:"src_hostname"`
-	DestHostname       string   `json:"dest_hostname"`
-	MaxAckBacklog      uint32   `json:"max_ack_backlog"`
-	Seq                uint32   `json:"seq"`
-	AckSeq             uint32   `json:"ack_seq"`
-	PktLen             uint32   `json:"pkt_len"`
-	SkState            string   `json:"sk_state"`
-	Stack              string   `json:"stack"`
-	NetdevQueueMapping uint32   `json:"netdev_queue_mapping"`
-	NetdevLinkStatus   []string `json:"netdev_linkstatus"`
-	NetdevName         string   `json:"netdev_name"`
-	NetdevIfindex      uint32   `json:"netdev_ifindex"`
-	NetCookie          uint64   `json:"net_cookie"`
-}
 
 type dropWatchTracing struct{}
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/dropwatch.c -o $BPF_DIR/dropwatch.o
-
 func init() {
-	tracing.RegisterEventTracing(tracerName, newDropWatch)
+	tracing.RegisterEventTracing("dropwatch", newDropWatch)
 }
 
 func newDropWatch() (*tracing.EventTracingAttr, error) {
@@ -128,113 +46,87 @@ func newDropWatch() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-// Start starts the tracer.
+// Start launches dropwatch as a subprocess, receives its events via toolstream,
+// filters them, and persists each event with tracing.Save.
 func (c *dropWatchTracing) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	sockPath := path.Join(os.TempDir(), fmt.Sprintf("dropwatch-%d.sock", os.Getpid()))
+	_ = os.Remove(sockPath)
+
+	srv, err := toolstream.NewServer(sockPath)
 	if err != nil {
-		return fmt.Errorf("load bpf: %w", err)
+		return fmt.Errorf("dropwatch: toolstream server: %w", err)
 	}
-	defer b.Close()
 
-	childCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	defer srv.Close()
 
-	// attach
-	reader, err := b.AttachAndEventPipe(childCtx, "perf_events", 8192)
-	if err != nil {
-		return fmt.Errorf("attach and event pipe: %w", err)
+	toolstream.Register(srv, "dropwatch", c.handleEvent)
+
+	if err := srv.Start(); err != nil {
+		return fmt.Errorf("dropwatch: toolstream start: %w", err)
 	}
-	defer reader.Close()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	args := []string{
+		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "dropwatch.o"),
+		"--output-storage", sockPath,
+	}
+	if cfg != nil && cfg.Dropwatch.Filter != "" {
+		args = append(args, "--filter", cfg.Dropwatch.Filter)
+	}
 
-	for {
-		select {
-		case <-childCtx.Done():
-			log.Info(logPrefix + "tracer is stopped.")
-			return nil
-		default:
-			var event perfEventT
-			if err := reader.ReadInto(&event); err != nil {
-				return fmt.Errorf(logPrefix+"failed to read from perf: %w", err)
-			}
+	cmd := exec.Command(path.Join(internalconfig.CoreBinDir, "dropwatch"), args...)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start dropwatch: %w", err)
+	}
 
-			// format
-			tracerData := c.formatEvent(&event)
+	log.Infof("dropwatch started pid=%d", cmd.Process.Pid)
 
-			if c.ignore(tracerData) {
-				log.Debugf(logPrefix+"ignore dropwatch data: %v", tracerData)
-				continue
-			}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
 
-			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: tracerName,
-				TracerTime: time.Now(),
-				TracerData: tracerData,
-			}); err != nil {
-				log.Warnf("failed to save tracing data: %v", err)
-			}
+	select {
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		<-done
+		log.Info("dropwatch stopped")
+		return nil
+	case werr := <-done:
+		if werr != nil {
+			return fmt.Errorf("dropwatch exited: %w", werr)
 		}
+		log.Info("dropwatch exited")
+		return nil
 	}
 }
 
-func (c *dropWatchTracing) formatEvent(event *perfEventT) *DropWatchTracingData {
-	// hostname
-	saddr := netutil.Inetv4Ntop(event.Saddr).String()
-	daddr := netutil.Inetv4Ntop(event.Daddr).String()
-	srcHostname := "<nil>"
-	destHostname := "<nil>"
-	h, err := net.LookupAddr(saddr)
-	if err == nil && len(h) > 0 {
-		srcHostname = h[0]
+func (c *dropWatchTracing) handleEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
+	if c.ignore(ev) {
+		return nil
 	}
 
-	h, err = net.LookupAddr(daddr)
-	if err == nil && len(h) > 0 {
-		destHostname = h[0]
-	}
-
-	// stack
-	stacks := strings.Join(symbol.KsymStackStrs(event.Stack[:], symbol.KsymStackMaxDepth), "\n")
-
-	// tracer data
-	data := &DropWatchTracingData{
-		Type:               typeMap[event.Type],
-		Comm:               bytesutil.ToStr(event.Comm[:]),
-		Pid:                event.TgidPid >> 32,
-		Saddr:              saddr,
-		Daddr:              daddr,
-		Sport:              netutil.Ntohs(event.Sport),
-		Dport:              netutil.Ntohs(event.Dport),
-		SrcHostname:        srcHostname,
-		DestHostname:       destHostname,
-		Seq:                netutil.Ntohl(event.Seq),
-		AckSeq:             netutil.Ntohl(event.AckSeq),
-		PktLen:             event.PktLen,
-		SkState:            tcpstateMap[event.SkState],
-		Stack:              stacks,
-		MaxAckBacklog:      event.SkMaxAckBacklog,
-		NetdevQueueMapping: event.NetdevQueueMapping,
-		NetdevName:         bytesutil.ToStr(event.NetdevName[:]),
-		NetdevLinkStatus:   linkstatus.FlagsRaw(event.NetdevFlags),
-		NetdevIfindex:      event.NetdevIfindex,
-		NetCookie:          event.NetCookie,
-	}
-
-	log.Debugf(logPrefix+"tracing data: %v", data)
-	return data
+	return tracing.Save(&tracing.WriteRequest{
+		TracerName:  "dropwatch",
+		ContainerID: ev.ContainerID,
+		TracerTime:  time.Now(),
+		TracerData:  ev,
+	})
 }
 
-func (c *dropWatchTracing) ignore(data *DropWatchTracingData) bool {
+// ignore returns true for known-noisy events that should not be forwarded.
+// Stack frame matching uses the same patterns as the previous TCP-only tracer.
+func (c *dropWatchTracing) ignore(data *types.DropWatchTracing) bool {
 	stack := strings.Split(data.Stack, "\n")
+
 	// state: CLOSE_WAIT
 	// stack:
-	//	1. kfree_skb/ffffffff963047b0
-	//	2. kfree_skb/ffffffff963047b0
-	//	3. skb_rbtree_purge/ffffffff963089e0
-	//	4. tcp_fin/ffffffff963ac200
-	//	5. ...
-	if data.SkState == "CLOSE_WAIT" {
+	// 1. kfree_skb/ffffffff963047b0
+	// 2. kfree_skb/ffffffff963047b0
+	// 3. skb_rbtree_purge/ffffffff963089e0
+	// 4. tcp_fin/ffffffff963ac200
+	// 5. ...
+	// CLOSE_WAIT + skb_rbtree_purge: normal socket teardown, not a drop.
+	if skState := packet.TCPSkState(data.PacketInfo); skState == "CLOSE_WAIT" {
 		if len(stack) >= 3 && strings.HasPrefix(stack[2], "skb_rbtree_purge/") {
 			return true
 		}
@@ -246,7 +138,8 @@ func (c *dropWatchTracing) ignore(data *DropWatchTracingData) bool {
 	// 3. neigh_invalidate/ffffffff96d388b0
 	// 4. neigh_timer_handler/ffffffff96d3a870
 	// 5. ...
-	if cfg.Dropwatch.ExcludedNeighInvalidate {
+	// neigh_invalidate: ARP/neighbor table cleanup, filtered by config.
+	if cfg != nil && cfg.Dropwatch.ExcludedNeighInvalidate {
 		if len(stack) >= 3 && strings.HasPrefix(stack[2], "neigh_invalidate/") {
 			return true
 		}
@@ -258,18 +151,19 @@ func (c *dropWatchTracing) ignore(data *DropWatchTracingData) bool {
 	// 3. bnxt_tx_int/ffffffffc05c6f20
 	// 4. __bnxt_poll_work_done/ffffffffc05c50c0
 	// 5. ...
-
+	//
 	// stack:
 	// 1. kfree_skb/ffffffffaba83d10
 	// 2. kfree_skb/ffffffffaba83d10
 	// 3. __bnxt_tx_int/ffffffffc045df90
 	// 4. bnxt_tx_int/ffffffffc045e250
 	// 5. ...
+	// bnxt NIC TX completion path: driver frees skb normally, not a real drop.
 	if len(stack) >= 3 &&
-		(strings.HasPrefix(stack[2], "bnxt_tx_int/") || strings.HasPrefix(stack[2], "__bnxt_tx_int/")) {
+		(strings.HasPrefix(stack[2], "bnxt_tx_int/") ||
+			strings.HasPrefix(stack[2], "__bnxt_tx_int/")) {
 		return true
 	}
 
-	// default: false
 	return false
 }

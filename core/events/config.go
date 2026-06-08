@@ -14,13 +14,15 @@
 
 package events
 
-// Config holds event tracing configuration used by the package at runtime.
+// Config holds event tracing configuration.
 type Config struct {
 	Softirq struct {
+		// 10ms
 		DisabledThreshold uint64 `default:"10000000"`
 	}
 
 	MemoryReclaim struct {
+		// 900ms
 		BlockedThreshold uint64 `default:"900000000"`
 	}
 
@@ -33,7 +35,9 @@ type Config struct {
 	}
 
 	Dropwatch struct {
-		ExcludedNeighInvalidate bool `default:"true"`
+		ExcludedNeighInvalidate bool     `default:"true"`
+		Filter                  string   `default:"tcp"` // tcpdump expression forwarded to dropwatch CLI (requires -tags pcap)
+		ExcludeContainers       []string // container names/IDs to exclude (BPF-side, future)
 	}
 
 	Netdev struct {
@@ -47,13 +51,7 @@ type Config struct {
 	IssuesList [][]string
 }
 
-var cfg = &Config{}
+var cfg *Config
 
-// Set updates the package level config.
-func Set(c *Config) {
-	if c == nil {
-		cfg = &Config{}
-		return
-	}
-	cfg = c
-}
+// Set sets the events config.
+func Set(c *Config) { cfg = c }
