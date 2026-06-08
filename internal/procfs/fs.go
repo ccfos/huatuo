@@ -43,7 +43,10 @@ var defaultPaths = map[string]func() string{
 	"dev":  func() string { return defaultDevMountPoint },
 }
 
-type FS = procfs.FS
+type (
+	FS      = procfs.FS
+	ProcMap = procfs.ProcMap
+)
 
 // RootPrefix add prefix for /proc, /sys, and /dev. Invoked only for integration test.
 func RootPrefix(root string) {

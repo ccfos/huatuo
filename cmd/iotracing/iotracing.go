@@ -60,7 +60,7 @@ type IOStack struct {
 	Comm              string       `json:"comm"`
 	ContainerHostname string       `json:"container_hostname"`
 	Latency           uint64       `json:"latency_us"`
-	Stack             symbol.Stack `json:"stack"`
+	Stack             []string `json:"stack"`
 }
 
 // ProcFileData records process information.
@@ -118,7 +118,7 @@ type IOData struct {
 
 // IODelayData contains IO schedule info from iodelay_perf_events.
 type IODelayData struct {
-	Stack     [symbol.KsymbolStackMinDepth]uint64
+	Stack     [symbol.KsymStackMinDepth]uint64
 	TimeStamp uint64
 	Cost      uint64
 	StackSize uint32
@@ -534,7 +534,7 @@ func mainAction(ctx *cli.Context) error {
 				ContainerHostname: hostname,
 				Pid:               event.Pid,
 				Latency:           event.Cost / 1000,
-				Stack:             symbol.DumpKernelBackTrace(event.Stack[:], symbol.KsymbolStackMinDepth),
+				Stack:             symbol.KsymStackStrs(event.Stack[:], symbol.KsymStackMinDepth),
 			}
 
 			tracingCmd.ioData.IOStack = append(tracingCmd.ioData.IOStack, stack)

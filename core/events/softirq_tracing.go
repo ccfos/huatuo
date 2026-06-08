@@ -35,7 +35,7 @@ import (
 type softirqTracing struct{}
 
 type softirqPerfEvent struct {
-	Stack     [symbol.KsymbolStackMaxDepth]uint64
+	Stack     [symbol.KsymStackMaxDepth]uint64
 	StackSize int64
 	Now       uint64
 	StallTime uint64
@@ -142,8 +142,8 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 
 // softirqDumpTrace is an interface for dump stacks in this case with offset and module info
 func softirqDumpTrace(addrs []uint64) string {
-	stacks := symbol.DumpKernelBackTrace(addrs, symbol.KsymbolStackMaxDepth)
-	return strings.Join(stacks.BackTrace, "\n")
+	stacks := symbol.KsymStackStrs(addrs, symbol.KsymStackMaxDepth)
+	return strings.Join(stacks, "\n")
 }
 
 func attachIrqAndEventPipe(ctx context.Context, b bpf.BPF) (bpf.PerfEventReader, error) {

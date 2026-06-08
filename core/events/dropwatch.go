@@ -75,7 +75,7 @@ type perfEventT struct {
 	AckSeq             uint32                              `json:"ack_seq"`
 	PktLen             uint32                              `json:"pkt_len"`
 	StackSize          int64                               `json:"stack_size"`
-	Stack              [symbol.KsymbolStackMaxDepth]uint64 `json:"stack"`
+	Stack              [symbol.KsymStackMaxDepth]uint64    `json:"stack"`
 	NetdevQueueMapping uint32                              `json:"netdev_queue_mapping"`
 	NetdevFlags        uint32                              `json:"netdev_flags"`
 	NetdevName         [bpf.NetdevNameLen]byte             `json:"netdev_name"`
@@ -195,7 +195,7 @@ func (c *dropWatchTracing) formatEvent(event *perfEventT) *DropWatchTracingData 
 	}
 
 	// stack
-	stacks := strings.Join(symbol.DumpKernelBackTrace(event.Stack[:], symbol.KsymbolStackMaxDepth).BackTrace, "\n")
+	stacks := strings.Join(symbol.KsymStackStrs(event.Stack[:], symbol.KsymStackMaxDepth), "\n")
 
 	// tracer data
 	data := &DropWatchTracingData{

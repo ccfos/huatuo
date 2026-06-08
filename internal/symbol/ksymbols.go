@@ -15,157 +15,97 @@
 package symbol
 
 import (
-	"bufio"
 	"fmt"
-	"os"
-	"sort"
-	"strconv"
-	"strings"
+	"slices"
 	"sync"
+
+	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/procfs"
 )
 
+const ksymMax = 300000
+
 var (
-	ksymbolCounter = 0
-	ksymbolPath    = "/proc/kallsyms"
-	ksymbolCache   = []Symbol{}
-	ksymbolIsInit  = false
-	ksymbolMax     = 300000
-	ksymbolLock    = sync.Mutex{}
-	moduleKernel   = "[kernel]"
-	defaultSymbol  = Symbol{0, "", "[unknown]"}
+	ksymOnce      sync.Once
+	kernelSymbols symbols
+	defaultKsym   = &symbol{Name: "[unknown]"}
 )
 
 const (
-	KsymbolStackMaxDepth = 127
-	KsymbolStackMinDepth = 16
+	// KsymStackMinDepth is the minimum supported kernel stack depth.
+	KsymStackMinDepth = 16
+	// KsymStackMaxDepth is the maximum supported kernel stack depth.
+	KsymStackMaxDepth = 127
+	// KsymPerfStackDepth is the default perf kernel stack depth.
+	KsymPerfStackDepth = 20
 )
 
-// Stack is record backtrace
-type Stack struct {
-	BackTrace []string `json:"back_trace"`
+// KsymStackBytes resolves kernel stack addresses into byte frames (innermost first).
+func KsymStackBytes(kstack []uint64, kstackSize int) [][]byte {
+	return dumpKernelBackTrace(kstack, kstackSize, outTypeBytes, false).bytes
 }
 
-// Symbol is record kernel symbol info
-type Symbol struct {
-	Addr   uint64
-	Name   string
-	Module string
+// KsymStackStrs resolves kernel stack addresses into string frames (innermost first).
+func KsymStackStrs(kstack []uint64, kstackSize int) []string {
+	return dumpKernelBackTrace(kstack, kstackSize, outTypeString, false).strings
 }
 
-func (s Symbol) String() string {
-	return fmt.Sprintf("{Addr: %x Name: %s Module: %s}", s.Addr, s.Name, s.Module)
+// KsymStackBytesReversed resolves kernel stack addresses into byte frames (outermost first).
+func KsymStackBytesReversed(kstack []uint64, kstackSize int) [][]byte {
+	return dumpKernelBackTrace(kstack, kstackSize, outTypeBytes, true).bytes
 }
 
-type symbolSort []Symbol
-
-func (s symbolSort) Len() int {
-	return ksymbolCounter
+// KsymStackStrsReversed resolves kernel stack addresses into string frames (outermost first).
+func KsymStackStrsReversed(kstack []uint64, kstackSize int) []string {
+	return dumpKernelBackTrace(kstack, kstackSize, outTypeString, true).strings
 }
 
-func (s symbolSort) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
-func (s symbolSort) Less(i, j int) bool {
-	return s[i].Addr < s[j].Addr
-}
-
-func loadKAllSymbols() error {
-	ksymbolCache = make([]Symbol, ksymbolMax)
-	// default
-	ksymbolCache[0] = defaultSymbol
-	ksymbolCounter = 1
-
-	f, err := os.Open(ksymbolPath)
-	if err != nil {
-		return err
+// KsymbolSearchAddr returns the address of a kernel symbol by name.
+func KsymbolSearchAddr(name string) (uint64, error) {
+	ensureKsymsLoaded()
+	for _, s := range kernelSymbols {
+		if s.Name == name {
+			return s.Addr, nil
+		}
 	}
-	defer f.Close()
+	return 0, fmt.Errorf("symbol %q not found in %q", name, procfs.Path("kallsyms"))
+}
 
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		words := strings.FieldsFunc(line, func(c rune) bool {
-			return c == ' ' || c == '\t'
-		})
-
-		// get kernel and module text symbol
-		if len(words) != 3 && len(words) != 4 {
-			continue
+// dumpKernelBackTrace resolves kernel addresses into stackFrames up to maxDepth frames.
+// reversed=true returns outermost frame first (original BPF order reversed);
+// reversed=false returns innermost frame first (top-of-stack first).
+func dumpKernelBackTrace(stack []uint64, maxDepth int, out outType, reversed bool) stackFrames {
+	if len(stack) > maxDepth {
+		stack = stack[:maxDepth]
+	}
+	ensureKsymsLoaded()
+	frames := resolveStack(stack, func(addr uint64) string {
+		sym := kernelSymbols.floorSym(addr)
+		if sym == nil {
+			return failFrame("ksym-not-found", "")
 		}
+		return fmt.Sprintf("%s/+%d %s", sym.Name, addr-sym.Addr, sym.Module)
+	}, out)
 
-		// only get text symbol
-		if words[1] != "T" && words[1] != "t" {
-			continue
+	if reversed {
+		if out == outTypeBytes {
+			slices.Reverse(frames.bytes)
+		} else {
+			slices.Reverse(frames.strings)
 		}
+	}
+	return frames
+}
 
-		addr, err := strconv.ParseUint(words[0], 16, 64)
+// ensureKsymsLoaded loads kallsyms exactly once; on failure it logs a warning and leaves kernelSymbols empty.
+func ensureKsymsLoaded() {
+	ksymOnce.Do(func() {
+		tbl, err := scanKallsyms(procfs.Path("kallsyms"), ksymMax)
 		if err != nil {
-			fmt.Printf("%v\n", err)
-			continue
+			log.Warnf("symbol: failed to load kallsyms: %v", err)
+			return
 		}
-
-		if len(words) == 3 {
-			ksymbolCache[ksymbolCounter] = Symbol{Addr: addr, Name: words[2], Module: moduleKernel}
-		} else {
-			ksymbolCache[ksymbolCounter] = Symbol{Addr: addr, Name: words[2], Module: words[3]}
-		}
-		ksymbolCounter++
-	}
-
-	// sort
-	sort.Sort(symbolSort(ksymbolCache))
-
-	ksymbolIsInit = true
-
-	return nil
-}
-
-func ksymbolSearch(key uint64) Symbol {
-	ksymbolLock.Lock()
-	defer ksymbolLock.Unlock()
-
-	if !ksymbolIsInit {
-		_ = loadKAllSymbols()
-	}
-
-	i, j := 0, ksymbolCounter
-	for i < j {
-		h := (i + j) >> 1 // avoid overflow when computing h
-		if ksymbolCache[h].Addr == key {
-			i = h
-			break
-		} else if ksymbolCache[h].Addr < key {
-			i = h + 1
-		} else {
-			j = h
-		}
-	}
-
-	if ksymbolCache[i].Addr == key {
-		return ksymbolCache[i]
-	}
-	if i == 0 {
-		return ksymbolCache[0]
-	}
-	return ksymbolCache[i-1]
-}
-
-// DumpKernelBackTrace converts the kernel stack address to the kernel symbol
-// and returns the Stack structure
-func DumpKernelBackTrace(stack []uint64, maxDepth int) Stack {
-	var s Stack
-
-	for i, addr := range stack {
-		if addr == 0 || i >= maxDepth {
-			break
-		}
-		sym := ksymbolSearch(addr)
-		if sym.Name != "" {
-			offset := addr - sym.Addr
-			s.BackTrace = append(s.BackTrace, fmt.Sprintf("%s/+%d %s",
-				sym.Name, offset, sym.Module))
-		}
-	}
-	return s
+		kernelSymbols = append(symbols{defaultKsym}, tbl...)
+		kernelSymbols[1:].sort()
+	})
 }

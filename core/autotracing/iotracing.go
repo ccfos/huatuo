@@ -23,7 +23,6 @@ import (
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs/blockdevice"
-	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
@@ -57,7 +56,7 @@ type IOStack struct {
 	Comm              string       `json:"comm"`
 	ContainerHostname string       `json:"container_hostname"`
 	Latency           uint64       `json:"latency_us"`
-	Stack             symbol.Stack `json:"stack"`
+	Stack             []string     `json:"stack"`
 }
 
 // ProcFileData records process information.

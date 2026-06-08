@@ -34,13 +34,13 @@ const (
 	libtype int = 0xd
 )
 
-type symbol struct {
+type usymEntry struct {
 	name  string
 	start uint64
 	size  uint64
 }
 
-type section struct {
+type usymSection struct {
 	name        string
 	start       uint64
 	end         uint64
@@ -49,33 +49,33 @@ type section struct {
 
 // elfcache elf slice
 type elfcache struct {
-	sections  []section
-	symcaches []symbol
+	sections  []usymSection
+	symcaches []usymEntry
 }
 
 // Usym User mode stack information
 type Usym struct {
 	elfcaches map[uint32]elfcache
-	libcaches map[string][]symbol
+	libcaches map[string][]usymEntry
 }
 
 // NewUsym creates a new Usym object
 func NewUsym() *Usym {
 	return &Usym{
 		elfcaches: make(map[uint32]elfcache),
-		libcaches: make(map[string][]symbol),
+		libcaches: make(map[string][]usymEntry),
 	}
 }
 
-func (m *Usym) getElfSymbols(f *elf.File) []symbol {
-	tabSym := []symbol{}
+func (m *Usym) getElfSymbols(f *elf.File) []usymEntry {
+	tabSym := []usymEntry{}
 	dynsymbols, err := f.DynamicSymbols()
 	if err != nil {
 		log.Debugf("Usym elf no dynsymbols err %v", err)
 	} else {
 		for _, dsym := range dynsymbols {
 			if elf.ST_TYPE(dsym.Info) == elf.STT_FUNC {
-				tabSym = append(tabSym, symbol{name: dsym.Name, start: dsym.Value, size: dsym.Size})
+				tabSym = append(tabSym, usymEntry{name: dsym.Name, start: dsym.Value, size: dsym.Size})
 			}
 		}
 	}
@@ -86,7 +86,7 @@ func (m *Usym) getElfSymbols(f *elf.File) []symbol {
 	} else {
 		for _, sym := range symbols {
 			if elf.ST_TYPE(sym.Info) == elf.STT_FUNC {
-				tabSym = append(tabSym, symbol{name: sym.Name, start: sym.Value, size: sym.Size})
+				tabSym = append(tabSym, usymEntry{name: sym.Name, start: sym.Value, size: sym.Size})
 			}
 		}
 	}
@@ -120,7 +120,7 @@ func (m *Usym) loadElfCaches(addr uint64, pid uint32) error {
 		return nil
 	}
 	// load sections
-	sectionArray := []section{}
+	sectionArray := []usymSection{}
 
 	path, err := m.getExePath(pid)
 	if err != nil {
@@ -137,7 +137,7 @@ func (m *Usym) loadElfCaches(addr uint64, pid uint32) error {
 	defer f.Close()
 	sections := f.Sections
 	for _, s := range sections {
-		sectionArray = append(sectionArray, section{name: s.Name, start: s.Addr, end: s.Addr + s.Size, sectiontype: elftype})
+		sectionArray = append(sectionArray, usymSection{name: s.Name, start: s.Addr, end: s.Addr + s.Size, sectiontype: elftype})
 	}
 
 	// load maps
@@ -167,7 +167,7 @@ func (m *Usym) loadElfCaches(addr uint64, pid uint32) error {
 		startNum, _ := strconv.ParseUint(start, 16, 64)
 		endNum, _ := strconv.ParseUint(end, 16, 64)
 		if !m.isInBacked(path) {
-			sectionArray = append(sectionArray, section{name: path, start: startNum, end: endNum, sectiontype: libtype})
+			sectionArray = append(sectionArray, usymSection{name: path, start: startNum, end: endNum, sectiontype: libtype})
 		}
 	}
 	sort.Slice(sectionArray, func(i, j int) bool { return sectionArray[i].start < sectionArray[j].start })
@@ -199,16 +199,16 @@ func (m *Usym) loadLibCache(libPath string) error {
 	return nil
 }
 
-func (m *Usym) searchSection(pid uint32, addr uint64) *section {
+func (m *Usym) searchSection(pid uint32, addr uint64) *usymSection {
 	if _, ok := m.elfcaches[pid]; !ok {
-		return &section{}
+		return &usymSection{}
 	}
 	progsection := m.elfcaches[pid].sections
 	index := sort.Search(len(progsection), func(i int) bool {
 		return progsection[i].start > addr
 	})
 	if index == len(progsection) {
-		return &section{}
+		return &usymSection{}
 	}
 	index--
 	log.Debugf("Usym searchSection addr %d index %v len %v", addr, index, len(progsection))
@@ -219,12 +219,12 @@ func (m *Usym) searchSection(pid uint32, addr uint64) *section {
 		if progsection[index].name != "" && addr <= end && addr >= start {
 			return &progsection[index]
 		}
-		return &section{}
+		return &usymSection{}
 	}
-	return &section{}
+	return &usymSection{}
 }
 
-func (m *Usym) searchSym(addr uint64, symbols []symbol) string {
+func (m *Usym) searchSym(addr uint64, symbols []usymEntry) string {
 	index := sort.Search(len(symbols), func(i int) bool {
 		return symbols[i].start > addr
 	})

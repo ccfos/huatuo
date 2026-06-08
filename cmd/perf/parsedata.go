@@ -49,8 +49,8 @@ type eventdata struct {
 
 // CgDumpTrace is an interface for dump stacks in cgusage case
 func CgDumpTrace(addrs []uint64) string {
-	stacks := symbol.DumpKernelBackTrace(addrs, perfStackDepth)
-	return strings.Join(stacks.BackTrace, "\n")
+	stacks := symbol.KsymStackStrs(addrs, perfStackDepth)
+	return strings.Join(stacks, "\n")
 }
 
 func convertLevels(levels []*querierv1.Level) []*flamegraph.Level {
