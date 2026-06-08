@@ -80,6 +80,11 @@ var (
 
 	// PCIe info: dcmi_get_device_pcie_info_v2(card_id, device_id, *pcie_info)
 	dcGetDevicePcieInfoV2 func(uint32, uint32, *dcmiPcieInfoAll) Return
+
+	// ID mapping: dcmi_get_device_logic_id(*logic_id, card_id, device_id)
+	dcGetDeviceLogicID func(*int32, int32, int32) Return
+	// ID mapping: dcmi_get_device_phyid_from_logicid(logic_id, *phyid)
+	dcGetPhysicIDFromLogicID func(uint32, *uint32) Return
 )
 
 // DcmiDeviceType specifies the component type for ECC queries.

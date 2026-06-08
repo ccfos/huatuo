@@ -13,24 +13,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package pcie parses PCIe link capability and status via lspci.
+// Package pcie reads PCIe link capability and status from sysfs.
 //
-// Verify metrics accuracy:
-//
-//		lspci -s <BDF> -vvv | grep -E "LnkCap:|LnkSta:"
-//	 	Exmaple: lspci -s 0000:9D:00.0 -vvv | grep -E "LnkCap:|LnkSta:"
-//
-// LnkCap Speed/Width → npu_link_cap_speed / npu_link_cap_width
-// LnkSta Speed/Width → npu_link_status_speed / npu_link_status_width
+//	/sys/bus/pci/devices/<BDF>/max_link_speed     → npu_link_cap_speed
+//	/sys/bus/pci/devices/<BDF>/max_link_width     → npu_link_cap_width
+//	/sys/bus/pci/devices/<BDF>/current_link_speed → npu_link_status_speed
+//	/sys/bus/pci/devices/<BDF>/current_link_width → npu_link_status_width
 package pcie
 
 import (
 	"fmt"
-	"os/exec"
-	"regexp"
+	"os"
 	"strconv"
 	"strings"
 )
+
+const pciDevicesPath = "/sys/bus/pci/devices"
 
 // PCIeLinkInfo holds PCIe link capability and status information.
 type PCIeLinkInfo struct {
@@ -40,53 +38,54 @@ type PCIeLinkInfo struct {
 	StatusWidth uint32  // LnkSta width in lanes
 }
 
-var (
-	speedRe = regexp.MustCompile(`Speed\s+(\d+\.?\d*)GT/s`)
-	widthRe = regexp.MustCompile(`Width\s+x(\d+)`)
-)
-
-// GetPCIeLinkInfo runs lspci and parses LnkCap/LnkSta for the given BDF.
+// GetPCIeLinkInfo reads PCIe link info from sysfs for the given BDF.
 func GetPCIeLinkInfo(bdf string) (*PCIeLinkInfo, error) {
-	out, err := exec.Command("lspci", "-s", bdf, "-vvv").Output()
-	if err != nil {
-		return nil, fmt.Errorf("lspci -s %s -vvv failed: %w", bdf, err)
-	}
+	base := pciDevicesPath + "/" + bdf
 
 	info := &PCIeLinkInfo{}
-	lines := strings.Split(string(out), "\n")
 
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if strings.Contains(trimmed, "LnkCap:") {
-			info.CapSpeed, info.CapWidth = parseSpeedWidth(trimmed)
-		}
-		if strings.Contains(trimmed, "LnkSta:") {
-			info.StatusSpeed, info.StatusWidth = parseSpeedWidth(trimmed)
-		}
+	if s, err := parseSpeed(base + "/max_link_speed"); err == nil {
+		info.CapSpeed = s
+	}
+	if w, err := parseWidth(base + "/max_link_width"); err == nil {
+		info.CapWidth = w
+	}
+	if s, err := parseSpeed(base + "/current_link_speed"); err == nil {
+		info.StatusSpeed = s
+	}
+	if w, err := parseWidth(base + "/current_link_width"); err == nil {
+		info.StatusWidth = w
 	}
 
 	if info.CapSpeed == 0 && info.StatusSpeed == 0 {
-		return nil, fmt.Errorf("lspci: LnkCap/LnkSta not found for %s", bdf)
+		return nil, fmt.Errorf("sysfs: unable to read link info for %s", bdf)
 	}
 
 	return info, nil
 }
 
-func parseSpeedWidth(line string) (float64, uint32) {
-	var speed float64
-	var width uint32
-
-	m := speedRe.FindStringSubmatch(line)
-	if len(m) >= 2 {
-		speed, _ = strconv.ParseFloat(m[1], 64)
+func parseSpeed(path string) (float64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
 	}
-
-	m = widthRe.FindStringSubmatch(line)
-	if len(m) >= 2 {
-		w, _ := strconv.ParseUint(m[1], 10, 32)
-		width = uint32(w)
+	// Format: "16 GT/s" or "16.0 GT/s" or "2.5 GT/s\n"
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("empty speed in %s", path)
 	}
+	return strconv.ParseFloat(fields[0], 64)
+}
 
-	return speed, width
+func parseWidth(path string) (uint32, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	// Format: "16\n" or "8\n"
+	width, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid width in %s: %w", path, err)
+	}
+	return uint32(width), nil
 }

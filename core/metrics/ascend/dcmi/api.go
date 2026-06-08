@@ -29,4 +29,6 @@ var (
 	DcGetHbmInfo             = libdcmi.DcGetHbmInfo
 	DcGetDeviceEccInfo       = libdcmi.DcGetDeviceEccInfo
 	DcGetPCIeBusInfo         = libdcmi.DcGetPCIeBusInfo
+	DcGetDeviceLogicID        = libdcmi.DcGetDeviceLogicID
+	DcGetPhysicIDFromLogicID  = libdcmi.DcGetPhysicIDFromLogicID
 )

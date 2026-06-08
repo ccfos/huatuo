@@ -16,6 +16,12 @@ package collector
 
 // Config holds metric collector configuration used by the package at runtime.
 type Config struct {
+	AscendNPU struct {
+		EnableDCMI bool `default:"true"`
+		EnablePCIe bool `default:"false"`
+		EnableHCCN bool `default:"false"`
+	}
+
 	NetdevStats struct {
 		EnableNetlink  bool `default:"false"`
 		DeviceExcluded string
