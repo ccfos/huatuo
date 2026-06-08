@@ -310,3 +310,28 @@ func (l *library) DcGetPCIeBusInfo(ctx context.Context, cardId, deviceId uint32)
 	return strings.TrimRight(bdf, " "), nil
 }
 
+// DcGetDeviceLogicID returns the logic ID for a given card and device.
+func (l *library) DcGetDeviceLogicID(cardId, deviceId int32) (int32, error) {
+	var logicID int32
+	if err := checkReturnCode("dcmi_get_device_logic_id",
+		dcGetDeviceLogicID(&logicID, cardId, deviceId)); err != nil {
+		return 0, err
+	}
+	if logicID < 0 {
+		return 0, fmt.Errorf("invalid logic ID: %d", logicID)
+	}
+	return logicID, nil
+}
+
+// DcGetPhysicIDFromLogicID returns the physical ID for a given logic ID.
+func (l *library) DcGetPhysicIDFromLogicID(logicID uint32) (int32, error) {
+	var phyID uint32
+	if err := checkReturnCode("dcmi_get_device_phyid_from_logicid",
+		dcGetPhysicIDFromLogicID(logicID, &phyID)); err != nil {
+		return 0, err
+	}
+	if phyID >= math.MaxInt32 {
+		return 0, fmt.Errorf("invalid physical ID: %d", phyID)
+	}
+	return int32(phyID), nil
+}
