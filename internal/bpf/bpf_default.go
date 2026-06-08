@@ -19,6 +19,7 @@ package bpf
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -82,6 +83,18 @@ func LoadBpfFromBytes(bpfName string, bpfBytes []byte, consts map[string]any) (B
 	return loadBpfFromReader(bpfName, bytes.NewReader(bpfBytes), consts)
 }
 
+// LoadBpfFromCollectionSpec loads the bpf from a prepared collection spec.
+// This allows callers to modify the spec (e.g., inject pcap filters) before loading.
+func LoadBpfFromCollectionSpec(bpfName string, spec *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
+	if spec == nil {
+		return nil, errors.New("nil collection spec")
+	}
+	if err := validateName(bpfName); err != nil {
+		return nil, err
+	}
+	return loadBpfFromCollectionSpec(bpfName, spec, consts)
+}
+
 // LoadBpf the bpf and return the bpf.
 func LoadBpf(bpfName string, consts map[string]any) (BPF, error) {
 	if err := validateName(bpfName); err != nil {
@@ -103,6 +116,10 @@ func loadBpfFromReader(bpfName string, rd io.ReaderAt, consts map[string]any) (B
 		return nil, fmt.Errorf("can't parse the bpf file %s: %w", bpfName, err)
 	}
 
+	return loadBpfFromCollectionSpec(bpfName, specs, consts)
+}
+
+func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
 	// RewriteConstants
 	if consts != nil {
 		if err := specs.RewriteConstants(consts); err != nil {
