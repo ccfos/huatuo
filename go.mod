@@ -3,8 +3,10 @@ module huatuo-bamai
 go 1.24.0
 
 require (
+	capnproto.org/go/capnp/v3 v3.1.0-alpha.2
 	github.com/cilium/ebpf v0.16.0
 	github.com/cloudflare/backoff v0.0.0-20240920015135-e46b80a3a7d0
+	github.com/cloudflare/cbpfc v0.0.0-20250612101420-369091e6a9e1
 	github.com/containerd/cgroups/v3 v3.0.3
 	github.com/deckarep/golang-set v1.8.0
 	github.com/docker/docker v27.4.1+incompatible
@@ -16,6 +18,7 @@ require (
 	github.com/go-playground/validator/v10 v10.22.1
 	github.com/google/cadvisor v0.50.0
 	github.com/google/uuid v1.6.0
+	github.com/gopacket/gopacket v1.2.0
 	github.com/grafana/grafana-plugin-sdk-go v0.251.0
 	github.com/grafana/pyroscope v1.7.1
 	github.com/grafana/pyroscope/api v0.4.0
@@ -23,6 +26,7 @@ require (
 	github.com/mdlayher/netlink v1.7.2
 	github.com/opencontainers/runtime-spec v1.2.0
 	github.com/pelletier/go-toml v1.9.5
+	github.com/packetcap/go-pcap v0.0.0-20251215121130-f2cf9f991e7c
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.21.0-rc.0
 	github.com/prometheus/procfs v0.19.2
