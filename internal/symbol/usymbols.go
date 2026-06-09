@@ -15,269 +15,263 @@
 package symbol
 
 import (
-	"bufio"
 	"debug/elf"
 	"fmt"
-	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
 
-	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/procfs"
+	utils "huatuo-bamai/internal/profiler/common"
+	"huatuo-bamai/internal/utils/fileutil"
 )
 
-const (
-	// elftype elf type
-	elftype int = 0xc
-	// libtype lib type
-	libtype int = 0xd
-)
-
-type usymEntry struct {
-	name  string
-	start uint64
-	size  uint64
+type elfCache struct {
+	secs sections
+	syms symbols
 }
 
-type usymSection struct {
-	name        string
-	start       uint64
-	end         uint64
-	sectiontype int
+type libCache struct {
+	syms symbols
 }
 
-// elfcache elf slice
-type elfcache struct {
-	sections  []usymSection
-	symcaches []usymEntry
+type cacheKey struct {
+	inode    uint64 //nolint:unused // used implicitly via map key equality; never accessed by name
+	mountKey string
 }
 
-// Usym User mode stack information
-type Usym struct {
-	elfcaches map[uint32]elfcache
-	libcaches map[string][]usymEntry
+// UserResolver resolves user-space stack addresses to symbol names across pids.
+type UserResolver struct {
+	exeCache  map[cacheKey]*elfCache // inode+xfs → elfcache
+	exeKeys   map[uint32]cacheKey    // pid → cachekey
+	libcaches map[cacheKey]*libCache // inode+xfs → libcache
+	libKeys   map[string]cacheKey    // libpath → cachekey
+	procmaps  map[uint32]sections
 }
 
-// NewUsym creates a new Usym object
-func NewUsym() *Usym {
-	return &Usym{
-		elfcaches: make(map[uint32]elfcache),
-		libcaches: make(map[string][]usymEntry),
+// NewUserResolver creates a UserResolver with shared caches across pids.
+func NewUserResolver() *UserResolver {
+	return &UserResolver{
+		exeCache:  make(map[cacheKey]*elfCache),
+		exeKeys:   make(map[uint32]cacheKey),
+		libcaches: make(map[cacheKey]*libCache),
+		libKeys:   make(map[string]cacheKey),
+		procmaps:  make(map[uint32]sections),
 	}
 }
 
-func (m *Usym) getElfSymbols(f *elf.File) []usymEntry {
-	tabSym := []usymEntry{}
-	dynsymbols, err := f.DynamicSymbols()
+// ResolveUserStackBytes resolves user-space stack addresses into byte frames.
+func (r *UserResolver) ResolveUserStackBytes(pid uint32, ustack []uint64, ustackSize int) [][]byte {
+	return r.resolveUserStack(pid, ustack, ustackSize, outTypeBytes).bytes
+}
+
+// ResolveUserStackStrs resolves user-space stack addresses into string frames.
+func (r *UserResolver) ResolveUserStackStrs(pid uint32, ustack []uint64, ustackSize int) []string {
+	return r.resolveUserStack(pid, ustack, ustackSize, outTypeString).strings
+}
+
+func (r *UserResolver) resolveUserStack(pid uint32, stack []uint64, stackSize int, out outType) stackFrames {
+	limit := min(stackSize, len(stack))
+	return resolveStack(stack[:limit], func(addr uint64) string {
+		return r.resolveAddr(pid, addr)
+	}, out)
+}
+
+func (r *UserResolver) resolveAddr(pid uint32, addr uint64) string {
+	cache, err := r.loadElfCaches(pid)
 	if err != nil {
-		log.Debugf("Usym elf no dynsymbols err %v", err)
-	} else {
-		for _, dsym := range dynsymbols {
-			if elf.ST_TYPE(dsym.Info) == elf.STT_FUNC {
-				tabSym = append(tabSym, usymEntry{name: dsym.Name, start: dsym.Value, size: dsym.Size})
-			}
+		return failFrame("elf-load-fail", "")
+	}
+
+	m := cache.secs.find(addr)
+	if m != nil {
+		if sym := cache.syms.resolve(addr); sym != "" {
+			return sym
+		}
+		return failFrame("elf-no-sym", "")
+	}
+
+	if err = r.loadProcMaps(pid); err != nil {
+		return failFrame("procmap-fail", "")
+	}
+	m = r.procmaps[pid].find(addr)
+	if m == nil {
+		return failFrame("proc-unmapped", "")
+	}
+	if !isLibPath(m.Pathname) {
+		return failFrame("non-lib", m.Pathname)
+	}
+
+	rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
+	libPath := filepath.Join(rootDir, m.Pathname)
+
+	libCache, err := r.loadLibCache(pid, libPath)
+	if err != nil {
+		return failFrame("lib-load-fail", m.Pathname)
+	}
+	baseAddr, ok := r.procmaps[pid].findBaseAddr(m.Pathname)
+	if !ok {
+		return failFrame("no-baseaddr", m.Pathname)
+	}
+	if sym := libCache.syms.resolve(addr - baseAddr); sym != "" {
+		return sym
+	}
+	return failFrame("lib-no-sym", m.Pathname)
+}
+
+func (r *UserResolver) loadElfCaches(pid uint32) (*elfCache, error) {
+	if key, ok := r.exeKeys[pid]; ok {
+		if cache, ok := r.exeCache[key]; ok {
+			return cache, nil
 		}
 	}
 
-	symbols, err := f.Symbols()
+	path, err := r.exePath(pid)
 	if err != nil {
-		log.Debugf("Usym elf no symbols err %v", err)
-	} else {
-		for _, sym := range symbols {
-			if elf.ST_TYPE(sym.Info) == elf.STT_FUNC {
-				tabSym = append(tabSym, usymEntry{name: sym.Name, start: sym.Value, size: sym.Size})
-			}
-		}
+		return nil, err
 	}
-	return tabSym
-}
 
-var backedArr = []string{"anon_inode:[perf_event]", "[stack]", "[vvar]", "[vdso]", "[vsyscall]", "[heap]", "//anon", "/dev/zero", "/anon_hugepage", "/SYSV"}
-
-func (m *Usym) isInBacked(str string) bool {
-	for _, item := range backedArr {
-		if item == str {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *Usym) getExePath(pid uint32) (string, error) {
-	progpath := fmt.Sprintf("/proc/%d/exe", pid)
-	binpath, err := os.Readlink(progpath)
+	key, err := r.exeCacheKey(pid, path)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	res := filepath.Join(fmt.Sprintf("/proc/%d/root", pid), binpath)
-	log.Debugf("Usym path: %v", res)
-	return res, nil
-}
-
-func (m *Usym) loadElfCaches(addr uint64, pid uint32) error {
-	if _, ok := m.elfcaches[pid]; ok {
-		return nil
-	}
-	// load sections
-	sectionArray := []usymSection{}
-
-	path, err := m.getExePath(pid)
-	if err != nil {
-		return err
-	}
-	if path == "" {
-		return fmt.Errorf("exepath is nil")
+	cache, ok := r.exeCache[key]
+	if ok {
+		r.exeKeys[pid] = key
+		return cache, nil
 	}
 
 	f, err := elf.Open(path)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("elf.Open %q: %w", path, err)
 	}
 	defer f.Close()
-	sections := f.Sections
-	for _, s := range sections {
-		sectionArray = append(sectionArray, usymSection{name: s.Name, start: s.Addr, end: s.Addr + s.Size, sectiontype: elftype})
+
+	secs := make(sections, 0, len(f.Sections))
+	for _, s := range f.Sections {
+		secs = append(secs, &procfs.ProcMap{
+			StartAddr: uintptr(s.Addr),
+			EndAddr:   uintptr(s.Addr + s.Size),
+			Pathname:  s.Name,
+		})
 	}
+	secs.sort()
 
-	// load maps
-	mapPath := fmt.Sprintf("/proc/%d/maps", pid)
-	file, err := os.Open(mapPath)
-	if err != nil {
-		return err
+	cache = &elfCache{
+		secs: secs,
+		syms: elfSymbols(f),
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	if err = scanner.Err(); err != nil {
-		return err
-	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		field := strings.Fields(line)
-		if len(field) < 6 {
-			continue
-		}
-		addr := strings.Split(field[0], "-")
-		start := addr[0]
-		end := addr[1]
-		path := field[5]
-
-		startNum, _ := strconv.ParseUint(start, 16, 64)
-		endNum, _ := strconv.ParseUint(end, 16, 64)
-		if !m.isInBacked(path) {
-			sectionArray = append(sectionArray, usymSection{name: path, start: startNum, end: endNum, sectiontype: libtype})
-		}
-	}
-	sort.Slice(sectionArray, func(i, j int) bool { return sectionArray[i].start < sectionArray[j].start })
-	log.Debugf("Usym elf + maps section: %v", sectionArray)
-
-	// load elfsymbols
-	tabsymbol := m.getElfSymbols(f)
-	sort.Slice(tabsymbol, func(i, j int) bool { return tabsymbol[i].start < tabsymbol[j].start })
-
-	var elf elfcache
-	elf.sections = sectionArray
-	elf.symcaches = tabsymbol
-	m.elfcaches[pid] = elf
-	return nil
+	r.exeCache[key] = cache
+	r.exeKeys[pid] = key
+	return cache, nil
 }
 
-func (m *Usym) loadLibCache(libPath string) error {
-	if _, ok := m.libcaches[libPath]; ok {
+func (r *UserResolver) loadProcMaps(pid uint32) error {
+	_, ok := r.procmaps[pid]
+	if ok {
 		return nil
 	}
-	f, err := elf.Open(libPath)
+
+	maps, err := parseMaps(pid)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	mtabsymbols := m.getElfSymbols(f)
-	sort.Slice(mtabsymbols, func(i, j int) bool { return mtabsymbols[i].start < mtabsymbols[j].start })
-	m.libcaches[libPath] = mtabsymbols
+	r.procmaps[pid] = maps
 	return nil
 }
 
-func (m *Usym) searchSection(pid uint32, addr uint64) *usymSection {
-	if _, ok := m.elfcaches[pid]; !ok {
-		return &usymSection{}
-	}
-	progsection := m.elfcaches[pid].sections
-	index := sort.Search(len(progsection), func(i int) bool {
-		return progsection[i].start > addr
-	})
-	if index == len(progsection) {
-		return &usymSection{}
-	}
-	index--
-	log.Debugf("Usym searchSection addr %d index %v len %v", addr, index, len(progsection))
-	if index < len(progsection) && index >= 0 {
-		log.Debugf("Usym searchSection curr %v next %v", progsection[index], progsection[index+1])
-		start := progsection[index].start
-		end := progsection[index].end
-		if progsection[index].name != "" && addr <= end && addr >= start {
-			return &progsection[index]
+func (r *UserResolver) loadLibCache(pid uint32, libPath string) (*libCache, error) {
+	if key, ok := r.libKeys[libPath]; ok {
+		if cache, ok := r.libcaches[key]; ok {
+			return cache, nil
 		}
-		return &usymSection{}
 	}
-	return &usymSection{}
+
+	key, err := r.libCacheKey(pid, libPath)
+	if err != nil {
+		return nil, err
+	}
+
+	cache, ok := r.libcaches[key]
+	if ok {
+		r.libKeys[libPath] = key
+		return cache, nil
+	}
+
+	f, err := elf.Open(libPath)
+	if err != nil {
+		return nil, fmt.Errorf("elf.Open %q: %w", libPath, err)
+	}
+	defer f.Close()
+
+	cache = &libCache{syms: elfSymbols(f)}
+	r.libcaches[key] = cache
+	r.libKeys[libPath] = key
+	return cache, nil
 }
 
-func (m *Usym) searchSym(addr uint64, symbols []usymEntry) string {
-	index := sort.Search(len(symbols), func(i int) bool {
-		return symbols[i].start > addr
-	})
-	if index == len(symbols) {
-		return ""
+func (r *UserResolver) exePath(pid uint32) (string, error) {
+	proc, err := procfs.NewProc(int(pid))
+	if err != nil {
+		return "", fmt.Errorf("procfs.NewProc %d: %w", pid, err)
 	}
-	index--
-	log.Debugf("Usym searchSym addr %d index %v len %v", addr, index, len(symbols))
-	if index < len(symbols) && index >= 0 {
-		log.Debugf("Usym searchSym curr %v next %v", symbols[index], symbols[index+1])
-		start := symbols[index].start
-		size := symbols[index].size
-		if symbols[index].name != "" && addr >= start && addr < start+size {
-			return symbols[index].name
-		}
-		return "<unknown>"
+	bin, err := proc.Executable()
+	if err != nil {
+		return "", fmt.Errorf("proc.Executable %d: %w", pid, err)
 	}
-	return ""
+	rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
+	return filepath.Join(rootDir, bin), nil
 }
 
-// ResolveUstack display user mode stack information
-func (m *Usym) ResolveUstack(addr uint64, pid uint32) string {
-	log.Debugf("Usym ResolveUstack addr %d pid %d", addr, pid)
-	err := m.loadElfCaches(addr, pid)
+func (r *UserResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
+	inode, err := fileutil.StatInode(path)
 	if err != nil {
-		log.Debugf("Usym loadElfCaches err %v", err)
-		return ""
+		return cacheKey{}, fmt.Errorf("stat %q: %w", path, err)
 	}
-	// search elf section
-	sec := m.searchSection(pid, addr)
-	if sec.name == "" {
-		return ""
-	}
-	// search elf symbol
-	if sec.sectiontype == elftype {
-		if _, ok := m.elfcaches[pid]; !ok {
-			return ""
-		}
-		log.Debugf("Usym elf type")
-		return m.searchSym(addr, m.elfcaches[pid].symcaches)
-	}
-	// search lib symbol
-	libpath := filepath.Join(fmt.Sprintf("/proc/%d/root", pid), sec.name)
-	baseaddr := sec.start
-	addr -= baseaddr
-	err = m.loadLibCache(libpath)
+
+	mountKey, err := r.mountKeyForPID(pid, path)
 	if err != nil {
-		log.Debugf("Usym loadLibCache err %v", err)
-		return ""
+		return cacheKey{}, err
 	}
-	if _, ok := m.libcaches[libpath]; !ok {
-		return ""
+
+	return cacheKey{inode: inode, mountKey: mountKey}, nil
+}
+
+func (r *UserResolver) libCacheKey(pid uint32, libPath string) (cacheKey, error) {
+	inode, err := fileutil.StatInode(libPath)
+	if err != nil {
+		return cacheKey{}, fmt.Errorf("stat %q: %w", libPath, err)
 	}
-	log.Debugf("Usym lib type libpath %v", libpath)
-	return m.searchSym(addr, m.libcaches[libpath])
+
+	mountKey, err := r.mountKeyForPID(pid, libPath)
+	if err != nil {
+		return cacheKey{}, err
+	}
+
+	return cacheKey{inode: inode, mountKey: mountKey}, nil
+}
+
+func (r *UserResolver) mountKeyForPID(pid uint32, hostPath string) (string, error) {
+	count, err := countXfsMounts()
+	if err != nil {
+		return "", err
+	}
+	if count < 2 {
+		return "", nil
+	}
+
+	inContainer, err := utils.IsProcessInContainer(int(pid))
+	if err != nil {
+		return "", err
+	}
+	if !inContainer {
+		return matchXfsMount(hostPath, mounts)
+	}
+
+	if key, ok := r.exeKeys[pid]; ok {
+		return key.mountKey, nil
+	}
+	lowerDir, err := lowerDirFromMountInfo(pid)
+	if err != nil {
+		return "", err
+	}
+	return matchXfsMount(lowerDir, mounts)
 }

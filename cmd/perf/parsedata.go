@@ -93,7 +93,7 @@ func parsedata(b bpf.BPF) error {
 		Value uint64
 	}
 
-	u := symbol.NewUsym()
+	u := symbol.NewUserResolver()
 	for _, v := range items {
 		ed := eventdata{}
 		var count uint64
@@ -141,13 +141,10 @@ func parsedata(b bpf.BPF) error {
 		}
 
 		if kv.Key.UstackSize > 0 {
-			for _, addr := range &kv.Key.Ustack {
-				if addr == 0 {
-					break
-				}
-				usym := u.ResolveUstack(addr, kv.Key.Pid)
-				if usym != "" {
-					index, functionNames = findOrAdd(usym, functionNames)
+			frames := u.ResolveUserStackStrs(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
+			for _, frame := range frames {
+				if frame != "" {
+					index, functionNames = findOrAdd(frame, functionNames)
 					sample.FunctionIds = append(sample.FunctionIds, int32(index))
 				}
 			}

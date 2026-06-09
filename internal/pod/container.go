@@ -166,7 +166,6 @@ func GetCSSToContainerID(subsys string) (map[uint64]string, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return BuildCssContainersID(containers, subsys), nil
 }
 
