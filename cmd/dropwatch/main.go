@@ -84,10 +84,10 @@ var (
 	_ = [1]struct{}{}[232-unsafe.Offsetof(dropPacketEvent{}.Stack)]
 )
 
-// loadBPFWithFilter reads the BPF object at bpfPath, injects filterExpr into the
+// loadDropwatchBPF reads the BPF object at bpfPath, injects filterExpr into the
 // pcap_stub_l2/l3 stubs, and loads it. Each instance uses a unique BPF name to
 // allow multiple instances to coexist.
-func loadBPFWithFilter(bpfPath, filterExpr string) (bpf.BPF, error) {
+func loadDropwatchBPF(bpfPath, filterExpr string) (bpf.BPF, error) {
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
 		return nil, fmt.Errorf("read bpf object: %w", err)
@@ -154,7 +154,7 @@ func mainAction(c *cli.Context) error {
 		defer sockClient.End()
 	}
 
-	bpfObj, err := loadBPFWithFilter(c.String("bpf-path"), c.String("filter"))
+	bpfObj, err := loadDropwatchBPF(c.String("bpf-path"), c.String("filter"))
 	if err != nil {
 		return fmt.Errorf("dropwatch: load bpf: %w", err)
 	}
@@ -189,7 +189,7 @@ func mainAction(c *cli.Context) error {
 
 	bpfObj.WaitDetachByBreaker(runCtx, cancel)
 
-	sink := newWriter(os.Stdout, outputFmt, sockClient)
+	sink := newWriter(outputFmt, sockClient)
 
 	var ev dropPacketEvent
 

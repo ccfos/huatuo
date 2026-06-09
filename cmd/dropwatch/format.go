@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"huatuo-bamai/internal/packet"
@@ -64,14 +65,14 @@ func (s *socketWriter) Write(ev *types.DropWatchTracing) error {
 }
 
 // newWriter returns the appropriate writer based on flags. client may be nil.
-func newWriter(w io.Writer, outputFmt string, client *toolstream.Client) writer {
+func newWriter(outputFmt string, client *toolstream.Client) writer {
 	switch {
 	case client != nil:
 		return &socketWriter{client: client}
 	case outputFmt == "json":
-		return &jsonWriter{w: w}
+		return &jsonWriter{w: os.Stdout}
 	default:
-		return &textWriter{w: w}
+		return &textWriter{w: os.Stdout}
 	}
 }
 
