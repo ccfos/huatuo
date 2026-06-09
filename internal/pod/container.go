@@ -36,20 +36,21 @@ var (
 
 // Container object
 type Container struct {
-	ID                string            `json:"id"`
-	Name              string            `json:"name"`
-	Hostname          string            `json:"hostname"`
-	Type              ContainerType     `json:"type"`
-	Qos               ContainerQos      `json:"qos"`
-	IPAddress         string            `json:"net_ip_address"`
-	NetNamespaceInode uint64            `json:"net_namespace_inode"`
-	InitPid           int               `json:"init_pid"`
-	CgroupPath        string            `json:"cgroup_path"`
-	CgroupCss         map[string]uint64 `json:"cgroup_css"` // map for: subSysName -> structAddress
-	StartedAt         time.Time         `json:"started_at"`
-	SyncedAt          time.Time         `json:"synced_at"`
-	Labels            map[string]any    `json:"labels"` // custom labels
-	lifeResources     map[string]any
+	ID                 string            `json:"id"`
+	Name               string            `json:"name"`
+	Hostname           string            `json:"hostname"`
+	Type               ContainerType     `json:"type"`
+	Qos                ContainerQos      `json:"qos"`
+	IPAddress          string            `json:"net_ip_address"`
+	NetNamespaceInode  uint64            `json:"net_namespace_inode"`
+	NetNamespaceCookie uint64            `json:"net_namespace_cookie"`
+	InitPid            int               `json:"init_pid"`
+	CgroupPath         string            `json:"cgroup_path"`
+	CgroupCss          map[string]uint64 `json:"cgroup_css"` // map for: subSysName -> structAddress
+	StartedAt          time.Time         `json:"started_at"`
+	SyncedAt           time.Time         `json:"synced_at"`
+	Labels             map[string]any    `json:"labels"` // custom labels
+	lifeResources      map[string]any
 }
 
 func (c *Container) String() string {
@@ -143,21 +144,26 @@ func Containers() (map[string]*Container, error) {
 	return containersByTypeQos(ContainerTypeAll, ContainerQosLevelMin)
 }
 
-// ContainerByNetNamespaceInode returns the special container by the net namespace inode.
-func ContainerByNetNamespaceInode(inode uint64) (*Container, error) {
-	// only for normal
+// containerBy searches normal containers and returns the first one for which
+// selector returns val. Returns nil, nil when no container matches.
+func containerBy[T comparable](selector func(*Container) T, val T) (*Container, error) {
 	all, err := NormalContainers()
 	if err != nil {
 		return nil, err
 	}
 
 	for _, c := range all {
-		if c.NetNamespaceInode == inode {
+		if selector(c) == val {
 			return c, nil
 		}
 	}
 
 	return nil, nil
+}
+
+// ContainerByNetInode returns the container whose net namespace inode matches.
+func ContainerByNetInode(inode uint64) (*Container, error) {
+	return containerBy(func(c *Container) uint64 { return c.NetNamespaceInode }, inode)
 }
 
 // GetCSSToContainerID builds a mapping from cgroup subsystem address to container ID.
@@ -189,4 +195,21 @@ func BuildCssContainers(containers map[string]*Container, subsys string) map[uin
 		}
 	}
 	return cssToContainerMap
+}
+
+// ContainerByCSS returns the container whose cgroup subsystem state address
+// for the given subsystem matches css.
+func ContainerByCSS(css uint64, subsys string) (*Container, error) {
+	if css == 0 {
+		return nil, nil
+	}
+	return containerBy(func(c *Container) uint64 { return c.CgroupCss[subsys] }, css)
+}
+
+// ContainerByNetCookie returns the container whose net namespace cookie matches cookie.
+func ContainerByNetCookie(cookie uint64) (*Container, error) {
+	if cookie == 0 {
+		return nil, nil
+	}
+	return containerBy(func(c *Container) uint64 { return c.NetNamespaceCookie }, cookie)
 }

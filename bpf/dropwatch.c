@@ -2,6 +2,7 @@
 
 #include <bpf/bpf_endian.h>
 
+#include "bpf_cgroup.h"
 #include "bpf_common.h"
 #include "bpf_net_namespace.h"
 #include "bpf_netdevice.h"
@@ -27,15 +28,16 @@ struct packet_meta {
 	u64 tgid_pid;            /* 8  */
 	u64 net_cookie;          /* 8  */
 	u64 kfree_skb_addr;      /* 8  */
+	u64 memcg_css_addr;           /* 8  */
 	u32 ifindex;             /* 4  */
 	u32 dev_flags;           /* 4  */
 	u32 queue_mapping;       /* 4  */
 	u32 drop_source;         /* 4  */
 	u32 type;                /* 4  */
-	u32 pad;                 /* 4  */
+	u32 net_inum;             /* 4  */
 	u8  dev_name[IFNAMSIZ];  /* 16 */
 	u8  comm[COMPAT_TASK_COMM_LEN]; /* 16 */
-};                           /* total: 88 bytes */
+};                           /* total: 96 bytes */
 
 struct packet_raw {
 	u16 eth_proto;    /* 2  */
@@ -186,7 +188,7 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 
 	data->pkt_hdr.pkt_len = BPF_CORE_READ(skb, len);
 
-	/* sk state */
+	/* sk state and memory cgroup CSS */
 	struct sock *sk = BPF_CORE_READ(skb, sk);
 	if (sk) {
 		u16 sk_protocol = 0, sk_type = 0;
@@ -196,9 +198,11 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 		    BPF_CORE_READ(sk, __sk_common.skc_family) == AF_INET)
 			data->pkt_hdr.sk_state = BPF_CORE_READ(sk, __sk_common.skc_state);
 	}
+	data->meta.memcg_css_addr = skb_memcg_css_addr(skb);
 
-	/* net cookie */
-	data->meta.net_cookie = net_get_netns_cookie(skb);
+	/* net cookie and net namespace inode from device or socket */
+	data->meta.net_cookie = skb_netns_cookie(skb);
+	data->meta.net_inum = skb_netns_inum(skb);
 
 	/* device info */
 	data->meta.dev_name[0] = '-';

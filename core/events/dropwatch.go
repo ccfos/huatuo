@@ -25,6 +25,7 @@ import (
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/packet"
+	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
@@ -105,12 +106,51 @@ func (c *dropWatchTracing) handleEvent(_ *toolstream.Session, ev *types.DropWatc
 		return nil
 	}
 
+	if ev.ContainerID == "" {
+		ev.ContainerID = resolveContainerIDFromMeta(ev)
+	}
+
 	return tracing.Save(&tracing.WriteRequest{
 		TracerName:  "dropwatch",
 		ContainerID: ev.ContainerID,
 		TracerTime:  time.Now(),
 		TracerData:  ev,
 	})
+}
+
+func resolveContainerIDFromMeta(ev *types.DropWatchTracing) string {
+	// 1. memcg CSS address — uniquely identifies a container.
+	if ev.MemcgCssAddr != 0 {
+		ct, err := pod.ContainerByCSS(ev.MemcgCssAddr, pod.SubSysMemory)
+		if err != nil {
+			log.Debugf("dropwatch: CSS lookup 0x%x: %v", ev.MemcgCssAddr, err)
+		} else if ct != nil {
+			return ct.ID
+		}
+	}
+
+	// 2. net namespace cookie — unique per netns; not available on kernels < 5.14.
+	// Returns one container sharing the namespace.
+	if ev.NetNamespaceCookie != 0 {
+		ct, err := pod.ContainerByNetCookie(ev.NetNamespaceCookie)
+		if err != nil {
+			log.Debugf("dropwatch: net_cookie lookup %d: %v", ev.NetNamespaceCookie, err)
+		} else if ct != nil {
+			return ct.ID
+		}
+	}
+
+	// 3. net namespace inode — always available, returns one container sharing the namespace.
+	if ev.NetNamespaceInode != 0 {
+		ct, err := pod.ContainerByNetInode(uint64(ev.NetNamespaceInode))
+		if err != nil {
+			log.Debugf("dropwatch: net_inum lookup %d: %v", ev.NetNamespaceInode, err)
+		} else if ct != nil {
+			return ct.ID
+		}
+	}
+
+	return ""
 }
 
 // ignore returns true for known-noisy events that should not be forwarded.

@@ -263,7 +263,7 @@ func ignore(pid uint64, comm string, hostNetnsInode uint64) (containerID string,
 
 	// check container level
 	var container *pod.Container
-	if container, err = pod.ContainerByNetNamespaceInode(dstInode); err != nil {
+	if container, err = pod.ContainerByNetInode(dstInode); err != nil {
 		log.Warnf("get container info by netns inode %v pid %v, failed: %v", dstInode, pid, err)
 	}
 	if container != nil {

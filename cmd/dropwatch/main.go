@@ -44,18 +44,19 @@ var (
 	AppVersion        = ""
 )
 
-// Must match struct perf_event_t in bpf/dropwatch.c exactly.
+// Must match struct packet_meta in bpf/dropwatch.c exactly.
 type packetMeta struct {
 	KtimeNS            uint64
 	TgidPid            uint64
 	NetCookie          uint64
 	SkbAddr            uint64
+	MemcgCssAddr       uint64
 	NetdevIfindex      uint32
 	NetdevFlags        uint32
 	NetdevQueueMapping uint32
 	DropSource         uint32
 	Type               uint32
-	Pad                uint32
+	NetInode           uint32
 	NetdevName         [bpf.NetdevNameLen]byte
 	Comm               [bpf.TaskCommLen]byte
 }
@@ -79,9 +80,9 @@ type dropPacketEvent struct {
 
 // Compile-time layout guards: assert BPF wire struct sizes match the C definitions.
 var (
-	_ = [1]struct{}{}[88-unsafe.Sizeof(packetMeta{})]
+	_ = [1]struct{}{}[96-unsafe.Sizeof(packetMeta{})]
 	_ = [1]struct{}{}[136-unsafe.Sizeof(packetRaw{})]
-	_ = [1]struct{}{}[232-unsafe.Offsetof(dropPacketEvent{}.Stack)]
+	_ = [1]struct{}{}[240-unsafe.Offsetof(dropPacketEvent{}.Stack)]
 )
 
 // loadDropwatchBPF reads the BPF object at bpfPath, injects filterExpr into the
@@ -114,6 +115,9 @@ func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
 		ObservedTimestamp:  time.Now().UTC().Format(time.RFC3339Nano),
 		Comm:               bytesutil.ToStr(ev.Meta.Comm[:]),
 		Pid:                ev.Meta.TgidPid >> 32,
+		MemcgCssAddr:       ev.Meta.MemcgCssAddr,
+		NetNamespaceCookie: ev.Meta.NetCookie,
+		NetNamespaceInode:  ev.Meta.NetInode,
 		NetdevName:         bytesutil.ToStr(ev.Meta.NetdevName[:]),
 		NetdevIfindex:      ev.Meta.NetdevIfindex,
 		NetdevQueueMapping: ev.Meta.NetdevQueueMapping,

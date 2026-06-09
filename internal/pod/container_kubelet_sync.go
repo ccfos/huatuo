@@ -390,6 +390,12 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 		return fmt.Errorf("failed to get net namespace inode by pid: %w", err)
 	}
 
+	// net namespace cookie (Linux 5.14+; falls back to 0 on older kernels)
+	netCookie, err := netutil.NetNSCookieByPid(initPid)
+	if err != nil {
+		log.Debugf("failed to get net namespace cookie for pid %d: %v", initPid, err)
+	}
+
 	labels, err := parseContainerLabels(containerType, pod)
 	if err != nil {
 		return fmt.Errorf("failed to parse container labels: %w", err)
@@ -406,20 +412,21 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 	}
 
 	containers[containerID] = &Container{
-		ID:                containerID,
-		Name:              container.Name,
-		Hostname:          hostname,
-		Type:              containerType,
-		Qos:               containerQos,
-		IPAddress:         parseContainerIPAddress(pod),
-		NetNamespaceInode: nsInode,
-		InitPid:           initPid,
-		CgroupPath:        containerCgroupSuffix(containerID, pod),
-		CgroupCss:         css,
-		StartedAt:         startedAt,
-		SyncedAt:          time.Now(),
-		lifeResources:     make(map[string]any),
-		Labels:            labels,
+		ID:                 containerID,
+		Name:               container.Name,
+		Hostname:           hostname,
+		Type:               containerType,
+		Qos:                containerQos,
+		IPAddress:          parseContainerIPAddress(pod),
+		NetNamespaceInode:  nsInode,
+		NetNamespaceCookie: netCookie,
+		InitPid:            initPid,
+		CgroupPath:         containerCgroupSuffix(containerID, pod),
+		CgroupCss:          css,
+		StartedAt:          startedAt,
+		SyncedAt:           time.Now(),
+		lifeResources:      make(map[string]any),
+		Labels:             labels,
 	}
 
 	// create container life resources
