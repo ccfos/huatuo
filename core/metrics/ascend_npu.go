@@ -174,7 +174,9 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 		go func() {
 			defer wg.Done()
 			if h, err := dcmi.DcGetDeviceHealth(ctx, cardId, deviceId); err != nil {
-				log.Debugf("ascend: health for card %d device %d failed: %v", cardId, deviceId, err)
+				if !dcmi.IsNotSupported(err) {
+					log.Debugf("ascend: health for card %d device %d failed: %v", cardId, deviceId, err)
+				}
 			} else {
 				ch <- metricResult{[]*metric.Data{
 					metric.NewGaugeData("npu_device_health", float64(h),
@@ -188,7 +190,9 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 		go func() {
 			defer wg.Done()
 			if p, err := dcmi.DcGetDevicePowerInfo(ctx, cardId, deviceId); err != nil {
-				log.Debugf("ascend: power for card %d device %d failed: %v", cardId, deviceId, err)
+				if !dcmi.IsNotSupported(err) {
+					log.Debugf("ascend: power for card %d device %d failed: %v", cardId, deviceId, err)
+				}
 			} else {
 				ch <- metricResult{[]*metric.Data{
 					metric.NewGaugeData("npu_power", float64(p),
@@ -202,7 +206,9 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 		go func() {
 			defer wg.Done()
 			if tmp, err := dcmi.DcGetDeviceTemperature(ctx, cardId, deviceId); err != nil {
-				log.Debugf("ascend: temperature for card %d device %d failed: %v", cardId, deviceId, err)
+				if !dcmi.IsNotSupported(err) {
+					log.Debugf("ascend: temperature for card %d device %d failed: %v", cardId, deviceId, err)
+				}
 			} else {
 				ch <- metricResult{[]*metric.Data{
 					metric.NewGaugeData("npu_temperature", float64(tmp),
@@ -216,7 +222,9 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 		go func() {
 			defer wg.Done()
 			if v, err := dcmi.DcGetDeviceVoltage(ctx, cardId, deviceId); err != nil {
-				log.Debugf("ascend: voltage for card %d device %d failed: %v", cardId, deviceId, err)
+				if !dcmi.IsNotSupported(err) {
+					log.Debugf("ascend: voltage for card %d device %d failed: %v", cardId, deviceId, err)
+				}
 			} else {
 				ch <- metricResult{[]*metric.Data{
 					metric.NewGaugeData("npu_voltage", float64(v),
@@ -243,7 +251,9 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 			for _, ut := range utilTypes {
 				rate, err := dcmi.DcGetDeviceUtilizationRate(ctx, cardId, deviceId, ut.devType)
 				if err != nil {
+					if !dcmi.IsNotSupported(err) {
 					log.Debugf("ascend: utilization %s for card %d device %d failed: %v", ut.devType.Name, cardId, deviceId, err)
+				}
 					continue
 				}
 				data = append(data,
@@ -270,7 +280,9 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 			for _, ft := range freqTypes {
 				freq, err := dcmi.DcGetDeviceFrequency(ctx, cardId, deviceId, ft.devType)
 				if err != nil {
+					if !dcmi.IsNotSupported(err) {
 					log.Debugf("ascend: frequency %s for card %d device %d failed: %v", ft.devType.Name, cardId, deviceId, err)
+				}
 					continue
 				}
 				data = append(data,
@@ -286,7 +298,9 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 		go func() {
 			defer wg.Done()
 			if netHealth, err := dcmi.DcGetDeviceNetWorkHealth(ctx, cardId, deviceId); err != nil {
+				if !dcmi.IsNotSupported(err) {
 				log.Debugf("ascend: network health for card %d device %d failed: %v", cardId, deviceId, err)
+			}
 			} else {
 				ch <- metricResult{[]*metric.Data{
 					metric.NewGaugeData("npu_device_network_health", float64(netHealth),
@@ -300,7 +314,9 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 		go func() {
 			defer wg.Done()
 			if hbmInfo, err := dcmi.DcGetHbmInfo(ctx, cardId, deviceId); err != nil {
+				if !dcmi.IsNotSupported(err) {
 				log.Debugf("ascend: HBM info for card %d device %d failed: %v", cardId, deviceId, err)
+			}
 			} else {
 				ch <- metricResult{[]*metric.Data{
 					metric.NewGaugeData("npu_hbm_mem_capacity", float64(hbmInfo.MemorySize), "NPU HBM memory capacity in MB.", npuLabels),
@@ -319,7 +335,9 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 		go func() {
 			defer wg.Done()
 			if eccInfo, err := dcmi.DcGetDeviceEccInfo(ctx, cardId, deviceId, dcmi.DcmiDeviceTypeHBM); err != nil {
+				if !dcmi.IsNotSupported(err) {
 				log.Debugf("ascend: ECC info for card %d device %d failed: %v", cardId, deviceId, err)
+			}
 			} else {
 				ch <- metricResult{[]*metric.Data{
 					metric.NewGaugeData("npu_hbm_ecc_enable", float64(eccInfo.EnableFlag), "NPU HBM ECC enable flag.", npuLabels),
@@ -348,7 +366,7 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ch <- metricResult{collectHccnMetrics(int32(cardId), int32(deviceId))}
+			ch <- metricResult{collectHccnMetrics(int32(cardId), int32(deviceId), npuLabels)}
 		}()
 	}
 
@@ -368,7 +386,9 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 func collectPCIeMetrics(ctx context.Context, cardId, deviceId uint32) []*metric.Data {
 	bdf, err := dcmi.DcGetPCIeBusInfo(ctx, cardId, deviceId)
 	if err != nil {
+		if !dcmi.IsNotSupported(err) {
 		log.Debugf("ascend: PCIe BDF for card %d device %d failed: %v", cardId, deviceId, err)
+	}
 		return nil
 	}
 	linkInfo, err := pcie.GetPCIeLinkInfo(bdf)
@@ -393,18 +413,64 @@ func collectPCIeMetrics(ctx context.Context, cardId, deviceId uint32) []*metric.
 	}
 }
 
-func collectHccnMetrics(cardId, deviceId int32) []*metric.Data {
+// hccnStatMetrics maps hccn_tool stat keys to Prometheus metric names.
+var hccnStatMetrics = map[string]string{
+	"mac_tx_mac_pause_num":  "npu_mac_tx_mac_pause_num",
+	"mac_rx_mac_pause_num":  "npu_mac_rx_mac_pause_num",
+	"mac_tx_pfc_pkt_num":    "npu_mac_tx_pfc_pkt_num",
+	"mac_rx_pfc_pkt_num":    "npu_mac_rx_pfc_pkt_num",
+	"mac_tx_bad_pkt_num":    "npu_mac_tx_bad_pkt_num",
+	"mac_rx_bad_pkt_num":    "npu_mac_rx_bad_pkt_num",
+	"roce_tx_err_pkt_num":   "npu_roce_tx_err_pkt_num",
+	"roce_rx_err_pkt_num":   "npu_roce_rx_err_pkt_num",
+	"roce_tx_all_pkt_num":   "npu_roce_tx_all_pkt_num",
+	"roce_rx_all_pkt_num":   "npu_roce_rx_all_pkt_num",
+	"roce_new_pkt_rty_num":  "npu_roce_new_pkt_rty_num",
+	"roce_out_of_order_num": "npu_roce_out_of_order_num",
+	"roce_rx_cnp_pkt_num":   "npu_roce_rx_cnp_pkt_num",
+	"roce_tx_cnp_pkt_num":   "npu_roce_tx_cnp_pkt_num",
+}
+
+// hccnOptMetrics maps hccn_tool optical keys to Prometheus metric names.
+var hccnOptMetrics = map[string]string{
+	"Temperature":     "npu_opt_temperature",
+	"Temp_High_Thres": "npu_opt_temperature_high_thres",
+	"Temp_Low_Thres":  "npu_opt_temperature_low_thres",
+	"Vcc":             "npu_opt_voltage",
+	"Vcc_High_Thres":  "npu_opt_voltage_high_thres",
+	"Vcc_Low_Thres":   "npu_opt_voltage_low_thres",
+	"Tx_Power0":       "npu_opt_tx_power_lane0",
+	"Tx_Power1":       "npu_opt_tx_power_lane1",
+	"Tx_Power2":       "npu_opt_tx_power_lane2",
+	"Tx_Power3":       "npu_opt_tx_power_lane3",
+	"Rx_Power0":       "npu_opt_rx_power_lane0",
+	"Rx_Power1":       "npu_opt_rx_power_lane1",
+	"Rx_Power2":       "npu_opt_rx_power_lane2",
+	"Rx_Power3":       "npu_opt_rx_power_lane3",
+	"Tx_Bias0":        "npu_opt_tx_bias_lane0",
+	"Tx_Bias1":        "npu_opt_tx_bias_lane1",
+	"Tx_Bias2":        "npu_opt_tx_bias_lane2",
+	"Tx_Bias3":        "npu_opt_tx_bias_lane3",
+	"Tx_Los_Flag":     "npu_opt_tx_los",
+	"Rx_Los_Flag":     "npu_opt_rx_los",
+	"Media_SNR_Lane0": "npu_opt_media_snr_lane0",
+	"Media_SNR_Lane1": "npu_opt_media_snr_lane1",
+	"Media_SNR_Lane2": "npu_opt_media_snr_lane2",
+	"Media_SNR_Lane3": "npu_opt_media_snr_lane3",
+}
+
+func collectHccnMetrics(cardId, deviceId int32, npuLabels map[string]string) []*metric.Data {
 	phyID := cardId
 	if logicID, err := dcmi.DcGetDeviceLogicID(cardId, deviceId); err != nil {
+		if !dcmi.IsNotSupported(err) {
 		log.Debugf("ascend: DcGetDeviceLogicID(%d, %d) failed, using cardId as phyID: %v", cardId, deviceId, err)
+	}
 	} else if phy, err := dcmi.DcGetPhysicIDFromLogicID(uint32(logicID)); err != nil {
+		if !dcmi.IsNotSupported(err) {
 		log.Debugf("ascend: DcGetPhysicIDFromLogicID(%d) failed, using cardId as phyID: %v", logicID, err)
+	}
 	} else {
 		phyID = phy
-	}
-	npuLabels := map[string]string{
-		"card":   strconv.Itoa(int(cardId)),
-		"device": strconv.Itoa(int(deviceId)),
 	}
 
 	type hccnResult struct {
@@ -456,24 +522,8 @@ func collectHccnMetrics(cardId, deviceId int32) []*metric.Data {
 			log.Debugf("ascend: hccn stat for phy %d failed: %v", phyID, err)
 			return
 		}
-		statMetrics := map[string]string{
-			"mac_tx_mac_pause_num":  "npu_mac_tx_mac_pause_num",
-			"mac_rx_mac_pause_num":  "npu_mac_rx_mac_pause_num",
-			"mac_tx_pfc_pkt_num":    "npu_mac_tx_pfc_pkt_num",
-			"mac_rx_pfc_pkt_num":    "npu_mac_rx_pfc_pkt_num",
-			"mac_tx_bad_pkt_num":    "npu_mac_tx_bad_pkt_num",
-			"mac_rx_bad_pkt_num":    "npu_mac_rx_bad_pkt_num",
-			"roce_tx_err_pkt_num":   "npu_roce_tx_err_pkt_num",
-			"roce_rx_err_pkt_num":   "npu_roce_rx_err_pkt_num",
-			"roce_tx_all_pkt_num":   "npu_roce_tx_all_pkt_num",
-			"roce_rx_all_pkt_num":   "npu_roce_rx_all_pkt_num",
-			"roce_new_pkt_rty_num":  "npu_roce_new_pkt_rty_num",
-			"roce_out_of_order_num": "npu_roce_out_of_order_num",
-			"roce_rx_cnp_pkt_num":   "npu_roce_rx_cnp_pkt_num",
-			"roce_tx_cnp_pkt_num":   "npu_roce_tx_cnp_pkt_num",
-		}
 		var data []*metric.Data
-		for key, metricName := range statMetrics {
+		for key, metricName := range hccnStatMetrics {
 			if val, ok := statInfo[key]; ok {
 				data = append(data,
 					metric.NewCounterData(metricName, float64(val), "NPU network stat counter.", npuLabels),
@@ -492,34 +542,8 @@ func collectHccnMetrics(cardId, deviceId int32) []*metric.Data {
 			log.Debugf("ascend: hccn optical for phy %d failed: %v", phyID, err)
 			return
 		}
-		optMetrics := map[string]string{
-			"Temperature":     "npu_opt_temperature",
-			"Temp_High_Thres": "npu_opt_temperature_high_thres",
-			"Temp_Low_Thres":  "npu_opt_temperature_low_thres",
-			"Vcc":             "npu_opt_voltage",
-			"Vcc_High_Thres":  "npu_opt_voltage_high_thres",
-			"Vcc_Low_Thres":   "npu_opt_voltage_low_thres",
-			"Tx_Power0":       "npu_opt_tx_power_lane0",
-			"Tx_Power1":       "npu_opt_tx_power_lane1",
-			"Tx_Power2":       "npu_opt_tx_power_lane2",
-			"Tx_Power3":       "npu_opt_tx_power_lane3",
-			"Rx_Power0":       "npu_opt_rx_power_lane0",
-			"Rx_Power1":       "npu_opt_rx_power_lane1",
-			"Rx_Power2":       "npu_opt_rx_power_lane2",
-			"Rx_Power3":       "npu_opt_rx_power_lane3",
-			"Tx_Bias0":        "npu_opt_tx_bias_lane0",
-			"Tx_Bias1":        "npu_opt_tx_bias_lane1",
-			"Tx_Bias2":        "npu_opt_tx_bias_lane2",
-			"Tx_Bias3":        "npu_opt_tx_bias_lane3",
-			"Tx_Los_Flag":     "npu_opt_tx_los",
-			"Rx_Los_Flag":     "npu_opt_rx_los",
-			"Media_SNR_Lane0": "npu_opt_media_snr_lane0",
-			"Media_SNR_Lane1": "npu_opt_media_snr_lane1",
-			"Media_SNR_Lane2": "npu_opt_media_snr_lane2",
-			"Media_SNR_Lane3": "npu_opt_media_snr_lane3",
-		}
 		var data []*metric.Data
-		for key, metricName := range optMetrics {
+		for key, metricName := range hccnOptMetrics {
 			if val, ok := optInfo[key]; ok {
 				data = append(data,
 					metric.NewGaugeData(metricName, val, "NPU optical module info.", npuLabels),
