@@ -56,10 +56,10 @@ type IOStatusData struct {
 
 // IOStack records io_schedule backtrace.
 type IOStack struct {
-	Pid               uint32       `json:"pid"`
-	Comm              string       `json:"comm"`
-	ContainerHostname string       `json:"container_hostname"`
-	Latency           uint64       `json:"latency_us"`
+	Pid               uint32   `json:"pid"`
+	Comm              string   `json:"comm"`
+	ContainerHostname string   `json:"container_hostname"`
+	Latency           uint64   `json:"latency_us"`
 	Stack             []string `json:"stack"`
 }
 

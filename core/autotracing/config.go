@@ -89,5 +89,4 @@ var cfg *Config
 // SetConfig sets the autotracing config and initializes default values for map fields.
 func SetConfig(c *Config) {
 	cfg = c
-
 }
