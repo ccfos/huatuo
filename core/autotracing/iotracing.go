@@ -196,7 +196,7 @@ func buildDiskMetric(prev, curr *blockdevice.Diskstats, intervalSeconds uint64) 
 	return metrics
 }
 
-func waittingDiskEvents(ctx context.Context, intervalSeconds uint64, thresholds IoThresholds) (*ReasonSnapshot, error) {
+func waitingDiskEvents(ctx context.Context, intervalSeconds uint64, thresholds IoThresholds) (*ReasonSnapshot, error) {
 	lastRawStats := make(map[string]*blockdevice.Diskstats)
 	lastMetrics := make(map[string]DiskStatus)
 	ticker := time.NewTicker(time.Duration(int64(intervalSeconds)) * time.Second)
@@ -259,7 +259,7 @@ func (c *ioTracing) Start(ctx context.Context) error {
 
 	runIotracingToolTimeout := cfg.IOTracing.RunTracingToolTimeout
 
-	reasonSnapshot, err := waittingDiskEvents(ctx, 5, thresholds)
+	reasonSnapshot, err := waitingDiskEvents(ctx, 5, thresholds)
 	if err != nil {
 		return err
 	}
