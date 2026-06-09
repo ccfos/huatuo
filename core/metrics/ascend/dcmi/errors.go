@@ -16,6 +16,7 @@
 package dcmi
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -26,6 +27,23 @@ type Error struct {
 
 func (e *Error) Error() string {
 	return fmt.Sprintf("%s failed: %s", e.symbol, e.code.String())
+}
+
+// IsNotSupported reports whether the error means the DCMI operation
+// is not supported by the current device, driver, or environment.
+func IsNotSupported(err error) bool {
+	var e *Error
+	if !errors.As(err, &e) {
+		return false
+	}
+	switch int32(e.code) {
+	case -8255: // Device ID/function is not supported
+	case -8013: // This API is not supported in containers
+	case -99998: // The called function is missing, please upgrade the driver
+	default:
+		return false
+	}
+	return true
 }
 
 // checkReturnCode converts a return code to an error.

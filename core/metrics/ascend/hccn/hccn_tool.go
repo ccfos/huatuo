@@ -24,37 +24,60 @@
 package hccn
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // hccnSemaphore limits total concurrent hccn_tool processes across all devices.
 var hccnSemaphore = make(chan struct{}, 32)
 
 const (
-	hccnTool  = "/usr/local/Ascend/driver/tools/hccn_tool"
-	limitSize = 1024 * 1024
+	hccnTool   = "/usr/local/Ascend/driver/tools/hccn_tool"
+	outputLimit = 1024 * 1024 // 1MB cap to prevent OOM from runaway output
 )
+
+// limitedWriter caps the total bytes written to prevent memory exhaustion.
+type limitedWriter struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (w *limitedWriter) Write(p []byte) (int, error) {
+	if w.buf.Len()+len(p) > w.limit {
+		return 0, fmt.Errorf("hccn_tool output exceeds limit (%d bytes)", w.limit)
+	}
+	return w.buf.Write(p)
+}
 
 func getInfoFromHccnTool(args ...string) (string, error) {
 	hccnSemaphore <- struct{}{}
 	defer func() { <-hccnSemaphore }()
 
-	cmd := exec.Command(hccnTool, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, hccnTool, args...)
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"LD_LIBRARY_PATH=" + os.Getenv("LD_LIBRARY_PATH"),
 	}
 
-	out, err := cmd.Output()
-	if err != nil {
+	stdout := &limitedWriter{limit: outputLimit}
+	stderr := &limitedWriter{limit: outputLimit}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("hccn_tool %v failed: %w", args, err)
 	}
 
-	return string(out), nil
+	return stdout.buf.String(), nil
 }
 
 // GetLinkStatus returns the link status ("UP" or "DOWN") for the given phyID.
@@ -65,6 +88,10 @@ func GetLinkStatus(phyID int32) (string, error) {
 		return "", err
 	}
 	replacedStr := strings.ReplaceAll(outStr, "\n", "")
+	// Handle boundary values: "Unknown!", "NA", etc.
+	if strings.Contains(replacedStr, "Unknown") || strings.Contains(replacedStr, "NA") {
+		return "", fmt.Errorf("link status unavailable for phy %d: %s", phyID, replacedStr)
+	}
 	outArr := strings.Split(replacedStr, " ")
 	if len(outArr) != 3 {
 		return "", fmt.Errorf("unexpected link status output: %s", outStr)
