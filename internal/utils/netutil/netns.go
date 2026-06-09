@@ -15,6 +15,7 @@
 package netutil
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -63,7 +64,7 @@ func NetNSCookieByPid(pid int) (uint64, error) {
 
 	cookie, err := unix.GetsockoptUint64(fd, unix.SOL_SOCKET, unix.SO_NETNS_COOKIE)
 	if err != nil {
-		if err == unix.ENOPROTOOPT {
+		if errors.Is(err, unix.ENOPROTOOPT) {
 			return 0, nil
 		}
 		return 0, fmt.Errorf("getsockopt SO_NETNS_COOKIE: %w", err)
