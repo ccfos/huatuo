@@ -33,11 +33,11 @@ func resetKernelSymbolFixture(t *testing.T, lines []string) {
 	}
 	mustWriteFile(t, filepath.Join(procDir, "kallsyms"), content)
 
-	kernelSymbols = symbols{}
-	ksymOnce = sync.Once{}
+	ksymTable = symbols{}
+	ksymLoadOnce = sync.Once{}
 	t.Cleanup(func() {
-		kernelSymbols = symbols{}
-		ksymOnce = sync.Once{}
+		ksymTable = symbols{}
+		ksymLoadOnce = sync.Once{}
 	})
 }
 
@@ -156,14 +156,14 @@ func TestDumpKernelBackTraceUnknownAddr(t *testing.T) {
 }
 
 func TestDumpKernelBackTraceKsymNotFound(t *testing.T) {
-	// Force kernelSymbols to be empty (no defaultKsym) so floorSym returns nil,
+	// Force ksymTable to be empty (no ksymUnknown) so floorSym returns nil,
 	// triggering the ksym-not-found failFrame path.
-	kernelSymbols = symbols{}
-	ksymOnce = sync.Once{}
-	ksymOnce.Do(func() {}) // mark done so ensureKsymsLoaded is a no-op
+	ksymTable = symbols{}
+	ksymLoadOnce = sync.Once{}
+	ksymLoadOnce.Do(func() {}) // mark done so ensureKsymsLoaded is a no-op
 	t.Cleanup(func() {
-		kernelSymbols = symbols{}
-		ksymOnce = sync.Once{}
+		ksymTable = symbols{}
+		ksymLoadOnce = sync.Once{}
 	})
 
 	const addr = uint64(0xffffffff81000000)

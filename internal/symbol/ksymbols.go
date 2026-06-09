@@ -26,9 +26,9 @@ import (
 const ksymMax = 300000
 
 var (
-	ksymOnce      sync.Once
-	kernelSymbols symbols
-	defaultKsym   = &symbol{Name: "[unknown]"}
+	ksymLoadOnce sync.Once
+	ksymTable    symbols
+	ksymUnknown  = &symbol{Name: "[unknown]"}
 )
 
 const (
@@ -63,7 +63,7 @@ func KsymStackStrsReversed(kstack []uint64, kstackSize int) []string {
 // KsymbolSearchAddr returns the address of a kernel symbol by name.
 func KsymbolSearchAddr(name string) (uint64, error) {
 	ensureKsymsLoaded()
-	for _, s := range kernelSymbols {
+	for _, s := range ksymTable {
 		if s.Name == name {
 			return s.Addr, nil
 		}
@@ -80,7 +80,7 @@ func dumpKernelBackTrace(stack []uint64, maxDepth int, out outType, reversed boo
 	}
 	ensureKsymsLoaded()
 	frames := resolveStack(stack, func(addr uint64) string {
-		sym := kernelSymbols.floorSym(addr)
+		sym := ksymTable.floorSym(addr)
 		if sym == nil {
 			return failFrame("ksym-not-found", "")
 		}
@@ -97,15 +97,15 @@ func dumpKernelBackTrace(stack []uint64, maxDepth int, out outType, reversed boo
 	return frames
 }
 
-// ensureKsymsLoaded loads kallsyms exactly once; on failure it logs a warning and leaves kernelSymbols empty.
+// ensureKsymsLoaded loads kallsyms exactly once; on failure it logs a warning and leaves ksymTable empty.
 func ensureKsymsLoaded() {
-	ksymOnce.Do(func() {
+	ksymLoadOnce.Do(func() {
 		tbl, err := scanKallsyms(procfs.Path("kallsyms"), ksymMax)
 		if err != nil {
 			log.Warnf("symbol: failed to load kallsyms: %v", err)
 			return
 		}
-		kernelSymbols = append(symbols{defaultKsym}, tbl...)
-		kernelSymbols[1:].sort()
+		ksymTable = append(symbols{ksymUnknown}, tbl...)
+		ksymTable[1:].sort()
 	})
 }
