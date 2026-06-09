@@ -35,9 +35,9 @@ type Config struct {
 	}
 
 	Dropwatch struct {
-		ExcludedNeighInvalidate bool     `default:"true"`
-		Filter                  string   `default:"tcp"` // tcpdump expression forwarded to dropwatch CLI (requires -tags pcap)
-		ExcludeContainers       []string // container names/IDs to exclude (BPF-side, future)
+		ExcludedNeighInvalidate bool   `default:"true"`
+		Filter                  string `default:"tcp"`
+		ExcludeContainers       []string
 	}
 
 	Netdev struct {
