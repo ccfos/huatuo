@@ -10,9 +10,11 @@
 
 <p align="center">
   <a href="https://github.com/ccfos/huatuo/stargazers"><img src="https://img.shields.io/github/stars/ccfos/huatuo?style=social" alt="GitHub Stars" /></a>
+  <a href="https://hub.docker.com/u/huatuo"><img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/huatuo/huatuo-bamai?style=social"/></a>
   <a href="https://github.com/ccfos/huatuo/issues"><img src="https://img.shields.io/github/issues/ccfos/huatuo" alt="GitHub Issues" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-green" alt="Apache 2.0 License" /></a>
   <a href="./CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs Welcome" /></a>
+  <a href="https://landscape.cncf.io/?item=observability-and-analysis--observability--huatuo"><img src="https://img.shields.io/badge/CNCF-Landscape-0C66E4" alt="CNCF Landscape" /></a>
 </p>
 
 <p align="center">
@@ -35,7 +37,7 @@
 通过整合 **kprobe**、**tracepoint**、**ftrace** 和 **eBPF** 等 Linux 内核动态追踪技术，HUATUO 提供了多维度的内核洞察力：更精细化的指标、异常事件驱动的内核运行时上下文捕获，以及智能化的自动追踪。项目已构建起一套完整的 Linux 内核深度可观测体系架构。
 HUATUO 已在滴滴生产环境中实现规模化部署，在诸多故障场景中发挥作用，有效保障了云原生操作系统的高可用性和性能优化。通过持续演进，HUATUO 旨在将 eBPF 可观测性技术推向更细粒度、更低开销和更高效率。
 
-更多信息，请访问：[https://huatuo.tech/](https://huatuo.tech/)
+HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-and-analysis--observability--huatuo).
 
 # 核心特性
 

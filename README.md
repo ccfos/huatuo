@@ -10,9 +10,11 @@
 
 <p align="center">
   <a href="https://github.com/ccfos/huatuo/stargazers"><img src="https://img.shields.io/github/stars/ccfos/huatuo?style=social" alt="GitHub Stars" /></a>
+  <a href="https://hub.docker.com/u/huatuo"><img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/huatuo/huatuo-bamai?style=social"/></a>
   <a href="https://github.com/ccfos/huatuo/issues"><img src="https://img.shields.io/github/issues/ccfos/huatuo" alt="GitHub Issues" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-green" alt="Apache 2.0 License" /></a>
   <a href="./CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs Welcome" /></a>
+  <a href="https://landscape.cncf.io/?item=observability-and-analysis--observability--huatuo"><img src="https://img.shields.io/badge/CNCF-Landscape-0C66E4" alt="CNCF Landscape" /></a>
 </p>
 
 <p align="center">
@@ -35,7 +37,7 @@
 By integrating Linux kernel dynamic tracing technologies like **kprobe**, **tracepoint**, **ftrace**, and **eBPF**, HUATUO provides kernel-wide insights: finer-grained metrics, automatic context capture from kernel runtime, and intelligent tracing.
 Deployed at scale in Didi’s production environment, HUATUO plays a key role in troubleshooting system failures, enhancing the high availability and performance of cloud-native operating systems.
 
-For more information, visit: [https://huatuo.tech](https://huatuo.tech)
+HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=observability-and-analysis--observability--huatuo).
 
 # Key Features
 
