@@ -1,5 +1,5 @@
 # capnproto.org/go/capnp/v3 v3.1.0-alpha.2
-## explicit; go 1.21
+## explicit; go 1.19
 capnproto.org/go/capnp/v3
 capnproto.org/go/capnp/v3/encoding/text
 capnproto.org/go/capnp/v3/exc
@@ -131,11 +131,8 @@ github.com/cilium/ebpf/perf
 ## explicit
 github.com/cloudflare/backoff
 # github.com/cloudflare/cbpfc v0.0.0-20250612101420-369091e6a9e1
-## explicit; go 1.21
+## explicit; go 1.19
 github.com/cloudflare/cbpfc
-# github.com/colega/zeropool v0.0.0-20230505084239-6fb4a4f75381
-## explicit; go 1.20
-github.com/colega/zeropool
 # github.com/cloudwego/base64x v0.1.4
 ## explicit; go 1.16
 github.com/cloudwego/base64x
@@ -143,6 +140,9 @@ github.com/cloudwego/base64x
 ## explicit; go 1.16
 github.com/cloudwego/iasm/expr
 github.com/cloudwego/iasm/x86_64
+# github.com/colega/zeropool v0.0.0-20230505084239-6fb4a4f75381
+## explicit; go 1.20
+github.com/colega/zeropool
 # github.com/containerd/cgroups/v3 v3.0.3
 ## explicit; go 1.18
 github.com/containerd/cgroups/v3
