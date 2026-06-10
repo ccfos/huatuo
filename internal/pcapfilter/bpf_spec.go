@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !didi
+
 package pcapfilter
 
 import (
@@ -19,13 +21,6 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
-)
-
-// L2StubSymbol and L3StubSymbol are the __noinline BPF function names that mark
-// the injection points. The C program must declare both pcap_stub_l2 and pcap_stub_l3.
-const (
-	L2StubSymbol = "pcap_stub_l2"
-	L3StubSymbol = "pcap_stub_l3"
 )
 
 // Apply compiles filterExpr for both L2 (DLT_EN10MB) and L3 (DLT_RAW), then splices

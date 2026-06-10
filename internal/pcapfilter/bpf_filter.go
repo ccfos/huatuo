@@ -18,7 +18,7 @@
 // Usage:
 //
 //	spec, _ := ebpf.LoadCollectionSpec("prog.o")
-//	if err := pcapfilter.Apply(spec, "host 10.0.0.1"); err != nil { ... }
+//	if err := pcapfilter.InjectFilter(spec, "host 10.0.0.1"); err != nil { ... }
 //	coll, _ := ebpf.NewCollection(spec)
 //
 // Limitations inherited from go-pcap's pure-Go compiler:
@@ -58,6 +58,13 @@ const (
 
 	etherTypeIPv4 = 0x0800
 	etherTypeIPv6 = 0x86dd
+)
+
+// L2StubSymbol and L3StubSymbol are the __noinline BPF function names that mark
+// the injection points. The C program must declare both pcap_stub_l2 and pcap_stub_l3.
+const (
+	L2StubSymbol = "pcap_stub_l2"
+	L3StubSymbol = "pcap_stub_l3"
 )
 
 // stack slot offsets used by patchPacketLoads.
