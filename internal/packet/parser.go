@@ -151,6 +151,8 @@ func ParsePacketHdr(pkt *PacketHdr) (PacketType, PacketInfo) {
 			Daddr:    ps.ipv4.DstIP.String(),
 			ICMPType: ps.icmp4.TypeCode.String(),
 			ID:       ps.icmp4.Id,
+			Seq:      ps.icmp4.Seq,
+			Checksum: ps.icmp4.Checksum,
 		}
 	case hasIPv6 && hasTCP:
 		pktType = PacketTypeIPv6TCP
