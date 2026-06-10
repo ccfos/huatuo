@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -91,33 +92,34 @@ func newPipedServer(t *testing.T) (rawClient net.Conn, clientEnc *capnp.Encoder,
 }
 
 // sendConnect sends a Connect frame via enc.
-func sendConnect(t *testing.T, enc *capnp.Encoder, toolName, version, taskID string) {
+func sendConnect(t *testing.T, enc *capnp.Encoder, toolName, version, taskID string) error {
 	t.Helper()
 	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err != nil {
-		t.Fatalf("send connect new message: %v", err)
+		return fmt.Errorf("send connect new message: %w", err)
 	}
 	root, err := NewRootMessage(seg)
 	if err != nil {
-		t.Fatalf("send connect new root: %v", err)
+		return fmt.Errorf("send connect new root: %w", err)
 	}
 	c, err := root.NewConnect()
 	if err != nil {
-		t.Fatalf("send connect new connect: %v", err)
+		return fmt.Errorf("send connect new connect: %w", err)
 	}
 	if err := c.SetToolName(toolName); err != nil {
-		t.Fatalf("send connect set tool name: %v", err)
+		return fmt.Errorf("send connect set tool name: %w", err)
 	}
 	if err := c.SetVersion(version); err != nil {
-		t.Fatalf("send connect set version: %v", err)
+		return fmt.Errorf("send connect set version: %w", err)
 	}
 	if err := c.SetTaskID(taskID); err != nil {
-		t.Fatalf("send connect set task id: %v", err)
+		return fmt.Errorf("send connect set task id: %w", err)
 	}
 	c.SetProtoVersion(1)
 	if err := enc.Encode(m); err != nil {
-		t.Fatalf("send connect encode: %v", err)
+		return fmt.Errorf("send connect encode: %w", err)
 	}
+	return nil
 }
 
 // sendChunk sends a Chunk frame via enc.
@@ -156,7 +158,10 @@ func TestNormalPath(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "dropwatch", "1.0", "")
+		if err := sendConnect(t, clientEnc, "dropwatch", "1.0", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
 		sendChunk(t, clientEnc, []byte(`{"container_id":"c1","x":1}`), true, false, "")
 		sendChunk(t, clientEnc, []byte(`{"container_id":"c2","x":2}`), true, false, "")
 		sendChunk(t, clientEnc, nil, false, true, "")
@@ -188,7 +193,10 @@ func TestErrorEnd(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "tool", "v", "")
+		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
 		sendChunk(t, clientEnc, nil, false, true, "boom")
 		rawClient.Close()
 	}()
@@ -210,7 +218,10 @@ func TestDataAndEndCombined(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "tool", "v", "")
+		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
 		sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, true, "")
 		rawClient.Close()
 	}()
@@ -232,7 +243,10 @@ func TestUnexpectedClose(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "tool", "v", "")
+		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
 		sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, false, "")
 		rawClient.Close()
 	}()
@@ -263,11 +277,34 @@ func TestEmptyToolName(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "", "v", "")
+		if err := sendConnect(t, clientEnc, "", "v", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
 		rawClient.Close()
 	}()
 
 	wait()
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Fatalf("want 0 handler calls, got %d", len(got))
+	}
+}
+
+// TestEmptyToolNameClosesEarly pins that empty ToolName causes handleConn to
+// return immediately rather than entering the Decode loop. Without this guard
+// the server would block waiting for a chunk forever; the test deliberately
+// omits the client-side close so that "accept-then-loop" behavior would hang
+// here until wait() trips its 2s timeout.
+func TestEmptyToolNameClosesEarly(t *testing.T) {
+	_, clientEnc, rec, wait := newPipedServer(t)
+
+	if err := sendConnect(t, clientEnc, "", "v", ""); err != nil {
+		t.Logf("send connect: %v", err)
+		return
+	}
+
+	wait()
+
 	if got := rec.snapshot(); len(got) != 0 {
 		t.Fatalf("want 0 handler calls, got %d", len(got))
 	}
@@ -279,7 +316,10 @@ func TestDecodeFailureAfterConnect(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "tool", "v", "")
+		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
 		// Write a malformed Cap'n Proto segment header; decoder will fail.
 		_, _ = rawClient.Write([]byte{0xff, 0xff, 0xff, 0xff}) //nolint:errcheck
 		rawClient.Close()

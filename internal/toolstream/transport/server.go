@@ -116,6 +116,13 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
+	// Empty ToolName violates the protocol: with no name the connection cannot
+	// be routed to any handler. Log at Error level so the producer side notices.
+	if sess.ToolName == "" {
+		log.Errorf("toolstream: connect: empty tool name, closing connection")
+		return
+	}
+
 	log.Infof("toolstream: connected tool=%s version=%s task_id=%s",
 		sess.ToolName, sess.Version, sess.TaskID)
 	defer log.Infof("toolstream: disconnected tool=%s task_id=%s",

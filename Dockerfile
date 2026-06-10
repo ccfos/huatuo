@@ -14,7 +14,7 @@ ENV PATH=$PATH:/usr/lib/llvm15/bin
 COPY . .
 RUN set -x; \
     apt-get update && apt-get install -y --no-install-recommends \
-    make clang libbpf-dev bpftool curl git binutils-gold musl-tools &&\
+    make clang libbpf-dev bpftool curl git binutils-gold musl-tools capnproto-dev &&\
     make BUILD_MODE=${BUILD_MODE} &&\
     mkdir -p ${RUN_PATH} &&\
     cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/ &&\

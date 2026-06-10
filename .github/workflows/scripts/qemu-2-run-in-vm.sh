@@ -99,7 +99,7 @@ function install_golang() {
 function prapre_test_env() {
 	case $OS_DISTRO in
 	ubuntu*)
-		packages=("make" "libbpf-dev" "clang" "git" "gcc" "jq")
+		packages=("make" "libbpf-dev" "clang" "git" "gcc" "jq" "capnproto")
 		missing_packages=()
 
 		for pkg in "${packages[@]}"; do
@@ -120,6 +120,7 @@ function prapre_test_env() {
 	esac
 
 	which mockery || go install github.com/vektra/mockery/v2@latest
+	which capnpc-go || go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.1
 	git config --global --add safe.directory /mnt/host
 }
 
@@ -132,6 +133,8 @@ cd /mnt/host && pwd
 ls -alh /mnt/host
 
 echo -e "\n\n⬅️ test..."
+
+go test -tags=didi -v ./internal/bpf
 
 make test
 

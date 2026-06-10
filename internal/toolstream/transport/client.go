@@ -27,6 +27,9 @@ type Client struct {
 	conn    net.Conn
 }
 
+// handshake writes the one-shot ConnectRequest frame. UDS has no handshake;
+// the server reads this frame, parses metadata, and starts dispatching chunks.
+// There is no server ack.
 func (c *Client) handshake(toolName, version, taskID string) error {
 	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err != nil {
