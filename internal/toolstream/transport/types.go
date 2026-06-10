@@ -14,10 +14,15 @@
 
 package transport
 
-//go:generate sh -c "capnp compile -I$(go list -m -f '{{.Dir}}' capnproto.org/go/capnp/v3)/std -ogo:. event.capnp"
+//go:generate sh -c "capnp compile -I$(GOFLAGS=-mod=mod go list -m -f '{{.Dir}}' capnproto.org/go/capnp/v3)/std -ogo:. event.capnp"
 
 // ChunkMsg carries a data payload or end-of-stream/error signal.
-// Data is backed by the Cap'n Proto message and safe to retain across handler calls.
+//
+// Data points into the Cap'n Proto segment that produced this message. It is
+// valid for the duration of the synchronous handler call only; the next frame
+// decoded on the same connection may reuse the underlying buffer. Callers that
+// queue Data, hand it to another goroutine, or retain it past the handler
+// return must copy it first.
 type ChunkMsg struct {
 	Data  []byte
 	Flush bool

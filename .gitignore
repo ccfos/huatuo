@@ -2,4 +2,3 @@
 _output/
 cmd/**/bin/
 **/mock_*_test.go
-**/*.capnp.go
