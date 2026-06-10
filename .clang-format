@@ -14,10 +14,10 @@ IndentGotoLabels: false
 
 BreakBeforeBraces: Linux
 AlignAfterOpenBracket: Align
-AlignConsecutiveAssignments:
-  Enabled: true
-  AcrossEmptyLines: false
-  AcrossComments: true
+# AlignConsecutiveAssignments:
+#   Enabled: true
+#   AcrossEmptyLines: false
+#   AcrossComments: true
 
 SortIncludes: true
 IncludeBlocks: Regroup
@@ -31,6 +31,9 @@ IncludeCategories:
 
 ColumnLimit: 80
 PenaltyReturnTypeOnItsOwnLine: 10
+PenaltyBreakAssignment: 1000
+PenaltyBreakBeforeFirstCallParameter: 2000
+PenaltyBreakBeforeMemberAccess: 3000
 BreakAfterReturnType: Automatic
 BinPackParameters: true
 AllowAllArgumentsOnNextLine: false
