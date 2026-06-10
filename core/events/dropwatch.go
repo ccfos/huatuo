@@ -179,10 +179,8 @@ func (c *dropWatchTracing) ignore(data *types.DropWatchTracing) bool {
 	// 4. neigh_timer_handler/ffffffff96d3a870
 	// 5. ...
 	// neigh_invalidate: ARP/neighbor table cleanup, filtered by config.
-	if cfg != nil && cfg.Dropwatch.ExcludedNeighInvalidate {
-		if len(stack) >= 3 && strings.HasPrefix(stack[2], "neigh_invalidate/") {
-			return true
-		}
+	if len(stack) >= 3 && strings.HasPrefix(stack[2], "neigh_invalidate/") {
+		return true
 	}
 
 	// stack:
