@@ -119,7 +119,8 @@ type ICMPInfo struct {
 	Daddr    string `json:"daddr"`
 	ICMPType string `json:"icmp_type"`
 	ID       uint16 `json:"id,omitempty"`
-	MTU      uint16 `json:"mtu,omitempty"`
+	Seq      uint16 `json:"seq,omitempty"`
+	Checksum uint16 `json:"checksum,omitempty"`
 }
 
 type ARPInfo struct {
@@ -143,8 +144,8 @@ func (t *UDPInfo) Detail() string {
 }
 
 func (t *ICMPInfo) Detail() string {
-	return fmt.Sprintf("[ICMP %s] %s > %s id=%d mtu=%d smac=%s dmac=%s",
-		t.ICMPType, t.Saddr, t.Daddr, t.ID, t.MTU, t.SrcMAC, t.DstMAC)
+	return fmt.Sprintf("[ICMP %s] %s > %s id=%d smac=%s dmac=%s",
+		t.ICMPType, t.Saddr, t.Daddr, t.ID, t.SrcMAC, t.DstMAC)
 }
 
 func (t *ARPInfo) Detail() string {
