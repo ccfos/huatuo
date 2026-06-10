@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -54,7 +55,7 @@ type packetMeta struct {
 	NetdevIfindex      uint32
 	NetdevFlags        uint32
 	NetdevQueueMapping uint32
-	DropSource         uint32
+	DropReason         uint32
 	Type               uint32
 	NetInode           uint32
 	NetdevName         [bpf.NetdevNameLen]byte
@@ -85,16 +86,38 @@ var (
 	_ = [1]struct{}{}[240-unsafe.Offsetof(dropPacketEvent{}.Stack)]
 )
 
-// loadDropwatchBPF reads the BPF object at bpfPath, injects filterExpr into the
-// pcap_stub_l2/l3 stubs, and loads it. Each instance uses a unique BPF name to
-// allow multiple instances to coexist.
-func loadDropwatchBPF(bpfPath, filterExpr string) (bpf.BPF, error) {
+// loadBPFWithFilter reads the BPF object at bpfPath, injects filterExpr into the
+// pcap_stub_l2/l3 stubs, applies RewriteConstants for any non-nil consts, and
+// loads it. Each instance uses a unique BPF name to allow multiple instances
+// to coexist.
+func loadBPFWithFilter(bpfPath, filterExpr string, consts map[string]any) (bpf.BPF, error) {
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
 		return nil, fmt.Errorf("read bpf object: %w", err)
 	}
 	bpfName := fmt.Sprintf("dropwatch_%d.o", time.Now().UnixNano())
-	return pcapfilter.Load(bpfName, bpfBytes, filterExpr, nil)
+	return pcapfilter.Load(bpfName, bpfBytes, filterExpr, consts)
+}
+
+// deviceFilterConsts resolves devName to an ifindex and returns the consts map
+// expected by bpf_skb_filter.h. Returns nil consts when devName is empty
+// (filter disabled at the BPF level by leaving filter_ifindex_included == 0).
+func deviceFilterConsts(devName string, exclude bool) (map[string]any, error) {
+	if devName == "" {
+		return nil, nil
+	}
+	iface, err := net.InterfaceByName(devName)
+	if err != nil {
+		return nil, fmt.Errorf("--device %q: %w", devName, err)
+	}
+	var excl uint32
+	if exclude {
+		excl = 1
+	}
+	return map[string]any{
+		"filter_ifindex_included": uint32(iface.Index),
+		"filter_ifindex_excluded": excl,
+	}, nil
 }
 
 func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
@@ -158,7 +181,12 @@ func mainAction(c *cli.Context) error {
 		defer sockClient.End()
 	}
 
-	bpfObj, err := loadDropwatchBPF(c.String("bpf-path"), c.String("filter"))
+	consts, err := deviceFilterConsts(c.String("device"), c.Bool("device-exclude"))
+	if err != nil {
+		return fmt.Errorf("dropwatch: %w", err)
+	}
+
+	bpfObj, err := loadBPFWithFilter(c.String("bpf-path"), c.String("filter"), consts)
 	if err != nil {
 		return fmt.Errorf("dropwatch: load bpf: %w", err)
 	}
@@ -233,6 +261,14 @@ func main() {
 			&cli.StringFlag{
 				Name:  "filter",
 				Usage: `tcpdump expression, e.g. "tcp and port 80"`,
+			},
+			&cli.StringFlag{
+				Name:  "device",
+				Usage: "interface to filter on (e.g. eth0); empty = all devices",
+			},
+			&cli.BoolFlag{
+				Name:  "device-exclude",
+				Usage: "treat --device as a blacklist (drop matching) instead of whitelist (pass matching)",
 			},
 			&cli.IntFlag{
 				Name:  "duration",

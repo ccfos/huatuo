@@ -35,9 +35,8 @@ type Config struct {
 	}
 
 	Dropwatch struct {
-		ExcludedNeighInvalidate bool   `default:"true"`
-		Filter                  string `default:"tcp"`
-		ExcludeContainers       []string
+		Filter            string `default:"tcp"`
+		ExcludeContainers []string
 	}
 
 	Netdev struct {

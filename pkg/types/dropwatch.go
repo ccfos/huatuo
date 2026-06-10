@@ -21,8 +21,7 @@ import "huatuo-bamai/internal/packet"
 type DropWatchTracing struct {
 	ObservedTimestamp  string            `json:"observed_timestamp"`
 	Type               string            `json:"type"`
-	Reason             string            `json:"reason,omitempty"`
-	DropSource         string            `json:"drop_source"`
+	DropReason         string            `json:"drop_reason"`
 	Comm               string            `json:"comm"`
 	Pid                uint64            `json:"pid"`
 	ContainerID        string            `json:"container_id,omitempty"`

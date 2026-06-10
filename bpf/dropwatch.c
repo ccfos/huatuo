@@ -7,6 +7,7 @@
 #include "bpf_net_namespace.h"
 #include "bpf_netdevice.h"
 #include "bpf_pcap_stub.h"
+#include "bpf_skb_filter.h"
 #include "vmlinux_net.h"
 
 #define TYPE_TCP_COMMON_DROP 1
@@ -19,8 +20,9 @@
 #define SK_FL_TYPE_SHIFT 16
 #define SK_FL_TYPE_MASK 0xffff0000
 
-/* Drop source (who triggered the kfree_skb) */
-#define DROP_SOURCE_UNKNOWN 0
+/* Drop reason (kernel skb_drop_reason enum; UNKNOWN until plumbed). */
+#define DROP_REASON_UNKNOWN   0
+#define DROP_REASON_UNSUPPORT 1
 #define PKT_RAW_LEN 120
 
 struct packet_meta {
@@ -32,7 +34,7 @@ struct packet_meta {
 	u32 ifindex;             /* 4  */
 	u32 dev_flags;           /* 4  */
 	u32 queue_mapping;       /* 4  */
-	u32 drop_source;         /* 4  */
+	u32 drop_reason;         /* 4  */
 	u32 type;                /* 4  */
 	u32 net_inum;             /* 4  */
 	u8  dev_name[IFNAMSIZ];  /* 16 */
@@ -167,6 +169,13 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 	 * Read directly from skb to avoid the ambiguity. */
 	skb_protocol = bpf_ntohs(BPF_CORE_READ(skb, protocol));
 
+	/* device filter: rewritten at load time via filter_ifindex_included /
+	 * filter_ifindex_excluded. filter_ifindex_included == 0 (default) means all
+	 * devices pass; cheap check, runs before the pcap bytecode below.
+	 */
+	if (!skb_filter_pass_dev(skb))
+		return 0;
+
 	/* pcap filter via bpf_pcap_stub.h: pass-through stub patched at load
 	 * time by internal/pcapinject with the compiled tcpdump expression.
 	 */
@@ -183,7 +192,7 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 	bpf_get_current_comm(&data->meta.comm, sizeof(data->meta.comm));
 	data->meta.kfree_skb_addr = (u64)(unsigned long)ctx->location;
 	data->meta.queue_mapping = BPF_CORE_READ(skb, queue_mapping);
-	data->meta.drop_source = DROP_SOURCE_UNKNOWN;
+	data->meta.drop_reason = DROP_REASON_UNKNOWN;
 	data->meta.type = 0;
 
 	data->pkt_hdr.pkt_len = BPF_CORE_READ(skb, len);
