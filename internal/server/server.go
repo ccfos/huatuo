@@ -32,6 +32,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// Config defines the configuration options for the HTTP server.
 type Config struct {
 	EnablePProf     bool
 	EnableRateLimit bool
@@ -53,6 +54,7 @@ var defaultConfig = &Config{
 	Group:           "",
 }
 
+// Server is an HTTP server instance.
 type server struct {
 	engine       *httpGin.Engine
 	promRegistry *prometheus.Registry
@@ -65,8 +67,10 @@ type Option struct {
 	Addr          string
 }
 
+// NewServer creates a new HTTP server with the given configuration.
 func NewServer(cfg *Config) *server {
 	httpGin.SetMode(httpGin.ReleaseMode)
+
 	if cfg == nil {
 		cfg = defaultConfig
 	}
@@ -121,6 +125,7 @@ func (s *server) promServerHandler() ErrHandlerContextFunc {
 	}
 }
 
+// a middleware for global rate limiting.
 func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
 	limiter := rate.NewLimiter(r, burst)
 	return func(c *httpGin.Context) {
@@ -138,6 +143,7 @@ func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
 	}
 }
 
+// Group return the cgroup for this httpserver
 func (s *server) Group() *routerGroup {
 	return s.rootGroup
 }
@@ -147,6 +153,7 @@ const (
 	HttpDelete = 2
 	HttpGet    = 3
 	HttpPut    = 4
+	HttpPatch  = 5
 )
 
 type Handle struct {
@@ -156,7 +163,8 @@ type Handle struct {
 }
 
 func (s *server) MustRegisterRoutes(subGroup string, handlers []Handle) {
-	g := s.rootGroup
+	var g *routerGroup = s.rootGroup
+
 	if subGroup != "" {
 		g = s.rootGroup.Group(subGroup)
 	}
@@ -171,6 +179,8 @@ func (s *server) MustRegisterRoutes(subGroup string, handlers []Handle) {
 			g.GET(h.Uri, h.Handle)
 		case HttpPut:
 			g.PUT(h.Uri, h.Handle)
+		case HttpPatch:
+			g.PATCH(h.Uri, h.Handle)
 		default:
 			panic("unknown type")
 		}
@@ -196,6 +206,7 @@ func (s *server) run(addr string) error {
 	return s.engine.RunListener(tcpListener)
 }
 
+// Run starts the TCP server with retry mechanism.
 func (s *server) Run(option *Option) error {
 	if option.RetryMaxTime > 0 && option.RetryInterval > 0 {
 		go func() {

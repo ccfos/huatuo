@@ -19,10 +19,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"huatuo-bamai/internal/server/response"
 )
 
+// Permission represents a permission string.
 type Permission string
 
+// User represents a user with permissions.
 type User struct {
 	ID          string
 	Name        string
@@ -30,6 +34,7 @@ type User struct {
 	IsAdmin     bool
 }
 
+// UserConfig represents a user configuration for initialization.
 type UserConfig struct {
 	ID          string
 	Name        string
@@ -37,10 +42,12 @@ type UserConfig struct {
 	IsAdmin     bool
 }
 
+// authService handles authentication and authorization.
 type authService struct {
 	users sync.Map
 }
 
+// NewService creates a new auth authService.
 func NewAuthService(users []UserConfig) *authService {
 	s := &authService{users: sync.Map{}}
 
@@ -61,14 +68,17 @@ func NewAuthService(users []UserConfig) *authService {
 	return s
 }
 
+// Add adds a user to the authService.
 func (s *authService) Add(user User) {
 	s.users.Store(user.ID, user)
 }
 
+// Delete removes a user from the authService.
 func (s *authService) Delete(userID string) {
 	s.users.Delete(userID)
 }
 
+// GetUserById gets a user by ID.
 func (s *authService) GetUserById(userID string) (User, bool) {
 	value, exists := s.users.Load(userID)
 	if !exists {
@@ -77,6 +87,7 @@ func (s *authService) GetUserById(userID string) (User, bool) {
 	return value.(User), true
 }
 
+// Validate validates if a user has access to a specific path.
 func (s *authService) Validate(userID, path string) error {
 	value, exists := s.users.Load(userID)
 	if !exists {
@@ -84,10 +95,13 @@ func (s *authService) Validate(userID, path string) error {
 	}
 
 	user := value.(User)
+
+	// Admin has access to everything
 	if user.IsAdmin {
 		return nil
 	}
 
+	// Check if user has permission for this path
 	for _, perm := range user.Permissions {
 		if s.matchesPath(string(perm), path) {
 			return nil
@@ -97,6 +111,7 @@ func (s *authService) Validate(userID, path string) error {
 	return fmt.Errorf("user %s does not have permission to access %s", userID, path)
 }
 
+// IsAdmin checks if a user is an admin.
 func (s *authService) IsAdmin(userID string) bool {
 	value, exists := s.users.Load(userID)
 	if !exists {
@@ -105,29 +120,44 @@ func (s *authService) IsAdmin(userID string) bool {
 	return value.(User).IsAdmin
 }
 
+// matchesPath performs simple path matching, supporting basic wildcards and path parameters.
 func (s *authService) matchesPath(permission, path string) bool {
+	// 1. Exact match
 	if permission == path {
 		return true
 	}
 
+	// 2. Handle wildcard ** (matches all sub-paths)
 	if strings.Contains(permission, "**") {
 		prefix := strings.Split(permission, "**")[0]
 		return strings.HasPrefix(path, prefix)
 	}
 
+	// 3. Handle single-level wildcard * and path parameter :param
 	return s.matchesSegments(permission, path)
 }
 
+// matchesSegments matches by path segments.
 func (s *authService) matchesSegments(permission, path string) bool {
 	permSegments := strings.Split(strings.Trim(permission, "/"), "/")
 	pathSegments := strings.Split(strings.Trim(path, "/"), "/")
+
+	// Segments must be the same length (unless there's a wildcard)
 	if len(permSegments) != len(pathSegments) {
 		return false
 	}
 
+	// Compare each segment
 	for i, permSeg := range permSegments {
 		pathSeg := pathSegments[i]
-		if permSeg == pathSeg || strings.HasPrefix(permSeg, ":") || permSeg == "*" {
+
+		if permSeg == pathSeg {
+			continue
+		}
+		if strings.HasPrefix(permSeg, ":") {
+			continue
+		}
+		if permSeg == "*" {
 			continue
 		}
 		return false
@@ -136,16 +166,17 @@ func (s *authService) matchesSegments(permission, path string) bool {
 	return true
 }
 
+// NewAuthMiddleware returns a HandlerContextFunc that validates requests using the given authService.
 func NewAuthMiddleware(svc *authService) HandlerContextFunc {
 	return func(ctx *Context) {
 		userID := ctx.Request().Header.Get("Authorization")
 		if userID == "" {
-			ctx.JSON(http.StatusUnauthorized, map[string]any{"code": 401, "message": "missing user ID"})
+			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "missing user ID")
 			ctx.Abort()
 			return
 		}
 		if err := svc.Validate(userID, ctx.Request().URL.Path); err != nil {
-			ctx.JSON(http.StatusForbidden, map[string]any{"code": 403, "message": err.Error()})
+			response.ErrorWithCode(ctx, http.StatusForbidden, response.ErrForbidden.Code, err.Error())
 			ctx.Abort()
 			return
 		}

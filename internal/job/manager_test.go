@@ -20,33 +20,37 @@ import (
 	"testing"
 )
 
-type stubStorage struct {
-	saveCalls   []any
-	deleteCalls []any
-	searchFunc  func(query, result any) error
+type stubJobStore struct {
+	saveCalls   []*Job
+	deleteCalls []string
+	getFunc     func(jobID string) (*Job, error)
+	listFunc    func(query *JobQuery) ([]*Job, error)
 	saveErr     error
 	deleteErr   error
 }
 
-func (s *stubStorage) Save(data any) error {
-	s.saveCalls = append(s.saveCalls, data)
+func (s *stubJobStore) Get(jobID string) (*Job, error) {
+	if s.getFunc != nil {
+		return s.getFunc(jobID)
+	}
+	return nil, nil
+}
+
+func (s *stubJobStore) Save(job *Job) error {
+	s.saveCalls = append(s.saveCalls, job)
 	return s.saveErr
 }
 
-func (s *stubStorage) Delete(condition any) error {
-	s.deleteCalls = append(s.deleteCalls, condition)
+func (s *stubJobStore) Delete(jobID string) error {
+	s.deleteCalls = append(s.deleteCalls, jobID)
 	return s.deleteErr
 }
 
-func (s *stubStorage) Search(query, result any) error {
-	if s.searchFunc != nil {
-		return s.searchFunc(query, result)
+func (s *stubJobStore) List(query *JobQuery) ([]*Job, error) {
+	if s.listFunc != nil {
+		return s.listFunc(query)
 	}
-	return nil
-}
-
-func (s *stubStorage) Update(condition, data any) error {
-	return nil
+	return nil, nil
 }
 
 type stubNodeAgent struct {
@@ -80,8 +84,8 @@ func (s *stubNodeAgent) GetTaskStatus(host, taskID string) (string, *Result, err
 	return "", nil, nil
 }
 
-func newTestManager(storage Storage, nodeAgent NodeAgent) *Manager {
-	return NewManager(storage, nodeAgent, ManagerConfig{
+func newTestManager(storage Store, nodeAgent NodeAgent) *Manager {
+	return newManagerWithStore(storage, nodeAgent, ManagerConfig{
 		MaxJobsPerHost: 2,
 		MaxTotalJobs:   3,
 	})
@@ -109,7 +113,7 @@ func newRunningJob(jobID string) *Job {
 // TestManagerCreate tests key branches of Manager.Create, including missing timeout/duration in request, per-host job limit reached, total job limit reached, and successful job creation with field population, task dispatch, and memory index updates.
 func TestManagerCreate(t *testing.T) {
 	t.Run("timeout or duration required", func(t *testing.T) {
-		storage := &stubStorage{}
+		storage := &stubJobStore{}
 		nodeAgent := &stubNodeAgent{}
 		manager := newTestManager(storage, nodeAgent)
 
@@ -135,7 +139,7 @@ func TestManagerCreate(t *testing.T) {
 	})
 
 	t.Run("per host limit reached", func(t *testing.T) {
-		storage := &stubStorage{}
+		storage := &stubJobStore{}
 		nodeAgent := &stubNodeAgent{}
 		manager := newTestManager(storage, nodeAgent)
 		manager.jobsByHost.Store("huatuo-dev", 2)
@@ -161,9 +165,9 @@ func TestManagerCreate(t *testing.T) {
 	})
 
 	t.Run("total limit reached", func(t *testing.T) {
-		storage := &stubStorage{}
+		storage := &stubJobStore{}
 		nodeAgent := &stubNodeAgent{}
-		manager := NewManager(storage, nodeAgent, ManagerConfig{
+		manager := newManagerWithStore(storage, nodeAgent, ManagerConfig{
 			MaxJobsPerHost: 3,
 			MaxTotalJobs:   2,
 		})
@@ -191,7 +195,7 @@ func TestManagerCreate(t *testing.T) {
 	})
 
 	t.Run("create success", func(t *testing.T) {
-		storage := &stubStorage{}
+		storage := &stubJobStore{}
 		nodeAgent := &stubNodeAgent{
 			startTaskFunc: func(host, container string, args *NewAgentTaskReq) (string, error) {
 				return "agent-task-2026", nil
@@ -258,7 +262,7 @@ func TestManagerCreate(t *testing.T) {
 // TestManagerStop tests Manager.Stop behavior, including returning nil when job doesn't exist, and stopping a running job by dispatching stop command, closing stop channel, updating status to stopped, and removing from memory index.
 func TestManagerStop(t *testing.T) {
 	t.Run("job not found returns nil", func(t *testing.T) {
-		storage := &stubStorage{}
+		storage := &stubJobStore{}
 		nodeAgent := &stubNodeAgent{}
 		manager := newTestManager(storage, nodeAgent)
 
@@ -272,7 +276,7 @@ func TestManagerStop(t *testing.T) {
 	})
 
 	t.Run("running job is stopped", func(t *testing.T) {
-		storage := &stubStorage{}
+		storage := &stubJobStore{}
 		nodeAgent := &stubNodeAgent{}
 		manager := newTestManager(storage, nodeAgent)
 		job := newRunningJob("job-running-2026")
@@ -307,6 +311,86 @@ func TestManagerStop(t *testing.T) {
 		}
 		if _, exists := manager.jobsByHost.Load(job.Host); exists {
 			t.Errorf("jobsByHost.Load(%q) exists=true, want false", job.Host)
+		}
+	})
+}
+
+// TestManagerGet covers the Manager.Get read path: verifies in-memory jobs are returned first and storage is consulted as a fallback when the job is not in memory.
+func TestManagerGet(t *testing.T) {
+	t.Run("returns in-memory job first", func(t *testing.T) {
+		storage := &stubJobStore{
+			getFunc: func(jobID string) (*Job, error) {
+				t.Errorf("storage Get() should not be called for in-memory job %q", jobID)
+				return nil, nil
+			},
+		}
+		manager := newTestManager(storage, &stubNodeAgent{})
+		runningJob := newRunningJob("job-memory-2026")
+		manager.jobs.Store(runningJob.JobID, runningJob)
+
+		gotJob, err := manager.Get("job-memory-2026")
+		if err != nil {
+			t.Errorf("Get() error=%v, want nil", err)
+		}
+		if gotJob != runningJob {
+			t.Errorf("Get() returned unexpected in-memory job pointer")
+		}
+	})
+
+	t.Run("falls back to store", func(t *testing.T) {
+		storage := &stubJobStore{
+			getFunc: func(jobID string) (*Job, error) {
+				if jobID != "job-archived-2026" {
+					t.Errorf("Get() jobID=%q, want %q", jobID, "job-archived-2026")
+				}
+				return &Job{
+					JobID:  "job-archived-2026",
+					Status: JobStatusCompleted,
+				}, nil
+			},
+		}
+		manager := newTestManager(storage, &stubNodeAgent{})
+
+		gotJob, err := manager.Get("job-archived-2026")
+		if err != nil {
+			t.Errorf("Get() error=%v, want nil", err)
+		}
+		if gotJob == nil {
+			t.Errorf("Get() returned nil job")
+			return
+		}
+		if gotJob.JobID != "job-archived-2026" {
+			t.Errorf("Get() job id=%q, want %q", gotJob.JobID, "job-archived-2026")
+		}
+	})
+}
+
+// TestManagerSave covers Manager.Save delegation: verifies that saves are forwarded to storage and storage errors are propagated unchanged.
+func TestManagerSave(t *testing.T) {
+	t.Run("save success", func(t *testing.T) {
+		storage := &stubJobStore{}
+		manager := newTestManager(storage, &stubNodeAgent{})
+		jobToSave := newRunningJob("job-save-2026")
+
+		err := manager.Save(jobToSave)
+		if err != nil {
+			t.Errorf("Save() error=%v, want nil", err)
+		}
+		if len(storage.saveCalls) != 1 {
+			t.Errorf("storage.Save() call count=%d, want 1", len(storage.saveCalls))
+		} else if storage.saveCalls[0] != jobToSave {
+			t.Errorf("storage.Save() received unexpected job pointer")
+		}
+	})
+
+	t.Run("save returns store error", func(t *testing.T) {
+		saveErr := errors.New("store save failed")
+		storage := &stubJobStore{saveErr: saveErr}
+		manager := newTestManager(storage, &stubNodeAgent{})
+
+		err := manager.Save(newRunningJob("job-save-error-2026"))
+		if !errors.Is(err, saveErr) {
+			t.Errorf("Save() error=%v, want %v", err, saveErr)
 		}
 	})
 }
@@ -355,23 +439,13 @@ func TestManagerList(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			storage := &stubStorage{
-				searchFunc: func(query, result any) error {
-					jobQuery, ok := query.(*JobQuery)
-					if !ok {
-						t.Errorf("Search() query type=%T, want *JobQuery", query)
-						return nil
-					}
-					if *jobQuery != tc.wantQuery {
-						t.Errorf("Search() query=%+v, want %+v", *jobQuery, tc.wantQuery)
+			storage := &stubJobStore{
+				listFunc: func(query *JobQuery) ([]*Job, error) {
+					if *query != tc.wantQuery {
+						t.Errorf("List() query=%+v, want %+v", *query, tc.wantQuery)
 					}
 
-					storedJobs, ok := result.(*[]*Job)
-					if !ok {
-						t.Errorf("Search() result type=%T, want *[]*Job", result)
-						return nil
-					}
-					*storedJobs = []*Job{
+					return []*Job{
 						{
 							JobID:     "job-archived-2026",
 							UserID:    "operator-2026",
@@ -380,8 +454,7 @@ func TestManagerList(t *testing.T) {
 							Status:    JobStatusRunning,
 							Type:      "oncpu",
 						},
-					}
-					return nil
+					}, nil
 				},
 			}
 			manager := newTestManager(storage, &stubNodeAgent{})
@@ -431,13 +504,13 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 		status   string
 		result   *Result
 		err      error
-		validate func(t *testing.T, manager *Manager, job *Job, storage *stubStorage, gotStatus string, gotErr error)
+		validate func(t *testing.T, manager *Manager, job *Job, storage *stubJobStore, gotStatus string, gotErr error)
 	}{
 		{
 			name:   "completed",
 			status: AgentStatusCompleted,
 			result: &Result{URL: "s3://huatuo-region/job-report-2026", Error: ""},
-			validate: func(t *testing.T, manager *Manager, job *Job, storage *stubStorage, gotStatus string, gotErr error) {
+			validate: func(t *testing.T, manager *Manager, job *Job, storage *stubJobStore, gotStatus string, gotErr error) {
 				if gotErr != nil {
 					t.Errorf("checkAndUpdateJobStatus() error=%v, want nil", gotErr)
 				}
@@ -462,7 +535,7 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 			name:   "failed",
 			status: AgentStatusFailed,
 			result: &Result{Error: "trace process exited with code 2"},
-			validate: func(t *testing.T, manager *Manager, job *Job, storage *stubStorage, gotStatus string, gotErr error) {
+			validate: func(t *testing.T, manager *Manager, job *Job, storage *stubJobStore, gotStatus string, gotErr error) {
 				if gotErr != nil {
 					t.Errorf("checkAndUpdateJobStatus() error=%v, want nil", gotErr)
 				}
@@ -486,7 +559,7 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 		{
 			name:   "not exist on agent",
 			status: AgentStatusNotExist,
-			validate: func(t *testing.T, manager *Manager, job *Job, storage *stubStorage, gotStatus string, gotErr error) {
+			validate: func(t *testing.T, manager *Manager, job *Job, storage *stubJobStore, gotStatus string, gotErr error) {
 				if gotErr != nil {
 					t.Errorf("checkAndUpdateJobStatus() error=%v, want nil", gotErr)
 				}
@@ -507,7 +580,7 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 		{
 			name:   "running",
 			status: AgentStatusRunning,
-			validate: func(t *testing.T, manager *Manager, job *Job, storage *stubStorage, gotStatus string, gotErr error) {
+			validate: func(t *testing.T, manager *Manager, job *Job, storage *stubJobStore, gotStatus string, gotErr error) {
 				if gotErr != nil {
 					t.Errorf("checkAndUpdateJobStatus() error=%v, want nil", gotErr)
 				}
@@ -528,7 +601,7 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 		{
 			name: "agent error",
 			err:  errors.New("agent timeout"),
-			validate: func(t *testing.T, manager *Manager, job *Job, storage *stubStorage, gotStatus string, gotErr error) {
+			validate: func(t *testing.T, manager *Manager, job *Job, storage *stubJobStore, gotStatus string, gotErr error) {
 				if gotErr == nil || gotErr.Error() != "agent timeout" {
 					t.Errorf("checkAndUpdateJobStatus() error=%v, want %q", gotErr, "agent timeout")
 				}
@@ -547,7 +620,7 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			storage := &stubStorage{}
+			storage := &stubJobStore{}
 			nodeAgent := &stubNodeAgent{
 				getTaskStatusFunc: func(host, taskID string) (string, *Result, error) {
 					if host != "huatuo-dev" {
@@ -573,7 +646,7 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 // TestManagerDelete tests Manager.Delete deletion restrictions, including preventing deletion of running jobs in memory, preventing deletion of running jobs in storage, and calling storage layer to delete completed jobs.
 func TestManagerDelete(t *testing.T) {
 	t.Run("running job in memory cannot be deleted", func(t *testing.T) {
-		storage := &stubStorage{}
+		storage := &stubJobStore{}
 		manager := newTestManager(storage, &stubNodeAgent{})
 		manager.jobs.Store("job-running-2026", newRunningJob("job-running-2026"))
 
@@ -587,18 +660,15 @@ func TestManagerDelete(t *testing.T) {
 	})
 
 	t.Run("running job in storage cannot be deleted", func(t *testing.T) {
-		storage := &stubStorage{
-			searchFunc: func(query, result any) error {
-				job, ok := result.(**Job)
-				if !ok {
-					t.Errorf("Search() result type=%T, want **Job", result)
-					return nil
+		storage := &stubJobStore{
+			getFunc: func(jobID string) (*Job, error) {
+				if jobID != "job-running-2026" {
+					t.Errorf("Get() jobID=%q, want %q", jobID, "job-running-2026")
 				}
-				*job = &Job{
+				return &Job{
 					JobID:  "job-running-2026",
 					Status: JobStatusRunning,
-				}
-				return nil
+				}, nil
 			},
 		}
 		manager := newTestManager(storage, &stubNodeAgent{})
@@ -613,18 +683,15 @@ func TestManagerDelete(t *testing.T) {
 	})
 
 	t.Run("completed job in storage is deleted", func(t *testing.T) {
-		storage := &stubStorage{
-			searchFunc: func(query, result any) error {
-				job, ok := result.(**Job)
-				if !ok {
-					t.Errorf("Search() result type=%T, want **Job", result)
-					return nil
+		storage := &stubJobStore{
+			getFunc: func(jobID string) (*Job, error) {
+				if jobID != "job-completed-2026" {
+					t.Errorf("Get() jobID=%q, want %q", jobID, "job-completed-2026")
 				}
-				*job = &Job{
+				return &Job{
 					JobID:  "job-completed-2026",
 					Status: JobStatusCompleted,
-				}
-				return nil
+				}, nil
 			},
 		}
 		manager := newTestManager(storage, &stubNodeAgent{})
