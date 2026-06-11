@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"reflect"
 	"time"
 
 	"huatuo-bamai/pkg/types"
@@ -56,6 +57,47 @@ func newPerfEventReader(ctx context.Context, array *ebpf.Map, perCPUBuffer int) 
 func (r *perfEventReader) Close() error {
 	r.cancelCtx()
 	return r.rd.Close()
+}
+
+func (r *perfEventReader) EpollShortWait() (int, error) {
+	return r.rd.EpollWait(100 * time.Millisecond)
+}
+
+func (r *perfEventReader) EpollWait() (int, error) {
+	return r.rd.EpollWait(500 * time.Millisecond)
+}
+
+func (r *perfEventReader) ReadAllRings(pdata any) ([]any, error) {
+	records, err := r.rd.ReadAllRings()
+	if err != nil {
+		if errors.Is(err, perf.ErrClosed) {
+			return nil, fmt.Errorf("reader closed")
+		}
+		return nil, fmt.Errorf("failed to read event: %w", err)
+	}
+
+	var resAll []any
+
+	typ := reflect.TypeOf(pdata)
+	if typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+
+	for _, rec := range records {
+		if rec.LostSamples != 0 {
+			continue
+		}
+
+		newEvt := reflect.New(typ).Interface()
+
+		if err := binary.Read(bytes.NewBuffer(rec.RawSample), binary.LittleEndian, newEvt); err != nil {
+			return nil, fmt.Errorf("failed to parse event: %w", err)
+		}
+
+		resAll = append(resAll, newEvt)
+	}
+
+	return resAll, nil
 }
 
 // ReadInto reads the eBPF perf_event into pdata.

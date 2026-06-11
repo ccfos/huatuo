@@ -237,10 +237,11 @@ func runPerf(parent context.Context, containerId string, timeOut int64) ([]byte,
 	ctx, cancel := context.WithTimeout(parent, time.Duration(timeOut+30)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "perf"),
-		"--bpf-obj", "cpuidle.o",
+	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "profiler"),
+		"--language", "c", "--type", "cpu",
 		"--container-id", containerId,
-		"--duration", strconv.FormatInt(timeOut, 10))
+		"--duration", strconv.FormatInt(timeOut, 10),
+		"--output-format", "flamedata")
 
 	return cmd.CombinedOutput()
 }
@@ -292,6 +293,17 @@ type CPUIdleTracingData struct {
 	DeltaUsage          int64                  `json:"deltausage"`
 	DeltaUsageThreshold int64                  `json:"deltausage_threshold"`
 	FlameData           []flamegraph.FrameData `json:"flamedata"`
+}
+
+type CPUIdleMetaData struct {
+	NowUser            int64 `json:"user"`
+	UserThreshold      int64 `json:"user_threshold"`
+	DeltaUser          int64 `json:"deltauser"`
+	DeltaUserThreshold int64 `json:"deltauser_threshold"`
+	NowSys             int64 `json:"sys"`
+	SysThreshold       int64 `json:"sys_threshold"`
+	DeltaSys           int64 `json:"deltasys"`
+	DeltaSysThreshold  int64 `json:"deltasys_threshold"`
 }
 
 func (c *cpuIdleTracing) Start(ctx context.Context) error {

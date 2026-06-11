@@ -107,7 +107,7 @@ func tasksGarbageCollect() {
 	}
 }
 
-func allocTaskID() string {
+func AllocTaskID() string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const length = 16
 	result := make([]byte, length)
@@ -126,7 +126,7 @@ func allocTaskID() string {
 
 // NewTask creates a new task, allocates an ID, and starts it.
 func NewTask(execBinary string, timeout time.Duration, storageType TaskStorageType, execArgs []string) string {
-	taskID := allocTaskID()
+	taskID := AllocTaskID()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	task := &task{
 		id:         taskID,

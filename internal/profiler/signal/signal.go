@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,22 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bpf
+package signal
 
-// PerfEventReader reads the eBPF perf_event.
-type PerfEventReader interface {
-	// ReadInto reads the eBPF perf_event into pdata.
-	ReadInto(pdata any) error
+import (
+	"context"
+	"errors"
+	"os"
+	"os/signal"
+	"syscall"
+)
 
-	// Close the PerfEventReader.
-	Close() error
+func SetupSignals() (chan os.Signal, error) {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
+	return signals, nil
+}
 
-	// EpollShortWait performs a short epoll wait.
-	EpollShortWait() (int, error)
-
-	// EpollWait performs a epoll wait.
-	EpollWait() (int, error)
-
-	// ReadAllRings reads all per-CPU ring buffers.
-	ReadAllRings(pdata any) ([]any, error)
+func ListenSignalAndCancel(sigCh <-chan os.Signal, cancel context.CancelFunc) (os.Signal, error) {
+	sig, ok := <-sigCh
+	if !ok {
+		return nil, errors.New("signal channel closed unexpectedly")
+	}
+	cancel()
+	return sig, nil
 }

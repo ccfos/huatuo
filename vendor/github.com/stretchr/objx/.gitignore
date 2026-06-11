@@ -1,11 +1,8 @@
 # Binaries for programs and plugins
 *.exe
-*.exe~
 *.dll
 *.so
 *.dylib
-*.o
-!*_bpf*.o
 
 # Test binary, build with `go test -c`
 *.test

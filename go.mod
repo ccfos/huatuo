@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	capnproto.org/go/capnp/v3 v3.1.0-alpha.2
+	github.com/Workiva/go-datastructures v1.1.7
 	github.com/cilium/ebpf v0.16.0
 	github.com/cloudflare/backoff v0.0.0-20240920015135-e46b80a3a7d0
 	github.com/cloudflare/cbpfc v0.0.0-20250612101420-369091e6a9e1
@@ -211,3 +212,5 @@ require (
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 )
+
+replace github.com/cilium/ebpf v0.16.0 => github.com/liuchangyan/cilium-ebpf v1.0.0
