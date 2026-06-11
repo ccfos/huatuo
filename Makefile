@@ -98,7 +98,8 @@ import-fmt:
 		$(FIND_EXCLUDE_PATHS) \
 		-exec shfmt -i 0 -w {} \;
 
-golangci-lint:
+golangci-lint: gen-build
+	@# gen-build ensures mock/capnp files exist for typecheck to resolve imports.
 	@golangci-lint run -v ./... --timeout=5m --config .golangci.yaml
 
 vendor:
