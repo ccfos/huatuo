@@ -22,11 +22,15 @@ GO_BUILD_LDFLAGS := \
 
 GO_BUILD_STATIC := $(GO_BUILD_FLAGS) -ldflags "-extldflags -static $(GO_BUILD_LDFLAGS)"
 GO_BUILD_NOSTATIC := $(GO_BUILD_FLAGS) -ldflags "$(GO_BUILD_LDFLAGS)"
+FIND_EXCLUDE_PATHS := \
+	! -path "./vendor/*" \
+	! -path "./.git/*" \
+	! -path "./.claude/*" \
+	! -path "./third_party/*"
+
 GO_SRCS := $(shell find . -name "*.go" \
 	! -name "*_test.go" \
-	! -path "./.git/*"\
-	! -path "./.claude/*"\
-	! -path "./vendor/*") \
+	$(FIND_EXCLUDE_PATHS)) \
 	go.mod go.sum
 
 BUILD_MODE ?= static
@@ -53,10 +57,7 @@ build-nostatic:
 bpf-build: $(BPF_BUILD_STAMP)
 $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 	@find . -name "*.go" \
-		! -path "./vendor/*" \
-		! -path "./.git/*" \
-		! -path "./.claude/*" \
-		! -path "./third_party/*" \
+		$(FIND_EXCLUDE_PATHS) \
 		-exec grep -l "^[[:space:]]*//go:generate.*BPF_COMPILE" {} \; | \
 		xargs -n1 dirname | sort -u | \
 		xargs -P $(shell nproc) -I {} sh -c ' \
@@ -87,13 +88,15 @@ check: import-fmt golangci-lint
 	@git diff --exit-code
 
 import-fmt:
-	$(eval GO_FILES := $(shell find . -name '*.go' ! \( -path "./vendor/*" -o -path "./.git/*" -o -path "./.claude/*" \)))
+	$(eval GO_FILES := $(shell find . -name '*.go' $(FIND_EXCLUDE_PATHS)))
 	@# goimports
-	@goimports -w -local huatuo-bamai  ${GO_FILES}
+	@goimports -w -local huatuo-bamai $(GO_FILES)
 	@# golang and shell fmt
 	@gofumpt -l -w $(GO_FILES);
 	@gofmt -w -r 'interface{} -> any' $(GO_FILES)
-	@find . -name "*.sh" ! \( -path "./vendor/*" -o -path "./.git/*" -o -path "./.claude/*" -o -path "./third_party/*" \) -exec shfmt -i 0 -w {} \;
+	@find . -name "*.sh" \
+		$(FIND_EXCLUDE_PATHS) \
+		-exec shfmt -i 0 -w {} \;
 
 golangci-lint:
 	@golangci-lint run -v ./... --timeout=5m --config .golangci.yaml
