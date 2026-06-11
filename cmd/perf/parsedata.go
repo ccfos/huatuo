@@ -49,7 +49,7 @@ type eventdata struct {
 
 // CgDumpTrace is an interface for dump stacks in cgusage case
 func CgDumpTrace(addrs []uint64) string {
-	stacks := symbol.KsymStackStrs(addrs, perfStackDepth)
+	stacks := symbol.KsymStackStrsReversed(addrs, perfStackDepth)
 	return strings.Join(stacks, "\n")
 }
 
@@ -93,7 +93,7 @@ func parsedata(b bpf.BPF) error {
 		Value uint64
 	}
 
-	u := symbol.NewUserResolver()
+	u := symbol.NewUsymResolver()
 	for _, v := range items {
 		ed := eventdata{}
 		var count uint64
@@ -141,7 +141,7 @@ func parsedata(b bpf.BPF) error {
 		}
 
 		if kv.Key.UstackSize > 0 {
-			frames := u.ResolveUserStackStrs(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
+			frames := u.UsymStackStrsReversed(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
 			for _, frame := range frames {
 				if frame != "" {
 					index, functionNames = findOrAdd(frame, functionNames)
