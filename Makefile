@@ -106,7 +106,10 @@ vendor:
 	@go mod tidy; go mod verify; go mod vendor
 
 clean:
-	@rm -rf _output $(shell find . -type f -name "*.o")
+	@rm -rf _output
+	@find . \( -name "*.o" -o -name "mock_*.go" \) \
+		$(FIND_EXCLUDE_PATHS) \
+		-delete
 
 gen-build:
 	@go generate -run "mockery.*" -x ./...
