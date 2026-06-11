@@ -73,7 +73,7 @@ func firstFunctionSymbol(t *testing.T, elfPath string) (string, uint64) {
 	return "", 0
 }
 
-func setupMainElfResolverFixture(t *testing.T) (*UserResolver, uint32, string, uint64) {
+func setupMainElfResolverFixture(t *testing.T) (*UsymResolver, uint32, string, uint64) {
 	t.Helper()
 	setTestXfsMounts(t, []string{"/"})
 	tmpRoot := setupTempProcRoot(t)
@@ -90,10 +90,10 @@ func setupMainElfResolverFixture(t *testing.T) (*UserResolver, uint32, string, u
 	mustSymlink(t, "/usr/bin/huatuo-dev", filepath.Join(procDir, "exe"))
 
 	functionName, functionAddr := firstFunctionSymbol(t, executablePath)
-	return NewUserResolver(), processID, functionName, functionAddr
+	return NewUsymResolver(), processID, functionName, functionAddr
 }
 
-func setupLibraryResolverFixture(t *testing.T) (*UserResolver, uint32, string, uint64) {
+func setupLibraryResolverFixture(t *testing.T) (*UsymResolver, uint32, string, uint64) {
 	t.Helper()
 	setTestXfsMounts(t, []string{"/"})
 	tmpRoot := setupTempProcRoot(t)
@@ -118,44 +118,44 @@ func setupLibraryResolverFixture(t *testing.T) (*UserResolver, uint32, string, u
 	mapsContent := "70000000-71000000 r-xp 00000000 fd:01 1001 /usr/lib/libhuatuo.so\n"
 	mustWriteFile(t, filepath.Join(procDir, "maps"), mapsContent)
 
-	return NewUserResolver(), processID, functionName, mapStart + functionAddr
+	return NewUsymResolver(), processID, functionName, mapStart + functionAddr
 }
 
-func TestNewUserResolver(t *testing.T) {
-	resolver := NewUserResolver()
+func TestNewUsymResolver(t *testing.T) {
+	resolver := NewUsymResolver()
 	if resolver == nil {
-		t.Fatalf("NewUserResolver(): got nil resolver")
+		t.Fatalf("NewUsymResolver(): got nil resolver")
 	}
 	if resolver.exeCache == nil || resolver.libcaches == nil || resolver.procmaps == nil {
-		t.Errorf("NewUserResolver(): caches not initialized")
+		t.Errorf("NewUsymResolver(): caches not initialized")
 	}
 }
 
-func TestUserResolverExePath(t *testing.T) {
+func TestUsymResolverExePath(t *testing.T) {
 	tests := []struct {
 		name     string
-		build    func(t *testing.T) (*UserResolver, uint32, string)
+		build    func(t *testing.T) (*UsymResolver, uint32, string)
 		wantErr  bool
 		wantPath string
 	}{
 		{
 			name: "pid-not-found",
-			build: func(t *testing.T) (*UserResolver, uint32, string) {
+			build: func(t *testing.T) (*UsymResolver, uint32, string) {
 				setupTempProcRoot(t)
-				return NewUserResolver(), uint32(1001), ""
+				return NewUsymResolver(), uint32(1001), ""
 			},
 			wantErr: true,
 		},
 		{
 			name: "resolve-executable-under-root",
-			build: func(t *testing.T) (*UserResolver, uint32, string) {
+			build: func(t *testing.T) (*UsymResolver, uint32, string) {
 				tmpRoot := setupTempProcRoot(t)
 				processID := uint32(1001)
 				procDir := filepath.Join(tmpRoot, "proc", strconv.Itoa(int(processID)))
 				procDirRoot := filepath.Join(procDir, "root")
 				mustMkdirAll(t, procDir)
 				mustSymlink(t, "/usr/bin/huatuo-dev", filepath.Join(procDir, "exe"))
-				return NewUserResolver(), processID, filepath.Join(procDirRoot, "/usr/bin/huatuo-dev")
+				return NewUsymResolver(), processID, filepath.Join(procDirRoot, "/usr/bin/huatuo-dev")
 			},
 			wantErr: false,
 		},
@@ -181,7 +181,7 @@ func TestUserResolverExePath(t *testing.T) {
 	}
 }
 
-func TestUserResolverLoadElfCaches(t *testing.T) {
+func TestUsymResolverLoadElfCaches(t *testing.T) {
 	t.Run("repeated-load-shares-cache-entry", func(t *testing.T) {
 		resolver, processID, _, _ := setupMainElfResolverFixture(t)
 
@@ -233,7 +233,7 @@ func TestUserResolverLoadElfCaches(t *testing.T) {
 			mustSymlink(t, "/usr/bin/huatuo-dev", filepath.Join(procDir, "exe"))
 		}
 
-		resolver := NewUserResolver()
+		resolver := NewUsymResolver()
 		cacheFirst, err := resolver.loadElfCaches(pidFirst)
 		if err != nil {
 			t.Fatalf("loadElfCaches(pidFirst): %v", err)
@@ -251,7 +251,7 @@ func TestUserResolverLoadElfCaches(t *testing.T) {
 	})
 }
 
-func TestUserResolverLoadProcMaps(t *testing.T) {
+func TestUsymResolverLoadProcMaps(t *testing.T) {
 	setTestXfsMounts(t, []string{"/"})
 	tmpRoot := setupTempProcRoot(t)
 	processID := uint32(1001)
@@ -261,7 +261,7 @@ func TestUserResolverLoadProcMaps(t *testing.T) {
 		"72000000-72100000 r--p 00000000 fd:01 1002 [heap]\n"
 	mustWriteFile(t, filepath.Join(procDir, "maps"), mapsContent)
 
-	resolver := NewUserResolver()
+	resolver := NewUsymResolver()
 	if err := resolver.loadProcMaps(processID); err != nil {
 		t.Fatalf("loadProcMaps first: %v", err)
 	}
@@ -274,16 +274,16 @@ func TestUserResolverLoadProcMaps(t *testing.T) {
 	}
 }
 
-func TestUserResolverLoadProcMapsNotFound(t *testing.T) {
+func TestUsymResolverLoadProcMapsNotFound(t *testing.T) {
 	setTestXfsMounts(t, []string{"/"})
 	setupTempProcRoot(t)
-	resolver := NewUserResolver()
+	resolver := NewUsymResolver()
 	if err := resolver.loadProcMaps(uint32(1001)); err == nil {
 		t.Errorf("loadProcMaps not-found: got nil error, want non-nil")
 	}
 }
 
-func TestUserResolverLoadLibCache(t *testing.T) {
+func TestUsymResolverLoadLibCache(t *testing.T) {
 	t.Run("repeated-load-shares-cache-entry", func(t *testing.T) {
 		setTestXfsMounts(t, []string{"/"})
 		tmpRoot := setupTempProcRoot(t)
@@ -292,7 +292,7 @@ func TestUserResolverLoadLibCache(t *testing.T) {
 		libraryPath := filepath.Join(libraryDir, "libhuatuo.so")
 		copyCurrentExecutable(t, libraryPath)
 
-		resolver := NewUserResolver()
+		resolver := NewUsymResolver()
 		firstCache, err := resolver.loadLibCache(uint32(1001), libraryPath)
 		if err != nil {
 			t.Fatalf("loadLibCache first: %v", err)
@@ -312,7 +312,7 @@ func TestUserResolverLoadLibCache(t *testing.T) {
 	t.Run("missing-library-returns-error", func(t *testing.T) {
 		setTestXfsMounts(t, []string{"/"})
 		setupTempProcRoot(t)
-		resolver := NewUserResolver()
+		resolver := NewUsymResolver()
 		if _, err := resolver.loadLibCache(uint32(1001), "/proc/1001/root/lib-not-found.so"); err == nil {
 			t.Errorf("loadLibCache not-found: got nil error, want non-nil")
 		}
@@ -342,7 +342,7 @@ func TestUserResolverLoadLibCache(t *testing.T) {
 			t.Fatalf("Link(%q -> %q): %v", libPathData, libPathLogs, err)
 		}
 
-		resolver := NewUserResolver()
+		resolver := NewUsymResolver()
 		if _, err := resolver.loadLibCache(processID, libPathData); err != nil {
 			t.Fatalf("loadLibCache(libPathData): %v", err)
 		}
@@ -355,29 +355,29 @@ func TestUserResolverLoadLibCache(t *testing.T) {
 	})
 }
 
-func TestResolveUserStackMainElf(t *testing.T) {
+func TestUsymStackMainElf(t *testing.T) {
 	resolver, processID, functionName, functionAddr := setupMainElfResolverFixture(t)
 
 	stack := []uint64{functionAddr, functionAddr}
-	got := resolver.ResolveUserStackStrs(processID, stack, 1)
+	got := resolver.UsymStackStrs(processID, stack, 1)
 	want := []string{functionName}
 	if !slices.Equal(got, want) {
-		t.Errorf("ResolveUserStackStrs main ELF: got %v, want %v", got, want)
+		t.Errorf("UsymStackStrs main ELF: got %v, want %v", got, want)
 	}
 
-	byteFrames := resolver.ResolveUserStackBytes(processID, []uint64{functionAddr}, 1)
+	byteFrames := resolver.UsymStackBytes(processID, []uint64{functionAddr}, 1)
 	if !slices.Equal(bytesFramesToStrings(byteFrames), []string{functionName}) {
-		t.Errorf("ResolveUserStackBytes main ELF: got %v, want [%s]", bytesFramesToStrings(byteFrames), functionName)
+		t.Errorf("UsymStackBytes main ELF: got %v, want [%s]", bytesFramesToStrings(byteFrames), functionName)
 	}
 }
 
-func TestResolveUserStackStrsLibraryFallback(t *testing.T) {
+func TestUsymStackStrsLibraryFallback(t *testing.T) {
 	t.Run("non-pie-single-rxp-segment", func(t *testing.T) {
 		resolver, processID, functionName, stackAddr := setupLibraryResolverFixture(t)
-		got := resolver.ResolveUserStackStrs(processID, []uint64{stackAddr}, 1)
+		got := resolver.UsymStackStrs(processID, []uint64{stackAddr}, 1)
 		want := []string{functionName}
 		if !slices.Equal(got, want) {
-			t.Errorf("ResolveUserStackStrs: got %v, want %v", got, want)
+			t.Errorf("UsymStackStrs: got %v, want %v", got, want)
 		}
 	})
 
@@ -413,18 +413,18 @@ func TestResolveUserStackStrsLibraryFallback(t *testing.T) {
 
 		// Runtime addr = pieBase + ELF symbol Value (first segment offset=0)
 		stackAddr := pieBase + functionAddr
-		resolver := NewUserResolver()
-		got := resolver.ResolveUserStackStrs(processID, []uint64{stackAddr}, 1)
+		resolver := NewUsymResolver()
+		got := resolver.UsymStackStrs(processID, []uint64{stackAddr}, 1)
 		want := []string{functionName}
 		if !slices.Equal(got, want) {
-			t.Errorf("ResolveUserStackStrs PIE: got %v, want %v", got, want)
+			t.Errorf("UsymStackStrs PIE: got %v, want %v", got, want)
 		}
 	})
 }
 
-func TestResolveAddrFailFrames(t *testing.T) {
-	newResolver := func(pid uint32, inode uint64) *UserResolver {
-		resolver := NewUserResolver()
+func TestUsymResolveAddrFailFrames(t *testing.T) {
+	newResolver := func(pid uint32, inode uint64) *UsymResolver {
+		resolver := NewUsymResolver()
 		key := cacheKey{inode: inode}
 		resolver.exeKeys[pid] = key
 		resolver.exeCache[key] = &elfCache{
@@ -444,7 +444,7 @@ func TestResolveAddrFailFrames(t *testing.T) {
 		name    string
 		addr    uint64
 		inode   uint64
-		prepare func(t *testing.T, resolver *UserResolver, pid uint32)
+		prepare func(t *testing.T, resolver *UsymResolver, pid uint32)
 		want    string
 	}{
 		{
@@ -457,7 +457,7 @@ func TestResolveAddrFailFrames(t *testing.T) {
 			name:  "procmap-fail",
 			addr:  0x3000,
 			inode: 2,
-			prepare: func(t *testing.T, _ *UserResolver, _ uint32) {
+			prepare: func(t *testing.T, _ *UsymResolver, _ uint32) {
 				setupTempProcRoot(t)
 			},
 			want: "unknown procmap-fail",
@@ -466,7 +466,7 @@ func TestResolveAddrFailFrames(t *testing.T) {
 			name:  "proc-unmapped",
 			addr:  0x90000000,
 			inode: 3,
-			prepare: func(_ *testing.T, resolver *UserResolver, pid uint32) {
+			prepare: func(_ *testing.T, resolver *UsymResolver, pid uint32) {
 				resolver.procmaps[pid] = sections{
 					&procfs.ProcMap{
 						StartAddr: uintptr(0x70000000),
@@ -481,7 +481,7 @@ func TestResolveAddrFailFrames(t *testing.T) {
 			name:  "non-lib",
 			addr:  0x80000000,
 			inode: 4,
-			prepare: func(_ *testing.T, resolver *UserResolver, pid uint32) {
+			prepare: func(_ *testing.T, resolver *UsymResolver, pid uint32) {
 				resolver.procmaps[pid] = sections{
 					&procfs.ProcMap{
 						StartAddr: uintptr(0x80000000),
@@ -496,7 +496,7 @@ func TestResolveAddrFailFrames(t *testing.T) {
 			name:  "lib-load-fail",
 			addr:  0x70000000,
 			inode: 5,
-			prepare: func(t *testing.T, resolver *UserResolver, pid uint32) {
+			prepare: func(t *testing.T, resolver *UsymResolver, pid uint32) {
 				setTestXfsMounts(t, []string{"/"})
 				setupTempProcRoot(t)
 				resolver.procmaps[pid] = sections{
@@ -513,7 +513,7 @@ func TestResolveAddrFailFrames(t *testing.T) {
 			name:  "lib-no-sym",
 			addr:  0x70000010,
 			inode: 6,
-			prepare: func(t *testing.T, resolver *UserResolver, pid uint32) {
+			prepare: func(t *testing.T, resolver *UsymResolver, pid uint32) {
 				setupTempProcRoot(t)
 
 				libPathname := "/usr/lib/libhuatuo.so"
@@ -551,20 +551,20 @@ func TestResolveAddrFailFrames(t *testing.T) {
 	}
 }
 
-func TestResolveUserStackStrsInvalidPid(t *testing.T) {
+func TestUsymStackStrsInvalidPid(t *testing.T) {
 	setTestXfsMounts(t, []string{"/"})
-	resolver := NewUserResolver()
+	resolver := NewUsymResolver()
 
 	// Invalid pid: elf-load-fail reason is encoded in the frame string.
 	const wantFrame = "unknown elf-load-fail"
 
-	got := resolver.ResolveUserStackStrs(uint32(99999998), []uint64{0x400100}, 1)
+	got := resolver.UsymStackStrs(uint32(99999998), []uint64{0x400100}, 1)
 	if len(got) != 1 || got[0] != wantFrame {
-		t.Errorf("ResolveUserStackStrs invalid pid: got %v, want [%s]", got, wantFrame)
+		t.Errorf("UsymStackStrs invalid pid: got %v, want [%s]", got, wantFrame)
 	}
 
-	byteFrames := resolver.ResolveUserStackBytes(uint32(99999998), []uint64{0x400100}, 1)
+	byteFrames := resolver.UsymStackBytes(uint32(99999998), []uint64{0x400100}, 1)
 	if len(byteFrames) != 1 || string(byteFrames[0]) != wantFrame {
-		t.Errorf("ResolveUserStackBytes invalid pid: got %v, want [%s]", byteFrames, wantFrame)
+		t.Errorf("UsymStackBytes invalid pid: got %v, want [%s]", byteFrames, wantFrame)
 	}
 }

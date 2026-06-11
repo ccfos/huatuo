@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"debug/elf"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -367,4 +368,32 @@ func lowerDirFromMountInfo(pid uint32) (string, error) {
 	}
 
 	return "", fmt.Errorf("lowerdir not found for pid %d", pid)
+}
+
+// FormatStack formats a stack trace (newline-separated addresses)
+// into a readable form with frame indices.
+// Returns nil if stack is empty.
+func FormatStack(stack string) []string {
+	if stack == "" {
+		return nil
+	}
+
+	var lines []string
+	for _, frame := range strings.Split(strings.TrimRight(stack, "\n"), "\n") {
+		if frame != "" {
+			lines = append(lines, frame)
+		}
+	}
+	return lines
+}
+
+// FormatStackLines formats stack lines for output with indices.
+func FormatStackLines(w io.Writer, stack string) error {
+	lines := FormatStack(stack)
+	for i, frame := range lines {
+		if _, err := fmt.Fprintf(w, "\t#%-2d  %s\n", i, frame); err != nil {
+			return err
+		}
+	}
+	return nil
 }
