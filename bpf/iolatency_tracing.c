@@ -4,8 +4,8 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#include "bpf_blkio.h"
 #include "bpf_common.h"
+#include "bpf_blkio.h"
 #include "bpf_compat_7_0.h"
 
 #define LATENCY_20MS_NS 20000000

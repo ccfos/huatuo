@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,22 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bpf
+package aggregator
 
-// PerfEventReader reads the eBPF perf_event.
-type PerfEventReader interface {
-	// ReadInto reads the eBPF perf_event into pdata.
-	ReadInto(pdata any) error
+import "time"
 
-	// Close the PerfEventReader.
-	Close() error
+type metrics struct {
+	StartTime         time.Time `json:"start_time"`
+	AggrOverflowCount int       `json:"aggr_overflow_count"`
+}
 
-	// EpollShortWait performs a short epoll wait.
-	EpollShortWait() (int, error)
-
-	// EpollWait performs a epoll wait.
-	EpollWait() (int, error)
-
-	// ReadAllRings reads all per-CPU ring buffers.
-	ReadAllRings(pdata any) ([]any, error)
+func newMetrics(count int) *metrics {
+	return &metrics{
+		StartTime:         time.Now(),
+		AggrOverflowCount: count,
+	}
 }

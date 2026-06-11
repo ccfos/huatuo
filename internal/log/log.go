@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"huatuo-bamai/internal/filerotate"
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -28,16 +30,18 @@ var logger *logrus.Logger
 
 const rfc3339NanoFixed = "2006-01-02T15:04:05.000000000Z07:00"
 
+var textFormatter = &logrus.TextFormatter{
+	DisableColors:   true,
+	ForceQuote:      true,
+	FullTimestamp:   true,
+	TimestampFormat: rfc3339NanoFixed,
+	DisableSorting:  false,
+}
+
 func init() {
 	logger = logrus.New()
 
-	logger.SetFormatter(&logrus.TextFormatter{
-		DisableColors:   true,
-		ForceQuote:      true,
-		FullTimestamp:   true,
-		TimestampFormat: rfc3339NanoFixed,
-		DisableSorting:  false,
-	})
+	logger.SetFormatter(textFormatter)
 
 	logger.SetOutput(os.Stdout)
 	logger.SetLevel(logrus.InfoLevel)
@@ -181,4 +185,48 @@ func Fatalf(format string, args ...any) {
 // WithCallerSkip creates an entry from the caller skip.
 func WithCallerSkip(skip int) *logrus.Entry {
 	return newLogrusEntry(2 + skip)
+}
+
+type profilerFormatter struct {
+	prefix    string
+	formatter logrus.Formatter
+}
+
+func (f *profilerFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	entry.Message = fmt.Sprintf("[%s] %s", f.prefix, entry.Message)
+	return f.formatter.Format(entry)
+}
+
+var profilerLogger *logrus.Logger
+
+var P = GetProfilerLogger
+
+func SetupProfilerLogger(verbose bool, logPath string, logSize int) {
+	profilerLogger = logrus.New()
+	profilerLogger.SetFormatter(&profilerFormatter{
+		prefix:    "profiler",
+		formatter: textFormatter,
+	})
+
+	if logSize <= 0 {
+		logSize = 100
+	}
+
+	if logPath != "" {
+		writer := filerotate.NewFileRotator(
+			logPath,
+			1,
+			logSize,
+		)
+		profilerLogger.SetOutput(writer)
+	} else if verbose {
+		profilerLogger.SetOutput(os.Stdout)
+	} else {
+		logger.SetOutput(io.Discard)
+		profilerLogger.SetOutput(io.Discard)
+	}
+}
+
+func GetProfilerLogger() *logrus.Entry {
+	return logrus.NewEntry(profilerLogger)
 }

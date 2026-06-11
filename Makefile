@@ -48,7 +48,7 @@ IMAGE := $(IMAGE_REPO):$(IMAGE_TAG)
 
 BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
 
-all: bpf-build sync build memray-bundle
+all: bpf-build sync build
 
 build-nostatic:
 	@$(MAKE) BUILD_MODE=nostatic all
@@ -126,4 +126,4 @@ integration: all gen-go
 e2e: all
 	@bash e2e/run.sh
 
-.PHONY: all build-nostatic memray-bundle bpf-build gen-go sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean
+.PHONY: all build-nostatic bpf-build gen-go sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean

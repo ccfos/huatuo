@@ -62,6 +62,13 @@ type CpuSysTracingData struct {
 	FlameData         []flamegraph.FrameData `json:"flamedata"`
 }
 
+type CpuSysMetaData struct {
+	NowSys            int64 `json:"sys"`
+	SysThreshold      int64 `json:"sys_threshold"`
+	DeltaSys          int64 `json:"deltasys"`
+	DeltaSysThreshold int64 `json:"deltasys_threshold"`
+}
+
 type cpuSysThreshold struct {
 	delta int64
 	usage int64
@@ -129,9 +136,10 @@ func runPerfSystemWide(parent context.Context, timeOut int64) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, time.Duration(timeOut+30)*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "perf"),
-		"--bpf-obj", "cpuidle.o",
-		"--duration", strconv.FormatInt(timeOut, 10))
+	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "profiler"),
+		"--language", "c", "--type", "cpu",
+		"--duration", strconv.FormatInt(timeOut, 10),
+		"--output-format", "flamedata")
 
 	return cmd.CombinedOutput()
 }

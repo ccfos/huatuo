@@ -11,10 +11,16 @@ ARG RUN_PATH="/home/huatuo-bamai"
 ARG BUILD_MODE
 WORKDIR ${BUILD_PATH}
 ENV PATH=$PATH:/usr/lib/llvm15/bin
+
+# If the network is slow, uncomment the mirror lines below
+# RUN go env -w GOPROXY=https://goproxy.cn,https://goproxy.io,direct
+
 COPY . .
+# RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+#     sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true
 RUN set -x; \
     apt-get update && apt-get install -y --no-install-recommends \
-    make clang libbpf-dev bpftool curl git binutils-gold musl-tools capnproto-dev &&\
+    make clang libbpf-dev bpftool curl git binutils-gold musl-tools &&\
     make BUILD_MODE=${BUILD_MODE} &&\
     mkdir -p ${RUN_PATH} &&\
     cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/ &&\
@@ -28,6 +34,8 @@ RUN set -x; \
 #
 FROM alpine:3.22.0 AS run-static
 ARG RUN_PATH="/home/huatuo-bamai"
+# If the network is slow, uncomment the mirror lines below
+# RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
 RUN apk add --no-cache curl
 COPY --from=build ${RUN_PATH} ${RUN_PATH}
 WORKDIR ${RUN_PATH}
@@ -39,6 +47,9 @@ WORKDIR ${RUN_PATH}
 #
 FROM golang:1.24 AS run-nostatic
 ARG RUN_PATH="/home/huatuo-bamai"
+# If the network is slow, uncomment the mirror lines below
+# RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+#     sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true
 RUN apt-get update && apt-get install -y --no-install-recommends curl libelf1 libnuma1 &&\
     rm -rf /var/lib/apt/lists/*
 COPY --from=build ${RUN_PATH} ${RUN_PATH}
