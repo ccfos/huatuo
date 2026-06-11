@@ -12,11 +12,8 @@ APP_CMD_DIR := cmd
 APP_CMD_OUTPUT := _output
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
 APP_CMD_BIN_TARGETS := $(patsubst %,$(APP_CMD_OUTPUT)/bin/%,$(notdir $(APP_CMD_SUBDIRS)))
-MEMRAY_VENDOR_DIR := $(ROOT_DIR)/third_party/memray-lite
-MEMRAY_BUNDLE_OUTPUT := $(ROOT_DIR)/$(APP_CMD_OUTPUT)/tools/memray-lite
 
-
-GO_BUILD_FLAGS := CGO_ENABLED=1 go build -tags "netgo osusergo $(GO_TAGS)" -gcflags=all="-N -l"
+GO_BUILD_FLAGS := CGO_ENABLED=1 go build -tags "netgo osusergo" -gcflags=all="-N -l"
 GO_BUILD_LDFLAGS := \
 	-s -w \
 	-X main.AppVersion=$(APP_VERSION) \
@@ -48,13 +45,10 @@ IMAGE := $(IMAGE_REPO):$(IMAGE_TAG)
 
 BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
 
-all: bpf-build sync build memray-bundle
+all: bpf-build sync build
 
 build-nostatic:
 	@$(MAKE) BUILD_MODE=nostatic all
-
-memray-bundle:
-	@bash $(ROOT_DIR)/build/build-memray-lite.sh "$(MEMRAY_VENDOR_DIR)" "$(MEMRAY_BUNDLE_OUTPUT)"
 
 bpf-build: $(BPF_BUILD_STAMP)
 $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
@@ -101,7 +95,7 @@ import-fmt:
 	@gofmt -w -r 'interface{} -> any' $(GO_FILES)
 	@find . -name "*.sh" ! \( -path "./vendor/*" -o -path "./.git/*" -o -path "./.claude/*" -o -path "./third_party/*" \) -exec shfmt -i 0 -w {} \;
 
-golangci-lint: 
+golangci-lint:
 	@golangci-lint run -v ./... --timeout=5m --config .golangci.yaml
 
 vendor:
@@ -110,20 +104,20 @@ vendor:
 clean:
 	@rm -rf _output $(shell find . -type f -name "*.o")
 
-gen-go:
+gen-build:
 	@go generate -run "mockery.*" -x ./...
 	@go generate -run "capnp.*" ./...
 
 test: unit integration e2e
 
-unit: bpf-build gen-go
+unit: bpf-build gen-build
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
-integration: all gen-go
+integration: all gen-build
 	@bash integration/run.sh
 
 e2e: all
 	@bash e2e/run.sh
 
-.PHONY: all build-nostatic memray-bundle bpf-build gen-go sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean
+.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean
