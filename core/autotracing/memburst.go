@@ -87,7 +87,7 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 	})
 	if err != nil {
 		log.Errorf("Error reading memory info: %v\n", err)
-		return []*processMemInfo{}, nil
+		return []*processMemInfo{}, err
 	}
 	currentSum := memInfo["Active(anon)"] + memInfo["Inactive(anon)"]
 	history[*currentIndex] = currentSum
