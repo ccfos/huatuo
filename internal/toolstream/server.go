@@ -17,6 +17,7 @@ package toolstream
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -31,6 +32,17 @@ type Session struct {
 
 // untypedHandler is the codec-erased internal dispatch signature.
 type untypedHandler func(sess *Session, payload []byte) error
+
+// DefaultSockPath is the Unix socket path used by the default server.
+const DefaultSockPath = "/var/run/huatuo-toolstream-default.sock"
+
+// ErrNotInitialized is returned when Start or Close is called on a nil or zero-value Server.
+var ErrNotInitialized = errors.New("toolstream: server not initialized")
+
+var (
+	defaultServer *Server
+	defaultOnce   sync.Once
+)
 
 // Server dispatches incoming tool events to per-tool typed handlers.
 type Server struct {
@@ -52,6 +64,23 @@ func NewServer(sockPath string) (*Server, error) {
 	}, nil
 }
 
+// NewServerDefault returns the package-level singleton Server listening on DefaultSockPath.
+func NewServerDefault() (*Server, error) {
+	var initErr error
+	defaultOnce.Do(func() {
+		s, err := NewServer(DefaultSockPath)
+		if err != nil {
+			initErr = err
+			return
+		}
+		defaultServer = s
+	})
+	if initErr != nil {
+		return nil, initErr
+	}
+	return defaultServer, nil
+}
+
 // Register binds a typed handler for events from toolName; safe for concurrent use.
 func Register[T any](
 	srv *Server,
@@ -71,8 +100,21 @@ func Register[T any](
 	}
 }
 
+// RegisterDefault binds a typed handler for events from toolName on the default server.
+func RegisterDefault[T any](toolName string, handler func(sess *Session, event T) error) {
+	srv, err := NewServerDefault()
+	if err != nil {
+		panic(fmt.Sprintf("toolstream: default server: %v", err))
+	}
+	Register(srv, toolName, handler)
+}
+
 // Start listens in the background; call Close to stop.
 func (s *Server) Start() error {
+	if s == nil || s.sockPath == "" {
+		return ErrNotInitialized
+	}
+
 	l, err := transport.ListenUDS(s.sockPath)
 	if err != nil {
 		return fmt.Errorf("toolstream: %w", err)
@@ -89,6 +131,10 @@ func (s *Server) Start() error {
 
 // Close shuts down the server and waits for all goroutines to finish.
 func (s *Server) Close() error {
+	if s == nil {
+		return ErrNotInitialized
+	}
+
 	if s.inner == nil {
 		return nil
 	}
