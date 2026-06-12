@@ -123,49 +123,58 @@ func sendConnect(t *testing.T, enc *capnp.Encoder, toolName, version, taskID str
 }
 
 // sendChunk sends a Chunk frame via enc.
-func sendChunk(t *testing.T, enc *capnp.Encoder, data []byte, flush, end bool, errStr string) {
+func sendChunk(t *testing.T, enc *capnp.Encoder, data []byte, flush, end bool, errStr string) error {
 	t.Helper()
 	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err != nil {
-		t.Fatalf("send chunk new message: %v", err)
+		return fmt.Errorf("send chunk new message: %w", err)
 	}
 	root, err := NewRootMessage(seg)
 	if err != nil {
-		t.Fatalf("send chunk new root: %v", err)
+		return fmt.Errorf("send chunk new root: %w", err)
 	}
 	chunk, err := root.NewChunk()
 	if err != nil {
-		t.Fatalf("send chunk new chunk: %v", err)
+		return fmt.Errorf("send chunk new chunk: %w", err)
 	}
 	if len(data) > 0 {
 		if err := chunk.SetData(data); err != nil {
-			t.Fatalf("send chunk set data: %v", err)
+			return fmt.Errorf("send chunk set data: %w", err)
 		}
 	}
 	chunk.SetFlush(flush)
 	chunk.SetEnd(end)
 	if errStr != "" {
 		if err := chunk.SetError(errStr); err != nil {
-			t.Fatalf("send chunk set error: %v", err)
+			return fmt.Errorf("send chunk set error: %w", err)
 		}
 	}
 	if err := enc.Encode(m); err != nil {
-		t.Fatalf("send chunk encode: %v", err)
+		return fmt.Errorf("send chunk encode: %w", err)
 	}
+	return nil
 }
 
 func TestNormalPath(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
+		defer rawClient.Close()
 		if err := sendConnect(t, clientEnc, "dropwatch", "1.0", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
 		}
-		sendChunk(t, clientEnc, []byte(`{"container_id":"c1","x":1}`), true, false, "")
-		sendChunk(t, clientEnc, []byte(`{"container_id":"c2","x":2}`), true, false, "")
-		sendChunk(t, clientEnc, nil, false, true, "")
-		rawClient.Close()
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c1","x":1}`), true, false, ""); err != nil {
+			t.Errorf("sendChunk 1: %v", err)
+			return
+		}
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c2","x":2}`), true, false, ""); err != nil {
+			t.Errorf("sendChunk 2: %v", err)
+			return
+		}
+		if err := sendChunk(t, clientEnc, nil, false, true, ""); err != nil {
+			t.Errorf("sendChunk end: %v", err)
+		}
 	}()
 
 	wait()
@@ -193,12 +202,14 @@ func TestErrorEnd(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
+		defer rawClient.Close()
 		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
 		}
-		sendChunk(t, clientEnc, nil, false, true, "boom")
-		rawClient.Close()
+		if err := sendChunk(t, clientEnc, nil, false, true, "boom"); err != nil {
+			t.Errorf("sendChunk: %v", err)
+		}
 	}()
 
 	wait()
@@ -218,12 +229,14 @@ func TestDataAndEndCombined(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
+		defer rawClient.Close()
 		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
 		}
-		sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, true, "")
-		rawClient.Close()
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, true, ""); err != nil {
+			t.Errorf("sendChunk: %v", err)
+		}
 	}()
 
 	wait()
@@ -243,12 +256,14 @@ func TestUnexpectedClose(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
+		defer rawClient.Close()
 		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
 		}
-		sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, false, "")
-		rawClient.Close()
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, false, ""); err != nil {
+			t.Errorf("sendChunk: %v", err)
+		}
 	}()
 
 	wait()
@@ -262,9 +277,11 @@ func TestInvalidFirstFrame(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
+		defer rawClient.Close()
 		// Send a chunk frame instead of a connect frame.
-		sendChunk(t, clientEnc, []byte("payload"), true, false, "")
-		rawClient.Close()
+		if err := sendChunk(t, clientEnc, []byte("payload"), true, false, ""); err != nil {
+			t.Errorf("sendChunk: %v", err)
+		}
 	}()
 
 	wait()
@@ -349,7 +366,7 @@ func TestClientRoundTrip(t *testing.T) {
 		t.Fatalf("Serve: %v", err)
 	}
 
-	defer func() { _ = srv.Close() }()
+	t.Cleanup(func() { _ = srv.Close() })
 
 	var c *Client
 

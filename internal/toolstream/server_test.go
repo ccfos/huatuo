@@ -15,6 +15,7 @@
 package toolstream_test
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -176,7 +177,7 @@ func TestUnregisteredToolIsIgnored(t *testing.T) {
 	rec.mu.Unlock()
 
 	if n != 0 {
-		t.Errorf("want 0 handler calls for unknown tool, got %d", n)
+		t.Errorf("unknown tool handler calls: got %d, want 0", n)
 	}
 }
 
@@ -215,5 +216,124 @@ func TestMultipleChunksThenEnd(t *testing.T) {
 		if g.event.ID != i {
 			t.Errorf("event %d: ID=%d want %d", i, g.event.ID, i)
 		}
+	}
+}
+
+func TestStartNilServer(t *testing.T) {
+	var srv *toolstream.Server
+	if err := srv.Start(); !errors.Is(err, toolstream.ErrNotInitialized) {
+		t.Errorf("Start on nil server: got %v, want ErrNotInitialized", err)
+	}
+}
+
+func TestStartZeroValueServer(t *testing.T) {
+	srv := &toolstream.Server{}
+	if err := srv.Start(); !errors.Is(err, toolstream.ErrNotInitialized) {
+		t.Errorf("Start on zero-value server: got %v, want ErrNotInitialized", err)
+	}
+}
+
+func TestStartAlreadyStarted(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+
+	t.Cleanup(func() { _ = srv.Close() })
+
+	if err := srv.Start(); !errors.Is(err, toolstream.ErrAlreadyStarted) {
+		t.Errorf("second Start: got %v, want ErrAlreadyStarted", err)
+	}
+}
+
+func TestCloseNilServer(t *testing.T) {
+	var srv *toolstream.Server
+	if err := srv.Close(); !errors.Is(err, toolstream.ErrNotInitialized) {
+		t.Errorf("Close on nil server: got %v, want ErrNotInitialized", err)
+	}
+}
+
+func TestCloseBeforeStart(t *testing.T) {
+	srv, _ := newTestServer(t)
+	if err := srv.Close(); err != nil {
+		t.Errorf("Close before Start: got %v, want nil", err)
+	}
+}
+
+func TestCloseIdempotent(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	t.Cleanup(func() { _ = srv.Close() })
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+
+	for range 3 {
+		if err := srv.Close(); err != nil {
+			t.Errorf("repeated Close: got %v, want nil", err)
+		}
+	}
+}
+
+func TestStartAfterClose(t *testing.T) {
+	srv, sockPath := newTestServer(t)
+	rec := newRecorder()
+
+	toolstream.Register(srv, "restart-tool", rec.handler)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+
+	t.Cleanup(func() { _ = srv.Close() })
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("second Start after Close: %v", err)
+	}
+
+	c, err := toolstream.NewClient(toolstream.ClientOptions{
+		SockPath: sockPath,
+		ToolName: "restart-tool",
+		Version:  "1.0",
+	})
+	if err != nil {
+		t.Fatalf("NewClient after restart: %v", err)
+	}
+
+	defer c.End()
+
+	if err := c.Send(testEvent{ID: 42, Value: "after-restart"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	got := rec.waitN(t, 1)
+	if got[0].event.ID != 42 {
+		t.Errorf("restarted server: event ID got %d, want 42", got[0].event.ID)
+	}
+}
+
+func TestNewServerDefaultSingleton(t *testing.T) {
+	s1, err := toolstream.NewServerDefault()
+	if err != nil {
+		t.Fatalf("first NewServerDefault: %v", err)
+	}
+
+	s2, err := toolstream.NewServerDefault()
+	if err != nil {
+		t.Fatalf("second NewServerDefault: %v", err)
+	}
+
+	if s1 != s2 {
+		t.Error("NewServerDefault: returned different pointers, want singleton")
 	}
 }
