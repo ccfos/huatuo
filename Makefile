@@ -49,7 +49,7 @@ IMAGE := $(IMAGE_REPO):$(IMAGE_TAG)
 
 BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
 
-all: bpf-build sync build
+all: gen-build bpf-build build sync
 
 build-nostatic:
 	@$(MAKE) BUILD_MODE=nostatic all
