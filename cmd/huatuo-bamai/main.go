@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ import (
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
+	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/tracing"
 
@@ -104,6 +105,15 @@ func mainAction(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+
+	tsSrv, err := toolstream.NewServerDefault()
+	if err != nil {
+		return fmt.Errorf("toolstream: %w", err)
+	}
+	if err := tsSrv.Start(); err != nil {
+		return fmt.Errorf("toolstream: start: %w", err)
+	}
+	defer tsSrv.Close()
 
 	mgr, err := tracing.NewManager(blacklisted)
 	if err != nil {

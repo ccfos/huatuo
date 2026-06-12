@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,26 +17,25 @@ package events
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path"
 	"strings"
 	"time"
 
+	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
-
-	internalconfig "huatuo-bamai/internal/config"
 )
 
 type dropWatchTracing struct{}
 
 func init() {
 	tracing.RegisterEventTracing("dropwatch", newDropWatch)
+	toolstream.RegisterDefault[*types.DropWatchTracing]("dropwatch", handleDropwatchEvent)
 }
 
 func newDropWatch() (*tracing.EventTracingAttr, error) {
@@ -47,28 +46,12 @@ func newDropWatch() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-// Start launches dropwatch as a subprocess, receives its events via toolstream,
-// filters them, and persists each event with tracing.Save.
+// Start launches dropwatch as a subprocess and waits for it to finish.
+// Events are received via the default toolstream server registered in init.
 func (c *dropWatchTracing) Start(ctx context.Context) error {
-	sockPath := path.Join(os.TempDir(), fmt.Sprintf("dropwatch-%d.sock", os.Getpid()))
-	_ = os.Remove(sockPath)
-
-	srv, err := toolstream.NewServer(sockPath)
-	if err != nil {
-		return fmt.Errorf("dropwatch: toolstream server: %w", err)
-	}
-
-	defer srv.Close()
-
-	toolstream.Register(srv, "dropwatch", c.handleEvent)
-
-	if err := srv.Start(); err != nil {
-		return fmt.Errorf("dropwatch: toolstream start: %w", err)
-	}
-
 	args := []string{
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "dropwatch.o"),
-		"--output-storage", sockPath,
+		"--output-storage", toolstream.DefaultSockPath,
 	}
 	if cfg != nil && cfg.Dropwatch.Filter != "" {
 		args = append(args, "--filter", cfg.Dropwatch.Filter)
@@ -101,8 +84,8 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 	}
 }
 
-func (c *dropWatchTracing) handleEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
-	if c.ignore(ev) {
+func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
+	if ignoreDropwatch(ev) {
 		return nil
 	}
 
@@ -153,9 +136,9 @@ func resolveContainerIDFromMeta(ev *types.DropWatchTracing) string {
 	return ""
 }
 
-// ignore returns true for known-noisy events that should not be forwarded.
+// ignoreDropwatch returns true for known-noisy events that should not be forwarded.
 // Stack frame matching uses the same patterns as the previous TCP-only tracer.
-func (c *dropWatchTracing) ignore(data *types.DropWatchTracing) bool {
+func ignoreDropwatch(data *types.DropWatchTracing) bool {
 	stack := strings.Split(data.Stack, "\n")
 
 	// state: CLOSE_WAIT

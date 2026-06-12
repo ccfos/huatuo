@@ -97,8 +97,8 @@ func Register[T any](
 	toolName string,
 	handler func(sess *Session, event T) error,
 ) {
-	srv.mu.Lock()
-	defer srv.mu.Unlock()
+	srv.handlersMu.Lock()
+	defer srv.handlersMu.Unlock()
 
 	srv.handlers[toolName] = func(sess *Session, payload []byte) error {
 		var ev T
@@ -114,7 +114,7 @@ func Register[T any](
 func RegisterDefault[T any](toolName string, handler func(sess *Session, event T) error) {
 	srv, err := NewServerDefault()
 	if err != nil {
-		panic(fmt.Sprintf("toolstream: default server: %v", err))
+		log.Fatalf("toolstream: default server: %v", err)
 	}
 	Register(srv, toolName, handler)
 }
