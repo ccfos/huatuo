@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	_ "embed"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -42,10 +41,8 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o iotracing.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
 
-//go:embed iotracing.o
-var iotracing []byte
 var tracingCmd ioTracing
 
 // IOStatusData contains IO status information.
@@ -496,8 +493,12 @@ func mainAction(ctx *cli.Context) error {
 	}
 	defer bpf.Close()
 
-	// load bpf
-	b, err := bpf.LoadBpfFromBytes("iotracing.o", iotracing, tracingCmd.filters)
+	bpfBytes, err := os.ReadFile(ctx.String("bpf-path"))
+	if err != nil {
+		return fmt.Errorf("read bpf object: %w", err)
+	}
+
+	b, err := bpf.LoadBpfFromBytes(ctx.String("bpf-path"), bpfBytes, tracingCmd.filters)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}
@@ -728,6 +729,11 @@ func main() {
 	app := cli.NewApp()
 	app.Action = mainAction
 	app.Flags = []cli.Flag{
+		&cli.StringFlag{
+			Name:  "bpf-path",
+			Value: "bpf/iotracing.o",
+			Usage: "path to the iotracing BPF object file",
+		},
 		&cli.StringFlag{
 			Name:  "device",
 			Usage: "Filter by device(s) (format: major:minor, multiple devices separated by comma, e.g., 8:0 or 8:0,253:0)",

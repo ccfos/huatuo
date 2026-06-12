@@ -15,7 +15,6 @@
 package main
 
 import (
-	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -30,13 +29,10 @@ import (
 	"huatuo-bamai/internal/log"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/perf.c -o perf.o
-
-//go:embed perf.o
-var perfBpfObj []byte
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/perf.c -o $BPF_DIR/perf.o
 
 func mainAction(ctx *cli.Context) error {
-	optBpfObj := ctx.String("bpf-obj")
+	bpfPath := ctx.String("bpf-path")
 	optPid := ctx.Uint64("pid")
 	optDuration := ctx.Int("duration")
 
@@ -56,7 +52,12 @@ func mainAction(ctx *cli.Context) error {
 	}
 	defer bpf.Close()
 
-	b, err := bpf.LoadBpfFromBytes(optBpfObj, perfBpfObj, map[string]any{"css": targetCssAddr, "pid": optPid})
+	bpfBytes, err := os.ReadFile(bpfPath)
+	if err != nil {
+		return fmt.Errorf("read bpf object: %w", err)
+	}
+
+	b, err := bpf.LoadBpfFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
@@ -93,9 +94,9 @@ func main() {
 	app.Usage = "perf"
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
-			Name:  "bpf-obj",
-			Value: "perf.o",
-			Usage: "case name",
+			Name:  "bpf-path",
+			Value: "bpf/perf.o",
+			Usage: "path to the perf BPF object file",
 		},
 		&cli.StringFlag{
 			Name:  "container-id",
