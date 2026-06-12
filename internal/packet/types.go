@@ -144,8 +144,8 @@ func (t *UDPInfo) Detail() string {
 }
 
 func (t *ICMPInfo) Detail() string {
-	return fmt.Sprintf("[ICMP %s] %s > %s id=%d smac=%s dmac=%s",
-		t.ICMPType, t.Saddr, t.Daddr, t.ID, t.SrcMAC, t.DstMAC)
+	return fmt.Sprintf("[ICMP %s] %s > %s id=%d seq=%d chk=0x%04x smac=%s dmac=%s",
+		t.ICMPType, t.Saddr, t.Daddr, t.ID, t.Seq, t.Checksum, t.SrcMAC, t.DstMAC)
 }
 
 func (t *ARPInfo) Detail() string {

@@ -62,7 +62,7 @@ func dumpPrograms(t *testing.T, spec *ebpf.CollectionSpec, prefix string) {
 	}
 }
 
-func TestInjectFilter(t *testing.T) {
+func TestApply(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("Skipping: requires root")
 	}
@@ -79,7 +79,7 @@ func TestInjectFilter(t *testing.T) {
 
 	filterExpr := "ip and src net 192.168.1.0/24 and tcp dst port 3306"
 	if err := Apply(specs, filterExpr); err != nil {
-		t.Fatalf("InjectFilter: %v", err)
+		t.Fatalf("Apply: %v", err)
 	}
 
 	dumpPrograms(t, specs, "Program")

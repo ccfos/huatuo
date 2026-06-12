@@ -91,35 +91,10 @@ func newPipedServer(t *testing.T) (rawClient net.Conn, clientEnc *capnp.Encoder,
 	}
 }
 
-// sendConnect sends a Connect frame via enc.
-func sendConnect(t *testing.T, enc *capnp.Encoder, toolName, version, taskID string) error {
+// handshake sends a Connect frame via enc using Client.handshake.
+func handshake(t *testing.T, enc *capnp.Encoder, rawClient net.Conn, toolName, version, taskID string) error {
 	t.Helper()
-	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
-	if err != nil {
-		return fmt.Errorf("send connect new message: %w", err)
-	}
-	root, err := NewRootMessage(seg)
-	if err != nil {
-		return fmt.Errorf("send connect new root: %w", err)
-	}
-	c, err := root.NewConnect()
-	if err != nil {
-		return fmt.Errorf("send connect new connect: %w", err)
-	}
-	if err := c.SetToolName(toolName); err != nil {
-		return fmt.Errorf("send connect set tool name: %w", err)
-	}
-	if err := c.SetVersion(version); err != nil {
-		return fmt.Errorf("send connect set version: %w", err)
-	}
-	if err := c.SetTaskID(taskID); err != nil {
-		return fmt.Errorf("send connect set task id: %w", err)
-	}
-	c.SetProtoVersion(1)
-	if err := enc.Encode(m); err != nil {
-		return fmt.Errorf("send connect encode: %w", err)
-	}
-	return nil
+	return (&Client{encoder: enc, conn: rawClient}).handshake(toolName, version, taskID)
 }
 
 // sendChunk sends a Chunk frame via enc.
@@ -159,8 +134,7 @@ func TestNormalPath(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		defer rawClient.Close()
-		if err := sendConnect(t, clientEnc, "dropwatch", "1.0", ""); err != nil {
+		if err := handshake(t, clientEnc, rawClient, "dropwatch", "1.0", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
 		}
@@ -202,8 +176,7 @@ func TestErrorEnd(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		defer rawClient.Close()
-		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
+		if err := handshake(t, clientEnc, rawClient, "tool", "v", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
 		}
@@ -229,8 +202,7 @@ func TestDataAndEndCombined(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		defer rawClient.Close()
-		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
+		if err := handshake(t, clientEnc, rawClient, "tool", "v", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
 		}
@@ -257,7 +229,7 @@ func TestUnexpectedClose(t *testing.T) {
 
 	go func() {
 		defer rawClient.Close()
-		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
+		if err := handshake(t, clientEnc, rawClient, "tool", "v", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
 		}
@@ -294,7 +266,7 @@ func TestEmptyToolName(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		if err := sendConnect(t, clientEnc, "", "v", ""); err != nil {
+		if err := handshake(t, clientEnc, rawClient, "", "v", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
 		}
@@ -313,9 +285,9 @@ func TestEmptyToolName(t *testing.T) {
 // omits the client-side close so that "accept-then-loop" behavior would hang
 // here until wait() trips its 2s timeout.
 func TestEmptyToolNameClosesEarly(t *testing.T) {
-	_, clientEnc, rec, wait := newPipedServer(t)
+	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
-	if err := sendConnect(t, clientEnc, "", "v", ""); err != nil {
+	if err := handshake(t, clientEnc, rawClient, "", "v", ""); err != nil {
 		t.Logf("send connect: %v", err)
 		return
 	}
@@ -333,7 +305,7 @@ func TestDecodeFailureAfterConnect(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		if err := sendConnect(t, clientEnc, "tool", "v", ""); err != nil {
+		if err := handshake(t, clientEnc, rawClient, "tool", "v", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
 		}
