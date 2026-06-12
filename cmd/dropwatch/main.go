@@ -103,7 +103,7 @@ func loadBPFWithFilter(bpfPath, filterExpr string, consts map[string]any) (bpf.B
 // deviceFilterConsts resolves devName to an ifindex and returns the consts map
 // expected by bpf_skb_filter.h. Returns nil consts when devName is empty
 // (filter disabled at the BPF level by leaving filter_ifindex_included == 0).
-func deviceFilterConsts(devName string, exclude bool) (map[string]any, error) {
+func deviceFilterConsts(devName string, excluded bool) (map[string]any, error) {
 	if devName == "" {
 		return nil, nil
 	}
@@ -112,7 +112,7 @@ func deviceFilterConsts(devName string, exclude bool) (map[string]any, error) {
 		return nil, fmt.Errorf("--device %q: %w", devName, err)
 	}
 	var excl uint32
-	if exclude {
+	if excluded {
 		excl = 1
 	}
 	return map[string]any{
@@ -182,7 +182,7 @@ func mainAction(c *cli.Context) error {
 		defer sockClient.End()
 	}
 
-	consts, err := deviceFilterConsts(c.String("device"), c.Bool("device-exclude"))
+	consts, err := deviceFilterConsts(c.String("device"), c.Bool("device-excluded"))
 	if err != nil {
 		return fmt.Errorf("dropwatch: %w", err)
 	}
@@ -268,7 +268,7 @@ func main() {
 				Usage: "interface to filter on (e.g. eth0); empty = all devices",
 			},
 			&cli.BoolFlag{
-				Name:  "device-exclude",
+				Name:  "device-excluded",
 				Usage: "treat --device as a blacklist (drop matching) instead of whitelist (pass matching)",
 			},
 			&cli.IntFlag{

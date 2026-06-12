@@ -18,7 +18,7 @@
 // Usage:
 //
 //	spec, _ := ebpf.LoadCollectionSpec("prog.o")
-//	if err := pcapfilter.InjectFilter(spec, "host 10.0.0.1"); err != nil { ... }
+//	if err := pcapfilter.Apply(spec, "host 10.0.0.1"); err != nil { ... }
 //	coll, _ := ebpf.NewCollection(spec)
 //
 // Limitations inherited from go-pcap's pure-Go compiler:

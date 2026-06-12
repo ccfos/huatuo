@@ -40,3 +40,9 @@ type DropWatchTracing struct {
 	Source             string            `json:"source,omitempty"`
 	Stack              string            `json:"stack"`
 }
+
+// Values for DropWatchTracing.Source.
+const (
+	DropSourceTypesEvent = "events"
+	DropSourceTypesTool  = "tools"
+)

@@ -20,9 +20,11 @@
 #define SK_FL_TYPE_SHIFT 16
 #define SK_FL_TYPE_MASK 0xffff0000
 
-/* Drop reason (kernel skb_drop_reason enum; UNKNOWN until plumbed). */
-#define DROP_REASON_UNKNOWN   0
-#define DROP_REASON_UNSUPPORT 1
+/* Reserved for future kernel skb_drop_reason (SKB_DROP_REASON_NOT_SPECIFIED,
+ * ...) passthrough; (u32)-1 is out of band: kernel reason values grow upward
+ * from 0 (low 16 bits code, high 16 bits subsystem since v6.4) and can never
+ * reach it. */
+#define SKB_DROP_REASON_UNSUPPORT ((u32)-1)
 #define PKT_RAW_LEN 120
 
 struct packet_meta {
@@ -192,7 +194,7 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 	bpf_get_current_comm(&data->meta.comm, sizeof(data->meta.comm));
 	data->meta.kfree_skb_addr = (u64)(unsigned long)ctx->location;
 	data->meta.queue_mapping = BPF_CORE_READ(skb, queue_mapping);
-	data->meta.drop_reason = DROP_REASON_UNKNOWN;
+	data->meta.drop_reason = SKB_DROP_REASON_UNSUPPORT;
 	data->meta.type = 0;
 
 	data->pkt_hdr.pkt_len = BPF_CORE_READ(skb, len);
