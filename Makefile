@@ -72,7 +72,7 @@ sync:
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
 	@cp *.conf $(APP_CMD_OUTPUT)/conf/
 
-build: $(APP_CMD_BIN_TARGETS)
+build: gen-build $(APP_CMD_BIN_TARGETS)
 $(APP_CMD_BIN_TARGETS): $(GO_SRCS)
 $(APP_CMD_OUTPUT)/bin/%:
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
