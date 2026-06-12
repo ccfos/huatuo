@@ -27,6 +27,7 @@ import (
 
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/stats"
+	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
@@ -238,7 +239,7 @@ func runPerf(parent context.Context, containerId string, timeOut int64) ([]byte,
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "perf"),
-		"--bpf-obj", "cpuidle.o",
+		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "perf.o"),
 		"--container-id", containerId,
 		"--duration", strconv.FormatInt(timeOut, 10))
 

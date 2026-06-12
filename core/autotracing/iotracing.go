@@ -18,9 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
+	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs/blockdevice"
 	"huatuo-bamai/pkg/tracing"
@@ -267,7 +269,7 @@ func (c *ioTracing) Start(ctx context.Context) error {
 	log.Debugf("wait disk events with reason snapshot: %+v", reasonSnapshot)
 
 	taskID := tracing.NewTask("iotracing", time.Duration(runIotracingToolTimeout)*time.Second,
-		tracing.TaskStorageStdout, []string{"--json"})
+		tracing.TaskStorageStdout, []string{"--bpf-path", path.Join(internalconfig.CoreBpfDir, "iotracing.o"), "--json"})
 
 	for {
 		select {
