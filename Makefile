@@ -88,11 +88,8 @@ check: import-fmt golangci-lint
 	@git diff --exit-code
 
 import-fmt:
-	$(eval GO_FILES := $(shell find . -name '*.go' \
-		! -name '*.capnp.go' \
-		! -name 'mock_*.go' \
-		! -name '*_test.go' \
-		$(FIND_EXCLUDE_PATHS)))
+	$(eval GO_FILES := $(shell find . -name '*.go' $(FIND_EXCLUDE_PATHS)))
+	@# goimports
 	@goimports -w -local huatuo-bamai $(GO_FILES)
 	@# golang and shell fmt
 	@gofumpt -l -w $(GO_FILES);
