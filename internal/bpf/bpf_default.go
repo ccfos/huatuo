@@ -132,7 +132,6 @@ func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 	if err != nil {
 		return nil, fmt.Errorf("can't new the bpf collection: %w", err)
 	}
-	defer coll.Close()
 
 	b := &defaultBPF{
 		name:         bpfName,
@@ -149,16 +148,19 @@ func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 
 		info, err := m.Info()
 		if err != nil {
+			coll.Close()
 			return nil, fmt.Errorf("can't get map info: %w", err)
 		}
 
 		id, ok := info.ID()
 		if !ok {
+			coll.Close()
 			return nil, fmt.Errorf("invalid map ID: %v", id)
 		}
 
 		bMap, err := m.Clone()
 		if err != nil {
+			coll.Close()
 			return nil, fmt.Errorf("can't clone map: %w", err)
 		}
 
@@ -177,16 +179,19 @@ func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 
 		info, err := p.Info()
 		if err != nil {
+			coll.Close()
 			return nil, fmt.Errorf("can't get program info: %w", err)
 		}
 
 		id, ok := info.ID()
 		if !ok {
+			coll.Close()
 			return nil, fmt.Errorf("invalid program ID: %v", id)
 		}
 
 		bProg, err := p.Clone()
 		if err != nil {
+			coll.Close()
 			return nil, fmt.Errorf("can't clone program: %w", err)
 		}
 
@@ -199,6 +204,9 @@ func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 			links:         make(map[string]link.Link),
 		}
 	}
+
+	// Close the original collection after successful cloning
+	coll.Close()
 
 	// mapName2IDs
 	b.mapName2IDs = make(map[string]uint32, len(b.mapSpecs))
