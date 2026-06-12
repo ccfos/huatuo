@@ -27,6 +27,7 @@ import (
 	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
@@ -103,10 +104,10 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 
 func resolveContainerIDFromMeta(ev *types.DropWatchTracing) string {
 	// 1. memcg CSS address — uniquely identifies a container.
-	if ev.MemcgCssAddr != 0 {
-		ct, err := pod.ContainerByCSS(ev.MemcgCssAddr, pod.SubSysMemory)
+	if addr, ok := kernaddr.Parse(ev.MemcgCssAddr); ok {
+		ct, err := pod.ContainerByCSS(addr, pod.SubSysMemory)
 		if err != nil {
-			log.Debugf("dropwatch: CSS lookup 0x%x: %v", ev.MemcgCssAddr, err)
+			log.Debugf("dropwatch: CSS lookup %s: %v", ev.MemcgCssAddr, err)
 		} else if ct != nil {
 			return ct.ID
 		}

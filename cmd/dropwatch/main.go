@@ -35,6 +35,7 @@ import (
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/utils/bytesutil"
+	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -138,14 +139,14 @@ func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
 		ObservedTimestamp:  time.Now().UTC().Format(time.RFC3339Nano),
 		Comm:               bytesutil.ToStr(ev.Meta.Comm[:]),
 		Pid:                ev.Meta.TgidPid >> 32,
-		MemcgCssAddr:       ev.Meta.MemcgCssAddr,
+		MemcgCssAddr:       kernaddr.Format(ev.Meta.MemcgCssAddr),
 		NetNamespaceCookie: ev.Meta.NetCookie,
 		NetNamespaceInode:  ev.Meta.NetInode,
 		NetdevName:         bytesutil.ToStr(ev.Meta.NetdevName[:]),
 		NetdevIfindex:      ev.Meta.NetdevIfindex,
 		NetdevQueueMapping: ev.Meta.NetdevQueueMapping,
 		NetdevLinkStatus:   linkstatus.FlagsRaw(ev.Meta.NetdevFlags),
-		PacketSkbAddr:      fmt.Sprintf("0x%016x", ev.Meta.SkbAddr),
+		PacketSkbAddr:      kernaddr.Format(ev.Meta.SkbAddr),
 		PacketEthProto:     fmt.Sprintf("0x%04x", ev.Raw.EthProto),
 		PacketLen:          ev.Raw.PktLen,
 		PacketType:         pktType,

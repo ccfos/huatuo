@@ -24,6 +24,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/utils/bytesutil"
+	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -137,11 +138,11 @@ func (c *oomCollector) Start(ctx context.Context) error {
 
 			cssContainers := pod.BuildCssContainersID(containers, pod.SubSysMemory)
 			oomData := &OOMTracingData{
-				TriggerMemcgCSS:    fmt.Sprintf("0x%x", data.TriggerMemcgCSS),
+				TriggerMemcgCSS:    kernaddr.Format(data.TriggerMemcgCSS),
 				TriggerPid:         data.TriggerPid,
 				TriggerProcessName: bytesutil.ToStr(data.TriggerProcessName[:]),
 				TriggerContainerID: cssContainers[data.TriggerMemcgCSS],
-				VictimMemcgCSS:     fmt.Sprintf("0x%x", data.VictimMemcgCSS),
+				VictimMemcgCSS:     kernaddr.Format(data.VictimMemcgCSS),
 				VictimPid:          data.VictimPid,
 				VictimProcessName:  bytesutil.ToStr(data.VictimProcessName[:]),
 				VictimContainerID:  cssContainers[data.VictimMemcgCSS],
