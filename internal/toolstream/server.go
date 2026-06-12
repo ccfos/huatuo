@@ -34,10 +34,14 @@ type Session struct {
 type untypedHandler func(sess *Session, payload []byte) error
 
 // DefaultSockPath is the Unix socket path used by the default server.
-const DefaultSockPath = "/var/run/huatuo-toolstream-default.sock"
+const DefaultSockPath = "/var/run/huatuo-toolstream.sock"
 
-// ErrNotInitialized is returned when Start or Close is called on a nil or zero-value Server.
-var ErrNotInitialized = errors.New("toolstream: server not initialized")
+var (
+	// ErrNotInitialized is returned when Start or Close is called on a nil or zero-value Server.
+	ErrNotInitialized = errors.New("toolstream: server not initialized")
+	// ErrAlreadyStarted is returned by Start when the server is already running.
+	ErrAlreadyStarted = errors.New("toolstream: server already started")
+)
 
 var (
 	defaultServer *Server
@@ -45,11 +49,17 @@ var (
 )
 
 // Server dispatches incoming tool events to per-tool typed handlers.
+// It is safe for simultaneous use by multiple goroutines.
 type Server struct {
 	sockPath string
-	mu       sync.RWMutex
-	handlers map[string]untypedHandler
-	inner    *transport.Server
+
+	// Handler registry:
+	handlersMu sync.RWMutex
+	handlers   map[string]untypedHandler
+
+	// Lifecycle of the underlying transport:
+	innerMu sync.Mutex
+	inner   *transport.Server
 }
 
 // NewServer creates a Server that will listen on sockPath when Start is called.
@@ -115,6 +125,13 @@ func (s *Server) Start() error {
 		return ErrNotInitialized
 	}
 
+	s.innerMu.Lock()
+	defer s.innerMu.Unlock()
+
+	if s.inner != nil {
+		return ErrAlreadyStarted
+	}
+
 	l, err := transport.ListenUDS(s.sockPath)
 	if err != nil {
 		return fmt.Errorf("toolstream: %w", err)
@@ -130,16 +147,21 @@ func (s *Server) Start() error {
 }
 
 // Close shuts down the server and waits for all goroutines to finish.
+// Calling Close more than once is safe and a no-op after the first call.
 func (s *Server) Close() error {
 	if s == nil {
 		return ErrNotInitialized
 	}
 
+	s.innerMu.Lock()
+	defer s.innerMu.Unlock()
+
 	if s.inner == nil {
 		return nil
 	}
-
-	return s.inner.Close()
+	inner := s.inner
+	s.inner = nil
+	return inner.Close()
 }
 
 func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {
@@ -152,9 +174,9 @@ func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {
 		return
 	}
 
-	s.mu.RLock()
+	s.handlersMu.RLock()
 	handler := s.handlers[tsess.ToolName]
-	s.mu.RUnlock()
+	s.handlersMu.RUnlock()
 
 	if handler == nil {
 		log.Warnf("toolstream: %s: no handler", tsess.ToolName)
