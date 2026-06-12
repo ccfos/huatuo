@@ -109,7 +109,7 @@ vendor:
 
 clean:
 	@rm -rf _output
-	@find . \( -name "*.o" -o -name "mock_*.go" \) \
+	@find . \( -name "*.o" -o -name "mock_*.go" -o -name "*.capnp.go" \) \
 		$(FIND_EXCLUDE_PATHS) \
 		-delete
 
