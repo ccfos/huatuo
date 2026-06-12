@@ -96,9 +96,9 @@ linters-settings:
   exclude-dirs:
     - vendor
 issues:
-  # Skip reporting issues inside generated files (mock, capnp).
-  # typecheck still compiles them as part of the package, so type errors are caught.
-  # Setting to false causes false-positive typecheck failures in test packages.
+  # Skip reporting lint issues inside generated files (mock, capnp).
+  # Issues in generated files should be fixed via the generator, not the file itself.
+  # Note: typecheck always compiles generated files regardless of this setting.
   exclude-generated: true
   # List of regexps of issue texts to exclude.
   #
