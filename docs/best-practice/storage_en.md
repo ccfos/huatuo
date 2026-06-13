@@ -63,7 +63,7 @@ Both Elasticsearch and OpenSearch provide native data source integrations with G
 
 ```bash
 docker pull opensearchproject/opensearch:2.6.0
-docker run -d --name opensearch -p 9200:9200 -p 9600:9600 \
+docker run -d --name opensearch --network host \
   -e "discovery.type=single-node" \
   opensearchproject/opensearch:2.6.0
 ```
@@ -191,7 +191,7 @@ Example response: the `count` value equals the total number of written records.
 
 ```bash
 docker pull docker.elastic.co/elasticsearch/elasticsearch:8.15.5
-docker run -d --name elasticsearch -p 9200:9200 -p 9300:9300 \
+docker run -d --name elasticsearch --network host \
   -e "discovery.type=single-node" \
   -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
   -e "ELASTIC_PASSWORD=123456" \
@@ -315,7 +315,7 @@ Elasticsearch V7 uses HTTP by default. Replace `https` with `http` in all comman
 
 ```bash
 docker pull docker.elastic.co/elasticsearch/elasticsearch:7.10.1
-docker run -d --name elasticsearch -p 9200:9200 -p 9300:9300 \
+docker run -d --name elasticsearch --network host \
   -e "discovery.type=single-node" \
   -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
   -e "ELASTIC_PASSWORD=123456" \

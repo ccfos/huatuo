@@ -63,7 +63,7 @@ Elasticsearch 和 OpenSearch 均提供与 Grafana 的原生数据源对接能力
 
 ```bash
 docker pull opensearchproject/opensearch:2.6.0
-docker run -d --name opensearch -p 9200:9200 -p 9600:9600 \
+docker run -d --name opensearch --network host \
     -e "discovery.type=single-node" \
     opensearchproject/opensearch:2.6.0
 ```
@@ -190,7 +190,7 @@ curl -k -u admin:admin -X GET "https://localhost:9200/huatuo_bamai/_count?pretty
 
 ```bash
 docker pull docker.elastic.co/elasticsearch/elasticsearch:8.15.5
-docker run -d --name elasticsearch -p 9200:9200 -p 9300:9300 \
+docker run -d --name elasticsearch --network host \
     -e "discovery.type=single-node" \
     -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
     -e "ELASTIC_PASSWORD=123456" \
@@ -313,7 +313,7 @@ V7 默认使用 HTTP，因此只需要在访问服务时替换为 HTTP 即可。
 
 ```bash
 docker pull docker.elastic.co/elasticsearch/elasticsearch:7.10.1
-docker run -d --name elasticsearch -p 9200:9200 -p 9300:9300 \
+docker run -d --name elasticsearch --network host \
     -e "discovery.type=single-node" \
     -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
     -e "ELASTIC_PASSWORD=123456" \
