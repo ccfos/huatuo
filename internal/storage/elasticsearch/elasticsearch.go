@@ -24,8 +24,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/elastic/go-elasticsearch/v8/esapi"
+	"github.com/elastic/go-elasticsearch/v8/esutil"
 	escount "github.com/elastic/go-elasticsearch/v8/typedapi/core/count"
 	esget "github.com/elastic/go-elasticsearch/v8/typedapi/core/get"
 	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
@@ -37,6 +39,13 @@ import (
 const (
 	defaultIndex     = "huatuo_bamai"
 	defaultQuerySize = 10000
+
+	// Bulk indexer tuning. 5MB / 1s matches the upstream defaults and is a
+	// safe starting point for ES/OpenSearch single-node and small clusters.
+	// Adjust if write rate or per-event size drifts significantly.
+	bulkFlushBytes    = 5 * 1024 * 1024
+	bulkFlushInterval = time.Second
+	bulkNumWorkers    = 4
 )
 
 // Config contains Elasticsearch backend settings.
@@ -48,8 +57,15 @@ type Config struct {
 }
 
 // Storage stores records in Elasticsearch, OpenSearch, or any compatible backend.
+//
+// Save is asynchronous: items are queued in bulk and flushed by size, time, or
+// Close. A nil error from Save means the item was buffered, not that it landed
+// in the index. Permanent per-item failures are logged via OnFailure; transient
+// whole-batch failures (429, 5xx, transport errors) are retried by the client.
+// Call Close on shutdown to flush any pending events.
 type Storage struct {
 	transport esapi.Transport
+	bulk      esutil.BulkIndexer
 	index     string
 }
 
@@ -78,7 +94,31 @@ func NewBackend(cfg *Config) (*Storage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Storage{transport: client, index: prefix}, nil
+
+	bulk, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
+		Client:        client,
+		Index:         prefix,
+		NumWorkers:    bulkNumWorkers,
+		FlushBytes:    bulkFlushBytes,
+		FlushInterval: bulkFlushInterval,
+		OnError: func(_ context.Context, err error) {
+			log.Errorf("elasticsearch bulk: %v", err)
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch bulk indexer: %w", err)
+	}
+
+	return &Storage{transport: client, bulk: bulk, index: prefix}, nil
+}
+
+// Close flushes any pending bulk operations and stops the indexer workers.
+// After Close, Save will panic; the Storage must not be reused.
+func (s *Storage) Close(ctx context.Context) error {
+	if s.bulk == nil {
+		return nil
+	}
+	return s.bulk.Close(ctx)
 }
 
 func (s *Storage) Init(_ context.Context, _ string, indexes []driver.Index) error {
@@ -91,22 +131,27 @@ func (s *Storage) Init(_ context.Context, _ string, indexes []driver.Index) erro
 }
 
 func (s *Storage) Save(ctx context.Context, rec driver.Record) error {
-	req := esapi.IndexRequest{
+	item := esutil.BulkIndexerItem{
 		Index:      s.index,
+		Action:     "index",
 		DocumentID: rec.ID,
 		Body:       bytes.NewReader(rec.Data),
+		OnFailure: func(_ context.Context, _ esutil.BulkIndexerItem, res esutil.BulkIndexerResponseItem, err error) {
+			// Reached only after client-level retries are exhausted, or the
+			// failure is per-item (parsing, mapping, version conflict). The
+			// item is dropped — caller does not learn about this synchronously.
+			if err != nil {
+				log.Errorf("elasticsearch bulk save %s/%s: %v", s.index, rec.ID, err)
+				return
+			}
+			log.Errorf("elasticsearch bulk save %s/%s: status=%d type=%s reason=%s",
+				s.index, rec.ID, res.Status, res.Error.Type, res.Error.Reason)
+		},
 	}
-	res, err := req.Do(driver.WithContext(ctx), s.transport)
-	if err != nil {
+	if err := s.bulk.Add(driver.WithContext(ctx), item); err != nil {
 		return fmt.Errorf("elasticsearch backend save %s: %w", s.index, err)
 	}
-	defer res.Body.Close()
-
-	if res.IsError() {
-		return responseError("save document", s.index, res)
-	}
-
-	log.Debugf("elasticsearch save index=%s id=%s statuscode=%d data=%s", s.index, rec.ID, res.StatusCode, rec.Data)
+	log.Debugf("elasticsearch bulk queued index=%s id=%s data=%s", s.index, rec.ID, rec.Data)
 	return nil
 }
 

@@ -95,6 +95,14 @@ func newCompatClient(addresses []string, username, password string) (*elasticsea
 		Password:                password,
 		EnableCompatibilityMode: true,
 		Transport:               &productHeaderTransport{inner: defaultTransport},
+		// Whole-batch retry: covers transport failures and 429/5xx returned for
+		// the entire bulk request. Per-item failures inside a 200 response are
+		// surfaced through BulkIndexerItem.OnFailure instead.
+		RetryOnStatus: []int{429, 502, 503, 504},
+		MaxRetries:    3,
+		RetryBackoff: func(attempt int) time.Duration {
+			return time.Duration(100<<attempt) * time.Millisecond
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("elasticsearch new client: %w", err)
