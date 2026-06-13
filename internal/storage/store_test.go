@@ -162,6 +162,8 @@ func (b *testBackend) Values(_ context.Context, field string, q driver.Query, si
 	return b.valuesValue, b.valuesErr
 }
 
+func (b *testBackend) Close(context.Context) error { return nil }
+
 func newTestMapper() *testMapper {
 	return &testMapper{
 		collection: "jobs",

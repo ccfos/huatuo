@@ -54,7 +54,7 @@ func newSQLiteBackendForTest(t *testing.T) *storagesqlite.Storage {
 	}
 
 	t.Cleanup(func() {
-		if closeErr := backend.Close(); closeErr != nil {
+		if closeErr := backend.Close(t.Context()); closeErr != nil {
 			t.Errorf("backend Close() returned error: %v", closeErr)
 		}
 	})

@@ -123,6 +123,11 @@ type Mapper[T any] interface {
 
 // Backend is implemented by storage backends. A backend instance is bound to
 // one collection by Init; subsequent calls operate on that collection.
+//
+// Close releases backend resources and flushes any buffered writes; backends
+// with async write paths (e.g. Elasticsearch bulk) rely on Close to land
+// pending records before exit. Implementations must tolerate being closed
+// once and never reused; calling Save after Close is undefined.
 type Backend interface {
 	Init(ctx context.Context, collection string, indexes []Index) error
 	Save(ctx context.Context, rec Record) error
@@ -131,4 +136,5 @@ type Backend interface {
 	Query(ctx context.Context, q Query) ([]Record, error)
 	Count(ctx context.Context, q Query) (int64, error)
 	Values(ctx context.Context, field string, q Query, size int) ([]string, error)
+	Close(ctx context.Context) error
 }

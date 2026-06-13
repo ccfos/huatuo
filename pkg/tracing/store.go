@@ -15,6 +15,8 @@
 package tracing
 
 import (
+	"context"
+	"errors"
 	"time"
 
 	"huatuo-bamai/internal/storage"
@@ -99,4 +101,36 @@ func SaveTaskOutputJSON(req *WriteRequest) error {
 
 	req.TracerRunType = TracerRunTypeTask
 	return taskDataWriter.saveJSON(req)
+}
+
+// CloseStores flushes and releases every configured tracing/task store. The
+// same Store may be registered under both writers; close it only once. All
+// close errors are joined and returned so the caller can observe every
+// failure.
+func CloseStores(ctx context.Context) error {
+	seen := make(map[*storage.Store[*Document]]struct{})
+	var errs []error
+
+	closeAll := func(stores []*storage.Store[*Document]) {
+		for _, st := range stores {
+			if st == nil {
+				continue
+			}
+			if _, ok := seen[st]; ok {
+				continue
+			}
+			seen[st] = struct{}{}
+			if err := st.Close(ctx); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+
+	if tracingDataWriter != nil {
+		closeAll(tracingDataWriter.stores)
+	}
+	if taskDataWriter != nil {
+		closeAll(taskDataWriter.stores)
+	}
+	return errors.Join(errs...)
 }

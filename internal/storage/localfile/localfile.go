@@ -39,6 +39,8 @@ type Storage struct {
 	maxRotation  int
 }
 
+var _ driver.Backend = (*Storage)(nil)
+
 // init registers the localfile backend driver so it is available via
 // side-effect import.
 func init() {
@@ -93,6 +95,12 @@ func (s *Storage) Count(context.Context, driver.Query) (int64, error) {
 
 func (s *Storage) Values(context.Context, string, driver.Query, int) ([]string, error) {
 	return nil, driver.ErrUnsupported
+}
+
+// Close is a no-op: the file rotator flushes on each Write, so there is
+// nothing buffered to drain at shutdown.
+func (s *Storage) Close(_ context.Context) error {
+	return nil
 }
 
 func (s *Storage) newFileWriter(filename string) io.Writer {

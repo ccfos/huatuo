@@ -148,6 +148,13 @@ func mainAction(ctx *cli.Context) error {
 		case syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM:
 			log.Infof("huatuo-bamai exited by signal %d", s)
 			_ = mgr.Stop()
+			// Drain bulk-buffered tracing writes after collectors stop and
+			// before BPF teardown — bounded to keep shutdown predictable.
+			closeCtx, cancelClose := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := tracing.CloseStores(closeCtx); err != nil {
+				log.Warnf("close tracing stores: %v", err)
+			}
+			cancelClose()
 			bpf.Close()
 			pod.ManagerRelease()
 			return nil
