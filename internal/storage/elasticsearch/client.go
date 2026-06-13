@@ -30,11 +30,18 @@ import (
 // a small idle pool turned bursty writes into per-request handshakes and
 // dominated CPU. The idle/total caps below let concurrent writers reuse
 // connections; MaxConnsPerHost bounds blast radius if ES slows down.
+//
+// ClientSessionCache enables TLS 1.3 PSK resumption: when the server (or an
+// intermediate proxy) silently closes an idle connection, the next handshake
+// reuses a ticket instead of doing full RSA-PSS verification.
 var defaultTransport http.RoundTripper = &http.Transport{
-	MaxIdleConns:          200,
-	MaxIdleConnsPerHost:   100,
-	MaxConnsPerHost:       200,
-	IdleConnTimeout:       90 * time.Second,
+	MaxIdleConns:        200,
+	MaxIdleConnsPerHost: 100,
+	MaxConnsPerHost:     200,
+	// Keep below typical server-side idle timeouts (ES/nginx/LB ~60s) so the
+	// client closes first. If the server closes a connection we still hold,
+	// the next request races into a stale conn and triggers a fresh handshake.
+	IdleConnTimeout:       50 * time.Second,
 	ResponseHeaderTimeout: 10 * time.Second,
 	DialContext: (&net.Dialer{
 		Timeout:   10 * time.Second,
@@ -42,6 +49,7 @@ var defaultTransport http.RoundTripper = &http.Transport{
 	}).DialContext,
 	TLSClientConfig: &tls.Config{
 		InsecureSkipVerify: true, // #nosec G402
+		ClientSessionCache: tls.NewLRUClientSessionCache(64),
 	},
 }
 
