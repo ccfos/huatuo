@@ -25,10 +25,21 @@ import (
 	elasticsearch "github.com/elastic/go-elasticsearch/v8"
 )
 
+// defaultTransport is sized to keep TLS handshake cost off the hot path.
+// Under FIPS, each fresh handshake spends several ms on RSA-PSS verification;
+// a small idle pool turned bursty writes into per-request handshakes and
+// dominated CPU. The idle/total caps below let concurrent writers reuse
+// connections; MaxConnsPerHost bounds blast radius if ES slows down.
 var defaultTransport http.RoundTripper = &http.Transport{
-	MaxIdleConnsPerHost:   10,
+	MaxIdleConns:          200,
+	MaxIdleConnsPerHost:   100,
+	MaxConnsPerHost:       200,
+	IdleConnTimeout:       90 * time.Second,
 	ResponseHeaderTimeout: 10 * time.Second,
-	DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+	DialContext: (&net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
 	TLSClientConfig: &tls.Config{
 		InsecureSkipVerify: true, // #nosec G402
 	},
