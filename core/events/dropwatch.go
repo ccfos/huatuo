@@ -103,10 +103,10 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 
 func resolveContainerIDFromMeta(ev *types.DropWatchTracing) string {
 	// 1. memcg CSS address — uniquely identifies a container.
-	if addr, ok := kernaddr.Parse(ev.MemcgCssAddr); ok {
+	if addr, ok := kernaddr.Parse(ev.MemoryCgroupCSSAddr); ok {
 		ct, err := pod.ContainerByCSS(addr, pod.SubSysMemory)
 		if err != nil {
-			log.Debugf("dropwatch: CSS lookup %s: %v", ev.MemcgCssAddr, err)
+			log.Debugf("dropwatch: CSS lookup %s: %v", ev.MemoryCgroupCSSAddr, err)
 		} else if ct != nil {
 			return ct.ID
 		}

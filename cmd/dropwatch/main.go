@@ -48,19 +48,19 @@ var (
 
 // Must match struct packet_meta in bpf/dropwatch.c exactly.
 type packetMeta struct {
-	KtimeNS            uint64
-	TgidPid            uint64
-	NetCookie          uint64
-	SkbAddr            uint64
-	MemcgCssAddr       uint64
-	NetdevIfindex      uint32
-	NetdevFlags        uint32
-	NetdevQueueMapping uint32
-	DropReason         uint32
-	Type               uint32
-	NetInode           uint32
-	NetdevName         [bpf.NetdevNameLen]byte
-	Comm               [bpf.TaskCommLen]byte
+	KtimeNS             uint64
+	TgidPid             uint64
+	NetCookie           uint64
+	SkbAddr             uint64
+	MemoryCgroupCSSAddr uint64
+	NetdevIfindex       uint32
+	NetdevFlags         uint32
+	NetdevQueueMapping  uint32
+	DropReason          uint32
+	Type                uint32
+	NetInode            uint32
+	NetdevName          [bpf.NetdevNameLen]byte
+	Comm                [bpf.TaskCommLen]byte
 }
 
 type packetRaw struct {
@@ -139,21 +139,21 @@ func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
 	stackStr := strings.Join(frames, "\n")
 
 	return &types.DropWatchTracing{
-		ObservedTimestamp:  time.Now().UTC().Format(time.RFC3339Nano),
-		Comm:               bytesutil.ToStr(ev.Meta.Comm[:]),
-		Pid:                ev.Meta.TgidPid >> 32,
-		MemcgCssAddr:       kernaddr.Format(ev.Meta.MemcgCssAddr),
-		NetNamespaceCookie: ev.Meta.NetCookie,
-		NetNamespaceInode:  ev.Meta.NetInode,
-		NetdevName:         bytesutil.ToStr(ev.Meta.NetdevName[:]),
-		NetdevIfindex:      ev.Meta.NetdevIfindex,
-		NetdevQueueMapping: ev.Meta.NetdevQueueMapping,
-		NetdevLinkStatus:   linkstatus.FlagsRaw(ev.Meta.NetdevFlags),
-		PacketSkbAddr:      kernaddr.Format(ev.Meta.SkbAddr),
-		PacketEthProto:     fmt.Sprintf("0x%04x", ev.Raw.EthProto),
-		PacketLen:          ev.Raw.PktLen,
-		Layers:             p,
-		Stack:              stackStr,
+		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
+		Pid:                 ev.Meta.TgidPid >> 32,
+		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemoryCgroupCSSAddr),
+		NetNamespaceCookie:  ev.Meta.NetCookie,
+		NetNamespaceInode:   ev.Meta.NetInode,
+		NetdevName:          bytesutil.ToStr(ev.Meta.NetdevName[:]),
+		NetdevIfindex:       ev.Meta.NetdevIfindex,
+		NetdevQueueMapping:  ev.Meta.NetdevQueueMapping,
+		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.NetdevFlags),
+		PacketSkbAddr:       kernaddr.Format(ev.Meta.SkbAddr),
+		PacketEthProto:      fmt.Sprintf("0x%04x", ev.Raw.EthProto),
+		PacketLen:           ev.Raw.PktLen,
+		Layers:              p,
+		Stack:               stackStr,
 	}
 }
 
