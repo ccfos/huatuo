@@ -122,7 +122,7 @@ func deviceFilterConsts(devName string, excluded bool) (map[string]any, error) {
 }
 
 func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
-	pkt := packet.PacketHdr{
+	pkt := packet.Hdr{
 		EthProto:  ev.Raw.EthProto,
 		RawLen:    uint8(ev.Raw.RawLen),
 		HasEthHdr: uint8(ev.Raw.HasEthHdr),
@@ -130,7 +130,10 @@ func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
 		Raw:       ev.Raw.Raw,
 	}
 
-	pktType, pktInfo := packet.ParsePacketHdr(&pkt)
+	p, err := packet.Parse(&pkt)
+	if err != nil {
+		log.Debugf("dropwatch: parse packet: %v", err)
+	}
 
 	frames := symbol.KsymStackStrs(ev.Stack[:], symbol.KsymStackMaxDepth)
 	stackStr := strings.Join(frames, "\n")
@@ -149,8 +152,7 @@ func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
 		PacketSkbAddr:      kernaddr.Format(ev.Meta.SkbAddr),
 		PacketEthProto:     fmt.Sprintf("0x%04x", ev.Raw.EthProto),
 		PacketLen:          ev.Raw.PktLen,
-		PacketType:         pktType,
-		PacketInfo:         pktInfo,
+		Layers:             p,
 		Stack:              stackStr,
 	}
 }

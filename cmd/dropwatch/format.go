@@ -20,7 +20,6 @@ import (
 	"io"
 	"os"
 
-	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/types"
@@ -34,8 +33,8 @@ type writer interface {
 type textWriter struct{ w io.Writer }
 
 func (s *textWriter) Write(ev *types.DropWatchTracing) error {
-	if _, err := fmt.Fprintf(s.w, "%s %s %s len=%d dev=%s pid=%d[%s] addr=%s\n",
-		ev.ObservedTimestamp, ev.PacketType, formatDetail(ev.PacketInfo),
+	if _, err := fmt.Fprintf(s.w, "%s %s len=%d dev=%s pid=%d[%s] addr=%s\n",
+		ev.ObservedTimestamp, ev.Layers,
 		ev.PacketLen, ev.NetdevName, ev.Pid, ev.Comm, ev.PacketSkbAddr); err != nil {
 		return err
 	}
@@ -77,13 +76,4 @@ func newWriter(outputFmt string, client *toolstream.Client) writer {
 	default:
 		return &textWriter{w: os.Stdout}
 	}
-}
-
-type detailable interface{ Detail() string }
-
-func formatDetail(info packet.PacketInfo) string {
-	if d, ok := info.(detailable); ok {
-		return d.Detail()
-	}
-	return "[?]"
 }

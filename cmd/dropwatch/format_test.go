@@ -18,7 +18,6 @@ import (
 	"errors"
 	"testing"
 
-	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -34,7 +33,6 @@ func TestTextWriterPropagatesIOError(t *testing.T) {
 
 	err := w.Write(&types.DropWatchTracing{
 		ObservedTimestamp: "now",
-		PacketType:        packet.PacketTypeIPv4TCP,
 		NetdevName:        "eth0",
 	})
 	if !errors.Is(err, boom) {

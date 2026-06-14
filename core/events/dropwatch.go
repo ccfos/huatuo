@@ -24,7 +24,6 @@ import (
 
 	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/utils/kernaddr"
@@ -150,7 +149,7 @@ func ignoreDropwatch(data *types.DropWatchTracing) bool {
 	// 4. tcp_fin/ffffffff963ac200
 	// 5. ...
 	// CLOSE_WAIT + skb_rbtree_purge: normal socket teardown, not a drop.
-	if skState := packet.TCPSkState(data.PacketInfo); skState == "CLOSE_WAIT" {
+	if data.Layers != nil && data.Layers.TCP != nil && data.Layers.TCP.SkState == "CLOSE_WAIT" {
 		if len(stack) >= 3 && strings.HasPrefix(stack[2], "skb_rbtree_purge/") {
 			return true
 		}

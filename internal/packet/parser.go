@@ -16,7 +16,11 @@ package packet
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"net"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/gopacket/gopacket"
@@ -25,7 +29,11 @@ import (
 
 const ethernetHeaderLen = 14
 
-type parserState struct {
+// ErrNoLayers is returned by Parse when the frame yields no
+// recognisable layers (truncated buffer or unsupported EtherType).
+var ErrNoLayers = errors.New("packet: no layers decoded")
+
+type decoder struct {
 	eth   layers.Ethernet
 	ipv4  layers.IPv4
 	ipv6  layers.IPv6
@@ -36,30 +44,39 @@ type parserState struct {
 	arp   layers.ARP
 	dlp   *gopacket.DecodingLayerParser
 	lyrs  []gopacket.LayerType
-	// frame holds the reconstructed Ethernet frame; reused across calls to
-	// avoid a heap allocation on every packet in the hot path.
+	// frame holds a synthesized Ethernet frame for the HasEthHdr==0 path,
+	// reused across calls. The HasEthHdr==1 path slices pkt.Raw directly and
+	// does not touch this buffer.
 	frame [ethernetHeaderLen + RawCapacity]byte
 }
 
-var parserPool = sync.Pool{
+var decoderPool = sync.Pool{
 	New: func() any {
-		s := &parserState{lyrs: make([]gopacket.LayerType, 0, 5)}
-		s.dlp = gopacket.NewDecodingLayerParser(
+		dec := &decoder{lyrs: make([]gopacket.LayerType, 0, 5)}
+		dec.dlp = gopacket.NewDecodingLayerParser(
 			layers.LayerTypeEthernet,
-			&s.eth, &s.ipv4, &s.ipv6,
-			&s.tcp, &s.udp, &s.icmp4, &s.icmp6, &s.arp,
+			&dec.eth, &dec.ipv4, &dec.ipv6,
+			&dec.tcp, &dec.udp, &dec.icmp4, &dec.icmp6, &dec.arp,
 		)
-		s.dlp.IgnoreUnsupported = true
+		dec.dlp.IgnoreUnsupported = true
 
-		return s
+		return dec
 	},
 }
 
-// ParsePacketHdr decodes pkt into a PacketType and protocol-specific PacketInfo.
-// When pkt.HasEthHdr == 1 the MAC addresses are embedded in the returned info struct.
-func ParsePacketHdr(pkt *PacketHdr) (PacketType, PacketInfo) {
-	ps := parserPool.Get().(*parserState)
-	defer parserPool.Put(ps)
+// Parse decodes pkt into a layered *Packet. The set of non-nil
+// layer pointers reflects what was successfully parsed; callers compose
+// behaviour against `p.TCP != nil`, `p.IPv4 != nil`, etc.
+//
+// Returns (nil, ErrNoLayers) when the buffer yields no recognisable layers.
+// A decode error that still produced at least one layer returns the partial
+// packet and a nil error — partial frames are useful for dropwatch tracing.
+//
+// Layer values are deep-copied out of the parser pool, so the returned
+// *Packet is safe to retain after this call.
+func Parse(pkt *Hdr) (*Packet, error) {
+	dec := decoderPool.Get().(*decoder)
+	defer decoderPool.Put(dec)
 
 	rawLen := int(pkt.RawLen)
 	if rawLen > len(pkt.Raw) {
@@ -69,143 +86,242 @@ func ParsePacketHdr(pkt *PacketHdr) (PacketType, PacketInfo) {
 	var frame []byte
 
 	if pkt.HasEthHdr == 1 {
-		frame = ps.frame[:rawLen]
-		copy(frame, pkt.Raw[:rawLen])
+		// Slice pkt.Raw directly — DecodeLayers reads only, and every value we
+		// extract below is either a primitive or a freshly-allocated copy, so
+		// nothing returned holds a reference to the buffer.
+		frame = pkt.Raw[:rawLen]
 	} else {
-		frame = ps.frame[:ethernetHeaderLen+rawLen]
+		frame = dec.frame[:ethernetHeaderLen+rawLen]
 		binary.BigEndian.PutUint16(frame[12:], pkt.EthProto)
 		copy(frame[ethernetHeaderLen:], pkt.Raw[:rawLen])
 	}
 
-	ps.lyrs = ps.lyrs[:0]
+	dec.lyrs = dec.lyrs[:0]
 
-	if err := ps.dlp.DecodeLayers(frame, &ps.lyrs); err != nil && len(ps.lyrs) == 0 {
-		return PacketTypeUnknown, nil
+	if err := dec.dlp.DecodeLayers(frame, &dec.lyrs); err != nil && len(dec.lyrs) == 0 {
+		return nil, fmt.Errorf("packet: decode layers: %w", err)
 	}
 
-	var srcMAC, dstMAC string
-
-	if pkt.HasEthHdr == 1 && len(ps.eth.SrcMAC) == 6 {
-		srcMAC = ps.eth.SrcMAC.String()
-		dstMAC = ps.eth.DstMAC.String()
+	if len(dec.lyrs) == 0 {
+		return nil, ErrNoLayers
 	}
 
-	var hasIPv4, hasIPv6, hasTCP, hasUDP, hasICMP4, hasICMP6, hasARP bool
+	out := &Packet{}
 
-	for _, lt := range ps.lyrs {
+	if pkt.HasEthHdr == 1 && len(dec.eth.SrcMAC) == 6 {
+		out.Ether = &Ether{
+			Src:    slices.Clone(dec.eth.SrcMAC),
+			Dst:    slices.Clone(dec.eth.DstMAC),
+			Type:   dec.eth.EthernetType.String(),
+			Length: dec.eth.Length,
+		}
+	}
+
+	for _, lt := range dec.lyrs {
 		switch lt {
 		case layers.LayerTypeIPv4:
-			hasIPv4 = true
+			out.IPv4 = &IPv4{
+				Version:    dec.ipv4.Version,
+				IHL:        dec.ipv4.IHL,
+				TOS:        dec.ipv4.TOS,
+				Length:     dec.ipv4.Length,
+				ID:         dec.ipv4.Id,
+				Flags:      dec.ipv4.Flags.String(),
+				FragOffset: dec.ipv4.FragOffset,
+				TTL:        dec.ipv4.TTL,
+				Protocol:   dec.ipv4.Protocol.String(),
+				Checksum:   dec.ipv4.Checksum,
+				Src:        slices.Clone(dec.ipv4.SrcIP),
+				Dst:        slices.Clone(dec.ipv4.DstIP),
+			}
 		case layers.LayerTypeIPv6:
-			hasIPv6 = true
+			out.IPv6 = &IPv6{
+				Version:      dec.ipv6.Version,
+				TrafficClass: dec.ipv6.TrafficClass,
+				FlowLabel:    dec.ipv6.FlowLabel,
+				Length:       dec.ipv6.Length,
+				NextHeader:   dec.ipv6.NextHeader.String(),
+				HopLimit:     dec.ipv6.HopLimit,
+				Src:          slices.Clone(dec.ipv6.SrcIP),
+				Dst:          slices.Clone(dec.ipv6.DstIP),
+			}
 		case layers.LayerTypeTCP:
-			hasTCP = true
+			out.TCP = &TCP{
+				SrcPort:    uint16(dec.tcp.SrcPort),
+				DstPort:    uint16(dec.tcp.DstPort),
+				Seq:        dec.tcp.Seq,
+				Ack:        dec.tcp.Ack,
+				DataOffset: dec.tcp.DataOffset,
+				Flags:      tcpFlags(&dec.tcp),
+				Window:     dec.tcp.Window,
+				Checksum:   dec.tcp.Checksum,
+				Urgent:     dec.tcp.Urgent,
+				SkState:    tcpStateName(pkt.SkState),
+			}
 		case layers.LayerTypeUDP:
-			hasUDP = true
+			out.UDP = &UDP{
+				SrcPort:  uint16(dec.udp.SrcPort),
+				DstPort:  uint16(dec.udp.DstPort),
+				Length:   dec.udp.Length,
+				Checksum: dec.udp.Checksum,
+			}
 		case layers.LayerTypeICMPv4:
-			hasICMP4 = true
+			out.ICMP = &ICMP{
+				Type:     dec.icmp4.TypeCode.String(),
+				Code:     dec.icmp4.TypeCode.Code(),
+				Checksum: dec.icmp4.Checksum,
+				ID:       dec.icmp4.Id,
+				Seq:      dec.icmp4.Seq,
+			}
 		case layers.LayerTypeICMPv6:
-			hasICMP6 = true
+			out.ICMP = &ICMP{
+				Type:     dec.icmp6.TypeCode.String(),
+				Code:     dec.icmp6.TypeCode.Code(),
+				Checksum: dec.icmp6.Checksum,
+			}
 		case layers.LayerTypeARP:
-			hasARP = true
+			out.ARP = &ARP{
+				AddrType:        dec.arp.AddrType.String(),
+				Protocol:        dec.arp.Protocol.String(),
+				HwAddressSize:   dec.arp.HwAddressSize,
+				ProtAddressSize: dec.arp.ProtAddressSize,
+				Operation:       arpOperationName(dec.arp.Operation),
+				SenderMAC:       net.HardwareAddr(slices.Clone(dec.arp.SourceHwAddress)),
+				SenderIP:        net.IP(slices.Clone(dec.arp.SourceProtAddress)),
+				TargetMAC:       net.HardwareAddr(slices.Clone(dec.arp.DstHwAddress)),
+				TargetIP:        net.IP(slices.Clone(dec.arp.DstProtAddress)),
+			}
 		}
 	}
 
-	var pktType PacketType
-	var info PacketInfo
-
-	switch {
-	case hasIPv4 && hasTCP:
-		pktType = PacketTypeIPv4TCP
-		info = &TCPInfo{
-			SrcMAC:  srcMAC,
-			DstMAC:  dstMAC,
-			Saddr:   ps.ipv4.SrcIP.String(),
-			Daddr:   ps.ipv4.DstIP.String(),
-			Sport:   uint16(ps.tcp.SrcPort),
-			Dport:   uint16(ps.tcp.DstPort),
-			SkState: tcpStateName(pkt.SkState),
-			Seq:     ps.tcp.Seq,
-			AckSeq:  ps.tcp.Ack,
-			Window:  ps.tcp.Window,
-			Flags:   tcpFlags(&ps.tcp),
-		}
-	case hasIPv4 && hasUDP:
-		pktType = PacketTypeIPv4UDP
-		info = &UDPInfo{
-			SrcMAC:   srcMAC,
-			DstMAC:   dstMAC,
-			Saddr:    ps.ipv4.SrcIP.String(),
-			Daddr:    ps.ipv4.DstIP.String(),
-			Sport:    uint16(ps.udp.SrcPort),
-			Dport:    uint16(ps.udp.DstPort),
-			Len:      ps.udp.Length,
-			Checksum: ps.udp.Checksum,
-		}
-	case hasIPv4 && hasICMP4:
-		pktType = PacketTypeIPv4ICMP
-		info = &ICMPInfo{
-			SrcMAC:   srcMAC,
-			DstMAC:   dstMAC,
-			Saddr:    ps.ipv4.SrcIP.String(),
-			Daddr:    ps.ipv4.DstIP.String(),
-			ICMPType: ps.icmp4.TypeCode.String(),
-			ID:       ps.icmp4.Id,
-			Seq:      ps.icmp4.Seq,
-			Checksum: ps.icmp4.Checksum,
-		}
-	case hasIPv6 && hasTCP:
-		pktType = PacketTypeIPv6TCP
-		info = &TCPInfo{
-			SrcMAC:  srcMAC,
-			DstMAC:  dstMAC,
-			Saddr:   ps.ipv6.SrcIP.String(),
-			Daddr:   ps.ipv6.DstIP.String(),
-			Sport:   uint16(ps.tcp.SrcPort),
-			Dport:   uint16(ps.tcp.DstPort),
-			SkState: tcpStateName(pkt.SkState),
-			Seq:     ps.tcp.Seq,
-			AckSeq:  ps.tcp.Ack,
-			Window:  ps.tcp.Window,
-			Flags:   tcpFlags(&ps.tcp),
-		}
-	case hasIPv6 && hasUDP:
-		pktType = PacketTypeIPv6UDP
-		info = &UDPInfo{
-			SrcMAC: srcMAC,
-			DstMAC: dstMAC,
-			Saddr:  ps.ipv6.SrcIP.String(),
-			Daddr:  ps.ipv6.DstIP.String(),
-			Sport:  uint16(ps.udp.SrcPort),
-			Dport:  uint16(ps.udp.DstPort),
-			Len:    ps.udp.Length,
-		}
-	case hasIPv6 && hasICMP6:
-		pktType = PacketTypeIPv6ICMPv6
-		info = &ICMPInfo{
-			SrcMAC:   srcMAC,
-			DstMAC:   dstMAC,
-			Saddr:    ps.ipv6.SrcIP.String(),
-			Daddr:    ps.ipv6.DstIP.String(),
-			ICMPType: ps.icmp6.TypeCode.String(),
-		}
-	case hasARP:
-		op := "request"
-		if ps.arp.Operation == 2 {
-			op = "reply"
-		}
-
-		pktType = PacketTypeARP
-		info = &ARPInfo{
-			SrcMAC:    srcMAC,
-			DstMAC:    dstMAC,
-			Operation: op,
-			SenderMAC: net.HardwareAddr(ps.arp.SourceHwAddress).String(),
-			SenderIP:  net.IP(ps.arp.SourceProtAddress).String(),
-			TargetMAC: net.HardwareAddr(ps.arp.DstHwAddress).String(),
-			TargetIP:  net.IP(ps.arp.DstProtAddress).String(),
-		}
+	// A frame that only yielded our synthetic Ethernet wrapper (or whose
+	// EtherType is unsupported) carries no usable protocol — treat it as
+	// unparseable so callers can distinguish from a real partial parse.
+	if out.IPv4 == nil && out.IPv6 == nil &&
+		out.TCP == nil && out.UDP == nil &&
+		out.ICMP == nil && out.ARP == nil {
+		return nil, ErrNoLayers
 	}
 
-	return pktType, info
+	return out, nil
+}
+
+// TCP flag bit positions used to index tcpFlagStrings. The bit assignment is
+// internal — only the (ordered) string output is observable.
+const (
+	flagSYN uint8 = 1 << iota
+	flagACK
+	flagFIN
+	flagRST
+	flagPSH
+	flagURG
+	flagECE
+	flagCWR
+)
+
+// tcpFlagStrings is a 256-entry lookup table from a packed flag byte to its
+// "SYN|ACK"-style rendering. Building strings via strings.Builder per packet
+// dominated the TCP hot path; precomputing all 2^8 combinations costs ~4 KB
+// of static memory and turns tcpFlags into a zero-allocation indexed read.
+var tcpFlagStrings [256]string
+
+func init() {
+	names := [...]struct {
+		bit  uint8
+		name string
+	}{
+		{flagSYN, "SYN"},
+		{flagACK, "ACK"},
+		{flagFIN, "FIN"},
+		{flagRST, "RST"},
+		{flagPSH, "PSH"},
+		{flagURG, "URG"},
+		{flagECE, "ECE"},
+		{flagCWR, "CWR"},
+	}
+
+	for i := 0; i < 256; i++ {
+		var parts []string
+
+		for _, n := range names {
+			if uint8(i)&n.bit != 0 {
+				parts = append(parts, n.name)
+			}
+		}
+
+		tcpFlagStrings[i] = strings.Join(parts, "|")
+	}
+}
+
+func tcpFlags(tcp *layers.TCP) string {
+	var b uint8
+
+	if tcp.SYN {
+		b |= flagSYN
+	}
+
+	if tcp.ACK {
+		b |= flagACK
+	}
+
+	if tcp.FIN {
+		b |= flagFIN
+	}
+
+	if tcp.RST {
+		b |= flagRST
+	}
+
+	if tcp.PSH {
+		b |= flagPSH
+	}
+
+	if tcp.URG {
+		b |= flagURG
+	}
+
+	if tcp.ECE {
+		b |= flagECE
+	}
+
+	if tcp.CWR {
+		b |= flagCWR
+	}
+
+	return tcpFlagStrings[b]
+}
+
+var tcpStateNames = []string{
+	"unknown",
+	"ESTABLISHED",
+	"SYN_SENT",
+	"SYN_RECV",
+	"FIN_WAIT1",
+	"FIN_WAIT2",
+	"TIME_WAIT",
+	"CLOSE",
+	"CLOSE_WAIT",
+	"LAST_ACK",
+	"LISTEN",
+	"CLOSING",
+	"NEW_SYN_RECV",
+}
+
+func tcpStateName(state uint8) string {
+	if int(state) < len(tcpStateNames) {
+		return tcpStateNames[state]
+	}
+
+	return fmt.Sprintf("UNKNOWN(%d)", state)
+}
+
+func arpOperationName(op uint16) string {
+	switch op {
+	case layers.ARPRequest:
+		return "request"
+	case layers.ARPReply:
+		return "reply"
+	default:
+		return fmt.Sprintf("UNKNOWN(%d)", op)
+	}
 }

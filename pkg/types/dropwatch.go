@@ -14,31 +14,38 @@
 
 package types
 
-import "huatuo-bamai/internal/packet"
+import (
+	"huatuo-bamai/internal/packet"
+)
 
 // DropWatchTracing is the canonical JSON schema for a dropwatch event,
 // shared between the dropwatch tool (producer) and huatuo-bamai (consumer).
+//
+// Layers holds the layered parse result (nested object per network layer).
+// Consumers select layers with field checks, e.g. `ev.Layers.TCP != nil`,
+// instead of a separate type-tag field. The name "Layers" mirrors gopacket's
+// terminology and keeps the field distinct from the `Packet*` BPF-metadata
+// prefix family above.
 type DropWatchTracing struct {
-	ObservedTimestamp  string            `json:"observed_timestamp"`
-	Type               string            `json:"type"`
-	DropReason         string            `json:"drop_reason"`
-	Comm               string            `json:"comm"`
-	Pid                uint64            `json:"pid"`
-	ContainerID        string            `json:"container_id,omitempty"`
-	MemcgCssAddr       string            `json:"memcg_css,omitempty"`
-	NetNamespaceCookie uint64            `json:"net_namespace_cookie,omitempty"`
-	NetNamespaceInode  uint32            `json:"net_namespace_inode,omitempty"`
-	NetdevName         string            `json:"netdev_name"`
-	NetdevIfindex      uint32            `json:"netdev_ifindex"`
-	NetdevQueueMapping uint32            `json:"netdev_queue_mapping"`
-	NetdevLinkStatus   []string          `json:"netdev_linkstatus"`
-	PacketSkbAddr      string            `json:"packet_skb_addr,omitempty"`
-	PacketEthProto     string            `json:"packet_eth_proto"`
-	PacketType         packet.PacketType `json:"packet_type"`
-	PacketLen          uint32            `json:"packet_len"`
-	PacketInfo         packet.PacketInfo `json:"packet_info,omitempty"`
-	Source             string            `json:"source,omitempty"`
-	Stack              string            `json:"stack"`
+	ObservedTimestamp  string         `json:"observed_timestamp"`
+	Type               string         `json:"type"`
+	DropReason         string         `json:"drop_reason"`
+	Source             string         `json:"source,omitempty"`
+	Comm               string         `json:"comm"`
+	Pid                uint64         `json:"pid"`
+	ContainerID        string         `json:"container_id,omitempty"`
+	MemcgCssAddr       string         `json:"memcg_css,omitempty"`
+	NetNamespaceCookie uint64         `json:"net_namespace_cookie,omitempty"`
+	NetNamespaceInode  uint32         `json:"net_namespace_inode,omitempty"`
+	NetdevName         string         `json:"netdev_name"`
+	NetdevIfindex      uint32         `json:"netdev_ifindex"`
+	NetdevQueueMapping uint32         `json:"netdev_queue_mapping"`
+	NetdevLinkStatus   []string       `json:"netdev_linkstatus"`
+	PacketSkbAddr      string         `json:"packet_skb_addr,omitempty"`
+	PacketEthProto     string         `json:"packet_eth_proto"`
+	PacketLen          uint32         `json:"packet_len"`
+	Layers             *packet.Packet `json:"layers,omitempty"`
+	Stack              string         `json:"stack"`
 }
 
 // Values for DropWatchTracing.Source.
