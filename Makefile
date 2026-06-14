@@ -49,7 +49,7 @@ IMAGE := $(IMAGE_REPO):$(IMAGE_TAG)
 
 BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
 
-all: gen-build bpf-build build sync
+all: bpf-build build sync
 
 build-nostatic:
 	@$(MAKE) BUILD_MODE=nostatic all
@@ -123,7 +123,7 @@ unit: bpf-build gen-build
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
-integration: all gen-build
+integration: all
 	@bash integration/run.sh
 
 e2e: all
