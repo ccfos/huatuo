@@ -232,6 +232,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 	if esStore != nil {
 		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
 	}
+
 	return nil
 }
 
