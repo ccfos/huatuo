@@ -156,7 +156,7 @@ func (c *iolatencyTracing) dumpContainerLatency() ([]BlkgqEntry, error) {
 func (c *iolatencyTracing) updateContainerBlkDisk(b bpf.BPF) error {
 	containers, err := pod.Containers()
 	if err != nil {
-		return err
+		return err 
 	}
 
 	var newContainers []*pod.Container
