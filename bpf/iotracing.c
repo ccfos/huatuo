@@ -249,18 +249,20 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 
 	cmd_flags = BPF_CORE_READ(req, cmd_flags);
 	if (is_write_request(cmd_flags)) {
-		entry->block_write_bytes += info->data_len;
+		__sync_fetch_and_add(&entry->block_write_bytes, info->data_len);
 	} else if ((cmd_flags & REQ_OP_MASK) == REQ_OP_READ) {
-		entry->block_read_bytes += info->data_len;
+		__sync_fetch_and_add(&entry->block_read_bytes, info->data_len);
 	} else {
 		bpf_map_delete_elem(&start_info_map, &info_key);
 		return 0;
 	}
 
 	now = bpf_ktime_get_ns();
-	entry->latency.sum_q2c += now - BPF_CORE_READ(req, start_time_ns);
-	entry->latency.sum_d2c += now - BPF_CORE_READ(req, io_start_time_ns);
-	entry->latency.cnt++;
+	__sync_fetch_and_add(&entry->latency.sum_q2c,
+			     now - BPF_CORE_READ(req, start_time_ns));
+	__sync_fetch_and_add(&entry->latency.sum_d2c,
+			     now - BPF_CORE_READ(req, io_start_time_ns));
+	__sync_fetch_and_add(&entry->latency.cnt, 1);
 
 	if (entry == &data) {
 		entry->blkcg_gq = (u64)info->bi_blkg;
@@ -357,9 +359,9 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 
 	type = type & 0x1;
 	if (type) /* 0: read, 1: write */
-		entry->fs_write_bytes += count;
+		__sync_fetch_and_add(&entry->fs_write_bytes, count);
 	else
-		entry->fs_read_bytes += count;
+		__sync_fetch_and_add(&entry->fs_read_bytes, count);
 
 	entry->flag = BPF_CORE_READ(iocb, ki_flags);
 	if (entry == &data)
@@ -412,7 +414,7 @@ static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 		entry->inode = key.inode;
 	}
 
-	entry->fs_write_bytes += PAGE_SIZE;
+	__sync_fetch_and_add(&entry->fs_write_bytes, PAGE_SIZE);
 	if (entry == &data)
 		bpf_map_update_elem(&io_source_map, &key, &data,
 				    COMPAT_BPF_ANY);
@@ -456,7 +458,7 @@ int bpf_filemap_fault(struct pt_regs *ctx)
 		entry->dev   = key.dev;
 		entry->inode = key.inode;
 	}
-	entry->fs_read_bytes += PAGE_SIZE;
+	__sync_fetch_and_add(&entry->fs_read_bytes, PAGE_SIZE);
 
 	if (entry == &data)
 		bpf_map_update_elem(&io_source_map, &key, &data,
