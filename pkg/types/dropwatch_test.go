@@ -106,11 +106,10 @@ func TestDropWatchTracingNilLayers(t *testing.T) {
 	}
 }
 
-func mustMAC(s string) net.HardwareAddr {
-	a, err := net.ParseMAC(s)
-	if err != nil {
+func mustMAC(s string) string {
+	if _, err := net.ParseMAC(s); err != nil {
 		panic(err)
 	}
 
-	return a
+	return s
 }

@@ -55,10 +55,10 @@ type Packet struct {
 // packet_eth_proto so the two are complementary. Length is non-zero only for
 // 802.3 framing — Ethernet II frames carry an EtherType in that slot instead.
 type Ether struct {
-	Src    net.HardwareAddr `json:"src"`
-	Dst    net.HardwareAddr `json:"dst"`
-	Type   string           `json:"type"`
-	Length uint16           `json:"len,omitempty"`
+	Src    string `json:"src"` // "aa:bb:cc:dd:ee:ff"
+	Dst    string `json:"dst"` // "aa:bb:cc:dd:ee:ff"
+	Type   string `json:"type"`
+	Length uint16 `json:"len,omitempty"`
 }
 
 // IPv4 holds IPv4-layer fields. Flags renders the bitfield as
@@ -131,15 +131,15 @@ type ICMP struct {
 // ARP holds ARP request/reply fields. AddrType and Protocol are the
 // parsed link/network layer names (e.g. "Ethernet", "IPv4").
 type ARP struct {
-	AddrType        string           `json:"addr_type"`
-	Protocol        string           `json:"protocol"`
-	HwAddressSize   uint8            `json:"hw_address_size"`
-	ProtAddressSize uint8            `json:"prot_address_size"`
-	Operation       string           `json:"operation"`
-	SenderMAC       net.HardwareAddr `json:"sender_mac"`
-	SenderIP        net.IP           `json:"sender_ip"`
-	TargetMAC       net.HardwareAddr `json:"target_mac"`
-	TargetIP        net.IP           `json:"target_ip"`
+	AddrType        string `json:"addr_type"`
+	Protocol        string `json:"protocol"`
+	HwAddressSize   uint8  `json:"hw_address_size"`
+	ProtAddressSize uint8  `json:"prot_address_size"`
+	Operation       string `json:"operation"`
+	SenderMAC       string `json:"sender_mac"` // "aa:bb:cc:dd:ee:ff"
+	SenderIP        net.IP `json:"sender_ip"`
+	TargetMAC       string `json:"target_mac"` // "aa:bb:cc:dd:ee:ff"
+	TargetIP        net.IP `json:"target_ip"`
 }
 
 // Label returns a short protocol-combination tag like "IPv4/TCP", "IPv6/UDP",

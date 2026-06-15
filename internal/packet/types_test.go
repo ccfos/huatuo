@@ -131,6 +131,59 @@ func TestPacketJSONRoundTrip(t *testing.T) {
 	}
 }
 
+// TestPacketJSONMACWireFormat pins MAC fields to the canonical
+// "aa:bb:cc:dd:ee:ff" literal on the JSON wire. Regression guard: if the
+// field types ever revert to net.HardwareAddr (or any []byte alias without
+// MarshalText), encoding/json silently base64-encodes them. The round-trip
+// test above doesn't catch that because the symmetric base64 decode produces
+// identical bytes; only an external-format assertion exposes the drift.
+func TestPacketJSONMACWireFormat(t *testing.T) {
+	cases := []struct {
+		name string
+		pkt  *Packet
+		want []string // substrings that must appear in the marshaled JSON
+	}{
+		{
+			name: "ether",
+			pkt: &Packet{
+				Ether: &Ether{Src: "aa:bb:cc:dd:ee:ff", Dst: "11:22:33:44:55:66", Type: "IPv4"},
+			},
+			want: []string{
+				`"src":"aa:bb:cc:dd:ee:ff"`,
+				`"dst":"11:22:33:44:55:66"`,
+			},
+		},
+		{
+			name: "arp",
+			pkt: &Packet{
+				ARP: &ARP{
+					Operation: "reply",
+					SenderMAC: "aa:bb:cc:dd:ee:ff", SenderIP: net.IPv4(10, 0, 0, 1),
+					TargetMAC: "11:22:33:44:55:66", TargetIP: net.IPv4(10, 0, 0, 2),
+				},
+			},
+			want: []string{
+				`"sender_mac":"aa:bb:cc:dd:ee:ff"`,
+				`"target_mac":"11:22:33:44:55:66"`,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(tc.pkt)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(string(b), w) {
+					t.Errorf("missing %s in JSON wire output: %s", w, b)
+				}
+			}
+		})
+	}
+}
+
 // TestPacketLabel asserts the Label() string for each protocol combination,
 // since downstream code uses it as the protocol-combination tag.
 func TestPacketLabel(t *testing.T) {
@@ -228,11 +281,10 @@ func TestPacketString(t *testing.T) {
 	}
 }
 
-func mac(s string) net.HardwareAddr {
-	addr, err := net.ParseMAC(s)
-	if err != nil {
+func mac(s string) string {
+	if _, err := net.ParseMAC(s); err != nil {
 		panic(err)
 	}
 
-	return addr
+	return s
 }

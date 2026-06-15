@@ -110,8 +110,8 @@ func Parse(pkt *Hdr) (*Packet, error) {
 
 	if pkt.HasEthHdr == 1 && len(dec.eth.SrcMAC) == 6 {
 		out.Ether = &Ether{
-			Src:    slices.Clone(dec.eth.SrcMAC),
-			Dst:    slices.Clone(dec.eth.DstMAC),
+			Src:    dec.eth.SrcMAC.String(),
+			Dst:    dec.eth.DstMAC.String(),
 			Type:   dec.eth.EthernetType.String(),
 			Length: dec.eth.Length,
 		}
@@ -186,9 +186,9 @@ func Parse(pkt *Hdr) (*Packet, error) {
 				HwAddressSize:   dec.arp.HwAddressSize,
 				ProtAddressSize: dec.arp.ProtAddressSize,
 				Operation:       arpOperationName(dec.arp.Operation),
-				SenderMAC:       net.HardwareAddr(slices.Clone(dec.arp.SourceHwAddress)),
+				SenderMAC:       net.HardwareAddr(dec.arp.SourceHwAddress).String(),
 				SenderIP:        net.IP(slices.Clone(dec.arp.SourceProtAddress)),
-				TargetMAC:       net.HardwareAddr(slices.Clone(dec.arp.DstHwAddress)),
+				TargetMAC:       net.HardwareAddr(dec.arp.DstHwAddress).String(),
 				TargetIP:        net.IP(slices.Clone(dec.arp.DstProtAddress)),
 			}
 		}

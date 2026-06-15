@@ -122,7 +122,7 @@ func TestParseIPv4TCP(t *testing.T) {
 }
 
 func TestParseIPv4UDP(t *testing.T) {
-	pkt := Hdr{EthProto: 0x0800, RawLen: 28} // 20 IPv4 + 8 UDP
+	pkt := Hdr{EthProto: 0x0800, RawLen: 28}       // 20 IPv4 + 8 UDP
 	pkt.Raw[0] = 0x45                              // version=4, ihl=5
 	pkt.Raw[9] = 17                                // protocol=UDP
 	pkt.Raw[12], pkt.Raw[15] = 10, 1               // src 10.0.0.1
@@ -218,11 +218,11 @@ func TestParseWithEthHdr(t *testing.T) {
 	if p.Ether == nil {
 		t.Fatalf("Ether: want non-nil, got nil")
 	}
-	if got := p.Ether.Src.String(); got != "aa:bb:cc:dd:ee:ff" {
-		t.Errorf("Ether.Src: want aa:bb:cc:dd:ee:ff, got %s", got)
+	if p.Ether.Src != "aa:bb:cc:dd:ee:ff" {
+		t.Errorf("Ether.Src: want aa:bb:cc:dd:ee:ff, got %s", p.Ether.Src)
 	}
-	if got := p.Ether.Dst.String(); got != "11:22:33:44:55:66" {
-		t.Errorf("Ether.Dst: want 11:22:33:44:55:66, got %s", got)
+	if p.Ether.Dst != "11:22:33:44:55:66" {
+		t.Errorf("Ether.Dst: want 11:22:33:44:55:66, got %s", p.Ether.Dst)
 	}
 	if p.Ether.Type != "IPv4" {
 		t.Errorf("Ether.Type: want IPv4, got %s", p.Ether.Type)
