@@ -28,8 +28,8 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 readonly DROPWATCH_BIN="${ROOT_DIR}/_output/bin/dropwatch"
 readonly DROPWATCH_BPF="${ROOT_DIR}/_output/bpf/dropwatch.o"
-readonly RATE=2
-readonly DURATION=5
+readonly RATE=1
+readonly DURATION=10
 readonly TARGET_IP="127.0.0.99"
 readonly TARGET_PORT=9999
 readonly EXPECTED_MAX=$((RATE * (DURATION + 1))) # +1s headroom for the first burst
@@ -77,7 +77,17 @@ warns=$(grep -c "rate limit hit" "${OUT}" || true)
 
 log_info "events=${events} (cap=${EXPECTED_MAX}), rate-limit warnings=${warns}"
 
-((events <= EXPECTED_MAX)) || fatal "events ${events} exceed cap ${EXPECTED_MAX}"
-((warns >= 1)) || fatal "expected at least one rate-limit warning under flood"
+# Different kernels/distros vary in how aggressively they coalesce or
+# drop UDP packets to a closed loopback port, so on assertion failure
+# dump OUT to make cross-environment debugging tractable.
+dump_out_and_fail() {
+	log_error "----- dropwatch OUT (${OUT}) -----"
+	cat "${OUT}" >&2 || true
+	log_error "----- end OUT -----"
+	fatal "$*"
+}
+
+((events <= EXPECTED_MAX)) || dump_out_and_fail "events ${events} exceed cap ${EXPECTED_MAX}"
+((warns >= 1)) || dump_out_and_fail "expected at least one rate-limit warning under flood"
 
 log_info "PASS"
