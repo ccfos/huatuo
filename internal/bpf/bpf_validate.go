@@ -27,12 +27,10 @@ func validateName(name string) error {
 		return errInvalidName
 	}
 
-	// Disallow path traversal and nested paths.
-	if strings.Contains(name, "..") {
-		return errInvalidName
-	}
-
-	if filepath.Base(name) != name {
+	// Reject .. traversal; slashes and absolute paths are allowed so the
+	// name may be a CLI-supplied object path (e.g. ./_output/bpf/iotracing.o).
+	cleaned := filepath.Clean(name)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return errInvalidName
 	}
 
