@@ -130,36 +130,32 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 	history := make([]int, historyWindowLength) // circular buffer
 	var currentIndex int
 	var isHistoryFull bool // don't check memory burst until we have enough data
-	var topProcesses []*processMemInfo
 	lastReportTime := time.Now().Add(-24 * time.Hour)
 	_, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historyWindowLength, topNProcesses, burstRatio, anonThreshold)
 	if err != nil {
 		log.Errorf("Fail to checkAndRecordMemoryUsage")
 		return err
 	}
+
+	ticker := time.NewTicker(time.Duration(sampleInterval) * time.Second)
+	defer ticker.Stop()
+
 	for {
-		ticker := time.NewTicker(time.Duration(sampleInterval) * time.Second)
-		stoppedByUser := false
-		for range ticker.C {
-			topProcesses, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historyWindowLength, topNProcesses, burstRatio, anonThreshold)
-			if err != nil {
-				log.Errorf("Fail to checkAndRecordMemoryUsage")
-				return err
-			}
+		var topProcesses []*processMemInfo
+		for len(topProcesses) == 0 {
 			select {
 			case <-ctx.Done():
 				log.Info("Caller request to stop")
-				stoppedByUser = true
-			default:
-			}
-			if len(topProcesses) > 0 || stoppedByUser {
-				break
+				return nil
+			case <-ticker.C:
+				topProcesses, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historyWindowLength, topNProcesses, burstRatio, anonThreshold)
+				if err != nil {
+					log.Errorf("Fail to checkAndRecordMemoryUsage")
+					return err
+				}
 			}
 		}
-		ticker.Stop()
-		if stoppedByUser {
-			break
-		}
+
 		currentTime := time.Now()
 		diff := currentTime.Sub(lastReportTime).Seconds()
 		if diff < float64(intervalTracing) {
@@ -176,5 +172,4 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 			log.Warnf("failed to save tracing data: %v", err)
 		}
 	}
-	return nil
 }
