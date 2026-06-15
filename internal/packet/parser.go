@@ -30,7 +30,7 @@ import (
 const ethernetHeaderLen = 14
 
 // ErrNoLayers is returned by Parse when the frame yields no
-// recognisable layers (truncated buffer or unsupported EtherType).
+// recognizable layers (truncated buffer or unsupported EtherType).
 var ErrNoLayers = errors.New("packet: no layers decoded")
 
 type decoder struct {
@@ -66,9 +66,9 @@ var decoderPool = sync.Pool{
 
 // Parse decodes pkt into a layered *Packet. The set of non-nil
 // layer pointers reflects what was successfully parsed; callers compose
-// behaviour against `p.TCP != nil`, `p.IPv4 != nil`, etc.
+// behavior against `p.TCP != nil`, `p.IPv4 != nil`, etc.
 //
-// Returns (nil, ErrNoLayers) when the buffer yields no recognisable layers.
+// Returns (nil, ErrNoLayers) when the buffer yields no recognizable layers.
 // A decode error that still produced at least one layer returns the partial
 // packet and a nil error — partial frames are useful for dropwatch tracing.
 //

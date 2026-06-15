@@ -567,11 +567,11 @@ func requireBPFPermission(tb testing.TB) {
 		if errors.Is(err, ebpf.ErrNotSupported) ||
 			errors.Is(err, unix.EPERM) ||
 			errors.Is(err, unix.EACCES) {
-			tb.Skipf("skipping: insufficient permissions for bpf: %v", err)
+			tb.Skipf("insufficient permissions for bpf: %v", err)
 		}
-		tb.Fatalf("bpf permission probe failed: %v", err)
+		tb.Fatalf("ebpf.NewMap() = %v, want nil", err)
 	}
-	m.Close()
+	_ = m.Close()
 }
 
 // isPerfEventUnavailable returns true if attaching a perf event is not allowed

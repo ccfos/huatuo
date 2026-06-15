@@ -52,7 +52,6 @@ func buildIPv4TCPSYNHdr() Hdr {
 func TestParseIPv4TCP(t *testing.T) {
 	pkt := buildIPv4TCPSYNHdr()
 	p, err := Parse(&pkt)
-
 	if err != nil {
 		t.Fatalf("Parse err: %v", err)
 	}

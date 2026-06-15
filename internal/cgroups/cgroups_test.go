@@ -39,7 +39,7 @@ import (
 func RequireRoot(tb testing.TB) {
 	tb.Helper()
 	if os.Geteuid() != 0 {
-		tb.Skipf("skipping: test requires root privileges")
+		tb.Skip("test requires root privileges")
 	}
 }
 
