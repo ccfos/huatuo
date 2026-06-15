@@ -62,6 +62,10 @@ func (c *CgroupV2) NewRuntime(path string, spec *specs.LinuxResources) error {
 }
 
 func (c *CgroupV2) DeleteRuntime() error {
+	if c.cgroup == nil {
+		return nil
+	}
+
 	rootfs, err := extv2.LoadSystemd("/", "")
 	if err != nil {
 		return err
@@ -79,10 +83,16 @@ func (c *CgroupV2) DeleteRuntime() error {
 }
 
 func (c *CgroupV2) UpdateRuntime(spec *specs.LinuxResources) error {
+	if c.cgroup == nil {
+		return fmt.Errorf("cgroup not initialized")
+	}
 	return c.cgroup.Update(extv2.ToResources(spec))
 }
 
 func (c *CgroupV2) AddProc(pid uint64) error {
+	if c.cgroup == nil {
+		return fmt.Errorf("cgroup not initialized")
+	}
 	return c.cgroup.AddProc(pid)
 }
 
