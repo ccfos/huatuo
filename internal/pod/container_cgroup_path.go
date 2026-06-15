@@ -37,7 +37,7 @@ func escapeSystemd(part string) string {
 // systemd represents slice hierarchy using `-`, so we need to follow suit when
 // generating the path of slice.
 // Essentially, test-a-b.slice becomes /test.slice/test-a.slice/test-a-b.slice.
-func expandSytemdSlice(slice string) string {
+func expandSystemdSlice(slice string) string {
 	var path, prefix string
 
 	sliceName := strings.TrimSuffix(slice, defaultSystemdSuffix)
@@ -59,7 +59,7 @@ func (paths cgroupPath) ToSystemd() string {
 		newparts = append(newparts, part)
 	}
 
-	return expandSytemdSlice(strings.Join(newparts, "-") + defaultSystemdSuffix)
+	return expandSystemdSlice(strings.Join(newparts, "-") + defaultSystemdSuffix)
 }
 
 func (paths cgroupPath) ToCgroupfs() string {
@@ -83,12 +83,27 @@ func containerCgroupPath(containerID string, pod *corev1.Pod) cgroupPath {
 }
 
 // https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/cm/cgroup_manager_linux.go#L81
-func containerCgroupSuffix(containerID string, pod *corev1.Pod) string {
+func containerCgroupSuffix(containerID string, pod *corev1.Pod) (string, error) {
 	name := containerCgroupPath(containerID, pod)
 
 	if kubeletPodCgroupDriver == "systemd" {
-		return name.ToSystemd()
+		scope, err := containerScopeName(containerID)
+		if err != nil {
+			return "", fmt.Errorf("container scope name: %w", err)
+		}
+		return name.ToSystemd() + "/" + scope, nil
 	}
 
-	return name.ToCgroupfs()
+	return name.ToCgroupfs(), nil
+}
+
+func containerScopeName(containerID string) (string, error) {
+	switch currContainerProvider {
+	case containerProviderDocker:
+		return "docker-" + containerID + ".scope", nil
+	case containerProviderContainerd:
+		return "cri-containerd-" + containerID + ".scope", nil
+	default:
+		return "", fmt.Errorf("container provider not initialized")
+	}
 }
