@@ -52,6 +52,14 @@ const (
 // skbFilterDevMapName is the BPF map name defined in bpf_skb_filter.h.
 const skbFilterDevMapName = "skb_filter_dev_map"
 
+// BPF symbols emitted by BPF_RATELIMIT_IN_MAP_RC(dropwatch) in bpf/dropwatch.c.
+const (
+	rlimitIntervalConst = "bpf_rlimit_interval_dropwatch"
+	rlimitBurstConst    = "bpf_rlimit_burst_dropwatch"
+	rlimitMaxBurstConst = "bpf_rlimit_max_burst_dropwatch"
+	rateLimitEventMap   = "event_bpf_rlimit_dropwatch"
+)
+
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/dropwatch.c -o $BPF_DIR/dropwatch.o
 
 var (
@@ -93,11 +101,27 @@ type dropPacketEvent struct {
 	Stack     [symbol.KsymStackMaxDepth]uint64
 }
 
+// rateLimitEvent mirrors struct bpf_ratelimit in bpf/include/bpf_ratelimit.h;
+// emitted once per window on the first miss so userspace can surface a single
+// warning instead of one per dropped event.
+type rateLimitEvent struct {
+	Interval      uint64
+	Begin         uint64
+	Burst         uint64
+	MaxBurst      uint64
+	Events        uint64
+	NMissed       uint64
+	TotalEvents   uint64
+	TotalNMissed  uint64
+	TotalInterval uint64
+}
+
 // Compile-time layout guards: assert BPF wire struct sizes match the C definitions.
 var (
 	_ = [1]struct{}{}[96-unsafe.Sizeof(packetMeta{})]
 	_ = [1]struct{}{}[136-unsafe.Sizeof(packetRaw{})]
 	_ = [1]struct{}{}[240-unsafe.Offsetof(dropPacketEvent{}.Stack)]
+	_ = [1]struct{}{}[72-unsafe.Sizeof(rateLimitEvent{})]
 )
 
 // loadBPFWithFilter reads the BPF object at bpfPath, injects filterExpr into the
@@ -204,6 +228,31 @@ func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
 	}
 }
 
+// readRateLimitEvents surfaces overflow events as warnings. The BPF side
+// already throttles to one event per window, so the loop itself is unthrottled.
+func readRateLimitEvents(ctx context.Context, r bpf.PerfEventReader, eventsPerSecond uint64) {
+	var ev rateLimitEvent
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		if err := r.ReadInto(&ev); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+
+			log.Errorf("dropwatch: rate-limit reader: %v", err)
+
+			continue
+		}
+
+		log.Warnf("dropwatch: rate limit hit (configured=%d/s, window_events=%d, window_missed=%d, total_events=%d, total_missed=%d)",
+			eventsPerSecond, ev.Events, ev.NMissed, ev.TotalEvents, ev.TotalNMissed)
+	}
+}
+
 func mainAction(c *cli.Context) error {
 	duration := c.Int("duration")
 	outputFmt := c.String("output")
@@ -235,7 +284,17 @@ func mainAction(c *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("dropwatch: %w", err)
 	}
+
 	consts := map[string]any{"filter_dev_mode": devMode}
+
+	// A non-zero rate uses a 1-second window with burst = N events; max_burst
+	// stays 0 (notify only on the first miss per window).
+	maxEventsPerSecond := c.Uint64("max-events-per-second")
+	if maxEventsPerSecond > 0 {
+		consts[rlimitIntervalConst] = uint64(1)
+		consts[rlimitBurstConst] = maxEventsPerSecond
+		consts[rlimitMaxBurstConst] = uint64(0)
+	}
 
 	bpfObj, err := loadBPFWithFilter(c.String("bpf-path"), c.String("filter"), consts)
 	if err != nil {
@@ -273,6 +332,18 @@ func mainAction(c *cli.Context) error {
 		return fmt.Errorf("dropwatch: attach: %w", err)
 	}
 	defer reader.Close()
+
+	// Drain the rate-limit overflow channel only when the limiter is armed —
+	// otherwise the perf map exists but never receives events.
+	if maxEventsPerSecond > 0 {
+		rlReader, err := bpfObj.EventPipeByName(runCtx, rateLimitEventMap, 64)
+		if err != nil {
+			return fmt.Errorf("dropwatch: open rate-limit event pipe: %w", err)
+		}
+		defer rlReader.Close()
+
+		go readRateLimitEvents(runCtx, rlReader, maxEventsPerSecond)
+	}
 
 	bpfObj.WaitDetachByBreaker(runCtx, cancel)
 
@@ -341,6 +412,11 @@ func main() {
 			&cli.StringFlag{
 				Name:  "task-id",
 				Usage: "task ID to associate with this session (requires --output-storage)",
+			},
+			&cli.Uint64Flag{
+				Name:  "max-events-per-second",
+				Usage: "cap reported drops to N events/sec globally (after --device/--filter); 0 disables",
+				Value: 0,
 			},
 		},
 	}

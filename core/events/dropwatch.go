@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,9 +53,8 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 	args := []string{
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "dropwatch.o"),
 		"--output-storage", toolstream.DefaultSockPath,
-	}
-	if cfg != nil && cfg.Dropwatch.Filter != "" {
-		args = append(args, "--filter", cfg.Dropwatch.Filter)
+		"--filter", cfg.Dropwatch.Filter,
+		"--max-events-per-second", strconv.FormatUint(cfg.Dropwatch.MaxEventsPerSecond, 10),
 	}
 
 	cmd := exec.Command(path.Join(internalconfig.CoreBinDir, "dropwatch"), args...)

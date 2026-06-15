@@ -35,8 +35,9 @@ type Config struct {
 	}
 
 	Dropwatch struct {
-		Filter            string `default:"tcp"`
-		ExcludeContainers []string
+		Filter             string `default:"tcp"`
+		MaxEventsPerSecond uint64 `default:"100"`
+		ExcludeContainers  []string
 	}
 
 	Netdev struct {
@@ -50,7 +51,14 @@ type Config struct {
 	IssuesList [][]string
 }
 
-var cfg *Config
+var cfg = &Config{}
 
-// Set sets the events config.
-func Set(c *Config) { cfg = c }
+// Set sets the events config. A nil argument resets to the zero value so
+// callers never need to nil-check cfg.
+func Set(c *Config) {
+	if c == nil {
+		cfg = &Config{}
+		return
+	}
+	cfg = c
+}
