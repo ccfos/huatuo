@@ -171,7 +171,8 @@ func anyfsAttachOptions() []bpf.AttachOption {
 	var opts []bpf.AttachOption
 
 	if hasFilesystem("ext4") {
-		opts = append(opts,
+		opts = append(
+			opts,
 			bpf.AttachOption{ProgramName: "bpf_anyfs_file_read_iter", Symbol: "ext4_file_read_iter"},
 			bpf.AttachOption{ProgramName: "bpf_anyfs_file_write_iter", Symbol: "ext4_file_write_iter"},
 			bpf.AttachOption{ProgramName: "bpf_anyfs_filemap_page_mkwrite", Symbol: "ext4_page_mkwrite"},
@@ -179,7 +180,8 @@ func anyfsAttachOptions() []bpf.AttachOption {
 	}
 
 	if hasFilesystem("xfs") {
-		opts = append(opts,
+		opts = append(
+			opts,
 			bpf.AttachOption{ProgramName: "bpf_anyfs_file_read_iter", Symbol: "xfs_file_read_iter"},
 			bpf.AttachOption{ProgramName: "bpf_anyfs_file_write_iter", Symbol: "xfs_file_write_iter"},
 			bpf.AttachOption{ProgramName: "bpf_anyfs_filemap_page_mkwrite", Symbol: "xfs_filemap_page_mkwrite"},
