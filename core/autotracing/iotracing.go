@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,21 +16,50 @@ package autotracing
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"os/exec"
 	"path"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs/blockdevice"
+	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
 
+const iotracingToolName = "iotracing"
+
+// pendingReasons correlates an inflight subprocess invocation (keyed by task ID)
+// with the disk-event reason captured by the core. The handler attaches it to
+// the saved record because the cmd has no concept of a trigger reason.
+var pendingReasons sync.Map
+
 func init() {
-	tracing.RegisterEventTracing("iotracing", newIoTracing)
+	tracing.RegisterEventTracing(iotracingToolName, newIoTracing)
+	toolstream.RegisterDefault[*types.IOTracingReport](iotracingToolName, handleIotracingEvent)
+}
+
+func handleIotracingEvent(sess *toolstream.Session, ev *types.IOTracingReport) error {
+	var reason *ReasonSnapshot
+	if v, ok := pendingReasons.LoadAndDelete(sess.TaskID); ok {
+		reason = v.(*ReasonSnapshot)
+	}
+
+	return tracing.Save(&tracing.WriteRequest{
+		TracerName: iotracingToolName,
+		TracerTime: time.Now(),
+		TracerData: &IOStatusData{
+			Reason:      reason,
+			Processes:   ev.Processes,
+			StallStacks: ev.StallStacks,
+		},
+		TracerRunType: tracing.TracerRunTypeAutotracing,
+	})
 }
 
 func newIoTracing() (*tracing.EventTracingAttr, error) {
@@ -45,33 +74,12 @@ type ioTracing struct{}
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
 
-// IOStatusData contains IO status information.
+// IOStatusData is the saved record: cmd-supplied process/stall data plus the
+// core-side reason snapshot that triggered the trace.
 type IOStatusData struct {
-	Reason      *ReasonSnapshot `json:"reason_snapshot"`
-	ProcessData []ProcFileData  `json:"process_io_data"`
-	IOStack     []IOStack       `json:"timeout_io_stack"`
-}
-
-// IOStack records io_schedule backtrace.
-type IOStack struct {
-	Pid               uint32   `json:"pid"`
-	Comm              string   `json:"comm"`
-	ContainerHostname string   `json:"container_hostname"`
-	Latency           uint64   `json:"latency_us"`
-	Stack             []string `json:"stack"`
-}
-
-// ProcFileData records process information.
-type ProcFileData struct {
-	Pid               uint32   `json:"pid"`
-	Comm              string   `json:"comm"`
-	ContainerHostname string   `json:"container_hostname"`
-	FsRead            uint64   `json:"fs_read"`
-	FsWrite           uint64   `json:"fs_write"`
-	DiskRead          uint64   `json:"disk_read"`
-	DiskWrite         uint64   `json:"disk_write"`
-	FileStat          []string `json:"file_stat"`
-	FileCount         uint64   `json:"file_count"`
+	Reason      *ReasonSnapshot            `json:"reason_snapshot"`
+	Processes   []types.ProcessFileIOStats `json:"process_file_io_stats"`
+	StallStacks []types.IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
 }
 
 // DiskStatus represents calculated delta metrics
@@ -250,7 +258,9 @@ func waitingDiskEvents(ctx context.Context, intervalSeconds uint64, thresholds I
 	}
 }
 
-// Start do the io tracer work
+// Start waits for a disk-burst trigger then runs the iotracing tool as a
+// subprocess; results stream back via toolstream. The trigger reason is
+// stashed under a generated task ID so handleIotracingEvent can attach it.
 func (c *ioTracing) Start(ctx context.Context) error {
 	thresholds := IoThresholds{
 		RbpsThreshold:  cfg.IOTracing.RbpsThreshold,
@@ -259,8 +269,6 @@ func (c *ioTracing) Start(ctx context.Context) error {
 		AwaitThreshold: cfg.IOTracing.AwaitThreshold,
 	}
 
-	runIotracingToolTimeout := cfg.IOTracing.RunTracingToolTimeout
-
 	reasonSnapshot, err := waitingDiskEvents(ctx, 5, thresholds)
 	if err != nil {
 		return err
@@ -268,43 +276,42 @@ func (c *ioTracing) Start(ctx context.Context) error {
 
 	log.Debugf("wait disk events with reason snapshot: %+v", reasonSnapshot)
 
-	taskID := tracing.NewTask("iotracing", time.Duration(runIotracingToolTimeout)*time.Second,
-		tracing.TaskStorageStdout, []string{"--bpf-path", path.Join(internalconfig.CoreBpfDir, "iotracing.o"), "--json"})
+	duration := cfg.IOTracing.RunTracingToolTimeout
+	taskID := fmt.Sprintf("iotracing-%d", time.Now().UnixNano())
 
-	for {
-		select {
-		case <-ctx.Done():
-			return types.ErrExitByCancelCtx
-		case <-time.After(1 * time.Second):
-			result := tracing.Result(taskID)
+	pendingReasons.Store(taskID, reasonSnapshot)
+	defer pendingReasons.Delete(taskID)
 
-			log.Debugf("tracing tool result: %+v", result)
+	args := []string{
+		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "iotracing.o"),
+		"--output-storage", toolstream.DefaultSockPath,
+		"--task-id", taskID,
+		"--duration", strconv.FormatUint(duration, 10),
+	}
 
-			switch result.TaskStatus {
-			case tracing.StatusCompleted:
-				if result.TaskErr != nil {
-					return result.TaskErr
-				}
+	cmd := exec.Command(path.Join(internalconfig.CoreBinDir, iotracingToolName), args...)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start iotracing: %w", err)
+	}
 
-				ioStatusData := IOStatusData{
-					Reason: reasonSnapshot,
-				}
-				if err := json.Unmarshal(result.TaskData, &ioStatusData); err != nil {
-					return fmt.Errorf("failed to unmarshal ioStatusData: %w", err)
-				}
+	log.Infof("iotracing started pid=%d", cmd.Process.Pid)
 
-				if err := tracing.Save(&tracing.WriteRequest{
-					TracerName:    "iotracing",
-					TracerTime:    time.Now(),
-					TracerData:    &ioStatusData,
-					TracerRunType: tracing.TracerRunTypeAutotracing,
-				}); err != nil {
-					log.Warnf("failed to save tracing data: %v", err)
-				}
-				return nil
-			case tracing.StatusFailed:
-				return result.TaskErr
-			}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		<-done
+		log.Info("iotracing stopped")
+		return nil
+	case werr := <-done:
+		if werr != nil {
+			return fmt.Errorf("iotracing exited: %w", werr)
 		}
+		log.Info("iotracing exited")
+		return nil
 	}
 }

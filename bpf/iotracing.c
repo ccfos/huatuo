@@ -14,7 +14,7 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define PAGE_SIZE 4096
 
 // Device filter configuration
-volatile const u32 FILTER_DEVS[16]	= {};
+volatile const u32 FILTER_DEV_IDS[16]	= {};
 volatile const u32 FILTER_DEV_COUNT	= 0;
 volatile const u64 FILTER_EVENT_TIMEOUT = 100000000;
 
@@ -28,7 +28,7 @@ static __always_inline int should_process_device(u32 dev)
 		return 1;
 
 	for (int i = 0; i < FILTER_DEV_COUNT && i < 16; i++)
-		if (FILTER_DEVS[i] == dev)
+		if (FILTER_DEV_IDS[i] == dev)
 			return 1;
 
 	return 0;
