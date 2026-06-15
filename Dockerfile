@@ -12,9 +12,14 @@ ARG BUILD_MODE
 WORKDIR ${BUILD_PATH}
 ENV PATH=$PATH:/usr/lib/llvm15/bin
 COPY . .
+
 RUN set -x; \
     apt-get update && apt-get install -y --no-install-recommends \
-    make clang libbpf-dev bpftool curl git binutils-gold musl-tools capnproto-dev &&\
+    make clang libbpf-dev bpftool curl git binutils-gold musl-tools capnproto &&\
+    go install github.com/vektra/mockery/v2@latest &&\
+    go install capnproto.org/go/capnp/v3/capnpc-go@latest
+
+RUN set -x; \
     make BUILD_MODE=${BUILD_MODE} &&\
     mkdir -p ${RUN_PATH} &&\
     cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/ &&\
