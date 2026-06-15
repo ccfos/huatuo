@@ -14,85 +14,52 @@
 
 package main
 
-import (
-	"container/heap"
-	"sort"
-)
+import "sort"
 
-// fileEntry pairs a BPF file-IO record with its sortable size; one
-// element of the per-pid file heap.
+// fileEntry pairs a BPF file-IO record with its sortable size.
 type fileEntry struct {
 	Record *bpfFilesystemIO
 	Size   uint64
 }
 
-// fileHeap is a max-heap of *fileEntry ordered by Size.
-type fileHeap []*fileEntry
-
-func (h fileHeap) Len() int           { return len(h) }
-func (h fileHeap) Less(i, j int) bool { return h[i].Size > h[j].Size }
-func (h fileHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-
-func (h *fileHeap) Push(x any) {
-	*h = append(*h, x.(*fileEntry))
+// pidGroup is one pid's file-IO records and their summed Size.
+type pidGroup struct {
+	Pid   uint32
+	Files []*fileEntry
+	Total uint64
 }
 
-func (h *fileHeap) Pop() any {
-	old := *h
-	n := len(old)
-	item := old[n-1]
-	*h = old[:n-1]
+// ProcessIOTable groups IO records by pid for top-N ranking.
+type ProcessIOTable map[uint32]*pidGroup
 
-	return item
-}
-
-// ProcessIOTable groups IO records by pid: each pid owns a max-heap
-// of its per-file stats and a running aggregate used to rank pids.
-type ProcessIOTable struct {
-	queues map[uint32]*fileHeap
-	totals map[uint32]uint64
-}
-
-func NewProcessIOTable() *ProcessIOTable {
-	return &ProcessIOTable{
-		queues: make(map[uint32]*fileHeap),
-		totals: make(map[uint32]uint64),
-	}
-}
-
-// Add pushes entry onto pid's heap and accumulates entry.Size into
-// pid's aggregate.
-func (t *ProcessIOTable) Add(pid uint32, entry *fileEntry) {
-	h, ok := t.queues[pid]
-	if !ok {
-		h = &fileHeap{}
-		t.queues[pid] = h
+func (t ProcessIOTable) Add(pid uint32, e *fileEntry) {
+	g := t[pid]
+	if g == nil {
+		g = &pidGroup{Pid: pid}
+		t[pid] = g
 	}
 
-	heap.Push(h, entry)
-	t.totals[pid] += entry.Size
+	g.Files = append(g.Files, e)
+	g.Total += e.Size
 }
 
-// TopN returns at most n pids ordered by descending aggregate IO.
-func (t *ProcessIOTable) TopN(n int) []uint32 {
-	pids := make([]uint32, 0, len(t.totals))
-	for pid := range t.totals {
-		pids = append(pids, pid)
+// TopN returns up to n groups ordered by descending Total; each
+// returned group's Files is sorted descending by Size in place.
+func (t ProcessIOTable) TopN(n int) []*pidGroup {
+	groups := make([]*pidGroup, 0, len(t))
+	for _, g := range t {
+		groups = append(groups, g)
 	}
 
-	sort.Slice(pids, func(i, j int) bool {
-		return t.totals[pids[i]] > t.totals[pids[j]]
-	})
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Total > groups[j].Total })
 
-	if n < len(pids) {
-		pids = pids[:n]
+	if n < len(groups) {
+		groups = groups[:n]
 	}
 
-	return pids
-}
+	for _, g := range groups {
+		sort.Slice(g.Files, func(i, j int) bool { return g.Files[i].Size > g.Files[j].Size })
+	}
 
-// Files returns the per-file max-heap for pid, or nil if pid has no
-// recorded IO.
-func (t *ProcessIOTable) Files(pid uint32) *fileHeap {
-	return t.queues[pid]
+	return groups
 }

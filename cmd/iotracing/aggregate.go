@@ -15,25 +15,23 @@
 package main
 
 import (
-	"container/heap"
-
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/types"
 )
 
-// buildProcessFileIOStats drains files (a max-heap ordered by Size) into a
-// ProcessFileIOStats: every entry contributes to the per-pid totals, while
-// only the top cfg.maxFilesPerProcess produce structured per-file rows.
-// cfg.durationSecond converts raw byte counters to per-second rates.
-func buildProcessFileIOStats(pid uint32, files *fileHeap, cfg ioConfig) types.ProcessFileIOStats {
+// buildProcessFileIOStats reduces one pidGroup into a ProcessFileIOStats:
+// every entry contributes to the per-pid totals, while only the first
+// cfg.maxFilesPerProcess (the highest-IO files, since g.Files is pre-sorted)
+// produce structured per-file rows. cfg.durationSecond converts raw byte
+// counters to per-second rates.
+func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats {
 	var read, write, dread, dwrite uint64
 	var fileStats []types.FileIOStats
 	var comm string
 
-	tableLength := uint64(files.Len())
-	for i := uint64(0); i < tableLength; i++ {
-		record := heap.Pop(files).(*fileEntry).Record
+	for i, fe := range g.Files {
+		record := fe.Record
 
 		wbps := record.FsWriteBytes / cfg.durationSecond
 		rbps := record.FsReadBytes / cfg.durationSecond
@@ -45,13 +43,13 @@ func buildProcessFileIOStats(pid uint32, files *fileHeap, cfg ioConfig) types.Pr
 		dread += drbps
 		dwrite += dwbps
 
-		// Heap pops highest-IO first; its comm becomes the fallback
-		// when /proc/<pid>/comm can't be read.
+		// First (highest-IO) record's comm is the fallback when
+		// /proc/<pid>/comm can't be read.
 		if comm == "" {
 			comm = bytesutil.ToStr(record.Comm[:])
 		}
 
-		if i >= cfg.maxFilesPerProcess {
+		if uint64(i) >= cfg.maxFilesPerProcess {
 			continue
 		}
 
@@ -76,22 +74,22 @@ func buildProcessFileIOStats(pid uint32, files *fileHeap, cfg ioConfig) types.Pr
 		})
 	}
 
-	cmdline, err := executil.ProcNameByPid(pid)
+	cmdline, err := executil.ProcNameByPid(g.Pid)
 	if err != nil {
 		cmdline = comm
 	}
 
 	out := types.ProcessFileIOStats{
+		Pid:               g.Pid,
 		Comm:              cmdline,
-		TotalDiskReadBps:  dread,
-		TotalDiskWriteBps: dwrite,
 		TotalFsReadBps:    read,
 		TotalFsWriteBps:   write,
-		Pid:               pid,
-		TotalFileCount:    tableLength,
+		TotalDiskReadBps:  dread,
+		TotalDiskWriteBps: dwrite,
 		TotalFiles:        fileStats,
+		TotalFileCount:    uint64(len(g.Files)),
 	}
-	out.ContainerHostname, _ = executil.HostnameByPid(pid)
+	out.ContainerHostname, _ = executil.HostnameByPid(g.Pid)
 
 	return out
 }

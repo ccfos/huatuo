@@ -145,7 +145,7 @@ func dumpAndAggregate(b bpf.BPF, cfg ioConfig) ([]types.ProcessFileIOStats, erro
 		return nil, fmt.Errorf("dump %s: %w", bpfSourceMapName, err)
 	}
 
-	table := NewProcessIOTable()
+	table := make(ProcessIOTable)
 
 	for _, dataRaw := range iodata {
 		var record bpfFilesystemIO
@@ -158,16 +158,11 @@ func dumpAndAggregate(b bpf.BPF, cfg ioConfig) ([]types.ProcessFileIOStats, erro
 		table.Add(record.Pid, &fileEntry{Record: &record, Size: blkSize})
 	}
 
-	pids := table.TopN(int(cfg.maxProcess))
+	groups := table.TopN(int(cfg.maxProcess))
 
-	processes := make([]types.ProcessFileIOStats, 0, len(pids))
-	for _, pid := range pids {
-		files := table.Files(pid)
-		if files == nil {
-			continue
-		}
-
-		processes = append(processes, buildProcessFileIOStats(pid, files, cfg))
+	processes := make([]types.ProcessFileIOStats, 0, len(groups))
+	for _, g := range groups {
+		processes = append(processes, buildProcessFileIOStats(g, cfg))
 	}
 
 	return processes, nil
