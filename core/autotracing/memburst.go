@@ -16,6 +16,7 @@ package autotracing
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -86,8 +87,7 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 		"Inactive(anon)": true,
 	})
 	if err != nil {
-		log.Errorf("Error reading memory info: %v\n", err)
-		return []*processMemInfo{}, err 
+		return []*processMemInfo{}, fmt.Errorf("read memory info: %w", err)
 	}
 	currentSum := memInfo["Active(anon)"] + memInfo["Inactive(anon)"]
 	history[*currentIndex] = currentSum
