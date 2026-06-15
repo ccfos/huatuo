@@ -32,10 +32,15 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
-// RequireRoot if the process is not running as root. Returns false
+// RequireRoot skips the test when the process is not running as root. Cgroup
+// mutation needs CAP_SYS_ADMIN; without it the test would fail noisily on every
+// unprivileged run (containers, CI).
 // TODO: move the func to internal/testutils
-func RequireRoot(tb testing.TB) bool {
-	return os.Geteuid() == 0
+func RequireRoot(tb testing.TB) {
+	tb.Helper()
+	if os.Geteuid() != 0 {
+		tb.Skipf("skipping: test requires root privileges")
+	}
 }
 
 func SetupRuntimeCgroupWithClean(t *testing.T) (Cgroup, string) {
@@ -247,9 +252,7 @@ func TestCgroupManager(t *testing.T) {
 }
 
 func TestCgroupInterfaces(t *testing.T) {
-	if !RequireRoot(t) {
-		t.Fatalf("Cgroup test requires root privileges")
-	}
+	RequireRoot(t)
 
 	cgr, err := NewManager()
 	if err != nil {

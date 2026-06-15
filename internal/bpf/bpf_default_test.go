@@ -34,6 +34,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 func TestMain(m *testing.M) {
@@ -146,6 +147,7 @@ func TestLoadBpf_DefaultBpfObjDir_Unreadable(t *testing.T) {
 
 func TestLoadBpf_LoadsFromDir(t *testing.T) {
 	t.Helper()
+	requireBPFPermission(t)
 
 	old := DefaultBpfObjDir
 	DefaultBpfObjDir = t.TempDir()
@@ -532,6 +534,7 @@ func loadMinimalObjBytes(t *testing.T) []byte {
 
 func loadMinimalBpfFromBytes(t *testing.T) *defaultBPF {
 	t.Helper()
+	requireBPFPermission(t)
 
 	objBytes := loadMinimalObjBytes(t)
 	obj, err := LoadBpfFromBytes("test_minimal.elf", objBytes, nil)
@@ -546,6 +549,29 @@ func loadMinimalBpfFromBytes(t *testing.T) *defaultBPF {
 	t.Cleanup(func() { b.Close() })
 
 	return b
+}
+
+// requireBPFPermission skips the test when the process lacks CAP_BPF, probed
+// via a tiny map create. Keeps unprivileged environments (containers, CI) from
+// failing with EPERM on every BPF-loading test.
+func requireBPFPermission(tb testing.TB) {
+	tb.Helper()
+
+	m, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.Hash,
+		KeySize:    4,
+		ValueSize:  4,
+		MaxEntries: 1,
+	})
+	if err != nil {
+		if errors.Is(err, ebpf.ErrNotSupported) ||
+			errors.Is(err, unix.EPERM) ||
+			errors.Is(err, unix.EACCES) {
+			tb.Skipf("skipping: insufficient permissions for bpf: %v", err)
+		}
+		tb.Fatalf("bpf permission probe failed: %v", err)
+	}
+	m.Close()
 }
 
 // isPerfEventUnavailable returns true if attaching a perf event is not allowed

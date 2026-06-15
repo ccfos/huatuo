@@ -112,6 +112,7 @@ func TestPerfEventReader_ReadInto_And_Close_ProgTest(t *testing.T) {
 	// This is the additional coverage you requested (modeled after ebpf/perf/reader_test.go):
 	// Use prog.Test(...) to emit one perf sample and ensure ReadInto consumes it.
 	t.Helper()
+	requireBPFPermission(t)
 
 	events := perfEventArray(t)
 	rd, err := perf.NewReader(events, 4096)
