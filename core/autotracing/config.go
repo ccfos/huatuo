@@ -84,9 +84,14 @@ type Config struct {
 	IssuesList [][]string
 }
 
-var cfg *Config
+var cfg = &Config{}
 
-// SetConfig sets the autotracing config and initializes default values for map fields.
-func SetConfig(c *Config) {
+// Set sets the autotracing config. A nil argument resets to the zero value so
+// callers never need to nil-check cfg.
+func Set(c *Config) {
+	if c == nil {
+		cfg = &Config{}
+		return
+	}
 	cfg = c
 }
