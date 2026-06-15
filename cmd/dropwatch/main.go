@@ -16,6 +16,8 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -38,6 +40,17 @@ import (
 	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/types"
 )
+
+// Device filter mode passed via RewriteConstants to bpf_skb_filter.h.
+// Values must match the filter_dev_mode semantics there.
+const (
+	devFilterModeOff       uint32 = iota // disabled — all devices pass
+	devFilterModeWhitelist               // only listed ifindexes pass
+	devFilterModeBlacklist               // listed ifindexes are dropped
+)
+
+// skbFilterDevMapName is the BPF map name defined in bpf_skb_filter.h.
+const skbFilterDevMapName = "skb_filter_dev_map"
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/dropwatch.c -o $BPF_DIR/dropwatch.o
 
@@ -100,25 +113,59 @@ func loadBPFWithFilter(bpfPath, filterExpr string, consts map[string]any) (bpf.B
 	return pcapfilter.Load(bpfName, bpfBytes, filterExpr, consts)
 }
 
-// deviceFilterConsts resolves devName to an ifindex and returns the consts map
-// expected by bpf_skb_filter.h. Returns nil consts when devName is empty
-// (filter disabled at the BPF level by leaving filter_ifindex_included == 0).
-func deviceFilterConsts(devName string, excluded bool) (map[string]any, error) {
-	if devName == "" {
-		return nil, nil
+// parseDeviceFlags requires the mutual-exclusivity invariant: at most one
+// of device / excluded is non-empty. The app's Before hook enforces it.
+func parseDeviceFlags(device, excluded string) (uint32, []uint32, error) {
+	var (
+		list string
+		mode uint32
+	)
+	switch {
+	case device != "":
+		list, mode = device, devFilterModeWhitelist
+	case excluded != "":
+		list, mode = excluded, devFilterModeBlacklist
+	default:
+		return devFilterModeOff, nil, nil
 	}
-	iface, err := net.InterfaceByName(devName)
-	if err != nil {
-		return nil, fmt.Errorf("--device %q: %w", devName, err)
+
+	var ifindexes []uint32
+	for _, name := range strings.Split(list, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		iface, err := net.InterfaceByName(name)
+		if err != nil {
+			return 0, nil, fmt.Errorf("device %q: %w", name, err)
+		}
+		ifindexes = append(ifindexes, uint32(iface.Index))
 	}
-	var excl uint32
-	if excluded {
-		excl = 1
+	if len(ifindexes) == 0 {
+		return 0, nil, errors.New("no valid interfaces specified")
 	}
-	return map[string]any{
-		"filter_ifindex_included": uint32(iface.Index),
-		"filter_ifindex_excluded": excl,
-	}, nil
+	return mode, ifindexes, nil
+}
+
+// installDeviceFilter loads ifindexes into skb_filter_dev_map. A single
+// map serves both whitelist and blacklist modes; filter_dev_mode decides
+// how a hit is interpreted on the BPF side.
+func installDeviceFilter(b bpf.BPF, mode uint32, ifindexes []uint32) error {
+	if mode == devFilterModeOff {
+		return nil
+	}
+	mapID := b.MapIDByName(skbFilterDevMapName)
+	if mapID == 0 {
+		return fmt.Errorf("bpf map %q not found", skbFilterDevMapName)
+	}
+
+	items := make([]bpf.MapItem, 0, len(ifindexes))
+	for _, idx := range ifindexes {
+		key := make([]byte, 4)
+		binary.NativeEndian.PutUint32(key, idx)
+		items = append(items, bpf.MapItem{Key: key, Value: []byte{1}})
+	}
+	return b.WriteMapItems(mapID, items)
 }
 
 func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
@@ -184,16 +231,21 @@ func mainAction(c *cli.Context) error {
 		defer sockClient.End()
 	}
 
-	consts, err := deviceFilterConsts(c.String("device"), c.Bool("device-excluded"))
+	devMode, devIfindexes, err := parseDeviceFlags(c.String("device"), c.String("device-excluded"))
 	if err != nil {
 		return fmt.Errorf("dropwatch: %w", err)
 	}
+	consts := map[string]any{"filter_dev_mode": devMode}
 
 	bpfObj, err := loadBPFWithFilter(c.String("bpf-path"), c.String("filter"), consts)
 	if err != nil {
 		return fmt.Errorf("dropwatch: load bpf: %w", err)
 	}
 	defer bpfObj.Close()
+
+	if err := installDeviceFilter(bpfObj, devMode, devIfindexes); err != nil {
+		return fmt.Errorf("dropwatch: device filter map: %w", err)
+	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -267,11 +319,11 @@ func main() {
 			},
 			&cli.StringFlag{
 				Name:  "device",
-				Usage: "interface to filter on (e.g. eth0); empty = all devices",
+				Usage: "comma-separated whitelist of interfaces (e.g. eth0,eth1); empty = all devices. SKBs without a net_device are dropped",
 			},
-			&cli.BoolFlag{
+			&cli.StringFlag{
 				Name:  "device-excluded",
-				Usage: "treat --device as a blacklist (drop matching) instead of whitelist (pass matching)",
+				Usage: "comma-separated blacklist of interfaces (e.g. eth0,eth1); mutually exclusive with --device. SKBs without a net_device pass",
 			},
 			&cli.IntFlag{
 				Name:  "duration",
@@ -300,6 +352,9 @@ func main() {
 		}
 		if c.IsSet("output") && c.String("output-storage") != "" {
 			log.Warnf("--output is ignored because --output-storage is set")
+		}
+		if c.String("device") != "" && c.String("device-excluded") != "" {
+			return errors.New("--device and --device-excluded are mutually exclusive")
 		}
 		return nil
 	}

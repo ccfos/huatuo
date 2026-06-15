@@ -171,9 +171,10 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 	 * Read directly from skb to avoid the ambiguity. */
 	skb_protocol = bpf_ntohs(BPF_CORE_READ(skb, protocol));
 
-	/* device filter: rewritten at load time via filter_ifindex_included /
-	 * filter_ifindex_excluded. filter_ifindex_included == 0 (default) means all
-	 * devices pass; cheap check, runs before the pcap bytecode below.
+	/* device filter: filter_dev_mode is rewritten at load time and
+	 * skb_filter_dev_map / skb_filter_dev_excluded_map are populated from
+	 * userspace. filter_dev_mode == 0 (default) means all devices pass;
+	 * cheap check, runs before the pcap bytecode below.
 	 */
 	if (!skb_filter_pass_dev(skb))
 		return 0;
