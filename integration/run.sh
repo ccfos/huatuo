@@ -16,6 +16,15 @@
 
 set -euo pipefail
 
+# Integration tests need root: unshare --uts/--mount, BPF loading, and the
+# test_*.sh cases themselves all require CAP_SYS_ADMIN/CAP_BPF. Skip cleanly
+# when invoked without privilege so `make integration` is a no-op for
+# unprivileged developers and CI lanes that don't grant root.
+if [[ ${EUID} -ne 0 ]]; then
+	echo "[INTEGRATION TEST] skipped: requires root (EUID=${EUID})" >&2
+	exit 0
+fi
+
 # Run the core integration tests.
 unshare --uts --mount bash -c '
 	mount --make-rprivate /
