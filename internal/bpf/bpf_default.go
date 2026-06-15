@@ -131,8 +131,7 @@ func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 	coll, err := ebpf.NewCollection(specs)
 	if err != nil {
 		return nil, fmt.Errorf("can't new the bpf collection: %w", err)
-	}
-
+	} 
 	b := &defaultBPF{
 		name:         bpfName,
 		mapSpecs:     make(map[uint32]mapSpec),
