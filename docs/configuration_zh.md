@@ -73,7 +73,7 @@ BlackList = ["netdev_hw", "metax_gpu"]
 # Default is 2.0 CPU.
 #
 # - LimitMem
-# The memory resource limitted for huatuo-bamai process.
+# The memory resource limited for huatuo-bamai process.
 # Default is 2048MB.
 #
 [RuntimeCgroup]
@@ -404,7 +404,7 @@ BlackList = ["netdev_hw", "metax_gpu"]
 # - ThresholdLoad
 # The loadavg threshold value, when reaching this threshold, dload profiling
 # is triggered.
-# Defalut: 5
+# Default: 5
 #
 # - Interval
 # The sample interval of the load for all containers.
@@ -445,21 +445,21 @@ BlackList = ["netdev_hw", "metax_gpu"]
 # - WbpsThreshold
 # Max write bytes per second, when reaching this threshold, iotracing is triggered.
 # Please note that if it is an NVMe device, it must also meet the UtilThreshold.
-# Defalut: 1500 MB/s
+# Default: 1500 MB/s
 #
 # - RbpsThreshold
 # Max read bytes per second, when reaching this threshold, iotracing is triggered.
 # Please note that if it is an NVMe device, it must also meet the UtilThreshold.
-# Defalut: 2000 MB/s
+# Default: 2000 MB/s
 #
 # - UtilThreshold
 # Disk utilization, Percentage of time the disk is busy. If this is consistently
 # above 80-90%, the disk may be a bottleneck.
-# Defalut: 90%
+# Default: 90%
 #
 # - AwaitThreshold
 # Await (Average IO wait time in ms): High values indicate slow disk response times.
-# Defalut: 100ms
+# Default: 100ms
 #
 # - RunTracingToolTimeout
 # The executing time of this tracing tool.
@@ -467,11 +467,11 @@ BlackList = ["netdev_hw", "metax_gpu"]
 #
 # - MaxProcDump
 # The number of processes displayed by iotracing tool.
-# Defalut: 10
+# Default: 10
 #
 # - MaxFilesPerProcDump
 # The number of files per process displayed by iotracing tool.
-# Defalut: 5
+# Default: 5
 #
 [AutoTracing.IOTracing]
 	# WbpsThreshold = 1500
@@ -613,7 +613,7 @@ IssuesList = []
 	# - DisabledThreshold
 	# When the disable duration of softirq exceeds the threshold, huatuo-bamai
 	# will collect kernel context.
-	# Defalut: 10000000 in nanoseconds, 10ms
+	# Default: 10000000 in nanoseconds, 10ms
 	#
 	[EventTracing.Softirq]
 		# DisabledThreshold = 10000000
