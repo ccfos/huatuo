@@ -106,13 +106,13 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 		lastUpdate:       now,
 	}
 
-	deltaHierarchyWaitSum = stat.hierarchyWaitSum - cpu.hierarchyWaitSum
-	if deltaHierarchyWaitSum <= 0 {
+	if stat.hierarchyWaitSum <= cpu.hierarchyWaitSum {
 		deltaThrottledSum = 0
 		deltaHierarchyWaitSum = 0
 		deltaInnerWaitSum = 0
 		deltaExterWaitSum = 0
 	} else {
+		deltaHierarchyWaitSum = stat.hierarchyWaitSum - cpu.hierarchyWaitSum
 		deltaThrottledSum = stat.throttledTime - cpu.throttledTime
 		deltaInnerWaitSum = stat.innerWaitSum - cpu.innerWaitSum
 
