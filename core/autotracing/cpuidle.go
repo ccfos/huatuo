@@ -43,7 +43,14 @@ func init() {
 var cgroupMgr cgroups.Cgroup
 
 func newCPUIdle() (*tracing.EventTracingAttr, error) {
-	cgroupMgr, _ = cgroups.NewManager()
+	cgroup, err := cgroups.NewManager()
+	if err != nil {
+		return nil, err
+	}
+	if cgroup == nil {
+		return nil, fmt.Errorf("cgroup manager is nil")
+	}
+	cgroupMgr = cgroup
 
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuIdleTracing{},
