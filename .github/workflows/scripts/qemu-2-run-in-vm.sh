@@ -125,6 +125,8 @@ function prapre_test_env() {
 
 	which mockery || go install github.com/vektra/mockery/v2@latest
 	which capnpc-go || go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
+	which shfmt || go install mvdan.cc/sh/v3/cmd/shfmt@latest
+
 	git config --global --add safe.directory /mnt/host
 }
 
