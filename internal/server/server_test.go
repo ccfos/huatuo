@@ -42,6 +42,22 @@ func TestNewServerRegistersMetricsRouteWithoutRegistry(t *testing.T) {
 	}
 }
 
+func TestNewServerRegistersHealthzRoute(t *testing.T) {
+	s := NewServer(nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody)
+	recorder := httptest.NewRecorder()
+
+	s.engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Errorf("response body = %q, want empty body", recorder.Body.String())
+	}
+}
+
 func TestPromServerHandlerWithRegistry(t *testing.T) {
 	s := &server{promRegistry: prometheus.NewRegistry()}
 
