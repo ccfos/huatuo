@@ -140,7 +140,7 @@ huatuo_bamai_pod_count() {
 integration_test_huatuo_bamai_config() {
 	cat >"${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" <<'EOF'
 # the blacklist for tracing and metrics
-BlackList = ["metax_gpu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq"]
+BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq"]
 EOF
 }
 
