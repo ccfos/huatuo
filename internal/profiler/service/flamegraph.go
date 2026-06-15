@@ -36,7 +36,7 @@ type ElasticSearchConfig struct {
 	Address, Username, Password, Index string
 }
 
-// InitalizeProfileFlamegraph initializes profiling flamegraph.
+// InitializeProfileFlamegraph initializes profiling flamegraph.
 func InitializeProfileFlamegraph(esConfig *ElasticSearchConfig) (err error) {
 	profileStorage, err = NewProfileStorage(
 		esConfig.Address,
@@ -114,7 +114,7 @@ func SelectMergeStacktraces(req *querierv1.SelectMergeStacktracesRequest) (*quer
 	profile := profilesMerge.Profile()
 	sampleType := profileTypes[1]
 
-	// conver profilev1.Profile to phlaremodel.Tree
+	// convert profilev1.Profile to phlaremodel.Tree
 	phlaremodelTree := new(phlaremodel.Tree)
 
 	// Find the index of the sample type we're interested in
