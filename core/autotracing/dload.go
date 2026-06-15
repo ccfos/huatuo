@@ -372,13 +372,14 @@ func (c *dloadTracing) Start(ctx context.Context) error {
 		debug:           cfg.Dload.EnableDebug,
 	}
 
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
-		default:
-			time.Sleep(time.Duration(interval) * time.Second)
-
+		case <-ticker.C:
 			if err := updateContainersDload(); err != nil {
 				return err
 			}
