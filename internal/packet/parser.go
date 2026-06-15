@@ -203,6 +203,7 @@ func Parse(pkt *Hdr) (*Packet, error) {
 		return nil, ErrNoLayers
 	}
 
+	out.Label = labelOf(out)
 	return out, nil
 }
 

@@ -116,7 +116,7 @@ func TestParseIPv4TCP(t *testing.T) {
 	if p.TCP.SkState != "ESTABLISHED" {
 		t.Errorf("TCP.SkState: want ESTABLISHED, got %s", p.TCP.SkState)
 	}
-	if got := p.Label(); got != "IPv4/TCP" {
+	if got := p.Label; got != "IPv4/TCP" {
 		t.Errorf("Label: want IPv4/TCP, got %s", got)
 	}
 }
@@ -141,7 +141,7 @@ func TestParseIPv4UDP(t *testing.T) {
 	if p.UDP.SrcPort != 5353 || p.UDP.DstPort != 53 {
 		t.Errorf("ports: want 5353>53, got %d>%d", p.UDP.SrcPort, p.UDP.DstPort)
 	}
-	if got := p.Label(); got != "IPv4/UDP" {
+	if got := p.Label; got != "IPv4/UDP" {
 		t.Errorf("Label: want IPv4/UDP, got %s", got)
 	}
 }
@@ -188,7 +188,7 @@ func TestParseARP(t *testing.T) {
 	if got := p.ARP.TargetIP.String(); got != "10.0.0.2" {
 		t.Errorf("TargetIP: want 10.0.0.2, got %s", got)
 	}
-	if got := p.Label(); got != "ARP" {
+	if got := p.Label; got != "ARP" {
 		t.Errorf("Label: want ARP, got %s", got)
 	}
 }

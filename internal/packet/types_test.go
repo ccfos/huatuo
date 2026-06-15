@@ -40,7 +40,7 @@ func TestPacketJSONNested(t *testing.T) {
 				IPv4:  &IPv4{Src: net.IPv4(10, 0, 0, 1), Dst: net.IPv4(10, 0, 0, 2)},
 				TCP:   &TCP{SrcPort: 1234, DstPort: 80, Flags: "SYN", SkState: "ESTABLISHED"},
 			},
-			wantKeys: []string{"ether", "ipv4", "tcp"},
+			wantKeys: []string{"ether", "ipv4", "label", "tcp"},
 		},
 		{
 			name: "ipv6_udp",
@@ -48,7 +48,7 @@ func TestPacketJSONNested(t *testing.T) {
 				IPv6: &IPv6{Src: net.ParseIP("::1"), Dst: net.ParseIP("::2")},
 				UDP:  &UDP{SrcPort: 53, DstPort: 1234, Length: 64, Checksum: 0xabcd},
 			},
-			wantKeys: []string{"ipv6", "udp"},
+			wantKeys: []string{"ipv6", "label", "udp"},
 		},
 		{
 			name: "arp",
@@ -59,7 +59,7 @@ func TestPacketJSONNested(t *testing.T) {
 					TargetMAC: mac("00:00:00:00:00:00"), TargetIP: net.IPv4(10, 0, 0, 2),
 				},
 			},
-			wantKeys: []string{"arp"},
+			wantKeys: []string{"arp", "label"},
 		},
 	}
 
@@ -184,9 +184,9 @@ func TestPacketJSONMACWireFormat(t *testing.T) {
 	}
 }
 
-// TestPacketLabel asserts the Label() string for each protocol combination,
-// since downstream code uses it as the protocol-combination tag.
-func TestPacketLabel(t *testing.T) {
+// TestLabelOf asserts the protocol-combination tag for each layer mix.
+// Downstream code reads Packet.Label, which parser fills via labelOf().
+func TestLabelOf(t *testing.T) {
 	cases := []struct {
 		name string
 		pkt  *Packet
@@ -205,8 +205,8 @@ func TestPacketLabel(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.pkt.Label(); got != tc.want {
-				t.Errorf("Label = %q, want %q", got, tc.want)
+			if got := labelOf(tc.pkt); got != tc.want {
+				t.Errorf("labelOf = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -224,6 +224,7 @@ func TestPacketString(t *testing.T) {
 		{
 			name: "ipv4_tcp",
 			pkt: &Packet{
+				Label: "IPv4/TCP",
 				Ether: &Ether{Src: mac("aa:bb:cc:dd:ee:ff"), Dst: mac("11:22:33:44:55:66"), Type: "IPv4"},
 				IPv4:  &IPv4{Src: net.IPv4(10, 0, 0, 1), Dst: net.IPv4(10, 0, 0, 2)},
 				TCP:   &TCP{SrcPort: 1234, DstPort: 80, Flags: "SYN", SkState: "ESTABLISHED"},
@@ -236,14 +237,16 @@ func TestPacketString(t *testing.T) {
 		{
 			name: "ipv6_udp",
 			pkt: &Packet{
-				IPv6: &IPv6{Src: net.ParseIP("::1"), Dst: net.ParseIP("::2")},
-				UDP:  &UDP{SrcPort: 53, DstPort: 1234, Length: 64, Checksum: 0xabcd},
+				Label: "IPv6/UDP",
+				IPv6:  &IPv6{Src: net.ParseIP("::1"), Dst: net.ParseIP("::2")},
+				UDP:   &UDP{SrcPort: 53, DstPort: 1234, Length: 64, Checksum: 0xabcd},
 			},
 			wantParts: []string{"IPv6/UDP", "[::1]:53", "[::2]:1234", "len=64", "chk=0xabcd"},
 		},
 		{
 			name: "arp",
 			pkt: &Packet{
+				Label: "ARP",
 				ARP: &ARP{
 					Operation: "request",
 					SenderMAC: mac("aa:bb:cc:dd:ee:ff"), SenderIP: net.IPv4(10, 0, 0, 1),
@@ -258,12 +261,12 @@ func TestPacketString(t *testing.T) {
 		},
 		{
 			name:      "ipv4_only",
-			pkt:       &Packet{IPv4: &IPv4{Src: net.IPv4(10, 0, 0, 1), Dst: net.IPv4(10, 0, 0, 2)}},
+			pkt:       &Packet{Label: "IPv4", IPv4: &IPv4{Src: net.IPv4(10, 0, 0, 1), Dst: net.IPv4(10, 0, 0, 2)}},
 			wantParts: []string{"IPv4", "10.0.0.1 > 10.0.0.2"},
 		},
 		{
 			name:      "ipv6_only",
-			pkt:       &Packet{IPv6: &IPv6{Src: net.ParseIP("::1"), Dst: net.ParseIP("::2")}},
+			pkt:       &Packet{Label: "IPv6", IPv6: &IPv6{Src: net.ParseIP("::1"), Dst: net.ParseIP("::2")}},
 			wantParts: []string{"IPv6", "::1 > ::2"},
 		},
 		{"nil_packet", nil, []string{"unknown"}},

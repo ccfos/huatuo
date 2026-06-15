@@ -38,9 +38,11 @@ type Hdr struct {
 // protocol combination (ether+ipv4+tcp, ether+ipv6+udp, arp, …) is expressed
 // by the set of non-nil fields rather than by a separate type per combination.
 //
-// JSON output mirrors the struct layout: `{"ether":{...},"ipv4":{...},...}`.
-// Missing layers are omitted via `omitempty`.
+// JSON output mirrors the struct layout: `{"label":"...","ether":{...},...}`.
+// Missing layers are omitted via `omitempty`; Label is always present so
+// downstream filtering/aggregation can key off a single field.
 type Packet struct {
+	Label string `json:"label"`
 	Ether *Ether `json:"ether,omitempty"`
 	IPv4  *IPv4  `json:"ipv4,omitempty"`
 	IPv6  *IPv6  `json:"ipv6,omitempty"`
@@ -142,9 +144,11 @@ type ARP struct {
 	TargetIP        net.IP `json:"target_ip"`
 }
 
-// Label returns a short protocol-combination tag like "IPv4/TCP", "IPv6/UDP",
-// "ARP", or "unknown". Used as the leading token of String().
-func (p *Packet) Label() string {
+// labelOf returns a short protocol-combination tag like "IPv4/TCP", "IPv6/UDP",
+// "ARP", or "unknown". Parser fills Packet.Label with this; downstream callers
+// should read the field rather than recompute. Free function (not a method) so
+// it can share the name "label" with the persisted struct field.
+func labelOf(p *Packet) string {
 	if p == nil {
 		return "unknown"
 	}
@@ -194,7 +198,7 @@ func (p *Packet) Label() string {
 //	ARP smac=.. dmac=.. request sender=10.0.0.1/aa:.. target=10.0.0.2/00:00:..
 //	IPv4 smac=.. dmac=.. 10.0.0.1 > 10.0.0.2
 //
-// The leading Label() token doubles as dropwatch's protocol-type column.
+// The leading label token doubles as dropwatch's protocol-type column.
 // Missing layers are omitted gracefully — frames with only L3 print just src > dst.
 func (p *Packet) String() string {
 	if p == nil {
@@ -203,7 +207,7 @@ func (p *Packet) String() string {
 
 	var b strings.Builder
 
-	b.WriteString(p.Label())
+	b.WriteString(p.Label)
 
 	if p.Ether != nil {
 		fmt.Fprintf(&b, " smac=%s dmac=%s", p.Ether.Src, p.Ether.Dst)
