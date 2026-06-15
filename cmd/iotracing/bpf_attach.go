@@ -27,15 +27,14 @@ import (
 // attachAndEventPipe attaches all programs found in the BPF object and
 // returns a perf reader for iodelay events. The reader is closed if any
 // later attach step fails so the caller cannot leak the pipe on error.
-func attachAndEventPipe(ctx context.Context, b bpf.BPF) (bpf.PerfEventReader, error) {
-	reader, err := b.EventPipeByName(ctx, bpfPerfMapName, 8192)
+func attachAndEventPipe(ctx context.Context, b bpf.BPF) (reader bpf.PerfEventReader, err error) {
+	reader, err = b.EventPipeByName(ctx, bpfPerfMapName, 8192)
 	if err != nil {
 		return nil, fmt.Errorf("get event pipe: %w", err)
 	}
 
-	var ok bool
 	defer func() {
-		if !ok {
+		if err != nil {
 			reader.Close()
 		}
 	}()
@@ -47,11 +46,9 @@ func attachAndEventPipe(ctx context.Context, b bpf.BPF) (bpf.PerfEventReader, er
 		return nil, err
 	}
 
-	if err := b.AttachWithOptions(options); err != nil {
+	if err = b.AttachWithOptions(options); err != nil {
 		return nil, fmt.Errorf("attach with options: %w", err)
 	}
-
-	ok = true
 
 	return reader, nil
 }
