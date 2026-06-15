@@ -38,7 +38,7 @@ import (
 var hccnSemaphore = make(chan struct{}, 32)
 
 const (
-	hccnTool   = "/usr/local/Ascend/driver/tools/hccn_tool"
+	hccnTool    = "/usr/local/Ascend/driver/tools/hccn_tool"
 	outputLimit = 1024 * 1024 // 1MB cap to prevent OOM from runaway output
 )
 
