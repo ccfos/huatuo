@@ -114,6 +114,8 @@ function prapre_test_env() {
 		if [ "${#missing_packages[@]}" -gt 0 ]; then
 			echo "installing missing packages: ${missing_packages[*]}"
 			sudo apt-get update
+			# wait for unattended-upgrades to release /var/lib/dpkg/lock-frontend
+			sudo flock --wait 300 /var/lib/dpkg/lock-frontend true || true
 			sudo apt-get install -y "${missing_packages[@]}"
 		fi
 		# Ubuntu 20.04 Default clang-10 Has a CO-RE Relocation Bug (Fixed in LLVM 12 / D87153) — Use clang-12 Instead
