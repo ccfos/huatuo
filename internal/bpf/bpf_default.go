@@ -604,6 +604,9 @@ func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
 	for i := 0; i < int(m.MaxEntries()); i++ {
 		nextKey, err := m.NextKeyBytes(prevKey)
 		if err != nil {
+			if errors.Is(err, ebpf.ErrKeyNotExist) {
+				break
+			}
 			return nil, fmt.Errorf("map %d, prevKey %v: next key: %w", mapID, prevKey, err)
 		}
 

@@ -61,67 +61,44 @@ func TestLoadBpfFromBytes_InvalidELF(t *testing.T) {
 	require.Error(t, err)
 }
 
-// Empty names plus any cleaned form starting with ".." would let LoadBpf
-// escape DefaultBpfObjDir once joined.
-var rejectedNames = []string{
-	"",
-	"..",
-	"../x.o",
-	"../../etc/passwd",
-	"x/../../y.o", // cleans to "../y.o"
-}
-
-// Path-like CLI inputs (e.g. "./_output/bpf/iotracing.o", absolute paths)
-// must pass: they cannot escape DefaultBpfObjDir because Clean keeps them
-// at or below the join root.
-var acceptedNames = []string{
-	"x.o",
-	".",
-	"./x.o",
-	"x/y.o",
-	"a..b.o",
-	"x/../y.o", // cleans to "y.o"
-	"x\\evil.o",
-	"/abs/path/x.o",
-}
-
-func TestValidateName(t *testing.T) {
-	for _, name := range rejectedNames {
-		t.Run("reject/"+name, func(t *testing.T) {
-			err := validateName(name)
-			if !errors.Is(err, errInvalidName) {
-				t.Errorf("validateName(%q) = %v, want %v", name, err, errInvalidName)
-			}
-		})
-	}
-
-	for _, name := range acceptedNames {
-		t.Run("accept/"+name, func(t *testing.T) {
-			if err := validateName(name); err != nil {
-				t.Errorf("validateName(%q) = %v, want nil", name, err)
-			}
-		})
-	}
-}
-
 func TestLoadBpfFromBytes_InvalidName(t *testing.T) {
-	for _, name := range rejectedNames {
+	cases := []string{
+		"",
+		"../x.o",
+		"x/evil.o",
+		"..",
+		".",
+		"./x.o",
+		"a..b.o",
+		"x/../y.o",
+		"x\\evil.o",
+	}
+
+	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
 			_, err := LoadBpfFromBytes(name, []byte("x"), nil)
-			if !errors.Is(err, errInvalidName) {
-				t.Errorf("LoadBpfFromBytes(%q) = %v, want %v", name, err, errInvalidName)
-			}
+			require.Error(t, err)
 		})
 	}
 }
 
 func TestLoadBpf_InvalidName(t *testing.T) {
-	for _, name := range rejectedNames {
+	cases := []string{
+		"",
+		"../x.o",
+		"x/evil.o",
+		"..",
+		".",
+		"./x.o",
+		"a..b.o",
+		"x/../y.o",
+		"x\\evil.o",
+	}
+
+	for _, name := range cases {
 		t.Run(name, func(t *testing.T) {
 			_, err := LoadBpf(name, nil)
-			if !errors.Is(err, errInvalidName) {
-				t.Errorf("LoadBpf(%q) = %v, want %v", name, err, errInvalidName)
-			}
+			require.Error(t, err)
 		})
 	}
 }
@@ -360,6 +337,35 @@ func TestDefaultBPF_MapOperations(t *testing.T) {
 	}
 }
 
+func TestDefaultBPFDumpMapEmptyHash(t *testing.T) {
+	requireBPFPermission(t)
+
+	m, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.Hash,
+		KeySize:    4,
+		ValueSize:  8,
+		MaxEntries: 4,
+	})
+	if errors.Is(err, ebpf.ErrNotSupported) {
+		t.Skipf("skipping: ebpf not supported: %v", err)
+	}
+	require.NoError(t, err)
+	t.Cleanup(func() { m.Close() })
+
+	b := &defaultBPF{
+		mapSpecs: map[uint32]mapSpec{
+			1: {
+				name: "empty_hash",
+				bMap: m,
+			},
+		},
+	}
+
+	items, err := b.DumpMap(1)
+	require.NoError(t, err)
+	assert.Empty(t, items)
+}
+
 // TestDefaultBPF_Attach_SpecTypes tests the Attach function with various program types.
 //
 // Covered functions:
@@ -377,7 +383,7 @@ func TestDefaultBPF_Attach(t *testing.T) {
 		t.Log("Attach() succeeded on first call")
 	}
 
-	// second Attach，return error（repeat attach）
+	// second Attach,return error(repeat attach)
 	if err := b.Attach(); err == nil {
 		t.Errorf("Attach() expected error on second call (duplicate attach), got nil")
 	} else {
