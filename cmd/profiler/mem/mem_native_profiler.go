@@ -15,9 +15,7 @@
 package mem
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -25,13 +23,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cilium/ebpf"
-
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
 	agghr "huatuo-bamai/internal/profiler/aggregator/handler"
+	"huatuo-bamai/internal/profiler/bpfmap"
 	util "huatuo-bamai/internal/profiler/common"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	registry "huatuo-bamai/internal/profiler/registry/v2"
@@ -44,12 +41,6 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/pm_accumulative2.c -o $BPF_DIR/pm_accumulative2.o
 
 const memDrainTick = 100 * time.Millisecond
-
-const (
-	transferCntIdx uint32 = 0
-	sampleCntAIdx  uint32 = 1
-	sampleCntBIdx  uint32 = 2
-)
 
 const (
 	modeVMAccu     = "vm_accumulative"
@@ -75,11 +66,6 @@ type memEvent struct {
 	// current parity at free time; kept in the shared event layout.
 	StackMapSel uint32
 	Value       int64
-}
-
-type stackTraceID struct {
-	kernelID int32
-	userID   int32
 }
 
 func init() {
@@ -334,7 +320,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 // per event without losing the alloc/free delta accumulation.
 type memBatchKey struct {
 	proc agghr.ProcessIDName
-	ids  stackTraceID
+	ids  bpfmap.StackTraceID
 	sel  uint32
 }
 
@@ -347,24 +333,24 @@ func (p *memNativeProfiler) flipAndDrain(
 	usym *symbol.UsymResolver,
 	addRecord func(any),
 ) error {
-	val, err := readMapUint64(p.bpf, stateMapID, transferCntIdx)
+	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCntIdx)
 	if err != nil {
 		return fmt.Errorf("read transferCnt: %w", err)
 	}
 
 	reader := readerA
-	sampleCountIdx := sampleCntAIdx
+	sampleCountIdx := bpfmap.SampleCntAIdx
 
 	if val%2 == 1 {
 		reader = readerB
-		sampleCountIdx = sampleCntBIdx
+		sampleCountIdx = bpfmap.SampleCntBIdx
 	}
 
-	if err := writeMapUint64(p.bpf, stateMapID, transferCntIdx, val+1); err != nil {
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCntIdx, val+1); err != nil {
 		return fmt.Errorf("write transferCnt: %w", err)
 	}
 
-	bpfCount, err := readMapUint64(p.bpf, stateMapID, sampleCountIdx)
+	bpfCount, err := bpfmap.ReadUint64(p.bpf, stateMapID, sampleCountIdx)
 	if err != nil {
 		return fmt.Errorf("read sampleCnt: %w", err)
 	}
@@ -393,7 +379,7 @@ func (p *memNativeProfiler) flipAndDrain(
 			Pid:  evt.Pid,
 			Name: util.CommToString(evt.Comm),
 		}
-		ids := stackTraceID{kernelID: evt.Kernstack, userID: evt.Userstack}
+		ids := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
 		key := memBatchKey{proc: proc, ids: ids, sel: evt.StackMapSel}
 		deltaByKey[key] += deltaBytes
 
@@ -405,20 +391,20 @@ func (p *memNativeProfiler) flipAndDrain(
 			targetSet = idsB
 		}
 
-		if ids.kernelID > 0 {
-			targetSet[ids.kernelID] = true
+		if ids.KernelID > 0 {
+			targetSet[ids.KernelID] = true
 		}
 
-		if ids.userID > 0 {
-			targetSet[ids.userID] = true
+		if ids.UserID > 0 {
+			targetSet[ids.UserID] = true
 		}
 	}
 
-	stackDataA := batchReadStackTraces(p.bpf, stackMapAID, idsA)
-	stackDataB := batchReadStackTraces(p.bpf, stackMapBID, idsB)
+	stackDataA := bpfmap.BatchReadStackTraces(p.bpf, stackMapAID, idsA)
+	stackDataB := bpfmap.BatchReadStackTraces(p.bpf, stackMapBID, idsB)
 	emitDeltas(deltaByKey, stackDataA, stackDataB, usym, addRecord)
 
-	if err := writeMapUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
 		log.P().Infof("failed to reset mem sample count: %v", err)
 	}
 
@@ -427,7 +413,7 @@ func (p *memNativeProfiler) flipAndDrain(
 
 func emitDeltas(
 	deltaByKey map[memBatchKey]int64,
-	stackDataA, stackDataB map[int32][127]uint64,
+	stackDataA, stackDataB map[int32][bpfmap.StackTraceLen]uint64,
 	usym *symbol.UsymResolver,
 	addRecord func(any),
 ) {
@@ -454,20 +440,20 @@ func emitDeltas(
 			kstackCache = kstackCacheB
 		}
 
-		if k.ids.kernelID > 0 {
-			if _, ok := kstackCache[k.ids.kernelID]; !ok {
-				if stackTrace, exists := stackData[k.ids.kernelID]; exists {
+		if k.ids.KernelID > 0 {
+			if _, ok := kstackCache[k.ids.KernelID]; !ok {
+				if stackTrace, exists := stackData[k.ids.KernelID]; exists {
 					kstrs := symbol.KsymStackStrsReversed(stackTrace[:], len(stackTrace))
-					kstackCache[k.ids.kernelID] = strings.Join(kstrs, ";") + ";"
+					kstackCache[k.ids.KernelID] = strings.Join(kstrs, ";") + ";"
 				}
 			}
 		}
 
-		if k.ids.userID > 0 {
-			if _, ok := ustackCache[k.ids.userID]; !ok {
-				if stackTrace, exists := stackData[k.ids.userID]; exists {
+		if k.ids.UserID > 0 {
+			if _, ok := ustackCache[k.ids.UserID]; !ok {
+				if stackTrace, exists := stackData[k.ids.UserID]; exists {
 					ustrs := usym.UsymStackStrs(k.proc.Pid, stackTrace[:], len(stackTrace))
-					ustackCache[k.ids.userID] = strings.Join(ustrs, ";") + ";"
+					ustackCache[k.ids.UserID] = strings.Join(ustrs, ";") + ";"
 				}
 			}
 		}
@@ -477,8 +463,8 @@ func emitDeltas(
 				Pid:  k.proc.Pid,
 				Name: k.proc.Name,
 			},
-			User:    ustackCache[k.ids.userID],
-			Kernel:  kstackCache[k.ids.kernelID],
+			User:    ustackCache[k.ids.UserID],
+			Kernel:  kstackCache[k.ids.KernelID],
 			Samples: delta,
 		}
 
@@ -496,59 +482,4 @@ func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 	default:
 		return 0
 	}
-}
-
-func readMapUint64(b bpf.BPF, mapID, idx uint32) (uint64, error) {
-	key := make([]byte, 4)
-	binary.LittleEndian.PutUint32(key, idx)
-
-	val, err := b.ReadMap(mapID, key)
-	if err != nil {
-		if errors.Is(err, ebpf.ErrKeyNotExist) {
-			return 0, nil
-		}
-
-		return 0, err
-	}
-
-	if len(val) < 8 {
-		return 0, nil
-	}
-
-	return binary.LittleEndian.Uint64(val), nil
-}
-
-func writeMapUint64(b bpf.BPF, mapID, idx uint32, v uint64) error {
-	key := make([]byte, 4)
-	binary.LittleEndian.PutUint32(key, idx)
-	val := make([]byte, 8)
-	binary.LittleEndian.PutUint64(val, v)
-
-	return b.WriteMapItems(mapID, []bpf.MapItem{{Key: key, Value: val}})
-}
-
-func batchReadStackTraces(b bpf.BPF, stMapID uint32, stackIDs map[int32]bool) map[int32][127]uint64 {
-	results := make(map[int32][127]uint64, len(stackIDs))
-	stackIDKeyBuffer := make([]byte, 4)
-
-	for stackID := range stackIDs {
-		binary.LittleEndian.PutUint32(stackIDKeyBuffer, uint32(stackID))
-
-		valBytes, err := b.ReadMap(stMapID, stackIDKeyBuffer)
-		if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			log.P().Infof("stack map lookup error for ID %d: %v", stackID, err)
-			continue
-		}
-
-		if err == nil && len(valBytes) == 127*8 {
-			var stackTrace [127]uint64
-
-			reader := bytes.NewReader(valBytes)
-			if err := binary.Read(reader, binary.LittleEndian, &stackTrace); err == nil {
-				results[stackID] = stackTrace
-			}
-		}
-	}
-
-	return results
 }

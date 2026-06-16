@@ -144,14 +144,10 @@ func (p *javaMemoryProfiler) Stop(pctx *pcontext.ProfilerContext, aggregator *ag
 		return err
 	}
 
-	stopRes := stopSampleProcesses(pids, toolPath)
+	stopRes := helper.StopAsprofProcesses(pids, toolPath)
 	return helper.CheckCmdResultsAllSuccess(stopRes, "stop")
 }
 
 func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) {
 	helper.ReadCollapsedFilesLoop(ctx, memProfileOutFile, addRecord)
-}
-
-func stopSampleProcesses(pids []int, toolPath string) []executil.CmdResult {
-	return helper.StopAsprofProcesses(pids, toolPath)
 }

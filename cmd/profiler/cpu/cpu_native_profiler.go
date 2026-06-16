@@ -15,7 +15,6 @@
 package cpu
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -23,13 +22,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cilium/ebpf"
-
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
 	agghr "huatuo-bamai/internal/profiler/aggregator/handler"
+	"huatuo-bamai/internal/profiler/bpfmap"
 	util "huatuo-bamai/internal/profiler/common"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	registry "huatuo-bamai/internal/profiler/registry/v2"
@@ -55,12 +53,6 @@ func init() {
 // drains the just-frozen ring. ~100ms balances responsiveness and overhead.
 const drainTick = 100 * time.Millisecond
 
-const (
-	transferCntIdx uint32 = 0
-	sampleCntAIdx  uint32 = 1
-	sampleCntBIdx  uint32 = 2
-)
-
 // cpuEventKey is the on-wire/event representation emitted by the BPF program.
 type cpuEventKey struct {
 	Pid        uint32
@@ -73,11 +65,6 @@ type cpuEventKey struct {
 	Flags      uint32
 	UprobeAddr uint64
 	Timestamp  uint64
-}
-
-type stackTraceID struct {
-	kernelID int32
-	userID   int32
 }
 
 type cpuNativeProfiler struct {
@@ -193,32 +180,32 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 // active before the flip. The drain is bounded by sampleCnt (set by the BPF
 // side), so it never blocks waiting for events that were never written.
 func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, stateMapID uint32, addRecord func(any)) error {
-	val, err := readMapUint64(p.bpf, stateMapID, transferCntIdx)
+	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCntIdx)
 	if err != nil {
 		return fmt.Errorf("read transferCnt: %w", err)
 	}
 
 	reader := readerA
 	stackMapID := p.bpf.MapIDByName("stack_map_a")
-	sampleCountIdx := sampleCntAIdx
+	sampleCountIdx := bpfmap.SampleCntAIdx
 
 	if val%2 == 1 {
 		reader = readerB
 		stackMapID = p.bpf.MapIDByName("stack_map_b")
-		sampleCountIdx = sampleCntBIdx
+		sampleCountIdx = bpfmap.SampleCntBIdx
 	}
 
-	if err := writeMapUint64(p.bpf, stateMapID, transferCntIdx, val+1); err != nil {
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCntIdx, val+1); err != nil {
 		return fmt.Errorf("write transferCnt: %w", err)
 	}
 
-	bpfCount, err := readMapUint64(p.bpf, stateMapID, sampleCountIdx)
+	bpfCount, err := bpfmap.ReadUint64(p.bpf, stateMapID, sampleCountIdx)
 	if err != nil {
 		return fmt.Errorf("read sampleCnt: %w", err)
 	}
 
-	stackIDStore := make(map[agghr.ProcessIDName]stackTraceID)
-	stackCount := make(map[stackTraceID]int)
+	stackIDStore := make(map[agghr.ProcessIDName]bpfmap.StackTraceID)
+	stackCount := make(map[bpfmap.StackTraceID]int)
 
 	for i := uint64(0); i < bpfCount; i++ {
 		var evt cpuEventKey
@@ -235,30 +222,22 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 			continue
 		}
 
-		pair := stackTraceID{kernelID: evt.Kernstack, userID: evt.Userstack}
+		pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
 		stackCount[pair]++
 		pidName := agghr.ProcessIDName{Pid: evt.Pid, Name: util.CommToString(evt.Comm)}
 		stackIDStore[pidName] = pair
 	}
 
-	var clearStackIDs []int32
 	if len(stackIDStore) > 0 {
-		clearStackIDs = aggregateStacksAndStore(p.bpf, stackIDStore, stackMapID, stackCount, addRecord)
+		aggregateStacksAndStore(p.bpf, stackIDStore, stackMapID, stackCount, addRecord)
 	}
 
-	if err := writeMapUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
 		log.P().Infof("failed to reset sample count: %v", err)
 	}
 
-	if len(clearStackIDs) > 0 {
-		clearKeys := make([][]byte, 0, len(clearStackIDs))
-		for _, id := range clearStackIDs {
-			key := make([]byte, 4)
-			binary.LittleEndian.PutUint32(key, uint32(id))
-			clearKeys = append(clearKeys, key)
-		}
-
-		if err := p.bpf.DeleteMapItems(stackMapID, clearKeys); err != nil {
+	if len(stackIDStore) > 0 {
+		if err := clearStackMap(p.bpf, stackMapID, stackIDStore); err != nil {
 			log.P().Infof("clear stack map keys err: %v", err)
 		}
 	}
@@ -266,54 +245,53 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 	return nil
 }
 
-func readMapUint64(b bpf.BPF, mapID, idx uint32) (uint64, error) {
-	key := make([]byte, 4)
-	binary.LittleEndian.PutUint32(key, idx)
-
-	val, err := b.ReadMap(mapID, key)
-	if err != nil {
-		if errors.Is(err, ebpf.ErrKeyNotExist) {
-			return 0, nil
+// clearStackMap removes the stack-map entries referenced by the just-drained
+// batch. Keys come from stackIDStore so we don't hold per-batch lists.
+func clearStackMap(b bpf.BPF, mapID uint32, stackIDStore map[agghr.ProcessIDName]bpfmap.StackTraceID) error {
+	seen := make(map[int32]struct{}, len(stackIDStore)*2)
+	for _, v := range stackIDStore {
+		if v.KernelID > 0 {
+			seen[v.KernelID] = struct{}{}
 		}
 
-		return 0, err
+		if v.UserID > 0 {
+			seen[v.UserID] = struct{}{}
+		}
 	}
 
-	if len(val) < 8 {
-		return 0, nil
+	if len(seen) == 0 {
+		return nil
 	}
 
-	return binary.LittleEndian.Uint64(val), nil
-}
+	clearKeys := make([][]byte, 0, len(seen))
+	for id := range seen {
+		key := make([]byte, 4)
+		binary.LittleEndian.PutUint32(key, uint32(id))
+		clearKeys = append(clearKeys, key)
+	}
 
-func writeMapUint64(b bpf.BPF, mapID, idx uint32, v uint64) error {
-	key := make([]byte, 4)
-	binary.LittleEndian.PutUint32(key, idx)
-	val := make([]byte, 8)
-	binary.LittleEndian.PutUint64(val, v)
-
-	return b.WriteMapItems(mapID, []bpf.MapItem{{Key: key, Value: val}})
+	return b.DeleteMapItems(mapID, clearKeys)
 }
 
 func aggregateStacksAndStore(
 	b bpf.BPF,
-	stackIDStore map[agghr.ProcessIDName]stackTraceID,
+	stackIDStore map[agghr.ProcessIDName]bpfmap.StackTraceID,
 	stMapID uint32,
-	stackCount map[stackTraceID]int,
+	stackCount map[bpfmap.StackTraceID]int,
 	addRecord func(any),
-) []int32 {
+) {
 	allStackIDs := make(map[int32]bool)
 	for _, v := range stackIDStore {
-		if v.kernelID > 0 {
-			allStackIDs[v.kernelID] = true
+		if v.KernelID > 0 {
+			allStackIDs[v.KernelID] = true
 		}
 
-		if v.userID > 0 {
-			allStackIDs[v.userID] = true
+		if v.UserID > 0 {
+			allStackIDs[v.UserID] = true
 		}
 	}
 
-	stackData, clearStackIDs := batchReadStackTraces(b, stMapID, allStackIDs)
+	stackData := bpfmap.BatchReadStackTraces(b, stMapID, allStackIDs)
 	ustackCache := make(map[int32]string)
 	kstackCache := make(map[int32]string)
 
@@ -322,62 +300,31 @@ func aggregateStacksAndStore(
 	for k, v := range stackIDStore {
 		pid := k.Pid
 
-		if v.kernelID > 0 {
-			if _, ok := kstackCache[v.kernelID]; !ok {
-				if stackTrace, exists := stackData[v.kernelID]; exists {
+		if v.KernelID > 0 {
+			if _, ok := kstackCache[v.KernelID]; !ok {
+				if stackTrace, exists := stackData[v.KernelID]; exists {
 					strs := symbol.KsymStackStrsReversed(stackTrace[:], len(stackTrace))
-					kstackCache[v.kernelID] = strings.Join(strs, ";") + ";"
+					kstackCache[v.KernelID] = strings.Join(strs, ";") + ";"
 				}
 			}
 		}
 
-		if v.userID > 0 {
-			if _, ok := ustackCache[v.userID]; !ok {
-				if stackTrace, exists := stackData[v.userID]; exists {
+		if v.UserID > 0 {
+			if _, ok := ustackCache[v.UserID]; !ok {
+				if stackTrace, exists := stackData[v.UserID]; exists {
 					strs := usym.UsymStackStrs(pid, stackTrace[:], len(stackTrace))
-					ustackCache[v.userID] = strings.Join(strs, ";") + ";"
+					ustackCache[v.UserID] = strings.Join(strs, ";") + ";"
 				}
 			}
 		}
 
 		record := &agghr.StackEntry{
 			Proc:    &agghr.ProcessIDName{Pid: pid, Name: k.Name},
-			User:    ustackCache[v.userID],
-			Kernel:  kstackCache[v.kernelID],
+			User:    ustackCache[v.UserID],
+			Kernel:  kstackCache[v.KernelID],
 			Samples: int64(stackCount[v]),
 		}
 
 		addRecord(record)
 	}
-
-	return clearStackIDs
-}
-
-func batchReadStackTraces(b bpf.BPF, stMapID uint32, stackIDs map[int32]bool) (map[int32][127]uint64, []int32) {
-	stackData := make(map[int32][127]uint64, len(stackIDs))
-	clearStackIDs := make([]int32, 0, len(stackIDs))
-	stackIDKeyBuffer := make([]byte, 4)
-
-	for stackID := range stackIDs {
-		binary.LittleEndian.PutUint32(stackIDKeyBuffer, uint32(stackID))
-
-		valBytes, err := b.ReadMap(stMapID, stackIDKeyBuffer)
-		if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			log.P().Infof("stack map lookup error for ID %d: %v", stackID, err)
-			continue
-		}
-
-		if err == nil && len(valBytes) == 127*8 {
-			var stackTrace [127]uint64
-
-			reader := bytes.NewReader(valBytes)
-			if err := binary.Read(reader, binary.LittleEndian, &stackTrace); err == nil {
-				stackData[stackID] = stackTrace
-			}
-		}
-
-		clearStackIDs = append(clearStackIDs, stackID)
-	}
-
-	return stackData, clearStackIDs
 }
