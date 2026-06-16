@@ -27,6 +27,7 @@ import (
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/procfs/sysfs"
 	"huatuo-bamai/internal/utils/parseutil"
 	"huatuo-bamai/pkg/metric"
@@ -65,6 +66,10 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 
 	ifaceList := make(map[string]*ethtool.DrvInfo)
 	ifaceSwCounter := make(map[string]uint64)
+	devices, err := matcher.NewListMatcher(cfg.NetdevHW.DeviceList)
+	if err != nil {
+		return nil, err
+	}
 
 	log.Infof("processing interfaces: %v", ifaces)
 	for _, iface := range ifaces {
@@ -74,7 +79,7 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 		}
 
 		// skip processing if the interface is not in the whitelist or the driver is not allowed
-		if !slices.Contains(cfg.NetdevHW.DeviceList, iface) ||
+		if !devices.Match(iface) ||
 			!slices.Contains(deviceDriverList, drv.Driver) {
 			log.Debugf("%s is skipped (not in whitelist or driver not allowed)", iface)
 			continue

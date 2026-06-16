@@ -709,13 +709,15 @@ IssuesList = []
 #
 # - DeviceList
 # The net devices we take care of.
+# Entries without explicit regex operators are matched exactly. Entries
+# containing regex operators are matched as full regular expressions.
 # Default: [] is empty, meaning no devices.
 #
 [EventTracing.Netdev]
 	DeviceList = ["eth0", "eth1", "bond4", "lo"]
 ```
 
-- **DeviceList**：需要监控的网卡设备列表。
+- **DeviceList**：需要监控的网卡设备列表。不包含显式正则操作符的条目按精确名称匹配，包含正则操作符的条目按完整正则表达式匹配。
 
   默认示例包含 "eth0", "eth1", "bond4", "lo"。 为空列表时表示不监控任何设备。 监控网络设备的物理链路状态事件等。
 
@@ -835,13 +837,15 @@ IssuesList = []
 #
 # - DeviceList
 # The net devices we take care of.
+# Entries without explicit regex operators are matched exactly. Entries
+# containing regex operators are matched as full regular expressions.
 # Default: [] is empty, meaning no devices.
 #
 [MetricCollector.NetdevDCB]
 	DeviceList = ["eth0", "eth1"]
 ```
 
-- **DeviceList**：需要采集 DCB（优先流控 PFC）信息的网卡列表。
+- **DeviceList**：需要采集 DCB（优先流控 PFC）信息的网卡列表。不包含显式正则操作符的条目按精确名称匹配，包含正则操作符的条目按完整正则表达式匹配。
 
   默认空。 
 
@@ -856,13 +860,15 @@ IssuesList = []
 #
 # - DeviceList
 # The net devices we take care of.
+# Entries without explicit regex operators are matched exactly. Entries
+# containing regex operators are matched as full regular expressions.
 # Default: [] is empty, meaning no devices.
 #
 [MetricCollector.NetdevHW]
 	DeviceList = ["eth0", "eth1"]
 ```
 
-- **DeviceList**：需要采集硬件层统计（如 rx_dropped）的网卡列表。
+- **DeviceList**：需要采集硬件层统计（如 rx_dropped）的网卡列表。不包含显式正则操作符的条目按精确名称匹配，包含正则操作符的条目按完整正则表达式匹配。
 
   默认空。 
 
