@@ -17,6 +17,7 @@ package pidfile
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 
@@ -24,10 +25,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func redirectPidDir(t *testing.T) {
+	t.Helper()
+	old := defaultDirPath
+	defaultDirPath = t.TempDir()
+	t.Cleanup(func() { defaultDirPath = old })
+}
+
 func TestPath(t *testing.T) {
 	tests := []struct {
-		name     string
-		expected string
+		name string
+		want string
 	}{
 		{"app", "/var/run/app.pid"},
 		{"nginx", "/var/run/nginx.pid"},
@@ -36,67 +44,89 @@ func TestPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, path(tt.name))
+			if got := path(tt.name); got != tt.want {
+				t.Errorf("path(%q) = %q, want %q", tt.name, got, tt.want)
+			}
 		})
 	}
 }
 
 func TestLock_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDefault := defaultDirPath
-	defaultDirPath = tmpDir
-	t.Cleanup(func() { defaultDirPath = oldDefault })
+	redirectPidDir(t)
 
 	name := "testapp"
-	pidPath := path(name)
-
-	err := Lock(name)
+	lk, err := Lock(name)
 	require.NoError(t, err)
-	t.Cleanup(func() { UnLock(name) })
+	t.Cleanup(lk.Unlock)
 
-	_, err = os.Stat(pidPath)
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(pidPath)
+	data, err := os.ReadFile(path(name))
 	require.NoError(t, err)
 	pid, err := strconv.Atoi(string(data))
 	require.NoError(t, err)
-	assert.Equal(t, os.Getpid(), pid)
+	if pid != os.Getpid() {
+		t.Errorf("pidfile pid = %d, want %d", pid, os.Getpid())
+	}
 }
 
 func TestLock_AlreadyLocked(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDefault := defaultDirPath
-	defaultDirPath = tmpDir
-	t.Cleanup(func() { defaultDirPath = oldDefault })
+	redirectPidDir(t)
 
 	name := "test-locked"
-
-	err := Lock(name)
+	lk, err := Lock(name)
 	require.NoError(t, err)
-	t.Cleanup(func() { UnLock(name) })
+	t.Cleanup(lk.Unlock)
 
-	err = Lock(name)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "running")
+	_, err = Lock(name)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already running")
 }
 
-func TestUnLock(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDefault := defaultDirPath
-	defaultDirPath = tmpDir
-	t.Cleanup(func() { defaultDirPath = oldDefault })
+func TestUnlock_RemovesFile(t *testing.T) {
+	redirectPidDir(t)
 
 	name := "toremove"
-	pidPath := path(name)
-
-	err := os.WriteFile(pidPath, []byte("12345"), 0o600)
+	lk, err := Lock(name)
 	require.NoError(t, err)
 
-	UnLock(name)
+	lk.Unlock()
 
-	_, err = os.Stat(pidPath)
-	assert.True(t, os.IsNotExist(err))
+	if _, err := os.Stat(path(name)); !os.IsNotExist(err) {
+		t.Errorf("Stat after Unlock: err = %v, want IsNotExist", err)
+	}
+}
+
+func TestUnlock_Idempotent(t *testing.T) {
+	redirectPidDir(t)
+
+	lk, err := Lock("twice")
+	require.NoError(t, err)
+
+	lk.Unlock()
+	lk.Unlock()
+}
+
+// TestLock_HandleKeepsFlockAlive guards the bug that motivated the
+// Handle redesign: in the previous API, Lock opened *os.File in a local
+// variable that became unreachable on return. After GC ran the finalizer
+// closed the fd, releasing the flock while the pid file stayed on disk —
+// a second Lock would then succeed. The new contract is that holding the
+// returned *Handle keeps the fd reachable, so GC cannot release the lock.
+func TestLock_HandleKeepsFlockAlive(t *testing.T) {
+	redirectPidDir(t)
+
+	name := "gcsurvive"
+	lk, err := Lock(name)
+	require.NoError(t, err)
+	t.Cleanup(lk.Unlock)
+
+	// Force two GC cycles so any unreachable *os.File would have its
+	// finalizer run and its fd closed before the second Lock attempt.
+	runtime.GC()
+	runtime.GC()
+
+	if _, err := Lock(name); err == nil {
+		t.Fatalf("Lock(%q) after GC = nil, want error (handle should still hold flock)", name)
+	}
 }
 
 func TestRead(t *testing.T) {
@@ -104,10 +134,10 @@ func TestRead(t *testing.T) {
 	pidPath := filepath.Join(tmp, "test.pid")
 
 	tests := []struct {
-		name        string
-		content     string
-		wantPID     int
-		wantErrKind bool // 是否期望有错误
+		name    string
+		content string
+		want    int
+		wantErr bool
 	}{
 		{"normal", "12345", 12345, false},
 		{"with space", "  67890  \n", 67890, false},
@@ -118,16 +148,22 @@ func TestRead(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := os.WriteFile(pidPath, []byte(tt.content), 0o600)
-			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(pidPath, []byte(tt.content), 0o600))
 
 			got, err := Read(pidPath)
-			if tt.wantErrKind {
-				assert.Error(t, err)
-				assert.Zero(t, got)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.wantPID, got)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Read(%q) err = nil, want error", tt.content)
+				}
+				if got != 0 {
+					t.Errorf("Read(%q) = %d, want 0", tt.content, got)
+				}
+
+				return
+			}
+			require.NoError(t, err)
+			if got != tt.want {
+				t.Errorf("Read(%q) = %d, want %d", tt.content, got, tt.want)
 			}
 		})
 	}
@@ -135,6 +171,6 @@ func TestRead(t *testing.T) {
 
 func TestRead_NotExist(t *testing.T) {
 	_, err := Read("/this/file/does/not/exist.pid")
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.True(t, os.IsNotExist(err))
 }

@@ -159,10 +159,11 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("invalid param %v", ctx.Args())
 	}
 
-	if err := pidfile.Lock("huatuo-apiserver"); err != nil {
+	lk, err := pidfile.Lock("huatuo-apiserver")
+	if err != nil {
 		return fmt.Errorf("failed to lock pid file: %w", err)
 	}
-	defer pidfile.UnLock("huatuo-apiserver")
+	defer lk.Unlock()
 
 	// init cpu quota
 	cgr, err := cgroups.NewManager()

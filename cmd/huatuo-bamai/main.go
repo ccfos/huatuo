@@ -172,12 +172,13 @@ func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
 }
 
 func lockPidfile(_ *Daemon) (func(context.Context) error, error) {
-	if err := pidfile.Lock(appName); err != nil {
+	lk, err := pidfile.Lock(appName)
+	if err != nil {
 		return nil, fmt.Errorf("lock pid file: %w", err)
 	}
 
 	return func(context.Context) error {
-		pidfile.UnLock(appName)
+		lk.Unlock()
 		return nil
 	}, nil
 }
