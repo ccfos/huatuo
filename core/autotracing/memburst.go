@@ -110,6 +110,19 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 	return []*processMemInfo{}, nil
 }
 
+func validateMemBurstConfig(historyWindowLength, sampleInterval, topNProcesses int) error {
+	if historyWindowLength <= 0 {
+		return fmt.Errorf("memory burst sliding window length must be greater than zero, got %d", historyWindowLength)
+	}
+	if sampleInterval <= 0 {
+		return fmt.Errorf("memory burst interval must be greater than zero, got %d", sampleInterval)
+	}
+	if topNProcesses <= 0 {
+		return fmt.Errorf("memory burst dump process max num must be greater than zero, got %d", topNProcesses)
+	}
+	return nil
+}
+
 // Core function
 func (c *memBurstTracing) Start(ctx context.Context) error {
 	var err error
@@ -120,6 +133,10 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 	topNProcesses := cfg.MemoryBurst.DumpProcessMaxNum
 	burstRatio := (float64(cfg.MemoryBurst.DeltaMemoryBurst)/100.0 + 1)
 	anonThreshold := cfg.MemoryBurst.DeltaAnonThreshold
+
+	if err := validateMemBurstConfig(historyWindowLength, sampleInterval, topNProcesses); err != nil {
+		return err
+	}
 
 	memInfo, err := readMemInfo(map[string]bool{"MemTotal": true})
 	if err != nil {
