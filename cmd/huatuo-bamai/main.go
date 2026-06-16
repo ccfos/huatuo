@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -37,11 +38,15 @@ import (
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
 	appName  = "huatuo-bamai"
 	appUsage = "An In-depth Observation of Linux Kernel Application"
+
+	shutdownTimeout = 10 * time.Second
 )
 
 var (
@@ -72,78 +77,255 @@ func main() {
 }
 
 func mainAction(opts *Options) error {
+	return NewDaemon(opts).Run(context.Background())
+}
+
+// Daemon owns the process-wide lifecycle. Each field is the handle to one
+// startup phase; a nil field means the phase is not yet active (or has been
+// disabled by an Option), so Shutdown can be invoked at any point — including
+// after a partial startup failure — and nil-guards each tear-down step.
+type Daemon struct {
+	opts *Options
+
+	cgroup    cgroups.Cgroup
+	pidLocked bool
+	bpfReady  bool
+	podReady  bool
+	metrics   *prometheus.Registry
+	tools     *toolstream.Server
+	tracing   *tracing.TracingManager
+}
+
+func NewDaemon(opts *Options) *Daemon {
+	return &Daemon{opts: opts}
+}
+
+// Run executes the startup pipeline, blocks until a termination signal (or
+// ctx cancellation) arrives, then runs Shutdown. A startup failure short-
+// circuits to a best-effort Shutdown before returning the original error.
+func (d *Daemon) Run(ctx context.Context) error {
+	if err := d.start(); err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		_ = d.Shutdown(shutdownCtx)
+
+		return err
+	}
+
+	log.Infof("huatuo-bamai now starting success")
+	s := d.waitForSignal(ctx)
+	log.Infof("huatuo-bamai exited by signal %v", s)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := d.Shutdown(shutdownCtx); err != nil {
+		log.Warnf("shutdown: %v", err)
+	}
+
+	return nil
+}
+
+// Shutdown tears down every active phase in reverse startup order. Each
+// branch is nil-guarded so Shutdown is safe to call after a partial
+// startup; errors are aggregated via errors.Join so a single failing
+// phase does not skip the rest.
+func (d *Daemon) Shutdown(ctx context.Context) error {
+	var errs []error
+
+	if d.tracing != nil {
+		if err := d.tracing.Stop(); err != nil {
+			errs = append(errs, fmt.Errorf("tracing stop: %w", err))
+		}
+		// Drain bulk-buffered tracing writes after collectors stop and
+		// before BPF teardown — bounded to keep shutdown predictable.
+		if err := tracing.CloseStores(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("close tracing stores: %w", err))
+		}
+		d.tracing = nil
+	}
+
+	if d.tools != nil {
+		if err := d.tools.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("toolstream close: %w", err))
+		}
+		d.tools = nil
+	}
+
+	if d.podReady {
+		pod.ManagerRelease()
+		d.podReady = false
+	}
+
+	if d.bpfReady {
+		bpf.Close()
+		d.bpfReady = false
+	}
+
+	if d.cgroup != nil {
+		if err := d.cgroup.DeleteRuntime(); err != nil {
+			errs = append(errs, fmt.Errorf("cgroup delete: %w", err))
+		}
+		d.cgroup = nil
+	}
+
+	if d.pidLocked {
+		pidfile.UnLock(appName)
+		d.pidLocked = false
+	}
+
+	return errors.Join(errs...)
+}
+
+func (d *Daemon) start() error {
+	steps := []func() error{
+		d.lockPidfile,
+		d.setupCgroup,
+		d.setupStorage,
+		d.setupBPF,
+		d.setupPodManager,
+		d.setupMetrics,
+		d.startToolstream,
+		d.startTracing,
+		d.startHandlers,
+		d.applyCgroupCPUQuota,
+	}
+
+	for _, step := range steps {
+		if err := step(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
+	waitCh := make(chan os.Signal, 1)
+	signal.Notify(waitCh, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
+
+	if d.opts.DryRun {
+		time.Sleep(2 * time.Second)
+		log.Infof("huatuo-bamai exited gracefully by syscall.SIGTERM")
+		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
+	}
+
+	select {
+	case <-ctx.Done():
+		return nil
+	case s := <-waitCh:
+		return s
+	}
+}
+
+func (d *Daemon) lockPidfile() error {
 	if err := pidfile.Lock(appName); err != nil {
 		return fmt.Errorf("failed to lock pid file: %w", err)
 	}
-	defer pidfile.UnLock(appName)
+	d.pidLocked = true
 
-	// init cpu quota; nil cgr means --disable-cgroup is set
-	var cgr cgroups.Cgroup
-	if opts.DisableCgroup {
+	return nil
+}
+
+func (d *Daemon) setupCgroup() error {
+	if d.opts.DisableCgroup {
 		log.Infof("self cgroup resource limit disabled by --disable-cgroup")
-	} else {
-		var err error
-		cgr, err = cgroups.NewManager()
-		if err != nil {
-			return err
-		}
-
-		if err := cgr.NewRuntime(
-			appName,
-			cgroups.ToSpec(
-				config.Get().RuntimeCgroup.LimitInitCPU,
-				config.Get().RuntimeCgroup.LimitMem,
-			),
-		); err != nil {
-			return fmt.Errorf("new runtime cgroup: %w", err)
-		}
-		defer func() {
-			_ = cgr.DeleteRuntime()
-		}()
-
-		if err := cgr.AddProc(uint64(os.Getpid())); err != nil {
-			return fmt.Errorf("cgroup add pid to cgroups.proc")
-		}
+		return nil
 	}
 
-	if !opts.DisableStorage {
-		if err := initStorage(opts.Region, config.Get()); err != nil {
-			return err
-		}
+	cgr, err := cgroups.NewManager()
+	if err != nil {
+		return err
 	}
 
+	if err := cgr.NewRuntime(
+		appName,
+		cgroups.ToSpec(
+			config.Get().RuntimeCgroup.LimitInitCPU,
+			config.Get().RuntimeCgroup.LimitMem,
+		),
+	); err != nil {
+		return fmt.Errorf("new runtime cgroup: %w", err)
+	}
+
+	if err := cgr.AddProc(uint64(os.Getpid())); err != nil {
+		return fmt.Errorf("cgroup add pid to cgroups.proc")
+	}
+
+	d.cgroup = cgr
+
+	return nil
+}
+
+func (d *Daemon) applyCgroupCPUQuota() error {
+	if d.cgroup == nil {
+		return nil
+	}
+	if err := d.cgroup.UpdateRuntime(cgroups.ToSpec(config.Get().RuntimeCgroup.LimitCPU, 0)); err != nil {
+		return fmt.Errorf("update runtime: %w", err)
+	}
+
+	return nil
+}
+
+func (d *Daemon) setupStorage() error {
+	if d.opts.DisableStorage {
+		return nil
+	}
+	return initStorage(d.opts.Region, config.Get())
+}
+
+func (d *Daemon) setupBPF() error {
 	if err := bpf.NewManager(&bpf.Option{}); err != nil {
 		return fmt.Errorf("failed to init bpf manager: %w", err)
 	}
+	d.bpfReady = true
 
+	return nil
+}
+
+func (d *Daemon) setupPodManager() error {
 	mgrInitCtx := pod.ManagerInitCtx{
 		PodReadOnlyPort:      config.Get().Pod.KubeletReadOnlyPort,
 		PodAuthorizedPort:    config.Get().Pod.KubeletAuthorizedPort,
 		PodClientCertPath:    config.Get().Pod.KubeletClientCertPath,
-		PodContainerDisabled: opts.DisableKubelet,
+		PodContainerDisabled: d.opts.DisableKubelet,
 		DockerAPIVersion:     config.Get().Pod.DockerAPIVersion,
 	}
 
 	if err := pod.ManagerInit(&mgrInitCtx); err != nil {
 		return fmt.Errorf("init podlist and sync module: %w", err)
 	}
+	d.podReady = true
 
-	blacklisted := config.Get().BlackList
-	prom, err := InitMetricsCollector(blacklisted, opts.Region)
+	return nil
+}
+
+func (d *Daemon) setupMetrics() error {
+	reg, err := InitMetricsCollector(config.Get().BlackList, d.opts.Region)
 	if err != nil {
 		return err
 	}
+	d.metrics = reg
 
-	tsSrv, err := toolstream.NewServerDefault()
+	return nil
+}
+
+func (d *Daemon) startToolstream() error {
+	srv, err := toolstream.NewServerDefault()
 	if err != nil {
 		return fmt.Errorf("toolstream: %w", err)
 	}
-	if err := tsSrv.Start(); err != nil {
+
+	if err := srv.Start(); err != nil {
 		return fmt.Errorf("toolstream: start: %w", err)
 	}
-	defer tsSrv.Close()
+	d.tools = srv
 
-	mgr, err := tracing.NewManager(blacklisted)
+	return nil
+}
+
+func (d *Daemon) startTracing() error {
+	mgr, err := tracing.NewManager(config.Get().BlackList)
 	if err != nil {
 		return err
 	}
@@ -151,49 +333,14 @@ func mainAction(opts *Options) error {
 	if err := mgr.Start(); err != nil {
 		return err
 	}
+	d.tracing = mgr
 
-	handlers.Start(config.Get().APIServer.TCPAddr, mgr, prom)
+	return nil
+}
 
-	// update cpu quota; skipped when --disable-cgroup is set
-	if cgr != nil {
-		if err := cgr.UpdateRuntime(cgroups.ToSpec(config.Get().RuntimeCgroup.LimitCPU, 0)); err != nil {
-			return fmt.Errorf("update runtime: %w", err)
-		}
-	}
-
-	waitExit := make(chan os.Signal, 1)
-	signal.Notify(waitExit, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
-
-	if opts.DryRun {
-		time.Sleep(2 * time.Second)
-		log.Infof("huatuo-bamai exited gracefully by syscall.SIGTERM")
-		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
-	}
-
-	log.Infof("huatuo-bamai now starting success")
-
-	for {
-		s := <-waitExit
-		switch s {
-		case syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM:
-			log.Infof("huatuo-bamai exited by signal %d", s)
-			_ = mgr.Stop()
-			// Drain bulk-buffered tracing writes after collectors stop and
-			// before BPF teardown — bounded to keep shutdown predictable.
-			closeCtx, cancelClose := context.WithTimeout(context.Background(), 10*time.Second)
-			if err := tracing.CloseStores(closeCtx); err != nil {
-				log.Warnf("close tracing stores: %v", err)
-			}
-			cancelClose()
-			bpf.Close()
-			pod.ManagerRelease()
-			return nil
-		case syscall.SIGUSR1:
-			return nil
-		default:
-			return nil
-		}
-	}
+func (d *Daemon) startHandlers() error {
+	handlers.Start(config.Get().APIServer.TCPAddr, d.tracing, d.metrics)
+	return nil
 }
 
 func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
