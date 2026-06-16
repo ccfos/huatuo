@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/pkg/tracing"
@@ -27,6 +28,7 @@ import (
 
 func (d *Daemon) setupStorage() error {
 	if d.opts.DisableStorage {
+		log.Infof("storage backends disabled by --disable-storage")
 		return nil
 	}
 	return initStorage(d.opts.Region, config.Get())
