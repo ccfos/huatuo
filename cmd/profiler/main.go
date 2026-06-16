@@ -21,8 +21,7 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	_ "huatuo-bamai/cmd/profiler/cpu"
-	_ "huatuo-bamai/cmd/profiler/mem"
+	_ "huatuo-bamai/cmd/profiler/provider"
 )
 
 func main() {
