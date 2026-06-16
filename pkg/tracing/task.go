@@ -19,13 +19,12 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"huatuo-bamai/internal/log"
 	"math/big"
 	"os/exec"
 	"path"
 	"sync"
 	"time"
-
-	"huatuo-bamai/internal/log"
 )
 
 // Status represents the status of a task.
@@ -107,6 +106,8 @@ func tasksGarbageCollect() {
 	}
 }
 
+// AllocTaskID returns a fresh random identifier suitable for tasks and tracer
+// records.
 func AllocTaskID() string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const length = 16
