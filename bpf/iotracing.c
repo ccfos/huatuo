@@ -12,6 +12,8 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define FILEPATH_MAX_DEPTH 8
 #define DNAME_INLINE_LEN 32
 #define PAGE_SIZE 4096
+#define BPF_DEV_MINOR_BITS 20
+#define BPF_DEV_MINOR_MASK ((1U << BPF_DEV_MINOR_BITS) - 1)
 
 // Device filter configuration
 volatile const u32 FILTER_DEV_IDS[16]	= {};
@@ -32,6 +34,12 @@ static __always_inline int should_process_device(u32 dev)
 			return 1;
 
 	return 0;
+}
+
+static __always_inline u32 encode_dev(u32 major, u32 minor)
+{
+	return (major & 0xfff) << BPF_DEV_MINOR_BITS |
+	       (minor & BPF_DEV_MINOR_MASK);
 }
 
 struct latency_info {
@@ -205,7 +213,7 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 		return -1;
 
 	partno	   = get_partition_number(req);
-	key.dev	   = (devn[0] & 0xfff) << 20 | (devn[1] & 0xff) + partno;
+	key.dev	   = encode_dev(devn[0], devn[1] + partno);
 	key.sector = BPF_CORE_READ(req, __sector);
 
 	if (!should_process_device(key.dev))
@@ -248,7 +256,7 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 		return -1;
 
 	partno		= get_partition_number(req);
-	info_key.dev	= (devn[0] & 0xfff) << 20 | (devn[1] & 0xff) + partno;
+	info_key.dev	= encode_dev(devn[0], devn[1] + partno);
 	info_key.sector = BPF_CORE_READ(req, __sector);
 
 	if (!should_process_device(info_key.dev))
