@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
@@ -22,10 +23,10 @@ import (
 	"huatuo-bamai/internal/pod"
 )
 
-func (d *Daemon) setupPodManager() error {
+func setupPodManager(d *Daemon) (func(context.Context) error, error) {
 	if d.opts.DisableKubelet {
 		log.Infof("kubelet pod sync disabled by --disable-kubelet")
-		return nil
+		return nil, nil
 	}
 
 	mgrCtx := pod.ManagerCtx{
@@ -36,9 +37,11 @@ func (d *Daemon) setupPodManager() error {
 	}
 
 	if err := pod.ManagerInit(&mgrCtx); err != nil {
-		return fmt.Errorf("init podlist and sync module: %w", err)
+		return nil, fmt.Errorf("init podlist and sync module: %w", err)
 	}
-	d.podReady = true
 
-	return nil
+	return func(context.Context) error {
+		pod.ManagerRelease()
+		return nil
+	}, nil
 }

@@ -15,6 +15,8 @@
 package main
 
 import (
+	"context"
+
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/metric/runtime"
@@ -22,18 +24,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func (d *Daemon) setupMetrics() error {
-	reg, err := initMetricsCollector(config.Get().BlackList, d.opts.Region)
-	if err != nil {
-		return err
-	}
-	d.metrics = reg
-
-	return nil
-}
-
-func initMetricsCollector(blackListed []string, region string) (*prometheus.Registry, error) {
-	nc, err := metric.NewCollectorManager(blackListed, region)
+func setupMetrics(d *Daemon) (func(context.Context) error, error) {
+	nc, err := metric.NewCollectorManager(config.Get().BlackList, d.opts.Region)
 	if err != nil {
 		return nil, err
 	}
@@ -42,5 +34,7 @@ func initMetricsCollector(blackListed []string, region string) (*prometheus.Regi
 	reg.MustRegister(nc)
 
 	runtime.RegisterCollector(reg, metric.DefaultNamespace)
-	return reg, nil
+	d.metrics = reg
+
+	return nil, nil
 }

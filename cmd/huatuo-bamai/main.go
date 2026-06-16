@@ -23,12 +23,9 @@ import (
 	"syscall"
 	"time"
 
-	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pidfile"
-	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -76,120 +73,81 @@ func mainAction(opts *Options) error {
 	return NewDaemon(opts).Run(context.Background())
 }
 
-// Daemon owns the process-wide lifecycle. Each field is the handle to one
-// startup phase; a nil field means the phase is not yet active (or has been
-// disabled by an Option), so Shutdown can be invoked at any point — including
-// after a partial startup failure — and nil-guards each tear-down step.
+// Daemon owns handles that earlier setup steps write and later ones read
+// (e.g. cgr produced by setupCgroup, consumed by applyCgroupCPUQuota).
 type Daemon struct {
 	opts *Options
 
-	cgroup    cgroups.Cgroup
-	pidLocked bool
-	bpfReady  bool
-	podReady  bool
-	metrics   *prometheus.Registry
-	tools     *toolstream.Server
-	tracer    *tracing.TracingManager
+	cgr     cgroups.Cgroup
+	metrics *prometheus.Registry
+	tracer  *tracing.TracingManager
 }
 
 func NewDaemon(opts *Options) *Daemon {
 	return &Daemon{opts: opts}
 }
 
-// Run executes the startup pipeline, blocks until a termination signal (or
-// ctx cancellation) arrives, then runs Shutdown. A startup failure short-
-// circuits to a best-effort Shutdown before returning the original error.
+// Run brings the daemon up by calling each module's setup function in
+// order, recording its cleanup on a stack, then blocks until a termination
+// signal arrives and runs the stack in reverse. A setup failure tears
+// down whatever already came up before returning the original error.
 func (d *Daemon) Run(ctx context.Context) error {
-	if err := d.start(); err != nil {
+	var cleanups []func(context.Context) error
+
+	shutdown := func() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
-		_ = d.Shutdown(shutdownCtx)
 
-		return err
+		var errs []error
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			if err := cleanups[i](shutdownCtx); err != nil {
+				errs = append(errs, err)
+			}
+		}
+
+		return errors.Join(errs...)
+	}
+
+	run := func(name string, setup func(*Daemon) (func(context.Context) error, error)) error {
+		cleanup, err := setup(d)
+		if err != nil {
+			_ = shutdown()
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		if cleanup != nil {
+			cleanups = append(cleanups, cleanup)
+		}
+
+		return nil
+	}
+
+	steps := []struct {
+		name  string
+		setup func(*Daemon) (func(context.Context) error, error)
+	}{
+		{"pidfile", lockPidfile},
+		{"cgroup", setupCgroup},
+		{"storage", setupStorage},
+		{"bpf", setupBPF},
+		{"pod", setupPodManager},
+		{"metrics", setupMetrics},
+		{"toolstream", startToolstream},
+		{"tracing", startTracing},
+		{"handlers", startHandlers},
+		{"cgroup-cpu-quota", applyCgroupCPUQuota},
+	}
+	for _, s := range steps {
+		if err := run(s.name, s.setup); err != nil {
+			return err
+		}
 	}
 
 	log.Infof("huatuo-bamai started successfully")
 	s := d.waitForSignal(ctx)
 	log.Infof("huatuo-bamai received signal %v, shutting down", s)
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	if err := d.Shutdown(shutdownCtx); err != nil {
+	if err := shutdown(); err != nil {
 		log.Warnf("shutdown completed with errors: %v", err)
-	}
-
-	return nil
-}
-
-// Shutdown tears down every active phase in reverse startup order. Each
-// branch is nil-guarded so Shutdown is safe to call after a partial
-// startup; errors are aggregated via errors.Join so a single failing
-// phase does not skip the rest.
-func (d *Daemon) Shutdown(ctx context.Context) error {
-	var errs []error
-
-	if d.tracer != nil {
-		if err := d.tracer.Stop(); err != nil {
-			errs = append(errs, fmt.Errorf("tracing stop: %w", err))
-		}
-		// Drain bulk-buffered tracing writes after collectors stop and
-		// before BPF teardown — bounded to keep shutdown predictable.
-		if err := tracing.CloseStores(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("close tracing stores: %w", err))
-		}
-		d.tracer = nil
-	}
-
-	if d.tools != nil {
-		if err := d.tools.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("toolstream close: %w", err))
-		}
-		d.tools = nil
-	}
-
-	if d.podReady {
-		pod.ManagerRelease()
-		d.podReady = false
-	}
-
-	if d.bpfReady {
-		bpf.Close()
-		d.bpfReady = false
-	}
-
-	if d.cgroup != nil {
-		if err := d.cgroup.DeleteRuntime(); err != nil {
-			errs = append(errs, fmt.Errorf("cgroup delete: %w", err))
-		}
-		d.cgroup = nil
-	}
-
-	if d.pidLocked {
-		pidfile.UnLock(appName)
-		d.pidLocked = false
-	}
-
-	return errors.Join(errs...)
-}
-
-func (d *Daemon) start() error {
-	steps := []func() error{
-		d.lockPidfile,
-		d.setupCgroup,
-		d.setupStorage,
-		d.setupBPF,
-		d.setupPodManager,
-		d.setupMetrics,
-		d.startToolstream,
-		d.startTracing,
-		d.startHandlers,
-		d.applyCgroupCPUQuota,
-	}
-
-	for _, step := range steps {
-		if err := step(); err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -213,11 +171,13 @@ func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
 	}
 }
 
-func (d *Daemon) lockPidfile() error {
+func lockPidfile(_ *Daemon) (func(context.Context) error, error) {
 	if err := pidfile.Lock(appName); err != nil {
-		return fmt.Errorf("failed to lock pid file: %w", err)
+		return nil, fmt.Errorf("lock pid file: %w", err)
 	}
-	d.pidLocked = true
 
-	return nil
+	return func(context.Context) error {
+		pidfile.UnLock(appName)
+		return nil
+	}, nil
 }

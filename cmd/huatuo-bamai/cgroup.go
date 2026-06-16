@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -23,15 +24,15 @@ import (
 	"huatuo-bamai/internal/log"
 )
 
-func (d *Daemon) setupCgroup() error {
+func setupCgroup(d *Daemon) (func(context.Context) error, error) {
 	if d.opts.DisableCgroup {
 		log.Infof("self cgroup resource limit disabled by --disable-cgroup")
-		return nil
+		return nil, nil
 	}
 
 	cgr, err := cgroups.NewManager()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := cgr.NewRuntime(
@@ -41,25 +42,24 @@ func (d *Daemon) setupCgroup() error {
 			config.Get().RuntimeCgroup.LimitMem,
 		),
 	); err != nil {
-		return fmt.Errorf("new runtime cgroup: %w", err)
+		return nil, fmt.Errorf("new runtime cgroup: %w", err)
 	}
 
 	if err := cgr.AddProc(uint64(os.Getpid())); err != nil {
-		return fmt.Errorf("cgroup add pid to cgroup.procs: %w", err)
+		return nil, fmt.Errorf("cgroup add pid to cgroup.procs: %w", err)
 	}
 
-	d.cgroup = cgr
-
-	return nil
+	d.cgr = cgr
+	return func(context.Context) error { return cgr.DeleteRuntime() }, nil
 }
 
-func (d *Daemon) applyCgroupCPUQuota() error {
-	if d.cgroup == nil {
-		return nil
+func applyCgroupCPUQuota(d *Daemon) (func(context.Context) error, error) {
+	if d.cgr == nil {
+		return nil, nil
 	}
-	if err := d.cgroup.UpdateRuntime(cgroups.ToSpec(config.Get().RuntimeCgroup.LimitCPU, 0)); err != nil {
-		return fmt.Errorf("update runtime: %w", err)
+	if err := d.cgr.UpdateRuntime(cgroups.ToSpec(config.Get().RuntimeCgroup.LimitCPU, 0)); err != nil {
+		return nil, fmt.Errorf("update runtime: %w", err)
 	}
 
-	return nil
+	return nil, nil
 }

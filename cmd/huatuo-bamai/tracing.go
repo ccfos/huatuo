@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
@@ -24,44 +25,54 @@ import (
 	"huatuo-bamai/pkg/tracing"
 )
 
-func (d *Daemon) setupBPF() error {
+func setupBPF(_ *Daemon) (func(context.Context) error, error) {
 	if err := bpf.NewManager(&bpf.Option{}); err != nil {
-		return fmt.Errorf("init bpf manager: %w", err)
+		return nil, fmt.Errorf("init bpf manager: %w", err)
 	}
-	d.bpfReady = true
 
-	return nil
+	return func(context.Context) error {
+		bpf.Close()
+		return nil
+	}, nil
 }
 
-func (d *Daemon) startToolstream() error {
+func startToolstream(_ *Daemon) (func(context.Context) error, error) {
 	srv, err := toolstream.NewServerDefault()
 	if err != nil {
-		return fmt.Errorf("toolstream: %w", err)
+		return nil, fmt.Errorf("toolstream: %w", err)
 	}
 
 	if err := srv.Start(); err != nil {
-		return fmt.Errorf("toolstream: start: %w", err)
+		return nil, fmt.Errorf("toolstream: start: %w", err)
 	}
-	d.tools = srv
 
-	return nil
+	return func(context.Context) error { return srv.Close() }, nil
 }
 
-func (d *Daemon) startTracing() error {
+func startTracing(d *Daemon) (func(context.Context) error, error) {
 	mgr, err := tracing.NewManager(config.Get().BlackList)
 	if err != nil {
-		return fmt.Errorf("new tracing manager: %w", err)
+		return nil, fmt.Errorf("new tracing manager: %w", err)
 	}
 
 	if err := mgr.Start(); err != nil {
-		return fmt.Errorf("start tracing manager: %w", err)
+		return nil, fmt.Errorf("start tracing manager: %w", err)
 	}
-	d.tracer = mgr
 
-	return nil
+	d.tracer = mgr
+	// Stop collectors first, then drain bulk-buffered writes before BPF teardown.
+	return func(ctx context.Context) error {
+		if err := mgr.Stop(); err != nil {
+			return fmt.Errorf("stop: %w", err)
+		}
+		if err := tracing.CloseStores(ctx); err != nil {
+			return fmt.Errorf("close stores: %w", err)
+		}
+		return nil
+	}, nil
 }
 
-func (d *Daemon) startHandlers() error {
+func startHandlers(d *Daemon) (func(context.Context) error, error) {
 	handlers.Start(config.Get().APIServer.TCPAddr, d.tracer, d.metrics)
-	return nil
+	return nil, nil
 }

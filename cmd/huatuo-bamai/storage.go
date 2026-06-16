@@ -26,12 +26,13 @@ import (
 	"huatuo-bamai/pkg/tracing"
 )
 
-func (d *Daemon) setupStorage() error {
+func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	if d.opts.DisableStorage {
 		log.Infof("storage backends disabled by --disable-storage")
-		return nil
+		return nil, nil
 	}
-	return initStorage(d.opts.Region, config.Get())
+
+	return nil, initStorage(d.opts.Region, config.Get())
 }
 
 func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
