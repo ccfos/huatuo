@@ -23,9 +23,6 @@ import (
 	"syscall"
 	"time"
 
-	_ "huatuo-bamai/core/autotracing"
-	_ "huatuo-bamai/core/events"
-	_ "huatuo-bamai/core/metrics"
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/log"
@@ -35,6 +32,10 @@ import (
 	"huatuo-bamai/pkg/tracing"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	_ "huatuo-bamai/core/autotracing"
+	_ "huatuo-bamai/core/events"
+	_ "huatuo-bamai/core/metrics"
 )
 
 const (
@@ -66,7 +67,7 @@ func main() {
 	})
 
 	if err := app.Run(os.Args); err != nil {
-		log.Errorf("Error: %v", err)
+		log.Errorf("app run: %v", err)
 		os.Exit(1)
 	}
 }
@@ -88,7 +89,7 @@ type Daemon struct {
 	podReady  bool
 	metrics   *prometheus.Registry
 	tools     *toolstream.Server
-	tracing   *tracing.TracingManager
+	tracer    *tracing.TracingManager
 }
 
 func NewDaemon(opts *Options) *Daemon {
@@ -107,9 +108,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 
-	log.Infof("huatuo-bamai now starting success")
+	log.Infof("huatuo-bamai started successfully")
 	s := d.waitForSignal(ctx)
-	log.Infof("huatuo-bamai exited by signal %v", s)
+	log.Infof("huatuo-bamai received signal %v, shutting down", s)
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
@@ -127,8 +128,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 func (d *Daemon) Shutdown(ctx context.Context) error {
 	var errs []error
 
-	if d.tracing != nil {
-		if err := d.tracing.Stop(); err != nil {
+	if d.tracer != nil {
+		if err := d.tracer.Stop(); err != nil {
 			errs = append(errs, fmt.Errorf("tracing stop: %w", err))
 		}
 		// Drain bulk-buffered tracing writes after collectors stop and
@@ -136,7 +137,7 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 		if err := tracing.CloseStores(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("close tracing stores: %w", err))
 		}
-		d.tracing = nil
+		d.tracer = nil
 	}
 
 	if d.tools != nil {
@@ -200,7 +201,7 @@ func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
 
 	if d.opts.DryRun {
 		time.Sleep(2 * time.Second)
-		log.Infof("huatuo-bamai exited gracefully by syscall.SIGTERM")
+		log.Infof("dry-run complete, sending SIGTERM to self")
 		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
 	}
 

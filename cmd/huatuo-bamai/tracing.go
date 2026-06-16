@@ -26,7 +26,7 @@ import (
 
 func (d *Daemon) setupBPF() error {
 	if err := bpf.NewManager(&bpf.Option{}); err != nil {
-		return fmt.Errorf("failed to init bpf manager: %w", err)
+		return fmt.Errorf("init bpf manager: %w", err)
 	}
 	d.bpfReady = true
 
@@ -50,18 +50,18 @@ func (d *Daemon) startToolstream() error {
 func (d *Daemon) startTracing() error {
 	mgr, err := tracing.NewManager(config.Get().BlackList)
 	if err != nil {
-		return err
+		return fmt.Errorf("new tracing manager: %w", err)
 	}
 
 	if err := mgr.Start(); err != nil {
-		return err
+		return fmt.Errorf("start tracing manager: %w", err)
 	}
-	d.tracing = mgr
+	d.tracer = mgr
 
 	return nil
 }
 
 func (d *Daemon) startHandlers() error {
-	handlers.Start(config.Get().APIServer.TCPAddr, d.tracing, d.metrics)
+	handlers.Start(config.Get().APIServer.TCPAddr, d.tracer, d.metrics)
 	return nil
 }

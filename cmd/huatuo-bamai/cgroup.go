@@ -45,7 +45,7 @@ func (d *Daemon) setupCgroup() error {
 	}
 
 	if err := cgr.AddProc(uint64(os.Getpid())); err != nil {
-		return fmt.Errorf("cgroup add pid to cgroups.proc")
+		return fmt.Errorf("cgroup add pid to cgroup.procs: %w", err)
 	}
 
 	d.cgroup = cgr

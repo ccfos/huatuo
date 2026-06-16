@@ -79,7 +79,9 @@ func buildCommand(info buildInfo) *cli.App {
 	opts.AddFlags(app)
 
 	app.Before = func(ctx *cli.Context) error {
-		opts.FromContext(ctx)
+		if err := opts.FromContext(ctx); err != nil {
+			return err
+		}
 		return configureRuntime(opts)
 	}
 
@@ -166,7 +168,7 @@ func (o *Options) AddFlags(app *cli.App) {
 }
 
 // FromContext copies parsed flag values from urfave/cli into Options.
-func (o *Options) FromContext(ctx *cli.Context) {
+func (o *Options) FromContext(ctx *cli.Context) error {
 	o.ConfigFile = ctx.String(flagConfig)
 	o.Region = ctx.String(flagRegion)
 	o.DisableKubelet = ctx.Bool(flagDisableKubelet)
@@ -177,31 +179,40 @@ func (o *Options) FromContext(ctx *cli.Context) {
 	o.DryRun = ctx.Bool(flagDryRun)
 	o.ProcfsPrefix = ctx.String(flagProcfsPrefix)
 
-	o.ConfigDir = resolveOptionDir(ctx, flagConfigDir)
-	o.BPFObjDir = resolveOptionDir(ctx, flagBPFObjDir)
-	o.ToolBinDir = resolveOptionDir(ctx, flagToolBinDir)
+	var err error
+	if o.ConfigDir, err = resolveOptionDir(ctx, flagConfigDir); err != nil {
+		return err
+	}
+	if o.BPFObjDir, err = resolveOptionDir(ctx, flagBPFObjDir); err != nil {
+		return err
+	}
+	if o.ToolBinDir, err = resolveOptionDir(ctx, flagToolBinDir); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // resolveOptionDir returns an absolute directory path for a path-like flag.
 // Absolute values and explicitly-set relative values are returned as-is;
 // unset defaults are anchored to the binary's parent dir to preserve the
 // original layout-relative resolution.
-func resolveOptionDir(ctx *cli.Context, name string) string {
+func resolveOptionDir(ctx *cli.Context, name string) (string, error) {
 	dir := ctx.String(name)
 	if filepath.IsAbs(dir) {
-		return dir
+		return dir, nil
 	}
 
 	if ctx.IsSet(name) {
-		return dir
+		return dir, nil
 	}
 
 	runningDir, err := executil.RunningDir()
 	if err != nil {
-		panic("find running dir")
+		return "", fmt.Errorf("resolve %s dir: %w", name, err)
 	}
 
-	return filepath.Join(runningDir, "../", dir)
+	return filepath.Join(runningDir, "../", dir), nil
 }
 
 // configureRuntime applies process-global side effects derived from Options:
@@ -215,33 +226,39 @@ func configureRuntime(opts *Options) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	if level := config.Get().Log.Level; level != "" {
-		log.SetLevel(level)
-		log.Infof("log level [%s] configured in file, use it", log.GetLevel())
+	// Log level: config file wins; --log-debug only applies when the config
+	// file leaves the level unset.
+	switch {
+	case config.Get().Log.Level != "":
+		log.SetLevel(config.Get().Log.Level)
+		log.Infof("log level set to %q from config file", log.GetLevel())
+	case opts.LogDebug:
+		log.SetLevel("Debug")
+		log.Infof("log level set to %q from --log-debug", log.GetLevel())
 	}
 
 	if logFile := config.Get().Log.File; logFile != "" {
+		// File handle is kept open for the process lifetime as the log sink.
 		file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
-		if err == nil {
-			log.SetOutput(file)
-		} else {
+		if err != nil {
 			log.SetOutput(os.Stdout)
-			log.Infof("Failed to log to file, using default stdout")
+			log.Infof("open log file %q failed, falling back to stdout: %v", logFile, err)
+		} else {
+			log.SetOutput(file)
 		}
 	}
 
 	if len(opts.DisableTracing) > 0 {
-		merged := append(config.Get().BlackList, opts.DisableTracing...)
+		bl := config.Get().BlackList
+		merged := make([]string, 0, len(bl)+len(opts.DisableTracing))
+		merged = append(merged, bl...)
+		merged = append(merged, opts.DisableTracing...)
 		config.Set("BlackList", merged)
-		log.Infof("The tracer black list by cli: %v", config.Get().BlackList)
+		log.Infof("merged tracer blacklist from CLI: %v", config.Get().BlackList)
 	}
 
 	if opts.ProcfsPrefix != "" {
 		procfs.RootPrefix(opts.ProcfsPrefix)
-	}
-
-	if opts.LogDebug {
-		log.SetLevel("Debug")
 	}
 
 	log.Debugf("option %s: %s, %s: %s, %s: %s",
