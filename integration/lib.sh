@@ -39,6 +39,14 @@ fatal() {
 	exit 1
 }
 
+# skip <reason>
+# Records that the test cannot meaningfully run in this environment and
+# exits 0 so the harness treats it as success without false confidence.
+skip() {
+	echo "$(log_prefix)[SKIP] $*"
+	exit 0
+}
+
 #  ---------------------------------- utils -----------------------------------
 assert_eq() {
 	local actual=$1 expect=$2 msg=${3:-""}
@@ -81,6 +89,36 @@ wait_until() {
 
 	log_error "❌ wait_until timeout: ${desc}, func/cmd: [${func} ${@}]"
 	return 1
+}
+
+# --------------------------- bpf tool test scaffolding ----------------------
+# Common scaffolding used by per-tool test_*.sh scripts (e.g.,
+# test_dropwatch_ratelimit.sh, test_iotracing.sh).
+
+# bpf_tool_setup <name>
+# Populates TOOL_BIN/TOOL_BPF/TOOL_OUT/TOOL_ERR for the named tool and
+# aborts unless running as root with both build artifacts present.
+bpf_tool_setup() {
+	local name=$1
+	TOOL_BIN="${ROOT_DIR}/_output/bin/${name}"
+	TOOL_BPF="${ROOT_DIR}/_output/bpf/${name}.o"
+	TOOL_OUT="${HUATUO_BAMAI_TEST_TMPDIR}/${name}.out"
+	TOOL_ERR="${HUATUO_BAMAI_TEST_TMPDIR}/${name}.err"
+
+	[[ $EUID -eq 0 ]] || fatal "requires root (BPF requires CAP_BPF/CAP_SYS_ADMIN)"
+	[[ -x ${TOOL_BIN} ]] || fatal "missing ${name} binary: ${TOOL_BIN}"
+	[[ -r ${TOOL_BPF} ]] || fatal "missing ${name} bpf object: ${TOOL_BPF}"
+}
+
+# dump_tool_logs_and_fail <msg>
+# Streams TOOL_OUT and TOOL_ERR to stderr for post-mortem then aborts.
+dump_tool_logs_and_fail() {
+	log_error "----- OUT (${TOOL_OUT}) -----"
+	[[ -f "${TOOL_OUT}" ]] && cat "${TOOL_OUT}" >&2
+	log_error "----- ERR (${TOOL_ERR}) -----"
+	[[ -f "${TOOL_ERR}" ]] && cat "${TOOL_ERR}" >&2
+	log_error "----- end -----"
+	fatal "$*"
 }
 
 # ------------------------------- huatuo-bamai --------------------------------
