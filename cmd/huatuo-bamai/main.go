@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -35,29 +33,53 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pidfile"
 	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/tracing"
-
-	"github.com/urfave/cli/v2"
 )
 
-func mainAction(ctx *cli.Context) error {
-	if ctx.NArg() > 0 {
-		return fmt.Errorf("invalid param %v", ctx.Args())
+const (
+	appName  = "huatuo-bamai"
+	appUsage = "An In-depth Observation of Linux Kernel Application"
+)
+
+var (
+	// AppGitCommit is the source revision the binary was built from, set by Makefile.
+	AppGitCommit string
+	// AppBuildTime is the build timestamp, set by Makefile.
+	AppBuildTime string
+	// AppVersion is the release version read from the VERSION file, set by Makefile.
+	AppVersion string
+)
+
+func main() {
+	if AppVersion == "" {
+		log.Error("the value of AppVersion must be specified")
+		os.Exit(1)
 	}
 
-	if err := pidfile.Lock(ctx.App.Name); err != nil {
+	app := buildCommand(buildInfo{
+		Version:   AppVersion,
+		GitCommit: AppGitCommit,
+		BuildTime: AppBuildTime,
+	})
+
+	if err := app.Run(os.Args); err != nil {
+		log.Errorf("Error: %v", err)
+		os.Exit(1)
+	}
+}
+
+func mainAction(opts *Options) error {
+	if err := pidfile.Lock(appName); err != nil {
 		return fmt.Errorf("failed to lock pid file: %w", err)
 	}
-	defer pidfile.UnLock(ctx.App.Name)
+	defer pidfile.UnLock(appName)
 
 	// init cpu quota; nil cgr means --disable-cgroup is set
 	var cgr cgroups.Cgroup
-	if ctx.Bool("disable-cgroup") {
+	if opts.DisableCgroup {
 		log.Infof("self cgroup resource limit disabled by --disable-cgroup")
 	} else {
 		var err error
@@ -67,7 +89,7 @@ func mainAction(ctx *cli.Context) error {
 		}
 
 		if err := cgr.NewRuntime(
-			ctx.App.Name,
+			appName,
 			cgroups.ToSpec(
 				config.Get().RuntimeCgroup.LimitInitCPU,
 				config.Get().RuntimeCgroup.LimitMem,
@@ -84,8 +106,8 @@ func mainAction(ctx *cli.Context) error {
 		}
 	}
 
-	if !ctx.Bool("disable-storage") {
-		if err := initStorage(ctx.String("region"), config.Get()); err != nil {
+	if !opts.DisableStorage {
+		if err := initStorage(opts.Region, config.Get()); err != nil {
 			return err
 		}
 	}
@@ -98,7 +120,7 @@ func mainAction(ctx *cli.Context) error {
 		PodReadOnlyPort:      config.Get().Pod.KubeletReadOnlyPort,
 		PodAuthorizedPort:    config.Get().Pod.KubeletAuthorizedPort,
 		PodClientCertPath:    config.Get().Pod.KubeletClientCertPath,
-		PodContainerDisabled: ctx.Bool("disable-kubelet"),
+		PodContainerDisabled: opts.DisableKubelet,
 		DockerAPIVersion:     config.Get().Pod.DockerAPIVersion,
 	}
 
@@ -107,7 +129,7 @@ func mainAction(ctx *cli.Context) error {
 	}
 
 	blacklisted := config.Get().BlackList
-	prom, err := InitMetricsCollector(blacklisted, ctx.String("region"))
+	prom, err := InitMetricsCollector(blacklisted, opts.Region)
 	if err != nil {
 		return err
 	}
@@ -142,7 +164,7 @@ func mainAction(ctx *cli.Context) error {
 	waitExit := make(chan os.Signal, 1)
 	signal.Notify(waitExit, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
 
-	if ctx.Bool("dry-run") {
+	if opts.DryRun {
 		time.Sleep(2 * time.Second)
 		log.Infof("huatuo-bamai exited gracefully by syscall.SIGTERM")
 		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
@@ -172,42 +194,6 @@ func mainAction(ctx *cli.Context) error {
 			return nil
 		}
 	}
-}
-
-var (
-	// AppGitCommit will be the hash that the binary was built from
-	// and will be populated by the Makefile
-	AppGitCommit string
-	// AppBuildTime will be populated by the Makefile
-	AppBuildTime string
-	// AppVersion will be populated by the Makefile, read from
-	// VERSION file of the source code.
-	AppVersion string
-	AppUsage   = "An In-depth Observation of Linux Kernel Application"
-)
-
-const (
-	optionBpfObjDir  = "bpf-dir"
-	optionToolBinDir = "tools-bin-dir"
-	optionConfigDir  = "config-dir"
-)
-
-func buildOptionDir(optionDir string, ctx *cli.Context) string {
-	dir := ctx.String(optionDir)
-	if filepath.IsAbs(dir) {
-		return dir
-	}
-
-	if ctx.IsSet(optionDir) {
-		return dir
-	}
-
-	runningDir, err := executil.RunningDir()
-	if err != nil {
-		panic("find running dir")
-	}
-
-	return filepath.Join(runningDir, "../", dir)
 }
 
 func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
@@ -272,144 +258,4 @@ func splitStorageAddresses(raw string) []string {
 		addresses = append(addresses, trimmed)
 	}
 	return addresses
-}
-
-func main() {
-	app := cli.NewApp()
-	app.Usage = AppUsage
-
-	if AppVersion == "" {
-		log.Error("the value of AppVersion must be specified")
-		os.Exit(1)
-	}
-
-	v := []string{
-		"",
-		fmt.Sprintf("   app_version: %s", AppVersion),
-		fmt.Sprintf("   go_version: %s", runtime.Version()),
-		fmt.Sprintf("   git_commit: %s", AppGitCommit),
-		fmt.Sprintf("   build_time: %s", AppBuildTime),
-	}
-	app.Version = strings.Join(v, "\n")
-
-	app.Flags = []cli.Flag{
-		&cli.StringFlag{
-			Name:  "config",
-			Value: "huatuo-bamai.conf",
-			Usage: "huatuo-bamai config file",
-		},
-		&cli.StringFlag{
-			Name:  optionConfigDir,
-			Value: "conf",
-			Usage: "huatuo config dir",
-		},
-		&cli.StringFlag{
-			Name:  optionBpfObjDir,
-			Value: "bpf",
-			Usage: "bpf obj dir",
-		},
-		&cli.StringFlag{
-			Name:  optionToolBinDir,
-			Value: "bin",
-			Usage: "tools bin dir",
-		},
-		&cli.StringFlag{
-			Name:     "region",
-			Required: true,
-			Usage:    "the host and containers are in this region",
-		},
-		&cli.BoolFlag{
-			Name:  "disable-kubelet",
-			Value: false,
-			Usage: "disable kubelet(testing only). Not recommended for production use.",
-		},
-		&cli.BoolFlag{
-			Name:  "disable-storage",
-			Value: false,
-			Usage: "disable storage backends(testing only). Not recommended for production use.",
-		},
-		&cli.BoolFlag{
-			Name:  "disable-cgroup",
-			Value: false,
-			Usage: "disable self cgroup resource limit",
-		},
-		&cli.StringSliceFlag{
-			Name:  "disable-tracing",
-			Usage: "disable tracing. This is related to BlackList in config, and complement each other",
-		},
-		&cli.BoolFlag{
-			Name:  "log-debug",
-			Usage: "enable debug output for logging",
-		},
-		&cli.BoolFlag{
-			Name:  "dry-run",
-			Usage: "for loading tests, exit gracefully",
-		},
-		&cli.StringFlag{
-			Name:  "procfs-prefix",
-			Usage: "procfs prefix for default mountpoint e.g. /proc /sys and /dev",
-		},
-	}
-
-	app.Before = func(ctx *cli.Context) error {
-		bpf.DefaultBpfObjDir = buildOptionDir(optionBpfObjDir, ctx)
-		tracing.TaskBinDir = buildOptionDir(optionToolBinDir, ctx)
-
-		configDir := buildOptionDir(optionConfigDir, ctx)
-		if err := config.Load(filepath.Join(configDir, ctx.String("config"))); err != nil {
-			return fmt.Errorf("load config: %w", err)
-		}
-
-		// log level
-		if config.Get().Log.Level != "" {
-			log.SetLevel(config.Get().Log.Level)
-			log.Infof("log level [%s] configured in file, use it", log.GetLevel())
-		}
-
-		logFile := config.Get().Log.File
-		if logFile != "" {
-			file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
-			if err == nil {
-				log.SetOutput(file)
-			} else {
-				log.SetOutput(os.Stdout)
-				log.Infof("Failed to log to file, using default stdout")
-			}
-		}
-
-		// tracer
-		disabledTracing := ctx.StringSlice("disable-tracing")
-		if len(disabledTracing) > 0 {
-			definedTracers := config.Get().BlackList
-			definedTracers = append(definedTracers, disabledTracing...)
-
-			config.Set("BlackList", definedTracers)
-
-			log.Infof("The tracer black list by cli: %v", config.Get().BlackList)
-		}
-
-		// mountpoint (test only)
-		if ctx.String("procfs-prefix") != "" {
-			procfs.RootPrefix(ctx.String("procfs-prefix"))
-		}
-
-		if ctx.Bool("log-debug") {
-			log.SetLevel("Debug")
-		}
-
-		// print dirs
-		log.Debugf("option %s: %s, %s: %s, %s: %s", optionBpfObjDir, bpf.DefaultBpfObjDir,
-			optionToolBinDir, tracing.TaskBinDir, optionConfigDir, configDir)
-
-		return nil
-	}
-
-	// core
-	app.Action = mainAction
-
-	// run
-	if err := app.Run(os.Args); err != nil {
-		log.Errorf("Error: %v", err)
-		os.Exit(1)
-	}
 }
