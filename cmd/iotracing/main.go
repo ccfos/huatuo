@@ -46,6 +46,7 @@ type ioConfig struct {
 func main() {
 	app := cli.NewApp()
 	app.Name = iotracingToolName
+	app.Usage = "eBPF tracer for Linux block I/O latency, with per-process and per-file attribution"
 	app.Action = mainAction
 	app.Flags = appFlags()
 	app.Before = func(c *cli.Context) error {

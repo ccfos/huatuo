@@ -39,7 +39,7 @@ import (
 )
 
 const (
-	huatuoAPIServerUsage = `huatuo-apiserver`
+	huatuoAPIServerUsage = "Control-plane API server for orchestrating HuaTuo profiling and tracing jobs across hosts"
 	optionConfigDir      = "config-dir"
 )
 

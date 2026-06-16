@@ -99,7 +99,7 @@ func mainAction(ctx *cli.Context) error {
 
 func main() {
 	app := cli.NewApp()
-	app.Usage = "perf"
+	app.Usage = "eBPF on-CPU sampling profiler for Linux, scoped by PID or container"
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
 			Name:  "bpf-path",
