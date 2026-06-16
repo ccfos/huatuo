@@ -103,7 +103,7 @@ func printIOTracingReport(w io.Writer, report *types.IOTracingReport) {
 		fmt.Fprintf(w, "COMMAND: %-20s\n", p.Comm)
 
 		fmt.Fprintln(w, "-----------------------------------")
-		fmt.Fprintln(w, "DEVICE  FS_READ FS_WRITE DISK_READ DISK_WRITE   LATENCY(μs)      FILE/INODE")
+		fmt.Fprintln(w, "DEVICE  FS_READ FS_WRITE DISK_READ DISK_WRITE   LATENCY(us)                         FILE/INODE")
 
 		for _, f := range p.TotalFiles {
 			path := f.Path
@@ -122,13 +122,13 @@ func printIOTracingReport(w io.Writer, report *types.IOTracingReport) {
 			diskWrite := fmt.Sprintf("%dB", f.DiskWriteBps)
 
 			if f.Inode == 0 {
-				fmt.Fprintf(w, "%-7s %7s %8s %9s %9s   q2c=%-4d d2c=%-4d %s\n",
+				fmt.Fprintf(w, "%-7s %7s %8s %9s %9s   q2c=%-4d max_q2c=%-4d d2c=%-4d max_d2c=%-4d %s\n",
 					device, fsRead, fsWrite, diskRead, diskWrite,
-					f.Q2CUs, f.D2CUs, path)
+					f.Q2CUs, f.MaxQ2CUs, f.D2CUs, f.MaxD2CUs, path)
 			} else {
-				fmt.Fprintf(w, "%-7s %7s %8s %9s %9s   q2c=%-4d d2c=%-4d %s (%d)\n",
+				fmt.Fprintf(w, "%-7s %7s %8s %9s %9s   q2c=%-4d max_q2c=%-4d d2c=%-4d max_d2c=%-4d %s (%d)\n",
 					device, fsRead, fsWrite, diskRead, diskWrite,
-					f.Q2CUs, f.D2CUs, path, f.Inode)
+					f.Q2CUs, f.MaxQ2CUs, f.D2CUs, f.MaxD2CUs, path, f.Inode)
 			}
 		}
 		fmt.Fprintln(w)

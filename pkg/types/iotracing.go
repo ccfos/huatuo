@@ -64,4 +64,6 @@ type FileIOStats struct {
 	DiskWriteBps uint64 `json:"disk_write_bps"`
 	Q2CUs        uint64 `json:"q2c_us"`
 	D2CUs        uint64 `json:"d2c_us"`
+	MaxQ2CUs     uint64 `json:"max_q2c_us"`
+	MaxD2CUs     uint64 `json:"max_d2c_us"`
 }

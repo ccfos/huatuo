@@ -249,6 +249,8 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 	int partno;
 	int devn[2];
 	u64 now;
+	u64 q2c;
+	u64 d2c;
 
 	disk = get_request_disk(req);
 	/* gendisk.major, gendisk.first_minor */
@@ -287,8 +289,15 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 	}
 
 	now = bpf_ktime_get_ns();
-	entry->latency.sum_q2c += now - BPF_CORE_READ(req, start_time_ns);
-	entry->latency.sum_d2c += now - BPF_CORE_READ(req, io_start_time_ns);
+	q2c = now - BPF_CORE_READ(req, start_time_ns);
+	d2c = now - BPF_CORE_READ(req, io_start_time_ns);
+
+	entry->latency.sum_q2c += q2c;
+	entry->latency.sum_d2c += d2c;
+	if (q2c > entry->latency.max_q2c)
+		entry->latency.max_q2c = q2c;
+	if (d2c > entry->latency.max_d2c)
+		entry->latency.max_d2c = d2c;
 	entry->latency.cnt++;
 
 	if (entry == &data) {

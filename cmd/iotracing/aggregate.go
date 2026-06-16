@@ -65,10 +65,12 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 			continue
 		}
 
-		var q2c, d2c uint64
+		var q2c, d2c, maxQ2C, maxD2C uint64
 		if record.Latency.Count > 0 {
 			q2c = record.Latency.SumQ2CNs / (record.Latency.Count * 1000)
 			d2c = record.Latency.SumD2CNs / (record.Latency.Count * 1000)
+			maxQ2C = record.Latency.MaxQ2CNs / 1000
+			maxD2C = record.Latency.MaxD2CNs / 1000
 		}
 
 		major, minor := record.DevID>>20&0xfff, record.DevID&0xfffff
@@ -85,6 +87,8 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 			DiskWriteBps: dwbps,
 			Q2CUs:        q2c,
 			D2CUs:        d2c,
+			MaxQ2CUs:     maxQ2C,
+			MaxD2CUs:     maxD2C,
 		})
 	}
 
