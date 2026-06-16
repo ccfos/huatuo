@@ -112,8 +112,12 @@ func (s *Storage) newFileWriter(filename string) io.Writer {
 		s.writerCache.Store(fp, fileWriter)
 	}
 
-	s.files[filename] = fileWriter.(io.Writer)
-	return s.files[filename]
+	w, ok := fileWriter.(io.Writer)
+	if !ok {
+		return nil
+	}
+	s.files[filename] = w
+	return w
 }
 
 func (s *Storage) writerByName(name string) io.Writer {

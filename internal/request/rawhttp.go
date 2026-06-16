@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -82,10 +83,16 @@ func connectUnix(sock string) (*net.UnixConn, error) {
 		return nil, err
 	}
 
-	// auto clean
-	runtime.SetFinalizer(c, (*net.UnixConn).Close)
+	uc, ok := c.(*net.UnixConn)
+	if !ok {
+		_ = c.Close()
+		return nil, fmt.Errorf("expected *net.UnixConn, got %T", c)
+	}
 
-	return c.(*net.UnixConn), nil
+	// auto clean
+	runtime.SetFinalizer(uc, (*net.UnixConn).Close)
+
+	return uc, nil
 }
 
 // SendRequest Provide a standard interface for sending http to the security agent
