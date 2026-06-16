@@ -32,18 +32,18 @@ import (
 )
 
 const (
-	flagConfig         = "config"
-	flagConfigDir      = "config-dir"
-	flagBPFObjDir      = "bpf-dir"
-	flagToolBinDir     = "tools-bin-dir"
-	flagRegion         = "region"
-	flagDisableKubelet = "disable-kubelet"
-	flagDisableStorage = "disable-storage"
-	flagDisableCgroup  = "disable-cgroup"
-	flagDisableTracing = "disable-tracing"
-	flagLogDebug       = "log-debug"
-	flagDryRun         = "dry-run"
-	flagProcfsPrefix   = "procfs-prefix"
+	cliFlagConfig         = "config"
+	cliFlagConfigDir      = "config-dir"
+	cliFlagBPFObjDir      = "bpf-dir"
+	cliFlagToolBinDir     = "tools-bin-dir"
+	cliFlagRegion         = "region"
+	cliFlagDisableKubelet = "disable-kubelet"
+	cliFlagDisableStorage = "disable-storage"
+	cliFlagDisableCgroup  = "disable-cgroup"
+	cliFlagDisableTracing = "disable-tracing"
+	cliFlagLogDebug       = "log-debug"
+	cliFlagDryRun         = "dry-run"
+	cliFlagProcfsPrefix   = "procfs-prefix"
 )
 
 type buildInfo struct {
@@ -109,59 +109,59 @@ func formatVersion(info buildInfo) string {
 func (o *Options) AddFlags(app *cli.App) {
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
-			Name:  flagConfig,
+			Name:  cliFlagConfig,
 			Value: "huatuo-bamai.conf",
 			Usage: "huatuo-bamai config file",
 		},
 		&cli.StringFlag{
-			Name:  flagConfigDir,
+			Name:  cliFlagConfigDir,
 			Value: "conf",
 			Usage: "huatuo config dir",
 		},
 		&cli.StringFlag{
-			Name:  flagBPFObjDir,
+			Name:  cliFlagBPFObjDir,
 			Value: "bpf",
 			Usage: "bpf obj dir",
 		},
 		&cli.StringFlag{
-			Name:  flagToolBinDir,
+			Name:  cliFlagToolBinDir,
 			Value: "bin",
 			Usage: "tools bin dir",
 		},
 		&cli.StringFlag{
-			Name:     flagRegion,
+			Name:     cliFlagRegion,
 			Required: true,
 			Usage:    "the host and containers are in this region",
 		},
 		&cli.BoolFlag{
-			Name:  flagDisableKubelet,
+			Name:  cliFlagDisableKubelet,
 			Value: false,
 			Usage: "disable kubelet(testing only). Not recommended for production use.",
 		},
 		&cli.BoolFlag{
-			Name:  flagDisableStorage,
+			Name:  cliFlagDisableStorage,
 			Value: false,
 			Usage: "disable storage backends(testing only). Not recommended for production use.",
 		},
 		&cli.BoolFlag{
-			Name:  flagDisableCgroup,
+			Name:  cliFlagDisableCgroup,
 			Value: false,
 			Usage: "disable self cgroup resource limit",
 		},
 		&cli.StringSliceFlag{
-			Name:  flagDisableTracing,
+			Name:  cliFlagDisableTracing,
 			Usage: "disable tracing. This is related to BlackList in config, and complement each other",
 		},
 		&cli.BoolFlag{
-			Name:  flagLogDebug,
+			Name:  cliFlagLogDebug,
 			Usage: "enable debug output for logging",
 		},
 		&cli.BoolFlag{
-			Name:  flagDryRun,
+			Name:  cliFlagDryRun,
 			Usage: "for loading tests, exit gracefully",
 		},
 		&cli.StringFlag{
-			Name:  flagProcfsPrefix,
+			Name:  cliFlagProcfsPrefix,
 			Usage: "procfs prefix for default mountpoint e.g. /proc /sys and /dev",
 		},
 	}
@@ -169,24 +169,24 @@ func (o *Options) AddFlags(app *cli.App) {
 
 // FromContext copies parsed flag values from urfave/cli into Options.
 func (o *Options) FromContext(ctx *cli.Context) error {
-	o.ConfigFile = ctx.String(flagConfig)
-	o.Region = ctx.String(flagRegion)
-	o.DisableKubelet = ctx.Bool(flagDisableKubelet)
-	o.DisableStorage = ctx.Bool(flagDisableStorage)
-	o.DisableCgroup = ctx.Bool(flagDisableCgroup)
-	o.DisableTracing = ctx.StringSlice(flagDisableTracing)
-	o.LogDebug = ctx.Bool(flagLogDebug)
-	o.DryRun = ctx.Bool(flagDryRun)
-	o.ProcfsPrefix = ctx.String(flagProcfsPrefix)
+	o.ConfigFile = ctx.String(cliFlagConfig)
+	o.Region = ctx.String(cliFlagRegion)
+	o.DisableKubelet = ctx.Bool(cliFlagDisableKubelet)
+	o.DisableStorage = ctx.Bool(cliFlagDisableStorage)
+	o.DisableCgroup = ctx.Bool(cliFlagDisableCgroup)
+	o.DisableTracing = ctx.StringSlice(cliFlagDisableTracing)
+	o.LogDebug = ctx.Bool(cliFlagLogDebug)
+	o.DryRun = ctx.Bool(cliFlagDryRun)
+	o.ProcfsPrefix = ctx.String(cliFlagProcfsPrefix)
 
 	var err error
-	if o.ConfigDir, err = resolveOptionDir(ctx, flagConfigDir); err != nil {
+	if o.ConfigDir, err = resolveOptionDir(ctx, cliFlagConfigDir); err != nil {
 		return err
 	}
-	if o.BPFObjDir, err = resolveOptionDir(ctx, flagBPFObjDir); err != nil {
+	if o.BPFObjDir, err = resolveOptionDir(ctx, cliFlagBPFObjDir); err != nil {
 		return err
 	}
-	if o.ToolBinDir, err = resolveOptionDir(ctx, flagToolBinDir); err != nil {
+	if o.ToolBinDir, err = resolveOptionDir(ctx, cliFlagToolBinDir); err != nil {
 		return err
 	}
 
@@ -262,9 +262,9 @@ func configureRuntime(opts *Options) error {
 	}
 
 	log.Debugf("option %s: %s, %s: %s, %s: %s",
-		flagBPFObjDir, bpf.DefaultBpfObjDir,
-		flagToolBinDir, tracing.TaskBinDir,
-		flagConfigDir, opts.ConfigDir)
+		cliFlagBPFObjDir, bpf.DefaultBpfObjDir,
+		cliFlagToolBinDir, tracing.TaskBinDir,
+		cliFlagConfigDir, opts.ConfigDir)
 
 	return nil
 }
