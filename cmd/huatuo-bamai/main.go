@@ -56,7 +56,7 @@ var (
 
 func main() {
 	if AppVersion == "" {
-		log.Error("the value of AppVersion must be specified")
+		log.Error("AppVersion is empty; binary must be linked with -ldflags \"-X main.AppVersion=...\"")
 		os.Exit(1)
 	}
 
@@ -115,7 +115,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := d.Shutdown(shutdownCtx); err != nil {
-		log.Warnf("shutdown: %v", err)
+		log.Warnf("shutdown completed with errors: %v", err)
 	}
 
 	return nil

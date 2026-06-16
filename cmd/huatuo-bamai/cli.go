@@ -154,7 +154,7 @@ func (o *Options) AddFlags(app *cli.App) {
 		},
 		&cli.BoolFlag{
 			Name:  cliFlagLogDebug,
-			Usage: "enable debug output for logging",
+			Usage: "force debug-level logging; ignored when Log.Level is set in the config file",
 		},
 		&cli.BoolFlag{
 			Name:  cliFlagDryRun,
@@ -242,7 +242,7 @@ func configureRuntime(opts *Options) error {
 		file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o666)
 		if err != nil {
 			log.SetOutput(os.Stdout)
-			log.Infof("open log file %q failed, falling back to stdout: %v", logFile, err)
+			log.Warnf("open log file %q failed, falling back to stdout: %v", logFile, err)
 		} else {
 			log.SetOutput(file)
 		}
@@ -261,7 +261,7 @@ func configureRuntime(opts *Options) error {
 		procfs.RootPrefix(opts.ProcfsPrefix)
 	}
 
-	log.Debugf("option %s: %s, %s: %s, %s: %s",
+	log.Debugf("resolved dirs: %s=%q %s=%q %s=%q",
 		cliFlagBPFObjDir, bpf.DefaultBpfObjDir,
 		cliFlagToolBinDir, tracing.TaskBinDir,
 		cliFlagConfigDir, opts.ConfigDir)
