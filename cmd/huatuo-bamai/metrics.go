@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,14 +15,24 @@
 package main
 
 import (
+	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/metric/runtime"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// InitMetricsCollector creates a new MetricsCollector instance.
-func InitMetricsCollector(blackListed []string, region string) (*prometheus.Registry, error) {
+func (d *Daemon) setupMetrics() error {
+	reg, err := initMetricsCollector(config.Get().BlackList, d.opts.Region)
+	if err != nil {
+		return err
+	}
+	d.metrics = reg
+
+	return nil
+}
+
+func initMetricsCollector(blackListed []string, region string) (*prometheus.Registry, error) {
 	nc, err := metric.NewCollectorManager(blackListed, region)
 	if err != nil {
 		return nil, err
