@@ -27,8 +27,12 @@ const (
 	defaultNodeCgroupName = "kubepods"
 )
 
-// {"kubepods", "burstable", "pod1234-abcd-5678-efgh"}
-type cgroupPath []string
+// slices: {"kubepods", "burstable", "pod1234-abcd-5678-efgh"}
+// scope: systemd scope unit appended after the slice hierarchy (systemd driver only).
+type cgroupPath struct {
+	slices []string
+	scope  string
+}
 
 func escapeSystemd(part string) string {
 	return strings.ReplaceAll(part, "-", "_")
@@ -52,21 +56,29 @@ func expandSystemdSlice(slice string) string {
 
 // {"kubepods", "burstable", "pod1234-abcd-5678-efgh"} becomes
 // "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod1234_abcd_5678_efgh.slice"
-func (paths cgroupPath) ToSystemd() string {
+// with the scope unit appended when present.
+func (p cgroupPath) ToSystemd() string {
 	newparts := []string{}
-	for _, part := range paths {
+	for _, part := range p.slices {
 		part = escapeSystemd(part)
 		newparts = append(newparts, part)
 	}
 
-	return expandSystemdSlice(strings.Join(newparts, "-") + defaultSystemdSuffix)
+	slicePath := expandSystemdSlice(strings.Join(newparts, "-") + defaultSystemdSuffix)
+
+	if p.scope != "" {
+		return slicePath + "/" + p.scope
+	}
+
+	return slicePath
 }
 
-func (paths cgroupPath) ToCgroupfs() string {
-	return "/" + path.Join(paths...)
+func (p cgroupPath) ToCgroupfs() string {
+	return "/" + path.Join(p.slices...)
 }
 
-func containerCgroupPath(containerID string, pod *corev1.Pod) cgroupPath {
+// https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/cm/cgroup_manager_linux.go#L81
+func containerCgroupPath(containerID string, pod *corev1.Pod) (cgroupPath, error) {
 	paths := []string{defaultNodeCgroupName}
 
 	if pod.Status.QOSClass != corev1.PodQOSGuaranteed {
@@ -75,23 +87,26 @@ func containerCgroupPath(containerID string, pod *corev1.Pod) cgroupPath {
 
 	paths = append(paths, fmt.Sprintf("pod%s", pod.UID))
 
-	if kubeletPodCgroupDriver != "systemd" {
-		paths = append(paths, containerID)
-	}
-
-	return paths
-}
-
-// https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/cm/cgroup_manager_linux.go#L81
-func containerCgroupSuffix(containerID string, pod *corev1.Pod) (string, error) {
-	name := containerCgroupPath(containerID, pod)
-
 	if kubeletPodCgroupDriver == "systemd" {
 		scope, err := containerScopeName(containerID)
 		if err != nil {
-			return "", fmt.Errorf("container scope name: %w", err)
+			return cgroupPath{}, fmt.Errorf("container scope name: %w", err)
 		}
-		return name.ToSystemd() + "/" + scope, nil
+		return cgroupPath{slices: paths, scope: scope}, nil
+	}
+
+	paths = append(paths, containerID)
+	return cgroupPath{slices: paths}, nil
+}
+
+func containerCgroupSuffix(containerID string, pod *corev1.Pod) (string, error) {
+	name, err := containerCgroupPath(containerID, pod)
+	if err != nil {
+		return "", err
+	}
+
+	if kubeletPodCgroupDriver == "systemd" {
+		return name.ToSystemd(), nil
 	}
 
 	return name.ToCgroupfs(), nil
