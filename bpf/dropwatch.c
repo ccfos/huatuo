@@ -205,8 +205,12 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 
 	/* meta */
 	data->meta.ktime_ns = bpf_ktime_get_ns();
+	/* tgid_pid and comm in SoftIRQ Context do not accurately reflect
+	 * the process where the drop occurred, only for reference.
+	 */
 	data->meta.tgid_pid = bpf_get_current_pid_tgid();
 	bpf_get_current_comm(&data->meta.comm, sizeof(data->meta.comm));
+
 	data->meta.kfree_skb_addr = (u64)(unsigned long)ctx->location;
 	data->meta.queue_mapping = BPF_CORE_READ(skb, queue_mapping);
 	data->meta.drop_reason = SKB_DROP_REASON_UNSUPPORT;
