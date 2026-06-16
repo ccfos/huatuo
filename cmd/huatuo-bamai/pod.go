@@ -18,19 +18,24 @@ import (
 	"fmt"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 )
 
 func (d *Daemon) setupPodManager() error {
-	mgrInitCtx := pod.ManagerInitCtx{
-		PodReadOnlyPort:      config.Get().Pod.KubeletReadOnlyPort,
-		PodAuthorizedPort:    config.Get().Pod.KubeletAuthorizedPort,
-		PodClientCertPath:    config.Get().Pod.KubeletClientCertPath,
-		PodContainerDisabled: d.opts.DisableKubelet,
-		DockerAPIVersion:     config.Get().Pod.DockerAPIVersion,
+	if d.opts.DisableKubelet {
+		log.Infof("kubelet pod sync disabled by --disable-kubelet")
+		return nil
 	}
 
-	if err := pod.ManagerInit(&mgrInitCtx); err != nil {
+	mgrCtx := pod.ManagerCtx{
+		PodReadOnlyPort:   config.Get().Pod.KubeletReadOnlyPort,
+		PodAuthorizedPort: config.Get().Pod.KubeletAuthorizedPort,
+		PodClientCertPath: config.Get().Pod.KubeletClientCertPath,
+		DockerAPIVersion:  config.Get().Pod.DockerAPIVersion,
+	}
+
+	if err := pod.ManagerInit(&mgrCtx); err != nil {
 		return fmt.Errorf("init podlist and sync module: %w", err)
 	}
 	d.podReady = true
