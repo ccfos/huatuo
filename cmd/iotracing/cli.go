@@ -42,6 +42,11 @@ const (
 	outputJSON = "json"
 )
 
+const (
+	devMajorMax = 0xfff
+	devMinorMax = 0xfffff
+)
+
 func appFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
@@ -169,13 +174,23 @@ func parseDeviceNumbers(deviceStr string) ([]uint32, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid major number %q: %w", parts[0], err)
 		}
+		if major > devMajorMax {
+			return nil, fmt.Errorf("major number %d exceeds max %d", major, devMajorMax)
+		}
 
 		minor, err := strconv.ParseUint(strings.TrimSpace(parts[1]), 10, 32)
 		if err != nil {
 			return nil, fmt.Errorf("invalid minor number %q: %w", parts[1], err)
 		}
+		if minor > devMinorMax {
+			return nil, fmt.Errorf("minor number %d exceeds max %d", minor, devMinorMax)
+		}
 
 		deviceNums = append(deviceNums, (uint32(major)&0xfff)<<20|uint32(minor))
+	}
+
+	if len(deviceNums) == 0 {
+		return nil, errors.New("no devices specified")
 	}
 
 	if len(deviceNums) > bpfFilterDevMaxNums {
