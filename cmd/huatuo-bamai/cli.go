@@ -87,7 +87,7 @@ func buildCommand(info buildInfo) *cli.App {
 
 	app.Action = func(ctx *cli.Context) error {
 		if ctx.NArg() > 0 {
-			return fmt.Errorf("invalid param %v", ctx.Args())
+			return fmt.Errorf("unexpected positional arguments: %v", ctx.Args().Slice())
 		}
 		return mainAction(opts)
 	}
