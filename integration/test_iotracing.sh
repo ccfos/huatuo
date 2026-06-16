@@ -37,7 +37,7 @@ readonly DURATION=8
 io_test_dir=""
 while read -r mp; do
 	[[ -d "${mp}" && -w "${mp}" ]] || continue
-	io_test_dir=$(mktemp -d "${mp}/huatuo-iotracing.XXXXXX") && break
+	io_test_dir=$(mktemp -d "${mp%/}/huatuo-iotracing.XXXXXX") && break
 done < <(awk '$3 == "ext4" || $3 == "xfs" { print $2 }' /proc/mounts)
 
 [[ -n "${io_test_dir}" ]] || skip "no writable ext4/xfs mount; iotracing accuracy needs anyfs probes to bind"
