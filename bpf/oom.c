@@ -24,6 +24,8 @@ struct oom_info {
 	u32 victim_pid;
 	u64 trigger_memcg_css;
 	u64 victim_memcg_css;
+	u64 mem_limit_pages;
+	u64 mem_usage_pages;
 };
 
 SEC("kprobe/oom_kill_process")
@@ -49,6 +51,13 @@ int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 	    (u64)BPF_CORE_READ(victim_task, cgroups, subsys[memory_cgrp_id]);
 	info.trigger_memcg_css =
 	    (u64)BPF_CORE_READ(trigger_task, cgroups, subsys[memory_cgrp_id]);
+
+	info.mem_limit_pages = BPF_CORE_READ(oc, totalpages);
+	struct mem_cgroup *memcg = BPF_CORE_READ(oc, memcg);
+	if (memcg) {
+		info.mem_usage_pages =
+		    (u64)BPF_CORE_READ(memcg, memory.usage.counter);
+	}
 
 	bpf_perf_event_output(ctx, &oom_perf_events, COMPAT_BPF_F_CURRENT_CPU,
 			      &info, sizeof(info));
