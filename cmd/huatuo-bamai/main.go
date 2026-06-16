@@ -55,27 +55,33 @@ func mainAction(ctx *cli.Context) error {
 	}
 	defer pidfile.UnLock(ctx.App.Name)
 
-	// init cpu quota
-	cgr, err := cgroups.NewManager()
-	if err != nil {
-		return err
-	}
+	// init cpu quota; nil cgr means --disable-cgroup is set
+	var cgr cgroups.Cgroup
+	if ctx.Bool("disable-cgroup") {
+		log.Infof("self cgroup resource limit disabled by --disable-cgroup")
+	} else {
+		var err error
+		cgr, err = cgroups.NewManager()
+		if err != nil {
+			return err
+		}
 
-	if err := cgr.NewRuntime(
-		ctx.App.Name,
-		cgroups.ToSpec(
-			config.Get().RuntimeCgroup.LimitInitCPU,
-			config.Get().RuntimeCgroup.LimitMem,
-		),
-	); err != nil {
-		return fmt.Errorf("new runtime cgroup: %w", err)
-	}
-	defer func() {
-		_ = cgr.DeleteRuntime()
-	}()
+		if err := cgr.NewRuntime(
+			ctx.App.Name,
+			cgroups.ToSpec(
+				config.Get().RuntimeCgroup.LimitInitCPU,
+				config.Get().RuntimeCgroup.LimitMem,
+			),
+		); err != nil {
+			return fmt.Errorf("new runtime cgroup: %w", err)
+		}
+		defer func() {
+			_ = cgr.DeleteRuntime()
+		}()
 
-	if err := cgr.AddProc(uint64(os.Getpid())); err != nil {
-		return fmt.Errorf("cgroup add pid to cgroups.proc")
+		if err := cgr.AddProc(uint64(os.Getpid())); err != nil {
+			return fmt.Errorf("cgroup add pid to cgroups.proc")
+		}
 	}
 
 	if !ctx.Bool("disable-storage") {
@@ -126,9 +132,11 @@ func mainAction(ctx *cli.Context) error {
 
 	handlers.Start(config.Get().APIServer.TCPAddr, mgr, prom)
 
-	// update cpu quota
-	if err := cgr.UpdateRuntime(cgroups.ToSpec(config.Get().RuntimeCgroup.LimitCPU, 0)); err != nil {
-		return fmt.Errorf("update runtime: %w", err)
+	// update cpu quota; skipped when --disable-cgroup is set
+	if cgr != nil {
+		if err := cgr.UpdateRuntime(cgroups.ToSpec(config.Get().RuntimeCgroup.LimitCPU, 0)); err != nil {
+			return fmt.Errorf("update runtime: %w", err)
+		}
 	}
 
 	waitExit := make(chan os.Signal, 1)
@@ -319,6 +327,11 @@ func main() {
 			Name:  "disable-storage",
 			Value: false,
 			Usage: "disable storage backends(testing only). Not recommended for production use.",
+		},
+		&cli.BoolFlag{
+			Name:  "disable-cgroup",
+			Value: false,
+			Usage: "disable self cgroup resource limit",
 		},
 		&cli.StringSliceFlag{
 			Name:  "disable-tracing",
