@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"huatuo-bamai/internal/filerotate"
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -182,3 +184,59 @@ func Fatalf(format string, args ...any) {
 func WithCallerSkip(skip int) *logrus.Entry {
 	return newLogrusEntry(2 + skip)
 }
+
+// profilerFormatter prefixes each profiler log line with "[profiler]" so the
+// CLI output is distinguishable from the daemon's own logs sharing the same
+// stream.
+type profilerFormatter struct {
+	prefix    string
+	formatter logrus.Formatter
+}
+
+func (f *profilerFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	entry.Message = fmt.Sprintf("[%s] %s", f.prefix, entry.Message)
+	return f.formatter.Format(entry)
+}
+
+var profilerLogger *logrus.Logger
+
+// SetupProfilerLogger configures the dedicated profiler logger. When logPath
+// is set, output rotates through filerotate; verbose enables stdout, otherwise
+// the global logger and profiler logger are silenced (the CLI is invoked from
+// other tooling that already captures the artifact).
+func SetupProfilerLogger(verbose bool, logPath string, logSize int) {
+	profilerLogger = logrus.New()
+	profilerLogger.SetFormatter(&profilerFormatter{
+		prefix: "profiler",
+		formatter: &logrus.TextFormatter{
+			DisableColors:   true,
+			ForceQuote:      true,
+			FullTimestamp:   true,
+			TimestampFormat: rfc3339NanoFixed,
+			DisableSorting:  false,
+		},
+	})
+
+	if logSize <= 0 {
+		logSize = 100
+	}
+
+	switch {
+	case logPath != "":
+		profilerLogger.SetOutput(filerotate.NewFileRotator(logPath, 1, logSize))
+	case verbose:
+		profilerLogger.SetOutput(os.Stdout)
+	default:
+		logger.SetOutput(io.Discard)
+		profilerLogger.SetOutput(io.Discard)
+	}
+}
+
+// GetProfilerLogger returns a logrus entry bound to the profiler logger.
+// Callers typically use the P alias.
+func GetProfilerLogger() *logrus.Entry {
+	return logrus.NewEntry(profilerLogger)
+}
+
+// P is the shorthand alias for GetProfilerLogger.
+var P = GetProfilerLogger
