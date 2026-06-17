@@ -377,7 +377,7 @@ func main() {
 	app := &cli.App{
 		Name:    dropwatchToolName,
 		Version: AppVersion,
-		Usage:   "watch kernel packet drops",
+		Usage:   "eBPF tracer for Linux kernel packet drops",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "bpf-path",
