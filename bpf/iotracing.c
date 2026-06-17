@@ -109,51 +109,72 @@ static __always_inline int is_write_request(u32 cmd_flags)
 	return (cmd_flags & REQ_OP_MASK) == REQ_OP_WRITE;
 }
 
-struct request_queue___new {
+struct request_queue___5_14 {
 	struct gendisk *disk;
-};
+} __attribute__((preserve_access_index));
 
-struct block_device___new {
+struct block_device___5_11 {
 	dev_t bd_dev;
 };
 
 /*
- * compatible with different kernel versions of disk device acquisition
+ * compatible with different kernel versions of disk device acquisition.
+ *
+ *   pre-5.17:   request->rq_disk
+ *   5.17 ~ 6.x: request->q->disk (rq_disk removed, request_queue gained
+ *               the disk field in 5.14)
+ *   7.0+:       request->part->bd_disk (request_queue->disk no longer
+ *               reflects the real disk on 7.0+)
+ *
+ * Discriminating 5.17~6.x from 7.0+ relies on whether the kernel's
+ * struct request_queue still carries the `disk` field. request->part
+ * cannot be used for this purpose: it exists since 5.11 (just with a
+ * different type) and is therefore always present on every kernel that
+ * reaches the second branch below.
  */
 static __always_inline struct gendisk *get_request_disk(struct request *req)
 {
-	struct request___7_0 *req7 = (struct request___7_0 *)req;
-	
-	if (bpf_core_field_exists(req7->part)) {
-		struct block_device *bdev = BPF_CORE_READ(req7, part);
-		if (bdev) {
-			struct block_device___7_0 *bdev7 = (struct block_device___7_0 *)bdev;
-			return BPF_CORE_READ(bdev7, bd_disk);
-		}
-	}
-	{
-		struct request_queue___new *q;
-		q = (struct request_queue___new *)BPF_CORE_READ(req, q);
+	struct request_queue___5_14 *q = NULL;
+
+	if (bpf_core_field_exists(req->rq_disk))
+		return BPF_CORE_READ(req, rq_disk);
+
+	if (bpf_core_field_exists(q->disk)) {
+		q = (struct request_queue___5_14 *)BPF_CORE_READ(req, q);
 		return BPF_CORE_READ(q, disk);
+	}
+
+	{
+		struct request___7_0 *req7 = (struct request___7_0 *)req;
+		struct block_device___7_0 *bdev7;
+
+		bdev7 = (struct block_device___7_0 *)BPF_CORE_READ(req7, part);
+		return BPF_CORE_READ(bdev7, bd_disk);
 	}
 }
 
 /*
- * compatible with different kernel versions of partition number acquisition
+ * compatible with different kernel versions of partition number acquisition.
+ *
+ *   pre-5.11: request->part is struct hd_struct*, partno is the
+ *             partition index directly
+ *   5.11+:    request->part is struct block_device*, the low byte of
+ *             bd_dev encodes the partition index
+ *
+ * 7.0+ keeps using struct block_device, so the 5.11+ path covers both.
  */
 static __always_inline int get_partition_number(struct request *req)
 {
 	void *part = BPF_CORE_READ(req, part);
-	struct block_device___7_0 *bdev7 = (struct block_device___7_0 *)part;
 
-	if (bpf_core_field_exists(bdev7->bd_dev)) {
-		dev_t dev = BPF_CORE_READ(bdev7, bd_dev);
-		return dev & 0xff;
-	}
+	if (bpf_core_field_exists(((struct hd_struct *)part)->partno))
+		return BPF_CORE_READ((struct hd_struct *)part, partno);
+
 	{
-		struct block_device___new *new_part;
+		struct block_device___5_11 *new_part;
 		int partno;
-		new_part = (struct block_device___new *)part;
+
+		new_part = (struct block_device___5_11 *)part;
 		partno	 = BPF_CORE_READ(new_part, bd_dev);
 		return partno & 0xff;
 	}
@@ -305,7 +326,7 @@ init_io_data(struct io_data *entry, struct dentry *root_dentry,
 	}
 }
 
-struct iov_iter___new {
+struct iov_iter___5_14 {
 	bool data_source;
 } __attribute__((preserve_access_index));
 
@@ -344,15 +365,23 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 	from  = (struct iov_iter *)PT_REGS_PARM2(ctx);
 	count = BPF_CORE_READ(from, count);
 
-	{
+	/*
+	 * iov_iter direction across kernel versions:
+	 *   pre-5.14: iov_iter::type        (low bit: 0=read, 1=write)
+	 *   5.14~6.x: iov_iter::data_source (bool: 0=read, 1=write)
+	 *   7.0+:     iov_iter::iter_type   (low bit: 0=read, 1=write)
+	 */
+	if (bpf_core_field_exists(from->type)) {
+		type = BPF_CORE_READ(from, type);
+	} else if (bpf_core_field_exists(((struct iov_iter___7_0 *)0)->iter_type)) {
 		struct iov_iter___7_0 *from7 = (struct iov_iter___7_0 *)from;
-		if (bpf_core_field_exists(from7->iter_type)) {
-			type = BPF_CORE_READ(from7, iter_type);
-		} else {
-			struct iov_iter___new *from_new;
-			from_new = (struct iov_iter___new *)from;
-			type	 = BPF_CORE_READ(from_new, data_source);
-		}
+
+		type = BPF_CORE_READ(from7, iter_type);
+	} else {
+		struct iov_iter___5_14 *from_new;
+
+		from_new = (struct iov_iter___5_14 *)from;
+		type	 = BPF_CORE_READ(from_new, data_source);
 	}
 
 	type = type & 0x1;
