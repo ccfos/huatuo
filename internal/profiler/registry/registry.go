@@ -25,17 +25,16 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 )
 
-// defaultLangProfiler maps a language to the implementation key used as a
-// fallback when no exact (lang, type) profiler is registered.
+// Per-language fallback to an implementation key, consulted by Get when no
+// exact (lang, type) is registered.
 var defaultLangProfiler = map[string]string{
 	"go":  "native",
 	"c":   "native",
 	"c++": "native",
 }
 
-// ProfilerMeta describes a registered profiler. Identity fields (Type,
-// LangOrImpl, Description) are user-facing keys; Impl + Aggregator are the
-// behavior pair driven by Profile.
+// ProfilerMeta groups identity fields (used as registry keys) and the
+// Impl/Aggregator behavior pair driven by Profile.
 type ProfilerMeta struct {
 	Type        string
 	LangOrImpl  string
@@ -96,7 +95,7 @@ func Get(langOrImpl, typ string) (ProfilerMeta, error) {
 func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	agg := p.Aggregator(pctx)
 	agg.Start()
-	log.P().Infof("aggregator started")
+	log.P().Info("aggregator started")
 
 	if err := p.Impl.Start(pctx); err != nil {
 		agg.Stop()
@@ -113,6 +112,7 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	}()
 
 	var deadline <-chan time.Time
+
 	if pctx.Duration > 0 {
 		t := time.NewTimer(time.Duration(pctx.Duration) * time.Second)
 		defer t.Stop()
@@ -120,11 +120,14 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 		deadline = t.C
 	}
 
+	var err error
+
 	select {
 	case <-deadline:
-		log.P().Infof("profiler auto-stop by duration")
+		log.P().Info("profiler auto-stop by duration")
 	case <-pctx.Ctx.Done():
-		log.P().Infof("profiler stop by context")
+		err = pctx.Ctx.Err()
+		log.P().Infof("profiler stop by context: %v", err)
 	}
 
 	// Cancel first so ReadDataLoop exits before Stop closes BPF/file handles
@@ -132,9 +135,9 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	pctx.Cancel()
 	wg.Wait()
 
-	if err := p.Impl.Stop(pctx, agg); err != nil {
-		log.P().Errorf("profiler stop: %v", err)
+	if stopErr := p.Impl.Stop(pctx, agg); stopErr != nil {
+		log.P().Errorf("profiler stop: %v", stopErr)
 	}
 
-	return nil
+	return err
 }

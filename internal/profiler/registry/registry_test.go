@@ -102,6 +102,23 @@ func TestGetFallbackToDefaultImpl(t *testing.T) {
 	}
 }
 
+func TestGetExactBeatsFallback(t *testing.T) {
+	resetRegistry(t)
+	// Both registered: ("go", "cpu") must win over the ("native", "cpu")
+	// fallback, otherwise a per-language override would be unreachable.
+	Register(newMeta("native", "cpu"))
+	Register(newMeta("go", "cpu"))
+
+	got, err := Get("go", "cpu")
+	if err != nil {
+		t.Fatalf(`Get("go", "cpu") error = %v, want nil`, err)
+	}
+
+	if got.LangOrImpl != "go" {
+		t.Errorf(`Get("go", "cpu").LangOrImpl = %q, want "go"`, got.LangOrImpl)
+	}
+}
+
 func TestGetFallbackMissesWhenTypeAbsent(t *testing.T) {
 	resetRegistry(t)
 	Register(newMeta("native", "cpu"))
