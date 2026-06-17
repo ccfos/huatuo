@@ -35,7 +35,7 @@ func init() {
 		Impl:        newCPUJavaProfiler(),
 	}
 
-	registry.RegisterProfilerMeta(meta.LangOrImpl, meta.Type, meta)
+	registry.Register(meta)
 }
 
 var profileOutFile map[int]string

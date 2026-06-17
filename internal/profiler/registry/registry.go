@@ -17,6 +17,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"huatuo-bamai/internal/log"
@@ -24,6 +25,8 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 )
 
+// defaultLangProfiler maps a language to the implementation key used as a
+// fallback when no exact (lang, type) profiler is registered.
 var defaultLangProfiler = map[string]string{
 	"go":  "native",
 	"c":   "native",
@@ -37,7 +40,7 @@ type ProfilerMeta struct {
 	Impl        Profiler
 }
 
-// Profiler interface defines the fundamental actions of a performance profiler
+// Profiler defines the lifecycle of a sampling implementation.
 type Profiler interface {
 	Start(pctx *pcontext.ProfilerContext) error
 	ReadDataLoop(ctx context.Context, addRecord func(any))
@@ -45,72 +48,86 @@ type Profiler interface {
 	NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator
 }
 
-var profilerRegistry = map[string]map[string]ProfilerMeta{} // language -> type -> ProfilerMeta
+// Registration is init-time only; profilerRegistry is read without locking
+// after init() ordering finishes. Do not call Register from request paths.
+var profilerRegistry = map[string]map[string]ProfilerMeta{}
 
-func RegisterProfilerMeta(langOrImpl, typ string, meta ProfilerMeta) {
-	if profilerRegistry[langOrImpl] == nil {
-		profilerRegistry[langOrImpl] = make(map[string]ProfilerMeta)
+// Register adds meta to the registry keyed by (LangOrImpl, Type). Duplicate
+// (lang, type) pairs panic — registration is init-time and a duplicate almost
+// always indicates two providers fighting over the same slot.
+func Register(meta ProfilerMeta) {
+	if profilerRegistry[meta.LangOrImpl] == nil {
+		profilerRegistry[meta.LangOrImpl] = make(map[string]ProfilerMeta)
 	}
-	profilerRegistry[langOrImpl][typ] = meta
+
+	if _, dup := profilerRegistry[meta.LangOrImpl][meta.Type]; dup {
+		panic(fmt.Sprintf("registry: duplicate profiler %s/%s", meta.LangOrImpl, meta.Type))
+	}
+
+	profilerRegistry[meta.LangOrImpl][meta.Type] = meta
 }
 
-// GetProfiler resolves a profiler by language and type, falling back to the
-// language's default profiler (e.g. "go" -> "native") if no exact match is
-// registered.
-func GetProfiler(langOrImpl, typ string) (ProfilerMeta, error) {
-	if m, ok := profilerRegistry[langOrImpl]; ok {
-		if meta, ok := m[typ]; ok {
-			return meta, nil
-		}
+// Get resolves (lang, typ). If no exact match exists, the language is replaced
+// by its default implementation key — e.g. ("go", "cpu") falls back to
+// ("native", "cpu") — and the lookup is retried.
+func Get(langOrImpl, typ string) (ProfilerMeta, error) {
+	if meta, ok := profilerRegistry[langOrImpl][typ]; ok {
+		return meta, nil
 	}
 
-	if profiler, ok := defaultLangProfiler[langOrImpl]; ok {
-		if m, ok := profilerRegistry[profiler]; ok {
-			if meta, ok := m[typ]; ok {
-				return meta, nil
-			}
+	if impl, ok := defaultLangProfiler[langOrImpl]; ok {
+		if meta, ok := profilerRegistry[impl][typ]; ok {
+			return meta, nil
 		}
 	}
 
 	return ProfilerMeta{}, fmt.Errorf("no profiler for lang=%s type=%s", langOrImpl, typ)
 }
 
-/*
- * Profile runs the sampling process for a given Profile
- * process: aggregation -> start -> data reading -> abnormal stop
- */
+// Profile runs the full sampling lifecycle: aggregator start, impl start,
+// async data drain, then stop on duration timeout or context cancellation.
+// It blocks until cleanup completes so resources are guaranteed released.
 func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
-	aggregator := p.Impl.NewAggregator(pctx)
+	agg := p.Impl.NewAggregator(pctx)
+	agg.Start()
+	log.P().Infof("aggregator started")
 
-	// Step1: aggregation phase
-	aggregator.Start()
-	log.P().Infof("Aggregator started successfully")
-
-	// Step2: start eBPF
 	if err := p.Impl.Start(pctx); err != nil {
-		aggregator.Stop()
+		agg.Stop()
 		pctx.Cancel()
-		return fmt.Errorf("failed to start profiler: %w", err)
+
+		return fmt.Errorf("start profiler: %w", err)
 	}
 
-	// Step3: data reading phase (async)
-	go p.Impl.ReadDataLoop(pctx.Ctx, aggregator.AddRecord)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		p.Impl.ReadDataLoop(pctx.Ctx, agg.AddRecord)
+	}()
 
-	// Step4: stop when time is up
+	var deadline <-chan time.Time
 	if pctx.Duration > 0 {
-		timer := time.NewTimer(time.Duration(pctx.Duration) * time.Second)
-		defer timer.Stop()
+		t := time.NewTimer(time.Duration(pctx.Duration) * time.Second)
+		defer t.Stop()
 
-		select {
-		case <-timer.C:
-			log.P().Infof("profiler auto-stop by duration")
-		case <-pctx.Ctx.Done():
-			log.P().Infof("profiler stop by context")
-		}
+		deadline = t.C
+	}
 
-		if err := p.Impl.Stop(pctx, aggregator); err != nil {
-			log.P().Infof("profiler stop error: %v", err)
-		}
+	select {
+	case <-deadline:
+		log.P().Infof("profiler auto-stop by duration")
+	case <-pctx.Ctx.Done():
+		log.P().Infof("profiler stop by context")
+	}
+
+	// Cancel first so ReadDataLoop exits before Stop closes BPF/file handles
+	// the loop may still be reading from.
+	pctx.Cancel()
+	wg.Wait()
+
+	if err := p.Impl.Stop(pctx, agg); err != nil {
+		log.P().Errorf("profiler stop: %v", err)
 	}
 
 	return nil

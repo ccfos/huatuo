@@ -35,7 +35,7 @@ func init() {
 		Impl:        newJavaMemoryProfiler(),
 	}
 
-	registry.RegisterProfilerMeta(meta.LangOrImpl, meta.Type, meta)
+	registry.Register(meta)
 }
 
 var memProfileOutFile map[int]string

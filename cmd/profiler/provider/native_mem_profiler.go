@@ -75,7 +75,7 @@ func init() {
 		Impl:        newMemNativeProfiler(),
 	}
 
-	registry.RegisterProfilerMeta(meta.LangOrImpl, meta.Type, meta)
+	registry.Register(meta)
 }
 
 func newMemNativeProfiler() registry.Profiler {

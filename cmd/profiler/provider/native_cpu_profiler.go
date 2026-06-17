@@ -42,7 +42,7 @@ func init() {
 		Impl:        newCPUNativeProfiler(),
 	}
 
-	registry.RegisterProfilerMeta(meta.LangOrImpl, meta.Type, meta)
+	registry.Register(meta)
 }
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/cpu_native_profiler2.c -o $BPF_DIR/cpu_native_profiler2.o

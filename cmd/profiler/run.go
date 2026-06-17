@@ -42,7 +42,7 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 	}
 	defer pctx.Cancel()
 
-	meta, err := registry.GetProfiler(lang, typ)
+	meta, err := registry.Get(lang, typ)
 	if err != nil {
 		return err
 	}
