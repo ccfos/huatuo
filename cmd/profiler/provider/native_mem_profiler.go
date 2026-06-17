@@ -27,7 +27,6 @@ import (
 	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
-	agghr "huatuo-bamai/internal/profiler/aggregator/handler"
 	"huatuo-bamai/internal/profiler/bpfmap"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/procutil"
@@ -84,7 +83,7 @@ func newMemNativeProfiler() registry.Profiler {
 }
 
 func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
-	return agghr.NewNativeAggregator(pctx).Aggregator
+	return newNativeAggregator(pctx).Aggregator
 }
 
 // Stop profiling, abnormal Stop also goes through here
@@ -319,7 +318,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 // retained-mode frees that reference the alternate stack_map can be dispatched
 // per event without losing the alloc/free delta accumulation.
 type memBatchKey struct {
-	proc agghr.ProcessIDName
+	proc processIDName
 	ids  bpfmap.StackTraceID
 	sel  uint32
 }
@@ -375,7 +374,7 @@ func (p *memNativeProfiler) flipAndDrain(
 			continue
 		}
 
-		proc := agghr.ProcessIDName{
+		proc := processIDName{
 			Pid:  evt.Pid,
 			Name: procutil.CommToString(evt.Comm),
 		}
@@ -458,8 +457,8 @@ func emitDeltas(
 			}
 		}
 
-		rec := &agghr.StackEntry{
-			Proc: &agghr.ProcessIDName{
+		rec := &stackEntry{
+			Proc: &processIDName{
 				Pid:  k.proc.Pid,
 				Name: k.proc.Name,
 			},

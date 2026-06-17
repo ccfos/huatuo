@@ -23,7 +23,6 @@ import (
 
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
-	pythonaggr "huatuo-bamai/internal/profiler/aggregator/callback"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	executil "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/procutil"
@@ -56,7 +55,7 @@ func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggre
 func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	pctx.OneShotAgg = true
 
-	aggr := pythonaggr.NewPythonCPUAggregator(pctx)
+	aggr := newPythonCPUAggregator(pctx)
 	aggr.Start()
 
 	err := p.sample(pctx, func(so profiler.SampleOutput) {

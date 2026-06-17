@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package callback
+package provider
 
 import (
 	"bytes"
@@ -26,7 +26,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
-	context "huatuo-bamai/internal/profiler/context"
+	pcontext "huatuo-bamai/internal/profiler/context"
 )
 
 type javaAggregator struct {
@@ -37,8 +37,7 @@ type javaAggregator struct {
 	sampleOutput []profiler.SampleOutput
 }
 
-// NewJavaAggregator create agregator
-func NewJavaAggregator(pctx *context.ProfilerContext) *javaAggregator {
+func newJavaAggregator(pctx *pcontext.ProfilerContext) *javaAggregator {
 	aggr := &javaAggregator{}
 	aggr.Aggregator = aggregator.NewAggregator(pctx, aggr.RecordProcessor, aggr.AggregatedExporter)
 	aggr.countMap = make(map[string]int)
@@ -92,7 +91,7 @@ func (a *javaAggregator) RecordProcessor(rec any) {
 	}
 }
 
-func (a *javaAggregator) AggregatedExporter(pctx *context.ProfilerContext) (any, error) {
+func (a *javaAggregator) AggregatedExporter(pctx *pcontext.ProfilerContext) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

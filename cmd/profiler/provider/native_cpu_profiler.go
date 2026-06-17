@@ -26,7 +26,6 @@ import (
 	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
-	agghr "huatuo-bamai/internal/profiler/aggregator/handler"
 	"huatuo-bamai/internal/profiler/bpfmap"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/procutil"
@@ -76,7 +75,7 @@ func newCPUNativeProfiler() registry.Profiler {
 }
 
 func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
-	return agghr.NewNativeAggregator(pctx).Aggregator
+	return newNativeAggregator(pctx).Aggregator
 }
 
 // Stop profiling, abnormal Stop also goes through here
@@ -204,7 +203,7 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 		return fmt.Errorf("read sampleCnt: %w", err)
 	}
 
-	stackIDStore := make(map[agghr.ProcessIDName]bpfmap.StackTraceID)
+	stackIDStore := make(map[processIDName]bpfmap.StackTraceID)
 	stackCount := make(map[bpfmap.StackTraceID]int)
 
 	for i := uint64(0); i < bpfCount; i++ {
@@ -224,7 +223,7 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 
 		pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
 		stackCount[pair]++
-		pidName := agghr.ProcessIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
+		pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
 		stackIDStore[pidName] = pair
 	}
 
@@ -247,7 +246,7 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 
 // clearStackMap removes the stack-map entries referenced by the just-drained
 // batch. Keys come from stackIDStore so we don't hold per-batch lists.
-func clearStackMap(b bpf.BPF, mapID uint32, stackIDStore map[agghr.ProcessIDName]bpfmap.StackTraceID) error {
+func clearStackMap(b bpf.BPF, mapID uint32, stackIDStore map[processIDName]bpfmap.StackTraceID) error {
 	seen := make(map[int32]struct{}, len(stackIDStore)*2)
 	for _, v := range stackIDStore {
 		if v.KernelID > 0 {
@@ -275,7 +274,7 @@ func clearStackMap(b bpf.BPF, mapID uint32, stackIDStore map[agghr.ProcessIDName
 
 func aggregateStacksAndStore(
 	b bpf.BPF,
-	stackIDStore map[agghr.ProcessIDName]bpfmap.StackTraceID,
+	stackIDStore map[processIDName]bpfmap.StackTraceID,
 	stMapID uint32,
 	stackCount map[bpfmap.StackTraceID]int,
 	addRecord func(any),
@@ -318,8 +317,8 @@ func aggregateStacksAndStore(
 			}
 		}
 
-		record := &agghr.StackEntry{
-			Proc:    &agghr.ProcessIDName{Pid: pid, Name: k.Name},
+		record := &stackEntry{
+			Proc:    &processIDName{Pid: pid, Name: k.Name},
 			User:    ustackCache[v.UserID],
 			Kernel:  kstackCache[v.KernelID],
 			Samples: int64(stackCount[v]),

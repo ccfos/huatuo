@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package callback
+package provider
 
 import (
 	"fmt"
@@ -23,21 +23,21 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
-	context "huatuo-bamai/internal/profiler/context"
+	pcontext "huatuo-bamai/internal/profiler/context"
 )
 
 // ------------------------
 // CPU / MEM stack struct
 // ------------------------
-// ProcessIDName is used to identify a process during aggregation
-type ProcessIDName struct {
+// processIDName is used to identify a process during aggregation
+type processIDName struct {
 	Pid  uint32
 	Name string
 }
 
-// StackEntry represents a single sampling record (not aggregated)
-type StackEntry struct {
-	Proc    *ProcessIDName
+// stackEntry represents a single sampling record (not aggregated)
+type stackEntry struct {
+	Proc    *processIDName
 	User    string
 	Kernel  string
 	Samples int64
@@ -54,14 +54,14 @@ type aggrKey struct {
 // -------------------
 // LOCK stack struct
 // -------------------
-type ProcessIDNameLock struct {
+type processIDNameLock struct {
 	Pid  uint32
 	Name string
 	Lock uint64
 }
 
-type LockStackEntry struct {
-	Proc      *ProcessIDNameLock
+type lockStackEntry struct {
+	Proc      *processIDNameLock
 	User      string
 	Kernel    string
 	WaitTime  uint64
@@ -77,16 +77,16 @@ type nativeAggregator struct {
 	mu sync.Mutex
 	*aggregator.Aggregator
 
-	aggrMap     map[aggrKey]*StackEntry
-	lockAggrMap map[lockAggrKey]*LockStackEntry
+	aggrMap     map[aggrKey]*stackEntry
+	lockAggrMap map[lockAggrKey]*lockStackEntry
 }
 
-func NewNativeAggregator(pctx *context.ProfilerContext) *nativeAggregator {
+func newNativeAggregator(pctx *pcontext.ProfilerContext) *nativeAggregator {
 	aggr := &nativeAggregator{}
 	aggr.Aggregator = aggregator.NewAggregator(pctx, aggr.RecordProcessor, aggr.AggregatedExporter)
 
-	aggr.aggrMap = make(map[aggrKey]*StackEntry)
-	aggr.lockAggrMap = make(map[lockAggrKey]*LockStackEntry)
+	aggr.aggrMap = make(map[aggrKey]*stackEntry)
+	aggr.lockAggrMap = make(map[lockAggrKey]*lockStackEntry)
 
 	return aggr
 }
@@ -97,12 +97,12 @@ func (a *nativeAggregator) RecordProcessor(rec any) {
 
 	// determine the type of rec
 	switch v := rec.(type) {
-	case *StackEntry:
+	case *stackEntry:
 		key := aggrKey{v.Proc.Pid, v.Proc.Name, v.User, v.Kernel}
 		if existed, ok := a.aggrMap[key]; ok {
 			existed.Samples += v.Samples
 		} else {
-			a.aggrMap[key] = &StackEntry{
+			a.aggrMap[key] = &stackEntry{
 				Proc:    v.Proc,
 				User:    v.User,
 				Kernel:  v.Kernel,
@@ -110,7 +110,7 @@ func (a *nativeAggregator) RecordProcessor(rec any) {
 			}
 		}
 
-	case *LockStackEntry:
+	case *lockStackEntry:
 		key := lockAggrKey{
 			_u:    v.User,
 			_lock: v.Proc.Lock,
@@ -120,7 +120,7 @@ func (a *nativeAggregator) RecordProcessor(rec any) {
 			existed.Contended += v.Contended
 			existed.WaitTime += v.WaitTime
 		} else {
-			a.lockAggrMap[key] = &LockStackEntry{
+			a.lockAggrMap[key] = &lockStackEntry{
 				Proc:      v.Proc,
 				User:      v.User,
 				Kernel:    v.Kernel,
@@ -134,7 +134,7 @@ func (a *nativeAggregator) RecordProcessor(rec any) {
 	}
 }
 
-func (a *nativeAggregator) AggregatedExporter(pctx *context.ProfilerContext) (any, error) {
+func (a *nativeAggregator) AggregatedExporter(pctx *pcontext.ProfilerContext) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -152,7 +152,7 @@ func (a *nativeAggregator) AggregatedExporter(pctx *context.ProfilerContext) (an
 	return res, err
 }
 
-func (a *nativeAggregator) exportCpuMemProfile(pctx *context.ProfilerContext) (any, error) {
+func (a *nativeAggregator) exportCpuMemProfile(pctx *pcontext.ProfilerContext) (any, error) {
 	if len(a.aggrMap) == 0 {
 		log.Infof("There is no data in aggregate queue")
 		return nil, nil
@@ -191,7 +191,7 @@ func (a *nativeAggregator) exportCpuMemProfile(pctx *context.ProfilerContext) (a
 	}
 }
 
-func (a *nativeAggregator) exportLockProfile(pctx *context.ProfilerContext) (any, error) {
+func (a *nativeAggregator) exportLockProfile(pctx *pcontext.ProfilerContext) (any, error) {
 	if len(a.lockAggrMap) == 0 {
 		log.Infof("There is no data in aggregate queue")
 		return nil, nil
@@ -305,7 +305,7 @@ func buildTreeItem(prefixes []string, userStack, kernelStack string, value uint6
 }
 
 // Construct pprof (pyroscope data)
-func buildPprofData(pctx *context.ProfilerContext, tree []*profiler.TreeItem) (*profiler.ProfileData, error) {
+func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (*profiler.ProfileData, error) {
 	var (
 		opt        *profiler.ParseOption
 		sampleType string
@@ -342,6 +342,6 @@ func buildPprofData(pctx *context.ProfilerContext, tree []*profiler.TreeItem) (*
 }
 
 func (a *nativeAggregator) reset() {
-	a.aggrMap = make(map[aggrKey]*StackEntry)
-	a.lockAggrMap = make(map[lockAggrKey]*LockStackEntry)
+	a.aggrMap = make(map[aggrKey]*stackEntry)
+	a.lockAggrMap = make(map[lockAggrKey]*lockStackEntry)
 }

@@ -21,7 +21,6 @@ import (
 	"strconv"
 
 	"huatuo-bamai/internal/profiler/aggregator"
-	agghr "huatuo-bamai/internal/profiler/aggregator/handler"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	executil "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/registry"
@@ -48,7 +47,7 @@ func newCPUJavaProfiler() registry.Profiler {
 }
 
 func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
-	return agghr.NewJavaAggregator(pctx).Aggregator
+	return newJavaAggregator(pctx).Aggregator
 }
 
 // Start async-profiler cmd

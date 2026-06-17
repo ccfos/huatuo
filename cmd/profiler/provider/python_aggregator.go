@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package callback
+package provider
 
 import (
 	"bytes"
@@ -54,12 +54,7 @@ func newPythonAggregator(pctx *pcontext.ProfilerContext, name, typ string, rate 
 	return aggr
 }
 
-func NewPythonAggregator(pctx *pcontext.ProfilerContext) *pythonAggregator {
-	return newPythonAggregator(pctx, "python-mem", profiler.ProfileTypeMemSample, profiler.NoSampleRate)
-}
-
-// NewPythonCPUAggregator creates an aggregator for py-spy CPU profiles.
-func NewPythonCPUAggregator(pctx *pcontext.ProfilerContext) *pythonAggregator {
+func newPythonCPUAggregator(pctx *pcontext.ProfilerContext) *pythonAggregator {
 	return newPythonAggregator(pctx, "python-cpu", profiler.ProfileTypeCpuSample, int64(pctx.Freq))
 }
 

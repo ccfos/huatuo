@@ -21,7 +21,6 @@ import (
 	"strconv"
 
 	"huatuo-bamai/internal/profiler/aggregator"
-	agghr "huatuo-bamai/internal/profiler/aggregator/handler"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	executil "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/registry"
@@ -48,7 +47,7 @@ func newJavaMemoryProfiler() registry.Profiler {
 }
 
 func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
-	return agghr.NewJavaAggregator(pctx).Aggregator
+	return newJavaAggregator(pctx).Aggregator
 }
 
 func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
