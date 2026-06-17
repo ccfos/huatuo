@@ -4,8 +4,8 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#include "bpf_blkio.h"
 #include "bpf_common.h"
+#include "bpf_blkio.h"
 #include "bpf_compat_7_0.h"
 
 #define LATENCY_20MS_NS 20000000
@@ -114,17 +114,19 @@ static __always_inline int q2c_latency_index(struct bio *bio, u64 now)
 {
 	u64 bi_issue, val;
 
-	{
-		struct bio___7_0 *bio7 = (struct bio___7_0 *)bio;
-		if (bpf_core_field_exists(bio7->issue_time_ns)) {
-			if (bpf_probe_read(&val, sizeof(val), &bio7->issue_time_ns))
-				return -1;
-		} else if (bpf_probe_read(&val, sizeof(val), &bio->bi_issue)) {
+	/*
+	 * pre-7.0: bio::bi_issue (struct bio_issue, low bits packed timestamp)
+	 * 7.0+:    bio::issue_time_ns (plain u64 nanosecond timestamp)
+	 */
+	if (bpf_core_field_exists(bio->bi_issue)) {
+		if (bpf_probe_read(&val, sizeof(val), &bio->bi_issue))
 			return -1;
-		}
+	} else {
+		struct bio___7_0 *bio7 = (struct bio___7_0 *)bio;
+
+		if (bpf_probe_read(&val, sizeof(val), &bio7->issue_time_ns))
+			return -1;
 	}
-	if (0)
-		return -1;
 
 	bi_issue = val & TIMESTAMP_MASK;
 

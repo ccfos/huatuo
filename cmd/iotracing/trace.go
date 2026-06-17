@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -42,7 +43,7 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 		return nil, fmt.Errorf("read bpf object: %w", err)
 	}
 
-	b, err := bpf.LoadBpfFromBytes(bpfPath, bpfBytes, filters)
+	b, err := bpf.LoadBpfFromBytes(filepath.Base(bpfPath), bpfBytes, filters)
 	if err != nil {
 		return nil, fmt.Errorf("load bpf: %w", err)
 	}
