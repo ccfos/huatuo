@@ -28,6 +28,17 @@ import (
 	"huatuo-bamai/internal/command/container"
 	flamegraphtui "huatuo-bamai/internal/flamegraph/tui"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/version"
+)
+
+const perfToolName = "perf"
+
+// Set by Makefile via -ldflags -X. Must live in package main; an empty
+// value falls back to version.Devel via version.Resolve.
+var (
+	AppVersion   string
+	AppGitCommit string
+	AppBuildTime string
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/perf.c -o $BPF_DIR/perf.o
@@ -99,6 +110,7 @@ func mainAction(ctx *cli.Context) error {
 
 func main() {
 	app := cli.NewApp()
+	app.Name = perfToolName
 	app.Usage = "eBPF on-CPU sampling profiler for Linux, scoped by PID or container"
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
@@ -138,6 +150,14 @@ func main() {
 	}
 
 	app.Action = mainAction
+
+	version.Wire(app, version.Seed{
+		Name:      perfToolName,
+		Version:   AppVersion,
+		GitCommit: AppGitCommit,
+		BuildTime: AppBuildTime,
+	})
+
 	if err := app.Run(os.Args); err != nil {
 		fmt.Printf("perf: %v\n", err)
 		os.Exit(1)

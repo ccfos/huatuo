@@ -21,14 +21,26 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	"huatuo-bamai/internal/version"
+
 	_ "huatuo-bamai/cmd/profiler/provider"
+)
+
+const profilerToolName = "profiler"
+
+// Set by Makefile via -ldflags -X. Must live in package main; an empty
+// value falls back to version.Devel via version.Resolve.
+var (
+	AppVersion   string
+	AppGitCommit string
+	AppBuildTime string
 )
 
 func main() {
 	signalLog := &bytes.Buffer{}
 	app := &cli.App{
-		Name:          "profiler",
-		Usage:         "Cross-language profiling CLI",
+		Name:          profilerToolName,
+		Usage:         "Sample CPU and memory profiles for a process or container, with eBPF-based userland and Linux kernel stack collection",
 		AllowExtFlags: true,
 		Flags:         appFlags,
 		Before:        runBefore,
@@ -36,6 +48,13 @@ func main() {
 			return runAction(cliCtx, signalLog)
 		},
 	}
+
+	version.Wire(app, version.Seed{
+		Name:      profilerToolName,
+		Version:   AppVersion,
+		GitCommit: AppGitCommit,
+		BuildTime: AppBuildTime,
+	})
 
 	if err := app.Run(os.Args); err != nil {
 		if signalLog.Len() > 0 {

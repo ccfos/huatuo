@@ -22,7 +22,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -34,24 +33,23 @@ import (
 	"huatuo-bamai/internal/pidfile"
 	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/utils/executil"
+	"huatuo-bamai/internal/version"
 
 	"github.com/urfave/cli/v2"
 )
 
 const (
+	apiServerToolName    = "huatuo-apiserver"
 	huatuoAPIServerUsage = "Control-plane API server for orchestrating HuaTuo profiling and tracing jobs across hosts"
 	optionConfigDir      = "config-dir"
 )
 
+// Set by Makefile via -ldflags -X. Must live in package main; an empty
+// value falls back to version.Devel via version.Resolve.
 var (
-	// AppGitCommit will be the hash that the binary was built from
-	// and will be populated by the Makefile
+	AppVersion   string
 	AppGitCommit string
-	// AppBuildTime will be populated by the Makefile
 	AppBuildTime string
-	// AppVersion will be populated by the Makefile, read from
-	// VERSION file of the source code.
-	AppVersion string
 )
 
 type fatalWriter struct {
@@ -78,22 +76,8 @@ func buildOptionDir(dir string) (string, error) {
 
 func main() {
 	app := cli.NewApp()
-	app.Name = "huatuo-apiserver"
+	app.Name = apiServerToolName
 	app.Usage = huatuoAPIServerUsage
-
-	if AppVersion == "" {
-		log.Error("the value of AppVersion must be specified")
-		os.Exit(1)
-	}
-	var v []string
-	v = append(v, fmt.Sprintf("App version: %s", AppVersion))
-	if AppGitCommit != "" {
-		v = append(v, fmt.Sprintf("   commit: %s", AppGitCommit))
-	}
-	if AppBuildTime != "" {
-		v = append(v, fmt.Sprintf("   build time: %s", AppBuildTime))
-	}
-	app.Version = strings.Join(v, "\n")
 
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
@@ -141,6 +125,13 @@ func main() {
 	}
 
 	app.Action = mainAction
+
+	version.Wire(app, version.Seed{
+		Name:      apiServerToolName,
+		Version:   AppVersion,
+		GitCommit: AppGitCommit,
+		BuildTime: AppBuildTime,
+	})
 
 	// If the command returns an error, cli takes upon itself to print
 	// the error on cli.ErrWriter and exit.

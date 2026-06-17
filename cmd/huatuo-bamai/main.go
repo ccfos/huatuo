@@ -26,6 +26,7 @@ import (
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pidfile"
+	"huatuo-bamai/internal/version"
 	"huatuo-bamai/pkg/tracing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -37,7 +38,7 @@ import (
 
 const (
 	appName  = "huatuo-bamai"
-	appUsage = "An In-depth Observation of Linux Kernel Application"
+	appUsage = "Node agent for Linux kernel observability"
 
 	shutdownTimeout = 10 * time.Second
 )
@@ -52,12 +53,8 @@ var (
 )
 
 func main() {
-	if AppVersion == "" {
-		log.Error("AppVersion is empty; binary must be linked with -ldflags \"-X main.AppVersion=...\"")
-		os.Exit(1)
-	}
-
-	app := buildCommand(buildInfo{
+	app := buildCommand(version.Seed{
+		Name:      appName,
 		Version:   AppVersion,
 		GitCommit: AppGitCommit,
 		BuildTime: AppBuildTime,

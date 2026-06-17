@@ -18,14 +18,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strings"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/utils/executil"
+	"huatuo-bamai/internal/version"
 	"huatuo-bamai/pkg/tracing"
 
 	"github.com/urfave/cli/v2"
@@ -46,12 +45,6 @@ const (
 	cliFlagProcfsPrefix   = "procfs-prefix"
 )
 
-type buildInfo struct {
-	Version   string
-	GitCommit string
-	BuildTime string
-}
-
 // Options holds all CLI-derived configuration. Populated by FromContext
 // during app.Before so downstream code reads only from Options and stays
 // decoupled from the urfave/cli framework.
@@ -70,13 +63,13 @@ type Options struct {
 	ProcfsPrefix   string
 }
 
-func buildCommand(info buildInfo) *cli.App {
+func buildCommand(seed version.Seed) *cli.App {
 	opts := &Options{}
 	app := cli.NewApp()
 	app.Name = appName
 	app.Usage = appUsage
-	app.Version = formatVersion(info)
 	opts.AddFlags(app)
+	version.Wire(app, seed)
 
 	app.Before = func(ctx *cli.Context) error {
 		if err := opts.FromContext(ctx); err != nil {
@@ -93,16 +86,6 @@ func buildCommand(info buildInfo) *cli.App {
 	}
 
 	return app
-}
-
-func formatVersion(info buildInfo) string {
-	return strings.Join([]string{
-		"",
-		fmt.Sprintf("   app_version: %s", info.Version),
-		fmt.Sprintf("   go_version: %s", runtime.Version()),
-		fmt.Sprintf("   git_commit: %s", info.GitCommit),
-		fmt.Sprintf("   build_time: %s", info.BuildTime),
-	}, "\n")
 }
 
 // AddFlags registers every CLI flag onto app.Flags.

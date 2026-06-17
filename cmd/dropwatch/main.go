@@ -38,6 +38,7 @@ import (
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kernaddr"
+	"huatuo-bamai/internal/version"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -64,7 +65,16 @@ const (
 
 var (
 	dropwatchToolName = "dropwatch"
-	AppVersion        = ""
+
+	// Set by Makefile via -ldflags -X. Must live in package main; an empty
+	// value falls back to version.Devel via version.Resolve.
+	AppVersion   string
+	AppGitCommit string
+	AppBuildTime string
+
+	// versionInfo holds the resolved build identity, populated in main and
+	// read from mainAction (toolstream).
+	versionInfo version.Info
 )
 
 // Must match struct packet_meta in bpf/dropwatch.c exactly.
@@ -270,7 +280,7 @@ func mainAction(c *cli.Context) error {
 		sockClient, err = toolstream.NewClient(toolstream.ClientOptions{
 			SockPath: path,
 			ToolName: dropwatchToolName,
-			Version:  AppVersion,
+			Version:  versionInfo.Version,
 			TaskID:   c.String("task-id"),
 		})
 		if err != nil {
@@ -375,9 +385,8 @@ func mainAction(c *cli.Context) error {
 
 func main() {
 	app := &cli.App{
-		Name:    dropwatchToolName,
-		Version: AppVersion,
-		Usage:   "eBPF tracer for Linux kernel packet drops",
+		Name:  dropwatchToolName,
+		Usage: "eBPF tracer for Linux kernel packet drops",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:     "bpf-path",
@@ -420,6 +429,13 @@ func main() {
 			},
 		},
 	}
+
+	versionInfo = version.Wire(app, version.Seed{
+		Name:      dropwatchToolName,
+		Version:   AppVersion,
+		GitCommit: AppGitCommit,
+		BuildTime: AppBuildTime,
+	})
 
 	app.Action = mainAction
 	app.Before = func(c *cli.Context) error {

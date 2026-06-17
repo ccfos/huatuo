@@ -24,14 +24,24 @@ import (
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/internal/version"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
 
 const iotracingToolName = "iotracing"
 
-// AppVersion is injected via -ldflags at build time.
-var AppVersion = ""
+// Set by Makefile via -ldflags -X. Must live in package main; an empty
+// value falls back to version.Devel via version.Resolve.
+var (
+	AppVersion   string
+	AppGitCommit string
+	AppBuildTime string
+
+	// versionInfo is the resolved build identity, populated in main and
+	// consumed by mainAction (toolstream).
+	versionInfo version.Info
+)
 
 // ioConfig is the validated, typed view of CLI flags consumed by the
 // trace pipeline.
@@ -60,6 +70,13 @@ func main() {
 
 		return nil
 	}
+
+	versionInfo = version.Wire(app, version.Seed{
+		Name:      iotracingToolName,
+		Version:   AppVersion,
+		GitCommit: AppGitCommit,
+		BuildTime: AppBuildTime,
+	})
 
 	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", iotracingToolName, err)
@@ -113,7 +130,7 @@ func openToolstream(c *cli.Context) (*toolstream.Client, error) {
 	client, err := toolstream.NewClient(toolstream.ClientOptions{
 		SockPath: path,
 		ToolName: iotracingToolName,
-		Version:  AppVersion,
+		Version:  versionInfo.Version,
 		TaskID:   c.String(cliFlagTaskID),
 	})
 	if err != nil {
