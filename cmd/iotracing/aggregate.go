@@ -15,10 +15,22 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/types"
 )
+
+func blockDevName(major, minor uint32) string {
+	link, err := os.Readlink(fmt.Sprintf("/sys/dev/block/%d:%d", major, minor))
+	if err != nil {
+		return "n/a"
+	}
+	return filepath.Base(link)
+}
 
 // buildProcessFileIOStats reduces one pidGroup into a ProcessFileIOStats:
 // every entry contributes to the per-pid totals, while only the first
@@ -59,9 +71,11 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 			d2c = record.Latency.SumD2CNs / (record.Latency.Count * 1000)
 		}
 
+		major, minor := record.DevID>>20&0xfff, record.DevID&0xfffff
 		fileStats = append(fileStats, types.FileIOStats{
-			Major:        record.DevID >> 20 & 0xfff,
-			Minor:        record.DevID & 0xfffff,
+			Major:        major,
+			Minor:        minor,
+			DevName:      blockDevName(major, minor),
 			Inode:        record.Ino,
 			Path:         record.PathName(),
 			IsDirect:     record.IsDirect(),

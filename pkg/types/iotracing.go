@@ -54,6 +54,7 @@ type ProcessFileIOStats struct {
 type FileIOStats struct {
 	Major        uint32 `json:"major"`
 	Minor        uint32 `json:"minor"`
+	DevName      string `json:"dev_name"`
 	Inode        uint64 `json:"inode"`
 	Path         string `json:"path"`
 	IsDirect     bool   `json:"is_direct"`
