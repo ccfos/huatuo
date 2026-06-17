@@ -33,19 +33,25 @@ var defaultLangProfiler = map[string]string{
 	"c++": "native",
 }
 
+// ProfilerMeta describes a registered profiler. Identity fields (Type,
+// LangOrImpl, Description) are user-facing keys; Impl + Aggregator are the
+// behavior pair driven by Profile.
 type ProfilerMeta struct {
 	Type        string
 	LangOrImpl  string
 	Description string
-	Impl        Profiler
+
+	Impl       Profiler
+	Aggregator func(*pcontext.ProfilerContext) *aggregator.Aggregator
 }
 
-// Profiler defines the lifecycle of a sampling implementation.
+// Profiler defines the sampling lifecycle. Aggregator construction is kept
+// out of this interface so impls that drive their own aggregator (e.g. py-spy
+// one-shot) don't need to hand-write a no-op factory method.
 type Profiler interface {
 	Start(pctx *pcontext.ProfilerContext) error
 	ReadDataLoop(ctx context.Context, addRecord func(any))
 	Stop(pctx *pcontext.ProfilerContext, aggregator *aggregator.Aggregator) error
-	NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator
 }
 
 // Registration is init-time only; profilerRegistry is read without locking
@@ -88,7 +94,7 @@ func Get(langOrImpl, typ string) (ProfilerMeta, error) {
 // async data drain, then stop on duration timeout or context cancellation.
 // It blocks until cleanup completes so resources are guaranteed released.
 func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
-	agg := p.Impl.NewAggregator(pctx)
+	agg := p.Aggregator(pctx)
 	agg.Start()
 	log.P().Infof("aggregator started")
 

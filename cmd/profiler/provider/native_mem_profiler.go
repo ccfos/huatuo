@@ -68,18 +68,14 @@ type memEvent struct {
 }
 
 func init() {
-	meta := registry.ProfilerMeta{
+	impl := &memNativeProfiler{}
+	registry.Register(registry.ProfilerMeta{
 		Type:        "mem",
 		LangOrImpl:  "native",
 		Description: "Native memory profiler using ebpf (vm/pm accumulated & retained)",
-		Impl:        newMemNativeProfiler(),
-	}
-
-	registry.Register(meta)
-}
-
-func newMemNativeProfiler() registry.Profiler {
-	return &memNativeProfiler{}
+		Impl:        impl,
+		Aggregator:  impl.NewAggregator,
+	})
 }
 
 func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {

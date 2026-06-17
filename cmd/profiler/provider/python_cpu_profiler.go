@@ -32,11 +32,13 @@ import (
 type pythonCPUProfiler struct{}
 
 func init() {
+	impl := &pythonCPUProfiler{}
 	registry.Register(registry.ProfilerMeta{
 		Type:        "cpu",
 		LangOrImpl:  "python",
 		Description: "Python CPU profiler using py-spy",
-		Impl:        &pythonCPUProfiler{},
+		Impl:        impl,
+		Aggregator:  impl.NewAggregator,
 	})
 }
 

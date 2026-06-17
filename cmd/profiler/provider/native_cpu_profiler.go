@@ -35,14 +35,14 @@ import (
 )
 
 func init() {
-	meta := registry.ProfilerMeta{
+	impl := &cpuNativeProfiler{}
+	registry.Register(registry.ProfilerMeta{
 		Type:        "cpu",
 		LangOrImpl:  "native",
 		Description: "Native CPU profiler using ebpf",
-		Impl:        newCPUNativeProfiler(),
-	}
-
-	registry.Register(meta)
+		Impl:        impl,
+		Aggregator:  impl.NewAggregator,
+	})
 }
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/cpu_native_profiler2.c -o $BPF_DIR/cpu_native_profiler2.o
@@ -68,10 +68,6 @@ type cpuEventKey struct {
 
 type cpuNativeProfiler struct {
 	bpf bpf.BPF
-}
-
-func newCPUNativeProfiler() registry.Profiler {
-	return &cpuNativeProfiler{}
 }
 
 func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {

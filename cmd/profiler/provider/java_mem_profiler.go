@@ -28,23 +28,19 @@ import (
 )
 
 func init() {
-	meta := registry.ProfilerMeta{
+	impl := &javaMemoryProfiler{}
+	registry.Register(registry.ProfilerMeta{
 		Type:        "mem",
 		LangOrImpl:  "java",
 		Description: "Java memory profiler using async-profiler",
-		Impl:        newJavaMemoryProfiler(),
-	}
-
-	registry.Register(meta)
+		Impl:        impl,
+		Aggregator:  impl.NewAggregator,
+	})
 }
 
 var memProfileOutFile map[int]string
 
 type javaMemoryProfiler struct{}
-
-func newJavaMemoryProfiler() registry.Profiler {
-	return &javaMemoryProfiler{}
-}
 
 func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
 	return newJavaAggregator(pctx).Aggregator

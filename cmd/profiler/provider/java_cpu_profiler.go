@@ -28,23 +28,19 @@ import (
 )
 
 func init() {
-	meta := registry.ProfilerMeta{
+	impl := &cpuJavaProfiler{}
+	registry.Register(registry.ProfilerMeta{
 		Type:        "cpu",
 		LangOrImpl:  "java",
 		Description: "Java CPU profiler using async-profiler",
-		Impl:        newCPUJavaProfiler(),
-	}
-
-	registry.Register(meta)
+		Impl:        impl,
+		Aggregator:  impl.NewAggregator,
+	})
 }
 
 var profileOutFile map[int]string
 
 type cpuJavaProfiler struct{}
-
-func newCPUJavaProfiler() registry.Profiler {
-	return &cpuJavaProfiler{}
-}
 
 func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
 	return newJavaAggregator(pctx).Aggregator
