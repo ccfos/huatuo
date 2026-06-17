@@ -24,8 +24,8 @@ import (
 	agghr "huatuo-bamai/internal/profiler/aggregator/handler"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	executil "huatuo-bamai/internal/profiler/exec"
-	helper "huatuo-bamai/internal/profiler/helper/java"
 	"huatuo-bamai/internal/profiler/registry"
+	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
 )
 
 func init() {
@@ -67,13 +67,13 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		mode = "object_alloc"
 	}
 
-	pids, err := helper.ResolveJavaPids(pid, toolLimit, execPath, svrAddr, containerID)
+	pids, err := javaruntime.ResolveJavaPids(pid, toolLimit, execPath, svrAddr, containerID)
 	if err != nil {
 		return err
 	}
 
 	if mode == "object_usage" {
-		javaVersion, err := helper.GetJavaVersion(pids[0])
+		javaVersion, err := javaruntime.GetJavaVersion(pids[0])
 		if err != nil {
 			return fmt.Errorf("failed to get Java version for PID %d: %w", pids[0], err)
 		}
@@ -88,12 +88,12 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	loopInterval := 9
 
-	if err := helper.PrepareJavaAgent(pids[0], toolPath); err != nil {
+	if err := javaruntime.PrepareJavaAgent(pids[0], toolPath); err != nil {
 		return err
 	}
 
 	cmdResults := sampleJavaMemoryProcesses(pctx.Ctx, pids, toolPath, event, extraArgs, loopInterval)
-	return helper.CheckAsprofStarted(cmdResults)
+	return javaruntime.CheckAsprofStarted(cmdResults)
 }
 
 func sampleJavaMemoryProcesses(ctx context.Context, pids []int, asprofPath, event string, extraArgs []string, loopInterval int) []executil.CmdResult {
@@ -123,7 +123,7 @@ func sampleJavaMemoryProcesses(ctx context.Context, pids []int, asprofPath, even
 			memProfileOutFile = make(map[int]string)
 		}
 
-		memProfileOutFile[pid] = helper.HostViewPath(pid, outFile)
+		memProfileOutFile[pid] = javaruntime.HostViewPath(pid, outFile)
 
 		return args
 	})
@@ -139,15 +139,15 @@ func (p *javaMemoryProfiler) Stop(pctx *pcontext.ProfilerContext, aggregator *ag
 
 	aggregator.Stop()
 
-	pids, err := helper.ResolveJavaPids(pid, 0, execPath, svrAddr, containerID)
+	pids, err := javaruntime.ResolveJavaPids(pid, 0, execPath, svrAddr, containerID)
 	if err != nil {
 		return err
 	}
 
-	stopRes := helper.StopAsprofProcesses(pids, toolPath)
-	return helper.CheckCmdResultsAllSuccess(stopRes, "stop")
+	stopRes := javaruntime.StopAsprofProcesses(pids, toolPath)
+	return javaruntime.CheckCmdResultsAllSuccess(stopRes, "stop")
 }
 
 func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) {
-	helper.ReadCollapsedFilesLoop(ctx, memProfileOutFile, addRecord)
+	javaruntime.ReadCollapsedFilesLoop(ctx, memProfileOutFile, addRecord)
 }

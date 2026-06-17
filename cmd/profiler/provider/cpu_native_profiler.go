@@ -28,8 +28,8 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	agghr "huatuo-bamai/internal/profiler/aggregator/handler"
 	"huatuo-bamai/internal/profiler/bpfmap"
-	util "huatuo-bamai/internal/profiler/common"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/types"
@@ -224,7 +224,7 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 
 		pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
 		stackCount[pair]++
-		pidName := agghr.ProcessIDName{Pid: evt.Pid, Name: util.CommToString(evt.Comm)}
+		pidName := agghr.ProcessIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
 		stackIDStore[pidName] = pair
 	}
 

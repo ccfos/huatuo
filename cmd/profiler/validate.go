@@ -21,7 +21,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"huatuo-bamai/internal/log"
-	pyhelper "huatuo-bamai/internal/profiler/helper/python"
+	pyruntime "huatuo-bamai/internal/profiler/runtime/python"
 )
 
 func runBefore(ctx *cli.Context) error {
@@ -95,7 +95,7 @@ func ensurePythonToolPath(ctx *cli.Context, typ string) error {
 		return fmt.Errorf("language=python requires --tool-path")
 	}
 
-	defaultToolPath, err := pyhelper.ResolveMemrayBundlePath("")
+	defaultToolPath, err := pyruntime.ResolveMemrayBundlePath("")
 	if err != nil {
 		return err
 	}

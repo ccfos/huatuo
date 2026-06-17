@@ -24,8 +24,8 @@ import (
 	agghr "huatuo-bamai/internal/profiler/aggregator/handler"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	executil "huatuo-bamai/internal/profiler/exec"
-	helper "huatuo-bamai/internal/profiler/helper/java"
 	"huatuo-bamai/internal/profiler/registry"
+	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
 )
 
 func init() {
@@ -61,20 +61,20 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	svrAddr := pctx.ServerAddress
 	containerID := pctx.ContainerID
 
-	pids, err := helper.ResolveJavaPids(pid, toolLimit, execPath, svrAddr, containerID)
+	pids, err := javaruntime.ResolveJavaPids(pid, toolLimit, execPath, svrAddr, containerID)
 	if err != nil {
 		return err
 	}
 
 	targetPid := pids[0]
 
-	if err := helper.PrepareJavaAgent(targetPid, toolPath); err != nil {
+	if err := javaruntime.PrepareJavaAgent(targetPid, toolPath); err != nil {
 		return err
 	}
 
 	// Sample and get results for all PIDs
 	cmdResults := sampleJavaProcesses(pctx.Ctx, pids, freq, toolPath)
-	return helper.CheckAsprofStarted(cmdResults)
+	return javaruntime.CheckAsprofStarted(cmdResults)
 }
 
 // Executes multiple asprof instances for profiling
@@ -107,7 +107,7 @@ func sampleJavaProcesses(ctx context.Context, pids []int, freq int, asprofPath s
 			profileOutFile = make(map[int]string)
 		}
 
-		profileOutFile[pid] = helper.HostViewPath(pid, outFile)
+		profileOutFile[pid] = javaruntime.HostViewPath(pid, outFile)
 
 		return args
 	})
@@ -127,15 +127,15 @@ func (p *cpuJavaProfiler) Stop(pctx *pcontext.ProfilerContext, aggregator *aggre
 	aggregator.Stop()
 
 	// stop async-profiler cmd
-	pids, err := helper.ResolveJavaPids(pid, 0, execPath, svrAddr, containerID)
+	pids, err := javaruntime.ResolveJavaPids(pid, 0, execPath, svrAddr, containerID)
 	if err != nil {
 		return err
 	}
 
-	stopRes := helper.StopAsprofProcesses(pids, toolPath)
-	return helper.CheckCmdResultsAllSuccess(stopRes, "stop")
+	stopRes := javaruntime.StopAsprofProcesses(pids, toolPath)
+	return javaruntime.CheckCmdResultsAllSuccess(stopRes, "stop")
 }
 
 func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) {
-	helper.ReadCollapsedFilesLoop(ctx, profileOutFile, addRecord)
+	javaruntime.ReadCollapsedFilesLoop(ctx, profileOutFile, addRecord)
 }

@@ -27,21 +27,22 @@ import (
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
-	util "huatuo-bamai/internal/profiler/common"
 	executil "huatuo-bamai/internal/profiler/exec"
+	"huatuo-bamai/internal/profiler/fileutil"
+	"huatuo-bamai/internal/profiler/procutil"
 )
 
 func ResolveJavaPids(pid, toolLimit int, execPath, serverAddr, containerID string) ([]int, error) {
 	if pid != 0 {
 		if execPath != "" {
-			if err := util.CheckExecPath(pid, execPath); err != nil {
+			if err := procutil.CheckExecPath(pid, execPath); err != nil {
 				return nil, err
 			}
 		}
 		return []int{pid}, nil
 	}
 
-	pids, err := util.GetPidsFromContainer(serverAddr, execPath, "java", containerID)
+	pids, err := procutil.GetPidsFromContainer(serverAddr, execPath, "java", containerID)
 	if toolLimit > 0 {
 		if len(pids) > toolLimit {
 			return nil, fmt.Errorf("sampling failed: too many target Java processes (limit: %d, found: %d)", toolLimit, len(pids))
@@ -57,7 +58,7 @@ func ResolveJavaPids(pid, toolLimit int, execPath, serverAddr, containerID strin
 }
 
 func HostViewPath(pid int, pathInTarget string) string {
-	inContainer, err := util.IsProcessInContainer(pid)
+	inContainer, err := procutil.IsProcessInContainer(pid)
 	if err == nil && inContainer {
 		return fmt.Sprintf("/proc/%d/root%s", pid, pathInTarget)
 	}
@@ -199,22 +200,9 @@ func GetJavaVersion(pid int) (int, error) {
 	return 0, fmt.Errorf("could not determine Java version from path: %s", target)
 }
 
-// CheckExecPath validates whether the actual java/python exec path matches the expected one.
-func CheckExecPath(pid int, expectedPath string) error {
-	linkPath := fmt.Sprintf("/proc/%d/exe", pid)
-	actualPath, err := os.Readlink(linkPath)
-	if err != nil {
-		return fmt.Errorf("readlink %s failed: %w", linkPath, err)
-	}
-	if actualPath != expectedPath {
-		return fmt.Errorf("exec path mismatch: actual=%s, expected=%s", actualPath, expectedPath)
-	}
-	return nil
-}
-
 // Copies the java agent to container's /tmp if needed.
 func PrepareJavaAgent(pid int, asprofPath string) error {
-	inContainer, err := util.IsProcessInContainer(pid)
+	inContainer, err := procutil.IsProcessInContainer(pid)
 	if err != nil {
 		return err
 	}
@@ -238,14 +226,14 @@ func PrepareJavaAgent(pid int, asprofPath string) error {
 		return fmt.Errorf("failed to stat agent path %s: %w", agentPath, err)
 	}
 
-	if err := util.CheckDirSpace(targetTmp); err != nil {
+	if err := fileutil.CheckDirSpace(targetTmp); err != nil {
 		return err
 	}
 	return copyAgentLib(asprofPath, targetTmp)
 }
 
 func CleanupJavaAgent(pid int) error {
-	inContainer, err := util.IsProcessInContainer(pid)
+	inContainer, err := procutil.IsProcessInContainer(pid)
 	if err != nil {
 		return err
 	}
@@ -277,5 +265,5 @@ func CleanupJavaAgent(pid int) error {
 func copyAgentLib(fromCasePath, toTmpPath string) error {
 	src := filepath.Join(fromCasePath, "libasyncProfiler.so")
 	dst := filepath.Join(toTmpPath, "libasyncProfiler.so")
-	return util.CopyFile(src, dst)
+	return fileutil.CopyFile(src, dst)
 }

@@ -29,8 +29,8 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	agghr "huatuo-bamai/internal/profiler/aggregator/handler"
 	"huatuo-bamai/internal/profiler/bpfmap"
-	util "huatuo-bamai/internal/profiler/common"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/types"
@@ -377,7 +377,7 @@ func (p *memNativeProfiler) flipAndDrain(
 
 		proc := agghr.ProcessIDName{
 			Pid:  evt.Pid,
-			Name: util.CommToString(evt.Comm),
+			Name: procutil.CommToString(evt.Comm),
 		}
 		ids := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
 		key := memBatchKey{proc: proc, ids: ids, sel: evt.StackMapSel}

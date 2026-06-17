@@ -26,8 +26,8 @@ import (
 	pythonaggr "huatuo-bamai/internal/profiler/aggregator/callback"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	executil "huatuo-bamai/internal/profiler/exec"
+	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
-	util "huatuo-bamai/internal/profiler/utils"
 )
 
 type pythonCPUProfiler struct{}
@@ -89,14 +89,14 @@ func (p *pythonCPUProfiler) sample(pctx *pcontext.ProfilerContext, recordFn func
 
 	if pid != 0 {
 		if execPath != "" {
-			if err := util.CheckExecPath(pid, execPath); err != nil {
+			if err := procutil.CheckExecPath(pid, execPath); err != nil {
 				return err
 			}
 		}
 		pids = []int{pid}
 	} else {
 		var err error
-		pids, err = util.GetPidsFromContainer(svrAddr, execPath, "python", containerID)
+		pids, err = procutil.GetPidsFromContainer(svrAddr, execPath, "python", containerID)
 		if err != nil {
 			return err
 		}

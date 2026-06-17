@@ -12,22 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package utils
+package fileutil
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
-	"huatuo-bamai/internal/bpf"
-
 	"golang.org/x/sys/unix"
 )
 
 // CopyDir recursively copies a directory tree rooted at src into dst.
-// Existing files will be overwritten. Permissions are preserved.
+// Existing files are overwritten; permissions are preserved.
 func CopyDir(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
@@ -48,12 +45,10 @@ func CopyDir(src, dst string) error {
 		}
 		target := filepath.Join(dst, relPath)
 
-		// Create directory
 		if info.IsDir() {
 			return os.MkdirAll(target, info.Mode())
 		}
 
-		// Ensure parent dir exists
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
@@ -62,7 +57,8 @@ func CopyDir(src, dst string) error {
 	})
 }
 
-// copyFile copies a file from src to dst while preserving permissions.
+// CopyFile copies a regular file from src to dst, preserving the source mode
+// and finally forcing 0o644 on the destination.
 func CopyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -95,20 +91,7 @@ func CopyFile(src, dst string) error {
 	return nil
 }
 
-// CheckExecPath validates whether the actual java/python exec path matches the expected one.
-func CheckExecPath(pid int, expectedPath string) error {
-	linkPath := fmt.Sprintf("/proc/%d/exe", pid)
-	actualPath, err := os.Readlink(linkPath)
-	if err != nil {
-		return fmt.Errorf("readlink %s failed: %w", linkPath, err)
-	}
-	if actualPath != expectedPath {
-		return fmt.Errorf("exec path mismatch: actual=%s, expected=%s", actualPath, expectedPath)
-	}
-	return nil
-}
-
-// CheckTmpSpace checks if the tmp path has at least 16MB free.
+// CheckDirSpace returns an error if dirPath has less than 16 MiB free.
 func CheckDirSpace(dirPath string) error {
 	var stat unix.Statfs_t
 	if err := unix.Statfs(dirPath, &stat); err != nil {
@@ -120,12 +103,4 @@ func CheckDirSpace(dirPath string) error {
 		return fmt.Errorf("not enough tmp space: %d < %d", available, minRequired)
 	}
 	return nil
-}
-
-func CommToString(c [bpf.TaskCommLen]byte) string {
-	n := bytes.IndexByte(c[:], 0)
-	if n == -1 {
-		n = len(c)
-	}
-	return string(c[:n])
 }

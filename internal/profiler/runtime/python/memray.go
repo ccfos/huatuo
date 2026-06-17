@@ -24,7 +24,8 @@ import (
 	"strconv"
 	"strings"
 
-	util "huatuo-bamai/internal/profiler/common"
+	"huatuo-bamai/internal/profiler/fileutil"
+	"huatuo-bamai/internal/profiler/procutil"
 )
 
 const defaultMemrayBundleDir = "/tmp/memray-lite"
@@ -181,7 +182,7 @@ func EnsureMemrayPython(pid int, hostPythonPath, containerBase, injectorName str
 		return "", fmt.Errorf("memray python directory missing at %s: %w", hostPythonPath, err)
 	}
 
-	inContainer, err := util.IsProcessInContainer(pid)
+	inContainer, err := procutil.IsProcessInContainer(pid)
 	if err != nil {
 		return "", err
 	}
@@ -213,7 +214,7 @@ func EnsureMemrayPython(pid int, hostPythonPath, containerBase, injectorName str
 	}
 
 	if needsCopy {
-		if err := util.CopyDir(hostPythonPath, hostView); err != nil {
+		if err := fileutil.CopyDir(hostPythonPath, hostView); err != nil {
 			return "", fmt.Errorf("copy memray bundle to container: %w", err)
 		}
 	}
