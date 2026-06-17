@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +46,7 @@ type HungTaskTracerData struct {
 	Comm                  string `json:"comm"`
 	CPUsStack             string `json:"cpus_stack"`
 	BlockedProcessesStack string `json:"blocked_processes_stack"`
+	HungTaskTimeoutSecs   int    `json:"hung_task_timeout_secs"`
 }
 
 type hungTaskTracing struct {
@@ -54,8 +57,7 @@ type hungTaskTracing struct {
 
 func init() {
 	// OS such as Fedora-42 may disable this feature.
-	sysctl := "/proc/sys/kernel/hung_task_timeout_secs"
-	if _, err := os.Stat(sysctl); err != nil {
+	if hungTaskTimeout() < 0 {
 		return
 	}
 
@@ -140,10 +142,28 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 					Comm:                  bytesutil.ToStr(data.Comm[:]),
 					CPUsStack:             cpusBT,
 					BlockedProcessesStack: blockedProcessesBT,
+					HungTaskTimeoutSecs:   hungTaskTimeout(),
 				},
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}
 		}
 	}
+}
+
+// returns the kernel hung_task_timeout_secs value.
+// Returns -1 when the kernel does not support hung task detection
+// (CONFIG_DETECT_HUNG_TASK=n), 0 means admin disabled it,
+// and the timeout > 0 in seconds means it works.
+func hungTaskTimeout() int {
+	sysctl := "/proc/sys/kernel/hung_task_timeout_secs"
+	data, err := os.ReadFile(sysctl)
+	if err != nil {
+		return -1
+	}
+	val, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return -1
+	}
+	return val
 }
