@@ -35,12 +35,14 @@ type cpuStat struct {
 	// calculated values
 	hierarchyWaitSum uint64
 	innerWaitSum     uint64
+	waitSum          uint64
 	cpuTotal         uint64
 
 	waitrateHierarchy float64
 	waitrateInner     float64
 	waitrateExter     float64
 	waitrateThrottled float64
+	waitrateWaitSum   float64
 
 	lastUpdate time.Time
 }
@@ -75,6 +77,8 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 		deltaHierarchyWaitSum uint64
 		deltaInnerWaitSum     uint64
 		deltaExterWaitSum     uint64
+		deltaWaitSum          uint64
+		deltaCpuUsage         uint64
 	)
 
 	c.mutex.Lock()
@@ -100,6 +104,7 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 		throttledTime:    raw["throttled_time"],
 		hierarchyWaitSum: raw["hierarchy_wait_sum"],
 		innerWaitSum:     raw["inner_wait_sum"],
+		waitSum:          raw["wait_sum"],
 		nrBursts:         raw["nr_bursts"],
 		burstTime:        raw["burst_time"],
 		cpuTotal:         usage.Usage * 1000,
@@ -121,6 +126,23 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 		}
 
 		deltaExterWaitSum = deltaHierarchyWaitSum - deltaThrottledSum - deltaInnerWaitSum
+	}
+
+	if stat.waitSum <= cpu.waitSum {
+		deltaWaitSum = 0
+	} else {
+		deltaWaitSum = stat.waitSum - cpu.waitSum
+	}
+	if stat.cpuTotal <= cpu.cpuTotal {
+		deltaCpuUsage = 0
+	} else {
+		deltaCpuUsage = stat.cpuTotal - cpu.cpuTotal
+	}
+	waitSumDenom := deltaWaitSum + deltaCpuUsage
+	if waitSumDenom == 0 {
+		stat.waitrateWaitSum = 0
+	} else {
+		stat.waitrateWaitSum = float64(deltaWaitSum) * 100 / float64(waitSumDenom)
 	}
 
 	deltaWaitRunSum := deltaHierarchyWaitSum + stat.cpuTotal - cpu.cpuTotal
@@ -159,6 +181,7 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			metrics, metric.NewContainerGaugeData(container, "wait_rate", containerDataCache.waitrateHierarchy, "wait rate for the containers", nil),
 			metric.NewContainerGaugeData(container, "inner_wait_rate", containerDataCache.waitrateInner, "inner wait rate for the containers", nil),
 			metric.NewContainerGaugeData(container, "exter_wait_rate", containerDataCache.waitrateExter, "exter wait rate for the containers", nil),
+			metric.NewContainerGaugeData(container, "wait_sum_exter_wait_rate", containerDataCache.waitrateWaitSum, "exter wait rate from wait_sum and cpu usage (requires kernel.sched_schedstats=1)", nil),
 			metric.NewContainerGaugeData(container, "throttle_wait_rate", containerDataCache.waitrateThrottled, "throttle wait rate for the containers", nil),
 			metric.NewContainerGaugeData(container, "nr_throttled", float64(containerDataCache.nrThrottled), "throttle nr for the containers", nil),
 			metric.NewContainerGaugeData(container, "throttled_time", float64(containerDataCache.throttledTime), "throttle time for the containers", nil),
