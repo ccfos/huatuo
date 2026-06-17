@@ -26,7 +26,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
-	registry "huatuo-bamai/internal/profiler/registry2"
+	pcontext "huatuo-bamai/internal/profiler/context"
 )
 
 type pythonAggregator struct {
@@ -41,7 +41,7 @@ type pythonAggregator struct {
 	sampleRate       int64  // NoSampleRate for mem; pctx.Freq for cpu
 }
 
-func newPythonAggregator(pctx *registry.ProfilerContext, name, typ string, rate int64) *pythonAggregator {
+func newPythonAggregator(pctx *pcontext.ProfilerContext, name, typ string, rate int64) *pythonAggregator {
 	aggr := &pythonAggregator{
 		profilerName: name,
 		profileType:  typ,
@@ -54,12 +54,12 @@ func newPythonAggregator(pctx *registry.ProfilerContext, name, typ string, rate 
 	return aggr
 }
 
-func NewPythonAggregator(pctx *registry.ProfilerContext) *pythonAggregator {
+func NewPythonAggregator(pctx *pcontext.ProfilerContext) *pythonAggregator {
 	return newPythonAggregator(pctx, "python-mem", profiler.ProfileTypeMemSample, profiler.NoSampleRate)
 }
 
 // NewPythonCPUAggregator creates an aggregator for py-spy CPU profiles.
-func NewPythonCPUAggregator(pctx *registry.ProfilerContext) *pythonAggregator {
+func NewPythonCPUAggregator(pctx *pcontext.ProfilerContext) *pythonAggregator {
 	return newPythonAggregator(pctx, "python-cpu", profiler.ProfileTypeCpuSample, int64(pctx.Freq))
 }
 
@@ -104,7 +104,7 @@ func (a *pythonAggregator) RecordProcessor(rec any) {
 	}
 }
 
-func (a *pythonAggregator) AggregatedExporter(pctx *registry.ProfilerContext) (any, error) {
+func (a *pythonAggregator) AggregatedExporter(pctx *pcontext.ProfilerContext) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

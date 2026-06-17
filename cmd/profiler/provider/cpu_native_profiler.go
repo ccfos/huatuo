@@ -30,7 +30,7 @@ import (
 	"huatuo-bamai/internal/profiler/bpfmap"
 	util "huatuo-bamai/internal/profiler/common"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	registry "huatuo-bamai/internal/profiler/registry/v2"
+	"huatuo-bamai/internal/profiler/registry"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/types"
 )

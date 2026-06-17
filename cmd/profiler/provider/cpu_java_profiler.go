@@ -25,7 +25,7 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 	executil "huatuo-bamai/internal/profiler/exec"
 	helper "huatuo-bamai/internal/profiler/helper/java"
-	registry "huatuo-bamai/internal/profiler/registry/v2"
+	"huatuo-bamai/internal/profiler/registry"
 )
 
 func init() {

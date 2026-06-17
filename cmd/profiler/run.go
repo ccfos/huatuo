@@ -21,7 +21,7 @@ import (
 
 	"huatuo-bamai/internal/log"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	registry "huatuo-bamai/internal/profiler/registry/v2"
+	"huatuo-bamai/internal/profiler/registry"
 )
 
 func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {

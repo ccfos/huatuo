@@ -22,9 +22,11 @@ import (
 	"strings"
 
 	"huatuo-bamai/internal/profiler"
+	"huatuo-bamai/internal/profiler/aggregator"
 	pythonaggr "huatuo-bamai/internal/profiler/aggregator/callback"
+	pcontext "huatuo-bamai/internal/profiler/context"
 	executil "huatuo-bamai/internal/profiler/exec"
-	registry "huatuo-bamai/internal/profiler/registry2"
+	"huatuo-bamai/internal/profiler/registry"
 	util "huatuo-bamai/internal/profiler/utils"
 )
 
@@ -39,20 +41,41 @@ func init() {
 	})
 }
 
-func (p *pythonCPUProfiler) StartProfile(pctx *registry.ProfilerContext) error {
+// NewAggregator returns a no-op aggregator because py-spy is one-shot and the
+// profiler creates and drives its own aggregator inside Start.
+func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
+	return aggregator.NewAggregator(
+		pctx,
+		func(any) {},
+		func(*pcontext.ProfilerContext) (any, error) { return nil, nil },
+	)
+}
+
+// Start runs py-spy synchronously, owns its own aggregator end-to-end, then
+// cancels pctx so registry.Profile's duration wait returns immediately.
+func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	pctx.OneShotAgg = true
+
 	aggr := pythonaggr.NewPythonCPUAggregator(pctx)
 	aggr.Start()
 
 	err := p.sample(pctx, func(so profiler.SampleOutput) {
 		aggr.AddRecord(so)
 	})
+
 	aggr.Stop()
+	pctx.Cancel()
 
 	return err
 }
 
-func (p *pythonCPUProfiler) sample(pctx *registry.ProfilerContext, recordFn func(profiler.SampleOutput)) error {
+func (p *pythonCPUProfiler) ReadDataLoop(_ context.Context, _ func(any)) {}
+
+func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext, _ *aggregator.Aggregator) error {
+	return nil
+}
+
+func (p *pythonCPUProfiler) sample(pctx *pcontext.ProfilerContext, recordFn func(profiler.SampleOutput)) error {
 	pid := pctx.PID
 	freq := pctx.Freq
 	dur := pctx.Duration
