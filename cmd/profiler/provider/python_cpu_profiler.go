@@ -29,7 +29,10 @@ import (
 	"huatuo-bamai/internal/profiler/registry"
 )
 
-type pythonCPUProfiler struct{}
+type pythonCPUProfiler struct {
+	pctx *pcontext.ProfilerContext
+	pids []int
+}
 
 func init() {
 	impl := &pythonCPUProfiler{}
@@ -42,86 +45,82 @@ func init() {
 	})
 }
 
-// NewAggregator returns a no-op aggregator because py-spy is one-shot and the
-// profiler creates and drives its own aggregator inside Start.
+// NewAggregator stamps OneShotAgg before construction so the aggregator worker
+// picks the batch-on-stop branch — py-spy emits all data only when the record
+// command exits, not incrementally over the duration window.
 func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
-	return aggregator.NewAggregator(
-		pctx,
-		func(any) {},
-		func(*pcontext.ProfilerContext) (any, error) { return nil, nil },
-	)
-}
-
-// Start runs py-spy synchronously, owns its own aggregator end-to-end, then
-// cancels pctx so registry.Profile's duration wait returns immediately.
-func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	pctx.OneShotAgg = true
 
-	aggr := newPythonCPUAggregator(pctx)
-	aggr.Start()
-
-	err := p.sample(pctx, func(so profiler.SampleOutput) {
-		aggr.AddRecord(so)
-	})
-
-	aggr.Stop()
-	pctx.Cancel()
-
-	return err
+	return newPythonCPUAggregator(pctx).Aggregator
 }
 
-func (p *pythonCPUProfiler) ReadDataLoop(_ context.Context, _ func(any)) {}
+// Start only resolves PIDs; py-spy runs in ReadDataLoop so Profile owns
+// lifecycle and the aggregator stays under Profile's control.
+func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	p.pctx = pctx
 
-func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext, _ *aggregator.Aggregator) error {
+	pids, err := resolvePythonPids(pctx)
+	if err != nil {
+		return err
+	}
+
+	p.pids = pids
+
 	return nil
 }
 
-func (p *pythonCPUProfiler) sample(pctx *pcontext.ProfilerContext, recordFn func(profiler.SampleOutput)) error {
-	pid := pctx.PID
-	freq := pctx.Freq
-	dur := pctx.Duration
-	toolPath := pctx.ToolPath
-	toolLimit := pctx.ToolLimit
-	execPath := pctx.ExecPath
-	svrAddr := pctx.ServerAddress
-	containerID := pctx.ContainerID
+func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
+	return runPySpyAndEmit(ctx, p.pctx, p.pids, addRecord)
+}
 
-	var pids []int
+func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
+	return nil
+}
 
-	if pid != 0 {
-		if execPath != "" {
-			if err := procutil.CheckExecPath(pid, execPath); err != nil {
-				return err
+func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
+	if pctx.PID != 0 {
+		if pctx.ExecPath != "" {
+			if err := procutil.CheckExecPath(pctx.PID, pctx.ExecPath); err != nil {
+				return nil, err
 			}
 		}
-		pids = []int{pid}
-	} else {
-		var err error
-		pids, err = procutil.GetPidsFromContainer(svrAddr, execPath, "python", containerID)
-		if err != nil {
-			return err
-		}
-		if toolLimit > 0 && len(pids) > toolLimit {
-			return fmt.Errorf("sampling failed: too many target Python processes (limit: %d, found: %d)", toolLimit, len(pids))
-		}
-		if len(pids) == 0 {
-			return fmt.Errorf("sampling failed: no target Python processes found in container: %s", containerID)
-		}
+
+		return []int{pctx.PID}, nil
 	}
 
-	cmdResults := runPySpy(pctx.Ctx, pids, dur, freq, toolPath)
+	pids, err := procutil.GetPidsFromContainer(pctx.ServerAddress, pctx.ExecPath, "python", pctx.ContainerID)
+	if err != nil {
+		return nil, err
+	}
+
+	if pctx.ToolLimit > 0 && len(pids) > pctx.ToolLimit {
+		return nil, fmt.Errorf("sampling failed: too many target Python processes (limit: %d, found: %d)", pctx.ToolLimit, len(pids))
+	}
+
+	if len(pids) == 0 {
+		return nil, fmt.Errorf("sampling failed: no target Python processes found in container: %s", pctx.ContainerID)
+	}
+
+	return pids, nil
+}
+
+func runPySpyAndEmit(ctx context.Context, pctx *pcontext.ProfilerContext, pids []int, addRecord func(any)) error {
+	cmdResults := runPySpy(ctx, pids, pctx.Duration, pctx.Freq, pctx.ToolPath)
 
 	var errorMessages []string
+
 	for i := range cmdResults {
 		cmdRes := &cmdResults[i]
 		targetPid := pids[i]
+
 		if !cmdRes.Success {
 			errorMessages = append(errorMessages,
 				fmt.Sprintf("PID[%d] sampling failed: %v, stderr: %s", targetPid, cmdRes.CmdErr, string(cmdRes.Stderr)))
 			continue
 		}
+
 		if len(cmdRes.Stdout) > 0 {
-			recordFn(profiler.SampleOutput{
+			addRecord(profiler.SampleOutput{
 				PID:    targetPid,
 				Output: string(cmdRes.Stdout),
 			})
@@ -131,6 +130,7 @@ func (p *pythonCPUProfiler) sample(pctx *pcontext.ProfilerContext, recordFn func
 	if len(errorMessages) > 0 {
 		return fmt.Errorf("sampling failed:\n%s", strings.Join(errorMessages, "\n"))
 	}
+
 	return nil
 }
 
@@ -139,6 +139,7 @@ func runPySpy(ctx context.Context, pids []int, dur, freq int, pyspyPath string) 
 	pyspyBin := filepath.Join(pyspyPath, "py-spy")
 	durStr := strconv.Itoa(dur)
 	freqStr := strconv.Itoa(freq)
+
 	return executil.ExecCmds(ctx, pids, pyspyBin, func(pid int) []string {
 		return []string{
 			"record",

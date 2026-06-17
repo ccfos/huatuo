@@ -17,7 +17,6 @@ package registry
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"huatuo-bamai/internal/log"
@@ -44,13 +43,14 @@ type ProfilerMeta struct {
 	Aggregator func(*pcontext.ProfilerContext) *aggregator.Aggregator
 }
 
-// Profiler defines the sampling lifecycle. Aggregator construction is kept
-// out of this interface so impls that drive their own aggregator (e.g. py-spy
-// one-shot) don't need to hand-write a no-op factory method.
+// Profiler is the sampling lifecycle. Aggregator ownership stays with Profile
+// so streaming (eBPF, async-profiler tail) and one-shot (py-spy) providers
+// share one shape; ReadDataLoop returns when ctx is cancelled or sampling
+// completes naturally, and its error surfaces through Profile.
 type Profiler interface {
 	Start(pctx *pcontext.ProfilerContext) error
-	ReadDataLoop(ctx context.Context, addRecord func(any))
-	Stop(pctx *pcontext.ProfilerContext, aggregator *aggregator.Aggregator) error
+	ReadDataLoop(ctx context.Context, addRecord func(any)) error
+	Stop(pctx *pcontext.ProfilerContext) error
 }
 
 // Registration is init-time only; profilerRegistry is read without locking
@@ -89,9 +89,9 @@ func Get(langOrImpl, typ string) (ProfilerMeta, error) {
 	return ProfilerMeta{}, fmt.Errorf("no profiler for lang=%s type=%s", langOrImpl, typ)
 }
 
-// Profile runs the full sampling lifecycle: aggregator start, impl start,
-// async data drain, then stop on duration timeout or context cancellation.
-// It blocks until cleanup completes so resources are guaranteed released.
+// Profile blocks until cleanup completes so resources are guaranteed released.
+// ReadDataLoop returning on its own is a legitimate stop reason — one-shot
+// samplers (py-spy) finish before the duration timer fires.
 func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	agg := p.Aggregator(pctx)
 	agg.Start()
@@ -104,11 +104,9 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 		return fmt.Errorf("start profiler: %w", err)
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
+	loopDone := make(chan error, 1)
 	go func() {
-		defer wg.Done()
-		p.Impl.ReadDataLoop(pctx.Ctx, agg.AddRecord)
+		loopDone <- p.Impl.ReadDataLoop(pctx.Ctx, agg.AddRecord)
 	}()
 
 	var deadline <-chan time.Time
@@ -120,7 +118,11 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 		deadline = t.C
 	}
 
-	var err error
+	var (
+		err     error
+		loopErr error
+		looped  bool
+	)
 
 	select {
 	case <-deadline:
@@ -128,15 +130,27 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	case <-pctx.Ctx.Done():
 		err = pctx.Ctx.Err()
 		log.P().Infof("profiler stop by context: %v", err)
+	case loopErr = <-loopDone:
+		looped = true
+		log.P().Infof("profiler stop by loop exit: %v", loopErr)
 	}
 
 	// Cancel first so ReadDataLoop exits before Stop closes BPF/file handles
 	// the loop may still be reading from.
 	pctx.Cancel()
-	wg.Wait()
 
-	if stopErr := p.Impl.Stop(pctx, agg); stopErr != nil {
+	if !looped {
+		loopErr = <-loopDone
+	}
+
+	if stopErr := p.Impl.Stop(pctx); stopErr != nil {
 		log.P().Errorf("profiler stop: %v", stopErr)
+	}
+
+	agg.Stop()
+
+	if err == nil && loopErr != nil {
+		err = loopErr
 	}
 
 	return err

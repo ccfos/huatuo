@@ -109,28 +109,19 @@ func sampleJavaProcesses(ctx context.Context, pids []int, freq int, asprofPath s
 }
 
 // Stop profiling, abnormal Stop also goes through here
-func (p *cpuJavaProfiler) Stop(pctx *pcontext.ProfilerContext, aggregator *aggregator.Aggregator) error {
-	pid := pctx.PID
-	toolPath := pctx.ToolPath
-	execPath := pctx.ExecPath
-	svrAddr := pctx.ServerAddress
-	containerID := pctx.ContainerID
-
-	var pids []int
-
-	// stop the aggregator
-	aggregator.Stop()
-
-	// stop async-profiler cmd
-	pids, err := javaruntime.ResolveJavaPids(pid, 0, execPath, svrAddr, containerID)
+func (p *cpuJavaProfiler) Stop(pctx *pcontext.ProfilerContext) error {
+	pids, err := javaruntime.ResolveJavaPids(pctx.PID, 0, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID)
 	if err != nil {
 		return err
 	}
 
-	stopRes := javaruntime.StopAsprofProcesses(pids, toolPath)
+	stopRes := javaruntime.StopAsprofProcesses(pids, pctx.ToolPath)
+
 	return javaruntime.CheckCmdResultsAllSuccess(stopRes, "stop")
 }
 
-func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) {
+func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
 	javaruntime.ReadCollapsedFilesLoop(ctx, profileOutFile, addRecord)
+
+	return nil
 }

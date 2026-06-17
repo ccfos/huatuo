@@ -125,24 +125,19 @@ func sampleJavaMemoryProcesses(ctx context.Context, pids []int, asprofPath, even
 }
 
 // Stop profiling, abnormal Stop also goes through here
-func (p *javaMemoryProfiler) Stop(pctx *pcontext.ProfilerContext, aggregator *aggregator.Aggregator) error {
-	pid := pctx.PID
-	toolPath := pctx.ToolPath
-	execPath := pctx.ExecPath
-	svrAddr := pctx.ServerAddress
-	containerID := pctx.ContainerID
-
-	aggregator.Stop()
-
-	pids, err := javaruntime.ResolveJavaPids(pid, 0, execPath, svrAddr, containerID)
+func (p *javaMemoryProfiler) Stop(pctx *pcontext.ProfilerContext) error {
+	pids, err := javaruntime.ResolveJavaPids(pctx.PID, 0, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID)
 	if err != nil {
 		return err
 	}
 
-	stopRes := javaruntime.StopAsprofProcesses(pids, toolPath)
+	stopRes := javaruntime.StopAsprofProcesses(pids, pctx.ToolPath)
+
 	return javaruntime.CheckCmdResultsAllSuccess(stopRes, "stop")
 }
 
-func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) {
+func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
 	javaruntime.ReadCollapsedFilesLoop(ctx, memProfileOutFile, addRecord)
+
+	return nil
 }

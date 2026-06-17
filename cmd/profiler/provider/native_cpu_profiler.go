@@ -75,13 +75,7 @@ func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggre
 }
 
 // Stop profiling, abnormal Stop also goes through here
-func (p *cpuNativeProfiler) Stop(pctx *pcontext.ProfilerContext, aggregator *aggregator.Aggregator) error {
-	if pctx.Cancel != nil {
-		pctx.Cancel()
-	}
-
-	aggregator.Stop()
-
+func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 	if p.bpf != nil {
 		if err := p.bpf.Close(); err != nil {
 			log.P().Infof("Error closing eBPF: %v", err)
@@ -131,21 +125,19 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	return nil
 }
 
-func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) {
+func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
 	log.P().Infof("Data reading loop started")
 	defer log.P().Infof("Data reading loop ended")
 
 	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
 	if err != nil {
-		log.P().Infof("failed to create readerA: %v", err)
-		return
+		return fmt.Errorf("create readerA: %w", err)
 	}
 	defer readerA.Close()
 
 	readerB, err := p.bpf.EventPipeByName(ctx, "profiler_output_b", 4096*257)
 	if err != nil {
-		log.P().Infof("failed to create readerB: %v", err)
-		return
+		return fmt.Errorf("create readerB: %w", err)
 	}
 	defer readerB.Close()
 
@@ -157,13 +149,13 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 		}
 
 		if err := p.flipAndDrain(readerA, readerB, stateMapID, addRecord); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
-				return
+				return nil
 			}
 
 			log.P().Infof("drain error: %v", err)

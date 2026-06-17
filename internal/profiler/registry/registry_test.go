@@ -27,9 +27,9 @@ import (
 // the lookup tables, not sampling, so a stub is enough.
 type fakeProfiler struct{}
 
-func (fakeProfiler) Start(*pcontext.ProfilerContext) error                        { return nil }
-func (fakeProfiler) ReadDataLoop(context.Context, func(any))                      {}
-func (fakeProfiler) Stop(*pcontext.ProfilerContext, *aggregator.Aggregator) error { return nil }
+func (fakeProfiler) Start(*pcontext.ProfilerContext) error         { return nil }
+func (fakeProfiler) ReadDataLoop(context.Context, func(any)) error { return nil }
+func (fakeProfiler) Stop(*pcontext.ProfilerContext) error          { return nil }
 
 // resetRegistry isolates the package-level map per test so order doesn't matter
 // and nothing leaks across tests.

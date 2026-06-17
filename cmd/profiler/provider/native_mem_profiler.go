@@ -78,20 +78,18 @@ func init() {
 	})
 }
 
+// NewAggregator stamps OneShotAgg before construction for retained mode —
+// alloc/free deltas must collapse in a single shot, not stream every interval.
 func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
+	if mode, err := resolveMemMode(pctx.ExtraFlags["mode"]); err == nil && mode == modePMRetained {
+		pctx.OneShotAgg = true
+	}
+
 	return newNativeAggregator(pctx).Aggregator
 }
 
 // Stop profiling, abnormal Stop also goes through here
-func (p *memNativeProfiler) Stop(pctx *pcontext.ProfilerContext, aggregator *aggregator.Aggregator) error {
-	if pctx.Cancel != nil {
-		pctx.Cancel()
-	}
-
-	if aggregator != nil {
-		aggregator.Stop()
-	}
-
+func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 	if p.bpf != nil {
 		if err := p.bpf.Close(); err != nil {
 			log.P().Infof("Error closing eBPF: %v", err)
@@ -110,11 +108,6 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	p.internalMode = internalMode
-	if internalMode == modePMRetained {
-		// Retained mode emits one record per (alloc - free) delta, which the
-		// aggregator must collapse in a single shot rather than streaming.
-		pctx.OneShotAgg = true
-	}
 
 	probability, err := resolveProbability(pctx.ExtraFlags["probability"], internalMode)
 	if err != nil {
@@ -266,21 +259,19 @@ func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads b
 	return "", nil, nil
 }
 
-func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) {
+func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
 	log.P().Infof("mem data reading loop started")
 	defer log.P().Infof("mem data reading loop ended")
 
 	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
 	if err != nil {
-		log.P().Infof("failed to create mem profiler readerA: %v", err)
-		return
+		return fmt.Errorf("create mem readerA: %w", err)
 	}
 	defer readerA.Close()
 
 	readerB, err := p.bpf.EventPipeByName(ctx, "profiler_output_b", 4096*257)
 	if err != nil {
-		log.P().Infof("failed to create mem profiler readerB: %v", err)
-		return
+		return fmt.Errorf("create mem readerB: %w", err)
 	}
 	defer readerB.Close()
 
@@ -296,13 +287,13 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 		}
 
 		if err := p.flipAndDrain(readerA, readerB, stateMapID, stackMapAID, stackMapBID, usym, addRecord); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
-				return
+				return nil
 			}
 
 			log.P().Infof("mem drain error: %v", err)
