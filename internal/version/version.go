@@ -142,7 +142,7 @@ func backfillFromBuildInfo(i *Info, bi *debug.BuildInfo) {
 
 // Multiline returns a kubectl-style multi-line block, suitable as
 // urfave/cli's app.Version output.
-func (i Info) Multiline() string {
+func (i *Info) Multiline() string {
 	return strings.Join([]string{
 		i.Name + ":",
 		fmt.Sprintf("   version:        %s", i.Version),
@@ -156,7 +156,7 @@ func (i Info) Multiline() string {
 }
 
 // Short returns "<name> <version> (<short-commit>[-dirty])".
-func (i Info) Short() string {
+func (i *Info) Short() string {
 	commit := i.GitCommit
 
 	const shortLen = 12
@@ -172,7 +172,7 @@ func (i Info) Short() string {
 }
 
 // JSON returns the canonical indented JSON serialization.
-func (i Info) JSON() string {
+func (i *Info) JSON() string {
 	b, err := json.MarshalIndent(i, "", "  ")
 	if err != nil {
 		return "{}"
@@ -198,13 +198,13 @@ func Wire(app *cli.App, s Seed) Info {
 	})
 
 	cli.VersionPrinter = func(c *cli.Context) {
-		printVersion(c.App.Writer, info, c.String(versionFormatFlag))
+		printVersion(c.App.Writer, &info, c.String(versionFormatFlag))
 	}
 
 	return info
 }
 
-func printVersion(w io.Writer, i Info, format string) {
+func printVersion(w io.Writer, i *Info, format string) {
 	switch format {
 	case "json":
 		fmt.Fprintln(w, i.JSON())

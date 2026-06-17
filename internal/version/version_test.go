@@ -182,7 +182,8 @@ func TestInfoJSONRoundTrip(t *testing.T) {
 }
 
 func TestInfoJSONFieldNames(t *testing.T) {
-	got := Info{Name: "tool"}.JSON()
+	info := Info{Name: "tool"}
+	got := info.JSON()
 	for _, want := range []string{
 		`"name"`,
 		`"version"`,
