@@ -19,6 +19,12 @@ jobs:
         include:
           # amd64
           - arch: amd64
+            os: ubuntu26.04
+            runner: ubuntu-24.04
+            vm_name: "huatuo-os-distro-test-vm-ubuntu26.04"
+            vm_mac: "4A:6F:6C:69:6E:20"
+            vm_ip: "192.168.122.100"
+          - arch: amd64
             os: ubuntu24.04
             runner: ubuntu-24.04
             vm_name: "huatuo-os-distro-test-vm-ubuntu24.04"

@@ -120,7 +120,7 @@ function install_vm() {
 
 	VIRT_COMMON_ARG=(
 		--name "${VM_NAME}"
-		--os-variant "${OS_DISTRO}"
+		--os-variant "${OS_VARIANT}"
 		--vcpus "${VM_VCPUS}"
 		--memory "${VM_MEMORY_MB}"
 		--disk path="${LIBVIRT_IMAGE_DIR}/${OS_IMAGE}",bus=virtio,cache=none,format=qcow2
@@ -228,6 +228,32 @@ ubuntu*)
 	exit 1
 	;;
 esac
+
+# map OS_DISTRO to a known --os-variant; fall back to latest if unknown
+OS_VARIANT="${OS_DISTRO}"
+if virt-install --osinfo list 2>/dev/null | grep -qwF "${OS_DISTRO}"; then
+	OS_VARIANT="${OS_DISTRO}"
+else
+	case "$OS_DISTRO" in
+	ubuntu*)
+		# extract major version, e.g. ubuntu26.04 → 26
+		u_version=${OS_DISTRO#ubuntu}
+		major=${u_version%.*}
+		case "$major" in
+		26)
+			OS_VARIANT=ubuntu24.04
+			;;
+		*)
+			OS_VARIANT="${OS_DISTRO}"
+			;;
+		esac
+		;;
+	*)
+		OS_VARIANT="${OS_DISTRO}"
+		;;
+	esac
+fi
+echo -e "ℹ️  OS_VARIANT resolved to: ${OS_VARIANT}"
 
 cloud_user_data
 echo -e "✅ ${CLOUD_USER_DATA} ok."
