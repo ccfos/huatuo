@@ -170,11 +170,11 @@ func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
 
 		switch p.pctx.OutputFormat {
 		case "flamegraph", "svg":
-			if err := p.exportFlameGraph(formatter); err != nil {
+			if err := writeFlameGraph(p.pctx.OutputPath, formatter); err != nil {
 				log.P().WithField("output_path", p.pctx.OutputPath).Errorf("write to SVG failed: %v", err)
 			}
 		default:
-			if err := p.exportFolded(formatter); err != nil {
+			if err := writeFolded(p.pctx.OutputPath, formatter); err != nil {
 				log.P().WithField("output_path", p.pctx.OutputPath).Errorf("write to file failed: %v", err)
 			}
 		}

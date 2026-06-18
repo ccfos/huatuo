@@ -28,8 +28,9 @@ import (
 	"huatuo-bamai/internal/profiler/output/raw"
 )
 
-func (p *Pipeline) exportFolded(f *raw.Formatter) error {
-	file, err := createOutputFile(p.pctx.OutputPath, "perf", ".folded")
+// writeFolded persists the folded-stack data to a timestamped .folded file.
+func writeFolded(dir string, f *raw.Formatter) error {
+	file, err := createOutputFile(dir, "perf", ".folded")
 	if err != nil {
 		return err
 	}
@@ -44,8 +45,9 @@ func (p *Pipeline) exportFolded(f *raw.Formatter) error {
 	return nil
 }
 
-func (p *Pipeline) exportFlameGraph(f *raw.Formatter) error {
-	file, err := createOutputFile(p.pctx.OutputPath, "flamegraph", ".svg")
+// writeFlameGraph persists the aggregated data as a flame graph SVG.
+func writeFlameGraph(dir string, f *raw.Formatter) error {
+	file, err := createOutputFile(dir, "flamegraph", ".svg")
 	if err != nil {
 		return err
 	}
