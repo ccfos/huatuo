@@ -66,6 +66,22 @@ func NewEventsHandler(maxClients, keepAliveIntervalSecs int) *EventsHandler {
 	return h
 }
 
+func (h *EventsHandler) acquireClient() bool {
+	for {
+		active := h.activeClients.Load()
+		if int(active) >= h.maxClients {
+			return false
+		}
+		if h.activeClients.CompareAndSwap(active, active+1) {
+			return true
+		}
+	}
+}
+
+func (h *EventsHandler) releaseClient() {
+	h.activeClients.Add(-1)
+}
+
 // WatchRequest is the POST body sent by a client to register an event watch.
 // All filter fields are optional regex patterns; omitting a field matches all values.
 // Additional filter fields can be added to WatchFilters without breaking existing clients.
@@ -126,12 +142,11 @@ func (wf *WatchFilters) matcher() (*matcher.FieldMatcher[*tracing.Document], err
 // the client disconnects, the server shuts down, or keepalive probes fail
 // maxKeepAliveFailures consecutive times.
 func (h *EventsHandler) watch(ctx *server.Context) error {
-	if int(h.activeClients.Load()) >= h.maxClients {
+	if !h.acquireClient() {
 		log.Infof("[eventwatch] rejected: max clients reached (%d/%d)", h.activeClients.Load(), h.maxClients)
 		return response.ErrTooManyRequests.WithMessage("max watch clients reached")
 	}
-	h.activeClients.Add(1)
-	defer h.activeClients.Add(-1)
+	defer h.releaseClient()
 
 	var req WatchRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
