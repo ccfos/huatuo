@@ -37,11 +37,11 @@ import (
 func init() {
 	impl := &cpuNativeProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:        "cpu",
-		LangOrImpl:  "native",
-		Description: "Native CPU profiler using ebpf",
-		Impl:        impl,
-		Aggregator:  impl.NewAggregator,
+		Type:          "cpu",
+		LangOrImpl:    "native",
+		Description:   "Native CPU profiler using ebpf",
+		Impl:          impl,
+		NewAggregator: impl.NewAggregator,
 	})
 }
 
@@ -70,8 +70,8 @@ type cpuNativeProfiler struct {
 	bpf bpf.BPF
 }
 
-func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
-	return newNativeAggregator(pctx).Aggregator
+func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) aggregator.Aggregator {
+	return newNativeAggregator(pctx)
 }
 
 // Stop profiling, abnormal Stop also goes through here

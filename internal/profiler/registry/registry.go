@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,14 +33,14 @@ var defaultLangProfiler = map[string]string{
 }
 
 // ProfilerMeta groups identity fields (used as registry keys) and the
-// Impl/Aggregator behavior pair driven by Profile.
+// Profiler/Aggregator behavior pair driven by Profile.
 type ProfilerMeta struct {
 	Type        string
 	LangOrImpl  string
 	Description string
 
-	Impl       Profiler
-	Aggregator func(*pcontext.ProfilerContext) *aggregator.Aggregator
+	Impl          Profiler
+	NewAggregator func(*pcontext.ProfilerContext) aggregator.Aggregator
 }
 
 // Profiler is the sampling lifecycle. Aggregator ownership stays with Profile
@@ -93,12 +93,13 @@ func Get(langOrImpl, typ string) (ProfilerMeta, error) {
 // ReadDataLoop returning on its own is a legitimate stop reason — one-shot
 // samplers (py-spy) finish before the duration timer fires.
 func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
-	agg := p.Aggregator(pctx)
-	agg.Start()
+	aggr := p.NewAggregator(pctx)
+	pipe := aggregator.NewPipeline(pctx, aggr)
+	pipe.Start()
 	log.P().Info("aggregator started")
 
 	if err := p.Impl.Start(pctx); err != nil {
-		agg.Stop()
+		pipe.Stop()
 		pctx.Cancel()
 
 		return fmt.Errorf("start profiler: %w", err)
@@ -106,7 +107,7 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- p.Impl.ReadDataLoop(pctx.Ctx, agg.AddRecord)
+		loopDone <- p.Impl.ReadDataLoop(pctx.Ctx, pipe.Enqueue)
 	}()
 
 	var deadline <-chan time.Time
@@ -147,7 +148,7 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 		log.P().Errorf("profiler stop: %v", stopErr)
 	}
 
-	agg.Stop()
+	pipe.Stop()
 
 	if err == nil && loopErr != nil {
 		err = loopErr

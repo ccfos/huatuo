@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -31,8 +31,13 @@ func (fakeProfiler) Start(*pcontext.ProfilerContext) error         { return nil 
 func (fakeProfiler) ReadDataLoop(context.Context, func(any)) error { return nil }
 func (fakeProfiler) Stop(*pcontext.ProfilerContext) error          { return nil }
 
-// resetRegistry isolates the package-level map per test so order doesn't matter
-// and nothing leaks across tests.
+// fakeAggregator satisfies aggregator.Aggregator with no behavior.
+type fakeAggregator struct{}
+
+func (fakeAggregator) Ingest(any)                                      {}
+func (fakeAggregator) Snapshot(*pcontext.ProfilerContext) (any, error) { return nil, nil }
+func (fakeAggregator) Reset()                                          {}
+
 func resetRegistry(t *testing.T) {
 	t.Helper()
 
@@ -44,11 +49,11 @@ func resetRegistry(t *testing.T) {
 
 func newMeta(lang, typ string) ProfilerMeta {
 	return ProfilerMeta{
-		Type:        typ,
-		LangOrImpl:  lang,
-		Description: "fake",
-		Impl:        fakeProfiler{},
-		Aggregator:  func(*pcontext.ProfilerContext) *aggregator.Aggregator { return nil },
+		Type:          typ,
+		LangOrImpl:    lang,
+		Description:   "fake",
+		Impl:          fakeProfiler{},
+		NewAggregator: func(*pcontext.ProfilerContext) aggregator.Aggregator { return fakeAggregator{} },
 	}
 }
 

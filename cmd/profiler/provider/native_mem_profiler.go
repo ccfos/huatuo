@@ -70,22 +70,22 @@ type memEvent struct {
 func init() {
 	impl := &memNativeProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:        "mem",
-		LangOrImpl:  "native",
-		Description: "Native memory profiler using ebpf (vm/pm accumulated & retained)",
-		Impl:        impl,
-		Aggregator:  impl.NewAggregator,
+		Type:          "mem",
+		LangOrImpl:    "native",
+		Description:   "Native memory profiler using ebpf (vm/pm accumulated & retained)",
+		Impl:          impl,
+		NewAggregator: impl.NewAggregator,
 	})
 }
 
 // NewAggregator stamps OneShotAgg before construction for retained mode —
 // alloc/free deltas must collapse in a single shot, not stream every interval.
-func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
+func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) aggregator.Aggregator {
 	if mode, err := resolveMemMode(pctx.ExtraFlags["mode"]); err == nil && mode == modePMRetained {
 		pctx.OneShotAgg = true
 	}
 
-	return newNativeAggregator(pctx).Aggregator
+	return newNativeAggregator(pctx)
 }
 
 // Stop profiling, abnormal Stop also goes through here

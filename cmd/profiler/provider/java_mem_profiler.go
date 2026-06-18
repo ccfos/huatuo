@@ -30,11 +30,11 @@ import (
 func init() {
 	impl := &javaMemoryProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:        "mem",
-		LangOrImpl:  "java",
-		Description: "Java memory profiler using async-profiler",
-		Impl:        impl,
-		Aggregator:  impl.NewAggregator,
+		Type:          "mem",
+		LangOrImpl:    "java",
+		Description:   "Java memory profiler using async-profiler",
+		Impl:          impl,
+		NewAggregator: impl.NewAggregator,
 	})
 }
 
@@ -42,8 +42,8 @@ var memProfileOutFile map[int]string
 
 type javaMemoryProfiler struct{}
 
-func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
-	return newJavaAggregator(pctx).Aggregator
+func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) aggregator.Aggregator {
+	return newJavaAggregator(pctx)
 }
 
 func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
@@ -73,7 +73,6 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 			return fmt.Errorf("failed to get Java version for PID %d: %w", pids[0], err)
 		}
 
-		// --live requires Java 11+: keeps only objects still referenced.
 		if javaVersion < 11 {
 			return fmt.Errorf("object_usage mode only supports Java 11 or newer, current Java version is %d", javaVersion)
 		}
@@ -98,7 +97,6 @@ func sampleJavaMemoryProcesses(ctx context.Context, pids []int, asprofPath, even
 		"--libpath", "/tmp/libasyncProfiler.so",
 		"-e", event,
 		"--alloc", "512k",
-		// Set the maximum Java stack depth to minimize stack storage
 		"-j", "256",
 		"--loop", strconv.Itoa(loopInterval),
 		"-o", "collapsed",
@@ -124,7 +122,6 @@ func sampleJavaMemoryProcesses(ctx context.Context, pids []int, asprofPath, even
 	})
 }
 
-// Stop profiling, abnormal Stop also goes through here
 func (p *javaMemoryProfiler) Stop(pctx *pcontext.ProfilerContext) error {
 	pids, err := javaruntime.ResolveJavaPids(pctx.PID, 0, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID)
 	if err != nil {

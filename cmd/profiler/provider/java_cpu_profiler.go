@@ -30,11 +30,11 @@ import (
 func init() {
 	impl := &cpuJavaProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:        "cpu",
-		LangOrImpl:  "java",
-		Description: "Java CPU profiler using async-profiler",
-		Impl:        impl,
-		Aggregator:  impl.NewAggregator,
+		Type:          "cpu",
+		LangOrImpl:    "java",
+		Description:   "Java CPU profiler using async-profiler",
+		Impl:          impl,
+		NewAggregator: impl.NewAggregator,
 	})
 }
 
@@ -42,11 +42,10 @@ var profileOutFile map[int]string
 
 type cpuJavaProfiler struct{}
 
-func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
-	return newJavaAggregator(pctx).Aggregator
+func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) aggregator.Aggregator {
+	return newJavaAggregator(pctx)
 }
 
-// Start async-profiler cmd
 func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	pid := pctx.PID
 	freq := pctx.Freq
@@ -67,22 +66,18 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	// Sample and get results for all PIDs
 	cmdResults := sampleJavaProcesses(pctx.Ctx, pids, freq, toolPath)
 	return javaruntime.CheckAsprofStarted(cmdResults)
 }
 
-// Executes multiple asprof instances for profiling
 func sampleJavaProcesses(ctx context.Context, pids []int, freq int, asprofPath string) []executil.CmdResult {
 	asprofBin := filepath.Join(asprofPath, "asprof")
 
-	// interval = integer(1000ms/freq)
 	intervalMs := 1000 / freq
 
 	baseArgs := []string{
 		"--libpath", "/tmp/libasyncProfiler.so",
 		"-i", fmt.Sprintf("%dms", intervalMs),
-		// Set the maximum Java stack depth to minimize stack storage
 		"-j", "256",
 		"--loop", "9",
 		"-o", "collapsed",
@@ -91,13 +86,13 @@ func sampleJavaProcesses(ctx context.Context, pids []int, freq int, asprofPath s
 	return executil.ExecCmds(ctx, pids, asprofBin, func(pid int) []string {
 		args := append([]string{}, baseArgs...)
 
-		// append -f parameter (file for each pid)
 		outFile := fmt.Sprintf("/tmp/asprof-cpu-%d.collapsed", pid)
 		args = append(
 			args,
 			"-f", outFile,
 			strconv.Itoa(pid),
 		)
+
 		if profileOutFile == nil {
 			profileOutFile = make(map[int]string)
 		}
@@ -108,7 +103,6 @@ func sampleJavaProcesses(ctx context.Context, pids []int, freq int, asprofPath s
 	})
 }
 
-// Stop profiling, abnormal Stop also goes through here
 func (p *cpuJavaProfiler) Stop(pctx *pcontext.ProfilerContext) error {
 	pids, err := javaruntime.ResolveJavaPids(pctx.PID, 0, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID)
 	if err != nil {

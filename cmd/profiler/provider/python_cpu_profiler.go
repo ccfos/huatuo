@@ -37,25 +37,23 @@ type pythonCPUProfiler struct {
 func init() {
 	impl := &pythonCPUProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:        "cpu",
-		LangOrImpl:  "python",
-		Description: "Python CPU profiler using py-spy",
-		Impl:        impl,
-		Aggregator:  impl.NewAggregator,
+		Type:          "cpu",
+		LangOrImpl:    "python",
+		Description:   "Python CPU profiler using py-spy",
+		Impl:          impl,
+		NewAggregator: impl.NewAggregator,
 	})
 }
 
-// NewAggregator stamps OneShotAgg before construction so the aggregator worker
-// picks the batch-on-stop branch — py-spy emits all data only when the record
-// command exits, not incrementally over the duration window.
-func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) *aggregator.Aggregator {
+// NewAggregator stamps OneShotAgg before construction so the pipeline
+// picks the batch-on-stop branch — py-spy emits all data only when the
+// record command exits, not incrementally over the duration window.
+func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) aggregator.Aggregator {
 	pctx.OneShotAgg = true
 
-	return newPythonCPUAggregator(pctx).Aggregator
+	return newPythonCPUAggregator(pctx)
 }
 
-// Start only resolves PIDs; py-spy runs in ReadDataLoop so Profile owns
-// lifecycle and the aggregator stays under Profile's control.
 func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	p.pctx = pctx
 
@@ -116,6 +114,7 @@ func runPySpyAndEmit(ctx context.Context, pctx *pcontext.ProfilerContext, pids [
 		if !cmdRes.Success {
 			errorMessages = append(errorMessages,
 				fmt.Sprintf("PID[%d] sampling failed: %v, stderr: %s", targetPid, cmdRes.CmdErr, string(cmdRes.Stderr)))
+
 			continue
 		}
 
@@ -134,7 +133,6 @@ func runPySpyAndEmit(ctx context.Context, pctx *pcontext.ProfilerContext, pids [
 	return nil
 }
 
-// runPySpy executes py-spy record in parallel for each PID, capturing raw folded-stack output.
 func runPySpy(ctx context.Context, pids []int, dur, freq int, pyspyPath string) []executil.CmdResult {
 	pyspyBin := filepath.Join(pyspyPath, "py-spy")
 	durStr := strconv.Itoa(dur)

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,39 +29,39 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 )
 
+// Compile-time check: pythonAggregator implements aggregator.Aggregator.
+var _ aggregator.Aggregator = (*pythonAggregator)(nil)
+
 type pythonAggregator struct {
 	mu sync.Mutex
-	*aggregator.Aggregator
 
 	countMap         map[string]int64
 	sampleOutput     []profiler.SampleOutput
 	keepSampleOutput bool
-	profilerName     string // "python-mem" or "python-cpu"
-	profileType      string // profiler.ProfileTypeMemSample or ProfileTypeCpuSample
-	sampleRate       int64  // NoSampleRate for mem; pctx.Freq for cpu
+	profilerName     string
+	profileType      string
+	sampleRate       int64
 }
 
 func newPythonAggregator(pctx *pcontext.ProfilerContext, name, typ string, rate int64) *pythonAggregator {
-	aggr := &pythonAggregator{
-		profilerName: name,
-		profileType:  typ,
-		sampleRate:   rate,
+	return &pythonAggregator{
+		profilerName:     name,
+		profileType:      typ,
+		sampleRate:       rate,
+		countMap:         make(map[string]int64),
+		keepSampleOutput: (pctx.OutputFormat == "pprof" || pctx.OutputFormat == "es") && !pctx.OneShotAgg,
 	}
-	aggr.Aggregator = aggregator.NewAggregator(pctx, aggr.RecordProcessor, aggr.AggregatedExporter)
-	aggr.countMap = make(map[string]int64)
-	aggr.sampleOutput = make([]profiler.SampleOutput, 0)
-	aggr.keepSampleOutput = (pctx.OutputFormat == "pprof" || pctx.OutputFormat == "es") && !pctx.OneShotAgg
-	return aggr
 }
 
 func newPythonCPUAggregator(pctx *pcontext.ProfilerContext) *pythonAggregator {
 	return newPythonAggregator(pctx, "python-cpu", profiler.ProfileTypeCpuSample, int64(pctx.Freq))
 }
 
-func (a *pythonAggregator) RecordProcessor(rec any) {
+func (a *pythonAggregator) Ingest(rec any) {
 	so, ok := rec.(profiler.SampleOutput)
 	if !ok {
-		log.Infof("invalid record")
+		log.Infof("invalid record type %T, expected profiler.SampleOutput", rec)
+
 		return
 	}
 
@@ -99,12 +99,11 @@ func (a *pythonAggregator) RecordProcessor(rec any) {
 	}
 }
 
-func (a *pythonAggregator) AggregatedExporter(pctx *pcontext.ProfilerContext) (any, error) {
+func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if len(a.countMap) == 0 {
-		log.Infof("There is no data in %s aggregate queue", a.profilerName)
 		return nil, nil
 	}
 
@@ -112,72 +111,74 @@ func (a *pythonAggregator) AggregatedExporter(pctx *pcontext.ProfilerContext) (a
 	var foldedArrFiltered [][]byte
 	negatives := 0
 	var negativeSamples []string
+
 	for stack, count := range a.countMap {
 		line := fmt.Sprintf("%s %d", stack, count)
 		foldedArr = append(foldedArr, []byte(line))
+
 		if pctx.OneShotAgg && (pctx.OutputFormat == "pprof" || pctx.OutputFormat == "es") {
 			if count < 0 {
 				negatives++
 				if len(negativeSamples) < 5 {
 					negativeSamples = append(negativeSamples, line)
 				}
+
 				continue
 			}
+
 			foldedArrFiltered = append(foldedArrFiltered, []byte(line))
 		}
 	}
 
 	folded := bytes.Join(foldedArr, []byte("\n"))
+
 	if pctx.OneShotAgg && (pctx.OutputFormat == "pprof" || pctx.OutputFormat == "es") {
 		if negatives > 0 {
 			log.P().Infof("[profiler] %s one-shot: dropped negatives=%d sample=%s", a.profilerName, negatives, strings.Join(negativeSamples, " | "))
 		}
+
 		folded = bytes.Join(foldedArrFiltered, []byte("\n"))
+
 		if len(folded) == 0 {
 			log.P().Infof("[profiler] %s one-shot: no non-negative samples after filtering", a.profilerName)
+
 			return nil, nil
 		}
 	}
-	// Emit per-interval deltas and let the base aggregator accumulate totals.
-	// This avoids double-aggregation when alloc/free fall into different intervals.
+
+	// Emit per-interval deltas so the pipeline accumulator avoids
+	// double-aggregation when alloc/free span different intervals.
 	a.countMap = make(map[string]int64)
 
 	switch pctx.OutputFormat {
 	case "pprof", "es":
-		if pctx.OneShotAgg {
-			pprofFolded, err := json.MarshalIndent([]profiler.SampleOutput{
-				{PID: pctx.PID, Output: string(folded)},
-			}, "", "  ")
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal sample output: %w", err)
-			}
+		return a.snapshotPprof(pctx, folded)
+	case "raw", "flamegraph", "svg":
+		return folded, nil
+	default:
+		return folded, nil
+	}
+}
 
-			opt := &profiler.ParseOption{SampleRate: a.sampleRate}
-			pprofData, err := profiler.ParseRawData(
-				pctx.Ctx,
-				time.Now(),
-				a.profileType,
-				a.profilerName,
-				pprofFolded,
-				opt,
-				pctx.PID,
-			)
-			if err != nil {
-				return nil, err
-			}
-			return pprofData, nil
-		}
+func (a *pythonAggregator) Reset() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
-		if len(a.sampleOutput) == 0 {
-			return nil, nil
-		}
+	a.countMap = make(map[string]int64)
+	a.sampleOutput = nil
+}
 
-		pprofFolded, err := json.MarshalIndent(a.sampleOutput, "", "  ")
+func (a *pythonAggregator) snapshotPprof(pctx *pcontext.ProfilerContext, folded []byte) (any, error) {
+	opt := &profiler.ParseOption{SampleRate: a.sampleRate}
+
+	if pctx.OneShotAgg {
+		pprofFolded, err := json.MarshalIndent([]profiler.SampleOutput{
+			{PID: pctx.PID, Output: string(folded)},
+		}, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal sample output: %w", err)
 		}
 
-		opt := &profiler.ParseOption{SampleRate: a.sampleRate}
 		pprofData, err := profiler.ParseRawData(
 			pctx.Ctx,
 			time.Now(),
@@ -188,12 +189,33 @@ func (a *pythonAggregator) AggregatedExporter(pctx *pcontext.ProfilerContext) (a
 			pctx.PID,
 		)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to parse raw data: %w", err)
 		}
+
 		return pprofData, nil
-	case "raw", "flamegraph", "svg":
-		return folded, nil
-	default:
-		return folded, nil
 	}
+
+	if len(a.sampleOutput) == 0 {
+		return nil, nil
+	}
+
+	pprofFolded, err := json.MarshalIndent(a.sampleOutput, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal sample output: %w", err)
+	}
+
+	pprofData, err := profiler.ParseRawData(
+		pctx.Ctx,
+		time.Now(),
+		a.profileType,
+		a.profilerName,
+		pprofFolded,
+		opt,
+		pctx.PID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse raw data: %w", err)
+	}
+
+	return pprofData, nil
 }
