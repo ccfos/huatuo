@@ -75,4 +75,3 @@ func createOutputFile(dir, prefix, ext string) (*os.File, error) {
 
 	return file, nil
 }
-

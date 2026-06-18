@@ -87,7 +87,7 @@ func (a *javaAggregator) Aggregate(rec any) {
 		}
 
 		frames := []string{fmt.Sprintf("process %d", so.PID), stack}
-	_ = a.formatter.Add(&output.Sample{Frames: frames, Count: count})
+		_ = a.formatter.Add(&output.Sample{Frames: frames, Count: count})
 	}
 }
 

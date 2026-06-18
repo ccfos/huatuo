@@ -37,12 +37,12 @@ var _ aggregator.Aggregator = (*pythonAggregator)(nil)
 type pythonAggregator struct {
 	mu sync.Mutex
 
-	formatter         output.Formatter
-	sampleOutput       []profiler.SampleOutput
-	keepSampleOutput  bool
-	profilerName      string
-	profileType       string
-	sampleRate        int64
+	formatter        output.Formatter
+	sampleOutput     []profiler.SampleOutput
+	keepSampleOutput bool
+	profilerName     string
+	profileType      string
+	sampleRate       int64
 }
 
 func newPythonAggregator(pctx *pcontext.ProfilerContext, name, typ string, rate int64) (*pythonAggregator, error) {

@@ -74,9 +74,9 @@ type lockAggrKey struct {
 type nativeAggregator struct {
 	mu sync.Mutex
 
-	formatter    output.Formatter
-	aggrMap      map[aggrKey]*stackEntry
-	lockAggrMap  map[lockAggrKey]*lockStackEntry
+	formatter   output.Formatter
+	aggrMap     map[aggrKey]*stackEntry
+	lockAggrMap map[lockAggrKey]*lockStackEntry
 }
 
 func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, error) {
@@ -86,9 +86,9 @@ func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, err
 	}
 
 	return &nativeAggregator{
-		formatter:    f,
-		aggrMap:      make(map[aggrKey]*stackEntry),
-		lockAggrMap:  make(map[lockAggrKey]*lockStackEntry),
+		formatter:   f,
+		aggrMap:     make(map[aggrKey]*stackEntry),
+		lockAggrMap: make(map[lockAggrKey]*lockStackEntry),
 	}, nil
 }
 
