@@ -31,6 +31,10 @@ type Formatter struct {
 
 var _ output.Formatter = (*Formatter)(nil)
 
+func init() {
+	output.RegisterFormatter(output.FormatRaw, func() output.Formatter { return New() })
+}
+
 // New returns a Formatter that writes folded-stack output.
 func New() *Formatter {
 	return &Formatter{counts: make(map[string]int64)}
@@ -69,13 +73,13 @@ func (f *Formatter) Reset() {
 	f.counts = make(map[string]int64)
 }
 
+// IsEmpty reports whether the formatter contains no samples.
+func (f *Formatter) IsEmpty() bool {
+	return len(f.counts) == 0
+}
+
 // Counts returns the accumulated stack-to-count map. The returned map
 // must not be modified; callers should treat it as read-only.
 func (f *Formatter) Counts() map[string]int64 {
 	return f.counts
-}
-
-// IsEmpty reports whether the formatter contains no samples.
-func (f *Formatter) IsEmpty() bool {
-	return len(f.counts) == 0
 }

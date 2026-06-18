@@ -42,7 +42,7 @@ var profileOutFile map[int]string
 
 type cpuJavaProfiler struct{}
 
-func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) aggregator.Aggregator {
+func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	return newJavaAggregator(pctx)
 }
 

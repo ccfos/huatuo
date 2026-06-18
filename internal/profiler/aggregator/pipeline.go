@@ -131,7 +131,7 @@ func (p *Pipeline) Enqueue(data any) {
 }
 
 func (p *Pipeline) isUploadEnabled() bool {
-	return p.pctx.OutputFormat == "pprof" || p.pctx.OutputFormat == "es"
+	return p.pctx.OutputFormat.IsUpload()
 }
 
 // aggregateAndExport runs one aggregation cycle. final indicates this is the
@@ -159,7 +159,7 @@ func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
 	}
 
 	// Non-upload mode: write directly from the folded formatter.
-	formatter := p.aggr.FoldedFormatter()
+	formatter := p.aggr.OutputFormatter()
 
 	if final {
 		if formatter.IsEmpty() {
@@ -168,12 +168,11 @@ func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
 			return
 		}
 
-		switch p.pctx.OutputFormat {
-		case "flamegraph", "svg":
+		if p.pctx.OutputFormat.IsFlameGraph() {
 			if err := writeFlameGraph(p.pctx.OutputPath, formatter); err != nil {
 				log.P().WithField("output_path", p.pctx.OutputPath).Errorf("write to SVG failed: %v", err)
 			}
-		default:
+		} else {
 			if err := writeFolded(p.pctx.OutputPath, formatter); err != nil {
 				log.P().WithField("output_path", p.pctx.OutputPath).Errorf("write to file failed: %v", err)
 			}

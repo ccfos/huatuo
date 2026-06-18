@@ -40,7 +40,7 @@ type ProfilerMeta struct {
 	Description string
 
 	Impl          Profiler
-	NewAggregator func(*pcontext.ProfilerContext) aggregator.Aggregator
+	NewAggregator func(*pcontext.ProfilerContext) (aggregator.Aggregator, error)
 }
 
 // Profiler is the sampling lifecycle. Aggregator ownership stays with Profile
@@ -93,7 +93,10 @@ func Get(langOrImpl, typ string) (ProfilerMeta, error) {
 // ReadDataLoop returning on its own is a legitimate stop reason — one-shot
 // samplers (py-spy) finish before the duration timer fires.
 func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
-	aggr := p.NewAggregator(pctx)
+	aggr, aggrErr := p.NewAggregator(pctx)
+	if aggrErr != nil {
+		return fmt.Errorf("create aggregator: %w", aggrErr)
+	}
 	pipe := aggregator.NewPipeline(pctx, aggr)
 	pipe.Start()
 	log.P().Info("aggregator started")

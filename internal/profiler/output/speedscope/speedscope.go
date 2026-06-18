@@ -96,8 +96,7 @@ func (f *Formatter) Add(s *output.Sample) error {
 	for i, name := range s.Frames {
 		var detail *output.Frame
 		if i < len(s.FrameDetails) {
-			d := s.FrameDetails[i]
-			detail = &d
+			detail = &s.FrameDetails[i]
 		}
 
 		indices = append(indices, f.getOrAddFrame(name, detail))
@@ -158,6 +157,10 @@ func (f *Formatter) Reset() {
 	f.frameList = nil
 	f.threads = make(map[string]*threadState)
 	f.threadOrder = nil
+}
+
+func (f *Formatter) IsEmpty() bool {
+	return len(f.threads) == 0
 }
 
 // getOrAddFrame returns the global index for a frame, adding it if unseen.

@@ -27,7 +27,6 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
-	"huatuo-bamai/internal/profiler/output/raw"
 )
 
 // Compile-time check: javaAggregator implements aggregator.Aggregator.
@@ -36,14 +35,19 @@ var _ aggregator.Aggregator = (*javaAggregator)(nil)
 type javaAggregator struct {
 	mu sync.Mutex
 
-	folded       *raw.Formatter
+	formatter    output.Formatter
 	sampleOutput []profiler.SampleOutput
 }
 
-func newJavaAggregator(_ *pcontext.ProfilerContext) *javaAggregator {
-	return &javaAggregator{
-		folded: raw.New(),
+func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) {
+	f, err := pctx.OutputFormat.NewFormatter()
+	if err != nil {
+		return nil, err
 	}
+
+	return &javaAggregator{
+		formatter: f,
+	}, nil
 }
 
 func (a *javaAggregator) Aggregate(rec any) {
@@ -83,7 +87,7 @@ func (a *javaAggregator) Aggregate(rec any) {
 		}
 
 		frames := []string{fmt.Sprintf("process %d", so.PID), stack}
-		_ = a.folded.Add(&output.Sample{Frames: frames, Count: count})
+	_ = a.formatter.Add(&output.Sample{Frames: frames, Count: count})
 	}
 }
 
@@ -91,11 +95,11 @@ func (a *javaAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.folded.IsEmpty() {
+	if a.formatter.IsEmpty() {
 		return nil, nil
 	}
 
-	if pctx.OutputFormat != "pprof" && pctx.OutputFormat != "es" {
+	if !pctx.OutputFormat.IsUpload() {
 		return nil, nil
 	}
 
@@ -106,12 +110,12 @@ func (a *javaAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.folded.Reset()
+	a.formatter.Reset()
 	a.sampleOutput = nil
 }
 
-func (a *javaAggregator) FoldedFormatter() *raw.Formatter {
-	return a.folded
+func (a *javaAggregator) OutputFormatter() output.Formatter {
+	return a.formatter
 }
 
 func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, error) {

@@ -16,20 +16,16 @@ package aggregator
 
 import (
 	"fmt"
-	"html"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 
 	"huatuo-bamai/internal/log"
-	flamegraph "huatuo-bamai/internal/profiler/output/flamegraph"
-	"huatuo-bamai/internal/profiler/output/raw"
+	"huatuo-bamai/internal/profiler/output"
 )
 
 // writeFolded persists the folded-stack data to a timestamped .folded file.
-func writeFolded(dir string, f *raw.Formatter) error {
+func writeFolded(dir string, f output.Formatter) error {
 	file, err := createOutputFile(dir, "perf", ".folded")
 	if err != nil {
 		return err
@@ -46,15 +42,14 @@ func writeFolded(dir string, f *raw.Formatter) error {
 }
 
 // writeFlameGraph persists the aggregated data as a flame graph SVG.
-func writeFlameGraph(dir string, f *raw.Formatter) error {
+func writeFlameGraph(dir string, f output.Formatter) error {
 	file, err := createOutputFile(dir, "flamegraph", ".svg")
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	stacks := buildRenderStacks(f.Counts())
-	if err := flamegraph.Render(stacks, file); err != nil {
+	if err := f.Write(file); err != nil {
 		return fmt.Errorf("failed to render flame graph: %w", err)
 	}
 
@@ -81,37 +76,3 @@ func createOutputFile(dir, prefix, ext string) (*os.File, error) {
 	return file, nil
 }
 
-func buildRenderStacks(counts map[string]int64) []flamegraph.Stack {
-	stacks := make([]flamegraph.Stack, 0, len(counts))
-
-	for stackStr, count := range counts {
-		stackStr = strings.ReplaceAll(stackStr, "\"", "")
-
-		parts := strings.Split(stackStr, ";")
-		if len(parts) == 0 {
-			continue
-		}
-
-		names := make([]string, 0, len(parts))
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				part = html.EscapeString(part)
-				names = append(names, part)
-			}
-		}
-
-		if len(names) > 0 {
-			stacks = append(stacks, flamegraph.Stack{
-				Names:   names,
-				Samples: count,
-			})
-		}
-	}
-
-	sort.Slice(stacks, func(i, j int) bool {
-		return stacks[i].Samples > stacks[j].Samples
-	})
-
-	return stacks
-}

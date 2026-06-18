@@ -70,7 +70,7 @@ type cpuNativeProfiler struct {
 	bpf bpf.BPF
 }
 
-func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) aggregator.Aggregator {
+func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	return newNativeAggregator(pctx)
 }
 

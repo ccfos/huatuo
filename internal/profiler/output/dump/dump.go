@@ -76,6 +76,10 @@ func (f *Formatter) Reset() {
 	f.samples = nil
 }
 
+func (f *Formatter) IsEmpty() bool {
+	return len(f.samples) == 0
+}
+
 func (f *Formatter) writeText(w io.Writer) error {
 	for i := range f.samples {
 		if err := f.writeOneSampleText(w, &f.samples[i]); err != nil {

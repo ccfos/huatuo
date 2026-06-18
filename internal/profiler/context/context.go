@@ -23,6 +23,9 @@ import (
 	"strings"
 
 	"huatuo-bamai/internal/profiler"
+	"huatuo-bamai/internal/profiler/output"
+	_ "huatuo-bamai/internal/profiler/output/flamegraph"
+	_ "huatuo-bamai/internal/profiler/output/raw"
 	psignal "huatuo-bamai/internal/profiler/signal"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
@@ -44,7 +47,7 @@ type ProfilerContext struct {
 	OneShotAgg   bool
 
 	ServerAddress string
-	OutputFormat  string
+	OutputFormat  output.OutputFormat
 	OutputPath    string
 	ContainerID   string
 	Type          string
@@ -113,12 +116,12 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	esPassword := cliCtx.String("es-password")
 	esIndex := cliCtx.String("es-index")
 
-	outputFormat := cliCtx.String("output-format")
+	outputFormat := output.OutputFormat(cliCtx.String("output-format"))
 
 	var dataSaver *storage.Store[*tracing.Document]
 
 	switch outputFormat {
-	case "es", "pprof":
+	case output.FormatES, output.FormatPprof:
 		var err error
 		esStorage, err := storage.NewFromConfig[*tracing.Document](
 			context.Background(),

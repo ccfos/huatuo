@@ -16,7 +16,6 @@
 package flamegraph
 
 import (
-	"html"
 	"io"
 	"sort"
 	"strings"
@@ -32,19 +31,16 @@ type Formatter struct {
 
 var _ output.Formatter = (*Formatter)(nil)
 
+func init() {
+	output.RegisterFormatter(output.FormatFlameGraph, func() output.Formatter { return New() })
+	output.RegisterFormatter(output.FormatSVG, func() output.Formatter { return New() })
+}
+
 // New returns a Formatter with the default SVG style.
 func New() *Formatter {
 	return &Formatter{
 		counts: make(map[string]int64),
 		style:  DefaultStyle,
-	}
-}
-
-// NewWithStyle returns a Formatter with a custom SVG style.
-func NewWithStyle(style Style) *Formatter {
-	return &Formatter{
-		counts: make(map[string]int64),
-		style:  style,
 	}
 }
 
@@ -67,19 +63,23 @@ func (f *Formatter) Reset() {
 	f.counts = make(map[string]int64)
 }
 
-// toStacks converts the count map to []Stack, HTML-escaping frame names.
+// IsEmpty reports whether the formatter contains no samples.
+func (f *Formatter) IsEmpty() bool {
+	return len(f.counts) == 0
+}
+
+// toStacks converts the count map to []Stack.
 func (f *Formatter) toStacks() []Stack {
 	stacks := make([]Stack, 0, len(f.counts))
 
 	for stackStr, count := range f.counts {
-		stackStr = strings.ReplaceAll(stackStr, "\"", "")
 		parts := strings.Split(stackStr, ";")
 		names := make([]string, 0, len(parts))
 
 		for _, p := range parts {
 			p = strings.TrimSpace(p)
 			if p != "" {
-				names = append(names, html.EscapeString(p))
+				names = append(names, p)
 			}
 		}
 		if len(names) > 0 {

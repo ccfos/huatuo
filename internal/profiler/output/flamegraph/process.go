@@ -32,9 +32,9 @@ type processor struct {
 func (p *processor) Process(stack Stack) {
 	frames := &p.frames
 
-	l := len(stack.Names)
-	if l > p.maxDepth {
-		p.maxDepth = l
+	n := len(stack.Names)
+	if n > p.maxDepth {
+		p.maxDepth = n
 	}
 
 	for depth, name := range stack.Names {
@@ -62,10 +62,6 @@ func (p *processor) Result() (frames []frame, maxDepth int) {
 }
 
 func (p *processor) sort(frames []frame) {
-	if frames == nil {
-		return
-	}
-
 	sort.Slice(frames, func(i, j int) bool {
 		return frames[i].Name < frames[j].Name
 	})
@@ -76,14 +72,14 @@ func (p *processor) sort(frames []frame) {
 }
 
 func (p *processor) calcPcts(frames []frame, totalPct, leftPct float32) {
-	if frames == nil {
-		return
-	}
-
 	var total int64
 
 	for i := range frames {
 		total += frames[i].SampleCount
+	}
+
+	if total == 0 {
+		return
 	}
 
 	d := leftPct

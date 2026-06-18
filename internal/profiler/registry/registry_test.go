@@ -21,6 +21,7 @@ import (
 
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/profiler/output"
 )
 
 // fakeProfiler satisfies Profiler with no behavior. Registry tests exercise
@@ -37,6 +38,7 @@ type fakeAggregator struct{}
 func (fakeAggregator) Aggregate(any)                                      {}
 func (fakeAggregator) Snapshot(*pcontext.ProfilerContext) (any, error) { return nil, nil }
 func (fakeAggregator) Reset()                                          {}
+func (fakeAggregator) OutputFormatter() output.Formatter               { return nil }
 
 func resetRegistry(t *testing.T) {
 	t.Helper()
@@ -53,7 +55,7 @@ func newMeta(lang, typ string) ProfilerMeta {
 		LangOrImpl:    lang,
 		Description:   "fake",
 		Impl:          fakeProfiler{},
-		NewAggregator: func(*pcontext.ProfilerContext) aggregator.Aggregator { return fakeAggregator{} },
+		NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return fakeAggregator{}, nil },
 	}
 }
 

@@ -25,7 +25,6 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
-	"huatuo-bamai/internal/profiler/output/raw"
 )
 
 // Compile-time check: nativeAggregator implements aggregator.Aggregator.
@@ -75,17 +74,22 @@ type lockAggrKey struct {
 type nativeAggregator struct {
 	mu sync.Mutex
 
-	folded      *raw.Formatter
-	aggrMap     map[aggrKey]*stackEntry
-	lockAggrMap map[lockAggrKey]*lockStackEntry
+	formatter    output.Formatter
+	aggrMap      map[aggrKey]*stackEntry
+	lockAggrMap  map[lockAggrKey]*lockStackEntry
 }
 
-func newNativeAggregator(_ *pcontext.ProfilerContext) *nativeAggregator {
-	return &nativeAggregator{
-		folded:      raw.New(),
-		aggrMap:     make(map[aggrKey]*stackEntry),
-		lockAggrMap: make(map[lockAggrKey]*lockStackEntry),
+func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, error) {
+	f, err := pctx.OutputFormat.NewFormatter()
+	if err != nil {
+		return nil, err
 	}
+
+	return &nativeAggregator{
+		formatter:    f,
+		aggrMap:      make(map[aggrKey]*stackEntry),
+		lockAggrMap:  make(map[lockAggrKey]*lockStackEntry),
+	}, nil
 }
 
 func (a *nativeAggregator) Aggregate(rec any) {
@@ -111,7 +115,7 @@ func (a *nativeAggregator) Aggregate(rec any) {
 			fmt.Sprintf("process %d:%s", v.Proc.Pid, v.Proc.Name),
 		}
 		frames = appendStackFrames(frames, v.User, v.Kernel)
-		_ = a.folded.Add(&output.Sample{Frames: frames, Count: v.Samples})
+		_ = a.formatter.Add(&output.Sample{Frames: frames, Count: v.Samples})
 
 	case *lockStackEntry:
 		key := lockAggrKey{
@@ -145,7 +149,7 @@ func (a *nativeAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error)
 		a.buildLockFolded(pctx)
 	}
 
-	if pctx.OutputFormat != "pprof" && pctx.OutputFormat != "es" {
+	if !pctx.OutputFormat.IsUpload() {
 		return nil, nil
 	}
 
@@ -160,13 +164,13 @@ func (a *nativeAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.folded.Reset()
+	a.formatter.Reset()
 	a.aggrMap = make(map[aggrKey]*stackEntry)
 	a.lockAggrMap = make(map[lockAggrKey]*lockStackEntry)
 }
 
-func (a *nativeAggregator) FoldedFormatter() *raw.Formatter {
-	return a.folded
+func (a *nativeAggregator) OutputFormatter() output.Formatter {
+	return a.formatter
 }
 
 // buildLockFolded populates the folded formatter with lock profile entries.
@@ -196,7 +200,7 @@ func (a *nativeAggregator) buildLockFolded(pctx *pcontext.ProfilerContext) {
 		}
 
 		frames = appendStackFrames(frames, rec.User, rec.Kernel)
-		_ = a.folded.Add(&output.Sample{Frames: frames, Count: int64(val)})
+		_ = a.formatter.Add(&output.Sample{Frames: frames, Count: int64(val)})
 	}
 }
 

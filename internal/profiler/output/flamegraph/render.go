@@ -15,11 +15,11 @@
 package flamegraph
 
 import (
-	"bytes"
 	_ "embed"
 	"fmt"
 	"html"
 	"io"
+	"strings"
 )
 
 type frame struct {
@@ -40,16 +40,15 @@ type Style struct {
 	XMargin       float32
 	FramesYOffset int
 	FrameHeight   int
-	FramePad      int
 }
 
 // Color returns a deterministic warm color for the given frame name.
 func (s Style) Color(name string) string {
-	v := randomNamehash(name)
+	v := nameHash(name)
 
 	r := 205 + int(50*v)
-	g := 0 + int(230*v)
-	b := 0 + int(55*v)
+	g := int(230 * v)
+	b := int(55 * v)
 
 	return fmt.Sprintf("rgb(%d,%d,%d)", r, g, b)
 }
@@ -63,7 +62,6 @@ var DefaultStyle = Style{
 	XMargin:       10,
 	FramesYOffset: 12 * 3,
 	FrameHeight:   16,
-	FramePad:      1,
 }
 
 // errWriter wraps an io.Writer and accumulates the first write error,
@@ -127,7 +125,7 @@ func (r *renderer) Start(ew *errWriter) {
 	ew.println("]]>")
 	ew.println("</script>")
 	ew.printf(`<rect x="0.0" y="0" width="%d" height="%d" fill="url(#background)"/>`+"\n", w, h)
-	ew.printf(`<text text-anchor="middle" x="%d" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)"  >Flame Graph</text>`+"\n", r.style.ImageWidth/2, r.style.FontSize*2, r.style.FontSize*3/2, r.style.FontFamily)
+	ew.printf(`<text text-anchor="middle" x="%d" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)">Flame Graph</text>`+"\n", r.style.ImageWidth/2, r.style.FontSize*2, r.style.FontSize*3/2, r.style.FontFamily)
 	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="details" > </text>`+"\n", r.style.XMargin, h-topMargin/2, r.style.FontSize, r.style.FontFamily)
 	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="unzoom" onclick="unzoom()" style="opacity:0.0;cursor:pointer" >Reset Zoom</text>`+"\n", r.style.XMargin, r.style.FontSize*2, r.style.FontSize, r.style.FontFamily)
 	ew.printf(`<text text-anchor="" x="%.1f" y="%d" font-size="%d" font-family="%s" fill="rgb(0,0,0)" id="search" onmouseover="searchover()" onmouseout="searchout()" onclick="search_prompt()" style="opacity:0.1;cursor:pointer" >Search</text>`+"\n", float32(r.style.ImageWidth)-r.style.XMargin-100, r.style.FontSize*2, r.style.FontSize, r.style.FontFamily)
@@ -138,14 +136,13 @@ func (r *renderer) End(ew *errWriter) {
 	ew.println(`</svg>`)
 }
 
-func (r *renderer) DrawFrame(f frame, ew *errWriter) {
-	queue := make([]frame, 0, 1000)
-	queue = append(queue, f)
+func (r *renderer) DrawFrame(root frame, ew *errWriter) {
+	queue := make([]frame, 0, 64)
+	queue = append(queue, root)
 
-	for len(queue) > 0 {
-		r.drawFrame(queue[0], ew)
-		queue = append(queue, queue[0].Children...)
-		queue = queue[1:]
+	for i := range len(queue) {
+		r.drawFrame(queue[i], ew)
+		queue = append(queue, queue[i].Children...)
 	}
 }
 
@@ -160,8 +157,10 @@ func (r *renderer) drawFrame(f frame, ew *errWriter) {
 	x := r.style.XMargin + (f.LeftPercent / 100 * usableWidth)
 	y := r.style.FramesYOffset + (r.maxFrameDepth-f.Depth-1)*r.style.FrameHeight
 
-	ew.printf(`<g class="func_g" onmouseover="s('%s')" onmouseout="c()" onclick="zoom(this)">`+"\n", title)
-	ew.printf("  <title>%s</title>\n", title)
+	jsTitle := strings.ReplaceAll(html.EscapeString(title), "'", "&#39;")
+
+	ew.printf(`<g class="func_g" onmouseover="s('%s')" onmouseout="c()" onclick="zoom(this)">`+"\n", jsTitle)
+	ew.printf("  <title>%s</title>\n", html.EscapeString(title))
 	ew.printf(`  <rect x="%.1f" y="%d" width="%.1f" height="%d" fill="%s" rx="2" ry="2"/>`+"\n",
 		x, y, w, h, color)
 
@@ -173,11 +172,11 @@ func (r *renderer) drawFrame(f frame, ew *errWriter) {
 	ew.printf("</g>\n")
 }
 
-// randomNamehash maps a frame name to a deterministic float32 in [0, 1).
-// Uses a simple multiplicative hash to avoid per-call allocations.
-func randomNamehash(n string) float32 {
-	var h uint32 = 2166136261 // FNV-1a offset basis
-	for i := 0; i < len(n); i++ {
+// nameHash maps a frame name to a deterministic float32 in [0, 1)
+// via FNV-1a to avoid per-call allocations.
+func nameHash(n string) float32 {
+	var h uint32 = 2166136261
+	for i := range len(n) {
 		h ^= uint32(n[i])
 		h *= 16777619
 	}
@@ -191,21 +190,10 @@ func (r *renderer) fitText(text string, width float32) string {
 	}
 
 	if len(text) < avail {
-		return text
+		return html.EscapeString(text)
 	}
 
-	var buf bytes.Buffer
-
-	// Truncate to available width; assumes ASCII.
-	_, _ = buf.WriteString(text[:avail-2])
-	_, _ = buf.WriteString("..")
-
-	return html.EscapeString(buf.String())
-}
-
-// Render writes a flame graph SVG for stacks using the default style.
-func Render(stacks []Stack, out io.Writer) error {
-	return RenderStyle(stacks, out, DefaultStyle)
+	return html.EscapeString(text[:avail-2]) + ".."
 }
 
 // RenderStyle writes a flame graph SVG for stacks using the given style.

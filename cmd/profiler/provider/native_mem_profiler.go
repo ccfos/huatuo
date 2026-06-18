@@ -80,7 +80,7 @@ func init() {
 
 // NewAggregator stamps OneShotAgg before construction for retained mode —
 // alloc/free deltas must collapse in a single shot, not stream every interval.
-func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) aggregator.Aggregator {
+func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	if mode, err := resolveMemMode(pctx.ExtraFlags["mode"]); err == nil && mode == modePMRetained {
 		pctx.OneShotAgg = true
 	}

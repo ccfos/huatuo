@@ -44,6 +44,10 @@ type prevState struct {
 	pid    int
 }
 
+// nestingIndent is the microsecond offset between nested X events,
+// giving visual depth in trace viewers.
+const nestingIndent = 0.001
+
 // Formatter accumulates samples and writes Chrome Trace JSON.
 type Formatter struct {
 	events       []event
@@ -156,12 +160,12 @@ func (f *Formatter) addStreaming(s *output.Sample, ts float64) {
 	if prev != nil {
 		oldFrames = prev.frames
 	}
-	newFrames := s.Frames
+	newFrames := make([]string, len(s.Frames))
+	copy(newFrames, s.Frames)
 
 	common := commonSuffixLen(oldFrames, newFrames)
 
-	// Emit "E" for frames that are leaving (innermost-first).
-	for i := 0; i < len(oldFrames)-common; i++ {
+	for i := range len(oldFrames) - common {
 		f.events = append(f.events, event{
 			Name: oldFrames[i],
 			Cat:  "profiler",
@@ -185,7 +189,12 @@ func (f *Formatter) addStreaming(s *output.Sample, ts float64) {
 		})
 	}
 
-	f.prev[tid] = &prevState{frames: newFrames, pid: s.PID}
+	if prev == nil {
+		prev = &prevState{}
+		f.prev[tid] = prev
+	}
+	prev.frames = newFrames
+	prev.pid = s.PID
 }
 
 // addBatch emits X events; each frame gets a duration proportional to Count.
@@ -200,7 +209,7 @@ func (f *Formatter) addBatch(s *output.Sample, ts float64) {
 	// Use nested X events by staggering start times slightly.
 	offset := 0.0
 
-	for i := 0; i < len(s.Frames); i++ {
+	for i := range len(s.Frames) {
 		f.events = append(f.events, event{
 			Name: s.Frames[i],
 			Cat:  "profiler",
@@ -210,16 +219,25 @@ func (f *Formatter) addBatch(s *output.Sample, ts float64) {
 			TS:   ts + offset,
 			Dur:  dur - offset,
 		})
-		offset += 0.001 // 1 ns nesting indent
+		offset += nestingIndent
 	}
 }
 
 func (f *Formatter) Write(w io.Writer) error {
 	finalTS := f.timestampFor(&output.Sample{})
+
+	n := len(f.events)
+	for _, ps := range f.prev {
+		n += len(ps.frames)
+	}
+
+	all := make([]event, 0, n)
+	all = append(all, f.events...)
+
 	for tid, ps := range f.prev {
-		for _, frame := range ps.frames {
-			f.events = append(f.events, event{
-				Name: frame,
+		for _, name := range ps.frames {
+			all = append(all, event{
+				Name: name,
 				Cat:  "profiler",
 				Ph:   "E",
 				PID:  ps.pid,
@@ -229,7 +247,7 @@ func (f *Formatter) Write(w io.Writer) error {
 		}
 	}
 
-	return json.NewEncoder(w).Encode(traceOutput{TraceEvents: f.events})
+	return json.NewEncoder(w).Encode(traceOutput{TraceEvents: all})
 }
 
 func (f *Formatter) Reset() {
@@ -237,6 +255,10 @@ func (f *Formatter) Reset() {
 	f.prev = make(map[string]*prevState)
 	f.seenThreads = make(map[string]struct{})
 	f.sampleIdx = 0
+}
+
+func (f *Formatter) IsEmpty() bool {
+	return len(f.events) == 0
 }
 
 func (f *Formatter) timestampFor(s *output.Sample) float64 {

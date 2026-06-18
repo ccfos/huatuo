@@ -48,7 +48,7 @@ func init() {
 // NewAggregator stamps OneShotAgg before construction so the pipeline
 // picks the batch-on-stop branch — py-spy emits all data only when the
 // record command exits, not incrementally over the duration window.
-func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) aggregator.Aggregator {
+func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	pctx.OneShotAgg = true
 
 	return newPythonCPUAggregator(pctx)

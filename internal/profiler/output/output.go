@@ -16,7 +16,70 @@
 // Supports both streaming (Count=1, Timestamp set) and batch (Count>1) usage.
 package output
 
-import "io"
+import (
+	"errors"
+	"fmt"
+	"io"
+	"sync"
+)
+
+// OutputFormat enumerates the supported profiling output formats.
+// The zero value "" is treated as FormatRaw.
+type OutputFormat string
+
+const (
+	FormatRaw        OutputFormat = "raw"
+	FormatFlameGraph OutputFormat = "flamegraph"
+	FormatSVG        OutputFormat = "svg"
+	FormatPprof      OutputFormat = "pprof"
+	FormatES         OutputFormat = "es"
+)
+
+// IsUpload reports whether the format requires upload to a backend (pprof or es).
+func (f OutputFormat) IsUpload() bool {
+	return f == FormatPprof || f == FormatES
+}
+
+// IsFlameGraph reports whether the format renders a flame graph (flamegraph or svg).
+func (f OutputFormat) IsFlameGraph() bool {
+	return f == FormatFlameGraph || f == FormatSVG
+}
+
+var (
+	formatterFactories = map[OutputFormat]func() Formatter{}
+	formatterMu        sync.RWMutex
+)
+
+// RegisterFormatter registers a factory for the given output format.
+// Called by sub-packages in init().
+func RegisterFormatter(f OutputFormat, fn func() Formatter) {
+	formatterMu.Lock()
+	formatterFactories[f] = fn
+	formatterMu.Unlock()
+}
+
+// ErrUnregisteredFormat indicates the requested output format has no
+// registered factory (the corresponding sub-package was not imported).
+var ErrUnregisteredFormat = errors.New("output: format not registered")
+
+// NewFormatter returns the appropriate Formatter for this format.
+// The corresponding sub-package must be imported so its init() registers
+// the factory; otherwise ErrUnregisteredFormat is returned.
+func (f OutputFormat) NewFormatter() (Formatter, error) {
+	if f == "" {
+		f = FormatRaw
+	}
+
+	formatterMu.RLock()
+	fn, ok := formatterFactories[f]
+	formatterMu.RUnlock()
+
+	if ok {
+		return fn(), nil
+	}
+
+	return nil, fmt.Errorf("%w: %q", ErrUnregisteredFormat, f)
+}
 
 // Frame holds optional per-frame metadata for rich output formats.
 // When FrameDetails is populated, FrameDetails[i] corresponds to Frames[i].
@@ -61,4 +124,5 @@ type Formatter interface {
 	Add(s *Sample) error
 	Write(w io.Writer) error
 	Reset()
+	IsEmpty() bool
 }

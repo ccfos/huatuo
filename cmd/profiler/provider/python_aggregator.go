@@ -37,25 +37,30 @@ var _ aggregator.Aggregator = (*pythonAggregator)(nil)
 type pythonAggregator struct {
 	mu sync.Mutex
 
-	folded           *raw.Formatter
-	sampleOutput     []profiler.SampleOutput
-	keepSampleOutput bool
-	profilerName     string
-	profileType      string
-	sampleRate       int64
+	formatter         output.Formatter
+	sampleOutput       []profiler.SampleOutput
+	keepSampleOutput  bool
+	profilerName      string
+	profileType       string
+	sampleRate        int64
 }
 
-func newPythonAggregator(pctx *pcontext.ProfilerContext, name, typ string, rate int64) *pythonAggregator {
+func newPythonAggregator(pctx *pcontext.ProfilerContext, name, typ string, rate int64) (*pythonAggregator, error) {
+	f, err := pctx.OutputFormat.NewFormatter()
+	if err != nil {
+		return nil, err
+	}
+
 	return &pythonAggregator{
 		profilerName:     name,
 		profileType:      typ,
 		sampleRate:       rate,
-		folded:           raw.New(),
-		keepSampleOutput: (pctx.OutputFormat == "pprof" || pctx.OutputFormat == "es") && !pctx.OneShotAgg,
-	}
+		formatter:        f,
+		keepSampleOutput: pctx.OutputFormat.IsUpload() && !pctx.OneShotAgg,
+	}, nil
 }
 
-func newPythonCPUAggregator(pctx *pcontext.ProfilerContext) *pythonAggregator {
+func newPythonCPUAggregator(pctx *pcontext.ProfilerContext) (*pythonAggregator, error) {
 	return newPythonAggregator(pctx, "python-cpu", profiler.ProfileTypeCpuSample, int64(pctx.Freq))
 }
 
@@ -97,7 +102,7 @@ func (a *pythonAggregator) Aggregate(rec any) {
 		}
 
 		frames := strings.Split(stack, ";")
-		_ = a.folded.Add(&output.Sample{Frames: frames, Count: count})
+		_ = a.formatter.Add(&output.Sample{Frames: frames, Count: count})
 	}
 }
 
@@ -105,14 +110,14 @@ func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.folded.IsEmpty() {
+	if a.formatter.IsEmpty() {
 		return nil, nil
 	}
 
-	if pctx.OutputFormat != "pprof" && pctx.OutputFormat != "es" {
+	if !pctx.OutputFormat.IsUpload() {
 		// Emit per-interval deltas so the pipeline avoids double-aggregation
 		// when alloc/free span different intervals.
-		a.folded.Reset()
+		a.formatter.Reset()
 
 		return nil, nil
 	}
@@ -124,12 +129,12 @@ func (a *pythonAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.folded.Reset()
+	a.formatter.Reset()
 	a.sampleOutput = nil
 }
 
-func (a *pythonAggregator) FoldedFormatter() *raw.Formatter {
-	return a.folded
+func (a *pythonAggregator) OutputFormatter() output.Formatter {
+	return a.formatter
 }
 
 func (a *pythonAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, error) {
@@ -139,7 +144,8 @@ func (a *pythonAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, e
 		negatives := 0
 		var negativeSamples []string
 
-		for stack, count := range a.folded.Counts() {
+		rf := a.formatter.(*raw.Formatter)
+		for stack, count := range rf.Counts() {
 			if count < 0 {
 				negatives++
 				if len(negativeSamples) < 5 {

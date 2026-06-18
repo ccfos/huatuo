@@ -42,7 +42,7 @@ var memProfileOutFile map[int]string
 
 type javaMemoryProfiler struct{}
 
-func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) aggregator.Aggregator {
+func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	return newJavaAggregator(pctx)
 }
 

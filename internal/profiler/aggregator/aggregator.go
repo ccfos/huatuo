@@ -16,7 +16,7 @@ package aggregator
 
 import (
 	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/output/raw"
+	"huatuo-bamai/internal/profiler/output"
 )
 
 // Aggregator absorbs profiler records into language-specific aggregated
@@ -28,13 +28,12 @@ type Aggregator interface {
 
 	// Snapshot returns the pprof profile data for upload backends.
 	// For raw/flamegraph/svg output, returns nil — the pipeline reads
-	// the folded formatter directly via FoldedFormatter.
+	// the output formatter directly via OutputFormatter.
 	Snapshot(pctx *pcontext.ProfilerContext) (any, error)
 
 	// Reset clears accumulated state for the next cycle.
 	Reset()
 
-	// FoldedFormatter returns the underlying folded-stack formatter
-	// for direct file output (raw, flamegraph, svg).
-	FoldedFormatter() *raw.Formatter
+	// OutputFormatter returns the formatter for file output (raw, flamegraph, svg).
+	OutputFormatter() output.Formatter
 }
