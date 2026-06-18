@@ -108,7 +108,7 @@ func (p *Pipeline) runAggregationDequeue() {
 			return
 		}
 
-		p.aggr.Ingest(rec)
+		p.aggr.Aggregate(rec)
 	}
 }
 

@@ -34,7 +34,7 @@ func (fakeProfiler) Stop(*pcontext.ProfilerContext) error          { return nil 
 // fakeAggregator satisfies aggregator.Aggregator with no behavior.
 type fakeAggregator struct{}
 
-func (fakeAggregator) Ingest(any)                                      {}
+func (fakeAggregator) Aggregate(any)                                      {}
 func (fakeAggregator) Snapshot(*pcontext.ProfilerContext) (any, error) { return nil, nil }
 func (fakeAggregator) Reset()                                          {}
 

@@ -45,7 +45,7 @@ func newJavaAggregator(pctx *pcontext.ProfilerContext) *javaAggregator {
 	}
 }
 
-func (a *javaAggregator) Ingest(rec any) {
+func (a *javaAggregator) Aggregate(rec any) {
 	so, ok := rec.(profiler.SampleOutput)
 	if !ok {
 		log.Infof("invalid record type %T, expected profiler.SampleOutput", rec)

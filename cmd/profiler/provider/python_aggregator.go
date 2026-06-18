@@ -57,7 +57,7 @@ func newPythonCPUAggregator(pctx *pcontext.ProfilerContext) *pythonAggregator {
 	return newPythonAggregator(pctx, "python-cpu", profiler.ProfileTypeCpuSample, int64(pctx.Freq))
 }
 
-func (a *pythonAggregator) Ingest(rec any) {
+func (a *pythonAggregator) Aggregate(rec any) {
 	so, ok := rec.(profiler.SampleOutput)
 	if !ok {
 		log.Infof("invalid record type %T, expected profiler.SampleOutput", rec)

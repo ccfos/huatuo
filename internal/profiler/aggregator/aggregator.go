@@ -20,8 +20,12 @@ import pcontext "huatuo-bamai/internal/profiler/context"
 // state and exports the result on demand. Each profiler language provides
 // its own implementation.
 type Aggregator interface {
-	// Ingest merges a single record into internal state.
-	Ingest(rec any)
+	// Aggregate incorporates a single record into internal state.
+	// Implementations may aggregate the record by merging it with
+	// existing accumulated data (e.g. summing sample counts by stack
+	// key), or simply buffer it for deferred processing during
+	// Snapshot.
+	Aggregate(rec any)
 
 	// Snapshot returns the current aggregated result without modifying state.
 	// Pipeline calls Reset only after successful output.

@@ -84,7 +84,7 @@ func newNativeAggregator(_ *pcontext.ProfilerContext) *nativeAggregator {
 	}
 }
 
-func (a *nativeAggregator) Ingest(rec any) {
+func (a *nativeAggregator) Aggregate(rec any) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
