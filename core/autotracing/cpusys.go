@@ -108,6 +108,11 @@ func (c *cpuSysTracing) updateCpuSysUsage() error {
 
 	sysUsageDelta := usage.system - c.usage.system
 	sysTotalDelta := usage.total - c.usage.total
+	if sysTotalDelta == 0 {
+		c.usage = usage
+		return nil
+	}
+
 	sysPercentage := int64(100 * sysUsageDelta / sysTotalDelta)
 
 	c.sysPercentDelta = sysPercentage - c.sysPercent
