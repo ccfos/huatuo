@@ -27,6 +27,8 @@ import (
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/profiler/output"
+	"huatuo-bamai/internal/profiler/output/raw"
 )
 
 // Compile-time check: pythonAggregator implements aggregator.Aggregator.
@@ -35,7 +37,7 @@ var _ aggregator.Aggregator = (*pythonAggregator)(nil)
 type pythonAggregator struct {
 	mu sync.Mutex
 
-	countMap         map[string]int64
+	folded           *raw.Formatter
 	sampleOutput     []profiler.SampleOutput
 	keepSampleOutput bool
 	profilerName     string
@@ -48,7 +50,7 @@ func newPythonAggregator(pctx *pcontext.ProfilerContext, name, typ string, rate 
 		profilerName:     name,
 		profileType:      typ,
 		sampleRate:       rate,
-		countMap:         make(map[string]int64),
+		folded:           raw.New(),
 		keepSampleOutput: (pctx.OutputFormat == "pprof" || pctx.OutputFormat == "es") && !pctx.OneShotAgg,
 	}
 }
@@ -89,13 +91,13 @@ func (a *pythonAggregator) Aggregate(rec any) {
 
 		stack := line[:idx]
 		countStr := strings.TrimSpace(line[idx+1:])
-
 		count, err := strconv.ParseInt(countStr, 10, 64)
 		if err != nil {
 			continue
 		}
 
-		a.countMap[stack] += count
+		frames := strings.Split(stack, ";")
+		_ = a.folded.Add(&output.Sample{Frames: frames, Count: count})
 	}
 }
 
@@ -103,82 +105,71 @@ func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if len(a.countMap) == 0 {
+	if a.folded.IsEmpty() {
 		return nil, nil
 	}
 
-	var foldedArr [][]byte
-	var foldedArrFiltered [][]byte
-	negatives := 0
-	var negativeSamples []string
+	if pctx.OutputFormat != "pprof" && pctx.OutputFormat != "es" {
+		// Emit per-interval deltas so the pipeline avoids double-aggregation
+		// when alloc/free span different intervals.
+		a.folded.Reset()
 
-	for stack, count := range a.countMap {
-		line := fmt.Sprintf("%s %d", stack, count)
-		foldedArr = append(foldedArr, []byte(line))
-
-		if pctx.OneShotAgg && (pctx.OutputFormat == "pprof" || pctx.OutputFormat == "es") {
-			if count < 0 {
-				negatives++
-				if len(negativeSamples) < 5 {
-					negativeSamples = append(negativeSamples, line)
-				}
-
-				continue
-			}
-
-			foldedArrFiltered = append(foldedArrFiltered, []byte(line))
-		}
+		return nil, nil
 	}
 
-	folded := bytes.Join(foldedArr, []byte("\n"))
-
-	if pctx.OneShotAgg && (pctx.OutputFormat == "pprof" || pctx.OutputFormat == "es") {
-		if negatives > 0 {
-			log.P().Infof("[profiler] %s one-shot: dropped negatives=%d sample=%s", a.profilerName, negatives, strings.Join(negativeSamples, " | "))
-		}
-
-		folded = bytes.Join(foldedArrFiltered, []byte("\n"))
-
-		if len(folded) == 0 {
-			log.P().Infof("[profiler] %s one-shot: no non-negative samples after filtering", a.profilerName)
-
-			return nil, nil
-		}
-	}
-
-	// Emit per-interval deltas so the pipeline accumulator avoids
-	// double-aggregation when alloc/free span different intervals.
-	a.countMap = make(map[string]int64)
-
-	switch pctx.OutputFormat {
-	case "pprof", "es":
-		return a.snapshotPprof(pctx, folded)
-	case "raw", "flamegraph", "svg":
-		return folded, nil
-	default:
-		return folded, nil
-	}
+	return a.snapshotPprof(pctx)
 }
 
 func (a *pythonAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.countMap = make(map[string]int64)
+	a.folded.Reset()
 	a.sampleOutput = nil
 }
 
-func (a *pythonAggregator) snapshotPprof(pctx *pcontext.ProfilerContext, folded []byte) (any, error) {
-	opt := &profiler.ParseOption{SampleRate: a.sampleRate}
+func (a *pythonAggregator) FoldedFormatter() *raw.Formatter {
+	return a.folded
+}
+
+func (a *pythonAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, error) {
+	var folded bytes.Buffer
 
 	if pctx.OneShotAgg {
+		negatives := 0
+		var negativeSamples []string
+
+		for stack, count := range a.folded.Counts() {
+			if count < 0 {
+				negatives++
+				if len(negativeSamples) < 5 {
+					negativeSamples = append(negativeSamples, fmt.Sprintf("%s %d", stack, count))
+				}
+
+				continue
+			}
+
+			fmt.Fprintf(&folded, "%s %d\n", stack, count)
+		}
+
+		if negatives > 0 {
+			log.P().Infof("[profiler] %s one-shot: dropped negatives=%d sample=%s", a.profilerName, negatives, strings.Join(negativeSamples, " | "))
+		}
+
+		if folded.Len() == 0 {
+			log.P().Infof("[profiler] %s one-shot: no non-negative samples after filtering", a.profilerName)
+
+			return nil, nil
+		}
+
 		pprofFolded, err := json.MarshalIndent([]profiler.SampleOutput{
-			{PID: pctx.PID, Output: string(folded)},
+			{PID: pctx.PID, Output: folded.String()},
 		}, "", "  ")
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal sample output: %w", err)
 		}
 
+		opt := &profiler.ParseOption{SampleRate: a.sampleRate}
 		pprofData, err := profiler.ParseRawData(
 			pctx.Ctx,
 			time.Now(),
@@ -204,6 +195,7 @@ func (a *pythonAggregator) snapshotPprof(pctx *pcontext.ProfilerContext, folded 
 		return nil, fmt.Errorf("failed to marshal sample output: %w", err)
 	}
 
+	opt := &profiler.ParseOption{SampleRate: a.sampleRate}
 	pprofData, err := profiler.ParseRawData(
 		pctx.Ctx,
 		time.Now(),

@@ -24,6 +24,8 @@ import (
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/profiler/output"
+	"huatuo-bamai/internal/profiler/output/raw"
 )
 
 // Compile-time check: nativeAggregator implements aggregator.Aggregator.
@@ -73,12 +75,14 @@ type lockAggrKey struct {
 type nativeAggregator struct {
 	mu sync.Mutex
 
+	folded      *raw.Formatter
 	aggrMap     map[aggrKey]*stackEntry
 	lockAggrMap map[lockAggrKey]*lockStackEntry
 }
 
 func newNativeAggregator(_ *pcontext.ProfilerContext) *nativeAggregator {
 	return &nativeAggregator{
+		folded:      raw.New(),
 		aggrMap:     make(map[aggrKey]*stackEntry),
 		lockAggrMap: make(map[lockAggrKey]*lockStackEntry),
 	}
@@ -102,6 +106,12 @@ func (a *nativeAggregator) Aggregate(rec any) {
 				Samples: v.Samples,
 			}
 		}
+
+		frames := []string{
+			fmt.Sprintf("process %d:%s", v.Proc.Pid, v.Proc.Name),
+		}
+		frames = appendStackFrames(frames, v.User, v.Kernel)
+		_ = a.folded.Add(&output.Sample{Frames: frames, Count: v.Samples})
 
 	case *lockStackEntry:
 		key := lockAggrKey{
@@ -132,6 +142,14 @@ func (a *nativeAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error)
 	defer a.mu.Unlock()
 
 	if pctx.Type == "lock" {
+		a.buildLockFolded(pctx)
+	}
+
+	if pctx.OutputFormat != "pprof" && pctx.OutputFormat != "es" {
+		return nil, nil
+	}
+
+	if pctx.Type == "lock" {
 		return a.snapshotLockProfile(pctx)
 	}
 
@@ -142,8 +160,44 @@ func (a *nativeAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	a.folded.Reset()
 	a.aggrMap = make(map[aggrKey]*stackEntry)
 	a.lockAggrMap = make(map[lockAggrKey]*lockStackEntry)
+}
+
+func (a *nativeAggregator) FoldedFormatter() *raw.Formatter {
+	return a.folded
+}
+
+// buildLockFolded populates the folded formatter with lock profile entries.
+// Lock stacks require mode-dependent frame construction, so they are
+// materialized at snapshot time rather than during Aggregate.
+func (a *nativeAggregator) buildLockFolded(pctx *pcontext.ProfilerContext) {
+	if len(a.lockAggrMap) == 0 {
+		return
+	}
+
+	outputType := pctx.ExtraFlags["mode"]
+
+	for _, rec := range a.lockAggrMap {
+		frames := []string{
+			fmt.Sprintf("lock: %x", rec.Proc.Lock),
+			fmt.Sprintf("PID: %d, COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
+		}
+
+		val := rec.WaitTime
+
+		if outputType == "" {
+			frames = append(frames, fmt.Sprintf("contended count: %d", rec.Contended))
+		} else {
+			if outputType == "count" {
+				val = uint64(rec.Contended)
+			}
+		}
+
+		frames = appendStackFrames(frames, rec.User, rec.Kernel)
+		_ = a.folded.Add(&output.Sample{Frames: frames, Count: int64(val)})
+	}
 }
 
 func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext) (any, error) {
@@ -151,38 +205,22 @@ func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext)
 		return nil, nil
 	}
 
-	foldedData := &strings.Builder{}
-	tree := make([]*profiler.TreeItem, 0, len(a.aggrMap))
 	skipNegForPprof := pctx.Type == "mem" &&
-		pctx.ExtraFlags["mode"] == "native_physical_usage" &&
-		(pctx.OutputFormat == "pprof" || pctx.OutputFormat == "es")
+		pctx.ExtraFlags["mode"] == "native_physical_usage"
+
+	tree := make([]*profiler.TreeItem, 0, len(a.aggrMap))
 
 	for _, rec := range a.aggrMap {
-		stackStr := mergeStackTraces(rec.User, rec.Kernel)
-
-		fmt.Fprintf(
-			foldedData,
-			"process %d:%q;%s %d\n",
-			rec.Proc.Pid,
-			rec.Proc.Name,
-			stackStr,
-			rec.Samples,
-		)
+		if skipNegForPprof && rec.Samples < 0 {
+			continue
+		}
 
 		prefixes := []string{fmt.Sprintf("process %d:%s", rec.Proc.Pid, rec.Proc.Name)}
-
-		if !skipNegForPprof || rec.Samples >= 0 {
-			item := buildTreeItem(prefixes, rec.User, rec.Kernel, uint64(rec.Samples))
-			tree = append(tree, item)
-		}
+		item := buildTreeItem(prefixes, rec.User, rec.Kernel, uint64(rec.Samples))
+		tree = append(tree, item)
 	}
 
-	switch pctx.OutputFormat {
-	case "pprof", "es":
-		return buildPprofData(pctx, tree)
-	default:
-		return []byte(foldedData.String()), nil
-	}
+	return buildPprofData(pctx, tree)
 }
 
 func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (any, error) {
@@ -190,13 +228,10 @@ func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (
 		return nil, nil
 	}
 
-	foldedData := &strings.Builder{}
 	tree := make([]*profiler.TreeItem, 0, len(a.lockAggrMap))
 	outputType := pctx.ExtraFlags["mode"]
 
 	for _, rec := range a.lockAggrMap {
-		stackStr := mergeStackTraces(rec.User, rec.Kernel)
-
 		prefixes := []string{
 			fmt.Sprintf("lock :%x", rec.Proc.Lock),
 			fmt.Sprintf("PID: %d: COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
@@ -205,57 +240,37 @@ func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (
 		val := rec.WaitTime
 
 		if outputType == "" {
-			fmt.Fprintf(
-				foldedData,
-				"lock: %x;PID: %d, COMMAND: %s;contended count: %d;%s %d\n",
-				rec.Proc.Lock,
-				rec.Proc.Pid,
-				rec.Proc.Name,
-				rec.Contended,
-				stackStr,
-				val,
-			)
 			prefixes = append(prefixes, fmt.Sprintf("contended count: %d", rec.Contended))
 		} else {
 			if outputType == "count" {
 				val = uint64(rec.Contended)
 			}
-
-			fmt.Fprintf(
-				foldedData,
-				"lock: %x;PID: %d, COMMAND: %s;%s %d\n",
-				rec.Proc.Lock,
-				rec.Proc.Pid,
-				rec.Proc.Name,
-				stackStr,
-				val,
-			)
 		}
 
 		item := buildTreeItem(prefixes, rec.User, rec.Kernel, val)
 		tree = append(tree, item)
 	}
 
-	switch pctx.OutputFormat {
-	case "pprof", "es":
-		return buildPprofData(pctx, tree)
-	default:
-		return []byte(foldedData.String()), nil
-	}
+	return buildPprofData(pctx, tree)
 }
 
-func mergeStackTraces(u, k string) string {
-	u = strings.TrimSuffix(u, ";")
-	k = strings.TrimSuffix(k, ";")
+func appendStackFrames(frames []string, userStack, kernelStack string) []string {
+	u := strings.TrimSuffix(userStack, ";")
+	k := strings.TrimSuffix(kernelStack, ";")
 
-	switch {
-	case u != "" && k != "":
-		return u + ";" + k
-	case u != "":
-		return u
-	default:
-		return k
+	for _, s := range strings.Split(u, ";") {
+		if s != "" {
+			frames = append(frames, s)
+		}
 	}
+
+	for _, s := range strings.Split(k, ";") {
+		if s != "" {
+			frames = append(frames, s)
+		}
+	}
+
+	return frames
 }
 
 func buildTreeItem(prefixes []string, userStack, kernelStack string, value uint64) *profiler.TreeItem {

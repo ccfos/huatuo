@@ -31,13 +31,11 @@ import (
 // aggregation via the embedded Aggregator, and routes output to the
 // configured backend (ES upload, file write, or SVG render).
 type Pipeline struct {
-	mu       sync.RWMutex
 	wg       sync.WaitGroup
 	stopCh   chan struct{}
 	stopOnce sync.Once
 
 	tracerID      string
-	stackCounts   map[string]int64
 	overflowCount atomic.Int64
 
 	pctx  *profctx.ProfilerContext
@@ -52,12 +50,11 @@ func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
 	}
 
 	return &Pipeline{
-		pctx:        pctx,
-		aggr:        aggr,
-		queue:       rqueue.NewRingBuffer(65536),
-		stackCounts: make(map[string]int64),
-		tracerID:    tracing.AllocTaskID(),
-		stopCh:      make(chan struct{}),
+		pctx:     pctx,
+		aggr:     aggr,
+		queue:    rqueue.NewRingBuffer(65536),
+		tracerID: tracing.AllocTaskID(),
+		stopCh:   make(chan struct{}),
 	}
 }
 
@@ -140,18 +137,14 @@ func (p *Pipeline) isUploadEnabled() bool {
 // aggregateAndExport runs one aggregation cycle. final indicates this is the
 // stop-time aggregation, which always writes output even if no new data.
 func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
-	data, err := p.aggr.Snapshot(p.pctx)
-	if err != nil {
-		log.P().Errorf("aggregate error: %v", err)
-
-		return
-	}
-
-	if data == nil && !final {
-		return
-	}
-
 	if p.isUploadEnabled() {
+		data, err := p.aggr.Snapshot(p.pctx)
+		if err != nil {
+			log.P().Errorf("aggregate error: %v", err)
+
+			return
+		}
+
 		if data != nil {
 			if err := p.saveProfilingDocument(ctx, data); err != nil {
 				log.P().WithField("tracer_id", p.tracerID).Errorf("upload to ES failed: %v", err)
@@ -165,18 +158,11 @@ func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
 		return
 	}
 
-	if data != nil {
-		p.mergeStackCounts(data)
-	} else {
-		log.P().Debugf("no new data aggregated this round")
-	}
+	// Non-upload mode: write directly from the folded formatter.
+	formatter := p.aggr.FoldedFormatter()
 
 	if final {
-		p.mu.RLock()
-		empty := len(p.stackCounts) == 0
-		p.mu.RUnlock()
-
-		if empty {
+		if formatter.IsEmpty() {
 			log.P().Warnf("no profiling samples collected; nothing written")
 
 			return
@@ -184,11 +170,11 @@ func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
 
 		switch p.pctx.OutputFormat {
 		case "flamegraph", "svg":
-			if err := p.exportFlameGraph(); err != nil {
+			if err := p.exportFlameGraph(formatter); err != nil {
 				log.P().WithField("output_path", p.pctx.OutputPath).Errorf("write to SVG failed: %v", err)
 			}
 		default:
-			if err := p.exportFolded(); err != nil {
+			if err := p.exportFolded(formatter); err != nil {
 				log.P().WithField("output_path", p.pctx.OutputPath).Errorf("write to file failed: %v", err)
 			}
 		}

@@ -15,7 +15,6 @@
 package provider
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -27,6 +26,8 @@ import (
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/profiler/output"
+	"huatuo-bamai/internal/profiler/output/raw"
 )
 
 // Compile-time check: javaAggregator implements aggregator.Aggregator.
@@ -35,13 +36,13 @@ var _ aggregator.Aggregator = (*javaAggregator)(nil)
 type javaAggregator struct {
 	mu sync.Mutex
 
-	countMap     map[string]int
+	folded       *raw.Formatter
 	sampleOutput []profiler.SampleOutput
 }
 
-func newJavaAggregator(pctx *pcontext.ProfilerContext) *javaAggregator {
+func newJavaAggregator(_ *pcontext.ProfilerContext) *javaAggregator {
 	return &javaAggregator{
-		countMap: make(map[string]int),
+		folded: raw.New(),
 	}
 }
 
@@ -76,14 +77,13 @@ func (a *javaAggregator) Aggregate(rec any) {
 
 		stack := line[:idx]
 		countStr := strings.TrimSpace(line[idx+1:])
-
-		count, err := strconv.Atoi(countStr)
+		count, err := strconv.ParseInt(countStr, 10, 64)
 		if err != nil {
 			continue
 		}
 
-		finalStack := fmt.Sprintf("process %d;%s", so.PID, stack)
-		a.countMap[finalStack] += count
+		frames := []string{fmt.Sprintf("process %d", so.PID), stack}
+		_ = a.folded.Add(&output.Sample{Frames: frames, Count: count})
 	}
 }
 
@@ -91,38 +91,30 @@ func (a *javaAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if len(a.countMap) == 0 {
+	if a.folded.IsEmpty() {
 		return nil, nil
 	}
 
-	var foldedArr [][]byte
-
-	for stack, count := range a.countMap {
-		line := fmt.Sprintf("%s %d", stack, count)
-		foldedArr = append(foldedArr, []byte(line))
+	if pctx.OutputFormat != "pprof" && pctx.OutputFormat != "es" {
+		return nil, nil
 	}
 
-	folded := bytes.Join(foldedArr, []byte("\n"))
-
-	switch pctx.OutputFormat {
-	case "pprof", "es":
-		return a.snapshotPprof(pctx, folded)
-	case "raw", "flamegraph", "svg":
-		return folded, nil
-	default:
-		return folded, nil
-	}
+	return a.snapshotPprof(pctx)
 }
 
 func (a *javaAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.countMap = make(map[string]int)
+	a.folded.Reset()
 	a.sampleOutput = nil
 }
 
-func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext, folded []byte) (any, error) {
+func (a *javaAggregator) FoldedFormatter() *raw.Formatter {
+	return a.folded
+}
+
+func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, error) {
 	if len(a.sampleOutput) == 0 {
 		return nil, nil
 	}

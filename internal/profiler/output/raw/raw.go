@@ -68,3 +68,14 @@ func (f *Formatter) Write(w io.Writer) error {
 func (f *Formatter) Reset() {
 	f.counts = make(map[string]int64)
 }
+
+// Counts returns the accumulated stack-to-count map. The returned map
+// must not be modified; callers should treat it as read-only.
+func (f *Formatter) Counts() map[string]int64 {
+	return f.counts
+}
+
+// IsEmpty reports whether the formatter contains no samples.
+func (f *Formatter) IsEmpty() bool {
+	return len(f.counts) == 0
+}
