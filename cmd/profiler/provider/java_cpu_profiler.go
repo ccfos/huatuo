@@ -17,12 +17,9 @@ package provider
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"strconv"
 
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	executil "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/registry"
 	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
 )
@@ -47,34 +44,16 @@ func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggrega
 }
 
 func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	pid := pctx.PID
-	freq := pctx.Freq
-	toolPath := pctx.ToolPath
-	toolLimit := pctx.ToolLimit
-	execPath := pctx.ExecPath
-	svrAddr := pctx.ServerAddress
-	containerID := pctx.ContainerID
-
-	pids, err := javaruntime.ResolveJavaPids(pid, toolLimit, execPath, svrAddr, containerID)
+	pids, err := javaruntime.ResolveJavaPids(pctx.PID, pctx.ToolLimit, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID)
 	if err != nil {
 		return err
 	}
 
-	targetPid := pids[0]
-
-	if err := javaruntime.PrepareJavaAgent(targetPid, toolPath); err != nil {
+	if err := javaruntime.PrepareJavaAgent(pids[0], pctx.ToolPath); err != nil {
 		return err
 	}
 
-	cmdResults := p.sampleProcesses(pctx.Ctx, pids, freq, toolPath)
-	return javaruntime.CheckAsprofStarted(cmdResults)
-}
-
-func (p *cpuJavaProfiler) sampleProcesses(ctx context.Context, pids []int, freq int, asprofPath string) []executil.CmdResult {
-	asprofBin := filepath.Join(asprofPath, "asprof")
-
-	intervalMs := 1000 / freq
-
+	intervalMs := 1000 / pctx.Freq
 	baseArgs := []string{
 		"--libpath", "/tmp/libasyncProfiler.so",
 		"-i", fmt.Sprintf("%dms", intervalMs),
@@ -83,40 +62,15 @@ func (p *cpuJavaProfiler) sampleProcesses(ctx context.Context, pids []int, freq 
 		"-o", "collapsed",
 	}
 
-	return executil.ExecCmds(ctx, pids, asprofBin, javaAsprofCallback(&p.profileOutFile, baseArgs, "cpu"))
+	p.profileOutFile, err = javaruntime.StartAsprofSampling(pctx.Ctx, pids, pctx.ToolPath, baseArgs, "cpu")
+	return err
 }
 
 func (p *cpuJavaProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	return stopJavaProfiler(pctx)
+	return javaruntime.StopJavaProfiler(pctx.PID, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID, pctx.ToolPath)
 }
 
 func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
 	javaruntime.ReadCollapsedFilesLoop(ctx, p.profileOutFile, addRecord)
 	return nil
-}
-
-func stopJavaProfiler(pctx *pcontext.ProfilerContext) error {
-	pids, err := javaruntime.ResolveJavaPids(pctx.PID, 0, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID)
-	if err != nil {
-		return err
-	}
-
-	stopRes := javaruntime.StopAsprofProcesses(pids, pctx.ToolPath)
-
-	return javaruntime.CheckCmdResultsAllSuccess(stopRes, "stop")
-}
-
-func javaAsprofCallback(profileOutFile *map[int]string, baseArgs []string, outFilePrefix string) func(int) []string {
-	return func(pid int) []string {
-		args := append([]string{}, baseArgs...)
-		outFile := fmt.Sprintf("/tmp/asprof-%s-%d.collapsed", outFilePrefix, pid)
-		args = append(args, "-f", outFile, strconv.Itoa(pid))
-
-		if *profileOutFile == nil {
-			*profileOutFile = make(map[int]string)
-		}
-		(*profileOutFile)[pid] = javaruntime.HostViewPath(pid, outFile)
-
-		return args
-	}
 }

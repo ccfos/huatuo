@@ -121,7 +121,43 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRe
 	}
 }
 
-func StopAsprofProcesses(pids []int, toolPath string) []executil.CmdResult {
+func StartAsprofSampling(ctx context.Context, pids []int, toolPath string, baseArgs []string, outFilePrefix string) (map[int]string, error) {
+	profileOutFile := make(map[int]string)
+
+	asprofBin := filepath.Join(toolPath, "asprof")
+	cmdResults := executil.ExecCmds(ctx, pids, asprofBin, asprofCallback(profileOutFile, baseArgs, outFilePrefix))
+
+	if err := CheckAsprofStarted(cmdResults); err != nil {
+		return nil, err
+	}
+
+	return profileOutFile, nil
+}
+
+func asprofCallback(profileOutFile map[int]string, baseArgs []string, outFilePrefix string) func(int) []string {
+	return func(pid int) []string {
+		args := append([]string{}, baseArgs...)
+		outFile := fmt.Sprintf("/tmp/asprof-%s-%d.collapsed", outFilePrefix, pid)
+		args = append(args, "-f", outFile, strconv.Itoa(pid))
+
+		profileOutFile[pid] = HostViewPath(pid, outFile)
+
+		return args
+	}
+}
+
+func StopJavaProfiler(pid int, execPath, serverAddr, containerID, toolPath string) error {
+	pids, err := ResolveJavaPids(pid, 0, execPath, serverAddr, containerID)
+	if err != nil {
+		return err
+	}
+
+	stopRes := stopAsprofProcesses(pids, toolPath)
+
+	return CheckCmdResultsAllSuccess(stopRes, "stop")
+}
+
+func stopAsprofProcesses(pids []int, toolPath string) []executil.CmdResult {
 	defer func() {
 		pid := pids[0]
 		if err := CleanupJavaAgent(pid); err != nil {

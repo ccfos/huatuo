@@ -17,12 +17,9 @@ package provider
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"strconv"
 
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	executil "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/registry"
 	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
 )
@@ -47,12 +44,11 @@ func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggr
 }
 
 func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	pid := pctx.PID
-	toolPath := pctx.ToolPath
-	toolLimit := pctx.ToolLimit
-	execPath := pctx.ExecPath
-	svrAddr := pctx.ServerAddress
-	containerID := pctx.ContainerID
+	pids, err := javaruntime.ResolveJavaPids(pctx.PID, pctx.ToolLimit, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID)
+	if err != nil {
+		return err
+	}
+
 	mode := pctx.ExtraFlags["mode"]
 	event := "alloc"
 
@@ -60,11 +56,6 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	if mode == "" {
 		mode = "object_alloc"
-	}
-
-	pids, err := javaruntime.ResolveJavaPids(pid, toolLimit, execPath, svrAddr, containerID)
-	if err != nil {
-		return err
 	}
 
 	if mode == "object_usage" {
@@ -80,37 +71,26 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		extraArgs = append(extraArgs, "--live")
 	}
 
-	loopInterval := 9
-
-	if err := javaruntime.PrepareJavaAgent(pids[0], toolPath); err != nil {
+	if err := javaruntime.PrepareJavaAgent(pids[0], pctx.ToolPath); err != nil {
 		return err
 	}
-
-	cmdResults := p.sampleProcesses(pctx.Ctx, pids, toolPath, event, extraArgs, loopInterval)
-	return javaruntime.CheckAsprofStarted(cmdResults)
-}
-
-func (p *javaMemoryProfiler) sampleProcesses(ctx context.Context, pids []int, asprofPath, event string, extraArgs []string, loopInterval int) []executil.CmdResult {
-	asprofBin := filepath.Join(asprofPath, "asprof")
 
 	baseArgs := []string{
 		"--libpath", "/tmp/libasyncProfiler.so",
 		"-e", event,
 		"--alloc", "512k",
 		"-j", "256",
-		"--loop", strconv.Itoa(loopInterval),
+		"--loop", "9",
 		"-o", "collapsed",
 	}
+	baseArgs = append(baseArgs, extraArgs...)
 
-	if len(extraArgs) > 0 {
-		baseArgs = append(baseArgs, extraArgs...)
-	}
-
-	return executil.ExecCmds(ctx, pids, asprofBin, javaAsprofCallback(&p.profileOutFile, baseArgs, "mem"))
+	p.profileOutFile, err = javaruntime.StartAsprofSampling(pctx.Ctx, pids, pctx.ToolPath, baseArgs, "mem")
+	return err
 }
 
 func (p *javaMemoryProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	return stopJavaProfiler(pctx)
+	return javaruntime.StopJavaProfiler(pctx.PID, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID, pctx.ToolPath)
 }
 
 func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
