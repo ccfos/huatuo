@@ -24,11 +24,11 @@ import (
 )
 
 // OutputFormat enumerates the supported profiling output formats.
-// The zero value "" is treated as FormatRaw.
+// The zero value "" is treated as FormatCollapsed.
 type OutputFormat string
 
 const (
-	FormatRaw        OutputFormat = "raw"
+	FormatCollapsed  OutputFormat = "collapsed"
 	FormatFlameGraph OutputFormat = "flamegraph"
 	FormatSVG        OutputFormat = "svg"
 	FormatPprof      OutputFormat = "pprof" // reserved; not yet implemented
@@ -68,7 +68,7 @@ var ErrUnregisteredFormat = errors.New("output: format not registered")
 // the factory; otherwise ErrUnregisteredFormat is returned.
 func (f OutputFormat) NewFormatter() (Formatter, error) {
 	if f == "" {
-		f = FormatRaw
+		f = FormatCollapsed
 	}
 
 	formatterMu.RLock()

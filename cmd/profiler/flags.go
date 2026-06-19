@@ -95,8 +95,8 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-format",
-		Usage: "Output format for profiling: raw|pprof|es|flamegraph|svg",
-		Value: "raw",
+		Usage: "Output format for profiling: collapsed|pprof|es|flamegraph|svg",
+		Value: "collapsed",
 	},
 	&cli.IntFlag{
 		Name:  "aggr-interval",

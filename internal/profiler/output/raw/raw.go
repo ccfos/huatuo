@@ -32,7 +32,7 @@ type Formatter struct {
 var _ output.Formatter = (*Formatter)(nil)
 
 func init() {
-	output.RegisterFormatter(output.FormatRaw, func() output.Formatter { return New() })
+	output.RegisterFormatter(output.FormatCollapsed, func() output.Formatter { return New() })
 }
 
 // New returns a Formatter that writes folded-stack output.
