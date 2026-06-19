@@ -21,12 +21,13 @@ import (
 	"strings"
 
 	"huatuo-bamai/internal/profiler/output"
+	"huatuo-bamai/internal/profiler/output/raw"
 )
 
 // Formatter accumulates samples and renders an SVG flame graph.
 type Formatter struct {
-	counts map[string]int64
-	style  Style
+	*raw.Formatter
+	style Style
 }
 
 var _ output.Formatter = (*Formatter)(nil)
@@ -39,40 +40,23 @@ func init() {
 // New returns a Formatter with the default SVG style.
 func New() *Formatter {
 	return &Formatter{
-		counts: make(map[string]int64),
-		style:  DefaultStyle,
+		Formatter: raw.New(),
+		style:     DefaultStyle,
 	}
 }
 
 func (f *Formatter) Name() string { return "flamegraph" }
 
-func (f *Formatter) Add(s *output.Sample) error {
-	if len(s.Frames) == 0 {
-		return nil
-	}
-	key := strings.Join(s.Frames, ";")
-	f.counts[key] += s.Count
-	return nil
-}
-
 func (f *Formatter) Write(w io.Writer) error {
 	return RenderStyle(f.toStacks(), w, f.style)
 }
 
-func (f *Formatter) Reset() {
-	f.counts = make(map[string]int64)
-}
-
-// IsEmpty reports whether the formatter contains no samples.
-func (f *Formatter) IsEmpty() bool {
-	return len(f.counts) == 0
-}
-
 // toStacks converts the count map to []Stack.
 func (f *Formatter) toStacks() []Stack {
-	stacks := make([]Stack, 0, len(f.counts))
+	counts := f.Counts()
+	stacks := make([]Stack, 0, len(counts))
 
-	for stackStr, count := range f.counts {
+	for stackStr, count := range counts {
 		parts := strings.Split(stackStr, ";")
 		names := make([]string, 0, len(parts))
 
@@ -82,6 +66,7 @@ func (f *Formatter) toStacks() []Stack {
 				names = append(names, p)
 			}
 		}
+
 		if len(names) > 0 {
 			stacks = append(stacks, Stack{
 				Names:   names,
@@ -93,5 +78,6 @@ func (f *Formatter) toStacks() []Stack {
 	sort.Slice(stacks, func(i, j int) bool {
 		return stacks[i].Samples > stacks[j].Samples
 	})
+
 	return stacks
 }

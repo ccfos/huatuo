@@ -31,13 +31,14 @@ const (
 	FormatRaw        OutputFormat = "raw"
 	FormatFlameGraph OutputFormat = "flamegraph"
 	FormatSVG        OutputFormat = "svg"
-	FormatPprof      OutputFormat = "pprof"
+	FormatPprof      OutputFormat = "pprof" // reserved; not yet implemented
 	FormatES         OutputFormat = "es"
 )
 
-// IsUpload reports whether the format requires upload to a backend (pprof or es).
+// IsUpload reports whether the format requires upload to a backend.
+// Only FormatES triggers the upload path; FormatPprof is reserved.
 func (f OutputFormat) IsUpload() bool {
-	return f == FormatPprof || f == FormatES
+	return f == FormatES
 }
 
 // IsFlameGraph reports whether the format renders a flame graph (flamegraph or svg).
