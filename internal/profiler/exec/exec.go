@@ -17,10 +17,12 @@ package exec
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -29,6 +31,7 @@ import (
 
 type CmdResult struct {
 	Pid     int
+	Cmd     string
 	Stdout  []byte
 	Stderr  []byte
 	Success bool
@@ -48,6 +51,7 @@ type CmdResult struct {
 // Returns:
 // - CmdResult: contains stdout/stderr, success status, and original pid.
 func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdResult {
+	cmdArgs := formatCmd(binPath, args)
 	cmd := exec.CommandContext(ctx, binPath, args...)
 
 	// Inherit envir variables from the current process
@@ -66,6 +70,7 @@ func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdRe
 	if err != nil {
 		return CmdResult{
 			Pid:     pid,
+			Cmd:     cmdArgs,
 			Stderr:  stderrBuf.Bytes(),
 			Success: false,
 			CmdErr:  err,
@@ -97,6 +102,7 @@ func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdRe
 		// Return the already collected output
 		return CmdResult{
 			Pid:     pid,
+			Cmd:     cmdArgs,
 			Stdout:  stdoutBuf.Bytes(),
 			Stderr:  stderrBuf.Bytes(),
 			Success: false,
@@ -105,6 +111,7 @@ func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdRe
 		// Normally finished
 		return CmdResult{
 			Pid:     pid,
+			Cmd:     cmdArgs,
 			Stdout:  stdoutBuf.Bytes(),
 			Stderr:  stderrBuf.Bytes(),
 			Success: err == nil,
@@ -123,7 +130,9 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 		go func(pid int) {
 			defer wg.Done()
 
-			cmd := exec.CommandContext(ctx, binPath, argsFn(pid)...)
+			pidArgs := argsFn(pid)
+			cmdArgs := formatCmd(binPath, pidArgs)
+			cmd := exec.CommandContext(ctx, binPath, pidArgs...)
 			// Inherit envir variables from the current process
 			cmd.Env = os.Environ()
 			cmd.Stdin = os.Stdin
@@ -138,9 +147,9 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 
 			err := cmd.Start()
 			if err != nil {
-				// Execute command error
 				resCh <- CmdResult{
 					Pid:     pid,
+					Cmd:     cmdArgs,
 					Stderr:  stderrBuf.Bytes(),
 					Success: false,
 					CmdErr:  err,
@@ -170,6 +179,7 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 				// Return the already collected output
 				resCh <- CmdResult{
 					Pid:     pid,
+					Cmd:     cmdArgs,
 					Stdout:  stdoutBuf.Bytes(),
 					Stderr:  stderrBuf.Bytes(),
 					Success: false,
@@ -178,6 +188,7 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 				// Normally finished
 				resCh <- CmdResult{
 					Pid:     pid,
+					Cmd:     cmdArgs,
 					Stdout:  stdoutBuf.Bytes(),
 					Stderr:  stderrBuf.Bytes(),
 					Success: err == nil,
@@ -202,6 +213,23 @@ func StopProfiler(asprofPath string, pid int) error {
 	_, err := cmd.CombinedOutput()
 	if err != nil {
 		return err
+	}
+	return nil
+}
+
+// VerifyCmdResults checks that every result succeeded; returns an error on
+// the first failure, logging stderr/stdout for diagnosis.
+func formatCmd(binPath string, args []string) string {
+	return binPath + " " + strings.Join(args, " ")
+}
+
+func VerifyResults(results []CmdResult) error {
+	for _, r := range results {
+		if r.Success {
+			continue
+		}
+		log.P().Warnf("cmd %q stderr: %s, stdout: %s, err: %s", r.Cmd, string(r.Stderr), string(r.Stdout), r.CmdErr)
+		return fmt.Errorf("cmd %q failed for pid: %d", r.Cmd, r.Pid)
 	}
 	return nil
 }

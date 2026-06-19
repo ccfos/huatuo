@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"huatuo-bamai/internal/log"
@@ -131,8 +130,12 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, enque
 }
 
 type AsprofSamplingOption struct {
-	Pids          []int
+	PID           int
+	ExecPath      string
+	ServerAddr    string
+	ContainerID   string
 	ToolPath      string
+	Pids          []int
 	BaseArgs      []string
 	OutFilePrefix string
 }
@@ -143,7 +146,7 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 	asprofBin := filepath.Join(opt.ToolPath, "asprof")
 	cmdResults := executil.ExecCmds(ctx, opt.Pids, asprofBin, asprofCallback(profileOutFile, opt.BaseArgs, opt.OutFilePrefix))
 
-	if err := CheckAsprofStarted(cmdResults); err != nil {
+	if err := executil.VerifyResults(cmdResults); err != nil {
 		return nil, err
 	}
 
@@ -162,15 +165,7 @@ func asprofCallback(profileOutFile map[int]string, baseArgs []string, outFilePre
 	}
 }
 
-type StopJavaProfilerOption struct {
-	PID         int
-	ExecPath    string
-	ServerAddr  string
-	ContainerID string
-	ToolPath    string
-}
-
-func StopJavaProfiler(ctx context.Context, opt StopJavaProfilerOption) error {
+func StopJavaProfiler(ctx context.Context, opt *AsprofSamplingOption) error {
 	pids, err := ResolveJavaPids(opt.PID, 0, opt.ExecPath, opt.ServerAddr, opt.ContainerID)
 	if err != nil {
 		return err
@@ -178,7 +173,7 @@ func StopJavaProfiler(ctx context.Context, opt StopJavaProfilerOption) error {
 
 	stopRes := stopAsprofProcesses(ctx, pids, opt.ToolPath)
 
-	return CheckCmdResultsAllSuccess(stopRes, "stop")
+	return executil.VerifyResults(stopRes)
 }
 
 func stopAsprofProcesses(ctx context.Context, pids []int, toolPath string) []executil.CmdResult {
@@ -201,32 +196,6 @@ func stopAsprofProcesses(ctx context.Context, pids []int, toolPath string) []exe
 			strconv.Itoa(pid),
 		}
 	})
-}
-
-func CheckAsprofStarted(cmdResults []executil.CmdResult) error {
-	for _, res := range cmdResults {
-		stderrStr := strings.TrimSpace(string(res.Stderr))
-		firstLine := ""
-		if stderrStr != "" {
-			firstLine = strings.Split(stderrStr, "\n")[0]
-		}
-
-		if firstLine != "Profiling started" {
-			return fmt.Errorf("profiler start failed for pid=%d, stderr=%q", res.Pid, stderrStr)
-		}
-	}
-	return nil
-}
-
-func CheckCmdResultsAllSuccess(cmdResults []executil.CmdResult, action string) error {
-	for _, r := range cmdResults {
-		if r.Success {
-			continue
-		}
-		log.P().Warnf("%s stderr: %s, %s , %s", action, string(r.Stderr), string(r.Stdout), r.CmdErr)
-		return fmt.Errorf("%s failed for pid: %d", action, r.Pid)
-	}
-	return nil
 }
 
 // GetJavaVersion extracts Java major version from exe symlink path.

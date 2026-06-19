@@ -71,7 +71,7 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 }
 
 func (p *cpuJavaProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	return javaruntime.StopJavaProfiler(pctx.Ctx, javaruntime.StopJavaProfilerOption{
+	return javaruntime.StopJavaProfiler(pctx.Ctx, &javaruntime.AsprofSamplingOption{
 		PID:         pctx.PID,
 		ExecPath:    pctx.ExecPath,
 		ServerAddr:  pctx.ServerAddress,
