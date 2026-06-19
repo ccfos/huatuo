@@ -94,6 +94,10 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
             Username = "elastic"
             Password = "huatuo-bamai"
             Index = "huatuo_bamai"
+            # CAFile = "/etc/huatuo/certs/es-ca.crt"
+            # CertFile = "/etc/huatuo/certs/es-client.crt"
+            # KeyFile = "/etc/huatuo/certs/es-client.key"
+            # InsecureSkipVerify = true
         ```
 
         Local storage configuration is as follows:

@@ -133,9 +133,26 @@ BlackList = ["netdev_hw", "metax_gpu"]
     # - Password
     # There is no default username and password.
     #
+    # - CAFile
+    # Optional CA certificate path used to verify HTTPS ES/OS servers.
+    #
+    # - CertFile
+    # - KeyFile
+    # Optional client certificate and key paths used for mutual TLS. CertFile and
+    # KeyFile must be configured together.
+    #
+    # - InsecureSkipVerify
+    # Skip HTTPS server certificate verification. Default is true for backward
+    # compatibility with existing self-signed deployments. Set it to false when
+    # CAFile or system root CAs should verify the server certificate.
+    #
     [Storage.ES]
         # Address = "http://127.0.0.1:9200"
         # Index = "huatuo_bamai"
+        # CAFile = "/etc/huatuo/certs/es-ca.crt"
+        # CertFile = "/etc/huatuo/certs/es-client.crt"
+        # KeyFile = "/etc/huatuo/certs/es-client.key"
+        # InsecureSkipVerify = true
         Username = "elastic"
         Password = "huatuo-bamai"
 ```
@@ -163,6 +180,24 @@ BlackList = ["netdev_hw", "metax_gpu"]
   No default value (example uses huatuo-bamai).
 
   **Description**: Used together with the username. In production, use a strong password and enable TLS encryption.
+
+- **CAFile**: CA certificate file path.
+
+  No default value.
+
+  **Description**: When ES/OS is exposed over HTTPS, use this field to trust a private CA or self-signed server certificate. Set `InsecureSkipVerify` to `false` to verify the server certificate with this CA file or system root CAs.
+
+- **CertFile** and **KeyFile**: Client certificate and private key file paths.
+
+  No default value.
+
+  **Description**: Used for mutual TLS authentication. These two fields must be configured together.
+
+- **InsecureSkipVerify**: Whether to skip HTTPS server certificate verification.
+
+  Default: true.
+
+  **Description**: The default preserves compatibility with existing self-signed deployments. In production, set it to `false` and configure `CAFile` or rely on system root CAs.
 
 **Overall**: ES/OS storage persists kernel tracing and event data for later search and analysis.
 

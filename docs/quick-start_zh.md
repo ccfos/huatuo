@@ -97,6 +97,10 @@ $ ./huatuo-bamai --region example --config huatuo-bamai.conf
             Username = "elastic"
             Password = "huatuo-bamai"
             Index = "huatuo_bamai"
+            # CAFile = "/etc/huatuo/certs/es-ca.crt"
+            # CertFile = "/etc/huatuo/certs/es-client.crt"
+            # KeyFile = "/etc/huatuo/certs/es-client.key"
+            # InsecureSkipVerify = true
         ```
 
         本地存储配置如下：

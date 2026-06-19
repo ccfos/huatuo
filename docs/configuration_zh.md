@@ -132,9 +132,26 @@ BlackList = ["netdev_hw", "metax_gpu"]
     # - Password
     # There is no default username and password.
     #
+    # - CAFile
+    # Optional CA certificate path used to verify HTTPS ES/OS servers.
+    #
+    # - CertFile
+    # - KeyFile
+    # Optional client certificate and key paths used for mutual TLS. CertFile and
+    # KeyFile must be configured together.
+    #
+    # - InsecureSkipVerify
+    # Skip HTTPS server certificate verification. Default is true for backward
+    # compatibility with existing self-signed deployments. Set it to false when
+    # CAFile or system root CAs should verify the server certificate.
+    #
     [Storage.ES]
         # Address = "http://127.0.0.1:9200"
         # Index = "huatuo_bamai"
+        # CAFile = "/etc/huatuo/certs/es-ca.crt"
+        # CertFile = "/etc/huatuo/certs/es-client.crt"
+        # KeyFile = "/etc/huatuo/certs/es-client.key"
+        # InsecureSkipVerify = true
         Username = "elastic"
         Password = "huatuo-bamai"
 ```
@@ -162,6 +179,24 @@ BlackList = ["netdev_hw", "metax_gpu"]
   无默认值（示例中使用 huatuo-bamai）。
 
   **说明**：配合用户名进行安全认证。生产环境强烈建议使用强密码并结合 TLS 加密传输。
+
+- **CAFile**：CA 证书文件路径。
+
+  无默认值。
+
+  **说明**：当 ES/OS 使用 HTTPS 暴露服务时，可通过该字段信任私有 CA 或自签名服务端证书。将 `InsecureSkipVerify` 设置为 `false` 后，会使用该 CA 文件或系统根证书校验服务端证书。
+
+- **CertFile** 和 **KeyFile**：客户端证书和私钥文件路径。
+
+  无默认值。
+
+  **说明**：用于双向 TLS 认证，两个字段必须同时配置。
+
+- **InsecureSkipVerify**：是否跳过 HTTPS 服务端证书校验。
+
+  默认值为 true。
+
+  **说明**：默认值用于兼容已有自签名部署。生产环境建议设置为 `false`，并配置 `CAFile` 或使用系统根证书完成校验。
 
 **整体说明**：ES/OS 存储用于持久化内核追踪和事件数据，便于后续检索与分析。如果用户不关心 Linux 内核事件、Autotracing 数据则可以关闭该配置。
 

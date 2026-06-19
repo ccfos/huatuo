@@ -16,11 +16,14 @@ package elasticsearch
 
 import (
 	"bytes"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -1064,4 +1067,84 @@ func TestNewBackend_ServerError(t *testing.T) {
 	if !strings.Contains(err.Error(), "elasticsearch client info") {
 		t.Errorf("error = %q, want to contain \"elasticsearch client info\"", err.Error())
 	}
+}
+
+func TestNewBackend_WithCAFile(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"name":"mock-es","version":{"number":"8.13.0"}}`))
+	}))
+	defer server.Close()
+
+	caFile := writeCertificateFile(t, server.Certificate().Raw)
+	insecureSkipVerify := false
+	backend, err := NewBackend(&Config{
+		Addresses:          []string{server.URL},
+		CAFile:             caFile,
+		InsecureSkipVerify: &insecureSkipVerify,
+	})
+	if err != nil {
+		t.Fatalf("NewBackend() returned error: %v", err)
+	}
+	if backend == nil {
+		t.Fatal("NewBackend() returned nil backend")
+	}
+}
+
+func TestBuildTLSConfig_LoadsClientCertificate(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	certificate := server.TLS.Certificates[0]
+	certFile := writeCertificateFile(t, certificate.Certificate[0])
+	keyData, err := x509.MarshalPKCS8PrivateKey(certificate.PrivateKey)
+	if err != nil {
+		t.Fatalf("x509.MarshalPKCS8PrivateKey() returned error: %v", err)
+	}
+	keyFile := writePEMFile(t, "PRIVATE KEY", keyData)
+
+	insecureSkipVerify := false
+	tlsConfig, err := buildTLSConfig(&Config{
+		CertFile:           certFile,
+		KeyFile:            keyFile,
+		InsecureSkipVerify: &insecureSkipVerify,
+	})
+	if err != nil {
+		t.Fatalf("buildTLSConfig() returned error: %v", err)
+	}
+	if tlsConfig.InsecureSkipVerify {
+		t.Error("InsecureSkipVerify = true, want false")
+	}
+	if len(tlsConfig.Certificates) != 1 {
+		t.Fatalf("Certificates length = %d, want 1", len(tlsConfig.Certificates))
+	}
+}
+
+func TestBuildTLSConfig_ClientCertificateRequiresKeyPair(t *testing.T) {
+	_, err := buildTLSConfig(&Config{CertFile: "client.crt"})
+	if err == nil {
+		t.Fatal("buildTLSConfig() expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "requires both cert file and key file") {
+		t.Errorf("error = %q, want missing key pair message", err.Error())
+	}
+}
+
+func writeCertificateFile(t *testing.T, derBytes []byte) string {
+	t.Helper()
+	return writePEMFile(t, "CERTIFICATE", derBytes)
+}
+
+func writePEMFile(t *testing.T, blockType string, derBytes []byte) string {
+	t.Helper()
+
+	path := t.TempDir() + "/tls.pem"
+	data := pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: derBytes})
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("os.WriteFile() returned error: %v", err)
+	}
+	return path
 }
