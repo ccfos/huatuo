@@ -72,7 +72,9 @@ func RetrySampleProfiler(ctx context.Context, pid, dur, freq int, toolPath, outp
 			if attempt == maxRetries {
 				msg := fmt.Sprintf("PID[%d] sampling failed after %d retries: profiler still running", pid, maxRetries)
 
-				_ = executil.StopProfiler(filepath.Join(toolPath, "asprof"), pid)
+				if err := executil.StopProfiler(filepath.Join(toolPath, "asprof"), pid); err != nil {
+					log.P().Warnf("stop profiler for pid %d: %v", pid, err)
+				}
 				cmdRes.Pid = pid
 				cmdRes.CmdErr = errors.New(msg)
 				cmdRes.Stderr = append(cmdRes.Stderr, []byte(msg)...)

@@ -140,7 +140,7 @@ func ResolveMemrayPythonPath(pid int, hostBundlePath string) (string, PythonVers
 				return hostPythonPath, version, true, nil
 			}
 			return "", version, true, fmt.Errorf(
-				"no memray runtime for python %s under %s (available: %s)",
+				"no memray runtime for python %s under %q (available: %s)",
 				version.String(),
 				hostBundlePath,
 				strings.Join(sortedRuntimeKeys(runtimes), ", "),
@@ -160,7 +160,7 @@ func ResolveMemrayPythonPath(pid int, hostBundlePath string) (string, PythonVers
 
 	hostPythonPath := filepath.Join(hostBundlePath, "python")
 	if _, err := os.Stat(filepath.Join(hostPythonPath, "memray")); err != nil {
-		return "", PythonVersion{}, false, fmt.Errorf("memray python directory missing at %s: %w", hostPythonPath, err)
+		return "", PythonVersion{}, false, fmt.Errorf("memray python directory missing at %q: %w", hostPythonPath, err)
 	}
 
 	version, ok, err := DetectTargetPythonVersion(pid)
@@ -179,7 +179,7 @@ func EnsureMemrayPython(pid int, hostPythonPath, containerBase, injectorName str
 	}
 
 	if _, err := os.Stat(filepath.Join(hostPythonPath, "memray")); err != nil {
-		return "", fmt.Errorf("memray python directory missing at %s: %w", hostPythonPath, err)
+		return "", fmt.Errorf("memray python directory missing at %q: %w", hostPythonPath, err)
 	}
 
 	inContainer, err := procutil.IsProcessInContainer(pid)
@@ -238,7 +238,7 @@ func SelectMemrayInjector(hostPythonPath string, version PythonVersion, versionK
 		return "", err
 	}
 	if len(matches) == 0 {
-		return "", fmt.Errorf("no injector shared object found under %s", glob)
+		return "", fmt.Errorf("no injector shared object found under %q", glob)
 	}
 
 	if versionKnown {

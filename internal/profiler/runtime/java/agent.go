@@ -52,7 +52,7 @@ func ResolveJavaPids(pid, toolLimit int, execPath, serverAddr, containerID strin
 		return nil, err
 	}
 	if len(pids) == 0 {
-		return nil, fmt.Errorf("sampling failed: no target Java processes found in container: %s", containerID)
+		return nil, fmt.Errorf("sampling failed: no target Java processes found in container: %q", containerID)
 	}
 	return pids, nil
 }
@@ -71,15 +71,17 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRe
 	for pid, path := range pidToPath {
 		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 		if err != nil {
-			log.P().Infof("open file %s for pid %d error: %v", path, pid, err)
+			log.P().Warnf("open file %s for pid %d error: %v", path, pid, err)
 			continue
 		}
 		files[pid] = f
 	}
 
 	defer func() {
-		for _, f := range files {
-			_ = f.Close()
+		for pid, f := range files {
+			if err := f.Close(); err != nil {
+				log.P().Warnf("close file for pid %d: %v", pid, err)
+			}
 		}
 	}()
 
@@ -92,13 +94,13 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRe
 
 		for pid, f := range files {
 			if _, err := f.Seek(0, 0); err != nil {
-				log.P().Infof("seek file for pid %d error: %v", pid, err)
+				log.P().Warnf("seek file for pid %d error: %v", pid, err)
 				continue
 			}
 
 			data, err := io.ReadAll(f)
 			if err != nil {
-				log.P().Infof("read file for pid %d error: %v", pid, err)
+				log.P().Warnf("read file for pid %d error: %v", pid, err)
 				continue
 			}
 
@@ -109,7 +111,7 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRe
 				})
 
 				if err := f.Truncate(0); err != nil {
-					log.P().Infof("truncate file for pid %d error: %v", pid, err)
+					log.P().Warnf("truncate file for pid %d error: %v", pid, err)
 					continue
 				}
 			}
@@ -123,7 +125,7 @@ func StopAsprofProcesses(pids []int, toolPath string) []executil.CmdResult {
 	defer func() {
 		pid := pids[0]
 		if err := CleanupJavaAgent(pid); err != nil {
-			log.P().Infof("Cleanup failed for PID %d: %v", pid, err)
+			log.P().Warnf("Cleanup failed for PID %d: %v", pid, err)
 		}
 	}()
 
@@ -161,7 +163,7 @@ func CheckCmdResultsAllSuccess(cmdResults []executil.CmdResult, action string) e
 		if r.Success {
 			continue
 		}
-		log.P().Infof("%s stderr: %s, %s , %s", action, string(r.Stderr), string(r.Stdout), r.CmdErr)
+		log.P().Warnf("%s stderr: %s, %s , %s", action, string(r.Stderr), string(r.Stdout), r.CmdErr)
 		return fmt.Errorf("%s failed for pid: %d", action, r.Pid)
 	}
 	return nil
@@ -197,7 +199,7 @@ func GetJavaVersion(pid int) (int, error) {
 		return strconv.Atoi(match[1])
 	}
 
-	return 0, fmt.Errorf("could not determine Java version from path: %s", target)
+	return 0, fmt.Errorf("could not determine Java version from path: %q", target)
 }
 
 // Copies the java agent to container's /tmp if needed.
@@ -223,7 +225,7 @@ func PrepareJavaAgent(pid int, asprofPath string) error {
 	if _, err := os.Stat(agentPath); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to stat agent path %s: %w", agentPath, err)
+		return fmt.Errorf("failed to stat agent path %q: %w", agentPath, err)
 	}
 
 	if err := fileutil.CheckDirSpace(targetTmp); err != nil {
@@ -249,13 +251,13 @@ func CleanupJavaAgent(pid int) error {
 	agentPath := filepath.Join(targetTmp, "libasyncProfiler.so")
 	if _, err := os.Stat(agentPath); err == nil {
 		if err := os.Remove(agentPath); err != nil {
-			return fmt.Errorf("failed to remove agent %s: %w", agentPath, err)
+			return fmt.Errorf("failed to remove agent %q: %w", agentPath, err)
 		}
 		log.P().Infof("Removed agent %s successfully", agentPath)
 	} else if os.IsNotExist(err) {
 		log.P().Infof("Agent %s does not exist, nothing to clean up", agentPath)
 	} else {
-		return fmt.Errorf("failed to stat agent path %s: %w", agentPath, err)
+		return fmt.Errorf("failed to stat agent path %q: %w", agentPath, err)
 	}
 
 	return nil
