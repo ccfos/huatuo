@@ -71,8 +71,8 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	return nil
 }
 
-func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
-	return runPySpyAndEmit(ctx, p.duration, p.freq, p.toolPath, p.pids, addRecord)
+func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
+	return runPySpyAndEmit(ctx, p.duration, p.freq, p.toolPath, p.pids, enqueue)
 }
 
 func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
@@ -106,7 +106,7 @@ func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 	return pids, nil
 }
 
-func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids []int, addRecord func(any)) error {
+func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids []int, enqueue func(any)) error {
 	cmdResults := runPySpy(ctx, pids, dur, freq, toolPath)
 
 	var errorMessages []string
@@ -123,7 +123,7 @@ func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids [
 		}
 
 		if len(cmdRes.Stdout) > 0 {
-			addRecord(profiler.SampleOutput{
+			enqueue(profiler.SampleOutput{
 				PID:    targetPid,
 				Output: string(cmdRes.Stdout),
 			})

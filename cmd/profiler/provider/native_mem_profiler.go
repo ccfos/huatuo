@@ -257,7 +257,7 @@ func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads b
 	return "", nil, nil, fmt.Errorf("unsupported mem profiler mode: %q", internalMode)
 }
 
-func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
+func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
 	log.P().Infof("data reading loop started")
 	defer log.P().Infof("data reading loop ended")
 
@@ -289,7 +289,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 		case <-ticker.C:
 		}
 
-		if err := p.flipAndDrain(readerA, readerB, stateMapID, stackMapAID, stackMapBID, usym, addRecord); err != nil {
+		if err := p.flipAndDrain(readerA, readerB, stateMapID, stackMapAID, stackMapBID, usym, enqueue); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
@@ -315,7 +315,7 @@ func (p *memNativeProfiler) flipAndDrain(
 	readerA, readerB bpf.PerfEventReader,
 	stateMapID, stackMapAID, stackMapBID uint32,
 	usym *symbol.UsymResolver,
-	addRecord func(any),
+	enqueue func(any),
 ) error {
 	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
 	if err != nil {
@@ -386,7 +386,7 @@ func (p *memNativeProfiler) flipAndDrain(
 
 	stackDataA := bpfmap.BatchReadStackTraces(p.bpf, stackMapAID, idsA)
 	stackDataB := bpfmap.BatchReadStackTraces(p.bpf, stackMapBID, idsB)
-	emitDeltas(deltaByKey, stackDataA, stackDataB, usym, addRecord)
+	emitDeltas(deltaByKey, stackDataA, stackDataB, usym, enqueue)
 
 	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
 		log.P().Warnf("reset sample count: %v", err)
@@ -399,7 +399,7 @@ func emitDeltas(
 	deltaByKey map[memBatchKey]int64,
 	stackDataA, stackDataB map[int32][bpfmap.StackTraceLen]uint64,
 	usym *symbol.UsymResolver,
-	addRecord func(any),
+	enqueue func(any),
 ) {
 	ustackCacheA := make(map[int32]string)
 	kstackCacheA := make(map[int32]string)
@@ -430,7 +430,7 @@ func emitDeltas(
 			Samples: delta,
 		}
 
-		addRecord(rec)
+		enqueue(rec)
 	}
 }
 

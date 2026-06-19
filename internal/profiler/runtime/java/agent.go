@@ -70,7 +70,7 @@ func HostViewPath(pid int, pathInTarget string) string {
 // profiler may not have written yet — so they are logged as warnings and
 // retried on the next tick rather than terminating the loop. Only an initial
 // failure to open every file is treated as a fatal error.
-func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRecord func(any)) error {
+func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, enqueue func(any)) error {
 	files := make(map[int]*os.File) // pid -> file
 
 	for pid, path := range pidToPath {
@@ -114,7 +114,7 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRe
 			}
 
 			if len(data) > 0 {
-				addRecord(profiler.SampleOutput{
+				enqueue(profiler.SampleOutput{
 					PID:    pid,
 					Output: string(data),
 				})

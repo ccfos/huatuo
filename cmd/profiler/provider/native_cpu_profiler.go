@@ -118,7 +118,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	return nil
 }
 
-func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
+func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
 	log.P().Infof("data reading loop started")
 	defer log.P().Infof("data reading loop ended")
 
@@ -146,7 +146,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 		case <-ticker.C:
 		}
 
-		if err := p.flipAndDrain(readerA, readerB, stateMapID, addRecord); err != nil {
+		if err := p.flipAndDrain(readerA, readerB, stateMapID, enqueue); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
@@ -159,7 +159,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 // flipAndDrain advances the BPF write parity and drains the ring that was
 // active before the flip. The drain is bounded by sampleCnt (set by the BPF
 // side), so it never blocks waiting for events that were never written.
-func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, stateMapID uint32, addRecord func(any)) error {
+func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, stateMapID uint32, enqueue func(any)) error {
 	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
 	if err != nil {
 		return fmt.Errorf("read transferCnt: %w", err)
@@ -209,7 +209,7 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 	}
 
 	if len(stackIDStore) > 0 {
-		aggregateStacksAndStore(p.bpf, stackIDStore, stackMapID, stackCount, addRecord)
+		aggregateStacksAndStore(p.bpf, stackIDStore, stackMapID, stackCount, enqueue)
 	}
 
 	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
@@ -259,7 +259,7 @@ func aggregateStacksAndStore(
 	stackIDStore map[processIDName]bpfmap.StackTraceID,
 	stMapID uint32,
 	stackCount map[bpfmap.StackTraceID]int,
-	addRecord func(any),
+	enqueue func(any),
 ) {
 	allStackIDs := make(map[int32]bool)
 	for _, v := range stackIDStore {
@@ -287,7 +287,7 @@ func aggregateStacksAndStore(
 			Samples: int64(stackCount[v]),
 		}
 
-		addRecord(record)
+		enqueue(record)
 	}
 }
 

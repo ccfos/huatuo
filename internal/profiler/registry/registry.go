@@ -49,7 +49,7 @@ type ProfilerMeta struct {
 // completes naturally, and its error surfaces through Profile.
 type Profiler interface {
 	Start(pctx *pcontext.ProfilerContext) error
-	ReadDataLoop(ctx context.Context, addRecord func(any)) error
+	ReadDataLoop(ctx context.Context, enqueue func(any)) error
 	Stop(pctx *pcontext.ProfilerContext) error
 }
 

@@ -80,6 +80,6 @@ func (p *cpuJavaProfiler) Stop(pctx *pcontext.ProfilerContext) error {
 	})
 }
 
-func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
-	return javaruntime.ReadCollapsedFilesLoop(ctx, p.profileOutFile, addRecord)
+func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
+	return javaruntime.ReadCollapsedFilesLoop(ctx, p.profileOutFile, enqueue)
 }
