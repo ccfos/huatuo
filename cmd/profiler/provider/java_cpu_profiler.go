@@ -53,21 +53,31 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	intervalMs := 1000 / pctx.Freq
 	baseArgs := []string{
 		"--libpath", "/tmp/libasyncProfiler.so",
-		"-i", fmt.Sprintf("%dms", intervalMs),
+		"-i", fmt.Sprintf("%dms", 1000/pctx.Freq),
 		"-j", "256",
 		"--loop", "9",
 		"-o", "collapsed",
 	}
 
-	p.profileOutFile, err = javaruntime.StartAsprofSampling(pctx.Ctx, pids, pctx.ToolPath, baseArgs, "cpu")
+	p.profileOutFile, err = javaruntime.StartAsprofSampling(pctx.Ctx, &javaruntime.AsprofSamplingOption{
+		Pids:          pids,
+		ToolPath:      pctx.ToolPath,
+		BaseArgs:      baseArgs,
+		OutFilePrefix: "cpu",
+	})
 	return err
 }
 
 func (p *cpuJavaProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	return javaruntime.StopJavaProfiler(pctx.PID, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID, pctx.ToolPath)
+	return javaruntime.StopJavaProfiler(pctx.Ctx, javaruntime.StopJavaProfilerOption{
+		PID:         pctx.PID,
+		ExecPath:    pctx.ExecPath,
+		ServerAddr:  pctx.ServerAddress,
+		ContainerID: pctx.ContainerID,
+		ToolPath:    pctx.ToolPath,
+	})
 }
 
 func (p *cpuJavaProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {

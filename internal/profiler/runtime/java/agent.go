@@ -121,11 +121,18 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRe
 	}
 }
 
-func StartAsprofSampling(ctx context.Context, pids []int, toolPath string, baseArgs []string, outFilePrefix string) (map[int]string, error) {
+type AsprofSamplingOption struct {
+	Pids          []int
+	ToolPath      string
+	BaseArgs      []string
+	OutFilePrefix string
+}
+
+func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[int]string, error) {
 	profileOutFile := make(map[int]string)
 
-	asprofBin := filepath.Join(toolPath, "asprof")
-	cmdResults := executil.ExecCmds(ctx, pids, asprofBin, asprofCallback(profileOutFile, baseArgs, outFilePrefix))
+	asprofBin := filepath.Join(opt.ToolPath, "asprof")
+	cmdResults := executil.ExecCmds(ctx, opt.Pids, asprofBin, asprofCallback(profileOutFile, opt.BaseArgs, opt.OutFilePrefix))
 
 	if err := CheckAsprofStarted(cmdResults); err != nil {
 		return nil, err
@@ -146,18 +153,26 @@ func asprofCallback(profileOutFile map[int]string, baseArgs []string, outFilePre
 	}
 }
 
-func StopJavaProfiler(pid int, execPath, serverAddr, containerID, toolPath string) error {
-	pids, err := ResolveJavaPids(pid, 0, execPath, serverAddr, containerID)
+type StopJavaProfilerOption struct {
+	PID         int
+	ExecPath    string
+	ServerAddr  string
+	ContainerID string
+	ToolPath    string
+}
+
+func StopJavaProfiler(ctx context.Context, opt StopJavaProfilerOption) error {
+	pids, err := ResolveJavaPids(opt.PID, 0, opt.ExecPath, opt.ServerAddr, opt.ContainerID)
 	if err != nil {
 		return err
 	}
 
-	stopRes := stopAsprofProcesses(pids, toolPath)
+	stopRes := stopAsprofProcesses(ctx, pids, opt.ToolPath)
 
 	return CheckCmdResultsAllSuccess(stopRes, "stop")
 }
 
-func stopAsprofProcesses(pids []int, toolPath string) []executil.CmdResult {
+func stopAsprofProcesses(ctx context.Context, pids []int, toolPath string) []executil.CmdResult {
 	defer func() {
 		pid := pids[0]
 		if err := CleanupJavaAgent(pid); err != nil {
@@ -167,10 +182,10 @@ func stopAsprofProcesses(pids []int, toolPath string) []executil.CmdResult {
 
 	asprofBin := filepath.Join(toolPath, "asprof")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	stopCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 
-	return executil.ExecCmds(ctx, pids, asprofBin, func(pid int) []string {
+	return executil.ExecCmds(stopCtx, pids, asprofBin, func(pid int) []string {
 		return []string{
 			"stop",
 			"--libpath", "/tmp/libasyncProfiler.so",

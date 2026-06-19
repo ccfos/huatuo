@@ -85,12 +85,23 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 	baseArgs = append(baseArgs, extraArgs...)
 
-	p.profileOutFile, err = javaruntime.StartAsprofSampling(pctx.Ctx, pids, pctx.ToolPath, baseArgs, "mem")
+	p.profileOutFile, err = javaruntime.StartAsprofSampling(pctx.Ctx, &javaruntime.AsprofSamplingOption{
+		Pids:          pids,
+		ToolPath:      pctx.ToolPath,
+		BaseArgs:      baseArgs,
+		OutFilePrefix: "mem",
+	})
 	return err
 }
 
 func (p *javaMemoryProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	return javaruntime.StopJavaProfiler(pctx.PID, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID, pctx.ToolPath)
+	return javaruntime.StopJavaProfiler(pctx.Ctx, javaruntime.StopJavaProfilerOption{
+		PID:         pctx.PID,
+		ExecPath:    pctx.ExecPath,
+		ServerAddr:  pctx.ServerAddress,
+		ContainerID: pctx.ContainerID,
+		ToolPath:    pctx.ToolPath,
+	})
 }
 
 func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
