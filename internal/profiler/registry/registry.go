@@ -45,7 +45,7 @@ type ProfilerMeta struct {
 
 // Profiler is the sampling lifecycle. Aggregator ownership stays with Profile
 // so streaming (eBPF, async-profiler tail) and one-shot (py-spy) providers
-// share one shape; ReadDataLoop returns when ctx is cancelled or sampling
+// share one shape; ReadDataLoop returns when ctx is canceled or sampling
 // completes naturally, and its error surfaces through Profile.
 type Profiler interface {
 	Start(pctx *pcontext.ProfilerContext) error

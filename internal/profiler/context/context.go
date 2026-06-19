@@ -167,7 +167,6 @@ func splitStorageAddresses(raw string) []string {
 type flagSegment struct {
 	key   string
 	value string
-	raw   string
 }
 
 func parseFlagSegments(flagList []string) ([]flagSegment, error) {
@@ -187,7 +186,7 @@ func parseFlagSegments(flagList []string) ([]flagSegment, error) {
 				key := strings.TrimSpace(parts[0])
 				value := strings.TrimSpace(parts[1])
 				if key != "" {
-					segments = append(segments, flagSegment{key: key, value: value, raw: segment})
+					segments = append(segments, flagSegment{key: key, value: value})
 				}
 
 				continue
@@ -198,7 +197,7 @@ func parseFlagSegments(flagList []string) ([]flagSegment, error) {
 				key := strings.TrimSpace(parts[0])
 				value := strings.TrimSpace(parts[1])
 				if key != "" {
-					segments = append(segments, flagSegment{key: key, value: value, raw: segment})
+					segments = append(segments, flagSegment{key: key, value: value})
 				}
 
 				continue

@@ -45,14 +45,6 @@ type stackEntry struct {
 	Samples int64
 }
 
-// aggrKey is used as the map key for aggregation.
-type aggrKey struct {
-	pid  uint32
-	name string
-	user string
-	kern string
-}
-
 type processIDNameLock struct {
 	Pid  uint32
 	Name string
@@ -67,17 +59,12 @@ type lockStackEntry struct {
 	Contended uint32
 }
 
-type lockAggrKey struct {
-	user string
-	lock uint64
-}
-
 type nativeAggregator struct {
 	mu sync.Mutex
 
 	formatter        output.Formatter
-	aggrMap          map[aggrKey]*stackEntry
-	lockAggrMap      map[lockAggrKey]*lockStackEntry
+	aggrMap          map[string]*stackEntry
+	lockAggrMap      map[string]*lockStackEntry
 	lockMode         string
 	isLockFoldedDone bool
 }
@@ -90,8 +77,8 @@ func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, err
 
 	return &nativeAggregator{
 		formatter:   f,
-		aggrMap:     make(map[aggrKey]*stackEntry),
-		lockAggrMap: make(map[lockAggrKey]*lockStackEntry),
+		aggrMap:     make(map[string]*stackEntry),
+		lockAggrMap: make(map[string]*lockStackEntry),
 		lockMode:    pctx.ExtraFlags["mode"],
 	}, nil
 }
@@ -102,7 +89,7 @@ func (a *nativeAggregator) Aggregate(rec any) {
 
 	switch v := rec.(type) {
 	case *stackEntry:
-		key := aggrKey{v.Proc.Pid, v.Proc.Name, v.User, v.Kernel}
+		key := fmt.Sprintf("%d\x00%s\x00%s\x00%s", v.Proc.Pid, v.Proc.Name, v.User, v.Kernel)
 
 		if existed, ok := a.aggrMap[key]; ok {
 			existed.Samples += v.Samples
@@ -126,10 +113,7 @@ func (a *nativeAggregator) Aggregate(rec any) {
 		}
 
 	case *lockStackEntry:
-		key := lockAggrKey{
-			user: v.User,
-			lock: v.Proc.Lock,
-		}
+		key := fmt.Sprintf("%s\x00%d", v.User, v.Proc.Lock)
 
 		if existed, ok := a.lockAggrMap[key]; ok {
 			existed.Contended += v.Contended
@@ -172,8 +156,8 @@ func (a *nativeAggregator) Reset() {
 		a.formatter.Reset()
 	}
 
-	a.aggrMap = make(map[aggrKey]*stackEntry)
-	a.lockAggrMap = make(map[lockAggrKey]*lockStackEntry)
+	a.aggrMap = make(map[string]*stackEntry)
+	a.lockAggrMap = make(map[string]*lockStackEntry)
 	a.isLockFoldedDone = false
 }
 
