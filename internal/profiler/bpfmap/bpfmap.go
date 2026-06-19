@@ -30,9 +30,9 @@ import (
 // Indices into profiler_state_map. The BPF program owns the layout; userspace
 // must use the same indices to flip parity and read the per-ring sample count.
 const (
-	TransferCntIdx uint32 = 0
-	SampleCntAIdx  uint32 = 1
-	SampleCntBIdx  uint32 = 2
+	TransferCountIdx uint32 = 0
+	SampleCountAIdx  uint32 = 1
+	SampleCountBIdx  uint32 = 2
 )
 
 // StackTraceID pairs a kernel and user stack-map ID emitted with each event.
@@ -47,10 +47,10 @@ const StackTraceLen = 127
 // ReadUint64 fetches a uint64 cell from a BPF map keyed by a uint32 index.
 // A missing key is treated as zero so callers can use it on first access.
 func ReadUint64(b bpf.BPF, mapID, idx uint32) (uint64, error) {
-	key := make([]byte, 4)
-	binary.LittleEndian.PutUint32(key, idx)
+	var key [4]byte
+	binary.LittleEndian.PutUint32(key[:], idx)
 
-	val, err := b.ReadMap(mapID, key)
+	val, err := b.ReadMap(mapID, key[:])
 	if err != nil {
 		if errors.Is(err, ebpf.ErrKeyNotExist) {
 			return 0, nil
@@ -68,12 +68,12 @@ func ReadUint64(b bpf.BPF, mapID, idx uint32) (uint64, error) {
 
 // WriteUint64 stores a uint64 value at a uint32-indexed cell in a BPF map.
 func WriteUint64(b bpf.BPF, mapID, idx uint32, v uint64) error {
-	key := make([]byte, 4)
-	binary.LittleEndian.PutUint32(key, idx)
-	val := make([]byte, 8)
-	binary.LittleEndian.PutUint64(val, v)
+	var key [4]byte
+	binary.LittleEndian.PutUint32(key[:], idx)
+	var val [8]byte
+	binary.LittleEndian.PutUint64(val[:], v)
 
-	return b.WriteMapItems(mapID, []bpf.MapItem{{Key: key, Value: val}})
+	return b.WriteMapItems(mapID, []bpf.MapItem{{Key: key[:], Value: val[:]}})
 }
 
 // BatchReadStackTraces reads the stack arrays for the given IDs from a BPF
@@ -88,7 +88,7 @@ func BatchReadStackTraces(b bpf.BPF, mapID uint32, ids map[int32]bool) map[int32
 
 		valBytes, err := b.ReadMap(mapID, keyBuf)
 		if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			log.P().Infof("stack map lookup error for ID %d: %v", stackID, err)
+			log.P().Warnf("stack map lookup error for ID %d: %v", stackID, err)
 			continue
 		}
 
