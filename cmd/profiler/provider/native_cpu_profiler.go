@@ -74,19 +74,12 @@ func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 	return newNativeAggregator(pctx)
 }
 
-// Stop profiling, abnormal Stop also goes through here
 func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
-	if p.bpf != nil {
-		if err := p.bpf.Close(); err != nil {
-			log.P().Infof("Error closing eBPF: %v", err)
-		}
-	}
-
-	return nil
+	return closeBpfSafe(p.bpf)
 }
 
 func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	log.P().Infof("starting cpu native profiler")
+	log.P().Infof("starting native cpu profiler")
 
 	var cssAddr uint64
 	if containerID := pctx.ContainerID; containerID != "" {
@@ -114,20 +107,20 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	if err := p.bpf.AttachWithOptions([]bpf.AttachOption{opt}); err != nil {
 		if cerr := p.bpf.Close(); cerr != nil {
-			log.P().Infof("Error closing eBPF: %v", cerr)
+			log.P().Warnf("closing eBPF after attach failure: %v", cerr)
 		}
 
 		return fmt.Errorf("failed to attach perf event PMU: %w", err)
 	}
 
-	log.P().Infof("eBPF attached successfully")
+	log.P().Infof("eBPF attached")
 
 	return nil
 }
 
 func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
-	log.P().Infof("Data reading loop started")
-	defer log.P().Infof("Data reading loop ended")
+	log.P().Infof("data reading loop started")
+	defer log.P().Infof("data reading loop ended")
 
 	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
 	if err != nil {
@@ -158,7 +151,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 				return nil
 			}
 
-			log.P().Infof("drain error: %v", err)
+			log.P().Warnf("drain: %v", err)
 		}
 	}
 }
@@ -167,22 +160,22 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 // active before the flip. The drain is bounded by sampleCnt (set by the BPF
 // side), so it never blocks waiting for events that were never written.
 func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, stateMapID uint32, addRecord func(any)) error {
-	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCntIdx)
+	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
 	if err != nil {
 		return fmt.Errorf("read transferCnt: %w", err)
 	}
 
 	reader := readerA
 	stackMapID := p.bpf.MapIDByName("stack_map_a")
-	sampleCountIdx := bpfmap.SampleCntAIdx
+	sampleCountIdx := bpfmap.SampleCountAIdx
 
 	if val%2 == 1 {
 		reader = readerB
 		stackMapID = p.bpf.MapIDByName("stack_map_b")
-		sampleCountIdx = bpfmap.SampleCntBIdx
+		sampleCountIdx = bpfmap.SampleCountBIdx
 	}
 
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCntIdx, val+1); err != nil {
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
 		return fmt.Errorf("write transferCnt: %w", err)
 	}
 
@@ -201,7 +194,7 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 				return err
 			}
 
-			log.P().Infof("read error after %d/%d events: %v", i, bpfCount, err)
+			log.P().Warnf("read after %d/%d events: %v", i, bpfCount, err)
 			break
 		}
 
@@ -220,20 +213,18 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 	}
 
 	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
-		log.P().Infof("failed to reset sample count: %v", err)
+		log.P().Warnf("reset sample count: %v", err)
 	}
 
 	if len(stackIDStore) > 0 {
 		if err := clearStackMap(p.bpf, stackMapID, stackIDStore); err != nil {
-			log.P().Infof("clear stack map keys err: %v", err)
+			log.P().Warnf("clear stack map: %v", err)
 		}
 	}
 
 	return nil
 }
 
-// clearStackMap removes the stack-map entries referenced by the just-drained
-// batch. Keys come from stackIDStore so we don't hold per-batch lists.
 func clearStackMap(b bpf.BPF, mapID uint32, stackIDStore map[processIDName]bpfmap.StackTraceID) error {
 	seen := make(map[int32]struct{}, len(stackIDStore)*2)
 	for _, v := range stackIDStore {
@@ -250,11 +241,14 @@ func clearStackMap(b bpf.BPF, mapID uint32, stackIDStore map[processIDName]bpfma
 		return nil
 	}
 
-	clearKeys := make([][]byte, 0, len(seen))
+	n := len(seen)
+	buf := make([]byte, 4*n)
+	clearKeys := make([][]byte, 0, n)
+	i := 0
 	for id := range seen {
-		key := make([]byte, 4)
-		binary.LittleEndian.PutUint32(key, uint32(id))
-		clearKeys = append(clearKeys, key)
+		binary.LittleEndian.PutUint32(buf[i:i+4], uint32(id))
+		clearKeys = append(clearKeys, buf[i:i+4])
+		i += 4
 	}
 
 	return b.DeleteMapItems(mapID, clearKeys)
@@ -281,32 +275,13 @@ func aggregateStacksAndStore(
 	stackData := bpfmap.BatchReadStackTraces(b, stMapID, allStackIDs)
 	ustackCache := make(map[int32]string)
 	kstackCache := make(map[int32]string)
-
 	usym := symbol.NewUsymResolver()
 
 	for k, v := range stackIDStore {
-		pid := k.Pid
-
-		if v.KernelID > 0 {
-			if _, ok := kstackCache[v.KernelID]; !ok {
-				if stackTrace, exists := stackData[v.KernelID]; exists {
-					strs := symbol.KsymStackStrsReversed(stackTrace[:], len(stackTrace))
-					kstackCache[v.KernelID] = strings.Join(strs, ";") + ";"
-				}
-			}
-		}
-
-		if v.UserID > 0 {
-			if _, ok := ustackCache[v.UserID]; !ok {
-				if stackTrace, exists := stackData[v.UserID]; exists {
-					strs := usym.UsymStackStrs(pid, stackTrace[:], len(stackTrace))
-					ustackCache[v.UserID] = strings.Join(strs, ";") + ";"
-				}
-			}
-		}
+		resolveStackStrs(v, k.Pid, stackData, usym, kstackCache, ustackCache)
 
 		record := &stackEntry{
-			Proc:    &processIDName{Pid: pid, Name: k.Name},
+			Proc:    &processIDName{Pid: k.Pid, Name: k.Name},
 			User:    ustackCache[v.UserID],
 			Kernel:  kstackCache[v.KernelID],
 			Samples: int64(stackCount[v]),
@@ -314,4 +289,43 @@ func aggregateStacksAndStore(
 
 		addRecord(record)
 	}
+}
+
+// resolveStackStrs populates kernel/user stack string caches for a single
+// StackTraceID. Shared by CPU and memory profilers to avoid duplicating the
+// symbol-resolution + cache-fill pattern.
+func resolveStackStrs(
+	ids bpfmap.StackTraceID,
+	pid uint32,
+	stackData map[int32][bpfmap.StackTraceLen]uint64,
+	usym *symbol.UsymResolver,
+	kstackCache, ustackCache map[int32]string,
+) {
+	if ids.KernelID > 0 {
+		if _, ok := kstackCache[ids.KernelID]; !ok {
+			if trace, exists := stackData[ids.KernelID]; exists {
+				strs := symbol.KsymStackStrsReversed(trace[:], len(trace))
+				kstackCache[ids.KernelID] = strings.Join(strs, ";") + ";"
+			}
+		}
+	}
+
+	if ids.UserID > 0 {
+		if _, ok := ustackCache[ids.UserID]; !ok {
+			if trace, exists := stackData[ids.UserID]; exists {
+				strs := usym.UsymStackStrs(pid, trace[:], len(trace))
+				ustackCache[ids.UserID] = strings.Join(strs, ";") + ";"
+			}
+		}
+	}
+}
+
+func closeBpfSafe(b bpf.BPF) error {
+	if b == nil {
+		return nil
+	}
+	if err := b.Close(); err != nil {
+		log.P().Warnf("closing eBPF: %v", err)
+	}
+	return nil
 }

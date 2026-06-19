@@ -30,8 +30,10 @@ import (
 )
 
 type pythonCPUProfiler struct {
-	pctx *pcontext.ProfilerContext
-	pids []int
+	duration int
+	freq     int
+	toolPath string
+	pids     []int
 }
 
 func init() {
@@ -49,13 +51,15 @@ func init() {
 // picks the batch-on-stop branch — py-spy emits all data only when the
 // record command exits, not incrementally over the duration window.
 func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	pctx.OneShotAgg = true
+	pctx.IsOneShotAgg = true
 
 	return newPythonCPUAggregator(pctx)
 }
 
 func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	p.pctx = pctx
+	p.duration = pctx.Duration
+	p.freq = pctx.Freq
+	p.toolPath = pctx.ToolPath
 
 	pids, err := resolvePythonPids(pctx)
 	if err != nil {
@@ -68,7 +72,7 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 }
 
 func (p *pythonCPUProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
-	return runPySpyAndEmit(ctx, p.pctx, p.pids, addRecord)
+	return runPySpyAndEmit(ctx, p.duration, p.freq, p.toolPath, p.pids, addRecord)
 }
 
 func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
@@ -96,14 +100,14 @@ func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 	}
 
 	if len(pids) == 0 {
-		return nil, fmt.Errorf("sampling failed: no target Python processes found in container: %s", pctx.ContainerID)
+		return nil, fmt.Errorf("sampling failed: no target Python processes found in container %q", pctx.ContainerID)
 	}
 
 	return pids, nil
 }
 
-func runPySpyAndEmit(ctx context.Context, pctx *pcontext.ProfilerContext, pids []int, addRecord func(any)) error {
-	cmdResults := runPySpy(ctx, pids, pctx.Duration, pctx.Freq, pctx.ToolPath)
+func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids []int, addRecord func(any)) error {
+	cmdResults := runPySpy(ctx, pids, dur, freq, toolPath)
 
 	var errorMessages []string
 
@@ -113,7 +117,7 @@ func runPySpyAndEmit(ctx context.Context, pctx *pcontext.ProfilerContext, pids [
 
 		if !cmdRes.Success {
 			errorMessages = append(errorMessages,
-				fmt.Sprintf("PID[%d] sampling failed: %v, stderr: %s", targetPid, cmdRes.CmdErr, string(cmdRes.Stderr)))
+				fmt.Sprintf("PID[%d] sampling failed: %v, stderr: %q", targetPid, cmdRes.CmdErr, string(cmdRes.Stderr)))
 
 			continue
 		}

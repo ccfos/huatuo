@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
@@ -82,21 +81,14 @@ func init() {
 // alloc/free deltas must collapse in a single shot, not stream every interval.
 func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	if mode, err := resolveMemMode(pctx.ExtraFlags["mode"]); err == nil && mode == modePMRetained {
-		pctx.OneShotAgg = true
+		pctx.IsOneShotAgg = true
 	}
 
 	return newNativeAggregator(pctx)
 }
 
-// Stop profiling, abnormal Stop also goes through here
 func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
-	if p.bpf != nil {
-		if err := p.bpf.Close(); err != nil {
-			log.P().Infof("Error closing eBPF: %v", err)
-		}
-	}
-
-	return nil
+	return closeBpfSafe(p.bpf)
 }
 
 func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
@@ -132,7 +124,10 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	bpfObjName, consts, opts := bpfPlanForMode(p.internalMode, pctx.PID, cssAddr, traceThreads, p.probability)
+	bpfObjName, consts, opts, err := bpfPlanForMode(p.internalMode, pctx.PID, cssAddr, traceThreads, p.probability)
+	if err != nil {
+		return err
+	}
 
 	b, err := bpf.LoadBpf(bpfObjName, consts)
 	if err != nil {
@@ -141,14 +136,14 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	if err := b.AttachWithOptions(opts); err != nil {
 		if cerr := b.Close(); cerr != nil {
-			log.P().Infof("Error closing eBPF: %v", cerr)
+			log.P().Warnf("closing eBPF after attach failure: %v", cerr)
 		}
 
 		return fmt.Errorf("failed to attach: %w", err)
 	}
 
 	p.bpf = b
-	log.P().Infof("native mem eBPF loaded & attached successfully")
+	log.P().Infof("eBPF attached")
 
 	return nil
 }
@@ -166,7 +161,7 @@ func resolveMemMode(mode string) (string, error) {
 	case "native_physical_alloc":
 		return modePMAccu, nil
 	default:
-		return "", fmt.Errorf("invalid mode %s", mode)
+		return "", fmt.Errorf("invalid mode %q", mode)
 	}
 }
 
@@ -198,7 +193,7 @@ func resolveScope(scope string) (bool, error) {
 	case "process-group":
 		return false, fmt.Errorf("scope 'process-group' is not supported by mem profiler")
 	default:
-		return false, fmt.Errorf("unsupported scope for mem profiler: %s", scope)
+		return false, fmt.Errorf("unsupported scope for mem profiler: %q", scope)
 	}
 }
 
@@ -213,13 +208,13 @@ func resolveCgroupCSS(pctx *pcontext.ProfilerContext) (uint64, error) {
 	}
 
 	if c == nil {
-		return 0, fmt.Errorf("container %s not found", pctx.ContainerID)
+		return 0, fmt.Errorf("container %q not found", pctx.ContainerID)
 	}
 
 	return c.CgroupCss["memory"], nil
 }
 
-func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads bool, probability uint) (string, map[string]any, []bpf.AttachOption) {
+func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads bool, probability uint) (string, map[string]any, []bpf.AttachOption, error) {
 	switch internalMode {
 	case modeVMAccu:
 		return "vm_accumulative2.o",
@@ -230,7 +225,8 @@ func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads b
 			},
 			[]bpf.AttachOption{
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
-			}
+			},
+			nil
 	case modePMRetained:
 		return "pm_retained2.o",
 			map[string]any{
@@ -242,7 +238,8 @@ func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads b
 			[]bpf.AttachOption{
 				{ProgramName: "trace_page_alloc", Symbol: "page_add_new_anon_rmap"},
 				{ProgramName: "trace_page_free", Symbol: "page_remove_rmap"},
-			}
+			},
+			nil
 	case modePMAccu:
 		return "pm_accumulative2.o",
 			map[string]any{
@@ -253,15 +250,16 @@ func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads b
 			},
 			[]bpf.AttachOption{
 				{ProgramName: "trace_page_alloc", Symbol: "page_add_new_anon_rmap"},
-			}
+			},
+			nil
 	}
 
-	return "", nil, nil
+	return "", nil, nil, fmt.Errorf("unsupported mem profiler mode: %q", internalMode)
 }
 
 func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
-	log.P().Infof("mem data reading loop started")
-	defer log.P().Infof("mem data reading loop ended")
+	log.P().Infof("data reading loop started")
+	defer log.P().Infof("data reading loop ended")
 
 	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
 	if err != nil {
@@ -296,7 +294,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, addRecord func(any
 				return nil
 			}
 
-			log.P().Infof("mem drain error: %v", err)
+			log.P().Warnf("drain: %v", err)
 		}
 	}
 }
@@ -319,20 +317,20 @@ func (p *memNativeProfiler) flipAndDrain(
 	usym *symbol.UsymResolver,
 	addRecord func(any),
 ) error {
-	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCntIdx)
+	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
 	if err != nil {
 		return fmt.Errorf("read transferCnt: %w", err)
 	}
 
 	reader := readerA
-	sampleCountIdx := bpfmap.SampleCntAIdx
+	sampleCountIdx := bpfmap.SampleCountAIdx
 
 	if val%2 == 1 {
 		reader = readerB
-		sampleCountIdx = bpfmap.SampleCntBIdx
+		sampleCountIdx = bpfmap.SampleCountBIdx
 	}
 
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCntIdx, val+1); err != nil {
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
 		return fmt.Errorf("write transferCnt: %w", err)
 	}
 
@@ -352,7 +350,7 @@ func (p *memNativeProfiler) flipAndDrain(
 				return err
 			}
 
-			log.P().Infof("mem read error after %d/%d events: %v", i, bpfCount, err)
+			log.P().Warnf("read after %d/%d events: %v", i, bpfCount, err)
 			break
 		}
 
@@ -391,7 +389,7 @@ func (p *memNativeProfiler) flipAndDrain(
 	emitDeltas(deltaByKey, stackDataA, stackDataB, usym, addRecord)
 
 	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
-		log.P().Infof("failed to reset mem sample count: %v", err)
+		log.P().Warnf("reset sample count: %v", err)
 	}
 
 	return nil
@@ -413,9 +411,6 @@ func emitDeltas(
 			continue
 		}
 
-		// StackMapSel picks the correct stack_map to resolve IDs against.
-		// For accumulative modes this equals current parity; retained frees
-		// may refer to the other map.
 		stackData := stackDataA
 		ustackCache := ustackCacheA
 		kstackCache := kstackCacheA
@@ -426,29 +421,10 @@ func emitDeltas(
 			kstackCache = kstackCacheB
 		}
 
-		if k.ids.KernelID > 0 {
-			if _, ok := kstackCache[k.ids.KernelID]; !ok {
-				if stackTrace, exists := stackData[k.ids.KernelID]; exists {
-					kstrs := symbol.KsymStackStrsReversed(stackTrace[:], len(stackTrace))
-					kstackCache[k.ids.KernelID] = strings.Join(kstrs, ";") + ";"
-				}
-			}
-		}
-
-		if k.ids.UserID > 0 {
-			if _, ok := ustackCache[k.ids.UserID]; !ok {
-				if stackTrace, exists := stackData[k.ids.UserID]; exists {
-					ustrs := usym.UsymStackStrs(k.proc.Pid, stackTrace[:], len(stackTrace))
-					ustackCache[k.ids.UserID] = strings.Join(ustrs, ";") + ";"
-				}
-			}
-		}
+		resolveStackStrs(k.ids, k.proc.Pid, stackData, usym, kstackCache, ustackCache)
 
 		rec := &stackEntry{
-			Proc: &processIDName{
-				Pid:  k.proc.Pid,
-				Name: k.proc.Name,
-			},
+			Proc:    &processIDName{Pid: k.proc.Pid, Name: k.proc.Name},
 			User:    ustackCache[k.ids.UserID],
 			Kernel:  kstackCache[k.ids.KernelID],
 			Samples: delta,
@@ -463,9 +439,10 @@ func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 	case modeVMAccu:
 		return v
 	case modePMAccu, modePMRetained:
-		// Pages → bytes, scaled up by inverse sampling probability.
 		return v * p.pageSize * 100 / int64(p.probability)
-	default:
-		return 0
 	}
+
+	log.P().Warnf("unknown mem mode %q, value treated as zero", p.internalMode)
+
+	return 0
 }

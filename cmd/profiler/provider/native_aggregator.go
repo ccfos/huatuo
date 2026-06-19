@@ -16,6 +16,7 @@ package provider
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -46,10 +47,10 @@ type stackEntry struct {
 
 // aggrKey is used as the map key for aggregation.
 type aggrKey struct {
-	_pid  uint32
-	_name string
-	_u    string
-	_k    string
+	pid  uint32
+	name string
+	user string
+	kern string
 }
 
 type processIDNameLock struct {
@@ -67,20 +68,22 @@ type lockStackEntry struct {
 }
 
 type lockAggrKey struct {
-	_u    string
-	_lock uint64
+	user string
+	lock uint64
 }
 
 type nativeAggregator struct {
 	mu sync.Mutex
 
-	formatter   output.Formatter
-	aggrMap     map[aggrKey]*stackEntry
-	lockAggrMap map[lockAggrKey]*lockStackEntry
+	formatter        output.Formatter
+	aggrMap          map[aggrKey]*stackEntry
+	lockAggrMap      map[lockAggrKey]*lockStackEntry
+	lockMode         string
+	isLockFoldedDone bool
 }
 
 func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, error) {
-	f, err := pctx.OutputFormat.NewFormatter()
+	f, err := aggregator.NewFormatterForOutput(pctx)
 	if err != nil {
 		return nil, err
 	}
@@ -89,6 +92,7 @@ func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, err
 		formatter:   f,
 		aggrMap:     make(map[aggrKey]*stackEntry),
 		lockAggrMap: make(map[lockAggrKey]*lockStackEntry),
+		lockMode:    pctx.ExtraFlags["mode"],
 	}, nil
 }
 
@@ -111,16 +115,20 @@ func (a *nativeAggregator) Aggregate(rec any) {
 			}
 		}
 
-		frames := []string{
-			fmt.Sprintf("process %d:%s", v.Proc.Pid, v.Proc.Name),
+		if a.formatter != nil {
+			frames := []string{
+				fmt.Sprintf("process %d:%s", v.Proc.Pid, v.Proc.Name),
+			}
+			frames = appendStackFrames(frames, v.User, v.Kernel)
+			if err := a.formatter.Add(&output.Sample{Frames: frames, Count: v.Samples}); err != nil {
+				log.P().Warnf("formatter add sample: %v", err)
+			}
 		}
-		frames = appendStackFrames(frames, v.User, v.Kernel)
-		_ = a.formatter.Add(&output.Sample{Frames: frames, Count: v.Samples})
 
 	case *lockStackEntry:
 		key := lockAggrKey{
-			_u:    v.User,
-			_lock: v.Proc.Lock,
+			user: v.User,
+			lock: v.Proc.Lock,
 		}
 
 		if existed, ok := a.lockAggrMap[key]; ok {
@@ -137,17 +145,13 @@ func (a *nativeAggregator) Aggregate(rec any) {
 		}
 
 	default:
-		log.Infof("invalid record type %T, expected *stackEntry or *lockStackEntry", rec)
+		log.P().Warnf("invalid record type %T, expected *stackEntry or *lockStackEntry", rec)
 	}
 }
 
 func (a *nativeAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	if pctx.Type == "lock" {
-		a.buildLockFolded(pctx)
-	}
 
 	if !pctx.OutputFormat.IsUpload() {
 		return nil, nil
@@ -164,43 +168,36 @@ func (a *nativeAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.formatter.Reset()
+	if a.formatter != nil {
+		a.formatter.Reset()
+	}
+
 	a.aggrMap = make(map[aggrKey]*stackEntry)
 	a.lockAggrMap = make(map[lockAggrKey]*lockStackEntry)
+	a.isLockFoldedDone = false
 }
 
 func (a *nativeAggregator) OutputFormatter() output.Formatter {
+	if a.formatter != nil && !a.isLockFoldedDone && len(a.lockAggrMap) > 0 {
+		a.buildLockFolded()
+		a.isLockFoldedDone = true
+	}
+
 	return a.formatter
 }
 
-// buildLockFolded populates the folded formatter with lock profile entries.
-// Lock stacks require mode-dependent frame construction, so they are
-// materialized at snapshot time rather than during Aggregate.
-func (a *nativeAggregator) buildLockFolded(pctx *pcontext.ProfilerContext) {
+func (a *nativeAggregator) buildLockFolded() {
 	if len(a.lockAggrMap) == 0 {
 		return
 	}
 
-	outputType := pctx.ExtraFlags["mode"]
-
 	for _, rec := range a.lockAggrMap {
-		frames := []string{
-			fmt.Sprintf("lock: %x", rec.Proc.Lock),
-			fmt.Sprintf("PID: %d, COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
-		}
-
-		val := rec.WaitTime
-
-		if outputType == "" {
-			frames = append(frames, fmt.Sprintf("contended count: %d", rec.Contended))
-		} else {
-			if outputType == "count" {
-				val = uint64(rec.Contended)
-			}
-		}
+		frames, val := lockPrefixFrames(rec, a.lockMode)
 
 		frames = appendStackFrames(frames, rec.User, rec.Kernel)
-		_ = a.formatter.Add(&output.Sample{Frames: frames, Count: int64(val)})
+		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: int64(val)}); err != nil {
+			log.P().Warnf("formatter add lock sample: %v", err)
+		}
 	}
 }
 
@@ -236,20 +233,7 @@ func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (
 	outputType := pctx.ExtraFlags["mode"]
 
 	for _, rec := range a.lockAggrMap {
-		prefixes := []string{
-			fmt.Sprintf("lock :%x", rec.Proc.Lock),
-			fmt.Sprintf("PID: %d: COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
-		}
-
-		val := rec.WaitTime
-
-		if outputType == "" {
-			prefixes = append(prefixes, fmt.Sprintf("contended count: %d", rec.Contended))
-		} else {
-			if outputType == "count" {
-				val = uint64(rec.Contended)
-			}
-		}
+		prefixes, val := lockPrefixFrames(rec, outputType)
 
 		item := buildTreeItem(prefixes, rec.User, rec.Kernel, val)
 		tree = append(tree, item)
@@ -275,6 +259,29 @@ func appendStackFrames(frames []string, userStack, kernelStack string) []string 
 	}
 
 	return frames
+}
+
+// parseCollapsedLine splits a "stack count" folded line into its parts.
+// Returns empty strings if the line is malformed.
+func parseCollapsedLine(line string) (stack string, count int64, ok bool) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", 0, false
+	}
+
+	idx := strings.LastIndex(line, " ")
+	if idx == -1 {
+		return "", 0, false
+	}
+
+	stack = line[:idx]
+	countStr := strings.TrimSpace(line[idx+1:])
+	count, err := strconv.ParseInt(countStr, 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+
+	return stack, count, true
 }
 
 func buildTreeItem(prefixes []string, userStack, kernelStack string, value uint64) *profiler.TreeItem {
@@ -308,31 +315,9 @@ func buildTreeItem(prefixes []string, userStack, kernelStack string, value uint6
 
 // buildPprofData constructs pprof (pyroscope-compatible) profile data.
 func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (*profiler.ProfileData, error) {
-	var (
-		opt        *profiler.ParseOption
-		sampleType string
-	)
-
-	switch pctx.Type {
-	case "cpu":
-		opt = &profiler.ParseOption{SampleRate: int64(pctx.Freq)}
-		sampleType = profiler.ProfileTypeCpuSample
-
-	case "mem":
-		opt = &profiler.ParseOption{SampleRate: profiler.NoSampleRate}
-		sampleType = profiler.ProfileTypeMemSample
-
-	case "lock":
-		opt = &profiler.ParseOption{SampleRate: profiler.NoSampleRate}
-
-		mode := pctx.ExtraFlags["mode"]
-		sampleType = profiler.ProfileTypeLockTimeSample
-		if mode == "count" {
-			sampleType = profiler.ProfileTypeLockCountSample
-		}
-
-	default:
-		return nil, fmt.Errorf("unsupported profile type: %s", pctx.Type)
+	opt, sampleType, err := profileTypeOptions(pctx)
+	if err != nil {
+		return nil, err
 	}
 
 	data, err := profiler.ParseTree(time.Now(), sampleType, tree, opt)
@@ -341,4 +326,40 @@ func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (
 	}
 
 	return data, nil
+}
+
+func lockPrefixFrames(rec *lockStackEntry, mode string) ([]string, uint64) {
+	frames := []string{
+		fmt.Sprintf("lock: %x", rec.Proc.Lock),
+		fmt.Sprintf("PID: %d, COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
+	}
+
+	val := rec.WaitTime
+
+	if mode == "" {
+		frames = append(frames, fmt.Sprintf("contended count: %d", rec.Contended))
+	}
+
+	if mode == "count" {
+		val = uint64(rec.Contended)
+	}
+
+	return frames, val
+}
+
+func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, error) {
+	switch pctx.Type {
+	case "cpu":
+		return &profiler.ParseOption{SampleRate: int64(pctx.Freq)}, profiler.ProfileTypeCpuSample, nil
+	case "mem":
+		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil
+	case "lock":
+		st := profiler.ProfileTypeLockTimeSample
+		if pctx.ExtraFlags["mode"] == "count" {
+			st = profiler.ProfileTypeLockCountSample
+		}
+		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, st, nil
+	default:
+		return nil, "", fmt.Errorf("unsupported profile type %q", pctx.Type)
+	}
 }
