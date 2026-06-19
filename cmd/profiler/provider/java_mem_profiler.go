@@ -38,9 +38,9 @@ func init() {
 	})
 }
 
-var memProfileOutFile map[int]string
-
-type javaMemoryProfiler struct{}
+type javaMemoryProfiler struct {
+	profileOutFile map[int]string
+}
 
 func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	return newJavaAggregator(pctx)
@@ -86,11 +86,11 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	cmdResults := sampleJavaMemoryProcesses(pctx.Ctx, pids, toolPath, event, extraArgs, loopInterval)
+	cmdResults := p.sampleProcesses(pctx.Ctx, pids, toolPath, event, extraArgs, loopInterval)
 	return javaruntime.CheckAsprofStarted(cmdResults)
 }
 
-func sampleJavaMemoryProcesses(ctx context.Context, pids []int, asprofPath, event string, extraArgs []string, loopInterval int) []executil.CmdResult {
+func (p *javaMemoryProfiler) sampleProcesses(ctx context.Context, pids []int, asprofPath, event string, extraArgs []string, loopInterval int) []executil.CmdResult {
 	asprofBin := filepath.Join(asprofPath, "asprof")
 
 	baseArgs := []string{
@@ -106,35 +106,14 @@ func sampleJavaMemoryProcesses(ctx context.Context, pids []int, asprofPath, even
 		baseArgs = append(baseArgs, extraArgs...)
 	}
 
-	return executil.ExecCmds(ctx, pids, asprofBin, func(pid int) []string {
-		args := append([]string{}, baseArgs...)
-
-		outFile := fmt.Sprintf("/tmp/asprof-mem-%d.collapsed", pid)
-		args = append(args, "-f", outFile, strconv.Itoa(pid))
-
-		if memProfileOutFile == nil {
-			memProfileOutFile = make(map[int]string)
-		}
-
-		memProfileOutFile[pid] = javaruntime.HostViewPath(pid, outFile)
-
-		return args
-	})
+	return executil.ExecCmds(ctx, pids, asprofBin, javaAsprofCallback(&p.profileOutFile, baseArgs, "mem"))
 }
 
 func (p *javaMemoryProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	pids, err := javaruntime.ResolveJavaPids(pctx.PID, 0, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID)
-	if err != nil {
-		return err
-	}
-
-	stopRes := javaruntime.StopAsprofProcesses(pids, pctx.ToolPath)
-
-	return javaruntime.CheckCmdResultsAllSuccess(stopRes, "stop")
+	return stopJavaProfiler(pctx)
 }
 
 func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, addRecord func(any)) error {
-	javaruntime.ReadCollapsedFilesLoop(ctx, memProfileOutFile, addRecord)
-
+	javaruntime.ReadCollapsedFilesLoop(ctx, p.profileOutFile, addRecord)
 	return nil
 }

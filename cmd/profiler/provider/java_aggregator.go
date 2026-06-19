@@ -17,7 +17,6 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,7 +39,7 @@ type javaAggregator struct {
 }
 
 func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) {
-	f, err := pctx.OutputFormat.NewFormatter()
+	f, err := aggregator.NewFormatterForOutput(pctx)
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +52,7 @@ func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) 
 func (a *javaAggregator) Aggregate(rec any) {
 	so, ok := rec.(profiler.SampleOutput)
 	if !ok {
-		log.Infof("invalid record type %T, expected profiler.SampleOutput", rec)
+		log.P().Warnf("invalid record type %T, expected profiler.SampleOutput", rec)
 
 		return
 	}
@@ -61,43 +60,30 @@ func (a *javaAggregator) Aggregate(rec any) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.sampleOutput = append(a.sampleOutput, profiler.SampleOutput{
-		PID:    so.PID,
-		Output: so.Output,
-	})
+	a.sampleOutput = append(a.sampleOutput, so)
+
+	if a.formatter == nil {
+		return
+	}
 
 	lines := strings.Split(so.Output, "\n")
 
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		idx := strings.LastIndex(line, " ")
-		if idx == -1 {
-			continue
-		}
-
-		stack := line[:idx]
-		countStr := strings.TrimSpace(line[idx+1:])
-		count, err := strconv.ParseInt(countStr, 10, 64)
-		if err != nil {
+		stack, count, ok := parseCollapsedLine(line)
+		if !ok {
 			continue
 		}
 
 		frames := []string{fmt.Sprintf("process %d", so.PID), stack}
-		_ = a.formatter.Add(&output.Sample{Frames: frames, Count: count})
+		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: count}); err != nil {
+			log.P().Warnf("formatter add sample: %v", err)
+		}
 	}
 }
 
 func (a *javaAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	if a.formatter.IsEmpty() {
-		return nil, nil
-	}
 
 	if !pctx.OutputFormat.IsUpload() {
 		return nil, nil
@@ -110,7 +96,10 @@ func (a *javaAggregator) Reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.formatter.Reset()
+	if a.formatter != nil {
+		a.formatter.Reset()
+	}
+
 	a.sampleOutput = nil
 }
 
@@ -150,19 +139,11 @@ func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, err
 }
 
 func javaParseOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, string, error) {
-	switch pctx.Type {
-	case "cpu":
-		return &profiler.ParseOption{SampleRate: int64(pctx.Freq)}, profiler.ProfileTypeCpuSample, "java-cpu", nil
-	case "mem":
-		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, "java-mem", nil
-	case "lock":
-		sampleType := profiler.ProfileTypeLockTimeSample
-		if pctx.ExtraFlags["mode"] == "count" {
-			sampleType = profiler.ProfileTypeLockCountSample
-		}
-
-		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, sampleType, "java-lock", nil
-	default:
-		return nil, "", "", fmt.Errorf("unsupported profile type: %s", pctx.Type)
+	opt, sampleType, err := profileTypeOptions(pctx)
+	if err != nil {
+		return nil, "", "", err
 	}
+
+	prName := "java-" + pctx.Type
+	return opt, sampleType, prName, nil
 }
