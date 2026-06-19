@@ -46,14 +46,14 @@ const (
 
 // Header is the memray stream header.
 type Header struct {
-	Pid           int32
-	NativeTraces  bool
-	TracePyAlloc  bool
-	FileFormat    uint8
-	CommandLine   string
-	MainTid       uint64
-	SkipFrames    uint64
-	PythonVersion int32
+	Pid                int32
+	HasNativeTraces    bool
+	ShouldTracePyAlloc bool
+	FileFormat         uint8
+	CommandLine        string
+	MainTid            uint64
+	SkipFrames         uint64
+	PythonVersion      int32
 }
 
 // reader holds decoding state.
@@ -78,6 +78,7 @@ type reader struct {
 
 	simpleAllocs map[uint64]liveAlloc
 	rangeAllocs  intervalTree
+	tmpBuf       [1]byte
 }
 
 type codeObject struct {
@@ -128,8 +129,7 @@ const (
 )
 
 const (
-	fileFormatAllAllocations        = 0
-	fileFormatAggregatedAllocations = 1
+	fileFormatAllAllocations = 0
 )
 
 func (rd *reader) readHeader() error {
@@ -200,20 +200,20 @@ func (rd *reader) readHeader() error {
 	}
 
 	rd.header = Header{
-		Pid:           pid,
-		NativeTraces:  native != 0,
-		TracePyAlloc:  tracePy != 0,
-		FileFormat:    fileFmt,
-		CommandLine:   cmd,
-		MainTid:       mainTid,
-		SkipFrames:    skipped,
-		PythonVersion: pyver,
+		Pid:                pid,
+		HasNativeTraces:    native != 0,
+		ShouldTracePyAlloc: tracePy != 0,
+		FileFormat:         fileFmt,
+		CommandLine:        cmd,
+		MainTid:            mainTid,
+		SkipFrames:         skipped,
+		PythonVersion:      pyver,
 	}
 	rd.threadStacks = make(map[uint64][]uint64)
 	rd.codeObjects = make(map[uint64]codeObject)
 	rd.simpleAllocs = make(map[uint64]liveAlloc)
 	rd.nativeFrames = make([]nativeFrame, 0, 1024)
-	if rd.header.NativeTraces {
+	if rd.header.HasNativeTraces {
 		rd.nativeSymbolize = newNativeSymbolizer(rd.header.Pid)
 	}
 	return nil
@@ -376,7 +376,7 @@ func (rd *reader) skipObjectRecord(flags uint8) error {
 		copy(rd.recentPtrs[1:], rd.recentPtrs[:len(rd.recentPtrs)-1])
 		rd.recentPtrs[0] = rd.lastDataPtr << 3
 	}
-	if rd.header.NativeTraces && (flags&1) == 1 {
+	if rd.header.HasNativeTraces && (flags&1) == 1 {
 		if _, err := rd.readSignedVarint(); err != nil {
 			return err
 		}
@@ -401,7 +401,7 @@ func (rd *reader) extractTypeAndFlags(b byte) (recordType, flags uint8) {
 
 func (rd *reader) readCString() (string, error) {
 	var buf []byte
-	tmp := make([]byte, 1)
+	tmp := rd.tmpBuf[:]
 	for {
 		if _, err := io.ReadFull(rd.r, tmp); err != nil {
 			return "", err
@@ -427,7 +427,7 @@ func (rd *reader) readUintptr() (uint64, error) {
 func (rd *reader) readVarint() (uint64, error) {
 	var res uint64
 	var shift uint
-	tmp := make([]byte, 1)
+	tmp := rd.tmpBuf[:]
 	for {
 		if _, err := io.ReadFull(rd.r, tmp); err != nil {
 			return 0, err

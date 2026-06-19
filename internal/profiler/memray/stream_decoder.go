@@ -34,12 +34,12 @@ type deltaValue struct {
 type StreamDecoder struct {
 	rd *reader
 
-	mu           sync.Mutex
-	stateMu      sync.Mutex
-	deltaAgg     map[locationKey]deltaValue
-	skippedRa    uint64
-	skippedRf    uint64
-	zeroPtrCache uint64
+	mu                  sync.Mutex
+	stateMu             sync.Mutex
+	deltaAgg            map[locationKey]deltaValue
+	skippedRangedAllocs uint64
+	skippedRangedFrees  uint64
+	zeroPtrCache        uint64
 }
 
 // NewStreamDecoder initializes a streaming decoder and reads the header.
@@ -61,7 +61,7 @@ func NewStreamDecoder(r io.Reader, opt Options) (*StreamDecoder, Header, error) 
 	if rd.header.FileFormat != fileFormatAllAllocations {
 		return nil, rd.header, fmt.Errorf("unsupported file_format %d", rd.header.FileFormat)
 	}
-	if opt.StackMode != StackModePython && !rd.header.NativeTraces {
+	if opt.StackMode != StackModePython && !rd.header.HasNativeTraces {
 		return nil, rd.header, fmt.Errorf("native/hybrid stacks requested but native_traces is false")
 	}
 
@@ -69,7 +69,7 @@ func NewStreamDecoder(r io.Reader, opt Options) (*StreamDecoder, Header, error) 
 	rd.codeObjects = make(map[uint64]codeObject)
 	rd.simpleAllocs = make(map[uint64]liveAlloc)
 	rd.nativeFrames = make([]nativeFrame, 0, 1024)
-	if rd.header.NativeTraces {
+	if rd.header.HasNativeTraces {
 		rd.nativeSymbolize = newNativeSymbolizer(rd.header.Pid)
 	}
 
@@ -175,7 +175,7 @@ func (d *StreamDecoder) handleAllocationDelta(flags uint8) error {
 		if addr == 0 {
 			d.zeroPtrCache++
 			if d.zeroPtrCache <= 3 {
-				log.P().Infof("[profiler] memray pointer cache hit to 0 (idx=%d); stream may be corrupt", ptrIdx)
+				log.P().Warnf("memray pointer cache hit to 0 (idx=%d); stream may be corrupt", ptrIdx)
 			}
 		}
 	}
@@ -192,7 +192,7 @@ func (d *StreamDecoder) handleAllocationDelta(flags uint8) error {
 	kind := allocatorKind(allocatorID)
 
 	var nativeFrame uint64
-	if d.rd.header.NativeTraces && kind != allocatorKindSimpleDealloc {
+	if d.rd.header.HasNativeTraces && kind != allocatorKindSimpleDealloc {
 		delta, err := d.rd.readSignedVarint()
 		if err != nil {
 			return err
@@ -258,7 +258,7 @@ func (d *StreamDecoder) addSimpleAlloc(addr, size, nativeFrame uint64) {
 func (d *StreamDecoder) addRangedAlloc(addr, size, nativeFrame uint64) {
 	if size == 0 {
 		d.mu.Lock()
-		d.skippedRa++
+		d.skippedRangedAllocs++
 		d.mu.Unlock()
 		return
 	}
@@ -290,7 +290,7 @@ func (d *StreamDecoder) removeSimpleAlloc(addr uint64) {
 func (d *StreamDecoder) removeRangedAlloc(addr, size uint64) {
 	if size == 0 {
 		d.mu.Lock()
-		d.skippedRf++
+		d.skippedRangedFrees++
 		d.mu.Unlock()
 		return
 	}
@@ -346,7 +346,7 @@ func (d *StreamDecoder) removeRangedAlloc(addr, size uint64) {
 
 	if !found {
 		d.mu.Lock()
-		d.skippedRf++
+		d.skippedRangedFrees++
 		d.mu.Unlock()
 	}
 }
@@ -415,7 +415,7 @@ func (d *StreamDecoder) FlushDelta(headerFrame string) []string {
 func (d *StreamDecoder) SkippedRanged() (allocs, frees uint64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.skippedRa, d.skippedRf
+	return d.skippedRangedAllocs, d.skippedRangedFrees
 }
 
 // BadParents returns the number of malformed parent references seen in the frame tree.
