@@ -28,10 +28,10 @@ import (
 func CopyDir(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
-		return fmt.Errorf("stat source dir %s: %w", src, err)
+		return fmt.Errorf("stat source dir %q: %w", src, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("source %s is not a directory", src)
+		return fmt.Errorf("source %q is not a directory", src)
 	}
 
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
@@ -86,7 +86,7 @@ func CopyFile(src, dst string) error {
 			return fmt.Errorf("chmod destination file: %w", err)
 		}
 	} else {
-		return fmt.Errorf("check srcfile stat error")
+		return fmt.Errorf("check srcfile stat error: %w", err)
 	}
 	return nil
 }
@@ -95,7 +95,7 @@ func CopyFile(src, dst string) error {
 func CheckDirSpace(dirPath string) error {
 	var stat unix.Statfs_t
 	if err := unix.Statfs(dirPath, &stat); err != nil {
-		return fmt.Errorf("statfs %s failed: %w", dirPath, err)
+		return fmt.Errorf("statfs %q failed: %w", dirPath, err)
 	}
 	available := stat.Bavail * uint64(stat.Bsize)
 	const minRequired = 16 * 1024 * 1024

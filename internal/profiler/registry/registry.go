@@ -86,7 +86,7 @@ func Get(langOrImpl, typ string) (ProfilerMeta, error) {
 		}
 	}
 
-	return ProfilerMeta{}, fmt.Errorf("no profiler for lang=%s type=%s", langOrImpl, typ)
+	return ProfilerMeta{}, fmt.Errorf("no profiler for lang=%q type=%q", langOrImpl, typ)
 }
 
 // Profile blocks until cleanup completes so resources are guaranteed released.

@@ -55,7 +55,7 @@ import (
 func ParseTree(startTime time.Time, profileType string, data []*TreeItem, opt *ParseOption) (*ProfileData, error) {
 	profileTypes := strings.Split(profileType, ":")
 	if len(profileTypes) != 5 {
-		return nil, fmt.Errorf("invalid profile type: %s", profileType)
+		return nil, fmt.Errorf("invalid profile type: %q", profileType)
 	}
 
 	tree := ptree.New()

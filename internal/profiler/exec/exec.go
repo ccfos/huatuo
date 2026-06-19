@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+
+	"huatuo-bamai/internal/log"
 )
 
 type CmdResult struct {
@@ -79,7 +81,9 @@ func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdRe
 	case <-ctx.Done():
 		// If context is canceled or times out, terminate the process group
 		// Sending SIGTERM to -pgid kills the whole group.
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
+			log.P().Warnf("kill process group %d: %v", cmd.Process.Pid, err)
+		}
 
 		// Send SIGTERM may leave some subprocesses or JVM agents running, run `asprof stop` to ensure cleanup if Lang=Java.
 		if filepath.Base(binPath) == "asprof" {
@@ -150,7 +154,9 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 			select {
 			case <-ctx.Done():
 				// If context is canceled, terminate the process group, sending SIGTERM to -pgid kills the whole group.
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+				if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
+					log.P().Warnf("kill process group %d: %v", cmd.Process.Pid, err)
+				}
 
 				// Send SIGTERM may leave some subprocesses or JVM agents running, run `asprof stop` to ensure cleanup if Lang=Java.
 				if filepath.Base(binPath) == "asprof" {
@@ -184,7 +190,7 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 	wg.Wait()
 	close(resCh)
 
-	var cmdRes []CmdResult
+	cmdRes := make([]CmdResult, 0, len(pids))
 	for r := range resCh {
 		cmdRes = append(cmdRes, r)
 	}

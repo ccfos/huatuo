@@ -30,7 +30,7 @@ func CheckExecPath(pid int, expectedPath string) error {
 		return fmt.Errorf("readlink %s failed: %w", linkPath, err)
 	}
 	if actualPath != expectedPath {
-		return fmt.Errorf("exec path mismatch: actual=%s, expected=%s", actualPath, expectedPath)
+		return fmt.Errorf("exec path mismatch: actual=%q, expected=%q", actualPath, expectedPath)
 	}
 	return nil
 }

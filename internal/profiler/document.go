@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler/timeutil"
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -33,12 +34,12 @@ const profilingMetadataCollection = "profiling_metadata"
 const profilingMetadataTracerRunManual = "manual"
 
 // ProfilingDocumentMapper maps profiling metadata documents to storage records.
-type ProfilingDocumentMapper struct{}
-
-var profilingMetadataContainerLookupFunc = fetchProfilingMetadataContainer
+type ProfilingDocumentMapper struct {
+	containerLookupFunc func(serverAddress, containerID string) (*profilingMetadataContainer, error)
+}
 
 // CreateProfilingDocument builds a profiling metadata document.
-func CreateProfilingDocument(metadata map[string]string, containerID, serverAddress string) *tracing.Document {
+func (m ProfilingDocumentMapper) CreateProfilingDocument(metadata map[string]string, containerID, serverAddress string) *tracing.Document {
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "huatuo"
@@ -66,13 +67,17 @@ func CreateProfilingDocument(metadata map[string]string, containerID, serverAddr
 	}
 
 	if containerID != "" {
-		container, err := profilingMetadataContainerLookupFunc(serverAddress, containerID)
+		lookupFn := m.containerLookupFunc
+		if lookupFn == nil {
+			lookupFn = fetchProfilingMetadataContainer
+		}
+		container, err := lookupFn(serverAddress, containerID)
 		if err != nil {
-			log.Infof("get container by %s: %v", containerID, err)
+			log.P().Warnf("get container by %s: %v", containerID, err)
 			return nil
 		}
 		if container == nil {
-			log.Infof("the container %s is not found", containerID)
+			log.P().Warnf("the container %s is not found", containerID)
 			return nil
 		}
 
@@ -151,17 +156,10 @@ func (ProfilingDocumentMapper) Indexes() []driver.Index {
 	}
 }
 
+const profilingMetadataTimeLayout = "2006-01-02 15:04:05.000 -0700"
+
 func profilingMetadataTimeValue(raw string, fallback time.Time) time.Time {
-	if raw == "" {
-		return fallback.UTC()
-	}
-
-	parsed, err := time.Parse("2006-01-02 15:04:05.000 -0700", raw)
-	if err == nil {
-		return parsed.UTC()
-	}
-
-	return fallback.UTC()
+	return timeutil.ParseWithFallback(raw, profilingMetadataTimeLayout, fallback)
 }
 
 func extractProfilingMetadataProfileType(tracerData any) string {
@@ -242,7 +240,7 @@ func fetchProfilingMetadataContainer(serverAddress, containerID string) (*profil
 	}
 
 	if len(payload.Data) == 0 {
-		return nil, fmt.Errorf("container not found: %s", containerID)
+		return nil, fmt.Errorf("container not found: %q", containerID)
 	}
 
 	container := payload.Data[0]
@@ -282,7 +280,7 @@ func applyProfilingMetadataMockContainer(document *tracing.Document, raw string)
 
 	var mock profilingMetadataMockContainer
 	if err := json.Unmarshal([]byte(raw), &mock); err != nil {
-		log.Infof("invalid mock-container metadata: %v", err)
+		log.P().Warnf("invalid mock-container metadata: %v", err)
 		return
 	}
 
