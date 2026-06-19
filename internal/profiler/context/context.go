@@ -27,6 +27,7 @@ import (
 	_ "huatuo-bamai/internal/profiler/output/flamegraph"
 	_ "huatuo-bamai/internal/profiler/output/raw"
 	psignal "huatuo-bamai/internal/profiler/signal"
+	"huatuo-bamai/internal/profiler/strutil"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/pkg/tracing"
@@ -44,7 +45,7 @@ type ProfilerContext struct {
 	Duration     int
 	ToolLimit    int
 	AggrInterval int
-	OneShotAgg   bool
+	IsOneShotAgg bool
 
 	ServerAddress string
 	OutputFormat  output.OutputFormat
@@ -76,7 +77,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	sigCh, err := psignal.SetupSignals()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("setupSignals failed: %w", err)
+		return nil, fmt.Errorf("failed to setup signals: %w", err)
 	}
 
 	go func() {
@@ -110,35 +111,11 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		return nil, err
 	}
 
-	// esAddress, esUsername, esPassword, esIndex for init ES client
-	esAddress := cliCtx.String("es-address")
-	esUsername := cliCtx.String("es-username")
-	esPassword := cliCtx.String("es-password")
-	esIndex := cliCtx.String("es-index")
-
 	outputFormat := output.OutputFormat(cliCtx.String("output-format"))
 
-	var dataSaver *storage.Store[*tracing.Document]
-
-	switch outputFormat {
-	case output.FormatES, output.FormatPprof:
-		var err error
-		esStorage, err := storage.NewFromConfig[*tracing.Document](
-			context.Background(),
-			&driver.Config{
-				Driver:      "elasticsearch",
-				ESAddresses: splitStorageAddresses(esAddress),
-				ESUsername:  esUsername,
-				ESPassword:  esPassword,
-				ESIndex:     esIndex,
-			},
-
-			profiler.ProfilingDocumentMapper{},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("storage.New(profiling metadata): %w", err)
-		}
-		dataSaver = esStorage
+	dataSaver, err := initESStorage(cliCtx, outputFormat)
+	if err != nil {
+		return nil, err
 	}
 
 	return &ProfilerContext{
@@ -184,108 +161,108 @@ func MapToStructByJSON[T any](m map[string]int64) (T, error) {
 }
 
 func splitStorageAddresses(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-
-	parts := make([]string, 0)
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		parts = append(parts, part)
-	}
-	return parts
+	return strutil.SplitCommaList(raw)
 }
 
-// parse Extra Flags to flags map
+type flagSegment struct {
+	key   string
+	value string
+	raw   string
+}
+
+func parseFlagSegments(flagList []string) ([]flagSegment, error) {
+	var segments []flagSegment
+
+	for _, raw := range flagList {
+		for _, segment := range strings.Split(raw, ",") {
+			segment = strings.TrimSpace(segment)
+			if segment == "" {
+				continue
+			}
+
+			clean := strings.TrimLeft(segment, "-")
+
+			if strings.Contains(clean, "=") {
+				parts := strings.SplitN(clean, "=", 2)
+				key := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				if key != "" {
+					segments = append(segments, flagSegment{key: key, value: value, raw: segment})
+				}
+
+				continue
+			}
+
+			parts := strings.Fields(clean)
+			if len(parts) == 2 {
+				key := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				if key != "" {
+					segments = append(segments, flagSegment{key: key, value: value, raw: segment})
+				}
+
+				continue
+			}
+
+			return nil, fmt.Errorf("invalid extra flag format: %q (expected --key=value or --key value)", segment)
+		}
+	}
+
+	return segments, nil
+}
+
 func parseExtraFlagsString(flagList []string) (map[string]string, error) {
-	flags := make(map[string]string)
-
-	for _, raw := range flagList {
-		for _, segment := range strings.Split(raw, ",") {
-			segment = strings.TrimSpace(segment)
-			if segment == "" {
-				continue
-			}
-
-			// Remove leading dashes (- or --)
-			clean := strings.TrimLeft(segment, "-")
-
-			// Case 1: key=value format (e.g. --core-id=10)
-			if strings.Contains(clean, "=") {
-				parts := strings.SplitN(clean, "=", 2)
-				key := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
-				if key != "" {
-					flags[key] = value
-				}
-				continue
-			}
-
-			// Case 2: key value format (e.g. --core-id 10)
-			parts := strings.Fields(clean)
-			if len(parts) == 2 {
-				key := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
-				if key != "" {
-					flags[key] = value
-				}
-				continue
-			}
-
-			// Invalid format fallback
-			return nil, fmt.Errorf("invalid extra flag format: %q (expected --key=value or --key value)", segment)
-		}
+	segments, err := parseFlagSegments(flagList)
+	if err != nil {
+		return nil, err
 	}
+
+	flags := make(map[string]string, len(segments))
+	for _, s := range segments {
+		flags[s.key] = s.value
+	}
+
 	return flags, nil
 }
 
-// parse Extra Flags to flags map
 func parseExtraFlagsInt64(flagList []string) (map[string]int64, error) {
-	flags := make(map[string]int64)
-
-	for _, raw := range flagList {
-		for _, segment := range strings.Split(raw, ",") {
-			segment = strings.TrimSpace(segment)
-			if segment == "" {
-				continue
-			}
-
-			// Remove leading dashes (- or --)
-			clean := strings.TrimLeft(segment, "-")
-
-			// Case 1: key=value format (e.g. --core-id=10)
-			if strings.Contains(clean, "=") {
-				parts := strings.SplitN(clean, "=", 2)
-				key := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
-
-				if key != "" {
-					iValue, err := strconv.Atoi(value)
-					if err == nil {
-						flags[key] = int64(iValue)
-					}
-				}
-				continue
-			}
-
-			// Case 2: key value format (e.g. --core-id 10)
-			parts := strings.Fields(clean)
-			if len(parts) == 2 {
-				key := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
-				iValue, err := strconv.Atoi(value)
-				if err == nil {
-					flags[key] = int64(iValue)
-				}
-				continue
-			}
-
-			// Invalid format fallback
-			return nil, fmt.Errorf("invalid extra flag format: %q (expected --key=value or --key value)", segment)
-		}
+	segments, err := parseFlagSegments(flagList)
+	if err != nil {
+		return nil, err
 	}
+
+	flags := make(map[string]int64, len(segments))
+	for _, s := range segments {
+		iValue, err := strconv.Atoi(s.value)
+		if err != nil {
+			return nil, fmt.Errorf("invalid int64 flag value for %q: %w", s.key, err)
+		}
+
+		flags[s.key] = int64(iValue)
+	}
+
 	return flags, nil
+}
+
+func initESStorage(cliCtx *cli.Context, format output.OutputFormat) (*storage.Store[*tracing.Document], error) {
+	if format != output.FormatES {
+		return nil, nil
+	}
+
+	store, err := storage.NewFromConfig[*tracing.Document](
+		context.Background(),
+		&driver.Config{
+			Driver:      "elasticsearch",
+			ESAddresses: splitStorageAddresses(cliCtx.String("es-address")),
+			ESUsername:  cliCtx.String("es-username"),
+			ESPassword:  cliCtx.String("es-password"),
+			ESIndex:     cliCtx.String("es-index"),
+		},
+		profiler.ProfilingDocumentMapper{},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("storage.New(profiling metadata): %w", err)
+	}
+
+	return store, nil
 }
