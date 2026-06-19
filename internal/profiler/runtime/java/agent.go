@@ -65,7 +65,12 @@ func HostViewPath(pid int, pathInTarget string) string {
 	return pathInTarget
 }
 
-func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRecord func(any)) {
+// ReadCollapsedFilesLoop polls collapsed output files until ctx is canceled.
+// Transient per-iteration I/O errors (seek/read/truncate) are expected — the
+// profiler may not have written yet — so they are logged as warnings and
+// retried on the next tick rather than terminating the loop. Only an initial
+// failure to open every file is treated as a fatal error.
+func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRecord func(any)) error {
 	files := make(map[int]*os.File) // pid -> file
 
 	for pid, path := range pidToPath {
@@ -75,6 +80,10 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRe
 			continue
 		}
 		files[pid] = f
+	}
+
+	if len(files) == 0 {
+		return fmt.Errorf("no collapsed files opened for any pid")
 	}
 
 	defer func() {
@@ -88,7 +97,7 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, addRe
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		default:
 		}
 
