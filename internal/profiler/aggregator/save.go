@@ -60,7 +60,7 @@ func (p *Pipeline) saveProfilingDocument(ctx context.Context, data any) error {
 		MetaData:   autoMeta,
 	}
 
-	doc := profiler.CreateProfilingDocument(p.pctx.MetaData, p.pctx.ContainerID, p.pctx.ServerAddress)
+	doc := profiler.ProfilingDocumentMapper{}.CreateProfilingDocument(p.pctx.MetaData, p.pctx.ContainerID, p.pctx.ServerAddress)
 	if doc == nil {
 		return fmt.Errorf("failed to build profiler document")
 	}

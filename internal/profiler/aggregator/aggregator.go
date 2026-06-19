@@ -37,3 +37,13 @@ type Aggregator interface {
 	// OutputFormatter returns the formatter for file output (raw, flamegraph, svg).
 	OutputFormatter() output.Formatter
 }
+
+// NewFormatterForOutput creates a Formatter based on the context's output format.
+// Returns nil for upload formats — the aggregator should use Snapshot instead.
+func NewFormatterForOutput(pctx *pcontext.ProfilerContext) (output.Formatter, error) {
+	if pctx.OutputFormat.IsUpload() {
+		return nil, nil
+	}
+
+	return pctx.OutputFormat.NewFormatter()
+}

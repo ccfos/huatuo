@@ -72,7 +72,7 @@ func (p *Pipeline) Start() {
 func (p *Pipeline) runAggregationExport() {
 	defer p.wg.Done()
 
-	if p.pctx.OneShotAgg {
+	if p.pctx.IsOneShotAgg {
 		<-p.stopCh
 		p.aggregateAndExport(p.pctx.Ctx, true)
 
@@ -122,6 +122,7 @@ func (p *Pipeline) Stop() {
 func (p *Pipeline) Enqueue(data any) {
 	ok, err := p.queue.Offer(data)
 	if err != nil {
+		log.P().Warnf("queue offer failed: %v", err)
 		return
 	}
 
@@ -130,14 +131,8 @@ func (p *Pipeline) Enqueue(data any) {
 	}
 }
 
-func (p *Pipeline) isUploadEnabled() bool {
-	return p.pctx.OutputFormat.IsUpload()
-}
-
-// aggregateAndExport runs one aggregation cycle. final indicates this is the
-// stop-time aggregation, which always writes output even if no new data.
 func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
-	if p.isUploadEnabled() {
+	if p.pctx.OutputFormat.IsUpload() {
 		data, err := p.aggr.Snapshot(p.pctx)
 		if err != nil {
 			log.P().Errorf("aggregate error: %v", err)
@@ -162,7 +157,7 @@ func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
 	formatter := p.aggr.OutputFormatter()
 
 	if final {
-		if formatter.IsEmpty() {
+		if formatter == nil || formatter.IsEmpty() {
 			log.P().Warnf("no profiling samples collected; nothing written")
 
 			return
