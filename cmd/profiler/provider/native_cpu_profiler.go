@@ -45,7 +45,7 @@ func init() {
 	})
 }
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/cpu_native_profiler2.c -o $BPF_DIR/cpu_native_profiler2.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_cpu_profiler.c -o $BPF_DIR/native_cpu_profiler.o
 
 // drainTick paces ring-buffer reads. The BPF program writes events to ring A
 // or B chosen by transferCnt parity; userspace flips parity each tick, then
@@ -91,7 +91,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		cssAddr = c.CgroupCss["cpu"]
 	}
 
-	b, err := bpf.LoadBpf("cpu_native_profiler2.o", map[string]any{
+	b, err := bpf.LoadBpf("native_cpu_profiler.o", map[string]any{
 		"target_css": cssAddr,
 		"target_pid": uint64(pctx.PID),
 	})
