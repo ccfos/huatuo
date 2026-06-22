@@ -76,7 +76,9 @@ var (
 	cgroupCssMetaDataMap      sync.Map
 
 	// avoid GC
-	_cgroupCssBpfInternal *bpf.BPF
+	_cgroupCssBpfInternal   *bpf.BPF
+	_cgroupCssBpfCancelFunc context.CancelFunc
+	_cgroupCssBpfReader     bpf.PerfEventReader
 )
 
 type containerCssMetaData struct {
@@ -195,11 +197,20 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader) 
 func cgroupRootNotify(realRoot, name string) error {
 	if err := filepath.WalkDir(realRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			if path != realRoot {
+				return nil // ignore error for container destory, but not for root path
+			}
 			return err
 		}
 		// for containerd, the length of cgroup name is 85
 		// for docker, it is 64
 		if !d.IsDir() || len(d.Name()) < kubeletContainerIDKnodeNameMinlen {
+			return nil
+		}
+
+		// Match container ID format only; skip pod-level .slice dirs
+		// whose names can also be ≥64 chars (e.g. kubepods-burstable-podXXX.slice).
+		if !kubeletContainerIDRegexp.MatchString(d.Name()) {
 			return nil
 		}
 
@@ -274,11 +285,15 @@ func cgroupCssInitEventSync() error {
 	}
 	_cgroupCssBpfInternal = &cssBpf
 
-	childCtx := context.Background()
+	childCtx, cancel := context.WithCancel(context.Background())
+	_cgroupCssBpfCancelFunc = cancel
+
 	reader, err := cssBpf.AttachAndEventPipe(childCtx, "cgroup_perf_events", 8192)
 	if err != nil {
+		cancel()
 		return err
 	}
+	_cgroupCssBpfReader = reader
 
 	cgroupCssEventSyncHandler(childCtx, reader)
 	return nil
@@ -344,4 +359,19 @@ func extractContainerID(fileName string) string {
 		return got[1]
 	}
 	return ""
+}
+
+func cgroupCssRelease() {
+	if _cgroupCssBpfCancelFunc != nil {
+		_cgroupCssBpfCancelFunc()
+		_cgroupCssBpfCancelFunc = nil
+	}
+	if _cgroupCssBpfReader != nil {
+		_cgroupCssBpfReader.Close()
+		_cgroupCssBpfReader = nil
+	}
+	if _cgroupCssBpfInternal != nil {
+		(*_cgroupCssBpfInternal).Close()
+		_cgroupCssBpfInternal = nil
+	}
 }
