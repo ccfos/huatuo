@@ -181,7 +181,7 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			metrics, metric.NewContainerGaugeData(container, "wait_rate", containerDataCache.waitrateHierarchy, "wait rate for the containers", nil),
 			metric.NewContainerGaugeData(container, "inner_wait_rate", containerDataCache.waitrateInner, "inner wait rate for the containers", nil),
 			metric.NewContainerGaugeData(container, "exter_wait_rate", containerDataCache.waitrateExter, "exter wait rate for the containers", nil),
-			metric.NewContainerGaugeData(container, "wait_sum_exter_wait_rate", containerDataCache.waitrateWaitSum, "exter wait rate from wait_sum and cpu usage (requires kernel.sched_schedstats=1)", nil),
+			metric.NewContainerGaugeData(container, "wait_sum_exter_wait_rate", containerDataCache.waitrateWaitSum, "exter wait rate base on wait_sum (requires kernel.sched_schedstats=1)", nil),
 			metric.NewContainerGaugeData(container, "throttle_wait_rate", containerDataCache.waitrateThrottled, "throttle wait rate for the containers", nil),
 			metric.NewContainerGaugeData(container, "nr_throttled", float64(containerDataCache.nrThrottled), "throttle nr for the containers", nil),
 			metric.NewContainerGaugeData(container, "throttled_time", float64(containerDataCache.throttledTime), "throttle time for the containers", nil),
