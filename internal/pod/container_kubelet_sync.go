@@ -199,8 +199,8 @@ func ManagerInit(ctx *ManagerInitCtx) error {
 					log.Infof("kubelet is running now")
 					_ = kubeletConfigCacheUpdate(ctx)
 					_ = containerCgroupCssInit()
-					ManagerRelease()
-					break
+					t.Stop()
+					return
 				}
 			case <-doneCtx.Done():
 				return
@@ -221,6 +221,8 @@ func ManagerRelease() {
 		kubeletDoneCancel()
 		kubeletDoneCancel = nil
 	}
+
+	cgroupCssRelease()
 }
 
 func kubeletSyncContainers() error {
