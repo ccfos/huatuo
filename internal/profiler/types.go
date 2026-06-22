@@ -15,6 +15,8 @@
 package profiler
 
 import (
+	"time"
+
 	ptree "github.com/grafana/pyroscope/pkg/og/storage/tree"
 )
 
@@ -40,6 +42,16 @@ type ProfileData struct {
 	//	Currently, in go1.22.4, the profilev1.Profile is the same as ptree.Profile, so we
 	//	use ptree.Profile.
 	Profile ptree.Profile `json:"profile,omitempty"`
+}
+
+// ParseInput holds the input parameters for ParseCollapsedData and ParseRawData.
+type ParseInput struct {
+	StartTime    time.Time
+	ProfileType  string
+	ProfilerName string
+	Data         []byte
+	Opt          *ParseOption
+	PID          int
 }
 
 // ParseOption is the option for ParseTree.

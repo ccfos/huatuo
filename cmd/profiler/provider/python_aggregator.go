@@ -189,12 +189,14 @@ func (a *pythonAggregator) snapshotPprofOneShot(pctx *pcontext.ProfilerContext) 
 	opt := &profiler.ParseOption{SampleRate: a.sampleRate}
 	pprofData, err := profiler.ParseRawData(
 		pctx.Ctx,
-		time.Now(),
-		a.profileType,
-		a.profilerName,
-		pprofFolded,
-		opt,
-		pctx.PID,
+		&profiler.ParseInput{
+			StartTime:    time.Now(),
+			ProfileType:  a.profileType,
+			ProfilerName: a.profilerName,
+			Data:         pprofFolded,
+			Opt:          opt,
+			PID:          pctx.PID,
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse raw data: %w", err)
@@ -216,12 +218,14 @@ func (a *pythonAggregator) snapshotPprofStreaming(pctx *pcontext.ProfilerContext
 	opt := &profiler.ParseOption{SampleRate: a.sampleRate}
 	pprofData, err := profiler.ParseRawData(
 		pctx.Ctx,
-		time.Now(),
-		a.profileType,
-		a.profilerName,
-		pprofFolded,
-		opt,
-		pctx.PID,
+		&profiler.ParseInput{
+			StartTime:    time.Now(),
+			ProfileType:  a.profileType,
+			ProfilerName: a.profilerName,
+			Data:         pprofFolded,
+			Opt:          opt,
+			PID:          pctx.PID,
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse raw data: %w", err)

@@ -124,12 +124,14 @@ func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, err
 
 	pprofData, err := profiler.ParseCollapsedData(
 		pctx.Ctx,
-		time.Now(),
-		sampleType,
-		prName,
-		pprofFolded,
-		opt,
-		pctx.PID,
+		&profiler.ParseInput{
+			StartTime:    time.Now(),
+			ProfileType:  sampleType,
+			ProfilerName: prName,
+			Data:         pprofFolded,
+			Opt:          opt,
+			PID:          pctx.PID,
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse collapsed data: %w", err)

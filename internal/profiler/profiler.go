@@ -93,31 +93,26 @@ func ParseTree(startTime time.Time, profileType string, data []*TreeItem, opt *P
 // e.g., Java example:
 // HotCode.main;HotCode.hotmethod3;java/util/UUID.randomUUID;java/security/SecureRandom.nextBytes;
 // read;entry_SYSCALL_64_after_hwframe_[k];do_syscall_64_[k];ksys_read_[k];__check_object_size_[k] 1
-func ParseCollapsedData(ctx context.Context, startTime time.Time, profileType, profilerName string, b []byte, opt *ParseOption, pid int) (*ProfileData, error) {
+func ParseCollapsedData(ctx context.Context, input *ParseInput) (*ProfileData, error) {
 	var outputs []SampleOutput
-	if err := json.Unmarshal(b, &outputs); err == nil && len(outputs) > 0 {
+	if err := json.Unmarshal(input.Data, &outputs); err == nil && len(outputs) > 0 {
 		for _, out := range outputs {
 			if out.PID == 0 || out.Output == "" {
-				// not SampleOutput function, skip to parse
 				goto fallback
 			}
 		}
-		// call multi parse data
-		// return parseCommonDataMultiGeneric(ctx, startTime, profileType, outputs, opt, extractJavaMainClassFromPid)
-		return parseMultiProcessData(ctx, startTime, profileType, profilerName, outputs, opt,
+		return parseMultiProcessData(ctx, input.StartTime, input.ProfileType, input.ProfilerName, outputs, input.Opt,
 			func(pid int) ([]byte, error) {
 				threadName, err := extractJavaMainClassFromPid(pid)
 				if err != nil {
 					return nil, err
 				}
-				// Format: "process pid: threadName"
 				return []byte(fmt.Sprintf("process %d:%s", pid, threadName)), nil
 			})
 	}
 
 fallback:
-	// fallback to parse single process data
-	return parseCommonData(ctx, startTime, profileType, b, opt, pid, extractJavaMainClassFromPid)
+	return parseCommonData(ctx, input.StartTime, input.ProfileType, input.Data, input.Opt, input.PID, extractJavaMainClassFromPid)
 }
 
 // ParseRawData parses a raw profile (e.g. py-spy output) into *ProfileData.
@@ -125,19 +120,13 @@ fallback:
 // e.g., Python example:
 // process 3577332:"python /app/test.py"; __bootstrap (threading.py:784);__bootstrap_inner (threading.py:811);
 // run (threading.py:764);worker (more-complex-demo.py:22); level1 (more-complex-demo.py:18);level2 (more-complex-demo.py:15) 10
-func ParseRawData(ctx context.Context, startTime time.Time, profileType, profilerName string, b []byte, opt *ParseOption, pid int) (*ProfileData, error) {
+func ParseRawData(ctx context.Context, input *ParseInput) (*ProfileData, error) {
 	var outputs []SampleOutput
-	if err := json.Unmarshal(b, &outputs); err == nil && len(outputs) > 0 {
+	if err := json.Unmarshal(input.Data, &outputs); err == nil && len(outputs) > 0 {
 		for _, out := range outputs {
 			if out.PID == 0 || out.Output == "" {
-				// not SampleOutput function, skip to parse
 				goto fallback
 			}
-			// Clean up lines starting with "py-spy>" for logging only：
-			//
-			// like the following lines:
-			// py-spy> Sampling process 100 times a second for 10 seconds. Press Control-C to exit.
-			// py-spy> Wrote raw flamegraph data to '/dev/stdout'. Samples: 4995 Errors: 0
 			raw := []byte(out.Output)
 			if bytes.Contains(raw, []byte("py-spy>")) {
 				lines := bytes.Split(raw, []byte("\n"))
@@ -152,12 +141,11 @@ func ParseRawData(ctx context.Context, startTime time.Time, profileType, profile
 				out.Output = buf.String()
 			}
 		}
-		// call multi parse data
-		return parseMultiProcessData(ctx, startTime, profileType, profilerName, outputs, opt, nil)
+		return parseMultiProcessData(ctx, input.StartTime, input.ProfileType, input.ProfilerName, outputs, input.Opt, nil)
 	}
 
 fallback:
-	return parseCommonData(ctx, startTime, profileType, b, opt, pid, extractPythonThreadNameFromPid)
+	return parseCommonData(ctx, input.StartTime, input.ProfileType, input.Data, input.Opt, input.PID, extractPythonThreadNameFromPid)
 }
 
 // Profiling output for each PID.
