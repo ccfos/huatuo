@@ -58,13 +58,33 @@ struct mix {
 static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 {
 	u64 tstamp = BPF_CORE_READ(skb, tstamp);
+	u64 now = bpf_ktime_get_ns();
+
 	// although the skb->tstamp record is opened in user space by
 	// SOF_TIMESTAMPING_RX_SOFTWARE, it is still 0 in the following cases:
 	// unix recv, netlink recv, few virtual dev(e.g. tun dev, napi dsabled)
 	if (!tstamp)
 		return 0;
 
-	return bpf_ktime_get_ns() - tstamp;
+	// skb->tstamp may be in ktime (CLOCK_MONOTONIC) or wall time
+	// depending on kernel version and delivery_time semantics.
+	// Newer kernels expose tstamp_type; prior versions use
+	// mono_delivery_time; old kernels always use wall time.
+	if (bpf_core_field_exists(((struct sk_buff *)0)->tstamp_type)) {
+		// SKB_CLOCK_MONOTONIC = 1
+		if (BPF_CORE_READ_BITFIELD(skb, tstamp_type) == 1)
+			return now - tstamp;
+		return now + mono_wall_offset - tstamp;
+	}
+
+	if (bpf_core_field_exists(((struct sk_buff *)0)->mono_delivery_time)) {
+		if (BPF_CORE_READ_BITFIELD(skb, mono_delivery_time))
+			return now - tstamp;
+		return now + mono_wall_offset - tstamp;
+	}
+
+	// old kernels: skb->tstamp is always wall time
+	return now + mono_wall_offset - tstamp;
 }
 
 static inline u8 get_state(struct sk_buff *skb)

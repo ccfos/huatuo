@@ -11077,6 +11077,8 @@ struct sk_buff {
 	__u8 csum_level: 2;
 	__u8 csum_not_inet: 1;
 	__u8 dst_pending_confirm: 1;
+	__u8 mono_delivery_time: 1;
+	__u8 tstamp_type: 2;
 	__u8 ndisc_nodetype: 2;
 	__u8 ipvs_property: 1;
 	__u8 inner_protocol_type: 1;
@@ -42071,6 +42073,8 @@ struct sk_buff___2 {
 	__u8 csum_level: 2;
 	__u8 csum_not_inet: 1;
 	__u8 dst_pending_confirm: 1;
+	__u8 mono_delivery_time: 1;
+	__u8 tstamp_type: 2;
 	__u8 ndisc_nodetype: 2;
 	__u8 ipvs_property: 1;
 	__u8 inner_protocol_type: 1;
