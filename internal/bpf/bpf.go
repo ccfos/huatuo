@@ -26,11 +26,11 @@ type Option struct {
 //
 //	The bpf manager has the following APIs:
 //
-//	// InitBpfManager initializes the bpf manager.
-//	InitBpfManager() error
+//	// NewManager initializes the bpf manager.
+//	NewManager(dur int) error
 //
-//	// CloseBpfManager closes the bpf manager.
-//	CloseBpfManager()
+//	// Close closes the bpf manager.
+//	Close()
 //
 //	// LoadBpf the bpf and return the bpf.
 //	LoadBpf(objName string, consts map[string]any) (BPF, error)

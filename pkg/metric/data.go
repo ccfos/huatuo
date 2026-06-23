@@ -32,6 +32,14 @@ var (
 	defaultRegion   string
 )
 
+func DefaultHostname() string {
+	return defaultHostname
+}
+
+func DefaultRegion() string {
+	return defaultRegion
+}
+
 const (
 	// MetricTypeGauge indicates a gauge metric.
 	MetricTypeGauge = 0

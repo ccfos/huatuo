@@ -124,7 +124,9 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 
 	log.Debugf("net_rx_latency offset of mono to walltime: %v ns", monoWallOffset)
 
-	// Enable skb software RX timestamps before starting the tracer.
+	// for tracing 'net_rx_latency' keep the skb timestamp enabled,
+	// kernel func net_enable_timestamp() is system wide, can enable by set SOF_TIMESTAMPING_RX_SOFTWARE,
+	// ref: https://www.kernel.org/doc/html/latest/networking/timestamping.html.
 	tsfd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
 	if err != nil {
 		return fmt.Errorf("create timestamp socket: %w", err)
@@ -234,6 +236,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			}
 			log.Debugf("net_rx_latency tracerData: %+v", tracerData)
 
+			// save storage
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:  "net_rx_latency",
 				ContainerID: containerID,
@@ -251,7 +254,7 @@ func ignore(pid uint64, comm string, hostNetnsInode uint64) (containerID string,
 	dstInode, err := netutil.NetNSInodeByPid(int(pid))
 	if err != nil {
 		// ignore the missing program
-		if errors.Is(err, syscall.ENOENT) {
+		if errors.Is(err, syscall.ENOENT) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.ESRCH) {
 			return "", true, nil
 		}
 		return "", skip, fmt.Errorf("get netns inode of pid %v failed: %w", pid, err)

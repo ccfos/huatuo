@@ -122,15 +122,14 @@ dump_tool_logs_and_fail() {
 }
 
 # ------------------------------- huatuo-bamai --------------------------------
-HUATUO_BAMAI_PID=""
-
 huatuo_bamai_start() {
 	local args=("$@")
 	[[ -x "${HUATUO_BAMAI_BIN}" ]] || fatal "huatuo-bamai binary not found: ${HUATUO_BAMAI_BIN}"
 
 	log_info "starting huatuo-bamai: ${args[*]}"
 	${HUATUO_BAMAI_BIN} "${args[@]}" >${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log 2>&1 &
-	HUATUO_BAMAI_PID=$!
+	local huatuo_bamai_pid=$!
+	echo "$huatuo_bamai_pid" >"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
 
 	sleep 0.5s
 
@@ -139,18 +138,18 @@ huatuo_bamai_start() {
 }
 
 huatuo_bamai_ready() {
+	local pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2>/dev/null || echo "")
+	[[ -n "$pid" ]] || fatal "❌ huatuo-bamai PID file not found"
+
 	# pid check, maybe process already exited
-	kill -0 "${HUATUO_BAMAI_PID}" 2>/dev/null || fatal "❌ huatuo-bamai pid=${HUATUO_BAMAI_PID} not exist, maybe exited."
+	kill -0 "${pid}" 2>/dev/null || fatal "❌ huatuo-bamai pid=${pid} not exist, maybe exited."
 	# healthz
 	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" >/dev/null
 }
 
 huatuo_bamai_stop() {
-	if [[ -n "${HUATUO_BAMAI_PID}" ]]; then
-		log_info "stopping huatuo-bamai (pid=${HUATUO_BAMAI_PID})"
-		kill "${HUATUO_BAMAI_PID}" || true
-		wait "${HUATUO_BAMAI_PID}" || true
-	fi
+	pkill --echo huatuo-bamai || true
+	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
 }
 
 huatuo_bamai_metrics() {
@@ -178,7 +177,55 @@ huatuo_bamai_pod_count() {
 integration_test_huatuo_bamai_config() {
 	cat >"${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" <<'EOF'
 # the blacklist for tracing and metrics
-BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq"]
+BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
+EOF
+}
+
+integration_test_huatuo_bamai_include_filter_config() {
+	cat >"${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" <<'EOF'
+# the blacklist for tracing and metrics
+BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
+
+[MetricCollector.Vmstat]
+    IncludedOnHost = "thp_split_pmd|thp_split_pud"
+    ExcludedOnHost = ""
+    IncludedOnContainer = ""
+    ExcludedOnContainer = ""
+
+[MetricCollector.Netstat]
+    Included = "Tcp_RetransSegs|TcpExt_TCPLostRetransmit"
+    Excluded = ""
+
+[MetricCollector.NetdevStats]
+    DeviceExcluded = ""
+    DeviceIncluded = "eth0"
+
+[MetricCollector.MountPointStat]
+    MountPointsIncluded = "/boot"
+EOF
+}
+
+integration_test_huatuo_bamai_exclude_filter_config() {
+	cat >"${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" <<'EOF'
+# the blacklist for tracing and metrics
+BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
+
+[MetricCollector.Vmstat]
+    IncludedOnHost = ""
+    ExcludedOnHost = "thp_zero_page_alloc|thp_swpout"
+    IncludedOnContainer = ""
+    ExcludedOnContainer = ""
+
+[MetricCollector.Netstat]
+    Included = ""
+    Excluded = "Tcp_ActiveOpens|TcpExt_TCPAutoCorking"
+
+[MetricCollector.NetdevStats]
+    DeviceExcluded = "^(docker\\w*)$"
+    DeviceIncluded = ""
+
+[MetricCollector.MountPointStat]
+    MountPointsIncluded = ""
 EOF
 }
 

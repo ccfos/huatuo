@@ -20,7 +20,7 @@ import (
 )
 
 func TestPath(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
 		name     string
 		segments []string
 		want     string
@@ -53,7 +53,7 @@ func TestPath(t *testing.T) {
 		},
 	}
 
-	for _, tc := range cases {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Path(tc.segments...); got != tc.want {
 				t.Errorf("Path(%v): got %q, want %q", tc.segments, got, tc.want)
