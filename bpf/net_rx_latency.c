@@ -64,7 +64,7 @@ static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 	if (!tstamp)
 		return 0;
 
-	return bpf_ktime_get_ns() + mono_wall_offset - tstamp;
+	return bpf_ktime_get_ns() - tstamp;
 }
 
 static inline u8 get_state(struct sk_buff *skb)
