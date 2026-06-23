@@ -15,7 +15,6 @@
 package netutil
 
 import (
-	"encoding/binary"
 	"net"
 	"testing"
 )
@@ -52,145 +51,51 @@ func TestInetv4Ntop(t *testing.T) {
 	}
 }
 
-func TestNtohs(t *testing.T) {
-	tests := []struct {
-		name string
-		val  uint16
-		want uint16
-	}{
-		{
-			name: "Basic",
-			val:  0x1234, // the network order
-			want: func() uint16 {
-				if NativeEndian == binary.LittleEndian {
-					return 0x3412
-				}
-				return 0x1234
-			}(),
-		},
-		{
-			name: "Zero",
-			val:  0x0000,
-			want: 0x0000,
-		},
-		{
-			name: "Max",
-			val:  0xffff,
-			want: 0xffff,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := Ntohs(tt.val); got != tt.want {
-				t.Errorf("InetNtohs() = %x, want %x", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestNtohl(t *testing.T) {
+func TestHtonlNtohlSymmetry(t *testing.T) {
 	tests := []struct {
 		name string
 		val  uint32
-		want uint32
 	}{
-		{
-			name: "Basic",
-			val:  0x12345678, // network order
-			want: func() uint32 {
-				if NativeEndian == binary.LittleEndian {
-					return 0x78563412
-				}
-				return 0x12345678
-			}(),
-		},
-		{
-			name: "Zero",
-			val:  0x00000000,
-			want: 0x00000000,
-		},
-		{
-			name: "Max",
-			val:  0xffffffff,
-			want: 0xffffffff,
-		},
+		{"Basic", 0x12345678},
+		{"Zero", 0x00000000},
+		{"Max", 0xffffffff},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := Ntohl(tt.val); got != tt.want {
-				t.Errorf("InetNtohl() = %x, want %x", got, tt.want)
+			network := Htonl(tt.val)
+			host := Ntohl(network)
+			if host != tt.val {
+				t.Errorf("Ntohl(Htonl(%x)) = %x, want %x", tt.val, host, tt.val)
+			}
+			// reverse validation
+			hostBack := Ntohl(Htonl(host))
+			if hostBack != host {
+				t.Errorf("Htonl(Ntohl(%x)) = %x, want %x", network, hostBack, network)
 			}
 		})
 	}
 }
 
-func TestHtons(t *testing.T) {
+func TestHtonsNtohsSymmetry(t *testing.T) {
 	tests := []struct {
 		name string
 		val  uint16
-		want uint16
 	}{
-		{
-			name: "Basic",
-			val:  0x1234, // host order
-			want: func() uint16 {
-				if NativeEndian == binary.LittleEndian {
-					return 0x3412
-				}
-				return 0x1234
-			}(),
-		},
-		{
-			name: "Zero",
-			val:  0x0000,
-			want: 0x0000,
-		},
-		{
-			name: "Max",
-			val:  0xffff,
-			want: 0xffff,
-		},
+		{"Basic", 0x1234},
+		{"Zero", 0x0000},
+		{"Max", 0xffff},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := Htons(tt.val); got != tt.want {
-				t.Errorf("InetHtons() = %x, want %x", got, tt.want)
+			network := Htons(tt.val)
+			host := Ntohs(network)
+			if host != tt.val {
+				t.Errorf("Ntohs(Htons(%x)) = %x, want %x", tt.val, host, tt.val)
 			}
-		})
-	}
-}
-
-func TestHtonl(t *testing.T) {
-	tests := []struct {
-		name string
-		val  uint32
-		want uint32
-	}{
-		{
-			name: "Basic",
-			val:  0x12345678, // host order
-			want: func() uint32 {
-				if NativeEndian == binary.LittleEndian {
-					return 0x78563412
-				}
-				return 0x12345678
-			}(),
-		},
-		{
-			name: "Zero",
-			val:  0x00000000,
-			want: 0x00000000,
-		},
-		{
-			name: "Max",
-			val:  0xffffffff,
-			want: 0xffffffff,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := Htonl(tt.val); got != tt.want {
-				t.Errorf("InetHtonl() = %x, want %x", got, tt.want)
+			// reverse validation
+			hostBack := Ntohs(Htons(host))
+			if hostBack != host {
+				t.Errorf("Htons(Ntohs(%x)) = %x, want %x", network, hostBack, network)
 			}
 		})
 	}

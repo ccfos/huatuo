@@ -70,6 +70,7 @@ func Save(req *WriteRequest) error {
 	if req.TracerRunType == "" {
 		req.TracerRunType = TracerRunTypeEvent
 	}
+
 	return tracingDataWriter.saveRaw(req)
 }
 

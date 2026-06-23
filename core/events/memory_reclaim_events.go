@@ -26,14 +26,15 @@ import (
 	"huatuo-bamai/pkg/tracing"
 )
 
-type memoryReclaimTracing struct{}
-
-type memoryReclaimPerfEvent struct {
-	Comm      [bpf.TaskCommLen]byte
-	Deltatime uint64
-	CSS       uint64
-	Pid       uint64
-}
+type (
+	memoryReclaimTracing   struct{}
+	memoryReclaimPerfEvent struct {
+		Comm      [bpf.TaskCommLen]byte
+		Deltatime uint64
+		CSS       uint64
+		Pid       uint64
+	}
+)
 
 // MemoryReclaimTracingData is the full data structure.
 type MemoryReclaimTracingData struct {
@@ -56,9 +57,9 @@ func newMemoryReclaim() (*tracing.EventTracingAttr, error) {
 
 const cssCacheTTL = 5 * time.Second
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim_events.c -o $BPF_DIR/memory_reclaim_events.o
-
 // Start detect work, load bpf and wait data form perfevent
+//
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim_events.c -o $BPF_DIR/memory_reclaim_events.o
 func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), map[string]any{
 		"deltath": cfg.MemoryReclaim.BlockedThreshold,

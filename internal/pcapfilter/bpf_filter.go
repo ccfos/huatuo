@@ -109,9 +109,9 @@ func buildFilterInsts(expr, suffix string, l3 bool) (asm.Instructions, error) {
 		PacketStart: asm.R4,
 		PacketEnd:   asm.R5,
 		Result:      asm.R0,
-		ResultLabel: "pcapinject_result" + suffix,
+		ResultLabel: "pcapfilter_result" + suffix,
 		Working:     [4]asm.Register{asm.R0, asm.R1, asm.R2, asm.R3},
-		LabelPrefix: "pcapinject" + suffix,
+		LabelPrefix: "pcapfilter" + suffix,
 		StackOffset: cbpfcStackOffset,
 	}
 

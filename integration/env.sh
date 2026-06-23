@@ -62,6 +62,13 @@ export WAIT_HUATUO_BAMAI_TIMEOUT
 WAIT_HUATUO_BAMAI_INTERVAL=2 # second
 export WAIT_HUATUO_BAMAI_INTERVAL
 
+# Arrays cannot be exported to child processes via environment variables.
+# Convert the array to a space-separated string that can be exported and later reconstructed.
+HUATUO_BAMAI_INTEGRATION_ARGS_STR="${HUATUO_BAMAI_ARGS_INTEGRATION[*]}"
+export HUATUO_BAMAI_INTEGRATION_ARGS_STR
+HUATUO_BAMAI_E2E_ARGS_STR="${HUATUO_BAMAI_ARGS_E2E[*]}"
+export HUATUO_BAMAI_E2E_ARGS_STR
+
 # k8s: metadata.name == pod-name, ct-hostname
 # huatuo-bamai: name == ct-hostname, hostname == pod-name == metadata.name
 BUSINESS_POD_NS="default"

@@ -37,8 +37,7 @@ func parseFormattedKmsgLine(line string) (time.Time, string, error) {
 func TestFormatKmsgEntry(t *testing.T) {
 	bootTime, err := getBootTime()
 	if err != nil {
-		t.Errorf("getBootTime() error=%v", err)
-		return
+		t.Fatalf("getBootTime() error=%v", err)
 	}
 
 	tests := []struct {
@@ -51,14 +50,12 @@ func TestFormatKmsgEntry(t *testing.T) {
 			entry: "6,1001,2026000;Test message",
 			validate: func(t *testing.T, got string, err error) {
 				if err != nil {
-					t.Errorf("formatKmsgEntry() error=%v, want nil", err)
-					return
+					t.Fatalf("formatKmsgEntry() error=%v, want nil", err)
 				}
 
 				ts, msg, parseErr := parseFormattedKmsgLine(got)
 				if parseErr != nil {
-					t.Errorf("parseFormattedKmsgLine(%q) error=%v", got, parseErr)
-					return
+					t.Fatalf("parseFormattedKmsgLine(%q) error=%v", got, parseErr)
 				}
 				if msg != "Test message" {
 					t.Errorf("message=%q, want %q", msg, "Test message")
@@ -121,8 +118,7 @@ func TestFormatKmsgs(t *testing.T) {
 			validate: func(t *testing.T, got string) {
 				lines := strings.Split(strings.TrimSpace(got), "\n")
 				if len(lines) != 2 {
-					t.Errorf("formatted line count=%d, want 2, got=%q", len(lines), got)
-					return
+					t.Fatalf("formatted line count=%d, want 2, got=%q", len(lines), got)
 				}
 				if !strings.Contains(lines[0], "Test message1") {
 					t.Errorf("line[0]=%q, want contains %q", lines[0], "Test message1")
@@ -138,8 +134,7 @@ func TestFormatKmsgs(t *testing.T) {
 			validate: func(t *testing.T, got string) {
 				lines := strings.Split(strings.TrimSpace(got), "\n")
 				if len(lines) != 1 {
-					t.Errorf("formatted line count=%d, want 1, got=%q", len(lines), got)
-					return
+					t.Fatalf("formatted line count=%d, want 1, got=%q", len(lines), got)
 				}
 				if !strings.Contains(lines[0], "Test message") {
 					t.Errorf("line[0]=%q, want contains %q", lines[0], "Test message")
@@ -152,8 +147,7 @@ func TestFormatKmsgs(t *testing.T) {
 			validate: func(t *testing.T, got string) {
 				lines := strings.Split(strings.TrimSpace(got), "\n")
 				if len(lines) != 1 {
-					t.Errorf("formatted line count=%d, want 1, got=%q", len(lines), got)
-					return
+					t.Fatalf("formatted line count=%d, want 1, got=%q", len(lines), got)
 				}
 				if !strings.Contains(lines[0], "Test valid") {
 					t.Errorf("line[0]=%q, want contains %q", lines[0], "Test valid")
@@ -190,8 +184,7 @@ func TestFormatKmsgs(t *testing.T) {
 func TestGetBootTime(t *testing.T) {
 	bootTime, err := getBootTime()
 	if err != nil {
-		t.Errorf("getBootTime() error=%v", err)
-		return
+		t.Fatalf("getBootTime() error=%v", err)
 	}
 	if bootTime.After(time.Now()) {
 		t.Errorf("getBootTime() returned future time=%v", bootTime)

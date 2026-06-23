@@ -21,11 +21,6 @@
 #define SK_FL_TYPE_SHIFT 16
 #define SK_FL_TYPE_MASK 0xffff0000
 
-/* Reserved for future kernel skb_drop_reason (SKB_DROP_REASON_NOT_SPECIFIED,
- * ...) passthrough; (u32)-1 is out of band: kernel reason values grow upward
- * from 0 (low 16 bits code, high 16 bits subsystem since v6.4) and can never
- * reach it. */
-#define SKB_DROP_REASON_UNSUPPORT ((u32)-1)
 #define PKT_RAW_LEN 120
 
 struct packet_meta {
@@ -38,11 +33,10 @@ struct packet_meta {
 	u32 dev_flags;           /* 4  */
 	u32 queue_mapping;       /* 4  */
 	u32 drop_reason;         /* 4  */
-	u32 type;                /* 4  */
 	u32 net_inum;             /* 4  */
 	u8  dev_name[IFNAMSIZ];  /* 16 */
 	u8  comm[COMPAT_TASK_COMM_LEN]; /* 16 */
-};                           /* total: 96 bytes */
+};                           /* 92 bytes + 4 tail pad = 96 */
 
 struct packet_raw {
 	u16 eth_proto;    /* 2  */
@@ -85,6 +79,31 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 
 static const struct drop_packet_event zero_data = {};
 static const u32 stackmap_key = 0;
+
+/* kfree_skb gained an skb drop reason field in v5.17, absent from the BTF this
+ * object is compiled against. Carry it in a CO-RE flavor relocated at load time:
+ * the anonymous enum field matches the kernel's enum skb_drop_reason by the name
+ * "reason". No reason constants are hardcoded (their values shift across kernels);
+ * names are resolved at runtime from kernel BTF in userspace (loadDropReasonNames).
+ *
+ * SKB_DROP_REASON_UNSUPPORT = -1 satisfies C's "enum needs >=1 enumerator" rule
+ * and is the out-of-band fallback for kernels predating the field: as (u32)-1 it
+ * can never collide with real reasons (which grow from 0). */
+struct trace_event_raw_kfree_skb___reason {
+	enum { SKB_DROP_REASON_UNSUPPORT = -1 } reason;
+} __attribute__((preserve_access_index));
+
+/* Return the kernel skb drop reason when the running kernel supports it,
+ * otherwise the out-of-band SKB_DROP_REASON_UNSUPPORT sentinel. */
+static inline u32 skb_get_drop_reason(struct trace_event_raw_kfree_skb *ctx)
+{
+	struct trace_event_raw_kfree_skb___reason *ctx_reason = (void *)ctx;
+
+	if (bpf_core_field_exists(ctx_reason->reason))
+		return BPF_CORE_READ(ctx_reason, reason);
+
+	return SKB_DROP_REASON_UNSUPPORT;
+}
 
 struct sock___5_10 {
 	u16 sk_type;
@@ -187,7 +206,7 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 		return 0;
 
 	/* pcap filter via bpf_pcap_stub.h: pass-through stub patched at load
-	 * time by internal/pcapinject with the compiled tcpdump expression.
+	 * time by internal/pcapfilter with the compiled tcpdump expression.
 	 */
 	if (!PCAP_STUB_PASS_SKB(skb))
 		return 0;
@@ -205,16 +224,11 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 
 	/* meta */
 	data->meta.ktime_ns = bpf_ktime_get_ns();
-	/* tgid_pid and comm in SoftIRQ Context do not accurately reflect
-	 * the process where the drop occurred, only for reference.
-	 */
 	data->meta.tgid_pid = bpf_get_current_pid_tgid();
 	bpf_get_current_comm(&data->meta.comm, sizeof(data->meta.comm));
-
 	data->meta.kfree_skb_addr = (u64)(unsigned long)ctx->location;
 	data->meta.queue_mapping = BPF_CORE_READ(skb, queue_mapping);
-	data->meta.drop_reason = SKB_DROP_REASON_UNSUPPORT;
-	data->meta.type = 0;
+	data->meta.drop_reason = skb_get_drop_reason(ctx);
 
 	data->pkt_hdr.pkt_len = BPF_CORE_READ(skb, len);
 

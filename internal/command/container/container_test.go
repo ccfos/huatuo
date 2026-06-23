@@ -22,7 +22,7 @@ import (
 	"testing"
 )
 
-// TestGetContainersCompatibility 覆盖容器查询调用方的兼容性，验证了带 container_id 查询参数时请求路径不变、统一响应包装能够正确解码，以及 GetContainerByID 和 GetAllContainers 都能继续工作。
+// TestGetContainersCompatibility covers the compatibility of container query callers. It verifies that the request path is unchanged when the container_id query parameter is present, that the unified response wrapper can be correctly decoded, and that both GetContainerByID and GetAllContainers continue to work.
 func TestGetContainersCompatibility(t *testing.T) {
 	var requestedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

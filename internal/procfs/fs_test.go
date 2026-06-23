@@ -116,7 +116,7 @@ func TestPath(t *testing.T) {
 }
 
 func TestDefaultPathByType(t *testing.T) {
-	defaultMounts := []struct {
+	tests := []struct {
 		typ   string
 		mount string
 	}{
@@ -127,7 +127,7 @@ func TestDefaultPathByType(t *testing.T) {
 		{typ: "unknown", mount: ""},
 	}
 
-	for _, mount := range defaultMounts {
+	for _, mount := range tests {
 		assert.Equal(t, mount.mount, DefaultPathByType(mount.typ))
 	}
 }

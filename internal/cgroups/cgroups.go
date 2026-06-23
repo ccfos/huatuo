@@ -54,13 +54,13 @@ type Cgroup interface {
 	UpdateRuntime(spec *specs.LinuxResources) error
 	// Add pids to cgroup.procs
 	AddProc(pid uint64) error
-	// Pids return pids of cgroups
+	// Pids returns pids of cgroups thread IDs
 	Pids(path string) ([]int32, error)
-	// CpuUsage return cgroups user/system and total usage.
 	// Procs returns pids of cgroups process IDs
 	Procs(path string) ([]int32, error)
+	// CpuUsage returns cgroups user/system and total usage.
 	CpuUsage(path string) (*stats.CpuUsage, error)
-	// CpuStatRaw return cpu.stat raw data
+	// CpuStatRaw returns cpu.stat raw data
 	CpuStatRaw(path string) (map[string]uint64, error)
 	// CpuQuotaAndPeriod cgroup quota and period
 	CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error)
@@ -87,7 +87,7 @@ func NewManager() (Cgroup, error) {
 	// attached, the controllers are all mounted as separate hierarchies as
 	// in legacy mode, i.e. /sys/fs/cgroup/unified/ is purely and exclusively
 	// about core cgroup v2 functionality and not about resource management.)
-	// In this mode compatibility with cgroup v1 is retained while some NewCgroupManager
+	// In this mode compatibility with cgroup v1 is retained while some NewManager
 	// v2 features are available too. This mode is a stopgap.
 	// Don't bother with this too much unless you have too much free time.
 

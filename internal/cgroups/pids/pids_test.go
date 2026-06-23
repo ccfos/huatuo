@@ -36,7 +36,7 @@ func writeProcFile(t *testing.T, filename, content string) string {
 
 // TestTasks covers the primary read and parse paths of Tasks.
 func TestTasks(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
 		name    string
 		file    string
 		content string
@@ -77,7 +77,7 @@ func TestTasks(t *testing.T) {
 		},
 	}
 
-	for _, tc := range cases {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := writeProcFile(t, tc.file, tc.content)
 			got, err := Tasks(dir, tc.file)

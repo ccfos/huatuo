@@ -134,6 +134,7 @@ func TestNormalPath(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
+		defer rawClient.Close()
 		if err := handshake(t, clientEnc, rawClient, "dropwatch", "1.0", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
@@ -176,6 +177,7 @@ func TestErrorEnd(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
+		defer rawClient.Close()
 		if err := handshake(t, clientEnc, rawClient, "tool", "v", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return
@@ -202,6 +204,7 @@ func TestDataAndEndCombined(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
+		defer rawClient.Close()
 		if err := handshake(t, clientEnc, rawClient, "tool", "v", ""); err != nil {
 			t.Logf("send connect: %v", err)
 			return

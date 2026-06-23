@@ -63,18 +63,15 @@ func TestNewMgrTracingEvent(t *testing.T) {
 
 	mgr, err := NewManager(nil)
 	if err != nil {
-		t.Errorf("NewMgrTracingEvent() error=%v", err)
-		return
+		t.Fatalf("NewMgrTracingEvent() error=%v", err)
 	}
 
 	if got, want := len(mgr.tracingEvents), 1; got != want {
-		t.Errorf("tracingEvents len=%d, want %d", got, want)
-		return
+		t.Fatalf("tracingEvents len=%d, want %d", got, want)
 	}
 
 	if _, ok := mgr.tracingEvents["trace_only"]; !ok {
-		t.Errorf("trace_only should be included in manager")
-		return
+		t.Fatalf("trace_only should be included in manager")
 	}
 
 	if _, ok := mgr.tracingEvents["metric_only"]; ok {
@@ -95,8 +92,7 @@ func TestMgrTracingEventStart(t *testing.T) {
 			},
 			validate: func(t *testing.T, err error) {
 				if err == nil {
-					t.Errorf("MgrTracingEventStart() error=nil, want non-nil")
-					return
+					t.Fatalf("MgrTracingEventStart() error=nil, want non-nil")
 				}
 				if !strings.Contains(err.Error(), "not found") {
 					t.Errorf("MgrTracingEventStart() error=%q, want contain %q", err.Error(), "not found")
@@ -115,8 +111,7 @@ func TestMgrTracingEventStart(t *testing.T) {
 			},
 			validate: func(t *testing.T, err error) {
 				if err == nil {
-					t.Errorf("MgrTracingEventStart() error=nil, want non-nil")
-					return
+					t.Fatalf("MgrTracingEventStart() error=nil, want non-nil")
 				}
 				if !strings.Contains(err.Error(), "blackListed") {
 					t.Errorf("MgrTracingEventStart() error=%q, want contain %q", err.Error(), "blackListed")
@@ -135,8 +130,7 @@ func TestMgrTracingEventStart(t *testing.T) {
 			},
 			validate: func(t *testing.T, err error) {
 				if err == nil {
-					t.Errorf("MgrTracingEventStart() error=nil, want non-nil")
-					return
+					t.Fatalf("MgrTracingEventStart() error=nil, want non-nil")
 				}
 				if !strings.Contains(err.Error(), "already running") {
 					t.Errorf("MgrTracingEventStart() error=%q, want contain %q", err.Error(), "already running")
@@ -173,13 +167,11 @@ func TestMgrTracingEventStartAndStopSuccess(t *testing.T) {
 
 	startErr := mgr.StartByName("trace-2026")
 	if startErr != nil {
-		t.Errorf("MgrTracingEventStart() error=%v", startErr)
-		return
+		t.Fatalf("MgrTracingEventStart() error=%v", startErr)
 	}
 
 	if !waitCancelReady(te) {
-		t.Errorf("cancelCtx was not initialized in time")
-		return
+		t.Fatalf("cancelCtx was not initialized in time")
 	}
 
 	stopErr := mgr.StopByName("trace-2026")
@@ -201,8 +193,7 @@ func TestMgrTracingEventStop(t *testing.T) {
 			},
 			validate: func(t *testing.T, err error) {
 				if err == nil {
-					t.Errorf("MgrTracingEventStop() error=nil, want non-nil")
-					return
+					t.Fatalf("MgrTracingEventStop() error=nil, want non-nil")
 				}
 				if !strings.Contains(err.Error(), "not found") {
 					t.Errorf("MgrTracingEventStop() error=%q, want contain %q", err.Error(), "not found")
@@ -220,8 +211,7 @@ func TestMgrTracingEventStop(t *testing.T) {
 			},
 			validate: func(t *testing.T, err error) {
 				if err == nil {
-					t.Errorf("MgrTracingEventStop() error=nil, want non-nil")
-					return
+					t.Fatalf("MgrTracingEventStop() error=nil, want non-nil")
 				}
 				if !strings.Contains(err.Error(), "not running") {
 					t.Errorf("MgrTracingEventStop() error=%q, want contain %q", err.Error(), "not running")
@@ -282,16 +272,14 @@ func TestMgrTracingInfoDump(t *testing.T) {
 
 	info := mgr.Dump()
 	if len(info) != len(tests) {
-		t.Errorf("MgrTracingInfoDump len=%d, want %d", len(info), len(tests))
-		return
+		t.Fatalf("MgrTracingInfoDump len=%d, want %d", len(info), len(tests))
 	}
 
 	for i := range tests {
 		t.Run(tests[i].nameKey, func(t *testing.T) {
 			got := info[tests[i].nameKey]
 			if got == nil {
-				t.Errorf("info[%q]=nil, want non-nil", tests[i].nameKey)
-				return
+				t.Fatalf("info[%q]=nil, want non-nil", tests[i].nameKey)
 			}
 			if got.Name != tests[i].wantName {
 				t.Errorf("info[%q].Name=%q, want %q", tests[i].nameKey, got.Name, tests[i].wantName)

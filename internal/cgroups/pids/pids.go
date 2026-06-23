@@ -21,8 +21,13 @@ import (
 	"strconv"
 )
 
-// 1. /sys/fs/cgroup/$GROUPPATH/cgroup.procs
-// 2. /sys/fs/cgroup/$GROUPPATH/cgroup.threads
+// Process-level files:
+// cgroup v1: /sys/fs/cgroup/$GROUPPATH/cgroup.procs
+// cgroup v2: /sys/fs/cgroup/$GROUPPATH/cgroup.procs
+
+// Thread-level files:
+// cgroup v1: /sys/fs/cgroup/$GROUPPATH/tasks
+// cgroup v2: /sys/fs/cgroup/$GROUPPATH/cgroup.thread
 func Tasks(path, file string) ([]int32, error) {
 	f, err := os.Open(filepath.Join(path, file))
 	if err != nil {
