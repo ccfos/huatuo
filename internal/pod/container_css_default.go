@@ -198,7 +198,7 @@ func cgroupRootNotify(realRoot, name string) error {
 	if err := filepath.WalkDir(realRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if path != realRoot {
-				return nil // ignore error for container destory, but not for root path
+				return nil // ignore error for container destroy, but not for root path
 			}
 			return err
 		}
