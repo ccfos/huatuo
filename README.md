@@ -97,6 +97,7 @@ The project supports kernel version 4.18 and later. The following kernel and OS 
 | 1.0.0  | 6.6.x          | OpenEuler 24.03/Anolis OS 23.3/OpenCloudOS V9 |
 | 1.0.0  | 6.8.x          | Ubuntu 24.04                                  |
 | 1.0.0  | 6.14.x         | Fedora 42                                     |
+| 2.3.0  | 7.0.x          | Ubuntu 26.04                                  |
 
 # Documentation
 
