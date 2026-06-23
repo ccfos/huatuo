@@ -66,7 +66,7 @@ func NewEventsHandler(maxClients, keepAliveIntervalSecs int) *EventsHandler {
 	return h
 }
 
-func (h *EventsHandler) acquireClient() bool {
+func (h *EventsHandler) tryAcquirePermit() bool {
 	for {
 		active := h.activeClients.Load()
 		if int(active) >= h.maxClients {
@@ -78,7 +78,7 @@ func (h *EventsHandler) acquireClient() bool {
 	}
 }
 
-func (h *EventsHandler) releaseClient() {
+func (h *EventsHandler) releasePermit() {
 	h.activeClients.Add(-1)
 }
 
@@ -142,11 +142,11 @@ func (wf *WatchFilters) matcher() (*matcher.FieldMatcher[*tracing.Document], err
 // the client disconnects, the server shuts down, or keepalive probes fail
 // maxKeepAliveFailures consecutive times.
 func (h *EventsHandler) watch(ctx *server.Context) error {
-	if !h.acquireClient() {
+	if !h.tryAcquirePermit() {
 		log.Infof("[eventwatch] rejected: max clients reached (%d/%d)", h.activeClients.Load(), h.maxClients)
 		return response.ErrTooManyRequests.WithMessage("max watch clients reached")
 	}
-	defer h.releaseClient()
+	defer h.releasePermit()
 
 	var req WatchRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {

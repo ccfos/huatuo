@@ -35,7 +35,7 @@ func TestEventsHandler_AcquireClientConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			if h.acquireClient() {
+			if h.tryAcquirePermit() {
 				acquired.Add(1)
 			}
 		}()
@@ -47,7 +47,7 @@ func TestEventsHandler_AcquireClientConcurrent(t *testing.T) {
 	require.Equal(t, int32(1), acquired.Load())
 	require.Equal(t, int32(1), h.activeClients.Load())
 
-	h.releaseClient()
+	h.releasePermit()
 	require.Equal(t, int32(0), h.activeClients.Load())
 }
 
