@@ -110,15 +110,24 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 	return []*processMemInfo{}, nil
 }
 
-func validateMemBurstConfig(historyWindowLength, sampleInterval, topNProcesses int) error {
-	if historyWindowLength <= 0 {
-		return fmt.Errorf("memory burst sliding window length must be greater than zero, got %d", historyWindowLength)
+func validateMemBurst(c *MemBurstConfig) error {
+	if c.DeltaMemoryBurst <= 0 {
+		return fmt.Errorf("memory burst delta must be positive, got %d", c.DeltaMemoryBurst)
 	}
-	if sampleInterval <= 0 {
-		return fmt.Errorf("memory burst interval must be greater than zero, got %d", sampleInterval)
+	if c.DeltaAnonThreshold < 0 || c.DeltaAnonThreshold > 100 {
+		return fmt.Errorf("memory burst anon threshold must be in [0, 100], got %d", c.DeltaAnonThreshold)
 	}
-	if topNProcesses <= 0 {
-		return fmt.Errorf("memory burst dump process max num must be greater than zero, got %d", topNProcesses)
+	if c.Interval <= 0 {
+		return fmt.Errorf("memory burst interval must be positive, got %d", c.Interval)
+	}
+	if c.IntervalTracing <= 0 {
+		return fmt.Errorf("memory burst tracing interval must be positive, got %d", c.IntervalTracing)
+	}
+	if c.SlidingWindowLength <= 0 {
+		return fmt.Errorf("memory burst sliding window length must be positive, got %d", c.SlidingWindowLength)
+	}
+	if c.DumpProcessMaxNum <= 0 {
+		return fmt.Errorf("memory burst dump process max num must be positive, got %d", c.DumpProcessMaxNum)
 	}
 	return nil
 }
@@ -134,7 +143,7 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 	burstRatio := (float64(cfg.MemoryBurst.DeltaMemoryBurst)/100.0 + 1)
 	anonThreshold := cfg.MemoryBurst.DeltaAnonThreshold
 
-	if err := validateMemBurstConfig(historyWindowLength, sampleInterval, topNProcesses); err != nil {
+	if err := validateMemBurst(&cfg.MemoryBurst); err != nil {
 		return err
 	}
 

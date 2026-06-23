@@ -16,48 +16,41 @@ package autotracing
 
 import "testing"
 
-func TestValidateMemBurstConfig(t *testing.T) {
+func TestValidateMemBurst(t *testing.T) {
+	valid := MemBurstConfig{
+		DeltaMemoryBurst:    100,
+		DeltaAnonThreshold:  70,
+		Interval:            10,
+		IntervalTracing:     1800,
+		SlidingWindowLength: 60,
+		DumpProcessMaxNum:   10,
+	}
+
 	cases := []struct {
-		name                string
-		historyWindowLength int
-		sampleInterval      int
-		topNProcesses       int
-		wantErr             bool
+		name    string
+		modify  func(*MemBurstConfig)
+		wantErr bool
 	}{
-		{
-			name:                "valid",
-			historyWindowLength: 60,
-			sampleInterval:      10,
-			topNProcesses:       10,
-		},
-		{
-			name:                "zero history",
-			historyWindowLength: 0,
-			sampleInterval:      10,
-			topNProcesses:       10,
-			wantErr:             true,
-		},
-		{
-			name:                "zero interval",
-			historyWindowLength: 60,
-			sampleInterval:      0,
-			topNProcesses:       10,
-			wantErr:             true,
-		},
-		{
-			name:                "zero top processes",
-			historyWindowLength: 60,
-			sampleInterval:      10,
-			topNProcesses:       0,
-			wantErr:             true,
-		},
+		{name: "valid", modify: func(*MemBurstConfig) {}},
+		{name: "zero delta memory burst", modify: func(c *MemBurstConfig) { c.DeltaMemoryBurst = 0 }, wantErr: true},
+		{name: "negative delta memory burst", modify: func(c *MemBurstConfig) { c.DeltaMemoryBurst = -1 }, wantErr: true},
+		{name: "anon threshold below range", modify: func(c *MemBurstConfig) { c.DeltaAnonThreshold = -1 }, wantErr: true},
+		{name: "anon threshold above range", modify: func(c *MemBurstConfig) { c.DeltaAnonThreshold = 101 }, wantErr: true},
+		{name: "anon threshold at zero", modify: func(c *MemBurstConfig) { c.DeltaAnonThreshold = 0 }},
+		{name: "anon threshold at hundred", modify: func(c *MemBurstConfig) { c.DeltaAnonThreshold = 100 }},
+		{name: "zero interval", modify: func(c *MemBurstConfig) { c.Interval = 0 }, wantErr: true},
+		{name: "zero interval tracing", modify: func(c *MemBurstConfig) { c.IntervalTracing = 0 }, wantErr: true},
+		{name: "zero sliding window", modify: func(c *MemBurstConfig) { c.SlidingWindowLength = 0 }, wantErr: true},
+		{name: "zero dump process max num", modify: func(c *MemBurstConfig) { c.DumpProcessMaxNum = 0 }, wantErr: true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateMemBurstConfig(tc.historyWindowLength, tc.sampleInterval, tc.topNProcesses)
+			c := valid
+			tc.modify(&c)
+			err := validateMemBurst(&c)
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("validateMemBurstConfig() error = %v, wantErr %v", err, tc.wantErr)
+				t.Errorf("validateMemBurst() error = %v, wantErr %v", err, tc.wantErr)
 			}
 		})
 	}
