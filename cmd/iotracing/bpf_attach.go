@@ -68,7 +68,7 @@ func attachAndEventPipe(ctx context.Context, b bpf.BPF) (reader bpf.PerfEventRea
 // stack capture in the kprobe sees a populated return-side context.
 func buildAttachOptions(programs []bpf.ProgramInfo) ([]bpf.AttachOption, error) {
 	requestQosIssue, requestQosDone := "__rq_qos_issue", "__rq_qos_done"
-	if hasKprobeFunction("rq_qos_issue") {
+	if bpf.HasKprobeFunction("rq_qos_issue") {
 		requestQosIssue, requestQosDone = "rq_qos_issue", "rq_qos_done"
 	}
 
@@ -108,30 +108,6 @@ func buildAttachOptions(programs []bpf.ProgramInfo) ([]bpf.AttachOption, error) 
 	options = append(options, anyfsAttachOptions()...)
 
 	return options, nil
-}
-
-// hasKprobeFunction returns whether the given symbol is reported as
-// attachable in the kernel's available_filter_functions list.
-func hasKprobeFunction(name string) bool {
-	file, err := os.Open("/sys/kernel/debug/tracing/available_filter_functions")
-	if err != nil {
-		return false
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		if strings.Fields(line)[0] == name {
-			return true
-		}
-	}
-
-	return false
 }
 
 // isAnyfsProgram is true for filesystem-agnostic stub programs that
