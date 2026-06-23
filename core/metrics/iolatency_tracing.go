@@ -81,7 +81,20 @@ func (c *iolatencyTracing) Start(ctx context.Context) error {
 	}
 	defer b.Close()
 
-	if err := b.Attach(); err != nil {
+	// commit 1e1a9cecfab3 ("block: force noio scope in blk_mq_freeze_queue")
+	// made blk_mq_freeze_queue a static inline wrapper in v6.15; the
+	// attachable symbol is blk_mq_freeze_queue_nomemsave. The first arg
+	// (struct request_queue *) is unchanged, so BPF logic stays the same.
+	freezeQueueSym := "blk_mq_freeze_queue"
+	if !bpf.HasKprobeFunction(freezeQueueSym) {
+		freezeQueueSym = "blk_mq_freeze_queue_nomemsave"
+	}
+
+	if err := b.AttachWithOptions([]bpf.AttachOption{
+		{ProgramName: "kprobe_start_request", Symbol: "blk_mq_start_request"},
+		{ProgramName: "kprobe_done_bio", Symbol: "__rq_qos_done_bio"},
+		{ProgramName: "kprobe_freeze_queue", Symbol: freezeQueueSym},
+	}); err != nil {
 		return err
 	}
 
