@@ -37,8 +37,8 @@ volatile const u32 bpf_dbg_enabled = 0;
 				.line      = __LINE__,                        \
 				.args      = {a1, a2, a3, 0},                 \
 			};                                                      \
-			bpf_probe_read_kernel_str(__event.msg,                  \
-						  BPF_DBG_MSG_LEN, msg);         \
+			bpf_probe_read_str(__event.msg,                        \
+						   sizeof(__event.msg), msg);          \
 			bpf_perf_event_output(ctx, &dbg_##map_name##_events,  \
 					      COMPAT_BPF_F_CURRENT_CPU,          \
 					      &__event, sizeof(__event));         \
