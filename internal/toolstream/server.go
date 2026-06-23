@@ -183,8 +183,21 @@ func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {
 		return
 	}
 
-	sess := &Session{Session: tsess}
-	if err := handler(sess, chunk.Data); err != nil {
-		log.Warnf("toolstream: %s: handler: %v", tsess.ToolName, err)
+	// Run handlers asynchronously so a handler calling srv.Close() cannot deadlock
+	// by waiting for the transport read loop goroutine that invoked dispatch.
+	payload := append([]byte(nil), chunk.Data...)
+	sess := &Session{
+		Session: &transport.Session{
+			ToolName: tsess.ToolName,
+			Version:  tsess.Version,
+			TaskID:   tsess.TaskID,
+		},
 	}
+	toolName := tsess.ToolName
+
+	go func() {
+		if err := handler(sess, payload); err != nil {
+			log.Warnf("toolstream: %s: handler: %v", toolName, err)
+		}
+	}()
 }

@@ -281,6 +281,50 @@ func TestCloseIdempotent(t *testing.T) {
 	}
 }
 
+
+func TestHandlerCanCloseServerWithoutDeadlock(t *testing.T) {
+	srv, sockPath := newTestServer(t)
+	closeDone := make(chan error, 1)
+	var closeOnce sync.Once
+
+	toolstream.Register(srv, "self-close", func(_ *toolstream.Session, _ testEvent) error {
+		closeOnce.Do(func() {
+			closeDone <- srv.Close()
+		})
+		return nil
+	})
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	t.Cleanup(func() { _ = srv.Close() })
+
+	c, err := toolstream.NewClient(toolstream.ClientOptions{
+		SockPath: sockPath,
+		ToolName: "self-close",
+		Version:  "1.0",
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	defer c.End()
+
+	if err := c.Send(testEvent{ID: 1}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close from handler: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close called from handler timed out (deadlock)")
+	}
+}
+
 func TestStartAfterClose(t *testing.T) {
 	srv, sockPath := newTestServer(t)
 	rec := newRecorder()
