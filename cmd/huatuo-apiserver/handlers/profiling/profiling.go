@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	v1 "huatuo-bamai/apis/v1"
@@ -458,7 +459,14 @@ func getFlameGraphURL(jobResult *job.Job) string {
 		labelVal = jobResult.Host
 	}
 
-	return fmt.Sprintf("%s/%s/%s?orgId=1&from=%s&to=%s&timezone=browser&%s=%s", base, dashboardUid, dashboardSlug, from, to, labelKey, labelVal)
+	query := url.Values{}
+	query.Set("orgId", "1")
+	query.Set("from", from)
+	query.Set("to", to)
+	query.Set("timezone", "browser")
+	query.Set(labelKey, labelVal)
+
+	return fmt.Sprintf("%s/%s/%s?%s", base, dashboardUid, dashboardSlug, query.Encode())
 }
 
 // delete deletes a profiling job record by ID.
