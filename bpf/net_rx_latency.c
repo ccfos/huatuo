@@ -9,7 +9,6 @@
 
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
-#include "linux_kernel.h"
 #include "vmlinux_net.h"
 
 volatile const long long mono_wall_offset = 0;

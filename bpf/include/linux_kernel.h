@@ -40,9 +40,5 @@
 /* End of Red Hat-specific taint flags */
 #define TAINT_FLAGS_COUNT               32
 
-/* enum skb_tstamp_type from include/linux/skbuff.h */
-#define SKB_CLOCK_REALTIME	0
-#define SKB_CLOCK_MONOTONIC	1
-#define SKB_CLOCK_TAI		2
 
 #endif

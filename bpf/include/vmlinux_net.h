@@ -14,6 +14,12 @@
 #define IPPROTO_TCP     6
 #define TCP_CLOSE       7
 
+enum skb_tstamp_type {
+	SKB_CLOCK_REALTIME,
+	SKB_CLOCK_MONOTONIC,
+	SKB_CLOCK_TAI,
+};
+
 #define IP_MF           0x2000          /* Flag: "More Fragments"       */
 #define IP_OFFSET       0x1FFF          /* "Fragment Offset" part       */
 
