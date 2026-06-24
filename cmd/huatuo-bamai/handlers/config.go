@@ -50,7 +50,9 @@ func (h *ConfigHandler) update(ctx *server.Context) error {
 		if reflect.ValueOf(v).Kind() == reflect.Float64 {
 			v = int(v.(float64))
 		}
-		config.Set(k, v)
+		if err := config.Set(k, v); err != nil {
+			return response.ErrInvalidRequest.WithMessage(err.Error())
+		}
 	}
 
 	if err := config.Sync(); err != nil {

@@ -237,7 +237,9 @@ func configureRuntime(opts *Options) error {
 		merged := make([]string, 0, len(bl)+len(opts.DisableTracing))
 		merged = append(merged, bl...)
 		merged = append(merged, opts.DisableTracing...)
-		config.Set("BlackList", merged)
+		if err := config.Set("BlackList", merged); err != nil {
+			return err
+		}
 		log.Infof("merged tracer blacklist from CLI: %v", config.Get().BlackList)
 	}
 
