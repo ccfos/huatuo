@@ -23,6 +23,23 @@ import (
 )
 
 // TestGetContainersCompatibility covers the compatibility of container query callers. It verifies that the request path is unchanged when the container_id query parameter is present, that the unified response wrapper can be correctly decoded, and that both GetContainerByID and GetAllContainers continue to work.
+func TestGetContainersIncludesErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "backend unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	serverAddr := strings.TrimPrefix(server.URL, "http://")
+
+	_, err := getContainers(serverAddr, "container-20250226")
+	if err == nil {
+		t.Fatal("getContainers() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "backend unavailable") {
+		t.Fatalf("getContainers() error = %q, want response body", err)
+	}
+}
+
 func TestGetContainersCompatibility(t *testing.T) {
 	var requestedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
