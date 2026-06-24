@@ -27,7 +27,8 @@ APP_CMD_OUTPUT := _output
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
 APP_CMD_BIN_TARGETS := $(patsubst %,$(APP_CMD_OUTPUT)/bin/%,$(notdir $(APP_CMD_SUBDIRS)))
 
-GO_BUILD_FLAGS := CGO_ENABLED=1 go build -tags "netgo osusergo" -gcflags=all="-N -l"
+GO ?= go
+GO_BUILD_FLAGS := CGO_ENABLED=1 $(GO) build -tags "netgo osusergo" -gcflags=all="-N -l"
 GO_BUILD_LDFLAGS := \
 	-s -w \
 	-X main.AppVersion=$(APP_VERSION) \
@@ -79,7 +80,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			export BPF_COMPILE=$(BPF_COMPILE); \
 			export BPF_INCLUDE=$(BPF_INCLUDE); \
 			export BPF_EXTRA_CFLAGS="$(BPF_EXTRA_CFLAGS)"; \
-			go generate {}'
+			$(GO) generate {}'
 	@mkdir -p $(APP_CMD_OUTPUT) && touch $@
 
 sync:
@@ -93,8 +94,34 @@ $(APP_CMD_OUTPUT)/bin/%:
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
 	$(GO_BUILD_IMPL) -o $@ ./$(APP_CMD_DIR)/$*
 
+PLATFORMS ?= linux/amd64,linux/arm64
+
 docker-build:
-	@docker build --network=host --no-cache --build-arg BUILD_MODE=$(BUILD_MODE) -t $(IMAGE) -f Dockerfile .
+	@docker build \
+		--network=host \
+		--no-cache \
+		--build-arg BUILD_MODE=$(BUILD_MODE) \
+		-t $(IMAGE) \
+		-f Dockerfile .
+
+docker-buildx:
+	@docker buildx build \
+		--platform $(PLATFORMS) \
+		--network=host \
+		--no-cache \
+		--build-arg BUILD_MODE=$(BUILD_MODE) \
+		-t $(IMAGE) \
+		-f Dockerfile \
+		--push .
+
+docker-buildx-check:
+	@docker buildx build \
+		--platform $(PLATFORMS) \
+		--network=host \
+		--no-cache \
+		--build-arg BUILD_MODE=$(BUILD_MODE) \
+		-f Dockerfile \
+		--output type=cacheonly .
 
 docker-clean:
 	@docker rmi $(IMAGE) || true
@@ -144,4 +171,4 @@ integration: all
 e2e: all
 	@bash e2e/run.sh
 
-.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean
+.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-buildx docker-buildx-check docker-clean
