@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"huatuo-bamai/internal/pod"
@@ -34,7 +35,7 @@ func getContainers(serverAddr, containerID string) ([]*pod.Container, error) {
 	}
 
 	if containerID != "" {
-		req.URL.RawQuery = fmt.Sprintf("container_id=%s", containerID)
+		req.URL.RawQuery = url.Values{"container_id": {containerID}}.Encode()
 	}
 
 	resp, err := client.Do(req)
