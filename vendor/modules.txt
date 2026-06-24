@@ -1,12 +1,16 @@
 # capnproto.org/go/capnp/v3 v3.1.0-alpha.2
 ## explicit; go 1.19
 capnproto.org/go/capnp/v3
+capnproto.org/go/capnp/v3/encoding/text
 capnproto.org/go/capnp/v3/exc
 capnproto.org/go/capnp/v3/exp/bufferpool
 capnproto.org/go/capnp/v3/flowcontrol
+capnproto.org/go/capnp/v3/internal/nodemap
+capnproto.org/go/capnp/v3/internal/schema
 capnproto.org/go/capnp/v3/internal/str
 capnproto.org/go/capnp/v3/internal/strquote
 capnproto.org/go/capnp/v3/packed
+capnproto.org/go/capnp/v3/schemas
 capnproto.org/go/capnp/v3/util/deferred
 capnproto.org/go/capnp/v3/util/maybe
 capnproto.org/go/capnp/v3/util/rc
