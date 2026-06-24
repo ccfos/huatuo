@@ -113,6 +113,12 @@ func (s *Store[T]) Delete(ctx context.Context, id string) error {
 	return s.backend.Delete(driver.WithContext(ctx), id)
 }
 
+// Close releases backend resources and flushes any pending writes. The store
+// must not be used after Close returns.
+func (s *Store[T]) Close(ctx context.Context) error {
+	return s.backend.Close(driver.WithContext(ctx))
+}
+
 // Query returns objects matching q; all filter and sort fields must be registered indexes.
 func (s *Store[T]) Query(ctx context.Context, q driver.Query) ([]T, error) {
 	if err := s.validateQuery(q); err != nil {

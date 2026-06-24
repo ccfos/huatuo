@@ -26,8 +26,7 @@ func writeConfigFile(t *testing.T, dir, name, content string) string {
 
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Errorf("write config file %s: %v", path, err)
-		return ""
+		t.Fatalf("write config file %s: %v", path, err)
 	}
 
 	return path
@@ -61,8 +60,7 @@ ExcludedOnContainer = "writeback"
 	}
 
 	if err := Load(path); err != nil {
-		t.Errorf("Load returned error: %v", err)
-		return
+		t.Fatalf("Load returned error: %v", err)
 	}
 
 	if len(Get().BlackList) != 2 {
@@ -110,8 +108,7 @@ ExcludedOnContainer = "writeback"
 	}
 
 	if err := Load(path); err != nil {
-		t.Errorf("Load returned error: %v", err)
-		return
+		t.Fatalf("Load returned error: %v", err)
 	}
 
 	Set("BlackList", []string{"netdev_hw", "metax_gpu"})
@@ -121,13 +118,11 @@ ExcludedOnContainer = "writeback"
 	Set("MetricCollector.Vmstat.IncludedOnContainer", "workingset_refault_file")
 
 	if err := Sync(); err != nil {
-		t.Errorf("Sync returned error: %v", err)
-		return
+		t.Fatalf("Sync returned error: %v", err)
 	}
 
 	if err := Load(path); err != nil {
-		t.Errorf("Load after Sync returned error: %v", err)
-		return
+		t.Fatalf("Load after Sync returned error: %v", err)
 	}
 
 	if len(Get().BlackList) != 2 {
@@ -148,8 +143,7 @@ ExcludedOnContainer = "writeback"
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Errorf("read synced config: %v", err)
-		return
+		t.Fatalf("read synced config: %v", err)
 	}
 	if !strings.Contains(string(raw), "[AutoTracing]") || !strings.Contains(string(raw), "IssuesList = [[\"cpuidle\", \"perf\"]]") {
 		t.Errorf("synced config should persist AutoTracing.IssuesList, got %s", string(raw))

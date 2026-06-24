@@ -35,7 +35,7 @@ func writeConfigFile(t *testing.T, dir, name, content string) string {
 
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Errorf("write config file %s: %v", path, err)
+		t.Fatalf("write config file %s: %v", path, err)
 		return ""
 	}
 
@@ -65,8 +65,7 @@ enabled = true
 `,
 			validate: func(t *testing.T, err error, cfg *sampleConfig) {
 				if err != nil {
-					t.Errorf("Load returned error: %v", err)
-					return
+					t.Fatalf("Load returned error: %v", err)
 				}
 				if cfg.Name != "huatuo-dev" {
 					t.Errorf("unexpected Name: %q", cfg.Name)
@@ -91,8 +90,7 @@ value = "kernel_sched_tick"
 `,
 			validate: func(t *testing.T, err error, cfg *sampleConfig) {
 				if err != nil {
-					t.Errorf("Load returned error: %v", err)
-					return
+					t.Fatalf("Load returned error: %v", err)
 				}
 				if cfg.Nested.Value != "kernel_sched_tick" {
 					t.Errorf("unexpected nested value: %q", cfg.Nested.Value)
@@ -154,22 +152,19 @@ func TestSyncAndSet(t *testing.T) {
 	cfg.Nested.Value = "trace-2026"
 
 	if err := Sync(path, cfg); err != nil {
-		t.Errorf("Sync returned error: %v", err)
-		return
+		t.Fatalf("Sync returned error: %v", err)
 	}
 
 	Set(cfg, "Name", "huatuo-region")
 	Set(cfg, "Nested.Value", "kernel_sched_tick")
 
 	if err := Sync(path, cfg); err != nil {
-		t.Errorf("Sync after Set returned error: %v", err)
-		return
+		t.Fatalf("Sync after Set returned error: %v", err)
 	}
 
 	reloaded := &sampleConfig{}
 	if err := Load(path, reloaded); err != nil {
-		t.Errorf("Load after Sync returned error: %v", err)
-		return
+		t.Fatalf("Load after Sync returned error: %v", err)
 	}
 
 	if reloaded.Name != "huatuo-region" {
@@ -181,8 +176,7 @@ func TestSyncAndSet(t *testing.T) {
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Errorf("read synced file: %v", err)
-		return
+		t.Fatalf("read synced file: %v", err)
 	}
 	if !strings.Contains(string(raw), "name = \"huatuo-region\"") {
 		t.Errorf("synced file should contain updated name, got: %s", string(raw))

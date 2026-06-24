@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -90,77 +91,65 @@ func newPipedServer(t *testing.T) (rawClient net.Conn, clientEnc *capnp.Encoder,
 	}
 }
 
-// sendConnect sends a Connect frame via enc.
-func sendConnect(t *testing.T, enc *capnp.Encoder, toolName, version, taskID string) {
+// handshake sends a Connect frame via enc using Client.handshake.
+func handshake(t *testing.T, enc *capnp.Encoder, rawClient net.Conn, toolName, version, taskID string) error {
 	t.Helper()
-	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
-	if err != nil {
-		t.Fatalf("send connect new message: %v", err)
-	}
-	root, err := NewRootMessage(seg)
-	if err != nil {
-		t.Fatalf("send connect new root: %v", err)
-	}
-	c, err := root.NewConnect()
-	if err != nil {
-		t.Fatalf("send connect new connect: %v", err)
-	}
-	if err := c.SetToolName(toolName); err != nil {
-		t.Fatalf("send connect set tool name: %v", err)
-	}
-	if err := c.SetVersion(version); err != nil {
-		t.Fatalf("send connect set version: %v", err)
-	}
-	if err := c.SetTaskID(taskID); err != nil {
-		t.Fatalf("send connect set task id: %v", err)
-	}
-	c.SetProtoVersion(1)
-	if err := enc.Encode(m); err != nil {
-		t.Fatalf("send connect encode: %v", err)
-	}
+	return (&Client{encoder: enc, conn: rawClient}).handshake(toolName, version, taskID)
 }
 
 // sendChunk sends a Chunk frame via enc.
-func sendChunk(t *testing.T, enc *capnp.Encoder, data []byte, flush, end bool, errStr string) {
+func sendChunk(t *testing.T, enc *capnp.Encoder, data []byte, flush, end bool, errStr string) error {
 	t.Helper()
 	m, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
 	if err != nil {
-		t.Fatalf("send chunk new message: %v", err)
+		return fmt.Errorf("send chunk new message: %w", err)
 	}
 	root, err := NewRootMessage(seg)
 	if err != nil {
-		t.Fatalf("send chunk new root: %v", err)
+		return fmt.Errorf("send chunk new root: %w", err)
 	}
 	chunk, err := root.NewChunk()
 	if err != nil {
-		t.Fatalf("send chunk new chunk: %v", err)
+		return fmt.Errorf("send chunk new chunk: %w", err)
 	}
 	if len(data) > 0 {
 		if err := chunk.SetData(data); err != nil {
-			t.Fatalf("send chunk set data: %v", err)
+			return fmt.Errorf("send chunk set data: %w", err)
 		}
 	}
 	chunk.SetFlush(flush)
 	chunk.SetEnd(end)
 	if errStr != "" {
 		if err := chunk.SetError(errStr); err != nil {
-			t.Fatalf("send chunk set error: %v", err)
+			return fmt.Errorf("send chunk set error: %w", err)
 		}
 	}
 	if err := enc.Encode(m); err != nil {
-		t.Fatalf("send chunk encode: %v", err)
+		return fmt.Errorf("send chunk encode: %w", err)
 	}
+	return nil
 }
 
 func TestNormalPath(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "dropwatch", "1.0", "")
-		sendChunk(t, clientEnc, []byte(`{"container_id":"c1","x":1}`), true, false, "")
-		sendChunk(t, clientEnc, []byte(`{"container_id":"c2","x":2}`), true, false, "")
-		sendChunk(t, clientEnc, nil, false, true, "")
-		rawClient.Close()
+		defer rawClient.Close()
+		if err := handshake(t, clientEnc, rawClient, "dropwatch", "1.0", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c1","x":1}`), true, false, ""); err != nil {
+			t.Errorf("sendChunk 1: %v", err)
+			return
+		}
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c2","x":2}`), true, false, ""); err != nil {
+			t.Errorf("sendChunk 2: %v", err)
+			return
+		}
+		if err := sendChunk(t, clientEnc, nil, false, true, ""); err != nil {
+			t.Errorf("sendChunk end: %v", err)
+		}
 	}()
 
 	wait()
@@ -188,9 +177,14 @@ func TestErrorEnd(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "tool", "v", "")
-		sendChunk(t, clientEnc, nil, false, true, "boom")
-		rawClient.Close()
+		defer rawClient.Close()
+		if err := handshake(t, clientEnc, rawClient, "tool", "v", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
+		if err := sendChunk(t, clientEnc, nil, false, true, "boom"); err != nil {
+			t.Errorf("sendChunk: %v", err)
+		}
 	}()
 
 	wait()
@@ -210,9 +204,14 @@ func TestDataAndEndCombined(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "tool", "v", "")
-		sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, true, "")
-		rawClient.Close()
+		defer rawClient.Close()
+		if err := handshake(t, clientEnc, rawClient, "tool", "v", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, true, ""); err != nil {
+			t.Errorf("sendChunk: %v", err)
+		}
 	}()
 
 	wait()
@@ -232,9 +231,14 @@ func TestUnexpectedClose(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "tool", "v", "")
-		sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, false, "")
-		rawClient.Close()
+		defer rawClient.Close()
+		if err := handshake(t, clientEnc, rawClient, "tool", "v", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
+		if err := sendChunk(t, clientEnc, []byte(`{"container_id":"c"}`), true, false, ""); err != nil {
+			t.Errorf("sendChunk: %v", err)
+		}
 	}()
 
 	wait()
@@ -248,9 +252,11 @@ func TestInvalidFirstFrame(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
+		defer rawClient.Close()
 		// Send a chunk frame instead of a connect frame.
-		sendChunk(t, clientEnc, []byte("payload"), true, false, "")
-		rawClient.Close()
+		if err := sendChunk(t, clientEnc, []byte("payload"), true, false, ""); err != nil {
+			t.Errorf("sendChunk: %v", err)
+		}
 	}()
 
 	wait()
@@ -263,11 +269,34 @@ func TestEmptyToolName(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "", "v", "")
+		if err := handshake(t, clientEnc, rawClient, "", "v", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
 		rawClient.Close()
 	}()
 
 	wait()
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Fatalf("want 0 handler calls, got %d", len(got))
+	}
+}
+
+// TestEmptyToolNameClosesEarly pins that empty ToolName causes handleConn to
+// return immediately rather than entering the Decode loop. Without this guard
+// the server would block waiting for a chunk forever; the test deliberately
+// omits the client-side close so that "accept-then-loop" behavior would hang
+// here until wait() trips its 2s timeout.
+func TestEmptyToolNameClosesEarly(t *testing.T) {
+	rawClient, clientEnc, rec, wait := newPipedServer(t)
+
+	if err := handshake(t, clientEnc, rawClient, "", "v", ""); err != nil {
+		t.Logf("send connect: %v", err)
+		return
+	}
+
+	wait()
+
 	if got := rec.snapshot(); len(got) != 0 {
 		t.Fatalf("want 0 handler calls, got %d", len(got))
 	}
@@ -279,7 +308,10 @@ func TestDecodeFailureAfterConnect(t *testing.T) {
 	rawClient, clientEnc, rec, wait := newPipedServer(t)
 
 	go func() {
-		sendConnect(t, clientEnc, "tool", "v", "")
+		if err := handshake(t, clientEnc, rawClient, "tool", "v", ""); err != nil {
+			t.Logf("send connect: %v", err)
+			return
+		}
 		// Write a malformed Cap'n Proto segment header; decoder will fail.
 		_, _ = rawClient.Write([]byte{0xff, 0xff, 0xff, 0xff}) //nolint:errcheck
 		rawClient.Close()
@@ -309,7 +341,7 @@ func TestClientRoundTrip(t *testing.T) {
 		t.Fatalf("Serve: %v", err)
 	}
 
-	defer func() { _ = srv.Close() }()
+	t.Cleanup(func() { _ = srv.Close() })
 
 	var c *Client
 

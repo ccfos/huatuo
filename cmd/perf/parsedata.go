@@ -19,6 +19,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,7 +51,7 @@ type eventdata struct {
 
 // CgDumpTrace is an interface for dump stacks in cgusage case
 func CgDumpTrace(addrs []uint64) string {
-	stacks := symbol.KsymStackStrs(addrs, perfStackDepth)
+	stacks := symbol.KsymStackStrsReversed(addrs, perfStackDepth)
 	return strings.Join(stacks, "\n")
 }
 
@@ -83,9 +85,17 @@ func findOrAdd(strA string, b []string) (int, []string) {
 }
 
 func parsedata(b bpf.BPF) error {
+	data, err := buildFlameData(b)
+	if err != nil {
+		return err
+	}
+	return writeFlameDataJSON(os.Stdout, data)
+}
+
+func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 	items, err := b.DumpMapByName("counts")
 	if err != nil || items == nil {
-		return err
+		return nil, err
 	}
 
 	var keyValuePairs []struct {
@@ -93,19 +103,19 @@ func parsedata(b bpf.BPF) error {
 		Value uint64
 	}
 
-	u := symbol.NewUserResolver()
+	u := symbol.NewUsymResolver()
 	for _, v := range items {
 		ed := eventdata{}
 		var count uint64
 		buf := bytes.NewReader(v.Key)
 		err := binary.Read(buf, binary.LittleEndian, &ed)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		buf = bytes.NewReader(v.Value)
 		err = binary.Read(buf, binary.LittleEndian, &count)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		keyValuePairs = append(keyValuePairs, struct {
@@ -141,7 +151,7 @@ func parsedata(b bpf.BPF) error {
 		}
 
 		if kv.Key.UstackSize > 0 {
-			frames := u.ResolveUserStackStrs(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
+			frames := u.UsymStackStrsReversed(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
 			for _, frame := range frames {
 				if frame != "" {
 					index, functionNames = findOrAdd(frame, functionNames)
@@ -164,10 +174,10 @@ func parsedata(b bpf.BPF) error {
 	sm.MergeStackTraces(stacktraces, functionNames)
 	if sm.Size() > 0 {
 		if err := m.MergeTreeBytes(sm.TreeBytes(-1)); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
-		return fmt.Errorf("phlaremodel: Error parsing stack data")
+		return nil, fmt.Errorf("phlaremodel: error parsing stack data")
 	}
 
 	flame := phlaremodel.NewFlameGraph(m.Tree(), -1)
@@ -211,14 +221,14 @@ func parsedata(b bpf.BPF) error {
 		labelarr = append(labelarr, keys[number])
 	}
 
-	DataSize := len(levelarr)
+	dataSize := len(levelarr)
 
-	if len(valuearr) != DataSize || len(selfarr) != DataSize || len(labelarr) != DataSize {
-		return fmt.Errorf("Data length is not equal")
+	if len(valuearr) != dataSize || len(selfarr) != dataSize || len(labelarr) != dataSize {
+		return nil, fmt.Errorf("data length is not equal")
 	}
 
-	FlameData = make([]flamegraph.FrameData, DataSize)
-	for i := 0; i < DataSize; i++ {
+	FlameData = make([]flamegraph.FrameData, dataSize)
+	for i := 0; i < dataSize; i++ {
 		FlameData[i] = flamegraph.FrameData{
 			Level: levelarr[i],
 			Value: valuearr[i],
@@ -227,11 +237,14 @@ func parsedata(b bpf.BPF) error {
 		}
 	}
 
-	// save
-	jsonData, err := json.Marshal(FlameData)
+	return FlameData, nil
+}
+
+func writeFlameDataJSON(w io.Writer, data []flamegraph.FrameData) error {
+	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("JSON encoding error: %w", err)
 	}
-	fmt.Println(string(jsonData))
+	_, err = fmt.Fprintln(w, string(jsonData))
 	return err
 }

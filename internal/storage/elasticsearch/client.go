@@ -25,12 +25,31 @@ import (
 	elasticsearch "github.com/elastic/go-elasticsearch/v8"
 )
 
+// defaultTransport is sized to keep TLS handshake cost off the hot path.
+// Under FIPS, each fresh handshake spends several ms on RSA-PSS verification;
+// a small idle pool turned bursty writes into per-request handshakes and
+// dominated CPU. The idle/total caps below let concurrent writers reuse
+// connections; MaxConnsPerHost bounds blast radius if ES slows down.
+//
+// ClientSessionCache enables TLS 1.3 PSK resumption: when the server (or an
+// intermediate proxy) silently closes an idle connection, the next handshake
+// reuses a ticket instead of doing full RSA-PSS verification.
 var defaultTransport http.RoundTripper = &http.Transport{
-	MaxIdleConnsPerHost:   10,
+	MaxIdleConns:        200,
+	MaxIdleConnsPerHost: 100,
+	MaxConnsPerHost:     200,
+	// Keep below typical server-side idle timeouts (ES/nginx/LB ~60s) so the
+	// client closes first. If the server closes a connection we still hold,
+	// the next request races into a stale conn and triggers a fresh handshake.
+	IdleConnTimeout:       50 * time.Second,
 	ResponseHeaderTimeout: 10 * time.Second,
-	DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+	DialContext: (&net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
 	TLSClientConfig: &tls.Config{
 		InsecureSkipVerify: true, // #nosec G402
+		ClientSessionCache: tls.NewLRUClientSessionCache(64),
 	},
 }
 
@@ -76,6 +95,14 @@ func newCompatClient(addresses []string, username, password string) (*elasticsea
 		Password:                password,
 		EnableCompatibilityMode: true,
 		Transport:               &productHeaderTransport{inner: defaultTransport},
+		// Whole-batch retry: covers transport failures and 429/5xx returned for
+		// the entire bulk request. Per-item failures inside a 200 response are
+		// surfaced through BulkIndexerItem.OnFailure instead.
+		RetryOnStatus: []int{429, 502, 503, 504},
+		MaxRetries:    3,
+		RetryBackoff: func(attempt int) time.Duration {
+			return time.Duration(100<<attempt) * time.Millisecond
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("elasticsearch new client: %w", err)

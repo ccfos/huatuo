@@ -19,16 +19,20 @@ import (
 	"net/http"
 )
 
+// JSONWriter is the minimal interface required for writing JSON responses.
+// *server.Context implements this interface.
 type JSONWriter interface {
 	JSON(code int, obj any)
 }
 
+// Response represents the standard response format for API calls.
 type Response struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 	Data    any    `json:"data,omitempty"`
 }
 
+// Success sends a successful response with HTTP 200 status code.
 func Success(w JSONWriter, data any) {
 	w.JSON(http.StatusOK, Response{
 		Code:    0,
@@ -37,6 +41,28 @@ func Success(w JSONWriter, data any) {
 	})
 }
 
+// Created sends a 201 Created response with a Location header pointing at the new resource.
+func Created(w interface {
+	JSONWriter
+	Header(key, val string)
+}, location string, data any,
+) {
+	w.Header("Location", location)
+	w.JSON(http.StatusCreated, Response{
+		Code:    0,
+		Message: "success",
+		Data:    data,
+	})
+}
+
+// NoContent sends a 204 No Content response with no body.
+func NoContent(w interface{ Status(code int) }) {
+	w.Status(http.StatusNoContent)
+}
+
+// Error sends an error response.
+// If err is an APIError, it uses the error's HTTP status code.
+// Otherwise, it returns HTTP 500 Internal Server Error.
 func Error(w JSONWriter, err error) {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
@@ -55,6 +81,7 @@ func Error(w JSONWriter, err error) {
 	})
 }
 
+// ErrorWithCode sends an error response with a custom HTTP status code and error code.
 func ErrorWithCode(w JSONWriter, status, code int, message string) {
 	w.JSON(status, Response{
 		Code:    code,

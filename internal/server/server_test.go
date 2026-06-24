@@ -26,31 +26,56 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// TestServerMetricsRateLimitAndRouteRegistration 覆盖 server 的核心装配行为，验证了无注册表时 /metrics 的兜底响应、有注册表时的 metrics 输出、限流中间件、Group 路由挂载，以及 MustRegisterRoutes 对 GET/POST/DELETE/PUT 的注册效果和未知类型的 panic。
-func TestServerMetricsRateLimitAndRouteRegistration(t *testing.T) {
-	withoutRegistry := NewServer(nil)
-	noRegistryRequest := httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody)
-	noRegistryRecorder := httptest.NewRecorder()
-	withoutRegistry.engine.ServeHTTP(noRegistryRecorder, noRegistryRequest)
+func TestNewServerRegistersMetricsRouteWithoutRegistry(t *testing.T) {
+	s := NewServer(nil)
 
-	if noRegistryRecorder.Code != http.StatusNotImplemented {
-		t.Errorf("metrics without registry status = %d, want %d", noRegistryRecorder.Code, http.StatusNotImplemented)
-	}
-	if !strings.Contains(noRegistryRecorder.Body.String(), "Prometheus registry not supported now") {
-		t.Errorf("metrics without registry body = %q, want unsupported message", noRegistryRecorder.Body.String())
-	}
+	request := httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody)
+	recorder := httptest.NewRecorder()
 
-	withRegistry := &server{promRegistry: prometheus.NewRegistry()}
-	handler := withRegistry.promServerHandler()
-	metricsCtx, metricsRecorder := newTestServerContext(http.MethodGet, "/metrics", "")
-	if err := handler(metricsCtx); err != nil {
+	s.engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotImplemented {
+		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusNotImplemented)
+	}
+	if !strings.Contains(recorder.Body.String(), "Prometheus registry not supported now") {
+		t.Errorf("response body = %q, want metrics unsupported message", recorder.Body.String())
+	}
+}
+
+func TestNewServerRegistersHealthzRoute(t *testing.T) {
+	s := NewServer(nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody)
+	recorder := httptest.NewRecorder()
+
+	s.engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Errorf("response body = %q, want empty body", recorder.Body.String())
+	}
+}
+
+func TestPromServerHandlerWithRegistry(t *testing.T) {
+	s := &server{promRegistry: prometheus.NewRegistry()}
+
+	handler := s.promServerHandler()
+	ctx, recorder := newTestServerContext(http.MethodGet, "/metrics", "")
+
+	err := handler(ctx)
+	if err != nil {
 		t.Errorf("promServerHandler() error = %v", err)
 	}
-	if metricsRecorder.Code != http.StatusOK {
-		t.Errorf("metrics with registry status = %d, want %d", metricsRecorder.Code, http.StatusOK)
+	if recorder.Code != http.StatusOK {
+		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusOK)
 	}
+}
 
+func TestNewRateLimitMiddleware(t *testing.T) {
 	httpGin.SetMode(httpGin.TestMode)
+
 	engine := httpGin.New()
 	engine.Use(middlewareContext(), newRateLimitMiddleware(rate.Every(time.Hour), 1))
 	engine.GET("/tasks", func(c *httpGin.Context) {
@@ -66,20 +91,36 @@ func TestServerMetricsRateLimitAndRouteRegistration(t *testing.T) {
 	engine.ServeHTTP(secondRecorder, secondRequest)
 
 	if firstRecorder.Code != http.StatusOK {
-		t.Errorf("first rate-limit response status = %d, want %d", firstRecorder.Code, http.StatusOK)
+		t.Errorf("first response status = %d, want %d", firstRecorder.Code, http.StatusOK)
 	}
 	if secondRecorder.Code != http.StatusTooManyRequests {
-		t.Errorf("second rate-limit response status = %d, want %d", secondRecorder.Code, http.StatusTooManyRequests)
+		t.Errorf("second response status = %d, want %d", secondRecorder.Code, http.StatusTooManyRequests)
 	}
 	if !strings.Contains(secondRecorder.Body.String(), `"message":"too many requests"`) {
-		t.Errorf("second rate-limit response body = %q, want rate-limit message", secondRecorder.Body.String())
+		t.Errorf("second response body = %q, want rate limit message", secondRecorder.Body.String())
 	}
+}
 
-	s := NewServer(&Config{Group: "/api"})
+func TestServerGroupReturnsConfiguredRootGroup(t *testing.T) {
+	s := NewServer(&Config{Group: "/v1"})
+
 	s.Group().GET("/status", func(ctx *Context) error {
 		ctx.Status(http.StatusNoContent)
 		return nil
 	})
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/status", http.NoBody)
+	recorder := httptest.NewRecorder()
+
+	s.engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
+func TestServerMustRegisterRoutes(t *testing.T) {
+	s := NewServer(&Config{Group: "/api"})
 	s.MustRegisterRoutes("/tasks", []Handle{
 		{
 			Typ: HttpGet,
@@ -113,21 +154,23 @@ func TestServerMetricsRateLimitAndRouteRegistration(t *testing.T) {
 				return nil
 			},
 		},
+		{
+			Typ: HttpPatch,
+			Uri: "/task-20250226",
+			Handle: func(ctx *Context) error {
+				ctx.JSON(http.StatusOK, map[string]string{"method": http.MethodPatch})
+				return nil
+			},
+		},
 	})
 
-	routeCases := []struct {
+	cases := []struct {
 		name         string
 		method       string
 		target       string
 		wantStatus   int
 		wantBodyPart string
 	}{
-		{
-			name:       "group-route",
-			method:     http.MethodGet,
-			target:     "/api/status",
-			wantStatus: http.StatusNoContent,
-		},
 		{
 			name:         "get-route",
 			method:       http.MethodGet,
@@ -155,24 +198,34 @@ func TestServerMetricsRateLimitAndRouteRegistration(t *testing.T) {
 			wantStatus:   http.StatusAccepted,
 			wantBodyPart: `"method":"PUT"`,
 		},
+		{
+			name:         "patch-route",
+			method:       http.MethodPatch,
+			target:       "/api/tasks/task-20250226",
+			wantStatus:   http.StatusOK,
+			wantBodyPart: `"method":"PATCH"`,
+		},
 	}
 
-	for _, tc := range routeCases {
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			request := httptest.NewRequest(tc.method, tc.target, http.NoBody)
 			recorder := httptest.NewRecorder()
+
 			s.engine.ServeHTTP(recorder, request)
 
 			if recorder.Code != tc.wantStatus {
-				t.Errorf("route response status = %d, want %d", recorder.Code, tc.wantStatus)
+				t.Errorf("response status = %d, want %d", recorder.Code, tc.wantStatus)
 			}
 			if tc.wantBodyPart != "" && !strings.Contains(recorder.Body.String(), tc.wantBodyPart) {
-				t.Errorf("route response body = %q, want substring %q", recorder.Body.String(), tc.wantBodyPart)
+				t.Errorf("response body = %q, want substring %q", recorder.Body.String(), tc.wantBodyPart)
 			}
 		})
 	}
+}
 
-	panicServer := NewServer(nil)
+func TestServerMustRegisterRoutesPanicsOnUnknownType(t *testing.T) {
+	s := NewServer(nil)
 	defer func() {
 		recovered := recover()
 		if recovered == nil {
@@ -183,5 +236,8 @@ func TestServerMetricsRateLimitAndRouteRegistration(t *testing.T) {
 			t.Errorf("panic value = %v, want %q", recovered, "unknown type")
 		}
 	}()
-	panicServer.MustRegisterRoutes("", []Handle{{Typ: 99, Uri: "/tasks"}})
+
+	s.MustRegisterRoutes("", []Handle{
+		{Typ: 99, Uri: "/tasks"},
+	})
 }

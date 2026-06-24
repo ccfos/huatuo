@@ -34,6 +34,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 func TestMain(m *testing.M) {
@@ -60,44 +61,67 @@ func TestLoadBpfFromBytes_InvalidELF(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestLoadBpfFromBytes_InvalidName(t *testing.T) {
-	cases := []string{
-		"",
-		"../x.o",
-		"x/evil.o",
-		"..",
-		".",
-		"./x.o",
-		"a..b.o",
-		"x/../y.o",
-		"x\\evil.o",
+// Empty names plus any cleaned form starting with ".." would let LoadBpf
+// escape DefaultBpfObjDir once joined.
+var rejectedNames = []string{
+	"",
+	"..",
+	"../x.o",
+	"../../etc/passwd",
+	"x/../../y.o", // cleans to "../y.o"
+}
+
+// Path-like CLI inputs (e.g. "./_output/bpf/iotracing.o", absolute paths)
+// must pass: they cannot escape DefaultBpfObjDir because Clean keeps them
+// at or below the join root.
+var acceptedNames = []string{
+	"x.o",
+	".",
+	"./x.o",
+	"x/y.o",
+	"a..b.o",
+	"x/../y.o", // cleans to "y.o"
+	"x\\evil.o",
+	"/abs/path/x.o",
+}
+
+func TestValidateName(t *testing.T) {
+	for _, name := range rejectedNames {
+		t.Run("reject/"+name, func(t *testing.T) {
+			err := validateName(name)
+			if !errors.Is(err, errInvalidName) {
+				t.Errorf("validateName(%q) = %v, want %v", name, err, errInvalidName)
+			}
+		})
 	}
 
-	for _, name := range cases {
+	for _, name := range acceptedNames {
+		t.Run("accept/"+name, func(t *testing.T) {
+			if err := validateName(name); err != nil {
+				t.Errorf("validateName(%q) = %v, want nil", name, err)
+			}
+		})
+	}
+}
+
+func TestLoadBpfFromBytes_InvalidName(t *testing.T) {
+	for _, name := range rejectedNames {
 		t.Run(name, func(t *testing.T) {
 			_, err := LoadBpfFromBytes(name, []byte("x"), nil)
-			require.Error(t, err)
+			if !errors.Is(err, errInvalidName) {
+				t.Errorf("LoadBpfFromBytes(%q) = %v, want %v", name, err, errInvalidName)
+			}
 		})
 	}
 }
 
 func TestLoadBpf_InvalidName(t *testing.T) {
-	cases := []string{
-		"",
-		"../x.o",
-		"x/evil.o",
-		"..",
-		".",
-		"./x.o",
-		"a..b.o",
-		"x/../y.o",
-		"x\\evil.o",
-	}
-
-	for _, name := range cases {
+	for _, name := range rejectedNames {
 		t.Run(name, func(t *testing.T) {
 			_, err := LoadBpf(name, nil)
-			require.Error(t, err)
+			if !errors.Is(err, errInvalidName) {
+				t.Errorf("LoadBpf(%q) = %v, want %v", name, err, errInvalidName)
+			}
 		})
 	}
 }
@@ -146,6 +170,7 @@ func TestLoadBpf_DefaultBpfObjDir_Unreadable(t *testing.T) {
 
 func TestLoadBpf_LoadsFromDir(t *testing.T) {
 	t.Helper()
+	requireBPFPermission(t)
 
 	old := DefaultBpfObjDir
 	DefaultBpfObjDir = t.TempDir()
@@ -532,6 +557,7 @@ func loadMinimalObjBytes(t *testing.T) []byte {
 
 func loadMinimalBpfFromBytes(t *testing.T) *defaultBPF {
 	t.Helper()
+	requireBPFPermission(t)
 
 	objBytes := loadMinimalObjBytes(t)
 	obj, err := LoadBpfFromBytes("test_minimal.elf", objBytes, nil)
@@ -546,6 +572,29 @@ func loadMinimalBpfFromBytes(t *testing.T) *defaultBPF {
 	t.Cleanup(func() { b.Close() })
 
 	return b
+}
+
+// requireBPFPermission skips the test when the process lacks CAP_BPF, probed
+// via a tiny map create. Keeps unprivileged environments (containers, CI) from
+// failing with EPERM on every BPF-loading test.
+func requireBPFPermission(tb testing.TB) {
+	tb.Helper()
+
+	m, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.Hash,
+		KeySize:    4,
+		ValueSize:  4,
+		MaxEntries: 1,
+	})
+	if err != nil {
+		if errors.Is(err, ebpf.ErrNotSupported) ||
+			errors.Is(err, unix.EPERM) ||
+			errors.Is(err, unix.EACCES) {
+			tb.Skipf("insufficient permissions for bpf: %v", err)
+		}
+		tb.Fatalf("ebpf.NewMap() = %v, want nil", err)
+	}
+	_ = m.Close()
 }
 
 // isPerfEventUnavailable returns true if attaching a perf event is not allowed

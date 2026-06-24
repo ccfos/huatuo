@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package runtime registers Go runtime and process-level Prometheus
+// collectors (memory, GC, file descriptors, CPU time, etc.) under the
+// HuaTuo metrics namespace.
 package runtime
 
 import (
@@ -19,6 +22,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 )
 
+// RegisterCollector registers the standard process and Go runtime
+// collectors with reg, prefixing their metric names with namespace so
+// they share a consistent prefix with the rest of the HuaTuo metrics.
 func RegisterCollector(reg *prometheus.Registry, namespace string) {
 	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
 		Namespace: namespace,

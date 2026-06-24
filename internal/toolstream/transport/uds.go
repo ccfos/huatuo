@@ -41,7 +41,13 @@ func ListenUDS(path string) (net.Listener, error) {
 		return nil, fmt.Errorf("transport: listen %s: %w", path, err)
 	}
 
-	_ = os.Chmod(path, 0o660)
+	// chmod is the security boundary for who can connect; if it fails the socket
+	// would silently keep the umask-derived permissions, so refuse to expose it.
+	if err := os.Chmod(path, 0o660); err != nil {
+		_ = l.Close()
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("transport: chmod %s: %w", path, err)
+	}
 
 	return &udsListener{Listener: l, path: path}, nil
 }

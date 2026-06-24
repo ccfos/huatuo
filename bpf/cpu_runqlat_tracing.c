@@ -12,13 +12,6 @@
 #define TASK_RUNNING 0
 #define TASK_ON_RQ_QUEUED 1
 
-#define _(P)                                                                   \
-	({                                                                     \
-		typeof(P) val = 0;                                             \
-		bpf_probe_read(&val, sizeof(val), &(P));                       \
-		val;                                                           \
-	})
-
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 struct stat_t {
@@ -57,7 +50,7 @@ struct {
 
 struct stat_t;
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(type, BPF_MAP_TYPE_PERCPU_HASH);
 #ifdef TG_ADDR_KEY
 	__type(key, u64);
 #else
@@ -69,7 +62,7 @@ struct {
 
 struct g_stat_t;
 struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__type(key, u32);
 	__type(value, struct g_stat_t);
 	// all global counts are integrated in one g_stat_t struct
@@ -137,7 +130,7 @@ SEC("raw_tracepoint/sched_switch")
 int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 {
 	u32 prev_pid, next_pid, g_key = 0;
-	u64 now, *tsp, delta;
+	u64 *tsp, delta;
 	bool is_voluntary;
 	long state;
 	struct stat_t *entry;
@@ -148,9 +141,10 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 	struct task_struct *prev = (struct task_struct *)ctx->args[1];
 	struct task_struct *next = (struct task_struct *)ctx->args[2];
 
+	u64 now = bpf_ktime_get_ns();
 #ifdef TG_ADDR_KEY
 	// get task_group addr: task_struct->sched_task_group
-	u64 key = (u64)_(prev->sched_task_group);
+	u64 key = (u64)BPF_CORE_READ(prev, sched_task_group);
 #else
 	// get pid ns id: task_struct->nsproxy->pid_ns_for_children->ns.inum
 	u32 key = BPF_CORE_READ(prev, nsproxy, pid_ns_for_children, ns.inum);
@@ -159,10 +153,9 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 	state = get_task_state(prev);
 
 	// ivcsw: treat like an enqueue event and store timestamp
-	prev_pid = _(prev->pid);
+	prev_pid = BPF_CORE_READ(prev, pid);
 	if (state == TASK_RUNNING) {
 		if (prev_pid != 0) {
-			now = bpf_ktime_get_ns();
 			bpf_map_update_elem(&latency, &prev_pid, &now,
 					    COMPAT_BPF_ANY);
 		}
@@ -171,23 +164,10 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 		is_voluntary = 1;
 	}
 
+	// for key=0<max_entries, no need to check and init
 	g_entry = bpf_map_lookup_elem(&cpu_host_metric, &g_key);
-	if (!g_entry) {
-		// init global counts map
-		struct g_stat_t g_new_stat = {
-			.g_nvcsw   = 0,
-			.g_nivcsw  = 0,
-			.g_nlat_01 = 0,
-			.g_nlat_02 = 0,
-			.g_nlat_03 = 0,
-			.g_nlat_04 = 0,
-		};
-		bpf_map_update_elem(&cpu_host_metric, &g_key, &g_new_stat,
-				    COMPAT_BPF_NOEXIST);
-		g_entry = bpf_map_lookup_elem(&cpu_host_metric, &g_key);
-		if (!g_entry)
-			return 0;
-	}
+	if (!g_entry)
+		return 0;
 
 	// When use pid namespace id as key, sometimes we would encounter
 	// null id because task->nsproxy is freed, usually means that this
@@ -195,14 +175,7 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 	if (key && prev_pid) {
 		entry = bpf_map_lookup_elem(&cpu_tg_metric, &key);
 		if (!entry) {
-			struct stat_t new_stat = {
-				.nvcsw	 = 0,
-				.nivcsw	 = 0,
-				.nlat_01 = 0,
-				.nlat_02 = 0,
-				.nlat_03 = 0,
-				.nlat_04 = 0,
-			};
+			struct stat_t new_stat = {};
 			bpf_map_update_elem(&cpu_tg_metric, &key, &new_stat,
 					    COMPAT_BPF_NOEXIST);
 			entry = bpf_map_lookup_elem(&cpu_tg_metric, &key);
@@ -211,18 +184,18 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 		}
 
 		if (is_voluntary) {
-			__sync_fetch_and_add(&entry->nvcsw, 1);
-			__sync_fetch_and_add(&g_entry->g_nvcsw, 1);
+			entry->nvcsw++;
+			g_entry->g_nvcsw++;
 		} else {
-			__sync_fetch_and_add(&entry->nivcsw, 1);
-			__sync_fetch_and_add(&g_entry->g_nivcsw, 1);
+			entry->nivcsw++;
+			g_entry->g_nivcsw++;
 		}
 	}
 
 	// trace_sched_switch is called under prev != next, no need to check
 	// again.
 
-	next_pid = _(next->pid);
+	next_pid = BPF_CORE_READ(next, pid);
 	// ignore idle
 	if (next_pid == 0)
 		return 0;
@@ -233,12 +206,11 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 		return 0; // missed enqueue
 	}
 
-	now   = bpf_ktime_get_ns();
 	delta = now - *tsp;
 	bpf_map_delete_elem(&latency, &next_pid);
 
 #ifdef TG_ADDR_KEY
-	key = (u64)_(next->sched_task_group);
+	key = (u64)BPF_CORE_READ(next, sched_task_group);
 #else
 	key = BPF_CORE_READ(next, nsproxy, pid_ns_for_children, ns.inum);
 #endif
@@ -246,14 +218,7 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 	if (key) {
 		entry = bpf_map_lookup_elem(&cpu_tg_metric, &key);
 		if (!entry) {
-			struct stat_t new_stat = {
-				.nvcsw	 = 0,
-				.nivcsw	 = 0,
-				.nlat_01 = 0,
-				.nlat_02 = 0,
-				.nlat_03 = 0,
-				.nlat_04 = 0,
-			};
+			struct stat_t new_stat = {};
 			bpf_map_update_elem(&cpu_tg_metric, &key, &new_stat,
 					    COMPAT_BPF_NOEXIST);
 			entry = bpf_map_lookup_elem(&cpu_tg_metric, &key);
@@ -262,17 +227,17 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 		}
 
 		if (delta < 10 * NSEC_PER_MSEC) {
-			__sync_fetch_and_add(&entry->nlat_01, 1);
-			__sync_fetch_and_add(&g_entry->g_nlat_01, 1);
+			entry->nlat_01++;
+			g_entry->g_nlat_01++;
 		} else if (delta < 20 * NSEC_PER_MSEC) {
-			__sync_fetch_and_add(&entry->nlat_02, 1);
-			__sync_fetch_and_add(&g_entry->g_nlat_02, 1);
+			entry->nlat_02++;
+			g_entry->g_nlat_02++;
 		} else if (delta < 50 * NSEC_PER_MSEC) {
-			__sync_fetch_and_add(&entry->nlat_03, 1);
-			__sync_fetch_and_add(&g_entry->g_nlat_03, 1);
+			entry->nlat_03++;
+			g_entry->g_nlat_03++;
 		} else {
-			__sync_fetch_and_add(&entry->nlat_04, 1);
-			__sync_fetch_and_add(&g_entry->g_nlat_04, 1);
+			entry->nlat_04++;
+			g_entry->g_nlat_04++;
 		}
 	}
 
@@ -287,7 +252,7 @@ int sched_process_exit_entry(struct bpf_raw_tracepoint_args *ctx)
 	// TP_PROTO(struct task_struct *tsk)
 	struct task_struct *p = (struct task_struct *)ctx->args[0];
 
-	pid = _(p->pid);
+	pid = BPF_CORE_READ(p, pid);
 	/*
 	 * check latency table to fix latency table overflow in below scenario:
 	 * when wake up the target task, but the target task always running in

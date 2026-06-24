@@ -18,6 +18,7 @@ import (
 	"debug/elf"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"huatuo-bamai/internal/procfs"
 	utils "huatuo-bamai/internal/profiler/common"
@@ -38,8 +39,8 @@ type cacheKey struct {
 	mountKey string
 }
 
-// UserResolver resolves user-space stack addresses to symbol names across pids.
-type UserResolver struct {
+// UsymResolver resolves user-space stack addresses to symbol names across pids.
+type UsymResolver struct {
 	exeCache  map[cacheKey]*elfCache // inode+xfs → elfcache
 	exeKeys   map[uint32]cacheKey    // pid → cachekey
 	libcaches map[cacheKey]*libCache // inode+xfs → libcache
@@ -47,9 +48,9 @@ type UserResolver struct {
 	procmaps  map[uint32]sections
 }
 
-// NewUserResolver creates a UserResolver with shared caches across pids.
-func NewUserResolver() *UserResolver {
-	return &UserResolver{
+// NewUsymResolver creates a UsymResolver with shared caches across pids.
+func NewUsymResolver() *UsymResolver {
+	return &UsymResolver{
 		exeCache:  make(map[cacheKey]*elfCache),
 		exeKeys:   make(map[uint32]cacheKey),
 		libcaches: make(map[cacheKey]*libCache),
@@ -58,24 +59,43 @@ func NewUserResolver() *UserResolver {
 	}
 }
 
-// ResolveUserStackBytes resolves user-space stack addresses into byte frames.
-func (r *UserResolver) ResolveUserStackBytes(pid uint32, ustack []uint64, ustackSize int) [][]byte {
-	return r.resolveUserStack(pid, ustack, ustackSize, outTypeBytes).bytes
+// UsymStackBytes resolves user-space stack addresses into byte frames (innermost first).
+func (r *UsymResolver) UsymStackBytes(pid uint32, ustack []uint64, ustackSize int) [][]byte {
+	return r.resolveUserStack(pid, ustack, ustackSize, outTypeBytes, false).bytes
 }
 
-// ResolveUserStackStrs resolves user-space stack addresses into string frames.
-func (r *UserResolver) ResolveUserStackStrs(pid uint32, ustack []uint64, ustackSize int) []string {
-	return r.resolveUserStack(pid, ustack, ustackSize, outTypeString).strings
+// UsymStackStrs resolves user-space stack addresses into string frames (innermost first).
+func (r *UsymResolver) UsymStackStrs(pid uint32, ustack []uint64, ustackSize int) []string {
+	return r.resolveUserStack(pid, ustack, ustackSize, outTypeString, false).strings
 }
 
-func (r *UserResolver) resolveUserStack(pid uint32, stack []uint64, stackSize int, out outType) stackFrames {
+// UsymStackBytesReversed resolves user-space stack addresses into byte frames (outermost first).
+func (r *UsymResolver) UsymStackBytesReversed(pid uint32, ustack []uint64, ustackSize int) [][]byte {
+	return r.resolveUserStack(pid, ustack, ustackSize, outTypeBytes, true).bytes
+}
+
+// UsymStackStrsReversed resolves user-space stack addresses into string frames (outermost first).
+func (r *UsymResolver) UsymStackStrsReversed(pid uint32, ustack []uint64, ustackSize int) []string {
+	return r.resolveUserStack(pid, ustack, ustackSize, outTypeString, true).strings
+}
+
+func (r *UsymResolver) resolveUserStack(pid uint32, stack []uint64, stackSize int, out outType, reversed bool) stackFrames {
 	limit := min(stackSize, len(stack))
-	return resolveStack(stack[:limit], func(addr uint64) string {
+	frames := resolveStack(stack[:limit], func(addr uint64) string {
 		return r.resolveAddr(pid, addr)
 	}, out)
+
+	if reversed {
+		if out == outTypeBytes {
+			slices.Reverse(frames.bytes)
+		} else {
+			slices.Reverse(frames.strings)
+		}
+	}
+	return frames
 }
 
-func (r *UserResolver) resolveAddr(pid uint32, addr uint64) string {
+func (r *UsymResolver) resolveAddr(pid uint32, addr uint64) string {
 	cache, err := r.loadElfCaches(pid)
 	if err != nil {
 		return failFrame("elf-load-fail", "")
@@ -117,7 +137,7 @@ func (r *UserResolver) resolveAddr(pid uint32, addr uint64) string {
 	return failFrame("lib-no-sym", m.Pathname)
 }
 
-func (r *UserResolver) loadElfCaches(pid uint32) (*elfCache, error) {
+func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
 	if key, ok := r.exeKeys[pid]; ok {
 		if cache, ok := r.exeCache[key]; ok {
 			return cache, nil
@@ -164,7 +184,7 @@ func (r *UserResolver) loadElfCaches(pid uint32) (*elfCache, error) {
 	return cache, nil
 }
 
-func (r *UserResolver) loadProcMaps(pid uint32) error {
+func (r *UsymResolver) loadProcMaps(pid uint32) error {
 	_, ok := r.procmaps[pid]
 	if ok {
 		return nil
@@ -178,7 +198,7 @@ func (r *UserResolver) loadProcMaps(pid uint32) error {
 	return nil
 }
 
-func (r *UserResolver) loadLibCache(pid uint32, libPath string) (*libCache, error) {
+func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*libCache, error) {
 	if key, ok := r.libKeys[libPath]; ok {
 		if cache, ok := r.libcaches[key]; ok {
 			return cache, nil
@@ -208,7 +228,7 @@ func (r *UserResolver) loadLibCache(pid uint32, libPath string) (*libCache, erro
 	return cache, nil
 }
 
-func (r *UserResolver) exePath(pid uint32) (string, error) {
+func (r *UsymResolver) exePath(pid uint32) (string, error) {
 	proc, err := procfs.NewProc(int(pid))
 	if err != nil {
 		return "", fmt.Errorf("procfs.NewProc %d: %w", pid, err)
@@ -221,7 +241,7 @@ func (r *UserResolver) exePath(pid uint32) (string, error) {
 	return filepath.Join(rootDir, bin), nil
 }
 
-func (r *UserResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
+func (r *UsymResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
 	inode, err := fileutil.StatInode(path)
 	if err != nil {
 		return cacheKey{}, fmt.Errorf("stat %q: %w", path, err)
@@ -235,7 +255,7 @@ func (r *UserResolver) exeCacheKey(pid uint32, path string) (cacheKey, error) {
 	return cacheKey{inode: inode, mountKey: mountKey}, nil
 }
 
-func (r *UserResolver) libCacheKey(pid uint32, libPath string) (cacheKey, error) {
+func (r *UsymResolver) libCacheKey(pid uint32, libPath string) (cacheKey, error) {
 	inode, err := fileutil.StatInode(libPath)
 	if err != nil {
 		return cacheKey{}, fmt.Errorf("stat %q: %w", libPath, err)
@@ -249,7 +269,7 @@ func (r *UserResolver) libCacheKey(pid uint32, libPath string) (cacheKey, error)
 	return cacheKey{inode: inode, mountKey: mountKey}, nil
 }
 
-func (r *UserResolver) mountKeyForPID(pid uint32, hostPath string) (string, error) {
+func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, error) {
 	count, err := countXfsMounts()
 	if err != nil {
 		return "", err

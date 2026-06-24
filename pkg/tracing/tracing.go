@@ -12,6 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package tracing is the core scheduling and lifecycle layer for HuaTuo
+// tracers and event sources.
+//
+// It defines the ITracingEvent and ITracingMetric interfaces, manages
+// per-tracer goroutines through EventTracing, and exposes a global
+// manager for registering, starting, and stopping tracing tasks.
+// The package also provides the document model and watch-event publish/
+// subscribe mechanism used to deliver tracer output to consumers.
 package tracing
 
 import (

@@ -53,8 +53,7 @@ const (
 )
 
 const (
-	sizeofDcbmsg  = 4
-	sizeofIEEEPfc = 133
+	sizeofDcbmsg = 4
 )
 
 type dcbMsg struct {
@@ -80,8 +79,13 @@ type ieeePfc struct {
 	Indications [IEEE_8021QAZ_MAX_TCS]uint64 // count of the received pfc frames
 }
 
-func deserializeIEEEPfc(b []byte) *ieeePfc {
-	return (*ieeePfc)(unsafe.Pointer(&b[0:sizeofIEEEPfc][0]))
+func deserializeIEEEPfc(b []byte) (*ieeePfc, error) {
+	size := int(unsafe.Sizeof(ieeePfc{}))
+	if len(b) < size {
+		return nil, fmt.Errorf("ieee pfc attr too short: got %d, want at least %d", len(b), size)
+	}
+
+	return (*ieeePfc)(unsafe.Pointer(&b[0])), nil
 }
 
 func doDcbRequest(ifname string) ([][]byte, error) {
@@ -107,7 +111,7 @@ func parseAttributes(attrs []syscall.NetlinkRouteAttr) (*ieeePfc, error) {
 			for _, s := range subattrs {
 				switch s.Attr.Type {
 				case DCB_ATTR_IEEE_PFC:
-					return deserializeIEEEPfc(s.Value), nil
+					return deserializeIEEEPfc(s.Value)
 				case DCB_ATTR_IEEE_PEER_PFC:
 				}
 			}

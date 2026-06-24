@@ -54,7 +54,7 @@ func NewBackend(dsn string) (*Storage, error) {
 }
 
 // Close closes the SQLite database.
-func (s *Storage) Close() error {
+func (s *Storage) Close(_ context.Context) error {
 	if s == nil || s.db == nil {
 		return nil
 	}

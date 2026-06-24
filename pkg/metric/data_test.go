@@ -22,6 +22,27 @@ import (
 	"huatuo-bamai/internal/pod"
 )
 
+func TestDefaultHostnameAndRegion(t *testing.T) {
+	defaultRegion = "huatuo-region"
+	defaultHostname = "huatuo-dev"
+
+	if DefaultHostname() != "huatuo-dev" {
+		t.Errorf("DefaultHostname()=%q, want %q", DefaultHostname(), "huatuo-dev")
+	}
+	if DefaultRegion() != "huatuo-region" {
+		t.Errorf("DefaultRegion()=%q, want %q", DefaultRegion(), "huatuo-region")
+	}
+
+	defaultRegion = ""
+	defaultHostname = ""
+	if DefaultHostname() != "" {
+		t.Errorf("DefaultHostname()=%q, want empty", DefaultHostname())
+	}
+	if DefaultRegion() != "" {
+		t.Errorf("DefaultRegion()=%q, want empty", DefaultRegion())
+	}
+}
+
 func TestIsNoDataError(t *testing.T) {
 	tests := []struct {
 		name     string

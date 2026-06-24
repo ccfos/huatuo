@@ -79,6 +79,47 @@ static __always_inline bool bpf_ratelimited(struct bpf_ratelimit *rate)
 				    &event_bpf_rlimit_##rate,                  \
 				    &___bpf_rlimit_cfg_##rate)
 
+// BPF_RATELIMIT_IN_MAP_RC: like BPF_RATELIMIT_IN_MAP, but parameters come from
+// three .rodata globals that userspace patches via cilium/ebpf RewriteConstants
+// before program load instead of being baked in at compile time. Use when the
+// rate must come from a CLI flag or config file. Layout matches the compile-
+// time variant exactly (same state map, same perf event channel, same payload),
+// so the userspace reader is interchangeable.
+#define BPF_RATELIMIT_IN_MAP_RC(name)                                          \
+	struct {                                                               \
+		__uint(type, BPF_MAP_TYPE_ARRAY);                              \
+		__uint(key_size, sizeof(u32));                                 \
+		__uint(value_size, sizeof(struct bpf_ratelimit));              \
+		__uint(max_entries, 1);                                        \
+	} bpf_rlimit_##name SEC(".maps");                                      \
+	struct {                                                               \
+		__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);                   \
+		__uint(key_size, sizeof(int));                                 \
+		__uint(value_size, sizeof(u32));                               \
+	} event_bpf_rlimit_##name SEC(".maps");                                \
+	volatile const __u64 bpf_rlimit_interval_##name	 = 0;                  \
+	volatile const __u64 bpf_rlimit_burst_##name	 = 0;                  \
+	volatile const __u64 bpf_rlimit_max_burst_##name = 0
+
+// bpf_ratelimited_in_map_rc: same contract as bpf_ratelimited_in_map. Returns
+// false (admit) when the limiter is disabled (interval == 0), in a single
+// .rodata load + compare with no map lookup on the fast path.
+#define bpf_ratelimited_in_map_rc(ctx, name)                                   \
+	({                                                                     \
+		bool __ret = false;                                            \
+		if (bpf_rlimit_interval_##name != 0) {                         \
+			struct bpf_ratelimit __cfg = {                         \
+				.interval  = bpf_rlimit_interval_##name,       \
+				.burst	   = bpf_rlimit_burst_##name,          \
+				.max_burst = bpf_rlimit_max_burst_##name,      \
+			};                                                     \
+			__ret = bpf_ratelimited_core_in_map(                   \
+				ctx, &bpf_rlimit_##name,                       \
+				&event_bpf_rlimit_##name, &__cfg);             \
+		}                                                              \
+		__ret;                                                         \
+	})
+
 static __always_inline bool
 bpf_ratelimited_core_in_map(void *ctx, void *map, void *perf_map,
 			    const volatile struct bpf_ratelimit *cfg)

@@ -14,12 +14,11 @@
 
 package job
 
-// Storage is the minimal persistence interface required by Manager.
-type Storage interface {
-	Save(data any) error
-	Delete(condition any) error
-	Search(query, result any) error
-	Update(condition, data any) error
+type Store interface {
+	Get(jobID string) (*Job, error)
+	Save(job *Job) error
+	Delete(jobID string) error
+	List(query *JobQuery) ([]*Job, error)
 }
 
 // NodeAgent interface for communicating with the huatuo-bamai agent

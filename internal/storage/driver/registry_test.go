@@ -50,6 +50,8 @@ func (b *testBackend) Values(context.Context, string, Query, int) ([]string, err
 	return nil, nil
 }
 
+func (b *testBackend) Close(context.Context) error { return nil }
+
 func cloneBackendFactories() map[string]BackendFactory {
 	backendFactoriesMu.RLock()
 	defer backendFactoriesMu.RUnlock()

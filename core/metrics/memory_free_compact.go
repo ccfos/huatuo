@@ -46,7 +46,7 @@ type reclaimCompact struct {
 }
 
 type memoryLatency struct {
-	/* the host latency counters of compaction and alloc pages in direct relaim. */
+	/* the host latency counters of compaction and alloc pages in direct reclaim. */
 	CompactionStall uint64
 	AllocPagesStall uint64
 	// FIXME: support cgroups v1/v2

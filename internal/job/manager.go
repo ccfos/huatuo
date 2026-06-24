@@ -15,6 +15,7 @@
 package job
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -30,24 +31,35 @@ var ErrJobCompleted = fmt.Errorf("job already completed")
 // ErrCannotDeleteRunning is returned when trying to delete a running job.
 var ErrCannotDeleteRunning = fmt.Errorf("cannot delete running job")
 
-// ManagerConfig holds configuration for the job manager
+// ManagerConfig holds configuration for the job manager.
 type ManagerConfig struct {
 	MaxJobsPerHost int
 	MaxTotalJobs   int
+	// StoreDSN is the SQLite data source name for the job store.
+	// Defaults to "jobs.db" when empty.
+	StoreDSN string
 }
 
-// Manager manages jobs
+// Manager tracks running jobs in memory and persists terminal states to storage.
 type Manager struct {
 	jobs       sync.Map // map[string]*Job
 	jobsByHost sync.Map // map[string]int
-	storage    Storage
+	storage    Store
 	nodeAgent  NodeAgent
 	stopChan   chan struct{}
 	config     ManagerConfig
 }
 
-// NewManager creates a new job manager
-func NewManager(storage Storage, nodeAgent NodeAgent, config ManagerConfig) *Manager {
+func NewManager(ctx context.Context, nodeAgent NodeAgent, config ManagerConfig) (*Manager, error) {
+	storage, err := newStore(ctx, config.StoreDSN)
+	if err != nil {
+		return nil, err
+	}
+
+	return newManagerWithStore(storage, nodeAgent, config), nil
+}
+
+func newManagerWithStore(storage Store, nodeAgent NodeAgent, config ManagerConfig) *Manager {
 	return &Manager{
 		storage:   storage,
 		nodeAgent: nodeAgent,
@@ -61,13 +73,11 @@ func (m *Manager) Shutdown() {
 	close(m.stopChan)
 }
 
-// Create creates a new job
 func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
 	if req.Args.TraceTimeout == 0 && req.Args.Duration == 0 {
 		return nil, fmt.Errorf("trace timeout or duration is required")
 	}
 
-	// Check per-host limit
 	jobCountVal, exists := m.jobsByHost.Load(req.Host)
 	if exists {
 		jobCount := jobCountVal.(int)
@@ -76,7 +86,6 @@ func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
 		}
 	}
 
-	// Check total jobs limit
 	jobCount := 0
 	m.jobs.Range(func(_, value any) bool {
 		jobCount++
@@ -147,32 +156,19 @@ func (m *Manager) Stop(jobID string, force bool) error {
 	return nil
 }
 
-// Get gets a job by ID
 func (m *Manager) Get(jobID string) (*Job, error) {
 	jobVal, exists := m.jobs.Load(jobID)
 	if exists {
 		return jobVal.(*Job), nil
 	}
 
-	query := JobQuery{
-		JobID:   jobID,
-		IsAdmin: true, // No user filter when looking up by ID
-	}
-	var storedJob *Job
-	err := m.storage.Search(query, &storedJob)
-	if err != nil {
-		return nil, err
-	}
-
-	return storedJob, nil
+	return m.storage.Get(jobID)
 }
 
-// Save saves a job to storage
 func (m *Manager) Save(job *Job) error {
 	return m.storage.Save(job)
 }
 
-// List lists jobs based on filters
 func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, error) {
 	var jobs []*Job
 
@@ -202,14 +198,12 @@ func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, e
 		return true
 	})
 
-	// Get jobs from storage
-	var storedJobs []*Job
 	if filter == nil {
 		filter = &JobQuery{}
 	}
 	filter.UserID = userID
 	filter.IsAdmin = isAdmin
-	err := m.storage.Search(filter, &storedJobs)
+	storedJobs, err := m.storage.List(filter)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +211,6 @@ func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, e
 	return append(jobs, storedJobs...), nil
 }
 
-// StopAll stops all running jobs
 func (m *Manager) StopAll() {
 	var jobIDs []string
 
@@ -237,7 +230,6 @@ func (m *Manager) StopAll() {
 	log.Infof("admin stopped all jobs(count: %d)", len(jobIDs))
 }
 
-// updateJobStatus updates the status of a job
 func (m *Manager) updateJobStatus(job *Job, status JobStatus, errMesg string) {
 	job.Status = status
 	job.LastUpdate = time.Now()
@@ -265,11 +257,7 @@ func (m *Manager) updateJobStatus(job *Job, status JobStatus, errMesg string) {
 	}
 }
 
-// checkAndUpdateJobStatus check agent job status and update local job status
-// return:
-//
-//	status - agent status
-//	err - query error
+// checkAndUpdateJobStatus polls the agent for the task's current status and transitions the local job accordingly.
 func (m *Manager) checkAndUpdateJobStatus(job *Job) (string, error) {
 	agentStatus, results, err := m.nodeAgent.GetTaskStatus(job.Host, job.AgentTaskID)
 	if err != nil {
@@ -296,7 +284,6 @@ func (m *Manager) checkAndUpdateJobStatus(job *Job) (string, error) {
 	}
 }
 
-// monitorJob monitors the status of a single job
 func (m *Manager) monitorJob(job *Job) {
 	var err error
 	var status string
@@ -372,7 +359,7 @@ func (m *Manager) monitorJob(job *Job) {
 				return
 			}
 
-			// Increment counter and check if it's time to query status (every 5 seconds)
+			// Poll agent status every 5 ticks (5 s).
 			statusCheckCounter++
 			if statusCheckCounter < 5 {
 				continue
@@ -389,7 +376,7 @@ func (m *Manager) monitorJob(job *Job) {
 	}
 }
 
-// Delete deletes a job record by ID, but only if it's not running
+// Delete removes the persisted job record; returns ErrCannotDeleteRunning if the job is still active.
 func (m *Manager) Delete(jobID string) error {
 	if jobVal, exists := m.jobs.Load(jobID); exists {
 		job := jobVal.(*Job)
@@ -398,12 +385,7 @@ func (m *Manager) Delete(jobID string) error {
 		}
 	}
 
-	query := JobQuery{
-		JobID:   jobID,
-		IsAdmin: true, // No user filter when looking up by ID
-	}
-	var storedJob *Job
-	err := m.storage.Search(query, &storedJob)
+	storedJob, err := m.storage.Get(jobID)
 	if err != nil {
 		return err
 	}

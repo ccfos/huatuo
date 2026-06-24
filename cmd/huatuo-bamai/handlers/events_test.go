@@ -15,12 +15,41 @@
 package handlers
 
 import (
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"huatuo-bamai/pkg/tracing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestEventsHandler_AcquireClientConcurrent(t *testing.T) {
+	h := NewEventsHandler(1, 0)
+	start := make(chan struct{})
+	var acquired atomic.Int32
+	var wg sync.WaitGroup
+
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if h.tryAcquirePermit() {
+				acquired.Add(1)
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	require.Equal(t, int32(1), acquired.Load())
+	require.Equal(t, int32(1), h.activeClients.Load())
+
+	h.releasePermit()
+	require.Equal(t, int32(0), h.activeClients.Load())
+}
 
 // --- WatchFilters.matcher() ---
 

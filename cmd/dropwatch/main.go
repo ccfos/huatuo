@@ -16,7 +16,10 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -34,7 +37,27 @@ import (
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/utils/bytesutil"
+	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/types"
+)
+
+// Device filter mode passed via RewriteConstants to bpf_skb_filter.h.
+// Values must match the filter_dev_mode semantics there.
+const (
+	devFilterModeOff       uint32 = iota // disabled — all devices pass
+	devFilterModeWhitelist               // only listed ifindexes pass
+	devFilterModeBlacklist               // listed ifindexes are dropped
+)
+
+// skbFilterDevMapName is the BPF map name defined in bpf_skb_filter.h.
+const skbFilterDevMapName = "skb_filter_dev_map"
+
+// BPF symbols emitted by BPF_RATELIMIT_IN_MAP_RC(dropwatch) in bpf/dropwatch.c.
+const (
+	rlimitIntervalConst = "bpf_rlimit_interval_dropwatch"
+	rlimitBurstConst    = "bpf_rlimit_burst_dropwatch"
+	rlimitMaxBurstConst = "bpf_rlimit_max_burst_dropwatch"
+	rateLimitEventMap   = "event_bpf_rlimit_dropwatch"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/dropwatch.c -o $BPF_DIR/dropwatch.o
@@ -46,19 +69,19 @@ var (
 
 // Must match struct packet_meta in bpf/dropwatch.c exactly.
 type packetMeta struct {
-	KtimeNS            uint64
-	TgidPid            uint64
-	NetCookie          uint64
-	SkbAddr            uint64
-	MemcgCssAddr       uint64
-	NetdevIfindex      uint32
-	NetdevFlags        uint32
-	NetdevQueueMapping uint32
-	DropSource         uint32
-	Type               uint32
-	NetInode           uint32
-	NetdevName         [bpf.NetdevNameLen]byte
-	Comm               [bpf.TaskCommLen]byte
+	KtimeNS             uint64
+	TgidPid             uint64
+	NetCookie           uint64
+	SkbAddr             uint64
+	MemoryCgroupCSSAddr uint64
+	NetdevIfindex       uint32
+	NetdevFlags         uint32
+	NetdevQueueMapping  uint32
+	DropReason          uint32
+	Type                uint32
+	NetInode            uint32
+	NetdevName          [bpf.NetdevNameLen]byte
+	Comm                [bpf.TaskCommLen]byte
 }
 
 type packetRaw struct {
@@ -78,27 +101,99 @@ type dropPacketEvent struct {
 	Stack     [symbol.KsymStackMaxDepth]uint64
 }
 
+// rateLimitEvent mirrors struct bpf_ratelimit in bpf/include/bpf_ratelimit.h;
+// emitted once per window on the first miss so userspace can surface a single
+// warning instead of one per dropped event.
+type rateLimitEvent struct {
+	Interval      uint64
+	Begin         uint64
+	Burst         uint64
+	MaxBurst      uint64
+	Events        uint64
+	NMissed       uint64
+	TotalEvents   uint64
+	TotalNMissed  uint64
+	TotalInterval uint64
+}
+
 // Compile-time layout guards: assert BPF wire struct sizes match the C definitions.
 var (
 	_ = [1]struct{}{}[96-unsafe.Sizeof(packetMeta{})]
 	_ = [1]struct{}{}[136-unsafe.Sizeof(packetRaw{})]
 	_ = [1]struct{}{}[240-unsafe.Offsetof(dropPacketEvent{}.Stack)]
+	_ = [1]struct{}{}[72-unsafe.Sizeof(rateLimitEvent{})]
 )
 
-// loadDropwatchBPF reads the BPF object at bpfPath, injects filterExpr into the
-// pcap_stub_l2/l3 stubs, and loads it. Each instance uses a unique BPF name to
-// allow multiple instances to coexist.
-func loadDropwatchBPF(bpfPath, filterExpr string) (bpf.BPF, error) {
+// loadBPFWithFilter reads the BPF object at bpfPath, injects filterExpr into the
+// pcap_stub_l2/l3 stubs, applies RewriteConstants for any non-nil consts, and
+// loads it. Each instance uses a unique BPF name to allow multiple instances
+// to coexist.
+func loadBPFWithFilter(bpfPath, filterExpr string, consts map[string]any) (bpf.BPF, error) {
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
 		return nil, fmt.Errorf("read bpf object: %w", err)
 	}
 	bpfName := fmt.Sprintf("dropwatch_%d.o", time.Now().UnixNano())
-	return pcapfilter.Load(bpfName, bpfBytes, filterExpr, nil)
+	return pcapfilter.Load(bpfName, bpfBytes, filterExpr, consts)
+}
+
+// parseDeviceFlags requires the mutual-exclusivity invariant: at most one
+// of device / excluded is non-empty. The app's Before hook enforces it.
+func parseDeviceFlags(device, excluded string) (uint32, []uint32, error) {
+	var (
+		list string
+		mode uint32
+	)
+	switch {
+	case device != "":
+		list, mode = device, devFilterModeWhitelist
+	case excluded != "":
+		list, mode = excluded, devFilterModeBlacklist
+	default:
+		return devFilterModeOff, nil, nil
+	}
+
+	var ifindexes []uint32
+	for _, name := range strings.Split(list, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		iface, err := net.InterfaceByName(name)
+		if err != nil {
+			return 0, nil, fmt.Errorf("device %q: %w", name, err)
+		}
+		ifindexes = append(ifindexes, uint32(iface.Index))
+	}
+	if len(ifindexes) == 0 {
+		return 0, nil, errors.New("no valid interfaces specified")
+	}
+	return mode, ifindexes, nil
+}
+
+// installDeviceFilter loads ifindexes into skb_filter_dev_map. A single
+// map serves both whitelist and blacklist modes; filter_dev_mode decides
+// how a hit is interpreted on the BPF side.
+func installDeviceFilter(b bpf.BPF, mode uint32, ifindexes []uint32) error {
+	if mode == devFilterModeOff {
+		return nil
+	}
+	mapID := b.MapIDByName(skbFilterDevMapName)
+	if mapID == 0 {
+		return fmt.Errorf("bpf map %q not found", skbFilterDevMapName)
+	}
+
+	items := make([]bpf.MapItem, 0, len(ifindexes))
+	for _, idx := range ifindexes {
+		key := make([]byte, 4)
+		binary.NativeEndian.PutUint32(key, idx)
+		items = append(items, bpf.MapItem{Key: key, Value: []byte{1}})
+	}
+	return b.WriteMapItems(mapID, items)
 }
 
 func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
-	pkt := packet.PacketHdr{
+	pkt := packet.Hdr{
 		EthProto:  ev.Raw.EthProto,
 		RawLen:    uint8(ev.Raw.RawLen),
 		HasEthHdr: uint8(ev.Raw.HasEthHdr),
@@ -106,28 +201,55 @@ func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
 		Raw:       ev.Raw.Raw,
 	}
 
-	pktType, pktInfo := packet.ParsePacketHdr(&pkt)
+	p, err := packet.Parse(&pkt)
+	if err != nil {
+		log.Debugf("dropwatch: parse packet: %v", err)
+	}
 
 	frames := symbol.KsymStackStrs(ev.Stack[:], symbol.KsymStackMaxDepth)
 	stackStr := strings.Join(frames, "\n")
 
 	return &types.DropWatchTracing{
-		ObservedTimestamp:  time.Now().UTC().Format(time.RFC3339Nano),
-		Comm:               bytesutil.ToStr(ev.Meta.Comm[:]),
-		Pid:                ev.Meta.TgidPid >> 32,
-		MemcgCssAddr:       ev.Meta.MemcgCssAddr,
-		NetNamespaceCookie: ev.Meta.NetCookie,
-		NetNamespaceInode:  ev.Meta.NetInode,
-		NetdevName:         bytesutil.ToStr(ev.Meta.NetdevName[:]),
-		NetdevIfindex:      ev.Meta.NetdevIfindex,
-		NetdevQueueMapping: ev.Meta.NetdevQueueMapping,
-		NetdevLinkStatus:   linkstatus.FlagsRaw(ev.Meta.NetdevFlags),
-		PacketSkbAddr:      fmt.Sprintf("0x%016x", ev.Meta.SkbAddr),
-		PacketEthProto:     fmt.Sprintf("0x%04x", ev.Raw.EthProto),
-		PacketLen:          ev.Raw.PktLen,
-		PacketType:         pktType,
-		PacketInfo:         pktInfo,
-		Stack:              stackStr,
+		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
+		Pid:                 ev.Meta.TgidPid >> 32,
+		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemoryCgroupCSSAddr),
+		NetNamespaceCookie:  ev.Meta.NetCookie,
+		NetNamespaceInode:   ev.Meta.NetInode,
+		NetdevName:          bytesutil.ToStr(ev.Meta.NetdevName[:]),
+		NetdevIfindex:       ev.Meta.NetdevIfindex,
+		NetdevQueueMapping:  ev.Meta.NetdevQueueMapping,
+		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.NetdevFlags),
+		PacketSkbAddr:       kernaddr.Format(ev.Meta.SkbAddr),
+		PacketEthProto:      fmt.Sprintf("0x%04x", ev.Raw.EthProto),
+		PacketLen:           ev.Raw.PktLen,
+		Layers:              p,
+		Stack:               stackStr,
+	}
+}
+
+// readRateLimitEvents surfaces overflow events as warnings. The BPF side
+// already throttles to one event per window, so the loop itself is unthrottled.
+func readRateLimitEvents(ctx context.Context, r bpf.PerfEventReader, eventsPerSecond uint64) {
+	var ev rateLimitEvent
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		if err := r.ReadInto(&ev); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+
+			log.Errorf("dropwatch: rate-limit reader: %v", err)
+
+			continue
+		}
+
+		log.Warnf("dropwatch: rate limit hit (configured=%d/s, window_events=%d, window_missed=%d, total_events=%d, total_missed=%d)",
+			eventsPerSecond, ev.Events, ev.NMissed, ev.TotalEvents, ev.TotalNMissed)
 	}
 }
 
@@ -158,11 +280,31 @@ func mainAction(c *cli.Context) error {
 		defer sockClient.End()
 	}
 
-	bpfObj, err := loadDropwatchBPF(c.String("bpf-path"), c.String("filter"))
+	devMode, devIfindexes, err := parseDeviceFlags(c.String("device"), c.String("device-excluded"))
+	if err != nil {
+		return fmt.Errorf("dropwatch: %w", err)
+	}
+
+	consts := map[string]any{"filter_dev_mode": devMode}
+
+	// A non-zero rate uses a 1-second window with burst = N events; max_burst
+	// stays 0 (notify only on the first miss per window).
+	maxEventsPerSecond := c.Uint64("max-events-per-second")
+	if maxEventsPerSecond > 0 {
+		consts[rlimitIntervalConst] = uint64(1)
+		consts[rlimitBurstConst] = maxEventsPerSecond
+		consts[rlimitMaxBurstConst] = uint64(0)
+	}
+
+	bpfObj, err := loadBPFWithFilter(c.String("bpf-path"), c.String("filter"), consts)
 	if err != nil {
 		return fmt.Errorf("dropwatch: load bpf: %w", err)
 	}
 	defer bpfObj.Close()
+
+	if err := installDeviceFilter(bpfObj, devMode, devIfindexes); err != nil {
+		return fmt.Errorf("dropwatch: device filter map: %w", err)
+	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -190,6 +332,18 @@ func mainAction(c *cli.Context) error {
 		return fmt.Errorf("dropwatch: attach: %w", err)
 	}
 	defer reader.Close()
+
+	// Drain the rate-limit overflow channel only when the limiter is armed —
+	// otherwise the perf map exists but never receives events.
+	if maxEventsPerSecond > 0 {
+		rlReader, err := bpfObj.EventPipeByName(runCtx, rateLimitEventMap, 64)
+		if err != nil {
+			return fmt.Errorf("dropwatch: open rate-limit event pipe: %w", err)
+		}
+		defer rlReader.Close()
+
+		go readRateLimitEvents(runCtx, rlReader, maxEventsPerSecond)
+	}
 
 	bpfObj.WaitDetachByBreaker(runCtx, cancel)
 
@@ -234,6 +388,14 @@ func main() {
 				Name:  "filter",
 				Usage: `tcpdump expression, e.g. "tcp and port 80"`,
 			},
+			&cli.StringFlag{
+				Name:  "device",
+				Usage: "comma-separated whitelist of interfaces (e.g. eth0,eth1); empty = all devices. SKBs without a net_device are dropped",
+			},
+			&cli.StringFlag{
+				Name:  "device-excluded",
+				Usage: "comma-separated blacklist of interfaces (e.g. eth0,eth1); mutually exclusive with --device. SKBs without a net_device pass",
+			},
 			&cli.IntFlag{
 				Name:  "duration",
 				Usage: "run for N seconds then exit (0=forever)",
@@ -251,6 +413,11 @@ func main() {
 				Name:  "task-id",
 				Usage: "task ID to associate with this session (requires --output-storage)",
 			},
+			&cli.Uint64Flag{
+				Name:  "max-events-per-second",
+				Usage: "cap reported drops to N events/sec globally (after --device/--filter); 0 disables",
+				Value: 0,
+			},
 		},
 	}
 
@@ -261,6 +428,9 @@ func main() {
 		}
 		if c.IsSet("output") && c.String("output-storage") != "" {
 			log.Warnf("--output is ignored because --output-storage is set")
+		}
+		if c.String("device") != "" && c.String("device-excluded") != "" {
+			return errors.New("--device and --device-excluded are mutually exclusive")
 		}
 		return nil
 	}

@@ -17,6 +17,12 @@
 #define IP_MF           0x2000          /* Flag: "More Fragments"       */
 #define IP_OFFSET       0x1FFF          /* "Fragment Offset" part       */
 
+// skb_mac_header - return the MAC header pointer from sk_buff
+static inline unsigned char *skb_mac_header(struct sk_buff *skb)
+{
+    return BPF_CORE_READ(skb, head) + BPF_CORE_READ(skb, mac_header);
+}
+
 // skb_network_header - get the network header from sk_buff
 static inline unsigned char *skb_network_header(struct sk_buff *skb)
 {
@@ -27,11 +33,5 @@ static inline unsigned char *skb_network_header(struct sk_buff *skb)
 static inline unsigned char *skb_transport_header(struct sk_buff *skb)
 {
     return BPF_CORE_READ(skb, head) + BPF_CORE_READ(skb, transport_header);
-}
-
-// skb_mac_header - return the MAC header pointer from sk_buff
-static inline unsigned char *skb_mac_header(struct sk_buff *skb)
-{
-    return BPF_CORE_READ(skb, head) + BPF_CORE_READ(skb, mac_header);
 }
 #endif

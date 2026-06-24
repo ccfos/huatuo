@@ -15,7 +15,6 @@
 package main
 
 import (
-	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -27,16 +26,14 @@ import (
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/command/container"
+	flamegraphtui "huatuo-bamai/internal/flamegraph/tui"
 	"huatuo-bamai/internal/log"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/perf.c -o perf.o
-
-//go:embed perf.o
-var perfBpfObj []byte
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/perf.c -o $BPF_DIR/perf.o
 
 func mainAction(ctx *cli.Context) error {
-	optBpfObj := ctx.String("bpf-obj")
+	bpfPath := ctx.String("bpf-path")
 	optPid := ctx.Uint64("pid")
 	optDuration := ctx.Int("duration")
 
@@ -56,7 +53,12 @@ func mainAction(ctx *cli.Context) error {
 	}
 	defer bpf.Close()
 
-	b, err := bpf.LoadBpfFromBytes(optBpfObj, perfBpfObj, map[string]any{"css": targetCssAddr, "pid": optPid})
+	bpfBytes, err := os.ReadFile(bpfPath)
+	if err != nil {
+		return fmt.Errorf("read bpf object: %w", err)
+	}
+
+	b, err := bpf.LoadBpfFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
@@ -81,8 +83,15 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("received signal %s", sig)
 	}
 
-	if err := parsedata(b); err != nil {
+	flameData, err := buildFlameData(b)
+	if err != nil {
 		return fmt.Errorf("parsedata err %w", err)
+	}
+	if ctx.Bool("tui") {
+		return flamegraphtui.Run(flameData)
+	}
+	if err := writeFlameDataJSON(os.Stdout, flameData); err != nil {
+		return fmt.Errorf("write flame data: %w", err)
 	}
 
 	return nil
@@ -93,9 +102,9 @@ func main() {
 	app.Usage = "perf"
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{
-			Name:  "bpf-obj",
-			Value: "perf.o",
-			Usage: "case name",
+			Name:  "bpf-path",
+			Value: "bpf/perf.o",
+			Usage: "path to the perf BPF object file",
 		},
 		&cli.StringFlag{
 			Name:  "container-id",
@@ -116,6 +125,10 @@ func main() {
 			Name:  "server-address",
 			Value: "127.0.0.1:19704",
 			Usage: "huatuo-bamai server address",
+		},
+		&cli.BoolFlag{
+			Name:  "tui",
+			Usage: "open an interactive terminal flamegraph viewer instead of printing JSON",
 		},
 	}
 

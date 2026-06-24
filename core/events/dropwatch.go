@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,26 +17,27 @@ package events
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
+	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/packet"
+	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
-
-	internalconfig "huatuo-bamai/internal/config"
 )
 
 type dropWatchTracing struct{}
 
 func init() {
 	tracing.RegisterEventTracing("dropwatch", newDropWatch)
+	toolstream.RegisterDefault[*types.DropWatchTracing]("dropwatch", handleDropwatchEvent)
 }
 
 func newDropWatch() (*tracing.EventTracingAttr, error) {
@@ -47,31 +48,14 @@ func newDropWatch() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-// Start launches dropwatch as a subprocess, receives its events via toolstream,
-// filters them, and persists each event with tracing.Save.
+// Start launches dropwatch as a subprocess and waits for it to finish.
+// Events are received via the default toolstream server registered in init.
 func (c *dropWatchTracing) Start(ctx context.Context) error {
-	sockPath := path.Join(os.TempDir(), fmt.Sprintf("dropwatch-%d.sock", os.Getpid()))
-	_ = os.Remove(sockPath)
-
-	srv, err := toolstream.NewServer(sockPath)
-	if err != nil {
-		return fmt.Errorf("dropwatch: toolstream server: %w", err)
-	}
-
-	defer srv.Close()
-
-	toolstream.Register(srv, "dropwatch", c.handleEvent)
-
-	if err := srv.Start(); err != nil {
-		return fmt.Errorf("dropwatch: toolstream start: %w", err)
-	}
-
 	args := []string{
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "dropwatch.o"),
-		"--output-storage", sockPath,
-	}
-	if cfg != nil && cfg.Dropwatch.Filter != "" {
-		args = append(args, "--filter", cfg.Dropwatch.Filter)
+		"--output-storage", toolstream.DefaultSockPath,
+		"--filter", cfg.Dropwatch.Filter,
+		"--max-events-per-second", strconv.FormatUint(cfg.Dropwatch.MaxEventsPerSecond, 10),
 	}
 
 	cmd := exec.Command(path.Join(internalconfig.CoreBinDir, "dropwatch"), args...)
@@ -101,8 +85,8 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 	}
 }
 
-func (c *dropWatchTracing) handleEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
-	if c.ignore(ev) {
+func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
+	if ignoreDropwatch(ev) {
 		return nil
 	}
 
@@ -120,10 +104,10 @@ func (c *dropWatchTracing) handleEvent(_ *toolstream.Session, ev *types.DropWatc
 
 func resolveContainerIDFromMeta(ev *types.DropWatchTracing) string {
 	// 1. memcg CSS address — uniquely identifies a container.
-	if ev.MemcgCssAddr != 0 {
-		ct, err := pod.ContainerByCSS(ev.MemcgCssAddr, pod.SubSysMemory)
+	if addr, ok := kernaddr.Parse(ev.MemoryCgroupCSSAddr); ok {
+		ct, err := pod.ContainerByCSS(addr, pod.SubSysMemory)
 		if err != nil {
-			log.Debugf("dropwatch: CSS lookup 0x%x: %v", ev.MemcgCssAddr, err)
+			log.Debugf("dropwatch: CSS lookup %s: %v", ev.MemoryCgroupCSSAddr, err)
 		} else if ct != nil {
 			return ct.ID
 		}
@@ -153,9 +137,9 @@ func resolveContainerIDFromMeta(ev *types.DropWatchTracing) string {
 	return ""
 }
 
-// ignore returns true for known-noisy events that should not be forwarded.
+// ignoreDropwatch returns true for known-noisy events that should not be forwarded.
 // Stack frame matching uses the same patterns as the previous TCP-only tracer.
-func (c *dropWatchTracing) ignore(data *types.DropWatchTracing) bool {
+func ignoreDropwatch(data *types.DropWatchTracing) bool {
 	stack := strings.Split(data.Stack, "\n")
 
 	// state: CLOSE_WAIT
@@ -166,43 +150,20 @@ func (c *dropWatchTracing) ignore(data *types.DropWatchTracing) bool {
 	// 4. tcp_fin/ffffffff963ac200
 	// 5. ...
 	// CLOSE_WAIT + skb_rbtree_purge: normal socket teardown, not a drop.
-	if skState := packet.TCPSkState(data.PacketInfo); skState == "CLOSE_WAIT" {
+	if data.Layers != nil && data.Layers.TCP != nil && data.Layers.TCP.SkState == "CLOSE_WAIT" {
 		if len(stack) >= 3 && strings.HasPrefix(stack[2], "skb_rbtree_purge/") {
 			return true
 		}
 	}
 
-	// stack:
-	// 1. kfree_skb/ffffffff96d127b0
-	// 2. kfree_skb/ffffffff96d127b0
-	// 3. neigh_invalidate/ffffffff96d388b0
-	// 4. neigh_timer_handler/ffffffff96d3a870
-	// 5. ...
-	// neigh_invalidate: ARP/neighbor table cleanup, filtered by config.
-	if cfg != nil && cfg.Dropwatch.ExcludedNeighInvalidate {
-		if len(stack) >= 3 && strings.HasPrefix(stack[2], "neigh_invalidate/") {
+	// Operator-configured stack-frame noise rules (e.g. bnxt_tx_int,
+	// neigh_invalidate). Patterns live in events.IssuesList; see
+	// net_rx_latency.go for the same pattern. Match against data.Stack
+	// (frames joined by '\n').
+	if cfg != nil {
+		if _, found := matcher.Classify(cfg.IssuesList, data.Stack); found {
 			return true
 		}
-	}
-
-	// stack:
-	// 1. kfree_skb/ffffffff82283d10
-	// 2. kfree_skb/ffffffff82283d10
-	// 3. bnxt_tx_int/ffffffffc05c6f20
-	// 4. __bnxt_poll_work_done/ffffffffc05c50c0
-	// 5. ...
-	//
-	// stack:
-	// 1. kfree_skb/ffffffffaba83d10
-	// 2. kfree_skb/ffffffffaba83d10
-	// 3. __bnxt_tx_int/ffffffffc045df90
-	// 4. bnxt_tx_int/ffffffffc045e250
-	// 5. ...
-	// bnxt NIC TX completion path: driver frees skb normally, not a real drop.
-	if len(stack) >= 3 &&
-		(strings.HasPrefix(stack[2], "bnxt_tx_int/") ||
-			strings.HasPrefix(stack[2], "__bnxt_tx_int/")) {
-		return true
 	}
 
 	return false

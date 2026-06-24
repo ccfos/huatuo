@@ -77,6 +77,11 @@ linters-settings:
       - filepathJoin
   nolintlint:
     allow-unused: true
+  dupword:
+    # `long` legitimately repeats in C type comments documenting purego
+    # struct layouts (e.g. `unsigned long long` for uint64 fields).
+    ignore:
+      - long
   gosec:
     # https://github.com/securego/gosec#available-rules
     #
@@ -96,6 +101,10 @@ linters-settings:
   exclude-dirs:
     - vendor
 issues:
+  # Skip reporting lint issues inside generated files (mock, capnp).
+  # Issues in generated files should be fixed via the generator, not the file itself.
+  # Note: typecheck always compiles generated files regardless of this setting.
+  exclude-generated: true
   # List of regexps of issue texts to exclude.
   #
   # But independently of this option we use default exclude patterns,

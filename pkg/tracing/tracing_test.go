@@ -53,8 +53,7 @@ func TestNewTracingEvent(t *testing.T) {
 
 	te := NewTracingEvent(attr, "cpu")
 	if te == nil {
-		t.Errorf("NewTracingEvent() should not return nil")
-		return
+		t.Fatalf("NewTracingEvent() should not return nil")
 	}
 	if te.name != "cpu" {
 		t.Errorf("name=%q, want %q", te.name, "cpu")
@@ -147,14 +146,12 @@ func TestEventTracingStartStopAndInfo(t *testing.T) {
 
 	err := te.Start()
 	if err != nil {
-		t.Errorf("Start() error=%v", err)
-		return
+		t.Fatalf("Start() error=%v", err)
 	}
 
 	ready := waitUntil(500*time.Millisecond, func() bool { return te.cancelCtx != nil && te.isRunning })
 	if !ready {
-		t.Errorf("tracing did not enter running state in time")
-		return
+		t.Fatalf("tracing did not enter running state in time")
 	}
 
 	info := te.Info()

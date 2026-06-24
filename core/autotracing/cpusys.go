@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/tracing"
@@ -130,7 +131,7 @@ func runPerfSystemWide(parent context.Context, timeOut int64) ([]byte, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "perf"),
-		"--bpf-obj", "cpuidle.o",
+		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "perf.o"),
 		"--duration", strconv.FormatInt(timeOut, 10))
 
 	return cmd.CombinedOutput()

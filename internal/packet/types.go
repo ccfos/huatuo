@@ -15,68 +15,17 @@
 package packet
 
 import (
-	"encoding/json"
 	"fmt"
+	"net"
+	"strconv"
+	"strings"
 )
-
-// PacketType is the L3+L4 protocol combination parsed from a BPF packet header.
-type PacketType uint8
-
-const (
-	PacketTypeUnknown    PacketType = 0
-	PacketTypeIPv4TCP    PacketType = 1
-	PacketTypeIPv4UDP    PacketType = 2
-	PacketTypeIPv4ICMP   PacketType = 3
-	PacketTypeIPv6TCP    PacketType = 4
-	PacketTypeIPv6UDP    PacketType = 5
-	PacketTypeIPv6ICMPv6 PacketType = 6
-	PacketTypeARP        PacketType = 7
-)
-
-var packetTypeNames = [...]string{
-	PacketTypeUnknown:    "unknown",
-	PacketTypeIPv4TCP:    "IPv4/TCP",
-	PacketTypeIPv4UDP:    "IPv4/UDP",
-	PacketTypeIPv4ICMP:   "IPv4/ICMP",
-	PacketTypeIPv6TCP:    "IPv6/TCP",
-	PacketTypeIPv6UDP:    "IPv6/UDP",
-	PacketTypeIPv6ICMPv6: "IPv6/ICMPv6",
-	PacketTypeARP:        "ARP",
-}
-
-func (p PacketType) String() string {
-	if int(p) < len(packetTypeNames) {
-		return packetTypeNames[p]
-	}
-	return fmt.Sprintf("unknown(%d)", p)
-}
-
-func (p PacketType) MarshalJSON() ([]byte, error) {
-	return json.Marshal(p.String())
-}
-
-func (p *PacketType) UnmarshalJSON(b []byte) error {
-	var s string
-	if err := json.Unmarshal(b, &s); err != nil {
-		return err
-	}
-
-	for i, name := range packetTypeNames {
-		if name == s {
-			*p = PacketType(i)
-			return nil
-		}
-	}
-
-	*p = PacketTypeUnknown
-	return nil
-}
 
 // RawCapacity is the size of the raw packet buffer, matching PKT_RAW_LEN in bpf/dropwatch.c.
 const RawCapacity = 120
 
-// PacketHdr mirrors struct packet_hdr in bpf/dropwatch.c.
-type PacketHdr struct {
+// Hdr mirrors struct packet_hdr in bpf/dropwatch.c.
+type Hdr struct {
 	EthProto  uint16
 	RawLen    uint8
 	HasEthHdr uint8 // 1: Raw starts with Ethernet header; 0: starts at L3
@@ -84,70 +33,234 @@ type PacketHdr struct {
 	Raw       [RawCapacity]byte
 }
 
-// PacketInfo holds protocol-specific fields parsed from PacketHdr.
-type PacketInfo any
-
-type TCPInfo struct {
-	SrcMAC  string `json:"smac,omitempty"`
-	DstMAC  string `json:"dmac,omitempty"`
-	Saddr   string `json:"saddr"`
-	Daddr   string `json:"daddr"`
-	Sport   uint16 `json:"sport"`
-	Dport   uint16 `json:"dport"`
-	SkState string `json:"tcp_state"`
-	Seq     uint32 `json:"seq"`
-	AckSeq  uint32 `json:"ack"`
-	Window  uint16 `json:"window"`
-	Flags   string `json:"flags"`
+// Packet is a layered representation of a parsed network packet. Each layer
+// pointer is non-nil iff that layer was present in the parsed frame, so any
+// protocol combination (ether+ipv4+tcp, ether+ipv6+udp, arp, …) is expressed
+// by the set of non-nil fields rather than by a separate type per combination.
+//
+// JSON output mirrors the struct layout: `{"label":"...","ether":{...},...}`.
+// Missing layers are omitted via `omitempty`; Label is always present so
+// downstream filtering/aggregation can key off a single field.
+type Packet struct {
+	Label string `json:"label"`
+	Ether *Ether `json:"ether,omitempty"`
+	IPv4  *IPv4  `json:"ipv4,omitempty"`
+	IPv6  *IPv6  `json:"ipv6,omitempty"`
+	TCP   *TCP   `json:"tcp,omitempty"`
+	UDP   *UDP   `json:"udp,omitempty"`
+	ICMP  *ICMP  `json:"icmp,omitempty"`
+	ARP   *ARP   `json:"arp,omitempty"`
 }
 
-type UDPInfo struct {
-	SrcMAC   string `json:"smac,omitempty"`
-	DstMAC   string `json:"dmac,omitempty"`
-	Saddr    string `json:"saddr"`
-	Daddr    string `json:"daddr"`
-	Sport    uint16 `json:"sport"`
-	Dport    uint16 `json:"dport"`
-	Len      uint16 `json:"len"`
-	Checksum uint16 `json:"chksum"`
+// Ether holds Ethernet-layer fields. Type is the parsed EtherType name
+// (e.g. "IPv4", "IPv6", "ARP"); the raw hex value lives at the top level as
+// packet_eth_proto so the two are complementary. Length is non-zero only for
+// 802.3 framing — Ethernet II frames carry an EtherType in that slot instead.
+type Ether struct {
+	Src    string `json:"src"` // "aa:bb:cc:dd:ee:ff"
+	Dst    string `json:"dst"` // "aa:bb:cc:dd:ee:ff"
+	Type   string `json:"type"`
+	Length uint16 `json:"len,omitempty"`
 }
 
-type ICMPInfo struct {
-	SrcMAC   string `json:"smac,omitempty"`
-	DstMAC   string `json:"dmac,omitempty"`
-	Saddr    string `json:"saddr"`
-	Daddr    string `json:"daddr"`
-	ICMPType string `json:"icmp_type"`
+// IPv4 holds IPv4-layer fields. Flags renders the bitfield as
+// "DF|MF"-style text; Protocol carries gopacket's name for the L4 protocol
+// (e.g. "TCP", "UDP", "ICMPv4").
+type IPv4 struct {
+	Version    uint8  `json:"version"`
+	IHL        uint8  `json:"ihl"`
+	TOS        uint8  `json:"tos"`
+	Length     uint16 `json:"len"`
+	ID         uint16 `json:"id"`
+	Flags      string `json:"flags,omitempty"`
+	FragOffset uint16 `json:"frag_offset,omitempty"`
+	TTL        uint8  `json:"ttl"`
+	Protocol   string `json:"protocol"`
+	Checksum   uint16 `json:"checksum"`
+	Src        net.IP `json:"src"`
+	Dst        net.IP `json:"dst"`
+}
+
+// IPv6 holds IPv6-layer fields. NextHeader is gopacket's name for the
+// next header (e.g. "TCP", "ICMPv6", "IPv6-HopByHop"); Length is the payload
+// length excluding the 40-byte fixed header.
+type IPv6 struct {
+	Version      uint8  `json:"version"`
+	TrafficClass uint8  `json:"traffic_class"`
+	FlowLabel    uint32 `json:"flow_label"`
+	Length       uint16 `json:"len"`
+	NextHeader   string `json:"next_header"`
+	HopLimit     uint8  `json:"hop_limit"`
+	Src          net.IP `json:"src"`
+	Dst          net.IP `json:"dst"`
+}
+
+// TCP holds L4 TCP fields. SkState originates from the BPF probe
+// (kernel sk_state) and is not part of the wire packet.
+type TCP struct {
+	SrcPort    uint16 `json:"sport"`
+	DstPort    uint16 `json:"dport"`
+	Seq        uint32 `json:"seq"`
+	Ack        uint32 `json:"ack"`
+	DataOffset uint8  `json:"data_offset"`
+	Flags      string `json:"flags"`
+	Window     uint16 `json:"window"`
+	Checksum   uint16 `json:"checksum"`
+	Urgent     uint16 `json:"urgent,omitempty"`
+	SkState    string `json:"sk_state,omitempty"`
+}
+
+// UDP holds L4 UDP fields.
+type UDP struct {
+	SrcPort  uint16 `json:"sport"`
+	DstPort  uint16 `json:"dport"`
+	Length   uint16 `json:"len"`
+	Checksum uint16 `json:"checksum"`
+}
+
+// ICMP is shared between ICMPv4 and ICMPv6: the L3 layer (IPv4 vs IPv6)
+// is the discriminator. Type is gopacket's pre-rendered TypeCode string
+// (e.g. "EchoRequest"); Code is the raw code byte. ID/Seq carry the ICMPv4
+// echo fields when present; ICMPv6 packets populate only Type/Code/Checksum.
+type ICMP struct {
+	Type     string `json:"type"`
+	Code     uint8  `json:"code"`
+	Checksum uint16 `json:"checksum"`
 	ID       uint16 `json:"id,omitempty"`
-	MTU      uint16 `json:"mtu,omitempty"`
+	Seq      uint16 `json:"seq,omitempty"`
 }
 
-type ARPInfo struct {
-	SrcMAC    string `json:"smac,omitempty"`
-	DstMAC    string `json:"dmac,omitempty"`
-	Operation string `json:"operation"`
-	SenderMAC string `json:"sha"`
-	SenderIP  string `json:"spa"`
-	TargetMAC string `json:"tha"`
-	TargetIP  string `json:"tpa"`
+// ARP holds ARP request/reply fields. AddrType and Protocol are the
+// parsed link/network layer names (e.g. "Ethernet", "IPv4").
+type ARP struct {
+	AddrType        string `json:"addr_type"`
+	Protocol        string `json:"protocol"`
+	HwAddressSize   uint8  `json:"hw_address_size"`
+	ProtAddressSize uint8  `json:"prot_address_size"`
+	Operation       string `json:"operation"`
+	SenderMAC       string `json:"sender_mac"` // "aa:bb:cc:dd:ee:ff"
+	SenderIP        net.IP `json:"sender_ip"`
+	TargetMAC       string `json:"target_mac"` // "aa:bb:cc:dd:ee:ff"
+	TargetIP        net.IP `json:"target_ip"`
 }
 
-func (t *TCPInfo) Detail() string {
-	return fmt.Sprintf("[%s] %s:%d > %s:%d sk=%s seq=%d ack=%d win=%d smac=%s dmac=%s",
-		t.Flags, t.Saddr, t.Sport, t.Daddr, t.Dport, t.SkState, t.Seq, t.AckSeq, t.Window, t.SrcMAC, t.DstMAC)
+// labelOf returns a short protocol-combination tag like "IPv4/TCP", "IPv6/UDP",
+// "ARP", or "unknown". Parser fills Packet.Label with this; downstream callers
+// should read the field rather than recompute. Free function (not a method) so
+// it can share the name "label" with the persisted struct field.
+func labelOf(p *Packet) string {
+	if p == nil {
+		return "unknown"
+	}
+
+	if p.ARP != nil {
+		return "ARP"
+	}
+
+	var l3 string
+	switch {
+	case p.IPv4 != nil:
+		l3 = "IPv4"
+	case p.IPv6 != nil:
+		l3 = "IPv6"
+	}
+
+	var l4 string
+	switch {
+	case p.TCP != nil:
+		l4 = "TCP"
+	case p.UDP != nil:
+		l4 = "UDP"
+	case p.ICMP != nil:
+		l4 = "ICMP"
+		if p.IPv6 != nil {
+			l4 = "ICMPv6"
+		}
+	}
+
+	switch {
+	case l3 != "" && l4 != "":
+		return l3 + "/" + l4
+	case l3 != "":
+		return l3
+	case l4 != "":
+		return l4
+	}
+
+	return "unknown"
 }
 
-func (t *UDPInfo) Detail() string {
-	return fmt.Sprintf("[UDP] %s:%d > %s:%d len=%d chk=0x%04x smac=%s dmac=%s",
-		t.Saddr, t.Sport, t.Daddr, t.Dport, t.Len, t.Checksum, t.SrcMAC, t.DstMAC)
+// String renders the packet in protocol-stack order — ether → L3 (ARP / IPv4 /
+// IPv6) → L4 (TCP / UDP / ICMP) — matching how the bytes appear on the wire:
+//
+//	IPv4/TCP smac=aa:.. dmac=11:.. 10.0.0.1:1234 > 10.0.0.2:80 [SYN] seq=1 ack=0 win=0 sk=ESTABLISHED
+//	IPv6/UDP [::1]:53 > [::2]:1234 len=64 chk=0xabcd
+//	ARP smac=.. dmac=.. request sender=10.0.0.1/aa:.. target=10.0.0.2/00:00:..
+//	IPv4 smac=.. dmac=.. 10.0.0.1 > 10.0.0.2
+//
+// The leading label token doubles as dropwatch's protocol-type column.
+// Missing layers are omitted gracefully — frames with only L3 print just src > dst.
+func (p *Packet) String() string {
+	if p == nil {
+		return "unknown"
+	}
+
+	var b strings.Builder
+
+	b.WriteString(p.Label)
+
+	if p.Ether != nil {
+		fmt.Fprintf(&b, " smac=%s dmac=%s", p.Ether.Src, p.Ether.Dst)
+	}
+
+	if p.ARP != nil {
+		fmt.Fprintf(&b, " %s sender=%s/%s target=%s/%s",
+			p.ARP.Operation,
+			p.ARP.SenderIP, p.ARP.SenderMAC,
+			p.ARP.TargetIP, p.ARP.TargetMAC)
+	} else if saddr, daddr := l3Addrs(p.IPv4, p.IPv6); saddr != "" {
+		// L4 with ports rewrites the addresses through JoinHostPort; L3-only
+		// and ICMP keep the bare IPs.
+		switch {
+		case p.TCP != nil:
+			saddr = net.JoinHostPort(saddr, strconv.Itoa(int(p.TCP.SrcPort)))
+			daddr = net.JoinHostPort(daddr, strconv.Itoa(int(p.TCP.DstPort)))
+		case p.UDP != nil:
+			saddr = net.JoinHostPort(saddr, strconv.Itoa(int(p.UDP.SrcPort)))
+			daddr = net.JoinHostPort(daddr, strconv.Itoa(int(p.UDP.DstPort)))
+		}
+
+		fmt.Fprintf(&b, " %s > %s", saddr, daddr)
+
+		switch {
+		case p.TCP != nil:
+			fmt.Fprintf(&b, " [%s] seq=%d ack=%d win=%d",
+				p.TCP.Flags, p.TCP.Seq, p.TCP.Ack, p.TCP.Window)
+
+			if p.TCP.SkState != "" {
+				fmt.Fprintf(&b, " sk=%s", p.TCP.SkState)
+			}
+		case p.UDP != nil:
+			fmt.Fprintf(&b, " len=%d chk=0x%04x", p.UDP.Length, p.UDP.Checksum)
+		case p.ICMP != nil:
+			fmt.Fprintf(&b, " type=%s", p.ICMP.Type)
+
+			if p.ICMP.ID != 0 || p.ICMP.Seq != 0 {
+				fmt.Fprintf(&b, " id=%d seq=%d", p.ICMP.ID, p.ICMP.Seq)
+			}
+		}
+	}
+
+	return b.String()
 }
 
-func (t *ICMPInfo) Detail() string {
-	return fmt.Sprintf("[ICMP %s] %s > %s id=%d mtu=%d smac=%s dmac=%s",
-		t.ICMPType, t.Saddr, t.Daddr, t.ID, t.MTU, t.SrcMAC, t.DstMAC)
-}
+func l3Addrs(v4 *IPv4, v6 *IPv6) (saddr, daddr string) {
+	switch {
+	case v4 != nil:
+		return v4.Src.String(), v4.Dst.String()
+	case v6 != nil:
+		return v6.Src.String(), v6.Dst.String()
+	}
 
-func (t *ARPInfo) Detail() string {
-	return fmt.Sprintf("[ARP %s] %s > %s sender=%s target=%s smac=%s dmac=%s",
-		t.Operation, t.SenderIP, t.TargetIP, t.SenderMAC, t.TargetMAC, t.SrcMAC, t.DstMAC)
+	return "", ""
 }

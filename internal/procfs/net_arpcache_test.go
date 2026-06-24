@@ -24,9 +24,8 @@ import (
 
 func TestNetArpCache(t *testing.T) {
 	// Create temporary procfs
-	tempDir, err := os.MkdirTemp("", "procfs-test-")
-	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
+	var err error
 
 	arpDir := filepath.Join(tempDir, "proc/net/stat")
 	err = os.MkdirAll(arpDir, 0o755)

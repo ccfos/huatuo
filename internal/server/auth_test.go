@@ -23,8 +23,7 @@ import (
 	httpGin "github.com/gin-gonic/gin"
 )
 
-// TestAuthServiceAndMiddleware 覆盖鉴权服务的主要能力，验证了用户初始化、Add/Delete/Get、精确路径和通配权限匹配、管理员判断，以及中间件在缺少 Authorization、无权限、和有权限三种请求下的响应行为。
-func TestAuthServiceAndMiddleware(t *testing.T) {
+func TestNewAuthService(t *testing.T) {
 	svc := NewAuthService([]UserConfig{
 		{
 			ID:          "admin-2026",
@@ -35,39 +34,86 @@ func TestAuthServiceAndMiddleware(t *testing.T) {
 		{
 			ID:          "viewer-2026",
 			Name:        "Viewer User",
-			Permissions: []string{"/v1/tasks", "/v1/tasks/:taskID", "/v1/tasks/*/result"},
+			Permissions: []string{"/v1/tasks/:taskID", "/v1/tasks/*/result"},
 		},
 	})
 
 	adminUser, ok := svc.GetUserById("admin-2026")
 	if !ok {
 		t.Errorf("GetUserById(admin-2026) did not find user")
-	} else {
-		if !adminUser.IsAdmin {
-			t.Errorf("admin user IsAdmin = false, want true")
-		}
-		if len(adminUser.Permissions) != 1 || adminUser.Permissions[0] != Permission("/v1/tasks/**") {
-			t.Errorf("admin permissions = %#v, want [/v1/tasks/**]", adminUser.Permissions)
-		}
+		return
+	}
+	if !adminUser.IsAdmin {
+		t.Errorf("admin user IsAdmin = false, want true")
+	}
+	if len(adminUser.Permissions) != 1 || adminUser.Permissions[0] != Permission("/v1/tasks/**") {
+		t.Errorf("admin user permissions = %#v, want [/v1/tasks/**]", adminUser.Permissions)
 	}
 
-	svc.Add(User{
+	viewerUser, ok := svc.GetUserById("viewer-2026")
+	if !ok {
+		t.Errorf("GetUserById(viewer-2026) did not find user")
+		return
+	}
+	if viewerUser.Name != "Viewer User" {
+		t.Errorf("viewer user name = %q, want %q", viewerUser.Name, "Viewer User")
+	}
+	if len(viewerUser.Permissions) != 2 {
+		t.Errorf("viewer user permissions length = %d, want %d", len(viewerUser.Permissions), 2)
+	}
+}
+
+func TestAuthServiceAddDeleteAndGetUserById(t *testing.T) {
+	svc := NewAuthService(nil)
+	user := User{
 		ID:          "operator-2026",
 		Name:        "Operator User",
 		Permissions: []Permission{"/v1/config"},
-	})
-	operator, ok := svc.GetUserById("operator-2026")
+	}
+
+	svc.Add(user)
+
+	got, ok := svc.GetUserById("operator-2026")
 	if !ok {
 		t.Errorf("GetUserById(operator-2026) did not find user after Add")
-	} else if operator.Name != "Operator User" {
-		t.Errorf("operator name = %q, want %q", operator.Name, "Operator User")
+		return
 	}
+	if got.ID != user.ID {
+		t.Errorf("user ID = %q, want %q", got.ID, user.ID)
+	}
+	if got.Name != user.Name {
+		t.Errorf("user name = %q, want %q", got.Name, user.Name)
+	}
+	if len(got.Permissions) != 1 || got.Permissions[0] != user.Permissions[0] {
+		t.Errorf("user permissions = %#v, want %#v", got.Permissions, user.Permissions)
+	}
+	if got.IsAdmin != user.IsAdmin {
+		t.Errorf("user IsAdmin = %v, want %v", got.IsAdmin, user.IsAdmin)
+	}
+
 	svc.Delete("operator-2026")
+
 	if _, ok := svc.GetUserById("operator-2026"); ok {
 		t.Errorf("GetUserById(operator-2026) found deleted user")
 	}
+}
 
-	validateCases := []struct {
+func TestAuthServiceValidate(t *testing.T) {
+	svc := NewAuthService([]UserConfig{
+		{
+			ID:          "admin-2026",
+			Name:        "Admin User",
+			Permissions: []string{"/v1/tasks/**"},
+			IsAdmin:     true,
+		},
+		{
+			ID:          "viewer-2026",
+			Name:        "Viewer User",
+			Permissions: []string{"/v1/tasks", "/v1/tasks/:taskID", "/v1/tasks/*/result", "/v1/traces/**"},
+		},
+	})
+
+	cases := []struct {
 		name        string
 		userID      string
 		path        string
@@ -94,6 +140,11 @@ func TestAuthServiceAndMiddleware(t *testing.T) {
 			path:   "/v1/tasks/task-20250226/result",
 		},
 		{
+			name:   "double-star-permission",
+			userID: "viewer-2026",
+			path:   "/v1/traces/task-20250226/detail",
+		},
+		{
 			name:        "missing-user",
 			userID:      "ghost-2026",
 			path:        "/v1/tasks",
@@ -107,7 +158,7 @@ func TestAuthServiceAndMiddleware(t *testing.T) {
 		},
 	}
 
-	for _, tc := range validateCases {
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := svc.Validate(tc.userID, tc.path)
 			if tc.wantErrPart == "" && err != nil {
@@ -124,8 +175,29 @@ func TestAuthServiceAndMiddleware(t *testing.T) {
 			}
 		})
 	}
+}
 
-	matchesCases := []struct {
+func TestAuthServiceIsAdmin(t *testing.T) {
+	svc := NewAuthService([]UserConfig{
+		{ID: "admin-2026", Name: "Admin User", IsAdmin: true},
+		{ID: "viewer-2026", Name: "Viewer User"},
+	})
+
+	if !svc.IsAdmin("admin-2026") {
+		t.Errorf("IsAdmin(admin-2026) = false, want true")
+	}
+	if svc.IsAdmin("viewer-2026") {
+		t.Errorf("IsAdmin(viewer-2026) = true, want false")
+	}
+	if svc.IsAdmin("ghost-2026") {
+		t.Errorf("IsAdmin(ghost-2026) = true, want false")
+	}
+}
+
+func TestAuthServiceMatchesPath(t *testing.T) {
+	svc := NewAuthService(nil)
+
+	cases := []struct {
 		name       string
 		permission string
 		path       string
@@ -149,78 +221,165 @@ func TestAuthServiceAndMiddleware(t *testing.T) {
 			path:       "/v1/config/runtime",
 			want:       false,
 		},
-		{
-			name:       "single-level-wildcard",
-			permission: "/v1/tasks/*/result",
-			path:       "/v1/tasks/task-20250226/result",
-			want:       true,
-		},
 	}
 
-	for _, tc := range matchesCases {
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := svc.matchesPath(tc.permission, tc.path); got != tc.want {
 				t.Errorf("matchesPath(%q, %q) = %v, want %v", tc.permission, tc.path, got, tc.want)
 			}
 		})
 	}
+}
 
-	if !svc.IsAdmin("admin-2026") {
-		t.Errorf("IsAdmin(admin-2026) = false, want true")
-	}
-	if svc.IsAdmin("viewer-2026") {
-		t.Errorf("IsAdmin(viewer-2026) = true, want false")
-	}
-	if svc.IsAdmin("ghost-2026") {
-		t.Errorf("IsAdmin(ghost-2026) = true, want false")
-	}
+func TestAuthServiceMatchesSegments(t *testing.T) {
+	svc := NewAuthService(nil)
 
-	httpGin.SetMode(httpGin.TestMode)
-	engine := httpGin.New()
-	engine.Use(middlewareContext(), wrapHandler(NewAuthMiddleware(svc)))
-	engine.GET("/v1/tasks/:taskID", func(c *httpGin.Context) {
-		c.JSON(http.StatusOK, map[string]string{"taskID": c.Param("taskID")})
-	})
-
-	middlewareCases := []struct {
-		name         string
-		headerValue  string
-		wantStatus   int
-		wantBodyPart string
+	cases := []struct {
+		name       string
+		permission string
+		path       string
+		want       bool
 	}{
 		{
-			name:         "missing-authorization",
+			name:       "path-parameter",
+			permission: "/v1/tasks/:taskID",
+			path:       "/v1/tasks/task-20250226",
+			want:       true,
+		},
+		{
+			name:       "single-level-wildcard",
+			permission: "/v1/tasks/*/result",
+			path:       "/v1/tasks/task-20250226/result",
+			want:       true,
+		},
+		{
+			name:       "different-segment-length",
+			permission: "/v1/tasks",
+			path:       "/v1/tasks/task-20250226",
+			want:       false,
+		},
+		{
+			name:       "literal-segment-mismatch",
+			permission: "/v1/tasks/*/result",
+			path:       "/v1/tasks/task-20250226/summary",
+			want:       false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := svc.matchesSegments(tc.permission, tc.path); got != tc.want {
+				t.Errorf("matchesSegments(%q, %q) = %v, want %v", tc.permission, tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNewAuthMiddleware(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+
+	svc := NewAuthService([]UserConfig{
+		{
+			ID:          "admin-2026",
+			Name:        "Admin User",
+			Permissions: []string{"/v1/tasks/**"},
+			IsAdmin:     true,
+		},
+		{
+			ID:          "viewer-2026",
+			Name:        "Viewer User",
+			Permissions: []string{"/v1/tasks/:taskID"},
+		},
+	})
+
+	cases := []struct {
+		name           string
+		authHeader     string
+		path           string
+		wantStatus     int
+		wantBodyPart   string
+		wantHandlerRun bool
+		wantUserID     string
+		wantIsAdmin    bool
+	}{
+		{
+			name:         "missing-authorization-header",
+			path:         "/v1/tasks/task-20250226",
 			wantStatus:   http.StatusUnauthorized,
 			wantBodyPart: "missing user ID",
 		},
 		{
-			name:         "forbidden-user",
-			headerValue:  "ghost-2026",
+			name:         "permission-denied",
+			authHeader:   "viewer-2026",
+			path:         "/v1/tasks/task-20250226/result",
 			wantStatus:   http.StatusForbidden,
-			wantBodyPart: "not found",
+			wantBodyPart: "does not have permission",
 		},
 		{
-			name:         "authorized-user",
-			headerValue:  "viewer-2026",
-			wantStatus:   http.StatusOK,
-			wantBodyPart: `"taskID":"task-20250226"`,
+			name:           "authorized-admin-request",
+			authHeader:     "admin-2026",
+			path:           "/v1/tasks/task-20250226/result",
+			wantStatus:     http.StatusNoContent,
+			wantHandlerRun: true,
+			wantUserID:     "admin-2026",
+			wantIsAdmin:    true,
 		},
 	}
 
-	for _, tc := range middlewareCases {
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "/v1/tasks/task-20250226", http.NoBody)
-			if tc.headerValue != "" {
-				request.Header.Set("Authorization", tc.headerValue)
+			engine := httpGin.New()
+
+			var handlerRan bool
+			var gotUserID string
+			var gotIsAdmin bool
+
+			engine.GET(
+				"/v1/tasks/:taskID",
+				wrapHandler(NewAuthMiddleware(svc)),
+				wrapHandler(func(ctx *Context) {
+					handlerRan = true
+					gotUserID = ctx.UserID
+					gotIsAdmin = ctx.IsAdmin
+					ctx.Status(http.StatusNoContent)
+				}),
+			)
+			engine.GET(
+				"/v1/tasks/:taskID/result",
+				wrapHandler(NewAuthMiddleware(svc)),
+				wrapHandler(func(ctx *Context) {
+					handlerRan = true
+					gotUserID = ctx.UserID
+					gotIsAdmin = ctx.IsAdmin
+					ctx.Status(http.StatusNoContent)
+				}),
+			)
+
+			request := httptest.NewRequest(http.MethodGet, tc.path, http.NoBody)
+			if tc.authHeader != "" {
+				request.Header.Set("Authorization", tc.authHeader)
 			}
 			recorder := httptest.NewRecorder()
+
 			engine.ServeHTTP(recorder, request)
 
 			if recorder.Code != tc.wantStatus {
-				t.Errorf("middleware response status = %d, want %d", recorder.Code, tc.wantStatus)
+				t.Errorf("response status = %d, want %d", recorder.Code, tc.wantStatus)
 			}
-			if !strings.Contains(recorder.Body.String(), tc.wantBodyPart) {
-				t.Errorf("middleware response body = %q, want substring %q", recorder.Body.String(), tc.wantBodyPart)
+			if tc.wantBodyPart != "" && !strings.Contains(recorder.Body.String(), tc.wantBodyPart) {
+				t.Errorf("response body = %q, want substring %q", recorder.Body.String(), tc.wantBodyPart)
+			}
+			if handlerRan != tc.wantHandlerRun {
+				t.Errorf("handler executed = %v, want %v", handlerRan, tc.wantHandlerRun)
+			}
+			if tc.wantHandlerRun {
+				if gotUserID != tc.wantUserID {
+					t.Errorf("ctx.UserID = %q, want %q", gotUserID, tc.wantUserID)
+				}
+				if gotIsAdmin != tc.wantIsAdmin {
+					t.Errorf("ctx.IsAdmin = %v, want %v", gotIsAdmin, tc.wantIsAdmin)
+				}
 			}
 		})
 	}

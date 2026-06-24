@@ -17,6 +17,7 @@ package toolstream
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -32,12 +33,33 @@ type Session struct {
 // untypedHandler is the codec-erased internal dispatch signature.
 type untypedHandler func(sess *Session, payload []byte) error
 
+// DefaultSockPath is the Unix socket path used by the default server.
+const DefaultSockPath = "/var/run/huatuo-toolstream.sock"
+
+var (
+	// ErrNotInitialized is returned when Start or Close is called on a nil or zero-value Server.
+	ErrNotInitialized = errors.New("toolstream: server not initialized")
+	// ErrAlreadyStarted is returned by Start when the server is already running.
+	ErrAlreadyStarted = errors.New("toolstream: server already started")
+)
+
+var (
+	defaultServer *Server
+	defaultOnce   sync.Once
+)
+
 // Server dispatches incoming tool events to per-tool typed handlers.
+// It is safe for simultaneous use by multiple goroutines.
 type Server struct {
 	sockPath string
-	mu       sync.RWMutex
-	handlers map[string]untypedHandler
-	inner    *transport.Server
+
+	// Handler registry:
+	handlersMu sync.RWMutex
+	handlers   map[string]untypedHandler
+
+	// Lifecycle of the underlying transport:
+	innerMu sync.Mutex
+	inner   *transport.Server
 }
 
 // NewServer creates a Server that will listen on sockPath when Start is called.
@@ -52,14 +74,31 @@ func NewServer(sockPath string) (*Server, error) {
 	}, nil
 }
 
+// NewServerDefault returns the package-level singleton Server listening on DefaultSockPath.
+func NewServerDefault() (*Server, error) {
+	var initErr error
+	defaultOnce.Do(func() {
+		s, err := NewServer(DefaultSockPath)
+		if err != nil {
+			initErr = err
+			return
+		}
+		defaultServer = s
+	})
+	if initErr != nil {
+		return nil, initErr
+	}
+	return defaultServer, nil
+}
+
 // Register binds a typed handler for events from toolName; safe for concurrent use.
 func Register[T any](
 	srv *Server,
 	toolName string,
 	handler func(sess *Session, event T) error,
 ) {
-	srv.mu.Lock()
-	defer srv.mu.Unlock()
+	srv.handlersMu.Lock()
+	defer srv.handlersMu.Unlock()
 
 	srv.handlers[toolName] = func(sess *Session, payload []byte) error {
 		var ev T
@@ -71,8 +110,28 @@ func Register[T any](
 	}
 }
 
+// RegisterDefault binds a typed handler for events from toolName on the default server.
+func RegisterDefault[T any](toolName string, handler func(sess *Session, event T) error) {
+	srv, err := NewServerDefault()
+	if err != nil {
+		log.Fatalf("toolstream: default server: %v", err)
+	}
+	Register(srv, toolName, handler)
+}
+
 // Start listens in the background; call Close to stop.
 func (s *Server) Start() error {
+	if s == nil || s.sockPath == "" {
+		return ErrNotInitialized
+	}
+
+	s.innerMu.Lock()
+	defer s.innerMu.Unlock()
+
+	if s.inner != nil {
+		return ErrAlreadyStarted
+	}
+
 	l, err := transport.ListenUDS(s.sockPath)
 	if err != nil {
 		return fmt.Errorf("toolstream: %w", err)
@@ -88,12 +147,21 @@ func (s *Server) Start() error {
 }
 
 // Close shuts down the server and waits for all goroutines to finish.
+// Calling Close more than once is safe and a no-op after the first call.
 func (s *Server) Close() error {
+	if s == nil {
+		return ErrNotInitialized
+	}
+
+	s.innerMu.Lock()
+	defer s.innerMu.Unlock()
+
 	if s.inner == nil {
 		return nil
 	}
-
-	return s.inner.Close()
+	inner := s.inner
+	s.inner = nil
+	return inner.Close()
 }
 
 func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {
@@ -106,9 +174,9 @@ func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {
 		return
 	}
 
-	s.mu.RLock()
+	s.handlersMu.RLock()
 	handler := s.handlers[tsess.ToolName]
-	s.mu.RUnlock()
+	s.handlersMu.RUnlock()
 
 	if handler == nil {
 		log.Warnf("toolstream: %s: no handler", tsess.ToolName)

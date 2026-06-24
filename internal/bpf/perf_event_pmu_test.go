@@ -235,6 +235,7 @@ func TestPerfEventPMU_DetachValidFDs(t *testing.T) {
 // newTestProgram returns a minimal PERF_EVENT program.
 func newTestProgram(t *testing.T) *ebpf.Program {
 	t.Helper()
+	requireBPFPermission(t)
 
 	prog, err := ebpf.NewProgram(&ebpf.ProgramSpec{
 		Type: ebpf.PerfEvent,

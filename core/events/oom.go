@@ -17,6 +17,7 @@ package events
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/utils/bytesutil"
+	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -37,6 +39,8 @@ type perfEventData struct {
 	VictimPid          int32
 	TriggerMemcgCSS    uint64
 	VictimMemcgCSS     uint64
+	MemLimitPages      uint64
+	MemUsagePages      uint64
 }
 
 type OOMTracingData struct {
@@ -50,6 +54,8 @@ type OOMTracingData struct {
 	VictimContainerHostname  string `json:"victim_container_hostname"`
 	VictimPid                int32  `json:"victim_pid"`
 	VictimProcessName        string `json:"victim_process_name"`
+	CgroupMemoryLimit        uint64 `json:"cgroup_memory_limit"`
+	CgroupMemoryUsage        uint64 `json:"cgroup_memory_usage"`
 }
 
 type oomMetric struct {
@@ -120,6 +126,8 @@ func (c *oomCollector) Start(ctx context.Context) error {
 
 	b.WaitDetachByBreaker(childCtx, cancel)
 
+	pageSize := uint64(os.Getpagesize())
+
 	for {
 		select {
 		case <-childCtx.Done():
@@ -137,14 +145,16 @@ func (c *oomCollector) Start(ctx context.Context) error {
 
 			cssContainers := pod.BuildCssContainersID(containers, pod.SubSysMemory)
 			oomData := &OOMTracingData{
-				TriggerMemcgCSS:    fmt.Sprintf("0x%x", data.TriggerMemcgCSS),
+				TriggerMemcgCSS:    kernaddr.Format(data.TriggerMemcgCSS),
 				TriggerPid:         data.TriggerPid,
 				TriggerProcessName: bytesutil.ToStr(data.TriggerProcessName[:]),
 				TriggerContainerID: cssContainers[data.TriggerMemcgCSS],
-				VictimMemcgCSS:     fmt.Sprintf("0x%x", data.VictimMemcgCSS),
+				VictimMemcgCSS:     kernaddr.Format(data.VictimMemcgCSS),
 				VictimPid:          data.VictimPid,
 				VictimProcessName:  bytesutil.ToStr(data.VictimProcessName[:]),
 				VictimContainerID:  cssContainers[data.VictimMemcgCSS],
+				CgroupMemoryLimit:  data.MemLimitPages * pageSize,
+				CgroupMemoryUsage:  data.MemUsagePages * pageSize,
 			}
 
 			// leave the hostname empty if this is not container.

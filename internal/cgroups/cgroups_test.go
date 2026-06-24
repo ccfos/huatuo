@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package testutil provides shared test helpers and a common test suite for
-// the v1 and v2 cgroup sub-packages. It is not intended for use outside tests.
-
 package cgroups
 
 import (
@@ -32,18 +29,22 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
-// RequireRoot if the process is not running as root. Returns false
+// RequireRoot skips the test when the process is not running as root. Cgroup
+// mutation needs CAP_SYS_ADMIN; without it the test would fail noisily on every
+// unprivileged run (containers, CI).
 // TODO: move the func to internal/testutils
-func RequireRoot(tb testing.TB) bool {
-	return os.Geteuid() == 0
+func RequireRoot(tb testing.TB) {
+	tb.Helper()
+	if os.Geteuid() != 0 {
+		tb.Skip("test requires root privileges")
+	}
 }
 
 func SetupRuntimeCgroupWithClean(t *testing.T) (Cgroup, string) {
 	t.Helper()
 	cgr, err := NewManager()
 	if err != nil {
-		t.Errorf("New: %v", err)
-		return nil, ""
+		t.Fatalf("New: %v", err)
 	}
 
 	// UnixNano suffix makes the path unique across concurrent test runs.
@@ -71,7 +72,7 @@ func TestToSpec(t *testing.T) {
 	// cpuPeriod is the package-level constant (100000).
 	const period uint64 = 100000
 
-	testCases := []struct {
+	tests := []struct {
 		name     string
 		cpu      float64
 		memory   int64
@@ -186,7 +187,7 @@ func TestToSpec(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
+	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := ToSpec(tc.cpu, tc.memory)
 			if got == nil {
@@ -202,7 +203,7 @@ func TestToSpec(t *testing.T) {
 func TestRootFsFilePath(t *testing.T) {
 	base := paths.RootfsDefaultPath
 
-	testCases := []struct {
+	tests := []struct {
 		subsys string
 		want   string
 	}{
@@ -212,7 +213,7 @@ func TestRootFsFilePath(t *testing.T) {
 		{"", base}, // empty subsys returns base; also validates RootfsDefaultPath()
 	}
 
-	for _, tc := range testCases {
+	for _, tc := range tests {
 		t.Run(tc.subsys+"-subsystem", func(t *testing.T) {
 			if got := RootFsFilePath(tc.subsys); got != tc.want {
 				t.Errorf("RootFsFilePath(%q): got %q, want %q", tc.subsys, got, tc.want)
@@ -226,7 +227,7 @@ func TestRootFsFilePath(t *testing.T) {
 	}
 }
 
-// TestCgroupManager verifies NewCgroupManager and CgroupMode together against
+// TestCgroupManager verifies NewManager and CgroupMode together against
 // the real host hierarchy. Both functions read extcgroups.Mode() so a single
 // call is shared to keep assertions consistent.
 func TestCgroupManager(t *testing.T) {
@@ -239,17 +240,15 @@ func TestCgroupManager(t *testing.T) {
 
 	mgr, err := NewManager()
 	if err != nil {
-		t.Fatalf("NewCgroupManager() mode %v: got error %v, want nil", mode, err)
+		t.Fatalf("NewManager() mode %v: got error %v, want nil", mode, err)
 	}
 	if mgr == nil {
-		t.Fatalf("NewCgroupManager() mode %v: got nil, want non-nil Cgroup", mode)
+		t.Fatalf("NewManager() mode %v: got nil, want non-nil Cgroup", mode)
 	}
 }
 
 func TestCgroupInterfaces(t *testing.T) {
-	if !RequireRoot(t) {
-		t.Fatalf("Cgroup test requires root privileges")
-	}
+	RequireRoot(t)
 
 	cgr, err := NewManager()
 	if err != nil {

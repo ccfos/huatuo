@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -62,6 +63,10 @@ func newMockElasticsearchServer() *mockElasticsearchServer {
 
 		parts := strings.Split(path, "/")
 		switch {
+		case len(parts) == 1 && parts[0] == "_bulk":
+			mockServer.handleBulk(w, r, "")
+		case len(parts) == 2 && parts[1] == "_bulk":
+			mockServer.handleBulk(w, r, parts[0])
 		case len(parts) == 1 && r.Method == http.MethodHead:
 			mockServer.handleIndexExists(w, parts[0])
 		case len(parts) == 1 && r.Method == http.MethodPut:
@@ -149,6 +154,69 @@ func (m *mockElasticsearchServer) handleSaveDocument(w http.ResponseWriter, r *h
 
 	w.WriteHeader(http.StatusCreated)
 	_, _ = w.Write([]byte(`{"result":"created"}`))
+}
+
+// handleBulk consumes NDJSON bulk requests. Only `index` actions are supported
+// since that is all the production Save path emits. Each accepted item is
+// stored under the index from either the action line or the URL path.
+func (m *mockElasticsearchServer) handleBulk(w http.ResponseWriter, r *http.Request, defaultIndex string) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	lines := bytes.Split(bytes.TrimRight(body, "\n"), []byte("\n"))
+
+	type bulkAction struct {
+		Index struct {
+			Index string `json:"_index"`
+			ID    string `json:"_id"`
+		} `json:"index"`
+	}
+
+	items := make([]map[string]any, 0, len(lines)/2)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i := 0; i+1 < len(lines); i += 2 {
+		var act bulkAction
+		if err := json.Unmarshal(lines[i], &act); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		idx := act.Index.Index
+		if idx == "" {
+			idx = defaultIndex
+		}
+		id := act.Index.ID
+
+		source := cloneRawMessage(lines[i+1])
+		var fields map[string]any
+		_ = json.Unmarshal(source, &fields)
+
+		if _, ok := m.indexes[idx]; !ok {
+			m.indexes[idx] = make(map[string]mockElasticsearchDocument)
+		}
+		m.indexes[idx][id] = mockElasticsearchDocument{ID: id, Source: source, Fields: fields}
+
+		items = append(items, map[string]any{
+			"index": map[string]any{
+				"_index":   idx,
+				"_id":      id,
+				"_version": 1,
+				"result":   "created",
+				"status":   201,
+			},
+		})
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"took":   1,
+		"errors": false,
+		"items":  items,
+	})
 }
 
 func (m *mockElasticsearchServer) handleGetDocument(w http.ResponseWriter, index, id string) {
@@ -629,6 +697,17 @@ func newBackendForTest(t *testing.T, server *mockElasticsearchServer) *Storage {
 	return backend
 }
 
+// flushBackend forces the bulk indexer to drain pending items. Save buffers
+// asynchronously, so tests must flush before issuing a read that depends on a
+// just-saved record. After flushing the indexer is closed; tests that need to
+// keep saving must rebuild the backend.
+func flushBackend(t *testing.T, backend *Storage) {
+	t.Helper()
+	if err := backend.Close(t.Context()); err != nil {
+		t.Fatalf("flush bulk: %v", err)
+	}
+}
+
 // TestBuildSearchRequest covers query DSL construction: verifies that equality, not-equal, range, IN, sort, pagination, and invalid pagination are all translated to the correct ES request body.
 func TestBuildSearchRequest(t *testing.T) {
 	baseTime := time.Date(2026, 4, 9, 8, 0, 0, 123000000, time.UTC)
@@ -758,6 +837,7 @@ func TestElasticsearchBackendCRUD(t *testing.T) {
 	if err := backend.Save(t.Context(), record); err != nil {
 		t.Errorf("Save() returned error: %v", err)
 	}
+	flushBackend(t, backend)
 
 	gotRecord, err := backend.Get(t.Context(), "job-es-alpha")
 	if err != nil {
@@ -822,6 +902,7 @@ func TestElasticsearchBackendQuery(t *testing.T) {
 			t.Errorf("Save(%q) returned error: %v", record.ID, err)
 		}
 	}
+	flushBackend(t, backend)
 
 	result, err := backend.Query(t.Context(), driver.Query{
 		Filters: []driver.Filter{
@@ -911,6 +992,7 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 			t.Errorf("Save(%q) returned error: %v", record.ID, err)
 		}
 	}
+	flushBackend(t, backend)
 
 	terms, err := backend.Values(t.Context(), "profile_type", driver.Query{
 		Filters: []driver.Filter{

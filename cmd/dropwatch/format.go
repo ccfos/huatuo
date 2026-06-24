@@ -19,9 +19,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
-	"huatuo-bamai/internal/packet"
+	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/types"
 )
@@ -34,15 +33,15 @@ type writer interface {
 type textWriter struct{ w io.Writer }
 
 func (s *textWriter) Write(ev *types.DropWatchTracing) error {
-	fmt.Fprintf(s.w, "%s %s %s len=%d dev=%s pid=%d[%s] addr=%s\n",
-		ev.ObservedTimestamp, ev.PacketType, formatDetail(ev.PacketInfo),
-		ev.PacketLen, ev.NetdevName, ev.Pid, ev.Comm, ev.PacketSkbAddr)
+	if _, err := fmt.Fprintf(s.w, "%s %s len=%d dev=%s pid=%d[%s] addr=%s\n",
+		ev.ObservedTimestamp, ev.Layers,
+		ev.PacketLen, ev.NetdevName, ev.Pid, ev.Comm, ev.PacketSkbAddr); err != nil {
+		return err
+	}
 
 	if ev.Stack != "" {
-		for i, frame := range strings.Split(strings.TrimRight(ev.Stack, "\n"), "\n") {
-			if frame != "" {
-				fmt.Fprintf(s.w, "\t#%-2d  %s\n", i, frame)
-			}
+		if err := symbol.FormatStackLines(s.w, ev.Stack); err != nil {
+			return err
 		}
 	}
 
@@ -52,15 +51,18 @@ func (s *textWriter) Write(ev *types.DropWatchTracing) error {
 type jsonWriter struct{ w io.Writer }
 
 func (s *jsonWriter) Write(ev *types.DropWatchTracing) error {
-	b, _ := json.Marshal(ev)
-	_, _ = fmt.Fprintf(s.w, "%s\n", b)
-	return nil
+	b, err := json.Marshal(ev)
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	_, err = s.w.Write(b)
+	return err
 }
 
 type socketWriter struct{ client *toolstream.Client }
 
 func (s *socketWriter) Write(ev *types.DropWatchTracing) error {
-	ev.Source = "client"
 	return s.client.Send(ev)
 }
 
@@ -74,13 +76,4 @@ func newWriter(outputFmt string, client *toolstream.Client) writer {
 	default:
 		return &textWriter{w: os.Stdout}
 	}
-}
-
-type detailable interface{ Detail() string }
-
-func formatDetail(info packet.PacketInfo) string {
-	if d, ok := info.(detailable); ok {
-		return d.Detail()
-	}
-	return "[?]"
 }

@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/pkg/types"
 
 	"github.com/cloudflare/backoff"
 )
@@ -114,6 +116,11 @@ func init() {
 }
 
 func newRasTracing() (*tracing.EventTracingAttr, error) {
+	if !hasRasTracepoint() {
+		log.Infof("ras: kernel tracepoint subsystem absent, disabling")
+		return nil, types.ErrNotSupported
+	}
+
 	backoffDur := defaultThrEventBackoff
 	if cfg.Ras.MceThrBackoff > 0 {
 		backoffDur = time.Duration(cfg.Ras.MceThrBackoff) * time.Second
@@ -128,6 +135,22 @@ func newRasTracing() (*tracing.EventTracingAttr, error) {
 		Interval:    60,
 		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
+}
+
+// hasRasTracepoint reports whether the running kernel exposes the ras:*
+// tracepoint family. Without it, CO-RE relocations against
+// trace_event_raw_mc_event resolve to a poisoned helper id and BPF load
+// fails at the verifier — common on stripped VM kernels (e.g. OrbStack).
+func hasRasTracepoint() bool {
+	for _, p := range []string{
+		"/sys/kernel/tracing/events/ras",
+		"/sys/kernel/debug/tracing/events/ras",
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func decodePayload[T any](info []byte) (*T, error) {

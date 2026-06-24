@@ -12,9 +12,14 @@ ARG BUILD_MODE
 WORKDIR ${BUILD_PATH}
 ENV PATH=$PATH:/usr/lib/llvm15/bin
 COPY . .
+
 RUN set -x; \
     apt-get update && apt-get install -y --no-install-recommends \
-    make clang libbpf-dev bpftool curl git binutils-gold musl-tools &&\
+    make clang libbpf-dev bpftool curl git binutils-gold musl-tools capnproto &&\
+    go install github.com/vektra/mockery/v2@latest &&\
+    go install capnproto.org/go/capnp/v3/capnpc-go@latest
+
+RUN set -x; \
     make BUILD_MODE=${BUILD_MODE} &&\
     mkdir -p ${RUN_PATH} &&\
     cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/ &&\
@@ -41,6 +46,7 @@ FROM golang:1.24 AS run-nostatic
 ARG RUN_PATH="/home/huatuo-bamai"
 RUN apt-get update && apt-get install -y --no-install-recommends curl libelf1 libnuma1 &&\
     rm -rf /var/lib/apt/lists/*
+ENV LD_LIBRARY_PATH=/usr/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/dcmi:${LD_LIBRARY_PATH}
 COPY --from=build ${RUN_PATH} ${RUN_PATH}
 WORKDIR ${RUN_PATH}
 

@@ -46,8 +46,7 @@ func TestNetNSInodeByPid(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := NetNSInodeByPid(tt.pid)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("NetNSInodeByPid() error = %v, wantErr %v", err, tt.wantErr)
-				return
+				t.Fatalf("NetNSInodeByPid() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr && got == 0 {
 				t.Errorf("NetNSInodeByPid() got = %v, want non-zero inode", got)

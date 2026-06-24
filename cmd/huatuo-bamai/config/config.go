@@ -111,7 +111,7 @@ func Sync() error {
 }
 
 func setCoreModuleConfig() {
-	autotracing.SetConfig(&cfg.AutoTracing)
+	autotracing.Set(&cfg.AutoTracing)
 	events.Set(&cfg.EventTracing)
 	collector.Set(&cfg.MetricCollector)
 }

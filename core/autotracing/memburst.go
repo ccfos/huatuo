@@ -16,6 +16,7 @@ package autotracing
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -86,8 +87,7 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 		"Inactive(anon)": true,
 	})
 	if err != nil {
-		log.Errorf("Error reading memory info: %v\n", err)
-		return []*processMemInfo{}, nil
+		return []*processMemInfo{}, fmt.Errorf("read memory info: %w", err)
 	}
 	currentSum := memInfo["Active(anon)"] + memInfo["Inactive(anon)"]
 	history[*currentIndex] = currentSum
@@ -110,6 +110,28 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 	return []*processMemInfo{}, nil
 }
 
+func validateMemBurst(c *MemBurstConfig) error {
+	if c.DeltaMemoryBurst <= 0 {
+		return fmt.Errorf("memory burst delta must be positive, got %d", c.DeltaMemoryBurst)
+	}
+	if c.DeltaAnonThreshold < 0 || c.DeltaAnonThreshold > 100 {
+		return fmt.Errorf("memory burst anon threshold must be in [0, 100], got %d", c.DeltaAnonThreshold)
+	}
+	if c.Interval <= 0 {
+		return fmt.Errorf("memory burst interval must be positive, got %d", c.Interval)
+	}
+	if c.IntervalTracing <= 0 {
+		return fmt.Errorf("memory burst tracing interval must be positive, got %d", c.IntervalTracing)
+	}
+	if c.SlidingWindowLength <= 0 {
+		return fmt.Errorf("memory burst sliding window length must be positive, got %d", c.SlidingWindowLength)
+	}
+	if c.DumpProcessMaxNum <= 0 {
+		return fmt.Errorf("memory burst dump process max num must be positive, got %d", c.DumpProcessMaxNum)
+	}
+	return nil
+}
+
 // Core function
 func (c *memBurstTracing) Start(ctx context.Context) error {
 	var err error
@@ -121,6 +143,10 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 	burstRatio := (float64(cfg.MemoryBurst.DeltaMemoryBurst)/100.0 + 1)
 	anonThreshold := cfg.MemoryBurst.DeltaAnonThreshold
 
+	if err := validateMemBurst(&cfg.MemoryBurst); err != nil {
+		return err
+	}
+
 	memInfo, err := readMemInfo(map[string]bool{"MemTotal": true})
 	if err != nil {
 		log.Infof("Error reading MemTotal from memory info: %v\n", err)
@@ -130,36 +156,32 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 	history := make([]int, historyWindowLength) // circular buffer
 	var currentIndex int
 	var isHistoryFull bool // don't check memory burst until we have enough data
-	var topProcesses []*processMemInfo
 	lastReportTime := time.Now().Add(-24 * time.Hour)
 	_, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historyWindowLength, topNProcesses, burstRatio, anonThreshold)
 	if err != nil {
 		log.Errorf("Fail to checkAndRecordMemoryUsage")
 		return err
 	}
+
+	ticker := time.NewTicker(time.Duration(sampleInterval) * time.Second)
+	defer ticker.Stop()
+
 	for {
-		ticker := time.NewTicker(time.Duration(sampleInterval) * time.Second)
-		stoppedByUser := false
-		for range ticker.C {
-			topProcesses, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historyWindowLength, topNProcesses, burstRatio, anonThreshold)
-			if err != nil {
-				log.Errorf("Fail to checkAndRecordMemoryUsage")
-				return err
-			}
+		var topProcesses []*processMemInfo
+		for len(topProcesses) == 0 {
 			select {
 			case <-ctx.Done():
 				log.Info("Caller request to stop")
-				stoppedByUser = true
-			default:
-			}
-			if len(topProcesses) > 0 || stoppedByUser {
-				break
+				return nil
+			case <-ticker.C:
+				topProcesses, err = checkAndRecordMemoryUsage(&currentIndex, &isHistoryFull, memTotal, history, historyWindowLength, topNProcesses, burstRatio, anonThreshold)
+				if err != nil {
+					log.Errorf("Fail to checkAndRecordMemoryUsage")
+					return err
+				}
 			}
 		}
-		ticker.Stop()
-		if stoppedByUser {
-			break
-		}
+
 		currentTime := time.Now()
 		diff := currentTime.Sub(lastReportTime).Seconds()
 		if diff < float64(intervalTracing) {
@@ -176,5 +198,4 @@ func (c *memBurstTracing) Start(ctx context.Context) error {
 			log.Warnf("failed to save tracing data: %v", err)
 		}
 	}
-	return nil
 }

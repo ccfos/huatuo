@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import (
 
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/stats"
+	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
@@ -39,19 +40,23 @@ func init() {
 	tracing.RegisterEventTracing("cpuidle", newCPUIdle)
 }
 
-var cgroupMgr cgroups.Cgroup
-
 func newCPUIdle() (*tracing.EventTracingAttr, error) {
-	cgroupMgr, _ = cgroups.NewManager()
+	// NewManager only returns nil alongside an error (default branch); v1/v2 never return nil on success
+	cgroup, err := cgroups.NewManager()
+	if err != nil {
+		return nil, err
+	}
 
 	return &tracing.EventTracingAttr{
-		TracingData: &cpuIdleTracing{},
+		TracingData: &cpuIdleTracing{cgroupMgr: cgroup},
 		Interval:    20,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
 
-type cpuIdleTracing struct{}
+type cpuIdleTracing struct {
+	cgroupMgr cgroups.Cgroup
+}
 
 type cpuStats struct {
 	user  int64
@@ -114,14 +119,14 @@ func updateContainersCPUIdle(f *matcher.ContainerMatcher) error {
 	return nil
 }
 
-func detectCPUIdleContainer(threshold *cpuIdleThreshold) (*containerCPUInfo, error) {
+func (c *cpuIdleTracing) detectCPUIdleContainer(threshold *cpuIdleThreshold) (*containerCPUInfo, error) {
 	for id, container := range containersCPUIdle {
 		if !container.alive {
 			delete(containersCPUIdle, id)
 		} else {
 			container.alive = false
 
-			if err := updateContainerCpuUsage(container); err != nil {
+			if err := c.updateContainerCpuUsage(container); err != nil {
 				log.Debugf("cpuidle update container [%s]: %v", container.path, err)
 				continue
 			}
@@ -153,8 +158,8 @@ func containerCpuUsageDelta(cpu1, cpu2 *cpuStats) cpuStats {
 	}
 }
 
-func updateContainerCpuUsage(container *containerCPUInfo) error {
-	cpuQuotaPeriod, err := cgroupMgr.CpuQuotaAndPeriod(container.path)
+func (c *cpuIdleTracing) updateContainerCpuUsage(container *containerCPUInfo) error {
+	cpuQuotaPeriod, err := c.cgroupMgr.CpuQuotaAndPeriod(container.path)
 	if err != nil {
 		return err
 	}
@@ -170,7 +175,7 @@ func updateContainerCpuUsage(container *containerCPUInfo) error {
 		return fmt.Errorf("cpu too small")
 	}
 
-	usage, err := cgroupMgr.CpuUsage(container.path)
+	usage, err := c.cgroupMgr.CpuUsage(container.path)
 	if err != nil {
 		return err
 	}
@@ -238,7 +243,7 @@ func runPerf(parent context.Context, containerId string, timeOut int64) ([]byte,
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "perf"),
-		"--bpf-obj", "cpuidle.o",
+		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "perf.o"),
 		"--container-id", containerId,
 		"--duration", strconv.FormatInt(timeOut, 10))
 
@@ -322,7 +327,7 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 				return err
 			}
 
-			container, err := detectCPUIdleContainer(threshold)
+			container, err := c.detectCPUIdleContainer(threshold)
 			if err != nil {
 				continue
 			}

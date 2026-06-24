@@ -63,7 +63,7 @@ Both Elasticsearch and OpenSearch provide native data source integrations with G
 
 ```bash
 docker pull opensearchproject/opensearch:2.6.0
-docker run -d --name opensearch -p 9200:9200 -p 9600:9600 \
+docker run -d --name opensearch --network host \
   -e "discovery.type=single-node" \
   opensearchproject/opensearch:2.6.0
 ```
@@ -191,7 +191,7 @@ Example response: the `count` value equals the total number of written records.
 
 ```bash
 docker pull docker.elastic.co/elasticsearch/elasticsearch:8.15.5
-docker run -d --name elasticsearch -p 9200:9200 -p 9300:9300 \
+docker run -d --name elasticsearch --network host \
   -e "discovery.type=single-node" \
   -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
   -e "ELASTIC_PASSWORD=123456" \
@@ -315,7 +315,7 @@ Elasticsearch V7 uses HTTP by default. Replace `https` with `http` in all comman
 
 ```bash
 docker pull docker.elastic.co/elasticsearch/elasticsearch:7.10.1
-docker run -d --name elasticsearch -p 9200:9200 -p 9300:9300 \
+docker run -d --name elasticsearch --network host \
   -e "discovery.type=single-node" \
   -e "ES_JAVA_OPTS=-Xms1g -Xmx1g" \
   -e "ELASTIC_PASSWORD=123456" \
@@ -389,7 +389,9 @@ curl -k -u elastic:123456 -X GET "http://localhost:9200/huatuo_bamai/_count?pret
 
 ### System Architecture
 
-The HUATUO Storage module runs on each node. It writes kernel events captured by the Tracer concurrently to the local directory and to Elasticsearch or OpenSearch. Both storage backends share the same `[Storage.ES]` configuration interface and are differentiated by address.
+The HUATUO Storage module runs on each node. It writes kernel events captured by the Tracer to the local directory and to Elasticsearch or OpenSearch. Both backends share the same `[Storage.ES]` configuration interface and are differentiated by address.
+
+The remote write path uses the ES/OpenSearch **Bulk API** (`_bulk`): events are queued in an in-memory buffer and submitted in batches by background workers based on size and time thresholds, with transport-layer retries on transient failures.
 
 ```mermaid
 graph TB
@@ -401,7 +403,7 @@ graph TB
     subgraph huatuo["HUATUO Agent (node-level)"]
         T["Tracer Layer"]
         L["Local Directory\nhuatuo-local/"]
-        S["Storage Module\n(concurrent write)"]
+        S["Storage Module\nBulkIndexer Buffer"]
     end
 
     subgraph backends["Storage Backends"]
@@ -412,41 +414,80 @@ graph TB
     kernel --> T
     T --> L
     T --> S
-    S -->|Index API| ES
-    S -->|Index API| OS
+    S -->|Bulk API + auto retry| ES
+    S -->|Bulk API + auto retry| OS
 ```
 
 ### Write Flow
 
-After the Tracer captures a kernel event, the Storage module writes it concurrently to the local directory and the remote storage backend. The two write paths execute in parallel — the local directory retains a copy while the remote backend provides durable storage and query capabilities.
+`Save` returns immediately after the event is buffered. Background workers flush the buffer to the remote backend when **any** of the following triggers fire: byte threshold, time threshold, or process shutdown. The local directory write is synchronous and independent of the remote Bulk path.
 
 ```mermaid
 sequenceDiagram
     participant T as Tracer Layer
     participant L as Local Directory (huatuo-local/)
-    participant S as Storage Module
+    participant S as Storage Module (BulkIndexer)
     participant B as ES / OpenSearch
 
     T->>S: Kernel event captured, serialized to JSON
-    par concurrent write
+    par Local path (sync)
         S->>L: Write to local file
-    and
-        S->>B: Write to remote storage (Index API)
-        B-->>S: Write acknowledged (200 OK)
+    and Remote path (async batch)
+        S->>S: Enqueue into bulk buffer, return immediately
+        Note over S: Flush on 5 MB / 1 s / shutdown
+        S->>B: POST /_bulk (multiple records)
+        B-->>S: 200 OK + per-item results
+        Note over S: Failed items reported via OnFailure callback
     end
 ```
 
-### Storage Pipeline
+### Bulk Write Mechanism
 
-From kernel event to storage backend, the process involves three stages: capture, serialization, and concurrent write. The local directory and remote backend are written to in parallel without blocking each other.
+#### Buffering and Flush Triggers
 
-```mermaid
-flowchart LR
-    A([Kernel Event]) --> B["Tracer Capture\nSerialize to JSON"]
-    B --> C["Storage Module\n(concurrent write)"]
-    C --> D["Write to Local Directory\nhuatuo-local/"]
-    C --> E["Write to ES / OpenSearch\nIndex API"]
-```
+| Parameter         | Value               | Meaning                                         |
+|-------------------|---------------------|-------------------------------------------------|
+| `FlushBytes`      | 5 MB                | Flush when accumulated bytes reach the threshold |
+| `FlushInterval`   | 1 s                 | Force-flush 1 second after the previous flush    |
+| `NumWorkers`      | 4                   | Concurrent workers submitting Bulk requests      |
+| Process shutdown  | `Close(ctx)`        | SIGTERM/SIGINT triggers a 10 s bounded drain     |
+
+#### Two-Tier Retry Policy
+
+Bulk failures are split into two layers with different retry semantics:
+
+| Layer                | Trigger                                                                       | Behavior                                                                                                  | Retried? |
+|----------------------|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------|----------|
+| **Whole-batch retry** | Transport error (connect / timeout / TLS)<br>HTTP status: `429 / 502 / 503 / 504` | Client retries with exponential backoff: 100 ms → 200 ms → 400 ms → 800 ms, up to **3 attempts**            | ✅ auto |
+| **Whole-batch reject**| HTTP status: `400 / 401 / 403 / 404 / 413`, etc.                              | Not retried; all records in the batch are dropped, an error is logged via `OnError`                        | ❌ drop |
+| **Per-item failure**  | 200 OK with per-item error: version conflict, mapping error, document too large| Not retried; only the failed item is dropped, `OnFailure` logs `index/id/status/type/reason`               | ❌ drop |
+| **Per-item success**  | 200 OK with per-item success                                                  | Considered durably indexed                                                                                 | —        |
+
+**Why this design**: 429/5xx and transport errors signal transient remote unavailability where retries are effective; 4xx (except 429) and per-item errors are client-side semantic issues (data shape, permissions) where retries would only amplify the failure — they should be surfaced via logs for human investigation.
+
+#### Data-Loss Scenarios
+
+In all three scenarios below, `Save` returns `nil` but the event never reaches the index:
+
+1. **Abnormal process exit**: `SIGKILL` or host power loss drops whatever is still buffered in the BulkIndexer (the local directory still keeps a copy).
+   - Mitigation: SIGTERM/SIGINT trigger graceful shutdown; `Close` force-flushes the buffer with a 10 s deadline.
+2. **Whole-batch permanent rejection**: 4xx (non-429) errors discard every record in the batch. Common causes: disabled index, expired credentials, document exceeding the cluster's `http.max_content_length`.
+   - Diagnosis: `OnError` log includes ES's `type` and `reason`.
+3. **Permanent per-item failure**: mapping conflict, version conflict, malformed document.
+   - Diagnosis: `OnFailure` log identifies the record by `index/id`.
+
+> **The local directory is always a fallback**: even if remote writes are lost, events remain available in `huatuo-local/` as the eventual-consistency safety net.
+
+#### Problems This Solves
+
+Replacing per-event Index API calls with a buffered BulkIndexer + auto-retry addresses four classes of problems:
+
+| Problem                                  | Old approach bottleneck                                 | Bulk approach improvement                                            |
+|------------------------------------------|---------------------------------------------------------|----------------------------------------------------------------------|
+| **TLS handshake CPU cost**               | One HTTPS handshake per event saturated CPU under FIPS/RSA-PSS | Many events share one connection and one handshake; TLS PSK tickets cached |
+| **Remote RTT throughput ceiling**        | One round-trip per event capped node-level write rate    | One Bulk request carries up to 5 MB; throughput scales with batch size |
+| **Transient remote jitter / 429 throttle** | A single failure dropped the event with no retry         | Client-level retry absorbs short-lived faults                         |
+| **Decoupling tracer layer from backend** | Slow remote backed pressure into capture, delaying tracing | Async buffer decouples capture from network — capture is no longer blocked on remote latency |
 
 ---
 
