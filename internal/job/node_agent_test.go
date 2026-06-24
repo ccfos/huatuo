@@ -29,6 +29,11 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+func (errReader) Close() error             { return nil }
+
 type timeoutTransportError struct{}
 
 func (timeoutTransportError) Error() string {
@@ -116,6 +121,29 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		}
 	})
 
+	t.Run("read body error on non-ok", func(t *testing.T) {
+		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Status:     "500 Internal Server Error",
+				Header:     make(http.Header),
+				Body:       errReader{},
+			}, nil
+		}))
+
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+			TracerName:   "oncpu",
+			TraceTimeout: 60,
+			DataType:     "flamegraph",
+		})
+		if err == nil || !strings.Contains(err.Error(), "read body") {
+			t.Errorf("StartTask() error=%v, want read body error", err)
+		}
+		if taskID != "" {
+			t.Errorf("StartTask() taskID=%q, want empty", taskID)
+		}
+	})
+
 	t.Run("invalid response body", func(t *testing.T) {
 		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return newHTTPResponse(http.StatusOK, `{"code":0,"message":"ok","data":`), nil
@@ -162,6 +190,22 @@ func TestHTTPNodeAgentStopTask(t *testing.T) {
 		err := agent.StopTask("huatuo-dev", "agent-task-2026", true)
 		if err == nil || !strings.Contains(err.Error(), "failed to stop job") {
 			t.Errorf("StopTask() error=%v, want stop failure", err)
+		}
+	})
+
+	t.Run("read body error on non-204", func(t *testing.T) {
+		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusConflict,
+				Status:     "409 Conflict",
+				Header:     make(http.Header),
+				Body:       errReader{},
+			}, nil
+		}))
+
+		err := agent.StopTask("huatuo-dev", "agent-task-2026", true)
+		if err == nil || !strings.Contains(err.Error(), "read body") {
+			t.Errorf("StopTask() error=%v, want read body error", err)
 		}
 	})
 }
@@ -252,6 +296,28 @@ func TestHTTPNodeAgentGetTaskStatus(t *testing.T) {
 				}
 				if attempts != 3 {
 					t.Errorf("GetTaskStatus() attempts=%d, want 3", attempts)
+				}
+			},
+		},
+		{
+			name: "read body error on non-ok",
+			buildTransport: func(attempts *int) http.RoundTripper {
+				return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					*attempts++
+					return &http.Response{
+						StatusCode: http.StatusInternalServerError,
+						Status:     "500 Internal Server Error",
+						Header:     make(http.Header),
+						Body:       errReader{},
+					}, nil
+				})
+			},
+			validate: func(t *testing.T, status string, result *Result, err error, attempts int) {
+				if err == nil || !strings.Contains(err.Error(), "read body") {
+					t.Errorf("GetTaskStatus() error=%v, want read body error", err)
+				}
+				if attempts != 1 {
+					t.Errorf("GetTaskStatus() attempts=%d, want 1", attempts)
 				}
 			},
 		},
