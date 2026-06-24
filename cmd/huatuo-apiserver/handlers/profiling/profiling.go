@@ -39,19 +39,34 @@ const (
 	ProfilingCPU    = "profiling_cpu"
 )
 
+type memoryModeCapability struct {
+	name      string
+	tracerArg string
+}
+
 var (
-	supportedLanguages = map[string]bool{
+	supportedProfilingTypes  = []string{"cpu", "memory"}
+	supportedCPULanguages    = []string{"c", "c++", "go", "java", "python"}
+	supportedMemoryLanguages = []string{
+		"c",
+		"c++",
+		"go",
+		"java",
+	}
+	supportedMemoryModeCapabilities = []memoryModeCapability{
+		{name: "NATIVE_PHYSICAL_ALLOC", tracerArg: "native_physical_alloc"},
+		{name: "NATIVE_PHYSICAL_USAGE", tracerArg: "native_physical_usage"},
+		{name: "NATIVE_VIRTUAL_ALLOC", tracerArg: "native_virtual_alloc"},
+		{name: "OBJECT_ALLOC", tracerArg: "object_alloc"},
+		{name: "OBJECT_USAGE", tracerArg: "object_usage"},
+	}
+	supportedMemoryModeNames = memoryModeNames(supportedMemoryModeCapabilities)
+	supportedMemoryModes     = memoryModeMap(supportedMemoryModeCapabilities)
+	supportedLanguages       = map[string]bool{
 		"c++":  true,
 		"c":    true,
 		"go":   true,
 		"java": true,
-	}
-	supportedMemoryModes = map[string]string{
-		"NATIVE_PHYSICAL_ALLOC": "native_physical_alloc",
-		"NATIVE_PHYSICAL_USAGE": "native_physical_usage",
-		"NATIVE_VIRTUAL_ALLOC":  "native_virtual_alloc",
-		"OBJECT_ALLOC":          "object_alloc",
-		"OBJECT_USAGE":          "object_usage",
 	}
 )
 
@@ -68,6 +83,7 @@ func NewHandler(jm *job.Manager) *Handler {
 	h.Handlers = []server.Handle{
 		{Typ: server.HttpPost, Uri: "", Handle: h.start},
 		{Typ: server.HttpGet, Uri: "", Handle: h.list},
+		{Typ: server.HttpGet, Uri: "/capabilities", Handle: h.capabilities},
 		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
 		{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
 		{Typ: server.HttpPatch, Uri: "/:id", Handle: h.patchOne},
@@ -82,8 +98,44 @@ func NewHandler(jm *job.Manager) *Handler {
 	return h
 }
 
+// capabilities returns the profiling modes and defaults supported by this API server.
+func (h *Handler) capabilities(ctx *server.Context) error {
+	cfg := config.Get().Profiling
+
+	response.Success(ctx, v1.ProfilingCapabilitiesResponse{
+		Types:           append([]string(nil), supportedProfilingTypes...),
+		CPULanguages:    append([]string(nil), supportedCPULanguages...),
+		MemoryLanguages: append([]string(nil), supportedMemoryLanguages...),
+		MemoryModes:     append([]string(nil), supportedMemoryModeNames...),
+		Defaults: v1.ProfilingCapabilityDefaults{
+			CPUProfilingInterval:     cfg.CPUProfilingInterval,
+			MemoryProfilingInterval:  cfg.MemoryProfilingInterval,
+			CPUSingleTraceTimeout:    cfg.CPUSingleTraceTimeout,
+			MemorySingleTraceTimeout: cfg.MemorySingleTraceTimeout,
+			ThirdPartyToolLimit:      cfg.ThirdPartyToolLimit,
+		},
+	})
+	return nil
+}
+
 func isLanguageSupported(lang string) bool {
 	return supportedLanguages[lang]
+}
+
+func memoryModeNames(modes []memoryModeCapability) []string {
+	names := make([]string, 0, len(modes))
+	for _, mode := range modes {
+		names = append(names, mode.name)
+	}
+	return names
+}
+
+func memoryModeMap(modes []memoryModeCapability) map[string]string {
+	result := make(map[string]string, len(modes))
+	for _, mode := range modes {
+		result[mode.name] = mode.tracerArg
+	}
+	return result
 }
 
 func isMemoryModeSupported(mode string) (string, bool) {
