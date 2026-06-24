@@ -18,28 +18,53 @@ import (
 	"bufio"
 	"os"
 	"strings"
+	"sync"
 )
 
-// HasKprobeFunction returns whether the given symbol is reported as
-// attachable in the kernel's available_filter_functions list.
-func HasKprobeFunction(name string) bool {
+var (
+	kprobeOnce    sync.Mutex
+	kprobeCache   map[string]struct{}
+	kprobeCached  bool
+)
+
+// loadKprobeFunctions reads /sys/kernel/debug/tracing/available_filter_functions
+// and populates kprobeCache. On success kprobeCached is set so subsequent
+// calls skip the file read; on failure the cache remains unset and the next
+// call retries.
+func loadKprobeFunctions() {
 	file, err := os.Open("/sys/kernel/debug/tracing/available_filter_functions")
 	if err != nil {
-		return false
+		return
 	}
 	defer file.Close()
 
+	cache := make(map[string]struct{})
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-
-		if strings.Fields(line)[0] == name {
-			return true
-		}
+		cache[strings.Fields(line)[0]] = struct{}{}
 	}
 
-	return false
+	if err := scanner.Err(); err != nil {
+		return
+	}
+
+	kprobeCache = cache
+	kprobeCached = true
+}
+
+// HasKprobeFunction returns whether the given symbol is reported as
+// attachable in the kernel's available_filter_functions list.
+func HasKprobeFunction(name string) bool {
+	kprobeOnce.Lock()
+	if !kprobeCached {
+		loadKprobeFunctions()
+	}
+	kprobeOnce.Unlock()
+
+	_, ok := kprobeCache[name]
+	return ok
 }
