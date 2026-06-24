@@ -110,7 +110,7 @@ assert_huatuo_bamai_pod_count() {
 e2e_test_teardown() {
 	local code=$1
 
-	huatuo_bamai_stop || true
+	huatuo_bamai_stop "${code}" || true
 	if ! huatuo_bamai_log_check; then
 		log_error "❌ huatuo-bamai log check failed"
 		code=1

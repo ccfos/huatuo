@@ -35,15 +35,10 @@ unshare --uts --mount bash -c '
 	source "./integration/env.sh"
 	source "${ROOT_DIR}/integration/lib.sh"
 
-	# Always cleanup the tests.
-	trap "integration_test_teardown \$?" EXIT
-
-	integration_test_huatuo_bamai_start
-
 	# auto run all test_*.sh scripts in the integration
 	for case in "${ROOT_DIR}"/integration/test_*.sh; do
 		[[ -f "$case" ]] || continue
-		log_info "⬅️⬅️ start: $(basename "$case")"
+		log_info "🚀🚀 start: $(basename "$case")"
 
 		chmod +x "$case"
 		if ! bash "$case"; then
