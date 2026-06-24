@@ -252,11 +252,12 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 				rate, err := dcmi.DcGetDeviceUtilizationRate(ctx, cardId, deviceId, ut.devType)
 				if err != nil {
 					if !dcmi.IsNotSupported(err) {
-					log.Debugf("ascend: utilization %s for card %d device %d failed: %v", ut.devType.Name, cardId, deviceId, err)
-				}
+						log.Debugf("ascend: utilization %s for card %d device %d failed: %v", ut.devType.Name, cardId, deviceId, err)
+					}
 					continue
 				}
-				data = append(data,
+				data = append(
+					data,
 					metric.NewGaugeData(ut.metricName, float64(rate),
 						"NPU device utilization rate (0-100%).", npuLabels),
 				)
@@ -281,11 +282,12 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 				freq, err := dcmi.DcGetDeviceFrequency(ctx, cardId, deviceId, ft.devType)
 				if err != nil {
 					if !dcmi.IsNotSupported(err) {
-					log.Debugf("ascend: frequency %s for card %d device %d failed: %v", ft.devType.Name, cardId, deviceId, err)
-				}
+						log.Debugf("ascend: frequency %s for card %d device %d failed: %v", ft.devType.Name, cardId, deviceId, err)
+					}
 					continue
 				}
-				data = append(data,
+				data = append(
+					data,
 					metric.NewGaugeData(ft.metricName, float64(freq),
 						"NPU device frequency in MHz.", npuLabels),
 				)
@@ -299,8 +301,8 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 			defer wg.Done()
 			if netHealth, err := dcmi.DcGetDeviceNetWorkHealth(ctx, cardId, deviceId); err != nil {
 				if !dcmi.IsNotSupported(err) {
-				log.Debugf("ascend: network health for card %d device %d failed: %v", cardId, deviceId, err)
-			}
+					log.Debugf("ascend: network health for card %d device %d failed: %v", cardId, deviceId, err)
+				}
 			} else {
 				ch <- metricResult{[]*metric.Data{
 					metric.NewGaugeData("npu_device_network_health", float64(netHealth),
@@ -315,8 +317,8 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 			defer wg.Done()
 			if hbmInfo, err := dcmi.DcGetHbmInfo(ctx, cardId, deviceId); err != nil {
 				if !dcmi.IsNotSupported(err) {
-				log.Debugf("ascend: HBM info for card %d device %d failed: %v", cardId, deviceId, err)
-			}
+					log.Debugf("ascend: HBM info for card %d device %d failed: %v", cardId, deviceId, err)
+				}
 			} else {
 				ch <- metricResult{[]*metric.Data{
 					metric.NewGaugeData("npu_hbm_mem_capacity", float64(hbmInfo.MemorySize), "NPU HBM memory capacity in MB.", npuLabels),
@@ -336,8 +338,8 @@ func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*m
 			defer wg.Done()
 			if eccInfo, err := dcmi.DcGetDeviceEccInfo(ctx, cardId, deviceId, dcmi.DcmiDeviceTypeHBM); err != nil {
 				if !dcmi.IsNotSupported(err) {
-				log.Debugf("ascend: ECC info for card %d device %d failed: %v", cardId, deviceId, err)
-			}
+					log.Debugf("ascend: ECC info for card %d device %d failed: %v", cardId, deviceId, err)
+				}
 			} else {
 				ch <- metricResult{[]*metric.Data{
 					metric.NewGaugeData("npu_hbm_ecc_enable", float64(eccInfo.EnableFlag), "NPU HBM ECC enable flag.", npuLabels),
@@ -387,8 +389,8 @@ func collectPCIeMetrics(ctx context.Context, cardId, deviceId uint32) []*metric.
 	bdf, err := dcmi.DcGetPCIeBusInfo(ctx, cardId, deviceId)
 	if err != nil {
 		if !dcmi.IsNotSupported(err) {
-		log.Debugf("ascend: PCIe BDF for card %d device %d failed: %v", cardId, deviceId, err)
-	}
+			log.Debugf("ascend: PCIe BDF for card %d device %d failed: %v", cardId, deviceId, err)
+		}
 		return nil
 	}
 	linkInfo, err := pcie.GetPCIeLinkInfo(bdf)
@@ -463,12 +465,12 @@ func collectHccnMetrics(cardId, deviceId int32, npuLabels map[string]string) []*
 	phyID := cardId
 	if logicID, err := dcmi.DcGetDeviceLogicID(cardId, deviceId); err != nil {
 		if !dcmi.IsNotSupported(err) {
-		log.Debugf("ascend: DcGetDeviceLogicID(%d, %d) failed, using cardId as phyID: %v", cardId, deviceId, err)
-	}
+			log.Debugf("ascend: DcGetDeviceLogicID(%d, %d) failed, using cardId as phyID: %v", cardId, deviceId, err)
+		}
 	} else if phy, err := dcmi.DcGetPhysicIDFromLogicID(uint32(logicID)); err != nil {
 		if !dcmi.IsNotSupported(err) {
-		log.Debugf("ascend: DcGetPhysicIDFromLogicID(%d) failed, using cardId as phyID: %v", logicID, err)
-	}
+			log.Debugf("ascend: DcGetPhysicIDFromLogicID(%d) failed, using cardId as phyID: %v", logicID, err)
+		}
 	} else {
 		phyID = phy
 	}
@@ -525,7 +527,8 @@ func collectHccnMetrics(cardId, deviceId int32, npuLabels map[string]string) []*
 		var data []*metric.Data
 		for key, metricName := range hccnStatMetrics {
 			if val, ok := statInfo[key]; ok {
-				data = append(data,
+				data = append(
+					data,
 					metric.NewCounterData(metricName, float64(val), "NPU network stat counter.", npuLabels),
 				)
 			}
@@ -545,7 +548,8 @@ func collectHccnMetrics(cardId, deviceId int32, npuLabels map[string]string) []*
 		var data []*metric.Data
 		for key, metricName := range hccnOptMetrics {
 			if val, ok := optInfo[key]; ok {
-				data = append(data,
+				data = append(
+					data,
 					metric.NewGaugeData(metricName, val, "NPU optical module info.", npuLabels),
 				)
 			}

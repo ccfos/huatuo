@@ -25,6 +25,7 @@ import (
 
 	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/utils/kernaddr"
@@ -155,35 +156,14 @@ func ignoreDropwatch(data *types.DropWatchTracing) bool {
 		}
 	}
 
-	// stack:
-	// 1. kfree_skb/ffffffff96d127b0
-	// 2. kfree_skb/ffffffff96d127b0
-	// 3. neigh_invalidate/ffffffff96d388b0
-	// 4. neigh_timer_handler/ffffffff96d3a870
-	// 5. ...
-	// neigh_invalidate: ARP/neighbor table cleanup, filtered by config.
-	if len(stack) >= 3 && strings.HasPrefix(stack[2], "neigh_invalidate/") {
-		return true
-	}
-
-	// stack:
-	// 1. kfree_skb/ffffffff82283d10
-	// 2. kfree_skb/ffffffff82283d10
-	// 3. bnxt_tx_int/ffffffffc05c6f20
-	// 4. __bnxt_poll_work_done/ffffffffc05c50c0
-	// 5. ...
-	//
-	// stack:
-	// 1. kfree_skb/ffffffffaba83d10
-	// 2. kfree_skb/ffffffffaba83d10
-	// 3. __bnxt_tx_int/ffffffffc045df90
-	// 4. bnxt_tx_int/ffffffffc045e250
-	// 5. ...
-	// bnxt NIC TX completion path: driver frees skb normally, not a real drop.
-	if len(stack) >= 3 &&
-		(strings.HasPrefix(stack[2], "bnxt_tx_int/") ||
-			strings.HasPrefix(stack[2], "__bnxt_tx_int/")) {
-		return true
+	// Operator-configured stack-frame noise rules (e.g. bnxt_tx_int,
+	// neigh_invalidate). Patterns live in events.IssuesList; see
+	// net_rx_latency.go for the same pattern. Match against data.Stack
+	// (frames joined by '\n').
+	if cfg != nil {
+		if _, found := matcher.Classify(cfg.IssuesList, data.Stack); found {
+			return true
+		}
 	}
 
 	return false

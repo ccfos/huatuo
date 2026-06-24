@@ -12,6 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package metric provides the metrics collection framework used by HuaTuo
+// to expose runtime observability data via Prometheus.
+//
+// Tracers implement the Collector interface and register with a
+// CollectorManager, which adapts them to prometheus.Collector and
+// publishes scrape duration and success metrics for each registered
+// collector.
 package metric
 
 import (

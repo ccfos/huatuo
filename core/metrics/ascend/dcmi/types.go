@@ -131,15 +131,15 @@ type dcmiHbmInfo struct {
 // dcmiPcieInfoAll matches the C struct dcmi_pcie_info_all layout for purego.
 // Total size must be 64 bytes.
 type dcmiPcieInfoAll struct {
-	venderid      uint32   // unsigned int
-	subvenderid   uint32   // unsigned int
-	deviceid      uint32   // unsigned int
-	subdeviceid   uint32   // unsigned int
-	domain        int32    // int
-	bdfBusid      uint32   // unsigned int
-	bdfDeviceid   uint32   // unsigned int
-	bdfFuncid     uint32   // unsigned int
-	_             [32]byte // reserve
+	_           uint32   // venderid (unsigned int)
+	_           uint32   // subvenderid (unsigned int)
+	_           uint32   // deviceid (unsigned int)
+	_           uint32   // subdeviceid (unsigned int)
+	domain      int32    // int
+	bdfBusid    uint32   // unsigned int
+	bdfDeviceid uint32   // unsigned int
+	bdfFuncid   uint32   // unsigned int
+	_           [32]byte // reserve
 }
 
 // dcmiEccInfo matches the C struct dcmi_ecc_info layout for purego.

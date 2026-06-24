@@ -45,6 +45,7 @@ unshare --uts --mount bash -c '
 		[[ -f "$case" ]] || continue
 		log_info "⬅️⬅️ start: $(basename "$case")"
 
+		chmod +x "$case"
 		if ! bash "$case"; then
 			fatal "❌ failed: $(basename "$case")"
 		fi

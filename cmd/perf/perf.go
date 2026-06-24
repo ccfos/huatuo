@@ -26,6 +26,7 @@ import (
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/command/container"
+	flamegraphtui "huatuo-bamai/internal/flamegraph/tui"
 	"huatuo-bamai/internal/log"
 )
 
@@ -82,8 +83,15 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("received signal %s", sig)
 	}
 
-	if err := parsedata(b); err != nil {
+	flameData, err := buildFlameData(b)
+	if err != nil {
 		return fmt.Errorf("parsedata err %w", err)
+	}
+	if ctx.Bool("tui") {
+		return flamegraphtui.Run(flameData)
+	}
+	if err := writeFlameDataJSON(os.Stdout, flameData); err != nil {
+		return fmt.Errorf("write flame data: %w", err)
 	}
 
 	return nil
@@ -117,6 +125,10 @@ func main() {
 			Name:  "server-address",
 			Value: "127.0.0.1:19704",
 			Usage: "huatuo-bamai server address",
+		},
+		&cli.BoolFlag{
+			Name:  "tui",
+			Usage: "open an interactive terminal flamegraph viewer instead of printing JSON",
 		},
 	}
 

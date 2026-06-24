@@ -67,7 +67,7 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 		Value: levels[0].Values[ValueOffest],
 		Self:  levels[0].Values[SelfOffest],
 		Level: 0,
-		Name:  names[levels[0].Values[0]],
+		Name:  names[levels[0].Values[NameOffest]],
 	}
 
 	parentsStack := []*ProfileTree{tree}

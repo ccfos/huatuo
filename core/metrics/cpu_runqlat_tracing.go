@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
@@ -83,6 +84,30 @@ func (c *runqlatCollector) Start(ctx context.Context) error {
 	return nil
 }
 
+func aggregatePerCPUValue(raw []byte, dst *latencyBpfData) error {
+	chunkSize := binary.Size(latencyBpfData{})
+	if chunkSize <= 0 || len(raw)%chunkSize != 0 {
+		return fmt.Errorf("unexpected data length %d (chunkSize %d)", len(raw), chunkSize)
+	}
+
+	*dst = latencyBpfData{}
+	reader := bytes.NewReader(nil)
+	for off := 0; off < len(raw); off += chunkSize {
+		var cpu latencyBpfData
+		reader.Reset(raw[off : off+chunkSize])
+		if err := binary.Read(reader, binary.LittleEndian, &cpu); err != nil {
+			return err
+		}
+		dst.NumVoluntarySwitch += cpu.NumVoluntarySwitch
+		dst.NumInVoluntarySwitch += cpu.NumInVoluntarySwitch
+		dst.NumLatencyZone0 += cpu.NumLatencyZone0
+		dst.NumLatencyZone1 += cpu.NumLatencyZone1
+		dst.NumLatencyZone2 += cpu.NumLatencyZone2
+		dst.NumLatencyZone3 += cpu.NumLatencyZone3
+	}
+	return nil
+}
+
 func (c *runqlatCollector) updateContainerDataCache(cssContainers map[uint64]*pod.Container) error {
 	items, err := c.bpf.DumpMapByName("cpu_tg_metric")
 	if err != nil {
@@ -103,9 +128,12 @@ func (c *runqlatCollector) updateContainerDataCache(cssContainers map[uint64]*po
 			continue
 		}
 
-		buf = bytes.NewReader(v.Value)
-		if err := binary.Read(buf, binary.LittleEndian, container.LifeResources("runqlat").(*latencyBpfData)); err != nil {
-			return fmt.Errorf("read cpu_tg_metric value: %w", err)
+		cache, ok := container.LifeResources("runqlat").(*latencyBpfData)
+		if !ok || cache == nil {
+			continue
+		}
+		if err := aggregatePerCPUValue(v.Value, cache); err != nil {
+			return fmt.Errorf("aggregate cpu_tg_metric value: %w", err)
 		}
 	}
 
@@ -114,12 +142,11 @@ func (c *runqlatCollector) updateContainerDataCache(cssContainers map[uint64]*po
 
 func (c *runqlatCollector) fetchHostRunqlat() []*metric.Data {
 	item, err := c.bpf.ReadMap(c.bpf.MapIDByName("cpu_host_metric"), []byte{0, 0, 0, 0})
-	if err != nil {
+	if err != nil || len(item) == 0 {
 		return nil
 	}
 
-	buf := bytes.NewReader(item)
-	if err = binary.Read(buf, binary.LittleEndian, &c.runqlatHost); err != nil {
+	if err = aggregatePerCPUValue(item, &c.runqlatHost); err != nil {
 		return nil
 	}
 
@@ -144,11 +171,23 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 	cssContainer := pod.BuildCssContainers(containers, pod.SubSysCPU)
 
 	// update all containers cache data
-	_ = c.updateContainerDataCache(cssContainer)
+	if err := c.updateContainerDataCache(cssContainer); err != nil {
+		log.Warnf("runqlat: update container cache: %v", err)
+	}
 
 	data := []*metric.Data{}
 	for _, container := range containers {
-		cache := container.LifeResources("runqlat").(*latencyBpfData)
+		// Skip containers with no CPU cgroup address: they are absent from
+		// cssContainer and therefore never updated by updateContainerDataCache.
+		// Reporting their zero/stale cache would produce misleading metrics.
+		if _, ok := container.CgroupCss[pod.SubSysCPU]; !ok {
+			continue
+		}
+
+		cache, ok := container.LifeResources("runqlat").(*latencyBpfData)
+		if !ok || cache == nil {
+			continue
+		}
 
 		data = append(data,
 			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone0), "cpu run queue latency for the containers", map[string]string{"zone": "0"}),

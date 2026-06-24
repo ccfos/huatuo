@@ -77,6 +77,11 @@ linters-settings:
       - filepathJoin
   nolintlint:
     allow-unused: true
+  dupword:
+    # `long` legitimately repeats in C type comments documenting purego
+    # struct layouts (e.g. `unsigned long long` for uint64 fields).
+    ignore:
+      - long
   gosec:
     # https://github.com/securego/gosec#available-rules
     #

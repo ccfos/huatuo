@@ -102,9 +102,17 @@ func NewServer(cfg *Config) *server {
 	s.engine.Use(middleWares...)
 	s.rootGroup = NewRoot(s.engine, cfg.Group)
 	s.MustRegisterRoutes("", []Handle{
+		{Typ: HttpGet, Uri: "/healthz", Handle: s.healthzHandler()},
 		{Typ: HttpGet, Uri: "/metrics", Handle: s.promServerHandler()},
 	})
 	return s
+}
+
+func (s *server) healthzHandler() ErrHandlerContextFunc {
+	return func(ctx *Context) error {
+		ctx.Status(http.StatusNoContent)
+		return nil
+	}
 }
 
 func (s *server) promServerHandler() ErrHandlerContextFunc {

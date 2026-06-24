@@ -46,14 +46,12 @@ func TestNewContextAndInternalContext(t *testing.T) {
 
 	storedValue, ok := ginCtx.Get(contextKey)
 	if !ok {
-		t.Errorf("gin context missing %q after newContext", contextKey)
-		return
+		t.Fatalf("gin context missing %q after newContext", contextKey)
 	}
 
 	storedCtx, ok := storedValue.(*Context)
 	if !ok {
-		t.Errorf("stored context type = %T, want *Context", storedValue)
-		return
+		t.Fatalf("stored context type = %T, want *Context", storedValue)
 	}
 
 	if storedCtx != want {
@@ -86,8 +84,7 @@ func TestInternalContextCreatesFallbackWhenMissingOrInvalid(t *testing.T) {
 
 			got := internalContext(ginCtx)
 			if got == nil {
-				t.Errorf("internalContext() returned nil")
-				return
+				t.Fatalf("internalContext() returned nil")
 			}
 			if got.c != ginCtx {
 				t.Errorf("context wrapped gin.Context %p, want %p", got.c, ginCtx)
@@ -95,14 +92,12 @@ func TestInternalContextCreatesFallbackWhenMissingOrInvalid(t *testing.T) {
 
 			storedValue, ok := ginCtx.Get(contextKey)
 			if !ok {
-				t.Errorf("gin context missing %q after fallback creation", contextKey)
-				return
+				t.Fatalf("gin context missing %q after fallback creation", contextKey)
 			}
 
 			storedCtx, ok := storedValue.(*Context)
 			if !ok {
-				t.Errorf("stored context type = %T, want *Context", storedValue)
-				return
+				t.Fatalf("stored context type = %T, want *Context", storedValue)
 			}
 
 			if storedCtx != got {

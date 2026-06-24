@@ -32,6 +32,16 @@ func (c *ContainerFilterConfig) Build() (*matcher.ContainerMatcher, error) {
 	return matcher.NewContainerMatcherFromRules(c.Included, c.Excluded)
 }
 
+// MemBurstConfig holds memory burst autotracing configuration.
+type MemBurstConfig struct {
+	DeltaMemoryBurst    int `default:"100"`
+	DeltaAnonThreshold  int `default:"70"`
+	Interval            int `default:"10"`
+	IntervalTracing     int `default:"1800"`
+	SlidingWindowLength int `default:"60"`
+	DumpProcessMaxNum   int `default:"10"`
+}
+
 // Config holds autotracing configuration.
 type Config struct {
 	CPUIdle struct {
@@ -71,14 +81,7 @@ type Config struct {
 		MaxFilesPerProcDump   int    `default:"5"`
 	}
 
-	MemoryBurst struct {
-		DeltaMemoryBurst    int `default:"100"`
-		DeltaAnonThreshold  int `default:"70"`
-		Interval            int `default:"10"`
-		IntervalTracing     int `default:"1800"`
-		SlidingWindowLength int `default:"60"`
-		DumpProcessMaxNum   int `default:"10"`
-	}
+	MemoryBurst MemBurstConfig
 
 	// IssuesList for known issue filtering
 	IssuesList [][]string

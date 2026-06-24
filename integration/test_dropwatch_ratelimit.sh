@@ -26,19 +26,12 @@ set -exuo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-readonly DROPWATCH_BIN="${ROOT_DIR}/_output/bin/dropwatch"
-readonly DROPWATCH_BPF="${ROOT_DIR}/_output/bpf/dropwatch.o"
-readonly RATE=2
-readonly DURATION=5
+bpf_tool_setup dropwatch
+readonly RATE=1
+readonly DURATION=10
 readonly TARGET_IP="127.0.0.99"
 readonly TARGET_PORT=9999
 readonly EXPECTED_MAX=$((RATE * (DURATION + 1))) # +1s headroom for the first burst
-readonly OUT="${HUATUO_BAMAI_TEST_TMPDIR}/dropwatch.out"
-readonly ERR="${HUATUO_BAMAI_TEST_TMPDIR}/dropwatch.err"
-
-[[ $EUID -eq 0 ]] || fatal "requires root (BPF requires CAP_BPF/CAP_SYS_ADMIN)"
-[[ -x ${DROPWATCH_BIN} ]] || fatal "missing dropwatch binary: ${DROPWATCH_BIN}"
-[[ -r ${DROPWATCH_BPF} ]] || fatal "missing dropwatch bpf object: ${DROPWATCH_BPF}"
 
 # No iptables rule is needed: sending UDP to a closed port on the loopback
 # triggers SKB_DROP_REASON_NO_SOCKET inside __udp4_lib_rcv, which calls
@@ -46,12 +39,12 @@ readonly ERR="${HUATUO_BAMAI_TEST_TMPDIR}/dropwatch.err"
 # means zero host-state pollution and no cleanup trap.
 
 log_info "dropwatch: rate=${RATE}/s, duration=${DURATION}s, target=${TARGET_IP}:${TARGET_PORT}"
-"${DROPWATCH_BIN}" --bpf-path "${DROPWATCH_BPF}" \
+"${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
 	--filter "udp and port ${TARGET_PORT}" \
 	--max-events-per-second "${RATE}" \
 	--duration "${DURATION}" \
 	--output text \
-	>"${OUT}" 2>"${ERR}" &
+	>"${TOOL_OUT}" 2>"${TOOL_ERR}" &
 dw_pid=$!
 
 # Let the BPF program attach before flooding.
@@ -69,15 +62,18 @@ timeout "${DURATION}" bash -c "
 " >/dev/null 2>&1 || true
 wait "${dw_pid}" || true
 
-events=$(grep -c "IPv4/UDP" "${OUT}" || true)
+events=$(grep -c "IPv4/UDP" "${TOOL_OUT}" || true)
 # Both event lines and rate-limit warnings are emitted on stdout by
 # huatuo-bamai/internal/log; ERR captures any unexpected stderr (panics,
 # etc.) for post-mortem only.
-warns=$(grep -c "rate limit hit" "${OUT}" || true)
+warns=$(grep -c "rate limit hit" "${TOOL_OUT}" || true)
 
 log_info "events=${events} (cap=${EXPECTED_MAX}), rate-limit warnings=${warns}"
 
-((events <= EXPECTED_MAX)) || fatal "events ${events} exceed cap ${EXPECTED_MAX}"
-((warns >= 1)) || fatal "expected at least one rate-limit warning under flood"
+# Different kernels/distros vary in how aggressively they coalesce or
+# drop UDP packets to a closed loopback port, so on assertion failure
+# dump the captured logs for cross-environment debugging.
+((events <= EXPECTED_MAX)) || dump_tool_logs_and_fail "events ${events} exceed cap ${EXPECTED_MAX}"
+((warns >= 1)) || dump_tool_logs_and_fail "expected at least one rate-limit warning under flood"
 
 log_info "PASS"

@@ -9,7 +9,7 @@
 
 /*
  * pcap_stub_l{2,3}: reserved-NOP stub functions patched at load time by
- * internal/pcapinject with compiled tcpdump filter bytecode. The three
+ * internal/pcapfilter with compiled tcpdump filter bytecode. The three
  * ctx parameters reserve R1/R2/R3; the patched bytecode overwrites them.
  * Unpatched body is a pass-through: data != data_end && three-way ctx
  * equality both hold, so the stub always returns true.
@@ -20,7 +20,7 @@
 static __noinline bool pcap_stub_l3(void *_ctx, void *__ctx, void *___ctx,
 				    void *data, void *data_end)
 {
-	/* 512 × 8-byte NOP insns; must equal nopAreaSize in internal/pcapinject/elfpatch.go */
+	/* 512 × 8-byte NOP insns; must equal stubReservedInsns in internal/pcapfilter/elfpatch.go */
 	asm volatile(".rept 512\n\t"
 		     ".byte 0xb7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00\n\t"
 		     ".endr\n\t");
@@ -30,7 +30,7 @@ static __noinline bool pcap_stub_l3(void *_ctx, void *__ctx, void *___ctx,
 static __noinline bool pcap_stub_l2(void *_ctx, void *__ctx, void *___ctx,
 				    void *data, void *data_end)
 {
-	/* 512 × 8-byte NOP insns; must equal nopAreaSize in internal/pcapinject/elfpatch.go */
+	/* 512 × 8-byte NOP insns; must equal stubReservedInsns in internal/pcapfilter/elfpatch.go */
 	asm volatile(".rept 512\n\t"
 		     ".byte 0xb7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00\n\t"
 		     ".endr\n\t");

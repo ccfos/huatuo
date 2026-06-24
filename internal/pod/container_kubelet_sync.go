@@ -199,8 +199,8 @@ func ManagerInit(ctx *ManagerInitCtx) error {
 					log.Infof("kubelet is running now")
 					_ = kubeletConfigCacheUpdate(ctx)
 					_ = containerCgroupCssInit()
-					ManagerRelease()
-					break
+					t.Stop()
+					return
 				}
 			case <-doneCtx.Done():
 				return
@@ -221,6 +221,8 @@ func ManagerRelease() {
 		kubeletDoneCancel()
 		kubeletDoneCancel = nil
 	}
+
+	cgroupCssRelease()
 }
 
 func kubeletSyncContainers() error {
@@ -411,6 +413,11 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 		return fmt.Errorf("failed to parse container css: %w", err)
 	}
 
+	cgroupPath, err := containerCgroupSuffix(containerID, pod)
+	if err != nil {
+		return fmt.Errorf("failed to get cgroup path: %w", err)
+	}
+
 	containers[containerID] = &Container{
 		ID:                 containerID,
 		Name:               container.Name,
@@ -421,7 +428,7 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 		NetNamespaceInode:  nsInode,
 		NetNamespaceCookie: netCookie,
 		InitPid:            initPid,
-		CgroupPath:         containerCgroupSuffix(containerID, pod),
+		CgroupPath:         cgroupPath,
 		CgroupCss:          css,
 		StartedAt:          startedAt,
 		SyncedAt:           time.Now(),
