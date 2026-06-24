@@ -46,9 +46,10 @@ func TestMain(m *testing.M) {
 }
 
 func TestManager_InitAndClose(t *testing.T) {
+	requireBPFPermission(t)
+
 	// Just verify they don't panic.
 	if err := NewManager(nil); err != nil {
-		// It might fail on non-Linux or without permissions.
 		t.Fatalf("InitBpfManager returned: %v", err)
 	} else {
 		Close()

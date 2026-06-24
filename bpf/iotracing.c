@@ -108,6 +108,15 @@ struct {
 	__uint(value_size, sizeof(u64));
 } request_struct_map SEC(".maps");
 
+static __always_inline void add_u64_counter(u64 *counter, u64 value,
+					    int is_map_entry)
+{
+	if (is_map_entry)
+		__sync_fetch_and_add(counter, value);
+	else
+		*counter += value;
+}
+
 #define REQ_OP_BITS 8
 #define REQ_OP_MASK ((1 << REQ_OP_BITS) - 1)
 #define REQ_META (1ULL << __REQ_META)
@@ -248,6 +257,7 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 	u32 cmd_flags;
 	int partno;
 	int devn[2];
+	int is_map_entry;
 	u64 now;
 	u64 q2c;
 	u64 d2c;
@@ -275,14 +285,17 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 		io_key.pid = info->pid;
 
 	entry = bpf_map_lookup_elem(&io_source_map, &io_key);
+	is_map_entry = entry != NULL;
 	if (!entry)
 		entry = &data;
 
 	cmd_flags = BPF_CORE_READ(req, cmd_flags);
 	if (is_write_request(cmd_flags)) {
-		entry->block_write_bytes += info->data_len;
+		add_u64_counter(&entry->block_write_bytes, info->data_len,
+				is_map_entry);
 	} else if ((cmd_flags & REQ_OP_MASK) == REQ_OP_READ) {
-		entry->block_read_bytes += info->data_len;
+		add_u64_counter(&entry->block_read_bytes, info->data_len,
+				is_map_entry);
 	} else {
 		bpf_map_delete_elem(&start_info_map, &info_key);
 		return 0;
@@ -292,13 +305,13 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 	q2c = now - BPF_CORE_READ(req, start_time_ns);
 	d2c = now - BPF_CORE_READ(req, io_start_time_ns);
 
-	entry->latency.sum_q2c += q2c;
-	entry->latency.sum_d2c += d2c;
+	add_u64_counter(&entry->latency.sum_q2c, q2c, is_map_entry);
+	add_u64_counter(&entry->latency.sum_d2c, d2c, is_map_entry);
 	if (q2c > entry->latency.max_q2c)
 		entry->latency.max_q2c = q2c;
 	if (d2c > entry->latency.max_d2c)
 		entry->latency.max_d2c = d2c;
-	entry->latency.cnt++;
+	add_u64_counter(&entry->latency.cnt, 1, is_map_entry);
 
 	if (entry == &data) {
 		entry->blkcg_gq = (u64)info->bi_blkg;
@@ -359,6 +372,7 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 	struct iov_iter *from;
 	size_t count;
 	unsigned int type;
+	int is_map_entry;
 
 	inode	  = BPF_CORE_READ(iocb, ki_filp, f_inode);
 	key.inode = BPF_CORE_READ(inode, i_ino);
@@ -368,6 +382,7 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 		return 0;
 
 	entry = bpf_map_lookup_elem(&io_source_map, &key);
+	is_map_entry = entry != NULL;
 	if (!entry)
 		entry = &data;
 
@@ -403,9 +418,9 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 
 	type = type & 0x1;
 	if (type) /* 0: read, 1: write */
-		entry->fs_write_bytes += count;
+		add_u64_counter(&entry->fs_write_bytes, count, is_map_entry);
 	else
-		entry->fs_read_bytes += count;
+		add_u64_counter(&entry->fs_read_bytes, count, is_map_entry);
 
 	entry->flag = BPF_CORE_READ(iocb, ki_flags);
 	if (entry == &data)
@@ -435,6 +450,7 @@ static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 	struct io_data data	   = {};
 	struct io_key key	   = {};
 	struct inode *inode;
+	int is_map_entry;
 
 	inode	  = BPF_CORE_READ(vma, vm_file, f_inode);
 	key.inode = BPF_CORE_READ(inode, i_ino);
@@ -444,6 +460,7 @@ static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 		return 0;
 
 	entry = bpf_map_lookup_elem(&io_source_map, &key);
+	is_map_entry = entry != NULL;
 	if (!entry)
 		entry = &data;
 
@@ -458,7 +475,7 @@ static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 		entry->inode = key.inode;
 	}
 
-	entry->fs_write_bytes += PAGE_SIZE;
+	add_u64_counter(&entry->fs_write_bytes, PAGE_SIZE, is_map_entry);
 	if (entry == &data)
 		bpf_map_update_elem(&io_source_map, &key, &data,
 				    COMPAT_BPF_ANY);
@@ -480,6 +497,7 @@ int bpf_filemap_fault(struct pt_regs *ctx)
 	struct io_data data	   = {};
 	struct io_key key	   = {};
 	struct inode *inode;
+	int is_map_entry;
 
 	inode	  = BPF_CORE_READ(vma, vm_file, f_inode);
 	key.inode = BPF_CORE_READ(inode, i_ino);
@@ -489,6 +507,7 @@ int bpf_filemap_fault(struct pt_regs *ctx)
 		return 0;
 
 	entry = bpf_map_lookup_elem(&io_source_map, &key);
+	is_map_entry = entry != NULL;
 	if (!entry)
 		entry = &data;
 
@@ -502,7 +521,7 @@ int bpf_filemap_fault(struct pt_regs *ctx)
 		entry->dev   = key.dev;
 		entry->inode = key.inode;
 	}
-	entry->fs_read_bytes += PAGE_SIZE;
+	add_u64_counter(&entry->fs_read_bytes, PAGE_SIZE, is_map_entry);
 
 	if (entry == &data)
 		bpf_map_update_elem(&io_source_map, &key, &data,
