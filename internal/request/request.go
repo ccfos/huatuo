@@ -89,8 +89,13 @@ func doRequest(req *http.Request) (*ServerResponse, error) {
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return serverResp, err
+	}
+
 	serverResp.StatusCode = resp.StatusCode
-	serverResp.Body = resp.Body
+	serverResp.Body = io.NopCloser(bytes.NewReader(body))
 	serverResp.Header = resp.Header
 
 	return serverResp, nil
