@@ -39,11 +39,11 @@ func setupBPF(_ *Daemon) (func(context.Context) error, error) {
 func startToolstream(_ *Daemon) (func(context.Context) error, error) {
 	srv, err := toolstream.NewServerDefault()
 	if err != nil {
-		return nil, fmt.Errorf("toolstream: %w", err)
+		return nil, fmt.Errorf("start: %w", err)
 	}
 
 	if err := srv.Start(); err != nil {
-		return nil, fmt.Errorf("toolstream: start: %w", err)
+		return nil, fmt.Errorf("start: %w", err)
 	}
 
 	return func(context.Context) error { return srv.Close() }, nil

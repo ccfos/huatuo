@@ -69,7 +69,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 				return
 			}
 
-			log.Warnf("toolstream: accept: %v", err)
+			log.Warnf("accept: %v", err)
 			continue
 		}
 
@@ -104,7 +104,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	firstMsg, err := frameDecoder.Decode()
 	if err != nil {
 		if !errors.Is(err, io.EOF) {
-			log.Warnf("toolstream: connect: %v", err)
+			log.Warnf("connect: %v", err)
 		}
 
 		return
@@ -112,20 +112,20 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 
 	sess, err := parseSession(firstMsg)
 	if err != nil {
-		log.Warnf("toolstream: connect: %v", err)
+		log.Warnf("connect: %v", err)
 		return
 	}
 
 	// Empty ToolName violates the protocol: with no name the connection cannot
 	// be routed to any handler. Log at Error level so the producer side notices.
 	if sess.ToolName == "" {
-		log.Errorf("toolstream: connect: empty tool name, closing connection")
+		log.Errorf("connect: empty tool name, closing connection")
 		return
 	}
 
-	log.Infof("toolstream: connected tool=%s version=%s task_id=%s",
+	log.Infof("connected tool=%s version=%s task_id=%s",
 		sess.ToolName, sess.Version, sess.TaskID)
-	defer log.Infof("toolstream: disconnected tool=%s task_id=%s",
+	defer log.Infof("disconnected tool=%s task_id=%s",
 		sess.ToolName, sess.TaskID)
 
 	for {
@@ -136,7 +136,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		msg, err := frameDecoder.Decode()
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				log.Warnf("toolstream: %s: recv: %v", sess.ToolName, err)
+				log.Warnf("%s: recv: %v", sess.ToolName, err)
 			}
 
 			return
@@ -144,7 +144,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 
 		chunk, err := parseChunk(msg)
 		if err != nil {
-			log.Warnf("toolstream: %s: recv: %v", sess.ToolName, err)
+			log.Warnf("%s: recv: %v", sess.ToolName, err)
 			return
 		}
 
