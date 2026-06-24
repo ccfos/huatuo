@@ -17,7 +17,9 @@ package container
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"huatuo-bamai/internal/pod"
@@ -44,7 +46,11 @@ func getContainers(serverAddr, containerID string) ([]*pod.Container, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get container failed, status code: %d", resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("get container failed, status code: %d, read body: %w", resp.StatusCode, err)
+		}
+		return nil, fmt.Errorf("get container failed, status code: %d, body: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	type containersResp struct {
