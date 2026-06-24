@@ -17,6 +17,7 @@ package request
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -70,6 +71,32 @@ func TestEncodeBodySetsJSONContentType(t *testing.T) {
 	}
 	if strings.TrimSpace(string(raw)) != `{"name":"cpu"}` {
 		t.Fatalf("body = %q, want JSON object", string(raw))
+	}
+}
+
+func TestDoRequestReturnsReadableBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	resp, err := doRequest(req)
+	if err != nil {
+		t.Fatalf("doRequest() error = %v", err)
+	}
+	defer resp.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll(response body) error = %v", err)
+	}
+	if string(body) != "ok" {
+		t.Fatalf("body = %q, want ok", string(body))
 	}
 }
 
