@@ -155,8 +155,12 @@ func TestSyncAndSet(t *testing.T) {
 		t.Fatalf("Sync returned error: %v", err)
 	}
 
-	Set(cfg, "Name", "huatuo-region")
-	Set(cfg, "Nested.Value", "kernel_sched_tick")
+	if err := Set(cfg, "Name", "huatuo-region"); err != nil {
+		t.Fatalf("Set Name returned error: %v", err)
+	}
+	if err := Set(cfg, "Nested.Value", "kernel_sched_tick"); err != nil {
+		t.Fatalf("Set Nested.Value returned error: %v", err)
+	}
 
 	if err := Sync(path, cfg); err != nil {
 		t.Fatalf("Sync after Set returned error: %v", err)

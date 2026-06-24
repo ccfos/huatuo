@@ -67,8 +67,7 @@ func Sync(path string, src any) error {
 }
 
 // Set modifies a field in cfg (a pointer to a struct) by dot-separated key.
-// Panics if the key is invalid or the value type doesn't match.
-func Set(cfg any, key string, val any) {
+func Set(cfg any, key string, val any) error {
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -76,7 +75,7 @@ func Set(cfg any, key string, val any) {
 	for _, k := range strings.Split(key, ".") {
 		elem := c.Elem().FieldByName(k)
 		if !elem.IsValid() || !elem.CanAddr() {
-			panic(fmt.Errorf("invalid elem %s: %v", key, elem))
+			return fmt.Errorf("invalid elem %s: %v", key, elem)
 		}
 		c = elem.Addr()
 	}
@@ -84,8 +83,9 @@ func Set(cfg any, key string, val any) {
 	rc := reflect.Indirect(c)
 	rval := reflect.ValueOf(val)
 	if rc.Kind() != rval.Kind() {
-		panic(fmt.Errorf("%s type %s is not assignable to type %s", key, rc.Kind(), rval.Kind()))
+		return fmt.Errorf("%s type %s is not assignable to type %s", key, rc.Kind(), rval.Kind())
 	}
 
 	rc.Set(rval)
+	return nil
 }

@@ -100,9 +100,12 @@ func Get() *BamaiConfig {
 }
 
 // Set updates a config field by dot-separated key.
-func Set(key string, val any) {
-	internalconfig.Set(cfg, key, val)
+func Set(key string, val any) error {
+	if err := internalconfig.Set(cfg, key, val); err != nil {
+		return err
+	}
 	setCoreModuleConfig()
+	return nil
 }
 
 // Sync writes the config back to the current config file.
