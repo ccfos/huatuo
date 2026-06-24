@@ -710,13 +710,15 @@ This section is responsible for capturing key kernel events and monitoring laten
 #
 # - DeviceList
 # The net devices we monitor.
+# Entries without explicit regex operators are matched exactly. Entries
+# containing regex operators are matched as full regular expressions.
 # Default: [] (empty, meaning no devices).
 #
 [EventTracing.Netdev]
 	DeviceList = ["eth0", "eth1", "bond4", "lo"]
 ```
 
-- **DeviceList**: List of network devices to monitor.
+- **DeviceList**: List of network devices to monitor. Plain names such as `eth0` are matched exactly, while regex patterns such as `eth[0-9]+` match multiple devices.
 
   Default example includes "eth0", "eth1", "bond4", "lo". An empty list means no devices are monitored.
 
@@ -834,13 +836,15 @@ This section defines collection rules for various system and network metrics. Al
 #
 # - DeviceList
 # The net devices we monitor.
+# Entries without explicit regex operators are matched exactly. Entries
+# containing regex operators are matched as full regular expressions.
 # Default: [] (empty, meaning no devices).
 #
 [MetricCollector.NetdevDCB]
 	DeviceList = ["eth0", "eth1"]
 ```
 
-- **DeviceList**: List of network devices for which DCB (Data Center Bridging) PFC information is collected.
+- **DeviceList**: List of network devices for which DCB (Data Center Bridging) PFC information is collected. Plain names are matched exactly, and regex patterns can be used to match multiple devices.
 
   Default: empty.
 
@@ -853,13 +857,15 @@ This section defines collection rules for various system and network metrics. Al
 #
 # - DeviceList
 # The net devices we monitor.
+# Entries without explicit regex operators are matched exactly. Entries
+# containing regex operators are matched as full regular expressions.
 # Default: [] (empty, meaning no devices).
 #
 [MetricCollector.NetdevHW]
 	DeviceList = ["eth0", "eth1"]
 ```
 
-- **DeviceList**: List of network devices for hardware-level statistics (e.g., rx_dropped).
+- **DeviceList**: List of network devices for hardware-level statistics (e.g., rx_dropped). Plain names are matched exactly, and regex patterns can be used to match multiple devices.
 
   Default: empty.
 

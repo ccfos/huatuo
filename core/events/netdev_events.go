@@ -17,12 +17,12 @@ package events
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sync"
 	"time"
 
 	"huatuo-bamai/internal/linkstatus"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 
@@ -142,6 +142,11 @@ func (netdev *netdevTracing) checkAndInitLinkStatus() error {
 		return err
 	}
 
+	devices, err := matcher.NewListMatcher(cfg.Netdev.DeviceList)
+	if err != nil {
+		return err
+	}
+
 	eth, err := ethtool.NewEthtool()
 	if err != nil {
 		return err
@@ -150,8 +155,7 @@ func (netdev *netdevTracing) checkAndInitLinkStatus() error {
 
 	for _, link := range links {
 		ifname := link.Attrs().Name
-		if !slices.Contains(cfg.Netdev.DeviceList,
-			ifname) {
+		if !devices.Match(ifname) {
 			continue
 		}
 
