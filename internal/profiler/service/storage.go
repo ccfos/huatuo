@@ -18,10 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler/strutil"
+	"huatuo-bamai/internal/profiler/timeutil"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
 
@@ -114,7 +115,7 @@ func NewProfileStorage(address, username, password, index string) (*ProfileStora
 		return nil, err
 	}
 
-	log.Infof("Initialize profile storage successfully, driver: elasticsearch, index: %s", index)
+	log.P().Infof("Initialize profile storage successfully, driver: elasticsearch, index: %s", index)
 	return &ProfileStorage{
 		store: profileStore,
 	}, nil
@@ -317,7 +318,7 @@ func normalizeProfileAggregationField(field string) (string, error) {
 		profileFieldProfileType:
 		return field, nil
 	default:
-		return "", fmt.Errorf("invalid aggregation field: %s", field)
+		return "", fmt.Errorf("invalid aggregation field: %q", field)
 	}
 }
 
@@ -329,31 +330,9 @@ func normalizeProfileSearchLimit(filter *SearchFilter) int {
 }
 
 func parseProfileDocumentTime(raw string, fallback time.Time) time.Time {
-	if raw == "" {
-		return fallback.UTC()
-	}
-
-	parsed, err := time.Parse(profileTimeLayout, raw)
-	if err == nil {
-		return parsed.UTC()
-	}
-
-	return fallback.UTC()
+	return timeutil.ParseWithFallback(raw, profileTimeLayout, fallback)
 }
 
 func splitProfileStorageAddresses(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-
-	parts := make([]string, 0)
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		parts = append(parts, part)
-	}
-
-	return parts
+	return strutil.SplitCommaList(raw)
 }

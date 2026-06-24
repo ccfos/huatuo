@@ -16,6 +16,7 @@ package pidfile
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -28,47 +29,63 @@ func path(name string) string {
 	return fmt.Sprintf("%s/%s.pid", defaultDirPath, name)
 }
 
-// Lock pid with file
-func Lock(name string) error {
-	name = path(name)
+// Handle owns an acquired pid file: an open fd holding the exclusive
+// flock, plus the on-disk path to remove on Unlock. The fd must stay
+// reachable for the whole lifetime of the lock — Linux flock is bound
+// to the open file description, so if Handle is garbage-collected the
+// kernel silently releases the flock while the pid file is still on disk.
+type Handle struct {
+	file *os.File
+	path string
+}
 
-	f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, 0o666)
+// Lock takes an exclusive, non-blocking flock on the pid file for name.
+// If another live process already holds the lock, the returned error
+// embeds its recorded pid.
+func Lock(name string) (*Handle, error) {
+	p := path(name)
+
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
-		if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
-			pid, err := os.ReadFile(name)
-			if err != nil {
-				return fmt.Errorf("running path: %s", name)
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			pid, readErr := os.ReadFile(p)
+			if readErr != nil {
+				return nil, fmt.Errorf("already running: %s", p)
 			}
 
-			return fmt.Errorf("running path: %s, pid %s", name, pid)
+			return nil, fmt.Errorf("already running: %s pid=%s", p, bytes.TrimSpace(pid))
 		}
 
-		return err
+		return nil, err
 	}
 
-	_, err = f.WriteString(strconv.Itoa(os.Getpid()))
-	return err
+	if _, err := fmt.Fprintf(f, "%d", os.Getpid()); err != nil {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+		_ = os.Remove(p)
+
+		return nil, err
+	}
+
+	return &Handle{file: f, path: p}, nil
 }
 
-// UnLock the pidfile
-// If a return value is needed in the future, we will support it.
-// The current implementation is simpler.
-func UnLock(name string) {
-	name = path(name)
-
-	f, err := os.OpenFile(name, os.O_CREATE|os.O_RDWR, 0o666)
-	if err != nil {
+// Unlock unlocks, closes, and removes the pid file. Calling Unlock more
+// than once is a no-op.
+func (h *Handle) Unlock() {
+	if h.file == nil {
 		return
 	}
-	defer f.Close()
 
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	_ = os.Remove(name)
+	_ = syscall.Flock(int(h.file.Fd()), syscall.LOCK_UN)
+	_ = h.file.Close()
+	_ = os.Remove(h.path)
+	h.file = nil
 }
 
 // Read reads the "PID file" at path, and returns the PID if it contains a

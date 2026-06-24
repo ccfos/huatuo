@@ -107,6 +107,8 @@ func tasksGarbageCollect() {
 	}
 }
 
+// AllocTaskID returns a fresh random identifier suitable for tasks and tracer
+// records.
 func AllocTaskID() string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const length = 16

@@ -43,7 +43,7 @@ func ReadDbgEvent(reader PerfEventReader) (*BpfDbgEvent, error) {
 }
 
 // DebugEventLoop reads debug events in a loop and logs each at Debug level.
-// Blocks until ctx is cancelled or the reader encounters a fatal error.
+// Blocks until ctx is canceled or the reader encounters a fatal error.
 func DebugEventLoop(ctx context.Context, reader PerfEventReader) error {
 	for {
 		select {
