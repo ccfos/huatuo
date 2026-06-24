@@ -5,13 +5,21 @@ ARG BUILD_MODE
 # Install development environment
 # Disable the elasticsearch and kubelet fetching pods.
 #
-FROM golang:1.24 AS build
+# -- xx helper --
+FROM --platform=$BUILDPLATFORM tonistiigi/xx:1.6.1 AS xx
+
+# -- Build --
+FROM --platform=$BUILDPLATFORM golang:1.24 AS build
+COPY --from=xx /usr/bin/xx-* /usr/bin/
+
 ARG BUILD_PATH="/go/huatuo-bamai"
 ARG RUN_PATH="/home/huatuo-bamai"
 ARG BUILD_MODE
+ARG TARGETARCH
+ARG TARGETPLATFORM
+
 WORKDIR ${BUILD_PATH}
 ENV PATH=$PATH:/usr/lib/llvm15/bin
-COPY . .
 
 RUN set -x; \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -19,8 +27,13 @@ RUN set -x; \
     go install github.com/vektra/mockery/v2@latest &&\
     go install capnproto.org/go/capnp/v3/capnpc-go@latest
 
+RUN xx-apt-get update && xx-apt-get install -y --no-install-recommends \
+    gcc libc6-dev libelf-dev libnuma-dev libbpf-dev
+
+COPY . .
+
 RUN set -x; \
-    make BUILD_MODE=${BUILD_MODE} &&\
+    CLANG_ARCH=${TARGETARCH} GO=xx-go make BUILD_MODE=${BUILD_MODE} &&\
     mkdir -p ${RUN_PATH} &&\
     cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/ &&\
     sed -i -e 's/# Address.*/Address=""/g' \

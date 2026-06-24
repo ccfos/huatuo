@@ -33,10 +33,55 @@ $ make
 
 ### 2. 镜像发布
 
+#### 2.1 快速构建
+
 通过 docker build 方式能够快速的发布，最新二进制容器镜像。
 
 ```bash
 docker build --network host -t huatuo/huatuo-bamai:latest .
+```
+
+#### 2.2 多架构支持（linux/amd64 + linux/arm64）
+
+**1. 环境准备**
+
+```bash
+# 注册 QEMU 用户态模拟器
+docker run --rm --privileged tonistiigi/binfmt --install all
+
+# 创建多架构 builder
+docker buildx create --name multiarch \
+    --driver docker-container \
+    --driver-opt network=host \
+    --use
+
+# 验证（同时触发 bootstrap）
+docker buildx inspect multiarch --bootstrap
+```
+
+**2. 构建并推送**
+
+```bash
+docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    --network=host \
+    -t <your-registry>/huatuo-bamai:latest \
+    -f Dockerfile \
+    --push .
+```
+
+**3. 验证多架构 Manifest**
+
+```bash
+docker buildx imagetools inspect <your-registry>/huatuo-bamai:latest
+```
+
+期望输出包含 `linux/amd64` 和 `linux/arm64` 两个 platform 条目：
+
+```
+Manifests:
+  Platform:  linux/amd64
+  Platform:  linux/arm64
 ```
 
 ### 3. 物理机编译
