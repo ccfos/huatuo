@@ -215,7 +215,7 @@ func ManagerRelease() {
 		kubeletDoneCancel = nil
 	}
 
-	cgroupCssRelease()
+	containerCgroupCssRelease()
 }
 
 func kubeletSyncContainers() error {

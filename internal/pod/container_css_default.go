@@ -76,9 +76,9 @@ var (
 	cgroupCssMetaDataMap      sync.Map
 
 	// avoid GC
-	_cgroupCssBpfInternal   *bpf.BPF
-	_cgroupCssBpfCancelFunc context.CancelFunc
-	_cgroupCssBpfReader     bpf.PerfEventReader
+	cgroupCssBpfInternal   *bpf.BPF
+	cgroupCssBpfCancelFunc context.CancelFunc
+	cgroupCssBpfReader     bpf.PerfEventReader
 )
 
 type containerCssMetaData struct {
@@ -283,17 +283,17 @@ func cgroupCssInitEventSync() error {
 	if err != nil {
 		return fmt.Errorf("LoadBpf: %w", err)
 	}
-	_cgroupCssBpfInternal = &cssBpf
+	cgroupCssBpfInternal = &cssBpf
 
 	childCtx, cancel := context.WithCancel(context.Background())
-	_cgroupCssBpfCancelFunc = cancel
+	cgroupCssBpfCancelFunc = cancel
 
 	reader, err := cssBpf.AttachAndEventPipe(childCtx, "cgroup_perf_events", 8192)
 	if err != nil {
 		cancel()
 		return err
 	}
-	_cgroupCssBpfReader = reader
+	cgroupCssBpfReader = reader
 
 	cgroupCssEventSyncHandler(childCtx, reader)
 	return nil
@@ -361,17 +361,17 @@ func extractContainerID(fileName string) string {
 	return ""
 }
 
-func cgroupCssRelease() {
-	if _cgroupCssBpfCancelFunc != nil {
-		_cgroupCssBpfCancelFunc()
-		_cgroupCssBpfCancelFunc = nil
+func containerCgroupCssRelease() {
+	if cgroupCssBpfCancelFunc != nil {
+		cgroupCssBpfCancelFunc()
+		cgroupCssBpfCancelFunc = nil
 	}
-	if _cgroupCssBpfReader != nil {
-		_cgroupCssBpfReader.Close()
-		_cgroupCssBpfReader = nil
+	if cgroupCssBpfReader != nil {
+		cgroupCssBpfReader.Close()
+		cgroupCssBpfReader = nil
 	}
-	if _cgroupCssBpfInternal != nil {
-		(*_cgroupCssBpfInternal).Close()
-		_cgroupCssBpfInternal = nil
+	if cgroupCssBpfInternal != nil {
+		(*cgroupCssBpfInternal).Close()
+		cgroupCssBpfInternal = nil
 	}
 }
