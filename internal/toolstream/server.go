@@ -65,7 +65,7 @@ type Server struct {
 // NewServer creates a Server that will listen on sockPath when Start is called.
 func NewServer(sockPath string) (*Server, error) {
 	if sockPath == "" {
-		return nil, fmt.Errorf("toolstream: socket path must not be empty")
+		return nil, fmt.Errorf("socket path must not be empty")
 	}
 
 	return &Server{
@@ -103,7 +103,7 @@ func Register[T any](
 	srv.handlers[toolName] = func(sess *Session, payload []byte) error {
 		var ev T
 		if err := json.Unmarshal(payload, &ev); err != nil {
-			return fmt.Errorf("toolstream: unmarshal for %s: %w", toolName, err)
+			return fmt.Errorf("unmarshal for %s: %w", toolName, err)
 		}
 
 		return handler(sess, ev)
@@ -114,7 +114,7 @@ func Register[T any](
 func RegisterDefault[T any](toolName string, handler func(sess *Session, event T) error) {
 	srv, err := NewServerDefault()
 	if err != nil {
-		log.Fatalf("toolstream: default server: %v", err)
+		log.Fatalf("default server: %v", err)
 	}
 	Register(srv, toolName, handler)
 }
@@ -134,12 +134,13 @@ func (s *Server) Start() error {
 
 	l, err := transport.ListenUDS(s.sockPath)
 	if err != nil {
-		return fmt.Errorf("toolstream: %w", err)
+		return err
 	}
 
 	inner, err := transport.Serve(l, s.dispatch)
 	if err != nil {
-		return fmt.Errorf("toolstream: %w", err)
+		_ = l.Close()
+		return err
 	}
 
 	s.inner = inner
@@ -166,7 +167,7 @@ func (s *Server) Close() error {
 
 func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {
 	if chunk.Err != "" {
-		log.Warnf("toolstream: %s: tool error: %s", tsess.ToolName, chunk.Err)
+		log.Warnf("%s: tool error: %s", tsess.ToolName, chunk.Err)
 		return
 	}
 
@@ -179,7 +180,7 @@ func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {
 	s.handlersMu.RUnlock()
 
 	if handler == nil {
-		log.Warnf("toolstream: %s: no handler", tsess.ToolName)
+		log.Warnf("%s: no handler", tsess.ToolName)
 		return
 	}
 

@@ -76,4 +76,3 @@ log_info "events=${events} (cap=${EXPECTED_MAX}), rate-limit warnings=${warns}"
 ((events <= EXPECTED_MAX)) || dump_tool_logs_and_fail "events ${events} exceed cap ${EXPECTED_MAX}"
 ((warns >= 1)) || dump_tool_logs_and_fail "expected at least one rate-limit warning under flood"
 
-log_info "PASS"

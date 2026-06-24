@@ -85,4 +85,3 @@ jq -e --arg dir "${io_test_dir}/" '
 ' "${TOOL_OUT}" >/dev/null ||
 	dump_tool_logs_and_fail "no dd-attributed write to ${io_test_dir} found"
 
-log_info "PASS"

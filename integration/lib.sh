@@ -16,88 +16,57 @@
 
 set -euo pipefail
 
-#  -------------------------------- log ---------------------------------------
+# --------------------------------- log --------------------------------------
+
 TEST_LOG_TAG=${TEST_LOG_TAG:-"INTEGRATION TEST"}
-log_prefix() {
-	echo "[${TEST_LOG_TAG}]"
-}
 
-log_info() {
-	echo "$(log_prefix) $*"
-}
+log_info()  { echo "[${TEST_LOG_TAG}] $*"; }
+log_warn()  { echo "[${TEST_LOG_TAG}][WARN] $*" >&2; }
+log_error() { echo "[${TEST_LOG_TAG}][ERROR] $*" >&2; }
+fatal()     { echo "[${TEST_LOG_TAG}][FAIL] $*" >&2; exit 1; }
 
-log_warn() {
-	echo "$(log_prefix)[WARN] $*" >&2
-}
+# skip exits 0 so the harness treats it as success without false confidence.
+skip() { echo "[${TEST_LOG_TAG}][SKIP] $*"; exit 0; }
 
-log_error() {
-	echo "$(log_prefix)[ERROR] $*" >&2
-}
+# --------------------------------- utils ------------------------------------
 
-fatal() {
-	echo "$(log_prefix)[FAIL] $*" >&2
-	exit 1
-}
-
-# skip <reason>
-# Records that the test cannot meaningfully run in this environment and
-# exits 0 so the harness treats it as success without false confidence.
-skip() {
-	echo "$(log_prefix)[SKIP] $*"
-	exit 0
-}
-
-#  ---------------------------------- utils -----------------------------------
 assert_eq() {
 	local actual=$1 expect=$2 msg=${3:-""}
-	if [[ "$actual" == "$expect" ]]; then
-		return 0
-	fi
-
+	[[ "$actual" == "$expect" ]] && return 0
 	log_info "assert_eq: ${msg} actual=${actual}, expect=${expect}"
 	return 1
 }
 
-# wait_until <timeout> <interval> <description> <function> [args...]
-# Returns: 0 on success, 1 on timeout (does not exit script)
+# wait_until <timeout> <interval> <desc> <func> [args...]
+# Returns 0 on success, 1 on timeout.
 wait_until() {
 	local timeout=$1 interval=$2 desc=$3
 	shift 3
-	local func=$1
-	shift
+	local func=$1; shift
 
 	if ! type -t "$func" >/dev/null 2>&1; then
-		echo "❌ wait_until expects function or command: \"$func\"" >&2
+		log_error "wait_until expects function or command: %q" "$func"
 		return 1
 	fi
 
 	local end=$(($(date +%s) + timeout))
 	local attempt=0
-	local ret=0
 
 	while [ "$(date +%s)" -lt "$end" ]; do
-		ret=0
 		attempt=$((attempt + 1))
-		log_info "wait attempt #${attempt}: ${desc}, func/cmd: [${func} ${@}]"
-		"$func" "$@" || ret=$?
-		if [ "$ret" -eq 0 ]; then
+		log_info "wait attempt #${attempt}: ${desc}, func/cmd: [${func} ${*}]"
+		if "$func" "$@"; then
 			return 0
 		fi
-
 		sleep "$interval"
 	done
 
-	log_error "❌ wait_until timeout: ${desc}, func/cmd: [${func} ${@}]"
+	log_error "wait_until timeout: ${desc}, func/cmd: [${func} ${*}]"
 	return 1
 }
 
-# --------------------------- bpf tool test scaffolding ----------------------
-# Common scaffolding used by per-tool test_*.sh scripts (e.g.,
-# test_dropwatch_ratelimit.sh, test_iotracing.sh).
+# ------------------------- bpf tool test scaffolding -------------------------
 
-# bpf_tool_setup <name>
-# Populates TOOL_BIN/TOOL_BPF/TOOL_OUT/TOOL_ERR for the named tool and
-# aborts unless running as root with both build artifacts present.
 bpf_tool_setup() {
 	local name=$1
 	TOOL_BIN="${ROOT_DIR}/_output/bin/${name}"
@@ -110,8 +79,6 @@ bpf_tool_setup() {
 	[[ -r ${TOOL_BPF} ]] || fatal "missing ${name} bpf object: ${TOOL_BPF}"
 }
 
-# dump_tool_logs_and_fail <msg>
-# Streams TOOL_OUT and TOOL_ERR to stderr for post-mortem then aborts.
 dump_tool_logs_and_fail() {
 	log_error "----- OUT (${TOOL_OUT}) -----"
 	[[ -f "${TOOL_OUT}" ]] && cat "${TOOL_OUT}" >&2
@@ -121,134 +88,54 @@ dump_tool_logs_and_fail() {
 	fatal "$*"
 }
 
-# ------------------------------- huatuo-bamai --------------------------------
+# ----------------------------- huatuo-bamai ----------------------------------
+
 huatuo_bamai_start() {
-	local args=("$@")
 	[[ -x "${HUATUO_BAMAI_BIN}" ]] || fatal "huatuo-bamai binary not found: ${HUATUO_BAMAI_BIN}"
 
-	log_info "starting huatuo-bamai: ${args[*]}"
-	${HUATUO_BAMAI_BIN} "${args[@]}" >${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log 2>&1 &
-	local huatuo_bamai_pid=$!
-	echo "$huatuo_bamai_pid" >"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
+	log_info "starting huatuo-bamai: $*"
+	"${HUATUO_BAMAI_BIN}" "$@" >"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" 2>&1 &
+	local pid=$!
+	echo "$pid" >"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
+	log_info "huatuo-bamai pid: ${pid}"
 
-	sleep 0.5s
-
-	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" "${WAIT_HUATUO_BAMAI_INTERVAL}" "huatuo-bamai ready" \
-		huatuo_bamai_ready
+	sleep 0.5
+	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" "${WAIT_HUATUO_BAMAI_INTERVAL}" \
+		"huatuo-bamai ready" huatuo_bamai_ready
 }
 
 huatuo_bamai_ready() {
-	local pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2>/dev/null || echo "")
-	[[ -n "$pid" ]] || fatal "❌ huatuo-bamai PID file not found"
+	local pid
+	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2>/dev/null || echo "")
+	[[ -n "$pid" ]] || return 1
 
-	# pid check, maybe process already exited
-	kill -0 "${pid}" 2>/dev/null || fatal "❌ huatuo-bamai pid=${pid} not exist, maybe exited."
-	# healthz
+	if ! kill -0 "${pid}" 2>/dev/null; then
+		log_error "huatuo-bamai pid=${pid} exited, last log:"
+		tail -20 "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2 || echo "empty"
+		return 1
+	fi
+
 	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" >/dev/null
 }
 
 huatuo_bamai_stop() {
-	pkill --echo huatuo-bamai || true
+	local exit_code=${1:-0}
+
+	local pid
+	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2>/dev/null || echo "")
+	if [[ -n "$pid" ]] && kill -0 "${pid}" 2>/dev/null; then
+		kill -TERM "${pid}"
+		local waited=0
+		while kill -0 "${pid}" 2>/dev/null && [[ $waited -lt 10 ]]; do
+			sleep 1
+			waited=$((waited + 1))
+		done
+		kill -9 "${pid}" 2>/dev/null || true
+	fi
 	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
-}
 
-huatuo_bamai_metrics() {
-	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}"
-}
-
-# print colored log and check if contains keywords
-huatuo_bamai_log_check() {
-	sed -E "s/(${HUATUO_BAMAI_MATCH_KEYWORDS})/\x1b[31m\1\x1b[0m/gI" ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log
-	! grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" ${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log
-}
-
-huatuo_bamai_pod_count() {
-	local regex=$1
-	curl -sf "${CURL_TIMEOUT[@]}" ${HUATUO_BAMAI_PODS_API} |
-		jq --arg re "$regex" '
-      [ .data[]
-        | select(.hostname != null)
-        | select(.hostname | test($re))
-      ] | length
-    ' 2>/dev/null || echo 0
-}
-
-# -------------------------------- integration --------------------------------
-integration_test_huatuo_bamai_config() {
-	cat >"${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" <<'EOF'
-# the blacklist for tracing and metrics
-BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
-EOF
-}
-
-integration_test_huatuo_bamai_include_filter_config() {
-	cat >"${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" <<'EOF'
-# the blacklist for tracing and metrics
-BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
-
-[MetricCollector.Vmstat]
-    IncludedOnHost = "thp_split_pmd|thp_split_pud"
-    ExcludedOnHost = ""
-    IncludedOnContainer = ""
-    ExcludedOnContainer = ""
-
-[MetricCollector.Netstat]
-    Included = "Tcp_RetransSegs|TcpExt_TCPLostRetransmit"
-    Excluded = ""
-
-[MetricCollector.NetdevStats]
-    DeviceExcluded = ""
-    DeviceIncluded = "eth0"
-
-[MetricCollector.MountPointStat]
-    MountPointsIncluded = "/boot"
-EOF
-}
-
-integration_test_huatuo_bamai_exclude_filter_config() {
-	cat >"${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" <<'EOF'
-# the blacklist for tracing and metrics
-BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
-
-[MetricCollector.Vmstat]
-    IncludedOnHost = ""
-    ExcludedOnHost = "thp_zero_page_alloc|thp_swpout"
-    IncludedOnContainer = ""
-    ExcludedOnContainer = ""
-
-[MetricCollector.Netstat]
-    Included = ""
-    Excluded = "Tcp_ActiveOpens|TcpExt_TCPAutoCorking"
-
-[MetricCollector.NetdevStats]
-    DeviceExcluded = "^(docker\\w*)$"
-    DeviceIncluded = ""
-
-[MetricCollector.MountPointStat]
-    MountPointsIncluded = ""
-EOF
-}
-
-integration_test_huatuo_bamai_start() {
-	[[ -x ${HUATUO_BAMAI_BIN} ]] || fatal "❌ binary not found: ${HUATUO_BAMAI_BIN}"
-	[[ -d ${HUATUO_BAMAI_TEST_EXPECTED} ]] || fatal "❌ expected metrics directory not found: ${HUATUO_BAMAI_TEST_EXPECTED}"
-
-	log_info "starting huatuo-bamai (mock fixture fs)"
-
-	integration_test_huatuo_bamai_config
-
-	huatuo_bamai_start "${HUATUO_BAMAI_ARGS_INTEGRATION[@]}"
-	log_info "huatuo-bamai started"
-}
-
-integration_test_teardown() {
-	local exit_code=$1
-
-	huatuo_bamai_stop || true
-
-	# Print details on failure
 	if [ "${exit_code}" -ne 0 ]; then
-		log_info "the exit code: $exit_code"
+		log_info "the exit code: ${exit_code}"
 		log_info "
 ========== HUATUO INTEGRATION TEST FAILED ================
 
@@ -266,13 +153,87 @@ Key files:
 =========================================================
 "
 	fi
+}
 
-	if ! huatuo_bamai_log_check; then
-		log_error "❌ huatuo-bamai log check failed"
-		exit_code=1
+huatuo_bamai_metrics() {
+	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}"
+}
+
+# highlight and reject error/panic keywords in the log
+huatuo_bamai_log_check() {
+	sed -E "s/(${HUATUO_BAMAI_MATCH_KEYWORDS})/\x1b[31m\1\x1b[0m/gI" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+	! grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
+}
+
+huatuo_bamai_pod_count() {
+	local regex=$1
+	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_PODS_API}" |
+		jq --arg re "$regex" '
+      [ .data[]
+        | select(.hostname != null)
+        | select(.hostname | test($re))
+      ] | length
+    ' 2>/dev/null || echo 0
+}
+
+# ----------------------------- metrics helpers --------------------------------
+
+# integration_test_start <config_writer_func>
+# Writes config via the named function, sets EXIT trap, and starts huatuo-bamai.
+integration_huatuo_bamai_start() {
+	local config_writer=${1:-write_default_config}
+
+	[[ -z "${HUATUO_BAMAI_ARGS_INTEGRATION:-}" ]] && eval "HUATUO_BAMAI_ARGS_INTEGRATION=(${HUATUO_BAMAI_INTEGRATION_ARGS_STR})"
+	trap 'huatuo_bamai_stop $? || true' EXIT
+
+	"$config_writer"
+	huatuo_bamai_start "${HUATUO_BAMAI_ARGS_INTEGRATION[@]}"
+}
+
+# huatuo_bamai_collect_metrics saves /metrics output to the temp metrics file.
+huatuo_bamai_collect_metrics() {
+	huatuo_bamai_metrics >"${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
+}
+
+# huatuo_bamai_await_metrics waits until the metrics endpoint responds, then saves.
+huatuo_bamai_await_metrics() {
+	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" \
+		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
+		"metrics endpoint ready" \
+		huatuo_bamai_collect_metrics
+}
+
+# check_metrics <desc> <present_pattern>... [-- <absent_pattern>...]
+# Single-pass metric assertion: verifies present patterns exist and absent
+# patterns do not, using at most 2 grep invocations regardless of pattern count.
+check_metrics() {
+	local desc=$1; shift
+	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
+	local prefix="huatuo_bamai_"
+
+	local present=() absent=()
+	while [[ $# -gt 0 && "$1" != "--" ]]; do
+		present+=("$1"); shift
+	done
+	shift 2>/dev/null || true
+	absent=("$@")
+
+	if [[ ${#absent[@]} -gt 0 ]]; then
+		local absent_re
+		absent_re=$(IFS='|'; echo "${absent[*]}")
+		local found
+		found=$(grep -oE "${prefix}(${absent_re})" "$metrics_file" || true)
+		[[ -z "$found" ]] || fatal "${desc}: expected absent but found: ${found}"
 	fi
 
-	if [ $exit_code -ne 0 ]; then
-		fatal "❌ integration test failed with exit code: ${exit_code}"
+	if [[ ${#present[@]} -gt 0 ]]; then
+		local present_re
+		present_re=$(IFS='|'; echo "${present[*]}")
+		local matches
+		matches=$(grep -oE "${prefix}(${present_re})" "$metrics_file" || true)
+		local pat
+		for pat in "${present[@]}"; do
+			echo "$matches" | grep -q "$pat" || fatal "${desc}: expected present but not found: ${pat}"
+		done
 	fi
 }
