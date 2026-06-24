@@ -61,7 +61,10 @@ func (c *HTTPNodeAgent) StartTask(host, container string, args *NewAgentTaskReq)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("agent returned non-OK status: %d, read body: %w", resp.StatusCode, err)
+		}
 		return "", fmt.Errorf("agent returned non-OK status: %d, body: %s", resp.StatusCode, body)
 	}
 
@@ -95,7 +98,10 @@ func (c *HTTPNodeAgent) StopTask(host, taskID string, force bool) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed to stop job: %s, read body: %w", resp.Status, err)
+		}
 		return fmt.Errorf("failed to stop job: %s, body: %s", resp.Status, string(body))
 	}
 
@@ -126,7 +132,10 @@ func (c *HTTPNodeAgent) GetTaskStatus(host, taskID string) (string, *Result, err
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return "", nil, fmt.Errorf("agent returned non-OK status: %d, read body: %w", resp.StatusCode, err)
+			}
 			return "", nil, fmt.Errorf("agent returned non-OK status: %d, body: %s", resp.StatusCode, string(body))
 		}
 

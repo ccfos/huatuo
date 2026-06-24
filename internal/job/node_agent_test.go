@@ -54,6 +54,66 @@ func newHTTPResponse(statusCode int, body string) *http.Response {
 	}
 }
 
+var errNodeAgentBodyRead = errors.New("node agent response body read failed")
+
+type failingReadCloser struct{}
+
+func (failingReadCloser) Read(_ []byte) (int, error) {
+	return 0, errNodeAgentBodyRead
+}
+
+func (failingReadCloser) Close() error {
+	return nil
+}
+
+func newHTTPResponseWithBody(statusCode int, body io.ReadCloser) *http.Response {
+	return &http.Response{
+		StatusCode: statusCode,
+		Status:     fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode)),
+		Header:     make(http.Header),
+		Body:       body,
+	}
+}
+
+func TestHTTPNodeAgentReturnsBodyReadError(t *testing.T) {
+	t.Run("start task", func(t *testing.T) {
+		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return newHTTPResponseWithBody(http.StatusInternalServerError, failingReadCloser{}), nil
+		}))
+
+		_, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+			TracerName:   "oncpu",
+			TraceTimeout: 60,
+			DataType:     "flamegraph",
+		})
+		if !errors.Is(err, errNodeAgentBodyRead) {
+			t.Errorf("StartTask() error=%v, want body read error", err)
+		}
+	})
+
+	t.Run("stop task", func(t *testing.T) {
+		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return newHTTPResponseWithBody(http.StatusConflict, failingReadCloser{}), nil
+		}))
+
+		err := agent.StopTask("huatuo-dev", "agent-task-2026", true)
+		if !errors.Is(err, errNodeAgentBodyRead) {
+			t.Errorf("StopTask() error=%v, want body read error", err)
+		}
+	})
+
+	t.Run("get task status", func(t *testing.T) {
+		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return newHTTPResponseWithBody(http.StatusInternalServerError, failingReadCloser{}), nil
+		}))
+
+		_, _, err := agent.GetTaskStatus("huatuo-dev", "agent-task-2026")
+		if !errors.Is(err, errNodeAgentBodyRead) {
+			t.Errorf("GetTaskStatus() error=%v, want body read error", err)
+		}
+	})
+}
+
 // TestHTTPNodeAgentStartTask tests HTTPNodeAgent.StartTask request and response handling, including successful task dispatch, writing container name to request body, agent returning non-200, and error handling for unparseable response body.
 func TestHTTPNodeAgentStartTask(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
