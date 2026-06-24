@@ -22,6 +22,7 @@ import (
 	"math/big"
 	"os/exec"
 	"path"
+	"sort"
 	"sync"
 	"time"
 
@@ -59,6 +60,13 @@ type TaskResult struct {
 	TaskStatus Status
 	TaskData   []byte
 	TaskErr    error
+}
+
+// TaskInfo is a lightweight task summary returned by list APIs.
+type TaskInfo struct {
+	TaskID     string `json:"task_id"`
+	TracerName string `json:"tracer_name"`
+	Status     Status `json:"status"`
 }
 
 // task represents a unit of work to be executed.
@@ -218,6 +226,31 @@ func RunningTaskCount() int {
 		return true
 	})
 	return count
+}
+
+// ListTasks returns summaries for all tasks currently kept in memory.
+func ListTasks() []TaskInfo {
+	tasks := make([]TaskInfo, 0)
+	taskLifeTmpCache.Range(func(key, value any) bool {
+		task := value.(*task)
+		taskID := task.id
+		if taskID == "" {
+			if keyID, ok := key.(string); ok {
+				taskID = keyID
+			}
+		}
+		tasks = append(tasks, TaskInfo{
+			TaskID:     taskID,
+			TracerName: task.execBinary,
+			Status:     task.status,
+		})
+		return true
+	})
+
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].TaskID < tasks[j].TaskID
+	})
+	return tasks
 }
 
 // Result returns the result of a task given its ID.

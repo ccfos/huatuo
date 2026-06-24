@@ -35,6 +35,7 @@ func NewTaskHandler() *TaskHandler {
 	h := &TaskHandler{}
 	h.Handlers = []server.Handle{
 		{Typ: server.HttpPost, Uri: "", Handle: h.create},
+		{Typ: server.HttpGet, Uri: "", Handle: h.list},
 		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
 		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.stop},
 	}
@@ -75,6 +76,11 @@ func (h *TaskHandler) create(ctx *server.Context) error {
 
 	id := tracing.NewTask(req.TracerName, time.Duration(req.Timeout)*time.Second, storageDefault, req.TracerArgs)
 	response.Success(ctx, map[string]any{"task_id": id})
+	return nil
+}
+
+func (h *TaskHandler) list(ctx *server.Context) error {
+	response.Success(ctx, map[string]any{"tasks": tracing.ListTasks()})
 	return nil
 }
 
