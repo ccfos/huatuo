@@ -20,6 +20,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -206,10 +207,12 @@ func fetchProfilingMetadataContainer(serverAddress, containerID string) (*profil
 		return nil, fmt.Errorf("container lookup requires server address and container id")
 	}
 
-	request, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/containers/json?container_id=%s", serverAddress, containerID), http.NoBody)
+	endpoint := fmt.Sprintf("http://%s/containers/json", serverAddress)
+	request, err := http.NewRequest(http.MethodGet, endpoint, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	request.URL.RawQuery = url.Values{"container_id": {containerID}}.Encode()
 
 	client := &http.Client{Timeout: 3 * time.Second}
 	response, err := client.Do(request)
