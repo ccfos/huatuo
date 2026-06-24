@@ -217,6 +217,10 @@ All event records include the following common fields:
 - **where**: Stage where latency occurred (`TO_NETIF_RCV` driver-to-kernel / `TO_TCPV4_RCV` kernel-to-TCP / `TO_USER_COPY` TCP-to-user-space)
 - **latency_ms**: Actual latency (milliseconds)
 
+
+**Operational note**: `net_rx_latency` depends on `skb->tstamp` carrying the packet receive timestamp. Some drivers, kernel paths, or custom network handling may clear that field before the probes read it. When that happens, HUATUO treats `0` as the start time, so the event can show a latency that looks like 40+ years. That usually does not mean the packet really waited in the network stack; it means the timestamp is no longer usable.
+
+If a group of machines keeps reporting this kind of huge latency, it is better to disable `EventTracing.NetRxLatency` there, or only enable it on nodes where `skb->tstamp` is known to be preserved. Otherwise these false events can drown out the network issues that are worth chasing.
 ### 4. oom
 
 **Description** Detects OOM (Out of Memory) events on the host or inside containers. Records information about the process killed by the OOM Killer (victim) and the process that triggered the OOM (trigger), along with the corresponding container and memory cgroup details, providing a complete fault snapshot. Host-level and per-container OOM count metrics are also maintained.
