@@ -50,6 +50,7 @@ var (
 	AppVersion   string
 	AppGitCommit string
 	AppBuildTime string
+	versionInfo  version.Info
 )
 
 type fatalWriter struct {
@@ -126,7 +127,7 @@ func main() {
 
 	app.Action = mainAction
 
-	version.Wire(app, version.Seed{
+	versionInfo = version.Wire(app, version.Seed{
 		Name:      apiServerToolName,
 		Version:   AppVersion,
 		GitCommit: AppGitCommit,
@@ -214,7 +215,7 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("initialize metrics collector: %w", err)
 	}
 
-	if err := handlers.ServerStart(config.Get().APIServer.TCPAddr, promRegistry, profilingManager, tracingManager); err != nil {
+	if err := handlers.ServerStart(config.Get().APIServer.TCPAddr, promRegistry, profilingManager, tracingManager, versionInfo); err != nil {
 		return fmt.Errorf("handlers.APIServer: %w", err)
 	}
 

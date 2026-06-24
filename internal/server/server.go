@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/version"
 
 	"github.com/cloudflare/backoff"
 	"github.com/gin-contrib/pprof"
@@ -42,6 +43,7 @@ type Config struct {
 	AuthUsers       []UserConfig
 	PromReg         *prometheus.Registry
 	Group           string
+	VersionInfo     *version.Info
 }
 
 var defaultConfig = &Config{
@@ -105,6 +107,11 @@ func NewServer(cfg *Config) *server {
 		{Typ: HttpGet, Uri: "/healthz", Handle: s.healthzHandler()},
 		{Typ: HttpGet, Uri: "/metrics", Handle: s.promServerHandler()},
 	})
+	if cfg.VersionInfo != nil {
+		s.MustRegisterRoutes("", []Handle{
+			{Typ: HttpGet, Uri: "/version", Handle: newVersionHandler(*cfg.VersionInfo)},
+		})
+	}
 	return s
 }
 

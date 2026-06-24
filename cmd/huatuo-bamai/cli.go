@@ -61,6 +61,7 @@ type Options struct {
 	LogDebug       bool
 	DryRun         bool
 	ProcfsPrefix   string
+	VersionInfo    version.Info
 }
 
 func buildCommand(seed version.Seed) *cli.App {
@@ -69,7 +70,7 @@ func buildCommand(seed version.Seed) *cli.App {
 	app.Name = appName
 	app.Usage = appUsage
 	opts.AddFlags(app)
-	version.Wire(app, seed)
+	opts.VersionInfo = version.Wire(app, seed)
 
 	app.Before = func(ctx *cli.Context) error {
 		if err := opts.FromContext(ctx); err != nil {
