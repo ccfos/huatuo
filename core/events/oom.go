@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/utils/bytesutil"
@@ -44,18 +45,19 @@ type perfEventData struct {
 }
 
 type OOMTracingData struct {
-	TriggerMemcgCSS          string `json:"trigger_memcg_css"`
-	TriggerContainerID       string `json:"trigger_container_id"`
-	TriggerContainerHostname string `json:"trigger_container_hostname"`
-	TriggerPid               int32  `json:"trigger_pid"`
-	TriggerProcessName       string `json:"trigger_process_name"`
-	VictimMemcgCSS           string `json:"victim_memcg_css"`
-	VictimContainerID        string `json:"victim_container_id"`
-	VictimContainerHostname  string `json:"victim_container_hostname"`
-	VictimPid                int32  `json:"victim_pid"`
-	VictimProcessName        string `json:"victim_process_name"`
-	CgroupMemoryLimit        uint64 `json:"cgroup_memory_limit"`
-	CgroupMemoryUsage        uint64 `json:"cgroup_memory_usage"`
+	TriggerMemcgCSS          string             `json:"trigger_memcg_css"`
+	TriggerContainerID       string             `json:"trigger_container_id"`
+	TriggerContainerHostname string             `json:"trigger_container_hostname"`
+	TriggerPid               int32              `json:"trigger_pid"`
+	TriggerProcessName       string             `json:"trigger_process_name"`
+	VictimMemcgCSS           string             `json:"victim_memcg_css"`
+	VictimContainerID        string             `json:"victim_container_id"`
+	VictimContainerHostname  string             `json:"victim_container_hostname"`
+	VictimPid                int32              `json:"victim_pid"`
+	VictimProcessName        string             `json:"victim_process_name"`
+	CgroupMemoryLimit        uint64             `json:"cgroup_memory_limit"`
+	CgroupMemoryUsage        uint64             `json:"cgroup_memory_usage"`
+	MemorySnapshot           *OOMMemorySnapshot `json:"memory_snapshot,omitempty"`
 }
 
 type oomMetric struct {
@@ -63,7 +65,9 @@ type oomMetric struct {
 	victimProcessName string
 }
 
-type oomCollector struct{}
+type oomCollector struct {
+	cgroup cgroups.Cgroup
+}
 
 var (
 	outOfMemoryCounterHost      float64
@@ -76,10 +80,17 @@ func init() {
 }
 
 func newOOMCollector() (*tracing.EventTracingAttr, error) {
+	cgroup, err := cgroups.NewManager()
+	if err != nil {
+		log.Warnf("failed to initialize cgroup reader for oom snapshot: %v", err)
+	}
+
 	return &tracing.EventTracingAttr{
-		TracingData: &oomCollector{},
-		Interval:    10,
-		Flag:        tracing.FlagTracing | tracing.FlagMetric,
+		TracingData: &oomCollector{
+			cgroup: cgroup,
+		},
+		Interval: 10,
+		Flag:     tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }
 
@@ -143,30 +154,11 @@ func (c *oomCollector) Start(ctx context.Context) error {
 				return fmt.Errorf("fetching the containers, err: %w", err)
 			}
 
-			cssContainers := pod.BuildCssContainersID(containers, pod.SubSysMemory)
-			oomData := &OOMTracingData{
-				TriggerMemcgCSS:    kernaddr.Format(data.TriggerMemcgCSS),
-				TriggerPid:         data.TriggerPid,
-				TriggerProcessName: bytesutil.ToStr(data.TriggerProcessName[:]),
-				TriggerContainerID: cssContainers[data.TriggerMemcgCSS],
-				VictimMemcgCSS:     kernaddr.Format(data.VictimMemcgCSS),
-				VictimPid:          data.VictimPid,
-				VictimProcessName:  bytesutil.ToStr(data.VictimProcessName[:]),
-				VictimContainerID:  cssContainers[data.VictimMemcgCSS],
-				CgroupMemoryLimit:  data.MemLimitPages * pageSize,
-				CgroupMemoryUsage:  data.MemUsagePages * pageSize,
-			}
+			oomData := newOOMTracingData(data, containers, pageSize, c.cgroup)
 
-			// leave the hostname empty if this is not container.
-			if container, ok := containers[oomData.TriggerContainerID]; ok {
-				oomData.TriggerContainerHostname = container.Hostname
-			}
-
-			// update victim hostname and metric counters
 			mutex.Lock()
 
 			if container, ok := containers[oomData.VictimContainerID]; ok {
-				oomData.VictimContainerHostname = container.Hostname
 				containerCounterUpdate(container.ID, oomData.VictimProcessName)
 			} else {
 				outOfMemoryCounterHost++
@@ -183,6 +175,37 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func newOOMTracingData(data perfEventData, containers map[string]*pod.Container, pageSize uint64, cgroup oomCgroupReader) *OOMTracingData {
+	cssContainers := pod.BuildCssContainersID(containers, pod.SubSysMemory)
+	oomData := &OOMTracingData{
+		TriggerMemcgCSS:    kernaddr.Format(data.TriggerMemcgCSS),
+		TriggerPid:         data.TriggerPid,
+		TriggerProcessName: bytesutil.ToStr(data.TriggerProcessName[:]),
+		TriggerContainerID: cssContainers[data.TriggerMemcgCSS],
+		VictimMemcgCSS:     kernaddr.Format(data.VictimMemcgCSS),
+		VictimPid:          data.VictimPid,
+		VictimProcessName:  bytesutil.ToStr(data.VictimProcessName[:]),
+		VictimContainerID:  cssContainers[data.VictimMemcgCSS],
+		CgroupMemoryLimit:  data.MemLimitPages * pageSize,
+		CgroupMemoryUsage:  data.MemUsagePages * pageSize,
+	}
+
+	var triggerContainer *pod.Container
+	if container, ok := containers[oomData.TriggerContainerID]; ok {
+		triggerContainer = container
+		oomData.TriggerContainerHostname = container.Hostname
+	}
+
+	var victimContainer *pod.Container
+	if container, ok := containers[oomData.VictimContainerID]; ok {
+		victimContainer = container
+		oomData.VictimContainerHostname = container.Hostname
+	}
+
+	oomData.MemorySnapshot = captureOOMMemorySnapshot(cgroup, triggerContainer, victimContainer)
+	return oomData
 }
 
 func containerCounterUpdate(containerID, processName string) {

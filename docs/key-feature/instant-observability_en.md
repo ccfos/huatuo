@@ -237,7 +237,42 @@ All event records include the following common fields:
         "victim_container_id": "***",
         "victim_container_hostname": "***.docker",
         "victim_pid": 3218745,
-        "victim_process_name": "java"
+        "victim_process_name": "java",
+        "cgroup_memory_limit": 2147483648,
+        "cgroup_memory_usage": 2143289344,
+        "memory_snapshot": {
+            "top_processes": [
+                {
+                    "pid": 3218745,
+                    "process_name": "java",
+                    "vm_rss": 1604321280,
+                    "rss_anon": 1509949440,
+                    "rss_file": 83886080,
+                    "rss_shmem": 0,
+                    "vm_swap": 0,
+                    "total": 1593835520
+                }
+            ],
+            "host_meminfo": {
+                "MemAvailable": 3355443200,
+                "Cached": 1073741824,
+                "Slab": 268435456
+            },
+            "victim_cgroup": {
+                "container_id": "***",
+                "cgroup_path": "kubepods.slice/...",
+                "current": 2143289344,
+                "max": 2147483648,
+                "stat": {
+                    "anon": 1509949440,
+                    "file": 83886080
+                },
+                "events": {
+                    "oom": 1,
+                    "oom_kill": 1
+                }
+            }
+        }
     }
 }
 ```
@@ -250,6 +285,10 @@ All event records include the following common fields:
 - **trigger_process_name / trigger_pid**: Name and PID of the process that triggered OOM
 - **trigger_container_hostname / trigger_container_id**: Hostname and container ID where the triggering process resided
 - **trigger_memcg_css**: Memory cgroup pointer (hex) of the triggering process
+- **cgroup_memory_limit / cgroup_memory_usage**: Memory limit and usage reported by the kernel event
+- **memory_snapshot.top_processes**: Top processes by RSS/swap at the OOM moment, including `RssAnon`, `RssFile`, `RssShmem`, `VmRSS`, and `VmSwap`
+- **memory_snapshot.host_meminfo**: Key host `/proc/meminfo` values, such as `MemAvailable`, `Cached`, `Slab`, swap, and anon/file activity
+- **memory_snapshot.trigger_cgroup / victim_cgroup**: Trigger/victim container cgroup path, current/max memory, `memory.stat`, and `memory.events`
 
 ### 5. softlockup
 
