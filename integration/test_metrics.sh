@@ -44,4 +44,3 @@ for f in "${HUATUO_BAMAI_TEST_EXPECTED}"/*.txt; do
 	grep "^huatuo_bamai_${prefix}" "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt" || log_info "(no metrics found)"
 done
 
-log_info "metrics passed"

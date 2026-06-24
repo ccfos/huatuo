@@ -40,4 +40,3 @@ check_metrics "include filter" \
 	'mountpoint_perm_ro{.*mountpoint="/sys/fs/cgroup"' \
 	'mountpoint_perm_ro{.*mountpoint="/home/root/containers'
 
-log_info "include filter metrics test passed"

@@ -34,4 +34,3 @@ check_metrics "exclude filter" \
 	"netstat_Tcp_ActiveOpens" "netstat_TcpExt_TCPAutoCorking" \
 	'netdev_.*device="docker0"'
 
-log_info "exclude filter metrics test passed"
