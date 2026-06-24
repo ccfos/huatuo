@@ -9,6 +9,7 @@
 
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
+#include "linux_kernel.h"
 #include "vmlinux_net.h"
 
 volatile const long long mono_wall_offset = 0;
@@ -70,21 +71,17 @@ static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 	// depending on kernel version and delivery_time semantics.
 	// Newer kernels expose tstamp_type; prior versions use
 	// mono_delivery_time; old kernels always use wall time.
+	u64 base_now = now + mono_wall_offset;
+
 	if (bpf_core_field_exists(((struct sk_buff *)0)->tstamp_type)) {
-		// SKB_CLOCK_MONOTONIC = 1
-		if (BPF_CORE_READ_BITFIELD(skb, tstamp_type) == 1)
-			return now - tstamp;
-		return now + mono_wall_offset - tstamp;
-	}
-
-	if (bpf_core_field_exists(((struct sk_buff *)0)->mono_delivery_time)) {
+		if (BPF_CORE_READ_BITFIELD(skb, tstamp_type) == SKB_CLOCK_MONOTONIC)
+			base_now = now;
+	} else if (bpf_core_field_exists(((struct sk_buff *)0)->mono_delivery_time)) {
 		if (BPF_CORE_READ_BITFIELD(skb, mono_delivery_time))
-			return now - tstamp;
-		return now + mono_wall_offset - tstamp;
+			base_now = now;
 	}
 
-	// old kernels: skb->tstamp is always wall time
-	return now + mono_wall_offset - tstamp;
+	return base_now - tstamp;
 }
 
 static inline u8 get_state(struct sk_buff *skb)
