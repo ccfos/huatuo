@@ -22,17 +22,19 @@ import (
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/server"
+	"huatuo-bamai/internal/version"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ServerStart starts the API service with the given configuration.
-func ServerStart(addr string, promReg *prometheus.Registry, profilingManager, tracingManager *job.Manager) error {
+func ServerStart(addr string, promReg *prometheus.Registry, profilingManager, tracingManager *job.Manager, versionInfo version.Info) error {
 	httpServer := server.NewServer(&server.Config{
 		EnablePProf:     false,
 		EnableRateLimit: false,
 		AuthUsers:       getUserConfigs(),
 		PromReg:         promReg,
+		VersionInfo:     &versionInfo,
 	})
 
 	// Register trace routes

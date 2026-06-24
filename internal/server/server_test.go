@@ -15,11 +15,14 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"huatuo-bamai/internal/version"
 
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -55,6 +58,44 @@ func TestNewServerRegistersHealthzRoute(t *testing.T) {
 	}
 	if recorder.Body.Len() != 0 {
 		t.Errorf("response body = %q, want empty body", recorder.Body.String())
+	}
+}
+
+func TestNewServerRegistersVersionRoute(t *testing.T) {
+	info := version.Info{
+		Name:         "huatuo-apiserver",
+		Version:      "1.2.3",
+		GitCommit:    "abcdef123456",
+		GitTreeState: "clean",
+		BuildTime:    "2026-06-24T00:00:00Z",
+		GoVersion:    "go1.24.0",
+		Compiler:     "gc",
+		Platform:     "linux/amd64",
+	}
+	s := NewServer(&Config{VersionInfo: &info})
+
+	request := httptest.NewRequest(http.MethodGet, "/version", http.NoBody)
+	recorder := httptest.NewRecorder()
+
+	s.engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("response status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var got struct {
+		Code    int          `json:"code"`
+		Message string       `json:"message"`
+		Data    version.Info `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, recorder.Body.String())
+	}
+	if got.Code != 0 || got.Message != "success" {
+		t.Fatalf("response code/message = %d/%q, want 0/success", got.Code, got.Message)
+	}
+	if got.Data != info {
+		t.Errorf("version response = %+v, want %+v", got.Data, info)
 	}
 }
 

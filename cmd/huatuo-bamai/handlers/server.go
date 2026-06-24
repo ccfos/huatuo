@@ -19,13 +19,14 @@ import (
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/server"
+	"huatuo-bamai/internal/version"
 	"huatuo-bamai/pkg/tracing"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Start starts the HTTP server with all handlers registered.
-func Start(addr string, mgrTracing *tracing.TracingManager, promReg *prometheus.Registry) {
+func Start(addr string, mgrTracing *tracing.TracingManager, promReg *prometheus.Registry, versionInfo version.Info) {
 	s := server.NewServer(&server.Config{
 		EnablePProf:     true,
 		EnableRateLimit: true,
@@ -33,6 +34,7 @@ func Start(addr string, mgrTracing *tracing.TracingManager, promReg *prometheus.
 		RateBurst:       200,
 		EnableRetry:     true,
 		PromReg:         promReg,
+		VersionInfo:     &versionInfo,
 	})
 
 	SetTracingManager(mgrTracing)
