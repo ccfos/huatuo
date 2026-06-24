@@ -184,8 +184,7 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 		return fmt.Errorf("read sampleCnt: %w", err)
 	}
 
-	stackIDStore := make(map[processIDName]bpfmap.StackTraceID)
-	stackCount := make(map[bpfmap.StackTraceID]int)
+	processStackCounts := make(map[processIDName]map[bpfmap.StackTraceID]int)
 
 	for i := uint64(0); i < bpfCount; i++ {
 		var evt cpuEventKey
@@ -203,21 +202,24 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 		}
 
 		pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
-		stackCount[pair]++
 		pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
-		stackIDStore[pidName] = pair
+
+		if processStackCounts[pidName] == nil {
+			processStackCounts[pidName] = make(map[bpfmap.StackTraceID]int)
+		}
+		processStackCounts[pidName][pair]++
 	}
 
-	if len(stackIDStore) > 0 {
-		aggregateStacksAndStore(p.bpf, stackIDStore, stackMapID, stackCount, enqueue)
+	if len(processStackCounts) > 0 {
+		aggregateStacksAndStore(p.bpf, processStackCounts, stackMapID, enqueue)
 	}
 
 	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
 		log.P().Warnf("reset sample count: %v", err)
 	}
 
-	if len(stackIDStore) > 0 {
-		if err := clearStackMap(p.bpf, stackMapID, stackIDStore); err != nil {
+	if len(processStackCounts) > 0 {
+		if err := clearStackMap(p.bpf, stackMapID, processStackCounts); err != nil {
 			log.P().Warnf("clear stack map: %v", err)
 		}
 	}
@@ -225,15 +227,17 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 	return nil
 }
 
-func clearStackMap(b bpf.BPF, mapID uint32, stackIDStore map[processIDName]bpfmap.StackTraceID) error {
-	seen := make(map[int32]struct{}, len(stackIDStore)*2)
-	for _, v := range stackIDStore {
-		if v.KernelID > 0 {
-			seen[v.KernelID] = struct{}{}
-		}
+func clearStackMap(b bpf.BPF, mapID uint32, processStackCounts map[processIDName]map[bpfmap.StackTraceID]int) error {
+	seen := make(map[int32]struct{})
+	for _, stacks := range processStackCounts {
+		for id := range stacks {
+			if id.KernelID > 0 {
+				seen[id.KernelID] = struct{}{}
+			}
 
-		if v.UserID > 0 {
-			seen[v.UserID] = struct{}{}
+			if id.UserID > 0 {
+				seen[id.UserID] = struct{}{}
+			}
 		}
 	}
 
@@ -256,19 +260,20 @@ func clearStackMap(b bpf.BPF, mapID uint32, stackIDStore map[processIDName]bpfma
 
 func aggregateStacksAndStore(
 	b bpf.BPF,
-	stackIDStore map[processIDName]bpfmap.StackTraceID,
+	processStackCounts map[processIDName]map[bpfmap.StackTraceID]int,
 	stMapID uint32,
-	stackCount map[bpfmap.StackTraceID]int,
 	enqueue func(any),
 ) {
 	allStackIDs := make(map[int32]bool)
-	for _, v := range stackIDStore {
-		if v.KernelID > 0 {
-			allStackIDs[v.KernelID] = true
-		}
+	for _, stacks := range processStackCounts {
+		for id := range stacks {
+			if id.KernelID > 0 {
+				allStackIDs[id.KernelID] = true
+			}
 
-		if v.UserID > 0 {
-			allStackIDs[v.UserID] = true
+			if id.UserID > 0 {
+				allStackIDs[id.UserID] = true
+			}
 		}
 	}
 
@@ -277,17 +282,19 @@ func aggregateStacksAndStore(
 	kstackCache := make(map[int32]string)
 	usym := symbol.NewUsymResolver()
 
-	for k, v := range stackIDStore {
-		resolveStackStrs(v, k.Pid, stackData, usym, kstackCache, ustackCache)
+	for pidName, stacks := range processStackCounts {
+		for stackID, count := range stacks {
+			resolveStackStrs(stackID, pidName.Pid, stackData, usym, kstackCache, ustackCache)
 
-		record := &stackEntry{
-			Proc:    &processIDName{Pid: k.Pid, Name: k.Name},
-			User:    ustackCache[v.UserID],
-			Kernel:  kstackCache[v.KernelID],
-			Samples: int64(stackCount[v]),
+			record := &stackEntry{
+				Proc:    &processIDName{Pid: pidName.Pid, Name: pidName.Name},
+				User:    ustackCache[stackID.UserID],
+				Kernel:  kstackCache[stackID.KernelID],
+				Samples: int64(count),
+			}
+
+			enqueue(record)
 		}
-
-		enqueue(record)
 	}
 }
 
