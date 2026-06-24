@@ -56,6 +56,12 @@ type Config struct {
 	ESUsername  string
 	ESPassword  string
 	ESIndex     string
+	ESCAFile    string
+	ESCertFile  string
+	ESKeyFile   string
+	// ESInsecureSkipVerify defaults to true when nil to preserve legacy ES/OS
+	// HTTPS behavior for deployments that use self-signed certificates.
+	ESInsecureSkipVerify *bool
 }
 
 // Op is a storage query operator.

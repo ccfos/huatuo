@@ -50,10 +50,14 @@ const (
 
 // Config contains Elasticsearch backend settings.
 type Config struct {
-	Addresses []string
-	Username  string
-	Password  string
-	Index     string
+	Addresses          []string
+	Username           string
+	Password           string
+	Index              string
+	CAFile             string
+	CertFile           string
+	KeyFile            string
+	InsecureSkipVerify *bool
 }
 
 // Storage stores records in Elasticsearch, OpenSearch, or any compatible backend.
@@ -74,10 +78,14 @@ var _ driver.Backend = (*Storage)(nil)
 func init() {
 	factory := func(cfg *driver.Config) (driver.Backend, error) {
 		return NewBackend(&Config{
-			Addresses: cfg.ESAddresses,
-			Username:  cfg.ESUsername,
-			Password:  cfg.ESPassword,
-			Index:     cfg.ESIndex,
+			Addresses:          cfg.ESAddresses,
+			Username:           cfg.ESUsername,
+			Password:           cfg.ESPassword,
+			Index:              cfg.ESIndex,
+			CAFile:             cfg.ESCAFile,
+			CertFile:           cfg.ESCertFile,
+			KeyFile:            cfg.ESKeyFile,
+			InsecureSkipVerify: cfg.ESInsecureSkipVerify,
 		})
 	}
 	driver.RegisterBackend("elasticsearch", factory)
@@ -86,11 +94,14 @@ func init() {
 
 // NewBackend creates a backend that connects to Elasticsearch v7/v8 or OpenSearch.
 func NewBackend(cfg *Config) (*Storage, error) {
+	if cfg == nil {
+		cfg = &Config{}
+	}
 	prefix := cfg.Index
 	if prefix == "" {
 		prefix = defaultIndex
 	}
-	client, err := newCompatClient(cfg.Addresses, cfg.Username, cfg.Password)
+	client, err := newCompatClient(cfg)
 	if err != nil {
 		return nil, err
 	}

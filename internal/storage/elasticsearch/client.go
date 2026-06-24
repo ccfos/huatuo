@@ -16,9 +16,11 @@ package elasticsearch
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -88,13 +90,21 @@ func (t *productHeaderTransport) RoundTrip(req *http.Request) (*http.Response, e
 //   - ES v7 ≥ 7.14: CompatibilityMode headers + native product header.
 //   - ES v7 < 7.14: CompatibilityMode headers + injected product header.
 //   - OpenSearch:    returns X-Elastic-Product natively; no separate client needed.
-func newCompatClient(addresses []string, username, password string) (*elasticsearch.Client, error) {
+func newCompatClient(cfg *Config) (*elasticsearch.Client, error) {
+	if cfg == nil {
+		cfg = &Config{}
+	}
+	tlsConfig, err := buildTLSConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	client, err := elasticsearch.NewClient(elasticsearch.Config{
-		Addresses:               addresses,
-		Username:                username,
-		Password:                password,
+		Addresses:               cfg.Addresses,
+		Username:                cfg.Username,
+		Password:                cfg.Password,
 		EnableCompatibilityMode: true,
-		Transport:               &productHeaderTransport{inner: defaultTransport},
+		Transport:               &productHeaderTransport{inner: newTransport(tlsConfig)},
 		// Whole-batch retry: covers transport failures and 429/5xx returned for
 		// the entire bulk request. Per-item failures inside a 200 response are
 		// surfaced through BulkIndexerItem.OnFailure instead.
@@ -118,4 +128,69 @@ func newCompatClient(addresses []string, username, password string) (*elasticsea
 		return nil, fmt.Errorf("elasticsearch client info: status %d", res.StatusCode)
 	}
 	return client, nil
+}
+
+func newTransport(tlsConfig *tls.Config) http.RoundTripper {
+	transport, ok := defaultTransport.(*http.Transport)
+	if !ok {
+		return defaultTransport
+	}
+	clone := transport.Clone()
+	clone.TLSClientConfig = tlsConfig
+	return clone
+}
+
+func buildTLSConfig(cfg *Config) (*tls.Config, error) {
+	insecureSkipVerify := true
+	if cfg != nil && cfg.InsecureSkipVerify != nil {
+		insecureSkipVerify = *cfg.InsecureSkipVerify
+	}
+
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: insecureSkipVerify, // #nosec G402 -- legacy default is preserved unless explicitly disabled.
+		ClientSessionCache: tls.NewLRUClientSessionCache(64),
+	}
+	if cfg == nil {
+		return tlsConfig, nil
+	}
+
+	if cfg.CAFile != "" {
+		rootCAs, err := loadRootCAs(cfg.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.RootCAs = rootCAs
+	}
+
+	if cfg.CertFile != "" || cfg.KeyFile != "" {
+		if cfg.CertFile == "" || cfg.KeyFile == "" {
+			return nil, fmt.Errorf("elasticsearch tls client certificate requires both cert file and key file")
+		}
+		certificate, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("elasticsearch tls load client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{certificate}
+	}
+
+	return tlsConfig, nil
+}
+
+func loadRootCAs(path string) (*x509.CertPool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("elasticsearch tls read ca file: %w", err)
+	}
+
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if !rootCAs.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("elasticsearch tls ca file contains no PEM certificates: %s", path)
+	}
+	return rootCAs, nil
 }
