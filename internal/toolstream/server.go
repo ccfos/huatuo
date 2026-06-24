@@ -139,6 +139,7 @@ func (s *Server) Start() error {
 
 	inner, err := transport.Serve(l, s.dispatch)
 	if err != nil {
+		_ = l.Close()
 		return fmt.Errorf("toolstream: %w", err)
 	}
 

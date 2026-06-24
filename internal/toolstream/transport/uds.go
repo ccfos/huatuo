@@ -26,14 +26,18 @@ type udsListener struct {
 }
 
 func (l *udsListener) Close() error {
+	err := l.Listener.Close()
 	_ = os.Remove(l.path)
-	return l.Listener.Close()
+	return err
 }
 
-// ListenUDS binds a Unix socket at path; returns an error if path already exists.
+// ListenUDS binds a Unix socket at path.
+// If path already exists it is removed first (leftover from a previous
+// unclean shutdown); an active listener on the same path will cause
+// net.Listen to fail regardless.
 func ListenUDS(path string) (net.Listener, error) {
 	if _, err := os.Stat(path); err == nil {
-		return nil, fmt.Errorf("transport: socket path already exists: %s", path)
+		_ = os.Remove(path)
 	}
 
 	l, err := net.Listen("unix", path)
