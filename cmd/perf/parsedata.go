@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -82,14 +81,6 @@ func findOrAdd(strA string, b []string) (int, []string) {
 	}
 
 	return index, b
-}
-
-func parsedata(b bpf.BPF) error {
-	data, err := buildFlameData(b)
-	if err != nil {
-		return err
-	}
-	return writeFlameDataJSON(os.Stdout, data)
 }
 
 func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {

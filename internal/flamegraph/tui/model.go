@@ -48,7 +48,6 @@ func Run(data []flamegraph.FrameData) error {
 
 // Model is the Bubble Tea state for the flamegraph viewer.
 type Model struct {
-	root       *Node
 	focus      *Node
 	visible    []*Node
 	cursor     int
@@ -65,7 +64,6 @@ type Model struct {
 func NewModel(data []flamegraph.FrameData) Model {
 	root := BuildTree(data)
 	model := Model{
-		root:    root,
 		focus:   root,
 		width:   defaultWidth,
 		height:  defaultHeight,
@@ -126,11 +124,11 @@ func BuildTree(data []flamegraph.FrameData) *Node {
 	return root
 }
 
-func (m Model) Init() tea.Cmd {
+func (m Model) Init() tea.Cmd { //nolint:gocritic // tea.Model interface requires value receiver
 	return nil
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) { //nolint:gocritic // tea.Model interface requires value receiver
 	switch typed := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = typed.Width
@@ -146,10 +144,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateKey(key tea.KeyMsg) (Model, tea.Cmd) {
+func (m *Model) updateKey(key tea.KeyMsg) (Model, tea.Cmd) {
 	switch key.String() {
 	case "ctrl+c", "q", "esc":
-		return m, tea.Quit
+		return *m, tea.Quit
 	case "up", "k":
 		m.moveCursor(-1)
 	case "down", "j":
@@ -174,10 +172,10 @@ func (m Model) updateKey(key tea.KeyMsg) (Model, tea.Cmd) {
 	case "n":
 		m.nextMatch()
 	}
-	return m, nil
+	return *m, nil
 }
 
-func (m Model) updateSearch(key tea.KeyMsg) Model {
+func (m *Model) updateSearch(key tea.KeyMsg) Model {
 	switch key.String() {
 	case "ctrl+c", "esc":
 		m.searching = false
@@ -186,7 +184,7 @@ func (m Model) updateSearch(key tea.KeyMsg) Model {
 		m.searching = false
 		m.applySearch()
 	case "backspace":
-		if len(m.query) > 0 {
+		if m.query != "" {
 			m.query = m.query[:len(m.query)-1]
 		}
 	case "space":
@@ -196,10 +194,10 @@ func (m Model) updateSearch(key tea.KeyMsg) Model {
 			m.query += string(key.Runes)
 		}
 	}
-	return m
+	return *m
 }
 
-func (m Model) View() string {
+func (m Model) View() string { //nolint:gocritic // tea.Model interface requires value receiver
 	var out strings.Builder
 	selected := m.selectedNode()
 	rootValue := m.focus.Value
@@ -245,7 +243,7 @@ func (m Model) View() string {
 	return out.String()
 }
 
-func (m Model) renderRow(cursor, match string, node *Node, rootValue int64) string {
+func (m *Model) renderRow(cursor, match string, node *Node, rootValue int64) string {
 	depth := nodeDepthFrom(node, m.focus)
 	indent := strings.Repeat("  ", depth)
 	barWidth := m.barWidth(node.Value, rootValue)
@@ -387,7 +385,7 @@ func (m *Model) nextMatch() {
 	}
 }
 
-func (m Model) viewportHeight() int {
+func (m *Model) viewportHeight() int {
 	height := m.height - headerLines - footerLines
 	if height < 3 {
 		return 3
@@ -395,14 +393,14 @@ func (m Model) viewportHeight() int {
 	return height
 }
 
-func (m Model) safeWidth() int {
+func (m *Model) safeWidth() int {
 	if m.width < 40 {
 		return 40
 	}
 	return m.width
 }
 
-func (m Model) barWidth(value, rootValue int64) int {
+func (m *Model) barWidth(value, rootValue int64) int {
 	available := m.safeWidth() / 3
 	if available < 10 {
 		available = 10

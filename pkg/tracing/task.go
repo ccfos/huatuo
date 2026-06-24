@@ -19,12 +19,13 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"huatuo-bamai/internal/log"
 	"math/big"
 	"os/exec"
 	"path"
 	"sync"
 	"time"
+
+	"huatuo-bamai/internal/log"
 )
 
 // Status represents the status of a task.
