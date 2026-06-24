@@ -738,16 +738,16 @@ IssuesList = []
 # monitor the net device events.
 #
 # - DeviceList
-# The net devices we take care of.
+# Regex list of net devices we take care of. Each pattern must match the full device name.
 # Default: [] is empty, meaning no devices.
 #
 [EventTracing.Netdev]
-	DeviceList = ["eth0", "eth1", "bond4", "lo"]
+	DeviceList = ["eth[0-9]+", "bond[0-9]+", "lo"]
 ```
 
-- **DeviceList**：需要监控的网卡设备列表。
+- **DeviceList**：需要监控的网卡设备正则列表。
 
-  默认示例包含 "eth0", "eth1", "bond4", "lo"。 为空列表时表示不监控任何设备。 监控网络设备的物理链路状态事件等。
+  每一项都需要完整匹配网卡名。写成 "eth0" 时仍然只匹配 eth0，写成 "eth[0-9]+" 时可以匹配一组 eth 网卡。为空列表时表示不监控任何设备。
 
   **说明**：精确指定感兴趣的网络接口，支持 bond、lo 等。
 
@@ -864,16 +864,16 @@ IssuesList = []
 # Collecting the DCB PFC (Priority-based Flow Control).
 #
 # - DeviceList
-# The net devices we take care of.
+# Regex list of net devices we take care of. Each pattern must match the full device name.
 # Default: [] is empty, meaning no devices.
 #
 [MetricCollector.NetdevDCB]
-	DeviceList = ["eth0", "eth1"]
+	DeviceList = ["eth[0-9]+"]
 ```
 
-- **DeviceList**：需要采集 DCB（优先流控 PFC）信息的网卡列表。
+- **DeviceList**：需要采集 DCB（优先流控 PFC）信息的网卡正则列表。
 
-  默认空。 
+  每一项都需要完整匹配网卡名。写成 "eth0" 时仍然只匹配 eth0，写成 "eth[0-9]+" 时可以匹配一组 eth 网卡。默认空。
 
   **说明**：主要用于数据中心网络环境下的优先级流控监控。
 
@@ -885,16 +885,16 @@ IssuesList = []
 # Collecting the hardware statistic of net devices, e.g, rx_dropped.
 #
 # - DeviceList
-# The net devices we take care of.
+# Regex list of net devices we take care of. Each pattern must match the full device name.
 # Default: [] is empty, meaning no devices.
 #
 [MetricCollector.NetdevHW]
-	DeviceList = ["eth0", "eth1"]
+	DeviceList = ["eth[0-9]+"]
 ```
 
-- **DeviceList**：需要采集硬件层统计（如 rx_dropped）的网卡列表。
+- **DeviceList**：需要采集硬件层统计（如 rx_dropped）的网卡正则列表。
 
-  默认空。 
+  每一项都需要完整匹配网卡名。写成 "eth0" 时仍然只匹配 eth0，写成 "eth[0-9]+" 时可以匹配一组 eth 网卡。默认空。
 
   **说明**：聚焦硬件丢包、错误等底层指标。
 
