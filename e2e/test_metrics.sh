@@ -21,7 +21,7 @@ source ${ROOT_DIR}/integration/lib.sh
 test_huatuo_bamai_metrics() {
 	log_info "⬅️ test huatuo-bamai metrics"
 	for i in {1..10}; do
-		huatuo_bamai_metrics >/dev/null
+		huatuo_bamai_metrics > /dev/null
 		sleep 0.2
 	done
 	log_info "✅ test huatuo-bamai metrics ok"

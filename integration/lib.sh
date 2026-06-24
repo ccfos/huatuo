@@ -20,13 +20,19 @@ set -euo pipefail
 
 TEST_LOG_TAG=${TEST_LOG_TAG:-"INTEGRATION TEST"}
 
-log_info()  { echo "[${TEST_LOG_TAG}] $*"; }
-log_warn()  { echo "[${TEST_LOG_TAG}][WARN] $*" >&2; }
+log_info() { echo "[${TEST_LOG_TAG}] $*"; }
+log_warn() { echo "[${TEST_LOG_TAG}][WARN] $*" >&2; }
 log_error() { echo "[${TEST_LOG_TAG}][ERROR] $*" >&2; }
-fatal()     { echo "[${TEST_LOG_TAG}][FAIL] $*" >&2; exit 1; }
+fatal() {
+	echo "[${TEST_LOG_TAG}][FAIL] $*" >&2
+	exit 1
+}
 
 # skip exits 0 so the harness treats it as success without false confidence.
-skip() { echo "[${TEST_LOG_TAG}][SKIP] $*"; exit 0; }
+skip() {
+	echo "[${TEST_LOG_TAG}][SKIP] $*"
+	exit 0
+}
 
 # --------------------------------- utils ------------------------------------
 
@@ -42,9 +48,10 @@ assert_eq() {
 wait_until() {
 	local timeout=$1 interval=$2 desc=$3
 	shift 3
-	local func=$1; shift
+	local func=$1
+	shift
 
-	if ! type -t "$func" >/dev/null 2>&1; then
+	if ! type -t "$func" > /dev/null 2>&1; then
 		log_error "wait_until expects function or command: %q" "$func"
 		return 1
 	fi
@@ -94,9 +101,9 @@ huatuo_bamai_start() {
 	[[ -x "${HUATUO_BAMAI_BIN}" ]] || fatal "huatuo-bamai binary not found: ${HUATUO_BAMAI_BIN}"
 
 	log_info "starting huatuo-bamai: $*"
-	"${HUATUO_BAMAI_BIN}" "$@" >"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" 2>&1 &
+	"${HUATUO_BAMAI_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" 2>&1 &
 	local pid=$!
-	echo "$pid" >"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
+	echo "$pid" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
 	log_info "huatuo-bamai pid: ${pid}"
 
 	sleep 0.5
@@ -106,31 +113,31 @@ huatuo_bamai_start() {
 
 huatuo_bamai_ready() {
 	local pid
-	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2>/dev/null || echo "")
+	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2> /dev/null || echo "")
 	[[ -n "$pid" ]] || return 1
 
-	if ! kill -0 "${pid}" 2>/dev/null; then
+	if ! kill -0 "${pid}" 2> /dev/null; then
 		log_error "huatuo-bamai pid=${pid} exited, last log:"
 		tail -20 "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2 || echo "empty"
 		return 1
 	fi
 
-	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" >/dev/null
+	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" > /dev/null
 }
 
 huatuo_bamai_stop() {
 	local exit_code=${1:-0}
 
 	local pid
-	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2>/dev/null || echo "")
-	if [[ -n "$pid" ]] && kill -0 "${pid}" 2>/dev/null; then
+	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2> /dev/null || echo "")
+	if [[ -n "$pid" ]] && kill -0 "${pid}" 2> /dev/null; then
 		kill -TERM "${pid}"
 		local waited=0
-		while kill -0 "${pid}" 2>/dev/null && [[ $waited -lt 10 ]]; do
+		while kill -0 "${pid}" 2> /dev/null && [[ $waited -lt 10 ]]; do
 			sleep 1
 			waited=$((waited + 1))
 		done
-		kill -9 "${pid}" 2>/dev/null || true
+		kill -9 "${pid}" 2> /dev/null || true
 	fi
 	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
 
@@ -167,13 +174,13 @@ huatuo_bamai_log_check() {
 
 huatuo_bamai_pod_count() {
 	local regex=$1
-	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_PODS_API}" |
-		jq --arg re "$regex" '
+	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_PODS_API}" \
+		| jq --arg re "$regex" '
       [ .data[]
         | select(.hostname != null)
         | select(.hostname | test($re))
       ] | length
-    ' 2>/dev/null || echo 0
+    ' 2> /dev/null || echo 0
 }
 
 # ----------------------------- metrics helpers --------------------------------
@@ -192,7 +199,7 @@ integration_huatuo_bamai_start() {
 
 # huatuo_bamai_collect_metrics saves /metrics output to the temp metrics file.
 huatuo_bamai_collect_metrics() {
-	huatuo_bamai_metrics >"${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
+	huatuo_bamai_metrics > "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
 }
 
 # huatuo_bamai_await_metrics waits until the metrics endpoint responds, then saves.
@@ -207,20 +214,25 @@ huatuo_bamai_await_metrics() {
 # Single-pass metric assertion: verifies present patterns exist and absent
 # patterns do not, using at most 2 grep invocations regardless of pattern count.
 check_metrics() {
-	local desc=$1; shift
+	local desc=$1
+	shift
 	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
 	local prefix="huatuo_bamai_"
 
 	local present=() absent=()
 	while [[ $# -gt 0 && "$1" != "--" ]]; do
-		present+=("$1"); shift
+		present+=("$1")
+		shift
 	done
-	shift 2>/dev/null || true
+	shift 2> /dev/null || true
 	absent=("$@")
 
 	if [[ ${#absent[@]} -gt 0 ]]; then
 		local absent_re
-		absent_re=$(IFS='|'; echo "${absent[*]}")
+		absent_re=$(
+			IFS='|'
+			echo "${absent[*]}"
+		)
 		local found
 		found=$(grep -oE "${prefix}(${absent_re})" "$metrics_file" || true)
 		[[ -z "$found" ]] || fatal "${desc}: expected absent but found: ${found}"
@@ -228,7 +240,10 @@ check_metrics() {
 
 	if [[ ${#present[@]} -gt 0 ]]; then
 		local present_re
-		present_re=$(IFS='|'; echo "${present[*]}")
+		present_re=$(
+			IFS='|'
+			echo "${present[*]}"
+		)
 		local matches
 		matches=$(grep -oE "${prefix}(${present_re})" "$metrics_file" || true)
 		local pat

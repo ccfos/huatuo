@@ -39,4 +39,3 @@ check_metrics "include filter" \
 	'netdev_.*device="eth1"' 'netdev_.*device="docker0"' \
 	'mountpoint_perm_ro{.*mountpoint="/sys/fs/cgroup"' \
 	'mountpoint_perm_ro{.*mountpoint="/home/root/containers'
-
