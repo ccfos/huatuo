@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	capnproto.org/go/capnp/v3 v3.1.0-alpha.2
+	github.com/Workiva/go-datastructures v1.1.7
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/cilium/ebpf v0.16.0
 	github.com/cloudflare/backoff v0.0.0-20240920015135-e46b80a3a7d0

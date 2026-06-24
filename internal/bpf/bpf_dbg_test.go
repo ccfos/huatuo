@@ -57,7 +57,7 @@ func TestBpfDbgEventRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip mismatch: %+v != %+v", decoded, e)
 	}
 	if nullTerminated(decoded.Msg[:]) != "hello world" {
-		t.Fatalf("msg mismatch: %q", string(decoded.Msg[:]))
+		t.Fatalf("msg mismatch: %q", nullTerminated(decoded.Msg[:]))
 	}
 }
 

@@ -1,16 +1,12 @@
 # capnproto.org/go/capnp/v3 v3.1.0-alpha.2
 ## explicit; go 1.19
 capnproto.org/go/capnp/v3
-capnproto.org/go/capnp/v3/encoding/text
 capnproto.org/go/capnp/v3/exc
 capnproto.org/go/capnp/v3/exp/bufferpool
 capnproto.org/go/capnp/v3/flowcontrol
-capnproto.org/go/capnp/v3/internal/nodemap
-capnproto.org/go/capnp/v3/internal/schema
 capnproto.org/go/capnp/v3/internal/str
 capnproto.org/go/capnp/v3/internal/strquote
 capnproto.org/go/capnp/v3/packed
-capnproto.org/go/capnp/v3/schemas
 capnproto.org/go/capnp/v3/util/deferred
 capnproto.org/go/capnp/v3/util/maybe
 capnproto.org/go/capnp/v3/util/rc
@@ -28,6 +24,9 @@ github.com/Microsoft/go-winio/internal/fs
 github.com/Microsoft/go-winio/internal/socket
 github.com/Microsoft/go-winio/internal/stringbuffer
 github.com/Microsoft/go-winio/pkg/guid
+# github.com/Workiva/go-datastructures v1.1.7
+## explicit; go 1.15
+github.com/Workiva/go-datastructures/queue
 # github.com/alecthomas/units v0.0.0-20240927000941-0f3dac36c52b
 ## explicit; go 1.15
 github.com/alecthomas/units
