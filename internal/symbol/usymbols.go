@@ -21,7 +21,7 @@ import (
 	"slices"
 
 	"huatuo-bamai/internal/procfs"
-	utils "huatuo-bamai/internal/profiler/common"
+	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/utils/fileutil"
 )
 
@@ -278,7 +278,7 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 		return "", nil
 	}
 
-	inContainer, err := utils.IsProcessInContainer(int(pid))
+	inContainer, err := procutil.IsProcessInContainer(int(pid))
 	if err != nil {
 		return "", err
 	}

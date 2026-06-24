@@ -1,0 +1,203 @@
+#include "vmlinux.h"
+#include "bpf_common.h"
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
+#include <bpf/bpf_core_read.h>
+
+char __license[] SEC("license") = "Dual MIT/GPL";
+
+volatile const u64 target_css = 0;
+volatile const u64 target_pid = 0;
+volatile const u64 idle_class_addr = 0;
+
+#ifndef TASK_COMM_LEN
+#define TASK_COMM_LEN 16
+#endif
+
+#ifndef PERF_STACK_DEPTH
+#define PERF_STACK_DEPTH 127
+#endif
+
+#ifndef PERF_MAX_STACK_DEPTH
+#define PERF_MAX_STACK_DEPTH		127
+#endif
+
+#define MAX_CPU 256
+
+#define BPF_ANY 0
+
+struct stack_trace_key_t {
+	__u32 pid;		// thread id
+	__u32 tgid;		// process id
+	__u32 cpu;
+	char comm[TASK_COMM_LEN];
+	int kernstack;
+	int userstack;
+	int intpstack;
+	__u32 flags;
+	__u64 uprobe_addr;
+	__u64 timestamp;
+};
+
+// #define BPF_F_USER_STACK		(1ULL << 8)
+
+#define STACK_MAP_ENTRIES 65536
+
+#ifndef BPF_F_USER_STACK
+#define BPF_F_USER_STACK (1ULL << 8)
+#endif
+
+#define KERN_STACKID_FLAGS (0)
+#define USER_STACKID_FLAGS (0 | BPF_F_USER_STACK)
+
+typedef enum {
+	TRANSFER_CNT_IDX = 0,	/* buffer-a and buffer-b transfer count. */
+	SAMPLE_CNT_A_IDX,	/* sample count A */
+	SAMPLE_CNT_B_IDX,	/* sample count B */
+	PROFILER_CNT
+} profiler_idx;
+
+
+// state map
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__type(key, u32);
+	__type(value, u64);
+	__uint(max_entries, PROFILER_CNT);
+} profiler_state_map SEC(".maps");
+
+
+struct {
+	__uint(type, BPF_MAP_TYPE_STACK_TRACE);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, PERF_MAX_STACK_DEPTH * sizeof(u64));
+	__uint(max_entries, STACK_MAP_ENTRIES);
+} stack_map_a SEC(".maps");
+
+
+struct {
+	__uint(type, BPF_MAP_TYPE_STACK_TRACE);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, PERF_MAX_STACK_DEPTH * sizeof(u64));
+	__uint(max_entries, STACK_MAP_ENTRIES);
+} stack_map_b SEC(".maps");
+
+
+/* Original A/B perf_event_array used for actual output */
+struct {
+	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+	__uint(key_size, sizeof(int));
+	__uint(value_size, sizeof(u32));
+} profiler_output_a SEC(".maps");
+
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+	__uint(key_size, sizeof(int));
+	__uint(value_size, sizeof(u32));
+} profiler_output_b SEC(".maps");
+
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, sizeof(struct stack_trace_key_t));
+	__uint(max_entries, 1);
+} event_buf SEC(".maps");
+
+
+#ifndef COMPAT_BPF_F_CURRENT_CPU
+#define COMPAT_BPF_F_CURRENT_CPU 0
+#endif
+
+SEC("perf_event/software/cpu_clock")
+int perf_event_sw_cpu_clock(struct pt_regs *ctx)
+{
+	u32 count_idx = TRANSFER_CNT_IDX;
+	u64 *transfer_count_ptr =
+		bpf_map_lookup_elem(&profiler_state_map, &count_idx);
+
+	u64 *sample_count_ptrs[2];
+
+	count_idx = SAMPLE_CNT_A_IDX;
+	sample_count_ptrs[0] = bpf_map_lookup_elem(&profiler_state_map, &count_idx);
+
+	count_idx = SAMPLE_CNT_B_IDX;
+	sample_count_ptrs[1] = bpf_map_lookup_elem(&profiler_state_map, &count_idx);
+
+	if (transfer_count_ptr == NULL || sample_count_ptrs[0] == NULL || sample_count_ptrs[1] == NULL) {
+		u64 err_val = 1;
+		bpf_map_update_elem(&profiler_state_map, &count_idx, &err_val, BPF_ANY);
+		return 0;
+	}
+
+	struct task_struct *curr = (struct task_struct *)bpf_get_current_task();
+	u64 cpu_css = (u64)BPF_CORE_READ(curr, cgroups, subsys[cpu_cgrp_id]);
+	u64 class = (u64)BPF_CORE_READ(curr, sched_class);
+
+	if (target_css != 0 && target_css != cpu_css)
+		return 0;
+
+	u64 id = bpf_get_current_pid_tgid() >> 32;
+	if (target_pid != 0 && target_pid != id)
+		return 0;
+
+	if (idle_class_addr != 0 && class == idle_class_addr)
+		return 0;
+
+	/* Pointers to be used */
+	struct stack_trace_key_t *event = NULL;
+	void *stack_map = NULL;         /* points to stack_map_a or stack_map_b (map variable address) */
+	void *profiler_output = NULL;   /* points to profiler_output_a or profiler_output_b (map variable address) */
+	u64 *sample_count_ptr = NULL;
+
+	u32 idx = 0;
+	/*
+	 * Parity selects both output perf buffer and stack_map.
+	 * Userspace reads the matching perf buffer and stack_map by parity,
+	 * so events do not need to carry a stack_map selector field.
+	 */
+	event = bpf_map_lookup_elem(&event_buf, &idx);
+	if (!event)
+		return 0;
+
+	event->tgid = id;
+	event->pid = (u32)id;
+
+	/*
+	 * CPU idle stacks will not be collected.
+	 */
+	if (event->tgid == event->pid && event->pid == 0) {
+		return 0;
+	}
+
+	bpf_get_current_comm(&event->comm, sizeof(event->comm));
+
+	if (((*transfer_count_ptr) & 0x1ULL) == 0) {
+		sample_count_ptr = sample_count_ptrs[0];
+		stack_map = (void *)&stack_map_a;
+		profiler_output = (void *)&profiler_output_a;
+	} else {
+		sample_count_ptr = sample_count_ptrs[1];
+		stack_map = (void *)&stack_map_b;
+		profiler_output = (void *)&profiler_output_b;
+	}
+
+	event->cpu = bpf_get_smp_processor_id();
+	event->timestamp = bpf_ktime_get_ns();
+
+	event->userstack = bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
+	event->kernstack = bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
+
+	if(event->userstack < 0 && event->kernstack < 0){
+		return 0;
+	}
+
+	__sync_fetch_and_add(sample_count_ptr, 1);
+
+	/* Output to perf_event_array: pass the map address (profiler_output) */
+	bpf_perf_event_output(ctx, profiler_output, COMPAT_BPF_F_CURRENT_CPU,
+						  event, sizeof(struct stack_trace_key_t));
+
+	return 0;
+}

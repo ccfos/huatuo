@@ -69,12 +69,11 @@ type kubeletConfigz struct {
 	Kubeletconfig kubeletConfiguration `json:"kubeletconfig"`
 }
 
-type ManagerInitCtx struct {
-	PodReadOnlyPort      uint32
-	PodAuthorizedPort    uint32
-	PodClientCertPath    string
-	PodContainerDisabled bool
-	DockerAPIVersion     string
+type ManagerCtx struct {
+	PodReadOnlyPort   uint32
+	PodAuthorizedPort uint32
+	PodClientCertPath string
+	DockerAPIVersion  string
 
 	// this is used internally.
 	podClientCertPath string
@@ -93,7 +92,7 @@ func kubeletConfigAuthorizedURL(port uint32) string {
 	return fmt.Sprintf("https://127.0.0.1:%d/configz", port)
 }
 
-func kubeletPodListHttpRequest(ctx *ManagerInitCtx) (*http.Client, error) {
+func kubeletPodListHttpRequest(ctx *ManagerCtx) (*http.Client, error) {
 	client := &http.Client{
 		Timeout: kubeletReqTimeout,
 	}
@@ -102,7 +101,7 @@ func kubeletPodListHttpRequest(ctx *ManagerInitCtx) (*http.Client, error) {
 	return client, err
 }
 
-func kubeletPodListAuthorizationRequest(ctx *ManagerInitCtx) (*http.Client, error) {
+func kubeletPodListAuthorizationRequest(ctx *ManagerCtx) (*http.Client, error) {
 	cert, err := tls.LoadX509KeyPair(ctx.podClientCertPath, ctx.podClientCertKey)
 	if err != nil {
 		return nil, fmt.Errorf("loading client key pair [%s,%s]: %w",
@@ -123,7 +122,7 @@ func kubeletPodListAuthorizationRequest(ctx *ManagerInitCtx) (*http.Client, erro
 	return client, err
 }
 
-func kubeletPodListPortCacheUpdate(ctx *ManagerInitCtx) error {
+func kubeletPodListPortCacheUpdate(ctx *ManagerCtx) error {
 	if client, err := kubeletPodListHttpRequest(ctx); err == nil {
 		kubeletPodListURL = kubeletPodListReadOnlyURL(ctx.PodReadOnlyPort)
 		kubeletPodListClient = client
@@ -144,14 +143,8 @@ func kubeletPodListPortCacheUpdate(ctx *ManagerInitCtx) error {
 	return nil
 }
 
-func ManagerInit(ctx *ManagerInitCtx) error {
+func ManagerInit(ctx *ManagerCtx) error {
 	dockerAPIVersion = ctx.DockerAPIVersion
-
-	// Pod sync disabled, directly return
-	if ctx.PodContainerDisabled {
-		log.Infof("skip pod sync: pod container from kubelet is disabled")
-		return nil
-	}
 
 	if ctx.PodReadOnlyPort == 0 && ctx.PodAuthorizedPort == 0 {
 		log.Warnf("pod sync is not working, we manually turned off this, readonlyport == 0, and authorizedport == 0")
@@ -512,7 +505,7 @@ func kubeletConfigFileDefault() (kubeletConfiguration, error) {
 //
 // CgroupDriver
 // ContainerRuntimeEndpoint
-func kubeletConfigCacheUpdate(ctx *ManagerInitCtx) error {
+func kubeletConfigCacheUpdate(ctx *ManagerCtx) error {
 	var (
 		config kubeletConfiguration
 		err    error
