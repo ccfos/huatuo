@@ -22,9 +22,9 @@ import (
 )
 
 var (
-	kprobeOnce    sync.Mutex
-	kprobeCache   map[string]struct{}
-	kprobeCached  bool
+	kprobeOnce   sync.Mutex
+	kprobeCache  map[string]struct{}
+	kprobeCached bool
 )
 
 // loadKprobeFunctions reads /sys/kernel/debug/tracing/available_filter_functions
