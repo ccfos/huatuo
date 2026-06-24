@@ -59,11 +59,11 @@ func SelectMergeStacktraces(req *querierv1.SelectMergeStacktracesRequest) (*quer
 		Limit:       100,
 	}
 
-	log.Debugf("1 SelectMergeStacktracesRequest: %+v", req)
+	log.Debugf("SelectMergeStacktracesRequest: %+v", req)
 
 	profileTypes := strings.Split(filter.ProfileType, ":")
 	if len(profileTypes) != 5 {
-		return nil, fmt.Errorf("invalid profile type: %s", filter.ProfileType)
+		return nil, fmt.Errorf("invalid profile type: %q", filter.ProfileType)
 	}
 
 	// labels
@@ -86,7 +86,7 @@ func SelectMergeStacktraces(req *querierv1.SelectMergeStacktracesRequest) (*quer
 		case "container_hostname":
 			filter.ContainerHostname = label.Value
 		default:
-			return nil, fmt.Errorf("invalid label: %s", label.Name)
+			return nil, fmt.Errorf("invalid label: %q", label.Name)
 		}
 	}
 
@@ -126,7 +126,7 @@ func SelectMergeStacktraces(req *querierv1.SelectMergeStacktracesRequest) (*quer
 		}
 	}
 	if sampleTypeIndex == -1 {
-		return nil, fmt.Errorf("sample type not found: %s", sampleType)
+		return nil, fmt.Errorf("sample type not found: %q", sampleType)
 	}
 
 	// Create a map for quick location lookup
