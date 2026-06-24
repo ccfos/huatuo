@@ -234,6 +234,37 @@ func TestRunningTaskCount(t *testing.T) {
 	}
 }
 
+func TestListTasks(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+
+	taskLifeTmpCache.Store("task-z", &task{
+		id:         "task-z",
+		execBinary: "mem",
+		status:     StatusFailed,
+	})
+	taskLifeTmpCache.Store("task-a", &task{
+		id:         "task-a",
+		execBinary: "cpu",
+		status:     StatusRunning,
+	})
+
+	got := ListTasks()
+	if len(got) != 2 {
+		t.Fatalf("ListTasks() len=%d, want 2", len(got))
+	}
+
+	want := []TaskInfo{
+		{TaskID: "task-a", TracerName: "cpu", Status: StatusRunning},
+		{TaskID: "task-z", TracerName: "mem", Status: StatusFailed},
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("ListTasks()[%d]=%+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
 func TestSetDeadlineDefault(t *testing.T) {
 	task := &task{}
 	before := time.Now()
