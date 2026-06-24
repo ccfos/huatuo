@@ -133,9 +133,27 @@ BlackList = ["netdev_hw", "metax_gpu"]
     # - Password
     # There is no default username and password.
     #
+    # - CAFile
+    # CA certificate file for verifying HTTPS Elasticsearch/OpenSearch servers.
+    # Empty means using system roots only.
+    #
+    # - CertFile
+    # - KeyFile
+    # Client certificate and private key files for mutual TLS.
+    # Configure them together or leave both empty.
+    #
+    # - InsecureSkipVerify
+    # Keep true to preserve the historical behavior with self-signed servers.
+    # Set false when CAFile or system roots can verify the server certificate.
+    # Default: true
+    #
     [Storage.ES]
         # Address = "http://127.0.0.1:9200"
         # Index = "huatuo_bamai"
+        # CAFile = ""
+        # CertFile = ""
+        # KeyFile = ""
+        # InsecureSkipVerify = true
         Username = "elastic"
         Password = "huatuo-bamai"
 ```
@@ -163,6 +181,18 @@ BlackList = ["netdev_hw", "metax_gpu"]
   No default value (example uses huatuo-bamai).
 
   **Description**: Used together with the username. In production, use a strong password and enable TLS encryption.
+
+- **CAFile**: CA certificate file used to verify HTTPS Elasticsearch/OpenSearch servers.
+
+  Default: empty, which means the client uses system root certificates only.
+
+- **CertFile** and **KeyFile**: Client certificate and private key files for mutual TLS.
+
+  Configure both fields together, or leave both empty.
+
+- **InsecureSkipVerify**: Whether to skip server certificate verification.
+
+  Default: true, preserving the previous behavior for existing self-signed deployments. Set it to false when CAFile or system roots can verify the server certificate.
 
 **Overall**: ES/OS storage persists kernel tracing and event data for later search and analysis.
 

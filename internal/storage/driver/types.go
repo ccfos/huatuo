@@ -56,6 +56,11 @@ type Config struct {
 	ESUsername  string
 	ESPassword  string
 	ESIndex     string
+	ESCAFile    string
+	ESCertFile  string
+	ESKeyFile   string
+	// Nil keeps the backend's historical default; non-nil makes the choice explicit.
+	ESInsecureSkipVerify *bool
 }
 
 // Op is a storage query operator.

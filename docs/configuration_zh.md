@@ -132,9 +132,27 @@ BlackList = ["netdev_hw", "metax_gpu"]
     # - Password
     # There is no default username and password.
     #
+    # - CAFile
+    # CA certificate file for verifying HTTPS Elasticsearch/OpenSearch servers.
+    # Empty means using system roots only.
+    #
+    # - CertFile
+    # - KeyFile
+    # Client certificate and private key files for mutual TLS.
+    # Configure them together or leave both empty.
+    #
+    # - InsecureSkipVerify
+    # Keep true to preserve the historical behavior with self-signed servers.
+    # Set false when CAFile or system roots can verify the server certificate.
+    # Default: true
+    #
     [Storage.ES]
         # Address = "http://127.0.0.1:9200"
         # Index = "huatuo_bamai"
+        # CAFile = ""
+        # CertFile = ""
+        # KeyFile = ""
+        # InsecureSkipVerify = true
         Username = "elastic"
         Password = "huatuo-bamai"
 ```
@@ -162,6 +180,18 @@ BlackList = ["netdev_hw", "metax_gpu"]
   无默认值（示例中使用 huatuo-bamai）。
 
   **说明**：配合用户名进行安全认证。生产环境强烈建议使用强密码并结合 TLS 加密传输。
+
+- **CAFile**：用于校验 HTTPS ElasticSearch/OpenSearch 服务端证书的 CA 证书文件。
+
+  默认空，表示只使用系统根证书。
+
+- **CertFile** 和 **KeyFile**：用于双向 TLS 的客户端证书和私钥文件。
+
+  两个字段需要同时配置，或者都保持为空。
+
+- **InsecureSkipVerify**：是否跳过服务端证书校验。
+
+  默认 true，用于兼容以前自签名证书也能连接的行为。当 `CAFile` 或系统根证书可以校验服务端证书时，建议设置为 false。
 
 **整体说明**：ES/OS 存储用于持久化内核追踪和事件数据，便于后续检索与分析。如果用户不关心 Linux 内核事件、Autotracing 数据则可以关闭该配置。
 

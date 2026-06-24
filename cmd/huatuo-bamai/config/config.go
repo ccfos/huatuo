@@ -45,6 +45,10 @@ type BamaiConfig struct {
 			Address            string `default:"http://127.0.0.1:9200"`
 			Username, Password string
 			Index              string `default:"huatuo_bamai"`
+			CAFile             string
+			CertFile           string
+			KeyFile            string
+			InsecureSkipVerify bool `default:"true"`
 		}
 
 		LocalFile struct {

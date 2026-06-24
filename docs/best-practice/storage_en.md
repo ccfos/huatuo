@@ -110,6 +110,10 @@ Add the following configuration to `huatuo-bamai.conf`. The default username and
 [Storage.ES]
     Address = "https://127.0.0.1:9200"
     Index = "huatuo_bamai"
+    # CAFile = "/path/to/ca.crt"
+    # CertFile = "/path/to/client.crt"
+    # KeyFile = "/path/to/client.key"
+    # InsecureSkipVerify = false
     Username = "admin"
     Password = "admin"
 ```
@@ -234,6 +238,10 @@ Add the following configuration to `huatuo-bamai.conf`. The default username for
 [Storage.ES]
     Address = "https://127.0.0.1:9200"
     Index = "huatuo_bamai"
+    # CAFile = "/path/to/ca.crt"
+    # CertFile = "/path/to/client.crt"
+    # KeyFile = "/path/to/client.key"
+    # InsecureSkipVerify = false
     Username = "elastic"
     Password = "123456"
 ```
