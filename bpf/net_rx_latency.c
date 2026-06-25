@@ -34,6 +34,9 @@ struct perf_event_t {
 	u32 ack_seq;
 	u8 state;
 	u8 where;
+	u8 _pad[2];
+	char netdev_name[IFNAMSIZ];
+	u32 netns_inum;
 };
 
 enum skb_rcv_where {
@@ -55,6 +58,46 @@ struct mix {
 	u8 where;
 };
 
+// CO-RE flavors for the skb timestamp-type bit. Two coexisting field names across kernels:
+//   - 6.0 .. 6.9 mainline + RHEL 5.14 backport (Rocky 9.6): mono_delivery_time:1
+//   - 6.10+ mainline + Ubuntu 6.8 backport (24.04 latest): tstamp_type
+//     (1-bit early, 2-bit later when SKB_CLOCK_TAI was added)
+// Pre-6.0 kernels (e.g. Ubuntu 22.04 GA 5.15) have neither — tstamp is wallclock.
+struct sk_buff___mdt { // mono_delivery_time
+	__u8 mono_delivery_time : 1;
+} __attribute__((preserve_access_index));
+
+struct sk_buff___tt { // tstamp_type
+	__u8 tstamp_type : 2;
+} __attribute__((preserve_access_index));
+
+// Mirrors enum skb_tstamp_type in include/linux/skbuff.h
+enum skb_tstamp_type {
+	SKB_CLOCK_REALTIME,
+	SKB_CLOCK_MONOTONIC,
+	SKB_CLOCK_TAI,
+};
+
+// skb_clock_class detects which clock domain skb->tstamp belongs to via CO-RE.
+//  1  = MONOTONIC  (compare directly with bpf_ktime_get_ns())
+//  0  = REALTIME   (add mono_wall_offset before comparing)
+// -1  = TAI        (no usable formula; caller must skip the packet)
+static inline int skb_clock_class(struct sk_buff *skb)
+{
+	struct sk_buff___tt *skb_tt   = (struct sk_buff___tt *)skb;
+	struct sk_buff___mdt *skb_mdt = (struct sk_buff___mdt *)skb;
+
+	if (bpf_core_field_exists(skb_tt->tstamp_type)) {
+		u8 t = BPF_CORE_READ_BITFIELD_PROBED(skb_tt, tstamp_type);
+		if (t == SKB_CLOCK_TAI)
+			return -1;
+		return (t == SKB_CLOCK_MONOTONIC) ? 1 : 0;
+	}
+	if (bpf_core_field_exists(skb_mdt->mono_delivery_time))
+		return !!BPF_CORE_READ_BITFIELD_PROBED(skb_mdt, mono_delivery_time);
+	return 0; // pre-6.0: tstamp is wallclock
+}
+
 static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 {
 	u64 tstamp = BPF_CORE_READ(skb, tstamp);
@@ -64,7 +107,14 @@ static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 	if (!tstamp)
 		return 0;
 
-	return bpf_ktime_get_ns() + mono_wall_offset - tstamp;
+	int cls = skb_clock_class(skb);
+	if (cls < 0)
+		return 0; // TAI: no correct formula, skip packet
+
+	u64 now = cls ? bpf_ktime_get_ns() : bpf_ktime_get_ns() + mono_wall_offset;
+	if (tstamp > now)
+		return 0;
+	return now - tstamp;
 }
 
 static inline u8 get_state(struct sk_buff *skb)
@@ -77,6 +127,9 @@ fill_and_output_event(void *ctx, struct sk_buff *skb, struct mix *_mix)
 {
 	struct perf_event_t event = {};
 	struct tcphdr tcp_hdr;
+	struct net_device *dev;
+	const char *name;
+	struct net *net;
 
 	// ratelimit
 	if (bpf_ratelimited(&rate))
@@ -98,6 +151,20 @@ fill_and_output_event(void *ctx, struct sk_buff *skb, struct mix *_mix)
 	event.pkt_len = BPF_CORE_READ(skb, len);
 	event.state   = _mix->state;
 	event.where   = _mix->where;
+
+	// read netdev name from skb->dev
+	dev = BPF_CORE_READ(skb, dev);
+	if (dev) {
+		name = BPF_CORE_READ(dev, name);
+		bpf_probe_read_kernel_str(
+			event.netdev_name,
+			sizeof(event.netdev_name),
+			name);
+
+		net = BPF_CORE_READ(dev, nd_net.net);
+		if (net)
+			event.netns_inum = BPF_CORE_READ(net, ns.inum);
+	}
 
 	bpf_perf_event_output(ctx, &net_recv_lat_event_map,
 			      COMPAT_BPF_F_CURRENT_CPU, &event,

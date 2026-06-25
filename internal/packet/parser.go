@@ -156,7 +156,7 @@ func Parse(pkt *Hdr) (*Packet, error) {
 				Window:     dec.tcp.Window,
 				Checksum:   dec.tcp.Checksum,
 				Urgent:     dec.tcp.Urgent,
-				SkState:    tcpStateName(pkt.SkState),
+				SkState:    TCPStateName(pkt.SkState),
 			}
 		case layers.LayerTypeUDP:
 			out.UDP = &UDP{
@@ -308,7 +308,7 @@ var tcpStateNames = []string{
 	"NEW_SYN_RECV",
 }
 
-func tcpStateName(state uint8) string {
+func TCPStateName(state uint8) string {
 	if int(state) < len(tcpStateNames) {
 		return tcpStateNames[state]
 	}
