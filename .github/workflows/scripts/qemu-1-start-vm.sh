@@ -34,7 +34,7 @@ function cloud_user_data() {
 	HOST_PUBKEY=$(cat ${SSH_KEY}.pub)
 
 	# for cloud-init
-	tee ${CLOUD_USER_DATA} >/dev/null <<EOF
+	tee ${CLOUD_USER_DATA} > /dev/null << EOF
 #cloud-config
 
 hostname: $OS_DISTRO
@@ -61,7 +61,7 @@ growpart:
 EOF
 
 	if [ -n "$LOCAL_IMG_PATH" ]; then
-		tee -a ${CLOUD_USER_DATA} >>/dev/null <<EOF
+		tee -a ${CLOUD_USER_DATA} >> /dev/null << EOF
 runcmd:
   - mkdir -p ${VM_ROOT}
   - echo "hostshare ${VM_ROOT} 9p trans=virtio,version=9p2000.L,access=any,_netdev 0 0" >> /etc/fstab
@@ -184,7 +184,7 @@ function wait_for_k8s_ready() {
 
 	for ((i = 1; i <= timeout; i += interval)); do
 		if ssh "${SSH_OPTS[@]}" "root@${VM_IP}" \
-			"kubectl wait --for=condition=Ready pod --all -A --timeout=3s" >/dev/null 2>&1; then
+			"kubectl wait --for=condition=Ready pod --all -A --timeout=3s" > /dev/null 2>&1; then
 			jitter_count=$((jitter_count - 1))
 			if [ $jitter_count -le 0 ]; then
 				ssh "${SSH_OPTS[@]}" "root@${VM_IP}" "kubectl get pod -A" || true
@@ -231,7 +231,7 @@ esac
 
 # map OS_DISTRO to a known --os-variant; fall back to latest if unknown
 OS_VARIANT="${OS_DISTRO}"
-if virt-install --osinfo list 2>/dev/null | grep -qwF "${OS_DISTRO}"; then
+if virt-install --osinfo list 2> /dev/null | grep -qwF "${OS_DISTRO}"; then
 	OS_VARIANT="${OS_DISTRO}"
 else
 	case "$OS_DISTRO" in

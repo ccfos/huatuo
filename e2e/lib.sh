@@ -56,14 +56,14 @@ kubelet_pods_json() {
 kubelet_pod_count() {
 	local ns=$1
 	local regex=$2
-	kubelet_pods_json |
-		jq --arg ns "$ns" --arg re "$regex" '
+	kubelet_pods_json \
+		| jq --arg ns "$ns" --arg re "$regex" '
         [ .items[]
           | select(.metadata.namespace == $ns)
           | select(.metadata.name | test($re))
           | select(.status.phase == "Running")
         ] | length
-        ' 2>/dev/null || echo 0
+        ' 2> /dev/null || echo 0
 }
 
 assert_kubelet_pod_count() {
