@@ -9,10 +9,55 @@ weight: 3
 
 ### 1. Build with the Official Image
 
-To isolate the developer’s local environment and simplify the build process, we provide a containerized build method. You can directly use `docker build` to produce an image containing the core collector **huatuo-bamai**, BPF objects, tools, and more. Run the following in the project root directory:
+To isolate the developer's local environment and simplify the build process, we provide a containerized build method. You can directly use `docker build` to produce an image containing the core collector **huatuo-bamai**, BPF objects, tools, and more. Run the following in the project root directory:
+
+#### 1.1 Single-arch Build
 
 ```bash
 docker build --network host -t huatuo/huatuo-bamai:latest .
+```
+
+#### 1.2 Multi-arch Build (linux/amd64 + linux/arm64)
+
+**Environment Setup**
+
+```bash
+# Register QEMU user-mode emulation
+docker run --rm --privileged tonistiigi/binfmt --install all
+
+# Create multi-arch builder
+docker buildx create --name multiarch \
+    --driver docker-container \
+    --driver-opt network=host \
+    --use
+
+# Verify (also triggers bootstrap)
+docker buildx inspect multiarch --bootstrap
+```
+
+**Build and Push**
+
+```bash
+docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    --network=host \
+    -t <your-registry>/huatuo-bamai:latest \
+    -f Dockerfile \
+    --push .
+```
+
+**Verify Multi-arch Manifest**
+
+```bash
+docker buildx imagetools inspect <your-registry>/huatuo-bamai:latest
+```
+
+Expected output contains both platform entries:
+
+```
+Manifests:
+  Platform:  linux/amd64
+  Platform:  linux/arm64
 ```
 
 ### 2. Build a Custom Image
