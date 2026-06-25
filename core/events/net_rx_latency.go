@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"syscall"
 	"time"
@@ -39,34 +40,40 @@ type netRecvLatTracing struct{}
 
 // NetTracingData is the full data structure.
 type NetTracingData struct {
-	Comm    string `json:"comm"`
-	Pid     uint64 `json:"pid"`
-	Where   string `json:"where"`
-	Latency uint64 `json:"latency_ms"`
-	State   string `json:"state"`
-	Saddr   string `json:"saddr"`
-	Daddr   string `json:"daddr"`
-	Sport   uint16 `json:"sport"`
-	Dport   uint16 `json:"dport"`
-	Seq     uint32 `json:"seq"`
-	AckSeq  uint32 `json:"ack_seq"`
-	PktLen  uint64 `json:"pkt_len"`
+	Comm          string  `json:"comm"`
+	Pid           uint64  `json:"pid"`
+	Where         string  `json:"where"`
+	Latency       float64 `json:"latency_ms"`
+	LatThresholds uint64  `json:"lat_thresholds"`
+	NetdevName    string  `json:"netdev_name"`
+	NetnsInum     uint32  `json:"netns_inum"`
+	State         string  `json:"state"`
+	Saddr         string  `json:"saddr"`
+	Daddr         string  `json:"daddr"`
+	Sport         uint16  `json:"sport"`
+	Dport         uint16  `json:"dport"`
+	Seq           uint32  `json:"seq"`
+	AckSeq        uint32  `json:"ack_seq"`
+	PktLen        uint64  `json:"pkt_len"`
 }
 
 // from bpf perf
 type netRcvPerfEvent struct {
-	Comm    [bpf.TaskCommLen]byte
-	Latency uint64
-	TgidPid uint64
-	PktLen  uint64
-	Sport   uint16
-	Dport   uint16
-	Saddr   uint32
-	Daddr   uint32
-	Seq     uint32
-	AckSeq  uint32
-	State   uint8
-	Where   uint8
+	Comm       [bpf.TaskCommLen]byte
+	Latency    uint64
+	TgidPid    uint64
+	PktLen     uint64
+	Sport      uint16
+	Dport      uint16
+	Saddr      uint32
+	Daddr      uint32
+	Seq        uint32
+	AckSeq     uint32
+	State      uint8
+	Where      uint8
+	_          [2]byte
+	NetdevName [bpf.NetdevNameLen]byte
+	NetnsInum  uint32
 }
 
 // from include/net/tcp_states.h
@@ -106,6 +113,13 @@ func newNetRcvLat() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
+func tcpStateName(state uint8) string {
+	if int(state) < len(tcpStateMap) {
+		return tcpStateMap[state]
+	}
+	return "UNKNOWN"
+}
+
 func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	toNetIf := cfg.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
 	toTCPV4 := cfg.NetRxLatency.Driver2TCP          // ms, before RPS to TCP recv(tcp_v4_rcv)
@@ -117,6 +131,8 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 
 	log.Debugf("net_rx_latency start, latency threshold [%v %v %v]ms", toNetIf, toTCPV4, toUserCopy)
 
+	latThresholds := []uint64{toNetIf, toTCPV4, toUserCopy}
+
 	monoWallOffset, err := estMonoWallOffset()
 	if err != nil {
 		return fmt.Errorf("estimate monoWallOffset failed: %w", err)
@@ -127,15 +143,11 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	// for tracing 'net_rx_latency' keep the skb timestamp enabled,
 	// kernel func net_enable_timestamp() is system wide, can enable by set SOF_TIMESTAMPING_RX_SOFTWARE,
 	// ref: https://www.kernel.org/doc/html/latest/networking/timestamping.html.
-	tsfd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	tsConn, err := enableSkbTimestamp()
 	if err != nil {
-		return fmt.Errorf("create timestamp socket: %w", err)
+		return err
 	}
-	defer syscall.Close(tsfd)
-	if err := syscall.SetsockoptInt(tsfd, syscall.SOL_SOCKET, syscall.SO_TIMESTAMPING,
-		unix.SOF_TIMESTAMPING_RX_SOFTWARE); err != nil {
-		return fmt.Errorf("enable skb rx timestamp: %w", err)
-	}
+	defer tsConn.Close()
 
 	args := map[string]any{
 		"mono_wall_offset": monoWallOffset,
@@ -180,38 +192,69 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			comm := "<nil>" // not in process context
 			var pid uint64
 			var containerID string
+
+			netdevName := bytesutil.ToStr(pd.NetdevName[:])
+			if netdevName == "" {
+				netdevName = "n/a"
+			}
+
 			if pd.TgidPid != 0 {
 				comm = bytesutil.ToStr(pd.Comm[:])
 				pid = pd.TgidPid >> 32
 
 				// check if its netns same as host netns
 				if pd.Where == userCopyCase {
-					cid, skip, err := ignore(pid, comm, hostNetNsInode)
+					cid, inode, skip, err := ignore(pid, comm, hostNetNsInode)
 					if err != nil {
-						return err
+						log.Warnf("net_rx_latency: check pid %v failed: %v, skipping event", pid, err)
+						continue
 					}
 					if skip {
 						continue
 					}
 					containerID = cid
+					if pd.NetnsInum == 0 {
+						pd.NetnsInum = uint32(inode)
+					}
+				}
+			}
+
+			if int(pd.Where) >= len(toWhere) {
+				log.Warnf("net_rx_latency: invalid where=%d, skipping", pd.Where)
+				continue
+			}
+
+			// For early stages (TO_NETIF_RCV, TO_TCPV4_RCV), populate container info from netns_inum
+			if containerID == "" && pd.NetnsInum != 0 && pd.Where != userCopyCase {
+				// Skip host network namespace
+				if uint64(pd.NetnsInum) != hostNetNsInode {
+					container, err := pod.ContainerByNetInode(uint64(pd.NetnsInum))
+					if err == nil && container != nil {
+						if isQosExcluded(container) {
+							log.Debugf("net_rx_latency: ignore container %+v", container)
+							continue
+						}
+						containerID = container.ID
+					}
 				}
 			}
 
 			where := toWhere[pd.Where]
-			lat := pd.Latency / 1000 / 1000 // ms
-			state := tcpStateMap[pd.State]
+			lat := float64(pd.Latency) / 1000 / 1000 // ms
+			latThreshold := latThresholds[pd.Where]
+			state := tcpStateName(pd.State)
 			saddr, daddr := netutil.Inetv4Ntop(pd.Saddr).String(), netutil.Inetv4Ntop(pd.Daddr).String()
 			sport, dport := netutil.Ntohs(pd.Sport), netutil.Ntohs(pd.Dport)
 			seq, ackSeq := netutil.Ntohl(pd.Seq), netutil.Ntohl(pd.AckSeq)
 			pktLen := pd.PktLen
 
-			title := fmt.Sprintf("comm=%s:%d to=%s lat(ms)=%v state=%s saddr=%s sport=%d daddr=%s dport=%d seq=%d ackSeq=%d pktLen=%d",
-				comm, pid, where, lat, state, saddr, sport, daddr, dport, seq, ackSeq, pktLen)
-
 			// tcp state filter
 			if (state != "ESTABLISHED") && (state != "<nil>") {
 				continue
 			}
+
+			title := fmt.Sprintf("comm=%s:%d to=%s lat(ms)=%.2f state=%s saddr=%s sport=%d daddr=%s dport=%d seq=%d ackSeq=%d pktLen=%d netdev=%s",
+				comm, pid, where, lat, state, saddr, sport, daddr, dport, seq, ackSeq, pktLen, netdevName)
 
 			// known issue filter
 			_, found := matcher.Classify(cfg.IssuesList, title)
@@ -221,18 +264,21 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			}
 
 			tracerData := &NetTracingData{
-				Comm:    comm,
-				Pid:     pid,
-				Where:   where,
-				Latency: lat,
-				State:   state,
-				Saddr:   saddr,
-				Daddr:   daddr,
-				Sport:   sport,
-				Dport:   dport,
-				Seq:     seq,
-				AckSeq:  ackSeq,
-				PktLen:  pktLen,
+				Comm:          comm,
+				Pid:           pid,
+				Where:         where,
+				Latency:       lat,
+				LatThresholds: latThreshold,
+				NetdevName:    netdevName,
+				NetnsInum:     pd.NetnsInum,
+				State:         state,
+				Saddr:         saddr,
+				Daddr:         daddr,
+				Sport:         sport,
+				Dport:         dport,
+				Seq:           seq,
+				AckSeq:        ackSeq,
+				PktLen:        pktLen,
 			}
 			log.Debugf("net_rx_latency tracerData: %+v", tracerData)
 
@@ -249,19 +295,28 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	}
 }
 
-func ignore(pid uint64, comm string, hostNetnsInode uint64) (containerID string, skip bool, err error) {
+func isQosExcluded(container *pod.Container) bool {
+	for _, level := range cfg.NetRxLatency.ExcludedContainerQos {
+		if strings.EqualFold(container.Qos.String(), level) {
+			return true
+		}
+	}
+	return false
+}
+
+func ignore(pid uint64, comm string, hostNetnsInode uint64) (containerID string, netnsInode uint64, skip bool, err error) {
 	// check if its netns same as host netns
 	dstInode, err := netutil.NetNSInodeByPid(int(pid))
 	if err != nil {
 		// ignore the missing program
 		if errors.Is(err, syscall.ENOENT) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.ESRCH) {
-			return "", true, nil
+			return "", 0, true, nil
 		}
-		return "", skip, fmt.Errorf("get netns inode of pid %v failed: %w", pid, err)
+		return "", 0, skip, fmt.Errorf("get netns inode of pid %v failed: %w", pid, err)
 	}
 	if cfg.NetRxLatency.ExcludedHostNetnamespace && dstInode == hostNetnsInode {
 		log.Debugf("ignore %s:%v the same netns as host", comm, pid)
-		return "", true, nil
+		return "", dstInode, true, nil
 	}
 
 	// check container level
@@ -270,18 +325,32 @@ func ignore(pid uint64, comm string, hostNetnsInode uint64) (containerID string,
 		log.Warnf("get container info by netns inode %v pid %v, failed: %v", dstInode, pid, err)
 	}
 	if container != nil {
-		for _, level := range cfg.NetRxLatency.ExcludedContainerQos {
-			if strings.EqualFold(container.Qos.String(), level) {
-				log.Debugf("ignore container %+v", container)
-				skip = true
-				break
-			}
+		if isQosExcluded(container) {
+			log.Debugf("net_rx_latency: ignore container %+v", container)
+			skip = true
 		}
 		containerID = container.ID
 	}
 
-	return containerID, skip, nil
+	return containerID, dstInode, skip, nil
 }
+
+func enableSkbTimestamp() (io.Closer, error) {
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	if err != nil {
+		return nil, fmt.Errorf("create timestamp socket: %w", err)
+	}
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, unix.SO_TIMESTAMPING,
+		unix.SOF_TIMESTAMPING_RX_SOFTWARE); err != nil {
+		syscall.Close(fd)
+		return nil, fmt.Errorf("enable skb rx timestamp: %w", err)
+	}
+	return fdCloser(fd), nil
+}
+
+type fdCloser int
+
+func (f fdCloser) Close() error { return syscall.Close(int(f)) }
 
 // estimate the offset between clock monotonic and real time
 // bpf_ktime_get_ns() access to clock monotonic, but skb->tstamp = ktime_get_real() at netif_receive_skb_internal
@@ -292,7 +361,7 @@ func estMonoWallOffset() (int64, error) {
 	var bestDelta int64
 	var offset int64
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		err1 := unix.ClockGettime(unix.CLOCK_REALTIME, &t1)
 		err2 := unix.ClockGettime(unix.CLOCK_MONOTONIC, &t2)
 		err3 := unix.ClockGettime(unix.CLOCK_REALTIME, &t3)
