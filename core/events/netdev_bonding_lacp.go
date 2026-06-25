@@ -69,6 +69,8 @@ func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
 	}
 	defer reader.Close()
 
+	b.WaitDetachByBreaker(childCtx, cancel)
+
 	for {
 		select {
 		case <-childCtx.Done():
