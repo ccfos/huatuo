@@ -26,4 +26,3 @@ integration_huatuo_bamai_start
 if ! huatuo_bamai_log_check; then
 	fatal "startup log check failed: found error/panic keywords in huatuo.log"
 fi
-

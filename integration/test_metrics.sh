@@ -29,8 +29,8 @@ for f in "${HUATUO_BAMAI_TEST_EXPECTED}"/*.txt; do
 	prefix="$(basename "$f" .txt)"
 
 	missing_metrics=$(
-		grep -v '^[[:space:]]*\(#\|$\)' "${f}" |
-			grep -Fvw -f "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt" || true
+		grep -v '^[[:space:]]*\(#\|$\)' "${f}" \
+			| grep -Fvw -f "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt" || true
 	)
 	if [[ -n "${missing_metrics}" ]]; then
 		log_info "missing metrics:"
@@ -43,4 +43,3 @@ for f in "${HUATUO_BAMAI_TEST_EXPECTED}"/*.txt; do
 	log_info "metric prefix ok: huatuo_bamai_${prefix}"
 	grep "^huatuo_bamai_${prefix}" "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt" || log_info "(no metrics found)"
 done
-

@@ -48,7 +48,7 @@ log_info "iotracing: duration=${DURATION}s, io_test_dir=${io_test_dir}"
 "${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
 	--duration "${DURATION}" \
 	--output json \
-	>"${TOOL_OUT}" 2>"${TOOL_ERR}" &
+	> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
 io_pid=$!
 
 # Let probes attach before the workload starts.
@@ -58,7 +58,7 @@ sleep 1
 # write_iter probes all see real requests. oflag=dsync syncs every
 # block, keeping a single dd busy until timeout instead of restarting.
 timeout "$((DURATION - 2))" dd if=/dev/zero of="${io_test_dir}/io" \
-	bs=1M oflag=dsync status=none >/dev/null 2>&1 &
+	bs=1M oflag=dsync status=none > /dev/null 2>&1 &
 
 wait "${io_pid}" || dump_tool_logs_and_fail "iotracing exited non-zero"
 [[ -s ${TOOL_OUT} ]] || dump_tool_logs_and_fail "iotracing produced empty output"
@@ -67,8 +67,8 @@ wait "${io_pid}" || dump_tool_logs_and_fail "iotracing exited non-zero"
 jq -e '
 	(.process_file_io_stats | type == "array") and
 	(.io_schedule_timeout_stacks | type == "array")
-' "${TOOL_OUT}" >/dev/null ||
-	dump_tool_logs_and_fail "iotracing JSON schema invalid"
+' "${TOOL_OUT}" > /dev/null \
+	|| dump_tool_logs_and_fail "iotracing JSON schema invalid"
 
 # Accuracy: a row attributed to dd holds a file under io_test_dir with non-zero
 # write bps. comm may be "dd" (BPF capture) or "dd if=/dev/zero ..."
@@ -82,6 +82,5 @@ jq -e --arg dir "${io_test_dir}/" '
 		| select(.path | startswith($dir))
 		| .fs_write_bps + .disk_write_bps)
 	| any(. > 0)
-' "${TOOL_OUT}" >/dev/null ||
-	dump_tool_logs_and_fail "no dd-attributed write to ${io_test_dir} found"
-
+' "${TOOL_OUT}" > /dev/null \
+	|| dump_tool_logs_and_fail "no dd-attributed write to ${io_test_dir} found"

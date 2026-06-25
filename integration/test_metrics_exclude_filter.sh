@@ -33,4 +33,3 @@ check_metrics "exclude filter" \
 	"memory_vmstat_thp_zero_page_alloc" "memory_vmstat_thp_swpout" \
 	"netstat_Tcp_ActiveOpens" "netstat_TcpExt_TCPAutoCorking" \
 	'netdev_.*device="docker0"'
-

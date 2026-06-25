@@ -57,7 +57,8 @@ func DebugEventLoop(ctx context.Context, reader PerfEventReader) error {
 			return err
 		}
 
-		log.Debugf("bpf_dbg: file=%#x line=%d ts=%d msg=%s args=[%#x %#x %#x %#x]",
+		log.Debugf(
+			"bpf_dbg: file=%#x line=%d ts=%d msg=%s args=[%#x %#x %#x %#x]",
 			event.FileID, event.Line, event.Timestamp,
 			nullTerminatedString(event.Msg[:]),
 			event.Args[0], event.Args[1], event.Args[2], event.Args[3],

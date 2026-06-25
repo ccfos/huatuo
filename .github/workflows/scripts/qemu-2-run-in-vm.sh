@@ -20,7 +20,7 @@ COMMAMND_DEPS=(
 function check_command_deps() {
 	local ok=1
 	for cmd in "${COMMAMND_DEPS[@]}"; do
-		if ! command -v "$cmd" &>/dev/null; then
+		if ! command -v "$cmd" &> /dev/null; then
 			echo "⚠️ $cmd not found"
 			ok=0
 		fi
@@ -73,7 +73,7 @@ function install_golang() {
 
 	local need_install=1
 
-	if command -v go >/dev/null 2>&1; then
+	if command -v go > /dev/null 2>&1; then
 		local goversion
 		goversion=$(go version | awk '{print $3}' | sed 's/^go//')
 		[[ "$goversion" == "$GOLANG_VERSION" ]] && need_install=0
@@ -103,7 +103,7 @@ function prapre_test_env() {
 		missing_packages=()
 
 		for pkg in "${packages[@]}"; do
-			if dpkg --status "$pkg" &>/dev/null; then
+			if dpkg --status "$pkg" &> /dev/null; then
 				echo "$pkg is already installed."
 			else
 				echo "$pkg is missing."
