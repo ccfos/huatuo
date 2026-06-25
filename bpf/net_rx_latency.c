@@ -55,6 +55,32 @@ struct mix {
 	u8 where;
 };
 
+struct sk_buff___mdt {
+	__u8 mono_delivery_time: 1;
+} __attribute__((preserve_access_index));
+
+struct sk_buff___tt {
+	__u8 tstamp_type: 2;
+} __attribute__((preserve_access_index));
+
+static inline int skb_clock_class(struct sk_buff *skb)
+{
+	struct sk_buff___tt *skb_tt = (struct sk_buff___tt *)skb;
+	struct sk_buff___mdt *skb_mdt = (struct sk_buff___mdt *)skb;
+
+	if (bpf_core_field_exists(skb_tt->tstamp_type)) {
+		u8 tstamp_type = BPF_CORE_READ_BITFIELD_PROBED(skb_tt, tstamp_type);
+
+		if (tstamp_type == SKB_CLOCK_TAI)
+			return -1;
+		return tstamp_type == SKB_CLOCK_MONOTONIC;
+	}
+	if (bpf_core_field_exists(skb_mdt->mono_delivery_time))
+		return !!BPF_CORE_READ_BITFIELD_PROBED(skb_mdt, mono_delivery_time);
+
+	return 0;
+}
+
 static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 {
 	u64 tstamp = BPF_CORE_READ(skb, tstamp);
@@ -66,19 +92,15 @@ static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 	if (!tstamp)
 		return 0;
 
-	// skb->tstamp may be in ktime (CLOCK_MONOTONIC) or wall time
-	// depending on kernel version and delivery_time semantics.
-	// Newer kernels expose tstamp_type; prior versions use
-	// mono_delivery_time; old kernels always use wall time.
-	u64 base_now = now + mono_wall_offset;
+	// skb->tstamp may be in ktime (CLOCK_MONOTONIC), wall time,
+	// or TAI depending on kernel version and delivery_time semantics.
+	int clock_class = skb_clock_class(skb);
+	if (clock_class < 0)
+		return 0;
 
-	if (bpf_core_field_exists(((struct sk_buff *)0)->tstamp_type)) {
-		if (BPF_CORE_READ_BITFIELD(skb, tstamp_type) == SKB_CLOCK_MONOTONIC)
-			base_now = now;
-	} else if (bpf_core_field_exists(((struct sk_buff *)0)->mono_delivery_time)) {
-		if (BPF_CORE_READ_BITFIELD(skb, mono_delivery_time))
-			base_now = now;
-	}
+	u64 base_now = clock_class ? now : now + mono_wall_offset;
+	if (tstamp > base_now)
+		return 0;
 
 	return base_now - tstamp;
 }
