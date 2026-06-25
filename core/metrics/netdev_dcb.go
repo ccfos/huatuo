@@ -17,10 +17,12 @@ package collector
 import (
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"syscall"
 	"unsafe"
 
+	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 
@@ -124,7 +126,22 @@ func parseAttributes(attrs []syscall.NetlinkRouteAttr) (*ieeePfc, error) {
 func (dcb *dcbCollector) Update() ([]*metric.Data, error) {
 	data := []*metric.Data{}
 
-	for _, ifname := range cfg.NetdevDCB.DeviceList {
+	deviceMatcher, err := matcher.NewValueListMatcher(cfg.NetdevDCB.DeviceList)
+	if err != nil {
+		return nil, err
+	}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, iface := range ifaces {
+		ifname := iface.Name
+		if !deviceMatcher.Match(ifname) {
+			continue
+		}
+
 		msgs, err := doDcbRequest(ifname)
 		if err != nil {
 			if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.ENODEV) {

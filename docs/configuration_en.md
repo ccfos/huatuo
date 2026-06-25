@@ -133,9 +133,27 @@ BlackList = ["netdev_hw", "metax_gpu"]
     # - Password
     # There is no default username and password.
     #
+    # - CAFile
+    # CA certificate file for verifying HTTPS Elasticsearch/OpenSearch servers.
+    # Empty means using system roots only.
+    #
+    # - CertFile
+    # - KeyFile
+    # Client certificate and private key files for mutual TLS.
+    # Configure them together or leave both empty.
+    #
+    # - InsecureSkipVerify
+    # Keep true to preserve the historical behavior with self-signed servers.
+    # Set false when CAFile or system roots can verify the server certificate.
+    # Default: true
+    #
     [Storage.ES]
         # Address = "http://127.0.0.1:9200"
         # Index = "huatuo_bamai"
+        # CAFile = ""
+        # CertFile = ""
+        # KeyFile = ""
+        # InsecureSkipVerify = true
         Username = "elastic"
         Password = "huatuo-bamai"
 ```
@@ -163,6 +181,18 @@ BlackList = ["netdev_hw", "metax_gpu"]
   No default value (example uses huatuo-bamai).
 
   **Description**: Used together with the username. In production, use a strong password and enable TLS encryption.
+
+- **CAFile**: CA certificate file used to verify HTTPS Elasticsearch/OpenSearch servers.
+
+  Default: empty, which means the client uses system root certificates only.
+
+- **CertFile** and **KeyFile**: Client certificate and private key files for mutual TLS.
+
+  Configure both fields together, or leave both empty.
+
+- **InsecureSkipVerify**: Whether to skip server certificate verification.
+
+  Default: true, preserving the previous behavior for existing self-signed deployments. Set it to false when CAFile or system roots can verify the server certificate.
 
 **Overall**: ES/OS storage persists kernel tracing and event data for later search and analysis.
 
@@ -709,16 +739,16 @@ This section is responsible for capturing key kernel events and monitoring laten
 # Monitor network device events.
 #
 # - DeviceList
-# The net devices we monitor.
+# Regex list of net devices we monitor. Each pattern must match the full device name.
 # Default: [] (empty, meaning no devices).
 #
 [EventTracing.Netdev]
-	DeviceList = ["eth0", "eth1", "bond4", "lo"]
+	DeviceList = ["eth[0-9]+", "bond[0-9]+", "lo"]
 ```
 
-- **DeviceList**: List of network devices to monitor.
+- **DeviceList**: Regex list of network devices to monitor.
 
-  Default example includes "eth0", "eth1", "bond4", "lo". An empty list means no devices are monitored.
+  Each item must match the full device name. Exact names such as "eth0" still work; patterns such as "eth[0-9]+" can match a group of devices. An empty list means no devices are monitored.
 
   **Description**: Monitors physical link status events for specified network interfaces.
 
@@ -833,16 +863,16 @@ This section defines collection rules for various system and network metrics. Al
 # Collecting the DCB PFC (Priority-based Flow Control).
 #
 # - DeviceList
-# The net devices we monitor.
+# Regex list of net devices we monitor. Each pattern must match the full device name.
 # Default: [] (empty, meaning no devices).
 #
 [MetricCollector.NetdevDCB]
-	DeviceList = ["eth0", "eth1"]
+	DeviceList = ["eth[0-9]+"]
 ```
 
-- **DeviceList**: List of network devices for which DCB (Data Center Bridging) PFC information is collected.
+- **DeviceList**: Regex list of network devices for which DCB (Data Center Bridging) PFC information is collected.
 
-  Default: empty.
+  Each item must match the full device name. Exact names such as "eth0" still work; patterns such as "eth[0-9]+" can match a group of devices. Default: empty.
 
 #### 8.3 Netdev Hardware Statistics
 
@@ -852,16 +882,16 @@ This section defines collection rules for various system and network metrics. Al
 # Collecting the hardware statistic of net devices, e.g, rx_dropped.
 #
 # - DeviceList
-# The net devices we monitor.
+# Regex list of net devices we monitor. Each pattern must match the full device name.
 # Default: [] (empty, meaning no devices).
 #
 [MetricCollector.NetdevHW]
-	DeviceList = ["eth0", "eth1"]
+	DeviceList = ["eth[0-9]+"]
 ```
 
-- **DeviceList**: List of network devices for hardware-level statistics (e.g., rx_dropped).
+- **DeviceList**: Regex list of network devices for hardware-level statistics (e.g., rx_dropped).
 
-  Default: empty.
+  Each item must match the full device name. Exact names such as "eth0" still work; patterns such as "eth[0-9]+" can match a group of devices. Default: empty.
 
 #### 8.4 Qdisc Collection
 

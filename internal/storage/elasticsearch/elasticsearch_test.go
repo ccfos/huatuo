@@ -16,11 +16,20 @@ package elasticsearch
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -697,6 +706,65 @@ func newBackendForTest(t *testing.T, server *mockElasticsearchServer) *Storage {
 	return backend
 }
 
+func boolPtr(v bool) *bool {
+	return &v
+}
+
+func writeTestCertificatePair(t *testing.T) (string, string) {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("rsa.GenerateKey() returned error: %v", err)
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("rand.Int() returned error: %v", err)
+	}
+
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName: "huatuo-test-client",
+		},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("x509.CreateCertificate() returned error: %v", err)
+	}
+
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "client.crt")
+	keyFile := filepath.Join(dir, "client.key")
+
+	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}), 0o600); err != nil {
+		t.Fatalf("write client certificate: %v", err)
+	}
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0o600); err != nil {
+		t.Fatalf("write client key: %v", err)
+	}
+
+	return certFile, keyFile
+}
+
+func writeCertificateFile(t *testing.T, name string, cert *x509.Certificate) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0o600); err != nil {
+		t.Fatalf("write certificate file: %v", err)
+	}
+	return path
+}
+
 // flushBackend forces the bulk indexer to drain pending items. Save buffers
 // asynchronously, so tests must flush before issuing a read that depends on a
 // just-saved record. After flushing the indexer is closed; tests that need to
@@ -705,6 +773,92 @@ func flushBackend(t *testing.T, backend *Storage) {
 	t.Helper()
 	if err := backend.Close(t.Context()); err != nil {
 		t.Fatalf("flush bulk: %v", err)
+	}
+}
+
+func TestNewTLSConfig_DefaultPreservesInsecureSkipVerify(t *testing.T) {
+	cfg, err := newTLSConfig(tlsOptions{})
+	if err != nil {
+		t.Fatalf("newTLSConfig() returned error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("newTLSConfig() returned nil config")
+	}
+	if !cfg.InsecureSkipVerify {
+		t.Error("InsecureSkipVerify = false, want true for historical default")
+	}
+	if cfg.ClientSessionCache == nil {
+		t.Error("ClientSessionCache = nil, want session cache")
+	}
+}
+
+func TestNewTLSConfig_CanDisableInsecureSkipVerify(t *testing.T) {
+	cfg, err := newTLSConfig(tlsOptions{InsecureSkipVerify: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("newTLSConfig() returned error: %v", err)
+	}
+	if cfg.InsecureSkipVerify {
+		t.Error("InsecureSkipVerify = true, want false")
+	}
+}
+
+func TestNewTLSConfig_ClientCertRequiresKeyPair(t *testing.T) {
+	certFile, _ := writeTestCertificatePair(t)
+
+	_, err := newTLSConfig(tlsOptions{CertFile: certFile})
+	if err == nil {
+		t.Fatal("newTLSConfig() expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "configured together") {
+		t.Errorf("error = %q, want configured together", err.Error())
+	}
+}
+
+func TestNewTLSConfig_LoadsClientCertificate(t *testing.T) {
+	certFile, keyFile := writeTestCertificatePair(t)
+
+	cfg, err := newTLSConfig(tlsOptions{
+		CertFile: certFile,
+		KeyFile:  keyFile,
+	})
+	if err != nil {
+		t.Fatalf("newTLSConfig() returned error: %v", err)
+	}
+	if len(cfg.Certificates) != 1 {
+		t.Errorf("Certificates length = %d, want 1", len(cfg.Certificates))
+	}
+}
+
+func TestNewCompatClient_WithCAAndClientCertFiles(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Elastic-Product", "Elasticsearch")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"name":"mock-es","version":{"number":"8.17.0"}}`))
+	})
+
+	server := httptest.NewUnstartedServer(handler)
+	server.TLS = &tls.Config{
+		ClientAuth: tls.RequireAnyClientCert,
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	caFile := writeCertificateFile(t, "server-ca.crt", server.Certificate())
+	certFile, keyFile := writeTestCertificatePair(t)
+
+	client, err := newCompatClient(&Config{
+		Addresses:          []string{server.URL},
+		CAFile:             caFile,
+		CertFile:           certFile,
+		KeyFile:            keyFile,
+		InsecureSkipVerify: boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("newCompatClient() returned error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("newCompatClient() returned nil client")
 	}
 }
 

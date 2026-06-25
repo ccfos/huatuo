@@ -49,6 +49,12 @@ IssuesList = [["net_rx_latency", "kernel_sched_tick"]]
 [EventTracing.NetRxLatency]
 ExcludedContainerQos = ["bestEffort"]
 
+[Storage.ES]
+CAFile = "/etc/huatuo/es-ca.crt"
+CertFile = "/etc/huatuo/es-client.crt"
+KeyFile = "/etc/huatuo/es-client.key"
+InsecureSkipVerify = false
+
 [MetricCollector.Vmstat]
 IncludedOnHost = "pgscan_direct"
 ExcludedOnHost = "total"
@@ -83,6 +89,18 @@ ExcludedOnContainer = "writeback"
 	}
 	if len(Get().EventTracing.NetRxLatency.ExcludedContainerQos) != 1 {
 		t.Errorf("unexpected ExcludedContainerQos length: %d", len(Get().EventTracing.NetRxLatency.ExcludedContainerQos))
+	}
+	if Get().Storage.ES.CAFile != "/etc/huatuo/es-ca.crt" {
+		t.Errorf("unexpected Storage.ES.CAFile: %q", Get().Storage.ES.CAFile)
+	}
+	if Get().Storage.ES.CertFile != "/etc/huatuo/es-client.crt" {
+		t.Errorf("unexpected Storage.ES.CertFile: %q", Get().Storage.ES.CertFile)
+	}
+	if Get().Storage.ES.KeyFile != "/etc/huatuo/es-client.key" {
+		t.Errorf("unexpected Storage.ES.KeyFile: %q", Get().Storage.ES.KeyFile)
+	}
+	if Get().Storage.ES.InsecureSkipVerify {
+		t.Error("Storage.ES.InsecureSkipVerify should be false")
 	}
 }
 

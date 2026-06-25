@@ -110,6 +110,10 @@ docker logs opensearch
 [Storage.ES]
     Address = "https://127.0.0.1:9200"
     Index = "huatuo_bamai"
+    # CAFile = "/path/to/ca.crt"
+    # CertFile = "/path/to/client.crt"
+    # KeyFile = "/path/to/client.key"
+    # InsecureSkipVerify = false
     Username = "admin"
     Password = "admin"
 ```
@@ -233,6 +237,10 @@ curl -k -u elastic:123456 https://localhost:9200
 [Storage.ES]
     Address = "https://127.0.0.1:9200"
     Index = "huatuo_bamai"
+    # CAFile = "/path/to/ca.crt"
+    # CertFile = "/path/to/client.crt"
+    # KeyFile = "/path/to/client.key"
+    # InsecureSkipVerify = false
     Username = "elastic"
     Password = "123456"
 ```

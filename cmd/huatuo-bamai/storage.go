@@ -43,11 +43,15 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		cfg.Storage.ES.Username != "" &&
 		cfg.Storage.ES.Password != "" {
 		store, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
-			Driver:      "elasticsearch",
-			ESAddresses: splitStorageAddresses(cfg.Storage.ES.Address),
-			ESUsername:  cfg.Storage.ES.Username,
-			ESPassword:  cfg.Storage.ES.Password,
-			ESIndex:     cfg.Storage.ES.Index,
+			Driver:               "elasticsearch",
+			ESAddresses:          splitStorageAddresses(cfg.Storage.ES.Address),
+			ESUsername:           cfg.Storage.ES.Username,
+			ESPassword:           cfg.Storage.ES.Password,
+			ESIndex:              cfg.Storage.ES.Index,
+			ESCAFile:             cfg.Storage.ES.CAFile,
+			ESCertFile:           cfg.Storage.ES.CertFile,
+			ESKeyFile:            cfg.Storage.ES.KeyFile,
+			ESInsecureSkipVerify: &cfg.Storage.ES.InsecureSkipVerify,
 		}, tracing.DocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new tracing document store (elasticsearch): %w", err)
