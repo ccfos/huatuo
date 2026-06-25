@@ -183,10 +183,7 @@ func loadRootCAs(path string) (*x509.CertPool, error) {
 	}
 
 	rootCAs, err := x509.SystemCertPool()
-	if err != nil {
-		rootCAs = x509.NewCertPool()
-	}
-	if rootCAs == nil {
+	if err != nil || rootCAs == nil {
 		rootCAs = x509.NewCertPool()
 	}
 	if !rootCAs.AppendCertsFromPEM(data) {
