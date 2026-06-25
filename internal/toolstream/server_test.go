@@ -281,7 +281,6 @@ func TestCloseIdempotent(t *testing.T) {
 	}
 }
 
-
 func TestHandlerCanCloseServerWithoutDeadlock(t *testing.T) {
 	srv, sockPath := newTestServer(t)
 	closeDone := make(chan error, 1)
