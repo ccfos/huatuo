@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
@@ -289,7 +290,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		case <-ticker.C:
 		}
 
-		if err := p.flipAndDrain(readerA, readerB, stateMapID, stackMapAID, stackMapBID, usym, enqueue); err != nil {
+		if err := p.drainActiveRing(readerA, readerB, stateMapID, stackMapAID, stackMapBID, usym, enqueue); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
@@ -308,49 +309,68 @@ type memBatchKey struct {
 	sel  uint32
 }
 
-// flipAndDrain advances the BPF write parity and drains the ring that was
-// active before the flip. The drain is bounded by sampleCnt set by the BPF
-// side, so it never blocks waiting for events that were never written.
-func (p *memNativeProfiler) flipAndDrain(
+type memActiveRing struct {
+	reader      bpf.PerfEventReader
+	sampleCount uint64
+}
+
+func (p *memNativeProfiler) advanceSwapParity(readerA, readerB bpf.PerfEventReader, stateMapID uint32) (memActiveRing, error) {
+	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
+	if err != nil {
+		return memActiveRing{}, fmt.Errorf("read transferCnt: %w", err)
+	}
+
+	var (
+		ring           memActiveRing
+		sampleCountIdx uint32
+	)
+	if val%2 == 0 {
+		ring = memActiveRing{reader: readerA}
+		sampleCountIdx = bpfmap.SampleCountAIdx
+	} else {
+		ring = memActiveRing{reader: readerB}
+		sampleCountIdx = bpfmap.SampleCountBIdx
+	}
+
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
+		return memActiveRing{}, fmt.Errorf("write transferCnt: %w", err)
+	}
+
+	ring.sampleCount, err = bpfmap.ReadUint64(p.bpf, stateMapID, sampleCountIdx)
+	if err != nil {
+		return memActiveRing{}, fmt.Errorf("read sampleCnt: %w", err)
+	}
+
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
+		return memActiveRing{}, fmt.Errorf("reset sampleCnt: %w", err)
+	}
+
+	return ring, nil
+}
+
+func (p *memNativeProfiler) drainActiveRing(
 	readerA, readerB bpf.PerfEventReader,
 	stateMapID, stackMapAID, stackMapBID uint32,
 	usym *symbol.UsymResolver,
 	enqueue func(any),
 ) error {
-	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
+	ring, err := p.advanceSwapParity(readerA, readerB, stateMapID)
 	if err != nil {
-		return fmt.Errorf("read transferCnt: %w", err)
-	}
-
-	reader := readerA
-	sampleCountIdx := bpfmap.SampleCountAIdx
-
-	if val%2 == 1 {
-		reader = readerB
-		sampleCountIdx = bpfmap.SampleCountBIdx
-	}
-
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
-		return fmt.Errorf("write transferCnt: %w", err)
-	}
-
-	bpfCount, err := bpfmap.ReadUint64(p.bpf, stateMapID, sampleCountIdx)
-	if err != nil {
-		return fmt.Errorf("read sampleCnt: %w", err)
+		return err
 	}
 
 	deltaByKey := make(map[memBatchKey]int64)
 	idsA := make(map[int32]bool)
 	idsB := make(map[int32]bool)
 
-	for i := uint64(0); i < bpfCount; i++ {
+	for i := uint64(0); i < ring.sampleCount; i++ {
 		var evt memEvent
-		if err := reader.ReadInto(&evt); err != nil {
+		if err := ring.reader.ReadInto(&evt); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return err
 			}
 
-			log.P().Warnf("read after %d/%d events: %v", i, bpfCount, err)
+			log.P().Warnf("read after %d/%d events: %v", i, ring.sampleCount, err)
 			break
 		}
 
@@ -387,10 +407,6 @@ func (p *memNativeProfiler) flipAndDrain(
 	stackDataA := bpfmap.BatchReadStackTraces(p.bpf, stackMapAID, idsA)
 	stackDataB := bpfmap.BatchReadStackTraces(p.bpf, stackMapBID, idsB)
 	emitDeltas(deltaByKey, stackDataA, stackDataB, usym, enqueue)
-
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
-		log.P().Warnf("reset sample count: %v", err)
-	}
 
 	return nil
 }
@@ -431,6 +447,32 @@ func emitDeltas(
 		}
 
 		enqueue(rec)
+	}
+}
+
+func resolveStackStrs(
+	ids bpfmap.StackTraceID,
+	pid uint32,
+	stackData map[int32][bpfmap.StackTraceLen]uint64,
+	usym *symbol.UsymResolver,
+	kstackCache, ustackCache map[int32]string,
+) {
+	if ids.KernelID > 0 {
+		if _, ok := kstackCache[ids.KernelID]; !ok {
+			if trace, exists := stackData[ids.KernelID]; exists {
+				strs := symbol.KsymStackStrsReversed(trace[:], len(trace))
+				kstackCache[ids.KernelID] = strings.Join(strs, ";") + ";"
+			}
+		}
+	}
+
+	if ids.UserID > 0 {
+		if _, ok := ustackCache[ids.UserID]; !ok {
+			if trace, exists := stackData[ids.UserID]; exists {
+				strs := usym.UsymStackStrs(pid, trace[:], len(trace))
+				ustackCache[ids.UserID] = strings.Join(strs, ";") + ";"
+			}
+		}
 	}
 }
 

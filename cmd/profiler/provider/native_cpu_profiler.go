@@ -15,12 +15,15 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/cilium/ebpf"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/command/container"
@@ -146,7 +149,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		case <-ticker.C:
 		}
 
-		if err := p.flipAndDrain(readerA, readerB, stateMapID, enqueue); err != nil {
+		if err := p.drainActiveRing(readerA, readerB, stateMapID, enqueue); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
@@ -156,44 +159,70 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	}
 }
 
-// flipAndDrain advances the BPF write parity and drains the ring that was
-// active before the flip. The drain is bounded by sampleCnt (set by the BPF
-// side), so it never blocks waiting for events that were never written.
-func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, stateMapID uint32, enqueue func(any)) error {
+type activeRing struct {
+	reader      bpf.PerfEventReader
+	stackMapID  uint32
+	sampleCount uint64
+}
+
+// advanceSwapParity increments the BPF write-parity counter so the kernel switches to
+// the other buffer pair, then captures and resets the now-frozen ring's sample
+// count. It returns the reader, stack map ID, and captured count for the
+// drainable side.
+func (p *cpuNativeProfiler) advanceSwapParity(readerA, readerB bpf.PerfEventReader, stateMapID uint32) (activeRing, error) {
 	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
 	if err != nil {
-		return fmt.Errorf("read transferCnt: %w", err)
+		return activeRing{}, fmt.Errorf("read transferCnt: %w", err)
 	}
 
-	reader := readerA
-	stackMapID := p.bpf.MapIDByName("stack_map_a")
-	sampleCountIdx := bpfmap.SampleCountAIdx
-
-	if val%2 == 1 {
-		reader = readerB
-		stackMapID = p.bpf.MapIDByName("stack_map_b")
+	var (
+		ring           activeRing
+		sampleCountIdx uint32
+	)
+	if val%2 == 0 {
+		ring = activeRing{
+			reader:     readerA,
+			stackMapID: p.bpf.MapIDByName("stack_map_a"),
+		}
+		sampleCountIdx = bpfmap.SampleCountAIdx
+	} else {
+		ring = activeRing{
+			reader:     readerB,
+			stackMapID: p.bpf.MapIDByName("stack_map_b"),
+		}
 		sampleCountIdx = bpfmap.SampleCountBIdx
 	}
 
 	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
-		return fmt.Errorf("write transferCnt: %w", err)
+		return activeRing{}, fmt.Errorf("write transferCnt: %w", err)
 	}
 
-	bpfCount, err := bpfmap.ReadUint64(p.bpf, stateMapID, sampleCountIdx)
+	ring.sampleCount, err = bpfmap.ReadUint64(p.bpf, stateMapID, sampleCountIdx)
 	if err != nil {
-		return fmt.Errorf("read sampleCnt: %w", err)
+		return activeRing{}, fmt.Errorf("read sampleCnt: %w", err)
 	}
 
-	processStackCounts := make(map[processIDName]map[bpfmap.StackTraceID]int)
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
+		return activeRing{}, fmt.Errorf("reset sampleCnt: %w", err)
+	}
 
-	for i := uint64(0); i < bpfCount; i++ {
+	return ring, nil
+}
+
+func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader, stateMapID uint32, enqueue func(any)) error {
+	ring, err := p.advanceSwapParity(readerA, readerB, stateMapID)
+	if err != nil {
+		return err
+	}
+
+	stackCountsByProc := make(map[processIDName]map[bpfmap.StackTraceID]int)
+
+	for i := uint64(0); i < ring.sampleCount; i++ {
 		var evt cpuEventKey
-		if err := reader.ReadInto(&evt); err != nil {
+		if err := ring.reader.ReadInto(&evt); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return err
 			}
-
-			log.P().Warnf("read after %d/%d events: %v", i, bpfCount, err)
 			break
 		}
 
@@ -204,22 +233,17 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 		pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
 		pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
 
-		if processStackCounts[pidName] == nil {
-			processStackCounts[pidName] = make(map[bpfmap.StackTraceID]int)
+		if stackCountsByProc[pidName] == nil {
+			stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int)
 		}
-		processStackCounts[pidName][pair]++
+		stackCountsByProc[pidName][pair]++
 	}
 
-	if len(processStackCounts) > 0 {
-		aggregateStacksAndStore(p.bpf, processStackCounts, stackMapID, enqueue)
-	}
+	if len(stackCountsByProc) > 0 {
+		var deleteKeys [][]byte
+		aggregateStacksAndStore(p.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys)
 
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
-		log.P().Warnf("reset sample count: %v", err)
-	}
-
-	if len(processStackCounts) > 0 {
-		if err := clearStackMap(p.bpf, stackMapID, processStackCounts); err != nil {
+		if err := p.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
 			log.P().Warnf("clear stack map: %v", err)
 		}
 	}
@@ -227,64 +251,29 @@ func (p *cpuNativeProfiler) flipAndDrain(readerA, readerB bpf.PerfEventReader, s
 	return nil
 }
 
-func clearStackMap(b bpf.BPF, mapID uint32, processStackCounts map[processIDName]map[bpfmap.StackTraceID]int) error {
-	seen := make(map[int32]struct{})
-	for _, stacks := range processStackCounts {
-		for id := range stacks {
-			if id.KernelID > 0 {
-				seen[id.KernelID] = struct{}{}
-			}
-
-			if id.UserID > 0 {
-				seen[id.UserID] = struct{}{}
-			}
-		}
-	}
-
-	if len(seen) == 0 {
-		return nil
-	}
-
-	n := len(seen)
-	buf := make([]byte, 4*n)
-	clearKeys := make([][]byte, 0, n)
-	i := 0
-	for id := range seen {
-		binary.LittleEndian.PutUint32(buf[i:i+4], uint32(id))
-		clearKeys = append(clearKeys, buf[i:i+4])
-		i += 4
-	}
-
-	return b.DeleteMapItems(mapID, clearKeys)
-}
-
 func aggregateStacksAndStore(
 	b bpf.BPF,
-	processStackCounts map[processIDName]map[bpfmap.StackTraceID]int,
-	stMapID uint32,
+	stackCountsByProc map[processIDName]map[bpfmap.StackTraceID]int,
+	stackMapID uint32,
 	enqueue func(any),
+	deleteKeys *[][]byte,
 ) {
-	allStackIDs := make(map[int32]bool)
-	for _, stacks := range processStackCounts {
-		for id := range stacks {
-			if id.KernelID > 0 {
-				allStackIDs[id.KernelID] = true
-			}
-
-			if id.UserID > 0 {
-				allStackIDs[id.UserID] = true
-			}
-		}
-	}
-
-	stackData := bpfmap.BatchReadStackTraces(b, stMapID, allStackIDs)
-	ustackCache := make(map[int32]string)
 	kstackCache := make(map[int32]string)
+	ustackCache := make(map[int32]string)
 	usym := symbol.NewUsymResolver()
 
-	for pidName, stacks := range processStackCounts {
+	for pidName, stacks := range stackCountsByProc {
 		for stackID, count := range stacks {
-			resolveStackStrs(stackID, pidName.Pid, stackData, usym, kstackCache, ustackCache)
+			if stackID.KernelID > 0 {
+				if _, ok := kstackCache[stackID.KernelID]; !ok {
+					kstackCache[stackID.KernelID] = resolveKstack(b, stackMapID, stackID.KernelID, deleteKeys)
+				}
+			}
+			if stackID.UserID > 0 {
+				if _, ok := ustackCache[stackID.UserID]; !ok {
+					ustackCache[stackID.UserID] = resolveUstack(b, stackMapID, stackID.UserID, pidName.Pid, usym, deleteKeys)
+				}
+			}
 
 			record := &stackEntry{
 				Proc:    &processIDName{Pid: pidName.Pid, Name: pidName.Name},
@@ -298,33 +287,47 @@ func aggregateStacksAndStore(
 	}
 }
 
-// resolveStackStrs populates kernel/user stack string caches for a single
-// StackTraceID. Shared by CPU and memory profilers to avoid duplicating the
-// symbol-resolution + cache-fill pattern.
-func resolveStackStrs(
-	ids bpfmap.StackTraceID,
-	pid uint32,
-	stackData map[int32][bpfmap.StackTraceLen]uint64,
-	usym *symbol.UsymResolver,
-	kstackCache, ustackCache map[int32]string,
-) {
-	if ids.KernelID > 0 {
-		if _, ok := kstackCache[ids.KernelID]; !ok {
-			if trace, exists := stackData[ids.KernelID]; exists {
-				strs := symbol.KsymStackStrsReversed(trace[:], len(trace))
-				kstackCache[ids.KernelID] = strings.Join(strs, ";") + ";"
-			}
+func resolveKstack(b bpf.BPF, mapID uint32, kernelID int32, deleteKeys *[][]byte) string {
+	trace, ok := readAndMarkStackTrace(b, mapID, kernelID, deleteKeys)
+	if !ok {
+		return ""
+	}
+	return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
+}
+
+func resolveUstack(b bpf.BPF, mapID uint32, userID int32, pid uint32, usym *symbol.UsymResolver, deleteKeys *[][]byte) string {
+	trace, ok := readAndMarkStackTrace(b, mapID, userID, deleteKeys)
+	if !ok {
+		return ""
+	}
+	return strings.Join(usym.UsymStackStrs(pid, trace[:], len(trace)), ";") + ";"
+}
+
+func readAndMarkStackTrace(b bpf.BPF, mapID uint32, id int32, deleteKeys *[][]byte) ([bpfmap.StackTraceLen]uint64, bool) {
+	keyBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(keyBuf, uint32(id))
+
+	*deleteKeys = append(*deleteKeys, keyBuf)
+
+	val, err := b.ReadMap(mapID, keyBuf)
+	if err != nil {
+		if !errors.Is(err, ebpf.ErrKeyNotExist) {
+			log.P().Warnf("stack map lookup for ID %d: %v", id, err)
 		}
+		return [bpfmap.StackTraceLen]uint64{}, false
 	}
 
-	if ids.UserID > 0 {
-		if _, ok := ustackCache[ids.UserID]; !ok {
-			if trace, exists := stackData[ids.UserID]; exists {
-				strs := usym.UsymStackStrs(pid, trace[:], len(trace))
-				ustackCache[ids.UserID] = strings.Join(strs, ";") + ";"
-			}
-		}
+	if len(val) != bpfmap.StackTraceLen*8 {
+		return [bpfmap.StackTraceLen]uint64{}, false
 	}
+
+	var trace [bpfmap.StackTraceLen]uint64
+	reader := bytes.NewReader(val)
+	if err := binary.Read(reader, binary.LittleEndian, &trace); err != nil {
+		return [bpfmap.StackTraceLen]uint64{}, false
+	}
+
+	return trace, true
 }
 
 func closeBpfSafe(b bpf.BPF) error {
