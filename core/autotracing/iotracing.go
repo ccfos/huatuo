@@ -97,9 +97,12 @@ type DiskStatus struct {
 }
 
 type ReasonSnapshot struct {
-	Type     string     `json:"type"`
-	Device   string     `json:"device"`
-	Iostatus DiskStatus `json:"iostatus"`
+	Type        string     `json:"type"`
+	Device      string     `json:"device"`
+	MajorNumber uint32     `json:"major_num"`
+	MinorNumber uint32     `json:"minor_num"`
+	Iostatus    DiskStatus `json:"iostatus"`
+	Summary     string     `json:"summary"`
 }
 
 // IoThresholds holds threshold values independently
@@ -172,6 +175,22 @@ func shouldIoThreshold(prev, curr DiskStatus, thresholds IoThresholds) threshold
 	return ioReasonNone
 }
 
+func validateIoThresholds(c *IoThresholds) error {
+	if c.UtilThreshold == 0 {
+		return fmt.Errorf("io util threshold must be positive, got %d", c.UtilThreshold)
+	}
+	if c.AwaitThreshold == 0 {
+		return fmt.Errorf("io await threshold must be positive, got %d", c.AwaitThreshold)
+	}
+	if c.RbpsThreshold == 0 {
+		return fmt.Errorf("io read bps threshold must be positive, got %d", c.RbpsThreshold)
+	}
+	if c.WbpsThreshold == 0 {
+		return fmt.Errorf("io write bps threshold must be positive, got %d", c.WbpsThreshold)
+	}
+	return nil
+}
+
 func ReadDiskStats() ([]blockdevice.Diskstats, error) {
 	fs, err := blockdevice.NewDefaultFS()
 	if err != nil {
@@ -183,6 +202,18 @@ func ReadDiskStats() ([]blockdevice.Diskstats, error) {
 
 // blockdevice.Diskstats is heavy (168 bytes); consider passing it by pointer
 func buildDiskMetric(prev, curr *blockdevice.Diskstats, intervalSeconds uint64) DiskStatus {
+	if intervalSeconds == 0 {
+		return DiskStatus{}
+	}
+	// Kernel counters reset when a device is removed and re-registered
+	// under the same name (hotplug, driver rebind, LVM rebuild). Without
+	// this guard the reset causes uint64 underflow in the delta below,
+	// producing a fake metric that triggers a false IO alert.
+	if curr.ReadIOs < prev.ReadIOs || curr.WriteIOs < prev.WriteIOs ||
+		curr.IOsTotalTicks < prev.IOsTotalTicks {
+		return DiskStatus{}
+	}
+
 	deltaReadIOs := curr.ReadIOs - prev.ReadIOs
 	deltaWriteIOs := curr.WriteIOs - prev.WriteIOs
 
@@ -210,6 +241,7 @@ func waitingDiskEvents(ctx context.Context, intervalSeconds uint64, thresholds I
 	lastRawStats := make(map[string]*blockdevice.Diskstats)
 	lastMetrics := make(map[string]DiskStatus)
 	ticker := time.NewTicker(time.Duration(int64(intervalSeconds)) * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -240,11 +272,16 @@ func waitingDiskEvents(ctx context.Context, intervalSeconds uint64, thresholds I
 
 					thresholds.nvme = strings.HasPrefix(curr.DeviceName, "nvme")
 					reasonType := shouldIoThreshold(lastMetrics[curr.DeviceName], metric, thresholds)
+					device := fmt.Sprintf("%s(%d:%d)", curr.DeviceName, curr.MajorNumber, curr.MinorNumber)
+					summary := iotracingSummary(reasonType, device, &metric, &thresholds)
 					if reasonType != ioReasonNone {
 						return &ReasonSnapshot{
-							Type:     reasonType.String(),
-							Device:   curr.DeviceName,
-							Iostatus: metric,
+							Type:        reasonType.String(),
+							Device:      curr.DeviceName,
+							MajorNumber: curr.MajorNumber,
+							MinorNumber: curr.MinorNumber,
+							Iostatus:    metric,
+							Summary:     summary,
 						}, nil
 					}
 
@@ -267,6 +304,10 @@ func (c *ioTracing) Start(ctx context.Context) error {
 		WbpsThreshold:  cfg.IOTracing.WbpsThreshold,
 		UtilThreshold:  cfg.IOTracing.UtilThreshold,
 		AwaitThreshold: cfg.IOTracing.AwaitThreshold,
+	}
+
+	if err := validateIoThresholds(&thresholds); err != nil {
+		return err
 	}
 
 	reasonSnapshot, err := waitingDiskEvents(ctx, 5, thresholds)
@@ -313,5 +354,30 @@ func (c *ioTracing) Start(ctx context.Context) error {
 		}
 		log.Info("iotracing exited")
 		return nil
+	}
+}
+
+func iotracingSummary(reasonType thresholdReason, device string, iostat *DiskStatus, thresholds *IoThresholds) string {
+	switch reasonType {
+	case ioReasonUtil:
+		return fmt.Sprintf("ioutil=%d%% (threshold=%d%%) on %s, aqu-sz=%d, r_await=%dms w_await=%dms",
+			iostat.IOutil, thresholds.UtilThreshold, device, iostat.QueueSize,
+			iostat.ReadAwait, iostat.WriteAwait)
+	case ioReasonReadBps:
+		return fmt.Sprintf("read_bps=%dMB/s (threshold=%dMB/s) on %s, aqu-sz=%d, r_await=%dms w_await=%dms",
+			iostat.ReadBps/1024/1024, thresholds.RbpsThreshold, device, iostat.QueueSize,
+			iostat.ReadAwait, iostat.WriteAwait)
+	case ioReasonWriteBps:
+		return fmt.Sprintf("write_bps=%dMB/s (threshold=%dMB/s) on %s, aqu-sz=%d, r_await=%dms w_await=%dms",
+			iostat.WriteBps/1024/1024, thresholds.WbpsThreshold, device, iostat.QueueSize,
+			iostat.ReadAwait, iostat.WriteAwait)
+	case ioReasonReadAwait:
+		return fmt.Sprintf("r_await=%dms (threshold=%dms) on %s, aqu-sz=%d",
+			iostat.ReadAwait, thresholds.AwaitThreshold, device, iostat.QueueSize)
+	case ioReasonWriteAwait:
+		return fmt.Sprintf("w_await=%dms (threshold=%dms) on %s, aqu-sz=%d",
+			iostat.WriteAwait, thresholds.AwaitThreshold, device, iostat.QueueSize)
+	default:
+		return fmt.Sprintf("%s on %s", reasonType, device)
 	}
 }
