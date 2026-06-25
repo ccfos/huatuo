@@ -19,7 +19,7 @@ ubuntu*)
 	MISSING_PACKAGES=()
 
 	for pkg in "${PACKAGES[@]}"; do
-		if dpkg --status "$pkg" &>/dev/null; then
+		if dpkg --status "$pkg" &> /dev/null; then
 			echo "$pkg is already installed."
 		else
 			echo "$pkg is missing."

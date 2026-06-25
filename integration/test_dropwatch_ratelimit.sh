@@ -44,7 +44,7 @@ log_info "dropwatch: rate=${RATE}/s, duration=${DURATION}s, target=${TARGET_IP}:
 	--max-events-per-second "${RATE}" \
 	--duration "${DURATION}" \
 	--output text \
-	>"${TOOL_OUT}" 2>"${TOOL_ERR}" &
+	> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
 dw_pid=$!
 
 # Let the BPF program attach before flooding.
@@ -59,7 +59,7 @@ timeout "${DURATION}" bash -c "
 	while :; do
 		printf x >/dev/udp/${TARGET_IP}/${TARGET_PORT}
 	done
-" >/dev/null 2>&1 || true
+" > /dev/null 2>&1 || true
 wait "${dw_pid}" || true
 
 events=$(grep -c "IPv4/UDP" "${TOOL_OUT}" || true)
@@ -75,4 +75,3 @@ log_info "events=${events} (cap=${EXPECTED_MAX}), rate-limit warnings=${warns}"
 # dump the captured logs for cross-environment debugging.
 ((events <= EXPECTED_MAX)) || dump_tool_logs_and_fail "events ${events} exceed cap ${EXPECTED_MAX}"
 ((warns >= 1)) || dump_tool_logs_and_fail "expected at least one rate-limit warning under flood"
-

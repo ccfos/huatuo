@@ -98,7 +98,7 @@ import-fmt:
 	@gofmt -w -r 'interface{} -> any' $(GO_FILES)
 	@find . -name "*.sh" \
 		$(FIND_EXCLUDE_PATHS) \
-		-exec shfmt -i 0 -w {} \;
+		-exec shfmt -i 0 -bn -sr -w {} \;
 
 golangci-lint: gen-build
 	@# gen-build ensures mock/capnp files exist for typecheck to resolve imports.
