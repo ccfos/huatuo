@@ -42,11 +42,12 @@ const (
 	HW_ERR_ACPI_GHES = 2
 	HW_ERR_PCIE_AER  = 3
 	HW_ERR_THR       = 4 // MCE threshold (local-APIC) interrupt
+	HW_ERR_ARM_GHES  = 5 // ARM processor error section (CPER §N.2.4.4, arm64 only)
 )
 
 // maxNumHWErrTypes is the total number of distinct hardware error source types.
 // Any new HW_ERR_* constant must increment this value and extend hwErrTypeLabels.
-const maxNumHWErrTypes = 5
+const maxNumHWErrTypes = 6
 
 // hwErrTypeLabels maps each HW_ERR_* index to its Prometheus "type" label value.
 // Index must align 1:1 with the HW_ERR_* constants above.
@@ -56,6 +57,7 @@ var hwErrTypeLabels = [maxNumHWErrTypes]string{
 	HW_ERR_ACPI_GHES: "acpi",
 	HW_ERR_PCIE_AER:  "aer",
 	HW_ERR_THR:       "thr",
+	HW_ERR_ARM_GHES:  "arm_ghes",
 }
 
 const labelType = "type"
@@ -563,6 +565,60 @@ func buildRasThrTracerData(data *rasEvent) (*RasTracingData, error) {
 	return newRasTracingData(data, "CPU", "MCE_THRESHOLD", ErrTypeCorrected, payload)
 }
 
+func buildRasArmGhesTracerData(data *rasEvent) (*RasTracingData, error) {
+	// tracepointArmEventPayload mirrors struct trace_event_raw_arm_event (UEFI v2.7 §N.2.4.4).
+	// Layout: trace_entry(8) | mpidr(8) | midr(8) | running_state(4) | psci_state(4) | affinity(1)
+	type tracepointArmEventPayload struct {
+		Pad          uint64 `json:"-"`
+		Mpidr        uint64 `json:"mpidr"`
+		Midr         uint64 `json:"midr"`
+		RunningState uint32 `json:"running_state"`
+		PsciState    uint32 `json:"psci_state"`
+		Affinity     uint8  `json:"affinity"`
+	}
+	payload, err := decodePayload[tracepointArmEventPayload](data.Info[:])
+	if err != nil {
+		return nil, fmt.Errorf("parse ARM GHES payload: %w", err)
+	}
+	runState, psciState := armRunningState(payload.RunningState, payload.PsciState)
+	return newRasTracingData(data, "CPU", "ARM_GHES", ErrTypeUnknown, struct {
+		Mpidr         string `json:"mpidr"`
+		Midr          string `json:"midr"`
+		RunningState  string `json:"running_state"`
+		PsciState     string `json:"psci_state"`
+		AffinityLevel string `json:"affinity_level"`
+	}{
+		// MPIDR is 0x0 when CPER_ARM_VALID_MPIDR is absent (kernel fills 0ULL,
+		// not ~0), so 0x0 is ambiguous: it may mean "not present".
+		Mpidr:         fmt.Sprintf("%#x", payload.Mpidr),
+		Midr:          fmt.Sprintf("%#x", payload.Midr),
+		RunningState:  runState,
+		PsciState:     psciState,
+		AffinityLevel: armU8Field(payload.Affinity),
+	})
+}
+
+// armRunningState decodes the CPER running_state field (UEFI v2.7 §N.2.4.4).
+// The kernel sets both fields to ^0 when CPER_ARM_VALID_RUNNING_STATE is absent.
+// Bit 0: 1 = processor running (psci_state is meaningless); 0 = stopped.
+func armRunningState(runningState, psciState uint32) (state, psci string) {
+	if runningState == ^uint32(0) {
+		return "N/A", "N/A"
+	}
+	if runningState&1 == 1 {
+		return "running", "N/A"
+	}
+	return "stopped", fmt.Sprintf("%#x", psciState)
+}
+
+// armU8Field formats an optional u8 CPER field; ^0 means not present.
+func armU8Field(v uint8) string {
+	if v == ^uint8(0) {
+		return "N/A"
+	}
+	return fmt.Sprintf("%d", v)
+}
+
 func dispatchRasTracerData(data *rasEvent) (*RasTracingData, error) {
 	switch data.Type {
 	case HW_ERR_MCE:
@@ -575,6 +631,8 @@ func dispatchRasTracerData(data *rasEvent) (*RasTracingData, error) {
 		return buildRasAerTracerData(data)
 	case HW_ERR_THR:
 		return buildRasThrTracerData(data)
+	case HW_ERR_ARM_GHES:
+		return buildRasArmGhesTracerData(data)
 	default:
 		return nil, fmt.Errorf("unsupported hardware error type %d", data.Type)
 	}
