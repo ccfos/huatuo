@@ -31,29 +31,38 @@ $ docker run -it --privileged --cgroupns=host --network=host -v $(pwd):/go/huatu
 $ make
 ```
 
-### 2. 物理机编译
-
-#### 2.1 安装依赖
-
-Ubuntu 24.04:
-```bash
-apt install make git clang libbpf-dev linux-tools-common curl
-```
-
-Fedora 40:
-```bash
-dnf install make git clang libbpf-devel bpftool curl
-```
-
-#### 2.2 编译
-```bash
-$ make
-```
-
-### 3. 镜像发布
+### 2. 镜像发布
 
 通过 docker build 方式能够快速的发布，最新二进制容器镜像。
 
 ```bash
 docker build --network host -t huatuo/huatuo-bamai:latest .
+```
+
+### 3. 物理机编译
+
+#### 3.1 安装依赖
+
+Ubuntu 24.04:
+```bash
+apt install make git clang libbpf-dev linux-tools-common curl capnproto
+```
+
+Fedora 40:
+```bash
+dnf install make git clang libbpf-devel bpftool curl capnproto capnproto-devel glibc-static
+```
+
+```bash
+go install mvdan.cc/gofumpt@v0.8.0
+go install mvdan.cc/sh/v3/cmd/shfmt@v3.11.0
+go install golang.org/x/tools/cmd/goimports@v0.36.0
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2
+go install github.com/vektra/mockery/v2@v2.53.6
+go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
+```
+
+#### 3.2 编译
+```bash
+$ make
 ```
