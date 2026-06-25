@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@ package events
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -33,36 +32,34 @@ import (
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/oom.c -o $BPF_DIR/oom.o
 
+// perfEventData mirrors the BPF perf event struct for OOM events.
 type perfEventData struct {
-	TriggerProcessName [bpf.TaskCommLen]byte
-	VictimProcessName  [bpf.TaskCommLen]byte
-	TriggerPid         int32
-	VictimPid          int32
-	TriggerMemcgCSS    uint64
-	VictimMemcgCSS     uint64
-	MemLimitPages      uint64
-	MemUsagePages      uint64
+	TriggerComm     [bpf.TaskCommLen]byte
+	VictimComm      [bpf.TaskCommLen]byte
+	TriggerPid      int32
+	VictimPid       int32
+	TriggerMemcgCSS uint64
+	VictimMemcgCSS  uint64
+}
+
+type OOMActor struct {
+	MemoryCgroupCSSAddr string                   `json:"memory_cgroup_css_addr"`
+	ContainerID         string                   `json:"container_id,omitempty"`
+	ContainerHostname   string                   `json:"container_hostname,omitempty"`
+	Pid                 int32                    `json:"pid"`
+	Comm                string                   `json:"comm"`
+	Cgroup              *OOMCgroupMemorySnapshot `json:"cgroup,omitempty"`
 }
 
 type OOMTracingData struct {
-	TriggerMemcgCSS          string             `json:"trigger_memcg_css"`
-	TriggerContainerID       string             `json:"trigger_container_id"`
-	TriggerContainerHostname string             `json:"trigger_container_hostname"`
-	TriggerPid               int32              `json:"trigger_pid"`
-	TriggerProcessName       string             `json:"trigger_process_name"`
-	VictimMemcgCSS           string             `json:"victim_memcg_css"`
-	VictimContainerID        string             `json:"victim_container_id"`
-	VictimContainerHostname  string             `json:"victim_container_hostname"`
-	VictimPid                int32              `json:"victim_pid"`
-	VictimProcessName        string             `json:"victim_process_name"`
-	CgroupMemoryLimit        uint64             `json:"cgroup_memory_limit"`
-	CgroupMemoryUsage        uint64             `json:"cgroup_memory_usage"`
-	MemorySnapshot           *OOMMemorySnapshot `json:"memory_snapshot,omitempty"`
+	Trigger        OOMActor           `json:"trigger"`
+	Victim         OOMActor           `json:"victim"`
+	MemorySnapshot *OOMMemorySnapshot `json:"memory_snapshot,omitempty"`
 }
 
 type oomMetric struct {
-	count             int
-	victimProcessName string
+	count            int
+	latestVictimComm string
 }
 
 type oomCollector struct {
@@ -100,7 +97,7 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 		return nil, fmt.Errorf("get normal container: %w", err)
 	}
 
-	metrics := []*metric.Data{}
+	var metrics []*metric.Data
 
 	mutex.Lock()
 
@@ -109,7 +106,7 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 		if val, exists := outOfMemoryCounterContainer[container.ID]; exists {
 			metrics = append(
 				metrics,
-				metric.NewContainerCounterData(container, "total", float64(val.count), "containers oom counter", map[string]string{"process": val.victimProcessName}),
+				metric.NewContainerCounterData(container, "total", float64(val.count), "containers oom counter", map[string]string{"latest_victim_comm": val.latestVictimComm}),
 			)
 		}
 	}
@@ -118,7 +115,6 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 	return metrics, nil
 }
 
-// Info return case's base info
 func (c *oomCollector) Start(ctx context.Context) error {
 	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
@@ -137,8 +133,6 @@ func (c *oomCollector) Start(ctx context.Context) error {
 
 	b.WaitDetachByBreaker(childCtx, cancel)
 
-	pageSize := uint64(os.Getpagesize())
-
 	for {
 		select {
 		case <-childCtx.Done():
@@ -146,20 +140,20 @@ func (c *oomCollector) Start(ctx context.Context) error {
 		default:
 			var data perfEventData
 			if err := reader.ReadInto(&data); err != nil {
-				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
+				return fmt.Errorf("failed to read perf event: %w", err)
 			}
 
 			containers, err := pod.Containers()
 			if err != nil {
-				return fmt.Errorf("fetching the containers, err: %w", err)
+				return fmt.Errorf("failed to fetch containers: %w", err)
 			}
 
-			oomData := newOOMTracingData(data, containers, pageSize, c.cgroup)
+			oomData := buildTracingData(data, containers, c.cgroup)
 
 			mutex.Lock()
 
-			if container, ok := containers[oomData.VictimContainerID]; ok {
-				containerCounterUpdate(container.ID, oomData.VictimProcessName)
+			if container, ok := containers[oomData.Victim.ContainerID]; ok {
+				containerCounterUpdate(container.ID, oomData.Victim.Comm)
 			} else {
 				outOfMemoryCounterHost++
 			}
@@ -167,9 +161,10 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			mutex.Unlock()
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: "oom",
-				TracerTime: time.Now(),
-				TracerData: oomData,
+				TracerName:  "oom",
+				TracerTime:  time.Now(),
+				TracerData:  oomData,
+				ContainerID: oomData.Victim.ContainerID,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}
@@ -177,43 +172,59 @@ func (c *oomCollector) Start(ctx context.Context) error {
 	}
 }
 
-func newOOMTracingData(data perfEventData, containers map[string]*pod.Container, pageSize uint64, cgroup oomCgroupReader) *OOMTracingData {
+func buildTracingData(data perfEventData, containers map[string]*pod.Container, cgroup cgroups.Cgroup) *OOMTracingData {
 	cssContainers := pod.BuildCssContainersID(containers, pod.SubSysMemory)
+
+	triggerID := cssContainers[data.TriggerMemcgCSS]
+	victimID := cssContainers[data.VictimMemcgCSS]
+
 	oomData := &OOMTracingData{
-		TriggerMemcgCSS:    kernaddr.Format(data.TriggerMemcgCSS),
-		TriggerPid:         data.TriggerPid,
-		TriggerProcessName: bytesutil.ToStr(data.TriggerProcessName[:]),
-		TriggerContainerID: cssContainers[data.TriggerMemcgCSS],
-		VictimMemcgCSS:     kernaddr.Format(data.VictimMemcgCSS),
-		VictimPid:          data.VictimPid,
-		VictimProcessName:  bytesutil.ToStr(data.VictimProcessName[:]),
-		VictimContainerID:  cssContainers[data.VictimMemcgCSS],
-		CgroupMemoryLimit:  data.MemLimitPages * pageSize,
-		CgroupMemoryUsage:  data.MemUsagePages * pageSize,
+		Trigger: OOMActor{
+			MemoryCgroupCSSAddr: kernaddr.Format(data.TriggerMemcgCSS),
+			ContainerID:         triggerID,
+			Pid:                 data.TriggerPid,
+			Comm:                bytesutil.ToStr(data.TriggerComm[:]),
+		},
+		Victim: OOMActor{
+			MemoryCgroupCSSAddr: kernaddr.Format(data.VictimMemcgCSS),
+			ContainerID:         victimID,
+			Pid:                 data.VictimPid,
+			Comm:                bytesutil.ToStr(data.VictimComm[:]),
+		},
 	}
 
-	var triggerContainer *pod.Container
-	if container, ok := containers[oomData.TriggerContainerID]; ok {
-		triggerContainer = container
-		oomData.TriggerContainerHostname = container.Hostname
+	if container, ok := containers[triggerID]; ok {
+		oomData.Trigger.ContainerHostname = container.Hostname
+		if snap, err := cgroupMemorySnapshot(cgroup, container); err != nil {
+			log.Warnf("trigger cgroup snapshot: %v", err)
+		} else {
+			oomData.Trigger.Cgroup = snap
+		}
 	}
 
-	var victimContainer *pod.Container
-	if container, ok := containers[oomData.VictimContainerID]; ok {
-		victimContainer = container
-		oomData.VictimContainerHostname = container.Hostname
+	if container, ok := containers[victimID]; ok {
+		oomData.Victim.ContainerHostname = container.Hostname
+		if snap, err := cgroupMemorySnapshot(cgroup, container); err != nil {
+			log.Warnf("victim cgroup snapshot: %v", err)
+		} else {
+			oomData.Victim.Cgroup = snap
+		}
 	}
 
-	oomData.MemorySnapshot = captureOOMMemorySnapshot(cgroup, triggerContainer, victimContainer)
+	if snap, err := hostMemorySnapshot(); err != nil {
+		log.Warnf("host memory snapshot: %v", err)
+	} else {
+		oomData.MemorySnapshot = snap
+	}
 	return oomData
 }
 
-func containerCounterUpdate(containerID, processName string) {
+func containerCounterUpdate(containerID, comm string) {
 	if val, exists := outOfMemoryCounterContainer[containerID]; exists {
 		val.count++
-		val.victimProcessName = processName
+		val.latestVictimComm = comm
 		return
 	}
 
-	outOfMemoryCounterContainer[containerID] = &oomMetric{count: 1, victimProcessName: processName}
+	outOfMemoryCounterContainer[containerID] = &oomMetric{count: 1, latestVictimComm: comm}
 }
