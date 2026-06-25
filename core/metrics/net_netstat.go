@@ -19,20 +19,37 @@ package collector
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
+	"huatuo-bamai/internal/utils/timeutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )
 
-type netstatCollector struct{}
+const netstatCacheInterval = 30 * time.Second
+
+// holds the raw /proc/net/(netstat|snmp) parse result for one container.
+type netstatContainerRaw struct {
+	container *pod.Container
+	stats     map[string]map[string]string
+}
+
+type netstatCollector struct {
+	mu      sync.RWMutex
+	cache   []netstatContainerRaw
+	running atomic.Bool
+}
 
 func init() {
 	tracing.RegisterEventTracing("netstat", newNetstatCollector)
@@ -41,14 +58,41 @@ func init() {
 func newNetstatCollector() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: &netstatCollector{},
-		Flag:        tracing.FlagMetric,
+		Interval:    10,
+		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }
 
+func (c *netstatCollector) Start(ctx context.Context) error {
+	c.running.Store(true)
+	defer c.running.Store(false)
+
+	timeutil.RunEvery(ctx, netstatCacheInterval, c.readAndCache)
+	return nil
+}
+
 func (c *netstatCollector) Update() ([]*metric.Data, error) {
+	if !c.running.Load() {
+		return nil, nil
+	}
+
+	f, err := matcher.NewValueMatcher(cfg.Netstat.Included, cfg.Netstat.Excluded)
+	if err != nil {
+		return nil, fmt.Errorf("netstat filter: %w", err)
+	}
+
+	c.mu.RLock()
+	cache := c.cache
+	c.mu.RUnlock()
+
+	return buildNetstatMetrics(cache, f), nil
+}
+
+func (c *netstatCollector) readAndCache() {
 	containers, err := pod.NormalContainers()
 	if err != nil {
-		return nil, err
+		log.Warnf("netstat: list containers failed: %v", err)
+		return
 	}
 
 	// support the host metrics
@@ -59,68 +103,57 @@ func (c *netstatCollector) Update() ([]*metric.Data, error) {
 	// append init namespace into containers
 	containers[""] = nil
 
-	f, err := matcher.NewValueMatcher(cfg.Netstat.Included, cfg.Netstat.Excluded)
-	if err != nil {
-		return nil, fmt.Errorf("netstat filter: %w", err)
-	}
-
-	var metrics []*metric.Data
+	var cache []netstatContainerRaw
 	for _, container := range containers {
-		m, err := buildNetAndSnmpStat(container, f)
+		pid := container.InitPidOrInitnsPid()
+		netStats, err := parseNetStat(procfs.Path(strconv.Itoa(pid), "net", "netstat"))
 		if err != nil {
-			log.Errorf("netstat/snmp metrics for container %v: %v", container, err)
+			log.Debugf("netstat/snmp metrics for container %v: %v", container, err)
 			continue
 		}
-		metrics = append(metrics, m...)
+		snmpStats, err := parseNetStat(procfs.Path(strconv.Itoa(pid), "net", "snmp"))
+		if err != nil {
+			log.Debugf("netstat/snmp metrics for container %v: %v", container, err)
+			continue
+		}
+		for k, v := range snmpStats {
+			netStats[k] = v
+		}
+
+		cache = append(cache, netstatContainerRaw{container: container, stats: netStats})
 	}
-	log.Debugf("Updated netstat metrics by filter %v: %v", f, metrics)
-	return metrics, nil
+
+	c.mu.Lock()
+	c.cache = cache
+	c.mu.Unlock()
 }
 
-func buildNetAndSnmpStat(container *pod.Container, f *matcher.ValueMatcher) ([]*metric.Data, error) {
-	pid := container.InitPidOrInitnsPid()
-
-	netStats, err := parseNetStat(procfs.Path(strconv.Itoa(pid), "net", "netstat"))
-	if err != nil {
-		return nil, err
-	}
-
-	snmpStats, err := parseNetStat(procfs.Path(strconv.Itoa(pid), "net", "snmp"))
-	if err != nil {
-		return nil, err
-	}
-
-	// Merge the results of snmpStats into netStats (collisions are possible, but
-	// we know that the keys are always unique for the given use case).
-	for k, v := range snmpStats {
-		netStats[k] = v
-	}
-
+func buildNetstatMetrics(cache []netstatContainerRaw, f *matcher.ValueMatcher) []*metric.Data {
 	var metrics []*metric.Data
-	for protocol, protocolStats := range netStats {
-		for name, value := range protocolStats {
-			v, err := strconv.ParseFloat(value, 64)
-			if err != nil {
-				return nil, err
-			}
+	for _, entry := range cache {
+		for protocol, protocolStats := range entry.stats {
+			for name, value := range protocolStats {
+				v, err := strconv.ParseFloat(value, 64)
+				if err != nil {
+					continue
+				}
 
-			key := protocol + "_" + name
-			if !f.Match(key) {
-				log.Debugf("Ignoring netstat metric %s", key)
-				continue
-			}
+				key := protocol + "_" + name
+				if !f.Match(key) {
+					log.Debugf("Ignoring netstat metric %s", key)
+					continue
+				}
 
-			if container != nil {
-				metrics = append(metrics,
-					metric.NewContainerGaugeData(container, key, v, fmt.Sprintf("statistic %s.", protocol+name), nil))
-			} else {
-				metrics = append(metrics,
-					metric.NewGaugeData(key, v, fmt.Sprintf("statistic %s.", protocol+name), nil))
+				help := fmt.Sprintf("statistic %s_%s.", protocol, name)
+				if entry.container != nil {
+					metrics = append(metrics, metric.NewContainerGaugeData(entry.container, key, v, help, nil))
+				} else {
+					metrics = append(metrics, metric.NewGaugeData(key, v, help, nil))
+				}
 			}
 		}
 	}
-
-	return metrics, nil
+	return metrics
 }
 
 func parseNetStat(fileName string) (map[string]map[string]string, error) {
@@ -137,8 +170,14 @@ func parseNetStat(fileName string) (map[string]map[string]string, error) {
 
 	for scanner.Scan() {
 		nameParts := strings.Split(scanner.Text(), " ")
+		if len(nameParts) == 0 || nameParts[0] == "" {
+			continue
+		}
 
-		scanner.Scan()
+		if !scanner.Scan() {
+			break
+		}
+
 		valueParts := strings.Split(scanner.Text(), " ")
 
 		// remove trailing ":"
