@@ -715,7 +715,7 @@ IssuesList = []
 	DeviceList = ["eth0", "eth1", "bond4", "lo"]
 ```
 
-- **DeviceList**：需要监控的网卡设备列表。
+- **DeviceList**：需要监控的网卡设备完整匹配正则列表。`"eth0"` 等字面量名称保持精确匹配，`"bond[0-9]+"` 等模式可匹配多块网卡。
 
   默认示例包含 "eth0", "eth1", "bond4", "lo"。 为空列表时表示不监控任何设备。 监控网络设备的物理链路状态事件等。
 
@@ -841,7 +841,7 @@ IssuesList = []
 	DeviceList = ["eth0", "eth1"]
 ```
 
-- **DeviceList**：需要采集 DCB（优先流控 PFC）信息的网卡列表。
+- **DeviceList**：需要采集 DCB（优先流控 PFC）信息的网卡完整匹配正则列表。
 
   默认空。 
 
@@ -862,7 +862,7 @@ IssuesList = []
 	DeviceList = ["eth0", "eth1"]
 ```
 
-- **DeviceList**：需要采集硬件层统计（如 rx_dropped）的网卡列表。
+- **DeviceList**：需要采集硬件层统计（如 rx_dropped）的网卡完整匹配正则列表。
 
   默认空。 
 

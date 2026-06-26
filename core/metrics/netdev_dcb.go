@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"unsafe"
 
+	"huatuo-bamai/internal/matcher"
+	"huatuo-bamai/internal/procfs/sysfs"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 
@@ -28,15 +30,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-type dcbCollector struct{}
+type dcbCollector struct {
+	deviceMatcher *matcher.ListMatcher
+}
 
 func init() {
 	tracing.RegisterEventTracing("netdev_dcb", newDcb)
 }
 
 func newDcb() (*tracing.EventTracingAttr, error) {
+	deviceMatcher, err := matcher.NewListMatcher(cfg.NetdevDCB.DeviceList)
+	if err != nil {
+		return nil, fmt.Errorf("netdev dcb device list: %w", err)
+	}
+
 	return &tracing.EventTracingAttr{
-		TracingData: &dcbCollector{},
+		TracingData: &dcbCollector{deviceMatcher: deviceMatcher},
 		Flag:        tracing.FlagMetric,
 	}, nil
 }
@@ -124,7 +133,12 @@ func parseAttributes(attrs []syscall.NetlinkRouteAttr) (*ieeePfc, error) {
 func (dcb *dcbCollector) Update() ([]*metric.Data, error) {
 	data := []*metric.Data{}
 
-	for _, ifname := range cfg.NetdevDCB.DeviceList {
+	ifaces, err := sysfs.DefaultNetClassDevices()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, ifname := range dcb.deviceMatcher.Filter(ifaces) {
 		msgs, err := doDcbRequest(ifname)
 		if err != nil {
 			if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.ENODEV) {
