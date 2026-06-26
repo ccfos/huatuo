@@ -160,50 +160,38 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 }
 
 type activeRing struct {
-	reader      bpf.PerfEventReader
-	stackMapID  uint32
-	sampleCount uint64
+	reader         bpf.PerfEventReader
+	stackMapID     uint32
+	sampleCountIdx uint32
 }
 
-// advanceSwapParity increments the BPF write-parity counter so the kernel switches to
-// the other buffer pair, then captures and resets the now-frozen ring's sample
-// count. It returns the reader, stack map ID, and captured count for the
-// drainable side.
+// advanceSwapParity increments the BPF write-parity counter so the kernel
+// switches to the other buffer pair, then returns the now-frozen (drainable)
+// ring along with the sample-count index used to track how many events the
+// BPF side wrote. The caller reads and resets that count while draining.
 func (p *cpuNativeProfiler) advanceSwapParity(readerA, readerB bpf.PerfEventReader, stateMapID uint32) (activeRing, error) {
 	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
 	if err != nil {
 		return activeRing{}, fmt.Errorf("read transferCnt: %w", err)
 	}
 
-	var (
-		ring           activeRing
-		sampleCountIdx uint32
-	)
+	var ring activeRing
 	if val%2 == 0 {
 		ring = activeRing{
-			reader:     readerA,
-			stackMapID: p.bpf.MapIDByName("stack_map_a"),
+			reader:         readerA,
+			stackMapID:     p.bpf.MapIDByName("stack_map_a"),
+			sampleCountIdx: bpfmap.SampleCountAIdx,
 		}
-		sampleCountIdx = bpfmap.SampleCountAIdx
 	} else {
 		ring = activeRing{
-			reader:     readerB,
-			stackMapID: p.bpf.MapIDByName("stack_map_b"),
+			reader:         readerB,
+			stackMapID:     p.bpf.MapIDByName("stack_map_b"),
+			sampleCountIdx: bpfmap.SampleCountBIdx,
 		}
-		sampleCountIdx = bpfmap.SampleCountBIdx
 	}
 
 	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
 		return activeRing{}, fmt.Errorf("write transferCnt: %w", err)
-	}
-
-	ring.sampleCount, err = bpfmap.ReadUint64(p.bpf, stateMapID, sampleCountIdx)
-	if err != nil {
-		return activeRing{}, fmt.Errorf("read sampleCnt: %w", err)
-	}
-
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
-		return activeRing{}, fmt.Errorf("reset sampleCnt: %w", err)
 	}
 
 	return ring, nil
@@ -217,26 +205,60 @@ func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader
 
 	stackCountsByProc := make(map[processIDName]map[bpfmap.StackTraceID]int)
 
-	for i := uint64(0); i < ring.sampleCount; i++ {
-		var evt cpuEventKey
-		if err := ring.reader.ReadInto(&evt); err != nil {
+	// Batch-read events until everything the BPF side wrote has been consumed.
+	// The kernel may keep writing to the just-frozen ring briefly after the
+	// parity flip, so re-check the sample count and keep draining until the
+	// number of events read equals the BPF-reported count.
+	totalRead := uint64(0)
+	for {
+		batch, err := ring.reader.ReadBatch(&cpuEventKey{})
+		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return err
 			}
+			log.P().Warnf("read batch: %v", err)
 			break
 		}
 
-		if evt.Kernstack <= 0 && evt.Userstack <= 0 {
-			continue
+		totalRead += uint64(len(batch))
+
+		for _, rec := range batch {
+			evt, ok := rec.(*cpuEventKey)
+			if !ok {
+				continue
+			}
+
+			if evt.Kernstack <= 0 && evt.Userstack <= 0 {
+				continue
+			}
+
+			pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
+			pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
+
+			if stackCountsByProc[pidName] == nil {
+				stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int)
+			}
+			stackCountsByProc[pidName][pair]++
 		}
 
-		pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
-		pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
-
-		if stackCountsByProc[pidName] == nil {
-			stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int)
+		// An empty batch means the ring is drained for now; avoid spinning
+		// even if the BPF count has not been fully matched.
+		if len(batch) == 0 {
+			break
 		}
-		stackCountsByProc[pidName][pair]++
+
+		bpfCount, err := bpfmap.ReadUint64(p.bpf, stateMapID, ring.sampleCountIdx)
+		if err != nil {
+			return fmt.Errorf("read sampleCnt: %w", err)
+		}
+
+		if totalRead >= bpfCount {
+			break
+		}
+	}
+
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, ring.sampleCountIdx, 0); err != nil {
+		log.P().Warnf("reset sample count: %v", err)
 	}
 
 	if len(stackCountsByProc) > 0 {

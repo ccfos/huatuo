@@ -19,6 +19,11 @@ type PerfEventReader interface {
 	// ReadInto reads the eBPF perf_event into pdata.
 	ReadInto(pdata any) error
 
+	// ReadBatch drains all per-CPU ring buffers currently available within a
+	// bounded deadline and returns the parsed events. Each element is a newly
+	// allocated value of the same type as pdata.
+	ReadBatch(pdata any) ([]any, error)
+
 	// Close the PerfEventReader.
 	Close() error
 }
