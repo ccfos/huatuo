@@ -12,6 +12,7 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define HW_ERR_NON_STANDARD 2
 #define HW_ERR_AER_EVENT    3
 #define HW_ERR_THR	    4
+#define HW_ERR_ARM_GHES	    5
 
 #define MCI_STATUS_DEFERRED (1ULL << 44)
 #define MCI_STATUS_UC	    (1ULL << 61)
@@ -128,6 +129,34 @@ int probe_thr_apic(struct thr_apic_ctx *ctx)
 }
 
 #endif /* __TARGET_ARCH_x86 */
+
+#ifdef __TARGET_ARCH_arm64
+
+SEC("tracepoint/ras/arm_event")
+int probe_arm_event(struct trace_event_raw_arm_event *ctx)
+{
+	struct event *event;
+	int key = 0;
+
+	event = bpf_map_lookup_elem(&event_data_map, &key);
+	if (!event)
+		return 0;
+
+	event_init(event, HW_ERR_ARM_GHES);
+
+	/*
+	 * arm_event tracepoint does not carry GHES severity; the GHES driver
+	 * drops it before calling trace_arm_event(). Severity is reported as
+	 * unknown in userspace.
+	 */
+	bpf_probe_read(event->info, sizeof(struct trace_event_raw_arm_event), ctx);
+
+	bpf_perf_event_output(ctx, &ras_event_map, COMPAT_BPF_F_CURRENT_CPU,
+			      event, sizeof(struct event));
+	return 0;
+}
+
+#endif /* __TARGET_ARCH_arm64 */
 
 SEC("tracepoint/ras/mc_event")
 int probe_ras_mc_event(struct trace_event_raw_mc_event *ctx)
