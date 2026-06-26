@@ -83,8 +83,8 @@ func TestEventTracingDoStart(t *testing.T) {
 				}
 			},
 			validate: func(t *testing.T, te *EventTracing) {
-				if !te.exit {
-					t.Errorf("exit=%v, want %v", te.exit, true)
+				if !te.exit.Load() {
+					t.Errorf("exit=%v, want %v", te.exit.Load(), true)
 				}
 			},
 		},
@@ -99,8 +99,8 @@ func TestEventTracingDoStart(t *testing.T) {
 				}
 			},
 			validate: func(t *testing.T, te *EventTracing) {
-				if te.exit {
-					t.Errorf("exit=%v, want %v", te.exit, false)
+				if te.exit.Load() {
+					t.Errorf("exit=%v, want %v", te.exit.Load(), false)
 				}
 			},
 		},
@@ -115,8 +115,8 @@ func TestEventTracingDoStart(t *testing.T) {
 				}
 			},
 			validate: func(t *testing.T, te *EventTracing) {
-				if te.exit {
-					t.Errorf("exit=%v, want %v", te.exit, false)
+				if te.exit.Load() {
+					t.Errorf("exit=%v, want %v", te.exit.Load(), false)
 				}
 			},
 		},
@@ -125,7 +125,7 @@ func TestEventTracingDoStart(t *testing.T) {
 	for i := range tests {
 		t.Run(tests[i].name, func(t *testing.T) {
 			te := tests[i].setup()
-			te.doStart()
+			te.doStart(context.Background())
 			tests[i].validate(t, te)
 		})
 	}
@@ -149,7 +149,7 @@ func TestEventTracingStartStopAndInfo(t *testing.T) {
 		t.Fatalf("Start() error=%v", err)
 	}
 
-	ready := waitUntil(500*time.Millisecond, func() bool { return te.cancelCtx != nil && te.isRunning })
+	ready := waitUntil(500*time.Millisecond, func() bool { return te.isRunning.Load() })
 	if !ready {
 		t.Fatalf("tracing did not enter running state in time")
 	}
@@ -160,7 +160,7 @@ func TestEventTracingStartStopAndInfo(t *testing.T) {
 	}
 
 	te.Stop()
-	stopped := waitUntil(500*time.Millisecond, func() bool { return !te.isRunning })
+	stopped := waitUntil(500*time.Millisecond, func() bool { return !te.isRunning.Load() })
 	if !stopped {
 		t.Errorf("tracing did not stop in time")
 	}

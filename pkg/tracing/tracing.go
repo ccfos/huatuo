@@ -25,6 +25,8 @@ package tracing
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"huatuo-bamai/internal/log"
@@ -36,10 +38,13 @@ type EventTracing struct {
 	ic        ITracingEvent
 	name      string
 	interval  int
-	hitCount  int
+	hitCount  atomic.Int32
+	mu        sync.Mutex
 	cancelCtx context.CancelFunc
-	exit      bool
-	isRunning bool
+	stopCh    chan struct{}
+	stopOnce  sync.Once
+	exit      atomic.Bool
+	isRunning atomic.Bool
 	flag      uint32
 }
 
@@ -60,23 +65,35 @@ func NewTracingEvent(tracing *EventTracingAttr, name string) *EventTracing {
 
 // Start do work
 func (c *EventTracing) Start() error {
-	c.isRunning = true
-	c.exit = false
+	c.isRunning.Store(true)
+	c.exit.Store(false)
+	c.stopCh = make(chan struct{})
+	c.stopOnce = sync.Once{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c.mu.Lock()
+	c.cancelCtx = cancel
+	c.mu.Unlock()
 
 	go func() {
-		for !c.exit {
-			c.doStart()
+		defer c.isRunning.Store(false)
+		for !c.exit.Load() {
+			c.doStart(ctx)
 
-			c.hitCount++
+			c.hitCount.Add(1)
 
-			if c.exit {
+			if c.exit.Load() {
 				break
 			}
 
-			time.Sleep(time.Duration(c.interval) * time.Second)
+			timer := time.NewTimer(time.Duration(c.interval) * time.Second)
+			select {
+			case <-timer.C:
+			case <-c.stopCh:
+			}
+			timer.Stop()
 		}
 
-		c.isRunning = false
 		log.Infof("tracing exited: %s", c.name)
 	}()
 
@@ -84,10 +101,12 @@ func (c *EventTracing) Start() error {
 	return nil
 }
 
-func (c *EventTracing) doStart() {
-	ctx, cancel := context.WithCancel(context.Background())
-	c.cancelCtx = cancel
-	defer c.cancelCtx()
+func (c *EventTracing) doStart(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("tracing %s panicked: %v", c.name, r)
+		}
+	}()
 
 	if err := c.ic.Start(ctx); err != nil {
 		if !(errors.Is(err, types.ErrExitByCancelCtx) ||
@@ -97,15 +116,24 @@ func (c *EventTracing) doStart() {
 		}
 
 		if errors.Is(err, types.ErrNotSupported) {
-			c.exit = true
+			c.exit.Store(true)
 		}
 	}
 }
 
 // Stop stop tracing
 func (c *EventTracing) Stop() {
-	c.exit = true
-	c.cancelCtx()
+	c.exit.Store(true)
+	c.stopOnce.Do(func() {
+		if c.stopCh != nil {
+			close(c.stopCh)
+		}
+	})
+	c.mu.Lock()
+	if c.cancelCtx != nil {
+		c.cancelCtx()
+	}
+	c.mu.Unlock()
 }
 
 // EventTracingInfo represents tracing information
@@ -121,8 +149,8 @@ type EventTracingInfo struct {
 func (c *EventTracing) Info() *EventTracingInfo {
 	return &EventTracingInfo{
 		Name:     c.name,
-		Running:  c.isRunning,
-		HitCount: c.hitCount,
+		Running:  c.isRunning.Load(),
+		HitCount: int(c.hitCount.Load()),
 		Interval: c.interval,
 		Flag:     c.flag,
 	}
