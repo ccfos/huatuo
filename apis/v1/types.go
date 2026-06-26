@@ -54,6 +54,24 @@ type ProfilingResults struct {
 	URL string `json:"url"` // URL to view the results
 }
 
+// ProfilingCapabilityDefaults represents default profiling runtime settings.
+type ProfilingCapabilityDefaults struct {
+	CPUProfilingInterval     int `json:"cpu_profiling_interval"`
+	MemoryProfilingInterval  int `json:"memory_profiling_interval"`
+	CPUSingleTraceTimeout    int `json:"cpu_single_trace_timeout"`
+	MemorySingleTraceTimeout int `json:"memory_single_trace_timeout"`
+	ThirdPartyToolLimit      int `json:"third_party_tool_limit"`
+}
+
+// ProfilingCapabilitiesResponse represents profiling capabilities supported by the API server.
+type ProfilingCapabilitiesResponse struct {
+	Types           []string                    `json:"types"`
+	CPULanguages    []string                    `json:"cpu_languages"`
+	MemoryLanguages []string                    `json:"memory_languages"`
+	MemoryModes     []string                    `json:"memory_modes"`
+	Defaults        ProfilingCapabilityDefaults `json:"defaults"`
+}
+
 // RawDataResponse represents raw profiling data response
 type RawDataResponse struct {
 	Data any `json:"data"` // raw profiling data
