@@ -716,7 +716,7 @@ This section is responsible for capturing key kernel events and monitoring laten
 	DeviceList = ["eth0", "eth1", "bond4", "lo"]
 ```
 
-- **DeviceList**: List of network devices to monitor.
+- **DeviceList**: List of network device full-match regex patterns to monitor. Literal names such as `"eth0"` keep exact-match behavior; patterns such as `"bond[0-9]+"` can select multiple devices.
 
   Default example includes "eth0", "eth1", "bond4", "lo". An empty list means no devices are monitored.
 
@@ -840,7 +840,7 @@ This section defines collection rules for various system and network metrics. Al
 	DeviceList = ["eth0", "eth1"]
 ```
 
-- **DeviceList**: List of network devices for which DCB (Data Center Bridging) PFC information is collected.
+- **DeviceList**: List of network device full-match regex patterns for which DCB (Data Center Bridging) PFC information is collected.
 
   Default: empty.
 
@@ -859,7 +859,7 @@ This section defines collection rules for various system and network metrics. Al
 	DeviceList = ["eth0", "eth1"]
 ```
 
-- **DeviceList**: List of network devices for hardware-level statistics (e.g., rx_dropped).
+- **DeviceList**: List of network device full-match regex patterns for hardware-level statistics (e.g., rx_dropped).
 
   Default: empty.
 
