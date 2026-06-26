@@ -32,7 +32,12 @@ func runBefore(ctx *cli.Context) error {
 		return fmt.Errorf("invalid config: cannot specify two or more values(e.g., --pid pid1 instead of: --pid pid1 pid2)")
 	}
 
-	setupLogging(ctx.Bool("verbose"), ctx.String("log-path"), ctx.Int("log-size"))
+	setupLogging(loggingOptions{
+		verbose: ctx.Bool("verbose"),
+		level:   ctx.String("log-level"),
+		path:    ctx.String("log-path"),
+		size:    ctx.Int("log-size"),
+	})
 
 	typ := ctx.String("type")
 	lang := ctx.String("language")

@@ -61,6 +61,11 @@ var appFlags = []cli.Flag{
 		Usage: "Enable verbose logging",
 	},
 	&cli.StringFlag{
+		Name:  "log-level",
+		Usage: "Log level: trace|debug|info|warn|error|fatal|panic",
+		Value: "info",
+	},
+	&cli.StringFlag{
 		Name:  "log-path",
 		Usage: "Default log path of profiling",
 	},
