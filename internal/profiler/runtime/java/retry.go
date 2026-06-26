@@ -58,7 +58,7 @@ func RetrySampleProfiler(ctx context.Context, pid, dur, freq int, toolPath, outp
 			}
 		}
 
-		log.P().Infof("PID[%d] sampling attempt %d/%d (delay: %s)", pid, attempt, maxRetries, delay*time.Duration(attempt))
+		log.Infof("PID[%d] sampling attempt %d/%d (delay: %s)", pid, attempt, maxRetries, delay*time.Duration(attempt))
 
 		res := sampleFn(ctx, onePid, dur, freq, toolPath, outputFormat)
 		cmdRes := res[0]
@@ -73,7 +73,7 @@ func RetrySampleProfiler(ctx context.Context, pid, dur, freq int, toolPath, outp
 				msg := fmt.Sprintf("PID[%d] sampling failed after %d retries: profiler still running", pid, maxRetries)
 
 				if err := executil.StopProfiler(filepath.Join(toolPath, "asprof"), pid); err != nil {
-					log.P().Warnf("stop profiler for pid %d: %v", pid, err)
+					log.Warnf("stop profiler for pid %d: %v", pid, err)
 				}
 				cmdRes.Pid = pid
 				cmdRes.CmdErr = errors.New(msg)

@@ -115,7 +115,7 @@ func NewProfileStorage(address, username, password, index string) (*ProfileStora
 		return nil, err
 	}
 
-	log.P().Infof("Initialize profile storage successfully, driver: elasticsearch, index: %s", index)
+	log.Infof("Initialize profile storage successfully, driver: elasticsearch, index: %s", index)
 	return &ProfileStorage{
 		store: profileStore,
 	}, nil

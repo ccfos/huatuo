@@ -73,11 +73,11 @@ func (p *Pipeline) saveProfilingDocument(ctx context.Context, data any) error {
 
 	if p.pctx.DataSaver != nil {
 		if err := p.pctx.DataSaver.Save(ctx, doc); err != nil {
-			log.P().WithField("tracer_id", p.tracerID).Errorf("failed to save profiling metadata: %v", err)
+			log.WithField("tracer_id", p.tracerID).Errorf("failed to save profiling metadata: %v", err)
 		}
 	}
 
-	log.P().WithField("tracer_id", doc.TracerID).Infof("profiling document saved")
+	log.WithField("tracer_id", doc.TracerID).Infof("profiling document saved")
 
 	return nil
 }

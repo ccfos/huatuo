@@ -20,7 +20,6 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/internal/log"
 	pyruntime "huatuo-bamai/internal/profiler/runtime/python"
 )
 
@@ -33,7 +32,7 @@ func runBefore(ctx *cli.Context) error {
 		return fmt.Errorf("invalid config: cannot specify two or more values(e.g., --pid pid1 instead of: --pid pid1 pid2)")
 	}
 
-	log.SetupProfilerLogger(ctx.Bool("verbose"), ctx.String("log-path"), ctx.Int("log-size"))
+	setupLogging(ctx.Bool("verbose"), ctx.String("log-path"), ctx.Int("log-size"))
 
 	typ := ctx.String("type")
 	lang := ctx.String("language")

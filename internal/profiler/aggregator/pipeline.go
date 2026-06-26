@@ -122,7 +122,7 @@ func (p *Pipeline) Stop() {
 func (p *Pipeline) Enqueue(data any) {
 	ok, err := p.queue.Offer(data)
 	if err != nil {
-		log.P().Warnf("queue offer failed: %v", err)
+		log.Warnf("queue offer failed: %v", err)
 		return
 	}
 
@@ -135,19 +135,19 @@ func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
 	if p.pctx.OutputFormat.IsUpload() {
 		data, err := p.aggr.Snapshot(p.pctx)
 		if err != nil {
-			log.P().Errorf("aggregate error: %v", err)
+			log.Errorf("aggregate error: %v", err)
 
 			return
 		}
 
 		if data != nil {
 			if err := p.saveProfilingDocument(ctx, data); err != nil {
-				log.P().WithField("tracer_id", p.tracerID).Errorf("upload to ES failed: %v", err)
+				log.WithField("tracer_id", p.tracerID).Errorf("upload to ES failed: %v", err)
 			} else {
 				p.aggr.Reset()
 			}
 		} else {
-			log.P().Warnf("upload enabled but snapshot returned nil")
+			log.Warnf("upload enabled but snapshot returned nil")
 		}
 
 		return
@@ -158,18 +158,18 @@ func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
 
 	if final {
 		if formatter == nil || formatter.IsEmpty() {
-			log.P().Warnf("no profiling samples collected; nothing written")
+			log.Warnf("no profiling samples collected; nothing written")
 
 			return
 		}
 
 		if p.pctx.OutputFormat.IsFlameGraph() {
 			if err := writeFlameGraph(p.pctx.OutputPath, formatter); err != nil {
-				log.P().WithField("output_path", p.pctx.OutputPath).Errorf("write to SVG failed: %v", err)
+				log.WithField("output_path", p.pctx.OutputPath).Errorf("write to SVG failed: %v", err)
 			}
 		} else {
 			if err := writeFolded(p.pctx.OutputPath, formatter); err != nil {
-				log.P().WithField("output_path", p.pctx.OutputPath).Errorf("write to file failed: %v", err)
+				log.WithField("output_path", p.pctx.OutputPath).Errorf("write to file failed: %v", err)
 			}
 		}
 

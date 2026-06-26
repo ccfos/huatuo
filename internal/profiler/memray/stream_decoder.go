@@ -175,7 +175,7 @@ func (d *StreamDecoder) handleAllocationDelta(flags uint8) error {
 		if addr == 0 {
 			d.zeroPtrCache++
 			if d.zeroPtrCache <= 3 {
-				log.P().Warnf("memray pointer cache hit to 0 (idx=%d); stream may be corrupt", ptrIdx)
+				log.Warnf("memray pointer cache hit to 0 (idx=%d); stream may be corrupt", ptrIdx)
 			}
 		}
 	}

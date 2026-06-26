@@ -75,7 +75,7 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, enque
 	for pid, path := range pidToPath {
 		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 		if err != nil {
-			log.P().Warnf("open file %s for pid %d error: %v", path, pid, err)
+			log.Warnf("open file %s for pid %d error: %v", path, pid, err)
 			continue
 		}
 		files[pid] = f
@@ -88,7 +88,7 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, enque
 	defer func() {
 		for pid, f := range files {
 			if err := f.Close(); err != nil {
-				log.P().Warnf("close file for pid %d: %v", pid, err)
+				log.Warnf("close file for pid %d: %v", pid, err)
 			}
 		}
 	}()
@@ -102,13 +102,13 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, enque
 
 		for pid, f := range files {
 			if _, err := f.Seek(0, 0); err != nil {
-				log.P().Warnf("seek file for pid %d error: %v", pid, err)
+				log.Warnf("seek file for pid %d error: %v", pid, err)
 				continue
 			}
 
 			data, err := io.ReadAll(f)
 			if err != nil {
-				log.P().Warnf("read file for pid %d error: %v", pid, err)
+				log.Warnf("read file for pid %d error: %v", pid, err)
 				continue
 			}
 
@@ -119,7 +119,7 @@ func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, enque
 				})
 
 				if err := f.Truncate(0); err != nil {
-					log.P().Warnf("truncate file for pid %d error: %v", pid, err)
+					log.Warnf("truncate file for pid %d error: %v", pid, err)
 					continue
 				}
 			}
@@ -180,7 +180,7 @@ func stopAsprofProcesses(ctx context.Context, pids []int, toolPath string) []exe
 	defer func() {
 		pid := pids[0]
 		if err := CleanupJavaAgent(pid); err != nil {
-			log.P().Warnf("Cleanup failed for PID %d: %v", pid, err)
+			log.Warnf("Cleanup failed for PID %d: %v", pid, err)
 		}
 	}()
 
@@ -240,10 +240,10 @@ func PrepareJavaAgent(pid int, asprofPath string) error {
 
 	targetTmp := "/tmp"
 	if inContainer {
-		log.P().Infof("This process is in container")
+		log.Infof("This process is in container")
 		targetTmp = fmt.Sprintf("/proc/%d/root/tmp", pid)
 	} else {
-		log.P().Infof("This process is not in container")
+		log.Infof("This process is not in container")
 	}
 
 	if _, err := os.Stat(targetTmp); err != nil {
@@ -271,10 +271,10 @@ func CleanupJavaAgent(pid int) error {
 
 	targetTmp := "/tmp"
 	if inContainer {
-		log.P().Infof("Cleaning up Java agent for PID %d in container", pid)
+		log.Infof("Cleaning up Java agent for PID %d in container", pid)
 		targetTmp = fmt.Sprintf("/proc/%d/root/tmp", pid)
 	} else {
-		log.P().Infof("Cleaning up Java agent for PID %d on host", pid)
+		log.Infof("Cleaning up Java agent for PID %d on host", pid)
 	}
 
 	agentPath := filepath.Join(targetTmp, "libasyncProfiler.so")
@@ -282,9 +282,9 @@ func CleanupJavaAgent(pid int) error {
 		if err := os.Remove(agentPath); err != nil {
 			return fmt.Errorf("failed to remove agent %q: %w", agentPath, err)
 		}
-		log.P().Infof("Removed agent %s successfully", agentPath)
+		log.Infof("Removed agent %s successfully", agentPath)
 	} else if os.IsNotExist(err) {
-		log.P().Infof("Agent %s does not exist, nothing to clean up", agentPath)
+		log.Infof("Agent %s does not exist, nothing to clean up", agentPath)
 	} else {
 		return fmt.Errorf("failed to stat agent path %q: %w", agentPath, err)
 	}

@@ -36,7 +36,7 @@ func writeFolded(dir string, f output.Formatter) error {
 		return fmt.Errorf("failed to write folded data: %w", err)
 	}
 
-	log.P().WithField("path", file.Name()).Infof("profiling data written")
+	log.WithField("path", file.Name()).Infof("profiling data written")
 
 	return nil
 }
@@ -53,7 +53,7 @@ func writeFlameGraph(dir string, f output.Formatter) error {
 		return fmt.Errorf("failed to render flame graph: %w", err)
 	}
 
-	log.P().WithField("path", file.Name()).Infof("flame graph written")
+	log.WithField("path", file.Name()).Infof("flame graph written")
 
 	return nil
 }

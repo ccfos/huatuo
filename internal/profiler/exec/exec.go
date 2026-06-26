@@ -87,7 +87,7 @@ func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdRe
 		// If context is canceled or times out, terminate the process group
 		// Sending SIGTERM to -pgid kills the whole group.
 		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
-			log.P().Warnf("kill process group %d: %v", cmd.Process.Pid, err)
+			log.Warnf("kill process group %d: %v", cmd.Process.Pid, err)
 		}
 
 		// Send SIGTERM may leave some subprocesses or JVM agents running, run `asprof stop` to ensure cleanup if Lang=Java.
@@ -164,7 +164,7 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 			case <-ctx.Done():
 				// If context is canceled, terminate the process group, sending SIGTERM to -pgid kills the whole group.
 				if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
-					log.P().Warnf("kill process group %d: %v", cmd.Process.Pid, err)
+					log.Warnf("kill process group %d: %v", cmd.Process.Pid, err)
 				}
 
 				// Send SIGTERM may leave some subprocesses or JVM agents running, run `asprof stop` to ensure cleanup if Lang=Java.
@@ -228,7 +228,7 @@ func VerifyResults(results []CmdResult) error {
 		if r.Success {
 			continue
 		}
-		log.P().Warnf("cmd %q stderr: %s, stdout: %s, err: %s", r.Cmd, string(r.Stderr), string(r.Stdout), r.CmdErr)
+		log.Warnf("cmd %q stderr: %s, stdout: %s, err: %s", r.Cmd, string(r.Stderr), string(r.Stdout), r.CmdErr)
 		return fmt.Errorf("cmd %q failed for pid: %d", r.Cmd, r.Pid)
 	}
 	return nil

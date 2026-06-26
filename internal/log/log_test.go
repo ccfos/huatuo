@@ -313,6 +313,70 @@ func TestFormat(t *testing.T) {
 	}
 }
 
+// Test SetFormatter applies a custom formatter to log output.
+func TestSetFormatter(t *testing.T) {
+	originalLevel := GetLevel()
+	defer func() {
+		SetLevel(originalLevel.String())
+		// Restore the default formatter so other tests are unaffected.
+		SetFormatter(&logrus.TextFormatter{
+			DisableColors:   true,
+			ForceQuote:      true,
+			FullTimestamp:   true,
+			TimestampFormat: rfc3339NanoFixed,
+			DisableSorting:  false,
+		})
+	}()
+
+	var buf bytes.Buffer
+	SetOutput(&buf)
+	SetLevel("info")
+	SetFormatter(&prefixTestFormatter{prefix: "unit"})
+
+	Info("formatter message")
+
+	got := buf.String()
+	if !strings.Contains(got, "[unit] formatter message") {
+		t.Errorf("expected custom-formatted output, got %q", got)
+	}
+}
+
+// Test WithField attaches a field to the resulting entry.
+func TestWithField(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value any
+	}{
+		{"string value", "tracer_id", "abc123"},
+		{"int value", "count", 42},
+		{"nil value", "empty", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := WithField(tt.key, tt.value)
+
+			got, exists := entry.Data[tt.key]
+			if !exists {
+				t.Fatalf("expected field %q to exist", tt.key)
+			}
+			if got != tt.value {
+				t.Errorf("field %q = %v, want %v", tt.key, got, tt.value)
+			}
+		})
+	}
+}
+
+// Helper: prefixTestFormatter is a minimal custom formatter for TestSetFormatter.
+type prefixTestFormatter struct {
+	prefix string
+}
+
+func (f *prefixTestFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	return []byte("[" + f.prefix + "] " + entry.Message + "\n"), nil
+}
+
 // Helper: testHook for Hook interface testing
 type testHook struct {
 	onFire func(entry *logrus.Entry) error

@@ -118,7 +118,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return fmt.Errorf("eBPF features requires root privileges")
 	}
 
-	log.P().Infof("starting native mem profiler, mode=%s", p.internalMode)
+	log.Infof("starting native mem profiler, mode=%s", p.internalMode)
 
 	cssAddr, err := resolveCgroupCSS(pctx)
 	if err != nil {
@@ -137,14 +137,14 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	if err := b.AttachWithOptions(opts); err != nil {
 		if cerr := b.Close(); cerr != nil {
-			log.P().Warnf("closing eBPF after attach failure: %v", cerr)
+			log.Warnf("closing eBPF after attach failure: %v", cerr)
 		}
 
 		return fmt.Errorf("failed to attach: %w", err)
 	}
 
 	p.bpf = b
-	log.P().Infof("eBPF attached")
+	log.Infof("eBPF attached")
 
 	return nil
 }
@@ -259,8 +259,8 @@ func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads b
 }
 
 func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	log.P().Infof("data reading loop started")
-	defer log.P().Infof("data reading loop ended")
+	log.Infof("data reading loop started")
+	defer log.Infof("data reading loop ended")
 
 	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
 	if err != nil {
@@ -295,7 +295,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 				return nil
 			}
 
-			log.P().Warnf("drain: %v", err)
+			log.Warnf("drain: %v", err)
 		}
 	}
 }
@@ -370,7 +370,7 @@ func (p *memNativeProfiler) drainActiveRing(
 				return err
 			}
 
-			log.P().Warnf("read after %d/%d events: %v", i, ring.sampleCount, err)
+			log.Warnf("read after %d/%d events: %v", i, ring.sampleCount, err)
 			break
 		}
 
@@ -484,7 +484,7 @@ func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 		return v * p.pageSize * 100 / int64(p.probability)
 	}
 
-	log.P().Warnf("unknown mem mode %q, value treated as zero", p.internalMode)
+	log.Warnf("unknown mem mode %q, value treated as zero", p.internalMode)
 
 	return 0
 }

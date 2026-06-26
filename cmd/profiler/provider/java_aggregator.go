@@ -52,7 +52,7 @@ func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) 
 func (a *javaAggregator) Aggregate(rec any) {
 	so, ok := rec.(profiler.SampleOutput)
 	if !ok {
-		log.P().Warnf("invalid record type %T, expected profiler.SampleOutput", rec)
+		log.Warnf("invalid record type %T, expected profiler.SampleOutput", rec)
 
 		return
 	}
@@ -76,7 +76,7 @@ func (a *javaAggregator) Aggregate(rec any) {
 
 		frames := []string{fmt.Sprintf("process %d", so.PID), stack}
 		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: count}); err != nil {
-			log.P().Warnf("formatter add sample: %v", err)
+			log.Warnf("formatter add sample: %v", err)
 		}
 	}
 }

@@ -108,7 +108,7 @@ func (a *nativeAggregator) Aggregate(rec any) {
 			}
 			frames = appendStackFrames(frames, v.User, v.Kernel)
 			if err := a.formatter.Add(&output.Sample{Frames: frames, Count: v.Samples}); err != nil {
-				log.P().Warnf("formatter add sample: %v", err)
+				log.Warnf("formatter add sample: %v", err)
 			}
 		}
 
@@ -129,7 +129,7 @@ func (a *nativeAggregator) Aggregate(rec any) {
 		}
 
 	default:
-		log.P().Warnf("invalid record type %T, expected *stackEntry or *lockStackEntry", rec)
+		log.Warnf("invalid record type %T, expected *stackEntry or *lockStackEntry", rec)
 	}
 }
 
@@ -180,7 +180,7 @@ func (a *nativeAggregator) buildLockFolded() {
 
 		frames = appendStackFrames(frames, rec.User, rec.Kernel)
 		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: int64(val)}); err != nil {
-			log.P().Warnf("formatter add lock sample: %v", err)
+			log.Warnf("formatter add lock sample: %v", err)
 		}
 	}
 }

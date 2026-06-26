@@ -47,7 +47,7 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 		return err
 	}
 
-	log.P().Infof("using profiler: %s-%s (%s)", meta.LangOrImpl, meta.Type, meta.Description)
+	log.Infof("using profiler: %s-%s (%s)", meta.LangOrImpl, meta.Type, meta.Description)
 
 	return registry.Profile(pctx, meta)
 }

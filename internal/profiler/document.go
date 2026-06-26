@@ -74,11 +74,11 @@ func (m ProfilingDocumentMapper) CreateProfilingDocument(metadata map[string]str
 		}
 		container, err := lookupFn(serverAddress, containerID)
 		if err != nil {
-			log.P().Warnf("get container by %s: %v", containerID, err)
+			log.Warnf("get container by %s: %v", containerID, err)
 			return nil
 		}
 		if container == nil {
-			log.P().Warnf("the container %s is not found", containerID)
+			log.Warnf("the container %s is not found", containerID)
 			return nil
 		}
 
@@ -283,7 +283,7 @@ func applyProfilingMetadataMockContainer(document *tracing.Document, raw string)
 
 	var mock profilingMetadataMockContainer
 	if err := json.Unmarshal([]byte(raw), &mock); err != nil {
-		log.P().Warnf("invalid mock-container metadata: %v", err)
+		log.Warnf("invalid mock-container metadata: %v", err)
 		return
 	}
 

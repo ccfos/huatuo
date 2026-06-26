@@ -82,7 +82,7 @@ func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	log.P().Infof("starting native cpu profiler")
+	log.Infof("starting native cpu profiler")
 
 	var cssAddr uint64
 	if containerID := pctx.ContainerID; containerID != "" {
@@ -110,20 +110,20 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	if err := p.bpf.AttachWithOptions([]bpf.AttachOption{opt}); err != nil {
 		if cerr := p.bpf.Close(); cerr != nil {
-			log.P().Warnf("closing eBPF after attach failure: %v", cerr)
+			log.Warnf("closing eBPF after attach failure: %v", cerr)
 		}
 
 		return fmt.Errorf("failed to attach perf event PMU: %w", err)
 	}
 
-	log.P().Infof("eBPF attached")
+	log.Infof("eBPF attached")
 
 	return nil
 }
 
 func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	log.P().Infof("data reading loop started")
-	defer log.P().Infof("data reading loop ended")
+	log.Infof("data reading loop started")
+	defer log.Infof("data reading loop ended")
 
 	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
 	if err != nil {
@@ -154,7 +154,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 				return nil
 			}
 
-			log.P().Warnf("drain: %v", err)
+			log.Warnf("drain: %v", err)
 		}
 	}
 }
@@ -216,7 +216,7 @@ func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return err
 			}
-			log.P().Warnf("read batch: %v", err)
+			log.Warnf("read batch: %v", err)
 			break
 		}
 
@@ -258,7 +258,7 @@ func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader
 	}
 
 	if err := bpfmap.WriteUint64(p.bpf, stateMapID, ring.sampleCountIdx, 0); err != nil {
-		log.P().Warnf("reset sample count: %v", err)
+		log.Warnf("reset sample count: %v", err)
 	}
 
 	if len(stackCountsByProc) > 0 {
@@ -266,7 +266,7 @@ func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader
 		aggregateStacksAndStore(p.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys)
 
 		if err := p.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
-			log.P().Warnf("clear stack map: %v", err)
+			log.Warnf("clear stack map: %v", err)
 		}
 	}
 
@@ -334,7 +334,7 @@ func readAndMarkStackTrace(b bpf.BPF, mapID uint32, id int32, deleteKeys *[][]by
 	val, err := b.ReadMap(mapID, keyBuf)
 	if err != nil {
 		if !errors.Is(err, ebpf.ErrKeyNotExist) {
-			log.P().Warnf("stack map lookup for ID %d: %v", id, err)
+			log.Warnf("stack map lookup for ID %d: %v", id, err)
 		}
 		return [bpfmap.StackTraceLen]uint64{}, false
 	}
@@ -357,7 +357,7 @@ func closeBpfSafe(b bpf.BPF) error {
 		return nil
 	}
 	if err := b.Close(); err != nil {
-		log.P().Warnf("closing eBPF: %v", err)
+		log.Warnf("closing eBPF: %v", err)
 	}
 	return nil
 }

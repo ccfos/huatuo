@@ -75,7 +75,7 @@ func newPythonCPUAggregator(pctx *pcontext.ProfilerContext) (*pythonAggregator, 
 func (a *pythonAggregator) Aggregate(rec any) {
 	so, ok := rec.(profiler.SampleOutput)
 	if !ok {
-		log.P().Warnf("invalid record type %T, expected profiler.SampleOutput", rec)
+		log.Warnf("invalid record type %T, expected profiler.SampleOutput", rec)
 
 		return
 	}
@@ -103,7 +103,7 @@ func (a *pythonAggregator) Aggregate(rec any) {
 
 		frames := strings.Split(stack, ";")
 		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: count}); err != nil {
-			log.P().Warnf("formatter add sample: %v", err)
+			log.Warnf("formatter add sample: %v", err)
 		}
 	}
 }
@@ -170,11 +170,11 @@ func (a *pythonAggregator) snapshotPprofOneShot(pctx *pcontext.ProfilerContext) 
 	}
 
 	if negatives > 0 {
-		log.P().Warnf("%s one-shot: dropped negatives=%d sample=%s", a.profilerName, negatives, strings.Join(negativeSamples, " | "))
+		log.Warnf("%s one-shot: dropped negatives=%d sample=%s", a.profilerName, negatives, strings.Join(negativeSamples, " | "))
 	}
 
 	if folded.Len() == 0 {
-		log.P().Warnf("%s one-shot: no non-negative samples after filtering", a.profilerName)
+		log.Warnf("%s one-shot: no non-negative samples after filtering", a.profilerName)
 
 		return nil, nil
 	}

@@ -151,13 +151,13 @@ func findProcessesInCgroups(cgroupSuffix, langKeyword, execPath string) (map[int
 func execPathInCmdline(pid int, execPath string) bool {
 	p, err := process.NewProcess(int32(pid))
 	if err != nil {
-		log.P().Warnf("new process for pid %d: %v", pid, err)
+		log.Warnf("new process for pid %d: %v", pid, err)
 		return false
 	}
 
 	cmdline, err := p.CmdlineSlice()
 	if err != nil {
-		log.P().Warnf("read cmdline for pid %d: %v", pid, err)
+		log.Warnf("read cmdline for pid %d: %v", pid, err)
 		return false
 	}
 

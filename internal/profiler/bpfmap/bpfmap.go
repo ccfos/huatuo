@@ -88,7 +88,7 @@ func BatchReadStackTraces(b bpf.BPF, mapID uint32, ids map[int32]bool) map[int32
 
 		valBytes, err := b.ReadMap(mapID, keyBuf)
 		if err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
-			log.P().Warnf("stack map lookup error for ID %d: %v", stackID, err)
+			log.Warnf("stack map lookup error for ID %d: %v", stackID, err)
 			continue
 		}
 

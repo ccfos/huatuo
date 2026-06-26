@@ -99,7 +99,7 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	}
 	pipe := aggregator.NewPipeline(pctx, aggr)
 	pipe.Start()
-	log.P().Info("aggregator started")
+	log.Info("aggregator started")
 
 	if err := p.Impl.Start(pctx); err != nil {
 		pipe.Stop()
@@ -130,13 +130,13 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 
 	select {
 	case <-deadline:
-		log.P().Info("profiler auto-stop by duration")
+		log.Info("profiler auto-stop by duration")
 	case <-pctx.Ctx.Done():
 		err = pctx.Ctx.Err()
-		log.P().Infof("profiler stop by context: %v", err)
+		log.Infof("profiler stop by context: %v", err)
 	case loopErr = <-loopDone:
 		looped = true
-		log.P().Infof("profiler stop by loop exit: %v", loopErr)
+		log.Infof("profiler stop by loop exit: %v", loopErr)
 	}
 
 	// Cancel first so ReadDataLoop exits before Stop closes BPF/file handles
@@ -148,7 +148,7 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	}
 
 	if stopErr := p.Impl.Stop(pctx); stopErr != nil {
-		log.P().Errorf("profiler stop: %v", stopErr)
+		log.Errorf("profiler stop: %v", stopErr)
 	}
 
 	pipe.Stop()
