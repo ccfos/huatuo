@@ -4,8 +4,6 @@ type: docs
 weight: 40
 ---
 
-# How to contribute
-
 Development happens on [GitHub](https://github.com/ccfos/huatuo) and contributions in all forms are welcome. Please take a look at the architecture to get a better understanding of the high-level goals.
 
 ## Clone and Provision Environment
@@ -18,7 +16,7 @@ Development happens on [GitHub](https://github.com/ccfos/huatuo) and contributio
 
 4. Clone your ${YOUR_GITHUB_USERNAME_OR_ORG}/huatuo fork and set up the base repository as upstream remote:
 
-    ```
+    ```bash
     git clone https://github.com/${YOUR_GITHUB_USERNAME_OR_ORG}/huatuo.git
     cd huatuo
     git remote add upstream https://github.com/ccfos/huatuo.git
@@ -30,9 +28,9 @@ Development happens on [GitHub](https://github.com/ccfos/huatuo) and contributio
 
 ## Developer Certificate of Origin
 
-The HUATUO project requires that all contributions to project repositories carry the Developer Certificate of Origin. This is as simple as appending a footer to your commits, a standard commit message is as follows:
+The project requires that all contributions to project repositories carry the Developer Certificate of Origin. This is as simple as appending a footer to your commits, a standard commit message is as follows:
 
-```
+```bash
 fix: resolve authentication bug
 
 The login token was not being validated properly.
@@ -48,14 +46,14 @@ Signing off your contributions this way means that you've read and understood th
 
 Many of the tests require privileges to set resource limits and load eBPF code. The easiest way to obtain these is to run the tests with sudo. Run all tests with the following command:
 
-```
+```bash
 make all
 go test ./...
 ```
 
 To test the current package with Go linters.
 
-```
+```bash
 make check
 ```
 
