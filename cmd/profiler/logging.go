@@ -68,7 +68,13 @@ func setupLogging(opts loggingOptions) {
 	})
 
 	if opts.level != "" {
-		log.SetLevel(opts.level)
+		switch opts.level {
+		case "trace", "debug", "info", "warn", "error":
+			log.SetLevel(opts.level)
+		default:
+			fmt.Fprintf(os.Stderr, "invalid log-level %q; using info (allowed: trace|debug|info|warn|error)\n", opts.level)
+			log.SetLevel("info")
+		}
 	}
 
 	size := opts.size
