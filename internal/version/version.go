@@ -186,6 +186,9 @@ func (i *Info) JSON() string {
 // cli.VersionPrinter so `-v` honors the chosen format. Returns the
 // resolved Info so callers can reuse it (e.g. as a toolstream version).
 //
+// It also chains app.Before to warn when --version-format is set but
+// --version is not, since the format flag has no effect on its own.
+//
 // Must be called after the caller has populated app.Flags, since Wire
 // appends to that slice.
 func Wire(app *cli.App, s Seed) Info {
@@ -199,6 +202,22 @@ func Wire(app *cli.App, s Seed) Info {
 
 	cli.VersionPrinter = func(c *cli.Context) {
 		printVersion(c.App.Writer, &info, c.String(versionFormatFlag))
+	}
+
+	prevBefore := app.Before
+	app.Before = func(c *cli.Context) error {
+		// cli short-circuits and returns before Before runs when --version
+		// is present, so reaching here with the format flag set means it was
+		// given on its own, where it has no effect.
+		if c.IsSet(versionFormatFlag) {
+			fmt.Fprintf(c.App.ErrWriter, "warning: --%s is only used with --version; ignoring\n", versionFormatFlag)
+		}
+
+		if prevBefore != nil {
+			return prevBefore(c)
+		}
+
+		return nil
 	}
 
 	return info
