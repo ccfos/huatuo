@@ -483,9 +483,9 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 // TestDefaultBPF_EventPipe_Flow tests the event pipe functionality.
 //
 // Covered functions:
-// - EventPipe(ctx context.Context, mapID uint32, channelSize int) (*PerfEventReader, error)
-// - EventPipeByName(ctx context.Context, mapName string, channelSize int) (*PerfEventReader, error)
-// - AttachAndEventPipe(ctx context.Context, mapName string, channelSize int) (*PerfEventReader, error)
+// - EventPipe(ctx context.Context, mapID uint32, perCPUBufSize int) (*PerfEventReader, error)
+// - EventPipeByName(ctx context.Context, mapName string, perCPUBufSize int) (*PerfEventReader, error)
+// - AttachAndEventPipe(ctx context.Context, mapName string, perCPUBufSize int) (*PerfEventReader, error)
 func TestDefaultBPF_EventPipe_Flow(t *testing.T) {
 	b := loadMinimalBpfFromBytes(t)
 

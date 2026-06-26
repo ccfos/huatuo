@@ -523,24 +523,24 @@ func (b *defaultBPF) Loaded() (bool, error) {
 }
 
 // EventPipe gets event-pipe and returns a PerfEventReader.
-func (b *defaultBPF) EventPipe(ctx context.Context, mapID, perCPUBuffer uint32) (PerfEventReader, error) {
-	reader, err := newPerfEventReader(ctx, b.mapSpecs[mapID].bMap, int(perCPUBuffer))
+func (b *defaultBPF) EventPipe(ctx context.Context, mapID, perCPUBufSize uint32) (PerfEventReader, error) {
+	reader, err := newPerfEventReader(ctx, b.mapSpecs[mapID].bMap, int(perCPUBufSize))
 	if err != nil {
 		return nil, err
 	}
 
-	log.Debugf("event-pipe %d, perCPUBuffer %d", mapID, perCPUBuffer)
+	log.Debugf("event-pipe %d, perCPUBufSize %d", mapID, perCPUBufSize)
 	return reader, nil
 }
 
 // EventPipeByName gets event-pipe by the mapName and returns a PerfEventReader.
-func (b *defaultBPF) EventPipeByName(ctx context.Context, mapName string, perCPUBuffer uint32) (PerfEventReader, error) {
-	return b.EventPipe(ctx, b.MapIDByName(mapName), perCPUBuffer)
+func (b *defaultBPF) EventPipeByName(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error) {
+	return b.EventPipe(ctx, b.MapIDByName(mapName), perCPUBufSize)
 }
 
 // AttachAndEventPipe attaches and event-pipe and returns a PerfEventReader.
-func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, perCPUBuffer uint32) (PerfEventReader, error) {
-	reader, err := b.EventPipeByName(ctx, mapName, perCPUBuffer)
+func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error) {
+	reader, err := b.EventPipeByName(ctx, mapName, perCPUBufSize)
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +550,7 @@ func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, per
 		return nil, err
 	}
 
-	log.Debugf("attach and event-pipe %s, perCPUBuffer %d", mapName, perCPUBuffer)
+	log.Debugf("attach and event-pipe %s, perCPUBufSize %d", mapName, perCPUBufSize)
 	return reader, nil
 }
 

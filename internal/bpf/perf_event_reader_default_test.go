@@ -95,7 +95,7 @@ func TestPerfEventReader_ReadInto_Closed(t *testing.T) {
 }
 
 func TestNewPerfEventReader_Failure(t *testing.T) {
-	// Keep the original coverage: perCPUBuffer must be > 0. Use any map type; reader creation should fail.
+	// Keep the original coverage: perCPUBufSize must be > 0. Use any map type; reader creation should fail.
 	b := loadMinimalBpfFromBytes(t)
 	info, err := b.Info()
 	require.NoError(t, err)

@@ -101,13 +101,13 @@ type BPF interface {
 	Loaded() (bool, error)
 
 	// EventPipe gets event-pipe and returns a PerfEventReader.
-	EventPipe(ctx context.Context, mapID, perCPUBuffer uint32) (PerfEventReader, error)
+	EventPipe(ctx context.Context, mapID, perCPUBufSize uint32) (PerfEventReader, error)
 
 	// EventPipeByName gets event-pipe by the mapName and returns a PerfEventReader.
-	EventPipeByName(ctx context.Context, mapName string, perCPUBuffer uint32) (PerfEventReader, error)
+	EventPipeByName(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error)
 
 	// AttachAndEventPipe attaches and event-pipe and returns a PerfEventReader.
-	AttachAndEventPipe(ctx context.Context, mapName string, perCPUBuffer uint32) (PerfEventReader, error)
+	AttachAndEventPipe(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error)
 
 	// ReadMap read the value content corresponding to a key from a map
 	//

@@ -42,8 +42,8 @@ type perfEventReader struct {
 var _ PerfEventReader = (*perfEventReader)(nil)
 
 // newPerfEventReader creates a new perfEventReader.
-func newPerfEventReader(ctx context.Context, array *ebpf.Map, perCPUBuffer int) (PerfEventReader, error) {
-	rd, err := perf.NewReader(array, perCPUBuffer)
+func newPerfEventReader(ctx context.Context, array *ebpf.Map, perCPUBufSize int) (PerfEventReader, error) {
+	rd, err := perf.NewReader(array, perCPUBufSize)
 	if err != nil {
 		return nil, fmt.Errorf("can't create the perf event reader: %w", err)
 	}
