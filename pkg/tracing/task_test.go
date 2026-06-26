@@ -224,9 +224,9 @@ func TestStopTask(t *testing.T) {
 func TestRunningTaskCount(t *testing.T) {
 	clearTaskCache()
 
-	taskLifeTmpCache.Store("task-running", &task{status: StatusRunning})
-	taskLifeTmpCache.Store("task-pending", &task{status: StatusPending})
-	taskLifeTmpCache.Store("task-completed", &task{status: StatusCompleted})
+	taskLifeTmpCache.Store("task-running", &task{state: taskState{status: StatusRunning}})
+	taskLifeTmpCache.Store("task-pending", &task{state: taskState{status: StatusPending}})
+	taskLifeTmpCache.Store("task-completed", &task{state: taskState{status: StatusCompleted}})
 
 	got := RunningTaskCount()
 	if got != 1 {
@@ -238,7 +238,7 @@ func TestSetDeadlineDefault(t *testing.T) {
 	task := &task{}
 	before := time.Now()
 	setDeadlineDefault(task)
-	if !task.deadlineTime.After(before) {
-		t.Errorf("deadlineTime=%v should be after %v", task.deadlineTime, before)
+	if !task.state.deadlineTime.After(before) {
+		t.Errorf("deadlineTime=%v should be after %v", task.state.deadlineTime, before)
 	}
 }

@@ -60,14 +60,14 @@ func (mgr *TracingManager) StartByName(name string) error {
 	}
 
 	if slices.Contains(mgr.blackListed, name) {
-		te.isRunning = false
+		te.isRunning.Store(false)
 		return fmt.Errorf("%q blackListed", name)
 	}
 
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
 
-	if te.isRunning {
+	if te.isRunning.Load() {
 		return fmt.Errorf("%q already running", name)
 	}
 
@@ -75,10 +75,8 @@ func (mgr *TracingManager) StartByName(name string) error {
 }
 
 func (mgr *TracingManager) Stop() error {
-	for name := range mgr.tracingEvents {
-		if err := mgr.StopByName(name); err != nil {
-			return err
-		}
+	for _, te := range mgr.tracingEvents {
+		te.Stop()
 	}
 	return nil
 }
@@ -91,7 +89,7 @@ func (mgr *TracingManager) StopByName(name string) error {
 
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
-	if !te.isRunning {
+	if !te.isRunning.Load() {
 		return fmt.Errorf("%q not running", name)
 	}
 

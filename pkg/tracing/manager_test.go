@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	pkgtypes "huatuo-bamai/pkg/types"
 )
@@ -30,16 +29,6 @@ type stubEvent struct {
 
 func (s *stubEvent) Start(ctx context.Context) error {
 	return s.startFunc(ctx)
-}
-
-func waitCancelReady(te *EventTracing) bool {
-	for range 50 {
-		if te.cancelCtx != nil {
-			return true
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return false
 }
 
 func TestNewMgrTracingEvent(t *testing.T) {
@@ -121,11 +110,11 @@ func TestMgrTracingEventStart(t *testing.T) {
 		{
 			name: "already running",
 			setup: func() (*TracingManager, string) {
+				te := &EventTracing{name: "trace-2026"}
+				te.isRunning.Store(true)
 				return &TracingManager{
-					tracingEvents: map[string]*EventTracing{
-						"trace-2026": {name: "trace-2026", isRunning: true},
-					},
-					blackListed: nil,
+					tracingEvents: map[string]*EventTracing{"trace-2026": te},
+					blackListed:   nil,
 				}, "trace-2026"
 			},
 			validate: func(t *testing.T, err error) {
@@ -170,10 +159,6 @@ func TestMgrTracingEventStartAndStopSuccess(t *testing.T) {
 		t.Fatalf("MgrTracingEventStart() error=%v", startErr)
 	}
 
-	if !waitCancelReady(te) {
-		t.Fatalf("cancelCtx was not initialized in time")
-	}
-
 	stopErr := mgr.StopByName("trace-2026")
 	if stopErr != nil {
 		t.Errorf("MgrTracingEventStop() error=%v", stopErr)
@@ -203,10 +188,9 @@ func TestMgrTracingEventStop(t *testing.T) {
 		{
 			name: "not running",
 			setup: func() (*TracingManager, string) {
+				te := &EventTracing{name: "trace-2026"}
 				return &TracingManager{
-					tracingEvents: map[string]*EventTracing{
-						"trace-2026": {name: "trace-2026", isRunning: false},
-					},
+					tracingEvents: map[string]*EventTracing{"trace-2026": te},
 				}, "trace-2026"
 			},
 			validate: func(t *testing.T, err error) {
@@ -221,10 +205,13 @@ func TestMgrTracingEventStop(t *testing.T) {
 		{
 			name: "running",
 			setup: func() (*TracingManager, string) {
+				te := &EventTracing{name: "trace-2026"}
+				te.isRunning.Store(true)
+				te.mu.Lock()
+				te.cancelCtx = func() {}
+				te.mu.Unlock()
 				return &TracingManager{
-					tracingEvents: map[string]*EventTracing{
-						"trace-2026": {name: "trace-2026", isRunning: true, cancelCtx: func() {}},
-					},
+					tracingEvents: map[string]*EventTracing{"trace-2026": te},
 				}, "trace-2026"
 			},
 			validate: func(t *testing.T, err error) {
@@ -261,13 +248,14 @@ func TestMgrTracingInfoDump(t *testing.T) {
 		tracingEvents: map[string]*EventTracing{},
 	}
 	for i := range tests {
-		mgr.tracingEvents[tests[i].nameKey] = &EventTracing{
-			name:      tests[i].wantName,
-			isRunning: tests[i].wantRun,
-			hitCount:  tests[i].wantHit,
-			interval:  tests[i].wantIntvl,
-			flag:      tests[i].wantFlag,
+		te := &EventTracing{
+			name:     tests[i].wantName,
+			interval: tests[i].wantIntvl,
+			flag:     tests[i].wantFlag,
 		}
+		te.isRunning.Store(tests[i].wantRun)
+		te.hitCount.Store(int32(tests[i].wantHit))
+		mgr.tracingEvents[tests[i].nameKey] = te
 	}
 
 	info := mgr.Dump()
