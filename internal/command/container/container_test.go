@@ -34,15 +34,15 @@ func TestGetContainersCompatibility(t *testing.T) {
 
 	serverAddr := strings.TrimPrefix(server.URL, "http://")
 
-	containers, err := getContainers(serverAddr, "container-20250226")
+	containers, err := getContainers(serverAddr, "container+2025&0226")
 	if err != nil {
 		t.Errorf("getContainers() error = %v", err)
 	}
 	if !strings.Contains(requestedPath, "/containers/json") {
 		t.Errorf("requested path = %q, want /containers/json", requestedPath)
 	}
-	if !strings.Contains(requestedPath, "container_id=container-20250226") {
-		t.Errorf("requested path = %q, want container_id query", requestedPath)
+	if !strings.Contains(requestedPath, "container_id=container%2B2025%260226") {
+		t.Errorf("requested path = %q, want escaped container_id query", requestedPath)
 	}
 	if len(containers) != 2 {
 		t.Errorf("len(containers) = %d, want %d", len(containers), 2)
