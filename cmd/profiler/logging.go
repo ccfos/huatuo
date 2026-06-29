@@ -16,7 +16,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/sirupsen/logrus"
@@ -51,13 +50,16 @@ type loggingOptions struct {
 	size    int
 }
 
-// setupLogging configures the shared logger for the profiler CLI. opts.level
-// sets the verbosity threshold. Output destination priority:
-//   - opts.file == "stdout": write to standard output
-//   - opts.file is a path: rotate through filerotate, capped at opts.size MB
-//   - opts.verbose: write to stdout
-//   - otherwise: silenced (io.Discard)
+// setupLogging configures the logger for the profiler CLI.
+// --verbose unconditionally overrides log-level to debug and log-file to
+// stdout so that a single flag enables full diagnostic output regardless
+// of any explicit --log-level or --log-file values.
 func setupLogging(opts loggingOptions) {
+	if opts.verbose {
+		opts.level = "debug"
+		opts.file = "stdout"
+	}
+
 	log.SetFormatter(&prefixFormatter{
 		prefix: profilerLogPrefix,
 		formatter: &logrus.TextFormatter{
@@ -69,14 +71,12 @@ func setupLogging(opts loggingOptions) {
 		},
 	})
 
-	if opts.level != "" {
-		switch opts.level {
-		case "trace", "debug", "info", "warn", "error":
-			log.SetLevel(opts.level)
-		default:
-			fmt.Fprintf(os.Stderr, "invalid log-level %q; using info (allowed: trace|debug|info|warn|error)\n", opts.level)
-			log.SetLevel("info")
-		}
+	switch opts.level {
+	case "trace", "debug", "info", "warn", "error":
+		log.SetLevel(opts.level)
+	default:
+		fmt.Fprintf(os.Stderr, "invalid log-level %q; using info (allowed: trace|debug|info|warn|error)\n", opts.level)
+		log.SetLevel("info")
 	}
 
 	size := opts.size
@@ -84,14 +84,9 @@ func setupLogging(opts loggingOptions) {
 		size = defaultLogSizeMB
 	}
 
-	switch {
-	case opts.file == "stdout":
+	if opts.file == "stdout" {
 		log.SetOutput(os.Stdout)
-	case opts.file != "":
+	} else {
 		log.SetOutput(filerotate.NewFileRotator(opts.file, 1, size))
-	case opts.verbose:
-		log.SetOutput(os.Stdout)
-	default:
-		log.SetOutput(io.Discard)
 	}
 }

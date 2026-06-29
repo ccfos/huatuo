@@ -58,7 +58,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.BoolFlag{
 		Name:  "verbose",
-		Usage: "Enable verbose logging",
+		Usage: "Shorthand for --log-level debug --log-file stdout; overrides explicit values of both flags",
 	},
 	&cli.StringFlag{
 		Name:  "log-level",
