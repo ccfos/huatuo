@@ -14,46 +14,42 @@
 
 package matcher
 
-import (
-	"fmt"
-	"regexp"
-)
-
 // ListMatcher matches a value against a whitelist of full-match regex patterns.
 // An empty ListMatcher matches nothing.
 type ListMatcher struct {
-	rules []*regexp.Regexp
+	fm *FieldMatcher[string]
 }
 
 // NewListMatcher compiles whitelist patterns. Each pattern is anchored so a
 // literal device name such as "eth0" keeps the old exact-match behavior, while
 // patterns such as "eth.*" can select a group of values.
 func NewListMatcher(patterns []string) (*ListMatcher, error) {
-	m := &ListMatcher{rules: make([]*regexp.Regexp, 0, len(patterns))}
+	specs := make([]FieldSpec[string], 0, len(patterns))
 	for _, pattern := range patterns {
 		if pattern == "" {
 			continue
 		}
-		re, err := regexp.Compile("^(?:" + pattern + ")$")
-		if err != nil {
-			return nil, fmt.Errorf("invalid list pattern %q: %w", pattern, err)
-		}
-		m.rules = append(m.rules, re)
+		specs = append(specs, FieldSpec[string]{
+			Name:    "value",
+			Pattern: "^(?:" + pattern + ")$",
+			Extract: func(s string) string { return s },
+		})
 	}
-	return m, nil
+
+	fm, err := NewFieldMatcher(specs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ListMatcher{fm: fm}, nil
 }
 
 // Match reports whether value matches any whitelist pattern.
 func (m *ListMatcher) Match(value string) bool {
-	if m == nil {
+	if m == nil || m.fm == nil {
 		return false
 	}
-	for _, re := range m.rules {
-		if re.MatchString(value) {
-			return true
-		}
-	}
-	return false
+	return m.fm.MatchAny(value)
 }
 
 // Filter returns values that match the whitelist, preserving the input order.

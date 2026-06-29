@@ -53,7 +53,7 @@ func NewFieldMatcher[T any](specs []FieldSpec[T]) (*FieldMatcher[T], error) {
 		}
 		re, err := regexp.Compile(s.Pattern)
 		if err != nil {
-			return nil, fmt.Errorf("invalid pattern for field %q: %w", s.Name, err)
+			return nil, fmt.Errorf("invalid pattern %q for field %q: %w", s.Pattern, s.Name, err)
 		}
 		rules = append(rules, &fieldRule[T]{
 			re:      re,
@@ -72,4 +72,15 @@ func (fm *FieldMatcher[T]) Match(v T) bool {
 		}
 	}
 	return true
+}
+
+// MatchAny returns true if any compiled rule matches v (OR semantics).
+// Returns false when the FieldMatcher has no rules.
+func (fm *FieldMatcher[T]) MatchAny(v T) bool {
+	for _, r := range fm.rules {
+		if r.match(v) {
+			return true
+		}
+	}
+	return false
 }
