@@ -47,14 +47,16 @@ func (f *prefixFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 type loggingOptions struct {
 	verbose bool
 	level   string
-	path    string
+	file    string
 	size    int
 }
 
 // setupLogging configures the shared logger for the profiler CLI. opts.level
-// sets the verbosity threshold. When opts.path is set, output rotates through
-// filerotate; opts.verbose enables stdout; otherwise the logger is silenced
-// (the CLI is invoked from other tooling that already captures the artifact).
+// sets the verbosity threshold. Output destination priority:
+//   - opts.file == "stdout": write to standard output
+//   - opts.file is a path: rotate through filerotate, capped at opts.size MB
+//   - opts.verbose: write to stdout
+//   - otherwise: silenced (io.Discard)
 func setupLogging(opts loggingOptions) {
 	log.SetFormatter(&prefixFormatter{
 		prefix: profilerLogPrefix,
@@ -83,8 +85,10 @@ func setupLogging(opts loggingOptions) {
 	}
 
 	switch {
-	case opts.path != "":
-		log.SetOutput(filerotate.NewFileRotator(opts.path, 1, size))
+	case opts.file == "stdout":
+		log.SetOutput(os.Stdout)
+	case opts.file != "":
+		log.SetOutput(filerotate.NewFileRotator(opts.file, 1, size))
 	case opts.verbose:
 		log.SetOutput(os.Stdout)
 	default:

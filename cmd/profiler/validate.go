@@ -35,7 +35,7 @@ func runBefore(ctx *cli.Context) error {
 	setupLogging(loggingOptions{
 		verbose: ctx.Bool("verbose"),
 		level:   ctx.String("log-level"),
-		path:    ctx.String("log-path"),
+		file:    ctx.String("log-file"),
 		size:    ctx.Int("log-size"),
 	})
 

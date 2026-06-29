@@ -66,8 +66,9 @@ var appFlags = []cli.Flag{
 		Value: "info",
 	},
 	&cli.StringFlag{
-		Name:  "log-path",
-		Usage: "Default log path of profiling",
+		Name:  "log-file",
+		Usage: "Log output destination: file path for rotating logs, or \"stdout\" for standard output",
+		Value: "stdout",
 	},
 	&cli.IntFlag{
 		Name:  "log-size",
