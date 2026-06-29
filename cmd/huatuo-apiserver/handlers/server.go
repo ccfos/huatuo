@@ -27,22 +27,31 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// ServerOptions groups the dependencies required to start the API server.
+type ServerOptions struct {
+	Addr             string
+	PromReg          *prometheus.Registry
+	ProfilingManager *job.Manager
+	TracingManager   *job.Manager
+	VersionInfo      *version.Info
+}
+
 // ServerStart starts the API service with the given configuration.
-func ServerStart(addr string, promReg *prometheus.Registry, profilingManager, tracingManager *job.Manager, versionInfo *version.Info) error {
+func ServerStart(opts ServerOptions) error {
 	httpServer := server.NewServer(&server.Config{
 		EnablePProf:     false,
 		EnableRateLimit: false,
 		AuthUsers:       getUserConfigs(),
-		PromReg:         promReg,
-		VersionInfo:     versionInfo,
+		PromReg:         opts.PromReg,
+		VersionInfo:     opts.VersionInfo,
 	})
 
 	// Register trace routes
-	httpServer.MustRegisterRoutes("/v1/traces", trace.NewHandler(tracingManager).Handlers)
-	httpServer.MustRegisterRoutes("/v1/profiles", profiling.NewHandler(profilingManager).Handlers)
+	httpServer.MustRegisterRoutes("/v1/traces", trace.NewHandler(opts.TracingManager).Handlers)
+	httpServer.MustRegisterRoutes("/v1/profiles", profiling.NewHandler(opts.ProfilingManager).Handlers)
 
 	_ = httpServer.Run(&server.Option{
-		Addr:          addr,
+		Addr:          opts.Addr,
 		RetryMaxTime:  5 * time.Minute,
 		RetryInterval: 1 * time.Minute,
 	})

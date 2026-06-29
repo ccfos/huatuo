@@ -73,6 +73,11 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 }
 
 func startHandlers(d *Daemon) (func(context.Context) error, error) {
-	handlers.Start(config.Get().APIServer.TCPAddr, d.tracer, d.metrics, &d.opts.VersionInfo)
+	handlers.Start(handlers.ServerOptions{
+		Addr:           config.Get().APIServer.TCPAddr,
+		TracingManager: d.tracer,
+		PromReg:        d.metrics,
+		VersionInfo:    &d.opts.VersionInfo,
+	})
 	return nil, nil
 }
