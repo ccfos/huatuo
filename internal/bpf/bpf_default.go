@@ -565,7 +565,6 @@ func (b *defaultBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	log.Debugf("read map %d, key %v, value %v", mapID, key, val)
 	return val, nil
 }
 
@@ -577,7 +576,6 @@ func (b *defaultBPF) WriteMapItems(mapID uint32, items []MapItem) error {
 		if err := m.Update(item.Key, item.Value, ebpf.UpdateAny); err != nil {
 			return fmt.Errorf("map %d, key %v: update: %w", mapID, item.Key, err)
 		}
-		log.Debugf("write map %d, key %v, value %v", mapID, item.Key, item.Value)
 	}
 	return nil
 }
@@ -590,7 +588,6 @@ func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
 		if err := m.Delete(k); err != nil {
 			return fmt.Errorf("map %d, key %v: delete: %w", mapID, k, err)
 		}
-		log.Debugf("delete map %d, key %v", mapID, k)
 	}
 	return nil
 }
@@ -628,7 +625,6 @@ func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
 		})
 	}
 
-	log.Debugf("dump map %d, items %v", mapID, items)
 	return items, nil
 }
 

@@ -102,11 +102,14 @@ func (a *nativeAggregator) Aggregate(rec any) {
 			}
 		}
 
+		log.Debugf("aggregate: pid=%d comm=%s samples=%d key=%q", v.Proc.Pid, v.Proc.Name, v.Samples, key)
+
 		if a.formatter != nil {
 			frames := []string{
 				fmt.Sprintf("process %d:%s", v.Proc.Pid, v.Proc.Name),
 			}
 			frames = appendStackFrames(frames, v.User, v.Kernel)
+			log.Debugf("formatter add: frames=%v count=%d", frames, v.Samples)
 			if err := a.formatter.Add(&output.Sample{Frames: frames, Count: v.Samples}); err != nil {
 				log.Warnf("formatter add sample: %v", err)
 			}

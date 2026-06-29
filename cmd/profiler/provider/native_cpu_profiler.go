@@ -241,6 +241,8 @@ func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader
 			stackCountsByProc[pidName][pair]++
 		}
 
+		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch), totalRead, len(stackCountsByProc))
+
 		// An empty batch means the ring is drained for now; avoid spinning
 		// even if the BPF count has not been fully matched.
 		if len(batch) == 0 {
@@ -252,10 +254,14 @@ func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader
 			return fmt.Errorf("read sampleCnt: %w", err)
 		}
 
+		log.Debugf("drain check: totalRead=%d bpfCount=%d", totalRead, bpfCount)
+
 		if totalRead >= bpfCount {
 			break
 		}
 	}
+
+	log.Debugf("drain done: totalRead=%d procs=%d", totalRead, len(stackCountsByProc))
 
 	if err := bpfmap.WriteUint64(p.bpf, stateMapID, ring.sampleCountIdx, 0); err != nil {
 		log.Warnf("reset sample count: %v", err)
@@ -284,6 +290,7 @@ func aggregateStacksAndStore(
 	ustackCache := make(map[int32]string)
 	usym := symbol.NewUsymResolver()
 
+	var records int
 	for pidName, stacks := range stackCountsByProc {
 		for stackID, count := range stacks {
 			if stackID.KernelID > 0 {
@@ -305,8 +312,11 @@ func aggregateStacksAndStore(
 			}
 
 			enqueue(record)
+			records++
 		}
 	}
+
+	log.Debugf("aggregate: procs=%d kstacks=%d ustacks=%d records=%d", len(stackCountsByProc), len(kstackCache), len(ustackCache), records)
 }
 
 func resolveKstack(b bpf.BPF, mapID uint32, kernelID int32, deleteKeys *[][]byte) string {
