@@ -22,7 +22,7 @@ import (
 	"testing"
 )
 
-// TestGetContainersCompatibility covers the compatibility of container query callers. It verifies that the request path is unchanged when the container_id query parameter is present, that the unified response wrapper can be correctly decoded, and that both GetContainerByID and GetAllContainers continue to work.
+// TestGetContainersIncludesErrorBody covers the error response handling.
 func TestGetContainersIncludesErrorBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "backend unavailable", http.StatusServiceUnavailable)
@@ -85,5 +85,31 @@ func TestGetContainersCompatibility(t *testing.T) {
 	}
 	if len(allContainers) != 2 {
 		t.Errorf("len(allContainers) = %d, want %d", len(allContainers), 2)
+	}
+}
+
+// TestGetContainersURLEscaped verifies that containerID containing URL-special
+// characters (e.g. +, &) is properly URL-escaped in the query string.
+func TestGetContainersURLEscaped(t *testing.T) {
+	var requestedQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"code":0,"message":"success","data":[]}`)
+	}))
+	defer server.Close()
+
+	serverAddr := strings.TrimPrefix(server.URL, "http://")
+
+	// containerID contains URL-special characters that must be escaped
+	_, err := getContainers(serverAddr, "container+2025&0226")
+	if err != nil {
+		t.Fatalf("getContainers() error = %v", err)
+	}
+
+	// The raw query should have + and & properly escaped
+	expected := "container_id=container%2B2025%260226"
+	if requestedQuery != expected {
+		t.Errorf("requested query = %q, want %q", requestedQuery, expected)
 	}
 }
