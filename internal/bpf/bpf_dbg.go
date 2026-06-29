@@ -23,6 +23,35 @@ import (
 
 const BpfDbgMsgLen = 64
 
+// bpfDbgEnabled is the process-wide switch controlling whether newly loaded
+// BPF objects have their debug output compiled in via constant rewrite.
+var bpfDbgEnabled bool
+
+// EnableBpfDbg turns on BPF debug output for subsequently loaded BPF objects.
+// It must be called before LoadBpf; already-loaded objects are unaffected.
+func EnableBpfDbg() { bpfDbgEnabled = true }
+
+// WithBpfDbg injects the bpf_dbg_enabled constant into consts when BPF debug
+// is enabled, so callers can fold it into the map passed to LoadBpf:
+//
+//	b, err := bpf.LoadBpf("x.o", bpf.WithBpfDbg(map[string]any{...}))
+//
+// When debug is disabled consts is returned unchanged.
+func WithBpfDbg(consts map[string]any) map[string]any {
+	if !bpfDbgEnabled {
+		return consts
+	}
+
+	if consts == nil {
+		consts = make(map[string]any)
+	}
+	// bpf_dbg_enabled is the volatile const u32 in bpf_dbg.h that gates
+	// bpf_dbg() output; RewriteConstants sets it at load time.
+	consts["bpf_dbg_enabled"] = uint32(1)
+
+	return consts
+}
+
 // BpfDbgEvent mirrors struct bpf_dbg_event in bpf_dbg.h.
 // The binary layout must match exactly (112 bytes, no padding).
 type BpfDbgEvent struct {
