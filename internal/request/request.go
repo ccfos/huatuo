@@ -87,7 +87,6 @@ func doRequest(req *http.Request) (*ServerResponse, error) {
 	if err != nil {
 		return serverResp, err
 	}
-	defer resp.Body.Close()
 
 	serverResp.StatusCode = resp.StatusCode
 	serverResp.Body = resp.Body
@@ -161,7 +160,7 @@ func checkResponseErr(serverResp *ServerResponse) error {
 		}
 		if bodyR.N == 0 {
 			return fmt.Errorf(`request returned %s with a message (> %d bytes) for API route and version %s,
-			 check if the server supports the requested API version`,
+		 check if the server supports the requested API version`,
 				http.StatusText(serverResp.StatusCode), respBodyMax, serverResp.ReqURL)
 		}
 	}
