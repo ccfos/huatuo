@@ -20,21 +20,54 @@
 static __noinline bool pcap_stub_l3(void *_ctx, void *__ctx, void *___ctx,
 				    void *data, void *data_end)
 {
-	/* 512 × 8-byte NOP insns; must equal stubReservedInsns in internal/pcapfilter/elfpatch.go */
+	/*
+	 * Bind the five parameters to R1..R5 and route them through the NOP
+	 * region as "+r" in/out operands. This creates a real data dependency
+	 * that forces clang to (1) emit the comparison below AFTER the region
+	 * and (2) read its operands from R1..R5 — exactly the registers the
+	 * spliced filter leaves set (R4=verdict, R5=0, R1=R2=R3=0 via the
+	 * fall-through epilogue in internal/pcapfilter/bpf_filter.go).
+	 *
+	 * Without these constraints clang is free to schedule the comparison
+	 * before the region: clang-12 does, stashing the result in callee-saved
+	 * registers and then letting the region's `r0 = 0` NOPs clobber the
+	 * return value, so the filter verdict is silently dropped. Do not
+	 * "simplify" the register pinning away.
+     *
+	 */
+	register void *a1 asm("r1") = _ctx;
+	register void *a2 asm("r2") = __ctx;
+	register void *a3 asm("r3") = ___ctx;
+	register void *a4 asm("r4") = data;
+	register void *a5 asm("r5") = data_end;
 	asm volatile(".rept 512\n\t"
 		     ".byte 0xb7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00\n\t"
-		     ".endr\n\t");
-	return data != data_end && _ctx == __ctx && __ctx == ___ctx;
+		     ".endr\n\t"
+		     : "+r"(a1), "+r"(a2), "+r"(a3), "+r"(a4), "+r"(a5)
+		     :: "r0");
+	return a4 != a5 && a1 == a2 && a2 == a3;
 }
 
 static __noinline bool pcap_stub_l2(void *_ctx, void *__ctx, void *___ctx,
 				    void *data, void *data_end)
 {
-	/* 512 × 8-byte NOP insns; must equal stubReservedInsns in internal/pcapfilter/elfpatch.go */
+	/*
+	 * Register-pinned NOP region; see pcap_stub_l3 above for why the
+	 * parameters are bound to R1..R5 and fed through the asm as "+r"
+	 * operands. Do not "simplify" the register pinning away.
+	 *
+	 */
+	register void *a1 asm("r1") = _ctx;
+	register void *a2 asm("r2") = __ctx;
+	register void *a3 asm("r3") = ___ctx;
+	register void *a4 asm("r4") = data;
+	register void *a5 asm("r5") = data_end;
 	asm volatile(".rept 512\n\t"
 		     ".byte 0xb7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00\n\t"
-		     ".endr\n\t");
-	return data != data_end && _ctx == __ctx && __ctx == ___ctx;
+		     ".endr\n\t"
+		     : "+r"(a1), "+r"(a2), "+r"(a3), "+r"(a4), "+r"(a5)
+		     :: "r0");
+	return a4 != a5 && a1 == a2 && a2 == a3;
 }
 
 /*
