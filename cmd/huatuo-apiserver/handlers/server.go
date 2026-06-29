@@ -28,13 +28,13 @@ import (
 )
 
 // ServerStart starts the API service with the given configuration.
-func ServerStart(addr string, promReg *prometheus.Registry, profilingManager, tracingManager *job.Manager, versionInfo version.Info) error {
+func ServerStart(addr string, promReg *prometheus.Registry, profilingManager, tracingManager *job.Manager, versionInfo *version.Info) error {
 	httpServer := server.NewServer(&server.Config{
 		EnablePProf:     false,
 		EnableRateLimit: false,
 		AuthUsers:       getUserConfigs(),
 		PromReg:         promReg,
-		VersionInfo:     &versionInfo,
+		VersionInfo:     versionInfo,
 	})
 
 	// Register trace routes

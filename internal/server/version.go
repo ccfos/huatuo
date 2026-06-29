@@ -19,7 +19,7 @@ import (
 	"huatuo-bamai/internal/version"
 )
 
-func newVersionHandler(info version.Info) ErrHandlerContextFunc {
+func newVersionHandler(info *version.Info) ErrHandlerContextFunc {
 	return func(ctx *Context) error {
 		response.Success(ctx, info)
 		return nil

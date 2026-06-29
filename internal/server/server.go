@@ -109,7 +109,7 @@ func NewServer(cfg *Config) *server {
 	})
 	if cfg.VersionInfo != nil {
 		s.MustRegisterRoutes("", []Handle{
-			{Typ: HttpGet, Uri: "/version", Handle: newVersionHandler(*cfg.VersionInfo)},
+			{Typ: HttpGet, Uri: "/version", Handle: newVersionHandler(cfg.VersionInfo)},
 		})
 	}
 	return s

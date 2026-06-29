@@ -215,7 +215,7 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("initialize metrics collector: %w", err)
 	}
 
-	if err := handlers.ServerStart(config.Get().APIServer.TCPAddr, promRegistry, profilingManager, tracingManager, versionInfo); err != nil {
+	if err := handlers.ServerStart(config.Get().APIServer.TCPAddr, promRegistry, profilingManager, tracingManager, &versionInfo); err != nil {
 		return fmt.Errorf("handlers.APIServer: %w", err)
 	}
 
