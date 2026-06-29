@@ -17,6 +17,7 @@ package request
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -112,5 +113,38 @@ func TestHTTPErrorMesg(t *testing.T) {
 
 	if got != "not found" {
 		t.Fatalf("HTTPErrorMesg() = %q, want not found", got)
+	}
+}
+
+// TestDoRequestResponseBodyReadable verifies that the response body is still
+// readable after doRequest returns on a successful (200 OK) response.
+func TestDoRequestResponseBodyReadable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodGet, server.URL, http.NoBody)
+	if err != nil {
+		t.Fatalf("http.NewRequest() error = %v", err)
+	}
+
+	resp, err := doRequest(req)
+	if err != nil {
+		t.Fatalf("doRequest() error = %v", err)
+	}
+	defer resp.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll(resp.Body) error = %v, want nil — body should be readable", err)
+	}
+	if strings.TrimSpace(string(body)) != "ok" {
+		t.Fatalf("body = %q, want %q", string(body), "ok")
 	}
 }
