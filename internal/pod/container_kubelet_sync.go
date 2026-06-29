@@ -249,7 +249,7 @@ func kubeletSyncContainers() error {
 		for i := range pod.Status.ContainerStatuses {
 			containerStatus := &pod.Status.ContainerStatuses[i]
 			if c, ok := m[containerStatus.Name]; ok {
-				m[containerStatus.Name] = [2]any{c[0], containerStatus}
+				m[containerStatus.Name] = [2]any{c[0], containerStatus]
 			}
 		}
 
@@ -346,7 +346,11 @@ func httpDoRequest(client *http.Client, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("http: %s, read body: %w", url, err)
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http: %s, status: %d, body: %s", url, resp.StatusCode, string(body))
 	}
