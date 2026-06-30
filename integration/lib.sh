@@ -86,13 +86,53 @@ bpf_tool_setup() {
 	[[ -r ${TOOL_BPF} ]] || fatal "missing ${name} bpf object: ${TOOL_BPF}"
 }
 
+# Print file to stderr with a label header; silent if file is absent.
+dump_file() {
+	local label=$1 path=$2
+	[[ -f "${path}" ]] || return 0
+	log_error "----- ${label} (${path}) -----"
+	cat "${path}" >&2
+}
+
 dump_tool_logs_and_fail() {
-	log_error "----- OUT (${TOOL_OUT}) -----"
-	[[ -f "${TOOL_OUT}" ]] && cat "${TOOL_OUT}" >&2
-	log_error "----- ERR (${TOOL_ERR}) -----"
-	[[ -f "${TOOL_ERR}" ]] && cat "${TOOL_ERR}" >&2
-	log_error "----- end -----"
+	dump_file "OUT" "${TOOL_OUT}"
+	dump_file "ERR" "${TOOL_ERR}"
 	fatal "$*"
+}
+
+# SIGTERM with graceful polling, then SIGKILL as fallback.
+# $1=pid  $2=timeout_seconds (default 10).
+stop_by_pid() {
+	local pid=$1 timeout=${2:-10}
+	kill -0 "${pid}" 2> /dev/null || return 0
+	kill -TERM "${pid}" 2> /dev/null || true
+	local waited=0
+	while kill -0 "${pid}" 2> /dev/null && [[ ${waited} -lt ${timeout} ]]; do
+		sleep 1
+		waited=$((waited + 1))
+	done
+	kill -KILL "${pid}" 2> /dev/null || true
+}
+
+# --------------------------- container detection ----------------------------
+
+# Returns 0 when running inside a container.
+# Method 1: overlay/btrfs rootfs — container runtimes mount an overlay or
+# btrfs snapshot as /; bare-metal hosts use ext4/xfs/zfs.
+# Method 2: systemd-detect-virt -c — explicitly checks for container
+# virtualization (docker, lxc, podman, etc.).
+is_container() {
+	local fstype
+	fstype=$(findmnt -n -o FSTYPE / 2>/dev/null || true)
+	case "${fstype}" in
+		overlay|btrfs) return 0 ;;
+	esac
+
+	if command -v systemd-detect-virt > /dev/null 2>&1; then
+		[[ "$(systemd-detect-virt -c 2>/dev/null)" != "none" ]] && return 0
+	fi
+
+	return 1
 }
 
 # ----------------------------- huatuo-bamai ----------------------------------
@@ -130,15 +170,7 @@ huatuo_bamai_stop() {
 
 	local pid
 	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2> /dev/null || echo "")
-	if [[ -n "$pid" ]] && kill -0 "${pid}" 2> /dev/null; then
-		kill -TERM "${pid}"
-		local waited=0
-		while kill -0 "${pid}" 2> /dev/null && [[ $waited -lt 10 ]]; do
-			sleep 1
-			waited=$((waited + 1))
-		done
-		kill -9 "${pid}" 2> /dev/null || true
-	fi
+	[[ -n "$pid" ]] && stop_by_pid "${pid}"
 	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
 
 	if [ "${exit_code}" -ne 0 ]; then
