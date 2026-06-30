@@ -111,11 +111,20 @@ ExcludedOnContainer = "writeback"
 		t.Fatalf("Load returned error: %v", err)
 	}
 
-	Set("BlackList", []string{"netdev_hw", "metax_gpu"})
-	Set("AutoTracing.IssuesList", [][]string{{"cpuidle", "perf"}})
-	Set("EventTracing.IssuesList", [][]string{{"dropwatch", "kfree_skb"}})
-	Set("MetricCollector.Vmstat.IncludedOnHost", "pgsteal_direct")
-	Set("MetricCollector.Vmstat.IncludedOnContainer", "workingset_refault_file")
+	for _, kv := range []struct {
+		key string
+		val any
+	}{
+		{"BlackList", []string{"netdev_hw", "metax_gpu"}},
+		{"AutoTracing.IssuesList", [][]string{{"cpuidle", "perf"}}},
+		{"EventTracing.IssuesList", [][]string{{"dropwatch", "kfree_skb"}}},
+		{"MetricCollector.Vmstat.IncludedOnHost", "pgsteal_direct"},
+		{"MetricCollector.Vmstat.IncludedOnContainer", "workingset_refault_file"},
+	} {
+		if err := Set(kv.key, kv.val); err != nil {
+			t.Fatalf("Set %s returned error: %v", kv.key, err)
+		}
+	}
 
 	if err := Sync(); err != nil {
 		t.Fatalf("Sync returned error: %v", err)
