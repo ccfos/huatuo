@@ -341,7 +341,7 @@ func resolveUstack(b bpf.BPF, mapID uint32, userID int32, pid uint32, usym *symb
 	if !ok {
 		return ""
 	}
-	return strings.Join(usym.UsymStackStrs(pid, trace[:], len(trace)), ";") + ";"
+	return strings.Join(usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
 }
 
 func readAndMarkStackTrace(b bpf.BPF, mapID uint32, id int32, deleteKeys *[][]byte) ([bpfmap.StackTraceLen]uint64, bool) {

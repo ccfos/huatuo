@@ -140,7 +140,7 @@ func (r *renderer) DrawFrame(root frame, ew *errWriter) {
 	queue := make([]frame, 0, 64)
 	queue = append(queue, root)
 
-	for i := range len(queue) {
+	for i := 0; i < len(queue); i++ {
 		r.drawFrame(queue[i], ew)
 		queue = append(queue, queue[i].Children...)
 	}
