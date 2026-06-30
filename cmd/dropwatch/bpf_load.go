@@ -31,7 +31,8 @@ func loadDropwatchBPFWithFilter(bpfPath, filterExpr string, devMode uint32, maxE
 
 	bpfName := fmt.Sprintf("dropwatch_%d.o", time.Now().UnixNano())
 
-	return pcapfilter.Load(bpfName,
+	return pcapfilter.Load(
+		bpfName,
 		bpfBytes,
 		filterExpr,
 		withRateLimitConstants(map[string]any{"filter_dev_mode": devMode}, maxEventsPerSecond),
