@@ -21,7 +21,10 @@ import (
 	"huatuo-bamai/internal/log"
 )
 
-const BpfDbgMsgLen = 64
+const (
+	BpfDbgMsgLen  = 64
+	BpfDbgFileLen = 64
+)
 
 // bpfDbgEnabled is the process-wide switch controlling whether newly loaded
 // BPF objects have their debug output compiled in via constant rewrite.
@@ -53,13 +56,13 @@ func WithBpfDbg(consts map[string]any) map[string]any {
 }
 
 // BpfDbgEvent mirrors struct bpf_dbg_event in bpf_dbg.h.
-// The binary layout must match exactly (112 bytes, no padding).
 type BpfDbgEvent struct {
-	Timestamp uint64
-	FileID    uint32
-	Line      uint32
-	Args      [4]uint64
+	FileName  [BpfDbgFileLen]byte
+	FileLine  uint32
+	Pad0      uint32
 	Msg       [BpfDbgMsgLen]byte
+	Args      [4]uint64
+	Timestamp uint64
 }
 
 // ReadDbgEvent reads a single debug event from the perf event reader.
@@ -87,8 +90,8 @@ func DebugEventLoop(ctx context.Context, reader PerfEventReader) error {
 		}
 
 		log.Debugf(
-			"bpf_dbg: file=%#x line=%d ts=%d msg=%s args=[%#x %#x %#x %#x]",
-			event.FileID, event.Line, event.Timestamp,
+			"bpf_dbg: file=%s line=%d ts=%d msg=%s args=[%#x %#x %#x %#x]",
+			nullTerminatedString(event.FileName[:]), event.FileLine, event.Timestamp,
 			nullTerminatedString(event.Msg[:]),
 			event.Args[0], event.Args[1], event.Args[2], event.Args[3],
 		)
@@ -102,4 +105,26 @@ func nullTerminatedString(b []byte) string {
 		}
 	}
 	return string(b)
+}
+
+// StartDebugEventLoop opens mapName as a perf event pipe and spawns a goroutine
+// running DebugEventLoop against it. It is a no-op when BPF debug is not
+// enabled. Returns a cleanup function the caller must defer to close the reader.
+func StartDebugEventLoop(ctx context.Context, b BPF, mapName string) (func(), error) {
+	if !bpfDbgEnabled {
+		return func() {}, nil
+	}
+
+	reader, err := b.EventPipeByName(ctx, mapName, 4096)
+	if err != nil {
+		return nil, fmt.Errorf("open bpf debug map %q: %w", mapName, err)
+	}
+
+	go func() {
+		if err := DebugEventLoop(ctx, reader); err != nil && ctx.Err() == nil {
+			log.Warnf("bpf debug event loop %q: %v", mapName, err)
+		}
+	}()
+
+	return func() { reader.Close() }, nil
 }
