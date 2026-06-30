@@ -22,12 +22,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const goodEnoughDeltaNs = 1000 // 1µs.
-
 var (
-	offsetOnce sync.Once
-	offsetNs   int64
-	offsetErr  error
+	offsetOnce        sync.Once
+	offsetNanoseconds int64
+	errOffsetOnce     error
 )
 
 // KtimeToTime converts a bpf_ktime_get_ns() nanosecond value to a
@@ -35,18 +33,20 @@ var (
 // sampled once on first call and cached for the process lifetime.
 func KtimeToTime(ktimeNs uint64) (time.Time, error) {
 	offsetOnce.Do(func() {
-		offsetNs, offsetErr = monoToRealOffset()
+		offsetNanoseconds, errOffsetOnce = monoToRealOffset()
 	})
-	if offsetErr != nil {
-		return time.Time{}, offsetErr
+	if errOffsetOnce != nil {
+		return time.Time{}, errOffsetOnce
 	}
-	return time.Unix(0, int64(ktimeNs)+offsetNs).UTC(), nil
+	return time.Unix(0, int64(ktimeNs)+offsetNanoseconds).UTC(), nil
 }
 
 // monoToRealOffset brackets a CLOCK_MONOTONIC read between two
 // CLOCK_REALTIME reads, up to 5 times, and keeps the tightest pair.
 // Exits early when the bracket is already below 1µs.
 func monoToRealOffset() (int64, error) {
+	const goodEnoughDeltaNs = 1000 // 1µs.
+
 	var real1, mono, real2 unix.Timespec
 	var bestDelta, offset int64
 
