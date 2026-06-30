@@ -44,41 +44,41 @@ func appFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
 			Name:     cliFlagBpfPath,
-			Usage:    "path to the dropwatch BPF object file",
+			Usage:    "path to compiled BPF object",
 			Required: true,
 		},
 		&cli.StringFlag{
 			Name:  cliFlagFilter,
-			Usage: `tcpdump expression, e.g. "tcp and port 80"`,
+			Usage: `pcap filter expression (e.g. "tcp and port 80")`,
 		},
 		&cli.StringFlag{
 			Name:  cliFlagDevice,
-			Usage: "comma-separated whitelist of interfaces (e.g. eth0,eth1); empty = all devices. SKBs without a net_device are dropped",
+			Usage: "whitelist interfaces, comma-separated; SKBs without a net_device are dropped",
 		},
 		&cli.StringFlag{
 			Name:  cliFlagDeviceExcluded,
-			Usage: "comma-separated blacklist of interfaces (e.g. eth0,eth1); mutually exclusive with --device. SKBs without a net_device pass",
+			Usage: "blacklist interfaces, comma-separated; SKBs without a net_device pass",
 		},
 		&cli.IntFlag{
 			Name:  cliFlagDuration,
-			Usage: "run for N seconds then exit (0=forever)",
+			Usage: "stop after N seconds (0 = run forever)",
 		},
 		&cli.StringFlag{
 			Name:  cliFlagOutput,
 			Value: outputText,
-			Usage: "output format: json or text; ignored when --output-storage is set",
+			Usage: "output format: text|json",
 		},
 		&cli.StringFlag{
 			Name:  cliFlagOutputStorage,
-			Usage: "unix socket path to send events to; when set, --output is ignored",
+			Usage: "unix socket path for event sink; overrides --output",
 		},
 		&cli.StringFlag{
 			Name:  cliFlagTaskID,
-			Usage: "task ID to associate with this session (requires --output-storage)",
+			Usage: "task ID associated with this session (requires --output-storage)",
 		},
 		&cli.Uint64Flag{
 			Name:  cliFlagMaxEventsPerSecond,
-			Usage: "cap reported drops to N events/sec globally (after --device/--filter); 0 disables",
+			Usage: "rate limit to N events/sec (0 = unlimited)",
 			Value: 0,
 		},
 	}
