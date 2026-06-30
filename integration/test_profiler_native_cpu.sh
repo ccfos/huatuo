@@ -64,8 +64,8 @@ cleanup() {
 	if [[ ${rc} -ne 0 ]]; then
 		dump_file "profiler stdout" "${TOOL_OUT}"
 		dump_file "profiler stderr" "${TOOL_ERR}"
-		dump_file "fixture stdout"  "${FIXTURE_OUT}"
-		dump_file "fixture stderr"  "${FIXTURE_ERR}"
+		dump_file "fixture stdout" "${FIXTURE_OUT}"
+		dump_file "fixture stderr" "${FIXTURE_ERR}"
 		log_error "workspace preserved at ${WORK_DIR}"
 	else
 		rm -rf "${WORK_DIR}"

@@ -123,13 +123,13 @@ stop_by_pid() {
 # virtualization (docker, lxc, podman, etc.).
 is_container() {
 	local fstype
-	fstype=$(findmnt -n -o FSTYPE / 2>/dev/null || true)
+	fstype=$(findmnt -n -o FSTYPE / 2> /dev/null || true)
 	case "${fstype}" in
-		overlay|btrfs) return 0 ;;
+	overlay | btrfs) return 0 ;;
 	esac
 
 	if command -v systemd-detect-virt > /dev/null 2>&1; then
-		[[ "$(systemd-detect-virt -c 2>/dev/null)" != "none" ]] && return 0
+		[[ "$(systemd-detect-virt -c 2> /dev/null)" != "none" ]] && return 0
 	fi
 
 	return 1
