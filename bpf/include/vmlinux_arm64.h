@@ -11131,6 +11131,8 @@ struct sk_buff {
 	unsigned char *data;
 	unsigned int truesize;
 	refcount_t users;
+	__u8 mono_delivery_time: 1;
+	__u8 tstamp_type: 2;
 };
 
 struct rpc_rqst;
@@ -42125,6 +42127,8 @@ struct sk_buff___2 {
 	unsigned char *data;
 	unsigned int truesize;
 	refcount_t users;
+	__u8 mono_delivery_time: 1;
+	__u8 tstamp_type: 2;
 };
 
 struct pipe_buf_operations___2;

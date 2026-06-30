@@ -55,16 +55,54 @@ struct mix {
 	u8 where;
 };
 
+struct sk_buff___mdt {
+	__u8 mono_delivery_time: 1;
+} __attribute__((preserve_access_index));
+
+struct sk_buff___tt {
+	__u8 tstamp_type: 2;
+} __attribute__((preserve_access_index));
+
+static inline int skb_clock_class(struct sk_buff *skb)
+{
+	struct sk_buff___tt *skb_tt = (struct sk_buff___tt *)skb;
+	struct sk_buff___mdt *skb_mdt = (struct sk_buff___mdt *)skb;
+
+	if (bpf_core_field_exists(skb_tt->tstamp_type)) {
+		u8 tstamp_type = BPF_CORE_READ_BITFIELD_PROBED(skb_tt, tstamp_type);
+
+		if (tstamp_type == SKB_CLOCK_TAI)
+			return -1;
+		return tstamp_type == SKB_CLOCK_MONOTONIC;
+	}
+	if (bpf_core_field_exists(skb_mdt->mono_delivery_time))
+		return !!BPF_CORE_READ_BITFIELD_PROBED(skb_mdt, mono_delivery_time);
+
+	return 0;
+}
+
 static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 {
 	u64 tstamp = BPF_CORE_READ(skb, tstamp);
+	u64 now = bpf_ktime_get_ns();
+
 	// although the skb->tstamp record is opened in user space by
 	// SOF_TIMESTAMPING_RX_SOFTWARE, it is still 0 in the following cases:
 	// unix recv, netlink recv, few virtual dev(e.g. tun dev, napi dsabled)
 	if (!tstamp)
 		return 0;
 
-	return bpf_ktime_get_ns() + mono_wall_offset - tstamp;
+	// skb->tstamp may be in ktime (CLOCK_MONOTONIC), wall time,
+	// or TAI depending on kernel version and delivery_time semantics.
+	int clock_class = skb_clock_class(skb);
+	if (clock_class < 0)
+		return 0;
+
+	u64 base_now = clock_class ? now : now + mono_wall_offset;
+	if (tstamp > base_now)
+		return 0;
+
+	return base_now - tstamp;
 }
 
 static inline u8 get_state(struct sk_buff *skb)
