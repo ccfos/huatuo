@@ -42,10 +42,10 @@ volatile const u32 bpf_dbg_enabled = 0;
  *      Enable with: BPF_DEBUG=1 make bpf-build  (passes -DDEBUG_BPF)
  *
  *   2. Run-time (bpf_dbg_enabled volatile const):
- *      Even when compiled in, output is suppressed until the Go side calls
- *      bpf.EnableBpfDbg() before LoadBpf, which rewrites the constant to 1
- *      via WithBpfDbg(). Without that rewrite the verifier folds the `if`
- *      away as dead code.
+ *      Even when compiled in, output is suppressed until the Go side loads
+ *      the object with a debug-enabled BpfDbg (bpf.NewBpfDbg(true)), whose
+ *      WithBpfDbg() rewrites the constant to 1 before LoadBpf. Without that
+ *      rewrite the verifier folds the `if` away as dead code.
  */
 #ifdef DEBUG_BPF
 

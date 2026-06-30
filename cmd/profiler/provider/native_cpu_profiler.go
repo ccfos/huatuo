@@ -71,6 +71,7 @@ type cpuEventKey struct {
 
 type cpuNativeProfiler struct {
 	bpf bpf.BPF
+	dbg *bpf.BpfDbg
 }
 
 func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
@@ -94,7 +95,9 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		cssAddr = c.CgroupCss["cpu"]
 	}
 
-	b, err := bpf.LoadBpf("native_cpu_profiler.o", bpf.WithBpfDbg(map[string]any{
+	p.dbg = bpf.NewDbg(pctx.LogBpfDebug)
+
+	b, err := bpf.LoadBpf("native_cpu_profiler.o", p.dbg.WithBpfDbg(map[string]any{
 		"target_css": cssAddr,
 		"target_pid": uint64(pctx.PID),
 	}))
@@ -125,7 +128,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	log.Infof("data reading loop started")
 	defer log.Infof("data reading loop ended")
 
-	stopDbg, err := bpf.StartDebugEventLoop(ctx, p.bpf, "dbg_native_cpu_dbg_events")
+	stopDbg, err := p.dbg.StartDebugEventLoop(ctx, p.bpf, "dbg_native_cpu_dbg_events")
 	if err != nil {
 		return fmt.Errorf("start bpf debug loop: %w", err)
 	}

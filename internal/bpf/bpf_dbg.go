@@ -27,18 +27,34 @@ const (
 	BpfDbgFileLen = 64
 )
 
-// bpfDbgEnabled is the process-wide switch controlling whether newly loaded
-// BPF objects have their debug output compiled in via constant rewrite.
-var bpfDbgEnabled bool
-
-// EnableBpfDbg turns on BPF debug output for subsequently loaded BPF objects.
-// It must be called before LoadBpf; already-loaded objects are unaffected.
-func EnableBpfDbg() { bpfDbgEnabled = true }
-
-// WithBpfDbg injects the bpf_dbg_enabled constant into consts when BPF debug
-// is enabled, so callers can fold it into the map passed to LoadBpf:
+// BpfDbg controls whether the BPF objects it is associated with have their
+// debug output compiled in via constant rewrite. Each instance owns its own
+// enabled flag, so multiple BPF objects loaded within the same process can
+// have their debug control toggled independently. Obtain one via NewDbg.
 //
-//	b, err := bpf.LoadBpf("x.o", bpf.WithBpfDbg(map[string]any{...}))
+// The zero value is a valid, debug-disabled BpfDbg.
+type BpfDbg struct {
+	enabled bool
+}
+
+// NewDbg returns a BpfDbg whose debug output is controlled by enabled.
+// Pass the result to LoadBpf via WithBpfDbg and to StartDebugEventLoop so a
+// single BPF object's debug state stays isolated from other objects.
+func NewDbg(enabled bool) *BpfDbg {
+	return &BpfDbg{enabled: enabled}
+}
+
+// Enabled reports whether this BpfDbg has debug output turned on.
+func (d *BpfDbg) Enabled() bool {
+	return d != nil && d.enabled
+}
+
+// WithBpfDbg injects the bpf_dbg_enabled constant into consts when this
+// BpfDbg has debug enabled, so callers can fold it into the map passed to
+// LoadBpf:
+//
+//	dbg := bpf.NewDbg(enable)
+//	b, err := bpf.LoadBpf("x.o", dbg.WithBpfDbg(map[string]any{...}))
 //
 // When debug is disabled consts is returned unchanged.
 //
@@ -46,8 +62,8 @@ func EnableBpfDbg() { bpfDbgEnabled = true }
 // guard), so RewriteConstants can rewrite it regardless of how the object
 // was compiled. In non-debug builds nothing references it, so flipping it
 // to 1 is a harmless no-op; in debug builds it gates bpf_dbg() output.
-func WithBpfDbg(consts map[string]any) map[string]any {
-	if !bpfDbgEnabled {
+func (d *BpfDbg) WithBpfDbg(consts map[string]any) map[string]any {
+	if !d.Enabled() {
 		return consts
 	}
 
@@ -69,24 +85,16 @@ type BpfDbgEvent struct {
 	Timestamp uint64
 }
 
-// ReadDbgEvent reads a single debug event from the perf event reader.
-func ReadDbgEvent(reader PerfEventReader) (*BpfDbgEvent, error) {
-	var event BpfDbgEvent
-	if err := reader.ReadInto(&event); err != nil {
-		return nil, fmt.Errorf("read debug event: %w", err)
-	}
-	return &event, nil
-}
-
-// DebugEventLoop reads debug events in a loop and logs each at Debug level.
+// debugEventLoop reads debug events in a loop and logs each at Debug level.
 // Blocks until ctx is canceled or the reader encounters a fatal error.
 //
-// It is a no-op unless BPF debug was enabled via EnableBpfDbg before loading.
-// When disabled the debug perf event array is either absent (non-DEBUG_BPF
-// build) or never written to (run-time gate off), so reading it would block
-// forever or operate on an invalid reader; the guard prevents that misuse.
-func DebugEventLoop(ctx context.Context, reader PerfEventReader) error {
-	if !bpfDbgEnabled {
+// It is a no-op unless this BpfDbg was created with debug enabled before
+// loading. When disabled the debug perf event array is either absent
+// (non-DEBUG_BPF build) or never written to (run-time gate off), so reading
+// it would block forever or operate on an invalid reader; the guard prevents
+// that misuse.
+func (d *BpfDbg) debugEventLoop(ctx context.Context, reader PerfEventReader) error {
+	if !d.Enabled() {
 		return nil
 	}
 
@@ -97,9 +105,9 @@ func DebugEventLoop(ctx context.Context, reader PerfEventReader) error {
 		default:
 		}
 
-		event, err := ReadDbgEvent(reader)
-		if err != nil {
-			return err
+		var event BpfDbgEvent
+		if err := reader.ReadInto(&event); err != nil {
+			return fmt.Errorf("read debug event: %w", err)
 		}
 
 		ts, err := timeutil.KtimeToTime(event.Timestamp)
@@ -133,19 +141,20 @@ func nullTerminatedString(b []byte) string {
 }
 
 // StartDebugEventLoop opens mapName as a perf event pipe and spawns a goroutine
-// running DebugEventLoop against it. Returns a cleanup function the caller
-// must defer to close the reader.
+// running the debug event loop against it. Returns a cleanup function the
+// caller must defer; it cancels the loop and closes the reader, then blocks
+// until the goroutine has exited so no reads outlive the cleanup.
 //
 // It is a no-op in either of these cases, returning a do-nothing cleanup and
 // no error so callers can use it unconditionally:
 //
-//   - BPF debug is disabled (EnableBpfDbg was not called).
+//   - BPF debug is disabled (this BpfDbg was created with enabled=false).
 //   - mapName does not exist in the loaded object (MapIDByName == 0, the
 //     documented "not found" sentinel). This can happen when the object
 //     was built without -DDEBUG_BPF (BPF_DBG_MAP is elided), when the
 //     source omits BPF_DBG_MAP(...), or when the caller passes a wrong name.
-func StartDebugEventLoop(ctx context.Context, b BPF, mapName string) (func(), error) {
-	if !bpfDbgEnabled {
+func (d *BpfDbg) StartDebugEventLoop(ctx context.Context, b BPF, mapName string) (func(), error) {
+	if !d.Enabled() {
 		return func() {}, nil
 	}
 
@@ -156,16 +165,25 @@ func StartDebugEventLoop(ctx context.Context, b BPF, mapName string) (func(), er
 		return func() {}, nil
 	}
 
-	reader, err := b.EventPipeByName(ctx, mapName, 4096)
+	loopCtx, cancel := context.WithCancel(ctx)
+
+	reader, err := b.EventPipeByName(loopCtx, mapName, 4096)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("open bpf debug map %q: %w", mapName, err)
 	}
 
+	done := make(chan struct{})
 	go func() {
-		if err := DebugEventLoop(ctx, reader); err != nil && ctx.Err() == nil {
+		defer close(done)
+		if err := d.debugEventLoop(loopCtx, reader); err != nil && loopCtx.Err() == nil {
 			log.Warnf("bpf debug event loop %q: %v", mapName, err)
 		}
 	}()
 
-	return func() { reader.Close() }, nil
+	return func() {
+		cancel()
+		reader.Close()
+		<-done
+	}, nil
 }
