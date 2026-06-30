@@ -15,6 +15,7 @@
 package v2
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -25,12 +26,15 @@ import (
 	"huatuo-bamai/internal/utils/parseutil"
 
 	extv2 "github.com/containerd/cgroups/v3/cgroup2"
+	systemdDbus "github.com/coreos/go-systemd/v22/dbus"
+	"github.com/godbus/dbus/v5"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 type CgroupV2 struct {
-	name   string
-	cgroup *extv2.Manager
+	name     string
+	cgroup   *extv2.Manager
+	unitName string
 }
 
 func New() (*CgroupV2, error) {
@@ -58,6 +62,7 @@ func (c *CgroupV2) NewRuntime(path string, spec *specs.LinuxResources) error {
 	}
 
 	c.cgroup = m
+	c.unitName = path + Postfix
 	return nil
 }
 
@@ -78,8 +83,52 @@ func (c *CgroupV2) DeleteRuntime() error {
 	return c.cgroup.DeleteSystemd()
 }
 
+// convert OCI resource spec to dbus properties for cgroup v2 systemd
+func specToSystemdProperties(spec *specs.LinuxResources) []systemdDbus.Property {
+	var properties []systemdDbus.Property
+
+	if spec.CPU != nil && spec.CPU.Quota != nil && *spec.CPU.Quota > 0 &&
+		spec.CPU.Period != nil && *spec.CPU.Period != 0 {
+		quota := uint64(*spec.CPU.Quota)
+		period := *spec.CPU.Period
+		cpuQuotaPerSecUSec := quota * 1000000 / period
+		if cpuQuotaPerSecUSec%10000 != 0 {
+			cpuQuotaPerSecUSec = ((cpuQuotaPerSecUSec / 10000) + 1) * 10000
+		}
+		properties = append(properties, systemdDbus.Property{
+			Name:  "CPUQuotaPerSecUSec",
+			Value: dbus.MakeVariant(cpuQuotaPerSecUSec),
+		})
+	}
+
+	if spec.Memory != nil && spec.Memory.Limit != nil {
+		properties = append(properties, systemdDbus.Property{
+			Name:  "MemoryMax",
+			Value: dbus.MakeVariant(uint64(*spec.Memory.Limit)),
+		})
+	}
+
+	return properties
+}
+
+func (c *CgroupV2) updateSystemd(properties []systemdDbus.Property) error {
+	ctx := context.TODO()
+	conn, err := systemdDbus.NewWithContext(ctx)
+	if err != nil {
+		return fmt.Errorf("cgroup2 connect to systemd dbus: %w", err)
+	}
+	defer conn.Close()
+
+	return conn.SetUnitPropertiesContext(ctx, c.unitName, true, properties...)
+}
+
 func (c *CgroupV2) UpdateRuntime(spec *specs.LinuxResources) error {
-	return c.cgroup.Update(extv2.ToResources(spec))
+	properties := specToSystemdProperties(spec)
+	if len(properties) == 0 {
+		return nil
+	}
+
+	return c.updateSystemd(properties)
 }
 
 func (c *CgroupV2) AddProc(pid uint64) error {
