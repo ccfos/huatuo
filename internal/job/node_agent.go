@@ -30,6 +30,17 @@ type HTTPNodeAgent struct {
 	client *http.Client
 }
 
+type startTaskRequest struct {
+	TracerName        string   `json:"tracer_name"`
+	Timeout           int      `json:"timeout"`
+	Interval          int      `json:"interval,omitempty"`
+	Duration          int      `json:"duration,omitempty"`
+	DataType          string   `json:"data_type"`
+	ContainerID       string   `json:"container_id,omitempty"`
+	ContainerHostname string   `json:"container_hostname,omitempty"`
+	TracerArgs        []string `json:"trace_args,omitempty"`
+}
+
 // NewHTTPNodeAgent creates a new HTTP agent client
 func NewHTTPNodeAgent() *HTTPNodeAgent {
 	return &HTTPNodeAgent{
@@ -42,7 +53,16 @@ func NewHTTPNodeAgent() *HTTPNodeAgent {
 // StartTask starts a task on the agent
 func (c *HTTPNodeAgent) StartTask(host, container string, args *NewAgentTaskReq) (string, error) {
 	args.ContainerHostname = container
-	requestBodyBytes, err := json.Marshal(args)
+	requestBodyBytes, err := json.Marshal(startTaskRequest{
+		TracerName:        args.TracerName,
+		Timeout:           args.TraceTimeout,
+		Interval:          args.Interval,
+		Duration:          args.Duration,
+		DataType:          args.DataType,
+		ContainerID:       args.ContainerID,
+		ContainerHostname: args.ContainerHostname,
+		TracerArgs:        args.TracerArgs,
+	})
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal request body: %w", err)
 	}
@@ -77,6 +97,12 @@ func (c *HTTPNodeAgent) StartTask(host, container string, args *NewAgentTaskReq)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+	if response.Code != 0 {
+		return "", fmt.Errorf("agent returned error response: code=%d, message=%s", response.Code, response.Message)
+	}
+	if response.Data.TaskID == "" {
+		return "", fmt.Errorf("agent returned empty task_id")
 	}
 
 	return response.Data.TaskID, nil
@@ -146,6 +172,9 @@ func (c *HTTPNodeAgent) GetTaskStatus(host, taskID string) (string, *Result, err
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&outerResponse); err != nil {
 			return "", nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+		if outerResponse.Code != 0 {
+			return "", nil, fmt.Errorf("agent returned error response: code=%d, message=%s", outerResponse.Code, outerResponse.Message)
 		}
 
 		var innerResponse struct {
