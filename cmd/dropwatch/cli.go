@@ -61,6 +61,7 @@ func appFlags() []cli.Flag {
 		},
 		&cli.IntFlag{
 			Name:  cliFlagDuration,
+			Value: 0,
 			Usage: "stop after N seconds (0 = run forever)",
 		},
 		&cli.StringFlag{
