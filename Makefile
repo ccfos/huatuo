@@ -5,6 +5,20 @@ BPF_COMPILE := $(ROOT_DIR)/build/clang.sh
 BPF_INCLUDE := "-I$(BPF_DIR)/include"
 BPF_SRCS := $(shell find $(BPF_DIR) -type f \( -name "*.c" -o -name "*.h" \))
 
+# BPF_DEBUG=1 compiles bpf_dbg()/bpf_dbg_msg() into BPF objects (see
+# bpf/include/bpf_dbg.h). Default off so the macros expand to no-ops,
+# eliminating the debug perf event array, rodata constant, and per-call
+# overhead at the source level (before the verifier ever runs).
+# The flag is plumbed via BPF_EXTRA_CFLAGS, which build/clang.sh appends
+# to its clang invocation, so per-file //go:generate directives are
+# untouched.
+BPF_DEBUG ?= 0
+ifeq ($(BPF_DEBUG),1)
+BPF_EXTRA_CFLAGS := -DDEBUG_BPF
+else
+BPF_EXTRA_CFLAGS :=
+endif
+
 APP_COMMIT ?= $(shell git describe --dirty --long --always)
 APP_BUILD_TIME = $(shell date "+%Y%m%d%H%M%S")
 APP_VERSION = "2.2.0"
@@ -64,6 +78,7 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			export BPF_DIR=$(BPF_DIR); \
 			export BPF_COMPILE=$(BPF_COMPILE); \
 			export BPF_INCLUDE=$(BPF_INCLUDE); \
+			export BPF_EXTRA_CFLAGS="$(BPF_EXTRA_CFLAGS)"; \
 			go generate {}'
 	@mkdir -p $(APP_CMD_OUTPUT) && touch $@
 

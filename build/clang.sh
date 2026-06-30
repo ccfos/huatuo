@@ -78,7 +78,10 @@ done
 [ -z "${OBJ}" ] && echo -e "-o must be specified, such as -o example.o \n\n $(usage)" && exit 1
 
 # Note: parameter ${DEFAULT_COMPILE_OPTIONS} will be overwritten by ${COMPILE_OPTIONS} in ${OPTIONS}
-OPTIONS="${DEFAULT_COMPILE_OPTIONS} ${COMPILE_OPTIONS}"
+# BPF_EXTRA_CFLAGS is an env-var escape hatch for the build system (e.g.
+# Makefile BPF_DEBUG=1 sets it to -DDEBUG_BPF) so callers don't have to
+# edit every //go:generate directive to flip a global flag.
+OPTIONS="${DEFAULT_COMPILE_OPTIONS} ${COMPILE_OPTIONS} ${BPF_EXTRA_CFLAGS}"
 [ -z "${INCLUDES}" ] && INCLUDES="${DEFAULT_INCLUDES}"
 
 clang ${OPTIONS} ${SRC} -o ${OBJ} ${INCLUDES}

@@ -41,6 +41,11 @@ func EnableBpfDbg() { bpfDbgEnabled = true }
 //	b, err := bpf.LoadBpf("x.o", bpf.WithBpfDbg(map[string]any{...}))
 //
 // When debug is disabled consts is returned unchanged.
+//
+// bpf_dbg_enabled is always defined in bpf_dbg.h (outside the DEBUG_BPF
+// guard), so RewriteConstants can rewrite it regardless of how the object
+// was compiled. In non-debug builds nothing references it, so flipping it
+// to 1 is a harmless no-op; in debug builds it gates bpf_dbg() output.
 func WithBpfDbg(consts map[string]any) map[string]any {
 	if !bpfDbgEnabled {
 		return consts
@@ -49,8 +54,6 @@ func WithBpfDbg(consts map[string]any) map[string]any {
 	if consts == nil {
 		consts = make(map[string]any)
 	}
-	// bpf_dbg_enabled is the volatile const u32 in bpf_dbg.h that gates
-	// bpf_dbg() output; RewriteConstants sets it at load time.
 	consts["bpf_dbg_enabled"] = uint32(1)
 
 	return consts
@@ -77,7 +80,16 @@ func ReadDbgEvent(reader PerfEventReader) (*BpfDbgEvent, error) {
 
 // DebugEventLoop reads debug events in a loop and logs each at Debug level.
 // Blocks until ctx is canceled or the reader encounters a fatal error.
+//
+// It is a no-op unless BPF debug was enabled via EnableBpfDbg before loading.
+// When disabled the debug perf event array is either absent (non-DEBUG_BPF
+// build) or never written to (run-time gate off), so reading it would block
+// forever or operate on an invalid reader; the guard prevents that misuse.
 func DebugEventLoop(ctx context.Context, reader PerfEventReader) error {
+	if !bpfDbgEnabled {
+		return nil
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -121,10 +133,26 @@ func nullTerminatedString(b []byte) string {
 }
 
 // StartDebugEventLoop opens mapName as a perf event pipe and spawns a goroutine
-// running DebugEventLoop against it. It is a no-op when BPF debug is not
-// enabled. Returns a cleanup function the caller must defer to close the reader.
+// running DebugEventLoop against it. Returns a cleanup function the caller
+// must defer to close the reader.
+//
+// It is a no-op in either of these cases, returning a do-nothing cleanup and
+// no error so callers can use it unconditionally:
+//
+//   - BPF debug is disabled (EnableBpfDbg was not called).
+//   - mapName does not exist in the loaded object (MapIDByName == 0, the
+//     documented "not found" sentinel). This can happen when the object
+//     was built without -DDEBUG_BPF (BPF_DBG_MAP is elided), when the
+//     source omits BPF_DBG_MAP(...), or when the caller passes a wrong name.
 func StartDebugEventLoop(ctx context.Context, b BPF, mapName string) (func(), error) {
 	if !bpfDbgEnabled {
+		return func() {}, nil
+	}
+
+	if b.MapIDByName(mapName) == 0 {
+		log.Debugf("bpf debug map %q not found, skipping event loop "+
+			"(check -DDEBUG_BPF build flag, BPF_DBG_MAP declaration, and map name)",
+			mapName)
 		return func() {}, nil
 	}
 
