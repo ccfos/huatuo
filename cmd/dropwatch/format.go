@@ -19,9 +19,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"time"
 
+	"huatuo-bamai/internal/linkstatus"
+	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/internal/utils/bytesutil"
+	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -66,14 +73,68 @@ func (s *socketWriter) Write(ev *types.DropWatchTracing) error {
 	return s.client.Send(ev)
 }
 
-// newWriter returns the appropriate writer based on flags. client may be nil.
-func newWriter(outputFmt string, client *toolstream.Client) writer {
-	switch {
-	case client != nil:
-		return &socketWriter{client: client}
-	case outputFmt == "json":
-		return &jsonWriter{w: os.Stdout}
+type writerOption struct {
+	outputFmt string
+	sockPath  string
+	toolName  string
+	version   string
+	taskID    string
+}
+
+func newWriter(opt *writerOption) (writer, func(), error) {
+	if opt.sockPath != "" {
+		client, err := toolstream.NewClient(toolstream.ClientOptions{
+			SockPath: opt.sockPath,
+			ToolName: opt.toolName,
+			Version:  opt.version,
+			TaskID:   opt.taskID,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("dropwatch: --output-storage: %w", err)
+		}
+		return &socketWriter{client: client}, client.End, nil
+	}
+
+	switch opt.outputFmt {
+	case "json":
+		return &jsonWriter{w: os.Stdout}, func() {}, nil
 	default:
-		return &textWriter{w: os.Stdout}
+		return &textWriter{w: os.Stdout}, func() {}, nil
+	}
+}
+
+func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
+	pkt := packet.Hdr{
+		EthProto:  ev.Raw.EthProto,
+		RawLen:    uint8(ev.Raw.RawLen),
+		HasEthHdr: uint8(ev.Raw.HasEthHdr),
+		SkState:   uint8(ev.Raw.SkState),
+		Raw:       ev.Raw.Raw,
+	}
+
+	p, err := packet.Parse(&pkt)
+	if err != nil {
+		log.Debugf("dropwatch: parse packet: %v", err)
+	}
+
+	frames := symbol.KsymStackStrs(ev.Stack[:], symbol.KsymStackMaxDepth)
+	stackStr := strings.Join(frames, "\n")
+
+	return &types.DropWatchTracing{
+		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
+		Pid:                 ev.Meta.TgidPid >> 32,
+		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemoryCgroupCSSAddr),
+		NetNamespaceCookie:  ev.Meta.NetCookie,
+		NetNamespaceInode:   ev.Meta.NetInode,
+		NetdevName:          bytesutil.ToStr(ev.Meta.NetdevName[:]),
+		NetdevIfindex:       ev.Meta.NetdevIfindex,
+		NetdevQueueMapping:  ev.Meta.NetdevQueueMapping,
+		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.NetdevFlags),
+		PacketSkbAddr:       kernaddr.Format(ev.Meta.SkbAddr),
+		PacketEthProto:      fmt.Sprintf("0x%04x", ev.Raw.EthProto),
+		PacketLen:           ev.Raw.PktLen,
+		Layers:              p,
+		Stack:               stackStr,
 	}
 }
