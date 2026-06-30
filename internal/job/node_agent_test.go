@@ -15,6 +15,7 @@
 package job
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -156,6 +157,16 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		if !strings.Contains(requestBody, `"container_hostname":"payment-worker"`) {
 			t.Errorf("StartTask() request body=%q, want container hostname field", requestBody)
 		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(requestBody), &payload); err != nil {
+			t.Fatalf("json.Unmarshal(requestBody) error=%v", err)
+		}
+		if got := payload["timeout"]; got != float64(60) {
+			t.Errorf("StartTask() timeout payload=%v, want 60", got)
+		}
+		if _, ok := payload["trace_timeout"]; ok {
+			t.Errorf("StartTask() request body=%q, should use agent field timeout instead of trace_timeout", requestBody)
+		}
 	})
 
 	t.Run("non ok response", func(t *testing.T) {
@@ -188,6 +199,42 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		})
 		if err == nil || !strings.Contains(err.Error(), "failed to decode response") {
 			t.Errorf("StartTask() error=%v, want decode error", err)
+		}
+		if taskID != "" {
+			t.Errorf("StartTask() taskID=%q, want empty", taskID)
+		}
+	})
+
+	t.Run("agent error response", func(t *testing.T) {
+		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return newHTTPResponse(http.StatusOK, `{"code":400,"message":"missing timeout","data":null}`), nil
+		}))
+
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+			TracerName:   "oncpu",
+			TraceTimeout: 60,
+			DataType:     "flamegraph",
+		})
+		if err == nil || !strings.Contains(err.Error(), "agent returned error response") {
+			t.Errorf("StartTask() error=%v, want agent error response", err)
+		}
+		if taskID != "" {
+			t.Errorf("StartTask() taskID=%q, want empty", taskID)
+		}
+	})
+
+	t.Run("empty task id", func(t *testing.T) {
+		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return newHTTPResponse(http.StatusOK, `{"code":0,"message":"ok","data":{"task_id":""}}`), nil
+		}))
+
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+			TracerName:   "oncpu",
+			TraceTimeout: 60,
+			DataType:     "flamegraph",
+		})
+		if err == nil || !strings.Contains(err.Error(), "empty task_id") {
+			t.Errorf("StartTask() error=%v, want empty task_id error", err)
 		}
 		if taskID != "" {
 			t.Errorf("StartTask() taskID=%q, want empty", taskID)
@@ -312,6 +359,29 @@ func TestHTTPNodeAgentGetTaskStatus(t *testing.T) {
 				}
 				if attempts != 3 {
 					t.Errorf("GetTaskStatus() attempts=%d, want 3", attempts)
+				}
+			},
+		},
+		{
+			name: "agent error response",
+			buildTransport: func(attempts *int) http.RoundTripper {
+				return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					*attempts++
+					return newHTTPResponse(http.StatusOK, `{"code":500,"message":"task status failed","data":null}`), nil
+				})
+			},
+			validate: func(t *testing.T, status string, result *Result, err error, attempts int) {
+				if err == nil || !strings.Contains(err.Error(), "agent returned error response") {
+					t.Errorf("GetTaskStatus() error=%v, want agent error response", err)
+				}
+				if status != "" {
+					t.Errorf("GetTaskStatus() status=%q, want empty", status)
+				}
+				if result != nil {
+					t.Errorf("GetTaskStatus() result=%+v, want nil", result)
+				}
+				if attempts != 1 {
+					t.Errorf("GetTaskStatus() attempts=%d, want 1", attempts)
 				}
 			},
 		},
