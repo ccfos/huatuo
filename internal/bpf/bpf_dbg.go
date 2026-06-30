@@ -95,12 +95,18 @@ func DebugEventLoop(ctx context.Context, reader PerfEventReader) error {
 			return fmt.Errorf("convert bpf timestamp: %w", err)
 		}
 
+		args := ""
+		if event.Args != [4]uint64{} {
+			args = fmt.Sprintf(" args=[%#x %#x %#x %#x]",
+				event.Args[0], event.Args[1], event.Args[2], event.Args[3])
+		}
+
 		log.Debugf(
-			"bpf_dbg: file=%s line=%d ts=%s msg=%s args=[%#x %#x %#x %#x]",
+			"bpf_dbg: file=%s line=%d ts=%s msg=%s%s",
 			nullTerminatedString(event.FileName[:]), event.FileLine,
 			timeutil.FormatUTC(ts),
 			nullTerminatedString(event.Msg[:]),
-			event.Args[0], event.Args[1], event.Args[2], event.Args[3],
+			args,
 		)
 	}
 }
