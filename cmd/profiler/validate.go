@@ -20,6 +20,7 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	"huatuo-bamai/internal/bpf"
 	pyruntime "huatuo-bamai/internal/profiler/runtime/python"
 )
 
@@ -38,6 +39,10 @@ func runBefore(ctx *cli.Context) error {
 		file:    ctx.String("log-file"),
 		size:    ctx.Int("log-size"),
 	})
+
+	if ctx.Bool("log-bpf-debug") {
+		bpf.EnableBpfDbg()
+	}
 
 	typ := ctx.String("type")
 	lang := ctx.String("language")

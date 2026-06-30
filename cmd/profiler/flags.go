@@ -75,6 +75,10 @@ var appFlags = []cli.Flag{
 		Usage: "Default log size of profiling",
 		Value: 100,
 	},
+	&cli.BoolFlag{
+		Name:  "log-bpf-debug",
+		Usage: "Log bpf_dbg events (native profiler only)",
+	},
 	&cli.StringFlag{
 		Name:  "tool-path",
 		Usage: "Path to the profiling tool (e.g. async-profiler, py-spy)",

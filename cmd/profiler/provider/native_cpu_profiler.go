@@ -94,10 +94,10 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		cssAddr = c.CgroupCss["cpu"]
 	}
 
-	b, err := bpf.LoadBpf("native_cpu_profiler.o", map[string]any{
+	b, err := bpf.LoadBpf("native_cpu_profiler.o", bpf.WithBpfDbg(map[string]any{
 		"target_css": cssAddr,
 		"target_pid": uint64(pctx.PID),
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
@@ -124,6 +124,12 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
 	log.Infof("data reading loop started")
 	defer log.Infof("data reading loop ended")
+
+	stopDbg, err := bpf.StartDebugEventLoop(ctx, p.bpf, "dbg_native_cpu_dbg_events")
+	if err != nil {
+		return fmt.Errorf("start bpf debug loop: %w", err)
+	}
+	defer stopDbg()
 
 	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
 	if err != nil {

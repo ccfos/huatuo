@@ -1,8 +1,12 @@
 #include "vmlinux.h"
-#include "bpf_common.h"
+
+#include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-#include <bpf/bpf_core_read.h>
+
+#include "bpf_common.h"
+#include "bpf_dbg.h"
+#include "bpf_map.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -19,16 +23,14 @@ volatile const u64 idle_class_addr = 0;
 #endif
 
 #ifndef PERF_MAX_STACK_DEPTH
-#define PERF_MAX_STACK_DEPTH		127
+#define PERF_MAX_STACK_DEPTH 127
 #endif
 
-#define MAX_CPU 256
-
-#define BPF_ANY 0
+BPF_DBG_MAP(native_cpu_dbg);
 
 struct stack_trace_key_t {
-	__u32 pid;		// thread id
-	__u32 tgid;		// process id
+	__u32 pid;  // thread id
+	__u32 tgid; // process id
 	__u32 cpu;
 	char comm[TASK_COMM_LEN];
 	int kernstack;
@@ -51,12 +53,11 @@ struct stack_trace_key_t {
 #define USER_STACKID_FLAGS (0 | BPF_F_USER_STACK)
 
 typedef enum {
-	TRANSFER_CNT_IDX = 0,	/* buffer-a and buffer-b transfer count. */
-	SAMPLE_CNT_A_IDX,	/* sample count A */
-	SAMPLE_CNT_B_IDX,	/* sample count B */
+	TRANSFER_CNT_IDX = 0, /* buffer-a and buffer-b transfer count. */
+	SAMPLE_CNT_A_IDX,     /* sample count A */
+	SAMPLE_CNT_B_IDX,     /* sample count B */
 	PROFILER_CNT
 } profiler_idx;
-
 
 // state map
 struct {
@@ -65,7 +66,6 @@ struct {
 	__type(value, u64);
 	__uint(max_entries, PROFILER_CNT);
 } profiler_state_map SEC(".maps");
-
 
 struct {
 	__uint(type, BPF_MAP_TYPE_STACK_TRACE);
@@ -135,20 +135,29 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	u64 cpu_css = (u64)BPF_CORE_READ(curr, cgroups, subsys[cpu_cgrp_id]);
 	u64 class = (u64)BPF_CORE_READ(curr, sched_class);
 
-	if (target_css != 0 && target_css != cpu_css)
+	if (target_css != 0 && target_css != cpu_css) {
+		bpf_dbg_msg(ctx, native_cpu_dbg, "target css missed");
 		return 0;
+	}
 
 	u64 id = bpf_get_current_pid_tgid() >> 32;
-	if (target_pid != 0 && target_pid != id)
+	if (target_pid != 0 && target_pid != id) {
+		bpf_dbg_msg(ctx, native_cpu_dbg, "target pid missed");
 		return 0;
+	}
 
-	if (idle_class_addr != 0 && class == idle_class_addr)
+	if (idle_class_addr != 0 && class == idle_class_addr) {
+		bpf_dbg_msg(ctx, native_cpu_dbg, "idle_class_addr missed");
 		return 0;
+	}
 
 	/* Pointers to be used */
 	struct stack_trace_key_t *event = NULL;
-	void *stack_map = NULL;         /* points to stack_map_a or stack_map_b (map variable address) */
-	void *profiler_output = NULL;   /* points to profiler_output_a or profiler_output_b (map variable address) */
+	void *stack_map = NULL; /* points to stack_map_a or stack_map_b (map
+				   variable address) */
+	void *profiler_output = NULL; /* points to profiler_output_a or
+					 profiler_output_b (map variable
+					 address) */
 	u64 *sample_count_ptr = NULL;
 
 	u32 idx = 0;
@@ -168,6 +177,7 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	 * CPU idle stacks will not be collected.
 	 */
 	if (event->tgid == event->pid && event->pid == 0) {
+		bpf_dbg_msg(ctx, native_cpu_dbg, "cpu idle missed");
 		return 0;
 	}
 
@@ -189,7 +199,8 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	event->userstack = bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
 	event->kernstack = bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
 
-	if(event->userstack < 0 && event->kernstack < 0){
+	if (event->userstack < 0 && event->kernstack < 0) {
+		bpf_dbg_msg(ctx, native_cpu_dbg, "user and kernel stack missed");
 		return 0;
 	}
 
@@ -197,7 +208,7 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 
 	/* Output to perf_event_array: pass the map address (profiler_output) */
 	bpf_perf_event_output(ctx, profiler_output, COMPAT_BPF_F_CURRENT_CPU,
-						  event, sizeof(struct stack_trace_key_t));
+			      event, sizeof(struct stack_trace_key_t));
 
 	return 0;
 }

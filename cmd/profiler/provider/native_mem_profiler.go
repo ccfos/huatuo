@@ -130,7 +130,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	b, err := bpf.LoadBpf(bpfObjName, consts)
+	b, err := bpf.LoadBpf(bpfObjName, bpf.WithBpfDbg(consts))
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
