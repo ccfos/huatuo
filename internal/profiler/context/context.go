@@ -46,6 +46,7 @@ type ProfilerContext struct {
 	ToolLimit    int
 	AggrInterval int
 	IsOneShotAgg bool
+	CPUID        int
 
 	ServerAddress string
 	OutputFormat  output.OutputFormat
@@ -129,6 +130,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		Duration:     cliCtx.Int("duration"),
 		ToolLimit:    cliCtx.Int("tool-limit"),
 		AggrInterval: cliCtx.Int("aggr-interval"),
+		CPUID:        cliCtx.Int("cpuid"),
 
 		ServerAddress: cliCtx.String("server-address"),
 		Type:          cliCtx.String("type"),

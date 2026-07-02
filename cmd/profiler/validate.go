@@ -17,6 +17,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/urfave/cli/v2"
 
@@ -138,6 +139,12 @@ func validateCommonOptions(ctx *cli.Context) error {
 	if cid := ctx.String("container-id"); cid != "" {
 		if err := validateContainerID(cid); err != nil {
 			return err
+		}
+	}
+
+	if cpuid := ctx.Int("cpuid"); cpuid >= 0 {
+		if cpuid >= runtime.NumCPU() {
+			return fmt.Errorf("cpuid %d is out of range (available: 0-%d)", cpuid, runtime.NumCPU()-1)
 		}
 	}
 

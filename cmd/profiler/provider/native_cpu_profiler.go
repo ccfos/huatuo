@@ -110,6 +110,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	opt := bpf.AttachOption{ProgramName: "perf_event_sw_cpu_clock"}
 	opt.PerfEvent.SampleFreq = uint64(pctx.Freq)
 	opt.PerfEvent.SamplePeriod = 0
+	opt.PerfEvent.CPUID = pctx.CPUID
 
 	if err := p.bpf.AttachWithOptions([]bpf.AttachOption{opt}); err != nil {
 		if cerr := p.bpf.Close(); cerr != nil {

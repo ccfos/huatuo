@@ -93,6 +93,11 @@ var appFlags = []cli.Flag{
 		Usage:   "The number of samples to collect per second",
 		Value:   99,
 	},
+	&cli.IntFlag{
+		Name:  "cpuid",
+		Usage: "Collect samples only on the specified CPU ID (currently only native_cpu profiler is supported, -1 means all CPUs)",
+		Value: -1,
+	},
 	&cli.StringSliceFlag{
 		Name:    "flags",
 		Aliases: []string{"f"},
