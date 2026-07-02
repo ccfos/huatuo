@@ -62,7 +62,7 @@ func TestLoadBpfFromBytes_InvalidELF(t *testing.T) {
 }
 
 // Empty names plus any cleaned form starting with ".." would let LoadBpf
-// escape DefaultBpfObjDir once joined.
+// escape DefaultObjDir once joined.
 var rejectedNames = []string{
 	"",
 	"..",
@@ -72,7 +72,7 @@ var rejectedNames = []string{
 }
 
 // Path-like CLI inputs (e.g. "./_output/bpf/iotracing.o", absolute paths)
-// must pass: they cannot escape DefaultBpfObjDir because Clean keeps them
+// must pass: they cannot escape DefaultObjDir because Clean keeps them
 // at or below the join root.
 var acceptedNames = []string{
 	"x.o",
@@ -127,40 +127,40 @@ func TestLoadBpf_InvalidName(t *testing.T) {
 }
 
 func TestLoadBpf_FileNotFound(t *testing.T) {
-	old := DefaultBpfObjDir
-	DefaultBpfObjDir = t.TempDir()
-	t.Cleanup(func() { DefaultBpfObjDir = old })
+	old := DefaultObjDir
+	DefaultObjDir = t.TempDir()
+	t.Cleanup(func() { DefaultObjDir = old })
 
 	_, err := LoadBpf("definitely_not_exists.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_DefaultBpfObjDir_Empty(t *testing.T) {
-	old := DefaultBpfObjDir
-	DefaultBpfObjDir = ""
-	t.Cleanup(func() { DefaultBpfObjDir = old })
+func TestLoadBpf_DefaultObjDir_Empty(t *testing.T) {
+	old := DefaultObjDir
+	DefaultObjDir = ""
+	t.Cleanup(func() { DefaultObjDir = old })
 
 	_, err := LoadBpf("definitely_not_exists.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_DefaultBpfObjDir_Relative(t *testing.T) {
-	old := DefaultBpfObjDir
-	DefaultBpfObjDir = "./definitely_not_exists_dir"
-	t.Cleanup(func() { DefaultBpfObjDir = old })
+func TestLoadBpf_DefaultObjDir_Relative(t *testing.T) {
+	old := DefaultObjDir
+	DefaultObjDir = "./definitely_not_exists_dir"
+	t.Cleanup(func() { DefaultObjDir = old })
 
 	_, err := LoadBpf("definitely_not_exists.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_DefaultBpfObjDir_Unreadable(t *testing.T) {
+func TestLoadBpf_DefaultObjDir_Unreadable(t *testing.T) {
 	t.Helper()
-	old := DefaultBpfObjDir
+	old := DefaultObjDir
 	unreadableDir := filepath.Join(t.TempDir(), "nope")
 	require.NoError(t, os.Mkdir(unreadableDir, 0o000))
-	DefaultBpfObjDir = unreadableDir
+	DefaultObjDir = unreadableDir
 	t.Cleanup(func() {
-		DefaultBpfObjDir = old
+		DefaultObjDir = old
 		_ = os.Chmod(unreadableDir, 0o700)
 	})
 
@@ -172,13 +172,13 @@ func TestLoadBpf_LoadsFromDir(t *testing.T) {
 	t.Helper()
 	requireBPFPermission(t)
 
-	old := DefaultBpfObjDir
-	DefaultBpfObjDir = t.TempDir()
+	old := DefaultObjDir
+	DefaultObjDir = t.TempDir()
 
-	t.Cleanup(func() { DefaultBpfObjDir = old })
+	t.Cleanup(func() { DefaultObjDir = old })
 
 	objBytes := loadMinimalObjBytes(t)
-	objPath := filepath.Join(DefaultBpfObjDir, "test_minimal.elf")
+	objPath := filepath.Join(DefaultObjDir, "test_minimal.elf")
 	require.NoError(t, os.WriteFile(objPath, objBytes, 0o600))
 
 	b, err := LoadBpf("test_minimal.elf", nil)
@@ -401,6 +401,7 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 		perfOpt  *struct {
 			SamplePeriod uint64
 			SampleFreq   uint64
+			CPUID        int
 		}
 		wantErr bool
 	}{
@@ -429,6 +430,7 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 			perfOpt: &struct {
 				SamplePeriod uint64
 				SampleFreq   uint64
+				CPUID        int
 			}{SampleFreq: 99},
 			wantErr: false,
 		},
@@ -439,6 +441,7 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 			perfOpt: &struct {
 				SamplePeriod uint64
 				SampleFreq   uint64
+				CPUID        int
 			}{SampleFreq: 0},
 			wantErr: true,
 		},

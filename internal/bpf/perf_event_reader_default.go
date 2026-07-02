@@ -46,7 +46,7 @@ var _ PerfEventReader = (*perfEventReader)(nil)
 func newPerfEventReader(ctx context.Context, array *ebpf.Map, perCPUBufSize int) (PerfEventReader, error) {
 	rd, err := perf.NewReader(array, perCPUBufSize)
 	if err != nil {
-		return nil, fmt.Errorf("can't create the perf event reader: %w", err)
+		return nil, fmt.Errorf("create perf event reader: %w", err)
 	}
 
 	readerCtx, cancel := context.WithCancel(ctx)
@@ -91,9 +91,9 @@ func (r *perfEventReader) ReadBatch(pdata any) ([]any, error) {
 				return batch, nil
 			}
 			if errors.Is(err, perf.ErrClosed) {
-				return batch, fmt.Errorf("perfEventReader is closed: %w", types.ErrExitByCancelCtx)
+				return batch, fmt.Errorf("perf event reader closed: %w", types.ErrExitByCancelCtx)
 			}
-			return nil, fmt.Errorf("failed to read the event: %w", err)
+			return nil, fmt.Errorf("read event: %w", err)
 		}
 
 		if rec.LostSamples != 0 {
@@ -102,7 +102,7 @@ func (r *perfEventReader) ReadBatch(pdata any) ([]any, error) {
 
 		dst := reflect.New(elemType).Interface()
 		if err := binary.Read(bytes.NewBuffer(rec.RawSample), binary.NativeEndian, dst); err != nil {
-			return nil, fmt.Errorf("failed to parse the event: %w", err)
+			return nil, fmt.Errorf("parse event: %w", err)
 		}
 
 		batch = append(batch, dst)
@@ -123,11 +123,11 @@ func (r *perfEventReader) ReadInto(pdata any) error {
 			record, err := r.rd.Read()
 			if err != nil {
 				if errors.Is(err, perf.ErrClosed) { // Close
-					return fmt.Errorf("perfEventReader is closed: %w", types.ErrExitByCancelCtx)
+					return fmt.Errorf("perf event reader closed: %w", types.ErrExitByCancelCtx)
 				} else if errors.Is(err, os.ErrDeadlineExceeded) { // poll deadline
 					continue
 				}
-				return fmt.Errorf("failed to read the event: %w", err)
+				return fmt.Errorf("read event: %w", err)
 			}
 
 			if record.LostSamples != 0 {

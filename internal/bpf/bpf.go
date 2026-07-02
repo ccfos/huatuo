@@ -22,48 +22,36 @@ type Option struct {
 	KeepaliveTimeout int
 }
 
-// The BPF APIs
-//
-//	The bpf manager has the following APIs:
-//
-//	// NewManager initializes the bpf manager.
-//	NewManager(dur int) error
-//
-//	// Close closes the bpf manager.
-//	Close()
-//
-//	// LoadBpf the bpf and return the bpf.
-//	LoadBpf(objName string, consts map[string]any) (BPF, error)
-
 // AttachOption is an option for attaching a program.
 type AttachOption struct {
 	ProgramName string
 	Symbol      string   // symbol for kprobe/kretprobe/tracepoint/raw_tracepoint
 	PerfEvent   struct { // BPF_PROG_TYPE_PERF_EVENT
 		SamplePeriod, SampleFreq uint64
+		CPUID                    int
 	}
 }
 
-// Info is the info of a bpf.
+// Info holds loaded BPF object metadata.
 type Info struct {
 	MapsInfo     []MapInfo
 	ProgramsInfo []ProgramInfo
 }
 
-// MapInfo is the info of a map.
+// MapInfo identifies a loaded BPF map.
 type MapInfo struct {
 	ID   uint32
 	Name string
 }
 
-// ProgramInfo is the info of a program.
+// ProgramInfo identifies a loaded BPF program.
 type ProgramInfo struct {
 	ID          uint32
 	Name        string
 	SectionName string
 }
 
-// MapItem describes a map element with key-value
+// MapItem describes a map element with key-value.
 type MapItem struct {
 	Key   []byte
 	Value []byte

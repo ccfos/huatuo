@@ -203,7 +203,7 @@ func resolveOptionDir(ctx *cli.Context, name string) (string, error) {
 // config file load, log level/file, tracer blacklist merge, procfs prefix.
 // Runs once from app.Before so subsequent code can read config.Get() freely.
 func configureRuntime(opts *Options) error {
-	bpf.DefaultBpfObjDir = opts.BPFObjDir
+	bpf.DefaultObjDir = opts.BPFObjDir
 	tracing.TaskBinDir = opts.ToolBinDir
 
 	if err := config.Load(filepath.Join(opts.ConfigDir, opts.ConfigFile)); err != nil {
@@ -248,7 +248,7 @@ func configureRuntime(opts *Options) error {
 	}
 
 	log.Debugf("resolved dirs: %s=%q %s=%q %s=%q",
-		cliFlagBPFObjDir, bpf.DefaultBpfObjDir,
+		cliFlagBPFObjDir, bpf.DefaultObjDir,
 		cliFlagToolBinDir, tracing.TaskBinDir,
 		cliFlagConfigDir, opts.ConfigDir)
 
