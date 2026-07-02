@@ -4,65 +4,206 @@ type: docs
 weight: 1
 ---
 
-Development happens on [GitHub](https://github.com/ccfos/huatuo) and contributions in all forms are welcome. Please take a look at the architecture to get a better understanding of the high-level goals.
+# Contributing to HUATUO
 
-## Clone and Provision Environment
+Thank you for your interest in contributing to HUATUO! This guide will help you get started.
 
-1. Make sure you have a GitHub account.
+---
 
-2. Fork the [huatuo](https://github.com/ccfos/huatuo) repository to your GitHub user or organization.
+## Ways to Contribute
 
-3. Turn off GitHub actions for your fork as described in the [GitHub Docs](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository#managing-github-actions-permissions-for-your-repository). This is recommended to avoid unnecessary CI notification failures on the fork.
+There are many ways to contribute to HUATUO:
 
-4. Clone your ${YOUR_GITHUB_USERNAME_OR_ORG}/huatuo fork and set up the base repository as upstream remote:
+- **Code** — Fix bugs, add features, improve performance
+- **Documentation** — Improve docs, translate content, write tutorials
+- **Testing** — Write unit tests, integration tests, report bugs
+- **eBPF** — Add new kernel probes, improve kernel compatibility
+- **Review** — Review pull requests from other contributors
 
-    ```bash
-    git clone https://github.com/${YOUR_GITHUB_USERNAME_OR_ORG}/huatuo.git
-    cd huatuo
-    git remote add upstream https://github.com/ccfos/huatuo.git
-    ```
+---
 
-5. Set up your Development Setup.
+## Development Environment
 
-6. Check the [GitHub issues](https://github.com/ccfos/huatuo/issues) for good tasks to get started.
+### Prerequisites
 
-## Developer Certificate of Origin
+| Tool | Requirement | Note |
+|------|----------|------|
+| **Go** | 1.24+ | The project is written in Go |
+| **Linux** | Kernel 4.18+ | eBPF programs require a Linux kernel |
+| **Clang/LLVM** | Any recent version | Required for compiling eBPF C programs |
+| **Kernel headers** | linux-headers | Required for BPF compilation |
+| **Docker** | (optional) | For containerized development |
+| **Git** | Any recent version | For version control |
 
-The project requires that all contributions to project repositories carry the Developer Certificate of Origin. This is as simple as appending a footer to your commits, a standard commit message is as follows:
-
-```bash
-fix: resolve authentication bug
-
-The login token was not being validated properly.
-
-Closes #123
-
-Signed-off-by: Your Name <name@example.org>
-```
-
-Signing off your contributions this way means that you've read and understood the contents of the DCO.
-
-## Running the tests
-
-Many of the tests require privileges to set resource limits and load eBPF code. The easiest way to obtain these is to run the tests with sudo. Run all tests with the following command:
+### Clone the Repository
 
 ```bash
-make all
-go test ./...
+# Fork the repository on GitHub, then:
+git clone https://github.com/YOUR_USERNAME/huatuo.git
+cd huatuo
+git remote add upstream https://github.com/ccfos/huatuo.git
 ```
 
-To test the current package with Go linters.
+---
+
+## Build and Test
+
+### Build
 
 ```bash
-make check
+make all          # Build everything (BPF + Go)
+make bpf-build    # Build only BPF programs
+make build        # Build only Go binaries
+make docker-build # Build Docker image
 ```
 
-## Submitting a pull request
+### Test
 
-1. Open a draft pull request. GitHub provides the ability to create a Pull Request in "draft" mode. On the "New Pull Request" page, below the pull request description box there is a button for creating the pull request. Click the arrow and choose "Create draft pull request". If your PR is still a work in progress, please select this mode. You will still be able to run the CI against it.
+```bash
+make test  # Run all tests
+make unit  # Run unit tests only
+make check # Run linting and formatting checks
+```
 
-    ![](/docs/img/how-to-contribute-pull-request.png)
+> **Note**: `make test` requires `/etc/kubernetes/pki` for E2E tests. If you don't have a K8s cluster, use `make unit` instead.
 
-2. To notify reviewers that the PR is ready for review, click **Ready for review** at the bottom of the page.
+---
 
-3. Engage in any discussions raised by reviewers and address any changes requested. Set the PR to draft PR mode while you address changes, then click **Ready for review** to re-request review.
+## Contribution Workflow
+
+### 1. Find or Create an Issue
+
+- Check the [open issues](https://github.com/ccfos/huatuo/issues) for bugs and features
+- If you find an unassigned issue, comment to ask for assignment
+- If you have a new idea, [create an issue](https://github.com/ccfos/huatuo/issues/new/choose) first
+
+### 2. Create a Branch
+
+```bash
+git checkout -b fix/short-description
+# or: git checkout -b feat/short-description
+# or: git checkout -b docs/short-description
+```
+
+Branch name prefixes:
+
+| Prefix | Purpose |
+|---------|--------|
+| `fix/` | Bug fixes |
+| `feat/` | New features |
+| `docs/` | Documentation |
+| `refactor/` | Code restructuring |
+| `test/` | Adding tests |
+
+### 3. Make Your Changes
+
+- Keep changes focused on a single issue
+- Add or update tests to cover your changes
+- Run `make check` to ensure code style compliance
+- Run `make unit` to verify tests pass
+
+### 4. Commit Your Changes
+
+Use [conventional commits](https://www.conventionalcommits.org/):
+
+```bash
+git commit -s -m "fix(scope): brief description
+
+Detailed explanation if needed.
+
+Closes #issue-number
+
+Signed-off-by: Your Name <your.email@example.com>"
+```
+
+The `-s` flag adds the required DCO `Signed-off-by` line.
+
+### 5. Push and Create a Pull Request
+
+```bash
+git push origin your-branch-name
+```
+
+Then go to [ccfos/huatuo](https://github.com/ccfos/huatuo) and create a **draft** Pull Request. When ready for review, click **Ready for review**.
+
+### 6. Code Review
+
+- A maintainer will review your PR
+- Address review comments by pushing new commits
+- Once approved, the maintainer will merge your PR
+
+---
+
+## Commit Messages
+
+HUATUO follows [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer]
+```
+
+### Types
+
+| Type | Description |
+|------|-------------|
+| `fix` | A bug fix |
+| `feat` | A new feature |
+| `docs` | Documentation changes |
+| `test` | Adding or updating tests |
+| `refactor` | Code restructuring without behavior change |
+| `chore` | Build process, dependencies, etc. |
+| `perf` | Performance improvements |
+
+### Examples
+
+```
+fix(pod): preserve response body read errors in httpDoRequest
+feat(bpf): add probe for kernel scheduling latency
+docs(contributing): add development setup guide
+test(request): verify response body is readable after doRequest
+```
+
+---
+
+## Code Style
+
+| Language | Tool |
+|----------|--------|
+| **Go** | `gofumpt` + `goimports` |
+| **C (eBPF)** | `clang-format` (config in `.clang-format`) |
+| **Shell** | `shfmt` |
+| **YAML/JSON** | 2-space indent |
+
+Run `make check` before every commit to ensure compliance.
+
+---
+
+## DCO Sign-off
+
+All contributions must include a **Developer Certificate of Origin (DCO)** sign-off.
+
+Every commit must end with:
+
+```
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+Use `git commit -s` to add this automatically.
+
+The sign-off certifies that you wrote the code or have the right to contribute it under the project's license (Apache 2.0).
+
+---
+
+## Community
+
+- **GitHub Issues** — Report bugs and request features
+- **GitHub Discussions** — Ask questions and share ideas
+- **WeChat** — Scan the QR code in the [README](https://github.com/ccfos/huatuo) to join the group
+
+---
+
+**Thank you for contributing to HUATUO!**
