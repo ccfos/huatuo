@@ -147,18 +147,10 @@ func softirqDumpTrace(addrs []uint64) string {
 }
 
 func attachIrqAndEventPipe(ctx context.Context, b bpf.BPF) (bpf.PerfEventReader, error) {
-	var err error
-
 	reader, err := b.EventPipeByName(ctx, "irqoff_event_map", 8192)
 	if err != nil {
 		return nil, err
 	}
-
-	defer func() {
-		if err != nil {
-			reader.Close()
-		}
-	}()
 
 	/*
 	 * NOTE: There might be more than 100ms gap between the attachment of hooks,
@@ -186,6 +178,7 @@ func attachIrqAndEventPipe(ctx context.Context, b bpf.BPF) (bpf.PerfEventReader,
 			Symbol:      "timer/tick_stop",
 		},
 	}); err != nil {
+		reader.Close()
 		return nil, err
 	}
 
