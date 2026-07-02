@@ -318,11 +318,14 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 		return fmt.Errorf("container filter: %w", err)
 	}
 
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
-		case <-time.After(time.Duration(interval) * time.Second):
+		case <-ticker.C:
 			if err := updateContainersCPUIdle(containerFilter); err != nil {
 				return err
 			}
