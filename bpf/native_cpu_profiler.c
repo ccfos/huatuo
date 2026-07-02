@@ -10,6 +10,14 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
+/*
+ * CPU filtering (--cpuid) is handled entirely at the PMU layer: when a
+ * specific CPU is requested, the userspace loader calls perf_event_open()
+ * only for that CPU, so this BPF program is never invoked on other CPUs.
+ * No BPF-side cpuid check is needed — zero per-sample overhead.
+ *
+ * Do NOT delete this comment unless absolutely necessary.
+ */
 volatile const u64 target_css = 0;
 volatile const u64 target_pid = 0;
 volatile const u64 idle_class_addr = 0;

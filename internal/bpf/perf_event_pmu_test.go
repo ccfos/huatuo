@@ -26,18 +26,18 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// TestAttachPerfEventPMU tests perf event attach using table-driven style.
-func TestAttachPerfEventPMU(t *testing.T) {
+// TestAttachPerfEvent tests perf event attach using table-driven style.
+func TestAttachPerfEvent(t *testing.T) {
 	prog := newTestProgram(t)
 
 	cases := []struct {
 		name   string
-		opt    *pmuOption
+		opt    *perfEventOption
 		wantOK bool
 	}{
 		{
 			name: "ok freq sampling",
-			opt: &pmuOption{
+			opt: &perfEventOption{
 				sampleType:       sampleTypeFreq,
 				samplePeriodFreq: 1,
 				program:          prog,
@@ -48,7 +48,7 @@ func TestAttachPerfEventPMU(t *testing.T) {
 			// sampleType 0 is undefined; current implementation falls through
 			// to freq because only sampleTypePeriod clears PerfBitFreq.
 			name: "undefined sample type defaults to freq behavior",
-			opt: &pmuOption{
+			opt: &perfEventOption{
 				sampleType:       0,
 				samplePeriodFreq: 1,
 				program:          prog,
@@ -62,7 +62,7 @@ func TestAttachPerfEventPMU(t *testing.T) {
 		},
 		{
 			name: "nil program",
-			opt: &pmuOption{
+			opt: &perfEventOption{
 				sampleType:       sampleTypeFreq,
 				samplePeriodFreq: 1,
 				program:          nil,
@@ -71,7 +71,7 @@ func TestAttachPerfEventPMU(t *testing.T) {
 		},
 		{
 			name: "closed program",
-			opt: &pmuOption{
+			opt: &perfEventOption{
 				sampleType:       sampleTypeFreq,
 				samplePeriodFreq: 1,
 				program: func() *ebpf.Program {
@@ -84,7 +84,7 @@ func TestAttachPerfEventPMU(t *testing.T) {
 		},
 		{
 			name: "zero sample freq",
-			opt: &pmuOption{
+			opt: &perfEventOption{
 				sampleType:       sampleTypeFreq,
 				samplePeriodFreq: 0,
 				program:          prog,
@@ -95,9 +95,9 @@ func TestAttachPerfEventPMU(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			pmu, err := attachPerfEventPMU(c.opt)
+			pmu, err := attachPerfEvent(c.opt)
 			if c.wantOK {
-				skipPerfEventPMUIfNotAvailable(t, err)
+				skipPerfEventIfNotAvailable(t, err)
 				require.NoError(t, err)
 				require.NotNil(t, pmu)
 				require.NotEmpty(t, pmu.fds)
@@ -109,29 +109,29 @@ func TestAttachPerfEventPMU(t *testing.T) {
 	}
 }
 
-// TestAttachPerfEventPMU_AttachTwice verifies that attaching the same program twice is safe.
-func TestAttachPerfEventPMU_AttachTwice(t *testing.T) {
+// TestAttachPerfEvent_AttachTwice verifies that attaching the same program twice is safe.
+func TestAttachPerfEvent_AttachTwice(t *testing.T) {
 	prog := newTestProgram(t)
 
-	opt := &pmuOption{
+	opt := &perfEventOption{
 		sampleType:       sampleTypeFreq,
 		samplePeriodFreq: 1,
 		program:          prog,
 	}
 
-	pmu1, err := attachPerfEventPMU(opt)
-	skipPerfEventPMUIfNotAvailable(t, err)
+	pmu1, err := attachPerfEvent(opt)
+	skipPerfEventIfNotAvailable(t, err)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pmu1.detach() })
 
-	pmu2, err := attachPerfEventPMU(opt)
-	skipPerfEventPMUIfNotAvailable(t, err)
+	pmu2, err := attachPerfEvent(opt)
+	skipPerfEventIfNotAvailable(t, err)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pmu2.detach() })
 }
 
-// TestAttach_DirectSyscall tests attach() syscall helper using table-driven style.
-func TestAttach_DirectSyscall(t *testing.T) {
+// TestOpenPerfEvent tests openPerfEvent syscall helper using table-driven style.
+func TestOpenPerfEvent(t *testing.T) {
 	prog := newTestProgram(t)
 
 	cases := []struct {
@@ -177,9 +177,9 @@ func TestAttach_DirectSyscall(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			fd, err := perfEventOpenWithBPF(c.attr, c.progFD, 0)
+			fd, err := openPerfEvent(c.attr, c.progFD, 0)
 			if c.wantOK {
-				skipPerfEventPMUIfNotAvailable(t, err)
+				skipPerfEventIfNotAvailable(t, err)
 				require.NoError(t, err)
 				require.GreaterOrEqual(t, fd, 0)
 				t.Cleanup(func() { _ = unix.Close(fd) })
@@ -190,14 +190,14 @@ func TestAttach_DirectSyscall(t *testing.T) {
 	}
 }
 
-// TestPerfEventPMU_Detach tests detach() is safe with empty or invalid fds.
-func TestPerfEventPMU_Detach(t *testing.T) {
+// TestPerfEventAttach_Detach tests detach() is safe with empty or invalid fds.
+func TestPerfEventAttach_Detach(t *testing.T) {
 	cases := []struct {
 		name string
-		pmu  *perfEventPMU
+		pmu  *perfEventAttach
 	}{
-		{"nil fds", &perfEventPMU{fds: nil}},
-		{"invalid fds", &perfEventPMU{fds: []int{-1, -2}}},
+		{"nil fds", &perfEventAttach{fds: nil}},
+		{"invalid fds", &perfEventAttach{fds: []int{-1, -2}}},
 	}
 
 	for _, c := range cases {
@@ -207,25 +207,25 @@ func TestPerfEventPMU_Detach(t *testing.T) {
 	}
 }
 
-// TestPerfEventPMU_DetachTwice verifies that calling detach() twice is safe.
-func TestPerfEventPMU_DetachTwice(t *testing.T) {
-	pmu := &perfEventPMU{fds: []int{-1, -2}}
+// TestPerfEventAttach_DetachTwice verifies that calling detach() twice is safe.
+func TestPerfEventAttach_DetachTwice(t *testing.T) {
+	pmu := &perfEventAttach{fds: []int{-1, -2}}
 	require.NoError(t, pmu.detach())
 	require.NoError(t, pmu.detach())
 }
 
-// TestPerfEventPMU_DetachValidFDs verifies that detach() correctly closes valid fds.
-func TestPerfEventPMU_DetachValidFDs(t *testing.T) {
+// TestPerfEventAttach_DetachValidFDs verifies that detach() correctly closes valid fds.
+func TestPerfEventAttach_DetachValidFDs(t *testing.T) {
 	prog := newTestProgram(t)
 
-	opt := &pmuOption{
+	opt := &perfEventOption{
 		sampleType:       sampleTypeFreq,
 		samplePeriodFreq: 1,
 		program:          prog,
 	}
 
-	pmu, err := attachPerfEventPMU(opt)
-	skipPerfEventPMUIfNotAvailable(t, err)
+	pmu, err := attachPerfEvent(opt)
+	skipPerfEventIfNotAvailable(t, err)
 	require.NoError(t, err)
 	require.NotEmpty(t, pmu.fds)
 
@@ -255,8 +255,8 @@ func newTestProgram(t *testing.T) *ebpf.Program {
 	return prog
 }
 
-// skipPerfEventPMUIfNotAvailable skips tests if perf is unavailable due to kernel restrictions or permissions.
-func skipPerfEventPMUIfNotAvailable(t *testing.T, err error) {
+// skipPerfEventIfNotAvailable skips tests if perf is unavailable due to kernel restrictions or permissions.
+func skipPerfEventIfNotAvailable(t *testing.T, err error) {
 	t.Helper()
 	if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.ENOENT) || errors.Is(err, unix.EINVAL) {
 		t.Skipf("skipping: perf event unavailable in this environment: %v", err)

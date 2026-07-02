@@ -27,26 +27,27 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var perfEventPmuSysbmol = "perf_event_pmu_sysbmol"
-
 const (
 	sampleTypePeriod = 1
 	sampleTypeFreq   = 2
+
+	cpuIDAll = -1
 )
 
-type perfEventPMU struct {
+type perfEventAttach struct {
 	fds []int
 }
 
-type pmuOption struct {
+type perfEventOption struct {
 	samplePeriodFreq uint64
 	sampleType       uint32
 	program          *ebpf.Program
+	cpuID            int
 }
 
-func (opt *pmuOption) Validate() error {
+func (opt *perfEventOption) Validate() error {
 	if opt == nil {
-		return fmt.Errorf("options required")
+		return fmt.Errorf("perf event option required")
 	}
 
 	var errs []error
@@ -63,11 +64,11 @@ func (opt *pmuOption) Validate() error {
 		return nil
 	}
 
-	return fmt.Errorf("invalid options: %v", errs)
+	return fmt.Errorf("invalid perf event option: %v", errs)
 }
 
-func perfEventOpenWithBPF(attr *unix.PerfEventAttr, progFD, cpuId int) (int, error) {
-	fd, err := unix.PerfEventOpen(attr, -1, cpuId, -1, unix.PERF_FLAG_FD_CLOEXEC)
+func openPerfEvent(attr *unix.PerfEventAttr, progFD, cpuID int) (int, error) {
+	fd, err := unix.PerfEventOpen(attr, -1, cpuID, -1, unix.PERF_FLAG_FD_CLOEXEC)
 	if err != nil {
 		return -1, err
 	}
@@ -85,7 +86,7 @@ func perfEventOpenWithBPF(attr *unix.PerfEventAttr, progFD, cpuId int) (int, err
 	return fd, nil
 }
 
-func attachPerfEventPMU(opt *pmuOption) (*perfEventPMU, error) {
+func attachPerfEvent(opt *perfEventOption) (*perfEventAttach, error) {
 	if err := opt.Validate(); err != nil {
 		return nil, err
 	}
@@ -103,22 +104,32 @@ func attachPerfEventPMU(opt *pmuOption) (*perfEventPMU, error) {
 	}
 
 	var fds []int
-	for i := 0; i < runtime.NumCPU(); i++ {
-		fd, err := perfEventOpenWithBPF(&attr, opt.program.FD(), i)
+	if opt.cpuID != cpuIDAll {
+		fds = make([]int, 0, 1)
+		fd, err := openPerfEvent(&attr, opt.program.FD(), opt.cpuID)
 		if err != nil {
-			for _, fd := range fds {
-				_ = unix.Close(fd)
-			}
 			return nil, err
 		}
-
 		fds = append(fds, fd)
+	} else {
+		fds = make([]int, 0, runtime.NumCPU())
+		for i := 0; i < runtime.NumCPU(); i++ {
+			fd, err := openPerfEvent(&attr, opt.program.FD(), i)
+			if err != nil {
+				for _, prevFD := range fds {
+					_ = unix.Close(prevFD)
+				}
+				return nil, err
+			}
+
+			fds = append(fds, fd)
+		}
 	}
 
-	return &perfEventPMU{fds: fds}, nil
+	return &perfEventAttach{fds: fds}, nil
 }
 
-func (p *perfEventPMU) detach() error {
+func (p *perfEventAttach) detach() error {
 	for _, fd := range p.fds {
 		_ = unix.Close(fd)
 	}
