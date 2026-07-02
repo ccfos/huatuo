@@ -18,7 +18,7 @@
 # fixture sampled at 99 Hz must produce at least one ";f1;f2;f3 N" line in
 # the folded output. Anchoring on $ prevents prefix matches in deeper frames.
 
-set -exuo pipefail
+set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
