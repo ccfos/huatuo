@@ -25,6 +25,7 @@ import (
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/pkg/types"
 
 	"github.com/safchain/ethtool"
 	"github.com/vishvananda/netlink"
@@ -72,8 +73,6 @@ func newNetdevTracing() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: &netdevTracing{
-			linkUpdateCh:          make(chan netlink.LinkUpdate),
-			linkDoneCh:            make(chan struct{}),
 			netdevInfoStore:       make(map[string]*netdevInfo),
 			linkStatusEventCounts: initMap,
 			name:                  "netdev_events",
@@ -83,10 +82,15 @@ func newNetdevTracing() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func (netdev *netdevTracing) Start(ctx context.Context) (err error) {
+func (netdev *netdevTracing) Start(ctx context.Context) error {
 	if err := netdev.checkAndInitLinkStatus(); err != nil {
 		return err
 	}
+
+	// Create new channels because linkDoneCh and linkUpdateCh
+	// cannot be reused after stop/restart.
+	netdev.linkUpdateCh = make(chan netlink.LinkUpdate)
+	netdev.linkDoneCh = make(chan struct{})
 
 	if err := netlink.LinkSubscribe(netdev.linkUpdateCh, netdev.linkDoneCh); err != nil {
 		return err
@@ -94,20 +98,19 @@ func (netdev *netdevTracing) Start(ctx context.Context) (err error) {
 	defer netdev.close()
 
 	for {
-		update, ok := <-netdev.linkUpdateCh
-		if !ok {
-			return nil
-		}
-		switch update.Header.Type {
-		case unix.NLMSG_ERROR:
-			return fmt.Errorf("NLMSG_ERROR")
-		case unix.RTM_NEWLINK:
-			ifname := update.Link.Attrs().Name
-			if _, ok := netdev.netdevInfoStore[ifname]; !ok {
-				// new interface
-				continue
+		select {
+		case <-ctx.Done():
+			return types.ErrExitByCancelCtx
+		case update, ok := <-netdev.linkUpdateCh:
+			if !ok {
+				return nil
 			}
-			netdev.handleEvent(&update)
+			switch update.Header.Type {
+			case unix.NLMSG_ERROR:
+				return fmt.Errorf("NLMSG_ERROR")
+			case unix.RTM_NEWLINK:
+				netdev.handleEvent(&update)
+			}
 		}
 	}
 }
@@ -165,12 +168,12 @@ func (netdev *netdevTracing) checkAndInitLinkStatus() error {
 		}
 
 		flags := link.Attrs().RawFlags
-		netdev.netdevInfoStore[ifname] = &netdevInfo{
+		netdev.setInfo(ifname, &netdevInfo{
 			flags:           flags,
 			driver:          drvInfo.Driver,
 			driverVersion:   drvInfo.Version,
 			firmwareVersion: drvInfo.FwVersion,
-		}
+		})
 
 		data := &netdevEventData{
 			linkFlags:       flags,
@@ -213,14 +216,37 @@ func (netdev *netdevTracing) updateAndSaveEvent(data *netdevEventData) {
 	}
 }
 
+func (netdev *netdevTracing) setInfo(ifname string, info *netdevInfo) {
+	netdev.mu.Lock()
+	netdev.netdevInfoStore[ifname] = info
+	netdev.mu.Unlock()
+}
+
+func (netdev *netdevTracing) recordLinkFlags(ifname string, newFlags uint32) (prevFlags uint32, info netdevInfo, ok bool) {
+	netdev.mu.Lock()
+	defer netdev.mu.Unlock()
+
+	stored, ok := netdev.netdevInfoStore[ifname]
+	if !ok {
+		// new interface
+		return 0, netdevInfo{}, false
+	}
+
+	prevFlags = stored.flags
+	stored.flags = newFlags
+	return prevFlags, *stored, true
+}
+
 func (netdev *netdevTracing) handleEvent(ev *netlink.LinkUpdate) {
 	ifname := ev.Link.Attrs().Name
 
 	currFlags := ev.Attrs().RawFlags
-	lastFlags := netdev.netdevInfoStore[ifname].flags
-	change := currFlags ^ lastFlags
 
-	netdev.netdevInfoStore[ifname].flags = currFlags
+	lastFlags, info, ok := netdev.recordLinkFlags(ifname, currFlags)
+	if !ok {
+		return
+	}
+	change := currFlags ^ lastFlags
 
 	data := &netdevEventData{
 		linkFlags:       currFlags,
@@ -229,14 +255,14 @@ func (netdev *netdevTracing) handleEvent(ev *netlink.LinkUpdate) {
 		Index:           ev.Link.Attrs().Index,
 		Mac:             ev.Link.Attrs().HardwareAddr.String(),
 		AtStart:         false,
-		Driver:          netdev.netdevInfoStore[ifname].driver,
-		DriverVersion:   netdev.netdevInfoStore[ifname].driverVersion,
-		FirmwareVersion: netdev.netdevInfoStore[ifname].firmwareVersion,
+		Driver:          info.driver,
+		DriverVersion:   info.driverVersion,
+		FirmwareVersion: info.firmwareVersion,
 	}
 	netdev.updateAndSaveEvent(data)
 }
 
 func (netdev *netdevTracing) close() {
+	// netlink.LinkSubscribe closes linkUpdateCh inner
 	close(netdev.linkDoneCh)
-	close(netdev.linkUpdateCh)
 }

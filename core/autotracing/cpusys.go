@@ -170,11 +170,14 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 		usage: cfg.CPUSys.SysThreshold,
 	}
 
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
-		case <-time.After(time.Duration(interval) * time.Second):
+		case <-ticker.C:
 			if err := c.updateCpuSysUsage(); err != nil {
 				return err
 			}
