@@ -71,6 +71,7 @@ type TaskInfo struct {
 
 // task represents a unit of work to be executed.
 type task struct {
+	mu           sync.Mutex         // Protects status, error, stdoutData, deadlineTime
 	id           string             // Unique identifier for the task.
 	execBinary   string             // Path to the executable file to run for this task.
 	execArgs     []string           // Arguments to pass to the executable.
@@ -79,7 +80,7 @@ type task struct {
 	error        error              // Error encountered during task execution.
 	storage      TaskStorageType    // Type of data produced by the task.
 	cancelFunc   context.CancelFunc // Function to cancel the task.
-	deadlineTime time.Time          // Time after which the task will be automatically deleted.
+	deadlineTime time.Time         // Time after which the task will be automatically deleted.
 }
 
 var (
@@ -103,9 +104,16 @@ func tasksGarbageCollect() {
 	for range ticker.C {
 		now := time.Now()
 		taskLifeTmpCache.Range(func(key, value any) bool {
-			task := value.(*task)
-			if task.status == StatusCompleted || task.status == StatusFailed {
-				if now.After(task.deadlineTime) {
+			task, ok := value.(*task)
+			if !ok {
+				return true
+			}
+			task.mu.Lock()
+			status := task.status
+			deadline := task.deadlineTime
+			task.mu.Unlock()
+			if status == StatusCompleted || status == StatusFailed {
+				if now.After(deadline) {
 					log.Infof("task %s deleted by timeout", key)
 					taskLifeTmpCache.Delete(key)
 				}
@@ -116,7 +124,8 @@ func tasksGarbageCollect() {
 }
 
 // AllocTaskID returns a fresh random identifier suitable for tasks and tracer
-// records.
+// records. If the cryptographic random source fails, it logs the error and
+// falls back to a timestamp-based identifier instead of panicking.
 func AllocTaskID() string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const length = 16
@@ -126,7 +135,8 @@ func AllocTaskID() string {
 	for i := range result {
 		num, err := rand.Int(rand.Reader, charsetLength)
 		if err != nil {
-			panic("Failed to generate random number")
+			log.Errorf("crypto/rand failed in AllocTaskID: %v, using fallback", err)
+			return fmt.Sprintf("fb%d", time.Now().UnixNano())
 		}
 		result[i] = charset[num.Int64()]
 	}
@@ -158,12 +168,17 @@ func runTask(ctx context.Context, task *task) {
 		setDeadlineDefault(task)
 	}()
 
+	task.mu.Lock()
 	task.status = StatusRunning
-	log.Infof("task %s %s started", task.execBinary, task.id)
+	binaryName := task.execBinary
+	taskID := task.id
+	task.mu.Unlock()
+	log.Infof("task %s %s started", binaryName, taskID)
 
 	cmd := exec.CommandContext(ctx, path.Join(TaskBinDir, task.execBinary), task.execArgs...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		task.mu.Lock()
 		task.status = StatusFailed
 		contextErr := ctx.Err()
 		if errors.Is(contextErr, context.DeadlineExceeded) {
@@ -173,14 +188,18 @@ func runTask(ctx context.Context, task *task) {
 		} else {
 			task.error = fmt.Errorf("task error: %s| cmd error: %s", err.Error(), string(output))
 		}
-		log.Infof("task %s %s failed: %s", task.execBinary, task.id, task.error.Error())
+		errStr := task.error.Error()
+		task.mu.Unlock()
+		log.Infof("task %s %s failed: %s", binaryName, taskID, errStr)
 		return
 	}
 
 	saveTaskOutputByType(task, time.Now(), output)
 
+	task.mu.Lock()
 	task.status = StatusCompleted
-	log.Infof("task %s completed: %s", task.id, fmt.Sprint(task.execBinary, task.execArgs))
+	task.mu.Unlock()
+	log.Infof("task %s completed: %s", taskID, fmt.Sprint(binaryName, task.execArgs))
 }
 
 func saveTaskOutputByType(task *task, startAt time.Time, output []byte) {
@@ -204,7 +223,9 @@ func saveTaskOutputByType(task *task, startAt time.Time, output []byte) {
 			log.Infof("save task json output %s %s failed: %v", task.execBinary, task.id, err)
 		}
 	case TaskStorageStdout:
+		task.mu.Lock()
 		task.stdoutData = append(task.stdoutData, output...)
+		task.mu.Unlock()
 	case TaskStorageLocal:
 	default:
 		log.Warn("data storage type not supported")
@@ -212,17 +233,24 @@ func saveTaskOutputByType(task *task, startAt time.Time, output []byte) {
 }
 
 func setDeadlineDefault(task *task) {
+	task.mu.Lock()
 	task.deadlineTime = time.Now().Add(10 * time.Minute)
+	task.mu.Unlock()
 }
 
 // RunningTaskCount gets the number of running tasks.
 func RunningTaskCount() int {
 	count := 0
 	taskLifeTmpCache.Range(func(key, value any) bool {
-		task := value.(*task)
+		task, ok := value.(*task)
+		if !ok {
+			return true
+		}
+		task.mu.Lock()
 		if task.status == StatusRunning {
 			count++
 		}
+		task.mu.Unlock()
 		return true
 	})
 	return count
@@ -232,8 +260,15 @@ func RunningTaskCount() int {
 func ListTasks() []TaskInfo {
 	tasks := make([]TaskInfo, 0)
 	taskLifeTmpCache.Range(func(key, value any) bool {
-		task := value.(*task)
+		task, ok := value.(*task)
+		if !ok {
+			return true
+		}
+		task.mu.Lock()
 		taskID := task.id
+		status := task.status
+		binary := task.execBinary
+		task.mu.Unlock()
 		if taskID == "" {
 			if keyID, ok := key.(string); ok {
 				taskID = keyID
@@ -241,8 +276,8 @@ func ListTasks() []TaskInfo {
 		}
 		tasks = append(tasks, TaskInfo{
 			TaskID:     taskID,
-			TracerName: task.execBinary,
-			Status:     task.status,
+			TracerName: binary,
+			Status:     status,
 		})
 		return true
 	})
@@ -263,14 +298,27 @@ func Result(taskID string) *TaskResult {
 		}
 	}
 
-	task := taskInterface.(*task)
-	if task.status == StatusFailed || task.status == StatusCompleted {
+	task, ok := taskInterface.(*task)
+	if !ok {
+		return &TaskResult{
+			TaskStatus: StatusNotExist,
+			TaskErr:    ErrTaskNotFound,
+		}
+	}
+
+	task.mu.Lock()
+	status := task.status
+	if status == StatusFailed || status == StatusCompleted {
 		setDeadlineDefault(task)
 	}
+	data := task.stdoutData
+	taskErr := task.error
+	task.mu.Unlock()
+
 	return &TaskResult{
-		TaskData:   task.stdoutData,
-		TaskStatus: task.status,
-		TaskErr:    task.error,
+		TaskData:   data,
+		TaskStatus: status,
+		TaskErr:    taskErr,
 	}
 }
 
@@ -281,11 +329,21 @@ func StopTask(taskID string) error {
 		return ErrTaskNotFound
 	}
 
-	task := taskAny.(*task)
-	if task.status == StatusRunning {
-		task.cancelFunc()
+	task, ok := taskAny.(*task)
+	if !ok {
+		return ErrTaskNotFound
+	}
+
+	task.mu.Lock()
+	isRunning := task.status == StatusRunning
+	cancel := task.cancelFunc
+	taskIDVal := task.id
+	task.mu.Unlock()
+
+	if isRunning && cancel != nil {
+		cancel()
 	}
 	taskLifeTmpCache.Delete(taskID)
-	log.Infof("task %s stopped", task.id)
+	log.Infof("task %s stopped", taskIDVal)
 	return nil
 }

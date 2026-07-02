@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -68,6 +69,38 @@ func TestAllocTaskID(t *testing.T) {
 			t.Errorf("AllocTaskID contains invalid char %q", ch)
 			return
 		}
+	}
+}
+
+// TestAllocTaskIDUniqueness verifies that AllocTaskID generates unique IDs
+// across many concurrent calls.
+func TestAllocTaskIDUniqueness(t *testing.T) {
+	const goroutines = 100
+	const idsPerGoroutine = 100
+
+	var mu sync.Mutex
+	ids := make(map[string]bool, goroutines*idsPerGoroutine)
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < idsPerGoroutine; j++ {
+				id := AllocTaskID()
+				mu.Lock()
+				if ids[id] {
+					t.Errorf("AllocTaskID generated duplicate: %s", id)
+				}
+				ids[id] = true
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if len(ids) != goroutines*idsPerGoroutine {
+		t.Errorf("unique IDs = %d, want %d", len(ids), goroutines*idsPerGoroutine)
 	}
 }
 
@@ -269,7 +302,81 @@ func TestSetDeadlineDefault(t *testing.T) {
 	task := &task{}
 	before := time.Now()
 	setDeadlineDefault(task)
-	if !task.deadlineTime.After(before) {
-		t.Errorf("deadlineTime=%v should be after %v", task.deadlineTime, before)
+	task.mu.Lock()
+	deadline := task.deadlineTime
+	task.mu.Unlock()
+	if !deadline.After(before) {
+		t.Errorf("deadlineTime=%v should be after %v", deadline, before)
 	}
+}
+
+// TestConcurrentResultAccess verifies that Result can be called concurrently
+// from multiple goroutines without data races.
+func TestConcurrentResultAccess(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+
+	taskLifeTmpCache.Store("concurrent-task", &task{
+		id:         "concurrent-task",
+		execBinary: "test",
+		status:     StatusCompleted,
+		stdoutData: []byte("output"),
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := Result("concurrent-task")
+			if r.TaskStatus != StatusCompleted {
+				t.Errorf("TaskStatus=%s, want %s", r.TaskStatus, StatusCompleted)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// TestConcurrentListTasks verifies that ListTasks can be called concurrently
+// with task status changes without data races.
+func TestConcurrentListTasks(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+
+	taskLifeTmpCache.Store("list-task", &task{
+		id:         "list-task",
+		execBinary: "test",
+		status:     StatusRunning,
+	})
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Reader goroutine
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_ = ListTasks()
+		}
+	}()
+
+	// Writer goroutine
+	go func() {
+		defer wg.Done()
+		taskAny, ok := taskLifeTmpCache.Load("list-task")
+		if !ok {
+			return
+		}
+		task, ok := taskAny.(*task)
+		if !ok {
+			return
+		}
+		for i := 0; i < 100; i++ {
+			task.mu.Lock()
+			task.status = StatusRunning
+			task.mu.Unlock()
+		}
+	}()
+
+	wg.Wait()
 }
