@@ -183,6 +183,10 @@ func ReadDiskStats() ([]blockdevice.Diskstats, error) {
 
 // blockdevice.Diskstats is heavy (168 bytes); consider passing it by pointer
 func buildDiskMetric(prev, curr *blockdevice.Diskstats, intervalSeconds uint64) DiskStatus {
+	if diskStatsWentBack(prev, curr) {
+		return DiskStatus{}
+	}
+
 	deltaReadIOs := curr.ReadIOs - prev.ReadIOs
 	deltaWriteIOs := curr.WriteIOs - prev.WriteIOs
 
@@ -204,6 +208,17 @@ func buildDiskMetric(prev, curr *blockdevice.Diskstats, intervalSeconds uint64) 
 	}
 
 	return metrics
+}
+
+func diskStatsWentBack(prev, curr *blockdevice.Diskstats) bool {
+	return curr.ReadIOs < prev.ReadIOs ||
+		curr.WriteIOs < prev.WriteIOs ||
+		curr.ReadSectors < prev.ReadSectors ||
+		curr.WriteSectors < prev.WriteSectors ||
+		curr.ReadTicks < prev.ReadTicks ||
+		curr.WriteTicks < prev.WriteTicks ||
+		curr.IOsTotalTicks < prev.IOsTotalTicks ||
+		curr.WeightedIOTicks < prev.WeightedIOTicks
 }
 
 func waitingDiskEvents(ctx context.Context, intervalSeconds uint64, thresholds IoThresholds) (*ReasonSnapshot, error) {
