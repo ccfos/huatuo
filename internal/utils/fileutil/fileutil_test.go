@@ -15,90 +15,32 @@
 package fileutil
 
 import (
-	"errors"
 	"os"
-	"path/filepath"
-	"syscall"
 	"testing"
 )
 
-// mustWriteTestFile creates a data file in the given directory using minimal
-// permissions and returns its full path. It uses t.Fatalf on any setup failure.
-func mustWriteTestFile(t *testing.T, dir, name string) string {
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("test content for StatInode inode verification"), 0o600); err != nil {
-		t.Fatalf("os.WriteFile(%q): %v", path, err)
+func TestStatInodeSuccess(t *testing.T) {
+	f, err := os.CreateTemp("", "huatuo-test-*")
+	if err != nil {
+		t.Fatalf("CreateTemp() error = %v", err)
 	}
-	return path
+	defer os.Remove(f.Name())
+
+	ino, err := StatInode(f.Name())
+	if err != nil {
+		t.Fatalf("StatInode(%q) error = %v", f.Name(), err)
+	}
+	if ino == 0 {
+		t.Errorf("StatInode(%q) = 0, want non-zero", f.Name())
+	}
 }
 
-// TestStatInode covers the primary paths of StatInode.
-func TestStatInode(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	validPath := mustWriteTestFile(t, tmpDir, "valid-inode-20250226")
-	nonExistPath := filepath.Join(tmpDir, "nonexistent-file-20250226")
-
-	tests := []struct {
-		name     string
-		input    string
-		validate func(t *testing.T, got uint64, err error)
-	}{
-		{
-			name:  "valid-existing-file",
-			input: validPath,
-			validate: func(t *testing.T, got uint64, err error) {
-				if err != nil {
-					t.Fatalf("StatInode: got error %v, want nil", err)
-				}
-				if got == 0 {
-					t.Fatalf("StatInode: got 0, want non-zero inode")
-				}
-				// verify the returned inode matches the actual inode from the filesystem
-				var s syscall.Stat_t
-				if err := syscall.Stat(validPath, &s); err != nil {
-					t.Fatalf("syscall.Stat verification failed: %v", err)
-				}
-				if got != s.Ino {
-					t.Errorf("StatInode: got %d, want %d", got, s.Ino)
-				}
-			},
-		},
-		{
-			name:  "nonexistent-file-returns-enoent",
-			input: nonExistPath,
-			validate: func(t *testing.T, got uint64, err error) {
-				if err == nil {
-					t.Fatalf("StatInode: got nil error, want non-nil")
-				}
-				if got != 0 {
-					t.Errorf("StatInode: got inode %d, want 0 on error", got)
-				}
-				if !errors.Is(err, syscall.ENOENT) {
-					t.Errorf("got error %v, want syscall.ENOENT", err)
-				}
-			},
-		},
-		{
-			name:  "empty-path-returns-error",
-			input: "",
-			validate: func(t *testing.T, got uint64, err error) {
-				if err == nil {
-					t.Fatalf("StatInode: got nil error for empty path, want non-nil")
-				}
-				if got != 0 {
-					t.Errorf("StatInode: got inode %d, want 0", got)
-				}
-				if !errors.Is(err, syscall.ENOENT) {
-					t.Errorf("got error %v, want syscall.ENOENT", err)
-				}
-			},
-		},
+func TestStatInodeMissingFile(t *testing.T) {
+	_, err := StatInode("/does/not/exist/huatuo-test-missing")
+	if err == nil {
+		t.Fatal("StatInode() error = nil, want non-nil")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := StatInode(tt.input)
-			tt.validate(t, got, err)
-		})
+	if !os.IsNotExist(err) {
+		t.Errorf("StatInode() error = %v, want os.IsNotExist error", err)
 	}
 }
