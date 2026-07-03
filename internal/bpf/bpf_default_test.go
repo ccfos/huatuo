@@ -627,3 +627,75 @@ func isPerfEventUnavailable(err error) bool {
 
 	return false
 }
+
+func TestDefaultBPF_CloseOrder(t *testing.T) {
+	b := loadMinimalBpfFromBytes(t)
+
+	err := b.AttachWithOptions([]AttachOption{
+		{ProgramName: "test_kprobe", Symbol: "sys_openat"},
+	})
+	if errors.Is(err, ebpf.ErrNotSupported) || errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) {
+		t.Skipf("skipping: attach not supported: %v", err)
+	}
+	require.NoError(t, err)
+
+	hasLinks := false
+	for _, p := range b.programSpecs {
+		if len(p.links) > 0 {
+			hasLinks = true
+			break
+		}
+	}
+	require.True(t, hasLinks, "expected at least one link after attach")
+
+	closeErr := b.Close()
+	require.NoError(t, closeErr, "Close after attach should not return EBUSY; wrong close order would cause kernel to refuse map/program close while links are active")
+}
+
+func TestDefaultBPF_DetachOrder(t *testing.T) {
+	b := loadMinimalBpfFromBytes(t)
+
+	err := b.AttachWithOptions([]AttachOption{
+		{ProgramName: "test_kprobe", Symbol: "sys_openat"},
+	})
+	if errors.Is(err, ebpf.ErrNotSupported) || errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) {
+		t.Skipf("skipping: attach not supported: %v", err)
+	}
+	require.NoError(t, err)
+
+	hasLinks := false
+	for _, p := range b.programSpecs {
+		if len(p.links) > 0 {
+			hasLinks = true
+			break
+		}
+	}
+	require.True(t, hasLinks, "expected at least one link after attach")
+
+	detachErr := b.Detach()
+	require.NoError(t, detachErr, "Detach should only close links and perf event, not programs or maps")
+
+	noLinks := true
+	for _, p := range b.programSpecs {
+		if len(p.links) > 0 {
+			noLinks = false
+			break
+		}
+	}
+	assert.True(t, noLinks, "Detach should clear all links")
+}
+
+func TestDefaultBPF_Close_Idempotent(t *testing.T) {
+	b := loadMinimalBpfFromBytes(t)
+
+	require.NoError(t, b.Close())
+	require.NoError(t, b.Close())
+	require.True(t, b.closed.Load())
+}
+
+func TestDefaultBPF_Detach_AfterClose(t *testing.T) {
+	b := loadMinimalBpfFromBytes(t)
+
+	require.NoError(t, b.Close())
+	require.NoError(t, b.Detach())
+}
