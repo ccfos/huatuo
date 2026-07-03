@@ -16,6 +16,7 @@ package bpf
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 )
@@ -29,12 +30,12 @@ var errInvalidName = errors.New("invalid bpf name")
 // expected.
 func validateName(name string) error {
 	if name == "" {
-		return errInvalidName
+		return fmt.Errorf("empty: %w", errInvalidName)
 	}
 
 	cleaned := filepath.Clean(name)
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		return errInvalidName
+		return fmt.Errorf("%q: path traversal: %w", name, errInvalidName)
 	}
 
 	return nil
