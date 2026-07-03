@@ -17,6 +17,7 @@ package response
 import (
 	"errors"
 	"net/http"
+	"reflect"
 	"testing"
 )
 
@@ -61,7 +62,7 @@ func TestSuccess(t *testing.T) {
 	if resp.Message != "success" {
 		t.Errorf("resp.Message = %q, want %q", resp.Message, "success")
 	}
-	if resp.Data != data {
+	if !reflect.DeepEqual(resp.Data, data) {
 		t.Errorf("resp.Data = %v, want %v", resp.Data, data)
 	}
 }
@@ -83,7 +84,7 @@ func TestCreated(t *testing.T) {
 	if !ok {
 		t.Fatalf("body is not Response: %T", w.body)
 	}
-	if resp.Data != data {
+	if !reflect.DeepEqual(resp.Data, data) {
 		t.Errorf("resp.Data = %v, want %v", resp.Data, data)
 	}
 }
