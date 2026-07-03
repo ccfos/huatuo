@@ -266,20 +266,41 @@ func (b *defaultBPF) Info() (*Info, error) {
 	return info, nil
 }
 
-// Close the bpf.
+// Close the bpf. Collects individual close errors and returns a combined error
+// so callers can detect cleanup failures.
 func (b *defaultBPF) Close() error {
+	var closeErrs []error
+
 	for _, m := range b.mapSpecs {
-		m.cloned.Close()
+		if m.cloned != nil {
+			if err := m.cloned.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close map %s: %w", m.name, err))
+			}
+		}
 	}
 
 	for _, p := range b.programSpecs {
-		for _, l := range p.links {
-			l.Close()
+		for linkKey, l := range p.links {
+			if l != nil {
+				if err := l.Close(); err != nil {
+					closeErrs = append(closeErrs, fmt.Errorf("close link %s in program %s: %w", linkKey, p.name, err))
+				}
+			}
 		}
-		p.cloned.Close()
+		if p.cloned != nil {
+			if err := p.cloned.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close program %s: %w", p.name, err))
+			}
+		}
 	}
 
-	return nil
+	if b.innerPerfEvent != nil {
+		if err := b.innerPerfEvent.detach(); err != nil {
+			closeErrs = append(closeErrs, fmt.Errorf("detach perf event: %w", err))
+		}
+	}
+
+	return errors.Join(closeErrs...)
 }
 
 // AttachWithOptions attaches programs with options.
@@ -288,7 +309,9 @@ func (b *defaultBPF) AttachWithOptions(opts []AttachOption) error {
 
 	defer func() {
 		if err != nil { // detach all programs when error.
-			_ = b.Detach()
+			if detachErr := b.Detach(); detachErr != nil {
+				log.Warnf("bpf %s: detach during attach failure also errored: %v", b, detachErr)
+			}
 		}
 	}()
 
@@ -340,7 +363,9 @@ func (b *defaultBPF) Attach() error {
 
 	defer func() {
 		if err != nil { // detach all programs when error.
-			_ = b.Detach()
+			if detachErr := b.Detach(); detachErr != nil {
+				log.Warnf("bpf %s: detach during attach failure also errored: %v", b, detachErr)
+			}
 		}
 	}()
 
@@ -497,20 +522,29 @@ func (b *defaultBPF) attachPerfEvent(opt *perfEventOption) error {
 	return nil
 }
 
-// Detach all programs.
+// Detach all programs. Collects individual detach errors and returns a
+// combined error so callers can detect cleanup failures.
 func (b *defaultBPF) Detach() error {
+	var detachErrs []error
+
 	for _, spec := range b.programSpecs {
-		for _, l := range spec.links {
-			err := l.Close()
-			log.Debugf("detach %s: %v", spec.sectionName, err)
+		for linkKey, l := range spec.links {
+			if l != nil {
+				if err := l.Close(); err != nil {
+					detachErrs = append(detachErrs, fmt.Errorf("detach link %s in program %s: %w", linkKey, spec.name, err))
+				}
+				log.Debugf("detach %s in %v", spec.sectionName, spec.cloned)
+			}
 		}
 	}
 
 	if b.innerPerfEvent != nil {
-		_ = b.innerPerfEvent.detach()
+		if err := b.innerPerfEvent.detach(); err != nil {
+			detachErrs = append(detachErrs, fmt.Errorf("detach perf event: %w", err))
+		}
 	}
 
-	return nil
+	return errors.Join(detachErrs...)
 }
 
 // Loaded checks bpf is still loaded.
