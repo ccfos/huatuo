@@ -55,7 +55,7 @@ type netdevEventData struct {
 	Index           int    `json:"index"`
 	LinkStatus      string `json:"linkstatus"`
 	Mac             string `json:"mac"`
-	AtStart         bool   `json:"start"` // true: be scanned at start, false: event trigger
+	IsAtStart       bool   `json:"start"` // true: be scanned at start, false: event trigger
 	Driver          string `json:"driver"`
 	DriverVersion   string `json:"driver_version"`
 	FirmwareVersion string `json:"firmware_version"`
@@ -124,13 +124,17 @@ func (netdev *netdevTracing) Update() ([]*metric.Data, error) {
 
 	for typ, value := range netdev.linkStatusEventCounts {
 		for ifname, count := range value {
+			info, exists := netdev.netdevInfoStore[ifname]
+			if !exists {
+				continue
+			}
 			metrics = append(metrics, metric.NewCounterData(
 				typ.String()+"_total", float64(count), typ.String(),
 				map[string]string{
 					"device":           ifname,
-					"driver":           netdev.netdevInfoStore[ifname].driver,
-					"driver_version":   netdev.netdevInfoStore[ifname].driverVersion,
-					"firmware_version": netdev.netdevInfoStore[ifname].firmwareVersion,
+					"driver":           info.driver,
+					"driver_version":   info.driverVersion,
+					"firmware_version": info.firmwareVersion,
 				},
 			))
 		}
@@ -180,7 +184,7 @@ func (netdev *netdevTracing) checkAndInitLinkStatus() error {
 			Ifname:          ifname,
 			Index:           link.Attrs().Index,
 			Mac:             link.Attrs().HardwareAddr.String(),
-			AtStart:         true,
+			IsAtStart:       true,
 			Driver:          drvInfo.Driver,
 			DriverVersion:   drvInfo.Version,
 			FirmwareVersion: drvInfo.FwVersion,
@@ -192,11 +196,15 @@ func (netdev *netdevTracing) checkAndInitLinkStatus() error {
 }
 
 func (netdev *netdevTracing) updateAndSaveEvent(data *netdevEventData) {
-	for _, status := range linkstatus.Changed(data.linkFlags, data.flagsChange) {
-		netdev.mu.Lock()
-		netdev.linkStatusEventCounts[status][data.Ifname]++
-		netdev.mu.Unlock()
+	changed := linkstatus.Changed(data.linkFlags, data.flagsChange)
 
+	netdev.mu.Lock()
+	for _, status := range changed {
+		netdev.linkStatusEventCounts[status][data.Ifname]++
+	}
+	netdev.mu.Unlock()
+
+	for _, status := range changed {
 		if data.LinkStatus == "" {
 			data.LinkStatus = status.String()
 		} else {
@@ -204,7 +212,7 @@ func (netdev *netdevTracing) updateAndSaveEvent(data *netdevEventData) {
 		}
 	}
 
-	if !data.AtStart && data.LinkStatus != "" {
+	if !data.IsAtStart && data.LinkStatus != "" {
 		log.Infof("%s %+v", data.LinkStatus, data)
 		if err := tracing.Save(&tracing.WriteRequest{
 			TracerName: netdev.name,
@@ -222,7 +230,7 @@ func (netdev *netdevTracing) setInfo(ifname string, info *netdevInfo) {
 	netdev.mu.Unlock()
 }
 
-func (netdev *netdevTracing) recordLinkFlags(ifname string, newFlags uint32) (prevFlags uint32, info netdevInfo, ok bool) {
+func (netdev *netdevTracing) loadAndSwapFlags(ifname string, newFlags uint32) (oldFlags uint32, driverInfo netdevInfo, ok bool) {
 	netdev.mu.Lock()
 	defer netdev.mu.Unlock()
 
@@ -232,9 +240,9 @@ func (netdev *netdevTracing) recordLinkFlags(ifname string, newFlags uint32) (pr
 		return 0, netdevInfo{}, false
 	}
 
-	prevFlags = stored.flags
+	oldFlags = stored.flags
 	stored.flags = newFlags
-	return prevFlags, *stored, true
+	return oldFlags, *stored, true
 }
 
 func (netdev *netdevTracing) handleEvent(ev *netlink.LinkUpdate) {
@@ -242,11 +250,11 @@ func (netdev *netdevTracing) handleEvent(ev *netlink.LinkUpdate) {
 
 	currFlags := ev.Attrs().RawFlags
 
-	lastFlags, info, ok := netdev.recordLinkFlags(ifname, currFlags)
+	oldFlags, driverInfo, ok := netdev.loadAndSwapFlags(ifname, currFlags)
 	if !ok {
 		return
 	}
-	change := currFlags ^ lastFlags
+	change := currFlags ^ oldFlags
 
 	data := &netdevEventData{
 		linkFlags:       currFlags,
@@ -254,10 +262,10 @@ func (netdev *netdevTracing) handleEvent(ev *netlink.LinkUpdate) {
 		Ifname:          ifname,
 		Index:           ev.Link.Attrs().Index,
 		Mac:             ev.Link.Attrs().HardwareAddr.String(),
-		AtStart:         false,
-		Driver:          info.driver,
-		DriverVersion:   info.driverVersion,
-		FirmwareVersion: info.firmwareVersion,
+		IsAtStart:       false,
+		Driver:          driverInfo.driver,
+		DriverVersion:   driverInfo.driverVersion,
+		FirmwareVersion: driverInfo.firmwareVersion,
 	}
 	netdev.updateAndSaveEvent(data)
 }
