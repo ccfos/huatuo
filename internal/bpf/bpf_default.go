@@ -104,7 +104,7 @@ func LoadBpfFromCollectionSpec(bpfName string, spec *ebpf.CollectionSpec, consts
 	return loadBpfFromCollectionSpec(bpfName, spec, consts)
 }
 
-// LoadBpf the bpf and return the bpf.
+// LoadBpf loads the BPF object from the default directory and returns it.
 func LoadBpf(bpfName string, consts map[string]any) (BPF, error) {
 	if err := validateName(bpfName); err != nil {
 		return nil, err
@@ -233,12 +233,12 @@ func (b *defaultBPF) Name() string {
 	return b.name
 }
 
-// MapIDByName gets mapID by Name.
+// MapIDByName gets mapID by Name. Returns 0 if the name does not exist.
 func (b *defaultBPF) MapIDByName(name string) uint32 {
 	return b.mapName2IDs[name]
 }
 
-// ProgIDByName gets progID by Name.
+// ProgIDByName gets progID by Name. Returns 0 if the name does not exist.
 func (b *defaultBPF) ProgIDByName(name string) uint32 {
 	return b.programName2IDs[name]
 }
@@ -334,7 +334,10 @@ func (b *defaultBPF) AttachWithOptions(opts []AttachOption) error {
 
 	for _, opt := range opts {
 		progID := b.ProgIDByName(opt.ProgramName)
-		spec := b.programSpecs[progID]
+		spec, ok := b.programSpecs[progID]
+		if !ok {
+			return fmt.Errorf("bpf %s: unknown program %q", b, opt.ProgramName)
+		}
 		switch spec.specType {
 		case ebpf.TracePoint:
 			// opt.Symbol: <system>/<symbol>
@@ -600,8 +603,7 @@ func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, per
 	}
 
 	if err := b.Attach(); err != nil {
-		reader.Close()
-		return nil, err
+		return nil, errors.Join(err, reader.Close())
 	}
 
 	log.Debugf("attach and event-pipe %s, perCPUBufSize %d", mapName, perCPUBufSize)
@@ -650,33 +652,18 @@ func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
 func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
 	m := b.mapSpecs[mapID].cloned
 
-	var prevKey any
 	var items []MapItem
-	for i := 0; i < int(m.MaxEntries()); i++ {
-		nextKey, err := m.NextKeyBytes(prevKey)
-		if err != nil {
-			return nil, fmt.Errorf("map %d, prevKey %v: next key: %w", mapID, prevKey, err)
-		}
-
-		// last key
-		if len(nextKey) == 0 {
-			break
-		}
-
-		value, err := m.LookupBytes(nextKey)
-		if err != nil {
-			return nil, fmt.Errorf("map %d, key %v: value: %w", mapID, nextKey, err)
-		}
-
-		if value == nil {
-			continue
-		}
-
-		prevKey = nextKey
+	key := make([]byte, m.KeySize())
+	val := make([]byte, m.ValueSize())
+	iter := m.Iterate()
+	for iter.Next(&key, &val) {
 		items = append(items, MapItem{
-			Key:   nextKey,
-			Value: value,
+			Key:   append([]byte(nil), key...),
+			Value: append([]byte(nil), val...),
 		})
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("map %d: iterate: %w", mapID, err)
 	}
 
 	return items, nil
