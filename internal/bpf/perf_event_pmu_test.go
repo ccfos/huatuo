@@ -202,7 +202,11 @@ func TestPerfEventAttach_Detach(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			require.NoError(t, c.pmu.detach())
+			if c.pmu.fds != nil {
+				require.Error(t, c.pmu.detach())
+			} else {
+				require.NoError(t, c.pmu.detach())
+			}
 		})
 	}
 }
@@ -210,8 +214,8 @@ func TestPerfEventAttach_Detach(t *testing.T) {
 // TestPerfEventAttach_DetachTwice verifies that calling detach() twice is safe.
 func TestPerfEventAttach_DetachTwice(t *testing.T) {
 	pmu := &perfEventAttach{fds: []int{-1, -2}}
-	require.NoError(t, pmu.detach())
-	require.NoError(t, pmu.detach())
+	require.Error(t, pmu.detach())
+	require.Error(t, pmu.detach())
 }
 
 // TestPerfEventAttach_DetachValidFDs verifies that detach() correctly closes valid fds.

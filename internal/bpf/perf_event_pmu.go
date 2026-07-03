@@ -20,6 +20,7 @@
 package bpf
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 
@@ -130,8 +131,11 @@ func attachPerfEvent(opt *perfEventOption) (*perfEventAttach, error) {
 }
 
 func (p *perfEventAttach) detach() error {
+	var errs []error
 	for _, fd := range p.fds {
-		_ = unix.Close(fd)
+		if err := unix.Close(fd); err != nil {
+			errs = append(errs, fmt.Errorf("close perf fd %d: %w", fd, err))
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
