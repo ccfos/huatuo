@@ -221,9 +221,13 @@ func (s *server) run(addr string) error {
 	return s.engine.RunListener(tcpListener)
 }
 
-// Run starts the TCP server with retry mechanism.
+// Run starts the TCP server. When RetryMaxTime > 0 and RetryInterval > 0,
+// it starts the server in a background goroutine with exponential backoff
+// retry and returns nil immediately. Without retry, it blocks until the
+// server stops.
 func (s *server) Run(option *Option) error {
 	if option.RetryMaxTime > 0 && option.RetryInterval > 0 {
+		log.Infof("tcp api server starting with retry on %s (max=%v, interval=%v)", option.Addr, option.RetryMaxTime, option.RetryInterval)
 		go func() {
 			b := backoff.New(option.RetryMaxTime, option.RetryInterval)
 			for {
@@ -241,7 +245,7 @@ func (s *server) Run(option *Option) error {
 				time.Sleep(retryInterval)
 			}
 		}()
-		return fmt.Errorf("init err")
+		return nil
 	}
 
 	return s.run(option.Addr)
