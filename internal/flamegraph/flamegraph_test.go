@@ -75,13 +75,14 @@ func TestLevelsToTreeEmpty(t *testing.T) {
 }
 
 func TestLevelsToTreeMultiLevel(t *testing.T) {
-	// Three-level flamebearer:
+	// Three-level flamebearer with adjacent siblings.
+	// Flamebearer start offsets are relative to previous item's end.
 	// Level 0: root [0, 100, 0, 0]
-	// Level 1: child-0 [0, 60, 10, 1], child-1 [60, 40, 5, 2]
+	// Level 1: child-0 [0, 60, 10, 1], child-1 [0, 40, 5, 2] (offset=0 = adjacent)
 	// Level 2: grandchild-0 [0, 30, 15, 3] (under child-0)
 	levels := []*Level{
 		{Values: []int64{0, 100, 0, 0}},
-		{Values: []int64{0, 60, 10, 1, 60, 40, 5, 2}},
+		{Values: []int64{0, 60, 10, 1, 0, 40, 5, 2}},
 		{Values: []int64{0, 30, 15, 3}},
 	}
 	names := []string{"root", "child-0", "child-1", "grandchild-0"}
