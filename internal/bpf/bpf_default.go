@@ -27,6 +27,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/types"
@@ -63,6 +64,13 @@ type programSpec struct {
 	links         map[string]link.Link
 }
 
+// defaultBPF holds loaded BPF maps and programs.
+//
+// NOTE: defaultBPF is NOT thread-safe. Concurrent calls to Attach/Detach/Close
+// or map operations will race. Callers must serialize lifecycle methods.
+// runtime.SetFinalizer may invoke Close from any goroutine once the object
+// becomes unreachable, so callers must retain a reference until explicitly
+// closed.
 type defaultBPF struct {
 	name            string
 	mapSpecs        map[uint32]mapSpec
@@ -70,6 +78,7 @@ type defaultBPF struct {
 	mapName2IDs     map[string]uint32
 	programName2IDs map[string]uint32
 	innerPerfEvent  *perfEventAttach
+	closed          atomic.Bool
 }
 
 // _ is a type assertion
@@ -269,15 +278,11 @@ func (b *defaultBPF) Info() (*Info, error) {
 // Close the bpf. Collects individual close errors and returns a combined error
 // so callers can detect cleanup failures.
 func (b *defaultBPF) Close() error {
-	var closeErrs []error
-
-	for _, m := range b.mapSpecs {
-		if m.cloned != nil {
-			if err := m.cloned.Close(); err != nil {
-				closeErrs = append(closeErrs, fmt.Errorf("close map %s: %w", m.name, err))
-			}
-		}
+	if b.closed.Swap(true) {
+		return nil
 	}
+
+	var closeErrs []error
 
 	for _, p := range b.programSpecs {
 		for linkKey, l := range p.links {
@@ -287,9 +292,20 @@ func (b *defaultBPF) Close() error {
 				}
 			}
 		}
+	}
+
+	for _, p := range b.programSpecs {
 		if p.cloned != nil {
 			if err := p.cloned.Close(); err != nil {
 				closeErrs = append(closeErrs, fmt.Errorf("close program %s: %w", p.name, err))
+			}
+		}
+	}
+
+	for _, m := range b.mapSpecs {
+		if m.cloned != nil {
+			if err := m.cloned.Close(); err != nil {
+				closeErrs = append(closeErrs, fmt.Errorf("close map %s: %w", m.name, err))
 			}
 		}
 	}
@@ -298,6 +314,7 @@ func (b *defaultBPF) Close() error {
 		if err := b.innerPerfEvent.detach(); err != nil {
 			closeErrs = append(closeErrs, fmt.Errorf("detach perf event: %w", err))
 		}
+		b.innerPerfEvent = nil
 	}
 
 	return errors.Join(closeErrs...)
@@ -525,23 +542,30 @@ func (b *defaultBPF) attachPerfEvent(opt *perfEventOption) error {
 // Detach all programs. Collects individual detach errors and returns a
 // combined error so callers can detect cleanup failures.
 func (b *defaultBPF) Detach() error {
+	if b.closed.Load() {
+		return nil
+	}
+
 	var detachErrs []error
 
-	for _, spec := range b.programSpecs {
+	for id, spec := range b.programSpecs {
 		for linkKey, l := range spec.links {
 			if l != nil {
 				if err := l.Close(); err != nil {
 					detachErrs = append(detachErrs, fmt.Errorf("detach link %s in program %s: %w", linkKey, spec.name, err))
+					log.Debugf("detach %s in %v: %v", spec.sectionName, spec.cloned, err)
 				}
-				log.Debugf("detach %s in %v", spec.sectionName, spec.cloned)
 			}
 		}
+		spec.links = make(map[string]link.Link)
+		b.programSpecs[id] = spec
 	}
 
 	if b.innerPerfEvent != nil {
 		if err := b.innerPerfEvent.detach(); err != nil {
 			detachErrs = append(detachErrs, fmt.Errorf("detach perf event: %w", err))
 		}
+		b.innerPerfEvent = nil
 	}
 
 	return errors.Join(detachErrs...)
