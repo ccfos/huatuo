@@ -254,7 +254,7 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 	if (dev) {
 		data->meta.dev_flags = netif_get_flags(dev);
 		data->meta.ifindex = BPF_CORE_READ(dev, ifindex);
-		bpf_probe_read_str(&data->meta.dev_name,
+		bpf_probe_read_kernel_str(&data->meta.dev_name,
 					  sizeof(data->meta.dev_name),
 					  dev->name);
 	}

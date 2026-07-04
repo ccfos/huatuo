@@ -305,7 +305,7 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 		entry->pid	= info->pid;
 		entry->dev	= info->dev;
 		entry->inode	= info->inode;
-		bpf_probe_read_str(entry->comm, COMPAT_TASK_COMM_LEN,
+		bpf_probe_read_kernel_str(entry->comm, COMPAT_TASK_COMM_LEN,
 				   info->comm);
 		bpf_map_update_elem(&io_source_map, &io_key, &data,
 				    COMPAT_BPF_ANY);
@@ -330,7 +330,7 @@ init_io_data(struct io_data *entry, struct dentry *root_dentry,
 			break;
 
 		entry->filepath[i][0] = 0;
-		bpf_probe_read_str(entry->filepath[i], DNAME_INLINE_LEN,
+		bpf_probe_read_kernel_str(entry->filepath[i], DNAME_INLINE_LEN,
 				   BPF_CORE_READ(dentry, d_name.name));
 		if (entry->filepath[i][0] == 0)
 			break;

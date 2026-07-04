@@ -36,7 +36,7 @@ bpf_cgroup_event_class_prog(struct bpf_raw_tracepoint_args *ctx, u64 type)
 
 	/* knode name */
 	knode_len =
-	    bpf_probe_read_str(&data.knode_name, sizeof(data.knode_name),
+	    bpf_probe_read_kernel_str(&data.knode_name, sizeof(data.knode_name),
 			       BPF_CORE_READ(cgrp, kn, name));
 	if (knode_len < CGROUP_KNODE_NAME_MINLEN + 1)
 		return 0;
