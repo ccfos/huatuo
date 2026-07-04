@@ -150,11 +150,10 @@ fill_and_output_event(void *ctx, struct sk_buff *skb, struct mix *_mix)
 	// read netdev name from skb->dev
 	dev = BPF_CORE_READ(skb, dev);
 	if (dev) {
-		name = BPF_CORE_READ(dev, name);
 		bpf_probe_read_kernel_str(
 			event.netdev_name,
 			sizeof(event.netdev_name),
-			name);
+			dev->name);
 
 	}
 
