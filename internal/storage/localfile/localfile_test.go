@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"huatuo-bamai/internal/storage/driver"
@@ -49,6 +50,68 @@ func TestBackendSave(t *testing.T) {
 	want := "{\n\t\"tracer_name\": \"kernel_sched_tick\"\n}\n"
 	if string(data) != want {
 		t.Errorf("saved content = %q, want %q", string(data), want)
+	}
+}
+
+// TestBackendSaveMkdirAllError verifies that Save returns an error when
+// the storage directory cannot be created (e.g., permission denied).
+// Before the fix, os.MkdirAll errors were silently discarded.
+func TestBackendSaveMkdirAllError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-based test not reliable on Windows")
+	}
+
+	// Create a read-only parent directory so MkdirAll inside it will fail.
+	parent := t.TempDir()
+	readOnlyDir := filepath.Join(parent, "readonly")
+	if err := os.MkdirAll(readOnlyDir, 0o555); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// Ensure cleanup can remove it even though it's read-only.
+	t.Cleanup(func() { os.Chmod(readOnlyDir, 0o755) })
+
+	// Use a subdirectory under the read-only dir that doesn't exist.
+	// MkdirAll will fail because the parent is read-only.
+	backend := NewBackend(filepath.Join(readOnlyDir, "nested", "data"), 1024, 3)
+
+	err := backend.Save(t.Context(), driver.Record{
+		ID:   "trace-permtest",
+		Data: []byte("{\"test\": true}"),
+		Fields: map[string]any{
+			"tracer_name": "permtest",
+		},
+	})
+	if err == nil {
+		t.Errorf("Save() error=nil, want permission denied error")
+	}
+}
+
+// TestBackendSaveInvalidJSONFallback verifies that when JSON formatting
+// fails, Save falls back to writing raw data and logs a warning.
+func TestBackendSaveInvalidJSONFallback(t *testing.T) {
+	dir := t.TempDir()
+	backend := NewBackend(dir, 1024, 3)
+
+	err := backend.Save(t.Context(), driver.Record{
+		ID:   "trace-badjson",
+		Data: []byte("not valid json {"),
+		Fields: map[string]any{
+			"tracer_name": "badjson_test",
+		},
+	})
+	if err != nil {
+		t.Errorf("Save() error=%v, want nil (raw data fallback should succeed)", err)
+		return
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "badjson_test"))
+	if err != nil {
+		t.Errorf("os.ReadFile() returned error: %v", err)
+		return
+	}
+
+	if string(data) != "not valid json {" {
+		t.Errorf("saved content = %q, want raw data as-is", string(data))
 	}
 }
 
