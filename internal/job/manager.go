@@ -216,7 +216,7 @@ func (m *Manager) StopAll() {
 
 	m.jobs.Range(func(_, value any) bool {
 		job := value.(*Job)
-		if job.Status == JobStatusRunning || job.Status == JobStatusPending {
+		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
 			jobIDs = append(jobIDs, job.JobID)
 		}
 		return true
@@ -297,7 +297,11 @@ func (m *Manager) monitorJob(job *Job) {
 			if stopErr := m.Stop(job.JobID, true); stopErr != nil {
 				log.Errorf("Failed to stop job %s in defer: %v", job.JobID, stopErr)
 			}
-			m.updateJobStatus(job, JobStatusFailed, err.Error())
+			errMsg := "job interrupted"
+			if err != nil {
+				errMsg = err.Error()
+			}
+			m.updateJobStatus(job, JobStatusFailed, errMsg)
 		}
 	}()
 
