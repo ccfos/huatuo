@@ -80,9 +80,9 @@ type netRcvPerfEvent struct {
 const userCopyCase = 2
 
 var toWhere = []string{
-	"TO_NETIF_RCV",
-	"TO_TCPV4_RCV",
-	"TO_USER_COPY",
+	"RX_STAGE_NETIF",
+	"RX_STAGE_TCPV4",
+	"RX_STAGE_USERCOPY",
 }
 
 func init() {
@@ -98,17 +98,17 @@ func newNetRcvLat() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netRecvLatTracing) Start(ctx context.Context) error {
-	toNetIf := cfg.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
-	toTCPV4 := cfg.NetRxLatency.Driver2TCP          // ms, before RPS to TCP recv(tcp_v4_rcv)
-	toUserCopy := cfg.NetRxLatency.Driver2Userspace // ms, before RPS to user recv(skb_copy_datagram_iovec)
+	rxlatThreshNetif := cfg.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
+	rxlatThreshTcpv4 := cfg.NetRxLatency.Driver2TCP          // ms, before RPS to TCP recv(tcp_v4_rcv)
+	rxlatThreshUsercopy := cfg.NetRxLatency.Driver2Userspace // ms, before RPS to user recv(skb_copy_datagram_iovec)
 
-	if toNetIf == 0 || toTCPV4 == 0 || toUserCopy == 0 {
-		return fmt.Errorf("net_rx_latency threshold [%v %v %v]ms invalid", toNetIf, toTCPV4, toUserCopy)
+	if rxlatThreshNetif == 0 || rxlatThreshTcpv4 == 0 || rxlatThreshUsercopy == 0 {
+		return fmt.Errorf("net_rx_latency threshold [%v %v %v]ms invalid", rxlatThreshNetif, rxlatThreshTcpv4, rxlatThreshUsercopy)
 	}
 
-	log.Debugf("net_rx_latency start, latency threshold [%v %v %v]ms", toNetIf, toTCPV4, toUserCopy)
+	log.Debugf("net_rx_latency start, latency threshold [%v %v %v]ms", rxlatThreshNetif, rxlatThreshTcpv4, rxlatThreshUsercopy)
 
-	latThresholds := []uint64{toNetIf, toTCPV4, toUserCopy}
+	latThresholds := []uint64{rxlatThreshNetif, rxlatThreshTcpv4, rxlatThreshUsercopy}
 
 	monoWallOffset, err := estMonoWallOffset()
 	if err != nil {
@@ -127,10 +127,10 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	defer tsConn.Close()
 
 	args := map[string]any{
-		"mono_wall_offset": monoWallOffset,
-		"to_netif":         toNetIf * 1000 * 1000,
-		"to_tcpv4":         toTCPV4 * 1000 * 1000,
-		"to_user_copy":     toUserCopy * 1000 * 1000,
+		"mono_wall_offset":      monoWallOffset,
+		"rxlat_thresh_netif":    rxlatThreshNetif * 1000 * 1000,
+		"rxlat_thresh_tcpv4":    rxlatThreshTcpv4 * 1000 * 1000,
+		"rxlat_thresh_usercopy": rxlatThreshUsercopy * 1000 * 1000,
 	}
 	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), args)
 	if err != nil {
@@ -201,7 +201,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			// For early stages (TO_NETIF_RCV, TO_TCPV4_RCV), populate container info from netns_inum
+			// For early stages (RX_STAGE_NETIF, RX_STAGE_TCPV4), populate container info from netns_inum
 			if containerID == "" && pd.NetnsInum != 0 && pd.Where != userCopyCase {
 				// Skip host network namespace
 				if uint64(pd.NetnsInum) != hostNetNsInode {

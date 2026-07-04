@@ -191,7 +191,7 @@ All event records include the following common fields:
     "tracer_data": {
         "comm": "nginx",
         "pid": 2921092,
-        "where": "TO_USER_COPY",
+        "where": "RX_STAGE_USERCOPY",
         "latency_ms": 95973,
         "state": "ESTABLISHED",
         "saddr": "10.156.248.76",
@@ -214,7 +214,7 @@ All event records include the following common fields:
 - **seq / ack_seq**: TCP sequence number / Acknowledgment sequence number
 - **state**: TCP connection state (e.g., `ESTABLISHED`)
 - **pkt_len**: Packet length (bytes)
-- **where**: Stage where latency occurred (`TO_NETIF_RCV` driver-to-kernel / `TO_TCPV4_RCV` kernel-to-TCP / `TO_USER_COPY` TCP-to-user-space)
+- **where**: Stage where latency occurred (`RX_STAGE_NETIF` driver-to-kernel / `RX_STAGE_TCPV4` kernel-to-TCP / `RX_STAGE_USERCOPY` TCP-to-user-space)
 - **latency_ms**: Actual latency (milliseconds)
 
 ### 4. oom

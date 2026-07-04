@@ -14,9 +14,9 @@
 #include "vmlinux_net.h"
 
 volatile const long long mono_wall_offset = 0;
-volatile const long long to_netif	  = 5 * 1000 * 1000;   // 5ms
-volatile const long long to_tcpv4	  = 10 * 1000 * 1000;  // 10ms
-volatile const long long to_user_copy	  = 115 * 1000 * 1000; // 115ms
+volatile const long long rxlat_thresh_netif	  = 5 * 1000 * 1000;   // 5ms
+volatile const long long rxlat_thresh_tcpv4	  = 10 * 1000 * 1000;  // 10ms
+volatile const long long rxlat_thresh_usercopy	  = 115 * 1000 * 1000; // 115ms
 
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
@@ -41,10 +41,10 @@ struct perf_event_t {
 	u32 netns_inum;
 };
 
-enum skb_rcv_where {
-	TO_NETIF_RCV,
-	TO_TCPV4_RCV,
-	TO_USER_COPY,
+enum rx_lat_stage {
+	RX_STAGE_NETIF,
+	RX_STAGE_TCPV4,
+	RX_STAGE_USERCOPY,
 };
 
 struct {
@@ -116,7 +116,9 @@ static inline bool skb_is_ipv4_tcp(struct sk_buff *skb)
 {
 	if (unlikely(BPF_CORE_READ(skb, protocol) != bpf_ntohs(ETH_P_IP)))
 		return false;
+
 	struct iphdr ip_hdr;
+
 	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
 	return ip_hdr.protocol == IPPROTO_TCP;
 }
@@ -138,7 +140,7 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 	if (bpf_ratelimited(&rate))
 		return;
 
-	if (likely(where == TO_USER_COPY)) {
+	if (likely(where == RX_STAGE_USERCOPY)) {
 		event.tgid_pid = bpf_get_current_pid_tgid();
 		bpf_get_current_comm(&event.comm, sizeof(event.comm));
 	}
@@ -153,7 +155,7 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 	event.seq     = tcp_hdr.seq;
 	event.ack_seq = tcp_hdr.ack_seq;
 	event.pkt_len = BPF_CORE_READ(skb, len);
-	event.state   = (where == TO_NETIF_RCV) ? 0 : skb_sk_state(skb);
+	event.state   = (where == RX_STAGE_NETIF) ? 0 : skb_sk_state(skb);
 	event.where   = where;
 
 	dev = BPF_CORE_READ(skb, dev);
@@ -179,11 +181,11 @@ int netif_receive_skb_prog(struct trace_event_raw_net_dev_template *args)
 	if (!skb_is_ipv4_tcp(skb))
 		return 0;
 
-	u64 delta = skb_latency_check(skb, to_netif);
+	u64 delta = skb_latency_check(skb, rxlat_thresh_netif);
 	if (!delta)
 		return 0;
 
-	submit_rxlat_event(args, skb, delta, TO_NETIF_RCV);
+	submit_rxlat_event(args, skb, delta, RX_STAGE_NETIF);
 	return 0;
 }
 
@@ -192,11 +194,11 @@ int tcp_v4_rcv_prog(struct pt_regs *ctx)
 {
 	struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM1_CORE(ctx);
 
-	u64 delta = skb_latency_check(skb, to_tcpv4);
+	u64 delta = skb_latency_check(skb, rxlat_thresh_tcpv4);
 	if (!delta)
 		return 0;
 
-	submit_rxlat_event(ctx, skb, delta, TO_TCPV4_RCV);
+	submit_rxlat_event(ctx, skb, delta, RX_STAGE_TCPV4);
 	return 0;
 }
 
@@ -209,11 +211,11 @@ int skb_copy_datagram_iovec_prog(
 	if (!skb_is_ipv4_tcp(skb))
 		return 0;
 
-	u64 delta = skb_latency_check(skb, to_user_copy);
+	u64 delta = skb_latency_check(skb, rxlat_thresh_usercopy);
 	if (!delta)
 		return 0;
 
-	submit_rxlat_event(args, skb, delta, TO_USER_COPY);
+	submit_rxlat_event(args, skb, delta, RX_STAGE_USERCOPY);
 	return 0;
 }
 

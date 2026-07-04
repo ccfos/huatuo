@@ -149,7 +149,7 @@ Example response:
       "tracer_data" : {
         "comm" : "<nil>",
         "pid" : 0,
-        "where" : "TO_NETIF_RCV",
+        "where" : "RX_STAGE_NETIF",
         "latency_ms" : 1776078133565,
         "saddr" : "127.0.0.1",
         "daddr" : "127.0.0.1",
@@ -273,7 +273,7 @@ Example response:
       "tracer_data" : {
         "comm" : "<nil>",
         "pid" : 0,
-        "where" : "TO_NETIF_RCV",
+        "where" : "RX_STAGE_NETIF",
         "latency_ms" : 1776078133565,
         "saddr" : "127.0.0.1",
         "daddr" : "127.0.0.1",
