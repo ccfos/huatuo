@@ -9,6 +9,7 @@
 
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
+#include "bpf_net_namespace.h"
 #include "bpf_sock.h"
 #include "vmlinux_net.h"
 
@@ -123,9 +124,7 @@ fill_and_output_event(void *ctx, struct sk_buff *skb, struct mix *_mix)
 {
 	struct perf_event_t event = {};
 	struct tcphdr tcp_hdr;
-	struct net_device *dev;
-	const char *name;
-	struct net *net;
+		struct net_device *dev;
 
 	// ratelimit
 	if (bpf_ratelimited(&rate))
@@ -157,10 +156,9 @@ fill_and_output_event(void *ctx, struct sk_buff *skb, struct mix *_mix)
 			sizeof(event.netdev_name),
 			name);
 
-		net = BPF_CORE_READ(dev, nd_net.net);
-		if (net)
-			event.netns_inum = BPF_CORE_READ(net, ns.inum);
 	}
+
+	event.netns_inum = skb_netns_inum(skb);
 
 	bpf_perf_event_output(ctx, &net_recv_lat_event_map,
 			      COMPAT_BPF_F_CURRENT_CPU, &event,
