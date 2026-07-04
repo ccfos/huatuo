@@ -53,13 +53,6 @@ struct {
 	__uint(value_size, sizeof(u32));
 } net_recv_lat_event_map SEC(".maps");
 
-struct mix {
-	struct iphdr *ip_hdr;
-	u64 lat;
-	u8 state;
-	u8 where;
-};
-
 // CO-RE flavors for the skb timestamp-type bit. Two coexisting field names across kernels:
 //   - 6.0 .. 6.9 mainline + RHEL 5.14 backport (Rocky 9.6): mono_delivery_time:1
 //   - 6.10+ mainline + Ubuntu 6.8 backport (24.04 latest): tstamp_type
@@ -119,12 +112,13 @@ static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 	return now - tstamp;
 }
 
-static inline bool skb_is_ipv4_tcp(struct sk_buff *skb, struct iphdr *ip_hdr)
+static inline bool skb_is_ipv4_tcp(struct sk_buff *skb)
 {
 	if (unlikely(BPF_CORE_READ(skb, protocol) != bpf_ntohs(ETH_P_IP)))
 		return false;
-	bpf_probe_read(ip_hdr, sizeof(*ip_hdr), skb_network_header(skb));
-	return ip_hdr->protocol == IPPROTO_TCP;
+	struct iphdr ip_hdr;
+	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
+	return ip_hdr.protocol == IPPROTO_TCP;
 }
 
 static inline u64 skb_latency_check(struct sk_buff *skb, u64 threshold)
@@ -134,41 +128,40 @@ static inline u64 skb_latency_check(struct sk_buff *skb, u64 threshold)
 }
 
 static inline void
-submit_rxlat_event(void *ctx, struct sk_buff *skb, struct mix *_mix)
+submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 {
 	struct perf_event_t event = {};
+	struct iphdr ip_hdr;
 	struct tcphdr tcp_hdr;
-		struct net_device *dev;
+	struct net_device *dev;
 
-	// ratelimit
 	if (bpf_ratelimited(&rate))
 		return;
 
-	if (likely(_mix->where == TO_USER_COPY)) {
+	if (likely(where == TO_USER_COPY)) {
 		event.tgid_pid = bpf_get_current_pid_tgid();
 		bpf_get_current_comm(&event.comm, sizeof(event.comm));
 	}
 
+	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
 	bpf_probe_read(&tcp_hdr, sizeof(tcp_hdr), skb_transport_header(skb));
-	event.latency = _mix->lat;
-	event.saddr   = _mix->ip_hdr->saddr;
-	event.daddr   = _mix->ip_hdr->daddr;
+	event.latency = lat;
+	event.saddr   = ip_hdr.saddr;
+	event.daddr   = ip_hdr.daddr;
 	event.sport   = tcp_hdr.source;
 	event.dport   = tcp_hdr.dest;
 	event.seq     = tcp_hdr.seq;
 	event.ack_seq = tcp_hdr.ack_seq;
 	event.pkt_len = BPF_CORE_READ(skb, len);
-	event.state   = _mix->state;
-	event.where   = _mix->where;
+	event.state   = (where == TO_NETIF_RCV) ? 0 : skb_sk_state(skb);
+	event.where   = where;
 
-	// read netdev name from skb->dev
 	dev = BPF_CORE_READ(skb, dev);
 	if (dev) {
 		bpf_probe_read_kernel_str(
 			event.netdev_name,
 			sizeof(event.netdev_name),
 			dev->name);
-
 	}
 
 	event.netns_inum = skb_netns_inum(skb);
@@ -182,17 +175,15 @@ SEC("tracepoint/net/netif_receive_skb")
 int netif_receive_skb_prog(struct trace_event_raw_net_dev_template *args)
 {
 	struct sk_buff *skb = (struct sk_buff *)args->skbaddr;
-	struct iphdr ip_hdr;
 
-	if (!skb_is_ipv4_tcp(skb, &ip_hdr))
+	if (!skb_is_ipv4_tcp(skb))
 		return 0;
 
 	u64 delta = skb_latency_check(skb, to_netif);
 	if (!delta)
 		return 0;
 
-	submit_rxlat_event(args, skb,
-			      &(struct mix){&ip_hdr, delta, 0, TO_NETIF_RCV});
+	submit_rxlat_event(args, skb, delta, TO_NETIF_RCV);
 	return 0;
 }
 
@@ -200,16 +191,12 @@ SEC("kprobe/tcp_v4_rcv")
 int tcp_v4_rcv_prog(struct pt_regs *ctx)
 {
 	struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM1_CORE(ctx);
-	struct iphdr ip_hdr;
 
 	u64 delta = skb_latency_check(skb, to_tcpv4);
 	if (!delta)
 		return 0;
 
-	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
-	submit_rxlat_event(
-	    ctx, skb,
-	    &(struct mix){&ip_hdr, delta, skb_sk_state(skb), TO_TCPV4_RCV});
+	submit_rxlat_event(ctx, skb, delta, TO_TCPV4_RCV);
 	return 0;
 }
 
@@ -218,18 +205,15 @@ int skb_copy_datagram_iovec_prog(
     struct trace_event_raw_skb_copy_datagram_iovec *args)
 {
 	struct sk_buff *skb = (struct sk_buff *)args->skbaddr;
-	struct iphdr ip_hdr;
 
-	if (!skb_is_ipv4_tcp(skb, &ip_hdr))
+	if (!skb_is_ipv4_tcp(skb))
 		return 0;
 
 	u64 delta = skb_latency_check(skb, to_user_copy);
 	if (!delta)
 		return 0;
 
-	submit_rxlat_event(
-	    args, skb,
-	    &(struct mix){&ip_hdr, delta, skb_sk_state(skb), TO_USER_COPY});
+	submit_rxlat_event(args, skb, delta, TO_USER_COPY);
 	return 0;
 }
 
