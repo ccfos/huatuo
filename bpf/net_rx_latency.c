@@ -134,7 +134,7 @@ static inline u64 skb_latency_check(struct sk_buff *skb, u64 threshold)
 }
 
 static inline void
-fill_and_output_event(void *ctx, struct sk_buff *skb, struct mix *_mix)
+submit_rxlat_event(void *ctx, struct sk_buff *skb, struct mix *_mix)
 {
 	struct perf_event_t event = {};
 	struct tcphdr tcp_hdr;
@@ -191,7 +191,7 @@ int netif_receive_skb_prog(struct trace_event_raw_net_dev_template *args)
 	if (!delta)
 		return 0;
 
-	fill_and_output_event(args, skb,
+	submit_rxlat_event(args, skb,
 			      &(struct mix){&ip_hdr, delta, 0, TO_NETIF_RCV});
 	return 0;
 }
@@ -207,7 +207,7 @@ int tcp_v4_rcv_prog(struct pt_regs *ctx)
 		return 0;
 
 	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
-	fill_and_output_event(
+	submit_rxlat_event(
 	    ctx, skb,
 	    &(struct mix){&ip_hdr, delta, skb_sk_state(skb), TO_TCPV4_RCV});
 	return 0;
@@ -227,7 +227,7 @@ int skb_copy_datagram_iovec_prog(
 	if (!delta)
 		return 0;
 
-	fill_and_output_event(
+	submit_rxlat_event(
 	    args, skb,
 	    &(struct mix){&ip_hdr, delta, skb_sk_state(skb), TO_USER_COPY});
 	return 0;
