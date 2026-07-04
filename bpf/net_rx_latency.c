@@ -18,9 +18,6 @@ volatile const long long rxlat_thresh_netif	  = 5 * 1000 * 1000;   // 5ms
 volatile const long long rxlat_thresh_tcpv4	  = 10 * 1000 * 1000;  // 10ms
 volatile const long long rxlat_thresh_usercopy	  = 115 * 1000 * 1000; // 115ms
 
-#define likely(x) __builtin_expect(!!(x), 1)
-#define unlikely(x) __builtin_expect(!!(x), 0)
-
 BPF_RATELIMIT(rate, 1, 100);
 
 struct perf_event_t {

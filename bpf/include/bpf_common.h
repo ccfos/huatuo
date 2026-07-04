@@ -9,6 +9,14 @@
 #define __noinline __attribute__((noinline))
 #endif
 
+#ifndef likely
+#define likely(x) __builtin_expect(!!(x), 1)
+#endif
+
+#ifndef unlikely
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#endif
+
 /* define COMPAT_XXX for compat old kernel vmlinux.h */
 #define COMPAT_BPF_F_CURRENT_CPU 0xffffffffULL
 
