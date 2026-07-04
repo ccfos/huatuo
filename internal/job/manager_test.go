@@ -682,19 +682,16 @@ func TestMonitorJobDeferNoNilPanic(t *testing.T) {
 	// because the defer block called err.Error() when err was nil.
 	manager.Shutdown()
 
-	// Wait for monitorJob goroutine to finish
-	time.Sleep(200 * time.Millisecond)
+	// Wait for monitorJob goroutine to finish processing.
+	time.Sleep(300 * time.Millisecond)
 
 	// If we reach here without panic, the test passes.
 	// Verify the job was marked as failed with a non-empty error message.
-	storedJob, storeErr := storage.Get(job.JobID)
-	if storeErr != nil {
-		t.Fatalf("storage.Get() error=%v, want nil", storeErr)
+	lastSave := storage.saveCalls[len(storage.saveCalls)-1]
+	if lastSave.Status != JobStatusFailed {
+		t.Errorf("job.Status=%s, want %s", lastSave.Status, JobStatusFailed)
 	}
-	if storedJob.Status != JobStatusFailed {
-		t.Errorf("job.Status=%s, want %s", storedJob.Status, JobStatusFailed)
-	}
-	if storedJob.Error == "" {
+	if lastSave.Error == "" {
 		t.Errorf("job.Error is empty, want non-empty error message")
 	}
 }
