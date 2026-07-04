@@ -26,6 +26,7 @@ import (
 	"sync"
 
 	"huatuo-bamai/internal/filerotate"
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/storage/driver"
 )
 
@@ -71,9 +72,14 @@ func (b *Storage) Save(_ context.Context, rec driver.Record) error {
 
 	data, err := formatDocumentJSON(rec.Data)
 	if err != nil {
+		log.Warnf("localfile: failed to format JSON for record, writing raw data: %v", err)
 		data = rec.Data
 	}
-	_, err = b.writerByName(filename).Write(data)
+	w, err := b.writerByName(filename)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(data)
 	return err
 }
 
@@ -116,19 +122,26 @@ func (b *Storage) newFileWriter(filename string) io.Writer {
 	return b.files[filename]
 }
 
-func (b *Storage) writerByName(name string) io.Writer {
+func (b *Storage) writerByName(name string) (io.Writer, error) {
 	if fileWriter, ok := b.files[name]; ok {
-		return fileWriter
+		return fileWriter, nil
 	}
 
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
-	if _, err := os.Stat(b.path); os.IsNotExist(err) {
-		_ = os.MkdirAll(b.path, 0o755)
+	// Double-check after acquiring lock
+	if fileWriter, ok := b.files[name]; ok {
+		return fileWriter, nil
 	}
 
-	return b.newFileWriter(name)
+	if _, err := os.Stat(b.path); os.IsNotExist(err) {
+		if mkdirErr := os.MkdirAll(b.path, 0o755); mkdirErr != nil {
+			return nil, mkdirErr
+		}
+	}
+
+	return b.newFileWriter(name), nil
 }
 
 func tracerFilename(rec driver.Record) string {
