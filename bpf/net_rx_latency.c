@@ -119,6 +119,20 @@ static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 	return now - tstamp;
 }
 
+static inline bool skb_is_ipv4_tcp(struct sk_buff *skb, struct iphdr *ip_hdr)
+{
+	if (unlikely(BPF_CORE_READ(skb, protocol) != bpf_ntohs(ETH_P_IP)))
+		return false;
+	bpf_probe_read(ip_hdr, sizeof(*ip_hdr), skb_network_header(skb));
+	return ip_hdr->protocol == IPPROTO_TCP;
+}
+
+static inline u64 skb_latency_check(struct sk_buff *skb, u64 threshold)
+{
+	u64 delta = delta_now_skb_tstamp(skb);
+	return (delta >= threshold) ? delta : 0;
+}
+
 static inline void
 fill_and_output_event(void *ctx, struct sk_buff *skb, struct mix *_mix)
 {
@@ -169,23 +183,16 @@ int netif_receive_skb_prog(struct trace_event_raw_net_dev_template *args)
 {
 	struct sk_buff *skb = (struct sk_buff *)args->skbaddr;
 	struct iphdr ip_hdr;
-	u64 delta;
 
-	if (unlikely(BPF_CORE_READ(skb, protocol) !=
-		     bpf_ntohs(ETH_P_IP))) // IPv4
+	if (!skb_is_ipv4_tcp(skb, &ip_hdr))
 		return 0;
 
-	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
-	if (ip_hdr.protocol != IPPROTO_TCP)
-		return 0;
-
-	delta = delta_now_skb_tstamp(skb);
-	if (delta < to_netif)
+	u64 delta = skb_latency_check(skb, to_netif);
+	if (!delta)
 		return 0;
 
 	fill_and_output_event(args, skb,
 			      &(struct mix){&ip_hdr, delta, 0, TO_NETIF_RCV});
-
 	return 0;
 }
 
@@ -194,17 +201,15 @@ int tcp_v4_rcv_prog(struct pt_regs *ctx)
 {
 	struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM1_CORE(ctx);
 	struct iphdr ip_hdr;
-	u64 delta;
 
-	delta = delta_now_skb_tstamp(skb);
-	if (delta < to_tcpv4)
+	u64 delta = skb_latency_check(skb, to_tcpv4);
+	if (!delta)
 		return 0;
 
 	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
 	fill_and_output_event(
 	    ctx, skb,
 	    &(struct mix){&ip_hdr, delta, skb_sk_state(skb), TO_TCPV4_RCV});
-
 	return 0;
 }
 
@@ -214,23 +219,17 @@ int skb_copy_datagram_iovec_prog(
 {
 	struct sk_buff *skb = (struct sk_buff *)args->skbaddr;
 	struct iphdr ip_hdr;
-	u64 delta;
 
-	if (unlikely(BPF_CORE_READ(skb, protocol) != bpf_ntohs(ETH_P_IP)))
+	if (!skb_is_ipv4_tcp(skb, &ip_hdr))
 		return 0;
 
-	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
-	if (ip_hdr.protocol != IPPROTO_TCP)
-		return 0;
-
-	delta = delta_now_skb_tstamp(skb);
-	if (delta < to_user_copy)
+	u64 delta = skb_latency_check(skb, to_user_copy);
+	if (!delta)
 		return 0;
 
 	fill_and_output_event(
 	    args, skb,
 	    &(struct mix){&ip_hdr, delta, skb_sk_state(skb), TO_USER_COPY});
-
 	return 0;
 }
 
