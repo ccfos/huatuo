@@ -9,6 +9,7 @@
 
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
+#include "bpf_sock.h"
 #include "vmlinux_net.h"
 
 volatile const long long mono_wall_offset = 0;
@@ -117,11 +118,6 @@ static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 	return now - tstamp;
 }
 
-static inline u8 get_state(struct sk_buff *skb)
-{
-	return BPF_CORE_READ(skb, sk, __sk_common.skc_state);
-}
-
 static inline void
 fill_and_output_event(void *ctx, struct sk_buff *skb, struct mix *_mix)
 {
@@ -210,7 +206,7 @@ int tcp_v4_rcv_prog(struct pt_regs *ctx)
 	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
 	fill_and_output_event(
 	    ctx, skb,
-	    &(struct mix){&ip_hdr, delta, get_state(skb), TO_TCPV4_RCV});
+	    &(struct mix){&ip_hdr, delta, skb_sk_state(skb), TO_TCPV4_RCV});
 
 	return 0;
 }
@@ -236,7 +232,7 @@ int skb_copy_datagram_iovec_prog(
 
 	fill_and_output_event(
 	    args, skb,
-	    &(struct mix){&ip_hdr, delta, get_state(skb), TO_USER_COPY});
+	    &(struct mix){&ip_hdr, delta, skb_sk_state(skb), TO_USER_COPY});
 
 	return 0;
 }
