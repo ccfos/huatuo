@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -43,18 +43,18 @@ type netRecvLatTracing struct{}
 type NetTracingData struct {
 	Comm          string  `json:"comm"`
 	Pid           uint64  `json:"pid"`
-	Where         string  `json:"where"`
-	Latency       float64 `json:"latency_ms"`
+	LatStage      string  `json:"lat_stage"`
+	LatMs         float64 `json:"lat_ms"`
 	LatThresholds uint64  `json:"lat_thresholds"`
 	NetdevName    string  `json:"netdev_name"`
 	NetnsInum     uint32  `json:"netns_inum"`
-	State         string  `json:"state"`
-	Saddr         string  `json:"saddr"`
-	Daddr         string  `json:"daddr"`
-	Sport         uint16  `json:"sport"`
-	Dport         uint16  `json:"dport"`
-	Seq           uint32  `json:"seq"`
-	AckSeq        uint32  `json:"ack_seq"`
+	TCPState      string  `json:"tcp_state"`
+	TCPSaddr      string  `json:"tcp_saddr"`
+	TCPDaddr      string  `json:"tcp_daddr"`
+	TCPSport      uint16  `json:"tcp_sport"`
+	TCPDport      uint16  `json:"tcp_dport"`
+	TCPSeq        uint32  `json:"tcp_seq"`
+	TCPAckSeq     uint32  `json:"tcp_ack_seq"`
 	PktLen        uint64  `json:"pkt_len"`
 }
 
@@ -64,20 +64,20 @@ type netRcvPerfEvent struct {
 	Latency    uint64
 	TgidPid    uint64
 	PktLen     uint64
-	Sport      uint16
-	Dport      uint16
-	Saddr      uint32
-	Daddr      uint32
-	Seq        uint32
-	AckSeq     uint32
-	State      uint8
-	Where      uint8
+	TCPSport   uint16
+	TCPDport   uint16
+	TCPSaddr   uint32
+	TCPDaddr   uint32
+	TCPSeq     uint32
+	TCPAckSeq  uint32
+	TCPState   uint8
+	LatStage   uint8
 	_          [2]byte
 	NetdevName [bpf.NetdevNameLen]byte
 	NetnsInum  uint32
 }
 
-var toWhere = []string{
+var latStageNames = []string{
 	"RX_STAGE_NETIF",
 	"RX_STAGE_TCPV4",
 	"RX_STAGE_USERCOPY",
@@ -168,13 +168,13 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			where := toWhere[pd.Where]
+			where := latStageNames[pd.LatStage]
 			lat := float64(pd.Latency) / 1000 / 1000 // ms
-			latThreshold := latThresholds[pd.Where]
-			state := packet.TCPStateName(pd.State)
-			saddr, daddr := netutil.Inetv4Ntop(pd.Saddr).String(), netutil.Inetv4Ntop(pd.Daddr).String()
-			sport, dport := netutil.Ntohs(pd.Sport), netutil.Ntohs(pd.Dport)
-			seq, ackSeq := netutil.Ntohl(pd.Seq), netutil.Ntohl(pd.AckSeq)
+			latThreshold := latThresholds[pd.LatStage]
+			state := packet.TCPStateName(pd.TCPState)
+			saddr, daddr := netutil.Inetv4Ntop(pd.TCPSaddr).String(), netutil.Inetv4Ntop(pd.TCPDaddr).String()
+			sport, dport := netutil.Ntohs(pd.TCPSport), netutil.Ntohs(pd.TCPDport)
+			seq, ackSeq := netutil.Ntohl(pd.TCPSeq), netutil.Ntohl(pd.TCPAckSeq)
 			pktLen := pd.PktLen
 
 			comm := bytesutil.ToStr(pd.Comm[:])
@@ -193,18 +193,18 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			tracerData := &NetTracingData{
 				Comm:          comm,
 				Pid:           pid,
-				Where:         where,
-				Latency:       lat,
+				LatStage:      where,
+				LatMs:         lat,
 				LatThresholds: latThreshold,
 				NetdevName:    bytesutil.ToStr(pd.NetdevName[:]),
 				NetnsInum:     pd.NetnsInum,
-				State:         state,
-				Saddr:         saddr,
-				Daddr:         daddr,
-				Sport:         sport,
-				Dport:         dport,
-				Seq:           seq,
-				AckSeq:        ackSeq,
+				TCPState:      state,
+				TCPSaddr:      saddr,
+				TCPDaddr:      daddr,
+				TCPSport:      sport,
+				TCPDport:      dport,
+				TCPSeq:        seq,
+				TCPAckSeq:     ackSeq,
 				PktLen:        pktLen,
 			}
 			log.Debugf("net_rx_latency tracerData: %+v", tracerData)

@@ -25,14 +25,14 @@ struct perf_event_t {
 	u64 latency;
 	u64 tgid_pid;
 	u64 pkt_len;
-	u16 sport;
-	u16 dport;
-	u32 saddr;
-	u32 daddr;
-	u32 seq;
-	u32 ack_seq;
-	u8 state;
-	u8 where;
+	u16 tcp_sport;
+	u16 tcp_dport;
+	u32 tcp_saddr;
+	u32 tcp_daddr;
+	u32 tcp_seq;
+	u32 tcp_ack_seq;
+	u8 tcp_state;
+	u8 lat_stage;
 	u8 _pad[2];
 	char netdev_name[IFNAMSIZ];
 	u32 netns_inum;
@@ -140,15 +140,15 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
 	bpf_probe_read(&tcp_hdr, sizeof(tcp_hdr), skb_transport_header(skb));
 	event.latency = lat;
-	event.saddr   = ip_hdr.saddr;
-	event.daddr   = ip_hdr.daddr;
-	event.sport   = tcp_hdr.source;
-	event.dport   = tcp_hdr.dest;
-	event.seq     = tcp_hdr.seq;
-	event.ack_seq = tcp_hdr.ack_seq;
+	event.tcp_saddr   = ip_hdr.saddr;
+	event.tcp_daddr   = ip_hdr.daddr;
+	event.tcp_sport   = tcp_hdr.source;
+	event.tcp_dport   = tcp_hdr.dest;
+	event.tcp_seq     = tcp_hdr.seq;
+	event.tcp_ack_seq = tcp_hdr.ack_seq;
 	event.pkt_len = BPF_CORE_READ(skb, len);
-	event.state   = (where == RX_STAGE_NETIF) ? 0 : skb_sk_state(skb);
-	event.where   = where;
+	event.tcp_state   = (where == RX_STAGE_NETIF) ? 0 : skb_sk_state(skb);
+	event.lat_stage   = where;
 	event.netdev_name[0] = '-';
 	event.comm[0] = '-';
 	event.netns_inum = skb_netns_inum(skb);
@@ -158,7 +158,6 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 		event.tgid_pid = bpf_get_current_pid_tgid();
 		bpf_get_current_comm(&event.comm, sizeof(event.comm));
 	}
-
 	dev = BPF_CORE_READ(skb, dev);
 	if (dev) {
 		bpf_probe_read_kernel_str(

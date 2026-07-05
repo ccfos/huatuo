@@ -191,15 +191,15 @@ All event records include the following common fields:
     "tracer_data": {
         "comm": "nginx",
         "pid": 2921092,
-        "where": "RX_STAGE_USERCOPY",
-        "latency_ms": 95973,
-        "state": "ESTABLISHED",
-        "saddr": "10.156.248.76",
-        "daddr": "10.134.72.4",
-        "sport": 9213,
-        "dport": 49000,
-        "seq": 1009085774,
-        "ack_seq": 689410995,
+        "lat_stage": "RX_STAGE_USERCOPY",
+        "lat_ms": 95973,
+        "tcp_state": "ESTABLISHED",
+        "tcp_saddr": "10.156.248.76",
+        "tcp_daddr": "10.134.72.4",
+        "tcp_sport": 9213,
+        "tcp_dport": 49000,
+        "tcp_seq": 1009085774,
+        "tcp_ack_seq": 689410995,
         "pkt_len": 26064
     }
 }
@@ -209,13 +209,13 @@ All event records include the following common fields:
 
 - **comm**: Name of the process that triggered the event
 - **pid**: Process ID that triggered the event
-- **saddr / daddr**: Source IP / Destination IP address
-- **sport / dport**: Source port / Destination port
-- **seq / ack_seq**: TCP sequence number / Acknowledgment sequence number
-- **state**: TCP connection state (all states are supported, e.g., `ESTABLISHED`, `SYN_SENT`, `FIN_WAIT`, `TIME_WAIT`)
+- **lat_stage**: Stage where latency occurred (`RX_STAGE_NETIF` driver-to-kernel / `RX_STAGE_TCPV4` kernel-to-TCP / `RX_STAGE_USERCOPY` TCP-to-user-space)
+- **lat_ms**: Actual latency (milliseconds)
+- **tcp_state**: TCP connection state (all states are supported, e.g., `ESTABLISHED`, `SYN_SENT`, `FIN_WAIT`, `TIME_WAIT`)
+- **tcp_saddr / tcp_daddr**: Source IP / Destination IP address
+- **tcp_sport / tcp_dport**: Source port / Destination port
+- **tcp_seq / tcp_ack_seq**: TCP sequence number / Acknowledgment sequence number
 - **pkt_len**: Packet length (bytes)
-- **where**: Stage where latency occurred (`RX_STAGE_NETIF` driver-to-kernel / `RX_STAGE_TCPV4` kernel-to-TCP / `RX_STAGE_USERCOPY` TCP-to-user-space)
-- **latency_ms**: Actual latency (milliseconds)
 
 ### 4. oom
 

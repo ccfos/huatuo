@@ -109,7 +109,7 @@ EVENTS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/events/net_rx_latency"
 
 # Filter events matching our veth IP pair, then validate.
 MATCHED=$(jq -s --arg saddr "${VETH_HOST_IP}" --arg daddr "${VETH_PEER_IP}" \
-	'[.[] | select(.tracer_data.saddr == $saddr and .tracer_data.daddr == $daddr)]' \
+	'[.[] | select(.tracer_data.tcp_saddr == $saddr and .tracer_data.tcp_daddr == $daddr)]' \
 	"${EVENTS_FILE}" 2> /dev/null)
 
 event_count=$(echo "${MATCHED}" | jq 'length' 2> /dev/null || echo 0)
