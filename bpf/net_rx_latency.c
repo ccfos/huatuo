@@ -137,11 +137,6 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 	if (bpf_ratelimited(&rate))
 		return;
 
-	if (likely(where == RX_STAGE_USERCOPY)) {
-		event.tgid_pid = bpf_get_current_pid_tgid();
-		bpf_get_current_comm(&event.comm, sizeof(event.comm));
-	}
-
 	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
 	bpf_probe_read(&tcp_hdr, sizeof(tcp_hdr), skb_transport_header(skb));
 	event.latency = lat;
@@ -154,6 +149,15 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 	event.pkt_len = BPF_CORE_READ(skb, len);
 	event.state   = (where == RX_STAGE_NETIF) ? 0 : skb_sk_state(skb);
 	event.where   = where;
+	event.netdev_name[0] = '-';
+	event.comm[0] = '-';
+	event.netns_inum = skb_netns_inum(skb);
+	event.tgid_pid = 0;
+
+	if (likely(where == RX_STAGE_USERCOPY)) {
+		event.tgid_pid = bpf_get_current_pid_tgid();
+		bpf_get_current_comm(&event.comm, sizeof(event.comm));
+	}
 
 	dev = BPF_CORE_READ(skb, dev);
 	if (dev) {
@@ -162,8 +166,6 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 			sizeof(event.netdev_name),
 			dev->name);
 	}
-
-	event.netns_inum = skb_netns_inum(skb);
 
 	bpf_perf_event_output(ctx, &net_recv_lat_event_map,
 			      COMPAT_BPF_F_CURRENT_CPU, &event,

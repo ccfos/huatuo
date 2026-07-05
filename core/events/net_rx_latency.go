@@ -16,7 +16,6 @@ package events
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -164,56 +163,10 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			if err := reader.ReadInto(&pd); err != nil {
 				return fmt.Errorf("read from perf event fail: %w", err)
 			}
-			tracerTime := time.Now()
 
-			comm := "<nil>" // not in process context
-			var pid uint64
-			var containerID string
-
-			netdevName := bytesutil.ToStr(pd.NetdevName[:])
-			if netdevName == "" {
-				netdevName = "n/a"
-			}
-
-			if pd.TgidPid != 0 {
-				comm = bytesutil.ToStr(pd.Comm[:])
-				pid = pd.TgidPid >> 32
-
-				// check if its netns same as host netns
-				if pd.Where == userCopyCase {
-					cid, inode, skip, err := ignore(pid, comm, hostNetNsInode)
-					if err != nil {
-						log.Warnf("net_rx_latency: check pid %v failed: %v, skipping event", pid, err)
-						continue
-					}
-					if skip {
-						continue
-					}
-					containerID = cid
-					if pd.NetnsInum == 0 {
-						pd.NetnsInum = uint32(inode)
-					}
-				}
-			}
-
-			if int(pd.Where) >= len(toWhere) {
-				log.Warnf("net_rx_latency: invalid where=%d, skipping", pd.Where)
+			containerID, ok := resolveContainerID(&pd, hostNetNsInode)
+			if !ok {
 				continue
-			}
-
-			// For early stages (RX_STAGE_NETIF, RX_STAGE_TCPV4), populate container info from netns_inum
-			if containerID == "" && pd.NetnsInum != 0 && pd.Where != userCopyCase {
-				// Skip host network namespace
-				if uint64(pd.NetnsInum) != hostNetNsInode {
-					container, err := pod.ContainerByNetInode(uint64(pd.NetnsInum))
-					if err == nil && container != nil {
-						if isQosExcluded(container) {
-							log.Debugf("net_rx_latency: ignore container %+v", container)
-							continue
-						}
-						containerID = container.ID
-					}
-				}
 			}
 
 			where := toWhere[pd.Where]
@@ -230,8 +183,11 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			title := fmt.Sprintf("comm=%s:%d to=%s lat(ms)=%.2f state=%s saddr=%s sport=%d daddr=%s dport=%d seq=%d ackSeq=%d pktLen=%d netdev=%s",
-				comm, pid, where, lat, state, saddr, sport, daddr, dport, seq, ackSeq, pktLen, netdevName)
+			comm := bytesutil.ToStr(pd.Comm[:])
+			pid := pd.TgidPid >> 32
+
+			title := fmt.Sprintf("comm=%s:%d to=%s lat(ms)=%.2f state=%s saddr=%s sport=%d daddr=%s dport=%d seq=%d ackSeq=%d pktLen=%d",
+				comm, pid, where, lat, state, saddr, sport, daddr, dport, seq, ackSeq, pktLen)
 
 			// known issue filter
 			_, found := matcher.Classify(cfg.IssuesList, title)
@@ -246,7 +202,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				Where:         where,
 				Latency:       lat,
 				LatThresholds: latThreshold,
-				NetdevName:    netdevName,
+				NetdevName:    bytesutil.ToStr(pd.NetdevName[:]),
 				NetnsInum:     pd.NetnsInum,
 				State:         state,
 				Saddr:         saddr,
@@ -263,7 +219,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName:  "net_rx_latency",
 				ContainerID: containerID,
-				TracerTime:  tracerTime,
+				TracerTime:  time.Now(),
 				TracerData:  tracerData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
@@ -281,35 +237,25 @@ func isQosExcluded(container *pod.Container) bool {
 	return false
 }
 
-func ignore(pid uint64, comm string, hostNetnsInode uint64) (containerID string, netnsInode uint64, skip bool, err error) {
-	// check if its netns same as host netns
-	dstInode, err := netutil.NetNSInodeByPid(int(pid))
+func resolveContainerID(pd *netRcvPerfEvent, hostNetnsInode uint64) (string, bool) {
+	inode := uint64(pd.NetnsInum)
+
+	if cfg.NetRxLatency.ExcludedHostNetnamespace && inode == hostNetnsInode {
+		return "", false
+	}
+
+	container, err := pod.ContainerByNetInode(inode)
 	if err != nil {
-		// ignore the missing program
-		if errors.Is(err, syscall.ENOENT) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.ESRCH) {
-			return "", 0, true, nil
-		}
-		return "", 0, skip, fmt.Errorf("get netns inode of pid %v failed: %w", pid, err)
+		log.Warnf("net_rx_latency: get container by netns inode %d failed: %v", inode, err)
+		return "", true
 	}
-	if cfg.NetRxLatency.ExcludedHostNetnamespace && dstInode == hostNetnsInode {
-		log.Debugf("ignore %s:%v the same netns as host", comm, pid)
-		return "", dstInode, true, nil
+	if container == nil {
+		return "", true
 	}
-
-	// check container level
-	var container *pod.Container
-	if container, err = pod.ContainerByNetInode(dstInode); err != nil {
-		log.Warnf("get container info by netns inode %v pid %v, failed: %v", dstInode, pid, err)
+	if isQosExcluded(container) {
+		return container.ID, false
 	}
-	if container != nil {
-		if isQosExcluded(container) {
-			log.Debugf("net_rx_latency: ignore container %+v", container)
-			skip = true
-		}
-		containerID = container.ID
-	}
-
-	return containerID, dstInode, skip, nil
+	return container.ID, true
 }
 
 func enableSkbTimestamp() (io.Closer, error) {
