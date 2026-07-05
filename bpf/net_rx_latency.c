@@ -8,15 +8,15 @@
 #include <bpf/bpf_tracing.h>
 
 #include "bpf_common.h"
-#include "bpf_ratelimit.h"
 #include "bpf_net_namespace.h"
+#include "bpf_ratelimit.h"
 #include "bpf_sock.h"
 #include "vmlinux_net.h"
 
 volatile const long long mono_wall_offset = 0;
-volatile const long long rxlat_thresh_netif	  = 5 * 1000 * 1000;   // 5ms
-volatile const long long rxlat_thresh_tcpv4	  = 10 * 1000 * 1000;  // 10ms
-volatile const long long rxlat_thresh_usercopy	  = 115 * 1000 * 1000; // 115ms
+volatile const long long rxlat_thresh_netif = 5 * 1000 * 1000;	    // 5ms
+volatile const long long rxlat_thresh_tcpv4 = 10 * 1000 * 1000;	    // 10ms
+volatile const long long rxlat_thresh_usercopy = 115 * 1000 * 1000; // 115ms
 
 BPF_RATELIMIT(rate, 1, 100);
 
@@ -50,11 +50,14 @@ struct {
 	__uint(value_size, sizeof(u32));
 } net_recv_lat_event_map SEC(".maps");
 
-// CO-RE flavors for the skb timestamp-type bit. Two coexisting field names across kernels:
-//   - 6.0 .. 6.9 mainline + RHEL 5.14 backport (Rocky 9.6): mono_delivery_time:1
+// CO-RE flavors for the skb timestamp-type bit. Two coexisting field names
+// across kernels:
+//   - 6.0 .. 6.9 mainline + RHEL 5.14 backport (Rocky 9.6):
+//   mono_delivery_time:1
 //   - 6.10+ mainline + Ubuntu 6.8 backport (24.04 latest): tstamp_type
 //     (1-bit early, 2-bit later when SKB_CLOCK_TAI was added)
-// Pre-6.0 kernels (e.g. Ubuntu 22.04 GA 5.15) have neither — tstamp is wallclock.
+// Pre-6.0 kernels (e.g. Ubuntu 22.04 GA 5.15) have neither — tstamp is
+// wallclock.
 struct sk_buff___mdt { // mono_delivery_time
 	__u8 mono_delivery_time : 1;
 } __attribute__((preserve_access_index));
@@ -76,7 +79,7 @@ enum skb_tstamp_type {
 // -1  = TAI        (no usable formula; caller must skip the packet)
 static inline int skb_clock_class(struct sk_buff *skb)
 {
-	struct sk_buff___tt *skb_tt   = (struct sk_buff___tt *)skb;
+	struct sk_buff___tt *skb_tt = (struct sk_buff___tt *)skb;
 	struct sk_buff___mdt *skb_mdt = (struct sk_buff___mdt *)skb;
 
 	if (bpf_core_field_exists(skb_tt->tstamp_type)) {
@@ -86,7 +89,8 @@ static inline int skb_clock_class(struct sk_buff *skb)
 		return (t == SKB_CLOCK_MONOTONIC) ? 1 : 0;
 	}
 	if (bpf_core_field_exists(skb_mdt->mono_delivery_time))
-		return !!BPF_CORE_READ_BITFIELD_PROBED(skb_mdt, mono_delivery_time);
+		return !!BPF_CORE_READ_BITFIELD_PROBED(skb_mdt,
+						       mono_delivery_time);
 	return 0; // pre-6.0: tstamp is wallclock
 }
 
@@ -103,7 +107,8 @@ static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 	if (cls < 0)
 		return 0; // TAI: no correct formula, skip packet
 
-	u64 now = cls ? bpf_ktime_get_ns() : bpf_ktime_get_ns() + mono_wall_offset;
+	u64 now = cls ? bpf_ktime_get_ns()
+		      : bpf_ktime_get_ns() + mono_wall_offset;
 	if (tstamp > now)
 		return 0;
 	return now - tstamp;
@@ -140,15 +145,15 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
 	bpf_probe_read(&tcp_hdr, sizeof(tcp_hdr), skb_transport_header(skb));
 	event.latency = lat;
-	event.tcp_saddr   = ip_hdr.saddr;
-	event.tcp_daddr   = ip_hdr.daddr;
-	event.tcp_sport   = tcp_hdr.source;
-	event.tcp_dport   = tcp_hdr.dest;
-	event.tcp_seq     = tcp_hdr.seq;
+	event.tcp_saddr = ip_hdr.saddr;
+	event.tcp_daddr = ip_hdr.daddr;
+	event.tcp_sport = tcp_hdr.source;
+	event.tcp_dport = tcp_hdr.dest;
+	event.tcp_seq = tcp_hdr.seq;
 	event.tcp_ack_seq = tcp_hdr.ack_seq;
 	event.pkt_len = BPF_CORE_READ(skb, len);
-	event.tcp_state   = (where == RX_STAGE_NETIF) ? 0 : skb_sk_state(skb);
-	event.lat_stage   = where;
+	event.tcp_state = (where == RX_STAGE_NETIF) ? 0 : skb_sk_state(skb);
+	event.lat_stage = where;
 	event.netdev_name[0] = '-';
 	event.comm[0] = '-';
 	event.netns_inum = skb_netns_inum(skb);
@@ -160,10 +165,8 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 	}
 	dev = BPF_CORE_READ(skb, dev);
 	if (dev) {
-		bpf_probe_read_kernel_str(
-			event.netdev_name,
-			sizeof(event.netdev_name),
-			dev->name);
+		bpf_probe_read_kernel_str(event.netdev_name,
+					  sizeof(event.netdev_name), dev->name);
 	}
 
 	bpf_perf_event_output(ctx, &net_recv_lat_event_map,
@@ -202,7 +205,7 @@ int tcp_v4_rcv_prog(struct pt_regs *ctx)
 
 SEC("tracepoint/skb/skb_copy_datagram_iovec")
 int skb_copy_datagram_iovec_prog(
-    struct trace_event_raw_skb_copy_datagram_iovec *args)
+	struct trace_event_raw_skb_copy_datagram_iovec *args)
 {
 	struct sk_buff *skb = (struct sk_buff *)args->skbaddr;
 
