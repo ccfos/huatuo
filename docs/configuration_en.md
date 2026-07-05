@@ -1009,7 +1009,47 @@ This section controls the runtime behavior of the `POST /v1/events/watch` SSE st
 
   **Description**: If three consecutive write attempts (ping or event data) fail, the server considers the client gone and closes the connection, releasing all associated resources. Set this value below the idle-timeout of any upstream proxy. Common production values are 15–60s.
 
-### 11. Best Practices and Important Notes
+### 11. Command-Line Flags
+
+`huatuo-bamai` supports the following command-line flags:
+
+```
+huatuo-bamai --region <region> [options]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--config` | Configuration file name | `huatuo-bamai.conf` |
+| `--config-dir` | Configuration file directory | `conf` |
+| `--bpf-dir` | BPF object file directory | `bpf` |
+| `--tools-bin-dir` | Tracing tool binary directory | `bin` |
+| `--region` | Deployment region (required) | - |
+| `--disable-kubelet` | Disable kubelet Pod fetching | `false` |
+| `--disable-storage` | Disable storage backends | `false` |
+| `--disable-cgroup` | Disable self cgroup resource limits | `false` |
+| `--disable-tracing` | Disable specified tracing modules (may be repeated) | - |
+| `--log-debug` | Force log level to Debug | `false` |
+| `--dry-run` | Load-only test; exit gracefully after startup | `false` |
+| `--procfs-prefix` | procfs mount point prefix | - |
+
+### 12. Configuration Override Precedence
+
+When the same configuration item is set in both command-line flags and the configuration file, the following precedence applies:
+
+**CLI flag > Configuration file > Built-in default**
+
+Specific rules:
+
+1. **Log level**: `--log-debug` > config file `[Log] Level` > built-in default `Info`
+   - `--log-debug` has the highest priority and forces the log level to `Debug` regardless of the `Level` value in the configuration file.
+   - An explicit `Level` in the configuration file overrides the built-in default.
+   - If neither is set, the default `Info` is used.
+
+2. **Tracing blacklist**: `--disable-tracing` is merged with the configuration file `BlackList` (they complement each other rather than override).
+
+3. **Other boolean switches** (`--disable-kubelet`, `--disable-storage`, `--disable-cgroup`): When explicitly set on the command line, they override the configuration file.
+
+### 13. Best Practices and Important Notes
 
 - **Resource Control**: In production, prioritize adjusting CPU and memory limits in [RuntimeCgroup] to avoid impacting business containers.
 - **Storage Choice**: For small-scale deployments, prefer [Storage.LocalFile] for local troubleshooting. For large clusters, configure Elasticsearch for centralized storage and querying.

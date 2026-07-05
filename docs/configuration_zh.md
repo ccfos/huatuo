@@ -1026,7 +1026,47 @@ IssuesList = []
 
   **说明**：若服务端连续 3 次写入探活消息（或事件数据）均失败，则视为客户端已断开并主动关闭连接，释放相关资源。建议该值不超过上游代理的 idle timeout，生产环境常见值为 15–60s。
 
-### 11. 配置最佳实践与注意事项
+### 11. 命令行参数
+
+`huatuo-bamai` 支持以下命令行参数：
+
+```
+huatuo-bamai --region <region> [选项]
+```
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--config` | 配置文件名 | `huatuo-bamai.conf` |
+| `--config-dir` | 配置文件目录 | `conf` |
+| `--bpf-dir` | BPF 对象文件目录 | `bpf` |
+| `--tools-bin-dir` | 追踪工具二进制目录 | `bin` |
+| `--region` | 部署区域（必填） | - |
+| `--disable-kubelet` | 禁用 kubelet Pod 获取 | `false` |
+| `--disable-storage` | 禁用存储后端 | `false` |
+| `--disable-cgroup` | 禁用自身 cgroup 资源限制 | `false` |
+| `--disable-tracing` | 禁用指定追踪模块（可多次指定） | - |
+| `--log-debug` | 强制设置日志级别为 Debug | `false` |
+| `--dry-run` | 仅加载测试，启动后优雅退出 | `false` |
+| `--procfs-prefix` | procfs 挂载点前缀 | - |
+
+### 12. 配置覆盖原则
+
+当同一配置项同时存在于命令行参数和配置文件时，遵循以下优先级：
+
+**命令行参数 > 配置文件 > 内置默认值**
+
+具体规则：
+
+1. **日志级别**：`--log-debug` > 配置文件 `[Log] Level` > 内置默认值 `Info`
+   - `--log-debug` 具有最高优先级，无论配置文件中 `Level` 为何值均强制设为 `Debug`
+   - 配置文件中显式设置 `Level` 时覆盖内置默认值
+   - 均未设置时使用默认值 `Info`
+
+2. **追踪黑名单**：`--disable-tracing` 与配置文件 `BlackList` 合并（两者互补，非覆盖）
+
+3. **其他布尔开关**（`--disable-kubelet`、`--disable-storage`、`--disable-cgroup`）：命令行显式设置时覆盖配置文件
+
+### 13. 配置最佳实践与注意事项
 
 - **资源控制**：生产环境优先调整 RuntimeCgroup 中的 CPU 和内存限制，避免影响业务容器。
 - **存储选择**：小规模部署可优先使用 LocalFile 进行本地排查；大规模集群推荐配置 Elasticsearch 实现集中存储与查询。
