@@ -42,6 +42,7 @@ HUATUO_BAMAI_ARGS_INTEGRATION=(
 	"--procfs-prefix" "${HUATUO_BAMAI_TEST_FIXTURES}"
 	"--disable-storage"
 	"--disable-kubelet"
+	"--log-debug"
 )
 export HUATUO_BAMAI_ARGS_INTEGRATION
 HUATUO_BAMAI_ARGS_E2E=(

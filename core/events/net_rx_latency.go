@@ -76,8 +76,6 @@ type netRcvPerfEvent struct {
 	NetnsInum  uint32
 }
 
-const userCopyCase = 2
-
 var toWhere = []string{
 	"RX_STAGE_NETIF",
 	"RX_STAGE_TCPV4",
