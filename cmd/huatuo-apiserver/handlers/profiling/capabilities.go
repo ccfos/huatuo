@@ -23,11 +23,9 @@ import (
 	"huatuo-bamai/internal/server/response"
 )
 
-// capabilities returns the profiling capabilities supported by the server.
-// This is a read-only endpoint that allows frontends, CLIs, and agents to
-// discover supported profiling types, languages, memory modes, and default
-// configuration values without hardcoding them.
-func (h *Handler) capabilities(ctx *server.Context) error {
+// buildCapabilitiesResponse constructs the profiling capabilities response
+// from the package-level supported languages/modes and the current configuration.
+func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, error) {
 	cpuLanguages := make([]string, 0, len(supportedLanguages)+1)
 	for lang := range supportedLanguages {
 		cpuLanguages = append(cpuLanguages, lang)
@@ -50,18 +48,28 @@ func (h *Handler) capabilities(ctx *server.Context) error {
 
 	cfg := config.Get().Profiling
 
-	resp := v1.ProfilingCapabilitiesResponse{
-		ProfileTypes:                      []string{"cpu", "memory"},
-		CPUSupportedLanguages:             cpuLanguages,
-		MemorySupportedLanguages:          memoryLanguages,
-		MemoryModes:                       memoryModes,
-		DefaultCPUInterval:                cfg.CPUProfilingInterval,
-		DefaultMemoryInterval:             cfg.MemoryProfilingInterval,
-		DefaultCPUSingleTraceTimeout:      cfg.CPUSingleTraceTimeout,
-		DefaultMemorySingleTraceTimeout:   cfg.MemorySingleTraceTimeout,
-		ThirdPartyToolLimit:               cfg.ThirdPartyToolLimit,
-	}
+	return v1.ProfilingCapabilitiesResponse{
+		ProfileTypes:                    []string{"cpu", "memory"},
+		CPUSupportedLanguages:           cpuLanguages,
+		MemorySupportedLanguages:        memoryLanguages,
+		MemoryModes:                     memoryModes,
+		DefaultCPUInterval:              cfg.CPUProfilingInterval,
+		DefaultMemoryInterval:           cfg.MemoryProfilingInterval,
+		DefaultCPUSingleTraceTimeout:    cfg.CPUSingleTraceTimeout,
+		DefaultMemorySingleTraceTimeout: cfg.MemorySingleTraceTimeout,
+		ThirdPartyToolLimit:             cfg.ThirdPartyToolLimit,
+	}, nil
+}
 
+// capabilities returns the profiling capabilities supported by the server.
+// This is a read-only endpoint that allows frontends, CLIs, and agents to
+// discover supported profiling types, languages, memory modes, and default
+// configuration values without hardcoding them.
+func (h *Handler) capabilities(ctx *server.Context) error {
+	resp, err := buildCapabilitiesResponse(h)
+	if err != nil {
+		return response.ErrInternal.WithMessage(err.Error())
+	}
 	response.Success(ctx, resp)
 	return nil
 }
