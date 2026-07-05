@@ -67,6 +67,7 @@ func NewHandler(jm *job.Manager) *Handler {
 	h := &Handler{jobManager: jm}
 
 	h.Handlers = []server.Handle{
+		{Typ: server.HttpGet, Uri: "/capabilities", Handle: h.capabilities},
 		{Typ: server.HttpPost, Uri: "", Handle: h.start},
 		{Typ: server.HttpGet, Uri: "", Handle: h.list},
 		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
