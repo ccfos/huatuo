@@ -41,40 +41,42 @@ type netRecvLatTracing struct{}
 
 // NetTracingData is the full data structure.
 type NetTracingData struct {
-	Comm          string  `json:"comm"`
-	Pid           uint64  `json:"pid"`
-	LatStage      string  `json:"lat_stage"`
-	LatMs         float64 `json:"lat_ms"`
-	LatThresholds uint64  `json:"lat_thresholds"`
-	NetdevName    string  `json:"netdev_name"`
-	NetnsInum     uint32  `json:"netns_inum"`
-	TCPState      string  `json:"tcp_state"`
-	TCPSaddr      string  `json:"tcp_saddr"`
-	TCPDaddr      string  `json:"tcp_daddr"`
-	TCPSport      uint16  `json:"tcp_sport"`
-	TCPDport      uint16  `json:"tcp_dport"`
-	TCPSeq        uint32  `json:"tcp_seq"`
-	TCPAckSeq     uint32  `json:"tcp_ack_seq"`
-	PktLen        uint64  `json:"pkt_len"`
+	Comm               string  `json:"comm"`
+	Pid                uint64  `json:"pid"`
+	LatStage           string  `json:"lat_stage"`
+	LatMs              float64 `json:"lat_ms"`
+	LatThresholds      uint64  `json:"lat_thresholds"`
+	NetdevName         string  `json:"netdev_name"`
+	NetNamespaceInode  uint32  `json:"net_namespace_inode"`
+	NetNamespaceCookie uint64  `json:"net_namespace_cookie"`
+	TCPState           string  `json:"tcp_state"`
+	TCPSaddr           string  `json:"tcp_saddr"`
+	TCPDaddr           string  `json:"tcp_daddr"`
+	TCPSport           uint16  `json:"tcp_sport"`
+	TCPDport           uint16  `json:"tcp_dport"`
+	TCPSeq             uint32  `json:"tcp_seq"`
+	TCPAckSeq          uint32  `json:"tcp_ack_seq"`
+	PktLen             uint64  `json:"pkt_len"`
 }
 
 // from bpf perf
 type netRcvPerfEvent struct {
-	Comm       [bpf.TaskCommLen]byte
-	Latency    uint64
-	TgidPid    uint64
-	PktLen     uint64
-	TCPSport   uint16
-	TCPDport   uint16
-	TCPSaddr   uint32
-	TCPDaddr   uint32
-	TCPSeq     uint32
-	TCPAckSeq  uint32
-	TCPState   uint8
-	LatStage   uint8
-	_          [2]byte
-	NetdevName [bpf.NetdevNameLen]byte
-	NetnsInum  uint32
+	Comm               [bpf.TaskCommLen]byte
+	Latency            uint64
+	TgidPid            uint64
+	PktLen             uint64
+	TCPSport           uint16
+	TCPDport           uint16
+	TCPSaddr           uint32
+	TCPDaddr           uint32
+	TCPSeq             uint32
+	TCPAckSeq          uint32
+	TCPState           uint8
+	LatStage           uint8
+	_                  [2]byte
+	NetdevName         [bpf.NetdevNameLen]byte
+	NetNamespaceInode  uint32
+	NetNamespaceCookie uint64
 }
 
 var latStageNames = []string{
@@ -163,7 +165,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				return fmt.Errorf("read from perf event fail: %w", err)
 			}
 
-			containerID, ok := resolveContainerID(&pd, hostNetNsInode)
+			containerID, ok := filterByConfigAndResolveContainerID(&pd, hostNetNsInode)
 			if !ok {
 				continue
 			}
@@ -191,21 +193,22 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			}
 
 			tracerData := &NetTracingData{
-				Comm:          comm,
-				Pid:           pid,
-				LatStage:      where,
-				LatMs:         lat,
-				LatThresholds: latThreshold,
-				NetdevName:    bytesutil.ToStr(pd.NetdevName[:]),
-				NetnsInum:     pd.NetnsInum,
-				TCPState:      state,
-				TCPSaddr:      saddr,
-				TCPDaddr:      daddr,
-				TCPSport:      sport,
-				TCPDport:      dport,
-				TCPSeq:        seq,
-				TCPAckSeq:     ackSeq,
-				PktLen:        pktLen,
+				Comm:               comm,
+				Pid:                pid,
+				LatStage:           where,
+				LatMs:              lat,
+				LatThresholds:      latThreshold,
+				NetdevName:         bytesutil.ToStr(pd.NetdevName[:]),
+				NetNamespaceInode:  pd.NetNamespaceInode,
+				NetNamespaceCookie: pd.NetNamespaceCookie,
+				TCPState:           state,
+				TCPSaddr:           saddr,
+				TCPDaddr:           daddr,
+				TCPSport:           sport,
+				TCPDport:           dport,
+				TCPSeq:             seq,
+				TCPAckSeq:          ackSeq,
+				PktLen:             pktLen,
 			}
 			log.Debugf("net_rx_latency tracerData: %+v", tracerData)
 
@@ -231,21 +234,36 @@ func isQosExcluded(container *pod.Container) bool {
 	return false
 }
 
-func resolveContainerID(pd *netRcvPerfEvent, hostNetnsInode uint64) (string, bool) {
-	inode := uint64(pd.NetnsInum)
+func filterByConfigAndResolveContainerID(pd *netRcvPerfEvent, hostNetnsInode uint64) (string, bool) {
+	inode := uint64(pd.NetNamespaceInode)
 
 	if cfg.NetRxLatency.ExcludedHostNetnamespace && inode == hostNetnsInode {
 		return "", false
 	}
 
-	container, err := pod.ContainerByNetInode(inode)
-	if err != nil {
-		log.Warnf("net_rx_latency: get container by netns inode %d failed: %v", inode, err)
-		return "", true
+	var container *pod.Container
+
+	if pd.NetNamespaceCookie != 0 {
+		ct, err := pod.ContainerByNetCookie(pd.NetNamespaceCookie)
+		if err != nil {
+			log.Debugf("net_rx_latency: net_cookie lookup %d failed: %v", pd.NetNamespaceCookie, err)
+		} else if ct != nil {
+			container = ct
+		}
 	}
+
 	if container == nil {
-		return "", true
+		ct, err := pod.ContainerByNetInode(inode)
+		if err != nil {
+			log.Warnf("net_rx_latency: get container by netns inode %d failed: %v", inode, err)
+			return "", true
+		}
+		if ct == nil {
+			return "", true
+		}
+		container = ct
 	}
+
 	if isQosExcluded(container) {
 		return container.ID, false
 	}

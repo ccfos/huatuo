@@ -36,6 +36,7 @@ struct perf_event_t {
 	u8 _pad[2];
 	char netdev_name[IFNAMSIZ];
 	u32 netns_inum;
+	u64 net_cookie;
 };
 
 enum rx_lat_stage {
@@ -157,6 +158,7 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 	event.netdev_name[0] = '-';
 	event.comm[0] = '-';
 	event.netns_inum = skb_netns_inum(skb);
+	event.net_cookie = skb_netns_cookie(skb);
 	event.tgid_pid = 0;
 
 	if (likely(where == RX_STAGE_USERCOPY)) {

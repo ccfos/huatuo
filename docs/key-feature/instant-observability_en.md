@@ -200,6 +200,8 @@ All event records include the following common fields:
         "tcp_dport": 49000,
         "tcp_seq": 1009085774,
         "tcp_ack_seq": 689410995,
+        "net_namespace_cookie": 123456789,
+        "net_namespace_inode": 402653184,
         "pkt_len": 26064
     }
 }
@@ -215,6 +217,8 @@ All event records include the following common fields:
 - **tcp_saddr / tcp_daddr**: Source IP / Destination IP address
 - **tcp_sport / tcp_dport**: Source port / Destination port
 - **tcp_seq / tcp_ack_seq**: TCP sequence number / Acknowledgment sequence number
+- **net_namespace_cookie**: Network namespace cookie (available on kernel ≥ 5.14, used for efficient container association)
+- **net_namespace_inode**: Network namespace inode
 - **pkt_len**: Packet length (bytes)
 
 ### 4. oom
