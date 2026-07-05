@@ -119,3 +119,17 @@ type ProfilingListResponse struct {
 	Limit  int                       `json:"limit"`
 	Offset int                       `json:"offset"`
 }
+
+// ProfilingCapabilitiesResponse describes the profiling capabilities
+// supported by the server and their default configurations.
+type ProfilingCapabilitiesResponse struct {
+	ProfileTypes              []string          `json:"profile_types"`                // supported profiling types, e.g. ["cpu", "memory"]
+	CPUSupportedLanguages     []string          `json:"cpu_supported_languages"`      // languages supported by CPU profiling
+	MemorySupportedLanguages  []string          `json:"memory_supported_languages"`   // languages supported by memory profiling
+	MemoryModes               map[string]string `json:"memory_modes"`                 // supported memory modes (key: display name, value: internal mode)
+	DefaultCPUInterval        int               `json:"default_cpu_interval"`         // default CPU profiling interval in seconds
+	DefaultMemoryInterval     int               `json:"default_memory_interval"`      // default memory profiling interval in seconds
+	DefaultCPUSingleTraceTimeout  int           `json:"default_cpu_single_trace_timeout"`  // default CPU single trace timeout in seconds
+	DefaultMemorySingleTraceTimeout int         `json:"default_memory_single_trace_timeout"` // default memory single trace timeout in seconds
+	ThirdPartyToolLimit       int               `json:"third_party_tool_limit"`      // third-party tool limit
+}
