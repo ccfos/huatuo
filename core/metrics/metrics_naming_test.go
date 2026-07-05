@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metrics
+package collector
 
 import (
 	"fmt"
@@ -33,7 +33,7 @@ type metricCallInfo struct {
 	line     int
 	funcName string // NewGaugeData, NewCounterData, NewContainerGaugeData, NewContainerCounterData
 	name     string // the metric name argument (if it's a string literal)
-	isString bool  // true if the name argument was a string literal
+	isString bool   // true if the name argument was a string literal
 }
 
 // validMetricName matches Prometheus metric naming rules:
@@ -46,10 +46,10 @@ func findMetricCalls(t *testing.T, dir string) []metricCallInfo {
 	var calls []metricCallInfo
 
 	targetFuncs := map[string]bool{
-		"NewGaugeData":             true,
-		"NewCounterData":           true,
-		"NewContainerGaugeData":    true,
-		"NewContainerCounterData":  true,
+		"NewGaugeData":            true,
+		"NewCounterData":          true,
+		"NewContainerGaugeData":   true,
+		"NewContainerCounterData": true,
 	}
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -163,14 +163,14 @@ func TestCounterNamesHaveTotalSuffix(t *testing.T) {
 	// are exposed as-is for compatibility.
 	allowlist := map[string]bool{
 		// Ascend NPU HBM error counters use _cnt suffix (vendor convention)
-		"npu_hbm_single_bit_error_cnt":               true,
-		"npu_hbm_double_bit_error_cnt":               true,
-		"npu_hbm_total_single_bit_error_cnt":         true,
-		"npu_hbm_total_double_bit_error_cnt":         true,
-		"npu_hbm_single_bit_isolated_pages_cnt":      true,
-		"npu_hbm_double_bit_isolated_pages_cnt":      true,
-		"npu_mac_tx_mac_pause_num":                   true,
-		"npu_mac_rx_mac_pause_num":                   true,
+		"npu_hbm_single_bit_error_cnt":          true,
+		"npu_hbm_double_bit_error_cnt":          true,
+		"npu_hbm_total_single_bit_error_cnt":    true,
+		"npu_hbm_total_double_bit_error_cnt":    true,
+		"npu_hbm_single_bit_isolated_pages_cnt": true,
+		"npu_hbm_double_bit_isolated_pages_cnt": true,
+		"npu_mac_tx_mac_pause_num":              true,
+		"npu_mac_rx_mac_pause_num":              true,
 	}
 
 	var violations []string
