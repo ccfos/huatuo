@@ -138,7 +138,7 @@ func (o *Options) AddFlags(app *cli.App) {
 		},
 		&cli.BoolFlag{
 			Name:  cliFlagLogDebug,
-			Usage: "force debug-level logging; ignored when Log.Level is set in the config file",
+			Usage: "force debug-level logging; overrides Log.Level from config file",
 		},
 		&cli.BoolFlag{
 			Name:  cliFlagDryRun,
@@ -210,15 +210,17 @@ func configureRuntime(opts *Options) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	// Log level: config file wins; --log-debug only applies when the config
-	// file leaves the level unset.
+	// Log level: CLI --log-debug overrides config file; config file overrides
+	// the built-in default (Info).
 	switch {
-	case config.Get().Log.Level != "":
-		log.SetLevel(config.Get().Log.Level)
-		log.Infof("log level set to %q from config file", log.GetLevel())
 	case opts.LogDebug:
 		log.SetLevel("Debug")
 		log.Infof("log level set to %q from --log-debug", log.GetLevel())
+	case config.Get().Log.Level != "":
+		log.SetLevel(config.Get().Log.Level)
+		log.Infof("log level set to %q from config file", log.GetLevel())
+	default:
+		log.SetLevel("Info")
 	}
 
 	if logFile := config.Get().Log.File; logFile != "" {
