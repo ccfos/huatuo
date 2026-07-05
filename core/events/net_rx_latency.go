@@ -176,11 +176,6 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			seq, ackSeq := netutil.Ntohl(pd.Seq), netutil.Ntohl(pd.AckSeq)
 			pktLen := pd.PktLen
 
-			// tcp state filter
-			if (state != "ESTABLISHED") && (state != "<nil>") {
-				continue
-			}
-
 			comm := bytesutil.ToStr(pd.Comm[:])
 			pid := pd.TgidPid >> 32
 

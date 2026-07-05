@@ -180,7 +180,7 @@ All event records include the following common fields:
 
 ### 3. net_rx_latency
 
-**Description** Detects latency events on the protocol stack receive path (NIC driver → kernel protocol stack → user-space receive). Three observation points are set along the receive path; when the latency of any stage exceeds the corresponding threshold (defaults: driver to kernel 5ms, kernel to TCP 10ms, TCP to user space 115ms), the event is recorded with the network 5-tuple, TCP sequence number, latency stage, and latency duration. The host network namespace is excluded by default, observing only container network traffic.
+**Description** Detects latency events on the protocol stack receive path (NIC driver → kernel protocol stack → user-space receive). Three observation points are set along the receive path; when the latency of any stage exceeds the corresponding threshold (defaults: driver to kernel 5ms, kernel to TCP 10ms, TCP to user space 115ms), the event is recorded with the network 5-tuple, TCP sequence number, latency stage, and latency duration. All TCP states are observed, not limited to ESTABLISHED—receive latency events in SYN, FIN, TIME_WAIT, and other non-ESTABLISHED states are also captured. The host network namespace is excluded by default, observing only container network traffic.
 
 **Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
 
@@ -212,7 +212,7 @@ All event records include the following common fields:
 - **saddr / daddr**: Source IP / Destination IP address
 - **sport / dport**: Source port / Destination port
 - **seq / ack_seq**: TCP sequence number / Acknowledgment sequence number
-- **state**: TCP connection state (e.g., `ESTABLISHED`)
+- **state**: TCP connection state (all states are supported, e.g., `ESTABLISHED`, `SYN_SENT`, `FIN_WAIT`, `TIME_WAIT`)
 - **pkt_len**: Packet length (bytes)
 - **where**: Stage where latency occurred (`RX_STAGE_NETIF` driver-to-kernel / `RX_STAGE_TCPV4` kernel-to-TCP / `RX_STAGE_USERCOPY` TCP-to-user-space)
 - **latency_ms**: Actual latency (milliseconds)
