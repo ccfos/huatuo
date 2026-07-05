@@ -33,7 +33,7 @@ var (
 // sampled once on first call and cached for the process lifetime.
 func KtimeToTime(ktimeNs uint64) (time.Time, error) {
 	offsetOnce.Do(func() {
-		offsetNanoseconds, errOffsetOnce = monoToRealOffset()
+		offsetNanoseconds, errOffsetOnce = MonoToRealOffset()
 	})
 	if errOffsetOnce != nil {
 		return time.Time{}, errOffsetOnce
@@ -44,7 +44,7 @@ func KtimeToTime(ktimeNs uint64) (time.Time, error) {
 // monoToRealOffset brackets a CLOCK_MONOTONIC read between two
 // CLOCK_REALTIME reads, up to 5 times, and keeps the tightest pair.
 // Exits early when the bracket is already below 1µs.
-func monoToRealOffset() (int64, error) {
+func MonoToRealOffset() (int64, error) {
 	const goodEnoughDeltaNs = 1000 // 1µs.
 
 	var real1, mono, real2 unix.Timespec

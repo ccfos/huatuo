@@ -27,6 +27,7 @@ import (
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/timeutil"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/netutil"
 	"huatuo-bamai/pkg/tracing"
@@ -107,7 +108,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 
 	latThresholds := []uint64{rxlatThreshNetif, rxlatThreshTcpv4, rxlatThreshUsercopy}
 
-	monoWallOffset, err := estMonoWallOffset()
+	monoWallOffset, err := timeutil.MonoToRealOffset()
 	if err != nil {
 		return fmt.Errorf("estimate monoWallOffset failed: %w", err)
 	}
@@ -267,30 +268,3 @@ func enableSkbTimestamp() (io.Closer, error) {
 type fdCloser int
 
 func (f fdCloser) Close() error { return syscall.Close(int(f)) }
-
-// estimate the offset between clock monotonic and real time
-// bpf_ktime_get_ns() access to clock monotonic, but skb->tstamp = ktime_get_real() at netif_receive_skb_internal
-// ref: https://github.com/torvalds/linux/blob/v4.18/net/core/dev.c#L4736
-// t3 - t2 + (t3 - t1) / 2 => (t3 + t1) / 2 - t2
-func estMonoWallOffset() (int64, error) {
-	var t1, t2, t3 unix.Timespec
-	var bestDelta int64
-	var offset int64
-
-	for i := range 10 {
-		err1 := unix.ClockGettime(unix.CLOCK_REALTIME, &t1)
-		err2 := unix.ClockGettime(unix.CLOCK_MONOTONIC, &t2)
-		err3 := unix.ClockGettime(unix.CLOCK_REALTIME, &t3)
-		if err1 != nil || err2 != nil || err3 != nil {
-			return 0, fmt.Errorf("%w, %w, %w", err1, err2, err3)
-		}
-
-		delta := unix.TimespecToNsec(t3) - unix.TimespecToNsec(t1)
-		if i == 0 || delta < bestDelta {
-			bestDelta = delta
-			offset = (unix.TimespecToNsec(t3)+unix.TimespecToNsec(t1))/2 - unix.TimespecToNsec(t2)
-		}
-	}
-
-	return offset, nil
-}
