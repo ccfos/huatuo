@@ -21,6 +21,7 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	"huatuo-bamai/internal/pod"
 	pyruntime "huatuo-bamai/internal/profiler/runtime/python"
 )
 
@@ -137,7 +138,7 @@ func validateCommonOptions(ctx *cli.Context) error {
 	}
 
 	if cid := ctx.String("container-id"); cid != "" {
-		if err := validateContainerID(cid); err != nil {
+		if err := pod.ValidateContainerID(cid); err != nil {
 			return err
 		}
 	}
@@ -171,20 +172,6 @@ func validateCommonOptions(ctx *cli.Context) error {
 
 	if ctx.String("output-format") == "remote" && ctx.String("output-storage") == "" {
 		return fmt.Errorf("--output-storage must not be empty when --output-format=remote")
-	}
-
-	return nil
-}
-
-func validateContainerID(cid string) error {
-	if len(cid) < 12 || len(cid) > 64 {
-		return fmt.Errorf("invalid container-id length: %s (should be 12-64 characters)", cid)
-	}
-
-	for i, c := range cid {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return fmt.Errorf("container-id contains non-hex character at position %d: %c", i, c)
-		}
 	}
 
 	return nil

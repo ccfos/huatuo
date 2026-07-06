@@ -17,12 +17,16 @@ package pod
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"sync"
 	"syscall"
 	"time"
 
 	"huatuo-bamai/internal/log"
 )
+
+// containerIDRegexp matches a 12-64 character hex container ID.
+var containerIDRegexp = regexp.MustCompile(`^[0-9a-fA-F]{12,64}$`)
 
 var (
 	// all containers, map: ContainerID -> *Container
@@ -114,6 +118,15 @@ func containersByTypeQos(typeMask ContainerType, minLevel ContainerQos) (map[str
 // ContainersByType returns the containers by type.
 func ContainersByType(typeMask ContainerType) (map[string]*Container, error) {
 	return containersByTypeQos(typeMask, ContainerQosLevelMin)
+}
+
+// ValidateContainerID reports whether id is a well-formed container ID
+// (12-64 hexadecimal characters).
+func ValidateContainerID(id string) error {
+	if !containerIDRegexp.MatchString(id) {
+		return fmt.Errorf("invalid container-id: %s (should be 12-64 hex characters)", id)
+	}
+	return nil
 }
 
 // ContainerByID returns the special container by id.
