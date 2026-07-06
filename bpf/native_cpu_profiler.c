@@ -212,6 +212,22 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 		return 0;
 	}
 
+	/*
+	 * Global ARRAY + atomic add is intentional; do NOT switch to PERCPU.
+	 *
+	 * Userspace drains the A/B perf ring by comparing the number of events
+	 * it has read (aggregated across all CPUs) against this counter, then
+	 * writes 0 to reset it for the next round. The comparison requires a
+	 * single global total that is safe to read atomically. A PERCPU map
+	 * would force userspace to sum per-CPU shards, which is a torn read
+	 * under concurrent samples and would cause premature drain-loop exit
+	 * (missed events). The cross-core cache contention of this atomic add
+	 * is negligible at typical sampling frequencies (e.g. 99Hz/CPU).
+	 *
+	 * Do NOT delete this comment unless the A/B reconciliation protocol
+	 * in userspace (see cmd/profiler/provider/native_cpu_profiler.go
+	 * drainActiveRing) is redesigned.
+	 */
 	__sync_fetch_and_add(sample_count_ptr, 1);
 
 	/* Output to perf_event_array: pass the map address (profiler_output) */
