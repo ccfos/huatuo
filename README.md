@@ -19,7 +19,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/⚡_eBPF-Zero_Instrumentation-blue" alt="Fast startup" />
-  <img src="https://img.shields.io/badge/🔒_Observability-Linux_Kernel,_Hardware_Level-critical" alt="Hardware-level observability" />
+  <img src="https://img.shields.io/badge/🔒_Observability-Agent_Sandbox,_Linux_Kernel,_Hardware_Level-critical" alt="Hardware-level observability" />
   <img src="https://img.shields.io/badge/📦_Deploy-Large_Scale-orange" alt="large scale" />
 </p>
 
@@ -31,7 +31,7 @@
 
 ---
 
-# What is HUATUO
+## What is HUATUO
 
 **HUATUO** is a cloud-native operating system observability project open-sourced by **DIDI** and incubated under the **CCF**. It delivers kernel-level observability for general-purpose cloud-native computing, AI computing, and bare-metal infrastructure services.
 By integrating Linux kernel dynamic tracing technologies like **kprobe**, **tracepoint**, **ftrace**, and **eBPF**, HUATUO provides kernel-wide insights: finer-grained metrics, automatic context capture from kernel runtime, and intelligent tracing.
@@ -39,7 +39,7 @@ Deployed at scale in Didi’s production environment, HUATUO plays a key role in
 
 HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=observability-and-analysis--observability--huatuo).
 
-# Key Features
+## Key Features
 
 - **Kernel-Wide Insight**: Leverages BPF to maintain performance overhead below 1%, delivering full-stack, low-level observability insights into Linux kernel subsystems like MM, CPU scheduling, networking, and block I/O.
 - **Instant Observability**: An event-driven runtime context capture mechanism that instruments kernel slow paths. It automatically triggers on events such as page faults, scheduling delays, generating detailed data for immediate analysis.
@@ -48,15 +48,15 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 - **Distributed Tracing**: Network-centric distributed tracing for service requests, which maps system call hierarchies and node relationships. It provides end-to-end visibility of microservice interactions in large-scale distributed systems.
 - **Ecosystem Integration**: Integration with mainstream open-source observability stacks like Prometheus, Grafana, Pyroscope, and Elasticsearch. It automatically associates K8s container labels/annotations. Achieved through zero-instrumentation, kernel-level programming with eBPF, ensuring broad compatibility across hardware platforms and Linux distributions.
 
-# Big Picture
+## Big Picture
 
 ![](/docs/img/hardware-errors-huatuo-framework.png)
 
-# Ecosystem
+## Ecosystem
 
 ![](/docs/img/huatuo-ecosystem.svg)
 
-# Getting Started
+## Getting Started
 
 - **Quick Run**
 
@@ -84,7 +84,7 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
   Do not deploy images with the latest tag to production environments, as this is a development and testing image. Use a formal release image or binary.
 
 
-# Kernel Versions
+## Kernel Versions
 
 The project supports kernel version 4.18 and later. The following kernel and OS distribution are primarily tested.
 
@@ -99,15 +99,23 @@ The project supports kernel version 4.18 and later. The following kernel and OS 
 | 1.0.0  | 6.14.x         | Fedora 42                                     |
 | 2.3.0  | 7.0.x          | Ubuntu 26.04                                  |
 
-# Documentation
+## Documentation
 
 For more information, visit [https://docs.huatuo.tech](https://docs.huatuo.tech/)
 
-# Contact Us
+## Community Co-Building
+
+- ❇️ We welcome all users, developers, companies, and organizations to use Huatuo, report bugs, submit feature requests, share best practices, and help us build a professional and vibrant open-source community.
+- ❤️ HUATUO Contributors
+<a href="https://github.com/ccfos/huatuo/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=ccfos/huatuo" />
+</a>
+
+## Contact Us
 - WeChat Group and Official Account:
 
 ![](/docs/img/contact-weixin.png)
 
-# License
+## License
 
 This project is open source under the Apache License 2.0. The BPF code is licensed under the GPL license.
