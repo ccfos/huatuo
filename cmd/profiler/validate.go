@@ -169,6 +169,10 @@ func validateCommonOptions(ctx *cli.Context) error {
 		}
 	}
 
+	if ctx.String("output-format") == "remote" && ctx.String("output-storage") == "" {
+		return fmt.Errorf("--output-storage must not be empty when --output-format=remote")
+	}
+
 	return nil
 }
 

@@ -17,6 +17,7 @@ package aggregator
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/internal/log"
@@ -24,7 +25,11 @@ import (
 	profctx "huatuo-bamai/internal/profiler/context"
 )
 
-func (p *Pipeline) saveProfilingDocument(ctx context.Context, data any) error {
+func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
+	if p.pctx.ToolstreamClient == nil {
+		return fmt.Errorf("toolstream client not initialized")
+	}
+
 	if len(p.pctx.CpuIdleMetaData) != 0 && len(p.pctx.CpuSysMetaData) != 0 {
 		return fmt.Errorf("cpu idle and sys metadata are both set; only one is allowed")
 	}
@@ -60,24 +65,26 @@ func (p *Pipeline) saveProfilingDocument(ctx context.Context, data any) error {
 		MetaData:   autoMeta,
 	}
 
-	doc := profiler.ProfilingDocumentMapper{}.CreateProfilingDocument(p.pctx.MetaData, p.pctx.ContainerID, p.pctx.ServerAddress)
-	if doc == nil {
-		return fmt.Errorf("failed to build profiler document")
+	tracerID := p.pctx.MetaData["tracer_id"]
+	if tracerID == "" {
+		tracerID = p.tracerID
 	}
 
-	doc.TracerData = tracerData
-
-	if doc.TracerID == "" {
-		doc.TracerID = p.tracerID
+	ev := &autotracing.ProfilerEvent{
+		TracerID:      tracerID,
+		ContainerID:   p.pctx.ContainerID,
+		TracerName:    p.pctx.MetaData["tracer_name"],
+		TracerRunType: p.pctx.MetaData["tracer_type"],
+		TracerTime:    time.Now().Format("2006-01-02 15:04:05.000 -0700"),
+		TracerData:    tracerData,
 	}
 
-	if p.pctx.DataSaver != nil {
-		if err := p.pctx.DataSaver.Save(ctx, doc); err != nil {
-			log.WithField("tracer_id", p.tracerID).Errorf("failed to save profiling metadata: %v", err)
-		}
+	if err := p.pctx.ToolstreamClient.Send(ev); err != nil {
+		log.WithField("tracer_id", tracerID).Errorf("failed to send profiling event: %v", err)
+		return err
 	}
 
-	log.WithField("tracer_id", doc.TracerID).Infof("profiling document saved")
+	log.WithField("tracer_id", tracerID).Infof("profiling event sent via toolstream")
 
 	return nil
 }

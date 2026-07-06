@@ -110,7 +110,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-format",
-		Usage: "Output format for profiling: collapsed|pprof|es|flamegraph|svg",
+		Usage: "Output format for profiling: collapsed|pprof|flamegraph|svg|remote",
 		Value: "collapsed",
 	},
 	&cli.IntFlag{
@@ -119,20 +119,9 @@ var appFlags = []cli.Flag{
 		Value: 10,
 	},
 	&cli.StringFlag{
-		Name:  "es-address",
-		Usage: "address for ES client",
-	},
-	&cli.StringFlag{
-		Name:  "es-username",
-		Usage: "username for ES client",
-	},
-	&cli.StringFlag{
-		Name:  "es-password",
-		Usage: "password for ES client",
-	},
-	&cli.StringFlag{
-		Name:  "es-index",
-		Usage: "index for ES client",
+		Name:  "output-storage",
+		Usage: "Unix socket path for remote upload (used with --output-format=remote)",
+		Value: "/var/run/huatuo-toolstream.sock",
 	},
 	&cli.StringSliceFlag{
 		Name:  "metadata",

@@ -21,6 +21,7 @@ import (
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/pkg/tracing"
@@ -79,6 +80,25 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 	}
 	if esStore != nil {
 		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
+	}
+
+	if cfg.Storage.ES.Address != "" &&
+		cfg.Storage.ES.Username != "" &&
+		cfg.Storage.ES.Password != "" {
+		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
+			Driver:      "elasticsearch",
+			ESAddresses: splitStorageAddresses(cfg.Storage.ES.Address),
+			ESUsername:  cfg.Storage.ES.Username,
+			ESPassword:  cfg.Storage.ES.Password,
+			ESIndex:     "profiling_metadata",
+		}, profiler.ProfilingDocumentMapper{})
+		if err != nil {
+			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)
+		}
+		tracing.SetProfileStore(
+			[]*storage.Store[*tracing.Document]{profileStore},
+			tracing.DocumentOptions{Region: storageRegion},
+		)
 	}
 
 	return nil

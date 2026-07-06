@@ -15,32 +15,59 @@
 package profiler
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
+
+	"huatuo-bamai/pkg/tracing"
 )
 
-func TestFetchProfilingMetadataContainerEscapesContainerID(t *testing.T) {
-	var requestURI string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestURI = r.URL.RequestURI()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"data":[{"id":"container-2026","hostname":"huatuo-dev","type":"normal","qos":"besteffort","labels":{"app":"demo"}}]}`)
-	}))
-	defer server.Close()
-
-	serverAddr := strings.TrimPrefix(server.URL, "http://")
-
-	container, err := fetchProfilingMetadataContainer(serverAddr, "container+2026&debug")
-	if err != nil {
-		t.Fatalf("fetchProfilingMetadataContainer() error = %v", err)
+func TestExtractProfilingMetadataProfileType(t *testing.T) {
+	tests := []struct {
+		name       string
+		tracerData any
+		want       string
+	}{
+		{
+			name:       "nil data",
+			tracerData: nil,
+			want:       "",
+		},
+		{
+			name: "valid profile type",
+			tracerData: map[string]any{
+				"flamedata": map[string]any{
+					"profile_type": "cpu",
+				},
+			},
+			want: "cpu",
+		},
+		{
+			name:       "missing flamedata",
+			tracerData: map[string]any{"other": "value"},
+			want:       "",
+		},
 	}
-	if container == nil || container.ID != "container-2026" {
-		t.Fatalf("container = %+v, want container-2026", container)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractProfilingMetadataProfileType(tt.tracerData)
+			if got != tt.want {
+				t.Errorf("extractProfilingMetadataProfileType() = %q, want %q", got, tt.want)
+			}
+		})
 	}
-	if !strings.Contains(requestURI, "container_id=container%2B2026%26debug") {
-		t.Fatalf("requestURI = %q, want escaped container_id", requestURI)
+}
+
+func TestProfilingDocumentMapperCollection(t *testing.T) {
+	m := ProfilingDocumentMapper{}
+	if got := m.Collection(); got != "profiling_metadata" {
+		t.Errorf("Collection() = %q, want %q", got, "profiling_metadata")
+	}
+}
+
+func TestProfilingDocumentMapperID(t *testing.T) {
+	m := ProfilingDocumentMapper{}
+	doc := &tracing.Document{TracerID: "test-id-123"}
+	if got := m.ID(doc); got != "test-id-123" {
+		t.Errorf("ID() = %q, want %q", got, "test-id-123")
 	}
 }

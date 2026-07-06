@@ -31,14 +31,13 @@ const (
 	FormatCollapsed  OutputFormat = "collapsed"
 	FormatFlameGraph OutputFormat = "flamegraph"
 	FormatSVG        OutputFormat = "svg"
-	FormatPprof      OutputFormat = "pprof" // reserved; not yet implemented
-	FormatES         OutputFormat = "es"
+	FormatPprof      OutputFormat = "pprof"  // reserved; not yet implemented
+	FormatRemote     OutputFormat = "remote" // upload to a remote storage backend
 )
 
-// IsUpload reports whether the format requires upload to a backend.
-// Only FormatES triggers the upload path; FormatPprof is reserved.
+// IsUpload reports whether the format uploads to a remote storage backend.
 func (f OutputFormat) IsUpload() bool {
-	return f == FormatES
+	return f == FormatRemote
 }
 
 // IsFlameGraph reports whether the format renders a flame graph (flamegraph or svg).

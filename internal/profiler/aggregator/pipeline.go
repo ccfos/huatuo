@@ -16,6 +16,8 @@ package aggregator
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -74,7 +76,9 @@ func (p *Pipeline) runAggregationExport() {
 
 	if p.pctx.IsOneShotAgg {
 		<-p.stopCh
-		p.aggregateAndExport(p.pctx.Ctx, true)
+		if err := p.aggregateAndExport(p.pctx.Ctx, true); err != nil {
+			log.WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed: %v", err)
+		}
 
 		return
 	}
@@ -85,9 +89,13 @@ func (p *Pipeline) runAggregationExport() {
 	for {
 		select {
 		case <-ticker.C:
-			p.aggregateAndExport(p.pctx.Ctx, false)
+			if err := p.aggregateAndExport(p.pctx.Ctx, false); err != nil {
+				log.WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed: %v", err)
+			}
 		case <-p.stopCh:
-			p.aggregateAndExport(p.pctx.Ctx, true)
+			if err := p.aggregateAndExport(p.pctx.Ctx, true); err != nil {
+				log.WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed: %v", err)
+			}
 
 			return
 		}
@@ -131,48 +139,46 @@ func (p *Pipeline) Enqueue(data any) {
 	}
 }
 
-func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) {
+func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) error {
 	if p.pctx.OutputFormat.IsUpload() {
 		data, err := p.aggr.Snapshot(p.pctx)
 		if err != nil {
-			log.Errorf("aggregate error: %v", err)
-
-			return
+			return fmt.Errorf("aggregate snapshot: %w", err)
 		}
 
-		if data != nil {
-			if err := p.saveProfilingDocument(ctx, data); err != nil {
-				log.WithField("tracer_id", p.tracerID).Errorf("upload to ES failed: %v", err)
-			} else {
-				p.aggr.Reset()
-			}
-		} else {
-			log.Warnf("upload enabled but snapshot returned nil")
+		if data == nil {
+			return nil
 		}
 
-		return
+		if err := p.saveProfilingDocument(ctx, data); err != nil {
+			return fmt.Errorf("upload profiling document: %w", err)
+		}
+
+		p.aggr.Reset()
+		return nil
+	}
+
+	if !final {
+		return nil
 	}
 
 	// Non-upload mode: write directly from the folded formatter.
 	formatter := p.aggr.OutputFormatter()
-
-	if final {
-		if formatter == nil || formatter.IsEmpty() {
-			log.Warnf("no profiling samples collected; nothing written")
-
-			return
-		}
-
-		if p.pctx.OutputFormat.IsFlameGraph() {
-			if err := writeFlameGraph(p.pctx.OutputPath, formatter); err != nil {
-				log.WithField("output_path", p.pctx.OutputPath).Errorf("write to SVG failed: %v", err)
-			}
-		} else {
-			if err := writeFolded(p.pctx.OutputPath, formatter); err != nil {
-				log.WithField("output_path", p.pctx.OutputPath).Errorf("write to file failed: %v", err)
-			}
-		}
-
-		p.aggr.Reset()
+	if formatter == nil || formatter.IsEmpty() {
+		return errors.New("no profiling samples collected; nothing written")
 	}
+
+	if p.pctx.OutputFormat.IsFlameGraph() {
+		if err := writeFlameGraph(p.pctx.OutputPath, formatter); err != nil {
+			return fmt.Errorf("write flamegraph SVG to %q: %w", p.pctx.OutputPath, err)
+		}
+	} else {
+		if err := writeFolded(p.pctx.OutputPath, formatter); err != nil {
+			return fmt.Errorf("write folded output to %q: %w", p.pctx.OutputPath, err)
+		}
+	}
+
+	p.aggr.Reset()
+
+	return nil
 }

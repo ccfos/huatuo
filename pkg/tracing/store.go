@@ -49,6 +49,7 @@ type WriteRequest struct {
 var (
 	tracingDataWriter *documentWriter
 	taskDataWriter    *documentWriter
+	profileDataWriter *documentWriter
 )
 
 // SetTracingStore configures stores for tracing documents.
@@ -82,6 +83,29 @@ func SetTaskStore(stores []*storage.Store[*Document], options DocumentOptions) {
 	}
 
 	taskDataWriter = newDocumentWriter(stores, options)
+}
+
+// SetProfileStore configures stores for profiling documents.
+func SetProfileStore(stores []*storage.Store[*Document], options DocumentOptions) {
+	if len(stores) == 0 {
+		profileDataWriter = nil
+		return
+	}
+
+	profileDataWriter = newDocumentWriter(stores, options)
+}
+
+// SaveProfile writes profiling data when a profile document store is configured.
+func SaveProfile(req *WriteRequest) error {
+	if profileDataWriter == nil {
+		return nil
+	}
+
+	if req.TracerRunType == "" {
+		req.TracerRunType = TracerRunTypeAutotracing
+	}
+
+	return profileDataWriter.saveRaw(req)
 }
 
 // SaveTaskOutputText stores task output as plain text.
@@ -132,6 +156,9 @@ func CloseStores(ctx context.Context) error {
 	}
 	if taskDataWriter != nil {
 		closeAll(taskDataWriter.stores)
+	}
+	if profileDataWriter != nil {
+		closeAll(profileDataWriter.stores)
 	}
 	return errors.Join(errs...)
 }

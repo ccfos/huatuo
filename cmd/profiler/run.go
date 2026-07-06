@@ -41,6 +41,9 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 		return err
 	}
 	defer pctx.Cancel()
+	if pctx.ToolstreamClient != nil {
+		defer pctx.ToolstreamClient.End()
+	}
 
 	meta, err := registry.Get(lang, typ)
 	if err != nil {

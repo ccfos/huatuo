@@ -27,10 +27,7 @@ import (
 	_ "huatuo-bamai/internal/profiler/output/flamegraph"
 	_ "huatuo-bamai/internal/profiler/output/raw"
 	psignal "huatuo-bamai/internal/profiler/signal"
-	"huatuo-bamai/internal/profiler/strutil"
-	"huatuo-bamai/internal/storage"
-	"huatuo-bamai/internal/storage/driver"
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/internal/toolstream"
 
 	"github.com/urfave/cli/v2"
 )
@@ -64,7 +61,7 @@ type ProfilerContext struct {
 	CpuIdleMetaData map[string]int64
 	CpuSysMetaData  map[string]int64
 
-	DataSaver *storage.Store[*tracing.Document]
+	ToolstreamClient *toolstream.Client
 }
 
 type TracerData struct {
@@ -115,7 +112,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 
 	outputFormat := output.OutputFormat(cliCtx.String("output-format"))
 
-	dataSaver, err := initESStorage(cliCtx, outputFormat)
+	tsClient, err := initToolstreamClient(cliCtx, outputFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +145,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		CpuSysMetaData:  cpusysMeta,
 		CpuIdleMetaData: cpuidleMeta,
 
-		DataSaver: dataSaver,
+		ToolstreamClient: tsClient,
 	}, nil
 }
 
@@ -162,10 +159,6 @@ func MapToStructByJSON[T any](m map[string]int64) (T, error) {
 
 	err = json.Unmarshal(data, &meta)
 	return meta, err
-}
-
-func splitStorageAddresses(raw string) []string {
-	return strutil.SplitCommaList(raw)
 }
 
 type flagSegment struct {
@@ -247,25 +240,24 @@ func parseExtraFlagsInt64(flagList []string) (map[string]int64, error) {
 	return flags, nil
 }
 
-func initESStorage(cliCtx *cli.Context, format output.OutputFormat) (*storage.Store[*tracing.Document], error) {
-	if format != output.FormatES {
+func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*toolstream.Client, error) {
+	if format != output.FormatRemote {
 		return nil, nil
 	}
 
-	store, err := storage.NewFromConfig[*tracing.Document](
-		context.Background(),
-		&driver.Config{
-			Driver:      "elasticsearch",
-			ESAddresses: splitStorageAddresses(cliCtx.String("es-address")),
-			ESUsername:  cliCtx.String("es-username"),
-			ESPassword:  cliCtx.String("es-password"),
-			ESIndex:     cliCtx.String("es-index"),
-		},
-		profiler.ProfilingDocumentMapper{},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("storage.New(profiling metadata): %w", err)
+	sockPath := cliCtx.String("output-storage")
+	if sockPath == "" {
+		return nil, fmt.Errorf("--output-storage is required when --output-format=remote")
 	}
 
-	return store, nil
+	client, err := toolstream.NewClient(toolstream.ClientOptions{
+		SockPath: sockPath,
+		ToolName: "profiler",
+		Version:  "1",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("toolstream connect %s: %w", sockPath, err)
+	}
+
+	return client, nil
 }
