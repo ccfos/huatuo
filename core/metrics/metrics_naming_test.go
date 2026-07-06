@@ -106,7 +106,6 @@ func findMetricCalls(t *testing.T, dir string) []metricCallInfo {
 
 		return nil
 	})
-
 	if err != nil {
 		t.Fatalf("filepath.Walk failed: %v", err)
 	}
