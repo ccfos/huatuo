@@ -1009,11 +1009,11 @@ This section controls the runtime behavior of the `POST /v1/events/watch` SSE st
 
   **Description**: If three consecutive write attempts (ping or event data) fail, the server considers the client gone and closes the connection, releasing all associated resources. Set this value below the idle-timeout of any upstream proxy. Common production values are 15–60s.
 
-### 11. Command-Line Flags
+### 11. CLI Flags
 
 `huatuo-bamai` supports the following command-line flags:
 
-```
+```bash
 huatuo-bamai --region <region> [options]
 ```
 

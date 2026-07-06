@@ -1030,7 +1030,7 @@ IssuesList = []
 
 `huatuo-bamai` 支持以下命令行参数：
 
-```
+```bash
 huatuo-bamai --region <region> [选项]
 ```
 
