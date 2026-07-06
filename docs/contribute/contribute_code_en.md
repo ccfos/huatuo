@@ -138,7 +138,7 @@ Then go to [ccfos/huatuo](https://github.com/ccfos/huatuo) and create a **draft*
 
 HUATUO follows [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
+```text
 <type>(<scope>): <description>
 
 [optional body]
@@ -160,7 +160,7 @@ HUATUO follows [Conventional Commits](https://www.conventionalcommits.org/):
 
 ### Examples
 
-```
+```text
 fix(pod): preserve response body read errors in httpDoRequest
 feat(bpf): add probe for kernel scheduling latency
 docs(contributing): add development setup guide

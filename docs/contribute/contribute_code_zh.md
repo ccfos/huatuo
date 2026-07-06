@@ -139,7 +139,7 @@ git push origin your-branch-name
 
 HUATUO 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
 
-```
+```text
 <type>(<scope>): <description>
 
 [可选正文]
@@ -161,7 +161,7 @@ HUATUO 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规�
 
 ### 示例
 
-```
+```text
 fix(pod): preserve response body read errors in httpDoRequest
 feat(bpf): add probe for kernel scheduling latency
 docs(contributing): add development setup guide
@@ -189,7 +189,7 @@ test(request): verify response body is readable after doRequest
 
 每次提交必须以以下内容结尾：
 
-```
+```bash
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
