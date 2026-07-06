@@ -15,6 +15,7 @@
 package handlers
 
 import (
+	"math"
 	"net/http"
 	"reflect"
 
@@ -48,7 +49,11 @@ func (h *ConfigHandler) update(ctx *server.Context) error {
 
 	for k, v := range req.Config {
 		if reflect.ValueOf(v).Kind() == reflect.Float64 {
-			v = int(v.(float64))
+			f := v.(float64)
+			if f > math.MaxInt64 || f < math.MinInt64 {
+				return response.ErrInvalidRequest.WithMessage("integer value out of range")
+			}
+			v = int64(f)
 		}
 		if err := config.Set(k, v); err != nil {
 			return response.ErrInvalidRequest.WithMessage(err.Error())
