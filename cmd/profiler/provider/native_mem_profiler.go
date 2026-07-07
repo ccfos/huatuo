@@ -35,16 +35,16 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/pm_retained2.c -o $BPF_DIR/pm_retained2.o
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/vm_accumulative2.c -o $BPF_DIR/vm_accumulative2.o
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/pm_accumulative2.c -o $BPF_DIR/pm_accumulative2.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_physical_usage.c -o $BPF_DIR/native_physical_usage.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_virtual_alloc.c -o $BPF_DIR/native_virtual_alloc.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_physical_alloc.c -o $BPF_DIR/native_physical_alloc.o
 
 const memDrainTick = 100 * time.Millisecond
 
 const (
-	modeVMAccu     = "vm_accumulative"
-	modePMRetained = "pm_retained"
-	modePMAccu     = "pm_accumulative"
+	modeVirtualAlloc  = "native_virtual_alloc"
+	modePhysicalUsage = "native_physical_usage"
+	modePhysicalAlloc = "native_physical_alloc"
 )
 
 type memNativeProfiler struct {
@@ -72,7 +72,7 @@ func init() {
 	registry.Register(registry.ProfilerMeta{
 		Type:          "mem",
 		LangOrImpl:    "native",
-		Description:   "Native memory profiler using ebpf (vm/pm accumulated & retained)",
+		Description:   "Native memory profiler using eBPF (virtual_alloc, physical_alloc, physical_usage modes)",
 		Impl:          impl,
 		NewAggregator: impl.NewAggregator,
 	})
@@ -81,7 +81,7 @@ func init() {
 // NewAggregator stamps OneShotAgg before construction for retained mode —
 // alloc/free deltas must collapse in a single shot, not stream every interval.
 func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	if mode, err := resolveMemMode(pctx.ExtraFlags["mode"]); err == nil && mode == modePMRetained {
+	if mode, err := resolveMemMode(pctx.ExtraFlags["mode"]); err == nil && mode == modePhysicalUsage {
 		pctx.IsOneShotAgg = true
 	}
 
@@ -153,16 +153,12 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 func resolveMemMode(mode string) (string, error) {
 	if mode == "" {
-		mode = "native_physical_alloc"
+		mode = modePhysicalAlloc
 	}
 
 	switch mode {
-	case "native_virtual_alloc":
-		return modeVMAccu, nil
-	case "native_physical_usage":
-		return modePMRetained, nil
-	case "native_physical_alloc":
-		return modePMAccu, nil
+	case modeVirtualAlloc, modePhysicalUsage, modePhysicalAlloc:
+		return mode, nil
 	default:
 		return "", fmt.Errorf("invalid mode %q", mode)
 	}
@@ -180,7 +176,7 @@ func resolveProbability(probStr, internalMode string) (uint, error) {
 		probability = prob
 	}
 
-	if (internalMode == modePMRetained || internalMode == modePMAccu) && (probability < 1 || probability > 100) {
+	if (internalMode == modePhysicalUsage || internalMode == modePhysicalAlloc) && (probability < 1 || probability > 100) {
 		return 0, fmt.Errorf("probability must be between 1 and 100")
 	}
 
@@ -219,8 +215,8 @@ func resolveCgroupCSS(pctx *pcontext.ProfilerContext) (uint64, error) {
 
 func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads bool, probability uint) (string, map[string]any, []bpf.AttachOption, error) {
 	switch internalMode {
-	case modeVMAccu:
-		return "vm_accumulative2.o",
+	case modeVirtualAlloc:
+		return "native_virtual_alloc.o",
 			map[string]any{
 				"target_pid":    uint32(pid),
 				"target_css":    cssAddr,
@@ -230,8 +226,8 @@ func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads b
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
 			},
 			nil
-	case modePMRetained:
-		return "pm_retained2.o",
+	case modePhysicalUsage:
+		return "native_physical_usage.o",
 			map[string]any{
 				"target_pid":           uint32(pid),
 				"target_css":           cssAddr,
@@ -243,8 +239,8 @@ func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads b
 				{ProgramName: "trace_page_free", Symbol: "page_remove_rmap"},
 			},
 			nil
-	case modePMAccu:
-		return "pm_accumulative2.o",
+	case modePhysicalAlloc:
+		return "native_physical_alloc.o",
 			map[string]any{
 				"target_pid":           uint32(pid),
 				"target_css":           cssAddr,
@@ -480,9 +476,9 @@ func resolveStackStrs(
 
 func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 	switch p.internalMode {
-	case modeVMAccu:
+	case modeVirtualAlloc:
 		return v
-	case modePMAccu, modePMRetained:
+	case modePhysicalAlloc, modePhysicalUsage:
 		return v * p.pageSize * 100 / int64(p.probability)
 	}
 

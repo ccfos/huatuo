@@ -29,7 +29,7 @@ struct mem_event_t {
 	 * Kept here for a shared event layout.
 	 */
 	u32 stack_map_sel;
-	s64 value; /* bytes for vm_accumulative */
+	s64 value; /* bytes for native_virtual_alloc */
 };
 
 struct {

@@ -30,7 +30,7 @@ struct mem_event_t {
 	 * Kept here for a consistent mem event layout.
 	 */
 	u32 stack_map_sel;
-	s64 value; /* pages (always +1 for pm_accumulative) */
+	s64 value; /* pages (always +1 for native_physical_alloc) */
 };
 
 struct {
