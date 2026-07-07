@@ -17,12 +17,11 @@ package pod
 import (
 	"errors"
 	"fmt"
+	"huatuo-bamai/internal/log"
 	"regexp"
 	"sync"
 	"syscall"
 	"time"
-
-	"huatuo-bamai/internal/log"
 )
 
 // containerIDRegexp matches a 12-64 character hex container ID.
@@ -66,9 +65,18 @@ func (c *Container) LifeResources(key string) any {
 	return c.lifeResources[key]
 }
 
-// LabelHostNamespace returns namespace label
+// LabelHostNamespace returns the HostNamespace label.
+// Returns empty string if the label is missing or not a string,
+// preventing a runtime panic from a bare type assertion.
 func (c *Container) LabelHostNamespace() string {
-	return c.Labels[labelHostNamespace].(string)
+	if c == nil || c.Labels == nil {
+		return ""
+	}
+	v, ok := c.Labels[labelHostNamespace].(string)
+	if !ok {
+		return ""
+	}
+	return v
 }
 
 func (c *Container) InitPidOrInitnsPid() int {
