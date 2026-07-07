@@ -375,3 +375,173 @@ func containerCgroupCssRelease() {
 		cgroupCssBpfInternal = nil
 	}
 }
+
+// GetContainerCSSBySubsys retrieves the cgroup subsystem state (CSS) address for a specific
+// container and subsystem. It first checks the local cache, and if not found, triggers
+// a one-time BPF-based collection for that specific container.
+// This function is compatible with the existing containerCgroupCssInit logic.
+func GetContainerCSSBySubsys(containerID, subsysName string) (uint64, error) {
+	if containerID == "" {
+		return 0, nil
+	}
+
+	// Ensure subsystem IDs are initialized
+	if len(cgroupCssID2SubSysNameMap) == 0 {
+		if err := cgroupInitSubSysIDs(); err != nil {
+			return 0, fmt.Errorf("init subsystem IDs: %w", err)
+		}
+	}
+
+	// Check if CSS data already exists in cache
+	cssList := cgroupListCssDataByKnode(containerID)
+	for _, css := range cssList {
+		if css.SubSys == subsysName {
+			return css.CSS, nil
+		}
+	}
+
+	// CSS not found in cache, trigger one-time collection
+	if err := syncContainerCSS(containerID); err != nil {
+		return 0, fmt.Errorf("sync container CSS: %w", err)
+	}
+
+	// Retry lookup after sync
+	cssList = cgroupListCssDataByKnode(containerID)
+	for _, css := range cssList {
+		if css.SubSys == subsysName {
+			return css.CSS, nil
+		}
+	}
+
+	return 0, fmt.Errorf("container %q CSS for subsystem %q not found", containerID, subsysName)
+}
+
+// syncContainerCSS triggers a one-time BPF-based CSS collection for a specific container.
+// It finds the container's cgroup path, reads a notification file to trigger the BPF program,
+// and waits for the CSS data to be populated.
+func syncContainerCSS(containerID string) error {
+	// Find container cgroup path
+	cgroupPath, err := findContainerCgroupPath(containerID)
+	if err != nil {
+		return fmt.Errorf("find container cgroup path: %w", err)
+	}
+
+	if cgroupPath == "" {
+		return fmt.Errorf("container %q cgroup path not found", containerID)
+	}
+
+	// Load BPF for one-time sync (similar to cgroupCssExistedSync but targeted)
+	if err := triggerContainerCSSSync(cgroupPath); err != nil {
+		return fmt.Errorf("trigger CSS sync: %w", err)
+	}
+
+	return nil
+}
+
+// findContainerCgroupPath searches for the cgroup path of a specific container ID.
+func findContainerCgroupPath(containerID string) (string, error) {
+	var foundPath string
+
+	switch cgroups.CgroupMode() {
+	case cgroups.Legacy, cgroups.Hybrid:
+		for _, subsys := range cgroupv1SubSysName {
+			root := cgroups.RootFsFilePath(subsys)
+			realRoot, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				continue
+			}
+
+			// Search for container ID in cgroup path
+			_ = filepath.WalkDir(realRoot, func(path string, d fs.DirEntry, err error) error {
+				if err != nil || !d.IsDir() {
+					return nil
+				}
+
+				if strings.Contains(d.Name(), containerID) {
+					foundPath = path
+					return fs.SkipAll
+				}
+
+				return nil
+			})
+
+			if foundPath != "" {
+				break
+			}
+		}
+	case cgroups.Unified:
+		_ = filepath.WalkDir(cgroups.RootfsDefaultPath(), func(path string, d fs.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				return nil
+			}
+
+			if strings.Contains(d.Name(), containerID) {
+				foundPath = path
+				return fs.SkipAll
+			}
+
+			return nil
+		})
+	}
+
+	return foundPath, nil
+}
+
+// triggerContainerCSSSync loads BPF and triggers CSS collection for a specific cgroup path.
+func triggerContainerCSSSync(cgroupPath string) error {
+	// Load BPF for CSS collection
+	cssBpf, err := bpf.LoadBpf("cgroup_css_sync.o", nil)
+	if err != nil {
+		return fmt.Errorf("load BPF: %w", err)
+	}
+	defer cssBpf.Close()
+
+	childCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Attach BPF programs
+	if err := cssBpf.AttachWithOptions([]bpf.AttachOption{
+		{
+			ProgramName: "bpf_cgroup_subsys_state_prog",
+			Symbol:      "cgroup_clone_children_read",
+		},
+		{
+			ProgramName: "bpf_cgroup_subsys_state_prog",
+			Symbol:      "memory_current_read",
+		},
+	}); err != nil {
+		return fmt.Errorf("attach BPF: %w", err)
+	}
+
+	// Create event reader
+	reader, err := cssBpf.EventPipeByName(childCtx, "cgroup_perf_events", 8192)
+	if err != nil {
+		return fmt.Errorf("create event pipe: %w", err)
+	}
+	defer reader.Close()
+
+	// Start event handler
+	cgroupCssEventSyncHandler(childCtx, reader)
+
+	// Give BPF time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Trigger notification by reading the file
+	var notifyFile string
+	switch cgroups.CgroupMode() {
+	case cgroups.Legacy, cgroups.Hybrid:
+		notifyFile = cgroupv1NotifyFile
+	case cgroups.Unified:
+		notifyFile = cgroupv2NotifyFile
+	}
+
+	notifyPath := filepath.Join(cgroupPath, notifyFile)
+	_, _ = os.ReadFile(notifyPath)
+
+	log.Debugf("triggered CSS sync for cgroup path: %s", cgroupPath)
+
+	// Wait for CSS data to be collected
+	time.Sleep(500 * time.Millisecond)
+
+	return nil
+}

@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
 	"huatuo-bamai/internal/profiler/bpfmap"
@@ -125,7 +124,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	log.Info("starting native mem profiler", "mode", p.internalMode)
 
-	cssAddr, err := resolveCgroupCSS(pctx)
+	cssAddr, err := resolveContainerCgroupCss(pctx, "memory")
 	if err != nil {
 		return err
 	}
@@ -199,23 +198,6 @@ func resolveScope(scope string) (bool, error) {
 	default:
 		return false, fmt.Errorf("unsupported scope for mem profiler: %q", scope)
 	}
-}
-
-func resolveCgroupCSS(pctx *pcontext.ProfilerContext) (uint64, error) {
-	if pctx.ContainerID == "" {
-		return 0, nil
-	}
-
-	c, err := container.GetContainerByID(pctx.ServerAddress, pctx.ContainerID)
-	if err != nil {
-		return 0, err
-	}
-
-	if c == nil {
-		return 0, fmt.Errorf("container %q not found", pctx.ContainerID)
-	}
-
-	return c.CgroupCss["memory"], nil
 }
 
 // bpfLoadConfig holds the configuration needed to load and attach a BPF program.

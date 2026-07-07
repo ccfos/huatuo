@@ -26,7 +26,6 @@ import (
 	"github.com/cilium/ebpf"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
 	"huatuo-bamai/internal/profiler/bpfmap"
@@ -89,14 +88,9 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	log.Infof("starting native cpu profiler")
 
-	var cssAddr uint64
-	if containerID := pctx.ContainerID; containerID != "" {
-		c, err := container.GetContainerByID(pctx.ServerAddress, containerID)
-		if err != nil {
-			return err
-		}
-
-		cssAddr = c.CgroupCss["cpu"]
+	cssAddr, err := resolveContainerCgroupCss(pctx, "cpu")
+	if err != nil {
+		return err
 	}
 
 	p.dbg = bpf.NewDbg(pctx.LogBpfDebug)
