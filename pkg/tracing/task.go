@@ -80,7 +80,7 @@ type task struct {
 	error        error              // Error encountered during task execution.
 	storage      TaskStorageType    // Type of data produced by the task.
 	cancelFunc   context.CancelFunc // Function to cancel the task.
-	deadlineTime time.Time         // Time after which the task will be automatically deleted.
+	deadlineTime time.Time          // Time after which the task will be automatically deleted.
 }
 
 var (
