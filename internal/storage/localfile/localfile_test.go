@@ -74,7 +74,7 @@ func TestBackendSaveMkdirAllError(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	// Ensure cleanup can remove it even though it's read-only.
-	t.Cleanup(func() { os.Chmod(readOnlyDir, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(readOnlyDir, 0o755) })
 
 	// Use a subdirectory under the read-only dir that doesn't exist.
 	// MkdirAll will fail because the parent is read-only.
