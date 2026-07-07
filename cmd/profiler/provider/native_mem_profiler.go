@@ -98,6 +98,10 @@ func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if err := requireRoot(); err != nil {
+		return err
+	}
+
 	p.pageSize = int64(os.Getpagesize())
 
 	internalMode, err := resolveMemMode(pctx.ExtraFlags["mode"])
@@ -117,10 +121,6 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	traceThreads, err := resolveScope(pctx.Scope)
 	if err != nil {
 		return err
-	}
-
-	if os.Geteuid() != 0 {
-		return fmt.Errorf("eBPF features requires root privileges")
 	}
 
 	log.Info("starting native mem profiler", "mode", p.internalMode)
