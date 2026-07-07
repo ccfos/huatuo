@@ -130,19 +130,19 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	bpfObjName, consts, opts, err := bpfPlanForMode(p.internalMode, pctx.PID, cssAddr, traceThreads, p.probability)
+	cfg, err := newBpfLoadConfig(p.internalMode, pctx.PID, cssAddr, traceThreads, p.probability)
 	if err != nil {
 		return err
 	}
 
 	dbg := bpf.NewDbg(pctx.LogBpfDebug)
 
-	b, err := bpf.LoadBpf(bpfObjName, dbg.WithBpfDbg(consts))
+	b, err := bpf.LoadBpf(cfg.ObjectFile, dbg.WithBpfDbg(cfg.Constants))
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
 
-	if err := b.AttachWithOptions(opts); err != nil {
+	if err := b.AttachWithOptions(cfg.AttachOpts); err != nil {
 		if cerr := b.Close(); cerr != nil {
 			log.Warn("closing eBPF after attach failure", "error", cerr)
 		}
@@ -218,47 +218,62 @@ func resolveCgroupCSS(pctx *pcontext.ProfilerContext) (uint64, error) {
 	return c.CgroupCss["memory"], nil
 }
 
-func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads bool, probability uint) (string, map[string]any, []bpf.AttachOption, error) {
+// bpfLoadConfig holds the configuration needed to load and attach a BPF program.
+type bpfLoadConfig struct {
+	// ObjectFile is the BPF object file name (e.g., "native_virtual_alloc.o").
+	ObjectFile string
+	// Constants are the constant values to be substituted in the BPF program.
+	Constants map[string]any
+	// AttachOpts specifies how to attach the BPF program to kernel hooks.
+	AttachOpts []bpf.AttachOption
+}
+
+// newBpfLoadConfig creates a BPF load configuration based on the profiler mode.
+// It returns the appropriate object file, constants, and attachment options for the given mode.
+func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads bool, probability uint) (*bpfLoadConfig, error) {
 	switch internalMode {
 	case modeVirtualAlloc:
-		return "native_virtual_alloc.o",
-			map[string]any{
+		return &bpfLoadConfig{
+			ObjectFile: "native_virtual_alloc.o",
+			Constants: map[string]any{
 				"target_pid":    uint32(pid),
 				"target_css":    cssAddr,
 				"trace_threads": traceThreads,
 			},
-			[]bpf.AttachOption{
+			AttachOpts: []bpf.AttachOption{
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
 			},
-			nil
+		}, nil
 	case modePhysicalUsage:
-		return "native_physical_usage.o",
-			map[string]any{
+		return &bpfLoadConfig{
+			ObjectFile: "native_physical_usage.o",
+			Constants: map[string]any{
 				"target_pid":           uint32(pid),
 				"target_css":           cssAddr,
 				"trace_threads":        traceThreads,
 				"sampling_probability": uint8(probability),
 			},
-			[]bpf.AttachOption{
+			AttachOpts: []bpf.AttachOption{
 				{ProgramName: "trace_page_alloc", Symbol: "page_add_new_anon_rmap"},
 				{ProgramName: "trace_page_free", Symbol: "page_remove_rmap"},
 			},
-			nil
+		}, nil
 	case modePhysicalAlloc:
-		return "native_physical_alloc.o",
-			map[string]any{
+		return &bpfLoadConfig{
+			ObjectFile: "native_physical_alloc.o",
+			Constants: map[string]any{
 				"target_pid":           uint32(pid),
 				"target_css":           cssAddr,
 				"trace_threads":        traceThreads,
 				"sampling_probability": uint8(probability),
 			},
-			[]bpf.AttachOption{
+			AttachOpts: []bpf.AttachOption{
 				{ProgramName: "trace_page_alloc", Symbol: "page_add_new_anon_rmap"},
 			},
-			nil
+		}, nil
 	}
 
-	return "", nil, nil, fmt.Errorf("unsupported mem profiler mode: %q", internalMode)
+	return nil, fmt.Errorf("unsupported mem profiler mode: %q", internalMode)
 }
 
 func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
