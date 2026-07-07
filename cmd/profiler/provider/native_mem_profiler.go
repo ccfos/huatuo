@@ -80,8 +80,13 @@ func init() {
 
 // NewAggregator stamps OneShotAgg before construction for retained mode —
 // alloc/free deltas must collapse in a single shot, not stream every interval.
-func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	if mode, err := resolveMemMode(pctx.ExtraFlags["mode"]); err == nil && mode == modePhysicalUsage {
+func (p *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
+	mode, err := resolveMemMode(pctx.ExtraFlags["mode"])
+	if err != nil {
+		return nil, err
+	}
+
+	if mode == modePhysicalUsage {
 		pctx.IsOneShotAgg = true
 	}
 
@@ -118,7 +123,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return fmt.Errorf("eBPF features requires root privileges")
 	}
 
-	log.Infof("starting native mem profiler, mode=%s", p.internalMode)
+	log.Info("starting native mem profiler", "mode", p.internalMode)
 
 	cssAddr, err := resolveCgroupCSS(pctx)
 	if err != nil {
@@ -139,14 +144,14 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	if err := b.AttachWithOptions(opts); err != nil {
 		if cerr := b.Close(); cerr != nil {
-			log.Warnf("closing eBPF after attach failure: %v", cerr)
+			log.Warn("closing eBPF after attach failure", "error", cerr)
 		}
 
 		return fmt.Errorf("failed to attach: %w", err)
 	}
 
 	p.bpf = b
-	log.Infof("eBPF attached")
+	log.Info("eBPF attached")
 
 	return nil
 }
@@ -257,8 +262,8 @@ func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads b
 }
 
 func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	log.Infof("data reading loop started")
-	defer log.Infof("data reading loop ended")
+	log.Info("data reading loop started")
+	defer log.Info("data reading loop ended")
 
 	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
 	if err != nil {
@@ -293,7 +298,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 				return nil
 			}
 
-			log.Warnf("drain: %v", err)
+			log.Warn("drain failed", "error", err)
 		}
 	}
 }
@@ -368,7 +373,7 @@ func (p *memNativeProfiler) drainActiveRing(
 				return err
 			}
 
-			log.Warnf("read after %d/%d events: %v", i, ring.sampleCount, err)
+			log.Warn("read event failed", "index", i, "total", ring.sampleCount, "error", err)
 			break
 		}
 
@@ -415,10 +420,11 @@ func emitDeltas(
 	usym *symbol.UsymResolver,
 	enqueue func(any),
 ) {
-	ustackCacheA := make(map[int32]string)
-	kstackCacheA := make(map[int32]string)
-	ustackCacheB := make(map[int32]string)
-	kstackCacheB := make(map[int32]string)
+	estimatedSize := len(deltaByKey)
+	ustackCacheA := make(map[int32]string, estimatedSize)
+	kstackCacheA := make(map[int32]string, estimatedSize)
+	ustackCacheB := make(map[int32]string, estimatedSize)
+	kstackCacheB := make(map[int32]string, estimatedSize)
 
 	for k, delta := range deltaByKey {
 		if delta == 0 {
@@ -482,7 +488,7 @@ func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 		return v * p.pageSize * 100 / int64(p.probability)
 	}
 
-	log.Warnf("unknown mem mode %q, value treated as zero", p.internalMode)
+	log.Warn("unknown mem mode, value treated as zero", "mode", p.internalMode)
 
 	return 0
 }
