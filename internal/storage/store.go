@@ -30,18 +30,18 @@ type Store[T any] struct {
 }
 
 // NewFromConfig creates a Store from Config and Mapper.
-func NewFromConfig[T any](ctx context.Context, cfg *driver.Config, mapper driver.Mapper[T]) (*Store[T], error) {
+func NewFromConfig[T any](ctx context.Context, cfg *driver.Config, collection string, mapper driver.Mapper[T]) (*Store[T], error) {
 	backend, err := driver.NewBackend(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	return NewStore(ctx, cfg.Driver, backend, mapper)
+	return NewStore(ctx, cfg.Driver, backend, collection, mapper)
 }
 
 // NewStore validates that backend and mapper are non-nil, verifies the collection
 // name, and calls backend.Init to create tables and indexes.
-func NewStore[T any](ctx context.Context, name string, backend driver.Backend, mapper driver.Mapper[T]) (*Store[T], error) {
+func NewStore[T any](ctx context.Context, name string, backend driver.Backend, collection string, mapper driver.Mapper[T]) (*Store[T], error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -52,7 +52,6 @@ func NewStore[T any](ctx context.Context, name string, backend driver.Backend, m
 		return nil, fmt.Errorf("storage: mapper is nil")
 	}
 
-	collection := mapper.Collection()
 	if collection == "" {
 		return nil, fmt.Errorf("storage: collection is empty")
 	}

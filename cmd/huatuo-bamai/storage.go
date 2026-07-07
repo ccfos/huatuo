@@ -49,7 +49,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 			ESUsername:  cfg.Storage.ES.Username,
 			ESPassword:  cfg.Storage.ES.Password,
 			ESIndex:     cfg.Storage.ES.Index,
-		}, tracing.DocumentStoreMapper{})
+		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new tracing document store (elasticsearch): %w", err)
 		}
@@ -63,7 +63,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 			LocalFilePath:         cfg.Storage.LocalFile.Path,
 			LocalFileMaxRotation:  cfg.Storage.LocalFile.MaxRotation,
 			LocalFileRotationSize: cfg.Storage.LocalFile.RotationSize,
-		}, tracing.DocumentStoreMapper{})
+		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new tracing document store (localfile): %w", err)
 		}
@@ -90,8 +90,8 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 			ESAddresses: splitStorageAddresses(cfg.Storage.ES.Address),
 			ESUsername:  cfg.Storage.ES.Username,
 			ESPassword:  cfg.Storage.ES.Password,
-			ESIndex:     "profiling_metadata",
-		}, profiler.ProfilingDocumentMapper{})
+			ESIndex:     profiler.MetadataCollection,
+		}, profiler.MetadataCollection, profiler.ProfilingDocumentMapper{})
 		if err != nil {
 			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)
 		}

@@ -113,7 +113,6 @@ type Index struct {
 
 // Mapper converts domain values of type T to and from the storage representation.
 type Mapper[T any] interface {
-	Collection() string
 	ID(entity T) string
 	Encode(entity T) ([]byte, error)
 	Decode(data []byte) (T, error)

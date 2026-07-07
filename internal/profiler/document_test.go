@@ -57,13 +57,6 @@ func TestExtractProfilingMetadataProfileType(t *testing.T) {
 	}
 }
 
-func TestProfilingDocumentMapperCollection(t *testing.T) {
-	m := ProfilingDocumentMapper{}
-	if got := m.Collection(); got != "profiling_metadata" {
-		t.Errorf("Collection() = %q, want %q", got, "profiling_metadata")
-	}
-}
-
 func TestProfilingDocumentMapperID(t *testing.T) {
 	m := ProfilingDocumentMapper{}
 	doc := &tracing.Document{TracerID: "test-id-123"}

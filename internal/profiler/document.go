@@ -23,14 +23,11 @@ import (
 	"huatuo-bamai/pkg/tracing"
 )
 
-const profilingMetadataCollection = "profiling_metadata"
+// MetadataCollection is the storage collection name for profiling metadata documents.
+const MetadataCollection = "profiling_metadata"
 
 // ProfilingDocumentMapper maps profiling metadata documents to storage records.
 type ProfilingDocumentMapper struct{}
-
-func (ProfilingDocumentMapper) Collection() string {
-	return profilingMetadataCollection
-}
 
 func (ProfilingDocumentMapper) ID(document *tracing.Document) string {
 	return document.TracerID

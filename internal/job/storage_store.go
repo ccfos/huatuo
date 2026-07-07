@@ -89,6 +89,7 @@ func newStore(ctx context.Context, dsn string) (Store, error) {
 			Driver:    "sqlite",
 			SQLiteDSN: dsn,
 		},
+		StorageCollection(),
 		storeMapper{},
 	)
 	if err != nil {
@@ -131,10 +132,6 @@ func (s *storageStore) List(query *JobQuery) ([]*Job, error) {
 	}
 
 	return jobs, nil
-}
-
-func (storeMapper) Collection() string {
-	return StorageCollection()
 }
 
 func (storeMapper) ID(entity *Job) string {

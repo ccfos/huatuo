@@ -110,7 +110,7 @@ func NewProfileStorage(address, username, password, index string) (*ProfileStora
 		ESUsername:  username,
 		ESPassword:  password,
 		ESIndex:     index,
-	}, profileDocumentMapper{})
+	}, profileMetadataCollection, profileDocumentMapper{})
 	if err != nil {
 		return nil, err
 	}
@@ -155,10 +155,6 @@ func (s *ProfileStorage) AggregationsByField(filter *SearchFilter, field string)
 	}
 
 	return terms, nil
-}
-
-func (profileDocumentMapper) Collection() string {
-	return profileMetadataCollection
 }
 
 func (profileDocumentMapper) ID(document *ProfileDocument) string {

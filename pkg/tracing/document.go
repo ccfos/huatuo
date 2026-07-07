@@ -22,6 +22,9 @@ import (
 	"huatuo-bamai/internal/storage/driver"
 )
 
+// DocumentCollection is the storage collection name for tracing documents.
+const DocumentCollection = "tracing_documents"
+
 // DocumentStoreMapper maps tracing documents to storage records.
 type DocumentStoreMapper struct{}
 
@@ -37,10 +40,6 @@ func tracingDocumentTimeValue(raw string, fallback time.Time) time.Time {
 	}
 
 	return parsed.UTC()
-}
-
-func (DocumentStoreMapper) Collection() string {
-	return "tracing_documents"
 }
 
 func (DocumentStoreMapper) ID(document *Document) string {

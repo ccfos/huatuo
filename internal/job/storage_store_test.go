@@ -31,7 +31,7 @@ func newStoreForTest(t *testing.T) Store {
 	store, err := storage.NewFromConfig[*Job](t.Context(), &driver.Config{
 		Driver:    "sqlite",
 		SQLiteDSN: dsn,
-	}, storeMapper{})
+	}, StorageCollection(), storeMapper{})
 	if err != nil {
 		t.Errorf("New() returned error: %v", err)
 		return nil

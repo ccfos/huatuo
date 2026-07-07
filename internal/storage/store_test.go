@@ -31,17 +31,12 @@ type testEntity struct {
 }
 
 type testMapper struct {
-	collection string
-	indexes    []driver.Index
-	fields     map[string]any
-	id         string
-	encodeErr  error
-	decodeErr  error
-	fieldsErr  error
-}
-
-func (m *testMapper) Collection() string {
-	return m.collection
+	indexes   []driver.Index
+	fields    map[string]any
+	id        string
+	encodeErr error
+	decodeErr error
+	fieldsErr error
 }
 
 func (m *testMapper) ID(v testEntity) string {
@@ -166,7 +161,6 @@ func (b *testBackend) Close(context.Context) error { return nil }
 
 func newTestMapper() *testMapper {
 	return &testMapper{
-		collection: "jobs",
 		indexes: []driver.Index{
 			{Field: "user_id"},
 			{Field: "status"},
@@ -185,15 +179,17 @@ func TestNewStore(t *testing.T) {
 	backendInitErr := errors.New("backend init failed")
 
 	cases := []struct {
-		name     string
-		backend  driver.Backend
-		mapper   driver.Mapper[testEntity]
-		validate func(*testing.T, *Store[testEntity], error, *testBackend)
+		name       string
+		backend    driver.Backend
+		collection string
+		mapper     driver.Mapper[testEntity]
+		validate   func(*testing.T, *Store[testEntity], error, *testBackend)
 	}{
 		{
-			name:    "init success",
-			backend: &testBackend{},
-			mapper:  newTestMapper(),
+			name:       "init success",
+			backend:    &testBackend{},
+			collection: "jobs",
+			mapper:     newTestMapper(),
 			validate: func(t *testing.T, store *Store[testEntity], err error, backend *testBackend) {
 				if err != nil {
 					t.Errorf("NewStore() returned error: %v", err)
@@ -213,9 +209,10 @@ func TestNewStore(t *testing.T) {
 			},
 		},
 		{
-			name:    "nil backend",
-			backend: nil,
-			mapper:  newTestMapper(),
+			name:       "nil backend",
+			backend:    nil,
+			collection: "jobs",
+			mapper:     newTestMapper(),
 			validate: func(t *testing.T, store *Store[testEntity], err error, _ *testBackend) {
 				if store != nil {
 					t.Errorf("NewStore() store = %#v, want nil", store)
@@ -226,9 +223,10 @@ func TestNewStore(t *testing.T) {
 			},
 		},
 		{
-			name:    "nil mapper",
-			backend: &testBackend{},
-			mapper:  nil,
+			name:       "nil mapper",
+			backend:    &testBackend{},
+			collection: "jobs",
+			mapper:     nil,
 			validate: func(t *testing.T, store *Store[testEntity], err error, backend *testBackend) {
 				if store != nil {
 					t.Errorf("NewStore() store = %#v, want nil", store)
@@ -242,8 +240,9 @@ func TestNewStore(t *testing.T) {
 			},
 		},
 		{
-			name:    "empty collection",
-			backend: &testBackend{},
+			name:       "empty collection",
+			backend:    &testBackend{},
+			collection: "",
 			mapper: &testMapper{
 				indexes: []driver.Index{{Field: "status"}},
 			},
@@ -264,7 +263,8 @@ func TestNewStore(t *testing.T) {
 			backend: &testBackend{
 				initErr: backendInitErr,
 			},
-			mapper: newTestMapper(),
+			collection: "jobs",
+			mapper:     newTestMapper(),
 			validate: func(t *testing.T, store *Store[testEntity], err error, backend *testBackend) {
 				if store != nil {
 					t.Errorf("NewStore() store = %#v, want nil", store)
@@ -281,7 +281,7 @@ func TestNewStore(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, tc.mapper)
+			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, tc.collection, tc.mapper)
 
 			typedBackend, _ := tc.backend.(*testBackend)
 			tc.validate(t, store, err, typedBackend)
@@ -328,9 +328,8 @@ func TestStoreSave(t *testing.T) {
 		{
 			name: "encode failed",
 			mapper: &testMapper{
-				collection: "jobs",
-				indexes:    newTestMapper().indexes,
-				encodeErr:  errors.New("marshal failed"),
+				indexes:   newTestMapper().indexes,
+				encodeErr: errors.New("marshal failed"),
 			},
 			backend: &testBackend{},
 			entity: testEntity{
@@ -351,9 +350,8 @@ func TestStoreSave(t *testing.T) {
 		{
 			name: "empty id",
 			mapper: &testMapper{
-				collection: "jobs",
-				indexes:    newTestMapper().indexes,
-				id:         "",
+				indexes: newTestMapper().indexes,
+				id:      "",
 			},
 			backend: &testBackend{},
 			entity: testEntity{
@@ -394,7 +392,7 @@ func TestStoreSave(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, tc.mapper)
+			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, "jobs", tc.mapper)
 			if err != nil {
 				t.Errorf("NewStore() returned error: %v", err)
 				return
@@ -484,7 +482,7 @@ func TestStoreGet(t *testing.T) {
 				mapper.decodeErr = errors.New("decode failed")
 			}
 
-			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, mapper)
+			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, "jobs", mapper)
 			if err != nil {
 				t.Errorf("NewStore() returned error: %v", err)
 				return
@@ -536,7 +534,7 @@ func TestStoreDelete(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, newTestMapper())
+			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, "jobs", newTestMapper())
 			if err != nil {
 				t.Errorf("NewStore() returned error: %v", err)
 				return
@@ -618,9 +616,8 @@ func TestStoreQuery(t *testing.T) {
 				Filters: []driver.Filter{{Field: "status", Op: driver.OpEq, Value: "running"}},
 			},
 			mapper: &testMapper{
-				collection: "jobs",
-				indexes:    newTestMapper().indexes,
-				decodeErr:  errors.New("decode failed"),
+				indexes:   newTestMapper().indexes,
+				decodeErr: errors.New("decode failed"),
 			},
 			validate: func(t *testing.T, entities []testEntity, err error, backend *testBackend) {
 				if !errors.Is(err, driver.ErrDecodeFailed) {
@@ -638,7 +635,7 @@ func TestStoreQuery(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, tc.mapper)
+			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, "jobs", tc.mapper)
 			if err != nil {
 				t.Errorf("NewStore() returned error: %v", err)
 				return
@@ -720,7 +717,7 @@ func TestStoreCount(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, newTestMapper())
+			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, "jobs", newTestMapper())
 			if err != nil {
 				t.Errorf("NewStore() returned error: %v", err)
 				return
@@ -813,7 +810,7 @@ func TestStoreTerms(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, newTestMapper())
+			store, err := NewStore[testEntity](t.Context(), tc.name, tc.backend, "jobs", newTestMapper())
 			if err != nil {
 				t.Errorf("NewStore() returned error: %v", err)
 				return
