@@ -20,15 +20,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/utils/netutil"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"syscall"
 	"time"
-
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/netutil"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
@@ -49,6 +48,7 @@ var (
 	kubeletDefaultConfigPath     = []string{
 		"/var/lib/kubelet/config.yaml",
 		"/var/lib/kubelet/ack-managed-config.yaml",
+		"/etc/kubernetes/kubelet/config.json",
 		"/host/etc/kubernetes/kubelet/config.json",
 	}
 )
@@ -171,7 +171,9 @@ func ManagerInit(ctx *ManagerCtx) error {
 		// success or other error codes except connect refused
 		// only init css metadata collect when kubelet available.
 		if err == nil {
-			_ = kubeletConfigCacheUpdate(ctx)
+			if cfgErr := kubeletConfigCacheUpdate(ctx); cfgErr != nil {
+				log.Warnf("kubelet config cache update failed: %v", cfgErr)
+			}
 			return containerCgroupCssInit()
 		}
 
@@ -190,7 +192,9 @@ func ManagerInit(ctx *ManagerCtx) error {
 			case <-t.C:
 				if err := kubeletPodListPortCacheUpdate(ctx); err == nil {
 					log.Infof("kubelet is running now")
-					_ = kubeletConfigCacheUpdate(ctx)
+					if cfgErr := kubeletConfigCacheUpdate(ctx); cfgErr != nil {
+						log.Warnf("kubelet config cache update failed: %v", cfgErr)
+					}
 					_ = containerCgroupCssInit()
 					t.Stop()
 					return
@@ -532,10 +536,8 @@ func kubeletConfigCacheUpdate(ctx *ManagerCtx) error {
 
 	config, err = kubeletConfigFileDefault()
 	if err != nil {
-		panic(fmt.Sprintf(
-			"we cannot find any cgroup driver of kubelet after requesting configz and default files: %v",
-			err,
-		))
+		log.Warnf("failed to determine kubelet cgroup driver from configz and default files, using defaults: %v", err)
+		return nil
 	}
 
 	return nil
