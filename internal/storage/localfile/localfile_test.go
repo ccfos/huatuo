@@ -60,6 +60,11 @@ func TestBackendSaveMkdirAllError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission-based test not reliable on Windows")
 	}
+	if os.Geteuid() == 0 {
+		// root bypasses Unix permission checks, so a 0o555 parent still
+		// allows MkdirAll and the test's premise no longer holds.
+		t.Skip("permission-based test not reliable when running as root")
+	}
 
 	// Create a read-only parent directory so MkdirAll inside it will fail.
 	parent := t.TempDir()
