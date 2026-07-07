@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	// Starts with an initial delay of 10ms, increasing by 10ms with each retry.
-	// Retries up to 1000 times, with a maximum total wait time of approximately 10 seconds.
+	// Retries up to maxRetries times with a fixed retryInterval delay between
+	// attempts, for a maximum total wait time of approximately 10 seconds.
 	maxRetries    = 1000
 	retryInterval = 10 * time.Millisecond
 
@@ -58,7 +58,7 @@ func RetrySampleProfiler(ctx context.Context, pid, dur, freq int, toolPath, outp
 			}
 		}
 
-		log.Infof("PID[%d] sampling attempt %d/%d (delay: %s)", pid, attempt, maxRetries, delay*time.Duration(attempt))
+		log.Infof("PID[%d] sampling attempt %d/%d (delay: %s)", pid, attempt, maxRetries, delay)
 
 		res := sampleFn(ctx, onePid, dur, freq, toolPath, outputFormat)
 		cmdRes := res[0]
