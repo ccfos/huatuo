@@ -15,6 +15,7 @@
 package localfile
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -97,26 +98,27 @@ func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 	dir := t.TempDir()
 	backend := NewBackend(dir, 1024, 3)
 
+	const tracerName = "badjson_test"
+	want := []byte("not valid json {")
+
 	err := backend.Save(t.Context(), driver.Record{
 		ID:   "trace-badjson",
-		Data: []byte("not valid json {"),
+		Data: want,
 		Fields: map[string]any{
-			"tracer_name": "badjson_test",
+			"tracer_name": tracerName,
 		},
 	})
 	if err != nil {
-		t.Errorf("Save() error=%v, want nil (raw data fallback should succeed)", err)
-		return
+		t.Fatalf("Save() = %v, want nil", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "badjson_test"))
+	got, err := os.ReadFile(filepath.Join(dir, tracerName))
 	if err != nil {
-		t.Errorf("os.ReadFile() returned error: %v", err)
-		return
+		t.Fatalf("ReadFile(%q) = %v, want nil", tracerName, err)
 	}
 
-	if string(data) != "not valid json {" {
-		t.Errorf("saved content = %q, want raw data as-is", string(data))
+	if !bytes.Equal(got, want) {
+		t.Errorf("saved content = %q, want %q", got, want)
 	}
 }
 
