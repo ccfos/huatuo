@@ -15,7 +15,9 @@
 package provider
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +29,17 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
 )
+
+// ErrRootRequired indicates the operation requires root privileges.
+var ErrRootRequired = errors.New("native profiler requires root privileges")
+
+// requireRoot checks if the current process has root privileges.
+func requireRoot() error {
+	if os.Geteuid() != 0 {
+		return ErrRootRequired
+	}
+	return nil
+}
 
 // Compile-time check: nativeAggregator implements aggregator.Aggregator.
 var _ aggregator.Aggregator = (*nativeAggregator)(nil)

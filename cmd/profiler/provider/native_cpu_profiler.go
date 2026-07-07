@@ -83,6 +83,10 @@ func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if err := requireRoot(); err != nil {
+		return err
+	}
+
 	log.Infof("starting native cpu profiler")
 
 	var cssAddr uint64
