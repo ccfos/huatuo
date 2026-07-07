@@ -18,6 +18,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 type stubJobStore struct {
@@ -640,6 +641,58 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 			gotStatus, gotErr := manager.checkAndUpdateJobStatus(job)
 			tc.validate(t, manager, job, storage, gotStatus, gotErr)
 		})
+	}
+}
+
+// TestMonitorJobDeferNoNilPanic verifies that monitorJob's defer does not panic
+// when the manager is shut down while a job is still running. Before the fix,
+// the defer called err.Error() when err was nil, causing a nil pointer dereference.
+func TestMonitorJobDeferNoNilPanic(t *testing.T) {
+	storage := &stubJobStore{}
+	nodeAgent := &stubNodeAgent{
+		startTaskFunc: func(host, container string, args *NewAgentTaskReq) (string, error) {
+			return "agent-task-2026", nil
+		},
+		stopTaskFunc: func(host, taskID string, force bool) error {
+			return nil
+		},
+		getTaskStatusFunc: func(host, taskID string) (string, *Result, error) {
+			return AgentStatusRunning, &Result{}, nil
+		},
+	}
+	manager := newTestManager(storage, nodeAgent)
+
+	_, err := manager.Create(CreateJobRequest{
+		UserID:    "operator-2026",
+		Container: "payment-worker",
+		Host:      "huatuo-dev",
+		JobType:   "oncpu",
+		Args: &NewAgentTaskReq{
+			TracerName:   "oncpu",
+			TraceTimeout: 300,
+			DataType:     "flamegraph",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error=%v, want nil", err)
+	}
+
+	// Simulate manager shutdown while job is still running.
+	// Before the fix, this would cause a nil pointer dereference
+	// because the defer block called err.Error() when err was nil.
+	manager.Shutdown()
+
+	// Wait for monitorJob goroutine to finish processing.
+	time.Sleep(300 * time.Millisecond)
+
+	// If we reach here without panic, the test passes.
+	// Verify the job was marked as failed with a non-empty error message.
+	lastSave := storage.saveCalls[len(storage.saveCalls)-1]
+	if lastSave.Status != JobStatusFailed {
+		t.Errorf("job.Status=%s, want %s", lastSave.Status, JobStatusFailed)
+	}
+	if lastSave.Error == "" {
+		t.Errorf("job.Error is empty, want non-empty error message")
 	}
 }
 
