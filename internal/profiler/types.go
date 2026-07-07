@@ -28,6 +28,11 @@ const (
 	ProfileTypeLockTimeSample  = "process_lock:lock:nanoseconds:lock:nanoseconds"
 )
 
+// MetadataCollection is the storage collection name for profiling metadata documents.
+// Profiling metadata reuses tracing.DocumentStoreMapper; profile_type is queried in-place
+// via the nested path tracer_data.flamedata.profile_type.
+const MetadataCollection = "profiling_metadata"
+
 // ProfileData is the data saved by the profiler.
 type ProfileData struct {
 	ProfileType string `json:"profile_type,omitempty"`
