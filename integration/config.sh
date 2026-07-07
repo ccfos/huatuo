@@ -70,3 +70,20 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
     MountPointsIncluded = ""
 EOF
 }
+
+# Unquoted heredoc: ${HUATUO_BAMAI_TEST_TMPDIR} must expand into Path,
+# unlike the sibling write_*_config helpers which quote to prevent expansion.
+write_net_rx_latency_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "dropwatch"]
+
+[EventTracing.NetRxLatency]
+    Driver2NetRx = 1
+    Driver2TCP = 1
+    Driver2Userspace = 1
+    ExcludedHostNetnamespace = false
+
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}

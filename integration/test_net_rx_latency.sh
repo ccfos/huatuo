@@ -62,21 +62,6 @@ HUATUO_BAMAI_ARGS_INTEGRATION=(
 HUATUO_BAMAI_INTEGRATION_ARGS_STR="${HUATUO_BAMAI_ARGS_INTEGRATION[*]}"
 export HUATUO_BAMAI_INTEGRATION_ARGS_STR
 
-write_net_rx_latency_config() {
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "dropwatch"]
-
-[EventTracing.NetRxLatency]
-    Driver2NetRx = 1
-    Driver2TCP = 1
-    Driver2Userspace = 1
-    ExcludedHostNetnamespace = false
-
-[Storage.LocalFile]
-    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
-EOF
-}
-
 integration_huatuo_bamai_start write_net_rx_latency_config
 trap cleanup_all EXIT
 
