@@ -207,7 +207,7 @@ func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext)
 	}
 
 	skipNegForPprof := pctx.Type == "mem" &&
-		pctx.ExtraFlags["mode"] == "native_physical_usage"
+		pctx.MemoryMode == "native_physical_usage"
 
 	tree := make([]*profiler.TreeItem, 0, len(a.aggrMap))
 

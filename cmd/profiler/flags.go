@@ -97,6 +97,10 @@ var appFlags = []cli.Flag{
 		Name:  "cpuid",
 		Usage: "CPU IDs to sample: comma-separated list and ranges (e.g., 1,3,5-10). Empty for all CPUs",
 	},
+	&cli.StringFlag{
+		Name:  "memory-mode",
+		Usage: "Memory profiling mode: virtual_alloc|physical_alloc|physical_usage (default: physical_alloc)",
+	},
 	&cli.StringSliceFlag{
 		Name:    "flags",
 		Aliases: []string{"f"},

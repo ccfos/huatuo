@@ -56,6 +56,7 @@ type ProfilerContext struct {
 	Scope         string
 	ToolPath      string
 	LogBpfDebug   bool
+	MemoryMode    string
 
 	ExtraFlags      map[string]string
 	MetaData        map[string]string
@@ -148,6 +149,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		LogBpfDebug:   cliCtx.Bool("log-bpf-debug"),
 		OutputPath:    cliCtx.String("output-path"),
 		OutputFormat:  outputFormat,
+		MemoryMode:    cliCtx.String("memory-mode"),
 
 		MetaData:        metaData,
 		ExtraFlags:      flagsMap,

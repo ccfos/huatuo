@@ -151,6 +151,12 @@ func validateCommonOptions(ctx *cli.Context) error {
 		}
 	}
 
+	if memMode := ctx.String("memory-mode"); memMode != "" {
+		if err := validateMemoryMode(memMode); err != nil {
+			return err
+		}
+	}
+
 	if d := ctx.Int("duration"); d < 1 {
 		return fmt.Errorf("duration must be at least 1 second")
 	}
@@ -174,6 +180,20 @@ func validateCommonOptions(ctx *cli.Context) error {
 
 	if ctx.String("output-format") == "remote" && ctx.String("output-storage") == "" {
 		return fmt.Errorf("--output-storage must not be empty when --output-format=remote")
+	}
+
+	return nil
+}
+
+func validateMemoryMode(mode string) error {
+	validModes := map[string]bool{
+		"virtual_alloc":   true,
+		"physical_alloc":  true,
+		"physical_usage":  true,
+	}
+
+	if !validModes[mode] {
+		return fmt.Errorf("invalid memory-mode: %q (allowed: virtual_alloc, physical_alloc, physical_usage)", mode)
 	}
 
 	return nil

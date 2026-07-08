@@ -73,7 +73,7 @@ func init() {
 // NewAggregator stamps OneShotAgg before construction for retained mode —
 // alloc/free deltas must collapse in a single shot, not stream every interval.
 func (p *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	mode, err := resolveMemMode(pctx.ExtraFlags["mode"])
+	mode, err := resolveMemMode(pctx.MemoryMode)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	p.pageSize = int64(os.Getpagesize())
 
-	internalMode, err := resolveMemMode(pctx.ExtraFlags["mode"])
+	internalMode, err := resolveMemMode(pctx.MemoryMode)
 	if err != nil {
 		return err
 	}

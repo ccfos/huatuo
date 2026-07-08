@@ -119,3 +119,45 @@ func TestParseCPUIDList(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateMemoryMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		wantErr bool
+	}{
+		{
+			name: "virtual_alloc",
+			mode: "virtual_alloc",
+		},
+		{
+			name: "physical_alloc",
+			mode: "physical_alloc",
+		},
+		{
+			name: "physical_usage",
+			mode: "physical_usage",
+		},
+		{
+			name:    "invalid mode",
+			mode:    "invalid",
+			wantErr: true,
+		},
+		{
+			name:    "empty mode",
+			mode:    "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMemoryMode(tt.mode)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
