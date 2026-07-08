@@ -115,7 +115,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	log.Info("starting native mem profiler", "mode", p.internalMode)
+	log.Info("starting native memory profiler mode: ", p.internalMode)
 
 	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemMemory)
 	if err != nil {
@@ -251,7 +251,6 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 	return nil, fmt.Errorf("unsupported mem profiler mode: %q", internalMode)
 }
 
-
 func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
 	log.Info("data reading loop started")
 	defer log.Info("data reading loop ended")
@@ -280,7 +279,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		// Use unified drainActiveRingBuffer with Memory event factory
 		if err := ringCtx.drainActiveRingBuffer(enqueue,
 			func() any { return &memEvent{} },
-			p.convertValueToBytes); err != nil {  // Convert pages to bytes
+			p.convertValueToBytes); err != nil { // Convert pages to bytes
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
