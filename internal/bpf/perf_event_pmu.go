@@ -43,7 +43,7 @@ type perfEventOption struct {
 	samplePeriodFreq uint64
 	sampleType       uint32
 	program          *ebpf.Program
-	cpuID            int
+	cpuIDs           []int
 }
 
 func (opt *perfEventOption) Validate() error {
@@ -105,13 +105,18 @@ func attachPerfEvent(opt *perfEventOption) (*perfEventAttach, error) {
 	}
 
 	var fds []int
-	if opt.cpuID != cpuIDAll {
-		fds = make([]int, 0, 1)
-		fd, err := openPerfEvent(&attr, opt.program.FD(), opt.cpuID)
-		if err != nil {
-			return nil, err
+	if len(opt.cpuIDs) > 0 {
+		fds = make([]int, 0, len(opt.cpuIDs))
+		for _, cpuID := range opt.cpuIDs {
+			fd, err := openPerfEvent(&attr, opt.program.FD(), cpuID)
+			if err != nil {
+				for _, prevFD := range fds {
+					_ = unix.Close(prevFD)
+				}
+				return nil, err
+			}
+			fds = append(fds, fd)
 		}
-		fds = append(fds, fd)
 	} else {
 		fds = make([]int, 0, runtime.NumCPU())
 		for i := 0; i < runtime.NumCPU(); i++ {

@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -43,7 +44,7 @@ type ProfilerContext struct {
 	ToolLimit    int
 	AggrInterval int
 	IsOneShotAgg bool
-	CPUID        int
+	CPUIDs       []int
 
 	ServerAddress string
 	OutputFormat  output.OutputFormat
@@ -117,6 +118,14 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		return nil, err
 	}
 
+	var cpuIDs []int
+	if cpuidStr := cliCtx.String("cpuid"); cpuidStr != "" {
+		cpuIDs, err = parseCPUIDList(cpuidStr)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &ProfilerContext{
 		Ctx:    ctx,
 		Cancel: cancel,
@@ -127,7 +136,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		Duration:     cliCtx.Int("duration"),
 		ToolLimit:    cliCtx.Int("tool-limit"),
 		AggrInterval: cliCtx.Int("aggr-interval"),
-		CPUID:        cliCtx.Int("cpuid"),
+		CPUIDs:       cpuIDs,
 
 		ServerAddress: cliCtx.String("server-address"),
 		Type:          cliCtx.String("type"),
@@ -260,4 +269,69 @@ func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*too
 	}
 
 	return client, nil
+}
+
+func parseCPUIDList(s string) ([]int, error) {
+	numCPU := runtime.NumCPU()
+	var cpuIDs []int
+	seen := make(map[int]bool)
+
+	parts := strings.Split(s, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		if strings.Contains(part, "-") {
+			rangeParts := strings.Split(part, "-")
+			if len(rangeParts) != 2 {
+				return nil, fmt.Errorf("invalid cpuid range: %q", part)
+			}
+
+			start, err := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid cpuid range start: %q", rangeParts[0])
+			}
+
+			end, err := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid cpuid range end: %q", rangeParts[1])
+			}
+
+			if start > end {
+				return nil, fmt.Errorf("invalid cpuid range: start %d > end %d", start, end)
+			}
+
+			for i := start; i <= end; i++ {
+				if i < 0 || i >= numCPU {
+					return nil, fmt.Errorf("cpuid %d is out of range (available: 0-%d)", i, numCPU-1)
+				}
+				if !seen[i] {
+					seen[i] = true
+					cpuIDs = append(cpuIDs, i)
+				}
+			}
+		} else {
+			id, err := strconv.Atoi(part)
+			if err != nil {
+				return nil, fmt.Errorf("invalid cpuid: %q", part)
+			}
+
+			if id < 0 || id >= numCPU {
+				return nil, fmt.Errorf("cpuid %d is out of range (available: 0-%d)", id, numCPU-1)
+			}
+
+			if !seen[id] {
+				seen[id] = true
+				cpuIDs = append(cpuIDs, id)
+			}
+		}
+	}
+
+	if len(cpuIDs) == 0 {
+		return nil, fmt.Errorf("cpuid list is empty")
+	}
+
+	return cpuIDs, nil
 }

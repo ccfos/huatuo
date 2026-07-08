@@ -365,7 +365,7 @@ func (b *defaultBPF) AttachWithOptions(opts []AttachOption) error {
 				samplePeriodFreq: opt.PerfEvent.SampleFreq,
 				sampleType:       sampleTypeFreq,
 				program:          spec.cloned,
-				cpuID:            opt.PerfEvent.CPUID,
+				cpuIDs:           opt.PerfEvent.CPUIDs,
 			}); err != nil {
 				return fmt.Errorf("attach perf event: %w", err)
 			}
@@ -538,7 +538,7 @@ func (b *defaultBPF) attachPerfEvent(opt *perfEventOption) error {
 	}
 
 	b.innerPerfEvent = event
-	log.Debugf("attach perf event, cpuID=%d", opt.cpuID)
+	log.Debugf("attach perf event, cpuIDs=%v", opt.cpuIDs)
 	return nil
 }
 

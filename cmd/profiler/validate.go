@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
+	"strings"
 
 	"github.com/urfave/cli/v2"
 
@@ -143,9 +145,9 @@ func validateCommonOptions(ctx *cli.Context) error {
 		}
 	}
 
-	if cpuid := ctx.Int("cpuid"); cpuid >= 0 {
-		if cpuid >= runtime.NumCPU() {
-			return fmt.Errorf("cpuid %d is out of range (available: 0-%d)", cpuid, runtime.NumCPU()-1)
+	if cpuidStr := ctx.String("cpuid"); cpuidStr != "" {
+		if _, err := parseCPUIDList(cpuidStr); err != nil {
+			return err
 		}
 	}
 
@@ -175,4 +177,69 @@ func validateCommonOptions(ctx *cli.Context) error {
 	}
 
 	return nil
+}
+
+func parseCPUIDList(s string) ([]int, error) {
+	numCPU := runtime.NumCPU()
+	var cpuIDs []int
+	seen := make(map[int]bool)
+
+	parts := strings.Split(s, ",")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		if strings.Contains(part, "-") {
+			rangeParts := strings.Split(part, "-")
+			if len(rangeParts) != 2 {
+				return nil, fmt.Errorf("invalid cpuid range: %q", part)
+			}
+
+			start, err := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid cpuid range start: %q", rangeParts[0])
+			}
+
+			end, err := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
+			if err != nil {
+				return nil, fmt.Errorf("invalid cpuid range end: %q", rangeParts[1])
+			}
+
+			if start > end {
+				return nil, fmt.Errorf("invalid cpuid range: start %d > end %d", start, end)
+			}
+
+			for i := start; i <= end; i++ {
+				if i < 0 || i >= numCPU {
+					return nil, fmt.Errorf("cpuid %d is out of range (available: 0-%d)", i, numCPU-1)
+				}
+				if !seen[i] {
+					seen[i] = true
+					cpuIDs = append(cpuIDs, i)
+				}
+			}
+		} else {
+			id, err := strconv.Atoi(part)
+			if err != nil {
+				return nil, fmt.Errorf("invalid cpuid: %q", part)
+			}
+
+			if id < 0 || id >= numCPU {
+				return nil, fmt.Errorf("cpuid %d is out of range (available: 0-%d)", id, numCPU-1)
+			}
+
+			if !seen[id] {
+				seen[id] = true
+				cpuIDs = append(cpuIDs, id)
+			}
+		}
+	}
+
+	if len(cpuIDs) == 0 {
+		return nil, fmt.Errorf("cpuid list is empty")
+	}
+
+	return cpuIDs, nil
 }

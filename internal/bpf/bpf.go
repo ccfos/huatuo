@@ -28,7 +28,7 @@ type AttachOption struct {
 	Symbol      string   // symbol for kprobe/kretprobe/tracepoint/raw_tracepoint
 	PerfEvent   struct { // BPF_PROG_TYPE_PERF_EVENT
 		SamplePeriod, SampleFreq uint64
-		CPUID                    int
+		CPUIDs                   []int
 	}
 }
 

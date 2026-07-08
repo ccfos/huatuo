@@ -401,7 +401,7 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 		perfOpt  *struct {
 			SamplePeriod uint64
 			SampleFreq   uint64
-			CPUID        int
+			CPUIDs       []int
 		}
 		wantErr bool
 	}{
@@ -430,7 +430,7 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 			perfOpt: &struct {
 				SamplePeriod uint64
 				SampleFreq   uint64
-				CPUID        int
+				CPUIDs       []int
 			}{SampleFreq: 99},
 			wantErr: false,
 		},
@@ -441,7 +441,7 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 			perfOpt: &struct {
 				SamplePeriod uint64
 				SampleFreq   uint64
-				CPUID        int
+				CPUIDs       []int
 			}{SampleFreq: 0},
 			wantErr: true,
 		},

@@ -98,7 +98,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	opt := bpf.AttachOption{ProgramName: "perf_event_sw_cpu_clock"}
 	opt.PerfEvent.SampleFreq = uint64(pctx.Freq)
 	opt.PerfEvent.SamplePeriod = 0
-	opt.PerfEvent.CPUID = pctx.CPUID
+	opt.PerfEvent.CPUIDs = pctx.CPUIDs
 
 	if err := p.bpf.AttachWithOptions([]bpf.AttachOption{opt}); err != nil {
 		if cerr := p.bpf.Close(); cerr != nil {
@@ -144,7 +144,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		// Use unified drainActiveRingBuffer with CPU event factory
 		if err := ringCtx.drainActiveRingBuffer(enqueue,
 			func() any { return &cpuEventKey{} },
-			nil); err != nil {  // No value conversion needed for CPU profiler
+			nil); err != nil { // No value conversion needed for CPU profiler
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
