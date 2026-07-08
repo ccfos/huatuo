@@ -38,9 +38,9 @@ import (
 const memDrainTick = 100 * time.Millisecond
 
 const (
-	modeVirtualAlloc  = "native_virtual_alloc"
-	modePhysicalUsage = "native_physical_usage"
-	modePhysicalAlloc = "native_physical_alloc"
+	modeVirtualAlloc  = "virtual_alloc"
+	modePhysicalUsage = "physical_usage"
+	modePhysicalAlloc = "physical_alloc"
 )
 
 type memNativeProfiler struct {
