@@ -33,9 +33,9 @@ var (
 	containers = map[string]*Container{}
 
 	// updated
-	lastUpdatedAt = time.Now()
-	updatedStep   = 5 * time.Second
-	updatedLock   sync.Mutex
+	lastUpdatedAt     = time.Now()
+	updatedStep       = 5 * time.Second
+	containersMapLock sync.RWMutex
 )
 
 // Container object
@@ -81,8 +81,8 @@ func (c *Container) InitPidOrInitnsPid() int {
 
 // containersByTypeQos returns the containers by type and level.
 func containersByTypeQos(typeMask ContainerType, minLevel ContainerQos) (map[string]*Container, error) {
-	updatedLock.Lock()
-	defer updatedLock.Unlock()
+	containersMapLock.Lock()
+	defer containersMapLock.Unlock()
 
 	res := make(map[string]*Container)
 
