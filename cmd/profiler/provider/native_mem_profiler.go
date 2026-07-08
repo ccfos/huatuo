@@ -35,8 +35,6 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_virtual_alloc.c -o $BPF_DIR/native_virtual_alloc.o
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_physical_alloc.c -o $BPF_DIR/native_physical_alloc.o
 
-const memDrainTick = 100 * time.Millisecond
-
 const (
 	modeVirtualAlloc  = "virtual_alloc"
 	modePhysicalUsage = "physical_usage"
@@ -266,7 +264,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	}
 	defer ringCtx.Close()
 
-	ticker := time.NewTicker(memDrainTick)
+	ticker := time.NewTicker(drainTick)
 	defer ticker.Stop()
 
 	for {

@@ -42,11 +42,6 @@ func init() {
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_cpu_profiler.c -o $BPF_DIR/native_cpu_profiler.o
 
-// drainTick paces ring-buffer reads. The BPF program writes events to ring A
-// or B chosen by transferCnt parity; userspace flips parity each tick, then
-// drains the just-frozen ring. ~100ms balances responsiveness and overhead.
-const drainTick = 100 * time.Millisecond
-
 // cpuEventKey is the on-wire/event representation emitted by the BPF program.
 type cpuEventKey struct {
 	ProfilerEventBase

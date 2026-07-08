@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 	"unsafe"
 
 	"huatuo-bamai/internal/bpf"
@@ -26,6 +27,11 @@ import (
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/pkg/types"
 )
+
+// drainTick paces ring-buffer reads. The BPF program writes events to ring A
+// or B chosen by transferCnt parity; userspace flips parity each tick, then
+// drains the just-frozen ring. ~100ms balances responsiveness and overhead.
+const drainTick = 100 * time.Millisecond
 
 // TaskCommLen is the length of task comm in BPF programs
 const TaskCommLen = 16
