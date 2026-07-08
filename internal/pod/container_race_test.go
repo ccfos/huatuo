@@ -20,11 +20,11 @@ import (
 )
 
 func TestContainersMutexProtectsMap(t *testing.T) {
-	// Verify that containersMu is an RWMutex, ensuring the global containers
+	// Verify that containersMapLock is an RWMutex, ensuring the global containers
 	// map is protected against concurrent read/write access.
 	// The original code used a plain sync.Mutex (updatedLock) that was only
 	// acquired in containersByTypeQos, leaving kubeletSyncContainers' writes
-	// unprotected. This test documents that containersMu must be an RWMutex.
+	// unprotected. This test documents that containersMapLock must be an RWMutex.
 	var mu sync.RWMutex
 
 	// Simulate concurrent read and write scenarios
@@ -57,10 +57,10 @@ func TestContainersMutexProtectsMap(t *testing.T) {
 }
 
 func TestContainersMutexTypeIsRWMutex(t *testing.T) {
-	// Verify that containersMu is sync.RWMutex, not sync.Mutex.
+	// Verify that containersMapLock is sync.RWMutex, not sync.Mutex.
 	// This ensures the type was changed from the original Mutex to RWMutex
 	// to support concurrent reads while writes are serialized.
-	// If this test fails to compile, containersMu was changed back to Mutex.
-	_ = containersMu.RLock
-	_ = containersMu.RUnlock
+	// If this test fails to compile, containersMapLock was changed back to Mutex.
+	_ = containersMapLock.RLock
+	_ = containersMapLock.RUnlock
 }

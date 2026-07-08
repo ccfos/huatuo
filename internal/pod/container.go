@@ -17,11 +17,12 @@ package pod
 import (
 	"errors"
 	"fmt"
-	"huatuo-bamai/internal/log"
 	"regexp"
 	"sync"
 	"syscall"
 	"time"
+
+	"huatuo-bamai/internal/log"
 )
 
 // containerIDRegexp matches a 12-64 character hex container ID.
@@ -32,9 +33,9 @@ var (
 	containers = map[string]*Container{}
 
 	// updated
-	lastUpdatedAt = time.Now()
-	updatedStep   = 5 * time.Second
-	containersMu  sync.RWMutex
+	lastUpdatedAt     = time.Now()
+	updatedStep       = 5 * time.Second
+	containersMapLock sync.RWMutex
 )
 
 // Container object
@@ -80,8 +81,8 @@ func (c *Container) InitPidOrInitnsPid() int {
 
 // containersByTypeQos returns the containers by type and level.
 func containersByTypeQos(typeMask ContainerType, minLevel ContainerQos) (map[string]*Container, error) {
-	containersMu.Lock()
-	defer containersMu.Unlock()
+	containersMapLock.Lock()
+	defer containersMapLock.Unlock()
 
 	res := make(map[string]*Container)
 
