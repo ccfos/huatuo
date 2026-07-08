@@ -228,7 +228,7 @@ func (p *cpuNativeProfiler) drainActiveRing(ringCtx *ringBufferContext, enqueue 
 
 	if len(stackCountsByProc) > 0 {
 		var deleteKeys [][]byte
-		aggregateStacksAndStore(ringCtx.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys, nil)
+		aggregateStacksAndStore(ringCtx.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys, nil, 0)
 
 		if err := ringCtx.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
 			log.Warnf("clear stack map: %v", err)

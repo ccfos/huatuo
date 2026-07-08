@@ -90,6 +90,7 @@ func resolveContainerCgroupCssByLocal(containerID, subsysName string) (uint64, e
 // aggregateStacksAndStore resolves stack traces and emits aggregated records.
 // For CPU profiler, convertValue is nil (samples are already counts).
 // For Memory profiler non-retained modes, convertValue converts raw value to bytes.
+// For Memory profiler retained mode, fallbackStackMapID provides fallback lookup path.
 func aggregateStacksAndStore(
 	b bpf.BPF,
 	stackCountsByProc map[processIDName]map[bpfmap.StackTraceID]int64,
@@ -97,6 +98,7 @@ func aggregateStacksAndStore(
 	enqueue func(any),
 	deleteKeys *[][]byte,
 	convertValue func(int64) int64,
+	fallbackStackMapID uint32,
 ) {
 	kstackCache := make(map[int32]string)
 	ustackCache := make(map[int32]string)
@@ -117,12 +119,12 @@ func aggregateStacksAndStore(
 
 			if stackID.KernelID > 0 {
 				if _, ok := kstackCache[stackID.KernelID]; !ok {
-					kstackCache[stackID.KernelID] = resolveKstack(b, stackMapID, stackID.KernelID, deleteKeys)
+					kstackCache[stackID.KernelID] = resolveKstackWithFallback(b, stackMapID, fallbackStackMapID, stackID.KernelID, deleteKeys)
 				}
 			}
 			if stackID.UserID > 0 {
 				if _, ok := ustackCache[stackID.UserID]; !ok {
-					ustackCache[stackID.UserID] = resolveUstack(b, stackMapID, stackID.UserID, pidName.Pid, usym, deleteKeys)
+					ustackCache[stackID.UserID] = resolveUstackWithFallback(b, stackMapID, fallbackStackMapID, stackID.UserID, pidName.Pid, usym, deleteKeys)
 				}
 			}
 
@@ -141,20 +143,46 @@ func aggregateStacksAndStore(
 	log.Debugf("aggregate: procs=%d kstacks=%d ustacks=%d records=%d", len(stackCountsByProc), len(kstackCache), len(ustackCache), records)
 }
 
-func resolveKstack(b bpf.BPF, mapID uint32, kernelID int32, deleteKeys *[][]byte) string {
-	trace, ok := readAndMarkStackTrace(b, mapID, kernelID, deleteKeys)
-	if !ok {
-		return ""
+// resolveKstackWithFallback resolves kernel stack with fallback support.
+// Fast path: lookup primary stackMapID (90-95% hit rate).
+// Slow path: fallback to another stackMapID if primary lookup fails.
+func resolveKstackWithFallback(b bpf.BPF, primaryMapID uint32, fallbackMapID uint32, kernelID int32, deleteKeys *[][]byte) string {
+	// Fast path: lookup primary stack map
+	trace, ok := readAndMarkStackTrace(b, primaryMapID, kernelID, deleteKeys)
+	if ok {
+		return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
 	}
-	return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
+
+	// Slow path: fallback to another stack map (only for retained mode)
+	if fallbackMapID != 0 {
+		trace, ok = readAndMarkStackTrace(b, fallbackMapID, kernelID, deleteKeys)
+		if ok {
+			return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
+		}
+	}
+
+	return ""
 }
 
-func resolveUstack(b bpf.BPF, mapID uint32, userID int32, pid uint32, usym *symbol.UsymResolver, deleteKeys *[][]byte) string {
-	trace, ok := readAndMarkStackTrace(b, mapID, userID, deleteKeys)
-	if !ok {
-		return ""
+// resolveUstackWithFallback resolves user stack with fallback support.
+// Fast path: lookup primary stackMapID (90-95% hit rate).
+// Slow path: fallback to another stackMapID if primary lookup fails.
+func resolveUstackWithFallback(b bpf.BPF, primaryMapID uint32, fallbackMapID uint32, userID int32, pid uint32, usym *symbol.UsymResolver, deleteKeys *[][]byte) string {
+	// Fast path: lookup primary stack map
+	trace, ok := readAndMarkStackTrace(b, primaryMapID, userID, deleteKeys)
+	if ok {
+		return strings.Join(usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
 	}
-	return strings.Join(usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
+
+	// Slow path: fallback to another stack map (only for retained mode)
+	if fallbackMapID != 0 {
+		trace, ok = readAndMarkStackTrace(b, fallbackMapID, userID, deleteKeys)
+		if ok {
+			return strings.Join(usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
+		}
+	}
+
+	return ""
 }
 
 func readAndMarkStackTrace(b bpf.BPF, mapID uint32, id int32, deleteKeys *[][]byte) ([bpfmap.StackTraceLen]uint64, bool) {

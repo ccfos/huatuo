@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
@@ -305,19 +304,6 @@ func (p *memNativeProfiler) drainActiveRing(
 	// Use nested map structure consistent with CPU profiler
 	stackCountsByProc := make(map[processIDName]map[bpfmap.StackTraceID]int64)
 
-	// For retained mode (physical_usage), track which stack map each stack ID comes from
-	// For non-retained modes, all stack IDs belong to current frozen ring's stack_map
-	var kernelIDToSel, userIDToSel map[int32]uint32
-	var idsA, idsB map[int32]bool
-
-	needsStackMapSel := p.internalMode == modePhysicalUsage
-	if needsStackMapSel {
-		kernelIDToSel = make(map[int32]uint32)
-		userIDToSel = make(map[int32]uint32)
-		idsA = make(map[int32]bool)
-		idsB = make(map[int32]bool)
-	}
-
 	// Batch-read events until everything the BPF side wrote has been consumed.
 	// The kernel may keep writing to the just-frozen ring briefly after the
 	// parity flip, so re-check the sample count and keep draining until the
@@ -345,6 +331,10 @@ func (p *memNativeProfiler) drainActiveRing(
 				continue
 			}
 
+			if evt.Value == 0 {
+				continue
+			}
+
 			pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
 			pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
 
@@ -354,30 +344,6 @@ func (p *memNativeProfiler) drainActiveRing(
 				stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int64)
 			}
 			stackCountsByProc[pidName][pair] += evt.Value
-
-			// For retained mode: track StackMapSel to resolve mixed stack maps
-			if needsStackMapSel {
-				if pair.KernelID > 0 {
-					kernelIDToSel[pair.KernelID] = evt.StackMapSel
-				}
-				if pair.UserID > 0 {
-					userIDToSel[pair.UserID] = evt.StackMapSel
-				}
-
-				// Collect stack IDs to the appropriate set based on StackMapSel
-				targetSet := idsA
-				if evt.StackMapSel%2 == 1 {
-					targetSet = idsB
-				}
-
-				if pair.KernelID > 0 {
-					targetSet[pair.KernelID] = true
-				}
-
-				if pair.UserID > 0 {
-					targetSet[pair.UserID] = true
-				}
-			}
 		}
 
 		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch), totalRead, len(stackCountsByProc))
@@ -407,89 +373,31 @@ func (p *memNativeProfiler) drainActiveRing(
 	}
 
 	if len(stackCountsByProc) > 0 {
-		// For non-retained modes: use CPU profiler's simple stack resolution logic
-		// All stack IDs belong to current frozen ring's stack_map
-		if !needsStackMapSel {
-			var deleteKeys [][]byte
-			aggregateStacksAndStore(ringCtx.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys, p.convertValueToBytes)
-
-			if err := ringCtx.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
-				log.Warnf("clear stack map: %v", err)
+		// Determine fallback stack map ID for retained mode
+		// Non-retained modes: fallbackStackMapID = 0 (no fallback needed)
+		// Retained mode: fallback to the other stack map
+		fallbackStackMapID := uint32(0)
+		if p.internalMode == modePhysicalUsage {
+			// If current ring uses stack_map_a, fallback to stack_map_b
+			// If current ring uses stack_map_b, fallback to stack_map_a
+			if ring.stackMapID == ringCtx.stackMapAID {
+				fallbackStackMapID = ringCtx.stackMapBID
+			} else {
+				fallbackStackMapID = ringCtx.stackMapAID
 			}
-		} else {
-			// For retained mode: use dual-stack-map resolution
-			stackDataA := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapAID, idsA)
-			stackDataB := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapBID, idsB)
-			emitDeltas(stackCountsByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue, p.convertValueToBytes)
+		}
+
+		var deleteKeys [][]byte
+		aggregateStacksAndStore(ringCtx.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys, p.convertValueToBytes, fallbackStackMapID)
+
+		if err := ringCtx.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
+			log.Warnf("clear stack map: %v", err)
 		}
 	}
 
 	return nil
 }
 
-func emitDeltas(
-	stackCountsByProc map[processIDName]map[bpfmap.StackTraceID]int64,
-	stackDataA, stackDataB map[int32][bpfmap.StackTraceLen]uint64,
-	kernelIDToSel, userIDToSel map[int32]uint32,
-	usym *symbol.UsymResolver,
-	enqueue func(any),
-	convertValue func(int64) int64,
-) {
-	// Pre-allocate caches for stack resolution
-	kstackCache := make(map[int32]string)
-	ustackCache := make(map[int32]string)
-
-	for proc, stacks := range stackCountsByProc {
-		for stackID, rawValue := range stacks {
-			if rawValue == 0 {
-				continue
-			}
-
-			// Convert raw value to bytes at aggregation time
-			delta := convertValue(rawValue)
-
-			// Determine which stack data to use based on StackMapSel mapping
-			kernelStackData := stackDataA
-			if sel, ok := kernelIDToSel[stackID.KernelID]; ok && sel%2 == 1 {
-				kernelStackData = stackDataB
-			}
-
-			userStackData := stackDataA
-			if sel, ok := userIDToSel[stackID.UserID]; ok && sel%2 == 1 {
-				userStackData = stackDataB
-			}
-
-			// Resolve kernel stack
-			if stackID.KernelID > 0 {
-				if _, ok := kstackCache[stackID.KernelID]; !ok {
-					if trace, exists := kernelStackData[stackID.KernelID]; exists {
-						strs := symbol.KsymStackStrsReversed(trace[:], len(trace))
-						kstackCache[stackID.KernelID] = strings.Join(strs, ";") + ";"
-					}
-				}
-			}
-
-			// Resolve user stack
-			if stackID.UserID > 0 {
-				if _, ok := ustackCache[stackID.UserID]; !ok {
-					if trace, exists := userStackData[stackID.UserID]; exists {
-						strs := usym.UsymStackStrs(proc.Pid, trace[:], len(trace))
-						ustackCache[stackID.UserID] = strings.Join(strs, ";") + ";"
-					}
-				}
-			}
-
-			rec := &stackEntry{
-				Proc:    &processIDName{Pid: proc.Pid, Name: proc.Name},
-				User:    ustackCache[stackID.UserID],
-				Kernel:  kstackCache[stackID.KernelID],
-				Samples: delta,
-			}
-
-			enqueue(rec)
-		}
-	}
-}
 
 func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 	switch p.internalMode {
