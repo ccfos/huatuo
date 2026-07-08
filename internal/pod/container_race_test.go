@@ -36,8 +36,8 @@ func TestContainersMutexProtectsMap(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			mu.Lock()
+			defer mu.Unlock()
 			// Simulate: containers["id"] = &Container{}
-			mu.Unlock()
 		}()
 	}
 
@@ -47,8 +47,8 @@ func TestContainersMutexProtectsMap(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			mu.RLock()
+			defer mu.RUnlock()
 			// Simulate: for range containers { ... }
-			mu.RUnlock()
 		}()
 	}
 
