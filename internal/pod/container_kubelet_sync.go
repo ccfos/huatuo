@@ -20,14 +20,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/netutil"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"syscall"
 	"time"
+
+	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/utils/netutil"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
@@ -171,9 +172,7 @@ func ManagerInit(ctx *ManagerCtx) error {
 		// success or other error codes except connect refused
 		// only init css metadata collect when kubelet available.
 		if err == nil {
-			if cfgErr := kubeletConfigCacheUpdate(ctx); cfgErr != nil {
-				log.Warnf("kubelet config cache update failed: %v", cfgErr)
-			}
+			kubeletConfigCacheMustUpdate(ctx)
 			return containerCgroupCssInit()
 		}
 
@@ -192,9 +191,7 @@ func ManagerInit(ctx *ManagerCtx) error {
 			case <-t.C:
 				if err := kubeletPodListPortCacheUpdate(ctx); err == nil {
 					log.Infof("kubelet is running now")
-					if cfgErr := kubeletConfigCacheUpdate(ctx); cfgErr != nil {
-						log.Warnf("kubelet config cache update failed: %v", cfgErr)
-					}
+					kubeletConfigCacheMustUpdate(ctx)
 					_ = containerCgroupCssInit()
 					t.Stop()
 					return
@@ -505,11 +502,16 @@ func kubeletConfigFileDefault() (kubeletConfiguration, error) {
 	return empty, fmt.Errorf("not found kubelet config")
 }
 
-// kubeletConfigCacheUpdate try to update the cache var:
+// kubeletConfigCacheMustUpdate updates the kubelet configuration cache.
 //
-// CgroupDriver
-// ContainerRuntimeEndpoint
-func kubeletConfigCacheUpdate(ctx *ManagerCtx) error {
+// This function MUST succeed: if the kubelet configz endpoint and all
+// default config file paths are unavailable, it panics because downstream
+// services that depend on kubelet pod information would be broken.
+//
+// Updated cache vars:
+//   - CgroupDriver
+//   - ContainerRuntimeEndpoint
+func kubeletConfigCacheMustUpdate(ctx *ManagerCtx) error {
 	var (
 		config kubeletConfiguration
 		err    error
@@ -536,8 +538,10 @@ func kubeletConfigCacheUpdate(ctx *ManagerCtx) error {
 
 	config, err = kubeletConfigFileDefault()
 	if err != nil {
-		log.Warnf("failed to determine kubelet cgroup driver from configz and default files, using defaults: %v", err)
-		return nil
+		panic(fmt.Sprintf(
+			"we cannot find any cgroup driver of kubelet after requesting configz and default files: %v",
+			err,
+		))
 	}
 
 	return nil
