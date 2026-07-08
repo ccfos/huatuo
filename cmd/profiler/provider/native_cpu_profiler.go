@@ -20,14 +20,11 @@ import (
 	"fmt"
 	"time"
 
-
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
-	"huatuo-bamai/internal/profiler/bpfmap"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
 	"huatuo-bamai/pkg/types"
 )
@@ -52,12 +49,9 @@ const drainTick = 100 * time.Millisecond
 
 // cpuEventKey is the on-wire/event representation emitted by the BPF program.
 type cpuEventKey struct {
-	Pid        uint32
+	ProfilerEventBase
 	Tgid       uint32
 	Cpu        uint32
-	Comm       [bpf.TaskCommLen]byte
-	Kernstack  int32
-	Userstack  int32
 	Intpstack  int32
 	Flags      uint32
 	UprobeAddr uint64
@@ -130,7 +124,8 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	defer stopDbg()
 
 	// Initialize ring buffer context once, reuse throughout the profiling loop
-	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257)
+	// needsFallback=false for CPU profiler (no dual-stack-map needed)
+	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257, false)
 	if err != nil {
 		return err
 	}
@@ -146,7 +141,11 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		case <-ticker.C:
 		}
 
-		if err := p.drainActiveRing(ringCtx, enqueue); err != nil {
+		// Use unified drainActiveRing with CPU event factory
+		if err := ringCtx.drainActiveRing(enqueue,
+			func() any { return &cpuEventKey{} },
+			func(rec any) int64 { return 1 }, // CPU: each event counts as 1 sample
+			nil); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
@@ -154,86 +153,4 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 			log.Warnf("drain: %v", err)
 		}
 	}
-}
-
-func (p *cpuNativeProfiler) drainActiveRing(ringCtx *ringBufferContext, enqueue func(any)) error {
-	ring, err := ringCtx.advanceSwapParity()
-	if err != nil {
-		return err
-	}
-
-	stackCountsByProc := make(map[processIDName]map[bpfmap.StackTraceID]int64)
-
-	// Batch-read events until everything the BPF side wrote has been consumed.
-	// The kernel may keep writing to the just-frozen ring briefly after the
-	// parity flip, so re-check the sample count and keep draining until the
-	// number of events read equals the BPF-reported count.
-	totalRead := uint64(0)
-	for {
-		batch, err := ring.reader.ReadBatch(&cpuEventKey{})
-		if err != nil {
-			if errors.Is(err, types.ErrExitByCancelCtx) {
-				return err
-			}
-			log.Warnf("read batch: %v", err)
-			break
-		}
-
-		totalRead += uint64(len(batch))
-
-		for _, rec := range batch {
-			evt, ok := rec.(*cpuEventKey)
-			if !ok {
-				continue
-			}
-
-			if evt.Kernstack <= 0 && evt.Userstack <= 0 {
-				continue
-			}
-
-			pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
-			pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
-
-			if stackCountsByProc[pidName] == nil {
-				stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int64)
-			}
-			stackCountsByProc[pidName][pair]++
-		}
-
-		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch), totalRead, len(stackCountsByProc))
-
-		// An empty batch means the ring is drained for now; avoid spinning
-		// even if the BPF count has not been fully matched.
-		if len(batch) == 0 {
-			break
-		}
-
-		bpfCount, err := bpfmap.ReadUint64(ringCtx.bpf, ringCtx.transferStateMapID, ring.sampleCountIdx)
-		if err != nil {
-			return fmt.Errorf("read sampleCnt: %w", err)
-		}
-
-		log.Debugf("drain check: totalRead=%d bpfCount=%d", totalRead, bpfCount)
-
-		if totalRead >= bpfCount {
-			break
-		}
-	}
-
-	log.Debugf("drain done: totalRead=%d procs=%d", totalRead, len(stackCountsByProc))
-
-	if err := bpfmap.WriteUint64(ringCtx.bpf, ringCtx.transferStateMapID, ring.sampleCountIdx, 0); err != nil {
-		log.Warnf("reset sample count: %v", err)
-	}
-
-	if len(stackCountsByProc) > 0 {
-		var deleteKeys [][]byte
-		aggregateStacksAndStore(ringCtx.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys, nil, 0)
-
-		if err := ringCtx.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
-			log.Warnf("clear stack map: %v", err)
-		}
-	}
-
-	return nil
 }

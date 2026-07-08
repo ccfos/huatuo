@@ -26,11 +26,8 @@ import (
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
-	"huatuo-bamai/internal/profiler/bpfmap"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
-	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -55,10 +52,7 @@ type memNativeProfiler struct {
 }
 
 type memEvent struct {
-	Pid       uint32
-	Comm      [bpf.TaskCommLen]byte
-	Kernstack int32
-	Userstack int32
+	ProfilerEventBase
 	// StackMapSel records which A/B stack_map the IDs came from. Required
 	// for retained free events whose alloc-time parity may differ from the
 	// current parity at free time; kept in the shared event layout.
@@ -258,18 +252,21 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 	return nil, fmt.Errorf("unsupported mem profiler mode: %q", internalMode)
 }
 
+
 func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
 	log.Info("data reading loop started")
 	defer log.Info("data reading loop ended")
 
+	// Determine if fallback is needed based on profiling mode
+	// Retained mode (physical_usage) needs fallback, others don't
+	needsFallback := p.internalMode == modePhysicalUsage
+
 	// Initialize ring buffer context once, reuse throughout the profiling loop
-	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257)
+	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257, needsFallback)
 	if err != nil {
 		return err
 	}
 	defer ringCtx.Close()
-
-	usym := symbol.NewUsymResolver()
 
 	ticker := time.NewTicker(memDrainTick)
 	defer ticker.Stop()
@@ -281,7 +278,11 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		case <-ticker.C:
 		}
 
-		if err := p.drainActiveRing(ringCtx, usym, enqueue); err != nil {
+		// Use unified drainActiveRing with Memory event factory
+		if err := ringCtx.drainActiveRing(enqueue,
+			func() any { return &memEvent{} },
+			func(rec any) int64 { return rec.(*memEvent).Value }, // Memory: use event.Value
+			p.convertValueToBytes); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
@@ -290,114 +291,6 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		}
 	}
 }
-
-func (p *memNativeProfiler) drainActiveRing(
-	ringCtx *ringBufferContext,
-	usym *symbol.UsymResolver,
-	enqueue func(any),
-) error {
-	ring, err := ringCtx.advanceSwapParity()
-	if err != nil {
-		return err
-	}
-
-	// Use nested map structure consistent with CPU profiler
-	stackCountsByProc := make(map[processIDName]map[bpfmap.StackTraceID]int64)
-
-	// Batch-read events until everything the BPF side wrote has been consumed.
-	// The kernel may keep writing to the just-frozen ring briefly after the
-	// parity flip, so re-check the sample count and keep draining until the
-	// number of events read equals the BPF-reported count.
-	totalRead := uint64(0)
-	for {
-		batch, err := ring.reader.ReadBatch(&memEvent{})
-		if err != nil {
-			if errors.Is(err, types.ErrExitByCancelCtx) {
-				return err
-			}
-			log.Warn("read batch failed", "error", err)
-			break
-		}
-
-		totalRead += uint64(len(batch))
-
-		for _, rec := range batch {
-			evt, ok := rec.(*memEvent)
-			if !ok {
-				continue
-			}
-
-			if evt.Kernstack <= 0 && evt.Userstack <= 0 {
-				continue
-			}
-
-			if evt.Value == 0 {
-				continue
-			}
-
-			pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
-			pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
-
-			// Aggregate by process and stack ID
-			// Store raw value first, convert to bytes during final aggregation
-			if stackCountsByProc[pidName] == nil {
-				stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int64)
-			}
-			stackCountsByProc[pidName][pair] += evt.Value
-		}
-
-		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch), totalRead, len(stackCountsByProc))
-
-		// An empty batch means the ring is drained for now; avoid spinning
-		// even if the BPF count has not been fully matched.
-		if len(batch) == 0 {
-			break
-		}
-
-		bpfCount, err := bpfmap.ReadUint64(ringCtx.bpf, ringCtx.transferStateMapID, ring.sampleCountIdx)
-		if err != nil {
-			return fmt.Errorf("read sampleCnt: %w", err)
-		}
-
-		log.Debugf("drain check: totalRead=%d bpfCount=%d", totalRead, bpfCount)
-
-		if totalRead >= bpfCount {
-			break
-		}
-	}
-
-	log.Debugf("drain done: totalRead=%d procs=%d", totalRead, len(stackCountsByProc))
-
-	if err := bpfmap.WriteUint64(ringCtx.bpf, ringCtx.transferStateMapID, ring.sampleCountIdx, 0); err != nil {
-		log.Warnf("reset sample count: %v", err)
-	}
-
-	if len(stackCountsByProc) > 0 {
-		// Determine fallback stack map ID for retained mode
-		// Non-retained modes: fallbackStackMapID = 0 (no fallback needed)
-		// Retained mode: fallback to the other stack map
-		fallbackStackMapID := uint32(0)
-		if p.internalMode == modePhysicalUsage {
-			// If current ring uses stack_map_a, fallback to stack_map_b
-			// If current ring uses stack_map_b, fallback to stack_map_a
-			if ring.stackMapID == ringCtx.stackMapAID {
-				fallbackStackMapID = ringCtx.stackMapBID
-			} else {
-				fallbackStackMapID = ringCtx.stackMapAID
-			}
-		}
-
-		var deleteKeys [][]byte
-		aggregateStacksAndStore(ringCtx.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys, p.convertValueToBytes, fallbackStackMapID)
-
-		if err := ringCtx.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
-			log.Warnf("clear stack map: %v", err)
-		}
-	}
-
-	return nil
-}
-
 
 func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 	switch p.internalMode {
