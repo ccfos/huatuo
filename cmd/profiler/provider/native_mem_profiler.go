@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -263,21 +263,12 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	log.Info("data reading loop started")
 	defer log.Info("data reading loop ended")
 
-	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
+	// Initialize ring buffer context once, reuse throughout the profiling loop
+	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257)
 	if err != nil {
-		return fmt.Errorf("create mem readerA: %w", err)
+		return err
 	}
-	defer readerA.Close()
-
-	readerB, err := p.bpf.EventPipeByName(ctx, "profiler_output_b", 4096*257)
-	if err != nil {
-		return fmt.Errorf("create mem readerB: %w", err)
-	}
-	defer readerB.Close()
-
-	stateMapID := p.bpf.MapIDByName("profiler_state_map")
-	stackMapAID := p.bpf.MapIDByName("stack_map_a")
-	stackMapBID := p.bpf.MapIDByName("stack_map_b")
+	defer ringCtx.Close()
 
 	usym := symbol.NewUsymResolver()
 
@@ -291,7 +282,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		case <-ticker.C:
 		}
 
-		if err := p.drainActiveRing(readerA, readerB, stateMapID, stackMapAID, stackMapBID, usym, enqueue); err != nil {
+		if err := p.drainActiveRing(ringCtx, usym, enqueue); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
@@ -302,12 +293,11 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 }
 
 func (p *memNativeProfiler) drainActiveRing(
-	readerA, readerB bpf.PerfEventReader,
-	stateMapID, stackMapAID, stackMapBID uint32,
+	ringCtx *ringBufferContext,
 	usym *symbol.UsymResolver,
 	enqueue func(any),
 ) error {
-	ring, err := advanceSwapParity(p.bpf, readerA, readerB, stateMapID, "stack_map_a", "stack_map_b")
+	ring, err := ringCtx.advanceSwapParity()
 	if err != nil {
 		return err
 	}
@@ -395,7 +385,7 @@ func (p *memNativeProfiler) drainActiveRing(
 			break
 		}
 
-		bpfCount, err := bpfmap.ReadUint64(p.bpf, stateMapID, ring.sampleCountIdx)
+		bpfCount, err := bpfmap.ReadUint64(ringCtx.bpf, ringCtx.stateMapID, ring.sampleCountIdx)
 		if err != nil {
 			return fmt.Errorf("read sampleCnt: %w", err)
 		}
@@ -409,13 +399,13 @@ func (p *memNativeProfiler) drainActiveRing(
 
 	log.Debugf("drain done: totalRead=%d procs=%d", totalRead, len(deltaByProc))
 
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, ring.sampleCountIdx, 0); err != nil {
+	if err := bpfmap.WriteUint64(ringCtx.bpf, ringCtx.stateMapID, ring.sampleCountIdx, 0); err != nil {
 		log.Warnf("reset sample count: %v", err)
 	}
 
 	if len(deltaByProc) > 0 {
-		stackDataA := bpfmap.BatchReadStackTraces(p.bpf, stackMapAID, idsA)
-		stackDataB := bpfmap.BatchReadStackTraces(p.bpf, stackMapBID, idsB)
+		stackDataA := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapAID, idsA)
+		stackDataB := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapBID, idsB)
 		emitDeltas(deltaByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue)
 	}
 

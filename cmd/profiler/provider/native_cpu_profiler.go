@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -134,19 +134,12 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	}
 	defer stopDbg()
 
-	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
+	// Initialize ring buffer context once, reuse throughout the profiling loop
+	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257)
 	if err != nil {
-		return fmt.Errorf("create readerA: %w", err)
+		return err
 	}
-	defer readerA.Close()
-
-	readerB, err := p.bpf.EventPipeByName(ctx, "profiler_output_b", 4096*257)
-	if err != nil {
-		return fmt.Errorf("create readerB: %w", err)
-	}
-	defer readerB.Close()
-
-	stateMapID := p.bpf.MapIDByName("profiler_state_map")
+	defer ringCtx.Close()
 
 	ticker := time.NewTicker(drainTick)
 	defer ticker.Stop()
@@ -158,7 +151,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		case <-ticker.C:
 		}
 
-		if err := p.drainActiveRing(readerA, readerB, stateMapID, enqueue); err != nil {
+		if err := p.drainActiveRing(ringCtx, enqueue); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
@@ -168,8 +161,8 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	}
 }
 
-func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader, stateMapID uint32, enqueue func(any)) error {
-	ring, err := advanceSwapParity(p.bpf, readerA, readerB, stateMapID, "stack_map_a", "stack_map_b")
+func (p *cpuNativeProfiler) drainActiveRing(ringCtx *ringBufferContext, enqueue func(any)) error {
+	ring, err := ringCtx.advanceSwapParity()
 	if err != nil {
 		return err
 	}
@@ -220,7 +213,7 @@ func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader
 			break
 		}
 
-		bpfCount, err := bpfmap.ReadUint64(p.bpf, stateMapID, ring.sampleCountIdx)
+		bpfCount, err := bpfmap.ReadUint64(ringCtx.bpf, ringCtx.stateMapID, ring.sampleCountIdx)
 		if err != nil {
 			return fmt.Errorf("read sampleCnt: %w", err)
 		}
@@ -234,15 +227,15 @@ func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader
 
 	log.Debugf("drain done: totalRead=%d procs=%d", totalRead, len(stackCountsByProc))
 
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, ring.sampleCountIdx, 0); err != nil {
+	if err := bpfmap.WriteUint64(ringCtx.bpf, ringCtx.stateMapID, ring.sampleCountIdx, 0); err != nil {
 		log.Warnf("reset sample count: %v", err)
 	}
 
 	if len(stackCountsByProc) > 0 {
 		var deleteKeys [][]byte
-		aggregateStacksAndStore(p.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys)
+		aggregateStacksAndStore(ringCtx.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys)
 
-		if err := p.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
+		if err := ringCtx.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
 			log.Warnf("clear stack map: %v", err)
 		}
 	}
@@ -331,14 +324,4 @@ func readAndMarkStackTrace(b bpf.BPF, mapID uint32, id int32, deleteKeys *[][]by
 	}
 
 	return trace, true
-}
-
-func closeBpfSafe(b bpf.BPF) error {
-	if b == nil {
-		return nil
-	}
-	if err := b.Close(); err != nil {
-		log.Warnf("closing eBPF: %v", err)
-	}
-	return nil
 }
