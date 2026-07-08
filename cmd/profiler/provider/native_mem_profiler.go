@@ -305,13 +305,18 @@ func (p *memNativeProfiler) drainActiveRing(
 	// Use nested map structure consistent with CPU profiler
 	stackCountsByProc := make(map[processIDName]map[bpfmap.StackTraceID]int64)
 
-	// Track which stack map each stack ID comes from
-	kernelIDToSel := make(map[int32]uint32)
-	userIDToSel := make(map[int32]uint32)
+	// For retained mode (physical_usage), track which stack map each stack ID comes from
+	// For non-retained modes, all stack IDs belong to current frozen ring's stack_map
+	var kernelIDToSel, userIDToSel map[int32]uint32
+	var idsA, idsB map[int32]bool
 
-	// Collect stack IDs for both maps
-	idsA := make(map[int32]bool)
-	idsB := make(map[int32]bool)
+	needsStackMapSel := p.internalMode == modePhysicalUsage
+	if needsStackMapSel {
+		kernelIDToSel = make(map[int32]uint32)
+		userIDToSel = make(map[int32]uint32)
+		idsA = make(map[int32]bool)
+		idsB = make(map[int32]bool)
+	}
 
 	// Batch-read events until everything the BPF side wrote has been consumed.
 	// The kernel may keep writing to the just-frozen ring briefly after the
@@ -343,34 +348,35 @@ func (p *memNativeProfiler) drainActiveRing(
 			pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
 			pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
 
-			// Aggregate by process and stack ID (StackMapSel doesn't affect aggregation)
+			// Aggregate by process and stack ID
 			// Store raw value first, convert to bytes during final aggregation
 			if stackCountsByProc[pidName] == nil {
 				stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int64)
 			}
 			stackCountsByProc[pidName][pair] += evt.Value
 
-			// Record StackMapSel mapping for stack resolution
-			// StackMapSel indicates which stack map contains the actual stack data
-			if pair.KernelID > 0 {
-				kernelIDToSel[pair.KernelID] = evt.StackMapSel
-			}
-			if pair.UserID > 0 {
-				userIDToSel[pair.UserID] = evt.StackMapSel
-			}
+			// For retained mode: track StackMapSel to resolve mixed stack maps
+			if needsStackMapSel {
+				if pair.KernelID > 0 {
+					kernelIDToSel[pair.KernelID] = evt.StackMapSel
+				}
+				if pair.UserID > 0 {
+					userIDToSel[pair.UserID] = evt.StackMapSel
+				}
 
-			// Collect stack IDs to the appropriate set based on StackMapSel
-			targetSet := idsA
-			if evt.StackMapSel%2 == 1 {
-				targetSet = idsB
-			}
+				// Collect stack IDs to the appropriate set based on StackMapSel
+				targetSet := idsA
+				if evt.StackMapSel%2 == 1 {
+					targetSet = idsB
+				}
 
-			if pair.KernelID > 0 {
-				targetSet[pair.KernelID] = true
-			}
+				if pair.KernelID > 0 {
+					targetSet[pair.KernelID] = true
+				}
 
-			if pair.UserID > 0 {
-				targetSet[pair.UserID] = true
+				if pair.UserID > 0 {
+					targetSet[pair.UserID] = true
+				}
 			}
 		}
 
@@ -401,9 +407,21 @@ func (p *memNativeProfiler) drainActiveRing(
 	}
 
 	if len(stackCountsByProc) > 0 {
-		stackDataA := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapAID, idsA)
-		stackDataB := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapBID, idsB)
-		emitDeltas(stackCountsByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue, p.convertValueToBytes)
+		// For non-retained modes: use CPU profiler's simple stack resolution logic
+		// All stack IDs belong to current frozen ring's stack_map
+		if !needsStackMapSel {
+			var deleteKeys [][]byte
+			aggregateStacksAndStore(ringCtx.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys, p.convertValueToBytes)
+
+			if err := ringCtx.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
+				log.Warnf("clear stack map: %v", err)
+			}
+		} else {
+			// For retained mode: use dual-stack-map resolution
+			stackDataA := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapAID, idsA)
+			stackDataB := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapBID, idsB)
+			emitDeltas(stackCountsByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue, p.convertValueToBytes)
+		}
 	}
 
 	return nil

@@ -167,7 +167,7 @@ func (p *cpuNativeProfiler) drainActiveRing(ringCtx *ringBufferContext, enqueue 
 		return err
 	}
 
-	stackCountsByProc := make(map[processIDName]map[bpfmap.StackTraceID]int)
+	stackCountsByProc := make(map[processIDName]map[bpfmap.StackTraceID]int64)
 
 	// Batch-read events until everything the BPF side wrote has been consumed.
 	// The kernel may keep writing to the just-frozen ring briefly after the
@@ -200,7 +200,7 @@ func (p *cpuNativeProfiler) drainActiveRing(ringCtx *ringBufferContext, enqueue 
 			pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
 
 			if stackCountsByProc[pidName] == nil {
-				stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int)
+				stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int64)
 			}
 			stackCountsByProc[pidName][pair]++
 		}
@@ -233,7 +233,7 @@ func (p *cpuNativeProfiler) drainActiveRing(ringCtx *ringBufferContext, enqueue 
 
 	if len(stackCountsByProc) > 0 {
 		var deleteKeys [][]byte
-		aggregateStacksAndStore(ringCtx.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys)
+		aggregateStacksAndStore(ringCtx.bpf, stackCountsByProc, ring.stackMapID, enqueue, &deleteKeys, nil)
 
 		if err := ringCtx.bpf.DeleteMapItems(ring.stackMapID, deleteKeys); err != nil {
 			log.Warnf("clear stack map: %v", err)
@@ -243,12 +243,16 @@ func (p *cpuNativeProfiler) drainActiveRing(ringCtx *ringBufferContext, enqueue 
 	return nil
 }
 
+// aggregateStacksAndStore resolves stack traces and emits aggregated records.
+// For CPU profiler, convertValue is nil (samples are already counts).
+// For Memory profiler non-retained modes, convertValue converts raw value to bytes.
 func aggregateStacksAndStore(
 	b bpf.BPF,
-	stackCountsByProc map[processIDName]map[bpfmap.StackTraceID]int,
+	stackCountsByProc map[processIDName]map[bpfmap.StackTraceID]int64,
 	stackMapID uint32,
 	enqueue func(any),
 	deleteKeys *[][]byte,
+	convertValue func(int64) int64,
 ) {
 	kstackCache := make(map[int32]string)
 	ustackCache := make(map[int32]string)
@@ -256,7 +260,17 @@ func aggregateStacksAndStore(
 
 	var records int
 	for pidName, stacks := range stackCountsByProc {
-		for stackID, count := range stacks {
+		for stackID, rawValue := range stacks {
+			// Convert value if needed (Memory profiler), otherwise use directly (CPU profiler)
+			value := rawValue
+			if convertValue != nil {
+				value = convertValue(rawValue)
+			}
+
+			if value == 0 {
+				continue
+			}
+
 			if stackID.KernelID > 0 {
 				if _, ok := kstackCache[stackID.KernelID]; !ok {
 					kstackCache[stackID.KernelID] = resolveKstack(b, stackMapID, stackID.KernelID, deleteKeys)
@@ -272,7 +286,7 @@ func aggregateStacksAndStore(
 				Proc:    &processIDName{Pid: pidName.Pid, Name: pidName.Name},
 				User:    ustackCache[stackID.UserID],
 				Kernel:  kstackCache[stackID.KernelID],
-				Samples: int64(count),
+				Samples: value,
 			}
 
 			enqueue(record)
