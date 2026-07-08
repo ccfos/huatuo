@@ -150,12 +150,10 @@ func (r *ringBufferContext) advanceSwapParity() (activeRingBuffer, error) {
 // Parameters:
 // - enqueue: callback to emit aggregated records
 // - newEvent: factory function to create event struct from batch data
-// - getValue: function to extract value from event (CPU: return 1, Memory: return event.Value)
 // - convertValue: optional function to convert raw value (nil for CPU, non-nil for Memory)
 func (r *ringBufferContext) drainActiveRingBuffer(
 	enqueue func(any),
 	newEvent func() any,
-	getValue func(any) int64,
 	convertValue func(int64) int64,
 ) error {
 	ring, err := r.advanceSwapParity()
@@ -195,8 +193,8 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 				continue
 			}
 
-			// Get value (CPU: 1, Memory: event.Value)
-			value := getValue(rec)
+			// Get value directly from base (CPU: 1, Memory: page/byte delta)
+			value := base.Value
 			if convertValue != nil {
 				value = convertValue(value)
 			}

@@ -21,7 +21,6 @@ import (
 	"os"
 	"strconv"
 	"time"
-	"unsafe"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups/subsystem"
@@ -281,12 +280,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		// Use unified drainActiveRingBuffer with Memory event factory
 		if err := ringCtx.drainActiveRingBuffer(enqueue,
 			func() any { return &memEvent{} },
-			func(rec any) int64 {
-				// Value is now in the embedded base, accessible via pointer conversion
-				base := (*ProfilerEventBase)(unsafe.Pointer(&rec))
-				return base.Value  // Memory delta (pages or bytes)
-			},
-			p.convertValueToBytes); err != nil {
+			p.convertValueToBytes); err != nil {  // Convert pages to bytes
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
