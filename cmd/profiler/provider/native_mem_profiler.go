@@ -341,25 +341,22 @@ func (p *memNativeProfiler) drainActiveRing(
 				continue
 			}
 
-			proc := processIDName{
-				Pid:  evt.Pid,
-				Name: procutil.CommToString(evt.Comm),
-			}
-			ids := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
+			pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
+			pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
 
 			// Aggregate by process and stack ID (StackMapSel doesn't affect aggregation)
-			if deltaByProc[proc] == nil {
-				deltaByProc[proc] = make(map[bpfmap.StackTraceID]int64)
+			if deltaByProc[pidName] == nil {
+				deltaByProc[pidName] = make(map[bpfmap.StackTraceID]int64)
 			}
-			deltaByProc[proc][ids] += deltaBytes
+			deltaByProc[pidName][pair] += deltaBytes
 
 			// Record StackMapSel mapping for stack resolution
 			// StackMapSel indicates which stack map contains the actual stack data
-			if ids.KernelID > 0 {
-				kernelIDToSel[ids.KernelID] = evt.StackMapSel
+			if pair.KernelID > 0 {
+				kernelIDToSel[pair.KernelID] = evt.StackMapSel
 			}
-			if ids.UserID > 0 {
-				userIDToSel[ids.UserID] = evt.StackMapSel
+			if pair.UserID > 0 {
+				userIDToSel[pair.UserID] = evt.StackMapSel
 			}
 
 			// Collect stack IDs to the appropriate set based on StackMapSel
@@ -368,12 +365,12 @@ func (p *memNativeProfiler) drainActiveRing(
 				targetSet = idsB
 			}
 
-			if ids.KernelID > 0 {
-				targetSet[ids.KernelID] = true
+			if pair.KernelID > 0 {
+				targetSet[pair.KernelID] = true
 			}
 
-			if ids.UserID > 0 {
-				targetSet[ids.UserID] = true
+			if pair.UserID > 0 {
+				targetSet[pair.UserID] = true
 			}
 		}
 
