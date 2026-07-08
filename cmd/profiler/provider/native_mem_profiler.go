@@ -336,8 +336,11 @@ func (p *memNativeProfiler) drainActiveRing(
 				continue
 			}
 
-			deltaBytes := p.convertValueToBytes(evt.Value)
-			if deltaBytes == 0 {
+			if evt.Kernstack <= 0 && evt.Userstack <= 0 {
+				continue
+			}
+
+			if evt.Value == 0 {
 				continue
 			}
 
@@ -345,10 +348,11 @@ func (p *memNativeProfiler) drainActiveRing(
 			pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
 
 			// Aggregate by process and stack ID (StackMapSel doesn't affect aggregation)
+			// Store raw value first, convert to bytes during final aggregation
 			if stackCountsByProc[pidName] == nil {
 				stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int64)
 			}
-			stackCountsByProc[pidName][pair] += deltaBytes
+			stackCountsByProc[pidName][pair] += evt.Value
 
 			// Record StackMapSel mapping for stack resolution
 			// StackMapSel indicates which stack map contains the actual stack data
@@ -403,7 +407,7 @@ func (p *memNativeProfiler) drainActiveRing(
 	if len(stackCountsByProc) > 0 {
 		stackDataA := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapAID, idsA)
 		stackDataB := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapBID, idsB)
-		emitDeltas(stackCountsByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue)
+		emitDeltas(stackCountsByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue, p.convertValueToBytes)
 	}
 
 	return nil
@@ -415,16 +419,20 @@ func emitDeltas(
 	kernelIDToSel, userIDToSel map[int32]uint32,
 	usym *symbol.UsymResolver,
 	enqueue func(any),
+	convertValue func(int64) int64,
 ) {
 	// Pre-allocate caches for stack resolution
 	kstackCache := make(map[int32]string)
 	ustackCache := make(map[int32]string)
 
 	for proc, stacks := range stackCountsByProc {
-		for stackID, delta := range stacks {
-			if delta == 0 {
+		for stackID, rawValue := range stacks {
+			if rawValue == 0 {
 				continue
 			}
+
+			// Convert raw value to bytes at aggregation time
+			delta := convertValue(rawValue)
 
 			// Determine which stack data to use based on StackMapSel mapping
 			kernelStackData := stackDataA
