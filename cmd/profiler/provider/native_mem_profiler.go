@@ -303,7 +303,7 @@ func (p *memNativeProfiler) drainActiveRing(
 	}
 
 	// Use nested map structure consistent with CPU profiler
-	deltaByProc := make(map[processIDName]map[bpfmap.StackTraceID]int64)
+	stackCountsByProc := make(map[processIDName]map[bpfmap.StackTraceID]int64)
 
 	// Track which stack map each stack ID comes from
 	kernelIDToSel := make(map[int32]uint32)
@@ -345,10 +345,10 @@ func (p *memNativeProfiler) drainActiveRing(
 			pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
 
 			// Aggregate by process and stack ID (StackMapSel doesn't affect aggregation)
-			if deltaByProc[pidName] == nil {
-				deltaByProc[pidName] = make(map[bpfmap.StackTraceID]int64)
+			if stackCountsByProc[pidName] == nil {
+				stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int64)
 			}
-			deltaByProc[pidName][pair] += deltaBytes
+			stackCountsByProc[pidName][pair] += deltaBytes
 
 			// Record StackMapSel mapping for stack resolution
 			// StackMapSel indicates which stack map contains the actual stack data
@@ -374,7 +374,7 @@ func (p *memNativeProfiler) drainActiveRing(
 			}
 		}
 
-		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch), totalRead, len(deltaByProc))
+		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch), totalRead, len(stackCountsByProc))
 
 		// An empty batch means the ring is drained for now; avoid spinning
 		// even if the BPF count has not been fully matched.
@@ -394,23 +394,23 @@ func (p *memNativeProfiler) drainActiveRing(
 		}
 	}
 
-	log.Debugf("drain done: totalRead=%d procs=%d", totalRead, len(deltaByProc))
+	log.Debugf("drain done: totalRead=%d procs=%d", totalRead, len(stackCountsByProc))
 
 	if err := bpfmap.WriteUint64(ringCtx.bpf, ringCtx.stateMapID, ring.sampleCountIdx, 0); err != nil {
 		log.Warnf("reset sample count: %v", err)
 	}
 
-	if len(deltaByProc) > 0 {
+	if len(stackCountsByProc) > 0 {
 		stackDataA := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapAID, idsA)
 		stackDataB := bpfmap.BatchReadStackTraces(ringCtx.bpf, ringCtx.stackMapBID, idsB)
-		emitDeltas(deltaByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue)
+		emitDeltas(stackCountsByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue)
 	}
 
 	return nil
 }
 
 func emitDeltas(
-	deltaByProc map[processIDName]map[bpfmap.StackTraceID]int64,
+	stackCountsByProc map[processIDName]map[bpfmap.StackTraceID]int64,
 	stackDataA, stackDataB map[int32][bpfmap.StackTraceLen]uint64,
 	kernelIDToSel, userIDToSel map[int32]uint32,
 	usym *symbol.UsymResolver,
@@ -420,7 +420,7 @@ func emitDeltas(
 	kstackCache := make(map[int32]string)
 	ustackCache := make(map[int32]string)
 
-	for proc, stacks := range deltaByProc {
+	for proc, stacks := range stackCountsByProc {
 		for stackID, delta := range stacks {
 			if delta == 0 {
 				continue
