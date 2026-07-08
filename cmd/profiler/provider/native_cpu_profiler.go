@@ -141,8 +141,8 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		case <-ticker.C:
 		}
 
-		// Use unified drainActiveRing with CPU event factory
-		if err := ringCtx.drainActiveRing(enqueue,
+		// Use unified drainActiveRingBuffer with CPU event factory
+		if err := ringCtx.drainActiveRingBuffer(enqueue,
 			func() any { return &cpuEventKey{} },
 			func(rec any) int64 { return 1 }, // CPU: each event counts as 1 sample
 			nil); err != nil {

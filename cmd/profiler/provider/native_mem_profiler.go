@@ -278,8 +278,8 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		case <-ticker.C:
 		}
 
-		// Use unified drainActiveRing with Memory event factory
-		if err := ringCtx.drainActiveRing(enqueue,
+		// Use unified drainActiveRingBuffer with Memory event factory
+		if err := ringCtx.drainActiveRingBuffer(enqueue,
 			func() any { return &memEvent{} },
 			func(rec any) int64 { return rec.(*memEvent).Value }, // Memory: use event.Value
 			p.convertValueToBytes); err != nil {
