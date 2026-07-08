@@ -33,7 +33,7 @@ func resolveContainerCgroupCss(pctx *pcontext.ProfilerContext, subsysName string
 	}
 
 	// Try API method first
-	cssAddr, err := resolveCgroupCSSViaAPI(pctx.ServerAddress, pctx.ContainerID, subsysName)
+	cssAddr, err := resolveContainerCgroupCssByAPI(pctx.ServerAddress, pctx.ContainerID, subsysName)
 	if err == nil {
 		return cssAddr, nil
 	}
@@ -41,7 +41,7 @@ func resolveContainerCgroupCss(pctx *pcontext.ProfilerContext, subsysName string
 	log.Warn("API method failed, falling back to local method", "error", err, "container_id", pctx.ContainerID, "subsystem", subsysName)
 
 	// Fallback to local BPF-based method
-	cssAddr, err = resolveCgroupCSSLocally(pctx.ContainerID, subsysName)
+	cssAddr, err = resolveContainerCgroupCssByLocal(pctx.ContainerID, subsysName)
 	if err != nil {
 		return 0, fmt.Errorf("both API and local methods failed for subsystem %s: %w", subsysName, err)
 	}
@@ -49,8 +49,8 @@ func resolveContainerCgroupCss(pctx *pcontext.ProfilerContext, subsysName string
 	return cssAddr, nil
 }
 
-// resolveCgroupCSSViaAPI attempts to get CSS address via huatuo-bamai API.
-func resolveCgroupCSSViaAPI(serverAddr, containerID, subsysName string) (uint64, error) {
+// resolveContainerCgroupCssByAPI attempts to get CSS address via huatuo-bamai API.
+func resolveContainerCgroupCssByAPI(serverAddr, containerID, subsysName string) (uint64, error) {
 	c, err := container.GetContainerByID(serverAddr, containerID)
 	if err != nil {
 		return 0, fmt.Errorf("API call failed: %w", err)
@@ -68,8 +68,8 @@ func resolveCgroupCSSViaAPI(serverAddr, containerID, subsysName string) (uint64,
 	return cssAddr, nil
 }
 
-// resolveCgroupCSSLocally retrieves CSS address using local BPF-based method.
-func resolveCgroupCSSLocally(containerID, subsysName string) (uint64, error) {
+// resolveContainerCgroupCssByLocal retrieves CSS address using local BPF-based method.
+func resolveContainerCgroupCssByLocal(containerID, subsysName string) (uint64, error) {
 	cssAddr, err := pod.GetContainerCSSBySubsys(containerID, subsysName)
 	if err != nil {
 		return 0, fmt.Errorf("local CSS retrieval failed: %w", err)
