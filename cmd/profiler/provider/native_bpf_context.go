@@ -37,6 +37,7 @@ type ProfilerEventBase struct {
 	Comm      [TaskCommLen]byte
 	Kernstack int32
 	Userstack int32
+	Value     int64  // CPU: always 1 (sample count), Memory: page/byte delta
 }
 
 // ringBufferContext holds the shared ring buffer state for A/B buffer management.

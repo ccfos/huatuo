@@ -52,7 +52,6 @@ struct mem_event_t {
 	 * Alloc events set this to current parity; free events reuse alloc-time selector.
 	 */
 	u32 stack_map_sel;
-	s64 value; /* pages delta: +1 on alloc, -1 on free */
 };
 
 struct {
@@ -195,7 +194,7 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 	if (event->base.userstack < 0 && event->base.kernstack < 0)
 		return 0;
 
-	event->value = 1;
+	event->base.value = 1;
 
 	struct stack_info_t stack_info = {};
 	stack_info.base.pid = event->base.pid;
@@ -281,7 +280,7 @@ int BPF_KPROBE(trace_page_free, struct page *page, bool compound)
 			 sizeof(event->base.comm));
 
 	/* Free: negative page delta */
-	event->value = -1;
+	event->base.value = -1;
 
 	bpf_map_delete_elem(&page_to_stackid, &page_addr);
 

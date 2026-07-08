@@ -27,7 +27,6 @@ struct mem_event_t {
 	 * Kept here for a shared event layout.
 	 */
 	u32 stack_map_sel;
-	s64 value; /* pages (always +1 for native_physical_alloc) */
 };
 
 struct {
@@ -172,7 +171,7 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 		return 0;
 
 	/* One page per event, convert to bytes in user space */
-	event->value = 1;
+	event->base.value = 1;
 
 	__sync_fetch_and_add(sample_count_ptr, 1);
 

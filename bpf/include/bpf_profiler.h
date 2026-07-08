@@ -16,6 +16,7 @@ struct profiler_event_base_t {
 	char comm[COMPAT_TASK_COMM_LEN];
 	int kernstack;
 	int userstack;
+	s64 value;  // CPU: always 1 (sample count), Memory: page/byte delta
 };
 
 #endif /* __BPF_PROFILER_H__ */

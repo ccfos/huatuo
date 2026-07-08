@@ -21,6 +21,7 @@ import (
 	"os"
 	"strconv"
 	"time"
+	"unsafe"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups/subsystem"
@@ -57,7 +58,6 @@ type memEvent struct {
 	// for retained free events whose alloc-time parity may differ from the
 	// current parity at free time; kept in the shared event layout.
 	StackMapSel uint32
-	Value       int64
 }
 
 func init() {
@@ -281,7 +281,11 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		// Use unified drainActiveRingBuffer with Memory event factory
 		if err := ringCtx.drainActiveRingBuffer(enqueue,
 			func() any { return &memEvent{} },
-			func(rec any) int64 { return rec.(*memEvent).Value }, // Memory: use event.Value
+			func(rec any) int64 {
+				// Value is now in the embedded base, accessible via pointer conversion
+				base := (*ProfilerEventBase)(unsafe.Pointer(&rec))
+				return base.Value  // Memory delta (pages or bytes)
+			},
 			p.convertValueToBytes); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil

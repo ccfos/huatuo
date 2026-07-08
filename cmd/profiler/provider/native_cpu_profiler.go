@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unsafe"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups/subsystem"
@@ -144,7 +145,11 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		// Use unified drainActiveRingBuffer with CPU event factory
 		if err := ringCtx.drainActiveRingBuffer(enqueue,
 			func() any { return &cpuEventKey{} },
-			func(rec any) int64 { return 1 }, // CPU: each event counts as 1 sample
+			func(rec any) int64 {
+				// Value is now in the embedded base, accessible via pointer conversion
+				base := (*ProfilerEventBase)(unsafe.Pointer(&rec))
+				return base.Value  // Always 1 for CPU profiler
+			},
 			nil); err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil

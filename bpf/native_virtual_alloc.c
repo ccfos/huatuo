@@ -26,7 +26,6 @@ struct mem_event_t {
 	 * Kept here for a shared event layout.
 	 */
 	u32 stack_map_sel;
-	s64 value; /* bytes for native_virtual_alloc */
 };
 
 struct {
@@ -170,7 +169,7 @@ int BPF_KPROBE(trace_mmap, struct file *file, unsigned long addr,
 	if (event->base.userstack < 0 && event->base.kernstack < 0)
 		return 0;
 
-	event->value = (s64)len;
+	event->base.value = (s64)len;
 
 	__sync_fetch_and_add(sample_count_ptr, 1);
 

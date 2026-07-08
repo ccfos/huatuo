@@ -203,6 +203,7 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 
 	event->base.userstack = bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
 	event->base.kernstack = bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
+	event->base.value = 1;  // CPU: each event counts as 1 sample
 
 	if (event->base.userstack < 0 && event->base.kernstack < 0) {
 		bpf_dbg_msg(ctx, native_cpu_dbg, "user and kernel stack missed");
