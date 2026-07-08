@@ -168,46 +168,8 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	}
 }
 
-type activeRing struct {
-	reader         bpf.PerfEventReader
-	stackMapID     uint32
-	sampleCountIdx uint32
-}
-
-// advanceSwapParity increments the BPF write-parity counter so the kernel
-// switches to the other buffer pair, then returns the now-frozen (drainable)
-// ring along with the sample-count index used to track how many events the
-// BPF side wrote. The caller reads and resets that count while draining.
-func (p *cpuNativeProfiler) advanceSwapParity(readerA, readerB bpf.PerfEventReader, stateMapID uint32) (activeRing, error) {
-	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
-	if err != nil {
-		return activeRing{}, fmt.Errorf("read transferCnt: %w", err)
-	}
-
-	var ring activeRing
-	if val%2 == 0 {
-		ring = activeRing{
-			reader:         readerA,
-			stackMapID:     p.bpf.MapIDByName("stack_map_a"),
-			sampleCountIdx: bpfmap.SampleCountAIdx,
-		}
-	} else {
-		ring = activeRing{
-			reader:         readerB,
-			stackMapID:     p.bpf.MapIDByName("stack_map_b"),
-			sampleCountIdx: bpfmap.SampleCountBIdx,
-		}
-	}
-
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
-		return activeRing{}, fmt.Errorf("write transferCnt: %w", err)
-	}
-
-	return ring, nil
-}
-
 func (p *cpuNativeProfiler) drainActiveRing(readerA, readerB bpf.PerfEventReader, stateMapID uint32, enqueue func(any)) error {
-	ring, err := p.advanceSwapParity(readerA, readerB, stateMapID)
+	ring, err := advanceSwapParity(p.bpf, readerA, readerB, stateMapID, "stack_map_a", "stack_map_b")
 	if err != nil {
 		return err
 	}

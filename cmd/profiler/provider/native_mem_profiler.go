@@ -301,52 +301,13 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	}
 }
 
-type memActiveRing struct {
-	reader      bpf.PerfEventReader
-	sampleCount uint64
-}
-
-func (p *memNativeProfiler) advanceSwapParity(readerA, readerB bpf.PerfEventReader, stateMapID uint32) (memActiveRing, error) {
-	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
-	if err != nil {
-		return memActiveRing{}, fmt.Errorf("read transferCnt: %w", err)
-	}
-
-	var (
-		ring           memActiveRing
-		sampleCountIdx uint32
-	)
-	if val%2 == 0 {
-		ring = memActiveRing{reader: readerA}
-		sampleCountIdx = bpfmap.SampleCountAIdx
-	} else {
-		ring = memActiveRing{reader: readerB}
-		sampleCountIdx = bpfmap.SampleCountBIdx
-	}
-
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
-		return memActiveRing{}, fmt.Errorf("write transferCnt: %w", err)
-	}
-
-	ring.sampleCount, err = bpfmap.ReadUint64(p.bpf, stateMapID, sampleCountIdx)
-	if err != nil {
-		return memActiveRing{}, fmt.Errorf("read sampleCnt: %w", err)
-	}
-
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
-		return memActiveRing{}, fmt.Errorf("reset sampleCnt: %w", err)
-	}
-
-	return ring, nil
-}
-
 func (p *memNativeProfiler) drainActiveRing(
 	readerA, readerB bpf.PerfEventReader,
 	stateMapID, stackMapAID, stackMapBID uint32,
 	usym *symbol.UsymResolver,
 	enqueue func(any),
 ) error {
-	ring, err := p.advanceSwapParity(readerA, readerB, stateMapID)
+	ring, err := advanceSwapParity(p.bpf, readerA, readerB, stateMapID, "stack_map_a", "stack_map_b")
 	if err != nil {
 		return err
 	}
@@ -362,61 +323,101 @@ func (p *memNativeProfiler) drainActiveRing(
 	idsA := make(map[int32]bool)
 	idsB := make(map[int32]bool)
 
-	for i := uint64(0); i < ring.sampleCount; i++ {
-		var evt memEvent
-		if err := ring.reader.ReadInto(&evt); err != nil {
+	// Batch-read events until everything the BPF side wrote has been consumed.
+	// The kernel may keep writing to the just-frozen ring briefly after the
+	// parity flip, so re-check the sample count and keep draining until the
+	// number of events read equals the BPF-reported count.
+	totalRead := uint64(0)
+	for {
+		batch, err := ring.reader.ReadBatch(&memEvent{})
+		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return err
 			}
-
-			log.Warn("read event failed", "index", i, "total", ring.sampleCount, "error", err)
+			log.Warn("read batch failed", "error", err)
 			break
 		}
 
-		deltaBytes := p.convertValueToBytes(evt.Value)
-		if deltaBytes == 0 {
-			continue
+		totalRead += uint64(len(batch))
+
+		for _, rec := range batch {
+			evt, ok := rec.(*memEvent)
+			if !ok {
+				continue
+			}
+
+			deltaBytes := p.convertValueToBytes(evt.Value)
+			if deltaBytes == 0 {
+				continue
+			}
+
+			proc := processIDName{
+				Pid:  evt.Pid,
+				Name: procutil.CommToString(evt.Comm),
+			}
+			ids := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
+
+			// Aggregate by process and stack ID (StackMapSel doesn't affect aggregation)
+			if deltaByProc[proc] == nil {
+				deltaByProc[proc] = make(map[bpfmap.StackTraceID]int64)
+			}
+			deltaByProc[proc][ids] += deltaBytes
+
+			// Record StackMapSel mapping for stack resolution
+			// StackMapSel indicates which stack map contains the actual stack data
+			if ids.KernelID > 0 {
+				kernelIDToSel[ids.KernelID] = evt.StackMapSel
+			}
+			if ids.UserID > 0 {
+				userIDToSel[ids.UserID] = evt.StackMapSel
+			}
+
+			// Collect stack IDs to the appropriate set based on StackMapSel
+			targetSet := idsA
+			if evt.StackMapSel%2 == 1 {
+				targetSet = idsB
+			}
+
+			if ids.KernelID > 0 {
+				targetSet[ids.KernelID] = true
+			}
+
+			if ids.UserID > 0 {
+				targetSet[ids.UserID] = true
+			}
 		}
 
-		proc := processIDName{
-			Pid:  evt.Pid,
-			Name: procutil.CommToString(evt.Comm),
-		}
-		ids := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
+		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch), totalRead, len(deltaByProc))
 
-		// Aggregate by process and stack ID (StackMapSel doesn't affect aggregation)
-		if deltaByProc[proc] == nil {
-			deltaByProc[proc] = make(map[bpfmap.StackTraceID]int64)
-		}
-		deltaByProc[proc][ids] += deltaBytes
-
-		// Record StackMapSel mapping for stack resolution
-		// StackMapSel indicates which stack map contains the actual stack data
-		if ids.KernelID > 0 {
-			kernelIDToSel[ids.KernelID] = evt.StackMapSel
-		}
-		if ids.UserID > 0 {
-			userIDToSel[ids.UserID] = evt.StackMapSel
+		// An empty batch means the ring is drained for now; avoid spinning
+		// even if the BPF count has not been fully matched.
+		if len(batch) == 0 {
+			break
 		}
 
-		// Collect stack IDs to the appropriate set based on StackMapSel
-		targetSet := idsA
-		if evt.StackMapSel%2 == 1 {
-			targetSet = idsB
+		bpfCount, err := bpfmap.ReadUint64(p.bpf, stateMapID, ring.sampleCountIdx)
+		if err != nil {
+			return fmt.Errorf("read sampleCnt: %w", err)
 		}
 
-		if ids.KernelID > 0 {
-			targetSet[ids.KernelID] = true
-		}
+		log.Debugf("drain check: totalRead=%d bpfCount=%d", totalRead, bpfCount)
 
-		if ids.UserID > 0 {
-			targetSet[ids.UserID] = true
+		if totalRead >= bpfCount {
+			break
 		}
 	}
 
-	stackDataA := bpfmap.BatchReadStackTraces(p.bpf, stackMapAID, idsA)
-	stackDataB := bpfmap.BatchReadStackTraces(p.bpf, stackMapBID, idsB)
-	emitDeltas(deltaByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue)
+	log.Debugf("drain done: totalRead=%d procs=%d", totalRead, len(deltaByProc))
+
+	if err := bpfmap.WriteUint64(p.bpf, stateMapID, ring.sampleCountIdx, 0); err != nil {
+		log.Warnf("reset sample count: %v", err)
+	}
+
+	if len(deltaByProc) > 0 {
+		stackDataA := bpfmap.BatchReadStackTraces(p.bpf, stackMapAID, idsA)
+		stackDataB := bpfmap.BatchReadStackTraces(p.bpf, stackMapBID, idsB)
+		emitDeltas(deltaByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue)
+	}
 
 	return nil
 }
