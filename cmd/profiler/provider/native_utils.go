@@ -15,12 +15,21 @@
 package provider
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/cilium/ebpf"
+
+	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/profiler/bpfmap"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/symbol"
 )
 
 // resolveContainerCgroupCss retrieves the cgroup subsystem state (CSS) address for a container.
@@ -76,4 +85,101 @@ func resolveContainerCgroupCssByLocal(containerID, subsysName string) (uint64, e
 	}
 
 	return cssAddr, nil
+}
+
+// aggregateStacksAndStore resolves stack traces and emits aggregated records.
+// For CPU profiler, convertValue is nil (samples are already counts).
+// For Memory profiler non-retained modes, convertValue converts raw value to bytes.
+func aggregateStacksAndStore(
+	b bpf.BPF,
+	stackCountsByProc map[processIDName]map[bpfmap.StackTraceID]int64,
+	stackMapID uint32,
+	enqueue func(any),
+	deleteKeys *[][]byte,
+	convertValue func(int64) int64,
+) {
+	kstackCache := make(map[int32]string)
+	ustackCache := make(map[int32]string)
+	usym := symbol.NewUsymResolver()
+
+	var records int
+	for pidName, stacks := range stackCountsByProc {
+		for stackID, rawValue := range stacks {
+			// Convert value if needed (Memory profiler), otherwise use directly (CPU profiler)
+			value := rawValue
+			if convertValue != nil {
+				value = convertValue(rawValue)
+			}
+
+			if value == 0 {
+				continue
+			}
+
+			if stackID.KernelID > 0 {
+				if _, ok := kstackCache[stackID.KernelID]; !ok {
+					kstackCache[stackID.KernelID] = resolveKstack(b, stackMapID, stackID.KernelID, deleteKeys)
+				}
+			}
+			if stackID.UserID > 0 {
+				if _, ok := ustackCache[stackID.UserID]; !ok {
+					ustackCache[stackID.UserID] = resolveUstack(b, stackMapID, stackID.UserID, pidName.Pid, usym, deleteKeys)
+				}
+			}
+
+			record := &stackEntry{
+				Proc:    &processIDName{Pid: pidName.Pid, Name: pidName.Name},
+				User:    ustackCache[stackID.UserID],
+				Kernel:  kstackCache[stackID.KernelID],
+				Samples: value,
+			}
+
+			enqueue(record)
+			records++
+		}
+	}
+
+	log.Debugf("aggregate: procs=%d kstacks=%d ustacks=%d records=%d", len(stackCountsByProc), len(kstackCache), len(ustackCache), records)
+}
+
+func resolveKstack(b bpf.BPF, mapID uint32, kernelID int32, deleteKeys *[][]byte) string {
+	trace, ok := readAndMarkStackTrace(b, mapID, kernelID, deleteKeys)
+	if !ok {
+		return ""
+	}
+	return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
+}
+
+func resolveUstack(b bpf.BPF, mapID uint32, userID int32, pid uint32, usym *symbol.UsymResolver, deleteKeys *[][]byte) string {
+	trace, ok := readAndMarkStackTrace(b, mapID, userID, deleteKeys)
+	if !ok {
+		return ""
+	}
+	return strings.Join(usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
+}
+
+func readAndMarkStackTrace(b bpf.BPF, mapID uint32, id int32, deleteKeys *[][]byte) ([bpfmap.StackTraceLen]uint64, bool) {
+	keyBuf := make([]byte, 4)
+	binary.LittleEndian.PutUint32(keyBuf, uint32(id))
+
+	*deleteKeys = append(*deleteKeys, keyBuf)
+
+	val, err := b.ReadMap(mapID, keyBuf)
+	if err != nil {
+		if !errors.Is(err, ebpf.ErrKeyNotExist) {
+			log.Warnf("stack map lookup for ID %d: %v", id, err)
+		}
+		return [bpfmap.StackTraceLen]uint64{}, false
+	}
+
+	if len(val) != bpfmap.StackTraceLen*8 {
+		return [bpfmap.StackTraceLen]uint64{}, false
+	}
+
+	var trace [bpfmap.StackTraceLen]uint64
+	reader := bytes.NewReader(val)
+	if err := binary.Read(reader, binary.LittleEndian, &trace); err != nil {
+		return [bpfmap.StackTraceLen]uint64{}, false
+	}
+
+	return trace, true
 }
