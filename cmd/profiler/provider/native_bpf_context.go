@@ -27,12 +27,12 @@ import (
 // It encapsulates all the common infrastructure needed for dual-buffer profiling
 // (readers, state map, stack maps) so profilers don't need to pass these around.
 type ringBufferContext struct {
-	bpf         bpf.BPF
-	readerA     bpf.PerfEventReader
-	readerB     bpf.PerfEventReader
-	stateMapID  uint32
-	stackMapAID uint32
-	stackMapBID uint32
+	bpf              bpf.BPF
+	readerA          bpf.PerfEventReader
+	readerB          bpf.PerfEventReader
+	transferStateMapID uint32
+	stackMapAID      uint32
+	stackMapBID      uint32
 }
 
 // newRingBufferContext initializes the ring buffer infrastructure for dual-buffer profiling.
@@ -51,12 +51,12 @@ func newRingBufferContext(b bpf.BPF, ctx context.Context, bufferSize int) (*ring
 	}
 
 	return &ringBufferContext{
-		bpf:         b,
-		readerA:     readerA,
-		readerB:     readerB,
-		stateMapID:  b.MapIDByName("profiler_state_map"),
-		stackMapAID: b.MapIDByName("stack_map_a"),
-		stackMapBID: b.MapIDByName("stack_map_b"),
+		bpf:              b,
+		readerA:          readerA,
+		readerB:          readerB,
+		transferStateMapID: b.MapIDByName("profiler_state_map"),
+		stackMapAID:      b.MapIDByName("stack_map_a"),
+		stackMapBID:      b.MapIDByName("stack_map_b"),
 	}, nil
 }
 
@@ -84,9 +84,9 @@ type activeRing struct {
 // BPF side wrote. The caller reads and resets that count while draining.
 //
 // This method uses the pre-initialized ring buffer context, eliminating the need
-// to pass readerA/readerB/stateMapID/map names on every call.
+// to pass readerA/readerB/transferStateMapID/map names on every call.
 func (r *ringBufferContext) advanceSwapParity() (activeRing, error) {
-	val, err := bpfmap.ReadUint64(r.bpf, r.stateMapID, bpfmap.TransferCountIdx)
+	val, err := bpfmap.ReadUint64(r.bpf, r.transferStateMapID, bpfmap.TransferCountIdx)
 	if err != nil {
 		return activeRing{}, fmt.Errorf("read transferCnt: %w", err)
 	}
@@ -106,7 +106,7 @@ func (r *ringBufferContext) advanceSwapParity() (activeRing, error) {
 		}
 	}
 
-	if err := bpfmap.WriteUint64(r.bpf, r.stateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
+	if err := bpfmap.WriteUint64(r.bpf, r.transferStateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
 		return activeRing{}, fmt.Errorf("write transferCnt: %w", err)
 	}
 

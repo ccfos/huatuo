@@ -340,10 +340,6 @@ func (p *memNativeProfiler) drainActiveRing(
 				continue
 			}
 
-			if evt.Value == 0 {
-				continue
-			}
-
 			pair := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
 			pidName := processIDName{Pid: evt.Pid, Name: procutil.CommToString(evt.Comm)}
 
@@ -386,7 +382,7 @@ func (p *memNativeProfiler) drainActiveRing(
 			break
 		}
 
-		bpfCount, err := bpfmap.ReadUint64(ringCtx.bpf, ringCtx.stateMapID, ring.sampleCountIdx)
+		bpfCount, err := bpfmap.ReadUint64(ringCtx.bpf, ringCtx.transferStateMapID, ring.sampleCountIdx)
 		if err != nil {
 			return fmt.Errorf("read sampleCnt: %w", err)
 		}
@@ -400,7 +396,7 @@ func (p *memNativeProfiler) drainActiveRing(
 
 	log.Debugf("drain done: totalRead=%d procs=%d", totalRead, len(stackCountsByProc))
 
-	if err := bpfmap.WriteUint64(ringCtx.bpf, ringCtx.stateMapID, ring.sampleCountIdx, 0); err != nil {
+	if err := bpfmap.WriteUint64(ringCtx.bpf, ringCtx.transferStateMapID, ring.sampleCountIdx, 0); err != nil {
 		log.Warnf("reset sample count: %v", err)
 	}
 
