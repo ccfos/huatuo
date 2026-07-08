@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
@@ -59,7 +60,7 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
-	containersCssMem := pod.BuildCssContainers(containers, pod.SubSysMemory)
+	containersCssMem := pod.BuildCssContainers(containers, subsystem.SubsystemMemory)
 
 	items, err := c.bpf.DumpMapByName("memory_cgroup_allocpages_stall")
 	if err != nil {

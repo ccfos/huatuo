@@ -22,6 +22,7 @@ import (
 	"huatuo-bamai/internal/cgroups/paths"
 	"huatuo-bamai/internal/cgroups/pids"
 	"huatuo-bamai/internal/cgroups/stats"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/utils/parseutil"
 
 	extv1 "github.com/containerd/cgroups/v3/cgroup1"
@@ -31,23 +32,6 @@ import (
 var clockTicks = getClockTicks()
 
 const microsecondsInSecond = 1000000
-
-// a typed name for a cgroup subsystem
-const (
-	subsysDevices   = "devices"
-	subsysHugetlb   = "hugetlb"
-	subsysFreezer   = "freezer"
-	subsysPids      = "pids"
-	subsysNetCLS    = "net_cls"
-	subsysNetPrio   = "net_prio"
-	subsysPerfEvent = "perf_event"
-	subsysCpuset    = "cpuset"
-	subsysCpu       = "cpu"
-	subsysCpuacct   = "cpuacct"
-	subsysMemory    = "memory"
-	subsysBlkio     = "blkio"
-	subsysRdma      = "rdma"
-)
 
 type CgroupV1 struct {
 	name   string
@@ -96,21 +80,21 @@ func (c *CgroupV1) AddProc(pid uint64) error {
 }
 
 func (c *CgroupV1) Pids(path string) ([]int32, error) {
-	return pids.Tasks(paths.Path(subsysCpu, path), "tasks")
+	return pids.Tasks(paths.Path(subsystem.SubsystemCPU, path), "tasks")
 }
 
 func (c *CgroupV1) Procs(path string) ([]int32, error) {
-	return pids.Tasks(paths.Path(subsysCpu, path), "cgroup.procs")
+	return pids.Tasks(paths.Path(subsystem.SubsystemCPU, path), "cgroup.procs")
 }
 
 func (c *CgroupV1) CpuUsage(path string) (*stats.CpuUsage, error) {
-	statPath := paths.Path(subsysCpu, path, "cpuacct.stat")
+	statPath := paths.Path(subsystem.SubsystemCPU, path, "cpuacct.stat")
 	raw, err := parseutil.RawKV(statPath)
 	if err != nil {
 		return nil, err
 	}
 
-	usagePath := paths.Path(subsysCpu, path, "cpuacct.usage")
+	usagePath := paths.Path(subsystem.SubsystemCPU, path, "cpuacct.usage")
 	usage, err := parseutil.ReadUint(usagePath)
 	if err != nil {
 		return nil, err
@@ -127,17 +111,17 @@ func (c *CgroupV1) CpuUsage(path string) (*stats.CpuUsage, error) {
 }
 
 func (c *CgroupV1) CpuStatRaw(path string) (map[string]uint64, error) {
-	return parseutil.RawKV(paths.Path(subsysCpu, path, "cpu.stat"))
+	return parseutil.RawKV(paths.Path(subsystem.SubsystemCPU, path, "cpu.stat"))
 }
 
 func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
-	periodPath := paths.Path(subsysCpu, path, "cpu.cfs_period_us")
+	periodPath := paths.Path(subsystem.SubsystemCPU, path, "cpu.cfs_period_us")
 	period, err := parseutil.ReadUint(periodPath)
 	if err != nil {
 		return nil, err
 	}
 
-	quotaPath := paths.Path(subsysCpu, path, "cpu.cfs_quota_us")
+	quotaPath := paths.Path(subsystem.SubsystemCPU, path, "cpu.cfs_quota_us")
 	quota, err := parseutil.ReadInt(quotaPath)
 	if err != nil {
 		return nil, err
@@ -157,11 +141,11 @@ func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 }
 
 func (c *CgroupV1) MemoryStatRaw(path string) (map[string]uint64, error) {
-	return parseutil.RawKV(paths.Path(subsysMemory, path, "memory.stat"))
+	return parseutil.RawKV(paths.Path(subsystem.SubsystemMemory, path, "memory.stat"))
 }
 
 func (c *CgroupV1) MemoryEventRaw(path string) (map[string]uint64, error) {
-	events, err := parseutil.RawKV(paths.Path(subsysMemory, path, "memory.events"))
+	events, err := parseutil.RawKV(paths.Path(subsystem.SubsystemMemory, path, "memory.events"))
 	if err != nil && errors.Is(err, syscall.ENOENT) {
 		// didi kernel cgroupv1 support memmory.events
 		// so for native cgroupv1, ignore syscall.ENOENT
@@ -172,13 +156,13 @@ func (c *CgroupV1) MemoryEventRaw(path string) (map[string]uint64, error) {
 }
 
 func (c *CgroupV1) MemoryUsage(path string) (*stats.MemoryUsage, error) {
-	usage, err := parseutil.ReadUint(paths.Path(subsysMemory,
+	usage, err := parseutil.ReadUint(paths.Path(subsystem.SubsystemMemory,
 		path, "memory.usage_in_bytes"))
 	if err != nil {
 		return nil, err
 	}
 
-	maxLimited, err := parseutil.ReadUint(paths.Path(subsysMemory,
+	maxLimited, err := parseutil.ReadUint(paths.Path(subsystem.SubsystemMemory,
 		path, "memory.limit_in_bytes"))
 	if err != nil {
 		return nil, err

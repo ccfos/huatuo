@@ -23,6 +23,7 @@ import (
 	"huatuo-bamai/internal/cgroups/paths"
 	"huatuo-bamai/internal/cgroups/pids"
 	"huatuo-bamai/internal/cgroups/stats"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/utils/parseutil"
 
 	extv2 "github.com/containerd/cgroups/v3/cgroup2"
@@ -56,7 +57,7 @@ func (c *CgroupV2) NewRuntime(path string, spec *specs.LinuxResources) error {
 	}
 
 	// enable cpu and memory cgroup controllers
-	if err := m.ToggleControllers([]string{"cpu", "memory"}, extv2.Enable); err != nil {
+	if err := m.ToggleControllers([]string{subsystem.SubsystemCPU, subsystem.SubsystemMemory}, extv2.Enable); err != nil {
 		_ = m.DeleteSystemd()
 		return fmt.Errorf("cgroup2 enabling cpu and memory controllers: %w", err)
 	}

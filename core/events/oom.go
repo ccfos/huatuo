@@ -22,6 +22,7 @@ import (
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/utils/bytesutil"
@@ -173,7 +174,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 }
 
 func buildTracingData(data perfEventData, containers map[string]*pod.Container, cgroup cgroups.Cgroup) *OOMTracingData {
-	cssContainers := pod.BuildCssContainersID(containers, pod.SubSysMemory)
+	cssContainers := pod.BuildCssContainersID(containers, subsystem.SubsystemMemory)
 
 	triggerID := cssContainers[data.TriggerMemcgCSS]
 	victimID := cssContainers[data.VictimMemcgCSS]

@@ -23,6 +23,7 @@ import (
 
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/paths"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
@@ -91,14 +92,14 @@ func updateContainersDload() error {
 	for _, container := range containers {
 		if _, ok := containersDloads[container.ID]; ok {
 			containersDloads[container.ID].name = container.CgroupPath
-			containersDloads[container.ID].path = paths.Path("cpu", container.CgroupPath)
+			containersDloads[container.ID].path = paths.Path(subsystem.SubsystemCPU, container.CgroupPath)
 			containersDloads[container.ID].container = container
 			containersDloads[container.ID].alive = true
 			continue
 		}
 
 		containersDloads[container.ID] = &containerDloadInfo{
-			path:      paths.Path("cpu", container.CgroupPath),
+			path:      paths.Path(subsystem.SubsystemCPU, container.CgroupPath),
 			name:      container.CgroupPath,
 			container: container,
 			alive:     true,

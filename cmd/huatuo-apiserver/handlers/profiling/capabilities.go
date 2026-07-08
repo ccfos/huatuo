@@ -19,6 +19,7 @@ import (
 
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 )
@@ -49,7 +50,7 @@ func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, er
 	cfg := config.Get().Profiling
 
 	return v1.ProfilingCapabilitiesResponse{
-		ProfileTypes:                    []string{"cpu", "memory"},
+		ProfileTypes:                    []string{subsystem.SubsystemCPU, subsystem.SubsystemMemory},
 		CPUSupportedLanguages:           cpuLanguages,
 		MemorySupportedLanguages:        memoryLanguages,
 		MemoryModes:                     memoryModes,

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/pkg/metric"
 )
@@ -45,7 +46,7 @@ func (c *iolatencyTracing) fetchContainerIOlatency() ([]*metric.Data, error) {
 		return nil, err
 	}
 
-	cssContainers := pod.BuildCssContainers(containers, pod.SubSysBlkIO)
+	cssContainers := pod.BuildCssContainers(containers, subsystem.SubsystemBlkIO)
 
 	containersIOdata, err := c.dumpContainerLatency()
 	if err != nil {

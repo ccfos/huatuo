@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cgroups
+package subsystem
 
 // Subsystem names for cgroup v1/v2.
 const (
 	SubsystemCPU       = "cpu"
-	SubsystemCPUAcct    = "cpuacct"
-	SubsystemCPUSet     = "cpuset"
-	SubsystemMemory     = "memory"
-	SubsystemBlkIO      = "blkio"
-	SubsystemDevices    = "devices"
-	SubsystemHugetlb    = "hugetlb"
-	SubsystemFreezer    = "freezer"
-	SubsystemPids       = "pids"
-	SubsystemNetCLS     = "net_cls"
-	SubsystemNetPrio    = "net_prio"
-	SubsystemPerfEvent  = "perf_event"
-	SubsystemRdma       = "rdma"
+	SubsystemCPUAcct   = "cpuacct"
+	SubsystemCPUSet    = "cpuset"
+	SubsystemMemory    = "memory"
+	SubsystemBlkIO     = "blkio"
+	SubsystemDevices   = "devices"
+	SubsystemHugetlb   = "hugetlb"
+	SubsystemFreezer   = "freezer"
+	SubsystemPids      = "pids"
+	SubsystemNetCLS    = "net_cls"
+	SubsystemNetPrio   = "net_prio"
+	SubsystemPerfEvent = "perf_event"
+	SubsystemRdma      = "rdma"
 )

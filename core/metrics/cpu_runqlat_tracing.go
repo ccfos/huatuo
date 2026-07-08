@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/pkg/metric"
@@ -168,7 +169,7 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
-	cssContainer := pod.BuildCssContainers(containers, pod.SubSysCPU)
+	cssContainer := pod.BuildCssContainers(containers, subsystem.SubsystemCPU)
 
 	// update all containers cache data
 	if err := c.updateContainerDataCache(cssContainer); err != nil {
@@ -180,7 +181,7 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 		// Skip containers with no CPU cgroup address: they are absent from
 		// cssContainer and therefore never updated by updateContainerDataCache.
 		// Reporting their zero/stale cache would produce misleading metrics.
-		if _, ok := container.CgroupCss[pod.SubSysCPU]; !ok {
+		if _, ok := container.CgroupCss[subsystem.SubsystemCPU]; !ok {
 			continue
 		}
 

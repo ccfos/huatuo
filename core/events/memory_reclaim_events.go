@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/utils/bytesutil"
@@ -90,7 +91,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		cssToContainer = pod.BuildCssContainers(containers, pod.SubSysCPU)
+		cssToContainer = pod.BuildCssContainers(containers, subsystem.SubsystemCPU)
 		cacheTime = time.Now()
 		return nil
 	}

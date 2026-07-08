@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/tracing"
@@ -186,7 +187,7 @@ func (c *iolatencyTracing) updateContainerBlkDisk(b bpf.BPF) error {
 	var deletedContainersKeys [][]byte
 
 	for _, container := range c.latestContainers {
-		if blkcg, ok := container.CgroupCss[pod.SubSysBlkIO]; ok {
+		if blkcg, ok := container.CgroupCss[subsystem.SubsystemBlkIO]; ok {
 			deletedContainersKeys = append(deletedContainersKeys,
 				bytesutil.ToBytes(blkcg))
 		}
@@ -201,7 +202,7 @@ func (c *iolatencyTracing) updateContainerBlkDisk(b bpf.BPF) error {
 
 	var items []bpf.MapItem
 	for _, container := range newContainers {
-		blkcg, ok := container.CgroupCss[pod.SubSysBlkIO]
+		blkcg, ok := container.CgroupCss[subsystem.SubsystemBlkIO]
 		if !ok {
 			continue
 		}

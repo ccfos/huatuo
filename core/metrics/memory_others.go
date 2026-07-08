@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"huatuo-bamai/internal/cgroups/paths"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/utils/parseutil"
 	"huatuo-bamai/pkg/metric"
@@ -39,7 +40,7 @@ func newMemOthersCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func parseValueWithKey(cgroupPath, cgroupFile, key string) (uint64, error) {
-	filePath := paths.Path("memory", cgroupPath, cgroupFile)
+	filePath := paths.Path(subsystem.SubsystemMemory, cgroupPath, cgroupFile)
 	if key == "" {
 		return parseutil.ReadUint(filePath)
 	}

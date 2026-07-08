@@ -17,6 +17,7 @@ package collector
 import (
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/paths"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
@@ -73,7 +74,7 @@ func containerLoadavg() ([]*metric.Data, error) {
 
 	loadavgs := []*metric.Data{}
 	for _, container := range containers {
-		stats, err := n.GetCpuLoad(container.Hostname, paths.Path("cpu", container.CgroupPath))
+		stats, err := n.GetCpuLoad(container.Hostname, paths.Path(subsystem.SubsystemCPU, container.CgroupPath))
 		if err != nil {
 			continue
 		}

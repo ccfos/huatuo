@@ -26,6 +26,7 @@ import (
 	"github.com/cilium/ebpf"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
 	"huatuo-bamai/internal/profiler/bpfmap"
@@ -88,7 +89,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	log.Infof("starting native cpu profiler")
 
-	cssAddr, err := resolveContainerCgroupCss(pctx, "cpu")
+	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemCPU)
 	if err != nil {
 		return err
 	}

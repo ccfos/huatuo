@@ -32,6 +32,7 @@ import (
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/types"
@@ -59,17 +60,12 @@ const (
 	cgroupSubsysCount                 = 13
 	kubeletContainerIDKnodeNameMaxlen = 85
 	kubeletContainerIDKnodeNameMinlen = 64
-	SubSysCPU                         = "cpu"
-	SubSysCPUAcct                     = "cpuacct"
-	SubSysCPUSet                      = "cpuset"
-	SubSysMemory                      = "memory"
-	SubSysBlkIO                       = "blkio"
 )
 
 var (
 	// used to extract container id from cgroup name
 	kubeletContainerIDRegexp  = regexp.MustCompile(`(?:cri-containerd-)?([0-9a-f]{64})(?:\.scope)?`)
-	cgroupv1SubSysName        = []string{SubSysCPU, SubSysCPUAcct, SubSysCPUSet, SubSysMemory, SubSysBlkIO}
+	cgroupv1SubSysName        = []string{subsystem.SubsystemCPU, subsystem.SubsystemCPUAcct, subsystem.SubsystemCPUSet, subsystem.SubsystemMemory, subsystem.SubsystemBlkIO}
 	cgroupv1NotifyFile        = "cgroup.clone_children"
 	cgroupv2NotifyFile        = "memory.current"
 	cgroupCssID2SubSysNameMap = map[int]string{}

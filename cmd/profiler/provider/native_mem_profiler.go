@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
 	"huatuo-bamai/internal/profiler/bpfmap"
@@ -124,7 +125,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	log.Info("starting native mem profiler", "mode", p.internalMode)
 
-	cssAddr, err := resolveContainerCgroupCss(pctx, "memory")
+	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemMemory)
 	if err != nil {
 		return err
 	}
