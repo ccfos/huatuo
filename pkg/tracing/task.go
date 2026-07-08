@@ -19,14 +19,13 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"huatuo-bamai/internal/log"
 	"math/big"
 	"os/exec"
 	"path"
 	"sort"
 	"sync"
 	"time"
-
-	"huatuo-bamai/internal/log"
 )
 
 // Status represents the status of a task.
@@ -103,7 +102,12 @@ func tasksGarbageCollect() {
 	for range ticker.C {
 		now := time.Now()
 		taskLifeTmpCache.Range(func(key, value any) bool {
-			task := value.(*task)
+			task, ok := value.(*task)
+			if !ok {
+				log.Warnf("task garbage collect: invalid task type for key %v", key)
+				taskLifeTmpCache.Delete(key)
+				return true
+			}
 			if task.status == StatusCompleted || task.status == StatusFailed {
 				if now.After(task.deadlineTime) {
 					log.Infof("task %s deleted by timeout", key)
@@ -117,7 +121,7 @@ func tasksGarbageCollect() {
 
 // AllocTaskID returns a fresh random identifier suitable for tasks and tracer
 // records.
-func AllocTaskID() string {
+func AllocTaskID() (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const length = 16
 	result := make([]byte, length)
@@ -126,17 +130,21 @@ func AllocTaskID() string {
 	for i := range result {
 		num, err := rand.Int(rand.Reader, charsetLength)
 		if err != nil {
-			panic("Failed to generate random number")
+			return "", fmt.Errorf("generate random task id: %w", err)
 		}
 		result[i] = charset[num.Int64()]
 	}
 
-	return string(result)
+	return string(result), nil
 }
 
 // NewTask creates a new task, allocates an ID, and starts it.
 func NewTask(execBinary string, timeout time.Duration, storageType TaskStorageType, execArgs []string) string {
-	taskID := AllocTaskID()
+	taskID, err := AllocTaskID()
+	if err != nil {
+		log.Errorf("alloc task id: %v", err)
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	task := &task{
 		id:         taskID,
@@ -219,7 +227,11 @@ func setDeadlineDefault(task *task) {
 func RunningTaskCount() int {
 	count := 0
 	taskLifeTmpCache.Range(func(key, value any) bool {
-		task := value.(*task)
+		task, ok := value.(*task)
+		if !ok {
+			log.Warnf("running task count: invalid task type for key %v", key)
+			return true
+		}
 		if task.status == StatusRunning {
 			count++
 		}
@@ -232,7 +244,11 @@ func RunningTaskCount() int {
 func ListTasks() []TaskInfo {
 	tasks := make([]TaskInfo, 0)
 	taskLifeTmpCache.Range(func(key, value any) bool {
-		task := value.(*task)
+		task, ok := value.(*task)
+		if !ok {
+			log.Warnf("list tasks: invalid task type for key %v", key)
+			return true
+		}
 		taskID := task.id
 		if taskID == "" {
 			if keyID, ok := key.(string); ok {
@@ -263,7 +279,13 @@ func Result(taskID string) *TaskResult {
 		}
 	}
 
-	task := taskInterface.(*task)
+	task, ok := taskInterface.(*task)
+	if !ok {
+		return &TaskResult{
+			TaskStatus: StatusNotExist,
+			TaskErr:    fmt.Errorf("invalid task type for id %s", taskID),
+		}
+	}
 	if task.status == StatusFailed || task.status == StatusCompleted {
 		setDeadlineDefault(task)
 	}
@@ -281,7 +303,10 @@ func StopTask(taskID string) error {
 		return ErrTaskNotFound
 	}
 
-	task := taskAny.(*task)
+	task, ok := taskAny.(*task)
+	if !ok {
+		return fmt.Errorf("invalid task type for id %s", taskID)
+	}
 	if task.status == StatusRunning {
 		task.cancelFunc()
 	}

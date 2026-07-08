@@ -55,7 +55,10 @@ func waitTaskFinal(taskID string, timeout time.Duration) *TaskResult {
 }
 
 func TestAllocTaskID(t *testing.T) {
-	id := AllocTaskID()
+	id, err := AllocTaskID()
+	if err != nil {
+		t.Fatalf("AllocTaskID() error=%v", err)
+	}
 	if len(id) != 16 {
 		t.Errorf("AllocTaskID length=%d, want 16", len(id))
 		return

@@ -18,13 +18,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"huatuo-bamai/internal/log"
+	"huatuo-bamai/pkg/tracing"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"huatuo-bamai/internal/log"
 	profctx "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/pkg/tracing"
 
 	rqueue "github.com/Workiva/go-datastructures/queue"
 )
@@ -52,11 +52,17 @@ func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
 	}
 
 	return &Pipeline{
-		pctx:     pctx,
-		aggr:     aggr,
-		queue:    rqueue.NewRingBuffer(65536),
-		tracerID: tracing.AllocTaskID(),
-		stopCh:   make(chan struct{}),
+		pctx:  pctx,
+		aggr:  aggr,
+		queue: rqueue.NewRingBuffer(65536),
+		tracerID: func() string {
+			id, err := tracing.AllocTaskID()
+			if err != nil {
+				log.Errorf("alloc tracer id: %v", err)
+			}
+			return id
+		}(),
+		stopCh: make(chan struct{}),
 	}
 }
 
