@@ -301,15 +301,6 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	}
 }
 
-// memBatchKey groups events by (process, stack pair, stack-map selector) so
-// retained-mode frees that reference the alternate stack_map can be dispatched
-// per event without losing the alloc/free delta accumulation.
-type memBatchKey struct {
-	proc processIDName
-	ids  bpfmap.StackTraceID
-	sel  uint32
-}
-
 type memActiveRing struct {
 	reader      bpf.PerfEventReader
 	sampleCount uint64
@@ -360,7 +351,14 @@ func (p *memNativeProfiler) drainActiveRing(
 		return err
 	}
 
-	deltaByKey := make(map[memBatchKey]int64)
+	// Use nested map structure consistent with CPU profiler
+	deltaByProc := make(map[processIDName]map[bpfmap.StackTraceID]int64)
+
+	// Track which stack map each stack ID comes from
+	kernelIDToSel := make(map[int32]uint32)
+	userIDToSel := make(map[int32]uint32)
+
+	// Collect stack IDs for both maps
 	idsA := make(map[int32]bool)
 	idsB := make(map[int32]bool)
 
@@ -385,12 +383,23 @@ func (p *memNativeProfiler) drainActiveRing(
 			Name: procutil.CommToString(evt.Comm),
 		}
 		ids := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
-		key := memBatchKey{proc: proc, ids: ids, sel: evt.StackMapSel}
-		deltaByKey[key] += deltaBytes
 
-		// In accumulative modes, StackMapSel always matches current parity.
-		// In retained mode, alloc events do too, but free events carry
-		// alloc-time StackMapSel from page_to_stackid which may differ.
+		// Aggregate by process and stack ID (StackMapSel doesn't affect aggregation)
+		if deltaByProc[proc] == nil {
+			deltaByProc[proc] = make(map[bpfmap.StackTraceID]int64)
+		}
+		deltaByProc[proc][ids] += deltaBytes
+
+		// Record StackMapSel mapping for stack resolution
+		// StackMapSel indicates which stack map contains the actual stack data
+		if ids.KernelID > 0 {
+			kernelIDToSel[ids.KernelID] = evt.StackMapSel
+		}
+		if ids.UserID > 0 {
+			userIDToSel[ids.UserID] = evt.StackMapSel
+		}
+
+		// Collect stack IDs to the appropriate set based on StackMapSel
 		targetSet := idsA
 		if evt.StackMapSel%2 == 1 {
 			targetSet = idsB
@@ -407,73 +416,67 @@ func (p *memNativeProfiler) drainActiveRing(
 
 	stackDataA := bpfmap.BatchReadStackTraces(p.bpf, stackMapAID, idsA)
 	stackDataB := bpfmap.BatchReadStackTraces(p.bpf, stackMapBID, idsB)
-	emitDeltas(deltaByKey, stackDataA, stackDataB, usym, enqueue)
+	emitDeltas(deltaByProc, stackDataA, stackDataB, kernelIDToSel, userIDToSel, usym, enqueue)
 
 	return nil
 }
 
 func emitDeltas(
-	deltaByKey map[memBatchKey]int64,
+	deltaByProc map[processIDName]map[bpfmap.StackTraceID]int64,
 	stackDataA, stackDataB map[int32][bpfmap.StackTraceLen]uint64,
+	kernelIDToSel, userIDToSel map[int32]uint32,
 	usym *symbol.UsymResolver,
 	enqueue func(any),
 ) {
-	estimatedSize := len(deltaByKey)
-	ustackCacheA := make(map[int32]string, estimatedSize)
-	kstackCacheA := make(map[int32]string, estimatedSize)
-	ustackCacheB := make(map[int32]string, estimatedSize)
-	kstackCacheB := make(map[int32]string, estimatedSize)
+	// Pre-allocate caches for stack resolution
+	kstackCache := make(map[int32]string)
+	ustackCache := make(map[int32]string)
 
-	for k, delta := range deltaByKey {
-		if delta == 0 {
-			continue
-		}
-
-		stackData := stackDataA
-		ustackCache := ustackCacheA
-		kstackCache := kstackCacheA
-
-		if k.sel%2 == 1 {
-			stackData = stackDataB
-			ustackCache = ustackCacheB
-			kstackCache = kstackCacheB
-		}
-
-		resolveStackStrs(k.ids, k.proc.Pid, stackData, usym, kstackCache, ustackCache)
-
-		rec := &stackEntry{
-			Proc:    &processIDName{Pid: k.proc.Pid, Name: k.proc.Name},
-			User:    ustackCache[k.ids.UserID],
-			Kernel:  kstackCache[k.ids.KernelID],
-			Samples: delta,
-		}
-
-		enqueue(rec)
-	}
-}
-
-func resolveStackStrs(
-	ids bpfmap.StackTraceID,
-	pid uint32,
-	stackData map[int32][bpfmap.StackTraceLen]uint64,
-	usym *symbol.UsymResolver,
-	kstackCache, ustackCache map[int32]string,
-) {
-	if ids.KernelID > 0 {
-		if _, ok := kstackCache[ids.KernelID]; !ok {
-			if trace, exists := stackData[ids.KernelID]; exists {
-				strs := symbol.KsymStackStrsReversed(trace[:], len(trace))
-				kstackCache[ids.KernelID] = strings.Join(strs, ";") + ";"
+	for proc, stacks := range deltaByProc {
+		for stackID, delta := range stacks {
+			if delta == 0 {
+				continue
 			}
-		}
-	}
 
-	if ids.UserID > 0 {
-		if _, ok := ustackCache[ids.UserID]; !ok {
-			if trace, exists := stackData[ids.UserID]; exists {
-				strs := usym.UsymStackStrs(pid, trace[:], len(trace))
-				ustackCache[ids.UserID] = strings.Join(strs, ";") + ";"
+			// Determine which stack data to use based on StackMapSel mapping
+			kernelStackData := stackDataA
+			if sel, ok := kernelIDToSel[stackID.KernelID]; ok && sel%2 == 1 {
+				kernelStackData = stackDataB
 			}
+
+			userStackData := stackDataA
+			if sel, ok := userIDToSel[stackID.UserID]; ok && sel%2 == 1 {
+				userStackData = stackDataB
+			}
+
+			// Resolve kernel stack
+			if stackID.KernelID > 0 {
+				if _, ok := kstackCache[stackID.KernelID]; !ok {
+					if trace, exists := kernelStackData[stackID.KernelID]; exists {
+						strs := symbol.KsymStackStrsReversed(trace[:], len(trace))
+						kstackCache[stackID.KernelID] = strings.Join(strs, ";") + ";"
+					}
+				}
+			}
+
+			// Resolve user stack
+			if stackID.UserID > 0 {
+				if _, ok := ustackCache[stackID.UserID]; !ok {
+					if trace, exists := userStackData[stackID.UserID]; exists {
+						strs := usym.UsymStackStrs(proc.Pid, trace[:], len(trace))
+						ustackCache[stackID.UserID] = strings.Join(strs, ";") + ";"
+					}
+				}
+			}
+
+			rec := &stackEntry{
+				Proc:    &processIDName{Pid: proc.Pid, Name: proc.Name},
+				User:    ustackCache[stackID.UserID],
+				Kernel:  kstackCache[stackID.KernelID],
+				Samples: delta,
+			}
+
+			enqueue(rec)
 		}
 	}
 }
