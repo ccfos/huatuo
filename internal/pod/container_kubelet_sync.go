@@ -20,15 +20,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/utils/netutil"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"syscall"
 	"time"
-
-	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/utils/netutil"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
@@ -532,10 +531,7 @@ func kubeletConfigCacheUpdate(ctx *ManagerCtx) error {
 
 	config, err = kubeletConfigFileDefault()
 	if err != nil {
-		panic(fmt.Sprintf(
-			"we cannot find any cgroup driver of kubelet after requesting configz and default files: %v",
-			err,
-		))
+		return fmt.Errorf("kubelet config unavailable: configz and default files failed: %w", err)
 	}
 
 	return nil
