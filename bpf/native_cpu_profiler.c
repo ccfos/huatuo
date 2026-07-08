@@ -4,7 +4,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
-#include "bpf_common.h"
+#include "bpf_profiler.h"
 #include "bpf_dbg.h"
 #include "bpf_map.h"
 
@@ -36,13 +36,10 @@ volatile const u64 idle_class_addr = 0;
 
 BPF_DBG_MAP(native_cpu_dbg);
 
-struct stack_trace_key_t {
-	__u32 pid;  // thread id
+struct cpu_event_t {
+	struct profiler_event_base_t base;
 	__u32 tgid; // process id
 	__u32 cpu;
-	char comm[TASK_COMM_LEN];
-	int kernstack;
-	int userstack;
 	int intpstack;
 	__u32 flags;
 	__u64 uprobe_addr;
@@ -109,7 +106,7 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(key_size, sizeof(u32));
-	__uint(value_size, sizeof(struct stack_trace_key_t));
+	__uint(value_size, sizeof(struct cpu_event_t));
 	__uint(max_entries, 1);
 } event_buf SEC(".maps");
 
@@ -160,7 +157,7 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	}
 
 	/* Pointers to be used */
-	struct stack_trace_key_t *event = NULL;
+	struct cpu_event_t *event = NULL;
 	void *stack_map = NULL; /* points to stack_map_a or stack_map_b (map
 				   variable address) */
 	void *profiler_output = NULL; /* points to profiler_output_a or
@@ -179,17 +176,17 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 		return 0;
 
 	event->tgid = id;
-	event->pid = (u32)id;
+	event->base.pid = (u32)id;
 
 	/*
 	 * CPU idle stacks will not be collected.
 	 */
-	if (event->tgid == event->pid && event->pid == 0) {
+	if (event->tgid == event->base.pid && event->base.pid == 0) {
 		bpf_dbg_msg(ctx, native_cpu_dbg, "cpu idle missed");
 		return 0;
 	}
 
-	bpf_get_current_comm(&event->comm, sizeof(event->comm));
+	bpf_get_current_comm(&event->base.comm, sizeof(event->base.comm));
 
 	if (((*transfer_count_ptr) & 0x1ULL) == 0) {
 		sample_count_ptr = sample_count_ptrs[0];
@@ -204,10 +201,10 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	event->cpu = bpf_get_smp_processor_id();
 	event->timestamp = bpf_ktime_get_ns();
 
-	event->userstack = bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
-	event->kernstack = bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
+	event->base.userstack = bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
+	event->base.kernstack = bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
 
-	if (event->userstack < 0 && event->kernstack < 0) {
+	if (event->base.userstack < 0 && event->base.kernstack < 0) {
 		bpf_dbg_msg(ctx, native_cpu_dbg, "user and kernel stack missed");
 		return 0;
 	}
@@ -232,7 +229,7 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 
 	/* Output to perf_event_array: pass the map address (profiler_output) */
 	bpf_perf_event_output(ctx, profiler_output, COMPAT_BPF_F_CURRENT_CPU,
-			      event, sizeof(struct stack_trace_key_t));
+			      event, sizeof(struct cpu_event_t));
 
 	return 0;
 }

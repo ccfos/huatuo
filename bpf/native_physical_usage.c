@@ -2,7 +2,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
-#include "bpf_common.h"
+#include "bpf_profiler.h"
 
 #define BPF_F_USER_STACK (1ULL << 8)
 #define BPF_ANY 0
@@ -20,10 +20,7 @@ enum {
 };
 
 struct stack_info_t {
-	u32 pid;
-	char comm[COMPAT_TASK_COMM_LEN];
-	int kernstack;
-	int userstack;
+	struct profiler_event_base_t base;
 	/*
 	 * stack_map_sel indicates which A/B stack_map the IDs were taken from.
 	 * Alloc events set this to current parity. Free events reuse the alloc-time selector
@@ -49,10 +46,7 @@ struct {
 } page_to_stackid SEC(".maps");
 
 struct mem_event_t {
-	u32 pid;
-	char comm[COMPAT_TASK_COMM_LEN];
-	int kernstack;
-	int userstack;
+	struct profiler_event_base_t base;
 	/*
 	 * stack_map_sel indicates which A/B stack_map the stack IDs belong to.
 	 * Alloc events set this to current parity; free events reuse alloc-time selector.
@@ -189,26 +183,26 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->pid = tgid;
+	event->base.pid = tgid;
 	event->stack_map_sel = stack_map_sel;
-	bpf_get_current_comm(&event->comm, sizeof(event->comm));
+	bpf_get_current_comm(&event->base.comm, sizeof(event->base.comm));
 
-	event->userstack =
+	event->base.userstack =
 		bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
-	event->kernstack =
+	event->base.kernstack =
 		bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
 
-	if (event->userstack < 0 && event->kernstack < 0)
+	if (event->base.userstack < 0 && event->base.kernstack < 0)
 		return 0;
 
 	event->value = 1;
 
 	struct stack_info_t stack_info = {};
-	stack_info.pid = event->pid;
-	__builtin_memcpy(&stack_info.comm, &event->comm,
-			 sizeof(stack_info.comm));
-	stack_info.userstack = event->userstack;
-	stack_info.kernstack = event->kernstack;
+	stack_info.base.pid = event->base.pid;
+	__builtin_memcpy(&stack_info.base.comm, &event->base.comm,
+			 sizeof(stack_info.base.comm));
+	stack_info.base.userstack = event->base.userstack;
+	stack_info.base.kernstack = event->base.kernstack;
 	stack_info.stack_map_sel = event->stack_map_sel;
 
 	u64 page_addr = (u64)page;
@@ -279,12 +273,12 @@ int BPF_KPROBE(trace_page_free, struct page *page, bool compound)
 
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->pid = stack_info->pid;
-	event->kernstack = stack_info->kernstack;
-	event->userstack = stack_info->userstack;
+	event->base.pid = stack_info->base.pid;
+	event->base.kernstack = stack_info->base.kernstack;
+	event->base.userstack = stack_info->base.userstack;
 	event->stack_map_sel = stack_info->stack_map_sel;
-	__builtin_memcpy(&event->comm, &stack_info->comm,
-			 sizeof(event->comm));
+	__builtin_memcpy(&event->base.comm, &stack_info->base.comm,
+			 sizeof(event->base.comm));
 
 	/* Free: negative page delta */
 	event->value = -1;

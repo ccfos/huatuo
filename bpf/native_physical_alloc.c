@@ -2,7 +2,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
-#include "bpf_common.h"
+#include "bpf_profiler.h"
 
 #define BPF_F_USER_STACK (1ULL << 8)
 
@@ -19,15 +19,12 @@ enum {
 };
 
 struct mem_event_t {
-	u32 pid;
-	char comm[COMPAT_TASK_COMM_LEN];
-	int kernstack;
-	int userstack;
+	struct profiler_event_base_t base;
 	/*
 	 * stack_map_sel indicates which A/B stack_map the stack IDs belong to.
 	 * In accumulative modes this always matches the current A/B parity (active reader).
 	 * Retained mode needs this for frees, which may refer to the other map after parity flips.
-	 * Kept here for a consistent mem event layout.
+	 * Kept here for a shared event layout.
 	 */
 	u32 stack_map_sel;
 	s64 value; /* pages (always +1 for native_physical_alloc) */
@@ -162,16 +159,16 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->pid = tgid;
+	event->base.pid = tgid;
 	event->stack_map_sel = stack_map_sel;
-	bpf_get_current_comm(&event->comm, sizeof(event->comm));
+	bpf_get_current_comm(&event->base.comm, sizeof(event->base.comm));
 
-	event->userstack =
+	event->base.userstack =
 		bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
-	event->kernstack =
+	event->base.kernstack =
 		bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
 
-	if (event->userstack < 0 && event->kernstack < 0)
+	if (event->base.userstack < 0 && event->base.kernstack < 0)
 		return 0;
 
 	/* One page per event, convert to bytes in user space */
