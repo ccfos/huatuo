@@ -19,13 +19,6 @@ enum {
 
 struct mem_event_t {
 	struct profiler_event_base_t base;
-	/*
-	 * stack_map_sel indicates which A/B stack_map the stack IDs belong to.
-	 * In accumulative modes this always matches the current A/B parity (active reader).
-	 * Retained mode needs this for frees, which may refer to the other map after parity flips.
-	 * Kept here for a shared event layout.
-	 */
-	u32 stack_map_sel;
 };
 
 struct {
@@ -133,7 +126,6 @@ int BPF_KPROBE(trace_mmap, struct file *file, unsigned long addr,
 	void *stack_map = NULL;
 	void *profiler_output = NULL;
 	u64 *sample_count_ptr = NULL;
-	u32 stack_map_sel = 0;
 	u32 idx = 0;
 
 	event = bpf_map_lookup_elem(&event_buf, &idx);
@@ -144,12 +136,10 @@ int BPF_KPROBE(trace_mmap, struct file *file, unsigned long addr,
 		profiler_output = (void *)&profiler_output_a;
 		sample_count_ptr = sample_count_ptrs[0];
 		stack_map = (void *)&stack_map_a;
-		stack_map_sel = 0;
 	} else {
 		profiler_output = (void *)&profiler_output_b;
 		sample_count_ptr = sample_count_ptrs[1];
 		stack_map = (void *)&stack_map_b;
-		stack_map_sel = 1;
 	}
 
 	if (!event)
@@ -158,7 +148,6 @@ int BPF_KPROBE(trace_mmap, struct file *file, unsigned long addr,
 	__builtin_memset(event, 0, sizeof(*event));
 
 	event->base.pid_tgid = pid_tgid;
-	event->stack_map_sel = stack_map_sel;
 	bpf_get_current_comm(&event->base.comm, sizeof(event->base.comm));
 
 	event->base.userstack =

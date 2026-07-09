@@ -51,10 +51,6 @@ type memNativeProfiler struct {
 
 type memEvent struct {
 	ProfilerEventBase
-	// StackMapSel records which A/B stack_map the IDs came from. Required
-	// for retained free events whose alloc-time parity may differ from the
-	// current parity at free time; kept in the shared event layout.
-	StackMapSel uint32
 }
 
 func init() {
