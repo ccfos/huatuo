@@ -63,7 +63,7 @@ var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:  "log-level",
 		Usage: "Log level: trace|debug|info|warn|error",
-		Value: "info",
+		Value: "error",
 	},
 	&cli.StringFlag{
 		Name:  "log-file",
