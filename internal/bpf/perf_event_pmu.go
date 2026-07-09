@@ -31,8 +31,6 @@ import (
 const (
 	sampleTypePeriod = 1
 	sampleTypeFreq   = 2
-
-	cpuIDAll = -1
 )
 
 type perfEventAttach struct {

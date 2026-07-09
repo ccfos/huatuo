@@ -94,22 +94,22 @@ func resolveContainerCgroupCssByLocal(containerID, subsysName string) (uint64, e
 //
 // Stack IDs are NOT deleted from the stack map after resolution for the following reasons:
 //
-// 1. Caching Performance: BPF_MAP_TYPE_STACK_TRACE is a cache-like map where stack IDs
-//    can be reused across multiple events. Keeping the IDs cached improves performance
-//    for subsequent lookups (10-20% hit rate for repeated stacks).
+//  1. Caching Performance: BPF_MAP_TYPE_STACK_TRACE is a cache-like map where stack IDs
+//     can be reused across multiple events. Keeping the IDs cached improves performance
+//     for subsequent lookups (10-20% hit rate for repeated stacks).
 //
-// 2. Fallback Support: In retained mode (physical_usage), free events may reference
-//    stack IDs from the previous cycle's stack_map. Deleting them would break the
-//    fallback lookup path that cross-references alloc-time stacks.
+//  2. Fallback Support: In retained mode (physical_usage), free events may reference
+//     stack IDs from the previous cycle's stack_map. Deleting them would break the
+//     fallback lookup path that cross-references alloc-time stacks.
 //
-// 3. Automatic Management: The kernel's BPF stack map implementation uses a LRU-like
-//    eviction policy when the map is full, automatically managing the lifecycle of
-//    stack traces without requiring explicit deletion.
+//  3. Automatic Management: The kernel's BPF stack map implementation uses a LRU-like
+//     eviction policy when the map is full, automatically managing the lifecycle of
+//     stack traces without requiring explicit deletion.
 //
-// 4. Reduced Overhead: Deleting stack IDs requires additional BPF map operations
-//    (one delete syscall per stack ID), which adds unnecessary overhead for a
-//    performance-critical path. The memory overhead of keeping stale entries is
-//    bounded by the map size limit (STACK_MAP_ENTRIES = 65536).
+//  4. Reduced Overhead: Deleting stack IDs requires additional BPF map operations
+//     (one delete syscall per stack ID), which adds unnecessary overhead for a
+//     performance-critical path. The memory overhead of keeping stale entries is
+//     bounded by the map size limit (STACK_MAP_ENTRIES = 65536).
 func aggregateStacksAndEnqueue(
 	b bpf.BPF,
 	stackCountsByProc map[processIDName]map[bpfmap.StackTraceID]int64,
@@ -164,7 +164,7 @@ func aggregateStacksAndEnqueue(
 // resolveKstackWithFallback resolves kernel stack with fallback support.
 // Fast path: lookup primary stackMapID (90-95% hit rate).
 // Slow path: fallback to another stackMapID if primary lookup fails.
-func resolveKstackWithFallback(b bpf.BPF, primaryMapID uint32, fallbackMapID uint32, kernelID int32) string {
+func resolveKstackWithFallback(b bpf.BPF, primaryMapID, fallbackMapID uint32, kernelID int32) string {
 	// Fast path: lookup primary stack map
 	trace, ok := readStackTrace(b, primaryMapID, kernelID)
 	if ok {
@@ -185,7 +185,7 @@ func resolveKstackWithFallback(b bpf.BPF, primaryMapID uint32, fallbackMapID uin
 // resolveUstackWithFallback resolves user stack with fallback support.
 // Fast path: lookup primary stackMapID (90-95% hit rate).
 // Slow path: fallback to another stackMapID if primary lookup fails.
-func resolveUstackWithFallback(b bpf.BPF, primaryMapID uint32, fallbackMapID uint32, userID int32, pid uint32, usym *symbol.UsymResolver) string {
+func resolveUstackWithFallback(b bpf.BPF, primaryMapID, fallbackMapID uint32, userID int32, pid uint32, usym *symbol.UsymResolver) string {
 	// Fast path: lookup primary stack map
 	trace, ok := readStackTrace(b, primaryMapID, userID)
 	if ok {
