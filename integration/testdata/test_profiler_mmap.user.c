@@ -25,7 +25,16 @@
 
 static volatile unsigned long sink;
 
-static KEEP_FRAME void *allocate_block(size_t size) {
+// Fixed allocation sizes for verification in test script
+// Total: 4096 + 16384 + 65536 + 262144 = 348160 bytes per iteration
+#define ALLOC_SIZE_1 4096
+#define ALLOC_SIZE_2 16384
+#define ALLOC_SIZE_3 65536
+#define ALLOC_SIZE_4 262144
+#define TOTAL_ALLOC_SIZE (ALLOC_SIZE_1 + ALLOC_SIZE_2 + ALLOC_SIZE_3 + ALLOC_SIZE_4)
+
+// Marker function for symbol matching in profiler output
+static KEEP_FRAME void *test_mmap_allocator(size_t size) {
 	void *p = mmap(NULL, size, PROT_READ | PROT_WRITE,
 		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (p == MAP_FAILED) {
@@ -38,20 +47,20 @@ static KEEP_FRAME void *allocate_block(size_t size) {
 	return p;
 }
 
-static KEEP_FRAME void free_block(void *p, size_t size) {
+static KEEP_FRAME void test_mmap_deallocator(void *p, size_t size) {
 	if (p) {
 		munmap(p, size);
 	}
 }
 
 static KEEP_FRAME void do_alloc_free_loop(void) {
-	const size_t block_sizes[] = {4096, 16384, 65536, 262144};
+	const size_t block_sizes[] = {ALLOC_SIZE_1, ALLOC_SIZE_2, ALLOC_SIZE_3, ALLOC_SIZE_4};
 	const int num_sizes = sizeof(block_sizes) / sizeof(block_sizes[0]);
 	void *blocks[4] = {NULL, NULL, NULL, NULL};
 
 	// Allocate blocks of varying sizes
 	for (int i = 0; i < num_sizes; i++) {
-		blocks[i] = allocate_block(block_sizes[i]);
+		blocks[i] = test_mmap_allocator(block_sizes[i]);
 	}
 
 	// Do some work
@@ -63,7 +72,7 @@ static KEEP_FRAME void do_alloc_free_loop(void) {
 
 	// Free all blocks
 	for (int i = 0; i < num_sizes; i++) {
-		free_block(blocks[i], block_sizes[i]);
+		test_mmap_deallocator(blocks[i], block_sizes[i]);
 	}
 }
 
