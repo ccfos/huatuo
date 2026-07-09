@@ -216,7 +216,7 @@ func buildProfileSearchQuery(filter *SearchFilter) driver.Query {
 	query := buildProfileAggregationQuery(filter)
 	query.Limit = normalizeProfileSearchLimit(filter)
 	query.Sorts = []driver.Sort{
-		{Field: profileFieldTime, Desc: true},
+		{Field: profileFieldUploadedTime, Desc: true},
 	}
 	return query
 }
@@ -232,16 +232,16 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 
 	if !filter.StartTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldTime,
+			Field: profileFieldUploadedTime,
 			Op:    driver.OpGte,
-			Value: filter.StartTime.UTC(),
+			Value: filter.StartTime.UTC().Format(time.RFC3339Nano),
 		})
 	}
 	if !filter.EndTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldTime,
+			Field: profileFieldUploadedTime,
 			Op:    driver.OpLte,
-			Value: filter.EndTime.UTC(),
+			Value: filter.EndTime.UTC().Format(time.RFC3339Nano),
 		})
 	}
 
@@ -260,7 +260,7 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 		query.Filters = append(
 			query.Filters,
 			driver.Filter{
-				Field: profileFieldHostname,
+				Field: profileFieldHostname + ".keyword",
 				Op:    driver.OpEq,
 				Value: filter.Hostname,
 			},
@@ -272,7 +272,7 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 		)
 	case filter.ContainerHostname != "":
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldContainerHostname,
+			Field: profileFieldContainerHostname + ".keyword",
 			Op:    driver.OpEq,
 			Value: filter.ContainerHostname,
 		})
@@ -280,7 +280,7 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 
 	if filter.ProfileType != "" {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldProfileType,
+			Field: profileFieldProfileType + ".keyword",
 			Op:    driver.OpEq,
 			Value: filter.ProfileType,
 		})
