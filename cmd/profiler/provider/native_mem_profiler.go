@@ -201,9 +201,9 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 		return &bpfLoadConfig{
 			ObjectFile: "native_virtual_alloc.o",
 			Constants: map[string]any{
-				"profiler_filter_pid":      uint32(pid),
-				"profiler_filter_css":      cssAddr,
-				"profiler_filter_threads":  traceThreads,
+				"profiler_filter_pid":     uint32(pid),
+				"profiler_filter_css":     cssAddr,
+				"profiler_filter_threads": traceThreads,
 			},
 			AttachOpts: []bpf.AttachOption{
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
@@ -213,10 +213,10 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 		return &bpfLoadConfig{
 			ObjectFile: "native_physical_usage.o",
 			Constants: map[string]any{
-				"profiler_filter_pid":      uint32(pid),
-				"profiler_filter_css":      cssAddr,
-				"profiler_filter_threads":  traceThreads,
-				"profiler_sampling_prob":   uint8(probability),
+				"profiler_filter_pid":     uint32(pid),
+				"profiler_filter_css":     cssAddr,
+				"profiler_filter_threads": traceThreads,
+				"profiler_sampling_prob":  uint8(probability),
 			},
 			AttachOpts: []bpf.AttachOption{
 				{ProgramName: "trace_page_alloc", Symbol: "page_add_new_anon_rmap"},
@@ -227,10 +227,10 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 		return &bpfLoadConfig{
 			ObjectFile: "native_physical_alloc.o",
 			Constants: map[string]any{
-				"profiler_filter_pid":      uint32(pid),
-				"profiler_filter_css":      cssAddr,
-				"profiler_filter_threads":  traceThreads,
-				"profiler_sampling_prob":   uint8(probability),
+				"profiler_filter_pid":     uint32(pid),
+				"profiler_filter_css":     cssAddr,
+				"profiler_filter_threads": traceThreads,
+				"profiler_sampling_prob":  uint8(probability),
 			},
 			AttachOpts: []bpf.AttachOption{
 				{ProgramName: "trace_page_alloc", Symbol: "page_add_new_anon_rmap"},
