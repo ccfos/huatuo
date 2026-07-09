@@ -182,31 +182,33 @@ struct { \
 /*
  * SELECT_PROFILER_AB - select A/B buffer based on transfer count parity.
  */
-#define SELECT_PROFILER_AB(transfer_count_ptr, sample_count_ptrs, \
-                           out_sample_count, out_stack_map, out_output) \
+#define SELECT_PROFILER_AB() \
 do { \
 	if (((*(transfer_count_ptr)) & 0x1ULL) == 0) { \
-		out_sample_count = sample_count_ptrs[0]; \
-		out_stack_map = (void *)&stack_map_a; \
-		out_output = (void *)&profiler_output_a; \
+		select_profiler_sample_count_ptr = sample_count_ptrs[0]; \
+		select_profiler_stack_map = (void *)&stack_map_a; \
+		select_profiler_output = (void *)&profiler_output_a; \
 	} else { \
-		out_sample_count = sample_count_ptrs[1]; \
-		out_stack_map = (void *)&stack_map_b; \
-		out_output = (void *)&profiler_output_b; \
+		select_profiler_sample_count_ptr = sample_count_ptrs[1]; \
+		select_profiler_stack_map = (void *)&stack_map_b; \
+		select_profiler_output = (void *)&profiler_output_b; \
 	} \
 } while(0)
 
 /*
- * GET_PROFILER_STATE_POINTERS - get standard state pointers.
+ * profiler_init_state - initialize profiler state pointers.
  */
-#define GET_PROFILER_STATE_POINTERS(transfer_ptr, sample_ptrs) \
-do { \
-	u32 _idx = PROFILER_STATE_TRANSFER_CNT_IDX; \
-	transfer_ptr = bpf_map_lookup_elem(&profiler_state_map, &_idx); \
-	_idx = PROFILER_STATE_SAMPLE_CNT_A_IDX; \
-	sample_ptrs[0] = bpf_map_lookup_elem(&profiler_state_map, &_idx); \
-	_idx = PROFILER_STATE_SAMPLE_CNT_B_IDX; \
-	sample_ptrs[1] = bpf_map_lookup_elem(&profiler_state_map, &_idx); \
-} while(0)
+static __always_inline bool profiler_init_state(void *state_map, u64 **transfer_ptr, u64 **sample_ptrs)
+{
+	u32 idx = PROFILER_STATE_TRANSFER_CNT_IDX;
+
+	*transfer_ptr = bpf_map_lookup_elem(state_map, &idx);
+	idx = PROFILER_STATE_SAMPLE_CNT_A_IDX;
+	sample_ptrs[0] = bpf_map_lookup_elem(state_map, &idx);
+	idx = PROFILER_STATE_SAMPLE_CNT_B_IDX;
+	sample_ptrs[1] = bpf_map_lookup_elem(state_map, &idx);
+
+	return *transfer_ptr && sample_ptrs[0] && sample_ptrs[1];
+}
 
 #endif /* __BPF_PROFILER_H__ */

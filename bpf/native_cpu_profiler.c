@@ -31,14 +31,12 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 {
 	u64 *transfer_count_ptr;
 	u64 *sample_count_ptrs[2];
-	GET_PROFILER_STATE_POINTERS(transfer_count_ptr, sample_count_ptrs);
+	void *select_profiler_stack_map;
+	void *select_profiler_output;
+	u64 *select_profiler_sample_count_ptr;
 
-	if (!transfer_count_ptr || !sample_count_ptrs[0] || !sample_count_ptrs[1]) {
-		u32 count_idx = PROFILER_STATE_TRANSFER_CNT_IDX;
-		u64 err_val = 1;
-		bpf_map_update_elem(&profiler_state_map, &count_idx, &err_val, COMPAT_BPF_ANY);
+	if (!profiler_init_state(&profiler_state_map, &transfer_count_ptr, sample_count_ptrs))
 		return 0;
-	}
 
 	struct task_struct *curr = (struct task_struct *)bpf_get_current_task();
 	u64 cpu_css = current_task_cpu_css_addr();
@@ -56,12 +54,7 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	if (!event)
 		return 0;
 
-	void *stack_map;
-	void *profiler_output;
-	u64 *sample_count_ptr;
-
-	SELECT_PROFILER_AB(transfer_count_ptr, sample_count_ptrs,
-	                   sample_count_ptr, stack_map, profiler_output);
+	SELECT_PROFILER_AB();
 
 	event->base.pid_tgid = pid_tgid;
 	bpf_get_current_comm(&event->base.comm, sizeof(event->base.comm));
@@ -69,8 +62,8 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	event->cpu = bpf_get_smp_processor_id();
 	event->timestamp = bpf_ktime_get_ns();
 
-	event->base.userstack = bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
-	event->base.kernstack = bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
+	event->base.userstack = bpf_get_stackid(ctx, select_profiler_stack_map, USER_STACKID_FLAGS);
+	event->base.kernstack = bpf_get_stackid(ctx, select_profiler_stack_map, KERN_STACKID_FLAGS);
 	event->base.value = 1;
 
 	if (event->base.userstack < 0 && event->base.kernstack < 0) {
@@ -82,9 +75,9 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	 * Global ARRAY + atomic add is intentional; do NOT switch to PERCPU.
 	 * See comment in original code for details.
 	 */
-	__sync_fetch_and_add(sample_count_ptr, 1);
+	__sync_fetch_and_add(select_profiler_sample_count_ptr, 1);
 
-	bpf_perf_event_output(ctx, profiler_output, COMPAT_BPF_F_CURRENT_CPU,
+	bpf_perf_event_output(ctx, select_profiler_output, COMPAT_BPF_F_CURRENT_CPU,
 	                      event, sizeof(struct cpu_event_t));
 
 	return 0;
