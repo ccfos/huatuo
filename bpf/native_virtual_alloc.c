@@ -118,9 +118,9 @@ int BPF_KPROBE(trace_mmap, struct file *file, unsigned long addr,
 		return 0;
 	}
 
-	u64 id = bpf_get_current_pid_tgid();
-	u32 tgid = id >> 32;
-	u32 pid = id & 0xffffffffUL;
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 tgid = pid_tgid >> 32;
+	u32 pid = pid_tgid & 0xffffffffUL;
 
 	if (!should_trace(pid, tgid))
 		return 0;
@@ -157,7 +157,7 @@ int BPF_KPROBE(trace_mmap, struct file *file, unsigned long addr,
 
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->base.pid = tgid;
+	event->base.pid_tgid = pid_tgid;
 	event->stack_map_sel = stack_map_sel;
 	bpf_get_current_comm(&event->base.comm, sizeof(event->base.comm));
 

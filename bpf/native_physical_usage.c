@@ -143,9 +143,9 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 		return 0;
 	}
 
-	u64 id = bpf_get_current_pid_tgid();
-	u32 tgid = id >> 32;
-	u32 pid = id & 0xffffffffUL;
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 tgid = pid_tgid >> 32;
+	u32 pid = pid_tgid & 0xffffffffUL;
 
 	if (!should_trace(pid, tgid))
 		return 0;
@@ -182,7 +182,7 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->base.pid = tgid;
+	event->base.pid_tgid = pid_tgid;
 	event->stack_map_sel = stack_map_sel;
 	bpf_get_current_comm(&event->base.comm, sizeof(event->base.comm));
 
@@ -197,7 +197,7 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 	event->base.value = 1;
 
 	struct stack_info_t stack_info = {};
-	stack_info.base.pid = event->base.pid;
+	stack_info.base.pid_tgid = event->base.pid_tgid;
 	__builtin_memcpy(&stack_info.base.comm, &event->base.comm,
 			 sizeof(stack_info.base.comm));
 	stack_info.base.userstack = event->base.userstack;
@@ -237,9 +237,9 @@ int BPF_KPROBE(trace_page_free, struct page *page, bool compound)
 		return 0;
 	}
 
-	u64 id = bpf_get_current_pid_tgid();
-	u32 tgid = id >> 32;
-	u32 pid = id & 0xffffffffUL;
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 tgid = pid_tgid >> 32;
+	u32 pid = pid_tgid & 0xffffffffUL;
 
 	if (!should_trace(pid, tgid))
 		return 0;
@@ -272,7 +272,7 @@ int BPF_KPROBE(trace_page_free, struct page *page, bool compound)
 
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->base.pid = stack_info->base.pid;
+	event->base.pid_tgid = stack_info->base.pid_tgid;
 	event->base.kernstack = stack_info->base.kernstack;
 	event->base.userstack = stack_info->base.userstack;
 	event->stack_map_sel = stack_info->stack_map_sel;

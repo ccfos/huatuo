@@ -39,11 +39,11 @@ const TaskCommLen = 16
 // ProfilerEventBase contains the common fields shared by all profiler events.
 // This matches the BPF-side struct profiler_event_base_t for binary compatibility.
 type ProfilerEventBase struct {
-	Pid       uint32
+	PidTgid   uint64 // Full pid_tgid: tgid (process) in upper 32 bits, pid (thread) in lower 32 bits
 	Comm      [TaskCommLen]byte
 	Kernstack int32
 	Userstack int32
-	Value     int64  // CPU: always 1 (sample count), Memory: page/byte delta
+	Value     int64 // CPU: always 1 (sample count), Memory: page/byte delta
 }
 
 // ringBufferContext holds the shared ring buffer state for A/B buffer management.
@@ -56,7 +56,7 @@ type ringBufferContext struct {
 	transferStateMapID uint32
 	stackMapAID        uint32
 	stackMapBID        uint32
-	needsFallback      bool  // true for memory retained mode, false for CPU/non-retained
+	needsFallback      bool // true for memory retained mode, false for CPU/non-retained
 }
 
 // newRingBufferContext initializes the ring buffer infrastructure for dual-buffer profiling.
@@ -100,10 +100,10 @@ func (r *ringBufferContext) Close() {
 // It contains the reader for the ring buffer and the index to track sample counts.
 // For retained mode memory profiling, fallbackStackMapID provides fallback lookup path.
 type activeRingBuffer struct {
-	reader            bpf.PerfEventReader
-	stackMapID        uint32
-	sampleCountIdx    uint32
-	fallbackStackMapID uint32  // 0 for CPU/non-retained, other stack_map for retained
+	reader             bpf.PerfEventReader
+	stackMapID         uint32
+	sampleCountIdx     uint32
+	fallbackStackMapID uint32 // 0 for CPU/non-retained, other stack_map for retained
 }
 
 // advanceSwapParity increments the BPF write-parity counter so the kernel
@@ -210,7 +210,9 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 
 			// Aggregate by process and stack ID
 			pair := bpfmap.StackTraceID{KernelID: base.Kernstack, UserID: base.Userstack}
-			pidName := processIDName{Pid: base.Pid, Name: procutil.CommToString(base.Comm)}
+			// Extract tgid (process ID) from upper 32 bits of pid_tgid
+			tgid := uint32(base.PidTgid >> 32)
+			pidName := processIDName{Pid: tgid, Name: procutil.CommToString(base.Comm)}
 
 			if stackCountsByProc[pidName] == nil {
 				stackCountsByProc[pidName] = make(map[bpfmap.StackTraceID]int64)

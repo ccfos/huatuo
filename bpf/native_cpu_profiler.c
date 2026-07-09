@@ -38,7 +38,6 @@ BPF_DBG_MAP(native_cpu_dbg);
 
 struct cpu_event_t {
 	struct profiler_event_base_t base;
-	__u32 tgid; // process id
 	__u32 cpu;
 	int intpstack;
 	__u32 flags;
@@ -145,8 +144,11 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 		return 0;
 	}
 
-	u64 id = bpf_get_current_pid_tgid() >> 32;
-	if (target_pid != 0 && target_pid != id) {
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 tgid = pid_tgid >> 32;
+	u32 pid = pid_tgid & 0xffffffffUL;
+
+	if (target_pid != 0 && target_pid != tgid) {
 		bpf_dbg_msg(ctx, native_cpu_dbg, "target pid missed");
 		return 0;
 	}
@@ -175,13 +177,12 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	if (!event)
 		return 0;
 
-	event->tgid = id;
-	event->base.pid = (u32)id;
+	event->base.pid_tgid = pid_tgid;
 
 	/*
 	 * CPU idle stacks will not be collected.
 	 */
-	if (event->tgid == event->base.pid && event->base.pid == 0) {
+	if (tgid == 0 && pid == 0) {
 		bpf_dbg_msg(ctx, native_cpu_dbg, "cpu idle missed");
 		return 0;
 	}

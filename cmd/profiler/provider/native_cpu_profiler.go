@@ -45,7 +45,6 @@ func init() {
 // cpuEventKey is the on-wire/event representation emitted by the BPF program.
 type cpuEventKey struct {
 	ProfilerEventBase
-	Tgid       uint32
 	Cpu        uint32
 	Intpstack  int32
 	Flags      uint32

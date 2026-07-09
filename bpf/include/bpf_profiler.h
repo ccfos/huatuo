@@ -12,7 +12,7 @@
  * cmd/profiler/provider/native_bpf_context.go for binary compatibility.
  */
 struct profiler_event_base_t {
-	u32 pid;
+	u64 pid_tgid;  // Full pid_tgid from bpf_get_current_pid_tgid(): tgid (process) in upper 32 bits, pid (thread) in lower 32 bits
 	char comm[COMPAT_TASK_COMM_LEN];
 	int kernstack;
 	int userstack;
