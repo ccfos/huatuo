@@ -1,0 +1,260 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "series",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMin": 0,
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 1,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "fieldMinMax": false,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "hideZeros": true,
+          "mode": "multi",
+          "sort": "asc"
+        }
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "alias": "",
+          "bucketAggs": [
+            {
+              "field": "uploaded_time",
+              "id": "2",
+              "settings": {
+                "interval": "auto"
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "hide": false,
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "hostname.keyword:$hostname\nAND container_hostname.keyword:$container_hostname\nAND tracer_data.flamedata.profile_type.keyword:$type",
+          "refId": "A",
+          "timeField": "uploaded_time"
+        }
+      ],
+      "title": "",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "huatuo-apiserver-pyroscope"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 1,
+      "maxPerRow": 2,
+      "options": {},
+      "pluginVersion": "12.0.3",
+      "repeat": "hostname",
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "huatuo-apiserver-pyroscope"
+          },
+          "groupBy": [],
+          "labelSelector": "{container_hostname=\"$container_hostname\"}",
+          "profileTypeId": "$type",
+          "queryType": "profile",
+          "refId": "A",
+          "spanSelector": []
+        }
+      ],
+      "title": "$container_hostname",
+      "type": "flamegraph"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 41,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "description": "Selects container-level profiles.",
+        "label": "container hostname",
+        "name": "container_hostname",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allowCustomValue": false,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND container_hostname.keyword:$container_hostname\",\n  \"size\": 5000\n}",
+        "description": "Read-only. Displays the host where the selected container resides. Not used as a query filter; filtering is by container_hostname only.",
+        "label": "hostname(Read-only)",
+        "name": "hostname",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND container_hostname.keyword:$container_hostname\",\n  \"size\": 5000\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "description": "profiling type",
+        "label": "type",
+        "name": "type",
+        "options": [
+          {
+            "selected": true,
+            "text": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+            "value": "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+          },
+          {
+            "selected": false,
+            "text": "memory:alloc_space:bytes:space:bytes",
+            "value": "memory:alloc_space:bytes:space:bytes"
+          },
+          {
+            "selected": false,
+            "text": "process_lock:lock:count:lock:count",
+            "value": "process_lock:lock:count:lock:count"
+          },
+          {
+            "selected": false,
+            "text": "process_lock:lock:nanoseconds:lock:nanoseconds",
+            "value": "process_lock:lock:nanoseconds:lock:nanoseconds"
+          }
+        ],
+        "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes,process_lock:lock:count:lock:count,process_lock:lock:nanoseconds:lock:nanoseconds",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1y",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Continuous Profiling(container)",
+  "uid": "continuous-profiling-container"
+}

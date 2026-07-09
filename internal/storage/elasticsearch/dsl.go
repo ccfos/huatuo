@@ -165,6 +165,13 @@ func buildClause(filter driver.Filter) (types.Query, bool, error) {
 
 	switch filter.Op {
 	case driver.OpEq:
+		// empty string match -> must_not exists (field does not exist)
+		if s, ok := filter.Value.(string); ok && s == "" {
+			q := types.Query{
+				Exists: &types.ExistsQuery{Field: filter.Field},
+			}
+			return q, true, nil
+		}
 		q := types.Query{Term: map[string]types.TermQuery{filter.Field: {Value: driver.NormalizeValue(filter.Value)}}}
 		return q, false, nil
 	case driver.OpNe:

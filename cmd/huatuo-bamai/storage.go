@@ -90,7 +90,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 			ESAddresses: splitStorageAddresses(cfg.Storage.ES.Address),
 			ESUsername:  cfg.Storage.ES.Username,
 			ESPassword:  cfg.Storage.ES.Password,
-			ESIndex:     profiler.MetadataCollection,
+			ESIndex:     cfg.Storage.ES.Index,
 		}, profiler.MetadataCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)

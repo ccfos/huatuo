@@ -29,6 +29,7 @@ import (
 	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
+	"huatuo-bamai/pkg/tracing"
 
 	"github.com/gin-gonic/gin/binding"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
@@ -149,6 +150,12 @@ func (h *Handler) start(ctx *server.Context) error {
 	if config.Get().Profiling.ThirdPartyToolLimit > 0 {
 		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--tool-limit", strconv.Itoa(config.Get().Profiling.ThirdPartyToolLimit))
 	}
+
+	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs,
+		"--output-format", "remote",
+		"--output-storage", "/var/run/huatuo-toolstream.sock",
+		"--metadata", "tracer_name=profiler",
+		"--metadata", "tracer_type="+tracing.TracerRunTypeTask)
 
 	var jobType string
 	if req.Type == "memory" {
@@ -542,6 +549,7 @@ func (h *Handler) DisplaySelectMergeStacktraces(ctx *server.Context) error {
 
 	resp, err := profileService.SelectMergeStacktraces(req)
 	if err != nil {
+		log.Warnf("SelectMergeStacktraces failed: %v", err)
 		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
 		return nil
 	}

@@ -28,10 +28,29 @@ services:
       - ./grafana/datasources/elasticsearch.yaml:/etc/grafana/provisioning/datasources/elasticsearch.yaml:ro
       - ./grafana/datasources/prometheus.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro
       - ./grafana/datasources/infinity.yaml:/etc/grafana/provisioning/datasources/infinity.yaml:ro
+      - ./grafana/datasources/pyroscope.yaml:/etc/grafana/provisioning/datasources/pyroscope.yaml:ro
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
       - prometheus
       - elasticsearch
+
+  huatuo-apiserver:
+    image: huatuo/huatuo-bamai:latest
+    container_name: huatuo-apiserver
+    network_mode: host
+    environment:
+      ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-}
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
+      RUN_PATH: ${RUN_PATH:-}
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ../../huatuo-apiserver.conf:${RUN_PATH}/conf/huatuo-apiserver.conf:rw
+      - ./run-huatuo-apiserver.sh:${RUN_PATH}/run-huatuo-apiserver.sh:rw
+    working_dir: ${RUN_PATH}
+    command: ["./run-huatuo-apiserver.sh"]
+    depends_on:
+      - elasticsearch
+      - prometheus
 
   huatuo-bamai:
     image: huatuo/huatuo-bamai:latest
@@ -39,6 +58,7 @@ services:
     network_mode: host
     cgroup: host
     privileged: true
+    working_dir: ${RUN_PATH:-/home/huatuo-bamai}
     environment:
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-}
       ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
@@ -50,8 +70,8 @@ services:
       - /etc:/etc:ro
       - /var:/var:ro
       - ../../huatuo-bamai.conf:${RUN_PATH}/conf/huatuo-bamai.conf:rw
-      - ./run.sh:${RUN_PATH}/run.sh:ro
-    command: ["./run.sh"]
+      - ./run-huatuo-bamai.sh:${RUN_PATH}/conf/../run-huatuo-bamai.sh:rw
+    command: ["./run-huatuo-bamai.sh"]
     depends_on:
       - elasticsearch
       - prometheus
