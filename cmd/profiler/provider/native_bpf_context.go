@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -188,12 +189,15 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 		totalRead += uint64(len(batch))
 
 		for _, rec := range batch {
-			// Directly convert to *ProfilerEventBase using pointer arithmetic.
-			// This works because ProfilerEventBase is the first (embedded) field
-			// in cpuEventKey, so they share the same memory address.
-			// This is guaranteed by Go's struct layout rules for embedded fields.
-			// For memory profilers, the event is ProfilerEventBase directly.
-			base := (*ProfilerEventBase)(unsafe.Pointer(&rec))
+			// rec is a pointer to the event struct (*cpuEventKey or *ProfilerEventBase).
+			// Use reflection to get the pointer value, then convert to *ProfilerEventBase.
+			// For structs with embedded ProfilerEventBase, the base is at offset 0.
+			ptrValue := reflect.ValueOf(rec)
+			if ptrValue.Kind() != reflect.Ptr {
+				continue
+			}
+			// Get the struct pointer and convert to *ProfilerEventBase
+			base := (*ProfilerEventBase)(unsafe.Pointer(ptrValue.Pointer()))
 
 			// Skip events without valid stacks
 			if base.Kernstack <= 0 && base.Userstack <= 0 {
