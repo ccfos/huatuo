@@ -78,8 +78,8 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	p.dbg = bpf.NewDbg(pctx.LogBpfDebug)
 
 	b, err := bpf.LoadBpf("native_cpu_profiler.o", p.dbg.WithBpfDbg(map[string]any{
-		"target_css": cssAddr,
-		"target_pid": uint64(pctx.PID),
+		"profiler_filter_css": cssAddr,
+		"profiler_filter_pid": uint32(pctx.PID),
 	}))
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)

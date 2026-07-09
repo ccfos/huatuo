@@ -4,163 +4,108 @@
 #include <bpf/bpf_core_read.h>
 #include "bpf_profiler.h"
 
-#define BPF_F_USER_STACK (1ULL << 8)
+char __license[] SEC("license") = "GPL";
 
-volatile const u64 target_css = 0;
-volatile const u32 target_pid = 0;
-volatile const bool trace_threads = false; // if true, match tgid, else match pid
-volatile const u8 sampling_probability = 100; // 1-100, default 100% (no sampling)
-
-enum {
-	TRANSFER_CNT_IDX = 0,
-	SAMPLE_CNT_A_IDX,
-	SAMPLE_CNT_B_IDX,
-	PROFILER_CNT,
-};
-
-struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);
-	__type(key, u32);
-	__type(value, u64);
-	__uint(max_entries, PROFILER_CNT);
-} profiler_state_map SEC(".maps");
-
-#define STACK_MAP_ENTRIES 65536
-
-#define KERN_STACKID_FLAGS (0)
-#define USER_STACKID_FLAGS (0 | BPF_F_USER_STACK)
-
-struct {
-	__uint(type, BPF_MAP_TYPE_STACK_TRACE);
-	__uint(key_size, sizeof(u32));
-	__uint(value_size, PERF_MAX_STACK_DEPTH * sizeof(u64));
-	__uint(max_entries, STACK_MAP_ENTRIES);
-} stack_map_a SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_STACK_TRACE);
-	__uint(key_size, sizeof(u32));
-	__uint(value_size, PERF_MAX_STACK_DEPTH * sizeof(u64));
-	__uint(max_entries, STACK_MAP_ENTRIES);
-} stack_map_b SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-	__uint(key_size, sizeof(int));
-	__uint(value_size, sizeof(u32));
-} profiler_output_a SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-	__uint(key_size, sizeof(int));
-	__uint(value_size, sizeof(u32));
-} profiler_output_b SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(key_size, sizeof(u32));
-	__uint(value_size, sizeof(struct profiler_event_base_t));
-	__uint(max_entries, 1);
-} event_buf SEC(".maps");
-
-#ifndef COMPAT_BPF_F_CURRENT_CPU
-#define COMPAT_BPF_F_CURRENT_CPU 0
-#endif
-
-static __always_inline int should_trace(u32 current_pid, u32 current_tgid)
-{
-	if (target_css != 0) {
-		struct task_struct *task =
-			(struct task_struct *)bpf_get_current_task();
-		u64 css = (u64)BPF_CORE_READ(task, cgroups, subsys[memory_cgrp_id]);
-		return css == target_css;
-	}
-	if (target_pid == 0) {
-		/* No PID filter */
-		return 1;
-	}
-	if (trace_threads) {
-		return current_tgid == target_pid;
-	}
-	return current_pid == target_pid;
-}
+DEFINE_PROFILER_PAGE_TRACKING_MAP();
+DEFINE_PROFILER_MAPS(struct profiler_event_base_t);
 
 SEC("kprobe/page_add_new_anon_rmap")
 int BPF_KPROBE(trace_page_alloc, struct page *page,
-		   struct vm_area_struct *vma, unsigned long address, bool compound)
+               struct vm_area_struct *vma, unsigned long address, bool compound)
 {
-	u32 count_idx = TRANSFER_CNT_IDX;
-	u64 *transfer_count_ptr =
-		bpf_map_lookup_elem(&profiler_state_map, &count_idx);
-
+	u64 *transfer_count_ptr;
 	u64 *sample_count_ptrs[2];
+	GET_PROFILER_STATE_POINTERS(transfer_count_ptr, sample_count_ptrs);
 
-	count_idx = SAMPLE_CNT_A_IDX;
-	sample_count_ptrs[0] =
-		bpf_map_lookup_elem(&profiler_state_map, &count_idx);
-
-	count_idx = SAMPLE_CNT_B_IDX;
-	sample_count_ptrs[1] =
-		bpf_map_lookup_elem(&profiler_state_map, &count_idx);
-
-	if (transfer_count_ptr == NULL || sample_count_ptrs[0] == NULL ||
-		sample_count_ptrs[1] == NULL) {
+	if (!transfer_count_ptr || !sample_count_ptrs[0] || !sample_count_ptrs[1])
 		return 0;
-	}
 
 	u64 pid_tgid = bpf_get_current_pid_tgid();
-	u32 tgid = pid_tgid >> 32;
-	u32 pid = pid_tgid & 0xffffffffUL;
-
-	if (!should_trace(pid, tgid))
+	if (!profiler_should_trace(pid_tgid))
 		return 0;
 
-	/* Sampling to reduce overhead */
-	if (bpf_get_prandom_u32() % 100 >= sampling_probability)
+	if (!profiler_should_sample())
 		return 0;
 
-	struct profiler_event_base_t *event = NULL;
-	void *stack_map = NULL;
-	void *profiler_output = NULL;
-	u64 *sample_count_ptr = NULL;
 	u32 idx = 0;
-
-	event = bpf_map_lookup_elem(&event_buf, &idx);
+	struct profiler_event_base_t *event = bpf_map_lookup_elem(&event_buf, &idx);
 	if (!event)
 		return 0;
 
-	if (((*transfer_count_ptr) & 0x1ULL) == 0) {
-		profiler_output = (void *)&profiler_output_a;
-		sample_count_ptr = sample_count_ptrs[0];
-		stack_map = (void *)&stack_map_a;
-	} else {
-		profiler_output = (void *)&profiler_output_b;
-		sample_count_ptr = sample_count_ptrs[1];
-		stack_map = (void *)&stack_map_b;
-	}
+	void *stack_map;
+	void *profiler_output;
+	u64 *sample_count_ptr;
+
+	SELECT_PROFILER_AB(transfer_count_ptr, sample_count_ptrs,
+	                   sample_count_ptr, stack_map, profiler_output);
 
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->pid_tgid = pid_tgid;
-	bpf_get_current_comm(&event->comm, sizeof(event->comm));
-
-	event->userstack =
-		bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
-	event->kernstack =
-		bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
-
-	if (event->userstack < 0 && event->kernstack < 0)
+	if (profiler_fill_event_base(event, ctx, stack_map) < 0)
 		return 0;
 
-	/* One page per event, convert to bytes in user space */
 	event->value = 1;
 
-	__sync_fetch_and_add(sample_count_ptr, 1);
+	u64 page_addr = (u64)page;
+	bpf_map_update_elem(&page_to_stackid, &page_addr, event, COMPAT_BPF_ANY);
 
+	__sync_fetch_and_add(sample_count_ptr, 1);
 	bpf_perf_event_output(ctx, profiler_output, COMPAT_BPF_F_CURRENT_CPU,
-				  event, sizeof(*event));
+	                      event, sizeof(*event));
 
 	return 0;
 }
 
-char LICENSE[] SEC("license") = "GPL";
+SEC("kprobe/page_remove_rmap")
+int BPF_KPROBE(trace_page_free, struct page *page, bool compound)
+{
+	u64 *transfer_count_ptr;
+	u64 *sample_count_ptrs[2];
+	GET_PROFILER_STATE_POINTERS(transfer_count_ptr, sample_count_ptrs);
+
+	if (!transfer_count_ptr || !sample_count_ptrs[0] || !sample_count_ptrs[1])
+		return 0;
+
+	u64 pid_tgid = bpf_get_current_pid_tgid();
+	if (!profiler_should_trace(pid_tgid))
+		return 0;
+
+	u64 page_addr = (u64)page;
+	struct profiler_event_base_t *stack_info =
+		bpf_map_lookup_elem(&page_to_stackid, &page_addr);
+	if (!stack_info)
+		return 0;
+
+	u32 idx = 0;
+	struct profiler_event_base_t *event = bpf_map_lookup_elem(&event_buf, &idx);
+	if (!event)
+		return 0;
+
+	void *profiler_output;
+	u64 *sample_count_ptr;
+
+	if (((*transfer_count_ptr) & 0x1ULL) == 0) {
+		sample_count_ptr = sample_count_ptrs[0];
+		profiler_output = (void *)&profiler_output_a;
+	} else {
+		sample_count_ptr = sample_count_ptrs[1];
+		profiler_output = (void *)&profiler_output_b;
+	}
+
+	__builtin_memset(event, 0, sizeof(*event));
+
+	event->pid_tgid = stack_info->pid_tgid;
+	event->kernstack = stack_info->kernstack;
+	event->userstack = stack_info->userstack;
+	__builtin_memcpy(&event->comm, &stack_info->comm, sizeof(event->comm));
+
+	event->value = -1;
+
+	bpf_map_delete_elem(&page_to_stackid, &page_addr);
+
+	__sync_fetch_and_add(sample_count_ptr, 1);
+	bpf_perf_event_output(ctx, profiler_output, COMPAT_BPF_F_CURRENT_CPU,
+	                      event, sizeof(*event));
+
+	return 0;
+}

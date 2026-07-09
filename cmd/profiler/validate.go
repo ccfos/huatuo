@@ -187,9 +187,9 @@ func validateCommonOptions(ctx *cli.Context) error {
 
 func validateMemoryMode(mode string) error {
 	validModes := map[string]bool{
-		"virtual_alloc":   true,
-		"physical_alloc":  true,
-		"physical_usage":  true,
+		"virtual_alloc":  true,
+		"physical_alloc": true,
+		"physical_usage": true,
 	}
 
 	if !validModes[mode] {
