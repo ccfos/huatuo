@@ -38,11 +38,9 @@ BPF_DBG_MAP(native_cpu_dbg);
 
 struct cpu_event_t {
 	struct profiler_event_base_t base;
-	__u32 cpu;
-	int intpstack;
-	__u32 flags;
-	__u64 uprobe_addr;
 	__u64 timestamp;
+	__u32 cpu;
+	__u32 pad0;
 };
 
 // #define BPF_F_USER_STACK		(1ULL << 8)
