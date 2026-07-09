@@ -190,8 +190,9 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 		for _, rec := range batch {
 			// Directly convert to *ProfilerEventBase using pointer arithmetic.
 			// This works because ProfilerEventBase is the first (embedded) field
-			// in both cpuEventKey and memEvent, so they share the same memory address.
+			// in cpuEventKey, so they share the same memory address.
 			// This is guaranteed by Go's struct layout rules for embedded fields.
+			// For memory profilers, the event is ProfilerEventBase directly.
 			base := (*ProfilerEventBase)(unsafe.Pointer(&rec))
 
 			// Skip events without valid stacks

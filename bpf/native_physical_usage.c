@@ -19,15 +19,11 @@ enum {
 	PROFILER_CNT,
 };
 
-struct stack_info_t {
-	struct profiler_event_base_t base;
-};
-
 /*
  * page_to_stackid tracks retained (live) anonymous pages.
  *
  * Key: page address (struct page *).
- * Value: stack_info_t captured at allocation time (PID/comm + stack IDs).
+ * Value: profiler_event_base_t captured at allocation time (PID/comm + stack IDs).
  *
  * When a page is freed, we look up the original alloc stack here so the -1 event
  * is attributed to the same stack, even if A/B parity has flipped since alloc.
@@ -36,12 +32,8 @@ struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 1 << 20);
 	__type(key, u64);
-	__type(value, struct stack_info_t);
+	__type(value, struct profiler_event_base_t);
 } page_to_stackid SEC(".maps");
-
-struct mem_event_t {
-	struct profiler_event_base_t base;
-};
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -58,7 +50,7 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(key_size, sizeof(u32));
-	__uint(value_size, sizeof(struct mem_event_t));
+	__uint(value_size, sizeof(struct profiler_event_base_t));
 	__uint(max_entries, 1);
 } event_buf SEC(".maps");
 
@@ -143,7 +135,7 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 	if (bpf_get_prandom_u32() % 100 >= sampling_probability)
 		return 0;
 
-	struct mem_event_t *event = NULL;
+	struct profiler_event_base_t *event = NULL;
 	void *stack_map = NULL;
 	void *profiler_output = NULL;
 	u64 *sample_count_ptr = NULL;
@@ -163,33 +155,23 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 		stack_map = (void *)&stack_map_b;
 	}
 
-	if (!event)
-		return 0;
-
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->base.pid_tgid = pid_tgid;
-	bpf_get_current_comm(&event->base.comm, sizeof(event->base.comm));
+	event->pid_tgid = pid_tgid;
+	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
-	event->base.userstack =
+	event->userstack =
 		bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
-	event->base.kernstack =
+	event->kernstack =
 		bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
 
-	if (event->base.userstack < 0 && event->base.kernstack < 0)
+	if (event->userstack < 0 && event->kernstack < 0)
 		return 0;
 
-	event->base.value = 1;
-
-	struct stack_info_t stack_info = {};
-	stack_info.base.pid_tgid = event->base.pid_tgid;
-	__builtin_memcpy(&stack_info.base.comm, &event->base.comm,
-			 sizeof(stack_info.base.comm));
-	stack_info.base.userstack = event->base.userstack;
-	stack_info.base.kernstack = event->base.kernstack;
+	event->value = 1;
 
 	u64 page_addr = (u64)page;
-	bpf_map_update_elem(&page_to_stackid, &page_addr, &stack_info, BPF_ANY);
+	bpf_map_update_elem(&page_to_stackid, &page_addr, event, BPF_ANY);
 
 	__sync_fetch_and_add(sample_count_ptr, 1);
 
@@ -229,12 +211,12 @@ int BPF_KPROBE(trace_page_free, struct page *page, bool compound)
 		return 0;
 
 	u64 page_addr = (u64)page;
-	struct stack_info_t *stack_info =
+	struct profiler_event_base_t *stack_info =
 		bpf_map_lookup_elem(&page_to_stackid, &page_addr);
 	if (!stack_info)
 		return 0;
 
-	struct mem_event_t *event = NULL;
+	struct profiler_event_base_t *event = NULL;
 	void *profiler_output = NULL;
 	u64 *sample_count_ptr = NULL;
 	u32 idx = 0;
@@ -251,19 +233,15 @@ int BPF_KPROBE(trace_page_free, struct page *page, bool compound)
 		sample_count_ptr = sample_count_ptrs[1];
 	}
 
-	if (!event)
-		return 0;
-
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->base.pid_tgid = stack_info->base.pid_tgid;
-	event->base.kernstack = stack_info->base.kernstack;
-	event->base.userstack = stack_info->base.userstack;
-	__builtin_memcpy(&event->base.comm, &stack_info->base.comm,
-			 sizeof(event->base.comm));
+	event->pid_tgid = stack_info->pid_tgid;
+	event->kernstack = stack_info->kernstack;
+	event->userstack = stack_info->userstack;
+	__builtin_memcpy(&event->comm, &stack_info->comm, sizeof(event->comm));
 
 	/* Free: negative page delta */
-	event->base.value = -1;
+	event->value = -1;
 
 	bpf_map_delete_elem(&page_to_stackid, &page_addr);
 

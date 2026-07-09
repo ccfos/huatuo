@@ -17,10 +17,6 @@ enum {
 	PROFILER_CNT,
 };
 
-struct mem_event_t {
-	struct profiler_event_base_t base;
-};
-
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__type(key, u32);
@@ -62,7 +58,7 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(key_size, sizeof(u32));
-	__uint(value_size, sizeof(struct mem_event_t));
+	__uint(value_size, sizeof(struct profiler_event_base_t));
 	__uint(max_entries, 1);
 } event_buf SEC(".maps");
 
@@ -122,7 +118,7 @@ int BPF_KPROBE(trace_mmap, struct file *file, unsigned long addr,
 	if (file)
 		return 0;
 
-	struct mem_event_t *event = NULL;
+	struct profiler_event_base_t *event = NULL;
 	void *stack_map = NULL;
 	void *profiler_output = NULL;
 	u64 *sample_count_ptr = NULL;
@@ -142,23 +138,20 @@ int BPF_KPROBE(trace_mmap, struct file *file, unsigned long addr,
 		stack_map = (void *)&stack_map_b;
 	}
 
-	if (!event)
-		return 0;
-
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->base.pid_tgid = pid_tgid;
-	bpf_get_current_comm(&event->base.comm, sizeof(event->base.comm));
+	event->pid_tgid = pid_tgid;
+	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
-	event->base.userstack =
+	event->userstack =
 		bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
-	event->base.kernstack =
+	event->kernstack =
 		bpf_get_stackid(ctx, stack_map, KERN_STACKID_FLAGS);
 
-	if (event->base.userstack < 0 && event->base.kernstack < 0)
+	if (event->userstack < 0 && event->kernstack < 0)
 		return 0;
 
-	event->base.value = (s64)len;
+	event->value = (s64)len;
 
 	__sync_fetch_and_add(sample_count_ptr, 1);
 

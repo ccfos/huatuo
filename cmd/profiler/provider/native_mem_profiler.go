@@ -49,10 +49,6 @@ type memNativeProfiler struct {
 	pageSize     int64
 }
 
-type memEvent struct {
-	ProfilerEventBase
-}
-
 func init() {
 	impl := &memNativeProfiler{}
 	registry.Register(registry.ProfilerMeta{
@@ -272,7 +268,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 		// Use unified drainActiveRingBuffer with Memory event factory
 		if err := ringCtx.drainActiveRingBuffer(enqueue,
-			func() any { return &memEvent{} },
+			func() any { return &ProfilerEventBase{} },
 			p.convertValueToBytes); err != nil { // Convert pages to bytes
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
