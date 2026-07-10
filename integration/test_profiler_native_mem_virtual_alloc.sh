@@ -121,38 +121,37 @@ fi
 
 # --- verify expected symbol appears in output --------------------------------
 
-log_info "checking for expected symbol 'test_mmap_allocator' in profiler output"
+log_info "checking for expected symbol 'test_alloc_free_loop' in profiler output"
 
 # Concatenate all folded files for symbol search
 ALL_FOLDED="${WORK_DIR}/all_folded.txt"
 cat "${FOLDED_FILES[@]}" > "${ALL_FOLDED}"
 
-if ! grep -q "test_mmap_allocator" "${ALL_FOLDED}"; then
-	log_error "expected symbol 'test_mmap_allocator' not found in profiler output"
+if ! grep -q "test_alloc_free_loop" "${ALL_FOLDED}"; then
+	log_error "expected symbol 'test_alloc_free_loop' not found in profiler output"
 	log_error "folded file contents:"
 	cat "${FOLDED_FILES[@]}" >&2
 	fatal "symbol verification failed"
 fi
 
-log_info "found expected symbol 'test_mmap_allocator'"
+log_info "found expected symbol 'test_alloc_free_loop'"
 
 # --- verify memory values match expected allocations -------------------------
 
 log_info "verifying memory allocation values"
 
-# Extract lines containing test_mmap_allocator and sum up the bytes
-# Format: stack_trace;bytes
+# Extract lines containing test_alloc_free_loop and sum up the bytes.
+# The folded output stores the byte count as the last whitespace-delimited field.
 TOTAL_CAPTURED_BYTES=0
 while IFS= read -r line; do
-	# Extract the byte count (last field after semicolon)
-	bytes=$(echo "${line}" | rev | cut -d';' -f1 | rev)
+	bytes=$(awk '{print $NF}' <<< "${line}")
 	if [[ "${bytes}" =~ ^[0-9]+$ ]]; then
 		TOTAL_CAPTURED_BYTES=$((TOTAL_CAPTURED_BYTES + bytes))
 	fi
-done < <(grep "test_mmap_allocator" "${ALL_FOLDED}")
+done < <(grep "test_alloc_free_loop" "${ALL_FOLDED}")
 
 if [[ ${TOTAL_CAPTURED_BYTES} -eq 0 ]]; then
-	log_error "no memory bytes captured for test_mmap_allocator"
+	log_error "no memory bytes captured for test_alloc_free_loop"
 	fatal "memory verification failed"
 fi
 
@@ -162,7 +161,7 @@ fi
 # Allow some tolerance since profiler may miss some events
 MIN_EXPECTED_BYTES=$((EXPECTED_TOTAL_PER_ITER * 100)) # At least 100 iterations worth
 
-log_info "captured ${TOTAL_CAPTURED_BYTES} bytes for test_mmap_allocator (min expected: ${MIN_EXPECTED_BYTES})"
+log_info "captured ${TOTAL_CAPTURED_BYTES} bytes for test_alloc_free_loop (min expected: ${MIN_EXPECTED_BYTES})"
 
 if [[ ${TOTAL_CAPTURED_BYTES} -lt ${MIN_EXPECTED_BYTES} ]]; then
 	log_error "captured memory (${TOTAL_CAPTURED_BYTES} bytes) is less than expected minimum (${MIN_EXPECTED_BYTES} bytes)"

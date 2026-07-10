@@ -53,7 +53,7 @@ static KEEP_FRAME void test_mmap_deallocator(void *p, size_t size) {
 	}
 }
 
-static KEEP_FRAME void do_alloc_free_loop(void) {
+static KEEP_FRAME void test_alloc_free_loop(void) {
 	const size_t block_sizes[] = {ALLOC_SIZE_1, ALLOC_SIZE_2, ALLOC_SIZE_3, ALLOC_SIZE_4};
 	const int num_sizes = sizeof(block_sizes) / sizeof(block_sizes[0]);
 	void *blocks[4] = {NULL, NULL, NULL, NULL};
@@ -87,7 +87,7 @@ int main(void) {
 	const double deadline = monotonic_seconds() + duration;
 
 	while (monotonic_seconds() < deadline) {
-		do_alloc_free_loop();
+		test_alloc_free_loop();
 		usleep(10000); // 10ms delay between iterations
 	}
 
