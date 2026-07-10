@@ -36,6 +36,7 @@ type Pipeline struct {
 	wg       sync.WaitGroup
 	stopCh   chan struct{}
 	stopOnce sync.Once
+	doneCh   chan struct{}
 
 	tracerID      string
 	overflowCount atomic.Int64
@@ -57,6 +58,7 @@ func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
 		queue:    rqueue.NewRingBuffer(65536),
 		tracerID: tracing.AllocTaskID(),
 		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
 	}
 }
 
@@ -76,6 +78,7 @@ func (p *Pipeline) runAggregationExport() {
 
 	if p.pctx.IsOneShotAgg {
 		<-p.stopCh
+		<-p.doneCh
 		if err := p.aggregateAndExport(p.pctx.Ctx, true); err != nil {
 			log.WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed: %v", err)
 		}
@@ -93,6 +96,7 @@ func (p *Pipeline) runAggregationExport() {
 				log.WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed: %v", err)
 			}
 		case <-p.stopCh:
+			<-p.doneCh
 			if err := p.aggregateAndExport(p.pctx.Ctx, true); err != nil {
 				log.WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed: %v", err)
 			}
@@ -106,10 +110,27 @@ func (p *Pipeline) runAggregationExport() {
 // record into the aggregator. Exits when the queue is disposed.
 func (p *Pipeline) runAggregationDequeue() {
 	defer p.wg.Done()
+	defer close(p.doneCh)
 
 	for {
-		rec, err := p.queue.Get()
+		rec, err := p.queue.Poll(100 * time.Millisecond)
 		if err != nil {
+			if errors.Is(err, rqueue.ErrTimeout) {
+				select {
+				case <-p.stopCh:
+					if p.queue.Len() == 0 {
+						return
+					}
+				default:
+				}
+
+				continue
+			}
+
+			if errors.Is(err, rqueue.ErrDisposed) {
+				return
+			}
+
 			return
 		}
 
@@ -121,7 +142,6 @@ func (p *Pipeline) runAggregationDequeue() {
 func (p *Pipeline) Stop() {
 	p.stopOnce.Do(func() {
 		close(p.stopCh)
-		p.queue.Dispose()
 		p.wg.Wait()
 	})
 }
