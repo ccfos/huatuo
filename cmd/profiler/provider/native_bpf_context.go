@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -26,6 +27,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/bpfmap"
 	"huatuo-bamai/internal/profiler/procutil"
+	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -58,6 +60,7 @@ type ringBufferContext struct {
 	stackMapAID        uint32
 	stackMapBID        uint32
 	needsFallback      bool // true for memory retained mode, false for CPU/non-retained
+	usym               *symbol.UsymResolver
 }
 
 // newRingBufferContext initializes the ring buffer infrastructure for dual-buffer profiling.
@@ -84,6 +87,7 @@ func newRingBufferContext(b bpf.BPF, ctx context.Context, bufferSize int, needsF
 		stackMapAID:        b.MapIDByName("stack_map_a"),
 		stackMapBID:        b.MapIDByName("stack_map_b"),
 		needsFallback:      needsFallback,
+		usym:               symbol.NewUsymResolver(),
 	}, nil
 }
 
@@ -159,13 +163,12 @@ func (r *ringBufferContext) advanceSwapParity() (activeRingBuffer, error) {
 // - newEvent: factory function to create event struct from batch data
 // - convertValue: optional function to convert raw value (nil for CPU, non-nil for Memory)
 func (r *ringBufferContext) drainActiveRingBuffer(
-	enqueue func(any),
 	newEvent func() any,
 	convertValue func(int64) int64,
-) error {
+) (map[processIDName]map[bpfmap.StackTraceID]int64, activeRingBuffer, error) {
 	ring, err := r.advanceSwapParity()
 	if err != nil {
-		return err
+		return nil, activeRingBuffer{}, err
 	}
 
 	// Use nested map structure for stack aggregation
@@ -180,7 +183,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 		batch, err := ring.reader.ReadBatch(newEvent())
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
-				return err
+				return nil, activeRingBuffer{}, err
 			}
 			log.Warnf("read batch: %v", err)
 			break
@@ -235,7 +238,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 
 		bpfCount, err := bpfmap.ReadUint64(r.bpf, r.transferStateMapID, ring.sampleCountIdx)
 		if err != nil {
-			return fmt.Errorf("read sampleCnt: %w", err)
+			return nil, activeRingBuffer{}, fmt.Errorf("read sampleCnt: %w", err)
 		}
 
 		log.Debugf("drain check: totalRead=%d bpfCount=%d", totalRead, bpfCount)
@@ -251,11 +254,115 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 		log.Warnf("reset sample count: %v", err)
 	}
 
-	if len(stackCountsByProc) > 0 {
-		aggregateStacksAndEnqueue(r.bpf, stackCountsByProc, ring.stackMapID, enqueue, convertValue, ring.fallbackStackMapID)
+	return stackCountsByProc, ring, nil
+}
+
+// aggregateStacksAndEnqueue resolves stack traces and emits aggregated records via enqueue callback.
+// For CPU profiler, convertValue is nil (samples are already counts).
+// For Memory profiler non-retained modes, convertValue converts raw value to bytes.
+// For Memory profiler retained mode, fallbackStackMapID provides fallback lookup path.
+//
+// Stack IDs are NOT deleted from the stack map after resolution for the following reasons:
+//
+//  1. Caching Performance: BPF_MAP_TYPE_STACK_TRACE is a cache-like map where stack IDs
+//     can be reused across multiple events. Keeping the IDs cached improves performance
+//     for subsequent lookups (10-20% hit rate for repeated stacks).
+//
+//  2. Fallback Support: In retained mode (physical_usage), free events may reference
+//     stack IDs from the previous cycle's stack_map. Deleting them would break the
+//     fallback lookup path that cross-references alloc-time stacks.
+//
+//  3. Automatic Management: The kernel's BPF stack map implementation uses a LRU-like
+//     eviction policy when the map is full, automatically managing the lifecycle of
+//     stack traces without requiring explicit deletion.
+//
+//  4. Reduced Overhead: Deleting stack IDs requires additional BPF map operations
+//     (one delete syscall per stack ID), which adds unnecessary overhead for a
+//     performance-critical path. The memory overhead of keeping stale entries is
+//     bounded by the map size limit (STACK_MAP_ENTRIES = 65536).
+func (r *ringBufferContext) aggregateStacksAndEnqueue(
+	stackCountsByProc map[processIDName]map[bpfmap.StackTraceID]int64,
+	ring activeRingBuffer,
+	enqueue func(any),
+	convertValue func(int64) int64,
+) {
+	kstackCache := make(map[int32]string)
+	ustackCache := make(map[int32]string)
+
+	var records int
+	for pidName, stacks := range stackCountsByProc {
+		for stackID, rawValue := range stacks {
+			value := rawValue
+			if convertValue != nil {
+				value = convertValue(rawValue)
+			}
+
+			if value == 0 {
+				continue
+			}
+
+			if stackID.KernelID > 0 {
+				if _, ok := kstackCache[stackID.KernelID]; !ok {
+					kstackCache[stackID.KernelID] = r.resolveKstackWithFallback(ring, stackID.KernelID)
+				}
+			}
+			if stackID.UserID > 0 {
+				if _, ok := ustackCache[stackID.UserID]; !ok {
+					ustackCache[stackID.UserID] = r.resolveUstackWithFallback(ring, stackID.UserID, pidName.Pid)
+				}
+			}
+
+			record := &stackEntry{
+				Proc:    &processIDName{Pid: pidName.Pid, Name: pidName.Name},
+				User:    ustackCache[stackID.UserID],
+				Kernel:  kstackCache[stackID.KernelID],
+				Samples: value,
+			}
+
+			enqueue(record)
+			records++
+		}
 	}
 
-	return nil
+	log.Debugf("aggregate: procs=%d kstacks=%d ustacks=%d records=%d", len(stackCountsByProc), len(kstackCache), len(ustackCache), records)
+}
+
+// resolveKstackWithFallback resolves kernel stack with fallback support.
+// Fast path: lookup primary stackMapID (90-95% hit rate).
+// Slow path: fallback to another stackMapID if primary lookup fails.
+func (r *ringBufferContext) resolveKstackWithFallback(ring activeRingBuffer, kernelID int32) string {
+	trace, ok := readStackTrace(r.bpf, ring.stackMapID, kernelID)
+	if ok {
+		return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
+	}
+
+	if ring.fallbackStackMapID != 0 {
+		trace, ok = readStackTrace(r.bpf, ring.fallbackStackMapID, kernelID)
+		if ok {
+			return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
+		}
+	}
+
+	return ""
+}
+
+// resolveUstackWithFallback resolves user stack with fallback support.
+// Fast path: lookup primary stackMapID (90-95% hit rate).
+// Slow path: fallback to another stackMapID if primary lookup fails.
+func (r *ringBufferContext) resolveUstackWithFallback(ring activeRingBuffer, userID int32, pid uint32) string {
+	trace, ok := readStackTrace(r.bpf, ring.stackMapID, userID)
+	if ok {
+		return strings.Join(r.usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
+	}
+
+	if ring.fallbackStackMapID != 0 {
+		trace, ok = readStackTrace(r.bpf, ring.fallbackStackMapID, userID)
+		if ok {
+			return strings.Join(r.usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
+		}
+	}
+
+	return ""
 }
 
 // closeBpfSafe safely closes a BPF object, handling nil checks and logging errors.

@@ -134,14 +134,21 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		}
 
 		// Use unified drainActiveRingBuffer with CPU event factory
-		if err := ringCtx.drainActiveRingBuffer(enqueue,
+		stackCountsByProc, ring, err := ringCtx.drainActiveRingBuffer(
 			func() any { return &cpuEventKey{} },
-			nil); err != nil { // No value conversion needed for CPU profiler
+			nil,
+		) // No value conversion needed for CPU profiler
+		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
 
 			log.Warnf("drain: %v", err)
+			continue
+		}
+
+		if len(stackCountsByProc) > 0 {
+			ringCtx.aggregateStacksAndEnqueue(stackCountsByProc, ring, enqueue, nil)
 		}
 	}
 }

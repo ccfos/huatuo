@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/cilium/ebpf"
 
@@ -29,7 +28,6 @@ import (
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/profiler/bpfmap"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/symbol"
 )
 
 // resolveContainerCgroupCss retrieves the cgroup subsystem state (CSS) address for a container.
@@ -85,122 +83,6 @@ func resolveContainerCgroupCssByLocal(containerID, subsysName string) (uint64, e
 	}
 
 	return cssAddr, nil
-}
-
-// aggregateStacksAndEnqueue resolves stack traces and emits aggregated records via enqueue callback.
-// For CPU profiler, convertValue is nil (samples are already counts).
-// For Memory profiler non-retained modes, convertValue converts raw value to bytes.
-// For Memory profiler retained mode, fallbackStackMapID provides fallback lookup path.
-//
-// Stack IDs are NOT deleted from the stack map after resolution for the following reasons:
-//
-//  1. Caching Performance: BPF_MAP_TYPE_STACK_TRACE is a cache-like map where stack IDs
-//     can be reused across multiple events. Keeping the IDs cached improves performance
-//     for subsequent lookups (10-20% hit rate for repeated stacks).
-//
-//  2. Fallback Support: In retained mode (physical_usage), free events may reference
-//     stack IDs from the previous cycle's stack_map. Deleting them would break the
-//     fallback lookup path that cross-references alloc-time stacks.
-//
-//  3. Automatic Management: The kernel's BPF stack map implementation uses a LRU-like
-//     eviction policy when the map is full, automatically managing the lifecycle of
-//     stack traces without requiring explicit deletion.
-//
-//  4. Reduced Overhead: Deleting stack IDs requires additional BPF map operations
-//     (one delete syscall per stack ID), which adds unnecessary overhead for a
-//     performance-critical path. The memory overhead of keeping stale entries is
-//     bounded by the map size limit (STACK_MAP_ENTRIES = 65536).
-func aggregateStacksAndEnqueue(
-	b bpf.BPF,
-	stackCountsByProc map[processIDName]map[bpfmap.StackTraceID]int64,
-	stackMapID uint32,
-	enqueue func(any),
-	convertValue func(int64) int64,
-	fallbackStackMapID uint32,
-) {
-	kstackCache := make(map[int32]string)
-	ustackCache := make(map[int32]string)
-	usym := symbol.NewUsymResolver()
-
-	var records int
-	for pidName, stacks := range stackCountsByProc {
-		for stackID, rawValue := range stacks {
-			// Convert value if needed (Memory profiler), otherwise use directly (CPU profiler)
-			value := rawValue
-			if convertValue != nil {
-				value = convertValue(rawValue)
-			}
-
-			if value == 0 {
-				continue
-			}
-
-			if stackID.KernelID > 0 {
-				if _, ok := kstackCache[stackID.KernelID]; !ok {
-					kstackCache[stackID.KernelID] = resolveKstackWithFallback(b, stackMapID, fallbackStackMapID, stackID.KernelID)
-				}
-			}
-			if stackID.UserID > 0 {
-				if _, ok := ustackCache[stackID.UserID]; !ok {
-					ustackCache[stackID.UserID] = resolveUstackWithFallback(b, stackMapID, fallbackStackMapID, stackID.UserID, pidName.Pid, usym)
-				}
-			}
-
-			record := &stackEntry{
-				Proc:    &processIDName{Pid: pidName.Pid, Name: pidName.Name},
-				User:    ustackCache[stackID.UserID],
-				Kernel:  kstackCache[stackID.KernelID],
-				Samples: value,
-			}
-
-			enqueue(record)
-			records++
-		}
-	}
-
-	log.Debugf("aggregate: procs=%d kstacks=%d ustacks=%d records=%d", len(stackCountsByProc), len(kstackCache), len(ustackCache), records)
-}
-
-// resolveKstackWithFallback resolves kernel stack with fallback support.
-// Fast path: lookup primary stackMapID (90-95% hit rate).
-// Slow path: fallback to another stackMapID if primary lookup fails.
-func resolveKstackWithFallback(b bpf.BPF, primaryMapID, fallbackMapID uint32, kernelID int32) string {
-	// Fast path: lookup primary stack map
-	trace, ok := readStackTrace(b, primaryMapID, kernelID)
-	if ok {
-		return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
-	}
-
-	// Slow path: fallback to another stack map (only for retained mode)
-	if fallbackMapID != 0 {
-		trace, ok = readStackTrace(b, fallbackMapID, kernelID)
-		if ok {
-			return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
-		}
-	}
-
-	return ""
-}
-
-// resolveUstackWithFallback resolves user stack with fallback support.
-// Fast path: lookup primary stackMapID (90-95% hit rate).
-// Slow path: fallback to another stackMapID if primary lookup fails.
-func resolveUstackWithFallback(b bpf.BPF, primaryMapID, fallbackMapID uint32, userID int32, pid uint32, usym *symbol.UsymResolver) string {
-	// Fast path: lookup primary stack map
-	trace, ok := readStackTrace(b, primaryMapID, userID)
-	if ok {
-		return strings.Join(usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
-	}
-
-	// Slow path: fallback to another stack map (only for retained mode)
-	if fallbackMapID != 0 {
-		trace, ok = readStackTrace(b, fallbackMapID, userID)
-		if ok {
-			return strings.Join(usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
-		}
-	}
-
-	return ""
 }
 
 // readStackTrace reads a stack trace from the BPF stack map by ID.
