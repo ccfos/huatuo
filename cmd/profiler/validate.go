@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -146,7 +146,7 @@ func validateCommonOptions(ctx *cli.Context) error {
 	}
 
 	if cpuidStr := ctx.String("cpuid"); cpuidStr != "" {
-		if _, err := parseCPUIDList(cpuidStr); err != nil {
+		if _, err := parseCPUIDs(cpuidStr); err != nil {
 			return err
 		}
 	}
@@ -199,8 +199,15 @@ func validateMemoryMode(mode string) error {
 	return nil
 }
 
-func parseCPUIDList(s string) ([]int, error) {
-	numCPU := runtime.NumCPU()
+func parseCPUIDs(s string) ([]int, error) {
+	return parseCPUIDsWithLimit(s, runtime.NumCPU())
+}
+
+func parseCPUIDsWithLimit(s string, numCPU int) ([]int, error) {
+	if numCPU <= 0 {
+		return nil, fmt.Errorf("cpu count must be positive")
+	}
+
 	var cpuIDs []int
 	seen := make(map[int]bool)
 
