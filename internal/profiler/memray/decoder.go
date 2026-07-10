@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"huatuo-bamai/internal/symbol"
@@ -64,14 +65,15 @@ type reader struct {
 	header Header
 
 	// per-stream state
-	lastDataPtr     uint64
-	lastNativeFrame uint64
-	lastInstrPtr    uint64
-	lastThreadID    uint64
-	recentPtrs      [15]uint64
-	threadStacks    map[uint64][]uint64
-	frameTree       frameTree
-	codeObjects     map[uint64]codeObject
+	lastDataPtr       uint64
+	lastNativeFrame   uint64
+	lastInstrPtr      uint64
+	lastCodeFirstLine int64
+	lastThreadID      uint64
+	recentPtrs        [15]uint64
+	threadStacks      map[uint64][]uint64
+	frameTree         frameTree
+	codeObjects       map[uint64]codeObject
 
 	nativeFrames    []nativeFrame
 	nativeSymbolize *nativeSymbolizer
@@ -82,9 +84,10 @@ type reader struct {
 }
 
 type codeObject struct {
-	Func string
-	// TODO(python-mem): Extend this struct to retain filename/firstlineno/linetable
-	// and render line-aware stack labels. We currently keep function-only labels.
+	Func      string
+	Filename  string
+	FirstLine int64
+	LineTable []byte
 }
 
 type locationKey struct {
@@ -244,16 +247,17 @@ func (rd *reader) handleFramePush(flags uint8) error {
 	}
 	frame.InstrOffset = sv
 
-	frameID, err := packPythonFrameID(frame.CodeObjectID, frame.IsEntry)
-	if err != nil {
-		return err
+	frameKey := pythonFrameKey{
+		CodeObjectID: frame.CodeObjectID,
+		InstrOffset:  frame.InstrOffset,
+		IsEntry:      frame.IsEntry,
 	}
 	stack := rd.threadStacks[rd.lastThreadID]
 	parent := uint64(0)
 	if len(stack) > 0 {
 		parent = stack[len(stack)-1]
 	}
-	newIdx := rd.frameTree.getTraceIndex(parent, frameID)
+	newIdx := rd.frameTree.getTraceIndex(parent, frameKey)
 	rd.threadStacks[rd.lastThreadID] = append(stack, newIdx)
 	return nil
 }
@@ -278,26 +282,29 @@ func (rd *reader) handleCodeObject() error {
 	if err != nil {
 		return err
 	}
-	if _, err := rd.readCString(); err != nil { // filename
+	filename, err := rd.readCString()
+	if err != nil {
 		return err
 	}
-	if _, err := rd.readSignedVarint(); err != nil { // firstlineno delta
+	firstLineDelta, err := rd.readSignedVarint()
+	if err != nil {
 		return err
 	}
-	// TODO(python-mem): Decode and retain linetable payload so we can reconstruct
-	// precise source line info in stack rendering.
+	rd.lastCodeFirstLine += firstLineDelta
 	ltSize, err := rd.readVarint()
 	if err != nil {
 		return err
 	}
-	if ltSize > 0 {
-		if _, err := io.CopyN(io.Discard, rd.r, int64(ltSize)); err != nil {
-			return err
-		}
+	lineTable := make([]byte, ltSize)
+	if _, err := io.ReadFull(rd.r, lineTable); err != nil {
+		return err
 	}
-	// TODO(python-mem): Keep richer code object metadata and include it in rendered
-	// stack frame labels. Today we intentionally map codeID -> function name only.
-	rd.codeObjects[codeID] = codeObject{Func: funcName}
+	rd.codeObjects[codeID] = codeObject{
+		Func:      funcName,
+		Filename:  filename,
+		FirstLine: rd.lastCodeFirstLine,
+		LineTable: lineTable,
+	}
 	return nil
 }
 
@@ -460,14 +467,20 @@ type frameTree struct {
 	badParents uint64
 }
 
+type pythonFrameKey struct {
+	CodeObjectID uint64
+	InstrOffset  int64
+	IsEntry      bool
+}
+
 type frameNode struct {
-	FrameID  uint64
+	Frame    pythonFrameKey
 	Parent   uint64
 	Children []childEdge
 }
 
 type childEdge struct {
-	FrameID  uint64
+	Frame    pythonFrameKey
 	ChildIdx uint64
 }
 
@@ -477,27 +490,26 @@ type frameInfo struct {
 	InstrOffset  int64
 }
 
-const maxPackedCodeObjectID = ^uint64(0) >> 1
-
-func packPythonFrameID(codeID uint64, isEntry bool) (uint64, error) {
-	// frameID packs codeID and isEntry into one uint64:
-	// - bits [63:1]: codeID
-	// - bit [0]: isEntry
-	if codeID > maxPackedCodeObjectID {
-		return 0, fmt.Errorf("code object id %d exceeds max packed range %d", codeID, maxPackedCodeObjectID)
+func comparePythonFrameKey(a, b pythonFrameKey) int {
+	switch {
+	case a.CodeObjectID < b.CodeObjectID:
+		return -1
+	case a.CodeObjectID > b.CodeObjectID:
+		return 1
+	case a.InstrOffset < b.InstrOffset:
+		return -1
+	case a.InstrOffset > b.InstrOffset:
+		return 1
+	case !a.IsEntry && b.IsEntry:
+		return -1
+	case a.IsEntry && !b.IsEntry:
+		return 1
+	default:
+		return 0
 	}
-	frameID := codeID << 1
-	if isEntry {
-		frameID |= 1
-	}
-	return frameID, nil
 }
 
-func unpackPythonFrameID(frameID uint64) (codeID uint64, isEntry bool) {
-	return frameID >> 1, frameID&1 == 1
-}
-
-func (ft *frameTree) getTraceIndex(parent, frameID uint64) uint64 {
+func (ft *frameTree) getTraceIndex(parent uint64, frame pythonFrameKey) uint64 {
 	if ft.nodes == nil {
 		ft.nodes = []frameNode{{}}
 	}
@@ -507,20 +519,18 @@ func (ft *frameTree) getTraceIndex(parent, frameID uint64) uint64 {
 		parent = 0
 	}
 	edges := ft.nodes[parent].Children
-	i := 0
-	// TODO: use binary search? (Children are kept sorted by FrameID; linear scan is OK for now.)
-	for i < len(edges) && edges[i].FrameID < frameID {
-		i++
-	}
-	if i < len(edges) && edges[i].FrameID == frameID {
+	i := sort.Search(len(edges), func(i int) bool {
+		return comparePythonFrameKey(edges[i].Frame, frame) >= 0
+	})
+	if i < len(edges) && comparePythonFrameKey(edges[i].Frame, frame) == 0 {
 		return edges[i].ChildIdx
 	}
 	newIdx := uint64(len(ft.nodes))
 	edges = append(edges, childEdge{})
 	copy(edges[i+1:], edges[i:])
-	edges[i] = childEdge{FrameID: frameID, ChildIdx: newIdx}
+	edges[i] = childEdge{Frame: frame, ChildIdx: newIdx}
 	ft.nodes[parent].Children = edges
-	ft.nodes = append(ft.nodes, frameNode{FrameID: frameID, Parent: parent})
+	ft.nodes = append(ft.nodes, frameNode{Frame: frame, Parent: parent})
 	return newIdx
 }
 
@@ -554,19 +564,177 @@ func (rd *reader) pythonStackFrames(idx uint64) ([]string, []bool) {
 	entries := make([]bool, 0, 16)
 	for idx != 0 {
 		node := rd.frameTree.nodes[idx]
-		frameID := node.FrameID
-		codeID, isEntry := unpackPythonFrameID(frameID)
-		// TODO(python-mem): Switch to line/file aware labels once code object metadata
-		// retention is implemented in handleCodeObject.
-		fn := rd.codeObjects[codeID].Func
-		if fn == "" {
-			fn = "[unknown]"
-		}
-		frames = append(frames, fn)
-		entries = append(entries, isEntry)
+		frames = append(frames, rd.renderPythonFrameLabel(node.Frame))
+		entries = append(entries, node.Frame.IsEntry)
 		idx = node.Parent
 	}
 	return frames, entries
+}
+
+func (rd *reader) renderPythonFrameLabel(frame pythonFrameKey) string {
+	co, ok := rd.codeObjects[frame.CodeObjectID]
+	if !ok {
+		return "[unknown]"
+	}
+
+	fn := co.Func
+	if fn == "" {
+		fn = "[unknown]"
+	}
+
+	line, ok := co.lineForOffset(rd.header.PythonVersion, frame.InstrOffset)
+	switch {
+	case ok && co.Filename != "":
+		return fmt.Sprintf("%s %s:%d", fn, co.Filename, line)
+	case ok:
+		return fmt.Sprintf("%s :%d", fn, line)
+	default:
+		return fn
+	}
+}
+
+func (co codeObject) lineForOffset(pythonVersion int32, instrOffset int64) (int64, bool) {
+	if instrOffset < 0 {
+		return 0, false
+	}
+	if len(co.LineTable) == 0 {
+		return 0, false
+	}
+
+	switch {
+	case pythonVersion >= 0x030B0000:
+		return parseLineTable311(co.LineTable, instrOffset, co.FirstLine)
+	case pythonVersion >= 0x030A0000:
+		return parseLineTable310(co.LineTable, instrOffset, co.FirstLine)
+	default:
+		return parseLineTable39(co.LineTable, instrOffset, co.FirstLine)
+	}
+}
+
+func parseLineTable311(lineTable []byte, instrOffset, firstLine int64) (int64, bool) {
+	addrq := uint64(instrOffset) / 2
+	ptr := 0
+	addr := uint64(0)
+	line := firstLine
+
+	scanVarint := func() (uint64, bool) {
+		if ptr >= len(lineTable) {
+			return 0, false
+		}
+		read := uint64(lineTable[ptr])
+		ptr++
+		val := read & 63
+		shift := uint(0)
+		for read&64 != 0 {
+			if ptr >= len(lineTable) {
+				return 0, false
+			}
+			read = uint64(lineTable[ptr])
+			ptr++
+			shift += 6
+			val |= (read & 63) << shift
+		}
+		return val, true
+	}
+
+	scanSignedVarint := func() (int64, bool) {
+		uval, ok := scanVarint()
+		if !ok {
+			return 0, false
+		}
+		sval := int64(uval >> 1)
+		if uval&1 == 1 {
+			sval = -sval
+		}
+		return sval, true
+	}
+
+	for ptr < len(lineTable) && lineTable[ptr] != 0 {
+		firstByte := lineTable[ptr]
+		ptr++
+		code := (firstByte >> 3) & 15
+		length := uint64(firstByte&7) + 1
+		endAddr := addr + length
+
+		switch code {
+		case 15:
+		case 14:
+			lineDelta, ok := scanSignedVarint()
+			if !ok {
+				return 0, false
+			}
+			line += lineDelta
+			if _, ok := scanVarint(); !ok {
+				return 0, false
+			}
+			if _, ok := scanVarint(); !ok {
+				return 0, false
+			}
+			if _, ok := scanVarint(); !ok {
+				return 0, false
+			}
+		case 13:
+			lineDelta, ok := scanSignedVarint()
+			if !ok {
+				return 0, false
+			}
+			line += lineDelta
+		case 10, 11, 12:
+			line += int64(code) - 10
+			if ptr+1 >= len(lineTable) {
+				return 0, false
+			}
+			ptr += 2
+		default:
+			if ptr >= len(lineTable) {
+				return 0, false
+			}
+			ptr++
+		}
+
+		if addr <= addrq && endAddr > addrq {
+			return line, true
+		}
+		addr = endAddr
+	}
+	return 0, false
+}
+
+func parseLineTable310(lineTable []byte, instrOffset, firstLine int64) (int64, bool) {
+	line := firstLine
+	lastExecutedInstruction := instrOffset << 1
+
+	for i, currentInstruction := 0, int64(0); i+1 < len(lineTable); {
+		startDelta := int64(lineTable[i])
+		i++
+		lineDelta := int8(lineTable[i])
+		i++
+		currentInstruction += startDelta
+		if lineDelta != -0x80 {
+			line += int64(lineDelta)
+		}
+		if currentInstruction > lastExecutedInstruction {
+			break
+		}
+	}
+
+	return line, true
+}
+
+func parseLineTable39(lineTable []byte, instrOffset, firstLine int64) (int64, bool) {
+	line := firstLine
+
+	for i, bc := 0, int64(0); i+1 < len(lineTable); {
+		bc += int64(lineTable[i])
+		i++
+		if bc > instrOffset {
+			break
+		}
+		line += int64(int8(lineTable[i]))
+		i++
+	}
+
+	return line, true
 }
 
 func (rd *reader) pythonStackKey(idx, tid uint64) string {
