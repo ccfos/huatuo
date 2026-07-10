@@ -46,7 +46,6 @@ readonly EXPECTED_ALLOC_SIZE_1=4096
 readonly EXPECTED_ALLOC_SIZE_2=16384
 readonly EXPECTED_ALLOC_SIZE_3=65536
 readonly EXPECTED_ALLOC_SIZE_4=262144
-readonly EXPECTED_TOTAL_PER_ITER=$((EXPECTED_ALLOC_SIZE_1 + EXPECTED_ALLOC_SIZE_2 + EXPECTED_ALLOC_SIZE_3 + EXPECTED_ALLOC_SIZE_4))
 
 # --- workspace + cleanup -----------------------------------------------------
 
@@ -55,9 +54,11 @@ FIXTURE_BIN="${WORK_DIR}/mmap_workload"
 FIXTURE_OUT="${WORK_DIR}/mmap.out"
 FIXTURE_ERR="${WORK_DIR}/mmap.err"
 TARGET_PID=""
+PROFILER_PID=""
 
 cleanup() {
 	local rc=$?
+	[[ -n "${PROFILER_PID}" ]] && stop_by_pid "${PROFILER_PID}" 5
 	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5
 	if [[ ${rc} -ne 0 ]]; then
 		dump_file "profiler stdout" "${TOOL_OUT}"
@@ -81,7 +82,7 @@ gcc -O0 -g -fno-inline -fno-omit-frame-pointer \
 
 # --- launch target -----------------------------------------------------------
 
-log_info "launching target with 30s"
+log_info "launching target and waiting for SIGUSR1"
 "${FIXTURE_BIN}" > "${FIXTURE_OUT}" 2> "${FIXTURE_ERR}" &
 TARGET_PID=$!
 kill -0 "${TARGET_PID}" 2> /dev/null || fatal "fixture exited immediately (pid=${TARGET_PID})"
@@ -91,7 +92,7 @@ log_info "target pid=${TARGET_PID}"
 # --- run profiler ------------------------------------------------------------
 
 log_info "running profiler for ${PROFILER_DURATION}s with --memory-mode virtual_alloc against pid=${TARGET_PID}"
-if ! "${TOOL_BIN}" \
+("${TOOL_BIN}" \
 	--type mem \
 	--language c \
 	--memory-mode virtual_alloc \
@@ -100,8 +101,20 @@ if ! "${TOOL_BIN}" \
 	--output-format collapsed \
 	--output-path "${WORK_DIR}" \
 	--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
-	> "${TOOL_OUT}" 2> "${TOOL_ERR}"; then
+	> "${TOOL_OUT}" 2> "${TOOL_ERR}") &
+PROFILER_PID=$!
+kill -0 "${PROFILER_PID}" 2> /dev/null || fatal "failed to launch profiler"
+
+sleep 2
+log_info "sending SIGUSR1 to target pid=${TARGET_PID}"
+kill -USR1 "${TARGET_PID}" || fatal "failed to signal fixture pid=${TARGET_PID}"
+
+if ! wait "${PROFILER_PID}"; then
 	fatal "profiler exited non-zero (see ${TOOL_ERR})"
+fi
+
+if ! wait "${TARGET_PID}"; then
+	fatal "fixture exited non-zero (see ${FIXTURE_ERR})"
 fi
 
 # --- assert ------------------------------------------------------------------
@@ -155,16 +168,17 @@ if [[ ${TOTAL_CAPTURED_BYTES} -eq 0 ]]; then
 	fatal "memory verification failed"
 fi
 
-# Calculate expected total: iterations * bytes per iteration
-# With 10ms sleep per iteration and 10s duration, expect ~1000 iterations
-# Each iteration allocates EXPECTED_TOTAL_PER_ITER bytes
-# Allow some tolerance since profiler may miss some events
-MIN_EXPECTED_BYTES=$((EXPECTED_TOTAL_PER_ITER * 100)) # At least 100 iterations worth
+ACTUAL_ALLOCATED_BYTES=$(awk -F= '/^actual_allocated_bytes=/{value=$2} END {print value}' "${FIXTURE_ERR}")
+if [[ ! "${ACTUAL_ALLOCATED_BYTES}" =~ ^[0-9]+$ ]]; then
+	log_error "missing actual_allocated_bytes in fixture stderr"
+	dump_file "fixture stderr" "${FIXTURE_ERR}"
+	fatal "memory verification failed"
+fi
 
-log_info "captured ${TOTAL_CAPTURED_BYTES} bytes for test_alloc_free_loop (min expected: ${MIN_EXPECTED_BYTES})"
+log_info "fixture reported ${ACTUAL_ALLOCATED_BYTES} bytes"
 
-if [[ ${TOTAL_CAPTURED_BYTES} -lt ${MIN_EXPECTED_BYTES} ]]; then
-	log_error "captured memory (${TOTAL_CAPTURED_BYTES} bytes) is less than expected minimum (${MIN_EXPECTED_BYTES} bytes)"
+if [[ ${TOTAL_CAPTURED_BYTES} -ne ${ACTUAL_ALLOCATED_BYTES} ]]; then
+	log_error "captured memory (${TOTAL_CAPTURED_BYTES} bytes) does not match actual allocated bytes (${ACTUAL_ALLOCATED_BYTES})"
 	fatal "memory verification failed"
 fi
 
