@@ -42,6 +42,17 @@ readonly PROFILER_AGGR_INTERVAL=5
 readonly PROFILER_READY_TIMEOUT=15
 readonly PROFILER_READY_INTERVAL=1
 
+readonly USER_MARKER_SYMBOL="test_alloc_free_loop"
+readonly KERNEL_MMAP_SYMBOL="do_mmap"
+EXPECTED_SYMBOL="${USER_MARKER_SYMBOL}"
+
+if kernel_version_le 5 4; then
+	# Linux 5.4 and older can return shallow BPF user stacks from kprobe/do_mmap.
+	# Validate the kernel hook instead of requiring a specific user-space frame.
+	EXPECTED_SYMBOL="${KERNEL_MMAP_SYMBOL}"
+fi
+readonly EXPECTED_SYMBOL
+
 # --- workspace + cleanup -----------------------------------------------------
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-mem.XXXXXX")
@@ -137,22 +148,22 @@ fi
 
 # --- verify expected symbol appears in output --------------------------------
 
-log_info "checking for expected symbol 'test_alloc_free_loop' in profiler output"
+log_info "checking for expected symbol '${EXPECTED_SYMBOL}' in profiler output"
 
-if ! grep -q "test_alloc_free_loop" "${FOLDED_FILES[@]}"; then
-	log_error "expected symbol 'test_alloc_free_loop' not found in profiler output"
+if ! grep -q "${EXPECTED_SYMBOL}" "${FOLDED_FILES[@]}"; then
+	log_error "expected symbol '${EXPECTED_SYMBOL}' not found in profiler output"
 	log_error "folded file contents:"
 	cat "${FOLDED_FILES[@]}" >&2
 	fatal "symbol verification failed"
 fi
 
-log_info "found expected symbol 'test_alloc_free_loop'"
+log_info "found expected symbol '${EXPECTED_SYMBOL}'"
 
 # --- verify memory values match expected allocations -------------------------
 
 log_info "verifying memory allocation values"
 
-# Extract lines containing test_alloc_free_loop and sum up the bytes.
+# Extract lines containing the expected symbol and sum up the bytes.
 # The folded output stores the byte count as the last whitespace-delimited field.
 TOTAL_CAPTURED_BYTES=0
 while IFS= read -r line; do
@@ -160,10 +171,10 @@ while IFS= read -r line; do
 	if [[ "${bytes}" =~ ^[0-9]+$ ]]; then
 		TOTAL_CAPTURED_BYTES=$((TOTAL_CAPTURED_BYTES + bytes))
 	fi
-done < <(grep "test_alloc_free_loop" "${FOLDED_FILES[@]}")
+done < <(grep "${EXPECTED_SYMBOL}" "${FOLDED_FILES[@]}")
 
 if [[ ${TOTAL_CAPTURED_BYTES} -eq 0 ]]; then
-	log_error "no memory bytes captured for test_alloc_free_loop"
+	log_error "no memory bytes captured for ${EXPECTED_SYMBOL}"
 	fatal "memory verification failed"
 fi
 

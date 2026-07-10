@@ -43,6 +43,23 @@ assert_eq() {
 	return 1
 }
 
+# kernel_version_le <major> <minor>
+# Returns 0 when the running kernel version is less than or equal to major.minor.
+kernel_version_le() {
+	local want_major=$1 want_minor=$2
+	local version major minor
+
+	version=$(uname -r)
+	major=${version%%.*}
+	version=${version#*.}
+	minor=${version%%.*}
+
+	[[ "${major}" =~ ^[0-9]+$ ]] || return 1
+	[[ "${minor}" =~ ^[0-9]+$ ]] || return 1
+
+	((major < want_major || (major == want_major && minor <= want_minor)))
+}
+
 # wait_until <timeout> <interval> <desc> <func> [args...]
 # Returns 0 on success, 1 on timeout.
 wait_until() {
