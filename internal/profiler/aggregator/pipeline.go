@@ -29,16 +29,23 @@ import (
 	rqueue "github.com/Workiva/go-datastructures/queue"
 )
 
+const (
+	pipelineStateIdle uint32 = iota
+	pipelineStateRunning
+	pipelineStateStopped
+)
+
 // Pipeline buffers profiler records through a ring queue, drives periodic
 // aggregation via the embedded Aggregator, and routes output to the
 // configured backend (ES upload, file write, or SVG render).
 type Pipeline struct {
-	wg       sync.WaitGroup
-	stopCh   chan struct{}
-	stopOnce sync.Once
-	doneCh   chan struct{}
+	wg     sync.WaitGroup
+	stopCh chan struct{}
+	doneCh chan struct{}
+	state  atomic.Uint32
 
 	tracerID      string
+	aggrInterval  time.Duration
 	overflowCount atomic.Int64
 
 	pctx  *profctx.ProfilerContext
@@ -46,59 +53,69 @@ type Pipeline struct {
 	queue *rqueue.RingBuffer
 }
 
-// NewPipeline initializes the data pipeline. If aggrInterval <= 0, default is 10 seconds.
+// NewPipeline initializes the data pipeline.
 func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
-	if pctx.AggrInterval <= 0 {
-		pctx.AggrInterval = 10
+	aggrInterval := time.Duration(pctx.AggrInterval) * time.Second
+	if aggrInterval <= 0 {
+		aggrInterval = 10 * time.Second
 	}
 
 	return &Pipeline{
-		pctx:     pctx,
-		aggr:     aggr,
-		queue:    rqueue.NewRingBuffer(65536),
-		tracerID: tracing.AllocTaskID(),
-		stopCh:   make(chan struct{}),
-		doneCh:   make(chan struct{}),
+		pctx:         pctx,
+		aggr:         aggr,
+		queue:        rqueue.NewRingBuffer(65536),
+		tracerID:     tracing.AllocTaskID(),
+		aggrInterval: aggrInterval,
+		stopCh:       make(chan struct{}),
+		doneCh:       make(chan struct{}),
 	}
 }
 
-// Start launches the aggregation worker and periodic export schedule.
+// Start launches the aggregation worker and periodic export schedule once.
+// It is a no-op after Stop starts; Pipeline instances are not restartable.
 func (p *Pipeline) Start() {
-	p.wg.Add(1)
-	go p.runAggregationDequeue()
+	if !p.state.CompareAndSwap(pipelineStateIdle, pipelineStateRunning) {
+		return
+	}
 
 	p.wg.Add(1)
-	go p.runAggregationExport()
+	go p.runDequeueAndAggregate()
+
+	p.wg.Add(1)
+	go p.runAggregateSnapshot()
 }
 
-// runAggregationExport periodically snapshots and exports aggregated
+// runAggregateSnapshot periodically snapshots and exports aggregated
 // data until the pipeline is stopped. In one-shot mode it exports once on stop.
-func (p *Pipeline) runAggregationExport() {
+func (p *Pipeline) runAggregateSnapshot() {
 	defer p.wg.Done()
 
 	if p.pctx.IsOneShotAgg {
 		<-p.stopCh
+		// Wait for queued records to drain before the final snapshot.
 		<-p.doneCh
-		if err := p.aggregateAndExport(p.pctx.Ctx, true); err != nil {
-			log.WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed: %v", err)
+		if err := p.aggregateAndSnapshot(p.pctx.Ctx, true); err != nil {
+			p.logAggregateExportError(err)
 		}
 
 		return
 	}
 
-	ticker := time.NewTicker(time.Duration(p.pctx.AggrInterval) * time.Second)
+	ticker := time.NewTicker(p.aggrInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			if err := p.aggregateAndExport(p.pctx.Ctx, false); err != nil {
-				log.WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed: %v", err)
+			if err := p.aggregateAndSnapshot(p.pctx.Ctx, false); err != nil {
+				p.logAggregateExportError(err)
 			}
 		case <-p.stopCh:
+			// Stop scheduling periodic snapshots; the final snapshot must observe
+			// all records accepted before shutdown.
 			<-p.doneCh
-			if err := p.aggregateAndExport(p.pctx.Ctx, true); err != nil {
-				log.WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed: %v", err)
+			if err := p.aggregateAndSnapshot(p.pctx.Ctx, true); err != nil {
+				p.logAggregateExportError(err)
 			}
 
 			return
@@ -106,9 +123,9 @@ func (p *Pipeline) runAggregationExport() {
 	}
 }
 
-// runAggregationDequeue continuously drains the queue and feeds each
-// record into the aggregator. Exits when the queue is disposed.
-func (p *Pipeline) runAggregationDequeue() {
+// runDequeueAndAggregate drains queued records into the aggregator.
+// After Stop begins, it exits only after the queue is empty.
+func (p *Pipeline) runDequeueAndAggregate() {
 	defer p.wg.Done()
 	defer close(p.doneCh)
 
@@ -131,6 +148,7 @@ func (p *Pipeline) runAggregationDequeue() {
 				return
 			}
 
+			log.WithError(err).WithField("tracer_id", p.tracerID).Warnf("aggregation dequeue stopped")
 			return
 		}
 
@@ -139,15 +157,29 @@ func (p *Pipeline) runAggregationDequeue() {
 }
 
 // Stop signals the pipeline to terminate and waits for all goroutines to exit.
+// Calls after the first one are no-ops. A stopped Pipeline cannot be restarted.
 func (p *Pipeline) Stop() {
-	p.stopOnce.Do(func() {
-		close(p.stopCh)
-		p.wg.Wait()
-	})
+	for {
+		state := p.state.Load()
+		if state == pipelineStateStopped {
+			return
+		}
+
+		if p.state.CompareAndSwap(state, pipelineStateStopped) {
+			close(p.stopCh)
+			p.wg.Wait()
+			return
+		}
+	}
 }
 
 // Enqueue offers a record into the aggregation queue for async processing.
+// Records offered after Stop begins are ignored.
 func (p *Pipeline) Enqueue(data any) {
+	if p.state.Load() == pipelineStateStopped {
+		return
+	}
+
 	ok, err := p.queue.Offer(data)
 	if err != nil {
 		log.Warnf("queue offer failed: %v", err)
@@ -159,7 +191,11 @@ func (p *Pipeline) Enqueue(data any) {
 	}
 }
 
-func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) error {
+func (p *Pipeline) logAggregateExportError(err error) {
+	log.WithError(err).WithField("tracer_id", p.tracerID).Errorf("aggregate and export failed")
+}
+
+func (p *Pipeline) aggregateAndSnapshot(ctx context.Context, final bool) error {
 	if p.pctx.OutputFormat.IsUpload() {
 		data, err := p.aggr.Snapshot(p.pctx)
 		if err != nil {
