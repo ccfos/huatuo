@@ -184,8 +184,12 @@ func (p *Pipeline) aggregateAndExport(ctx context.Context, final bool) error {
 
 	// Non-upload mode: write directly from the folded formatter.
 	formatter := p.aggr.OutputFormatter()
-	if formatter == nil || formatter.IsEmpty() {
-		return errors.New("no profiling samples collected; nothing written")
+	if formatter == nil {
+		return fmt.Errorf("output formatter is nil for non-upload format %q", p.pctx.OutputFormat)
+	}
+
+	if formatter.IsEmpty() {
+		return nil
 	}
 
 	if p.pctx.OutputFormat.IsFlameGraph() {

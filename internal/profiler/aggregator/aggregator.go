@@ -19,6 +19,8 @@ import (
 	"huatuo-bamai/internal/profiler/output"
 )
 
+//go:generate mockery --name=Aggregator --dir=. --filename=mock_aggregator_test.go --inpackage --case=underscore
+
 // Aggregator absorbs profiler records into language-specific aggregated
 // state and exports the result on demand. Each profiler language provides
 // its own implementation.
