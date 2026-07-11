@@ -25,10 +25,14 @@ source "${ROOT_DIR}/integration/lib.sh"
 is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
 
 readonly PROFILER_BIN="${ROOT_DIR}/_output/bin/profiler"
+readonly PROFILER_BPF="${ROOT_DIR}/_output/bpf/native_cpu_profiler.o"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 
 command -v gcc > /dev/null || skip "gcc(1) not in PATH"
 command -v taskset > /dev/null || skip "taskset(1) not in PATH"
+[[ -x "${PROFILER_BIN}" ]] || fatal "profiler binary missing: ${PROFILER_BIN}"
+[[ -r "${PROFILER_BPF}" ]] || fatal "native bpf object missing: ${PROFILER_BPF}"
+[[ -r "${FIXTURE_SRC}" ]] || fatal "fixture source missing: ${FIXTURE_SRC}"
 [[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip "perf_event_paranoid not readable: perf unavailable"
 readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
 [[ "${PARANOID}" -le 2 ]] || skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
@@ -40,13 +44,16 @@ readonly CHAIN_PATTERN=';f1;f2;f3 [0-9]+$'
 
 readonly FIXTURE_OUTDIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-cpuid.XXXXXX")
 FIXTURE_BIN="${FIXTURE_OUTDIR}/callchain"
+PROFILER_OUT="${FIXTURE_OUTDIR}/profiler.out"
+PROFILER_ERR="${FIXTURE_OUTDIR}/profiler.err"
 TARGET_PID=""
 
 cleanup() {
 	local rc=$?
 	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5
 	if [[ ${rc} -ne 0 ]]; then
-		dump_file "profiler stderr" "${FIXTURE_OUTDIR}/profiler.err"
+		dump_file "profiler stdout" "${PROFILER_OUT}"
+		dump_file "profiler stderr" "${PROFILER_ERR}"
 		log_error "workspace preserved at ${FIXTURE_OUTDIR}"
 	else
 		rm -rf "${FIXTURE_OUTDIR}"
@@ -71,6 +78,8 @@ gcc -O0 -g -fno-inline -fno-omit-frame-pointer \
 verify_cpuid_chain() {
 	local pin_cpu=$1 cpuid=$2 expect_chain=$3
 	local out_dir="${FIXTURE_OUTDIR}/${pin_cpu}"
+	local folded_glob="${out_dir}/perf_*.folded"
+	local match_count=0
 
 	log_info "fixture on CPU${pin_cpu}, profiler --cpuid ${cpuid}, expect chain ${expect_chain}"
 	mkdir -p "${out_dir}"
@@ -83,26 +92,37 @@ verify_cpuid_chain() {
 		--cpuid "${cpuid}" --duration 10 --freq 99 \
 		--output-format collapsed --output-path "${out_dir}" \
 		--aggr-interval 5 \
-		> /dev/null 2> "${FIXTURE_OUTDIR}/profiler.err" \
+		> "${PROFILER_OUT}" 2> "${PROFILER_ERR}" \
 		|| fatal "profiler exited non-zero"
 
 	stop_by_pid "${TARGET_PID}" 5
 	TARGET_PID=""
 
-	mapfile -t folded < <(find "${out_dir}" -name 'perf_*.folded' -type f)
-	local match_count=0
-	if [[ ${#folded[@]} -gt 0 ]]; then
-		match_count=$(grep -hE "${CHAIN_PATTERN}" "${folded[@]}" | wc -l) || true
+	if compgen -G "${folded_glob}" > /dev/null; then
+		match_count=$(grep -hE "${CHAIN_PATTERN}" ${folded_glob} | wc -l) || true
+	elif [[ "${expect_chain}" == "present" ]]; then
+		fatal "no folded file produced"
 	fi
 
-	if [[ "${expect_chain}" == "present" ]]; then
-		[[ ${#folded[@]} -gt 0 ]] || fatal "no folded file produced"
-		[[ "${match_count}" -ge 1 ]] || fatal "chain not found (matches=${match_count})"
+	case "${expect_chain}" in
+	present)
+		[[ "${match_count}" -ge 1 ]] || fail_with_folded "${out_dir}" "chain not found (matches=${match_count})"
 		log_info "chain matched (${match_count} lines)"
-	else
-		[[ "${match_count}" -eq 0 ]] || fatal "chain unexpectedly found (matches=${match_count})"
+		;;
+	absent)
+		[[ "${match_count}" -eq 0 ]] || fail_with_folded "${out_dir}" "chain unexpectedly found (matches=${match_count})"
 		log_info "chain absent as expected"
-	fi
+		;;
+	esac
+}
+
+fail_with_folded() {
+	local out_dir=$1
+	local message=$2
+
+	log_error "folded contents in ${out_dir}:"
+	find "${out_dir}" -name 'perf_*.folded' -type f -print -exec cat {} \; >&2
+	fatal "${message}"
 }
 
 # --- tests -------------------------------------------------------------------
