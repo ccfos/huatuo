@@ -16,7 +16,6 @@ package aggregator
 
 import (
 	"context"
-	"io"
 	"testing"
 
 	profctx "huatuo-bamai/internal/profiler/context"
@@ -43,8 +42,11 @@ func TestPipelineAggregateAndExport_NilFormatter(t *testing.T) {
 }
 
 func TestPipelineAggregateAndExport_EmptyFormatter(t *testing.T) {
+	formatter := NewFormatter(t)
+	formatter.On("IsEmpty").Return(true).Once()
+
 	aggr := NewMockAggregator(t)
-	aggr.On("OutputFormatter").Return(&mockFormatter{empty: true}).Once()
+	aggr.On("OutputFormatter").Return(formatter).Once()
 
 	p := NewPipeline(&profctx.ProfilerContext{
 		OutputFormat: output.FormatCollapsed,
@@ -56,26 +58,4 @@ func TestPipelineAggregateAndExport_EmptyFormatter(t *testing.T) {
 	}
 
 	aggr.AssertNotCalled(t, "Reset")
-}
-
-type mockFormatter struct {
-	empty bool
-}
-
-func (mf *mockFormatter) Name() string {
-	return "mock"
-}
-
-func (mf *mockFormatter) Add(*output.Sample) error {
-	return nil
-}
-
-func (mf *mockFormatter) Write(io.Writer) error {
-	return nil
-}
-
-func (mf *mockFormatter) Reset() {}
-
-func (mf *mockFormatter) IsEmpty() bool {
-	return mf.empty
 }
