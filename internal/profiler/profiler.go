@@ -301,8 +301,11 @@ func extractJavaMainClassFromPid(pid int) (string, error) {
 	}
 
 	cmdlineSlice, err := p.CmdlineSlice()
-	if err != nil || len(cmdlineSlice) == 0 {
+	if err != nil {
 		return "", err
+	}
+	if len(cmdlineSlice) == 0 {
+		return "", fmt.Errorf("empty cmdline for PID %d", pid)
 	}
 
 	// Match java keyword
@@ -369,7 +372,7 @@ func extractPythonThreadNameFromPid(pid int) (string, error) {
 
 	base := filepath.Base(resolvedExe)
 	if !strings.HasPrefix(base, "python") {
-		return "", err
+		return "", fmt.Errorf("process %d exe is %q, not a python process", pid, base)
 	}
 
 	p, err := process.NewProcess(int32(pid))
@@ -378,8 +381,11 @@ func extractPythonThreadNameFromPid(pid int) (string, error) {
 	}
 
 	cmdline, err := p.CmdlineSlice()
-	if err != nil || len(cmdline) == 0 {
+	if err != nil {
 		return "", err
+	}
+	if len(cmdline) == 0 {
+		return "", fmt.Errorf("empty cmdline for PID %d", pid)
 	}
 
 	// Extract main script，skip -u -m flags and etc.
