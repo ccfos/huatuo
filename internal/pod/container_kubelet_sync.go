@@ -143,7 +143,7 @@ func kubeletPodListPortCacheUpdate(ctx *ManagerCtx) error {
 	return nil
 }
 
-func ManagerInit(ctx *ManagerCtx) error {
+func InitManager(ctx *ManagerCtx) error {
 	dockerAPIVersion = ctx.DockerAPIVersion
 
 	if ctx.PodReadOnlyPort == 0 && ctx.PodAuthorizedPort == 0 {
@@ -204,7 +204,7 @@ func ManagerInit(ctx *ManagerCtx) error {
 	return nil
 }
 
-func ManagerRelease() {
+func ReleaseManager() {
 	if kubeletTimeTicker != nil {
 		kubeletTimeTicker.Stop()
 		kubeletTimeTicker = nil
