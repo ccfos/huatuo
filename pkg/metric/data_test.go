@@ -167,6 +167,64 @@ func TestNewCounterData_DiffPoint(t *testing.T) {
 	}
 }
 
+func TestDataLabelsAllowDefaultOverrides(t *testing.T) {
+	defaultRegion = "huatuo-region"
+	defaultHostname = "huatuo-dev"
+
+	tests := []struct {
+		name  string
+		build func() *Data
+		want  map[string]string
+	}{
+		{
+			name: "host metric",
+			build: func() *Data {
+				return NewGaugeData("cpu_usage", 1, "cpu usage", map[string]string{
+					LabelRegion: "custom-region",
+					LabelHost:   "custom-host",
+				})
+			},
+			want: map[string]string{LabelRegion: "custom-region", LabelHost: "custom-host"},
+		},
+		{
+			name: "container metric",
+			build: func() *Data {
+				return NewContainerGaugeData(&pod.Container{
+					Name:     "container",
+					Hostname: "node",
+					Type:     pod.ContainerTypeNormal,
+					Labels:   map[string]any{"HostNamespace": "host-ns"},
+				}, "latency", 1, "latency", map[string]string{
+					LabelContainerName: "custom-container",
+					LabelHost:          "custom-host",
+				})
+			},
+			want: map[string]string{LabelContainerName: "custom-container", LabelHost: "custom-host"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := tt.build()
+			seen := make(map[string]string, len(d.labelKey))
+			for i, key := range d.labelKey {
+				if _, ok := seen[key]; ok {
+					t.Fatalf("duplicate label %q in %v", key, d.labelKey)
+				}
+				seen[key] = d.labelValue[i]
+			}
+			for key, want := range tt.want {
+				if got := seen[key]; got != want {
+					t.Errorf("label %q = %q, want %q", key, got, want)
+				}
+			}
+			if got := d.prometheusMetric("collector"); got == nil {
+				t.Error("prometheusMetric() = nil, want non-nil")
+			}
+		})
+	}
+}
+
 func TestNewContainerGaugeData(t *testing.T) {
 	defaultRegion = "huatuo-region"
 	defaultHostname = "huatuo-dev"

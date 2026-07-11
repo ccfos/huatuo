@@ -96,7 +96,9 @@ func newData(name string, value float64, typ int, help string, label map[string]
 	}
 
 	data.labelKey = append(data.labelKey, LabelRegion, LabelHost)
-	data.labelValue = append(data.labelValue, defaultRegion, hostname)
+	data.labelValue = append(data.labelValue,
+		labelValue(label, LabelRegion, defaultRegion),
+		labelValue(label, LabelHost, hostname))
 
 	// sort the labelKey
 	selfLabelKeys := make([]string, 0, len(label))
@@ -107,11 +109,21 @@ func newData(name string, value float64, typ int, help string, label map[string]
 
 	// add self label
 	for _, k := range selfLabelKeys {
+		if k == LabelRegion || k == LabelHost {
+			continue
+		}
 		data.labelKey = append(data.labelKey, k)
 		data.labelValue = append(data.labelValue, label[k])
 	}
 
 	return data
+}
+
+func labelValue(label map[string]string, key, fallback string) string {
+	if value, ok := label[key]; ok {
+		return value
+	}
+	return fallback
 }
 
 // NewGaugeData creates a new instance of Data.
@@ -173,13 +185,13 @@ func newContainerData(container *pod.Container, name string, value float64, typ 
 		LabelContainerHostNamespace,
 		LabelHost)
 	data.labelValue = append(data.labelValue,
-		defaultRegion,
-		container.Hostname,
-		container.Name,
-		container.Type.String(),
-		container.Qos.String(),
-		container.LabelHostNamespace(),
-		hostname)
+		labelValue(label, LabelRegion, defaultRegion),
+		labelValue(label, LabelContainerHost, container.Hostname),
+		labelValue(label, LabelContainerName, container.Name),
+		labelValue(label, LabelContainerType, container.Type.String()),
+		labelValue(label, LabelContainerLevel, container.Qos.String()),
+		labelValue(label, LabelContainerHostNamespace, container.LabelHostNamespace()),
+		labelValue(label, LabelHost, hostname))
 
 	// sort the labelKey
 	selfLabelKeys := make([]string, 0, len(label))
@@ -190,11 +202,29 @@ func newContainerData(container *pod.Container, name string, value float64, typ 
 
 	// add self label
 	for _, k := range selfLabelKeys {
+		if isDefaultContainerLabel(k) {
+			continue
+		}
 		data.labelKey = append(data.labelKey, k)
 		data.labelValue = append(data.labelValue, label[k])
 	}
 
 	return data
+}
+
+func isDefaultContainerLabel(key string) bool {
+	switch key {
+	case LabelRegion,
+		LabelContainerHost,
+		LabelContainerName,
+		LabelContainerType,
+		LabelContainerLevel,
+		LabelContainerHostNamespace,
+		LabelHost:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewContainerGaugeData creates a new instance of container Data.
