@@ -56,29 +56,17 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 
 	SELECT_PROFILER_AB();
 
-	event->base.pid_tgid = pid_tgid;
-	bpf_get_current_comm(&event->base.comm, sizeof(event->base.comm));
-
 	event->cpu = bpf_get_smp_processor_id();
 	event->timestamp = bpf_ktime_get_ns();
-
-	event->base.userstack = bpf_get_stackid(ctx, select_profiler_stack_map, USER_STACKID_FLAGS);
-	event->base.kernstack = bpf_get_stackid(ctx, select_profiler_stack_map, KERN_STACKID_FLAGS);
 	event->base.value = 1;
 
-	if (event->base.userstack < 0 && event->base.kernstack < 0) {
+	if (profiler_fill_event_base(&event->base, pid_tgid, ctx, select_profiler_stack_map) < 0) {
 		bpf_dbg_msg(ctx, native_cpu_dbg, "stack missed");
 		return 0;
 	}
 
-	/*
-	 * Global ARRAY + atomic add is intentional; do NOT switch to PERCPU.
-	 * See comment in original code for details.
-	 */
-	__sync_fetch_and_add(select_profiler_sample_count_ptr, 1);
-
-	bpf_perf_event_output(ctx, select_profiler_output, COMPAT_BPF_F_CURRENT_CPU,
-	                      event, sizeof(struct cpu_event_t));
+	profiler_emit_event(ctx, select_profiler_output,
+	                    select_profiler_sample_count_ptr, event, sizeof(*event));
 
 	return 0;
 }
