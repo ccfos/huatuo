@@ -17,6 +17,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
@@ -29,6 +30,7 @@ type Permission string
 // User represents a user with permissions.
 type User struct {
 	ID          string
+	Name        string
 	Permissions []Permission
 	IsAdmin     bool
 }
@@ -36,6 +38,7 @@ type User struct {
 // UserConfig represents a user configuration for initialization.
 type UserConfig struct {
 	ID          string
+	Name        string
 	BearerToken string
 	Permissions []string
 	IsAdmin     bool
@@ -44,11 +47,23 @@ type UserConfig struct {
 // authService handles authentication and authorization.
 type authService struct {
 	usersByToken sync.Map
+	usersByID    sync.Map
+	tokensByID   sync.Map
+}
+
+// UserManager exposes the operations the console uses to administer the
+// in-memory user/API-key registry. Methods are safe for concurrent use.
+type UserManager interface {
+	ListUsers() []User
+	Add(user User)
+	Delete(userID string)
+	GetUserById(userID string) (User, bool)
+	IsAdmin(userID string) bool
 }
 
 // NewService creates a new auth authService.
 func NewAuthService(users []UserConfig) *authService {
-	s := &authService{usersByToken: sync.Map{}}
+	s := &authService{}
 
 	for _, cfgUser := range users {
 		permissions := make([]Permission, 0, len(cfgUser.Permissions))
@@ -56,11 +71,19 @@ func NewAuthService(users []UserConfig) *authService {
 			permissions = append(permissions, Permission(p))
 		}
 
-		s.usersByToken.Store(cfgUser.BearerToken, User{
+		token := cfgUser.BearerToken
+		if token == "" {
+			token = cfgUser.ID
+		}
+		user := User{
 			ID:          cfgUser.ID,
+			Name:        cfgUser.Name,
 			Permissions: permissions,
 			IsAdmin:     cfgUser.IsAdmin,
-		})
+		}
+		s.usersByID.Store(user.ID, user)
+		s.usersByToken.Store(token, user)
+		s.tokensByID.Store(user.ID, token)
 	}
 
 	return s
@@ -73,6 +96,47 @@ func (s *authService) Authenticate(token string) (User, bool) {
 		return User{}, false
 	}
 	return value.(User), true
+}
+
+// Add adds a user to the authService.
+func (s *authService) Add(user User) {
+	s.usersByID.Store(user.ID, user)
+	s.usersByToken.Store(user.ID, user)
+	s.tokensByID.Store(user.ID, user.ID)
+}
+
+// Delete removes a user from the authService.
+func (s *authService) Delete(userID string) {
+	_, exists := s.usersByID.LoadAndDelete(userID)
+	if token, tokenExists := s.tokensByID.LoadAndDelete(userID); exists && tokenExists {
+		s.usersByToken.Delete(token.(string))
+	}
+}
+
+// ListUsers returns all registered users in a stable, id-sorted order.
+func (s *authService) ListUsers() []User {
+	users := make([]User, 0)
+	s.usersByID.Range(func(_, value any) bool {
+		users = append(users, value.(User))
+		return true
+	})
+	sort.Slice(users, func(i, j int) bool { return users[i].ID < users[j].ID })
+	return users
+}
+
+// GetUserById gets a user by ID.
+func (s *authService) GetUserById(userID string) (User, bool) {
+	value, exists := s.usersByID.Load(userID)
+	if !exists {
+		return User{}, false
+	}
+	return value.(User), true
+}
+
+// IsAdmin reports whether the identified user has administrator access.
+func (s *authService) IsAdmin(userID string) bool {
+	user, exists := s.GetUserById(userID)
+	return exists && user.IsAdmin
 }
 
 // Validate validates if a user has access to a specific path.
@@ -164,7 +228,7 @@ func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFun
 	}
 	return func(ctx *Context) {
 		path := ctx.Request().URL.Path
-		if matchesAnyPath(svc, publicPaths, path) {
+		if isPublicPath(path, publicPaths) {
 			ctx.Next()
 			return
 		}
@@ -208,6 +272,18 @@ func bearerToken(header string) string {
 func matchesAnyPath(svc *authService, patterns []string, path string) bool {
 	for _, pattern := range patterns {
 		if svc.matchesPath(pattern, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPublicPath(path string, publicPaths []string) bool {
+	for _, prefix := range publicPaths {
+		if prefix == "" {
+			continue
+		}
+		if path == prefix || (prefix != "/" && strings.HasPrefix(path, strings.TrimRight(prefix, "/")+"/")) {
 			return true
 		}
 	}
