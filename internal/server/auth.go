@@ -17,6 +17,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
@@ -45,6 +46,17 @@ type UserConfig struct {
 // authService handles authentication and authorization.
 type authService struct {
 	users sync.Map
+}
+
+// UserManager exposes the operations the console uses to administer the
+// in-memory user/API-key registry. Methods are safe for concurrent use.
+type UserManager interface {
+	ListUsers() []User
+	Add(user User)
+	Delete(userID string)
+	GetUserById(userID string) (User, bool)
+	Validate(userID, path string) error
+	IsAdmin(userID string) bool
 }
 
 // NewService creates a new auth authService.
@@ -76,6 +88,17 @@ func (s *authService) Add(user User) {
 // Delete removes a user from the authService.
 func (s *authService) Delete(userID string) {
 	s.users.Delete(userID)
+}
+
+// ListUsers returns all registered users in a stable, id-sorted order.
+func (s *authService) ListUsers() []User {
+	users := make([]User, 0)
+	s.users.Range(func(_, value any) bool {
+		users = append(users, value.(User))
+		return true
+	})
+	sort.Slice(users, func(i, j int) bool { return users[i].ID < users[j].ID })
+	return users
 }
 
 // GetUserById gets a user by ID.
@@ -167,8 +190,15 @@ func (s *authService) matchesSegments(permission, path string) bool {
 }
 
 // NewAuthMiddleware returns a HandlerContextFunc that validates requests using the given authService.
-func NewAuthMiddleware(svc *authService) HandlerContextFunc {
+// Requests whose path matches one of publicPaths (exact match or prefix + "/")
+// bypass authentication so that public assets such as the web console can be
+// served without credentials.
+func NewAuthMiddleware(svc *authService, publicPaths []string) HandlerContextFunc {
 	return func(ctx *Context) {
+		if isPublicPath(ctx.Request().URL.Path, publicPaths) {
+			ctx.Next()
+			return
+		}
 		userID := ctx.Request().Header.Get("Authorization")
 		if userID == "" {
 			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "missing user ID")
@@ -184,4 +214,18 @@ func NewAuthMiddleware(svc *authService) HandlerContextFunc {
 		ctx.IsAdmin = svc.IsAdmin(userID)
 		ctx.Next()
 	}
+}
+
+// isPublicPath reports whether path is exempt from authentication. A path is
+// public when it equals a configured prefix exactly or starts with prefix+"/".
+func isPublicPath(path string, publicPaths []string) bool {
+	for _, prefix := range publicPaths {
+		if prefix == "" {
+			continue
+		}
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }

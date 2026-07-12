@@ -133,3 +133,69 @@ type ProfilingCapabilitiesResponse struct {
 	DefaultMemorySingleTraceTimeout int               `json:"default_memory_single_trace_timeout"` // default memory single trace timeout in seconds
 	ThirdPartyToolLimit             int               `json:"third_party_tool_limit"`              // third-party tool limit
 }
+
+// UserResponse represents a registered user/API key in the access-control view.
+// The ID field is the credential presented in the Authorization header.
+type UserResponse struct {
+	ID          string   `json:"id"`          // unique credential / API key
+	Name        string   `json:"name"`        // human-readable display name
+	IsAdmin     bool     `json:"is_admin"`    // whether the user has administrator privileges
+	Permissions []string `json:"permissions"` // URL path patterns this user may access
+}
+
+// CreateUserRequest creates a new user/API key. When GenerateKey is true the
+// server generates a random credential and returns it once in the response;
+// the caller is then expected to treat it as a secret.
+type CreateUserRequest struct {
+	Name        string   `json:"name"`         // human-readable display name
+	IsAdmin     bool     `json:"is_admin"`     // whether the user has administrator privileges
+	Permissions []string `json:"permissions"`  // URL path patterns this user may access
+	GenerateKey bool     `json:"generate_key"` // when true, generate a random API key/ID
+	ID          string   `json:"id,omitempty"` // explicit ID; used when GenerateKey is false
+}
+
+// CreateUserResponse is returned when a user/API key is created.
+type CreateUserResponse struct {
+	ID string `json:"id"` // the credential to present in the Authorization header
+}
+
+// RoleResponse describes a named permission template that can be assigned to a user.
+type RoleResponse struct {
+	Name        string   `json:"name"`        // role identifier, e.g. "admin"
+	Description string   `json:"description"` // human-readable description
+	Permissions []string `json:"permissions"` // URL path patterns granted by the role
+	IsAdmin     bool     `json:"is_admin"`    // whether the role implies administrator privileges
+}
+
+// WhoAmIResponse describes the identity of the authenticated caller.
+type WhoAmIResponse struct {
+	ID          string   `json:"id"`          // credential / API key
+	Name        string   `json:"name"`        // display name
+	IsAdmin     bool     `json:"is_admin"`    // administrator privileges
+	Permissions []string `json:"permissions"` // effective URL path patterns (empty for admins)
+}
+
+// SystemInfoResponse aggregates status information for the dashboard.
+type SystemInfoResponse struct {
+	Version string       `json:"version"` // server version
+	Commit  string       `json:"commit"`  // git commit
+	Modules []ModuleInfo `json:"modules"` // integrated modules surfaced in the console
+	Limits  SystemLimits `json:"limits"`  // configured task scheduling limits
+}
+
+// ModuleInfo describes an integrated observability module.
+type ModuleInfo struct {
+	Name        string `json:"name"`         // module identifier, e.g. "profiling"
+	DisplayName string `json:"display_name"` // human-readable name
+	Description string `json:"description"`  // short description of the module
+	Endpoint    string `json:"endpoint"`     // primary API endpoint backing the module
+	Enabled     bool   `json:"enabled"`      // whether the module is available
+}
+
+// SystemLimits exposes the configured task scheduling limits.
+type SystemLimits struct {
+	MaxProfilingTasksPerHost int `json:"max_profiling_tasks_per_host"`
+	MaxTracingTasksPerHost   int `json:"max_tracing_tasks_per_host"`
+	MaxTotalProfilingTasks   int `json:"max_total_profiling_tasks"`
+	MaxTotalTracingTasks     int `json:"max_total_tracing_tasks"`
+}
