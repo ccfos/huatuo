@@ -226,6 +226,8 @@ huatuo_bamai_memory_reclaim_container_directstall{container_host="coredns-855c4d
 |memory_free_compaction_stall|Time stalled in memory compaction| nanoseconds|Host| eBPF | host, region|
 |memory_reclaim_container_directstall|Number of direct reclaim events in container| count| Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 
+> **Note**: The `memory_others_container_directstall_time`, `memory_others_container_asyncreclaim_time`, and `memory_others_container_local_direct_reclaim_time` metrics read memory cgroup extension interfaces provided by the Didi Cloud custom kernel (`memory.directstall_stat`, `memory.asynreclaim_stat`, `memory.local_direct_reclaim_time`). Mainline and common distribution kernels do not expose these interfaces, so these metrics are simply not emitted there — this is expected, and no extra kernel module can provide them. To observe container direct reclaim behavior on standard kernels, use the eBPF-based `memory_reclaim_container_directstall` listed above.
+
 ### State
 
 From cgroup memory.stat:
