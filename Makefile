@@ -157,4 +157,10 @@ integration: all
 e2e: all
 	@bash e2e/run.sh
 
-.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+# Performance-overhead benchmark (issue #336). Builds huatuo-bamai first so
+# `make bench` works from a clean tree. Override knobs via the environment,
+# e.g. BENCH_ITERATIONS=10 make bench. See bench/README.md.
+bench: all
+	@bash bench/run.sh
+
+.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e bench docker-build docker-clean compose-dev-up compose-dev-down

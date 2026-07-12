@@ -1,0 +1,78 @@
+name: Performance Overhead Benchmark
+
+# Runs the HUATUO performance-overhead benchmark (issue #336) in a QEMU VM,
+# uploads the JSON + text summary as artifacts, and optionally fails on a
+# regression-threshold breach. Runs on release tags and on manual dispatch so
+# it never blocks ordinary pull requests.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      fail_on_regression:
+        description: "Fail CI when a metric's delta_percent crosses its threshold"
+        type: boolean
+        default: false
+      os_distro:
+        description: "Ubuntu distro to test in the QEMU VM"
+        type: choice
+        default: ubuntu24.04
+        options:
+          - ubuntu24.04
+          - ubuntu22.04
+          - ubuntu20.04
+
+jobs:
+  benchmark:
+    name: Benchmark in VM (${{ inputs.os_distro || 'ubuntu24.04' }})
+    runs-on: ubuntu-24.04
+    env:
+      ACT_RUN: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        if: ${{ env.ACT_RUN != 'true' }}
+        uses: docker/setup-buildx-action@v3.3.0
+
+      - name: Host Init
+        run: |
+          .github/workflows/scripts/qemu-0-host-init.sh amd64 ${{ inputs.os_distro || 'ubuntu24.04' }}
+
+      - name: Start VM
+        timeout-minutes: 30
+        run: |
+          .github/workflows/scripts/qemu-1-start-vm.sh \
+            amd64 "${{ inputs.os_distro || 'ubuntu24.04' }}" \
+            "huatuo-bench-vm" "4A:6F:6C:69:6E:20" "192.168.122.100"
+
+      - name: Run benchmark in VM
+        timeout-minutes: 60
+        env:
+          BENCH_FAIL_ON_REGRESSION: ${{ inputs.fail_on_regression == true && '1' || '0' }}
+        run: |
+          ssh \
+            -i ${HOME}/.ssh/id_ed25519_vm \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            root@192.168.122.100 \
+            "BENCH_FAIL_ON_REGRESSION=${BENCH_FAIL_ON_REGRESSION} bash -s -- amd64 ${{ inputs.os_distro || 'ubuntu24.04' }}" \
+            < .github/workflows/scripts/qemu-2-run-bench-in-vm.sh
+
+      - name: Cleanup VM
+        if: always()
+        run: |
+          .github/workflows/scripts/qemu-3-cleanup.sh \
+            "huatuo-bench-vm" "4A:6F:6C:69:6E:20" "192.168.122.100"
+
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: huatuo-benchmark-${{ inputs.os_distro || 'ubuntu24.04' }}
+          path: bench/results/
+          if-no-files-found: warn
+          retention-days: 90
