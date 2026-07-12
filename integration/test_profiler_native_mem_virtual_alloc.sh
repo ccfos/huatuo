@@ -62,10 +62,6 @@ FIXTURE_ERR="${WORK_DIR}/mmap.err"
 TARGET_PID=""
 PROFILER_PID=""
 
-profiler_ready() {
-	[[ -f "${TOOL_OUT}" ]] && grep -q "data reading loop started" "${TOOL_OUT}"
-}
-
 cleanup() {
 	local rc=$?
 	[[ -n "${PROFILER_PID}" ]] && stop_by_pid "${PROFILER_PID}" 5
@@ -118,7 +114,7 @@ kill -0 "${PROFILER_PID}" 2> /dev/null || fatal "failed to launch profiler"
 
 wait_until "${PROFILER_READY_TIMEOUT}" "${PROFILER_READY_INTERVAL}" \
 	"profiler ready" \
-	profiler_ready || fatal "profiler did not start the read loop"
+	profiler_ready "${TOOL_OUT}" || fatal "profiler did not start the read loop"
 
 log_info "sending SIGUSR1 to target pid=${TARGET_PID}"
 kill -USR1 "${TARGET_PID}" || fatal "failed to signal fixture pid=${TARGET_PID}"

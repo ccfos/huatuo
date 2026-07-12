@@ -89,6 +89,29 @@ wait_until() {
 	return 1
 }
 
+profiler_ready() {
+	local stdout=$1
+	[[ -f "${stdout}" ]] && grep -q "data reading loop started" "${stdout}"
+}
+
+kprobe_available() {
+	local symbol=$1
+	local file candidate
+	local files=(
+		"/sys/kernel/tracing/available_filter_functions"
+		"/sys/kernel/debug/tracing/available_filter_functions"
+	)
+
+	for file in "${files[@]}"; do
+		[[ -r "${file}" ]] || continue
+		for candidate in "${symbol}" "__x64_${symbol}"; do
+			awk -v sym="${candidate}" '$1 == sym { found = 1; exit } END { exit !found }' "${file}" && return 0
+		done
+	done
+
+	return 1
+}
+
 # ------------------------- bpf tool test scaffolding -------------------------
 
 bpf_tool_setup() {
