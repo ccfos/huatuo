@@ -107,10 +107,11 @@ static __always_inline bool profiler_should_sample(void)
  */
 static __always_inline int profiler_fill_event_base(
 	struct profiler_event_base_t *event,
+	u64 pid_tgid,
 	void *ctx,
 	void *stack_map)
 {
-	event->pid_tgid = bpf_get_current_pid_tgid();
+	event->pid_tgid = pid_tgid;
 	bpf_get_current_comm(&event->comm, sizeof(event->comm));
 
 	event->userstack = bpf_get_stackid(ctx, stack_map, USER_STACKID_FLAGS);
@@ -120,6 +121,51 @@ static __always_inline int profiler_fill_event_base(
 		return -1;
 
 	return 0;
+}
+
+static __always_inline void profiler_copy_event_base(
+	struct profiler_event_base_t *dst,
+	const struct profiler_event_base_t *src)
+{
+	dst->pid_tgid = src->pid_tgid;
+	dst->kernstack = src->kernstack;
+	dst->userstack = src->userstack;
+	__builtin_memcpy(&dst->comm, &src->comm, sizeof(dst->comm));
+}
+
+static __always_inline struct profiler_event_base_t *profiler_prepare_event_base(
+	void *event_map,
+	u64 pid_tgid,
+	void *ctx,
+	void *stack_map)
+{
+	u32 idx = 0;
+	struct profiler_event_base_t *event = bpf_map_lookup_elem(event_map, &idx);
+	if (!event)
+		return NULL;
+
+	__builtin_memset(event, 0, sizeof(*event));
+
+	if (profiler_fill_event_base(event, pid_tgid, ctx, stack_map) < 0)
+		return NULL;
+
+	return event;
+}
+
+static __always_inline void profiler_emit_event(
+	void *ctx,
+	void *output,
+	u64 *sample_count_ptr,
+	void *event,
+	u64 event_size)
+{
+	/*
+	 * Global ARRAY + atomic add is intentional; do NOT switch to PERCPU.
+	 * See comment in original code for details.
+	 */
+	__sync_fetch_and_add(sample_count_ptr, 1);
+	bpf_perf_event_output(ctx, output, COMPAT_BPF_F_CURRENT_CPU,
+	                      event, event_size);
 }
 
 /*

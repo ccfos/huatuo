@@ -28,23 +28,17 @@ int BPF_KPROBE(trace_mmap, struct file *file, unsigned long addr,
 	if (file)
 		return 0;
 
-	u32 idx = 0;
-	struct profiler_event_base_t *event = bpf_map_lookup_elem(&event_buf, &idx);
-	if (!event)
-		return 0;
-
 	SELECT_PROFILER_AB();
 
-	__builtin_memset(event, 0, sizeof(*event));
-
-	if (profiler_fill_event_base(event, ctx, select_profiler_stack_map) < 0)
+	struct profiler_event_base_t *event = profiler_prepare_event_base(
+		&event_buf, pid_tgid, ctx, select_profiler_stack_map);
+	if (!event)
 		return 0;
 
 	event->value = (s64)len;
 
-	__sync_fetch_and_add(select_profiler_sample_count_ptr, 1);
-	bpf_perf_event_output(ctx, select_profiler_output, COMPAT_BPF_F_CURRENT_CPU,
-	                      event, sizeof(*event));
+	profiler_emit_event(ctx, select_profiler_output,
+	                    select_profiler_sample_count_ptr, event, sizeof(*event));
 
 	return 0;
 }

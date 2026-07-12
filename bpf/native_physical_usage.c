@@ -29,16 +29,11 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 	if (!profiler_should_sample())
 		return 0;
 
-	u32 idx = 0;
-	struct profiler_event_base_t *event = bpf_map_lookup_elem(&event_buf, &idx);
-	if (!event)
-		return 0;
-
 	SELECT_PROFILER_AB();
 
-	__builtin_memset(event, 0, sizeof(*event));
-
-	if (profiler_fill_event_base(event, ctx, select_profiler_stack_map) < 0)
+	struct profiler_event_base_t *event = profiler_prepare_event_base(
+		&event_buf, pid_tgid, ctx, select_profiler_stack_map);
+	if (!event)
 		return 0;
 
 	event->value = 1;
@@ -46,9 +41,8 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 	u64 page_addr = (u64)page;
 	bpf_map_update_elem(&page_to_stackid, &page_addr, event, COMPAT_BPF_ANY);
 
-	__sync_fetch_and_add(select_profiler_sample_count_ptr, 1);
-	bpf_perf_event_output(ctx, select_profiler_output, COMPAT_BPF_F_CURRENT_CPU,
-	                      event, sizeof(*event));
+	profiler_emit_event(ctx, select_profiler_output,
+	                    select_profiler_sample_count_ptr, event, sizeof(*event));
 
 	return 0;
 }
@@ -84,18 +78,13 @@ int BPF_KPROBE(trace_page_free, struct page *page, bool compound)
 
 	__builtin_memset(event, 0, sizeof(*event));
 
-	event->pid_tgid = stack_info->pid_tgid;
-	event->kernstack = stack_info->kernstack;
-	event->userstack = stack_info->userstack;
-	__builtin_memcpy(&event->comm, &stack_info->comm, sizeof(event->comm));
-
+	profiler_copy_event_base(event, stack_info);
 	event->value = -1;
 
 	bpf_map_delete_elem(&page_to_stackid, &page_addr);
 
-	__sync_fetch_and_add(select_profiler_sample_count_ptr, 1);
-	bpf_perf_event_output(ctx, select_profiler_output, COMPAT_BPF_F_CURRENT_CPU,
-	                      event, sizeof(*event));
+	profiler_emit_event(ctx, select_profiler_output,
+	                    select_profiler_sample_count_ptr, event, sizeof(*event));
 
 	return 0;
 }
