@@ -39,6 +39,10 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 	event->value = 1;
 
 	u64 page_addr = (u64)page;
+	/*
+	 * The hash map stores a value copy, so later event_buf reuse does not
+	 * overwrite the allocation stack saved for this page address.
+	 */
 	bpf_map_update_elem(&page_to_stackid, &page_addr, event, COMPAT_BPF_ANY);
 
 	profiler_emit_event(ctx, select_profiler_output,
