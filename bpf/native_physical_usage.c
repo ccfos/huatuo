@@ -78,14 +78,14 @@ int BPF_KPROBE(trace_page_free, struct page *page, bool compound)
 	if (!event)
 		return 0;
 
-	SELECT_PROFILER_AB();
-
 	__builtin_memset(event, 0, sizeof(*event));
 
 	profiler_copy_event_base(event, stack_info);
 	event->value = -1;
 
 	bpf_map_delete_elem(&page_to_stackid, &page_addr);
+
+	SELECT_PROFILER_AB();
 
 	profiler_emit_event(ctx, select_profiler_output,
 	                    select_profiler_sample_count_ptr, event, sizeof(*event));
