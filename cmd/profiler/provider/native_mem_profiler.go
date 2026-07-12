@@ -39,6 +39,14 @@ const (
 	modeVirtualAlloc  = "virtual_alloc"
 	modePhysicalUsage = "physical_usage"
 	modePhysicalAlloc = "physical_alloc"
+
+	programTracePageAlloc = "trace_page_alloc"
+	programTracePageFree  = "trace_page_free"
+
+	symbolPageAddNewAnonRmap  = "page_add_new_anon_rmap"
+	symbolPageRemoveRmap      = "page_remove_rmap"
+	symbolFolioAddNewAnonRmap = "folio_add_new_anon_rmap"
+	symbolFolioRemoveRmapPtes = "folio_remove_rmap_ptes"
 )
 
 type memNativeProfiler struct {
@@ -48,6 +56,8 @@ type memNativeProfiler struct {
 	probability  uint
 	pageSize     int64
 }
+
+var hasKprobeFunction = bpf.HasKprobeFunction
 
 func init() {
 	impl := &memNativeProfiler{}
@@ -210,6 +220,11 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 			},
 		}, nil
 	case modePhysicalUsage:
+		attachOpts, err := newPhysicalUsageAttachOptions()
+		if err != nil {
+			return nil, err
+		}
+
 		return &bpfLoadConfig{
 			ObjectFile: "native_physical_usage.o",
 			Constants: map[string]any{
@@ -218,12 +233,14 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 				"profiler_filter_threads": traceThreads,
 				"profiler_sampling_prob":  uint8(probability),
 			},
-			AttachOpts: []bpf.AttachOption{
-				{ProgramName: "trace_page_alloc", Symbol: "page_add_new_anon_rmap"},
-				{ProgramName: "trace_page_free", Symbol: "page_remove_rmap"},
-			},
+			AttachOpts: attachOpts,
 		}, nil
 	case modePhysicalAlloc:
+		attachOpt, err := newPhysicalAllocAttachOption()
+		if err != nil {
+			return nil, err
+		}
+
 		return &bpfLoadConfig{
 			ObjectFile: "native_physical_alloc.o",
 			Constants: map[string]any{
@@ -232,13 +249,52 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 				"profiler_filter_threads": traceThreads,
 				"profiler_sampling_prob":  uint8(probability),
 			},
-			AttachOpts: []bpf.AttachOption{
-				{ProgramName: "trace_page_alloc", Symbol: "page_add_new_anon_rmap"},
-			},
+			AttachOpts: []bpf.AttachOption{attachOpt},
 		}, nil
 	}
 
 	return nil, fmt.Errorf("unsupported mem profiler mode: %q", internalMode)
+}
+
+func newPhysicalAllocAttachOption() (bpf.AttachOption, error) {
+	if hasKprobeFunction(symbolPageAddNewAnonRmap) {
+		return bpf.AttachOption{
+			ProgramName: programTracePageAlloc,
+			Symbol:      symbolPageAddNewAnonRmap,
+		}, nil
+	}
+
+	if hasKprobeFunction(symbolFolioAddNewAnonRmap) {
+		return bpf.AttachOption{
+			ProgramName: programTracePageAlloc,
+			Symbol:      symbolFolioAddNewAnonRmap,
+		}, nil
+	}
+
+	return bpf.AttachOption{}, fmt.Errorf("no supported physical alloc kprobe found: tried %s, %s",
+		symbolPageAddNewAnonRmap, symbolFolioAddNewAnonRmap)
+}
+
+func newPhysicalUsageAttachOptions() ([]bpf.AttachOption, error) {
+	if hasKprobeFunction(symbolPageAddNewAnonRmap) && hasKprobeFunction(symbolPageRemoveRmap) {
+		return []bpf.AttachOption{
+			{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
+			{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+		}, nil
+	}
+
+	if hasKprobeFunction(symbolFolioAddNewAnonRmap) && hasKprobeFunction(symbolFolioRemoveRmapPtes) {
+		return []bpf.AttachOption{
+			{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+			// folio_remove_rmap_ptes can cover multiple pages; parse nr_pages before
+			// treating a single free event as more than one page.
+			{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+		}, nil
+	}
+
+	return nil, fmt.Errorf("no supported physical usage kprobe pair found: tried %s/%s, %s/%s",
+		symbolPageAddNewAnonRmap, symbolPageRemoveRmap,
+		symbolFolioAddNewAnonRmap, symbolFolioRemoveRmapPtes)
 }
 
 func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
