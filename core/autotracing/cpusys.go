@@ -143,13 +143,7 @@ func (c *cpuSysTracing) updateCpuSysUsage() error {
 	if err != nil {
 		return err
 	}
-	return c.updateCpuSysUsageWithSample(usage)
-}
 
-// updateCpuSysUsageWithSample applies the delta computation logic against a
-// pre-fetched sample. It exists so unit tests can exercise the divide-by-zero
-// and underflow paths without needing to mock /proc/stat.
-func (c *cpuSysTracing) updateCpuSysUsageWithSample(usage *cpuUsage) error {
 	if c.usage == nil {
 		c.usage = usage
 		return nil
