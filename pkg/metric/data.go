@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -109,7 +109,7 @@ func newData(name string, value float64, typ int, help string, label map[string]
 
 	// add self label
 	for _, k := range selfLabelKeys {
-		if k == LabelRegion || k == LabelHost {
+		if isDefaultHostLabel(k) {
 			continue
 		}
 		data.labelKey = append(data.labelKey, k)
@@ -210,6 +210,10 @@ func newContainerData(container *pod.Container, name string, value float64, typ 
 	}
 
 	return data
+}
+
+func isDefaultHostLabel(key string) bool {
+	return key == LabelRegion || key == LabelHost
 }
 
 func isDefaultContainerLabel(key string) bool {

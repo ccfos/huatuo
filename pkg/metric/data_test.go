@@ -180,11 +180,16 @@ func TestDataLabelsAllowDefaultOverrides(t *testing.T) {
 			name: "host metric",
 			build: func() *Data {
 				return NewGaugeData("cpu_usage", 1, "cpu usage", map[string]string{
-					LabelRegion: "custom-region",
-					LabelHost:   "custom-host",
+					LabelRegion:        "custom-region",
+					LabelHost:          "custom-host",
+					LabelContainerName: "custom-container",
 				})
 			},
-			want: map[string]string{LabelRegion: "custom-region", LabelHost: "custom-host"},
+			want: map[string]string{
+				LabelRegion:        "custom-region",
+				LabelHost:          "custom-host",
+				LabelContainerName: "custom-container",
+			},
 		},
 		{
 			name: "container metric",
