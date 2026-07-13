@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,10 +30,10 @@ import (
 
 type memOthersCollector struct{}
 
-// didiMemcgMetrics maps the memory cgroup extension files provided by the
+// didiMemcgMetricSpecs maps the memory cgroup extension files provided by the
 // Didi Cloud custom kernel to the metrics exported by this collector.
 // Mainline and distribution kernels do not expose these files.
-var didiMemcgMetrics = []struct {
+var didiMemcgMetricSpecs = []struct {
 	path string
 	key  string
 	name string
@@ -63,8 +63,8 @@ func init() {
 // hasDidiMemcgInterfaces reports whether the running kernel exposes any of
 // the Didi memcg extension files on the root memory cgroup.
 func hasDidiMemcgInterfaces() bool {
-	for _, t := range didiMemcgMetrics {
-		if _, err := os.Stat(paths.Path(subsystem.SubsystemMemory, t.path)); err == nil {
+	for _, spec := range didiMemcgMetricSpecs {
+		if _, err := os.Stat(paths.Path(subsystem.SubsystemMemory, spec.path)); err == nil {
 			return true
 		}
 	}
@@ -107,15 +107,15 @@ func (c *memOthersCollector) Update() ([]*metric.Data, error) {
 	metrics := []*metric.Data{}
 
 	for _, container := range containers {
-		for _, t := range didiMemcgMetrics {
-			value, err := parseValueWithKey(container.CgroupPath, t.path, t.key)
+		for _, spec := range didiMemcgMetricSpecs {
+			value, err := parseValueWithKey(container.CgroupPath, spec.path, spec.key)
 			if err != nil {
 				// FIXME: os maynot support this metric
 				continue
 			}
 
 			metrics = append(metrics,
-				metric.NewContainerGaugeData(container, t.name, float64(value), fmt.Sprintf("memory cgroup %s", t.name), nil))
+				metric.NewContainerGaugeData(container, spec.name, float64(value), fmt.Sprintf("memory cgroup %s", spec.name), nil))
 		}
 	}
 
