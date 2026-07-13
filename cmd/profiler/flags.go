@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,9 +18,47 @@ import "github.com/urfave/cli/v2"
 
 var appFlags = []cli.Flag{
 	&cli.StringFlag{
-		Name:  "server-address",
-		Usage: "Huatuo profiling server address",
-		Value: "127.0.0.1:19704",
+		Name:    "type",
+		Aliases: []string{"t"},
+		Usage:   "Profiling type: cpu|mem",
+	},
+	&cli.StringFlag{
+		Name:    "language",
+		Aliases: []string{"l"},
+		Usage:   "Target language: java|go|python|c|c++",
+	},
+	&cli.StringFlag{
+		Name:  "memory-mode",
+		Usage: "Memory profiling mode: virtual_alloc|physical_alloc|physical_usage (default: physical_alloc)",
+	},
+	&cli.Uint64Flag{
+		Name:    "pid",
+		Aliases: []string{"p"},
+		Usage:   "Target PID",
+	},
+	&cli.StringFlag{
+		Name:  "cpuid",
+		Usage: "CPU IDs to sample: comma-separated list and ranges (e.g., 1,3,5-10). Empty for all CPUs",
+	},
+	&cli.StringFlag{
+		Name:  "container-id",
+		Usage: "Target container ID",
+	},
+	&cli.StringFlag{
+		Name:  "scope",
+		Value: "thread",
+		Usage: "Sampling dimension: thread|thread-group|process-group etc.",
+	},
+	&cli.IntFlag{
+		Name:    "freq",
+		Aliases: []string{"F"},
+		Usage:   "The number of samples to collect per second",
+		Value:   99,
+	},
+	&cli.IntFlag{
+		Name:  "aggr-interval",
+		Usage: "interval for profiling of aggregate process",
+		Value: 10,
 	},
 	&cli.IntFlag{
 		Name:    "duration",
@@ -29,32 +67,19 @@ var appFlags = []cli.Flag{
 		Value:   10,
 	},
 	&cli.StringFlag{
-		Name:    "language",
-		Aliases: []string{"l"},
-		Usage:   "Target language: java|go|python|c|c++",
+		Name:  "output-path",
+		Usage: "Output path for profiling",
+		Value: ".",
 	},
 	&cli.StringFlag{
-		Name:    "type",
-		Aliases: []string{"t"},
-		Usage:   "Profiling type: cpu|mem",
-	},
-	&cli.Uint64Flag{
-		Name:    "pid",
-		Aliases: []string{"p"},
-		Usage:   "Target PID",
+		Name:  "output-format",
+		Usage: "Output format for profiling: collapsed|pprof|flamegraph|svg|remote",
+		Value: "collapsed",
 	},
 	&cli.StringFlag{
-		Name:  "container-id",
-		Usage: "Target container ID",
-	},
-	&cli.StringFlag{
-		Name:  "exec-path",
-		Usage: "Executable path of target process",
-	},
-	&cli.StringFlag{
-		Name:  "scope",
-		Value: "thread",
-		Usage: "Sampling dimension: thread|thread-group|process-group etc.",
+		Name:  "output-storage",
+		Usage: "Unix socket path for remote upload (used with --output-format=remote)",
+		Value: "/var/run/huatuo-toolstream.sock",
 	},
 	&cli.BoolFlag{
 		Name:  "verbose",
@@ -87,44 +112,14 @@ var appFlags = []cli.Flag{
 		Name:  "tool-limit",
 		Usage: "Limit how many third-party tools can run in parallel (e.g. async-profiler, py-spy)",
 	},
-	&cli.IntFlag{
-		Name:    "freq",
-		Aliases: []string{"F"},
-		Usage:   "The number of samples to collect per second",
-		Value:   99,
+	&cli.StringFlag{
+		Name:  "exec-path",
+		Usage: "Executable path of target process",
 	},
 	&cli.StringFlag{
-		Name:  "cpuid",
-		Usage: "CPU IDs to sample: comma-separated list and ranges (e.g., 1,3,5-10). Empty for all CPUs",
-	},
-	&cli.StringFlag{
-		Name:  "memory-mode",
-		Usage: "Memory profiling mode: virtual_alloc|physical_alloc|physical_usage (default: physical_alloc)",
-	},
-	&cli.StringSliceFlag{
-		Name:    "flags",
-		Aliases: []string{"f"},
-		Usage:   "Extra cpu/memory profiler flags, e.g. -f '--core-id=10' -f '--title=AppName'",
-	},
-	&cli.StringFlag{
-		Name:  "output-path",
-		Usage: "Output path for profiling",
-		Value: ".",
-	},
-	&cli.StringFlag{
-		Name:  "output-format",
-		Usage: "Output format for profiling: collapsed|pprof|flamegraph|svg|remote",
-		Value: "collapsed",
-	},
-	&cli.IntFlag{
-		Name:  "aggr-interval",
-		Usage: "interval for profiling of aggregate process",
-		Value: 10,
-	},
-	&cli.StringFlag{
-		Name:  "output-storage",
-		Usage: "Unix socket path for remote upload (used with --output-format=remote)",
-		Value: "/var/run/huatuo-toolstream.sock",
+		Name:  "server-address",
+		Usage: "Huatuo profiling server address",
+		Value: "127.0.0.1:19704",
 	},
 	&cli.StringSliceFlag{
 		Name:  "metadata",
@@ -133,6 +128,11 @@ var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:  "mock-container",
 		Usage: "Mock container metadata JSON for uploads (testing only), or 'random' to auto-generate",
+	},
+	&cli.StringSliceFlag{
+		Name:    "flags",
+		Aliases: []string{"f"},
+		Usage:   "Extra cpu/memory profiler flags, e.g. -f '--core-id=10' -f '--title=AppName'",
 	},
 	&cli.StringSliceFlag{
 		Name:  "cpuidle-metadata",
