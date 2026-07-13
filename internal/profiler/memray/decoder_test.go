@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -113,6 +113,30 @@ func TestHandleCodeObjectWithEmptyLineTable(t *testing.T) {
 	}
 }
 
+func TestHandleCodeObjectRejectsOversizedLineTable(t *testing.T) {
+	var payload bytes.Buffer
+	payload.Write(encodeVarint(7))
+	payload.WriteString("main")
+	payload.WriteByte(0)
+	payload.WriteString("main.py")
+	payload.WriteByte(0)
+	payload.Write(encodeSignedVarint(1))
+	payload.Write(encodeVarint(maxCodeObjectLineTableSize + 1))
+
+	rd := &reader{
+		r:           bytes.NewReader(payload.Bytes()),
+		codeObjects: make(map[uint64]codeObject),
+	}
+
+	err := rd.handleCodeObject()
+	if err == nil {
+		t.Fatal("handleCodeObject() error = nil, want oversized line table error")
+	}
+	if got, want := err.Error(), "code object line table too large"; !bytes.Contains([]byte(got), []byte(want)) {
+		t.Fatalf("handleCodeObject() error = %q, want substring %q", got, want)
+	}
+}
+
 func TestHandleCodeObjectRestoresFirstLineFromDelta(t *testing.T) {
 	var payload bytes.Buffer
 	payload.Write(encodeCodeObjectRecord(1, "outer", "sample.py", 120, nil))
@@ -167,6 +191,26 @@ func TestRenderPythonFrameLabelUsesLineNumberWhenAvailable(t *testing.T) {
 	got := rd.renderPythonFrameLabel(pythonFrameKey{CodeObjectID: 5, InstrOffset: 1, IsEntry: true})
 	if got != "alloc app.py:123" {
 		t.Fatalf("renderPythonFrameLabel() = %q, want %q", got, "alloc app.py:123")
+	}
+}
+
+func TestRenderPythonFrameLabelSanitizesFilenameForFoldedStacks(t *testing.T) {
+	rd := &reader{
+		header: Header{PythonVersion: 0x030A0000},
+		opt:    Options{Separator: ";"},
+		codeObjects: map[uint64]codeObject{
+			5: {
+				Func:      "alloc",
+				Filename:  "dir;a\npp.py",
+				FirstLine: 120,
+				LineTable: []byte{2, 3},
+			},
+		},
+	}
+
+	got := rd.renderPythonFrameLabel(pythonFrameKey{CodeObjectID: 5, InstrOffset: 1, IsEntry: true})
+	if got != "alloc dir_a pp.py:123" {
+		t.Fatalf("renderPythonFrameLabel() = %q, want %q", got, "alloc dir_a pp.py:123")
 	}
 }
 

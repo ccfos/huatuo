@@ -131,6 +131,8 @@ const (
 	recordTypeAllocation = 128
 )
 
+const maxCodeObjectLineTableSize = 16 << 20
+
 const (
 	fileFormatAllAllocations = 0
 )
@@ -295,7 +297,10 @@ func (rd *reader) handleCodeObject() error {
 	if err != nil {
 		return err
 	}
-	lineTable := make([]byte, ltSize)
+	if ltSize > maxCodeObjectLineTableSize {
+		return fmt.Errorf("code object line table too large: %d", ltSize)
+	}
+	lineTable := make([]byte, int(ltSize))
 	if _, err := io.ReadFull(rd.r, lineTable); err != nil {
 		return err
 	}
@@ -583,14 +588,24 @@ func (rd *reader) renderPythonFrameLabel(frame pythonFrameKey) string {
 	}
 
 	line, ok := co.lineForOffset(rd.header.PythonVersion, frame.InstrOffset)
+	filename := sanitizeFoldedStackFilename(co.Filename, rd.opt.Separator)
 	switch {
-	case ok && co.Filename != "":
-		return fmt.Sprintf("%s %s:%d", fn, co.Filename, line)
+	case ok && filename != "":
+		return fmt.Sprintf("%s %s:%d", fn, filename, line)
 	case ok:
 		return fmt.Sprintf("%s :%d", fn, line)
 	default:
 		return fn
 	}
+}
+
+func sanitizeFoldedStackFilename(filename, sep string) string {
+	filename = strings.ReplaceAll(filename, "\r", " ")
+	filename = strings.ReplaceAll(filename, "\n", " ")
+	if sep != "" {
+		filename = strings.ReplaceAll(filename, sep, "_")
+	}
+	return filename
 }
 
 func (co codeObject) lineForOffset(pythonVersion int32, instrOffset int64) (int64, bool) {
