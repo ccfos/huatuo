@@ -18,76 +18,54 @@ import (
 	"testing"
 )
 
-// TestCPUtilStatBareAssertionSafety verifies that the comma-ok pattern
-// on LifeResources does not panic when the returned value is nil or
-// a wrong type. This is a regression test for the bare type assertion
-// that previously would crash the metrics pipeline.
-func TestCPUUtilStatBareAssertionSafety(t *testing.T) {
+func TestLifeResourcesAsCPUUtilStat(t *testing.T) {
 	tests := []struct {
-		name  string
-		value any
-		ok    bool
+		name   string
+		value  any
+		wantOK bool
 	}{
-		{name: "nil returns false", value: nil, ok: false},
-		{name: "correct type returns true", value: &cpuUtilStat{}, ok: true},
-		{name: "wrong type returns false", value: "not a cpuUtilStat", ok: false},
-		{name: "int returns false", value: 42, ok: false},
+		{name: "valid *cpuUtilStat", value: &cpuUtilStat{}, wantOK: true},
+		{name: "typed nil *cpuUtilStat", value: (*cpuUtilStat)(nil), wantOK: false},
+		{name: "wrong type string", value: "not a cpuUtilStat", wantOK: false},
+		{name: "nil interface", value: nil, wantOK: false},
+		{name: "wrong type int", value: 42, wantOK: false},
 	}
 
-	for i := range tests {
-		t.Run(tests[i].name, func(t *testing.T) {
-			_, ok := tests[i].value.(*cpuUtilStat)
-			if ok != tests[i].ok {
-				t.Errorf("type assertion ok=%v, want %v", ok, tests[i].ok)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := lifeResourcesAsCPUUtilStat(tt.value)
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if tt.wantOK && result == nil {
+				t.Error("expected non-nil result for valid input")
 			}
 		})
 	}
 }
 
-// TestCPUStatBareAssertionSafety verifies the same for cpuStat.
-func TestCPUStatBareAssertionSafety(t *testing.T) {
+func TestLifeResourcesAsCPUStat(t *testing.T) {
 	tests := []struct {
-		name  string
-		value any
-		ok    bool
+		name   string
+		value  any
+		wantOK bool
 	}{
-		{name: "nil returns false", value: nil, ok: false},
-		{name: "correct type returns true", value: &cpuStat{}, ok: true},
-		{name: "wrong type returns false", value: "not a cpuStat", ok: false},
-		{name: "int returns false", value: 42, ok: false},
+		{name: "valid *cpuStat", value: &cpuStat{}, wantOK: true},
+		{name: "typed nil *cpuStat", value: (*cpuStat)(nil), wantOK: false},
+		{name: "wrong type string", value: "not a cpuStat", wantOK: false},
+		{name: "nil interface", value: nil, wantOK: false},
+		{name: "wrong type int", value: 42, wantOK: false},
 	}
 
-	for i := range tests {
-		t.Run(tests[i].name, func(t *testing.T) {
-			_, ok := tests[i].value.(*cpuStat)
-			if ok != tests[i].ok {
-				t.Errorf("type assertion ok=%v, want %v", ok, tests[i].ok)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := lifeResourcesAsCPUStat(tt.value)
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if tt.wantOK && result == nil {
+				t.Error("expected non-nil result for valid input")
 			}
 		})
-	}
-}
-
-// TestCPUUtilStatFields verifies that a zero-value cpuUtilStat has the
-// expected default fields, ensuring the safe assertion fallback path
-// produces sensible zero metrics.
-func TestCPUUtilStatZeroValue(t *testing.T) {
-	var s cpuUtilStat
-	if s.totalUtil != 0 || s.usrUtil != 0 || s.sysUtil != 0 {
-		t.Errorf("zero-value cpuUtilStat has non-zero utils: total=%v usr=%v sys=%v",
-			s.totalUtil, s.usrUtil, s.sysUtil)
-	}
-}
-
-// TestCPUStatZeroValue verifies that a zero-value cpuStat has the
-// expected default fields.
-func TestCPUStatZeroValue(t *testing.T) {
-	var s cpuStat
-	if s.cpuTotal != 0 || s.waitSum != 0 {
-		t.Errorf("zero-value cpuStat has non-zero counters: cpuTotal=%v waitSum=%v",
-			s.cpuTotal, s.waitSum)
-	}
-	if s.waitrateHierarchy != 0 || s.waitrateInner != 0 {
-		t.Errorf("zero-value cpuStat has non-zero rates: hierarchy=%v inner=%v",
-			s.waitrateHierarchy, s.waitrateInner)
 	}
 }

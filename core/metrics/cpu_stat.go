@@ -162,6 +162,14 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 	return nil
 }
 
+func lifeResourcesAsCPUStat(v any) (*cpuStat, bool) {
+	dataCache, ok := v.(*cpuStat)
+	if !ok || dataCache == nil {
+		return nil, false
+	}
+	return dataCache, true
+}
+
 func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 	metrics := []*metric.Data{}
 
@@ -171,12 +179,11 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 	}
 
 	for _, container := range containers {
-		dataCache, ok := container.LifeResources("collector_cpu_stat").(*cpuStat)
+		containerDataCache, ok := lifeResourcesAsCPUStat(container.LifeResources("collector_cpu_stat"))
 		if !ok {
-			log.Warnf("cpu_stat: LifeResources for container %s returned unexpected type", container)
+			log.Warnf("cpu_stat: LifeResources for container %s returned unexpected type or nil", container)
 			continue
 		}
-		containerDataCache := dataCache
 		if err := c.updateDataCache(containerDataCache, container); err != nil {
 			log.Infof("failed to update cpu info of %s, %v", container, err)
 			continue
