@@ -268,6 +268,23 @@ func TestListTasks(t *testing.T) {
 	}
 }
 
+func TestResultReturnsDataCopy(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+
+	taskLifeTmpCache.Store("task-copy", &task{
+		status:     StatusCompleted,
+		stdoutData: []byte("output"),
+	})
+
+	result := Result("task-copy")
+	result.TaskData[0] = 'X'
+
+	if got := string(Result("task-copy").TaskData); got != "output" {
+		t.Fatalf("Result().TaskData=%q, want %q", got, "output")
+	}
+}
+
 func TestSetDeadlineDefault(t *testing.T) {
 	task := &task{}
 	before := time.Now()
