@@ -221,6 +221,23 @@ All event records include the following common fields:
 - **net_namespace_inode**: Network namespace inode
 - **pkt_len**: Packet length (bytes)
 
+**Limitations**
+
+`net_rx_latency` computes per-stage latency as `ts_current - skb->tstamp`. When `skb->tstamp` is cleared to zero by the kernel, the latency calculation is invalidated (the eBPF layer returns 0 directly, producing no event). The following scenarios are known to clear `skb->tstamp`, rendering this feature unable to observe receive latency:
+
+| Scenario | Affected Path | Related Kernel Patch |
+| -------- | ------------- | -------------------- |
+| **Loopback interfaces** | `loopback_xmit()` in `drivers/net/loopback.c` clears `skb->tstamp` after calling `skb_tx_timestamp()`, preventing confusion between different clock bases (CLOCK_MONOTONIC vs CLOCK_REALTIME) | `4c16128b6271` ("net: loopback: clear skb->tstamp before netif_rx()") |
+| **Cross-namespace forwarding** | `skb_scrub_packet(skb, xnet=true)` in `net/core/skbuff.c` clears `skb->tstamp` when packets cross network namespaces, affecting container network forwarding traffic observation | `c47d8c2f38f8` ("net: Clear skb->tstamp only on the forwarding path") |
+| **Unix socket / Netlink** | Unix domain sockets and Netlink communication paths do not deliver `skb->tstamp`; the timestamp is always zero | — |
+| **Certain virtual devices** | tun devices and virtual NICs with NAPI disabled do not invoke `net_timestamp_check()` to populate `skb->tstamp` | — |
+| **BPF program interference** | Starting from kernel v5.18 (commit `9bb984f28d5bc`), the `bpf_skb_set_tstamp()` helper allows TC/BPF programs to modify or clear `skb->tstamp`. If the host deploys BPF programs that modify timestamps, this feature may not work correctly | `9bb984f28d5bc` (v5.18+) |
+| **High-version kernel `tstamp_type` semantics** | Starting from kernel v5.18+, the `tstamp_type` field (commit `4d25ca2d6801`) extends the semantics of `skb->tstamp` from a single receive timestamp to support multiple clock bases (REALTIME/MONO/TAI). Mixing different clock bases may cause incorrect latency calculations | `4d25ca2d6801` (v5.18+) |
+
+**Recommendation**: In the above scenarios, consider disabling this feature by setting the thresholds to `0` or using `issues_list` filter rules to suppress invalid events.
+
+**Historical note**: In earlier versions without the zero-value guard, `ts_current - 0 = ts_current` would report the current system time (nanoseconds since 1970) as approximately 50 years of receive latency, generating massive false events. This has been fixed with a zero-value check in the eBPF layer.
+
 ### 4. oom
 
 **Description** Detects OOM (Out of Memory) events on the host or inside containers. Records information about the process killed by the OOM Killer (victim) and the process that triggered the OOM (trigger), along with the corresponding container and memory cgroup details, providing a complete fault snapshot. Host-level and per-container OOM count metrics are also maintained.
