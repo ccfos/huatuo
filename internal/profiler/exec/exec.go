@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package exec
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -106,6 +107,7 @@ func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdRe
 			Stdout:  stdoutBuf.Bytes(),
 			Stderr:  stderrBuf.Bytes(),
 			Success: false,
+			CmdErr:  ctx.Err(),
 		}
 	case err := <-done:
 		// Normally finished
@@ -183,6 +185,7 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 					Stdout:  stdoutBuf.Bytes(),
 					Stderr:  stderrBuf.Bytes(),
 					Success: false,
+					CmdErr:  ctx.Err(),
 				}
 			case err := <-done:
 				// Normally finished
@@ -217,19 +220,66 @@ func StopProfiler(asprofPath string, pid int) error {
 	return nil
 }
 
-// VerifyCmdResults checks that every result succeeded; returns an error on
-// the first failure, logging stderr/stdout for diagnosis.
 func formatCmd(binPath string, args []string) string {
 	return binPath + " " + strings.Join(args, " ")
 }
 
+const maxCommandOutputInError = 4096
+
+type commandResultError struct {
+	pid    int
+	cmd    string
+	stdout string
+	stderr string
+	err    error
+}
+
+func (e *commandResultError) Error() string {
+	var message strings.Builder
+	fmt.Fprintf(&message, "command %q failed for pid %d", e.cmd, e.pid)
+	if e.err != nil {
+		fmt.Fprintf(&message, ": %v", e.err)
+	}
+	if e.stderr != "" {
+		fmt.Fprintf(&message, "; stderr=%q", e.stderr)
+	}
+	if e.stdout != "" {
+		fmt.Fprintf(&message, "; stdout=%q", e.stdout)
+	}
+
+	return message.String()
+}
+
+func (e *commandResultError) Unwrap() error {
+	return e.err
+}
+
+func commandOutputForError(output []byte) string {
+	trimmed := strings.TrimSpace(string(output))
+	if len(trimmed) <= maxCommandOutputInError {
+		return trimmed
+	}
+
+	return trimmed[:maxCommandOutputInError] + "... (truncated)"
+}
+
+// VerifyResults reports every failed command with its process and captured
+// diagnostics so callers can identify the failing tool invocation.
 func VerifyResults(results []CmdResult) error {
+	failures := make([]error, 0)
 	for _, r := range results {
 		if r.Success {
 			continue
 		}
-		log.Warnf("cmd %q stderr: %s, stdout: %s, err: %s", r.Cmd, string(r.Stderr), string(r.Stdout), r.CmdErr)
-		return fmt.Errorf("cmd %q failed for pid: %d", r.Cmd, r.Pid)
+
+		failures = append(failures, &commandResultError{
+			pid:    r.Pid,
+			cmd:    r.Cmd,
+			stdout: commandOutputForError(r.Stdout),
+			stderr: commandOutputForError(r.Stderr),
+			err:    r.CmdErr,
+		})
 	}
-	return nil
+
+	return errors.Join(failures...)
 }
