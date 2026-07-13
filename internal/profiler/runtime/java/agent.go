@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -140,10 +140,18 @@ type AsprofSamplingOption struct {
 	OutFilePrefix string
 }
 
+func asprofPath(toolPath string) string {
+	return filepath.Join(toolPath, "bin", "asprof")
+}
+
+func agentLibraryPath(toolPath string) string {
+	return filepath.Join(toolPath, "lib", "libasyncProfiler.so")
+}
+
 func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[int]string, error) {
 	profileOutFile := make(map[int]string)
 
-	asprofBin := filepath.Join(opt.ToolPath, "asprof")
+	asprofBin := asprofPath(opt.ToolPath)
 	cmdResults := executil.ExecCmds(ctx, opt.Pids, asprofBin, asprofCallback(profileOutFile, opt.BaseArgs, opt.OutFilePrefix))
 
 	if err := executil.VerifyResults(cmdResults); err != nil {
@@ -184,7 +192,7 @@ func stopAsprofProcesses(ctx context.Context, pids []int, toolPath string) []exe
 		}
 	}()
 
-	asprofBin := filepath.Join(toolPath, "asprof")
+	asprofBin := asprofPath(toolPath)
 
 	stopCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
@@ -232,7 +240,7 @@ func GetJavaVersion(pid int) (int, error) {
 }
 
 // Copies the java agent to container's /tmp if needed.
-func PrepareJavaAgent(pid int, asprofPath string) error {
+func PrepareJavaAgent(pid int, toolPath string) error {
 	inContainer, err := procutil.IsProcessInContainer(pid)
 	if err != nil {
 		return err
@@ -260,7 +268,7 @@ func PrepareJavaAgent(pid int, asprofPath string) error {
 	if err := fileutil.CheckDirSpace(targetTmp); err != nil {
 		return err
 	}
-	return copyAgentLib(asprofPath, targetTmp)
+	return copyAgentLib(toolPath, targetTmp)
 }
 
 func CleanupJavaAgent(pid int) error {
@@ -293,8 +301,8 @@ func CleanupJavaAgent(pid int) error {
 }
 
 // copyAgentLib copies the async profiler .so library into tmp directory.
-func copyAgentLib(fromCasePath, toTmpPath string) error {
-	src := filepath.Join(fromCasePath, "libasyncProfiler.so")
+func copyAgentLib(toolPath, toTmpPath string) error {
+	src := agentLibraryPath(toolPath)
 	dst := filepath.Join(toTmpPath, "libasyncProfiler.so")
 	return fileutil.CopyFile(src, dst)
 }

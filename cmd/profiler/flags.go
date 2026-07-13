@@ -106,7 +106,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "tool-path",
-		Usage: "Path to the profiling tool (e.g. async-profiler, py-spy)",
+		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
 	},
 	&cli.IntFlag{
 		Name:  "tool-limit",

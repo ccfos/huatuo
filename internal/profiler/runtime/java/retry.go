@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -72,7 +71,7 @@ func RetrySampleProfiler(ctx context.Context, pid, dur, freq int, toolPath, outp
 			if attempt == maxRetries {
 				msg := fmt.Sprintf("PID[%d] sampling failed after %d retries: profiler still running", pid, maxRetries)
 
-				if err := executil.StopProfiler(filepath.Join(toolPath, "asprof"), pid); err != nil {
+				if err := executil.StopProfiler(asprofPath(toolPath), pid); err != nil {
 					log.Warnf("stop profiler for pid %d: %v", pid, err)
 				}
 				cmdRes.Pid = pid
