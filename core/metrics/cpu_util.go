@@ -125,14 +125,6 @@ func (c *cpuUtilCollector) updateHostDataCache() ([]*metric.Data, error) {
 	}, nil
 }
 
-func lifeResourcesAsCPUUtilStat(v any) (*cpuUtilStat, bool) {
-	dataCache, ok := v.(*cpuUtilStat)
-	if !ok || dataCache == nil {
-		return nil, false
-	}
-	return dataCache, true
-}
-
 func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 	metrics := []*metric.Data{}
 
@@ -159,11 +151,12 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			continue
 		}
 
-		containerDataCache, ok := lifeResourcesAsCPUUtilStat(container.LifeResources("collector_cpu_util"))
-		if !ok {
+		dataCache, ok := container.LifeResources("collector_cpu_util").(*cpuUtilStat)
+		if !ok || dataCache == nil {
 			log.Warnf("cpu_util: LifeResources for container %s returned unexpected type or nil", container)
 			continue
 		}
+		containerDataCache := dataCache
 		if err := c.updateDataCache(containerDataCache, container, numCores); err != nil {
 			log.Infof("failed to update cpu info of %s, %v", container, err)
 			continue
