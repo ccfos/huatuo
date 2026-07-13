@@ -125,10 +125,6 @@ var appFlags = []cli.Flag{
 		Name:  "metadata",
 		Usage: "Meta data for document data, e.g. --metadata '--tracer_id HHKKJGKIUOLNK' --metadata '--tracer_data=AppName'",
 	},
-	&cli.StringFlag{
-		Name:  "mock-container",
-		Usage: "Mock container metadata JSON for uploads (testing only), or 'random' to auto-generate",
-	},
 	&cli.StringSliceFlag{
 		Name:    "flags",
 		Aliases: []string{"f"},

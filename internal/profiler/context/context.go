@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -98,10 +98,6 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	if err != nil {
 		return nil, err
 	}
-	if mockContainer := cliCtx.String("mock-container"); mockContainer != "" {
-		metaData["mock_container"] = mockContainer
-	}
-
 	cpuidleMeta, err := parseExtraFlagsInt64(cliCtx.StringSlice("cpuidle-metadata"))
 	if err != nil {
 		return nil, err
