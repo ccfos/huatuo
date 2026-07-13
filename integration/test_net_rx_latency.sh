@@ -41,37 +41,27 @@ ip link set "${VETH_HOST}" up 2> /dev/null || true
 ip link set "${VETH_PEER}" up 2> /dev/null || true
 sleep 0.5
 
-_original_args_str="${HUATUO_BAMAI_INTEGRATION_ARGS_STR}"
 _server_pid=""
+WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/net-rx-latency.XXXXXX")
 cleanup_all() {
 	[[ -n "${_server_pid}" ]] && stop_by_pid "${_server_pid}" 2 || true
-	huatuo_bamai_stop $? 2> /dev/null || true
 	ip link del "${VETH_HOST}" 2> /dev/null || true
-	export HUATUO_BAMAI_INTEGRATION_ARGS_STR="${_original_args_str}"
-	HUATUO_BAMAI_ARGS_INTEGRATION=""
 }
 trap cleanup_all EXIT
 
-HUATUO_BAMAI_ARGS_INTEGRATION=(
-	"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
-	"--config" "bamai.conf"
-	"--region" "dev"
-	"--procfs-prefix" "${HUATUO_BAMAI_TEST_FIXTURES}"
-	"--disable-kubelet"
-)
-HUATUO_BAMAI_INTEGRATION_ARGS_STR="${HUATUO_BAMAI_ARGS_INTEGRATION[*]}"
-export HUATUO_BAMAI_INTEGRATION_ARGS_STR
+integration_huatuo_bamai_start \
+	write_net_rx_latency_config \
+	--region dev \
+	--procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
+	--disable-kubelet
 
-integration_huatuo_bamai_start write_net_rx_latency_config
-trap cleanup_all EXIT
-
-SLOW_TCP_SERVER="${HUATUO_BAMAI_TEST_TMPDIR}/slow-tcp-server"
+SLOW_TCP_SERVER="${WORK_DIR}/slow-tcp-server"
 cc -O2 -Wall -Wextra -o "${SLOW_TCP_SERVER}" \
 	"${ROOT_DIR}/integration/testdata/test_net_rx_latency_user.c" \
 	|| skip "failed to compile slow-tcp-server"
 
 "${SLOW_TCP_SERVER}" \
-	> "${HUATUO_BAMAI_TEST_TMPDIR}/testserver.log" 2>&1 &
+	> "${WORK_DIR}/testserver.log" 2>&1 &
 server_pid=$!
 _server_pid="${server_pid}"
 sleep 0.5
@@ -81,16 +71,13 @@ for i in $(seq 1 5); do
 	curl -s --connect-timeout 1 --max-time 2 \
 		--interface "${VETH_HOST_IP}" \
 		http://${VETH_PEER_IP}:${TEST_PORT}/ \
-		>> "${HUATUO_BAMAI_TEST_TMPDIR}/curl.log" 2>&1 || true
+		>> "${WORK_DIR}/curl.log" 2>&1 || true
 done
 
 sleep 5
 
 EVENTS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/events/net_rx_latency"
-[[ -f "${EVENTS_FILE}" ]] || {
-	dump_file "HUATUO" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
-	fatal "no events file: ${EVENTS_FILE}"
-}
+[[ -f "${EVENTS_FILE}" ]] || fatal "no events file: ${EVENTS_FILE}"
 
 # Filter events matching our veth IP pair, then validate.
 MATCHED=$(jq -s --arg saddr "${VETH_HOST_IP}" --arg daddr "${VETH_PEER_IP}" \
@@ -102,9 +89,6 @@ event_count=$(echo "${event_count}" | tr -d '[:space:]')
 log_info "net_rx_latency events (${VETH_HOST_IP} -> ${VETH_PEER_IP}): ${event_count}"
 
 if [[ "${event_count}" -eq 0 ]]; then
-	dump_file "EVENTS" "${EVENTS_FILE}"
-	dump_file "SERVER" "${HUATUO_BAMAI_TEST_TMPDIR}/testserver.log"
-	dump_file "HUATUO" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 	fatal "no matching net_rx_latency events found"
 fi
 

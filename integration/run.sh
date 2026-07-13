@@ -34,18 +34,37 @@ unshare --uts --mount bash -c '
 	set -euo pipefail
 	source "./integration/env.sh"
 	source "${ROOT_DIR}/integration/lib.sh"
+	active_test_workspace=""
 
-	# auto run all test_*.sh scripts in the integration
-	for case in "${ROOT_DIR}"/integration/test_*.sh; do
-		[[ -f "$case" ]] || continue
-		log_info "🚀🚀 start: $(basename "$case")"
+	runner_cleanup() {
+		local runner_status=$?
+		[[ -n "${active_test_workspace}" ]] || return 0
+		integration_test_exit "${runner_status}" "${active_test_workspace}" || true
+	}
+	trap runner_cleanup EXIT
 
-		chmod +x "$case"
-		if ! bash "$case"; then
-			fatal "❌ failed: $(basename "$case")"
+	# Run each test in an isolated workspace owned by this runner.
+	for test_script in "${ROOT_DIR}"/integration/test_*.sh; do
+		[[ -f "${test_script}" ]] || continue
+		test_name=$(basename "${test_script}" .sh)
+		test_workspace=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${test_name}.XXXXXX")
+		active_test_workspace="${test_workspace}"
+		log_info "🚀🚀 start: $(basename "${test_script}")"
+
+		chmod +x "${test_script}"
+		if HUATUO_BAMAI_TEST_TMPDIR="${test_workspace}" bash "${test_script}"; then
+			test_status=0
+		else
+			test_status=$?
 		fi
 
-		log_info "✅✅ passed: $(basename "$case")"
+		integration_test_exit "${test_status}" "${test_workspace}"
+		active_test_workspace=""
+		if [[ ${test_status} -ne 0 ]]; then
+			fatal "❌ failed: $(basename "${test_script}")"
+		fi
+
+		log_info "✅✅ passed: $(basename "${test_script}")"
 	done
 
 	log_info "🎉🎉 all integration tests passed."

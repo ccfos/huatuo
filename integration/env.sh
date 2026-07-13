@@ -35,16 +35,6 @@ HUATUO_BAMAI_TEST_FIXTURES="${ROOT_DIR}/integration/fixtures"
 export HUATUO_BAMAI_TEST_FIXTURES
 HUATUO_BAMAI_TEST_EXPECTED="${ROOT_DIR}/integration/fixtures/expected_metrics"
 export HUATUO_BAMAI_TEST_EXPECTED
-HUATUO_BAMAI_ARGS_INTEGRATION=(
-	"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
-	"--config" "bamai.conf"
-	"--region" "dev"
-	"--procfs-prefix" "${HUATUO_BAMAI_TEST_FIXTURES}"
-	"--disable-storage"
-	"--disable-kubelet"
-	"--log-debug"
-)
-export HUATUO_BAMAI_ARGS_INTEGRATION
 HUATUO_BAMAI_ARGS_E2E=(
 	"--config-dir" "${ROOT_DIR}/_output/conf/"
 	"--config" "huatuo-bamai.conf"
@@ -64,9 +54,7 @@ WAIT_HUATUO_BAMAI_INTERVAL=2 # second
 export WAIT_HUATUO_BAMAI_INTERVAL
 
 # Arrays cannot be exported to child processes via environment variables.
-# Convert the array to a space-separated string that can be exported and later reconstructed.
-HUATUO_BAMAI_INTEGRATION_ARGS_STR="${HUATUO_BAMAI_ARGS_INTEGRATION[*]}"
-export HUATUO_BAMAI_INTEGRATION_ARGS_STR
+# Convert the E2E array to a string for reconstruction in child processes.
 HUATUO_BAMAI_E2E_ARGS_STR="${HUATUO_BAMAI_ARGS_E2E[*]}"
 export HUATUO_BAMAI_E2E_ARGS_STR
 

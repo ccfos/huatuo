@@ -26,8 +26,6 @@ source "${ROOT_DIR}/integration/lib.sh"
 is_container && skip "native memory profiler requires bare-metal cgroup/PMU access"
 
 readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
-readonly TOOL_OUT="${HUATUO_BAMAI_TEST_TMPDIR}/profiler.out"
-readonly TOOL_ERR="${HUATUO_BAMAI_TEST_TMPDIR}/profiler.err"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_mmap.user.c"
 
 command -v gcc > /dev/null || skip "gcc(1) not in PATH"
@@ -56,6 +54,8 @@ readonly EXPECTED_SYMBOL
 # --- workspace + cleanup -----------------------------------------------------
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-mem.XXXXXX")
+TOOL_OUT="${WORK_DIR}/profiler.out"
+TOOL_ERR="${WORK_DIR}/profiler.err"
 FIXTURE_BIN="${WORK_DIR}/mmap_workload"
 FIXTURE_OUT="${WORK_DIR}/mmap.out"
 FIXTURE_ERR="${WORK_DIR}/mmap.err"
@@ -63,18 +63,8 @@ TARGET_PID=""
 PROFILER_PID=""
 
 cleanup() {
-	local rc=$?
-	[[ -n "${PROFILER_PID}" ]] && stop_by_pid "${PROFILER_PID}" 5
-	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5
-	if [[ ${rc} -ne 0 ]]; then
-		dump_file "profiler stdout" "${TOOL_OUT}"
-		dump_file "profiler stderr" "${TOOL_ERR}"
-		dump_file "fixture stdout" "${FIXTURE_OUT}"
-		dump_file "fixture stderr" "${FIXTURE_ERR}"
-		log_error "workspace preserved at ${WORK_DIR}"
-	else
-		rm -rf "${WORK_DIR}"
-	fi
+	[[ -n "${PROFILER_PID}" ]] && stop_by_pid "${PROFILER_PID}" 5 || true
+	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5 || true
 }
 trap cleanup EXIT
 
@@ -137,8 +127,6 @@ log_info "found ${#FOLDED_FILES[@]} folded file(s); asserting non-empty output"
 # Check that we have at least some profiling data
 LINE_COUNT=$(wc -l < "${FOLDED_FILES[0]}") || true
 if [[ "${LINE_COUNT}" -eq 0 ]]; then
-	log_error "folded file is empty; contents:"
-	cat "${FOLDED_FILES[@]}" >&2
 	fatal "no profiling data captured"
 fi
 
@@ -147,10 +135,7 @@ fi
 log_info "checking for expected symbol '${EXPECTED_SYMBOL}' in profiler output"
 
 if ! grep -q "${EXPECTED_SYMBOL}" "${FOLDED_FILES[@]}"; then
-	log_error "expected symbol '${EXPECTED_SYMBOL}' not found in profiler output"
-	log_error "folded file contents:"
-	cat "${FOLDED_FILES[@]}" >&2
-	fatal "symbol verification failed"
+	fatal "expected symbol '${EXPECTED_SYMBOL}' not found in profiler output"
 fi
 
 log_info "found expected symbol '${EXPECTED_SYMBOL}'"
@@ -176,9 +161,7 @@ fi
 
 ACTUAL_ALLOCATED_BYTES=$(awk -F= '/^actual_allocated_bytes=/{value=$2} END {print value}' "${FIXTURE_ERR}")
 if [[ ! "${ACTUAL_ALLOCATED_BYTES}" =~ ^[0-9]+$ ]]; then
-	log_error "missing actual_allocated_bytes in fixture stderr"
-	dump_file "fixture stderr" "${FIXTURE_ERR}"
-	fatal "memory verification failed"
+	fatal "missing actual_allocated_bytes in fixture stderr"
 fi
 
 log_info "fixture reported ${ACTUAL_ALLOCATED_BYTES} bytes"

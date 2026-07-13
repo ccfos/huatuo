@@ -46,15 +46,8 @@ TARGET_PID=""
 PROFILER_PID=""
 
 cleanup() {
-	local rc=$?
-	[[ -n "${PROFILER_PID}" ]] && stop_by_pid "${PROFILER_PID}" 5
-	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5
-	if [[ ${rc} -ne 0 ]]; then
-		find "${WORK_DIR}" -maxdepth 2 -type f -print -exec sed -n '1,160p' {} \; >&2 || true
-		log_error "workspace preserved at ${WORK_DIR}"
-	else
-		rm -rf "${WORK_DIR}"
-	fi
+	[[ -n "${PROFILER_PID}" ]] && stop_by_pid "${PROFILER_PID}" 5 || true
+	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5 || true
 }
 trap cleanup EXIT
 
@@ -137,7 +130,6 @@ run_profile_case physical_usage "${USAGE_DIR}"
 USAGE_LINES=$(folded_line_count "${USAGE_DIR}")
 if [[ "${USAGE_LINES}" -ne 0 ]]; then
 	log_error "physical_usage should emit no folded symbols for balanced alloc/free; lines=${USAGE_LINES}"
-	find "${USAGE_DIR}" -maxdepth 1 -name 'perf_*.folded' -type f -print -exec cat {} \; >&2
 	fatal "physical_usage balance verification failed"
 fi
 

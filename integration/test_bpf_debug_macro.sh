@@ -31,8 +31,7 @@ DEBUG_MARKER="HUATUO_BPF_DBG_DEBUG_MARKER_V1"
 
 command -v strings > /dev/null || fatal "strings(1) not found in PATH"
 
-WORK_DIR=$(mktemp -d /tmp/huatuo-bpf-dbg.XXXXXX)
-trap 'rm -rf "${WORK_DIR}"' EXIT
+WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/bpf-debug.XXXXXX")
 
 # compile_fixture <out.o> <extra_cflags>: invokes clang.sh via the same
 # env-var contract the Makefile uses (BPF_EXTRA_CFLAGS), so this test

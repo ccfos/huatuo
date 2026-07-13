@@ -35,8 +35,6 @@ for f in "${HUATUO_BAMAI_TEST_EXPECTED}"/*.txt; do
 	if [[ -n "${missing_metrics}" ]]; then
 		log_info "missing metrics:"
 		log_info "${missing_metrics}"
-		log_info "metrics file ${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt:"
-		log_info "$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt")"
 		fatal "metrics check failed for prefix: ${prefix}"
 	fi
 

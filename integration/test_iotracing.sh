@@ -29,12 +29,21 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 bpf_tool_setup iotracing
 readonly DURATION=8
+io_test_dir=""
+IO_PID=""
+WORKLOAD_PID=""
+
+cleanup() {
+	[[ -n "${IO_PID}" ]] && stop_by_pid "${IO_PID}" 5 || true
+	[[ -n "${WORKLOAD_PID}" ]] && stop_by_pid "${WORKLOAD_PID}" 5 || true
+	[[ -n "${io_test_dir}" ]] && rm -rf -- "${io_test_dir}" || true
+}
+trap cleanup EXIT
 
 # Per-file attribution depends on anyfs probes binding to ext4/xfs
 # (see cmd/iotracing/bpf_attach.go). Without such a mount the test can
 # only validate the JSON envelope, which is too weak to be informative —
 # skip rather than report a misleading PASS.
-io_test_dir=""
 while read -r mp; do
 	[[ -d "${mp}" && -w "${mp}" ]] || continue
 	io_test_dir=$(mktemp -d "${mp%/}/huatuo-iotracing.XXXXXX") && break
@@ -42,14 +51,12 @@ done < <(awk '$3 == "ext4" || $3 == "xfs" { print $2 }' /proc/mounts)
 
 [[ -n "${io_test_dir}" ]] || skip "no writable ext4/xfs mount; iotracing accuracy needs anyfs probes to bind"
 
-trap "rm -rf '${io_test_dir}'" EXIT
-
 log_info "iotracing: duration=${DURATION}s, io_test_dir=${io_test_dir}"
 "${TOOL_BIN}" --bpf-path "${TOOL_BPF}" \
 	--duration "${DURATION}" \
 	--output json \
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
-io_pid=$!
+IO_PID=$!
 
 # Let probes attach before the workload starts.
 sleep 1
@@ -59,16 +66,18 @@ sleep 1
 # block, keeping a single dd busy until timeout instead of restarting.
 timeout "$((DURATION - 2))" dd if=/dev/zero of="${io_test_dir}/io" \
 	bs=1M oflag=dsync status=none > /dev/null 2>&1 &
+WORKLOAD_PID=$!
 
-wait "${io_pid}" || dump_tool_logs_and_fail "iotracing exited non-zero"
-[[ -s ${TOOL_OUT} ]] || dump_tool_logs_and_fail "iotracing produced empty output"
+wait "${IO_PID}" || fatal "iotracing exited non-zero"
+IO_PID=""
+[[ -s ${TOOL_OUT} ]] || fatal "iotracing produced empty output"
 
 # Envelope: parses as JSON, both top-level keys exist as arrays.
 jq -e '
 	(.process_file_io_stats | type == "array") and
 	(.io_schedule_timeout_stacks | type == "array")
 ' "${TOOL_OUT}" > /dev/null \
-	|| dump_tool_logs_and_fail "iotracing JSON schema invalid"
+	|| fatal "iotracing JSON schema invalid"
 
 # Accuracy: a row attributed to dd holds a file under io_test_dir with non-zero
 # write bps. comm may be "dd" (BPF capture) or "dd if=/dev/zero ..."
@@ -83,4 +92,4 @@ jq -e --arg dir "${io_test_dir}/" '
 		| .fs_write_bps + .disk_write_bps)
 	| any(. > 0)
 ' "${TOOL_OUT}" > /dev/null \
-	|| dump_tool_logs_and_fail "no dd-attributed write to ${io_test_dir} found"
+	|| fatal "no dd-attributed write to ${io_test_dir} found"

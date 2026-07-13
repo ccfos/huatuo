@@ -32,6 +32,12 @@ readonly DURATION=10
 readonly TARGET_IP="127.0.0.99"
 readonly TARGET_PORT=9999
 readonly EXPECTED_MAX=$((RATE * (DURATION + 1))) # +1s headroom for the first burst
+DROPWATCH_PID=""
+
+cleanup() {
+	[[ -n "${DROPWATCH_PID}" ]] && stop_by_pid "${DROPWATCH_PID}" 5 || true
+}
+trap cleanup EXIT
 
 # No iptables rule is needed: sending UDP to a closed port on the loopback
 # triggers SKB_DROP_REASON_NO_SOCKET inside __udp4_lib_rcv, which calls
@@ -45,7 +51,7 @@ log_info "dropwatch: rate=${RATE}/s, duration=${DURATION}s, target=${TARGET_IP}:
 	--duration "${DURATION}" \
 	--output text \
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}" &
-dw_pid=$!
+DROPWATCH_PID=$!
 
 # Let the BPF program attach before flooding.
 sleep 0.5
@@ -60,7 +66,8 @@ timeout "${DURATION}" bash -c "
 		printf x >/dev/udp/${TARGET_IP}/${TARGET_PORT}
 	done
 " > /dev/null 2>&1 || true
-wait "${dw_pid}" || true
+wait "${DROPWATCH_PID}" || true
+DROPWATCH_PID=""
 
 events=$(grep -c "IPv4/UDP" "${TOOL_OUT}" || true)
 # Both event lines and rate-limit warnings are emitted on stdout by
@@ -71,7 +78,6 @@ warns=$(grep -c "rate limit hit" "${TOOL_OUT}" || true)
 log_info "events=${events} (cap=${EXPECTED_MAX}), rate-limit warnings=${warns}"
 
 # Different kernels/distros vary in how aggressively they coalesce or
-# drop UDP packets to a closed loopback port, so on assertion failure
-# dump the captured logs for cross-environment debugging.
-((events <= EXPECTED_MAX)) || dump_tool_logs_and_fail "events ${events} exceed cap ${EXPECTED_MAX}"
-((warns >= 1)) || dump_tool_logs_and_fail "expected at least one rate-limit warning under flood"
+# drop UDP packets to a closed loopback port, so keep both assertions explicit.
+((events <= EXPECTED_MAX)) || fatal "events ${events} exceed cap ${EXPECTED_MAX}"
+((warns >= 1)) || fatal "expected at least one rate-limit warning under flood"

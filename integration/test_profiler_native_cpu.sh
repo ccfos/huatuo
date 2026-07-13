@@ -27,8 +27,6 @@ source "${ROOT_DIR}/integration/lib.sh"
 is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
 
 readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
-readonly TOOL_OUT="${HUATUO_BAMAI_TEST_TMPDIR}/profiler.out"
-readonly TOOL_ERR="${HUATUO_BAMAI_TEST_TMPDIR}/profiler.err"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 
 command -v gcc > /dev/null || skip "gcc(1) not in PATH"
@@ -53,23 +51,15 @@ readonly CHAIN_PATTERN=';f1;f2;f3 [0-9]+$'
 # --- workspace + cleanup -----------------------------------------------------
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-callchain.XXXXXX")
+TOOL_OUT="${WORK_DIR}/profiler.out"
+TOOL_ERR="${WORK_DIR}/profiler.err"
 FIXTURE_BIN="${WORK_DIR}/callchain"
 FIXTURE_OUT="${WORK_DIR}/callchain.out"
 FIXTURE_ERR="${WORK_DIR}/callchain.err"
 TARGET_PID=""
 
 cleanup() {
-	local rc=$?
-	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5
-	if [[ ${rc} -ne 0 ]]; then
-		dump_file "profiler stdout" "${TOOL_OUT}"
-		dump_file "profiler stderr" "${TOOL_ERR}"
-		dump_file "fixture stdout" "${FIXTURE_OUT}"
-		dump_file "fixture stderr" "${FIXTURE_ERR}"
-		log_error "workspace preserved at ${WORK_DIR}"
-	else
-		rm -rf "${WORK_DIR}"
-	fi
+	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5 || true
 }
 trap cleanup EXIT
 
@@ -116,8 +106,6 @@ log_info "found ${#FOLDED_FILES[@]} folded file(s); asserting f1->f2->f3 chain"
 
 MATCH_COUNT=$(grep -hE "${CHAIN_PATTERN}" "${FOLDED_FILES[@]}" | wc -l) || true
 if [[ "${MATCH_COUNT}" -eq 0 ]]; then
-	log_error "no line matched ${CHAIN_PATTERN}; folded contents:"
-	cat "${FOLDED_FILES[@]}" >&2
 	fatal "f1->f2->f3 chain not found in folded output"
 fi
 

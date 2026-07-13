@@ -118,26 +118,28 @@ bpf_tool_setup() {
 	local name=$1
 	TOOL_BIN="${ROOT_DIR}/_output/bin/${name}"
 	TOOL_BPF="${ROOT_DIR}/_output/bpf/${name}.o"
-	TOOL_OUT="${HUATUO_BAMAI_TEST_TMPDIR}/${name}.out"
-	TOOL_ERR="${HUATUO_BAMAI_TEST_TMPDIR}/${name}.err"
 
 	[[ $EUID -eq 0 ]] || fatal "requires root (BPF requires CAP_BPF/CAP_SYS_ADMIN)"
 	[[ -x ${TOOL_BIN} ]] || fatal "missing ${name} binary: ${TOOL_BIN}"
 	[[ -r ${TOOL_BPF} ]] || fatal "missing ${name} bpf object: ${TOOL_BPF}"
+
+	TOOL_WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${name}.XXXXXX")
+	TOOL_OUT="${TOOL_WORK_DIR}/${name}.out"
+	TOOL_ERR="${TOOL_WORK_DIR}/${name}.err"
 }
 
-# Print file to stderr with a label header; silent if file is absent.
-dump_file() {
-	local label=$1 path=$2
-	[[ -f "${path}" ]] || return 0
-	log_error "----- ${label} (${path}) -----"
-	cat "${path}" >&2
-}
+# Print text files under a directory; binary files are omitted from diagnostics.
+dump_text_files() {
+	local dir=$1
+	local file
 
-dump_tool_logs_and_fail() {
-	dump_file "OUT" "${TOOL_OUT}"
-	dump_file "ERR" "${TOOL_ERR}"
-	fatal "$*"
+	[[ -d "${dir}" ]] || return 0
+
+	while IFS= read -r -d '' file; do
+		[[ ! -s "${file}" ]] || grep -Iq '' "${file}" || continue
+		log_error "----- FILE (${file}) -----"
+		sed -n '1,160p' "${file}" >&2
+	done < <(find "${dir}" -type f -print0)
 }
 
 # SIGTERM with graceful polling, then SIGKILL as fallback.
@@ -197,8 +199,7 @@ huatuo_bamai_ready() {
 	[[ -n "$pid" ]] || return 1
 
 	if ! kill -0 "${pid}" 2> /dev/null; then
-		log_error "huatuo-bamai pid=${pid} exited, last log:"
-		tail -20 "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2 || echo "empty"
+		log_error "huatuo-bamai pid=${pid} exited"
 		return 1
 	fi
 
@@ -206,41 +207,40 @@ huatuo_bamai_ready() {
 }
 
 huatuo_bamai_stop() {
-	local exit_code=${1:-0}
-
+	local test_workspace=${1:-${HUATUO_BAMAI_TEST_TMPDIR}}
 	local pid
-	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2> /dev/null || echo "")
+	pid=$(cat "${test_workspace}/huatuo-bamai.pid" 2> /dev/null || echo "")
 	[[ -n "$pid" ]] && stop_by_pid "${pid}"
-	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
+	rm -f "${test_workspace}/huatuo-bamai.pid"
+}
 
-	if [ "${exit_code}" -ne 0 ]; then
-		log_info "the exit code: ${exit_code}"
-		log_info "
-========== HUATUO INTEGRATION TEST FAILED ================
+# Stop shared services, then remove or report the runner-owned test workspace.
+integration_test_exit() {
+	local exit_code=$1
+	local test_workspace=$2
 
-Summary:
-  - One or more expected metrics are missing.
-
-Temporary artifacts preserved at:
-  ${HUATUO_BAMAI_TEST_TMPDIR}
-
-Key files:
-  - metrics.txt
-  - huatuo.log
-  - bamai.conf
-
-=========================================================
-"
+	if [[ -z "${test_workspace}" || "${test_workspace}" != "${HUATUO_BAMAI_TEST_TMPDIR}/"* ]]; then
+		log_error "refusing to finalize test workspace outside ${HUATUO_BAMAI_TEST_TMPDIR}: ${test_workspace}"
+		return 1
 	fi
+
+	huatuo_bamai_stop "${test_workspace}" || true
+
+	if [[ ${exit_code} -eq 0 ]]; then
+		rm -rf -- "${test_workspace}"
+		return 0
+	fi
+
+	dump_text_files "${test_workspace}"
+	log_error "integration test failed with exit code ${exit_code}; artifacts preserved at ${test_workspace}"
 }
 
 huatuo_bamai_metrics() {
 	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}"
 }
 
-# highlight and reject error/panic keywords in the log
+# Reject error/panic keywords in the log.
 huatuo_bamai_log_check() {
-	sed -E "s/(${HUATUO_BAMAI_MATCH_KEYWORDS})/\x1b[31m\1\x1b[0m/gI" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 	! grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 }
 
@@ -257,16 +257,32 @@ huatuo_bamai_pod_count() {
 
 # ----------------------------- metrics helpers --------------------------------
 
-# integration_test_start <config_writer_func>
-# Writes config via the named function, sets EXIT trap, and starts huatuo-bamai.
+# integration_huatuo_bamai_start [config_writer_func] [huatuo-bamai args...]
+# Builds config paths from the current test workspace before starting huatuo-bamai.
 integration_huatuo_bamai_start() {
 	local config_writer=${1:-write_default_config}
+	if [[ $# -gt 0 ]]; then
+		shift
+	fi
+	local runtime_args=(
+		"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
+		"--config" "bamai.conf"
+	)
 
-	[[ -z "${HUATUO_BAMAI_ARGS_INTEGRATION:-}" ]] && eval "HUATUO_BAMAI_ARGS_INTEGRATION=(${HUATUO_BAMAI_INTEGRATION_ARGS_STR})"
-	trap 'huatuo_bamai_stop $? || true' EXIT
+	if [[ $# -gt 0 ]]; then
+		runtime_args+=("$@")
+	else
+		runtime_args+=(
+			"--region" "dev"
+			"--procfs-prefix" "${HUATUO_BAMAI_TEST_FIXTURES}"
+			"--disable-storage"
+			"--disable-kubelet"
+			"--log-debug"
+		)
+	fi
 
 	"$config_writer"
-	huatuo_bamai_start "${HUATUO_BAMAI_ARGS_INTEGRATION[@]}"
+	huatuo_bamai_start "${runtime_args[@]}"
 }
 
 # huatuo_bamai_collect_metrics saves /metrics output to the temp metrics file.

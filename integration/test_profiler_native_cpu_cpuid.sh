@@ -49,15 +49,7 @@ PROFILER_ERR="${FIXTURE_OUTDIR}/profiler.err"
 TARGET_PID=""
 
 cleanup() {
-	local rc=$?
-	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5
-	if [[ ${rc} -ne 0 ]]; then
-		dump_file "profiler stdout" "${PROFILER_OUT}"
-		dump_file "profiler stderr" "${PROFILER_ERR}"
-		log_error "workspace preserved at ${FIXTURE_OUTDIR}"
-	else
-		rm -rf "${FIXTURE_OUTDIR}"
-	fi
+	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5 || true
 }
 trap cleanup EXIT
 
@@ -106,23 +98,14 @@ verify_cpuid_chain() {
 
 	case "${expect_chain}" in
 	present)
-		[[ "${match_count}" -ge 1 ]] || fail_with_folded "${out_dir}" "chain not found (matches=${match_count})"
+		[[ "${match_count}" -ge 1 ]] || fatal "chain not found (matches=${match_count})"
 		log_info "chain matched (${match_count} lines)"
 		;;
 	absent)
-		[[ "${match_count}" -eq 0 ]] || fail_with_folded "${out_dir}" "chain unexpectedly found (matches=${match_count})"
+		[[ "${match_count}" -eq 0 ]] || fatal "chain unexpectedly found (matches=${match_count})"
 		log_info "chain absent as expected"
 		;;
 	esac
-}
-
-fail_with_folded() {
-	local out_dir=$1
-	local message=$2
-
-	log_error "folded contents in ${out_dir}:"
-	find "${out_dir}" -name 'perf_*.folded' -type f -print -exec cat {} \; >&2
-	fatal "${message}"
 }
 
 # --- tests -------------------------------------------------------------------
