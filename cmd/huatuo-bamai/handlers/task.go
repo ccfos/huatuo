@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -75,6 +75,9 @@ func (h *TaskHandler) create(ctx *server.Context) error {
 	}
 
 	id := tracing.NewTask(req.TracerName, time.Duration(req.Timeout)*time.Second, storageDefault, req.TracerArgs)
+	if id == "" {
+		return response.ErrInternal.WithMessage("failed to allocate task id")
+	}
 	response.Success(ctx, map[string]any{"task_id": id})
 	return nil
 }

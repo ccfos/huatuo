@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -117,7 +117,7 @@ func tasksGarbageCollect() {
 
 // AllocTaskID returns a fresh random identifier suitable for tasks and tracer
 // records.
-func AllocTaskID() string {
+func AllocTaskID() (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	const length = 16
 	result := make([]byte, length)
@@ -126,17 +126,21 @@ func AllocTaskID() string {
 	for i := range result {
 		num, err := rand.Int(rand.Reader, charsetLength)
 		if err != nil {
-			panic("Failed to generate random number")
+			return "", fmt.Errorf("generate random task id: %w", err)
 		}
 		result[i] = charset[num.Int64()]
 	}
 
-	return string(result)
+	return string(result), nil
 }
 
 // NewTask creates a new task, allocates an ID, and starts it.
 func NewTask(execBinary string, timeout time.Duration, storageType TaskStorageType, execArgs []string) string {
-	taskID := AllocTaskID()
+	taskID, err := AllocTaskID()
+	if err != nil {
+		log.Errorf("alloc task id: %v", err)
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	task := &task{
 		id:         taskID,

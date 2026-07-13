@@ -61,10 +61,16 @@ func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
 	}
 
 	return &Pipeline{
-		pctx:         pctx,
-		aggr:         aggr,
-		queue:        rqueue.NewRingBuffer(65536),
-		tracerID:     tracing.AllocTaskID(),
+		pctx:  pctx,
+		aggr:  aggr,
+		queue: rqueue.NewRingBuffer(65536),
+		tracerID: func() string {
+			id, err := tracing.AllocTaskID()
+			if err != nil {
+				log.Errorf("alloc tracer id: %v", err)
+			}
+			return id
+		}(),
 		aggrInterval: aggrInterval,
 		stopCh:       make(chan struct{}),
 		doneCh:       make(chan struct{}),
