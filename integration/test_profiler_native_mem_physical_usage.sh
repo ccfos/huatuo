@@ -27,11 +27,9 @@ readonly PROFILER_AGGR_INTERVAL=2
 readonly PROFILER_READY_TIMEOUT=15
 readonly PROFILER_READY_INTERVAL=1
 
-command -v gcc > /dev/null || skip "gcc(1) not in PATH"
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
 [[ -r "${ROOT_DIR}/_output/bpf/native_physical_alloc.o" ]] || fatal "native physical alloc bpf object missing"
 [[ -r "${ROOT_DIR}/_output/bpf/native_physical_usage.o" ]] || fatal "native physical usage bpf object missing"
-[[ -r "${FIXTURE_SRC}" ]] || fatal "fixture source missing: ${FIXTURE_SRC}"
 if kprobe_available page_add_new_anon_rmap && kprobe_available page_remove_rmap; then
 	log_info "using page rmap kprobes"
 elif kprobe_available folio_add_new_anon_rmap && kprobe_available folio_remove_rmap_ptes; then
@@ -50,14 +48,6 @@ cleanup() {
 	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5 || true
 }
 trap cleanup EXIT
-
-compile_fixture() {
-	log_info "compiling fixture: $(basename "${FIXTURE_SRC}")"
-	gcc -O0 -g -fno-inline -fno-omit-frame-pointer \
-		-o "${FIXTURE_BIN}" "${FIXTURE_SRC}" \
-		2> "${WORK_DIR}/gcc.err" \
-		|| fatal "gcc failed:"$'\n'"$(< "${WORK_DIR}/gcc.err")"
-}
 
 run_profile_case() {
 	local mode=$1 out_dir=$2
@@ -118,7 +108,7 @@ folded_line_count() {
 	echo "${count}"
 }
 
-compile_fixture
+compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
 
 ALLOC_DIR="${WORK_DIR}/physical_alloc"
 run_profile_case physical_alloc "${ALLOC_DIR}"

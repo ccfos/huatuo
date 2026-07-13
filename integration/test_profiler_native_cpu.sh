@@ -29,10 +29,8 @@ is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
 readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 
-command -v gcc > /dev/null || skip "gcc(1) not in PATH"
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
 [[ -r "${ROOT_DIR}/_output/bpf/native_cpu_profiler.o" ]] || fatal "native bpf object missing"
-[[ -r "${FIXTURE_SRC}" ]] || fatal "fixture source missing: ${FIXTURE_SRC}"
 
 # Missing perf_event_paranoid ⇒ perf not exposed; skip rather than default
 # to "2" which would mask the real issue as a misleading BPF load failure.
@@ -65,11 +63,7 @@ trap cleanup EXIT
 
 # --- build fixture -----------------------------------------------------------
 
-log_info "compiling fixture: $(basename "${FIXTURE_SRC}")"
-gcc -O0 -g -fno-inline -fno-omit-frame-pointer \
-	-o "${FIXTURE_BIN}" "${FIXTURE_SRC}" \
-	2> "${WORK_DIR}/gcc.err" \
-	|| fatal "gcc failed:"$'\n'"$(< "${WORK_DIR}/gcc.err")"
+compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
 
 # --- launch target -----------------------------------------------------------
 

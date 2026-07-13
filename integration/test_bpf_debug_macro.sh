@@ -33,16 +33,6 @@ command -v strings > /dev/null || fatal "strings(1) not found in PATH"
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/bpf-debug.XXXXXX")
 
-# compile_fixture <out.o> <extra_cflags>: invokes clang.sh via the same
-# env-var contract the Makefile uses (BPF_EXTRA_CFLAGS), so this test
-# tracks the real debug-toggle path instead of a parallel one.
-compile_fixture() {
-	BPF_EXTRA_CFLAGS="$2" "${ROOT_DIR}/build/clang.sh" \
-		-s "${FIXTURE}" -o "$1" -I "${ROOT_DIR}/bpf/include" \
-		> "${WORK_DIR}/clang.log" 2>&1 \
-		|| fatal "clang.sh failed (BPF_EXTRA_CFLAGS='$2'):"$'\n'"$(< "${WORK_DIR}/clang.log")"
-}
-
 # expect_marker <obj> <"has"|"missing"> <marker>: single source of truth
 # for the strings(1)-based assertion. `strings -a` scans the whole file
 # (section layout varies by binutils version); `grep -Fq` makes the match
@@ -64,8 +54,8 @@ OBJ_WITH_DEBUG="${WORK_DIR}/bpf_debug_on.o"
 OBJ_WITHOUT_DEBUG="${WORK_DIR}/bpf_debug_off.o"
 
 log_info "compiling fixture (BPF_DEBUG=1 and BPF_DEBUG=0)"
-compile_fixture "${OBJ_WITH_DEBUG}" "-DDEBUG_BPF"
-compile_fixture "${OBJ_WITHOUT_DEBUG}" ""
+compile_bpf_fixture "${FIXTURE}" "${OBJ_WITH_DEBUG}" "-DDEBUG_BPF"
+compile_bpf_fixture "${FIXTURE}" "${OBJ_WITHOUT_DEBUG}"
 
 # Sanity: a plain .rodata string unrelated to the macro must appear in
 # both builds. If not, the toolchain or fixture is broken and the DEBUG

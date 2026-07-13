@@ -28,10 +28,8 @@ is_container && skip "native memory profiler requires bare-metal cgroup/PMU acce
 readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_mmap.user.c"
 
-command -v gcc > /dev/null || skip "gcc(1) not in PATH"
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
 [[ -r "${ROOT_DIR}/_output/bpf/native_virtual_alloc.o" ]] || fatal "native bpf object missing"
-[[ -r "${FIXTURE_SRC}" ]] || fatal "fixture source missing: ${FIXTURE_SRC}"
 
 # --- tunables ----------------------------------------------------------------
 
@@ -70,11 +68,7 @@ trap cleanup EXIT
 
 # --- build fixture -----------------------------------------------------------
 
-log_info "compiling fixture: $(basename "${FIXTURE_SRC}")"
-gcc -O0 -g -fno-inline -fno-omit-frame-pointer \
-	-o "${FIXTURE_BIN}" "${FIXTURE_SRC}" \
-	2> "${WORK_DIR}/gcc.err" \
-	|| fatal "gcc failed:"$'\n'"$(< "${WORK_DIR}/gcc.err")"
+compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
 
 # --- launch target -----------------------------------------------------------
 

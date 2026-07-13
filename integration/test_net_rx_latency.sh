@@ -56,9 +56,9 @@ integration_huatuo_bamai_start \
 	--disable-kubelet
 
 SLOW_TCP_SERVER="${WORK_DIR}/slow-tcp-server"
-cc -O2 -Wall -Wextra -o "${SLOW_TCP_SERVER}" \
+compile_user_fixture \
 	"${ROOT_DIR}/integration/testdata/test_net_rx_latency_user.c" \
-	|| skip "failed to compile slow-tcp-server"
+	"${SLOW_TCP_SERVER}"
 
 "${SLOW_TCP_SERVER}" \
 	> "${WORK_DIR}/testserver.log" 2>&1 &

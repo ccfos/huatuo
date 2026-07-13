@@ -112,6 +112,35 @@ kprobe_available() {
 	return 1
 }
 
+# compile_user_fixture <source> <output> [compiler flags...]
+# Keep stack frames observable so profiler fixtures produce stable call chains.
+compile_user_fixture() {
+	local source=$1
+	local output=$2
+	shift 2
+	local compile_log="${output}.compile.log"
+
+	log_info "compiling fixture: $(basename "${source}")"
+	gcc -O0 -g -Wall -Wextra -fno-inline -fno-omit-frame-pointer "$@" \
+		-o "${output}" "${source}" \
+		2> "${compile_log}" \
+		|| fatal "gcc failed compiling ${source}:"$'\n'"$(< "${compile_log}")"
+}
+
+# compile_bpf_fixture <source> <output> [extra_cflags]
+compile_bpf_fixture() {
+	local source=$1
+	local output=$2
+	local extra_cflags=${3:-}
+	local compile_log="${output}.compile.log"
+
+	log_info "compiling BPF fixture: $(basename "${source}")"
+	BPF_EXTRA_CFLAGS="${extra_cflags}" "${ROOT_DIR}/build/clang.sh" \
+		-s "${source}" -o "${output}" -I "${ROOT_DIR}/bpf/include" \
+		> "${compile_log}" 2>&1 \
+		|| fatal "clang.sh failed compiling ${source}:"$'\n'"$(< "${compile_log}")"
+}
+
 # ------------------------- bpf tool test scaffolding -------------------------
 
 bpf_tool_setup() {

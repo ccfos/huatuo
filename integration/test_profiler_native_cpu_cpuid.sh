@@ -28,11 +28,9 @@ readonly PROFILER_BIN="${ROOT_DIR}/_output/bin/profiler"
 readonly PROFILER_BPF="${ROOT_DIR}/_output/bpf/native_cpu_profiler.o"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 
-command -v gcc > /dev/null || skip "gcc(1) not in PATH"
 command -v taskset > /dev/null || skip "taskset(1) not in PATH"
 [[ -x "${PROFILER_BIN}" ]] || fatal "profiler binary missing: ${PROFILER_BIN}"
 [[ -r "${PROFILER_BPF}" ]] || fatal "native bpf object missing: ${PROFILER_BPF}"
-[[ -r "${FIXTURE_SRC}" ]] || fatal "fixture source missing: ${FIXTURE_SRC}"
 [[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip "perf_event_paranoid not readable: perf unavailable"
 readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
 [[ "${PARANOID}" -le 2 ]] || skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
@@ -55,11 +53,7 @@ trap cleanup EXIT
 
 # --- build fixture -----------------------------------------------------------
 
-log_info "compiling fixture"
-gcc -O0 -g -fno-inline -fno-omit-frame-pointer \
-	-o "${FIXTURE_BIN}" "${FIXTURE_SRC}" \
-	2> "${FIXTURE_OUTDIR}/gcc.err" \
-	|| fatal "gcc failed:"$'\n'"$(< "${FIXTURE_OUTDIR}/gcc.err")"
+compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
 
 # --- helper ------------------------------------------------------------------
 
