@@ -104,6 +104,10 @@ var appFlags = []cli.Flag{
 		Name:  "log-bpf-debug",
 		Usage: "Log bpf_dbg events (native profiler only)",
 	},
+	&cli.BoolFlag{
+		Name:  "enable-pprof",
+		Usage: "Serve Go runtime profiles on port 6000",
+	},
 	&cli.StringFlag{
 		Name:  "tool-path",
 		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -43,6 +43,20 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 	defer pctx.Cancel()
 	if pctx.ToolstreamClient != nil {
 		defer pctx.ToolstreamClient.End()
+	}
+
+	if cliCtx.Bool("enable-pprof") {
+		server, err := startPprofServer(pctx.Ctx, profilerPprofAddress)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := server.Close(); err != nil {
+				log.Errorf("close pprof server on %s: %v", profilerPprofAddress, err)
+			}
+		}()
+
+		log.Infof("pprof server started on %s", profilerPprofAddress)
 	}
 
 	meta, err := registry.Get(lang, typ)
