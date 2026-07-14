@@ -47,10 +47,12 @@ $ curl -s localhost:19704/metrics
 
 #### 2.2 Docker Compose 启动
 
-通过 docker compose，可以快速地在本地搭建部署一套完整的环境。该命令拉取最新镜像，启动 [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com)，huatuo-bamai 等组件。命令执行成功后，打开浏览器访问 [http://localhost:3000](http://localhost:3000) 即可浏览监控大盘（grafana 默认管理员账户：admin 密码：admin； 系统正常状态不会触发 Events, AutoTracing）。
+通过 docker compose，可以快速地在本地搭建部署一套完整的环境。该命令拉取配置的镜像，启动 [Elasticsearch](https://www.elastic.co)、[Prometheus](https://prometheus.io)、[Pyroscope](https://grafana.com/oss/pyroscope/)、[Grafana](https://grafana.com) 和 huatuo-bamai 等组件。命令执行成功后，打开浏览器访问 [http://localhost:3000](http://localhost:3000) 即可浏览监控大盘（Grafana 默认管理员账户：admin，密码：admin；系统正常状态不会触发 Events、AutoTracing）。
+
+如需在不启动 `huatuo-apiserver` 的情况下展示 `cpuidle` 和 `cpusys` 火焰图，请参阅 [AutoTracing Pyroscope 火焰图](development/autotracing_pyroscope_zh.md)。
 
 ```bash
-$ docker compose --project-directory ./build/docker up
+$ COMPOSE_PROFILES=full docker compose --project-directory ./build/docker up
 ```
 
 ![HUATUO 组件之 huatuo-bamai 运行示意图](/docs/img/quickstart-components.png)

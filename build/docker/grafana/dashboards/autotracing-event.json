@@ -2717,6 +2717,11 @@
                   {
                     "title": "火焰图跳转",
                     "url": "/d/autotracing-flame-redirect/autotracing-flame-redirect?var-id=${__data.fields.点击跳转火焰图}"
+                  },
+                  {
+                    "targetBlank": true,
+                    "title": "Pyroscope 火焰图",
+                    "url": "/d/autotracing-pyroscope-flamegraph/autotracing-pyroscope-flamegraph?var-tracer_id=${__data.fields.点击跳转火焰图}&var-tracer_name=cpuidle&var-hostname=${__data.fields.hostname}&var-container_id=${__data.fields.container_id}&time=${__data.fields.uploaded_time}&time.window=120000"
                   }
                 ]
               },
@@ -2866,7 +2871,7 @@
               "_type": true,
               "container_host_ns": true,
               "container_hostname": false,
-              "container_id": true,
+              "container_id": false,
               "container_level": true,
               "container_type": true,
               "es_index_time": true,
@@ -2877,7 +2882,7 @@
               "time": true,
               "tracer_data.flamedata": true,
               "tracer_name": true,
-              "uploaded_time": true
+              "uploaded_time": false
             },
             "indexByName": {
               "_id": 2,
@@ -3266,6 +3271,11 @@
                         "targetBlank": true,
                         "title": "火焰图跳转",
                         "url": "/d/autotracing-flame-redirect/autotracing-flame-redirect?var-id=${__data.fields.点击跳转火焰图}"
+                      },
+                      {
+                        "targetBlank": true,
+                        "title": "Pyroscope 火焰图",
+                        "url": "/d/autotracing-pyroscope-flamegraph/autotracing-pyroscope-flamegraph?var-tracer_id=${__data.fields.点击跳转火焰图}&var-tracer_name=cpusys&var-hostname=${__data.fields.hostname}&var-container_id=${__data.fields.container_id}&time=${__data.fields.uploaded_time}&time.window=120000"
                       }
                     ]
                   },
@@ -3415,7 +3425,7 @@
                   "_type": true,
                   "container_host_ns": true,
                   "container_hostname": false,
-                  "container_id": true,
+                  "container_id": false,
                   "container_level": true,
                   "container_type": true,
                   "es_index_time": true,
@@ -3426,7 +3436,7 @@
                   "time": true,
                   "tracer_data.flamedata": true,
                   "tracer_name": true,
-                  "uploaded_time": true
+                  "uploaded_time": false
                 },
                 "indexByName": {
                   "_id": 2,

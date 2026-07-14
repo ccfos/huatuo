@@ -21,10 +21,12 @@ $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/
 
 ### Start containers with Docker Compose
 
-[Docker Compose](https://docs.docker.com/compose/) allows you to quickly set up a complete local environment where you manage the collector, Elasticsearch, Prometheus, Grafana, and other components yourself.
+[Docker Compose](https://docs.docker.com/compose/) allows you to quickly set up a complete local environment where you manage the collector, Elasticsearch, Prometheus, Pyroscope, Grafana, and other components yourself.
 
 ```bash
-$ docker compose --project-directory ./build/docker up
+$ COMPOSE_PROFILES=full docker compose --project-directory ./build/docker up
 ```
 
 For Docker Compose installation instructions, see https://docs.docker.com/compose/install/linux/.
+
+To display AutoTracing CPU flame graphs without running `huatuo-apiserver`, see [AutoTracing flame graphs with Pyroscope](../development/autotracing_pyroscope_en.md).

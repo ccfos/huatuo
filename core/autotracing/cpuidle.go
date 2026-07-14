@@ -34,6 +34,8 @@ import (
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
+
+	"github.com/rs/xid"
 )
 
 func init() {
@@ -271,14 +273,25 @@ func buildAndSaveCPUIdleContainer(container *containerCPUInfo, threshold *cpuIdl
 	}
 
 	log.Debugf("cpuidle flamedata %v", tracerData.FlameData)
+	tracerID := xid.New().String()
 	if err := tracing.Save(&tracing.WriteRequest{
 		TracerName:    "cpuidle",
+		TracerID:      tracerID,
 		ContainerID:   container.id,
 		TracerTime:    container.traceTime,
 		TracerData:    &tracerData,
 		TracerRunType: tracing.TracerRunTypeAutotracing,
 	}); err != nil {
 		log.Warnf("failed to save tracing data: %v", err)
+	}
+	if err := saveAutotracingCPUProfile(
+		tracerID,
+		"cpuidle",
+		container.id,
+		container.traceTime,
+		tracerData.FlameData,
+	); err != nil {
+		log.Warnf("failed to save cpuidle profile: %v", err)
 	}
 	return nil
 }

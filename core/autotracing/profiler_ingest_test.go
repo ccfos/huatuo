@@ -17,6 +17,9 @@ package autotracing
 import (
 	"testing"
 	"time"
+
+	"huatuo-bamai/internal/profiler"
+	profctx "huatuo-bamai/internal/profiler/context"
 )
 
 func TestParseProfilerEventTime(t *testing.T) {
@@ -73,7 +76,9 @@ func TestHandleProfilerEventNoStore(t *testing.T) {
 		TracerName:    "profiler",
 		TracerRunType: "autotracing",
 		TracerTime:    "2026-07-06 12:30:45.123 +0800",
-		TracerData:    map[string]any{"flamedata": map[string]any{"profile_type": "cpu"}},
+		TracerData: &profctx.TracerData{FlameData: &profiler.ProfileData{
+			ProfileType: profiler.ProfileTypeCpuSample,
+		}},
 	}
 
 	if err := handleProfilerEvent(nil, ev); err != nil {

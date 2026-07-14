@@ -23,7 +23,8 @@ RUN set -x; \
     make BUILD_MODE=${BUILD_MODE} &&\
     mkdir -p ${RUN_PATH} &&\
     cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/ &&\
-    sed -i -e 's/# Address.*/Address=""/g' \
+    sed -i -e '/\[Storage\.ES\]/,/\[Storage\.LocalFile\]/ s/^[[:space:]]*#*[[:space:]]*Address[[:space:]]*=.*/        Address = ""/' \
+    -e '/\[Storage\.Pyroscope\]/,/\[AutoTracing\]/ s/^[[:space:]]*Address[[:space:]]*=.*/        Address = ""/' \
     -e '$a\    KubeletReadOnlyPort=0' \
     -e '$a\    KubeletAuthorizedPort=0' ${RUN_PATH}/conf/huatuo-bamai.conf
 

@@ -72,6 +72,14 @@ type TracerData struct {
 	FlameData  *profiler.ProfileData `json:"flamedata"`
 }
 
+// ProfileData returns the pprof payload for profile-native storage mappers.
+func (d *TracerData) ProfileData() *profiler.ProfileData {
+	if d == nil {
+		return nil
+	}
+	return d.FlameData
+}
+
 func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, error) {
 	ctx, cancel := context.WithCancel(cliCtx.Context)
 

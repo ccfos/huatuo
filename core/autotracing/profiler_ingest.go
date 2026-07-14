@@ -17,18 +17,19 @@ package autotracing
 import (
 	"time"
 
+	profctx "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
 )
 
 // ProfilerEvent is the payload sent by the profiler subprocess over toolstream.
 type ProfilerEvent struct {
-	TracerID      string `json:"tracer_id,omitempty"`
-	ContainerID   string `json:"container_id,omitempty"`
-	TracerName    string `json:"tracer_name,omitempty"`
-	TracerRunType string `json:"tracer_type,omitempty"`
-	TracerTime    string `json:"tracer_time"`
-	TracerData    any    `json:"tracer_data,omitempty"`
+	TracerID      string              `json:"tracer_id,omitempty"`
+	ContainerID   string              `json:"container_id,omitempty"`
+	TracerName    string              `json:"tracer_name,omitempty"`
+	TracerRunType string              `json:"tracer_type,omitempty"`
+	TracerTime    string              `json:"tracer_time"`
+	TracerData    *profctx.TracerData `json:"tracer_data,omitempty"`
 }
 
 const profilerEventTimeLayout = "2006-01-02 15:04:05.000 -0700"

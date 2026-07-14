@@ -20,10 +20,12 @@ $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/
 
 ### 使用 Docker Compose 启动容器
 
-通过 [Docker Compose](https://docs.docker.com/compose/) 可在本地快速搭建一套完整环境，自行管理采集器、Elasticsearch、Prometheus、Grafana 等组件。
+通过 [Docker Compose](https://docs.docker.com/compose/) 可在本地快速搭建一套完整环境，自行管理采集器、Elasticsearch、Prometheus、Pyroscope、Grafana 等组件。
 
 ```bash
-$ docker compose --project-directory ./build/docker up
+$ COMPOSE_PROFILES=full docker compose --project-directory ./build/docker up
 ```
 
 > Docker Compose 安装方法请参阅 https://docs.docker.com/compose/install/linux/。
+
+如需在不启动 `huatuo-apiserver` 的情况下展示 AutoTracing CPU 火焰图，请参阅 [AutoTracing Pyroscope 火焰图](../development/autotracing_pyroscope_zh.md)。

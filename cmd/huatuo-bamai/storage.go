@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
+	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/storage"
@@ -38,11 +39,12 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 
 func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 	var esStore *storage.Store[*tracing.Document]
+	esEnabled := cfg.Storage.ES.Address != "" &&
+		cfg.Storage.ES.Username != "" &&
+		cfg.Storage.ES.Password != ""
 
 	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)
-	if cfg.Storage.ES.Address != "" &&
-		cfg.Storage.ES.Username != "" &&
-		cfg.Storage.ES.Password != "" {
+	if esEnabled {
 		store, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
 			ESAddresses: splitStorageAddresses(cfg.Storage.ES.Address),
@@ -82,9 +84,8 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
 	}
 
-	if cfg.Storage.ES.Address != "" &&
-		cfg.Storage.ES.Username != "" &&
-		cfg.Storage.ES.Password != "" {
+	profileStores := make([]*storage.Store[*tracing.Document], 0, 2)
+	if esEnabled {
 		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
 			ESAddresses: splitStorageAddresses(cfg.Storage.ES.Address),
@@ -95,10 +96,28 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		if err != nil {
 			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)
 		}
-		tracing.SetProfileStore(
-			[]*storage.Store[*tracing.Document]{profileStore},
-			tracing.DocumentOptions{Region: storageRegion},
-		)
+		profileStores = append(profileStores, profileStore)
+	}
+
+	displayBackend, err := cfg.AutoTracing.Display.ResolveBackend()
+	if err != nil {
+		return fmt.Errorf("resolve autotracing display backend: %w", err)
+	}
+	if displayBackend == autotracing.DisplayBackendPyroscope && cfg.Storage.Pyroscope.Address != "" {
+		pyroscopeStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
+			Driver:                  "pyroscope",
+			PyroscopeAddress:        cfg.Storage.Pyroscope.Address,
+			PyroscopeAppNamePrefix:  cfg.Storage.Pyroscope.AppNamePrefix,
+			PyroscopeTimeoutSeconds: cfg.Storage.Pyroscope.TimeoutSeconds,
+		}, profiler.MetadataCollection, tracing.ProfileDocumentStoreMapper{})
+		if err != nil {
+			return fmt.Errorf("new profiling document store (pyroscope): %w", err)
+		}
+		profileStores = append(profileStores, pyroscopeStore)
+	}
+
+	if len(profileStores) > 0 {
+		tracing.SetProfileStore(profileStores, tracing.DocumentOptions{Region: storageRegion})
 	}
 
 	return nil

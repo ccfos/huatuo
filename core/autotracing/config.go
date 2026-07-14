@@ -14,7 +14,46 @@
 
 package autotracing
 
-import "huatuo-bamai/internal/matcher"
+import (
+	"fmt"
+	"strings"
+
+	"huatuo-bamai/internal/matcher"
+)
+
+// DisplayBackend identifies the backend used to display AutoTracing data.
+type DisplayBackend string
+
+const (
+	DisplayBackendPyroscope DisplayBackend = "pyroscope"
+	DisplayBackendAPIServer DisplayBackend = "apiserver"
+)
+
+// DisplayConfig controls the presentation backend without changing collection.
+type DisplayConfig struct {
+	Backend string `default:"pyroscope"`
+}
+
+// ResolveBackend returns the normalized backend. An omitted backend selects
+// direct Grafana and Pyroscope display mode.
+func (c DisplayConfig) ResolveBackend() (DisplayBackend, error) {
+	backend := DisplayBackend(strings.ToLower(strings.TrimSpace(c.Backend)))
+	if backend == "" {
+		return DisplayBackendPyroscope, nil
+	}
+
+	switch backend {
+	case DisplayBackendPyroscope, DisplayBackendAPIServer:
+		return backend, nil
+	default:
+		return "", fmt.Errorf(
+			"invalid AutoTracing display backend %q (want %q or %q)",
+			c.Backend,
+			DisplayBackendPyroscope,
+			DisplayBackendAPIServer,
+		)
+	}
+}
 
 // ContainerFilterConfig is the serializable form of a container filter.
 // It is converted to a *matcher.ContainerMatcher at runtime.
@@ -44,6 +83,8 @@ type MemBurstConfig struct {
 
 // Config holds autotracing configuration.
 type Config struct {
+	Display DisplayConfig
+
 	CPUIdle struct {
 		UserThreshold         int64                  `default:"75"`
 		SysThreshold          int64                  `default:"45"`
