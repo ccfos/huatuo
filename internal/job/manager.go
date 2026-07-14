@@ -47,6 +47,7 @@ type Manager struct {
 	storage    Store
 	nodeAgent  NodeAgent
 	stopChan   chan struct{}
+	stopOnce   sync.Once
 	config     ManagerConfig
 }
 
@@ -70,7 +71,24 @@ func newManagerWithStore(storage Store, nodeAgent NodeAgent, config ManagerConfi
 
 // Shutdown stops the manager and all background jobs
 func (m *Manager) Shutdown() {
-	close(m.stopChan)
+	var doneChans []chan struct{}
+	m.jobs.Range(func(_, value any) bool {
+		job := value.(*Job)
+		job.runtime.mu.Lock()
+		if job.runtime.doneChan != nil {
+			doneChans = append(doneChans, job.runtime.doneChan)
+		}
+		job.runtime.mu.Unlock()
+		return true
+	})
+
+	m.stopOnce.Do(func() {
+		close(m.stopChan)
+	})
+
+	for _, doneChan := range doneChans {
+		<-doneChan
+	}
 }
 
 func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
@@ -110,7 +128,10 @@ func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
 		Timeout:    req.Args.TraceTimeout,
 		Args:       *req.Args,
 		LastUpdate: now,
-		stopChan:   make(chan struct{}),
+		runtime: &jobRuntime{
+			stopChan: make(chan struct{}),
+			doneChan: make(chan struct{}),
+		},
 	}
 
 	agentTaskID, err := m.nodeAgent.StartTask(job.Host, job.Container, req.Args)
@@ -119,13 +140,7 @@ func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
 	}
 	job.AgentTaskID = agentTaskID
 
-	log.Infof("start task %s on host %s, task info: %+v", job.JobID, job.Host, job)
-
-	go m.monitorJob(job)
-
 	m.updateJobStatus(job, JobStatusRunning, "")
-
-	m.jobs.Store(jobID, job)
 
 	currentCount := 0
 	if countVal, exists := m.jobsByHost.Load(req.Host); exists {
@@ -133,7 +148,11 @@ func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
 	}
 	m.jobsByHost.Store(req.Host, currentCount+1)
 
-	return job, nil
+	log.Infof("start task %s on host %s, agent task %s", job.JobID, job.Host, job.AgentTaskID)
+
+	go m.monitorJob(job)
+
+	return snapshotJob(job), nil
 }
 
 // Stop stops a job
@@ -145,13 +164,10 @@ func (m *Manager) Stop(jobID string, force bool) error {
 	}
 	job := jobVal.(*Job)
 
-	err := m.nodeAgent.StopTask(job.Host, job.AgentTaskID, false)
-	if err != nil {
+	if err := m.stopJob(job, force, JobStatusStopped, "Job stopped by user", true); err != nil {
 		return fmt.Errorf("stop task %s: %w", jobID, err)
 	}
 
-	close(job.stopChan)
-	m.updateJobStatus(job, JobStatusStopped, "Job stopped by user")
 	log.Infof("Job %s stopped by user", jobID)
 	return nil
 }
@@ -159,7 +175,7 @@ func (m *Manager) Stop(jobID string, force bool) error {
 func (m *Manager) Get(jobID string) (*Job, error) {
 	jobVal, exists := m.jobs.Load(jobID)
 	if exists {
-		return jobVal.(*Job), nil
+		return snapshotJob(jobVal.(*Job)), nil
 	}
 
 	return m.storage.Get(jobID)
@@ -173,7 +189,7 @@ func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, e
 	var jobs []*Job
 
 	m.jobs.Range(func(_, value any) bool {
-		job := value.(*Job)
+		job := snapshotJob(value.(*Job))
 
 		if !isAdmin && job.UserID != userID {
 			return true
@@ -215,7 +231,7 @@ func (m *Manager) StopAll() {
 	var jobIDs []string
 
 	m.jobs.Range(func(_, value any) bool {
-		job := value.(*Job)
+		job := snapshotJob(value.(*Job))
 		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
 			jobIDs = append(jobIDs, job.JobID)
 		}
@@ -230,15 +246,72 @@ func (m *Manager) StopAll() {
 	log.Infof("admin stopped all jobs(count: %d)", len(jobIDs))
 }
 
-func (m *Manager) updateJobStatus(job *Job, status JobStatus, errMesg string) {
+func isTerminalJobStatus(status JobStatus) bool {
+	return status == JobStatusCompleted || status == JobStatusStopped ||
+		status == JobStatusFailed || status == JobStatusTimeout
+}
+
+func snapshotJob(job *Job) *Job {
+	if job.runtime == nil {
+		return snapshotJobLocked(job)
+	}
+
+	job.runtime.mu.Lock()
+	defer job.runtime.mu.Unlock()
+
+	return snapshotJobLocked(job)
+}
+
+func snapshotJobLocked(job *Job) *Job {
+	args := job.Args
+	args.TracerArgs = append([]string(nil), job.Args.TracerArgs...)
+
+	privateData := make(map[string]any, len(job.PrivateData))
+	for key, value := range job.PrivateData {
+		privateData[key] = value
+	}
+
+	return &Job{
+		Type:        job.Type,
+		JobID:       job.JobID,
+		UserName:    job.UserName,
+		UserID:      job.UserID,
+		Container:   job.Container,
+		Host:        job.Host,
+		AgentTaskID: job.AgentTaskID,
+		Status:      job.Status,
+		Error:       job.Error,
+		Duration:    job.Duration,
+		Timeout:     job.Timeout,
+		StartTime:   job.StartTime,
+		EndTime:     job.EndTime,
+		Args:        args,
+		Results:     job.Results,
+		LastUpdate:  job.LastUpdate,
+		PrivateData: privateData,
+	}
+}
+
+func (m *Manager) updateJobStatus(job *Job, status JobStatus, errMesg string) bool {
+	job.runtime.mu.Lock()
+	defer job.runtime.mu.Unlock()
+
+	return m.updateJobStatusLocked(job, status, errMesg)
+}
+
+func (m *Manager) updateJobStatusLocked(job *Job, status JobStatus, errMesg string) bool {
+	if isTerminalJobStatus(job.Status) {
+		return false
+	}
+
 	job.Status = status
 	job.LastUpdate = time.Now()
 
-	if status == JobStatusCompleted || status == JobStatusStopped || status == JobStatusFailed || status == JobStatusTimeout {
+	if isTerminalJobStatus(status) {
 		job.EndTime = time.Now()
 		job.Error = errMesg
 
-		if err := m.storage.Save(job); err != nil {
+		if err := m.storage.Save(snapshotJobLocked(job)); err != nil {
 			log.Errorf("Failed to save job %s: %v", job.JobID, err)
 		}
 
@@ -255,10 +328,57 @@ func (m *Manager) updateJobStatus(job *Job, status JobStatus, errMesg string) {
 	} else {
 		m.jobs.Store(job.JobID, job)
 	}
+
+	return true
+}
+
+func (m *Manager) stopJob(
+	job *Job,
+	force bool,
+	status JobStatus,
+	errMesg string,
+	waitForMonitor bool,
+) error {
+	job.runtime.mu.Lock()
+	if isTerminalJobStatus(job.Status) {
+		doneChan := job.runtime.doneChan
+		job.runtime.mu.Unlock()
+		if waitForMonitor && doneChan != nil {
+			<-doneChan
+		}
+		return nil
+	}
+
+	if err := m.nodeAgent.StopTask(job.Host, job.AgentTaskID, force); err != nil {
+		job.runtime.mu.Unlock()
+		return err
+	}
+
+	job.runtime.stopOnce.Do(func() {
+		if job.runtime.stopChan != nil {
+			close(job.runtime.stopChan)
+		}
+	})
+	m.updateJobStatusLocked(job, status, errMesg)
+	doneChan := job.runtime.doneChan
+	job.runtime.mu.Unlock()
+
+	if waitForMonitor && doneChan != nil {
+		<-doneChan
+	}
+
+	return nil
 }
 
 // checkAndUpdateJobStatus polls the agent for the task's current status and transitions the local job accordingly.
 func (m *Manager) checkAndUpdateJobStatus(job *Job) (string, error) {
+	job.runtime.mu.Lock()
+	defer job.runtime.mu.Unlock()
+
+	if isTerminalJobStatus(job.Status) {
+		return string(job.Status), nil
+	}
+
 	agentStatus, results, err := m.nodeAgent.GetTaskStatus(job.Host, job.AgentTaskID)
 	if err != nil {
 		return agentStatus, err
@@ -266,16 +386,22 @@ func (m *Manager) checkAndUpdateJobStatus(job *Job) (string, error) {
 
 	switch agentStatus {
 	case AgentStatusCompleted:
-		job.Results = *results
-		m.updateJobStatus(job, JobStatusCompleted, "")
+		if results != nil {
+			job.Results = *results
+		}
+		m.updateJobStatusLocked(job, JobStatusCompleted, "")
 		return agentStatus, nil
 	case AgentStatusFailed:
-		job.Results = *results
-		m.updateJobStatus(job, JobStatusFailed, "Job failed: "+results.Error)
-		log.Errorf("Job %s failed: %v", job.JobID, results.Error)
+		resultErr := ""
+		if results != nil {
+			job.Results = *results
+			resultErr = results.Error
+		}
+		m.updateJobStatusLocked(job, JobStatusFailed, "Job failed: "+resultErr)
+		log.Errorf("Job %s failed: %v", job.JobID, resultErr)
 		return agentStatus, nil
 	case AgentStatusNotExist:
-		m.updateJobStatus(job, JobStatusFailed, "Job doesn't exist on agent")
+		m.updateJobStatusLocked(job, JobStatusFailed, "Job doesn't exist on agent")
 		return agentStatus, nil
 	case AgentStatusRunning, AgentStatusPending:
 		return agentStatus, nil
@@ -289,19 +415,15 @@ func (m *Manager) monitorJob(job *Job) {
 	var status string
 
 	ticker := time.NewTicker(1 * time.Second)
+	defer close(job.runtime.doneChan)
 	defer ticker.Stop()
 	defer func() {
-		// if job is still running when monitorJob exits, it means some error happened,
-		// try to stop job and set job status to failed
-		if job.Status == JobStatusRunning {
-			if stopErr := m.Stop(job.JobID, true); stopErr != nil {
-				log.Errorf("Failed to stop job %s in defer: %v", job.JobID, stopErr)
-			}
-			errMsg := "job interrupted"
-			if err != nil {
-				errMsg = err.Error()
-			}
-			m.updateJobStatus(job, JobStatusFailed, errMsg)
+		errMsg := "job interrupted"
+		if err != nil {
+			errMsg = err.Error()
+		}
+		if stopErr := m.stopJob(job, true, JobStatusFailed, errMsg, false); stopErr != nil {
+			log.Errorf("Failed to stop job %s in defer: %v", job.JobID, stopErr)
 		}
 	}()
 
@@ -317,7 +439,7 @@ func (m *Manager) monitorJob(job *Job) {
 
 	for {
 		select {
-		case <-job.stopChan:
+		case <-job.runtime.stopChan:
 			return
 		case <-m.stopChan:
 			return
@@ -334,10 +456,16 @@ func (m *Manager) monitorJob(job *Job) {
 					return
 				}
 
-				if err := m.Stop(job.JobID, true); err != nil {
-					log.Errorf("Failed to stop agent job %s: %v", job.JobID, err)
+				if stopErr := m.stopJob(
+					job,
+					true,
+					JobStatusTimeout,
+					"Job has timed out",
+					false,
+				); stopErr != nil {
+					err = stopErr
+					log.Errorf("Failed to stop agent job %s: %v", job.JobID, stopErr)
 				}
-				m.updateJobStatus(job, JobStatusTimeout, "Job has timed out")
 				return
 			}
 
@@ -351,12 +479,16 @@ func (m *Manager) monitorJob(job *Job) {
 					return
 				}
 
-				if err := m.Stop(job.JobID, false); err != nil {
-					log.Errorf("Failed to stop agent job %s: %v", job.JobID, err)
-				}
-				if status, err = m.checkAndUpdateJobStatus(job); err != nil {
-					log.Warnf("Failed to get job status after stop: %v", err)
-				} else if status != AgentStatusRunning {
+				if stopErr := m.stopJob(
+					job,
+					false,
+					JobStatusStopped,
+					"Job duration completed",
+					false,
+				); stopErr != nil {
+					err = stopErr
+					log.Errorf("Failed to stop agent job %s: %v", job.JobID, stopErr)
+				} else {
 					log.Infof("Job %s stopped by duration", job.JobID)
 				}
 
@@ -383,7 +515,7 @@ func (m *Manager) monitorJob(job *Job) {
 // Delete removes the persisted job record; returns ErrCannotDeleteRunning if the job is still active.
 func (m *Manager) Delete(jobID string) error {
 	if jobVal, exists := m.jobs.Load(jobID); exists {
-		job := jobVal.(*Job)
+		job := snapshotJob(jobVal.(*Job))
 		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
 			return ErrCannotDeleteRunning
 		}
