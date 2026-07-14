@@ -16,8 +16,10 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"syscall"
 	"time"
@@ -50,6 +52,7 @@ type NetTracingData struct {
 	NetNamespaceInode  uint32  `json:"net_namespace_inode"`
 	NetNamespaceCookie uint64  `json:"net_namespace_cookie"`
 	TCPState           string  `json:"tcp_state"`
+	AddressFamily      string  `json:"address_family"`
 	TCPSaddr           string  `json:"tcp_saddr"`
 	TCPDaddr           string  `json:"tcp_daddr"`
 	TCPSport           uint16  `json:"tcp_sport"`
@@ -59,7 +62,8 @@ type NetTracingData struct {
 	PktLen             uint64  `json:"pkt_len"`
 }
 
-// from bpf perf
+// from bpf perf. Layout mirrors bpf/net_rx_latency.c perf_event_t byte-for-byte;
+// TX aliases this same struct (see net_tx_latency.go).
 type netRcvPerfEvent struct {
 	Comm               [bpf.TaskCommLen]byte
 	Latency            uint64
@@ -67,8 +71,10 @@ type netRcvPerfEvent struct {
 	PktLen             uint64
 	TCPSport           uint16
 	TCPDport           uint16
-	TCPSaddr           uint32
-	TCPDaddr           uint32
+	AddrFamily         uint8
+	_                  [3]byte
+	TCPSaddr           [16]byte
+	TCPDaddr           [16]byte
 	TCPSeq             uint32
 	TCPAckSeq          uint32
 	TCPState           uint8
@@ -77,6 +83,30 @@ type netRcvPerfEvent struct {
 	NetdevName         [bpf.NetdevNameLen]byte
 	NetNamespaceInode  uint32
 	NetNamespaceCookie uint64
+}
+
+// Address families carried in AddrFamily; mirror bpf/include/vmlinux_net.h.
+const (
+	afINET  uint8 = 2  // AF_INET
+	afINET6 uint8 = 10 // AF_INET6
+)
+
+const (
+	addrFamilyV4 = "ipv4"
+	addrFamilyV6 = "ipv6"
+)
+
+// addrs formats the 16-byte src/dst according to AddrFamily. IPv4 occupies the
+// low 4 bytes (network order); IPv6 uses all 16. Shared by RX and TX.
+func (e *netRcvPerfEvent) addrs() (family, saddr, daddr string) {
+	if e.AddrFamily == afINET6 {
+		return addrFamilyV6,
+			netutil.Inetv6Ntop(e.TCPSaddr).String(),
+			netutil.Inetv6Ntop(e.TCPDaddr).String()
+	}
+	return addrFamilyV4,
+		net.IPv4(e.TCPSaddr[0], e.TCPSaddr[1], e.TCPSaddr[2], e.TCPSaddr[3]).String(),
+		net.IPv4(e.TCPDaddr[0], e.TCPDaddr[1], e.TCPDaddr[2], e.TCPDaddr[3]).String()
 }
 
 var latStageNames = []string{
@@ -141,9 +171,28 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := b.AttachAndEventPipe(childCtx, "net_recv_lat_event_map", 8192)
+	reader, err := b.EventPipeByName(childCtx, "net_recv_lat_event_map", 8192)
 	if err != nil {
 		return err
+	}
+
+	// Attach explicitly (instead of AttachAndEventPipe) so the IPv6 TCP-layer
+	// probe can be omitted on kernels without CONFIG_IPV6: Attach() is
+	// all-or-nothing, so a missing tcp_v6_rcv must stay out of the list. The
+	// netif_receive_skb and skb_copy_datagram_iovec tracepoints are
+	// protocol-agnostic, so IPv6 RX latency is still collected (2 of 3 stages)
+	// even when tcp_v6_rcv is absent.
+	attachOpts := []bpf.AttachOption{
+		{ProgramName: "netif_receive_skb_prog", Symbol: "net/netif_receive_skb"},
+		{ProgramName: "tcp_v4_rcv_prog", Symbol: "tcp_v4_rcv"},
+		{ProgramName: "skb_copy_datagram_iovec_prog", Symbol: "skb/skb_copy_datagram_iovec"},
+	}
+	if bpf.HasKprobeFunction("tcp_v6_rcv") {
+		attachOpts = append(attachOpts,
+			bpf.AttachOption{ProgramName: "tcp_v6_rcv_prog", Symbol: "tcp_v6_rcv"})
+	}
+	if err := b.AttachWithOptions(attachOpts); err != nil {
+		return errors.Join(err, reader.Close())
 	}
 	defer reader.Close()
 
@@ -174,7 +223,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			lat := float64(pd.Latency) / 1000 / 1000 // ms
 			latThreshold := latThresholds[pd.LatStage]
 			state := packet.TCPStateName(pd.TCPState)
-			saddr, daddr := netutil.Inetv4Ntop(pd.TCPSaddr).String(), netutil.Inetv4Ntop(pd.TCPDaddr).String()
+			addrFamily, saddr, daddr := pd.addrs()
 			sport, dport := netutil.Ntohs(pd.TCPSport), netutil.Ntohs(pd.TCPDport)
 			seq, ackSeq := netutil.Ntohl(pd.TCPSeq), netutil.Ntohl(pd.TCPAckSeq)
 			pktLen := pd.PktLen
@@ -202,6 +251,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				NetNamespaceInode:  pd.NetNamespaceInode,
 				NetNamespaceCookie: pd.NetNamespaceCookie,
 				TCPState:           state,
+				AddressFamily:      addrFamily,
 				TCPSaddr:           saddr,
 				TCPDaddr:           daddr,
 				TCPSport:           sport,

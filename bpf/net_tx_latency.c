@@ -29,8 +29,10 @@ enum tx_lat_stage {
 	TX_STAGE_NIC,
 };
 
-// Mirrors net_rx_latency's perf_event_t layout so the userspace decoder and
-// Grafana panels stay consistent. lat_stage is reused to carry tx_stage.
+// Mirrors net_rx_latency's perf_event_t layout byte-for-byte so the userspace
+// decoder and Grafana panels stay consistent. lat_stage is reused to carry
+// tx_stage. TX is IPv4-only, so addr_family is always AF_INET and only the
+// low 4 bytes of the 16-byte address fields are populated.
 struct perf_event_t {
 	char comm[COMPAT_TASK_COMM_LEN];
 	u64 latency;
@@ -38,8 +40,10 @@ struct perf_event_t {
 	u64 pkt_len;
 	u16 tcp_sport;
 	u16 tcp_dport;
-	u32 tcp_saddr;
-	u32 tcp_daddr;
+	u8 addr_family;
+	u8 _pad1[3];
+	u8 tcp_saddr[16];
+	u8 tcp_daddr[16];
 	u32 tcp_seq;
 	u32 tcp_ack_seq;
 	u8 tcp_state;
@@ -113,9 +117,10 @@ submit_txlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 stage,
 
 	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
 	bpf_probe_read(&tcp_hdr, sizeof(tcp_hdr), skb_transport_header(skb));
+	event.addr_family = AF_INET;
 	event.latency = lat;
-	event.tcp_saddr = ip_hdr.saddr;
-	event.tcp_daddr = ip_hdr.daddr;
+	__builtin_memcpy(event.tcp_saddr, &ip_hdr.saddr, sizeof(ip_hdr.saddr));
+	__builtin_memcpy(event.tcp_daddr, &ip_hdr.daddr, sizeof(ip_hdr.daddr));
 	event.tcp_sport = tcp_hdr.source;
 	event.tcp_dport = tcp_hdr.dest;
 	event.tcp_seq = tcp_hdr.seq;

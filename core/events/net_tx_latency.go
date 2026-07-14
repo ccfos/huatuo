@@ -118,7 +118,7 @@ func (c *netTxLatTracing) Start(ctx context.Context) error {
 			lat := float64(pd.Latency) / 1000 / 1000 // ms
 			latThreshold := latThresholds[pd.LatStage]
 			state := packet.TCPStateName(pd.TCPState)
-			saddr, daddr := netutil.Inetv4Ntop(pd.TCPSaddr).String(), netutil.Inetv4Ntop(pd.TCPDaddr).String()
+			addrFamily, saddr, daddr := pd.addrs()
 			sport, dport := netutil.Ntohs(pd.TCPSport), netutil.Ntohs(pd.TCPDport)
 			seq, ackSeq := netutil.Ntohl(pd.TCPSeq), netutil.Ntohl(pd.TCPAckSeq)
 			pktLen := pd.PktLen
@@ -145,6 +145,7 @@ func (c *netTxLatTracing) Start(ctx context.Context) error {
 				NetNamespaceInode:  pd.NetNamespaceInode,
 				NetNamespaceCookie: pd.NetNamespaceCookie,
 				TCPState:           state,
+				AddressFamily:      addrFamily,
 				TCPSaddr:           saddr,
 				TCPDaddr:           daddr,
 				TCPSport:           sport,
