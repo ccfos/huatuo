@@ -29,19 +29,19 @@ import (
 func TestPacketMetaParse(t *testing.T) {
 	buf := make([]byte, 96)
 
-	le := binary.LittleEndian
-	le.PutUint64(buf[0:], 1111)        // ktime_ns
-	le.PutUint64(buf[8:], 2222)        // tgid_pid
-	le.PutUint64(buf[16:], 3333)       // net_cookie
-	le.PutUint64(buf[24:], 4444)       // kfree_skb_addr
-	le.PutUint64(buf[32:], 5555)       // memcg_css_addr
-	le.PutUint32(buf[40:], 7)          // ifindex
-	le.PutUint32(buf[44:], 0x1003)     // dev_flags
-	le.PutUint32(buf[48:], 2)          // queue_mapping
-	le.PutUint32(buf[52:], 6)          // drop_reason
-	le.PutUint32(buf[56:], 4026531840) // net_inum
-	copy(buf[60:], "eth0")             // dev_name[16]
-	copy(buf[76:], "nginx-worker")     // comm[16]
+	native := binary.NativeEndian
+	native.PutUint64(buf[0:], 1111)        // ktime_ns
+	native.PutUint64(buf[8:], 2222)        // tgid_pid
+	native.PutUint64(buf[16:], 3333)       // net_cookie
+	native.PutUint64(buf[24:], 4444)       // kfree_skb_addr
+	native.PutUint64(buf[32:], 5555)       // memcg_css_addr
+	native.PutUint32(buf[40:], 7)          // ifindex
+	native.PutUint32(buf[44:], 0x1003)     // dev_flags
+	native.PutUint32(buf[48:], 2)          // queue_mapping
+	native.PutUint32(buf[52:], 6)          // drop_reason
+	native.PutUint32(buf[56:], 4026531840) // net_inum
+	copy(buf[60:], "eth0")                 // dev_name[16]
+	copy(buf[76:], "nginx-worker")         // comm[16]
 	// buf[92:96] is the C tail padding, zero.
 
 	var meta packetMeta
