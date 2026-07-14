@@ -87,7 +87,6 @@ func doRequest(req *http.Request) (*ServerResponse, error) {
 	if err != nil {
 		return serverResp, err
 	}
-	defer resp.Body.Close()
 
 	serverResp.StatusCode = resp.StatusCode
 	serverResp.Body = resp.Body
