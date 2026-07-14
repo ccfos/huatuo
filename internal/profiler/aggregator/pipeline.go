@@ -100,13 +100,16 @@ func (p *Pipeline) runAggregateSnapshot() {
 		<-p.stopCh
 		// Wait for queued records to drain before the final snapshot.
 		<-p.doneCh
-		if err := p.aggregateAndSnapshot(p.pctx.Ctx, true); err != nil {
+		snapshotCtx := p.pctx.Ctx
+		if snapshotCtx != nil {
+			snapshotCtx = context.WithoutCancel(snapshotCtx)
+		}
+		if err := p.aggregateAndSnapshot(snapshotCtx, true); err != nil {
 			p.logAggregateExportError(err)
 		}
 
 		return
 	}
-
 	ticker := time.NewTicker(p.aggrInterval)
 	defer ticker.Stop()
 

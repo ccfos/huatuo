@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
@@ -37,6 +38,7 @@ func init() {
 
 type javaMemoryProfiler struct {
 	profileOutFile map[int]string
+	samplingOpt    *javaruntime.AsprofSamplingOption
 }
 
 func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
@@ -44,7 +46,7 @@ func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggr
 }
 
 func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	pids, err := javaruntime.ResolveJavaPids(pctx.PID, pctx.ToolLimit, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID)
+	pids, err := resolveJavaPIDs(pctx)
 	if err != nil {
 		return err
 	}
@@ -80,30 +82,34 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		"-e", event,
 		"--alloc", "512k",
 		"-j", "256",
-		"--loop", "9",
-		"-o", "collapsed",
 	}
 	baseArgs = append(baseArgs, extraArgs...)
 
-	p.profileOutFile, err = javaruntime.StartAsprofSampling(pctx.Ctx, &javaruntime.AsprofSamplingOption{
+	opt := &javaruntime.AsprofSamplingOption{
 		Pids:          pids,
 		ToolPath:      pctx.ToolPath,
 		BaseArgs:      baseArgs,
 		OutFilePrefix: "mem",
-	})
-	return err
+		AggrInterval:  javaAggregationInterval(pctx),
+		Duration:      time.Duration(pctx.Duration) * time.Second,
+	}
+	profileOutFile, err := javaruntime.StartAsprofSampling(pctx.Ctx, opt)
+	if err != nil {
+		return err
+	}
+
+	p.profileOutFile = profileOutFile
+	p.samplingOpt = opt
+	return nil
 }
 
 func (p *javaMemoryProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	return javaruntime.StopJavaProfiler(pctx.Ctx, &javaruntime.AsprofSamplingOption{
-		PID:         pctx.PID,
-		ExecPath:    pctx.ExecPath,
-		ServerAddr:  pctx.ServerAddress,
-		ContainerID: pctx.ContainerID,
-		ToolPath:    pctx.ToolPath,
-	})
+	return javaruntime.StopJavaProfiler(pctx.Ctx, p.samplingOpt)
 }
 
 func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	return javaruntime.ReadCollapsedFilesLoop(ctx, p.profileOutFile, enqueue)
+	if p.samplingOpt == nil {
+		return fmt.Errorf("read Java memory profile: profiler is not started")
+	}
+	return javaruntime.ReadAsprofDataLoop(ctx, p.samplingOpt, p.profileOutFile, enqueue)
 }

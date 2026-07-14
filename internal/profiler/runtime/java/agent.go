@@ -16,12 +16,13 @@ package java
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"huatuo-bamai/internal/log"
@@ -29,9 +30,15 @@ import (
 	executil "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/fileutil"
 	"huatuo-bamai/internal/profiler/procutil"
+	"huatuo-bamai/pkg/tracing"
 )
 
-func ResolveJavaPids(pid, toolLimit int, execPath, serverAddr, containerID string) ([]int, error) {
+const (
+	asprofCommandTimeout     = 5 * time.Second
+	asprofOutputFileHeadroom = 2
+)
+
+func ResolveJavaPids(pid int, execPath, serverAddr, containerID string) ([]int, error) {
 	if pid != 0 {
 		if execPath != "" {
 			if err := procutil.CheckExecPath(pid, execPath); err != nil {
@@ -42,11 +49,6 @@ func ResolveJavaPids(pid, toolLimit int, execPath, serverAddr, containerID strin
 	}
 
 	pids, err := procutil.GetPidsFromContainer(serverAddr, execPath, "java", containerID)
-	if toolLimit > 0 {
-		if len(pids) > toolLimit {
-			return nil, fmt.Errorf("sampling failed: too many target Java processes (limit: %d, found: %d)", toolLimit, len(pids))
-		}
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -64,80 +66,39 @@ func HostViewPath(pid int, pathInTarget string) string {
 	return pathInTarget
 }
 
-// ReadCollapsedFilesLoop polls collapsed output files until ctx is canceled.
-// Transient per-iteration I/O errors (seek/read/truncate) are expected — the
-// profiler may not have written yet — so they are logged as warnings and
-// retried on the next tick rather than terminating the loop. Only an initial
-// failure to open every file is treated as a fatal error.
-func ReadCollapsedFilesLoop(ctx context.Context, pidToPath map[int]string, enqueue func(any)) error {
-	files := make(map[int]*os.File) // pid -> file
-
-	for pid, path := range pidToPath {
-		f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-		if err != nil {
-			log.Warnf("open file %s for pid %d error: %v", path, pid, err)
-			continue
-		}
-		files[pid] = f
+// ReadAsprofDataLoop consumes complete files produced by async-profiler's loop.
+func ReadAsprofDataLoop(
+	ctx context.Context,
+	opt *AsprofSamplingOption,
+	pidToPath map[int]string,
+	enqueue func(any),
+) error {
+	collector := newCollapsedFileCollector(
+		opt.Pids,
+		pidToPath,
+		func(output profiler.SampleOutput) { enqueue(output) },
+	)
+	if err := collector.run(ctx); err != nil {
+		return err
 	}
-
-	if len(files) == 0 {
-		return fmt.Errorf("no collapsed files opened for any pid")
-	}
-
-	defer func() {
-		for pid, f := range files {
-			if err := f.Close(); err != nil {
-				log.Warnf("close file for pid %d: %v", pid, err)
-			}
-		}
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-
-		for pid, f := range files {
-			if _, err := f.Seek(0, 0); err != nil {
-				log.Warnf("seek file for pid %d error: %v", pid, err)
-				continue
-			}
-
-			data, err := io.ReadAll(f)
-			if err != nil {
-				log.Warnf("read file for pid %d error: %v", pid, err)
-				continue
-			}
-
-			if len(data) > 0 {
-				enqueue(profiler.SampleOutput{
-					PID:    pid,
-					Output: string(data),
-				})
-
-				if err := f.Truncate(0); err != nil {
-					log.Warnf("truncate file for pid %d error: %v", pid, err)
-					continue
-				}
-			}
-		}
-
-		time.Sleep(100 * time.Millisecond)
-	}
+	return finishAsprofSampling(ctx, opt, collector)
 }
 
 type AsprofSamplingOption struct {
-	PID           int
-	ExecPath      string
-	ServerAddr    string
-	ContainerID   string
-	ToolPath      string
-	Pids          []int
-	BaseArgs      []string
-	OutFilePrefix string
+	PID             int
+	ExecPath        string
+	ServerAddr      string
+	ContainerID     string
+	ToolPath        string
+	Pids            []int
+	BaseArgs        []string
+	OutFilePrefix   string
+	AggrInterval    time.Duration
+	Duration        time.Duration
+	SessionID       string
+	StartedAt       time.Time
+	activePIDs      map[int]bool
+	outputFileCount uint64
 }
 
 func asprofPath(toolPath string) string {
@@ -149,61 +110,194 @@ func agentLibraryPath(toolPath string) string {
 }
 
 func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[int]string, error) {
-	profileOutFile := make(map[int]string)
-
-	asprofBin := asprofPath(opt.ToolPath)
-	cmdResults := executil.ExecCmds(ctx, opt.Pids, asprofBin, asprofCallback(profileOutFile, opt.BaseArgs, opt.OutFilePrefix))
-
-	if err := executil.VerifyResults(cmdResults); err != nil {
-		return nil, err
+	if opt.AggrInterval <= 0 {
+		return nil, fmt.Errorf("start async-profiler: aggregation interval must be positive")
+	}
+	if opt.Duration <= 0 {
+		return nil, fmt.Errorf("start async-profiler: duration must be positive")
 	}
 
+	sessionID, err := tracing.AllocTaskID()
+	if err != nil {
+		return nil, fmt.Errorf("start async-profiler: allocate session ID: %w", err)
+	}
+	opt.SessionID = sessionID
+	opt.activePIDs = make(map[int]bool, len(opt.Pids))
+	opt.outputFileCount = asprofOutputFileCount(opt.Duration, opt.AggrInterval)
+
+	profileOutFile := make(map[int]string)
+	argsByPID := make(map[int][]string, len(opt.Pids))
+	argsFn := startAsprofCallback(
+		profileOutFile,
+		opt.BaseArgs,
+		opt.OutFilePrefix,
+		opt.SessionID,
+		opt.AggrInterval,
+		opt.outputFileCount,
+	)
+	for _, pid := range opt.Pids {
+		argsByPID[pid] = argsFn(pid)
+	}
+
+	asprofBin := asprofPath(opt.ToolPath)
+	startCtx, cancel := context.WithTimeout(ctx, asprofCommandTimeout)
+	cmdResults := executil.ExecCmds(startCtx, opt.Pids, asprofBin, func(pid int) []string {
+		return argsByPID[pid]
+	})
+	startCtxErr := startCtx.Err()
+	cancel()
+
+	for _, result := range cmdResults {
+		if result.Success {
+			opt.activePIDs[result.Pid] = true
+		}
+	}
+
+	verifyErr := executil.VerifyResults(cmdResults)
+	if startCtxErr != nil || verifyErr != nil {
+		cleanupErr := stopActiveAsprofProcesses(ctx, opt)
+		return nil, errors.Join(
+			fmt.Errorf("start async-profiler: %w", firstError(startCtxErr, verifyErr)),
+			cleanupErr,
+		)
+	}
+
+	opt.StartedAt = time.Now()
 	return profileOutFile, nil
 }
 
-func asprofCallback(profileOutFile map[int]string, baseArgs []string, outFilePrefix string) func(int) []string {
-	return func(pid int) []string {
-		args := append([]string{}, baseArgs...)
-		outFile := fmt.Sprintf("/tmp/asprof-%s-%d.collapsed", outFilePrefix, pid)
-		args = append(args, "-f", outFile, strconv.Itoa(pid))
+func firstError(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-		profileOutFile[pid] = HostViewPath(pid, outFile)
+func startAsprofCallback(
+	profileOutFile map[int]string,
+	baseArgs []string,
+	outFilePrefix string,
+	sessionID string,
+	aggrInterval time.Duration,
+	outputFileCount uint64,
+) func(int) []string {
+	return func(pid int) []string {
+		args := make([]string, len(baseArgs)+1, len(baseArgs)+8)
+		args[0] = "start"
+		copy(args[1:], baseArgs)
+		outFile := loopOutputPath(sessionID, outFilePrefix, pid, outputFileCount)
+		args = append(
+			args,
+			"--loop", formatAsprofDuration(aggrInterval),
+			"-o", "collapsed",
+			"-f", outFile,
+			strconv.Itoa(pid),
+		)
+
+		sequencePattern := fmt.Sprintf("%%n{%d}", outputFileCount)
+		profileOutFile[pid] = HostViewPath(pid, strings.Replace(outFile, sequencePattern, "*", 1))
 
 		return args
 	}
 }
 
-func StopJavaProfiler(ctx context.Context, opt *AsprofSamplingOption) error {
-	pids, err := ResolveJavaPids(opt.PID, 0, opt.ExecPath, opt.ServerAddr, opt.ContainerID)
-	if err != nil {
-		return err
-	}
-
-	stopRes := stopAsprofProcesses(ctx, pids, opt.ToolPath)
-
-	return executil.VerifyResults(stopRes)
+func formatAsprofDuration(interval time.Duration) string {
+	return strconv.FormatInt(int64(interval/time.Second), 10) + "s"
 }
 
-func stopAsprofProcesses(ctx context.Context, pids []int, toolPath string) []executil.CmdResult {
-	defer func() {
-		pid := pids[0]
-		if err := CleanupJavaAgent(pid); err != nil {
-			log.Warnf("Cleanup failed for PID %d: %v", pid, err)
-		}
-	}()
+func asprofOutputFileCount(duration, aggregationInterval time.Duration) uint64 {
+	windowCount := duration / aggregationInterval
+	if duration%aggregationInterval != 0 {
+		windowCount++
+	}
+	return uint64(windowCount) + asprofOutputFileHeadroom
+}
 
-	asprofBin := asprofPath(toolPath)
+func loopOutputPath(sessionID, outFilePrefix string, pid int, outputFileCount uint64) string {
+	return fmt.Sprintf(
+		"/tmp/huatuo-asprof-%s-%s-%d-%%n{%d}.collapsed",
+		sessionID,
+		outFilePrefix,
+		pid,
+		outputFileCount,
+	)
+}
 
-	stopCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+func finalOutputPath(sessionID, outFilePrefix string, pid int, sequence uint64) string {
+	return fmt.Sprintf(
+		"/tmp/huatuo-asprof-%s-%s-%d-%d.collapsed",
+		sessionID,
+		outFilePrefix,
+		pid,
+		sequence,
+	)
+}
+
+func stopWithOutputArgs(pid int, sessionID, outFilePrefix string, sequence uint64) []string {
+	return []string{
+		"stop",
+		"--libpath", "/tmp/libasyncProfiler.so",
+		"-o", "collapsed",
+		"-f", finalOutputPath(sessionID, outFilePrefix, pid, sequence),
+		strconv.Itoa(pid),
+	}
+}
+
+func StopJavaProfiler(ctx context.Context, opt *AsprofSamplingOption) error {
+	if opt == nil {
+		return nil
+	}
+	return stopActiveAsprofProcesses(ctx, opt)
+}
+
+func stopActiveAsprofProcesses(ctx context.Context, opt *AsprofSamplingOption) error {
+	stopCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		asprofCommandTimeout,
+	)
 	defer cancel()
 
-	return executil.ExecCmds(stopCtx, pids, asprofBin, func(pid int) []string {
+	activePIDs := opt.activePIDList()
+	results := executil.ExecCmds(stopCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
 		return []string{
 			"stop",
 			"--libpath", "/tmp/libasyncProfiler.so",
 			strconv.Itoa(pid),
 		}
 	})
+	opt.markStopped(results)
+
+	var cleanupErrs []error
+	for _, pid := range opt.Pids {
+		if err := CleanupJavaAgent(pid); err != nil {
+			cleanupErrs = append(cleanupErrs, fmt.Errorf("cleanup Java agent for PID %d: %w", pid, err))
+		}
+	}
+
+	return errors.Join(
+		executil.VerifyResults(results),
+		errors.Join(cleanupErrs...),
+	)
+}
+
+func (opt *AsprofSamplingOption) activePIDList() []int {
+	pids := make([]int, 0, len(opt.activePIDs))
+	for _, pid := range opt.Pids {
+		if opt.activePIDs[pid] {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+func (opt *AsprofSamplingOption) markStopped(results []executil.CmdResult) {
+	for _, result := range results {
+		if result.Success {
+			opt.activePIDs[result.Pid] = false
+		}
+	}
 }
 
 // GetJavaVersion extracts Java major version from exe symlink path.

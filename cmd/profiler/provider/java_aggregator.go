@@ -36,9 +36,12 @@ type javaAggregator struct {
 
 	formatter    output.Formatter
 	sampleOutput []profiler.SampleOutput
+	startedAt    time.Time
 }
 
 func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) {
+	pctx.IsOneShotAgg = true
+
 	f, err := aggregator.NewFormatterForOutput(pctx)
 	if err != nil {
 		return nil, err
@@ -46,6 +49,7 @@ func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) 
 
 	return &javaAggregator{
 		formatter: f,
+		startedAt: time.Now(),
 	}, nil
 }
 
@@ -61,7 +65,6 @@ func (a *javaAggregator) Aggregate(rec any) {
 	defer a.mu.Unlock()
 
 	a.sampleOutput = append(a.sampleOutput, so)
-
 	if a.formatter == nil {
 		return
 	}
@@ -125,7 +128,7 @@ func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, err
 	pprofData, err := profiler.ParseCollapsedData(
 		pctx.Ctx,
 		&profiler.ParseInput{
-			StartTime:    time.Now(),
+			StartTime:    a.startedAt,
 			ProfileType:  sampleType,
 			ProfilerName: prName,
 			Data:         pprofFolded,

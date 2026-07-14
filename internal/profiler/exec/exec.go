@@ -53,6 +53,7 @@ type CmdResult struct {
 // - CmdResult: contains stdout/stderr, success status, and original pid.
 func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdResult {
 	cmdArgs := formatCmd(binPath, args)
+	log.Debugf("executing command: %s", cmdArgs)
 	cmd := exec.CommandContext(ctx, binPath, args...)
 
 	// Inherit envir variables from the current process
@@ -92,13 +93,17 @@ func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdRe
 		}
 
 		// Send SIGTERM may leave some subprocesses or JVM agents running, run `asprof stop` to ensure cleanup if Lang=Java.
+		cmdErr := ctx.Err()
 		if filepath.Base(binPath) == "asprof" {
-			err := StopProfiler(binPath, pid)
-			if err != nil {
-				stderrBuf.WriteString("\n[Error stopping profiler]: " + err.Error())
-			}
+			cmdErr = StopProfiler(binPath, pid)
 		}
 		<-done
+
+		log.Debugf("command stopped: command=%q error=%v", cmdArgs, cmdErr)
+
+		if cmdErr != nil && filepath.Base(binPath) == "asprof" {
+			stderrBuf.WriteString("\n[Error stopping profiler]: " + cmdErr.Error())
+		}
 
 		// Return the already collected output
 		return CmdResult{
@@ -106,8 +111,8 @@ func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdRe
 			Cmd:     cmdArgs,
 			Stdout:  stdoutBuf.Bytes(),
 			Stderr:  stderrBuf.Bytes(),
-			Success: false,
-			CmdErr:  ctx.Err(),
+			Success: cmdErr == nil,
+			CmdErr:  cmdErr,
 		}
 	case err := <-done:
 		// Normally finished
@@ -134,6 +139,7 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 
 			pidArgs := argsFn(pid)
 			cmdArgs := formatCmd(binPath, pidArgs)
+			log.Debugf("executing command: %s", cmdArgs)
 			cmd := exec.CommandContext(ctx, binPath, pidArgs...)
 			// Inherit envir variables from the current process
 			cmd.Env = os.Environ()
@@ -156,6 +162,8 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 					Success: false,
 					CmdErr:  err,
 				}
+
+				log.Debugf("command start failed: command=%q error=%v", cmdArgs, err)
 				return
 			}
 
@@ -170,25 +178,35 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 				}
 
 				// Send SIGTERM may leave some subprocesses or JVM agents running, run `asprof stop` to ensure cleanup if Lang=Java.
+				cmdErr := ctx.Err()
 				if filepath.Base(binPath) == "asprof" {
-					err := StopProfiler(binPath, pid)
-					if err != nil {
-						stderrBuf.WriteString("\n[Error stopping profiler]: " + err.Error())
-					}
+					cmdErr = StopProfiler(binPath, pid)
 				}
 				<-done
+				if cmdErr != nil && filepath.Base(binPath) == "asprof" {
+					stderrBuf.WriteString("\n[Error stopping profiler]: " + cmdErr.Error())
+				}
 
 				// Return the already collected output
+				log.Debugf("command stopped: command=%q error=%v", cmdArgs, cmdErr)
 				resCh <- CmdResult{
 					Pid:     pid,
 					Cmd:     cmdArgs,
 					Stdout:  stdoutBuf.Bytes(),
 					Stderr:  stderrBuf.Bytes(),
-					Success: false,
-					CmdErr:  ctx.Err(),
+					Success: cmdErr == nil,
+					CmdErr:  cmdErr,
 				}
 			case err := <-done:
 				// Normally finished
+				log.Debugf(
+					"command finished: command=%q pid=%d error=%v stdout=%q stderr=%q",
+					cmdArgs,
+					pid,
+					err,
+					commandOutputForError(stdoutBuf.Bytes()),
+					commandOutputForError(stderrBuf.Bytes()),
+				)
 				resCh <- CmdResult{
 					Pid:     pid,
 					Cmd:     cmdArgs,
@@ -212,7 +230,9 @@ func ExecCmds(ctx context.Context, pids []int, binPath string, argsFn func(pid i
 }
 
 func StopProfiler(asprofPath string, pid int) error {
-	cmd := exec.Command(asprofPath, "--libpath", "/tmp/libasyncProfiler.so", "stop", strconv.Itoa(pid))
+	args := []string{"--libpath", "/tmp/libasyncProfiler.so", "stop", strconv.Itoa(pid)}
+	log.Debugf("executing command: %s", formatCmd(asprofPath, args))
+	cmd := exec.Command(asprofPath, args...)
 	_, err := cmd.CombinedOutput()
 	if err != nil {
 		return err
@@ -271,6 +291,8 @@ func VerifyResults(results []CmdResult) error {
 		if r.Success {
 			continue
 		}
+
+		log.Debugf("command failed: command=%q pid=%d error=%v", r.Cmd, r.Pid, r.CmdErr)
 
 		failures = append(failures, &commandResultError{
 			pid:    r.Pid,
