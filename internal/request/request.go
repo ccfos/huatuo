@@ -87,11 +87,17 @@ func doRequest(req *http.Request) (*ServerResponse, error) {
 	if err != nil {
 		return serverResp, err
 	}
-	defer resp.Body.Close()
+	bodyTransferred := false
+	defer func() {
+		if !bodyTransferred {
+			_ = resp.Body.Close()
+		}
+	}()
 
 	serverResp.StatusCode = resp.StatusCode
 	serverResp.Body = resp.Body
 	serverResp.Header = resp.Header
+	bodyTransferred = true
 
 	return serverResp, nil
 }
