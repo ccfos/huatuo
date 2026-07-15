@@ -46,8 +46,21 @@ func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggrega
 }
 
 func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	pids, err := resolveJavaPIDs(pctx)
-	if err != nil {
+	pids := []int{pctx.PID}
+	if pctx.PID == 0 {
+		var err error
+		pids, err = javaruntime.ResolveJavaPids(
+			pctx.PID,
+			pctx.ExecPath,
+			pctx.ServerAddress,
+			pctx.ContainerID,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := validateJavaToolLimit(pids, pctx.ToolLimit); err != nil {
 		return err
 	}
 

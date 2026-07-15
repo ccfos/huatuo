@@ -39,15 +39,6 @@ const (
 )
 
 func ResolveJavaPids(pid int, execPath, serverAddr, containerID string) ([]int, error) {
-	if pid != 0 {
-		if execPath != "" {
-			if err := procutil.CheckExecPath(pid, execPath); err != nil {
-				return nil, err
-			}
-		}
-		return []int{pid}, nil
-	}
-
 	pids, err := procutil.GetPidsFromContainer(serverAddr, execPath, "java", containerID)
 	if err != nil {
 		return nil, err

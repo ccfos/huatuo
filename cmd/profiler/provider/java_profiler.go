@@ -16,26 +16,7 @@ package provider
 
 import (
 	"fmt"
-
-	pcontext "huatuo-bamai/internal/profiler/context"
-	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
 )
-
-func resolveJavaPIDs(pctx *pcontext.ProfilerContext) ([]int, error) {
-	pids, err := javaruntime.ResolveJavaPids(
-		pctx.PID,
-		pctx.ExecPath,
-		pctx.ServerAddress,
-		pctx.ContainerID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateJavaToolLimit(pids, pctx.ToolLimit); err != nil {
-		return nil, err
-	}
-	return pids, nil
-}
 
 func validateJavaToolLimit(pids []int, toolLimit int) error {
 	if toolLimit > 0 && len(pids) > toolLimit {
