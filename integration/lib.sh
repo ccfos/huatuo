@@ -69,7 +69,7 @@ wait_until() {
 	shift
 
 	if ! type -t "$func" > /dev/null 2>&1; then
-		log_error "wait_until expects function or command: %q" "$func"
+		log_error "wait_until expects function or command: [${func}]"
 		return 1
 	fi
 

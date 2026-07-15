@@ -78,7 +78,6 @@ assert_kubelet_pod_count() {
 	if ! wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		"$desc" \
 		_assert; then
 		# wait timeout, dump pods from kubelet
 		kubelet_pods_json
@@ -98,7 +97,6 @@ assert_huatuo_bamai_pod_count() {
 	if ! wait_until \
 		"$((WAIT_HUATUO_BAMAI_TIMEOUT / 2))" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		"$desc" \
 		_assert; then
 		# wait timeout, dump pods from huatuo-bamai
 		curl "${CURL_TIMEOUT[@]}" ${HUATUO_BAMAI_PODS_API}
