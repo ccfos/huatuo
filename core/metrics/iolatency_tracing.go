@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -73,6 +74,7 @@ type iolatencyTracing struct {
 	running          atomic.Bool
 	latestContainers map[string]*pod.Container
 	bpfObject        bpf.BPF
+	bpfObjectMu      sync.Mutex
 }
 
 func (c *iolatencyTracing) Start(ctx context.Context) error {
@@ -107,7 +109,10 @@ func (c *iolatencyTracing) Start(ctx context.Context) error {
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 
+	c.bpfObjectMu.Lock()
 	c.bpfObject = b
+	c.bpfObjectMu.Unlock()
+
 	c.running.Store(true)
 	defer c.running.Store(false)
 
@@ -124,6 +129,9 @@ func (c *iolatencyTracing) Start(ctx context.Context) error {
 }
 
 func (c *iolatencyTracing) dumpBlkdiskLatency() ([]BlkDiskEntry, error) {
+	c.bpfObjectMu.Lock()
+	defer c.bpfObjectMu.Unlock()
+
 	var latencyData []BlkDiskEntry
 
 	disks, err := c.bpfObject.DumpMapByName(blkDiskLatencyMap)
@@ -146,6 +154,9 @@ func (c *iolatencyTracing) dumpBlkdiskLatency() ([]BlkDiskEntry, error) {
 }
 
 func (c *iolatencyTracing) dumpContainerLatency() ([]BlkgqEntry, error) {
+	c.bpfObjectMu.Lock()
+	defer c.bpfObjectMu.Unlock()
+
 	var latencyData []BlkgqEntry
 
 	containersData, err := c.bpfObject.DumpMapByName(blkContainerLatencyMap)
