@@ -17,6 +17,7 @@ package request
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -104,6 +105,32 @@ func TestCheckResponseErrTextBody(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "backend down") {
 		t.Fatalf("error = %q, want backend down", err.Error())
+	}
+}
+
+func TestDoRequestKeepsSuccessBodyReadable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	resp, err := doRequest(req)
+	if err != nil {
+		t.Fatalf("doRequest() error = %v", err)
+	}
+	defer resp.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if string(body) != "ok" {
+		t.Fatalf("body = %q, want ok", string(body))
 	}
 }
 
