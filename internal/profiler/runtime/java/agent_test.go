@@ -24,6 +24,43 @@ import (
 	"time"
 )
 
+func TestParseJavaVersionPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		path      string
+		want      int
+		wantError bool
+	}{
+		{name: "JDK 8", path: "/usr/lib/jvm/jdk1.8.0/bin/java", want: 8},
+		{name: "JDK 17", path: "/opt/jdk-17.0.1/bin/java", want: 17},
+		{name: "compact JDK 21", path: "/opt/jdk21.0.6/bin/java", want: 21},
+		{name: "OpenJDK 21", path: "/usr/lib/jvm/java-21-openjdk-arm64/bin/java", want: 21},
+		{name: "unknown", path: "/opt/runtime/bin/java", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := parseJavaVersionPath(tt.path)
+			if tt.wantError {
+				if err == nil {
+					t.Fatalf("parseJavaVersionPath(%q) error=nil, want error", tt.path)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseJavaVersionPath(%q) error=%v", tt.path, err)
+			}
+			if got != tt.want {
+				t.Fatalf("parseJavaVersionPath(%q)=%d, want %d", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestStartAsprofSamplingValidatesDuration(t *testing.T) {
 	t.Parallel()
 

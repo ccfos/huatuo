@@ -298,7 +298,10 @@ func GetJavaVersion(pid int) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to resolve exe for pid %d: %w", pid, err)
 	}
+	return parseJavaVersionPath(target)
+}
 
+func parseJavaVersionPath(target string) (int, error) {
 	// Case 1: jdk1.8 → Java 8
 	if matched, _ := regexp.MatchString(`jdk1\.8`, target); matched {
 		return 8, nil
@@ -318,6 +321,12 @@ func GetJavaVersion(pid int) (int, error) {
 	// Case 3: match jdk21.0.6, jdk-17, etc.
 	re1 := regexp.MustCompile(`jdk-?(\d+)`)
 	if match := re1.FindStringSubmatch(target); len(match) == 2 {
+		return strconv.Atoi(match[1])
+	}
+
+	// Case 4: java-21-openjdk-arm64, etc.
+	re2 := regexp.MustCompile(`java-(\d+)`)
+	if match := re2.FindStringSubmatch(target); len(match) == 2 {
 		return strconv.Atoi(match[1])
 	}
 
