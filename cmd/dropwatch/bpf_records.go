@@ -32,10 +32,10 @@ type packetMeta struct {
 	NetdevFlags         uint32
 	NetdevQueueMapping  uint32
 	DropReason          uint32
-	Type                uint32
 	NetInode            uint32
 	NetdevName          [bpf.NetdevNameLen]byte
 	Comm                [bpf.TaskCommLen]byte
+	_                   [4]byte // tail padding of struct packet_meta (92 -> 96)
 }
 
 type packetRaw struct {
@@ -55,8 +55,16 @@ type dropPacketEvent struct {
 	Stack     [symbol.KsymStackMaxDepth]uint64
 }
 
+// Size checks alone cannot catch a stale field: dropping one u32 while the
+// total stays 96 (absorbed by the C tail padding) shifts every later field,
+// so the per-field offsets are pinned to struct packet_meta in
+// bpf/dropwatch.c as well.
 var (
 	_ = [1]struct{}{}[96-unsafe.Sizeof(packetMeta{})]
+	_ = [1]struct{}{}[52-unsafe.Offsetof(packetMeta{}.DropReason)]
+	_ = [1]struct{}{}[56-unsafe.Offsetof(packetMeta{}.NetInode)]
+	_ = [1]struct{}{}[60-unsafe.Offsetof(packetMeta{}.NetdevName)]
+	_ = [1]struct{}{}[76-unsafe.Offsetof(packetMeta{}.Comm)]
 	_ = [1]struct{}{}[136-unsafe.Sizeof(packetRaw{})]
 	_ = [1]struct{}{}[240-unsafe.Offsetof(dropPacketEvent{}.Stack)]
 )
