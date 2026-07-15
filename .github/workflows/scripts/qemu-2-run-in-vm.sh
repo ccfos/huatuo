@@ -140,8 +140,6 @@ ls -alh /mnt/host
 
 echo -e "\n\n⬅️ test..."
 
-go test -tags=didi -v ./internal/bpf
-
 make test
 
 echo -e "✅ test ok."
