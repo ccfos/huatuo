@@ -31,10 +31,35 @@ func TestResolvePythonPidsExplicitTargets(t *testing.T) {
 }
 
 func TestResolvePythonPidsToolLimit(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{PIDs: []int{123, 456}, ToolLimit: 1}
-
-	_, err := resolvePythonPids(pctx)
+	err := validatePythonToolLimit([]int{123, 456}, 1)
 	require.EqualError(t, err, "sampling failed: too many target Python processes (limit: 1, found: 2)")
+}
+
+func TestPythonRootPids(t *testing.T) {
+	parents := map[int]int{
+		100: 1,
+		101: 100,
+		102: 101,
+		200: 1,
+		201: 200,
+	}
+	parentPID := func(pid int) (int, error) {
+		return parents[pid], nil
+	}
+
+	roots, err := pythonRootPids([]int{100, 101, 102, 200, 201}, parentPID)
+	require.NoError(t, err)
+	require.Equal(t, []int{100, 200}, roots)
+}
+
+func TestPythonRootPidsDetectsParentCycle(t *testing.T) {
+	parents := map[int]int{100: 200, 200: 100}
+	parentPID := func(pid int) (int, error) {
+		return parents[pid], nil
+	}
+
+	_, err := pythonRootPids([]int{100}, parentPID)
+	require.EqualError(t, err, "resolve Python target PID 100 ancestry: process parent cycle at PID 100")
 }
 
 func TestBuildPySpyArgs(t *testing.T) {

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -196,6 +196,11 @@ func readPPid(pid int) (int, error) {
 	}
 
 	return 0, fmt.Errorf("PPid not found for pid %d", pid)
+}
+
+// ParentPID returns the current parent process ID from procfs.
+func ParentPID(pid int) (int, error) {
+	return readPPid(pid)
 }
 
 func isInDifferentMountNS(pid int) (bool, error) {

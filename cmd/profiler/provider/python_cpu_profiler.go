@@ -65,6 +65,13 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	if err != nil {
 		return err
 	}
+	pids, err = pythonRootPids(pids, procutil.ParentPID)
+	if err != nil {
+		return err
+	}
+	if err := validatePythonToolLimit(pids, pctx.ToolLimit); err != nil {
+		return err
+	}
 
 	p.pids = pids
 
@@ -88,9 +95,6 @@ func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 				}
 			}
 		}
-		if err := validatePythonToolLimit(pctx.PIDs, pctx.ToolLimit); err != nil {
-			return nil, err
-		}
 		return pctx.PIDs, nil
 	}
 
@@ -99,15 +103,47 @@ func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 		return nil, err
 	}
 
-	if err := validatePythonToolLimit(pids, pctx.ToolLimit); err != nil {
-		return nil, err
-	}
-
 	if len(pids) == 0 {
 		return nil, fmt.Errorf("sampling failed: no target Python processes found in container %q", pctx.ContainerID)
 	}
 
 	return pids, nil
+}
+
+func pythonRootPids(pids []int, parentPID func(int) (int, error)) ([]int, error) {
+	targets := make(map[int]struct{}, len(pids))
+	for _, pid := range pids {
+		targets[pid] = struct{}{}
+	}
+
+	roots := make([]int, 0, len(pids))
+	for _, pid := range pids {
+		ancestor := pid
+		seen := map[int]struct{}{pid: {}}
+		isDescendant := false
+		for ancestor > 1 {
+			ppid, err := parentPID(ancestor)
+			if err != nil {
+				return nil, fmt.Errorf("resolve Python target PID %d ancestry: %w", pid, err)
+			}
+			if ppid <= 1 {
+				break
+			}
+			if _, ok := seen[ppid]; ok {
+				return nil, fmt.Errorf("resolve Python target PID %d ancestry: process parent cycle at PID %d", pid, ppid)
+			}
+			if _, ok := targets[ppid]; ok {
+				isDescendant = true
+				break
+			}
+			seen[ppid] = struct{}{}
+			ancestor = ppid
+		}
+		if !isDescendant {
+			roots = append(roots, pid)
+		}
+	}
+	return roots, nil
 }
 
 func validatePythonToolLimit(pids []int, limit int) error {
