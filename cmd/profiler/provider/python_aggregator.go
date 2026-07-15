@@ -15,7 +15,6 @@
 package provider
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -27,104 +26,116 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
-	"huatuo-bamai/internal/profiler/output/raw"
 )
 
-// Compile-time check: pythonAggregator implements aggregator.Aggregator.
 var _ aggregator.Aggregator = (*pythonAggregator)(nil)
 
 type pythonAggregator struct {
 	mu sync.Mutex
 
-	formatter              output.Formatter
-	sampleOutput           []profiler.SampleOutput
-	shouldKeepSampleOutput bool
-	profilerName           string
-	profileType            string
-	sampleRate             int64
-}
-
-func newPythonAggregator(pctx *pcontext.ProfilerContext, name, typ string, rate int64) (*pythonAggregator, error) {
-	var f output.Formatter
-
-	if pctx.OutputFormat.IsUpload() {
-		if pctx.IsOneShotAgg {
-			f = raw.New()
-		}
-	} else {
-		var err error
-		f, err = aggregator.NewFormatterForOutput(pctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return &pythonAggregator{
-		profilerName:           name,
-		profileType:            typ,
-		sampleRate:             rate,
-		formatter:              f,
-		shouldKeepSampleOutput: pctx.OutputFormat.IsUpload() && !pctx.IsOneShotAgg,
-	}, nil
+	formatter    output.Formatter
+	sampleOutput []profiler.SampleOutput
+	startedAt    time.Time
+	sampleRate   int64
 }
 
 func newPythonCPUAggregator(pctx *pcontext.ProfilerContext) (*pythonAggregator, error) {
-	return newPythonAggregator(pctx, "python-cpu", profiler.ProfileTypeCpuSample, int64(pctx.Freq))
+	pctx.IsOneShotAgg = true
+
+	f, err := aggregator.NewFormatterForOutput(pctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return &pythonAggregator{
+		formatter:  f,
+		startedAt:  time.Now(),
+		sampleRate: int64(pctx.Freq),
+	}, nil
 }
 
 func (a *pythonAggregator) Aggregate(rec any) {
 	so, ok := rec.(profiler.SampleOutput)
 	if !ok {
 		log.Warnf("invalid record type %T, expected profiler.SampleOutput", rec)
+		return
+	}
 
+	so.Output = normalizePythonOutput(so.PID, so.Output)
+	if so.Output == "" {
 		return
 	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.shouldKeepSampleOutput {
-		a.sampleOutput = append(a.sampleOutput, profiler.SampleOutput{
-			PID:    so.PID,
-			Output: so.Output,
-		})
-	}
-
+	a.sampleOutput = append(a.sampleOutput, so)
 	if a.formatter == nil {
 		return
 	}
 
-	lines := strings.Split(so.Output, "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(so.Output, "\n") {
 		stack, count, ok := parseCollapsedLine(line)
-		if !ok {
+		if !ok || count <= 0 {
 			continue
 		}
 
-		frames := strings.Split(stack, ";")
-		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: count}); err != nil {
+		if err := a.formatter.Add(&output.Sample{
+			Frames: strings.Split(stack, ";"),
+			Count:  count,
+		}); err != nil {
 			log.Warnf("formatter add sample: %v", err)
 		}
 	}
+}
+
+func normalizePythonOutput(pid int, raw string) string {
+	var normalized strings.Builder
+	for _, line := range strings.Split(raw, "\n") {
+		stack, count, ok := parseCollapsedLine(line)
+		if !ok || count <= 0 {
+			continue
+		}
+
+		firstFrame, _, _ := strings.Cut(stack, ";")
+		if !strings.HasPrefix(strings.TrimSpace(firstFrame), "process ") {
+			fmt.Fprintf(&normalized, "process %d;%s %d\n", pid, stack, count)
+			continue
+		}
+		fmt.Fprintf(&normalized, "%s %d\n", stack, count)
+	}
+	return normalized.String()
 }
 
 func (a *pythonAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if !pctx.OutputFormat.IsUpload() {
-		if a.formatter != nil {
-			a.formatter.Reset()
-		}
-
+	if !pctx.OutputFormat.IsUpload() || len(a.sampleOutput) == 0 {
 		return nil, nil
 	}
 
-	if a.formatter != nil && a.formatter.IsEmpty() {
-		return nil, nil
+	data, err := json.MarshalIndent(a.sampleOutput, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal sample output: %w", err)
 	}
 
-	return a.snapshotPprof(pctx)
+	pprofData, err := profiler.ParseRawData(
+		pctx.Ctx,
+		&profiler.ParseInput{
+			StartTime:    a.startedAt,
+			ProfileType:  profiler.ProfileTypeCpuSample,
+			ProfilerName: "python-cpu",
+			Data:         data,
+			Opt:          &profiler.ParseOption{SampleRate: a.sampleRate},
+			PID:          pctx.PID(),
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse raw data: %w", err)
+	}
+
+	return pprofData, nil
 }
 
 func (a *pythonAggregator) Reset() {
@@ -134,102 +145,9 @@ func (a *pythonAggregator) Reset() {
 	if a.formatter != nil {
 		a.formatter.Reset()
 	}
-
 	a.sampleOutput = nil
 }
 
 func (a *pythonAggregator) OutputFormatter() output.Formatter {
 	return a.formatter
-}
-
-func (a *pythonAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, error) {
-	if pctx.IsOneShotAgg {
-		return a.snapshotPprofOneShot(pctx)
-	}
-
-	return a.snapshotPprofStreaming(pctx)
-}
-
-func (a *pythonAggregator) snapshotPprofOneShot(pctx *pcontext.ProfilerContext) (any, error) {
-	var folded bytes.Buffer
-	negatives := 0
-	var negativeSamples []string
-
-	rf := a.formatter.(*raw.Formatter)
-	for stack, count := range rf.Counts() {
-		if count < 0 {
-			negatives++
-			if len(negativeSamples) < 5 {
-				negativeSamples = append(negativeSamples, fmt.Sprintf("%s %d", stack, count))
-			}
-
-			continue
-		}
-
-		fmt.Fprintf(&folded, "%s %d\n", stack, count)
-	}
-
-	if negatives > 0 {
-		log.Warnf("%s one-shot: dropped negatives=%d sample=%s", a.profilerName, negatives, strings.Join(negativeSamples, " | "))
-	}
-
-	if folded.Len() == 0 {
-		log.Warnf("%s one-shot: no non-negative samples after filtering", a.profilerName)
-
-		return nil, nil
-	}
-
-	pprofFolded, err := json.MarshalIndent([]profiler.SampleOutput{
-		{PID: pctx.PID(), Output: folded.String()},
-	}, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal sample output: %w", err)
-	}
-
-	opt := &profiler.ParseOption{SampleRate: a.sampleRate}
-	pprofData, err := profiler.ParseRawData(
-		pctx.Ctx,
-		&profiler.ParseInput{
-			StartTime:    time.Now(),
-			ProfileType:  a.profileType,
-			ProfilerName: a.profilerName,
-			Data:         pprofFolded,
-			Opt:          opt,
-			PID:          pctx.PID(),
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse raw data: %w", err)
-	}
-
-	return pprofData, nil
-}
-
-func (a *pythonAggregator) snapshotPprofStreaming(pctx *pcontext.ProfilerContext) (any, error) {
-	if len(a.sampleOutput) == 0 {
-		return nil, nil
-	}
-
-	pprofFolded, err := json.MarshalIndent(a.sampleOutput, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal sample output: %w", err)
-	}
-
-	opt := &profiler.ParseOption{SampleRate: a.sampleRate}
-	pprofData, err := profiler.ParseRawData(
-		pctx.Ctx,
-		&profiler.ParseInput{
-			StartTime:    time.Now(),
-			ProfileType:  a.profileType,
-			ProfilerName: a.profilerName,
-			Data:         pprofFolded,
-			Opt:          opt,
-			PID:          pctx.PID(),
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse raw data: %w", err)
-	}
-
-	return pprofData, nil
 }
