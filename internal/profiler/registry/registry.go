@@ -115,7 +115,8 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 
 	var deadline <-chan time.Time
 
-	if pctx.Duration > 0 {
+	_, managesDuration := p.Impl.(interface{ ManagesDuration() })
+	if pctx.Duration > 0 && !managesDuration {
 		t := time.NewTimer(time.Duration(pctx.Duration) * time.Second)
 		defer t.Stop()
 

@@ -47,6 +47,9 @@ func init() {
 	})
 }
 
+// ManagesDuration marks py-spy as self-terminating after record --duration.
+func (*pythonCPUProfiler) ManagesDuration() {}
+
 func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	return newPythonCPUAggregator(pctx)
 }
