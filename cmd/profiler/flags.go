@@ -34,7 +34,7 @@ var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "pid",
 		Aliases: []string{"p"},
-		Usage:   "Target PID(s), comma-separated for Java; native supports one PID",
+		Usage:   "Target PID(s), comma-separated for Java and Python; native supports one PID",
 	},
 	&cli.StringFlag{
 		Name:  "cpuid",

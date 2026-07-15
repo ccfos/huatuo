@@ -80,14 +80,18 @@ func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
-	if pctx.PID() != 0 {
+	if len(pctx.PIDs) > 0 {
 		if pctx.ExecPath != "" {
-			if err := procutil.CheckExecPath(pctx.PID(), pctx.ExecPath); err != nil {
-				return nil, err
+			for _, pid := range pctx.PIDs {
+				if err := procutil.CheckExecPath(pid, pctx.ExecPath); err != nil {
+					return nil, err
+				}
 			}
 		}
-
-		return []int{pctx.PID()}, nil
+		if err := validatePythonToolLimit(pctx.PIDs, pctx.ToolLimit); err != nil {
+			return nil, err
+		}
+		return pctx.PIDs, nil
 	}
 
 	pids, err := procutil.GetPidsFromContainer(pctx.ServerAddress, pctx.ExecPath, "python", pctx.ContainerID)
@@ -95,8 +99,8 @@ func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 		return nil, err
 	}
 
-	if pctx.ToolLimit > 0 && len(pids) > pctx.ToolLimit {
-		return nil, fmt.Errorf("sampling failed: too many target Python processes (limit: %d, found: %d)", pctx.ToolLimit, len(pids))
+	if err := validatePythonToolLimit(pids, pctx.ToolLimit); err != nil {
+		return nil, err
 	}
 
 	if len(pids) == 0 {
@@ -106,6 +110,17 @@ func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 	return pids, nil
 }
 
+func validatePythonToolLimit(pids []int, limit int) error {
+	if limit > 0 && len(pids) > limit {
+		return fmt.Errorf(
+			"sampling failed: too many target Python processes (limit: %d, found: %d)",
+			limit,
+			len(pids),
+		)
+	}
+	return nil
+}
+
 func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids []int, enqueue func(any)) error {
 	cmdResults := runPySpy(ctx, pids, dur, freq, toolPath)
 
@@ -113,7 +128,7 @@ func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids [
 
 	for i := range cmdResults {
 		cmdRes := &cmdResults[i]
-		targetPid := pids[i]
+		targetPid := cmdRes.Pid
 
 		if !cmdRes.Success {
 			errorMessages = append(errorMessages,
@@ -143,14 +158,18 @@ func runPySpy(ctx context.Context, pids []int, dur, freq int, pyspyPath string) 
 	freqStr := strconv.Itoa(freq)
 
 	return executil.ExecCmds(ctx, pids, pyspyBin, func(pid int) []string {
-		return []string{
-			"record",
-			"-d", durStr,
-			"-f", "raw",
-			"-r", freqStr,
-			"--subprocesses",
-			"-o", "/dev/stdout",
-			"-p", strconv.Itoa(pid),
-		}
+		return buildPySpyArgs(pid, durStr, freqStr)
 	})
+}
+
+func buildPySpyArgs(pid int, duration, frequency string) []string {
+	return []string{
+		"record",
+		"-d", duration,
+		"-f", "raw",
+		"-r", frequency,
+		"--subprocesses",
+		"-o", "/dev/stdout",
+		"-p", strconv.Itoa(pid),
+	}
 }

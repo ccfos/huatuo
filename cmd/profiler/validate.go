@@ -87,9 +87,6 @@ func validateLanguageOptions(ctx *cli.Context, lang, typ string) error {
 		return validateExactlyOneTarget(ctx)
 
 	case "python":
-		if err := validateSinglePID(ctx, "Python"); err != nil {
-			return err
-		}
 		if err := ensurePythonToolPath(ctx); err != nil {
 			return err
 		}
