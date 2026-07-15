@@ -31,10 +31,10 @@ var appFlags = []cli.Flag{
 		Name:  "memory-mode",
 		Usage: "Memory profiling mode: virtual_alloc|physical_alloc|physical_usage (default: physical_alloc)",
 	},
-	&cli.Uint64Flag{
+	&cli.StringFlag{
 		Name:    "pid",
 		Aliases: []string{"p"},
-		Usage:   "Target PID",
+		Usage:   "Target PID(s), comma-separated for Java; native supports one PID",
 	},
 	&cli.StringFlag{
 		Name:  "cpuid",

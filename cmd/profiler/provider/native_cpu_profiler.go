@@ -64,6 +64,9 @@ func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if len(pctx.PIDs) > 1 {
+		return fmt.Errorf("start native CPU profiler: multiple PIDs are not supported")
+	}
 	if err := requireRoot(); err != nil {
 		return err
 	}
@@ -79,7 +82,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	b, err := bpf.LoadBpf("native_cpu_profiler.o", p.dbg.WithBpfDbg(map[string]any{
 		"profiler_filter_css": cssAddr,
-		"profiler_filter_pid": uint32(pctx.PID),
+		"profiler_filter_pid": uint32(pctx.PID()),
 	}))
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)

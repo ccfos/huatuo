@@ -46,11 +46,10 @@ func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggrega
 }
 
 func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	pids := []int{pctx.PID}
-	if pctx.PID == 0 {
+	pids := pctx.PIDs
+	if len(pids) == 0 {
 		var err error
 		pids, err = javaruntime.ResolveJavaPids(
-			pctx.PID,
 			pctx.ExecPath,
 			pctx.ServerAddress,
 			pctx.ContainerID,
@@ -64,8 +63,10 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	if err := javaruntime.PrepareJavaAgent(pids[0], pctx.ToolPath); err != nil {
-		return err
+	for _, pid := range pids {
+		if err := javaruntime.PrepareJavaAgent(pid, pctx.ToolPath); err != nil {
+			return fmt.Errorf("prepare Java agent for PID %d: %w", pid, err)
+		}
 	}
 
 	baseArgs := []string{

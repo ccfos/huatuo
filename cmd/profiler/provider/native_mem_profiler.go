@@ -90,6 +90,9 @@ func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if len(pctx.PIDs) > 1 {
+		return fmt.Errorf("start native memory profiler: multiple PIDs are not supported")
+	}
 	if err := requireRoot(); err != nil {
 		return err
 	}
@@ -122,7 +125,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	cfg, err := newBpfLoadConfig(p.internalMode, pctx.PID, cssAddr, traceThreads, p.probability)
+	cfg, err := newBpfLoadConfig(p.internalMode, pctx.PID(), cssAddr, traceThreads, p.probability)
 	if err != nil {
 		return err
 	}

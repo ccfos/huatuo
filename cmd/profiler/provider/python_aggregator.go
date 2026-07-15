@@ -180,7 +180,7 @@ func (a *pythonAggregator) snapshotPprofOneShot(pctx *pcontext.ProfilerContext) 
 	}
 
 	pprofFolded, err := json.MarshalIndent([]profiler.SampleOutput{
-		{PID: pctx.PID, Output: folded.String()},
+		{PID: pctx.PID(), Output: folded.String()},
 	}, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal sample output: %w", err)
@@ -195,7 +195,7 @@ func (a *pythonAggregator) snapshotPprofOneShot(pctx *pcontext.ProfilerContext) 
 			ProfilerName: a.profilerName,
 			Data:         pprofFolded,
 			Opt:          opt,
-			PID:          pctx.PID,
+			PID:          pctx.PID(),
 		},
 	)
 	if err != nil {
@@ -224,7 +224,7 @@ func (a *pythonAggregator) snapshotPprofStreaming(pctx *pcontext.ProfilerContext
 			ProfilerName: a.profilerName,
 			Data:         pprofFolded,
 			Opt:          opt,
-			PID:          pctx.PID,
+			PID:          pctx.PID(),
 		},
 	)
 	if err != nil {

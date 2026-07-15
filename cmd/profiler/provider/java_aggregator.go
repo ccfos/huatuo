@@ -133,7 +133,7 @@ func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, err
 			ProfilerName: prName,
 			Data:         pprofFolded,
 			Opt:          opt,
-			PID:          pctx.PID,
+			PID:          pctx.PID(),
 		},
 	)
 	if err != nil {

@@ -80,14 +80,14 @@ func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
-	if pctx.PID != 0 {
+	if pctx.PID() != 0 {
 		if pctx.ExecPath != "" {
-			if err := procutil.CheckExecPath(pctx.PID, pctx.ExecPath); err != nil {
+			if err := procutil.CheckExecPath(pctx.PID(), pctx.ExecPath); err != nil {
 				return nil, err
 			}
 		}
 
-		return []int{pctx.PID}, nil
+		return []int{pctx.PID()}, nil
 	}
 
 	pids, err := procutil.GetPidsFromContainer(pctx.ServerAddress, pctx.ExecPath, "python", pctx.ContainerID)

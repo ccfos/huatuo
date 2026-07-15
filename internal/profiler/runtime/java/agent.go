@@ -38,7 +38,7 @@ const (
 	asprofOutputFileHeadroom = 2
 )
 
-func ResolveJavaPids(pid int, execPath, serverAddr, containerID string) ([]int, error) {
+func ResolveJavaPids(execPath, serverAddr, containerID string) ([]int, error) {
 	pids, err := procutil.GetPidsFromContainer(serverAddr, execPath, "java", containerID)
 	if err != nil {
 		return nil, err

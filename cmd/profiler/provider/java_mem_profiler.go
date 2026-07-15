@@ -46,11 +46,10 @@ func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggr
 }
 
 func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	pids := []int{pctx.PID}
-	if pctx.PID == 0 {
+	pids := pctx.PIDs
+	if len(pids) == 0 {
 		var err error
 		pids, err = javaruntime.ResolveJavaPids(
-			pctx.PID,
 			pctx.ExecPath,
 			pctx.ServerAddress,
 			pctx.ContainerID,
@@ -74,20 +73,28 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	if mode == "object_usage" {
-		javaVersion, err := javaruntime.GetJavaVersion(pids[0])
-		if err != nil {
-			return fmt.Errorf("failed to get Java version for PID %d: %w", pids[0], err)
-		}
+		for _, pid := range pids {
+			javaVersion, err := javaruntime.GetJavaVersion(pid)
+			if err != nil {
+				return fmt.Errorf("failed to get Java version for PID %d: %w", pid, err)
+			}
 
-		if javaVersion < 11 {
-			return fmt.Errorf("object_usage mode only supports Java 11 or newer, current Java version is %d", javaVersion)
+			if javaVersion < 11 {
+				return fmt.Errorf(
+					"object_usage mode requires Java 11 or newer: PID %d uses Java %d",
+					pid,
+					javaVersion,
+				)
+			}
 		}
 
 		extraArgs = append(extraArgs, "--live")
 	}
 
-	if err := javaruntime.PrepareJavaAgent(pids[0], pctx.ToolPath); err != nil {
-		return err
+	for _, pid := range pids {
+		if err := javaruntime.PrepareJavaAgent(pid, pctx.ToolPath); err != nil {
+			return fmt.Errorf("prepare Java agent for PID %d: %w", pid, err)
+		}
 	}
 
 	baseArgs := []string{

@@ -38,7 +38,7 @@ type ProfilerContext struct {
 	Cancel context.CancelFunc
 	Cli    *cli.Context
 
-	PID          int
+	PIDs         []int
 	Freq         int
 	Duration     int
 	ToolLimit    int
@@ -123,12 +123,16 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		}
 	}
 
+	pids, err := ParsePIDs(cliCtx.String("pid"))
+	if err != nil {
+		return nil, err
+	}
 	return &ProfilerContext{
 		Ctx:    ctx,
 		Cancel: cancel,
 		Cli:    cliCtx,
 
-		PID:          cliCtx.Int("pid"),
+		PIDs:         pids,
 		Freq:         cliCtx.Int("freq"),
 		Duration:     cliCtx.Int("duration"),
 		ToolLimit:    cliCtx.Int("tool-limit"),

@@ -70,3 +70,36 @@ func TestValidateJavaToolLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeProfilersRejectMultiplePIDs(t *testing.T) {
+	t.Parallel()
+
+	pctx := &pcontext.ProfilerContext{PIDs: []int{123, 456}}
+	tests := []struct {
+		name      string
+		start     func(*pcontext.ProfilerContext) error
+		wantError string
+	}{
+		{
+			name:      "CPU",
+			start:     (&cpuNativeProfiler{}).Start,
+			wantError: "start native CPU profiler: multiple PIDs are not supported",
+		},
+		{
+			name:      "memory",
+			start:     (&memNativeProfiler{}).Start,
+			wantError: "start native memory profiler: multiple PIDs are not supported",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.start(pctx)
+			if err == nil || err.Error() != tt.wantError {
+				t.Fatalf("Start() error=%v, want %q", err, tt.wantError)
+			}
+		})
+	}
+}

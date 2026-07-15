@@ -24,6 +24,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"huatuo-bamai/internal/pod"
+	pcontext "huatuo-bamai/internal/profiler/context"
 	pyruntime "huatuo-bamai/internal/profiler/runtime/python"
 )
 
@@ -64,6 +65,9 @@ func runBefore(ctx *cli.Context) error {
 func validateLanguageOptions(ctx *cli.Context, lang, typ string) error {
 	switch lang {
 	case "go", "c", "c++":
+		if err := validateSinglePID(ctx, "native"); err != nil {
+			return err
+		}
 		if typ == "mem" {
 			return validateExactlyOneTarget(ctx)
 		}
@@ -78,6 +82,9 @@ func validateLanguageOptions(ctx *cli.Context, lang, typ string) error {
 		return validateExactlyOneTarget(ctx)
 
 	case "python":
+		if err := validateSinglePID(ctx, "Python"); err != nil {
+			return err
+		}
 		if err := ensurePythonToolPath(ctx, typ); err != nil {
 			return err
 		}
@@ -122,7 +129,7 @@ func ensurePythonToolPath(ctx *cli.Context, typ string) error {
 
 func validateExactlyOneTarget(ctx *cli.Context) error {
 	hasContainer := ctx.String("container-id") != ""
-	hasPID := ctx.Uint64("pid") != 0
+	hasPID := ctx.String("pid") != ""
 
 	if hasContainer == hasPID {
 		return fmt.Errorf("exactly one of --container-id or --pid must be provided")
@@ -131,8 +138,23 @@ func validateExactlyOneTarget(ctx *cli.Context) error {
 	return nil
 }
 
+func validateSinglePID(ctx *cli.Context, profilerName string) error {
+	pids, err := pcontext.ParsePIDs(ctx.String("pid"))
+	if err != nil {
+		return err
+	}
+	if len(pids) > 1 {
+		return fmt.Errorf("%s profiler does not support multiple PIDs", profilerName)
+	}
+	return nil
+}
+
 func validateCommonOptions(ctx *cli.Context) error {
-	if pid := ctx.Uint64("pid"); pid != 0 {
+	pids, err := pcontext.ParsePIDs(ctx.String("pid"))
+	if err != nil {
+		return err
+	}
+	for _, pid := range pids {
 		procPath := fmt.Sprintf("/proc/%d", pid)
 		if _, err := os.Stat(procPath); os.IsNotExist(err) {
 			return fmt.Errorf("pid %d does not exist", pid)
