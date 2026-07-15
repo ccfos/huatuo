@@ -16,6 +16,35 @@
 
 set -euo pipefail
 
+usage() {
+	echo "usage: $0 [test_*.sh] [repeat-count]" >&2
+}
+
+if (($# > 2)); then
+	usage
+	exit 2
+fi
+
+readonly REQUESTED_TEST=${1:-}
+readonly REQUESTED_REPEAT_COUNT=${2:-1}
+readonly INTEGRATION_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+if [[ -n "${REQUESTED_TEST}" ]]; then
+	[[ "${REQUESTED_TEST}" == test_*.sh && "${REQUESTED_TEST}" != */* ]] || {
+		echo "integration test must be a test_*.sh file name: ${REQUESTED_TEST}" >&2
+		exit 2
+	}
+	[[ -f "${INTEGRATION_DIR}/${REQUESTED_TEST}" ]] || {
+		echo "integration test not found: ${REQUESTED_TEST}" >&2
+		exit 2
+	}
+fi
+
+[[ "${REQUESTED_REPEAT_COUNT}" =~ ^[1-9][0-9]*$ ]] || {
+	echo "repeat count must be a positive integer: ${REQUESTED_REPEAT_COUNT}" >&2
+	exit 2
+}
+
 # Integration tests need root: unshare --uts/--mount, BPF loading, and the
 # test_*.sh cases themselves all require CAP_SYS_ADMIN/CAP_BPF. Skip cleanly
 # when invoked without privilege so `make integration` is a no-op for
@@ -34,6 +63,8 @@ unshare --uts --mount bash -c '
 	set -euo pipefail
 	source "./integration/env.sh"
 	source "${ROOT_DIR}/integration/lib.sh"
+	requested_test=$1
+	requested_repeat_count=$2
 	active_test_workspace=""
 
 	runner_cleanup() {
@@ -43,29 +74,37 @@ unshare --uts --mount bash -c '
 	}
 	trap runner_cleanup EXIT
 
+	if [[ -n "${requested_test}" ]]; then
+		test_scripts=("${ROOT_DIR}/integration/${requested_test}")
+	else
+		test_scripts=("${ROOT_DIR}"/integration/test_*.sh)
+	fi
+
 	# Run each test in an isolated workspace owned by this runner.
-	for test_script in "${ROOT_DIR}"/integration/test_*.sh; do
-		[[ -f "${test_script}" ]] || continue
-		test_name=$(basename "${test_script}" .sh)
-		test_workspace=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${test_name}.XXXXXX")
-		active_test_workspace="${test_workspace}"
-		log_info "🚀🚀 start: $(basename "${test_script}")"
+	for ((run = 1; run <= requested_repeat_count; run++)); do
+		for test_script in "${test_scripts[@]}"; do
+			[[ -f "${test_script}" ]] || continue
+			test_name=$(basename "${test_script}" .sh)
+			test_workspace=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${test_name}.XXXXXX")
+			active_test_workspace="${test_workspace}"
+			log_info "🚀🚀 start: $(basename "${test_script}") (${run}/${requested_repeat_count})"
 
-		chmod +x "${test_script}"
-		if HUATUO_BAMAI_TEST_TMPDIR="${test_workspace}" bash "${test_script}"; then
-			test_status=0
-		else
-			test_status=$?
-		fi
+			chmod +x "${test_script}"
+			if HUATUO_BAMAI_TEST_TMPDIR="${test_workspace}" bash "${test_script}"; then
+				test_status=0
+			else
+				test_status=$?
+			fi
 
-		integration_test_exit "${test_status}" "${test_workspace}"
-		active_test_workspace=""
-		if [[ ${test_status} -ne 0 ]]; then
-			fatal "❌ failed: $(basename "${test_script}")"
-		fi
+			integration_test_exit "${test_status}" "${test_workspace}"
+			active_test_workspace=""
+			if [[ ${test_status} -ne 0 ]]; then
+				fatal "❌ failed: $(basename "${test_script}") (${run}/${requested_repeat_count})"
+			fi
 
-		log_info "✅✅ passed: $(basename "${test_script}")"
+			log_info "✅✅ passed: $(basename "${test_script}") (${run}/${requested_repeat_count})"
+		done
 	done
 
 	log_info "🎉🎉 all integration tests passed."
-'
+' integration-runner "${REQUESTED_TEST}" "${REQUESTED_REPEAT_COUNT}"

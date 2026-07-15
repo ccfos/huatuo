@@ -29,6 +29,13 @@ weight: 5
 ```bash
 bash integration/run.sh
 ```
+
+指定文件名可以只运行一个集成测试，第二个参数指定循环次数，默认为 1：
+
+```bash
+bash integration/run.sh test_metrics_exclude_filter.sh 10
+```
+
 或通过 Makefile 执行：
 ```bash
 make integration
