@@ -54,6 +54,8 @@ WAIT_HUATUO_BAMAI_INTERVAL=2 # second
 export WAIT_HUATUO_BAMAI_INTERVAL
 JAVA_PROFILER_TOOL_PATH=${JAVA_PROFILER_TOOL_PATH:-/home/work/async-profiler}
 export JAVA_PROFILER_TOOL_PATH
+PYTHON_PROFILER_TOOL_PATH=${PYTHON_PROFILER_TOOL_PATH:-/home/didi/.local/bin}
+export PYTHON_PROFILER_TOOL_PATH
 
 # Arrays cannot be exported to child processes via environment variables.
 # Convert the E2E array to a string for reconstruction in child processes.
