@@ -214,11 +214,9 @@ func TestValidateMemoryMode(t *testing.T) {
 			wantError: "memory mode \"object_alloc\" is not supported for go; supported modes: virtual_alloc, physical_alloc, physical_usage",
 		},
 		{
-			name:      "Python memory unsupported",
-			language:  "python",
-			typ:       "mem",
-			mode:      "object_alloc",
-			wantError: "Python memory profiler does not support --memory-mode yet",
+			name:     "Python is validated before memory mode",
+			language: "python",
+			typ:      "cpu",
 		},
 	}
 
@@ -256,6 +254,47 @@ func TestValidateAggregationWindow(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateAggregationWindow(tt.duration, tt.interval)
+			if tt.wantError != "" {
+				require.EqualError(t, err, tt.wantError)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidatePythonProfileOptions(t *testing.T) {
+	tests := []struct {
+		name      string
+		language  string
+		typ       string
+		duration  int
+		interval  int
+		wantError string
+	}{
+		{name: "Python CPU one-shot", language: "python", typ: "cpu", duration: 10, interval: 10},
+		{
+			name:      "Python memory",
+			language:  "python",
+			typ:       "mem",
+			duration:  10,
+			interval:  10,
+			wantError: "Python profiler supports only --type=cpu",
+		},
+		{
+			name:      "Python continuous profiling",
+			language:  "python",
+			typ:       "cpu",
+			duration:  30,
+			interval:  10,
+			wantError: "Python CPU profiler does not support continuous profiling: --aggr-interval (10s) must equal --duration (30s)",
+		},
+		{name: "Java unaffected", language: "java", typ: "cpu", duration: 30, interval: 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePythonProfileOptions(tt.language, tt.typ, tt.duration, tt.interval)
 			if tt.wantError != "" {
 				require.EqualError(t, err, tt.wantError)
 				return

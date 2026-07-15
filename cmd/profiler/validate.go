@@ -25,7 +25,6 @@ import (
 
 	"huatuo-bamai/internal/pod"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	pyruntime "huatuo-bamai/internal/profiler/runtime/python"
 )
 
 func runBefore(ctx *cli.Context) error {
@@ -53,6 +52,9 @@ func runBefore(ctx *cli.Context) error {
 
 	if typ != "cpu" && typ != "mem" {
 		return fmt.Errorf("unsupported profiling type: %q (expected: cpu or mem)", typ)
+	}
+	if err := validatePythonProfileOptions(lang, typ, ctx.Int("duration"), ctx.Int("aggr-interval")); err != nil {
+		return err
 	}
 	if err := validateMemoryMode(lang, typ, ctx.String("memory-mode")); err != nil {
 		return err
@@ -88,10 +90,9 @@ func validateLanguageOptions(ctx *cli.Context, lang, typ string) error {
 		if err := validateSinglePID(ctx, "Python"); err != nil {
 			return err
 		}
-		if err := ensurePythonToolPath(ctx, typ); err != nil {
+		if err := ensurePythonToolPath(ctx); err != nil {
 			return err
 		}
-
 		return validateExactlyOneTarget(ctx)
 
 	case "":
@@ -102,32 +103,28 @@ func validateLanguageOptions(ctx *cli.Context, lang, typ string) error {
 	}
 }
 
-// ensurePythonToolPath fills in a default --tool-path for python mem profiles
-// (memray ships its own bundle dir) and otherwise enforces a user-supplied path.
-func ensurePythonToolPath(ctx *cli.Context, typ string) error {
+func validatePythonProfileOptions(lang, typ string, duration, interval int) error {
+	if lang != "python" {
+		return nil
+	}
+	if typ != "cpu" {
+		return fmt.Errorf("Python profiler supports only --type=cpu")
+	}
+	if interval != duration {
+		return fmt.Errorf(
+			"Python CPU profiler does not support continuous profiling: --aggr-interval (%ds) must equal --duration (%ds)",
+			interval,
+			duration,
+		)
+	}
+	return nil
+}
+
+func ensurePythonToolPath(ctx *cli.Context) error {
 	if ctx.String("tool-path") != "" {
 		return nil
 	}
-
-	if typ != "mem" {
-		return fmt.Errorf("language=python requires --tool-path")
-	}
-
-	defaultToolPath, err := pyruntime.ResolveMemrayBundlePath("")
-	if err != nil {
-		return err
-	}
-
-	info, err := os.Stat(defaultToolPath)
-	if err != nil {
-		return fmt.Errorf("python mem profiler default tool-path invalid: %s: %w", defaultToolPath, err)
-	}
-
-	if !info.IsDir() {
-		return fmt.Errorf("python mem profiler default tool-path must be a directory: %s", defaultToolPath)
-	}
-
-	return nil
+	return fmt.Errorf("language=python requires --tool-path")
 }
 
 func validateExactlyOneTarget(ctx *cli.Context) error {
@@ -221,8 +218,6 @@ func validateMemoryMode(lang, typ, mode string) error {
 		supported = []string{"object_alloc", "object_usage"}
 	case "go", "c", "c++":
 		supported = []string{"virtual_alloc", "physical_alloc", "physical_usage"}
-	case "python":
-		return fmt.Errorf("Python memory profiler does not support --memory-mode yet")
 	default:
 		return nil
 	}
