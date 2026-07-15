@@ -81,6 +81,38 @@ func TestPipelineEnqueue_AfterStop(t *testing.T) {
 	aggr.AssertNotCalled(t, "Aggregate")
 }
 
+func TestPipelineStop_DrainsAcceptedRecords(t *testing.T) {
+	aggr := NewMockAggregator(t)
+	aggr.On("Aggregate", "first").Once()
+	aggr.On("Aggregate", "second").Once()
+	aggr.On("OutputFormatter").Return(nil).Once()
+
+	p := NewPipeline(&profctx.ProfilerContext{
+		Ctx:          t.Context(),
+		OutputFormat: output.FormatCollapsed,
+	}, aggr)
+	p.Enqueue("first")
+	p.Enqueue("second")
+
+	p.Start()
+	p.Stop()
+}
+
+func TestPipelineEnqueue_CountsOverflow(t *testing.T) {
+	p := NewPipeline(&profctx.ProfilerContext{}, NewMockAggregator(t))
+
+	for i := 0; i < pipelineQueueCapacity+1; i++ {
+		p.Enqueue(i)
+	}
+
+	if got := len(p.queue); got != pipelineQueueCapacity {
+		t.Fatalf("len(p.queue) = %d, want %d", got, pipelineQueueCapacity)
+	}
+	if got := p.overflowCount.Load(); got != 1 {
+		t.Fatalf("p.overflowCount.Load() = %d, want 1", got)
+	}
+}
+
 func TestPipelineAggregateAndExport_NilFormatter(t *testing.T) {
 	aggr := NewMockAggregator(t)
 	aggr.On("OutputFormatter").Return(nil).Once()

@@ -16,7 +16,6 @@ package aggregator
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -25,9 +24,9 @@ import (
 	"huatuo-bamai/internal/log"
 	profctx "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/pkg/tracing"
-
-	rqueue "github.com/Workiva/go-datastructures/queue"
 )
+
+const pipelineQueueCapacity = 65536
 
 const (
 	pipelineStateIdle uint32 = iota
@@ -35,7 +34,7 @@ const (
 	pipelineStateStopped
 )
 
-// Pipeline buffers profiler records through a ring queue, drives periodic
+// Pipeline buffers profiler records through a channel, drives periodic
 // aggregation via the embedded Aggregator, and routes output to the
 // configured backend (ES upload, file write, or SVG render).
 type Pipeline struct {
@@ -48,9 +47,13 @@ type Pipeline struct {
 	aggrInterval  time.Duration
 	overflowCount atomic.Int64
 
-	pctx  *profctx.ProfilerContext
-	aggr  Aggregator
-	queue *rqueue.RingBuffer
+	pctx *profctx.ProfilerContext
+	aggr Aggregator
+	// A channel blocks idle consumers; RingBuffer.Poll spins on timeout checks
+	// and spends CPU in runtime.nanotime and scheduler operations. The mutex
+	// makes stopping atomic with respect to accepting a record.
+	queue        chan any
+	enqueueMutex sync.RWMutex
 }
 
 // NewPipeline initializes the data pipeline.
@@ -63,7 +66,7 @@ func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
 	return &Pipeline{
 		pctx:  pctx,
 		aggr:  aggr,
-		queue: rqueue.NewRingBuffer(65536),
+		queue: make(chan any, pipelineQueueCapacity),
 		tracerID: func() string {
 			id, err := tracing.AllocTaskID()
 			if err != nil {
@@ -139,29 +142,19 @@ func (p *Pipeline) runDequeueAndAggregate() {
 	defer close(p.doneCh)
 
 	for {
-		rec, err := p.queue.Poll(100 * time.Millisecond)
-		if err != nil {
-			if errors.Is(err, rqueue.ErrTimeout) {
+		select {
+		case rec := <-p.queue:
+			p.aggr.Aggregate(rec)
+		case <-p.stopCh:
+			for {
 				select {
-				case <-p.stopCh:
-					if p.queue.Len() == 0 {
-						return
-					}
+				case rec := <-p.queue:
+					p.aggr.Aggregate(rec)
 				default:
+					return
 				}
-
-				continue
 			}
-
-			if errors.Is(err, rqueue.ErrDisposed) {
-				return
-			}
-
-			log.WithError(err).WithField("tracer_id", p.tracerID).Warnf("aggregation dequeue stopped")
-			return
 		}
-
-		p.aggr.Aggregate(rec)
 	}
 }
 
@@ -175,7 +168,9 @@ func (p *Pipeline) Stop() {
 		}
 
 		if p.state.CompareAndSwap(state, pipelineStateStopped) {
+			p.enqueueMutex.Lock()
 			close(p.stopCh)
+			p.enqueueMutex.Unlock()
 			p.wg.Wait()
 			return
 		}
@@ -185,17 +180,16 @@ func (p *Pipeline) Stop() {
 // Enqueue offers a record into the aggregation queue for async processing.
 // Records offered after Stop begins are ignored.
 func (p *Pipeline) Enqueue(data any) {
+	p.enqueueMutex.RLock()
+	defer p.enqueueMutex.RUnlock()
+
 	if p.state.Load() == pipelineStateStopped {
 		return
 	}
 
-	ok, err := p.queue.Offer(data)
-	if err != nil {
-		log.Warnf("queue offer failed: %v", err)
-		return
-	}
-
-	if !ok {
+	select {
+	case p.queue <- data:
+	default:
 		p.overflowCount.Add(1)
 	}
 }
