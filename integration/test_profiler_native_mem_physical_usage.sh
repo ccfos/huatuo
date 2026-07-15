@@ -30,10 +30,12 @@ readonly PROFILER_READY_INTERVAL=1
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
 [[ -r "${ROOT_DIR}/_output/bpf/native_physical_alloc.o" ]] || fatal "native physical alloc bpf object missing"
 [[ -r "${ROOT_DIR}/_output/bpf/native_physical_usage.o" ]] || fatal "native physical usage bpf object missing"
-if kprobe_available page_add_new_anon_rmap && kprobe_available page_remove_rmap; then
-	log_info "using page rmap kprobes"
-elif kprobe_available folio_add_new_anon_rmap && kprobe_available folio_remove_rmap_ptes; then
+if kprobe_available folio_add_new_anon_rmap && kprobe_available folio_remove_rmap_ptes; then
 	log_info "using folio rmap kprobes"
+elif kprobe_available folio_add_new_anon_rmap && kprobe_available page_remove_rmap; then
+	log_info "using mixed folio/page rmap kprobes"
+elif kprobe_available page_add_new_anon_rmap && kprobe_available page_remove_rmap; then
+	log_info "using page rmap kprobes"
 else
 	skip "no supported physical usage kprobe pair found"
 fi
