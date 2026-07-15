@@ -54,6 +54,9 @@ func runBefore(ctx *cli.Context) error {
 	if typ != "cpu" && typ != "mem" {
 		return fmt.Errorf("unsupported profiling type: %q (expected: cpu or mem)", typ)
 	}
+	if err := validateMemoryMode(lang, typ, ctx.String("memory-mode")); err != nil {
+		return err
+	}
 
 	if err := validateLanguageOptions(ctx, lang, typ); err != nil {
 		return err
@@ -173,14 +176,8 @@ func validateCommonOptions(ctx *cli.Context) error {
 		}
 	}
 
-	if memMode := ctx.String("memory-mode"); memMode != "" {
-		if err := validateMemoryMode(memMode); err != nil {
-			return err
-		}
-	}
-
-	if d := ctx.Int("duration"); d < 1 {
-		return fmt.Errorf("duration must be at least 1 second")
+	if err := validateAggregationWindow(ctx.Int("duration"), ctx.Int("aggr-interval")); err != nil {
+		return err
 	}
 
 	scope := ctx.String("scope")
@@ -207,17 +204,56 @@ func validateCommonOptions(ctx *cli.Context) error {
 	return nil
 }
 
-func validateMemoryMode(mode string) error {
-	validModes := map[string]bool{
-		"virtual_alloc":  true,
-		"physical_alloc": true,
-		"physical_usage": true,
+func validateMemoryMode(lang, typ, mode string) error {
+	if typ != "mem" {
+		if mode != "" {
+			return fmt.Errorf("--memory-mode is only valid when --type=mem")
+		}
+		return nil
+	}
+	if mode == "" {
+		return fmt.Errorf("--memory-mode is required when --type=mem")
 	}
 
-	if !validModes[mode] {
-		return fmt.Errorf("invalid memory-mode: %q (allowed: virtual_alloc, physical_alloc, physical_usage)", mode)
+	var supported []string
+	switch lang {
+	case "java":
+		supported = []string{"object_alloc", "object_usage"}
+	case "go", "c", "c++":
+		supported = []string{"virtual_alloc", "physical_alloc", "physical_usage"}
+	case "python":
+		return fmt.Errorf("Python memory profiler does not support --memory-mode yet")
+	default:
+		return nil
 	}
 
+	for _, candidate := range supported {
+		if mode == candidate {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"memory mode %q is not supported for %s; supported modes: %s",
+		mode,
+		lang,
+		strings.Join(supported, ", "),
+	)
+}
+
+func validateAggregationWindow(duration, interval int) error {
+	if duration < 1 {
+		return fmt.Errorf("duration must be at least 1 second")
+	}
+	if interval < 1 {
+		return fmt.Errorf("aggregation interval must be at least 1 second")
+	}
+	if interval > duration {
+		return fmt.Errorf(
+			"aggregation interval (%ds) exceeds duration (%ds)",
+			interval,
+			duration,
+		)
+	}
 	return nil
 }
 

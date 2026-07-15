@@ -162,39 +162,102 @@ func TestParseCPUIDs(t *testing.T) {
 
 func TestValidateMemoryMode(t *testing.T) {
 	tests := []struct {
-		name    string
-		mode    string
-		wantErr bool
+		name      string
+		language  string
+		typ       string
+		mode      string
+		wantError string
 	}{
 		{
-			name: "virtual_alloc",
-			mode: "virtual_alloc",
+			name:     "Java object allocation",
+			language: "java",
+			typ:      "mem",
+			mode:     "object_alloc",
 		},
 		{
-			name: "physical_alloc",
-			mode: "physical_alloc",
+			name:     "Java object usage",
+			language: "java",
+			typ:      "mem",
+			mode:     "object_usage",
 		},
 		{
-			name: "physical_usage",
-			mode: "physical_usage",
+			name:     "native physical allocation",
+			language: "c",
+			typ:      "mem",
+			mode:     "physical_alloc",
 		},
 		{
-			name:    "invalid mode",
-			mode:    "invalid",
-			wantErr: true,
+			name:      "memory mode required",
+			language:  "java",
+			typ:       "mem",
+			wantError: "--memory-mode is required when --type=mem",
 		},
 		{
-			name:    "empty mode",
-			mode:    "",
-			wantErr: true,
+			name:      "memory mode rejected for CPU",
+			language:  "java",
+			typ:       "cpu",
+			mode:      "object_alloc",
+			wantError: "--memory-mode is only valid when --type=mem",
+		},
+		{
+			name:      "Java rejects native mode",
+			language:  "java",
+			typ:       "mem",
+			mode:      "physical_alloc",
+			wantError: "memory mode \"physical_alloc\" is not supported for java; supported modes: object_alloc, object_usage",
+		},
+		{
+			name:      "native rejects object mode",
+			language:  "go",
+			typ:       "mem",
+			mode:      "object_alloc",
+			wantError: "memory mode \"object_alloc\" is not supported for go; supported modes: virtual_alloc, physical_alloc, physical_usage",
+		},
+		{
+			name:      "Python memory unsupported",
+			language:  "python",
+			typ:       "mem",
+			mode:      "object_alloc",
+			wantError: "Python memory profiler does not support --memory-mode yet",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateMemoryMode(tt.mode)
-			if tt.wantErr {
-				require.Error(t, err)
+			err := validateMemoryMode(tt.language, tt.typ, tt.mode)
+			if tt.wantError != "" {
+				require.EqualError(t, err, tt.wantError)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateAggregationWindow(t *testing.T) {
+	tests := []struct {
+		name      string
+		duration  int
+		interval  int
+		wantError string
+	}{
+		{name: "equal", duration: 10, interval: 10},
+		{name: "shorter interval", duration: 10, interval: 3},
+		{name: "invalid duration", interval: 1, wantError: "duration must be at least 1 second"},
+		{name: "invalid interval", duration: 10, wantError: "aggregation interval must be at least 1 second"},
+		{
+			name:      "interval exceeds duration",
+			duration:  10,
+			interval:  11,
+			wantError: "aggregation interval (11s) exceeds duration (10s)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateAggregationWindow(tt.duration, tt.interval)
+			if tt.wantError != "" {
+				require.EqualError(t, err, tt.wantError)
 				return
 			}
 			require.NoError(t, err)

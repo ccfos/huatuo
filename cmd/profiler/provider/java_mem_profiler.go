@@ -25,6 +25,13 @@ import (
 	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
 )
 
+const (
+	javaMemoryModeObjectAlloc = "object_alloc"
+	javaMemoryModeObjectUsage = "object_usage"
+	javaAllocInterval         = "512k"
+	javaMemoryStackDepth      = "256"
+)
+
 func init() {
 	impl := &javaMemoryProfiler{}
 	registry.Register(registry.ProfilerMeta{
@@ -63,16 +70,10 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	mode := pctx.ExtraFlags["mode"]
-	event := "alloc"
-
 	var extraArgs []string
-
-	if mode == "" {
-		mode = "object_alloc"
-	}
-
-	if mode == "object_usage" {
+	switch pctx.MemoryMode {
+	case javaMemoryModeObjectAlloc:
+	case javaMemoryModeObjectUsage:
 		for _, pid := range pids {
 			javaVersion, err := javaruntime.GetJavaVersion(pid)
 			if err != nil {
@@ -89,6 +90,8 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		}
 
 		extraArgs = append(extraArgs, "--live")
+	default:
+		return fmt.Errorf("unsupported Java memory mode %q", pctx.MemoryMode)
 	}
 
 	for _, pid := range pids {
@@ -99,9 +102,9 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	baseArgs := []string{
 		"--libpath", "/tmp/libasyncProfiler.so",
-		"-e", event,
-		"--alloc", "512k",
-		"-j", "256",
+		"-e", "alloc",
+		"--alloc", javaAllocInterval,
+		"-j", javaMemoryStackDepth,
 	}
 	baseArgs = append(baseArgs, extraArgs...)
 

@@ -29,7 +29,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "memory-mode",
-		Usage: "Memory profiling mode: virtual_alloc|physical_alloc|physical_usage (default: physical_alloc)",
+		Usage: "Memory mode; Java: object_alloc|object_usage; native: virtual_alloc|physical_alloc|physical_usage",
 	},
 	&cli.StringFlag{
 		Name:    "pid",

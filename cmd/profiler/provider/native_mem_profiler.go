@@ -152,10 +152,6 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 }
 
 func resolveMemMode(mode string) (string, error) {
-	if mode == "" {
-		mode = modePhysicalAlloc
-	}
-
 	switch mode {
 	case modeVirtualAlloc, modePhysicalUsage, modePhysicalAlloc:
 		return mode, nil
