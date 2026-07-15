@@ -58,6 +58,9 @@ func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
 	if !ok {
 		return fmt.Errorf("invalid pprof data for uploading: %T", data)
 	}
+	if err := profiler.ApplyLabels(flameData, p.pctx.Labels); err != nil {
+		return fmt.Errorf("inject profiling labels: %w", err)
+	}
 
 	tracerData := &profctx.TracerData{
 		MetricData: newMetrics(int(p.overflowCount.Load())),

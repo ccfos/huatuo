@@ -26,7 +26,7 @@ Supported languages and underlying implementations:
 | Language | Profile types | Implementation |
 | --- | --- | --- |
 | C / C++ / Go | CPU / memory / lock | eBPF (perf_event + stack maps) |
-| Java | CPU / memory / lock | async-profiler |
+| Java | CPU / memory | async-profiler |
 | Python | CPU / memory | py-spy / memray |
 
 Profile type identifiers (used in Grafana queries):
@@ -91,12 +91,62 @@ Request fields:
 
 | Field | Description |
 | --- | --- |
-| `type` | Profile type: `cpu` / `memory` |
+| `type` | Profile type: `cpu` / `memory` / `lock` |
 | `target_process_language` | Target language: `go`, `c`, `c++`, `java`, `python` |
 | `hostname` | **Required**. Target host name; apiserver dispatches the job to the huatuo-bamai agent at `http://{hostname}:19704` (must match the hostname reported by the agent) |
 | `duration` | Total profiling duration (seconds); the agent samples periodically at `CPUProfilingInterval` |
 | `container` | Container hostname for container-level collection; leave empty for host-level |
 | `target_exec_path` | Optional, filter target processes by executable path |
+| `scope` | Collection dimension: `pid`, `tgid`, `cgroup`, `process-group`, or `all` |
+| `pid` | PID/TGID target; with `process-group`, it can also be used to resolve the PGID |
+| `cgroup_id` / `cgroup_path` | Cgroup target. Specify one; `container` also selects its cgroup |
+| `process_group_id` | Process-group target |
+| `labels` | Additional Prometheus-compatible labels (`[A-Za-z_][A-Za-z0-9_]*`) |
+
+### Multi-dimensional collection and labels
+
+Native CPU, memory, and lock profilers share the same collection scopes. The
+legacy CLI names `thread` and `thread-group` remain aliases for `pid` and
+`tgid`, so existing profiling commands continue to work.
+
+```bash
+# Exact thread
+profiler -t cpu -l go --scope pid --pid 4242 -d 30
+
+# Entire thread group/process
+profiler -t cpu -l go --scope tgid --pid 4242 -d 30
+
+# Cgroup v2 path (its inode is the kernel cgroup ID)
+profiler -t cpu -l go --scope cgroup \
+  --cgroup-path /sys/fs/cgroup/system.slice/example.service -d 30
+
+# Process group; omit --process-group-id to derive it from --pid
+profiler -t cpu -l go --scope process-group --pid 4242 -d 30
+```
+
+Every uploaded profile receives `profiling_scope` plus the applicable `pid`,
+`tgid`, `cgroup_id`, `cgroup_path`, `container_id`, or `process_group_id` label. Custom
+`--label key=value` labels are also accepted. Huatuo writes these dimensions
+both as Pyroscope series labels and as standard pprof sample labels, which
+keeps the payload usable by Pyroscope and Parca. The Pyroscope-compatible
+`LabelNames`, `LabelValues`, and stacktrace selector endpoints expose the same
+dimension names for querying and aggregation.
+
+### Kernel lock profiling
+
+Kernel lock profiling is available for native C/C++/Go targets. It measures
+acquisition latency or acquisition count for mutexes, spinlocks, and read/write
+locks:
+
+```bash
+profiler -t lock -l go --scope tgid --pid 4242 \
+  --lock-types mutex,spinlock,rwlock \
+  --lock-mode time --lock-min-wait 1us -d 30
+```
+
+Use `--lock-mode count` for the number of acquisitions that reach the wait
+threshold. `--lock-min-wait` suppresses fast acquisitions to control overhead. The API accepts the equivalent
+`lock_types`, `lock_mode`, and `lock_min_wait` fields.
 
 Response returns the task ID:
 

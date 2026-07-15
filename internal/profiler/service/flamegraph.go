@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler"
 
 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
@@ -86,12 +87,18 @@ func SelectMergeStacktraces(req *querierv1.SelectMergeStacktracesRequest) (*quer
 		case "container_hostname":
 			filter.ContainerHostname = label.Value
 		default:
-			return nil, fmt.Errorf("invalid label: %q", label.Name)
+			if !profiler.IsCollectionDimensionLabel(label.Name) {
+				return nil, fmt.Errorf("invalid label: %q", label.Name)
+			}
+			if filter.Labels == nil {
+				filter.Labels = make(map[string]string)
+			}
+			filter.Labels[label.Name] = label.Value
 		}
 	}
 
-	if filter.ID == "" && filter.Hostname == "" && filter.ContainerHostname == "" {
-		return nil, fmt.Errorf("id or *hostname must be specified")
+	if filter.ID == "" && filter.Hostname == "" && filter.ContainerHostname == "" && len(filter.Labels) == 0 {
+		return nil, fmt.Errorf("id, *hostname, or a profiling dimension label must be specified")
 	}
 
 	// search
@@ -234,8 +241,10 @@ func SelectSeries(req *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesRe
 //	request: typesv1.LabelNamesRequest
 //	response: typesv1.LabelNamesResponse
 func LabelNames(req *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
+	names := []string{"region", "hostname", "container_hostname", "container_host_namespace"}
+	names = append(names, profiler.CollectionDimensionLabels...)
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"region", "hostname", "container_hostname", "container_host_namespace"},
+		Names: names,
 	}
 	return response, nil
 }
@@ -260,10 +269,15 @@ func LabelValues(req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse,
 	profileTypePresent := false
 	for _, ms := range matchers {
 		for _, m := range ms {
-			if m.Name == "__profile_type__" {
+			switch {
+			case m.Name == "__profile_type__":
 				profileTypePresent = true
 				filter.ProfileType = m.Value
-				break
+			case profiler.IsCollectionDimensionLabel(m.Name) && m.Value != "" && m.Value != "*":
+				if filter.Labels == nil {
+					filter.Labels = make(map[string]string)
+				}
+				filter.Labels[m.Name] = m.Value
 			}
 		}
 	}

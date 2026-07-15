@@ -113,11 +113,6 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	p.probability = probability
 
-	traceThreads, err := resolveScope(pctx.Scope)
-	if err != nil {
-		return err
-	}
-
 	log.Info("starting native memory profiler mode: ", p.internalMode)
 
 	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemMemory)
@@ -125,9 +120,16 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	cfg, err := newBpfLoadConfig(p.internalMode, pctx.PID(), cssAddr, traceThreads, p.probability)
+	cfg, err := newBpfLoadConfig(p.internalMode, 0, cssAddr, false, p.probability)
 	if err != nil {
 		return err
+	}
+	filterConstants, err := profilerFilterConstants(pctx, cssAddr)
+	if err != nil {
+		return err
+	}
+	for name, value := range filterConstants {
+		cfg.Constants[name] = value
 	}
 
 	dbg := bpf.NewDbg(pctx.LogBpfDebug)
@@ -177,19 +179,6 @@ func resolveProbability(probStr, internalMode string) (uint, error) {
 	}
 
 	return uint(probability), nil
-}
-
-func resolveScope(scope string) (bool, error) {
-	switch scope {
-	case "thread", "":
-		return false, nil
-	case "thread-group":
-		return true, nil
-	case "process-group":
-		return false, fmt.Errorf("scope 'process-group' is not supported by mem profiler")
-	default:
-		return false, fmt.Errorf("unsupported scope for mem profiler: %q", scope)
-	}
 }
 
 // bpfLoadConfig holds the configuration needed to load and attach a BPF program.

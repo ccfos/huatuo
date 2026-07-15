@@ -22,6 +22,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/output"
@@ -38,13 +40,16 @@ type ProfilerContext struct {
 	Cancel context.CancelFunc
 	Cli    *cli.Context
 
-	PIDs         []int
-	Freq         int
-	Duration     int
-	ToolLimit    int
-	AggrInterval int
-	IsOneShotAgg bool
-	CPUIDs       []int
+	PIDs           []int
+	Freq           int
+	Duration       int
+	ToolLimit      int
+	AggrInterval   int
+	IsOneShotAgg   bool
+	CPUIDs         []int
+	CgroupID       uint64
+	ProcessGroupID int
+	LockMinWait    time.Duration
 
 	ServerAddress string
 	OutputFormat  output.OutputFormat
@@ -57,6 +62,10 @@ type ProfilerContext struct {
 	ToolPath      string
 	LogBpfDebug   bool
 	MemoryMode    string
+	CgroupPath    string
+	LockMode      string
+	LockTypes     []string
+	Labels        map[string]string
 
 	ExtraFlags      map[string]string
 	MetaData        map[string]string
@@ -98,6 +107,17 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	if err != nil {
 		return nil, err
 	}
+
+	labels, err := parseProfileLabels(cliCtx.StringSlice("label"))
+	if err != nil {
+		return nil, err
+	}
+	for name := range labels {
+		if err := profiler.ValidateCustomLabelName(name); err != nil {
+			return nil, err
+		}
+	}
+
 	cpuidleMeta, err := parseExtraFlagsInt64(cliCtx.StringSlice("cpuidle-metadata"))
 	if err != nil {
 		return nil, err
@@ -127,29 +147,112 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	if err != nil {
 		return nil, err
 	}
+	targetPID := 0
+	if len(pids) > 0 {
+		targetPID = pids[0]
+	}
+
+	scope, err := normalizeRequestedScope(cliCtx.String("scope"), cliCtx.IsSet("scope"), targetPID)
+	if err != nil {
+		return nil, err
+	}
+
+	cgroupID := cliCtx.Uint64("cgroup-id")
+	cgroupPath := strings.TrimSpace(cliCtx.String("cgroup-path"))
+	if cgroupPath != "" && cgroupID == 0 {
+		var stat syscall.Stat_t
+		if err := syscall.Stat(cgroupPath, &stat); err != nil {
+			return nil, fmt.Errorf("stat cgroup path %q: %w", cgroupPath, err)
+		}
+		cgroupID = stat.Ino
+	}
+
+	processGroupID := cliCtx.Int("process-group-id")
+	if scope == ScopeProcessGroup && processGroupID == 0 && targetPID != 0 {
+		if len(pids) > 1 {
+			return nil, fmt.Errorf("scope process-group cannot derive one process group from multiple PIDs")
+		}
+		processGroupID, err = syscall.Getpgid(targetPID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve process group for pid %d: %w", targetPID, err)
+		}
+	}
+
+	scope = inferImplicitScope(
+		scope,
+		cliCtx.IsSet("scope"),
+		targetPID,
+		processGroupID,
+		cgroupID,
+		cliCtx.String("container-id"),
+	)
+
+	lockTypes, err := ParseLockTypes(cliCtx.String("lock-types"))
+	if err != nil {
+		return nil, err
+	}
+
+	labels[profiler.LabelProfilingScope] = scope
+	if containerID := cliCtx.String("container-id"); containerID != "" {
+		// Container CSS filtering is applied in addition to the selected scope,
+		// so preserve it as a dimension even for an explicit PID/TGID target.
+		labels[profiler.LabelContainerID] = containerID
+	}
+	switch scope {
+	case ScopePID:
+		if len(pids) > 0 {
+			labels[profiler.LabelPID] = formatPIDs(pids)
+		}
+	case ScopeTGID:
+		if len(pids) > 0 {
+			labels[profiler.LabelTGID] = formatPIDs(pids)
+		}
+	case ScopeCgroup:
+		if cgroupID != 0 {
+			labels[profiler.LabelCgroupID] = strconv.FormatUint(cgroupID, 10)
+		}
+		if cgroupPath != "" {
+			labels[profiler.LabelCgroupPath] = cgroupPath
+		}
+	case ScopeProcessGroup:
+		if processGroupID != 0 {
+			labels[profiler.LabelProcessGroupID] = strconv.Itoa(processGroupID)
+		}
+	}
+	if cliCtx.String("type") == "lock" {
+		labels[profiler.LabelLockType] = strings.Join(lockTypes, ",")
+	}
+
 	return &ProfilerContext{
 		Ctx:    ctx,
 		Cancel: cancel,
 		Cli:    cliCtx,
 
-		PIDs:         pids,
-		Freq:         cliCtx.Int("freq"),
-		Duration:     cliCtx.Int("duration"),
-		ToolLimit:    cliCtx.Int("tool-limit"),
-		AggrInterval: cliCtx.Int("aggr-interval"),
-		CPUIDs:       cpuIDs,
+		PIDs:           pids,
+		Freq:           cliCtx.Int("freq"),
+		Duration:       cliCtx.Int("duration"),
+		ToolLimit:      cliCtx.Int("tool-limit"),
+		AggrInterval:   cliCtx.Int("aggr-interval"),
+		CPUIDs:         cpuIDs,
+		CgroupID:       cgroupID,
+		ProcessGroupID: processGroupID,
+		LockMinWait:    cliCtx.Duration("lock-min-wait"),
 
 		ServerAddress: cliCtx.String("server-address"),
 		Type:          cliCtx.String("type"),
 		Language:      cliCtx.String("language"),
 		ContainerID:   cliCtx.String("container-id"),
 		ExecPath:      cliCtx.String("exec-path"),
-		Scope:         cliCtx.String("scope"),
+		Scope:         scope,
 		ToolPath:      cliCtx.String("tool-path"),
 		LogBpfDebug:   cliCtx.Bool("log-bpf-debug"),
 		OutputPath:    cliCtx.String("output-path"),
 		OutputFormat:  outputFormat,
 		MemoryMode:    cliCtx.String("memory-mode"),
+		CgroupPath:    cgroupPath,
+		LockMode:      cliCtx.String("lock-mode"),
+		LockTypes:     lockTypes,
+		Labels:        labels,
 
 		MetaData:        metaData,
 		ExtraFlags:      flagsMap,
@@ -158,6 +261,98 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 
 		ToolstreamClient: tsClient,
 	}, nil
+}
+
+func formatPIDs(pids []int) string {
+	values := make([]string, 0, len(pids))
+	for _, pid := range pids {
+		values = append(values, strconv.Itoa(pid))
+	}
+	return strings.Join(values, ",")
+}
+
+const (
+	ScopeAll          = "all"
+	ScopePID          = "pid"
+	ScopeTGID         = "tgid"
+	ScopeCgroup       = "cgroup"
+	ScopeProcessGroup = "process-group"
+)
+
+// NormalizeScope accepts the original CLI vocabulary while exposing stable
+// PID/TGID names in labels and backend queries.
+func NormalizeScope(scope string) (string, error) {
+	switch strings.TrimSpace(scope) {
+	case "", "thread", ScopePID:
+		return ScopePID, nil
+	case "thread-group", ScopeTGID:
+		return ScopeTGID, nil
+	case ScopeCgroup:
+		return ScopeCgroup, nil
+	case ScopeProcessGroup:
+		return ScopeProcessGroup, nil
+	case ScopeAll:
+		return ScopeAll, nil
+	default:
+		return "", fmt.Errorf("unsupported scope %q", scope)
+	}
+}
+
+// normalizeRequestedScope preserves the original profiler CLI behavior:
+// although the default flag text was "thread", an unqualified --pid was
+// historically matched against TGID by the native CPU and memory filters.
+// An explicitly supplied "thread" still opts into the new per-thread scope.
+func normalizeRequestedScope(scope string, explicitlySet bool, pid int) (string, error) {
+	normalized, err := NormalizeScope(scope)
+	if err != nil {
+		return "", err
+	}
+	if !explicitlySet && pid != 0 && normalized == ScopePID {
+		return ScopeTGID, nil
+	}
+	return normalized, nil
+}
+
+func inferImplicitScope(scope string, explicitlySet bool, pid, processGroupID int, cgroupID uint64, containerID string) string {
+	if explicitlySet {
+		return scope
+	}
+	switch {
+	case cgroupID != 0 || containerID != "":
+		return ScopeCgroup
+	case processGroupID != 0:
+		return ScopeProcessGroup
+	case pid != 0:
+		// normalizeRequestedScope already preserves the legacy TGID default.
+		return scope
+	default:
+		return ScopeAll
+	}
+}
+
+// ParseLockTypes normalizes and de-duplicates the requested kernel lock types.
+func ParseLockTypes(raw string) ([]string, error) {
+	seen := make(map[string]bool)
+	result := make([]string, 0, 3)
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(strings.ToLower(value))
+		if value == "" {
+			continue
+		}
+		switch value {
+		case "mutex", "spinlock", "rwlock":
+		default:
+			return nil, fmt.Errorf("unsupported lock type %q", value)
+		}
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("at least one lock type is required")
+	}
+	return result, nil
 }
 
 func MapToStructByJSON[T any](m map[string]int64) (T, error) {
@@ -230,6 +425,25 @@ func parseExtraFlagsString(flagList []string) (map[string]string, error) {
 	}
 
 	return flags, nil
+}
+
+// parseProfileLabels keeps commas and equals signs in label values. The CLI
+// disables its slice separator globally, while the older extra-flag parsers
+// continue to implement their own comma-separated syntax.
+func parseProfileLabels(flagList []string) (map[string]string, error) {
+	labels := make(map[string]string, len(flagList))
+	for _, raw := range flagList {
+		parts := strings.SplitN(strings.TrimSpace(raw), "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid profile label format %q (expected key=value)", raw)
+		}
+		name := strings.TrimSpace(strings.TrimLeft(parts[0], "-"))
+		if name == "" {
+			return nil, fmt.Errorf("invalid profile label format %q (empty name)", raw)
+		}
+		labels[name] = strings.TrimSpace(parts[1])
+	}
+	return labels, nil
 }
 
 func parseExtraFlagsInt64(flagList []string) (map[string]int64, error) {

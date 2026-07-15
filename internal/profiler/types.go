@@ -36,6 +36,10 @@ const MetadataCollection = "profiling_metadata"
 // ProfileData is the data saved by the profiler.
 type ProfileData struct {
 	ProfileType string `json:"profile_type,omitempty"`
+	// Labels contains profile-wide series labels. The same labels are also
+	// embedded into every pprof sample so both series-oriented backends
+	// (Pyroscope) and pprof-native backends (Parca) retain the dimensions.
+	Labels map[string]string `json:"labels,omitempty"`
 	// Please note:
 	//
 	//	In pyroscope 1.13.0, use profilev1.Profile instead of ptree.Profile, but it depends

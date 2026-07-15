@@ -142,6 +142,22 @@ func ContainerByID(id string) (*Container, error) {
 	return nil, nil
 }
 
+// ContainerByHostname returns a normal or sidecar container whose runtime
+// hostname matches hostname. Profiling jobs use this to translate the
+// control-plane selector into the stable container ID consumed by eBPF filters.
+func ContainerByHostname(hostname string) (*Container, error) {
+	all, err := NormalSidecarContainers()
+	if err != nil {
+		return nil, err
+	}
+	for _, container := range all {
+		if container.Hostname == hostname {
+			return container, nil
+		}
+	}
+	return nil, nil
+}
+
 // NormalContainers returns the normal containers.
 func NormalContainers() (map[string]*Container, error) {
 	return ContainersByType(ContainerTypeNormal)

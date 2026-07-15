@@ -14,13 +14,17 @@
 
 package main
 
-import "github.com/urfave/cli/v2"
+import (
+	"time"
+
+	"github.com/urfave/cli/v2"
+)
 
 var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "type",
 		Aliases: []string{"t"},
-		Usage:   "Profiling type: cpu|mem",
+		Usage:   "Profiling type: cpu|mem|lock",
 	},
 	&cli.StringFlag{
 		Name:    "language",
@@ -34,7 +38,7 @@ var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "pid",
 		Aliases: []string{"p"},
-		Usage:   "Target PID(s), comma-separated for Java; native supports one PID",
+		Usage:   "Target PID/TGID; comma-separated PIDs remain supported for Java",
 	},
 	&cli.StringFlag{
 		Name:  "cpuid",
@@ -47,7 +51,38 @@ var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:  "scope",
 		Value: "thread",
-		Usage: "Sampling dimension: thread|thread-group|process-group etc.",
+		Usage: "Sampling dimension: pid|tgid|cgroup|process-group (thread and thread-group are legacy aliases)",
+	},
+	&cli.Uint64Flag{
+		Name:  "cgroup-id",
+		Usage: "Target cgroup ID (as returned by bpf_get_current_cgroup_id)",
+	},
+	&cli.StringFlag{
+		Name:  "cgroup-path",
+		Usage: "Target cgroup filesystem path; its inode is used as the cgroup ID",
+	},
+	&cli.IntFlag{
+		Name:  "process-group-id",
+		Usage: "Target process group ID; when omitted it is resolved from --pid",
+	},
+	&cli.StringFlag{
+		Name:  "lock-types",
+		Value: "mutex,spinlock,rwlock",
+		Usage: "Kernel lock types to profile: comma-separated mutex,spinlock,rwlock",
+	},
+	&cli.StringFlag{
+		Name:  "lock-mode",
+		Value: "time",
+		Usage: "Lock profile value: time|count",
+	},
+	&cli.DurationFlag{
+		Name:  "lock-min-wait",
+		Value: time.Microsecond,
+		Usage: "Minimum lock acquisition latency to record (for example 1us or 1ms)",
+	},
+	&cli.StringSliceFlag{
+		Name:  "label",
+		Usage: "Profile series label in key=value form; repeat for multiple labels",
 	},
 	&cli.IntFlag{
 		Name:    "freq",

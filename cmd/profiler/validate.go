@@ -16,10 +16,12 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -51,8 +53,8 @@ func runBefore(ctx *cli.Context) error {
 		return fmt.Errorf("missing required flags: --type and --language")
 	}
 
-	if typ != "cpu" && typ != "mem" {
-		return fmt.Errorf("unsupported profiling type: %q (expected: cpu or mem)", typ)
+	if typ != "cpu" && typ != "mem" && typ != "lock" {
+		return fmt.Errorf("unsupported profiling type: %q (expected: cpu, mem, or lock)", typ)
 	}
 	if err := validateMemoryMode(lang, typ, ctx.String("memory-mode")); err != nil {
 		return err
@@ -72,12 +74,15 @@ func validateLanguageOptions(ctx *cli.Context, lang, typ string) error {
 			return err
 		}
 		if typ == "mem" {
-			return validateExactlyOneTarget(ctx)
+			return validateNativeMemoryTarget(ctx)
 		}
 
 		return nil
 
 	case "java":
+		if typ == "lock" {
+			return fmt.Errorf("kernel lock profiling requires language go, c, or c++")
+		}
 		if ctx.String("tool-path") == "" {
 			return fmt.Errorf("language=%s requires --tool-path", lang)
 		}
@@ -85,6 +90,9 @@ func validateLanguageOptions(ctx *cli.Context, lang, typ string) error {
 		return validateExactlyOneTarget(ctx)
 
 	case "python":
+		if typ == "lock" {
+			return fmt.Errorf("kernel lock profiling requires language go, c, or c++")
+		}
 		if err := validateSinglePID(ctx, "Python"); err != nil {
 			return err
 		}
@@ -100,6 +108,25 @@ func validateLanguageOptions(ctx *cli.Context, lang, typ string) error {
 	default:
 		return fmt.Errorf("unsupported language: %s", lang)
 	}
+}
+
+func validateNativeMemoryTarget(ctx *cli.Context) error {
+	hasContainer := ctx.String("container-id") != ""
+	hasPID := ctx.String("pid") != ""
+	hasCgroup := ctx.Uint64("cgroup-id") != 0 || ctx.String("cgroup-path") != ""
+	hasProcessGroup := ctx.Int("process-group-id") != 0
+
+	targets := 0
+	for _, present := range []bool{hasContainer, hasPID, hasCgroup, hasProcessGroup} {
+		if present {
+			targets++
+		}
+	}
+	if targets != 1 {
+		return fmt.Errorf("exactly one PID/TGID, container/cgroup, or process group target must be provided")
+	}
+
+	return nil
 }
 
 // ensurePythonToolPath fills in a default --tool-path for python mem profiles
@@ -158,6 +185,9 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 	for _, pid := range pids {
+		if uint64(pid) > math.MaxInt32 {
+			return fmt.Errorf("pid %d exceeds Linux PID range", pid)
+		}
 		procPath := fmt.Sprintf("/proc/%d", pid)
 		if _, err := os.Stat(procPath); os.IsNotExist(err) {
 			return fmt.Errorf("pid %d does not exist", pid)
@@ -170,6 +200,22 @@ func validateCommonOptions(ctx *cli.Context) error {
 		}
 	}
 
+	if cgroupPath := strings.TrimSpace(ctx.String("cgroup-path")); cgroupPath != "" {
+		info, err := os.Stat(cgroupPath)
+		if err != nil {
+			return fmt.Errorf("cgroup-path does not exist: %s: %w", cgroupPath, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("cgroup-path must be a directory: %s", cgroupPath)
+		}
+	}
+	if ctx.Uint64("cgroup-id") != 0 && ctx.String("cgroup-path") != "" {
+		return fmt.Errorf("only one of --cgroup-id or --cgroup-path may be provided")
+	}
+	if pgid := ctx.Int("process-group-id"); pgid < 0 || uint64(pgid) > math.MaxInt32 {
+		return fmt.Errorf("process-group-id must be between 0 and %d", math.MaxInt32)
+	}
+
 	if cpuidStr := ctx.String("cpuid"); cpuidStr != "" {
 		if _, err := parseCPUIDs(cpuidStr); err != nil {
 			return err
@@ -180,10 +226,39 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 
-	scope := ctx.String("scope")
-	validScopes := map[string]bool{"thread": true, "thread-group": true, "process-group": true}
-	if !validScopes[scope] {
-		return fmt.Errorf("unsupported scope: %s (allowed: thread, thread-group, process-group)", scope)
+	scope, err := pcontext.NormalizeScope(ctx.String("scope"))
+	if err != nil {
+		return err
+	}
+	switch scope {
+	case pcontext.ScopePID, pcontext.ScopeTGID:
+		if ctx.IsSet("scope") && len(pids) == 0 {
+			return fmt.Errorf("scope %s requires --pid", scope)
+		}
+		if ctx.IsSet("scope") && len(pids) > 1 {
+			return fmt.Errorf("scope %s requires exactly one --pid", scope)
+		}
+	case pcontext.ScopeCgroup:
+		if ctx.String("container-id") == "" && ctx.Uint64("cgroup-id") == 0 && ctx.String("cgroup-path") == "" {
+			return fmt.Errorf("scope cgroup requires --container-id, --cgroup-id, or --cgroup-path")
+		}
+	case pcontext.ScopeProcessGroup:
+		if ctx.Int("process-group-id") == 0 && len(pids) == 0 {
+			return fmt.Errorf("scope process-group requires --process-group-id or --pid")
+		}
+		if ctx.Int("process-group-id") == 0 && len(pids) > 1 {
+			return fmt.Errorf("scope process-group cannot derive one group from multiple PIDs")
+		}
+	}
+
+	if _, err := pcontext.ParseLockTypes(ctx.String("lock-types")); err != nil {
+		return err
+	}
+	if mode := ctx.String("lock-mode"); mode != "time" && mode != "count" {
+		return fmt.Errorf("invalid lock-mode %q (allowed: time, count)", mode)
+	}
+	if ctx.Duration("lock-min-wait") < 0 || ctx.Duration("lock-min-wait") > time.Hour {
+		return fmt.Errorf("lock-min-wait must be between 0 and 1h")
 	}
 
 	if toolPath := ctx.String("tool-path"); toolPath != "" {

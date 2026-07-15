@@ -69,7 +69,8 @@ type lockStackEntry struct {
 	User      string
 	Kernel    string
 	WaitTime  uint64
-	Contended uint32
+	Contended uint64
+	LockType  string
 }
 
 type nativeAggregator struct {
@@ -92,7 +93,7 @@ func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, err
 		formatter:   f,
 		aggrMap:     make(map[string]*stackEntry),
 		lockAggrMap: make(map[string]*lockStackEntry),
-		lockMode:    pctx.ExtraFlags["mode"],
+		lockMode:    pctx.LockMode,
 	}, nil
 }
 
@@ -129,7 +130,7 @@ func (a *nativeAggregator) Aggregate(rec any) {
 		}
 
 	case *lockStackEntry:
-		key := fmt.Sprintf("%s\x00%d", v.User, v.Proc.Lock)
+		key := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%s", v.User, v.Kernel, v.LockType, v.Proc.Pid, v.Proc.Lock, v.Proc.Name)
 
 		if existed, ok := a.lockAggrMap[key]; ok {
 			existed.Contended += v.Contended
@@ -141,6 +142,7 @@ func (a *nativeAggregator) Aggregate(rec any) {
 				Kernel:    v.Kernel,
 				WaitTime:  v.WaitTime,
 				Contended: v.Contended,
+				LockType:  v.LockType,
 			}
 		}
 
@@ -230,7 +232,7 @@ func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (
 	}
 
 	tree := make([]*profiler.TreeItem, 0, len(a.lockAggrMap))
-	outputType := pctx.ExtraFlags["mode"]
+	outputType := pctx.LockMode
 
 	for _, rec := range a.lockAggrMap {
 		prefixes, val := lockPrefixFrames(rec, outputType)
@@ -330,18 +332,19 @@ func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (
 
 func lockPrefixFrames(rec *lockStackEntry, mode string) ([]string, uint64) {
 	frames := []string{
+		fmt.Sprintf("lock type: %s", rec.LockType),
 		fmt.Sprintf("lock: %x", rec.Proc.Lock),
 		fmt.Sprintf("PID: %d, COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
 	}
 
 	val := rec.WaitTime
 
-	if mode == "" {
+	if mode == "" || mode == "time" {
 		frames = append(frames, fmt.Sprintf("contended count: %d", rec.Contended))
 	}
 
 	if mode == "count" {
-		val = uint64(rec.Contended)
+		val = rec.Contended
 	}
 
 	return frames, val
@@ -355,7 +358,7 @@ func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, 
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil
 	case "lock":
 		st := profiler.ProfileTypeLockTimeSample
-		if pctx.ExtraFlags["mode"] == "count" {
+		if pctx.LockMode == "count" {
 			st = profiler.ProfileTypeLockCountSample
 		}
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, st, nil

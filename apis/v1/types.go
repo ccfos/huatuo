@@ -16,13 +16,22 @@ package v1
 
 // StartProfilingRequest represents a request to start profiling
 type StartProfilingRequest struct {
-	Type                  string `json:"type"`                    // cpu or memory
-	TargetExecPath        string `json:"target_exec_path"`        // executable path for CPU profiling
-	TargetProcessLanguage string `json:"target_process_language"` // programming language of the target process
-	MemoryMode            string `json:"memory_mode"`             // memory profiling mode
-	Duration              int    `json:"duration"`                // profiling duration in seconds
-	Container             string `json:"container"`               // container name or ID
-	Hostname              string `json:"hostname"`                // host name
+	Type                  string            `json:"type"`                       // cpu, memory, or lock
+	TargetExecPath        string            `json:"target_exec_path"`           // executable path for CPU profiling
+	TargetProcessLanguage string            `json:"target_process_language"`    // programming language of the target process
+	MemoryMode            string            `json:"memory_mode"`                // memory profiling mode
+	Duration              int               `json:"duration"`                   // profiling duration in seconds
+	Container             string            `json:"container"`                  // container name or ID
+	Hostname              string            `json:"hostname"`                   // host name
+	Scope                 string            `json:"scope,omitempty"`            // pid, tgid, cgroup, or process-group
+	PID                   uint64            `json:"pid,omitempty"`              // target PID/TGID
+	CgroupID              uint64            `json:"cgroup_id,omitempty"`        // target cgroup ID
+	CgroupPath            string            `json:"cgroup_path,omitempty"`      // target cgroup filesystem path
+	ProcessGroupID        int               `json:"process_group_id,omitempty"` // target process group ID
+	LockTypes             []string          `json:"lock_types,omitempty"`       // mutex, spinlock, rwlock
+	LockMode              string            `json:"lock_mode,omitempty"`        // time or count
+	LockMinWait           string            `json:"lock_min_wait,omitempty"`    // Go duration such as 1us
+	Labels                map[string]string `json:"labels,omitempty"`           // Pyroscope/Parca-compatible series labels
 }
 
 // StartProfilingResponse represents a response to start profiling
@@ -43,10 +52,17 @@ type ProfilingStatusResponse struct {
 	Duration              int              `json:"duration"`                // profiling duration
 	Results               ProfilingResults `json:"results"`                 // profiling results
 	ErrorMessage          string           `json:"error_message"`           // error message if any
-	Type                  string           `json:"type"`                    // cpu or memory
+	Type                  string           `json:"type"`                    // cpu, memory, or lock
 	TargetExecPath        string           `json:"target_exec_path"`        // executable path for CPU profiling
 	TargetProcessLanguage string           `json:"target_process_language"` // programming language of the target process
 	MemoryMode            string           `json:"memory_mode"`             // memory profiling mode
+	Scope                 string           `json:"scope,omitempty"`
+	PID                   uint64           `json:"pid,omitempty"`
+	CgroupID              uint64           `json:"cgroup_id,omitempty"`
+	CgroupPath            string           `json:"cgroup_path,omitempty"`
+	ProcessGroupID        int              `json:"process_group_id,omitempty"`
+	LockTypes             []string         `json:"lock_types,omitempty"`
+	LockMode              string           `json:"lock_mode,omitempty"`
 }
 
 // ProfilingResults represents profiling results
@@ -132,4 +148,6 @@ type ProfilingCapabilitiesResponse struct {
 	DefaultCPUSingleTraceTimeout    int               `json:"default_cpu_single_trace_timeout"`    // default CPU single trace timeout in seconds
 	DefaultMemorySingleTraceTimeout int               `json:"default_memory_single_trace_timeout"` // default memory single trace timeout in seconds
 	ThirdPartyToolLimit             int               `json:"third_party_tool_limit"`              // third-party tool limit
+	CollectionDimensions            []string          `json:"collection_dimensions"`               // pid, tgid, cgroup, process-group
+	KernelLockTypes                 []string          `json:"kernel_lock_types"`                   // mutex, spinlock, rwlock
 }

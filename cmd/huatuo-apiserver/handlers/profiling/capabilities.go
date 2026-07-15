@@ -50,7 +50,7 @@ func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, er
 	cfg := config.Get().Profiling
 
 	return v1.ProfilingCapabilitiesResponse{
-		ProfileTypes:                    []string{subsystem.SubsystemCPU, subsystem.SubsystemMemory},
+		ProfileTypes:                    []string{subsystem.SubsystemCPU, subsystem.SubsystemMemory, "lock"},
 		CPUSupportedLanguages:           cpuLanguages,
 		MemorySupportedLanguages:        memoryLanguages,
 		MemoryModes:                     memoryModes,
@@ -59,6 +59,8 @@ func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, er
 		DefaultCPUSingleTraceTimeout:    cfg.CPUSingleTraceTimeout,
 		DefaultMemorySingleTraceTimeout: cfg.MemorySingleTraceTimeout,
 		ThirdPartyToolLimit:             cfg.ThirdPartyToolLimit,
+		CollectionDimensions:            []string{"pid", "tgid", "cgroup", "process-group"},
+		KernelLockTypes:                 []string{"mutex", "spinlock", "rwlock"},
 	}, nil
 }
 
