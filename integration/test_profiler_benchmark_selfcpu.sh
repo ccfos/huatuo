@@ -68,7 +68,7 @@ PROFILER_TARGET_PID=$!
 PROFILER_SELFPID=$!
 
 sleep 2
-wait_until 10 1 "profiler ready" profiler_ready "${PROFILER_STDOUT}" || fatal \
+wait_until 10 1 profiler_ready "${PROFILER_STDOUT}" || fatal \
 	"profiler did not enter its data reading loop"
 kill -0 "${PROFILER_SELFPID}" 2> /dev/null || fatal \
 	"profiler exited before CPU sampling"

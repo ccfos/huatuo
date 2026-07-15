@@ -78,7 +78,6 @@ run_profile_case() {
 	kill -0 "${PROFILER_PID}" 2> /dev/null || fatal "failed to launch profiler mode=${mode}"
 
 	wait_until "${PROFILER_READY_TIMEOUT}" "${PROFILER_READY_INTERVAL}" \
-		"profiler ready mode=${mode}" \
 		profiler_ready "${profiler_out}" || fatal "profiler did not start read loop mode=${mode}"
 
 	kill -USR1 "${TARGET_PID}" || fatal "failed to signal fixture mode=${mode}"

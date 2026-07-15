@@ -60,11 +60,11 @@ kernel_version_le() {
 	((major < want_major || (major == want_major && minor <= want_minor)))
 }
 
-# wait_until <timeout> <interval> <desc> <func> [args...]
+# wait_until <timeout> <interval> <func> [args...]
 # Returns 0 on success, 1 on timeout.
 wait_until() {
-	local timeout=$1 interval=$2 desc=$3
-	shift 3
+	local timeout=$1 interval=$2
+	shift 2
 	local func=$1
 	shift
 
@@ -78,14 +78,14 @@ wait_until() {
 
 	while [ "$(date +%s)" -lt "$end" ]; do
 		attempt=$((attempt + 1))
-		log_info "wait attempt #${attempt}: ${desc}, func/cmd: [${func} ${*}]"
+		log_info "wait attempt #${attempt}: func/cmd: [${func} ${*}]"
 		if "$func" "$@"; then
 			return 0
 		fi
 		sleep "$interval"
 	done
 
-	log_error "wait_until timeout: ${desc}, func/cmd: [${func} ${*}]"
+	log_error "wait_until timeout: func/cmd: [${func} ${*}]"
 	return 1
 }
 
@@ -219,7 +219,7 @@ huatuo_bamai_start() {
 
 	sleep 0.5
 	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" "${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		"huatuo-bamai ready" huatuo_bamai_ready
+		huatuo_bamai_ready
 }
 
 huatuo_bamai_ready() {
@@ -323,7 +323,6 @@ huatuo_bamai_collect_metrics() {
 huatuo_bamai_await_metrics() {
 	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		"metrics endpoint ready" \
 		huatuo_bamai_collect_metrics
 }
 

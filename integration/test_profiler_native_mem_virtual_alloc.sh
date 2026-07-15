@@ -97,7 +97,6 @@ PROFILER_PID=$!
 kill -0 "${PROFILER_PID}" 2> /dev/null || fatal "failed to launch profiler"
 
 wait_until "${PROFILER_READY_TIMEOUT}" "${PROFILER_READY_INTERVAL}" \
-	"profiler ready" \
 	profiler_ready "${TOOL_OUT}" || fatal "profiler did not start the read loop"
 
 log_info "sending SIGUSR1 to target pid=${TARGET_PID}"
