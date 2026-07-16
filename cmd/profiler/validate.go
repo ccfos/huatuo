@@ -25,6 +25,7 @@ import (
 
 	"huatuo-bamai/internal/pod"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/pkg/profiling"
 )
 
 func runBefore(ctx *cli.Context) error {
@@ -43,15 +44,20 @@ func runBefore(ctx *cli.Context) error {
 		size:    ctx.Int("log-size"),
 	})
 
-	typ := ctx.String("type")
-	lang := ctx.String("language")
-
-	if typ == "" || lang == "" {
+	if ctx.String("type") == "" || ctx.String("language") == "" {
 		return fmt.Errorf("missing required flags: --type and --language")
 	}
 
-	if typ != "cpu" && typ != "mem" {
-		return fmt.Errorf("unsupported profiling type: %q (expected: cpu or mem)", typ)
+	typ, err := profiling.ParseType(ctx.String("type"))
+	if err != nil {
+		return err
+	}
+	lang, err := profiling.ParseLanguage(ctx.String("language"))
+	if err != nil {
+		return err
+	}
+	if !profiling.IsSupported(lang, typ) {
+		return fmt.Errorf("language %s does not support profiling type %s", lang, typ)
 	}
 	if err := validatePythonProfileOptions(lang, typ, ctx.Int("duration"), ctx.Int("aggr-interval")); err != nil {
 		return err
@@ -70,32 +76,32 @@ func runBefore(ctx *cli.Context) error {
 	return validateCommonOptions(ctx)
 }
 
-func validateLanguageOptions(ctx *cli.Context, lang, typ string) error {
+func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ profiling.Type) error {
 	switch lang {
-	case "go", "c", "c++":
+	case profiling.LanguageGo, profiling.LanguageC, profiling.LanguageCPP:
 		if err := validateSinglePID(ctx, "native"); err != nil {
 			return err
 		}
-		if typ == "mem" {
+		if typ == profiling.TypeMemory {
 			return validateExactlyOneTarget(ctx)
 		}
 
 		return nil
 
-	case "java":
+	case profiling.LanguageJava:
 		if ctx.String("tool-path") == "" {
 			return fmt.Errorf("language=%s requires --tool-path", lang)
 		}
 
 		return validateExactlyOneTarget(ctx)
 
-	case "python":
+	case profiling.LanguagePython:
 		if err := ensurePythonToolPath(ctx); err != nil {
 			return err
 		}
 		return validateExactlyOneTarget(ctx)
 
-	case "":
+	case profiling.LanguageUnknown:
 		return fmt.Errorf("missing required flag: --language")
 
 	default:
@@ -103,11 +109,11 @@ func validateLanguageOptions(ctx *cli.Context, lang, typ string) error {
 	}
 }
 
-func validatePythonProfileOptions(lang, typ string, duration, interval int) error {
-	if lang != "python" {
+func validatePythonProfileOptions(lang profiling.Language, typ profiling.Type, duration, interval int) error {
+	if lang != profiling.LanguagePython {
 		return nil
 	}
-	if typ != "cpu" {
+	if typ != profiling.TypeCPU {
 		return fmt.Errorf("Python profiler supports only --type=cpu")
 	}
 	if interval != duration {
@@ -150,7 +156,7 @@ func validateSinglePID(ctx *cli.Context, profilerName string) error {
 }
 
 func validateCommonOptions(ctx *cli.Context) error {
-	if err := validateNumericOptions(ctx.String("type"), ctx.Int("freq"), ctx.Int("tool-limit")); err != nil {
+	if err := validateNumericOptions(profiling.Type(ctx.String("type")), ctx.Int("freq"), ctx.Int("tool-limit")); err != nil {
 		return err
 	}
 
@@ -208,8 +214,8 @@ func validateCommonOptions(ctx *cli.Context) error {
 	return nil
 }
 
-func validateNumericOptions(profileType string, freq, toolLimit int) error {
-	if profileType == "cpu" && freq < 1 {
+func validateNumericOptions(profileType profiling.Type, freq, toolLimit int) error {
+	if profileType == profiling.TypeCPU && freq < 1 {
 		return fmt.Errorf("frequency must be at least 1 sample per second")
 	}
 	if toolLimit < 0 {
@@ -218,12 +224,13 @@ func validateNumericOptions(profileType string, freq, toolLimit int) error {
 	return nil
 }
 
-func validateProfilerFlagCompatibility(ctx *cli.Context, lang, typ string) error {
-	native := lang == "go" || lang == "c" || lang == "c++"
-	nativeCPU := native && typ == "cpu"
-	nativeMemory := native && typ == "mem"
+func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language, typ profiling.Type) error {
+	implementation, _ := profiling.ImplementationFor(lang)
+	native := implementation == profiling.ImplementationNative
+	nativeCPU := native && typ == profiling.TypeCPU
+	nativeMemory := native && typ == profiling.TypeMemory
 
-	if lang == "java" && typ == "cpu" && ctx.Int("freq") > 1000 {
+	if lang == profiling.LanguageJava && typ == profiling.TypeCPU && ctx.Int("freq") > 1000 {
 		return fmt.Errorf("Java profiler frequency must not exceed 1000 samples per second")
 	}
 	if ctx.String("cpuid") != "" && !nativeCPU {
@@ -238,8 +245,16 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang, typ string) error
 	if ctx.String("exec-path") != "" && native {
 		return fmt.Errorf("--exec-path is not supported by native profilers")
 	}
-	if len(ctx.StringSlice("flags")) > 0 && !nativeMemory {
-		return fmt.Errorf("--flags is supported only by native memory profiling")
+	if ctx.IsSet("physical-memory-probability") {
+		physicalMemory := nativeMemory &&
+			profiling.MemoryMode(ctx.String("memory-mode")) != profiling.MemoryModeVirtualAlloc
+		if !physicalMemory {
+			return fmt.Errorf("--physical-memory-probability is supported only by native physical memory profiling")
+		}
+		probability := ctx.Uint("physical-memory-probability")
+		if probability < 1 || probability > 100 {
+			return fmt.Errorf("physical memory probability must be between 1 and 100")
+		}
 	}
 	return nil
 }
@@ -253,37 +268,33 @@ func validateOutputFormat(format string) error {
 	}
 }
 
-func validateMemoryMode(lang, typ, mode string) error {
-	if typ != "mem" {
-		if mode != "" {
-			return fmt.Errorf("--memory-mode is only valid when --type=mem")
+func validateMemoryMode(lang profiling.Language, typ profiling.Type, value string) error {
+	if typ != profiling.TypeMemory {
+		if value != "" {
+			return fmt.Errorf("--memory-mode is only valid when --type=memory")
 		}
 		return nil
 	}
-	if mode == "" {
-		return fmt.Errorf("--memory-mode is required when --type=mem")
+	if value == "" {
+		return fmt.Errorf("--memory-mode is required when --type=memory")
 	}
-
-	var supported []string
-	switch lang {
-	case "java":
-		supported = []string{"object_alloc", "object_usage"}
-	case "go", "c", "c++":
-		supported = []string{"virtual_alloc", "physical_alloc", "physical_usage"}
-	default:
+	mode, err := profiling.ParseMemoryMode(value)
+	if err != nil {
+		return err
+	}
+	if profiling.SupportsMemoryMode(lang, mode) {
 		return nil
 	}
-
+	supported := profiling.MemoryModesFor(lang)
+	values := make([]string, 0, len(supported))
 	for _, candidate := range supported {
-		if mode == candidate {
-			return nil
-		}
+		values = append(values, string(candidate))
 	}
 	return fmt.Errorf(
 		"memory mode %q is not supported for %s; supported modes: %s",
 		mode,
 		lang,
-		strings.Join(supported, ", "),
+		strings.Join(values, ", "),
 	)
 }
 

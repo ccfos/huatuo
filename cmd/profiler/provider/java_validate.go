@@ -16,6 +16,8 @@ package provider
 
 import (
 	"fmt"
+
+	"huatuo-bamai/pkg/profiling"
 )
 
 func validateJavaFrequency(freq int) error {
@@ -33,14 +35,14 @@ func validateJavaToolPath(toolPath string) error {
 }
 
 func validateJavaMemoryMode(
-	mode string,
+	mode profiling.MemoryMode,
 	pids []int,
 	getVersion func(int) (int, error),
 ) ([]string, error) {
 	switch mode {
-	case javaMemoryModeObjectAlloc:
+	case profiling.MemoryModeObjectAlloc:
 		return []string{}, nil
-	case javaMemoryModeObjectUsage:
+	case profiling.MemoryModeObjectUsage:
 		for _, pid := range pids {
 			javaVersion, err := getVersion(pid)
 			if err != nil {

@@ -27,6 +27,7 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/registry"
+	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -35,10 +36,6 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_physical_alloc.c -o $BPF_DIR/native_physical_alloc.o
 
 const (
-	modeVirtualAlloc  = "virtual_alloc"
-	modePhysicalUsage = "physical_usage"
-	modePhysicalAlloc = "physical_alloc"
-
 	programTracePageAlloc = "trace_page_alloc"
 	programTracePageFree  = "trace_page_free"
 
@@ -51,7 +48,7 @@ const (
 type memNativeProfiler struct {
 	bpf bpf.BPF
 
-	internalMode string
+	internalMode profiling.MemoryMode
 	probability  uint
 	pageSize     int64
 }
@@ -61,11 +58,11 @@ var hasKprobeFunction = bpf.HasKprobeFunction
 func init() {
 	impl := &memNativeProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "mem",
-		LangOrImpl:    "native",
-		Description:   "Native memory profiler using eBPF (virtual_alloc, physical_alloc, physical_usage modes)",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeMemory,
+		Implementation: profiling.ImplementationNative,
+		Description:    "Native memory profiler using eBPF (virtual_alloc, physical_alloc, physical_usage modes)",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 
@@ -77,7 +74,7 @@ func (p *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 		return nil, err
 	}
 
-	if mode == modePhysicalUsage {
+	if mode == profiling.MemoryModePhysicalUsage {
 		pctx.IsOneShotAgg = true
 	}
 
@@ -104,11 +101,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	p.internalMode = internalMode
-	if err := validateNativeMemoryExtraFlags(internalMode, pctx.ExtraFlags); err != nil {
-		return err
-	}
-
-	probability, err := resolveProbability(pctx.ExtraFlags["probability"], internalMode)
+	probability, err := resolveProbability(pctx.PhysicalMemoryProbability)
 	if err != nil {
 		return err
 	}
@@ -165,9 +158,9 @@ type bpfLoadConfig struct {
 
 // newBpfLoadConfig creates a BPF load configuration based on the profiler mode.
 // It returns the appropriate object file, constants, and attachment options for the given mode.
-func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads bool, probability uint) (*bpfLoadConfig, error) {
+func newBpfLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64, traceThreads bool, probability uint) (*bpfLoadConfig, error) {
 	switch internalMode {
-	case modeVirtualAlloc:
+	case profiling.MemoryModeVirtualAlloc:
 		return &bpfLoadConfig{
 			ObjectFile: "native_virtual_alloc.o",
 			Constants: map[string]any{
@@ -179,7 +172,7 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
 			},
 		}, nil
-	case modePhysicalUsage:
+	case profiling.MemoryModePhysicalUsage:
 		attachOpts, err := newPhysicalUsageAttachOptions()
 		if err != nil {
 			return nil, err
@@ -195,7 +188,7 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 			},
 			AttachOpts: attachOpts,
 		}, nil
-	case modePhysicalAlloc:
+	case profiling.MemoryModePhysicalAlloc:
 		attachOpt, err := newPhysicalAllocAttachOption()
 		if err != nil {
 			return nil, err
@@ -263,7 +256,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 	// Determine if fallback is needed based on profiling mode
 	// Retained mode (physical_usage) needs fallback, others don't
-	needsFallback := p.internalMode == modePhysicalUsage
+	needsFallback := p.internalMode == profiling.MemoryModePhysicalUsage
 
 	// Initialize ring buffer context once, reuse throughout the profiling loop
 	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257, needsFallback)
@@ -304,9 +297,9 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 	switch p.internalMode {
-	case modeVirtualAlloc:
+	case profiling.MemoryModeVirtualAlloc:
 		return v
-	case modePhysicalAlloc, modePhysicalUsage:
+	case profiling.MemoryModePhysicalAlloc, profiling.MemoryModePhysicalUsage:
 		return v * p.pageSize * 100 / int64(p.probability)
 	}
 

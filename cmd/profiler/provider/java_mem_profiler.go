@@ -23,23 +23,22 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/registry"
 	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
+	"huatuo-bamai/pkg/profiling"
 )
 
 const (
-	javaMemoryModeObjectAlloc = "object_alloc"
-	javaMemoryModeObjectUsage = "object_usage"
-	javaAllocInterval         = "512k"
-	javaMemoryStackDepth      = "256"
+	javaAllocInterval    = "512k"
+	javaMemoryStackDepth = "256"
 )
 
 func init() {
 	impl := &javaMemoryProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "mem",
-		LangOrImpl:    "java",
-		Description:   "Java memory profiler using async-profiler",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeMemory,
+		Implementation: profiling.ImplementationJava,
+		Description:    "Java memory profiler using async-profiler",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 

@@ -28,6 +28,7 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
+	"huatuo-bamai/pkg/profiling"
 )
 
 // ErrRootRequired indicates the operation requires root privileges.
@@ -78,7 +79,6 @@ type nativeAggregator struct {
 	formatter        output.Formatter
 	aggrMap          map[string]*stackEntry
 	lockAggrMap      map[string]*lockStackEntry
-	lockMode         string
 	isLockFoldedDone bool
 }
 
@@ -92,7 +92,6 @@ func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, err
 		formatter:   f,
 		aggrMap:     make(map[string]*stackEntry),
 		lockAggrMap: make(map[string]*lockStackEntry),
-		lockMode:    pctx.ExtraFlags["mode"],
 	}, nil
 }
 
@@ -130,7 +129,6 @@ func (a *nativeAggregator) Aggregate(rec any) {
 
 	case *lockStackEntry:
 		key := fmt.Sprintf("%s\x00%d", v.User, v.Proc.Lock)
-
 		if existed, ok := a.lockAggrMap[key]; ok {
 			existed.Contended += v.Contended
 			existed.WaitTime += v.WaitTime
@@ -157,10 +155,9 @@ func (a *nativeAggregator) Snapshot(pctx *pcontext.ProfilerContext) (any, error)
 		return nil, nil
 	}
 
-	if pctx.Type == "lock" {
+	if pctx.Type == profiling.TypeLock {
 		return a.snapshotLockProfile(pctx)
 	}
-
 	return a.snapshotCpuMemProfile(pctx)
 }
 
@@ -182,20 +179,14 @@ func (a *nativeAggregator) OutputFormatter() output.Formatter {
 		a.buildLockFolded()
 		a.isLockFoldedDone = true
 	}
-
 	return a.formatter
 }
 
 func (a *nativeAggregator) buildLockFolded() {
-	if len(a.lockAggrMap) == 0 {
-		return
-	}
-
 	for _, rec := range a.lockAggrMap {
-		frames, val := lockPrefixFrames(rec, a.lockMode)
-
+		frames, value := lockPrefixFrames(rec)
 		frames = appendStackFrames(frames, rec.User, rec.Kernel)
-		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: int64(val)}); err != nil {
+		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: int64(value)}); err != nil {
 			log.Warnf("formatter add lock sample: %v", err)
 		}
 	}
@@ -206,8 +197,8 @@ func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext)
 		return nil, nil
 	}
 
-	skipNegForPprof := pctx.Type == "mem" &&
-		pctx.MemoryMode == modePhysicalUsage
+	skipNegForPprof := pctx.Type == profiling.TypeMemory &&
+		pctx.MemoryMode == profiling.MemoryModePhysicalUsage
 
 	tree := make([]*profiler.TreeItem, 0, len(a.aggrMap))
 
@@ -230,15 +221,10 @@ func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (
 	}
 
 	tree := make([]*profiler.TreeItem, 0, len(a.lockAggrMap))
-	outputType := pctx.ExtraFlags["mode"]
-
 	for _, rec := range a.lockAggrMap {
-		prefixes, val := lockPrefixFrames(rec, outputType)
-
-		item := buildTreeItem(prefixes, rec.User, rec.Kernel, val)
-		tree = append(tree, item)
+		prefixes, value := lockPrefixFrames(rec)
+		tree = append(tree, buildTreeItem(prefixes, rec.User, rec.Kernel, value))
 	}
-
 	return buildPprofData(pctx, tree)
 }
 
@@ -328,37 +314,22 @@ func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (
 	return data, nil
 }
 
-func lockPrefixFrames(rec *lockStackEntry, mode string) ([]string, uint64) {
-	frames := []string{
+func lockPrefixFrames(rec *lockStackEntry) ([]string, uint64) {
+	return []string{
 		fmt.Sprintf("lock: %x", rec.Proc.Lock),
 		fmt.Sprintf("PID: %d, COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
-	}
-
-	val := rec.WaitTime
-
-	if mode == "" {
-		frames = append(frames, fmt.Sprintf("contended count: %d", rec.Contended))
-	}
-
-	if mode == "count" {
-		val = uint64(rec.Contended)
-	}
-
-	return frames, val
+		fmt.Sprintf("contended count: %d", rec.Contended),
+	}, rec.WaitTime
 }
 
 func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, error) {
 	switch pctx.Type {
-	case "cpu":
+	case profiling.TypeCPU:
 		return &profiler.ParseOption{SampleRate: int64(pctx.Freq)}, profiler.ProfileTypeCpuSample, nil
-	case "mem":
+	case profiling.TypeMemory:
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil
-	case "lock":
-		st := profiler.ProfileTypeLockTimeSample
-		if pctx.ExtraFlags["mode"] == "count" {
-			st = profiler.ProfileTypeLockCountSample
-		}
-		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, st, nil
+	case profiling.TypeLock:
+		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeLockTimeSample, nil
 	default:
 		return nil, "", fmt.Errorf("unsupported profile type %q", pctx.Type)
 	}

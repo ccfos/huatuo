@@ -16,6 +16,9 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"io"
+	"os"
 	"runtime"
 	"strconv"
 	"testing"
@@ -23,7 +26,56 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v2"
+
+	"huatuo-bamai/pkg/profiling"
 )
+
+func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantError string
+	}{
+		{
+			name: "memory type",
+			args: []string{
+				"--type", "memory",
+				"--language", "c",
+				"--memory-mode", "physical_alloc",
+				"--pid", strconv.Itoa(os.Getpid()),
+			},
+		},
+		{
+			name:      "legacy mem type",
+			args:      []string{"--type", "mem", "--language", "c"},
+			wantError: `unsupported profiling type "mem" (expected: cpu or memory)`,
+		},
+		{
+			name:      "removed flags option",
+			args:      []string{"--type", "cpu", "--language", "c", "--flags", "ignored"},
+			wantError: "flag provided but not defined: -flags",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := &cli.App{
+				Flags:         appFlags,
+				Before:        runBefore,
+				AllowExtFlags: true,
+				Writer:        io.Discard,
+				ErrWriter:     io.Discard,
+				Action:        func(*cli.Context) error { return nil },
+			}
+			err := app.Run(append([]string{"profiler"}, tt.args...))
+			if tt.wantError == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantError, fmt.Sprintf("args: %v", tt.args))
+		})
+	}
+}
 
 func TestParseCPUIDsWithLimit(t *testing.T) {
 	tests := []struct {
@@ -182,11 +234,31 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			wantError: "--exec-path is not supported by native profilers",
 		},
 		{
-			name:      "Python extra flags",
+			name:      "Python physical memory probability",
 			language:  "python",
 			typ:       "cpu",
-			args:      []string{"--flags", "--probability=10"},
-			wantError: "--flags is supported only by native memory profiling",
+			args:      []string{"--physical-memory-probability", "10"},
+			wantError: "--physical-memory-probability is supported only by native physical memory profiling",
+		},
+		{
+			name:      "native virtual memory probability",
+			language:  "c",
+			typ:       "memory",
+			args:      []string{"--memory-mode", "virtual_alloc", "--physical-memory-probability", "10"},
+			wantError: "--physical-memory-probability is supported only by native physical memory profiling",
+		},
+		{
+			name:     "native physical memory probability",
+			language: "c",
+			typ:      "memory",
+			args:     []string{"--memory-mode", "physical_usage", "--physical-memory-probability", "10"},
+		},
+		{
+			name:      "native physical memory probability out of range",
+			language:  "c",
+			typ:       "memory",
+			args:      []string{"--memory-mode", "physical_alloc", "--physical-memory-probability", "101"},
+			wantError: "physical memory probability must be between 1 and 100",
 		},
 		{
 			name:      "Java frequency too high",
@@ -200,7 +272,11 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := newValidationCLIContext(t, tt.args...)
-			err := validateProfilerFlagCompatibility(ctx, tt.language, tt.typ)
+			err := validateProfilerFlagCompatibility(
+				ctx,
+				profiling.Language(tt.language),
+				profiling.Type(tt.typ),
+			)
 			if tt.wantError != "" {
 				require.EqualError(t, err, tt.wantError)
 				return
@@ -219,7 +295,7 @@ func TestValidateOutputFormat(t *testing.T) {
 
 func TestValidateNumericOptions(t *testing.T) {
 	require.NoError(t, validateNumericOptions("cpu", 99, 0))
-	require.NoError(t, validateNumericOptions("mem", 0, 0))
+	require.NoError(t, validateNumericOptions(profiling.TypeMemory, 0, 0))
 	require.EqualError(t, validateNumericOptions("cpu", 0, 0), "frequency must be at least 1 sample per second")
 	require.EqualError(t, validateNumericOptions("cpu", 99, -1), "tool limit must not be negative")
 }
@@ -263,45 +339,45 @@ func TestValidateMemoryMode(t *testing.T) {
 		{
 			name:     "Java object allocation",
 			language: "java",
-			typ:      "mem",
+			typ:      "memory",
 			mode:     "object_alloc",
 		},
 		{
 			name:     "Java object usage",
 			language: "java",
-			typ:      "mem",
+			typ:      "memory",
 			mode:     "object_usage",
 		},
 		{
 			name:     "native physical allocation",
 			language: "c",
-			typ:      "mem",
+			typ:      "memory",
 			mode:     "physical_alloc",
 		},
 		{
 			name:      "memory mode required",
 			language:  "java",
-			typ:       "mem",
-			wantError: "--memory-mode is required when --type=mem",
+			typ:       "memory",
+			wantError: "--memory-mode is required when --type=memory",
 		},
 		{
 			name:      "memory mode rejected for CPU",
 			language:  "java",
 			typ:       "cpu",
 			mode:      "object_alloc",
-			wantError: "--memory-mode is only valid when --type=mem",
+			wantError: "--memory-mode is only valid when --type=memory",
 		},
 		{
 			name:      "Java rejects native mode",
 			language:  "java",
-			typ:       "mem",
+			typ:       "memory",
 			mode:      "physical_alloc",
 			wantError: "memory mode \"physical_alloc\" is not supported for java; supported modes: object_alloc, object_usage",
 		},
 		{
 			name:      "native rejects object mode",
 			language:  "go",
-			typ:       "mem",
+			typ:       "memory",
 			mode:      "object_alloc",
 			wantError: "memory mode \"object_alloc\" is not supported for go; supported modes: virtual_alloc, physical_alloc, physical_usage",
 		},
@@ -314,7 +390,11 @@ func TestValidateMemoryMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateMemoryMode(tt.language, tt.typ, tt.mode)
+			err := validateMemoryMode(
+				profiling.Language(tt.language),
+				profiling.Type(tt.typ),
+				tt.mode,
+			)
 			if tt.wantError != "" {
 				require.EqualError(t, err, tt.wantError)
 				return
@@ -368,7 +448,7 @@ func TestValidatePythonProfileOptions(t *testing.T) {
 		{
 			name:      "Python memory",
 			language:  "python",
-			typ:       "mem",
+			typ:       "memory",
 			duration:  10,
 			interval:  10,
 			wantError: "Python profiler supports only --type=cpu",
@@ -386,7 +466,12 @@ func TestValidatePythonProfileOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validatePythonProfileOptions(tt.language, tt.typ, tt.duration, tt.interval)
+			err := validatePythonProfileOptions(
+				profiling.Language(tt.language),
+				profiling.Type(tt.typ),
+				tt.duration,
+				tt.interval,
+			)
 			if tt.wantError != "" {
 				require.EqualError(t, err, tt.wantError)
 				return

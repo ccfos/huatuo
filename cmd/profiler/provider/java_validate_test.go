@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"huatuo-bamai/pkg/profiling"
 )
 
 func TestValidateJavaFrequency(t *testing.T) {
@@ -43,18 +45,18 @@ func TestValidateJavaToolPath(t *testing.T) {
 
 func TestValidateJavaMemoryMode(t *testing.T) {
 	version := func(int) (int, error) { return 17, nil }
-	args, err := validateJavaMemoryMode(javaMemoryModeObjectAlloc, []int{1}, version)
+	args, err := validateJavaMemoryMode(profiling.MemoryModeObjectAlloc, []int{1}, version)
 	require.NoError(t, err)
 	require.Empty(t, args)
 
-	args, err = validateJavaMemoryMode(javaMemoryModeObjectUsage, []int{1}, version)
+	args, err = validateJavaMemoryMode(profiling.MemoryModeObjectUsage, []int{1}, version)
 	require.NoError(t, err)
 	require.Equal(t, []string{"--live"}, args)
 
-	_, err = validateJavaMemoryMode(javaMemoryModeObjectUsage, []int{1}, func(int) (int, error) { return 8, nil })
+	_, err = validateJavaMemoryMode(profiling.MemoryModeObjectUsage, []int{1}, func(int) (int, error) { return 8, nil })
 	require.EqualError(t, err, "object_usage mode requires Java 11 or newer: PID 1 uses Java 8")
 
-	_, err = validateJavaMemoryMode(javaMemoryModeObjectUsage, []int{1}, func(int) (int, error) {
+	_, err = validateJavaMemoryMode(profiling.MemoryModeObjectUsage, []int{1}, func(int) (int, error) {
 		return 0, errors.New("unavailable")
 	})
 	require.EqualError(t, err, "failed to get Java version for PID 1: unavailable")

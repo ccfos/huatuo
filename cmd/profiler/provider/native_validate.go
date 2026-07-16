@@ -16,8 +16,8 @@ package provider
 
 import (
 	"fmt"
-	"slices"
-	"strconv"
+
+	"huatuo-bamai/pkg/profiling"
 )
 
 func validateNativePIDs(profileType string, pids []int) error {
@@ -27,45 +27,23 @@ func validateNativePIDs(profileType string, pids []int) error {
 	return nil
 }
 
-func validateNativeMemoryExtraFlags(mode string, flags map[string]string) error {
-	supported := []string{"probability"}
-	for key := range flags {
-		if !slices.Contains(supported, key) {
-			return fmt.Errorf("native memory profiler does not support --flags key %q", key)
-		}
-	}
-	if mode == modeVirtualAlloc && flags["probability"] != "" {
-		return fmt.Errorf("--flags probability is not supported by memory mode %q", mode)
-	}
-	return nil
-}
-
-func resolveMemMode(mode string) (string, error) {
+func resolveMemMode(mode profiling.MemoryMode) (profiling.MemoryMode, error) {
 	switch mode {
-	case modeVirtualAlloc, modePhysicalUsage, modePhysicalAlloc:
+	case profiling.MemoryModeVirtualAlloc,
+		profiling.MemoryModePhysicalUsage,
+		profiling.MemoryModePhysicalAlloc:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("invalid mode %q", mode)
+		return profiling.MemoryModeUnknown, fmt.Errorf("invalid mode %q", mode)
 	}
 }
 
-func resolveProbability(probStr, internalMode string) (uint, error) {
-	probability := uint64(100)
-
-	if probStr != "" {
-		prob, err := strconv.ParseUint(probStr, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("invalid probability value %q: %w", probStr, err)
-		}
-
-		probability = prob
-	}
-
+func resolveProbability(probability uint) (uint, error) {
 	if probability < 1 || probability > 100 {
-		return 0, fmt.Errorf("probability must be between 1 and 100")
+		return 0, fmt.Errorf("physical memory probability must be between 1 and 100")
 	}
 
-	return uint(probability), nil
+	return probability, nil
 }
 
 func resolveScope(scope string) (bool, error) {

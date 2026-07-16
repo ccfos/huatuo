@@ -20,7 +20,7 @@ var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "type",
 		Aliases: []string{"t"},
-		Usage:   "Profiling type: cpu|mem",
+		Usage:   "Profiling type: cpu|memory",
 	},
 	&cli.StringFlag{
 		Name:    "language",
@@ -30,6 +30,11 @@ var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:  "memory-mode",
 		Usage: "Memory mode; Java: object_alloc|object_usage; native: virtual_alloc|physical_alloc|physical_usage",
+	},
+	&cli.UintFlag{
+		Name:  "physical-memory-probability",
+		Usage: "Native physical-memory sampling probability, from 1 to 100 percent",
+		Value: 100,
 	},
 	&cli.StringFlag{
 		Name:    "pid",
@@ -128,11 +133,6 @@ var appFlags = []cli.Flag{
 	&cli.StringSliceFlag{
 		Name:  "metadata",
 		Usage: "Meta data for document data, e.g. --metadata '--tracer_id HHKKJGKIUOLNK' --metadata '--tracer_data=AppName'",
-	},
-	&cli.StringSliceFlag{
-		Name:    "flags",
-		Aliases: []string{"f"},
-		Usage:   "Extra cpu/memory profiler flags, e.g. -f '--core-id=10' -f '--title=AppName'",
 	},
 	&cli.StringSliceFlag{
 		Name:  "cpuidle-metadata",

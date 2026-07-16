@@ -26,17 +26,18 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/registry"
+	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/types"
 )
 
 func init() {
 	impl := &cpuNativeProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "cpu",
-		LangOrImpl:    "native",
-		Description:   "Native CPU profiler using ebpf",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeCPU,
+		Implementation: profiling.ImplementationNative,
+		Description:    "Native CPU profiler using ebpf",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 

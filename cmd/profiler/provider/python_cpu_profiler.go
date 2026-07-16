@@ -27,6 +27,7 @@ import (
 	executil "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
+	"huatuo-bamai/pkg/profiling"
 )
 
 type pythonCPUProfiler struct {
@@ -39,11 +40,11 @@ type pythonCPUProfiler struct {
 func init() {
 	impl := &pythonCPUProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "cpu",
-		LangOrImpl:    "python",
-		Description:   "Python CPU profiler using py-spy",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeCPU,
+		Implementation: profiling.ImplementationPython,
+		Description:    "Python CPU profiler using py-spy",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 

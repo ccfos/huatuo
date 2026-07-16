@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,12 +29,25 @@ func SetupSignals() (chan os.Signal, error) {
 	return signals, nil
 }
 
+// StopSignals unregisters a channel created by SetupSignals.
+func StopSignals(signals chan os.Signal) {
+	signal.Stop(signals)
+}
+
 // Once Caught signal, the main process will exit
-func ListenSignalAndCancel(sigCh <-chan os.Signal, cancel context.CancelFunc) (os.Signal, error) {
-	sig, ok := <-sigCh
-	if !ok {
-		return nil, errors.New("signal channel closed unexpectedly")
+func ListenSignalAndCancel(
+	ctx context.Context,
+	sigCh <-chan os.Signal,
+	cancel context.CancelFunc,
+) (os.Signal, error) {
+	select {
+	case <-ctx.Done():
+		return nil, nil
+	case sig, ok := <-sigCh:
+		if !ok {
+			return nil, errors.New("signal channel closed unexpectedly")
+		}
+		cancel()
+		return sig, nil
 	}
-	cancel()
-	return sig, nil
 }

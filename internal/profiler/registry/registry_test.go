@@ -22,6 +22,7 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
+	"huatuo-bamai/pkg/profiling"
 )
 
 // fakeProfiler satisfies Profiler with no behavior. Registry tests exercise
@@ -44,39 +45,39 @@ func resetRegistry(t *testing.T) {
 	t.Helper()
 
 	saved := profilerRegistry
-	profilerRegistry = map[string]map[string]ProfilerMeta{}
+	profilerRegistry = map[profiling.Implementation]map[profiling.Type]ProfilerMeta{}
 
 	t.Cleanup(func() { profilerRegistry = saved })
 }
 
-func newMeta(lang, typ string) ProfilerMeta {
+func newMeta(implementation profiling.Implementation, typ profiling.Type) ProfilerMeta {
 	return ProfilerMeta{
-		Type:          typ,
-		LangOrImpl:    lang,
-		Description:   "fake",
-		Impl:          fakeProfiler{},
-		NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return fakeAggregator{}, nil },
+		Type:           typ,
+		Implementation: implementation,
+		Description:    "fake",
+		Impl:           fakeProfiler{},
+		NewAggregator:  func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) { return fakeAggregator{}, nil },
 	}
 }
 
 func TestRegisterThenGet(t *testing.T) {
 	resetRegistry(t)
-	Register(newMeta("native", "cpu"))
+	Register(newMeta(profiling.ImplementationNative, profiling.TypeCPU))
 
-	got, err := Get("native", "cpu")
+	got, err := Get(profiling.ImplementationNative, profiling.TypeCPU)
 	if err != nil {
 		t.Fatalf(`Get("native", "cpu") error = %v, want nil`, err)
 	}
 
-	if got.LangOrImpl != "native" || got.Type != "cpu" {
+	if got.Implementation != profiling.ImplementationNative || got.Type != profiling.TypeCPU {
 		t.Errorf(`Get("native", "cpu") = (%q, %q), want ("native", "cpu")`,
-			got.LangOrImpl, got.Type)
+			got.Implementation, got.Type)
 	}
 }
 
 func TestRegisterDuplicatePanics(t *testing.T) {
 	resetRegistry(t)
-	Register(newMeta("native", "cpu"))
+	Register(newMeta(profiling.ImplementationNative, profiling.TypeCPU))
 
 	defer func() {
 		r := recover()
@@ -90,57 +91,23 @@ func TestRegisterDuplicatePanics(t *testing.T) {
 		}
 	}()
 
-	Register(newMeta("native", "cpu"))
-}
-
-func TestGetFallbackToDefaultImpl(t *testing.T) {
-	resetRegistry(t)
-	Register(newMeta("native", "cpu"))
-
-	// "go" is not registered directly; defaultLangProfiler["go"] = "native"
-	// must redirect the lookup to ("native", "cpu").
-	got, err := Get("go", "cpu")
-	if err != nil {
-		t.Fatalf(`Get("go", "cpu") error = %v, want nil`, err)
-	}
-
-	if got.LangOrImpl != "native" {
-		t.Errorf(`Get("go", "cpu").LangOrImpl = %q, want "native"`, got.LangOrImpl)
-	}
-}
-
-func TestGetExactBeatsFallback(t *testing.T) {
-	resetRegistry(t)
-	// Both registered: ("go", "cpu") must win over the ("native", "cpu")
-	// fallback, otherwise a per-language override would be unreachable.
-	Register(newMeta("native", "cpu"))
-	Register(newMeta("go", "cpu"))
-
-	got, err := Get("go", "cpu")
-	if err != nil {
-		t.Fatalf(`Get("go", "cpu") error = %v, want nil`, err)
-	}
-
-	if got.LangOrImpl != "go" {
-		t.Errorf(`Get("go", "cpu").LangOrImpl = %q, want "go"`, got.LangOrImpl)
-	}
+	Register(newMeta(profiling.ImplementationNative, profiling.TypeCPU))
 }
 
 func TestGetFallbackMissesWhenTypeAbsent(t *testing.T) {
 	resetRegistry(t)
-	Register(newMeta("native", "cpu"))
+	Register(newMeta(profiling.ImplementationNative, profiling.TypeCPU))
 
-	// Lang fallback resolves "go" -> "native", but ("native", "mem") is not
-	// registered, so the second lookup also misses.
-	if _, err := Get("go", "mem"); err == nil {
-		t.Fatal(`Get("go", "mem") error = nil, want non-nil`)
+	// The native implementation has no memory provider registered in this test.
+	if _, err := Get(profiling.ImplementationNative, profiling.TypeMemory); err == nil {
+		t.Fatal(`Get("native", "memory") error = nil, want non-nil`)
 	}
 }
 
-func TestGetUnknownLang(t *testing.T) {
+func TestGetUnknownImplementation(t *testing.T) {
 	resetRegistry(t)
 
-	if _, err := Get("rust", "cpu"); err == nil {
-		t.Fatal(`Get("rust", "cpu") error = nil, want non-nil`)
+	if _, err := Get("unknown", profiling.TypeCPU); err == nil {
+		t.Fatal(`Get("unknown", "cpu") error = nil, want non-nil`)
 	}
 }

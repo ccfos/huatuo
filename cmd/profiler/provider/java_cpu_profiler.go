@@ -23,16 +23,17 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/registry"
 	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
+	"huatuo-bamai/pkg/profiling"
 )
 
 func init() {
 	impl := &cpuJavaProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "cpu",
-		LangOrImpl:    "java",
-		Description:   "Java CPU profiler using async-profiler",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeCPU,
+		Implementation: profiling.ImplementationJava,
+		Description:    "Java CPU profiler using async-profiler",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 

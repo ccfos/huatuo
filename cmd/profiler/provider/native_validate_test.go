@@ -29,28 +29,14 @@ func TestValidateNativePIDs(t *testing.T) {
 	)
 }
 
-func TestValidateNativeMemoryExtraFlags(t *testing.T) {
-	require.NoError(t, validateNativeMemoryExtraFlags(modePhysicalAlloc, map[string]string{"probability": "10"}))
-	require.EqualError(
-		t,
-		validateNativeMemoryExtraFlags(modePhysicalAlloc, map[string]string{"unknown": "1"}),
-		`native memory profiler does not support --flags key "unknown"`,
-	)
-	require.EqualError(
-		t,
-		validateNativeMemoryExtraFlags(modeVirtualAlloc, map[string]string{"probability": "10"}),
-		`--flags probability is not supported by memory mode "virtual_alloc"`,
-	)
-}
-
 func TestResolveProbability(t *testing.T) {
-	probability, err := resolveProbability("", modePhysicalAlloc)
+	probability, err := resolveProbability(100)
 	require.NoError(t, err)
 	require.Equal(t, uint(100), probability)
 
-	_, err = resolveProbability("0", modePhysicalAlloc)
-	require.EqualError(t, err, "probability must be between 1 and 100")
+	_, err = resolveProbability(0)
+	require.EqualError(t, err, "physical memory probability must be between 1 and 100")
 
-	_, err = resolveProbability("101", modePhysicalUsage)
-	require.EqualError(t, err, "probability must be between 1 and 100")
+	_, err = resolveProbability(101)
+	require.EqualError(t, err, "physical memory probability must be between 1 and 100")
 }

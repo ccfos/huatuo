@@ -19,7 +19,30 @@ import (
 
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
+	"huatuo-bamai/pkg/profiling"
 )
+
+func TestJavaParseOptionsKeepsProfilerNames(t *testing.T) {
+	tests := []struct {
+		typ      profiling.Type
+		wantName string
+	}{
+		{typ: profiling.TypeCPU, wantName: "java-cpu"},
+		{typ: profiling.TypeMemory, wantName: "java-mem"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.typ), func(t *testing.T) {
+			_, _, name, err := javaParseOptions(&pcontext.ProfilerContext{Type: tt.typ})
+			if err != nil {
+				t.Fatalf("javaParseOptions() error = %v", err)
+			}
+			if name != tt.wantName {
+				t.Fatalf("name = %q, want %q", name, tt.wantName)
+			}
+		})
+	}
+}
 
 func TestNewJavaAggregatorUsesOneShotAggregation(t *testing.T) {
 	t.Parallel()

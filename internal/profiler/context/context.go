@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/output"
@@ -29,6 +30,7 @@ import (
 	_ "huatuo-bamai/internal/profiler/output/raw"
 	psignal "huatuo-bamai/internal/profiler/signal"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/pkg/profiling"
 
 	"github.com/urfave/cli/v2"
 )
@@ -46,19 +48,19 @@ type ProfilerContext struct {
 	IsOneShotAgg bool
 	CPUIDs       []int
 
-	ServerAddress string
-	OutputFormat  output.OutputFormat
-	OutputPath    string
-	ContainerID   string
-	Type          string
-	Language      string
-	ExecPath      string
-	Scope         string
-	ToolPath      string
-	LogBpfDebug   bool
-	MemoryMode    string
+	ServerAddress             string
+	OutputFormat              output.OutputFormat
+	OutputPath                string
+	ContainerID               string
+	Type                      profiling.Type
+	Language                  profiling.Language
+	ExecPath                  string
+	Scope                     string
+	ToolPath                  string
+	LogBpfDebug               bool
+	MemoryMode                profiling.MemoryMode
+	PhysicalMemoryProbability uint
 
-	ExtraFlags      map[string]string
 	MetaData        map[string]string
 	CpuIdleMetaData map[string]int64
 	CpuSysMetaData  map[string]int64
@@ -80,37 +82,55 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		cancel()
 		return nil, fmt.Errorf("failed to setup signals: %w", err)
 	}
+	var cancelOnce sync.Once
+	listenerDone := make(chan struct{})
+	cancelProfiler := func() {
+		cancelOnce.Do(func() {
+			psignal.StopSignals(sigCh)
+			cancel()
+			<-listenerDone
+		})
+	}
+	succeeded := false
+	var tsClient *toolstream.Client
+	defer func() {
+		if succeeded {
+			return
+		}
+		cancelProfiler()
+		if tsClient != nil {
+			_ = tsClient.Close()
+		}
+	}()
 
 	go func() {
-		sig, err := psignal.ListenSignalAndCancel(sigCh, cancel)
+		defer close(listenerDone)
+		sig, err := psignal.ListenSignalAndCancel(ctx, sigCh, cancel)
 		if err != nil {
 			fmt.Fprintf(logBuf, "[signal] error: %v\n", err)
 		}
-		fmt.Fprintf(logBuf, "[signal] caught signal: %s, canceling context\n", sig)
+		if sig != nil {
+			fmt.Fprintf(logBuf, "[signal] caught signal: %s, canceling context\n", sig)
+		}
 	}()
 
-	flagsMap, err := parseExtraFlagsString(cliCtx.StringSlice("flags"))
+	metaData, err := parseFlagValuesString(cliCtx.StringSlice("metadata"))
+	if err != nil {
+		return nil, err
+	}
+	cpuidleMeta, err := parseFlagValuesInt64(cliCtx.StringSlice("cpuidle-metadata"))
 	if err != nil {
 		return nil, err
 	}
 
-	metaData, err := parseExtraFlagsString(cliCtx.StringSlice("metadata"))
-	if err != nil {
-		return nil, err
-	}
-	cpuidleMeta, err := parseExtraFlagsInt64(cliCtx.StringSlice("cpuidle-metadata"))
-	if err != nil {
-		return nil, err
-	}
-
-	cpusysMeta, err := parseExtraFlagsInt64(cliCtx.StringSlice("cpusys-metadata"))
+	cpusysMeta, err := parseFlagValuesInt64(cliCtx.StringSlice("cpusys-metadata"))
 	if err != nil {
 		return nil, err
 	}
 
 	outputFormat := output.OutputFormat(cliCtx.String("output-format"))
 
-	tsClient, err := initToolstreamClient(cliCtx, outputFormat)
+	tsClient, err = initToolstreamClient(cliCtx, outputFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -127,9 +147,24 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	if err != nil {
 		return nil, err
 	}
-	return &ProfilerContext{
+	typ, err := profiling.ParseType(cliCtx.String("type"))
+	if err != nil {
+		return nil, err
+	}
+	language, err := profiling.ParseLanguage(cliCtx.String("language"))
+	if err != nil {
+		return nil, err
+	}
+	mode := profiling.MemoryModeUnknown
+	if cliCtx.String("memory-mode") != "" {
+		mode, err = profiling.ParseMemoryMode(cliCtx.String("memory-mode"))
+		if err != nil {
+			return nil, err
+		}
+	}
+	profilerContext := &ProfilerContext{
 		Ctx:    ctx,
-		Cancel: cancel,
+		Cancel: cancelProfiler,
 		Cli:    cliCtx,
 
 		PIDs:         pids,
@@ -139,25 +174,27 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		AggrInterval: cliCtx.Int("aggr-interval"),
 		CPUIDs:       cpuIDs,
 
-		ServerAddress: cliCtx.String("server-address"),
-		Type:          cliCtx.String("type"),
-		Language:      cliCtx.String("language"),
-		ContainerID:   cliCtx.String("container-id"),
-		ExecPath:      cliCtx.String("exec-path"),
-		Scope:         cliCtx.String("scope"),
-		ToolPath:      cliCtx.String("tool-path"),
-		LogBpfDebug:   cliCtx.Bool("log-bpf-debug"),
-		OutputPath:    cliCtx.String("output-path"),
-		OutputFormat:  outputFormat,
-		MemoryMode:    cliCtx.String("memory-mode"),
+		ServerAddress:             cliCtx.String("server-address"),
+		Type:                      typ,
+		Language:                  language,
+		ContainerID:               cliCtx.String("container-id"),
+		ExecPath:                  cliCtx.String("exec-path"),
+		Scope:                     cliCtx.String("scope"),
+		ToolPath:                  cliCtx.String("tool-path"),
+		LogBpfDebug:               cliCtx.Bool("log-bpf-debug"),
+		OutputPath:                cliCtx.String("output-path"),
+		OutputFormat:              outputFormat,
+		MemoryMode:                mode,
+		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
 
 		MetaData:        metaData,
-		ExtraFlags:      flagsMap,
 		CpuSysMetaData:  cpusysMeta,
 		CpuIdleMetaData: cpuidleMeta,
 
 		ToolstreamClient: tsClient,
-	}, nil
+	}
+	succeeded = true
+	return profilerContext, nil
 }
 
 func MapToStructByJSON[T any](m map[string]int64) (T, error) {
@@ -218,7 +255,7 @@ func parseFlagSegments(flagList []string) ([]flagSegment, error) {
 	return segments, nil
 }
 
-func parseExtraFlagsString(flagList []string) (map[string]string, error) {
+func parseFlagValuesString(flagList []string) (map[string]string, error) {
 	segments, err := parseFlagSegments(flagList)
 	if err != nil {
 		return nil, err
@@ -232,7 +269,7 @@ func parseExtraFlagsString(flagList []string) (map[string]string, error) {
 	return flags, nil
 }
 
-func parseExtraFlagsInt64(flagList []string) (map[string]int64, error) {
+func parseFlagValuesInt64(flagList []string) (map[string]int64, error) {
 	segments, err := parseFlagSegments(flagList)
 	if err != nil {
 		return nil, err

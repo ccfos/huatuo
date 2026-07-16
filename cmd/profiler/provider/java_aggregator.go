@@ -26,6 +26,7 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
+	"huatuo-bamai/pkg/profiling"
 )
 
 // Compile-time check: javaAggregator implements aggregator.Aggregator.
@@ -149,6 +150,9 @@ func javaParseOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, st
 		return nil, "", "", err
 	}
 
-	prName := "java-" + pctx.Type
+	prName := "java-" + string(pctx.Type)
+	if pctx.Type == profiling.TypeMemory {
+		prName = "java-mem"
+	}
 	return opt, sampleType, prName, nil
 }
