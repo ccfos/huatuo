@@ -31,11 +31,6 @@ var appFlags = []cli.Flag{
 		Name:  "memory-mode",
 		Usage: "Memory mode; Java: object_alloc|object_usage; native: virtual_alloc|physical_alloc|physical_usage",
 	},
-	&cli.UintFlag{
-		Name:  "physical-memory-probability",
-		Usage: "Native physical-memory sampling probability, from 1 to 100 percent",
-		Value: 100,
-	},
 	&cli.StringFlag{
 		Name:    "pid",
 		Aliases: []string{"p"},
@@ -59,6 +54,11 @@ var appFlags = []cli.Flag{
 		Aliases: []string{"F"},
 		Usage:   "The number of samples to collect per second",
 		Value:   99,
+	},
+	&cli.UintFlag{
+		Name:  "physical-memory-probability",
+		Usage: "Native physical-memory sampling probability, from 1 to 100 percent",
+		Value: 100,
 	},
 	&cli.IntFlag{
 		Name:  "aggr-interval",
