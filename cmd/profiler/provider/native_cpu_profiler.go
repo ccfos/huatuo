@@ -64,8 +64,8 @@ func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if len(pctx.PIDs) > 1 {
-		return fmt.Errorf("start native CPU profiler: multiple PIDs are not supported")
+	if err := validateNativePIDs("CPU", pctx.PIDs); err != nil {
+		return err
 	}
 	if err := requireRoot(); err != nil {
 		return err

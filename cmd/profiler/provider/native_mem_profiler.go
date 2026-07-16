@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
@@ -90,8 +89,8 @@ func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if len(pctx.PIDs) > 1 {
-		return fmt.Errorf("start native memory profiler: multiple PIDs are not supported")
+	if err := validateNativePIDs("memory", pctx.PIDs); err != nil {
+		return err
 	}
 	if err := requireRoot(); err != nil {
 		return err
@@ -105,6 +104,9 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	p.internalMode = internalMode
+	if err := validateNativeMemoryExtraFlags(internalMode, pctx.ExtraFlags); err != nil {
+		return err
+	}
 
 	probability, err := resolveProbability(pctx.ExtraFlags["probability"], internalMode)
 	if err != nil {
@@ -149,47 +151,6 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	log.Info("eBPF attached")
 
 	return nil
-}
-
-func resolveMemMode(mode string) (string, error) {
-	switch mode {
-	case modeVirtualAlloc, modePhysicalUsage, modePhysicalAlloc:
-		return mode, nil
-	default:
-		return "", fmt.Errorf("invalid mode %q", mode)
-	}
-}
-
-func resolveProbability(probStr, internalMode string) (uint, error) {
-	probability := uint64(100)
-
-	if probStr != "" {
-		prob, err := strconv.ParseUint(probStr, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("invalid probability value %q: %w", probStr, err)
-		}
-
-		probability = prob
-	}
-
-	if (internalMode == modePhysicalUsage || internalMode == modePhysicalAlloc) && (probability < 1 || probability > 100) {
-		return 0, fmt.Errorf("probability must be between 1 and 100")
-	}
-
-	return uint(probability), nil
-}
-
-func resolveScope(scope string) (bool, error) {
-	switch scope {
-	case "thread", "":
-		return false, nil
-	case "thread-group":
-		return true, nil
-	case "process-group":
-		return false, fmt.Errorf("scope 'process-group' is not supported by mem profiler")
-	default:
-		return false, fmt.Errorf("unsupported scope for mem profiler: %q", scope)
-	}
 }
 
 // bpfLoadConfig holds the configuration needed to load and attach a BPF program.
