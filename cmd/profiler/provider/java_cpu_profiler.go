@@ -46,6 +46,13 @@ func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggrega
 }
 
 func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if err := validateJavaFrequency(pctx.Freq); err != nil {
+		return err
+	}
+	if err := validateJavaToolPath(pctx.ToolPath); err != nil {
+		return err
+	}
+
 	pids := pctx.PIDs
 	if len(pids) == 0 {
 		var err error
@@ -58,8 +65,19 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 			return err
 		}
 	}
+	if err := validateResolvedPIDs("Java", pids); err != nil {
+		return err
+	}
+	if len(pctx.PIDs) > 0 {
+		if err := validateProcessExecutables("Java", "java", pids); err != nil {
+			return err
+		}
+		if err := validateExpectedExecPath(pids, pctx.ExecPath); err != nil {
+			return err
+		}
+	}
 
-	if err := validateJavaToolLimit(pids, pctx.ToolLimit); err != nil {
+	if err := validateToolLimit("Java", pids, pctx.ToolLimit); err != nil {
 		return err
 	}
 

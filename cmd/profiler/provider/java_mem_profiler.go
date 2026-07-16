@@ -53,6 +53,10 @@ func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggr
 }
 
 func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if err := validateJavaToolPath(pctx.ToolPath); err != nil {
+		return err
+	}
+
 	pids := pctx.PIDs
 	if len(pids) == 0 {
 		var err error
@@ -65,33 +69,25 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 			return err
 		}
 	}
+	if err := validateResolvedPIDs("Java", pids); err != nil {
+		return err
+	}
+	if len(pctx.PIDs) > 0 {
+		if err := validateProcessExecutables("Java", "java", pids); err != nil {
+			return err
+		}
+		if err := validateExpectedExecPath(pids, pctx.ExecPath); err != nil {
+			return err
+		}
+	}
 
-	if err := validateJavaToolLimit(pids, pctx.ToolLimit); err != nil {
+	if err := validateToolLimit("Java", pids, pctx.ToolLimit); err != nil {
 		return err
 	}
 
-	var extraArgs []string
-	switch pctx.MemoryMode {
-	case javaMemoryModeObjectAlloc:
-	case javaMemoryModeObjectUsage:
-		for _, pid := range pids {
-			javaVersion, err := javaruntime.GetJavaVersion(pid)
-			if err != nil {
-				return fmt.Errorf("failed to get Java version for PID %d: %w", pid, err)
-			}
-
-			if javaVersion < 11 {
-				return fmt.Errorf(
-					"object_usage mode requires Java 11 or newer: PID %d uses Java %d",
-					pid,
-					javaVersion,
-				)
-			}
-		}
-
-		extraArgs = append(extraArgs, "--live")
-	default:
-		return fmt.Errorf("unsupported Java memory mode %q", pctx.MemoryMode)
+	extraArgs, err := validateJavaMemoryMode(pctx.MemoryMode, pids, javaruntime.GetJavaVersion)
+	if err != nil {
+		return err
 	}
 
 	for _, pid := range pids {

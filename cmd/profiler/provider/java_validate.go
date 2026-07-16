@@ -1,0 +1,61 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package provider
+
+import (
+	"fmt"
+)
+
+func validateJavaFrequency(freq int) error {
+	if freq < 1 || freq > 1000 {
+		return fmt.Errorf("Java profiler frequency must be between 1 and 1000 samples per second")
+	}
+	return nil
+}
+
+func validateJavaToolPath(toolPath string) error {
+	if err := validateToolFile("Java", toolPath, "bin/asprof", true); err != nil {
+		return err
+	}
+	return validateToolFile("Java", toolPath, "lib/libasyncProfiler.so", false)
+}
+
+func validateJavaMemoryMode(
+	mode string,
+	pids []int,
+	getVersion func(int) (int, error),
+) ([]string, error) {
+	switch mode {
+	case javaMemoryModeObjectAlloc:
+		return []string{}, nil
+	case javaMemoryModeObjectUsage:
+		for _, pid := range pids {
+			javaVersion, err := getVersion(pid)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get Java version for PID %d: %w", pid, err)
+			}
+			if javaVersion < 11 {
+				return nil, fmt.Errorf(
+					"object_usage mode requires Java 11 or newer: PID %d uses Java %d",
+					pid,
+					javaVersion,
+				)
+			}
+		}
+		return []string{"--live"}, nil
+	default:
+		return nil, fmt.Errorf("unsupported Java memory mode %q", mode)
+	}
+}
