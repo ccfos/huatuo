@@ -40,13 +40,13 @@ type ProfilerContext struct {
 	Cancel context.CancelFunc
 	Cli    *cli.Context
 
-	PIDs         []int
-	Freq         int
-	Duration     int
-	ToolLimit    int
-	AggrInterval int
-	IsOneShotAgg bool
-	CPUIDs       []int
+	PIDs                 []int
+	Freq                 int
+	Duration             int
+	MaxProfilerProcesses int
+	AggrInterval         int
+	IsOneShotAgg         bool
+	CPUIDs               []int
 
 	ServerAddress             string
 	OutputFormat              output.OutputFormat
@@ -167,12 +167,12 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		Cancel: cancelProfiler,
 		Cli:    cliCtx,
 
-		PIDs:         pids,
-		Freq:         cliCtx.Int("freq"),
-		Duration:     cliCtx.Int("duration"),
-		ToolLimit:    cliCtx.Int("tool-limit"),
-		AggrInterval: cliCtx.Int("aggr-interval"),
-		CPUIDs:       cpuIDs,
+		PIDs:                 pids,
+		Freq:                 cliCtx.Int("freq"),
+		Duration:             cliCtx.Int("duration"),
+		MaxProfilerProcesses: cliCtx.Int("max-profiler-processes"),
+		AggrInterval:         cliCtx.Int("aggr-interval"),
+		CPUIDs:               cpuIDs,
 
 		ServerAddress:             cliCtx.String("server-address"),
 		Type:                      typ,

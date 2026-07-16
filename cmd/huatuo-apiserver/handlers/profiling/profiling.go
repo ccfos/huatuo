@@ -122,8 +122,12 @@ func (h *Handler) start(ctx *server.Context) error {
 	agentTaskReq.Duration = req.Duration * 2
 	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--duration", strconv.Itoa(agentTaskReq.Interval))
 
-	if config.Get().Profiling.ThirdPartyToolLimit > 0 {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--tool-limit", strconv.Itoa(config.Get().Profiling.ThirdPartyToolLimit))
+	if config.Get().Profiling.MaxProfilerProcesses > 0 {
+		agentTaskReq.TracerArgs = append(
+			agentTaskReq.TracerArgs,
+			"--max-profiler-processes",
+			strconv.Itoa(config.Get().Profiling.MaxProfilerProcesses),
+		)
 	}
 
 	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs,

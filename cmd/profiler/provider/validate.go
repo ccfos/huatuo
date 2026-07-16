@@ -42,14 +42,17 @@ func validateExpectedExecPath(pids []int, execPath string) error {
 	return nil
 }
 
-func validateToolLimit(profilerName string, pids []int, limit int) error {
-	if limit <= 0 || len(pids) <= limit {
+func validateMaxProfilerProcesses(profilerName string, pids []int, maximum int) error {
+	if maximum < 0 {
+		return fmt.Errorf("start %s profiler: maximum profiler processes must not be negative", profilerName)
+	}
+	if maximum == 0 || len(pids) <= maximum {
 		return nil
 	}
 	return fmt.Errorf(
-		"start %s profiler: too many target processes: limit=%d, found=%d",
+		"start %s profiler: too many profiler processes: maximum=%d, required=%d",
 		profilerName,
-		limit,
+		maximum,
 		len(pids),
 	)
 }

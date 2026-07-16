@@ -196,7 +196,11 @@ func validateSinglePID(ctx *cli.Context, profilerName string) error {
 }
 
 func validateCommonOptions(ctx *cli.Context) error {
-	if err := validateNumericOptions(profiling.Type(ctx.String("type")), ctx.Int("freq"), ctx.Int("tool-limit")); err != nil {
+	if err := validateNumericOptions(
+		profiling.Type(ctx.String("type")),
+		ctx.Int("freq"),
+		ctx.Int("max-profiler-processes"),
+	); err != nil {
 		return err
 	}
 
@@ -254,12 +258,12 @@ func validateCommonOptions(ctx *cli.Context) error {
 	return nil
 }
 
-func validateNumericOptions(profileType profiling.Type, freq, toolLimit int) error {
+func validateNumericOptions(profileType profiling.Type, freq, maxProfilerProcesses int) error {
 	if profileType == profiling.TypeCPU && freq < 1 {
 		return fmt.Errorf("frequency must be at least 1 sample per second")
 	}
-	if toolLimit < 0 {
-		return fmt.Errorf("tool limit must not be negative")
+	if maxProfilerProcesses < 0 {
+		return fmt.Errorf("maximum profiler processes must not be negative")
 	}
 	return nil
 }

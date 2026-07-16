@@ -80,7 +80,7 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		}
 	}
 
-	if err := validateToolLimit("Java", pids, pctx.ToolLimit); err != nil {
+	if err := validateMaxProfilerProcesses("Java", pids, pctx.MaxProfilerProcesses); err != nil {
 		return err
 	}
 

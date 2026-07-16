@@ -62,7 +62,7 @@ Profiling 相关配置位于 `huatuo-apiserver.conf` 的 `[Profiling]` 段：
 | `MemoryProfilingInterval` | 10 | 单次内存采样时长（秒） |
 | `CPUSingleTraceTimeout` | 20 | 单次 CPU 采样超时（秒） |
 | `MemorySingleTraceTimeout` | 20 | 单次内存采样超时（秒） |
-| `ThirdPartyToolLimit` | 10 | 第三方工具（async-profiler 等）最大并发数 |
+| `MaxProfilerProcesses` | 10 | profiler 子进程最大并发数；0 表示不限制 |
 | `FlameGraphBaseURL` | `http://localhost:8006/d` | 火焰图大盘基址，用于拼接任务结果链接 |
 
 > 若希望任务返回的 `results.url` 直达 Grafana 大盘，将 `FlameGraphBaseURL` 改为实际 Grafana 地址（如 `http://localhost:3000/d`）。

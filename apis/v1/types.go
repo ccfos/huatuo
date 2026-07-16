@@ -131,5 +131,5 @@ type ProfilingCapabilitiesResponse struct {
 	DefaultMemoryInterval           int               `json:"default_memory_interval"`             // default memory profiling interval in seconds
 	DefaultCPUSingleTraceTimeout    int               `json:"default_cpu_single_trace_timeout"`    // default CPU single trace timeout in seconds
 	DefaultMemorySingleTraceTimeout int               `json:"default_memory_single_trace_timeout"` // default memory single trace timeout in seconds
-	ThirdPartyToolLimit             int               `json:"third_party_tool_limit"`              // third-party tool limit
+	MaxProfilerProcesses            int               `json:"max_profiler_processes"`              // maximum concurrent profiler subprocesses
 }

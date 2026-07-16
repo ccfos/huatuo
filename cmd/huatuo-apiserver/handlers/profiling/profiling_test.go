@@ -50,7 +50,7 @@ func TestCapabilities(t *testing.T) {
 	cfg.Profiling.MemoryProfilingInterval = 20
 	cfg.Profiling.CPUSingleTraceTimeout = 30
 	cfg.Profiling.MemorySingleTraceTimeout = 40
-	cfg.Profiling.ThirdPartyToolLimit = 5
+	cfg.Profiling.MaxProfilerProcesses = 5
 	defer func() { cfg.Profiling = old }()
 
 	h := &Handler{}
@@ -115,8 +115,8 @@ func TestCapabilities(t *testing.T) {
 	if resp.DefaultMemorySingleTraceTimeout != 40 {
 		t.Errorf("DefaultMemorySingleTraceTimeout = %d, want 40", resp.DefaultMemorySingleTraceTimeout)
 	}
-	if resp.ThirdPartyToolLimit != 5 {
-		t.Errorf("ThirdPartyToolLimit = %d, want 5", resp.ThirdPartyToolLimit)
+	if resp.MaxProfilerProcesses != 5 {
+		t.Errorf("MaxProfilerProcesses = %d, want 5", resp.MaxProfilerProcesses)
 	}
 }
 

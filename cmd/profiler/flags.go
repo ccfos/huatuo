@@ -118,8 +118,8 @@ var appFlags = []cli.Flag{
 		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
 	},
 	&cli.IntFlag{
-		Name:  "tool-limit",
-		Usage: "Limit how many third-party tools can run in parallel (e.g. async-profiler, py-spy)",
+		Name:  "max-profiler-processes",
+		Usage: "Maximum concurrent profiler subprocesses; 0 means unlimited",
 	},
 	&cli.StringFlag{
 		Name:  "exec-path",

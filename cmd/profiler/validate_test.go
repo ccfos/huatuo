@@ -46,6 +46,15 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "maximum profiler processes",
+			args: []string{
+				"--type", "cpu",
+				"--language", "c",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--max-profiler-processes", "2",
+			},
+		},
+		{
 			name:      "legacy mem type",
 			args:      []string{"--type", "mem", "--language", "c"},
 			wantError: `unsupported profiling type "mem" (expected: cpu or memory)`,
@@ -54,6 +63,11 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			name:      "removed flags option",
 			args:      []string{"--type", "cpu", "--language", "c", "--flags", "ignored"},
 			wantError: "flag provided but not defined: -flags",
+		},
+		{
+			name:      "removed tool limit option",
+			args:      []string{"--type", "cpu", "--language", "c", "--tool-limit", "2"},
+			wantError: "flag provided but not defined: -tool-limit",
 		},
 	}
 
@@ -297,7 +311,11 @@ func TestValidateNumericOptions(t *testing.T) {
 	require.NoError(t, validateNumericOptions("cpu", 99, 0))
 	require.NoError(t, validateNumericOptions(profiling.TypeMemory, 0, 0))
 	require.EqualError(t, validateNumericOptions("cpu", 0, 0), "frequency must be at least 1 sample per second")
-	require.EqualError(t, validateNumericOptions("cpu", 99, -1), "tool limit must not be negative")
+	require.EqualError(
+		t,
+		validateNumericOptions("cpu", 99, -1),
+		"maximum profiler processes must not be negative",
+	)
 }
 
 func newValidationCLIContext(t *testing.T, args ...string) *cli.Context {

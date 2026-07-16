@@ -23,29 +23,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateToolLimit(t *testing.T) {
+func TestValidateMaxProfilerProcesses(t *testing.T) {
 	tests := []struct {
 		name         string
 		profilerName string
 		pids         []int
-		limit        int
+		maximum      int
 		wantError    string
 	}{
 		{name: "unlimited", profilerName: "Java", pids: []int{1, 2}},
-		{name: "negative limit", profilerName: "Java", pids: []int{1, 2}, limit: -1},
-		{name: "within limit", profilerName: "Python", pids: []int{1, 2}, limit: 2},
+		{
+			name:         "negative maximum",
+			profilerName: "Java",
+			pids:         []int{1, 2},
+			maximum:      -1,
+			wantError:    "start Java profiler: maximum profiler processes must not be negative",
+		},
+		{name: "within maximum", profilerName: "Python", pids: []int{1, 2}, maximum: 2},
 		{
 			name:         "over limit",
 			profilerName: "Python",
 			pids:         []int{1, 2},
-			limit:        1,
-			wantError:    "start Python profiler: too many target processes: limit=1, found=2",
+			maximum:      1,
+			wantError:    "start Python profiler: too many profiler processes: maximum=1, required=2",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateToolLimit(tt.profilerName, tt.pids, tt.limit)
+			err := validateMaxProfilerProcesses(tt.profilerName, tt.pids, tt.maximum)
 			if tt.wantError != "" {
 				require.EqualError(t, err, tt.wantError)
 				return

@@ -62,7 +62,7 @@ Profiling-related configuration lives in the `[Profiling]` section of `huatuo-ap
 | `MemoryProfilingInterval` | 10 | Single memory sampling duration (seconds) |
 | `CPUSingleTraceTimeout` | 20 | Single CPU sampling timeout (seconds) |
 | `MemorySingleTraceTimeout` | 20 | Single memory sampling timeout (seconds) |
-| `ThirdPartyToolLimit` | 10 | Max concurrent third-party tools (async-profiler, etc.) |
+| `MaxProfilerProcesses` | 10 | Maximum concurrent profiler subprocesses; 0 means unlimited |
 | `FlameGraphBaseURL` | `http://localhost:8006/d` | Flame-graph dashboard base URL, used to build task result links |
 
 > To make the `results.url` returned by a task point directly at Grafana, set `FlameGraphBaseURL` to the actual Grafana address (e.g. `http://localhost:3000/d`).

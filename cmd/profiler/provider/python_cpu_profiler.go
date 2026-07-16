@@ -86,7 +86,7 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	if err != nil {
 		return err
 	}
-	if err := validateToolLimit("Python", pids, pctx.ToolLimit); err != nil {
+	if err := validateMaxProfilerProcesses("Python", pids, pctx.MaxProfilerProcesses); err != nil {
 		return err
 	}
 

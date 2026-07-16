@@ -55,7 +55,7 @@ func buildCapabilitiesResponse(_ *Handler) (v1.ProfilingCapabilitiesResponse, er
 		DefaultMemoryInterval:           cfg.MemoryProfilingInterval,
 		DefaultCPUSingleTraceTimeout:    cfg.CPUSingleTraceTimeout,
 		DefaultMemorySingleTraceTimeout: cfg.MemorySingleTraceTimeout,
-		ThirdPartyToolLimit:             cfg.ThirdPartyToolLimit,
+		MaxProfilerProcesses:            cfg.MaxProfilerProcesses,
 	}, nil
 }
 

@@ -64,7 +64,7 @@ if ! "${TOOL_BIN}" \
 	--language python \
 	--pid "${PROFILER_PARENT_PID},${PROFILER_CHILD_PID},${PROFILER_INDEPENDENT_PID}" \
 	--tool-path "${PYTHON_PROFILER_TOOL_PATH}" \
-	--tool-limit 2 \
+	--max-profiler-processes 2 \
 	--duration "${PROFILER_DURATION}" \
 	--aggr-interval "${PROFILER_DURATION}" \
 	--freq 99 \
