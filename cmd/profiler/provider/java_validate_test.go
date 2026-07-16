@@ -15,7 +15,6 @@
 package provider
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,23 +43,14 @@ func TestValidateJavaToolPath(t *testing.T) {
 }
 
 func TestValidateJavaMemoryMode(t *testing.T) {
-	version := func(int) (int, error) { return 17, nil }
-	args, err := validateJavaMemoryMode(profiling.MemoryModeObjectAlloc, []int{1}, version)
+	args, err := validateJavaMemoryMode(profiling.MemoryModeObjectAlloc)
 	require.NoError(t, err)
 	require.Empty(t, args)
 
-	args, err = validateJavaMemoryMode(profiling.MemoryModeObjectUsage, []int{1}, version)
+	args, err = validateJavaMemoryMode(profiling.MemoryModeObjectUsage)
 	require.NoError(t, err)
 	require.Equal(t, []string{"--live"}, args)
 
-	_, err = validateJavaMemoryMode(profiling.MemoryModeObjectUsage, []int{1}, func(int) (int, error) { return 8, nil })
-	require.EqualError(t, err, "object_usage mode requires Java 11 or newer: PID 1 uses Java 8")
-
-	_, err = validateJavaMemoryMode(profiling.MemoryModeObjectUsage, []int{1}, func(int) (int, error) {
-		return 0, errors.New("unavailable")
-	})
-	require.EqualError(t, err, "failed to get Java version for PID 1: unavailable")
-
-	_, err = validateJavaMemoryMode("unknown", []int{1}, version)
+	_, err = validateJavaMemoryMode("unknown")
 	require.EqualError(t, err, `unsupported Java memory mode "unknown"`)
 }

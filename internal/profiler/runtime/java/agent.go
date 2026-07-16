@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -289,48 +288,6 @@ func (opt *AsprofSamplingOption) markStopped(results []executil.CmdResult) {
 			opt.activePIDs[result.Pid] = false
 		}
 	}
-}
-
-// GetJavaVersion extracts Java major version from exe symlink path.
-func GetJavaVersion(pid int) (int, error) {
-	link := fmt.Sprintf("/proc/%d/exe", pid)
-	target, err := os.Readlink(link)
-	if err != nil {
-		return 0, fmt.Errorf("failed to resolve exe for pid %d: %w", pid, err)
-	}
-	return parseJavaVersionPath(target)
-}
-
-func parseJavaVersionPath(target string) (int, error) {
-	// Case 1: jdk1.8 → Java 8
-	if matched, _ := regexp.MatchString(`jdk1\.8`, target); matched {
-		return 8, nil
-	}
-
-	// Case 2: jdk1.8.0, jdk-1.8.0, jdk-17.0.1, etc.
-	re0 := regexp.MustCompile(`jdk-?(\d+)\.(\d+)`)
-	if match := re0.FindStringSubmatch(target); len(match) == 3 {
-		major, _ := strconv.Atoi(match[1])
-		minor, _ := strconv.Atoi(match[2])
-		if major == 1 {
-			return minor, nil // jdk-1.8 → Java 8
-		}
-		return major, nil
-	}
-
-	// Case 3: match jdk21.0.6, jdk-17, etc.
-	re1 := regexp.MustCompile(`jdk-?(\d+)`)
-	if match := re1.FindStringSubmatch(target); len(match) == 2 {
-		return strconv.Atoi(match[1])
-	}
-
-	// Case 4: java-21-openjdk-arm64, etc.
-	re2 := regexp.MustCompile(`java-(\d+)`)
-	if match := re2.FindStringSubmatch(target); len(match) == 2 {
-		return strconv.Atoi(match[1])
-	}
-
-	return 0, fmt.Errorf("could not determine Java version from path: %q", target)
 }
 
 // Copies the java agent to container's /tmp if needed.

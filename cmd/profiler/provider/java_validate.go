@@ -34,28 +34,11 @@ func validateJavaToolPath(toolPath string) error {
 	return validateToolFile("Java", toolPath, "lib/libasyncProfiler.so", false)
 }
 
-func validateJavaMemoryMode(
-	mode profiling.MemoryMode,
-	pids []int,
-	getVersion func(int) (int, error),
-) ([]string, error) {
+func validateJavaMemoryMode(mode profiling.MemoryMode) ([]string, error) {
 	switch mode {
 	case profiling.MemoryModeObjectAlloc:
 		return []string{}, nil
 	case profiling.MemoryModeObjectUsage:
-		for _, pid := range pids {
-			javaVersion, err := getVersion(pid)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get Java version for PID %d: %w", pid, err)
-			}
-			if javaVersion < 11 {
-				return nil, fmt.Errorf(
-					"object_usage mode requires Java 11 or newer: PID %d uses Java %d",
-					pid,
-					javaVersion,
-				)
-			}
-		}
 		return []string{"--live"}, nil
 	default:
 		return nil, fmt.Errorf("unsupported Java memory mode %q", mode)
