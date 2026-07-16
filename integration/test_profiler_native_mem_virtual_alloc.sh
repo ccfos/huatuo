@@ -83,7 +83,7 @@ log_info "target pid=${TARGET_PID}"
 
 log_info "running profiler for ${PROFILER_DURATION}s with --memory-mode virtual_alloc against pid=${TARGET_PID}"
 ("${TOOL_BIN}" \
-	--type mem \
+	--type memory \
 	--language c \
 	--memory-mode virtual_alloc \
 	--pid "${TARGET_PID}" \
