@@ -15,12 +15,14 @@
 package main
 
 import (
+	"flag"
 	"runtime"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v2"
 )
 
 func TestParseCPUIDsWithLimit(t *testing.T) {
@@ -140,6 +142,96 @@ func TestParseCPUIDsWithLimit(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestValidateProfilerFlagCompatibility(t *testing.T) {
+	tests := []struct {
+		name      string
+		language  string
+		typ       string
+		args      []string
+		wantError string
+	}{
+		{name: "native CPU cpuid", language: "go", typ: "cpu", args: []string{"--cpuid", "1"}},
+		{
+			name:      "Java cpuid",
+			language:  "java",
+			typ:       "cpu",
+			args:      []string{"--cpuid", "1"},
+			wantError: "--cpuid is supported only by native CPU profiling",
+		},
+		{
+			name:      "Python BPF debug",
+			language:  "python",
+			typ:       "cpu",
+			args:      []string{"--log-bpf-debug"},
+			wantError: "--log-bpf-debug is supported only by native profilers",
+		},
+		{
+			name:      "Java scope",
+			language:  "java",
+			typ:       "cpu",
+			args:      []string{"--scope", "thread-group"},
+			wantError: "--scope=thread-group is supported only by native memory profiling",
+		},
+		{
+			name:      "native exec path",
+			language:  "c",
+			typ:       "cpu",
+			args:      []string{"--exec-path", "/bin/app"},
+			wantError: "--exec-path is not supported by native profilers",
+		},
+		{
+			name:      "Python extra flags",
+			language:  "python",
+			typ:       "cpu",
+			args:      []string{"--flags", "--probability=10"},
+			wantError: "--flags is supported only by native memory profiling",
+		},
+		{
+			name:      "Java frequency too high",
+			language:  "java",
+			typ:       "cpu",
+			args:      []string{"--freq", "1001"},
+			wantError: "Java profiler frequency must not exceed 1000 samples per second",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := newValidationCLIContext(t, tt.args...)
+			err := validateProfilerFlagCompatibility(ctx, tt.language, tt.typ)
+			if tt.wantError != "" {
+				require.EqualError(t, err, tt.wantError)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateOutputFormat(t *testing.T) {
+	for _, format := range []string{"collapsed", "flamegraph", "svg", "remote"} {
+		require.NoError(t, validateOutputFormat(format))
+	}
+	require.EqualError(t, validateOutputFormat("pprof"), `unsupported output format "pprof"`)
+}
+
+func TestValidateNumericOptions(t *testing.T) {
+	require.NoError(t, validateNumericOptions("cpu", 99, 0))
+	require.NoError(t, validateNumericOptions("mem", 0, 0))
+	require.EqualError(t, validateNumericOptions("cpu", 0, 0), "frequency must be at least 1 sample per second")
+	require.EqualError(t, validateNumericOptions("cpu", 99, -1), "tool limit must not be negative")
+}
+
+func newValidationCLIContext(t *testing.T, args ...string) *cli.Context {
+	t.Helper()
+	set := flag.NewFlagSet(t.Name(), flag.ContinueOnError)
+	for _, appFlag := range appFlags {
+		require.NoError(t, appFlag.Apply(set))
+	}
+	require.NoError(t, set.Parse(args))
+	return cli.NewContext(nil, set, nil)
 }
 
 func TestParseCPUIDs(t *testing.T) {

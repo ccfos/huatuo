@@ -59,6 +59,9 @@ func runBefore(ctx *cli.Context) error {
 	if err := validateMemoryMode(lang, typ, ctx.String("memory-mode")); err != nil {
 		return err
 	}
+	if err := validateProfilerFlagCompatibility(ctx, lang, typ); err != nil {
+		return err
+	}
 
 	if err := validateLanguageOptions(ctx, lang, typ); err != nil {
 		return err
@@ -147,6 +150,10 @@ func validateSinglePID(ctx *cli.Context, profilerName string) error {
 }
 
 func validateCommonOptions(ctx *cli.Context) error {
+	if err := validateNumericOptions(ctx.String("type"), ctx.Int("freq"), ctx.Int("tool-limit")); err != nil {
+		return err
+	}
+
 	pids, err := pcontext.ParsePIDs(ctx.String("pid"))
 	if err != nil {
 		return err
@@ -194,8 +201,56 @@ func validateCommonOptions(ctx *cli.Context) error {
 	if ctx.String("output-format") == "remote" && ctx.String("output-storage") == "" {
 		return fmt.Errorf("--output-storage must not be empty when --output-format=remote")
 	}
+	if err := validateOutputFormat(ctx.String("output-format")); err != nil {
+		return err
+	}
 
 	return nil
+}
+
+func validateNumericOptions(profileType string, freq, toolLimit int) error {
+	if profileType == "cpu" && freq < 1 {
+		return fmt.Errorf("frequency must be at least 1 sample per second")
+	}
+	if toolLimit < 0 {
+		return fmt.Errorf("tool limit must not be negative")
+	}
+	return nil
+}
+
+func validateProfilerFlagCompatibility(ctx *cli.Context, lang, typ string) error {
+	native := lang == "go" || lang == "c" || lang == "c++"
+	nativeCPU := native && typ == "cpu"
+	nativeMemory := native && typ == "mem"
+
+	if lang == "java" && typ == "cpu" && ctx.Int("freq") > 1000 {
+		return fmt.Errorf("Java profiler frequency must not exceed 1000 samples per second")
+	}
+	if ctx.String("cpuid") != "" && !nativeCPU {
+		return fmt.Errorf("--cpuid is supported only by native CPU profiling")
+	}
+	if ctx.Bool("log-bpf-debug") && !native {
+		return fmt.Errorf("--log-bpf-debug is supported only by native profilers")
+	}
+	if ctx.String("scope") != "thread" && !nativeMemory {
+		return fmt.Errorf("--scope=%s is supported only by native memory profiling", ctx.String("scope"))
+	}
+	if ctx.String("exec-path") != "" && native {
+		return fmt.Errorf("--exec-path is not supported by native profilers")
+	}
+	if len(ctx.StringSlice("flags")) > 0 && !nativeMemory {
+		return fmt.Errorf("--flags is supported only by native memory profiling")
+	}
+	return nil
+}
+
+func validateOutputFormat(format string) error {
+	switch format {
+	case "collapsed", "flamegraph", "svg", "remote":
+		return nil
+	default:
+		return fmt.Errorf("unsupported output format %q", format)
+	}
 }
 
 func validateMemoryMode(lang, typ, mode string) error {
