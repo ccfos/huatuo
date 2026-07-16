@@ -59,7 +59,6 @@ func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		var err error
 		pids, err = javaruntime.ResolveJavaPids(
 			pctx.ExecPath,
-			pctx.ServerAddress,
 			pctx.ContainerID,
 		)
 		if err != nil {

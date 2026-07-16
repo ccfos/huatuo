@@ -108,7 +108,7 @@ func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 		return pctx.PIDs, nil
 	}
 
-	pids, err := procutil.GetPidsFromContainer(pctx.ServerAddress, pctx.ExecPath, "python", pctx.ContainerID)
+	pids, err := procutil.GetPidsFromContainer(pctx.ExecPath, "python", pctx.ContainerID)
 	if err != nil {
 		return nil, err
 	}
