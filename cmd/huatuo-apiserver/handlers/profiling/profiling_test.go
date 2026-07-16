@@ -24,6 +24,7 @@ import (
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/job"
+	"huatuo-bamai/internal/server"
 	profilecap "huatuo-bamai/pkg/profiling"
 )
 
@@ -35,6 +36,7 @@ func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 
 	url := getFlameGraphURL(&job.Job{
 		Type:      ProfilingCPU,
+		Host:      "node+2026&prod",
 		Container: "container+2026&debug",
 		StartTime: time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC),
 		EndTime:   time.Date(2026, 6, 24, 10, 5, 0, 0, time.UTC),
@@ -43,12 +45,70 @@ func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 	if !strings.Contains(url, "var-container_hostname=container%2B2026%26debug") {
 		t.Fatalf("url = %q, want escaped container label value", url)
 	}
+	if !strings.Contains(url, "var-hostname=node%2B2026%26prod") {
+		t.Fatalf("url = %q, want escaped host label value for container dashboard", url)
+	}
+	if !strings.Contains(url, "/continuous-profiling-container/") ||
+		!strings.Contains(url, "var-type=process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds") {
+		t.Fatalf("url = %q, want provisioned dashboard UID and CPU profile type", url)
+	}
+}
+
+func TestGetFlameGraphURLIncludesLockAndDimensionVariables(t *testing.T) {
+	cfg := config.Get()
+	oldBase := cfg.Profiling.FlameGraphBaseURL
+	cfg.Profiling.FlameGraphBaseURL = "http://grafana.example/d"
+	defer func() { cfg.Profiling.FlameGraphBaseURL = oldBase }()
+
+	url := getFlameGraphURL(&job.Job{
+		Type:      ProfilingLock,
+		Host:      "node-a",
+		StartTime: time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, 7, 16, 10, 5, 0, 0, time.UTC),
+		PrivateData: map[string]any{
+			"scope":            "process-group",
+			"cpu_ids":          []int{0, 1},
+			"process_group_id": "321",
+			"lock_mode":        "count",
+		},
+	})
+	for _, expected := range []string{
+		"/continuous-profiling-host/",
+		"var-type=process_lock%3Alock%3Acount%3Alock%3Acount",
+		"var-profiling_scope=process-group",
+		"var-cpu=0%2C1",
+		"var-process_group_id=321",
+	} {
+		if !strings.Contains(url, expected) {
+			t.Fatalf("url = %q, want %q", url, expected)
+		}
+	}
+}
+
+func TestNewHandlerRegistersPyroscopeDiffRoute(t *testing.T) {
+	handler := NewHandler(nil)
+	want := map[string]int{
+		"/flamegraph/querier.v1.QuerierService/Diff": server.HttpPost,
+		"/flamegraph/export/pprof":                   server.HttpGet,
+		"/flamegraph/export/svg":                     server.HttpGet,
+	}
+	for _, route := range handler.Handlers {
+		if typ, ok := want[route.Uri]; ok && route.Typ == typ {
+			delete(want, route.Uri)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("NewHandler() does not register routes: %v", want)
+	}
 }
 
 func TestAppendCollectionTracerArgs(t *testing.T) {
 	req := v1.StartProfilingRequest{
-		Scope:          "process-group",
-		ProcessGroupID: 321,
+		Type:                  "cpu",
+		TargetProcessLanguage: "go",
+		CPUIds:                []int{3, 1},
+		Scope:                 "process-group",
+		ProcessGroupID:        321,
 		Labels: map[string]string{
 			"zone":    "cn-sh",
 			"service": "checkout",
@@ -63,6 +123,7 @@ func TestAppendCollectionTracerArgs(t *testing.T) {
 		t.Fatalf("appendCollectionTracerArgs() scope = %q", scope)
 	}
 	want := []string{
+		"--cpuid", "1,3",
 		"--scope", "process-group",
 		"--process-group-id", "321",
 		"--label", "service=checkout",
@@ -70,6 +131,30 @@ func TestAppendCollectionTracerArgs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(taskReq.TracerArgs, want) {
 		t.Fatalf("TracerArgs = %v, want %v", taskReq.TracerArgs, want)
+	}
+}
+
+func TestAppendCollectionTracerArgsRejectsInvalidCPUIds(t *testing.T) {
+	for _, cpuIDs := range [][]int{{-1}, {2, 2}} {
+		taskReq := job.NewAgentTaskReq{}
+		_, err := appendCollectionTracerArgs(&taskReq, &v1.StartProfilingRequest{
+			Type: "cpu", TargetProcessLanguage: "go", CPUIds: cpuIDs,
+		})
+		if err == nil {
+			t.Fatalf("CPUIds %v: expected validation error", cpuIDs)
+		}
+	}
+}
+
+func TestAppendCollectionTracerArgsRejectsCPUIdsForManagedRuntimes(t *testing.T) {
+	for _, language := range []string{"java", "python"} {
+		taskReq := job.NewAgentTaskReq{}
+		_, err := appendCollectionTracerArgs(&taskReq, &v1.StartProfilingRequest{
+			Type: "cpu", TargetProcessLanguage: language, CPUIds: []int{0},
+		})
+		if err == nil || !strings.Contains(err.Error(), "native") {
+			t.Fatalf("language %q: error = %v, want native CPU filter error", language, err)
+		}
 	}
 }
 
@@ -101,6 +186,7 @@ func TestAppendCollectionTracerArgsRejectsReservedLabel(t *testing.T) {
 
 func TestConvertJobToProfilingResponseAfterPrivateDataJSONRoundTrip(t *testing.T) {
 	privateData := map[string]any{
+		"cpu_ids":          []int{1, 3},
 		"scope":            "cgroup",
 		"pid":              "42",
 		"cgroup_id":        "18446744073709551614",
@@ -128,6 +214,9 @@ func TestConvertJobToProfilingResponseAfterPrivateDataJSONRoundTrip(t *testing.T
 	if got.Scope != "cgroup" || got.PID != 42 || got.CgroupID != 18446744073709551614 ||
 		got.CgroupPath != "/sys/fs/cgroup/workload" || got.ProcessGroupID != 321 {
 		t.Fatalf("dimension response = %+v", got)
+	}
+	if !reflect.DeepEqual(got.CPUIds, []int{1, 3}) {
+		t.Fatalf("CPUIds = %v", got.CPUIds)
 	}
 	if !reflect.DeepEqual(got.LockTypes, []string{"mutex", "rwlock"}) || got.LockMode != "time" {
 		t.Fatalf("lock response = %+v", got)
@@ -191,7 +280,7 @@ func TestCapabilities(t *testing.T) {
 	if want := []string{"cpu", "memory", "lock"}; !reflect.DeepEqual(resp.ProfileTypes, want) {
 		t.Errorf("ProfileTypes = %v, want %v", resp.ProfileTypes, want)
 	}
-	if want := []string{"pid", "tgid", "cgroup", "process-group"}; !reflect.DeepEqual(resp.CollectionDimensions, want) {
+	if want := []string{"cpu", "pid", "tgid", "cgroup", "process-group"}; !reflect.DeepEqual(resp.CollectionDimensions, want) {
 		t.Errorf("CollectionDimensions = %v, want %v", resp.CollectionDimensions, want)
 	}
 	if want := []string{"mutex", "spinlock", "rwlock"}; !reflect.DeepEqual(resp.KernelLockTypes, want) {
@@ -326,6 +415,7 @@ func TestValidateProfilingTarget(t *testing.T) {
 		{name: "Java missing target", implementation: profilecap.ImplementationJava, wantErr: true},
 		{name: "Java duplicate target", req: v1.StartProfilingRequest{PID: 1, Container: "app"}, implementation: profilecap.ImplementationJava, wantErr: true},
 		{name: "Java native dimension", req: v1.StartProfilingRequest{PID: 1, Scope: "tgid"}, implementation: profilecap.ImplementationJava, wantErr: true},
+		{name: "Java CPU dimension", req: v1.StartProfilingRequest{PID: 1, CPUIds: []int{0}}, implementation: profilecap.ImplementationJava, wantErr: true},
 		{name: "native memory PID", req: v1.StartProfilingRequest{Type: "memory", PID: 1}, implementation: profilecap.ImplementationNative},
 		{name: "native memory cgroup", req: v1.StartProfilingRequest{Type: "memory", CgroupID: 2}, implementation: profilecap.ImplementationNative},
 		{name: "native memory missing target", req: v1.StartProfilingRequest{Type: "memory"}, implementation: profilecap.ImplementationNative, wantErr: true},

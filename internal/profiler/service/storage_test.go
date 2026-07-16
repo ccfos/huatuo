@@ -72,3 +72,65 @@ func TestProfileDimensionQueriesUseKeywordFields(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileAggregationQueryKeepsHostOnlySemantics(t *testing.T) {
+	query := buildProfileAggregationQuery(&SearchFilter{Hostname: "node-a"})
+	want := []driver.Filter{
+		{Field: profileFieldHostname + ".keyword", Op: driver.OpEq, Value: "node-a"},
+		{Field: profileFieldContainerHostname, Op: driver.OpEq, Value: ""},
+	}
+	if len(query.Filters) != len(want) {
+		t.Fatalf("filters = %#v, want %#v", query.Filters, want)
+	}
+	for i := range want {
+		if query.Filters[i] != want[i] {
+			t.Fatalf("filter[%d] = %#v, want %#v", i, query.Filters[i], want[i])
+		}
+	}
+}
+
+func TestProfileAggregationQueryCombinesHostAndContainer(t *testing.T) {
+	query := buildProfileAggregationQuery(&SearchFilter{
+		Hostname:          "node-a",
+		ContainerHostname: "worker",
+	})
+	want := []driver.Filter{
+		{Field: profileFieldHostname + ".keyword", Op: driver.OpEq, Value: "node-a"},
+		{Field: profileFieldContainerHostname + ".keyword", Op: driver.OpEq, Value: "worker"},
+	}
+	if len(query.Filters) != len(want) {
+		t.Fatalf("filters = %#v, want %#v", query.Filters, want)
+	}
+	for i := range want {
+		if query.Filters[i] != want[i] {
+			t.Fatalf("filter[%d] = %#v, want %#v", i, query.Filters[i], want[i])
+		}
+	}
+}
+
+func TestProfileAggregationQuerySupportsContainerWithoutHost(t *testing.T) {
+	query := buildProfileAggregationQuery(&SearchFilter{ContainerHostname: "worker"})
+	want := driver.Filter{
+		Field: profileFieldContainerHostname + ".keyword",
+		Op:    driver.OpEq,
+		Value: "worker",
+	}
+	if len(query.Filters) != 1 || query.Filters[0] != want {
+		t.Fatalf("filters = %#v, want [%#v]", query.Filters, want)
+	}
+}
+
+func TestProfileAggregationQueryCanIncludeContainerCandidatesForHost(t *testing.T) {
+	query := buildProfileAggregationQuery(&SearchFilter{
+		Hostname:                 "node-a",
+		IncludeContainerProfiles: true,
+	})
+	want := driver.Filter{
+		Field: profileFieldHostname + ".keyword",
+		Op:    driver.OpEq,
+		Value: "node-a",
+	}
+	if len(query.Filters) != 1 || query.Filters[0] != want {
+		t.Fatalf("filters = %#v, want [%#v]", query.Filters, want)
+	}
+}

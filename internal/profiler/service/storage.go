@@ -83,15 +83,16 @@ type ProfileDocument struct {
 
 // SearchFilter defines the search filter.
 type SearchFilter struct {
-	ID                string
-	Hostname          string
-	ContainerHostname string
-	TracerID          string
-	StartTime         time.Time
-	EndTime           time.Time
-	ProfileType       string
-	Labels            map[string]string
-	Limit             int
+	ID                       string
+	Hostname                 string
+	ContainerHostname        string
+	IncludeContainerProfiles bool
+	TracerID                 string
+	StartTime                time.Time
+	EndTime                  time.Time
+	ProfileType              string
+	Labels                   map[string]string
+	Limit                    int
 }
 
 // ProfileStorage implements profile document queries on top of the new storage backend.
@@ -134,6 +135,16 @@ func (s *ProfileStorage) SearchProfiles(filter *SearchFilter) ([]*ProfileDocumen
 	}
 
 	return documents, nil
+}
+
+// CountProfiles counts documents matching the predicates that can be pushed
+// into storage. Callers use it to reject queries that would otherwise be
+// silently truncated by Elasticsearch's result-window limit.
+func (s *ProfileStorage) CountProfiles(filter *SearchFilter) (int64, error) {
+	if s == nil || s.store == nil {
+		return 0, fmt.Errorf("profile storage is nil")
+	}
+	return s.store.Count(context.Background(), buildProfileAggregationQuery(filter))
 }
 
 // AggregationsByField gets aggregations by field.
@@ -269,26 +280,32 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 			Op:    driver.OpEq,
 			Value: id,
 		})
-	case filter.Hostname != "":
-		query.Filters = append(
-			query.Filters,
-			driver.Filter{
+	default:
+		if filter.Hostname != "" {
+			query.Filters = append(query.Filters, driver.Filter{
 				Field: profileFieldHostname + ".keyword",
 				Op:    driver.OpEq,
 				Value: filter.Hostname,
-			},
-			driver.Filter{
+			})
+		}
+		if filter.ContainerHostname != "" {
+			// A container query may also specify its host. Keeping both exact
+			// predicates avoids merging identically named containers from
+			// different hosts.
+			query.Filters = append(query.Filters, driver.Filter{
+				Field: profileFieldContainerHostname + ".keyword",
+				Op:    driver.OpEq,
+				Value: filter.ContainerHostname,
+			})
+		} else if filter.Hostname != "" && !filter.IncludeContainerProfiles {
+			// Hostname by itself has explicit host-profile semantics. Container
+			// profiles carry container_hostname and must not leak into host views.
+			query.Filters = append(query.Filters, driver.Filter{
 				Field: profileFieldContainerHostname,
 				Op:    driver.OpEq,
 				Value: "",
-			},
-		)
-	case filter.ContainerHostname != "":
-		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldContainerHostname + ".keyword",
-			Op:    driver.OpEq,
-			Value: filter.ContainerHostname,
-		})
+			})
+		}
 	}
 
 	if filter.ProfileType != "" {

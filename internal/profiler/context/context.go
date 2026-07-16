@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -141,6 +142,10 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		if err != nil {
 			return nil, err
 		}
+		if cliCtx.String("type") != "cpu" || !supportsNativeCPUFilter(cliCtx.String("language")) {
+			return nil, fmt.Errorf("--cpuid is only supported for native c, c++, or go CPU profiling")
+		}
+		sort.Ints(cpuIDs)
 	}
 
 	pids, err := ParsePIDs(cliCtx.String("pid"))
@@ -209,6 +214,9 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		)
 
 		labels[profiler.LabelProfilingScope] = scope
+		if typ == profiling.TypeCPU && len(cpuIDs) > 0 {
+			labels[profiler.LabelCPU] = formatCPUIds(cpuIDs)
+		}
 		if containerID := cliCtx.String("container-id"); containerID != "" {
 			// Container CSS filtering is applied in addition to the selected scope,
 			// so preserve it as a dimension even for an explicit PID/TGID target.
@@ -249,7 +257,6 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 			labels[profiler.LabelLockType] = lockTypes[0]
 		}
 	}
-
 	profilerContext := &ProfilerContext{
 		Ctx:    ctx,
 		Cancel: cancelProfiler,
@@ -288,6 +295,23 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	}
 	succeeded = true
 	return profilerContext, nil
+}
+
+func supportsNativeCPUFilter(language string) bool {
+	switch language {
+	case "c", "c++", "go":
+		return true
+	default:
+		return false
+	}
+}
+
+func formatCPUIds(cpuIDs []int) string {
+	values := make([]string, len(cpuIDs))
+	for i, cpuID := range cpuIDs {
+		values[i] = strconv.Itoa(cpuID)
+	}
+	return strings.Join(values, ",")
 }
 
 func formatPIDs(pids []int) string {

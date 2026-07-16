@@ -123,3 +123,22 @@ func TestFormatPIDsPreservesJavaMultiPIDTargets(t *testing.T) {
 		t.Fatalf("formatPIDs() = %q, want %q", got, "42,99")
 	}
 }
+
+func TestFormatCPUIdsPreservesSelectedCPUSet(t *testing.T) {
+	if got := formatCPUIds([]int{0, 3}); got != "0,3" {
+		t.Fatalf("formatCPUIds() = %q, want %q", got, "0,3")
+	}
+}
+
+func TestSupportsNativeCPUFilter(t *testing.T) {
+	for _, language := range []string{"c", "c++", "go"} {
+		if !supportsNativeCPUFilter(language) {
+			t.Errorf("supportsNativeCPUFilter(%q) = false", language)
+		}
+	}
+	for _, language := range []string{"java", "python", ""} {
+		if supportsNativeCPUFilter(language) {
+			t.Errorf("supportsNativeCPUFilter(%q) = true", language)
+		}
+	}
+}

@@ -15,6 +15,7 @@
 package profiling
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,14 +67,94 @@ func NewHandler(jm *job.Manager) *Handler {
 		{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
 		{Typ: server.HttpPatch, Uri: "/:id", Handle: h.patchOne},
 		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.delete},
+		{Typ: server.HttpGet, Uri: "/flamegraph/export/pprof", Handle: h.DisplayPprofExport},
+		{Typ: server.HttpGet, Uri: "/flamegraph/export/svg", Handle: h.DisplaySVGExport},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces", Handle: h.DisplaySelectMergeStacktraces},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/ProfileTypes", Handle: h.DisplayProfileTypes},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectSeries", Handle: h.DisplaySelectSeries},
+		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/Diff", Handle: h.DisplayDiff},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/LabelNames", Handle: h.DisplayLabelNames},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/LabelValues", Handle: h.DisplayLabelValues},
 	}
 
 	return h
+}
+
+func profileExportRequest(ctx *server.Context) (*querierv1.SelectMergeStacktracesRequest, error) {
+	profileType := strings.TrimSpace(ctx.Query("profile_type"))
+	if profileType == "" {
+		return nil, fmt.Errorf("profile_type is required")
+	}
+	selector := strings.TrimSpace(ctx.Query("selector"))
+	if selector == "" {
+		return nil, fmt.Errorf("selector is required")
+	}
+	start, err := strconv.ParseInt(ctx.Query("start"), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("start must be a Unix timestamp in milliseconds: %w", err)
+	}
+	end, err := strconv.ParseInt(ctx.Query("end"), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("end must be a Unix timestamp in milliseconds: %w", err)
+	}
+	return &querierv1.SelectMergeStacktracesRequest{
+		ProfileTypeID: profileType,
+		LabelSelector: selector,
+		Start:         start,
+		End:           end,
+	}, nil
+}
+
+func writeProfileServiceError(ctx *server.Context, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, profileService.ErrInvalidProfileQuery):
+		status = http.StatusBadRequest
+	case errors.Is(err, profileService.ErrProfileQueryLimitExceeded):
+		status = http.StatusUnprocessableEntity
+	}
+	ctx.JSON(status, map[string]any{"message": err.Error()})
+}
+
+// DisplayPprofExport serves a selected, gzip-compressed standard pprof file.
+func (h *Handler) DisplayPprofExport(ctx *server.Context) error {
+	req, err := profileExportRequest(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
+		return nil
+	}
+	payload, err := profileService.MarshalPprof(req)
+	if err != nil {
+		writeProfileServiceError(ctx, err)
+		return nil
+	}
+	ctx.Header("Content-Type", "application/octet-stream")
+	ctx.Header("Content-Disposition", `attachment; filename="huatuo-profile.pb.gz"`)
+	ctx.Header("X-Content-Type-Options", "nosniff")
+	ctx.Writer().WriteHeader(http.StatusOK)
+	_, _ = ctx.Writer().Write(payload)
+	return nil
+}
+
+// DisplaySVGExport serves the same selection as a standalone interactive SVG.
+func (h *Handler) DisplaySVGExport(ctx *server.Context) error {
+	req, err := profileExportRequest(ctx)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
+		return nil
+	}
+	var output bytes.Buffer
+	if err := profileService.RenderProfileSVG(req, &output); err != nil {
+		writeProfileServiceError(ctx, err)
+		return nil
+	}
+	ctx.Header("Content-Type", "image/svg+xml; charset=utf-8")
+	ctx.Header("Content-Disposition", `inline; filename="huatuo-flamegraph.svg"`)
+	ctx.Header("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'")
+	ctx.Header("X-Content-Type-Options", "nosniff")
+	ctx.Writer().WriteHeader(http.StatusOK)
+	_, _ = ctx.Writer().Write(output.Bytes())
+	return nil
 }
 
 // start starts a new profiling job.
@@ -217,6 +298,7 @@ func (h *Handler) start(ctx *server.Context) error {
 		"target_exec_path":        req.TargetExecPath,
 		"target_process_language": req.TargetProcessLanguage,
 		"memory_mode":             req.MemoryMode,
+		"cpu_ids":                 req.CPUIds,
 		"scope":                   collectionScope,
 		// Store integer identifiers as decimal strings. PrivateData is decoded
 		// through map[string]any, where JSON numbers otherwise become float64
@@ -262,6 +344,9 @@ func profilerToolPath(language string) string {
 
 func validateProfilingTarget(req *v1.StartProfilingRequest, implementation profiling.Implementation) error {
 	if implementation != profiling.ImplementationNative {
+		if len(req.CPUIds) > 0 {
+			return fmt.Errorf("cpu_ids is only supported for native c, c++, or go CPU profiling")
+		}
 		if req.Scope != "" || req.CgroupID != 0 || req.CgroupPath != "" || req.ProcessGroupID != 0 {
 			return fmt.Errorf("collection dimensions are only supported for native profiling")
 		}
@@ -345,6 +430,33 @@ func fillLockTracerArgs(agentTaskReq *job.NewAgentTaskReq, req *v1.StartProfilin
 }
 
 func appendCollectionTracerArgs(agentTaskReq *job.NewAgentTaskReq, req *v1.StartProfilingRequest) (string, error) {
+	if len(req.CPUIds) > 0 && req.Type != "cpu" {
+		return "", fmt.Errorf("cpu_ids is only supported for CPU profiling")
+	}
+	if len(req.CPUIds) > 0 && !supportsNativeCPUFilter(req.TargetProcessLanguage) {
+		return "", fmt.Errorf("cpu_ids is only supported for native c, c++, or go CPU profiling")
+	}
+	seenCPUIds := make(map[int]struct{}, len(req.CPUIds))
+	for _, cpuID := range req.CPUIds {
+		if cpuID < 0 {
+			return "", fmt.Errorf("cpu_ids must contain non-negative logical CPU IDs")
+		}
+		if _, exists := seenCPUIds[cpuID]; exists {
+			return "", fmt.Errorf("cpu_ids contains duplicate CPU ID %d", cpuID)
+		}
+		seenCPUIds[cpuID] = struct{}{}
+	}
+	if len(req.CPUIds) > 0 {
+		cpuIDs := append([]int(nil), req.CPUIds...)
+		sort.Ints(cpuIDs)
+		parts := make([]string, len(cpuIDs))
+		for i, cpuID := range cpuIDs {
+			parts[i] = strconv.Itoa(cpuID)
+		}
+		req.CPUIds = cpuIDs
+		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--cpuid", strings.Join(parts, ","))
+	}
+
 	scope := req.Scope
 	if scope == "" {
 		switch {
@@ -430,6 +542,15 @@ func appendProfileLabelArgs(agentTaskReq *job.NewAgentTaskReq, labels map[string
 		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--label", name+"="+labels[name])
 	}
 	return nil
+}
+
+func supportsNativeCPUFilter(language string) bool {
+	switch language {
+	case "c", "c++", "go":
+		return true
+	default:
+		return false
+	}
 }
 
 // hasRunningProfilingJob reports whether a profiling job is currently running on hostname for userID.
@@ -681,6 +802,9 @@ func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.Profiling
 				resp.MemoryMode = memoryModeStr
 			}
 		}
+		if value, ok := privateDataIntSlice(jobResult.PrivateData["cpu_ids"]); ok {
+			resp.CPUIds = append([]int(nil), value...)
+		}
 		if targetExecPath, ok := jobResult.PrivateData["target_exec_path"]; ok && targetExecPath != nil {
 			if targetExecPathStr, ok := targetExecPath.(string); ok {
 				resp.TargetExecPath = targetExecPathStr
@@ -820,43 +944,44 @@ func privateDataStringMap(value any) (map[string]string, bool) {
 	}
 }
 
+func privateDataIntSlice(value any) ([]int, bool) {
+	switch typed := value.(type) {
+	case []int:
+		return typed, true
+	case []any:
+		values := make([]int, len(typed))
+		for i, item := range typed {
+			parsed, ok := privateDataInt(item)
+			if !ok || parsed < 0 {
+				return nil, false
+			}
+			values[i] = parsed
+		}
+		return values, true
+	default:
+		return nil, false
+	}
+}
+
 func getFlameGraphURL(jobResult *job.Job) string {
 	base := config.Get().Profiling.FlameGraphBaseURL
+	if jobResult == nil {
+		return ""
+	}
 
-	var dashboardUid string
-	var dashboardSlug string
-	var labelKey string
-	var labelVal string
+	var dashboardUID string
 
 	from := jobResult.StartTime.UTC().Format("2006-01-02T15:04:05.000Z")
 	to := jobResult.EndTime.UTC().Format("2006-01-02T15:04:05.000Z")
 
 	if jobResult.Container != "" {
-		switch jobResult.Type {
-		case ProfilingMemory:
-			dashboardUid = "container-memory-profiling"
-			dashboardSlug = "e5aeb9-e599a8-memory-profiling"
-		case ProfilingCPU:
-			dashboardUid = "container-cpu-profiling"
-			dashboardSlug = "e5aeb9-e599a8-cpu-profiling"
-		default:
-			return ""
-		}
-		labelKey = "var-container_hostname"
-		labelVal = jobResult.Container
+		dashboardUID = "continuous-profiling-container"
 	} else {
-		switch jobResult.Type {
-		case ProfilingMemory:
-			dashboardUid = "host-memory-profiling"
-			dashboardSlug = "e5aebf-e4b8bb-e69cba-memory-profiling"
-		case ProfilingCPU:
-			dashboardUid = "host-cpu-profiling"
-			dashboardSlug = "e5aebf-e4b8bb-e69cba-cpu-profiling"
-		default:
-			return ""
-		}
-		labelKey = "var-hostname"
-		labelVal = jobResult.Host
+		dashboardUID = "continuous-profiling-host"
+	}
+	profileType := jobProfileType(jobResult)
+	if profileType == "" {
+		return ""
 	}
 
 	query := url.Values{}
@@ -864,9 +989,67 @@ func getFlameGraphURL(jobResult *job.Job) string {
 	query.Set("from", from)
 	query.Set("to", to)
 	query.Set("timezone", "browser")
-	query.Set(labelKey, labelVal)
+	query.Set("var-hostname", jobResult.Host)
+	if jobResult.Container != "" {
+		// Container names are only unique within a host. Keep the host variable
+		// pinned as well so a link cannot mix identically named containers from
+		// different hosts.
+		query.Set("var-container_hostname", jobResult.Container)
+	}
+	query.Set("var-type", profileType)
+	appendJobDimensionVariables(query, jobResult.PrivateData)
 
-	return fmt.Sprintf("%s/%s/%s?%s", base, dashboardUid, dashboardSlug, query.Encode())
+	return fmt.Sprintf("%s/%s/%s?%s", base, dashboardUID, "continuous-profiling", query.Encode())
+}
+
+func jobProfileType(jobResult *job.Job) string {
+	switch jobResult.Type {
+	case ProfilingCPU:
+		return profiler.ProfileTypeCpuSample
+	case ProfilingMemory:
+		return profiler.ProfileTypeMemSample
+	case ProfilingLock:
+		if mode, _ := jobResult.PrivateData["lock_mode"].(string); mode == "count" {
+			return profiler.ProfileTypeLockCountSample
+		}
+		return profiler.ProfileTypeLockTimeSample
+	default:
+		return ""
+	}
+}
+
+func appendJobDimensionVariables(query url.Values, privateData map[string]any) {
+	if len(privateData) == 0 {
+		return
+	}
+	scope, _ := privateData["scope"].(string)
+	if scope != "" {
+		query.Set("var-profiling_scope", scope)
+	}
+	if cpuIDs, ok := privateDataIntSlice(privateData["cpu_ids"]); ok && len(cpuIDs) > 0 {
+		parts := make([]string, len(cpuIDs))
+		for i, cpuID := range cpuIDs {
+			parts[i] = strconv.Itoa(cpuID)
+		}
+		query.Set("var-cpu", strings.Join(parts, ","))
+	}
+	if pid, ok := privateDataUint64(privateData["pid"]); ok && pid != 0 {
+		switch scope {
+		case "pid":
+			query.Set("var-pid", strconv.FormatUint(pid, 10))
+		case "tgid":
+			query.Set("var-tgid", strconv.FormatUint(pid, 10))
+		}
+	}
+	if cgroupID, ok := privateDataUint64(privateData["cgroup_id"]); ok && cgroupID != 0 {
+		query.Set("var-cgroup_id", strconv.FormatUint(cgroupID, 10))
+	}
+	if cgroupPath, ok := privateData["cgroup_path"].(string); ok && cgroupPath != "" {
+		query.Set("var-cgroup_path", cgroupPath)
+	}
+	if processGroupID, ok := privateDataInt(privateData["process_group_id"]); ok && processGroupID != 0 {
+		query.Set("var-process_group_id", strconv.Itoa(processGroupID))
+	}
 }
 
 // delete deletes a profiling job record by ID.
@@ -942,7 +1125,7 @@ func (h *Handler) DisplaySelectMergeStacktraces(ctx *server.Context) error {
 	resp, err := profileService.SelectMergeStacktraces(req)
 	if err != nil {
 		log.Warnf("SelectMergeStacktraces failed: %v", err)
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		writeProfileServiceError(ctx, err)
 		return nil
 	}
 
@@ -987,11 +1170,32 @@ func (h *Handler) DisplaySelectSeries(ctx *server.Context) error {
 
 	resp, err := profileService.SelectSeries(req)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		writeProfileServiceError(ctx, err)
 		return nil
 	}
 
 	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
+	ctx.Header("Content-Type", "application/proto")
+	ctx.ProtoBuf(http.StatusOK, resp)
+	return nil
+}
+
+// DisplayDiff handles /querier.v1.QuerierService/Diff.
+func (h *Handler) DisplayDiff(ctx *server.Context) error {
+	req := &querierv1.DiffRequest{}
+	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
+		return nil
+	}
+
+	log.Infof("DisplayDiff request: %v", req)
+
+	resp, err := profileService.Diff(req)
+	if err != nil {
+		writeProfileServiceError(ctx, err)
+		return nil
+	}
+
 	ctx.Header("Content-Type", "application/proto")
 	ctx.ProtoBuf(http.StatusOK, resp)
 	return nil
@@ -1031,7 +1235,7 @@ func (h *Handler) DisplayLabelValues(ctx *server.Context) error {
 
 	resp, err := profileService.LabelValues(req)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		writeProfileServiceError(ctx, err)
 		return nil
 	}
 

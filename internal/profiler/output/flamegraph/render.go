@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"strings"
 )
 
 type frame struct {
@@ -157,9 +156,12 @@ func (r *renderer) drawFrame(f frame, ew *errWriter) {
 	x := r.style.XMargin + (f.LeftPercent / 100 * usableWidth)
 	y := r.style.FramesYOffset + (r.maxFrameDepth-f.Depth-1)*r.style.FrameHeight
 
-	jsTitle := strings.ReplaceAll(html.EscapeString(title), "'", "&#39;")
+	// Keep symbol data out of JavaScript source. XML entities are decoded
+	// before event handlers run, so escaping a quote inside s('...') would not
+	// prevent a crafted symbol from terminating that string.
+	attributeTitle := html.EscapeString(title)
 
-	ew.printf(`<g class="func_g" onmouseover="s('%s')" onmouseout="c()" onclick="zoom(this)">`+"\n", jsTitle)
+	ew.printf(`<g class="func_g" data-title="%s" onmouseover="s(this.getAttribute('data-title'))" onmouseout="c()" onclick="zoom(this)">`+"\n", attributeTitle)
 	ew.printf("  <title>%s</title>\n", html.EscapeString(title))
 	ew.printf(`  <rect x="%.1f" y="%d" width="%.1f" height="%d" fill="%s" rx="2" ry="2"/>`+"\n",
 		x, y, w, h, color)

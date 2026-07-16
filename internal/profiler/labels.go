@@ -24,6 +24,7 @@ import (
 
 const (
 	LabelProfilingScope = "profiling_scope"
+	LabelCPU            = "cpu"
 	LabelPID            = "pid"
 	LabelTGID           = "tgid"
 	LabelCgroupID       = "cgroup_id"
@@ -37,6 +38,7 @@ const (
 // Pyroscope-compatible query API.
 var CollectionDimensionLabels = []string{
 	LabelProfilingScope,
+	LabelCPU,
 	LabelPID,
 	LabelTGID,
 	LabelCgroupID,

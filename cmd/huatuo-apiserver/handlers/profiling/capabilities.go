@@ -59,7 +59,7 @@ func buildCapabilitiesResponse(_ *Handler) (v1.ProfilingCapabilitiesResponse, er
 		DefaultCPUSingleTraceTimeout:    cfg.CPUSingleTraceTimeout,
 		DefaultMemorySingleTraceTimeout: cfg.MemorySingleTraceTimeout,
 		MaxProfilerProcesses:            cfg.MaxProfilerProcesses,
-		CollectionDimensions:            []string{"pid", "tgid", "cgroup", "process-group"},
+		CollectionDimensions:            []string{"cpu", "pid", "tgid", "cgroup", "process-group"},
 		KernelLockTypes:                 []string{"mutex", "spinlock", "rwlock"},
 	}, nil
 }

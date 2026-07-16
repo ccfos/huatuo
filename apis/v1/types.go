@@ -23,6 +23,7 @@ type StartProfilingRequest struct {
 	Duration              int               `json:"duration"`                   // profiling duration in seconds
 	Container             string            `json:"container"`                  // container name or ID
 	Hostname              string            `json:"hostname"`                   // host name
+	CPUIds                []int             `json:"cpu_ids,omitempty"`          // target logical CPU IDs
 	Scope                 string            `json:"scope,omitempty"`            // pid, tgid, cgroup, or process-group
 	PID                   uint64            `json:"pid,omitempty"`              // target PID/TGID
 	CgroupID              uint64            `json:"cgroup_id,omitempty"`        // target cgroup ID
@@ -56,6 +57,7 @@ type ProfilingStatusResponse struct {
 	TargetExecPath        string            `json:"target_exec_path"`        // executable path for CPU profiling
 	TargetProcessLanguage string            `json:"target_process_language"` // programming language of the target process
 	MemoryMode            string            `json:"memory_mode"`             // memory profiling mode
+	CPUIds                []int             `json:"cpu_ids,omitempty"`       // target logical CPU IDs
 	Scope                 string            `json:"scope,omitempty"`
 	PID                   uint64            `json:"pid,omitempty"`
 	CgroupID              uint64            `json:"cgroup_id,omitempty"`
@@ -151,6 +153,6 @@ type ProfilingCapabilitiesResponse struct {
 	DefaultCPUSingleTraceTimeout    int               `json:"default_cpu_single_trace_timeout"`    // default CPU single trace timeout in seconds
 	DefaultMemorySingleTraceTimeout int               `json:"default_memory_single_trace_timeout"` // default memory single trace timeout in seconds
 	MaxProfilerProcesses            int               `json:"max_profiler_processes"`              // maximum concurrent profiler subprocesses
-	CollectionDimensions            []string          `json:"collection_dimensions"`               // pid, tgid, cgroup, process-group
+	CollectionDimensions            []string          `json:"collection_dimensions"`               // cpu, pid, tgid, cgroup, process-group
 	KernelLockTypes                 []string          `json:"kernel_lock_types"`                   // mutex, spinlock, rwlock
 }
