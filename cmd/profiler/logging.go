@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,9 +16,11 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli/v2"
 
 	"huatuo-bamai/internal/filerotate"
 	"huatuo-bamai/internal/log"
@@ -26,8 +28,8 @@ import (
 
 const (
 	rfc3339NanoFixed  = "2006-01-02T15:04:05.000000000Z07:00"
-	defaultLogSizeMB  = 100
 	profilerLogPrefix = "profiler"
+	loggingCloserKey  = "profiler-logging-closer"
 )
 
 // prefixFormatter prefixes each log line with "[profiler]" so the CLI output is
@@ -50,11 +52,12 @@ type loggingOptions struct {
 	size    int
 }
 
-// setupLogging configures the logger for the profiler CLI.
+// setupLogging configures the logger for the profiler CLI and returns the file
+// closer so buffered resources are released before the process exits.
 // --verbose unconditionally overrides log-level to debug and log-file to
 // stdout so that a single flag enables full diagnostic output regardless
 // of any explicit --log-level or --log-file values.
-func setupLogging(opts loggingOptions) {
+func setupLogging(opts loggingOptions) (io.Closer, error) {
 	if opts.verbose {
 		opts.level = "debug"
 		opts.file = "stdout"
@@ -75,18 +78,57 @@ func setupLogging(opts loggingOptions) {
 	case "trace", "debug", "info", "warn", "error":
 		log.SetLevel(opts.level)
 	default:
-		fmt.Fprintf(os.Stderr, "invalid log-level %q; using info (allowed: trace|debug|info|warn|error)\n", opts.level)
-		log.SetLevel("info")
+		return nil, fmt.Errorf("invalid --log-level %q; allowed: trace, debug, info, warn, error", opts.level)
 	}
 
-	size := opts.size
-	if size <= 0 {
-		size = defaultLogSizeMB
+	if opts.size < 0 {
+		return nil, fmt.Errorf("--log-size must be at least 0 MB")
 	}
 
 	if opts.file == "stdout" {
 		log.SetOutput(os.Stdout)
-	} else {
-		log.SetOutput(filerotate.NewFileRotator(opts.file, 1, size))
+		return nil, nil
 	}
+
+	if opts.file == "" {
+		return nil, fmt.Errorf("--log-file must be a file path or stdout")
+	}
+
+	if opts.size == 0 {
+		file, err := os.OpenFile(opts.file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return nil, fmt.Errorf("open log file %q: %w", opts.file, err)
+		}
+		log.SetOutput(file)
+		return file, nil
+	}
+
+	// Lumberjack opens files lazily, so preflight the path to fail during CLI
+	// startup instead of dropping the first log entry.
+	file, err := os.OpenFile(opts.file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open log file %q: %w", opts.file, err)
+	}
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("close log file %q after validation: %w", opts.file, err)
+	}
+
+	rotator := filerotate.NewFileRotator(opts.file, 1, opts.size)
+	log.SetOutput(rotator)
+	return rotator, nil
+}
+
+func closeLogging(ctx *cli.Context) error {
+	if ctx.App.Metadata == nil {
+		return nil
+	}
+	closer, ok := ctx.App.Metadata[loggingCloserKey].(io.Closer)
+	if !ok {
+		return nil
+	}
+	if err := closer.Close(); err != nil {
+		return fmt.Errorf("close log file: %w", err)
+	}
+	delete(ctx.App.Metadata, loggingCloserKey)
+	return nil
 }

@@ -37,12 +37,15 @@ func runBefore(ctx *cli.Context) error {
 		return fmt.Errorf("invalid config: cannot specify two or more values(e.g., --pid pid1 instead of: --pid pid1 pid2)")
 	}
 
-	setupLogging(loggingOptions{
+	loggingOpts := loggingOptions{
 		verbose: ctx.Bool("verbose"),
 		level:   ctx.String("log-level"),
 		file:    ctx.String("log-file"),
 		size:    ctx.Int("log-size"),
-	})
+	}
+	if err := validateLoggingOptions(loggingOpts, ctx.IsSet("log-size")); err != nil {
+		return err
+	}
 
 	if ctx.String("type") == "" || ctx.String("language") == "" {
 		return fmt.Errorf("missing required flags: --type and --language")
@@ -73,7 +76,44 @@ func runBefore(ctx *cli.Context) error {
 		return err
 	}
 
-	return validateCommonOptions(ctx)
+	if err := validateCommonOptions(ctx); err != nil {
+		return err
+	}
+
+	closer, err := setupLogging(loggingOpts)
+	if err != nil {
+		return err
+	}
+	if closer != nil {
+		if ctx.App.Metadata == nil {
+			ctx.App.Metadata = make(map[string]any)
+		}
+		ctx.App.Metadata[loggingCloserKey] = closer
+	}
+	return nil
+}
+
+func validateLoggingOptions(opts loggingOptions, logSizeSet bool) error {
+	if opts.verbose {
+		opts.level = "debug"
+		opts.file = "stdout"
+	}
+
+	switch opts.level {
+	case "trace", "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("invalid --log-level %q; allowed: trace, debug, info, warn, error", opts.level)
+	}
+	if opts.file == "" {
+		return fmt.Errorf("--log-file must be a file path or stdout")
+	}
+	if opts.size < 0 {
+		return fmt.Errorf("--log-size must be at least 0 MB")
+	}
+	if logSizeSet && opts.file == "stdout" {
+		return fmt.Errorf("--log-size applies only when --log-file is a file path")
+	}
+	return nil
 }
 
 func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ profiling.Type) error {

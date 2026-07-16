@@ -102,7 +102,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:  "log-size",
-		Usage: "Default log size of profiling",
+		Usage: "Log rotation size in MB; 0 disables rotation",
 		Value: 100,
 	},
 	&cli.BoolFlag{
