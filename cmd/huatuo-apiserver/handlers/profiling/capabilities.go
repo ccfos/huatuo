@@ -16,41 +16,38 @@ package profiling
 
 import (
 	"sort"
+	"strings"
 
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
-	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
+	"huatuo-bamai/pkg/profiling"
 )
 
-// buildCapabilitiesResponse constructs the profiling capabilities response
-// from the package-level supported languages/modes and the current configuration.
-func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, error) {
-	cpuLanguages := make([]string, 0, len(supportedLanguages)+1)
-	for lang := range supportedLanguages {
-		cpuLanguages = append(cpuLanguages, lang)
-	}
-	// python is supported for CPU profiling via special handling in fillCPUTracerArgs
-	cpuLanguages = append(cpuLanguages, "python")
+func buildCapabilitiesResponse(_ *Handler) (v1.ProfilingCapabilitiesResponse, error) {
+	cpuLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeCPU))
 	sort.Strings(cpuLanguages)
 
-	memoryLanguages := make([]string, 0, len(supportedLanguages))
-	for lang := range supportedLanguages {
-		memoryLanguages = append(memoryLanguages, lang)
-	}
+	memoryLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeMemory))
 	sort.Strings(memoryLanguages)
 
-	// Copy memory modes to avoid mutating the package-level map
-	memoryModes := make(map[string]string, len(supportedMemoryModes))
-	for k, v := range supportedMemoryModes {
-		memoryModes[k] = v
+	memoryModes := map[string]string{}
+	for _, language := range profiling.LanguagesFor(profiling.TypeMemory) {
+		implementation, _ := profiling.ImplementationFor(language)
+		for _, mode := range profiling.MemoryModesFor(language) {
+			id := strings.ToUpper(string(mode))
+			if implementation == profiling.ImplementationNative {
+				id = "NATIVE_" + id
+			}
+			memoryModes[id] = string(mode)
+		}
 	}
 
 	cfg := config.Get().Profiling
 
 	return v1.ProfilingCapabilitiesResponse{
-		ProfileTypes:                    []string{subsystem.SubsystemCPU, subsystem.SubsystemMemory},
+		ProfileTypes:                    []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
 		CPUSupportedLanguages:           cpuLanguages,
 		MemorySupportedLanguages:        memoryLanguages,
 		MemoryModes:                     memoryModes,
@@ -60,6 +57,14 @@ func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, er
 		DefaultMemorySingleTraceTimeout: cfg.MemorySingleTraceTimeout,
 		ThirdPartyToolLimit:             cfg.ThirdPartyToolLimit,
 	}, nil
+}
+
+func languageStrings(languages []profiling.Language) []string {
+	values := make([]string, 0, len(languages))
+	for _, language := range languages {
+		values = append(values, string(language))
+	}
+	return values
 }
 
 // capabilities returns the profiling capabilities supported by the server.

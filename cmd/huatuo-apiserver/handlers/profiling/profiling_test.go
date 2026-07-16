@@ -120,23 +120,31 @@ func TestCapabilities(t *testing.T) {
 	}
 }
 
-// TestCapabilitiesDoesNotMutatePackageMaps verifies that calling capabilities
-// does not mutate the package-level supportedLanguages or supportedMemoryMaps.
-func TestCapabilitiesDoesNotMutatePackageMaps(t *testing.T) {
+func TestCapabilitiesReturnsIndependentMemoryModeMap(t *testing.T) {
 	h := &Handler{}
-	_, _ = buildCapabilitiesResponse(h)
-
 	resp, _ := buildCapabilitiesResponse(h)
 	resp.MemoryModes["NEW_MODE"] = "new_mode"
 	resp.MemoryModes["NATIVE_PHYSICAL_ALLOC"] = "modified"
 
-	_, ok := supportedMemoryModes["NATIVE_PHYSICAL_ALLOC"]
-	if !ok || supportedMemoryModes["NATIVE_PHYSICAL_ALLOC"] != "native_physical_alloc" {
-		t.Errorf("supportedMemoryModes was mutated by capabilities response")
+	next, _ := buildCapabilitiesResponse(h)
+	if next.MemoryModes["NATIVE_PHYSICAL_ALLOC"] != "physical_alloc" {
+		t.Errorf("MemoryModes was mutated across responses")
+	}
+	if _, ok := next.MemoryModes["NEW_MODE"]; ok {
+		t.Errorf("MemoryModes retained a caller mutation")
+	}
+}
+
+func TestFillMemoryTracerArgsUsesMemoryModeFlag(t *testing.T) {
+	req := &job.NewAgentTaskReq{}
+
+	err := fillMemoryTracerArgs(req, "", "NATIVE_PHYSICAL_USAGE")
+	if err != nil {
+		t.Fatalf("fillMemoryTracerArgs() error = %v", err)
 	}
 
-	_, ok = supportedMemoryModes["NEW_MODE"]
-	if ok {
-		t.Errorf("supportedMemoryModes was mutated with NEW_MODE")
+	want := []string{"-t", "memory", "--memory-mode", "physical_usage", "-l", "c"}
+	if strings.Join(req.TracerArgs, " ") != strings.Join(want, " ") {
+		t.Fatalf("TracerArgs = %q, want %q", req.TracerArgs, want)
 	}
 }

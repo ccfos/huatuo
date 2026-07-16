@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
@@ -29,6 +30,7 @@ import (
 	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
+	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/tracing"
 
 	"github.com/gin-gonic/gin/binding"
@@ -39,22 +41,6 @@ import (
 const (
 	ProfilingMemory = "profiling_memory"
 	ProfilingCPU    = "profiling_cpu"
-)
-
-var (
-	supportedLanguages = map[string]bool{
-		"c++":  true,
-		"c":    true,
-		"go":   true,
-		"java": true,
-	}
-	supportedMemoryModes = map[string]string{
-		"NATIVE_PHYSICAL_ALLOC": "native_physical_alloc",
-		"NATIVE_PHYSICAL_USAGE": "native_physical_usage",
-		"NATIVE_VIRTUAL_ALLOC":  "native_virtual_alloc",
-		"OBJECT_ALLOC":          "object_alloc",
-		"OBJECT_USAGE":          "object_usage",
-	}
 )
 
 // Handler handles profiling-related HTTP requests.
@@ -83,17 +69,6 @@ func NewHandler(jm *job.Manager) *Handler {
 	}
 
 	return h
-}
-
-func isLanguageSupported(lang string) bool {
-	return supportedLanguages[lang]
-}
-
-func isMemoryModeSupported(mode string) (string, bool) {
-	if memoryMode, ok := supportedMemoryModes[mode]; ok {
-		return memoryMode, true
-	}
-	return "", false
 }
 
 // start starts a new profiling job.
@@ -205,43 +180,43 @@ func (h *Handler) hasRunningProfilingJob(hostname, userID string) (bool, error) 
 }
 
 func fillMemoryTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetProcessLanguage, memoryMode string) error {
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", "mem")
+	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", string(profiling.TypeMemory))
 
-	if mode, ok := isMemoryModeSupported(memoryMode); ok {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--flags", fmt.Sprintf("--mode %s", mode))
-	} else {
+	languageValue := targetProcessLanguage
+	modeValue := strings.ToLower(memoryMode)
+	if strings.HasPrefix(memoryMode, "NATIVE_") {
+		languageValue = string(profiling.LanguageC)
+		modeValue = strings.ToLower(strings.TrimPrefix(memoryMode, "NATIVE_"))
+	}
+	language, err := profiling.ParseLanguage(languageValue)
+	if err != nil {
+		return fmt.Errorf("memory profiling not supported for %s", targetProcessLanguage)
+	}
+	mode, err := profiling.ParseMemoryMode(modeValue)
+	if err != nil || !profiling.SupportsMemoryMode(language, mode) {
 		return fmt.Errorf("memory mode not supported: %s", memoryMode)
 	}
 
-	// memory native mode do not need to pass language in frontend, just set it to c
-	if memoryMode == "NATIVE_PHYSICAL_ALLOC" || memoryMode == "NATIVE_PHYSICAL_USAGE" || memoryMode == "NATIVE_VIRTUAL_ALLOC" {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", "c")
-		return nil
-	}
-
-	if isLanguageSupported(targetProcessLanguage) {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", targetProcessLanguage)
-	} else {
-		return fmt.Errorf("memory profiling not supported for %s", targetProcessLanguage)
-	}
-
+	agentTaskReq.TracerArgs = append(
+		agentTaskReq.TracerArgs,
+		"--memory-mode", string(mode),
+		"-l", string(language),
+	)
 	return nil
 }
 
 func fillCPUTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetExecPath, targetProcessLanguage string) error {
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", "cpu")
+	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", string(profiling.TypeCPU))
 
 	if targetExecPath != "" {
 		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--exec-path", targetExecPath)
 	}
 
-	if isLanguageSupported(targetProcessLanguage) {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", targetProcessLanguage)
-	} else if targetProcessLanguage == "python" {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", "python")
-	} else {
+	language, err := profiling.ParseLanguage(targetProcessLanguage)
+	if err != nil || !profiling.IsSupported(language, profiling.TypeCPU) {
 		return fmt.Errorf("cpu profiling not supported for %s", targetProcessLanguage)
 	}
+	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", string(language))
 
 	return nil
 }
