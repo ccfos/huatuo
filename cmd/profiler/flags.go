@@ -61,6 +61,10 @@ var appFlags = []cli.Flag{
 		Value: 100,
 	},
 	&cli.IntFlag{
+		Name:  "max-profiler-processes",
+		Usage: "Maximum concurrent profiler subprocesses; 0 means unlimited",
+	},
+	&cli.IntFlag{
 		Name:  "aggr-interval",
 		Usage: "interval for profiling of aggregate process",
 		Value: 10,
@@ -86,10 +90,6 @@ var appFlags = []cli.Flag{
 		Usage: "Unix socket path for remote upload (used with --output-format=remote)",
 		Value: "/var/run/huatuo-toolstream.sock",
 	},
-	&cli.BoolFlag{
-		Name:  "verbose",
-		Usage: "Shorthand for --log-level debug --log-file stdout; overrides explicit values of both flags",
-	},
 	&cli.StringFlag{
 		Name:  "log-level",
 		Usage: "Log level: trace|debug|info|warn|error",
@@ -110,16 +110,16 @@ var appFlags = []cli.Flag{
 		Usage: "Log bpf_dbg events (native profiler only)",
 	},
 	&cli.BoolFlag{
+		Name:  "verbose",
+		Usage: "Shorthand for --log-level debug --log-file stdout; overrides explicit values of both flags",
+	},
+	&cli.BoolFlag{
 		Name:  "enable-pprof",
 		Usage: "Serve Go runtime profiles on port 6000",
 	},
 	&cli.StringFlag{
 		Name:  "tool-path",
 		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
-	},
-	&cli.IntFlag{
-		Name:  "max-profiler-processes",
-		Usage: "Maximum concurrent profiler subprocesses; 0 means unlimited",
 	},
 	&cli.StringFlag{
 		Name:  "exec-path",
