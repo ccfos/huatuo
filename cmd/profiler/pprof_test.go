@@ -47,3 +47,29 @@ func TestStartPprofServerListenError(t *testing.T) {
 		t.Fatalf("start pprof server error=%q, want prefix %q", got, want)
 	}
 }
+
+func TestEnablePprofFlag(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{
+			name: "disabled by default",
+		},
+		{
+			name: "enabled explicitly",
+			args: []string{"--enable-pprof"},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := newValidationCLIContext(t, tt.args...)
+			if got := ctx.Bool("enable-pprof"); got != tt.want {
+				t.Fatalf("enable-pprof=%t, want %t", got, tt.want)
+			}
+		})
+	}
+}
