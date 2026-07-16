@@ -31,38 +31,38 @@ readonly PYSPY_BIN="${PYTHON_PROFILER_TOOL_PATH}/py-spy"
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-python-multi.XXXXXX")
-CHILD_PID_FILE="${WORK_DIR}/child.pid"
-PARENT_PID=""
-CHILD_PID=""
-INDEPENDENT_PID=""
+PROFILER_PROFILER_CHILD_PID_FILE="${WORK_DIR}/child.pid"
+PROFILER_PARENT_PID=""
+PROFILER_CHILD_PID=""
+PROFILER_INDEPENDENT_PID=""
 
 cleanup() {
-	[[ -n "${PARENT_PID}" ]] && stop_by_pid "${PARENT_PID}" 5 || true
-	[[ -n "${CHILD_PID}" ]] && stop_by_pid "${CHILD_PID}" 5 || true
-	[[ -n "${INDEPENDENT_PID}" ]] && stop_by_pid "${INDEPENDENT_PID}" 5 || true
+	[[ -n "${PROFILER_PARENT_PID}" ]] && stop_by_pid "${PROFILER_PARENT_PID}" 5 || true
+	[[ -n "${PROFILER_CHILD_PID}" ]] && stop_by_pid "${PROFILER_CHILD_PID}" 5 || true
+	[[ -n "${PROFILER_INDEPENDENT_PID}" ]] && stop_by_pid "${PROFILER_INDEPENDENT_PID}" 5 || true
 }
 trap cleanup EXIT
 
-python3 "${FIXTURE}" parent "${CHILD_PID_FILE}" \
+python3 "${FIXTURE}" parent "${PROFILER_PROFILER_CHILD_PID_FILE}" \
 	> "${WORK_DIR}/parent.out" 2> "${WORK_DIR}/parent.err" &
-PARENT_PID=$!
+PROFILER_PARENT_PID=$!
 
-wait_until 10 1 test -s "${CHILD_PID_FILE}" || fatal "Python child PID was not published"
-CHILD_PID=$(< "${CHILD_PID_FILE}")
+wait_until 10 1 test -s "${PROFILER_PROFILER_CHILD_PID_FILE}" || fatal "Python child PID was not published"
+PROFILER_CHILD_PID=$(< "${PROFILER_PROFILER_CHILD_PID_FILE}")
 
 python3 "${FIXTURE}" independent \
 	> "${WORK_DIR}/independent.out" 2> "${WORK_DIR}/independent.err" &
-INDEPENDENT_PID=$!
+PROFILER_INDEPENDENT_PID=$!
 
-kill -0 "${PARENT_PID}" || fatal "Python parent exited immediately"
-kill -0 "${CHILD_PID}" || fatal "Python child exited immediately"
-kill -0 "${INDEPENDENT_PID}" || fatal "independent Python process exited immediately"
+kill -0 "${PROFILER_PARENT_PID}" || fatal "Python parent exited immediately"
+kill -0 "${PROFILER_CHILD_PID}" || fatal "Python child exited immediately"
+kill -0 "${PROFILER_INDEPENDENT_PID}" || fatal "independent Python process exited immediately"
 
-log_info "profiling Python pids=${PARENT_PID},${CHILD_PID},${INDEPENDENT_PID}"
+log_info "profiling Python pids=${PROFILER_PARENT_PID},${PROFILER_CHILD_PID},${PROFILER_INDEPENDENT_PID}"
 if ! "${TOOL_BIN}" \
 	--type cpu \
 	--language python \
-	--pid "${PARENT_PID},${CHILD_PID},${INDEPENDENT_PID}" \
+	--pid "${PROFILER_PARENT_PID},${PROFILER_CHILD_PID},${PROFILER_INDEPENDENT_PID}" \
 	--tool-path "${PYTHON_PROFILER_TOOL_PATH}" \
 	--tool-limit 2 \
 	--duration "${PROFILER_DURATION}" \
@@ -77,11 +77,11 @@ fi
 mapfile -t FOLDED_FILES < <(find "${WORK_DIR}" -maxdepth 1 -name 'perf_*.folded' -type f)
 [[ ${#FOLDED_FILES[@]} -gt 0 ]] || fatal "no perf_*.folded file produced"
 
-grep -qh "process ${PARENT_PID}.*parent_hot_method" "${FOLDED_FILES[@]}" \
-	|| fatal "parent workload stack not found for PID ${PARENT_PID}"
-grep -qh "process ${CHILD_PID}.*child_hot_method" "${FOLDED_FILES[@]}" \
-	|| fatal "child workload stack not found for PID ${CHILD_PID}"
-grep -qh "process ${INDEPENDENT_PID}.*independent_hot_method" "${FOLDED_FILES[@]}" \
-	|| fatal "independent workload stack not found for PID ${INDEPENDENT_PID}"
+grep -qh "process ${PROFILER_PARENT_PID}.*parent_hot_method" "${FOLDED_FILES[@]}" \
+	|| fatal "parent workload stack not found for PID ${PROFILER_PARENT_PID}"
+grep -qh "process ${PROFILER_CHILD_PID}.*child_hot_method" "${FOLDED_FILES[@]}" \
+	|| fatal "child workload stack not found for PID ${PROFILER_CHILD_PID}"
+grep -qh "process ${PROFILER_INDEPENDENT_PID}.*independent_hot_method" "${FOLDED_FILES[@]}" \
+	|| fatal "independent workload stack not found for PID ${PROFILER_INDEPENDENT_PID}"
 
 log_info "Python parent, child, and independent stacks are correctly attributed"
