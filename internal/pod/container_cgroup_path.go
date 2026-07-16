@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"huatuo-bamai/internal/cgroups"
 )
 
 const (
@@ -77,26 +79,18 @@ func (p cgroupPath) ToCgroupfs() string {
 	return "/" + path.Join(p.slices...)
 }
 
-// https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/cm/cgroup_manager_linux.go#L81
-func containerCgroupPath(containerID string, pod *corev1.Pod) (cgroupPath, error) {
-	paths := []string{defaultNodeCgroupName}
-
-	if pod.Status.QOSClass != corev1.PodQOSGuaranteed {
-		paths = append(paths, strings.ToLower(string(pod.Status.QOSClass)))
+// ContainerCgroupPathsByID returns the kernel cgroup membership of a container init process.
+func ContainerCgroupPathsByID(containerID string) (*cgroups.ProcessPaths, error) {
+	pid, err := containerInitPIDByID(containerID)
+	if err != nil {
+		return nil, err
 	}
 
-	paths = append(paths, fmt.Sprintf("pod%s", pod.UID))
-
-	if kubeletPodCgroupDriver == "systemd" {
-		scope, err := containerScopeName(containerID)
-		if err != nil {
-			return cgroupPath{}, fmt.Errorf("container scope name: %w", err)
-		}
-		return cgroupPath{slices: paths, scope: scope}, nil
+	paths, err := cgroups.PathsForPID(pid)
+	if err != nil {
+		return nil, fmt.Errorf("resolve container %q cgroup paths from pid %d: %w", containerID, pid, err)
 	}
-
-	paths = append(paths, containerID)
-	return cgroupPath{slices: paths}, nil
+	return paths, nil
 }
 
 func containerCgroupSuffix(containerID string, pod *corev1.Pod) (string, error) {
@@ -121,4 +115,39 @@ func containerScopeName(containerID string) (string, error) {
 	default:
 		return "", fmt.Errorf("container provider not initialized")
 	}
+}
+
+// ContainerCgroupPathByID returns the path used to read the container's processes.
+func ContainerCgroupPathByID(containerID string) (string, error) {
+	paths, err := ContainerCgroupPathsByID(containerID)
+	if err != nil {
+		return "", err
+	}
+	cgroupPath, err := paths.PathForProcesses()
+	if err != nil {
+		return "", fmt.Errorf("resolve container %q process cgroup path: %w", containerID, err)
+	}
+	return cgroupPath, nil
+}
+
+// https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/cm/cgroup_manager_linux.go#L81
+func containerCgroupPath(containerID string, pod *corev1.Pod) (cgroupPath, error) {
+	paths := []string{defaultNodeCgroupName}
+
+	if pod.Status.QOSClass != corev1.PodQOSGuaranteed {
+		paths = append(paths, strings.ToLower(string(pod.Status.QOSClass)))
+	}
+
+	paths = append(paths, fmt.Sprintf("pod%s", pod.UID))
+
+	if kubeletPodCgroupDriver == "systemd" {
+		scope, err := containerScopeName(containerID)
+		if err != nil {
+			return cgroupPath{}, fmt.Errorf("container scope name: %w", err)
+		}
+		return cgroupPath{slices: paths, scope: scope}, nil
+	}
+
+	paths = append(paths, containerID)
+	return cgroupPath{slices: paths}, nil
 }
