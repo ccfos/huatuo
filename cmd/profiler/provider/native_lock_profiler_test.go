@@ -16,6 +16,7 @@ package provider
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -23,101 +24,137 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 )
 
-func TestLockAttachOptionsSupportsAllKernelLockTypes(t *testing.T) {
-	available := map[string]bool{
-		"mutex_lock":      true,
-		"_raw_spin_lock":  true,
-		"_raw_read_lock":  true,
-		"_raw_write_lock": true,
-	}
-	old := hasLockKprobeFunction
+func setLockProbeAvailability(t *testing.T, tracepoints bool, available map[string]bool) {
+	t.Helper()
+	oldTracepoints := hasLockContentionTracepoints
+	oldKprobe := hasLockKprobeFunction
+	hasLockContentionTracepoints = func() bool { return tracepoints }
 	hasLockKprobeFunction = func(name string) bool { return available[name] }
-	defer func() { hasLockKprobeFunction = old }()
+	t.Cleanup(func() {
+		hasLockContentionTracepoints = oldTracepoints
+		hasLockKprobeFunction = oldKprobe
+	})
+}
 
-	got, err := lockAttachOptions([]string{"mutex", "spinlock", "rwlock"})
+func TestLockAttachOptionsPrefersContentionTracepoints(t *testing.T) {
+	setLockProbeAvailability(t, true, nil)
+
+	got, backend, err := lockAttachOptions([]string{"mutex", "spinlock", "rwlock"})
 	if err != nil {
 		t.Fatalf("lockAttachOptions() error = %v", err)
 	}
 	want := []bpf.AttachOption{
-		{ProgramName: "trace_mutex_lock", Symbol: "mutex_lock"},
-		{ProgramName: "trace_mutex_lock_return", Symbol: "mutex_lock"},
-		{ProgramName: "trace_spin_lock", Symbol: "_raw_spin_lock"},
-		{ProgramName: "trace_spin_lock_return", Symbol: "_raw_spin_lock"},
-		{ProgramName: "trace_rw_lock", Symbol: "_raw_read_lock"},
-		{ProgramName: "trace_rw_lock_return", Symbol: "_raw_read_lock"},
-		{ProgramName: "trace_rw_lock", Symbol: "_raw_write_lock"},
-		{ProgramName: "trace_rw_lock_return", Symbol: "_raw_write_lock"},
+		{ProgramName: "trace_lock_contention_begin", Symbol: "lock/contention_begin"},
+		{ProgramName: "trace_lock_contention_end", Symbol: "lock/contention_end"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("lockAttachOptions() = %#v, want %#v", got, want)
+	}
+	if backend != lockBackendContentionTracepoint {
+		t.Fatalf("backend = %q, want %q", backend, lockBackendContentionTracepoint)
 	}
 }
 
-func TestLockAttachOptionsAttachesEveryAvailableVariant(t *testing.T) {
+func TestLockAttachOptionsSupportsAllKernelLockTypesWithSlowpaths(t *testing.T) {
 	available := map[string]bool{
-		"mutex_lock":               true,
-		"mutex_lock_interruptible": true,
-		"_raw_spin_lock":           true,
-		"_raw_spin_lock_irqsave":   true,
+		"__mutex_lock_slowpath":            true,
+		"native_queued_spin_lock_slowpath": true,
+		"queued_read_lock_slowpath":        true,
+		"queued_write_lock_slowpath":       true,
 	}
-	old := hasLockKprobeFunction
-	hasLockKprobeFunction = func(name string) bool { return available[name] }
-	defer func() { hasLockKprobeFunction = old }()
+	setLockProbeAvailability(t, false, available)
 
-	got, err := lockAttachOptions([]string{"mutex", "spinlock", "mutex"})
+	got, backend, err := lockAttachOptions([]string{"mutex", "spinlock", "rwlock"})
 	if err != nil {
 		t.Fatalf("lockAttachOptions() error = %v", err)
 	}
 	want := []bpf.AttachOption{
-		{ProgramName: "trace_mutex_lock", Symbol: "mutex_lock"},
-		{ProgramName: "trace_mutex_lock_return", Symbol: "mutex_lock"},
-		{ProgramName: "trace_mutex_lock", Symbol: "mutex_lock_interruptible"},
-		{ProgramName: "trace_mutex_lock_return", Symbol: "mutex_lock_interruptible"},
-		{ProgramName: "trace_spin_lock", Symbol: "_raw_spin_lock"},
-		{ProgramName: "trace_spin_lock_return", Symbol: "_raw_spin_lock"},
-		{ProgramName: "trace_spin_lock", Symbol: "_raw_spin_lock_irqsave"},
-		{ProgramName: "trace_spin_lock_return", Symbol: "_raw_spin_lock_irqsave"},
+		{ProgramName: "trace_mutex_lock", Symbol: "__mutex_lock_slowpath"},
+		{ProgramName: "trace_mutex_lock_return", Symbol: "__mutex_lock_slowpath"},
+		{ProgramName: "trace_spin_lock", Symbol: "native_queued_spin_lock_slowpath"},
+		{ProgramName: "trace_spin_lock_return", Symbol: "native_queued_spin_lock_slowpath"},
+		{ProgramName: "trace_rw_lock", Symbol: "queued_read_lock_slowpath"},
+		{ProgramName: "trace_rw_lock_return", Symbol: "queued_read_lock_slowpath"},
+		{ProgramName: "trace_rw_lock", Symbol: "queued_write_lock_slowpath"},
+		{ProgramName: "trace_rw_lock_return", Symbol: "queued_write_lock_slowpath"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("lockAttachOptions() = %#v, want %#v", got, want)
+	}
+	if backend != lockBackendSlowpathKprobe {
+		t.Fatalf("backend = %q, want %q", backend, lockBackendSlowpathKprobe)
+	}
+}
+
+func TestLockAttachOptionsOnlyAttachesAvailableSlowpaths(t *testing.T) {
+	available := map[string]bool{
+		"__mutex_lock_slowpath":               true,
+		"__mutex_lock_interruptible_slowpath": true,
+		"__mutex_lock_killable_slowpath":      true,
+		"native_queued_spin_lock_slowpath":    true,
+		"__pv_queued_spin_lock_slowpath":      true,
+	}
+	setLockProbeAvailability(t, false, available)
+
+	got, _, err := lockAttachOptions([]string{"mutex", "spinlock", "mutex"})
+	if err != nil {
+		t.Fatalf("lockAttachOptions() error = %v", err)
+	}
+	if gotLen, wantLen := len(got), 10; gotLen != wantLen {
+		t.Fatalf("len(lockAttachOptions()) = %d, want %d: %#v", gotLen, wantLen, got)
+	}
+	for _, option := range got {
+		if !strings.HasSuffix(option.Symbol, "slowpath") {
+			t.Errorf("unsafe non-slowpath symbol attached: %q", option.Symbol)
+		}
+		if strings.HasPrefix(option.Symbol, "_raw_") {
+			t.Errorf("raw lock fast path attached: %q", option.Symbol)
+		}
 	}
 }
 
 func TestLockAttachOptionsReportsUnavailableType(t *testing.T) {
-	old := hasLockKprobeFunction
-	hasLockKprobeFunction = func(string) bool { return false }
-	defer func() { hasLockKprobeFunction = old }()
+	setLockProbeAvailability(t, false, nil)
 
-	if _, err := lockAttachOptions([]string{"mutex"}); err == nil {
+	if _, _, err := lockAttachOptions([]string{"mutex"}); err == nil {
 		t.Fatal("lockAttachOptions() error = nil")
 	}
 }
 
 func TestLockAttachOptionsRequiresReadAndWriteRWLock(t *testing.T) {
-	old := hasLockKprobeFunction
-	hasLockKprobeFunction = func(name string) bool { return name == "_raw_read_lock" }
-	defer func() { hasLockKprobeFunction = old }()
+	setLockProbeAvailability(t, false, map[string]bool{"queued_read_lock_slowpath": true})
 
-	if _, err := lockAttachOptions([]string{"rwlock"}); err == nil {
+	if _, _, err := lockAttachOptions([]string{"rwlock"}); err == nil {
 		t.Fatal("lockAttachOptions() error = nil when write-side rwlock probe is unavailable")
 	}
 }
 
-func TestLockEventBinaryLayout(t *testing.T) {
-	var event lockEvent
-	if got, want := unsafe.Sizeof(event), uintptr(64); got != want {
-		t.Fatalf("sizeof(lockEvent) = %d, want %d", got, want)
+func TestLockTypesMask(t *testing.T) {
+	if got, want := lockTypesMask([]string{"mutex", "rwlock"}), uint32(0b101); got != want {
+		t.Fatalf("lockTypesMask() = %03b, want %03b", got, want)
+	}
+}
+
+func TestLockStatBinaryLayout(t *testing.T) {
+	var key lockStatKey
+	if got, want := unsafe.Sizeof(key), uintptr(48); got != want {
+		t.Fatalf("sizeof(lockStatKey) = %d, want %d", got, want)
+	}
+	var value lockStatValue
+	if got, want := unsafe.Sizeof(value), uintptr(16); got != want {
+		t.Fatalf("sizeof(lockStatValue) = %d, want %d", got, want)
 	}
 	checks := []struct {
 		name string
 		got  uintptr
 		want uintptr
 	}{
-		{name: "base", got: unsafe.Offsetof(event.ProfilerEventBase), want: 0},
-		{name: "lock", got: unsafe.Offsetof(event.Lock), want: 40},
-		{name: "wait time", got: unsafe.Offsetof(event.WaitTime), want: 48},
-		{name: "contended", got: unsafe.Offsetof(event.Contended), want: 56},
-		{name: "lock type", got: unsafe.Offsetof(event.LockType), want: 60},
+		{name: "pid_tgid", got: unsafe.Offsetof(key.PidTgid), want: 0},
+		{name: "comm", got: unsafe.Offsetof(key.Comm), want: 8},
+		{name: "lock", got: unsafe.Offsetof(key.Lock), want: 24},
+		{name: "kernel stack", got: unsafe.Offsetof(key.Kernstack), want: 32},
+		{name: "user stack", got: unsafe.Offsetof(key.Userstack), want: 36},
+		{name: "lock type", got: unsafe.Offsetof(key.LockType), want: 40},
 	}
 	for _, check := range checks {
 		if check.got != check.want {

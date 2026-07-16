@@ -15,20 +15,21 @@
 package provider
 
 import (
+	"bytes"
 	"context"
-	"errors"
+	"encoding/binary"
 	"fmt"
+	"os"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
-	"huatuo-bamai/internal/profiler/bpfmap"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
-	"huatuo-bamai/pkg/types"
+	"huatuo-bamai/internal/symbol"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_lock_profiler.c -o $BPF_DIR/native_lock_profiler.o
@@ -37,34 +38,50 @@ const (
 	lockTypeMutex uint8 = iota + 1
 	lockTypeSpinlock
 	lockTypeRWLock
+	lockDrainInterval = time.Second
 )
 
-type lockEvent struct {
-	ProfilerEventBase
+const (
+	lockBackendContentionTracepoint = "contention tracepoints"
+	lockBackendSlowpathKprobe       = "contention slowpaths"
+)
+
+type lockStatKey struct {
+	PidTgid   uint64
+	Comm      [TaskCommLen]byte
 	Lock      uint64
-	WaitTime  uint64
-	Contended uint32
+	Kernstack int32
+	Userstack int32
 	LockType  uint8
-	Pad       [3]byte
+	Pad       [7]byte
+}
+
+type lockStatValue struct {
+	WaitTime  uint64
+	Contended uint64
 }
 
 type lockNativeProfiler struct {
 	bpf bpf.BPF
 }
 
-type lockProbeGroup struct {
-	description string
-	symbols     []string
+type lockProbe struct {
+	symbol        string
+	enterProgram  string
+	returnProgram string
 }
 
-var hasLockKprobeFunction = bpf.HasKprobeFunction
+var (
+	hasLockKprobeFunction        = bpf.HasKprobeFunction
+	hasLockContentionTracepoints = lockContentionTracepointsAvailable
+)
 
 func init() {
 	impl := &lockNativeProfiler{}
 	registry.Register(registry.ProfilerMeta{
 		Type:          "lock",
 		LangOrImpl:    "native",
-		Description:   "Native kernel lock profiler for mutex, spinlock, and rwlock using eBPF",
+		Description:   "Low-overhead native kernel lock contention profiler using eBPF",
 		Impl:          impl,
 		NewAggregator: impl.NewAggregator,
 	})
@@ -91,8 +108,9 @@ func (p *lockNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 	constants["profiler_lock_min_wait_ns"] = uint64(pctx.LockMinWait.Nanoseconds())
+	constants["profiler_lock_type_mask"] = lockTypesMask(pctx.LockTypes)
 
-	attachOptions, err := lockAttachOptions(pctx.LockTypes)
+	attachOptions, backend, err := lockAttachOptions(pctx.LockTypes)
 	if err != nil {
 		return err
 	}
@@ -103,11 +121,11 @@ func (p *lockNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 	if err := b.AttachWithOptions(attachOptions); err != nil {
 		_ = b.Close()
-		return fmt.Errorf("failed to attach lock probes: %w", err)
+		return fmt.Errorf("failed to attach lock contention probes: %w", err)
 	}
 
 	p.bpf = b
-	log.Infof("kernel lock profiler attached for types %v", pctx.LockTypes)
+	log.Infof("kernel lock profiler attached via %s for types %v", backend, pctx.LockTypes)
 	return nil
 }
 
@@ -116,118 +134,203 @@ func (p *lockNativeProfiler) Stop(*pcontext.ProfilerContext) error {
 }
 
 func (p *lockNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257, false)
+	log.Infof("data reading loop started")
+	defer log.Infof("data reading loop ended")
+
+	drainer, err := newLockStatsDrainer(p.bpf)
 	if err != nil {
 		return err
 	}
-	defer ringCtx.Close()
 
-	ticker := time.NewTicker(drainTick)
+	ticker := time.NewTicker(lockDrainInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			// The BPF links are still attached here. Flip once more and drain the
+			// last stable map before registry.Profile closes the object.
+			return drainer.drain(enqueue)
 		case <-ticker.C:
-		}
-		if err := ringCtx.drainLockEvents(enqueue); err != nil {
-			if errors.Is(err, types.ErrExitByCancelCtx) {
-				return nil
+			if err := drainer.drain(enqueue); err != nil {
+				log.Warnf("drain lock contention stats: %v", err)
 			}
-			log.Warnf("drain lock events: %v", err)
 		}
 	}
 }
 
-func lockAttachOptions(lockTypes []string) ([]bpf.AttachOption, error) {
-	var options []bpf.AttachOption
+func lockTypesMask(lockTypes []string) uint32 {
+	var mask uint32
+	for _, lockType := range lockTypes {
+		switch lockType {
+		case "mutex":
+			mask |= 1 << (lockTypeMutex - 1)
+		case "spinlock":
+			mask |= 1 << (lockTypeSpinlock - 1)
+		case "rwlock":
+			mask |= 1 << (lockTypeRWLock - 1)
+		}
+	}
+	return mask
+}
+
+func lockContentionTracepointsAvailable() bool {
+	for _, root := range []string{
+		"/sys/kernel/tracing/events/lock",
+		"/sys/kernel/debug/tracing/events/lock",
+	} {
+		if _, err := os.Stat(root + "/contention_begin/id"); err != nil {
+			continue
+		}
+		if _, err := os.Stat(root + "/contention_end/id"); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func lockAttachOptions(lockTypes []string) ([]bpf.AttachOption, string, error) {
+	if hasLockContentionTracepoints() {
+		return []bpf.AttachOption{
+			{ProgramName: "trace_lock_contention_begin", Symbol: "lock/contention_begin"},
+			{ProgramName: "trace_lock_contention_end", Symbol: "lock/contention_end"},
+		}, lockBackendContentionTracepoint, nil
+	}
+
+	probes := map[string][]lockProbe{
+		"mutex": {
+			{
+				symbol:        "__mutex_lock_slowpath",
+				enterProgram:  "trace_mutex_lock",
+				returnProgram: "trace_mutex_lock_return",
+			},
+			{
+				symbol:        "__mutex_lock_interruptible_slowpath",
+				enterProgram:  "trace_mutex_lock",
+				returnProgram: "trace_mutex_lock_interruptible_return",
+			},
+			{
+				symbol:        "__mutex_lock_killable_slowpath",
+				enterProgram:  "trace_mutex_lock",
+				returnProgram: "trace_mutex_lock_interruptible_return",
+			},
+		},
+		"spinlock": {
+			{
+				symbol:        "queued_spin_lock_slowpath",
+				enterProgram:  "trace_spin_lock",
+				returnProgram: "trace_spin_lock_return",
+			},
+			{
+				symbol:        "native_queued_spin_lock_slowpath",
+				enterProgram:  "trace_spin_lock",
+				returnProgram: "trace_spin_lock_return",
+			},
+			{
+				symbol:        "__pv_queued_spin_lock_slowpath",
+				enterProgram:  "trace_spin_lock",
+				returnProgram: "trace_spin_lock_return",
+			},
+			{
+				symbol:        "pv_queued_spin_lock_slowpath",
+				enterProgram:  "trace_spin_lock",
+				returnProgram: "trace_spin_lock_return",
+			},
+		},
+		"rwlock": {
+			{
+				symbol:        "queued_read_lock_slowpath",
+				enterProgram:  "trace_rw_lock",
+				returnProgram: "trace_rw_lock_return",
+			},
+			{
+				symbol:        "queued_write_lock_slowpath",
+				enterProgram:  "trace_rw_lock",
+				returnProgram: "trace_rw_lock_return",
+			},
+		},
+	}
+
 	seenTypes := make(map[string]bool, len(lockTypes))
+	var options []bpf.AttachOption
 	for _, lockType := range lockTypes {
 		if seenTypes[lockType] {
 			continue
 		}
 		seenTypes[lockType] = true
 
-		var groups []lockProbeGroup
-		var enterProgram, returnProgram string
-		switch lockType {
-		case "mutex":
-			groups = []lockProbeGroup{{
-				description: "mutex",
-				symbols: []string{
-					"mutex_lock",
-					"mutex_lock_interruptible",
-					"mutex_lock_killable",
-					"mutex_lock_nested",
-					"_mutex_lock_nested",
-				},
-			}}
-			enterProgram, returnProgram = "trace_mutex_lock", "trace_mutex_lock_return"
-		case "spinlock":
-			groups = []lockProbeGroup{{
-				description: "spinlock",
-				symbols: []string{
-					"_raw_spin_lock",
-					"_raw_spin_lock_irq",
-					"_raw_spin_lock_irqsave",
-					"_raw_spin_lock_bh",
-					"_raw_spin_lock_nested",
-				},
-			}}
-			enterProgram, returnProgram = "trace_spin_lock", "trace_spin_lock_return"
-		case "rwlock":
-			groups = []lockProbeGroup{
-				{
-					description: "rwlock read",
-					symbols: []string{
-						"_raw_read_lock",
-						"_raw_read_lock_irq",
-						"_raw_read_lock_irqsave",
-						"_raw_read_lock_bh",
-					},
-				},
-				{
-					description: "rwlock write",
-					symbols: []string{
-						"_raw_write_lock",
-						"_raw_write_lock_irq",
-						"_raw_write_lock_irqsave",
-						"_raw_write_lock_bh",
-					},
-				},
+		candidates, ok := probes[lockType]
+		if !ok {
+			return nil, "", fmt.Errorf("unsupported lock type %q", lockType)
+		}
+		matched := 0
+		for _, probe := range candidates {
+			if !hasLockKprobeFunction(probe.symbol) {
+				continue
 			}
-			enterProgram, returnProgram = "trace_rw_lock", "trace_rw_lock_return"
-		default:
-			return nil, fmt.Errorf("unsupported lock type %q", lockType)
+			options = append(options,
+				bpf.AttachOption{ProgramName: probe.enterProgram, Symbol: probe.symbol},
+				bpf.AttachOption{ProgramName: probe.returnProgram, Symbol: probe.symbol},
+			)
+			matched++
 		}
 
-		for _, group := range groups {
-			matched := false
-			for _, symbol := range group.symbols {
-				if !hasLockKprobeFunction(symbol) {
-					continue
-				}
-				options = append(options,
-					bpf.AttachOption{ProgramName: enterProgram, Symbol: symbol},
-					bpf.AttachOption{ProgramName: returnProgram, Symbol: symbol},
-				)
-				matched = true
-			}
-			if !matched {
-				return nil, fmt.Errorf("kernel does not expose a probeable %s function", group.description)
-			}
+		// qrwlock needs both read and write slowpaths to satisfy the selected
+		// rwlock type. Other types need at least one architecture-specific path.
+		if matched == 0 || (lockType == "rwlock" && matched != len(candidates)) {
+			return nil, "", fmt.Errorf(
+				"kernel does not expose safe contention slowpaths for %s; refusing high-overhead fast-path probes",
+				lockType,
+			)
 		}
 	}
 	if len(options) == 0 {
-		return nil, fmt.Errorf("at least one kernel lock type is required")
+		return nil, "", fmt.Errorf("at least one kernel lock type is required")
 	}
-	return options, nil
+	return options, lockBackendSlowpathKprobe, nil
 }
 
-func (r *ringBufferContext) drainLockEvents(enqueue func(any)) error {
-	ring, err := r.advanceSwapParity()
+type lockStatsDrainer struct {
+	bpf     bpf.BPF
+	ringCtx *ringBufferContext
+	statsA  uint32
+	statsB  uint32
+}
+
+func newLockStatsDrainer(b bpf.BPF) (*lockStatsDrainer, error) {
+	if b == nil {
+		return nil, fmt.Errorf("lock profiler BPF is not loaded")
+	}
+	ringCtx := &ringBufferContext{
+		bpf:                b,
+		transferStateMapID: b.MapIDByName("profiler_state_map"),
+		stackMapAID:        b.MapIDByName("stack_map_a"),
+		stackMapBID:        b.MapIDByName("stack_map_b"),
+		usym:               symbol.NewUsymResolver(),
+	}
+	return &lockStatsDrainer{
+		bpf:     b,
+		ringCtx: ringCtx,
+		statsA:  b.MapIDByName("lock_stats_a"),
+		statsB:  b.MapIDByName("lock_stats_b"),
+	}, nil
+}
+
+func (d *lockStatsDrainer) drain(enqueue func(any)) error {
+	ring, err := d.ringCtx.advanceSwapParity()
 	if err != nil {
 		return err
+	}
+	statsMapID := d.statsA
+	if ring.stackMapID == d.ringCtx.stackMapBID {
+		statsMapID = d.statsB
+	}
+
+	items, err := d.bpf.DumpMap(statsMapID)
+	if err != nil {
+		return fmt.Errorf("dump lock stats: %w", err)
+	}
+	if len(items) == 0 {
+		return nil
 	}
 
 	kstackCache := make(map[int32]string)
@@ -235,60 +338,56 @@ func (r *ringBufferContext) drainLockEvents(enqueue func(any)) error {
 		id  int32
 		pid uint32
 	}]string)
-	totalRead := uint64(0)
-	for {
-		batch, err := ring.reader.ReadBatch(&lockEvent{})
-		if err != nil {
-			return err
+	keys := make([][]byte, 0, len(items))
+	for _, item := range items {
+		var key lockStatKey
+		if err := binary.Read(bytes.NewReader(item.Key), binary.NativeEndian, &key); err != nil {
+			return fmt.Errorf("decode lock stat key: %w", err)
 		}
-		totalRead += uint64(len(batch))
-
-		for _, raw := range batch {
-			event, ok := raw.(*lockEvent)
-			if !ok || (event.Kernstack < 0 && event.Userstack < 0) {
-				continue
-			}
-			tgid := uint32(event.PidTgid >> 32)
-			if _, ok := kstackCache[event.Kernstack]; !ok && event.Kernstack >= 0 {
-				kstackCache[event.Kernstack] = r.resolveKstackWithFallback(ring, event.Kernstack)
-			}
-			ukey := struct {
-				id  int32
-				pid uint32
-			}{event.Userstack, tgid}
-			if _, ok := ustackCache[ukey]; !ok && event.Userstack >= 0 {
-				ustackCache[ukey] = r.resolveUstackWithFallback(ring, event.Userstack, tgid)
-			}
-
-			enqueue(&lockStackEntry{
-				Proc: &processIDNameLock{
-					Pid:  tgid,
-					Name: procutil.CommToString(event.Comm),
-					Lock: event.Lock,
-				},
-				User:      ustackCache[ukey],
-				Kernel:    kstackCache[event.Kernstack],
-				WaitTime:  event.WaitTime,
-				Contended: uint64(event.Contended),
-				LockType:  lockTypeName(event.LockType),
-			})
+		var value lockStatValue
+		if err := binary.Read(bytes.NewReader(item.Value), binary.NativeEndian, &value); err != nil {
+			return fmt.Errorf("decode lock stat value: %w", err)
+		}
+		keys = append(keys, item.Key)
+		if value.Contended == 0 || (key.Kernstack < 0 && key.Userstack < 0) {
+			continue
 		}
 
-		if len(batch) == 0 {
-			break
+		tgid := uint32(key.PidTgid >> 32)
+		if key.Kernstack >= 0 {
+			if _, ok := kstackCache[key.Kernstack]; !ok {
+				kstackCache[key.Kernstack] = d.ringCtx.resolveKstackWithFallback(ring, key.Kernstack)
+			}
 		}
-		count, err := bpfmap.ReadUint64(r.bpf, r.transferStateMapID, ring.sampleCountIdx)
-		if err != nil {
-			return err
+		ukey := struct {
+			id  int32
+			pid uint32
+		}{key.Userstack, tgid}
+		if key.Userstack >= 0 {
+			if _, ok := ustackCache[ukey]; !ok {
+				ustackCache[ukey] = d.ringCtx.resolveUstackWithFallback(ring, key.Userstack, tgid)
+			}
 		}
-		if totalRead >= count {
-			break
-		}
+
+		enqueue(&lockStackEntry{
+			Proc: &processIDNameLock{
+				Pid:  tgid,
+				Name: procutil.CommToString(key.Comm),
+				Lock: key.Lock,
+			},
+			User:      ustackCache[ukey],
+			Kernel:    kstackCache[key.Kernstack],
+			WaitTime:  value.WaitTime,
+			Contended: value.Contended,
+			LockType:  lockTypeName(key.LockType),
+		})
 	}
 
-	if err := bpfmap.WriteUint64(r.bpf, r.transferStateMapID, ring.sampleCountIdx, 0); err != nil {
-		log.Warnf("reset lock sample count: %v", err)
+	if err := d.bpf.DeleteMapItems(statsMapID, keys); err != nil {
+		return fmt.Errorf("delete drained lock stats: %w", err)
 	}
+	log.Debugf("drained lock stats: entries=%d kernel_stacks=%d user_stacks=%d",
+		len(items), len(kstackCache), len(ustackCache))
 	return nil
 }
 

@@ -25,7 +25,7 @@ weight: 4
 
 | 语言 | 采集类型 | 底层实现 |
 | --- | --- | --- |
-| C / C++ / Go | CPU / 内存 / 锁 | eBPF（perf_event + 栈映射） |
+| C / C++ / Go | CPU / 内存 / 锁 | eBPF（perf_event / 锁争用 + 栈映射） |
 | Java | CPU / 内存 | async-profiler |
 | Python | CPU / 内存 | py-spy / memray |
 
@@ -134,8 +134,8 @@ Pyroscope/Parca。Pyroscope 兼容的 `LabelNames`、`LabelValues` 和火焰图
 
 ### 内核锁 Profiling
 
-原生 C/C++/Go 目标支持 mutex、spinlock、rwlock 三类内核锁，可按等待
-时间或采集次数生成 Profile：
+原生 C/C++/Go 目标支持 mutex、spinlock、rwlock 三类内核锁，可按争用
+等待时间或争用次数生成 Profile：
 
 ```bash
 profiler -t lock -l go --scope tgid --pid 4242 \
@@ -143,9 +143,18 @@ profiler -t lock -l go --scope tgid --pid 4242 \
   --lock-mode time --lock-min-wait 1us -d 30
 ```
 
-使用 `--lock-mode count` 查看达到等待阈值的加锁次数；`--lock-min-wait`
-可过滤快速加锁以控制开销。API 对应字段为 `lock_types`、`lock_mode`、
+使用 `--lock-mode count` 查看达到等待阈值的争用次数；`--lock-min-wait`
+用于过滤较短的等待。API 对应字段为 `lock_types`、`lock_mode`、
 `lock_min_wait`。
+
+采集器采用与 `perf lock contention` 相同的“只观测真实争用”模型：Linux
+5.19 及以上优先使用内核 `lock:contention_begin` / `lock:contention_end`
+tracepoint；Ubuntu 20.04 的 5.4 等旧内核则按能力探测 mutex、queued
+spinlock、queued rwlock 的慢路径。采集器不会退回到高频
+`_raw_*_lock` 加锁入口进行全局插桩。等待时间与次数先在 BPF 内聚合，
+再由用户态周期读取，因此高争用时事件量仍然有界。运行时不依赖
+`perf` 命令或 `CONFIG_LOCK_STAT`；若内核既没有 contention tracepoint，
+也没有安全的慢路径符号，请求会返回明确的不支持错误。
 
 返回任务 ID：
 

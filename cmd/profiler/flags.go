@@ -78,7 +78,7 @@ var appFlags = []cli.Flag{
 	&cli.DurationFlag{
 		Name:  "lock-min-wait",
 		Value: time.Microsecond,
-		Usage: "Minimum lock acquisition latency to record (for example 1us or 1ms)",
+		Usage: "Minimum lock contention wait to record (for example 1us or 1ms)",
 	},
 	&cli.StringSliceFlag{
 		Name:  "label",

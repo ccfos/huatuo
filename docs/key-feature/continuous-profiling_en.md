@@ -25,7 +25,7 @@ Supported languages and underlying implementations:
 
 | Language | Profile types | Implementation |
 | --- | --- | --- |
-| C / C++ / Go | CPU / memory / lock | eBPF (perf_event + stack maps) |
+| C / C++ / Go | CPU / memory / lock | eBPF (perf_event / lock contention + stack maps) |
 | Java | CPU / memory | async-profiler |
 | Python | CPU / memory | py-spy / memray |
 
@@ -135,7 +135,7 @@ dimension names for querying and aggregation.
 ### Kernel lock profiling
 
 Kernel lock profiling is available for native C/C++/Go targets. It measures
-acquisition latency or acquisition count for mutexes, spinlocks, and read/write
+contention wait time or contention count for mutexes, spinlocks, and read/write
 locks:
 
 ```bash
@@ -144,9 +144,20 @@ profiler -t lock -l go --scope tgid --pid 4242 \
   --lock-mode time --lock-min-wait 1us -d 30
 ```
 
-Use `--lock-mode count` for the number of acquisitions that reach the wait
-threshold. `--lock-min-wait` suppresses fast acquisitions to control overhead. The API accepts the equivalent
-`lock_types`, `lock_mode`, and `lock_min_wait` fields.
+Use `--lock-mode count` for the number of contentions that reach the wait
+threshold. `--lock-min-wait` suppresses short waits. The API accepts the
+equivalent `lock_types`, `lock_mode`, and `lock_min_wait` fields.
+
+The collector follows the same contention-only model as `perf lock
+contention`: on Linux 5.19 and later it uses the kernel's
+`lock:contention_begin` / `lock:contention_end` tracepoints. Older kernels,
+including Ubuntu 20.04's 5.4 kernel, use feature-detected mutex, queued
+spinlock, and queued rwlock slowpaths. It never falls back to instrumenting the
+high-frequency `_raw_*_lock` acquisition paths. Counts and wait times are
+aggregated in BPF before userspace reads them, which keeps event volume bounded
+during heavy contention. The `perf` executable and `CONFIG_LOCK_STAT` are not
+required; when neither contention tracepoints nor safe slowpath symbols are
+available, the requested lock type fails with an explicit unsupported error.
 
 Response returns the task ID:
 
