@@ -64,20 +64,26 @@ func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
 	}
 
 	return &Pipeline{
-		pctx:  pctx,
-		aggr:  aggr,
-		queue: make(chan any, pipelineQueueCapacity),
-		tracerID: func() string {
-			id, err := tracing.AllocTaskID()
-			if err != nil {
-				log.Errorf("alloc tracer id: %v", err)
-			}
-			return id
-		}(),
+		pctx:         pctx,
+		aggr:         aggr,
+		queue:        make(chan any, pipelineQueueCapacity),
+		tracerID:     resolveTracerID(pctx.TracerID, tracing.AllocTaskID),
 		aggrInterval: aggrInterval,
 		stopCh:       make(chan struct{}),
 		doneCh:       make(chan struct{}),
 	}
+}
+
+func resolveTracerID(configured string, allocate func() (string, error)) string {
+	if configured != "" {
+		return configured
+	}
+
+	id, err := allocate()
+	if err != nil {
+		log.Errorf("alloc tracer id: %v", err)
+	}
+	return id
 }
 
 // Start launches the aggregation worker and periodic export schedule once.

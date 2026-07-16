@@ -55,6 +55,15 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "tracer ID",
+			args: []string{
+				"--type", "cpu",
+				"--language", "c",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--tracer-id", "trace-123",
+			},
+		},
+		{
 			name:      "legacy mem type",
 			args:      []string{"--type", "mem", "--language", "c"},
 			wantError: `unsupported profiling type "mem" (expected: cpu or memory)`,
@@ -68,6 +77,21 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			name:      "removed tool limit option",
 			args:      []string{"--type", "cpu", "--language", "c", "--tool-limit", "2"},
 			wantError: "flag provided but not defined: -tool-limit",
+		},
+		{
+			name:      "removed metadata option",
+			args:      []string{"--type", "cpu", "--language", "c", "--metadata", "tracer_id=trace-123"},
+			wantError: "flag provided but not defined: -metadata",
+		},
+		{
+			name:      "removed CPU idle metadata option",
+			args:      []string{"--type", "cpu", "--language", "c", "--cpuidle-metadata", "user=1"},
+			wantError: "flag provided but not defined: -cpuidle-metadata",
+		},
+		{
+			name:      "removed CPU sys metadata option",
+			args:      []string{"--type", "cpu", "--language", "c", "--cpusys-metadata", "sys=1"},
+			wantError: "flag provided but not defined: -cpusys-metadata",
 		},
 	}
 

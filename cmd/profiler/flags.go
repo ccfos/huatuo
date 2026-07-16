@@ -130,16 +130,8 @@ var appFlags = []cli.Flag{
 		Usage: "Huatuo profiling server address",
 		Value: "127.0.0.1:19704",
 	},
-	&cli.StringSliceFlag{
-		Name:  "metadata",
-		Usage: "Meta data for document data, e.g. --metadata '--tracer_id HHKKJGKIUOLNK' --metadata '--tracer_data=AppName'",
-	},
-	&cli.StringSliceFlag{
-		Name:  "cpuidle-metadata",
-		Usage: "Meta data for cpuidle tracerData, e.g. --cpuidle-metadata '--user_threshold 54' --cpuidle-metadata '--user=AppName'",
-	},
-	&cli.StringSliceFlag{
-		Name:  "cpusys-metadata",
-		Usage: "Meta data for cpusys tracerData, e.g. --cpusys-metadata '--usage_threshold 33' --cpusys-metadata '--title=AppName'",
+	&cli.StringFlag{
+		Name:  "tracer-id",
+		Usage: "Tracing task ID; generated automatically when empty",
 	},
 }

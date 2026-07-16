@@ -17,7 +17,6 @@ package context
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -61,16 +60,13 @@ type ProfilerContext struct {
 	MemoryMode                profiling.MemoryMode
 	PhysicalMemoryProbability uint
 
-	MetaData        map[string]string
-	CpuIdleMetaData map[string]int64
-	CpuSysMetaData  map[string]int64
+	TracerID string
 
 	ToolstreamClient *toolstream.Client
 }
 
 type TracerData struct {
 	MetricData any                   `json:"metric_data,omitempty"`
-	MetaData   any                   `json:"metadata,omitempty"`
 	FlameData  *profiler.ProfileData `json:"flamedata"`
 }
 
@@ -113,20 +109,6 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 			fmt.Fprintf(logBuf, "[signal] caught signal: %s, canceling context\n", sig)
 		}
 	}()
-
-	metaData, err := parseFlagValuesString(cliCtx.StringSlice("metadata"))
-	if err != nil {
-		return nil, err
-	}
-	cpuidleMeta, err := parseFlagValuesInt64(cliCtx.StringSlice("cpuidle-metadata"))
-	if err != nil {
-		return nil, err
-	}
-
-	cpusysMeta, err := parseFlagValuesInt64(cliCtx.StringSlice("cpusys-metadata"))
-	if err != nil {
-		return nil, err
-	}
 
 	outputFormat := output.OutputFormat(cliCtx.String("output-format"))
 
@@ -187,105 +169,12 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		MemoryMode:                mode,
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
 
-		MetaData:        metaData,
-		CpuSysMetaData:  cpusysMeta,
-		CpuIdleMetaData: cpuidleMeta,
+		TracerID: cliCtx.String("tracer-id"),
 
 		ToolstreamClient: tsClient,
 	}
 	succeeded = true
 	return profilerContext, nil
-}
-
-func MapToStructByJSON[T any](m map[string]int64) (T, error) {
-	var meta T
-
-	data, err := json.Marshal(m)
-	if err != nil {
-		return meta, err
-	}
-
-	err = json.Unmarshal(data, &meta)
-	return meta, err
-}
-
-type flagSegment struct {
-	key   string
-	value string
-}
-
-func parseFlagSegments(flagList []string) ([]flagSegment, error) {
-	var segments []flagSegment
-
-	for _, raw := range flagList {
-		for _, segment := range strings.Split(raw, ",") {
-			segment = strings.TrimSpace(segment)
-			if segment == "" {
-				continue
-			}
-
-			clean := strings.TrimLeft(segment, "-")
-
-			if strings.Contains(clean, "=") {
-				parts := strings.SplitN(clean, "=", 2)
-				key := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
-				if key != "" {
-					segments = append(segments, flagSegment{key: key, value: value})
-				}
-
-				continue
-			}
-
-			parts := strings.Fields(clean)
-			if len(parts) == 2 {
-				key := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
-				if key != "" {
-					segments = append(segments, flagSegment{key: key, value: value})
-				}
-
-				continue
-			}
-
-			return nil, fmt.Errorf("invalid extra flag format: %q (expected --key=value or --key value)", segment)
-		}
-	}
-
-	return segments, nil
-}
-
-func parseFlagValuesString(flagList []string) (map[string]string, error) {
-	segments, err := parseFlagSegments(flagList)
-	if err != nil {
-		return nil, err
-	}
-
-	flags := make(map[string]string, len(segments))
-	for _, s := range segments {
-		flags[s.key] = s.value
-	}
-
-	return flags, nil
-}
-
-func parseFlagValuesInt64(flagList []string) (map[string]int64, error) {
-	segments, err := parseFlagSegments(flagList)
-	if err != nil {
-		return nil, err
-	}
-
-	flags := make(map[string]int64, len(segments))
-	for _, s := range segments {
-		iValue, err := strconv.Atoi(s.value)
-		if err != nil {
-			return nil, fmt.Errorf("invalid int64 flag value for %q: %w", s.key, err)
-		}
-
-		flags[s.key] = int64(iValue)
-	}
-
-	return flags, nil
 }
 
 func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*toolstream.Client, error) {

@@ -28,11 +28,15 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	set.String("type", "cpu", "")
 	set.String("language", "c", "")
 	set.String("output-format", "collapsed", "")
+	set.String("tracer-id", "trace-123", "")
 	cliCtx := cli.NewContext(nil, set, nil)
 
 	pctx, err := NewProfilerContext(cliCtx, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("NewProfilerContext() error = %v", err)
+	}
+	if pctx.TracerID != "trace-123" {
+		t.Fatalf("TracerID = %q, want trace-123", pctx.TracerID)
 	}
 	pctx.Cancel()
 	pctx.Cancel()

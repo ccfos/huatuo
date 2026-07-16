@@ -31,7 +31,6 @@ import (
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/profiling"
-	"huatuo-bamai/pkg/tracing"
 
 	"github.com/gin-gonic/gin/binding"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
@@ -132,9 +131,7 @@ func (h *Handler) start(ctx *server.Context) error {
 
 	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs,
 		"--output-format", "remote",
-		"--output-storage", "/var/run/huatuo-toolstream.sock",
-		"--metadata", "tracer_name=profiler",
-		"--metadata", "tracer_type="+tracing.TracerRunTypeTask)
+		"--output-storage", "/var/run/huatuo-toolstream.sock")
 
 	var jobType string
 	if req.Type == "memory" {

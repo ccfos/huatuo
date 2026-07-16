@@ -16,6 +16,7 @@ package aggregator
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -34,6 +35,56 @@ func TestNewPipeline_DoesNotMutateContext(t *testing.T) {
 
 	if p.aggrInterval != 10*time.Second {
 		t.Fatalf("NewPipeline aggrInterval = %s, want 10s", p.aggrInterval)
+	}
+}
+
+func TestResolveTracerID(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured string
+		allocate   func() (string, error)
+		want       string
+		wantAlloc  bool
+	}{
+		{
+			name:       "configured ID",
+			configured: "trace-123",
+			allocate: func() (string, error) {
+				return "unexpected", nil
+			},
+			want: "trace-123",
+		},
+		{
+			name: "allocated ID",
+			allocate: func() (string, error) {
+				return "generated-123", nil
+			},
+			want:      "generated-123",
+			wantAlloc: true,
+		},
+		{
+			name: "allocation error",
+			allocate: func() (string, error) {
+				return "", errors.New("random source unavailable")
+			},
+			wantAlloc: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allocated := false
+			allocate := func() (string, error) {
+				allocated = true
+				return tt.allocate()
+			}
+			if got := resolveTracerID(tt.configured, allocate); got != tt.want {
+				t.Fatalf("resolveTracerID() = %q, want %q", got, tt.want)
+			}
+			if allocated != tt.wantAlloc {
+				t.Fatalf("allocator called = %t, want %t", allocated, tt.wantAlloc)
+			}
+		})
 	}
 }
 
