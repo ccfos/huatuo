@@ -15,6 +15,8 @@
 package provider
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	pcontext "huatuo-bamai/internal/profiler/context"
@@ -30,9 +32,12 @@ func TestResolvePythonPidsExplicitTargets(t *testing.T) {
 	require.Equal(t, []int{123, 456}, pids)
 }
 
-func TestResolvePythonPidsToolLimit(t *testing.T) {
-	err := validatePythonToolLimit([]int{123, 456}, 1)
-	require.EqualError(t, err, "sampling failed: too many target Python processes (limit: 1, found: 2)")
+func TestValidatePythonToolPath(t *testing.T) {
+	dir := t.TempDir()
+	pyspy := filepath.Join(dir, "py-spy")
+	require.NoError(t, os.WriteFile(pyspy, []byte("tool"), 0o600))
+	require.NoError(t, os.Chmod(pyspy, 0o700))
+	require.NoError(t, validatePythonToolPath(dir))
 }
 
 func TestPythonRootPids(t *testing.T) {
@@ -72,4 +77,13 @@ func TestBuildPySpyArgs(t *testing.T) {
 		"-o", "/dev/stdout",
 		"-p", "123",
 	}, buildPySpyArgs(123, "10", "99"))
+}
+
+func TestValidatePythonAggregationWindow(t *testing.T) {
+	require.NoError(t, validatePythonAggregationWindow(10, 10))
+	require.EqualError(
+		t,
+		validatePythonAggregationWindow(30, 10),
+		"Python CPU profiler does not support continuous profiling: aggregation interval (10s) must equal duration (30s)",
+	)
 }

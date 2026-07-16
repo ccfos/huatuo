@@ -55,6 +55,13 @@ func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 }
 
 func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if err := validatePythonToolPath(pctx.ToolPath); err != nil {
+		return err
+	}
+	if err := validatePythonAggregationWindow(pctx.Duration, pctx.AggrInterval); err != nil {
+		return err
+	}
+
 	p.duration = pctx.Duration
 	p.freq = pctx.Freq
 	p.toolPath = pctx.ToolPath
@@ -63,11 +70,22 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	if err != nil {
 		return err
 	}
+	if err := validateResolvedPIDs("Python", pids); err != nil {
+		return err
+	}
+	if len(pctx.PIDs) > 0 {
+		if err := validateProcessExecutables("Python", "python", pids); err != nil {
+			return err
+		}
+		if err := validateExpectedExecPath(pids, pctx.ExecPath); err != nil {
+			return err
+		}
+	}
 	pids, err = pythonRootPids(pids, procutil.ParentPID)
 	if err != nil {
 		return err
 	}
-	if err := validatePythonToolLimit(pids, pctx.ToolLimit); err != nil {
+	if err := validateToolLimit("Python", pids, pctx.ToolLimit); err != nil {
 		return err
 	}
 
@@ -86,13 +104,6 @@ func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
 
 func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 	if len(pctx.PIDs) > 0 {
-		if pctx.ExecPath != "" {
-			for _, pid := range pctx.PIDs {
-				if err := procutil.CheckExecPath(pid, pctx.ExecPath); err != nil {
-					return nil, err
-				}
-			}
-		}
 		return pctx.PIDs, nil
 	}
 
@@ -106,53 +117,6 @@ func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 	}
 
 	return pids, nil
-}
-
-func pythonRootPids(pids []int, parentPID func(int) (int, error)) ([]int, error) {
-	targets := make(map[int]struct{}, len(pids))
-	for _, pid := range pids {
-		targets[pid] = struct{}{}
-	}
-
-	roots := make([]int, 0, len(pids))
-	for _, pid := range pids {
-		ancestor := pid
-		seen := map[int]struct{}{pid: {}}
-		isDescendant := false
-		for ancestor > 1 {
-			ppid, err := parentPID(ancestor)
-			if err != nil {
-				return nil, fmt.Errorf("resolve Python target PID %d ancestry: %w", pid, err)
-			}
-			if ppid <= 1 {
-				break
-			}
-			if _, ok := seen[ppid]; ok {
-				return nil, fmt.Errorf("resolve Python target PID %d ancestry: process parent cycle at PID %d", pid, ppid)
-			}
-			if _, ok := targets[ppid]; ok {
-				isDescendant = true
-				break
-			}
-			seen[ppid] = struct{}{}
-			ancestor = ppid
-		}
-		if !isDescendant {
-			roots = append(roots, pid)
-		}
-	}
-	return roots, nil
-}
-
-func validatePythonToolLimit(pids []int, limit int) error {
-	if limit > 0 && len(pids) > limit {
-		return fmt.Errorf(
-			"sampling failed: too many target Python processes (limit: %d, found: %d)",
-			limit,
-			len(pids),
-		)
-	}
-	return nil
 }
 
 func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids []int, enqueue func(any)) error {
