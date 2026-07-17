@@ -436,7 +436,7 @@ func syncContainerCSS(containerID string) error {
 
 // findContainerCgroupPath resolves the container's kernel cgroup membership on this host.
 func findContainerCgroupPath(containerID string) (string, error) {
-	paths, err := ContainerCgroupPathsByID(containerID)
+	paths, err := containerCgroupPathsByID(containerID)
 	if err != nil {
 		return "", err
 	}

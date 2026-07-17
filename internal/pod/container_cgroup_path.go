@@ -79,8 +79,7 @@ func (p cgroupPath) ToCgroupfs() string {
 	return "/" + path.Join(p.slices...)
 }
 
-// ContainerCgroupPathsByID returns the kernel cgroup membership of a container init process.
-func ContainerCgroupPathsByID(containerID string) (*cgroups.ProcessPaths, error) {
+func containerCgroupPathsByID(containerID string) (*cgroups.ProcessPaths, error) {
 	pid, err := containerInitPIDByID(containerID)
 	if err != nil {
 		return nil, err
@@ -119,7 +118,7 @@ func containerScopeName(containerID string) (string, error) {
 
 // ContainerCgroupPathByID returns the path used to read the container's processes.
 func ContainerCgroupPathByID(containerID string) (string, error) {
-	paths, err := ContainerCgroupPathsByID(containerID)
+	paths, err := containerCgroupPathsByID(containerID)
 	if err != nil {
 		return "", err
 	}
