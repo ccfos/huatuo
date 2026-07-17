@@ -47,7 +47,20 @@ func TestNativeAggregatorAggregatesLockTime(t *testing.T) {
 	}
 }
 
-func requireSingleLockRecord(t *testing.T, aggregator *nativeAggregator, waitTime uint64, contended uint32) {
+func TestNativeAggregatorUsesLockCountSampleType(t *testing.T) {
+	_, sampleType, err := profileTypeOptions(&pcontext.ProfilerContext{
+		Type:     profiling.TypeLock,
+		LockMode: "count",
+	})
+	if err != nil {
+		t.Fatalf("profileTypeOptions() error = %v", err)
+	}
+	if sampleType != profiler.ProfileTypeLockCountSample {
+		t.Fatalf("sample type = %q, want %q", sampleType, profiler.ProfileTypeLockCountSample)
+	}
+}
+
+func requireSingleLockRecord(t *testing.T, aggregator *nativeAggregator, waitTime, contended uint64) {
 	t.Helper()
 	if len(aggregator.lockAggrMap) != 1 {
 		t.Fatalf("lock records = %d, want 1", len(aggregator.lockAggrMap))

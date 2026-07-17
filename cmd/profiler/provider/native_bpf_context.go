@@ -203,7 +203,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 			base := (*ProfilerEventBase)(unsafe.Pointer(ptrValue.Pointer()))
 
 			// Skip events without valid stacks
-			if base.Kernstack <= 0 && base.Userstack <= 0 {
+			if base.Kernstack < 0 && base.Userstack < 0 {
 				continue
 			}
 
@@ -259,7 +259,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 
 // aggregateStacksAndEnqueue resolves stack traces and emits aggregated records via enqueue callback.
 // For CPU profiler, convertValue is nil (samples are already counts).
-// For Memory profiler non-retained modes, convertValue converts raw value to bytes.
+// For Memory profilers, convertValue converts the aggregated raw value to bytes.
 // For Memory profiler retained mode, fallbackStackMapID provides fallback lookup path.
 //
 // Stack IDs are NOT deleted from the stack map after resolution for the following reasons:
@@ -287,7 +287,10 @@ func (r *ringBufferContext) aggregateStacksAndEnqueue(
 	convertValue func(int64) int64,
 ) {
 	kstackCache := make(map[int32]string)
-	ustackCache := make(map[int32]string)
+	ustackCache := make(map[struct {
+		id  int32
+		pid uint32
+	}]string)
 
 	var records int
 	for pidName, stacks := range stackCountsByProc {
@@ -301,20 +304,26 @@ func (r *ringBufferContext) aggregateStacksAndEnqueue(
 				continue
 			}
 
-			if stackID.KernelID > 0 {
+			if stackID.KernelID >= 0 {
 				if _, ok := kstackCache[stackID.KernelID]; !ok {
 					kstackCache[stackID.KernelID] = r.resolveKstackWithFallback(ring, stackID.KernelID)
 				}
 			}
-			if stackID.UserID > 0 {
-				if _, ok := ustackCache[stackID.UserID]; !ok {
-					ustackCache[stackID.UserID] = r.resolveUstackWithFallback(ring, stackID.UserID, pidName.Pid)
+			userStack := ""
+			if stackID.UserID >= 0 {
+				key := struct {
+					id  int32
+					pid uint32
+				}{id: stackID.UserID, pid: pidName.Pid}
+				if _, ok := ustackCache[key]; !ok {
+					ustackCache[key] = r.resolveUstackWithFallback(ring, stackID.UserID, pidName.Pid)
 				}
+				userStack = ustackCache[key]
 			}
 
 			record := &stackEntry{
 				Proc:    &processIDName{Pid: pidName.Pid, Name: pidName.Name},
-				User:    ustackCache[stackID.UserID],
+				User:    userStack,
 				Kernel:  kstackCache[stackID.KernelID],
 				Samples: value,
 			}

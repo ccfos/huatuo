@@ -99,7 +99,7 @@ function install_golang() {
 function prapre_test_env() {
 	case $OS_DISTRO in
 	ubuntu*)
-		packages=("make" "libbpf-dev" "clang" "git" "gcc" "jq" "capnproto")
+		packages=("make" "libbpf-dev" "clang" "git" "gcc" "jq" "capnproto" "kmod" "linux-headers-$(uname -r)")
 		missing_packages=()
 
 		for pkg in "${packages[@]}"; do

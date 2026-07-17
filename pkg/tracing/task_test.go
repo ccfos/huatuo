@@ -74,6 +74,18 @@ func TestAllocTaskID(t *testing.T) {
 	}
 }
 
+func TestNewTaskWithIDRejectsInvalidIDs(t *testing.T) {
+	clearTaskCache()
+	if got := NewTaskWithID("", "unused", time.Second, TaskStorageStdout, nil); got != "" {
+		t.Fatalf("NewTaskWithID(empty) = %q, want empty", got)
+	}
+
+	taskLifeTmpCache.Store("duplicate", &task{status: StatusPending})
+	if got := NewTaskWithID("duplicate", "unused", time.Second, TaskStorageStdout, nil); got != "" {
+		t.Fatalf("NewTaskWithID(duplicate) = %q, want empty", got)
+	}
+}
+
 func TestResultNotFound(t *testing.T) {
 	clearTaskCache()
 

@@ -30,6 +30,36 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 )
 
+// profilerFilterConstants translates the user-facing collection scope into
+// the stable BPF constant ABI shared by CPU, memory, and lock profilers.
+func profilerFilterConstants(pctx *pcontext.ProfilerContext, cssAddr uint64) (map[string]any, error) {
+	constants := map[string]any{
+		"profiler_filter_css":           cssAddr,
+		"profiler_filter_pid":           uint32(0),
+		"profiler_filter_threads":       false,
+		"profiler_filter_tgid":          uint32(0),
+		"profiler_filter_cgroup_id":     uint64(0),
+		"profiler_filter_process_group": uint32(0),
+	}
+
+	switch pctx.Scope {
+	case pcontext.ScopeAll:
+	case pcontext.ScopePID:
+		constants["profiler_filter_pid"] = uint32(pctx.PID())
+		constants["profiler_filter_threads"] = true
+	case pcontext.ScopeTGID:
+		constants["profiler_filter_tgid"] = uint32(pctx.PID())
+	case pcontext.ScopeCgroup:
+		constants["profiler_filter_cgroup_id"] = pctx.CgroupID
+	case pcontext.ScopeProcessGroup:
+		constants["profiler_filter_process_group"] = uint32(pctx.ProcessGroupID)
+	default:
+		return nil, fmt.Errorf("unsupported native profiler scope %q", pctx.Scope)
+	}
+
+	return constants, nil
+}
+
 // resolveContainerCgroupCss retrieves the cgroup subsystem state (CSS) address for a container.
 // It first attempts to get CSS via huatuo-bamai API, and falls back to local BPF-based
 // method if the API is unavailable. The subsysName parameter specifies the cgroup subsystem

@@ -70,7 +70,8 @@ type lockStackEntry struct {
 	User      string
 	Kernel    string
 	WaitTime  uint64
-	Contended uint32
+	Contended uint64
+	LockType  string
 }
 
 type nativeAggregator struct {
@@ -79,6 +80,7 @@ type nativeAggregator struct {
 	formatter        output.Formatter
 	aggrMap          map[string]*stackEntry
 	lockAggrMap      map[string]*lockStackEntry
+	lockMode         string
 	isLockFoldedDone bool
 }
 
@@ -92,6 +94,7 @@ func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, err
 		formatter:   f,
 		aggrMap:     make(map[string]*stackEntry),
 		lockAggrMap: make(map[string]*lockStackEntry),
+		lockMode:    pctx.LockMode,
 	}, nil
 }
 
@@ -128,7 +131,7 @@ func (a *nativeAggregator) Aggregate(rec any) {
 		}
 
 	case *lockStackEntry:
-		key := fmt.Sprintf("%s\x00%d", v.User, v.Proc.Lock)
+		key := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%s", v.User, v.Kernel, v.LockType, v.Proc.Pid, v.Proc.Lock, v.Proc.Name)
 		if existed, ok := a.lockAggrMap[key]; ok {
 			existed.Contended += v.Contended
 			existed.WaitTime += v.WaitTime
@@ -139,6 +142,7 @@ func (a *nativeAggregator) Aggregate(rec any) {
 				Kernel:    v.Kernel,
 				WaitTime:  v.WaitTime,
 				Contended: v.Contended,
+				LockType:  v.LockType,
 			}
 		}
 
@@ -184,7 +188,7 @@ func (a *nativeAggregator) OutputFormatter() output.Formatter {
 
 func (a *nativeAggregator) buildLockFolded() {
 	for _, rec := range a.lockAggrMap {
-		frames, value := lockPrefixFrames(rec)
+		frames, value := lockPrefixFrames(rec, a.lockMode)
 		frames = appendStackFrames(frames, rec.User, rec.Kernel)
 		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: int64(value)}); err != nil {
 			log.Warnf("formatter add lock sample: %v", err)
@@ -221,8 +225,9 @@ func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (
 	}
 
 	tree := make([]*profiler.TreeItem, 0, len(a.lockAggrMap))
+	outputType := pctx.LockMode
 	for _, rec := range a.lockAggrMap {
-		prefixes, value := lockPrefixFrames(rec)
+		prefixes, value := lockPrefixFrames(rec, outputType)
 		tree = append(tree, buildTreeItem(prefixes, rec.User, rec.Kernel, value))
 	}
 	return buildPprofData(pctx, tree)
@@ -314,12 +319,24 @@ func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (
 	return data, nil
 }
 
-func lockPrefixFrames(rec *lockStackEntry) ([]string, uint64) {
-	return []string{
+func lockPrefixFrames(rec *lockStackEntry, mode string) ([]string, uint64) {
+	frames := []string{
+		fmt.Sprintf("lock type: %s", rec.LockType),
 		fmt.Sprintf("lock: %x", rec.Proc.Lock),
 		fmt.Sprintf("PID: %d, COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
-		fmt.Sprintf("contended count: %d", rec.Contended),
-	}, rec.WaitTime
+	}
+
+	val := rec.WaitTime
+
+	if mode == "" || mode == "time" {
+		frames = append(frames, fmt.Sprintf("contended count: %d", rec.Contended))
+	}
+
+	if mode == "count" {
+		val = rec.Contended
+	}
+
+	return frames, val
 }
 
 func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, error) {
@@ -329,7 +346,11 @@ func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, 
 	case profiling.TypeMemory:
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil
 	case profiling.TypeLock:
-		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeLockTimeSample, nil
+		st := profiler.ProfileTypeLockTimeSample
+		if pctx.LockMode == "count" {
+			st = profiler.ProfileTypeLockCountSample
+		}
+		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, st, nil
 	default:
 		return nil, "", fmt.Errorf("unsupported profile type %q", pctx.Type)
 	}

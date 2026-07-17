@@ -39,12 +39,13 @@ var (
 func main() {
 	signalLog := &bytes.Buffer{}
 	app := &cli.App{
-		Name:          profilerToolName,
-		Usage:         "Sample CPU and memory profiles for a process or container, with eBPF-based userland and Linux kernel stack collection",
-		AllowExtFlags: true,
-		Flags:         appFlags,
-		Before:        runBefore,
-		After:         closeLogging,
+		Name:                      profilerToolName,
+		Usage:                     "Sample CPU, memory, and kernel lock profiles by PID, TGID, cgroup, or process group",
+		AllowExtFlags:             true,
+		DisableSliceFlagSeparator: true,
+		Flags:                     appFlags,
+		Before:                    runBefore,
+		After:                     closeLogging,
 		Action: func(cliCtx *cli.Context) error {
 			return runAction(cliCtx, signalLog)
 		},

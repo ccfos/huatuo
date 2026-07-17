@@ -55,6 +55,26 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "native lock profiling",
+			args: []string{
+				"--type", "lock",
+				"--language", "c",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--lock-types", "mutex,rwlock",
+				"--lock-mode", "count",
+				"--lock-min-wait", "10us",
+			},
+		},
+		{
+			name: "invalid lock type",
+			args: []string{
+				"--type", "lock",
+				"--language", "c",
+				"--lock-types", "futex",
+			},
+			wantError: `unsupported lock type "futex"`,
+		},
+		{
 			name: "tracer ID",
 			args: []string{
 				"--type", "cpu",
@@ -66,7 +86,7 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 		{
 			name:      "legacy mem type",
 			args:      []string{"--type", "mem", "--language", "c"},
-			wantError: `unsupported profiling type "mem" (expected: cpu or memory)`,
+			wantError: `unsupported profiling type "mem" (expected: cpu, memory, or lock)`,
 		},
 		{
 			name:      "removed flags option",
@@ -262,7 +282,16 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			language:  "java",
 			typ:       "cpu",
 			args:      []string{"--scope", "thread-group"},
-			wantError: "--scope=thread-group is supported only by native memory profiling",
+			wantError: "collection dimensions are supported only by native profiling",
+		},
+		{name: "native CPU scope", language: "go", typ: "cpu", args: []string{"--scope", "thread-group"}},
+		{name: "native lock scope", language: "c", typ: "lock", args: []string{"--scope", "cgroup"}},
+		{
+			name:      "Java lock option",
+			language:  "java",
+			typ:       "cpu",
+			args:      []string{"--lock-mode", "count"},
+			wantError: "lock options are supported only by native lock profiling",
 		},
 		{
 			name:      "native exec path",

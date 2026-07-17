@@ -35,8 +35,56 @@ typedef enum {
 static volatile const u64 profiler_filter_css = 0;
 static volatile const u32 profiler_filter_pid = 0;
 static volatile const bool profiler_filter_threads = false;
+static volatile const u32 profiler_filter_tgid = 0;
+static volatile const u64 profiler_filter_cgroup_id = 0;
+static volatile const u32 profiler_filter_process_group = 0;
 static volatile const u8 profiler_sampling_prob = 100;
 static volatile const u64 profiler_idle_class_addr = 0;
+
+static __always_inline u32 profiler_current_process_group(void)
+{
+	struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+	struct signal_struct *signal = BPF_CORE_READ(task, signal);
+	if (!signal)
+		return 0;
+
+	struct pid *pgrp = BPF_CORE_READ(signal, pids[PIDTYPE_PGID]);
+	if (!pgrp)
+		return 0;
+
+	/* numbers[0] is the PID as seen from the host PID namespace. */
+	return BPF_CORE_READ(pgrp, numbers[0].nr);
+}
+
+static __always_inline bool profiler_matches_dimensions(u64 pid_tgid)
+{
+	u32 tgid = pid_tgid >> 32;
+	u32 pid = pid_tgid & 0xffffffffUL;
+
+	if (profiler_filter_cgroup_id != 0 &&
+	    profiler_filter_cgroup_id != bpf_get_current_cgroup_id())
+		return false;
+
+	if (profiler_filter_process_group != 0 &&
+	    profiler_filter_process_group != profiler_current_process_group())
+		return false;
+
+	if (profiler_filter_tgid != 0 && profiler_filter_tgid != tgid)
+		return false;
+
+	/* profiler_filter_threads preserves the original constant ABI while
+	 * making exact PID and TGID filtering explicit for new callers. */
+	if (profiler_filter_pid != 0) {
+		if (profiler_filter_threads) {
+			if (pid != profiler_filter_pid)
+				return false;
+		} else if (tgid != profiler_filter_pid) {
+			return false;
+		}
+	}
+
+	return true;
+}
 
 /*
  * profiler_should_trace - check if current process should be traced.
@@ -44,26 +92,13 @@ static volatile const u64 profiler_idle_class_addr = 0;
  */
 static __always_inline bool profiler_should_trace(u64 pid_tgid)
 {
-	u32 tgid = pid_tgid >> 32;
-	u32 pid = pid_tgid & 0xffffffffUL;
-
 	if (profiler_filter_css != 0) {
 		u64 css = current_task_memory_css_addr();
 		if (css != profiler_filter_css)
 			return false;
 	}
 
-	if (profiler_filter_pid != 0) {
-		if (profiler_filter_threads) {
-			if (pid != profiler_filter_pid)
-				return false;
-		} else {
-			if (tgid != profiler_filter_pid)
-				return false;
-		}
-	}
-
-	return true;
+	return profiler_matches_dimensions(pid_tgid);
 }
 
 /*
@@ -78,7 +113,7 @@ static __always_inline bool profiler_should_trace_cpu(u64 pid_tgid, u64 cpu_css,
 	if (profiler_filter_css != 0 && profiler_filter_css != cpu_css)
 		return false;
 
-	if (profiler_filter_pid != 0 && profiler_filter_pid != tgid)
+	if (!profiler_matches_dimensions(pid_tgid))
 		return false;
 
 	if (profiler_idle_class_addr != 0 && sched_class == profiler_idle_class_addr)

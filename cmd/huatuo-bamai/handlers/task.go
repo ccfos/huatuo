@@ -16,10 +16,13 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
+	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/tracing"
@@ -43,11 +46,15 @@ func NewTaskHandler() *TaskHandler {
 }
 
 type NewTaskReq struct {
-	TracerName string   `json:"tracer_name" binding:"required"`
-	Timeout    int      `json:"timeout" binding:"required,number,lt=3600"`
-	DataType   string   `json:"data_type" binding:"required"`
-	TracerArgs []string `json:"trace_args" binding:"omitempty"`
+	TracerName        string   `json:"tracer_name" binding:"required"`
+	Timeout           int      `json:"timeout" binding:"required,number,lt=3600"`
+	DataType          string   `json:"data_type" binding:"required"`
+	ContainerID       string   `json:"container_id,omitempty"`
+	ContainerHostname string   `json:"container_hostname,omitempty"`
+	TracerArgs        []string `json:"trace_args" binding:"omitempty"`
 }
+
+var containerByHostname = pod.ContainerByHostname
 
 func handleBindError(ctx *server.Context, err error) {
 	var validationError *validator.ValidationErrors
@@ -74,12 +81,65 @@ func (h *TaskHandler) create(ctx *server.Context) error {
 		storageDefault = tracing.TaskStorageStdout
 	}
 
-	id := tracing.NewTask(req.TracerName, time.Duration(req.Timeout)*time.Second, storageDefault, req.TracerArgs)
+	taskID, err := tracing.AllocTaskID()
+	if err != nil {
+		return response.ErrInternal.WithMessage("failed to allocate task id")
+	}
+	tracerArgs, err := taskTracerArgs(&req, taskID)
+	if err != nil {
+		return response.ErrInvalidRequest.WithMessage(err.Error())
+	}
+
+	id := tracing.NewTaskWithID(taskID, req.TracerName, time.Duration(req.Timeout)*time.Second, storageDefault, tracerArgs)
 	if id == "" {
 		return response.ErrInternal.WithMessage("failed to allocate task id")
 	}
 	response.Success(ctx, map[string]any{"task_id": id})
 	return nil
+}
+
+func taskTracerArgs(req *NewTaskReq, tracerID string) ([]string, error) {
+	args := append([]string(nil), req.TracerArgs...)
+	if req.TracerName != "profiler" {
+		return args, nil
+	}
+
+	if !hasCLIFlag(args, "--container-id") {
+		containerID := req.ContainerID
+		if containerID == "" && req.ContainerHostname != "" {
+			// The public API historically describes this selector as hostname or
+			// ID. Preserve both forms while always passing the stable ID to the
+			// profiler's cgroup resolver.
+			if pod.ValidateContainerID(req.ContainerHostname) == nil {
+				containerID = req.ContainerHostname
+			} else {
+				container, err := containerByHostname(req.ContainerHostname)
+				if err != nil {
+					return nil, fmt.Errorf("resolve container hostname %q: %w", req.ContainerHostname, err)
+				}
+				if container == nil {
+					return nil, fmt.Errorf("container hostname %q not found", req.ContainerHostname)
+				}
+				containerID = container.ID
+			}
+		}
+		if containerID != "" {
+			args = append(args, "--container-id", containerID)
+		}
+	}
+	if tracerID != "" && !hasCLIFlag(args, "--tracer-id") {
+		args = append(args, "--tracer-id", tracerID)
+	}
+	return args, nil
+}
+
+func hasCLIFlag(args []string, name string) bool {
+	for _, arg := range args {
+		if arg == name || strings.HasPrefix(arg, name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *TaskHandler) list(ctx *server.Context) error {

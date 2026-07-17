@@ -33,9 +33,9 @@ func TestCapabilities(t *testing.T) {
 		types          []Type
 		memoryModes    []MemoryMode
 	}{
-		{LanguageC, ImplementationNative, []Type{TypeCPU, TypeMemory}, nativeModes},
-		{LanguageCPP, ImplementationNative, []Type{TypeCPU, TypeMemory}, nativeModes},
-		{LanguageGo, ImplementationNative, []Type{TypeCPU, TypeMemory}, nativeModes},
+		{LanguageC, ImplementationNative, []Type{TypeCPU, TypeMemory, TypeLock}, nativeModes},
+		{LanguageCPP, ImplementationNative, []Type{TypeCPU, TypeMemory, TypeLock}, nativeModes},
+		{LanguageGo, ImplementationNative, []Type{TypeCPU, TypeMemory, TypeLock}, nativeModes},
 		{
 			LanguageJava,
 			ImplementationJava,
@@ -75,7 +75,11 @@ func TestCapabilities(t *testing.T) {
 		[]Language{LanguageC, LanguageCPP, LanguageGo, LanguageJava},
 		LanguagesFor(TypeMemory),
 	)
-	require.Empty(t, LanguagesFor(TypeLock))
+	require.Equal(
+		t,
+		[]Language{LanguageC, LanguageCPP, LanguageGo},
+		LanguagesFor(TypeLock),
+	)
 }
 
 func TestMemoryModesForReturnsCopy(t *testing.T) {
@@ -98,7 +102,7 @@ func TestCapabilityDefinitionsAreUnique(t *testing.T) {
 }
 
 func TestParsers(t *testing.T) {
-	for _, typ := range []Type{TypeCPU, TypeMemory} {
+	for _, typ := range []Type{TypeCPU, TypeMemory, TypeLock} {
 		parsed, err := ParseType(string(typ))
 		require.NoError(t, err)
 		require.Equal(t, typ, parsed)
@@ -128,7 +132,7 @@ func TestParsers(t *testing.T) {
 
 func TestParseTypeRejectsLegacyMemoryValue(t *testing.T) {
 	_, err := ParseType("mem")
-	require.EqualError(t, err, `unsupported profiling type "mem" (expected: cpu or memory)`)
+	require.EqualError(t, err, `unsupported profiling type "mem" (expected: cpu, memory, or lock)`)
 }
 
 func allMemoryModes() []MemoryMode {

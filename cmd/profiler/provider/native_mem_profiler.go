@@ -108,11 +108,6 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	p.probability = probability
 
-	traceThreads, err := resolveScope(pctx.Scope)
-	if err != nil {
-		return err
-	}
-
 	log.Info("starting native memory profiler mode: ", p.internalMode)
 
 	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemMemory)
@@ -120,9 +115,16 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	cfg, err := newBpfLoadConfig(p.internalMode, pctx.PID(), cssAddr, traceThreads, p.probability)
+	cfg, err := newBpfLoadConfig(p.internalMode, 0, cssAddr, false, p.probability)
 	if err != nil {
 		return err
+	}
+	filterConstants, err := profilerFilterConstants(pctx, cssAddr)
+	if err != nil {
+		return err
+	}
+	for name, value := range filterConstants {
+		cfg.Constants[name] = value
 	}
 
 	dbg := bpf.NewDbg(pctx.LogBpfDebug)
@@ -278,8 +280,8 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		// Use unified drainActiveRingBuffer with Memory event factory
 		stackCountsByProc, ring, err := ringCtx.drainActiveRingBuffer(
 			func() any { return &ProfilerEventBase{} },
-			p.convertValueToBytes,
-		) // Convert pages to bytes
+			nil,
+		)
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
@@ -290,6 +292,9 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		}
 
 		if len(stackCountsByProc) > 0 {
+			// Aggregate raw page deltas first, then convert the aggregate exactly
+			// once. Converting in both drain and enqueue would square the page-size
+			// and sampling-probability factors for physical memory profiles.
 			ringCtx.aggregateStacksAndEnqueue(stackCountsByProc, ring, enqueue, p.convertValueToBytes)
 		}
 	}
