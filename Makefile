@@ -144,4 +144,10 @@ integration: all
 e2e: all
 	@bash e2e/run.sh
 
-.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean
+# metrics-naming-check validates Prometheus naming conventions for all
+# metric names defined in core/metrics/. Uses static analysis (go/ast)
+# — no BPF or runtime dependencies required.
+metrics-naming-check:
+	@go test -run "TestMetricNames|TestCounterNames" -count=1 ./core/metrics/ -v
+
+.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean metrics-naming-check
