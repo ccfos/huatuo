@@ -372,11 +372,11 @@ func containerCgroupCssRelease() {
 	}
 }
 
-// GetContainerCSSBySubsys retrieves the cgroup subsystem state (CSS) address for a specific
+// ContainerCSSBySubsys retrieves the cgroup subsystem state (CSS) address for a specific
 // container and subsystem. It first checks the local cache, and if not found, triggers
 // a one-time BPF-based collection for that specific container.
 // This function is compatible with the existing containerCgroupCssInit logic.
-func GetContainerCSSBySubsys(containerID, subsysName string) (uint64, error) {
+func ContainerCSSBySubsys(containerID, subsysName string) (uint64, error) {
 	if containerID == "" {
 		return 0, nil
 	}

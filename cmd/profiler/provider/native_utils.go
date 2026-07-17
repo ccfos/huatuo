@@ -77,7 +77,7 @@ func resolveContainerCgroupCssByAPI(serverAddr, containerID, subsysName string) 
 
 // resolveContainerCgroupCssByLocal retrieves CSS address using local BPF-based method.
 func resolveContainerCgroupCssByLocal(containerID, subsysName string) (uint64, error) {
-	cssAddr, err := pod.GetContainerCSSBySubsys(containerID, subsysName)
+	cssAddr, err := pod.ContainerCSSBySubsys(containerID, subsysName)
 	if err != nil {
 		return 0, fmt.Errorf("local CSS retrieval failed: %w", err)
 	}
