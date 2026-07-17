@@ -114,9 +114,12 @@ func (c *netTxLatTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			where := txStageNames[pd.LatStage]
+			where, latThreshold, stageOK := lookupLatStage(pd.LatStage, txStageNames, latThresholds)
+			if !stageOK {
+				log.Warnf("net_tx_latency: unknown lat_stage %d, skipping", pd.LatStage)
+				continue
+			}
 			lat := float64(pd.Latency) / 1000 / 1000 // ms
-			latThreshold := latThresholds[pd.LatStage]
 			state := packet.TCPStateName(pd.TCPState)
 			addrFamily, saddr, daddr := pd.addrs()
 			sport, dport := netutil.Ntohs(pd.TCPSport), netutil.Ntohs(pd.TCPDport)
