@@ -124,7 +124,7 @@ func (h *Handler) start(ctx *server.Context) error {
 	if config.Get().Profiling.MaxProfilerProcesses > 0 {
 		agentTaskReq.TracerArgs = append(
 			agentTaskReq.TracerArgs,
-			"--max-profiler-processes",
+			"--max-concurrent-procs",
 			strconv.Itoa(config.Get().Profiling.MaxProfilerProcesses),
 		)
 	}

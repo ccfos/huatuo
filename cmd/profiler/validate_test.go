@@ -51,7 +51,7 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 				"--type", "cpu",
 				"--language", "c",
 				"--pid", strconv.Itoa(os.Getpid()),
-				"--max-profiler-processes", "2",
+				"--max-concurrent-procs", "2",
 			},
 		},
 		{

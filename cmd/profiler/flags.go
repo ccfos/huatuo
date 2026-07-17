@@ -61,7 +61,7 @@ var appFlags = []cli.Flag{
 		Value: 100,
 	},
 	&cli.IntFlag{
-		Name:  "max-profiler-processes",
+		Name:  "max-concurrent-procs",
 		Usage: "Maximum concurrent profiler subprocesses; 0 means unlimited",
 	},
 	&cli.IntFlag{

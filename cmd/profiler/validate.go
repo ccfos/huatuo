@@ -199,7 +199,7 @@ func validateCommonOptions(ctx *cli.Context) error {
 	if err := validateNumericOptions(
 		profiling.Type(ctx.String("type")),
 		ctx.Int("freq"),
-		ctx.Int("max-profiler-processes"),
+		ctx.Int("max-concurrent-procs"),
 	); err != nil {
 		return err
 	}

@@ -152,7 +152,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		PIDs:                 pids,
 		Freq:                 cliCtx.Int("freq"),
 		Duration:             cliCtx.Int("duration"),
-		MaxProfilerProcesses: cliCtx.Int("max-profiler-processes"),
+		MaxProfilerProcesses: cliCtx.Int("max-concurrent-procs"),
 		AggrInterval:         cliCtx.Int("aggr-interval"),
 		CPUIDs:               cpuIDs,
 
