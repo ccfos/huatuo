@@ -98,15 +98,15 @@ test_docker() {
 	local runtime_dir="${WORK_DIR}/docker"
 
 	if ! command -v docker > /dev/null; then
-		log_warn "skipping Docker: command is not installed"
+		log_warn "skipping docker: command is not installed"
 		return
 	fi
 	if ! docker info > /dev/null 2>&1; then
-		log_warn "skipping Docker: daemon is unavailable"
+		log_warn "skipping docker: daemon is unavailable"
 		return
 	fi
 	if ! docker image inspect "${DOCKER_IMAGE}" > /dev/null 2>&1; then
-		log_warn "skipping Docker: image is unavailable: ${DOCKER_IMAGE}"
+		log_warn "skipping docker: image is unavailable: ${DOCKER_IMAGE}"
 		return
 	fi
 
@@ -121,9 +121,9 @@ test_docker() {
 			-cp /work TestProfilerJavaMultiPID alpha')
 
 	wait_until 30 1 test -f "${runtime_dir}/java.ready" \
-		|| fatal "Docker Java container did not become ready: ${DOCKER_CONTAINER_ID}"
+		|| fatal "docker Java container did not become ready: ${DOCKER_CONTAINER_ID}"
 	docker inspect --format '{{.State.Running}}' "${DOCKER_CONTAINER_ID}" | grep -qx true \
-		|| fatal "Docker Java container exited before profiling: ${DOCKER_CONTAINER_ID}"
+		|| fatal "docker Java container exited before profiling: ${DOCKER_CONTAINER_ID}"
 	run_runtime_cases docker "${DOCKER_CONTAINER_ID}"
 	docker rm -f "${DOCKER_CONTAINER_ID}" > /dev/null
 	DOCKER_CONTAINER_ID=""
@@ -176,5 +176,5 @@ test_containerd() {
 test_docker
 test_containerd
 
-((RUNTIMES_TESTED > 0)) || skip "no Docker or containerd runtime was testable"
+((RUNTIMES_TESTED > 0)) || skip "no docker or containerd runtime was testable"
 log_info "container-id profiling passed for ${RUNTIMES_TESTED} runtime(s)"
