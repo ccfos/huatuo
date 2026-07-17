@@ -23,23 +23,22 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/registry"
 	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
+	"huatuo-bamai/pkg/profiling"
 )
 
 const (
-	javaMemoryModeObjectAlloc = "object_alloc"
-	javaMemoryModeObjectUsage = "object_usage"
-	javaAllocInterval         = "512k"
-	javaMemoryStackDepth      = "256"
+	javaAllocInterval    = "512k"
+	javaMemoryStackDepth = "256"
 )
 
 func init() {
 	impl := &javaMemoryProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "mem",
-		LangOrImpl:    "java",
-		Description:   "Java memory profiler using async-profiler",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeMemory,
+		Implementation: profiling.ImplementationJava,
+		Description:    "Java memory profiler using async-profiler",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 
@@ -53,45 +52,40 @@ func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggr
 }
 
 func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if err := validateJavaToolPath(pctx.ToolPath); err != nil {
+		return err
+	}
+
 	pids := pctx.PIDs
 	if len(pids) == 0 {
 		var err error
 		pids, err = javaruntime.ResolveJavaPids(
 			pctx.ExecPath,
-			pctx.ServerAddress,
 			pctx.ContainerID,
 		)
 		if err != nil {
 			return err
 		}
 	}
+	if err := validateResolvedPIDs("Java", pids); err != nil {
+		return err
+	}
+	if len(pctx.PIDs) > 0 {
+		if err := validateProcessExecutables("Java", "java", pids); err != nil {
+			return err
+		}
+		if err := validateExpectedExecPath(pids, pctx.ExecPath); err != nil {
+			return err
+		}
+	}
 
-	if err := validateJavaToolLimit(pids, pctx.ToolLimit); err != nil {
+	if err := validateMaxProfilerProcesses("Java", pids, pctx.MaxProfilerProcesses); err != nil {
 		return err
 	}
 
-	var extraArgs []string
-	switch pctx.MemoryMode {
-	case javaMemoryModeObjectAlloc:
-	case javaMemoryModeObjectUsage:
-		for _, pid := range pids {
-			javaVersion, err := javaruntime.GetJavaVersion(pid)
-			if err != nil {
-				return fmt.Errorf("failed to get Java version for PID %d: %w", pid, err)
-			}
-
-			if javaVersion < 11 {
-				return fmt.Errorf(
-					"object_usage mode requires Java 11 or newer: PID %d uses Java %d",
-					pid,
-					javaVersion,
-				)
-			}
-		}
-
-		extraArgs = append(extraArgs, "--live")
-	default:
-		return fmt.Errorf("unsupported Java memory mode %q", pctx.MemoryMode)
+	extraArgs, err := validateJavaMemoryMode(pctx.MemoryMode)
+	if err != nil {
+		return err
 	}
 
 	for _, pid := range pids {

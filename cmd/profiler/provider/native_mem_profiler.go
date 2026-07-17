@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
@@ -28,6 +27,7 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/registry"
+	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -36,10 +36,6 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_physical_alloc.c -o $BPF_DIR/native_physical_alloc.o
 
 const (
-	modeVirtualAlloc  = "virtual_alloc"
-	modePhysicalUsage = "physical_usage"
-	modePhysicalAlloc = "physical_alloc"
-
 	programTracePageAlloc = "trace_page_alloc"
 	programTracePageFree  = "trace_page_free"
 
@@ -52,7 +48,7 @@ const (
 type memNativeProfiler struct {
 	bpf bpf.BPF
 
-	internalMode string
+	internalMode profiling.MemoryMode
 	probability  uint
 	pageSize     int64
 }
@@ -62,11 +58,11 @@ var hasKprobeFunction = bpf.HasKprobeFunction
 func init() {
 	impl := &memNativeProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "mem",
-		LangOrImpl:    "native",
-		Description:   "Native memory profiler using eBPF (virtual_alloc, physical_alloc, physical_usage modes)",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeMemory,
+		Implementation: profiling.ImplementationNative,
+		Description:    "Native memory profiler using eBPF (virtual_alloc, physical_alloc, physical_usage modes)",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 
@@ -78,7 +74,7 @@ func (p *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 		return nil, err
 	}
 
-	if mode == modePhysicalUsage {
+	if mode == profiling.MemoryModePhysicalUsage {
 		pctx.IsOneShotAgg = true
 	}
 
@@ -90,8 +86,8 @@ func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if len(pctx.PIDs) > 1 {
-		return fmt.Errorf("start native memory profiler: multiple PIDs are not supported")
+	if err := validateNativePIDs("memory", pctx.PIDs); err != nil {
+		return err
 	}
 	if err := requireRoot(); err != nil {
 		return err
@@ -105,8 +101,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	p.internalMode = internalMode
-
-	probability, err := resolveProbability(pctx.ExtraFlags["probability"], internalMode)
+	probability, err := resolveProbability(pctx.PhysicalMemoryProbability)
 	if err != nil {
 		return err
 	}
@@ -153,34 +148,6 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	return nil
 }
 
-func resolveMemMode(mode string) (string, error) {
-	switch mode {
-	case modeVirtualAlloc, modePhysicalUsage, modePhysicalAlloc:
-		return mode, nil
-	default:
-		return "", fmt.Errorf("invalid mode %q", mode)
-	}
-}
-
-func resolveProbability(probStr, internalMode string) (uint, error) {
-	probability := uint64(100)
-
-	if probStr != "" {
-		prob, err := strconv.ParseUint(probStr, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("invalid probability value %q: %w", probStr, err)
-		}
-
-		probability = prob
-	}
-
-	if (internalMode == modePhysicalUsage || internalMode == modePhysicalAlloc) && (probability < 1 || probability > 100) {
-		return 0, fmt.Errorf("probability must be between 1 and 100")
-	}
-
-	return uint(probability), nil
-}
-
 // bpfLoadConfig holds the configuration needed to load and attach a BPF program.
 type bpfLoadConfig struct {
 	// ObjectFile is the BPF object file name (e.g., "native_virtual_alloc.o").
@@ -193,9 +160,9 @@ type bpfLoadConfig struct {
 
 // newBpfLoadConfig creates a BPF load configuration based on the profiler mode.
 // It returns the appropriate object file, constants, and attachment options for the given mode.
-func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads bool, probability uint) (*bpfLoadConfig, error) {
+func newBpfLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64, traceThreads bool, probability uint) (*bpfLoadConfig, error) {
 	switch internalMode {
-	case modeVirtualAlloc:
+	case profiling.MemoryModeVirtualAlloc:
 		return &bpfLoadConfig{
 			ObjectFile: "native_virtual_alloc.o",
 			Constants: map[string]any{
@@ -207,7 +174,7 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
 			},
 		}, nil
-	case modePhysicalUsage:
+	case profiling.MemoryModePhysicalUsage:
 		attachOpts, err := newPhysicalUsageAttachOptions()
 		if err != nil {
 			return nil, err
@@ -223,7 +190,7 @@ func newBpfLoadConfig(internalMode string, pid int, cssAddr uint64, traceThreads
 			},
 			AttachOpts: attachOpts,
 		}, nil
-	case modePhysicalAlloc:
+	case profiling.MemoryModePhysicalAlloc:
 		attachOpt, err := newPhysicalAllocAttachOption()
 		if err != nil {
 			return nil, err
@@ -291,7 +258,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 	// Determine if fallback is needed based on profiling mode
 	// Retained mode (physical_usage) needs fallback, others don't
-	needsFallback := p.internalMode == modePhysicalUsage
+	needsFallback := p.internalMode == profiling.MemoryModePhysicalUsage
 
 	// Initialize ring buffer context once, reuse throughout the profiling loop
 	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257, needsFallback)
@@ -313,8 +280,8 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		// Use unified drainActiveRingBuffer with Memory event factory
 		stackCountsByProc, ring, err := ringCtx.drainActiveRingBuffer(
 			func() any { return &ProfilerEventBase{} },
-			p.convertValueToBytes,
-		) // Convert pages to bytes
+			nil,
+		)
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
@@ -325,6 +292,9 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		}
 
 		if len(stackCountsByProc) > 0 {
+			// Aggregate raw page deltas first, then convert the aggregate exactly
+			// once. Converting in both drain and enqueue would square the page-size
+			// and sampling-probability factors for physical memory profiles.
 			ringCtx.aggregateStacksAndEnqueue(stackCountsByProc, ring, enqueue, p.convertValueToBytes)
 		}
 	}
@@ -332,9 +302,9 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 	switch p.internalMode {
-	case modeVirtualAlloc:
+	case profiling.MemoryModeVirtualAlloc:
 		return v
-	case modePhysicalAlloc, modePhysicalUsage:
+	case profiling.MemoryModePhysicalAlloc, profiling.MemoryModePhysicalUsage:
 		return v * p.pageSize * 100 / int64(p.probability)
 	}
 

@@ -55,6 +55,16 @@ func TestLockAttachOptionsPrefersContentionTracepoints(t *testing.T) {
 	}
 }
 
+func TestLockAttachOptionsValidatesTypesBeforeUsingTracepoints(t *testing.T) {
+	setLockProbeAvailability(t, true, nil)
+
+	for _, lockTypes := range [][]string{nil, {"unknown"}} {
+		if _, _, err := lockAttachOptions(lockTypes); err == nil {
+			t.Fatalf("lockAttachOptions(%v) error = nil", lockTypes)
+		}
+	}
+}
+
 func TestLockAttachOptionsSupportsAllKernelLockTypesWithSlowpaths(t *testing.T) {
 	available := map[string]bool{
 		"__mutex_lock_slowpath":            true,
@@ -192,6 +202,33 @@ func TestLockAggregationAndModes(t *testing.T) {
 		if countValue != 3 {
 			t.Errorf("count mode value = %d, want 3", countValue)
 		}
+	}
+}
+
+func TestLockAggregationKeepsDistinctDimensions(t *testing.T) {
+	aggr := &nativeAggregator{lockAggrMap: make(map[string]*lockStackEntry)}
+	base := lockStackEntry{
+		Proc:      &processIDNameLock{Pid: 42, Name: "worker", Lock: 0xabcd},
+		User:      "user;",
+		Kernel:    "kernel-a;",
+		WaitTime:  1,
+		Contended: 1,
+		LockType:  "mutex",
+	}
+	aggr.Aggregate(&base)
+
+	differentPID := base
+	differentPID.Proc = &processIDNameLock{Pid: 43, Name: "worker", Lock: 0xabcd}
+	aggr.Aggregate(&differentPID)
+	differentKernel := base
+	differentKernel.Kernel = "kernel-b;"
+	aggr.Aggregate(&differentKernel)
+	differentType := base
+	differentType.LockType = "rwlock"
+	aggr.Aggregate(&differentType)
+
+	if got, want := len(aggr.lockAggrMap), 4; got != want {
+		t.Fatalf("lock aggregate size = %d, want %d", got, want)
 	}
 }
 

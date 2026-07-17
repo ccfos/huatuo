@@ -41,28 +41,30 @@ type StartProfilingResponse struct {
 
 // ProfilingStatusResponse represents a profiling status response
 type ProfilingStatusResponse struct {
-	ID                    string           `json:"id"`                      // profiling task ID
-	AgentTaskID           string           `json:"agent_task_id"`           // agent task ID
-	Container             string           `json:"container"`               // container name or ID
-	Hostname              string           `json:"hostname"`                // host name
-	Status                string           `json:"status"`                  // task status
-	StartTime             string           `json:"start_time"`              // start time
-	EndTime               string           `json:"end_time"`                // end time
-	TracerArgs            []string         `json:"tracer_args"`             // tracer arguments
-	Duration              int              `json:"duration"`                // profiling duration
-	Results               ProfilingResults `json:"results"`                 // profiling results
-	ErrorMessage          string           `json:"error_message"`           // error message if any
-	Type                  string           `json:"type"`                    // cpu, memory, or lock
-	TargetExecPath        string           `json:"target_exec_path"`        // executable path for CPU profiling
-	TargetProcessLanguage string           `json:"target_process_language"` // programming language of the target process
-	MemoryMode            string           `json:"memory_mode"`             // memory profiling mode
-	Scope                 string           `json:"scope,omitempty"`
-	PID                   uint64           `json:"pid,omitempty"`
-	CgroupID              uint64           `json:"cgroup_id,omitempty"`
-	CgroupPath            string           `json:"cgroup_path,omitempty"`
-	ProcessGroupID        int              `json:"process_group_id,omitempty"`
-	LockTypes             []string         `json:"lock_types,omitempty"`
-	LockMode              string           `json:"lock_mode,omitempty"`
+	ID                    string            `json:"id"`                      // profiling task ID
+	AgentTaskID           string            `json:"agent_task_id"`           // agent task ID
+	Container             string            `json:"container"`               // container name or ID
+	Hostname              string            `json:"hostname"`                // host name
+	Status                string            `json:"status"`                  // task status
+	StartTime             string            `json:"start_time"`              // start time
+	EndTime               string            `json:"end_time"`                // end time
+	TracerArgs            []string          `json:"tracer_args"`             // tracer arguments
+	Duration              int               `json:"duration"`                // profiling duration
+	Results               ProfilingResults  `json:"results"`                 // profiling results
+	ErrorMessage          string            `json:"error_message"`           // error message if any
+	Type                  string            `json:"type"`                    // cpu, memory, or lock
+	TargetExecPath        string            `json:"target_exec_path"`        // executable path for CPU profiling
+	TargetProcessLanguage string            `json:"target_process_language"` // programming language of the target process
+	MemoryMode            string            `json:"memory_mode"`             // memory profiling mode
+	Scope                 string            `json:"scope,omitempty"`
+	PID                   uint64            `json:"pid,omitempty"`
+	CgroupID              uint64            `json:"cgroup_id,omitempty"`
+	CgroupPath            string            `json:"cgroup_path,omitempty"`
+	ProcessGroupID        int               `json:"process_group_id,omitempty"`
+	LockTypes             []string          `json:"lock_types,omitempty"`
+	LockMode              string            `json:"lock_mode,omitempty"`
+	LockMinWait           string            `json:"lock_min_wait,omitempty"`
+	Labels                map[string]string `json:"labels,omitempty"`
 }
 
 // ProfilingResults represents profiling results
@@ -139,15 +141,16 @@ type ProfilingListResponse struct {
 // ProfilingCapabilitiesResponse describes the profiling capabilities
 // supported by the server and their default configurations.
 type ProfilingCapabilitiesResponse struct {
-	ProfileTypes                    []string          `json:"profile_types"`                       // supported profiling types, e.g. ["cpu", "memory"]
+	ProfileTypes                    []string          `json:"profile_types"`                       // supported profiling types, e.g. ["cpu", "memory", "lock"]
 	CPUSupportedLanguages           []string          `json:"cpu_supported_languages"`             // languages supported by CPU profiling
 	MemorySupportedLanguages        []string          `json:"memory_supported_languages"`          // languages supported by memory profiling
+	LockSupportedLanguages          []string          `json:"lock_supported_languages"`            // languages supported by lock profiling
 	MemoryModes                     map[string]string `json:"memory_modes"`                        // supported memory modes (key: display name, value: internal mode)
 	DefaultCPUInterval              int               `json:"default_cpu_interval"`                // default CPU profiling interval in seconds
 	DefaultMemoryInterval           int               `json:"default_memory_interval"`             // default memory profiling interval in seconds
 	DefaultCPUSingleTraceTimeout    int               `json:"default_cpu_single_trace_timeout"`    // default CPU single trace timeout in seconds
 	DefaultMemorySingleTraceTimeout int               `json:"default_memory_single_trace_timeout"` // default memory single trace timeout in seconds
-	ThirdPartyToolLimit             int               `json:"third_party_tool_limit"`              // third-party tool limit
+	MaxProfilerProcesses            int               `json:"max_profiler_processes"`              // maximum concurrent profiler subprocesses
 	CollectionDimensions            []string          `json:"collection_dimensions"`               // pid, tgid, cgroup, process-group
 	KernelLockTypes                 []string          `json:"kernel_lock_types"`                   // mutex, spinlock, rwlock
 }

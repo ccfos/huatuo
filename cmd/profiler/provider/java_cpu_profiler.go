@@ -23,16 +23,17 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/registry"
 	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
+	"huatuo-bamai/pkg/profiling"
 )
 
 func init() {
 	impl := &cpuJavaProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "cpu",
-		LangOrImpl:    "java",
-		Description:   "Java CPU profiler using async-profiler",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeCPU,
+		Implementation: profiling.ImplementationJava,
+		Description:    "Java CPU profiler using async-profiler",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 
@@ -46,20 +47,37 @@ func (p *cpuJavaProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggrega
 }
 
 func (p *cpuJavaProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if err := validateJavaFrequency(pctx.Freq); err != nil {
+		return err
+	}
+	if err := validateJavaToolPath(pctx.ToolPath); err != nil {
+		return err
+	}
+
 	pids := pctx.PIDs
 	if len(pids) == 0 {
 		var err error
 		pids, err = javaruntime.ResolveJavaPids(
 			pctx.ExecPath,
-			pctx.ServerAddress,
 			pctx.ContainerID,
 		)
 		if err != nil {
 			return err
 		}
 	}
+	if err := validateResolvedPIDs("Java", pids); err != nil {
+		return err
+	}
+	if len(pctx.PIDs) > 0 {
+		if err := validateProcessExecutables("Java", "java", pids); err != nil {
+			return err
+		}
+		if err := validateExpectedExecPath(pids, pctx.ExecPath); err != nil {
+			return err
+		}
+	}
 
-	if err := validateJavaToolLimit(pids, pctx.ToolLimit); err != nil {
+	if err := validateMaxProfilerProcesses("Java", pids, pctx.MaxProfilerProcesses); err != nil {
 		return err
 	}
 

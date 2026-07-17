@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
@@ -30,6 +31,7 @@ import (
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
 	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/pkg/profiling"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_lock_profiler.c -o $BPF_DIR/native_lock_profiler.o
@@ -79,11 +81,11 @@ var (
 func init() {
 	impl := &lockNativeProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "lock",
-		LangOrImpl:    "native",
-		Description:   "Low-overhead native kernel lock contention profiler using eBPF",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeLock,
+		Implementation: profiling.ImplementationNative,
+		Description:    "Low-overhead native kernel lock contention profiler using eBPF",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 
@@ -92,8 +94,8 @@ func (p *lockNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggr
 }
 
 func (p *lockNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	if len(pctx.PIDs) > 1 {
-		return fmt.Errorf("start native lock profiler: multiple PIDs are not supported")
+	if err := validateNativePIDs("lock", pctx.PIDs); err != nil {
+		return err
 	}
 	if err := requireRoot(); err != nil {
 		return err
@@ -189,6 +191,12 @@ func lockContentionTracepointsAvailable() bool {
 }
 
 func lockAttachOptions(lockTypes []string) ([]bpf.AttachOption, string, error) {
+	normalizedTypes, err := pcontext.ParseLockTypes(strings.Join(lockTypes, ","))
+	if err != nil {
+		return nil, "", err
+	}
+	lockTypes = normalizedTypes
+
 	if hasLockContentionTracepoints() {
 		return []bpf.AttachOption{
 			{ProgramName: "trace_lock_contention_begin", Symbol: "lock/contention_begin"},
@@ -250,14 +258,8 @@ func lockAttachOptions(lockTypes []string) ([]bpf.AttachOption, string, error) {
 		},
 	}
 
-	seenTypes := make(map[string]bool, len(lockTypes))
 	var options []bpf.AttachOption
 	for _, lockType := range lockTypes {
-		if seenTypes[lockType] {
-			continue
-		}
-		seenTypes[lockType] = true
-
 		candidates, ok := probes[lockType]
 		if !ok {
 			return nil, "", fmt.Errorf("unsupported lock type %q", lockType)

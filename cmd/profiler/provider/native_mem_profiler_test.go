@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/pkg/profiling"
 )
 
 func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
@@ -34,13 +35,13 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		mode       string
+		mode       profiling.MemoryMode
 		wantObject string
 		wantAttach []bpf.AttachOption
 	}{
 		{
 			name:       "virtual alloc",
-			mode:       modeVirtualAlloc,
+			mode:       profiling.MemoryModeVirtualAlloc,
 			wantObject: "native_virtual_alloc.o",
 			wantAttach: []bpf.AttachOption{
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
@@ -48,7 +49,7 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 		},
 		{
 			name:       "physical usage",
-			mode:       modePhysicalUsage,
+			mode:       profiling.MemoryModePhysicalUsage,
 			wantObject: "native_physical_usage.o",
 			wantAttach: []bpf.AttachOption{
 				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
@@ -57,7 +58,7 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 		},
 		{
 			name:       "physical alloc",
-			mode:       modePhysicalAlloc,
+			mode:       profiling.MemoryModePhysicalAlloc,
 			wantObject: "native_physical_alloc.o",
 			wantAttach: []bpf.AttachOption{
 				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
@@ -81,6 +82,17 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 				t.Fatalf("AttachOpts = %#v, want %#v", cfg.AttachOpts, tc.wantAttach)
 			}
 		})
+	}
+}
+
+func TestPhysicalMemoryValueConversion(t *testing.T) {
+	p := &memNativeProfiler{
+		internalMode: profiling.MemoryModePhysicalAlloc,
+		probability:  50,
+		pageSize:     4096,
+	}
+	if got, want := p.convertValueToBytes(1), int64(8192); got != want {
+		t.Fatalf("convertValueToBytes(1) = %d, want %d", got, want)
 	}
 }
 

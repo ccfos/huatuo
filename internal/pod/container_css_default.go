@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -372,11 +372,11 @@ func containerCgroupCssRelease() {
 	}
 }
 
-// GetContainerCSSBySubsys retrieves the cgroup subsystem state (CSS) address for a specific
+// ContainerCSSBySubsys retrieves the cgroup subsystem state (CSS) address for a specific
 // container and subsystem. It first checks the local cache, and if not found, triggers
 // a one-time BPF-based collection for that specific container.
 // This function is compatible with the existing containerCgroupCssInit logic.
-func GetContainerCSSBySubsys(containerID, subsysName string) (uint64, error) {
+func ContainerCSSBySubsys(containerID, subsysName string) (uint64, error) {
 	if containerID == "" {
 		return 0, nil
 	}
@@ -434,53 +434,69 @@ func syncContainerCSS(containerID string) error {
 	return nil
 }
 
-// findContainerCgroupPath searches for the cgroup path of a specific container ID.
+// findContainerCgroupPath resolves the container's kernel cgroup membership on this host.
 func findContainerCgroupPath(containerID string) (string, error) {
-	var foundPath string
+	paths, err := containerCgroupPathsByID(containerID)
+	if err != nil {
+		return "", err
+	}
 
 	switch cgroups.CgroupMode() {
 	case cgroups.Legacy, cgroups.Hybrid:
+		var resolveErrors []error
 		for _, subsys := range cgroupv1SubSysName {
-			root := cgroups.RootFsFilePath(subsys)
-			realRoot, err := filepath.EvalSymlinks(root)
-			if err != nil {
+			membershipPath := paths.Controllers[subsys]
+			if membershipPath == "" {
 				continue
 			}
 
-			// Search for container ID in cgroup path
-			_ = filepath.WalkDir(realRoot, func(path string, d fs.DirEntry, err error) error {
-				if err != nil || !d.IsDir() {
-					return nil
-				}
-
-				if strings.Contains(d.Name(), containerID) {
-					foundPath = path
-					return fs.SkipAll
-				}
-
-				return nil
-			})
-
-			if foundPath != "" {
-				break
+			cgroupPath, err := resolveCgroupFilesystemPath(
+				cgroups.RootFsFilePath(subsys),
+				membershipPath,
+				cgroupv1NotifyFile,
+			)
+			if err == nil {
+				return cgroupPath, nil
 			}
+			resolveErrors = append(resolveErrors, fmt.Errorf("%s controller: %w", subsys, err))
 		}
+
+		if len(resolveErrors) == 0 {
+			return "", fmt.Errorf("container %q has no supported cgroup v1 membership", containerID)
+		}
+		return "", fmt.Errorf(
+			"container %q has no accessible cgroup v1 notification file: %w",
+			containerID,
+			errors.Join(resolveErrors...),
+		)
 	case cgroups.Unified:
-		_ = filepath.WalkDir(cgroups.RootfsDefaultPath(), func(path string, d fs.DirEntry, err error) error {
-			if err != nil || !d.IsDir() {
-				return nil
-			}
+		if paths.Unified == "" {
+			return "", fmt.Errorf("container %q has no cgroup v2 membership", containerID)
+		}
 
-			if strings.Contains(d.Name(), containerID) {
-				foundPath = path
-				return fs.SkipAll
-			}
+		return resolveCgroupFilesystemPath(
+			cgroups.RootfsDefaultPath(),
+			paths.Unified,
+			cgroupv2NotifyFile,
+		)
+	default:
+		return "", fmt.Errorf("unsupported cgroup mode %d", cgroups.CgroupMode())
+	}
+}
 
-			return nil
-		})
+func resolveCgroupFilesystemPath(root, membershipPath, notifyFile string) (string, error) {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve cgroup root %q: %w", root, err)
 	}
 
-	return foundPath, nil
+	cgroupPath := filepath.Join(realRoot, strings.TrimPrefix(membershipPath, "/"))
+	notifyPath := filepath.Join(cgroupPath, notifyFile)
+	if _, err := os.Stat(notifyPath); err != nil {
+		return "", fmt.Errorf("access cgroup notification file %q: %w", notifyPath, err)
+	}
+
+	return cgroupPath, nil
 }
 
 // triggerContainerCSSSync loads BPF and triggers CSS collection for a specific cgroup path.
@@ -532,7 +548,9 @@ func triggerContainerCSSSync(cgroupPath string) error {
 	}
 
 	notifyPath := filepath.Join(cgroupPath, notifyFile)
-	_, _ = os.ReadFile(notifyPath)
+	if _, err := os.ReadFile(notifyPath); err != nil {
+		return fmt.Errorf("read cgroup notification file %q: %w", notifyPath, err)
+	}
 
 	log.Debugf("triggered CSS sync for cgroup path: %s", cgroupPath)
 

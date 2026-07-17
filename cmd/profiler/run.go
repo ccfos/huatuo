@@ -16,19 +16,25 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/urfave/cli/v2"
 
 	"huatuo-bamai/internal/log"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/registry"
+	"huatuo-bamai/pkg/profiling"
 )
 
 func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
-	typ := cliCtx.String("type")
-	lang := cliCtx.String("language")
+	typ := profiling.Type(cliCtx.String("type"))
+	lang := profiling.Language(cliCtx.String("language"))
 
-	if isNativeLang(lang) {
+	implementation, ok := profiling.ImplementationFor(lang)
+	if !ok {
+		return fmt.Errorf("no profiling implementation for language %q", lang)
+	}
+	if implementation == profiling.ImplementationNative {
 		cleanup, err := initBpfManager(cliCtx.Int("duration"))
 		if err != nil {
 			return err
@@ -59,21 +65,12 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 		log.Infof("pprof server started on %s", profilerPprofAddress)
 	}
 
-	meta, err := registry.Get(lang, typ)
+	meta, err := registry.Get(implementation, typ)
 	if err != nil {
 		return err
 	}
 
-	log.Infof("using profiler: %s-%s (%s)", meta.LangOrImpl, meta.Type, meta.Description)
+	log.Infof("using profiler: %s-%s (%s)", meta.Implementation, meta.Type, meta.Description)
 
 	return registry.Profile(pctx, meta)
-}
-
-func isNativeLang(lang string) bool {
-	switch lang {
-	case "go", "c", "c++":
-		return true
-	default:
-		return false
-	}
 }

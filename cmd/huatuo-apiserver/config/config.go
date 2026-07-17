@@ -73,7 +73,11 @@ type ComConfig struct {
 		MemoryProfilingInterval  int `default:"10"`
 		CPUSingleTraceTimeout    int `default:"20"`
 		MemorySingleTraceTimeout int `default:"20"`
-		ThirdPartyToolLimit      int `default:"10"`
+		MaxProfilerProcesses     int `default:"10"`
+		// JavaProfilerToolPath is the async-profiler root on every agent host.
+		JavaProfilerToolPath string
+		// PythonProfilerToolPath contains the py-spy executable on every agent host.
+		PythonProfilerToolPath string
 		// FlameGraphBaseURL is the base URL for the flame graph dashboard.
 		FlameGraphBaseURL string `default:"http://localhost:8006/d"`
 	}

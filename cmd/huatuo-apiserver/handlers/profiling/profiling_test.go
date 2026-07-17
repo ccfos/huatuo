@@ -24,6 +24,7 @@ import (
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/job"
+	profilecap "huatuo-bamai/pkg/profiling"
 )
 
 func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
@@ -107,6 +108,8 @@ func TestConvertJobToProfilingResponseAfterPrivateDataJSONRoundTrip(t *testing.T
 		"process_group_id": "321",
 		"lock_types":       []string{"mutex", "rwlock"},
 		"lock_mode":        "time",
+		"lock_min_wait":    "10us",
+		"labels":           map[string]string{"service": "checkout"},
 	}
 	raw, err := json.Marshal(privateData)
 	if err != nil {
@@ -128,6 +131,9 @@ func TestConvertJobToProfilingResponseAfterPrivateDataJSONRoundTrip(t *testing.T
 	}
 	if !reflect.DeepEqual(got.LockTypes, []string{"mutex", "rwlock"}) || got.LockMode != "time" {
 		t.Fatalf("lock response = %+v", got)
+	}
+	if got.LockMinWait != "10us" || !reflect.DeepEqual(got.Labels, map[string]string{"service": "checkout"}) {
+		t.Fatalf("lock metadata response = %+v", got)
 	}
 }
 
@@ -173,7 +179,7 @@ func TestCapabilities(t *testing.T) {
 	cfg.Profiling.MemoryProfilingInterval = 20
 	cfg.Profiling.CPUSingleTraceTimeout = 30
 	cfg.Profiling.MemorySingleTraceTimeout = 40
-	cfg.Profiling.ThirdPartyToolLimit = 5
+	cfg.Profiling.MaxProfilerProcesses = 5
 	defer func() { cfg.Profiling = old }()
 
 	h := &Handler{}
@@ -182,27 +188,17 @@ func TestCapabilities(t *testing.T) {
 		t.Fatalf("buildCapabilitiesResponse() error = %v", err)
 	}
 
-	if len(resp.ProfileTypes) != 3 {
-		t.Errorf("ProfileTypes len = %d, want 3", len(resp.ProfileTypes))
+	if want := []string{"cpu", "memory", "lock"}; !reflect.DeepEqual(resp.ProfileTypes, want) {
+		t.Errorf("ProfileTypes = %v, want %v", resp.ProfileTypes, want)
 	}
-	hasCPU := false
-	hasMemory := false
-	for _, pt := range resp.ProfileTypes {
-		if pt == "cpu" {
-			hasCPU = true
-		}
-		if pt == "memory" {
-			hasMemory = true
-		}
+	if want := []string{"pid", "tgid", "cgroup", "process-group"}; !reflect.DeepEqual(resp.CollectionDimensions, want) {
+		t.Errorf("CollectionDimensions = %v, want %v", resp.CollectionDimensions, want)
 	}
-	if !hasCPU || !hasMemory {
-		t.Errorf("ProfileTypes = %v, want contain both cpu and memory", resp.ProfileTypes)
+	if want := []string{"mutex", "spinlock", "rwlock"}; !reflect.DeepEqual(resp.KernelLockTypes, want) {
+		t.Errorf("KernelLockTypes = %v, want %v", resp.KernelLockTypes, want)
 	}
-	if len(resp.CollectionDimensions) != 4 {
-		t.Errorf("CollectionDimensions = %v", resp.CollectionDimensions)
-	}
-	if len(resp.KernelLockTypes) != 3 {
-		t.Errorf("KernelLockTypes = %v", resp.KernelLockTypes)
+	if want := []string{"c", "c++", "go"}; !reflect.DeepEqual(resp.LockSupportedLanguages, want) {
+		t.Errorf("LockSupportedLanguages = %v, want %v", resp.LockSupportedLanguages, want)
 	}
 
 	if len(resp.CPUSupportedLanguages) != 5 {
@@ -244,28 +240,104 @@ func TestCapabilities(t *testing.T) {
 	if resp.DefaultMemorySingleTraceTimeout != 40 {
 		t.Errorf("DefaultMemorySingleTraceTimeout = %d, want 40", resp.DefaultMemorySingleTraceTimeout)
 	}
-	if resp.ThirdPartyToolLimit != 5 {
-		t.Errorf("ThirdPartyToolLimit = %d, want 5", resp.ThirdPartyToolLimit)
+	if resp.MaxProfilerProcesses != 5 {
+		t.Errorf("MaxProfilerProcesses = %d, want 5", resp.MaxProfilerProcesses)
 	}
 }
 
-// TestCapabilitiesDoesNotMutatePackageMaps verifies that calling capabilities
-// does not mutate the package-level supportedLanguages or supportedMemoryMaps.
-func TestCapabilitiesDoesNotMutatePackageMaps(t *testing.T) {
+func TestCapabilitiesReturnsIndependentMemoryModeMap(t *testing.T) {
 	h := &Handler{}
-	_, _ = buildCapabilitiesResponse(h)
-
 	resp, _ := buildCapabilitiesResponse(h)
 	resp.MemoryModes["NEW_MODE"] = "new_mode"
 	resp.MemoryModes["NATIVE_PHYSICAL_ALLOC"] = "modified"
 
-	_, ok := supportedMemoryModes["NATIVE_PHYSICAL_ALLOC"]
-	if !ok || supportedMemoryModes["NATIVE_PHYSICAL_ALLOC"] != "native_physical_alloc" {
-		t.Errorf("supportedMemoryModes was mutated by capabilities response")
+	next, _ := buildCapabilitiesResponse(h)
+	if next.MemoryModes["NATIVE_PHYSICAL_ALLOC"] != "physical_alloc" {
+		t.Errorf("MemoryModes was mutated across responses")
+	}
+	if _, ok := next.MemoryModes["NEW_MODE"]; ok {
+		t.Errorf("MemoryModes retained a caller mutation")
+	}
+}
+
+func TestFillMemoryTracerArgsUsesMemoryModeFlag(t *testing.T) {
+	req := &job.NewAgentTaskReq{}
+
+	err := fillMemoryTracerArgs(req, "", "NATIVE_PHYSICAL_USAGE", "")
+	if err != nil {
+		t.Fatalf("fillMemoryTracerArgs() error = %v", err)
 	}
 
-	_, ok = supportedMemoryModes["NEW_MODE"]
-	if ok {
-		t.Errorf("supportedMemoryModes was mutated with NEW_MODE")
+	want := []string{"-t", "memory", "--memory-mode", "physical_usage", "-l", "c"}
+	if strings.Join(req.TracerArgs, " ") != strings.Join(want, " ") {
+		t.Fatalf("TracerArgs = %q, want %q", req.TracerArgs, want)
+	}
+}
+
+func TestFillProfilerArgsHonorImplementationRequirements(t *testing.T) {
+	t.Run("native CPU rejects binary path", func(t *testing.T) {
+		req := &job.NewAgentTaskReq{}
+		err := fillCPUTracerArgs(req, "/bin/app", "c", "")
+		if err == nil || !strings.Contains(err.Error(), "not supported for native") {
+			t.Fatalf("fillCPUTracerArgs() error = %v", err)
+		}
+	})
+
+	t.Run("Java CPU includes tool and binary paths", func(t *testing.T) {
+		req := &job.NewAgentTaskReq{}
+		err := fillCPUTracerArgs(req, "/usr/bin/java", "java", "/opt/async-profiler")
+		if err != nil {
+			t.Fatalf("fillCPUTracerArgs() error = %v", err)
+		}
+		want := []string{
+			"-t", "cpu", "--binary-match-path", "/usr/bin/java", "-l", "java",
+			"--tool-path", "/opt/async-profiler",
+		}
+		if !reflect.DeepEqual(req.TracerArgs, want) {
+			t.Fatalf("TracerArgs = %v, want %v", req.TracerArgs, want)
+		}
+	})
+
+	t.Run("Java memory requires configured tool path", func(t *testing.T) {
+		err := fillMemoryTracerArgs(&job.NewAgentTaskReq{}, "java", "OBJECT_ALLOC", "")
+		if err == nil || !strings.Contains(err.Error(), "configured tool path") {
+			t.Fatalf("fillMemoryTracerArgs() error = %v", err)
+		}
+	})
+}
+
+func TestAppendProfilingTimingArgsUsesConfiguredInterval(t *testing.T) {
+	req := &job.NewAgentTaskReq{Interval: 15}
+	appendProfilingTimingArgs(req, 60)
+	want := []string{"--duration", "15", "--aggr-interval", "15"}
+	if req.Duration != 120 || !reflect.DeepEqual(req.TracerArgs, want) {
+		t.Fatalf("task = %+v, want duration=120 args=%v", req, want)
+	}
+}
+
+func TestValidateProfilingTarget(t *testing.T) {
+	tests := []struct {
+		name           string
+		req            v1.StartProfilingRequest
+		implementation profilecap.Implementation
+		wantErr        bool
+	}{
+		{name: "Java PID", req: v1.StartProfilingRequest{PID: 1}, implementation: profilecap.ImplementationJava},
+		{name: "Java missing target", implementation: profilecap.ImplementationJava, wantErr: true},
+		{name: "Java duplicate target", req: v1.StartProfilingRequest{PID: 1, Container: "app"}, implementation: profilecap.ImplementationJava, wantErr: true},
+		{name: "Java native dimension", req: v1.StartProfilingRequest{PID: 1, Scope: "tgid"}, implementation: profilecap.ImplementationJava, wantErr: true},
+		{name: "native memory PID", req: v1.StartProfilingRequest{Type: "memory", PID: 1}, implementation: profilecap.ImplementationNative},
+		{name: "native memory cgroup", req: v1.StartProfilingRequest{Type: "memory", CgroupID: 2}, implementation: profilecap.ImplementationNative},
+		{name: "native memory missing target", req: v1.StartProfilingRequest{Type: "memory"}, implementation: profilecap.ImplementationNative, wantErr: true},
+		{name: "native memory duplicate target", req: v1.StartProfilingRequest{Type: "memory", PID: 1, ProcessGroupID: 2}, implementation: profilecap.ImplementationNative, wantErr: true},
+		{name: "native CPU all", req: v1.StartProfilingRequest{Type: "cpu"}, implementation: profilecap.ImplementationNative},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateProfilingTarget(&tc.req, tc.implementation)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateProfilingTarget() error = %v, wantErr=%v", err, tc.wantErr)
+			}
+		})
 	}
 }

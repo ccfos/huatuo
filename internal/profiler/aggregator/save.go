@@ -23,35 +23,14 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
 	profctx "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/pkg/tracing"
 )
+
+const profilerTracerName = "profiler"
 
 func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
 	if p.pctx.ToolstreamClient == nil {
 		return fmt.Errorf("toolstream client not initialized")
-	}
-
-	if len(p.pctx.CpuIdleMetaData) != 0 && len(p.pctx.CpuSysMetaData) != 0 {
-		return fmt.Errorf("cpu idle and sys metadata are both set; only one is allowed")
-	}
-
-	var autoMeta any
-
-	if len(p.pctx.CpuIdleMetaData) != 0 {
-		cpuIdleMeta, err := profctx.MapToStructByJSON[autotracing.CPUIdleMetaData](p.pctx.CpuIdleMetaData)
-		if err != nil {
-			return fmt.Errorf("failed to map CPU idle metadata: %w", err)
-		}
-
-		autoMeta = cpuIdleMeta
-	}
-
-	if len(p.pctx.CpuSysMetaData) != 0 {
-		cpuSysMeta, err := profctx.MapToStructByJSON[autotracing.CpuSysMetaData](p.pctx.CpuSysMetaData)
-		if err != nil {
-			return fmt.Errorf("failed to map CPU sys metadata: %w", err)
-		}
-
-		autoMeta = cpuSysMeta
 	}
 
 	flameData, ok := data.(*profiler.ProfileData)
@@ -65,29 +44,23 @@ func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
 	tracerData := &profctx.TracerData{
 		MetricData: newMetrics(int(p.overflowCount.Load())),
 		FlameData:  flameData,
-		MetaData:   autoMeta,
-	}
-
-	tracerID := p.pctx.MetaData["tracer_id"]
-	if tracerID == "" {
-		tracerID = p.tracerID
 	}
 
 	ev := &autotracing.ProfilerEvent{
-		TracerID:      tracerID,
+		TracerID:      p.tracerID,
 		ContainerID:   p.pctx.ContainerID,
-		TracerName:    p.pctx.MetaData["tracer_name"],
-		TracerRunType: p.pctx.MetaData["tracer_type"],
+		TracerName:    profilerTracerName,
+		TracerRunType: tracing.TracerRunTypeTask,
 		TracerTime:    time.Now().Format("2006-01-02 15:04:05.000 -0700"),
 		TracerData:    tracerData,
 	}
 
 	if err := p.pctx.ToolstreamClient.Send(ev); err != nil {
-		log.WithField("tracer_id", tracerID).Errorf("failed to send profiling event: %v", err)
+		log.WithField("tracer_id", p.tracerID).Errorf("failed to send profiling event: %v", err)
 		return err
 	}
 
-	log.WithField("tracer_id", tracerID).Infof("profiling event sent via toolstream")
+	log.WithField("tracer_id", p.tracerID).Infof("profiling event sent via toolstream")
 
 	return nil
 }

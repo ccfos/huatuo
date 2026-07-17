@@ -48,11 +48,15 @@ func TestTaskTracerArgsResolvesProfilerContainerHostname(t *testing.T) {
 		TracerName:        "profiler",
 		ContainerHostname: "worker-1",
 		TracerArgs:        []string{"--scope", "cgroup"},
-	})
+	}, "task-123")
 	if err != nil {
 		t.Fatalf("taskTracerArgs() error = %v", err)
 	}
-	want := []string{"--scope", "cgroup", "--container-id", "0123456789abcdef0123456789abcdef"}
+	want := []string{
+		"--scope", "cgroup",
+		"--container-id", "0123456789abcdef0123456789abcdef",
+		"--tracer-id", "task-123",
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("taskTracerArgs() = %v, want %v", got, want)
 	}
@@ -64,11 +68,25 @@ func TestTaskTracerArgsAcceptsProfilerContainerIDSelector(t *testing.T) {
 		TracerName:        "profiler",
 		ContainerHostname: containerID,
 		TracerArgs:        []string{"--scope", "cgroup"},
-	})
+	}, "task-456")
 	if err != nil {
 		t.Fatalf("taskTracerArgs() error = %v", err)
 	}
-	want := []string{"--scope", "cgroup", "--container-id", containerID}
+	want := []string{"--scope", "cgroup", "--container-id", containerID, "--tracer-id", "task-456"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("taskTracerArgs() = %v, want %v", got, want)
+	}
+}
+
+func TestTaskTracerArgsPreservesExplicitProfilerTracerID(t *testing.T) {
+	got, err := taskTracerArgs(&NewTaskReq{
+		TracerName: "profiler",
+		TracerArgs: []string{"--tracer-id=explicit"},
+	}, "task-ignored")
+	if err != nil {
+		t.Fatalf("taskTracerArgs() error = %v", err)
+	}
+	want := []string{"--tracer-id=explicit"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("taskTracerArgs() = %v, want %v", got, want)
 	}

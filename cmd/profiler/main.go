@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -45,6 +45,7 @@ func main() {
 		DisableSliceFlagSeparator: true,
 		Flags:                     appFlags,
 		Before:                    runBefore,
+		After:                     closeLogging,
 		Action: func(cliCtx *cli.Context) error {
 			return runAction(cliCtx, signalLog)
 		},

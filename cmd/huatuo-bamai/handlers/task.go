@@ -18,7 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
+	"strings"
 	"time"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
@@ -81,12 +81,16 @@ func (h *TaskHandler) create(ctx *server.Context) error {
 		storageDefault = tracing.TaskStorageStdout
 	}
 
-	tracerArgs, err := taskTracerArgs(&req)
+	taskID, err := tracing.AllocTaskID()
+	if err != nil {
+		return response.ErrInternal.WithMessage("failed to allocate task id")
+	}
+	tracerArgs, err := taskTracerArgs(&req, taskID)
 	if err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	id := tracing.NewTask(req.TracerName, time.Duration(req.Timeout)*time.Second, storageDefault, tracerArgs)
+	id := tracing.NewTaskWithID(taskID, req.TracerName, time.Duration(req.Timeout)*time.Second, storageDefault, tracerArgs)
 	if id == "" {
 		return response.ErrInternal.WithMessage("failed to allocate task id")
 	}
@@ -94,34 +98,48 @@ func (h *TaskHandler) create(ctx *server.Context) error {
 	return nil
 }
 
-func taskTracerArgs(req *NewTaskReq) ([]string, error) {
+func taskTracerArgs(req *NewTaskReq, tracerID string) ([]string, error) {
 	args := append([]string(nil), req.TracerArgs...)
-	if req.TracerName != "profiler" || slices.Contains(args, "--container-id") {
+	if req.TracerName != "profiler" {
 		return args, nil
 	}
 
-	containerID := req.ContainerID
-	if containerID == "" && req.ContainerHostname != "" {
-		// The public API historically describes this selector as hostname or
-		// ID. Preserve both forms while always passing the stable ID to the
-		// profiler's cgroup resolver.
-		if pod.ValidateContainerID(req.ContainerHostname) == nil {
-			containerID = req.ContainerHostname
-		} else {
-			container, err := containerByHostname(req.ContainerHostname)
-			if err != nil {
-				return nil, fmt.Errorf("resolve container hostname %q: %w", req.ContainerHostname, err)
+	if !hasCLIFlag(args, "--container-id") {
+		containerID := req.ContainerID
+		if containerID == "" && req.ContainerHostname != "" {
+			// The public API historically describes this selector as hostname or
+			// ID. Preserve both forms while always passing the stable ID to the
+			// profiler's cgroup resolver.
+			if pod.ValidateContainerID(req.ContainerHostname) == nil {
+				containerID = req.ContainerHostname
+			} else {
+				container, err := containerByHostname(req.ContainerHostname)
+				if err != nil {
+					return nil, fmt.Errorf("resolve container hostname %q: %w", req.ContainerHostname, err)
+				}
+				if container == nil {
+					return nil, fmt.Errorf("container hostname %q not found", req.ContainerHostname)
+				}
+				containerID = container.ID
 			}
-			if container == nil {
-				return nil, fmt.Errorf("container hostname %q not found", req.ContainerHostname)
-			}
-			containerID = container.ID
+		}
+		if containerID != "" {
+			args = append(args, "--container-id", containerID)
 		}
 	}
-	if containerID != "" {
-		args = append(args, "--container-id", containerID)
+	if tracerID != "" && !hasCLIFlag(args, "--tracer-id") {
+		args = append(args, "--tracer-id", tracerID)
 	}
 	return args, nil
+}
+
+func hasCLIFlag(args []string, name string) bool {
+	for _, arg := range args {
+		if arg == name || strings.HasPrefix(arg, name+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *TaskHandler) list(ctx *server.Context) error {

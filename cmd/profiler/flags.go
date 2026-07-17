@@ -24,7 +24,7 @@ var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "type",
 		Aliases: []string{"t"},
-		Usage:   "Profiling type: cpu|mem|lock",
+		Usage:   "Profiling type: cpu|memory|lock",
 	},
 	&cli.StringFlag{
 		Name:    "language",
@@ -38,7 +38,7 @@ var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "pid",
 		Aliases: []string{"p"},
-		Usage:   "Target PID/TGID; comma-separated PIDs remain supported for Java",
+		Usage:   "Target PID(s), comma-separated for Java and Python; native supports one PID/TGID",
 	},
 	&cli.StringFlag{
 		Name:  "cpuid",
@@ -90,6 +90,15 @@ var appFlags = []cli.Flag{
 		Usage:   "The number of samples to collect per second",
 		Value:   99,
 	},
+	&cli.UintFlag{
+		Name:  "physical-memory-probability",
+		Usage: "Native physical-memory sampling probability, from 1 to 100 percent",
+		Value: 100,
+	},
+	&cli.IntFlag{
+		Name:  "max-concurrent-procs",
+		Usage: "Maximum concurrent profiler subprocesses; 0 means unlimited",
+	},
 	&cli.IntFlag{
 		Name:  "aggr-interval",
 		Usage: "interval for profiling of aggregate process",
@@ -108,17 +117,13 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "output-format",
-		Usage: "Output format for profiling: collapsed|pprof|flamegraph|svg|remote",
+		Usage: "Output format for profiling: collapsed|flamegraph|svg|remote",
 		Value: "collapsed",
 	},
 	&cli.StringFlag{
 		Name:  "output-storage",
 		Usage: "Unix socket path for remote upload (used with --output-format=remote)",
 		Value: "/var/run/huatuo-toolstream.sock",
-	},
-	&cli.BoolFlag{
-		Name:  "verbose",
-		Usage: "Shorthand for --log-level debug --log-file stdout; overrides explicit values of both flags",
 	},
 	&cli.StringFlag{
 		Name:  "log-level",
@@ -132,12 +137,16 @@ var appFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:  "log-size",
-		Usage: "Default log size of profiling",
+		Usage: "Log rotation size in MB; 0 disables rotation",
 		Value: 100,
 	},
 	&cli.BoolFlag{
 		Name:  "log-bpf-debug",
 		Usage: "Log bpf_dbg events (native profiler only)",
+	},
+	&cli.BoolFlag{
+		Name:  "verbose",
+		Usage: "Shorthand for --log-level debug --log-file stdout; overrides explicit values of both flags",
 	},
 	&cli.BoolFlag{
 		Name:  "enable-pprof",
@@ -147,34 +156,17 @@ var appFlags = []cli.Flag{
 		Name:  "tool-path",
 		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
 	},
-	&cli.IntFlag{
-		Name:  "tool-limit",
-		Usage: "Limit how many third-party tools can run in parallel (e.g. async-profiler, py-spy)",
+	&cli.StringFlag{
+		Name:  "binary-match-path",
+		Usage: "Binary path used to match target processes",
 	},
 	&cli.StringFlag{
-		Name:  "exec-path",
-		Usage: "Executable path of target process",
-	},
-	&cli.StringFlag{
-		Name:  "server-address",
-		Usage: "Huatuo profiling server address",
+		Name:  "huatuo-api-address",
+		Usage: "HuaTuo API address used to resolve container metadata",
 		Value: "127.0.0.1:19704",
 	},
-	&cli.StringSliceFlag{
-		Name:  "metadata",
-		Usage: "Meta data for document data, e.g. --metadata '--tracer_id HHKKJGKIUOLNK' --metadata '--tracer_data=AppName'",
-	},
-	&cli.StringSliceFlag{
-		Name:    "flags",
-		Aliases: []string{"f"},
-		Usage:   "Extra cpu/memory profiler flags, e.g. -f '--core-id=10' -f '--title=AppName'",
-	},
-	&cli.StringSliceFlag{
-		Name:  "cpuidle-metadata",
-		Usage: "Meta data for cpuidle tracerData, e.g. --cpuidle-metadata '--user_threshold 54' --cpuidle-metadata '--user=AppName'",
-	},
-	&cli.StringSliceFlag{
-		Name:  "cpusys-metadata",
-		Usage: "Meta data for cpusys tracerData, e.g. --cpusys-metadata '--usage_threshold 33' --cpusys-metadata '--title=AppName'",
+	&cli.StringFlag{
+		Name:  "tracer-id",
+		Usage: "Tracing task ID; generated automatically when empty",
 	},
 }

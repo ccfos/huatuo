@@ -61,7 +61,7 @@ run_profile_case() {
 
 	log_info "running Java memory profiler mode=${mode} pid=${PROFILER_TARGET_PID}"
 	if ! "${TOOL_BIN}" \
-		--type mem \
+		--type memory \
 		--language java \
 		--memory-mode "${mode}" \
 		--pid "${PROFILER_TARGET_PID}" \

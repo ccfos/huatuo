@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import (
 	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/pkg/profiling"
 
 	"github.com/gin-gonic/gin/binding"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
@@ -46,22 +46,6 @@ const (
 	ProfilingMemory = "profiling_memory"
 	ProfilingCPU    = "profiling_cpu"
 	ProfilingLock   = "profiling_lock"
-)
-
-var (
-	supportedLanguages = map[string]bool{
-		"c++":  true,
-		"c":    true,
-		"go":   true,
-		"java": true,
-	}
-	supportedMemoryModes = map[string]string{
-		"NATIVE_PHYSICAL_ALLOC": "native_physical_alloc",
-		"NATIVE_PHYSICAL_USAGE": "native_physical_usage",
-		"NATIVE_VIRTUAL_ALLOC":  "native_virtual_alloc",
-		"OBJECT_ALLOC":          "object_alloc",
-		"OBJECT_USAGE":          "object_usage",
-	}
 )
 
 // Handler handles profiling-related HTTP requests.
@@ -92,23 +76,15 @@ func NewHandler(jm *job.Manager) *Handler {
 	return h
 }
 
-func isLanguageSupported(lang string) bool {
-	return supportedLanguages[lang]
-}
-
-func isMemoryModeSupported(mode string) (string, bool) {
-	if memoryMode, ok := supportedMemoryModes[mode]; ok {
-		return memoryMode, true
-	}
-	return "", false
-}
-
 // start starts a new profiling job.
 func (h *Handler) start(ctx *server.Context) error {
 	var req v1.StartProfilingRequest
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
+	}
+	if req.Duration < 1 {
+		return response.ErrInvalidRequest.WithMessage("duration must be at least 1 second")
 	}
 
 	hasRunning, err := h.hasRunningProfilingJob(req.Hostname, ctx.UserID)
@@ -127,13 +103,23 @@ func (h *Handler) start(ctx *server.Context) error {
 	case "cpu":
 		agentTaskReq.Interval = config.Get().Profiling.CPUProfilingInterval
 		agentTaskReq.TraceTimeout = config.Get().Profiling.CPUSingleTraceTimeout
-		if err := fillCPUTracerArgs(&agentTaskReq, req.TargetExecPath, req.TargetProcessLanguage); err != nil {
+		if err := fillCPUTracerArgs(
+			&agentTaskReq,
+			req.TargetExecPath,
+			req.TargetProcessLanguage,
+			profilerToolPath(req.TargetProcessLanguage),
+		); err != nil {
 			return response.ErrInvalidRequest.WithMessage(err.Error())
 		}
 	case "memory":
 		agentTaskReq.Interval = config.Get().Profiling.MemoryProfilingInterval
 		agentTaskReq.TraceTimeout = config.Get().Profiling.MemorySingleTraceTimeout
-		if err := fillMemoryTracerArgs(&agentTaskReq, req.TargetProcessLanguage, req.MemoryMode); err != nil {
+		if err := fillMemoryTracerArgs(
+			&agentTaskReq,
+			req.TargetProcessLanguage,
+			req.MemoryMode,
+			profilerToolPath(req.TargetProcessLanguage),
+		); err != nil {
 			return response.ErrInvalidRequest.WithMessage(err.Error())
 		}
 	case "lock":
@@ -160,24 +146,53 @@ func (h *Handler) start(ctx *server.Context) error {
 		agentTaskReq.TraceTimeout = agentTaskReq.Interval * 2
 	}
 
-	// profiling job need to be stopped from outside, so we need to set duration to args.Duration * 2,
-	// job.Duration will control the actual profiling time
-	agentTaskReq.Duration = req.Duration * 2
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--duration", strconv.Itoa(agentTaskReq.Interval))
-	collectionScope, err := appendCollectionTracerArgs(&agentTaskReq, &req)
+	appendProfilingTimingArgs(&agentTaskReq, req.Duration)
+
+	languageValue := req.TargetProcessLanguage
+	if req.Type == string(profiling.TypeMemory) && strings.HasPrefix(req.MemoryMode, "NATIVE_") {
+		languageValue = string(profiling.LanguageC)
+	}
+	language, err := profiling.ParseLanguage(languageValue)
 	if err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
+	implementation, ok := profiling.ImplementationFor(language)
+	if !ok {
+		return response.ErrInvalidRequest.WithMessage(fmt.Sprintf("unsupported language %q", language))
+	}
+	if err := validateProfilingTarget(&req, implementation); err != nil {
+		return response.ErrInvalidRequest.WithMessage(err.Error())
+	}
 
-	if config.Get().Profiling.ThirdPartyToolLimit > 0 {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--tool-limit", strconv.Itoa(config.Get().Profiling.ThirdPartyToolLimit))
+	collectionScope := ""
+	if implementation == profiling.ImplementationNative {
+		collectionScope, err = appendCollectionTracerArgs(&agentTaskReq, &req)
+		if err != nil {
+			return response.ErrInvalidRequest.WithMessage(err.Error())
+		}
+	} else {
+		if req.PID > math.MaxInt32 {
+			return response.ErrInvalidRequest.WithMessage(fmt.Sprintf("pid %d exceeds Linux PID range", req.PID))
+		}
+		if req.PID != 0 {
+			agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--pid", strconv.FormatUint(req.PID, 10))
+		}
+		if err := appendProfileLabelArgs(&agentTaskReq, req.Labels); err != nil {
+			return response.ErrInvalidRequest.WithMessage(err.Error())
+		}
+	}
+
+	if config.Get().Profiling.MaxProfilerProcesses > 0 {
+		agentTaskReq.TracerArgs = append(
+			agentTaskReq.TracerArgs,
+			"--max-concurrent-procs",
+			strconv.Itoa(config.Get().Profiling.MaxProfilerProcesses),
+		)
 	}
 
 	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs,
 		"--output-format", "remote",
-		"--output-storage", "/var/run/huatuo-toolstream.sock",
-		"--metadata", "tracer_name=profiler",
-		"--metadata", "tracer_type="+tracing.TracerRunTypeTask)
+		"--output-storage", "/var/run/huatuo-toolstream.sock")
 
 	var jobType string
 	if req.Type == "memory" {
@@ -212,6 +227,8 @@ func (h *Handler) start(ctx *server.Context) error {
 		"process_group_id": strconv.Itoa(req.ProcessGroupID),
 		"lock_types":       req.LockTypes,
 		"lock_mode":        req.LockMode,
+		"lock_min_wait":    req.LockMinWait,
+		"labels":           req.Labels,
 	}
 
 	response.Created(ctx, "/v1/profiles/"+jobResult.JobID, v1.StartProfilingResponse{
@@ -220,8 +237,64 @@ func (h *Handler) start(ctx *server.Context) error {
 	return nil
 }
 
+func appendProfilingTimingArgs(agentTaskReq *job.NewAgentTaskReq, requestedDuration int) {
+	// The job manager controls the overall lifetime; each profiler invocation
+	// emits exactly one interval-sized snapshot.
+	agentTaskReq.Duration = requestedDuration * 2
+	interval := strconv.Itoa(agentTaskReq.Interval)
+	agentTaskReq.TracerArgs = append(
+		agentTaskReq.TracerArgs,
+		"--duration", interval,
+		"--aggr-interval", interval,
+	)
+}
+
+func profilerToolPath(language string) string {
+	switch language {
+	case string(profiling.LanguageJava):
+		return config.Get().Profiling.JavaProfilerToolPath
+	case string(profiling.LanguagePython):
+		return config.Get().Profiling.PythonProfilerToolPath
+	default:
+		return ""
+	}
+}
+
+func validateProfilingTarget(req *v1.StartProfilingRequest, implementation profiling.Implementation) error {
+	if implementation != profiling.ImplementationNative {
+		if req.Scope != "" || req.CgroupID != 0 || req.CgroupPath != "" || req.ProcessGroupID != 0 {
+			return fmt.Errorf("collection dimensions are only supported for native profiling")
+		}
+		if (req.PID != 0) == (req.Container != "") {
+			return fmt.Errorf("exactly one of pid or container must be provided")
+		}
+		return nil
+	}
+
+	if req.Type != string(profiling.TypeMemory) {
+		return nil
+	}
+	hasPID := req.PID != 0
+	hasContainerOrCgroup := req.Container != "" || req.CgroupID != 0 || req.CgroupPath != ""
+	hasProcessGroup := req.ProcessGroupID != 0
+	targets := 0
+	for _, present := range []bool{hasPID, hasContainerOrCgroup, hasProcessGroup} {
+		if present {
+			targets++
+		}
+	}
+	if targets != 1 {
+		return fmt.Errorf("exactly one PID/TGID, container/cgroup, or process group target must be provided")
+	}
+	return nil
+}
+
 func fillLockTracerArgs(agentTaskReq *job.NewAgentTaskReq, req *v1.StartProfilingRequest) ([]string, string, error) {
-	if !isLanguageSupported(req.TargetProcessLanguage) || req.TargetProcessLanguage == "java" {
+	if req.TargetExecPath != "" {
+		return nil, "", fmt.Errorf("target_exec_path is not supported for native profiling")
+	}
+	language, err := profiling.ParseLanguage(req.TargetProcessLanguage)
+	if err != nil || !profiling.IsSupported(language, profiling.TypeLock) {
 		return nil, "", fmt.Errorf("kernel lock profiling requires target_process_language c, c++, or go")
 	}
 	lockTypes := req.LockTypes
@@ -241,6 +314,9 @@ func fillLockTracerArgs(agentTaskReq *job.NewAgentTaskReq, req *v1.StartProfilin
 			normalizedTypes = append(normalizedTypes, lockType)
 		}
 	}
+	if len(normalizedTypes) == 0 {
+		return nil, "", fmt.Errorf("at least one kernel lock type is required")
+	}
 	mode := strings.ToLower(strings.TrimSpace(req.LockMode))
 	if mode == "" {
 		mode = "time"
@@ -251,7 +327,7 @@ func fillLockTracerArgs(agentTaskReq *job.NewAgentTaskReq, req *v1.StartProfilin
 
 	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs,
 		"-t", "lock",
-		"-l", req.TargetProcessLanguage,
+		"-l", string(language),
 		"--lock-types", strings.Join(normalizedTypes, ","),
 		"--lock-mode", mode,
 	)
@@ -335,18 +411,25 @@ func appendCollectionTracerArgs(agentTaskReq *job.NewAgentTaskReq, req *v1.Start
 		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--process-group-id", strconv.Itoa(req.ProcessGroupID))
 	}
 
-	labelNames := make([]string, 0, len(req.Labels))
-	for name := range req.Labels {
+	if err := appendProfileLabelArgs(agentTaskReq, req.Labels); err != nil {
+		return "", err
+	}
+	return scope, nil
+}
+
+func appendProfileLabelArgs(agentTaskReq *job.NewAgentTaskReq, labels map[string]string) error {
+	labelNames := make([]string, 0, len(labels))
+	for name := range labels {
 		if err := profiler.ValidateCustomLabelName(name); err != nil {
-			return "", err
+			return err
 		}
 		labelNames = append(labelNames, name)
 	}
 	sort.Strings(labelNames)
 	for _, name := range labelNames {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--label", name+"="+req.Labels[name])
+		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--label", name+"="+labels[name])
 	}
-	return scope, nil
+	return nil
 }
 
 // hasRunningProfilingJob reports whether a profiling job is currently running on hostname for userID.
@@ -367,43 +450,59 @@ func (h *Handler) hasRunningProfilingJob(hostname, userID string) (bool, error) 
 	return false, nil
 }
 
-func fillMemoryTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetProcessLanguage, memoryMode string) error {
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", "mem")
+func fillMemoryTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetProcessLanguage, memoryMode, toolPath string) error {
+	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", string(profiling.TypeMemory))
 
-	if mode, ok := isMemoryModeSupported(memoryMode); ok {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--flags", fmt.Sprintf("--mode %s", mode))
-	} else {
+	languageValue := targetProcessLanguage
+	modeValue := strings.ToLower(memoryMode)
+	if strings.HasPrefix(memoryMode, "NATIVE_") {
+		languageValue = string(profiling.LanguageC)
+		modeValue = strings.ToLower(strings.TrimPrefix(memoryMode, "NATIVE_"))
+	}
+	language, err := profiling.ParseLanguage(languageValue)
+	if err != nil {
+		return fmt.Errorf("memory profiling not supported for %s", targetProcessLanguage)
+	}
+	mode, err := profiling.ParseMemoryMode(modeValue)
+	if err != nil || !profiling.SupportsMemoryMode(language, mode) {
 		return fmt.Errorf("memory mode not supported: %s", memoryMode)
 	}
 
-	// memory native mode do not need to pass language in frontend, just set it to c
-	if memoryMode == "NATIVE_PHYSICAL_ALLOC" || memoryMode == "NATIVE_PHYSICAL_USAGE" || memoryMode == "NATIVE_VIRTUAL_ALLOC" {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", "c")
-		return nil
+	agentTaskReq.TracerArgs = append(
+		agentTaskReq.TracerArgs,
+		"--memory-mode", string(mode),
+		"-l", string(language),
+	)
+	implementation, _ := profiling.ImplementationFor(language)
+	if implementation != profiling.ImplementationNative {
+		if toolPath == "" {
+			return fmt.Errorf("%s profiling requires a configured tool path", language)
+		}
+		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--tool-path", toolPath)
 	}
-
-	if isLanguageSupported(targetProcessLanguage) {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", targetProcessLanguage)
-	} else {
-		return fmt.Errorf("memory profiling not supported for %s", targetProcessLanguage)
-	}
-
 	return nil
 }
 
-func fillCPUTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetExecPath, targetProcessLanguage string) error {
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", "cpu")
+func fillCPUTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetExecPath, targetProcessLanguage, toolPath string) error {
+	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", string(profiling.TypeCPU))
 
-	if targetExecPath != "" {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--exec-path", targetExecPath)
-	}
-
-	if isLanguageSupported(targetProcessLanguage) {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", targetProcessLanguage)
-	} else if targetProcessLanguage == "python" {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", "python")
-	} else {
+	language, err := profiling.ParseLanguage(targetProcessLanguage)
+	if err != nil || !profiling.IsSupported(language, profiling.TypeCPU) {
 		return fmt.Errorf("cpu profiling not supported for %s", targetProcessLanguage)
+	}
+	implementation, _ := profiling.ImplementationFor(language)
+	if implementation == profiling.ImplementationNative && targetExecPath != "" {
+		return fmt.Errorf("target_exec_path is not supported for native profiling")
+	}
+	if targetExecPath != "" {
+		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--binary-match-path", targetExecPath)
+	}
+	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", string(language))
+	if implementation != profiling.ImplementationNative {
+		if toolPath == "" {
+			return fmt.Errorf("%s profiling requires a configured tool path", language)
+		}
+		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--tool-path", toolPath)
 	}
 
 	return nil
@@ -613,6 +712,12 @@ func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.Profiling
 		if value, ok := jobResult.PrivateData["lock_mode"].(string); ok {
 			resp.LockMode = value
 		}
+		if value, ok := jobResult.PrivateData["lock_min_wait"].(string); ok {
+			resp.LockMinWait = value
+		}
+		if value, ok := privateDataStringMap(jobResult.PrivateData["labels"]); ok {
+			resp.Labels = value
+		}
 	}
 
 	return resp
@@ -689,6 +794,25 @@ func privateDataStringSlice(value any) ([]string, bool) {
 				return nil, false
 			}
 			values[i] = text
+		}
+		return values, true
+	default:
+		return nil, false
+	}
+}
+
+func privateDataStringMap(value any) (map[string]string, bool) {
+	switch typed := value.(type) {
+	case map[string]string:
+		return typed, true
+	case map[string]any:
+		values := make(map[string]string, len(typed))
+		for name, item := range typed {
+			text, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			values[name] = text
 		}
 		return values, true
 	default:

@@ -30,24 +30,31 @@ source "${ROOT_DIR}/integration/config.sh"
 
 VETH_HOST="veth-rxlat-h"
 VETH_PEER="veth-rxlat-p"
+NETNS="net-rxlat-${BASHPID}"
 VETH_HOST_IP="10.200.1.1"
 VETH_PEER_IP="10.200.1.2"
 TEST_PORT=19876
-
-ip link add "${VETH_HOST}" type veth peer name "${VETH_PEER}" 2> /dev/null || skip "veth creation failed"
-ip addr add "${VETH_HOST_IP}/24" dev "${VETH_HOST}" 2> /dev/null || true
-ip addr add "${VETH_PEER_IP}/24" dev "${VETH_PEER}" 2> /dev/null || true
-ip link set "${VETH_HOST}" up 2> /dev/null || true
-ip link set "${VETH_PEER}" up 2> /dev/null || true
-sleep 0.5
 
 _server_pid=""
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/net-rx-latency.XXXXXX")
 cleanup_all() {
 	[[ -n "${_server_pid}" ]] && stop_by_pid "${_server_pid}" 2 || true
 	ip link del "${VETH_HOST}" 2> /dev/null || true
+	ip netns del "${NETNS}" 2> /dev/null || true
 }
 trap cleanup_all EXIT
+
+# Isolate the peer so its address cannot resolve through the host local table.
+ip netns add "${NETNS}" 2> /dev/null || skip "network namespace creation failed: ${NETNS}"
+ip link add "${VETH_HOST}" type veth peer name "${VETH_PEER}" 2> /dev/null || skip "veth creation failed"
+
+ip link set "${VETH_PEER}" netns "${NETNS}"
+ip addr add "${VETH_HOST_IP}/24" dev "${VETH_HOST}"
+ip link set "${VETH_HOST}" up
+ip -n "${NETNS}" addr add "${VETH_PEER_IP}/24" dev "${VETH_PEER}"
+ip -n "${NETNS}" link set "${VETH_PEER}" up
+ip -n "${NETNS}" link set lo up
+sleep 0.5
 
 integration_huatuo_bamai_start \
 	write_net_rx_latency_config \
@@ -60,7 +67,7 @@ compile_user_fixture \
 	"${ROOT_DIR}/integration/testdata/test_net_rx_latency_user.c" \
 	"${SLOW_TCP_SERVER}"
 
-"${SLOW_TCP_SERVER}" \
+ip netns exec "${NETNS}" "${SLOW_TCP_SERVER}" \
 	> "${WORK_DIR}/testserver.log" 2>&1 &
 server_pid=$!
 _server_pid="${server_pid}"

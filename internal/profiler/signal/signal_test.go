@@ -12,19 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package provider
+package signal
 
 import (
-	"fmt"
+	"context"
+	"os"
+	"testing"
 )
 
-func validateJavaToolLimit(pids []int, toolLimit int) error {
-	if toolLimit > 0 && len(pids) > toolLimit {
-		return fmt.Errorf(
-			"start Java profiler: too many target processes: limit=%d, found=%d",
-			toolLimit,
-			len(pids),
-		)
+func TestListenSignalAndCancelStopsWithContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	signals := make(chan os.Signal, 1)
+	cancel()
+
+	sig, err := ListenSignalAndCancel(ctx, signals, func() {})
+	if err != nil {
+		t.Fatalf("ListenSignalAndCancel() error = %v", err)
 	}
-	return nil
+	if sig != nil {
+		t.Fatalf("signal = %v, want nil", sig)
+	}
 }

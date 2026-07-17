@@ -63,7 +63,7 @@ run_profile_case() {
 
 	log_info "running profiler mode=${mode} pid=${TARGET_PID}"
 	("${TOOL_BIN}" \
-		--type mem \
+		--type memory \
 		--language c \
 		--memory-mode "${mode}" \
 		--pid "${TARGET_PID}" \
@@ -71,7 +71,7 @@ run_profile_case() {
 		--output-format collapsed \
 		--output-path "${out_dir}" \
 		--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
-		--flags "--probability=100" \
+		--physical-memory-probability 100 \
 		--verbose \
 		> "${profiler_out}" 2> "${profiler_err}") &
 	PROFILER_PID=$!

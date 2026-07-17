@@ -259,7 +259,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 
 // aggregateStacksAndEnqueue resolves stack traces and emits aggregated records via enqueue callback.
 // For CPU profiler, convertValue is nil (samples are already counts).
-// For Memory profiler non-retained modes, convertValue converts raw value to bytes.
+// For Memory profilers, convertValue converts the aggregated raw value to bytes.
 // For Memory profiler retained mode, fallbackStackMapID provides fallback lookup path.
 //
 // Stack IDs are NOT deleted from the stack map after resolution for the following reasons:

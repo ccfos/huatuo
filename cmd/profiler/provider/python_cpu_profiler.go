@@ -27,6 +27,7 @@ import (
 	executil "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
+	"huatuo-bamai/pkg/profiling"
 )
 
 type pythonCPUProfiler struct {
@@ -39,30 +40,53 @@ type pythonCPUProfiler struct {
 func init() {
 	impl := &pythonCPUProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "cpu",
-		LangOrImpl:    "python",
-		Description:   "Python CPU profiler using py-spy",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeCPU,
+		Implementation: profiling.ImplementationPython,
+		Description:    "Python CPU profiler using py-spy",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 
-// NewAggregator stamps OneShotAgg before construction so the pipeline
-// picks the batch-on-stop branch — py-spy emits all data only when the
-// record command exits, not incrementally over the duration window.
-func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	pctx.IsOneShotAgg = true
+// ManagesDuration marks py-spy as self-terminating after record --duration.
+func (*pythonCPUProfiler) ManagesDuration() {}
 
+func (p *pythonCPUProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	return newPythonCPUAggregator(pctx)
 }
 
 func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if err := validatePythonToolPath(pctx.ToolPath); err != nil {
+		return err
+	}
+	if err := validatePythonAggregationWindow(pctx.Duration, pctx.AggrInterval); err != nil {
+		return err
+	}
+
 	p.duration = pctx.Duration
 	p.freq = pctx.Freq
 	p.toolPath = pctx.ToolPath
 
 	pids, err := resolvePythonPids(pctx)
 	if err != nil {
+		return err
+	}
+	if err := validateResolvedPIDs("Python", pids); err != nil {
+		return err
+	}
+	if len(pctx.PIDs) > 0 {
+		if err := validateProcessExecutables("Python", "python", pids); err != nil {
+			return err
+		}
+		if err := validateExpectedExecPath(pids, pctx.ExecPath); err != nil {
+			return err
+		}
+	}
+	pids, err = pythonRootPids(pids, procutil.ParentPID)
+	if err != nil {
+		return err
+	}
+	if err := validateMaxProfilerProcesses("Python", pids, pctx.MaxProfilerProcesses); err != nil {
 		return err
 	}
 
@@ -80,23 +104,13 @@ func (p *pythonCPUProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
-	if pctx.PID() != 0 {
-		if pctx.ExecPath != "" {
-			if err := procutil.CheckExecPath(pctx.PID(), pctx.ExecPath); err != nil {
-				return nil, err
-			}
-		}
-
-		return []int{pctx.PID()}, nil
+	if len(pctx.PIDs) > 0 {
+		return pctx.PIDs, nil
 	}
 
-	pids, err := procutil.GetPidsFromContainer(pctx.ServerAddress, pctx.ExecPath, "python", pctx.ContainerID)
+	pids, err := procutil.GetPidsFromContainer(pctx.ExecPath, "python", pctx.ContainerID)
 	if err != nil {
 		return nil, err
-	}
-
-	if pctx.ToolLimit > 0 && len(pids) > pctx.ToolLimit {
-		return nil, fmt.Errorf("sampling failed: too many target Python processes (limit: %d, found: %d)", pctx.ToolLimit, len(pids))
 	}
 
 	if len(pids) == 0 {
@@ -113,7 +127,7 @@ func runPySpyAndEmit(ctx context.Context, dur, freq int, toolPath string, pids [
 
 	for i := range cmdResults {
 		cmdRes := &cmdResults[i]
-		targetPid := pids[i]
+		targetPid := cmdRes.Pid
 
 		if !cmdRes.Success {
 			errorMessages = append(errorMessages,
@@ -143,14 +157,18 @@ func runPySpy(ctx context.Context, pids []int, dur, freq int, pyspyPath string) 
 	freqStr := strconv.Itoa(freq)
 
 	return executil.ExecCmds(ctx, pids, pyspyBin, func(pid int) []string {
-		return []string{
-			"record",
-			"-d", durStr,
-			"-f", "raw",
-			"-r", freqStr,
-			"--subprocesses",
-			"-o", "/dev/stdout",
-			"-p", strconv.Itoa(pid),
-		}
+		return buildPySpyArgs(pid, durStr, freqStr)
 	})
+}
+
+func buildPySpyArgs(pid int, duration, frequency string) []string {
+	return []string{
+		"record",
+		"-d", duration,
+		"-f", "raw",
+		"-r", frequency,
+		"--subprocesses",
+		"-o", "/dev/stdout",
+		"-p", strconv.Itoa(pid),
+	}
 }

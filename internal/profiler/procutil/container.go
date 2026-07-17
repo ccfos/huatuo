@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,8 +24,8 @@ import (
 	"strings"
 
 	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
 
 	"github.com/shirou/gopsutil/process"
@@ -62,13 +62,13 @@ func IsProcessInContainer(pid int) (bool, error) {
 
 // GetPidsFromContainer returns the root PIDs of processes in containerID
 // that match langKeyword (e.g. "python", "java") and optionally execPath.
-func GetPidsFromContainer(bamaiSvr, execPath, langKeyword, containerID string) ([]int, error) {
-	c, err := container.GetContainerByID(bamaiSvr, containerID)
+func GetPidsFromContainer(execPath, langKeyword, containerID string) ([]int, error) {
+	cgroupPath, err := pod.ContainerCgroupPathByID(containerID)
 	if err != nil {
 		return nil, err
 	}
 
-	pidMap, err := findProcessesInCgroups(c.CgroupPath, langKeyword, execPath)
+	pidMap, err := findProcessesInCgroups(cgroupPath, langKeyword, execPath)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +196,11 @@ func readPPid(pid int) (int, error) {
 	}
 
 	return 0, fmt.Errorf("PPid not found for pid %d", pid)
+}
+
+// ParentPID returns the current parent process ID from procfs.
+func ParentPID(pid int) (int, error) {
+	return readPPid(pid)
 }
 
 func isInDifferentMountNS(pid int) (bool, error) {

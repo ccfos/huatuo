@@ -17,11 +17,11 @@ package context
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -31,6 +31,7 @@ import (
 	_ "huatuo-bamai/internal/profiler/output/raw"
 	psignal "huatuo-bamai/internal/profiler/signal"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/pkg/profiling"
 
 	"github.com/urfave/cli/v2"
 )
@@ -40,44 +41,41 @@ type ProfilerContext struct {
 	Cancel context.CancelFunc
 	Cli    *cli.Context
 
-	PIDs           []int
-	Freq           int
-	Duration       int
-	ToolLimit      int
-	AggrInterval   int
-	IsOneShotAgg   bool
-	CPUIDs         []int
-	CgroupID       uint64
-	ProcessGroupID int
-	LockMinWait    time.Duration
+	PIDs                 []int
+	Freq                 int
+	Duration             int
+	MaxProfilerProcesses int
+	AggrInterval         int
+	IsOneShotAgg         bool
+	CPUIDs               []int
+	CgroupID             uint64
+	ProcessGroupID       int
+	LockMinWait          time.Duration
 
-	ServerAddress string
-	OutputFormat  output.OutputFormat
-	OutputPath    string
-	ContainerID   string
-	Type          string
-	Language      string
-	ExecPath      string
-	Scope         string
-	ToolPath      string
-	LogBpfDebug   bool
-	MemoryMode    string
-	CgroupPath    string
-	LockMode      string
-	LockTypes     []string
-	Labels        map[string]string
+	ServerAddress             string
+	OutputFormat              output.OutputFormat
+	OutputPath                string
+	ContainerID               string
+	Type                      profiling.Type
+	Language                  profiling.Language
+	ExecPath                  string
+	Scope                     string
+	ToolPath                  string
+	LogBpfDebug               bool
+	MemoryMode                profiling.MemoryMode
+	PhysicalMemoryProbability uint
+	CgroupPath                string
+	LockMode                  string
+	LockTypes                 []string
+	Labels                    map[string]string
 
-	ExtraFlags      map[string]string
-	MetaData        map[string]string
-	CpuIdleMetaData map[string]int64
-	CpuSysMetaData  map[string]int64
+	TracerID string
 
 	ToolstreamClient *toolstream.Client
 }
 
 type TracerData struct {
 	MetricData any                   `json:"metric_data,omitempty"`
-	MetaData   any                   `json:"metadata,omitempty"`
 	FlameData  *profiler.ProfileData `json:"flamedata"`
 }
 
@@ -89,24 +87,37 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		cancel()
 		return nil, fmt.Errorf("failed to setup signals: %w", err)
 	}
+	var cancelOnce sync.Once
+	listenerDone := make(chan struct{})
+	cancelProfiler := func() {
+		cancelOnce.Do(func() {
+			psignal.StopSignals(sigCh)
+			cancel()
+			<-listenerDone
+		})
+	}
+	succeeded := false
+	var tsClient *toolstream.Client
+	defer func() {
+		if succeeded {
+			return
+		}
+		cancelProfiler()
+		if tsClient != nil {
+			_ = tsClient.Close()
+		}
+	}()
 
 	go func() {
-		sig, err := psignal.ListenSignalAndCancel(sigCh, cancel)
+		defer close(listenerDone)
+		sig, err := psignal.ListenSignalAndCancel(ctx, sigCh, cancel)
 		if err != nil {
 			fmt.Fprintf(logBuf, "[signal] error: %v\n", err)
 		}
-		fmt.Fprintf(logBuf, "[signal] caught signal: %s, canceling context\n", sig)
+		if sig != nil {
+			fmt.Fprintf(logBuf, "[signal] caught signal: %s, canceling context\n", sig)
+		}
 	}()
-
-	flagsMap, err := parseExtraFlagsString(cliCtx.StringSlice("flags"))
-	if err != nil {
-		return nil, err
-	}
-
-	metaData, err := parseExtraFlagsString(cliCtx.StringSlice("metadata"))
-	if err != nil {
-		return nil, err
-	}
 
 	labels, err := parseProfileLabels(cliCtx.StringSlice("label"))
 	if err != nil {
@@ -117,20 +128,9 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 			return nil, err
 		}
 	}
-
-	cpuidleMeta, err := parseExtraFlagsInt64(cliCtx.StringSlice("cpuidle-metadata"))
-	if err != nil {
-		return nil, err
-	}
-
-	cpusysMeta, err := parseExtraFlagsInt64(cliCtx.StringSlice("cpusys-metadata"))
-	if err != nil {
-		return nil, err
-	}
-
 	outputFormat := output.OutputFormat(cliCtx.String("output-format"))
 
-	tsClient, err := initToolstreamClient(cliCtx, outputFormat)
+	tsClient, err = initToolstreamClient(cliCtx, outputFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -147,120 +147,147 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	if err != nil {
 		return nil, err
 	}
+	typ, err := profiling.ParseType(cliCtx.String("type"))
+	if err != nil {
+		return nil, err
+	}
+	language, err := profiling.ParseLanguage(cliCtx.String("language"))
+	if err != nil {
+		return nil, err
+	}
+	mode := profiling.MemoryModeUnknown
+	if cliCtx.String("memory-mode") != "" {
+		mode, err = profiling.ParseMemoryMode(cliCtx.String("memory-mode"))
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	targetPID := 0
 	if len(pids) > 0 {
 		targetPID = pids[0]
 	}
 
-	scope, err := normalizeRequestedScope(cliCtx.String("scope"), cliCtx.IsSet("scope"), targetPID)
-	if err != nil {
-		return nil, err
-	}
-
+	scope := cliCtx.String("scope")
 	cgroupID := cliCtx.Uint64("cgroup-id")
 	cgroupPath := strings.TrimSpace(cliCtx.String("cgroup-path"))
-	if cgroupPath != "" && cgroupID == 0 {
-		var stat syscall.Stat_t
-		if err := syscall.Stat(cgroupPath, &stat); err != nil {
-			return nil, fmt.Errorf("stat cgroup path %q: %w", cgroupPath, err)
-		}
-		cgroupID = stat.Ino
-	}
-
 	processGroupID := cliCtx.Int("process-group-id")
-	if scope == ScopeProcessGroup && processGroupID == 0 && targetPID != 0 {
-		if len(pids) > 1 {
-			return nil, fmt.Errorf("scope process-group cannot derive one process group from multiple PIDs")
-		}
-		processGroupID, err = syscall.Getpgid(targetPID)
+	lockTypes := []string(nil)
+
+	implementation, _ := profiling.ImplementationFor(language)
+	if implementation == profiling.ImplementationNative {
+		scope, err = normalizeRequestedScope(scope, cliCtx.IsSet("scope"), targetPID)
 		if err != nil {
-			return nil, fmt.Errorf("resolve process group for pid %d: %w", targetPID, err)
+			return nil, err
+		}
+
+		if cgroupPath != "" && cgroupID == 0 {
+			var stat syscall.Stat_t
+			if err := syscall.Stat(cgroupPath, &stat); err != nil {
+				return nil, fmt.Errorf("stat cgroup path %q: %w", cgroupPath, err)
+			}
+			cgroupID = stat.Ino
+		}
+
+		if scope == ScopeProcessGroup && processGroupID == 0 && targetPID != 0 {
+			if len(pids) > 1 {
+				return nil, fmt.Errorf("scope process-group cannot derive one process group from multiple PIDs")
+			}
+			processGroupID, err = syscall.Getpgid(targetPID)
+			if err != nil {
+				return nil, fmt.Errorf("resolve process group for pid %d: %w", targetPID, err)
+			}
+		}
+
+		scope = inferImplicitScope(
+			scope,
+			cliCtx.IsSet("scope"),
+			targetPID,
+			processGroupID,
+			cgroupID,
+			cliCtx.String("container-id"),
+		)
+
+		labels[profiler.LabelProfilingScope] = scope
+		if containerID := cliCtx.String("container-id"); containerID != "" {
+			// Container CSS filtering is applied in addition to the selected scope,
+			// so preserve it as a dimension even for an explicit PID/TGID target.
+			labels[profiler.LabelContainerID] = containerID
+		}
+		switch scope {
+		case ScopePID:
+			if len(pids) > 0 {
+				labels[profiler.LabelPID] = formatPIDs(pids)
+			}
+		case ScopeTGID:
+			if len(pids) > 0 {
+				labels[profiler.LabelTGID] = formatPIDs(pids)
+			}
+		case ScopeCgroup:
+			if cgroupID != 0 {
+				labels[profiler.LabelCgroupID] = strconv.FormatUint(cgroupID, 10)
+			}
+			if cgroupPath != "" {
+				labels[profiler.LabelCgroupPath] = cgroupPath
+			}
+		case ScopeProcessGroup:
+			if processGroupID != 0 {
+				labels[profiler.LabelProcessGroupID] = strconv.Itoa(processGroupID)
+			}
 		}
 	}
 
-	scope = inferImplicitScope(
-		scope,
-		cliCtx.IsSet("scope"),
-		targetPID,
-		processGroupID,
-		cgroupID,
-		cliCtx.String("container-id"),
-	)
-
-	lockTypes, err := ParseLockTypes(cliCtx.String("lock-types"))
-	if err != nil {
-		return nil, err
-	}
-
-	labels[profiler.LabelProfilingScope] = scope
-	if containerID := cliCtx.String("container-id"); containerID != "" {
-		// Container CSS filtering is applied in addition to the selected scope,
-		// so preserve it as a dimension even for an explicit PID/TGID target.
-		labels[profiler.LabelContainerID] = containerID
-	}
-	switch scope {
-	case ScopePID:
-		if len(pids) > 0 {
-			labels[profiler.LabelPID] = formatPIDs(pids)
+	if typ == profiling.TypeLock {
+		lockTypes, err = ParseLockTypes(cliCtx.String("lock-types"))
+		if err != nil {
+			return nil, err
 		}
-	case ScopeTGID:
-		if len(pids) > 0 {
-			labels[profiler.LabelTGID] = formatPIDs(pids)
+		// lock_type is a queryable series label only when it identifies every
+		// sample in the profile. Multi-type profiles keep the real type in each
+		// stack prefix instead of publishing a misleading comma-joined label.
+		if len(lockTypes) == 1 {
+			labels[profiler.LabelLockType] = lockTypes[0]
 		}
-	case ScopeCgroup:
-		if cgroupID != 0 {
-			labels[profiler.LabelCgroupID] = strconv.FormatUint(cgroupID, 10)
-		}
-		if cgroupPath != "" {
-			labels[profiler.LabelCgroupPath] = cgroupPath
-		}
-	case ScopeProcessGroup:
-		if processGroupID != 0 {
-			labels[profiler.LabelProcessGroupID] = strconv.Itoa(processGroupID)
-		}
-	}
-	if cliCtx.String("type") == "lock" {
-		labels[profiler.LabelLockType] = strings.Join(lockTypes, ",")
 	}
 
-	return &ProfilerContext{
+	profilerContext := &ProfilerContext{
 		Ctx:    ctx,
-		Cancel: cancel,
+		Cancel: cancelProfiler,
 		Cli:    cliCtx,
 
-		PIDs:           pids,
-		Freq:           cliCtx.Int("freq"),
-		Duration:       cliCtx.Int("duration"),
-		ToolLimit:      cliCtx.Int("tool-limit"),
-		AggrInterval:   cliCtx.Int("aggr-interval"),
-		CPUIDs:         cpuIDs,
-		CgroupID:       cgroupID,
-		ProcessGroupID: processGroupID,
-		LockMinWait:    cliCtx.Duration("lock-min-wait"),
+		PIDs:                 pids,
+		Freq:                 cliCtx.Int("freq"),
+		Duration:             cliCtx.Int("duration"),
+		MaxProfilerProcesses: cliCtx.Int("max-concurrent-procs"),
+		AggrInterval:         cliCtx.Int("aggr-interval"),
+		CPUIDs:               cpuIDs,
+		CgroupID:             cgroupID,
+		ProcessGroupID:       processGroupID,
+		LockMinWait:          cliCtx.Duration("lock-min-wait"),
 
-		ServerAddress: cliCtx.String("server-address"),
-		Type:          cliCtx.String("type"),
-		Language:      cliCtx.String("language"),
-		ContainerID:   cliCtx.String("container-id"),
-		ExecPath:      cliCtx.String("exec-path"),
-		Scope:         scope,
-		ToolPath:      cliCtx.String("tool-path"),
-		LogBpfDebug:   cliCtx.Bool("log-bpf-debug"),
-		OutputPath:    cliCtx.String("output-path"),
-		OutputFormat:  outputFormat,
-		MemoryMode:    cliCtx.String("memory-mode"),
-		CgroupPath:    cgroupPath,
-		LockMode:      cliCtx.String("lock-mode"),
-		LockTypes:     lockTypes,
-		Labels:        labels,
+		ServerAddress:             cliCtx.String("huatuo-api-address"),
+		Type:                      typ,
+		Language:                  language,
+		ContainerID:               cliCtx.String("container-id"),
+		ExecPath:                  cliCtx.String("binary-match-path"),
+		Scope:                     scope,
+		ToolPath:                  cliCtx.String("tool-path"),
+		LogBpfDebug:               cliCtx.Bool("log-bpf-debug"),
+		OutputPath:                cliCtx.String("output-path"),
+		OutputFormat:              outputFormat,
+		MemoryMode:                mode,
+		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
+		CgroupPath:                cgroupPath,
+		LockMode:                  cliCtx.String("lock-mode"),
+		LockTypes:                 lockTypes,
+		Labels:                    labels,
 
-		MetaData:        metaData,
-		ExtraFlags:      flagsMap,
-		CpuSysMetaData:  cpusysMeta,
-		CpuIdleMetaData: cpuidleMeta,
+		TracerID: cliCtx.String("tracer-id"),
 
 		ToolstreamClient: tsClient,
-	}, nil
+	}
+	succeeded = true
+	return profilerContext, nil
 }
 
 func formatPIDs(pids []int) string {
@@ -355,81 +382,8 @@ func ParseLockTypes(raw string) ([]string, error) {
 	return result, nil
 }
 
-func MapToStructByJSON[T any](m map[string]int64) (T, error) {
-	var meta T
-
-	data, err := json.Marshal(m)
-	if err != nil {
-		return meta, err
-	}
-
-	err = json.Unmarshal(data, &meta)
-	return meta, err
-}
-
-type flagSegment struct {
-	key   string
-	value string
-}
-
-func parseFlagSegments(flagList []string) ([]flagSegment, error) {
-	var segments []flagSegment
-
-	for _, raw := range flagList {
-		for _, segment := range strings.Split(raw, ",") {
-			segment = strings.TrimSpace(segment)
-			if segment == "" {
-				continue
-			}
-
-			clean := strings.TrimLeft(segment, "-")
-
-			if strings.Contains(clean, "=") {
-				parts := strings.SplitN(clean, "=", 2)
-				key := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
-				if key != "" {
-					segments = append(segments, flagSegment{key: key, value: value})
-				}
-
-				continue
-			}
-
-			parts := strings.Fields(clean)
-			if len(parts) == 2 {
-				key := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
-				if key != "" {
-					segments = append(segments, flagSegment{key: key, value: value})
-				}
-
-				continue
-			}
-
-			return nil, fmt.Errorf("invalid extra flag format: %q (expected --key=value or --key value)", segment)
-		}
-	}
-
-	return segments, nil
-}
-
-func parseExtraFlagsString(flagList []string) (map[string]string, error) {
-	segments, err := parseFlagSegments(flagList)
-	if err != nil {
-		return nil, err
-	}
-
-	flags := make(map[string]string, len(segments))
-	for _, s := range segments {
-		flags[s.key] = s.value
-	}
-
-	return flags, nil
-}
-
-// parseProfileLabels keeps commas and equals signs in label values. The CLI
-// disables its slice separator globally, while the older extra-flag parsers
-// continue to implement their own comma-separated syntax.
+// parseProfileLabels keeps commas and equals signs in label values because the
+// CLI disables its slice separator globally.
 func parseProfileLabels(flagList []string) (map[string]string, error) {
 	labels := make(map[string]string, len(flagList))
 	for _, raw := range flagList {
@@ -444,25 +398,6 @@ func parseProfileLabels(flagList []string) (map[string]string, error) {
 		labels[name] = strings.TrimSpace(parts[1])
 	}
 	return labels, nil
-}
-
-func parseExtraFlagsInt64(flagList []string) (map[string]int64, error) {
-	segments, err := parseFlagSegments(flagList)
-	if err != nil {
-		return nil, err
-	}
-
-	flags := make(map[string]int64, len(segments))
-	for _, s := range segments {
-		iValue, err := strconv.Atoi(s.value)
-		if err != nil {
-			return nil, fmt.Errorf("invalid int64 flag value for %q: %w", s.key, err)
-		}
-
-		flags[s.key] = int64(iValue)
-	}
-
-	return flags, nil
 }
 
 func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*toolstream.Client, error) {

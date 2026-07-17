@@ -106,5 +106,7 @@ unshare --uts --mount bash -c '
 		done
 	done
 
+	# Failed runs exit earlier and retain this root with their artifacts.
+	rmdir -- "${HUATUO_BAMAI_TEST_TMPDIR}"
 	log_info "🎉🎉 all integration tests passed."
 ' integration-runner "${REQUESTED_TEST}" "${REQUESTED_REPEAT_COUNT}"
