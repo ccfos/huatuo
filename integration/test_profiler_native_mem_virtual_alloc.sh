@@ -86,6 +86,7 @@ log_info "running profiler for ${PROFILER_DURATION}s with --memory-mode virtual_
 	--type memory \
 	--language c \
 	--memory-mode virtual_alloc \
+	--thread-group \
 	--pid "${TARGET_PID}" \
 	--duration "${PROFILER_DURATION}" \
 	--output-format collapsed \

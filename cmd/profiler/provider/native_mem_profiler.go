@@ -108,11 +108,6 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	p.probability = probability
 
-	traceThreads, err := resolveScope(pctx.Scope)
-	if err != nil {
-		return err
-	}
-
 	log.Info("starting native memory profiler mode: ", p.internalMode)
 
 	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemMemory)
@@ -120,7 +115,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	cfg, err := newBpfLoadConfig(p.internalMode, pctx.PID(), cssAddr, traceThreads, p.probability)
+	cfg, err := newBpfLoadConfig(p.internalMode, pctx.PID(), cssAddr, pctx.ThreadGroup, p.probability)
 	if err != nil {
 		return err
 	}

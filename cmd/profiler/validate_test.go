@@ -258,12 +258,13 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			wantError: "--log-bpf-debug is supported only by native profilers",
 		},
 		{
-			name:      "Java scope",
+			name:      "Java thread group",
 			language:  "java",
 			typ:       "cpu",
-			args:      []string{"--scope", "thread-group"},
-			wantError: "--scope=thread-group is supported only by native memory profiling",
+			args:      []string{"--thread-group"},
+			wantError: "--thread-group is supported only by native memory profiling",
 		},
+		{name: "native memory thread group", language: "c", typ: "memory", args: []string{"--thread-group"}},
 		{
 			name:      "native exec path",
 			language:  "c",

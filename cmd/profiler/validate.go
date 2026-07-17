@@ -231,12 +231,6 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 
-	scope := ctx.String("scope")
-	validScopes := map[string]bool{"thread": true, "thread-group": true, "process-group": true}
-	if !validScopes[scope] {
-		return fmt.Errorf("unsupported scope: %s (allowed: thread, thread-group, process-group)", scope)
-	}
-
 	if toolPath := ctx.String("tool-path"); toolPath != "" {
 		info, err := os.Stat(toolPath)
 		if err != nil {
@@ -283,8 +277,8 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.Bool("log-bpf-debug") && !native {
 		return fmt.Errorf("--log-bpf-debug is supported only by native profilers")
 	}
-	if ctx.String("scope") != "thread" && !nativeMemory {
-		return fmt.Errorf("--scope=%s is supported only by native memory profiling", ctx.String("scope"))
+	if ctx.Bool("thread-group") && !nativeMemory {
+		return fmt.Errorf("--thread-group is supported only by native memory profiling")
 	}
 	if ctx.String("binary-match-path") != "" && native {
 		return fmt.Errorf("--binary-match-path is not supported by native profilers")
