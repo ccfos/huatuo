@@ -532,10 +532,7 @@ func kubeletConfigCacheUpdate(ctx *ManagerCtx) error {
 
 	config, err = kubeletConfigFileDefault()
 	if err != nil {
-		panic(fmt.Sprintf(
-			"we cannot find any cgroup driver of kubelet after requesting configz and default files: %v",
-			err,
-		))
+		return fmt.Errorf("we cannot find any cgroup driver of kubelet after requesting configz and default files: %w", err)
 	}
 
 	return nil
