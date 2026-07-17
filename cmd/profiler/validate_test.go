@@ -268,8 +268,8 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			name:      "native exec path",
 			language:  "c",
 			typ:       "cpu",
-			args:      []string{"--exec-path", "/bin/app"},
-			wantError: "--exec-path is not supported by native profilers",
+			args:      []string{"--binary-match-path", "/bin/app"},
+			wantError: "--binary-match-path is not supported by native profilers",
 		},
 		{
 			name:      "Python physical memory probability",

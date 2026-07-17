@@ -50,7 +50,7 @@ func mainAction(ctx *cli.Context) error {
 
 	var targetCssAddr uint64
 	if containerID := ctx.String("container-id"); containerID != "" {
-		c, err := container.GetContainerByID(ctx.String("server-address"), containerID)
+		c, err := container.GetContainerByID(ctx.String("huatuo-api-address"), containerID)
 		if err != nil {
 			return err
 		}
@@ -134,9 +134,9 @@ func main() {
 			Usage: "Tool duration(s)",
 		},
 		&cli.StringFlag{
-			Name:  "server-address",
+			Name:  "huatuo-api-address",
 			Value: "127.0.0.1:19704",
-			Usage: "huatuo-bamai server address",
+			Usage: "HuaTuo API address used to resolve container metadata",
 		},
 		&cli.BoolFlag{
 			Name:  "tui",

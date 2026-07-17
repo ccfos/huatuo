@@ -286,8 +286,8 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.String("scope") != "thread" && !nativeMemory {
 		return fmt.Errorf("--scope=%s is supported only by native memory profiling", ctx.String("scope"))
 	}
-	if ctx.String("exec-path") != "" && native {
-		return fmt.Errorf("--exec-path is not supported by native profilers")
+	if ctx.String("binary-match-path") != "" && native {
+		return fmt.Errorf("--binary-match-path is not supported by native profilers")
 	}
 	if ctx.IsSet("physical-memory-probability") {
 		physicalMemory := nativeMemory &&

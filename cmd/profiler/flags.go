@@ -122,12 +122,12 @@ var appFlags = []cli.Flag{
 		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
 	},
 	&cli.StringFlag{
-		Name:  "exec-path",
-		Usage: "Executable path of target process",
+		Name:  "binary-match-path",
+		Usage: "Binary path used to match target processes",
 	},
 	&cli.StringFlag{
-		Name:  "server-address",
-		Usage: "Huatuo profiling server address",
+		Name:  "huatuo-api-address",
+		Usage: "HuaTuo API address used to resolve container metadata",
 		Value: "127.0.0.1:19704",
 	},
 	&cli.StringFlag{

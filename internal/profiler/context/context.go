@@ -156,11 +156,11 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		AggrInterval:         cliCtx.Int("aggr-interval"),
 		CPUIDs:               cpuIDs,
 
-		ServerAddress:             cliCtx.String("server-address"),
+		ServerAddress:             cliCtx.String("huatuo-api-address"),
 		Type:                      typ,
 		Language:                  language,
 		ContainerID:               cliCtx.String("container-id"),
-		ExecPath:                  cliCtx.String("exec-path"),
+		ExecPath:                  cliCtx.String("binary-match-path"),
 		Scope:                     cliCtx.String("scope"),
 		ToolPath:                  cliCtx.String("tool-path"),
 		LogBpfDebug:               cliCtx.Bool("log-bpf-debug"),

@@ -210,7 +210,7 @@ func fillCPUTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetExecPath, target
 	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", string(profiling.TypeCPU))
 
 	if targetExecPath != "" {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--exec-path", targetExecPath)
+		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--binary-match-path", targetExecPath)
 	}
 
 	language, err := profiling.ParseLanguage(targetProcessLanguage)
