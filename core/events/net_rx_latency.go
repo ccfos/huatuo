@@ -111,8 +111,21 @@ func (e *netRcvPerfEvent) addrs() (family, saddr, daddr string) {
 
 var latStageNames = []string{
 	"RX_STAGE_NETIF",
-	"RX_STAGE_TCPV4",
+	"RX_STAGE_TCP",
 	"RX_STAGE_USERCOPY",
+}
+
+// lookupLatStage resolves the stage name and per-stage threshold for a BPF
+// lat_stage index. It returns ok=false when the index is out of range for
+// either slice, so a corrupt or unexpected lat_stage value skips the event
+// instead of panicking on an out-of-range index (the value arrives straight
+// from perf data). Shared by the RX (latStageNames) and TX (txStageNames)
+// decoders.
+func lookupLatStage(stage uint8, names []string, thresholds []uint64) (name string, threshold uint64, ok bool) {
+	if int(stage) >= len(names) || int(stage) >= len(thresholds) {
+		return "", 0, false
+	}
+	return names[stage], thresholds[stage], true
 }
 
 func init() {
@@ -129,16 +142,16 @@ func newNetRcvLat() (*tracing.EventTracingAttr, error) {
 
 func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	rxlatThreshNetif := cfg.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
-	rxlatThreshTcpv4 := cfg.NetRxLatency.Driver2TCP          // ms, before RPS to TCP recv(tcp_v4_rcv)
+	rxlatThreshTcp := cfg.NetRxLatency.Driver2TCP            // ms, before RPS to TCP recv(tcp_v4_rcv)
 	rxlatThreshUsercopy := cfg.NetRxLatency.Driver2Userspace // ms, before RPS to user recv(skb_copy_datagram_iovec)
 
-	if rxlatThreshNetif == 0 || rxlatThreshTcpv4 == 0 || rxlatThreshUsercopy == 0 {
-		return fmt.Errorf("net_rx_latency threshold [%v %v %v]ms invalid", rxlatThreshNetif, rxlatThreshTcpv4, rxlatThreshUsercopy)
+	if rxlatThreshNetif == 0 || rxlatThreshTcp == 0 || rxlatThreshUsercopy == 0 {
+		return fmt.Errorf("net_rx_latency threshold [%v %v %v]ms invalid", rxlatThreshNetif, rxlatThreshTcp, rxlatThreshUsercopy)
 	}
 
-	log.Debugf("net_rx_latency start, latency threshold [%v %v %v]ms", rxlatThreshNetif, rxlatThreshTcpv4, rxlatThreshUsercopy)
+	log.Debugf("net_rx_latency start, latency threshold [%v %v %v]ms", rxlatThreshNetif, rxlatThreshTcp, rxlatThreshUsercopy)
 
-	latThresholds := []uint64{rxlatThreshNetif, rxlatThreshTcpv4, rxlatThreshUsercopy}
+	latThresholds := []uint64{rxlatThreshNetif, rxlatThreshTcp, rxlatThreshUsercopy}
 
 	monoWallOffset, err := timeutil.MonoToRealOffset()
 	if err != nil {
@@ -159,7 +172,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	args := map[string]any{
 		"mono_wall_offset":      monoWallOffset,
 		"rxlat_thresh_netif":    rxlatThreshNetif * 1000 * 1000,
-		"rxlat_thresh_tcpv4":    rxlatThreshTcpv4 * 1000 * 1000,
+		"rxlat_thresh_tcp":      rxlatThreshTcp * 1000 * 1000,
 		"rxlat_thresh_usercopy": rxlatThreshUsercopy * 1000 * 1000,
 	}
 	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), args)
@@ -219,9 +232,12 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			where := latStageNames[pd.LatStage]
+			where, latThreshold, stageOK := lookupLatStage(pd.LatStage, latStageNames, latThresholds)
+			if !stageOK {
+				log.Warnf("net_rx_latency: unknown lat_stage %d, skipping", pd.LatStage)
+				continue
+			}
 			lat := float64(pd.Latency) / 1000 / 1000 // ms
-			latThreshold := latThresholds[pd.LatStage]
 			state := packet.TCPStateName(pd.TCPState)
 			addrFamily, saddr, daddr := pd.addrs()
 			sport, dport := netutil.Ntohs(pd.TCPSport), netutil.Ntohs(pd.TCPDport)
