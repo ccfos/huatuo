@@ -65,7 +65,7 @@ func TestReadNetRetransmitPerfEventIPv4(t *testing.T) {
 	// netutil.Ntohs reverses them. 1234 = 0x04d2 → BE bytes 04 d2.
 	buf := buildRetransmitBuf(
 		1_000_000, 100<<32, 0xdeadbeef, 0, 1500,
-		4026531840, 0x12345678, 0x04d2, 0x0050, afINET, 1,
+		4026531840, 0x12345678, 0x04d2, 0x0050, 2, 1, // AF_INET
 		saddr, daddr, "curl", "eth0")
 
 	pd, err := readNetRetransmitPerfEvent(bytes.NewReader(buf))
@@ -101,7 +101,7 @@ func TestReadNetRetransmitPerfEventIPv6(t *testing.T) {
 
 	buf := buildRetransmitBuf(
 		2_000_000, 0, 0, 0, 0,
-		0, 0, 0, 0, afINET6, 1,
+		0, 0, 0, 0, 10, 1, // AF_INET6
 		saddr, daddr, "", "-")
 
 	pd, err := readNetRetransmitPerfEvent(bytes.NewReader(buf))

@@ -207,12 +207,15 @@ func resolveRetransmitContainer(pd *netRetransmitPerfEvent) string {
 }
 
 func (e *netRetransmitPerfEvent) addrs() (family, saddr, daddr string) {
-	if e.AddrFamily == afINET6 {
-		return addrFamilyV6,
-			netutil.Inetv6Ntop(e.TCPSaddr).String(),
-			netutil.Inetv6Ntop(e.TCPDaddr).String()
+	// AF_INET6 = 10, AF_INET = 2 (bpf/include/vmlinux_net.h). Inlined as
+	// literals so this file does not depend on net_rx_latency.go's afINET*
+	// consts and stays self-contained on main.
+	if e.AddrFamily == 10 { // AF_INET6
+		return "ipv6",
+			net.IP(e.TCPSaddr[:]).String(),
+			net.IP(e.TCPDaddr[:]).String()
 	}
-	return addrFamilyV4,
+	return "ipv4",
 		net.IPv4(e.TCPSaddr[0], e.TCPSaddr[1], e.TCPSaddr[2], e.TCPSaddr[3]).String(),
 		net.IPv4(e.TCPDaddr[0], e.TCPDaddr[1], e.TCPDaddr[2], e.TCPDaddr[3]).String()
 }
