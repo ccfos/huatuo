@@ -46,10 +46,34 @@ type DropWatchTracing struct {
 	PacketLen           uint32         `json:"packet_len"`
 	Layers              *packet.Packet `json:"layers,omitempty"`
 	Stack               string         `json:"stack"`
+
+	// DropLayer annotates where in the network path the packet was lost, so
+	// kernel dropwatch events (protocol/driver stack frames) and hardware
+	// rx_dropped aggregates from netdev_hw can be correlated on one timeline.
+	// See the DropLayer* values below. Omitempty keeps legacy events unchanged.
+	DropLayer string `json:"drop_layer,omitempty"`
+
+	// DropCount carries the number of packets lost for aggregate events that
+	// do not represent a single skb — today only the netdev_hw hardware-drop
+	// event (DropLayer == DropLayerHardware) sets it to the per-interval delta.
+	// Per-packet kernel dropwatch events leave it unset.
+	DropCount uint64 `json:"drop_count,omitempty"`
 }
 
 // Values for DropWatchTracing.Source.
 const (
-	DropSourceTypesEvent = "events"
-	DropSourceTypesTool  = "tools"
+	DropSourceTypesEvent  = "events"
+	DropSourceTypesTool   = "tools"
+	DropSourceTypesMetric = "metrics" // hardware rx_dropped aggregate from netdev_hw
+)
+
+// Values for DropWatchTracing.DropLayer — the network-path layer where a drop
+// happened. Hardware drops (counted by the NIC/driver before reaching the
+// stack) never reach the kfree_skb tracepoint, so they are emitted by netdev_hw
+// directly; kernel drops are classified from the drop-location stack frame.
+const (
+	DropLayerHardware = "hardware" // NIC/driver drop counted via rx_dropped (netdev_hw)
+	DropLayerDriver   = "driver"   // link-layer ingress: netif_receive_skb, napi, qdisc...
+	DropLayerProtocol = "protocol" // L3/L4 stack: ip, ipv6, tcp, udp, icmp, arp, socket...
+	DropLayerUnknown  = "unknown"  // drop location could not be classified
 )

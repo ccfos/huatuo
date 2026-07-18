@@ -24,6 +24,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/log"
@@ -32,6 +33,7 @@ import (
 	"huatuo-bamai/internal/utils/parseutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/pkg/types"
 
 	"github.com/safchain/ethtool"
 )
@@ -43,6 +45,10 @@ type netdevHw struct {
 	prog                  bpf.BPF
 	running               atomic.Bool
 	ifaceSwDroppedCounter map[string]uint64
+	// ifaceHwDroppedCounter holds the last emitted cumulative hardware drop
+	// count per interface, used to derive the per-interval delta emitted as a
+	// dropwatch tracing event (see emitHwDropDelta).
+	ifaceHwDroppedCounter map[string]uint64
 	ifaceList             map[string]*ethtool.DrvInfo
 	sysNetPath            string
 	mutex                 sync.Mutex
@@ -71,6 +77,7 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 
 	ifaceList := make(map[string]*ethtool.DrvInfo)
 	ifaceSwCounter := make(map[string]uint64)
+	ifaceHwCounter := make(map[string]uint64)
 
 	log.Infof("processing interfaces: %v", ifaces)
 	for _, iface := range ifaces {
@@ -88,6 +95,9 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 
 		ifaceList[iface] = &drv
 		ifaceSwCounter[iface] = 0
+		// ifaceHwCounter is intentionally NOT pre-populated: the first
+		// emitHwDropDelta sample baselines the cumulative counter so the
+		// boot-time accumulation is not mistaken for fresh drops.
 		log.Debugf("support iface %s [%s] hardware rx_dropped", iface, drv.Driver)
 	}
 
@@ -95,6 +105,7 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 		TracingData: &netdevHw{
 			ifaceList:             ifaceList,
 			ifaceSwDroppedCounter: ifaceSwCounter,
+			ifaceHwDroppedCounter: ifaceHwCounter,
 			sysNetPath:            sysfs.Path("class/net"),
 		},
 		Interval: 10,
@@ -142,9 +153,59 @@ func (netdev *netdevHw) Update() ([]*metric.Data, error) {
 			"count of packets dropped at hardware level",
 			map[string]string{"device": iface, "driver": drv.Driver},
 		))
+
+		// Correlate hardware drops with kernel dropwatch events: emit the
+		// per-interval delta as a dropwatch tracing event tagged
+		// DropLayerHardware so both sources share one schema/stream and can be
+		// sliced by drop_layer on one timeline. Must be called under mutex.
+		netdev.emitHwDropDelta(iface, count)
 	}
 
 	return data, nil
+}
+
+// emitHwDropDelta tracks the cumulative hardware-drop counter for iface and,
+// when it grows, emits a dropwatch tracing event carrying the delta. The first
+// observed sample baselines the counter (no event) so the boot-time cumulative
+// count is not mistaken for fresh drops. A decrease (driver reset / counter
+// wraparound) is treated as a fresh baseline via hwDropDelta.
+func (netdev *netdevHw) emitHwDropDelta(iface string, cur uint64) {
+	prev, exists := netdev.ifaceHwDroppedCounter[iface]
+	netdev.ifaceHwDroppedCounter[iface] = cur
+	if !exists {
+		return // first sample: baseline, nothing to report
+	}
+
+	delta := hwDropDelta(prev, cur)
+	if delta == 0 {
+		return
+	}
+
+	ev := &types.DropWatchTracing{
+		ObservedTimestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Source:            types.DropSourceTypesMetric,
+		Type:              "hw_drop",
+		NetdevName:        iface,
+		DropLayer:         types.DropLayerHardware,
+		DropCount:         delta,
+	}
+	if err := tracing.Save(&tracing.WriteRequest{
+		TracerName: "dropwatch",
+		TracerTime: time.Now(),
+		TracerData: ev,
+	}); err != nil {
+		log.Warnf("netdev_hw: save hardware drop event for %s: %v", iface, err)
+	}
+}
+
+// hwDropDelta returns the positive difference between two cumulative hardware
+// drop counters. A decrease (counter reset or wraparound) reports the current
+// value as-is so a reset never surfaces as a huge spurious delta.
+func hwDropDelta(prev, cur uint64) uint64 {
+	if cur >= prev {
+		return cur - prev
+	}
+	return cur
 }
 
 func (netdev *netdevHw) readSysNetclassStat(iface, stat string) (uint64, error) {
