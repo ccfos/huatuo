@@ -61,6 +61,11 @@ endif
 
 IMAGE := $(IMAGE_REPO):$(IMAGE_TAG)
 
+COMPOSE_DEV := docker compose \
+	--project-directory $(ROOT_DIR)/build/docker \
+	-f $(ROOT_DIR)/build/docker/docker-compose.yml \
+	-f $(ROOT_DIR)/build/docker/docker-compose.dev.yml
+
 BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
 
 all: bpf-build build sync
@@ -98,6 +103,14 @@ docker-build:
 
 docker-clean:
 	@docker rmi $(IMAGE) || true
+
+compose-dev-up:
+	@$(COMPOSE_DEV) build huatuo-apiserver
+	@$(COMPOSE_DEV) up
+
+compose-dev-down:
+	@$(COMPOSE_DEV) down --remove-orphans --volumes
+	@docker image rm huatuo/huatuo-bamai:dev || true
 
 check: import-fmt golangci-lint
 	@git diff --exit-code
@@ -144,4 +157,4 @@ integration: all
 e2e: all
 	@bash e2e/run.sh
 
-.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean
+.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

@@ -1,0 +1,9 @@
+.git
+_output
+*.folded
+*.log
+*.o
+.DS_Store
+.idea
+.vscode
+coverage.*

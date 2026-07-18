@@ -1,0 +1,12 @@
+services:
+  huatuo-apiserver:
+    image: huatuo/huatuo-bamai:dev
+    pull_policy: never
+    build:
+      context: ../..
+      dockerfile: Dockerfile.devel
+      target: dev-runtime
+
+  huatuo-bamai:
+    image: huatuo/huatuo-bamai:dev
+    pull_policy: never
