@@ -62,6 +62,12 @@ export PYTHON_PROFILER_TOOL_PATH
 HUATUO_BAMAI_E2E_ARGS_STR="${HUATUO_BAMAI_ARGS_E2E[*]}"
 export HUATUO_BAMAI_E2E_ARGS_STR
 
+# Initialized empty so the net latency integration tests' save/restore of this
+# var works on the first run under `set -u` (the test reads its current value
+# before overwriting it). Mirrors HUATUO_BAMAI_E2E_ARGS_STR above.
+HUATUO_BAMAI_INTEGRATION_ARGS_STR=""
+export HUATUO_BAMAI_INTEGRATION_ARGS_STR
+
 # k8s: metadata.name == pod-name, ct-hostname
 # huatuo-bamai: name == ct-hostname, hostname == pod-name == metadata.name
 BUSINESS_POD_NS="default"
