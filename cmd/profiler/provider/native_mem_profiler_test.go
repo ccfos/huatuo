@@ -34,10 +34,11 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 	defer restore()
 
 	tests := []struct {
-		name       string
-		mode       profiling.MemoryMode
-		wantObject string
-		wantAttach []bpf.AttachOption
+		name            string
+		mode            profiling.MemoryMode
+		wantObject      string
+		wantAttach      []bpf.AttachOption
+		wantProbability bool
 	}{
 		{
 			name:       "virtual alloc",
@@ -48,18 +49,20 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			},
 		},
 		{
-			name:       "physical usage",
-			mode:       profiling.MemoryModePhysicalUsage,
-			wantObject: "native_physical_usage.o",
+			name:            "physical usage",
+			mode:            profiling.MemoryModePhysicalUsage,
+			wantObject:      "native_physical_usage.o",
+			wantProbability: true,
 			wantAttach: []bpf.AttachOption{
 				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
 				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
 			},
 		},
 		{
-			name:       "physical alloc",
-			mode:       profiling.MemoryModePhysicalAlloc,
-			wantObject: "native_physical_alloc.o",
+			name:            "physical alloc",
+			mode:            profiling.MemoryModePhysicalAlloc,
+			wantObject:      "native_physical_alloc.o",
+			wantProbability: true,
 			wantAttach: []bpf.AttachOption{
 				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
 			},
@@ -69,9 +72,9 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := newBpfLoadConfig(tc.mode, 123, 456, true, 42)
+			cfg, err := newNativeMemoryBPFLoadConfig(tc.mode, 123, 456, true, 42)
 			if err != nil {
-				t.Fatalf("newBpfLoadConfig() error = %v", err)
+				t.Fatalf("newNativeMemoryBPFLoadConfig() error = %v", err)
 			}
 
 			if cfg.ObjectFile != tc.wantObject {
@@ -80,6 +83,14 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 
 			if !reflect.DeepEqual(cfg.AttachOpts, tc.wantAttach) {
 				t.Fatalf("AttachOpts = %#v, want %#v", cfg.AttachOpts, tc.wantAttach)
+			}
+
+			probability, ok := cfg.Constants["profiler_sampling_prob"]
+			if ok != tc.wantProbability {
+				t.Fatalf("profiler_sampling_prob present = %t, want %t", ok, tc.wantProbability)
+			}
+			if tc.wantProbability && probability != uint8(42) {
+				t.Fatalf("profiler_sampling_prob = %v, want 42", probability)
 			}
 		})
 	}
@@ -96,9 +107,9 @@ func TestNewBpfLoadConfigThreadFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := newBpfLoadConfig(profiling.MemoryModeVirtualAlloc, 123, 0, tt.threadGroup, 100)
+			cfg, err := newNativeMemoryBPFLoadConfig(profiling.MemoryModeVirtualAlloc, 123, 0, tt.threadGroup, 100)
 			if err != nil {
-				t.Fatalf("newBpfLoadConfig() error = %v", err)
+				t.Fatalf("newNativeMemoryBPFLoadConfig() error = %v", err)
 			}
 			if got := cfg.Constants["profiler_filter_threads"]; got != tt.threadGroup {
 				t.Fatalf("profiler_filter_threads = %v, want %v", got, tt.threadGroup)

@@ -30,6 +30,14 @@ import (
 	pcontext "huatuo-bamai/internal/profiler/context"
 )
 
+func newNativeBPFConstants(pid int, cssAddr uint64, threadGroup bool) map[string]any {
+	return map[string]any{
+		"profiler_filter_css":     cssAddr,
+		"profiler_filter_pid":     uint32(pid),
+		"profiler_filter_threads": threadGroup,
+	}
+}
+
 // resolveContainerCgroupCss retrieves the cgroup subsystem state (CSS) address for a container.
 // It first attempts to get CSS via huatuo-bamai API, and falls back to local BPF-based
 // method if the API is unavailable. The subsysName parameter specifies the cgroup subsystem

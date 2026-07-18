@@ -115,7 +115,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	cfg, err := newBpfLoadConfig(p.internalMode, pctx.PID(), cssAddr, pctx.ThreadGroup, p.probability)
+	cfg, err := newNativeMemoryBPFLoadConfig(p.internalMode, pctx.PID(), cssAddr, pctx.ThreadGroup, p.probability)
 	if err != nil {
 		return err
 	}
@@ -141,8 +141,8 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	return nil
 }
 
-// bpfLoadConfig holds the configuration needed to load and attach a BPF program.
-type bpfLoadConfig struct {
+// nativeMemoryBPFLoadConfig holds the configuration needed to load and attach a BPF program.
+type nativeMemoryBPFLoadConfig struct {
 	// ObjectFile is the BPF object file name (e.g., "native_virtual_alloc.o").
 	ObjectFile string
 	// Constants are the constant values to be substituted in the BPF program.
@@ -151,18 +151,16 @@ type bpfLoadConfig struct {
 	AttachOpts []bpf.AttachOption
 }
 
-// newBpfLoadConfig creates a BPF load configuration based on the profiler mode.
+// newNativeMemoryBPFLoadConfig creates a BPF load configuration based on the profiler mode.
 // It returns the appropriate object file, constants, and attachment options for the given mode.
-func newBpfLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64, threadGroup bool, probability uint) (*bpfLoadConfig, error) {
+func newNativeMemoryBPFLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64, threadGroup bool, probability uint) (*nativeMemoryBPFLoadConfig, error) {
+	constants := newNativeBPFConstants(pid, cssAddr, threadGroup)
+
 	switch internalMode {
 	case profiling.MemoryModeVirtualAlloc:
-		return &bpfLoadConfig{
+		return &nativeMemoryBPFLoadConfig{
 			ObjectFile: "native_virtual_alloc.o",
-			Constants: map[string]any{
-				"profiler_filter_pid":     uint32(pid),
-				"profiler_filter_css":     cssAddr,
-				"profiler_filter_threads": threadGroup,
-			},
+			Constants:  constants,
 			AttachOpts: []bpf.AttachOption{
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
 			},
@@ -173,14 +171,10 @@ func newBpfLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64
 			return nil, err
 		}
 
-		return &bpfLoadConfig{
+		constants["profiler_sampling_prob"] = uint8(probability)
+		return &nativeMemoryBPFLoadConfig{
 			ObjectFile: "native_physical_usage.o",
-			Constants: map[string]any{
-				"profiler_filter_pid":     uint32(pid),
-				"profiler_filter_css":     cssAddr,
-				"profiler_filter_threads": threadGroup,
-				"profiler_sampling_prob":  uint8(probability),
-			},
+			Constants:  constants,
 			AttachOpts: attachOpts,
 		}, nil
 	case profiling.MemoryModePhysicalAlloc:
@@ -189,14 +183,10 @@ func newBpfLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64
 			return nil, err
 		}
 
-		return &bpfLoadConfig{
+		constants["profiler_sampling_prob"] = uint8(probability)
+		return &nativeMemoryBPFLoadConfig{
 			ObjectFile: "native_physical_alloc.o",
-			Constants: map[string]any{
-				"profiler_filter_pid":     uint32(pid),
-				"profiler_filter_css":     cssAddr,
-				"profiler_filter_threads": threadGroup,
-				"profiler_sampling_prob":  uint8(probability),
-			},
+			Constants:  constants,
 			AttachOpts: []bpf.AttachOption{attachOpt},
 		}, nil
 	}

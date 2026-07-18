@@ -46,7 +46,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.BoolFlag{
 		Name:  "thread-group",
-		Usage: "Profile the target thread group; supported only by native memory profiling",
+		Usage: "Profile the target thread group; supported only by native profiling",
 	},
 	&cli.IntFlag{
 		Name:    "freq",

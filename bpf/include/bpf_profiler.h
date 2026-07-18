@@ -39,55 +39,24 @@ static volatile const u8 profiler_sampling_prob = 100;
 static volatile const u64 profiler_idle_class_addr = 0;
 
 /*
- * profiler_should_trace - check if current process should be traced.
+ * profiler_should_trace - check if current process and cgroup should be traced.
  * Returns true if should trace, false otherwise.
  */
-static __always_inline bool profiler_should_trace(u64 pid_tgid)
+static __always_inline bool profiler_should_trace(u64 pid_tgid, u64 css)
 {
 	u32 tgid = pid_tgid >> 32;
 	u32 pid = pid_tgid & 0xffffffffUL;
 
-	if (profiler_filter_css != 0) {
-		u64 css = current_task_memory_css_addr();
-		if (css != profiler_filter_css)
-			return false;
-	}
-
-	if (profiler_filter_pid != 0) {
-		if (profiler_filter_threads) {
-			if (tgid != profiler_filter_pid)
-				return false;
-		} else {
-			if (pid != profiler_filter_pid)
-				return false;
-		}
-	}
-
-	return true;
-}
-
-/*
- * profiler_should_trace_cpu - CPU profiler specific trace check.
- * Also checks idle class and cpu cgroup subsystem.
- */
-static __always_inline bool profiler_should_trace_cpu(u64 pid_tgid, u64 cpu_css, u64 sched_class)
-{
-	u32 tgid = pid_tgid >> 32;
-	u32 pid = pid_tgid & 0xffffffffUL;
-
-	if (profiler_filter_css != 0 && profiler_filter_css != cpu_css)
+	if (profiler_filter_css != 0 && css != profiler_filter_css)
 		return false;
 
-	if (profiler_filter_pid != 0 && profiler_filter_pid != tgid)
-		return false;
+	if (profiler_filter_pid == 0)
+		return true;
 
-	if (profiler_idle_class_addr != 0 && sched_class == profiler_idle_class_addr)
-		return false;
+	if (profiler_filter_threads)
+		return tgid == profiler_filter_pid;
 
-	if (tgid == 0 && pid == 0)
-		return false;
-
-	return true;
+	return pid == profiler_filter_pid;
 }
 
 /*

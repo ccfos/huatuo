@@ -277,8 +277,8 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.Bool("log-bpf-debug") && !native {
 		return fmt.Errorf("--log-bpf-debug is supported only by native profilers")
 	}
-	if ctx.Bool("thread-group") && !nativeMemory {
-		return fmt.Errorf("--thread-group is supported only by native memory profiling")
+	if ctx.Bool("thread-group") && !native {
+		return fmt.Errorf("--thread-group is supported only by native profiling")
 	}
 	if ctx.String("binary-match-path") != "" && native {
 		return fmt.Errorf("--binary-match-path is not supported by native profilers")
