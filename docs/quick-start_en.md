@@ -43,10 +43,12 @@ If you want to understand the underlying principles and deploy HUATUO to your ow
 If you want to further understand HUATUO's operational mechanisms, architecture design, monitoring dashboard, and custom deployment, you can quickly set up a complete local environment using docker compose.
 
 ```bash
-$ docker compose --project-directory ./build/docker up
+$ COMPOSE_PROFILES=full docker compose --project-directory ./build/docker up
 ```
 
-This command pulls the latest images and starts components including [elasticsearch](https://www.elastic.co), [prometheus](https://prometheus.io), [grafana](https://grafana.com)，huatuo-bamai. After successful command execution, open your browser and visit [http://localhost:3000](http://localhost:3000) to access the monitoring dashboard (Grafana default admin account: admin, password: admin; Since your system is in normal state, the Events and AutoTracing dashboards typically won't display data).
+This command pulls the configured images and starts components including [Elasticsearch](https://www.elastic.co), [Prometheus](https://prometheus.io), [Pyroscope](https://grafana.com/oss/pyroscope/), [Grafana](https://grafana.com), and huatuo-bamai. After successful command execution, open your browser and visit [http://localhost:3000](http://localhost:3000) to access the monitoring dashboard (Grafana default admin account: admin, password: admin; since your system is in a normal state, the Events and AutoTracing dashboards typically won't display data).
+
+See [AutoTracing flame graphs with Pyroscope](development/autotracing_pyroscope_en.md) to configure `cpuidle` and `cpusys` flame graphs without `huatuo-apiserver`.
 
 ![HUATUO huatuo-bamai Component Operation Diagram](/docs/img/quickstart-components.png)
 

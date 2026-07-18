@@ -40,8 +40,16 @@ BlackList = ["netdev_hw", "metax_gpu"]
 [RuntimeCgroup]
 LimitMem = 2
 
+[Storage.Pyroscope]
+Address = "http://127.0.0.1:4040"
+AppNamePrefix = "huatuo"
+TimeoutSeconds = 5
+
 [AutoTracing]
 IssuesList = [["dload", "jbd2"]]
+
+[AutoTracing.Display]
+Backend = "apiserver"
 
 [EventTracing]
 IssuesList = [["net_rx_latency", "kernel_sched_tick"]]
@@ -69,8 +77,20 @@ ExcludedOnContainer = "writeback"
 	if Get().RuntimeCgroup.LimitMem != 2*1024*1024 {
 		t.Errorf("LimitMem should be converted to bytes, got %d", Get().RuntimeCgroup.LimitMem)
 	}
+	if Get().Storage.Pyroscope.Address != "http://127.0.0.1:4040" {
+		t.Errorf("Storage.Pyroscope.Address = %q", Get().Storage.Pyroscope.Address)
+	}
+	if Get().Storage.Pyroscope.AppNamePrefix != "huatuo" {
+		t.Errorf("Storage.Pyroscope.AppNamePrefix = %q", Get().Storage.Pyroscope.AppNamePrefix)
+	}
+	if Get().Storage.Pyroscope.TimeoutSeconds != 5 {
+		t.Errorf("Storage.Pyroscope.TimeoutSeconds = %d", Get().Storage.Pyroscope.TimeoutSeconds)
+	}
 	if len(Get().AutoTracing.IssuesList) != 1 {
 		t.Errorf("unexpected AutoTracing.IssuesList length: %d", len(Get().AutoTracing.IssuesList))
+	}
+	if backend, err := Get().AutoTracing.Display.ResolveBackend(); err != nil || backend != "apiserver" {
+		t.Errorf("AutoTracing.Display.Backend = %q, %v; want apiserver", backend, err)
 	}
 	if len(Get().EventTracing.IssuesList) != 1 {
 		t.Errorf("unexpected EventTracing.IssuesList length: %d", len(Get().EventTracing.IssuesList))
@@ -83,6 +103,21 @@ ExcludedOnContainer = "writeback"
 	}
 	if len(Get().EventTracing.NetRxLatency.ExcludedContainerQos) != 1 {
 		t.Errorf("unexpected ExcludedContainerQos length: %d", len(Get().EventTracing.NetRxLatency.ExcludedContainerQos))
+	}
+}
+
+func TestLoadRejectsInvalidAutoTracingDisplayBackend(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[AutoTracing.Display]
+Backend = "unknown"
+`)
+
+	err := Load(path)
+	if err == nil {
+		t.Fatal("Load returned nil error")
+	}
+	if !strings.Contains(err.Error(), "invalid AutoTracing display backend") {
+		t.Fatalf("Load error = %q", err)
 	}
 }
 
@@ -109,6 +144,9 @@ ExcludedOnContainer = "writeback"
 
 	if err := Load(path); err != nil {
 		t.Fatalf("Load returned error: %v", err)
+	}
+	if backend, err := Get().AutoTracing.Display.ResolveBackend(); err != nil || backend != "pyroscope" {
+		t.Fatalf("default AutoTracing.Display.Backend = %q, %v; want pyroscope", backend, err)
 	}
 
 	for _, kv := range []struct {

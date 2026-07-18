@@ -30,6 +30,8 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
+
+	"github.com/rs/xid"
 )
 
 func init() {
@@ -150,13 +152,18 @@ func (c *cpuSysTracing) buildAndSaveCPUSystem(traceTime time.Time, threshold *cp
 	}
 
 	log.Debugf("cpuidle flamedata %v", tracerData.FlameData)
+	tracerID := xid.New().String()
 	if err := tracing.Save(&tracing.WriteRequest{
 		TracerName:    "cpusys",
+		TracerID:      tracerID,
 		TracerTime:    traceTime,
 		TracerData:    &tracerData,
 		TracerRunType: tracing.TracerRunTypeAutotracing,
 	}); err != nil {
 		log.Warnf("failed to save tracing data: %v", err)
+	}
+	if err := saveAutotracingCPUProfile(tracerID, "cpusys", "", traceTime, tracerData.FlameData); err != nil {
+		log.Warnf("failed to save cpusys profile: %v", err)
 	}
 	return nil
 }

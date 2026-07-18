@@ -1,0 +1,155 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "huatuo-bamai-pyroscope"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {},
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "huatuo-bamai-pyroscope"
+          },
+          "groupBy": [],
+          "labelSelector": "{service_name=~\".*\",tracer_id=~\"$tracer_id\",tracer_name=\"$tracer_name\",hostname=~\"$hostname\",container_id=~\"$container_id\",tracer_type=\"autotracing\"}",
+          "maxNodes": 16384,
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "queryType": "profile",
+          "refId": "A"
+        }
+      ],
+      "title": "$tracer_name / $tracer_id",
+      "type": "flamegraph"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 41,
+  "tags": [
+    "huatuo",
+    "autotracing",
+    "pyroscope"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "label": "Tracer ID",
+        "name": "tracer_id",
+        "options": [
+          {
+            "selected": true,
+            "text": ".*",
+            "value": ".*"
+          }
+        ],
+        "query": ".*",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": "cpuidle",
+          "value": "cpuidle"
+        },
+        "label": "Tracer",
+        "name": "tracer_name",
+        "options": [
+          {
+            "selected": true,
+            "text": "cpuidle",
+            "value": "cpuidle"
+          },
+          {
+            "selected": false,
+            "text": "cpusys",
+            "value": "cpusys"
+          }
+        ],
+        "query": "cpuidle,cpusys",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "label": "Hostname",
+        "name": "hostname",
+        "options": [
+          {
+            "selected": true,
+            "text": ".*",
+            "value": ".*"
+          }
+        ],
+        "query": ".*",
+        "type": "textbox"
+      },
+      {
+        "current": {
+          "text": ".*",
+          "value": ".*"
+        },
+        "label": "Container ID",
+        "name": "container_id",
+        "options": [
+          {
+            "selected": true,
+            "text": ".*",
+            "value": ".*"
+          }
+        ],
+        "query": ".*",
+        "type": "textbox"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "HuaTuo AutoTracing Pyroscope Flamegraph",
+  "uid": "autotracing-pyroscope-flamegraph",
+  "version": 1,
+  "weekStart": ""
+}

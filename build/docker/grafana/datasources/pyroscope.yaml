@@ -1,5 +1,13 @@
 apiVersion: 1
 
+deleteDatasources:
+  - name: huatuo-apiserver-pyroscope
+    orgId: 1
+  - name: huatuo-bamai-pyroscope
+    orgId: 1
+
+prune: true
+
 datasources:
   - name: huatuo-apiserver-pyroscope
     type: grafana-pyroscope-datasource
@@ -8,8 +16,20 @@ datasources:
     orgId: 1
     url: http://127.0.0.1:12740/v1/profiles/flamegraph/
     jsonData:
-      minStep: '15s'
-      httpHeaderName1: 'Authorization'
+      minStep: "15s"
+      httpHeaderName1: "Authorization"
     secureJsonData:
       httpHeaderValue1: REPLACE_WITH_RANDOM_HEX
+    editable: false
+
+  - name: huatuo-bamai-pyroscope
+    type: grafana-pyroscope-datasource
+    uid: huatuo-bamai-pyroscope
+    access: proxy
+    orgId: 1
+    url: http://localhost:4040
+    isDefault: false
+    jsonData:
+      minStep: 1s
+    version: 1
     editable: false

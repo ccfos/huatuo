@@ -15,6 +15,8 @@
 package config
 
 import (
+	"fmt"
+
 	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/core/events"
 	collector "huatuo-bamai/core/metrics"
@@ -52,6 +54,12 @@ type BamaiConfig struct {
 			RotationSize int    `default:"100"`
 			MaxRotation  int    `default:"10"`
 		}
+
+		Pyroscope struct {
+			Address        string
+			AppNamePrefix  string
+			TimeoutSeconds int
+		}
 	}
 
 	Task struct {
@@ -86,6 +94,9 @@ func Load(path string) error {
 	cfg = &BamaiConfig{}
 	if err := internalconfig.Load(path, cfg); err != nil {
 		return err
+	}
+	if _, err := cfg.AutoTracing.Display.ResolveBackend(); err != nil {
+		return fmt.Errorf("validate config: %w", err)
 	}
 
 	cfg.RuntimeCgroup.LimitMem *= 1024 * 1024
