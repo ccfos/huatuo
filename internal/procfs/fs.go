@@ -44,8 +44,10 @@ var defaultPaths = map[string]func() string{
 }
 
 type (
-	FS      = procfs.FS
-	ProcMap = procfs.ProcMap
+	FS       = procfs.FS
+	ProcMap  = procfs.ProcMap
+	PSIStats = procfs.PSIStats
+	PSILine  = procfs.PSILine
 )
 
 // RootPrefix add prefix for /proc, /sys, and /dev. Invoked only for integration test.
