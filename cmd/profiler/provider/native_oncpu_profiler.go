@@ -26,6 +26,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/profiler/aggregator"
 	pcontext "github.com/ccfos/huatuo/internal/profiler/context"
+	"github.com/ccfos/huatuo/internal/profiler/forktrack"
 	"github.com/ccfos/huatuo/internal/profiler/registry"
 	"github.com/ccfos/huatuo/pkg/profiling"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -52,6 +53,7 @@ type cpuNativeProfiler struct {
 	dbg                *bpf.BpfDbg
 	offCPUMode         bool
 	offCPUStatsEnabled bool
+	forkConfig         forktrack.Config
 }
 
 func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
@@ -67,7 +69,7 @@ func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 		p.ringCtx = nil
 	}
 
-	err := closeBPF(p.bpf)
+	err := stopNativeProfilerBPF(p.bpf, p.forkConfig.Enabled)
 	p.bpf = nil
 	return err
 }
@@ -106,11 +108,26 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		objectName = "native_oncpu_profiler.o"
 		constants = newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
 	}
+	forkConfig, err := nativeForkConfig(pctx)
+	if err != nil {
+		return err
+	}
+	p.forkConfig = forkConfig
+	constants, forkAttachOpts, err := applyNativeForkTracking(constants, nil, forkConfig)
+	if err != nil {
+		return err
+	}
 
 	dbg := bpf.NewDbg(pctx.LogBpfDebug)
-	b, err := bpf.LoadBPF(objectName, dbg.WithBpfDbg(constants))
+	b, err := loadNativeProfilerBPF(objectName, dbg.WithBpfDbg(constants), forkConfig)
 	if err != nil {
 		return fmt.Errorf("load native CPU %s BPF object %q: %w", pctx.Mode, objectName, err)
+	}
+	if len(forkAttachOpts) > 0 {
+		if err := b.AttachWithOptions(forkAttachOpts); err != nil {
+			_ = b.Close()
+			return fmt.Errorf("attach native CPU fork tracking probes: %w", err)
+		}
 	}
 	if offCPU {
 		if err := configureOffCPUSet(b, pctx.CPUIDs); err != nil {
@@ -165,7 +182,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	p.dbg = dbg
 	p.offCPUMode = offCPU
 	p.offCPUStatsEnabled = offCPU && pctx.OffCPUStatsEnabled
-	log.Infof("eBPF attached")
+	log.Info("eBPF attached", "fork_tracking", forkConfig.Description())
 
 	return nil
 }
