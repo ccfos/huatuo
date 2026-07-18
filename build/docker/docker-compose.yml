@@ -10,7 +10,13 @@ services:
     volumes:
       - ./elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
       - ./elasticsearch-jvm.options:/usr/share/elasticsearch/config/jvm.options:ro
-  
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -u elastic:$${ELASTIC_PASSWORD} http://localhost:9200/ >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+      start_period: 20s
+
   prometheus:
     image: prom/prometheus:${PROMETHEUS_VERSION:-v2.53.3}
     container_name: prometheus
@@ -45,12 +51,13 @@ services:
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - ../../huatuo-apiserver.conf:${RUN_PATH}/conf/huatuo-apiserver.conf:rw
-      - ./run-huatuo-apiserver.sh:${RUN_PATH}/run-huatuo-apiserver.sh:rw
     working_dir: ${RUN_PATH}
-    command: ["./run-huatuo-apiserver.sh"]
+    command: ["./bin/huatuo-apiserver", "--config", "huatuo-apiserver.conf"]
     depends_on:
-      - elasticsearch
-      - prometheus
+      elasticsearch:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
 
   huatuo-bamai:
     image: huatuo/huatuo-bamai:latest
@@ -70,9 +77,11 @@ services:
       - /etc:/etc:ro
       - /var:/var:ro
       - ../../huatuo-bamai.conf:${RUN_PATH}/conf/huatuo-bamai.conf:rw
-      - ./run-huatuo-bamai.sh:${RUN_PATH}/conf/../run-huatuo-bamai.sh:rw
-    command: ["./run-huatuo-bamai.sh"]
+    command: ["./bin/huatuo-bamai", "--region", "example", "--config", "huatuo-bamai.conf", "--disable-kubelet"]
     depends_on:
-      - elasticsearch
-      - prometheus
-      - grafana
+      elasticsearch:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+      grafana:
+        condition: service_started
