@@ -22,16 +22,20 @@ import (
 	"net"
 	"path/filepath"
 	"slices"
+	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/dropcorrelation"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/procfs/sysfs"
 	"huatuo-bamai/internal/utils/parseutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/pkg/types"
 
 	"github.com/safchain/ethtool"
 )
@@ -41,10 +45,13 @@ var deviceDriverList = []string{"mlx5_core", "i40e", "ixgbe", "bnxt_en", "virtio
 
 type netdevHw struct {
 	prog                  bpf.BPF
+	eth                   *ethtool.Ethtool
 	running               atomic.Bool
 	ifaceSwDroppedCounter map[string]uint64
 	ifaceList             map[string]*ethtool.DrvInfo
 	sysNetPath            string
+	normalizer            *dropcorrelation.CounterNormalizer
+	correlator            *dropcorrelation.Correlator
 	mutex                 sync.Mutex
 }
 
@@ -66,6 +73,7 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 
 	deviceMatcher, err := matcher.NewListMatcher(cfg.NetdevHW.DeviceList)
 	if err != nil {
+		eth.Close()
 		return nil, fmt.Errorf("netdev hw device list: %w", err)
 	}
 
@@ -96,6 +104,14 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 			ifaceList:             ifaceList,
 			ifaceSwDroppedCounter: ifaceSwCounter,
 			sysNetPath:            sysfs.Path("class/net"),
+			eth:                   eth,
+			normalizer:            dropcorrelation.NewCounterNormalizer(),
+			correlator: dropcorrelation.ConfigureDefault(dropcorrelation.Options{
+				Window:        time.Duration(cfg.NetdevHW.CorrelationWindowSec) * time.Second,
+				PendingLimit:  cfg.NetdevHW.PendingEventLimit,
+				IncidentLimit: cfg.NetdevHW.RecentIncidentLimit,
+				ReasonLimit:   cfg.NetdevHW.ReasonLabelLimit,
+			}),
 		},
 		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
@@ -116,25 +132,21 @@ func (netdev *netdevHw) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
-	data := []*metric.Data{}
+	now := time.Now()
+	data := make([]*metric.Data, 0, len(netdev.ifaceList)*12)
 	for iface, drv := range netdev.ifaceList {
-		counters := map[string]uint64{
-			"rx_dropped":       0,
-			"rx_missed_errors": 0,
+		sample, absolute, err := netdev.collectHardwareSample(now, iface, drv.Driver)
+		if err != nil {
+			log.Warnf("netdev_hw: collect %s hardware counters: %v", iface, err)
+			continue
 		}
 
-		for name := range counters {
-			counters[name], _ = netdev.readSysNetclassStat(iface, name)
-		}
-
-		count := counters["rx_missed_errors"]
+		count := absolute["rx_missed_errors"]
 		// 1. No packet loss
 		// 2. rx_missed_errors of the driver is not used.
 		if count == 0 {
-			// hardware drop = rx_dropped - software_drops
-			if sw, ok := netdev.ifaceSwDroppedCounter[iface]; ok {
-				count = counters["rx_dropped"] - sw
-			}
+			// collectHardwareSample already removes BPF-observed software drops.
+			count = absolute["rx_dropped"]
 		}
 
 		data = append(data, metric.NewCounterData(
@@ -142,9 +154,166 @@ func (netdev *netdevHw) Update() ([]*metric.Data, error) {
 			"count of packets dropped at hardware level",
 			map[string]string{"device": iface, "driver": drv.Driver},
 		))
+
+		incidents := netdev.correlator.ObserveHardware(sample)
+		netdev.persistCorrelationIncidents(incidents)
 	}
 
+	netdev.persistCorrelationIncidents(netdev.correlator.Flush(now))
+	data = append(data, netdev.correlationMetrics()...)
+
 	return data, nil
+}
+
+func (netdev *netdevHw) collectHardwareSample(now time.Time, iface, driver string) (
+	dropcorrelation.HardwareSample,
+	map[string]uint64,
+	error,
+) {
+	names := []string{
+		"rx_dropped", "rx_missed_errors", "rx_errors",
+		"tx_dropped", "tx_errors", "tx_carrier_errors", "tx_fifo_errors",
+	}
+	sysCounters := make(map[string]uint64, len(names))
+	degraded := false
+	for _, name := range names {
+		value, err := netdev.readSysNetclassStat(iface, name)
+		if err != nil {
+			degraded = true
+			continue
+		}
+		sysCounters[name] = value
+	}
+
+	// sysfs rx_dropped contains software drops on several drivers. Subtract the
+	// BPF-observed software component before it enters hardware correlation.
+	if sw, ok := netdev.ifaceSwDroppedCounter[iface]; ok {
+		if dropped := sysCounters["rx_dropped"]; dropped >= sw {
+			sysCounters["rx_dropped"] = dropped - sw
+		} else {
+			sysCounters["rx_dropped"] = 0
+			degraded = true
+		}
+	}
+
+	var ethCounters map[string]uint64
+	if cfg.NetdevHW.EnableEthtoolStats && netdev.eth != nil {
+		var err error
+		ethCounters, err = netdev.eth.Stats(iface)
+		if err != nil {
+			degraded = true
+			log.Debugf("netdev_hw: ethtool stats unavailable for %s: %v", iface, err)
+		}
+	}
+
+	sample, err := netdev.normalizer.Normalize(dropcorrelation.RawSample{
+		Timestamp: now,
+		Device:    iface,
+		Driver:    driver,
+		Sysfs:     sysCounters,
+		Ethtool:   ethCounters,
+	})
+	if err != nil {
+		return dropcorrelation.HardwareSample{}, nil, err
+	}
+	sample.ReadDegraded = degraded
+	return sample, sysCounters, nil
+}
+
+func (netdev *netdevHw) correlationMetrics() []*metric.Data {
+	snapshot := netdev.correlator.Snapshot()
+	data := []*metric.Data{
+		metric.NewGaugeData("drop_correlation_pending_events", float64(snapshot.Pending),
+			"dropwatch events waiting for a hardware sample", nil),
+		metric.NewCounterData("drop_correlation_events_total", float64(snapshot.Events),
+			"dropwatch events accepted by the correlation engine", nil),
+		metric.NewCounterData("drop_correlation_incidents_total", float64(snapshot.Incidents),
+			"dropwatch events finalized by the correlation engine", nil),
+		metric.NewCounterData("drop_correlation_pending_dropped_total", float64(snapshot.DroppedPending),
+			"events force-finalized because the bounded pending queue was full", nil),
+		metric.NewCounterData("drop_correlation_counter_resets_total", float64(snapshot.Resets),
+			"NIC counter resets excluded from correlation", nil),
+		metric.NewCounterData("drop_correlation_degraded_samples_total", float64(snapshot.DegradedSamples),
+			"partially unavailable NIC hardware counter samples", nil),
+		metric.NewCounterData("drop_correlation_unmatched_hardware_total", float64(snapshot.UnmatchedHardware),
+			"hardware loss samples without a matching dropwatch event", nil),
+	}
+
+	for _, key := range snapshot.SortedKeys() {
+		data = append(data, metric.NewCounterData(
+			"drop_correlation_classified_total",
+			float64(snapshot.ByKey[key]),
+			"correlated packet drops classified by lowest proven layer",
+			map[string]string{
+				"device":    key.Device,
+				"direction": string(key.Direction),
+				"layer":     string(key.Layer),
+				"reason":    key.Reason,
+			},
+		))
+	}
+
+	devices := make([]string, 0, len(snapshot.LastHardwareByIface))
+	for device := range snapshot.LastHardwareByIface {
+		devices = append(devices, device)
+	}
+	sort.Strings(devices)
+	for _, device := range devices {
+		sample := snapshot.LastHardwareByIface[device]
+		for _, counter := range dropcorrelation.AllCounters() {
+			data = append(data, metric.NewGaugeData(
+				"drop_correlation_hardware_delta",
+				float64(sample.Delta[counter]),
+				"normalized NIC loss counter delta used by the correlation engine",
+				map[string]string{
+					"device":  device,
+					"driver":  sample.Driver,
+					"counter": string(counter),
+				},
+			))
+		}
+	}
+	return data
+}
+
+func (netdev *netdevHw) persistCorrelationIncidents(incidents []dropcorrelation.Incident) {
+	for _, incident := range incidents {
+		delta := make(map[string]uint64, len(incident.HardwareDelta))
+		for counter, value := range incident.HardwareDelta {
+			if value > 0 {
+				delta[string(counter)] = value
+			}
+		}
+		storageEvent := &types.DropCorrelationIncident{
+			EventID:              incident.Event.ID,
+			ObservedTimestamp:    incident.Event.Timestamp.UTC().Format(time.RFC3339Nano),
+			FinalizedTimestamp:   incident.FinalizedAt.UTC().Format(time.RFC3339Nano),
+			Device:               incident.Event.Device,
+			IfIndex:              incident.Event.IfIndex,
+			Driver:               incident.Driver,
+			Direction:            string(incident.Event.Direction),
+			Layer:                string(incident.Layer),
+			Confidence:           incident.Confidence,
+			DropReason:           incident.Event.Reason,
+			Protocol:             incident.Event.Protocol,
+			ContainerID:          incident.Event.ContainerID,
+			PacketLength:         incident.Event.PacketLen,
+			CorrelationLagMS:     float64(incident.CorrelationLag) / float64(time.Millisecond),
+			Evidence:             append([]string(nil), incident.Evidence...),
+			HardwareCounterDelta: delta,
+		}
+		if !incident.HardwareSampleAt.IsZero() {
+			storageEvent.HardwareTimestamp = incident.HardwareSampleAt.UTC().Format(time.RFC3339Nano)
+		}
+		if err := tracing.Save(&tracing.WriteRequest{
+			TracerName:  "dropwatch_correlation",
+			ContainerID: incident.Event.ContainerID,
+			TracerTime:  incident.FinalizedAt,
+			TracerData:  storageEvent,
+		}); err != nil {
+			log.Warnf("netdev_hw: save correlated drop event %d: %v", incident.Event.ID, err)
+		}
+	}
 }
 
 func (netdev *netdevHw) readSysNetclassStat(iface, stat string) (uint64, error) {
@@ -192,6 +361,9 @@ func (netdev *netdevHw) updateIfaceSwDroppedStat() error {
 }
 
 func (netdev *netdevHw) Start(ctx context.Context) error {
+	if netdev.eth != nil {
+		defer netdev.eth.Close()
+	}
 	prog, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err

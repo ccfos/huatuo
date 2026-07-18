@@ -33,7 +33,12 @@ type Config struct {
 	}
 
 	NetdevHW struct {
-		DeviceList []string
+		DeviceList           []string
+		CorrelationWindowSec int  `default:"15"`
+		PendingEventLimit    int  `default:"4096"`
+		RecentIncidentLimit  int  `default:"1024"`
+		ReasonLabelLimit     int  `default:"64"`
+		EnableEthtoolStats   bool `default:"true"`
 	}
 
 	Qdisc struct {
