@@ -23,7 +23,7 @@ RUN set -x; \
     go install golang.org/x/tools/cmd/goimports@v0.36.0 && \
     go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2 && \
     go install github.com/vektra/mockery/v2@v2.53.6 && \
-    go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
+    go install capnproto.org/go/capnp/v3/capnpc-go@latest
 
 FROM base AS dev-build
 WORKDIR /go/huatuo-bamai
