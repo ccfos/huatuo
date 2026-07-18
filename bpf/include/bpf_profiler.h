@@ -55,10 +55,10 @@ static __always_inline bool profiler_should_trace(u64 pid_tgid)
 
 	if (profiler_filter_pid != 0) {
 		if (profiler_filter_threads) {
-			if (pid != profiler_filter_pid)
+			if (tgid != profiler_filter_pid)
 				return false;
 		} else {
-			if (tgid != profiler_filter_pid)
+			if (pid != profiler_filter_pid)
 				return false;
 		}
 	}

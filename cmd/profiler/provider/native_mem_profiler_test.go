@@ -85,6 +85,28 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 	}
 }
 
+func TestNewBpfLoadConfigThreadFilter(t *testing.T) {
+	tests := []struct {
+		name        string
+		threadGroup bool
+	}{
+		{name: "target thread"},
+		{name: "thread group", threadGroup: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := newBpfLoadConfig(profiling.MemoryModeVirtualAlloc, 123, 0, tt.threadGroup, 100)
+			if err != nil {
+				t.Fatalf("newBpfLoadConfig() error = %v", err)
+			}
+			if got := cfg.Constants["profiler_filter_threads"]; got != tt.threadGroup {
+				t.Fatalf("profiler_filter_threads = %v, want %v", got, tt.threadGroup)
+			}
+		})
+	}
+}
+
 func TestNewPhysicalAllocAttachOption(t *testing.T) {
 	tests := []struct {
 		name      string

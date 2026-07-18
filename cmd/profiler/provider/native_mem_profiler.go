@@ -153,7 +153,7 @@ type bpfLoadConfig struct {
 
 // newBpfLoadConfig creates a BPF load configuration based on the profiler mode.
 // It returns the appropriate object file, constants, and attachment options for the given mode.
-func newBpfLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64, traceThreads bool, probability uint) (*bpfLoadConfig, error) {
+func newBpfLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64, threadGroup bool, probability uint) (*bpfLoadConfig, error) {
 	switch internalMode {
 	case profiling.MemoryModeVirtualAlloc:
 		return &bpfLoadConfig{
@@ -161,7 +161,7 @@ func newBpfLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64
 			Constants: map[string]any{
 				"profiler_filter_pid":     uint32(pid),
 				"profiler_filter_css":     cssAddr,
-				"profiler_filter_threads": traceThreads,
+				"profiler_filter_threads": threadGroup,
 			},
 			AttachOpts: []bpf.AttachOption{
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
@@ -178,7 +178,7 @@ func newBpfLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64
 			Constants: map[string]any{
 				"profiler_filter_pid":     uint32(pid),
 				"profiler_filter_css":     cssAddr,
-				"profiler_filter_threads": traceThreads,
+				"profiler_filter_threads": threadGroup,
 				"profiler_sampling_prob":  uint8(probability),
 			},
 			AttachOpts: attachOpts,
@@ -194,7 +194,7 @@ func newBpfLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64
 			Constants: map[string]any{
 				"profiler_filter_pid":     uint32(pid),
 				"profiler_filter_css":     cssAddr,
-				"profiler_filter_threads": traceThreads,
+				"profiler_filter_threads": threadGroup,
 				"profiler_sampling_prob":  uint8(probability),
 			},
 			AttachOpts: []bpf.AttachOption{attachOpt},
