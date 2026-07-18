@@ -26,6 +26,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/profiler/forktrack"
 	"huatuo-bamai/internal/profiler/registry"
 	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/types"
@@ -51,6 +52,7 @@ type memNativeProfiler struct {
 	internalMode profiling.MemoryMode
 	probability  uint
 	pageSize     int64
+	forkConfig   forktrack.Config
 }
 
 var hasKprobeFunction = bpf.HasKprobeFunction
@@ -82,7 +84,7 @@ func (p *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 }
 
 func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
-	return closeBpfSafe(p.bpf)
+	return stopNativeProfilerBPF(p.bpf, p.forkConfig.Enabled)
 }
 
 func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
@@ -124,10 +126,19 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	if err != nil {
 		return err
 	}
+	forkConfig, err := nativeForkConfig(pctx)
+	if err != nil {
+		return err
+	}
+	p.forkConfig = forkConfig
+	cfg.Constants, cfg.AttachOpts, err = applyNativeForkTracking(cfg.Constants, cfg.AttachOpts, forkConfig)
+	if err != nil {
+		return err
+	}
 
 	dbg := bpf.NewDbg(pctx.LogBpfDebug)
 
-	b, err := bpf.LoadBpf(cfg.ObjectFile, dbg.WithBpfDbg(cfg.Constants))
+	b, err := loadNativeProfilerBPF(cfg.ObjectFile, dbg.WithBpfDbg(cfg.Constants), forkConfig)
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
@@ -141,7 +152,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	p.bpf = b
-	log.Info("eBPF attached")
+	log.Info("eBPF attached", "fork_tracking", forkConfig.Description())
 
 	return nil
 }

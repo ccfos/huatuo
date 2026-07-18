@@ -14,7 +14,11 @@
 
 package main
 
-import "github.com/urfave/cli/v2"
+import (
+	"github.com/urfave/cli/v2"
+
+	"huatuo-bamai/internal/profiler/forktrack"
+)
 
 var appFlags = []cli.Flag{
 	&cli.StringFlag{
@@ -48,6 +52,25 @@ var appFlags = []cli.Flag{
 		Name:  "scope",
 		Value: "thread",
 		Usage: "Sampling dimension: thread|thread-group|process-group etc.",
+	},
+	&cli.BoolFlag{
+		Name:  "follow-forks",
+		Usage: "Continue native profiling for descendants created after startup",
+	},
+	&cli.UintFlag{
+		Name:  "fork-max-procs",
+		Usage: "Maximum simultaneously tracked descendants when --follow-forks is enabled",
+		Value: uint(forktrack.DefaultMaxTracked),
+	},
+	&cli.UintFlag{
+		Name:  "fork-rate",
+		Usage: "Accepted descendant fork events per second; 0 disables rate limiting",
+		Value: uint(forktrack.DefaultRate),
+	},
+	&cli.UintFlag{
+		Name:  "fork-burst",
+		Usage: "Additional descendant fork events accepted in each one-second window",
+		Value: uint(forktrack.DefaultBurst),
 	},
 	&cli.IntFlag{
 		Name:    "freq",

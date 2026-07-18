@@ -25,6 +25,7 @@ import (
 
 	"huatuo-bamai/internal/pod"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/profiler/forktrack"
 	"huatuo-bamai/pkg/profiling"
 )
 
@@ -282,6 +283,26 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	}
 	if ctx.Bool("log-bpf-debug") && !native {
 		return fmt.Errorf("--log-bpf-debug is supported only by native profilers")
+	}
+	if ctx.Bool("follow-forks") {
+		if !native {
+			return fmt.Errorf("--follow-forks is supported only by native profilers")
+		}
+		if ctx.String("pid") == "" {
+			return fmt.Errorf("--follow-forks requires --pid")
+		}
+		maxTracked := uint64(ctx.Uint("fork-max-procs"))
+		if maxTracked == 0 || maxTracked > uint64(forktrack.HardMaxTracked) {
+			return fmt.Errorf("--fork-max-procs must be between 1 and %d", forktrack.HardMaxTracked)
+		}
+		if uint64(ctx.Uint("fork-rate")) > uint64(forktrack.MaxRate) {
+			return fmt.Errorf("--fork-rate must not exceed %d", forktrack.MaxRate)
+		}
+		if uint64(ctx.Uint("fork-burst")) > uint64(forktrack.MaxBurst) {
+			return fmt.Errorf("--fork-burst must not exceed %d", forktrack.MaxBurst)
+		}
+	} else if ctx.IsSet("fork-max-procs") || ctx.IsSet("fork-rate") || ctx.IsSet("fork-burst") {
+		return fmt.Errorf("fork limit flags require --follow-forks")
 	}
 	if ctx.String("scope") != "thread" && !nativeMemory {
 		return fmt.Errorf("--scope=%s is supported only by native memory profiling", ctx.String("scope"))

@@ -61,6 +61,55 @@ func TestLoadBpfFromBytes_InvalidELF(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestResizeMapMaxEntries(t *testing.T) {
+	newSpec := func() *ebpf.CollectionSpec {
+		return &ebpf.CollectionSpec{Maps: map[string]*ebpf.MapSpec{
+			"fork_pid_map": {Type: ebpf.Hash, MaxEntries: 65536},
+			"unrelated":    {Type: ebpf.Array, MaxEntries: 8},
+		}}
+	}
+
+	t.Run("override selected map", func(t *testing.T) {
+		spec := newSpec()
+		require.NoError(t, resizeMapMaxEntries(spec, map[string]uint32{"fork_pid_map": 37}))
+		assert.Equal(t, uint32(37), spec.Maps["fork_pid_map"].MaxEntries)
+		assert.Equal(t, uint32(8), spec.Maps["unrelated"].MaxEntries)
+	})
+
+	t.Run("nil overrides", func(t *testing.T) {
+		spec := newSpec()
+		require.NoError(t, resizeMapMaxEntries(spec, nil))
+		assert.Equal(t, uint32(65536), spec.Maps["fork_pid_map"].MaxEntries)
+	})
+
+	t.Run("zero rejected", func(t *testing.T) {
+		spec := newSpec()
+		err := resizeMapMaxEntries(spec, map[string]uint32{"fork_pid_map": 0})
+		require.EqualError(t, err, `map "fork_pid_map" maximum entries must be greater than zero`)
+		assert.Equal(t, uint32(65536), spec.Maps["fork_pid_map"].MaxEntries)
+	})
+
+	t.Run("unknown map rejected", func(t *testing.T) {
+		spec := newSpec()
+		err := resizeMapMaxEntries(spec, map[string]uint32{"missing": 1})
+		require.EqualError(t, err, `map "missing" not found`)
+	})
+
+	t.Run("validation is atomic", func(t *testing.T) {
+		spec := newSpec()
+		err := resizeMapMaxEntries(spec, map[string]uint32{
+			"fork_pid_map": 10,
+			"missing":      1,
+		})
+		require.Error(t, err)
+		assert.Equal(t, uint32(65536), spec.Maps["fork_pid_map"].MaxEntries)
+	})
+
+	t.Run("nil spec rejected", func(t *testing.T) {
+		require.EqualError(t, resizeMapMaxEntries(nil, nil), "nil collection spec")
+	})
+}
+
 // Empty names plus any cleaned form starting with ".." would let LoadBpf
 // escape DefaultObjDir once joined.
 var rejectedNames = []string{

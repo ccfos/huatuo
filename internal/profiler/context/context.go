@@ -59,6 +59,10 @@ type ProfilerContext struct {
 	LogBpfDebug               bool
 	MemoryMode                profiling.MemoryMode
 	PhysicalMemoryProbability uint
+	FollowForks               bool
+	ForkMaxProcesses          uint
+	ForkRate                  uint
+	ForkBurst                 uint
 
 	TracerID string
 
@@ -168,6 +172,10 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		OutputFormat:              outputFormat,
 		MemoryMode:                mode,
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
+		FollowForks:               cliCtx.Bool("follow-forks"),
+		ForkMaxProcesses:          cliCtx.Uint("fork-max-procs"),
+		ForkRate:                  cliCtx.Uint("fork-rate"),
+		ForkBurst:                 cliCtx.Uint("fork-burst"),
 
 		TracerID: cliCtx.String("tracer-id"),
 
