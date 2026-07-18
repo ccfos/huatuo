@@ -62,9 +62,9 @@ run_case() {
 		thread_group_arg=(--thread-group)
 	fi
 
-	"${FIXTURE_BIN}" >"${case_dir}/fixture.out" 2>"${case_dir}/fixture.err" &
+	"${FIXTURE_BIN}" > "${case_dir}/fixture.out" 2> "${case_dir}/fixture.err" &
 	TARGET_PID=$!
-	kill -0 "${TARGET_PID}" 2>/dev/null || fatal "fixture exited immediately (pid=${TARGET_PID})"
+	kill -0 "${TARGET_PID}" 2> /dev/null || fatal "fixture exited immediately (pid=${TARGET_PID})"
 
 	("${TOOL_BIN}" \
 		--type cpu \
@@ -77,7 +77,7 @@ run_case() {
 		--output-path "${case_dir}" \
 		--verbose \
 		"${thread_group_arg[@]}" \
-		>"${tool_out}" 2>"${tool_err}") &
+		> "${tool_out}" 2> "${tool_err}") &
 	PROFILER_PID=$!
 
 	wait_until 15 1 profiler_ready "${tool_out}" || fatal "profiler did not start the read loop"
@@ -90,8 +90,8 @@ run_case() {
 	mapfile -t folded_files < <(find "${case_dir}" -maxdepth 1 -name 'perf_*.folded' -type f)
 	if [[ "${expect_worker}" == "yes" ]]; then
 		[[ ${#folded_files[@]} -gt 0 ]] || fatal "no perf_*.folded file produced"
-		grep -q "${WORKER_SYMBOL}" "${folded_files[@]}" ||
-			fatal "worker symbol ${WORKER_SYMBOL} not found with --thread-group"
+		grep -q "${WORKER_SYMBOL}" "${folded_files[@]}" \
+			|| fatal "worker symbol ${WORKER_SYMBOL} not found with --thread-group"
 	elif [[ ${#folded_files[@]} -gt 0 ]] && grep -q "${WORKER_SYMBOL}" "${folded_files[@]}"; then
 		fatal "worker symbol ${WORKER_SYMBOL} captured without --thread-group"
 	fi
