@@ -81,7 +81,11 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
 EOF
 }
 
-integration_huatuo_bamai_start write_net_rx_latency_ipv6_config
+# Pass HUATUO_BAMAI_ARGS_INTEGRATION explicitly so integration_huatuo_bamai_start
+# takes its non-default branch — otherwise the helper defaults to
+# --disable-storage and the [Storage.LocalFile] events this test asserts on are
+# never written.
+integration_huatuo_bamai_start write_net_rx_latency_ipv6_config "${HUATUO_BAMAI_ARGS_INTEGRATION[@]}"
 trap cleanup_all EXIT
 
 SLOW_TCP_SERVER="${HUATUO_BAMAI_TEST_TMPDIR}/slow-tcp-server-v6"
