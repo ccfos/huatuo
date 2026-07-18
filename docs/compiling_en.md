@@ -69,63 +69,11 @@ $ make
 
 ### 4. BPF Debug Build
 
-BPF code can use the `bpf_dbg()` and `bpf_dbg_msg()` macros (defined in `bpf/include/bpf_dbg.h`) to print debug information from kernel space. This helps you trace the runtime logic of eBPF programs. The feature uses a two-stage switch. It is fully disabled by default and adds no overhead to the production path.
-
-#### 4.1 Adding Trace Points in BPF Code
-
-```c
-#include "bpf_dbg.h"
-
-// Declare a debug map in each .c file that contains a BPF program to trace
-// (the map name must match the name used below).
-BPF_DBG_MAP(native_cpu);
-
-SEC("perf_event")
-int prog(void *ctx)
-{
-        // Print a message only
-        bpf_dbg_msg(ctx, native_cpu, "enter prog");
-
-        // Print a message with up to 3 u64 arguments
-        bpf_dbg(ctx, native_cpu, "pid and addr", pid, addr, 0);
-        return 0;
-}
-```
-
-When `BPF_DEBUG=0` (the default), these macros expand to no-ops. The debug perf event array, the on-stack event struct, `bpf_ktime_get_ns`, and `bpf_perf_event_output` are **not emitted**. The verifier never sees them, the `.o` file is smaller, and no extra file descriptor is consumed at load time.
-
-#### 4.2 Enabling at Build Time (Stage 1: DEBUG_BPF)
-
 Set `BPF_DEBUG=1` to pass `-DDEBUG_BPF` to clang and compile the debug code into the BPF object:
 
 ```bash
 $ make BPF_DEBUG=1            # Or build only the BPF objects: make BPF_DEBUG=1 bpf-build
 ```
 
-#### 4.3 Enabling at Runtime (Stage 2: log-bpf-debug)
-
-Even when compiled into the object, debug output is still suppressed at runtime by default. To turn it on, pass `--log-bpf-debug` when you start the profiler (currently effective for the native profiler only):
-
-```bash
-$ ./profiler --type cpu --language native --log-bpf-debug ...
-```
-
-This works as follows: when the BPF object is loaded, a `BpfDbg` instance created by `bpf.NewDbg(true)` rewrites the `bpf_dbg_enabled` constant to 1 before `LoadBpf`. Without this rewrite, the verifier eliminates `if (bpf_dbg_enabled)` as dead code. Each BPF object holds its own `BpfDbg`, so the debug switches are independent of one another.
-
-#### 4.4 Output
-
-Debug events are printed by user space as Debug-level logs. Each entry contains:
-
-- `file`: the BPF source file name where the trace point fired (`__FILE_NAME__`)
-- `line`: the source line number
-- `ts`: the event timestamp (`bpf_ktime_get_ns` converted to UTC wall-clock time)
-- `msg`: the message string passed to the trace point
-- `args`: optional, up to 3 `u64` arguments (omitted when all are 0)
-
-Example:
-
-```text
-bpf_dbg: file=native_cpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456Z msg=enter prog args=[0x1f4 0xffff8881 0x0 0x0]
-```
-
-> Note: Compile with `BPF_DEBUG=1` **and** run with `--log-bpf-debug`.
+See [Debugging](development/debugging_en.md) for trace points, runtime switches,
+and log output.
