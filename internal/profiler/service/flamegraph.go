@@ -15,21 +15,53 @@
 package service
 
 import (
+	"errors"
 	"fmt"
+	"math"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler"
 
 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	phlaremodel "github.com/grafana/pyroscope/pkg/model"
-	"github.com/grafana/pyroscope/pkg/pprof"
+	promlabels "github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
-var profileStorage *ProfileStorage
+const (
+	profileQueryLimit  = 10000
+	profileSeriesLimit = 10
+)
+
+var (
+	// ErrInvalidProfileQuery identifies client-controlled selector, time range,
+	// aggregation, and profile-type validation failures.
+	ErrInvalidProfileQuery = errors.New("invalid profile query")
+	// ErrProfileQueryLimitExceeded prevents returning a silently truncated
+	// flame graph, series, diff, or export.
+	ErrProfileQueryLimitExceeded = errors.New("profile query limit exceeded")
+)
+
+func invalidProfileQueryf(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrInvalidProfileQuery, fmt.Sprintf(format, args...))
+}
+
+type profileQueryStorage interface {
+	SearchProfiles(filter *SearchFilter) ([]*ProfileDocument, error)
+	AggregationsByField(filter *SearchFilter, field string) ([]string, error)
+}
+
+type profileQueryCountStorage interface {
+	CountProfiles(filter *SearchFilter) (int64, error)
+}
+
+var profileStorage profileQueryStorage
 
 type ElasticSearchConfig struct {
 	Debug                              bool
@@ -52,137 +84,343 @@ func InitializeProfileFlamegraph(esConfig *ElasticSearchConfig) (err error) {
 //	request: querierv1.SelectMergeStacktracesRequest
 //	response: querierv1.SelectMergeStacktracesResponse
 func SelectMergeStacktraces(req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error) {
-	filter := &SearchFilter{
-		StartTime:   time.UnixMilli(req.Start),
-		EndTime:     time.UnixMilli(req.End),
-		ProfileType: req.ProfileTypeID,
-		Limit:       100,
+	if req == nil {
+		return nil, invalidProfileQueryf("request is nil")
 	}
-
 	log.Debugf("SelectMergeStacktracesRequest: %+v", req)
 
-	profileTypes := strings.Split(filter.ProfileType, ":")
-	if len(profileTypes) != 5 {
-		return nil, fmt.Errorf("invalid profile type: %q", filter.ProfileType)
-	}
-
-	// labels
-	labels, err := parser.ParseMetricSelector(req.LabelSelector)
+	tree, err := selectProfileTree(req, false)
 	if err != nil {
-		return nil, fmt.Errorf("parse matchers: %w", err)
+		return nil, err
 	}
 
-	for _, label := range labels {
-		// skip empty or "All"
-		if label.Value == "" || label.Value == "all" || label.Value == "All" || label.Value == "*" {
+	return &querierv1.SelectMergeStacktracesResponse{
+		Flamegraph: phlaremodel.NewFlameGraph(tree, req.GetMaxNodes()),
+	}, nil
+}
+
+// Diff compares two independently selected profile windows.
+func Diff(req *querierv1.DiffRequest) (*querierv1.DiffResponse, error) {
+	if req == nil || req.Left == nil || req.Right == nil {
+		return nil, invalidProfileQueryf("left and right profile selections are required")
+	}
+	if req.Left.ProfileTypeID != req.Right.ProfileTypeID {
+		return nil, invalidProfileQueryf("left and right profile types must match")
+	}
+
+	left, err := selectProfileTree(req.Left, true)
+	if err != nil {
+		return nil, fmt.Errorf("select left profiles: %w", err)
+	}
+	right, err := selectProfileTree(req.Right, true)
+	if err != nil {
+		return nil, fmt.Errorf("select right profiles: %w", err)
+	}
+
+	flamegraph, err := phlaremodel.NewFlamegraphDiff(left, right, diffMaxNodes(req))
+	if err != nil {
+		return nil, fmt.Errorf("build flamegraph diff: %w", err)
+	}
+	return &querierv1.DiffResponse{Flamegraph: flamegraph}, nil
+}
+
+func diffMaxNodes(req *querierv1.DiffRequest) int64 {
+	left := req.Left.GetMaxNodes()
+	right := req.Right.GetMaxNodes()
+	switch {
+	case left > 0 && right > 0 && right < left:
+		return right
+	case left > 0:
+		return left
+	default:
+		return right
+	}
+}
+
+type profileSelection struct {
+	filter   *SearchFilter
+	matchers []*promlabels.Matcher
+}
+
+func buildProfileSelection(profileType, selector string, start, end int64, limit int) (*profileSelection, string, error) {
+	profileTypeParts := strings.Split(profileType, ":")
+	if len(profileTypeParts) != 5 {
+		return nil, "", invalidProfileQueryf("invalid profile type: %q", profileType)
+	}
+	if end < start {
+		return nil, "", invalidProfileQueryf("end time must not be before start time")
+	}
+
+	var matchers []*promlabels.Matcher
+	var err error
+	if strings.TrimSpace(selector) != "" {
+		matchers, err = parser.ParseMetricSelector(selector)
+		if err != nil {
+			return nil, "", invalidProfileQueryf("parse matchers: %v", err)
+		}
+	}
+
+	selection := &profileSelection{
+		filter: &SearchFilter{
+			StartTime:   time.UnixMilli(start),
+			EndTime:     time.UnixMilli(end),
+			ProfileType: profileType,
+			Limit:       limit,
+		},
+		matchers: make([]*promlabels.Matcher, 0, len(matchers)),
+	}
+	for _, matcher := range matchers {
+		if matcher == nil {
 			continue
 		}
+		if err := validateProfileQueryLabel(matcher.Name); err != nil {
+			return nil, "", err
+		}
+		selection.matchers = append(selection.matchers, matcher)
 
-		switch label.Name {
+		if matcher.Name == "container_hostname" {
+			switch matcher.Type {
+			case promlabels.MatchEqual:
+				selection.filter.IncludeContainerProfiles = matcher.Value != ""
+			case promlabels.MatchRegexp:
+				// Grafana uses ^$ for the comparison dashboard's host-level
+				// selection. Other regexes must search container documents too;
+				// a regex without metacharacters is safe to push down as equality.
+				if matcher.Value != "^$" {
+					selection.filter.IncludeContainerProfiles = true
+					if regexp.QuoteMeta(matcher.Value) == matcher.Value {
+						selection.filter.ContainerHostname = matcher.Value
+					}
+				}
+			default:
+				// Negative matchers need both host and container candidates so
+				// their Prometheus missing-label semantics can be applied later.
+				selection.filter.IncludeContainerProfiles = true
+			}
+		}
+
+		// Push exact-match predicates into Elasticsearch. Regex and negative
+		// matchers are evaluated after decoding so their Prometheus semantics are
+		// preserved rather than silently treating them as equality predicates.
+		if matcher.Type != promlabels.MatchEqual {
+			continue
+		}
+		switch matcher.Name {
 		case "id":
-			filter.ID = label.Value
+			selection.filter.ID = matcher.Value
 		case "hostname":
-			filter.Hostname = label.Value
+			selection.filter.Hostname = matcher.Value
 		case "container_hostname":
-			filter.ContainerHostname = label.Value
+			selection.filter.ContainerHostname = matcher.Value
 		default:
-			return nil, fmt.Errorf("invalid label: %q", label.Name)
+			if profiler.IsCollectionDimensionLabel(matcher.Name) {
+				if selection.filter.Labels == nil {
+					selection.filter.Labels = make(map[string]string)
+				}
+				selection.filter.Labels[matcher.Name] = matcher.Value
+			}
 		}
 	}
+	return selection, profileTypeParts[1], nil
+}
 
-	if filter.ID == "" && filter.Hostname == "" && filter.ContainerHostname == "" {
-		return nil, fmt.Errorf("id or *hostname must be specified")
+func validateProfileQueryLabel(name string) error {
+	switch name {
+	case "id", "region", "hostname", "container_hostname", "container_host_namespace",
+		"container_type", "container_qos", "tracer_name", "tracer_id", "tracer_type",
+		"__profile_type__":
+		return nil
 	}
+	if err := profiler.ValidateLabelName(name); err != nil {
+		return invalidProfileQueryf("invalid profile query label %q: %v", name, err)
+	}
+	return nil
+}
 
-	// search
-	profileDocs, err := profileStorage.SearchProfiles(filter)
+func searchProfileDocuments(selection *profileSelection) ([]*ProfileDocument, error) {
+	if profileStorage == nil {
+		return nil, fmt.Errorf("profile storage is not initialized")
+	}
+	if counter, ok := profileStorage.(profileQueryCountStorage); ok {
+		count, err := counter.CountProfiles(selection.filter)
+		if err != nil {
+			return nil, fmt.Errorf("count profiles: %w", err)
+		}
+		if count > int64(selection.filter.Limit) {
+			return nil, fmt.Errorf(
+				"%w: storage matched %d documents; narrow the time range or selector below %d documents",
+				ErrProfileQueryLimitExceeded,
+				count,
+				selection.filter.Limit,
+			)
+		}
+	}
+	documents, err := profileStorage.SearchProfiles(selection.filter)
 	if err != nil {
 		return nil, fmt.Errorf("search profiles: %w", err)
 	}
-	if len(profileDocs) == 0 {
+
+	matched := documents[:0]
+	for _, document := range documents {
+		if document == nil || !profileDocumentInRange(document, selection.filter) {
+			continue
+		}
+		matches := true
+		for _, matcher := range selection.matchers {
+			if !matcher.Matches(profileDocumentLabelValue(document, matcher.Name)) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			matched = append(matched, document)
+		}
+	}
+	return matched, nil
+}
+
+func profileDocumentInRange(document *ProfileDocument, filter *SearchFilter) bool {
+	timestamp := profileDocumentTimestamp(document)
+	return (filter.StartTime.IsZero() || !timestamp.Before(filter.StartTime)) &&
+		(filter.EndTime.IsZero() || !timestamp.After(filter.EndTime)) &&
+		(filter.ProfileType == "" || document.TracerData.Flamedata.ProfileType == filter.ProfileType)
+}
+
+func profileDocumentTimestamp(document *ProfileDocument) time.Time {
+	if !document.UploadedTime.IsZero() {
+		return document.UploadedTime
+	}
+	return parseProfileDocumentTime(document.TracerTime, time.Unix(0, 0))
+}
+
+func profileDocumentLabelValue(document *ProfileDocument, name string) string {
+	switch name {
+	case "id", "tracer_id":
+		return document.TracerID
+	case "region":
+		return document.Region
+	case "hostname":
+		return document.Hostname
+	case "container_hostname":
+		return document.ContainerHostname
+	case "container_host_namespace":
+		return document.ContainerHostNamespace
+	case "container_type":
+		return document.ContainerType
+	case "container_qos":
+		return document.ContainerQOS
+	case "tracer_name":
+		return document.TracerName
+	case "tracer_type":
+		return document.TracerRunType
+	case "__profile_type__":
+		return document.TracerData.Flamedata.ProfileType
+	default:
+		return document.TracerData.Flamedata.Labels[name]
+	}
+}
+
+func selectProfileTree(req *querierv1.SelectMergeStacktracesRequest, allowEmpty bool) (*phlaremodel.Tree, error) {
+	selection, sampleType, err := buildProfileSelection(
+		req.ProfileTypeID,
+		req.LabelSelector,
+		req.Start,
+		req.End,
+		profileQueryLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	documents, err := searchProfileDocuments(selection)
+	if err != nil {
+		return nil, err
+	}
+	if len(documents) == 0 && !allowEmpty {
 		return nil, fmt.Errorf("no profiles documents found")
 	}
 
-	// merge profileDocs
-	var profilesMerge pprof.ProfileMerge
-	for _, profileDoc := range profileDocs {
-		profile := &profileDoc.TracerData.Flamedata.Profile
-		if err := profilesMerge.Merge(profile); err != nil {
-			return nil, fmt.Errorf("merge profile: %w", err)
+	tree := new(phlaremodel.Tree)
+	for _, document := range documents {
+		if err := addProfileDocumentToTree(tree, document, sampleType); err != nil {
+			return nil, err
 		}
 	}
-	profile := profilesMerge.Profile()
-	sampleType := profileTypes[1]
+	return tree, nil
+}
 
-	// convert profilev1.Profile to phlaremodel.Tree
-	phlaremodelTree := new(phlaremodel.Tree)
+func addProfileDocumentToTree(tree *phlaremodel.Tree, document *ProfileDocument, sampleType string) error {
+	profile := &document.TracerData.Flamedata.Profile
+	sampleTypeIndex, err := profileSampleTypeIndex(profile.StringTable, profile.SampleType, sampleType)
+	if err != nil {
+		return err
+	}
 
-	// Find the index of the sample type we're interested in
-	sampleTypeIndex := -1
-	for i, st := range profile.SampleType {
-		if profile.StringTable[st.Type] == sampleType {
-			sampleTypeIndex = i
-			break
+	locationMap := make(map[uint64]*googlev1.Location, len(profile.Location))
+	for _, location := range profile.Location {
+		if location != nil {
+			locationMap[location.Id] = location
 		}
 	}
-	if sampleTypeIndex == -1 {
-		return nil, fmt.Errorf("sample type not found: %q", sampleType)
+	functionMap := make(map[uint64]*googlev1.Function, len(profile.Function))
+	for _, function := range profile.Function {
+		if function != nil {
+			functionMap[function.Id] = function
+		}
 	}
 
-	// Create a map for quick location lookup
-	locationMap := make(map[uint64]*googlev1.Location)
-	for _, loc := range profile.Location {
-		locationMap[loc.Id] = loc
-	}
-
-	// Create a map for quick function lookup
-	functionMap := make(map[uint64]*googlev1.Function)
-	for _, fn := range profile.Function {
-		functionMap[fn.Id] = fn
-	}
-
-	// Process each sample
 	for _, sample := range profile.Sample {
-		// Get the value for our sample type
-		if len(sample.Value) <= sampleTypeIndex {
+		if sample == nil || sampleTypeIndex >= len(sample.Value) {
 			continue
 		}
-		value := sample.Value[sampleTypeIndex]
-
-		// Build stack trace string from location ids
-		var stack []string
-		for _, locId := range sample.LocationId {
-			loc, exists := locationMap[locId]
-			if !exists || len(loc.Line) == 0 {
-				continue
-			}
-
-			// Get the first line entry (primary function)
-			line := loc.Line[0]
-			fn, exists := functionMap[line.FunctionId]
-			if !exists {
-				continue
-			}
-
-			// Get function name from string table
-			funcName := profile.StringTable[fn.Name]
-			stack = append(stack, funcName)
-		}
-
-		// Insert stack into tree (leaf is at stack[0], so we need to reverse for phlaremodel.Tree)
+		stack := profileSampleStack(profile, locationMap, functionMap, sample.LocationId)
 		if len(stack) > 0 {
-			reversedStack := make([]string, len(stack))
-			for i, j := 0, len(stack)-1; i < len(stack); i, j = i+1, j-1 {
-				reversedStack[i] = stack[j]
-			}
-			phlaremodelTree.InsertStack(value, reversedStack...)
+			tree.InsertStack(sample.Value[sampleTypeIndex], stack...)
 		}
 	}
+	return nil
+}
 
-	// convert phlaremodel.Tree to FlameGraph
-	return &querierv1.SelectMergeStacktracesResponse{
-		Flamegraph: phlaremodel.NewFlameGraph(phlaremodelTree, -1),
-	}, nil
+func profileSampleStack(
+	profile *googlev1.Profile,
+	locationMap map[uint64]*googlev1.Location,
+	functionMap map[uint64]*googlev1.Function,
+	locationIDs []uint64,
+) []string {
+	stack := make([]string, 0, len(locationIDs))
+	for _, locationID := range locationIDs {
+		location := locationMap[locationID]
+		if location == nil {
+			continue
+		}
+		// pprof stores leaf locations first. Within one location, Line[0]
+		// is the innermost inlined function and the last line is its caller.
+		for _, line := range location.Line {
+			if line == nil {
+				continue
+			}
+			function := functionMap[line.FunctionId]
+			if function == nil || function.Name < 0 || function.Name >= int64(len(profile.StringTable)) {
+				continue
+			}
+			stack = append(stack, profile.StringTable[function.Name])
+		}
+	}
+	for left, right := 0, len(stack)-1; left < right; left, right = left+1, right-1 {
+		stack[left], stack[right] = stack[right], stack[left]
+	}
+	return stack
+}
+
+func profileSampleTypeIndex(stringTable []string, sampleTypes []*googlev1.ValueType, sampleType string) (int, error) {
+	for i, valueType := range sampleTypes {
+		if valueType == nil || valueType.Type < 0 || valueType.Type >= int64(len(stringTable)) {
+			continue
+		}
+		if stringTable[valueType.Type] == sampleType {
+			return i, nil
+		}
+	}
+	return -1, fmt.Errorf("sample type not found: %q", sampleType)
 }
 
 // ProfileTypes gets profiling types.
@@ -226,7 +464,189 @@ func ProfileTypes(req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesRe
 //	request: querierv1.SelectSeriesRequest
 //	response: querierv1.SelectSeriesResponse
 func SelectSeries(req *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesResponse, error) {
-	return nil, nil
+	if req == nil {
+		return nil, invalidProfileQueryf("request is nil")
+	}
+	if req.End < req.Start {
+		return nil, invalidProfileQueryf("end time must not be before start time")
+	}
+
+	stepMillis, err := seriesStepMillis(req.Step)
+	if err != nil {
+		return nil, err
+	}
+	aggregation := typesv1.TimeSeriesAggregationType_TIME_SERIES_AGGREGATION_TYPE_SUM
+	if req.Aggregation != nil {
+		aggregation = *req.Aggregation
+	}
+	if aggregation != typesv1.TimeSeriesAggregationType_TIME_SERIES_AGGREGATION_TYPE_SUM &&
+		aggregation != typesv1.TimeSeriesAggregationType_TIME_SERIES_AGGREGATION_TYPE_AVERAGE {
+		return nil, invalidProfileQueryf("unsupported time series aggregation: %s", aggregation.String())
+	}
+
+	selection, sampleType, err := buildProfileSelection(
+		req.ProfileTypeID,
+		req.LabelSelector,
+		req.Start,
+		req.End,
+		profileQueryLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	documents, err := searchProfileDocuments(selection)
+	if err != nil {
+		return nil, err
+	}
+	if len(documents) == 0 {
+		return &querierv1.SelectSeriesResponse{}, nil
+	}
+
+	groupBy, err := normalizeGroupBy(req.GroupBy)
+	if err != nil {
+		return nil, err
+	}
+
+	type bucketValue struct {
+		sum   float64
+		count int64
+	}
+	type groupedSeries struct {
+		labels  []*typesv1.LabelPair
+		buckets map[int64]*bucketValue
+	}
+	groups := make(map[string]*groupedSeries)
+	for _, document := range documents {
+		value, found, valueErr := profileDocumentSampleTotal(document, sampleType)
+		if valueErr != nil {
+			return nil, valueErr
+		}
+		if !found {
+			continue
+		}
+
+		labels, key := profileSeriesLabels(document, groupBy)
+		group := groups[key]
+		if group == nil {
+			group = &groupedSeries{labels: labels, buckets: make(map[int64]*bucketValue)}
+			groups[key] = group
+		}
+		timestamp := profileDocumentTimestamp(document).UnixMilli()
+		bucket := req.Start + ((timestamp-req.Start)/stepMillis)*stepMillis
+		entry := group.buckets[bucket]
+		if entry == nil {
+			entry = &bucketValue{}
+			group.buckets[bucket] = entry
+		}
+		entry.sum += float64(value)
+		entry.count++
+	}
+
+	series := make([]*typesv1.Series, 0, len(groups))
+	for _, group := range groups {
+		points := make([]*typesv1.Point, 0, len(group.buckets))
+		for timestamp, value := range group.buckets {
+			pointValue := value.sum
+			if aggregation == typesv1.TimeSeriesAggregationType_TIME_SERIES_AGGREGATION_TYPE_AVERAGE {
+				pointValue /= float64(value.count)
+			}
+			points = append(points, &typesv1.Point{Timestamp: timestamp, Value: pointValue})
+		}
+		sort.Slice(points, func(i, j int) bool { return points[i].Timestamp < points[j].Timestamp })
+		series = append(series, &typesv1.Series{Labels: group.labels, Points: points})
+	}
+	sort.Slice(series, func(i, j int) bool {
+		left, right := profileSeriesValue(series[i]), profileSeriesValue(series[j])
+		if left != right {
+			return left > right
+		}
+		return phlaremodel.CompareLabelPairs(series[i].Labels, series[j].Labels) < 0
+	})
+	if len(series) > profileSeriesLimit {
+		series = series[:profileSeriesLimit]
+	}
+
+	return &querierv1.SelectSeriesResponse{Series: series}, nil
+}
+
+func profileSeriesValue(series *typesv1.Series) float64 {
+	var total float64
+	for _, point := range series.GetPoints() {
+		total += point.GetValue()
+	}
+	return total
+}
+
+func seriesStepMillis(step float64) (int64, error) {
+	if math.IsNaN(step) || math.IsInf(step, 0) || step <= 0 || step > float64(math.MaxInt64)/1000 {
+		return 0, invalidProfileQueryf("step must be a finite positive number of seconds")
+	}
+	milliseconds := int64(math.Round(step * 1000))
+	if milliseconds < 1 {
+		milliseconds = 1
+	}
+	return milliseconds, nil
+}
+
+func normalizeGroupBy(groupBy []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(groupBy))
+	result := make([]string, 0, len(groupBy))
+	for _, name := range groupBy {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if err := validateProfileQueryLabel(name); err != nil {
+			return nil, err
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func profileDocumentSampleTotal(document *ProfileDocument, sampleType string) (int64, bool, error) {
+	profile := &document.TracerData.Flamedata.Profile
+	index, err := profileSampleTypeIndex(profile.StringTable, profile.SampleType, sampleType)
+	if err != nil {
+		return 0, false, err
+	}
+	var total int64
+	var found bool
+	for _, sample := range profile.Sample {
+		if sample == nil || index >= len(sample.Value) {
+			continue
+		}
+		total += sample.Value[index]
+		found = true
+	}
+	return total, found, nil
+}
+
+func profileSeriesLabels(document *ProfileDocument, groupBy []string) ([]*typesv1.LabelPair, string) {
+	labels := make([]*typesv1.LabelPair, 0, len(groupBy))
+	for _, name := range groupBy {
+		labels = append(labels, &typesv1.LabelPair{
+			Name:  name,
+			Value: profileDocumentLabelValue(document, name),
+		})
+	}
+	return labels, labelPairsKey(labels)
+}
+
+func labelPairsKey(labels []*typesv1.LabelPair) string {
+	var key strings.Builder
+	for _, label := range labels {
+		if label == nil {
+			continue
+		}
+		_, _ = fmt.Fprintf(&key, "%d:%s=%d:%s;", len(label.Name), label.Name, len(label.Value), label.Value)
+	}
+	return key.String()
 }
 
 // LabelNames gets label names by request.
@@ -234,8 +654,10 @@ func SelectSeries(req *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesRe
 //	request: typesv1.LabelNamesRequest
 //	response: typesv1.LabelNamesResponse
 func LabelNames(req *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
+	names := []string{"region", "hostname", "container_hostname", "container_host_namespace"}
+	names = append(names, profiler.CollectionDimensionLabels...)
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"region", "hostname", "container_hostname", "container_host_namespace"},
+		Names: names,
 	}
 	return response, nil
 }
@@ -253,23 +675,28 @@ func LabelValues(req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse,
 
 	matchers, err := parser.ParseMetricSelectors(req.Matchers)
 	if err != nil {
-		return nil, fmt.Errorf("parse matchers: %w", err)
+		return nil, invalidProfileQueryf("parse matchers: %v", err)
 	}
 
 	// filter: ProfileType
 	profileTypePresent := false
 	for _, ms := range matchers {
 		for _, m := range ms {
-			if m.Name == "__profile_type__" {
+			switch {
+			case m.Name == "__profile_type__":
 				profileTypePresent = true
 				filter.ProfileType = m.Value
-				break
+			case profiler.IsCollectionDimensionLabel(m.Name) && m.Value != "" && m.Value != "*":
+				if filter.Labels == nil {
+					filter.Labels = make(map[string]string)
+				}
+				filter.Labels[m.Name] = m.Value
 			}
 		}
 	}
 
 	if !profileTypePresent {
-		return nil, fmt.Errorf("no __profile_type__ matcher present")
+		return nil, invalidProfileQueryf("no __profile_type__ matcher present")
 	}
 
 	names, err := profileStorage.AggregationsByField(filter, req.Name)

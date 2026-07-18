@@ -1,0 +1,452 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Back to profiling overview",
+      "tooltip": "Return to the continuous profiling overview",
+      "type": "link",
+      "url": "/d/continuous-profiling-host/continuous-profiling"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Container profiling overview",
+      "tooltip": "Open the selected container in the profiling overview",
+      "type": "link",
+      "url": "/d/continuous-profiling-container/continuous-profiling"
+    }
+  ],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "## Window-over-window profile comparison\n\nBoth panels use the same host/container and profiling-dimension selector. Leave **container hostname** at `All` for host profiles, or select a container for container profiles. The **current window** is shown on the left; the right panel applies Grafana's native `timeShift: 1h` and therefore shows the preceding one-hour-shifted window. Each flame graph panel keeps Grafana's built-in **Top table** available.\n\nThe apiserver also implements the Pyroscope-compatible `querier.v1.QuerierService/Diff` RPC for clients that submit explicit baseline and comparison selections. This dashboard deliberately provides a directly verifiable side-by-side comparison with supported `queryType: profile` queries; it does not claim that Grafana Profiles Drilldown service discovery is configured.",
+        "mode": "markdown"
+      },
+      "pluginVersion": "12.0.3",
+      "title": "How to compare",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "huatuo-apiserver-pyroscope"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "id": 2,
+      "options": {
+        "showFlameGraphOnly": false
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "huatuo-apiserver-pyroscope"
+          },
+          "groupBy": [],
+          "labelSelector": "{hostname=\"$hostname\",container_hostname=~\"${container_hostname:regex}\",profiling_scope=~\"${profiling_scope:regex}\",cpu=~\"${cpu:regex}\",pid=~\"${pid:regex}\",tgid=~\"${tgid:regex}\",cgroup_id=~\"${cgroup_id:regex}\",cgroup_path=~\"${cgroup_path:regex}\",process_group_id=~\"${process_group_id:regex}\",container_id=~\"${container_id:regex}\",lock_type=~\"${lock_type:regex}\"}",
+          "maxNodes": 16384,
+          "profileTypeId": "$type",
+          "queryType": "profile",
+          "refId": "A",
+          "spanSelector": []
+        }
+      ],
+      "title": "Current window — flame graph and Top table",
+      "type": "flamegraph"
+    },
+    {
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "huatuo-apiserver-pyroscope"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "id": 3,
+      "options": {
+        "showFlameGraphOnly": false
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "huatuo-apiserver-pyroscope"
+          },
+          "groupBy": [],
+          "labelSelector": "{hostname=\"$hostname\",container_hostname=~\"${container_hostname:regex}\",profiling_scope=~\"${profiling_scope:regex}\",cpu=~\"${cpu:regex}\",pid=~\"${pid:regex}\",tgid=~\"${tgid:regex}\",cgroup_id=~\"${cgroup_id:regex}\",cgroup_path=~\"${cgroup_path:regex}\",process_group_id=~\"${process_group_id:regex}\",container_id=~\"${container_id:regex}\",lock_type=~\"${lock_type:regex}\"}",
+          "maxNodes": 16384,
+          "profileTypeId": "$type",
+          "queryType": "profile",
+          "refId": "A",
+          "spanSelector": []
+        }
+      ],
+      "timeShift": "1h",
+      "title": "Previous window (shifted 1h) — flame graph and Top table",
+      "type": "flamegraph"
+    }
+  ],
+  "schemaVersion": 41,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "description": "Selects the host for host-level or container-level profiles.",
+        "label": "hostname",
+        "name": "hostname",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "^$",
+        "allowCustomValue": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "description": "Optional container selector. All uses ^$ and selects host-level profiles only.",
+        "includeAll": true,
+        "label": "container hostname",
+        "multi": false,
+        "name": "container_hostname",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.profiling_scope.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 100\n}",
+        "description": "Optional exact profiling scope filter.",
+        "includeAll": true,
+        "label": "scope",
+        "multi": false,
+        "name": "profiling_scope",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.profiling_scope.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 100\n}",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cpu.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact logical CPU set filter.",
+        "includeAll": true,
+        "label": "CPU",
+        "multi": false,
+        "name": "cpu",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cpu.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.pid.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact PID filter.",
+        "includeAll": true,
+        "label": "PID",
+        "multi": false,
+        "name": "pid",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.pid.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.tgid.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact TGID filter.",
+        "includeAll": true,
+        "label": "TGID",
+        "multi": false,
+        "name": "tgid",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.tgid.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cgroup_id.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact cgroup ID filter.",
+        "includeAll": true,
+        "label": "cgroup ID",
+        "multi": false,
+        "name": "cgroup_id",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cgroup_id.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cgroup_path.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact cgroup path filter.",
+        "includeAll": true,
+        "label": "cgroup path",
+        "multi": false,
+        "name": "cgroup_path",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cgroup_path.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.process_group_id.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact process group filter.",
+        "includeAll": true,
+        "label": "process group",
+        "multi": false,
+        "name": "process_group_id",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.process_group_id.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.container_id.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact container ID filter.",
+        "includeAll": true,
+        "label": "container ID",
+        "multi": false,
+        "name": "container_id",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.container_id.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.lock_type.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 100\n}",
+        "description": "Optional exact kernel lock type filter.",
+        "includeAll": true,
+        "label": "lock type",
+        "multi": false,
+        "name": "lock_type",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.lock_type.keyword\",\n  \"query\": \"hostname.keyword:$hostname AND tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 100\n}",
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "description": "profiling type",
+        "label": "type",
+        "name": "type",
+        "options": [
+          {
+            "selected": true,
+            "text": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+            "value": "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+          },
+          {
+            "selected": false,
+            "text": "memory:alloc_space:bytes:space:bytes",
+            "value": "memory:alloc_space:bytes:space:bytes"
+          },
+          {
+            "selected": false,
+            "text": "process_lock:lock:count:lock:count",
+            "value": "process_lock:lock:count:lock:count"
+          },
+          {
+            "selected": false,
+            "text": "process_lock:lock:nanoseconds:lock:nanoseconds",
+            "value": "process_lock:lock:nanoseconds:lock:nanoseconds"
+          }
+        ],
+        "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes,process_lock:lock:count:lock:count,process_lock:lock:nanoseconds:lock:nanoseconds",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Continuous Profiling comparison",
+  "uid": "continuous-profiling-compare"
+}

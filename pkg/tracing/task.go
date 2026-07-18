@@ -151,6 +151,16 @@ func NewTask(execBinary string, timeout time.Duration, storageType TaskStorageTy
 		log.Errorf("alloc task id: %v", err)
 		return ""
 	}
+	return NewTaskWithID(taskID, execBinary, timeout, storageType, execArgs)
+}
+
+// NewTaskWithID creates and starts a task with a caller-allocated ID. This is
+// useful when the ID must also be passed to the tracer for data correlation.
+func NewTaskWithID(taskID, execBinary string, timeout time.Duration, storageType TaskStorageType, execArgs []string) string {
+	if taskID == "" {
+		log.Error("start task: empty task id")
+		return ""
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	task := &task{
 		id:         taskID,
@@ -161,7 +171,11 @@ func NewTask(execBinary string, timeout time.Duration, storageType TaskStorageTy
 		execArgs:   append([]string(nil), execArgs...),
 		doneCh:     make(chan struct{}),
 	}
-	taskLifeTmpCache.Store(taskID, task)
+	if _, loaded := taskLifeTmpCache.LoadOrStore(taskID, task); loaded {
+		cancel()
+		log.Errorf("start task: duplicate task id %q", taskID)
+		return ""
+	}
 
 	go runTask(ctx, task)
 

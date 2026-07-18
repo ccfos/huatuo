@@ -31,6 +31,8 @@ func buildCapabilitiesResponse(_ *Handler) (v1.ProfilingCapabilitiesResponse, er
 
 	memoryLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeMemory))
 	sort.Strings(memoryLanguages)
+	lockLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeLock))
+	sort.Strings(lockLanguages)
 
 	memoryModes := map[string]string{}
 	for _, language := range profiling.LanguagesFor(profiling.TypeMemory) {
@@ -47,15 +49,18 @@ func buildCapabilitiesResponse(_ *Handler) (v1.ProfilingCapabilitiesResponse, er
 	cfg := config.Get().Profiling
 
 	return v1.ProfilingCapabilitiesResponse{
-		ProfileTypes:                    []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
+		ProfileTypes:                    []string{string(profiling.TypeCPU), string(profiling.TypeMemory), string(profiling.TypeLock)},
 		CPUSupportedLanguages:           cpuLanguages,
 		MemorySupportedLanguages:        memoryLanguages,
+		LockSupportedLanguages:          lockLanguages,
 		MemoryModes:                     memoryModes,
 		DefaultCPUInterval:              cfg.CPUProfilingInterval,
 		DefaultMemoryInterval:           cfg.MemoryProfilingInterval,
 		DefaultCPUSingleTraceTimeout:    cfg.CPUSingleTraceTimeout,
 		DefaultMemorySingleTraceTimeout: cfg.MemorySingleTraceTimeout,
 		MaxProfilerProcesses:            cfg.MaxProfilerProcesses,
+		CollectionDimensions:            []string{"cpu", "pid", "tgid", "cgroup", "process-group"},
+		KernelLockTypes:                 []string{"mutex", "spinlock", "rwlock"},
 	}, nil
 }
 

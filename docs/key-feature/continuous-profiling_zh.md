@@ -25,9 +25,9 @@ weight: 4
 
 | 语言 | 采集类型 | 底层实现 |
 | --- | --- | --- |
-| C / C++ / Go | CPU / 内存 / 锁 | eBPF（perf_event + 栈映射） |
-| Java | CPU / 内存 / 锁 | async-profiler |
-| Python | CPU / 内存 | py-spy / memray |
+| C / C++ / Go | CPU / 内存 / 锁 | eBPF（perf_event / 锁争用 + 栈映射） |
+| Java | CPU / 内存 | async-profiler |
+| Python | CPU | py-spy |
 
 Profile 类型标识（Grafana 查询用）：
 
@@ -91,12 +91,70 @@ $ curl -X POST http://127.0.0.1:12740/v1/profiles \
 
 | 字段 | 说明 |
 | --- | --- |
-| `type` | 采集类型：`cpu` / `memory` |
+| `type` | 采集类型：`cpu` / `memory` / `lock` |
 | `target_process_language` | 目标语言：`go`、`c`、`c++`、`java`、`python` |
 | `hostname` | **必填**。目标宿主机名，apiserver 据此将任务下发至 `http://{hostname}:19704` 上的 huatuo-bamai agent（需与 agent 上报的 hostname 一致） |
 | `duration` | 采集总时长（秒），期间 agent 按 `CPUProfilingInterval` 周期采样 |
 | `container` | 容器级采集时填容器 hostname，宿主级采集留空 |
 | `target_exec_path` | 可选，按可执行文件路径过滤目标进程 |
+| `scope` | 采集维度：`pid`、`tgid`、`cgroup`、`process-group` 或 `all` |
+| `pid` | PID/TGID 目标；`process-group` 模式下也可据此解析 PGID |
+| `cgroup_id` / `cgroup_path` | cgroup 目标，二选一；`container` 也会选择对应容器 cgroup |
+| `process_group_id` | 进程组目标 |
+| `labels` | 自定义 Prometheus 兼容标签（`[A-Za-z_][A-Za-z0-9_]*`） |
+
+### 多维度采集与标签
+
+原生 CPU、内存、锁 Profiler 共用 `pid`、`tgid`、`cgroup`、
+`process-group` 四种过滤维度。原有 CLI 的 `thread`、`thread-group`
+分别保留为 `pid`、`tgid` 的兼容别名，现有命令无需修改。
+
+```bash
+# 精确线程
+profiler -t cpu -l go --scope pid --pid 4242 -d 30
+
+# 整个线程组/进程
+profiler -t cpu -l go --scope tgid --pid 4242 -d 30
+
+# cgroup v2 路径（目录 inode 即内核 cgroup ID）
+profiler -t cpu -l go --scope cgroup \
+  --cgroup-path /sys/fs/cgroup/system.slice/example.service -d 30
+
+# 进程组；省略 --process-group-id 时会从 --pid 解析 PGID
+profiler -t cpu -l go --scope process-group --pid 4242 -d 30
+```
+
+每份上传 Profile 都会携带 `profiling_scope`，以及当前维度对应的
+`pid`、`tgid`、`cgroup_id`、`cgroup_path`、`container_id` 或
+`process_group_id` 标签；
+还可重复传入 `--label key=value` 添加业务标签。Huatuo 同时将这些标签
+写入 Pyroscope series name 与标准 pprof sample label，因此数据兼容
+Pyroscope/Parca。Pyroscope 兼容的 `LabelNames`、`LabelValues` 和火焰图
+查询接口也支持按上述维度检索和聚合。
+
+### 内核锁 Profiling
+
+原生 C/C++/Go 目标支持 mutex、spinlock、rwlock 三类内核锁，可按争用
+等待时间或争用次数生成 Profile：
+
+```bash
+profiler -t lock -l go --scope tgid --pid 4242 \
+  --lock-types mutex,spinlock,rwlock \
+  --lock-mode time --lock-min-wait 1us -d 30
+```
+
+使用 `--lock-mode count` 查看达到等待阈值的争用次数；`--lock-min-wait`
+用于过滤较短的等待。API 对应字段为 `lock_types`、`lock_mode`、
+`lock_min_wait`。
+
+采集器采用与 `perf lock contention` 相同的“只观测真实争用”模型：Linux
+5.19 及以上优先使用内核 `lock:contention_begin` / `lock:contention_end`
+tracepoint；Ubuntu 20.04 的 5.4 等旧内核则按能力探测 mutex、queued
+spinlock、queued rwlock 的慢路径。采集器不会退回到高频
+`_raw_*_lock` 加锁入口进行全局插桩。等待时间与次数先在 BPF 内聚合，
+再由用户态周期读取，因此高争用时事件量仍然有界。运行时不依赖
+`perf` 命令或 `CONFIG_LOCK_STAT`；若内核既没有 contention tracepoint，
+也没有安全的慢路径符号，请求会返回明确的不支持错误。
 
 返回任务 ID：
 

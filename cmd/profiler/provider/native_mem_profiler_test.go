@@ -85,6 +85,17 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 	}
 }
 
+func TestPhysicalMemoryValueConversion(t *testing.T) {
+	p := &memNativeProfiler{
+		internalMode: profiling.MemoryModePhysicalAlloc,
+		probability:  50,
+		pageSize:     4096,
+	}
+	if got, want := p.convertValueToBytes(1), int64(8192); got != want {
+		t.Fatalf("convertValueToBytes(1) = %d, want %d", got, want)
+	}
+}
+
 func TestNewPhysicalAllocAttachOption(t *testing.T) {
 	tests := []struct {
 		name      string

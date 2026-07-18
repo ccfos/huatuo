@@ -16,10 +16,12 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -76,7 +78,7 @@ func runBefore(ctx *cli.Context) error {
 		return err
 	}
 
-	if err := validateCommonOptions(ctx); err != nil {
+	if err := validateCommonOptions(ctx, lang, typ); err != nil {
 		return err
 	}
 
@@ -123,7 +125,7 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 			return err
 		}
 		if typ == profiling.TypeMemory {
-			return validateExactlyOneTarget(ctx)
+			return validateNativeMemoryTarget(ctx)
 		}
 
 		return nil
@@ -147,6 +149,25 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 	default:
 		return fmt.Errorf("unsupported language: %s", lang)
 	}
+}
+
+func validateNativeMemoryTarget(ctx *cli.Context) error {
+	hasPID := ctx.String("pid") != ""
+	hasContainerOrCgroup := ctx.String("container-id") != "" ||
+		ctx.Uint64("cgroup-id") != 0 || ctx.String("cgroup-path") != ""
+	hasProcessGroup := ctx.Int("process-group-id") != 0
+
+	targets := 0
+	for _, present := range []bool{hasPID, hasContainerOrCgroup, hasProcessGroup} {
+		if present {
+			targets++
+		}
+	}
+	if targets != 1 {
+		return fmt.Errorf("exactly one PID/TGID, container/cgroup, or process group target must be provided")
+	}
+
+	return nil
 }
 
 func validatePythonProfileOptions(lang profiling.Language, typ profiling.Type, duration, interval int) error {
@@ -195,7 +216,7 @@ func validateSinglePID(ctx *cli.Context, profilerName string) error {
 	return nil
 }
 
-func validateCommonOptions(ctx *cli.Context) error {
+func validateCommonOptions(ctx *cli.Context, lang profiling.Language, typ profiling.Type) error {
 	if err := validateNumericOptions(
 		profiling.Type(ctx.String("type")),
 		ctx.Int("freq"),
@@ -209,6 +230,9 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 	for _, pid := range pids {
+		if uint64(pid) > math.MaxInt32 {
+			return fmt.Errorf("pid %d exceeds Linux PID range", pid)
+		}
 		procPath := fmt.Sprintf("/proc/%d", pid)
 		if _, err := os.Stat(procPath); os.IsNotExist(err) {
 			return fmt.Errorf("pid %d does not exist", pid)
@@ -221,6 +245,22 @@ func validateCommonOptions(ctx *cli.Context) error {
 		}
 	}
 
+	if cgroupPath := strings.TrimSpace(ctx.String("cgroup-path")); cgroupPath != "" {
+		info, err := os.Stat(cgroupPath)
+		if err != nil {
+			return fmt.Errorf("cgroup-path does not exist: %s: %w", cgroupPath, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("cgroup-path must be a directory: %s", cgroupPath)
+		}
+	}
+	if ctx.Uint64("cgroup-id") != 0 && ctx.String("cgroup-path") != "" {
+		return fmt.Errorf("only one of --cgroup-id or --cgroup-path may be provided")
+	}
+	if pgid := ctx.Int("process-group-id"); pgid < 0 || uint64(pgid) > math.MaxInt32 {
+		return fmt.Errorf("process-group-id must be between 0 and %d", math.MaxInt32)
+	}
+
 	if cpuidStr := ctx.String("cpuid"); cpuidStr != "" {
 		if _, err := parseCPUIDs(cpuidStr); err != nil {
 			return err
@@ -231,10 +271,44 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 
-	scope := ctx.String("scope")
-	validScopes := map[string]bool{"thread": true, "thread-group": true, "process-group": true}
-	if !validScopes[scope] {
-		return fmt.Errorf("unsupported scope: %s (allowed: thread, thread-group, process-group)", scope)
+	implementation, _ := profiling.ImplementationFor(lang)
+	if implementation == profiling.ImplementationNative {
+		scope, err := pcontext.NormalizeScope(ctx.String("scope"))
+		if err != nil {
+			return err
+		}
+		switch scope {
+		case pcontext.ScopePID, pcontext.ScopeTGID:
+			if ctx.IsSet("scope") && len(pids) == 0 {
+				return fmt.Errorf("scope %s requires --pid", scope)
+			}
+			if ctx.IsSet("scope") && len(pids) > 1 {
+				return fmt.Errorf("scope %s requires exactly one --pid", scope)
+			}
+		case pcontext.ScopeCgroup:
+			if ctx.String("container-id") == "" && ctx.Uint64("cgroup-id") == 0 && ctx.String("cgroup-path") == "" {
+				return fmt.Errorf("scope cgroup requires --container-id, --cgroup-id, or --cgroup-path")
+			}
+		case pcontext.ScopeProcessGroup:
+			if ctx.Int("process-group-id") == 0 && len(pids) == 0 {
+				return fmt.Errorf("scope process-group requires --process-group-id or --pid")
+			}
+			if ctx.Int("process-group-id") == 0 && len(pids) > 1 {
+				return fmt.Errorf("scope process-group cannot derive one group from multiple PIDs")
+			}
+		}
+	}
+
+	if typ == profiling.TypeLock {
+		if _, err := pcontext.ParseLockTypes(ctx.String("lock-types")); err != nil {
+			return err
+		}
+		if mode := ctx.String("lock-mode"); mode != "time" && mode != "count" {
+			return fmt.Errorf("invalid lock-mode %q (allowed: time, count)", mode)
+		}
+		if ctx.Duration("lock-min-wait") < 0 || ctx.Duration("lock-min-wait") > time.Hour {
+			return fmt.Errorf("lock-min-wait must be between 0 and 1h")
+		}
 	}
 
 	if toolPath := ctx.String("tool-path"); toolPath != "" {
@@ -273,6 +347,8 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	native := implementation == profiling.ImplementationNative
 	nativeCPU := native && typ == profiling.TypeCPU
 	nativeMemory := native && typ == profiling.TypeMemory
+	nativeLock := native && typ == profiling.TypeLock
+	nativeDimensions := native && (typ == profiling.TypeCPU || typ == profiling.TypeMemory || typ == profiling.TypeLock)
 
 	if lang == profiling.LanguageJava && typ == profiling.TypeCPU && ctx.Int("freq") > 1000 {
 		return fmt.Errorf("Java profiler frequency must not exceed 1000 samples per second")
@@ -283,8 +359,11 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.Bool("log-bpf-debug") && !native {
 		return fmt.Errorf("--log-bpf-debug is supported only by native profilers")
 	}
-	if ctx.String("scope") != "thread" && !nativeMemory {
-		return fmt.Errorf("--scope=%s is supported only by native memory profiling", ctx.String("scope"))
+	if (ctx.IsSet("scope") || ctx.IsSet("cgroup-id") || ctx.IsSet("cgroup-path") || ctx.IsSet("process-group-id")) && !nativeDimensions {
+		return fmt.Errorf("collection dimensions are supported only by native profiling")
+	}
+	if (ctx.IsSet("lock-types") || ctx.IsSet("lock-mode") || ctx.IsSet("lock-min-wait")) && !nativeLock {
+		return fmt.Errorf("lock options are supported only by native lock profiling")
 	}
 	if ctx.String("binary-match-path") != "" && native {
 		return fmt.Errorf("--binary-match-path is not supported by native profilers")

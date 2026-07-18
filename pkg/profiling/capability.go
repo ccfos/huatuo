@@ -88,7 +88,7 @@ func newNativeCapability(language Language) capability {
 	return capability{
 		Language:       language,
 		Implementation: ImplementationNative,
-		Types:          []Type{TypeCPU, TypeMemory},
+		Types:          []Type{TypeCPU, TypeMemory, TypeLock},
 		MemoryModes: []MemoryMode{
 			MemoryModeVirtualAlloc,
 			MemoryModePhysicalAlloc,
@@ -99,10 +99,10 @@ func newNativeCapability(language Language) capability {
 
 func ParseType(value string) (Type, error) {
 	typ := Type(value)
-	if typ == TypeCPU || typ == TypeMemory {
+	if typ == TypeCPU || typ == TypeMemory || typ == TypeLock {
 		return typ, nil
 	}
-	return TypeUnknown, fmt.Errorf("unsupported profiling type %q (expected: cpu or memory)", value)
+	return TypeUnknown, fmt.Errorf("unsupported profiling type %q (expected: cpu, memory, or lock)", value)
 }
 
 func ParseLanguage(value string) (Language, error) {

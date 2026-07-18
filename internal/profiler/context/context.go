@@ -19,9 +19,12 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/output"
@@ -46,6 +49,9 @@ type ProfilerContext struct {
 	AggrInterval         int
 	IsOneShotAgg         bool
 	CPUIDs               []int
+	CgroupID             uint64
+	ProcessGroupID       int
+	LockMinWait          time.Duration
 
 	ServerAddress             string
 	OutputFormat              output.OutputFormat
@@ -59,6 +65,10 @@ type ProfilerContext struct {
 	LogBpfDebug               bool
 	MemoryMode                profiling.MemoryMode
 	PhysicalMemoryProbability uint
+	CgroupPath                string
+	LockMode                  string
+	LockTypes                 []string
+	Labels                    map[string]string
 
 	TracerID string
 
@@ -110,6 +120,15 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		}
 	}()
 
+	labels, err := parseProfileLabels(cliCtx.StringSlice("label"))
+	if err != nil {
+		return nil, err
+	}
+	for name := range labels {
+		if err := profiler.ValidateCustomLabelName(name); err != nil {
+			return nil, err
+		}
+	}
 	outputFormat := output.OutputFormat(cliCtx.String("output-format"))
 
 	tsClient, err = initToolstreamClient(cliCtx, outputFormat)
@@ -123,6 +142,10 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		if err != nil {
 			return nil, err
 		}
+		if cliCtx.String("type") != "cpu" || !supportsNativeCPUFilter(cliCtx.String("language")) {
+			return nil, fmt.Errorf("--cpuid is only supported for native c, c++, or go CPU profiling")
+		}
+		sort.Ints(cpuIDs)
 	}
 
 	pids, err := ParsePIDs(cliCtx.String("pid"))
@@ -144,6 +167,96 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 			return nil, err
 		}
 	}
+
+	targetPID := 0
+	if len(pids) > 0 {
+		targetPID = pids[0]
+	}
+
+	scope := cliCtx.String("scope")
+	cgroupID := cliCtx.Uint64("cgroup-id")
+	cgroupPath := strings.TrimSpace(cliCtx.String("cgroup-path"))
+	processGroupID := cliCtx.Int("process-group-id")
+	lockTypes := []string(nil)
+
+	implementation, _ := profiling.ImplementationFor(language)
+	if implementation == profiling.ImplementationNative {
+		scope, err = normalizeRequestedScope(scope, cliCtx.IsSet("scope"), targetPID)
+		if err != nil {
+			return nil, err
+		}
+
+		if cgroupPath != "" && cgroupID == 0 {
+			var stat syscall.Stat_t
+			if err := syscall.Stat(cgroupPath, &stat); err != nil {
+				return nil, fmt.Errorf("stat cgroup path %q: %w", cgroupPath, err)
+			}
+			cgroupID = stat.Ino
+		}
+
+		if scope == ScopeProcessGroup && processGroupID == 0 && targetPID != 0 {
+			if len(pids) > 1 {
+				return nil, fmt.Errorf("scope process-group cannot derive one process group from multiple PIDs")
+			}
+			processGroupID, err = syscall.Getpgid(targetPID)
+			if err != nil {
+				return nil, fmt.Errorf("resolve process group for pid %d: %w", targetPID, err)
+			}
+		}
+
+		scope = inferImplicitScope(
+			scope,
+			cliCtx.IsSet("scope"),
+			targetPID,
+			processGroupID,
+			cgroupID,
+			cliCtx.String("container-id"),
+		)
+
+		labels[profiler.LabelProfilingScope] = scope
+		if typ == profiling.TypeCPU && len(cpuIDs) > 0 {
+			labels[profiler.LabelCPU] = formatCPUIds(cpuIDs)
+		}
+		if containerID := cliCtx.String("container-id"); containerID != "" {
+			// Container CSS filtering is applied in addition to the selected scope,
+			// so preserve it as a dimension even for an explicit PID/TGID target.
+			labels[profiler.LabelContainerID] = containerID
+		}
+		switch scope {
+		case ScopePID:
+			if len(pids) > 0 {
+				labels[profiler.LabelPID] = formatPIDs(pids)
+			}
+		case ScopeTGID:
+			if len(pids) > 0 {
+				labels[profiler.LabelTGID] = formatPIDs(pids)
+			}
+		case ScopeCgroup:
+			if cgroupID != 0 {
+				labels[profiler.LabelCgroupID] = strconv.FormatUint(cgroupID, 10)
+			}
+			if cgroupPath != "" {
+				labels[profiler.LabelCgroupPath] = cgroupPath
+			}
+		case ScopeProcessGroup:
+			if processGroupID != 0 {
+				labels[profiler.LabelProcessGroupID] = strconv.Itoa(processGroupID)
+			}
+		}
+	}
+
+	if typ == profiling.TypeLock {
+		lockTypes, err = ParseLockTypes(cliCtx.String("lock-types"))
+		if err != nil {
+			return nil, err
+		}
+		// lock_type is a queryable series label only when it identifies every
+		// sample in the profile. Multi-type profiles keep the real type in each
+		// stack prefix instead of publishing a misleading comma-joined label.
+		if len(lockTypes) == 1 {
+			labels[profiler.LabelLockType] = lockTypes[0]
+		}
+	}
 	profilerContext := &ProfilerContext{
 		Ctx:    ctx,
 		Cancel: cancelProfiler,
@@ -155,19 +268,26 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		MaxProfilerProcesses: cliCtx.Int("max-concurrent-procs"),
 		AggrInterval:         cliCtx.Int("aggr-interval"),
 		CPUIDs:               cpuIDs,
+		CgroupID:             cgroupID,
+		ProcessGroupID:       processGroupID,
+		LockMinWait:          cliCtx.Duration("lock-min-wait"),
 
 		ServerAddress:             cliCtx.String("huatuo-api-address"),
 		Type:                      typ,
 		Language:                  language,
 		ContainerID:               cliCtx.String("container-id"),
 		ExecPath:                  cliCtx.String("binary-match-path"),
-		Scope:                     cliCtx.String("scope"),
+		Scope:                     scope,
 		ToolPath:                  cliCtx.String("tool-path"),
 		LogBpfDebug:               cliCtx.Bool("log-bpf-debug"),
 		OutputPath:                cliCtx.String("output-path"),
 		OutputFormat:              outputFormat,
 		MemoryMode:                mode,
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
+		CgroupPath:                cgroupPath,
+		LockMode:                  cliCtx.String("lock-mode"),
+		LockTypes:                 lockTypes,
+		Labels:                    labels,
 
 		TracerID: cliCtx.String("tracer-id"),
 
@@ -175,6 +295,133 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	}
 	succeeded = true
 	return profilerContext, nil
+}
+
+func supportsNativeCPUFilter(language string) bool {
+	switch language {
+	case "c", "c++", "go":
+		return true
+	default:
+		return false
+	}
+}
+
+func formatCPUIds(cpuIDs []int) string {
+	values := make([]string, len(cpuIDs))
+	for i, cpuID := range cpuIDs {
+		values[i] = strconv.Itoa(cpuID)
+	}
+	return strings.Join(values, ",")
+}
+
+func formatPIDs(pids []int) string {
+	values := make([]string, 0, len(pids))
+	for _, pid := range pids {
+		values = append(values, strconv.Itoa(pid))
+	}
+	return strings.Join(values, ",")
+}
+
+const (
+	ScopeAll          = "all"
+	ScopePID          = "pid"
+	ScopeTGID         = "tgid"
+	ScopeCgroup       = "cgroup"
+	ScopeProcessGroup = "process-group"
+)
+
+// NormalizeScope accepts the original CLI vocabulary while exposing stable
+// PID/TGID names in labels and backend queries.
+func NormalizeScope(scope string) (string, error) {
+	switch strings.TrimSpace(scope) {
+	case "", "thread", ScopePID:
+		return ScopePID, nil
+	case "thread-group", ScopeTGID:
+		return ScopeTGID, nil
+	case ScopeCgroup:
+		return ScopeCgroup, nil
+	case ScopeProcessGroup:
+		return ScopeProcessGroup, nil
+	case ScopeAll:
+		return ScopeAll, nil
+	default:
+		return "", fmt.Errorf("unsupported scope %q", scope)
+	}
+}
+
+// normalizeRequestedScope preserves the original profiler CLI behavior:
+// although the default flag text was "thread", an unqualified --pid was
+// historically matched against TGID by the native CPU and memory filters.
+// An explicitly supplied "thread" still opts into the new per-thread scope.
+func normalizeRequestedScope(scope string, explicitlySet bool, pid int) (string, error) {
+	normalized, err := NormalizeScope(scope)
+	if err != nil {
+		return "", err
+	}
+	if !explicitlySet && pid != 0 && normalized == ScopePID {
+		return ScopeTGID, nil
+	}
+	return normalized, nil
+}
+
+func inferImplicitScope(scope string, explicitlySet bool, pid, processGroupID int, cgroupID uint64, containerID string) string {
+	if explicitlySet {
+		return scope
+	}
+	switch {
+	case cgroupID != 0 || containerID != "":
+		return ScopeCgroup
+	case processGroupID != 0:
+		return ScopeProcessGroup
+	case pid != 0:
+		// normalizeRequestedScope already preserves the legacy TGID default.
+		return scope
+	default:
+		return ScopeAll
+	}
+}
+
+// ParseLockTypes normalizes and de-duplicates the requested kernel lock types.
+func ParseLockTypes(raw string) ([]string, error) {
+	seen := make(map[string]bool)
+	result := make([]string, 0, 3)
+	for _, value := range strings.Split(raw, ",") {
+		value = strings.TrimSpace(strings.ToLower(value))
+		if value == "" {
+			continue
+		}
+		switch value {
+		case "mutex", "spinlock", "rwlock":
+		default:
+			return nil, fmt.Errorf("unsupported lock type %q", value)
+		}
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("at least one lock type is required")
+	}
+	return result, nil
+}
+
+// parseProfileLabels keeps commas and equals signs in label values because the
+// CLI disables its slice separator globally.
+func parseProfileLabels(flagList []string) (map[string]string, error) {
+	labels := make(map[string]string, len(flagList))
+	for _, raw := range flagList {
+		parts := strings.SplitN(strings.TrimSpace(raw), "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid profile label format %q (expected key=value)", raw)
+		}
+		name := strings.TrimSpace(strings.TrimLeft(parts[0], "-"))
+		if name == "" {
+			return nil, fmt.Errorf("invalid profile label format %q (empty name)", raw)
+		}
+		labels[name] = strings.TrimSpace(parts[1])
+	}
+	return labels, nil
 }
 
 func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*toolstream.Client, error) {
