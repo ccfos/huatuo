@@ -243,6 +243,49 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 		wantError string
 	}{
 		{name: "native CPU cpuid", language: "go", typ: "cpu", args: []string{"--cpuid", "1"}},
+		{name: "native off-CPU", language: "go", typ: "cpu", args: []string{"--cpu-mode", "offcpu"}},
+		{
+			name:      "Java off-CPU",
+			language:  "java",
+			typ:       "cpu",
+			args:      []string{"--cpu-mode", "offcpu"},
+			wantError: "--cpu-mode=offcpu is supported only by native CPU profiling",
+		},
+		{
+			name:      "off-CPU rejects cpuid",
+			language:  "c",
+			typ:       "cpu",
+			args:      []string{"--cpu-mode", "offcpu", "--cpuid", "1"},
+			wantError: "--cpuid is not supported with --cpu-mode=offcpu",
+		},
+		{
+			name:      "off-CPU rejects explicit frequency",
+			language:  "go",
+			typ:       "cpu",
+			args:      []string{"--cpu-mode", "offcpu", "--freq", "99"},
+			wantError: "--freq is not used with --cpu-mode=offcpu",
+		},
+		{
+			name:      "off-CPU duration range",
+			language:  "c++",
+			typ:       "cpu",
+			args:      []string{"--cpu-mode", "offcpu", "--offcpu-min-us", "100", "--offcpu-max-us", "99"},
+			wantError: "--offcpu-max-us must be zero or at least --offcpu-min-us",
+		},
+		{
+			name:      "off-CPU metric requires mode",
+			language:  "go",
+			typ:       "cpu",
+			args:      []string{"--offcpu-metric", "blocked"},
+			wantError: "--offcpu-metric requires native CPU profiling with --cpu-mode=offcpu",
+		},
+		{
+			name:      "invalid off-CPU metric",
+			language:  "go",
+			typ:       "cpu",
+			args:      []string{"--cpu-mode", "offcpu", "--offcpu-metric", "wait"},
+			wantError: `unsupported off-CPU metric "wait" (expected: total, blocked, or runnable)`,
+		},
 		{
 			name:      "Java cpuid",
 			language:  "java",

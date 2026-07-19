@@ -53,10 +53,11 @@ type processIDName struct {
 
 // stackEntry represents a single sampling record (not aggregated).
 type stackEntry struct {
-	Proc    *processIDName
-	User    string
-	Kernel  string
-	Samples int64
+	Proc     *processIDName
+	User     string
+	Kernel   string
+	Samples  int64
+	Category string
 }
 
 type processIDNameLock struct {
@@ -101,16 +102,17 @@ func (a *nativeAggregator) Aggregate(rec any) {
 
 	switch v := rec.(type) {
 	case *stackEntry:
-		key := fmt.Sprintf("%d\x00%s\x00%s\x00%s", v.Proc.Pid, v.Proc.Name, v.User, v.Kernel)
+		key := fmt.Sprintf("%d\x00%s\x00%s\x00%s\x00%s", v.Proc.Pid, v.Proc.Name, v.Category, v.User, v.Kernel)
 
 		if existed, ok := a.aggrMap[key]; ok {
 			existed.Samples += v.Samples
 		} else {
 			a.aggrMap[key] = &stackEntry{
-				Proc:    v.Proc,
-				User:    v.User,
-				Kernel:  v.Kernel,
-				Samples: v.Samples,
+				Proc:     v.Proc,
+				User:     v.User,
+				Kernel:   v.Kernel,
+				Samples:  v.Samples,
+				Category: v.Category,
 			}
 		}
 
@@ -119,6 +121,9 @@ func (a *nativeAggregator) Aggregate(rec any) {
 		if a.formatter != nil {
 			frames := []string{
 				fmt.Sprintf("process %d:%s", v.Proc.Pid, v.Proc.Name),
+			}
+			if v.Category != "" {
+				frames = append(frames, v.Category)
 			}
 			frames = appendStackFrames(frames, v.User, v.Kernel)
 			log.Debugf("formatter add: frames=%v count=%d", frames, v.Samples)
@@ -208,6 +213,9 @@ func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext)
 		}
 
 		prefixes := []string{fmt.Sprintf("process %d:%s", rec.Proc.Pid, rec.Proc.Name)}
+		if rec.Category != "" {
+			prefixes = append(prefixes, rec.Category)
+		}
 		item := buildTreeItem(prefixes, rec.User, rec.Kernel, uint64(rec.Samples))
 		tree = append(tree, item)
 	}
@@ -325,6 +333,9 @@ func lockPrefixFrames(rec *lockStackEntry) ([]string, uint64) {
 func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, error) {
 	switch pctx.Type {
 	case profiling.TypeCPU:
+		if pctx.CPUMode == profiling.CPUModeOffCPU {
+			return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeOffCpuSample, nil
+		}
 		return &profiler.ParseOption{SampleRate: int64(pctx.Freq)}, profiler.ProfileTypeCpuSample, nil
 	case profiling.TypeMemory:
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil
