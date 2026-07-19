@@ -17,8 +17,8 @@ package job
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 )
 
 type stubJobStore struct {
@@ -55,11 +55,12 @@ func (s *stubJobStore) List(query *JobQuery) ([]*Job, error) {
 }
 
 type stubNodeAgent struct {
-	startTaskCalls    int
-	stopTaskCalls     int
-	startTaskFunc     func(host, container string, args *NewAgentTaskReq) (string, error)
-	stopTaskFunc      func(host, taskID string, force bool) error
-	getTaskStatusFunc func(host, taskID string) (string, *Result, error)
+	startTaskCalls     int
+	stopTaskCalls      int
+	getTaskStatusCalls int
+	startTaskFunc      func(host, container string, args *NewAgentTaskReq) (string, error)
+	stopTaskFunc       func(host, taskID string, force bool) error
+	getTaskStatusFunc  func(host, taskID string) (string, *Result, error)
 }
 
 func (s *stubNodeAgent) StartTask(host, container string, args *NewAgentTaskReq) (string, error) {
@@ -79,6 +80,7 @@ func (s *stubNodeAgent) StopTask(host, taskID string, force bool) error {
 }
 
 func (s *stubNodeAgent) GetTaskStatus(host, taskID string) (string, *Result, error) {
+	s.getTaskStatusCalls++
 	if s.getTaskStatusFunc != nil {
 		return s.getTaskStatusFunc(host, taskID)
 	}
@@ -107,7 +109,9 @@ func newRunningJob(jobID string) *Job {
 			TraceTimeout: 60,
 			DataType:     "flamegraph",
 		},
-		stopChan: make(chan struct{}),
+		runtime: &jobRuntime{
+			stopChan: make(chan struct{}),
+		},
 	}
 }
 
@@ -243,8 +247,8 @@ func TestManagerCreate(t *testing.T) {
 		storedJobVal, exists := manager.jobs.Load(job.JobID)
 		if !exists {
 			t.Errorf("jobs.Load(%q) exists=false, want true", job.JobID)
-		} else if storedJobVal.(*Job) != job {
-			t.Errorf("jobs.Load(%q) returned unexpected job pointer", job.JobID)
+		} else if storedJobVal.(*Job).JobID != job.JobID {
+			t.Errorf("jobs.Load(%q) returned unexpected job", job.JobID)
 		}
 
 		jobCountVal, exists := manager.jobsByHost.Load("huatuo-dev")
@@ -256,6 +260,14 @@ func TestManagerCreate(t *testing.T) {
 
 		if stopErr := manager.Stop(job.JobID, true); stopErr != nil {
 			t.Errorf("Stop(%q) error=%v, want nil", job.JobID, stopErr)
+		}
+		if len(storage.saveCalls) != 1 {
+			t.Errorf("storage.Save() call count=%d, want 1", len(storage.saveCalls))
+		} else if storage.saveCalls[0].Status != JobStatusStopped {
+			t.Errorf("saved job status=%s, want %s", storage.saveCalls[0].Status, JobStatusStopped)
+		}
+		if nodeAgent.stopTaskCalls != 1 {
+			t.Errorf("StopTask() call count=%d, want 1", nodeAgent.stopTaskCalls)
 		}
 	})
 }
@@ -302,9 +314,9 @@ func TestManagerStop(t *testing.T) {
 		}
 
 		select {
-		case <-job.stopChan:
+		case <-job.runtime.stopChan:
 		default:
-			t.Errorf("job.stopChan was not closed")
+			t.Errorf("job.runtime.stopChan was not closed")
 		}
 
 		if _, exists := manager.jobs.Load(job.JobID); exists {
@@ -312,6 +324,99 @@ func TestManagerStop(t *testing.T) {
 		}
 		if _, exists := manager.jobsByHost.Load(job.Host); exists {
 			t.Errorf("jobsByHost.Load(%q) exists=true, want false", job.Host)
+		}
+	})
+
+	t.Run("concurrent stops finalize once", func(t *testing.T) {
+		storage := &stubJobStore{}
+		nodeAgent := &stubNodeAgent{}
+		manager := newTestManager(storage, nodeAgent)
+		job := newRunningJob("job-concurrent-stop-2026")
+		manager.jobs.Store(job.JobID, job)
+		manager.jobsByHost.Store(job.Host, 1)
+
+		start := make(chan struct{})
+		errs := make(chan error, 2)
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				errs <- manager.Stop(job.JobID, true)
+			}()
+		}
+
+		close(start)
+		wg.Wait()
+		close(errs)
+
+		for err := range errs {
+			if err != nil {
+				t.Errorf("Stop() error=%v, want nil", err)
+			}
+		}
+		if nodeAgent.stopTaskCalls != 1 {
+			t.Errorf("StopTask() call count=%d, want 1", nodeAgent.stopTaskCalls)
+		}
+		if len(storage.saveCalls) != 1 {
+			t.Errorf("storage.Save() call count=%d, want 1", len(storage.saveCalls))
+		}
+		if job.Status != JobStatusStopped {
+			t.Errorf("job.Status=%s, want %s", job.Status, JobStatusStopped)
+		}
+		if _, exists := manager.jobsByHost.Load(job.Host); exists {
+			t.Errorf("jobsByHost.Load(%q) exists=true, want false", job.Host)
+		}
+	})
+
+	t.Run("monitor cannot overwrite stopped status", func(t *testing.T) {
+		storage := &stubJobStore{}
+		stopStarted := make(chan struct{})
+		releaseStop := make(chan struct{})
+		nodeAgent := &stubNodeAgent{
+			stopTaskFunc: func(_, _ string, _ bool) error {
+				close(stopStarted)
+				<-releaseStop
+				return nil
+			},
+			getTaskStatusFunc: func(_, _ string) (string, *Result, error) {
+				return AgentStatusCompleted, &Result{}, nil
+			},
+		}
+		manager := newTestManager(storage, nodeAgent)
+		job := newRunningJob("job-stop-wins-2026")
+		manager.jobs.Store(job.JobID, job)
+		manager.jobsByHost.Store(job.Host, 1)
+
+		stopErr := make(chan error, 1)
+		go func() {
+			stopErr <- manager.Stop(job.JobID, true)
+		}()
+		<-stopStarted
+
+		pollErr := make(chan error, 1)
+		go func() {
+			_, err := manager.checkAndUpdateJobStatus(job)
+			pollErr <- err
+		}()
+
+		close(releaseStop)
+		if err := <-stopErr; err != nil {
+			t.Errorf("Stop() error=%v, want nil", err)
+		}
+		if err := <-pollErr; err != nil {
+			t.Errorf("checkAndUpdateJobStatus() error=%v, want nil", err)
+		}
+
+		if nodeAgent.getTaskStatusCalls != 0 {
+			t.Errorf("GetTaskStatus() call count=%d, want 0", nodeAgent.getTaskStatusCalls)
+		}
+		if job.Status != JobStatusStopped {
+			t.Errorf("job.Status=%s, want %s", job.Status, JobStatusStopped)
+		}
+		if len(storage.saveCalls) != 1 {
+			t.Errorf("storage.Save() call count=%d, want 1", len(storage.saveCalls))
 		}
 	})
 }
@@ -333,8 +438,11 @@ func TestManagerGet(t *testing.T) {
 		if err != nil {
 			t.Errorf("Get() error=%v, want nil", err)
 		}
-		if gotJob != runningJob {
-			t.Errorf("Get() returned unexpected in-memory job pointer")
+		if gotJob == runningJob {
+			t.Errorf("Get() returned the manager's internal job pointer")
+		}
+		if gotJob.JobID != runningJob.JobID || gotJob.Status != runningJob.Status {
+			t.Errorf("Get()=(JobID=%q, Status=%s), want (JobID=%q, Status=%s)", gotJob.JobID, gotJob.Status, runningJob.JobID, runningJob.Status)
 		}
 	})
 
@@ -682,11 +790,8 @@ func TestMonitorJobDeferNoNilPanic(t *testing.T) {
 	// because the defer block called err.Error() when err was nil.
 	manager.Shutdown()
 
-	// Wait for monitorJob goroutine to finish processing.
-	time.Sleep(300 * time.Millisecond)
-
-	// If we reach here without panic, the test passes.
-	// Verify the job was marked as failed with a non-empty error message.
+	// Shutdown waits for monitorJob to finish. Verify the job was marked as
+	// failed with a non-empty error message.
 	lastSave := storage.saveCalls[len(storage.saveCalls)-1]
 	if lastSave.Status != JobStatusFailed {
 		t.Errorf("job.Status=%s, want %s", lastSave.Status, JobStatusFailed)

@@ -15,6 +15,7 @@
 package job
 
 import (
+	"sync"
 	"time"
 )
 
@@ -82,10 +83,17 @@ type Job struct {
 	Args        NewAgentTaskReq `json:"args"`
 	Results     Result          `json:"results,omitempty"`
 
-	LastUpdate time.Time `json:"-"`
-	stopChan   chan struct{}
+	LastUpdate time.Time   `json:"-"`
+	runtime    *jobRuntime `json:"-"`
 
 	PrivateData map[string]any `json:"-"`
+}
+
+type jobRuntime struct {
+	mu       sync.Mutex
+	stopOnce sync.Once
+	stopChan chan struct{}
+	doneChan chan struct{}
 }
 
 // JobQuery defines filters for searching jobs
