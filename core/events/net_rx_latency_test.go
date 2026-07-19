@@ -43,7 +43,7 @@ func TestLatStageNamesProtocolAgnostic(t *testing.T) {
 // silently desync the Go slice and mislabel events or break the latThresholds
 // lookup.
 func TestLatStageNamesOrdering(t *testing.T) {
-	want := []string{"RX_STAGE_NETIF", "RX_STAGE_TCP", "RX_STAGE_USERCOPY"}
+	want := []string{"RX_STAGE_NETIF", "RX_STAGE_TCP", "RX_STAGE_USERCOPY", "RX_STAGE_IPTABLE"}
 	if len(latStageNames) != len(want) {
 		t.Fatalf("latStageNames len = %d, want %d (%v)", len(latStageNames), len(want), latStageNames)
 	}
@@ -58,7 +58,7 @@ func TestLatStageNamesOrdering(t *testing.T) {
 // every in-range stage resolves, and out-of-range indices return ok=false
 // instead of panicking on the slice index.
 func TestLookupLatStageRXBounds(t *testing.T) {
-	thresholds := []uint64{5, 10, 115}
+	thresholds := []uint64{5, 10, 115, 10}
 	for i := 0; i < len(latStageNames); i++ {
 		name, th, ok := lookupLatStage(uint8(i), latStageNames, thresholds)
 		if !ok {
@@ -87,5 +87,20 @@ func TestLookupLatStageThresholdMismatch(t *testing.T) {
 		if _, _, ok := lookupLatStage(uint8(i), latStageNames, short); ok {
 			t.Fatalf("stage %d should fail closed with mismatched thresholds", i)
 		}
+	}
+}
+
+// TestLatStageIptableIsLastIndex pins RX_STAGE_IPTABLE to the last position.
+// IPTABLE measures ipt_do_table() function duration (not an skb-tstamp delta),
+// so it must never be inserted before NETIF/TCP/USERCOPY — those indices are
+// load-bearing (latStageNames / latThresholds / the BPF volatile-const order
+// are all indexed by the enum). A future insert-in-the-middle must fail here
+// rather than surface as silently mis-attributed production events.
+func TestLatStageIptableIsLastIndex(t *testing.T) {
+	if len(latStageNames) != 4 {
+		t.Fatalf("latStageNames len = %d, want 4: %v", len(latStageNames), latStageNames)
+	}
+	if latStageNames[len(latStageNames)-1] != "RX_STAGE_IPTABLE" {
+		t.Fatalf("last stage = %q, want RX_STAGE_IPTABLE", latStageNames[len(latStageNames)-1])
 	}
 }

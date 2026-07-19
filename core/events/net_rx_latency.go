@@ -113,6 +113,7 @@ var latStageNames = []string{
 	"RX_STAGE_NETIF",
 	"RX_STAGE_TCP",
 	"RX_STAGE_USERCOPY",
+	"RX_STAGE_IPTABLE",
 }
 
 // lookupLatStage resolves the stage name and per-stage threshold for a BPF
@@ -144,14 +145,15 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	rxlatThreshNetif := cfg.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
 	rxlatThreshTcp := cfg.NetRxLatency.Driver2TCP            // ms, before RPS to TCP recv(tcp_v4_rcv)
 	rxlatThreshUsercopy := cfg.NetRxLatency.Driver2Userspace // ms, before RPS to user recv(skb_copy_datagram_iovec)
+	rxlatThreshIptable := cfg.NetRxLatency.Driver2Iptable    // ms, ipt_do_table() rule-matching duration
 
-	if rxlatThreshNetif == 0 || rxlatThreshTcp == 0 || rxlatThreshUsercopy == 0 {
-		return fmt.Errorf("net_rx_latency threshold [%v %v %v]ms invalid", rxlatThreshNetif, rxlatThreshTcp, rxlatThreshUsercopy)
+	if rxlatThreshNetif == 0 || rxlatThreshTcp == 0 || rxlatThreshUsercopy == 0 || rxlatThreshIptable == 0 {
+		return fmt.Errorf("net_rx_latency threshold [%v %v %v %v]ms invalid", rxlatThreshNetif, rxlatThreshTcp, rxlatThreshUsercopy, rxlatThreshIptable)
 	}
 
-	log.Debugf("net_rx_latency start, latency threshold [%v %v %v]ms", rxlatThreshNetif, rxlatThreshTcp, rxlatThreshUsercopy)
+	log.Debugf("net_rx_latency start, latency threshold [%v %v %v %v]ms", rxlatThreshNetif, rxlatThreshTcp, rxlatThreshUsercopy, rxlatThreshIptable)
 
-	latThresholds := []uint64{rxlatThreshNetif, rxlatThreshTcp, rxlatThreshUsercopy}
+	latThresholds := []uint64{rxlatThreshNetif, rxlatThreshTcp, rxlatThreshUsercopy, rxlatThreshIptable}
 
 	monoWallOffset, err := timeutil.MonoToRealOffset()
 	if err != nil {
@@ -174,6 +176,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 		"rxlat_thresh_netif":    rxlatThreshNetif * 1000 * 1000,
 		"rxlat_thresh_tcp":      rxlatThreshTcp * 1000 * 1000,
 		"rxlat_thresh_usercopy": rxlatThreshUsercopy * 1000 * 1000,
+		"rxlat_thresh_iptable":  rxlatThreshIptable * 1000 * 1000,
 	}
 	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), args)
 	if err != nil {
@@ -203,6 +206,14 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	if bpf.HasKprobeFunction("tcp_v6_rcv") {
 		attachOpts = append(attachOpts,
 			bpf.AttachOption{ProgramName: "tcp_v6_rcv_prog", Symbol: "tcp_v6_rcv"})
+	}
+	// ipt_do_table (IPv4 iptables rule matching) only exists when the kernel
+	// builds CONFIG_IP_NF_IPTABLES; skip both probes otherwise. nftables-mode
+	// kernels (k8s >= v1.29 default) use nft_do_chain instead — not covered.
+	if bpf.HasKprobeFunction("ipt_do_table") {
+		attachOpts = append(attachOpts,
+			bpf.AttachOption{ProgramName: "ipt_do_table_entry_prog", Symbol: "ipt_do_table"},
+			bpf.AttachOption{ProgramName: "ipt_do_table_ret_prog", Symbol: "ipt_do_table"})
 	}
 	if err := b.AttachWithOptions(attachOpts); err != nil {
 		return errors.Join(err, reader.Close())
