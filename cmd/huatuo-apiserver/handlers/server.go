@@ -15,9 +15,11 @@
 package handlers
 
 import (
+	"net/http"
 	"time"
 
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
+	"huatuo-bamai/cmd/huatuo-apiserver/handlers/console"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
 	"huatuo-bamai/internal/job"
@@ -42,13 +44,25 @@ func ServerStart(opts ServerOptions) error {
 		EnablePProf:     false,
 		EnableRateLimit: false,
 		AuthUsers:       getUserConfigs(),
-		PromReg:         opts.PromReg,
-		VersionInfo:     opts.VersionInfo,
+		// The web console and the root redirect are reachable without a
+		// credential so the login screen can be served before authentication.
+		PublicPaths: []string{"/", "/console"},
+		PromReg:     opts.PromReg,
+		VersionInfo: opts.VersionInfo,
 	})
+
+	// Register the console routes (RBAC, system info, API-key management).
+	consoleHandler := console.NewHandler(httpServer.UserManager(), opts.VersionInfo)
+	httpServer.MustRegisterRoutes("/v1", consoleHandler.Handlers)
 
 	// Register trace routes
 	httpServer.MustRegisterRoutes("/v1/traces", trace.NewHandler(opts.TracingManager).Handlers)
 	httpServer.MustRegisterRoutes("/v1/profiles", profiling.NewHandler(opts.ProfilingManager).Handlers)
+
+	// Serve the embedded web console. The "/console" prefix is in PublicPaths,
+	// so the assets load without authentication; API calls still require a key.
+	httpServer.StaticFS("/console", console.WebFS())
+	httpServer.Redirect("/", "/console/", http.StatusFound)
 
 	_ = httpServer.Run(&server.Option{
 		Addr:          opts.Addr,

@@ -17,6 +17,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"syscall"
@@ -41,9 +42,13 @@ type Config struct {
 	RateBurst       int
 	EnableRetry     bool
 	AuthUsers       []UserConfig
-	PromReg         *prometheus.Registry
-	Group           string
-	VersionInfo     *version.Info
+	// PublicPaths are URL path prefixes exempt from authentication. A path is
+	// public when it equals a configured value exactly or starts with value+"/".
+	// Used to serve the web console and other unauthenticated assets.
+	PublicPaths []string
+	PromReg     *prometheus.Registry
+	Group       string
+	VersionInfo *version.Info
 }
 
 var defaultConfig = &Config{
@@ -61,6 +66,7 @@ type server struct {
 	engine       *httpGin.Engine
 	promRegistry *prometheus.Registry
 	rootGroup    *routerGroup
+	authSvc      *authService
 }
 
 type Option struct {
@@ -94,7 +100,8 @@ func NewServer(cfg *Config) *server {
 
 	if len(cfg.AuthUsers) > 0 {
 		svc := NewAuthService(cfg.AuthUsers)
-		middleWares = append(middleWares, wrapHandler(NewAuthMiddleware(svc)))
+		s.authSvc = svc
+		middleWares = append(middleWares, wrapHandler(NewAuthMiddleware(svc, cfg.PublicPaths)))
 	}
 
 	if cfg.EnableRateLimit {
@@ -161,6 +168,36 @@ func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
 // Group return the cgroup for this httpserver
 func (s *server) Group() *routerGroup {
 	return s.rootGroup
+}
+
+// UserManager returns the user/API-key registry used for authentication, or
+// nil when authentication is disabled. Callers may type-assert against the
+// UserManager interface to administer users and API keys.
+func (s *server) UserManager() UserManager {
+	if s.authSvc == nil {
+		return nil
+	}
+	return s.authSvc
+}
+
+// StaticFS serves files from fsys at the given URL path using gin's StaticFS.
+// relativePath must not contain URL parameters. The handler is registered on
+// the root engine so it participates in the normal routing/middleware chain.
+func (s *server) StaticFS(relativePath string, fsys fs.FS) {
+	s.engine.StaticFS(relativePath, http.FS(fsys))
+}
+
+// Redirect registers a route that performs an HTTP redirect to targetPath.
+func (s *server) Redirect(relativePath, targetPath string, code int) {
+	s.engine.GET(relativePath, func(c *httpGin.Context) {
+		c.Redirect(code, targetPath)
+	})
+}
+
+// HTTPHandler returns the underlying http.Handler. Useful for embedding the
+// server in another process and for in-process testing with httptest.
+func (s *server) HTTPHandler() http.Handler {
+	return s.engine
 }
 
 const (

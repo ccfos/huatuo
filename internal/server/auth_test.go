@@ -337,7 +337,7 @@ func TestNewAuthMiddleware(t *testing.T) {
 
 			engine.GET(
 				"/v1/tasks/:taskID",
-				wrapHandler(NewAuthMiddleware(svc)),
+				wrapHandler(NewAuthMiddleware(svc, nil)),
 				wrapHandler(func(ctx *Context) {
 					handlerRan = true
 					gotUserID = ctx.UserID
@@ -347,7 +347,7 @@ func TestNewAuthMiddleware(t *testing.T) {
 			)
 			engine.GET(
 				"/v1/tasks/:taskID/result",
-				wrapHandler(NewAuthMiddleware(svc)),
+				wrapHandler(NewAuthMiddleware(svc, nil)),
 				wrapHandler(func(ctx *Context) {
 					handlerRan = true
 					gotUserID = ctx.UserID

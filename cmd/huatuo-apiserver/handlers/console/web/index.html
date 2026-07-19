@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HuaTuo Console</title>
+    <link rel="stylesheet" href="assets/app.css" />
+  </head>
+  <body>
+    <div id="app" class="app">
+      <header class="topbar" hidden>
+        <div class="topbar-brand">
+          <span class="logo">HuaTuo</span>
+          <span class="logo-sub">Console</span>
+        </div>
+        <nav class="nav" id="nav"></nav>
+        <div class="topbar-user">
+          <span id="user-badge" class="user-badge"></span>
+          <button id="logout-btn" class="btn btn-ghost" type="button">Sign out</button>
+        </div>
+      </header>
+
+      <main id="view" class="view"></main>
+
+      <footer class="footer">
+        <span id="server-version"></span>
+      </footer>
+    </div>
+
+    <script src="assets/app.js"></script>
+  </body>
+</html>
