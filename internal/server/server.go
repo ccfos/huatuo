@@ -208,7 +208,10 @@ func (s *server) run(addr string) error {
 		return fmt.Errorf("listen %w", err)
 	}
 
-	tcpListener := listener.(*net.TCPListener)
+	tcpListener, ok := listener.(*net.TCPListener)
+	if !ok {
+		return fmt.Errorf("expected *net.TCPListener, got %T", listener)
+	}
 	file, err := tcpListener.File()
 	if err != nil {
 		return fmt.Errorf("get listener fd %w", err)
