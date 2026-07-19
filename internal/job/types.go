@@ -15,6 +15,7 @@
 package job
 
 import (
+	"sync"
 	"time"
 )
 
@@ -84,6 +85,7 @@ type Job struct {
 
 	LastUpdate time.Time `json:"-"`
 	stopChan   chan struct{}
+	mu         sync.Mutex
 
 	PrivateData map[string]any `json:"-"`
 }

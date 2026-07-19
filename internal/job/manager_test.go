@@ -17,11 +17,13 @@ package job
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 type stubJobStore struct {
+	mu          sync.Mutex
 	saveCalls   []*Job
 	deleteCalls []string
 	getFunc     func(jobID string) (*Job, error)
@@ -38,11 +40,15 @@ func (s *stubJobStore) Get(jobID string) (*Job, error) {
 }
 
 func (s *stubJobStore) Save(job *Job) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.saveCalls = append(s.saveCalls, job)
 	return s.saveErr
 }
 
 func (s *stubJobStore) Delete(jobID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.deleteCalls = append(s.deleteCalls, jobID)
 	return s.deleteErr
 }
@@ -683,13 +689,27 @@ func TestMonitorJobDeferNoNilPanic(t *testing.T) {
 	manager.Shutdown()
 
 	// Wait for monitorJob goroutine to finish processing.
-	time.Sleep(300 * time.Millisecond)
+	// Poll until storage receives at least one save, then verify.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		storage.mu.Lock()
+		n := len(storage.saveCalls)
+		storage.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	// If we reach here without panic, the test passes.
-	// Verify the job was marked as failed with a non-empty error message.
+	// With idempotent terminal transitions, the defer calls m.Stop() which
+	// sets the job to Stopped, and the subsequent updateJobStatus(Failed)
+	// is correctly skipped to avoid overwriting the terminal state.
+	storage.mu.Lock()
 	lastSave := storage.saveCalls[len(storage.saveCalls)-1]
-	if lastSave.Status != JobStatusFailed {
-		t.Errorf("job.Status=%s, want %s", lastSave.Status, JobStatusFailed)
+	storage.mu.Unlock()
+	if lastSave.Status != JobStatusStopped {
+		t.Errorf("job.Status=%s, want %s", lastSave.Status, JobStatusStopped)
 	}
 	if lastSave.Error == "" {
 		t.Errorf("job.Error is empty, want non-empty error message")

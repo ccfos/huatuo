@@ -69,6 +69,14 @@ func newManagerWithStore(storage Store, nodeAgent NodeAgent, config ManagerConfi
 }
 
 // Shutdown stops the manager and all background jobs
+
+// isTerminalStatus returns true if the job status is a terminal state
+// from which no further transition should occur.
+func isTerminalStatus(status JobStatus) bool {
+	return status == JobStatusCompleted || status == JobStatusStopped ||
+		status == JobStatusFailed || status == JobStatusTimeout
+}
+
 func (m *Manager) Shutdown() {
 	close(m.stopChan)
 }
@@ -80,8 +88,8 @@ func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
 
 	jobCountVal, exists := m.jobsByHost.Load(req.Host)
 	if exists {
-		jobCount := jobCountVal.(int)
-		if jobCount >= m.config.MaxJobsPerHost {
+		jobCount, ok := jobCountVal.(int)
+		if ok && jobCount >= m.config.MaxJobsPerHost {
 			return nil, fmt.Errorf("maximum number of jobs reached for host %s", req.Host)
 		}
 	}
@@ -129,7 +137,9 @@ func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
 
 	currentCount := 0
 	if countVal, exists := m.jobsByHost.Load(req.Host); exists {
-		currentCount = countVal.(int)
+		if n, ok := countVal.(int); ok {
+			currentCount = n
+		}
 	}
 	m.jobsByHost.Store(req.Host, currentCount+1)
 
@@ -143,7 +153,10 @@ func (m *Manager) Stop(jobID string, force bool) error {
 		// always return nil, because the job may be completed
 		return nil
 	}
-	job := jobVal.(*Job)
+	job, ok := jobVal.(*Job)
+	if !ok || job == nil {
+		return nil
+	}
 
 	err := m.nodeAgent.StopTask(job.Host, job.AgentTaskID, false)
 	if err != nil {
@@ -173,7 +186,10 @@ func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, e
 	var jobs []*Job
 
 	m.jobs.Range(func(_, value any) bool {
-		job := value.(*Job)
+		job, ok := value.(*Job)
+		if !ok || job == nil {
+			return true
+		}
 
 		if !isAdmin && job.UserID != userID {
 			return true
@@ -215,7 +231,10 @@ func (m *Manager) StopAll() {
 	var jobIDs []string
 
 	m.jobs.Range(func(_, value any) bool {
-		job := value.(*Job)
+		job, ok := value.(*Job)
+		if !ok || job == nil {
+			return true
+		}
 		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
 			jobIDs = append(jobIDs, job.JobID)
 		}
@@ -231,10 +250,20 @@ func (m *Manager) StopAll() {
 }
 
 func (m *Manager) updateJobStatus(job *Job, status JobStatus, errMesg string) {
+	job.mu.Lock()
+	defer job.mu.Unlock()
+
+	// Make terminal state transitions idempotent: if the job is already in a
+	// terminal state, do not overwrite it with a different terminal state.
+	// This prevents monitorJob's defer from overwriting a successful Stop.
+	if isTerminalStatus(job.Status) && isTerminalStatus(status) {
+		return
+	}
+
 	job.Status = status
 	job.LastUpdate = time.Now()
 
-	if status == JobStatusCompleted || status == JobStatusStopped || status == JobStatusFailed || status == JobStatusTimeout {
+	if isTerminalStatus(status) {
 		job.EndTime = time.Now()
 		job.Error = errMesg
 
@@ -243,7 +272,10 @@ func (m *Manager) updateJobStatus(job *Job, status JobStatus, errMesg string) {
 		}
 
 		if countVal, exists := m.jobsByHost.Load(job.Host); exists {
-			currentCount := countVal.(int)
+			currentCount, ok := countVal.(int)
+			if !ok {
+				currentCount = 1
+			}
 			if currentCount <= 1 {
 				m.jobsByHost.Delete(job.Host)
 			} else {
@@ -293,7 +325,10 @@ func (m *Manager) monitorJob(job *Job) {
 	defer func() {
 		// if job is still running when monitorJob exits, it means some error happened,
 		// try to stop job and set job status to failed
-		if job.Status == JobStatusRunning {
+		job.mu.Lock()
+		shouldStop := job.Status == JobStatusRunning
+		job.mu.Unlock()
+		if shouldStop {
 			if stopErr := m.Stop(job.JobID, true); stopErr != nil {
 				log.Errorf("Failed to stop job %s in defer: %v", job.JobID, stopErr)
 			}
@@ -383,12 +418,19 @@ func (m *Manager) monitorJob(job *Job) {
 // Delete removes the persisted job record; returns ErrCannotDeleteRunning if the job is still active.
 func (m *Manager) Delete(jobID string) error {
 	if jobVal, exists := m.jobs.Load(jobID); exists {
-		job := jobVal.(*Job)
-		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
+		job, ok := jobVal.(*Job)
+		if !ok || job == nil {
+			goto checkStorage
+		}
+		job.mu.Lock()
+		isRunning := job.Status == JobStatusPending || job.Status == JobStatusRunning
+		job.mu.Unlock()
+		if isRunning {
 			return ErrCannotDeleteRunning
 		}
 	}
 
+checkStorage:
 	storedJob, err := m.storage.Get(jobID)
 	if err != nil {
 		return err
