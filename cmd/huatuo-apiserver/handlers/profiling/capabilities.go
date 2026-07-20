@@ -46,13 +46,13 @@ func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, er
 	cfg := h.profilingConfig
 
 	return v1.ProfilingCapabilitiesResponse{
-		ProfileTypes:               []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
-		CPUSupportedLanguages:      cpuLanguages,
-		MemorySupportedLanguages:   memoryLanguages,
-		MemoryModes:                memoryModes,
-		DefaultAggregationInterval: cfg.AggregationInterval,
-		DefaultExecutionTimeout:    cfg.ExecutionTimeout,
-		MaxProfilerProcesses:       cfg.MaxProfilerProcs,
+		Types:               []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
+		CPULanguages:        cpuLanguages,
+		MemoryLanguages:     memoryLanguages,
+		MemoryModes:         memoryModes,
+		AggregationInterval: cfg.AggregationInterval,
+		ExecutionTimeout:    cfg.ExecutionTimeout,
+		MaxProfilerProcs:    cfg.MaxProfilerProcs,
 	}, nil
 }
 

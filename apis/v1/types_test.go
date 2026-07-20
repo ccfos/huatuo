@@ -46,7 +46,7 @@ func TestCreateJobRequestJSONFields(t *testing.T) {
 		{
 			name:    "trace job",
 			request: CreateTraceJobRequest{},
-			fields:  []string{"type", "duration", "container", "hostname"},
+			fields:  []string{"type", "duration", "container_id", "hostname"},
 		},
 	}
 
@@ -85,13 +85,13 @@ func TestProfilingCapabilitiesResponseJSONFields(t *testing.T) {
 	}
 
 	fields := []string{
-		"profile_types",
-		"cpu_supported_languages",
-		"memory_supported_languages",
+		"types",
+		"cpu_languages",
+		"memory_languages",
 		"memory_modes",
-		"default_aggregation_interval",
-		"default_execution_timeout",
-		"max_profiler_processes",
+		"aggregation_interval",
+		"execution_timeout",
+		"max_profiler_procs",
 	}
 	if len(decoded) != len(fields) {
 		t.Fatalf("JSON field count = %d, want %d", len(decoded), len(fields))
@@ -100,5 +100,52 @@ func TestProfilingCapabilitiesResponseJSONFields(t *testing.T) {
 		if _, ok := decoded[field]; !ok {
 			t.Errorf("JSON field %q is missing", field)
 		}
+	}
+}
+
+func TestStandardizedJobJSONFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		value  any
+		fields []string
+	}{
+		{
+			name:  "profiling response",
+			value: ProfilingJobResponse{},
+			fields: []string{
+				"container_id",
+				"binary_match_path",
+				"language",
+			},
+		},
+		{
+			name:   "job filter",
+			value:  JobFilter{},
+			fields: []string{"container_id", "hostname"},
+		},
+		{
+			name:   "trace response",
+			value:  TraceJobResponse{},
+			fields: []string{"container_id", "hostname"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload, err := json.Marshal(tt.value)
+			if err != nil {
+				t.Fatalf("json.Marshal() error = %v", err)
+			}
+
+			var decoded map[string]any
+			if err := json.Unmarshal(payload, &decoded); err != nil {
+				t.Fatalf("json.Unmarshal() error = %v", err)
+			}
+			for _, field := range tt.fields {
+				if _, ok := decoded[field]; !ok {
+					t.Errorf("JSON field %q is missing", field)
+				}
+			}
+		})
 	}
 }

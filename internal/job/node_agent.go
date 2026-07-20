@@ -51,7 +51,7 @@ func NewHTTPNodeAgent() *HTTPNodeAgent {
 }
 
 // StartTask starts a task on the agent
-func (c *HTTPNodeAgent) StartTask(host, container string, args *NewAgentTaskReq) (string, error) {
+func (c *HTTPNodeAgent) StartTask(host, container string, args *AgentTaskRequest) (string, error) {
 	args.ContainerHostname = container
 	requestBodyBytes, err := json.Marshal(startTaskRequest{
 		TracerName:        args.TracerName,

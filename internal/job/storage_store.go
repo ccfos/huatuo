@@ -29,23 +29,23 @@ type storageStore struct {
 }
 
 type storagePayload struct {
-	Type        string          `json:"type"`
-	JobID       string          `json:"job_id"`
-	UserName    string          `json:"user_name"`
-	UserID      string          `json:"user_id"`
-	Container   string          `json:"container"`
-	Host        string          `json:"host"`
-	AgentTaskID string          `json:"agent_job_id"`
-	Status      JobStatus       `json:"status"`
-	Error       string          `json:"error,omitempty"`
-	Duration    int             `json:"duration"`
-	Timeout     int             `json:"timeout"`
-	StartTime   time.Time       `json:"start_time"`
-	EndTime     time.Time       `json:"end_time"`
-	Args        NewAgentTaskReq `json:"args"`
-	Results     Result          `json:"results,omitempty"`
-	LastUpdate  time.Time       `json:"last_update"`
-	PrivateData map[string]any  `json:"private_data,omitempty"`
+	Type        string           `json:"type"`
+	JobID       string           `json:"job_id"`
+	UserName    string           `json:"user_name"`
+	UserID      string           `json:"user_id"`
+	Container   string           `json:"container"`
+	Host        string           `json:"host"`
+	AgentTaskID string           `json:"agent_job_id"`
+	Status      JobStatus        `json:"status"`
+	Error       string           `json:"error,omitempty"`
+	Duration    int              `json:"duration"`
+	Timeout     int              `json:"timeout"`
+	StartTime   time.Time        `json:"start_time"`
+	EndTime     time.Time        `json:"end_time"`
+	Args        AgentTaskRequest `json:"args"`
+	Results     Result           `json:"results,omitempty"`
+	LastUpdate  time.Time        `json:"last_update"`
+	PrivateData map[string]any   `json:"private_data,omitempty"`
 }
 
 type storeMapper struct{}
@@ -57,8 +57,8 @@ func StorageCollection() string {
 func StorageFields(entity *Job) map[string]any {
 	return map[string]any{
 		"user_id":    entity.UserID,
-		"container":  entity.Container,
-		"host":       entity.Host,
+		"container":  entity.ContainerID,
+		"host":       entity.Hostname,
 		"status":     string(entity.Status),
 		"type":       entity.Type,
 		"start_time": entity.StartTime,
@@ -135,27 +135,27 @@ func (s *storageStore) List(query *JobQuery) ([]*Job, error) {
 }
 
 func (storeMapper) ID(entity *Job) string {
-	return entity.JobID
+	return entity.ID
 }
 
 func (storeMapper) Encode(entity *Job) ([]byte, error) {
 	payload := storagePayload{
 		Type:        entity.Type,
-		JobID:       entity.JobID,
-		UserName:    entity.UserName,
+		JobID:       entity.ID,
+		UserName:    entity.Username,
 		UserID:      entity.UserID,
-		Container:   entity.Container,
-		Host:        entity.Host,
+		Container:   entity.ContainerID,
+		Host:        entity.Hostname,
 		AgentTaskID: entity.AgentTaskID,
 		Status:      entity.Status,
-		Error:       entity.Error,
+		Error:       entity.ErrorMessage,
 		Duration:    entity.Duration,
-		Timeout:     entity.Timeout,
+		Timeout:     entity.TraceTimeout,
 		StartTime:   entity.StartTime,
 		EndTime:     entity.EndTime,
-		Args:        entity.Args,
-		Results:     entity.Results,
-		LastUpdate:  entity.LastUpdate,
+		Args:        entity.AgentTask,
+		Results:     entity.Result,
+		LastUpdate:  entity.UpdatedAt,
 		PrivateData: entity.PrivateData,
 	}
 
@@ -169,31 +169,31 @@ func (storeMapper) Decode(data []byte) (*Job, error) {
 	}
 
 	return &Job{
-		Type:        payload.Type,
-		JobID:       payload.JobID,
-		UserName:    payload.UserName,
-		UserID:      payload.UserID,
-		Container:   payload.Container,
-		Host:        payload.Host,
-		AgentTaskID: payload.AgentTaskID,
-		Status:      payload.Status,
-		Error:       payload.Error,
-		Duration:    payload.Duration,
-		Timeout:     payload.Timeout,
-		StartTime:   payload.StartTime,
-		EndTime:     payload.EndTime,
-		Args:        payload.Args,
-		Results:     payload.Results,
-		LastUpdate:  payload.LastUpdate,
-		PrivateData: payload.PrivateData,
+		Type:         payload.Type,
+		ID:           payload.JobID,
+		Username:     payload.UserName,
+		UserID:       payload.UserID,
+		ContainerID:  payload.Container,
+		Hostname:     payload.Host,
+		AgentTaskID:  payload.AgentTaskID,
+		Status:       payload.Status,
+		ErrorMessage: payload.Error,
+		Duration:     payload.Duration,
+		TraceTimeout: payload.Timeout,
+		StartTime:    payload.StartTime,
+		EndTime:      payload.EndTime,
+		AgentTask:    payload.Args,
+		Result:       payload.Results,
+		UpdatedAt:    payload.LastUpdate,
+		PrivateData:  payload.PrivateData,
 	}, nil
 }
 
 func (storeMapper) Fields(entity *Job) (map[string]any, error) {
 	return map[string]any{
 		"user_id":    entity.UserID,
-		"container":  entity.Container,
-		"host":       entity.Host,
+		"container":  entity.ContainerID,
+		"host":       entity.Hostname,
 		"status":     string(entity.Status),
 		"type":       entity.Type,
 		"start_time": entity.StartTime,

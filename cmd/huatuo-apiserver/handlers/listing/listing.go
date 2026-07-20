@@ -46,9 +46,9 @@ func SortJobs(jobs []*job.Job, sortKey string) error {
 	case "end_time":
 		less = func(i, j int) bool { return jobs[i].EndTime.Before(jobs[j].EndTime) }
 	case "host":
-		less = func(i, j int) bool { return jobs[i].Host < jobs[j].Host }
+		less = func(i, j int) bool { return jobs[i].Hostname < jobs[j].Hostname }
 	case "container":
-		less = func(i, j int) bool { return jobs[i].Container < jobs[j].Container }
+		less = func(i, j int) bool { return jobs[i].ContainerID < jobs[j].ContainerID }
 	default:
 		return errors.New("invalid sort field: " + field)
 	}

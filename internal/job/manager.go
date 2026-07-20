@@ -88,30 +88,30 @@ func (m *Manager) Create(req *CreateJobRequest) (*Job, error) {
 	if req == nil {
 		return nil, errors.New("job request is required")
 	}
-	if req.Args == nil {
+	if req.AgentTask == nil {
 		return nil, errors.New("job arguments are required")
 	}
-	if req.Args.TraceTimeout == 0 && req.Args.Duration == 0 {
+	if req.AgentTask.TraceTimeout == 0 && req.AgentTask.Duration == 0 {
 		return nil, errors.New("trace timeout or duration is required")
 	}
 
 	jobID := fmt.Sprintf("id-%s", uuid.NewString()[:8])
 	now := time.Now()
 	job := &Job{
-		Type:        req.Type,
-		JobID:       jobID,
-		UserName:    req.UserID, // Set UserName to be the same as UserID for now
-		UserID:      req.UserID,
-		Container:   req.ContainerID,
-		Host:        req.Hostname,
-		Status:      JobStatusPending,
-		StartTime:   now,
-		Duration:    req.Args.Duration,
-		Timeout:     req.Args.TraceTimeout,
-		Args:        *req.Args,
-		LastUpdate:  now,
-		stopChan:    make(chan struct{}),
-		PrivateData: cloneJobPrivateData(req.PrivateData),
+		Type:         req.Type,
+		ID:           jobID,
+		Username:     req.UserID, // Username mirrors UserID until identity names are distinct.
+		UserID:       req.UserID,
+		ContainerID:  req.ContainerID,
+		Hostname:     req.Hostname,
+		Status:       JobStatusPending,
+		StartTime:    now,
+		Duration:     req.AgentTask.Duration,
+		TraceTimeout: req.AgentTask.TraceTimeout,
+		AgentTask:    *req.AgentTask,
+		UpdatedAt:    now,
+		stopCh:       make(chan struct{}),
+		PrivateData:  cloneJobPrivateData(req.PrivateData),
 	}
 
 	m.mu.Lock()
@@ -134,20 +134,20 @@ func (m *Manager) Create(req *CreateJobRequest) (*Job, error) {
 	m.monitorWG.Add(1)
 	m.mu.Unlock()
 
-	agentTaskID, err := m.nodeAgent.StartTask(job.Host, job.Container, req.Args)
+	agentTaskID, err := m.nodeAgent.StartTask(job.Hostname, job.ContainerID, req.AgentTask)
 	if err != nil {
 		m.rollbackJob(job)
 		m.monitorWG.Done()
-		return nil, fmt.Errorf("start task %s: %w", job.JobID, err)
+		return nil, fmt.Errorf("start task %s: %w", job.ID, err)
 	}
 
 	m.mu.Lock()
 	job.AgentTaskID = agentTaskID
 	job.Status = JobStatusRunning
-	job.LastUpdate = time.Now()
+	job.UpdatedAt = time.Now()
 	m.mu.Unlock()
 
-	log.WithField("job_id", job.JobID).WithField("host", job.Host).
+	log.WithField("job_id", job.ID).WithField("host", job.Hostname).
 		Info("started agent task")
 	go func() {
 		defer m.monitorWG.Done()
@@ -171,7 +171,7 @@ func (m *Manager) Stop(jobID string, force bool) error {
 		return nil
 	}
 	m.stopping[jobID] = struct{}{}
-	host, agentTaskID := job.Host, job.AgentTaskID
+	host, agentTaskID := job.Hostname, job.AgentTaskID
 	m.mu.Unlock()
 
 	err := m.nodeAgent.StopTask(host, agentTaskID, force)
@@ -216,10 +216,10 @@ func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, e
 		}
 
 		if filter != nil {
-			if filter.ContainerID != "" && job.Container != filter.ContainerID {
+			if filter.ContainerID != "" && job.ContainerID != filter.ContainerID {
 				return true
 			}
-			if filter.Hostname != "" && job.Host != filter.Hostname {
+			if filter.Hostname != "" && job.Hostname != filter.Hostname {
 				return true
 			}
 			if filter.Status != "" && string(job.Status) != filter.Status {
@@ -256,7 +256,7 @@ func (m *Manager) StopAll() {
 	m.jobs.Range(func(_, value any) bool {
 		job := value.(*Job)
 		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
-			jobIDs = append(jobIDs, job.JobID)
+			jobIDs = append(jobIDs, job.ID)
 		}
 		return true
 	})
@@ -272,36 +272,36 @@ func (m *Manager) StopAll() {
 
 func (m *Manager) finishJob(job *Job, status JobStatus, errMessage string, result *Result) {
 	m.mu.Lock()
-	if _, exists := m.jobs.Load(job.JobID); !exists {
+	if _, exists := m.jobs.Load(job.ID); !exists {
 		m.mu.Unlock()
 		return
 	}
 	now := time.Now()
 	job.Status = status
-	job.LastUpdate = now
+	job.UpdatedAt = now
 	job.EndTime = now
-	job.Error = errMessage
+	job.ErrorMessage = errMessage
 	if result != nil {
-		job.Results = *result
+		job.Result = *result
 	}
 	select {
-	case <-job.stopChan:
+	case <-job.stopCh:
 	default:
-		close(job.stopChan)
+		close(job.stopCh)
 	}
-	m.jobs.Delete(job.JobID)
-	delete(m.stopping, job.JobID)
-	count := m.hostJobCount(job.Host)
+	m.jobs.Delete(job.ID)
+	delete(m.stopping, job.ID)
+	count := m.hostJobCount(job.Hostname)
 	if count <= 1 {
-		m.jobsByHost.Delete(job.Host)
+		m.jobsByHost.Delete(job.Hostname)
 	} else {
-		m.jobsByHost.Store(job.Host, count-1)
+		m.jobsByHost.Store(job.Hostname, count-1)
 	}
 	snapshot := cloneJob(job)
 	m.mu.Unlock()
 
 	if err := m.storage.Save(snapshot); err != nil {
-		log.WithError(err).WithField("job_id", job.JobID).Error("failed to save job")
+		log.WithError(err).WithField("job_id", job.ID).Error("failed to save job")
 	}
 }
 
@@ -326,13 +326,13 @@ func (m *Manager) rollbackJob(job *Job) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.jobs.Delete(job.JobID)
-	count := m.hostJobCount(job.Host)
+	m.jobs.Delete(job.ID)
+	count := m.hostJobCount(job.Hostname)
 	if count <= 1 {
-		m.jobsByHost.Delete(job.Host)
+		m.jobsByHost.Delete(job.Hostname)
 		return
 	}
-	m.jobsByHost.Store(job.Host, count-1)
+	m.jobsByHost.Store(job.Hostname, count-1)
 }
 
 func (m *Manager) jobIsActive(jobID string) bool {
@@ -344,15 +344,15 @@ func (m *Manager) jobIsActive(jobID string) bool {
 }
 
 func (m *Manager) stopAgent(job *Job, force bool) error {
-	if err := m.nodeAgent.StopTask(job.Host, job.AgentTaskID, force); err != nil {
-		return fmt.Errorf("stop task %s: %w", job.JobID, err)
+	if err := m.nodeAgent.StopTask(job.Hostname, job.AgentTaskID, force); err != nil {
+		return fmt.Errorf("stop task %s: %w", job.ID, err)
 	}
 	return nil
 }
 
 // checkAndUpdateJobStatus polls the agent for the task's current status and transitions the local job accordingly.
 func (m *Manager) checkAndUpdateJobStatus(job *Job) (string, error) {
-	agentStatus, results, err := m.nodeAgent.GetTaskStatus(job.Host, job.AgentTaskID)
+	agentStatus, results, err := m.nodeAgent.GetTaskStatus(job.Hostname, job.AgentTaskID)
 	if err != nil {
 		return agentStatus, err
 	}
@@ -369,7 +369,7 @@ func (m *Manager) checkAndUpdateJobStatus(job *Job) (string, error) {
 			return agentStatus, errors.New("agent returned failed status without results")
 		}
 		m.finishJob(job, JobStatusFailed, "job failed: "+results.Error, results)
-		log.WithField("job_id", job.JobID).WithField("agent_error", results.Error).
+		log.WithField("job_id", job.ID).WithField("agent_error", results.Error).
 			Error("job failed")
 		return agentStatus, nil
 	case AgentStatusNotExist:
@@ -388,7 +388,7 @@ func (m *Manager) monitorJob(job *Job) {
 
 	var timeoutTime, durationEndTime time.Time
 	if job.Duration == 0 {
-		timeoutTime = job.StartTime.Add(time.Duration(job.Timeout) * time.Second)
+		timeoutTime = job.StartTime.Add(time.Duration(job.TraceTimeout) * time.Second)
 	} else {
 		durationEndTime = job.StartTime.Add(time.Duration(job.Duration) * time.Second)
 	}
@@ -398,11 +398,11 @@ func (m *Manager) monitorJob(job *Job) {
 
 	for {
 		select {
-		case <-job.stopChan:
+		case <-job.stopCh:
 			return
 		case <-m.stopChan:
 			if err := m.stopAgent(job, true); err != nil {
-				log.WithError(err).WithField("job_id", job.JobID).
+				log.WithError(err).WithField("job_id", job.ID).
 					Error("failed to stop job during shutdown")
 			}
 			m.finishJob(job, JobStatusFailed, "job interrupted by manager shutdown", nil)
@@ -473,11 +473,11 @@ func (m *Manager) monitorJob(job *Job) {
 }
 
 func (m *Manager) failMonitoredJob(job *Job, cause error) {
-	if !m.jobIsActive(job.JobID) {
+	if !m.jobIsActive(job.ID) {
 		return
 	}
 	if err := m.stopAgent(job, true); err != nil {
-		log.WithError(err).WithField("job_id", job.JobID).
+		log.WithError(err).WithField("job_id", job.ID).
 			Error("failed to stop job after monitor error")
 	}
 	m.finishJob(job, JobStatusFailed, cause.Error(), nil)

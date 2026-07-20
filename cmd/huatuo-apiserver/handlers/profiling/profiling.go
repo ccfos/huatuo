@@ -101,7 +101,7 @@ func (h *Handler) create(ctx *server.Context) error {
 		return response.ErrConflict.WithMessage("there is already a profiling job running on this host")
 	}
 
-	taskReq := job.NewAgentTaskReq{
+	taskReq := job.AgentTaskRequest{
 		TracerName:   "profiler",
 		DataType:     "db-json",
 		Interval:     h.profilingConfig.AggregationInterval,
@@ -177,15 +177,15 @@ func (h *Handler) create(ctx *server.Context) error {
 		ContainerID: req.ContainerID,
 		Hostname:    req.Hostname,
 		Type:        jobType,
-		Args:        &taskReq,
+		AgentTask:   &taskReq,
 		PrivateData: profilingPrivateData(&req),
 	})
 	if err != nil {
 		log.WithError(err).Error("failed to create profiling job")
 		return response.ErrInternal
 	}
-	response.Created(ctx, "/v1/profiles/"+jobResult.JobID, v1.CreateProfilingJobResponse{
-		ID: jobResult.JobID,
+	response.Created(ctx, "/v1/profiles/"+jobResult.ID, v1.CreateProfilingJobResponse{
+		ID: jobResult.ID,
 	})
 	return nil
 }
@@ -215,7 +215,7 @@ func (h *Handler) hasRunningProfilingJob(hostname, userID string) (bool, error) 
 }
 
 func fillTracerArgs(
-	agentTaskReq *job.NewAgentTaskReq,
+	agentTaskReq *job.AgentTaskRequest,
 	profilingType profiling.Type,
 	language profiling.Language,
 	typeArgs ...string,
@@ -405,29 +405,29 @@ func (h *Handler) get(ctx *server.Context) error {
 // convertJobToProfilingResponse converts a job.Job to v1.ProfilingJobResponse.
 func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.ProfilingJobResponse {
 	if jobResult.Status == job.JobStatusCompleted || jobResult.Status == job.JobStatusStopped {
-		if jobResult.Results.URL == "" {
-			jobResult.Results.URL = getFlameGraphURL(h.profilingConfig.FlameGraphBaseURL, jobResult)
+		if jobResult.Result.URL == "" {
+			jobResult.Result.URL = getFlameGraphURL(h.profilingConfig.FlameGraphBaseURL, jobResult)
 			if err := h.jobManager.Save(jobResult); err != nil {
-				log.WithError(err).WithField("job_id", jobResult.JobID).
+				log.WithError(err).WithField("job_id", jobResult.ID).
 					Error("failed to save profiling job")
 			}
 		}
 	}
 
 	resp := v1.ProfilingJobResponse{
-		ID:          jobResult.JobID,
+		ID:          jobResult.ID,
 		AgentTaskID: jobResult.AgentTaskID,
-		Container:   jobResult.Container,
-		Hostname:    jobResult.Host,
+		ContainerID: jobResult.ContainerID,
+		Hostname:    jobResult.Hostname,
 		Status:      string(jobResult.Status),
 		StartTime:   jobResult.StartTime.Format("2006-01-02T15:04:05.000"),
 		EndTime:     jobResult.EndTime.Format("2006-01-02T15:04:05.000"),
-		TracerArgs:  jobResult.Args.TracerArgs,
-		Duration:    jobResult.Args.Duration >> 1,
+		TracerArgs:  jobResult.AgentTask.TracerArgs,
+		Duration:    jobResult.AgentTask.Duration >> 1,
 		Results: v1.ProfilingResults{
-			URL: jobResult.Results.URL,
+			URL: jobResult.Result.URL,
 		},
-		ErrorMessage: jobResult.Error,
+		ErrorMessage: jobResult.ErrorMessage,
 	}
 
 	switch jobResult.Type {
@@ -445,12 +445,12 @@ func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.Profiling
 		}
 		if binaryMatchPath, ok := jobResult.PrivateData[privateDataBinaryMatchPath]; ok && binaryMatchPath != nil {
 			if binaryMatchPathStr, ok := binaryMatchPath.(string); ok {
-				resp.TargetExecPath = binaryMatchPathStr
+				resp.BinaryMatchPath = binaryMatchPathStr
 			}
 		}
 		if language, ok := jobResult.PrivateData[privateDataLanguage]; ok && language != nil {
 			if languageStr, ok := language.(string); ok {
-				resp.TargetProcessLanguage = languageStr
+				resp.Language = languageStr
 			}
 		}
 	}
@@ -467,7 +467,7 @@ func getFlameGraphURL(base string, jobResult *job.Job) string {
 	from := jobResult.StartTime.UTC().Format("2006-01-02T15:04:05.000Z")
 	to := jobResult.EndTime.UTC().Format("2006-01-02T15:04:05.000Z")
 
-	if jobResult.Container != "" {
+	if jobResult.ContainerID != "" {
 		switch jobResult.Type {
 		case ProfilingMemory:
 			dashboardUid = "container-memory-profiling"
@@ -479,7 +479,7 @@ func getFlameGraphURL(base string, jobResult *job.Job) string {
 			return ""
 		}
 		labelKey = "var-container_hostname"
-		labelVal = jobResult.Container
+		labelVal = jobResult.ContainerID
 	} else {
 		switch jobResult.Type {
 		case ProfilingMemory:
@@ -492,7 +492,7 @@ func getFlameGraphURL(base string, jobResult *job.Job) string {
 			return ""
 		}
 		labelKey = "var-hostname"
-		labelVal = jobResult.Host
+		labelVal = jobResult.Hostname
 	}
 
 	query := url.Values{}

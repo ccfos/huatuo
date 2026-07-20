@@ -32,21 +32,21 @@ type CreateProfilingJobResponse struct {
 
 // ProfilingJobResponse represents a profiling job response.
 type ProfilingJobResponse struct {
-	ID                    string           `json:"id"`                      // profiling job ID
-	AgentTaskID           string           `json:"agent_task_id"`           // agent task ID
-	Container             string           `json:"container"`               // container name or ID
-	Hostname              string           `json:"hostname"`                // host name
-	Status                string           `json:"status"`                  // job status
-	StartTime             string           `json:"start_time"`              // start time
-	EndTime               string           `json:"end_time"`                // end time
-	TracerArgs            []string         `json:"tracer_args"`             // tracer arguments
-	Duration              int              `json:"duration"`                // profiling duration
-	Results               ProfilingResults `json:"results"`                 // profiling results
-	ErrorMessage          string           `json:"error_message"`           // error message if any
-	Type                  string           `json:"type"`                    // cpu or memory
-	TargetExecPath        string           `json:"target_exec_path"`        // executable path for CPU profiling
-	TargetProcessLanguage string           `json:"target_process_language"` // programming language of the target process
-	MemoryMode            string           `json:"memory_mode"`             // memory profiling mode
+	ID              string           `json:"id"`                // profiling job ID
+	AgentTaskID     string           `json:"agent_task_id"`     // agent task ID
+	ContainerID     string           `json:"container_id"`      // container ID
+	Hostname        string           `json:"hostname"`          // host name
+	Type            string           `json:"type"`              // cpu or memory
+	MemoryMode      string           `json:"memory_mode"`       // memory profiling mode
+	Language        string           `json:"language"`          // programming language of the target process
+	BinaryMatchPath string           `json:"binary_match_path"` // executable path used to match target processes
+	Status          string           `json:"status"`            // job status
+	StartTime       string           `json:"start_time"`        // start time
+	EndTime         string           `json:"end_time"`          // end time
+	TracerArgs      []string         `json:"tracer_args"`       // tracer arguments
+	Duration        int              `json:"duration"`          // profiling duration
+	Results         ProfilingResults `json:"results"`           // profiling results
+	ErrorMessage    string           `json:"error_message"`     // error message if any
 }
 
 // ProfilingResults represents profiling results
@@ -61,18 +61,18 @@ type RawDataResponse struct {
 
 // JobFilter represents a job filter
 type JobFilter struct {
-	Container string `json:"container"` // container name or ID
-	Host      string `json:"host"`      // host name
-	Status    string `json:"status"`    // job status
-	Type      string `json:"type"`      // job type
+	ContainerID string `json:"container_id"` // container ID
+	Hostname    string `json:"hostname"`     // host name
+	Status      string `json:"status"`       // job status
+	Type        string `json:"type"`         // job type
 }
 
 // CreateTraceJobRequest represents a request to create a trace job.
 type CreateTraceJobRequest struct {
-	Type      string `json:"type"`      // trace type
-	Duration  int    `json:"duration"`  // trace duration in seconds
-	Container string `json:"container"` // container name or ID
-	Hostname  string `json:"hostname"`  // host name
+	Type        string `json:"type"`         // trace type
+	Duration    int    `json:"duration"`     // trace duration in seconds
+	ContainerID string `json:"container_id"` // container ID
+	Hostname    string `json:"hostname"`     // host name
 }
 
 // CreateTraceJobResponse represents a response to create a trace job.
@@ -84,7 +84,7 @@ type CreateTraceJobResponse struct {
 type TraceJobResponse struct {
 	ID           string       `json:"id"`            // trace job ID
 	AgentTaskID  string       `json:"agent_task_id"` // agent task ID
-	Container    string       `json:"container"`     // container name or ID
+	ContainerID  string       `json:"container_id"`  // container ID
 	Hostname     string       `json:"hostname"`      // host name
 	Status       string       `json:"status"`        // job status
 	StartTime    string       `json:"start_time"`    // start time
@@ -123,11 +123,11 @@ type ProfilingJobListResponse struct {
 // ProfilingCapabilitiesResponse describes the profiling capabilities
 // supported by the server and their default configurations.
 type ProfilingCapabilitiesResponse struct {
-	ProfileTypes               []string          `json:"profile_types"`                // supported profiling types, e.g. ["cpu", "memory"]
-	CPUSupportedLanguages      []string          `json:"cpu_supported_languages"`      // languages supported by CPU profiling
-	MemorySupportedLanguages   []string          `json:"memory_supported_languages"`   // languages supported by memory profiling
-	MemoryModes                map[string]string `json:"memory_modes"`                 // supported memory modes (key: display name, value: internal mode)
-	DefaultAggregationInterval int               `json:"default_aggregation_interval"` // default aggregation interval in seconds
-	DefaultExecutionTimeout    int               `json:"default_execution_timeout"`    // default profiler execution timeout in seconds
-	MaxProfilerProcesses       int               `json:"max_profiler_processes"`       // maximum concurrent profiler subprocesses
+	Types               []string          `json:"types"`                // supported profiling types, e.g. ["cpu", "memory"]
+	CPULanguages        []string          `json:"cpu_languages"`        // languages supported by CPU profiling
+	MemoryLanguages     []string          `json:"memory_languages"`     // languages supported by memory profiling
+	MemoryModes         map[string]string `json:"memory_modes"`         // supported memory modes (key: display name, value: internal mode)
+	AggregationInterval int               `json:"aggregation_interval"` // default aggregation interval in seconds
+	ExecutionTimeout    int               `json:"execution_timeout"`    // default profiler execution timeout in seconds
+	MaxProfilerProcs    int               `json:"max_profiler_procs"`   // maximum concurrent profiler subprocesses
 }

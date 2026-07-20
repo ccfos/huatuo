@@ -57,7 +57,7 @@ func (h *Handler) start(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	args := job.NewAgentTaskReq{
+	args := job.AgentTaskRequest{
 		TracerName: "tracer",
 		DataType:   "db",
 	}
@@ -75,18 +75,18 @@ func (h *Handler) start(ctx *server.Context) error {
 
 	jobResult, err := h.jobManager.Create(&job.CreateJobRequest{
 		UserID:      ctx.UserID,
-		ContainerID: req.Container,
+		ContainerID: req.ContainerID,
 		Hostname:    req.Hostname,
 		Type:        "tracing",
-		Args:        &args,
+		AgentTask:   &args,
 	})
 	if err != nil {
 		log.WithError(err).Error("failed to create trace job")
 		return response.ErrInternal
 	}
 
-	response.Created(ctx, "/v1/traces/"+jobResult.JobID, v1.CreateTraceJobResponse{
-		ID: jobResult.JobID,
+	response.Created(ctx, "/v1/traces/"+jobResult.ID, v1.CreateTraceJobResponse{
+		ID: jobResult.ID,
 	})
 	return nil
 }
@@ -244,15 +244,15 @@ func (h *Handler) delete(ctx *server.Context) error {
 // convertJobToTraceResponse maps an internal *job.Job to the v1 wire type.
 func convertJobToTraceResponse(jobResult *job.Job) v1.TraceJobResponse {
 	return v1.TraceJobResponse{
-		ID:          jobResult.JobID,
+		ID:          jobResult.ID,
 		AgentTaskID: jobResult.AgentTaskID,
-		Container:   jobResult.Container,
-		Hostname:    jobResult.Host,
+		ContainerID: jobResult.ContainerID,
+		Hostname:    jobResult.Hostname,
 		Status:      string(jobResult.Status),
 		StartTime:   jobResult.StartTime.Format("2006-01-02T15:04:05Z07:00"),
 		EndTime:     jobResult.EndTime.Format("2006-01-02T15:04:05Z07:00"),
 		Results: v1.TraceResults{
-			URL: jobResult.Results.URL,
+			URL: jobResult.Result.URL,
 		},
 	}
 }

@@ -27,10 +27,10 @@ import (
 
 func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 	url := getFlameGraphURL("http://grafana.example/d", &job.Job{
-		Type:      ProfilingCPU,
-		Container: "container+2026&debug",
-		StartTime: time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC),
-		EndTime:   time.Date(2026, 6, 24, 10, 5, 0, 0, time.UTC),
+		Type:        ProfilingCPU,
+		ContainerID: "container+2026&debug",
+		StartTime:   time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC),
+		EndTime:     time.Date(2026, 6, 24, 10, 5, 0, 0, time.UTC),
 	})
 
 	if !strings.Contains(url, "var-container_hostname=container%2B2026%26debug") {
@@ -68,12 +68,12 @@ func TestCapabilities(t *testing.T) {
 		t.Fatalf("buildCapabilitiesResponse() error = %v", err)
 	}
 
-	if len(resp.ProfileTypes) != 2 {
-		t.Errorf("ProfileTypes len = %d, want 2", len(resp.ProfileTypes))
+	if len(resp.Types) != 2 {
+		t.Errorf("Types len = %d, want 2", len(resp.Types))
 	}
 	hasCPU := false
 	hasMemory := false
-	for _, pt := range resp.ProfileTypes {
+	for _, pt := range resp.Types {
 		if pt == "cpu" {
 			hasCPU = true
 		}
@@ -82,24 +82,24 @@ func TestCapabilities(t *testing.T) {
 		}
 	}
 	if !hasCPU || !hasMemory {
-		t.Errorf("ProfileTypes = %v, want contain both cpu and memory", resp.ProfileTypes)
+		t.Errorf("Types = %v, want contain both cpu and memory", resp.Types)
 	}
 
-	if len(resp.CPUSupportedLanguages) != 5 {
-		t.Errorf("CPUSupportedLanguages len = %d, want 5 (c++, c, go, java, python)", len(resp.CPUSupportedLanguages))
+	if len(resp.CPULanguages) != 5 {
+		t.Errorf("CPULanguages len = %d, want 5 (c++, c, go, java, python)", len(resp.CPULanguages))
 	}
 	hasPython := false
-	for _, lang := range resp.CPUSupportedLanguages {
+	for _, lang := range resp.CPULanguages {
 		if lang == "python" {
 			hasPython = true
 		}
 	}
 	if !hasPython {
-		t.Errorf("CPUSupportedLanguages = %v, want contain python", resp.CPUSupportedLanguages)
+		t.Errorf("CPULanguages = %v, want contain python", resp.CPULanguages)
 	}
 
-	if len(resp.MemorySupportedLanguages) != 4 {
-		t.Errorf("MemorySupportedLanguages len = %d, want 4 (c++, c, go, java)", len(resp.MemorySupportedLanguages))
+	if len(resp.MemoryLanguages) != 4 {
+		t.Errorf("MemoryLanguages len = %d, want 4 (c++, c, go, java)", len(resp.MemoryLanguages))
 	}
 
 	if len(resp.MemoryModes) != 5 {
@@ -112,14 +112,14 @@ func TestCapabilities(t *testing.T) {
 		t.Errorf("MemoryModes missing OBJECT_USAGE")
 	}
 
-	if resp.DefaultAggregationInterval != 15 {
-		t.Errorf("DefaultAggregationInterval = %d, want 15", resp.DefaultAggregationInterval)
+	if resp.AggregationInterval != 15 {
+		t.Errorf("AggregationInterval = %d, want 15", resp.AggregationInterval)
 	}
-	if resp.DefaultExecutionTimeout != 30 {
-		t.Errorf("DefaultExecutionTimeout = %d, want 30", resp.DefaultExecutionTimeout)
+	if resp.ExecutionTimeout != 30 {
+		t.Errorf("ExecutionTimeout = %d, want 30", resp.ExecutionTimeout)
 	}
-	if resp.MaxProfilerProcesses != 5 {
-		t.Errorf("MaxProfilerProcesses = %d, want 5", resp.MaxProfilerProcesses)
+	if resp.MaxProfilerProcs != 5 {
+		t.Errorf("MaxProfilerProcs = %d, want 5", resp.MaxProfilerProcs)
 	}
 }
 
@@ -164,7 +164,7 @@ func TestFillTracerArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := &job.NewAgentTaskReq{}
+			req := &job.AgentTaskRequest{}
 			fillTracerArgs(req, tt.profilingType, tt.language, tt.typeArgs...)
 			if strings.Join(req.TracerArgs, " ") != strings.Join(tt.want, " ") {
 				t.Fatalf("TracerArgs = %q, want %q", req.TracerArgs, tt.want)
@@ -206,11 +206,11 @@ func TestConvertJobToProfilingResponseReadsRequestJSONNames(t *testing.T) {
 		},
 	})
 
-	if resp.TargetExecPath != "/usr/bin/example" {
-		t.Errorf("TargetExecPath=%q, want %q", resp.TargetExecPath, "/usr/bin/example")
+	if resp.BinaryMatchPath != "/usr/bin/example" {
+		t.Errorf("BinaryMatchPath=%q, want %q", resp.BinaryMatchPath, "/usr/bin/example")
 	}
-	if resp.TargetProcessLanguage != "go" {
-		t.Errorf("TargetProcessLanguage=%q, want %q", resp.TargetProcessLanguage, "go")
+	if resp.Language != "go" {
+		t.Errorf("Language=%q, want %q", resp.Language, "go")
 	}
 	if resp.MemoryMode != "object_alloc" {
 		t.Errorf("MemoryMode=%q, want %q", resp.MemoryMode, "object_alloc")

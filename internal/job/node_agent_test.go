@@ -82,7 +82,7 @@ func TestHTTPNodeAgentReturnsBodyReadError(t *testing.T) {
 			return newHTTPResponseWithBody(http.StatusInternalServerError, failingReadCloser{}), nil
 		}))
 
-		_, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+		_, err := agent.StartTask("huatuo-dev", "payment-worker", &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			DataType:     "flamegraph",
@@ -138,7 +138,7 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 
 			return newHTTPResponse(http.StatusOK, `{"code":0,"message":"ok","data":{"task_id":"agent-task-2026"}}`), nil
 		}))
-		args := &NewAgentTaskReq{
+		args := &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			Interval:     10,
@@ -186,7 +186,7 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 			return newHTTPResponse(http.StatusInternalServerError, "agent unavailable"), nil
 		}))
 
-		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			DataType:     "flamegraph",
@@ -204,7 +204,7 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 			return newHTTPResponse(http.StatusOK, `{"code":0,"message":"ok","data":`), nil
 		}))
 
-		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			DataType:     "flamegraph",
@@ -222,7 +222,7 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 			return newHTTPResponse(http.StatusOK, `{"code":400,"message":"missing timeout","data":null}`), nil
 		}))
 
-		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			DataType:     "flamegraph",
@@ -240,7 +240,7 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 			return newHTTPResponse(http.StatusOK, `{"code":0,"message":"ok","data":{"task_id":""}}`), nil
 		}))
 
-		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			DataType:     "flamegraph",

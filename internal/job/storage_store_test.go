@@ -43,50 +43,50 @@ func newStoreForTest(t *testing.T) Store {
 func sampleStoredJobs(baseTime time.Time) []*Job {
 	return []*Job{
 		{
-			Type:        "profiling_cpu",
-			JobID:       "job-store-alpha",
-			UserName:    "operator-2026",
-			UserID:      "operator-2026",
-			Container:   "payment-worker",
-			Host:        "huatuo-dev",
-			AgentTaskID: "agent-task-alpha",
-			Status:      JobStatusCompleted,
-			Duration:    120,
-			Timeout:     120,
-			StartTime:   baseTime,
-			EndTime:     baseTime.Add(2 * time.Minute),
-			Args: NewAgentTaskReq{
+			Type:         "profiling_cpu",
+			ID:           "job-store-alpha",
+			Username:     "operator-2026",
+			UserID:       "operator-2026",
+			ContainerID:  "payment-worker",
+			Hostname:     "huatuo-dev",
+			AgentTaskID:  "agent-task-alpha",
+			Status:       JobStatusCompleted,
+			Duration:     120,
+			TraceTimeout: 120,
+			StartTime:    baseTime,
+			EndTime:      baseTime.Add(2 * time.Minute),
+			AgentTask: AgentTaskRequest{
 				TracerName:   "profiler",
 				TraceTimeout: 120,
 				DataType:     "db-json",
 			},
-			Results: Result{
+			Result: Result{
 				URL: "s3://huatuo-region/job-store-alpha",
 			},
-			LastUpdate: baseTime.Add(2 * time.Minute),
+			UpdatedAt: baseTime.Add(2 * time.Minute),
 			PrivateData: map[string]any{
 				"memory_mode": "object_alloc",
 			},
 		},
 		{
-			Type:        "tracing",
-			JobID:       "job-store-beta",
-			UserName:    "reviewer-2026",
-			UserID:      "reviewer-2026",
-			Container:   "db-worker",
-			Host:        "huatuo-dev",
-			AgentTaskID: "agent-task-beta",
-			Status:      JobStatusStopped,
-			Duration:    60,
-			Timeout:     60,
-			StartTime:   baseTime.Add(1 * time.Hour),
-			EndTime:     baseTime.Add(61 * time.Minute),
-			Args: NewAgentTaskReq{
+			Type:         "tracing",
+			ID:           "job-store-beta",
+			Username:     "reviewer-2026",
+			UserID:       "reviewer-2026",
+			ContainerID:  "db-worker",
+			Hostname:     "huatuo-dev",
+			AgentTaskID:  "agent-task-beta",
+			Status:       JobStatusStopped,
+			Duration:     60,
+			TraceTimeout: 60,
+			StartTime:    baseTime.Add(1 * time.Hour),
+			EndTime:      baseTime.Add(61 * time.Minute),
+			AgentTask: AgentTaskRequest{
 				TracerName:   "tracer",
 				TraceTimeout: 60,
 				DataType:     "db",
 			},
-			LastUpdate: baseTime.Add(61 * time.Minute),
+			UpdatedAt: baseTime.Add(61 * time.Minute),
 		},
 	}
 }
@@ -102,7 +102,7 @@ func TestStorageStoreSQLiteIntegration(t *testing.T) {
 	jobs := sampleStoredJobs(baseTime)
 	for _, storedJob := range jobs {
 		if err := store.Save(storedJob); err != nil {
-			t.Errorf("Save(%q) returned error: %v", storedJob.JobID, err)
+			t.Errorf("Save(%q) returned error: %v", storedJob.ID, err)
 		}
 	}
 
@@ -114,8 +114,8 @@ func TestStorageStoreSQLiteIntegration(t *testing.T) {
 		t.Errorf("Get() returned nil job")
 		return
 	}
-	if gotJob.Results.URL != "s3://huatuo-region/job-store-alpha" {
-		t.Errorf("Get() results url = %q, want %q", gotJob.Results.URL, "s3://huatuo-region/job-store-alpha")
+	if gotJob.Result.URL != "s3://huatuo-region/job-store-alpha" {
+		t.Errorf("Get() result url = %q, want %q", gotJob.Result.URL, "s3://huatuo-region/job-store-alpha")
 	}
 	if gotJob.PrivateData["memory_mode"] != "object_alloc" {
 		t.Errorf("Get() memory_mode = %v, want %q", gotJob.PrivateData["memory_mode"], "object_alloc")
@@ -133,8 +133,8 @@ func TestStorageStoreSQLiteIntegration(t *testing.T) {
 	if len(listedJobs) != 1 {
 		t.Errorf("List() result length = %d, want 1", len(listedJobs))
 	}
-	if len(listedJobs) == 1 && listedJobs[0].JobID != "job-store-alpha" {
-		t.Errorf("List() first id = %q, want %q", listedJobs[0].JobID, "job-store-alpha")
+	if len(listedJobs) == 1 && listedJobs[0].ID != "job-store-alpha" {
+		t.Errorf("List() first id = %q, want %q", listedJobs[0].ID, "job-store-alpha")
 	}
 
 	if err := store.Delete("job-store-beta"); err != nil {

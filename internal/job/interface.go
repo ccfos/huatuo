@@ -24,7 +24,7 @@ type Store interface {
 // NodeAgent interface for communicating with the huatuo-bamai agent
 type NodeAgent interface {
 	// StartTask starts a task on the agent
-	StartTask(host, container string, args *NewAgentTaskReq) (string, error)
+	StartTask(host, container string, request *AgentTaskRequest) (string, error)
 	// StopTask stops a task on the agent
 	StopTask(host, taskID string, force bool) error
 	// GetTaskStatus gets the status of a task on the agent
