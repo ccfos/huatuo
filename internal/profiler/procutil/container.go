@@ -31,6 +31,11 @@ import (
 	"github.com/shirou/gopsutil/process"
 )
 
+type procInfo struct {
+	pid  int
+	ppid int
+}
+
 // ContainerPathOnHost returns the host-visible path for a container-scoped path.
 func ContainerPathOnHost(pid int, containerPath string) string {
 	if containerPath == "" {
@@ -97,13 +102,6 @@ func findProcessesInCgroups(cgroupSuffix, langKeyword, execPath string) (map[int
 		return nil, err
 	}
 
-	type procInfo struct {
-		pid  int
-		ppid int
-	}
-
-	validPids := make(map[int]bool)
-
 	var targetProcs []procInfo
 
 	for _, rawPid := range pids {
@@ -130,16 +128,38 @@ func findProcessesInCgroups(cgroupSuffix, langKeyword, execPath string) (map[int
 		}
 
 		targetProcs = append(targetProcs, procInfo{pid: pid, ppid: ppid})
-		validPids[pid] = true
+	}
+
+	return groupProcessesByRoot(targetProcs)
+}
+
+func groupProcessesByRoot(processes []procInfo) (map[int][]int, error) {
+	parents := make(map[int]int, len(processes))
+	for _, proc := range processes {
+		parents[proc.pid] = proc.ppid
 	}
 
 	result := make(map[int][]int)
-	for _, proc := range targetProcs {
-		if validPids[proc.ppid] {
-			result[proc.ppid] = append(result[proc.ppid], proc.pid)
-		} else {
-			result[proc.pid] = append(result[proc.pid], proc.pid)
+	for _, proc := range processes {
+		root := proc.pid
+		parent := proc.ppid
+		seen := map[int]struct{}{proc.pid: {}}
+
+		for {
+			next, ok := parents[parent]
+			if !ok {
+				break
+			}
+			if _, ok := seen[parent]; ok {
+				return nil, fmt.Errorf("process parent cycle at PID %d", parent)
+			}
+
+			seen[parent] = struct{}{}
+			root = parent
+			parent = next
 		}
+
+		result[root] = append(result[root], proc.pid)
 	}
 
 	return result, nil
