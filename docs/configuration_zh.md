@@ -658,6 +658,11 @@ IssuesList = []
 # The latency from driver to userspace copy data, e.g., skb_copy_datagram_iovec.
 # Default: 115ms
 #
+# - Driver2Iptable
+# Duration of ipt_do_table() (IPv4 iptables rule matching). Surfaces slow rule
+# evaluation on iptables-mode k8s (< v1.29) with complex rulesets.
+# Default: 10ms
+#
 # - ExcludedContainerQos
 # Blacklist: skip containers whose qos level matches.
 # Values: "guaranteed", "burstable", "besteffort" (case-insensitive).
@@ -671,6 +676,7 @@ IssuesList = []
 	# Driver2NetRx = 5
 	# Driver2TCP = 10
 	# Driver2Userspace = 115
+	# Driver2Iptable = 10
 	# ExcludedContainerQos = []
 	ExcludedContainerQos = ["besteffort"]
 	# ExcludedHostNetnamespace = true
@@ -687,6 +693,10 @@ IssuesList = []
 - **Driver2Userspace**：从驱动到用户态数据拷贝的延迟阈值（毫秒）。
 
   默认 115ms。 例如 skb_copy_datagram_iovec 等函数的延迟监控。
+
+- **Driver2Iptable**：`ipt_do_table()`（IPv4 iptables 规则匹配）的耗时阈值（毫秒）。与上面几个阶段（基于 skb 时间戳的延迟）不同，这是函数自身的执行耗时——用于发现 iptables 模式 k8s（< v1.29）规则复杂时规则评估变慢。
+
+  默认 10ms。
 
 - **ExcludedContainerQos**：排除的容器 QoS 级别，黑名单模式。
 

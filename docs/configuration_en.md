@@ -663,6 +663,11 @@ This section is responsible for capturing key kernel events and monitoring laten
 # The latency from driver to userspace copy data, e.g., skb_copy_datagram_iovec.
 # Default: 115ms
 #
+# - Driver2Iptable
+# Duration of ipt_do_table() (IPv4 iptables rule matching). Surfaces slow rule
+# evaluation on iptables-mode k8s (< v1.29) with complex rulesets.
+# Default: 10ms
+#
 # - ExcludedContainerQos
 # Blacklist: skip containers whose qos level matches.
 # Values: "guaranteed", "burstable", "besteffort" (case-insensitive).
@@ -676,6 +681,7 @@ This section is responsible for capturing key kernel events and monitoring laten
 	# Driver2NetRx = 5
 	# Driver2TCP = 10
 	# Driver2Userspace = 115
+	# Driver2Iptable = 10
 	# ExcludedContainerQos = []
 	ExcludedContainerQos = ["besteffort"]
 	# ExcludedHostNetnamespace = true
@@ -692,6 +698,10 @@ This section is responsible for capturing key kernel events and monitoring laten
 - **Driver2Userspace**: Latency threshold from driver to userspace data copy (e.g., skb_copy_datagram_iovec).
 
   Default: 115ms.
+
+- **Driver2Iptable**: Duration threshold for `ipt_do_table()` (IPv4 iptables rule matching). Unlike the stages above (which are skb-tstamp deltas), this is the function's own runtime — use it to spot slow rule evaluation on iptables-mode k8s (< v1.29) with complex rulesets.
+
+  Default: 10ms.
 
 - **ExcludedContainerQos**: Container QoS levels to exclude (blacklist).
 

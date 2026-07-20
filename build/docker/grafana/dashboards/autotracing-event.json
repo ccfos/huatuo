@@ -1600,6 +1600,84 @@
       "gridPos": {
         "h": 5,
         "w": 3,
+        "x": 21,
+        "y": 5
+      },
+      "id": 200,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "alias": "",
+          "bucketAggs": [
+            {
+              "field": "uploaded_time",
+              "id": "2",
+              "settings": {
+                "interval": "auto"
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "tracer_name:net_tx_latency AND region:$region AND hostname:$hostname",
+          "refId": "A",
+          "timeField": "uploaded_time"
+        }
+      ],
+      "title": "net_tx_latency",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 3,
         "x": 18,
         "y": 5
       },
@@ -6665,7 +6743,7 @@
           },
           "id": 12,
           "options": {
-            "content": "网络收方向延迟 事件触发条件(or)：\n- 1、网卡 -> 驱动收 > 5ms\n- 2、网卡 -> 协议栈收 > 10ms\n- 3、网卡 -> 用户态拷贝数据 > 115ms\n\n事件几乎都来自 3 (用户主动读取数据的时间超过了阈值)。\n\n过滤延迟发生的位置 where\n- 1 RX_STAGE_NETIF\n- 2 RX_STAGE_TCPV4\n- 3 RX_STAGE_USERCOPY",
+            "content": "网络收方向延迟 事件触发条件(or)：\n- 1、网卡 -> 驱动收 > 5ms\n- 2、网卡 -> 协议栈收 > 10ms\n- 3、网卡 -> 用户态拷贝数据 > 115ms\n\n事件几乎都来自 3 (用户主动读取数据的时间超过了阈值)。\n\n过滤延迟发生的位置 where\n- 1 RX_STAGE_NETIF\n- 2 RX_STAGE_TCP\n- 3 RX_STAGE_USERCOPY",
             "mode": "markdown"
           },
           "pluginVersion": "8.3.7",

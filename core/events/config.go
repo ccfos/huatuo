@@ -30,6 +30,14 @@ type Config struct {
 		Driver2NetRx             uint64 `default:"5"`
 		Driver2TCP               uint64 `default:"10"`
 		Driver2Userspace         uint64 `default:"115"`
+		Driver2Iptable           uint64 `default:"10"`
+		ExcludedHostNetnamespace bool   `default:"true"`
+		ExcludedContainerQos     []string
+	}
+
+	NetTxLatency struct {
+		Sendmsg2Qdisc            uint64 `default:"50"`
+		Qdisc2Nic                uint64 `default:"1"`
 		ExcludedHostNetnamespace bool   `default:"true"`
 		ExcludedContainerQos     []string
 	}
