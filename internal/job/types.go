@@ -15,6 +15,7 @@
 package job
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -62,7 +63,7 @@ type CreateJobRequest struct {
 	Hostname    string
 	Type        string
 	AgentTask   *AgentTaskRequest
-	PrivateData map[string]any
+	PrivateData json.RawMessage
 }
 
 // Job represents a job
@@ -86,7 +87,7 @@ type Job struct {
 	UpdatedAt time.Time `json:"-"`
 	stopCh    chan struct{}
 
-	PrivateData map[string]any `json:"-"`
+	PrivateData json.RawMessage `json:"-"`
 }
 
 // JobQuery defines filters for searching jobs

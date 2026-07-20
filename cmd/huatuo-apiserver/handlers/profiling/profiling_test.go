@@ -15,6 +15,7 @@
 package profiling
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -174,26 +175,25 @@ func TestFillTracerArgs(t *testing.T) {
 }
 
 func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
-	privateData := profilingPrivateData(&v1.CreateProfilingJobRequest{
+	data, err := newProfilingPrivateData(&v1.CreateProfilingJobRequest{
 		BinaryMatchPath: "/usr/bin/example",
 		Duration:        60,
 		Language:        "go",
 		MemoryMode:      "object_alloc",
 	})
+	if err != nil {
+		t.Fatalf("newProfilingPrivateData() error=%v", err)
+	}
 
-	want := map[string]any{
-		"binary_match_path": "/usr/bin/example",
-		"duration":          60,
-		"language":          "go",
-		"memory_mode":       "object_alloc",
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatalf("json.Unmarshal() error=%v", err)
 	}
-	if len(privateData) != len(want) {
-		t.Fatalf("profilingPrivateData() len=%d, want %d", len(privateData), len(want))
-	}
-	for key, wantValue := range want {
-		if got := privateData[key]; got != wantValue {
-			t.Errorf("profilingPrivateData()[%q]=%v, want %v", key, got, wantValue)
-		}
+	if fields["binary_match_path"] != "/usr/bin/example" ||
+		fields["duration"] != float64(60) ||
+		fields["language"] != "go" ||
+		fields["memory_mode"] != "object_alloc" {
+		t.Errorf("newProfilingPrivateData()=%s, want request fields", data)
 	}
 }
 
@@ -201,12 +201,12 @@ func TestConvertJobToProfilingResponseReadsRequestJSONNames(t *testing.T) {
 	resp, err := buildProfilingJobResponse(&job.Job{
 		Type:   ProfilingMemory,
 		Status: job.JobStatusRunning,
-		PrivateData: map[string]any{
-			"binary_match_path": "/usr/bin/example",
-			"duration":          float64(60),
-			"language":          "go",
-			"memory_mode":       "object_alloc",
-		},
+		PrivateData: json.RawMessage(`{
+			"binary_match_path":"/usr/bin/example",
+			"duration":60,
+			"language":"go",
+			"memory_mode":"object_alloc"
+		}`),
 	}, "")
 	if err != nil {
 		t.Fatalf("buildProfilingJobResponse() error = %v", err)
@@ -228,6 +228,16 @@ func TestConvertJobToProfilingResponseReadsRequestJSONNames(t *testing.T) {
 
 func TestProfilingJobResponseRejectsNonProfilingJob(t *testing.T) {
 	_, err := buildProfilingJobResponse(&job.Job{Type: "trace"}, "")
+	if err == nil {
+		t.Fatal("buildProfilingJobResponse() error = nil, want non-nil")
+	}
+}
+
+func TestProfilingJobResponseRejectsInvalidPrivateData(t *testing.T) {
+	_, err := buildProfilingJobResponse(&job.Job{
+		Type:        ProfilingCPU,
+		PrivateData: json.RawMessage(`{"duration":`),
+	}, "")
 	if err == nil {
 		t.Fatal("buildProfilingJobResponse() error = nil, want non-nil")
 	}
@@ -256,15 +266,13 @@ func TestIsProfilingJobType(t *testing.T) {
 
 func TestProfilingJobResponseBuildsURLWithoutMutatingJob(t *testing.T) {
 	jobResult := &job.Job{
-		ID:        "profile-2026",
-		Type:      ProfilingCPU,
-		Hostname:  "huatuo-dev",
-		Status:    job.JobStatusCompleted,
-		StartTime: time.Date(2026, time.July, 20, 10, 0, 0, 0, time.UTC),
-		EndTime:   time.Date(2026, time.July, 20, 10, 1, 0, 0, time.UTC),
-		PrivateData: map[string]any{
-			"duration": 60,
-		},
+		ID:          "profile-2026",
+		Type:        ProfilingCPU,
+		Hostname:    "huatuo-dev",
+		Status:      job.JobStatusCompleted,
+		StartTime:   time.Date(2026, time.July, 20, 10, 0, 0, 0, time.UTC),
+		EndTime:     time.Date(2026, time.July, 20, 10, 1, 0, 0, time.UTC),
+		PrivateData: json.RawMessage(`{"duration":60}`),
 	}
 
 	resp, err := buildProfilingJobResponse(jobResult, "http://grafana.example/d")

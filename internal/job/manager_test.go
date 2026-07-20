@@ -15,6 +15,7 @@
 package job
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -221,7 +222,7 @@ func TestManagerCreate(t *testing.T) {
 			},
 		}
 		manager := newTestManager(storage, nodeAgent)
-		privateData := map[string]any{"language": "go"}
+		privateData := json.RawMessage(`{"language":"go"}`)
 
 		job, err := manager.Create(&CreateJobRequest{
 			UserID:      "operator-2026",
@@ -259,9 +260,13 @@ func TestManagerCreate(t *testing.T) {
 		if got := nodeAgent.startTaskCalls.Load(); got != 1 {
 			t.Errorf("StartTask() call count=%d, want 1", got)
 		}
-		privateData["language"] = "java"
-		if job.PrivateData["language"] != "go" {
-			t.Errorf("Create() private data=%v, want language go", job.PrivateData)
+		privateData[0] = '['
+		var gotPrivateData map[string]string
+		if err := json.Unmarshal(job.PrivateData, &gotPrivateData); err != nil {
+			t.Fatalf("unmarshal job private data: %v", err)
+		}
+		if gotPrivateData["language"] != "go" {
+			t.Errorf("Create() private data=%s, want language go", job.PrivateData)
 		}
 
 		storedJobVal, exists := manager.jobs.Load(job.ID)

@@ -45,7 +45,7 @@ type storagePayload struct {
 	Args        AgentTaskRequest `json:"args"`
 	Results     Result           `json:"results,omitempty"`
 	LastUpdate  time.Time        `json:"last_update"`
-	PrivateData map[string]any   `json:"private_data,omitempty"`
+	PrivateData json.RawMessage  `json:"private_data,omitempty"`
 }
 
 type storeMapper struct{}
@@ -245,14 +245,9 @@ func cloneJob(entity *Job) *Job {
 	return &cloned
 }
 
-func cloneJobPrivateData(input map[string]any) map[string]any {
+func cloneJobPrivateData(input json.RawMessage) json.RawMessage {
 	if len(input) == 0 {
 		return nil
 	}
-
-	output := make(map[string]any, len(input))
-	for key, value := range input {
-		output[key] = value
-	}
-	return output
+	return append(json.RawMessage(nil), input...)
 }

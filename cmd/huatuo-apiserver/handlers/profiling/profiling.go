@@ -15,6 +15,7 @@
 package profiling
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -41,11 +42,6 @@ import (
 const (
 	ProfilingMemory = "profiling_memory"
 	ProfilingCPU    = "profiling_cpu"
-
-	privateDataBinaryMatchPath = "binary_match_path"
-	privateDataDuration        = "duration"
-	privateDataLanguage        = "language"
-	privateDataMemoryMode      = "memory_mode"
 )
 
 // Handler handles profiling-related HTTP requests.
@@ -174,13 +170,19 @@ func (h *Handler) create(ctx *server.Context) error {
 		"--output-storage", "/var/run/huatuo-toolstream.sock",
 	)
 
+	privateData, err := newProfilingPrivateData(&req)
+	if err != nil {
+		log.WithError(err).Error("failed to encode profiling private data")
+		return response.ErrInternal
+	}
+
 	jobResult, err := h.jobManager.Create(&job.CreateJobRequest{
 		UserID:      ctx.UserID,
 		ContainerID: req.ContainerID,
 		Hostname:    req.Hostname,
 		Type:        jobType,
 		AgentTask:   &taskReq,
-		PrivateData: profilingPrivateData(&req),
+		PrivateData: privateData,
 	})
 	if err != nil {
 		log.WithError(err).Error("failed to create profiling job")
@@ -192,13 +194,24 @@ func (h *Handler) create(ctx *server.Context) error {
 	return nil
 }
 
-func profilingPrivateData(req *v1.CreateProfilingJobRequest) map[string]any {
-	return map[string]any{
-		privateDataBinaryMatchPath: req.BinaryMatchPath,
-		privateDataDuration:        req.Duration,
-		privateDataLanguage:        req.Language,
-		privateDataMemoryMode:      req.MemoryMode,
+type profilingPrivateData struct {
+	BinaryMatchPath string `json:"binary_match_path"`
+	Duration        int    `json:"duration"`
+	Language        string `json:"language"`
+	MemoryMode      string `json:"memory_mode"`
+}
+
+func newProfilingPrivateData(req *v1.CreateProfilingJobRequest) (json.RawMessage, error) {
+	data, err := json.Marshal(profilingPrivateData{
+		BinaryMatchPath: req.BinaryMatchPath,
+		Duration:        req.Duration,
+		Language:        req.Language,
+		MemoryMode:      req.MemoryMode,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encoding profiling private data: %w", err)
 	}
+	return data, nil
 }
 
 // hasRunningProfilingJob reports whether a profiling job is currently running on hostname for userID.
@@ -406,7 +419,9 @@ func (h *Handler) get(ctx *server.Context) error {
 
 	profilingResponse, err := buildProfilingJobResponse(jobResult, h.profilingConfig.FlameGraphBaseURL)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		log.WithError(err).WithField("job_id", taskID).
+			Error("failed to build profiling job response")
+		return response.ErrInternal
 	}
 
 	response.Success(ctx, profilingResponse)
@@ -424,7 +439,10 @@ func buildProfilingJobResponse(jobResult *job.Job, flameGraphBaseURL string) (v1
 		resultURL = getFlameGraphURL(flameGraphBaseURL, jobResult)
 	}
 
-	privateData := profilingJobPrivateData(jobResult.PrivateData)
+	privateData, err := decodeProfilingPrivateData(jobResult.PrivateData)
+	if err != nil {
+		return v1.ProfilingJobResponse{}, err
+	}
 	if privateData.Duration == 0 {
 		privateData.Duration = jobResult.AgentTask.Duration / 2
 	}
@@ -470,36 +488,16 @@ func profilingJobHasResults(status job.JobStatus) bool {
 	return status == job.JobStatusCompleted || status == job.JobStatusStopped
 }
 
-type profilingPrivateFields struct {
-	BinaryMatchPath string
-	Duration        int
-	Language        string
-	MemoryMode      string
-}
-
-func profilingJobPrivateData(privateData map[string]any) profilingPrivateFields {
-	binaryMatchPath, _ := privateData[privateDataBinaryMatchPath].(string)
-	duration := profilingDuration(privateData[privateDataDuration])
-	language, _ := privateData[privateDataLanguage].(string)
-	memoryMode, _ := privateData[privateDataMemoryMode].(string)
-
-	return profilingPrivateFields{
-		BinaryMatchPath: binaryMatchPath,
-		Duration:        duration,
-		Language:        language,
-		MemoryMode:      memoryMode,
+func decodeProfilingPrivateData(data json.RawMessage) (profilingPrivateData, error) {
+	if len(data) == 0 {
+		return profilingPrivateData{}, nil
 	}
-}
 
-func profilingDuration(value any) int {
-	switch duration := value.(type) {
-	case int:
-		return duration
-	case float64:
-		return int(duration)
-	default:
-		return 0
+	var privateData profilingPrivateData
+	if err := json.Unmarshal(data, &privateData); err != nil {
+		return profilingPrivateData{}, fmt.Errorf("decoding profiling private data: %w", err)
 	}
+	return privateData, nil
 }
 
 func formatProfilingTime(value time.Time) string {

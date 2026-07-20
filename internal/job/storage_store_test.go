@@ -15,6 +15,7 @@
 package job
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -63,10 +64,8 @@ func sampleStoredJobs(baseTime time.Time) []*Job {
 			Result: Result{
 				URL: "s3://huatuo-region/job-store-alpha",
 			},
-			UpdatedAt: baseTime.Add(2 * time.Minute),
-			PrivateData: map[string]any{
-				"memory_mode": "object_alloc",
-			},
+			UpdatedAt:   baseTime.Add(2 * time.Minute),
+			PrivateData: json.RawMessage(`{"memory_mode":"object_alloc"}`),
 		},
 		{
 			Type:         "tracing",
@@ -117,8 +116,12 @@ func TestStorageStoreSQLiteIntegration(t *testing.T) {
 	if gotJob.Result.URL != "s3://huatuo-region/job-store-alpha" {
 		t.Errorf("Get() result url = %q, want %q", gotJob.Result.URL, "s3://huatuo-region/job-store-alpha")
 	}
-	if gotJob.PrivateData["memory_mode"] != "object_alloc" {
-		t.Errorf("Get() memory_mode = %v, want %q", gotJob.PrivateData["memory_mode"], "object_alloc")
+	var privateData map[string]string
+	if err := json.Unmarshal(gotJob.PrivateData, &privateData); err != nil {
+		t.Fatalf("unmarshal private data: %v", err)
+	}
+	if privateData["memory_mode"] != "object_alloc" {
+		t.Errorf("Get() memory_mode = %v, want %q", privateData["memory_mode"], "object_alloc")
 	}
 
 	listedJobs, err := store.List(&JobQuery{
