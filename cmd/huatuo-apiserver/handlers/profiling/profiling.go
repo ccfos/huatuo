@@ -86,20 +86,19 @@ func (h *Handler) create(ctx *server.Context) error {
 		return response.ErrConflict.WithMessage("there is already a profiling job running on this host")
 	}
 
+	profilingConfig := config.Get().Profiling
 	agentTaskReq := job.NewAgentTaskReq{
-		TracerName: "profiler",
-		DataType:   "db-json",
+		TracerName:   "profiler",
+		DataType:     "db-json",
+		Interval:     profilingConfig.AggregationInterval,
+		TraceTimeout: profilingConfig.ExecutionTimeout,
 	}
 	switch req.ProfilingType {
 	case "cpu":
-		agentTaskReq.Interval = config.Get().Profiling.CPUProfilingInterval
-		agentTaskReq.TraceTimeout = config.Get().Profiling.CPUSingleTraceTimeout
 		if err := fillCPUTracerArgs(&agentTaskReq, req.BinaryMatchPath, req.Language); err != nil {
 			return response.ErrInvalidRequest.WithMessage(err.Error())
 		}
 	case "memory":
-		agentTaskReq.Interval = config.Get().Profiling.MemoryProfilingInterval
-		agentTaskReq.TraceTimeout = config.Get().Profiling.MemorySingleTraceTimeout
 		if err := fillMemoryTracerArgs(&agentTaskReq, req.Language, req.MemoryMode); err != nil {
 			return response.ErrInvalidRequest.WithMessage(err.Error())
 		}
@@ -122,11 +121,11 @@ func (h *Handler) create(ctx *server.Context) error {
 	agentTaskReq.Duration = req.Duration * 2
 	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--duration", strconv.Itoa(agentTaskReq.Interval))
 
-	if config.Get().Profiling.MaxProfilerProcesses > 0 {
+	if profilingConfig.MaxProfilerProcesses > 0 {
 		agentTaskReq.TracerArgs = append(
 			agentTaskReq.TracerArgs,
 			"--max-concurrent-procs",
-			strconv.Itoa(config.Get().Profiling.MaxProfilerProcesses),
+			strconv.Itoa(profilingConfig.MaxProfilerProcesses),
 		)
 	}
 

@@ -69,11 +69,9 @@ type ComConfig struct {
 	}
 
 	Profiling struct {
-		CPUProfilingInterval     int `default:"10"`
-		MemoryProfilingInterval  int `default:"10"`
-		CPUSingleTraceTimeout    int `default:"20"`
-		MemorySingleTraceTimeout int `default:"20"`
-		MaxProfilerProcesses     int `default:"10"`
+		AggregationInterval  int `default:"10"`
+		ExecutionTimeout     int `default:"20"`
+		MaxProfilerProcesses int `default:"10"`
 		// FlameGraphBaseURL is the base URL for the flame graph dashboard.
 		FlameGraphBaseURL string `default:"http://localhost:8006/d"`
 	}

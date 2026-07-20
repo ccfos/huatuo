@@ -72,3 +72,33 @@ func TestCreateJobRequestJSONFields(t *testing.T) {
 		})
 	}
 }
+
+func TestProfilingCapabilitiesResponseJSONFields(t *testing.T) {
+	payload, err := json.Marshal(ProfilingCapabilitiesResponse{})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	fields := []string{
+		"profile_types",
+		"cpu_supported_languages",
+		"memory_supported_languages",
+		"memory_modes",
+		"default_aggregation_interval",
+		"default_execution_timeout",
+		"max_profiler_processes",
+	}
+	if len(decoded) != len(fields) {
+		t.Fatalf("JSON field count = %d, want %d", len(decoded), len(fields))
+	}
+	for _, field := range fields {
+		if _, ok := decoded[field]; !ok {
+			t.Errorf("JSON field %q is missing", field)
+		}
+	}
+}

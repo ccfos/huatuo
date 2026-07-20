@@ -213,39 +213,27 @@ weight: 5
 
 ```toml
 [Profiling]
-    # CPUProfilingInterval     = 10
-    # MemoryProfilingInterval  = 10
-    # CPUSingleTraceTimeout    = 20
-    # MemorySingleTraceTimeout = 20
-    # MaxProfilerProcesses     = 10
-    # FlameGraphBaseURL        = "http://localhost:8006/d"
+    # AggregationInterval  = 10
+    # ExecutionTimeout     = 20
+    # MaxProfilerProcesses = 10
+    # FlameGraphBaseURL     = "http://localhost:8006/d"
 ```
 
-- **CPUProfilingInterval**：CPU 性能剖析默认采样间隔。
+- **AggregationInterval**：性能剖析数据的聚合与上报周期。
 
   默认值为 `10`，单位为秒。
 
-  **说明**：间隔越短，采样更密集，但会增加采集和存储开销。
+  **说明**：该值对应 profiler 的 `--aggr-interval` 参数，同时用于调度
+  连续性能剖析任务。间隔越短，结果更新越及时，但会增加聚合、上报和
+  存储开销。
 
-- **MemoryProfilingInterval**：内存性能剖析默认采样间隔。
-
-  默认值为 `10`，单位为秒。
-
-  **说明**：应结合所需分析精度和目标进程负载设置。
-
-- **CPUSingleTraceTimeout**：单次 CPU 追踪超时时间。
+- **ExecutionTimeout**：单个 profiler 子进程的执行超时时间。
 
   默认值为 `20`，单位为秒。
 
-  **说明**：用于避免单次 CPU 追踪长期占用资源。超时时间应大于预期的
-  单次采集时长。
-
-- **MemorySingleTraceTimeout**：单次内存追踪超时时间。
-
-  默认值为 `20`，单位为秒。
-
-  **说明**：目标进程较多或负载较高时可适当增加，但需关注并发任务的
-  资源占用。
+  **说明**：该值限制 profiler 子进程的最长运行时间，不代表整个性能
+  剖析任务的持续时间。配置值小于两个聚合周期时，服务会提高实际超时
+  时间，避免正常任务被提前终止。
 
 - **MaxProfilerProcesses**：第三方性能剖析工具的最大并发进程数。
 
@@ -305,10 +293,8 @@ LogLevel = "Info"
     ]
 
 [Profiling]
-    CPUProfilingInterval = 10
-    MemoryProfilingInterval = 10
-    CPUSingleTraceTimeout = 20
-    MemorySingleTraceTimeout = 20
+    AggregationInterval = 10
+    ExecutionTimeout = 20
     MaxProfilerProcesses = 10
     FlameGraphBaseURL = "https://grafana.example.com/d"
 ```

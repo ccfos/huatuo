@@ -239,42 +239,28 @@ can be configured, for example:
 
 ```toml
 [Profiling]
-    # CPUProfilingInterval     = 10
-    # MemoryProfilingInterval  = 10
-    # CPUSingleTraceTimeout    = 20
-    # MemorySingleTraceTimeout = 20
-    # MaxProfilerProcesses     = 10
-    # FlameGraphBaseURL        = "http://localhost:8006/d"
+    # AggregationInterval  = 10
+    # ExecutionTimeout     = 20
+    # MaxProfilerProcesses = 10
+    # FlameGraphBaseURL     = "http://localhost:8006/d"
 ```
 
-- **CPUProfilingInterval**: Default CPU profiling sampling interval.
+- **AggregationInterval**: Interval for aggregating and reporting profiling
+  data.
 
   The default is `10`, measured in seconds.
 
-  **Note**: A shorter interval provides denser samples but increases collection
-  and storage overhead.
+  **Note**: This value maps to the profiler's `--aggr-interval` option and also
+  schedules continuous profiling work. A shorter interval updates results more
+  frequently but increases aggregation, reporting, and storage overhead.
 
-- **MemoryProfilingInterval**: Default memory profiling sampling interval.
-
-  The default is `10`, measured in seconds.
-
-  **Note**: Set this value according to the required analysis precision and
-  target process load.
-
-- **CPUSingleTraceTimeout**: Timeout for one CPU tracing operation.
+- **ExecutionTimeout**: Execution timeout for one profiler subprocess.
 
   The default is `20`, measured in seconds.
 
-  **Note**: This option prevents a single CPU tracing operation from consuming
-  resources indefinitely. The timeout should exceed the expected duration of
-  one collection.
-
-- **MemorySingleTraceTimeout**: Timeout for one memory tracing operation.
-
-  The default is `20`, measured in seconds.
-
-  **Note**: Increase this value when profiling many target processes or under
-  high load, but monitor the resource use of concurrent tasks.
+  **Note**: This value limits the profiler subprocess, not the entire profiling
+  job. When configured below two aggregation intervals, the server raises the
+  effective timeout so valid jobs are not terminated early.
 
 - **MaxProfilerProcesses**: Maximum number of concurrent third-party profiler
   processes.
@@ -337,10 +323,8 @@ LogLevel = "Info"
     ]
 
 [Profiling]
-    CPUProfilingInterval = 10
-    MemoryProfilingInterval = 10
-    CPUSingleTraceTimeout = 20
-    MemorySingleTraceTimeout = 20
+    AggregationInterval = 10
+    ExecutionTimeout = 20
     MaxProfilerProcesses = 10
     FlameGraphBaseURL = "https://grafana.example.com/d"
 ```

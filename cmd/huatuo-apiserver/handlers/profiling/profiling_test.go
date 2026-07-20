@@ -46,10 +46,8 @@ func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 func TestCapabilities(t *testing.T) {
 	cfg := config.Get()
 	old := cfg.Profiling
-	cfg.Profiling.CPUProfilingInterval = 15
-	cfg.Profiling.MemoryProfilingInterval = 20
-	cfg.Profiling.CPUSingleTraceTimeout = 30
-	cfg.Profiling.MemorySingleTraceTimeout = 40
+	cfg.Profiling.AggregationInterval = 15
+	cfg.Profiling.ExecutionTimeout = 30
 	cfg.Profiling.MaxProfilerProcesses = 5
 	defer func() { cfg.Profiling = old }()
 
@@ -103,17 +101,11 @@ func TestCapabilities(t *testing.T) {
 		t.Errorf("MemoryModes missing OBJECT_USAGE")
 	}
 
-	if resp.DefaultCPUInterval != 15 {
-		t.Errorf("DefaultCPUInterval = %d, want 15", resp.DefaultCPUInterval)
+	if resp.DefaultAggregationInterval != 15 {
+		t.Errorf("DefaultAggregationInterval = %d, want 15", resp.DefaultAggregationInterval)
 	}
-	if resp.DefaultMemoryInterval != 20 {
-		t.Errorf("DefaultMemoryInterval = %d, want 20", resp.DefaultMemoryInterval)
-	}
-	if resp.DefaultCPUSingleTraceTimeout != 30 {
-		t.Errorf("DefaultCPUSingleTraceTimeout = %d, want 30", resp.DefaultCPUSingleTraceTimeout)
-	}
-	if resp.DefaultMemorySingleTraceTimeout != 40 {
-		t.Errorf("DefaultMemorySingleTraceTimeout = %d, want 40", resp.DefaultMemorySingleTraceTimeout)
+	if resp.DefaultExecutionTimeout != 30 {
+		t.Errorf("DefaultExecutionTimeout = %d, want 30", resp.DefaultExecutionTimeout)
 	}
 	if resp.MaxProfilerProcesses != 5 {
 		t.Errorf("MaxProfilerProcesses = %d, want 5", resp.MaxProfilerProcesses)

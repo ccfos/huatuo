@@ -47,15 +47,13 @@ func buildCapabilitiesResponse(_ *Handler) (v1.ProfilingCapabilitiesResponse, er
 	cfg := config.Get().Profiling
 
 	return v1.ProfilingCapabilitiesResponse{
-		ProfileTypes:                    []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
-		CPUSupportedLanguages:           cpuLanguages,
-		MemorySupportedLanguages:        memoryLanguages,
-		MemoryModes:                     memoryModes,
-		DefaultCPUInterval:              cfg.CPUProfilingInterval,
-		DefaultMemoryInterval:           cfg.MemoryProfilingInterval,
-		DefaultCPUSingleTraceTimeout:    cfg.CPUSingleTraceTimeout,
-		DefaultMemorySingleTraceTimeout: cfg.MemorySingleTraceTimeout,
-		MaxProfilerProcesses:            cfg.MaxProfilerProcesses,
+		ProfileTypes:               []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
+		CPUSupportedLanguages:      cpuLanguages,
+		MemorySupportedLanguages:   memoryLanguages,
+		MemoryModes:                memoryModes,
+		DefaultAggregationInterval: cfg.AggregationInterval,
+		DefaultExecutionTimeout:    cfg.ExecutionTimeout,
+		MaxProfilerProcesses:       cfg.MaxProfilerProcesses,
 	}, nil
 }
 
