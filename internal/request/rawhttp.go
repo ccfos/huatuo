@@ -18,12 +18,15 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"runtime"
 	"syscall"
 )
+
+var errRawHTTPNotConnected = errors.New("raw HTTP connection is not established")
 
 const (
 	cmsgDataMax = 200 * 4
@@ -201,6 +204,10 @@ func readCmsgAndResponse(fd int) ([]byte, []byte, error) {
 
 // ReadResponse Provide a standard interface for reading http response to the security agent
 func (h *RawHTTP) ReadResponse() (*http.Response, error) {
+	if h == nil || h.conn == nil {
+		return nil, errRawHTTPNotConnected
+	}
+
 	connFile, err := h.conn.File()
 	if err != nil {
 		return nil, err
