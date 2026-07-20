@@ -53,6 +53,13 @@ type Handler struct {
 	Handlers        []server.Handle
 }
 
+type profilingJobListQuery struct {
+	ContainerID string `form:"containerID"`
+	Hostname    string `form:"hostname"`
+	Status      string `form:"status"`
+	Type        string `form:"type"`
+}
+
 // NewHandler creates a new profiling handler.
 func NewHandler(jm *job.Manager) *Handler {
 	h := &Handler{
@@ -268,37 +275,17 @@ func (h *Handler) list(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobType := ctx.Query("type")
-	validTypes := map[string]bool{
-		"memory": true,
-		"cpu":    true,
-		"":       true,
-	}
-	if !validTypes[jobType] {
-		return response.ErrInvalidRequest.WithMessage("invalid type value")
+	queries, err := profilingJobQueries(ctx)
+	if err != nil {
+		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	filter := job.JobQuery{
-		ContainerID: ctx.Query("container"),
-		Hostname:    ctx.Query("host"),
-		Status:      ctx.Query("status"),
-	}
 	var allJobs []*job.Job
 	var listErr error
-	typesToQuery := []string{}
-	if jobType == "memory" || jobType == "" {
-		typesToQuery = append(typesToQuery, ProfilingMemory)
-	}
-	if jobType == "cpu" || jobType == "" {
-		typesToQuery = append(typesToQuery, ProfilingCPU)
-	}
-	for _, queryType := range typesToQuery {
-		currentFilter := filter
-		currentFilter.Type = queryType
-
-		jobs, err := h.jobManager.List(ctx.UserID, ctx.IsAdmin, &currentFilter)
+	for i := range queries {
+		jobs, err := h.jobManager.List(ctx.UserID, ctx.IsAdmin, &queries[i])
 		if err != nil {
-			log.WithError(err).WithField("job_type", queryType).
+			log.WithError(err).WithField("job_type", queries[i].Type).
 				Error("failed to list profiling jobs")
 			listErr = err
 			continue
@@ -328,6 +315,69 @@ func (h *Handler) list(ctx *server.Context) error {
 		Offset: listParams.Offset,
 	})
 	return nil
+}
+
+func profilingJobQueries(ctx *server.Context) ([]job.JobQuery, error) {
+	var query profilingJobListQuery
+	if err := ctx.ShouldBindQuery(&query); err != nil {
+		return nil, fmt.Errorf("binding profiling job query: %w", err)
+	}
+
+	return validateProfilingJobListQuery(query)
+}
+
+func validateProfilingJobListQuery(query profilingJobListQuery) ([]job.JobQuery, error) {
+	if err := validateProfilingJobStatus(query.Status); err != nil {
+		return nil, err
+	}
+
+	switch query.Type {
+	case "":
+		return []job.JobQuery{
+			{
+				ContainerID: query.ContainerID,
+				Hostname:    query.Hostname,
+				Status:      query.Status,
+				Type:        ProfilingMemory,
+			},
+			{
+				ContainerID: query.ContainerID,
+				Hostname:    query.Hostname,
+				Status:      query.Status,
+				Type:        ProfilingCPU,
+			},
+		}, nil
+	case "cpu":
+		return []job.JobQuery{
+			{
+				ContainerID: query.ContainerID,
+				Hostname:    query.Hostname,
+				Status:      query.Status,
+				Type:        ProfilingCPU,
+			},
+		}, nil
+	case "memory":
+		return []job.JobQuery{
+			{
+				ContainerID: query.ContainerID,
+				Hostname:    query.Hostname,
+				Status:      query.Status,
+				Type:        ProfilingMemory,
+			},
+		}, nil
+	default:
+		return nil, fmt.Errorf("invalid type %q", query.Type)
+	}
+}
+
+func validateProfilingJobStatus(status string) error {
+	switch job.JobStatus(status) {
+	case "", job.JobStatusPending, job.JobStatusRunning, job.JobStatusCompleted,
+		job.JobStatusFailed, job.JobStatusStopped, job.JobStatusTimeout:
+		return nil
+	default:
+		return fmt.Errorf("invalid status %q", status)
+	}
 }
 
 // get gets a specific profiling job by ID.
