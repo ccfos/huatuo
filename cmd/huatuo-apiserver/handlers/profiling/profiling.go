@@ -330,11 +330,6 @@ func profilingJobQueries(ctx *server.Context) ([]job.JobQuery, error) {
 	if err := ctx.ShouldBindQuery(&query); err != nil {
 		return nil, fmt.Errorf("binding profiling job query: %w", err)
 	}
-
-	return validateProfilingJobListQuery(query)
-}
-
-func validateProfilingJobListQuery(query profilingJobListQuery) ([]job.JobQuery, error) {
 	if err := validateProfilingJobStatus(query.Status); err != nil {
 		return nil, err
 	}
