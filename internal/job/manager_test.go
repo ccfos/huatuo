@@ -17,11 +17,13 @@ package job
 import (
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 )
 
 type stubJobStore struct {
+	mu          sync.Mutex
 	saveCalls   []*Job
 	deleteCalls []string
 	getFunc     func(jobID string) (*Job, error)
@@ -38,13 +40,29 @@ func (s *stubJobStore) Get(jobID string) (*Job, error) {
 }
 
 func (s *stubJobStore) Save(job *Job) error {
-	s.saveCalls = append(s.saveCalls, job)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.saveCalls = append(s.saveCalls, cloneJob(job))
 	return s.saveErr
 }
 
 func (s *stubJobStore) Delete(jobID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.deleteCalls = append(s.deleteCalls, jobID)
 	return s.deleteErr
+}
+
+func (s *stubJobStore) savedJobs() []*Job {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*Job(nil), s.saveCalls...)
+}
+
+func (s *stubJobStore) deletedJobIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.deleteCalls...)
 }
 
 func (s *stubJobStore) List(query *JobQuery) ([]*Job, error) {
@@ -55,15 +73,15 @@ func (s *stubJobStore) List(query *JobQuery) ([]*Job, error) {
 }
 
 type stubNodeAgent struct {
-	startTaskCalls    int
-	stopTaskCalls     int
+	startTaskCalls    atomic.Int32
+	stopTaskCalls     atomic.Int32
 	startTaskFunc     func(host, container string, args *NewAgentTaskReq) (string, error)
 	stopTaskFunc      func(host, taskID string, force bool) error
 	getTaskStatusFunc func(host, taskID string) (string, *Result, error)
 }
 
 func (s *stubNodeAgent) StartTask(host, container string, args *NewAgentTaskReq) (string, error) {
-	s.startTaskCalls++
+	s.startTaskCalls.Add(1)
 	if s.startTaskFunc != nil {
 		return s.startTaskFunc(host, container, args)
 	}
@@ -71,7 +89,7 @@ func (s *stubNodeAgent) StartTask(host, container string, args *NewAgentTaskReq)
 }
 
 func (s *stubNodeAgent) StopTask(host, taskID string, force bool) error {
-	s.stopTaskCalls++
+	s.stopTaskCalls.Add(1)
 	if s.stopTaskFunc != nil {
 		return s.stopTaskFunc(host, taskID, force)
 	}
@@ -134,8 +152,8 @@ func TestManagerCreate(t *testing.T) {
 		if job != nil {
 			t.Errorf("Create() job=%+v, want nil", job)
 		}
-		if nodeAgent.startTaskCalls != 0 {
-			t.Errorf("StartTask() call count=%d, want 0", nodeAgent.startTaskCalls)
+		if got := nodeAgent.startTaskCalls.Load(); got != 0 {
+			t.Errorf("StartTask() call count=%d, want 0", got)
 		}
 	})
 
@@ -238,8 +256,8 @@ func TestManagerCreate(t *testing.T) {
 		if job.UserName != "operator-2026" {
 			t.Errorf("Create() user name=%q, want %q", job.UserName, "operator-2026")
 		}
-		if nodeAgent.startTaskCalls != 1 {
-			t.Errorf("StartTask() call count=%d, want 1", nodeAgent.startTaskCalls)
+		if got := nodeAgent.startTaskCalls.Load(); got != 1 {
+			t.Errorf("StartTask() call count=%d, want 1", got)
 		}
 		privateData["language"] = "java"
 		if job.PrivateData["language"] != "go" {
@@ -249,8 +267,8 @@ func TestManagerCreate(t *testing.T) {
 		storedJobVal, exists := manager.jobs.Load(job.JobID)
 		if !exists {
 			t.Errorf("jobs.Load(%q) exists=false, want true", job.JobID)
-		} else if storedJobVal.(*Job) != job {
-			t.Errorf("jobs.Load(%q) returned unexpected job pointer", job.JobID)
+		} else if storedJobVal.(*Job).JobID != job.JobID {
+			t.Errorf("jobs.Load(%q) returned unexpected job", job.JobID)
 		}
 
 		jobCountVal, exists := manager.jobsByHost.Load("huatuo-dev")
@@ -277,8 +295,8 @@ func TestManagerStop(t *testing.T) {
 		if err != nil {
 			t.Errorf("Stop() error=%v, want nil", err)
 		}
-		if nodeAgent.stopTaskCalls != 0 {
-			t.Errorf("StopTask() call count=%d, want 0", nodeAgent.stopTaskCalls)
+		if got := nodeAgent.stopTaskCalls.Load(); got != 0 {
+			t.Errorf("StopTask() call count=%d, want 0", got)
 		}
 	})
 
@@ -294,17 +312,17 @@ func TestManagerStop(t *testing.T) {
 		if err != nil {
 			t.Errorf("Stop() error=%v, want nil", err)
 		}
-		if nodeAgent.stopTaskCalls != 1 {
-			t.Errorf("StopTask() call count=%d, want 1", nodeAgent.stopTaskCalls)
+		if got := nodeAgent.stopTaskCalls.Load(); got != 1 {
+			t.Errorf("StopTask() call count=%d, want 1", got)
 		}
 		if job.Status != JobStatusStopped {
 			t.Errorf("Stop() status=%s, want %s", job.Status, JobStatusStopped)
 		}
-		if job.Error != "Job stopped by user" {
-			t.Errorf("Stop() error message=%q, want %q", job.Error, "Job stopped by user")
+		if job.Error != "job stopped by user" {
+			t.Errorf("Stop() error message=%q, want %q", job.Error, "job stopped by user")
 		}
-		if len(storage.saveCalls) != 1 {
-			t.Errorf("storage.Save() call count=%d, want 1", len(storage.saveCalls))
+		if got := len(storage.savedJobs()); got != 1 {
+			t.Errorf("storage.Save() call count=%d, want 1", got)
 		}
 
 		select {
@@ -339,8 +357,8 @@ func TestManagerGet(t *testing.T) {
 		if err != nil {
 			t.Errorf("Get() error=%v, want nil", err)
 		}
-		if gotJob != runningJob {
-			t.Errorf("Get() returned unexpected in-memory job pointer")
+		if gotJob.JobID != runningJob.JobID {
+			t.Errorf("Get() job ID=%q, want %q", gotJob.JobID, runningJob.JobID)
 		}
 	})
 
@@ -383,10 +401,11 @@ func TestManagerSave(t *testing.T) {
 		if err != nil {
 			t.Errorf("Save() error=%v, want nil", err)
 		}
-		if len(storage.saveCalls) != 1 {
-			t.Errorf("storage.Save() call count=%d, want 1", len(storage.saveCalls))
-		} else if storage.saveCalls[0] != jobToSave {
-			t.Errorf("storage.Save() received unexpected job pointer")
+		savedJobs := storage.savedJobs()
+		if len(savedJobs) != 1 {
+			t.Errorf("storage.Save() call count=%d, want 1", len(savedJobs))
+		} else if savedJobs[0].JobID != jobToSave.JobID {
+			t.Errorf("storage.Save() job ID=%q, want %q", savedJobs[0].JobID, jobToSave.JobID)
 		}
 	})
 
@@ -530,8 +549,8 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 				if job.Results.URL != "s3://huatuo-region/job-report-2026" {
 					t.Errorf("job.Results.URL=%q, want %q", job.Results.URL, "s3://huatuo-region/job-report-2026")
 				}
-				if len(storage.saveCalls) != 1 {
-					t.Errorf("storage.Save() call count=%d, want 1", len(storage.saveCalls))
+				if got := len(storage.savedJobs()); got != 1 {
+					t.Errorf("storage.Save() call count=%d, want 1", got)
 				}
 				if _, exists := manager.jobs.Load(job.JobID); exists {
 					t.Errorf("jobs.Load(%q) exists=true, want false", job.JobID)
@@ -552,11 +571,11 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 				if job.Status != JobStatusFailed {
 					t.Errorf("job.Status=%s, want %s", job.Status, JobStatusFailed)
 				}
-				if job.Error != "Job failed: trace process exited with code 2" {
-					t.Errorf("job.Error=%q, want %q", job.Error, "Job failed: trace process exited with code 2")
+				if job.Error != "job failed: trace process exited with code 2" {
+					t.Errorf("job.Error=%q, want %q", job.Error, "job failed: trace process exited with code 2")
 				}
-				if len(storage.saveCalls) != 1 {
-					t.Errorf("storage.Save() call count=%d, want 1", len(storage.saveCalls))
+				if got := len(storage.savedJobs()); got != 1 {
+					t.Errorf("storage.Save() call count=%d, want 1", got)
 				}
 				if _, exists := manager.jobsByHost.Load(job.Host); exists {
 					t.Errorf("jobsByHost.Load(%q) exists=true, want false", job.Host)
@@ -576,11 +595,11 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 				if job.Status != JobStatusFailed {
 					t.Errorf("job.Status=%s, want %s", job.Status, JobStatusFailed)
 				}
-				if job.Error != "Job doesn't exist on agent" {
-					t.Errorf("job.Error=%q, want %q", job.Error, "Job doesn't exist on agent")
+				if job.Error != "job does not exist on agent" {
+					t.Errorf("job.Error=%q, want %q", job.Error, "job does not exist on agent")
 				}
-				if len(storage.saveCalls) != 1 {
-					t.Errorf("storage.Save() call count=%d, want 1", len(storage.saveCalls))
+				if got := len(storage.savedJobs()); got != 1 {
+					t.Errorf("storage.Save() call count=%d, want 1", got)
 				}
 			},
 		},
@@ -597,8 +616,8 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 				if job.Status != JobStatusRunning {
 					t.Errorf("job.Status=%s, want %s", job.Status, JobStatusRunning)
 				}
-				if len(storage.saveCalls) != 0 {
-					t.Errorf("storage.Save() call count=%d, want 0", len(storage.saveCalls))
+				if got := len(storage.savedJobs()); got != 0 {
+					t.Errorf("storage.Save() call count=%d, want 0", got)
 				}
 				if _, exists := manager.jobs.Load(job.JobID); !exists {
 					t.Errorf("jobs.Load(%q) exists=false, want true", job.JobID)
@@ -618,8 +637,8 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 				if job.Status != JobStatusRunning {
 					t.Errorf("job.Status=%s, want %s", job.Status, JobStatusRunning)
 				}
-				if len(storage.saveCalls) != 0 {
-					t.Errorf("storage.Save() call count=%d, want 0", len(storage.saveCalls))
+				if got := len(storage.savedJobs()); got != 0 {
+					t.Errorf("storage.Save() call count=%d, want 0", got)
 				}
 			},
 		},
@@ -688,12 +707,11 @@ func TestMonitorJobDeferNoNilPanic(t *testing.T) {
 	// because the defer block called err.Error() when err was nil.
 	manager.Shutdown()
 
-	// Wait for monitorJob goroutine to finish processing.
-	time.Sleep(300 * time.Millisecond)
-
-	// If we reach here without panic, the test passes.
-	// Verify the job was marked as failed with a non-empty error message.
-	lastSave := storage.saveCalls[len(storage.saveCalls)-1]
+	savedJobs := storage.savedJobs()
+	if len(savedJobs) == 0 {
+		t.Fatal("storage.Save() call count=0, want at least 1")
+	}
+	lastSave := savedJobs[len(savedJobs)-1]
 	if lastSave.Status != JobStatusFailed {
 		t.Errorf("job.Status=%s, want %s", lastSave.Status, JobStatusFailed)
 	}
@@ -713,8 +731,8 @@ func TestManagerDelete(t *testing.T) {
 		if !errors.Is(err, ErrCannotDeleteRunning) {
 			t.Errorf("Delete() error=%v, want %v", err, ErrCannotDeleteRunning)
 		}
-		if len(storage.deleteCalls) != 0 {
-			t.Errorf("storage.Delete() call count=%d, want 0", len(storage.deleteCalls))
+		if got := len(storage.deletedJobIDs()); got != 0 {
+			t.Errorf("storage.Delete() call count=%d, want 0", got)
 		}
 	})
 
@@ -736,8 +754,8 @@ func TestManagerDelete(t *testing.T) {
 		if !errors.Is(err, ErrCannotDeleteRunning) {
 			t.Errorf("Delete() error=%v, want %v", err, ErrCannotDeleteRunning)
 		}
-		if len(storage.deleteCalls) != 0 {
-			t.Errorf("storage.Delete() call count=%d, want 0", len(storage.deleteCalls))
+		if got := len(storage.deletedJobIDs()); got != 0 {
+			t.Errorf("storage.Delete() call count=%d, want 0", got)
 		}
 	})
 
@@ -759,10 +777,118 @@ func TestManagerDelete(t *testing.T) {
 		if err != nil {
 			t.Errorf("Delete() error=%v, want nil", err)
 		}
-		if len(storage.deleteCalls) != 1 {
-			t.Errorf("storage.Delete() call count=%d, want 1", len(storage.deleteCalls))
-		} else if storage.deleteCalls[0] != "job-completed-2026" {
-			t.Errorf("storage.Delete() condition=%v, want %q", storage.deleteCalls[0], "job-completed-2026")
+		deletedJobIDs := storage.deletedJobIDs()
+		if len(deletedJobIDs) != 1 {
+			t.Errorf("storage.Delete() call count=%d, want 1", len(deletedJobIDs))
+		} else if deletedJobIDs[0] != "job-completed-2026" {
+			t.Errorf("storage.Delete() condition=%v, want %q", deletedJobIDs[0], "job-completed-2026")
 		}
 	})
+}
+
+func TestManagerCreateRejectsNilArgs(t *testing.T) {
+	manager := newTestManager(&stubJobStore{}, &stubNodeAgent{})
+
+	job, err := manager.Create(CreateJobRequest{})
+	if err == nil || err.Error() != "job arguments are required" {
+		t.Errorf("Create() error=%v, want missing arguments error", err)
+	}
+	if job != nil {
+		t.Errorf("Create() job=%+v, want nil", job)
+	}
+}
+
+func TestManagerCreateReservesQuotaAtomically(t *testing.T) {
+	const maxJobs = 3
+	manager := newManagerWithStore(&stubJobStore{}, &stubNodeAgent{
+		startTaskFunc: func(_, _ string, _ *NewAgentTaskReq) (string, error) {
+			return "agent-task-2026", nil
+		},
+	}, ManagerConfig{MaxJobsPerHost: maxJobs, MaxTotalJobs: maxJobs})
+
+	var wg sync.WaitGroup
+	var successes atomic.Int32
+	for range 12 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := manager.Create(CreateJobRequest{
+				Host: "huatuo-dev",
+				Args: &NewAgentTaskReq{TraceTimeout: 60},
+			})
+			if err == nil {
+				successes.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	manager.StopAll()
+	manager.Shutdown()
+
+	if got := successes.Load(); got > maxJobs {
+		t.Errorf("Create() success count=%d, want at most %d", got, maxJobs)
+	}
+}
+
+func TestManagerStopIsIdempotentAndForwardsForce(t *testing.T) {
+	var gotForce atomic.Bool
+	nodeAgent := &stubNodeAgent{
+		stopTaskFunc: func(_, _ string, force bool) error {
+			gotForce.Store(force)
+			return nil
+		},
+	}
+	manager := newTestManager(&stubJobStore{}, nodeAgent)
+	job := newRunningJob("job-running-2026")
+	manager.jobs.Store(job.JobID, job)
+	manager.jobsByHost.Store(job.Host, 1)
+
+	if err := manager.Stop(job.JobID, true); err != nil {
+		t.Fatalf("Stop() error=%v, want nil", err)
+	}
+	if err := manager.Stop(job.JobID, true); err != nil {
+		t.Errorf("second Stop() error=%v, want nil", err)
+	}
+	if got := nodeAgent.stopTaskCalls.Load(); got != 1 {
+		t.Errorf("StopTask() call count=%d, want 1", got)
+	}
+	if !gotForce.Load() {
+		t.Error("StopTask() force=false, want true")
+	}
+}
+
+func TestManagerShutdownIsIdempotent(t *testing.T) {
+	manager := newTestManager(&stubJobStore{}, &stubNodeAgent{})
+
+	manager.Shutdown()
+	manager.Shutdown()
+}
+
+func TestManagerCheckAndUpdateJobStatusRejectsMissingResult(t *testing.T) {
+	manager := newTestManager(&stubJobStore{}, &stubNodeAgent{
+		getTaskStatusFunc: func(_, _ string) (string, *Result, error) {
+			return AgentStatusCompleted, nil, nil
+		},
+	})
+	job := newRunningJob("job-running-2026")
+	manager.jobs.Store(job.JobID, job)
+	manager.jobsByHost.Store(job.Host, 1)
+
+	_, err := manager.checkAndUpdateJobStatus(job)
+	if err == nil || err.Error() != "agent returned completed status without results" {
+		t.Errorf("checkAndUpdateJobStatus() error=%v, want missing results error", err)
+	}
+}
+
+func TestManagerListDoesNotMutateFilter(t *testing.T) {
+	manager := newTestManager(&stubJobStore{}, &stubNodeAgent{})
+	filter := &JobQuery{Host: "huatuo-dev"}
+	want := *filter
+
+	if _, err := manager.List("operator-2026", false, filter); err != nil {
+		t.Fatalf("List() error=%v, want nil", err)
+	}
+	if *filter != want {
+		t.Errorf("List() filter=%+v, want unchanged %+v", *filter, want)
+	}
 }
