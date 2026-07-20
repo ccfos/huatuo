@@ -215,7 +215,7 @@ weight: 5
 [Profiling]
     # AggregationInterval  = 10
     # ExecutionTimeout     = 20
-    # MaxProfilerProcesses = 10
+    # MaxProfilerProcs     = 10
     # FlameGraphBaseURL     = "http://localhost:8006/d"
 ```
 
@@ -234,7 +234,7 @@ weight: 5
   **说明**：该值限制 profiler 子进程的最长运行时间，不代表整个性能
   剖析任务的持续时间。配置不满足约束时，API 服务将拒绝启动。
 
-- **MaxProfilerProcesses**：第三方性能剖析工具的最大并发进程数。
+- **MaxProfilerProcs**：第三方性能剖析工具的最大并发进程数。
 
   默认值为 `10`。
 
@@ -295,7 +295,7 @@ LogLevel = "Info"
 [Profiling]
     AggregationInterval = 10
     ExecutionTimeout = 20
-    MaxProfilerProcesses = 10
+    MaxProfilerProcs = 10
     FlameGraphBaseURL = "https://grafana.example.com/d"
 ```
 

@@ -96,8 +96,10 @@ func (h *Handler) create(ctx *server.Context) error {
 		Interval:     h.profilingConfig.AggregationInterval,
 		TraceTimeout: h.profilingConfig.ExecutionTimeout,
 	}
+	var jobType string
 	switch req.ProfilingType {
 	case string(profiling.TypeCPU):
+		jobType = ProfilingCPU
 		language, err := profiling.ParseLanguage(req.Language)
 		if err != nil || !profiling.IsSupported(language, profiling.TypeCPU) {
 			return response.ErrInvalidRequest.WithMessage(
@@ -110,6 +112,7 @@ func (h *Handler) create(ctx *server.Context) error {
 		}
 		fillTracerArgs(&taskReq, profiling.TypeCPU, language, typeArgs...)
 	case string(profiling.TypeMemory):
+		jobType = ProfilingMemory
 		language, err := profiling.ParseLanguage(req.Language)
 		if err != nil || !profiling.IsSupported(language, profiling.TypeMemory) {
 			return response.ErrInvalidRequest.WithMessage(
@@ -129,7 +132,9 @@ func (h *Handler) create(ctx *server.Context) error {
 			"--memory-mode", string(mode),
 		)
 	default:
-		return response.ErrInvalidRequest.WithMessage("not supported yet")
+		return response.ErrInvalidRequest.WithMessage(
+			fmt.Sprintf("unsupported profiling type %q", req.ProfilingType),
+		)
 	}
 
 	if req.Duration < taskReq.Interval*2 {
@@ -151,43 +156,27 @@ func (h *Handler) create(ctx *server.Context) error {
 		taskReq.TracerArgs,
 		"--duration", strconv.Itoa(req.Duration),
 		"--aggr-interval", strconv.Itoa(taskReq.Interval),
+		"--max-concurrent-procs", strconv.Itoa(h.profilingConfig.MaxProfilerProcs),
+		"--output-format", "remote",
+		"--output-storage", "/var/run/huatuo-toolstream.sock",
 	)
 
-	if h.profilingConfig.MaxProfilerProcesses > 0 {
-		taskReq.TracerArgs = append(
-			taskReq.TracerArgs,
-			"--max-concurrent-procs",
-			strconv.Itoa(h.profilingConfig.MaxProfilerProcesses),
-		)
-	}
-
-	taskReq.TracerArgs = append(taskReq.TracerArgs,
-		"--output-format", "remote",
-		"--output-storage", "/var/run/huatuo-toolstream.sock")
-
-	var jobType string
-	if req.ProfilingType == "memory" {
-		jobType = ProfilingMemory
-	} else {
-		jobType = ProfilingCPU
-	}
 	jobResult, err := h.jobManager.Create(job.CreateJobRequest{
 		UserID:    ctx.UserID,
 		Container: req.ContainerID,
 		Host:      req.Hostname,
 		JobType:   jobType,
 		Args:      &taskReq,
+		PrivateData: map[string]any{
+			"target_exec_path":        req.BinaryMatchPath,
+			"target_process_language": req.Language,
+			"memory_mode":             req.MemoryMode,
+		},
 	})
 	if err != nil {
 		log.WithError(err).Error("failed to create profiling job")
 		return response.ErrInternal
 	}
-	jobResult.PrivateData = map[string]any{
-		"target_exec_path":        req.BinaryMatchPath,
-		"target_process_language": req.Language,
-		"memory_mode":             req.MemoryMode,
-	}
-
 	response.Created(ctx, "/v1/profiles/"+jobResult.JobID, v1.CreateProfilingJobResponse{
 		ID: jobResult.JobID,
 	})

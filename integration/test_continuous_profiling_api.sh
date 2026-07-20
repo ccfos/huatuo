@@ -160,7 +160,7 @@ EOF
 [Profiling]
     AggregationInterval = ${PROFILE_INTERVAL}
     ExecutionTimeout = 20
-    MaxProfilerProcesses = 1
+    MaxProfilerProcs = 1
     FlameGraphBaseURL = "http://grafana.invalid/d"
 EOF
 }

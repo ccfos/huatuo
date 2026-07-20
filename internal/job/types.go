@@ -57,11 +57,12 @@ type NewAgentTaskReq struct {
 
 // CreateJobRequest holds parameters for creating a new job
 type CreateJobRequest struct {
-	UserID    string
-	Container string
-	Host      string
-	JobType   string
-	Args      *NewAgentTaskReq
+	UserID      string
+	Container   string
+	Host        string
+	JobType     string
+	Args        *NewAgentTaskReq
+	PrivateData map[string]any
 }
 
 // Job represents a job

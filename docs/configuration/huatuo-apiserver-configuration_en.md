@@ -241,7 +241,7 @@ can be configured, for example:
 [Profiling]
     # AggregationInterval  = 10
     # ExecutionTimeout     = 20
-    # MaxProfilerProcesses = 10
+    # MaxProfilerProcs     = 10
     # FlameGraphBaseURL     = "http://localhost:8006/d"
 ```
 
@@ -263,7 +263,7 @@ can be configured, for example:
   **Note**: This value limits the profiler subprocess, not the entire profiling
   job. The API server refuses to start when this constraint is not satisfied.
 
-- **MaxProfilerProcesses**: Maximum number of concurrent third-party profiler
+- **MaxProfilerProcs**: Maximum number of concurrent third-party profiler
   processes.
 
   The default is `10`.
@@ -328,7 +328,7 @@ LogLevel = "Info"
 [Profiling]
     AggregationInterval = 10
     ExecutionTimeout = 20
-    MaxProfilerProcesses = 10
+    MaxProfilerProcs = 10
     FlameGraphBaseURL = "https://grafana.example.com/d"
 ```
 

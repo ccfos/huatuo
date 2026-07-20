@@ -58,9 +58,9 @@ func TestNewHandlerSnapshotsProfilingConfig(t *testing.T) {
 // profiling types, languages, memory modes, and default configuration values.
 func TestCapabilities(t *testing.T) {
 	h := &Handler{profilingConfig: config.ProfilingConfig{
-		AggregationInterval:  15,
-		ExecutionTimeout:     30,
-		MaxProfilerProcesses: 5,
+		AggregationInterval: 15,
+		ExecutionTimeout:    30,
+		MaxProfilerProcs:    5,
 	}}
 	resp, err := buildCapabilitiesResponse(h)
 	if err != nil {

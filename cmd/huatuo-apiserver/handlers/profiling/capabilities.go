@@ -52,7 +52,7 @@ func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, er
 		MemoryModes:                memoryModes,
 		DefaultAggregationInterval: cfg.AggregationInterval,
 		DefaultExecutionTimeout:    cfg.ExecutionTimeout,
-		MaxProfilerProcesses:       cfg.MaxProfilerProcesses,
+		MaxProfilerProcesses:       cfg.MaxProfilerProcs,
 	}, nil
 }
 

@@ -203,12 +203,14 @@ func TestManagerCreate(t *testing.T) {
 			},
 		}
 		manager := newTestManager(storage, nodeAgent)
+		privateData := map[string]any{"language": "go"}
 
 		job, err := manager.Create(CreateJobRequest{
-			UserID:    "operator-2026",
-			Container: "payment-worker",
-			Host:      "huatuo-dev",
-			JobType:   "oncpu",
+			UserID:      "operator-2026",
+			Container:   "payment-worker",
+			Host:        "huatuo-dev",
+			JobType:     "oncpu",
+			PrivateData: privateData,
 			Args: &NewAgentTaskReq{
 				TracerName:   "oncpu",
 				TraceTimeout: 60,
@@ -238,6 +240,10 @@ func TestManagerCreate(t *testing.T) {
 		}
 		if nodeAgent.startTaskCalls != 1 {
 			t.Errorf("StartTask() call count=%d, want 1", nodeAgent.startTaskCalls)
+		}
+		privateData["language"] = "java"
+		if job.PrivateData["language"] != "go" {
+			t.Errorf("Create() private data=%v, want language go", job.PrivateData)
 		}
 
 		storedJobVal, exists := manager.jobs.Load(job.JobID)

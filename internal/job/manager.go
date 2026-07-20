@@ -98,19 +98,20 @@ func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
 	jobID := fmt.Sprintf("id-%s", uuid.NewString()[:8])
 	now := time.Now()
 	job := &Job{
-		Type:       req.JobType,
-		JobID:      jobID,
-		UserName:   req.UserID, // Set UserName to be the same as UserID for now
-		UserID:     req.UserID,
-		Container:  req.Container,
-		Host:       req.Host,
-		Status:     JobStatusPending,
-		StartTime:  now,
-		Duration:   req.Args.Duration,
-		Timeout:    req.Args.TraceTimeout,
-		Args:       *req.Args,
-		LastUpdate: now,
-		stopChan:   make(chan struct{}),
+		Type:        req.JobType,
+		JobID:       jobID,
+		UserName:    req.UserID, // Set UserName to be the same as UserID for now
+		UserID:      req.UserID,
+		Container:   req.Container,
+		Host:        req.Host,
+		Status:      JobStatusPending,
+		StartTime:   now,
+		Duration:    req.Args.Duration,
+		Timeout:     req.Args.TraceTimeout,
+		Args:        *req.Args,
+		LastUpdate:  now,
+		stopChan:    make(chan struct{}),
+		PrivateData: cloneJobPrivateData(req.PrivateData),
 	}
 
 	agentTaskID, err := m.nodeAgent.StartTask(job.Host, job.Container, req.Args)

@@ -25,9 +25,9 @@ const maxAggregationInterval = 1200
 
 // ProfilingConfig controls profiler subprocess execution.
 type ProfilingConfig struct {
-	AggregationInterval  int `default:"10"`
-	ExecutionTimeout     int `default:"20"`
-	MaxProfilerProcesses int `default:"10"`
+	AggregationInterval int `default:"10"`
+	ExecutionTimeout    int `default:"20"`
+	MaxProfilerProcs    int `default:"10"`
 	// FlameGraphBaseURL is the base URL for the flame graph dashboard.
 	FlameGraphBaseURL string `default:"http://localhost:8006/d"`
 }
@@ -44,8 +44,8 @@ func (c ProfilingConfig) Validate() error {
 	if c.ExecutionTimeout < minimumTimeout {
 		return fmt.Errorf("execution timeout must be at least %d seconds", minimumTimeout)
 	}
-	if c.MaxProfilerProcesses < 0 {
-		return fmt.Errorf("max profiler processes must not be negative")
+	if c.MaxProfilerProcs < 0 {
+		return fmt.Errorf("max profiler procs must not be negative")
 	}
 
 	flameGraphURL, err := url.Parse(c.FlameGraphBaseURL)

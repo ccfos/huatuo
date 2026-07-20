@@ -30,7 +30,7 @@ func TestLoadValidatesProfilingConfig(t *testing.T) {
 [Profiling]
 AggregationInterval = 10
 ExecutionTimeout = 19
-MaxProfilerProcesses = 10
+MaxProfilerProcs = 10
 FlameGraphBaseURL = "http://localhost:8006/d"
 `)
 	if err := os.WriteFile(configFile, contents, 0o600); err != nil {
@@ -52,10 +52,10 @@ func TestProfilingConfigValidate(t *testing.T) {
 		{
 			name: "valid",
 			config: ProfilingConfig{
-				AggregationInterval:  10,
-				ExecutionTimeout:     20,
-				MaxProfilerProcesses: 10,
-				FlameGraphBaseURL:    "http://localhost:8006/d",
+				AggregationInterval: 10,
+				ExecutionTimeout:    20,
+				MaxProfilerProcs:    10,
+				FlameGraphBaseURL:   "http://localhost:8006/d",
 			},
 		},
 		{
@@ -87,12 +87,12 @@ func TestProfilingConfigValidate(t *testing.T) {
 		{
 			name: "negative profiler process limit",
 			config: ProfilingConfig{
-				AggregationInterval:  10,
-				ExecutionTimeout:     20,
-				MaxProfilerProcesses: -1,
-				FlameGraphBaseURL:    "http://localhost:8006/d",
+				AggregationInterval: 10,
+				ExecutionTimeout:    20,
+				MaxProfilerProcs:    -1,
+				FlameGraphBaseURL:   "http://localhost:8006/d",
 			},
-			wantError: "max profiler processes must not be negative",
+			wantError: "max profiler procs must not be negative",
 		},
 		{
 			name: "unsupported flame graph URL scheme",
