@@ -14,8 +14,8 @@
 
 package v1
 
-// StartProfilingRequest represents a request to start profiling
-type StartProfilingRequest struct {
+// CreateProfilingJobRequest represents a request to create a profiling job.
+type CreateProfilingJobRequest struct {
 	Type                  string `json:"type"`                    // cpu or memory
 	TargetExecPath        string `json:"target_exec_path"`        // executable path for CPU profiling
 	TargetProcessLanguage string `json:"target_process_language"` // programming language of the target process
@@ -25,18 +25,18 @@ type StartProfilingRequest struct {
 	Hostname              string `json:"hostname"`                // host name
 }
 
-// StartProfilingResponse represents a response to start profiling
-type StartProfilingResponse struct {
-	ID string `json:"id"` // profiling task ID
+// CreateProfilingJobResponse represents a response to create a profiling job.
+type CreateProfilingJobResponse struct {
+	ID string `json:"id"` // profiling job ID
 }
 
-// ProfilingStatusResponse represents a profiling status response
-type ProfilingStatusResponse struct {
-	ID                    string           `json:"id"`                      // profiling task ID
+// ProfilingJobResponse represents a profiling job response.
+type ProfilingJobResponse struct {
+	ID                    string           `json:"id"`                      // profiling job ID
 	AgentTaskID           string           `json:"agent_task_id"`           // agent task ID
 	Container             string           `json:"container"`               // container name or ID
 	Hostname              string           `json:"hostname"`                // host name
-	Status                string           `json:"status"`                  // task status
+	Status                string           `json:"status"`                  // job status
 	StartTime             string           `json:"start_time"`              // start time
 	EndTime               string           `json:"end_time"`                // end time
 	TracerArgs            []string         `json:"tracer_args"`             // tracer arguments
@@ -67,26 +67,26 @@ type JobFilter struct {
 	Type      string `json:"type"`      // job type
 }
 
-// StartTraceRequest represents a request to start tracing
-type StartTraceRequest struct {
+// CreateTraceJobRequest represents a request to create a trace job.
+type CreateTraceJobRequest struct {
 	Type      string `json:"type"`      // trace type
 	Duration  int    `json:"duration"`  // trace duration in seconds
 	Container string `json:"container"` // container name or ID
 	Hostname  string `json:"hostname"`  // host name
 }
 
-// StartTraceResponse represents a response to start tracing
-type StartTraceResponse struct {
-	ID string `json:"id"` // trace task ID
+// CreateTraceJobResponse represents a response to create a trace job.
+type CreateTraceJobResponse struct {
+	ID string `json:"id"` // trace job ID
 }
 
-// TraceStatusResponse represents a trace status response
-type TraceStatusResponse struct {
-	ID           string       `json:"id"`            // trace task ID
+// TraceJobResponse represents a trace job response.
+type TraceJobResponse struct {
+	ID           string       `json:"id"`            // trace job ID
 	AgentTaskID  string       `json:"agent_task_id"` // agent task ID
 	Container    string       `json:"container"`     // container name or ID
 	Hostname     string       `json:"hostname"`      // host name
-	Status       string       `json:"status"`        // task status
+	Status       string       `json:"status"`        // job status
 	StartTime    string       `json:"start_time"`    // start time
 	EndTime      string       `json:"end_time"`      // end time
 	Results      TraceResults `json:"results"`       // trace results
@@ -104,20 +104,20 @@ type PatchStatusRequest struct {
 	Status string `json:"status"`
 }
 
-// TraceListResponse represents a paginated list of traces.
-type TraceListResponse struct {
-	Items  []TraceStatusResponse `json:"items"`
-	Total  int                   `json:"total"`
-	Limit  int                   `json:"limit"`
-	Offset int                   `json:"offset"`
+// TraceJobListResponse represents a paginated list of trace jobs.
+type TraceJobListResponse struct {
+	Items  []TraceJobResponse `json:"items"`
+	Total  int                `json:"total"`
+	Limit  int                `json:"limit"`
+	Offset int                `json:"offset"`
 }
 
-// ProfilingListResponse represents a paginated list of profiling jobs.
-type ProfilingListResponse struct {
-	Items  []ProfilingStatusResponse `json:"items"`
-	Total  int                       `json:"total"`
-	Limit  int                       `json:"limit"`
-	Offset int                       `json:"offset"`
+// ProfilingJobListResponse represents a paginated list of profiling jobs.
+type ProfilingJobListResponse struct {
+	Items  []ProfilingJobResponse `json:"items"`
+	Total  int                    `json:"total"`
+	Limit  int                    `json:"limit"`
+	Offset int                    `json:"offset"`
 }
 
 // ProfilingCapabilitiesResponse describes the profiling capabilities

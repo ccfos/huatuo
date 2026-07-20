@@ -54,7 +54,7 @@ func NewHandler(jm *job.Manager) *Handler {
 
 	h.Handlers = []server.Handle{
 		{Typ: server.HttpGet, Uri: "/capabilities", Handle: h.capabilities},
-		{Typ: server.HttpPost, Uri: "", Handle: h.start},
+		{Typ: server.HttpPost, Uri: "", Handle: h.create},
 		{Typ: server.HttpGet, Uri: "", Handle: h.list},
 		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
 		{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
@@ -70,9 +70,9 @@ func NewHandler(jm *job.Manager) *Handler {
 	return h
 }
 
-// start starts a new profiling job.
-func (h *Handler) start(ctx *server.Context) error {
-	var req v1.StartProfilingRequest
+// create creates a profiling job.
+func (h *Handler) create(ctx *server.Context) error {
+	var req v1.CreateProfilingJobRequest
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
@@ -157,7 +157,7 @@ func (h *Handler) start(ctx *server.Context) error {
 		"memory_mode":             req.MemoryMode,
 	}
 
-	response.Created(ctx, "/v1/profiles/"+jobResult.JobID, v1.StartProfilingResponse{
+	response.Created(ctx, "/v1/profiles/"+jobResult.JobID, v1.CreateProfilingJobResponse{
 		ID: jobResult.JobID,
 	})
 	return nil
@@ -313,12 +313,12 @@ func (h *Handler) list(ctx *server.Context) error {
 	total := len(allJobs)
 	pageJobs := listing.Paginate(allJobs, listParams.Offset, listParams.Limit)
 
-	items := make([]v1.ProfilingStatusResponse, len(pageJobs))
+	items := make([]v1.ProfilingJobResponse, len(pageJobs))
 	for i, j := range pageJobs {
 		items[i] = h.convertJobToProfilingResponse(j)
 	}
 
-	response.Success(ctx, v1.ProfilingListResponse{
+	response.Success(ctx, v1.ProfilingJobListResponse{
 		Items:  items,
 		Total:  total,
 		Limit:  listParams.Limit,
@@ -349,8 +349,8 @@ func (h *Handler) get(ctx *server.Context) error {
 	return nil
 }
 
-// convertJobToProfilingResponse converts a job.Job to v1.ProfilingStatusResponse.
-func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.ProfilingStatusResponse {
+// convertJobToProfilingResponse converts a job.Job to v1.ProfilingJobResponse.
+func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.ProfilingJobResponse {
 	if jobResult.Status == job.JobStatusCompleted || jobResult.Status == job.JobStatusStopped {
 		if jobResult.Results.URL == "" {
 			jobResult.Results.URL = getFlameGraphURL(jobResult)
@@ -361,7 +361,7 @@ func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.Profiling
 		}
 	}
 
-	resp := v1.ProfilingStatusResponse{
+	resp := v1.ProfilingJobResponse{
 		ID:          jobResult.JobID,
 		AgentTaskID: jobResult.AgentTaskID,
 		Container:   jobResult.Container,

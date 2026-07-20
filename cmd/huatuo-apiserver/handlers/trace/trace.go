@@ -51,7 +51,7 @@ func NewHandler(jm *job.Manager) *Handler {
 
 // start starts a new trace job.
 func (h *Handler) start(ctx *server.Context) error {
-	var req v1.StartTraceRequest
+	var req v1.CreateTraceJobRequest
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
@@ -85,7 +85,7 @@ func (h *Handler) start(ctx *server.Context) error {
 		return response.ErrInternal
 	}
 
-	response.Created(ctx, "/v1/traces/"+jobResult.JobID, v1.StartTraceResponse{
+	response.Created(ctx, "/v1/traces/"+jobResult.JobID, v1.CreateTraceJobResponse{
 		ID: jobResult.JobID,
 	})
 	return nil
@@ -118,12 +118,12 @@ func (h *Handler) list(ctx *server.Context) error {
 	total := len(jobs)
 	pageJobs := listing.Paginate(jobs, listParams.Offset, listParams.Limit)
 
-	items := make([]v1.TraceStatusResponse, len(pageJobs))
+	items := make([]v1.TraceJobResponse, len(pageJobs))
 	for i, j := range pageJobs {
 		items[i] = convertJobToTraceResponse(j)
 	}
 
-	response.Success(ctx, v1.TraceListResponse{
+	response.Success(ctx, v1.TraceJobListResponse{
 		Items:  items,
 		Total:  total,
 		Limit:  listParams.Limit,
@@ -242,8 +242,8 @@ func (h *Handler) delete(ctx *server.Context) error {
 }
 
 // convertJobToTraceResponse maps an internal *job.Job to the v1 wire type.
-func convertJobToTraceResponse(jobResult *job.Job) v1.TraceStatusResponse {
-	return v1.TraceStatusResponse{
+func convertJobToTraceResponse(jobResult *job.Job) v1.TraceJobResponse {
+	return v1.TraceJobResponse{
 		ID:          jobResult.JobID,
 		AgentTaskID: jobResult.AgentTaskID,
 		Container:   jobResult.Container,
