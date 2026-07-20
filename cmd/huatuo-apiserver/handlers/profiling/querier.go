@@ -26,6 +26,52 @@ import (
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 )
 
+// DisplaySelectMergeStacktraces handles /querier.v1.QuerierService/SelectMergeStacktraces.
+func (h *Handler) DisplaySelectMergeStacktraces(ctx *server.Context) error {
+	req := &querierv1.SelectMergeStacktracesRequest{}
+	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
+		return nil
+	}
+
+	log.WithField("request", req).Debug("selecting merged stack traces")
+
+	resp, err := profileService.SelectMergeStacktraces(req)
+	if err != nil {
+		log.WithError(err).Error("failed to select merged stack traces")
+		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
+		return nil
+	}
+
+	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
+	ctx.Header("Content-Type", "application/proto")
+	ctx.ProtoBuf(http.StatusOK, resp)
+	return nil
+}
+
+// DisplayProfileTypes handles /querier.v1.QuerierService/ProfileTypes.
+func (h *Handler) DisplayProfileTypes(ctx *server.Context) error {
+	req := &querierv1.ProfileTypesRequest{}
+	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
+		return nil
+	}
+
+	log.WithField("request", req).Debug("listing profile types")
+
+	resp, err := profileService.ProfileTypes(req)
+	if err != nil {
+		log.WithError(err).Error("failed to list profile types")
+		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
+		return nil
+	}
+
+	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
+	ctx.Header("Content-Type", "application/proto")
+	ctx.ProtoBuf(http.StatusOK, resp)
+	return nil
+}
+
 // DisplaySelectSeries handles /querier.v1.QuerierService/SelectSeries.
 func (h *Handler) DisplaySelectSeries(ctx *server.Context) error {
 	req := &querierv1.SelectSeriesRequest{}

@@ -18,14 +18,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/listing"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
@@ -33,9 +31,6 @@ import (
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/profiling"
-
-	"github.com/gin-gonic/gin/binding"
-	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 )
 
 const (
@@ -43,43 +38,11 @@ const (
 	ProfilingCPU    = "profiling_cpu"
 )
 
-// Handler handles profiling-related HTTP requests.
-type Handler struct {
-	jobManager      *job.Manager
-	profilingConfig config.ProfilingConfig
-	Handlers        []server.Handle
-}
-
 type profilingJobListQuery struct {
 	ContainerID string `form:"containerID"`
 	Hostname    string `form:"hostname"`
 	Status      string `form:"status"`
 	Type        string `form:"type"`
-}
-
-// NewHandler creates a new profiling handler.
-func NewHandler(jm *job.Manager) *Handler {
-	h := &Handler{
-		jobManager:      jm,
-		profilingConfig: config.Get().Profiling,
-	}
-
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpGet, Uri: "/capabilities", Handle: h.capabilities},
-		{Typ: server.HttpPost, Uri: "", Handle: h.create},
-		{Typ: server.HttpGet, Uri: "", Handle: h.list},
-		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
-		{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
-		{Typ: server.HttpPatch, Uri: "/:id", Handle: h.patchOne},
-		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.delete},
-		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces", Handle: h.DisplaySelectMergeStacktraces},
-		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/ProfileTypes", Handle: h.DisplayProfileTypes},
-		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectSeries", Handle: h.DisplaySelectSeries},
-		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/LabelNames", Handle: h.DisplayLabelNames},
-		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/LabelValues", Handle: h.DisplayLabelValues},
-	}
-
-	return h
 }
 
 // create creates a profiling job.
@@ -610,51 +573,5 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 	response.Success(ctx, v1.RawDataResponse{
 		Data: profiles,
 	})
-	return nil
-}
-
-// DisplaySelectMergeStacktraces handles /querier.v1.QuerierService/SelectMergeStacktraces.
-func (h *Handler) DisplaySelectMergeStacktraces(ctx *server.Context) error {
-	req := &querierv1.SelectMergeStacktracesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	log.WithField("request", req).Debug("selecting merged stack traces")
-
-	resp, err := profileService.SelectMergeStacktraces(req)
-	if err != nil {
-		log.WithError(err).Error("failed to select merged stack traces")
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
-	return nil
-}
-
-// DisplayProfileTypes handles /querier.v1.QuerierService/ProfileTypes.
-func (h *Handler) DisplayProfileTypes(ctx *server.Context) error {
-	req := &querierv1.ProfileTypesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	log.WithField("request", req).Debug("listing profile types")
-
-	resp, err := profileService.ProfileTypes(req)
-	if err != nil {
-		log.WithError(err).Error("failed to list profile types")
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
 	return nil
 }
