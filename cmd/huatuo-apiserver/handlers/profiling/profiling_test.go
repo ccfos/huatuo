@@ -24,12 +24,7 @@ import (
 )
 
 func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
-	cfg := config.Get()
-	oldBase := cfg.Profiling.FlameGraphBaseURL
-	cfg.Profiling.FlameGraphBaseURL = "http://grafana.example/d"
-	defer func() { cfg.Profiling.FlameGraphBaseURL = oldBase }()
-
-	url := getFlameGraphURL(&job.Job{
+	url := getFlameGraphURL("http://grafana.example/d", &job.Job{
 		Type:      ProfilingCPU,
 		Container: "container+2026&debug",
 		StartTime: time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC),
@@ -41,17 +36,31 @@ func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 	}
 }
 
+func TestNewHandlerSnapshotsProfilingConfig(t *testing.T) {
+	cfg := config.Get()
+	old := cfg.Profiling
+	defer func() { cfg.Profiling = old }()
+
+	cfg.Profiling.AggregationInterval = 15
+	h := NewHandler(nil)
+	cfg.Profiling.AggregationInterval = 30
+
+	if h.profilingConfig.AggregationInterval != 15 {
+		t.Fatalf(
+			"AggregationInterval = %d, want 15",
+			h.profilingConfig.AggregationInterval,
+		)
+	}
+}
+
 // TestCapabilities verifies that the capabilities handler returns the correct
 // profiling types, languages, memory modes, and default configuration values.
 func TestCapabilities(t *testing.T) {
-	cfg := config.Get()
-	old := cfg.Profiling
-	cfg.Profiling.AggregationInterval = 15
-	cfg.Profiling.ExecutionTimeout = 30
-	cfg.Profiling.MaxProfilerProcesses = 5
-	defer func() { cfg.Profiling = old }()
-
-	h := &Handler{}
+	h := &Handler{profilingConfig: config.ProfilingConfig{
+		AggregationInterval:  15,
+		ExecutionTimeout:     30,
+		MaxProfilerProcesses: 5,
+	}}
 	resp, err := buildCapabilitiesResponse(h)
 	if err != nil {
 		t.Fatalf("buildCapabilitiesResponse() error = %v", err)

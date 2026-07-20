@@ -19,13 +19,12 @@ import (
 	"strings"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/profiling"
 )
 
-func buildCapabilitiesResponse(_ *Handler) (v1.ProfilingCapabilitiesResponse, error) {
+func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, error) {
 	cpuLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeCPU))
 	sort.Strings(cpuLanguages)
 
@@ -44,7 +43,7 @@ func buildCapabilitiesResponse(_ *Handler) (v1.ProfilingCapabilitiesResponse, er
 		}
 	}
 
-	cfg := config.Get().Profiling
+	cfg := h.profilingConfig
 
 	return v1.ProfilingCapabilitiesResponse{
 		ProfileTypes:               []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},

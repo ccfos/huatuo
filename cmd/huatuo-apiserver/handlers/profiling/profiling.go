@@ -44,13 +44,17 @@ const (
 
 // Handler handles profiling-related HTTP requests.
 type Handler struct {
-	jobManager *job.Manager
-	Handlers   []server.Handle
+	jobManager      *job.Manager
+	profilingConfig config.ProfilingConfig
+	Handlers        []server.Handle
 }
 
 // NewHandler creates a new profiling handler.
 func NewHandler(jm *job.Manager) *Handler {
-	h := &Handler{jobManager: jm}
+	h := &Handler{
+		jobManager:      jm,
+		profilingConfig: config.Get().Profiling,
+	}
 
 	h.Handlers = []server.Handle{
 		{Typ: server.HttpGet, Uri: "/capabilities", Handle: h.capabilities},
@@ -86,12 +90,11 @@ func (h *Handler) create(ctx *server.Context) error {
 		return response.ErrConflict.WithMessage("there is already a profiling job running on this host")
 	}
 
-	profilingConfig := config.Get().Profiling
 	agentTaskReq := job.NewAgentTaskReq{
 		TracerName:   "profiler",
 		DataType:     "db-json",
-		Interval:     profilingConfig.AggregationInterval,
-		TraceTimeout: profilingConfig.ExecutionTimeout,
+		Interval:     h.profilingConfig.AggregationInterval,
+		TraceTimeout: h.profilingConfig.ExecutionTimeout,
 	}
 	switch req.ProfilingType {
 	case "cpu":
@@ -106,26 +109,17 @@ func (h *Handler) create(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage("not supported yet")
 	}
 
-	if agentTaskReq.Interval == 0 {
-		log.WithField("interval", 10).Warn("profiling interval is not configured")
-		agentTaskReq.Interval = 10
-	}
-	if agentTaskReq.TraceTimeout < agentTaskReq.Interval*2 {
-		log.WithField("timeout", agentTaskReq.Interval*2).
-			Warn("profiling timeout is shorter than two intervals")
-		agentTaskReq.TraceTimeout = agentTaskReq.Interval * 2
-	}
 
 	// profiling job need to be stopped from outside, so we need to set duration to args.Duration * 2,
 	// job.Duration will control the actual profiling time
 	agentTaskReq.Duration = req.Duration * 2
 	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--duration", strconv.Itoa(agentTaskReq.Interval))
 
-	if profilingConfig.MaxProfilerProcesses > 0 {
+	if h.profilingConfig.MaxProfilerProcesses > 0 {
 		agentTaskReq.TracerArgs = append(
 			agentTaskReq.TracerArgs,
 			"--max-concurrent-procs",
-			strconv.Itoa(profilingConfig.MaxProfilerProcesses),
+			strconv.Itoa(h.profilingConfig.MaxProfilerProcesses),
 		)
 	}
 
@@ -352,7 +346,7 @@ func (h *Handler) get(ctx *server.Context) error {
 func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.ProfilingJobResponse {
 	if jobResult.Status == job.JobStatusCompleted || jobResult.Status == job.JobStatusStopped {
 		if jobResult.Results.URL == "" {
-			jobResult.Results.URL = getFlameGraphURL(jobResult)
+			jobResult.Results.URL = getFlameGraphURL(h.profilingConfig.FlameGraphBaseURL, jobResult)
 			if err := h.jobManager.Save(jobResult); err != nil {
 				log.WithError(err).WithField("job_id", jobResult.JobID).
 					Error("failed to save profiling job")
@@ -404,9 +398,7 @@ func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.Profiling
 	return resp
 }
 
-func getFlameGraphURL(jobResult *job.Job) string {
-	base := config.Get().Profiling.FlameGraphBaseURL
-
+func getFlameGraphURL(base string, jobResult *job.Job) string {
 	var dashboardUid string
 	var dashboardSlug string
 	var labelKey string

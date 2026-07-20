@@ -248,7 +248,8 @@ can be configured, for example:
 - **AggregationInterval**: Interval for aggregating and reporting profiling
   data.
 
-  The default is `10`, measured in seconds.
+  The default is `10`, measured in seconds. Valid values range from `1` to
+  `1199`.
 
   **Note**: This value maps to the profiler's `--aggr-interval` option and also
   schedules continuous profiling work. A shorter interval updates results more
@@ -256,11 +257,11 @@ can be configured, for example:
 
 - **ExecutionTimeout**: Execution timeout for one profiler subprocess.
 
-  The default is `20`, measured in seconds.
+  The default is `20`, measured in seconds, and must be at least twice
+  `AggregationInterval`.
 
   **Note**: This value limits the profiler subprocess, not the entire profiling
-  job. When configured below two aggregation intervals, the server raises the
-  effective timeout so valid jobs are not terminated early.
+  job. The API server refuses to start when this constraint is not satisfied.
 
 - **MaxProfilerProcesses**: Maximum number of concurrent third-party profiler
   processes.
@@ -268,7 +269,8 @@ can be configured, for example:
   The default is `10`.
 
   **Note**: This option limits external profiler concurrency to avoid
-  exhausting CPU, memory, or process resources.
+  exhausting CPU, memory, or process resources. It cannot be negative; set it
+  to `0` to disable the limit.
 
 - **FlameGraphBaseURL**: Flame graph dashboard base URL.
 
@@ -276,7 +278,8 @@ can be configured, for example:
 
   **Note**: The API service appends a dashboard identifier to this address to
   create the flame graph URL for each trace. When using a separate
-  visualization service, set this to an address accessible to clients.
+  visualization service, set this to an address accessible to clients. The URL
+  must use HTTP or HTTPS and include a host.
 
 ### 9. Configuration Example
 

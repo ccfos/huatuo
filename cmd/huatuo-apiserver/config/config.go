@@ -15,8 +15,52 @@
 package config
 
 import (
+	"fmt"
+	"net/url"
+
 	internalconfig "huatuo-bamai/internal/config"
 )
+
+const maxAggregationInterval = 1200
+
+// ProfilingConfig controls profiler subprocess execution.
+type ProfilingConfig struct {
+	AggregationInterval  int `default:"10"`
+	ExecutionTimeout     int `default:"20"`
+	MaxProfilerProcesses int `default:"10"`
+	// FlameGraphBaseURL is the base URL for the flame graph dashboard.
+	FlameGraphBaseURL string `default:"http://localhost:8006/d"`
+}
+
+// Validate rejects profiling settings that cannot produce a valid job.
+func (c ProfilingConfig) Validate() error {
+	if c.AggregationInterval <= 0 {
+		return fmt.Errorf("aggregation interval must be greater than 0 seconds")
+	}
+	if c.AggregationInterval >= maxAggregationInterval {
+		return fmt.Errorf("aggregation interval must be less than %d seconds", maxAggregationInterval)
+	}
+	minimumTimeout := c.AggregationInterval * 2
+	if c.ExecutionTimeout < minimumTimeout {
+		return fmt.Errorf("execution timeout must be at least %d seconds", minimumTimeout)
+	}
+	if c.MaxProfilerProcesses < 0 {
+		return fmt.Errorf("max profiler processes must not be negative")
+	}
+
+	flameGraphURL, err := url.Parse(c.FlameGraphBaseURL)
+	if err != nil {
+		return fmt.Errorf("parsing flame graph base url: %w", err)
+	}
+	if flameGraphURL.Scheme != "http" && flameGraphURL.Scheme != "https" {
+		return fmt.Errorf("flame graph base url must use http or https")
+	}
+	if flameGraphURL.Host == "" {
+		return fmt.Errorf("flame graph base url must include a host")
+	}
+
+	return nil
+}
 
 // ComConfig global common configuration
 type ComConfig struct {
@@ -68,13 +112,7 @@ type ComConfig struct {
 		Address, Username, Password, Index string
 	}
 
-	Profiling struct {
-		AggregationInterval  int `default:"10"`
-		ExecutionTimeout     int `default:"20"`
-		MaxProfilerProcesses int `default:"10"`
-		// FlameGraphBaseURL is the base URL for the flame graph dashboard.
-		FlameGraphBaseURL string `default:"http://localhost:8006/d"`
-	}
+	Profiling ProfilingConfig
 }
 
 var userConfig = &ComConfig{}
@@ -83,6 +121,9 @@ var userConfig = &ComConfig{}
 func Load(configFile string) error {
 	if err := internalconfig.Load(configFile, userConfig); err != nil {
 		return err
+	}
+	if err := userConfig.Profiling.Validate(); err != nil {
+		return fmt.Errorf("validating profiling config: %w", err)
 	}
 	userConfig.RuntimeCgroup.LimitMem *= 1024 * 1024
 	return nil
