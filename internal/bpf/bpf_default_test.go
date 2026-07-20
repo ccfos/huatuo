@@ -348,9 +348,8 @@ func TestDefaultBPF_MapOperations(t *testing.T) {
 		{
 			name: "Error_InvalidMapID",
 			fn: func(t *testing.T) {
-				assert.Panics(t, func() {
-					_ = b.WriteMapItems(99999, []MapItem{{Key: key, Value: val}})
-				})
+				err := b.WriteMapItems(99999, []MapItem{{Key: key, Value: val}})
+				assert.EqualError(t, err, "map 99999 not found")
 			},
 		},
 	}
