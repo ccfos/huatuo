@@ -90,17 +90,17 @@ func (h *Handler) create(ctx *server.Context) error {
 		TracerName: "profiler",
 		DataType:   "db-json",
 	}
-	switch req.Type {
+	switch req.ProfilingType {
 	case "cpu":
 		agentTaskReq.Interval = config.Get().Profiling.CPUProfilingInterval
 		agentTaskReq.TraceTimeout = config.Get().Profiling.CPUSingleTraceTimeout
-		if err := fillCPUTracerArgs(&agentTaskReq, req.TargetExecPath, req.TargetProcessLanguage); err != nil {
+		if err := fillCPUTracerArgs(&agentTaskReq, req.BinaryMatchPath, req.Language); err != nil {
 			return response.ErrInvalidRequest.WithMessage(err.Error())
 		}
 	case "memory":
 		agentTaskReq.Interval = config.Get().Profiling.MemoryProfilingInterval
 		agentTaskReq.TraceTimeout = config.Get().Profiling.MemorySingleTraceTimeout
-		if err := fillMemoryTracerArgs(&agentTaskReq, req.TargetProcessLanguage, req.MemoryMode); err != nil {
+		if err := fillMemoryTracerArgs(&agentTaskReq, req.Language, req.MemoryMode); err != nil {
 			return response.ErrInvalidRequest.WithMessage(err.Error())
 		}
 	default:
@@ -135,14 +135,14 @@ func (h *Handler) create(ctx *server.Context) error {
 		"--output-storage", "/var/run/huatuo-toolstream.sock")
 
 	var jobType string
-	if req.Type == "memory" {
+	if req.ProfilingType == "memory" {
 		jobType = ProfilingMemory
 	} else {
 		jobType = ProfilingCPU
 	}
 	jobResult, err := h.jobManager.Create(job.CreateJobRequest{
 		UserID:    ctx.UserID,
-		Container: req.Container,
+		Container: req.ContainerID,
 		Host:      req.Hostname,
 		JobType:   jobType,
 		Args:      &agentTaskReq,
@@ -152,8 +152,8 @@ func (h *Handler) create(ctx *server.Context) error {
 		return response.ErrInternal
 	}
 	jobResult.PrivateData = map[string]any{
-		"target_exec_path":        req.TargetExecPath,
-		"target_process_language": req.TargetProcessLanguage,
+		"target_exec_path":        req.BinaryMatchPath,
+		"target_process_language": req.Language,
 		"memory_mode":             req.MemoryMode,
 	}
 

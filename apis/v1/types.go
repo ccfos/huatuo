@@ -16,13 +16,13 @@ package v1
 
 // CreateProfilingJobRequest represents a request to create a profiling job.
 type CreateProfilingJobRequest struct {
-	Type                  string `json:"type"`                    // cpu or memory
-	TargetExecPath        string `json:"target_exec_path"`        // executable path for CPU profiling
-	TargetProcessLanguage string `json:"target_process_language"` // programming language of the target process
-	MemoryMode            string `json:"memory_mode"`             // memory profiling mode
-	Duration              int    `json:"duration"`                // profiling duration in seconds
-	Container             string `json:"container"`               // container name or ID
-	Hostname              string `json:"hostname"`                // host name
+	ProfilingType   string `json:"type"`              // cpu or memory
+	BinaryMatchPath string `json:"binary_match_path"` // executable path used to match target processes
+	Language        string `json:"language"`          // programming language of the target process
+	MemoryMode      string `json:"memory_mode"`       // memory profiling mode
+	Duration        int    `json:"duration"`          // profiling duration in seconds
+	ContainerID     string `json:"container_id"`      // container ID
+	Hostname        string `json:"hostname"`          // host name
 }
 
 // CreateProfilingJobResponse represents a response to create a profiling job.

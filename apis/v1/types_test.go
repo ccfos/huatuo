@@ -26,15 +26,20 @@ func TestCreateJobRequestJSONFields(t *testing.T) {
 		fields  []string
 	}{
 		{
-			name:    "profiling job",
-			request: CreateProfilingJobRequest{},
+			name: "profiling job",
+			request: CreateProfilingJobRequest{
+				ProfilingType:   "cpu",
+				BinaryMatchPath: "/usr/bin/example",
+				Language:        "go",
+				ContainerID:     "container-id",
+			},
 			fields: []string{
 				"type",
-				"target_exec_path",
-				"target_process_language",
+				"binary_match_path",
+				"language",
 				"memory_mode",
 				"duration",
-				"container",
+				"container_id",
 				"hostname",
 			},
 		},
