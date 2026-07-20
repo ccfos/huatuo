@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
@@ -42,6 +43,7 @@ const (
 	ProfilingCPU    = "profiling_cpu"
 
 	privateDataBinaryMatchPath = "binary_match_path"
+	privateDataDuration        = "duration"
 	privateDataLanguage        = "language"
 	privateDataMemoryMode      = "memory_mode"
 )
@@ -193,6 +195,7 @@ func (h *Handler) create(ctx *server.Context) error {
 func profilingPrivateData(req *v1.CreateProfilingJobRequest) map[string]any {
 	return map[string]any{
 		privateDataBinaryMatchPath: req.BinaryMatchPath,
+		privateDataDuration:        req.Duration,
 		privateDataLanguage:        req.Language,
 		privateDataMemoryMode:      req.MemoryMode,
 	}
@@ -305,7 +308,12 @@ func (h *Handler) list(ctx *server.Context) error {
 
 	items := make([]v1.ProfilingJobResponse, len(pageJobs))
 	for i, j := range pageJobs {
-		items[i] = h.convertJobToProfilingResponse(j)
+		items[i], err = buildProfilingJobResponse(j, h.profilingConfig.FlameGraphBaseURL)
+		if err != nil {
+			log.WithError(err).WithField("job_id", j.ID).
+				Error("failed to build profiling job response")
+			return response.ErrInternal
+		}
 	}
 
 	response.Success(ctx, v1.ProfilingJobListResponse{
@@ -396,66 +404,105 @@ func (h *Handler) get(ctx *server.Context) error {
 		return response.ErrForbidden
 	}
 
-	profilingResponse := h.convertJobToProfilingResponse(jobResult)
+	profilingResponse, err := buildProfilingJobResponse(jobResult, h.profilingConfig.FlameGraphBaseURL)
+	if err != nil {
+		return response.ErrNotFound.WithMessage(err.Error())
+	}
 
 	response.Success(ctx, profilingResponse)
 	return nil
 }
 
-// convertJobToProfilingResponse converts a job.Job to v1.ProfilingJobResponse.
-func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.ProfilingJobResponse {
-	if jobResult.Status == job.JobStatusCompleted || jobResult.Status == job.JobStatusStopped {
-		if jobResult.Result.URL == "" {
-			jobResult.Result.URL = getFlameGraphURL(h.profilingConfig.FlameGraphBaseURL, jobResult)
-			if err := h.jobManager.Save(jobResult); err != nil {
-				log.WithError(err).WithField("job_id", jobResult.ID).
-					Error("failed to save profiling job")
-			}
-		}
+func buildProfilingJobResponse(jobResult *job.Job, flameGraphBaseURL string) (v1.ProfilingJobResponse, error) {
+	profileType, err := profilingAPIType(jobResult.Type)
+	if err != nil {
+		return v1.ProfilingJobResponse{}, err
 	}
 
+	resultURL := jobResult.Result.URL
+	if resultURL == "" && profilingJobHasResults(jobResult.Status) {
+		resultURL = getFlameGraphURL(flameGraphBaseURL, jobResult)
+	}
+
+	privateData := profilingJobPrivateData(jobResult.PrivateData)
+	if privateData.Duration == 0 {
+		privateData.Duration = jobResult.AgentTask.Duration / 2
+	}
 	resp := v1.ProfilingJobResponse{
 		ID:          jobResult.ID,
 		AgentTaskID: jobResult.AgentTaskID,
 		ContainerID: jobResult.ContainerID,
 		Hostname:    jobResult.Hostname,
 		Status:      string(jobResult.Status),
-		StartTime:   jobResult.StartTime.Format("2006-01-02T15:04:05.000"),
-		EndTime:     jobResult.EndTime.Format("2006-01-02T15:04:05.000"),
+		Type:        profileType,
+		StartTime:   formatProfilingTime(jobResult.StartTime),
+		EndTime:     formatProfilingTime(jobResult.EndTime),
 		TracerArgs:  jobResult.AgentTask.TracerArgs,
-		Duration:    jobResult.AgentTask.Duration >> 1,
+		Duration:    privateData.Duration,
 		Results: v1.ProfilingResults{
-			URL: jobResult.Result.URL,
+			URL: resultURL,
 		},
-		ErrorMessage: jobResult.ErrorMessage,
+		ErrorMessage:    jobResult.ErrorMessage,
+		MemoryMode:      privateData.MemoryMode,
+		BinaryMatchPath: privateData.BinaryMatchPath,
+		Language:        privateData.Language,
 	}
 
-	switch jobResult.Type {
+	return resp, nil
+}
+
+func profilingAPIType(jobType string) (string, error) {
+	switch jobType {
 	case ProfilingMemory:
-		resp.Type = "memory"
+		return string(profiling.TypeMemory), nil
 	case ProfilingCPU:
-		resp.Type = "cpu"
+		return string(profiling.TypeCPU), nil
+	default:
+		return "", fmt.Errorf("job %q is not a profiling job", jobType)
 	}
+}
 
-	if jobResult.PrivateData != nil {
-		if memoryMode, ok := jobResult.PrivateData[privateDataMemoryMode]; ok && memoryMode != nil {
-			if memoryModeStr, ok := memoryMode.(string); ok {
-				resp.MemoryMode = memoryModeStr
-			}
-		}
-		if binaryMatchPath, ok := jobResult.PrivateData[privateDataBinaryMatchPath]; ok && binaryMatchPath != nil {
-			if binaryMatchPathStr, ok := binaryMatchPath.(string); ok {
-				resp.BinaryMatchPath = binaryMatchPathStr
-			}
-		}
-		if language, ok := jobResult.PrivateData[privateDataLanguage]; ok && language != nil {
-			if languageStr, ok := language.(string); ok {
-				resp.Language = languageStr
-			}
-		}
+func profilingJobHasResults(status job.JobStatus) bool {
+	return status == job.JobStatusCompleted || status == job.JobStatusStopped
+}
+
+type profilingPrivateFields struct {
+	BinaryMatchPath string
+	Duration        int
+	Language        string
+	MemoryMode      string
+}
+
+func profilingJobPrivateData(privateData map[string]any) profilingPrivateFields {
+	binaryMatchPath, _ := privateData[privateDataBinaryMatchPath].(string)
+	duration := profilingDuration(privateData[privateDataDuration])
+	language, _ := privateData[privateDataLanguage].(string)
+	memoryMode, _ := privateData[privateDataMemoryMode].(string)
+
+	return profilingPrivateFields{
+		BinaryMatchPath: binaryMatchPath,
+		Duration:        duration,
+		Language:        language,
+		MemoryMode:      memoryMode,
 	}
+}
 
-	return resp
+func profilingDuration(value any) int {
+	switch duration := value.(type) {
+	case int:
+		return duration
+	case float64:
+		return int(duration)
+	default:
+		return 0
+	}
+}
+
+func formatProfilingTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format("2006-01-02T15:04:05.000")
 }
 
 func getFlameGraphURL(base string, jobResult *job.Job) string {

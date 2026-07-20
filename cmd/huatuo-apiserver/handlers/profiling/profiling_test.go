@@ -176,12 +176,14 @@ func TestFillTracerArgs(t *testing.T) {
 func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
 	privateData := profilingPrivateData(&v1.CreateProfilingJobRequest{
 		BinaryMatchPath: "/usr/bin/example",
+		Duration:        60,
 		Language:        "go",
 		MemoryMode:      "object_alloc",
 	})
 
 	want := map[string]any{
 		"binary_match_path": "/usr/bin/example",
+		"duration":          60,
 		"language":          "go",
 		"memory_mode":       "object_alloc",
 	}
@@ -196,15 +198,19 @@ func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
 }
 
 func TestConvertJobToProfilingResponseReadsRequestJSONNames(t *testing.T) {
-	h := &Handler{}
-	resp := h.convertJobToProfilingResponse(&job.Job{
+	resp, err := buildProfilingJobResponse(&job.Job{
+		Type:   ProfilingMemory,
 		Status: job.JobStatusRunning,
 		PrivateData: map[string]any{
 			"binary_match_path": "/usr/bin/example",
+			"duration":          float64(60),
 			"language":          "go",
 			"memory_mode":       "object_alloc",
 		},
-	})
+	}, "")
+	if err != nil {
+		t.Fatalf("buildProfilingJobResponse() error = %v", err)
+	}
 
 	if resp.BinaryMatchPath != "/usr/bin/example" {
 		t.Errorf("BinaryMatchPath=%q, want %q", resp.BinaryMatchPath, "/usr/bin/example")
@@ -214,6 +220,54 @@ func TestConvertJobToProfilingResponseReadsRequestJSONNames(t *testing.T) {
 	}
 	if resp.MemoryMode != "object_alloc" {
 		t.Errorf("MemoryMode=%q, want %q", resp.MemoryMode, "object_alloc")
+	}
+	if resp.Duration != 60 {
+		t.Errorf("Duration=%d, want 60", resp.Duration)
+	}
+}
+
+func TestProfilingJobResponseRejectsNonProfilingJob(t *testing.T) {
+	_, err := buildProfilingJobResponse(&job.Job{Type: "trace"}, "")
+	if err == nil {
+		t.Fatal("buildProfilingJobResponse() error = nil, want non-nil")
+	}
+}
+
+func TestProfilingJobResponseBuildsURLWithoutMutatingJob(t *testing.T) {
+	jobResult := &job.Job{
+		ID:        "profile-2026",
+		Type:      ProfilingCPU,
+		Hostname:  "huatuo-dev",
+		Status:    job.JobStatusCompleted,
+		StartTime: time.Date(2026, time.July, 20, 10, 0, 0, 0, time.UTC),
+		EndTime:   time.Date(2026, time.July, 20, 10, 1, 0, 0, time.UTC),
+		PrivateData: map[string]any{
+			"duration": 60,
+		},
+	}
+
+	resp, err := buildProfilingJobResponse(jobResult, "http://grafana.example/d")
+	if err != nil {
+		t.Fatalf("buildProfilingJobResponse() error = %v", err)
+	}
+	if resp.Results.URL == "" {
+		t.Error("buildProfilingJobResponse() result URL is empty")
+	}
+	if jobResult.Result.URL != "" {
+		t.Errorf("job result URL mutated to %q", jobResult.Result.URL)
+	}
+	if resp.Duration != 60 {
+		t.Errorf("Duration=%d, want 60", resp.Duration)
+	}
+}
+
+func TestProfilingJobResponseFormatsZeroEndTimeAsEmpty(t *testing.T) {
+	resp, err := buildProfilingJobResponse(&job.Job{Type: ProfilingCPU}, "")
+	if err != nil {
+		t.Fatalf("buildProfilingJobResponse() error = %v", err)
+	}
+	if resp.EndTime != "" {
+		t.Errorf("EndTime=%q, want empty", resp.EndTime)
 	}
 }
 
