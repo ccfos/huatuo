@@ -165,13 +165,13 @@ func (h *Handler) create(ctx *server.Context) error {
 		"--output-storage", "/var/run/huatuo-toolstream.sock",
 	)
 
-	jobResult, err := h.jobManager.Create(job.CreateJobRequest{
+	jobResult, err := h.jobManager.Create(&job.CreateJobRequest{
 		UserID:      ctx.UserID,
-		Container:   req.ContainerID,
-		Host:        req.Hostname,
-		JobType:     jobType,
+		ContainerID: req.ContainerID,
+		Hostname:    req.Hostname,
+		Type:        jobType,
 		Args:        &taskReq,
-		PrivateData: profilingPrivateData(req),
+		PrivateData: profilingPrivateData(&req),
 	})
 	if err != nil {
 		log.WithError(err).Error("failed to create profiling job")
@@ -183,7 +183,7 @@ func (h *Handler) create(ctx *server.Context) error {
 	return nil
 }
 
-func profilingPrivateData(req v1.CreateProfilingJobRequest) map[string]any {
+func profilingPrivateData(req *v1.CreateProfilingJobRequest) map[string]any {
 	return map[string]any{
 		privateDataBinaryMatchPath: req.BinaryMatchPath,
 		privateDataLanguage:        req.Language,

@@ -84,7 +84,10 @@ func (m *Manager) Shutdown() {
 	m.monitorWG.Wait()
 }
 
-func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
+func (m *Manager) Create(req *CreateJobRequest) (*Job, error) {
+	if req == nil {
+		return nil, errors.New("job request is required")
+	}
 	if req.Args == nil {
 		return nil, errors.New("job arguments are required")
 	}
@@ -95,12 +98,12 @@ func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
 	jobID := fmt.Sprintf("id-%s", uuid.NewString()[:8])
 	now := time.Now()
 	job := &Job{
-		Type:        req.JobType,
+		Type:        req.Type,
 		JobID:       jobID,
 		UserName:    req.UserID, // Set UserName to be the same as UserID for now
 		UserID:      req.UserID,
-		Container:   req.Container,
-		Host:        req.Host,
+		Container:   req.ContainerID,
+		Host:        req.Hostname,
 		Status:      JobStatusPending,
 		StartTime:   now,
 		Duration:    req.Args.Duration,
@@ -118,16 +121,16 @@ func (m *Manager) Create(req CreateJobRequest) (*Job, error) {
 		return nil, errors.New("job manager is shutting down")
 	default:
 	}
-	if m.hostJobCount(req.Host) >= m.config.MaxJobsPerHost {
+	if m.hostJobCount(req.Hostname) >= m.config.MaxJobsPerHost {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("maximum number of jobs reached for host %s", req.Host)
+		return nil, fmt.Errorf("maximum number of jobs reached for host %s", req.Hostname)
 	}
 	if m.jobCount() >= m.config.MaxTotalJobs {
 		m.mu.Unlock()
 		return nil, errors.New("maximum number of total jobs reached")
 	}
 	m.jobs.Store(jobID, job)
-	m.jobsByHost.Store(req.Host, m.hostJobCount(req.Host)+1)
+	m.jobsByHost.Store(req.Hostname, m.hostJobCount(req.Hostname)+1)
 	m.monitorWG.Add(1)
 	m.mu.Unlock()
 

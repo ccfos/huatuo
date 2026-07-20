@@ -58,9 +58,9 @@ type NewAgentTaskReq struct {
 // CreateJobRequest holds parameters for creating a new job
 type CreateJobRequest struct {
 	UserID      string
-	Container   string
-	Host        string
-	JobType     string
+	ContainerID string
+	Hostname    string
+	Type        string
 	Args        *NewAgentTaskReq
 	PrivateData map[string]any
 }

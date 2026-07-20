@@ -174,7 +174,7 @@ func TestFillTracerArgs(t *testing.T) {
 }
 
 func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
-	privateData := profilingPrivateData(v1.CreateProfilingJobRequest{
+	privateData := profilingPrivateData(&v1.CreateProfilingJobRequest{
 		BinaryMatchPath: "/usr/bin/example",
 		Language:        "go",
 		MemoryMode:      "object_alloc",

@@ -73,12 +73,12 @@ func (h *Handler) start(ctx *server.Context) error {
 	}
 	args.Duration = req.Duration
 
-	jobResult, err := h.jobManager.Create(job.CreateJobRequest{
-		UserID:    ctx.UserID,
-		Container: req.Container,
-		Host:      req.Hostname,
-		JobType:   "tracing",
-		Args:      &args,
+	jobResult, err := h.jobManager.Create(&job.CreateJobRequest{
+		UserID:      ctx.UserID,
+		ContainerID: req.Container,
+		Hostname:    req.Hostname,
+		Type:        "tracing",
+		Args:        &args,
 	})
 	if err != nil {
 		log.WithError(err).Error("failed to create trace job")

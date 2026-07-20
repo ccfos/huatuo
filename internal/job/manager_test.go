@@ -136,11 +136,11 @@ func TestManagerCreate(t *testing.T) {
 		nodeAgent := &stubNodeAgent{}
 		manager := newTestManager(storage, nodeAgent)
 
-		job, err := manager.Create(CreateJobRequest{
-			UserID:    "operator-2026",
-			Container: "payment-worker",
-			Host:      "huatuo-dev",
-			JobType:   "oncpu",
+		job, err := manager.Create(&CreateJobRequest{
+			UserID:      "operator-2026",
+			ContainerID: "payment-worker",
+			Hostname:    "huatuo-dev",
+			Type:        "oncpu",
 			Args: &NewAgentTaskReq{
 				TracerName: "oncpu",
 				DataType:   "flamegraph",
@@ -163,11 +163,11 @@ func TestManagerCreate(t *testing.T) {
 		manager := newTestManager(storage, nodeAgent)
 		manager.jobsByHost.Store("huatuo-dev", 2)
 
-		job, err := manager.Create(CreateJobRequest{
-			UserID:    "operator-2026",
-			Container: "payment-worker",
-			Host:      "huatuo-dev",
-			JobType:   "oncpu",
+		job, err := manager.Create(&CreateJobRequest{
+			UserID:      "operator-2026",
+			ContainerID: "payment-worker",
+			Hostname:    "huatuo-dev",
+			Type:        "oncpu",
 			Args: &NewAgentTaskReq{
 				TracerName:   "oncpu",
 				TraceTimeout: 60,
@@ -193,11 +193,11 @@ func TestManagerCreate(t *testing.T) {
 		manager.jobs.Store("job-20260101", newRunningJob("job-20260101"))
 		manager.jobs.Store("job-20260102", newRunningJob("job-20260102"))
 
-		job, err := manager.Create(CreateJobRequest{
-			UserID:    "operator-2026",
-			Container: "payment-worker",
-			Host:      "huatuo-dev",
-			JobType:   "oncpu",
+		job, err := manager.Create(&CreateJobRequest{
+			UserID:      "operator-2026",
+			ContainerID: "payment-worker",
+			Hostname:    "huatuo-dev",
+			Type:        "oncpu",
 			Args: &NewAgentTaskReq{
 				TracerName:   "oncpu",
 				TraceTimeout: 60,
@@ -223,11 +223,11 @@ func TestManagerCreate(t *testing.T) {
 		manager := newTestManager(storage, nodeAgent)
 		privateData := map[string]any{"language": "go"}
 
-		job, err := manager.Create(CreateJobRequest{
+		job, err := manager.Create(&CreateJobRequest{
 			UserID:      "operator-2026",
-			Container:   "payment-worker",
-			Host:        "huatuo-dev",
-			JobType:     "oncpu",
+			ContainerID: "payment-worker",
+			Hostname:    "huatuo-dev",
+			Type:        "oncpu",
 			PrivateData: privateData,
 			Args: &NewAgentTaskReq{
 				TracerName:   "oncpu",
@@ -687,11 +687,11 @@ func TestMonitorJobDeferNoNilPanic(t *testing.T) {
 	}
 	manager := newTestManager(storage, nodeAgent)
 
-	_, err := manager.Create(CreateJobRequest{
-		UserID:    "operator-2026",
-		Container: "payment-worker",
-		Host:      "huatuo-dev",
-		JobType:   "oncpu",
+	_, err := manager.Create(&CreateJobRequest{
+		UserID:      "operator-2026",
+		ContainerID: "payment-worker",
+		Hostname:    "huatuo-dev",
+		Type:        "oncpu",
 		Args: &NewAgentTaskReq{
 			TracerName:   "oncpu",
 			TraceTimeout: 300,
@@ -789,7 +789,15 @@ func TestManagerDelete(t *testing.T) {
 func TestManagerCreateRejectsNilArgs(t *testing.T) {
 	manager := newTestManager(&stubJobStore{}, &stubNodeAgent{})
 
-	job, err := manager.Create(CreateJobRequest{})
+	job, err := manager.Create(nil)
+	if err == nil || err.Error() != "job request is required" {
+		t.Errorf("Create(nil) error=%v, want missing request error", err)
+	}
+	if job != nil {
+		t.Errorf("Create(nil) job=%+v, want nil", job)
+	}
+
+	job, err = manager.Create(&CreateJobRequest{})
 	if err == nil || err.Error() != "job arguments are required" {
 		t.Errorf("Create() error=%v, want missing arguments error", err)
 	}
@@ -812,9 +820,9 @@ func TestManagerCreateReservesQuotaAtomically(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := manager.Create(CreateJobRequest{
-				Host: "huatuo-dev",
-				Args: &NewAgentTaskReq{TraceTimeout: 60},
+			_, err := manager.Create(&CreateJobRequest{
+				Hostname: "huatuo-dev",
+				Args:     &NewAgentTaskReq{TraceTimeout: 60},
 			})
 			if err == nil {
 				successes.Add(1)
