@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/job"
 	profiledef "huatuo-bamai/pkg/profiling"
@@ -169,5 +170,49 @@ func TestFillTracerArgs(t *testing.T) {
 				t.Fatalf("TracerArgs = %q, want %q", req.TracerArgs, tt.want)
 			}
 		})
+	}
+}
+
+func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
+	privateData := profilingPrivateData(v1.CreateProfilingJobRequest{
+		BinaryMatchPath: "/usr/bin/example",
+		Language:        "go",
+		MemoryMode:      "object_alloc",
+	})
+
+	want := map[string]any{
+		"binary_match_path": "/usr/bin/example",
+		"language":          "go",
+		"memory_mode":       "object_alloc",
+	}
+	if len(privateData) != len(want) {
+		t.Fatalf("profilingPrivateData() len=%d, want %d", len(privateData), len(want))
+	}
+	for key, wantValue := range want {
+		if got := privateData[key]; got != wantValue {
+			t.Errorf("profilingPrivateData()[%q]=%v, want %v", key, got, wantValue)
+		}
+	}
+}
+
+func TestConvertJobToProfilingResponseReadsRequestJSONNames(t *testing.T) {
+	h := &Handler{}
+	resp := h.convertJobToProfilingResponse(&job.Job{
+		Status: job.JobStatusRunning,
+		PrivateData: map[string]any{
+			"binary_match_path": "/usr/bin/example",
+			"language":          "go",
+			"memory_mode":       "object_alloc",
+		},
+	})
+
+	if resp.TargetExecPath != "/usr/bin/example" {
+		t.Errorf("TargetExecPath=%q, want %q", resp.TargetExecPath, "/usr/bin/example")
+	}
+	if resp.TargetProcessLanguage != "go" {
+		t.Errorf("TargetProcessLanguage=%q, want %q", resp.TargetProcessLanguage, "go")
+	}
+	if resp.MemoryMode != "object_alloc" {
+		t.Errorf("MemoryMode=%q, want %q", resp.MemoryMode, "object_alloc")
 	}
 }

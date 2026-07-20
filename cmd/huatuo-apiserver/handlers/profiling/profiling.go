@@ -40,6 +40,10 @@ import (
 const (
 	ProfilingMemory = "profiling_memory"
 	ProfilingCPU    = "profiling_cpu"
+
+	privateDataBinaryMatchPath = "binary_match_path"
+	privateDataLanguage        = "language"
+	privateDataMemoryMode      = "memory_mode"
 )
 
 // Handler handles profiling-related HTTP requests.
@@ -162,16 +166,12 @@ func (h *Handler) create(ctx *server.Context) error {
 	)
 
 	jobResult, err := h.jobManager.Create(job.CreateJobRequest{
-		UserID:    ctx.UserID,
-		Container: req.ContainerID,
-		Host:      req.Hostname,
-		JobType:   jobType,
-		Args:      &taskReq,
-		PrivateData: map[string]any{
-			"target_exec_path":        req.BinaryMatchPath,
-			"target_process_language": req.Language,
-			"memory_mode":             req.MemoryMode,
-		},
+		UserID:      ctx.UserID,
+		Container:   req.ContainerID,
+		Host:        req.Hostname,
+		JobType:     jobType,
+		Args:        &taskReq,
+		PrivateData: profilingPrivateData(req),
 	})
 	if err != nil {
 		log.WithError(err).Error("failed to create profiling job")
@@ -181,6 +181,14 @@ func (h *Handler) create(ctx *server.Context) error {
 		ID: jobResult.JobID,
 	})
 	return nil
+}
+
+func profilingPrivateData(req v1.CreateProfilingJobRequest) map[string]any {
+	return map[string]any{
+		privateDataBinaryMatchPath: req.BinaryMatchPath,
+		privateDataLanguage:        req.Language,
+		privateDataMemoryMode:      req.MemoryMode,
+	}
 }
 
 // hasRunningProfilingJob reports whether a profiling job is currently running on hostname for userID.
@@ -380,19 +388,19 @@ func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.Profiling
 	}
 
 	if jobResult.PrivateData != nil {
-		if memoryMode, ok := jobResult.PrivateData["memory_mode"]; ok && memoryMode != nil {
+		if memoryMode, ok := jobResult.PrivateData[privateDataMemoryMode]; ok && memoryMode != nil {
 			if memoryModeStr, ok := memoryMode.(string); ok {
 				resp.MemoryMode = memoryModeStr
 			}
 		}
-		if targetExecPath, ok := jobResult.PrivateData["target_exec_path"]; ok && targetExecPath != nil {
-			if targetExecPathStr, ok := targetExecPath.(string); ok {
-				resp.TargetExecPath = targetExecPathStr
+		if binaryMatchPath, ok := jobResult.PrivateData[privateDataBinaryMatchPath]; ok && binaryMatchPath != nil {
+			if binaryMatchPathStr, ok := binaryMatchPath.(string); ok {
+				resp.TargetExecPath = binaryMatchPathStr
 			}
 		}
-		if targetProcessLanguage, ok := jobResult.PrivateData["target_process_language"]; ok && targetProcessLanguage != nil {
-			if targetProcessLanguageStr, ok := targetProcessLanguage.(string); ok {
-				resp.TargetProcessLanguage = targetProcessLanguageStr
+		if language, ok := jobResult.PrivateData[privateDataLanguage]; ok && language != nil {
+			if languageStr, ok := language.(string); ok {
+				resp.TargetProcessLanguage = languageStr
 			}
 		}
 	}
