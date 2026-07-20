@@ -233,6 +233,27 @@ func TestProfilingJobResponseRejectsNonProfilingJob(t *testing.T) {
 	}
 }
 
+func TestIsProfilingJobType(t *testing.T) {
+	tests := []struct {
+		name    string
+		jobType string
+		want    bool
+	}{
+		{name: "cpu profiling", jobType: ProfilingCPU, want: true},
+		{name: "memory profiling", jobType: ProfilingMemory, want: true},
+		{name: "trace job", jobType: "trace", want: false},
+		{name: "empty type", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isProfilingJobType(tt.jobType); got != tt.want {
+				t.Errorf("isProfilingJobType(%q)=%t, want %t", tt.jobType, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestProfilingJobResponseBuildsURLWithoutMutatingJob(t *testing.T) {
 	jobResult := &job.Job{
 		ID:        "profile-2026",

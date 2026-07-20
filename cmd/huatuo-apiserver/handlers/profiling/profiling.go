@@ -398,6 +398,11 @@ func (h *Handler) get(ctx *server.Context) error {
 	if !ctx.CanAccessTask(jobResult.UserID) {
 		return response.ErrForbidden
 	}
+	if !isProfilingJobType(jobResult.Type) {
+		return response.ErrNotFound.WithMessage(
+			fmt.Sprintf("job %q is not a profiling job", taskID),
+		)
+	}
 
 	profilingResponse, err := buildProfilingJobResponse(jobResult, h.profilingConfig.FlameGraphBaseURL)
 	if err != nil {
@@ -444,6 +449,10 @@ func buildProfilingJobResponse(jobResult *job.Job, flameGraphBaseURL string) (v1
 	}
 
 	return resp, nil
+}
+
+func isProfilingJobType(jobType string) bool {
+	return jobType == ProfilingCPU || jobType == ProfilingMemory
 }
 
 func profilingAPIType(jobType string) (string, error) {
