@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -82,10 +83,9 @@ func GetPidsFromContainer(execPath, langKeyword, containerID string) ([]int, err
 }
 
 // findProcessesInCgroups groups processes in the cgroup matching langKeyword
-// (and optionally execPath) by their root PID inside the cgroup. A process
-// whose parent is also matched is grouped under that parent; otherwise it
-// becomes its own group root. Returns an empty result when both langKeyword
-// and execPath fail to match any process.
+// (and optionally execPath) by their root PID inside the cgroup. Each process
+// is placed under its highest matching ancestor. Returns an empty result when
+// both langKeyword and execPath fail to match any process.
 func findProcessesInCgroups(cgroupSuffix, langKeyword, execPath string) (map[int][]int, error) {
 	cgroup, err := cgroups.NewManager()
 	if err != nil {
@@ -97,14 +97,7 @@ func findProcessesInCgroups(cgroupSuffix, langKeyword, execPath string) (map[int
 		return nil, err
 	}
 
-	type procInfo struct {
-		pid  int
-		ppid int
-	}
-
-	validPids := make(map[int]bool)
-
-	var targetProcs []procInfo
+	parentByPID := make(map[int]int)
 
 	for _, rawPid := range pids {
 		pid := int(rawPid)
@@ -129,20 +122,58 @@ func findProcessesInCgroups(cgroupSuffix, langKeyword, execPath string) (map[int
 			return nil, err
 		}
 
-		targetProcs = append(targetProcs, procInfo{pid: pid, ppid: ppid})
-		validPids[pid] = true
+		parentByPID[pid] = ppid
 	}
 
+	return groupProcessesByRoot(parentByPID), nil
+}
+
+// groupProcessesByRoot groups matching processes under their highest matching
+// ancestor. If a malformed parent graph has a cycle, its lowest PID is used as
+// a stable group root so the caller still receives one target for that cycle.
+func groupProcessesByRoot(parentByPID map[int]int) map[int][]int {
 	result := make(map[int][]int)
-	for _, proc := range targetProcs {
-		if validPids[proc.ppid] {
-			result[proc.ppid] = append(result[proc.ppid], proc.pid)
-		} else {
-			result[proc.pid] = append(result[proc.pid], proc.pid)
-		}
+	for pid := range parentByPID {
+		root := processGroupRoot(pid, parentByPID)
+		result[root] = append(result[root], pid)
 	}
 
-	return result, nil
+	for _, pids := range result {
+		sort.Ints(pids)
+	}
+
+	return result
+}
+
+func processGroupRoot(pid int, parentByPID map[int]int) int {
+	path := make([]int, 0)
+	seen := make(map[int]int)
+	current := pid
+
+	for {
+		if cycleStart, ok := seen[current]; ok {
+			root := path[cycleStart]
+			for _, cyclePID := range path[cycleStart+1:] {
+				if cyclePID < root {
+					root = cyclePID
+				}
+			}
+			return root
+		}
+
+		seen[current] = len(path)
+		path = append(path, current)
+
+		parent, ok := parentByPID[current]
+		if !ok {
+			return current
+		}
+		if _, ok := parentByPID[parent]; !ok {
+			return current
+		}
+
+		current = parent
+	}
 }
 
 // execPathInCmdline reports whether execPath appears in any cmdline argument
