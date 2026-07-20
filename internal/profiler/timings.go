@@ -56,14 +56,18 @@ func SetSymbolizeToPprofTimeStamp(profilerName string, t time.Time) {
 
 func GetSampleSerializeTimeStamp(profilerName string) time.Time {
 	if v, ok := SampleSerializeTimeStore.Load(profilerName); ok {
-		return v.(time.Time)
+		if timestamp, ok := v.(time.Time); ok {
+			return timestamp
+		}
 	}
 	return time.Time{}
 }
 
 func GetSymbolizeToPprofTimeStamp(profilerName string) time.Time {
 	if v, ok := SymbolizeToPprofTimeStore.Load(profilerName); ok {
-		return v.(time.Time)
+		if timestamp, ok := v.(time.Time); ok {
+			return timestamp
+		}
 	}
 	return time.Time{}
 }
