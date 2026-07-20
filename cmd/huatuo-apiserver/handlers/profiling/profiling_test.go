@@ -148,3 +148,45 @@ func TestFillMemoryTracerArgsUsesMemoryModeFlag(t *testing.T) {
 		t.Fatalf("TracerArgs = %q, want %q", req.TracerArgs, want)
 	}
 }
+
+func TestFillTracerArgsQuotesUnsupportedValues(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*job.NewAgentTaskReq) error
+		want      string
+	}{
+		{
+			name: "cpu language",
+			configure: func(req *job.NewAgentTaskReq) error {
+				return fillCPUTracerArgs(req, "", "unknown language")
+			},
+			want: `cpu profiling not supported for "unknown language"`,
+		},
+		{
+			name: "memory language",
+			configure: func(req *job.NewAgentTaskReq) error {
+				return fillMemoryTracerArgs(req, "unknown language", "physical_alloc")
+			},
+			want: `memory profiling not supported for "unknown language"`,
+		},
+		{
+			name: "memory mode",
+			configure: func(req *job.NewAgentTaskReq) error {
+				return fillMemoryTracerArgs(req, "c", "unknown mode")
+			},
+			want: `memory mode not supported: "unknown mode"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.configure(&job.NewAgentTaskReq{})
+			if err == nil {
+				t.Fatal("configure() error = nil, want non-nil")
+			}
+			if err.Error() != tt.want {
+				t.Fatalf("configure() error = %q, want %q", err, tt.want)
+			}
+		})
+	}
+}

@@ -108,11 +108,12 @@ func (h *Handler) start(ctx *server.Context) error {
 	}
 
 	if agentTaskReq.Interval == 0 {
-		log.Infof("CPUProfilingInterval or MemoryProfilingInterval is not set, using default value 10")
+		log.WithField("interval", 10).Warn("profiling interval is not configured")
 		agentTaskReq.Interval = 10
 	}
 	if agentTaskReq.TraceTimeout < agentTaskReq.Interval*2 {
-		log.Infof("CPUSingleTraceTimeout or MemorySingleTraceTimeout is less than Interval * 2, using Interval * 2")
+		log.WithField("timeout", agentTaskReq.Interval*2).
+			Warn("profiling timeout is shorter than two intervals")
 		agentTaskReq.TraceTimeout = agentTaskReq.Interval * 2
 	}
 
@@ -147,8 +148,8 @@ func (h *Handler) start(ctx *server.Context) error {
 		Args:      &agentTaskReq,
 	})
 	if err != nil {
-		log.Errorf("Failed to create profiling job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).Error("failed to create profiling job")
+		return response.ErrInternal
 	}
 	jobResult.PrivateData = map[string]any{
 		"target_exec_path":        req.TargetExecPath,
@@ -170,11 +171,9 @@ func (h *Handler) hasRunningProfilingJob(hostname, userID string) (bool, error) 
 	}
 	jobs, err := h.jobManager.List(userID, false, &filter)
 	if err != nil {
-		log.Errorf("Failed to list profiling jobs: %v", err)
-		return false, err
+		return false, fmt.Errorf("listing running profiling jobs: %w", err)
 	}
 	if len(jobs) > 0 {
-		log.Infof("There is already a profiling job running on this host")
 		return true, nil
 	}
 	return false, nil
@@ -191,11 +190,11 @@ func fillMemoryTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetProcessLangua
 	}
 	language, err := profiling.ParseLanguage(languageValue)
 	if err != nil {
-		return fmt.Errorf("memory profiling not supported for %s", targetProcessLanguage)
+		return fmt.Errorf("memory profiling not supported for %q", targetProcessLanguage)
 	}
 	mode, err := profiling.ParseMemoryMode(modeValue)
 	if err != nil || !profiling.SupportsMemoryMode(language, mode) {
-		return fmt.Errorf("memory mode not supported: %s", memoryMode)
+		return fmt.Errorf("memory mode not supported: %q", memoryMode)
 	}
 
 	agentTaskReq.TracerArgs = append(
@@ -215,7 +214,7 @@ func fillCPUTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetExecPath, target
 
 	language, err := profiling.ParseLanguage(targetProcessLanguage)
 	if err != nil || !profiling.IsSupported(language, profiling.TypeCPU) {
-		return fmt.Errorf("cpu profiling not supported for %s", targetProcessLanguage)
+		return fmt.Errorf("cpu profiling not supported for %q", targetProcessLanguage)
 	}
 	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", string(language))
 
@@ -251,8 +250,8 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 	}
 
 	if err := h.jobManager.Stop(taskID, false); err != nil {
-		log.Errorf("Failed to stop profiling job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).WithField("job_id", taskID).Error("failed to stop profiling job")
+		return response.ErrInternal
 	}
 
 	response.Success(ctx, nil)
@@ -296,14 +295,15 @@ func (h *Handler) list(ctx *server.Context) error {
 
 		jobs, err := h.jobManager.List(ctx.UserID, ctx.IsAdmin, &currentFilter)
 		if err != nil {
-			log.Errorf("Failed to list %s jobs: %v", queryType, err)
+			log.WithError(err).WithField("job_type", queryType).
+				Error("failed to list profiling jobs")
 			listErr = err
 			continue
 		}
 		allJobs = append(allJobs, jobs...)
 	}
 	if listErr != nil && len(allJobs) == 0 {
-		return response.ErrInternal.WithMessage(listErr.Error())
+		return response.ErrInternal
 	}
 
 	if err := listing.SortJobs(allJobs, listParams.Sort); err != nil {
@@ -355,7 +355,8 @@ func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.Profiling
 		if jobResult.Results.URL == "" {
 			jobResult.Results.URL = getFlameGraphURL(jobResult)
 			if err := h.jobManager.Save(jobResult); err != nil {
-				log.Errorf("Failed to save job %s: %v", jobResult.JobID, err)
+				log.WithError(err).WithField("job_id", jobResult.JobID).
+					Error("failed to save profiling job")
 			}
 		}
 	}
@@ -473,8 +474,8 @@ func (h *Handler) delete(ctx *server.Context) error {
 		if errors.Is(err, job.ErrCannotDeleteRunning) {
 			return response.ErrConflict.WithMessage("cannot delete running job")
 		}
-		log.Errorf("Failed to delete profiling job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).WithField("job_id", taskID).Error("failed to delete profiling job")
+		return response.ErrInternal
 	}
 
 	response.NoContent(ctx)
@@ -503,8 +504,8 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 
 	profiles, err := profileService.GetProfilesByTracerID(jobResult.AgentTaskID)
 	if err != nil {
-		log.Errorf("Failed to get raw profiling data: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get raw profiling data")
+		return response.ErrInternal
 	}
 
 	response.Success(ctx, v1.RawDataResponse{
@@ -521,12 +522,12 @@ func (h *Handler) DisplaySelectMergeStacktraces(ctx *server.Context) error {
 		return nil
 	}
 
-	log.Infof("DisplaySelectMergeStacktraces request: %v", req)
+	log.WithField("request", req).Debug("selecting merged stack traces")
 
 	resp, err := profileService.SelectMergeStacktraces(req)
 	if err != nil {
-		log.Warnf("SelectMergeStacktraces failed: %v", err)
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		log.WithError(err).Error("failed to select merged stack traces")
+		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
 		return nil
 	}
 
@@ -544,12 +545,12 @@ func (h *Handler) DisplayProfileTypes(ctx *server.Context) error {
 		return nil
 	}
 
-	log.Infof("DisplayProfileTypes request: %v", req)
+	log.WithField("request", req).Debug("listing profile types")
 
 	resp, err := profileService.ProfileTypes(req)
 	if err != nil {
-		log.Errorf("Failed to get profile types: %v", err)
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		log.WithError(err).Error("failed to list profile types")
+		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
 		return nil
 	}
 
@@ -567,11 +568,12 @@ func (h *Handler) DisplaySelectSeries(ctx *server.Context) error {
 		return nil
 	}
 
-	log.Infof("DisplaySelectSeries request: %v", req)
+	log.WithField("request", req).Debug("selecting profile series")
 
 	resp, err := profileService.SelectSeries(req)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		log.WithError(err).Error("failed to select profile series")
+		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
 		return nil
 	}
 
@@ -589,11 +591,12 @@ func (h *Handler) DisplayLabelNames(ctx *server.Context) error {
 		return nil
 	}
 
-	log.Infof("DisplayLabelNames request: %v", req)
+	log.WithField("request", req).Debug("listing profile label names")
 
 	resp, err := profileService.LabelNames(req)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		log.WithError(err).Error("failed to list profile label names")
+		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
 		return nil
 	}
 
@@ -611,11 +614,12 @@ func (h *Handler) DisplayLabelValues(ctx *server.Context) error {
 		return nil
 	}
 
-	log.Infof("DisplayLabelValues request: %v", req)
+	log.WithField("request", req).Debug("listing profile label values")
 
 	resp, err := profileService.LabelValues(req)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
+		log.WithError(err).Error("failed to list profile label values")
+		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
 		return nil
 	}
 

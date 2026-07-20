@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -81,8 +81,8 @@ func (h *Handler) start(ctx *server.Context) error {
 		Args:      &args,
 	})
 	if err != nil {
-		log.Errorf("Failed to create trace job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).Error("failed to create trace job")
+		return response.ErrInternal
 	}
 
 	response.Created(ctx, "/v1/traces/"+jobResult.JobID, v1.StartTraceResponse{
@@ -107,8 +107,8 @@ func (h *Handler) list(ctx *server.Context) error {
 
 	jobs, err := h.jobManager.List(ctx.UserID, ctx.IsAdmin, &filter)
 	if err != nil {
-		log.Errorf("Failed to list jobs: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).Error("failed to list trace jobs")
+		return response.ErrInternal
 	}
 
 	if err := listing.SortJobs(jobs, listParams.Sort); err != nil {
@@ -181,8 +181,8 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 	}
 
 	if err := h.jobManager.Stop(taskID, false); err != nil {
-		log.Errorf("Failed to stop job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).WithField("job_id", taskID).Error("failed to stop trace job")
+		return response.ErrInternal
 	}
 
 	response.Success(ctx, nil)
@@ -233,8 +233,8 @@ func (h *Handler) delete(ctx *server.Context) error {
 		if errors.Is(err, job.ErrCannotDeleteRunning) {
 			return response.ErrConflict.WithMessage("cannot delete running job")
 		}
-		log.Errorf("Failed to delete job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).WithField("job_id", taskID).Error("failed to delete trace job")
+		return response.ErrInternal
 	}
 
 	response.NoContent(ctx)

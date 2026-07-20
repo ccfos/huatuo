@@ -16,12 +16,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -58,7 +60,7 @@ type fatalWriter struct {
 }
 
 func (f *fatalWriter) Write(p []byte) (n int, err error) {
-	log.Errorf("%s", p)
+	log.WithField("output", strings.TrimSpace(string(p))).Error("cli command failed")
 	return f.cliErrWriter.Write(p)
 }
 
@@ -69,7 +71,7 @@ func buildOptionDir(dir string) (string, error) {
 
 	runningDir, err := executil.RunningDir()
 	if err != nil {
-		return "", fmt.Errorf("failed to find running directory: %w", err)
+		return "", fmt.Errorf("finding running directory: %w", err)
 	}
 
 	return filepath.Join(runningDir, "../", dir), nil
@@ -103,22 +105,24 @@ func main() {
 			return err
 		}
 		if err := config.Load(filepath.Join(configDir, ctx.String("config"))); err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
+			return fmt.Errorf("loading config: %w", err)
 		}
 		if config.Get().LogLevel != "" {
 			log.SetLevel(config.Get().LogLevel)
-			log.Infof("log level [%s] configured in file, use it", log.GetLevel())
+			log.WithField("level", log.GetLevel()).Info("configured log level")
 		}
 
 		/* pprof */
 		if ctx.Bool("enable-pprof") {
 			go func() {
-				log.Infof("pprof server started on [::]:6062")
+				log.WithField("address", ":6062").Info("starting pprof server")
 				server := &http.Server{
 					Addr:              ":6062",
 					ReadHeaderTimeout: 30 * time.Second,
 				}
-				log.Error(server.ListenAndServe())
+				if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					log.WithError(err).Error("pprof server stopped")
+				}
 			}()
 		}
 
@@ -140,7 +144,6 @@ func main() {
 	cli.ErrWriter = &fatalWriter{cli.ErrWriter}
 
 	if err := app.Run(os.Args); err != nil {
-		log.Errorf("Error: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
 	}
@@ -148,12 +151,12 @@ func main() {
 
 func mainAction(ctx *cli.Context) error {
 	if ctx.NArg() > 0 {
-		return fmt.Errorf("invalid param %v", ctx.Args())
+		return fmt.Errorf("unexpected arguments: %q", ctx.Args().Slice())
 	}
 
 	lk, err := pidfile.Lock("huatuo-apiserver")
 	if err != nil {
-		return fmt.Errorf("failed to lock pid file: %w", err)
+		return fmt.Errorf("locking pid file: %w", err)
 	}
 	defer lk.Unlock()
 
@@ -170,14 +173,14 @@ func mainAction(ctx *cli.Context) error {
 			config.Get().RuntimeCgroup.LimitMem,
 		),
 	); err != nil {
-		return fmt.Errorf("new runtime cgroup: %w", err)
+		return fmt.Errorf("creating runtime cgroup: %w", err)
 	}
 	defer func() {
 		_ = cgr.DeleteRuntime()
 	}()
 
 	if err := cgr.AddProc(uint64(os.Getpid())); err != nil {
-		return fmt.Errorf("cgroup add pid to cgroups.proc")
+		return fmt.Errorf("adding process to runtime cgroup: %w", err)
 	}
 
 	nodeAgent := job.NewHTTPNodeAgent()
@@ -188,7 +191,7 @@ func mainAction(ctx *cli.Context) error {
 		MaxTotalJobs:   config.Get().TaskConfig.MaxTotalProfilingTasks,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to initialize profiling manager: %w", err)
+		return fmt.Errorf("initializing profiling manager: %w", err)
 	}
 
 	tracingManager, err := job.NewManager(context.Background(), nodeAgent, job.ManagerConfig{
@@ -196,7 +199,7 @@ func mainAction(ctx *cli.Context) error {
 		MaxTotalJobs:   config.Get().TaskConfig.MaxTotalTracingTasks,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to initialize tracing manager: %w", err)
+		return fmt.Errorf("initializing tracing manager: %w", err)
 	}
 
 	// profiling flamegraph
@@ -207,12 +210,12 @@ func mainAction(ctx *cli.Context) error {
 		Index:    config.Get().ElasticSearch.Index,
 	}
 	if err := profileService.InitializeProfileFlamegraph(esConfig); err != nil {
-		return fmt.Errorf("initialize profiling flamegraph: %w", err)
+		return fmt.Errorf("initializing profiling flamegraph: %w", err)
 	}
 
 	promRegistry, err := InitMetricsCollector()
 	if err != nil {
-		return fmt.Errorf("initialize metrics collector: %w", err)
+		return fmt.Errorf("initializing metrics collector: %w", err)
 	}
 
 	if err := handlers.ServerStart(handlers.ServerOptions{
@@ -222,12 +225,12 @@ func mainAction(ctx *cli.Context) error {
 		TracingManager:   tracingManager,
 		VersionInfo:      &versionInfo,
 	}); err != nil {
-		return fmt.Errorf("handlers.APIServer: %w", err)
+		return fmt.Errorf("starting api server: %w", err)
 	}
 
 	waitExit := make(chan os.Signal, 1)
 	signal.Notify(waitExit, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
 	s := <-waitExit
-	log.Infof("huatuo-apiserver exit by signal %d", s)
+	log.WithField("signal", s).Info("stopping huatuo-apiserver")
 	return nil
 }
