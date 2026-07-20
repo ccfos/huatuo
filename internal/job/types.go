@@ -91,13 +91,13 @@ type Job struct {
 
 // JobQuery defines filters for searching jobs
 type JobQuery struct {
-	JobID     string
-	UserID    string
-	IsAdmin   bool
-	Container string
-	Host      string
-	Status    string
-	Type      string
+	ID          string
+	UserID      string
+	IsAdmin     bool
+	ContainerID string
+	Hostname    string
+	Status      string
+	Type        string
 }
 
 // JobCleanupQuery defines parameters for cleaning up old jobs

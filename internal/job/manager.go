@@ -216,10 +216,10 @@ func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, e
 		}
 
 		if filter != nil {
-			if filter.Container != "" && job.Container != filter.Container {
+			if filter.ContainerID != "" && job.Container != filter.ContainerID {
 				return true
 			}
-			if filter.Host != "" && job.Host != filter.Host {
+			if filter.Hostname != "" && job.Host != filter.Hostname {
 				return true
 			}
 			if filter.Status != "" && string(job.Status) != filter.Status {

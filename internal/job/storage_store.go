@@ -221,11 +221,11 @@ func toStorageQuery(q *JobQuery) driver.Query {
 	if q.UserID != "" && !q.IsAdmin {
 		filters = append(filters, driver.Filter{Field: "user_id", Op: driver.OpEq, Value: q.UserID})
 	}
-	if q.Container != "" {
-		filters = append(filters, driver.Filter{Field: "container", Op: driver.OpEq, Value: q.Container})
+	if q.ContainerID != "" {
+		filters = append(filters, driver.Filter{Field: "container", Op: driver.OpEq, Value: q.ContainerID})
 	}
-	if q.Host != "" {
-		filters = append(filters, driver.Filter{Field: "host", Op: driver.OpEq, Value: q.Host})
+	if q.Hostname != "" {
+		filters = append(filters, driver.Filter{Field: "host", Op: driver.OpEq, Value: q.Hostname})
 	}
 	if q.Status != "" {
 		filters = append(filters, driver.Filter{Field: "status", Op: driver.OpEq, Value: q.Status})

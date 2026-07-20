@@ -194,8 +194,8 @@ func profilingPrivateData(req *v1.CreateProfilingJobRequest) map[string]any {
 // hasRunningProfilingJob reports whether a profiling job is currently running on hostname for userID.
 func (h *Handler) hasRunningProfilingJob(hostname, userID string) (bool, error) {
 	filter := job.JobQuery{
-		Host:   hostname,
-		Status: "running",
+		Hostname: hostname,
+		Status:   "running",
 	}
 	jobs, err := h.jobManager.List(userID, false, &filter)
 	if err != nil {
@@ -279,9 +279,9 @@ func (h *Handler) list(ctx *server.Context) error {
 	}
 
 	filter := job.JobQuery{
-		Container: ctx.Query("container"),
-		Host:      ctx.Query("host"),
-		Status:    ctx.Query("status"),
+		ContainerID: ctx.Query("container"),
+		Hostname:    ctx.Query("host"),
+		Status:      ctx.Query("status"),
 	}
 	var allJobs []*job.Job
 	var listErr error

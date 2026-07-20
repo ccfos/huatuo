@@ -122,10 +122,10 @@ func TestStorageStoreSQLiteIntegration(t *testing.T) {
 	}
 
 	listedJobs, err := store.List(&JobQuery{
-		UserID:  "operator-2026",
-		IsAdmin: false,
-		Host:    "huatuo-dev",
-		Type:    "profiling_cpu",
+		UserID:   "operator-2026",
+		IsAdmin:  false,
+		Hostname: "huatuo-dev",
+		Type:     "profiling_cpu",
 	})
 	if err != nil {
 		t.Errorf("List() returned error: %v", err)

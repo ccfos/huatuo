@@ -99,10 +99,10 @@ func (h *Handler) list(ctx *server.Context) error {
 	}
 
 	filter := job.JobQuery{
-		Container: ctx.Query("container"),
-		Host:      ctx.Query("host"),
-		Status:    ctx.Query("status"),
-		Type:      "tracing",
+		ContainerID: ctx.Query("container"),
+		Hostname:    ctx.Query("host"),
+		Status:      ctx.Query("status"),
+		Type:        "tracing",
 	}
 
 	jobs, err := h.jobManager.List(ctx.UserID, ctx.IsAdmin, &filter)

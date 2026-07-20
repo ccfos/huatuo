@@ -436,19 +436,19 @@ func TestManagerList(t *testing.T) {
 			userID:  "operator-2026",
 			isAdmin: false,
 			filter: &JobQuery{
-				Container: "payment-worker",
-				Host:      "huatuo-dev",
-				Status:    string(JobStatusRunning),
-				Type:      "oncpu",
+				ContainerID: "payment-worker",
+				Hostname:    "huatuo-dev",
+				Status:      string(JobStatusRunning),
+				Type:        "oncpu",
 			},
 			wantIDs: []string{"job-live-2026", "job-archived-2026"},
 			wantQuery: JobQuery{
-				UserID:    "operator-2026",
-				IsAdmin:   false,
-				Container: "payment-worker",
-				Host:      "huatuo-dev",
-				Status:    string(JobStatusRunning),
-				Type:      "oncpu",
+				UserID:      "operator-2026",
+				IsAdmin:     false,
+				ContainerID: "payment-worker",
+				Hostname:    "huatuo-dev",
+				Status:      string(JobStatusRunning),
+				Type:        "oncpu",
 			},
 		},
 		{
@@ -890,7 +890,7 @@ func TestManagerCheckAndUpdateJobStatusRejectsMissingResult(t *testing.T) {
 
 func TestManagerListDoesNotMutateFilter(t *testing.T) {
 	manager := newTestManager(&stubJobStore{}, &stubNodeAgent{})
-	filter := &JobQuery{Host: "huatuo-dev"}
+	filter := &JobQuery{Hostname: "huatuo-dev"}
 	want := *filter
 
 	if _, err := manager.List("operator-2026", false, filter); err != nil {
