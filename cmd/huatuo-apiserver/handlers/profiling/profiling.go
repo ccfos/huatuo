@@ -90,40 +90,78 @@ func (h *Handler) create(ctx *server.Context) error {
 		return response.ErrConflict.WithMessage("there is already a profiling job running on this host")
 	}
 
-	agentTaskReq := job.NewAgentTaskReq{
+	taskReq := job.NewAgentTaskReq{
 		TracerName:   "profiler",
 		DataType:     "db-json",
 		Interval:     h.profilingConfig.AggregationInterval,
 		TraceTimeout: h.profilingConfig.ExecutionTimeout,
 	}
 	switch req.ProfilingType {
-	case "cpu":
-		if err := fillCPUTracerArgs(&agentTaskReq, req.BinaryMatchPath, req.Language); err != nil {
-			return response.ErrInvalidRequest.WithMessage(err.Error())
+	case string(profiling.TypeCPU):
+		language, err := profiling.ParseLanguage(req.Language)
+		if err != nil || !profiling.IsSupported(language, profiling.TypeCPU) {
+			return response.ErrInvalidRequest.WithMessage(
+				fmt.Sprintf("cpu profiling not supported for %q", req.Language),
+			)
 		}
-	case "memory":
-		if err := fillMemoryTracerArgs(&agentTaskReq, req.Language, req.MemoryMode); err != nil {
-			return response.ErrInvalidRequest.WithMessage(err.Error())
+		var typeArgs []string
+		if req.BinaryMatchPath != "" {
+			typeArgs = append(typeArgs, "--binary-match-path", req.BinaryMatchPath)
 		}
+		fillTracerArgs(&taskReq, profiling.TypeCPU, language, typeArgs...)
+	case string(profiling.TypeMemory):
+		language, err := profiling.ParseLanguage(req.Language)
+		if err != nil || !profiling.IsSupported(language, profiling.TypeMemory) {
+			return response.ErrInvalidRequest.WithMessage(
+				fmt.Sprintf("memory profiling not supported for %q", req.Language),
+			)
+		}
+		mode, err := profiling.ParseMemoryMode(strings.ToLower(req.MemoryMode))
+		if err != nil || !profiling.SupportsMemoryMode(language, mode) {
+			return response.ErrInvalidRequest.WithMessage(
+				fmt.Sprintf("memory mode not supported: %q", req.MemoryMode),
+			)
+		}
+		fillTracerArgs(
+			&taskReq,
+			profiling.TypeMemory,
+			language,
+			"--memory-mode", string(mode),
+		)
 	default:
 		return response.ErrInvalidRequest.WithMessage("not supported yet")
 	}
 
+	if req.Duration < taskReq.Interval*2 {
+		return response.ErrInvalidRequest.WithMessage(
+			"duration must cover at least two profiling intervals",
+		)
+	}
+	if req.Duration+taskReq.Interval >= 3600 {
+		return response.ErrInvalidRequest.WithMessage("duration plus profiling interval must be less than 3600 seconds")
+	}
+	if taskReq.TraceTimeout < req.Duration+taskReq.Interval {
+		taskReq.TraceTimeout = req.Duration + taskReq.Interval
+	}
 
 	// profiling job need to be stopped from outside, so we need to set duration to args.Duration * 2,
 	// job.Duration will control the actual profiling time
-	agentTaskReq.Duration = req.Duration * 2
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--duration", strconv.Itoa(agentTaskReq.Interval))
+	taskReq.Duration = req.Duration * 2
+	taskReq.TracerArgs = append(
+		taskReq.TracerArgs,
+		"--duration", strconv.Itoa(req.Duration),
+		"--aggr-interval", strconv.Itoa(taskReq.Interval),
+	)
 
 	if h.profilingConfig.MaxProfilerProcesses > 0 {
-		agentTaskReq.TracerArgs = append(
-			agentTaskReq.TracerArgs,
+		taskReq.TracerArgs = append(
+			taskReq.TracerArgs,
 			"--max-concurrent-procs",
 			strconv.Itoa(h.profilingConfig.MaxProfilerProcesses),
 		)
 	}
 
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs,
+	taskReq.TracerArgs = append(taskReq.TracerArgs,
 		"--output-format", "remote",
 		"--output-storage", "/var/run/huatuo-toolstream.sock")
 
@@ -138,7 +176,7 @@ func (h *Handler) create(ctx *server.Context) error {
 		Container: req.ContainerID,
 		Host:      req.Hostname,
 		JobType:   jobType,
-		Args:      &agentTaskReq,
+		Args:      &taskReq,
 	})
 	if err != nil {
 		log.WithError(err).Error("failed to create profiling job")
@@ -172,46 +210,21 @@ func (h *Handler) hasRunningProfilingJob(hostname, userID string) (bool, error) 
 	return false, nil
 }
 
-func fillMemoryTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetProcessLanguage, memoryMode string) error {
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", string(profiling.TypeMemory))
-
-	languageValue := targetProcessLanguage
-	modeValue := strings.ToLower(memoryMode)
-	if strings.HasPrefix(memoryMode, "NATIVE_") {
-		languageValue = string(profiling.LanguageC)
-		modeValue = strings.ToLower(strings.TrimPrefix(memoryMode, "NATIVE_"))
-	}
-	language, err := profiling.ParseLanguage(languageValue)
-	if err != nil {
-		return fmt.Errorf("memory profiling not supported for %q", targetProcessLanguage)
-	}
-	mode, err := profiling.ParseMemoryMode(modeValue)
-	if err != nil || !profiling.SupportsMemoryMode(language, mode) {
-		return fmt.Errorf("memory mode not supported: %q", memoryMode)
-	}
-
+func fillTracerArgs(
+	agentTaskReq *job.NewAgentTaskReq,
+	profilingType profiling.Type,
+	language profiling.Language,
+	typeArgs ...string,
+) {
 	agentTaskReq.TracerArgs = append(
 		agentTaskReq.TracerArgs,
-		"--memory-mode", string(mode),
+		"-t", string(profilingType),
+	)
+	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, typeArgs...)
+	agentTaskReq.TracerArgs = append(
+		agentTaskReq.TracerArgs,
 		"-l", string(language),
 	)
-	return nil
-}
-
-func fillCPUTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetExecPath, targetProcessLanguage string) error {
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", string(profiling.TypeCPU))
-
-	if targetExecPath != "" {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--binary-match-path", targetExecPath)
-	}
-
-	language, err := profiling.ParseLanguage(targetProcessLanguage)
-	if err != nil || !profiling.IsSupported(language, profiling.TypeCPU) {
-		return fmt.Errorf("cpu profiling not supported for %q", targetProcessLanguage)
-	}
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", string(language))
-
-	return nil
 }
 
 // patchOne stops a profiling job. Body must be {"status":"stopped"}.

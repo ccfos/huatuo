@@ -21,6 +21,7 @@ import (
 
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/job"
+	profiledef "huatuo-bamai/pkg/profiling"
 )
 
 func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
@@ -136,57 +137,36 @@ func TestCapabilitiesReturnsIndependentMemoryModeMap(t *testing.T) {
 	}
 }
 
-func TestFillMemoryTracerArgsUsesMemoryModeFlag(t *testing.T) {
-	req := &job.NewAgentTaskReq{}
-
-	err := fillMemoryTracerArgs(req, "", "NATIVE_PHYSICAL_USAGE")
-	if err != nil {
-		t.Fatalf("fillMemoryTracerArgs() error = %v", err)
-	}
-
-	want := []string{"-t", "memory", "--memory-mode", "physical_usage", "-l", "c"}
-	if strings.Join(req.TracerArgs, " ") != strings.Join(want, " ") {
-		t.Fatalf("TracerArgs = %q, want %q", req.TracerArgs, want)
-	}
-}
-
-func TestFillTracerArgsQuotesUnsupportedValues(t *testing.T) {
+func TestFillTracerArgs(t *testing.T) {
 	tests := []struct {
-		name      string
-		configure func(*job.NewAgentTaskReq) error
-		want      string
+		name          string
+		profilingType profiledef.Type
+		language      profiledef.Language
+		typeArgs      []string
+		want          []string
 	}{
 		{
-			name: "cpu language",
-			configure: func(req *job.NewAgentTaskReq) error {
-				return fillCPUTracerArgs(req, "", "unknown language")
-			},
-			want: `cpu profiling not supported for "unknown language"`,
+			name:          "cpu binary match path",
+			profilingType: profiledef.TypeCPU,
+			language:      profiledef.LanguageGo,
+			typeArgs:      []string{"--binary-match-path", "/usr/bin/example"},
+			want:          []string{"-t", "cpu", "--binary-match-path", "/usr/bin/example", "-l", "go"},
 		},
 		{
-			name: "memory language",
-			configure: func(req *job.NewAgentTaskReq) error {
-				return fillMemoryTracerArgs(req, "unknown language", "physical_alloc")
-			},
-			want: `memory profiling not supported for "unknown language"`,
-		},
-		{
-			name: "memory mode",
-			configure: func(req *job.NewAgentTaskReq) error {
-				return fillMemoryTracerArgs(req, "c", "unknown mode")
-			},
-			want: `memory mode not supported: "unknown mode"`,
+			name:          "memory mode",
+			profilingType: profiledef.TypeMemory,
+			language:      profiledef.LanguageC,
+			typeArgs:      []string{"--memory-mode", "physical_usage"},
+			want:          []string{"-t", "memory", "--memory-mode", "physical_usage", "-l", "c"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.configure(&job.NewAgentTaskReq{})
-			if err == nil {
-				t.Fatal("configure() error = nil, want non-nil")
-			}
-			if err.Error() != tt.want {
-				t.Fatalf("configure() error = %q, want %q", err, tt.want)
+			req := &job.NewAgentTaskReq{}
+			fillTracerArgs(req, tt.profilingType, tt.language, tt.typeArgs...)
+			if strings.Join(req.TracerArgs, " ") != strings.Join(tt.want, " ") {
+				t.Fatalf("TracerArgs = %q, want %q", req.TracerArgs, tt.want)
 			}
 		})
 	}

@@ -20,6 +20,8 @@ import (
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/storage/driver"
+
+	"github.com/rs/xid"
 )
 
 // DocumentCollection is the storage collection name for tracing documents.
@@ -27,6 +29,16 @@ const DocumentCollection = "tracing_documents"
 
 // DocumentStoreMapper maps tracing documents to storage records.
 type DocumentStoreMapper struct{}
+
+// ProfileDocumentStoreMapper preserves every aggregation window for a profiling task.
+type ProfileDocumentStoreMapper struct {
+	DocumentStoreMapper
+}
+
+// ID returns a unique storage ID while tracer_id keeps snapshots queryable as one task.
+func (ProfileDocumentStoreMapper) ID(_ *Document) string {
+	return xid.New().String()
+}
 
 func tracingDocumentTimeValue(raw string, fallback time.Time) time.Time {
 	if raw == "" {

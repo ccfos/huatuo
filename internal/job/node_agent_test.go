@@ -141,7 +141,10 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		args := &NewAgentTaskReq{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
+			Interval:     10,
+			Duration:     120,
 			DataType:     "flamegraph",
+			TracerArgs:   []string{"--duration", "60", "--aggr-interval", "10"},
 		}
 
 		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", args)
@@ -166,6 +169,15 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		}
 		if _, ok := payload["trace_timeout"]; ok {
 			t.Errorf("StartTask() request body=%q, should use agent field timeout instead of trace_timeout", requestBody)
+		}
+		if got := payload["interval"]; got != float64(10) {
+			t.Errorf("StartTask() interval payload=%v, want 10", got)
+		}
+		if got := payload["duration"]; got != float64(120) {
+			t.Errorf("StartTask() duration payload=%v, want 120", got)
+		}
+		if got := payload["trace_args"]; fmt.Sprint(got) != "[--duration 60 --aggr-interval 10]" {
+			t.Errorf("StartTask() trace_args payload=%v, want profiler duration and interval", got)
 		}
 	})
 

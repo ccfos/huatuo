@@ -91,7 +91,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 			ESUsername:  cfg.Storage.ES.Username,
 			ESPassword:  cfg.Storage.ES.Password,
 			ESIndex:     cfg.Storage.ES.Index,
-		}, profiler.MetadataCollection, tracing.DocumentStoreMapper{})
+		}, profiler.MetadataCollection, tracing.ProfileDocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)
 		}
