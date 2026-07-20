@@ -15,11 +15,15 @@
 
 volatile const long long mono_wall_offset = 0;
 volatile const long long rxlat_thresh_netif = 5 * 1000 * 1000;	    // 5ms
-volatile const long long rxlat_thresh_tcpv4 = 10 * 1000 * 1000;	    // 10ms
+volatile const long long rxlat_thresh_tcp = 10 * 1000 * 1000;	    // 10ms
 volatile const long long rxlat_thresh_usercopy = 115 * 1000 * 1000; // 115ms
 
 BPF_RATELIMIT(rate, 1, 100);
 
+// Addresses are stored as 16-byte fields so a single layout serves both
+// families: IPv4 occupies the low 4 bytes (network order, rest zero), IPv6
+// uses all 16. addr_family (AF_INET / AF_INET6) tells userspace how to
+// format them. Mirrored byte-for-byte by net_tx_latency.c.
 struct perf_event_t {
 	char comm[COMPAT_TASK_COMM_LEN];
 	u64 latency;
@@ -27,8 +31,10 @@ struct perf_event_t {
 	u64 pkt_len;
 	u16 tcp_sport;
 	u16 tcp_dport;
-	u32 tcp_saddr;
-	u32 tcp_daddr;
+	u8 addr_family;
+	u8 _pad1[3];
+	u8 tcp_saddr[16];
+	u8 tcp_daddr[16];
 	u32 tcp_seq;
 	u32 tcp_ack_seq;
 	u8 tcp_state;
@@ -41,7 +47,7 @@ struct perf_event_t {
 
 enum rx_lat_stage {
 	RX_STAGE_NETIF,
-	RX_STAGE_TCPV4,
+	RX_STAGE_TCP,
 	RX_STAGE_USERCOPY,
 };
 
@@ -115,15 +121,31 @@ static inline u64 delta_now_skb_tstamp(struct sk_buff *skb)
 	return now - tstamp;
 }
 
-static inline bool skb_is_ipv4_tcp(struct sk_buff *skb)
+// skb_tcp_family returns AF_INET / AF_INET6 for TCP packets, else 0, so the
+// protocol-agnostic RX tracepoints accept both families. The tcp_v4_rcv /
+// tcp_v6_rcv kprobes need no check — the symbol already implies the family.
+static inline u8 skb_tcp_family(struct sk_buff *skb)
 {
-	if (unlikely(BPF_CORE_READ(skb, protocol) != bpf_ntohs(ETH_P_IP)))
-		return false;
+	__be16 proto = BPF_CORE_READ(skb, protocol);
 
-	struct iphdr ip_hdr;
+	if (proto == bpf_ntohs(ETH_P_IP)) {
+		struct iphdr h;
 
-	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
-	return ip_hdr.protocol == IPPROTO_TCP;
+		bpf_probe_read(&h, sizeof(h), skb_network_header(skb));
+		return (h.protocol == IPPROTO_TCP) ? AF_INET : 0;
+	}
+
+	if (proto == bpf_ntohs(ETH_P_IPV6)) {
+		struct ipv6hdr h;
+
+		bpf_probe_read(&h, sizeof(h), skb_network_header(skb));
+		// NOTE: nexthdr check does not walk extension header chains;
+		// IPv6+EH TCP packets are caught by the tcp_v6_rcv
+		// kprobe instead.
+		return (h.nexthdr == IPPROTO_TCP) ? AF_INET6 : 0;
+	}
+
+	return 0;
 }
 
 static inline u64 skb_latency_check(struct sk_buff *skb, u64 threshold)
@@ -133,21 +155,38 @@ static inline u64 skb_latency_check(struct sk_buff *skb, u64 threshold)
 }
 
 static inline void
-submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
+submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where,
+		   u8 family)
 {
 	struct perf_event_t event = {};
-	struct iphdr ip_hdr;
 	struct tcphdr tcp_hdr;
 	struct net_device *dev;
 
 	if (bpf_ratelimited(&rate))
 		return;
 
-	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
+	if (family == AF_INET6) {
+		struct ipv6hdr ip6_hdr;
+
+		bpf_probe_read(&ip6_hdr, sizeof(ip6_hdr),
+			       skb_network_header(skb));
+		__builtin_memcpy(event.tcp_saddr, &ip6_hdr.saddr,
+				 sizeof(ip6_hdr.saddr));
+		__builtin_memcpy(event.tcp_daddr, &ip6_hdr.daddr,
+				 sizeof(ip6_hdr.daddr));
+	} else {
+		struct iphdr ip_hdr;
+
+		bpf_probe_read(&ip_hdr, sizeof(ip_hdr),
+			       skb_network_header(skb));
+		__builtin_memcpy(event.tcp_saddr, &ip_hdr.saddr,
+				 sizeof(ip_hdr.saddr));
+		__builtin_memcpy(event.tcp_daddr, &ip_hdr.daddr,
+				 sizeof(ip_hdr.daddr));
+	}
 	bpf_probe_read(&tcp_hdr, sizeof(tcp_hdr), skb_transport_header(skb));
+	event.addr_family = family;
 	event.latency = lat;
-	event.tcp_saddr = ip_hdr.saddr;
-	event.tcp_daddr = ip_hdr.daddr;
 	event.tcp_sport = tcp_hdr.source;
 	event.tcp_dport = tcp_hdr.dest;
 	event.tcp_seq = tcp_hdr.seq;
@@ -180,15 +219,16 @@ SEC("tracepoint/net/netif_receive_skb")
 int netif_receive_skb_prog(struct trace_event_raw_net_dev_template *args)
 {
 	struct sk_buff *skb = (struct sk_buff *)args->skbaddr;
+	u8 family = skb_tcp_family(skb);
 
-	if (!skb_is_ipv4_tcp(skb))
+	if (!family)
 		return 0;
 
 	u64 delta = skb_latency_check(skb, rxlat_thresh_netif);
 	if (!delta)
 		return 0;
 
-	submit_rxlat_event(args, skb, delta, RX_STAGE_NETIF);
+	submit_rxlat_event(args, skb, delta, RX_STAGE_NETIF, family);
 	return 0;
 }
 
@@ -197,11 +237,27 @@ int tcp_v4_rcv_prog(struct pt_regs *ctx)
 {
 	struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM1_CORE(ctx);
 
-	u64 delta = skb_latency_check(skb, rxlat_thresh_tcpv4);
+	u64 delta = skb_latency_check(skb, rxlat_thresh_tcp);
 	if (!delta)
 		return 0;
 
-	submit_rxlat_event(ctx, skb, delta, RX_STAGE_TCPV4);
+	submit_rxlat_event(ctx, skb, delta, RX_STAGE_TCP, AF_INET);
+	return 0;
+}
+
+// IPv6 counterpart of tcp_v4_rcv. Only attached when the kernel actually
+// exports the symbol (CONFIG_IPV6); the userspace loader gates it via
+// HasKprobeFunction("tcp_v6_rcv") so IPv4-only kernels are unaffected.
+SEC("kprobe/tcp_v6_rcv")
+int tcp_v6_rcv_prog(struct pt_regs *ctx)
+{
+	struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM1_CORE(ctx);
+
+	u64 delta = skb_latency_check(skb, rxlat_thresh_tcp);
+	if (!delta)
+		return 0;
+
+	submit_rxlat_event(ctx, skb, delta, RX_STAGE_TCP, AF_INET6);
 	return 0;
 }
 
@@ -210,15 +266,16 @@ int skb_copy_datagram_iovec_prog(
 	struct trace_event_raw_skb_copy_datagram_iovec *args)
 {
 	struct sk_buff *skb = (struct sk_buff *)args->skbaddr;
+	u8 family = skb_tcp_family(skb);
 
-	if (!skb_is_ipv4_tcp(skb))
+	if (!family)
 		return 0;
 
 	u64 delta = skb_latency_check(skb, rxlat_thresh_usercopy);
 	if (!delta)
 		return 0;
 
-	submit_rxlat_event(args, skb, delta, RX_STAGE_USERCOPY);
+	submit_rxlat_event(args, skb, delta, RX_STAGE_USERCOPY, family);
 	return 0;
 }
 
