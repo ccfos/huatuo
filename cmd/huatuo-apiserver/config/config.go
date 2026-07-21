@@ -62,8 +62,8 @@ func (c ProfilingConfig) Validate() error {
 	return nil
 }
 
-// ComConfig global common configuration
-type ComConfig struct {
+// Config contains API server configuration.
+type Config struct {
 	LogLevel string `default:"Info"`
 
 	// RuntimeCgroup for huatuo resource
@@ -115,21 +115,32 @@ type ComConfig struct {
 	Profiling ProfilingConfig
 }
 
-var userConfig = &ComConfig{}
+var userConfig = &Config{}
+
+// LoadFile loads and validates a fresh configuration instance.
+func LoadFile(configFile string) (*Config, error) {
+	cfg := &Config{}
+	if err := internalconfig.Load(configFile, cfg); err != nil {
+		return nil, err
+	}
+	if err := cfg.Profiling.Validate(); err != nil {
+		return nil, fmt.Errorf("validating profiling config: %w", err)
+	}
+	cfg.RuntimeCgroup.LimitMem *= 1024 * 1024
+	return cfg, nil
+}
 
 // Load load config file
 func Load(configFile string) error {
-	if err := internalconfig.Load(configFile, userConfig); err != nil {
+	cfg, err := LoadFile(configFile)
+	if err != nil {
 		return err
 	}
-	if err := userConfig.Profiling.Validate(); err != nil {
-		return fmt.Errorf("validating profiling config: %w", err)
-	}
-	userConfig.RuntimeCgroup.LimitMem *= 1024 * 1024
+	userConfig = cfg
 	return nil
 }
 
 // Get return the global configuration obj
-func Get() *ComConfig {
+func Get() *Config {
 	return userConfig
 }

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,9 +22,6 @@ import (
 
 	"huatuo-bamai/internal/job"
 )
-
-// StatusStopped is the only status value accepted by PATCH endpoints.
-const StatusStopped = "stopped"
 
 // SortJobs sorts jobs in place. Supported keys: start_time, end_time, host, container.
 // A leading "-" means descending. Empty key defaults to "-start_time" (newest first).

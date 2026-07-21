@@ -15,128 +15,54 @@
 package profiling
 
 import (
+	"context"
 	"net/http"
 
 	"huatuo-bamai/internal/log"
-	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 
 	"github.com/gin-gonic/gin/binding"
-	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
-	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 )
 
-// DisplaySelectMergeStacktraces handles /querier.v1.QuerierService/SelectMergeStacktraces.
-func (h *Handler) DisplaySelectMergeStacktraces(ctx *server.Context) error {
-	req := &querierv1.SelectMergeStacktracesRequest{}
+func handleProto[Request, Response any](
+	ctx *server.Context,
+	operation string,
+	invoke func(context.Context, *Request) (*Response, error),
+) error {
+	req := new(Request)
 	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
+		ctx.JSON(http.StatusBadRequest, map[string]any{"message": "invalid protobuf request"})
 		return nil
 	}
 
-	log.WithField("request", req).Debug("selecting merged stack traces")
-
-	resp, err := profileService.SelectMergeStacktraces(req)
+	resp, err := invoke(ctx.Request().Context(), req)
 	if err != nil {
-		log.WithError(err).Error("failed to select merged stack traces")
+		log.WithError(err).WithField("operation", operation).Error("profile query failed")
 		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
 		return nil
 	}
 
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
 	ctx.Header("Content-Type", "application/proto")
 	ctx.ProtoBuf(http.StatusOK, resp)
 	return nil
 }
 
-// DisplayProfileTypes handles /querier.v1.QuerierService/ProfileTypes.
-func (h *Handler) DisplayProfileTypes(ctx *server.Context) error {
-	req := &querierv1.ProfileTypesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	log.WithField("request", req).Debug("listing profile types")
-
-	resp, err := profileService.ProfileTypes(req)
-	if err != nil {
-		log.WithError(err).Error("failed to list profile types")
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
-	return nil
+func (h *Handler) displaySelectMergeStacktraces(ctx *server.Context) error {
+	return handleProto(ctx, "select_merge_stacktraces", h.profileService.SelectMergeStacktraces)
 }
 
-// DisplaySelectSeries handles /querier.v1.QuerierService/SelectSeries.
-func (h *Handler) DisplaySelectSeries(ctx *server.Context) error {
-	req := &querierv1.SelectSeriesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	log.WithField("request", req).Debug("selecting profile series")
-
-	resp, err := profileService.SelectSeries(req)
-	if err != nil {
-		log.WithError(err).Error("failed to select profile series")
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
-	return nil
+func (h *Handler) displayProfileTypes(ctx *server.Context) error {
+	return handleProto(ctx, "profile_types", h.profileService.ProfileTypes)
 }
 
-// DisplayLabelNames handles /querier.v1.QuerierService/LabelNames.
-func (h *Handler) DisplayLabelNames(ctx *server.Context) error {
-	req := &typesv1.LabelNamesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	log.WithField("request", req).Debug("listing profile label names")
-
-	resp, err := profileService.LabelNames(req)
-	if err != nil {
-		log.WithError(err).Error("failed to list profile label names")
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
-	return nil
+func (h *Handler) displaySelectSeries(ctx *server.Context) error {
+	return handleProto(ctx, "select_series", h.profileService.SelectSeries)
 }
 
-// DisplayLabelValues handles /querier.v1.QuerierService/LabelValues.
-func (h *Handler) DisplayLabelValues(ctx *server.Context) error {
-	req := &typesv1.LabelValuesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
-	}
+func (h *Handler) displayLabelNames(ctx *server.Context) error {
+	return handleProto(ctx, "label_names", h.profileService.LabelNames)
+}
 
-	log.WithField("request", req).Debug("listing profile label values")
-
-	resp, err := profileService.LabelValues(req)
-	if err != nil {
-		log.WithError(err).Error("failed to list profile label values")
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
-	return nil
+func (h *Handler) displayLabelValues(ctx *server.Context) error {
+	return handleProto(ctx, "label_values", h.profileService.LabelValues)
 }

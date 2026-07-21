@@ -15,16 +15,24 @@
 package main
 
 import (
-	"huatuo-bamai/pkg/metric/runtime"
+	"context"
+	"fmt"
 
-	"github.com/prometheus/client_golang/prometheus"
+	"huatuo-bamai/internal/profiler/service"
 )
 
-var promNamespace = "huatuo_apiserver"
+func setupProfileFlamegraph(d *Daemon) (func(context.Context) error, error) {
+	esConfig := &service.ElasticSearchConfig{
+		Address:  d.opts.Config.ElasticSearch.Address,
+		Username: d.opts.Config.ElasticSearch.Username,
+		Password: d.opts.Config.ElasticSearch.Password,
+		Index:    d.opts.Config.ElasticSearch.Index,
+	}
+	profileService, err := service.NewService(d.ctx, esConfig)
+	if err != nil {
+		return nil, fmt.Errorf("initialize profiling flamegraph: %w", err)
+	}
+	d.profileService = profileService
 
-func InitMetricsCollector() (*prometheus.Registry, error) {
-	reg := prometheus.NewRegistry()
-
-	runtime.RegisterCollector(reg, promNamespace)
-	return reg, nil
+	return profileService.Close, nil
 }

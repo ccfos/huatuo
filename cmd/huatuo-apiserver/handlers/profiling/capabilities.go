@@ -24,7 +24,7 @@ import (
 	"huatuo-bamai/pkg/profiling"
 )
 
-func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, error) {
+func buildCapabilitiesResponse(h *Handler) v1.ProfilingCapabilitiesResponse {
 	cpuLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeCPU))
 	sort.Strings(cpuLanguages)
 
@@ -53,7 +53,7 @@ func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, er
 		AggregationInterval: cfg.AggregationInterval,
 		ExecutionTimeout:    cfg.ExecutionTimeout,
 		MaxProfilerProcs:    cfg.MaxProfilerProcs,
-	}, nil
+	}
 }
 
 func languageStrings(languages []profiling.Language) []string {
@@ -69,10 +69,6 @@ func languageStrings(languages []profiling.Language) []string {
 // discover supported profiling types, languages, memory modes, and default
 // configuration values without hardcoding them.
 func (h *Handler) capabilities(ctx *server.Context) error {
-	resp, err := buildCapabilitiesResponse(h)
-	if err != nil {
-		return response.ErrInternal.WithMessage(err.Error())
-	}
-	response.Success(ctx, resp)
+	response.Success(ctx, buildCapabilitiesResponse(h))
 	return nil
 }

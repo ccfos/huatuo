@@ -23,14 +23,13 @@ import (
 
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/listing"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/pkg/profiling"
 )
 
 type profilingJobListQuery struct {
-	ContainerID string `form:"containerID"`
+	ContainerID string `form:"container_id"`
 	Hostname    string `form:"hostname"`
 	Status      string `form:"status"`
 	Type        string `form:"type"`
@@ -69,6 +68,7 @@ func buildCreateProfilingJobRequest(
 	taskReq := job.AgentTaskRequest{
 		TracerName:   "profiler",
 		DataType:     "db-json",
+		ContainerID:  req.ContainerID,
 		Interval:     cfg.AggregationInterval,
 		TraceTimeout: cfg.ExecutionTimeout,
 	}
@@ -176,6 +176,9 @@ func parseProfilingJobListRequest(ctx *server.Context) (*profilingJobListRequest
 	if err := ctx.ShouldBindQuery(&query); err != nil {
 		return nil, fmt.Errorf("binding profiling job query: %w", err)
 	}
+	if query.ContainerID == "" {
+		query.ContainerID = ctx.Query("containerID")
+	}
 	jobQueries, err := buildProfilingJobQueries(query)
 	if err != nil {
 		return nil, err
@@ -246,7 +249,7 @@ func parsePatchProfilingJobRequest(ctx *server.Context) (*patchProfilingJobReque
 	if err := ctx.ShouldBindJSON(&body); err != nil {
 		return nil, err
 	}
-	if body.Status != listing.StatusStopped {
+	if body.Status != string(job.JobStatusStopped) {
 		return nil, errors.New(`status must be "stopped"`)
 	}
 

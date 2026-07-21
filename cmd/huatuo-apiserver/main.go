@@ -18,219 +18,158 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers"
-	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pidfile"
 	profileService "huatuo-bamai/internal/profiler/service"
-	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/internal/version"
 
-	"github.com/urfave/cli/v2"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
-	apiServerToolName    = "huatuo-apiserver"
-	huatuoAPIServerUsage = "Control-plane API server for orchestrating HuaTuo profiling and tracing jobs across hosts"
-	optionConfigDir      = "config-dir"
+	appName  = "huatuo-apiserver"
+	appUsage = "Control-plane API server for orchestrating HuaTuo profiling and tracing jobs across hosts"
+
+	shutdownTimeout = 10 * time.Second
 )
 
-// Set by Makefile via -ldflags -X. Must live in package main; an empty
-// value falls back to version.Devel via version.Resolve.
 var (
-	AppVersion   string
+	// AppGitCommit is the source revision the binary was built from, set by Makefile.
 	AppGitCommit string
+	// AppBuildTime is the build timestamp, set by Makefile.
 	AppBuildTime string
-	versionInfo  version.Info
+	// AppVersion is the release version read from the VERSION file, set by Makefile.
+	AppVersion string
 )
-
-type fatalWriter struct {
-	cliErrWriter io.Writer
-}
-
-func (f *fatalWriter) Write(p []byte) (n int, err error) {
-	log.WithField("output", strings.TrimSpace(string(p))).Error("cli command failed")
-	return f.cliErrWriter.Write(p)
-}
-
-func buildOptionDir(dir string) (string, error) {
-	if filepath.IsAbs(dir) {
-		return dir, nil
-	}
-
-	runningDir, err := executil.RunningDir()
-	if err != nil {
-		return "", fmt.Errorf("finding running directory: %w", err)
-	}
-
-	return filepath.Join(runningDir, "../", dir), nil
-}
 
 func main() {
-	app := cli.NewApp()
-	app.Name = apiServerToolName
-	app.Usage = huatuoAPIServerUsage
-
-	app.Flags = []cli.Flag{
-		&cli.StringFlag{
-			Name:  "config",
-			Value: "huatuo-apiserver.conf",
-			Usage: "huatuo-apiserver config file",
-		},
-		&cli.StringFlag{
-			Name:  optionConfigDir,
-			Value: "conf",
-			Usage: "huatuo config dir",
-		},
-		&cli.BoolFlag{
-			Name:  "enable-pprof",
-			Usage: "package pprof serves via its HTTP server runtime profiling data, default(false)",
-		},
-	}
-
-	app.Before = func(ctx *cli.Context) error {
-		configDir, err := buildOptionDir(ctx.String(optionConfigDir))
-		if err != nil {
-			return err
-		}
-		if err := config.Load(filepath.Join(configDir, ctx.String("config"))); err != nil {
-			return fmt.Errorf("loading config: %w", err)
-		}
-		if config.Get().LogLevel != "" {
-			log.SetLevel(config.Get().LogLevel)
-			log.WithField("level", log.GetLevel()).Info("configured log level")
-		}
-
-		/* pprof */
-		if ctx.Bool("enable-pprof") {
-			go func() {
-				log.WithField("address", ":6062").Info("starting pprof server")
-				server := &http.Server{
-					Addr:              ":6062",
-					ReadHeaderTimeout: 30 * time.Second,
-				}
-				if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-					log.WithError(err).Error("pprof server stopped")
-				}
-			}()
-		}
-
-		return nil
-	}
-
-	app.Action = mainAction
-
-	versionInfo = version.Wire(app, version.Seed{
-		Name:      apiServerToolName,
+	app := buildCommand(version.Seed{
+		Name:      appName,
 		Version:   AppVersion,
 		GitCommit: AppGitCommit,
 		BuildTime: AppBuildTime,
 	})
 
-	// If the command returns an error, cli takes upon itself to print
-	// the error on cli.ErrWriter and exit.
-	// Use our own writer here to ensure the log gets sent to the right location.
-	cli.ErrWriter = &fatalWriter{cli.ErrWriter}
-
 	if err := app.Run(os.Args); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		log.WithError(err).Error("app run failed")
 		os.Exit(1)
 	}
 }
 
-func mainAction(ctx *cli.Context) error {
-	if ctx.NArg() > 0 {
-		return fmt.Errorf("unexpected arguments: %q", ctx.Args().Slice())
+func mainAction(opts *Options) error {
+	return NewDaemon(opts).Run(context.Background())
+}
+
+type setupFunc func(*Daemon) (func(context.Context) error, error)
+
+type daemonStep struct {
+	name  string
+	setup setupFunc
+}
+
+// Daemon owns handles produced by startup steps and consumed by later steps.
+type Daemon struct {
+	opts *Options
+	ctx  context.Context
+
+	metrics        *prometheus.Registry
+	jobManager     *job.Manager
+	profileService *profileService.Service
+	steps          []daemonStep
+}
+
+func NewDaemon(opts *Options) *Daemon {
+	return &Daemon{
+		opts: opts,
+		steps: []daemonStep{
+			{name: "pidfile", setup: lockPidfile},
+			{name: "cgroup", setup: setupCgroup},
+			{name: "profiling-flamegraph", setup: setupProfileFlamegraph},
+			{name: "job-managers", setup: setupJobManagers},
+			{name: "metrics", setup: setupMetrics},
+			{name: "handlers", setup: startHandlers},
+		},
+	}
+}
+
+// Run starts each module in order and tears initialized modules down in reverse.
+func (d *Daemon) Run(ctx context.Context) error {
+	d.ctx = ctx
+	cleanups := make([]func(context.Context) error, 0, len(d.steps))
+
+	shutdown := func() error {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		var errs []error
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			if err := cleanups[i](shutdownCtx); err != nil {
+				errs = append(errs, err)
+			}
+		}
+
+		return errors.Join(errs...)
 	}
 
-	lk, err := pidfile.Lock("huatuo-apiserver")
-	if err != nil {
-		return fmt.Errorf("locking pid file: %w", err)
+	for _, step := range d.steps {
+		cleanup, err := step.setup(d)
+		if err != nil {
+			if cleanupErr := shutdown(); cleanupErr != nil {
+				log.WithError(cleanupErr).Warn("startup rollback completed with errors")
+			}
+			return fmt.Errorf("%s: %w", step.name, err)
+		}
+		if cleanup != nil {
+			cleanups = append(cleanups, cleanup)
+		}
 	}
-	defer lk.Unlock()
 
-	// init cpu quota
-	cgr, err := cgroups.NewManager()
-	if err != nil {
+	log.Info("huatuo-apiserver started")
+	s := d.waitForSignal(ctx)
+	log.WithField("signal", s).Info("huatuo-apiserver shutting down")
+
+	if err := shutdown(); err != nil {
+		log.WithError(err).Warn("shutdown completed with errors")
 		return err
 	}
 
-	if err := cgr.NewRuntime(
-		ctx.App.Name,
-		cgroups.ToSpec(
-			float64(config.Get().RuntimeCgroup.LimitCPU),
-			config.Get().RuntimeCgroup.LimitMem,
-		),
-	); err != nil {
-		return fmt.Errorf("creating runtime cgroup: %w", err)
-	}
-	defer func() {
-		_ = cgr.DeleteRuntime()
-	}()
-
-	if err := cgr.AddProc(uint64(os.Getpid())); err != nil {
-		return fmt.Errorf("adding process to runtime cgroup: %w", err)
-	}
-
-	nodeAgent := job.NewHTTPNodeAgent()
-
-	// Create separate managers for profiling and tracing
-	profilingManager, err := job.NewManager(context.Background(), nodeAgent, job.ManagerConfig{
-		MaxJobsPerHost: config.Get().TaskConfig.MaxProfilingTasksPerHost,
-		MaxTotalJobs:   config.Get().TaskConfig.MaxTotalProfilingTasks,
-	})
-	if err != nil {
-		return fmt.Errorf("initializing profiling manager: %w", err)
-	}
-
-	tracingManager, err := job.NewManager(context.Background(), nodeAgent, job.ManagerConfig{
-		MaxJobsPerHost: config.Get().TaskConfig.MaxTracingTasksPerHost,
-		MaxTotalJobs:   config.Get().TaskConfig.MaxTotalTracingTasks,
-	})
-	if err != nil {
-		return fmt.Errorf("initializing tracing manager: %w", err)
-	}
-
-	// profiling flamegraph
-	esConfig := &profileService.ElasticSearchConfig{
-		Address:  config.Get().ElasticSearch.Address,
-		Username: config.Get().ElasticSearch.Username,
-		Password: config.Get().ElasticSearch.Password,
-		Index:    config.Get().ElasticSearch.Index,
-	}
-	if err := profileService.InitializeProfileFlamegraph(esConfig); err != nil {
-		return fmt.Errorf("initializing profiling flamegraph: %w", err)
-	}
-
-	promRegistry, err := InitMetricsCollector()
-	if err != nil {
-		return fmt.Errorf("initializing metrics collector: %w", err)
-	}
-
-	if err := handlers.ServerStart(handlers.ServerOptions{
-		Addr:             config.Get().APIServer.TCPAddr,
-		PromReg:          promRegistry,
-		ProfilingManager: profilingManager,
-		TracingManager:   tracingManager,
-		VersionInfo:      &versionInfo,
-	}); err != nil {
-		return fmt.Errorf("starting api server: %w", err)
-	}
-
-	waitExit := make(chan os.Signal, 1)
-	signal.Notify(waitExit, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
-	s := <-waitExit
-	log.WithField("signal", s).Info("stopping huatuo-apiserver")
 	return nil
+}
+
+func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
+	waitCh := make(chan os.Signal, 1)
+	signal.Notify(
+		waitCh,
+		syscall.SIGHUP,
+		syscall.SIGQUIT,
+		syscall.SIGUSR1,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
+	defer signal.Stop(waitCh)
+
+	select {
+	case <-ctx.Done():
+		return nil
+	case s := <-waitCh:
+		return s
+	}
+}
+
+func lockPidfile(_ *Daemon) (func(context.Context) error, error) {
+	lk, err := pidfile.Lock(appName)
+	if err != nil {
+		return nil, fmt.Errorf("lock pid file: %w", err)
+	}
+
+	return func(context.Context) error {
+		lk.Unlock()
+		return nil
+	}, nil
 }

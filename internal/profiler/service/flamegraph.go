@@ -15,6 +15,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -29,29 +30,41 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
-var profileStorage *ProfileStorage
-
 type ElasticSearchConfig struct {
 	Debug                              bool
 	Address, Username, Password, Index string
 }
 
-// InitializeProfileFlamegraph initializes profiling flamegraph.
-func InitializeProfileFlamegraph(esConfig *ElasticSearchConfig) (err error) {
-	profileStorage, err = NewProfileStorage(
+// Service provides profile query operations.
+type Service struct {
+	profileStorage *ProfileStorage
+}
+
+// NewService initializes a profile query service.
+func NewService(ctx context.Context, esConfig *ElasticSearchConfig) (*Service, error) {
+	profileStorage, err := NewProfileStorageContext(
+		ctx,
 		esConfig.Address,
 		esConfig.Username,
 		esConfig.Password,
 		esConfig.Index,
 	)
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return &Service{profileStorage: profileStorage}, nil
+}
+
+// Close releases profile query resources.
+func (s *Service) Close(ctx context.Context) error {
+	return s.profileStorage.Close(ctx)
 }
 
 // SelectMergeStacktraces selects merge stacktraces by request.
 //
 //	request: querierv1.SelectMergeStacktracesRequest
 //	response: querierv1.SelectMergeStacktracesResponse
-func SelectMergeStacktraces(req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error) {
+func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error) {
 	filter := &SearchFilter{
 		StartTime:   time.UnixMilli(req.Start),
 		EndTime:     time.UnixMilli(req.End),
@@ -83,6 +96,8 @@ func SelectMergeStacktraces(req *querierv1.SelectMergeStacktracesRequest) (*quer
 			filter.ID = label.Value
 		case "hostname":
 			filter.Hostname = label.Value
+		case "container_id":
+			filter.ContainerID = label.Value
 		case "container_hostname":
 			filter.ContainerHostname = label.Value
 		default:
@@ -90,12 +105,12 @@ func SelectMergeStacktraces(req *querierv1.SelectMergeStacktracesRequest) (*quer
 		}
 	}
 
-	if filter.ID == "" && filter.Hostname == "" && filter.ContainerHostname == "" {
-		return nil, fmt.Errorf("id or *hostname must be specified")
+	if filter.ID == "" && filter.Hostname == "" && filter.ContainerID == "" && filter.ContainerHostname == "" {
+		return nil, fmt.Errorf("id, hostname, or container must be specified")
 	}
 
 	// search
-	profileDocs, err := profileStorage.SearchProfiles(filter)
+	profileDocs, err := s.profileStorage.SearchProfilesContext(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("search profiles: %w", err)
 	}
@@ -189,14 +204,14 @@ func SelectMergeStacktraces(req *querierv1.SelectMergeStacktracesRequest) (*quer
 //
 //	request: querierv1.ProfileTypesRequest
 //	response: querierv1.ProfileTypesResponse
-func ProfileTypes(req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error) {
+func (s *Service) ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error) {
 	filter := &SearchFilter{
 		StartTime: time.UnixMilli(req.Start),
 		EndTime:   time.UnixMilli(req.End),
 		Limit:     500,
 	}
 
-	types, err := profileStorage.AggregationsByField(filter, "tracer_data.flamedata.profile_type")
+	types, err := s.profileStorage.AggregationsByFieldContext(ctx, filter, "tracer_data.flamedata.profile_type")
 	if err != nil {
 		return nil, fmt.Errorf("get profile types: %w", err)
 	}
@@ -225,7 +240,7 @@ func ProfileTypes(req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesRe
 //
 //	request: querierv1.SelectSeriesRequest
 //	response: querierv1.SelectSeriesResponse
-func SelectSeries(req *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesResponse, error) {
+func (s *Service) SelectSeries(context.Context, *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesResponse, error) {
 	return nil, nil
 }
 
@@ -233,9 +248,9 @@ func SelectSeries(req *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesRe
 //
 //	request: typesv1.LabelNamesRequest
 //	response: typesv1.LabelNamesResponse
-func LabelNames(req *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
+func (s *Service) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"region", "hostname", "container_hostname", "container_host_namespace"},
+		Names: []string{"region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
 	}
 	return response, nil
 }
@@ -244,7 +259,7 @@ func LabelNames(req *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, er
 //
 //	request: typesv1.LabelValuesRequest
 //	response: typesv1.LabelValuesResponse
-func LabelValues(req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse, error) {
+func (s *Service) LabelValues(ctx context.Context, req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse, error) {
 	filter := &SearchFilter{
 		StartTime: time.UnixMilli(req.Start),
 		EndTime:   time.UnixMilli(req.End),
@@ -272,7 +287,7 @@ func LabelValues(req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse,
 		return nil, fmt.Errorf("no __profile_type__ matcher present")
 	}
 
-	names, err := profileStorage.AggregationsByField(filter, req.Name)
+	names, err := s.profileStorage.AggregationsByFieldContext(ctx, filter, req.Name)
 	if err != nil {
 		return nil, fmt.Errorf("get profile types: %w", err)
 	}
@@ -281,7 +296,7 @@ func LabelValues(req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse,
 }
 
 // GetProfilesByTracerID gets all profiles by tracer_id from ES
-func GetProfilesByTracerID(tracerID string) ([]*ProfileDocument, error) {
+func (s *Service) GetProfilesByTracerID(ctx context.Context, tracerID string) ([]*ProfileDocument, error) {
 	filter := &SearchFilter{
 		TracerID:  tracerID,
 		StartTime: time.Now().Add(-90 * 24 * time.Hour),
@@ -289,5 +304,5 @@ func GetProfilesByTracerID(tracerID string) ([]*ProfileDocument, error) {
 		Limit:     1000,
 	}
 
-	return profileStorage.SearchProfiles(filter)
+	return s.profileStorage.SearchProfilesContext(ctx, filter)
 }

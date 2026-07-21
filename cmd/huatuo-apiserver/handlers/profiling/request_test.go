@@ -15,7 +15,7 @@
 package profiling
 
 import (
-	"reflect"
+	"slices"
 	"testing"
 
 	v1 "huatuo-bamai/apis/v1"
@@ -118,7 +118,7 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			if got.AgentTask.Duration != tt.req.Duration*2 {
 				t.Errorf("AgentTask.Duration=%d, want %d", got.AgentTask.Duration, tt.req.Duration*2)
 			}
-			if !reflect.DeepEqual(got.AgentTask.TracerArgs, tt.wantTracerArgs) {
+			if !slices.Equal(got.AgentTask.TracerArgs, tt.wantTracerArgs) {
 				t.Errorf("TracerArgs=%q, want %q", got.AgentTask.TracerArgs, tt.wantTracerArgs)
 			}
 		})

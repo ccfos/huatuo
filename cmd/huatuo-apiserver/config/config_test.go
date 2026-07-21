@@ -22,9 +22,6 @@ import (
 )
 
 func TestLoadValidatesProfilingConfig(t *testing.T) {
-	old := *userConfig
-	defer func() { *userConfig = old }()
-
 	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
 	contents := []byte(`
 [Profiling]
@@ -37,9 +34,45 @@ FlameGraphBaseURL = "http://localhost:8006/d"
 		t.Fatalf("os.WriteFile() error = %v", err)
 	}
 
-	err := Load(configFile)
+	_, err := LoadFile(configFile)
 	if err == nil || !strings.Contains(err.Error(), "validating profiling config: execution timeout must be at least 20 seconds") {
 		t.Fatalf("Load() error = %v, want profiling validation error", err)
+	}
+}
+
+func TestLoadFileDoesNotAccumulateMemoryConversion(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
+	contents := []byte(`
+[RuntimeCgroup]
+LimitMem = 64
+
+[Profiling]
+AggregationInterval = 10
+ExecutionTimeout = 20
+MaxProfilerProcs = 10
+FlameGraphBaseURL = "http://localhost:8006/d"
+`)
+	if err := os.WriteFile(configFile, contents, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	first, err := LoadFile(configFile)
+	if err != nil {
+		t.Fatalf("first LoadFile() error = %v", err)
+	}
+	second, err := LoadFile(configFile)
+	if err != nil {
+		t.Fatalf("second LoadFile() error = %v", err)
+	}
+	want := int64(64 * 1024 * 1024)
+	if first.RuntimeCgroup.LimitMem != want || second.RuntimeCgroup.LimitMem != want {
+		t.Fatalf(
+			"LimitMem = (%d, %d), want (%d, %d)",
+			first.RuntimeCgroup.LimitMem,
+			second.RuntimeCgroup.LimitMem,
+			want,
+			want,
+		)
 	}
 }
 

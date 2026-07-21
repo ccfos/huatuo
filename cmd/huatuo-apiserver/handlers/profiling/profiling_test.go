@@ -33,19 +33,15 @@ func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 		EndTime:     time.Date(2026, 6, 24, 10, 5, 0, 0, time.UTC),
 	})
 
-	if !strings.Contains(url, "var-container_hostname=container%2B2026%26debug") {
+	if !strings.Contains(url, "var-container_id=container%2B2026%26debug") {
 		t.Fatalf("url = %q, want escaped container label value", url)
 	}
 }
 
 func TestNewHandlerSnapshotsProfilingConfig(t *testing.T) {
-	cfg := config.Get()
-	old := cfg.Profiling
-	defer func() { cfg.Profiling = old }()
-
-	cfg.Profiling.AggregationInterval = 15
-	h := NewHandler(nil)
-	cfg.Profiling.AggregationInterval = 30
+	cfg := config.ProfilingConfig{AggregationInterval: 15}
+	h := NewHandler(nil, nil, cfg)
+	cfg.AggregationInterval = 30
 
 	if h.profilingConfig.AggregationInterval != 15 {
 		t.Fatalf(
@@ -63,10 +59,7 @@ func TestCapabilities(t *testing.T) {
 		ExecutionTimeout:    30,
 		MaxProfilerProcs:    5,
 	}}
-	resp, err := buildCapabilitiesResponse(h)
-	if err != nil {
-		t.Fatalf("buildCapabilitiesResponse() error = %v", err)
-	}
+	resp := buildCapabilitiesResponse(h)
 
 	if len(resp.Types) != 2 {
 		t.Errorf("Types len = %d, want 2", len(resp.Types))
@@ -125,11 +118,11 @@ func TestCapabilities(t *testing.T) {
 
 func TestCapabilitiesReturnsIndependentMemoryModeMap(t *testing.T) {
 	h := &Handler{}
-	resp, _ := buildCapabilitiesResponse(h)
+	resp := buildCapabilitiesResponse(h)
 	resp.MemoryModes["NEW_MODE"] = "new_mode"
 	resp.MemoryModes["NATIVE_PHYSICAL_ALLOC"] = "modified"
 
-	next, _ := buildCapabilitiesResponse(h)
+	next := buildCapabilitiesResponse(h)
 	if next.MemoryModes["NATIVE_PHYSICAL_ALLOC"] != "physical_alloc" {
 		t.Errorf("MemoryModes was mutated across responses")
 	}

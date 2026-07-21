@@ -25,7 +25,6 @@ import (
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/listing"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
-	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/profiling"
@@ -40,15 +39,10 @@ const (
 func (h *Handler) create(ctx *server.Context) error {
 	req, err := parseCreateProfilingJobRequest(ctx)
 	if err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
+		return response.ErrInvalidRequest
 	}
-
-	hasRunning, err := h.hasRunningProfilingJob(req.Hostname, ctx.UserID)
-	if err != nil {
-		return response.ErrInternal.WithMessage(err.Error())
-	}
-	if hasRunning {
-		return response.ErrConflict.WithMessage("there is already a profiling job running on this host")
+	if req.Hostname == "" {
+		return response.ErrInvalidRequest.WithMessage("hostname is required")
 	}
 
 	createReq, err := buildCreateProfilingJobRequest(
@@ -60,8 +54,11 @@ func (h *Handler) create(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobResult, err := h.jobManager.Create(createReq)
+	jobResult, err := h.jobManager.CreateContext(ctx.Request().Context(), createReq)
 	if err != nil {
+		if errors.Is(err, job.ErrQuotaExceeded) {
+			return response.ErrConflict.WithMessage("profiling job quota exceeded")
+		}
 		log.WithError(err).Error("failed to create profiling job")
 		return response.ErrInternal
 	}
@@ -69,21 +66,6 @@ func (h *Handler) create(ctx *server.Context) error {
 		ID: jobResult.ID,
 	})
 	return nil
-}
-
-// hasRunningProfilingJob reports whether a profiling job is currently running on hostname for userID.
-func (h *Handler) hasRunningProfilingJob(hostname, userID string) (bool, error) {
-	jobs, err := h.jobManager.List(userID, false, &job.JobQuery{
-		Hostname: hostname,
-		Status:   "running",
-	})
-	if err != nil {
-		return false, fmt.Errorf("listing running profiling jobs: %w", err)
-	}
-	if len(jobs) > 0 {
-		return true, nil
-	}
-	return false, nil
 }
 
 // patchOne stops a profiling job. Body must be {"status":"stopped"}.
@@ -94,9 +76,13 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 	}
 	taskID := req.ID
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get profiling job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
@@ -107,7 +93,7 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage("job already completed")
 	}
 
-	if err := h.jobManager.Stop(taskID, false); err != nil {
+	if err := h.jobManager.StopByTypesContext(ctx.Request().Context(), taskID, false, ProfilingCPU, ProfilingMemory); err != nil {
 		log.WithError(err).WithField("job_id", taskID).Error("failed to stop profiling job")
 		return response.ErrInternal
 	}
@@ -124,21 +110,15 @@ func (h *Handler) list(ctx *server.Context) error {
 	}
 
 	var allJobs []*job.Job
-	var listErr error
 	for i := range req.JobQueries {
-		jobs, err := h.jobManager.List(ctx.UserID, ctx.IsAdmin, &req.JobQueries[i])
+		jobs, err := h.jobManager.ListContext(ctx.Request().Context(), ctx.UserID, ctx.IsAdmin, &req.JobQueries[i])
 		if err != nil {
 			log.WithError(err).WithField("job_type", req.JobQueries[i].Type).
 				Error("failed to list profiling jobs")
-			listErr = err
-			continue
+			return response.ErrInternal
 		}
 		allJobs = append(allJobs, jobs...)
 	}
-	if listErr != nil && len(allJobs) == 0 {
-		return response.ErrInternal
-	}
-
 	if err := listing.SortJobs(allJobs, req.ListParams.Sort); err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
@@ -172,20 +152,18 @@ func (h *Handler) get(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get profiling job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
 		return response.ErrForbidden
 	}
-	if !isProfilingJobType(jobResult.Type) {
-		return response.ErrNotFound.WithMessage(
-			fmt.Sprintf("job %q is not a profiling job", taskID),
-		)
-	}
-
 	profilingResponse, err := buildProfilingJobResponse(jobResult, h.profilingConfig.FlameGraphBaseURL)
 	if err != nil {
 		log.WithError(err).WithField("job_id", taskID).
@@ -273,11 +251,11 @@ func formatProfilingTime(value time.Time) string {
 	if value.IsZero() {
 		return ""
 	}
-	return value.Format("2006-01-02T15:04:05.000")
+	return value.Format(time.RFC3339Nano)
 }
 
 func getFlameGraphURL(base string, jobResult *job.Job) string {
-	var dashboardUid string
+	var dashboardUID string
 	var dashboardSlug string
 	var labelKey string
 	var labelVal string
@@ -288,23 +266,23 @@ func getFlameGraphURL(base string, jobResult *job.Job) string {
 	if jobResult.ContainerID != "" {
 		switch jobResult.Type {
 		case ProfilingMemory:
-			dashboardUid = "container-memory-profiling"
+			dashboardUID = "container-memory-profiling"
 			dashboardSlug = "e5aeb9-e599a8-memory-profiling"
 		case ProfilingCPU:
-			dashboardUid = "container-cpu-profiling"
+			dashboardUID = "container-cpu-profiling"
 			dashboardSlug = "e5aeb9-e599a8-cpu-profiling"
 		default:
 			return ""
 		}
-		labelKey = "var-container_hostname"
+		labelKey = "var-container_id"
 		labelVal = jobResult.ContainerID
 	} else {
 		switch jobResult.Type {
 		case ProfilingMemory:
-			dashboardUid = "host-memory-profiling"
+			dashboardUID = "host-memory-profiling"
 			dashboardSlug = "e5aebf-e4b8bb-e69cba-memory-profiling"
 		case ProfilingCPU:
-			dashboardUid = "host-cpu-profiling"
+			dashboardUID = "host-cpu-profiling"
 			dashboardSlug = "e5aebf-e4b8bb-e69cba-cpu-profiling"
 		default:
 			return ""
@@ -320,7 +298,7 @@ func getFlameGraphURL(base string, jobResult *job.Job) string {
 	query.Set("timezone", "browser")
 	query.Set(labelKey, labelVal)
 
-	return fmt.Sprintf("%s/%s/%s?%s", base, dashboardUid, dashboardSlug, query.Encode())
+	return fmt.Sprintf("%s/%s/%s?%s", base, dashboardUID, dashboardSlug, query.Encode())
 }
 
 // delete deletes a profiling job record by ID.
@@ -330,16 +308,20 @@ func (h *Handler) delete(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get profiling job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
 		return response.ErrForbidden
 	}
 
-	if err := h.jobManager.Delete(taskID); err != nil {
+	if err := h.jobManager.DeleteByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory); err != nil {
 		if errors.Is(err, job.ErrCannotDeleteRunning) {
 			return response.ErrConflict.WithMessage("cannot delete running job")
 		}
@@ -358,9 +340,13 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get profiling job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
@@ -371,7 +357,10 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage("agent job ID not found")
 	}
 
-	profiles, err := profileService.GetProfilesByTracerID(jobResult.AgentTaskID)
+	if h.profileService == nil {
+		return response.ErrInternal
+	}
+	profiles, err := h.profileService.GetProfilesByTracerID(ctx.Request().Context(), jobResult.AgentTaskID)
 	if err != nil {
 		log.WithError(err).WithField("job_id", taskID).Error("failed to get raw profiling data")
 		return response.ErrInternal
