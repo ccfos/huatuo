@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,10 +15,13 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -61,6 +64,72 @@ type server struct {
 	engine       *httpGin.Engine
 	promRegistry *prometheus.Registry
 	rootGroup    *routerGroup
+	mu           sync.Mutex
+	httpServer   *http.Server
+	listener     net.Listener
+	serveErr     chan error
+}
+
+// Start binds addr before returning and serves requests in the background.
+func (s *server) Start(addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", addr, err)
+	}
+
+	s.mu.Lock()
+	if s.httpServer != nil {
+		s.mu.Unlock()
+		_ = listener.Close()
+		return errors.New("http server already started")
+	}
+
+	httpServer := &http.Server{
+		Handler:           s.engine,
+		ReadHeaderTimeout: 30 * time.Second,
+	}
+	serveErr := make(chan error, 1)
+	s.httpServer = httpServer
+	s.listener = listener
+	s.serveErr = serveErr
+	s.mu.Unlock()
+
+	go func() {
+		err := httpServer.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		serveErr <- err
+	}()
+
+	return nil
+}
+
+// Shutdown stops accepting requests and waits for the serving goroutine.
+func (s *server) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	httpServer := s.httpServer
+	serveErr := s.serveErr
+	s.mu.Unlock()
+	if httpServer == nil {
+		return nil
+	}
+
+	shutdownErr := httpServer.Shutdown(ctx)
+	var serveResult error
+	select {
+	case serveResult = <-serveErr:
+	case <-ctx.Done():
+		serveResult = ctx.Err()
+	}
+
+	s.mu.Lock()
+	s.httpServer = nil
+	s.listener = nil
+	s.serveErr = nil
+	s.mu.Unlock()
+
+	return errors.Join(shutdownErr, serveResult)
 }
 
 type Option struct {
@@ -82,14 +151,13 @@ func NewServer(cfg *Config) *server {
 		promRegistry: cfg.PromReg,
 	}
 
-	if cfg.EnablePProf {
-		pprof.Register(s.engine)
-	}
-
 	middleWares := []httpGin.HandlerFunc{
 		middlewareContext(),
-		httpGin.Logger(),
+		requestLogMiddleware(),
 		httpGin.Recovery(),
+	}
+	if cfg.PromReg != nil {
+		middleWares = append(middleWares, newHTTPMetricsMiddleware(cfg.PromReg))
 	}
 
 	if len(cfg.AuthUsers) > 0 {
@@ -102,6 +170,9 @@ func NewServer(cfg *Config) *server {
 	}
 
 	s.engine.Use(middleWares...)
+	if cfg.EnablePProf {
+		pprof.Register(s.engine)
+	}
 	s.rootGroup = NewRoot(s.engine, cfg.Group)
 	s.MustRegisterRoutes("", []Handle{
 		{Typ: HttpGet, Uri: "/healthz", Handle: s.healthzHandler()},
@@ -113,6 +184,47 @@ func NewServer(cfg *Config) *server {
 		})
 	}
 	return s
+}
+
+func requestLogMiddleware() httpGin.HandlerFunc {
+	return func(ctx *httpGin.Context) {
+		startedAt := time.Now()
+		ctx.Next()
+		log.WithField("method", ctx.Request.Method).
+			WithField("path", ctx.FullPath()).
+			WithField("status", ctx.Writer.Status()).
+			WithField("latency", time.Since(startedAt)).
+			Info("http request completed")
+	}
+}
+
+func newHTTPMetricsMiddleware(reg prometheus.Registerer) httpGin.HandlerFunc {
+	requests := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "huatuo",
+		Subsystem: "http_server",
+		Name:      "requests_total",
+		Help:      "Total API requests by route, method, and status.",
+	}, []string{"route", "method", "status"})
+	duration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "huatuo",
+		Subsystem: "http_server",
+		Name:      "request_duration_seconds",
+		Help:      "API request duration by route and method.",
+		Buckets:   prometheus.DefBuckets,
+	}, []string{"route", "method"})
+	reg.MustRegister(requests, duration)
+
+	return func(ctx *httpGin.Context) {
+		startedAt := time.Now()
+		ctx.Next()
+		route := ctx.FullPath()
+		if route == "" {
+			route = "unmatched"
+		}
+		status := strconv.Itoa(ctx.Writer.Status())
+		requests.WithLabelValues(route, ctx.Request.Method, status).Inc()
+		duration.WithLabelValues(route, ctx.Request.Method).Observe(time.Since(startedAt).Seconds())
+	}
 }
 
 func (s *server) healthzHandler() ErrHandlerContextFunc {
@@ -208,17 +320,7 @@ func (s *server) run(addr string) error {
 		return fmt.Errorf("listen %w", err)
 	}
 
-	tcpListener := listener.(*net.TCPListener)
-	file, err := tcpListener.File()
-	if err != nil {
-		return fmt.Errorf("get listener fd %w", err)
-	}
-
-	if err := syscall.SetsockoptInt(int(file.Fd()), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); err != nil {
-		return fmt.Errorf("set sockopt addr reuse %w", err)
-	}
-
-	return s.engine.RunListener(tcpListener)
+	return s.engine.RunListener(listener)
 }
 
 // Run starts the TCP server with retry mechanism.
@@ -234,9 +336,11 @@ func (s *server) Run(option *Option) error {
 
 				retryInterval := b.Duration()
 				if errors.Is(err, syscall.EADDRINUSE) {
-					log.Infof("tcp api server %v, retrying in %v ...", err, retryInterval)
+					log.WithError(err).WithField("retry_interval", retryInterval).
+						Info("tcp api address is in use; retrying")
 				} else if err != nil {
-					log.Warnf("tcp api server %v, retrying in %v ...", err, retryInterval)
+					log.WithError(err).WithField("retry_interval", retryInterval).
+						Warn("tcp api server failed; retrying")
 				}
 				time.Sleep(retryInterval)
 			}
