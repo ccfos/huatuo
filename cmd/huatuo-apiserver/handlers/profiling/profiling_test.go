@@ -23,7 +23,6 @@ import (
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/job"
-	profiledef "huatuo-bamai/pkg/profiling"
 )
 
 func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
@@ -136,41 +135,6 @@ func TestCapabilitiesReturnsIndependentMemoryModeMap(t *testing.T) {
 	}
 	if _, ok := next.MemoryModes["NEW_MODE"]; ok {
 		t.Errorf("MemoryModes retained a caller mutation")
-	}
-}
-
-func TestFillTracerArgs(t *testing.T) {
-	tests := []struct {
-		name          string
-		profilingType profiledef.Type
-		language      profiledef.Language
-		typeArgs      []string
-		want          []string
-	}{
-		{
-			name:          "cpu binary match path",
-			profilingType: profiledef.TypeCPU,
-			language:      profiledef.LanguageGo,
-			typeArgs:      []string{"--binary-match-path", "/usr/bin/example"},
-			want:          []string{"-t", "cpu", "--binary-match-path", "/usr/bin/example", "-l", "go"},
-		},
-		{
-			name:          "memory mode",
-			profilingType: profiledef.TypeMemory,
-			language:      profiledef.LanguageC,
-			typeArgs:      []string{"--memory-mode", "physical_usage"},
-			want:          []string{"-t", "memory", "--memory-mode", "physical_usage", "-l", "c"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := &job.AgentTaskRequest{}
-			fillTracerArgs(req, tt.profilingType, tt.language, tt.typeArgs...)
-			if strings.Join(req.TracerArgs, " ") != strings.Join(tt.want, " ") {
-				t.Fatalf("TracerArgs = %q, want %q", req.TracerArgs, tt.want)
-			}
-		})
 	}
 }
 

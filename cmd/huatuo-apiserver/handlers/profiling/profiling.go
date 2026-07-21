@@ -45,6 +45,13 @@ type profilingJobListQuery struct {
 	Type        string `form:"type"`
 }
 
+type profilingJobPrivateData struct {
+	BinaryMatchPath string `json:"binary_match_path"`
+	Duration        int    `json:"duration"`
+	Language        string `json:"language"`
+	MemoryMode      string `json:"memory_mode"`
+}
+
 // create creates a profiling job.
 func (h *Handler) create(ctx *server.Context) error {
 	var req v1.CreateProfilingJobRequest
@@ -77,11 +84,19 @@ func (h *Handler) create(ctx *server.Context) error {
 				fmt.Sprintf("cpu profiling not supported for %q", req.Language),
 			)
 		}
-		var typeArgs []string
-		if req.BinaryMatchPath != "" {
-			typeArgs = append(typeArgs, "--binary-match-path", req.BinaryMatchPath)
+		taskReq.TracerArgs = []string{
+			"-t", string(profiling.TypeCPU),
 		}
-		fillTracerArgs(&taskReq, profiling.TypeCPU, language, typeArgs...)
+		if req.BinaryMatchPath != "" {
+			taskReq.TracerArgs = append(
+				taskReq.TracerArgs,
+				"--binary-match-path", req.BinaryMatchPath,
+			)
+		}
+		taskReq.TracerArgs = append(
+			taskReq.TracerArgs,
+			"-l", string(language),
+		)
 	case string(profiling.TypeMemory):
 		jobType = ProfilingMemory
 		language, err := profiling.ParseLanguage(req.Language)
@@ -96,12 +111,11 @@ func (h *Handler) create(ctx *server.Context) error {
 				fmt.Sprintf("memory mode not supported: %q", req.MemoryMode),
 			)
 		}
-		fillTracerArgs(
-			&taskReq,
-			profiling.TypeMemory,
-			language,
+		taskReq.TracerArgs = []string{
+			"-t", string(profiling.TypeMemory),
 			"--memory-mode", string(mode),
-		)
+			"-l", string(language),
+		}
 	default:
 		return response.ErrInvalidRequest.WithMessage(
 			fmt.Sprintf("unsupported profiling type %q", req.ProfilingType),
@@ -156,15 +170,8 @@ func (h *Handler) create(ctx *server.Context) error {
 	return nil
 }
 
-type profilingPrivateData struct {
-	BinaryMatchPath string `json:"binary_match_path"`
-	Duration        int    `json:"duration"`
-	Language        string `json:"language"`
-	MemoryMode      string `json:"memory_mode"`
-}
-
 func newProfilingPrivateData(req *v1.CreateProfilingJobRequest) (json.RawMessage, error) {
-	data, err := json.Marshal(profilingPrivateData{
+	data, err := json.Marshal(profilingJobPrivateData{
 		BinaryMatchPath: req.BinaryMatchPath,
 		Duration:        req.Duration,
 		Language:        req.Language,
@@ -178,11 +185,10 @@ func newProfilingPrivateData(req *v1.CreateProfilingJobRequest) (json.RawMessage
 
 // hasRunningProfilingJob reports whether a profiling job is currently running on hostname for userID.
 func (h *Handler) hasRunningProfilingJob(hostname, userID string) (bool, error) {
-	filter := job.JobQuery{
+	jobs, err := h.jobManager.List(userID, false, &job.JobQuery{
 		Hostname: hostname,
 		Status:   "running",
-	}
-	jobs, err := h.jobManager.List(userID, false, &filter)
+	})
 	if err != nil {
 		return false, fmt.Errorf("listing running profiling jobs: %w", err)
 	}
@@ -190,23 +196,6 @@ func (h *Handler) hasRunningProfilingJob(hostname, userID string) (bool, error) 
 		return true, nil
 	}
 	return false, nil
-}
-
-func fillTracerArgs(
-	agentTaskReq *job.AgentTaskRequest,
-	profilingType profiling.Type,
-	language profiling.Language,
-	typeArgs ...string,
-) {
-	agentTaskReq.TracerArgs = append(
-		agentTaskReq.TracerArgs,
-		"-t", string(profilingType),
-	)
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, typeArgs...)
-	agentTaskReq.TracerArgs = append(
-		agentTaskReq.TracerArgs,
-		"-l", string(language),
-	)
 }
 
 // patchOne stops a profiling job. Body must be {"status":"stopped"}.
@@ -450,14 +439,14 @@ func profilingJobHasResults(status job.JobStatus) bool {
 	return status == job.JobStatusCompleted || status == job.JobStatusStopped
 }
 
-func decodeProfilingPrivateData(data json.RawMessage) (profilingPrivateData, error) {
+func decodeProfilingPrivateData(data json.RawMessage) (profilingJobPrivateData, error) {
 	if len(data) == 0 {
-		return profilingPrivateData{}, nil
+		return profilingJobPrivateData{}, nil
 	}
 
-	var privateData profilingPrivateData
+	var privateData profilingJobPrivateData
 	if err := json.Unmarshal(data, &privateData); err != nil {
-		return profilingPrivateData{}, fmt.Errorf("decoding profiling private data: %w", err)
+		return profilingJobPrivateData{}, fmt.Errorf("decoding profiling private data: %w", err)
 	}
 	return privateData, nil
 }
