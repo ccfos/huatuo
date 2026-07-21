@@ -154,11 +154,11 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		if taskID != "agent-task-2026" {
 			t.Errorf("StartTask() taskID=%q, want %q", taskID, "agent-task-2026")
 		}
-		if args.ContainerHostname != "payment-worker" {
-			t.Errorf("StartTask() ContainerHostname=%q, want %q", args.ContainerHostname, "payment-worker")
+		if args.ContainerID != "payment-worker" {
+			t.Errorf("StartTask() ContainerID=%q, want %q", args.ContainerID, "payment-worker")
 		}
-		if !strings.Contains(requestBody, `"container_hostname":"payment-worker"`) {
-			t.Errorf("StartTask() request body=%q, want container hostname field", requestBody)
+		if !strings.Contains(requestBody, `"container_id":"payment-worker"`) {
+			t.Errorf("StartTask() request body=%q, want container ID field", requestBody)
 		}
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(requestBody), &payload); err != nil {

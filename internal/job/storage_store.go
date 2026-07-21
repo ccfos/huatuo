@@ -100,7 +100,11 @@ func newStore(ctx context.Context, dsn string) (Store, error) {
 }
 
 func (s *storageStore) Get(jobID string) (*Job, error) {
-	entity, err := s.store.Get(context.Background(), jobID)
+	return s.GetContext(context.Background(), jobID)
+}
+
+func (s *storageStore) GetContext(ctx context.Context, jobID string) (*Job, error) {
+	entity, err := s.store.Get(ctx, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -109,19 +113,31 @@ func (s *storageStore) Get(jobID string) (*Job, error) {
 }
 
 func (s *storageStore) Save(jobEntity *Job) error {
+	return s.SaveContext(context.Background(), jobEntity)
+}
+
+func (s *storageStore) SaveContext(ctx context.Context, jobEntity *Job) error {
 	if jobEntity == nil {
 		return fmt.Errorf("job store: job is nil")
 	}
 
-	return s.store.Save(context.Background(), jobEntity)
+	return s.store.Save(ctx, jobEntity)
 }
 
 func (s *storageStore) Delete(jobID string) error {
-	return s.store.Delete(context.Background(), jobID)
+	return s.DeleteContext(context.Background(), jobID)
+}
+
+func (s *storageStore) DeleteContext(ctx context.Context, jobID string) error {
+	return s.store.Delete(ctx, jobID)
 }
 
 func (s *storageStore) List(query *JobQuery) ([]*Job, error) {
-	result, err := s.store.Query(context.Background(), toStorageQuery(query))
+	return s.ListContext(context.Background(), query)
+}
+
+func (s *storageStore) ListContext(ctx context.Context, query *JobQuery) ([]*Job, error) {
+	result, err := s.store.Query(ctx, toStorageQuery(query))
 	if err != nil {
 		return nil, err
 	}
@@ -132,6 +148,10 @@ func (s *storageStore) List(query *JobQuery) ([]*Job, error) {
 	}
 
 	return jobs, nil
+}
+
+func (s *storageStore) Close(ctx context.Context) error {
+	return s.store.Close(ctx)
 }
 
 func (storeMapper) ID(entity *Job) string {

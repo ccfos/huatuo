@@ -14,11 +14,21 @@
 
 package job
 
+import "context"
+
 type Store interface {
 	Get(jobID string) (*Job, error)
 	Save(job *Job) error
 	Delete(jobID string) error
 	List(query *JobQuery) ([]*Job, error)
+}
+
+type contextStore interface {
+	GetContext(ctx context.Context, jobID string) (*Job, error)
+	SaveContext(ctx context.Context, job *Job) error
+	DeleteContext(ctx context.Context, jobID string) error
+	ListContext(ctx context.Context, query *JobQuery) ([]*Job, error)
+	Close(ctx context.Context) error
 }
 
 // NodeAgent interface for communicating with the huatuo-bamai agent
@@ -29,4 +39,10 @@ type NodeAgent interface {
 	StopTask(host, taskID string, force bool) error
 	// GetTaskStatus gets the status of a task on the agent
 	GetTaskStatus(host, taskID string) (string, *Result, error)
+}
+
+type contextNodeAgent interface {
+	StartTaskContext(ctx context.Context, host, container string, request *AgentTaskRequest) (string, error)
+	StopTaskContext(ctx context.Context, host, taskID string, force bool) error
+	GetTaskStatusContext(ctx context.Context, host, taskID string) (string, *Result, error)
 }

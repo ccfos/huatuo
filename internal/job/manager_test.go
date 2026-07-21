@@ -130,6 +130,90 @@ func newRunningJob(jobID string) *Job {
 	}
 }
 
+func TestManagerTypePoliciesShareQuotaWithinGroup(t *testing.T) {
+	manager := newManagerWithStore(&stubJobStore{}, &stubNodeAgent{
+		startTaskFunc: func(_, _ string, _ *AgentTaskRequest) (string, error) {
+			return "agent-task-2026", nil
+		},
+	}, ManagerConfig{TypePolicies: map[string]TypePolicy{
+		"profiling_cpu": {
+			Group:          "profiling",
+			MaxJobsPerHost: 1,
+			MaxTotalJobs:   2,
+		},
+		"profiling_memory": {
+			Group:          "profiling",
+			MaxJobsPerHost: 1,
+			MaxTotalJobs:   2,
+		},
+		"tracing": {
+			Group:          "tracing",
+			MaxJobsPerHost: 1,
+			MaxTotalJobs:   2,
+		},
+	}})
+
+	cpuJob, err := manager.Create(&CreateJobRequest{
+		UserID:   "operator-2026",
+		Hostname: "huatuo-dev",
+		Type:     "profiling_cpu",
+		AgentTask: &AgentTaskRequest{
+			TracerName:   "profiler",
+			TraceTimeout: 60,
+			DataType:     "db-json",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create CPU profiling job: %v", err)
+	}
+	defer manager.Shutdown()
+
+	_, err = manager.Create(&CreateJobRequest{
+		UserID:   "operator-2026",
+		Hostname: "huatuo-dev",
+		Type:     "profiling_memory",
+		AgentTask: &AgentTaskRequest{
+			TracerName:   "profiler",
+			TraceTimeout: 60,
+			DataType:     "db-json",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "maximum number of profiling jobs") {
+		t.Fatalf("create memory profiling job error = %v, want shared quota error", err)
+	}
+
+	traceJob, err := manager.Create(&CreateJobRequest{
+		UserID:   "operator-2026",
+		Hostname: "huatuo-dev",
+		Type:     "tracing",
+		AgentTask: &AgentTaskRequest{
+			TracerName:   "tracer",
+			TraceTimeout: 60,
+			DataType:     "db",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create tracing job with independent quota: %v", err)
+	}
+	if err := manager.Stop(cpuJob.ID, true); err != nil {
+		t.Fatalf("stop CPU profiling job: %v", err)
+	}
+	if err := manager.Stop(traceJob.ID, true); err != nil {
+		t.Fatalf("stop tracing job: %v", err)
+	}
+}
+
+func TestManagerGetByTypesHidesOtherJobTypes(t *testing.T) {
+	manager := newTestManager(&stubJobStore{getFunc: func(string) (*Job, error) {
+		return &Job{ID: "job-2026", Type: "profiling_cpu"}, nil
+	}}, &stubNodeAgent{})
+
+	_, err := manager.GetByTypes("job-2026", "tracing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetByTypes() error = %v, want ErrNotFound", err)
+	}
+}
+
 // TestManagerCreate tests key branches of Manager.Create, including missing timeout/duration in request, per-host job limit reached, total job limit reached, and successful job creation with field population, task dispatch, and memory index updates.
 func TestManagerCreate(t *testing.T) {
 	t.Run("timeout or duration required", func(t *testing.T) {
@@ -707,9 +791,7 @@ func TestMonitorJobDeferNoNilPanic(t *testing.T) {
 		t.Fatalf("Create() error=%v, want nil", err)
 	}
 
-	// Simulate manager shutdown while job is still running.
-	// Before the fix, this would cause a nil pointer dereference
-	// because the defer block called err.Error() when err was nil.
+	// Shutdown owns active jobs and stops them before releasing storage.
 	manager.Shutdown()
 
 	savedJobs := storage.savedJobs()
@@ -717,8 +799,8 @@ func TestMonitorJobDeferNoNilPanic(t *testing.T) {
 		t.Fatal("storage.Save() call count=0, want at least 1")
 	}
 	lastSave := savedJobs[len(savedJobs)-1]
-	if lastSave.Status != JobStatusFailed {
-		t.Errorf("job.Status=%s, want %s", lastSave.Status, JobStatusFailed)
+	if lastSave.Status != JobStatusStopped {
+		t.Errorf("job.Status=%s, want %s", lastSave.Status, JobStatusStopped)
 	}
 	if lastSave.ErrorMessage == "" {
 		t.Errorf("job.ErrorMessage is empty, want non-empty error message")

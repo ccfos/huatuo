@@ -16,6 +16,7 @@ package job
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,7 +53,11 @@ func NewHTTPNodeAgent() *HTTPNodeAgent {
 
 // StartTask starts a task on the agent
 func (c *HTTPNodeAgent) StartTask(host, container string, args *AgentTaskRequest) (string, error) {
-	args.ContainerHostname = container
+	return c.StartTaskContext(context.Background(), host, container, args)
+}
+
+func (c *HTTPNodeAgent) StartTaskContext(ctx context.Context, host, container string, args *AgentTaskRequest) (string, error) {
+	args.ContainerID = container
 	requestBodyBytes, err := json.Marshal(startTaskRequest{
 		TracerName:        args.TracerName,
 		Timeout:           args.TraceTimeout,
@@ -68,7 +73,7 @@ func (c *HTTPNodeAgent) StartTask(host, container string, args *AgentTaskRequest
 	}
 
 	url := fmt.Sprintf("http://%s:19704/tasks", host)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(requestBodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(requestBodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -110,9 +115,13 @@ func (c *HTTPNodeAgent) StartTask(host, container string, args *AgentTaskRequest
 
 // StopTask stops a task on the agent
 func (c *HTTPNodeAgent) StopTask(host, taskID string, force bool) error {
+	return c.StopTaskContext(context.Background(), host, taskID, force)
+}
+
+func (c *HTTPNodeAgent) StopTaskContext(ctx context.Context, host, taskID string, force bool) error {
 	url := fmt.Sprintf("http://%s:19704/tasks/%s", host, taskID)
 
-	req, err := http.NewRequest(http.MethodDelete, url, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -136,11 +145,15 @@ func (c *HTTPNodeAgent) StopTask(host, taskID string, force bool) error {
 
 // GetTaskStatus gets the status of a task on the agent
 func (c *HTTPNodeAgent) GetTaskStatus(host, taskID string) (string, *Result, error) {
+	return c.GetTaskStatusContext(context.Background(), host, taskID)
+}
+
+func (c *HTTPNodeAgent) GetTaskStatusContext(ctx context.Context, host, taskID string) (string, *Result, error) {
 	url := fmt.Sprintf("http://%s:19704/tasks/%s", host, taskID)
 
 	var lastErr error
 	for attempt := range 3 {
-		req, err := http.NewRequest(http.MethodGet, url, http.NoBody)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 		if err != nil {
 			return "", nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -150,7 +163,8 @@ func (c *HTTPNodeAgent) GetTaskStatus(host, taskID string) (string, *Result, err
 			// Only retry on timeout error
 			if nerr, ok := err.(interface{ Timeout() bool }); ok && nerr.Timeout() {
 				lastErr = err
-				log.Infof("timeout to get task status, retry, taskID: %s, attempt: %d", taskID, attempt+1)
+				log.WithField("task_id", taskID).WithField("attempt", attempt+1).
+					Info("timed out getting task status; retrying")
 				continue
 			}
 			return "", nil, fmt.Errorf("failed to send request: %w", err)

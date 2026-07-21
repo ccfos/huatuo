@@ -14,6 +14,15 @@
 
 package job
 
-import "huatuo-bamai/internal/storage/driver"
+import (
+	"errors"
+
+	"huatuo-bamai/internal/storage/driver"
+)
 
 var ErrNotFound = driver.ErrNotFound
+
+var (
+	ErrQuotaExceeded      = errors.New("job quota exceeded")
+	ErrUnsupportedJobType = errors.New("unsupported job type")
+)

@@ -36,23 +36,34 @@ var ErrCannotDeleteRunning = errors.New("cannot delete running job")
 type ManagerConfig struct {
 	MaxJobsPerHost int
 	MaxTotalJobs   int
+	TypePolicies   map[string]TypePolicy
 	// StoreDSN is the SQLite data source name for the job store.
 	// Defaults to "jobs.db" when empty.
 	StoreDSN string
 }
 
+// TypePolicy assigns a job type to a quota group.
+type TypePolicy struct {
+	Group          string
+	MaxJobsPerHost int
+	MaxTotalJobs   int
+}
+
 // Manager tracks running jobs in memory and persists terminal states to storage.
 type Manager struct {
-	jobs       sync.Map // map[string]*Job
-	jobsByHost sync.Map // map[string]int
-	mu         sync.RWMutex
-	stopping   map[string]struct{}
-	shutdown   sync.Once
-	monitorWG  sync.WaitGroup
-	storage    Store
-	nodeAgent  NodeAgent
-	stopChan   chan struct{}
-	config     ManagerConfig
+	jobs        sync.Map // map[string]*Job
+	jobsByHost  sync.Map // map[string]int
+	mu          sync.RWMutex
+	stopping    map[string]struct{}
+	shutdown    sync.Once
+	shutdownErr error
+	monitorWG   sync.WaitGroup
+	storage     Store
+	nodeAgent   NodeAgent
+	stopChan    chan struct{}
+	config      ManagerConfig
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 func NewManager(ctx context.Context, nodeAgent NodeAgent, config ManagerConfig) (*Manager, error) {
@@ -61,30 +72,65 @@ func NewManager(ctx context.Context, nodeAgent NodeAgent, config ManagerConfig) 
 		return nil, err
 	}
 
-	return newManagerWithStore(storage, nodeAgent, config), nil
+	manager := newManagerWithStore(storage, nodeAgent, config)
+	manager.cancel()
+	manager.ctx, manager.cancel = context.WithCancel(ctx)
+	return manager, nil
 }
 
 func newManagerWithStore(storage Store, nodeAgent NodeAgent, config ManagerConfig) *Manager {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		storage:   storage,
 		nodeAgent: nodeAgent,
 		stopChan:  make(chan struct{}),
 		stopping:  make(map[string]struct{}),
 		config:    config,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 }
 
 // Shutdown stops the manager and waits for its background monitors.
 func (m *Manager) Shutdown() {
-	m.mu.Lock()
+	_ = m.ShutdownContext(context.Background())
+}
+
+// ShutdownContext stops monitors, waits for them, and closes the job store.
+func (m *Manager) ShutdownContext(ctx context.Context) error {
 	m.shutdown.Do(func() {
+		stopErr := m.stopAllByTypes(ctx, nil)
+		m.mu.Lock()
 		close(m.stopChan)
+		m.cancel()
+		m.mu.Unlock()
+
+		done := make(chan struct{})
+		go func() {
+			m.monitorWG.Wait()
+			close(done)
+		}()
+		var waitErr error
+		select {
+		case <-done:
+		case <-ctx.Done():
+			waitErr = ctx.Err()
+		}
+		var closeErr error
+		if store, ok := m.storage.(contextStore); ok {
+			closeErr = store.Close(ctx)
+		}
+		m.shutdownErr = errors.Join(stopErr, waitErr, closeErr)
 	})
-	m.mu.Unlock()
-	m.monitorWG.Wait()
+	return m.shutdownErr
 }
 
 func (m *Manager) Create(req *CreateJobRequest) (*Job, error) {
+	return m.CreateContext(context.Background(), req)
+}
+
+// CreateContext creates a job and propagates cancellation to the node agent.
+func (m *Manager) CreateContext(ctx context.Context, req *CreateJobRequest) (*Job, error) {
 	if req == nil {
 		return nil, errors.New("job request is required")
 	}
@@ -121,20 +167,32 @@ func (m *Manager) Create(req *CreateJobRequest) (*Job, error) {
 		return nil, errors.New("job manager is shutting down")
 	default:
 	}
-	if m.hostJobCount(req.Hostname) >= m.config.MaxJobsPerHost {
+	policy, err := m.policyFor(req.Type)
+	if err != nil {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("maximum number of jobs reached for host %s", req.Hostname)
+		return nil, err
 	}
-	if m.jobCount() >= m.config.MaxTotalJobs {
+	if m.hostJobCount(req.Hostname, policy.Group) >= policy.MaxJobsPerHost {
 		m.mu.Unlock()
-		return nil, errors.New("maximum number of total jobs reached")
+		if policy.Group == "" {
+			return nil, fmt.Errorf("%w: maximum number of jobs reached for host %s", ErrQuotaExceeded, req.Hostname)
+		}
+		return nil, fmt.Errorf("%w: maximum number of %s jobs reached for host %s", ErrQuotaExceeded, policy.Group, req.Hostname)
+	}
+	if m.jobCount(policy.Group) >= policy.MaxTotalJobs {
+		m.mu.Unlock()
+		if policy.Group == "" {
+			return nil, fmt.Errorf("%w: maximum number of total jobs reached", ErrQuotaExceeded)
+		}
+		return nil, fmt.Errorf("%w: maximum number of total %s jobs reached", ErrQuotaExceeded, policy.Group)
 	}
 	m.jobs.Store(jobID, job)
-	m.jobsByHost.Store(req.Hostname, m.hostJobCount(req.Hostname)+1)
+	hostKey := quotaHostKey(req.Hostname, policy.Group)
+	m.jobsByHost.Store(hostKey, m.hostJobCount(req.Hostname, policy.Group)+1)
 	m.monitorWG.Add(1)
 	m.mu.Unlock()
 
-	agentTaskID, err := m.nodeAgent.StartTask(job.Hostname, job.ContainerID, req.AgentTask)
+	agentTaskID, err := m.startTask(ctx, job.Hostname, job.ContainerID, req.AgentTask)
 	if err != nil {
 		m.rollbackJob(job)
 		m.monitorWG.Done()
@@ -159,6 +217,11 @@ func (m *Manager) Create(req *CreateJobRequest) (*Job, error) {
 
 // Stop stops a job
 func (m *Manager) Stop(jobID string, force bool) error {
+	return m.StopContext(context.Background(), jobID, force)
+}
+
+// StopContext stops a job and propagates cancellation to the node agent.
+func (m *Manager) StopContext(ctx context.Context, jobID string, force bool) error {
 	m.mu.Lock()
 	jobVal, exists := m.jobs.Load(jobID)
 	if !exists {
@@ -174,7 +237,7 @@ func (m *Manager) Stop(jobID string, force bool) error {
 	host, agentTaskID := job.Hostname, job.AgentTaskID
 	m.mu.Unlock()
 
-	err := m.nodeAgent.StopTask(host, agentTaskID, force)
+	err := m.stopTask(ctx, host, agentTaskID, force)
 	if err != nil {
 		m.mu.Lock()
 		delete(m.stopping, jobID)
@@ -188,6 +251,11 @@ func (m *Manager) Stop(jobID string, force bool) error {
 }
 
 func (m *Manager) Get(jobID string) (*Job, error) {
+	return m.GetContext(context.Background(), jobID)
+}
+
+// GetContext gets a job while propagating cancellation to storage.
+func (m *Manager) GetContext(ctx context.Context, jobID string) (*Job, error) {
 	m.mu.RLock()
 	jobVal, exists := m.jobs.Load(jobID)
 	if exists {
@@ -197,14 +265,36 @@ func (m *Manager) Get(jobID string) (*Job, error) {
 	}
 	m.mu.RUnlock()
 
-	return m.storage.Get(jobID)
+	return m.storeGet(ctx, jobID)
+}
+
+// GetByTypes returns a job only when it belongs to one of the expected types.
+func (m *Manager) GetByTypes(jobID string, expectedTypes ...string) (*Job, error) {
+	return m.GetByTypesContext(context.Background(), jobID, expectedTypes...)
+}
+
+// GetByTypesContext gets an expected job type while propagating cancellation.
+func (m *Manager) GetByTypesContext(ctx context.Context, jobID string, expectedTypes ...string) (*Job, error) {
+	jobResult, err := m.GetContext(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if !hasJobType(jobResult.Type, expectedTypes) {
+		return nil, ErrNotFound
+	}
+	return jobResult, nil
 }
 
 func (m *Manager) Save(job *Job) error {
-	return m.storage.Save(job)
+	return m.storeSave(context.Background(), job)
 }
 
 func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, error) {
+	return m.ListContext(context.Background(), userID, isAdmin, filter)
+}
+
+// ListContext lists jobs while propagating cancellation to storage.
+func (m *Manager) ListContext(ctx context.Context, userID string, isAdmin bool, filter *JobQuery) ([]*Job, error) {
 	var jobs []*Job
 
 	m.mu.RLock()
@@ -241,7 +331,7 @@ func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, e
 	}
 	query.UserID = userID
 	query.IsAdmin = isAdmin
-	storedJobs, err := m.storage.List(&query)
+	storedJobs, err := m.storeList(ctx, &query)
 	if err != nil {
 		return nil, err
 	}
@@ -250,11 +340,29 @@ func (m *Manager) List(userID string, isAdmin bool, filter *JobQuery) ([]*Job, e
 }
 
 func (m *Manager) StopAll() {
+	_ = m.stopAllByTypes(m.ctx, nil)
+}
+
+// StopAllByTypes stops active jobs belonging to the expected types.
+func (m *Manager) StopAllByTypes(expectedTypes ...string) {
+	_ = m.stopAllByTypes(m.ctx, expectedTypes)
+}
+
+// StopAllByTypesContext stops expected active jobs and returns all stop failures.
+func (m *Manager) StopAllByTypesContext(ctx context.Context, expectedTypes ...string) error {
+	return m.stopAllByTypes(ctx, expectedTypes)
+}
+
+func (m *Manager) stopAllByTypes(ctx context.Context, expectedTypes []string) error {
 	var jobIDs []string
+	var errs []error
 
 	m.mu.RLock()
 	m.jobs.Range(func(_, value any) bool {
 		job := value.(*Job)
+		if len(expectedTypes) > 0 && !hasJobType(job.Type, expectedTypes) {
+			return true
+		}
 		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
 			jobIDs = append(jobIDs, job.ID)
 		}
@@ -263,11 +371,26 @@ func (m *Manager) StopAll() {
 	m.mu.RUnlock()
 
 	for _, id := range jobIDs {
-		if err := m.Stop(id, true); err != nil {
+		if err := m.StopContext(ctx, id, true); err != nil {
 			log.WithError(err).WithField("job_id", id).Error("failed to stop agent job")
+			errs = append(errs, fmt.Errorf("stop job %s: %w", id, err))
 		}
 	}
 	log.WithField("count", len(jobIDs)).Info("stopped all jobs")
+	return errors.Join(errs...)
+}
+
+// StopByTypes stops a job only when it belongs to one of the expected types.
+func (m *Manager) StopByTypes(jobID string, force bool, expectedTypes ...string) error {
+	return m.StopByTypesContext(context.Background(), jobID, force, expectedTypes...)
+}
+
+// StopByTypesContext stops an expected job type while propagating cancellation.
+func (m *Manager) StopByTypesContext(ctx context.Context, jobID string, force bool, expectedTypes ...string) error {
+	if _, err := m.GetByTypesContext(ctx, jobID, expectedTypes...); err != nil {
+		return err
+	}
+	return m.StopContext(ctx, jobID, force)
 }
 
 func (m *Manager) finishJob(job *Job, status JobStatus, errMessage string, result *Result) {
@@ -291,35 +414,68 @@ func (m *Manager) finishJob(job *Job, status JobStatus, errMessage string, resul
 	}
 	m.jobs.Delete(job.ID)
 	delete(m.stopping, job.ID)
-	count := m.hostJobCount(job.Hostname)
+	policy, policyErr := m.policyFor(job.Type)
+	hostKey := quotaHostKey(job.Hostname, policy.Group)
+	count := m.hostJobCount(job.Hostname, policy.Group)
 	if count <= 1 {
-		m.jobsByHost.Delete(job.Hostname)
+		m.jobsByHost.Delete(hostKey)
 	} else {
-		m.jobsByHost.Store(job.Hostname, count-1)
+		m.jobsByHost.Store(hostKey, count-1)
 	}
 	snapshot := cloneJob(job)
 	m.mu.Unlock()
+	if policyErr != nil {
+		log.WithError(policyErr).WithField("job_id", job.ID).Error("failed to release job quota")
+	}
 
-	if err := m.storage.Save(snapshot); err != nil {
+	if err := m.storeSave(m.ctx, snapshot); err != nil {
 		log.WithError(err).WithField("job_id", job.ID).Error("failed to save job")
 	}
 }
 
-func (m *Manager) jobCount() int {
+func (m *Manager) jobCount(group string) int {
 	count := 0
-	m.jobs.Range(func(_, _ any) bool {
-		count++
+	m.jobs.Range(func(_, value any) bool {
+		job := value.(*Job)
+		policy, err := m.policyFor(job.Type)
+		if err == nil && (group == "" || policy.Group == group) {
+			count++
+		}
 		return true
 	})
 	return count
 }
 
-func (m *Manager) hostJobCount(host string) int {
-	count, exists := m.jobsByHost.Load(host)
+func (m *Manager) hostJobCount(host, group string) int {
+	count, exists := m.jobsByHost.Load(quotaHostKey(host, group))
 	if !exists {
 		return 0
 	}
 	return count.(int)
+}
+
+func (m *Manager) policyFor(jobType string) (TypePolicy, error) {
+	if len(m.config.TypePolicies) == 0 {
+		return TypePolicy{
+			MaxJobsPerHost: m.config.MaxJobsPerHost,
+			MaxTotalJobs:   m.config.MaxTotalJobs,
+		}, nil
+	}
+	policy, ok := m.config.TypePolicies[jobType]
+	if !ok {
+		return TypePolicy{}, fmt.Errorf("%w: %q", ErrUnsupportedJobType, jobType)
+	}
+	if policy.Group == "" {
+		policy.Group = jobType
+	}
+	return policy, nil
+}
+
+func quotaHostKey(host, group string) string {
+	if group == "" {
+		return host
+	}
+	return group + "\x00" + host
 }
 
 func (m *Manager) rollbackJob(job *Job) {
@@ -327,12 +483,18 @@ func (m *Manager) rollbackJob(job *Job) {
 	defer m.mu.Unlock()
 
 	m.jobs.Delete(job.ID)
-	count := m.hostJobCount(job.Hostname)
-	if count <= 1 {
-		m.jobsByHost.Delete(job.Hostname)
+	policy, err := m.policyFor(job.Type)
+	if err != nil {
+		log.WithError(err).WithField("job_id", job.ID).Error("failed to release job quota")
 		return
 	}
-	m.jobsByHost.Store(job.Hostname, count-1)
+	hostKey := quotaHostKey(job.Hostname, policy.Group)
+	count := m.hostJobCount(job.Hostname, policy.Group)
+	if count <= 1 {
+		m.jobsByHost.Delete(hostKey)
+		return
+	}
+	m.jobsByHost.Store(hostKey, count-1)
 }
 
 func (m *Manager) jobIsActive(jobID string) bool {
@@ -344,7 +506,7 @@ func (m *Manager) jobIsActive(jobID string) bool {
 }
 
 func (m *Manager) stopAgent(job *Job, force bool) error {
-	if err := m.nodeAgent.StopTask(job.Hostname, job.AgentTaskID, force); err != nil {
+	if err := m.stopTask(m.ctx, job.Hostname, job.AgentTaskID, force); err != nil {
 		return fmt.Errorf("stop task %s: %w", job.ID, err)
 	}
 	return nil
@@ -352,7 +514,7 @@ func (m *Manager) stopAgent(job *Job, force bool) error {
 
 // checkAndUpdateJobStatus polls the agent for the task's current status and transitions the local job accordingly.
 func (m *Manager) checkAndUpdateJobStatus(job *Job) (string, error) {
-	agentStatus, results, err := m.nodeAgent.GetTaskStatus(job.Hostname, job.AgentTaskID)
+	agentStatus, results, err := m.getTaskStatus(m.ctx, job.Hostname, job.AgentTaskID)
 	if err != nil {
 		return agentStatus, err
 	}
@@ -485,6 +647,11 @@ func (m *Manager) failMonitoredJob(job *Job, cause error) {
 
 // Delete removes the persisted job record; returns ErrCannotDeleteRunning if the job is still active.
 func (m *Manager) Delete(jobID string) error {
+	return m.DeleteContext(context.Background(), jobID)
+}
+
+// DeleteContext deletes a completed job while propagating cancellation to storage.
+func (m *Manager) DeleteContext(ctx context.Context, jobID string) error {
 	m.mu.RLock()
 	if jobVal, exists := m.jobs.Load(jobID); exists {
 		job := jobVal.(*Job)
@@ -495,7 +662,7 @@ func (m *Manager) Delete(jobID string) error {
 	}
 	m.mu.RUnlock()
 
-	storedJob, err := m.storage.Get(jobID)
+	storedJob, err := m.storeGet(ctx, jobID)
 	if err != nil {
 		return err
 	}
@@ -504,5 +671,76 @@ func (m *Manager) Delete(jobID string) error {
 		return ErrCannotDeleteRunning
 	}
 
+	return m.storeDelete(ctx, jobID)
+}
+
+// DeleteByTypes deletes a job only when it belongs to one of the expected types.
+func (m *Manager) DeleteByTypes(jobID string, expectedTypes ...string) error {
+	return m.DeleteByTypesContext(context.Background(), jobID, expectedTypes...)
+}
+
+// DeleteByTypesContext deletes an expected job type while propagating cancellation.
+func (m *Manager) DeleteByTypesContext(ctx context.Context, jobID string, expectedTypes ...string) error {
+	if _, err := m.GetByTypesContext(ctx, jobID, expectedTypes...); err != nil {
+		return err
+	}
+	return m.DeleteContext(ctx, jobID)
+}
+
+func hasJobType(jobType string, expectedTypes []string) bool {
+	for _, expectedType := range expectedTypes {
+		if jobType == expectedType {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) startTask(ctx context.Context, host, container string, req *AgentTaskRequest) (string, error) {
+	if agent, ok := m.nodeAgent.(contextNodeAgent); ok {
+		return agent.StartTaskContext(ctx, host, container, req)
+	}
+	return m.nodeAgent.StartTask(host, container, req)
+}
+
+func (m *Manager) stopTask(ctx context.Context, host, taskID string, force bool) error {
+	if agent, ok := m.nodeAgent.(contextNodeAgent); ok {
+		return agent.StopTaskContext(ctx, host, taskID, force)
+	}
+	return m.nodeAgent.StopTask(host, taskID, force)
+}
+
+func (m *Manager) getTaskStatus(ctx context.Context, host, taskID string) (string, *Result, error) {
+	if agent, ok := m.nodeAgent.(contextNodeAgent); ok {
+		return agent.GetTaskStatusContext(ctx, host, taskID)
+	}
+	return m.nodeAgent.GetTaskStatus(host, taskID)
+}
+
+func (m *Manager) storeGet(ctx context.Context, jobID string) (*Job, error) {
+	if store, ok := m.storage.(contextStore); ok {
+		return store.GetContext(ctx, jobID)
+	}
+	return m.storage.Get(jobID)
+}
+
+func (m *Manager) storeSave(ctx context.Context, jobEntity *Job) error {
+	if store, ok := m.storage.(contextStore); ok {
+		return store.SaveContext(ctx, jobEntity)
+	}
+	return m.storage.Save(jobEntity)
+}
+
+func (m *Manager) storeDelete(ctx context.Context, jobID string) error {
+	if store, ok := m.storage.(contextStore); ok {
+		return store.DeleteContext(ctx, jobID)
+	}
 	return m.storage.Delete(jobID)
+}
+
+func (m *Manager) storeList(ctx context.Context, query *JobQuery) ([]*Job, error) {
+	if store, ok := m.storage.(contextStore); ok {
+		return store.ListContext(ctx, query)
+	}
+	return m.storage.List(query)
 }
