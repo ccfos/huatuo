@@ -56,6 +56,7 @@ type Config struct {
 	IdleTimeout       time.Duration
 	MaxHeaderBytes    int
 	MaxBodyBytes      int64
+	Ready             func(context.Context) error
 }
 
 var defaultConfig = &Config{
@@ -157,6 +158,16 @@ func (s *server) Done() <-chan struct{} {
 	return s.serveDone
 }
 
+// Addr returns the bound listener address after Start.
+func (s *server) Addr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listener == nil {
+		return nil
+	}
+	return s.listener.Addr()
+}
+
 // Wait returns the serving result or the context error.
 func (s *server) Wait(ctx context.Context) error {
 	s.mu.Lock()
@@ -210,7 +221,7 @@ func NewServer(cfg *Config) *server {
 
 	if cfg.RequireAuth || len(cfg.AuthUsers) > 0 {
 		svc := NewAuthService(cfg.AuthUsers)
-		publicPaths := append([]string{"/healthz", "/metrics", "/version"}, cfg.PublicPaths...)
+		publicPaths := append([]string{"/healthz", "/readyz", "/metrics", "/version"}, cfg.PublicPaths...)
 		adminPaths := append([]string{"/debug/pprof", "/debug/pprof/**"}, cfg.AdminPaths...)
 		middleWares = append(middleWares, wrapHandler(NewAuthMiddleware(svc, publicPaths, adminPaths)))
 	}
@@ -226,6 +237,7 @@ func NewServer(cfg *Config) *server {
 	s.rootGroup = NewRoot(s.engine, cfg.Group)
 	s.MustRegisterRoutes("", []Handle{
 		{Typ: HttpGet, Uri: "/healthz", Handle: s.healthzHandler()},
+		{Typ: HttpGet, Uri: "/readyz", Handle: s.readyzHandler()},
 		{Typ: HttpGet, Uri: "/metrics", Handle: s.promServerHandler()},
 	})
 	if cfg.VersionInfo != nil {
@@ -309,6 +321,22 @@ func newHTTPMetricsMiddleware(reg prometheus.Registerer) httpGin.HandlerFunc {
 
 func (s *server) healthzHandler() ErrHandlerContextFunc {
 	return func(ctx *Context) error {
+		ctx.Status(http.StatusNoContent)
+		return nil
+	}
+}
+
+func (s *server) readyzHandler() ErrHandlerContextFunc {
+	return func(ctx *Context) error {
+		if s.config.Ready == nil {
+			ctx.Status(http.StatusNoContent)
+			return nil
+		}
+		if err := s.config.Ready(ctx.Request().Context()); err != nil {
+			log.WithError(err).Warn("readiness check failed")
+			ctx.JSON(http.StatusServiceUnavailable, map[string]string{"status": "not ready"})
+			return nil
+		}
 		ctx.Status(http.StatusNoContent)
 		return nil
 	}

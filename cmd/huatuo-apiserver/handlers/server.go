@@ -17,13 +17,11 @@ package handlers
 import (
 	"context"
 	"errors"
+	"net"
 	"time"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
-	"huatuo-bamai/internal/job"
-	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/version"
 
@@ -33,13 +31,24 @@ import (
 
 // ServerOptions groups the dependencies required to start the API server.
 type ServerOptions struct {
-	Addr           string
-	PromReg        *prometheus.Registry
-	JobManager     *job.Manager
-	ProfileService *profileService.Service
-	EnablePProf    bool
-	VersionInfo    *version.Info
-	Config         *config.Config
+	Addr                string
+	PromReg             *prometheus.Registry
+	TraceJobManager     trace.JobManager
+	ProfilingJobManager profiling.JobManager
+	ProfileService      profiling.ProfileQueryService
+	ProfilingConfig     profiling.Config
+	AuthUsers           []server.UserConfig
+	EnablePProf         bool
+	VersionInfo         *version.Info
+	RateLimit           rate.Limit
+	RateBurst           int
+	ReadHeaderTimeout   time.Duration
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	IdleTimeout         time.Duration
+	MaxHeaderBytes      int
+	MaxBodyBytes        int64
+	Ready               func(context.Context) error
 }
 
 // RunningServer exposes the lifecycle of the API listener.
@@ -47,41 +56,46 @@ type RunningServer interface {
 	Shutdown(ctx context.Context) error
 	Done() <-chan struct{}
 	Wait(ctx context.Context) error
+	Addr() net.Addr
 }
 
 // Start starts the API service with the given configuration.
-func Start(opts ServerOptions) (RunningServer, error) {
-	if opts.Config == nil {
-		return nil, errors.New("start API server: config is required")
+func Start(opts *ServerOptions) (RunningServer, error) {
+	if opts == nil {
+		return nil, errors.New("start API server: options are required")
 	}
-	if opts.JobManager == nil {
-		return nil, errors.New("start API server: job manager is required")
+	if opts.TraceJobManager == nil || opts.ProfilingJobManager == nil {
+		return nil, errors.New("start API server: job managers are required")
 	}
 	if opts.ProfileService == nil {
 		return nil, errors.New("start API server: profile service is required")
 	}
 	httpServer := server.NewServer(&server.Config{
-		RequireAuth:       true,
-		EnablePProf:       opts.EnablePProf,
-		EnableRateLimit:   true,
-		RateLimit:         rate.Limit(opts.Config.APIServer.RateLimit),
-		RateBurst:         opts.Config.APIServer.RateBurst,
-		AuthUsers:         getUserConfigs(opts.Config),
+		RequireAuth:     true,
+		EnablePProf:     opts.EnablePProf,
+		EnableRateLimit: true,
+		RateLimit:       opts.RateLimit,
+		RateBurst:       opts.RateBurst,
+		AuthUsers:       opts.AuthUsers,
+		AdminPaths: []string{
+			"/v1/profiles/flamegraph/**",
+		},
 		PromReg:           opts.PromReg,
 		VersionInfo:       opts.VersionInfo,
-		ReadHeaderTimeout: time.Duration(opts.Config.APIServer.ReadHeaderTimeoutSeconds) * time.Second,
-		ReadTimeout:       time.Duration(opts.Config.APIServer.ReadTimeoutSeconds) * time.Second,
-		WriteTimeout:      time.Duration(opts.Config.APIServer.WriteTimeoutSeconds) * time.Second,
-		IdleTimeout:       time.Duration(opts.Config.APIServer.IdleTimeoutSeconds) * time.Second,
-		MaxHeaderBytes:    opts.Config.APIServer.MaxHeaderBytes,
-		MaxBodyBytes:      opts.Config.APIServer.MaxBodyBytes,
+		ReadHeaderTimeout: opts.ReadHeaderTimeout,
+		ReadTimeout:       opts.ReadTimeout,
+		WriteTimeout:      opts.WriteTimeout,
+		IdleTimeout:       opts.IdleTimeout,
+		MaxHeaderBytes:    opts.MaxHeaderBytes,
+		MaxBodyBytes:      opts.MaxBodyBytes,
+		Ready:             opts.Ready,
 	})
 
 	// Register trace routes
-	httpServer.MustRegisterRoutes("/v1/traces", trace.NewHandler(opts.JobManager).Handlers)
+	httpServer.MustRegisterRoutes("/v1/traces", trace.NewHandler(opts.TraceJobManager).Handlers)
 	httpServer.MustRegisterRoutes(
 		"/v1/profiles",
-		profiling.NewHandler(opts.JobManager, opts.ProfileService, opts.Config.Profiling).Handlers,
+		profiling.NewHandler(opts.ProfilingJobManager, opts.ProfileService, opts.ProfilingConfig).Handlers,
 	)
 
 	if err := httpServer.Start(opts.Addr); err != nil {
@@ -89,20 +103,4 @@ func Start(opts ServerOptions) (RunningServer, error) {
 	}
 
 	return httpServer, nil
-}
-
-// getUserConfigs converts apiserver config users to server.UserConfig.
-func getUserConfigs(cfg *config.Config) []server.UserConfig {
-	users := make([]server.UserConfig, 0, len(cfg.Auth.Users))
-
-	for _, u := range cfg.Auth.Users {
-		users = append(users, server.UserConfig{
-			ID:          u.ID,
-			Name:        u.Name,
-			Permissions: u.Permissions,
-			IsAdmin:     u.IsAdmin,
-		})
-	}
-
-	return users
 }

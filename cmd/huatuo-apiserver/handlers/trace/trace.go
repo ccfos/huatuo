@@ -33,11 +33,12 @@ const traceJobType = job.JobTypeTracing
 
 // Handler handles trace-related HTTP requests.
 type Handler struct {
-	jobManager jobManager
+	jobManager JobManager
 	Handlers   []server.Handle
 }
 
-type jobManager interface {
+// JobManager defines the trace handler's job operations.
+type JobManager interface {
 	CreateContext(ctx context.Context, request *job.CreateJobRequest) (*job.Job, error)
 	ListPageContext(ctx context.Context, userID string, isAdmin bool, query *job.JobQuery) (*job.JobPage, error)
 	GetByTypesContext(ctx context.Context, jobID string, expectedTypes ...job.JobType) (*job.Job, error)
@@ -47,7 +48,7 @@ type jobManager interface {
 }
 
 // NewHandler creates a new trace handler.
-func NewHandler(jm jobManager) *Handler {
+func NewHandler(jm JobManager) *Handler {
 	h := &Handler{jobManager: jm}
 
 	h.Handlers = []server.Handle{
@@ -127,8 +128,8 @@ func (h *Handler) list(ctx *server.Context) error {
 	}
 
 	filter := job.JobQuery{
-		ContainerID: firstQuery(ctx, "container_id", "container"),
-		Hostname:    firstQuery(ctx, "hostname", "host"),
+		ContainerID: ctx.Query("container_id"),
+		Hostname:    ctx.Query("hostname"),
 		Status:      ctx.Query("status"),
 		Types:       []job.JobType{traceJobType},
 		Sort:        listParams.Sort,
@@ -157,13 +158,6 @@ func (h *Handler) list(ctx *server.Context) error {
 		Offset: listParams.Offset,
 	})
 	return nil
-}
-
-func firstQuery(ctx *server.Context, preferred, legacy string) string {
-	if value := ctx.Query(preferred); value != "" {
-		return value
-	}
-	return ctx.Query(legacy)
 }
 
 // get gets a specific trace by ID.
@@ -297,6 +291,7 @@ func convertJobToTraceResponse(jobResult *job.Job) v1.TraceJobResponse {
 		AgentTaskID:  jobResult.AgentTaskID,
 		ContainerID:  jobResult.ContainerID,
 		Hostname:     jobResult.Hostname,
+		Type:         traceAPIType(jobResult.AgentTask.TracerName),
 		Status:       string(jobResult.Status),
 		StartTime:    formatTime(jobResult.StartTime),
 		EndTime:      formatTime(jobResult.EndTime),
@@ -305,6 +300,13 @@ func convertJobToTraceResponse(jobResult *job.Job) v1.TraceJobResponse {
 			URL: jobResult.Result.URL,
 		},
 	}
+}
+
+func traceAPIType(tracerName string) string {
+	if tracerName == "tracer" {
+		return "tracing"
+	}
+	return tracerName
 }
 
 func formatTime(value time.Time) string {

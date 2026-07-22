@@ -137,6 +137,16 @@ func (s *ProfileStorage) Close(ctx context.Context) error {
 	return s.store.Close(ctx)
 }
 
+func (s *ProfileStorage) Ready(ctx context.Context) error {
+	if s == nil || s.store == nil {
+		return errors.New("profile storage is not initialized")
+	}
+	if _, err := s.store.Count(ctx, driver.Query{Limit: 1}); err != nil {
+		return fmt.Errorf("profile storage readiness: %w", err)
+	}
+	return nil
+}
+
 // SearchProfiles searches profiles by SearchFilter.
 func (s *ProfileStorage) SearchProfiles(filter *SearchFilter) ([]*ProfileDocument, error) {
 	return s.SearchProfilesContext(context.Background(), filter)

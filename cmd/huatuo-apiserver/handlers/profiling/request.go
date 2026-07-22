@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/pkg/profiling"
@@ -63,7 +62,7 @@ func parseCreateProfilingJobRequest(ctx *server.Context) (*v1.CreateProfilingJob
 func buildCreateProfilingJobRequest(
 	req *v1.CreateProfilingJobRequest,
 	userID string,
-	cfg *config.ProfilingConfig,
+	cfg *Config,
 ) (*job.CreateJobRequest, error) {
 	taskReq := job.AgentTaskRequest{
 		TracerName:   "profiler",
@@ -175,9 +174,6 @@ func parseProfilingJobListRequest(ctx *server.Context) (*profilingJobListRequest
 	var query profilingJobListQuery
 	if err := ctx.ShouldBindQuery(&query); err != nil {
 		return nil, fmt.Errorf("binding profiling job query: %w", err)
-	}
-	if query.ContainerID == "" {
-		query.ContainerID = ctx.Query("containerID")
 	}
 	jobQuery, err := buildProfilingJobQuery(query)
 	if err != nil {

@@ -16,6 +16,8 @@ package main
 
 import (
 	"flag"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/urfave/cli/v2"
@@ -50,5 +52,33 @@ func TestOptionsFromContextPreservesExplicitRelativeConfigDir(t *testing.T) {
 	}
 	if !opts.DisableCgroup {
 		t.Error("DisableCgroup = false, want true")
+	}
+}
+
+func TestConfigureRuntimeAnchorsRelativeJobStoreToConfigDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	configFile := "apiserver.conf"
+	contents := []byte(`
+[[Auth.users]]
+ID = "test-token"
+IsAdmin = true
+
+[ElasticSearch]
+Address = "http://127.0.0.1:9200"
+
+[TaskConfig]
+JobStoreDSN = "state/jobs.db"
+`)
+	if err := os.WriteFile(filepath.Join(configDir, configFile), contents, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	opts := &Options{ConfigDir: configDir, ConfigFile: configFile}
+	if err := configureRuntime(opts); err != nil {
+		t.Fatalf("configureRuntime() error = %v", err)
+	}
+	want := filepath.Join(configDir, "state/jobs.db")
+	if got := opts.Config.TaskConfig.JobStoreDSN; got != want {
+		t.Fatalf("JobStoreDSN = %q, want %q", got, want)
 	}
 }

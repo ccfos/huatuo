@@ -21,14 +21,14 @@ import (
 	"huatuo-bamai/internal/profiler/service"
 )
 
-func setupProfileFlamegraph(d *Daemon) (func(context.Context) error, error) {
+func setupProfileFlamegraph(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
 	esConfig := &service.ElasticSearchConfig{
 		Address:  d.opts.Config.ElasticSearch.Address,
 		Username: d.opts.Config.ElasticSearch.Username,
 		Password: d.opts.Config.ElasticSearch.Password,
 		Index:    d.opts.Config.ElasticSearch.Index,
 	}
-	profileService, err := service.NewService(d.ctx, esConfig)
+	profileService, err := service.NewService(ctx, esConfig)
 	if err != nil {
 		return nil, fmt.Errorf("initialize profiling flamegraph: %w", err)
 	}

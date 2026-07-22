@@ -14,6 +14,12 @@
 
 package v1
 
+import (
+	"time"
+
+	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
+)
+
 // CreateProfilingJobRequest represents a request to create a profiling job.
 type CreateProfilingJobRequest struct {
 	ProfilingType   string `json:"type"`              // cpu or memory
@@ -54,12 +60,41 @@ type ProfilingResults struct {
 	URL string `json:"url"` // URL to view the results
 }
 
-// RawDataResponse represents raw profiling data response
+// RawProfile is the stable API representation of one stored profile.
+type RawProfile struct {
+	Hostname               string               `json:"hostname"`
+	Region                 string               `json:"region"`
+	UploadedTime           time.Time            `json:"uploaded_time"`
+	Time                   string               `json:"time"`
+	ContainerID            string               `json:"container_id,omitempty"`
+	ContainerHostname      string               `json:"container_hostname,omitempty"`
+	ContainerHostNamespace string               `json:"container_host_namespace,omitempty"`
+	ContainerType          string               `json:"container_type,omitempty"`
+	ContainerQOS           string               `json:"container_qos,omitempty"`
+	TracerName             string               `json:"tracer_name,omitempty"`
+	TracerID               string               `json:"tracer_id,omitempty"`
+	TracerTime             string               `json:"tracer_time"`
+	TracerRunType          string               `json:"tracer_type,omitempty"`
+	TracerData             RawProfileTracerData `json:"tracer_data,omitempty"`
+}
+
+// RawProfileTracerData contains profiler output fields exposed by the API.
+type RawProfileTracerData struct {
+	Flamedata RawProfileFlameData `json:"flamedata,omitempty"`
+}
+
+// RawProfileFlameData contains the profile payload and its type.
+type RawProfileFlameData struct {
+	ProfileType string             `json:"profile_type,omitempty"`
+	Profile     *profilev1.Profile `json:"profile,omitempty"`
+}
+
+// RawDataResponse represents a page of raw profiling data.
 type RawDataResponse struct {
-	Data    any  `json:"data"` // raw profiling data
-	Limit   int  `json:"limit"`
-	Offset  int  `json:"offset"`
-	HasMore bool `json:"has_more"`
+	Data    []RawProfile `json:"data"`
+	Limit   int          `json:"limit"`
+	Offset  int          `json:"offset"`
+	HasMore bool         `json:"has_more"`
 }
 
 // JobFilter represents a job filter
@@ -89,6 +124,7 @@ type TraceJobResponse struct {
 	AgentTaskID  string       `json:"agent_task_id"` // agent task ID
 	ContainerID  string       `json:"container_id"`  // container ID
 	Hostname     string       `json:"hostname"`      // host name
+	Type         string       `json:"type"`          // requested tracer type
 	Status       string       `json:"status"`        // job status
 	StartTime    string       `json:"start_time"`    // start time
 	EndTime      string       `json:"end_time"`      // end time

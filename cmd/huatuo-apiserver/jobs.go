@@ -17,12 +17,19 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"huatuo-bamai/internal/job"
 )
 
-func setupJobManagers(d *Daemon) (func(context.Context) error, error) {
-	nodeAgent := job.NewHTTPNodeAgent()
+func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
+	nodeAgent := job.NewHTTPNodeAgent(job.HTTPNodeAgentConfig{
+		Port:                d.opts.Config.Agent.Port,
+		RequestTimeout:      time.Duration(d.opts.Config.Agent.RequestTimeoutSeconds) * time.Second,
+		StatusRetryAttempts: d.opts.Config.Agent.StatusRetryAttempts,
+		StatusRetryBackoff:  time.Duration(d.opts.Config.Agent.StatusRetryBackoffMillis) * time.Millisecond,
+		Observe:             d.agentObserver,
+	})
 	profilingPolicy := job.TypePolicy{
 		Group:          "profiling",
 		MaxJobsPerHost: d.opts.Config.TaskConfig.MaxProfilingTasksPerHost,
@@ -33,9 +40,11 @@ func setupJobManagers(d *Daemon) (func(context.Context) error, error) {
 		MaxJobsPerHost: d.opts.Config.TaskConfig.MaxTracingTasksPerHost,
 		MaxTotalJobs:   d.opts.Config.TaskConfig.MaxTotalTracingTasks,
 	}
-	manager, err := job.NewManager(d.ctx, nodeAgent, job.ManagerConfig{
-		StoreDSN:            d.opts.Config.TaskConfig.JobStoreDSN,
-		ShutdownConcurrency: d.opts.Config.TaskConfig.ShutdownConcurrency,
+	manager, err := job.NewManager(ctx, nodeAgent, job.ManagerConfig{
+		StoreDSN:                 d.opts.Config.TaskConfig.JobStoreDSN,
+		ShutdownConcurrency:      d.opts.Config.TaskConfig.ShutdownConcurrency,
+		StatusPollInterval:       time.Duration(d.opts.Config.Agent.StatusPollIntervalSeconds) * time.Second,
+		MaxConsecutivePollErrors: d.opts.Config.Agent.MaxConsecutivePollErrors,
 		TypePolicies: map[job.JobType]job.TypePolicy{
 			job.JobTypeProfilingCPU:    profilingPolicy,
 			job.JobTypeProfilingMemory: profilingPolicy,
@@ -47,6 +56,7 @@ func setupJobManagers(d *Daemon) (func(context.Context) error, error) {
 	}
 
 	d.jobManager = manager
+	d.metrics.MustRegister(newJobManagerCollector(manager))
 	return func(ctx context.Context) error {
 		return manager.ShutdownContext(ctx)
 	}, nil

@@ -17,7 +17,6 @@ package profiling
 import (
 	"context"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/job"
 	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
@@ -28,13 +27,22 @@ import (
 
 // Handler handles profiling-related HTTP requests.
 type Handler struct {
-	jobManager      jobManager
-	profileService  profileQueryService
-	profilingConfig config.ProfilingConfig
+	jobManager      JobManager
+	profileService  ProfileQueryService
+	profilingConfig Config
 	Handlers        []server.Handle
 }
 
-type profileQueryService interface {
+// Config contains profiling values used by request and response handling.
+type Config struct {
+	AggregationInterval int
+	ExecutionTimeout    int
+	MaxProfilerProcs    int
+	FlameGraphBaseURL   string
+}
+
+// ProfileQueryService defines profile query operations consumed by the handler.
+type ProfileQueryService interface {
 	SelectMergeStacktraces(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error)
 	ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error)
 	LabelNames(ctx context.Context, req *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error)
@@ -42,7 +50,8 @@ type profileQueryService interface {
 	GetProfilesByTracerIDPage(ctx context.Context, tracerID string, limit, offset int) ([]*profileService.ProfileDocument, error)
 }
 
-type jobManager interface {
+// JobManager defines the profiling handler's job operations.
+type JobManager interface {
 	CreateContext(ctx context.Context, request *job.CreateJobRequest) (*job.Job, error)
 	ListPageContext(ctx context.Context, userID string, isAdmin bool, query *job.JobQuery) (*job.JobPage, error)
 	GetByTypesContext(ctx context.Context, jobID string, expectedTypes ...job.JobType) (*job.Job, error)
@@ -52,9 +61,9 @@ type jobManager interface {
 
 // NewHandler creates a new profiling handler.
 func NewHandler(
-	jm jobManager,
-	profileSvc profileQueryService,
-	profilingConfig config.ProfilingConfig,
+	jm JobManager,
+	profileSvc ProfileQueryService,
+	profilingConfig Config,
 ) *Handler {
 	h := &Handler{
 		jobManager:      jm,

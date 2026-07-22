@@ -21,8 +21,8 @@ import (
 	"time"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/job"
+	profileService "huatuo-bamai/internal/profiler/service"
 )
 
 func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
@@ -39,7 +39,7 @@ func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 }
 
 func TestNewHandlerSnapshotsProfilingConfig(t *testing.T) {
-	cfg := config.ProfilingConfig{AggregationInterval: 15}
+	cfg := Config{AggregationInterval: 15}
 	h := NewHandler(nil, nil, cfg)
 	cfg.AggregationInterval = 30
 
@@ -54,7 +54,7 @@ func TestNewHandlerSnapshotsProfilingConfig(t *testing.T) {
 // TestCapabilities verifies that the capabilities handler returns the correct
 // profiling types, languages, memory modes, and default configuration values.
 func TestCapabilities(t *testing.T) {
-	h := &Handler{profilingConfig: config.ProfilingConfig{
+	h := &Handler{profilingConfig: Config{
 		AggregationInterval: 15,
 		ExecutionTimeout:    30,
 		MaxProfilerProcs:    5,
@@ -254,5 +254,29 @@ func TestProfilingJobResponseFormatsZeroEndTimeAsEmpty(t *testing.T) {
 	}
 	if resp.EndTime != "" {
 		t.Errorf("EndTime=%q, want empty", resp.EndTime)
+	}
+}
+
+func TestRawProfileResponsesMapsStableWireType(t *testing.T) {
+	document := &profileService.ProfileDocument{
+		Hostname:   "node-a",
+		TracerID:   "trace-a",
+		TracerTime: "2026-07-22T10:00:00Z",
+	}
+	document.TracerData.Flamedata.ProfileType = "process_cpu"
+
+	items := rawProfileResponses([]*profileService.ProfileDocument{nil, document})
+	if len(items) != 1 {
+		t.Fatalf("rawProfileResponses() length = %d, want 1", len(items))
+	}
+	if items[0].Hostname != document.Hostname || items[0].TracerID != document.TracerID {
+		t.Fatalf(
+			"raw profile identity = (%q, %q), want document identity",
+			items[0].Hostname,
+			items[0].TracerID,
+		)
+	}
+	if got := items[0].TracerData.Flamedata.ProfileType; got != "process_cpu" {
+		t.Fatalf("profile type = %q, want process_cpu", got)
 	}
 }

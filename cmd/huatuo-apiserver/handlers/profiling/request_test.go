@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/job"
 )
 
@@ -92,7 +91,7 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 		},
 	}
 
-	cfg := config.ProfilingConfig{
+	cfg := Config{
 		AggregationInterval: 10,
 		ExecutionTimeout:    20,
 		MaxProfilerProcs:    2,

@@ -46,6 +46,7 @@ type APIServerConfig struct {
 	ReadTimeoutSeconds       int    `default:"30"`
 	WriteTimeoutSeconds      int    `default:"60"`
 	IdleTimeoutSeconds       int    `default:"120"`
+	ShutdownTimeoutSeconds   int    `default:"60"`
 	MaxHeaderBytes           int    `default:"1048576"`
 	MaxBodyBytes             int64  `default:"4194304"`
 	RateLimit                int    `default:"200"`
@@ -70,6 +71,15 @@ type TaskConfig struct {
 	MaxTotalTracingTasks     int    `default:"1000"`
 	JobStoreDSN              string `default:"jobs.db"`
 	ShutdownConcurrency      int    `default:"16"`
+}
+
+type AgentConfig struct {
+	Port                      int `default:"19704"`
+	RequestTimeoutSeconds     int `default:"10"`
+	StatusRetryAttempts       int `default:"3"`
+	StatusRetryBackoffMillis  int `default:"100"`
+	StatusPollIntervalSeconds int `default:"5"`
+	MaxConsecutivePollErrors  int `default:"3"`
 }
 
 type ElasticSearchConfig struct {
@@ -125,6 +135,8 @@ type Config struct {
 	// TaskConfig contains task-related configuration
 	TaskConfig TaskConfig
 
+	Agent AgentConfig
+
 	ElasticSearch ElasticSearchConfig
 
 	Profiling ProfilingConfig
@@ -140,8 +152,14 @@ func (c *Config) Validate() error {
 	if err := c.TaskConfig.Validate(); err != nil {
 		return fmt.Errorf("validating task config: %w", err)
 	}
+	if err := c.Agent.Validate(); err != nil {
+		return fmt.Errorf("validating agent config: %w", err)
+	}
 	if c.RuntimeCgroup.LimitCPU <= 0 || c.RuntimeCgroup.LimitMem <= 0 {
 		return errors.New("runtime cgroup limits must be greater than zero")
+	}
+	if len(c.Auth.Users) == 0 {
+		return errors.New("at least one auth user is required")
 	}
 	seenUsers := make(map[string]struct{}, len(c.Auth.Users))
 	for i, user := range c.Auth.Users {
@@ -174,6 +192,29 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func (c AgentConfig) Validate() error {
+	values := []struct {
+		name  string
+		value int
+	}{
+		{name: "port", value: c.Port},
+		{name: "request timeout", value: c.RequestTimeoutSeconds},
+		{name: "status retry attempts", value: c.StatusRetryAttempts},
+		{name: "status retry backoff", value: c.StatusRetryBackoffMillis},
+		{name: "status poll interval", value: c.StatusPollIntervalSeconds},
+		{name: "max consecutive poll errors", value: c.MaxConsecutivePollErrors},
+	}
+	for _, item := range values {
+		if item.value <= 0 {
+			return fmt.Errorf("agent %s must be greater than zero", item.name)
+		}
+	}
+	if c.Port > 65535 {
+		return errors.New("agent port must not exceed 65535")
+	}
+	return nil
+}
+
 func (c *APIServerConfig) Validate() error {
 	values := []struct {
 		name  string
@@ -183,6 +224,7 @@ func (c *APIServerConfig) Validate() error {
 		{name: "read timeout", value: int64(c.ReadTimeoutSeconds)},
 		{name: "write timeout", value: int64(c.WriteTimeoutSeconds)},
 		{name: "idle timeout", value: int64(c.IdleTimeoutSeconds)},
+		{name: "shutdown timeout", value: int64(c.ShutdownTimeoutSeconds)},
 		{name: "max header bytes", value: int64(c.MaxHeaderBytes)},
 		{name: "max body bytes", value: c.MaxBodyBytes},
 		{name: "rate limit", value: int64(c.RateLimit)},
@@ -220,10 +262,7 @@ func (c TaskConfig) Validate() error {
 
 func (c ElasticSearchConfig) Validate() error {
 	if strings.TrimSpace(c.Address) == "" {
-		if c.Username == "" && c.Password == "" && c.Index == "" {
-			return nil
-		}
-		return errors.New("address is required when Elasticsearch is configured")
+		return errors.New("address is required")
 	}
 	for _, address := range strings.Split(c.Address, ",") {
 		parsed, err := url.Parse(strings.TrimSpace(address))

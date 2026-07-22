@@ -24,6 +24,7 @@ import (
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
+	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/profiling"
@@ -373,10 +374,41 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 		profiles = profiles[:listParams.Limit]
 	}
 	response.Success(ctx, v1.RawDataResponse{
-		Data:    profiles,
+		Data:    rawProfileResponses(profiles),
 		Limit:   listParams.Limit,
 		Offset:  listParams.Offset,
 		HasMore: hasMore,
 	})
 	return nil
+}
+
+func rawProfileResponses(profiles []*profileService.ProfileDocument) []v1.RawProfile {
+	items := make([]v1.RawProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		if profile == nil {
+			continue
+		}
+		items = append(items, v1.RawProfile{
+			Hostname:               profile.Hostname,
+			Region:                 profile.Region,
+			UploadedTime:           profile.UploadedTime,
+			Time:                   profile.Time,
+			ContainerID:            profile.ContainerID,
+			ContainerHostname:      profile.ContainerHostname,
+			ContainerHostNamespace: profile.ContainerHostNamespace,
+			ContainerType:          profile.ContainerType,
+			ContainerQOS:           profile.ContainerQOS,
+			TracerName:             profile.TracerName,
+			TracerID:               profile.TracerID,
+			TracerTime:             profile.TracerTime,
+			TracerRunType:          profile.TracerRunType,
+			TracerData: v1.RawProfileTracerData{
+				Flamedata: v1.RawProfileFlameData{
+					ProfileType: profile.TracerData.Flamedata.ProfileType,
+					Profile:     &profile.TracerData.Flamedata.Profile,
+				},
+			},
+		})
+	}
+	return items
 }

@@ -14,7 +14,17 @@
 
 package service
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestServiceReadyRejectsUninitializedStorage(t *testing.T) {
+	err := (*Service)(nil).Ready(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "not initialized") {
+		t.Fatalf("Ready() error = %v, want initialization error", err)
+	}
+}
 
 func TestProfileStringRejectsInvalidIndex(t *testing.T) {
 	table := []string{"", "samples"}

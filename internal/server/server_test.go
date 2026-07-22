@@ -15,7 +15,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -61,6 +63,28 @@ func TestNewServerRegistersHealthzRoute(t *testing.T) {
 	}
 }
 
+func TestNewServerReadinessRoute(t *testing.T) {
+	tests := []struct {
+		name       string
+		ready      func(context.Context) error
+		wantStatus int
+	}{
+		{name: "ready", ready: func(context.Context) error { return nil }, wantStatus: http.StatusNoContent},
+		{name: "not ready", ready: func(context.Context) error { return errors.New("store unavailable") }, wantStatus: http.StatusServiceUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := NewServer(&Config{Ready: test.ready})
+			request := httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody)
+			recorder := httptest.NewRecorder()
+			s.engine.ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatus {
+				t.Errorf("response status = %d, want %d", recorder.Code, test.wantStatus)
+			}
+		})
+	}
+}
+
 func TestNewServerRegistersVersionRoute(t *testing.T) {
 	info := version.Info{
 		Name:         "huatuo-apiserver",
@@ -103,10 +127,17 @@ func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
 	srv := NewServer(&Config{
 		RequireAuth: true,
 		EnablePProf: true,
+		AdminPaths:  []string{"/v1/profiles/flamegraph/**"},
 		AuthUsers: []UserConfig{
 			{ID: "admin-2026", IsAdmin: true},
-			{ID: "viewer-2026", Permissions: []string{"/debug/pprof/**"}},
+			{ID: "viewer-2026", Permissions: []string{
+				"/debug/pprof/**",
+				"/v1/profiles/flamegraph/**",
+			}},
 		},
+	})
+	srv.engine.POST("/v1/profiles/flamegraph/query", func(ctx *httpGin.Context) {
+		ctx.Status(http.StatusNoContent)
 	})
 
 	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody)
@@ -130,6 +161,18 @@ func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
 	srv.engine.ServeHTTP(adminRecorder, adminRequest)
 	if adminRecorder.Code != http.StatusOK {
 		t.Fatalf("admin pprof status=%d, want %d", adminRecorder.Code, http.StatusOK)
+	}
+
+	viewerFlameRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/profiles/flamegraph/query",
+		http.NoBody,
+	)
+	viewerFlameRequest.Header.Set("Authorization", "Bearer viewer-2026")
+	viewerFlameRecorder := httptest.NewRecorder()
+	srv.engine.ServeHTTP(viewerFlameRecorder, viewerFlameRequest)
+	if viewerFlameRecorder.Code != http.StatusForbidden {
+		t.Fatalf("viewer flamegraph status=%d, want %d", viewerFlameRecorder.Code, http.StatusForbidden)
 	}
 }
 

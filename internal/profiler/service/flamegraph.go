@@ -61,6 +61,14 @@ func (s *Service) Close(ctx context.Context) error {
 	return s.profileStorage.Close(ctx)
 }
 
+// Ready verifies that profile storage can serve queries.
+func (s *Service) Ready(ctx context.Context) error {
+	if s == nil || s.profileStorage == nil {
+		return errors.New("profile service is not initialized")
+	}
+	return s.profileStorage.Ready(ctx)
+}
+
 // SelectMergeStacktraces selects merge stacktraces by request.
 //
 //	request: querierv1.SelectMergeStacktracesRequest

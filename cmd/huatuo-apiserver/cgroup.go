@@ -22,7 +22,7 @@ import (
 	"huatuo-bamai/internal/cgroups"
 )
 
-func setupCgroup(d *Daemon) (func(context.Context) error, error) {
+func setupCgroup(_ context.Context, d *Daemon) (func(context.Context) error, error) {
 	if d.opts.DisableCgroup {
 		return nil, nil
 	}

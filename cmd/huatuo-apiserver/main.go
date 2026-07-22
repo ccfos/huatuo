@@ -35,8 +35,6 @@ import (
 const (
 	appName  = "huatuo-apiserver"
 	appUsage = "Control-plane API server for orchestrating HuaTuo profiling and tracing jobs across hosts"
-
-	shutdownTimeout = 10 * time.Second
 )
 
 var (
@@ -66,7 +64,7 @@ func mainAction(opts *Options) error {
 	return NewDaemon(opts).Run(context.Background())
 }
 
-type setupFunc func(*Daemon) (func(context.Context) error, error)
+type setupFunc func(context.Context, *Daemon) (func(context.Context) error, error)
 
 type daemonStep struct {
 	name  string
@@ -76,11 +74,11 @@ type daemonStep struct {
 // Daemon owns handles produced by startup steps and consumed by later steps.
 type Daemon struct {
 	opts *Options
-	ctx  context.Context
 
 	metrics        *prometheus.Registry
 	jobManager     *job.Manager
 	profileService *profileService.Service
+	agentObserver  job.AgentRequestObserver
 	apiServer      interface {
 		Done() <-chan struct{}
 		Wait(ctx context.Context) error
@@ -95,8 +93,8 @@ func NewDaemon(opts *Options) *Daemon {
 			{name: "pidfile", setup: lockPidfile},
 			{name: "cgroup", setup: setupCgroup},
 			{name: "profiling-flamegraph", setup: setupProfileFlamegraph},
-			{name: "job-managers", setup: setupJobManagers},
 			{name: "metrics", setup: setupMetrics},
+			{name: "job-managers", setup: setupJobManagers},
 			{name: "handlers", setup: startHandlers},
 		},
 	}
@@ -104,25 +102,42 @@ func NewDaemon(opts *Options) *Daemon {
 
 // Run starts each module in order and tears initialized modules down in reverse.
 func (d *Daemon) Run(ctx context.Context) error {
-	d.ctx = ctx
 	cleanups := make([]func(context.Context) error, 0, len(d.steps))
+	shutdownTimeout := 60 * time.Second
+	if d.opts != nil && d.opts.Config != nil && d.opts.Config.APIServer.ShutdownTimeoutSeconds > 0 {
+		shutdownTimeout = time.Duration(d.opts.Config.APIServer.ShutdownTimeoutSeconds) * time.Second
+	}
 
 	shutdown := func() error {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			shutdownTimeout,
+		)
 		defer cancel()
 
 		var errs []error
 		for i := len(cleanups) - 1; i >= 0; i-- {
-			if err := cleanups[i](shutdownCtx); err != nil {
+			remainingSteps := i + 1
+			shutdownDeadline, _ := shutdownCtx.Deadline()
+			remaining := time.Until(shutdownDeadline)
+			if remaining <= 0 {
+				remaining = time.Nanosecond
+			}
+			stepCtx, stepCancel := context.WithTimeout(
+				context.WithoutCancel(shutdownCtx),
+				remaining/time.Duration(remainingSteps),
+			)
+			if err := cleanups[i](stepCtx); err != nil {
 				errs = append(errs, err)
 			}
+			stepCancel()
 		}
 
 		return errors.Join(errs...)
 	}
 
 	for _, step := range d.steps {
-		cleanup, err := step.setup(d)
+		cleanup, err := step.setup(ctx, d)
 		if err != nil {
 			if cleanupErr := shutdown(); cleanupErr != nil {
 				log.WithError(cleanupErr).Warn("startup rollback completed with errors")
@@ -177,11 +192,11 @@ func (d *Daemon) waitForSignal(ctx context.Context) (os.Signal, error) {
 	case s := <-waitCh:
 		return s, nil
 	case <-d.apiServer.Done():
-		return nil, d.apiServer.Wait(context.Background())
+		return nil, d.apiServer.Wait(context.WithoutCancel(ctx))
 	}
 }
 
-func lockPidfile(_ *Daemon) (func(context.Context) error, error) {
+func lockPidfile(_ context.Context, _ *Daemon) (func(context.Context) error, error) {
 	lk, err := pidfile.Lock(appName)
 	if err != nil {
 		return nil, fmt.Errorf("lock pid file: %w", err)

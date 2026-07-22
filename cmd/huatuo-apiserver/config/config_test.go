@@ -24,6 +24,13 @@ import (
 func TestLoadValidatesProfilingConfig(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
 	contents := []byte(`
+[[Auth.users]]
+ID = "test-token"
+IsAdmin = true
+
+[ElasticSearch]
+Address = "http://127.0.0.1:9200"
+
 [Profiling]
 AggregationInterval = 10
 ExecutionTimeout = 19
@@ -43,6 +50,13 @@ FlameGraphBaseURL = "http://localhost:8006/d"
 func TestLoadFileDoesNotAccumulateMemoryConversion(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
 	contents := []byte(`
+[[Auth.users]]
+ID = "test-token"
+IsAdmin = true
+
+[ElasticSearch]
+Address = "http://127.0.0.1:9200"
+
 [RuntimeCgroup]
 LimitMem = 64
 
@@ -73,6 +87,64 @@ FlameGraphBaseURL = "http://localhost:8006/d"
 			want,
 			want,
 		)
+	}
+}
+
+func TestLoadFileRequiresAuthUserAndElasticsearchAddress(t *testing.T) {
+	tests := []struct {
+		name      string
+		contents  string
+		wantError string
+	}{
+		{
+			name: "missing auth user",
+			contents: `
+[ElasticSearch]
+Address = "http://127.0.0.1:9200"
+`,
+			wantError: "at least one auth user is required",
+		},
+		{
+			name: "missing Elasticsearch address",
+			contents: `
+[[Auth.users]]
+ID = "test-token"
+IsAdmin = true
+`,
+			wantError: "validating Elasticsearch config: address is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configFile := filepath.Join(t.TempDir(), "apiserver.conf")
+			if err := os.WriteFile(configFile, []byte(tt.contents), 0o600); err != nil {
+				t.Fatalf("os.WriteFile() error = %v", err)
+			}
+			_, err := LoadFile(configFile)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("LoadFile() error = %v, want contain %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestAgentConfigValidate(t *testing.T) {
+	valid := AgentConfig{
+		Port:                      19704,
+		RequestTimeoutSeconds:     10,
+		StatusRetryAttempts:       3,
+		StatusRetryBackoffMillis:  100,
+		StatusPollIntervalSeconds: 5,
+		MaxConsecutivePollErrors:  3,
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	valid.Port = 65536
+	if err := valid.Validate(); err == nil || !strings.Contains(err.Error(), "must not exceed 65535") {
+		t.Fatalf("Validate() error = %v, want invalid port", err)
 	}
 }
 
@@ -172,6 +244,7 @@ func TestConfigValidateRejectsDuplicateUsers(t *testing.T) {
 			ReadTimeoutSeconds:       30,
 			WriteTimeoutSeconds:      60,
 			IdleTimeoutSeconds:       120,
+			ShutdownTimeoutSeconds:   60,
 			MaxHeaderBytes:           1024,
 			MaxBodyBytes:             1024,
 			RateLimit:                10,
@@ -185,11 +258,20 @@ func TestConfigValidateRejectsDuplicateUsers(t *testing.T) {
 			JobStoreDSN:              "jobs.db",
 			ShutdownConcurrency:      1,
 		},
+		Agent: AgentConfig{
+			Port:                      19704,
+			RequestTimeoutSeconds:     10,
+			StatusRetryAttempts:       3,
+			StatusRetryBackoffMillis:  100,
+			StatusPollIntervalSeconds: 5,
+			MaxConsecutivePollErrors:  3,
+		},
 		Profiling: ProfilingConfig{
 			AggregationInterval: 10,
 			ExecutionTimeout:    20,
 			FlameGraphBaseURL:   "http://localhost:8006/d",
 		},
+		ElasticSearch: ElasticSearchConfig{Address: "http://127.0.0.1:9200"},
 		Auth: AuthConfig{Users: []UserConfig{
 			{ID: "duplicate", IsAdmin: true},
 			{ID: "duplicate", IsAdmin: true},

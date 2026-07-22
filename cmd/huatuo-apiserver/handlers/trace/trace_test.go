@@ -52,6 +52,7 @@ func TestConvertJobToTraceResponse(t *testing.T) {
 		Status:       job.JobStatusFailed,
 		StartTime:    start,
 		ErrorMessage: "agent failed",
+		AgentTask:    job.AgentTaskRequest{TracerName: "tracer"},
 	})
 
 	if response.StartTime != start.Format(time.RFC3339Nano) {
@@ -62,5 +63,8 @@ func TestConvertJobToTraceResponse(t *testing.T) {
 	}
 	if response.ErrorMessage != "agent failed" {
 		t.Errorf("ErrorMessage = %q, want %q", response.ErrorMessage, "agent failed")
+	}
+	if response.Type != "tracing" {
+		t.Errorf("Type = %q, want tracing", response.Type)
 	}
 }

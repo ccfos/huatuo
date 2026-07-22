@@ -19,6 +19,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestDaemonRunCleansUpInReverseOrder(t *testing.T) {
@@ -58,7 +59,7 @@ func TestDaemonRunRollsBackInitializedSteps(t *testing.T) {
 			newTestStep("second", &calls),
 			{
 				name: "failed",
-				setup: func(*Daemon) (func(context.Context) error, error) {
+				setup: func(context.Context, *Daemon) (func(context.Context) error, error) {
 					calls = append(calls, "setup failed")
 					return nil, errors.New("setup failed")
 				},
@@ -83,10 +84,37 @@ func TestDaemonRunRollsBackInitializedSteps(t *testing.T) {
 	}
 }
 
+func TestSetupMetricsObservesAgentRequests(t *testing.T) {
+	daemon := &Daemon{}
+	if _, err := setupMetrics(t.Context(), daemon); err != nil {
+		t.Fatalf("setupMetrics() error = %v", err)
+	}
+	daemon.agentObserver("start", time.Second, nil)
+
+	families, err := daemon.metrics.Gather()
+	if err != nil {
+		t.Fatalf("Gather() error = %v", err)
+	}
+	want := map[string]bool{
+		"huatuo_apiserver_agent_requests_total":           false,
+		"huatuo_apiserver_agent_request_duration_seconds": false,
+	}
+	for _, family := range families {
+		if _, ok := want[family.GetName()]; ok {
+			want[family.GetName()] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("metric %q was not gathered", name)
+		}
+	}
+}
+
 func newTestStep(name string, calls *[]string) daemonStep {
 	return daemonStep{
 		name: name,
-		setup: func(*Daemon) (func(context.Context) error, error) {
+		setup: func(context.Context, *Daemon) (func(context.Context) error, error) {
 			*calls = append(*calls, "setup "+name)
 			return func(context.Context) error {
 				*calls = append(*calls, "cleanup "+name)

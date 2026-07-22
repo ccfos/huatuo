@@ -17,6 +17,7 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/log"
@@ -126,6 +127,9 @@ func configureRuntime(opts *Options) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	opts.Config = cfg
+	if dsn := cfg.TaskConfig.JobStoreDSN; !filepath.IsAbs(dsn) && !strings.HasPrefix(dsn, "file:") {
+		cfg.TaskConfig.JobStoreDSN = filepath.Join(opts.ConfigDir, dsn)
+	}
 
 	if level := cfg.LogLevel; level != "" {
 		log.SetLevel(level)
