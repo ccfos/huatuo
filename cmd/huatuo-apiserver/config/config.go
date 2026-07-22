@@ -83,10 +83,10 @@ type AgentConfig struct {
 }
 
 type ElasticSearchConfig struct {
-	Address  string
+	Address  string `default:"http://127.0.0.1:9200"`
 	Username string
 	Password string
-	Index    string
+	Index    string `default:"huatuo_bamai"`
 }
 
 // Validate rejects profiling settings that cannot produce a valid job.

@@ -90,42 +90,68 @@ FlameGraphBaseURL = "http://localhost:8006/d"
 	}
 }
 
-func TestLoadFileRequiresAuthUserAndElasticsearchAddress(t *testing.T) {
-	tests := []struct {
-		name      string
-		contents  string
-		wantError string
-	}{
-		{
-			name: "missing auth user",
-			contents: `
-[ElasticSearch]
-Address = "http://127.0.0.1:9200"
-`,
-			wantError: "at least one auth user is required",
-		},
-		{
-			name: "missing Elasticsearch address",
-			contents: `
+func TestLoadFileRequiresAuthUser(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
+	if err := os.WriteFile(configFile, nil, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	_, err := LoadFile(configFile)
+	if err == nil || !strings.Contains(err.Error(), "at least one auth user is required") {
+		t.Fatalf("LoadFile() error = %v, want missing auth user", err)
+	}
+}
+
+func TestLoadFileDefaultsElasticsearchConfig(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
+	contents := []byte(`
 [[Auth.users]]
 ID = "test-token"
 IsAdmin = true
-`,
-			wantError: "validating Elasticsearch config: address is required",
-		},
+`)
+	if err := os.WriteFile(configFile, contents, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			configFile := filepath.Join(t.TempDir(), "apiserver.conf")
-			if err := os.WriteFile(configFile, []byte(tt.contents), 0o600); err != nil {
-				t.Fatalf("os.WriteFile() error = %v", err)
-			}
-			_, err := LoadFile(configFile)
-			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
-				t.Fatalf("LoadFile() error = %v, want contain %q", err, tt.wantError)
-			}
-		})
+	cfg, err := LoadFile(configFile)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if cfg.ElasticSearch.Address != "http://127.0.0.1:9200" {
+		t.Fatalf("ElasticSearch.Address = %q, want default", cfg.ElasticSearch.Address)
+	}
+	if cfg.ElasticSearch.Index != "huatuo_bamai" {
+		t.Fatalf("ElasticSearch.Index = %q, want default", cfg.ElasticSearch.Index)
+	}
+	if cfg.ElasticSearch.Username != "" || cfg.ElasticSearch.Password != "" {
+		t.Fatalf("ElasticSearch credentials = (%q, %q), want empty", cfg.ElasticSearch.Username, cfg.ElasticSearch.Password)
+	}
+}
+
+func TestLoadFileOverridesElasticsearchDefaults(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
+	contents := []byte(`
+[[Auth.users]]
+ID = "test-token"
+IsAdmin = true
+
+[ElasticSearch]
+Address = "https://search.example:9443"
+Index = "profiles"
+`)
+	if err := os.WriteFile(configFile, contents, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	cfg, err := LoadFile(configFile)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if cfg.ElasticSearch.Address != "https://search.example:9443" {
+		t.Fatalf("ElasticSearch.Address = %q, want explicit value", cfg.ElasticSearch.Address)
+	}
+	if cfg.ElasticSearch.Index != "profiles" {
+		t.Fatalf("ElasticSearch.Index = %q, want explicit value", cfg.ElasticSearch.Index)
 	}
 }
 

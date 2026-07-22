@@ -162,10 +162,10 @@ weight: 5
 
 ```toml
 [ElasticSearch]
-    Address  = "http://127.0.0.1:9200"
+    # Address = "http://127.0.0.1:9200"
     Username = "elastic"
     Password = "huatuo-bamai"
-    Index    = "huatuo_bamai"
+    # Index = "huatuo_bamai"
 ```
 
 `huatuo-apiserver` 使用 Elasticsearch/OpenSearch 查询 `huatuo-bamai` 产生
@@ -173,8 +173,8 @@ weight: 5
 
 - **Address**：Elasticsearch/OpenSearch 服务地址。
 
-  无内置默认值，需填写包含协议和端口的完整 URL，例如
-  `http://127.0.0.1:9200` 或 `https://127.0.0.1:9200`。
+  默认值为 `http://127.0.0.1:9200`。覆盖默认值时，需填写包含协议和端口的
+  完整 URL，例如 `https://127.0.0.1:9200`。
 
   **说明**：生产环境建议使用 HTTPS，并确保 API 服务能够访问该地址。
 
@@ -193,7 +193,7 @@ weight: 5
 
 - **Index**：数据索引名称。
 
-  无内置默认值，示例值为 `huatuo_bamai`。
+  默认值为 `huatuo_bamai`。
 
   **说明**：应与 `huatuo-bamai.conf` 中的存储索引保持一致，否则 API
   服务无法查询采集端写入的数据。

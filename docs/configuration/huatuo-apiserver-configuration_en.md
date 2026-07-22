@@ -185,10 +185,10 @@ credentials to version control.
 
 ```toml
 [ElasticSearch]
-    Address  = "http://127.0.0.1:9200"
+    # Address = "http://127.0.0.1:9200"
     Username = "elastic"
     Password = "huatuo-bamai"
-    Index    = "huatuo_bamai"
+    # Index = "huatuo_bamai"
 ```
 
 `huatuo-apiserver` uses Elasticsearch/OpenSearch to query tracing and event
@@ -197,9 +197,8 @@ they must be configured together.
 
 - **Address**: Elasticsearch/OpenSearch service address.
 
-  There is no built-in default. Specify a complete URL including the scheme
-  and port, such as `http://127.0.0.1:9200` or
-  `https://127.0.0.1:9200`.
+  The default is `http://127.0.0.1:9200`. To override it, specify a complete
+  URL including the scheme and port, such as `https://127.0.0.1:9200`.
 
   **Note**: Use HTTPS in production and ensure that the API service can reach
   this address.
@@ -220,7 +219,7 @@ they must be configured together.
 
 - **Index**: Data index name.
 
-  There is no built-in default. The example value is `huatuo_bamai`.
+  The default is `huatuo_bamai`.
 
   **Note**: This value must match the storage index in `huatuo-bamai.conf`.
   Otherwise, the API service cannot query data written by the collector.
