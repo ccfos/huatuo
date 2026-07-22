@@ -75,14 +75,35 @@ func NewStore[T any](ctx context.Context, name string, backend driver.Backend, c
 
 // Save persists v; returns ErrInvalidField if the ID is empty.
 func (s *Store[T]) Save(ctx context.Context, v T) error {
-	fields, err := s.mapper.Fields(v)
+	rec, err := s.record(v)
 	if err != nil {
 		return err
+	}
+	return s.backend.Save(driver.WithContext(ctx), rec)
+}
+
+// Create persists v only when its ID does not already exist.
+func (s *Store[T]) Create(ctx context.Context, v T) error {
+	creator, ok := s.backend.(driver.Creator)
+	if !ok {
+		return driver.ErrUnsupportedOp
+	}
+	rec, err := s.record(v)
+	if err != nil {
+		return err
+	}
+	return creator.Create(driver.WithContext(ctx), rec)
+}
+
+func (s *Store[T]) record(v T) (driver.Record, error) {
+	fields, err := s.mapper.Fields(v)
+	if err != nil {
+		return driver.Record{}, err
 	}
 
 	data, err := s.mapper.Encode(v)
 	if err != nil {
-		return fmt.Errorf("%w: %w", driver.ErrEncodeFailed, err)
+		return driver.Record{}, fmt.Errorf("%w: %w", driver.ErrEncodeFailed, err)
 	}
 
 	rec := driver.Record{
@@ -91,10 +112,9 @@ func (s *Store[T]) Save(ctx context.Context, v T) error {
 		Fields: fields,
 	}
 	if rec.ID == "" {
-		return fmt.Errorf("%w: empty id", driver.ErrInvalidField)
+		return driver.Record{}, fmt.Errorf("%w: empty id", driver.ErrInvalidField)
 	}
-
-	return s.backend.Save(driver.WithContext(ctx), rec)
+	return rec, nil
 }
 
 // Get retrieves the object with the given id; returns ErrNotFound when not found.

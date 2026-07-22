@@ -135,6 +135,24 @@ func TestSQLiteBackendCRUD(t *testing.T) {
 	}
 }
 
+func TestSQLiteBackendCreateRejectsDuplicateID(t *testing.T) {
+	backend := newSQLiteBackendForTest(t)
+	if backend == nil {
+		return
+	}
+	if err := backend.Init(t.Context(), "jobs", nil); err != nil {
+		t.Fatalf("backend Init() error = %v", err)
+	}
+
+	record := driver.Record{ID: "job-duplicate", Data: []byte(`{"status":"pending"}`)}
+	if err := backend.Create(t.Context(), record); err != nil {
+		t.Fatalf("first Create() error = %v", err)
+	}
+	if err := backend.Create(t.Context(), record); !errors.Is(err, driver.ErrAlreadyExists) {
+		t.Fatalf("second Create() error = %v, want ErrAlreadyExists", err)
+	}
+}
+
 // TestSQLiteBackendQuery covers SQLite backend querying: verifies equality filter, range filter, IN filter, sorting, pagination, count, and rejection of invalid pagination.
 func TestSQLiteBackendQuery(t *testing.T) {
 	backend := newSQLiteBackendForTest(t)
