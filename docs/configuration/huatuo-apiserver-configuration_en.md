@@ -70,6 +70,14 @@ credentials to version control.
 ```toml
 [APIServer]
     # TCPAddr = ":12740"
+    # ReadHeaderTimeoutSeconds = 10
+    # ReadTimeoutSeconds       = 30
+    # WriteTimeoutSeconds      = 60
+    # IdleTimeoutSeconds       = 120
+    # MaxHeaderBytes           = 1048576
+    # MaxBodyBytes             = 4194304
+    # RateLimit                = 200
+    # RateBurst                = 200
 ```
 
 - **TCPAddr**: API server listen address.
@@ -81,6 +89,16 @@ credentials to version control.
   the service externally, configure a firewall, reverse proxy, and access
   controls as appropriate.
 
+- **ReadHeaderTimeoutSeconds**, **ReadTimeoutSeconds**,
+  **WriteTimeoutSeconds**, and **IdleTimeoutSeconds** bound slow or stalled
+  connections. Defaults are `10`, `30`, `60`, and `120` seconds.
+
+- **MaxHeaderBytes** and **MaxBodyBytes** cap request headers and bodies.
+  Defaults are 1 MiB and 4 MiB.
+
+- **RateLimit** and **RateBurst** configure the process-wide HTTP token bucket.
+  Both default to `200`.
+
 ### 5. Task Scheduling
 
 ```toml
@@ -89,6 +107,8 @@ credentials to version control.
     # MaxTracingTasksPerHost   = 5
     # MaxTotalProfilingTasks   = 500
     # MaxTotalTracingTasks     = 1000
+    # JobStoreDSN              = "jobs.db"
+    # ShutdownConcurrency      = 16
 ```
 
 - **MaxProfilingTasksPerHost**: Maximum number of concurrent profiling tasks
@@ -125,6 +145,15 @@ credentials to version control.
   **Note**: This limit applies together with the per-host limit. Adjust it in
   production according to cluster size and backend capacity.
 
+- **JobStoreDSN**: SQLite data source for durable job state.
+
+  The default is `jobs.db`. Use a persistent writable path in production.
+
+- **ShutdownConcurrency**: Maximum concurrent Agent stop requests during
+  graceful shutdown.
+
+  The default is `16`.
+
 ### 6. Storage
 
 ```toml
@@ -133,12 +162,11 @@ credentials to version control.
     Username = "elastic"
     Password = "huatuo-bamai"
     Index    = "huatuo_bamai"
-    Debug    = false
 ```
 
 `huatuo-apiserver` uses Elasticsearch/OpenSearch to query tracing and event
-data produced by `huatuo-bamai`. The storage backend is disabled if any of
-`Address`, `Username`, or `Password` is empty.
+data produced by `huatuo-bamai`. `Username` and `Password` are optional, but
+they must be configured together.
 
 - **Address**: Elasticsearch/OpenSearch service address.
 
@@ -170,15 +198,11 @@ data produced by `huatuo-bamai`. The storage backend is disabled if any of
   **Note**: This value must match the storage index in `huatuo-bamai.conf`.
   Otherwise, the API service cannot query data written by the collector.
 
-- **Debug**: Elasticsearch/OpenSearch client debug logging switch.
-
-  The default is `false`.
-
-  **Note**: Enabling this option produces more detailed request and response
-  information. Enable it only temporarily when troubleshooting backend
-  connection or query issues.
-
 ### 7. Authentication and Authorization
+
+`/healthz`, `/metrics`, and `/version` are public. When pprof is enabled,
+`/debug/pprof/**` shares the API listener and is restricted to administrators.
+All other routes require `Authorization: Bearer <Auth.users.ID>`.
 
 Declare each user in a separate `[[Auth.users]]` array table. Multiple users
 can be configured, for example:
@@ -190,20 +214,20 @@ can be configured, for example:
     Name    = "Administrator"
     IsAdmin = true
 
-# Regular user: can access tracing and profiling APIs only.
+# Regular user: read-only access to tracing and profiling APIs.
 [[Auth.users]]
     ID          = "REPLACE_WITH_RANDOM_HEX"
     Name        = "huatuo-front"
     IsAdmin     = false
     Permissions = [
-        "/v1/traces",
-        "/v1/traces/**",
-        "/v1/profiles",
-        "/v1/profiles/**",
+        "GET /v1/traces",
+        "GET /v1/traces/**",
+        "GET /v1/profiles",
+        "GET /v1/profiles/**",
     ]
 ```
 
-- **ID**: Unique user identifier and request credential.
+- **ID**: Unique user identifier and bearer credential.
 
   There is no default.
 
@@ -225,11 +249,13 @@ can be configured, for example:
   **Note**: Keep the number of administrator accounts to a minimum. Define
   explicit permission lists for regular clients.
 
-- **Permissions**: List of allowed URL path patterns.
+- **Permissions**: List of allowed URL patterns, optionally prefixed by an
+  HTTP method.
 
   There is no default. This option applies only when `IsAdmin = false`. It
   supports exact paths and wildcard paths. `**` matches any content after its
-  position, as in `/v1/traces/**`.
+  position, as in `/v1/traces/**`. Use `GET /v1/traces/**` for read-only
+  access. A path-only pattern permits every method for compatibility.
 
   **Note**: A collection path and its subpaths usually require separate
   entries, such as both `/v1/traces` and `/v1/traces/**`. Follow the principle
@@ -307,7 +333,6 @@ LogLevel = "Info"
     Username = "huatuo-apiserver"
     Password = "REPLACE_WITH_STRONG_PASSWORD"
     Index = "huatuo_bamai"
-    Debug = false
 
 [[Auth.users]]
     ID = "REPLACE_WITH_RANDOM_HEX"

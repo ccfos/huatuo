@@ -26,13 +26,16 @@ API_BASE="http://127.0.0.1:12740"
 USER_ID="<Auth.users.ID>"
 ```
 
-Every request must pass the user ID configured in `huatuo-apiserver.conf` directly in the `Authorization` header:
+Every request must pass the configured user ID as a bearer token:
 
 ```text
-Authorization: <Auth.users.ID>
+Authorization: Bearer <Auth.users.ID>
 ```
 
-A non-administrator user requires both `/v1/profiles` and `/v1/profiles/**` permissions. The API uses the following common JSON response envelope:
+A non-administrator user requires both `/v1/profiles` and
+`/v1/profiles/**` permissions. Permissions may include an HTTP method, such as
+`GET /v1/profiles/**`. The API uses the following common JSON response
+envelope:
 
 ```json
 {
@@ -48,7 +51,7 @@ Before creating a job, query the profiling types, languages, memory modes, and r
 
 ```bash
 curl -sS \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   "${API_BASE}/v1/profiles/capabilities"
 ```
 
@@ -95,7 +98,7 @@ Create a Go CPU profiling job on a host:
 ```bash
 curl -sS -i \
   -X POST \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "cpu",
@@ -111,7 +114,7 @@ Create a Java live-object profiling job in a container:
 ```bash
 curl -sS -i \
   -X POST \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "memory",
@@ -158,7 +161,7 @@ List the 20 most recent running CPU profiling jobs on `node-01`:
 
 ```bash
 curl -sS -G \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   --data-urlencode "hostname=node-01" \
   --data-urlencode "status=running" \
   --data-urlencode "type=cpu" \
@@ -174,7 +177,7 @@ curl -sS -G \
 
 ```bash
 curl -sS \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   "${API_BASE}/v1/profiles/${JOB_ID}"
 ```
 
@@ -214,12 +217,14 @@ Profiling jobs use these statuses:
 
 ```bash
 curl -sS \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   -o profile-raw.json \
-  "${API_BASE}/v1/profiles/${JOB_ID}/raw"
+  "${API_BASE}/v1/profiles/${JOB_ID}/raw?limit=100&offset=0"
 ```
 
-The raw profile records are in `data.data`. If the job does not yet have an Agent task ID, the endpoint returns `400 Bad Request`.
+The raw records are in `data.data`; `data.limit`, `data.offset`, and
+`data.has_more` describe the page. If the job does not yet have an Agent task
+ID, the endpoint returns `400 Bad Request`.
 
 ### 7. Stop a Profiling Job
 
@@ -228,7 +233,7 @@ Only jobs in `pending` or `running` status can be stopped. The `PATCH` request a
 ```bash
 curl -sS \
   -X PATCH \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   -H "Content-Type: application/json" \
   -d '{"status":"stopped"}' \
   "${API_BASE}/v1/profiles/${JOB_ID}"
@@ -243,7 +248,7 @@ Deletion removes only the job record. Jobs in `pending` or `running` status cann
 ```bash
 curl -sS -i \
   -X DELETE \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   "${API_BASE}/v1/profiles/${JOB_ID}"
 ```
 

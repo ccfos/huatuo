@@ -61,6 +61,14 @@ weight: 5
 ```toml
 [APIServer]
     # TCPAddr = ":12740"
+    # ReadHeaderTimeoutSeconds = 10
+    # ReadTimeoutSeconds       = 30
+    # WriteTimeoutSeconds      = 60
+    # IdleTimeoutSeconds       = 120
+    # MaxHeaderBytes           = 1048576
+    # MaxBodyBytes             = 4194304
+    # RateLimit                = 200
+    # RateBurst                = 200
 ```
 
 - **TCPAddr**：API 服务监听地址。
@@ -71,6 +79,16 @@ weight: 5
   **说明**：如只允许本机访问，可配置为 `127.0.0.1:12740`。对外暴露
   服务时，应同时配置防火墙、反向代理和访问控制。
 
+- **ReadHeaderTimeoutSeconds**、**ReadTimeoutSeconds**、
+  **WriteTimeoutSeconds** 和 **IdleTimeoutSeconds** 限制慢连接或停滞连接。
+  默认值依次为 `10`、`30`、`60` 和 `120` 秒。
+
+- **MaxHeaderBytes** 和 **MaxBodyBytes** 限制请求头与请求体大小，默认值
+  分别为 1 MiB 和 4 MiB。
+
+- **RateLimit** 和 **RateBurst** 配置进程级 HTTP 令牌桶，默认值均为
+  `200`。
+
 ### 5. 任务调度配置
 
 ```toml
@@ -79,6 +97,8 @@ weight: 5
     # MaxTracingTasksPerHost   = 5
     # MaxTotalProfilingTasks   = 500
     # MaxTotalTracingTasks     = 1000
+    # JobStoreDSN              = "jobs.db"
+    # ShutdownConcurrency      = 16
 ```
 
 - **MaxProfilingTasksPerHost**：单台主机允许同时执行的性能剖析任务上限。
@@ -108,6 +128,14 @@ weight: 5
   **说明**：该限制与单主机限制共同生效。生产环境应根据集群规模和后端
   容量调整。
 
+- **JobStoreDSN**：持久化任务状态的 SQLite 数据源。
+
+  默认值为 `jobs.db`。生产环境应使用持久、可写的路径。
+
+- **ShutdownConcurrency**：优雅退出时并发停止 Agent 任务的上限。
+
+  默认值为 `16`。
+
 ### 6. 存储配置
 
 ```toml
@@ -116,12 +144,10 @@ weight: 5
     Username = "elastic"
     Password = "huatuo-bamai"
     Index    = "huatuo_bamai"
-    Debug    = false
 ```
 
 `huatuo-apiserver` 使用 Elasticsearch/OpenSearch 查询 `huatuo-bamai` 产生
-的追踪和事件数据。`Address`、`Username` 或 `Password` 中任意一项为空时，
-该存储后端将被禁用。
+的追踪和事件数据。`Username` 和 `Password` 可省略，但必须同时配置。
 
 - **Address**：Elasticsearch/OpenSearch 服务地址。
 
@@ -150,14 +176,11 @@ weight: 5
   **说明**：应与 `huatuo-bamai.conf` 中的存储索引保持一致，否则 API
   服务无法查询采集端写入的数据。
 
-- **Debug**：Elasticsearch/OpenSearch 客户端调试日志开关。
-
-  默认值为 `false`。
-
-  **说明**：启用后会输出更详细的请求和响应信息，仅建议在排查后端连接
-  或查询问题时临时使用。
-
 ### 7. 认证与授权配置
+
+`/healthz`、`/metrics` 和 `/version` 无需认证。启用 pprof 后，
+`/debug/pprof/**` 与 API 共用监听端口，并且仅管理员可访问。其他接口必须
+携带 `Authorization: Bearer <Auth.users.ID>`。
 
 每个用户使用一个 `[[Auth.users]]` 数组表声明。可配置多个用户，例如：
 
@@ -168,20 +191,20 @@ weight: 5
     Name    = "Administrator"
     IsAdmin = true
 
-# 普通用户：仅允许访问追踪和性能剖析接口。
+# 普通用户：仅允许读取追踪和性能剖析接口。
 [[Auth.users]]
     ID          = "REPLACE_WITH_RANDOM_HEX"
     Name        = "huatuo-front"
     IsAdmin     = false
     Permissions = [
-        "/v1/traces",
-        "/v1/traces/**",
-        "/v1/profiles",
-        "/v1/profiles/**",
+        "GET /v1/traces",
+        "GET /v1/traces/**",
+        "GET /v1/profiles",
+        "GET /v1/profiles/**",
     ]
 ```
 
-- **ID**：用户唯一标识和请求认证凭据。
+- **ID**：用户唯一标识和 Bearer 认证凭据。
 
   无默认值。
 
@@ -200,10 +223,12 @@ weight: 5
 
   **说明**：管理员账号应严格控制数量，普通调用方应使用明确的权限列表。
 
-- **Permissions**：允许访问的 URL 路径模式列表。
+- **Permissions**：允许访问的 URL 模式列表，可选 HTTP 方法前缀。
 
   无默认值，仅在 `IsAdmin = false` 时生效。支持完整路径和通配路径，
-  `**` 匹配其所在位置之后的任意内容，例如 `/v1/traces/**`。
+  `**` 匹配其所在位置之后的任意内容，例如 `/v1/traces/**`。使用
+  `GET /v1/traces/**` 可仅授予读权限；仅配置路径时，为兼容旧配置，
+  允许所有 HTTP 方法。
 
   **说明**：访问集合路径和其子路径通常需要分别声明，例如同时配置
   `/v1/traces` 和 `/v1/traces/**`。应遵循最小权限原则，只开放调用方
@@ -274,7 +299,6 @@ LogLevel = "Info"
     Username = "huatuo-apiserver"
     Password = "REPLACE_WITH_STRONG_PASSWORD"
     Index = "huatuo_bamai"
-    Debug = false
 
 [[Auth.users]]
     ID = "REPLACE_WITH_RANDOM_HEX"

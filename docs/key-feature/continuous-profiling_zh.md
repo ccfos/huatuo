@@ -26,13 +26,14 @@ API_BASE="http://127.0.0.1:12740"
 USER_ID="<Auth.users.ID>"
 ```
 
-每个请求必须在 `Authorization` 请求头中直接传入 `huatuo-apiserver.conf` 配置的用户 ID：
+每个请求必须在 `Authorization` 请求头中以 Bearer token 传入配置的用户 ID：
 
 ```text
-Authorization: <Auth.users.ID>
+Authorization: Bearer <Auth.users.ID>
 ```
 
-非管理员用户需要配置 `/v1/profiles` 和 `/v1/profiles/**` 权限。接口使用统一 JSON 响应格式：
+非管理员用户需要配置 `/v1/profiles` 和 `/v1/profiles/**` 权限。权限可带
+HTTP 方法前缀，例如 `GET /v1/profiles/**`。接口使用统一 JSON 响应格式：
 
 ```json
 {
@@ -48,7 +49,7 @@ Authorization: <Auth.users.ID>
 
 ```bash
 curl -sS \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   "${API_BASE}/v1/profiles/capabilities"
 ```
 
@@ -95,7 +96,7 @@ curl -sS \
 ```bash
 curl -sS -i \
   -X POST \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "cpu",
@@ -111,7 +112,7 @@ curl -sS -i \
 ```bash
 curl -sS -i \
   -X POST \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "memory",
@@ -158,7 +159,7 @@ JOB_ID="<profile-job-id>"
 
 ```bash
 curl -sS -G \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   --data-urlencode "hostname=node-01" \
   --data-urlencode "status=running" \
   --data-urlencode "type=cpu" \
@@ -174,7 +175,7 @@ curl -sS -G \
 
 ```bash
 curl -sS \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   "${API_BASE}/v1/profiles/${JOB_ID}"
 ```
 
@@ -214,12 +215,14 @@ curl -sS \
 
 ```bash
 curl -sS \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   -o profile-raw.json \
-  "${API_BASE}/v1/profiles/${JOB_ID}/raw"
+  "${API_BASE}/v1/profiles/${JOB_ID}/raw?limit=100&offset=0"
 ```
 
-原始剖析记录位于响应体的 `data.data` 字段。任务尚未分配 Agent 任务 ID 时，接口返回 `400 Bad Request`。
+原始剖析记录位于响应体的 `data.data` 字段；`data.limit`、`data.offset`
+和 `data.has_more` 描述分页。任务尚未分配 Agent 任务 ID 时，接口返回
+`400 Bad Request`。
 
 ### 7. 停止任务
 
@@ -228,7 +231,7 @@ curl -sS \
 ```bash
 curl -sS \
   -X PATCH \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   -H "Content-Type: application/json" \
   -d '{"status":"stopped"}' \
   "${API_BASE}/v1/profiles/${JOB_ID}"
@@ -243,7 +246,7 @@ curl -sS \
 ```bash
 curl -sS -i \
   -X DELETE \
-  -H "Authorization: ${USER_ID}" \
+  -H "Authorization: Bearer ${USER_ID}" \
   "${API_BASE}/v1/profiles/${JOB_ID}"
 ```
 
