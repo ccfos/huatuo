@@ -31,9 +31,15 @@ import (
 
 // HTTPNodeAgent implements NodeAgent interface using HTTP
 type HTTPNodeAgent struct {
-	client *http.Client
-	port   int
+	client              *http.Client
+	port                int
+	statusRetryAttempts int
+	statusRetryBackoff  time.Duration
+	observe             AgentRequestObserver
 }
+
+// AgentRequestObserver records one completed Agent request.
+type AgentRequestObserver func(operation string, duration time.Duration, err error)
 
 const (
 	maxAgentResponseBytes = 1 << 20
@@ -41,8 +47,12 @@ const (
 )
 
 type HTTPNodeAgentConfig struct {
-	Client *http.Client
-	Port   int
+	Client              *http.Client
+	Port                int
+	RequestTimeout      time.Duration
+	StatusRetryAttempts int
+	StatusRetryBackoff  time.Duration
+	Observe             AgentRequestObserver
 }
 
 type startTaskRequest struct {
@@ -59,17 +69,37 @@ type startTaskRequest struct {
 
 // NewHTTPNodeAgent creates a new HTTP agent client
 func NewHTTPNodeAgent(configs ...HTTPNodeAgentConfig) *HTTPNodeAgent {
-	config := HTTPNodeAgentConfig{Port: 19704}
+	config := HTTPNodeAgentConfig{
+		Port:                19704,
+		RequestTimeout:      10 * time.Second,
+		StatusRetryAttempts: 3,
+		StatusRetryBackoff:  100 * time.Millisecond,
+	}
 	if len(configs) > 0 {
 		config = configs[0]
 		if config.Port == 0 {
 			config.Port = 19704
 		}
+		if config.RequestTimeout <= 0 {
+			config.RequestTimeout = 10 * time.Second
+		}
+		if config.StatusRetryAttempts <= 0 {
+			config.StatusRetryAttempts = 3
+		}
+		if config.StatusRetryBackoff <= 0 {
+			config.StatusRetryBackoff = 100 * time.Millisecond
+		}
 	}
 	if config.Client == nil {
-		config.Client = &http.Client{Timeout: 10 * time.Second}
+		config.Client = &http.Client{Timeout: config.RequestTimeout}
 	}
-	return &HTTPNodeAgent{client: config.Client, port: config.Port}
+	return &HTTPNodeAgent{
+		client:              config.Client,
+		port:                config.Port,
+		statusRetryAttempts: config.StatusRetryAttempts,
+		statusRetryBackoff:  config.StatusRetryBackoff,
+		observe:             config.Observe,
+	}
 }
 
 // StartTask starts a task on the agent
@@ -77,7 +107,13 @@ func (c *HTTPNodeAgent) StartTask(host, container string, args *AgentTaskRequest
 	return c.StartTaskContext(context.Background(), host, container, args)
 }
 
-func (c *HTTPNodeAgent) StartTaskContext(ctx context.Context, host, container string, args *AgentTaskRequest) (string, error) {
+func (c *HTTPNodeAgent) StartTaskContext(
+	ctx context.Context,
+	host, container string,
+	args *AgentTaskRequest,
+) (taskID string, returnedErr error) {
+	startedAt := time.Now()
+	defer func() { c.observeRequest("start", startedAt, returnedErr) }()
 	taskArgs := *args
 	taskArgs.ContainerID = container
 	requestBodyBytes, err := json.Marshal(startTaskRequest{
@@ -104,7 +140,7 @@ func (c *HTTPNodeAgent) StartTaskContext(ctx context.Context, host, container st
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
+		return "", fmt.Errorf("%w: %w", ErrAgentDispatchUncertain, err)
 	}
 	defer resp.Body.Close()
 
@@ -145,7 +181,13 @@ func (c *HTTPNodeAgent) StopTask(host, taskID string, force bool) error {
 	return c.StopTaskContext(context.Background(), host, taskID, force)
 }
 
-func (c *HTTPNodeAgent) StopTaskContext(ctx context.Context, host, taskID string, force bool) error {
+func (c *HTTPNodeAgent) StopTaskContext(
+	ctx context.Context,
+	host, taskID string,
+	force bool,
+) (returnedErr error) {
+	startedAt := time.Now()
+	defer func() { c.observeRequest("stop", startedAt, returnedErr) }()
 	endpoint := c.endpoint(host, "/tasks/"+url.PathEscape(taskID))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, http.NoBody)
@@ -178,11 +220,16 @@ func (c *HTTPNodeAgent) GetTaskStatus(host, taskID string) (string, *Result, err
 	return c.GetTaskStatusContext(context.Background(), host, taskID)
 }
 
-func (c *HTTPNodeAgent) GetTaskStatusContext(ctx context.Context, host, taskID string) (string, *Result, error) {
+func (c *HTTPNodeAgent) GetTaskStatusContext(
+	ctx context.Context,
+	host, taskID string,
+) (status string, result *Result, returnedErr error) {
+	startedAt := time.Now()
+	defer func() { c.observeRequest("status", startedAt, returnedErr) }()
 	endpoint := c.endpoint(host, "/tasks/"+url.PathEscape(taskID))
 
 	var lastErr error
-	for attempt := range 3 {
+	for attempt := range c.statusRetryAttempts {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
 		if err != nil {
 			return "", nil, fmt.Errorf("failed to create request: %w", err)
@@ -196,7 +243,7 @@ func (c *HTTPNodeAgent) GetTaskStatusContext(ctx context.Context, host, taskID s
 				log.WithField("task_id", taskID).WithField("attempt", attempt+1).
 					Info("timed out getting task status; retrying")
 				select {
-				case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
+				case <-time.After(time.Duration(attempt+1) * c.statusRetryBackoff):
 					continue
 				case <-ctx.Done():
 					return "", nil, ctx.Err()
@@ -241,7 +288,13 @@ func (c *HTTPNodeAgent) GetTaskStatusContext(ctx context.Context, host, taskID s
 
 		return innerResponse.Status, &Result{URL: innerResponse.Data, Error: innerResponse.Error}, nil
 	}
-	return "", nil, fmt.Errorf("failed to send request after 3 attempts: %w", lastErr)
+	return "", nil, fmt.Errorf("failed to send request after %d attempts: %w", c.statusRetryAttempts, lastErr)
+}
+
+func (c *HTTPNodeAgent) observeRequest(operation string, startedAt time.Time, err error) {
+	if c.observe != nil {
+		c.observe(operation, time.Since(startedAt), err)
+	}
 }
 
 func (c *HTTPNodeAgent) endpoint(host, path string) string {

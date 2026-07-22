@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -56,6 +57,10 @@ func (s *stubJobStore) Save(_ context.Context, job *Job) error {
 		return s.saveFunc(job)
 	}
 	return s.saveErr
+}
+
+func (s *stubJobStore) Create(ctx context.Context, job *Job) error {
+	return s.Save(ctx, job)
 }
 
 func (s *stubJobStore) Delete(_ context.Context, jobID string) error {
@@ -129,8 +134,9 @@ func (s *stubNodeAgent) GetTaskStatusContext(_ context.Context, host, taskID str
 
 func newTestManager(storage Store, nodeAgent NodeAgent) *Manager {
 	return newManagerWithStore(storage, nodeAgent, ManagerConfig{
-		MaxJobsPerHost: 2,
-		MaxTotalJobs:   3,
+		TypePolicies: map[JobType]TypePolicy{
+			"oncpu": {MaxJobsPerHost: 2, MaxTotalJobs: 3},
+		},
 	})
 }
 
@@ -150,6 +156,37 @@ func newRunningJob(jobID string) *Job {
 			DataType:     "flamegraph",
 		},
 		stopCh: make(chan struct{}),
+	}
+}
+
+func TestManagerCreateKeepsPendingJobWhenDispatchIsUncertain(t *testing.T) {
+	store := &stubJobStore{}
+	manager := newTestManager(store, &stubNodeAgent{
+		startTaskFunc: func(_, _ string, _ *AgentTaskRequest) (string, error) {
+			return "", fmt.Errorf("%w: connection reset", ErrAgentDispatchUncertain)
+		},
+	})
+
+	created, err := manager.CreateContext(t.Context(), &CreateJobRequest{
+		Type:     "oncpu",
+		Hostname: "node-a",
+		AgentTask: &AgentTaskRequest{
+			TracerName:   "oncpu",
+			TraceTimeout: 60,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateContext() error = %v", err)
+	}
+	if created.Status != JobStatusPending {
+		t.Fatalf("created status = %q, want %q", created.Status, JobStatusPending)
+	}
+	if !strings.HasPrefix(created.ID, "id-") || len(created.ID) != len("id-")+36 {
+		t.Fatalf("created ID = %q, want full UUID", created.ID)
+	}
+
+	if err := manager.ShutdownContext(t.Context()); err != nil {
+		t.Fatalf("ShutdownContext() error = %v", err)
 	}
 }
 
@@ -226,6 +263,24 @@ func TestManagerTypePoliciesShareQuotaWithinGroup(t *testing.T) {
 	}
 }
 
+func TestValidateManagerConfigRejectsInconsistentGroupQuota(t *testing.T) {
+	err := validateManagerConfig(ManagerConfig{TypePolicies: map[JobType]TypePolicy{
+		"profiling_cpu": {
+			Group:          "profiling",
+			MaxJobsPerHost: 1,
+			MaxTotalJobs:   10,
+		},
+		"profiling_memory": {
+			Group:          "profiling",
+			MaxJobsPerHost: 2,
+			MaxTotalJobs:   10,
+		},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "inconsistent limits") {
+		t.Fatalf("validateManagerConfig() error = %v, want inconsistent limits", err)
+	}
+}
+
 func TestManagerGetByTypesHidesOtherJobTypes(t *testing.T) {
 	manager := newTestManager(&stubJobStore{getFunc: func(string) (*Job, error) {
 		return &Job{ID: "job-2026", Type: "profiling_cpu"}, nil
@@ -282,7 +337,7 @@ func TestManagerRetainsQuotaWhenTerminalPersistenceFails(t *testing.T) {
 	manager := newTestManager(storage, &stubNodeAgent{})
 	active := newRunningJob("job-persist-2026")
 	manager.jobs[active.ID] = active
-	manager.jobsByHost[active.Hostname] = 1
+	manager.jobsByHost[quotaHostKey(active.Hostname, "oncpu")] = 1
 
 	err := manager.finishJob(t.Context(), active, JobStatusCompleted, "", &Result{})
 	if !errors.Is(err, ErrPersistence) {
@@ -291,7 +346,7 @@ func TestManagerRetainsQuotaWhenTerminalPersistenceFails(t *testing.T) {
 	if !manager.jobIsActive(active.ID) {
 		t.Fatal("finishJob() removed active job after persistence failure")
 	}
-	if got := manager.jobsByHost[active.Hostname]; got != 1 {
+	if got := manager.jobsByHost[quotaHostKey(active.Hostname, "oncpu")]; got != 1 {
 		t.Fatalf("host quota=%d, want 1", got)
 	}
 }
@@ -314,7 +369,7 @@ func TestManagerRestartsRecoveredPendingJob(t *testing.T) {
 	pending.Status = JobStatusPending
 	pending.AgentTaskID = pending.ID
 	manager.jobs[pending.ID] = pending
-	manager.jobsByHost[pending.Hostname] = 1
+	manager.jobsByHost[quotaHostKey(pending.Hostname, "oncpu")] = 1
 
 	status, err := manager.checkAndUpdateJobStatus(t.Context(), pending)
 	if err != nil {
@@ -344,7 +399,7 @@ func TestManagerRecoverJobsRestoresActiveQuota(t *testing.T) {
 	if !manager.jobIsActive(recovered.ID) {
 		t.Fatal("recovered job is not active")
 	}
-	if got := manager.jobsByHost[recovered.Hostname]; got != 1 {
+	if got := manager.jobsByHost[quotaHostKey(recovered.Hostname, "oncpu")]; got != 1 {
 		t.Fatalf("recovered host quota=%d, want 1", got)
 	}
 	if err := manager.ShutdownContext(t.Context()); err != nil {
@@ -384,7 +439,7 @@ func TestManagerCreate(t *testing.T) {
 		storage := &stubJobStore{}
 		nodeAgent := &stubNodeAgent{}
 		manager := newTestManager(storage, nodeAgent)
-		manager.jobsByHost["huatuo-dev"] = 2
+		manager.jobsByHost[quotaHostKey("huatuo-dev", "oncpu")] = 2
 
 		job, err := manager.CreateContext(t.Context(), &CreateJobRequest{
 			UserID:      "operator-2026",
@@ -398,7 +453,7 @@ func TestManagerCreate(t *testing.T) {
 			},
 		})
 
-		if err == nil || !strings.Contains(err.Error(), "maximum number of jobs reached for host") {
+		if err == nil || !strings.Contains(err.Error(), "maximum number of oncpu jobs reached for host") {
 			t.Errorf("Create() error=%v, want host limit error", err)
 		}
 		if job != nil {
@@ -410,8 +465,9 @@ func TestManagerCreate(t *testing.T) {
 		storage := &stubJobStore{}
 		nodeAgent := &stubNodeAgent{}
 		manager := newManagerWithStore(storage, nodeAgent, ManagerConfig{
-			MaxJobsPerHost: 3,
-			MaxTotalJobs:   2,
+			TypePolicies: map[JobType]TypePolicy{
+				"oncpu": {MaxJobsPerHost: 3, MaxTotalJobs: 2},
+			},
 		})
 		manager.jobs["job-20260101"] = newRunningJob("job-20260101")
 		manager.jobs["job-20260102"] = newRunningJob("job-20260102")
@@ -428,7 +484,7 @@ func TestManagerCreate(t *testing.T) {
 			},
 		})
 
-		if err == nil || !strings.Contains(err.Error(), "maximum number of total jobs reached") {
+		if err == nil || !strings.Contains(err.Error(), "maximum number of total oncpu jobs reached") {
 			t.Errorf("Create() error=%v, want total limit error", err)
 		}
 		if job != nil {
@@ -498,7 +554,7 @@ func TestManagerCreate(t *testing.T) {
 			t.Errorf("jobs.Load(%q) returned unexpected job", job.ID)
 		}
 
-		jobCountVal, exists := manager.jobsByHost["huatuo-dev"]
+		jobCountVal, exists := manager.jobsByHost[quotaHostKey("huatuo-dev", "oncpu")]
 		if !exists {
 			t.Errorf("jobsByHost.Load(%q) exists=false, want true", "huatuo-dev")
 		} else if jobCountVal != 1 {
@@ -533,7 +589,7 @@ func TestManagerStop(t *testing.T) {
 		manager := newTestManager(storage, nodeAgent)
 		job := newRunningJob("job-running-2026")
 		manager.jobs[job.ID] = job
-		manager.jobsByHost[job.Hostname] = 1
+		manager.jobsByHost[quotaHostKey(job.Hostname, "oncpu")] = 1
 
 		err := manager.StopContext(t.Context(), job.ID, true)
 		if err != nil {
@@ -561,7 +617,7 @@ func TestManagerStop(t *testing.T) {
 		if _, exists := manager.jobs[job.ID]; exists {
 			t.Errorf("jobs.Load(%q) exists=true, want false", job.ID)
 		}
-		if _, exists := manager.jobsByHost[job.Hostname]; exists {
+		if _, exists := manager.jobsByHost[quotaHostKey(job.Hostname, "oncpu")]; exists {
 			t.Errorf("jobsByHost.Load(%q) exists=true, want false", job.Hostname)
 		}
 	})
@@ -757,7 +813,7 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 				if got := len(storage.savedJobs()); got != 1 {
 					t.Errorf("storage.Save() call count=%d, want 1", got)
 				}
-				if _, exists := manager.jobsByHost[job.Hostname]; exists {
+				if _, exists := manager.jobsByHost[quotaHostKey(job.Hostname, "oncpu")]; exists {
 					t.Errorf("jobsByHost.Load(%q) exists=true, want false", job.Hostname)
 				}
 			},
@@ -841,7 +897,7 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 			manager := newTestManager(storage, nodeAgent)
 			job := newRunningJob("job-status-2026")
 			manager.jobs[job.ID] = job
-			manager.jobsByHost[job.Hostname] = 1
+			manager.jobsByHost[quotaHostKey(job.Hostname, "oncpu")] = 1
 
 			gotStatus, gotErr := manager.checkAndUpdateJobStatus(t.Context(), job)
 			tc.validate(t, manager, job, storage, gotStatus, gotErr)
@@ -990,7 +1046,9 @@ func TestManagerCreateReservesQuotaAtomically(t *testing.T) {
 		startTaskFunc: func(_, _ string, _ *AgentTaskRequest) (string, error) {
 			return "agent-task-2026", nil
 		},
-	}, ManagerConfig{MaxJobsPerHost: maxJobs, MaxTotalJobs: maxJobs})
+	}, ManagerConfig{TypePolicies: map[JobType]TypePolicy{
+		"oncpu": {MaxJobsPerHost: maxJobs, MaxTotalJobs: maxJobs},
+	}})
 
 	var wg sync.WaitGroup
 	var successes atomic.Int32
@@ -1000,6 +1058,7 @@ func TestManagerCreateReservesQuotaAtomically(t *testing.T) {
 			defer wg.Done()
 			_, err := manager.CreateContext(t.Context(), &CreateJobRequest{
 				Hostname:  "huatuo-dev",
+				Type:      "oncpu",
 				AgentTask: &AgentTaskRequest{TraceTimeout: 60},
 			})
 			if err == nil {
@@ -1029,7 +1088,7 @@ func TestManagerStopIsIdempotentAndForwardsForce(t *testing.T) {
 	manager := newTestManager(&stubJobStore{}, nodeAgent)
 	job := newRunningJob("job-running-2026")
 	manager.jobs[job.ID] = job
-	manager.jobsByHost[job.Hostname] = 1
+	manager.jobsByHost[quotaHostKey(job.Hostname, "oncpu")] = 1
 
 	if err := manager.StopContext(t.Context(), job.ID, true); err != nil {
 		t.Fatalf("Stop() error=%v, want nil", err)
@@ -1060,7 +1119,7 @@ func TestManagerCheckAndUpdateJobStatusRejectsMissingResult(t *testing.T) {
 	})
 	job := newRunningJob("job-running-2026")
 	manager.jobs[job.ID] = job
-	manager.jobsByHost[job.Hostname] = 1
+	manager.jobsByHost[quotaHostKey(job.Hostname, "oncpu")] = 1
 
 	_, err := manager.checkAndUpdateJobStatus(t.Context(), job)
 	if err == nil || err.Error() != "agent returned completed status without results" {

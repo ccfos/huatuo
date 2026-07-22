@@ -19,9 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/storage/driver"
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
@@ -35,14 +37,14 @@ var ErrCannotDeleteRunning = errors.New("cannot delete running job")
 
 // ManagerConfig holds configuration for the job manager.
 type ManagerConfig struct {
-	MaxJobsPerHost int
-	MaxTotalJobs   int
-	TypePolicies   map[JobType]TypePolicy
+	TypePolicies map[JobType]TypePolicy
 	// ShutdownConcurrency bounds simultaneous Agent stop requests.
 	ShutdownConcurrency int
 	// StoreDSN is the SQLite data source name for the job store.
 	// Defaults to "jobs.db" when empty.
-	StoreDSN string
+	StoreDSN                 string
+	StatusPollInterval       time.Duration
+	MaxConsecutivePollErrors int
 }
 
 // TypePolicy assigns a job type to a quota group.
@@ -54,18 +56,40 @@ type TypePolicy struct {
 
 // Manager tracks running jobs in memory and persists terminal states to storage.
 type Manager struct {
-	jobs        map[string]*Job
-	jobsByHost  map[string]int
-	mu          sync.RWMutex
-	stopping    map[string]struct{}
-	finishing   map[string]chan struct{}
-	shutdown    sync.Once
-	shutdownErr error
-	monitorWG   sync.WaitGroup
-	storage     Store
-	nodeAgent   NodeAgent
-	stopChan    chan struct{}
-	config      ManagerConfig
+	jobs                map[string]*Job
+	jobsByHost          map[string]int
+	mu                  sync.RWMutex
+	stopping            map[string]struct{}
+	finishing           map[string]chan struct{}
+	shutdownMu          sync.Mutex
+	shuttingDown        bool
+	shutdownDone        chan struct{}
+	shutdownErr         error
+	monitorWG           sync.WaitGroup
+	storage             Store
+	nodeAgent           NodeAgent
+	stopChan            chan struct{}
+	config              ManagerConfig
+	quotaRejections     atomic.Uint64
+	persistenceFailures atomic.Uint64
+	recoveredJobs       atomic.Uint64
+	shutdownIncomplete  atomic.Uint64
+}
+
+// ActiveJobStat contains one active job metric bucket.
+type ActiveJobStat struct {
+	Type   JobType
+	Status JobStatus
+	Count  int
+}
+
+// ManagerStats is a point-in-time snapshot of manager metrics.
+type ManagerStats struct {
+	Active              []ActiveJobStat
+	QuotaRejections     uint64
+	PersistenceFailures uint64
+	RecoveredJobs       uint64
+	ShutdownIncomplete  uint64
 }
 
 func NewManager(ctx context.Context, nodeAgent NodeAgent, config ManagerConfig) (*Manager, error) {
@@ -90,11 +114,9 @@ func NewManager(ctx context.Context, nodeAgent NodeAgent, config ManagerConfig) 
 
 func validateManagerConfig(config ManagerConfig) error {
 	if len(config.TypePolicies) == 0 {
-		if config.MaxJobsPerHost <= 0 || config.MaxTotalJobs <= 0 {
-			return errors.New("job quotas must be greater than zero")
-		}
-		return nil
+		return errors.New("job type policies are required")
 	}
+	groups := make(map[string]TypePolicy)
 	for jobType, policy := range config.TypePolicies {
 		if jobType == "" {
 			return errors.New("job type policy has an empty type")
@@ -102,6 +124,15 @@ func validateManagerConfig(config ManagerConfig) error {
 		if policy.MaxJobsPerHost <= 0 || policy.MaxTotalJobs <= 0 {
 			return fmt.Errorf("job type %q quotas must be greater than zero", jobType)
 		}
+		group := policy.Group
+		if group == "" {
+			group = string(jobType)
+		}
+		if existing, ok := groups[group]; ok &&
+			(existing.MaxJobsPerHost != policy.MaxJobsPerHost || existing.MaxTotalJobs != policy.MaxTotalJobs) {
+			return fmt.Errorf("job quota group %q has inconsistent limits", group)
+		}
+		groups[group] = policy
 	}
 	return nil
 }
@@ -110,15 +141,27 @@ func newManagerWithStore(storage Store, nodeAgent NodeAgent, config ManagerConfi
 	if config.ShutdownConcurrency <= 0 {
 		config.ShutdownConcurrency = 16
 	}
+	if config.StatusPollInterval <= 0 {
+		config.StatusPollInterval = 5 * time.Second
+	}
+	if config.MaxConsecutivePollErrors <= 0 {
+		config.MaxConsecutivePollErrors = 3
+	}
+	policies := make(map[JobType]TypePolicy, len(config.TypePolicies))
+	for jobType, policy := range config.TypePolicies {
+		policies[jobType] = policy
+	}
+	config.TypePolicies = policies
 	return &Manager{
-		storage:    storage,
-		nodeAgent:  nodeAgent,
-		jobs:       make(map[string]*Job),
-		jobsByHost: make(map[string]int),
-		stopChan:   make(chan struct{}),
-		stopping:   make(map[string]struct{}),
-		finishing:  make(map[string]chan struct{}),
-		config:     config,
+		storage:      storage,
+		nodeAgent:    nodeAgent,
+		jobs:         make(map[string]*Job),
+		jobsByHost:   make(map[string]int),
+		stopChan:     make(chan struct{}),
+		stopping:     make(map[string]struct{}),
+		finishing:    make(map[string]chan struct{}),
+		shutdownDone: make(chan struct{}),
+		config:       config,
 	}
 }
 
@@ -151,37 +194,94 @@ func (m *Manager) recoverJobs(ctx context.Context) error {
 			m.monitorJob(context.WithoutCancel(ctx), jobToMonitor)
 		}(recoveredJob)
 	}
+	m.recoveredJobs.Add(uint64(len(jobs)))
 	m.mu.Unlock()
 	return nil
 }
 
 // ShutdownContext stops monitors, waits for them, and closes the job store.
 func (m *Manager) ShutdownContext(ctx context.Context) error {
-	m.shutdown.Do(func() {
-		stopErr := m.stopAllByTypes(ctx, nil)
-		m.mu.Lock()
-		close(m.stopChan)
-		m.mu.Unlock()
-
-		done := make(chan struct{})
-		go func() {
-			m.monitorWG.Wait()
-			close(done)
-		}()
-		var waitErr error
+	m.shutdownMu.Lock()
+	if m.shuttingDown {
+		done := m.shutdownDone
+		m.shutdownMu.Unlock()
 		select {
 		case <-done:
+			m.shutdownMu.Lock()
+			defer m.shutdownMu.Unlock()
+			return m.shutdownErr
 		case <-ctx.Done():
-			waitErr = ctx.Err()
+			return ctx.Err()
 		}
-		closeErr := m.storage.Close(ctx)
-		m.shutdownErr = errors.Join(stopErr, waitErr, closeErr)
-	})
-	return m.shutdownErr
+	}
+	m.shuttingDown = true
+	m.shutdownMu.Unlock()
+
+	stopErr := m.stopAllByTypes(ctx, nil)
+	m.mu.Lock()
+	close(m.stopChan)
+	m.mu.Unlock()
+
+	closeCtx := context.WithoutCancel(ctx)
+	go func() {
+		m.monitorWG.Wait()
+		closeErr := m.storage.Close(closeCtx)
+		m.shutdownMu.Lock()
+		m.shutdownErr = errors.Join(stopErr, closeErr)
+		close(m.shutdownDone)
+		m.shutdownMu.Unlock()
+	}()
+
+	select {
+	case <-m.shutdownDone:
+		m.shutdownMu.Lock()
+		defer m.shutdownMu.Unlock()
+		return m.shutdownErr
+	case <-ctx.Done():
+		m.shutdownIncomplete.Add(1)
+		return errors.Join(stopErr, ctx.Err())
+	}
+}
+
+// Stats returns current active job counts and cumulative failure counters.
+func (m *Manager) Stats() ManagerStats {
+	type bucket struct {
+		jobType JobType
+		status  JobStatus
+	}
+	m.mu.RLock()
+	counts := make(map[bucket]int)
+	for _, activeJob := range m.jobs {
+		counts[bucket{jobType: activeJob.Type, status: activeJob.Status}]++
+	}
+	m.mu.RUnlock()
+	active := make([]ActiveJobStat, 0, len(counts))
+	for key, count := range counts {
+		active = append(active, ActiveJobStat{Type: key.jobType, Status: key.status, Count: count})
+	}
+	return ManagerStats{
+		Active:              active,
+		QuotaRejections:     m.quotaRejections.Load(),
+		PersistenceFailures: m.persistenceFailures.Load(),
+		RecoveredJobs:       m.recoveredJobs.Load(),
+		ShutdownIncomplete:  m.shutdownIncomplete.Load(),
+	}
+}
+
+// Ready verifies that the durable job store is available.
+func (m *Manager) Ready(ctx context.Context) error {
+	if _, err := m.storage.Count(ctx, &JobQuery{}); err != nil {
+		return fmt.Errorf("job store readiness: %w", err)
+	}
+	return nil
 }
 
 // CreateContext creates a job and propagates cancellation to the node agent.
 func (m *Manager) CreateContext(ctx context.Context, req *CreateJobRequest) (*Job, error) {
+	return m.createContext(ctx, req, 3)
+}
+
+func (m *Manager) createContext(ctx context.Context, req *CreateJobRequest, idAttempts int) (*Job, error) {
 	if req == nil {
 		return nil, errors.New("job request is required")
 	}
@@ -192,7 +292,7 @@ func (m *Manager) CreateContext(ctx context.Context, req *CreateJobRequest) (*Jo
 		return nil, errors.New("trace timeout or duration is required")
 	}
 
-	jobID := fmt.Sprintf("id-%s", uuid.NewString()[:8])
+	jobID := "id-" + uuid.NewString()
 	now := time.Now()
 	job := &Job{
 		Type:         req.Type,
@@ -227,6 +327,7 @@ func (m *Manager) CreateContext(ctx context.Context, req *CreateJobRequest) (*Jo
 	}
 	if m.hostJobCount(req.Hostname, policy.Group) >= policy.MaxJobsPerHost {
 		m.mu.Unlock()
+		m.quotaRejections.Add(1)
 		if policy.Group == "" {
 			return nil, fmt.Errorf("%w: maximum number of jobs reached for host %s", ErrQuotaExceeded, req.Hostname)
 		}
@@ -234,6 +335,7 @@ func (m *Manager) CreateContext(ctx context.Context, req *CreateJobRequest) (*Jo
 	}
 	if m.jobCount(policy.Group) >= policy.MaxTotalJobs {
 		m.mu.Unlock()
+		m.quotaRejections.Add(1)
 		if policy.Group == "" {
 			return nil, fmt.Errorf("%w: maximum number of total jobs reached", ErrQuotaExceeded)
 		}
@@ -245,15 +347,28 @@ func (m *Manager) CreateContext(ctx context.Context, req *CreateJobRequest) (*Jo
 	m.monitorWG.Add(1)
 	m.mu.Unlock()
 
-	if err := m.storage.Save(ctx, cloneJob(job)); err != nil {
+	if err := m.storage.Create(ctx, cloneJob(job)); err != nil {
+		m.persistenceFailures.Add(1)
 		m.rollbackJob(job)
 		m.monitorWG.Done()
+		if errors.Is(err, driver.ErrAlreadyExists) && idAttempts > 1 {
+			return m.createContext(ctx, req, idAttempts-1)
+		}
 		return nil, fmt.Errorf("persist pending job %s: %w", job.ID, err)
 	}
 
 	agentTask := job.AgentTask
 	agentTaskID, err := m.startTask(ctx, job.Hostname, job.ContainerID, &agentTask)
 	if err != nil {
+		if errors.Is(err, ErrAgentDispatchUncertain) {
+			log.WithError(err).WithField("job_id", job.ID).
+				Warn("agent task dispatch result is uncertain")
+			go func() {
+				defer m.monitorWG.Done()
+				m.monitorJob(context.WithoutCancel(ctx), job)
+			}()
+			return cloneJob(job), nil
+		}
 		finishErr := m.finishJob(ctx, job, JobStatusFailed, err.Error(), nil)
 		if finishErr == nil {
 			m.monitorWG.Done()
@@ -270,6 +385,7 @@ func (m *Manager) CreateContext(ctx context.Context, req *CreateJobRequest) (*Jo
 	runningSnapshot := cloneJob(job)
 	m.mu.Unlock()
 	if err := m.storage.Save(ctx, runningSnapshot); err != nil {
+		m.persistenceFailures.Add(1)
 		stopErr := m.stopTask(ctx, job.Hostname, agentTaskID, true)
 		finishErr := m.finishJob(ctx, job, JobStatusFailed, "failed to persist running job", nil)
 		if finishErr == nil {
@@ -504,6 +620,7 @@ func (m *Manager) finishJob(ctx context.Context, job *Job, status JobStatus, err
 	m.mu.Unlock()
 
 	if err := m.storage.Save(ctx, snapshot); err != nil {
+		m.persistenceFailures.Add(1)
 		return errors.Join(ErrPersistence, fmt.Errorf("persist terminal job %s: %w", job.ID, err))
 	}
 
@@ -561,12 +678,6 @@ func (m *Manager) hostJobCount(host, group string) int {
 }
 
 func (m *Manager) policyFor(jobType JobType) (TypePolicy, error) {
-	if len(m.config.TypePolicies) == 0 {
-		return TypePolicy{
-			MaxJobsPerHost: m.config.MaxJobsPerHost,
-			MaxTotalJobs:   m.config.MaxTotalJobs,
-		}, nil
-	}
 	policy, ok := m.config.TypePolicies[jobType]
 	if !ok {
 		return TypePolicy{}, fmt.Errorf("%w: %q", ErrUnsupportedJobType, jobType)
@@ -688,6 +799,7 @@ func (m *Manager) markJobRunning(ctx context.Context, job *Job) error {
 	snapshot := cloneJob(job)
 	m.mu.Unlock()
 	if err := m.storage.Save(ctx, snapshot); err != nil {
+		m.persistenceFailures.Add(1)
 		return errors.Join(ErrPersistence, fmt.Errorf("persist running job %s: %w", job.ID, err))
 	}
 	return nil
@@ -706,6 +818,7 @@ func (m *Manager) monitorJob(ctx context.Context, job *Job) {
 
 	// Counter for status check (every 5 seconds)
 	statusCheckCounter := 0
+	statusCheckTicks := max(1, int(m.config.StatusPollInterval/time.Second))
 	consecutivePollErrors := 0
 
 	for {
@@ -781,7 +894,7 @@ func (m *Manager) monitorJob(ctx context.Context, job *Job) {
 
 			// Poll agent status every 5 ticks (5 s).
 			statusCheckCounter++
-			if statusCheckCounter < 5 {
+			if statusCheckCounter < statusCheckTicks {
 				continue
 			}
 			statusCheckCounter = 0
@@ -793,7 +906,7 @@ func (m *Manager) monitorJob(ctx context.Context, job *Job) {
 					continue
 				}
 				consecutivePollErrors++
-				if consecutivePollErrors < 3 {
+				if consecutivePollErrors < m.config.MaxConsecutivePollErrors {
 					log.WithError(err).WithField("job_id", job.ID).Warn("agent status check failed")
 					continue
 				}

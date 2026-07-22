@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 type roundTripFunc func(req *http.Request) (*http.Response, error)
@@ -73,6 +74,35 @@ func newHTTPResponseWithBody(statusCode int, body io.ReadCloser) *http.Response 
 		Status:     fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode)),
 		Header:     make(http.Header),
 		Body:       body,
+	}
+}
+
+func TestHTTPNodeAgentUsesConfiguredPortAndObserver(t *testing.T) {
+	var observedOperation string
+	var observedErr error
+	agent := NewHTTPNodeAgent(HTTPNodeAgentConfig{
+		Client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "http://huatuo-dev:21970/tasks" {
+				t.Fatalf("request URL = %q, want configured Agent port", req.URL.String())
+			}
+			return newHTTPResponse(
+				http.StatusOK,
+				`{"code":0,"message":"ok","data":{"task_id":"agent-task-2026"}}`,
+			), nil
+		})},
+		Port: 21970,
+		Observe: func(operation string, _ time.Duration, err error) {
+			observedOperation = operation
+			observedErr = err
+		},
+	})
+
+	_, err := agent.StartTask("huatuo-dev", "", &AgentTaskRequest{TraceTimeout: 10})
+	if err != nil {
+		t.Fatalf("StartTask() error = %v", err)
+	}
+	if observedOperation != "start" || observedErr != nil {
+		t.Fatalf("observer = (%q, %v), want (start, nil)", observedOperation, observedErr)
 	}
 }
 

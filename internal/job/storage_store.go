@@ -17,6 +17,7 @@ package job
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -118,6 +119,13 @@ func (s *storageStore) Save(ctx context.Context, jobEntity *Job) error {
 	}
 
 	return s.store.Save(ctx, jobEntity)
+}
+
+func (s *storageStore) Create(ctx context.Context, jobEntity *Job) error {
+	if jobEntity == nil {
+		return errors.New("job store: job is nil")
+	}
+	return s.store.Create(ctx, jobEntity)
 }
 
 func (s *storageStore) Delete(ctx context.Context, jobID string) error {

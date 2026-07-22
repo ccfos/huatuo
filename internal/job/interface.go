@@ -18,6 +18,7 @@ import "context"
 
 type Store interface {
 	Get(ctx context.Context, jobID string) (*Job, error)
+	Create(ctx context.Context, job *Job) error
 	Save(ctx context.Context, job *Job) error
 	Delete(ctx context.Context, jobID string) error
 	List(ctx context.Context, query *JobQuery) ([]*Job, error)
