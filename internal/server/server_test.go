@@ -99,6 +99,40 @@ func TestNewServerRegistersVersionRoute(t *testing.T) {
 	}
 }
 
+func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
+	srv := NewServer(&Config{
+		RequireAuth: true,
+		EnablePProf: true,
+		AuthUsers: []UserConfig{
+			{ID: "admin-2026", IsAdmin: true},
+			{ID: "viewer-2026", Permissions: []string{"/debug/pprof/**"}},
+		},
+	})
+
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody)
+	metricsRecorder := httptest.NewRecorder()
+	srv.engine.ServeHTTP(metricsRecorder, metricsRequest)
+	if metricsRecorder.Code != http.StatusNotImplemented {
+		t.Fatalf("anonymous metrics status=%d, want %d", metricsRecorder.Code, http.StatusNotImplemented)
+	}
+
+	viewerRequest := httptest.NewRequest(http.MethodGet, "/debug/pprof/", http.NoBody)
+	viewerRequest.Header.Set("Authorization", "Bearer viewer-2026")
+	viewerRecorder := httptest.NewRecorder()
+	srv.engine.ServeHTTP(viewerRecorder, viewerRequest)
+	if viewerRecorder.Code != http.StatusForbidden {
+		t.Fatalf("viewer pprof status=%d, want %d", viewerRecorder.Code, http.StatusForbidden)
+	}
+
+	adminRequest := httptest.NewRequest(http.MethodGet, "/debug/pprof/", http.NoBody)
+	adminRequest.Header.Set("Authorization", "Bearer admin-2026")
+	adminRecorder := httptest.NewRecorder()
+	srv.engine.ServeHTTP(adminRecorder, adminRequest)
+	if adminRecorder.Code != http.StatusOK {
+		t.Fatalf("admin pprof status=%d, want %d", adminRecorder.Code, http.StatusOK)
+	}
+}
+
 func TestPromServerHandlerWithRegistry(t *testing.T) {
 	s := &server{promRegistry: prometheus.NewRegistry()}
 

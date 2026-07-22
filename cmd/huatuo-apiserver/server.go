@@ -22,7 +22,7 @@ import (
 )
 
 func startHandlers(d *Daemon) (func(context.Context) error, error) {
-	shutdown, err := handlers.ServerStart(handlers.ServerOptions{
+	runningServer, err := handlers.Start(handlers.ServerOptions{
 		Addr:           d.opts.Config.APIServer.TCPAddr,
 		PromReg:        d.metrics,
 		JobManager:     d.jobManager,
@@ -34,6 +34,7 @@ func startHandlers(d *Daemon) (func(context.Context) error, error) {
 	if err != nil {
 		return nil, fmt.Errorf("start api server: %w", err)
 	}
+	d.apiServer = runningServer
 
-	return shutdown, nil
+	return runningServer.Shutdown, nil
 }

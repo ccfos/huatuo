@@ -17,6 +17,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"time"
 
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
@@ -27,6 +28,7 @@ import (
 	"huatuo-bamai/internal/version"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/time/rate"
 )
 
 // ServerOptions groups the dependencies required to start the API server.
@@ -40,8 +42,15 @@ type ServerOptions struct {
 	Config         *config.Config
 }
 
-// ServerStart starts the API service with the given configuration.
-func ServerStart(opts ServerOptions) (func(context.Context) error, error) {
+// RunningServer exposes the lifecycle of the API listener.
+type RunningServer interface {
+	Shutdown(ctx context.Context) error
+	Done() <-chan struct{}
+	Wait(ctx context.Context) error
+}
+
+// Start starts the API service with the given configuration.
+func Start(opts ServerOptions) (RunningServer, error) {
 	if opts.Config == nil {
 		return nil, errors.New("start API server: config is required")
 	}
@@ -52,13 +61,20 @@ func ServerStart(opts ServerOptions) (func(context.Context) error, error) {
 		return nil, errors.New("start API server: profile service is required")
 	}
 	httpServer := server.NewServer(&server.Config{
-		EnablePProf:     opts.EnablePProf,
-		EnableRateLimit: true,
-		RateLimit:       200,
-		RateBurst:       200,
-		AuthUsers:       getUserConfigs(opts.Config),
-		PromReg:         opts.PromReg,
-		VersionInfo:     opts.VersionInfo,
+		RequireAuth:       true,
+		EnablePProf:       opts.EnablePProf,
+		EnableRateLimit:   true,
+		RateLimit:         rate.Limit(opts.Config.APIServer.RateLimit),
+		RateBurst:         opts.Config.APIServer.RateBurst,
+		AuthUsers:         getUserConfigs(opts.Config),
+		PromReg:           opts.PromReg,
+		VersionInfo:       opts.VersionInfo,
+		ReadHeaderTimeout: time.Duration(opts.Config.APIServer.ReadHeaderTimeoutSeconds) * time.Second,
+		ReadTimeout:       time.Duration(opts.Config.APIServer.ReadTimeoutSeconds) * time.Second,
+		WriteTimeout:      time.Duration(opts.Config.APIServer.WriteTimeoutSeconds) * time.Second,
+		IdleTimeout:       time.Duration(opts.Config.APIServer.IdleTimeoutSeconds) * time.Second,
+		MaxHeaderBytes:    opts.Config.APIServer.MaxHeaderBytes,
+		MaxBodyBytes:      opts.Config.APIServer.MaxBodyBytes,
 	})
 
 	// Register trace routes
@@ -72,7 +88,7 @@ func ServerStart(opts ServerOptions) (func(context.Context) error, error) {
 		return nil, err
 	}
 
-	return httpServer.Shutdown, nil
+	return httpServer, nil
 }
 
 // getUserConfigs converts apiserver config users to server.UserConfig.

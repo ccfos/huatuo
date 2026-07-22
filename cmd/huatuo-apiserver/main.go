@@ -81,7 +81,11 @@ type Daemon struct {
 	metrics        *prometheus.Registry
 	jobManager     *job.Manager
 	profileService *profileService.Service
-	steps          []daemonStep
+	apiServer      interface {
+		Done() <-chan struct{}
+		Wait(ctx context.Context) error
+	}
+	steps []daemonStep
 }
 
 func NewDaemon(opts *Options) *Daemon {
@@ -131,10 +135,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 
 	log.Info("huatuo-apiserver started")
-	s := d.waitForSignal(ctx)
-	log.WithField("signal", s).Info("huatuo-apiserver shutting down")
+	s, serveErr := d.waitForSignal(ctx)
+	if serveErr != nil {
+		log.WithError(serveErr).Error("api server stopped unexpectedly")
+	} else {
+		log.WithField("signal", s).Info("huatuo-apiserver shutting down")
+	}
 
-	if err := shutdown(); err != nil {
+	if err := errors.Join(serveErr, shutdown()); err != nil {
 		log.WithError(err).Warn("shutdown completed with errors")
 		return err
 	}
@@ -142,7 +150,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	return nil
 }
 
-func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
+func (d *Daemon) waitForSignal(ctx context.Context) (os.Signal, error) {
 	waitCh := make(chan os.Signal, 1)
 	signal.Notify(
 		waitCh,
@@ -154,11 +162,22 @@ func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
 	)
 	defer signal.Stop(waitCh)
 
+	if d.apiServer == nil {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		case s := <-waitCh:
+			return s, nil
+		}
+	}
+
 	select {
 	case <-ctx.Done():
-		return nil
+		return nil, nil
 	case s := <-waitCh:
-		return s
+		return s, nil
+	case <-d.apiServer.Done():
+		return nil, d.apiServer.Wait(context.Background())
 	}
 }
 
