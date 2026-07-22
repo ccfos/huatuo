@@ -65,6 +65,7 @@ weight: 5
     # ReadTimeoutSeconds       = 30
     # WriteTimeoutSeconds      = 60
     # IdleTimeoutSeconds       = 120
+    # ShutdownTimeoutSeconds   = 60
     # MaxHeaderBytes           = 1048576
     # MaxBodyBytes             = 4194304
     # RateLimit                = 200
@@ -82,6 +83,9 @@ weight: 5
 - **ReadHeaderTimeoutSeconds**、**ReadTimeoutSeconds**、
   **WriteTimeoutSeconds** 和 **IdleTimeoutSeconds** 限制慢连接或停滞连接。
   默认值依次为 `10`、`30`、`60` 和 `120` 秒。
+
+- **ShutdownTimeoutSeconds** 设置所有组件共享的优雅退出总时限，默认值为
+  `60` 秒。各组件按剩余时间和待退出组件数分配退出时限。
 
 - **MaxHeaderBytes** 和 **MaxBodyBytes** 限制请求头与请求体大小，默认值
   分别为 1 MiB 和 4 MiB。
@@ -130,11 +134,29 @@ weight: 5
 
 - **JobStoreDSN**：持久化任务状态的 SQLite 数据源。
 
-  默认值为 `jobs.db`。生产环境应使用持久、可写的路径。
+  默认值为 `jobs.db`。相对路径以配置文件所在目录为基准。生产环境应使用
+  持久、可写的路径。
 
 - **ShutdownConcurrency**：优雅退出时并发停止 Agent 任务的上限。
 
   默认值为 `16`。
+
+#### Agent 通信与状态轮询
+
+```toml
+[Agent]
+    # Port                      = 19704
+    # RequestTimeoutSeconds     = 10
+    # StatusRetryAttempts       = 3
+    # StatusRetryBackoffMillis  = 100
+    # StatusPollIntervalSeconds = 5
+    # MaxConsecutivePollErrors  = 3
+```
+
+- **Port** 和 **RequestTimeoutSeconds** 设置 Agent HTTP 端口及单次请求超时。
+- **StatusRetryAttempts** 和 **StatusRetryBackoffMillis** 设置状态查询重试。
+- **StatusPollIntervalSeconds** 设置任务状态轮询周期。
+- **MaxConsecutivePollErrors** 设置任务被标记失败前允许的连续轮询错误数。
 
 ### 6. 存储配置
 
@@ -178,9 +200,10 @@ weight: 5
 
 ### 7. 认证与授权配置
 
-`/healthz`、`/metrics` 和 `/version` 无需认证。启用 pprof 后，
+`/healthz`、`/readyz`、`/metrics` 和 `/version` 无需认证。启用 pprof 后，
 `/debug/pprof/**` 与 API 共用监听端口，并且仅管理员可访问。其他接口必须
-携带 `Authorization: Bearer <Auth.users.ID>`。
+携带 `Authorization: Bearer <Auth.users.ID>`。所有
+`/v1/profiles/flamegraph/**` 查询接口仅管理员可访问。
 
 每个用户使用一个 `[[Auth.users]]` 数组表声明。可配置多个用户，例如：
 
@@ -293,6 +316,10 @@ LogLevel = "Info"
     MaxTracingTasksPerHost = 5
     MaxTotalProfilingTasks = 500
     MaxTotalTracingTasks = 1000
+
+[Agent]
+    Port = 19704
+    RequestTimeoutSeconds = 10
 
 [ElasticSearch]
     Address = "https://elasticsearch.example.com:9200"

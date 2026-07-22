@@ -74,6 +74,7 @@ credentials to version control.
     # ReadTimeoutSeconds       = 30
     # WriteTimeoutSeconds      = 60
     # IdleTimeoutSeconds       = 120
+    # ShutdownTimeoutSeconds   = 60
     # MaxHeaderBytes           = 1048576
     # MaxBodyBytes             = 4194304
     # RateLimit                = 200
@@ -92,6 +93,10 @@ credentials to version control.
 - **ReadHeaderTimeoutSeconds**, **ReadTimeoutSeconds**,
   **WriteTimeoutSeconds**, and **IdleTimeoutSeconds** bound slow or stalled
   connections. Defaults are `10`, `30`, `60`, and `120` seconds.
+
+- **ShutdownTimeoutSeconds** sets the total graceful-shutdown deadline shared
+  by all components. The default is `60` seconds. Each component receives a
+  portion of the remaining deadline.
 
 - **MaxHeaderBytes** and **MaxBodyBytes** cap request headers and bodies.
   Defaults are 1 MiB and 4 MiB.
@@ -147,12 +152,34 @@ credentials to version control.
 
 - **JobStoreDSN**: SQLite data source for durable job state.
 
-  The default is `jobs.db`. Use a persistent writable path in production.
+  The default is `jobs.db`. Relative paths are resolved from the directory
+  containing the configuration file. Use a persistent writable path in
+  production.
 
 - **ShutdownConcurrency**: Maximum concurrent Agent stop requests during
   graceful shutdown.
 
   The default is `16`.
+
+#### Agent Communication and Status Polling
+
+```toml
+[Agent]
+    # Port                      = 19704
+    # RequestTimeoutSeconds     = 10
+    # StatusRetryAttempts       = 3
+    # StatusRetryBackoffMillis  = 100
+    # StatusPollIntervalSeconds = 5
+    # MaxConsecutivePollErrors  = 3
+```
+
+- **Port** and **RequestTimeoutSeconds** set the Agent HTTP port and the
+  timeout for one request.
+- **StatusRetryAttempts** and **StatusRetryBackoffMillis** configure status
+  query retries.
+- **StatusPollIntervalSeconds** configures the task status polling interval.
+- **MaxConsecutivePollErrors** sets how many consecutive polling errors are
+  allowed before a job is marked failed.
 
 ### 6. Storage
 
@@ -200,9 +227,10 @@ they must be configured together.
 
 ### 7. Authentication and Authorization
 
-`/healthz`, `/metrics`, and `/version` are public. When pprof is enabled,
+`/healthz`, `/readyz`, `/metrics`, and `/version` are public. When pprof is enabled,
 `/debug/pprof/**` shares the API listener and is restricted to administrators.
-All other routes require `Authorization: Bearer <Auth.users.ID>`.
+All other routes require `Authorization: Bearer <Auth.users.ID>`. Every
+`/v1/profiles/flamegraph/**` query route is restricted to administrators.
 
 Declare each user in a separate `[[Auth.users]]` array table. Multiple users
 can be configured, for example:
@@ -327,6 +355,10 @@ LogLevel = "Info"
     MaxTracingTasksPerHost = 5
     MaxTotalProfilingTasks = 500
     MaxTotalTracingTasks = 1000
+
+[Agent]
+    Port = 19704
+    RequestTimeoutSeconds = 10
 
 [ElasticSearch]
     Address = "https://elasticsearch.example.com:9200"
