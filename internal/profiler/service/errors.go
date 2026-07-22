@@ -12,19 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package job
+package service
 
-import (
-	"errors"
-
-	"huatuo-bamai/internal/storage/driver"
-)
-
-var ErrNotFound = driver.ErrNotFound
+import "errors"
 
 var (
-	ErrQuotaExceeded      = errors.New("job quota exceeded")
-	ErrUnsupportedJobType = errors.New("unsupported job type")
-	ErrPersistence        = errors.New("job persistence failed")
-	ErrInvalidQuery       = errors.New("invalid job query")
+	ErrInvalidQuery   = errors.New("invalid profile query")
+	ErrProfilesAbsent = errors.New("profiles not found")
 )

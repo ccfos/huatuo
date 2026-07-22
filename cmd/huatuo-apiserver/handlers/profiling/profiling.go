@@ -22,7 +22,6 @@ import (
 	"time"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/listing"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/server"
@@ -31,8 +30,8 @@ import (
 )
 
 const (
-	ProfilingMemory = "profiling_memory"
-	ProfilingCPU    = "profiling_cpu"
+	ProfilingMemory = job.JobTypeProfilingMemory
+	ProfilingCPU    = job.JobTypeProfilingCPU
 )
 
 // create creates a profiling job.
@@ -109,25 +108,22 @@ func (h *Handler) list(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	var allJobs []*job.Job
-	for i := range req.JobQueries {
-		jobs, err := h.jobManager.ListContext(ctx.Request().Context(), ctx.UserID, ctx.IsAdmin, &req.JobQueries[i])
-		if err != nil {
-			log.WithError(err).WithField("job_type", req.JobQueries[i].Type).
-				Error("failed to list profiling jobs")
-			return response.ErrInternal
+	req.JobQuery.Sort = req.ListParams.Sort
+	req.JobQuery.Offset = req.ListParams.Offset
+	req.JobQuery.Limit = req.ListParams.Limit
+	page, err := h.jobManager.ListPageContext(
+		ctx.Request().Context(), ctx.UserID, ctx.IsAdmin, &req.JobQuery,
+	)
+	if err != nil {
+		if errors.Is(err, job.ErrInvalidQuery) {
+			return response.ErrInvalidRequest.WithMessage(err.Error())
 		}
-		allJobs = append(allJobs, jobs...)
-	}
-	if err := listing.SortJobs(allJobs, req.ListParams.Sort); err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
+		log.WithError(err).Error("failed to list profiling jobs")
+		return response.ErrInternal
 	}
 
-	total := len(allJobs)
-	pageJobs := listing.Paginate(allJobs, req.ListParams.Offset, req.ListParams.Limit)
-
-	items := make([]v1.ProfilingJobResponse, len(pageJobs))
-	for i, j := range pageJobs {
+	items := make([]v1.ProfilingJobResponse, len(page.Items))
+	for i, j := range page.Items {
 		items[i], err = buildProfilingJobResponse(j, h.profilingConfig.FlameGraphBaseURL)
 		if err != nil {
 			log.WithError(err).WithField("job_id", j.ID).
@@ -138,7 +134,7 @@ func (h *Handler) list(ctx *server.Context) error {
 
 	response.Success(ctx, v1.ProfilingJobListResponse{
 		Items:  items,
-		Total:  total,
+		Total:  int(page.Total),
 		Limit:  req.ListParams.Limit,
 		Offset: req.ListParams.Offset,
 	})
@@ -216,11 +212,11 @@ func buildProfilingJobResponse(jobResult *job.Job, flameGraphBaseURL string) (v1
 	return resp, nil
 }
 
-func isProfilingJobType(jobType string) bool {
+func isProfilingJobType(jobType job.JobType) bool {
 	return jobType == ProfilingCPU || jobType == ProfilingMemory
 }
 
-func profilingAPIType(jobType string) (string, error) {
+func profilingAPIType(jobType job.JobType) (string, error) {
 	switch jobType {
 	case ProfilingMemory:
 		return string(profiling.TypeMemory), nil
@@ -335,6 +331,10 @@ func (h *Handler) delete(ctx *server.Context) error {
 
 // getRawData gets raw profiling data from ES by job ID.
 func (h *Handler) getRawData(ctx *server.Context) error {
+	listParams, err := ctx.ParseListParams()
+	if err != nil {
+		return response.ErrInvalidRequest.WithMessage(err.Error())
+	}
 	taskID, err := parseProfilingJobID(ctx)
 	if err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
@@ -360,14 +360,23 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 	if h.profileService == nil {
 		return response.ErrInternal
 	}
-	profiles, err := h.profileService.GetProfilesByTracerID(ctx.Request().Context(), jobResult.AgentTaskID)
+	profiles, err := h.profileService.GetProfilesByTracerIDPage(
+		ctx.Request().Context(), jobResult.AgentTaskID, listParams.Limit+1, listParams.Offset,
+	)
 	if err != nil {
 		log.WithError(err).WithField("job_id", taskID).Error("failed to get raw profiling data")
 		return response.ErrInternal
 	}
 
+	hasMore := len(profiles) > listParams.Limit
+	if hasMore {
+		profiles = profiles[:listParams.Limit]
+	}
 	response.Success(ctx, v1.RawDataResponse{
-		Data: profiles,
+		Data:    profiles,
+		Limit:   listParams.Limit,
+		Offset:  listParams.Offset,
+		HasMore: hasMore,
 	})
 	return nil
 }

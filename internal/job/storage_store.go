@@ -29,7 +29,7 @@ type storageStore struct {
 }
 
 type storagePayload struct {
-	Type        string           `json:"type"`
+	Type        JobType          `json:"type"`
 	JobID       string           `json:"job_id"`
 	UserName    string           `json:"user_name"`
 	UserID      string           `json:"user_id"`
@@ -50,29 +50,33 @@ type storagePayload struct {
 
 type storeMapper struct{}
 
-func StorageCollection() string {
+func storageCollection() string {
 	return "jobs"
 }
 
-func StorageFields(entity *Job) map[string]any {
+func storageFields(entity *Job) map[string]any {
 	return map[string]any{
+		"id":         entity.ID,
 		"user_id":    entity.UserID,
 		"container":  entity.ContainerID,
 		"host":       entity.Hostname,
 		"status":     string(entity.Status),
 		"type":       entity.Type,
 		"start_time": entity.StartTime,
+		"end_time":   entity.EndTime,
 	}
 }
 
-func StorageIndexes() []string {
+func storageIndexes() []string {
 	return []string{
 		"user_id",
+		"id",
 		"container",
 		"host",
 		"status",
 		"type",
 		"start_time",
+		"end_time",
 	}
 }
 
@@ -89,7 +93,7 @@ func newStore(ctx context.Context, dsn string) (Store, error) {
 			Driver:    "sqlite",
 			SQLiteDSN: dsn,
 		},
-		StorageCollection(),
+		storageCollection(),
 		storeMapper{},
 	)
 	if err != nil {
@@ -99,11 +103,7 @@ func newStore(ctx context.Context, dsn string) (Store, error) {
 	return &storageStore{store: store}, nil
 }
 
-func (s *storageStore) Get(jobID string) (*Job, error) {
-	return s.GetContext(context.Background(), jobID)
-}
-
-func (s *storageStore) GetContext(ctx context.Context, jobID string) (*Job, error) {
+func (s *storageStore) Get(ctx context.Context, jobID string) (*Job, error) {
 	entity, err := s.store.Get(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -112,11 +112,7 @@ func (s *storageStore) GetContext(ctx context.Context, jobID string) (*Job, erro
 	return cloneJob(entity), nil
 }
 
-func (s *storageStore) Save(jobEntity *Job) error {
-	return s.SaveContext(context.Background(), jobEntity)
-}
-
-func (s *storageStore) SaveContext(ctx context.Context, jobEntity *Job) error {
+func (s *storageStore) Save(ctx context.Context, jobEntity *Job) error {
 	if jobEntity == nil {
 		return fmt.Errorf("job store: job is nil")
 	}
@@ -124,19 +120,14 @@ func (s *storageStore) SaveContext(ctx context.Context, jobEntity *Job) error {
 	return s.store.Save(ctx, jobEntity)
 }
 
-func (s *storageStore) Delete(jobID string) error {
-	return s.DeleteContext(context.Background(), jobID)
-}
-
-func (s *storageStore) DeleteContext(ctx context.Context, jobID string) error {
+func (s *storageStore) Delete(ctx context.Context, jobID string) error {
 	return s.store.Delete(ctx, jobID)
 }
 
-func (s *storageStore) List(query *JobQuery) ([]*Job, error) {
-	return s.ListContext(context.Background(), query)
-}
-
-func (s *storageStore) ListContext(ctx context.Context, query *JobQuery) ([]*Job, error) {
+func (s *storageStore) List(ctx context.Context, query *JobQuery) ([]*Job, error) {
+	if err := validateJobQuery(query); err != nil {
+		return nil, err
+	}
 	result, err := s.store.Query(ctx, toStorageQuery(query))
 	if err != nil {
 		return nil, err
@@ -148,6 +139,35 @@ func (s *storageStore) ListContext(ctx context.Context, query *JobQuery) ([]*Job
 	}
 
 	return jobs, nil
+}
+
+func (s *storageStore) Count(ctx context.Context, query *JobQuery) (int64, error) {
+	if err := validateJobQuery(query); err != nil {
+		return 0, err
+	}
+	return s.store.Count(ctx, toStorageQuery(query))
+}
+
+func validateJobQuery(query *JobQuery) error {
+	if query == nil {
+		return nil
+	}
+	if query.Limit < 0 || query.Limit > 1000 {
+		return fmt.Errorf("%w: limit must be between 0 and 1000", ErrInvalidQuery)
+	}
+	if query.Offset < 0 {
+		return fmt.Errorf("%w: offset must not be negative", ErrInvalidQuery)
+	}
+	field := query.Sort
+	if field != "" && field[0] == '-' {
+		field = field[1:]
+	}
+	switch field {
+	case "", "id", "start_time", "end_time", "host", "container", "status", "type":
+		return nil
+	default:
+		return fmt.Errorf("%w: unsupported sort field %q", ErrInvalidQuery, field)
+	}
 }
 
 func (s *storageStore) Close(ctx context.Context) error {
@@ -210,25 +230,11 @@ func (storeMapper) Decode(data []byte) (*Job, error) {
 }
 
 func (storeMapper) Fields(entity *Job) (map[string]any, error) {
-	return map[string]any{
-		"user_id":    entity.UserID,
-		"container":  entity.ContainerID,
-		"host":       entity.Hostname,
-		"status":     string(entity.Status),
-		"type":       entity.Type,
-		"start_time": entity.StartTime,
-	}, nil
+	return storageFields(entity), nil
 }
 
 func (storeMapper) Indexes() []driver.Index {
-	names := []string{
-		"user_id",
-		"container",
-		"host",
-		"status",
-		"type",
-		"start_time",
-	}
+	names := storageIndexes()
 	indexes := make([]driver.Index, 0, len(names))
 	for _, name := range names {
 		indexes = append(indexes, driver.Index{Field: name})
@@ -237,6 +243,9 @@ func (storeMapper) Indexes() []driver.Index {
 }
 
 func toStorageQuery(q *JobQuery) driver.Query {
+	if q == nil {
+		q = &JobQuery{}
+	}
 	filters := make([]driver.Filter, 0, 6)
 	if q.UserID != "" && !q.IsAdmin {
 		filters = append(filters, driver.Filter{Field: "user_id", Op: driver.OpEq, Value: q.UserID})
@@ -247,21 +256,51 @@ func toStorageQuery(q *JobQuery) driver.Query {
 	if q.Hostname != "" {
 		filters = append(filters, driver.Filter{Field: "host", Op: driver.OpEq, Value: q.Hostname})
 	}
-	if q.Status != "" {
+	if len(q.Statuses) > 0 {
+		values := make([]string, len(q.Statuses))
+		for i := range q.Statuses {
+			values[i] = string(q.Statuses[i])
+		}
+		filters = append(filters, driver.Filter{Field: "status", Op: driver.OpIn, Value: values})
+	} else if q.Status != "" {
 		filters = append(filters, driver.Filter{Field: "status", Op: driver.OpEq, Value: q.Status})
 	}
-	if q.Type != "" {
-		filters = append(filters, driver.Filter{Field: "type", Op: driver.OpEq, Value: q.Type})
+	if len(q.Types) == 1 {
+		filters = append(filters, driver.Filter{Field: "type", Op: driver.OpEq, Value: string(q.Types[0])})
+	} else if len(q.Types) > 1 {
+		values := make([]string, len(q.Types))
+		for i := range q.Types {
+			values[i] = string(q.Types[i])
+		}
+		filters = append(filters, driver.Filter{Field: "type", Op: driver.OpIn, Value: values})
 	}
 
-	return driver.Query{
+	query := driver.Query{
 		Filters: filters,
+		Limit:   q.Limit,
+		Offset:  q.Offset,
 	}
+	field := q.Sort
+	desc := false
+	if field == "" {
+		field = "-start_time"
+	}
+	if field[0] == '-' {
+		desc = true
+		field = field[1:]
+	}
+	query.Sorts = []driver.Sort{{Field: field, Desc: desc}, {Field: "id", Desc: desc}}
+	return query
 }
 
 func cloneJob(entity *Job) *Job {
+	if entity == nil {
+		return nil
+	}
 	cloned := *entity
 	cloned.PrivateData = cloneJobPrivateData(entity.PrivateData)
+	cloned.AgentTask.TracerArgs = append([]string(nil), entity.AgentTask.TracerArgs...)
+	cloned.stopCh = entity.stopCh
 	return &cloned
 }
 

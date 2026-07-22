@@ -21,12 +21,24 @@ import (
 
 type JobStatus string
 
+// JobType identifies the operation executed by an agent job.
+type JobType string
+
 const (
 	AgentStatusCompleted = "completed"
 	AgentStatusFailed    = "failed"
 	AgentStatusPending   = "pending"
 	AgentStatusRunning   = "running"
 	AgentStatusNotExist  = "not_exist"
+)
+
+const (
+	// JobTypeProfilingCPU identifies CPU profiling jobs.
+	JobTypeProfilingCPU JobType = "profiling_cpu"
+	// JobTypeProfilingMemory identifies memory profiling jobs.
+	JobTypeProfilingMemory JobType = "profiling_memory"
+	// JobTypeTracing identifies tracing jobs.
+	JobTypeTracing JobType = "tracing"
 )
 
 const (
@@ -46,6 +58,7 @@ type Result struct {
 
 // AgentTaskRequest represents the request body for creating an agent task.
 type AgentTaskRequest struct {
+	RequestID         string   `json:"request_id,omitempty" binding:"omitempty"`        // Idempotency key assigned by the control plane
 	TracerName        string   `json:"tracer_name" binding:"required"`                  // Name of the tracer, required field
 	TraceTimeout      int      `json:"trace_timeout" binding:"required,number,lt=3600"` // Timeout in seconds, must be less than 3600s(1 hours)
 	Interval          int      `json:"interval" binding:"omitempty,number,lt=3600"`     // Interval in seconds, must be less than 3600s(1 hours)
@@ -61,14 +74,14 @@ type CreateJobRequest struct {
 	UserID      string
 	ContainerID string
 	Hostname    string
-	Type        string
+	Type        JobType
 	AgentTask   *AgentTaskRequest
 	PrivateData json.RawMessage
 }
 
 // Job represents a job
 type Job struct {
-	Type         string           `json:"type"`
+	Type         JobType          `json:"type"`
 	ID           string           `json:"id"`
 	Username     string           `json:"username"`
 	UserID       string           `json:"user_id"`
@@ -98,7 +111,17 @@ type JobQuery struct {
 	ContainerID string
 	Hostname    string
 	Status      string
-	Type        string
+	Statuses    []JobStatus
+	Types       []JobType
+	Sort        string
+	Limit       int
+	Offset      int
+}
+
+// JobPage contains one page of jobs and the total number of matching records.
+type JobPage struct {
+	Items []*Job
+	Total int64
 }
 
 // JobCleanupQuery defines parameters for cleaning up old jobs

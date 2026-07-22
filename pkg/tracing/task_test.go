@@ -74,6 +74,48 @@ func TestAllocTaskID(t *testing.T) {
 	}
 }
 
+func TestNewTaskWithIDIsIdempotent(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+
+	const taskID = "job-idempotent-2026"
+	if _, err := NewTaskWithID(taskID, "missing-profiler", time.Second, TaskStorageStdout, nil); err != nil {
+		t.Fatalf("first NewTaskWithID() error=%v", err)
+	}
+	first, ok := taskLifeTmpCache.Load(taskID)
+	if !ok {
+		t.Fatal("first NewTaskWithID() did not store task")
+	}
+	if _, err := NewTaskWithID(taskID, "different-profiler", time.Second, TaskStorageStdout, nil); err != nil {
+		t.Fatalf("second NewTaskWithID() error=%v", err)
+	}
+	second, ok := taskLifeTmpCache.Load(taskID)
+	if !ok || first != second {
+		t.Fatal("second NewTaskWithID() replaced the existing task")
+	}
+	if result := waitTaskFinal(taskID, time.Second); result.TaskStatus != StatusFailed {
+		t.Fatalf("idempotent task status=%s, want failed", result.TaskStatus)
+	}
+}
+
+func TestNewTaskWithIDLimitAllowsRetryButRejectsNewTask(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+	existing := &task{status: StatusPending}
+	taskLifeTmpCache.Store("existing-2026", existing)
+
+	if _, err := NewTaskWithIDLimit(
+		"existing-2026", "profiler", time.Second, TaskStorageStdout, nil, 1,
+	); err != nil {
+		t.Fatalf("retry existing task error=%v", err)
+	}
+	if _, err := NewTaskWithIDLimit(
+		"new-2026", "profiler", time.Second, TaskStorageStdout, nil, 1,
+	); !errors.Is(err, ErrTaskLimitExceeded) {
+		t.Fatalf("new task error=%v, want ErrTaskLimitExceeded", err)
+	}
+}
+
 func TestResultNotFound(t *testing.T) {
 	clearTaskCache()
 

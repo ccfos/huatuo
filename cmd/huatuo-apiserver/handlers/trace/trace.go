@@ -20,7 +20,6 @@ import (
 	"time"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/listing"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/server"
@@ -30,7 +29,7 @@ import (
 // MaxTraceTimeout is the maximum allowed trace duration in seconds.
 const MaxTraceTimeout = 300
 
-const traceJobType = "tracing"
+const traceJobType = job.JobTypeTracing
 
 // Handler handles trace-related HTTP requests.
 type Handler struct {
@@ -40,11 +39,11 @@ type Handler struct {
 
 type jobManager interface {
 	CreateContext(ctx context.Context, request *job.CreateJobRequest) (*job.Job, error)
-	ListContext(ctx context.Context, userID string, isAdmin bool, query *job.JobQuery) ([]*job.Job, error)
-	GetByTypesContext(ctx context.Context, jobID string, expectedTypes ...string) (*job.Job, error)
-	StopByTypesContext(ctx context.Context, jobID string, force bool, expectedTypes ...string) error
-	StopAllByTypesContext(ctx context.Context, expectedTypes ...string) error
-	DeleteByTypesContext(ctx context.Context, jobID string, expectedTypes ...string) error
+	ListPageContext(ctx context.Context, userID string, isAdmin bool, query *job.JobQuery) (*job.JobPage, error)
+	GetByTypesContext(ctx context.Context, jobID string, expectedTypes ...job.JobType) (*job.Job, error)
+	StopByTypesContext(ctx context.Context, jobID string, force bool, expectedTypes ...job.JobType) error
+	StopAllByTypesContext(ctx context.Context, expectedTypes ...job.JobType) error
+	DeleteByTypesContext(ctx context.Context, jobID string, expectedTypes ...job.JobType) error
 }
 
 // NewHandler creates a new trace handler.
@@ -131,30 +130,29 @@ func (h *Handler) list(ctx *server.Context) error {
 		ContainerID: firstQuery(ctx, "container_id", "container"),
 		Hostname:    firstQuery(ctx, "hostname", "host"),
 		Status:      ctx.Query("status"),
-		Type:        traceJobType,
+		Types:       []job.JobType{traceJobType},
+		Sort:        listParams.Sort,
+		Limit:       listParams.Limit,
+		Offset:      listParams.Offset,
 	}
 
-	jobs, err := h.jobManager.ListContext(ctx.Request().Context(), ctx.UserID, ctx.IsAdmin, &filter)
+	page, err := h.jobManager.ListPageContext(ctx.Request().Context(), ctx.UserID, ctx.IsAdmin, &filter)
 	if err != nil {
+		if errors.Is(err, job.ErrInvalidQuery) {
+			return response.ErrInvalidRequest.WithMessage(err.Error())
+		}
 		log.WithError(err).Error("failed to list trace jobs")
 		return response.ErrInternal
 	}
 
-	if err := listing.SortJobs(jobs, listParams.Sort); err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
-	}
-
-	total := len(jobs)
-	pageJobs := listing.Paginate(jobs, listParams.Offset, listParams.Limit)
-
-	items := make([]v1.TraceJobResponse, len(pageJobs))
-	for i, j := range pageJobs {
+	items := make([]v1.TraceJobResponse, len(page.Items))
+	for i, j := range page.Items {
 		items[i] = convertJobToTraceResponse(j)
 	}
 
 	response.Success(ctx, v1.TraceJobListResponse{
 		Items:  items,
-		Total:  total,
+		Total:  int(page.Total),
 		Limit:  listParams.Limit,
 		Offset: listParams.Offset,
 	})

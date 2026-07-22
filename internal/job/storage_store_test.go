@@ -32,7 +32,7 @@ func newStoreForTest(t *testing.T) Store {
 	store, err := storage.NewFromConfig[*Job](t.Context(), &driver.Config{
 		Driver:    "sqlite",
 		SQLiteDSN: dsn,
-	}, StorageCollection(), storeMapper{})
+	}, storageCollection(), storeMapper{})
 	if err != nil {
 		t.Errorf("New() returned error: %v", err)
 		return nil
@@ -100,12 +100,12 @@ func TestStorageStoreSQLiteIntegration(t *testing.T) {
 	baseTime := time.Date(2026, 4, 9, 13, 0, 0, 0, time.UTC)
 	jobs := sampleStoredJobs(baseTime)
 	for _, storedJob := range jobs {
-		if err := store.Save(storedJob); err != nil {
+		if err := store.Save(t.Context(), storedJob); err != nil {
 			t.Errorf("Save(%q) returned error: %v", storedJob.ID, err)
 		}
 	}
 
-	gotJob, err := store.Get("job-store-alpha")
+	gotJob, err := store.Get(t.Context(), "job-store-alpha")
 	if err != nil {
 		t.Errorf("Get() returned error: %v", err)
 	}
@@ -124,11 +124,11 @@ func TestStorageStoreSQLiteIntegration(t *testing.T) {
 		t.Errorf("Get() memory_mode = %v, want %q", privateData["memory_mode"], "object_alloc")
 	}
 
-	listedJobs, err := store.List(&JobQuery{
+	listedJobs, err := store.List(t.Context(), &JobQuery{
 		UserID:   "operator-2026",
 		IsAdmin:  false,
 		Hostname: "huatuo-dev",
-		Type:     "profiling_cpu",
+		Types:    []JobType{JobTypeProfilingCPU},
 	})
 	if err != nil {
 		t.Errorf("List() returned error: %v", err)
@@ -140,12 +140,19 @@ func TestStorageStoreSQLiteIntegration(t *testing.T) {
 		t.Errorf("List() first id = %q, want %q", listedJobs[0].ID, "job-store-alpha")
 	}
 
-	if err := store.Delete("job-store-beta"); err != nil {
+	if err := store.Delete(t.Context(), "job-store-beta"); err != nil {
 		t.Errorf("Delete() returned error: %v", err)
 	}
 
-	_, err = store.Get("job-store-beta")
+	_, err = store.Get(t.Context(), "job-store-beta")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("Get() after delete error = %v, want %v", err, ErrNotFound)
+	}
+}
+
+func TestValidateJobQueryRejectsUnsafeSort(t *testing.T) {
+	err := validateJobQuery(&JobQuery{Sort: "start_time; DROP TABLE jobs"})
+	if !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("validateJobQuery() error=%v, want ErrInvalidQuery", err)
 	}
 }

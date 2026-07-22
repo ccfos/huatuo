@@ -56,7 +56,10 @@ type ProfilingResults struct {
 
 // RawDataResponse represents raw profiling data response
 type RawDataResponse struct {
-	Data any `json:"data"` // raw profiling data
+	Data    any  `json:"data"` // raw profiling data
+	Limit   int  `json:"limit"`
+	Offset  int  `json:"offset"`
+	HasMore bool `json:"has_more"`
 }
 
 // JobFilter represents a job filter

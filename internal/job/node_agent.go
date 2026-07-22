@@ -20,7 +20,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"huatuo-bamai/internal/log"
@@ -29,9 +32,21 @@ import (
 // HTTPNodeAgent implements NodeAgent interface using HTTP
 type HTTPNodeAgent struct {
 	client *http.Client
+	port   int
+}
+
+const (
+	maxAgentResponseBytes = 1 << 20
+	maxAgentErrorBytes    = 8 << 10
+)
+
+type HTTPNodeAgentConfig struct {
+	Client *http.Client
+	Port   int
 }
 
 type startTaskRequest struct {
+	RequestID         string   `json:"request_id,omitempty"`
 	TracerName        string   `json:"tracer_name"`
 	Timeout           int      `json:"timeout"`
 	Interval          int      `json:"interval,omitempty"`
@@ -43,12 +58,18 @@ type startTaskRequest struct {
 }
 
 // NewHTTPNodeAgent creates a new HTTP agent client
-func NewHTTPNodeAgent() *HTTPNodeAgent {
-	return &HTTPNodeAgent{
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+func NewHTTPNodeAgent(configs ...HTTPNodeAgentConfig) *HTTPNodeAgent {
+	config := HTTPNodeAgentConfig{Port: 19704}
+	if len(configs) > 0 {
+		config = configs[0]
+		if config.Port == 0 {
+			config.Port = 19704
+		}
 	}
+	if config.Client == nil {
+		config.Client = &http.Client{Timeout: 10 * time.Second}
+	}
+	return &HTTPNodeAgent{client: config.Client, port: config.Port}
 }
 
 // StartTask starts a task on the agent
@@ -57,23 +78,25 @@ func (c *HTTPNodeAgent) StartTask(host, container string, args *AgentTaskRequest
 }
 
 func (c *HTTPNodeAgent) StartTaskContext(ctx context.Context, host, container string, args *AgentTaskRequest) (string, error) {
-	args.ContainerID = container
+	taskArgs := *args
+	taskArgs.ContainerID = container
 	requestBodyBytes, err := json.Marshal(startTaskRequest{
-		TracerName:        args.TracerName,
-		Timeout:           args.TraceTimeout,
-		Interval:          args.Interval,
-		Duration:          args.Duration,
-		DataType:          args.DataType,
-		ContainerID:       args.ContainerID,
-		ContainerHostname: args.ContainerHostname,
-		TracerArgs:        args.TracerArgs,
+		RequestID:         taskArgs.RequestID,
+		TracerName:        taskArgs.TracerName,
+		Timeout:           taskArgs.TraceTimeout,
+		Interval:          taskArgs.Interval,
+		Duration:          taskArgs.Duration,
+		DataType:          taskArgs.DataType,
+		ContainerID:       taskArgs.ContainerID,
+		ContainerHostname: taskArgs.ContainerHostname,
+		TracerArgs:        taskArgs.TracerArgs,
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	url := fmt.Sprintf("http://%s:19704/tasks", host)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(requestBodyBytes))
+	endpoint := c.endpoint(host, "/tasks")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(requestBodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -86,7 +109,7 @@ func (c *HTTPNodeAgent) StartTaskContext(ctx context.Context, host, container st
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
+		body, err := readAgentErrorBody(resp.Body)
 		if err != nil {
 			return "", fmt.Errorf("agent returned non-OK status: %d, read body: %w", resp.StatusCode, err)
 		}
@@ -100,7 +123,11 @@ func (c *HTTPNodeAgent) StartTaskContext(ctx context.Context, host, container st
 			TaskID string `json:"task_id"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	body, err := readAgentBody(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 	if response.Code != 0 {
@@ -119,9 +146,9 @@ func (c *HTTPNodeAgent) StopTask(host, taskID string, force bool) error {
 }
 
 func (c *HTTPNodeAgent) StopTaskContext(ctx context.Context, host, taskID string, force bool) error {
-	url := fmt.Sprintf("http://%s:19704/tasks/%s", host, taskID)
+	endpoint := c.endpoint(host, "/tasks/"+url.PathEscape(taskID))
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -132,8 +159,11 @@ func (c *HTTPNodeAgent) StopTaskContext(ctx context.Context, host, taskID string
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
 	if resp.StatusCode != http.StatusNoContent {
-		body, err := io.ReadAll(resp.Body)
+		body, err := readAgentErrorBody(resp.Body)
 		if err != nil {
 			return fmt.Errorf("failed to stop job: %s, read body: %w", resp.Status, err)
 		}
@@ -149,11 +179,11 @@ func (c *HTTPNodeAgent) GetTaskStatus(host, taskID string) (string, *Result, err
 }
 
 func (c *HTTPNodeAgent) GetTaskStatusContext(ctx context.Context, host, taskID string) (string, *Result, error) {
-	url := fmt.Sprintf("http://%s:19704/tasks/%s", host, taskID)
+	endpoint := c.endpoint(host, "/tasks/"+url.PathEscape(taskID))
 
 	var lastErr error
 	for attempt := range 3 {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
 		if err != nil {
 			return "", nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -165,14 +195,19 @@ func (c *HTTPNodeAgent) GetTaskStatusContext(ctx context.Context, host, taskID s
 				lastErr = err
 				log.WithField("task_id", taskID).WithField("attempt", attempt+1).
 					Info("timed out getting task status; retrying")
-				continue
+				select {
+				case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
+					continue
+				case <-ctx.Done():
+					return "", nil, ctx.Err()
+				}
 			}
 			return "", nil, fmt.Errorf("failed to send request: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, err := io.ReadAll(resp.Body)
+			body, err := readAgentErrorBody(resp.Body)
 			if err != nil {
 				return "", nil, fmt.Errorf("agent returned non-OK status: %d, read body: %w", resp.StatusCode, err)
 			}
@@ -184,7 +219,11 @@ func (c *HTTPNodeAgent) GetTaskStatusContext(ctx context.Context, host, taskID s
 			Message string          `json:"message"`
 			Data    json.RawMessage `json:"data"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&outerResponse); err != nil {
+		body, err := readAgentBody(resp.Body)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to read response: %w", err)
+		}
+		if err := json.Unmarshal(body, &outerResponse); err != nil {
 			return "", nil, fmt.Errorf("failed to decode response: %w", err)
 		}
 		if outerResponse.Code != 0 {
@@ -203,4 +242,23 @@ func (c *HTTPNodeAgent) GetTaskStatusContext(ctx context.Context, host, taskID s
 		return innerResponse.Status, &Result{URL: innerResponse.Data, Error: innerResponse.Error}, nil
 	}
 	return "", nil, fmt.Errorf("failed to send request after 3 attempts: %w", lastErr)
+}
+
+func (c *HTTPNodeAgent) endpoint(host, path string) string {
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(c.port)) + path
+}
+
+func readAgentBody(body io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, maxAgentResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxAgentResponseBytes {
+		return nil, fmt.Errorf("agent response exceeds %d bytes", maxAgentResponseBytes)
+	}
+	return data, nil
+}
+
+func readAgentErrorBody(body io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(body, maxAgentErrorBytes))
 }

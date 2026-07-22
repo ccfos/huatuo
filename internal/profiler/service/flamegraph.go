@@ -16,6 +16,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -27,11 +28,11 @@ import (
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	phlaremodel "github.com/grafana/pyroscope/pkg/model"
 	"github.com/grafana/pyroscope/pkg/pprof"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
 type ElasticSearchConfig struct {
-	Debug                              bool
 	Address, Username, Password, Index string
 }
 
@@ -65,6 +66,12 @@ func (s *Service) Close(ctx context.Context) error {
 //	request: querierv1.SelectMergeStacktracesRequest
 //	response: querierv1.SelectMergeStacktracesResponse
 func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("%w: request is required", ErrInvalidQuery)
+	}
+	if req.End < req.Start {
+		return nil, fmt.Errorf("%w: end time precedes start time", ErrInvalidQuery)
+	}
 	filter := &SearchFilter{
 		StartTime:   time.UnixMilli(req.Start),
 		EndTime:     time.UnixMilli(req.End),
@@ -76,13 +83,13 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 
 	profileTypes := strings.Split(filter.ProfileType, ":")
 	if len(profileTypes) != 5 {
-		return nil, fmt.Errorf("invalid profile type: %q", filter.ProfileType)
+		return nil, fmt.Errorf("%w: invalid profile type %q", ErrInvalidQuery, filter.ProfileType)
 	}
 
 	// labels
 	labels, err := parser.ParseMetricSelector(req.LabelSelector)
 	if err != nil {
-		return nil, fmt.Errorf("parse matchers: %w", err)
+		return nil, errors.Join(ErrInvalidQuery, fmt.Errorf("parse matchers: %w", err))
 	}
 
 	for _, label := range labels {
@@ -91,22 +98,13 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 			continue
 		}
 
-		switch label.Name {
-		case "id":
-			filter.ID = label.Value
-		case "hostname":
-			filter.Hostname = label.Value
-		case "container_id":
-			filter.ContainerID = label.Value
-		case "container_hostname":
-			filter.ContainerHostname = label.Value
-		default:
-			return nil, fmt.Errorf("invalid label: %q", label.Name)
+		if err := applyProfileMatcher(filter, label); err != nil {
+			return nil, err
 		}
 	}
 
 	if filter.ID == "" && filter.Hostname == "" && filter.ContainerID == "" && filter.ContainerHostname == "" {
-		return nil, fmt.Errorf("id, hostname, or container must be specified")
+		return nil, fmt.Errorf("%w: id, hostname, or container must be specified", ErrInvalidQuery)
 	}
 
 	// search
@@ -115,7 +113,7 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 		return nil, fmt.Errorf("search profiles: %w", err)
 	}
 	if len(profileDocs) == 0 {
-		return nil, fmt.Errorf("no profiles documents found")
+		return nil, ErrProfilesAbsent
 	}
 
 	// merge profileDocs
@@ -127,6 +125,9 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 		}
 	}
 	profile := profilesMerge.Profile()
+	if profile == nil {
+		return nil, ErrProfilesAbsent
+	}
 	sampleType := profileTypes[1]
 
 	// convert profilev1.Profile to phlaremodel.Tree
@@ -135,29 +136,41 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 	// Find the index of the sample type we're interested in
 	sampleTypeIndex := -1
 	for i, st := range profile.SampleType {
-		if profile.StringTable[st.Type] == sampleType {
+		if st == nil {
+			continue
+		}
+		if value, ok := profileString(profile.StringTable, st.Type); ok && value == sampleType {
 			sampleTypeIndex = i
 			break
 		}
 	}
 	if sampleTypeIndex == -1 {
-		return nil, fmt.Errorf("sample type not found: %q", sampleType)
+		return nil, fmt.Errorf("%w: sample type %q not found", ErrInvalidQuery, sampleType)
 	}
 
 	// Create a map for quick location lookup
-	locationMap := make(map[uint64]*googlev1.Location)
+	locationMap := make(map[uint64]*googlev1.Location, len(profile.Location))
 	for _, loc := range profile.Location {
+		if loc == nil {
+			continue
+		}
 		locationMap[loc.Id] = loc
 	}
 
 	// Create a map for quick function lookup
-	functionMap := make(map[uint64]*googlev1.Function)
+	functionMap := make(map[uint64]*googlev1.Function, len(profile.Function))
 	for _, fn := range profile.Function {
+		if fn == nil {
+			continue
+		}
 		functionMap[fn.Id] = fn
 	}
 
 	// Process each sample
 	for _, sample := range profile.Sample {
+		if sample == nil {
+			continue
+		}
 		// Get the value for our sample type
 		if len(sample.Value) <= sampleTypeIndex {
 			continue
@@ -165,7 +178,7 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 		value := sample.Value[sampleTypeIndex]
 
 		// Build stack trace string from location ids
-		var stack []string
+		stack := make([]string, 0, len(sample.LocationId))
 		for _, locId := range sample.LocationId {
 			loc, exists := locationMap[locId]
 			if !exists || len(loc.Line) == 0 {
@@ -174,23 +187,28 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 
 			// Get the first line entry (primary function)
 			line := loc.Line[0]
+			if line == nil {
+				continue
+			}
 			fn, exists := functionMap[line.FunctionId]
 			if !exists {
 				continue
 			}
 
 			// Get function name from string table
-			funcName := profile.StringTable[fn.Name]
+			funcName, ok := profileString(profile.StringTable, fn.Name)
+			if !ok {
+				continue
+			}
 			stack = append(stack, funcName)
 		}
 
 		// Insert stack into tree (leaf is at stack[0], so we need to reverse for phlaremodel.Tree)
 		if len(stack) > 0 {
-			reversedStack := make([]string, len(stack))
-			for i, j := 0, len(stack)-1; i < len(stack); i, j = i+1, j-1 {
-				reversedStack[i] = stack[j]
+			for i, j := 0, len(stack)-1; i < j; i, j = i+1, j-1 {
+				stack[i], stack[j] = stack[j], stack[i]
 			}
-			phlaremodelTree.InsertStack(value, reversedStack...)
+			phlaremodelTree.InsertStack(value, stack...)
 		}
 	}
 
@@ -198,6 +216,34 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 	return &querierv1.SelectMergeStacktracesResponse{
 		Flamegraph: phlaremodel.NewFlameGraph(phlaremodelTree, -1),
 	}, nil
+}
+
+func applyProfileMatcher(filter *SearchFilter, matcher *labels.Matcher) error {
+	if matcher.Type != labels.MatchEqual {
+		return fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, matcher.Name)
+	}
+	switch matcher.Name {
+	case "id":
+		filter.ID = matcher.Value
+	case "hostname":
+		filter.Hostname = matcher.Value
+	case "container_id":
+		filter.ContainerID = matcher.Value
+	case "container_hostname":
+		filter.ContainerHostname = matcher.Value
+	case "__profile_type__":
+		filter.ProfileType = matcher.Value
+	default:
+		return fmt.Errorf("%w: invalid label %q", ErrInvalidQuery, matcher.Name)
+	}
+	return nil
+}
+
+func profileString(table []string, index int64) (string, bool) {
+	if index < 0 || index >= int64(len(table)) {
+		return "", false
+	}
+	return table[index], true
 }
 
 // ProfileTypes gets profiling types.
@@ -240,10 +286,7 @@ func (s *Service) ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesR
 //
 //	request: querierv1.SelectSeriesRequest
 //	response: querierv1.SelectSeriesResponse
-func (s *Service) SelectSeries(context.Context, *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesResponse, error) {
-	return nil, nil
-}
-
+//
 // LabelNames gets label names by request.
 //
 //	request: typesv1.LabelNamesRequest
@@ -268,23 +311,27 @@ func (s *Service) LabelValues(ctx context.Context, req *typesv1.LabelValuesReque
 
 	matchers, err := parser.ParseMetricSelectors(req.Matchers)
 	if err != nil {
-		return nil, fmt.Errorf("parse matchers: %w", err)
+		return nil, errors.Join(ErrInvalidQuery, fmt.Errorf("parse matchers: %w", err))
+	}
+	if len(matchers) != 1 {
+		return nil, fmt.Errorf("%w: exactly one matcher group is required", ErrInvalidQuery)
 	}
 
 	// filter: ProfileType
 	profileTypePresent := false
 	for _, ms := range matchers {
 		for _, m := range ms {
+			if err := applyProfileMatcher(filter, m); err != nil {
+				return nil, err
+			}
 			if m.Name == "__profile_type__" {
 				profileTypePresent = true
-				filter.ProfileType = m.Value
-				break
 			}
 		}
 	}
 
 	if !profileTypePresent {
-		return nil, fmt.Errorf("no __profile_type__ matcher present")
+		return nil, fmt.Errorf("%w: no __profile_type__ matcher present", ErrInvalidQuery)
 	}
 
 	names, err := s.profileStorage.AggregationsByFieldContext(ctx, filter, req.Name)
@@ -297,11 +344,17 @@ func (s *Service) LabelValues(ctx context.Context, req *typesv1.LabelValuesReque
 
 // GetProfilesByTracerID gets all profiles by tracer_id from ES
 func (s *Service) GetProfilesByTracerID(ctx context.Context, tracerID string) ([]*ProfileDocument, error) {
+	return s.GetProfilesByTracerIDPage(ctx, tracerID, 1000, 0)
+}
+
+// GetProfilesByTracerIDPage gets one stable page of profiles by tracer ID.
+func (s *Service) GetProfilesByTracerIDPage(ctx context.Context, tracerID string, limit, offset int) ([]*ProfileDocument, error) {
 	filter := &SearchFilter{
 		TracerID:  tracerID,
 		StartTime: time.Now().Add(-90 * 24 * time.Hour),
 		EndTime:   time.Now(),
-		Limit:     1000,
+		Limit:     limit,
+		Offset:    offset,
 	}
 
 	return s.profileStorage.SearchProfilesContext(ctx, filter)

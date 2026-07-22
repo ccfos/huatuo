@@ -16,9 +16,11 @@ package profiling
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"huatuo-bamai/internal/log"
+	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 
 	"github.com/gin-gonic/gin/binding"
@@ -37,6 +39,14 @@ func handleProto[Request, Response any](
 
 	resp, err := invoke(ctx.Request().Context(), req)
 	if err != nil {
+		if errors.Is(err, profileService.ErrInvalidQuery) {
+			ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
+			return nil
+		}
+		if errors.Is(err, profileService.ErrProfilesAbsent) {
+			ctx.JSON(http.StatusNotFound, map[string]any{"message": "profiles not found"})
+			return nil
+		}
 		log.WithError(err).WithField("operation", operation).Error("profile query failed")
 		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
 		return nil
@@ -53,10 +63,6 @@ func (h *Handler) displaySelectMergeStacktraces(ctx *server.Context) error {
 
 func (h *Handler) displayProfileTypes(ctx *server.Context) error {
 	return handleProto(ctx, "profile_types", h.profileService.ProfileTypes)
-}
-
-func (h *Handler) displaySelectSeries(ctx *server.Context) error {
-	return handleProto(ctx, "select_series", h.profileService.SelectSeries)
 }
 
 func (h *Handler) displayLabelNames(ctx *server.Context) error {

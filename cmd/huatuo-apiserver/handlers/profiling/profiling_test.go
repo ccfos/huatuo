@@ -203,12 +203,12 @@ func TestProfilingJobResponseRejectsInvalidPrivateData(t *testing.T) {
 func TestIsProfilingJobType(t *testing.T) {
 	tests := []struct {
 		name    string
-		jobType string
+		jobType job.JobType
 		want    bool
 	}{
 		{name: "cpu profiling", jobType: ProfilingCPU, want: true},
 		{name: "memory profiling", jobType: ProfilingMemory, want: true},
-		{name: "trace job", jobType: "trace", want: false},
+		{name: "trace job", jobType: job.JobType("trace"), want: false},
 		{name: "empty type", want: false},
 	}
 

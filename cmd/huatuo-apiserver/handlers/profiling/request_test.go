@@ -27,7 +27,7 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 	tests := []struct {
 		name           string
 		req            v1.CreateProfilingJobRequest
-		wantType       string
+		wantType       job.JobType
 		wantTracerArgs []string
 		wantErr        string
 	}{
@@ -129,7 +129,7 @@ func TestBuildProfilingJobQueries(t *testing.T) {
 	tests := []struct {
 		name      string
 		query     profilingJobListQuery
-		wantTypes []string
+		wantTypes []job.JobType
 		wantErr   string
 	}{
 		{
@@ -139,36 +139,36 @@ func TestBuildProfilingJobQueries(t *testing.T) {
 				Hostname:    "huatuo-dev",
 				Status:      string(job.JobStatusRunning),
 			},
-			wantTypes: []string{ProfilingMemory, ProfilingCPU},
+			wantTypes: []job.JobType{ProfilingMemory, ProfilingCPU},
 		},
-		{name: "cpu profiling", query: profilingJobListQuery{Type: "cpu"}, wantTypes: []string{ProfilingCPU}},
-		{name: "memory profiling", query: profilingJobListQuery{Type: "memory"}, wantTypes: []string{ProfilingMemory}},
+		{name: "cpu profiling", query: profilingJobListQuery{Type: "cpu"}, wantTypes: []job.JobType{ProfilingCPU}},
+		{name: "memory profiling", query: profilingJobListQuery{Type: "memory"}, wantTypes: []job.JobType{ProfilingMemory}},
 		{name: "invalid type", query: profilingJobListQuery{Type: "offcpu"}, wantErr: `invalid type "offcpu"`},
 		{name: "invalid status", query: profilingJobListQuery{Status: "unknown"}, wantErr: `invalid status "unknown"`},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildProfilingJobQueries(tt.query)
+			got, err := buildProfilingJobQuery(tt.query)
 			if tt.wantErr != "" {
 				if err == nil || err.Error() != tt.wantErr {
-					t.Fatalf("buildProfilingJobQueries() error=%v, want %q", err, tt.wantErr)
+					t.Fatalf("buildProfilingJobQuery() error=%v, want %q", err, tt.wantErr)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("buildProfilingJobQueries() error=%v", err)
+				t.Fatalf("buildProfilingJobQuery() error=%v", err)
 			}
-			if len(got) != len(tt.wantTypes) {
-				t.Fatalf("buildProfilingJobQueries() len=%d, want %d", len(got), len(tt.wantTypes))
+			if len(got.Types) != len(tt.wantTypes) {
+				t.Fatalf("buildProfilingJobQuery() types=%d, want %d", len(got.Types), len(tt.wantTypes))
 			}
 			for i, wantType := range tt.wantTypes {
-				if got[i].Type != wantType {
-					t.Errorf("JobQueries[%d].Type=%q, want %q", i, got[i].Type, wantType)
+				if got.Types[i] != wantType {
+					t.Errorf("Types[%d]=%q, want %q", i, got.Types[i], wantType)
 				}
-				if got[i].ContainerID != tt.query.ContainerID || got[i].Hostname != tt.query.Hostname {
-					t.Errorf("JobQueries[%d]=%+v, want request target fields", i, got[i])
-				}
+			}
+			if got.ContainerID != tt.query.ContainerID || got.Hostname != tt.query.Hostname {
+				t.Errorf("JobQuery=%+v, want request target fields", got)
 			}
 		})
 	}

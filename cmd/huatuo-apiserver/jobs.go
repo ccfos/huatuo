@@ -34,10 +34,12 @@ func setupJobManagers(d *Daemon) (func(context.Context) error, error) {
 		MaxTotalJobs:   d.opts.Config.TaskConfig.MaxTotalTracingTasks,
 	}
 	manager, err := job.NewManager(d.ctx, nodeAgent, job.ManagerConfig{
-		TypePolicies: map[string]job.TypePolicy{
-			"profiling_cpu":    profilingPolicy,
-			"profiling_memory": profilingPolicy,
-			"tracing":          tracingPolicy,
+		StoreDSN:            d.opts.Config.TaskConfig.JobStoreDSN,
+		ShutdownConcurrency: d.opts.Config.TaskConfig.ShutdownConcurrency,
+		TypePolicies: map[job.JobType]job.TypePolicy{
+			job.JobTypeProfilingCPU:    profilingPolicy,
+			job.JobTypeProfilingMemory: profilingPolicy,
+			job.JobTypeTracing:         tracingPolicy,
 		},
 	})
 	if err != nil {

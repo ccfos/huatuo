@@ -162,3 +162,40 @@ func TestProfilingConfigValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigValidateRejectsDuplicateUsers(t *testing.T) {
+	cfg := Config{
+		RuntimeCgroup: RuntimeCgroupConfig{LimitCPU: 1, LimitMem: 1},
+		APIServer: APIServerConfig{
+			TCPAddr:                  ":12740",
+			ReadHeaderTimeoutSeconds: 10,
+			ReadTimeoutSeconds:       30,
+			WriteTimeoutSeconds:      60,
+			IdleTimeoutSeconds:       120,
+			MaxHeaderBytes:           1024,
+			MaxBodyBytes:             1024,
+			RateLimit:                10,
+			RateBurst:                10,
+		},
+		TaskConfig: TaskConfig{
+			MaxProfilingTasksPerHost: 1,
+			MaxTracingTasksPerHost:   1,
+			MaxTotalProfilingTasks:   1,
+			MaxTotalTracingTasks:     1,
+			JobStoreDSN:              "jobs.db",
+			ShutdownConcurrency:      1,
+		},
+		Profiling: ProfilingConfig{
+			AggregationInterval: 10,
+			ExecutionTimeout:    20,
+			FlameGraphBaseURL:   "http://localhost:8006/d",
+		},
+		Auth: AuthConfig{Users: []UserConfig{
+			{ID: "duplicate", IsAdmin: true},
+			{ID: "duplicate", IsAdmin: true},
+		}},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate ID") {
+		t.Fatalf("Validate() error=%v, want duplicate ID", err)
+	}
+}

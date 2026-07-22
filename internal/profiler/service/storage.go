@@ -91,6 +91,7 @@ type SearchFilter struct {
 	EndTime           time.Time
 	ProfileType       string
 	Limit             int
+	Offset            int
 }
 
 // ProfileStorage implements profile document queries on top of the new storage backend.
@@ -243,6 +244,9 @@ func (profileDocumentMapper) Indexes() []driver.Index {
 func buildProfileSearchQuery(filter *SearchFilter) driver.Query {
 	query := buildProfileAggregationQuery(filter)
 	query.Limit = normalizeProfileSearchLimit(filter)
+	if filter != nil && filter.Offset > 0 {
+		query.Offset = filter.Offset
+	}
 	query.Sorts = []driver.Sort{
 		{Field: profileFieldUploadedTime, Desc: true},
 	}
@@ -355,6 +359,9 @@ func normalizeProfileAggregationField(field string) (string, error) {
 func normalizeProfileSearchLimit(filter *SearchFilter) int {
 	if filter == nil || filter.Limit <= 0 {
 		return 100
+	}
+	if filter.Limit > 1000 {
+		return 1000
 	}
 	return filter.Limit
 }

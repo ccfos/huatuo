@@ -86,12 +86,15 @@ type task struct {
 
 var (
 	taskLifeTmpCache sync.Map
+	taskCreateMu     sync.Mutex
 	// ErrTaskNotFound Error returned when a task is not found.
 	ErrTaskNotFound = errors.New("task not found")
 	// ErrTaskTimeout Error returned when a task times out.
 	ErrTaskTimeout = errors.New("task timeout")
 	// ErrTaskCanceled Error returned when a task is canceled.
 	ErrTaskCanceled = errors.New("task canceled")
+	// ErrTaskLimitExceeded is returned when a new task would exceed the active limit.
+	ErrTaskLimitExceeded = errors.New("too many running tasks")
 )
 
 func init() {
@@ -151,6 +154,44 @@ func NewTask(execBinary string, timeout time.Duration, storageType TaskStorageTy
 		log.Errorf("alloc task id: %v", err)
 		return ""
 	}
+	if _, err := NewTaskWithID(taskID, execBinary, timeout, storageType, execArgs); err != nil {
+		log.Errorf("create task: %v", err)
+		return ""
+	}
+	return taskID
+}
+
+// NewTaskWithID creates a task with an idempotency key supplied by the caller.
+func NewTaskWithID(
+	taskID string,
+	execBinary string,
+	timeout time.Duration,
+	storageType TaskStorageType,
+	execArgs []string,
+) (string, error) {
+	return NewTaskWithIDLimit(taskID, execBinary, timeout, storageType, execArgs, 0)
+}
+
+// NewTaskWithIDLimit creates an idempotent task while enforcing an active limit.
+func NewTaskWithIDLimit(
+	taskID string,
+	execBinary string,
+	timeout time.Duration,
+	storageType TaskStorageType,
+	execArgs []string,
+	maxActive int,
+) (string, error) {
+	if taskID == "" {
+		return "", errors.New("task id is required")
+	}
+	taskCreateMu.Lock()
+	defer taskCreateMu.Unlock()
+	if _, loaded := taskLifeTmpCache.Load(taskID); loaded {
+		return taskID, nil
+	}
+	if maxActive > 0 && activeTaskCount() >= maxActive {
+		return "", ErrTaskLimitExceeded
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	task := &task{
 		id:         taskID,
@@ -165,7 +206,25 @@ func NewTask(execBinary string, timeout time.Duration, storageType TaskStorageTy
 
 	go runTask(ctx, task)
 
-	return taskID
+	return taskID, nil
+}
+
+func activeTaskCount() int {
+	count := 0
+	taskLifeTmpCache.Range(func(_, value any) bool {
+		task, ok := value.(*task)
+		if !ok {
+			return true
+		}
+		task.mu.Lock()
+		active := task.status == StatusPending || task.status == StatusRunning
+		task.mu.Unlock()
+		if active {
+			count++
+		}
+		return true
+	})
+	return count
 }
 
 func runTask(ctx context.Context, task *task) {

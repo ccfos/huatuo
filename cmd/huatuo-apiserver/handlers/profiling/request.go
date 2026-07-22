@@ -37,7 +37,7 @@ type profilingJobListQuery struct {
 
 type profilingJobListRequest struct {
 	ListParams server.ListParams
-	JobQueries []job.JobQuery
+	JobQuery   job.JobQuery
 }
 
 type patchProfilingJobRequest struct {
@@ -117,7 +117,7 @@ func buildCreateProfilingJobRequest(
 func buildProfilingTracerArgs(
 	taskReq *job.AgentTaskRequest,
 	req *v1.CreateProfilingJobRequest,
-) (string, error) {
+) (job.JobType, error) {
 	switch req.ProfilingType {
 	case string(profiling.TypeCPU):
 		language, err := profiling.ParseLanguage(req.Language)
@@ -132,7 +132,7 @@ func buildProfilingTracerArgs(
 			)
 		}
 		taskReq.TracerArgs = append(taskReq.TracerArgs, "-l", string(language))
-		return ProfilingCPU, nil
+		return job.JobTypeProfilingCPU, nil
 	case string(profiling.TypeMemory):
 		language, err := profiling.ParseLanguage(req.Language)
 		if err != nil || !profiling.IsSupported(language, profiling.TypeMemory) {
@@ -147,7 +147,7 @@ func buildProfilingTracerArgs(
 			"--memory-mode", string(mode),
 			"-l", string(language),
 		}
-		return ProfilingMemory, nil
+		return job.JobTypeProfilingMemory, nil
 	default:
 		return "", fmt.Errorf("unsupported profiling type %q", req.ProfilingType)
 	}
@@ -179,20 +179,20 @@ func parseProfilingJobListRequest(ctx *server.Context) (*profilingJobListRequest
 	if query.ContainerID == "" {
 		query.ContainerID = ctx.Query("containerID")
 	}
-	jobQueries, err := buildProfilingJobQueries(query)
+	jobQuery, err := buildProfilingJobQuery(query)
 	if err != nil {
 		return nil, err
 	}
 
 	return &profilingJobListRequest{
 		ListParams: listParams,
-		JobQueries: jobQueries,
+		JobQuery:   jobQuery,
 	}, nil
 }
 
-func buildProfilingJobQueries(query profilingJobListQuery) ([]job.JobQuery, error) {
+func buildProfilingJobQuery(query profilingJobListQuery) (job.JobQuery, error) {
 	if err := validateProfilingJobStatus(query.Status); err != nil {
-		return nil, err
+		return job.JobQuery{}, err
 	}
 
 	jobQuery := job.JobQuery{
@@ -202,20 +202,15 @@ func buildProfilingJobQueries(query profilingJobListQuery) ([]job.JobQuery, erro
 	}
 	switch query.Type {
 	case "":
-		memoryQuery := jobQuery
-		memoryQuery.Type = ProfilingMemory
-		cpuQuery := jobQuery
-		cpuQuery.Type = ProfilingCPU
-		return []job.JobQuery{memoryQuery, cpuQuery}, nil
+		jobQuery.Types = []job.JobType{job.JobTypeProfilingMemory, job.JobTypeProfilingCPU}
 	case "cpu":
-		jobQuery.Type = ProfilingCPU
-		return []job.JobQuery{jobQuery}, nil
+		jobQuery.Types = []job.JobType{job.JobTypeProfilingCPU}
 	case "memory":
-		jobQuery.Type = ProfilingMemory
-		return []job.JobQuery{jobQuery}, nil
+		jobQuery.Types = []job.JobType{job.JobTypeProfilingMemory}
 	default:
-		return nil, fmt.Errorf("invalid type %q", query.Type)
+		return job.JobQuery{}, fmt.Errorf("invalid type %q", query.Type)
 	}
+	return jobQuery, nil
 }
 
 func validateProfilingJobStatus(status string) error {

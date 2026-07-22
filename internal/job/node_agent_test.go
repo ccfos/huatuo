@@ -139,6 +139,7 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 			return newHTTPResponse(http.StatusOK, `{"code":0,"message":"ok","data":{"task_id":"agent-task-2026"}}`), nil
 		}))
 		args := &AgentTaskRequest{
+			RequestID:    "job-2026",
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			Interval:     10,
@@ -154,8 +155,8 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		if taskID != "agent-task-2026" {
 			t.Errorf("StartTask() taskID=%q, want %q", taskID, "agent-task-2026")
 		}
-		if args.ContainerID != "payment-worker" {
-			t.Errorf("StartTask() ContainerID=%q, want %q", args.ContainerID, "payment-worker")
+		if args.ContainerID != "" {
+			t.Errorf("StartTask() mutated ContainerID=%q, want empty", args.ContainerID)
 		}
 		if !strings.Contains(requestBody, `"container_id":"payment-worker"`) {
 			t.Errorf("StartTask() request body=%q, want container ID field", requestBody)
@@ -166,6 +167,9 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		}
 		if got := payload["timeout"]; got != float64(60) {
 			t.Errorf("StartTask() timeout payload=%v, want 60", got)
+		}
+		if got := payload["request_id"]; got != "job-2026" {
+			t.Errorf("StartTask() request_id payload=%v, want job-2026", got)
 		}
 		if _, ok := payload["trace_timeout"]; ok {
 			t.Errorf("StartTask() request body=%q, should use agent field timeout instead of trace_timeout", requestBody)
