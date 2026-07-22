@@ -265,7 +265,7 @@ func buildProfileSearchQuery(filter *SearchFilter) driver.Query {
 
 func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 	query := driver.Query{
-		Filters: make([]driver.Filter, 0, 6),
+		Filters: make([]driver.Filter, 0, 8),
 	}
 
 	if filter == nil {
@@ -287,8 +287,7 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 		})
 	}
 
-	switch {
-	case filter.TracerID != "" || filter.ID != "":
+	if filter.TracerID != "" || filter.ID != "" {
 		id := filter.TracerID
 		if id == "" {
 			id = filter.ID
@@ -298,7 +297,8 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 			Op:    driver.OpEq,
 			Value: id,
 		})
-	case filter.Hostname != "":
+	}
+	if filter.Hostname != "" {
 		query.Filters = append(
 			query.Filters,
 			driver.Filter{
@@ -312,13 +312,15 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 				Value: "",
 			},
 		)
-	case filter.ContainerID != "":
+	}
+	if filter.ContainerID != "" {
 		query.Filters = append(query.Filters, driver.Filter{
 			Field: profileFieldContainerID + ".keyword",
 			Op:    driver.OpEq,
 			Value: filter.ContainerID,
 		})
-	case filter.ContainerHostname != "":
+	}
+	if filter.ContainerHostname != "" {
 		query.Filters = append(query.Filters, driver.Filter{
 			Field: profileFieldContainerHostname + ".keyword",
 			Op:    driver.OpEq,
@@ -331,14 +333,6 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 			Field: profileFieldProfileType + ".keyword",
 			Op:    driver.OpEq,
 			Value: filter.ProfileType,
-		})
-	}
-
-	if filter.TracerID != "" {
-		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldTracerID,
-			Op:    driver.OpEq,
-			Value: filter.TracerID,
 		})
 	}
 
