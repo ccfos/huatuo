@@ -15,98 +15,157 @@
 package tracing
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"slices"
 	"sync"
+	"time"
 )
 
-type TracingManager struct {
-	tracingEvents map[string]*EventTracing
-	mu            sync.Mutex
-	blackListed   []string
+// Manager owns the registered tracer runners. It is safe for simultaneous use
+// by multiple goroutines.
+type Manager struct {
+	mu       sync.RWMutex
+	runners  map[string]*eventRunner
+	isClosed bool
 }
 
-func NewManager(blackListed []string) (*TracingManager, error) {
-	tracings, err := NewRegister(blackListed)
+// NewManager initializes all registered tracers that are not blacklisted.
+func NewManager(blacklist []string) (*Manager, error) {
+	registrations, err := NewRegister(blacklist)
 	if err != nil {
 		return nil, err
 	}
 
-	tracingEvents := make(map[string]*EventTracing)
-	for key, trace := range tracings {
-		if trace.Flag&FlagTracing == 0 {
+	runners := make(map[string]*eventRunner, len(registrations))
+	for name, registration := range registrations {
+		if registration.Flag&FlagTracing == 0 {
 			continue
 		}
-		tracingEvents[key] = NewTracingEvent(trace, key)
+
+		starter, ok := registration.TracingData.(starter)
+		if !ok {
+			return nil, fmt.Errorf(
+				"%w: %q does not implement Start(context.Context)",
+				ErrInvalidTracer,
+				name,
+			)
+		}
+		if registration.Interval <= 0 {
+			return nil, fmt.Errorf(
+				"%w: %q restart interval must be positive",
+				ErrInvalidTracer,
+				name,
+			)
+		}
+
+		runners[name] = newEventRunner(
+			name,
+			starter,
+			time.Duration(registration.Interval)*time.Second,
+			registration.Flag,
+		)
 	}
 
-	return &TracingManager{tracingEvents: tracingEvents, blackListed: blackListed}, nil
+	return &Manager{runners: runners}, nil
 }
 
-func (mgr *TracingManager) Start() error {
-	for name := range mgr.tracingEvents {
-		if err := mgr.StartByName(name); err != nil {
-			return err
+// Start starts every registered tracer.
+func (m *Manager) Start(ctx context.Context) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.isClosed {
+		return ErrManagerClosed
+	}
+
+	var errs []error
+	for _, runner := range m.runners {
+		if err := runner.start(ctx); err != nil {
+			errs = append(errs, err)
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
-func (mgr *TracingManager) StartByName(name string) error {
-	te, ok := mgr.tracingEvents[name]
+// StartByName starts a registered tracer.
+func (m *Manager) StartByName(ctx context.Context, name string) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.isClosed {
+		return ErrManagerClosed
+	}
+
+	runner, ok := m.runners[name]
 	if !ok {
-		return fmt.Errorf("%q not found", name)
+		return newTracerStateError(ErrTracerNotFound, name)
 	}
 
-	if slices.Contains(mgr.blackListed, name) {
-		te.isRunning = false
-		return fmt.Errorf("%q blackListed", name)
-	}
-
-	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
-
-	if te.isRunning {
-		return fmt.Errorf("%q already running", name)
-	}
-
-	return te.Start()
+	return runner.start(ctx)
 }
 
-func (mgr *TracingManager) Stop() error {
-	for name := range mgr.tracingEvents {
-		if err := mgr.StopByName(name); err != nil {
-			return err
+// Close permanently rejects subsequent starts, cancels all tracers, and waits
+// for their goroutines until ctx is done.
+//
+// A closed Manager cannot be restarted because application shutdown may
+// release stores and BPF resources immediately afterward. Use StopByName for a
+// restartable stop, or create a new Manager after Close. If ctx ends first,
+// Close returns its error while the tracer goroutines continue shutting down.
+func (m *Manager) Close(ctx context.Context) error {
+	m.mu.Lock()
+	m.isClosed = true
+
+	type pendingStop struct {
+		name string
+		done <-chan struct{}
+	}
+
+	pending := make([]pendingStop, 0, len(m.runners))
+	var errs []error
+	for name, runner := range m.runners {
+		done, err := runner.cancelRun()
+		if err != nil && !errors.Is(err, ErrTracerNotRunning) {
+			errs = append(errs, err)
+			continue
+		}
+		if done != nil {
+			pending = append(pending, pendingStop{name: name, done: done})
 		}
 	}
-	return nil
+	m.mu.Unlock()
+
+	for _, runner := range pending {
+		if err := waitForRunner(ctx, runner.name, runner.done); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
-func (mgr *TracingManager) StopByName(name string) error {
-	te, ok := mgr.tracingEvents[name]
+// StopByName stops a registered tracer and waits for its goroutine to exit.
+func (m *Manager) StopByName(ctx context.Context, name string) error {
+	m.mu.RLock()
+	runner, ok := m.runners[name]
+	m.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("%q not found", name)
+		return newTracerStateError(ErrTracerNotFound, name)
 	}
 
-	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
-	if !te.isRunning {
-		return fmt.Errorf("%q not running", name)
-	}
-
-	te.Stop()
-	return nil
+	return runner.stop(ctx)
 }
 
-// Dump gets all tracer info
-func (mgr *TracingManager) Dump() map[string]*EventTracingInfo {
-	mgr.mu.Lock()
-	defer mgr.mu.Unlock()
+// Snapshots returns lifecycle snapshots for all registered tracers.
+func (m *Manager) Snapshots() map[string]LifecycleSnapshot {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	dump := make(map[string]*EventTracingInfo)
-	for name, c := range mgr.tracingEvents {
-		dump[name] = c.Info()
+	snapshots := make(map[string]LifecycleSnapshot, len(m.runners))
+	for name, runner := range m.runners {
+		snapshots[name] = runner.snapshot()
 	}
-	return dump
+
+	return snapshots
 }

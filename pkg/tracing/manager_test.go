@@ -16,286 +16,182 @@ package tracing
 
 import (
 	"context"
-	"strings"
-	"sync"
+	"errors"
 	"testing"
 	"time"
 
 	pkgtypes "huatuo-bamai/pkg/types"
 )
 
-type stubEvent struct {
-	startFunc func(ctx context.Context) error
-}
-
-func (s *stubEvent) Start(ctx context.Context) error {
-	return s.startFunc(ctx)
-}
-
-func waitCancelReady(te *EventTracing) bool {
-	for range 50 {
-		if te.cancelCtx != nil {
-			return true
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return false
-}
-
-func TestNewMgrTracingEvent(t *testing.T) {
+func TestNewManager(t *testing.T) {
 	resetRegisterState()
 	t.Cleanup(resetRegisterState)
 
-	newAttr := func(flag uint32) *EventTracingAttr {
-		return &EventTracingAttr{
-			Flag:        flag,
-			Interval:    1,
-			TracingData: &stubEvent{startFunc: func(context.Context) error { return nil }},
-		}
-	}
-
 	RegisterEventTracing("trace_only", func() (*EventTracingAttr, error) {
-		return newAttr(FlagTracing), nil
+		return &EventTracingAttr{
+			Flag:     FlagTracing,
+			Interval: 1,
+			TracingData: &starterStub{
+				startFunc: func(context.Context) error {
+					return pkgtypes.ErrNotSupported
+				},
+			},
+		}, nil
 	})
 	RegisterEventTracing("metric_only", func() (*EventTracingAttr, error) {
-		return newAttr(FlagMetric), nil
+		return &EventTracingAttr{
+			Flag:        FlagMetric,
+			TracingData: struct{}{},
+		}, nil
 	})
 
-	mgr, err := NewManager(nil)
+	manager, err := NewManager(nil)
 	if err != nil {
-		t.Fatalf("NewMgrTracingEvent() error=%v", err)
+		t.Fatalf("NewManager() error = %v, want nil", err)
 	}
-
-	if got, want := len(mgr.tracingEvents), 1; got != want {
-		t.Fatalf("tracingEvents len=%d, want %d", got, want)
+	if got := len(manager.runners); got != 1 {
+		t.Fatalf("len(Manager.runners) = %d, want 1", got)
 	}
-
-	if _, ok := mgr.tracingEvents["trace_only"]; !ok {
-		t.Fatalf("trace_only should be included in manager")
-	}
-
-	if _, ok := mgr.tracingEvents["metric_only"]; ok {
-		t.Errorf("metric_only should not be included in tracing manager")
+	if _, ok := manager.runners["trace_only"]; !ok {
+		t.Error(`Manager.runners["trace_only"] is missing`)
 	}
 }
 
-func TestMgrTracingEventStart(t *testing.T) {
+func TestNewManagerRejectsInvalidTracer(t *testing.T) {
 	tests := []struct {
-		name     string
-		setup    func() (*TracingManager, string)
-		validate func(*testing.T, error)
+		name        string
+		interval    int
+		tracingData any
 	}{
 		{
-			name: "not found",
-			setup: func() (*TracingManager, string) {
-				return &TracingManager{tracingEvents: map[string]*EventTracing{}, blackListed: nil}, "trace-not-found"
-			},
-			validate: func(t *testing.T, err error) {
-				if err == nil {
-					t.Fatalf("MgrTracingEventStart() error=nil, want non-nil")
-				}
-				if !strings.Contains(err.Error(), "not found") {
-					t.Errorf("MgrTracingEventStart() error=%q, want contain %q", err.Error(), "not found")
-				}
-			},
+			name:        "missing starter",
+			interval:    1,
+			tracingData: struct{}{},
 		},
 		{
-			name: "blacklisted",
-			setup: func() (*TracingManager, string) {
-				return &TracingManager{
-					tracingEvents: map[string]*EventTracing{
-						"trace-2026": {name: "trace-2026"},
-					},
-					blackListed: []string{"trace-2026"},
-				}, "trace-2026"
-			},
-			validate: func(t *testing.T, err error) {
-				if err == nil {
-					t.Fatalf("MgrTracingEventStart() error=nil, want non-nil")
-				}
-				if !strings.Contains(err.Error(), "blackListed") {
-					t.Errorf("MgrTracingEventStart() error=%q, want contain %q", err.Error(), "blackListed")
-				}
-			},
-		},
-		{
-			name: "already running",
-			setup: func() (*TracingManager, string) {
-				return &TracingManager{
-					tracingEvents: map[string]*EventTracing{
-						"trace-2026": {name: "trace-2026", isRunning: true},
-					},
-					blackListed: nil,
-				}, "trace-2026"
-			},
-			validate: func(t *testing.T, err error) {
-				if err == nil {
-					t.Fatalf("MgrTracingEventStart() error=nil, want non-nil")
-				}
-				if !strings.Contains(err.Error(), "already running") {
-					t.Errorf("MgrTracingEventStart() error=%q, want contain %q", err.Error(), "already running")
-				}
+			name:     "non-positive restart interval",
+			interval: 0,
+			tracingData: &starterStub{
+				startFunc: func(context.Context) error { return nil },
 			},
 		},
 	}
 
-	for i := range tests {
-		t.Run(tests[i].name, func(t *testing.T) {
-			mgr, name := tests[i].setup()
-			err := mgr.StartByName(name)
-			tests[i].validate(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetRegisterState()
+			t.Cleanup(resetRegisterState)
+
+			RegisterEventTracing("invalid", func() (*EventTracingAttr, error) {
+				return &EventTracingAttr{
+					Flag:        FlagTracing,
+					Interval:    tt.interval,
+					TracingData: tt.tracingData,
+				}, nil
+			})
+
+			_, err := NewManager(nil)
+			if !errors.Is(err, ErrInvalidTracer) {
+				t.Errorf("NewManager() error = %v, want ErrInvalidTracer", err)
+			}
 		})
 	}
 }
 
-func TestMgrTracingEventStartAndStopSuccess(t *testing.T) {
-	te := &EventTracing{
-		ic: &stubEvent{
+func TestManagerLifecycle(t *testing.T) {
+	started := make(chan struct{})
+	runner := newEventRunner(
+		"trace-2026",
+		&starterStub{
 			startFunc: func(ctx context.Context) error {
+				close(started)
 				<-ctx.Done()
+
 				return pkgtypes.ErrExitByCancelCtx
 			},
 		},
-		name:     "trace-2026",
-		interval: 1,
-	}
-	mgr := &TracingManager{
-		tracingEvents: map[string]*EventTracing{"trace-2026": te},
-		blackListed:   nil,
-		mu:            sync.Mutex{},
+		time.Hour,
+		FlagTracing,
+	)
+	manager := &Manager{
+		runners: map[string]*eventRunner{"trace-2026": runner},
 	}
 
-	startErr := mgr.StartByName("trace-2026")
-	if startErr != nil {
-		t.Fatalf("MgrTracingEventStart() error=%v", startErr)
+	if err := manager.StartByName(t.Context(), "missing"); !errors.Is(err, ErrTracerNotFound) {
+		t.Errorf("Manager.StartByName() error = %v, want ErrTracerNotFound", err)
+	}
+	if err := manager.StartByName(t.Context(), "trace-2026"); err != nil {
+		t.Fatalf("Manager.StartByName() error = %v, want nil", err)
+	}
+	<-started
+
+	snapshot := manager.Snapshots()["trace-2026"]
+	if !snapshot.IsRunning {
+		t.Error("Manager.Snapshots()[trace-2026].IsRunning = false, want true")
 	}
 
-	if !waitCancelReady(te) {
-		t.Fatalf("cancelCtx was not initialized in time")
+	if err := manager.StopByName(t.Context(), "trace-2026"); err != nil {
+		t.Fatalf("Manager.StopByName() error = %v, want nil", err)
 	}
-
-	stopErr := mgr.StopByName("trace-2026")
-	if stopErr != nil {
-		t.Errorf("MgrTracingEventStop() error=%v", stopErr)
+	if err := manager.StopByName(t.Context(), "trace-2026"); !errors.Is(err, ErrTracerNotRunning) {
+		t.Errorf("Manager.StopByName() error = %v, want ErrTracerNotRunning", err)
 	}
 }
 
-func TestMgrTracingEventStop(t *testing.T) {
-	tests := []struct {
-		name     string
-		setup    func() (*TracingManager, string)
-		validate func(*testing.T, error)
-	}{
-		{
-			name: "not found",
-			setup: func() (*TracingManager, string) {
-				return &TracingManager{tracingEvents: map[string]*EventTracing{}}, "trace-not-found"
+func TestManagerCloseWaitsForAllRunners(t *testing.T) {
+	const runnerCount = 2
+
+	started := make(chan struct{}, runnerCount)
+	canceled := make(chan struct{}, runnerCount)
+	release := make(chan struct{})
+	runners := make(map[string]*eventRunner, runnerCount)
+	for _, name := range []string{"first", "second"} {
+		runners[name] = newEventRunner(
+			name,
+			&starterStub{
+				startFunc: func(ctx context.Context) error {
+					started <- struct{}{}
+					<-ctx.Done()
+					canceled <- struct{}{}
+					<-release
+
+					return pkgtypes.ErrExitByCancelCtx
+				},
 			},
-			validate: func(t *testing.T, err error) {
-				if err == nil {
-					t.Fatalf("MgrTracingEventStop() error=nil, want non-nil")
-				}
-				if !strings.Contains(err.Error(), "not found") {
-					t.Errorf("MgrTracingEventStop() error=%q, want contain %q", err.Error(), "not found")
-				}
-			},
-		},
-		{
-			name: "not running",
-			setup: func() (*TracingManager, string) {
-				return &TracingManager{
-					tracingEvents: map[string]*EventTracing{
-						"trace-2026": {name: "trace-2026", isRunning: false},
-					},
-				}, "trace-2026"
-			},
-			validate: func(t *testing.T, err error) {
-				if err == nil {
-					t.Fatalf("MgrTracingEventStop() error=nil, want non-nil")
-				}
-				if !strings.Contains(err.Error(), "not running") {
-					t.Errorf("MgrTracingEventStop() error=%q, want contain %q", err.Error(), "not running")
-				}
-			},
-		},
-		{
-			name: "running",
-			setup: func() (*TracingManager, string) {
-				return &TracingManager{
-					tracingEvents: map[string]*EventTracing{
-						"trace-2026": {name: "trace-2026", isRunning: true, cancelCtx: func() {}},
-					},
-				}, "trace-2026"
-			},
-			validate: func(t *testing.T, err error) {
-				if err != nil {
-					t.Errorf("MgrTracingEventStop() error=%v, want nil", err)
-				}
-			},
-		},
+			time.Hour,
+			FlagTracing,
+		)
+	}
+	manager := &Manager{runners: runners}
+
+	if err := manager.Start(t.Context()); err != nil {
+		t.Fatalf("Manager.Start() error = %v, want nil", err)
+	}
+	for range runnerCount {
+		<-started
 	}
 
-	for i := range tests {
-		t.Run(tests[i].name, func(t *testing.T) {
-			mgr, name := tests[i].setup()
-			err := mgr.StopByName(name)
-			tests[i].validate(t, err)
-		})
-	}
-}
+	closeErr := make(chan error, 1)
+	go func() {
+		closeErr <- manager.Close(t.Context())
+	}()
 
-func TestMgrTracingInfoDump(t *testing.T) {
-	tests := []struct {
-		nameKey   string
-		wantName  string
-		wantRun   bool
-		wantHit   int
-		wantIntvl int
-		wantFlag  uint32
-	}{
-		{nameKey: "trace-2026", wantName: "trace-2026", wantRun: true, wantHit: 3, wantIntvl: 2, wantFlag: FlagTracing},
-		{nameKey: "trace-2027", wantName: "trace-2027", wantRun: false, wantHit: 1, wantIntvl: 5, wantFlag: FlagMetric | FlagTracing},
-	}
-
-	mgr := &TracingManager{
-		tracingEvents: map[string]*EventTracing{},
-	}
-	for i := range tests {
-		mgr.tracingEvents[tests[i].nameKey] = &EventTracing{
-			name:      tests[i].wantName,
-			isRunning: tests[i].wantRun,
-			hitCount:  tests[i].wantHit,
-			interval:  tests[i].wantIntvl,
-			flag:      tests[i].wantFlag,
+	for range runnerCount {
+		select {
+		case <-canceled:
+		case <-time.After(time.Second):
+			t.Fatal("Manager.Close() did not cancel all runners before waiting")
 		}
 	}
+	close(release)
 
-	info := mgr.Dump()
-	if len(info) != len(tests) {
-		t.Fatalf("MgrTracingInfoDump len=%d, want %d", len(info), len(tests))
+	if err := <-closeErr; err != nil {
+		t.Fatalf("Manager.Close() error = %v, want nil", err)
 	}
-
-	for i := range tests {
-		t.Run(tests[i].nameKey, func(t *testing.T) {
-			got := info[tests[i].nameKey]
-			if got == nil {
-				t.Fatalf("info[%q]=nil, want non-nil", tests[i].nameKey)
-			}
-			if got.Name != tests[i].wantName {
-				t.Errorf("info[%q].Name=%q, want %q", tests[i].nameKey, got.Name, tests[i].wantName)
-			}
-			if got.Running != tests[i].wantRun {
-				t.Errorf("info[%q].Running=%v, want %v", tests[i].nameKey, got.Running, tests[i].wantRun)
-			}
-			if got.HitCount != tests[i].wantHit {
-				t.Errorf("info[%q].HitCount=%d, want %d", tests[i].nameKey, got.HitCount, tests[i].wantHit)
-			}
-			if got.Interval != tests[i].wantIntvl {
-				t.Errorf("info[%q].Interval=%d, want %d", tests[i].nameKey, got.Interval, tests[i].wantIntvl)
-			}
-			if got.Flag != tests[i].wantFlag {
-				t.Errorf("info[%q].Flag=%d, want %d", tests[i].nameKey, got.Flag, tests[i].wantFlag)
-			}
-		})
+	if err := manager.StartByName(t.Context(), "first"); !errors.Is(err, ErrManagerClosed) {
+		t.Errorf("Manager.StartByName() error = %v, want ErrManagerClosed", err)
+	}
+	if err := manager.Close(t.Context()); err != nil {
+		t.Errorf("second Manager.Close() error = %v, want nil", err)
 	}
 }

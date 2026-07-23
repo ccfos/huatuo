@@ -55,14 +55,14 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 		return nil, fmt.Errorf("new tracing manager: %w", err)
 	}
 
-	if err := mgr.Start(); err != nil {
+	if err := mgr.Start(context.Background()); err != nil {
 		return nil, fmt.Errorf("start tracing manager: %w", err)
 	}
 
 	d.tracer = mgr
 	// Stop collectors first, then drain bulk-buffered writes before BPF teardown.
 	return func(ctx context.Context) error {
-		if err := mgr.Stop(); err != nil {
+		if err := mgr.Close(ctx); err != nil {
 			return fmt.Errorf("stop: %w", err)
 		}
 		if err := tracing.CloseStores(ctx); err != nil {
