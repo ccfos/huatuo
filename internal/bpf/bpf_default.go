@@ -579,37 +579,12 @@ func (b *defaultBPF) Loaded() (bool, error) {
 	return true, nil
 }
 
-// mapByID returns the cloned map for the given ID.
-//
-// All ID-based map operations go through here so that an unknown ID produces
-// a descriptive error instead of dereferencing a zero-value mapSpec (whose
-// cloned *ebpf.Map is nil) and panicking — see issue #372.
-func (b *defaultBPF) mapByID(mapID uint32) (*ebpf.Map, error) {
-	spec, ok := b.mapSpecs[mapID]
-	if !ok || spec.cloned == nil {
-		return nil, fmt.Errorf("unknown map id %d", mapID)
-	}
-	return spec.cloned, nil
-}
-
-// mapByName returns the cloned map for the given name.
-//
-// Like mapByID, but used by the name-based helpers so the original name is
-// preserved in the error instead of being lost when MapIDByName returns 0.
-func (b *defaultBPF) mapByName(mapName string) (*ebpf.Map, error) {
-	if _, ok := b.mapName2IDs[mapName]; !ok {
-		return nil, fmt.Errorf("unknown map name %q", mapName)
-	}
-	return b.mapByID(b.mapName2IDs[mapName])
-}
-
 // EventPipe gets event-pipe and returns a PerfEventReader.
 func (b *defaultBPF) EventPipe(ctx context.Context, mapID, perCPUBufSize uint32) (PerfEventReader, error) {
-	m, err := b.mapByID(mapID)
-	if err != nil {
-		return nil, err
+	if b.mapSpecs[mapID].cloned == nil {
+		return nil, fmt.Errorf("unknown map id %d", mapID)
 	}
-	reader, err := newPerfEventReader(ctx, m, int(perCPUBufSize))
+	reader, err := newPerfEventReader(ctx, b.mapSpecs[mapID].cloned, int(perCPUBufSize))
 	if err != nil {
 		return nil, err
 	}
@@ -620,17 +595,7 @@ func (b *defaultBPF) EventPipe(ctx context.Context, mapID, perCPUBufSize uint32)
 
 // EventPipeByName gets event-pipe by the mapName and returns a PerfEventReader.
 func (b *defaultBPF) EventPipeByName(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error) {
-	m, err := b.mapByName(mapName)
-	if err != nil {
-		return nil, err
-	}
-	reader, err := newPerfEventReader(ctx, m, int(perCPUBufSize))
-	if err != nil {
-		return nil, err
-	}
-
-	log.Debugf("event-pipe %s, perCPUBufSize %d", mapName, perCPUBufSize)
-	return reader, nil
+	return b.EventPipe(ctx, b.MapIDByName(mapName), perCPUBufSize)
 }
 
 // AttachAndEventPipe attaches and event-pipe and returns a PerfEventReader.
@@ -654,11 +619,10 @@ func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, per
 // obtained value is of byte type, which also needs to be converted to the
 // corresponding type.
 func (b *defaultBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
-	m, err := b.mapByID(mapID)
-	if err != nil {
-		return nil, err
+	if b.mapSpecs[mapID].cloned == nil {
+		return nil, fmt.Errorf("unknown map id %d", mapID)
 	}
-	val, err := m.LookupBytes(key)
+	val, err := b.mapSpecs[mapID].cloned.LookupBytes(key)
 	if err != nil {
 		return nil, err
 	}
@@ -668,10 +632,10 @@ func (b *defaultBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 
 // WriteMapItems write the value content corresponding to a key to a map.
 func (b *defaultBPF) WriteMapItems(mapID uint32, items []MapItem) error {
-	m, err := b.mapByID(mapID)
-	if err != nil {
-		return err
+	if b.mapSpecs[mapID].cloned == nil {
+		return fmt.Errorf("unknown map id %d", mapID)
 	}
+	m := b.mapSpecs[mapID].cloned
 
 	for _, item := range items {
 		if err := m.Update(item.Key, item.Value, ebpf.UpdateAny); err != nil {
@@ -683,10 +647,10 @@ func (b *defaultBPF) WriteMapItems(mapID uint32, items []MapItem) error {
 
 // DeleteMapItems deletes multiple items from a BPF map by keys.
 func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
-	m, err := b.mapByID(mapID)
-	if err != nil {
-		return err
+	if b.mapSpecs[mapID].cloned == nil {
+		return fmt.Errorf("unknown map id %d", mapID)
 	}
+	m := b.mapSpecs[mapID].cloned
 
 	for _, k := range keys {
 		if err := m.Delete(k); err != nil {
@@ -698,10 +662,10 @@ func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
 
 // DumpMap dump all the context of the map
 func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
-	m, err := b.mapByID(mapID)
-	if err != nil {
-		return nil, err
+	if b.mapSpecs[mapID].cloned == nil {
+		return nil, fmt.Errorf("unknown map id %d", mapID)
 	}
+	m := b.mapSpecs[mapID].cloned
 
 	var items []MapItem
 	key := make([]byte, m.KeySize())
@@ -722,26 +686,7 @@ func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
 
 // DumpMapByName dump all the context of the map.
 func (b *defaultBPF) DumpMapByName(mapName string) ([]MapItem, error) {
-	m, err := b.mapByName(mapName)
-	if err != nil {
-		return nil, err
-	}
-
-	var items []MapItem
-	key := make([]byte, m.KeySize())
-	val := make([]byte, m.ValueSize())
-	iter := m.Iterate()
-	for iter.Next(&key, &val) {
-		items = append(items, MapItem{
-			Key:   append([]byte(nil), key...),
-			Value: append([]byte(nil), val...),
-		})
-	}
-	if err := iter.Err(); err != nil {
-		return nil, fmt.Errorf("map %q: iterate: %w", mapName, err)
-	}
-
-	return items, nil
+	return b.DumpMap(b.MapIDByName(mapName))
 }
 
 // WaitDetachByBreaker check the bpf's status.

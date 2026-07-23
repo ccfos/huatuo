@@ -783,7 +783,9 @@ func TestDefaultBPFMapOperationsRejectUnknownMap(t *testing.T) {
 		t.Run("DumpMapByName_unknownName", func(t *testing.T) {
 			_, err := b.DumpMapByName("missing")
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), `unknown map name "missing"`)
+			// DumpMapByName delegates to DumpMap(MapIDByName(name));
+			// an unknown name yields id 0, which DumpMap rejects.
+			assert.Contains(t, err.Error(), "unknown map id")
 		})
 		t.Run("ReadMap_unknownID", func(t *testing.T) {
 			_, err := b.ReadMap(9999, []byte{0})
