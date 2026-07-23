@@ -346,7 +346,13 @@ func httpDoRequest(client *http.Client, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		// Surface the read failure instead of returning a (possibly empty) body
+		// that silently breaks JSON decode downstream. Retain URL context so
+		// the operator can tell which kubelet endpoint failed.
+		return nil, fmt.Errorf("http: %s, read body: %w", url, err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http: %s, status: %d, body: %s", url, resp.StatusCode, string(body))
 	}

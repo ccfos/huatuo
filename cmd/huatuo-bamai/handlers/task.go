@@ -43,6 +43,7 @@ func NewTaskHandler() *TaskHandler {
 }
 
 type NewTaskReq struct {
+	RequestID  string   `json:"request_id" binding:"omitempty,max=128"`
 	TracerName string   `json:"tracer_name" binding:"required"`
 	Timeout    int      `json:"timeout" binding:"required,number,lt=3600"`
 	DataType   string   `json:"data_type" binding:"required"`
@@ -65,18 +66,32 @@ func (h *TaskHandler) create(ctx *server.Context) error {
 		return nil
 	}
 
-	if tracing.RunningTaskCount() > config.Get().Task.MaxRunningTask {
-		return response.ErrInvalidRequest.WithMessage("too many running tasks")
-	}
-
 	storageDefault := tracing.TaskStorageDB
 	if req.DataType == "json" {
 		storageDefault = tracing.TaskStorageStdout
 	}
 
-	id := tracing.NewTask(req.TracerName, time.Duration(req.Timeout)*time.Second, storageDefault, req.TracerArgs)
+	id := req.RequestID
 	if id == "" {
-		return response.ErrInternal.WithMessage("failed to allocate task id")
+		var err error
+		id, err = tracing.AllocTaskID()
+		if err != nil {
+			return response.ErrInternal.WithMessage("failed to allocate task id")
+		}
+	}
+	id, err := tracing.NewTaskWithIDLimit(
+		id,
+		req.TracerName,
+		time.Duration(req.Timeout)*time.Second,
+		storageDefault,
+		req.TracerArgs,
+		config.Get().Task.MaxRunningTask,
+	)
+	if err != nil {
+		if errors.Is(err, tracing.ErrTaskLimitExceeded) {
+			return response.ErrInvalidRequest.WithMessage(err.Error())
+		}
+		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 	response.Success(ctx, map[string]any{"task_id": id})
 	return nil

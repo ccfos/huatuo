@@ -98,23 +98,56 @@ CREATE TABLE IF NOT EXISTS %s (
 }
 
 func (s *Storage) Save(ctx context.Context, rec driver.Record) error {
-	normalized := make(map[string]any, len(rec.Fields))
-	for k, v := range rec.Fields {
-		normalized[k] = driver.NormalizeValue(v)
-	}
-	fieldsJSON, err := json.Marshal(normalized)
+	fieldsJSON, err := normalizedFieldsJSON(rec.Fields)
 	if err != nil {
-		return fmt.Errorf("sqlite backend marshal fields: %w", err)
+		return err
 	}
 
 	saveSQL := fmt.Sprintf(
 		`INSERT OR REPLACE INTO %s (id, data, fields) VALUES (?, ?, ?)`,
 		quoteIdentifier(s.table),
 	)
-	if _, err := s.db.ExecContext(driver.WithContext(ctx), saveSQL, rec.ID, rec.Data, string(fieldsJSON)); err != nil {
+	if _, err := s.db.ExecContext(driver.WithContext(ctx), saveSQL, rec.ID, rec.Data, fieldsJSON); err != nil {
 		return fmt.Errorf("sqlite backend save into %s: %w", s.table, err)
 	}
 	return nil
+}
+
+// Create inserts rec without replacing an existing ID.
+func (s *Storage) Create(ctx context.Context, rec driver.Record) error {
+	fieldsJSON, err := normalizedFieldsJSON(rec.Fields)
+	if err != nil {
+		return err
+	}
+
+	createSQL := fmt.Sprintf(
+		`INSERT INTO %s (id, data, fields) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+		quoteIdentifier(s.table),
+	)
+	result, err := s.db.ExecContext(driver.WithContext(ctx), createSQL, rec.ID, rec.Data, fieldsJSON)
+	if err != nil {
+		return fmt.Errorf("sqlite backend create in %s: %w", s.table, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite backend create rows affected: %w", err)
+	}
+	if rows == 0 {
+		return driver.ErrAlreadyExists
+	}
+	return nil
+}
+
+func normalizedFieldsJSON(fields map[string]any) (string, error) {
+	normalized := make(map[string]any, len(fields))
+	for k, v := range fields {
+		normalized[k] = driver.NormalizeValue(v)
+	}
+	fieldsJSON, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("sqlite backend marshal fields: %w", err)
+	}
+	return string(fieldsJSON), nil
 }
 
 func (s *Storage) Get(ctx context.Context, id string) (driver.Record, error) {

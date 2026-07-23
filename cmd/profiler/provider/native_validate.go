@@ -45,16 +45,3 @@ func resolveProbability(probability uint) (uint, error) {
 
 	return probability, nil
 }
-
-func resolveScope(scope string) (bool, error) {
-	switch scope {
-	case "thread", "":
-		return false, nil
-	case "thread-group":
-		return true, nil
-	case "process-group":
-		return false, fmt.Errorf("scope 'process-group' is not supported by mem profiler")
-	default:
-		return false, fmt.Errorf("unsupported scope for mem profiler: %q", scope)
-	}
-}

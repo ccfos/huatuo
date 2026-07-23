@@ -1,5 +1,5 @@
 ---
-title: 配置指南
+title: huatuo-bamai 配置
 type: docs
 description:
 author: HUATUO Team

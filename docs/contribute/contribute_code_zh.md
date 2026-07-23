@@ -57,6 +57,21 @@ make build        # 只构建 Go 二进制文件
 make docker-build # 构建 Docker 镜像
 ```
 
+### 全容器联调
+
+使用当前源码构建开发镜像，并启动采集器、API Server、Elasticsearch、
+Prometheus 和 Grafana：
+
+```bash
+make compose-dev-up
+```
+
+停止环境并清理关联的容器、卷和本地开发镜像：
+
+```bash
+make compose-dev-down
+```
+
 ### 测试
 
 ```bash

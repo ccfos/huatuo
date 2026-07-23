@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 FROM golang:1.24-alpine3.22 AS base
 #
 # To accelerate the build process, you may uncomment this section.
@@ -21,4 +23,21 @@ RUN set -x; \
     go install golang.org/x/tools/cmd/goimports@v0.36.0 && \
     go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2 && \
     go install github.com/vektra/mockery/v2@v2.53.6 && \
-    go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
+    go install capnproto.org/go/capnp/v3/capnpc-go@latest
+
+FROM base AS dev-build
+WORKDIR /go/huatuo-bamai
+ENV GOCACHE=/root/.cache/go-build
+COPY . .
+RUN --mount=type=cache,target=${GOCACHE} \
+    make all && \
+    cp -a _output /tmp/huatuo-bamai
+
+FROM alpine:3.22.0 AS dev-runtime
+ARG RUN_PATH=/home/huatuo-bamai
+RUN apk add --no-cache curl
+COPY --from=dev-build /tmp/huatuo-bamai ${RUN_PATH}
+WORKDIR ${RUN_PATH}
+
+# Keep the default target as the interactive development toolchain image.
+FROM base AS devel

@@ -87,10 +87,11 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 	p.forkConfig = forkConfig
-	constants, attachOpts, err := applyNativeForkTracking(map[string]any{
-		"profiler_filter_css": cssAddr,
-		"profiler_filter_pid": uint32(pctx.PID()),
-	}, nil, forkConfig)
+	constants, attachOpts, err := applyNativeForkTracking(
+		newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup),
+		nil,
+		forkConfig,
+	)
 	if err != nil {
 		return err
 	}

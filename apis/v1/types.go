@@ -14,39 +14,45 @@
 
 package v1
 
-// StartProfilingRequest represents a request to start profiling
-type StartProfilingRequest struct {
-	Type                  string `json:"type"`                    // cpu or memory
-	TargetExecPath        string `json:"target_exec_path"`        // executable path for CPU profiling
-	TargetProcessLanguage string `json:"target_process_language"` // programming language of the target process
-	MemoryMode            string `json:"memory_mode"`             // memory profiling mode
-	Duration              int    `json:"duration"`                // profiling duration in seconds
-	Container             string `json:"container"`               // container name or ID
-	Hostname              string `json:"hostname"`                // host name
+import (
+	"time"
+
+	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
+)
+
+// CreateProfilingJobRequest represents a request to create a profiling job.
+type CreateProfilingJobRequest struct {
+	ProfilingType   string `json:"type"`              // cpu or memory
+	BinaryMatchPath string `json:"binary_match_path"` // executable path used to match target processes
+	Language        string `json:"language"`          // programming language of the target process
+	MemoryMode      string `json:"memory_mode"`       // memory profiling mode
+	Duration        int    `json:"duration"`          // profiling duration in seconds
+	ContainerID     string `json:"container_id"`      // container ID
+	Hostname        string `json:"hostname"`          // host name
 }
 
-// StartProfilingResponse represents a response to start profiling
-type StartProfilingResponse struct {
-	ID string `json:"id"` // profiling task ID
+// CreateProfilingJobResponse represents a response to create a profiling job.
+type CreateProfilingJobResponse struct {
+	ID string `json:"id"` // profiling job ID
 }
 
-// ProfilingStatusResponse represents a profiling status response
-type ProfilingStatusResponse struct {
-	ID                    string           `json:"id"`                      // profiling task ID
-	AgentTaskID           string           `json:"agent_task_id"`           // agent task ID
-	Container             string           `json:"container"`               // container name or ID
-	Hostname              string           `json:"hostname"`                // host name
-	Status                string           `json:"status"`                  // task status
-	StartTime             string           `json:"start_time"`              // start time
-	EndTime               string           `json:"end_time"`                // end time
-	TracerArgs            []string         `json:"tracer_args"`             // tracer arguments
-	Duration              int              `json:"duration"`                // profiling duration
-	Results               ProfilingResults `json:"results"`                 // profiling results
-	ErrorMessage          string           `json:"error_message"`           // error message if any
-	Type                  string           `json:"type"`                    // cpu or memory
-	TargetExecPath        string           `json:"target_exec_path"`        // executable path for CPU profiling
-	TargetProcessLanguage string           `json:"target_process_language"` // programming language of the target process
-	MemoryMode            string           `json:"memory_mode"`             // memory profiling mode
+// ProfilingJobResponse represents a profiling job response.
+type ProfilingJobResponse struct {
+	ID              string           `json:"id"`                // profiling job ID
+	AgentTaskID     string           `json:"agent_task_id"`     // agent task ID
+	ContainerID     string           `json:"container_id"`      // container ID
+	Hostname        string           `json:"hostname"`          // host name
+	Type            string           `json:"type"`              // cpu or memory
+	MemoryMode      string           `json:"memory_mode"`       // memory profiling mode
+	Language        string           `json:"language"`          // programming language of the target process
+	BinaryMatchPath string           `json:"binary_match_path"` // executable path used to match target processes
+	Status          string           `json:"status"`            // job status
+	StartTime       string           `json:"start_time"`        // start time
+	EndTime         string           `json:"end_time"`          // end time
+	TracerArgs      []string         `json:"tracer_args"`       // tracer arguments
+	Duration        int              `json:"duration"`          // profiling duration
+	Results         ProfilingResults `json:"results"`           // profiling results
+	ErrorMessage    string           `json:"error_message"`     // error message if any
 }
 
 // ProfilingResults represents profiling results
@@ -54,39 +60,72 @@ type ProfilingResults struct {
 	URL string `json:"url"` // URL to view the results
 }
 
-// RawDataResponse represents raw profiling data response
+// RawProfile is the stable API representation of one stored profile.
+type RawProfile struct {
+	Hostname               string               `json:"hostname"`
+	Region                 string               `json:"region"`
+	UploadedTime           time.Time            `json:"uploaded_time"`
+	Time                   string               `json:"time"`
+	ContainerID            string               `json:"container_id,omitempty"`
+	ContainerHostname      string               `json:"container_hostname,omitempty"`
+	ContainerHostNamespace string               `json:"container_host_namespace,omitempty"`
+	ContainerType          string               `json:"container_type,omitempty"`
+	ContainerQOS           string               `json:"container_qos,omitempty"`
+	TracerName             string               `json:"tracer_name,omitempty"`
+	TracerID               string               `json:"tracer_id,omitempty"`
+	TracerTime             string               `json:"tracer_time"`
+	TracerRunType          string               `json:"tracer_type,omitempty"`
+	TracerData             RawProfileTracerData `json:"tracer_data,omitempty"`
+}
+
+// RawProfileTracerData contains profiler output fields exposed by the API.
+type RawProfileTracerData struct {
+	Flamedata RawProfileFlameData `json:"flamedata,omitempty"`
+}
+
+// RawProfileFlameData contains the profile payload and its type.
+type RawProfileFlameData struct {
+	ProfileType string             `json:"profile_type,omitempty"`
+	Profile     *profilev1.Profile `json:"profile,omitempty"`
+}
+
+// RawDataResponse represents a page of raw profiling data.
 type RawDataResponse struct {
-	Data any `json:"data"` // raw profiling data
+	Data    []RawProfile `json:"data"`
+	Limit   int          `json:"limit"`
+	Offset  int          `json:"offset"`
+	HasMore bool         `json:"has_more"`
 }
 
 // JobFilter represents a job filter
 type JobFilter struct {
-	Container string `json:"container"` // container name or ID
-	Host      string `json:"host"`      // host name
-	Status    string `json:"status"`    // job status
-	Type      string `json:"type"`      // job type
+	ContainerID string `json:"container_id"` // container ID
+	Hostname    string `json:"hostname"`     // host name
+	Status      string `json:"status"`       // job status
+	Type        string `json:"type"`         // job type
 }
 
-// StartTraceRequest represents a request to start tracing
-type StartTraceRequest struct {
-	Type      string `json:"type"`      // trace type
-	Duration  int    `json:"duration"`  // trace duration in seconds
-	Container string `json:"container"` // container name or ID
-	Hostname  string `json:"hostname"`  // host name
+// CreateTraceJobRequest represents a request to create a trace job.
+type CreateTraceJobRequest struct {
+	Type        string `json:"type"`         // trace type
+	Duration    int    `json:"duration"`     // trace duration in seconds
+	ContainerID string `json:"container_id"` // container ID
+	Hostname    string `json:"hostname"`     // host name
 }
 
-// StartTraceResponse represents a response to start tracing
-type StartTraceResponse struct {
-	ID string `json:"id"` // trace task ID
+// CreateTraceJobResponse represents a response to create a trace job.
+type CreateTraceJobResponse struct {
+	ID string `json:"id"` // trace job ID
 }
 
-// TraceStatusResponse represents a trace status response
-type TraceStatusResponse struct {
-	ID           string       `json:"id"`            // trace task ID
+// TraceJobResponse represents a trace job response.
+type TraceJobResponse struct {
+	ID           string       `json:"id"`            // trace job ID
 	AgentTaskID  string       `json:"agent_task_id"` // agent task ID
-	Container    string       `json:"container"`     // container name or ID
+	ContainerID  string       `json:"container_id"`  // container ID
 	Hostname     string       `json:"hostname"`      // host name
-	Status       string       `json:"status"`        // task status
+	Type         string       `json:"type"`          // requested tracer type
+	Status       string       `json:"status"`        // job status
 	StartTime    string       `json:"start_time"`    // start time
 	EndTime      string       `json:"end_time"`      // end time
 	Results      TraceResults `json:"results"`       // trace results
@@ -104,32 +143,30 @@ type PatchStatusRequest struct {
 	Status string `json:"status"`
 }
 
-// TraceListResponse represents a paginated list of traces.
-type TraceListResponse struct {
-	Items  []TraceStatusResponse `json:"items"`
-	Total  int                   `json:"total"`
-	Limit  int                   `json:"limit"`
-	Offset int                   `json:"offset"`
+// TraceJobListResponse represents a paginated list of trace jobs.
+type TraceJobListResponse struct {
+	Items  []TraceJobResponse `json:"items"`
+	Total  int                `json:"total"`
+	Limit  int                `json:"limit"`
+	Offset int                `json:"offset"`
 }
 
-// ProfilingListResponse represents a paginated list of profiling jobs.
-type ProfilingListResponse struct {
-	Items  []ProfilingStatusResponse `json:"items"`
-	Total  int                       `json:"total"`
-	Limit  int                       `json:"limit"`
-	Offset int                       `json:"offset"`
+// ProfilingJobListResponse represents a paginated list of profiling jobs.
+type ProfilingJobListResponse struct {
+	Items  []ProfilingJobResponse `json:"items"`
+	Total  int                    `json:"total"`
+	Limit  int                    `json:"limit"`
+	Offset int                    `json:"offset"`
 }
 
 // ProfilingCapabilitiesResponse describes the profiling capabilities
 // supported by the server and their default configurations.
 type ProfilingCapabilitiesResponse struct {
-	ProfileTypes                    []string          `json:"profile_types"`                       // supported profiling types, e.g. ["cpu", "memory"]
-	CPUSupportedLanguages           []string          `json:"cpu_supported_languages"`             // languages supported by CPU profiling
-	MemorySupportedLanguages        []string          `json:"memory_supported_languages"`          // languages supported by memory profiling
-	MemoryModes                     map[string]string `json:"memory_modes"`                        // supported memory modes (key: display name, value: internal mode)
-	DefaultCPUInterval              int               `json:"default_cpu_interval"`                // default CPU profiling interval in seconds
-	DefaultMemoryInterval           int               `json:"default_memory_interval"`             // default memory profiling interval in seconds
-	DefaultCPUSingleTraceTimeout    int               `json:"default_cpu_single_trace_timeout"`    // default CPU single trace timeout in seconds
-	DefaultMemorySingleTraceTimeout int               `json:"default_memory_single_trace_timeout"` // default memory single trace timeout in seconds
-	MaxProfilerProcesses            int               `json:"max_profiler_processes"`              // maximum concurrent profiler subprocesses
+	Types               []string          `json:"types"`                // supported profiling types, e.g. ["cpu", "memory"]
+	CPULanguages        []string          `json:"cpu_languages"`        // languages supported by CPU profiling
+	MemoryLanguages     []string          `json:"memory_languages"`     // languages supported by memory profiling
+	MemoryModes         map[string]string `json:"memory_modes"`         // supported memory modes (key: display name, value: internal mode)
+	AggregationInterval int               `json:"aggregation_interval"` // default aggregation interval in seconds
+	ExecutionTimeout    int               `json:"execution_timeout"`    // default profiler execution timeout in seconds
+	MaxProfilerProcs    int               `json:"max_profiler_procs"`   // maximum concurrent profiler subprocesses
 }

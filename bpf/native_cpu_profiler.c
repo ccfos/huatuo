@@ -43,8 +43,12 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	u64 sched_class = (u64)BPF_CORE_READ(curr, sched_class);
 
 	u64 pid_tgid = bpf_get_current_pid_tgid();
+	u32 tgid = pid_tgid >> 32;
+	u32 pid = pid_tgid & 0xffffffffUL;
 
-	if (!profiler_should_trace_cpu(pid_tgid, cpu_css, sched_class)) {
+	if (!profiler_should_trace(pid_tgid, cpu_css) ||
+	    (profiler_idle_class_addr != 0 && sched_class == profiler_idle_class_addr) ||
+	    (tgid == 0 && pid == 0)) {
 		bpf_dbg_msg(ctx, native_cpu_dbg, "filter missed");
 		return 0;
 	}

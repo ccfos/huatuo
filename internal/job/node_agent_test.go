@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 type roundTripFunc func(req *http.Request) (*http.Response, error)
@@ -76,13 +77,42 @@ func newHTTPResponseWithBody(statusCode int, body io.ReadCloser) *http.Response 
 	}
 }
 
+func TestHTTPNodeAgentUsesConfiguredPortAndObserver(t *testing.T) {
+	var observedOperation string
+	var observedErr error
+	agent := NewHTTPNodeAgent(HTTPNodeAgentConfig{
+		Client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "http://huatuo-dev:21970/tasks" {
+				t.Fatalf("request URL = %q, want configured Agent port", req.URL.String())
+			}
+			return newHTTPResponse(
+				http.StatusOK,
+				`{"code":0,"message":"ok","data":{"task_id":"agent-task-2026"}}`,
+			), nil
+		})},
+		Port: 21970,
+		Observe: func(operation string, _ time.Duration, err error) {
+			observedOperation = operation
+			observedErr = err
+		},
+	})
+
+	_, err := agent.StartTask("huatuo-dev", "", &AgentTaskRequest{TraceTimeout: 10})
+	if err != nil {
+		t.Fatalf("StartTask() error = %v", err)
+	}
+	if observedOperation != "start" || observedErr != nil {
+		t.Fatalf("observer = (%q, %v), want (start, nil)", observedOperation, observedErr)
+	}
+}
+
 func TestHTTPNodeAgentReturnsBodyReadError(t *testing.T) {
 	t.Run("start task", func(t *testing.T) {
 		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return newHTTPResponseWithBody(http.StatusInternalServerError, failingReadCloser{}), nil
 		}))
 
-		_, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+		_, err := agent.StartTask("huatuo-dev", "payment-worker", &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			DataType:     "flamegraph",
@@ -138,10 +168,14 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 
 			return newHTTPResponse(http.StatusOK, `{"code":0,"message":"ok","data":{"task_id":"agent-task-2026"}}`), nil
 		}))
-		args := &NewAgentTaskReq{
+		args := &AgentTaskRequest{
+			RequestID:    "job-2026",
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
+			Interval:     10,
+			Duration:     120,
 			DataType:     "flamegraph",
+			TracerArgs:   []string{"--duration", "60", "--aggr-interval", "10"},
 		}
 
 		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", args)
@@ -151,11 +185,11 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		if taskID != "agent-task-2026" {
 			t.Errorf("StartTask() taskID=%q, want %q", taskID, "agent-task-2026")
 		}
-		if args.ContainerHostname != "payment-worker" {
-			t.Errorf("StartTask() ContainerHostname=%q, want %q", args.ContainerHostname, "payment-worker")
+		if args.ContainerID != "" {
+			t.Errorf("StartTask() mutated ContainerID=%q, want empty", args.ContainerID)
 		}
-		if !strings.Contains(requestBody, `"container_hostname":"payment-worker"`) {
-			t.Errorf("StartTask() request body=%q, want container hostname field", requestBody)
+		if !strings.Contains(requestBody, `"container_id":"payment-worker"`) {
+			t.Errorf("StartTask() request body=%q, want container ID field", requestBody)
 		}
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(requestBody), &payload); err != nil {
@@ -164,8 +198,20 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		if got := payload["timeout"]; got != float64(60) {
 			t.Errorf("StartTask() timeout payload=%v, want 60", got)
 		}
+		if got := payload["request_id"]; got != "job-2026" {
+			t.Errorf("StartTask() request_id payload=%v, want job-2026", got)
+		}
 		if _, ok := payload["trace_timeout"]; ok {
 			t.Errorf("StartTask() request body=%q, should use agent field timeout instead of trace_timeout", requestBody)
+		}
+		if got := payload["interval"]; got != float64(10) {
+			t.Errorf("StartTask() interval payload=%v, want 10", got)
+		}
+		if got := payload["duration"]; got != float64(120) {
+			t.Errorf("StartTask() duration payload=%v, want 120", got)
+		}
+		if got := payload["trace_args"]; fmt.Sprint(got) != "[--duration 60 --aggr-interval 10]" {
+			t.Errorf("StartTask() trace_args payload=%v, want profiler duration and interval", got)
 		}
 	})
 
@@ -174,7 +220,7 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 			return newHTTPResponse(http.StatusInternalServerError, "agent unavailable"), nil
 		}))
 
-		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			DataType:     "flamegraph",
@@ -192,7 +238,7 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 			return newHTTPResponse(http.StatusOK, `{"code":0,"message":"ok","data":`), nil
 		}))
 
-		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			DataType:     "flamegraph",
@@ -210,7 +256,7 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 			return newHTTPResponse(http.StatusOK, `{"code":400,"message":"missing timeout","data":null}`), nil
 		}))
 
-		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			DataType:     "flamegraph",
@@ -228,7 +274,7 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 			return newHTTPResponse(http.StatusOK, `{"code":0,"message":"ok","data":{"task_id":""}}`), nil
 		}))
 
-		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &NewAgentTaskReq{
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", &AgentTaskRequest{
 			TracerName:   "oncpu",
 			TraceTimeout: 60,
 			DataType:     "flamegraph",

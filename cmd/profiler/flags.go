@@ -48,10 +48,9 @@ var appFlags = []cli.Flag{
 		Name:  "container-id",
 		Usage: "Target container ID",
 	},
-	&cli.StringFlag{
-		Name:  "scope",
-		Value: "thread",
-		Usage: "Sampling dimension: thread|thread-group|process-group etc.",
+	&cli.BoolFlag{
+		Name:  "thread-group",
+		Usage: "Profile the target thread group; supported only by native profiling",
 	},
 	&cli.BoolFlag{
 		Name:  "follow-forks",

@@ -38,9 +38,9 @@ func TestNewAuthService(t *testing.T) {
 		},
 	})
 
-	adminUser, ok := svc.GetUserById("admin-2026")
+	adminUser, ok := svc.GetUserByID("admin-2026")
 	if !ok {
-		t.Errorf("GetUserById(admin-2026) did not find user")
+		t.Errorf("GetUserByID(admin-2026) did not find user")
 		return
 	}
 	if !adminUser.IsAdmin {
@@ -50,9 +50,9 @@ func TestNewAuthService(t *testing.T) {
 		t.Errorf("admin user permissions = %#v, want [/v1/tasks/**]", adminUser.Permissions)
 	}
 
-	viewerUser, ok := svc.GetUserById("viewer-2026")
+	viewerUser, ok := svc.GetUserByID("viewer-2026")
 	if !ok {
-		t.Errorf("GetUserById(viewer-2026) did not find user")
+		t.Errorf("GetUserByID(viewer-2026) did not find user")
 		return
 	}
 	if viewerUser.Name != "Viewer User" {
@@ -63,7 +63,7 @@ func TestNewAuthService(t *testing.T) {
 	}
 }
 
-func TestAuthServiceAddDeleteAndGetUserById(t *testing.T) {
+func TestAuthServiceAddDeleteAndGetUserByID(t *testing.T) {
 	svc := NewAuthService(nil)
 	user := User{
 		ID:          "operator-2026",
@@ -73,9 +73,9 @@ func TestAuthServiceAddDeleteAndGetUserById(t *testing.T) {
 
 	svc.Add(user)
 
-	got, ok := svc.GetUserById("operator-2026")
+	got, ok := svc.GetUserByID("operator-2026")
 	if !ok {
-		t.Errorf("GetUserById(operator-2026) did not find user after Add")
+		t.Errorf("GetUserByID(operator-2026) did not find user after Add")
 		return
 	}
 	if got.ID != user.ID {
@@ -93,8 +93,8 @@ func TestAuthServiceAddDeleteAndGetUserById(t *testing.T) {
 
 	svc.Delete("operator-2026")
 
-	if _, ok := svc.GetUserById("operator-2026"); ok {
-		t.Errorf("GetUserById(operator-2026) found deleted user")
+	if _, ok := svc.GetUserByID("operator-2026"); ok {
+		t.Errorf("GetUserByID(operator-2026) found deleted user")
 	}
 }
 
@@ -191,6 +191,19 @@ func TestAuthServiceIsAdmin(t *testing.T) {
 	}
 	if svc.IsAdmin("ghost-2026") {
 		t.Errorf("IsAdmin(ghost-2026) = true, want false")
+	}
+}
+
+func TestAuthServiceValidatesPermissionMethod(t *testing.T) {
+	svc := NewAuthService([]UserConfig{{
+		ID:          "viewer-2026",
+		Permissions: []string{"GET /v1/profiles/**"},
+	}})
+	if err := svc.Validate("viewer-2026", http.MethodGet, "/v1/profiles/job-2026"); err != nil {
+		t.Fatalf("GET permission error=%v", err)
+	}
+	if err := svc.Validate("viewer-2026", http.MethodDelete, "/v1/profiles/job-2026"); err == nil {
+		t.Fatal("DELETE permission error=nil, want denied")
 	}
 }
 
@@ -307,18 +320,18 @@ func TestNewAuthMiddleware(t *testing.T) {
 			name:         "missing-authorization-header",
 			path:         "/v1/tasks/task-20250226",
 			wantStatus:   http.StatusUnauthorized,
-			wantBodyPart: "missing user ID",
+			wantBodyPart: "missing bearer token",
 		},
 		{
 			name:         "permission-denied",
-			authHeader:   "viewer-2026",
+			authHeader:   "Bearer viewer-2026",
 			path:         "/v1/tasks/task-20250226/result",
 			wantStatus:   http.StatusForbidden,
 			wantBodyPart: "does not have permission",
 		},
 		{
 			name:           "authorized-admin-request",
-			authHeader:     "admin-2026",
+			authHeader:     "Bearer admin-2026",
 			path:           "/v1/tasks/task-20250226/result",
 			wantStatus:     http.StatusNoContent,
 			wantHandlerRun: true,

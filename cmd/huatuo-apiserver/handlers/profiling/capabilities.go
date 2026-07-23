@@ -19,13 +19,12 @@ import (
 	"strings"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/profiling"
 )
 
-func buildCapabilitiesResponse(_ *Handler) (v1.ProfilingCapabilitiesResponse, error) {
+func buildCapabilitiesResponse(h *Handler) v1.ProfilingCapabilitiesResponse {
 	cpuLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeCPU))
 	sort.Strings(cpuLanguages)
 
@@ -44,19 +43,17 @@ func buildCapabilitiesResponse(_ *Handler) (v1.ProfilingCapabilitiesResponse, er
 		}
 	}
 
-	cfg := config.Get().Profiling
+	cfg := h.profilingConfig
 
 	return v1.ProfilingCapabilitiesResponse{
-		ProfileTypes:                    []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
-		CPUSupportedLanguages:           cpuLanguages,
-		MemorySupportedLanguages:        memoryLanguages,
-		MemoryModes:                     memoryModes,
-		DefaultCPUInterval:              cfg.CPUProfilingInterval,
-		DefaultMemoryInterval:           cfg.MemoryProfilingInterval,
-		DefaultCPUSingleTraceTimeout:    cfg.CPUSingleTraceTimeout,
-		DefaultMemorySingleTraceTimeout: cfg.MemorySingleTraceTimeout,
-		MaxProfilerProcesses:            cfg.MaxProfilerProcesses,
-	}, nil
+		Types:               []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
+		CPULanguages:        cpuLanguages,
+		MemoryLanguages:     memoryLanguages,
+		MemoryModes:         memoryModes,
+		AggregationInterval: cfg.AggregationInterval,
+		ExecutionTimeout:    cfg.ExecutionTimeout,
+		MaxProfilerProcs:    cfg.MaxProfilerProcs,
+	}
 }
 
 func languageStrings(languages []profiling.Language) []string {
@@ -72,10 +69,6 @@ func languageStrings(languages []profiling.Language) []string {
 // discover supported profiling types, languages, memory modes, and default
 // configuration values without hardcoding them.
 func (h *Handler) capabilities(ctx *server.Context) error {
-	resp, err := buildCapabilitiesResponse(h)
-	if err != nil {
-		return response.ErrInternal.WithMessage(err.Error())
-	}
-	response.Success(ctx, resp)
+	response.Success(ctx, buildCapabilitiesResponse(h))
 	return nil
 }

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -78,8 +78,8 @@ func (s *authService) Delete(userID string) {
 	s.users.Delete(userID)
 }
 
-// GetUserById gets a user by ID.
-func (s *authService) GetUserById(userID string) (User, bool) {
+// GetUserByID gets a user by ID.
+func (s *authService) GetUserByID(userID string) (User, bool) {
 	value, exists := s.users.Load(userID)
 	if !exists {
 		return User{}, false
@@ -88,7 +88,13 @@ func (s *authService) GetUserById(userID string) (User, bool) {
 }
 
 // Validate validates if a user has access to a specific path.
-func (s *authService) Validate(userID, path string) error {
+func (s *authService) Validate(userID string, request ...string) error {
+	method, path := "", ""
+	if len(request) == 1 {
+		path = request[0]
+	} else if len(request) >= 2 {
+		method, path = request[0], request[1]
+	}
 	value, exists := s.users.Load(userID)
 	if !exists {
 		return fmt.Errorf("user %s not found", userID)
@@ -103,12 +109,21 @@ func (s *authService) Validate(userID, path string) error {
 
 	// Check if user has permission for this path
 	for _, perm := range user.Permissions {
-		if s.matchesPath(string(perm), path) {
+		permissionMethod, permissionPath := splitPermission(string(perm))
+		if (permissionMethod == "" || permissionMethod == method) && s.matchesPath(permissionPath, path) {
 			return nil
 		}
 	}
 
-	return fmt.Errorf("user %s does not have permission to access %s", userID, path)
+	return fmt.Errorf("user does not have permission to access %s %s", method, path)
+}
+
+func splitPermission(permission string) (string, string) {
+	parts := strings.Fields(permission)
+	if len(parts) == 2 {
+		return strings.ToUpper(parts[0]), parts[1]
+	}
+	return "", permission
 }
 
 // IsAdmin checks if a user is an admin.
@@ -167,15 +182,39 @@ func (s *authService) matchesSegments(permission, path string) bool {
 }
 
 // NewAuthMiddleware returns a HandlerContextFunc that validates requests using the given authService.
-func NewAuthMiddleware(svc *authService) HandlerContextFunc {
+func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFunc {
+	var publicPaths, adminPaths []string
+	if len(pathSets) > 0 {
+		publicPaths = pathSets[0]
+	}
+	if len(pathSets) > 1 {
+		adminPaths = pathSets[1]
+	}
 	return func(ctx *Context) {
-		userID := ctx.Request().Header.Get("Authorization")
+		path := ctx.Request().URL.Path
+		if matchesAnyPath(svc, publicPaths, path) {
+			ctx.Next()
+			return
+		}
+
+		userID := bearerToken(ctx.Request().Header.Get("Authorization"))
 		if userID == "" {
-			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "missing user ID")
+			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "missing bearer token")
 			ctx.Abort()
 			return
 		}
-		if err := svc.Validate(userID, ctx.Request().URL.Path); err != nil {
+		user, exists := svc.GetUserByID(userID)
+		if !exists {
+			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "invalid bearer token")
+			ctx.Abort()
+			return
+		}
+		if matchesAnyPath(svc, adminPaths, path) && !user.IsAdmin {
+			response.ErrorWithCode(ctx, http.StatusForbidden, response.ErrForbidden.Code, "administrator permission required")
+			ctx.Abort()
+			return
+		}
+		if err := svc.Validate(userID, ctx.Request().Method, path); err != nil {
 			response.ErrorWithCode(ctx, http.StatusForbidden, response.ErrForbidden.Code, err.Error())
 			ctx.Abort()
 			return
@@ -184,4 +223,21 @@ func NewAuthMiddleware(svc *authService) HandlerContextFunc {
 		ctx.IsAdmin = svc.IsAdmin(userID)
 		ctx.Next()
 	}
+}
+
+func bearerToken(header string) string {
+	scheme, token, found := strings.Cut(strings.TrimSpace(header), " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}
+
+func matchesAnyPath(svc *authService, patterns []string, path string) bool {
+	for _, pattern := range patterns {
+		if svc.matchesPath(pattern, path) {
+			return true
+		}
+	}
+	return false
 }

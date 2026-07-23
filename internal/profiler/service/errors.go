@@ -12,19 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package service
 
-import (
-	"huatuo-bamai/pkg/metric/runtime"
+import "errors"
 
-	"github.com/prometheus/client_golang/prometheus"
+var (
+	ErrInvalidQuery   = errors.New("invalid profile query")
+	ErrProfilesAbsent = errors.New("profiles not found")
 )
-
-var promNamespace = "huatuo_apiserver"
-
-func InitMetricsCollector() (*prometheus.Registry, error) {
-	reg := prometheus.NewRegistry()
-
-	runtime.RegisterCollector(reg, promNamespace)
-	return reg, nil
-}

@@ -23,7 +23,10 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 		return 0;
 
 	u64 pid_tgid = bpf_get_current_pid_tgid();
-	if (!profiler_should_trace(pid_tgid))
+	u64 mem_css = 0;
+	if (profiler_filter_css != 0)
+		mem_css = current_task_memory_css_addr();
+	if (!profiler_should_trace(pid_tgid, mem_css))
 		return 0;
 
 	if (!profiler_should_sample())
@@ -64,7 +67,10 @@ int BPF_KPROBE(trace_page_free, struct page *page, bool compound)
 		return 0;
 
 	u64 pid_tgid = bpf_get_current_pid_tgid();
-	if (!profiler_should_trace(pid_tgid))
+	u64 mem_css = 0;
+	if (profiler_filter_css != 0)
+		mem_css = current_task_memory_css_addr();
+	if (!profiler_should_trace(pid_tgid, mem_css))
 		return 0;
 
 	u64 page_addr = (u64)page;

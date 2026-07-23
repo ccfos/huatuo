@@ -1,5 +1,5 @@
 ---
-title: Configuration Guide
+title: huatuo-bamai Configuration
 type: docs
 description:
 author: HUATUO Team

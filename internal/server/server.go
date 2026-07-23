@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,10 +15,13 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -35,25 +38,41 @@ import (
 
 // Config defines the configuration options for the HTTP server.
 type Config struct {
-	EnablePProf     bool
-	EnableRateLimit bool
-	RateLimit       rate.Limit
-	RateBurst       int
-	EnableRetry     bool
-	AuthUsers       []UserConfig
-	PromReg         *prometheus.Registry
-	Group           string
-	VersionInfo     *version.Info
+	EnablePProf       bool
+	EnableRateLimit   bool
+	RateLimit         rate.Limit
+	RateBurst         int
+	EnableRetry       bool
+	RequireAuth       bool
+	AuthUsers         []UserConfig
+	PublicPaths       []string
+	AdminPaths        []string
+	PromReg           *prometheus.Registry
+	Group             string
+	VersionInfo       *version.Info
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
+	MaxBodyBytes      int64
+	Ready             func(context.Context) error
 }
 
 var defaultConfig = &Config{
-	EnablePProf:     false,
-	EnableRateLimit: false,
-	RateLimit:       200,
-	RateBurst:       200,
-	EnableRetry:     false,
-	PromReg:         nil,
-	Group:           "",
+	EnablePProf:       false,
+	EnableRateLimit:   false,
+	RateLimit:         200,
+	RateBurst:         200,
+	EnableRetry:       false,
+	PromReg:           nil,
+	Group:             "",
+	ReadHeaderTimeout: 10 * time.Second,
+	ReadTimeout:       30 * time.Second,
+	WriteTimeout:      60 * time.Second,
+	IdleTimeout:       120 * time.Second,
+	MaxHeaderBytes:    1 << 20,
+	MaxBodyBytes:      4 << 20,
 }
 
 // Server is an HTTP server instance.
@@ -61,6 +80,110 @@ type server struct {
 	engine       *httpGin.Engine
 	promRegistry *prometheus.Registry
 	rootGroup    *routerGroup
+	mu           sync.Mutex
+	httpServer   *http.Server
+	listener     net.Listener
+	serveDone    chan struct{}
+	serveResult  error
+	config       Config
+}
+
+// Start binds addr before returning and serves requests in the background.
+func (s *server) Start(addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", addr, err)
+	}
+
+	s.mu.Lock()
+	if s.httpServer != nil {
+		s.mu.Unlock()
+		_ = listener.Close()
+		return errors.New("http server already started")
+	}
+
+	httpServer := &http.Server{
+		Handler:           s.engine,
+		ReadHeaderTimeout: s.config.ReadHeaderTimeout,
+		ReadTimeout:       s.config.ReadTimeout,
+		WriteTimeout:      s.config.WriteTimeout,
+		IdleTimeout:       s.config.IdleTimeout,
+		MaxHeaderBytes:    s.config.MaxHeaderBytes,
+	}
+	serveDone := make(chan struct{})
+	s.httpServer = httpServer
+	s.listener = listener
+	s.serveDone = serveDone
+	s.serveResult = nil
+	s.mu.Unlock()
+
+	go func() {
+		err := httpServer.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		s.mu.Lock()
+		s.serveResult = err
+		close(serveDone)
+		s.mu.Unlock()
+	}()
+
+	return nil
+}
+
+// Shutdown stops accepting requests and waits for the serving goroutine.
+func (s *server) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	httpServer := s.httpServer
+	s.mu.Unlock()
+	if httpServer == nil {
+		return nil
+	}
+
+	shutdownErr := httpServer.Shutdown(ctx)
+	serveResult := s.Wait(ctx)
+
+	s.mu.Lock()
+	s.httpServer = nil
+	s.listener = nil
+	s.mu.Unlock()
+
+	return errors.Join(shutdownErr, serveResult)
+}
+
+// Done is closed when the serving goroutine exits.
+func (s *server) Done() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.serveDone
+}
+
+// Addr returns the bound listener address after Start.
+func (s *server) Addr() net.Addr {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.listener == nil {
+		return nil
+	}
+	return s.listener.Addr()
+}
+
+// Wait returns the serving result or the context error.
+func (s *server) Wait(ctx context.Context) error {
+	s.mu.Lock()
+	done := s.serveDone
+	s.mu.Unlock()
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.serveResult
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type Option struct {
@@ -76,25 +199,31 @@ func NewServer(cfg *Config) *server {
 	if cfg == nil {
 		cfg = defaultConfig
 	}
+	effectiveConfig := *cfg
+	normalizeServerConfig(&effectiveConfig)
+	cfg = &effectiveConfig
 
 	s := &server{
 		engine:       httpGin.New(),
 		promRegistry: cfg.PromReg,
-	}
-
-	if cfg.EnablePProf {
-		pprof.Register(s.engine)
+		config:       *cfg,
 	}
 
 	middleWares := []httpGin.HandlerFunc{
 		middlewareContext(),
-		httpGin.Logger(),
+		maxBodyBytesMiddleware(cfg.MaxBodyBytes),
+		requestLogMiddleware(),
 		httpGin.Recovery(),
 	}
+	if cfg.PromReg != nil {
+		middleWares = append(middleWares, newHTTPMetricsMiddleware(cfg.PromReg))
+	}
 
-	if len(cfg.AuthUsers) > 0 {
+	if cfg.RequireAuth || len(cfg.AuthUsers) > 0 {
 		svc := NewAuthService(cfg.AuthUsers)
-		middleWares = append(middleWares, wrapHandler(NewAuthMiddleware(svc)))
+		publicPaths := append([]string{"/healthz", "/readyz", "/metrics", "/version"}, cfg.PublicPaths...)
+		adminPaths := append([]string{"/debug/pprof", "/debug/pprof/**"}, cfg.AdminPaths...)
+		middleWares = append(middleWares, wrapHandler(NewAuthMiddleware(svc, publicPaths, adminPaths)))
 	}
 
 	if cfg.EnableRateLimit {
@@ -102,9 +231,13 @@ func NewServer(cfg *Config) *server {
 	}
 
 	s.engine.Use(middleWares...)
+	if cfg.EnablePProf {
+		pprof.Register(s.engine)
+	}
 	s.rootGroup = NewRoot(s.engine, cfg.Group)
 	s.MustRegisterRoutes("", []Handle{
 		{Typ: HttpGet, Uri: "/healthz", Handle: s.healthzHandler()},
+		{Typ: HttpGet, Uri: "/readyz", Handle: s.readyzHandler()},
 		{Typ: HttpGet, Uri: "/metrics", Handle: s.promServerHandler()},
 	})
 	if cfg.VersionInfo != nil {
@@ -115,8 +248,95 @@ func NewServer(cfg *Config) *server {
 	return s
 }
 
+func normalizeServerConfig(cfg *Config) {
+	if cfg.ReadHeaderTimeout <= 0 {
+		cfg.ReadHeaderTimeout = defaultConfig.ReadHeaderTimeout
+	}
+	if cfg.ReadTimeout <= 0 {
+		cfg.ReadTimeout = defaultConfig.ReadTimeout
+	}
+	if cfg.WriteTimeout <= 0 {
+		cfg.WriteTimeout = defaultConfig.WriteTimeout
+	}
+	if cfg.IdleTimeout <= 0 {
+		cfg.IdleTimeout = defaultConfig.IdleTimeout
+	}
+	if cfg.MaxHeaderBytes <= 0 {
+		cfg.MaxHeaderBytes = defaultConfig.MaxHeaderBytes
+	}
+	if cfg.MaxBodyBytes <= 0 {
+		cfg.MaxBodyBytes = defaultConfig.MaxBodyBytes
+	}
+}
+
+func maxBodyBytesMiddleware(limit int64) httpGin.HandlerFunc {
+	return func(ctx *httpGin.Context) {
+		if ctx.Request.Body != nil {
+			ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, limit)
+		}
+		ctx.Next()
+	}
+}
+
+func requestLogMiddleware() httpGin.HandlerFunc {
+	return func(ctx *httpGin.Context) {
+		startedAt := time.Now()
+		ctx.Next()
+		log.WithField("method", ctx.Request.Method).
+			WithField("path", ctx.FullPath()).
+			WithField("status", ctx.Writer.Status()).
+			WithField("latency", time.Since(startedAt)).
+			Info("http request completed")
+	}
+}
+
+func newHTTPMetricsMiddleware(reg prometheus.Registerer) httpGin.HandlerFunc {
+	requests := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "huatuo",
+		Subsystem: "http_server",
+		Name:      "requests_total",
+		Help:      "Total API requests by route, method, and status.",
+	}, []string{"route", "method", "status"})
+	duration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "huatuo",
+		Subsystem: "http_server",
+		Name:      "request_duration_seconds",
+		Help:      "API request duration by route and method.",
+		Buckets:   prometheus.DefBuckets,
+	}, []string{"route", "method"})
+	reg.MustRegister(requests, duration)
+
+	return func(ctx *httpGin.Context) {
+		startedAt := time.Now()
+		ctx.Next()
+		route := ctx.FullPath()
+		if route == "" {
+			route = "unmatched"
+		}
+		status := strconv.Itoa(ctx.Writer.Status())
+		requests.WithLabelValues(route, ctx.Request.Method, status).Inc()
+		duration.WithLabelValues(route, ctx.Request.Method).Observe(time.Since(startedAt).Seconds())
+	}
+}
+
 func (s *server) healthzHandler() ErrHandlerContextFunc {
 	return func(ctx *Context) error {
+		ctx.Status(http.StatusNoContent)
+		return nil
+	}
+}
+
+func (s *server) readyzHandler() ErrHandlerContextFunc {
+	return func(ctx *Context) error {
+		if s.config.Ready == nil {
+			ctx.Status(http.StatusNoContent)
+			return nil
+		}
+		if err := s.config.Ready(ctx.Request().Context()); err != nil {
+			log.WithError(err).Warn("readiness check failed")
+			ctx.JSON(http.StatusServiceUnavailable, map[string]string{"status": "not ready"})
+			return nil
+		}
 		ctx.Status(http.StatusNoContent)
 		return nil
 	}
@@ -142,9 +362,40 @@ func (s *server) promServerHandler() ErrHandlerContextFunc {
 
 // a middleware for global rate limiting.
 func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
-	limiter := rate.NewLimiter(r, burst)
+	type limiterEntry struct {
+		limiter  *rate.Limiter
+		lastSeen time.Time
+	}
+	var mu sync.Mutex
+	limiters := make(map[string]limiterEntry)
+	var requests uint64
 	return func(c *httpGin.Context) {
-		if !limiter.Allow() {
+		key := internalContext(c).UserID
+		if key == "" {
+			key = c.Request.RemoteAddr
+			if host, _, err := net.SplitHostPort(key); err == nil {
+				key = host
+			}
+		}
+		now := time.Now()
+		mu.Lock()
+		entry, exists := limiters[key]
+		if !exists {
+			entry.limiter = rate.NewLimiter(r, burst)
+		}
+		entry.lastSeen = now
+		limiters[key] = entry
+		requests++
+		if requests%1000 == 0 {
+			for client, candidate := range limiters {
+				if now.Sub(candidate.lastSeen) > 10*time.Minute {
+					delete(limiters, client)
+				}
+			}
+		}
+		allowed := entry.limiter.Allow()
+		mu.Unlock()
+		if !allowed {
 			ctx := internalContext(c)
 			ctx.JSON(http.StatusTooManyRequests, map[string]any{
 				"code":    429,
@@ -208,17 +459,7 @@ func (s *server) run(addr string) error {
 		return fmt.Errorf("listen %w", err)
 	}
 
-	tcpListener := listener.(*net.TCPListener)
-	file, err := tcpListener.File()
-	if err != nil {
-		return fmt.Errorf("get listener fd %w", err)
-	}
-
-	if err := syscall.SetsockoptInt(int(file.Fd()), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); err != nil {
-		return fmt.Errorf("set sockopt addr reuse %w", err)
-	}
-
-	return s.engine.RunListener(tcpListener)
+	return s.engine.RunListener(listener)
 }
 
 // Run starts the TCP server with retry mechanism.
@@ -234,9 +475,11 @@ func (s *server) Run(option *Option) error {
 
 				retryInterval := b.Duration()
 				if errors.Is(err, syscall.EADDRINUSE) {
-					log.Infof("tcp api server %v, retrying in %v ...", err, retryInterval)
+					log.WithError(err).WithField("retry_interval", retryInterval).
+						Info("tcp api address is in use; retrying")
 				} else if err != nil {
-					log.Warnf("tcp api server %v, retrying in %v ...", err, retryInterval)
+					log.WithError(err).WithField("retry_interval", retryInterval).
+						Warn("tcp api server failed; retrying")
 				}
 				time.Sleep(retryInterval)
 			}

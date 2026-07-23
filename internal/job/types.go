@@ -15,10 +15,14 @@
 package job
 
 import (
+	"encoding/json"
 	"time"
 )
 
 type JobStatus string
+
+// JobType identifies the operation executed by an agent job.
+type JobType string
 
 const (
 	AgentStatusCompleted = "completed"
@@ -26,6 +30,15 @@ const (
 	AgentStatusPending   = "pending"
 	AgentStatusRunning   = "running"
 	AgentStatusNotExist  = "not_exist"
+)
+
+const (
+	// JobTypeProfilingCPU identifies CPU profiling jobs.
+	JobTypeProfilingCPU JobType = "profiling_cpu"
+	// JobTypeProfilingMemory identifies memory profiling jobs.
+	JobTypeProfilingMemory JobType = "profiling_memory"
+	// JobTypeTracing identifies tracing jobs.
+	JobTypeTracing JobType = "tracing"
 )
 
 const (
@@ -43,8 +56,9 @@ type Result struct {
 	Error string `json:"error"`
 }
 
-// NewAgentTaskReq represents the structure of the request body for creating a new job.
-type NewAgentTaskReq struct {
+// AgentTaskRequest represents the request body for creating an agent task.
+type AgentTaskRequest struct {
+	RequestID         string   `json:"request_id,omitempty" binding:"omitempty"`        // Idempotency key assigned by the control plane
 	TracerName        string   `json:"tracer_name" binding:"required"`                  // Name of the tracer, required field
 	TraceTimeout      int      `json:"trace_timeout" binding:"required,number,lt=3600"` // Timeout in seconds, must be less than 3600s(1 hours)
 	Interval          int      `json:"interval" binding:"omitempty,number,lt=3600"`     // Interval in seconds, must be less than 3600s(1 hours)
@@ -52,51 +66,62 @@ type NewAgentTaskReq struct {
 	DataType          string   `json:"data_type" binding:"required"`                    // Type of data to be handled, required field
 	ContainerID       string   `json:"container_id" binding:"omitempty"`                // ID of the container, optional field
 	ContainerHostname string   `json:"container_hostname" binding:"omitempty"`          // Hostname of the container, optional field
-	TracerArgs        []string `json:"trace_args" binding:"omitempty"`                  // Additional arguments for the tracer, optional field
+	TracerArgs        []string `json:"tracer_args" binding:"omitempty"`                 // Additional arguments for the tracer, optional field
 }
 
 // CreateJobRequest holds parameters for creating a new job
 type CreateJobRequest struct {
-	UserID    string
-	Container string
-	Host      string
-	JobType   string
-	Args      *NewAgentTaskReq
+	UserID      string
+	ContainerID string
+	Hostname    string
+	Type        JobType
+	AgentTask   *AgentTaskRequest
+	PrivateData json.RawMessage
 }
 
 // Job represents a job
 type Job struct {
-	Type        string          `json:"type"`
-	JobID       string          `json:"job_id"`
-	UserName    string          `json:"user_name"`
-	UserID      string          `json:"user_id"`
-	Container   string          `json:"container"`
-	Host        string          `json:"host"`
-	AgentTaskID string          `json:"agent_job_id"`
-	Status      JobStatus       `json:"status"`
-	Error       string          `json:"error,omitempty"`
-	Duration    int             `json:"duration"`
-	Timeout     int             `json:"timeout"`
-	StartTime   time.Time       `json:"start_time"`
-	EndTime     time.Time       `json:"end_time"`
-	Args        NewAgentTaskReq `json:"args"`
-	Results     Result          `json:"results,omitempty"`
+	Type         JobType          `json:"type"`
+	ID           string           `json:"id"`
+	Username     string           `json:"username"`
+	UserID       string           `json:"user_id"`
+	ContainerID  string           `json:"container_id"`
+	Hostname     string           `json:"hostname"`
+	AgentTaskID  string           `json:"agent_task_id"`
+	Status       JobStatus        `json:"status"`
+	ErrorMessage string           `json:"error_message,omitempty"`
+	Duration     int              `json:"duration"`
+	TraceTimeout int              `json:"trace_timeout"`
+	StartTime    time.Time        `json:"start_time"`
+	EndTime      time.Time        `json:"end_time"`
+	AgentTask    AgentTaskRequest `json:"agent_task"`
+	Result       Result           `json:"result,omitempty"`
 
-	LastUpdate time.Time `json:"-"`
-	stopChan   chan struct{}
+	UpdatedAt time.Time `json:"-"`
+	stopCh    chan struct{}
 
-	PrivateData map[string]any `json:"-"`
+	PrivateData json.RawMessage `json:"-"`
 }
 
 // JobQuery defines filters for searching jobs
 type JobQuery struct {
-	JobID     string
-	UserID    string
-	IsAdmin   bool
-	Container string
-	Host      string
-	Status    string
-	Type      string
+	ID          string
+	UserID      string
+	IsAdmin     bool
+	ContainerID string
+	Hostname    string
+	Status      string
+	Statuses    []JobStatus
+	Types       []JobType
+	Sort        string
+	Limit       int
+	Offset      int
+}
+
+// JobPage contains one page of jobs and the total number of matching records.
+type JobPage struct {
+	Items []*Job
+	Total int64
 }
 
 // JobCleanupQuery defines parameters for cleaning up old jobs

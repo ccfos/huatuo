@@ -15,231 +15,74 @@
 package profiling
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
+	"time"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/listing"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
 	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/profiling"
-
-	"github.com/gin-gonic/gin/binding"
-	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
-	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 )
 
 const (
-	ProfilingMemory = "profiling_memory"
-	ProfilingCPU    = "profiling_cpu"
+	ProfilingMemory = job.JobTypeProfilingMemory
+	ProfilingCPU    = job.JobTypeProfilingCPU
 )
 
-// Handler handles profiling-related HTTP requests.
-type Handler struct {
-	jobManager *job.Manager
-	Handlers   []server.Handle
-}
-
-// NewHandler creates a new profiling handler.
-func NewHandler(jm *job.Manager) *Handler {
-	h := &Handler{jobManager: jm}
-
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpGet, Uri: "/capabilities", Handle: h.capabilities},
-		{Typ: server.HttpPost, Uri: "", Handle: h.start},
-		{Typ: server.HttpGet, Uri: "", Handle: h.list},
-		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
-		{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
-		{Typ: server.HttpPatch, Uri: "/:id", Handle: h.patchOne},
-		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.delete},
-		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces", Handle: h.DisplaySelectMergeStacktraces},
-		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/ProfileTypes", Handle: h.DisplayProfileTypes},
-		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectSeries", Handle: h.DisplaySelectSeries},
-		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/LabelNames", Handle: h.DisplayLabelNames},
-		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/LabelValues", Handle: h.DisplayLabelValues},
+// create creates a profiling job.
+func (h *Handler) create(ctx *server.Context) error {
+	req, err := parseCreateProfilingJobRequest(ctx)
+	if err != nil {
+		return response.ErrInvalidRequest
+	}
+	if req.Hostname == "" {
+		return response.ErrInvalidRequest.WithMessage("hostname is required")
 	}
 
-	return h
-}
-
-// start starts a new profiling job.
-func (h *Handler) start(ctx *server.Context) error {
-	var req v1.StartProfilingRequest
-
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	createReq, err := buildCreateProfilingJobRequest(
+		req,
+		ctx.UserID,
+		&h.profilingConfig,
+	)
+	if err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	hasRunning, err := h.hasRunningProfilingJob(req.Hostname, ctx.UserID)
+	jobResult, err := h.jobManager.CreateContext(ctx.Request().Context(), createReq)
 	if err != nil {
-		return response.ErrInternal.WithMessage(err.Error())
-	}
-	if hasRunning {
-		return response.ErrConflict.WithMessage("there is already a profiling job running on this host")
-	}
-
-	agentTaskReq := job.NewAgentTaskReq{
-		TracerName: "profiler",
-		DataType:   "db-json",
-	}
-	switch req.Type {
-	case "cpu":
-		agentTaskReq.Interval = config.Get().Profiling.CPUProfilingInterval
-		agentTaskReq.TraceTimeout = config.Get().Profiling.CPUSingleTraceTimeout
-		if err := fillCPUTracerArgs(&agentTaskReq, req.TargetExecPath, req.TargetProcessLanguage); err != nil {
-			return response.ErrInvalidRequest.WithMessage(err.Error())
+		if errors.Is(err, job.ErrQuotaExceeded) {
+			return response.ErrConflict.WithMessage("profiling job quota exceeded")
 		}
-	case "memory":
-		agentTaskReq.Interval = config.Get().Profiling.MemoryProfilingInterval
-		agentTaskReq.TraceTimeout = config.Get().Profiling.MemorySingleTraceTimeout
-		if err := fillMemoryTracerArgs(&agentTaskReq, req.TargetProcessLanguage, req.MemoryMode); err != nil {
-			return response.ErrInvalidRequest.WithMessage(err.Error())
-		}
-	default:
-		return response.ErrInvalidRequest.WithMessage("not supported yet")
+		log.WithError(err).Error("failed to create profiling job")
+		return response.ErrInternal
 	}
-
-	if agentTaskReq.Interval == 0 {
-		log.Infof("CPUProfilingInterval or MemoryProfilingInterval is not set, using default value 10")
-		agentTaskReq.Interval = 10
-	}
-	if agentTaskReq.TraceTimeout < agentTaskReq.Interval*2 {
-		log.Infof("CPUSingleTraceTimeout or MemorySingleTraceTimeout is less than Interval * 2, using Interval * 2")
-		agentTaskReq.TraceTimeout = agentTaskReq.Interval * 2
-	}
-
-	// profiling job need to be stopped from outside, so we need to set duration to args.Duration * 2,
-	// job.Duration will control the actual profiling time
-	agentTaskReq.Duration = req.Duration * 2
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--duration", strconv.Itoa(agentTaskReq.Interval))
-
-	if config.Get().Profiling.MaxProfilerProcesses > 0 {
-		agentTaskReq.TracerArgs = append(
-			agentTaskReq.TracerArgs,
-			"--max-concurrent-procs",
-			strconv.Itoa(config.Get().Profiling.MaxProfilerProcesses),
-		)
-	}
-
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs,
-		"--output-format", "remote",
-		"--output-storage", "/var/run/huatuo-toolstream.sock")
-
-	var jobType string
-	if req.Type == "memory" {
-		jobType = ProfilingMemory
-	} else {
-		jobType = ProfilingCPU
-	}
-	jobResult, err := h.jobManager.Create(job.CreateJobRequest{
-		UserID:    ctx.UserID,
-		Container: req.Container,
-		Host:      req.Hostname,
-		JobType:   jobType,
-		Args:      &agentTaskReq,
+	response.Created(ctx, "/v1/profiles/"+jobResult.ID, v1.CreateProfilingJobResponse{
+		ID: jobResult.ID,
 	})
-	if err != nil {
-		log.Errorf("Failed to create profiling job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
-	}
-	jobResult.PrivateData = map[string]any{
-		"target_exec_path":        req.TargetExecPath,
-		"target_process_language": req.TargetProcessLanguage,
-		"memory_mode":             req.MemoryMode,
-	}
-
-	response.Created(ctx, "/v1/profiles/"+jobResult.JobID, v1.StartProfilingResponse{
-		ID: jobResult.JobID,
-	})
-	return nil
-}
-
-// hasRunningProfilingJob reports whether a profiling job is currently running on hostname for userID.
-func (h *Handler) hasRunningProfilingJob(hostname, userID string) (bool, error) {
-	filter := job.JobQuery{
-		Host:   hostname,
-		Status: "running",
-	}
-	jobs, err := h.jobManager.List(userID, false, &filter)
-	if err != nil {
-		log.Errorf("Failed to list profiling jobs: %v", err)
-		return false, err
-	}
-	if len(jobs) > 0 {
-		log.Infof("There is already a profiling job running on this host")
-		return true, nil
-	}
-	return false, nil
-}
-
-func fillMemoryTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetProcessLanguage, memoryMode string) error {
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", string(profiling.TypeMemory))
-
-	languageValue := targetProcessLanguage
-	modeValue := strings.ToLower(memoryMode)
-	if strings.HasPrefix(memoryMode, "NATIVE_") {
-		languageValue = string(profiling.LanguageC)
-		modeValue = strings.ToLower(strings.TrimPrefix(memoryMode, "NATIVE_"))
-	}
-	language, err := profiling.ParseLanguage(languageValue)
-	if err != nil {
-		return fmt.Errorf("memory profiling not supported for %s", targetProcessLanguage)
-	}
-	mode, err := profiling.ParseMemoryMode(modeValue)
-	if err != nil || !profiling.SupportsMemoryMode(language, mode) {
-		return fmt.Errorf("memory mode not supported: %s", memoryMode)
-	}
-
-	agentTaskReq.TracerArgs = append(
-		agentTaskReq.TracerArgs,
-		"--memory-mode", string(mode),
-		"-l", string(language),
-	)
-	return nil
-}
-
-func fillCPUTracerArgs(agentTaskReq *job.NewAgentTaskReq, targetExecPath, targetProcessLanguage string) error {
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-t", string(profiling.TypeCPU))
-
-	if targetExecPath != "" {
-		agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "--binary-match-path", targetExecPath)
-	}
-
-	language, err := profiling.ParseLanguage(targetProcessLanguage)
-	if err != nil || !profiling.IsSupported(language, profiling.TypeCPU) {
-		return fmt.Errorf("cpu profiling not supported for %s", targetProcessLanguage)
-	}
-	agentTaskReq.TracerArgs = append(agentTaskReq.TracerArgs, "-l", string(language))
-
 	return nil
 }
 
 // patchOne stops a profiling job. Body must be {"status":"stopped"}.
 func (h *Handler) patchOne(ctx *server.Context) error {
-	taskID := ctx.Param("id")
-	if taskID == "" {
-		return response.ErrInvalidRequest.WithMessage("id is required")
-	}
-
-	var req v1.PatchStatusRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	req, err := parsePatchProfilingJobRequest(ctx)
+	if err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
-	if req.Status != listing.StatusStopped {
-		return response.ErrInvalidRequest.WithMessage(`status must be "stopped"`)
-	}
+	taskID := req.ID
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get profiling job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
@@ -250,9 +93,9 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage("job already completed")
 	}
 
-	if err := h.jobManager.Stop(taskID, false); err != nil {
-		log.Errorf("Failed to stop profiling job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+	if err := h.jobManager.StopByTypesContext(ctx.Request().Context(), taskID, false, ProfilingCPU, ProfilingMemory); err != nil {
+		log.WithError(err).WithField("job_id", taskID).Error("failed to stop profiling job")
+		return response.ErrInternal
 	}
 
 	response.Success(ctx, nil)
@@ -261,153 +104,155 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 
 // list lists profiling jobs based on filters.
 func (h *Handler) list(ctx *server.Context) error {
-	listParams, err := ctx.ParseListParams()
+	req, err := parseProfilingJobListRequest(ctx)
 	if err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobType := ctx.Query("type")
-	validTypes := map[string]bool{
-		"memory": true,
-		"cpu":    true,
-		"":       true,
-	}
-	if !validTypes[jobType] {
-		return response.ErrInvalidRequest.WithMessage("invalid type value")
-	}
-
-	filter := job.JobQuery{
-		Container: ctx.Query("container"),
-		Host:      ctx.Query("host"),
-		Status:    ctx.Query("status"),
-	}
-	var allJobs []*job.Job
-	var listErr error
-	typesToQuery := []string{}
-	if jobType == "memory" || jobType == "" {
-		typesToQuery = append(typesToQuery, ProfilingMemory)
-	}
-	if jobType == "cpu" || jobType == "" {
-		typesToQuery = append(typesToQuery, ProfilingCPU)
-	}
-	for _, queryType := range typesToQuery {
-		currentFilter := filter
-		currentFilter.Type = queryType
-
-		jobs, err := h.jobManager.List(ctx.UserID, ctx.IsAdmin, &currentFilter)
-		if err != nil {
-			log.Errorf("Failed to list %s jobs: %v", queryType, err)
-			listErr = err
-			continue
+	req.JobQuery.Sort = req.ListParams.Sort
+	req.JobQuery.Offset = req.ListParams.Offset
+	req.JobQuery.Limit = req.ListParams.Limit
+	page, err := h.jobManager.ListPageContext(
+		ctx.Request().Context(), ctx.UserID, ctx.IsAdmin, &req.JobQuery,
+	)
+	if err != nil {
+		if errors.Is(err, job.ErrInvalidQuery) {
+			return response.ErrInvalidRequest.WithMessage(err.Error())
 		}
-		allJobs = append(allJobs, jobs...)
-	}
-	if listErr != nil && len(allJobs) == 0 {
-		return response.ErrInternal.WithMessage(listErr.Error())
+		log.WithError(err).Error("failed to list profiling jobs")
+		return response.ErrInternal
 	}
 
-	if err := listing.SortJobs(allJobs, listParams.Sort); err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
+	items := make([]v1.ProfilingJobResponse, len(page.Items))
+	for i, j := range page.Items {
+		items[i], err = buildProfilingJobResponse(j, h.profilingConfig.FlameGraphBaseURL)
+		if err != nil {
+			log.WithError(err).WithField("job_id", j.ID).
+				Error("failed to build profiling job response")
+			return response.ErrInternal
+		}
 	}
 
-	total := len(allJobs)
-	pageJobs := listing.Paginate(allJobs, listParams.Offset, listParams.Limit)
-
-	items := make([]v1.ProfilingStatusResponse, len(pageJobs))
-	for i, j := range pageJobs {
-		items[i] = h.convertJobToProfilingResponse(j)
-	}
-
-	response.Success(ctx, v1.ProfilingListResponse{
+	response.Success(ctx, v1.ProfilingJobListResponse{
 		Items:  items,
-		Total:  total,
-		Limit:  listParams.Limit,
-		Offset: listParams.Offset,
+		Total:  int(page.Total),
+		Limit:  req.ListParams.Limit,
+		Offset: req.ListParams.Offset,
 	})
 	return nil
 }
 
 // get gets a specific profiling job by ID.
 func (h *Handler) get(ctx *server.Context) error {
-	taskID := ctx.Param("id")
-	if taskID == "" {
-		return response.ErrInvalidRequest.WithMessage("id is required")
+	taskID, err := parseProfilingJobID(ctx)
+	if err != nil {
+		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get profiling job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
 		return response.ErrForbidden
 	}
-
-	profilingResponse := h.convertJobToProfilingResponse(jobResult)
+	profilingResponse, err := buildProfilingJobResponse(jobResult, h.profilingConfig.FlameGraphBaseURL)
+	if err != nil {
+		log.WithError(err).WithField("job_id", taskID).
+			Error("failed to build profiling job response")
+		return response.ErrInternal
+	}
 
 	response.Success(ctx, profilingResponse)
 	return nil
 }
 
-// convertJobToProfilingResponse converts a job.Job to v1.ProfilingStatusResponse.
-func (h *Handler) convertJobToProfilingResponse(jobResult *job.Job) v1.ProfilingStatusResponse {
-	if jobResult.Status == job.JobStatusCompleted || jobResult.Status == job.JobStatusStopped {
-		if jobResult.Results.URL == "" {
-			jobResult.Results.URL = getFlameGraphURL(jobResult)
-			if err := h.jobManager.Save(jobResult); err != nil {
-				log.Errorf("Failed to save job %s: %v", jobResult.JobID, err)
-			}
-		}
+func buildProfilingJobResponse(jobResult *job.Job, flameGraphBaseURL string) (v1.ProfilingJobResponse, error) {
+	profileType, err := profilingAPIType(jobResult.Type)
+	if err != nil {
+		return v1.ProfilingJobResponse{}, err
 	}
 
-	resp := v1.ProfilingStatusResponse{
-		ID:          jobResult.JobID,
+	resultURL := jobResult.Result.URL
+	if resultURL == "" && profilingJobHasResults(jobResult.Status) {
+		resultURL = getFlameGraphURL(flameGraphBaseURL, jobResult)
+	}
+
+	privateData, err := decodeProfilingPrivateData(jobResult.PrivateData)
+	if err != nil {
+		return v1.ProfilingJobResponse{}, err
+	}
+	if privateData.Duration == 0 {
+		privateData.Duration = jobResult.AgentTask.Duration / 2
+	}
+	resp := v1.ProfilingJobResponse{
+		ID:          jobResult.ID,
 		AgentTaskID: jobResult.AgentTaskID,
-		Container:   jobResult.Container,
-		Hostname:    jobResult.Host,
+		ContainerID: jobResult.ContainerID,
+		Hostname:    jobResult.Hostname,
 		Status:      string(jobResult.Status),
-		StartTime:   jobResult.StartTime.Format("2006-01-02T15:04:05.000"),
-		EndTime:     jobResult.EndTime.Format("2006-01-02T15:04:05.000"),
-		TracerArgs:  jobResult.Args.TracerArgs,
-		Duration:    jobResult.Args.Duration >> 1,
+		Type:        profileType,
+		StartTime:   formatProfilingTime(jobResult.StartTime),
+		EndTime:     formatProfilingTime(jobResult.EndTime),
+		TracerArgs:  jobResult.AgentTask.TracerArgs,
+		Duration:    privateData.Duration,
 		Results: v1.ProfilingResults{
-			URL: jobResult.Results.URL,
+			URL: resultURL,
 		},
-		ErrorMessage: jobResult.Error,
+		ErrorMessage:    jobResult.ErrorMessage,
+		MemoryMode:      privateData.MemoryMode,
+		BinaryMatchPath: privateData.BinaryMatchPath,
+		Language:        privateData.Language,
 	}
 
-	switch jobResult.Type {
-	case ProfilingMemory:
-		resp.Type = "memory"
-	case ProfilingCPU:
-		resp.Type = "cpu"
-	}
-
-	if jobResult.PrivateData != nil {
-		if memoryMode, ok := jobResult.PrivateData["memory_mode"]; ok && memoryMode != nil {
-			if memoryModeStr, ok := memoryMode.(string); ok {
-				resp.MemoryMode = memoryModeStr
-			}
-		}
-		if targetExecPath, ok := jobResult.PrivateData["target_exec_path"]; ok && targetExecPath != nil {
-			if targetExecPathStr, ok := targetExecPath.(string); ok {
-				resp.TargetExecPath = targetExecPathStr
-			}
-		}
-		if targetProcessLanguage, ok := jobResult.PrivateData["target_process_language"]; ok && targetProcessLanguage != nil {
-			if targetProcessLanguageStr, ok := targetProcessLanguage.(string); ok {
-				resp.TargetProcessLanguage = targetProcessLanguageStr
-			}
-		}
-	}
-
-	return resp
+	return resp, nil
 }
 
-func getFlameGraphURL(jobResult *job.Job) string {
-	base := config.Get().Profiling.FlameGraphBaseURL
+func isProfilingJobType(jobType job.JobType) bool {
+	return jobType == ProfilingCPU || jobType == ProfilingMemory
+}
 
-	var dashboardUid string
+func profilingAPIType(jobType job.JobType) (string, error) {
+	switch jobType {
+	case ProfilingMemory:
+		return string(profiling.TypeMemory), nil
+	case ProfilingCPU:
+		return string(profiling.TypeCPU), nil
+	default:
+		return "", fmt.Errorf("job %q is not a profiling job", jobType)
+	}
+}
+
+func profilingJobHasResults(status job.JobStatus) bool {
+	return status == job.JobStatusCompleted || status == job.JobStatusStopped
+}
+
+func decodeProfilingPrivateData(data json.RawMessage) (profilingJobPrivateData, error) {
+	if len(data) == 0 {
+		return profilingJobPrivateData{}, nil
+	}
+
+	var privateData profilingJobPrivateData
+	if err := json.Unmarshal(data, &privateData); err != nil {
+		return profilingJobPrivateData{}, fmt.Errorf("decoding profiling private data: %w", err)
+	}
+	return privateData, nil
+}
+
+func formatProfilingTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format(time.RFC3339Nano)
+}
+
+func getFlameGraphURL(base string, jobResult *job.Job) string {
+	var dashboardUID string
 	var dashboardSlug string
 	var labelKey string
 	var labelVal string
@@ -415,32 +260,32 @@ func getFlameGraphURL(jobResult *job.Job) string {
 	from := jobResult.StartTime.UTC().Format("2006-01-02T15:04:05.000Z")
 	to := jobResult.EndTime.UTC().Format("2006-01-02T15:04:05.000Z")
 
-	if jobResult.Container != "" {
+	if jobResult.ContainerID != "" {
 		switch jobResult.Type {
 		case ProfilingMemory:
-			dashboardUid = "container-memory-profiling"
+			dashboardUID = "container-memory-profiling"
 			dashboardSlug = "e5aeb9-e599a8-memory-profiling"
 		case ProfilingCPU:
-			dashboardUid = "container-cpu-profiling"
+			dashboardUID = "container-cpu-profiling"
 			dashboardSlug = "e5aeb9-e599a8-cpu-profiling"
 		default:
 			return ""
 		}
-		labelKey = "var-container_hostname"
-		labelVal = jobResult.Container
+		labelKey = "var-container_id"
+		labelVal = jobResult.ContainerID
 	} else {
 		switch jobResult.Type {
 		case ProfilingMemory:
-			dashboardUid = "host-memory-profiling"
+			dashboardUID = "host-memory-profiling"
 			dashboardSlug = "e5aebf-e4b8bb-e69cba-memory-profiling"
 		case ProfilingCPU:
-			dashboardUid = "host-cpu-profiling"
+			dashboardUID = "host-cpu-profiling"
 			dashboardSlug = "e5aebf-e4b8bb-e69cba-cpu-profiling"
 		default:
 			return ""
 		}
 		labelKey = "var-hostname"
-		labelVal = jobResult.Host
+		labelVal = jobResult.Hostname
 	}
 
 	query := url.Values{}
@@ -450,31 +295,35 @@ func getFlameGraphURL(jobResult *job.Job) string {
 	query.Set("timezone", "browser")
 	query.Set(labelKey, labelVal)
 
-	return fmt.Sprintf("%s/%s/%s?%s", base, dashboardUid, dashboardSlug, query.Encode())
+	return fmt.Sprintf("%s/%s/%s?%s", base, dashboardUID, dashboardSlug, query.Encode())
 }
 
 // delete deletes a profiling job record by ID.
 func (h *Handler) delete(ctx *server.Context) error {
-	taskID := ctx.Param("id")
-	if taskID == "" {
-		return response.ErrInvalidRequest.WithMessage("id is required")
+	taskID, err := parseProfilingJobID(ctx)
+	if err != nil {
+		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get profiling job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
 		return response.ErrForbidden
 	}
 
-	if err := h.jobManager.Delete(taskID); err != nil {
+	if err := h.jobManager.DeleteByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory); err != nil {
 		if errors.Is(err, job.ErrCannotDeleteRunning) {
 			return response.ErrConflict.WithMessage("cannot delete running job")
 		}
-		log.Errorf("Failed to delete profiling job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).WithField("job_id", taskID).Error("failed to delete profiling job")
+		return response.ErrInternal
 	}
 
 	response.NoContent(ctx)
@@ -483,14 +332,22 @@ func (h *Handler) delete(ctx *server.Context) error {
 
 // getRawData gets raw profiling data from ES by job ID.
 func (h *Handler) getRawData(ctx *server.Context) error {
-	taskID := ctx.Param("id")
-	if taskID == "" {
-		return response.ErrInvalidRequest.WithMessage("id is required")
+	listParams, err := ctx.ParseListParams()
+	if err != nil {
+		return response.ErrInvalidRequest.WithMessage(err.Error())
+	}
+	taskID, err := parseProfilingJobID(ctx)
+	if err != nil {
+		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get profiling job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
@@ -501,126 +358,57 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage("agent job ID not found")
 	}
 
-	profiles, err := profileService.GetProfilesByTracerID(jobResult.AgentTaskID)
+	if h.profileService == nil {
+		return response.ErrInternal
+	}
+	profiles, err := h.profileService.GetProfilesByTracerIDPage(
+		ctx.Request().Context(), jobResult.AgentTaskID, listParams.Limit+1, listParams.Offset,
+	)
 	if err != nil {
-		log.Errorf("Failed to get raw profiling data: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get raw profiling data")
+		return response.ErrInternal
 	}
 
+	hasMore := len(profiles) > listParams.Limit
+	if hasMore {
+		profiles = profiles[:listParams.Limit]
+	}
 	response.Success(ctx, v1.RawDataResponse{
-		Data: profiles,
+		Data:    rawProfileResponses(profiles),
+		Limit:   listParams.Limit,
+		Offset:  listParams.Offset,
+		HasMore: hasMore,
 	})
 	return nil
 }
 
-// DisplaySelectMergeStacktraces handles /querier.v1.QuerierService/SelectMergeStacktraces.
-func (h *Handler) DisplaySelectMergeStacktraces(ctx *server.Context) error {
-	req := &querierv1.SelectMergeStacktracesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
+func rawProfileResponses(profiles []*profileService.ProfileDocument) []v1.RawProfile {
+	items := make([]v1.RawProfile, 0, len(profiles))
+	for _, profile := range profiles {
+		if profile == nil {
+			continue
+		}
+		items = append(items, v1.RawProfile{
+			Hostname:               profile.Hostname,
+			Region:                 profile.Region,
+			UploadedTime:           profile.UploadedTime,
+			Time:                   profile.Time,
+			ContainerID:            profile.ContainerID,
+			ContainerHostname:      profile.ContainerHostname,
+			ContainerHostNamespace: profile.ContainerHostNamespace,
+			ContainerType:          profile.ContainerType,
+			ContainerQOS:           profile.ContainerQOS,
+			TracerName:             profile.TracerName,
+			TracerID:               profile.TracerID,
+			TracerTime:             profile.TracerTime,
+			TracerRunType:          profile.TracerRunType,
+			TracerData: v1.RawProfileTracerData{
+				Flamedata: v1.RawProfileFlameData{
+					ProfileType: profile.TracerData.Flamedata.ProfileType,
+					Profile:     &profile.TracerData.Flamedata.Profile,
+				},
+			},
+		})
 	}
-
-	log.Infof("DisplaySelectMergeStacktraces request: %v", req)
-
-	resp, err := profileService.SelectMergeStacktraces(req)
-	if err != nil {
-		log.Warnf("SelectMergeStacktraces failed: %v", err)
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
-	return nil
-}
-
-// DisplayProfileTypes handles /querier.v1.QuerierService/ProfileTypes.
-func (h *Handler) DisplayProfileTypes(ctx *server.Context) error {
-	req := &querierv1.ProfileTypesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	log.Infof("DisplayProfileTypes request: %v", req)
-
-	resp, err := profileService.ProfileTypes(req)
-	if err != nil {
-		log.Errorf("Failed to get profile types: %v", err)
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
-	return nil
-}
-
-// DisplaySelectSeries handles /querier.v1.QuerierService/SelectSeries.
-func (h *Handler) DisplaySelectSeries(ctx *server.Context) error {
-	req := &querierv1.SelectSeriesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	log.Infof("DisplaySelectSeries request: %v", req)
-
-	resp, err := profileService.SelectSeries(req)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
-	return nil
-}
-
-// DisplayLabelNames handles /querier.v1.QuerierService/LabelNames.
-func (h *Handler) DisplayLabelNames(ctx *server.Context) error {
-	req := &typesv1.LabelNamesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	log.Infof("DisplayLabelNames request: %v", req)
-
-	resp, err := profileService.LabelNames(req)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
-	return nil
-}
-
-// DisplayLabelValues handles /querier.v1.QuerierService/LabelValues.
-func (h *Handler) DisplayLabelValues(ctx *server.Context) error {
-	req := &typesv1.LabelValuesRequest{}
-	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	log.Infof("DisplayLabelValues request: %v", req)
-
-	resp, err := profileService.LabelValues(req)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": err.Error()})
-		return nil
-	}
-
-	// fix internal: invalid content-type: "application/x-protobuf"; expecting "application/proto"
-	ctx.Header("Content-Type", "application/proto")
-	ctx.ProtoBuf(http.StatusOK, resp)
-	return nil
+	return items
 }
