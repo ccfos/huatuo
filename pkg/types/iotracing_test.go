@@ -17,45 +17,65 @@ package types
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestIOTracingReportJSONContract(t *testing.T) {
-	report := IOTracingReport{
-		Processes: []ProcessFileIOStats{{
-			Pid:            42,
-			Comm:           "worker",
-			TotalFileCount: 1,
-			TotalFiles: []FileIOStats{{
-				DevName: "sda",
-				Path:    "/data/file",
-			}},
-		}},
-		StallStacks: []IOScheduleEvent{{Pid: 42, Comm: "worker", Stack: []string{"io_schedule"}}},
+	tests := []struct {
+		name     string
+		report   IOTracingReport
+		wantJSON string
+	}{
+		{
+			name:     "empty report preserves top-level field names",
+			report:   IOTracingReport{},
+			wantJSON: `{"process_file_io_stats":null,"io_schedule_timeout_stacks":null}`,
+		},
+		{
+			name: "populated report preserves nested wire schema",
+			report: IOTracingReport{
+				Processes: []ProcessFileIOStats{{
+					Pid:            42,
+					Comm:           "worker",
+					TotalFileCount: 1,
+					TotalFiles: []FileIOStats{{
+						DevName: "sda",
+						Path:    "/data/file",
+					}},
+				}},
+				StallStacks: []IOScheduleEvent{{Pid: 42, Comm: "worker", Stack: []string{"io_schedule"}}},
+			},
+			wantJSON: `{"process_file_io_stats":[{"pid":42,"comm":"worker","container_hostname":"","total_fs_read_bps":0,"total_fs_write_bps":0,"total_disk_read_bps":0,"total_disk_write_bps":0,"total_files":[{"major":0,"minor":0,"dev_name":"sda","inode":0,"path":"/data/file","is_direct":false,"fs_read_bps":0,"fs_write_bps":0,"disk_read_bps":0,"disk_write_bps":0,"q2c_us":0,"d2c_us":0,"max_q2c_us":0,"max_d2c_us":0}],"total_file_count":1}],"io_schedule_timeout_stacks":[{"pid":42,"comm":"worker","container_hostname":"","schedule_latency_us":0,"stack":["io_schedule"]}]}`,
+		},
 	}
 
-	encoded, err := json.Marshal(report)
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded, err := json.Marshal(tt.report)
+			if err != nil {
+				t.Fatalf("json.Marshal() error = %v", err)
+			}
 
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &fields); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-	for _, field := range []string{"process_file_io_stats", "io_schedule_timeout_stacks"} {
-		if _, ok := fields[field]; !ok {
-			t.Errorf("report JSON is missing %q: %s", field, encoded)
-		}
-	}
+			var gotJSON map[string]any
+			if err := json.Unmarshal(encoded, &gotJSON); err != nil {
+				t.Fatalf("json.Unmarshal() output error = %v", err)
+			}
+			var wantJSON map[string]any
+			if err := json.Unmarshal([]byte(tt.wantJSON), &wantJSON); err != nil {
+				t.Fatalf("json.Unmarshal() expected JSON error = %v", err)
+			}
+			if diff := cmp.Diff(wantJSON, gotJSON); diff != "" {
+				t.Errorf("JSON mismatch (-want +got):\n%s", diff)
+			}
 
-	var decoded IOTracingReport
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-	if len(decoded.Processes) != 1 || decoded.Processes[0].TotalFiles[0].Path != "/data/file" {
-		t.Fatalf("round-trip processes = %+v, want file path", decoded.Processes)
-	}
-	if len(decoded.StallStacks) != 1 || decoded.StallStacks[0].Stack[0] != "io_schedule" {
-		t.Fatalf("round-trip stall stacks = %+v, want stack", decoded.StallStacks)
+			var gotReport IOTracingReport
+			if err := json.Unmarshal(encoded, &gotReport); err != nil {
+				t.Fatalf("json.Unmarshal() round-trip error = %v", err)
+			}
+			if diff := cmp.Diff(tt.report, gotReport); diff != "" {
+				t.Errorf("round-trip mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
