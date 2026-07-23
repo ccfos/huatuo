@@ -581,6 +581,9 @@ func (b *defaultBPF) Loaded() (bool, error) {
 
 // EventPipe gets event-pipe and returns a PerfEventReader.
 func (b *defaultBPF) EventPipe(ctx context.Context, mapID, perCPUBufSize uint32) (PerfEventReader, error) {
+	if b.mapSpecs[mapID].cloned == nil {
+		return nil, fmt.Errorf("unknown map id %d", mapID)
+	}
 	reader, err := newPerfEventReader(ctx, b.mapSpecs[mapID].cloned, int(perCPUBufSize))
 	if err != nil {
 		return nil, err
@@ -616,6 +619,9 @@ func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, per
 // obtained value is of byte type, which also needs to be converted to the
 // corresponding type.
 func (b *defaultBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
+	if b.mapSpecs[mapID].cloned == nil {
+		return nil, fmt.Errorf("unknown map id %d", mapID)
+	}
 	val, err := b.mapSpecs[mapID].cloned.LookupBytes(key)
 	if err != nil {
 		return nil, err
@@ -626,6 +632,9 @@ func (b *defaultBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 
 // WriteMapItems write the value content corresponding to a key to a map.
 func (b *defaultBPF) WriteMapItems(mapID uint32, items []MapItem) error {
+	if b.mapSpecs[mapID].cloned == nil {
+		return fmt.Errorf("unknown map id %d", mapID)
+	}
 	m := b.mapSpecs[mapID].cloned
 
 	for _, item := range items {
@@ -638,6 +647,9 @@ func (b *defaultBPF) WriteMapItems(mapID uint32, items []MapItem) error {
 
 // DeleteMapItems deletes multiple items from a BPF map by keys.
 func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
+	if b.mapSpecs[mapID].cloned == nil {
+		return fmt.Errorf("unknown map id %d", mapID)
+	}
 	m := b.mapSpecs[mapID].cloned
 
 	for _, k := range keys {
@@ -650,6 +662,9 @@ func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
 
 // DumpMap dump all the context of the map
 func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
+	if b.mapSpecs[mapID].cloned == nil {
+		return nil, fmt.Errorf("unknown map id %d", mapID)
+	}
 	m := b.mapSpecs[mapID].cloned
 
 	var items []MapItem

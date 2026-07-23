@@ -348,9 +348,11 @@ func TestDefaultBPF_MapOperations(t *testing.T) {
 		{
 			name: "Error_InvalidMapID",
 			fn: func(t *testing.T) {
-				assert.Panics(t, func() {
-					_ = b.WriteMapItems(99999, []MapItem{{Key: key, Value: val}})
-				})
+				// #372: an unknown map ID must return a descriptive error
+				// instead of panicking on a nil *ebpf.Map dereference.
+				err := b.WriteMapItems(99999, []MapItem{{Key: key, Value: val}})
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "unknown map id")
 			},
 		},
 	}
@@ -698,4 +700,136 @@ func TestDefaultBPF_Detach_AfterClose(t *testing.T) {
 
 	require.NoError(t, b.Close())
 	require.NoError(t, b.Detach())
+}
+
+// TestDefaultBPFMapOperationsRejectUnknownMap covers issue #372: every map API
+// (both ID- and name-based) must return a descriptive error for an unknown
+// map, instead of panicking on a nil *ebpf.Map dereference.
+//
+// Reproduces the exact case from the issue (DumpMapByName on a defaultBPF
+// whose maps are empty) and extends it to all 5 entry points, on both empty
+// and loaded managers, since a loaded manager can also be asked about a map
+// name/ID that does not belong to its object file.
+func TestDefaultBPFMapOperationsRejectUnknownMap(t *testing.T) {
+	ctx := t.Context()
+
+	newEmpty := func(t *testing.T) *defaultBPF {
+		t.Helper()
+		return &defaultBPF{
+			mapSpecs:    make(map[uint32]mapSpec),
+			mapName2IDs: make(map[string]uint32),
+		}
+	}
+
+	// Direct repro from the issue: an empty defaultBPF.DumpMapByName("missing")
+	// used to panic in DumpMap when calling m.KeySize() on the missing map.
+	t.Run("issue_repro_DumpMapByNameUnknown_emptyManager", func(t *testing.T) {
+		b := newEmpty(t)
+		_, _ = b.DumpMapByName("missing") // must not panic
+	})
+
+	// Sanity: every entry point on an empty manager returns a non-nil error
+	// rather than panicking. Run the table twice — once against an empty
+	// manager, once against a loaded manager queried for a foreign name/ID —
+	// to make sure the guard fires in both shapes.
+	cases := []struct {
+		name string
+		fn   func(b *defaultBPF) error
+	}{
+		{"DumpMap_unknownID", func(b *defaultBPF) error {
+			_, err := b.DumpMap(9999)
+			return err
+		}},
+		{"DumpMapByName_unknownName", func(b *defaultBPF) error {
+			_, err := b.DumpMapByName("missing")
+			return err
+		}},
+		{"ReadMap_unknownID", func(b *defaultBPF) error {
+			_, err := b.ReadMap(9999, []byte{0})
+			return err
+		}},
+		{"WriteMapItems_unknownID", func(b *defaultBPF) error {
+			return b.WriteMapItems(9999, []MapItem{{Key: []byte{0}, Value: []byte{0}}})
+		}},
+		{"DeleteMapItems_unknownID", func(b *defaultBPF) error {
+			return b.DeleteMapItems(9999, [][]byte{{0}})
+		}},
+		{"EventPipe_unknownID", func(b *defaultBPF) error {
+			_, err := b.EventPipe(ctx, 9999, 4096)
+			return err
+		}},
+		{"EventPipeByName_unknownName", func(b *defaultBPF) error {
+			_, err := b.EventPipeByName(ctx, "missing", 4096)
+			return err
+		}},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run("empty_manager/"+tc.name, func(t *testing.T) {
+			require.Error(t, tc.fn(newEmpty(t)))
+		})
+	}
+
+	// Also verify on a *loaded* manager: a name/ID that isn't part of the
+	// loaded object must still be rejected, not panic.
+	t.Run("loaded_manager_foreign_lookup", func(t *testing.T) {
+		b := loadMinimalBpfFromBytes(t)
+		t.Run("DumpMap_unknownID", func(t *testing.T) {
+			_, err := b.DumpMap(9999)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unknown map id")
+		})
+		t.Run("DumpMapByName_unknownName", func(t *testing.T) {
+			_, err := b.DumpMapByName("missing")
+			require.Error(t, err)
+			// DumpMapByName delegates to DumpMap(MapIDByName(name));
+			// an unknown name yields id 0, which DumpMap rejects.
+			assert.Contains(t, err.Error(), "unknown map id")
+		})
+		t.Run("ReadMap_unknownID", func(t *testing.T) {
+			_, err := b.ReadMap(9999, []byte{0})
+			require.Error(t, err)
+		})
+		t.Run("WriteMapItems_unknownID", func(t *testing.T) {
+			err := b.WriteMapItems(9999, []MapItem{{Key: []byte{0}, Value: []byte{0}}})
+			require.Error(t, err)
+		})
+		t.Run("DeleteMapItems_unknownID", func(t *testing.T) {
+			err := b.DeleteMapItems(9999, [][]byte{{0}})
+			require.Error(t, err)
+		})
+	})
+
+	// Negative-space guard: known map still works after the fix (i.e. the
+	// new lookup path didn't accidentally reject valid maps).
+	//
+	// counter_map is a BPF_MAP_TYPE_ARRAY (see test_minimal.bpf.c), so we
+	// exercise the operations valid on ARRAY maps: Write (Update),
+	// Read (Lookup), and Dump (Iterate). Delete is intentionally not asserted
+	// here — ARRAY maps return EINVAL from bpf_map_delete_elem, which is a
+	// map-type semantic, not a regression of the unknown-map guard.
+	t.Run("loaded_manager_known_map_still_works", func(t *testing.T) {
+		b := loadMinimalBpfFromBytes(t)
+		mapID := b.MapIDByName("counter_map")
+		require.NotZero(t, mapID)
+
+		key := make([]byte, 4)
+		binary.LittleEndian.PutUint32(key, 0)
+		val := make([]byte, 8)
+		binary.LittleEndian.PutUint64(val, 42)
+		require.NoError(t, b.WriteMapItems(mapID, []MapItem{{Key: key, Value: val}}))
+
+		got, err := b.ReadMap(mapID, key)
+		require.NoError(t, err)
+		assert.Len(t, got, 8)
+
+		items, err := b.DumpMap(mapID)
+		require.NoError(t, err)
+		assert.NotEmpty(t, items)
+
+		byName, err := b.DumpMapByName("counter_map")
+		require.NoError(t, err)
+		assert.NotEmpty(t, byName)
+	})
 }
