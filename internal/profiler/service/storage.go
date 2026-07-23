@@ -22,10 +22,10 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler/strutil"
 	"huatuo-bamai/internal/profiler/timeutil"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
+	"huatuo-bamai/internal/strutil"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
@@ -114,7 +114,7 @@ func NewProfileStorageContext(ctx context.Context, address, username, password, 
 
 	profileStore, err := storage.NewFromConfig[*ProfileDocument](ctx, &driver.Config{
 		Driver:      "elasticsearch",
-		ESAddresses: splitProfileStorageAddresses(address),
+		ESAddresses: strutil.SplitCommaList(address),
 		ESUsername:  username,
 		ESPassword:  password,
 		ESIndex:     index,
@@ -378,8 +378,4 @@ func normalizeProfileSearchLimit(filter *SearchFilter) int {
 
 func parseProfileDocumentTime(raw string, fallback time.Time) time.Time {
 	return timeutil.ParseWithFallback(raw, profileTimeLayout, fallback)
-}
-
-func splitProfileStorageAddresses(raw string) []string {
-	return strutil.SplitCommaList(raw)
 }

@@ -17,13 +17,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
+	"huatuo-bamai/internal/strutil"
 	"huatuo-bamai/pkg/tracing"
 )
 
@@ -45,7 +45,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		cfg.Storage.ES.Password != "" {
 		store, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
-			ESAddresses: splitStorageAddresses(cfg.Storage.ES.Address),
+			ESAddresses: strutil.SplitCommaList(cfg.Storage.ES.Address),
 			ESUsername:  cfg.Storage.ES.Username,
 			ESPassword:  cfg.Storage.ES.Password,
 			ESIndex:     cfg.Storage.ES.Index,
@@ -87,7 +87,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		cfg.Storage.ES.Password != "" {
 		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
-			ESAddresses: splitStorageAddresses(cfg.Storage.ES.Address),
+			ESAddresses: strutil.SplitCommaList(cfg.Storage.ES.Address),
 			ESUsername:  cfg.Storage.ES.Username,
 			ESPassword:  cfg.Storage.ES.Password,
 			ESIndex:     cfg.Storage.ES.Index,
@@ -102,17 +102,4 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 	}
 
 	return nil
-}
-
-func splitStorageAddresses(raw string) []string {
-	parts := strings.Split(raw, ",")
-	addresses := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		addresses = append(addresses, trimmed)
-	}
-	return addresses
 }
