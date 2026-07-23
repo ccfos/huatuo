@@ -29,6 +29,54 @@ import (
 	"github.com/shirou/gopsutil/process"
 )
 
+// dimensionLabelSeparator is the marker between the existing header frame
+// (e.g. "threadName#pid") and any injected dimension labels. Using a ';' keeps
+// the result consistent with the collapsed-stack frame separator so flamegraph
+// renderers treat the labels as part of the first frame, while pprof/Pyroscope
+// backends still parse the `key=value` pairs as labels within that frame.
+const dimensionLabelSeparator = ";"
+
+// buildDimensionLabels renders the requested dimension labels in pprof
+// canonical form (e.g. "pid=123;tgid=456;cgroup=/kubepods/..."). Returns nil
+// when no labels are requested or no values are available, so callers can
+// cheaply detect the no-op case and preserve byte-identical output.
+//
+// It takes the individual dimension values rather than a struct so it works
+// uniformly for the multi-PID path (which reads SampleOutput) and the
+// single-PID path (which reads ParseInput.SampleDimensions).
+func buildDimensionLabels(dim Dimensions, pid, tgid int, cgroupPath, processGroup string) []byte {
+	if !dim.Enabled() {
+		return nil
+	}
+	var b []byte
+	if dim.PID && pid != 0 {
+		b = appendDimension(b, "pid", strconv.Itoa(pid))
+	}
+	if dim.TGID && tgid != 0 {
+		b = appendDimension(b, "tgid", strconv.Itoa(tgid))
+	}
+	if dim.Cgroup && cgroupPath != "" {
+		b = appendDimension(b, "cgroup", cgroupPath)
+	}
+	if dim.ProcessGroup && processGroup != "" {
+		b = appendDimension(b, "pgroup", processGroup)
+	}
+	return b
+}
+
+// appendDimension appends one `key=value` pair to b, prefixed by the frame
+// separator when b already has content. Returns the (possibly reallocated)
+// buffer.
+func appendDimension(b []byte, key, value string) []byte {
+	if len(b) > 0 {
+		b = append(b, dimensionLabelSeparator...)
+	}
+	b = append(b, key...)
+	b = append(b, '=')
+	b = append(b, value...)
+	return b
+}
+
 // ParseTree parses the tree data and returns the profile data.
 //
 // The tree example:
@@ -112,7 +160,7 @@ func ParseCollapsedData(ctx context.Context, input *ParseInput) (*ProfileData, e
 	}
 
 fallback:
-	return parseCommonData(ctx, input.StartTime, input.ProfileType, input.Data, input.Opt, input.PID, extractJavaMainClassFromPid)
+	return parseCommonData(ctx, input.StartTime, input.ProfileType, input.Data, input.Opt, input.PID, input.SampleDimensions, extractJavaMainClassFromPid)
 }
 
 // ParseRawData parses a raw profile (e.g. py-spy output) into *ProfileData.
@@ -145,13 +193,20 @@ func ParseRawData(ctx context.Context, input *ParseInput) (*ProfileData, error) 
 	}
 
 fallback:
-	return parseCommonData(ctx, input.StartTime, input.ProfileType, input.Data, input.Opt, input.PID, extractPythonThreadNameFromPid)
+	return parseCommonData(ctx, input.StartTime, input.ProfileType, input.Data, input.Opt, input.PID, input.SampleDimensions, extractPythonThreadNameFromPid)
 }
 
 // Profiling output for each PID.
 type SampleOutput struct {
 	PID    int    `json:"pid"`
 	Output string `json:"output"`
+
+	// TGID, CgroupPath, and ProcessGroup are optional dimension carriers used
+	// when ParseOption.Dimensions requests label injection. Zero values are
+	// skipped — existing callers that leave these unset are unaffected.
+	TGID         int    `json:"tgid,omitempty"`
+	CgroupPath   string `json:"cgroup_path,omitempty"`
+	ProcessGroup string `json:"process_group,omitempty"`
 }
 
 // parseMultiProcessData parses profiles of multiple PIDs from SampleOutput.
@@ -173,6 +228,21 @@ func parseMultiProcessData(ctx context.Context, startTime time.Time, profileType
 			headerFrame, err = getThreadName(out.PID)
 			if err != nil {
 				return nil, fmt.Errorf("get header frame for PID %d failed: %w", out.PID, err)
+			}
+		}
+		// When the caller requests dimension labels, append them to the header
+		// frame (or synthesize a bare-label header when getThreadName is nil,
+		// which is the ParseRawData multi-PID path).
+		var dim Dimensions
+		if opt != nil {
+			dim = opt.Dimensions
+		}
+		if dimLabels := buildDimensionLabels(dim, out.PID, out.TGID, out.CgroupPath, out.ProcessGroup); dimLabels != nil {
+			if len(headerFrame) > 0 {
+				headerFrame = append(headerFrame, dimensionLabelSeparator...)
+				headerFrame = append(headerFrame, dimLabels...)
+			} else {
+				headerFrame = dimLabels
 			}
 		}
 
@@ -232,7 +302,7 @@ func parseMultiProcessData(ctx context.Context, startTime time.Time, profileType
 }
 
 // parseCommonData parses profile of single PID from raw data.
-func parseCommonData(ctx context.Context, startTime time.Time, profileType string, b []byte, opt *ParseOption, pid int, getThreadName func(int) (string, error)) (*ProfileData, error) {
+func parseCommonData(ctx context.Context, startTime time.Time, profileType string, b []byte, opt *ParseOption, pid int, sampleDims SampleDimensions, getThreadName func(int) (string, error)) (*ProfileData, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -275,8 +345,15 @@ func parseCommonData(ctx context.Context, startTime time.Time, profileType strin
 			Value: value,
 		}
 
-		// Format: threadName#pid
+		// Format: threadName#pid (optionally followed by dimension labels).
 		firstField := fmt.Sprintf("%s#%d", threadName, pid)
+		var dim Dimensions
+		if opt != nil {
+			dim = opt.Dimensions
+		}
+		if dimLabels := buildDimensionLabels(dim, pid, sampleDims.TGID, sampleDims.CgroupPath, sampleDims.ProcessGroup); dimLabels != nil {
+			firstField += dimensionLabelSeparator + string(dimLabels)
+		}
 		item.Stack = append(item.Stack, []byte(firstField))
 
 		// Append each frame in order
