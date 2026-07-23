@@ -176,7 +176,6 @@ func TestAuthServiceValidate(t *testing.T) {
 		})
 	}
 }
-
 func TestAuthServiceIsAdmin(t *testing.T) {
 	svc := NewAuthService([]UserConfig{
 		{ID: "admin-2026", Name: "Admin User", IsAdmin: true},
@@ -393,6 +392,35 @@ func TestNewAuthMiddleware(t *testing.T) {
 				if gotIsAdmin != tc.wantIsAdmin {
 					t.Errorf("ctx.IsAdmin = %v, want %v", gotIsAdmin, tc.wantIsAdmin)
 				}
+			}
+		})
+	}
+}
+
+func TestAuthServiceValidatePermissions(t *testing.T) {
+	service := NewAuthService([]UserConfig{
+		{ID: "admin", IsAdmin: true},
+		{ID: "reader", Permissions: []string{"/tasks/:id", "/metrics/**"}},
+	})
+
+	tests := []struct {
+		name    string
+		userID  string
+		path    string
+		wantErr bool
+	}{
+		{name: "admin can access every path", userID: "admin", path: "/private"},
+		{name: "path parameter matches one segment", userID: "reader", path: "/tasks/42"},
+		{name: "wildcard matches nested path", userID: "reader", path: "/metrics/host/cpu"},
+		{name: "path parameter does not match extra segment", userID: "reader", path: "/tasks/42/logs", wantErr: true},
+		{name: "unknown user is denied", userID: "missing", path: "/tasks/42", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := service.Validate(tt.userID, tt.path)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate(%q, %q) error = %v, wantErr %v", tt.userID, tt.path, err, tt.wantErr)
 			}
 		})
 	}
