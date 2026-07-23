@@ -21,7 +21,7 @@ import (
 
 func TestToBytesUsesLittleEndianLayout(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		value any
 		want  []byte
 	}{
