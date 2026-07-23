@@ -17,53 +17,72 @@ package types
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
-func TestWatchEventUsesCloudEventsJSONFieldNames(t *testing.T) {
-	event := WatchEvent{
-		SpecVersion:     "1.0",
-		ID:              "event-1",
-		Source:          "huatuo-bamai",
-		Type:            "io.tracing.complete",
-		DataContentType: "application/json",
-		Time:            "2026-07-22T00:00:00Z",
-		Data: WatchEventData{
-			Hostname:  "node-1",
-			Region:    "test",
-			TracerName: "iotracing",
+func TestWatchEventJSONContract(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		want  map[string]any
+	}{
+		{
+			name: "cloud events envelope uses canonical field names",
+			value: WatchEvent{
+				SpecVersion:     "1.0",
+				ID:              "event-1",
+				Source:          "huatuo-bamai",
+				Type:            "io.tracing.complete",
+				DataContentType: "application/json",
+				Time:            "2026-07-22T00:00:00Z",
+				Data: WatchEventData{
+					Hostname:          "node-1",
+					Region:            "test",
+					ObservedTimestamp: "2026-07-22T00:00:00Z",
+					TracerName:        "iotracing",
+				},
+			},
+			want: map[string]any{
+				"specversion":     "1.0",
+				"id":              "event-1",
+				"source":          "huatuo-bamai",
+				"type":            "io.tracing.complete",
+				"datacontenttype": "application/json",
+				"time":            "2026-07-22T00:00:00Z",
+				"data": map[string]any{
+					"hostname":           "node-1",
+					"region":             "test",
+					"observed_timestamp": "2026-07-22T00:00:00Z",
+					"tracer_name":        "iotracing",
+				},
+			},
+		},
+		{
+			name:  "optional container fields are omitted",
+			value: WatchEventData{Hostname: "node-1", Region: "test", ObservedTimestamp: "2026-07-22T00:00:00Z"},
+			want: map[string]any{
+				"hostname":           "node-1",
+				"region":             "test",
+				"observed_timestamp": "2026-07-22T00:00:00Z",
+			},
 		},
 	}
 
-	encoded, err := json.Marshal(event)
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded, err := json.Marshal(tt.value)
+			if err != nil {
+				t.Fatalf("json.Marshal() error = %v", err)
+			}
 
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &fields); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-	for _, field := range []string{"specversion", "id", "source", "type", "datacontenttype", "time", "data"} {
-		if _, ok := fields[field]; !ok {
-			t.Errorf("event JSON is missing %q: %s", field, encoded)
-		}
-	}
-	if _, ok := fields["SpecVersion"]; ok {
-		t.Errorf("event JSON unexpectedly exposes Go field name: %s", encoded)
-	}
-}
-
-func TestWatchEventDataOmitsOptionalContainerFields(t *testing.T) {
-	encoded, err := json.Marshal(WatchEventData{Hostname: "node-1", Region: "test"})
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
-	}
-
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &fields); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-	if _, ok := fields["container_id"]; ok {
-		t.Errorf("empty optional container_id was serialized: %s", encoded)
+			var got map[string]any
+			if err := json.Unmarshal(encoded, &got); err != nil {
+				t.Fatalf("json.Unmarshal() error = %v", err)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("JSON mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
