@@ -105,7 +105,9 @@ func (c *EventTracing) doStart() {
 // Stop stop tracing
 func (c *EventTracing) Stop() {
 	c.exit = true
-	c.cancelCtx()
+	if c.cancelCtx != nil {
+		c.cancelCtx()
+	}
 }
 
 // EventTracingInfo represents tracing information

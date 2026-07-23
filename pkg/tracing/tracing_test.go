@@ -165,3 +165,26 @@ func TestEventTracingStartStopAndInfo(t *testing.T) {
 		t.Errorf("tracing did not stop in time")
 	}
 }
+
+func TestEventTracingStopBeforeFirstStartDoesNotPanic(t *testing.T) {
+	tracing := &EventTracing{}
+
+	tracing.Stop()
+
+	if !tracing.exit {
+		t.Fatal("Stop() did not mark tracing as exited")
+	}
+}
+
+func TestEventTracingStopCancelsActiveRun(t *testing.T) {
+	cancelled := false
+	tracing := &EventTracing{
+		cancelCtx: func() { cancelled = true },
+	}
+
+	tracing.Stop()
+
+	if !cancelled {
+		t.Fatal("Stop() did not cancel active tracing")
+	}
+}
