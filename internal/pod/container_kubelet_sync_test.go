@@ -16,69 +16,35 @@ package pod
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
-
-// failingReader returns its payload on the first Read and an error on the
-// second, simulating a kubelet response whose body is truncated mid-stream.
-type failingReader struct {
-	first   []byte
-	read    int
-	failErr error
-}
-
-func (f *failingReader) Read(p []byte) (int, error) {
-	if f.read < len(f.first) {
-		n := copy(p, f.first[f.read:])
-		f.read += n
-		return n, nil
-	}
-	return 0, f.failErr
-}
-
-func (f *failingReader) Close() error { return nil }
 
 // TestHTTPDoRequestPropagatesBodyReadError reproduces issue #258: when a kubelet
 // response body fails to read, the error must be surfaced to the caller rather
 // than being swallowed and replaced with an empty body.
 func TestHTTPDoRequestPropagatesBodyReadError(t *testing.T) {
 	wantReadErr := errors.New("simulated mid-stream read failure")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 200 OK, but the body errors partway through. This is what real
-		// kubelets do when the connection drops after headers are flushed.
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		//nolint:errcheck // the test intentionally ignores the Flush result
-		_, _ = w.Write([]byte(`{"partial":`))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-		// Hijack is not needed; instead, we swap the body by wrapping via a
-		// transport below to keep this handler transport-agnostic.
-	}))
-	t.Cleanup(srv.Close)
-
-	// Use a custom transport whose response body errors on read.
 	client := &http.Client{
-		Transport: bodyErrorTransport{failErr: wantReadErr},
+		Transport: bodyReadErrorTransport{readErr: wantReadErr},
 	}
+	requestURL := "http://test.kubelet.invalid/pods"
 
-	_, err := httpDoRequest(client, "http://test.kubelet.invalid/pods")
+	_, err := httpDoRequest(client, requestURL)
 	if err == nil {
-		t.Fatalf("httpDoRequest returned nil error for a body read failure; expected the read error to propagate")
+		t.Fatal("httpDoRequest() error = nil, want non-nil")
 	}
 	if !errors.Is(err, wantReadErr) {
-		t.Errorf("expected error to wrap the read failure, got %v", err)
+		t.Errorf("errors.Is(httpDoRequest(%q) error, wantReadErr) = false, want true; error = %v", requestURL, err)
 	}
-	if !strings.Contains(err.Error(), "http://test.kubelet.invalid/pods") {
-		t.Errorf("expected error to retain URL context, got %q", err.Error())
-	}
-	if !strings.Contains(err.Error(), "read body") {
-		t.Errorf("expected error message to mention 'read body', got %q", err.Error())
+	wantError := fmt.Sprintf("http: %s, read body: %v", requestURL, wantReadErr)
+	if err.Error() != wantError {
+		t.Errorf("httpDoRequest(%q) error = %q, want %q", requestURL, err, wantError)
 	}
 }
 
@@ -92,49 +58,50 @@ func TestHTTPDoRequestReturnsBodyOnSuccess(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	body, err := httpDoRequest(srv.Client(), srv.URL+"/pods")
+	requestURL := srv.URL + "/pods"
+	body, err := httpDoRequest(srv.Client(), requestURL)
 	if err != nil {
-		t.Fatalf("unexpected error on success: %v", err)
+		t.Fatalf("httpDoRequest() error = %v, want nil", err)
 	}
-	if string(body) != `{"ok":true}` {
-		t.Errorf("expected body {\"ok\":true}, got %q", string(body))
+	wantBody := `{"ok":true}`
+	if string(body) != wantBody {
+		t.Errorf("httpDoRequest(%q) body = %q, want %q", requestURL, body, wantBody)
 	}
 }
 
-// TestHTTPDoRequestNonOKStatusKeepsErrorAndBody makes sure the existing
+// TestHTTPDoRequestReportsNonOKStatusAndBody makes sure the existing
 // non-200 error path is unaffected by the read-error fix.
-func TestHTTPDoRequestNonOKStatusKeepsErrorAndBody(t *testing.T) {
+func TestHTTPDoRequestReportsNonOKStatusAndBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = io.WriteString(w, `boom`)
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := httpDoRequest(srv.Client(), srv.URL+"/pods")
+	requestURL := srv.URL + "/pods"
+	_, err := httpDoRequest(srv.Client(), requestURL)
 	if err == nil {
-		t.Fatalf("expected error for non-200 status, got nil")
+		t.Fatal("httpDoRequest() error = nil, want non-nil")
 	}
-	if !strings.Contains(err.Error(), "status: 500") {
-		t.Errorf("expected status in error, got %q", err.Error())
-	}
-	if !strings.Contains(err.Error(), "boom") {
-		t.Errorf("expected body in error, got %q", err.Error())
+	wantError := fmt.Sprintf("http: %s, status: %d, body: boom", requestURL, http.StatusInternalServerError)
+	if err.Error() != wantError {
+		t.Errorf("httpDoRequest(%q) error = %q, want %q", requestURL, err, wantError)
 	}
 }
 
-// bodyErrorTransport returns a 200 response whose body fails on the first
-// Read, replicating the kubelet truncation scenario from the issue.
-type bodyErrorTransport struct {
-	failErr error
+// bodyReadErrorTransport returns a response whose body read fails after a
+// partial payload.
+type bodyReadErrorTransport struct {
+	readErr error
 }
 
-func (t bodyErrorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (t bodyReadErrorTransport) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body: &failingReader{
-			first:   []byte(`{"partial":`),
-			failErr: t.failErr,
-		},
+		Body: io.NopCloser(io.MultiReader(
+			strings.NewReader(`{"partial":`),
+			iotest.ErrReader(t.readErr),
+		)),
 	}, nil
 }
