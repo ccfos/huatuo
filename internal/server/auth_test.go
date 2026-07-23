@@ -15,6 +15,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -394,20 +395,20 @@ func TestAuthServiceValidatePermissions(t *testing.T) {
 		name    string
 		userID  string
 		path    string
-		wantErr bool
+		wantErr error
 	}{
-		{name: "admin can access every path", userID: "admin", path: "/private"},
-		{name: "path parameter matches one segment", userID: "reader", path: "/tasks/42"},
-		{name: "wildcard matches nested path", userID: "reader", path: "/metrics/host/cpu"},
-		{name: "path parameter does not match extra segment", userID: "reader", path: "/tasks/42/logs", wantErr: true},
-		{name: "unknown user is denied", userID: "missing", path: "/tasks/42", wantErr: true},
+		{name: "admin can access every path", userID: "admin", path: "/private", wantErr: nil},
+		{name: "path parameter matches one segment", userID: "reader", path: "/tasks/42", wantErr: nil},
+		{name: "wildcard matches nested path", userID: "reader", path: "/metrics/host/cpu", wantErr: nil},
+		{name: "path parameter does not match extra segment", userID: "reader", path: "/tasks/42/logs", wantErr: ErrPermissionDenied},
+		{name: "unknown user is denied", userID: "missing", path: "/tasks/42", wantErr: ErrUserNotFound},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := service.Validate(tt.userID, tt.path)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("Validate(%q, %q) error = %v, wantErr %v", tt.userID, tt.path, err, tt.wantErr)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Validate(%q, %q) error = %v, want %v", tt.userID, tt.path, err, tt.wantErr)
 			}
 		})
 	}

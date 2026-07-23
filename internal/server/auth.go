@@ -15,12 +15,20 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 
 	"huatuo-bamai/internal/server/response"
+)
+
+var (
+	// ErrUserNotFound indicates that authentication was attempted for an unknown user.
+	ErrUserNotFound = errors.New("not found")
+	// ErrPermissionDenied indicates that a known user lacks access to the requested path.
+	ErrPermissionDenied = errors.New("does not have permission")
 )
 
 // Permission represents a permission string.
@@ -91,7 +99,7 @@ func (s *authService) GetUserById(userID string) (User, bool) {
 func (s *authService) Validate(userID, path string) error {
 	value, exists := s.users.Load(userID)
 	if !exists {
-		return fmt.Errorf("user %s not found", userID)
+		return fmt.Errorf("user %s %w", userID, ErrUserNotFound)
 	}
 
 	user := value.(User)
@@ -108,7 +116,7 @@ func (s *authService) Validate(userID, path string) error {
 		}
 	}
 
-	return fmt.Errorf("user %s does not have permission to access %s", userID, path)
+	return fmt.Errorf("user %s %w to access %s", userID, ErrPermissionDenied, path)
 }
 
 // IsAdmin checks if a user is an admin.
