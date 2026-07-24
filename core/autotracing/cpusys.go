@@ -18,6 +18,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path"
@@ -68,6 +70,40 @@ type cpuSysThreshold struct {
 	usage int64
 }
 
+// minCPUFields is the minimum number of numeric fields the aggregate cpu line
+// in /proc/stat must contain: user, nice, system. Anything fewer indicates a
+// malformed or truncated file and the values cannot be trusted.
+const minCPUFields = 3
+
+// parseCPUStatLine parses the aggregate "cpu  ..." line from /proc/stat and
+// returns the system (field index 2) and total (sum of all fields) usage.
+// It is extracted from cpuSysUsage so it can be unit-tested without a real
+// /proc/stat.
+func parseCPUStatLine(line string) (system, total uint64, err error) {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return 0, 0, fmt.Errorf("cpu: empty /proc/stat aggregate line")
+	}
+	// fields[0] is the "cpu" label; the rest are numeric counters.
+	numbers := fields[1:]
+	if len(numbers) < minCPUFields {
+		return 0, 0, fmt.Errorf("cpu: /proc/stat aggregate line has %d fields, need at least %d", len(numbers), minCPUFields)
+	}
+
+	for i, field := range numbers {
+		val, parseErr := strconv.ParseUint(field, 10, 64)
+		if parseErr != nil {
+			return 0, 0, fmt.Errorf("cpu: /proc/stat field %d (%q): %w", i, field, parseErr)
+		}
+		total += val
+		if i == 2 {
+			system = val
+		}
+	}
+
+	return system, total, nil
+}
+
 func cpuSysUsage() (*cpuUsage, error) {
 	f, err := os.Open("/proc/stat")
 	if err != nil {
@@ -76,23 +112,30 @@ func cpuSysUsage() (*cpuUsage, error) {
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
-	scanner.Scan()
-	fields := strings.Fields(scanner.Text())[1:]
-
-	var total, sys uint64
-	for i, field := range fields {
-		val, err := strconv.ParseUint(field, 10, 64)
-		if err != nil {
-			return nil, err
+	if !scanner.Scan() {
+		if scanErr := scanner.Err(); scanErr != nil {
+			return nil, fmt.Errorf("cpu: read /proc/stat: %w", scanErr)
 		}
-
-		total += val
-		if i == 2 {
-			sys = val
-		}
+		return nil, errors.New("cpu: /proc/stat is empty")
 	}
 
-	return &cpuUsage{system: sys, total: total}, nil
+	system, total, err := parseCPUStatLine(scanner.Text())
+	if err != nil {
+		return nil, err
+	}
+
+	return &cpuUsage{system: system, total: total}, nil
+}
+
+// safeSubUint64 returns a-b clamped to 0. /proc/stat counters are monotonic,
+// but across container restarts, host migrations, or counter wraps the new
+// sample can be smaller than the cached one, which would underflow uint64
+// subtraction and produce an enormous (close to 2^64) delta.
+func safeSubUint64(a, b uint64) uint64 {
+	if a <= b {
+		return 0
+	}
+	return a - b
 }
 
 func (c *cpuSysTracing) updateCpuSysUsage() error {
@@ -106,8 +149,17 @@ func (c *cpuSysTracing) updateCpuSysUsage() error {
 		return nil
 	}
 
-	sysUsageDelta := usage.system - c.usage.system
-	sysTotalDelta := usage.total - c.usage.total
+	sysUsageDelta := safeSubUint64(usage.system, c.usage.system)
+	sysTotalDelta := safeSubUint64(usage.total, c.usage.total)
+	if sysTotalDelta == 0 {
+		// No tick elapsed between samples (very fast polling on an idle CPU)
+		// or counters went backwards so the delta was clamped to 0. Either
+		// way we cannot compute a percentage; keep the previous baseline so
+		// the next sample has a valid reference point instead of zeroing it.
+		c.usage = usage
+		return nil
+	}
+
 	sysPercentage := int64(100 * sysUsageDelta / sysTotalDelta)
 
 	c.sysPercentDelta = sysPercentage - c.sysPercent
