@@ -210,7 +210,10 @@ func buildDiskMetric(prev, curr *blockdevice.Diskstats, intervalSeconds uint64) 
 	// this guard the reset causes uint64 underflow in the delta below,
 	// producing a fake metric that triggers a false IO alert.
 	if curr.ReadIOs < prev.ReadIOs || curr.WriteIOs < prev.WriteIOs ||
-		curr.IOsTotalTicks < prev.IOsTotalTicks {
+		curr.IOsTotalTicks < prev.IOsTotalTicks ||
+		curr.ReadSectors < prev.ReadSectors || curr.WriteSectors < prev.WriteSectors ||
+		curr.ReadTicks < prev.ReadTicks || curr.WriteTicks < prev.WriteTicks ||
+		curr.WeightedIOTicks < prev.WeightedIOTicks {
 		return DiskStatus{}
 	}
 
