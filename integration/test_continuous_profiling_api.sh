@@ -32,7 +32,6 @@ readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.u
 
 ES_CONTAINER_ID=""
 ES_ADDR=""
-APISERVER_PID=""
 TARGET_PID=""
 APISERVER_PORT=""
 APISERVER_ADDR=""
@@ -41,7 +40,7 @@ LAST_PROFILE_DIAGNOSTIC="no raw profile request made"
 cleanup() {
 	local status=$?
 	[[ -n "${TARGET_PID}" ]] && stop_by_pid "${TARGET_PID}" 5 || true
-	[[ -n "${APISERVER_PID}" ]] && stop_by_pid "${APISERVER_PID}" 10 || true
+	huatuo_apiserver_stop
 	huatuo_bamai_stop "${HUATUO_BAMAI_TEST_TMPDIR}" || true
 	if [[ -n "${ES_CONTAINER_ID}" ]]; then
 		if [[ ${status} -ne 0 ]]; then
@@ -60,7 +59,7 @@ require_environment() {
 	command -v jq > /dev/null || skip "jq command is not installed"
 	command -v ss > /dev/null || skip "ss command is not installed"
 	command -v timeout > /dev/null || fatal "timeout command is not installed"
-	[[ -x "${ROOT_DIR}/_output/bin/huatuo-apiserver" ]] \
+	[[ -x "${HUATUO_APISERVER_BIN}" ]] \
 		|| fatal "huatuo-apiserver binary missing"
 	[[ -x "${ROOT_DIR}/_output/bin/huatuo-bamai" ]] || fatal "huatuo-bamai binary missing"
 	[[ -x "${ROOT_DIR}/_output/bin/profiler" ]] || fatal "profiler binary missing"
@@ -70,26 +69,8 @@ require_environment() {
 	local paranoid
 	paranoid=$(cat /proc/sys/kernel/perf_event_paranoid)
 	[[ "${paranoid}" -le 2 ]] || skip "kernel.perf_event_paranoid=${paranoid} blocks sampling"
-	port_is_available 19704 || fatal "huatuo-bamai port 19704 is already in use"
-	APISERVER_PORT=$(allocate_port) || fatal "failed to allocate an apiserver port"
+	APISERVER_PORT=$(allocate_available_port) || fatal "failed to allocate an apiserver port"
 	APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
-}
-
-port_is_available() {
-	local port=$1
-	! ss -H -ltn | awk '{ print $4 }' | grep -Eq "[:.]${port}$"
-}
-
-allocate_port() {
-	local attempt port
-	for ((attempt = 0; attempt < 20; attempt++)); do
-		port=$((20000 + RANDOM % 20001))
-		if port_is_available "${port}"; then
-			echo "${port}"
-			return 0
-		fi
-	done
-	return 1
 }
 
 start_elasticsearch() {
@@ -123,7 +104,7 @@ elasticsearch_ready() {
 			> /dev/null
 }
 
-write_configs() {
+write_continuous_profiling_bamai_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "dropwatch"]
 
@@ -136,7 +117,9 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
 [Storage.LocalFile]
     Path = ""
 EOF
+}
 
+write_continuous_profiling_apiserver_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
 [APIServer]
     TCPAddr = "127.0.0.1:${APISERVER_PORT}"
@@ -187,26 +170,6 @@ continuous_profiling_bamai_ready() {
 		fatal "huatuo-bamai exited during startup: $(tail -n 80 "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log")"
 	fi
 	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}" > /dev/null
-}
-
-start_apiserver() {
-	(
-		cd "${HUATUO_BAMAI_TEST_TMPDIR}"
-		exec "${ROOT_DIR}/_output/bin/huatuo-apiserver" \
-			--config-dir "${HUATUO_BAMAI_TEST_TMPDIR}" \
-			--config apiserver.conf
-	) > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" 2>&1 &
-	APISERVER_PID=$!
-	wait_until 120 2 apiserver_ready || fatal "huatuo-apiserver did not become ready"
-}
-
-apiserver_ready() {
-	if ! kill -0 "${APISERVER_PID}" 2> /dev/null; then
-		fatal "huatuo-apiserver exited during startup: $(tail -n 80 "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log")"
-	fi
-	curl -sf "${CURL_TIMEOUT[@]}" \
-		-H "Authorization: ${API_USER}" \
-		"${APISERVER_ADDR}/v1/profiles/capabilities" > /dev/null
 }
 
 start_fixture() {
@@ -295,11 +258,12 @@ profile_is_completed() {
 }
 
 require_services_alive() {
-	local bamai_pid
+	local apiserver_pid bamai_pid
 	bamai_pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2> /dev/null || true)
+	apiserver_pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid" 2> /dev/null || true)
 	[[ -n "${bamai_pid}" ]] && kill -0 "${bamai_pid}" 2> /dev/null \
 		|| fatal "huatuo-bamai exited while profiling"
-	[[ -n "${APISERVER_PID}" ]] && kill -0 "${APISERVER_PID}" 2> /dev/null \
+	[[ -n "${apiserver_pid}" ]] && kill -0 "${apiserver_pid}" 2> /dev/null \
 		|| fatal "huatuo-apiserver exited while profiling"
 	docker inspect --format '{{.State.Running}}' "${ES_CONTAINER_ID}" 2> /dev/null \
 		| grep -qx true || fatal "Elasticsearch exited while profiling"
@@ -371,9 +335,9 @@ assert_profile_lifecycle() {
 
 require_environment
 start_elasticsearch
-write_configs
+write_continuous_profiling_bamai_config
 start_bamai
-start_apiserver
+integration_huatuo_apiserver_start write_continuous_profiling_apiserver_config
 start_fixture
 assert_api_contract
 create_profile

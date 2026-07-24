@@ -43,6 +43,18 @@ assert_eq() {
 	return 1
 }
 
+allocate_available_port() {
+	local attempt port
+	for ((attempt = 0; attempt < 20; attempt++)); do
+		port=$((20000 + RANDOM % 20001))
+		if ! ss -H -ltn | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
+			echo "${port}"
+			return 0
+		fi
+	done
+	return 1
+}
+
 # kernel_version_le <major> <minor>
 # Returns 0 when the running kernel version is less than or equal to major.minor.
 kernel_version_le() {
@@ -243,6 +255,61 @@ huatuo_bamai_stop() {
 	rm -f "${test_workspace}/huatuo-bamai.pid"
 }
 
+# --------------------------- huatuo-apiserver -------------------------------
+
+huatuo_apiserver_start() {
+	[[ -x "${HUATUO_APISERVER_BIN}" ]] \
+		|| fatal "huatuo-apiserver binary not found: ${HUATUO_APISERVER_BIN}"
+
+	log_info "starting huatuo-apiserver: $*"
+	"${HUATUO_APISERVER_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" 2>&1 &
+	local pid=$!
+	echo "$pid" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"
+	log_info "huatuo-apiserver pid: ${pid}"
+
+	sleep 0.5
+	wait_until "${WAIT_HUATUO_APISERVER_TIMEOUT}" "${WAIT_HUATUO_APISERVER_INTERVAL}" \
+		huatuo_apiserver_ready
+}
+
+huatuo_apiserver_ready() {
+	local pid
+	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid" 2> /dev/null || echo "")
+	[[ -n "$pid" ]] || return 1
+
+	if ! kill -0 "${pid}" 2> /dev/null; then
+		log_error "huatuo-apiserver pid=${pid} exited"
+		return 1
+	fi
+
+	curl -sf "${CURL_TIMEOUT[@]}" "${APISERVER_ADDR}/healthz" > /dev/null
+}
+
+huatuo_apiserver_stop() {
+	local test_workspace=${1:-${HUATUO_BAMAI_TEST_TMPDIR}}
+	local pid
+	pid=$(cat "${test_workspace}/huatuo-apiserver.pid" 2> /dev/null || echo "")
+	[[ -n "$pid" ]] && stop_by_pid "${pid}"
+	rm -f "${test_workspace}/huatuo-apiserver.pid"
+}
+
+# integration_huatuo_apiserver_start [config_writer_func] [apiserver args...]
+# Builds config paths from the current test workspace before starting apiserver.
+integration_huatuo_apiserver_start() {
+	local config_writer=${1:-write_apiserver_apis_config}
+	if [[ $# -gt 0 ]]; then
+		shift
+	fi
+	local runtime_args=(
+		"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
+		"--config" "apiserver.conf"
+	)
+	runtime_args+=("$@")
+
+	"$config_writer"
+	huatuo_apiserver_start "${runtime_args[@]}"
+}
+
 # Stop shared services, then remove or report the runner-owned test workspace.
 integration_test_exit() {
 	local exit_code=$1
@@ -253,6 +320,7 @@ integration_test_exit() {
 		return 1
 	fi
 
+	huatuo_apiserver_stop "${test_workspace}" || true
 	huatuo_bamai_stop "${test_workspace}" || true
 
 	if [[ ${exit_code} -eq 0 ]]; then

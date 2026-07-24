@@ -87,3 +87,19 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 EOF
 }
+
+# The apiserver port and workspace paths are allocated by the caller.
+write_apiserver_apis_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
+[APIServer]
+    TCPAddr = "127.0.0.1:${APISERVER_PORT}"
+
+[TaskConfig]
+    JobStoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
+
+[[Auth.users]]
+    ID = "${API_USER}"
+    Name = "Integration administrator"
+    IsAdmin = true
+EOF
+}
