@@ -49,6 +49,7 @@ var (
 	kubeletDefaultConfigPath     = []string{
 		"/var/lib/kubelet/config.yaml",
 		"/var/lib/kubelet/ack-managed-config.yaml",
+		"/etc/kubernetes/kubelet/config.json",
 		"/host/etc/kubernetes/kubelet/config.json",
 	}
 )
@@ -171,7 +172,7 @@ func InitManager(ctx *ManagerCtx) error {
 		// success or other error codes except connect refused
 		// only init css metadata collect when kubelet available.
 		if err == nil {
-			_ = kubeletConfigCacheUpdate(ctx)
+			kubeletConfigCacheMustUpdate(ctx)
 			return containerCgroupCssInit()
 		}
 
@@ -190,7 +191,7 @@ func InitManager(ctx *ManagerCtx) error {
 			case <-t.C:
 				if err := kubeletPodListPortCacheUpdate(ctx); err == nil {
 					log.Infof("kubelet is running now")
-					_ = kubeletConfigCacheUpdate(ctx)
+					kubeletConfigCacheMustUpdate(ctx)
 					_ = containerCgroupCssInit()
 					t.Stop()
 					return
@@ -507,11 +508,16 @@ func kubeletConfigFileDefault() (kubeletConfiguration, error) {
 	return empty, fmt.Errorf("not found kubelet config")
 }
 
-// kubeletConfigCacheUpdate try to update the cache var:
+// kubeletConfigCacheMustUpdate updates the kubelet configuration cache.
 //
-// CgroupDriver
-// ContainerRuntimeEndpoint
-func kubeletConfigCacheUpdate(ctx *ManagerCtx) error {
+// This function MUST succeed: if the kubelet configz endpoint and all
+// default config file paths are unavailable, it panics because downstream
+// services that depend on kubelet pod information would be broken.
+//
+// Updated cache vars:
+//   - CgroupDriver
+//   - ContainerRuntimeEndpoint
+func kubeletConfigCacheMustUpdate(ctx *ManagerCtx) error {
 	var (
 		config kubeletConfiguration
 		err    error
