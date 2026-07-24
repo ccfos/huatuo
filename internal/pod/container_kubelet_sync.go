@@ -254,7 +254,10 @@ func kubeletSyncContainers() error {
 		}
 
 		for _, c := range m {
-			containerStatus := c[1].(*corev1.ContainerStatus)
+			containerStatus, ok := c[1].(*corev1.ContainerStatus)
+			if !ok || containerStatus == nil {
+				continue
+			}
 			containerID, err := parseContainerIDInPodStatus(containerStatus.ContainerID)
 			if err != nil {
 				log.Warnf("failed to parse container id %s in pod %s status: %v", containerStatus.ContainerID, pod.Name, err)
