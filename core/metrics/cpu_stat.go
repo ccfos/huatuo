@@ -145,7 +145,7 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 		stat.waitrateWaitSum = float64(deltaWaitSum) * 100 / float64(waitSumDenom)
 	}
 
-	deltaWaitRunSum := deltaHierarchyWaitSum + stat.cpuTotal - cpu.cpuTotal
+	deltaWaitRunSum := deltaHierarchyWaitSum + deltaCpuUsage
 	if deltaWaitRunSum == 0 {
 		stat.waitrateHierarchy = 0
 		stat.waitrateInner = 0
