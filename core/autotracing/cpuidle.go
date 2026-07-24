@@ -199,6 +199,10 @@ func (c *cpuIdleTracing) updateContainerCpuUsage(container *containerCPUInfo) er
 	}
 
 	updateElapsed := time.Since(container.updateTime).Microseconds()
+	if updateElapsed == 0 {
+		container.updateTime = time.Now()
+		return fmt.Errorf("cpu usage update interval too small")
+	}
 
 	container.nowUsagePercentage.user = 100 * delta.user / updateElapsed / cpuCores
 	container.nowUsagePercentage.sys = 100 * delta.sys / updateElapsed / cpuCores
