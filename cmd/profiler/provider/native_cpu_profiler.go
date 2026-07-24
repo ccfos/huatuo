@@ -25,6 +25,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/internal/profiler/forktrack"
 	"huatuo-bamai/internal/profiler/registry"
 	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/types"
@@ -52,8 +53,9 @@ type cpuEventKey struct {
 }
 
 type cpuNativeProfiler struct {
-	bpf bpf.BPF
-	dbg *bpf.BpfDbg
+	bpf        bpf.BPF
+	dbg        *bpf.BpfDbg
+	forkConfig forktrack.Config
 }
 
 func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
@@ -61,7 +63,7 @@ func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 }
 
 func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
-	return closeBpfSafe(p.bpf)
+	return stopNativeProfilerBPF(p.bpf, p.forkConfig.Enabled)
 }
 
 func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
@@ -80,11 +82,21 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	p.dbg = bpf.NewDbg(pctx.LogBpfDebug)
-
-	b, err := bpf.LoadBpf(
-		"native_cpu_profiler.o",
-		p.dbg.WithBpfDbg(newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)),
+	forkConfig, err := nativeForkConfig(pctx)
+	if err != nil {
+		return err
+	}
+	p.forkConfig = forkConfig
+	constants, attachOpts, err := applyNativeForkTracking(
+		newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup),
+		nil,
+		forkConfig,
 	)
+	if err != nil {
+		return err
+	}
+
+	b, err := loadNativeProfilerBPF("native_cpu_profiler.o", p.dbg.WithBpfDbg(constants), forkConfig)
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
@@ -95,16 +107,17 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	opt.PerfEvent.SampleFreq = uint64(pctx.Freq)
 	opt.PerfEvent.SamplePeriod = 0
 	opt.PerfEvent.CPUIDs = pctx.CPUIDs
+	attachOpts = append(attachOpts, opt)
 
-	if err := p.bpf.AttachWithOptions([]bpf.AttachOption{opt}); err != nil {
+	if err := p.bpf.AttachWithOptions(attachOpts); err != nil {
 		if cerr := p.bpf.Close(); cerr != nil {
 			log.Warnf("closing eBPF after attach failure: %v", cerr)
 		}
 
-		return fmt.Errorf("failed to attach perf event PMU: %w", err)
+		return fmt.Errorf("failed to attach native profiler programs: %w", err)
 	}
 
-	log.Infof("eBPF attached")
+	log.Info("eBPF attached", "fork_tracking", forkConfig.Description())
 
 	return nil
 }

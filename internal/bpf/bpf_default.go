@@ -106,6 +106,13 @@ func LoadBpfFromCollectionSpec(bpfName string, spec *ebpf.CollectionSpec, consts
 
 // LoadBpf loads the BPF object from the default directory and returns it.
 func LoadBpf(bpfName string, consts map[string]any) (BPF, error) {
+	return LoadBpfWithMapSizes(bpfName, consts, nil)
+}
+
+// LoadBpfWithMapSizes loads a BPF object after overriding selected map
+// capacities in its CollectionSpec. This is useful for optional features whose
+// compile-time maximum would otherwise reserve resources in every load.
+func LoadBpfWithMapSizes(bpfName string, consts map[string]any, mapMaxEntries map[string]uint32) (BPF, error) {
 	if err := validateName(bpfName); err != nil {
 		return nil, err
 	}
@@ -115,7 +122,34 @@ func LoadBpf(bpfName string, consts map[string]any) (BPF, error) {
 	}
 	defer f.Close()
 
-	return loadBpfFromReader(bpfName, f, consts)
+	specs, err := ebpf.LoadCollectionSpecFromReader(f)
+	if err != nil {
+		return nil, fmt.Errorf("parse BPF object %q: %w", bpfName, err)
+	}
+	if err := resizeMapMaxEntries(specs, mapMaxEntries); err != nil {
+		return nil, fmt.Errorf("resize BPF maps: %w", err)
+	}
+	return loadBpfFromCollectionSpec(bpfName, specs, consts)
+}
+
+func resizeMapMaxEntries(specs *ebpf.CollectionSpec, overrides map[string]uint32) error {
+	if specs == nil {
+		return errors.New("nil collection spec")
+	}
+	for name, maxEntries := range overrides {
+		if maxEntries == 0 {
+			return fmt.Errorf("map %q maximum entries must be greater than zero", name)
+		}
+		_, ok := specs.Maps[name]
+		if !ok {
+			return fmt.Errorf("map %q not found", name)
+		}
+	}
+	for name, maxEntries := range overrides {
+		mapSpec := specs.Maps[name]
+		mapSpec.MaxEntries = maxEntries
+	}
+	return nil
 }
 
 // loadBpfFromReader loads the bpf from reader.
