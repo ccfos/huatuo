@@ -82,10 +82,15 @@ func (c *tcpMemory) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
+	usagePercent := float64(0)
+	if stats.memoryLimit > 0 {
+		usagePercent = stats.memoryPages / stats.memoryLimit
+	}
+
 	return []*metric.Data{
 		metric.NewGaugeData("usage_pages", stats.memoryPages, "tcp memory pages usage", nil),
 		metric.NewGaugeData("usage_bytes", stats.memoryBytes, "tcp memory bytes usage", nil),
 		metric.NewGaugeData("limit_pages", stats.memoryLimit, "tcp memory pages limit", nil),
-		metric.NewGaugeData("usage_percent", stats.memoryPages/stats.memoryLimit, "tcp memory usage percent", nil),
+		metric.NewGaugeData("usage_percent", usagePercent, "tcp memory usage percent", nil),
 	}, nil
 }
