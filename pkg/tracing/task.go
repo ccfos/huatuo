@@ -25,8 +25,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"huatuo-bamai/internal/log"
 )
 
 // Status represents the status of a task.
@@ -110,7 +108,6 @@ func tasksGarbageCollect() {
 		taskLifeTmpCache.Range(func(key, value any) bool {
 			task, ok := value.(*task)
 			if !ok {
-				log.Warnf("task garbage collect: invalid task type for key %v", key)
 				taskLifeTmpCache.Delete(key)
 				return true
 			}
@@ -120,7 +117,6 @@ func tasksGarbageCollect() {
 				now.After(task.deadlineTime)
 			task.mu.Unlock()
 			if expired {
-				log.Infof("task %s deleted by timeout", key)
 				taskLifeTmpCache.Delete(key)
 			}
 			return true
@@ -151,11 +147,9 @@ func AllocTaskID() (string, error) {
 func NewTask(execBinary string, timeout time.Duration, storageType TaskStorageType, execArgs []string) string {
 	taskID, err := AllocTaskID()
 	if err != nil {
-		log.Errorf("alloc task id: %v", err)
 		return ""
 	}
 	if _, err := NewTaskWithID(taskID, execBinary, timeout, storageType, execArgs); err != nil {
-		log.Errorf("create task: %v", err)
 		return ""
 	}
 	return taskID
@@ -234,7 +228,6 @@ func runTask(ctx context.Context, task *task) {
 	task.mu.Lock()
 	task.status = StatusRunning
 	task.mu.Unlock()
-	log.Infof("task %s %s started", task.execBinary, task.id)
 
 	cmd := exec.CommandContext(ctx, path.Join(TaskBinDir, task.execBinary), task.execArgs...)
 	output, err := cmd.CombinedOutput()
@@ -254,7 +247,6 @@ func runTask(ctx context.Context, task *task) {
 		task.error = taskErr
 		task.deadlineTime = time.Now().Add(10 * time.Minute)
 		task.mu.Unlock()
-		log.Infof("task %s %s failed: %s", task.execBinary, task.id, taskErr)
 		return
 	}
 
@@ -264,36 +256,30 @@ func runTask(ctx context.Context, task *task) {
 	task.status = StatusCompleted
 	task.deadlineTime = time.Now().Add(10 * time.Minute)
 	task.mu.Unlock()
-	log.Infof("task %s completed: %s", task.id, fmt.Sprint(task.execBinary, task.execArgs))
 }
 
 func saveTaskOutputByType(task *task, startAt time.Time, output []byte) {
 	switch task.storage {
 	case TaskStorageDB:
-		if err := SaveTaskOutputText(&WriteRequest{
+		_ = SaveTaskOutputText(&WriteRequest{
 			TracerName: task.execBinary,
 			TracerID:   task.id,
 			TracerTime: startAt,
 			TracerData: string(output),
-		}); err != nil {
-			log.Infof("save task output %s %s failed: %v", task.execBinary, task.id, err)
-		}
+		})
 	case TaskStorageDBJSON:
-		if err := SaveTaskOutputJSON(&WriteRequest{
+		_ = SaveTaskOutputJSON(&WriteRequest{
 			TracerName: task.execBinary,
 			TracerID:   task.id,
 			TracerTime: startAt,
 			TracerData: string(output),
-		}); err != nil {
-			log.Infof("save task json output %s %s failed: %v", task.execBinary, task.id, err)
-		}
+		})
 	case TaskStorageStdout:
 		task.mu.Lock()
 		task.stdoutData = append(task.stdoutData, output...)
 		task.mu.Unlock()
 	case TaskStorageLocal:
 	default:
-		log.Warn("data storage type not supported")
 	}
 }
 
@@ -310,7 +296,6 @@ func RunningTaskCount() int {
 	taskLifeTmpCache.Range(func(key, value any) bool {
 		task, ok := value.(*task)
 		if !ok {
-			log.Warnf("running task count: invalid task type for key %v", key)
 			return true
 		}
 
@@ -330,7 +315,6 @@ func ListTasks() []TaskInfo {
 	taskLifeTmpCache.Range(func(key, value any) bool {
 		task, ok := value.(*task)
 		if !ok {
-			log.Warnf("list tasks: invalid task type for key %v", key)
 			return true
 		}
 
@@ -402,7 +386,6 @@ func StopTask(taskID string) error {
 	status := task.status
 	cancel := task.cancelFunc
 	doneCh := task.doneCh
-	id := task.id
 	task.mu.Unlock()
 	if cancel != nil && (status == StatusPending || status == StatusRunning) {
 		cancel()
@@ -411,6 +394,5 @@ func StopTask(taskID string) error {
 		<-doneCh
 	}
 	taskLifeTmpCache.Delete(taskID)
-	log.Infof("task %s stopped", id)
 	return nil
 }
