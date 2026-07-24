@@ -82,12 +82,7 @@ type AgentConfig struct {
 	MaxConsecutivePollErrors  int `default:"3"`
 }
 
-type ElasticSearchConfig struct {
-	Address  string `default:"http://127.0.0.1:9200"`
-	Username string
-	Password string
-	Index    string `default:"huatuo_bamai"`
-}
+type ElasticSearchConfig = internalconfig.ElasticsearchConfig
 
 // Validate rejects profiling settings that cannot produce a valid job.
 func (c ProfilingConfig) Validate() error {
@@ -256,22 +251,6 @@ func (c TaskConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.JobStoreDSN) == "" {
 		return fmt.Errorf("job store DSN is required")
-	}
-	return nil
-}
-
-func (c ElasticSearchConfig) Validate() error {
-	if strings.TrimSpace(c.Address) == "" {
-		return errors.New("address is required")
-	}
-	for _, address := range strings.Split(c.Address, ",") {
-		parsed, err := url.Parse(strings.TrimSpace(address))
-		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-			return fmt.Errorf("invalid address %q", address)
-		}
-	}
-	if (c.Username == "") != (c.Password == "") {
-		return errors.New("username and password must be configured together")
 	}
 	return nil
 }

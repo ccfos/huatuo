@@ -67,9 +67,6 @@ func Start(opts *ServerOptions) (RunningServer, error) {
 	if opts.TraceJobManager == nil || opts.ProfilingJobManager == nil {
 		return nil, errors.New("start API server: job managers are required")
 	}
-	if opts.ProfileService == nil {
-		return nil, errors.New("start API server: profile service is required")
-	}
 	httpServer := server.NewServer(&server.Config{
 		RequireAuth:     true,
 		EnablePProf:     opts.EnablePProf,

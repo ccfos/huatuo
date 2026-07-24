@@ -63,9 +63,6 @@ func TestConfigureRuntimeAnchorsRelativeJobStoreToConfigDirectory(t *testing.T) 
 ID = "test-token"
 IsAdmin = true
 
-[ElasticSearch]
-Address = "http://127.0.0.1:9200"
-
 [TaskConfig]
 JobStoreDSN = "state/jobs.db"
 `)

@@ -185,20 +185,23 @@ credentials to version control.
 
 ```toml
 [ElasticSearch]
-    # Address = "http://127.0.0.1:9200"
+    Address = "http://127.0.0.1:9200"
     Username = "elastic"
     Password = "huatuo-bamai"
     # Index = "huatuo_bamai"
 ```
 
-`huatuo-apiserver` uses Elasticsearch/OpenSearch to query tracing and event
-data produced by `huatuo-bamai`. `Username` and `Password` are optional, but
-they must be configured together.
+`huatuo-apiserver` uses Elasticsearch/OpenSearch to query profiling data
+produced by `huatuo-bamai`. Storage is disabled when `Address`, `Username`,
+and `Password` are all empty. Enabling storage requires all three values;
+partial connection settings prevent startup. When storage is disabled,
+raw-profile and flame graph query routes are not registered, and readiness
+does not depend on Elasticsearch/OpenSearch.
 
 - **Address**: Elasticsearch/OpenSearch service address.
 
-  The default is `http://127.0.0.1:9200`. To override it, specify a complete
-  URL including the scheme and port, such as `https://127.0.0.1:9200`.
+  There is no default. Specify a complete URL including the scheme and port,
+  such as `https://127.0.0.1:9200`.
 
   **Note**: Use HTTPS in production and ensure that the API service can reach
   this address.

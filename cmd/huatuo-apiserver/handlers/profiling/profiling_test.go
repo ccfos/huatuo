@@ -25,6 +25,37 @@ import (
 	profileService "huatuo-bamai/internal/profiler/service"
 )
 
+func TestNewHandlerOmitsStorageRoutesWhenDisabled(t *testing.T) {
+	handler := NewHandler(nil, nil, Config{})
+
+	for _, route := range handler.Handlers {
+		if route.Uri == "/:id/raw" || strings.HasPrefix(route.Uri, "/flamegraph/") {
+			t.Errorf("storage route %q registered without profile storage", route.Uri)
+		}
+	}
+}
+
+func TestNewHandlerRegistersStorageRoutesWhenEnabled(t *testing.T) {
+	handler := NewHandler(nil, &profileService.Service{}, Config{})
+	routes := make(map[string]struct{}, len(handler.Handlers))
+	for _, route := range handler.Handlers {
+		routes[route.Uri] = struct{}{}
+	}
+
+	want := []string{
+		"/:id/raw",
+		"/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces",
+		"/flamegraph/querier.v1.QuerierService/ProfileTypes",
+		"/flamegraph/querier.v1.QuerierService/LabelNames",
+		"/flamegraph/querier.v1.QuerierService/LabelValues",
+	}
+	for _, route := range want {
+		if _, ok := routes[route]; !ok {
+			t.Errorf("storage route %q is not registered", route)
+		}
+	}
+}
+
 func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 	url := getFlameGraphURL("http://grafana.example/d", &job.Job{
 		Type:        ProfilingCPU,

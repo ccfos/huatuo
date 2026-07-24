@@ -18,10 +18,16 @@ import (
 	"context"
 	"fmt"
 
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/service"
 )
 
 func setupProfileFlamegraph(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
+	if !d.opts.Config.ElasticSearch.Enabled() {
+		log.Info("profile storage disabled")
+		return nil, nil
+	}
+
 	esConfig := &service.ElasticSearchConfig{
 		Address:  d.opts.Config.ElasticSearch.Address,
 		Username: d.opts.Config.ElasticSearch.Username,

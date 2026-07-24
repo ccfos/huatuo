@@ -28,9 +28,6 @@ func TestLoadValidatesProfilingConfig(t *testing.T) {
 ID = "test-token"
 IsAdmin = true
 
-[ElasticSearch]
-Address = "http://127.0.0.1:9200"
-
 [Profiling]
 AggregationInterval = 10
 ExecutionTimeout = 19
@@ -53,9 +50,6 @@ func TestLoadFileDoesNotAccumulateMemoryConversion(t *testing.T) {
 [[Auth.users]]
 ID = "test-token"
 IsAdmin = true
-
-[ElasticSearch]
-Address = "http://127.0.0.1:9200"
 
 [RuntimeCgroup]
 LimitMem = 64
@@ -102,7 +96,7 @@ func TestLoadFileRequiresAuthUser(t *testing.T) {
 	}
 }
 
-func TestLoadFileDefaultsElasticsearchConfig(t *testing.T) {
+func TestLoadFileDisablesElasticsearchByDefault(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
 	contents := []byte(`
 [[Auth.users]]
@@ -117,8 +111,11 @@ IsAdmin = true
 	if err != nil {
 		t.Fatalf("LoadFile() error = %v", err)
 	}
-	if cfg.ElasticSearch.Address != "http://127.0.0.1:9200" {
-		t.Fatalf("ElasticSearch.Address = %q, want default", cfg.ElasticSearch.Address)
+	if cfg.ElasticSearch.Enabled() {
+		t.Fatal("Elasticsearch is enabled without connection settings")
+	}
+	if cfg.ElasticSearch.Address != "" {
+		t.Fatalf("ElasticSearch.Address = %q, want empty", cfg.ElasticSearch.Address)
 	}
 	if cfg.ElasticSearch.Index != "huatuo_bamai" {
 		t.Fatalf("ElasticSearch.Index = %q, want default", cfg.ElasticSearch.Index)
@@ -137,6 +134,8 @@ IsAdmin = true
 
 [ElasticSearch]
 Address = "https://search.example:9443"
+Username = "elastic"
+Password = "secret"
 Index = "profiles"
 `)
 	if err := os.WriteFile(configFile, contents, 0o600); err != nil {
@@ -152,6 +151,32 @@ Index = "profiles"
 	}
 	if cfg.ElasticSearch.Index != "profiles" {
 		t.Fatalf("ElasticSearch.Index = %q, want explicit value", cfg.ElasticSearch.Index)
+	}
+	if !cfg.ElasticSearch.Enabled() {
+		t.Fatal("Elasticsearch is disabled with complete connection settings")
+	}
+}
+
+func TestLoadFileRejectsPartialElasticsearchConfig(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
+	contents := []byte(`
+[[Auth.users]]
+ID = "test-token"
+IsAdmin = true
+
+[ElasticSearch]
+Address = "http://127.0.0.1:9200"
+`)
+	if err := os.WriteFile(configFile, contents, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	_, err := LoadFile(configFile)
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"address, username, and password must be configured together",
+	) {
+		t.Fatalf("LoadFile() error = %v, want incomplete Elasticsearch error", err)
 	}
 }
 
@@ -297,7 +322,6 @@ func TestConfigValidateRejectsDuplicateUsers(t *testing.T) {
 			ExecutionTimeout:    20,
 			FlameGraphBaseURL:   "http://localhost:8006/d",
 		},
-		ElasticSearch: ElasticSearchConfig{Address: "http://127.0.0.1:9200"},
 		Auth: AuthConfig{Users: []UserConfig{
 			{ID: "duplicate", IsAdmin: true},
 			{ID: "duplicate", IsAdmin: true},

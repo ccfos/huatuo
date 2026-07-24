@@ -29,12 +29,17 @@ import (
 )
 
 func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {
+	var profileQueryService profiling.ProfileQueryService
+	if d.profileService != nil {
+		profileQueryService = d.profileService
+	}
+
 	runningServer, err := handlers.Start(&handlers.ServerOptions{
 		Addr:                d.opts.Config.APIServer.TCPAddr,
 		PromReg:             d.metrics,
 		TraceJobManager:     d.jobManager,
 		ProfilingJobManager: d.jobManager,
-		ProfileService:      d.profileService,
+		ProfileService:      profileQueryService,
 		ProfilingConfig: profiling.Config{
 			AggregationInterval: d.opts.Config.Profiling.AggregationInterval,
 			ExecutionTimeout:    d.opts.Config.Profiling.ExecutionTimeout,
@@ -53,7 +58,11 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 		MaxHeaderBytes:    d.opts.Config.APIServer.MaxHeaderBytes,
 		MaxBodyBytes:      d.opts.Config.APIServer.MaxBodyBytes,
 		Ready: func(ctx context.Context) error {
-			return errors.Join(d.jobManager.Ready(ctx), d.profileService.Ready(ctx))
+			err := d.jobManager.Ready(ctx)
+			if d.profileService == nil {
+				return err
+			}
+			return errors.Join(err, d.profileService.Ready(ctx))
 		},
 	})
 	if err != nil {
