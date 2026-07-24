@@ -151,7 +151,12 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			continue
 		}
 
-		containerDataCache := container.LifeResources("collector_cpu_util").(*cpuUtilStat)
+		dataCache, ok := container.LifeResources("collector_cpu_util").(*cpuUtilStat)
+		if !ok || dataCache == nil {
+			log.Warnf("cpu_util: LifeResources for container %s returned unexpected type or nil", container)
+			continue
+		}
+		containerDataCache := dataCache
 		if err := c.updateDataCache(containerDataCache, container, numCores); err != nil {
 			log.Infof("failed to update cpu info of %s, %v", container, err)
 			continue
@@ -163,7 +168,10 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			metric.NewContainerGaugeData(container, "total", containerDataCache.totalUtil, "cpu total for the containers", nil))
 	}
 
-	more, _ := c.updateHostDataCache()
+	more, err := c.updateHostDataCache()
+	if err != nil {
+		log.Warnf("cpu_util: failed to update host data cache: %v", err)
+	}
 
 	return append(metrics, more...), nil
 }
