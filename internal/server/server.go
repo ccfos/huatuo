@@ -22,13 +22,11 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/version"
 
-	"github.com/cloudflare/backoff"
 	"github.com/gin-contrib/pprof"
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -184,12 +182,6 @@ func (s *server) Wait(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-type Option struct {
-	RetryMaxTime  time.Duration
-	RetryInterval time.Duration
-	Addr          string
 }
 
 // NewServer creates a new HTTP server with the given configuration.
@@ -451,41 +443,4 @@ func (s *server) MustRegisterRoutes(subGroup string, handlers []Handle) {
 			panic("unknown type")
 		}
 	}
-}
-
-func (s *server) run(addr string) error {
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("listen %w", err)
-	}
-
-	return s.engine.RunListener(listener)
-}
-
-// Run starts the TCP server with retry mechanism.
-func (s *server) Run(option *Option) error {
-	if option.RetryMaxTime > 0 && option.RetryInterval > 0 {
-		go func() {
-			b := backoff.New(option.RetryMaxTime, option.RetryInterval)
-			for {
-				err := s.run(option.Addr)
-				if err == nil {
-					return
-				}
-
-				retryInterval := b.Duration()
-				if errors.Is(err, syscall.EADDRINUSE) {
-					log.WithError(err).WithField("retry_interval", retryInterval).
-						Info("tcp api address is in use; retrying")
-				} else if err != nil {
-					log.WithError(err).WithField("retry_interval", retryInterval).
-						Warn("tcp api server failed; retrying")
-				}
-				time.Sleep(retryInterval)
-			}
-		}()
-		return fmt.Errorf("init err")
-	}
-
-	return s.run(option.Addr)
 }

@@ -75,9 +75,13 @@ func mainAction(opts *Options) error {
 type Daemon struct {
 	opts *Options
 
-	cgr     cgroups.Cgroup
-	metrics *prometheus.Registry
-	tracer  *tracing.Manager
+	cgr       cgroups.Cgroup
+	metrics   *prometheus.Registry
+	tracer    *tracing.Manager
+	apiServer interface {
+		Done() <-chan struct{}
+		Wait(ctx context.Context) error
+	}
 }
 
 func NewDaemon(opts *Options) *Daemon {
@@ -140,8 +144,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 
 	log.Infof("huatuo-bamai started successfully")
-	s := d.waitForSignal(ctx)
-	log.Infof("huatuo-bamai received signal %v, shutting down", s)
+	s, serveErr := d.waitForSignal(ctx)
+	if serveErr != nil {
+		log.WithError(serveErr).Error("api server stopped unexpectedly")
+	} else {
+		log.Infof("huatuo-bamai received signal %v, shutting down", s)
+	}
 
 	if err := shutdown(); err != nil {
 		log.Warnf("shutdown completed with errors: %v", err)
@@ -150,7 +158,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	return nil
 }
 
-func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
+func (d *Daemon) waitForSignal(ctx context.Context) (os.Signal, error) {
 	waitCh := make(chan os.Signal, 1)
 	signal.Notify(waitCh, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
 
@@ -160,11 +168,22 @@ func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
 		_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
 	}
 
+	if d.apiServer == nil {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		case s := <-waitCh:
+			return s, nil
+		}
+	}
+
 	select {
 	case <-ctx.Done():
-		return nil
+		return nil, nil
 	case s := <-waitCh:
-		return s
+		return s, nil
+	case <-d.apiServer.Done():
+		return nil, d.apiServer.Wait(context.WithoutCancel(ctx))
 	}
 }
 
