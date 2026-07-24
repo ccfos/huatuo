@@ -256,7 +256,7 @@ curl -sS -i \
 
 `profiler` 是 HUATUO 提供的独立性能剖析命令行工具。它可以直接对宿主机进程或容器内进程采样，不依赖 huatuo-apiserver、Elasticsearch 或 Grafana。工具支持 C、C++、Go、Java 和 Python 进程，并将调用栈输出为折叠栈或 SVG 火焰图。
 
-C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 CPU、虚拟内存分配、物理内存分配和物理内存驻留。Java 通过 async-profiler 观测 CPU、对象分配和存活对象；Python 通过 py-spy 观测 CPU。采集结果适合用于热点函数定位、内存增长归因、容器内进程分析和性能问题现场留存。
+C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU 阻塞与调度延迟、虚拟内存分配、物理内存分配和物理内存驻留。Java 通过 async-profiler 观测 CPU、对象分配和存活对象；Python 通过 py-spy 观测 CPU。采集结果适合用于热点函数定位、内存增长归因、容器内进程分析和性能问题现场留存。
 
 本节以下介绍 `_output/bin/profiler` 的独立使用方式。服务化的持续 Profiling 使用方式见上方 Profiles API。
 
@@ -341,6 +341,10 @@ sudo _output/bin/profiler \
 | --- | --- | --- | --- |
 | `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；使用 `--type memory` 时必填 |
 | `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围，例如 `1,3,5-10` |
+| `--cpu-mode` | `oncpu` | 原生 CPU | `oncpu` 按频率采样，`offcpu` 归因阻塞与可运行调度延迟 |
+| `--offcpu-metric` | `total` | 原生 off-CPU | 累计 `total`、`blocked` 或 `runnable` 时间 |
+| `--offcpu-min-us` | `1000` | 原生 off-CPU | 丢弃小于该微秒数的阶段延迟 |
+| `--offcpu-max-us` | `0` | 原生 off-CPU | 丢弃大于该微秒数的阶段延迟；`0` 表示不限制 |
 | `--thread-group` | `false` | 原生 | 同时采集目标 PID 所在线程组中的其他线程 |
 | `--physical-memory-probability` | `100` | 原生物理内存 | 物理内存事件采样概率，范围为 1～100 |
 | `--log-bpf-debug` | `false` | 原生 | 输出 BPF 调试事件，常规采集不建议启用 |
@@ -385,6 +389,19 @@ sudo _output/bin/profiler \
   --duration 30 --aggr-interval 10 \
   --output-format flamegraph --output-path ./profiles/host
 ```
+
+如需把线程离开 CPU 的时间归因到触发切出的调用路径，使用 off-CPU 模式：
+
+```bash
+sudo _output/bin/profiler \
+  --type cpu --language go --pid 12345 --thread-group \
+  --cpu-mode offcpu --offcpu-metric total \
+  --offcpu-min-us 1000 \
+  --duration 30 --aggr-interval 10 \
+  --output-format flamegraph --output-path ./profiles/go-offcpu
+```
+
+off-CPU 是事件驱动采集，因此不使用 `--freq`；由于调度 tracepoint 需要全局观察任务迁移，也不支持 `--cpuid`。火焰图直接以纳秒为数值，并增加 `off-CPU blocked`、`scheduling delay (preempted)`、`scheduling delay (yielded)` 等根节点。`total` 模式同时累计阻塞与可运行阶段，但仍按这些根节点分开显示。采集端使用单一稳定的 BPF stack map，避免长时间睡眠跨越多轮读取后被错误解析到另一代栈。
 
 原生内存支持以下维度：
 
@@ -498,6 +515,9 @@ main;handleRequest;writeResponse 172
 # 原生 CPU
 sudo ./integration/run.sh test_profiler_native_cpu.sh
 
+# 原生 off-CPU 阻塞与调度延迟
+sudo ./integration/run.sh test_profiler_native_cpu_offcpu.sh
+
 # 原生虚拟内存与物理内存
 sudo ./integration/run.sh test_profiler_native_mem_virtual_alloc.sh
 sudo ./integration/run.sh test_profiler_native_mem_physical_usage.sh
@@ -514,7 +534,7 @@ sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 
 ## ⚙️ 功能原理介绍
 
-`profiler` 先根据语言和观测类型选择采集器。原生 CPU 采集器将 eBPF 程序挂载到 perf event，原生内存采集器通过内核事件记录分配与释放路径；Java 和 Python 采集器分别启动 async-profiler 和 py-spy 子进程。采集记录进入统一聚合流水线，按调用栈合并计数，最后写入本地文件或上传远端存储。
+`profiler` 先根据语言和观测类型选择采集器。原生 on-CPU 采集器将 eBPF 程序挂载到 perf event；off-CPU 模式挂载调度切换、唤醒、退出和任务释放 tracepoint；原生内存采集器通过内核事件记录分配与释放路径；Java 和 Python 采集器分别启动 async-profiler 和 py-spy 子进程。采集记录进入统一聚合流水线，按调用栈合并计数，最后写入本地文件或上传远端存储。
 
 ```mermaid
 flowchart LR

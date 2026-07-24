@@ -24,6 +24,10 @@ type PerfEventReader interface {
 	// allocated value of the same type as pdata.
 	ReadBatch(pdata any) ([]any, error)
 
+	// LostSamples returns the cumulative number of samples the kernel reported
+	// as dropped because the perf buffer could not keep up.
+	LostSamples() uint64
+
 	// Close the PerfEventReader.
 	Close() error
 }

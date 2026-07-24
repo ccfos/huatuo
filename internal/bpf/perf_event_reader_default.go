@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync/atomic"
 	"time"
 
 	"huatuo-bamai/pkg/types"
@@ -34,9 +35,14 @@ import (
 
 // perfEventReader reads the eBPF perf_event_array.
 type perfEventReader struct {
-	ctx       context.Context
-	rd        *perf.Reader
-	cancelCtx context.CancelFunc
+	ctx         context.Context
+	rd          *perf.Reader
+	cancelCtx   context.CancelFunc
+	lostSamples atomic.Uint64
+}
+
+func (r *perfEventReader) LostSamples() uint64 {
+	return r.lostSamples.Load()
 }
 
 // _ is a type assertion
@@ -97,6 +103,7 @@ func (r *perfEventReader) ReadBatch(pdata any) ([]any, error) {
 		}
 
 		if rec.LostSamples != 0 {
+			r.lostSamples.Add(rec.LostSamples)
 			continue
 		}
 
@@ -131,6 +138,7 @@ func (r *perfEventReader) ReadInto(pdata any) error {
 			}
 
 			if record.LostSamples != 0 {
+				r.lostSamples.Add(record.LostSamples)
 				continue
 			}
 

@@ -41,6 +41,25 @@ var appFlags = []cli.Flag{
 		Usage: "CPU IDs to sample: comma-separated list and ranges (e.g., 1,3,5-10). Empty for all CPUs",
 	},
 	&cli.StringFlag{
+		Name:  "cpu-mode",
+		Usage: "Native CPU profiling mode: oncpu|offcpu",
+		Value: "oncpu",
+	},
+	&cli.StringFlag{
+		Name:  "offcpu-metric",
+		Usage: "Off-CPU time to attribute: total|blocked|runnable",
+		Value: "total",
+	},
+	&cli.Uint64Flag{
+		Name:  "offcpu-min-us",
+		Usage: "Minimum off-CPU interval to record in microseconds",
+		Value: 1000,
+	},
+	&cli.Uint64Flag{
+		Name:  "offcpu-max-us",
+		Usage: "Maximum off-CPU interval to record in microseconds; 0 disables the limit",
+	},
+	&cli.StringFlag{
 		Name:  "container-id",
 		Usage: "Target container ID",
 	},

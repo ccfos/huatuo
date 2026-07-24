@@ -23,6 +23,7 @@ import (
 const (
 	// ProfileTypeCpuSample is the profile type for CPU sample.
 	ProfileTypeCpuSample       = "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+	ProfileTypeOffCpuSample    = "process_offcpu:offcpu:nanoseconds:offcpu:nanoseconds"
 	ProfileTypeMemSample       = "memory:alloc_space:bytes:space:bytes"
 	ProfileTypeLockCountSample = "process_lock:lock:count:lock:count"
 	ProfileTypeLockTimeSample  = "process_lock:lock:nanoseconds:lock:nanoseconds"

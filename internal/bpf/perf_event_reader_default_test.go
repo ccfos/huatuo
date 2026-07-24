@@ -44,6 +44,12 @@ import (
 // removing the Layer 2 header.
 var emptyBpfContext = make([]byte, 15)
 
+func TestPerfEventReaderLostSamples(t *testing.T) {
+	reader := &perfEventReader{}
+	reader.lostSamples.Add(7)
+	require.Equal(t, uint64(7), reader.LostSamples())
+}
+
 func TestPerfEventReader_Lifecycle(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
