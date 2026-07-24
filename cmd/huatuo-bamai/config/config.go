@@ -15,6 +15,8 @@
 package config
 
 import (
+	"fmt"
+
 	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/core/events"
 	collector "huatuo-bamai/core/metrics"
@@ -41,11 +43,7 @@ type BamaiConfig struct {
 	}
 
 	Storage struct {
-		ES struct {
-			Address            string `default:"http://127.0.0.1:9200"`
-			Username, Password string
-			Index              string `default:"huatuo_bamai"`
-		}
+		ES internalconfig.ElasticsearchConfig
 
 		LocalFile struct {
 			Path         string `default:"huatuo-local"`
@@ -86,6 +84,9 @@ func Load(path string) error {
 	cfg = &BamaiConfig{}
 	if err := internalconfig.Load(path, cfg); err != nil {
 		return err
+	}
+	if err := cfg.Storage.ES.Validate(); err != nil {
+		return fmt.Errorf("validate Elasticsearch config: %w", err)
 	}
 
 	cfg.RuntimeCgroup.LimitMem *= 1024 * 1024

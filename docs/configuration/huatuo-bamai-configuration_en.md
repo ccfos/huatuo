@@ -114,15 +114,10 @@ BlackList = ["netdev_hw", "metax_gpu"]
     # Store the tracing and events data of linux kernel to ES/OS.
     #
     # - Address
-    # Default address is :9200 of localhost. Port 9200 is used for all API calls
-    # over HTTP. This includes search and aggregations, monitoring and anything
-    # else that uses a HTTP or HTTPS request. All client libraries will use this port to
-    # talk to Elasticsearch or OpenSearch.
+    # Port 9200 is commonly used for Elasticsearch/OpenSearch HTTP APIs.
     # e.g.
     # http://127.0.0.1:9200
     # https://127.0.0.1:9200
-    #
-    # Default: :9200
     #
     # - Index
     # Elasticsearch or OpenSearch index, a logical namespace that holds a collection of
@@ -131,10 +126,11 @@ BlackList = ["netdev_hw", "metax_gpu"]
     #
     # - Username
     # - Password
-    # There is no default username and password.
+    # Address, Username, and Password must be either all empty (disabled) or
+    # all configured (enabled). Partial connection settings are invalid.
     #
     [Storage.ES]
-        # Address = "http://127.0.0.1:9200"
+        Address = "http://127.0.0.1:9200"
         # Index = "huatuo_bamai"
         Username = "elastic"
         Password = "huatuo-bamai"
@@ -142,9 +138,12 @@ BlackList = ["netdev_hw", "metax_gpu"]
 
 - **Address**: ElasticSearch/OpenSearch service address.
 
-  Default: http://127.0.0.1:9200.
+  No default value.
 
-  **Description**: Used to store kernel tracing and event data. ES/OS storage is disabled if any of Address, Username, or Password is empty. Port 9200 is the standard HTTP/HTTPS API port for ElasticSearch/OpenSearch.
+  **Description**: Used to store kernel tracing and event data. ES/OS storage
+  is disabled when Address, Username, and Password are all empty. All three
+  values are required when storage is enabled; a partial configuration
+  prevents startup.
 
 - **Index**: Index name.
 

@@ -113,15 +113,10 @@ BlackList = ["netdev_hw", "metax_gpu"]
     # Store the tracing and events data of linux kernel to ES/OS.
     #
     # - Address
-    # Default address is :9200 of localhost. Port 9200 is used for all API calls
-    # over HTTP. This includes search and aggregations, monitoring and anything
-    # else that uses a HTTP or HTTPS request. All client libraries will use this port to
-    # talk to Elasticsearch or OpenSearch.
+    # Port 9200 is commonly used for Elasticsearch/OpenSearch HTTP APIs.
     # e.g.
     # http://127.0.0.1:9200
     # https://127.0.0.1:9200
-    #
-    # Default: :9200
     #
     # - Index
     # Elasticsearch or OpenSearch index, a logical namespace that holds a collection of
@@ -130,10 +125,11 @@ BlackList = ["netdev_hw", "metax_gpu"]
     #
     # - Username
     # - Password
-    # There is no default username and password.
+    # Address, Username, and Password must be either all empty (disabled) or
+    # all configured (enabled). Partial connection settings are invalid.
     #
     [Storage.ES]
-        # Address = "http://127.0.0.1:9200"
+        Address = "http://127.0.0.1:9200"
         # Index = "huatuo_bamai"
         Username = "elastic"
         Password = "huatuo-bamai"
@@ -141,9 +137,11 @@ BlackList = ["netdev_hw", "metax_gpu"]
 
 - **Address**：ElasticSearch/OpenSearch 存储服务地址。 
 
-  默认值为 http://127.0.0.1:9200。 
+  无默认值。
 
-  **说明**：用于存储内核追踪和事件数据。如果 Address、Username 或 Password 中任一项为空，则禁用 ES/OS 存储。支持 HTTP/HTTPS 协议。
+  **说明**：用于存储内核追踪和事件数据。Address、Username、Password
+  三项全部为空时禁用 ES/OS 存储；启用时必须三项全部配置，部分配置会
+  导致进程启动失败。支持 HTTP/HTTPS 协议。
 
 - **Index**：索引名称。
 

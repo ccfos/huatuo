@@ -84,6 +84,43 @@ ExcludedOnContainer = "writeback"
 	if len(Get().EventTracing.NetRxLatency.ExcludedContainerQos) != 1 {
 		t.Errorf("unexpected ExcludedContainerQos length: %d", len(Get().EventTracing.NetRxLatency.ExcludedContainerQos))
 	}
+	if Get().Storage.ES.Enabled() {
+		t.Error("Elasticsearch is enabled without connection settings")
+	}
+}
+
+func TestLoadEnablesCompleteElasticsearchConfig(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Storage.ES]
+Address = "http://127.0.0.1:9200"
+Username = "elastic"
+Password = "secret"
+`)
+
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !Get().Storage.ES.Enabled() {
+		t.Fatal("Elasticsearch is disabled with complete connection settings")
+	}
+	if Get().Storage.ES.Index != "huatuo_bamai" {
+		t.Fatalf("Elasticsearch index = %q, want default", Get().Storage.ES.Index)
+	}
+}
+
+func TestLoadRejectsPartialElasticsearchConfig(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Storage.ES]
+Address = "http://127.0.0.1:9200"
+`)
+
+	err := Load(path)
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"address, username, and password must be configured together",
+	) {
+		t.Fatalf("Load() error = %v, want incomplete Elasticsearch error", err)
+	}
 }
 
 func TestSetAndSync(t *testing.T) {

@@ -40,9 +40,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 	var esStore *storage.Store[*tracing.Document]
 
 	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)
-	if cfg.Storage.ES.Address != "" &&
-		cfg.Storage.ES.Username != "" &&
-		cfg.Storage.ES.Password != "" {
+	if cfg.Storage.ES.Enabled() {
 		store, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
 			ESAddresses: strutil.SplitCommaList(cfg.Storage.ES.Address),
@@ -82,9 +80,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
 	}
 
-	if cfg.Storage.ES.Address != "" &&
-		cfg.Storage.ES.Username != "" &&
-		cfg.Storage.ES.Password != "" {
+	if cfg.Storage.ES.Enabled() {
 		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
 			ESAddresses: strutil.SplitCommaList(cfg.Storage.ES.Address),
