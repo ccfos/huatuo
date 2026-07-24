@@ -69,6 +69,8 @@ func NewStreamDecoder(r io.Reader, opt Options) (*StreamDecoder, Header, error) 
 	rd.codeObjects = make(map[uint64]codeObject)
 	rd.simpleAllocs = make(map[uint64]liveAlloc)
 	rd.nativeFrames = make([]nativeFrame, 0, 1024)
+	rd.pyFrameIndex = make(map[pyFrameKey]uint64)
+	rd.pyFrames = make([]pyFrameKey, 0, 1024)
 	if rd.header.HasNativeTraces {
 		rd.nativeSymbolize = newNativeSymbolizer(rd.header.Pid)
 	}

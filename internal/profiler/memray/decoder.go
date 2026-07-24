@@ -18,14 +18,16 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"huatuo-bamai/internal/symbol"
 )
 
-// Decoder implements a minimal memray-lite ALL_ALLOCATIONS stream reader.
-// It reconstructs Python stacks (function only) and retained allocations.
-// Native/hybrid stacks are supported at function granularity; line/file info remains TODO.
+// Decoder implements a memray-lite ALL_ALLOCATIONS stream reader. It
+// reconstructs Python stacks with line/file granularity (via the code object
+// linetable) and retained allocations. Native/hybrid stacks are supported at
+// function granularity via native symbolization.
 
 // Options controls decoding.
 type Options struct {
@@ -79,12 +81,37 @@ type reader struct {
 	simpleAllocs map[uint64]liveAlloc
 	rangeAllocs  intervalTree
 	tmpBuf       [1]byte
+
+	// lastCodeFirstLineNo accumulates the delta-encoded firstlineno field of
+	// consecutive CODE_OBJECT records, matching memray's readIntegralDelta.
+	lastCodeFirstLineNo int64
+
+	// pyFrameIndex/pyFrames form a registry that deduplicates pyFrameKey into
+	// a stable frame id used as the FrameTree node identity (mirrors memray's
+	// Registry<Frame>). Index 0 is the first registered frame.
+	pyFrameIndex map[pyFrameKey]uint64
+	pyFrames     []pyFrameKey
 }
 
 type codeObject struct {
-	Func string
-	// TODO(python-mem): Extend this struct to retain filename/firstlineno/linetable
-	// and render line-aware stack labels. We currently keep function-only labels.
+	Func        string
+	Filename    string
+	FirstLineNo int
+	// Linetable is the raw CPython co_linetable (3.10+) or co_lnotab (<3.10)
+	// payload captured by memray. It is decoded on demand to resolve the
+	// source line for a given instruction offset.
+	Linetable []byte
+}
+
+// pyFrameKey uniquely identifies a Python frame in the stream. It mirrors
+// memray's tracking_api::Frame (code object id + instruction offset +
+// entry-frame flag). Including the instruction offset is what enables
+// line-level allocation attribution: frames executing different source lines
+// within the same code object are distinct tree nodes.
+type pyFrameKey struct {
+	CodeObjectID uint64
+	InstrOffset  int64
+	IsEntry      bool
 }
 
 type locationKey struct {
@@ -213,6 +240,8 @@ func (rd *reader) readHeader() error {
 	rd.codeObjects = make(map[uint64]codeObject)
 	rd.simpleAllocs = make(map[uint64]liveAlloc)
 	rd.nativeFrames = make([]nativeFrame, 0, 1024)
+	rd.pyFrameIndex = make(map[pyFrameKey]uint64)
+	rd.pyFrames = make([]pyFrameKey, 0, 1024)
 	if rd.header.HasNativeTraces {
 		rd.nativeSymbolize = newNativeSymbolizer(rd.header.Pid)
 	}
@@ -232,22 +261,21 @@ func (rd *reader) handleContextSwitch() error {
 }
 
 func (rd *reader) handleFramePush(flags uint8) error {
-	var frame frameInfo
-	frame.IsEntry = flags&1 == 1
-	var err error
-	if frame.CodeObjectID, err = rd.readVarint(); err != nil {
-		return err
-	}
-	sv, err := rd.readSignedVarint()
+	isEntry := flags&1 == 1
+	codeObjectID, err := rd.readVarint()
 	if err != nil {
 		return err
 	}
-	frame.InstrOffset = sv
+	instrOffset, err := rd.readSignedVarint()
+	if err != nil {
+		return err
+	}
 
-	frameID, err := packPythonFrameID(frame.CodeObjectID, frame.IsEntry)
-	if err != nil {
-		return err
-	}
+	frameID := rd.registerPyFrame(pyFrameKey{
+		CodeObjectID: codeObjectID,
+		InstrOffset:  instrOffset,
+		IsEntry:      isEntry,
+	})
 	stack := rd.threadStacks[rd.lastThreadID]
 	parent := uint64(0)
 	if len(stack) > 0 {
@@ -256,6 +284,18 @@ func (rd *reader) handleFramePush(flags uint8) error {
 	newIdx := rd.frameTree.getTraceIndex(parent, frameID)
 	rd.threadStacks[rd.lastThreadID] = append(stack, newIdx)
 	return nil
+}
+
+// registerPyFrame deduplicates a pyFrameKey into a stable frame id, mirroring
+// memray's Registry<Frame>. The returned id is used as the FrameTree identity.
+func (rd *reader) registerPyFrame(key pyFrameKey) uint64 {
+	if idx, ok := rd.pyFrameIndex[key]; ok {
+		return idx
+	}
+	idx := uint64(len(rd.pyFrames))
+	rd.pyFrameIndex[key] = idx
+	rd.pyFrames = append(rd.pyFrames, key)
+	return idx
 }
 
 func (rd *reader) handleFramePop(flags uint8) error {
@@ -278,26 +318,36 @@ func (rd *reader) handleCodeObject() error {
 	if err != nil {
 		return err
 	}
-	if _, err := rd.readCString(); err != nil { // filename
+	filename, err := rd.readCString()
+	if err != nil {
 		return err
 	}
-	if _, err := rd.readSignedVarint(); err != nil { // firstlineno delta
+	// firstlineno is delta-encoded across consecutive CODE_OBJECT records
+	// (memray readIntegralDelta against d_last.code_firstlineno).
+	firstlinenoDelta, err := rd.readSignedVarint()
+	if err != nil {
 		return err
 	}
-	// TODO(python-mem): Decode and retain linetable payload so we can reconstruct
-	// precise source line info in stack rendering.
+	rd.lastCodeFirstLineNo += firstlinenoDelta
+
 	ltSize, err := rd.readVarint()
 	if err != nil {
 		return err
 	}
+	var linetable []byte
 	if ltSize > 0 {
-		if _, err := io.CopyN(io.Discard, rd.r, int64(ltSize)); err != nil {
+		linetable = make([]byte, ltSize)
+		if _, err := io.ReadFull(rd.r, linetable); err != nil {
 			return err
 		}
 	}
-	// TODO(python-mem): Keep richer code object metadata and include it in rendered
-	// stack frame labels. Today we intentionally map codeID -> function name only.
-	rd.codeObjects[codeID] = codeObject{Func: funcName}
+
+	rd.codeObjects[codeID] = codeObject{
+		Func:        funcName,
+		Filename:    filename,
+		FirstLineNo: int(rd.lastCodeFirstLineNo),
+		Linetable:   linetable,
+	}
 	return nil
 }
 
@@ -471,32 +521,6 @@ type childEdge struct {
 	ChildIdx uint64
 }
 
-type frameInfo struct {
-	CodeObjectID uint64
-	IsEntry      bool
-	InstrOffset  int64
-}
-
-const maxPackedCodeObjectID = ^uint64(0) >> 1
-
-func packPythonFrameID(codeID uint64, isEntry bool) (uint64, error) {
-	// frameID packs codeID and isEntry into one uint64:
-	// - bits [63:1]: codeID
-	// - bit [0]: isEntry
-	if codeID > maxPackedCodeObjectID {
-		return 0, fmt.Errorf("code object id %d exceeds max packed range %d", codeID, maxPackedCodeObjectID)
-	}
-	frameID := codeID << 1
-	if isEntry {
-		frameID |= 1
-	}
-	return frameID, nil
-}
-
-func unpackPythonFrameID(frameID uint64) (codeID uint64, isEntry bool) {
-	return frameID >> 1, frameID&1 == 1
-}
-
 func (ft *frameTree) getTraceIndex(parent, frameID uint64) uint64 {
 	if ft.nodes == nil {
 		ft.nodes = []frameNode{{}}
@@ -507,11 +531,12 @@ func (ft *frameTree) getTraceIndex(parent, frameID uint64) uint64 {
 		parent = 0
 	}
 	edges := ft.nodes[parent].Children
-	i := 0
-	// TODO: use binary search? (Children are kept sorted by FrameID; linear scan is OK for now.)
-	for i < len(edges) && edges[i].FrameID < frameID {
-		i++
-	}
+	// Children are kept sorted by FrameID, so use a binary search to find the
+	// insertion point (mirrors memray's std::lower_bound). This keeps frame
+	// tree construction sub-linear in the number of sibling frames.
+	i := sort.Search(len(edges), func(j int) bool {
+		return edges[j].FrameID >= frameID
+	})
 	if i < len(edges) && edges[i].FrameID == frameID {
 		return edges[i].ChildIdx
 	}
@@ -554,19 +579,48 @@ func (rd *reader) pythonStackFrames(idx uint64) ([]string, []bool) {
 	entries := make([]bool, 0, 16)
 	for idx != 0 {
 		node := rd.frameTree.nodes[idx]
-		frameID := node.FrameID
-		codeID, isEntry := unpackPythonFrameID(frameID)
-		// TODO(python-mem): Switch to line/file aware labels once code object metadata
-		// retention is implemented in handleCodeObject.
-		fn := rd.codeObjects[codeID].Func
-		if fn == "" {
-			fn = "[unknown]"
-		}
-		frames = append(frames, fn)
-		entries = append(entries, isEntry)
+		key := rd.pyFrames[node.FrameID]
+		frames = append(frames, rd.pythonFrameLabel(key.CodeObjectID, key.InstrOffset))
+		entries = append(entries, key.IsEntry)
 		idx = node.Parent
 	}
 	return frames, entries
+}
+
+// pythonFrameLabel renders a single Python frame as "func (file:line)". The
+// line is resolved from the code object's linetable using the instruction
+// offset; if the linetable is absent or cannot be resolved, the label degrades
+// to "func (file)" or just "func".
+func (rd *reader) pythonFrameLabel(codeID uint64, instrOffset int64) string {
+	co := rd.codeObjects[codeID]
+	fn := co.Func
+	if fn == "" {
+		fn = "[unknown]"
+	}
+	lineno := rd.resolvePythonLine(co, instrOffset)
+	switch {
+	case co.Filename != "" && lineno > 0:
+		return fmt.Sprintf("%s (%s:%d)", fn, co.Filename, lineno)
+	case co.Filename != "":
+		return fmt.Sprintf("%s (%s)", fn, co.Filename)
+	default:
+		return fn
+	}
+}
+
+// resolvePythonLine maps an instruction offset to a source line using the code
+// object linetable. It mirrors memray's frameToLocation: the line table is only
+// consulted when present and the instruction offset is non-negative; otherwise
+// 0 (unknown) is returned.
+func (rd *reader) resolvePythonLine(co codeObject, instrOffset int64) int {
+	if len(co.Linetable) == 0 || instrOffset < 0 {
+		return 0
+	}
+	lineno, ok := parseLinetable(rd.header.PythonVersion, co.Linetable, instrOffset, co.FirstLineNo)
+	if !ok {
+		return 0
+	}
+	return lineno
 }
 
 func (rd *reader) pythonStackKey(idx, tid uint64) string {
