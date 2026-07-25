@@ -35,6 +35,7 @@ type fakeProfileQueryStorage struct {
 	countErr    error
 	searchErr   error
 	searchCalls []SearchFilter
+	pages       map[int][]*ProfileDocument
 }
 
 func (*fakeProfileQueryStorage) Close(context.Context) error { return nil }
@@ -48,6 +49,9 @@ func (s *fakeProfileQueryStorage) SearchProfilesContext(
 		return nil, s.searchErr
 	}
 	s.searchCalls = append(s.searchCalls, *filter)
+	if s.pages != nil {
+		return s.pages[filter.Offset], nil
+	}
 	documents := s.matchingDocuments(filter)
 	if filter.Offset >= len(documents) {
 		return nil, nil
@@ -223,6 +227,71 @@ func TestSearchProfileDocumentsRejectsOversizedQuery(t *testing.T) {
 	}
 }
 
+func TestSearchProfileDocumentsRejectsInvalidStorageResults(t *testing.T) {
+	document := testProfileDocument(time.Now(), "trace-a", 1, "root", "leaf")
+	tests := []struct {
+		name    string
+		storage *fakeProfileQueryStorage
+	}{
+		{
+			name:    "negative count",
+			storage: &fakeProfileQueryStorage{count: -1},
+		},
+		{
+			name: "empty page",
+			storage: &fakeProfileQueryStorage{
+				count: 1,
+				pages: map[int][]*ProfileDocument{0: {}},
+			},
+		},
+		{
+			name: "short page",
+			storage: &fakeProfileQueryStorage{
+				count: 2,
+				pages: map[int][]*ProfileDocument{0: {document}},
+			},
+		},
+		{
+			name: "oversized page",
+			storage: &fakeProfileQueryStorage{
+				count: 1,
+				pages: map[int][]*ProfileDocument{0: {document, document}},
+			},
+		},
+		{
+			name: "nil document",
+			storage: &fakeProfileQueryStorage{
+				count: 1,
+				pages: map[int][]*ProfileDocument{0: {nil}},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := newTestProfileService(test.storage)
+			selection, err := buildProfileSelection(
+				profiler.ProfileTypeCpuSample,
+				`{id="trace-a"}`,
+				0,
+				time.Now().Add(time.Hour).UnixMilli(),
+			)
+			if err != nil {
+				t.Fatalf("buildProfileSelection() error = %v", err)
+			}
+
+			_, err = service.searchProfileDocuments(t.Context(), selection)
+			if err == nil {
+				t.Fatal("searchProfileDocuments() error = nil, want storage contract error")
+			}
+			if errors.Is(err, ErrInvalidQuery) ||
+				errors.Is(err, ErrProfilesAbsent) ||
+				errors.Is(err, ErrProfileQueryLimitExceeded) {
+				t.Fatalf("storage contract error = %v, want internal error", err)
+			}
+		})
+	}
+}
+
 func TestBuildProfileSelectionRejectsBroadMatchers(t *testing.T) {
 	for _, selector := range []string{
 		`{hostname=~"node-.*"}`,
@@ -306,6 +375,85 @@ func TestDiffBuildsDoubleFlamegraph(t *testing.T) {
 	}
 	if response.Flamegraph == nil || response.Flamegraph.LeftTicks != 10 {
 		t.Fatalf("Diff() response = %#v, want 10 left ticks", response)
+	}
+}
+
+func TestEmptyStoredProfileHasNoUsableSamples(t *testing.T) {
+	start := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
+	document := &ProfileDocument{
+		Hostname:     "node-a",
+		UploadedTime: start,
+		TracerID:     "empty-profile",
+	}
+	document.TracerData.Flamedata.ProfileType = profiler.ProfileTypeCpuSample
+	service := newTestProfileService(&fakeProfileQueryStorage{
+		documents: []*ProfileDocument{document},
+	})
+
+	_, err := service.SelectMergeStacktraces(
+		t.Context(),
+		&querierv1.SelectMergeStacktracesRequest{
+			ProfileTypeID: profiler.ProfileTypeCpuSample,
+			LabelSelector: `{id="empty-profile"}`,
+			Start:         start.Add(-time.Second).UnixMilli(),
+			End:           start.Add(time.Second).UnixMilli(),
+		},
+	)
+	if !errors.Is(err, ErrProfilesAbsent) {
+		t.Fatalf("SelectMergeStacktraces() error = %v, want profiles absent", err)
+	}
+
+	series, err := service.SelectSeries(t.Context(), &querierv1.SelectSeriesRequest{
+		ProfileTypeID: profiler.ProfileTypeCpuSample,
+		LabelSelector: `{id="empty-profile"}`,
+		Start:         start.Add(-time.Second).UnixMilli(),
+		End:           start.Add(time.Second).UnixMilli(),
+		Step:          1,
+	})
+	if err != nil {
+		t.Fatalf("SelectSeries() error = %v", err)
+	}
+	if len(series.Series) != 0 {
+		t.Fatalf("SelectSeries() series = %#v, want empty", series.Series)
+	}
+}
+
+func TestSamplesWithoutValuesAreSkipped(t *testing.T) {
+	start := time.Date(2026, time.July, 25, 13, 0, 0, 0, time.UTC)
+	document := testProfileDocument(start, "no-values", 1, "root", "leaf")
+	document.TracerData.Flamedata.Profile.Sample = []*profilev1.Sample{
+		nil,
+		{LocationId: []uint64{2, 1}},
+	}
+	service := newTestProfileService(&fakeProfileQueryStorage{
+		documents: []*ProfileDocument{document},
+	})
+
+	series, err := service.SelectSeries(t.Context(), &querierv1.SelectSeriesRequest{
+		ProfileTypeID: profiler.ProfileTypeCpuSample,
+		LabelSelector: `{id="no-values"}`,
+		Start:         start.Add(-time.Second).UnixMilli(),
+		End:           start.Add(time.Second).UnixMilli(),
+		Step:          1,
+	})
+	if err != nil {
+		t.Fatalf("SelectSeries() error = %v", err)
+	}
+	if len(series.Series) != 0 {
+		t.Fatalf("SelectSeries() series = %#v, want empty", series.Series)
+	}
+
+	_, err = service.SelectMergeStacktraces(
+		t.Context(),
+		&querierv1.SelectMergeStacktracesRequest{
+			ProfileTypeID: profiler.ProfileTypeCpuSample,
+			LabelSelector: `{id="no-values"}`,
+			Start:         start.Add(-time.Second).UnixMilli(),
+			End:           start.Add(time.Second).UnixMilli(),
+		},
+	)
+	if !errors.Is(err, ErrProfilesAbsent) {
+		t.Fatalf("SelectMergeStacktraces() error = %v, want profiles absent", err)
 	}
 }
 
