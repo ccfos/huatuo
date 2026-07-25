@@ -207,6 +207,7 @@ func buildProfilingJobResponse(jobResult *job.Job, flameGraphBaseURL string) (v1
 		ErrorMessage:    jobResult.ErrorMessage,
 		MemoryMode:      privateData.MemoryMode,
 		BinaryMatchPath: privateData.BinaryMatchPath,
+		ToolPath:        privateData.ToolPath,
 		Language:        privateData.Language,
 		CPUIDs:          append([]int(nil), privateData.CPUIDs...),
 		PID:             privateData.PID,

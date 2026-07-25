@@ -134,6 +134,7 @@ func TestCapabilitiesReturnsIndependentMemoryModeMap(t *testing.T) {
 func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
 	data, err := newProfilingPrivateData(&v1.CreateProfilingJobRequest{
 		BinaryMatchPath: "/usr/bin/example",
+		ToolPath:        "/opt/profiler",
 		Duration:        60,
 		Language:        "go",
 		MemoryMode:      "object_alloc",
@@ -150,6 +151,7 @@ func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
 		t.Fatalf("json.Unmarshal() error=%v", err)
 	}
 	if fields["binary_match_path"] != "/usr/bin/example" ||
+		fields["tool_path"] != "/opt/profiler" ||
 		fields["duration"] != float64(60) ||
 		fields["language"] != "go" ||
 		fields["memory_mode"] != "object_alloc" ||
@@ -169,6 +171,7 @@ func TestConvertJobToProfilingResponseReadsRequestJSONNames(t *testing.T) {
 		Status: job.JobStatusRunning,
 		PrivateData: json.RawMessage(`{
 			"binary_match_path":"/usr/bin/example",
+			"tool_path":"/opt/profiler",
 			"duration":60,
 			"language":"go",
 			"memory_mode":"object_alloc",
@@ -183,6 +186,9 @@ func TestConvertJobToProfilingResponseReadsRequestJSONNames(t *testing.T) {
 
 	if resp.BinaryMatchPath != "/usr/bin/example" {
 		t.Errorf("BinaryMatchPath=%q, want %q", resp.BinaryMatchPath, "/usr/bin/example")
+	}
+	if resp.ToolPath != "/opt/profiler" {
+		t.Errorf("ToolPath=%q, want %q", resp.ToolPath, "/opt/profiler")
 	}
 	if resp.Language != "go" {
 		t.Errorf("Language=%q, want %q", resp.Language, "go")

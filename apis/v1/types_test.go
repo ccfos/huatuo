@@ -39,6 +39,7 @@ func TestCreateJobRequestJSONFields(t *testing.T) {
 			fields: []string{
 				"type",
 				"binary_match_path",
+				"tool_path",
 				"language",
 				"memory_mode",
 				"duration",
@@ -125,6 +126,7 @@ func TestStandardizedJobJSONFields(t *testing.T) {
 			fields: []string{
 				"container_id",
 				"binary_match_path",
+				"tool_path",
 				"language",
 				"cpu_ids",
 				"pid",

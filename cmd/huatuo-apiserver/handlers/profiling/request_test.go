@@ -78,6 +78,26 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			},
 		},
 		{
+			name: "java profiling with external tool",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "cpu",
+				Language:      "java",
+				ToolPath:      "/opt/async-profiler",
+				Duration:      30,
+			},
+			wantType: ProfilingCPU,
+			wantTracerArgs: []string{
+				"-t", "cpu",
+				"-l", "java",
+				"--tool-path", "/opt/async-profiler",
+				"--duration", "30",
+				"--aggr-interval", "10",
+				"--max-concurrent-procs", "2",
+				"--output-format", "remote",
+				"--output-storage", "/var/run/huatuo-toolstream.sock",
+			},
+		},
+		{
 			name: "native memory profiling by exact PID",
 			req: v1.CreateProfilingJobRequest{
 				ProfilingType: "memory",
@@ -98,6 +118,16 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 				"--output-format", "remote",
 				"--output-storage", "/var/run/huatuo-toolstream.sock",
 			},
+		},
+		{
+			name: "java profiling requires external tool",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "cpu",
+				Language:      "java",
+				ToolPath:      "   ",
+				Duration:      30,
+			},
+			wantErr: `language "java" requires tool_path`,
 		},
 		{
 			name: "native PID and container are mutually exclusive",
