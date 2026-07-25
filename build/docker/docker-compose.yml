@@ -1,5 +1,6 @@
 services:
   elasticsearch:
+    profiles: ["full"]
     image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.15.5}
     container_name: elasticsearch
     network_mode: host
@@ -18,13 +19,21 @@ services:
       start_period: 20s
 
   prometheus:
+    profiles: ["full"]
     image: prom/prometheus:${PROMETHEUS_VERSION:-v2.53.3}
     container_name: prometheus
     network_mode: host
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
+  pyroscope:
+    profiles: ["full", "profiling"]
+    image: grafana/pyroscope:${PYROSCOPE_VERSION:-2.0.2}
+    container_name: pyroscope
+    network_mode: host
+
   grafana:
+    profiles: ["full", "profiling"]
     image: grafana/grafana-oss:${GRAFANA_VERSION:-12.0.3}
     container_name: grafana
     network_mode: host
@@ -37,11 +46,9 @@ services:
       - ./grafana/datasources/infinity.yaml:/etc/grafana/provisioning/datasources/infinity.yaml:ro
       - ./grafana/datasources/pyroscope.yaml:/etc/grafana/provisioning/datasources/pyroscope.yaml:ro
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-    depends_on:
-      - prometheus
-      - elasticsearch
 
   huatuo-apiserver:
+    profiles: ["full"]
     image: huatuo/huatuo-bamai:latest
     container_name: huatuo-apiserver
     network_mode: host
@@ -61,6 +68,7 @@ services:
         condition: service_started
 
   huatuo-bamai:
+    profiles: ["full", "profiling"]
     image: huatuo/huatuo-bamai:latest
     container_name: huatuo-bamai
     network_mode: host
@@ -71,19 +79,15 @@ services:
     environment:
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-}
       ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
-      RUN_PATH: ${RUN_PATH:-}
+      HUATUO_MODE: ${COMPOSE_PROFILES:-full}
+      PYROSCOPE_ADDRESS: ${PYROSCOPE_ADDRESS:-http://127.0.0.1:4040}
+      RUN_PATH: ${RUN_PATH:-/home/huatuo-bamai}
     volumes:
       - /sys:/sys:rw
       - /proc:/proc:rw
       - /run:/run:rw
       - /etc:/etc:ro
       - /var:/var:ro
-      - ../../huatuo-bamai.conf:${RUN_PATH}/conf/huatuo-bamai.conf:rw
-    command: ["./bin/huatuo-bamai", "--region", "example", "--config", "huatuo-bamai.conf", "--disable-kubelet"]
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-      prometheus:
-        condition: service_started
-      grafana:
-        condition: service_started
+      - ../../huatuo-bamai.conf:${RUN_PATH:-/home/huatuo-bamai}/conf/huatuo-bamai.conf:ro
+      - ./run.sh:${RUN_PATH:-/home/huatuo-bamai}/run.sh:ro
+    command: ["./run.sh"]
