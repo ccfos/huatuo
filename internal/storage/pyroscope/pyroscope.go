@@ -28,6 +28,7 @@ import (
 	"time"
 	"unicode"
 
+	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/storage/driver"
 )
 
@@ -322,6 +323,15 @@ func (b *Storage) applicationName(fields map[string]any) string {
 		{name: "container_hostname", field: "container_hostname"},
 		{name: "tracer_type", field: "tracer_type"},
 		{name: "profile_type", field: "profile_type"},
+	}
+	for _, name := range profiler.CollectionDimensionLabelNames() {
+		if name == profiler.LabelContainerID {
+			continue
+		}
+		labels = append(labels, struct {
+			name  string
+			field string
+		}{name: name, field: name})
 	}
 
 	values := make([]string, 0, len(labels))

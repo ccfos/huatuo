@@ -48,6 +48,7 @@ func saveAutotracingCPUEvent(
 		&profiler.ParseOption{SampleRate: autotracingProfileSampleRate},
 	)
 	if profileErr == nil {
+		profileData.Labels = autotracingProfileLabels(request)
 		profileErr = tracing.SaveProfile(&tracing.WriteRequest{
 			TracerName:    request.TracerName,
 			TracerID:      request.TracerID,
@@ -63,6 +64,19 @@ func saveAutotracingCPUEvent(
 		wrapAutotracingSaveError("folded stacks", foldedErr),
 		wrapAutotracingSaveError("pprof profile", profileErr),
 	)
+}
+
+func autotracingProfileLabels(
+	request *tracing.WriteRequest,
+) map[string]string {
+	labels := map[string]string{
+		profiler.LabelProfilingScope: "host",
+	}
+	if request.ContainerID != "" {
+		labels[profiler.LabelProfilingScope] = "container"
+		labels[profiler.LabelContainerID] = request.ContainerID
+	}
+	return labels
 }
 
 func wrapAutotracingSaveError(target string, err error) error {

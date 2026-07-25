@@ -36,6 +36,8 @@ Open Grafana at
 http://localhost:3000 and open the
 `HuaTuo AutoTracing Pyroscope Flamegraph` dashboard. CPUIdle and CPUSys
 profiles appear after their configured AutoTracing thresholds are triggered.
+The dashboard queries Pyroscope directly and can filter the
+`profiling_scope`, `tracer_name`, `tracer_id`, and container series labels.
 The same snapshots are exported as folded stacks in the `huatuo-data` volume:
 
 ```bash

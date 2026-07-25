@@ -29,6 +29,13 @@ func TestPprofDocumentStoreMapperEncodesProtobuf(t *testing.T) {
 	start := time.Unix(1700000000, 123).UTC()
 	profileData := &profiler.ProfileData{
 		ProfileType: profiler.ProfileTypeCpuSample,
+		Labels: map[string]string{
+			profiler.LabelProfilingScope: "thread_group",
+			profiler.LabelCPU:            "1,3",
+			profiler.LabelTGID:           "4242",
+			profiler.LabelContainerID:    "profile-container",
+			"unmanaged":                  "ignored",
+		},
 		Profile: ptree.Profile{
 			StringTable:   []string{"", "cpu", "nanoseconds"},
 			TimeNanos:     start.UnixNano(),
@@ -36,9 +43,10 @@ func TestPprofDocumentStoreMapperEncodesProtobuf(t *testing.T) {
 		},
 	}
 	document := &Document{
-		TracerID:   "trace-1",
-		TracerTime: start.Format(tracingDocumentTimeLayout),
-		TracerData: testProfileEnvelope{profileData: profileData},
+		TracerID:    "trace-1",
+		TracerTime:  start.Format(tracingDocumentTimeLayout),
+		ContainerID: "document-container",
+		TracerData:  testProfileEnvelope{profileData: profileData},
 	}
 
 	mapper := PprofDocumentStoreMapper{}
@@ -66,6 +74,29 @@ func TestPprofDocumentStoreMapperEncodesProtobuf(t *testing.T) {
 	}
 	if got := fields["profile_end_time"]; got != start.Add(10*time.Second) {
 		t.Errorf("profile_end_time = %v, want %v", got, start.Add(10*time.Second))
+	}
+	for name, want := range map[string]string{
+		profiler.LabelProfilingScope: "thread_group",
+		profiler.LabelCPU:            "1,3",
+		profiler.LabelTGID:           "4242",
+		profiler.LabelContainerID:    "document-container",
+	} {
+		if got := fields[name]; got != want {
+			t.Errorf("%s = %v, want %q", name, got, want)
+		}
+	}
+	if _, ok := fields["unmanaged"]; ok {
+		t.Fatal("unmanaged profile label was exposed as series metadata")
+	}
+
+	indexes := make(map[string]struct{})
+	for _, index := range mapper.Indexes() {
+		indexes[index.Field] = struct{}{}
+	}
+	for _, name := range profiler.CollectionDimensionLabelNames() {
+		if _, ok := indexes[name]; !ok {
+			t.Errorf("PprofDocumentStoreMapper indexes missing %q", name)
+		}
 	}
 }
 

@@ -244,7 +244,10 @@ CPUIdle and CPUSys automatic traces keep their existing JSON event and also
 write a CPU pprof profile with the same tracer ID. The profile uses
 `cpu:nanoseconds` samples at 99 Hz and carries `tracer_name`, `tracer_id`,
 `hostname`, `container_id` when applicable, `tracer_type`, and `profile_type`
-labels.
+labels. Collection dimensions are exposed as the managed Pyroscope series
+labels `profiling_scope`, `cpu`, `pid`, `tgid`, and `container_id`. AutoTracing
+sets `profiling_scope` to `host` or `container`, so direct Grafana queries can
+select either scope without huatuo-apiserver.
 
 #### 5.4 AutoTracing Display Backend
 
