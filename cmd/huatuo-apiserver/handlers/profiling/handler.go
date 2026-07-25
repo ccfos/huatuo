@@ -44,6 +44,8 @@ type Config struct {
 // ProfileQueryService defines profile query operations consumed by the handler.
 type ProfileQueryService interface {
 	SelectMergeStacktraces(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error)
+	SelectSeries(ctx context.Context, req *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesResponse, error)
+	Diff(ctx context.Context, req *querierv1.DiffRequest) (*querierv1.DiffResponse, error)
 	ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error)
 	LabelNames(ctx context.Context, req *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error)
 	LabelValues(ctx context.Context, req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse, error)
@@ -81,6 +83,8 @@ func NewHandler(
 		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.delete},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces", Handle: h.displaySelectMergeStacktraces},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/ProfileTypes", Handle: h.displayProfileTypes},
+		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectSeries", Handle: h.displaySelectSeries},
+		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/Diff", Handle: h.displayDiff},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/LabelNames", Handle: h.displayLabelNames},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/LabelValues", Handle: h.displayLabelValues},
 	}
