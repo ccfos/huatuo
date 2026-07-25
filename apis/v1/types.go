@@ -24,6 +24,7 @@ import (
 type CreateProfilingJobRequest struct {
 	ProfilingType   string `json:"type"`              // cpu or memory
 	BinaryMatchPath string `json:"binary_match_path"` // executable path used to match target processes
+	ToolPath        string `json:"tool_path"`         // external profiler installation directory
 	Language        string `json:"language"`          // programming language of the target process
 	MemoryMode      string `json:"memory_mode"`       // memory profiling mode
 	Duration        int    `json:"duration"`          // profiling duration in seconds
@@ -46,6 +47,7 @@ type ProfilingJobResponse struct {
 	MemoryMode      string           `json:"memory_mode"`       // memory profiling mode
 	Language        string           `json:"language"`          // programming language of the target process
 	BinaryMatchPath string           `json:"binary_match_path"` // executable path used to match target processes
+	ToolPath        string           `json:"tool_path"`         // external profiler installation directory
 	Status          string           `json:"status"`            // job status
 	StartTime       string           `json:"start_time"`        // start time
 	EndTime         string           `json:"end_time"`          // end time

@@ -87,6 +87,7 @@ curl -sS \
 | `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
 | `container_id` | 否 | 目标容器 ID；不传表示对宿主机剖析 |
 | `binary_match_path` | 否 | Java/Python CPU 剖析的目标可执行文件路径匹配条件；原生剖析不支持 |
+| `tool_path` | Java/Python 剖析必需 | Agent 主机上的工具安装目录：Java 使用 async-profiler，Python 使用 py-spy |
 | `memory_mode` | 内存剖析必需 | 内存剖析模式，必须与 `language` 匹配 |
 
 `duration` 必须不小于两个 `aggregation_interval`，且 `duration + aggregation_interval` 必须小于 3600 秒。同一用户在同一节点上已有运行中的剖析任务时，服务端返回 `409 Conflict`。
@@ -118,6 +119,7 @@ curl -sS -i \
     "type": "memory",
     "language": "java",
     "memory_mode": "object_usage",
+    "tool_path": "/opt/async-profiler",
     "duration": 60,
     "container_id": "9f4c2f1a8b7d",
     "hostname": "node-01"
@@ -191,6 +193,7 @@ curl -sS \
 | `language` | 目标进程语言 |
 | `memory_mode` | 内存剖析模式；CPU 任务为空 |
 | `binary_match_path` | 创建任务时指定的可执行文件匹配路径 |
+| `tool_path` | 创建任务时指定的外部 profiler 安装目录 |
 | `status` | 当前任务状态 |
 | `start_time`、`end_time` | 任务开始和结束时间；尚未产生时为空 |
 | `tracer_args` | huatuo-apiserver 实际下发给 profiler 的命令行参数 |
