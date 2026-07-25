@@ -240,6 +240,12 @@ enabled at the same time and continues to store its existing JSON profiling
 documents. Use HTTPS when credentials leave the local host, and restrict
 configuration-file permissions because authentication fields contain secrets.
 
+CPUIdle and CPUSys automatic traces keep their existing JSON event and also
+write a CPU pprof profile with the same tracer ID. The profile uses
+`cpu:nanoseconds` samples at 99 Hz and carries `tracer_name`, `tracer_id`,
+`hostname`, `container_id` when applicable, `tracer_type`, and `profile_type`
+labels.
+
 ### 6. Automatic Tracing
 
 The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.
