@@ -46,6 +46,7 @@ type patchProfilingJobRequest struct {
 
 type profilingJobPrivateData struct {
 	BinaryMatchPath string `json:"binary_match_path"`
+	ToolPath        string `json:"tool_path"`
 	Duration        int    `json:"duration"`
 	Language        string `json:"language"`
 	MemoryMode      string `json:"memory_mode"`
@@ -131,6 +132,9 @@ func buildProfilingTracerArgs(
 			)
 		}
 		taskReq.TracerArgs = append(taskReq.TracerArgs, "-l", string(language))
+		if err := appendProfilingToolPath(taskReq, req.ToolPath, language); err != nil {
+			return "", err
+		}
 		return job.JobTypeProfilingCPU, nil
 	case string(profiling.TypeMemory):
 		language, err := profiling.ParseLanguage(req.Language)
@@ -146,15 +150,35 @@ func buildProfilingTracerArgs(
 			"--memory-mode", string(mode),
 			"-l", string(language),
 		}
+		if err := appendProfilingToolPath(taskReq, req.ToolPath, language); err != nil {
+			return "", err
+		}
 		return job.JobTypeProfilingMemory, nil
 	default:
 		return "", fmt.Errorf("unsupported profiling type %q", req.ProfilingType)
 	}
 }
 
+func appendProfilingToolPath(
+	taskReq *job.AgentTaskRequest,
+	toolPath string,
+	language profiling.Language,
+) error {
+	toolPath = strings.TrimSpace(toolPath)
+	implementation, _ := profiling.ImplementationFor(language)
+	if implementation != profiling.ImplementationNative && toolPath == "" {
+		return fmt.Errorf("language %q requires tool_path", language)
+	}
+	if toolPath != "" {
+		taskReq.TracerArgs = append(taskReq.TracerArgs, "--tool-path", toolPath)
+	}
+	return nil
+}
+
 func newProfilingPrivateData(req *v1.CreateProfilingJobRequest) (json.RawMessage, error) {
 	data, err := json.Marshal(profilingJobPrivateData{
 		BinaryMatchPath: req.BinaryMatchPath,
+		ToolPath:        strings.TrimSpace(req.ToolPath),
 		Duration:        req.Duration,
 		Language:        req.Language,
 		MemoryMode:      req.MemoryMode,
