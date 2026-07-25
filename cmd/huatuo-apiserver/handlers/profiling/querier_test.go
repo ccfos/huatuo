@@ -145,3 +145,16 @@ func TestProfileExportRequestRejectsInvalidValues(t *testing.T) {
 		})
 	}
 }
+
+func TestBoundedProfileSVGBufferRejectsOversizedOutput(t *testing.T) {
+	var output boundedProfileSVGBuffer
+	if _, err := output.Write(make([]byte, maxProfileSVGResponseBytes)); err != nil {
+		t.Fatalf("write at limit: %v", err)
+	}
+	if _, err := output.Write([]byte("x")); !errors.Is(
+		err,
+		profileService.ErrProfileQueryLimitExceeded,
+	) {
+		t.Fatalf("write above limit error = %v, want query limit", err)
+	}
+}
