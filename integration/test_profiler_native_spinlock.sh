@@ -22,7 +22,7 @@ is_container && skip "native spinlock profiler requires bare-metal BPF access"
 [[ ${EUID} -eq 0 ]] || skip "native spinlock profiler requires root"
 
 readonly PROFILER_BIN="${ROOT_DIR}/_output/bin/profiler"
-readonly PROFILER_BPF="${ROOT_DIR}/_output/bpf/native_mutex_profiler.o"
+readonly PROFILER_BPF="${ROOT_DIR}/_output/bpf/native_spinlock_profiler.o"
 readonly FIXTURE_DIR="${ROOT_DIR}/integration/testdata/spinlockprof_fixture"
 readonly KERNEL_BUILD_DIR="/lib/modules/$(uname -r)/build"
 

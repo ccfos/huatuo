@@ -28,10 +28,10 @@ const (
 type LockType string
 
 const (
-	LockTypeUnknown LockType = ""
-	LockTypeMutex   LockType = "mutex"
+	LockTypeUnknown  LockType = ""
+	LockTypeMutex    LockType = "mutex"
 	LockTypeSpinlock LockType = "spinlock"
-	LockTypeRWLock  LockType = "rwlock"
+	LockTypeRWLock   LockType = "rwlock"
 )
 
 // ParseLockType returns a supported native kernel lock primitive.

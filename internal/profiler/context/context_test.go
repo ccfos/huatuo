@@ -50,6 +50,39 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	}
 }
 
+func TestProfilerContextNormalizesThreadIDToThreadGroupID(t *testing.T) {
+	oldThreadGroupID := threadGroupID
+	threadGroupID = func(pid int) (int, error) {
+		if pid != 4243 {
+			t.Fatalf("threadGroupID pid = %d, want 4243", pid)
+		}
+		return 4242, nil
+	}
+	t.Cleanup(func() {
+		threadGroupID = oldThreadGroupID
+	})
+
+	set := flag.NewFlagSet(t.Name(), flag.ContinueOnError)
+	set.String("type", "cpu", "")
+	set.String("language", "c", "")
+	set.String("pid", "4243", "")
+	set.Bool("thread-group", true, "")
+	set.String("output-format", "collapsed", "")
+	if err := set.Parse(nil); err != nil {
+		t.Fatalf("FlagSet.Parse() error = %v", err)
+	}
+	cliCtx := cli.NewContext(nil, set, nil)
+
+	pctx, err := NewProfilerContext(cliCtx, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("NewProfilerContext() error = %v", err)
+	}
+	t.Cleanup(pctx.Cancel)
+	if len(pctx.PIDs) != 1 || pctx.PIDs[0] != 4242 {
+		t.Fatalf("PIDs = %v, want [4242]", pctx.PIDs)
+	}
+}
+
 func TestLockTypeForProfile(t *testing.T) {
 	lockType, err := lockTypeForProfile(profiling.TypeLock, "")
 	if err != nil {

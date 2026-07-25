@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,11 +15,16 @@
 package procutil
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/procfs"
 )
 
 // CheckExecPath validates whether the actual exec path of pid matches expectedPath.
@@ -42,4 +47,39 @@ func CommToString(c [bpf.TaskCommLen]byte) string {
 		n = len(c)
 	}
 	return string(c[:n])
+}
+
+// ThreadGroupID returns the TGID for pid, which may itself be a non-leader TID.
+func ThreadGroupID(pid int) (int, error) {
+	path := procfs.Path(strconv.Itoa(pid), "status")
+	status, err := os.Open(path)
+	if err != nil {
+		return 0, fmt.Errorf("open status for pid %d: %w", pid, err)
+	}
+	defer status.Close()
+
+	tgid, err := parseThreadGroupID(status)
+	if err != nil {
+		return 0, fmt.Errorf("read TGID for pid %d: %w", pid, err)
+	}
+	return tgid, nil
+}
+
+func parseThreadGroupID(status io.Reader) (int, error) {
+	scanner := bufio.NewScanner(status)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 2 || fields[0] != "Tgid:" {
+			continue
+		}
+		tgid, err := strconv.Atoi(fields[1])
+		if err != nil || tgid < 1 {
+			return 0, fmt.Errorf("invalid Tgid value %q", fields[1])
+		}
+		return tgid, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("scan status: %w", err)
+	}
+	return 0, fmt.Errorf("Tgid field not found")
 }

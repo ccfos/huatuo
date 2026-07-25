@@ -282,6 +282,9 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.Bool("thread-group") && !native {
 		return fmt.Errorf("--thread-group is supported only by native profiling")
 	}
+	if ctx.Bool("thread-group") && ctx.String("pid") == "" {
+		return fmt.Errorf("--thread-group requires --pid")
+	}
 	if ctx.IsSet("lock-wait-threshold") && !nativeLock {
 		return fmt.Errorf(
 			"--lock-wait-threshold is supported only by native lock profiling",

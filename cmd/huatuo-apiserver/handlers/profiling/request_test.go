@@ -203,6 +203,7 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			req: v1.CreateProfilingJobRequest{
 				ProfilingType: "cpu",
 				Language:      "java",
+				ToolPath:      "/opt/async-profiler",
 				Duration:      30,
 				PID:           4242,
 			},
@@ -352,7 +353,7 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			},
 		},
 		{
-			name: "spinlock profiling is not available",
+			name: "spinlock profiling by PID",
 			req: v1.CreateProfilingJobRequest{
 				ProfilingType: "lock",
 				Language:      "c",
@@ -360,8 +361,19 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 				PID:           4242,
 				LockType:      profiletypes.LockType("spinlock"),
 			},
-			wantErr: `unsupported lock type "spinlock" ` +
-				`(expected: mutex or rwlock)`,
+			wantType: ProfilingLock,
+			wantTracerArgs: []string{
+				"-t", "lock",
+				"-l", "c",
+				"--lock-type", "spinlock",
+				"--lock-wait-threshold", "1us",
+				"--pid", "4242",
+				"--duration", "30",
+				"--aggr-interval", "10",
+				"--max-concurrent-procs", "2",
+				"--output-format", "remote",
+				"--output-storage", "/var/run/huatuo-toolstream.sock",
+			},
 		},
 		{
 			name: "native memory requires a target",

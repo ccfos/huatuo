@@ -64,7 +64,7 @@ The `data` object contains these fields:
 | `memory_languages` | Languages supported by memory profiling |
 | `lock_languages` | Languages supported by lock profiling |
 | `lock_modes` | Lock profile values; currently only `wait_time` |
-| `lock_types` | Lock primitives; currently only `mutex` |
+| `lock_types` | Lock primitives: `mutex`, `spinlock`, and `rwlock` |
 | `memory_modes` | Memory profiling modes; keys are display names and values are used when creating jobs |
 | `aggregation_interval` | Server-side data aggregation interval in seconds |
 | `execution_timeout` | Execution timeout for one profiler subprocess in seconds |
@@ -81,7 +81,8 @@ CPU profiling currently supports `c`, `c++`, `go`, `java`, and `python`. Memory 
 | `java` | `object_usage` | JVM live objects |
 
 Lock profiling supports only native `c`, `c++`, and `go` targets. It records
-contended mutex wait time and never enables host-wide lock instrumentation.
+contended mutex, spinlock, or rwlock wait time and never enables host-wide lock
+instrumentation.
 
 ### 3. Create a Profiling Job
 
@@ -95,13 +96,13 @@ contended mutex wait time and never enables host-wide lock instrumentation.
 | `hostname` | Yes | Hostname of the node running the target process; used for job scheduling |
 | `container_id` | No | Target container ID; omit it to profile the host |
 | `pid` | For PID-targeted native jobs | Exact target PID; native memory and lock jobs require it unless `container_id` is set |
-| `thread_group` | No | Include every thread in `pid`'s thread group (TGID); requires `pid` and is not accepted for lock jobs |
+| `thread_group` | No | Include every thread in `pid`'s thread group (TGID); requires `pid` |
 | `cpu_ids` | No | CPU IDs selected for native CPU profiling |
 | `binary_match_path` | No | Executable path matcher for Java/Python CPU profiling; native profiling does not support it |
 | `tool_path` | For Java/Python profiling | Tool installation directory on the Agent host: async-profiler for Java or py-spy for Python |
 | `memory_mode` | For memory profiling | Memory profiling mode; it must be supported by `language` |
 | `lock_mode` | No | Lock profile value; only `wait_time` is supported and is the default |
-| `lock_type` | No | Lock primitive; only `mutex` is supported and is the default |
+| `lock_type` | No | Lock primitive: `mutex`, `spinlock`, or `rwlock`; defaults to `mutex` |
 | `lock_wait_threshold` | No | Minimum contention wait; Go duration such as `10us`, default `1us` |
 
 `duration` must cover at least two `aggregation_interval` periods, and `duration + aggregation_interval` must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
@@ -242,8 +243,8 @@ The `data` object contains the job details:
 | `thread_group` | Whether native profiling includes the PID's thread group |
 | `cpu_ids` | CPU IDs selected for native CPU profiling |
 | `lock_mode` | Lock profile value; `wait_time` for current lock jobs |
-| `lock_type` | Lock primitive; `mutex` for current lock jobs |
-| `lock_wait_threshold` | Minimum mutex contention wait recorded by the profiler |
+| `lock_type` | Lock primitive: `mutex`, `spinlock`, or `rwlock` |
+| `lock_wait_threshold` | Minimum lock contention wait recorded by the profiler |
 | `status` | Current job status |
 | `start_time`, `end_time` | Job start and end times; empty until available |
 | `tracer_args` | Command-line arguments sent by huatuo-apiserver to profiler |

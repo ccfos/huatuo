@@ -108,9 +108,10 @@ func TestCapabilities(t *testing.T) {
 	}
 	if !slices.Equal(resp.LockTypes, []profiletypes.LockType{
 		profiletypes.LockTypeMutex,
+		profiletypes.LockTypeSpinlock,
 		profiletypes.LockTypeRWLock,
 	}) {
-		t.Errorf("LockTypes = %v, want mutex and rwlock", resp.LockTypes)
+		t.Errorf("LockTypes = %v, want mutex, spinlock, and rwlock", resp.LockTypes)
 	}
 
 	if len(resp.MemoryModes) != 5 {
