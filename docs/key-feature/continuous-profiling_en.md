@@ -254,6 +254,24 @@ curl -sS -i \
 
 A successful deletion returns `204 No Content` with no response body. If the job is still active, the endpoint returns `409 Conflict`.
 
+### 9. Pyroscope-compatible Queries
+
+The profiling API implements the Pyroscope `SelectSeries` and `Diff` protobuf
+methods under `/v1/profiles/flamegraph/querier.v1.QuerierService/`. `SelectSeries`
+returns time buckets using sum or average aggregation. `Diff` compares two
+independent time windows and returns a double flame graph.
+
+Selectors are intentionally exact. They accept `id`, `hostname`,
+`container_id`, `container_hostname`, and `tracer`; the profile type is supplied
+by the protobuf request. Regular expressions, negative matchers, and arbitrary
+labels are rejected with `400 Bad Request`.
+
+Each selection is counted before profile data is loaded. Up to 10,000 documents
+are read in stable pages of 1,000. A larger selection returns
+`422 Unprocessable Entity` and must be narrowed by time or target. Merge
+requests, and diff requests with neither side populated, return
+`404 Not Found`; storage failures return `500 Internal Server Error`.
+
 ## 📖 profiler CLI Overview
 
 `profiler` is HUATUO's standalone performance profiling CLI. It samples host processes or processes inside containers without requiring huatuo-apiserver, Elasticsearch, or Grafana. The tool supports C, C++, Go, Java, and Python processes and writes call stacks as folded stacks or SVG flame graphs.

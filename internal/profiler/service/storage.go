@@ -167,6 +167,14 @@ func (s *ProfileStorage) SearchProfilesContext(ctx context.Context, filter *Sear
 	return documents, nil
 }
 
+// CountProfilesContext counts profiles matching a filter.
+func (s *ProfileStorage) CountProfilesContext(ctx context.Context, filter *SearchFilter) (int64, error) {
+	if s == nil || s.store == nil {
+		return 0, errors.New("profile storage is not initialized")
+	}
+	return s.store.Count(ctx, buildProfileAggregationQuery(filter))
+}
+
 // AggregationsByField gets aggregations by field.
 func (s *ProfileStorage) AggregationsByField(filter *SearchFilter, field string) ([]string, error) {
 	return s.AggregationsByFieldContext(context.Background(), filter, field)
@@ -259,6 +267,7 @@ func buildProfileSearchQuery(filter *SearchFilter) driver.Query {
 	}
 	query.Sorts = []driver.Sort{
 		{Field: profileFieldUploadedTime, Desc: true},
+		{Field: profileFieldTracerID},
 	}
 	return query
 }
