@@ -16,6 +16,7 @@ package profiling
 
 import (
 	"context"
+	"io"
 
 	"huatuo-bamai/internal/job"
 	profileService "huatuo-bamai/internal/profiler/service"
@@ -46,6 +47,8 @@ type ProfileQueryService interface {
 	SelectMergeStacktraces(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error)
 	SelectSeries(ctx context.Context, req *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesResponse, error)
 	Diff(ctx context.Context, req *querierv1.DiffRequest) (*querierv1.DiffResponse, error)
+	MarshalPprof(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) ([]byte, error)
+	RenderProfileSVG(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest, writer io.Writer) error
 	ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error)
 	LabelNames(ctx context.Context, req *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error)
 	LabelValues(ctx context.Context, req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse, error)
@@ -81,6 +84,8 @@ func NewHandler(
 		{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
 		{Typ: server.HttpPatch, Uri: "/:id", Handle: h.patchOne},
 		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.delete},
+		{Typ: server.HttpGet, Uri: "/flamegraph/export/pprof", Handle: h.displayPprofExport},
+		{Typ: server.HttpGet, Uri: "/flamegraph/export/svg", Handle: h.displaySVGExport},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces", Handle: h.displaySelectMergeStacktraces},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/ProfileTypes", Handle: h.displayProfileTypes},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectSeries", Handle: h.displaySelectSeries},
