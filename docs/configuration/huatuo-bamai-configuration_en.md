@@ -251,6 +251,7 @@ labels.
 ```toml
 [AutoTracing.Display]
     Backend = "pyroscope"
+    FoldedStacksDir = "huatuo-local/autotracing-folded"
 ```
 
 - **Backend** selects the presentation path at runtime:
@@ -258,11 +259,19 @@ labels.
     provisioned Grafana dashboard. `Storage.Pyroscope.Address` is required.
   - `apiserver` keeps the existing Elasticsearch and huatuo-apiserver path.
     The Elasticsearch address, username, and password are required.
+- **FoldedStacksDir** writes one `.folded` file for every CPUIdle or CPUSys
+  snapshot in `pyroscope` mode. Each line contains a semicolon-delimited stack
+  and its positive self-sample count. An empty path disables this additional
+  export.
 
 Changing the backend and restarting huatuo-bamai does not change trigger
 thresholds, perf execution, or snapshot collection. In `pyroscope` mode,
 Elasticsearch can remain configured for the existing JSON event stream and
 Pyroscope is added as a profile store.
+
+Folded snapshots use deterministic sorted output and filenames containing the
+tracer name, UTC snapshot time, and tracer ID. Files are written atomically
+with mode `0600`, so a watcher never observes a partial snapshot.
 
 ### 6. Automatic Tracing
 

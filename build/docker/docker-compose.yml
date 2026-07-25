@@ -79,6 +79,7 @@ services:
       ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
       HUATUO_MODE: ${COMPOSE_PROFILES:-profiling}
       PYROSCOPE_ADDRESS: ${PYROSCOPE_ADDRESS:-http://127.0.0.1:4040}
+      FOLDED_STACKS_DIR: ${FOLDED_STACKS_DIR:-/var/lib/huatuo/autotracing-folded}
       RUN_PATH: ${RUN_PATH:-/home/huatuo-bamai}
     volumes:
       - /sys:/sys:rw
@@ -86,6 +87,10 @@ services:
       - /run:/run:rw
       - /etc:/etc:ro
       - /var:/var:ro
+      - huatuo-data:/var/lib/huatuo
       - ../../huatuo-bamai.conf:${RUN_PATH:-/home/huatuo-bamai}/conf/huatuo-bamai.conf:ro
       - ./run.sh:${RUN_PATH:-/home/huatuo-bamai}/run.sh:ro
     command: ["./run.sh"]
+
+volumes:
+  huatuo-data:
