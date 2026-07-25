@@ -232,6 +232,11 @@ Pyroscope 使用 pprof protobuf 保存 profiling 数据。可以同时启用
 Elasticsearch；Elasticsearch 会继续保存现有 JSON profiling 文档。凭据需要
 离开本机时应使用 HTTPS，并限制配置文件权限，避免认证信息泄露。
 
+CPUIdle 和 CPUSys 自动追踪会保留原有 JSON 事件，并使用相同的 tracer ID
+额外写入 CPU pprof。该 profile 以 99 Hz 采样，样本单位为
+`cpu:nanoseconds`，并携带 `tracer_name`、`tracer_id`、`hostname`、适用时
+的 `container_id`、`tracer_type` 和 `profile_type` 标签。
+
 ### 6. 自动追踪配置
 
 自动追踪模块是 HUATUO 的智能特性之一，可根据阈值自动触发特定性能追踪，减少人工干预。
