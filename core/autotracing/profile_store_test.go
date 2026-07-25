@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -230,6 +232,178 @@ func TestSaveAutotracingCPUEventPreservesOneSideOnFailure(t *testing.T) {
 				len(tracingBackend.records),
 			)
 		}
+	})
+}
+
+func TestSaveAutotracingCPUEventExportsFoldedStacks(t *testing.T) {
+	directory := t.TempDir()
+	configureAutotracingDisplay(
+		t,
+		DisplayBackendPyroscope,
+		directory,
+	)
+	tracingBackend := &captureProfileBackend{}
+	profileBackend := &captureProfileBackend{}
+	configureAutotracingStores(t, tracingBackend, profileBackend)
+
+	start := time.Unix(1700000000, 123).UTC()
+	err := saveAutotracingCPUEvent(
+		&tracing.WriteRequest{
+			TracerName:    "cpusys",
+			TracerID:      "trace/one",
+			TracerTime:    start,
+			TracerData:    map[string]any{"flamedata": "preserved"},
+			TracerRunType: tracing.TracerRunTypeAutotracing,
+		},
+		time.Second,
+		[]flamegraph.FrameData{
+			{Level: 0, Value: 7, Self: 1, Label: "root"},
+			{Level: 1, Value: 6, Self: 6, Label: "worker"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("saveAutotracingCPUEvent returned error: %v", err)
+	}
+
+	files, err := filepath.Glob(filepath.Join(directory, "*.folded"))
+	if err != nil {
+		t.Fatalf("glob folded snapshots: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("folded snapshot files = %v, want one", files)
+	}
+	if !strings.Contains(
+		filepath.Base(files[0]),
+		"cpusys-20231114T221320.000000123Z-trace_one.folded",
+	) {
+		t.Errorf("folded snapshot filename = %q", filepath.Base(files[0]))
+	}
+	content, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("read folded snapshot: %v", err)
+	}
+	if got, want := string(content), "root 1\nroot;worker 6\n"; got != want {
+		t.Fatalf("folded snapshot = %q, want %q", got, want)
+	}
+	info, err := os.Stat(files[0])
+	if err != nil {
+		t.Fatalf("stat folded snapshot: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("folded snapshot permissions = %o, want 600", got)
+	}
+}
+
+func TestDisplayModeSwitchPreservesCollection(t *testing.T) {
+	directory := t.TempDir()
+	tracingBackend := &captureProfileBackend{}
+	profileBackend := &captureProfileBackend{}
+	configureAutotracingStores(t, tracingBackend, profileBackend)
+
+	displayConfig := &Config{}
+	displayConfig.Display.Backend = string(DisplayBackendAPIServer)
+	displayConfig.Display.FoldedStacksDir = directory
+	Set(displayConfig)
+	t.Cleanup(func() {
+		Set(nil)
+	})
+
+	save := func(tracerID string) {
+		t.Helper()
+		err := saveAutotracingCPUEvent(
+			&tracing.WriteRequest{
+				TracerName:    "cpusys",
+				TracerID:      tracerID,
+				TracerTime:    time.Unix(1700000000, 0).UTC(),
+				TracerData:    map[string]any{"flamedata": "preserved"},
+				TracerRunType: tracing.TracerRunTypeAutotracing,
+			},
+			time.Second,
+			validAutotracingFrames(),
+		)
+		if err != nil {
+			t.Fatalf("save %s: %v", tracerID, err)
+		}
+	}
+
+	save("apiserver-snapshot")
+	displayConfig.Display.Backend = string(DisplayBackendPyroscope)
+	save("pyroscope-snapshot")
+
+	if len(tracingBackend.records) != 2 {
+		t.Fatalf(
+			"JSON records after switch = %d, want 2",
+			len(tracingBackend.records),
+		)
+	}
+	if len(profileBackend.records) != 2 {
+		t.Fatalf(
+			"profile records after switch = %d, want 2",
+			len(profileBackend.records),
+		)
+	}
+	files, err := filepath.Glob(filepath.Join(directory, "*.folded"))
+	if err != nil {
+		t.Fatalf("glob folded snapshots: %v", err)
+	}
+	if len(files) != 1 ||
+		!strings.Contains(filepath.Base(files[0]), "pyroscope-snapshot") {
+		t.Fatalf(
+			"folded files after switch = %v, want only Pyroscope snapshot",
+			files,
+		)
+	}
+}
+
+func TestFoldedExportFailureDoesNotDropOtherOutputs(t *testing.T) {
+	parentFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parentFile, []byte("occupied"), 0o600); err != nil {
+		t.Fatalf("write parent file: %v", err)
+	}
+	configureAutotracingDisplay(
+		t,
+		DisplayBackendPyroscope,
+		filepath.Join(parentFile, "folded"),
+	)
+	tracingBackend := &captureProfileBackend{}
+	profileBackend := &captureProfileBackend{}
+	configureAutotracingStores(t, tracingBackend, profileBackend)
+
+	err := saveAutotracingCPUEvent(
+		&tracing.WriteRequest{
+			TracerName:    "cpusys",
+			TracerID:      "trace-1",
+			TracerTime:    time.Unix(1700000000, 0).UTC(),
+			TracerData:    map[string]any{"flamedata": "preserved"},
+			TracerRunType: tracing.TracerRunTypeAutotracing,
+		},
+		time.Second,
+		validAutotracingFrames(),
+	)
+	if err == nil || !strings.Contains(err.Error(), "folded stacks") {
+		t.Fatalf("error = %v, want folded export error", err)
+	}
+	if len(tracingBackend.records) != 1 {
+		t.Fatalf("JSON records = %d, want 1", len(tracingBackend.records))
+	}
+	if len(profileBackend.records) != 1 {
+		t.Fatalf("profile records = %d, want 1", len(profileBackend.records))
+	}
+}
+
+func configureAutotracingDisplay(
+	t *testing.T,
+	backend DisplayBackend,
+	directory string,
+) {
+	t.Helper()
+	previous := cfg
+	next := &Config{}
+	next.Display.Backend = string(backend)
+	next.Display.FoldedStacksDir = directory
+	Set(next)
+	t.Cleanup(func() {
+		Set(previous)
 	})
 }
 

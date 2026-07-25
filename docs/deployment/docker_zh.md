@@ -35,6 +35,16 @@ $ docker compose --project-directory ./build/docker up
 http://localhost:3000，
 可打开 `HuaTuo AutoTracing Pyroscope Flamegraph` Dashboard。CPUIdle 或
 CPUSys 达到配置的 AutoTracing 阈值后，Dashboard 才会出现 profile。
+相同快照还会以 folded stacks 写入 `huatuo-data` volume：
+
+```bash
+$ docker compose --project-directory ./build/docker \
+    cp huatuo-bamai:/var/lib/huatuo/autotracing-folded/. ./folded/
+```
+
+这些文本文件可直接交给支持 Brendan Gregg folded-stack 输入格式的工具。
+Grafana/Pyroscope 展示不依赖文件复制；bamai 会同时把对应的 pprof profile
+发送给 Pyroscope。
 
 如需使用现有 huatuo-apiserver 展示链路：
 

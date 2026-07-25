@@ -31,7 +31,8 @@ const (
 
 // DisplayConfig controls snapshot output without changing collection.
 type DisplayConfig struct {
-	Backend string `default:"pyroscope"`
+	Backend         string `default:"pyroscope"`
+	FoldedStacksDir string `default:"huatuo-local/autotracing-folded"`
 }
 
 // ResolveBackend returns the normalized display backend.
