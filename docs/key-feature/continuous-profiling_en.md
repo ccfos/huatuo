@@ -261,7 +261,40 @@ The raw records are in `data.data`; `data.limit`, `data.offset`, and
 `data.has_more` describe the page. If the job does not yet have an Agent task
 ID, the endpoint returns `400 Bad Request`.
 
-### 8. Stop a Profiling Job
+### 8. Export Merged pprof or SVG
+
+The export endpoints merge the stored snapshots selected by profile type, time
+range, and an exact target label:
+
+```bash
+curl -sS --get \
+  -H "Authorization: Bearer ${USER_ID}" \
+  --data-urlencode \
+  "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
+  --data-urlencode 'selector={hostname="node-a"}' \
+  --data-urlencode "start=${START_MILLISECONDS}" \
+  --data-urlencode "end=${END_MILLISECONDS}" \
+  -o profile.pb.gz \
+  "${API_BASE}/v1/profiles/flamegraph/export/pprof"
+
+curl -sS --get \
+  -H "Authorization: Bearer ${USER_ID}" \
+  --data-urlencode \
+  "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
+  --data-urlencode 'selector={hostname="node-a"}' \
+  --data-urlencode "start=${START_MILLISECONDS}" \
+  --data-urlencode "end=${END_MILLISECONDS}" \
+  -o flamegraph.svg \
+  "${API_BASE}/v1/profiles/flamegraph/export/svg"
+```
+
+Selectors accept exact `id`, `hostname`, `container_id`,
+`container_hostname`, or `tracer` matches. At least one target is required.
+The service counts matching documents before fetching them, reads them in
+pages, and returns `422 Unprocessable Entity` when more than 10,000 documents
+match. Narrow the time range in that case.
+
+### 9. Stop a Profiling Job
 
 Only jobs in `pending` or `running` status can be stopped. The `PATCH` request accepts only `stopped` as the `status` value:
 
@@ -276,7 +309,7 @@ curl -sS \
 
 A successful stop returns `200 OK`. A job that has already ended returns `400 Bad Request`.
 
-### 9. Delete a Profiling Job
+### 10. Delete a Profiling Job
 
 Deletion removes only the job record. Jobs in `pending` or `running` status cannot be deleted directly and must be stopped first:
 
@@ -289,7 +322,7 @@ curl -sS -i \
 
 A successful deletion returns `204 No Content` with no response body. If the job is still active, the endpoint returns `409 Conflict`.
 
-### 10. Pyroscope-compatible Queries
+### 11. Pyroscope-compatible Queries
 
 The profiling API implements the Pyroscope `SelectSeries` and `Diff` protobuf
 methods under `/v1/profiles/flamegraph/querier.v1.QuerierService/`. `SelectSeries`

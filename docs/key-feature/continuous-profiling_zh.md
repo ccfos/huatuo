@@ -252,7 +252,38 @@ curl -sS \
 和 `data.has_more` 描述分页。任务尚未分配 Agent 任务 ID 时，接口返回
 `400 Bad Request`。
 
-### 8. 停止任务
+### 8. 导出合并后的 pprof 或 SVG
+
+导出接口根据剖析类型、时间范围和精确目标标签合并存储中的快照：
+
+```bash
+curl -sS --get \
+  -H "Authorization: Bearer ${USER_ID}" \
+  --data-urlencode \
+  "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
+  --data-urlencode 'selector={hostname="node-a"}' \
+  --data-urlencode "start=${START_MILLISECONDS}" \
+  --data-urlencode "end=${END_MILLISECONDS}" \
+  -o profile.pb.gz \
+  "${API_BASE}/v1/profiles/flamegraph/export/pprof"
+
+curl -sS --get \
+  -H "Authorization: Bearer ${USER_ID}" \
+  --data-urlencode \
+  "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
+  --data-urlencode 'selector={hostname="node-a"}' \
+  --data-urlencode "start=${START_MILLISECONDS}" \
+  --data-urlencode "end=${END_MILLISECONDS}" \
+  -o flamegraph.svg \
+  "${API_BASE}/v1/profiles/flamegraph/export/svg"
+```
+
+选择器接受精确的 `id`、`hostname`、`container_id`、
+`container_hostname` 或 `tracer` 匹配，并且至少需要一个目标。服务会先
+统计匹配文档数，再分页读取。匹配超过 10,000 个文档时返回
+`422 Unprocessable Entity`，此时需要缩小时间范围。
+
+### 9. 停止任务
 
 只有 `pending` 或 `running` 状态的任务可以停止。`PATCH` 请求的 `status` 只接受 `stopped`：
 
@@ -267,7 +298,7 @@ curl -sS \
 
 停止成功返回 `200 OK`。已结束的任务返回 `400 Bad Request`。
 
-### 9. 删除任务
+### 10. 删除任务
 
 删除操作只移除任务记录。`pending` 或 `running` 状态的任务不能直接删除，需要先停止任务：
 
@@ -280,7 +311,7 @@ curl -sS -i \
 
 删除成功返回 `204 No Content`，不包含响应体。任务仍在运行时返回 `409 Conflict`。
 
-### 10. Pyroscope 兼容查询
+### 11. Pyroscope 兼容查询
 
 Profiling API 在
 `/v1/profiles/flamegraph/querier.v1.QuerierService/` 下实现 Pyroscope 的
