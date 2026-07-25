@@ -210,7 +210,35 @@ BlackList = ["netdev_hw", "metax_gpu"]
 
   Default: 10.
 
-  **Description**: Oldest files are automatically deleted once the limit is reached, controlling disk usage.
+**Description**: Oldest files are automatically deleted once the limit is reached, controlling disk usage.
+
+#### 5.3 Pyroscope Profile Storage
+
+```toml
+[Storage.Pyroscope]
+    Address = "https://profiles.example.com"
+    AppNamePrefix = "huatuo"
+    # Username = "profiles-user"
+    # Password = "change-me"
+    # BearerToken = "token"
+    TimeoutSeconds = 5
+```
+
+- **Address**: Pyroscope server base URL. An empty value disables this
+  backend. The backend appends `/ingest` and accepts only HTTP or HTTPS URLs.
+- **AppNamePrefix**: Prefix for Pyroscope application names. The default is
+  `huatuo`.
+- **Username / Password**: Optional Basic Auth credentials. Both fields must
+  be set together.
+- **BearerToken**: Optional bearer token. It cannot be combined with Basic
+  Auth.
+- **TimeoutSeconds**: Timeout for each ingest request. The default is 5
+  seconds.
+
+Pyroscope stores profiling data as pprof protobuf. Elasticsearch can remain
+enabled at the same time and continues to store its existing JSON profiling
+documents. Use HTTPS when credentials leave the local host, and restrict
+configuration-file permissions because authentication fields contain secrets.
 
 ### 6. Automatic Tracing
 
