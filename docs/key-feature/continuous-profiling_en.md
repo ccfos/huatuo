@@ -213,9 +213,10 @@ Profiling jobs use these statuses:
 
 ### 6. Inspect Profiles in Grafana
 
-Grafana provisioning includes separate host and container continuous profiling
-dashboards. Both dashboards show the number of stored profile snapshots and a
-merged flame graph with a Top table for the selected time range:
+Grafana provisioning includes host, container, and comparison continuous
+profiling dashboards. The host and container dashboards show the number of
+stored profile snapshots, total profile value over time, Top 10 series grouped
+by tracer, and a merged flame graph with a Top table:
 
 - The host dashboard selects an exact `hostname` and excludes container
   profiles.
@@ -237,10 +238,13 @@ export HUATUO_GRAFANA_PROFILE_TOKEN="<Auth.users.ID>"
 docker compose -f build/docker/docker-compose.yml up -d
 ```
 
-The dashboards intentionally use the existing merged-stacktrace API.
-Profile-value timelines, grouped Top-N series, and comparison views require
-Pyroscope-compatible `SelectSeries` and `Diff` endpoints and are not
-provisioned until those endpoints are available.
+The timeline and Top 10 panels use the Pyroscope-compatible `SelectSeries`
+endpoint. The comparison dashboard uses `Diff` through a bounded JSON adapter
+for Grafana's flame graph panel. The selected range is the current window and
+is compared with the immediately preceding window of the same duration. A
+selected `container_id` takes precedence over `hostname`. The adapter defaults
+to 5,000 nodes, rejects values above 10,000, and limits its JSON response to
+8 MiB.
 
 ### 7. Get Raw Profiling Data
 
@@ -285,7 +289,7 @@ curl -sS -i \
 
 A successful deletion returns `204 No Content` with no response body. If the job is still active, the endpoint returns `409 Conflict`.
 
-### 9. Pyroscope-compatible Queries
+### 10. Pyroscope-compatible Queries
 
 The profiling API implements the Pyroscope `SelectSeries` and `Diff` protobuf
 methods under `/v1/profiles/flamegraph/querier.v1.QuerierService/`. `SelectSeries`
