@@ -70,3 +70,78 @@ func TestProfileQueryHTTPError(t *testing.T) {
 		})
 	}
 }
+
+func TestProfileExportRequest(t *testing.T) {
+	values := map[string]string{
+		"profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+		"selector":     `{hostname="node-a"}`,
+		"start":        "1784944800000",
+		"end":          "1784944860000",
+	}
+	req, err := profileExportRequest(func(name string) string {
+		return values[name]
+	})
+	if err != nil {
+		t.Fatalf("profileExportRequest() error = %v", err)
+	}
+	if req.ProfileTypeID != values["profile_type"] ||
+		req.LabelSelector != values["selector"] ||
+		req.Start != 1784944800000 ||
+		req.End != 1784944860000 {
+		t.Fatalf("profileExportRequest() = %#v, want query values", req)
+	}
+}
+
+func TestProfileExportRequestRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name   string
+		values map[string]string
+		want   string
+	}{
+		{
+			name:   "profile type",
+			values: map[string]string{},
+			want:   "profile_type is required",
+		},
+		{
+			name: "selector",
+			values: map[string]string{
+				"profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			},
+			want: "selector is required",
+		},
+		{
+			name: "start",
+			values: map[string]string{
+				"profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+				"selector":     `{hostname="node-a"}`,
+				"start":        "yesterday",
+			},
+			want: "start must be a Unix timestamp in milliseconds",
+		},
+		{
+			name: "end",
+			values: map[string]string{
+				"profile_type": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+				"selector":     `{hostname="node-a"}`,
+				"start":        "1784944800000",
+				"end":          "tomorrow",
+			},
+			want: "end must be a Unix timestamp in milliseconds",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := profileExportRequest(func(name string) string {
+				return test.values[name]
+			})
+			if err == nil || err.Error() != test.want {
+				t.Fatalf(
+					"profileExportRequest() error = %v, want %q",
+					err,
+					test.want,
+				)
+			}
+		})
+	}
+}

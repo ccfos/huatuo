@@ -15,15 +15,20 @@
 package profiling
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"huatuo-bamai/internal/log"
 	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 
 	"github.com/gin-gonic/gin/binding"
+	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 )
 
 func handleProto[Request, Response any](
@@ -87,4 +92,96 @@ func (h *Handler) displayLabelNames(ctx *server.Context) error {
 
 func (h *Handler) displayLabelValues(ctx *server.Context) error {
 	return handleProto(ctx, "label_values", h.profileService.LabelValues)
+}
+
+func profileExportRequest(
+	query func(string) string,
+) (*querierv1.SelectMergeStacktracesRequest, error) {
+	profileType := strings.TrimSpace(query("profile_type"))
+	if profileType == "" {
+		return nil, errors.New("profile_type is required")
+	}
+	selector := strings.TrimSpace(query("selector"))
+	if selector == "" {
+		return nil, errors.New("selector is required")
+	}
+	start, err := strconv.ParseInt(query("start"), 10, 64)
+	if err != nil {
+		return nil, errors.New("start must be a Unix timestamp in milliseconds")
+	}
+	end, err := strconv.ParseInt(query("end"), 10, 64)
+	if err != nil {
+		return nil, errors.New("end must be a Unix timestamp in milliseconds")
+	}
+	return &querierv1.SelectMergeStacktracesRequest{
+		ProfileTypeID: profileType,
+		LabelSelector: selector,
+		Start:         start,
+		End:           end,
+	}, nil
+}
+
+func writeProfileServiceError(ctx *server.Context, operation string, err error) {
+	status, message := profileQueryHTTPError(err)
+	if status == http.StatusInternalServerError {
+		log.WithError(err).WithField("operation", operation).Error("profile query failed")
+	}
+	ctx.JSON(status, map[string]any{"message": message})
+}
+
+func (h *Handler) displayPprofExport(ctx *server.Context) error {
+	req, err := profileExportRequest(ctx.Query)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
+		return nil
+	}
+	payload, err := h.profileService.MarshalPprof(ctx.Request().Context(), req)
+	if err != nil {
+		writeProfileServiceError(ctx, "export_pprof", err)
+		return nil
+	}
+	ctx.Header("Content-Type", "application/octet-stream")
+	ctx.Header(
+		"Content-Disposition",
+		`attachment; filename="huatuo-profile.pb.gz"`,
+	)
+	ctx.Header("X-Content-Type-Options", "nosniff")
+	ctx.Writer().WriteHeader(http.StatusOK)
+	if _, err := ctx.Writer().Write(payload); err != nil {
+		return fmt.Errorf("write pprof export: %w", err)
+	}
+	return nil
+}
+
+func (h *Handler) displaySVGExport(ctx *server.Context) error {
+	req, err := profileExportRequest(ctx.Query)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
+		return nil
+	}
+	var output bytes.Buffer
+	if err := h.profileService.RenderProfileSVG(
+		ctx.Request().Context(),
+		req,
+		&output,
+	); err != nil {
+		writeProfileServiceError(ctx, "export_svg", err)
+		return nil
+	}
+	ctx.Header("Content-Type", "image/svg+xml; charset=utf-8")
+	ctx.Header(
+		"Content-Disposition",
+		`inline; filename="huatuo-flamegraph.svg"`,
+	)
+	ctx.Header(
+		"Content-Security-Policy",
+		"sandbox allow-scripts; default-src 'none'; "+
+			"script-src 'unsafe-inline'; style-src 'unsafe-inline'",
+	)
+	ctx.Header("X-Content-Type-Options", "nosniff")
+	ctx.Writer().WriteHeader(http.StatusOK)
+	if _, err := ctx.Writer().Write(output.Bytes()); err != nil {
+		return fmt.Errorf("write SVG export: %w", err)
+	}
+	return nil
 }

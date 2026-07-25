@@ -51,6 +51,22 @@ func TestNewHandlerSnapshotsProfilingConfig(t *testing.T) {
 	}
 }
 
+func TestNewHandlerRegistersProfileExports(t *testing.T) {
+	h := NewHandler(nil, nil, Config{})
+	routes := make(map[string]bool, len(h.Handlers))
+	for _, handler := range h.Handlers {
+		routes[handler.Uri] = true
+	}
+	for _, route := range []string{
+		"/flamegraph/export/pprof",
+		"/flamegraph/export/svg",
+	} {
+		if !routes[route] {
+			t.Errorf("profile export route %q is not registered", route)
+		}
+	}
+}
+
 // TestCapabilities verifies that the capabilities handler returns the correct
 // profiling types, languages, memory modes, and default configuration values.
 func TestCapabilities(t *testing.T) {
