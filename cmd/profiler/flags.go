@@ -14,13 +14,17 @@
 
 package main
 
-import "github.com/urfave/cli/v2"
+import (
+	"time"
+
+	"github.com/urfave/cli/v2"
+)
 
 var appFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:    "type",
 		Aliases: []string{"t"},
-		Usage:   "Profiling type: cpu|memory",
+		Usage:   "Profiling type: cpu|memory|lock",
 	},
 	&cli.StringFlag{
 		Name:    "language",
@@ -47,6 +51,11 @@ var appFlags = []cli.Flag{
 	&cli.BoolFlag{
 		Name:  "thread-group",
 		Usage: "Profile the target thread group; supported only by native profiling",
+	},
+	&cli.DurationFlag{
+		Name:  "lock-wait-threshold",
+		Usage: "Minimum mutex contention wait to record",
+		Value: time.Microsecond,
 	},
 	&cli.IntFlag{
 		Name:    "freq",

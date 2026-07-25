@@ -70,7 +70,7 @@ type lockStackEntry struct {
 	User      string
 	Kernel    string
 	WaitTime  uint64
-	Contended uint32
+	Contended uint64
 }
 
 type nativeAggregator struct {
@@ -128,7 +128,14 @@ func (a *nativeAggregator) Aggregate(rec any) {
 		}
 
 	case *lockStackEntry:
-		key := fmt.Sprintf("%s\x00%d", v.User, v.Proc.Lock)
+		key := fmt.Sprintf(
+			"%d\x00%s\x00%s\x00%s\x00%d",
+			v.Proc.Pid,
+			v.Proc.Name,
+			v.User,
+			v.Kernel,
+			v.Proc.Lock,
+		)
 		if existed, ok := a.lockAggrMap[key]; ok {
 			existed.Contended += v.Contended
 			existed.WaitTime += v.WaitTime
@@ -329,7 +336,15 @@ func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, 
 	case profiling.TypeMemory:
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil
 	case profiling.TypeLock:
-		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeLockTimeSample, nil
+		if pctx.LockMode != profiling.LockModeUnknown &&
+			pctx.LockMode != profiling.LockModeWaitTime {
+			return nil, "", fmt.Errorf(
+				"unsupported lock mode %q",
+				pctx.LockMode,
+			)
+		}
+		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate},
+			profiler.ProfileTypeLockTimeSample, nil
 	default:
 		return nil, "", fmt.Errorf("unsupported profile type %q", pctx.Type)
 	}

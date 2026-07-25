@@ -314,7 +314,7 @@ _output/bin/profiler --help
 
 ```bash
 sudo _output/bin/profiler \
-  --type <cpu|memory> \
+  --type <cpu|memory|lock> \
   --language <c|c++|go|java|python> \
   --pid <pid> \
   --duration 30 \
@@ -323,13 +323,13 @@ sudo _output/bin/profiler \
   --output-path ./profiles
 ```
 
-`--type` 和 `--language` 为必填参数。Java、Python 和原生内存采集必须在 `--pid` 与 `--container-id` 中指定且仅指定一个目标；原生 CPU 采集未指定目标时可进行宿主机级采样。
+`--type` 和 `--language` 为必填参数。Java、Python、原生内存和原生锁采集必须在 `--pid` 与 `--container-id` 中指定且仅指定一个目标；原生 CPU 采集未指定目标时可进行宿主机级采样。
 
 ### 2. 通用命令参数
 
 | 参数 | 默认值 | 适用范围 | 说明 |
 | --- | --- | --- | --- |
-| `--type`, `-t` | 无 | 全部 | 观测类型：`cpu` 或 `memory`，必填 |
+| `--type`, `-t` | 无 | 全部 | 观测类型：`cpu`、`memory` 或 `lock`，必填 |
 | `--language`, `-l` | 无 | 全部 | 目标语言：`c`、`c++`、`go`、`java` 或 `python`，必填 |
 | `--pid`, `-p` | 无 | 全部 | 目标 PID；Java、Python 可使用逗号分隔多个 PID，原生采集最多一个 PID |
 | `--container-id` | 无 | 全部 | 目标容器 ID；不能与 `--pid` 同时使用 |
@@ -356,6 +356,7 @@ sudo _output/bin/profiler \
 | `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；使用 `--type memory` 时必填 |
 | `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围，例如 `1,3,5-10` |
 | `--thread-group` | `false` | 原生 | 同时采集目标 PID 所在线程组中的其他线程 |
+| `--lock-wait-threshold` | `1us` | 原生锁 | 纳入结果的最小 mutex 竞争等待时间 |
 | `--physical-memory-probability` | `100` | 原生物理内存 | 物理内存事件采样概率，范围为 1～100 |
 | `--log-bpf-debug` | `false` | 原生 | 输出 BPF 调试事件，常规采集不建议启用 |
 
@@ -437,6 +438,23 @@ sudo _output/bin/profiler \
 ```
 
 `--physical-memory-probability` 仅适用于 `physical_alloc` 和 `physical_usage`。降低该值可减少高频内存事件的处理量，但火焰图中的值由采样事件估算，不再是逐事件统计。
+
+原生锁采集当前仅统计 mutex 等待时间。内核支持时使用锁竞争
+tracepoint，否则使用 mutex 慢路径。必须指定 PID 或容器，避免意外启用
+宿主机级锁插桩。
+
+```bash
+sudo _output/bin/profiler \
+  --type lock \
+  --language c \
+  --pid 12345 \
+  --thread-group \
+  --lock-wait-threshold 10us \
+  --duration 30 \
+  --aggr-interval 10 \
+  --output-format flamegraph \
+  --output-path ./profiles/mutex-wait
+```
 
 ### 4. Java 观测
 
