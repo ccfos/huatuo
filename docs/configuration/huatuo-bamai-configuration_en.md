@@ -279,13 +279,31 @@ configuration-file permissions because authentication fields contain secrets.
 
 ### 7. Automatic Tracing
 
+#### 7.1 AutoTracing Display Backend
+
+```toml
+[AutoTracing.Display]
+    Backend = "pyroscope"
+```
+
+- **Backend** selects the presentation path at runtime:
+  - `pyroscope` (default) writes profiles directly to Pyroscope for the
+    provisioned Grafana dashboard. `Storage.Pyroscope.Address` is required.
+  - `apiserver` keeps the existing Elasticsearch and huatuo-apiserver path.
+    The Elasticsearch address, username, and password are required.
+
+Changing the backend and restarting huatuo-bamai does not change trigger
+thresholds, perf execution, or snapshot collection. In `pyroscope` mode,
+Elasticsearch can remain configured for the existing JSON event stream and
+Pyroscope is added as a profile store.
+
 The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.
 
 CPUIdle and CPUSys traces keep their existing JSON event and also write a CPU
 pprof profile with the same tracer ID. The profile uses `cpu:nanoseconds`
 samples at 99 Hz. Profile storage failures do not discard the JSON event.
 
-#### 7.1 CPUIdle Automatic Tracing — Sudden High CPU Usage in Containers
+#### 7.2 CPUIdle Automatic Tracing — Sudden High CPU Usage in Containers
 
 ```bash
 # Autotracing configuration 
@@ -417,7 +435,7 @@ samples at 99 Hz. Profile storage failures do not discard the JSON event.
 
   Default: no rules, all containers monitored.
 
-#### 7.2 CPUSys Automatic Tracing — Sudden High System CPU on Host
+#### 7.3 CPUSys Automatic Tracing — Sudden High System CPU on Host
 
 ```bash
 # cpusys
@@ -477,7 +495,7 @@ samples at 99 Hz. Profile storage failures do not discard the JSON event.
 
 **Trigger Logic**: Tracing is triggered when both SysThreshold and DeltaSysThreshold are satisfied.
 
-#### 7.3 Dload AutoTracing — D-State Task Profiling for Containers
+#### 7.4 Dload AutoTracing — D-State Task Profiling for Containers
 
 ```bash
 # dload
@@ -515,7 +533,7 @@ samples at 99 Hz. Profile storage failures do not discard the JSON event.
 
   Default: 1800s (30 minutes).
 
-#### 7.4 IOTracing AutoTracing — Container IO Performance Profiling
+#### 7.5 IOTracing AutoTracing — Container IO Performance Profiling
 
 ```bash
 # iotracing
@@ -592,7 +610,7 @@ samples at 99 Hz. Profile storage failures do not discard the JSON event.
 
 **Description**: Used for diagnosing IO hotspots in containers, especially under high disk load.
 
-#### 7.5 MemoryBurst AutoTracing
+#### 7.6 MemoryBurst AutoTracing
 
 This module detects sudden memory usage spikes on the host and automatically captures kernel context to help diagnose memory pressure events.
 
@@ -657,7 +675,7 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
   Default: 10.
 
-#### 7.6 Known Issue Filtering (IssuesList)
+#### 7.7 Known Issue Filtering (IssuesList)
 
 ```bash
 # Autotracing configuration.

@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
+	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/storage"
@@ -39,6 +40,17 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 
 func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 	var esStore *storage.Store[*tracing.Document]
+	displayBackend, err := cfg.AutoTracing.Display.ResolveBackend()
+	if err != nil {
+		return fmt.Errorf("resolve AutoTracing display backend: %w", err)
+	}
+	if err := validateDisplayStorage(
+		cfg,
+		displayBackend,
+		cfg.Storage.Elasticsearch.Enabled(),
+	); err != nil {
+		return err
+	}
 
 	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)
 	if cfg.Storage.Elasticsearch.Enabled() {
@@ -81,7 +93,11 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
 	}
 
-	profileStores, err := newProfileStores(context.Background(), cfg)
+	profileStores, err := newProfileStores(
+		context.Background(),
+		cfg,
+		displayBackend,
+	)
 	if err != nil {
 		return err
 	}
@@ -98,6 +114,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 func newProfileStores(
 	ctx context.Context,
 	cfg *config.BamaiConfig,
+	displayBackend autotracing.DisplayBackend,
 ) ([]*storage.Store[*tracing.Document], error) {
 	profileStores := make([]*storage.Store[*tracing.Document], 0, 2)
 
@@ -115,7 +132,7 @@ func newProfileStores(
 		profileStores = append(profileStores, profileStore)
 	}
 
-	if cfg.Storage.Pyroscope.Address != "" {
+	if displayBackend == autotracing.DisplayBackendPyroscope {
 		profileStore, err := storage.NewFromConfig[*tracing.Document](ctx, &driver.Config{
 			Driver:                  "pyroscope",
 			PyroscopeAddress:        cfg.Storage.Pyroscope.Address,
@@ -136,6 +153,32 @@ func newProfileStores(
 	}
 
 	return profileStores, nil
+}
+
+func validateDisplayStorage(
+	cfg *config.BamaiConfig,
+	displayBackend autotracing.DisplayBackend,
+	esEnabled bool,
+) error {
+	switch displayBackend {
+	case autotracing.DisplayBackendPyroscope:
+		if cfg.Storage.Pyroscope.Address == "" {
+			return fmt.Errorf(
+				"AutoTracing display backend %q requires Storage.Pyroscope.Address",
+				displayBackend,
+			)
+		}
+	case autotracing.DisplayBackendAPIServer:
+		if !esEnabled {
+			return fmt.Errorf(
+				"AutoTracing display backend %q requires Storage.Elasticsearch address, username, and password",
+				displayBackend,
+			)
+		}
+	default:
+		return fmt.Errorf("unsupported AutoTracing display backend %q", displayBackend)
+	}
+	return nil
 }
 
 func closeProfileStores(

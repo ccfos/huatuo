@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"huatuo-bamai/core/autotracing"
 )
 
 func writeConfigFile(t *testing.T, dir, name, content string) string {
@@ -66,6 +68,9 @@ TimeoutSeconds = 8
 
 [AutoTracing]
 IssuesList = [["dload", "jbd2"]]
+
+[AutoTracing.Display]
+Backend = "apiserver"
 
 [EventTracing]
 IssuesList = [["net_rx_latency", "kernel_sched_tick"]]
@@ -141,6 +146,13 @@ ExcludedOnContainer = "writeback"
 			"unexpected CPUSys.IntervalTracing: %d",
 			Get().AutoTracing.CPUSys.IntervalTracing,
 		)
+	}
+	backend, err := Get().AutoTracing.Display.ResolveBackend()
+	if err != nil {
+		t.Fatalf("resolve display backend: %v", err)
+	}
+	if backend != autotracing.DisplayBackendAPIServer {
+		t.Errorf("display backend = %q, want apiserver", backend)
 	}
 	if len(Get().EventTracing.IssuesList) != 1 {
 		t.Errorf("unexpected EventTracing.IssuesList length: %d", len(Get().EventTracing.IssuesList))
@@ -329,6 +341,10 @@ ExcludedOnContainer = "writeback"
 	if err := Load(path); err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
+	if backend, err := Get().AutoTracing.Display.ResolveBackend(); err != nil ||
+		backend != autotracing.DisplayBackendPyroscope {
+		t.Fatalf("default display backend = %q, %v", backend, err)
+	}
 
 	for _, kv := range []struct {
 		key string
@@ -336,6 +352,7 @@ ExcludedOnContainer = "writeback"
 	}{
 		{"BlackList", []string{"netdev_hw", "metax_gpu"}},
 		{"AutoTracing.IssuesList", [][]string{{"cpuidle", "perf"}}},
+		{"AutoTracing.Display.Backend", "apiserver"},
 		{"EventTracing.IssuesList", [][]string{{"dropwatch", "kfree_skb"}}},
 		{"MetricCollector.Vmstat.IncludedOnHost", "pgsteal_direct"},
 		{"MetricCollector.Vmstat.IncludedOnContainer", "workingset_refault_file"},
@@ -365,6 +382,10 @@ ExcludedOnContainer = "writeback"
 	if len(Get().AutoTracing.IssuesList) != 1 || len(Get().AutoTracing.IssuesList[0]) != 2 || Get().AutoTracing.IssuesList[0][0] != "cpuidle" {
 		t.Errorf("unexpected AutoTracing.IssuesList after reload: %#v", Get().AutoTracing.IssuesList)
 	}
+	if backend, err := Get().AutoTracing.Display.ResolveBackend(); err != nil ||
+		backend != autotracing.DisplayBackendAPIServer {
+		t.Errorf("display backend after reload = %q, %v", backend, err)
+	}
 	if len(Get().EventTracing.IssuesList) != 1 || len(Get().EventTracing.IssuesList[0]) != 2 || Get().EventTracing.IssuesList[0][0] != "dropwatch" {
 		t.Errorf("unexpected EventTracing.IssuesList after reload: %#v", Get().EventTracing.IssuesList)
 	}
@@ -384,5 +405,44 @@ ExcludedOnContainer = "writeback"
 	}
 	if !strings.Contains(string(raw), "MemoryLimitMiB = 2048") {
 		t.Errorf("synced config should preserve the public memory unit, got %s", string(raw))
+	}
+}
+
+func TestLoadRejectsInvalidAutoTracingDisplayBackend(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[AutoTracing.Display]
+Backend = "unknown"
+`)
+
+	err := Load(path)
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"invalid AutoTracing display backend",
+	) {
+		t.Fatalf("Load error = %v, want invalid display backend", err)
+	}
+}
+
+func TestSetRejectsInvalidAutoTracingDisplayBackendWithoutMutation(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[AutoTracing.Display]
+Backend = "pyroscope"
+`)
+	if err := Load(path); err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	err := Set("AutoTracing.Display.Backend", "unknown")
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"invalid AutoTracing display backend",
+	) {
+		t.Fatalf("Set error = %v, want invalid display backend", err)
+	}
+	if Get().AutoTracing.Display.Backend != "pyroscope" {
+		t.Fatalf(
+			"display backend mutated to %q",
+			Get().AutoTracing.Display.Backend,
+		)
 	}
 }
