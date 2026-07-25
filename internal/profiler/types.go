@@ -36,6 +36,8 @@ const MetadataCollection = "profiling_metadata"
 // ProfileData is the data saved by the profiler.
 type ProfileData struct {
 	ProfileType string `json:"profile_type,omitempty"`
+	// Labels are mirrored into pprof samples and indexed for label queries.
+	Labels map[string]string `json:"labels,omitempty"`
 	// Please note:
 	//
 	//	In pyroscope 1.13.0, use profilev1.Profile instead of ptree.Profile, but it depends

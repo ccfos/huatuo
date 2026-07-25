@@ -388,6 +388,23 @@ sudo _output/bin/profiler \
   --output-format flamegraph --output-path ./profiles/host
 ```
 
+Remote profiles preserve their collection selectors as both profile metadata
+and pprof sample labels. This keeps the dimensions available to
+Pyroscope-compatible label queries and Parca-compatible pprof readers:
+
+| Label | Value |
+| --- | --- |
+| `profiling_scope` | `host`, `container`, `pid`, or `thread_group` |
+| `pid` | Exact PID target, or comma-separated external-profiler targets |
+| `tgid` | Thread-group target used with `--thread-group` |
+| `container_id` | Target supplied through the common container selector |
+| `cpu` | Comma-separated CPU IDs selected with `--cpuid` |
+
+The Pyroscope-compatible API accepts equality matchers for these labels and
+returns their values through the label-values endpoint. A label describes the
+collection filter; it does not replace the per-process frames already present
+in a profile.
+
 Native memory profiling supports these dimensions:
 
 | `--memory-mode` | Measurement | Suitable for |
