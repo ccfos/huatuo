@@ -348,6 +348,25 @@ func TestSelectSeriesBucketsAndGroups(t *testing.T) {
 	}
 }
 
+func TestProfileNodeLimits(t *testing.T) {
+	if got, err := normalizeProfileMaxNodes(0); err != nil ||
+		got != defaultProfileNodes {
+		t.Fatalf("normalizeProfileMaxNodes(0) = (%d, %v)", got, err)
+	}
+	for _, value := range []int64{-1, profileNodeLimit + 1} {
+		if _, err := normalizeProfileMaxNodes(value); !errors.Is(
+			err,
+			ErrInvalidQuery,
+		) {
+			t.Fatalf(
+				"normalizeProfileMaxNodes(%d) error = %v, want invalid query",
+				value,
+				err,
+			)
+		}
+	}
+}
+
 func TestDiffBuildsDoubleFlamegraph(t *testing.T) {
 	start := time.Date(2026, time.July, 25, 11, 0, 0, 0, time.UTC)
 	service := newTestProfileService(&fakeProfileQueryStorage{documents: []*ProfileDocument{

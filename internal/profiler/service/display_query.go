@@ -33,6 +33,8 @@ const (
 	profileQueryLimit    = 10000
 	profileQueryPageSize = 1000
 	profileSeriesLimit   = 100
+	defaultProfileNodes  = 5000
+	profileNodeLimit     = 10000
 )
 
 type profileSelection struct {
@@ -289,6 +291,10 @@ func (s *Service) Diff(
 	if req.Left.ProfileTypeID != req.Right.ProfileTypeID {
 		return nil, invalidProfileQueryf("left and right profile types must match")
 	}
+	maxNodes, err := diffMaxNodes(req)
+	if err != nil {
+		return nil, err
+	}
 	left, leftFound, err := s.selectProfileTree(ctx, req.Left, true)
 	if err != nil {
 		return nil, fmt.Errorf("select left profiles: %w", err)
@@ -300,24 +306,41 @@ func (s *Service) Diff(
 	if !leftFound && !rightFound {
 		return nil, ErrProfilesAbsent
 	}
-	flamegraph, err := phlaremodel.NewFlamegraphDiff(left, right, diffMaxNodes(req))
+	flamegraph, err := phlaremodel.NewFlamegraphDiff(left, right, maxNodes)
 	if err != nil {
 		return nil, fmt.Errorf("build flamegraph diff: %w", err)
 	}
 	return &querierv1.DiffResponse{Flamegraph: flamegraph}, nil
 }
 
-func diffMaxNodes(req *querierv1.DiffRequest) int64 {
-	left := req.Left.GetMaxNodes()
-	right := req.Right.GetMaxNodes()
-	switch {
-	case left > 0 && right > 0 && right < left:
-		return right
-	case left > 0:
-		return left
-	default:
-		return right
+func diffMaxNodes(req *querierv1.DiffRequest) (int64, error) {
+	left, err := normalizeProfileMaxNodes(req.Left.GetMaxNodes())
+	if err != nil {
+		return 0, fmt.Errorf("left selection: %w", err)
 	}
+	right, err := normalizeProfileMaxNodes(req.Right.GetMaxNodes())
+	if err != nil {
+		return 0, fmt.Errorf("right selection: %w", err)
+	}
+	switch {
+	case right < left:
+		return right, nil
+	default:
+		return left, nil
+	}
+}
+
+func normalizeProfileMaxNodes(maxNodes int64) (int64, error) {
+	if maxNodes == 0 {
+		return defaultProfileNodes, nil
+	}
+	if maxNodes < 0 || maxNodes > profileNodeLimit {
+		return 0, invalidProfileQueryf(
+			"max nodes must be between 0 and %d",
+			profileNodeLimit,
+		)
+	}
+	return maxNodes, nil
 }
 
 // SelectSeries returns sample totals bucketed by time and exact profile labels.
