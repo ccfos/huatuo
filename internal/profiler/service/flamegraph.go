@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler"
 
 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
@@ -111,8 +112,15 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 		}
 	}
 
-	if filter.ID == "" && filter.Hostname == "" && filter.ContainerID == "" && filter.ContainerHostname == "" {
-		return nil, fmt.Errorf("%w: id, hostname, or container must be specified", ErrInvalidQuery)
+	if filter.ID == "" &&
+		filter.Hostname == "" &&
+		filter.ContainerID == "" &&
+		filter.ContainerHostname == "" &&
+		len(filter.Labels) == 0 {
+		return nil, fmt.Errorf(
+			"%w: id, hostname, container, or collection dimension must be specified",
+			ErrInvalidQuery,
+		)
 	}
 
 	// search
@@ -242,7 +250,13 @@ func applyProfileMatcher(filter *SearchFilter, matcher *labels.Matcher) error {
 	case "__profile_type__":
 		filter.ProfileType = matcher.Value
 	default:
-		return fmt.Errorf("%w: invalid label %q", ErrInvalidQuery, matcher.Name)
+		if !profiler.IsCollectionDimensionLabel(matcher.Name) {
+			return fmt.Errorf("%w: invalid label %q", ErrInvalidQuery, matcher.Name)
+		}
+		if filter.Labels == nil {
+			filter.Labels = make(map[string]string)
+		}
+		filter.Labels[matcher.Name] = matcher.Value
 	}
 	return nil
 }
@@ -300,8 +314,25 @@ func (s *Service) ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesR
 //	request: typesv1.LabelNamesRequest
 //	response: typesv1.LabelNamesResponse
 func (s *Service) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
+	names := []string{
+		"region",
+		"hostname",
+		"container_id",
+		"container_hostname",
+		"container_host_namespace",
+	}
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		seen[name] = struct{}{}
+	}
+	for _, name := range profiler.CollectionDimensionLabelNames() {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		names = append(names, name)
+	}
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
+		Names: names,
 	}
 	return response, nil
 }

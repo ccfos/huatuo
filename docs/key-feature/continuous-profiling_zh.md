@@ -397,6 +397,20 @@ sudo _output/bin/profiler \
   --output-format flamegraph --output-path ./profiles/host
 ```
 
+远端 profile 会同时在 profile 元数据和每个 pprof sample 中保留采集选择器，
+因此 Pyroscope 兼容的序列查询和 Parca 兼容的 pprof 读取器都可以使用这些维度：
+
+| 标签 | 取值 |
+| --- | --- |
+| `profiling_scope` | `host`、`container`、`pid` 或 `thread_group` |
+| `pid` | 精确 PID；外部 profiler 多目标时为逗号分隔的 PID 列表 |
+| `tgid` | 使用 `--thread-group` 时的线程组目标 |
+| `container_id` | 通过统一容器选择器指定的容器 ID |
+| `cpu` | `--cpuid` 选择的逗号分隔 CPU ID |
+
+Pyroscope 兼容 API 支持这些标签的等值匹配，并通过 label-values 接口返回聚合值。
+标签描述采集过滤条件，不会替代 profile 中已有的进程帧。
+
 原生内存支持以下维度：
 
 | `--memory-mode` | 统计内容 | 适用问题 |

@@ -33,9 +33,9 @@ func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
 		return fmt.Errorf("toolstream client not initialized")
 	}
 
-	flameData, ok := data.(*profiler.ProfileData)
-	if !ok {
-		return fmt.Errorf("invalid pprof data for uploading: %T", data)
+	flameData, err := applyCollectionDimensionLabels(p.pctx, data)
+	if err != nil {
+		return err
 	}
 
 	tracerData := &profctx.TracerData{
@@ -60,4 +60,22 @@ func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
 	log.WithField("tracer_id", p.tracerID).Infof("profiling event sent via toolstream")
 
 	return nil
+}
+
+func applyCollectionDimensionLabels(
+	pctx *profctx.ProfilerContext,
+	data any,
+) (*profiler.ProfileData, error) {
+	flameData, ok := data.(*profiler.ProfileData)
+	if !ok {
+		return nil, fmt.Errorf("invalid pprof data for uploading: %T", data)
+	}
+	if err := profiler.ApplyLabels(
+		flameData,
+		pctx.CollectionDimensionLabels(),
+	); err != nil {
+		return nil, fmt.Errorf("apply collection dimension labels: %w", err)
+	}
+
+	return flameData, nil
 }
