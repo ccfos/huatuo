@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/storage/driver"
 )
 
@@ -122,6 +123,35 @@ func TestStorageSaveUsesBasicAuthentication(t *testing.T) {
 	backend := newBackendWithHTTPClient(endpoint, "huatuo", "user", "secret", "", httpClient)
 	if err := backend.Save(context.Background(), driver.Record{Data: []byte{1}}); err != nil {
 		t.Fatalf("Save returned error: %v", err)
+	}
+}
+
+func TestApplicationNameIncludesCollectionDimensions(t *testing.T) {
+	endpoint, _ := url.Parse("https://pyroscope.test/ingest")
+	backend := newBackendWithHTTPClient(
+		endpoint,
+		"huatuo",
+		"",
+		"",
+		"",
+		http.DefaultClient,
+	)
+
+	got := backend.applicationName(map[string]any{
+		"tracer_name":                       "profiler",
+		"profile_type":                      "cpu",
+		profiler.LabelProfilingScope:        "thread_group",
+		profiler.LabelCPU:                   "1,3",
+		profiler.LabelPID:                   "42",
+		profiler.LabelTGID:                  "4242",
+		profiler.LabelContainerID:           "containerd://abc",
+		"unmanaged_profile_dimension_label": "ignored",
+	})
+	want := "huatuo.profiler{tracer_name=profiler," +
+		"container_id=containerd_//abc,profile_type=cpu," +
+		"profiling_scope=thread_group,cpu=1_3,pid=42,tgid=4242}"
+	if got != want {
+		t.Fatalf("applicationName = %q, want %q", got, want)
 	}
 }
 

@@ -112,6 +112,12 @@ func TestBuildAndSaveCPUSystemWritesJSONAndPprof(t *testing.T) {
 		"profile_type",
 		profiler.ProfileTypeCpuSample,
 	)
+	assertProfileField(
+		t,
+		profileRecord,
+		profiler.LabelProfilingScope,
+		"host",
+	)
 	assertProfileField(t, profileRecord, "hostname", "test-host")
 
 	if got := profileRecord.Fields["profile_start_time"]; got != start {

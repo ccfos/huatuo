@@ -130,3 +130,10 @@ if RUN_PATH="$test_dir/run" \
 	echo "run.sh accepted an unknown HUATUO_MODE." >&2
 	exit 1
 fi
+
+datasources="$script_dir/grafana/datasources/pyroscope.yaml"
+grep -q 'uid: huatuo-bamai-pyroscope' "$datasources"
+grep -q 'url: http://127.0.0.1:4040' "$datasources"
+grep -q 'uid: huatuo-apiserver-pyroscope' "$datasources"
+grep -q "httpHeaderName1: 'Authorization'" "$datasources"
+grep -q 'httpHeaderValue1: REPLACE_WITH_RANDOM_HEX' "$datasources"

@@ -35,6 +35,8 @@ $ docker compose --project-directory ./build/docker up
 http://localhost:3000，
 可打开 `HuaTuo AutoTracing Pyroscope Flamegraph` Dashboard。CPUIdle 或
 CPUSys 达到配置的 AutoTracing 阈值后，Dashboard 才会出现 profile。
+Dashboard 会直接查询 Pyroscope，并可筛选 `profiling_scope`、
+`tracer_name`、`tracer_id` 和容器 series 标签。
 相同快照还会以 folded stacks 写入 `huatuo-data` volume：
 
 ```bash

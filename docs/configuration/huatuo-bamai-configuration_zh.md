@@ -235,7 +235,10 @@ Elasticsearch；Elasticsearch 会继续保存现有 JSON profiling 文档。凭�
 CPUIdle 和 CPUSys 自动追踪会保留原有 JSON 事件，并使用相同的 tracer ID
 额外写入 CPU pprof。该 profile 以 99 Hz 采样，样本单位为
 `cpu:nanoseconds`，并携带 `tracer_name`、`tracer_id`、`hostname`、适用时
-的 `container_id`、`tracer_type` 和 `profile_type` 标签。
+的 `container_id`、`tracer_type` 和 `profile_type` 标签。采集维度会作为
+受控的 Pyroscope series 标签 `profiling_scope`、`cpu`、`pid`、`tgid`
+和 `container_id` 暴露。AutoTracing 会将 `profiling_scope` 设为 `host`
+或 `container`，因此 Grafana 无需 huatuo-apiserver 即可直接筛选采集范围。
 
 #### 5.4 AutoTracing 展示后端
 

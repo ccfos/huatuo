@@ -67,17 +67,36 @@ func (PprofDocumentStoreMapper) Fields(document *Document) (map[string]any, erro
 	}
 	fields["profile_end_time"] = end
 
+	for _, name := range profiler.CollectionDimensionLabelNames() {
+		value := profileData.Labels[name]
+		if value == "" {
+			continue
+		}
+		if name == profiler.LabelContainerID {
+			if containerID, _ := fields[name].(string); containerID != "" {
+				continue
+			}
+		}
+		fields[name] = value
+	}
+
 	return fields, nil
 }
 
 // Indexes lists metadata consumed by the Pyroscope ingest backend.
 func (PprofDocumentStoreMapper) Indexes() []driver.Index {
 	indexes := (ProfileDocumentStoreMapper{}).Indexes()
-	return append(indexes,
+	indexes = append(indexes,
 		driver.Index{Field: "profile_type"},
 		driver.Index{Field: "profile_start_time"},
 		driver.Index{Field: "profile_end_time"},
 	)
+	for _, name := range profiler.CollectionDimensionLabelNames() {
+		if name != profiler.LabelContainerID {
+			indexes = append(indexes, driver.Index{Field: name})
+		}
+	}
+	return indexes
 }
 
 func profileDataFromDocument(document *Document) (*profiler.ProfileData, error) {
