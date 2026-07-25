@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/output"
@@ -46,6 +47,7 @@ type ProfilerContext struct {
 	AggrInterval         int
 	IsOneShotAgg         bool
 	CPUIDs               []int
+	LockWaitThreshold    time.Duration
 
 	ServerAddress             string
 	OutputFormat              output.OutputFormat
@@ -59,6 +61,8 @@ type ProfilerContext struct {
 	LogBpfDebug               bool
 	MemoryMode                profiling.MemoryMode
 	PhysicalMemoryProbability uint
+	LockMode                  profiling.LockMode
+	LockType                  profiling.LockType
 
 	TracerID string
 
@@ -155,6 +159,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		MaxProfilerProcesses: cliCtx.Int("max-concurrent-procs"),
 		AggrInterval:         cliCtx.Int("aggr-interval"),
 		CPUIDs:               cpuIDs,
+		LockWaitThreshold:    cliCtx.Duration("lock-wait-threshold"),
 
 		ServerAddress:             cliCtx.String("huatuo-api-address"),
 		Type:                      typ,
@@ -168,6 +173,8 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		OutputFormat:              outputFormat,
 		MemoryMode:                mode,
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
+		LockMode:                  lockModeForType(typ),
+		LockType:                  lockTypeForType(typ),
 
 		TracerID: cliCtx.String("tracer-id"),
 
@@ -175,6 +182,20 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	}
 	succeeded = true
 	return profilerContext, nil
+}
+
+func lockModeForType(typ profiling.Type) profiling.LockMode {
+	if typ == profiling.TypeLock {
+		return profiling.LockModeWaitTime
+	}
+	return profiling.LockModeUnknown
+}
+
+func lockTypeForType(typ profiling.Type) profiling.LockType {
+	if typ == profiling.TypeLock {
+		return profiling.LockTypeMutex
+	}
+	return profiling.LockTypeUnknown
 }
 
 func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*toolstream.Client, error) {

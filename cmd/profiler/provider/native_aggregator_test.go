@@ -47,7 +47,44 @@ func TestNativeAggregatorAggregatesLockTime(t *testing.T) {
 	}
 }
 
-func requireSingleLockRecord(t *testing.T, aggregator *nativeAggregator, waitTime uint64, contended uint32) {
+func TestNativeAggregatorKeepsDistinctLockMetadata(t *testing.T) {
+	aggregator := &nativeAggregator{
+		aggrMap:     map[string]*stackEntry{},
+		lockAggrMap: map[string]*lockStackEntry{},
+	}
+	base := &lockStackEntry{
+		Proc:      &processIDNameLock{Pid: 12, Name: "app", Lock: 0xab},
+		User:      "foo;bar",
+		Kernel:    "mutex_lock",
+		WaitTime:  10,
+		Contended: 1,
+	}
+	differentPID := *base
+	differentPID.Proc = &processIDNameLock{
+		Pid:  13,
+		Name: "app",
+		Lock: 0xab,
+	}
+	differentKernel := *base
+	differentKernel.Kernel = "mutex_lock_nested"
+
+	aggregator.Aggregate(base)
+	aggregator.Aggregate(&differentPID)
+	aggregator.Aggregate(&differentKernel)
+
+	if len(aggregator.lockAggrMap) != 3 {
+		t.Fatalf(
+			"lock records = %d, want 3 distinct metadata groups",
+			len(aggregator.lockAggrMap),
+		)
+	}
+}
+
+func requireSingleLockRecord(
+	t *testing.T,
+	aggregator *nativeAggregator,
+	waitTime, contended uint64,
+) {
 	t.Helper()
 	if len(aggregator.lockAggrMap) != 1 {
 		t.Fatalf("lock records = %d, want 1", len(aggregator.lockAggrMap))
