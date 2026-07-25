@@ -232,9 +232,9 @@ merged flame graph with a Top table for the selected time range:
 
 - The host dashboard selects an exact `hostname` and excludes container
   profiles.
-- The container dashboard selects an exact `container_id` and the reporting
-  `hostname`. Container names are not used as identifiers because they are not
-  guaranteed to be unique.
+- The container dashboard queries profiles by exact `container_id` and shows
+  the reporting `hostname` for context. Container names are not used as
+  identifiers because they are not guaranteed to be unique.
 
 CPU and memory are the only profile types exposed by these dashboards. A
 completed job's `results.url` opens the corresponding dashboard with its

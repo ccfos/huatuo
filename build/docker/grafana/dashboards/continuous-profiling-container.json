@@ -185,14 +185,14 @@
             "uid": "huatuo-apiserver-pyroscope"
           },
           "groupBy": [],
-          "labelSelector": "{hostname=\"$hostname\",container_id=\"$container_id\"}",
+          "labelSelector": "{container_id=\"$container_id\"}",
           "profileTypeId": "$type",
           "queryType": "profile",
           "refId": "A",
           "spanSelector": []
         }
       ],
-      "description": "Merged profile for the selected container, host, type, and time range.",
+      "description": "Merged profile for the selected container ID, type, and time range.",
       "title": "$container_id flame graph and Top table",
       "type": "flamegraph"
     }

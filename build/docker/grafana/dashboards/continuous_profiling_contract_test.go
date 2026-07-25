@@ -147,7 +147,7 @@ func TestContinuousProfilingContainerDashboardContract(t *testing.T) {
 
 	var selectors []string
 	dashboardStrings(raw, "labelSelector", &selectors)
-	wantSelector := `{hostname="$hostname",container_id="$container_id"}`
+	wantSelector := `{container_id="$container_id"}`
 	if !slices.Equal(selectors, []string{wantSelector}) {
 		t.Fatalf("profile selectors = %v, want %s", selectors, wantSelector)
 	}
