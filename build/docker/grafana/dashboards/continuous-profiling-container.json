@@ -24,7 +24,20 @@
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Host profiles",
+      "tooltip": "Open the host profiling dashboard.",
+      "type": "link",
+      "url": "/d/continuous-profiling-host/continuous-profiling-host"
+    }
+  ],
   "panels": [
     {
       "datasource": {
@@ -135,12 +148,13 @@
               "type": "count"
             }
           ],
-          "query": "hostname.keyword:$hostname\nAND container_hostname.keyword:$container_hostname\nAND tracer_data.flamedata.profile_type.keyword:$type",
+          "query": "hostname.keyword:$hostname\nAND container_id.keyword:$container_id\nAND tracer_data.flamedata.profile_type.keyword:$type",
           "refId": "A",
           "timeField": "uploaded_time"
         }
       ],
-      "title": "",
+      "description": "Number of profile snapshots stored in each time bucket.",
+      "title": "Profile documents ingested",
       "type": "timeseries"
     },
     {
@@ -171,14 +185,15 @@
             "uid": "huatuo-apiserver-pyroscope"
           },
           "groupBy": [],
-          "labelSelector": "{container_hostname=\"$container_hostname\"}",
+          "labelSelector": "{hostname=\"$hostname\",container_id=\"$container_id\"}",
           "profileTypeId": "$type",
           "queryType": "profile",
           "refId": "A",
           "spanSelector": []
         }
       ],
-      "title": "$container_hostname",
+      "description": "Merged profile for the selected container, host, type, and time range.",
+      "title": "$container_id flame graph and Top table",
       "type": "flamegraph"
     }
   ],
@@ -192,12 +207,12 @@
           "type": "elasticsearch",
           "uid": "huatuo-bamai-es"
         },
-        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
-        "description": "Selects container-level profiles.",
-        "label": "container hostname",
-        "name": "container_hostname",
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"container_id.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "description": "Selects one container by its stable ID.",
+        "label": "container ID",
+        "name": "container_id",
         "options": [],
-        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"container_hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"container_id.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
         "refresh": 1,
         "regex": "",
         "type": "query"
@@ -208,12 +223,12 @@
           "type": "elasticsearch",
           "uid": "huatuo-bamai-es"
         },
-        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND container_hostname.keyword:$container_hostname\",\n  \"size\": 5000\n}",
-        "description": "Read-only. Displays the host where the selected container resides. Not used as a query filter; filtering is by container_hostname only.",
-        "label": "hostname(Read-only)",
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND container_id.keyword:$container_id\",\n  \"size\": 5000\n}",
+        "description": "Selects the host that reported the container profile.",
+        "label": "hostname",
         "name": "hostname",
         "options": [],
-        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND container_hostname.keyword:$container_hostname\",\n  \"size\": 5000\n}",
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND container_id.keyword:$container_id\",\n  \"size\": 5000\n}",
         "refresh": 1,
         "regex": "",
         "type": "query"
@@ -232,29 +247,19 @@
             "selected": false,
             "text": "memory:alloc_space:bytes:space:bytes",
             "value": "memory:alloc_space:bytes:space:bytes"
-          },
-          {
-            "selected": false,
-            "text": "process_lock:lock:count:lock:count",
-            "value": "process_lock:lock:count:lock:count"
-          },
-          {
-            "selected": false,
-            "text": "process_lock:lock:nanoseconds:lock:nanoseconds",
-            "value": "process_lock:lock:nanoseconds:lock:nanoseconds"
           }
         ],
-        "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes,process_lock:lock:count:lock:count,process_lock:lock:nanoseconds:lock:nanoseconds",
+        "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes",
         "type": "custom"
       }
     ]
   },
   "time": {
-    "from": "now-1y",
+    "from": "now-1h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Continuous Profiling(container)",
+  "title": "Continuous Profiling (Container)",
   "uid": "continuous-profiling-container"
 }

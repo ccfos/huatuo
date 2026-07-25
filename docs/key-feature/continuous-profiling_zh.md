@@ -209,7 +209,33 @@ curl -sS \
 | `failed` | 任务执行失败，查看 `error_message` 定位原因 |
 | `timeout` | 任务超过允许的执行时间 |
 
-### 6. 获取原始剖析数据
+### 6. 在 Grafana 中查看剖析结果
+
+Grafana provisioning 提供独立的宿主机和容器持续剖析 dashboard。两张
+dashboard 都展示选定时间范围内写入的剖析快照数量，以及合并后的火焰图
+和 Top 表：
+
+- 宿主机 dashboard 按 `hostname` 精确筛选，并排除容器剖析数据。
+- 容器 dashboard 按 `container_id` 和上报节点 `hostname` 精确筛选。容器名
+  不保证唯一，因此不作为容器标识。
+
+dashboard 只提供当前已支持的 CPU 和内存剖析类型。任务完成后，
+`results.url` 会打开对应 dashboard，并预选目标、剖析类型和采集时间窗口。
+
+Pyroscope datasource 通过 huatuo-apiserver 查询数据。启用 API 鉴权时，
+应创建只拥有 `POST /v1/profiles/flamegraph/**` 权限的专用用户，并通过
+环境变量将同一个用户 ID 传给 Grafana，不要把它提交到仓库：
+
+```bash
+export HUATUO_GRAFANA_PROFILE_TOKEN="<Auth.users.ID>"
+docker compose -f build/docker/docker-compose.yml up -d
+```
+
+当前 dashboard 只依赖已有的合并栈查询接口。剖析值时间线、按维度分组的
+Top-N 序列和对比视图依赖兼容 Pyroscope 的 `SelectSeries`、`Diff` 接口，
+在这些接口可用前不进行 provisioning。
+
+### 7. 获取原始剖析数据
 
 `GET /v1/profiles/:id/raw` 根据 `agent_task_id` 查询存储中的原始剖析数据。数据量可能较大，可以直接保存到文件：
 
@@ -224,7 +250,7 @@ curl -sS \
 和 `data.has_more` 描述分页。任务尚未分配 Agent 任务 ID 时，接口返回
 `400 Bad Request`。
 
-### 7. 停止任务
+### 8. 停止任务
 
 只有 `pending` 或 `running` 状态的任务可以停止。`PATCH` 请求的 `status` 只接受 `stopped`：
 
@@ -239,7 +265,7 @@ curl -sS \
 
 停止成功返回 `200 OK`。已结束的任务返回 `400 Bad Request`。
 
-### 8. 删除任务
+### 9. 删除任务
 
 删除操作只移除任务记录。`pending` 或 `running` 状态的任务不能直接删除，需要先停止任务：
 
