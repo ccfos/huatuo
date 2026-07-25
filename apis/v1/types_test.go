@@ -32,6 +32,9 @@ func TestCreateJobRequestJSONFields(t *testing.T) {
 				BinaryMatchPath: "/usr/bin/example",
 				Language:        "go",
 				ContainerID:     "container-id",
+				CPUIDs:          []int{1},
+				PID:             4242,
+				ThreadGroup:     true,
 			},
 			fields: []string{
 				"type",
@@ -42,6 +45,9 @@ func TestCreateJobRequestJSONFields(t *testing.T) {
 				"duration",
 				"container_id",
 				"hostname",
+				"cpu_ids",
+				"pid",
+				"thread_group",
 			},
 		},
 		{
@@ -111,13 +117,20 @@ func TestStandardizedJobJSONFields(t *testing.T) {
 		fields []string
 	}{
 		{
-			name:  "profiling response",
-			value: ProfilingJobResponse{},
+			name: "profiling response",
+			value: ProfilingJobResponse{
+				CPUIDs:      []int{1},
+				PID:         4242,
+				ThreadGroup: true,
+			},
 			fields: []string{
 				"container_id",
 				"binary_match_path",
 				"tool_path",
 				"language",
+				"cpu_ids",
+				"pid",
+				"thread_group",
 			},
 		},
 		{

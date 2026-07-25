@@ -88,13 +88,20 @@ CPU profiling currently supports `c`, `c++`, `go`, `java`, and `python`. Memory 
 | `duration` | Yes | Profiling duration in seconds |
 | `hostname` | Yes | Hostname of the node running the target process; used for job scheduling |
 | `container_id` | No | Target container ID; omit it to profile the host |
+| `pid` | No | Exact target PID for native profiling; mutually exclusive with `container_id` |
+| `thread_group` | No | Include every thread in `pid`'s thread group (TGID); requires `pid` |
+| `cpu_ids` | No | CPU IDs selected for native CPU profiling |
 | `binary_match_path` | No | Executable path matcher for Java/Python CPU profiling; native profiling does not support it |
 | `tool_path` | For Java/Python profiling | Tool installation directory on the Agent host: async-profiler for Java or py-spy for Python |
 | `memory_mode` | For memory profiling | Memory profiling mode; it must be supported by `language` |
 
 `duration` must cover at least two `aggregation_interval` periods, and `duration + aggregation_interval` must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
 
-Create a Go CPU profiling job on a host:
+Native CPU profiling can omit both `pid` and `container_id` to sample the
+host. Native memory profiling requires exactly one of them. Without
+`thread_group`, `pid` keeps its exact-thread meaning.
+
+Create a Go CPU profiling job for a thread group on selected CPUs:
 
 ```bash
 curl -sS -i \
@@ -105,6 +112,9 @@ curl -sS -i \
     "type": "cpu",
     "language": "go",
     "duration": 60,
+    "pid": 4242,
+    "thread_group": true,
+    "cpu_ids": [1, 3],
     "hostname": "node-01"
   }' \
   "${API_BASE}/v1/profiles"
@@ -196,6 +206,9 @@ The `data` object contains the job details:
 | `memory_mode` | Memory profiling mode; empty for CPU jobs |
 | `binary_match_path` | Executable path matcher specified when the job was created |
 | `tool_path` | External profiler installation directory specified when the job was created |
+| `pid` | Exact native target PID; empty for container or host-wide jobs |
+| `thread_group` | Whether native profiling includes the PID's thread group |
+| `cpu_ids` | CPU IDs selected for native CPU profiling |
 | `status` | Current job status |
 | `start_time`, `end_time` | Job start and end times; empty until available |
 | `tracer_args` | Command-line arguments sent by huatuo-apiserver to profiler |

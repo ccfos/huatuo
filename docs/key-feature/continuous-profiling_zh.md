@@ -86,13 +86,18 @@ curl -sS \
 | `duration` | 是 | 采集时长，单位为秒 |
 | `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
 | `container_id` | 否 | 目标容器 ID；不传表示对宿主机剖析 |
+| `pid` | 否 | 原生剖析的精确目标 PID；不能与 `container_id` 同时使用 |
+| `thread_group` | 否 | 采集 `pid` 所在线程组（TGID）的全部线程；必须同时指定 `pid` |
+| `cpu_ids` | 否 | 原生 CPU 剖析限定的 CPU ID |
 | `binary_match_path` | 否 | Java/Python CPU 剖析的目标可执行文件路径匹配条件；原生剖析不支持 |
 | `tool_path` | Java/Python 剖析必需 | Agent 主机上的工具安装目录：Java 使用 async-profiler，Python 使用 py-spy |
 | `memory_mode` | 内存剖析必需 | 内存剖析模式，必须与 `language` 匹配 |
 
 `duration` 必须不小于两个 `aggregation_interval`，且 `duration + aggregation_interval` 必须小于 3600 秒。同一用户在同一节点上已有运行中的剖析任务时，服务端返回 `409 Conflict`。
 
-创建宿主机 Go CPU 剖析任务：
+原生 CPU 剖析可以同时省略 `pid` 和 `container_id`，对整个宿主机采样。原生内存剖析必须指定其中一个。未启用 `thread_group` 时，`pid` 保持精确线程语义。
+
+创建限定 CPU 的 Go 线程组剖析任务：
 
 ```bash
 curl -sS -i \
@@ -103,6 +108,9 @@ curl -sS -i \
     "type": "cpu",
     "language": "go",
     "duration": 60,
+    "pid": 4242,
+    "thread_group": true,
+    "cpu_ids": [1, 3],
     "hostname": "node-01"
   }' \
   "${API_BASE}/v1/profiles"
@@ -194,6 +202,9 @@ curl -sS \
 | `memory_mode` | 内存剖析模式；CPU 任务为空 |
 | `binary_match_path` | 创建任务时指定的可执行文件匹配路径 |
 | `tool_path` | 创建任务时指定的外部 profiler 安装目录 |
+| `pid` | 原生剖析的精确目标 PID；容器任务或宿主机级任务为空 |
+| `thread_group` | 是否采集该 PID 所在线程组 |
+| `cpu_ids` | 原生 CPU 剖析限定的 CPU ID |
 | `status` | 当前任务状态 |
 | `start_time`、`end_time` | 任务开始和结束时间；尚未产生时为空 |
 | `tracer_args` | huatuo-apiserver 实际下发给 profiler 的命令行参数 |
