@@ -17,6 +17,8 @@ package v1
 import (
 	"encoding/json"
 	"testing"
+
+	"huatuo-bamai/pkg/profiling"
 )
 
 func TestCreateJobRequestJSONFields(t *testing.T) {
@@ -28,13 +30,16 @@ func TestCreateJobRequestJSONFields(t *testing.T) {
 		{
 			name: "profiling job",
 			request: CreateProfilingJobRequest{
-				ProfilingType:   "cpu",
-				BinaryMatchPath: "/usr/bin/example",
-				Language:        "go",
-				ContainerID:     "container-id",
-				CPUIDs:          []int{1},
-				PID:             4242,
-				ThreadGroup:     true,
+				ProfilingType:     "cpu",
+				BinaryMatchPath:   "/usr/bin/example",
+				Language:          "go",
+				ContainerID:       "container-id",
+				CPUIDs:            []int{1},
+				PID:               4242,
+				ThreadGroup:       true,
+				LockMode:          profiling.LockModeWaitTime,
+				LockType:          profiling.LockTypeMutex,
+				LockWaitThreshold: "10us",
 			},
 			fields: []string{
 				"type",
@@ -48,6 +53,9 @@ func TestCreateJobRequestJSONFields(t *testing.T) {
 				"cpu_ids",
 				"pid",
 				"thread_group",
+				"lock_mode",
+				"lock_type",
+				"lock_wait_threshold",
 			},
 		},
 		{
@@ -95,6 +103,9 @@ func TestProfilingCapabilitiesResponseJSONFields(t *testing.T) {
 		"types",
 		"cpu_languages",
 		"memory_languages",
+		"lock_languages",
+		"lock_modes",
+		"lock_types",
 		"memory_modes",
 		"aggregation_interval",
 		"execution_timeout",

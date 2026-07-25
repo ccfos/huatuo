@@ -48,6 +48,7 @@ func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) err
 		TypePolicies: map[job.JobType]job.TypePolicy{
 			job.JobTypeProfilingCPU:    profilingPolicy,
 			job.JobTypeProfilingMemory: profilingPolicy,
+			job.JobTypeProfilingLock:   profilingPolicy,
 			job.JobTypeTracing:         tracingPolicy,
 		},
 	})

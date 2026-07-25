@@ -59,9 +59,12 @@ The `data` object contains these fields:
 
 | Field | Description |
 | --- | --- |
-| `types` | Supported profiling types: `cpu` and `memory` |
+| `types` | Supported profiling types: `cpu`, `memory`, and `lock` |
 | `cpu_languages` | Languages supported by CPU profiling |
 | `memory_languages` | Languages supported by memory profiling |
+| `lock_languages` | Languages supported by lock profiling |
+| `lock_modes` | Lock profile values; currently only `wait_time` |
+| `lock_types` | Lock primitives; currently only `mutex` |
 | `memory_modes` | Memory profiling modes; keys are display names and values are used when creating jobs |
 | `aggregation_interval` | Server-side data aggregation interval in seconds |
 | `execution_timeout` | Execution timeout for one profiler subprocess in seconds |
@@ -77,28 +80,34 @@ CPU profiling currently supports `c`, `c++`, `go`, `java`, and `python`. Memory 
 | `java` | `object_alloc` | JVM object allocation |
 | `java` | `object_usage` | JVM live objects |
 
+Lock profiling supports only native `c`, `c++`, and `go` targets. It records
+contended mutex wait time and never enables host-wide lock instrumentation.
+
 ### 3. Create a Profiling Job
 
 `POST /v1/profiles` accepts the following JSON fields:
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `type` | Yes | Profiling type: `cpu` or `memory` |
+| `type` | Yes | Profiling type: `cpu`, `memory`, or `lock` |
 | `language` | Yes | Target process language; it must support the selected profiling type |
 | `duration` | Yes | Profiling duration in seconds |
 | `hostname` | Yes | Hostname of the node running the target process; used for job scheduling |
 | `container_id` | No | Target container ID; omit it to profile the host |
-| `pid` | No | Exact target PID for native profiling; mutually exclusive with `container_id` |
-| `thread_group` | No | Include every thread in `pid`'s thread group (TGID); requires `pid` |
+| `pid` | For PID-targeted native jobs | Exact target PID; native memory and lock jobs require it unless `container_id` is set |
+| `thread_group` | No | Include every thread in `pid`'s thread group (TGID); requires `pid` and is not accepted for lock jobs |
 | `cpu_ids` | No | CPU IDs selected for native CPU profiling |
 | `binary_match_path` | No | Executable path matcher for Java/Python CPU profiling; native profiling does not support it |
 | `tool_path` | For Java/Python profiling | Tool installation directory on the Agent host: async-profiler for Java or py-spy for Python |
 | `memory_mode` | For memory profiling | Memory profiling mode; it must be supported by `language` |
+| `lock_mode` | No | Lock profile value; only `wait_time` is supported and is the default |
+| `lock_type` | No | Lock primitive; only `mutex` is supported and is the default |
+| `lock_wait_threshold` | No | Minimum contention wait; Go duration such as `10us`, default `1us` |
 
 `duration` must cover at least two `aggregation_interval` periods, and `duration + aggregation_interval` must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
 
 Native CPU profiling can omit both `pid` and `container_id` to sample the
-host. Native memory profiling requires exactly one of them. Without
+host. Native memory and lock profiling require exactly one of them. Without
 `thread_group`, `pid` keeps its exact-thread meaning.
 
 Create a Go CPU profiling job for a thread group on selected CPUs:
@@ -139,6 +148,29 @@ curl -sS -i \
   "${API_BASE}/v1/profiles"
 ```
 
+Create a targeted Go mutex contention profile:
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "lock",
+    "language": "go",
+    "duration": 60,
+    "pid": 4242,
+    "lock_mode": "wait_time",
+    "lock_type": "mutex",
+    "lock_wait_threshold": "10us",
+    "hostname": "node-01"
+  }' \
+  "${API_BASE}/v1/profiles"
+```
+
+Lock jobs require exactly one `pid` or `container_id`. The API rejects
+host-wide lock jobs and non-native languages.
+
 A successful request returns `201 Created`. The `Location` response header identifies the new job, and the response body contains the job ID used by subsequent requests:
 
 ```json
@@ -164,7 +196,7 @@ JOB_ID="<profile-job-id>"
 | `container_id` | None | Exact container ID filter (`containerID` remains accepted for compatibility) |
 | `hostname` | None | Exact node hostname filter |
 | `status` | None | `pending`, `running`, `completed`, `failed`, `stopped`, or `timeout` |
-| `type` | None | `cpu` or `memory`; omit it to return both types |
+| `type` | None | `cpu`, `memory`, or `lock`; omit it to return all types |
 | `limit` | `50` | Page size; must be greater than 0 and is capped at 500 |
 | `offset` | `0` | Starting offset; must be greater than or equal to 0 |
 | `sort` | `-start_time` | `start_time`, `end_time`, `host`, or `container`; prefix with `-` for descending order |
@@ -201,7 +233,7 @@ The `data` object contains the job details:
 | `agent_task_id` | HUATUO Agent task ID |
 | `container_id` | Target container ID; empty for host jobs |
 | `hostname` | Target node hostname |
-| `type` | `cpu` or `memory` |
+| `type` | `cpu`, `memory`, or `lock` |
 | `language` | Target process language |
 | `memory_mode` | Memory profiling mode; empty for CPU jobs |
 | `binary_match_path` | Executable path matcher specified when the job was created |
@@ -209,6 +241,9 @@ The `data` object contains the job details:
 | `pid` | Exact native target PID; empty for container or host-wide jobs |
 | `thread_group` | Whether native profiling includes the PID's thread group |
 | `cpu_ids` | CPU IDs selected for native CPU profiling |
+| `lock_mode` | Lock profile value; `wait_time` for current lock jobs |
+| `lock_type` | Lock primitive; `mutex` for current lock jobs |
+| `lock_wait_threshold` | Minimum mutex contention wait recorded by the profiler |
 | `status` | Current job status |
 | `start_time`, `end_time` | Job start and end times; empty until available |
 | `tracer_args` | Command-line arguments sent by huatuo-apiserver to profiler |

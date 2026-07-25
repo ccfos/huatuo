@@ -17,22 +17,27 @@ package v1
 import (
 	"time"
 
+	"huatuo-bamai/pkg/profiling"
+
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
 // CreateProfilingJobRequest represents a request to create a profiling job.
 type CreateProfilingJobRequest struct {
-	ProfilingType   string `json:"type"`                   // cpu or memory
-	BinaryMatchPath string `json:"binary_match_path"`      // executable path used to match target processes
-	ToolPath        string `json:"tool_path"`              // external profiler installation directory
-	Language        string `json:"language"`               // programming language of the target process
-	MemoryMode      string `json:"memory_mode"`            // memory profiling mode
-	Duration        int    `json:"duration"`               // profiling duration in seconds
-	ContainerID     string `json:"container_id"`           // container ID
-	Hostname        string `json:"hostname"`               // host name
-	CPUIDs          []int  `json:"cpu_ids,omitempty"`      // CPU IDs selected for native CPU profiling
-	PID             int    `json:"pid,omitempty"`          // exact PID selected for native profiling
-	ThreadGroup     bool   `json:"thread_group,omitempty"` // include the PID's thread group
+	ProfilingType     string             `json:"type"`                          // cpu, memory, or lock
+	BinaryMatchPath   string             `json:"binary_match_path"`             // executable path used to match target processes
+	ToolPath          string             `json:"tool_path"`                     // external profiler installation directory
+	Language          string             `json:"language"`                      // programming language of the target process
+	MemoryMode        string             `json:"memory_mode"`                   // memory profiling mode
+	Duration          int                `json:"duration"`                      // profiling duration in seconds
+	ContainerID       string             `json:"container_id"`                  // container ID
+	Hostname          string             `json:"hostname"`                      // host name
+	CPUIDs            []int              `json:"cpu_ids,omitempty"`             // CPU IDs selected for native CPU profiling
+	PID               int                `json:"pid,omitempty"`                 // exact PID selected for native profiling
+	ThreadGroup       bool               `json:"thread_group,omitempty"`        // include the PID's thread group
+	LockMode          profiling.LockMode `json:"lock_mode,omitempty"`           // lock profile value
+	LockType          profiling.LockType `json:"lock_type,omitempty"`           // lock primitive
+	LockWaitThreshold string             `json:"lock_wait_threshold,omitempty"` // minimum recorded contention wait
 }
 
 // CreateProfilingJobResponse represents a response to create a profiling job.
@@ -42,25 +47,28 @@ type CreateProfilingJobResponse struct {
 
 // ProfilingJobResponse represents a profiling job response.
 type ProfilingJobResponse struct {
-	ID              string           `json:"id"`                     // profiling job ID
-	AgentTaskID     string           `json:"agent_task_id"`          // agent task ID
-	ContainerID     string           `json:"container_id"`           // container ID
-	Hostname        string           `json:"hostname"`               // host name
-	Type            string           `json:"type"`                   // cpu or memory
-	MemoryMode      string           `json:"memory_mode"`            // memory profiling mode
-	Language        string           `json:"language"`               // programming language of the target process
-	BinaryMatchPath string           `json:"binary_match_path"`      // executable path used to match target processes
-	ToolPath        string           `json:"tool_path"`              // external profiler installation directory
-	Status          string           `json:"status"`                 // job status
-	StartTime       string           `json:"start_time"`             // start time
-	EndTime         string           `json:"end_time"`               // end time
-	TracerArgs      []string         `json:"tracer_args"`            // tracer arguments
-	Duration        int              `json:"duration"`               // profiling duration
-	Results         ProfilingResults `json:"results"`                // profiling results
-	ErrorMessage    string           `json:"error_message"`          // error message if any
-	CPUIDs          []int            `json:"cpu_ids,omitempty"`      // CPU IDs selected for native CPU profiling
-	PID             int              `json:"pid,omitempty"`          // exact PID selected for native profiling
-	ThreadGroup     bool             `json:"thread_group,omitempty"` // include the PID's thread group
+	ID                string             `json:"id"`                            // profiling job ID
+	AgentTaskID       string             `json:"agent_task_id"`                 // agent task ID
+	ContainerID       string             `json:"container_id"`                  // container ID
+	Hostname          string             `json:"hostname"`                      // host name
+	Type              string             `json:"type"`                          // cpu, memory, or lock
+	MemoryMode        string             `json:"memory_mode"`                   // memory profiling mode
+	Language          string             `json:"language"`                      // programming language of the target process
+	BinaryMatchPath   string             `json:"binary_match_path"`             // executable path used to match target processes
+	ToolPath          string             `json:"tool_path"`                     // external profiler installation directory
+	Status            string             `json:"status"`                        // job status
+	StartTime         string             `json:"start_time"`                    // start time
+	EndTime           string             `json:"end_time"`                      // end time
+	TracerArgs        []string           `json:"tracer_args"`                   // tracer arguments
+	Duration          int                `json:"duration"`                      // profiling duration
+	Results           ProfilingResults   `json:"results"`                       // profiling results
+	ErrorMessage      string             `json:"error_message"`                 // error message if any
+	CPUIDs            []int              `json:"cpu_ids,omitempty"`             // CPU IDs selected for native CPU profiling
+	PID               int                `json:"pid,omitempty"`                 // exact PID selected for native profiling
+	ThreadGroup       bool               `json:"thread_group,omitempty"`        // include the PID's thread group
+	LockMode          profiling.LockMode `json:"lock_mode,omitempty"`           // lock profile value
+	LockType          profiling.LockType `json:"lock_type,omitempty"`           // lock primitive
+	LockWaitThreshold string             `json:"lock_wait_threshold,omitempty"` // minimum recorded contention wait
 }
 
 // ProfilingResults represents profiling results
@@ -170,11 +178,14 @@ type ProfilingJobListResponse struct {
 // ProfilingCapabilitiesResponse describes the profiling capabilities
 // supported by the server and their default configurations.
 type ProfilingCapabilitiesResponse struct {
-	Types               []string          `json:"types"`                // supported profiling types, e.g. ["cpu", "memory"]
-	CPULanguages        []string          `json:"cpu_languages"`        // languages supported by CPU profiling
-	MemoryLanguages     []string          `json:"memory_languages"`     // languages supported by memory profiling
-	MemoryModes         map[string]string `json:"memory_modes"`         // supported memory modes (key: display name, value: internal mode)
-	AggregationInterval int               `json:"aggregation_interval"` // default aggregation interval in seconds
-	ExecutionTimeout    int               `json:"execution_timeout"`    // default profiler execution timeout in seconds
-	MaxProfilerProcs    int               `json:"max_profiler_procs"`   // maximum concurrent profiler subprocesses
+	Types               []string             `json:"types"`                // supported profiling types
+	CPULanguages        []string             `json:"cpu_languages"`        // languages supported by CPU profiling
+	MemoryLanguages     []string             `json:"memory_languages"`     // languages supported by memory profiling
+	LockLanguages       []string             `json:"lock_languages"`       // languages supported by lock profiling
+	LockModes           []profiling.LockMode `json:"lock_modes"`           // supported lock profile values
+	LockTypes           []profiling.LockType `json:"lock_types"`           // supported lock primitives
+	MemoryModes         map[string]string    `json:"memory_modes"`         // supported memory modes (key: display name, value: internal mode)
+	AggregationInterval int                  `json:"aggregation_interval"` // default aggregation interval in seconds
+	ExecutionTimeout    int                  `json:"execution_timeout"`    // default profiler execution timeout in seconds
+	MaxProfilerProcs    int                  `json:"max_profiler_procs"`   // maximum concurrent profiler subprocesses
 }
