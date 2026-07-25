@@ -75,14 +75,23 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid native lock type",
+			name: "native spinlock contention",
 			args: []string{
 				"--type", "lock",
 				"--language", "c",
 				"--pid", strconv.Itoa(os.Getpid()),
 				"--lock-type", "spinlock",
 			},
-			wantError: `unsupported lock type "spinlock"`,
+		},
+		{
+			name: "invalid native lock type",
+			args: []string{
+				"--type", "lock",
+				"--language", "c",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--lock-type", "semaphore",
+			},
+			wantError: `unsupported lock type "semaphore"`,
 		},
 		{
 			name:      "native mutex contention requires a target",

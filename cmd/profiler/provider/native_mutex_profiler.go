@@ -34,11 +34,13 @@ import (
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_mutex_profiler.c -o $BPF_DIR/native_mutex_profiler.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_spinlock_profiler.c -o $BPF_DIR/native_spinlock_profiler.o
 
 const (
 	mutexBackendContentionTracepoints = "contention tracepoints"
 	mutexBackendSlowpathKprobe        = "mutex slowpath"
 	mutexSlowpathSymbol               = "__mutex_lock_slowpath"
+	spinlockBackendTracepoints        = "contention tracepoints"
 )
 
 type lockContentionEvent struct {
@@ -77,7 +79,7 @@ func init() {
 	registry.Register(registry.ProfilerMeta{
 		Type:           profiling.TypeLock,
 		Implementation: profiling.ImplementationNative,
-		Description:    "Native kernel mutex and rwlock contention profiler using eBPF",
+		Description:    "Native mutex, spinlock, and rwlock contention profiler using eBPF",
 		Impl:           impl,
 		NewAggregator:  impl.NewAggregator,
 	})
@@ -121,6 +123,9 @@ func (p *nativeLockProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	case profiling.LockTypeMutex:
 		objectName = "native_mutex_profiler.o"
 		attachOptions, backend, err = mutexAttachOptions()
+	case profiling.LockTypeSpinlock:
+		objectName = "native_spinlock_profiler.o"
+		attachOptions, backend, err = spinlockAttachOptions()
 	case profiling.LockTypeRWLock:
 		objectName = "native_rwlock_profiler.o"
 		attachOptions, backend, err = rwlockAttachOptions()
@@ -249,6 +254,26 @@ func mutexAttachOptions() ([]bpf.AttachOption, string, error) {
 			Symbol:      mutexSlowpathSymbol,
 		},
 	}, mutexBackendSlowpathKprobe, nil
+}
+
+func spinlockAttachOptions() ([]bpf.AttachOption, string, error) {
+	if !hasLockContentionTracepoints() {
+		return nil, "", fmt.Errorf(
+			"spinlock contention requires lock:contention_begin/end " +
+				"tracepoints (Linux 5.19+); refusing unsafe " +
+				"spinlock slowpath probes",
+		)
+	}
+	return []bpf.AttachOption{
+		{
+			ProgramName: "trace_spin_contention_begin",
+			Symbol:      "lock/contention_begin",
+		},
+		{
+			ProgramName: "trace_spin_contention_end",
+			Symbol:      "lock/contention_end",
+		},
+	}, spinlockBackendTracepoints, nil
 }
 
 func drainLockContentionEvents(

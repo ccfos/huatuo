@@ -54,7 +54,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "lock-type",
-		Usage: "Kernel lock primitive to profile: mutex|rwlock",
+		Usage: "Kernel lock primitive to profile: mutex|spinlock|rwlock",
 		Value: "mutex",
 	},
 	&cli.DurationFlag{
