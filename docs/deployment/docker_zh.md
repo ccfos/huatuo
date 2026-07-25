@@ -39,6 +39,7 @@ $ COMPOSE_PROFILES=profiling docker compose --project-directory ./build/docker u
 `profiling` profile 只启动 huatuo-bamai、Pyroscope 和 Grafana，不启动或等待
 Elasticsearch、Prometheus、huatuo-apiserver。huatuo-bamai 会禁用 kubelet
 发现，因此无需 kubelet 客户端证书。Grafana 地址为 http://localhost:3000，
-数据源选择 `huatuo-bamai-pyroscope`。
+可打开 `HuaTuo AutoTracing Pyroscope Flamegraph` Dashboard。CPUIdle 或
+CPUSys 达到配置的 AutoTracing 阈值后，Dashboard 才会出现 profile。
 
 > Docker Compose 安装方法请参阅 https://docs.docker.com/compose/install/linux/。
