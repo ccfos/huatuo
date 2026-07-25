@@ -40,6 +40,12 @@ BlackList = ["netdev_hw", "metax_gpu"]
 [RuntimeCgroup]
 LimitMem = 2
 
+[Storage.Pyroscope]
+Address = "https://profiles.example.com"
+AppNamePrefix = "production.huatuo"
+BearerToken = "token-1"
+TimeoutSeconds = 8
+
 [AutoTracing]
 IssuesList = [["dload", "jbd2"]]
 
@@ -68,6 +74,24 @@ ExcludedOnContainer = "writeback"
 	}
 	if Get().RuntimeCgroup.LimitMem != 2*1024*1024 {
 		t.Errorf("LimitMem should be converted to bytes, got %d", Get().RuntimeCgroup.LimitMem)
+	}
+	if Get().Storage.Pyroscope.Address != "https://profiles.example.com" {
+		t.Errorf("unexpected Pyroscope address: %q", Get().Storage.Pyroscope.Address)
+	}
+	if Get().Storage.Pyroscope.AppNamePrefix != "production.huatuo" {
+		t.Errorf(
+			"unexpected Pyroscope app name prefix: %q",
+			Get().Storage.Pyroscope.AppNamePrefix,
+		)
+	}
+	if Get().Storage.Pyroscope.BearerToken != "token-1" {
+		t.Errorf("unexpected Pyroscope bearer token")
+	}
+	if Get().Storage.Pyroscope.TimeoutSeconds != 8 {
+		t.Errorf(
+			"unexpected Pyroscope timeout: %d",
+			Get().Storage.Pyroscope.TimeoutSeconds,
+		)
 	}
 	if len(Get().AutoTracing.IssuesList) != 1 {
 		t.Errorf("unexpected AutoTracing.IssuesList length: %d", len(Get().AutoTracing.IssuesList))
