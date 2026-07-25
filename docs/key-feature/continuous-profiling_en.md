@@ -89,6 +89,7 @@ CPU profiling currently supports `c`, `c++`, `go`, `java`, and `python`. Memory 
 | `hostname` | Yes | Hostname of the node running the target process; used for job scheduling |
 | `container_id` | No | Target container ID; omit it to profile the host |
 | `binary_match_path` | No | Executable path matcher for Java/Python CPU profiling; native profiling does not support it |
+| `tool_path` | For Java/Python profiling | Tool installation directory on the Agent host: async-profiler for Java or py-spy for Python |
 | `memory_mode` | For memory profiling | Memory profiling mode; it must be supported by `language` |
 
 `duration` must cover at least two `aggregation_interval` periods, and `duration + aggregation_interval` must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
@@ -120,6 +121,7 @@ curl -sS -i \
     "type": "memory",
     "language": "java",
     "memory_mode": "object_usage",
+    "tool_path": "/opt/async-profiler",
     "duration": 60,
     "container_id": "9f4c2f1a8b7d",
     "hostname": "node-01"
@@ -193,6 +195,7 @@ The `data` object contains the job details:
 | `language` | Target process language |
 | `memory_mode` | Memory profiling mode; empty for CPU jobs |
 | `binary_match_path` | Executable path matcher specified when the job was created |
+| `tool_path` | External profiler installation directory specified when the job was created |
 | `status` | Current job status |
 | `start_time`, `end_time` | Job start and end times; empty until available |
 | `tracer_args` | Command-line arguments sent by huatuo-apiserver to profiler |
