@@ -216,8 +216,8 @@ dashboard 都展示选定时间范围内写入的剖析快照数量，以及合�
 和 Top 表：
 
 - 宿主机 dashboard 按 `hostname` 精确筛选，并排除容器剖析数据。
-- 容器 dashboard 按 `container_id` 和上报节点 `hostname` 精确筛选。容器名
-  不保证唯一，因此不作为容器标识。
+- 容器 dashboard 按 `container_id` 精确查询剖析数据，并展示上报节点
+  `hostname` 作为上下文。容器名不保证唯一，因此不作为容器标识。
 
 dashboard 只提供当前已支持的 CPU 和内存剖析类型。任务完成后，
 `results.url` 会打开对应 dashboard，并预选目标、剖析类型和采集时间窗口。
