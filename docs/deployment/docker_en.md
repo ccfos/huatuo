@@ -68,6 +68,8 @@ $ COMPOSE_PROFILES=profiling docker compose --project-directory ./build/docker u
 The profiling profile starts only huatuo-bamai, Pyroscope, and Grafana.
 huatuo-bamai does not wait for Elasticsearch and starts with kubelet discovery
 disabled, so kubelet client certificates are not required. Open Grafana at
-http://localhost:3000 and use the `huatuo-bamai-pyroscope` data source.
+http://localhost:3000 and open the
+`HuaTuo AutoTracing Pyroscope Flamegraph` dashboard. CPUIdle and CPUSys
+profiles appear after their configured AutoTracing thresholds are triggered.
 
 For Docker Compose installation instructions, see https://docs.docker.com/compose/install/linux/.
