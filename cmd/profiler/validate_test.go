@@ -55,6 +55,20 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "native mutex contention",
+			args: []string{
+				"--type", "lock",
+				"--language", "c",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--lock-wait-threshold", "10us",
+			},
+		},
+		{
+			name:      "native mutex contention requires a target",
+			args:      []string{"--type", "lock", "--language", "c"},
+			wantError: "exactly one of --container-id or --pid must be provided",
+		},
+		{
 			name: "tracer ID",
 			args: []string{
 				"--type", "cpu",
@@ -66,7 +80,7 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 		{
 			name:      "legacy mem type",
 			args:      []string{"--type", "mem", "--language", "c"},
-			wantError: `unsupported profiling type "mem" (expected: cpu or memory)`,
+			wantError: `unsupported profiling type "mem" (expected: cpu, memory, or lock)`,
 		},
 		{
 			name:      "removed flags option",
@@ -273,6 +287,19 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 		},
 		{name: "native CPU thread group", language: "go", typ: "cpu", args: []string{"--thread-group"}},
 		{name: "native memory thread group", language: "c", typ: "memory", args: []string{"--thread-group"}},
+		{
+			name:     "native mutex wait threshold",
+			language: "c",
+			typ:      "lock",
+			args:     []string{"--lock-wait-threshold", "10us"},
+		},
+		{
+			name:      "CPU mutex wait threshold",
+			language:  "c",
+			typ:       "cpu",
+			args:      []string{"--lock-wait-threshold", "10us"},
+			wantError: "--lock-wait-threshold is supported only by native lock profiling",
+		},
 		{
 			name:      "native exec path",
 			language:  "c",

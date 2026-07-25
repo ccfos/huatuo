@@ -302,7 +302,7 @@ The basic command structure is:
 
 ```bash
 sudo _output/bin/profiler \
-  --type <cpu|memory> \
+  --type <cpu|memory|lock> \
   --language <c|c++|go|java|python> \
   --pid <pid> \
   --duration 30 \
@@ -311,13 +311,13 @@ sudo _output/bin/profiler \
   --output-path ./profiles
 ```
 
-`--type` and `--language` are required. Java, Python, and native memory profiling require exactly one target specified with either `--pid` or `--container-id`. Native CPU profiling can sample the entire host when neither target is specified.
+`--type` and `--language` are required. Java, Python, native memory, and native lock profiling require exactly one target specified with either `--pid` or `--container-id`. Native CPU profiling can sample the entire host when neither target is specified.
 
 ### 2. General CLI Options
 
 | Option | Default | Scope | Description |
 | --- | --- | --- | --- |
-| `--type`, `-t` | None | All | Profile type: `cpu` or `memory`; required |
+| `--type`, `-t` | None | All | Profile type: `cpu`, `memory`, or `lock`; required |
 | `--language`, `-l` | None | All | Target language: `c`, `c++`, `go`, `java`, or `python`; required |
 | `--pid`, `-p` | None | All | Target PID; Java and Python accept comma-separated PIDs, while native profiling accepts at most one PID |
 | `--container-id` | None | All | Target container ID; mutually exclusive with `--pid` |
@@ -344,6 +344,7 @@ Native profiling options:
 | `--memory-mode` | None | Native memory, Java memory | Memory profiling mode; required with `--type memory` |
 | `--cpuid` | All CPUs | Native CPU | Comma-separated CPU list or ranges, for example `1,3,5-10` |
 | `--thread-group` | `false` | Native | Also profile other threads in the target PID's thread group |
+| `--lock-wait-threshold` | `1us` | Native lock | Minimum mutex contention wait included in the profile |
 | `--physical-memory-probability` | `100` | Native physical memory | Physical memory event sampling probability from 1 to 100 |
 | `--log-bpf-debug` | `false` | Native | Emit BPF debug events; not recommended for normal profiling |
 
@@ -411,6 +412,24 @@ sudo _output/bin/profiler \
 ```
 
 `--physical-memory-probability` applies only to `physical_alloc` and `physical_usage`. Lowering it reduces processing for high-frequency memory events, but flame-graph values are then estimates based on sampled events rather than counts of every event.
+
+Native lock profiling currently records mutex wait time only. It attaches to the
+kernel lock contention tracepoints when available and otherwise uses the mutex
+slow path. A PID or container target is mandatory to prevent accidental
+host-wide lock instrumentation.
+
+```bash
+sudo _output/bin/profiler \
+  --type lock \
+  --language c \
+  --pid 12345 \
+  --thread-group \
+  --lock-wait-threshold 10us \
+  --duration 30 \
+  --aggr-interval 10 \
+  --output-format flamegraph \
+  --output-path ./profiles/mutex-wait
+```
 
 ### 4. Observing Java
 
