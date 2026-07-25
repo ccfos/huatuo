@@ -267,13 +267,30 @@ Elasticsearch；Elasticsearch 会继续保存现有 JSON profiling 文档。凭�
 
 ### 7. 自动追踪配置
 
+#### 7.1 AutoTracing 展示后端
+
+```toml
+[AutoTracing.Display]
+    Backend = "pyroscope"
+```
+
+- **Backend** 在运行时选择展示链路：
+  - `pyroscope`（默认）：profile 直接写入 Pyroscope，并由预置的 Grafana
+    Dashboard 展示，必须配置 `Storage.Pyroscope.Address`。
+  - `apiserver`：保留 Elasticsearch 和 huatuo-apiserver 展示链路，必须
+    配置 Elasticsearch 地址、用户名和密码。
+
+修改配置并重启 huatuo-bamai 即可切换模式。切换不会改变触发阈值、perf
+执行或快照采集。`pyroscope` 模式仍可保留 Elasticsearch，用于保存原有
+JSON 事件，同时将 Pyroscope 注册为 profile store。
+
 自动追踪模块是 HUATUO 的智能特性之一，可根据阈值自动触发特定性能追踪，减少人工干预。
 
 CPUIdle 和 CPUSys 会保留原有 JSON 事件，并使用相同的 tracer ID 额外写入
 CPU pprof。该 profile 以 99 Hz 采样，样本单位为 `cpu:nanoseconds`。
 profile 存储失败不会丢弃 JSON 事件。
 
-#### 7.1 CPUIdle 自动追踪 — 容器突发高 CPU 使用场景
+#### 7.2 CPUIdle 自动追踪 — 容器突发高 CPU 使用场景
 
 ```bash
 # Autotracing configuration 
@@ -403,7 +420,7 @@ profile 存储失败不会丢弃 JSON 事件。
 
   默认无规则，监控所有容器。
 
-#### 7.2 CPUSys 自动追踪 — 宿主机突发高系统 CPU 使用场景
+#### 7.3 CPUSys 自动追踪 — 宿主机突发高系统 CPU 使用场景
 
 ```bash
 # cpusys
@@ -461,7 +478,7 @@ profile 存储失败不会丢弃 JSON 事件。
 
 **触发逻辑**：当 SysThreshold 与 DeltaSysThreshold 同时满足时触发。
 
-#### 7.3 Dload 自动追踪 — 容器 D 状态任务剖析
+#### 7.4 Dload 自动追踪 — 容器 D 状态任务剖析
 
 ```bash
 # dload
@@ -502,7 +519,7 @@ profile 存储失败不会丢弃 JSON 事件。
 
   默认 1800s（30 分钟）。 两次自动追踪之间的最小间隔，防止频繁执行对系统造成压力。
 
-#### 7.4 IOTracing 自动追踪 — 容器 IO 性能剖析
+#### 7.5 IOTracing 自动追踪 — 容器 IO 性能剖析
 
 ```bash
 # iotracing
@@ -580,7 +597,7 @@ profile 存储失败不会丢弃 JSON 事件。
 
 **说明**：IOTracing 用于容器 IO 热点诊断，特别关注高负载磁盘场景。
 
-#### 7.5 内存突发自动追踪
+#### 7.6 内存突发自动追踪
 
 该模块用于检测宿主机内存使用量突发增长场景，并在触发时自动捕获内核上下文，便于诊断内存压力事件。
 
@@ -651,7 +668,7 @@ profile 存储失败不会丢弃 JSON 事件。
 
   **说明**：控制输出数据量，避免单次事件产生过多诊断信息。
 
-#### 7.6 已知问题过滤（IssuesList）
+#### 7.7 已知问题过滤（IssuesList）
 
 ```bash
 # Autotracing configuration.

@@ -21,7 +21,7 @@ ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-localhost}
 ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-huatuo-bamai}
 RUN_PATH=${RUN_PATH:-/home/huatuo-bamai}
 CONFIG_FILE=${CONFIG_FILE:-${RUN_PATH}/conf/huatuo-bamai.conf}
-HUATUO_MODE=${HUATUO_MODE:-full}
+HUATUO_MODE=${HUATUO_MODE:-profiling}
 PYROSCOPE_ADDRESS=${PYROSCOPE_ADDRESS:-http://127.0.0.1:4040}
 ELASTICSEARCH_WAIT_SECONDS=${ELASTICSEARCH_WAIT_SECONDS:-180}
 ELASTICSEARCH_INIT_DELAY_SECONDS=${ELASTICSEARCH_INIT_DELAY_SECONDS:-5}
@@ -57,11 +57,14 @@ prepare_runtime_config() {
 	runtime_config="${RUN_PATH}/conf/huatuo-bamai-${mode}.conf"
 	temp_config="${runtime_config}.tmp.$$"
 	disable_elasticsearch=false
+	display_backend=apiserver
 	if [ "$mode" = "profiling" ]; then
 		disable_elasticsearch=true
+		display_backend=pyroscope
 	fi
 	if ! awk \
 		-v disable_elasticsearch="$disable_elasticsearch" \
+		-v display_backend="$display_backend" \
 		-v pyroscope_address="$PYROSCOPE_ADDRESS" '
 		/^[[:space:]]*\[Storage\.Elasticsearch\][[:space:]]*$/ {
 			section = "es"
@@ -71,6 +74,12 @@ prepare_runtime_config() {
 		/^[[:space:]]*\[Storage\.Pyroscope\][[:space:]]*$/ {
 			section = "pyroscope"
 			seen_pyroscope = 1
+			print
+			next
+		}
+		/^[[:space:]]*\[AutoTracing\.Display\][[:space:]]*$/ {
+			section = "display"
+			seen_display = 1
 			print
 			next
 		}
@@ -95,17 +104,25 @@ prepare_runtime_config() {
 			seen_pyroscope_address = 1
 			next
 		}
+		section == "display" &&
+			/^[[:space:]]*#?[[:space:]]*Backend[[:space:]]*=/ {
+			printf "        Backend = \"%s\"\n", display_backend
+			seen_display_backend = 1
+			next
+		}
 		{ print }
 		END {
 			if (!seen_es_address ||
 				!seen_pyroscope ||
-				!seen_pyroscope_address) {
+				!seen_pyroscope_address ||
+				!seen_display ||
+				!seen_display_backend) {
 				exit 42
 			}
 		}
 	' "$CONFIG_FILE" > "$temp_config"; then
 		rm -f "$temp_config"
-		echo "Storage.Elasticsearch or Storage.Pyroscope is missing from $CONFIG_FILE." >&2
+		echo "Storage or AutoTracing.Display is missing from $CONFIG_FILE." >&2
 		return 1
 	fi
 
@@ -113,9 +130,9 @@ prepare_runtime_config() {
 	mv "$temp_config" "$runtime_config"
 	CONFIG_FILE=$runtime_config
 	if [ "$mode" = "profiling" ]; then
-		echo "Profiling mode: Elasticsearch is disabled and Pyroscope is enabled."
+		echo "Profiling mode: AutoTracing uses Grafana and Pyroscope."
 	else
-		echo "Full mode: Elasticsearch and Pyroscope are enabled."
+		echo "Full mode: AutoTracing uses huatuo-apiserver."
 	fi
 }
 
