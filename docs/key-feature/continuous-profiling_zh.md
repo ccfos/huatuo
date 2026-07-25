@@ -391,7 +391,8 @@ sudo _output/bin/profiler \
 | `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；使用 `--type memory` 时必填 |
 | `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围，例如 `1,3,5-10` |
 | `--thread-group` | `false` | 原生 | 同时采集目标 PID 所在线程组中的其他线程 |
-| `--lock-wait-threshold` | `1us` | 原生锁 | 纳入结果的最小 mutex 竞争等待时间 |
+| `--lock-type` | `mutex` | 原生锁 | 内核锁类型：`mutex` 或 `rwlock` |
+| `--lock-wait-threshold` | `1us` | 原生锁 | 纳入结果的最小竞争等待时间 |
 | `--physical-memory-probability` | `100` | 原生物理内存 | 物理内存事件采样概率，范围为 1～100 |
 | `--log-bpf-debug` | `false` | 原生 | 输出 BPF 调试事件，常规采集不建议启用 |
 
@@ -474,9 +475,11 @@ sudo _output/bin/profiler \
 
 `--physical-memory-probability` 仅适用于 `physical_alloc` 和 `physical_usage`。降低该值可减少高频内存事件的处理量，但火焰图中的值由采样事件估算，不再是逐事件统计。
 
-原生锁采集当前仅统计 mutex 等待时间。内核支持时使用锁竞争
-tracepoint，否则使用 mutex 慢路径。必须指定 PID 或容器，避免意外启用
-宿主机级锁插桩。
+原生锁采集统计 mutex 或队列 rwlock 的竞争等待时间。Linux 5.19 及以上
+使用仅在竞争时触发的锁 tracepoint，并区分 rwlock 读等待和写等待；较老的
+非 PREEMPT_RT 内核仅使用 mutex 或队列 rwlock 慢路径。缺少这些钩子时会
+直接拒绝启动，不会回退到全局 `_raw_read_lock` 或 `_raw_write_lock` 插桩。
+必须指定 PID 或容器目标。
 
 ```bash
 sudo _output/bin/profiler \
@@ -484,11 +487,12 @@ sudo _output/bin/profiler \
   --language c \
   --pid 12345 \
   --thread-group \
+  --lock-type rwlock \
   --lock-wait-threshold 10us \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
-  --output-path ./profiles/mutex-wait
+  --output-path ./profiles/rwlock-wait
 ```
 
 ### 4. Java 观测

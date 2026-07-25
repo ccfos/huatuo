@@ -14,6 +14,8 @@
 
 package profiling
 
+import "fmt"
+
 // LockMode identifies the value represented by a lock profile.
 type LockMode string
 
@@ -28,4 +30,19 @@ type LockType string
 const (
 	LockTypeUnknown LockType = ""
 	LockTypeMutex   LockType = "mutex"
+	LockTypeRWLock  LockType = "rwlock"
 )
+
+// ParseLockType returns a supported native kernel lock primitive.
+func ParseLockType(value string) (LockType, error) {
+	lockType := LockType(value)
+	switch lockType {
+	case LockTypeMutex, LockTypeRWLock:
+		return lockType, nil
+	default:
+		return LockTypeUnknown, fmt.Errorf(
+			"unsupported lock type %q (expected: mutex or rwlock)",
+			value,
+		)
+	}
+}

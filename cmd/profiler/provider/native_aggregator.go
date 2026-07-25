@@ -71,6 +71,8 @@ type lockStackEntry struct {
 	Kernel    string
 	WaitTime  uint64
 	Contended uint64
+	LockType  profiling.LockType
+	Access    string
 }
 
 type nativeAggregator struct {
@@ -129,12 +131,14 @@ func (a *nativeAggregator) Aggregate(rec any) {
 
 	case *lockStackEntry:
 		key := fmt.Sprintf(
-			"%d\x00%s\x00%s\x00%s\x00%d",
+			"%d\x00%s\x00%s\x00%s\x00%d\x00%s\x00%s",
 			v.Proc.Pid,
 			v.Proc.Name,
 			v.User,
 			v.Kernel,
 			v.Proc.Lock,
+			v.LockType,
+			v.Access,
 		)
 		if existed, ok := a.lockAggrMap[key]; ok {
 			existed.Contended += v.Contended
@@ -146,6 +150,8 @@ func (a *nativeAggregator) Aggregate(rec any) {
 				Kernel:    v.Kernel,
 				WaitTime:  v.WaitTime,
 				Contended: v.Contended,
+				LockType:  v.LockType,
+				Access:    v.Access,
 			}
 		}
 
@@ -322,8 +328,13 @@ func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (
 }
 
 func lockPrefixFrames(rec *lockStackEntry) ([]string, uint64) {
+	lockType := string(rec.LockType)
+	if rec.Access != "" {
+		lockType += ":" + rec.Access
+	}
 	return []string{
 		fmt.Sprintf("lock: %x", rec.Proc.Lock),
+		fmt.Sprintf("lock type: %s", lockType),
 		fmt.Sprintf("PID: %d, COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
 		fmt.Sprintf("contended count: %d", rec.Contended),
 	}, rec.WaitTime

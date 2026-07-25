@@ -52,9 +52,14 @@ var appFlags = []cli.Flag{
 		Name:  "thread-group",
 		Usage: "Profile the target thread group; supported only by native profiling",
 	},
+	&cli.StringFlag{
+		Name:  "lock-type",
+		Usage: "Kernel lock primitive to profile: mutex|rwlock",
+		Value: "mutex",
+	},
 	&cli.DurationFlag{
 		Name:  "lock-wait-threshold",
-		Usage: "Minimum mutex contention wait to record",
+		Usage: "Minimum lock contention wait to record",
 		Value: time.Microsecond,
 	},
 	&cli.IntFlag{
