@@ -31,6 +31,8 @@ type dashboardVariable struct {
 	Name       string `json:"name"`
 	Definition string `json:"definition"`
 	Query      string `json:"query"`
+	AllValue   string `json:"allValue"`
+	IncludeAll bool   `json:"includeAll"`
 	Options    []struct {
 		Value string `json:"value"`
 	} `json:"options"`
@@ -149,8 +151,8 @@ func requireExactProfileQueries(
 	}
 	if grouped, ok := groupBys[1].([]any); !ok ||
 		len(grouped) != 1 ||
-		grouped[0] != "tracer" {
-		t.Fatalf("Top series groupBy = %v, want tracer", groupBys[1])
+		grouped[0] != "$group_by" {
+		t.Fatalf("Top series groupBy = %v, want dashboard dimension", groupBys[1])
 	}
 
 	var limits []any
@@ -166,11 +168,34 @@ func requireExactProfileQueries(
 	}
 }
 
+func requireDimensionVariables(
+	t *testing.T,
+	dashboard dashboardContract,
+) {
+	t.Helper()
+
+	fields := map[string]string{
+		"profiling_scope": "tracer_data.flamedata.labels.profiling_scope.keyword",
+		"cpu":             "tracer_data.flamedata.labels.cpu.keyword",
+		"pid":             "tracer_data.flamedata.labels.pid.keyword",
+		"tgid":            "tracer_data.flamedata.labels.tgid.keyword",
+	}
+	for name, field := range fields {
+		variable := findDashboardVariable(t, dashboard, name)
+		if !variable.IncludeAll || variable.AllValue != "" {
+			t.Fatalf("%s must provide an empty exact-match All value", name)
+		}
+		if !strings.Contains(variable.Definition, field) ||
+			!strings.Contains(variable.Definition, `"size": 500`) {
+			t.Fatalf("%s query is unbounded or uses the wrong field: %s", name, variable.Definition)
+		}
+	}
+}
+
 func requireNoUnsupportedSelectors(t *testing.T, payload string) {
 	t.Helper()
 
 	for _, unsupported := range []string{
-		"profiling_scope",
 		"cgroup",
 		"process_group",
 		"process_lock",
@@ -190,13 +215,19 @@ func TestContinuousProfilingHostDashboardContract(t *testing.T) {
 		t.Fatalf("UID = %q, want continuous-profiling-host", dashboard.UID)
 	}
 	requireSupportedProfileTypes(t, dashboard)
+	requireDimensionVariables(t, dashboard)
 
 	hostname := findDashboardVariable(t, dashboard, "hostname")
 	if !strings.Contains(hostname.Definition, "NOT _exists_:container_hostname") {
 		t.Fatalf("hostname query can select container profiles: %s", hostname.Definition)
 	}
 
-	requireExactProfileQueries(t, raw, `{hostname="$hostname"}`)
+	requireExactProfileQueries(
+		t,
+		raw,
+		`{hostname="$hostname",profiling_scope="$profiling_scope",`+
+			`cpu="$cpu",pid="$pid",tgid="$tgid"}`,
+	)
 	requireNoUnsupportedSelectors(t, payload)
 }
 
@@ -206,6 +237,7 @@ func TestContinuousProfilingContainerDashboardContract(t *testing.T) {
 		t.Fatalf("UID = %q, want continuous-profiling-container", dashboard.UID)
 	}
 	requireSupportedProfileTypes(t, dashboard)
+	requireDimensionVariables(t, dashboard)
 
 	containerID := findDashboardVariable(t, dashboard, "container_id")
 	if !strings.Contains(containerID.Definition, `"field": "container_id.keyword"`) {
@@ -216,7 +248,12 @@ func TestContinuousProfilingContainerDashboardContract(t *testing.T) {
 		t.Fatalf("hostname variable is not container scoped: %s", hostname.Definition)
 	}
 
-	requireExactProfileQueries(t, raw, `{container_id="$container_id"}`)
+	requireExactProfileQueries(
+		t,
+		raw,
+		`{container_id="$container_id",profiling_scope="$profiling_scope",`+
+			`cpu="$cpu",pid="$pid",tgid="$tgid"}`,
+	)
 	if strings.Contains(payload, "container_hostname") {
 		t.Fatal("dashboard uses non-unique container hostname")
 	}
@@ -232,6 +269,7 @@ func TestContinuousProfilingComparisonDashboardContract(t *testing.T) {
 		t.Fatalf("UID = %q, want continuous-profiling-compare", dashboard.UID)
 	}
 	requireSupportedProfileTypes(t, dashboard)
+	requireDimensionVariables(t, dashboard)
 
 	containerID := findDashboardVariable(t, dashboard, "container_id")
 	if !strings.Contains(containerID.Definition, `"field": "container_id.keyword"`) {
@@ -261,7 +299,11 @@ func TestContinuousProfilingComparisonDashboardContract(t *testing.T) {
 	if len(bodies) != 1 ||
 		!strings.Contains(bodies[0], `"max_nodes": 5000`) ||
 		!strings.Contains(bodies[0], `${hostname:json}`) ||
-		!strings.Contains(bodies[0], `${container_id:json}`) {
+		!strings.Contains(bodies[0], `${container_id:json}`) ||
+		!strings.Contains(bodies[0], `${profiling_scope:json}`) ||
+		!strings.Contains(bodies[0], `${cpu:json}`) ||
+		!strings.Contains(bodies[0], `${pid:json}`) ||
+		!strings.Contains(bodies[0], `${tgid:json}`) {
 		t.Fatalf("comparison request is not bounded or JSON-escaped: %v", bodies)
 	}
 	requireNoUnsupportedSelectors(t, payload)
@@ -285,6 +327,21 @@ func TestContinuousProfilingDatasourceAuthenticationContract(t *testing.T) {
 		}
 		if strings.Contains(datasourceText, "REPLACE_WITH_RANDOM_HEX") {
 			t.Fatalf("%s contains a placeholder credential", filename)
+		}
+	}
+	pyroscope, err := os.ReadFile("../datasources/pyroscope.yaml")
+	if err != nil {
+		t.Fatalf("read Pyroscope datasources: %v", err)
+	}
+	pyroscopeText := string(pyroscope)
+	for _, expected := range []string{
+		"uid: huatuo-apiserver-pyroscope",
+		"url: http://127.0.0.1:12740/v1/profiles/flamegraph/",
+		"uid: huatuo-bamai-pyroscope",
+		"url: http://127.0.0.1:4040",
+	} {
+		if !strings.Contains(pyroscopeText, expected) {
+			t.Fatalf("Pyroscope datasources missing %q", expected)
 		}
 	}
 

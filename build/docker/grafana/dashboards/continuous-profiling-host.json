@@ -210,7 +210,7 @@
             "uid": "huatuo-apiserver-pyroscope"
           },
           "groupBy": [],
-          "labelSelector": "{hostname=\"$hostname\"}",
+          "labelSelector": "{hostname=\"$hostname\",profiling_scope=\"$profiling_scope\",cpu=\"$cpu\",pid=\"$pid\",tgid=\"$tgid\"}",
           "limit": 1,
           "profileTypeId": "$type",
           "queryType": "metrics",
@@ -263,9 +263,9 @@
             "uid": "huatuo-apiserver-pyroscope"
           },
           "groupBy": [
-            "tracer"
+            "$group_by"
           ],
-          "labelSelector": "{hostname=\"$hostname\"}",
+          "labelSelector": "{hostname=\"$hostname\",profiling_scope=\"$profiling_scope\",cpu=\"$cpu\",pid=\"$pid\",tgid=\"$tgid\"}",
           "limit": 10,
           "profileTypeId": "$type",
           "queryType": "metrics",
@@ -303,7 +303,7 @@
             "uid": "huatuo-apiserver-pyroscope"
           },
           "groupBy": [],
-          "labelSelector": "{hostname=\"$hostname\"}",
+          "labelSelector": "{hostname=\"$hostname\",profiling_scope=\"$profiling_scope\",cpu=\"$cpu\",pid=\"$pid\",tgid=\"$tgid\"}",
           "profileTypeId": "$type",
           "queryType": "profile",
           "refId": "A",
@@ -353,6 +353,121 @@
           }
         ],
         "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes",
+        "type": "custom"
+      },
+      {
+        "allValue": "",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.profiling_scope.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "description": "Optional exact collection-scope filter.",
+        "includeAll": true,
+        "label": "scope",
+        "multi": false,
+        "name": "profiling_scope",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.profiling_scope.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cpu.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "description": "Optional exact logical CPU-set filter.",
+        "includeAll": true,
+        "label": "CPU set",
+        "multi": false,
+        "name": "cpu",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cpu.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.pid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "description": "Optional exact process or thread target filter.",
+        "includeAll": true,
+        "label": "PID",
+        "multi": false,
+        "name": "pid",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.pid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.tgid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "description": "Optional exact thread-group target filter.",
+        "includeAll": true,
+        "label": "TGID",
+        "multi": false,
+        "name": "tgid",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.tgid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "description": "Dimension used by the bounded Top 10 series.",
+        "label": "Top 10 group",
+        "name": "group_by",
+        "options": [
+          {
+            "selected": true,
+            "text": "tracer",
+            "value": "tracer"
+          },
+          {
+            "selected": false,
+            "text": "profiling_scope",
+            "value": "profiling_scope"
+          },
+          {
+            "selected": false,
+            "text": "cpu",
+            "value": "cpu"
+          },
+          {
+            "selected": false,
+            "text": "pid",
+            "value": "pid"
+          },
+          {
+            "selected": false,
+            "text": "tgid",
+            "value": "tgid"
+          },
+          {
+            "selected": false,
+            "text": "container_id",
+            "value": "container_id"
+          }
+        ],
+        "query": "tracer,profiling_scope,cpu,pid,tgid,container_id",
         "type": "custom"
       }
     ]

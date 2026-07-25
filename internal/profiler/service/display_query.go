@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"huatuo-bamai/internal/profiler"
+
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
@@ -33,6 +35,8 @@ const (
 	profileQueryLimit    = 10000
 	profileQueryPageSize = 1000
 	profileSeriesLimit   = 100
+	defaultProfileNodes  = 5000
+	profileNodeLimit     = 10000
 )
 
 type profileSelection struct {
@@ -78,7 +82,8 @@ func buildProfileSelection(profileType, selector string, start, end int64) (*pro
 	}
 	if !hasExactProfileTarget(filter) {
 		return nil, invalidProfileQueryf(
-			"id, hostname, container_id, container_hostname, or tracer must be specified",
+			"id, hostname, container_id, container_hostname, tracer, or a " +
+				"collection dimension must be specified",
 		)
 	}
 	return &profileSelection{filter: filter, sampleType: profileTypeParts[1]}, nil
@@ -89,12 +94,22 @@ func invalidProfileQueryf(format string, args ...any) error {
 }
 
 func hasExactProfileTarget(filter *SearchFilter) bool {
-	return filter != nil &&
-		(filter.ID != "" ||
-			filter.Hostname != "" ||
-			filter.ContainerID != "" ||
-			filter.ContainerHostname != "" ||
-			filter.TracerID != "")
+	if filter == nil {
+		return false
+	}
+	if filter.ID != "" ||
+		filter.Hostname != "" ||
+		filter.ContainerID != "" ||
+		filter.ContainerHostname != "" ||
+		filter.TracerID != "" {
+		return true
+	}
+	for _, value := range filter.Labels {
+		if value != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) searchProfileDocuments(
@@ -289,6 +304,10 @@ func (s *Service) Diff(
 	if req.Left.ProfileTypeID != req.Right.ProfileTypeID {
 		return nil, invalidProfileQueryf("left and right profile types must match")
 	}
+	maxNodes, err := diffMaxNodes(req)
+	if err != nil {
+		return nil, err
+	}
 	left, leftFound, err := s.selectProfileTree(ctx, req.Left, true)
 	if err != nil {
 		return nil, fmt.Errorf("select left profiles: %w", err)
@@ -300,24 +319,41 @@ func (s *Service) Diff(
 	if !leftFound && !rightFound {
 		return nil, ErrProfilesAbsent
 	}
-	flamegraph, err := phlaremodel.NewFlamegraphDiff(left, right, diffMaxNodes(req))
+	flamegraph, err := phlaremodel.NewFlamegraphDiff(left, right, maxNodes)
 	if err != nil {
 		return nil, fmt.Errorf("build flamegraph diff: %w", err)
 	}
 	return &querierv1.DiffResponse{Flamegraph: flamegraph}, nil
 }
 
-func diffMaxNodes(req *querierv1.DiffRequest) int64 {
-	left := req.Left.GetMaxNodes()
-	right := req.Right.GetMaxNodes()
-	switch {
-	case left > 0 && right > 0 && right < left:
-		return right
-	case left > 0:
-		return left
-	default:
-		return right
+func diffMaxNodes(req *querierv1.DiffRequest) (int64, error) {
+	left, err := normalizeProfileMaxNodes(req.Left.GetMaxNodes())
+	if err != nil {
+		return 0, fmt.Errorf("left selection: %w", err)
 	}
+	right, err := normalizeProfileMaxNodes(req.Right.GetMaxNodes())
+	if err != nil {
+		return 0, fmt.Errorf("right selection: %w", err)
+	}
+	switch {
+	case right < left:
+		return right, nil
+	default:
+		return left, nil
+	}
+}
+
+func normalizeProfileMaxNodes(maxNodes int64) (int64, error) {
+	if maxNodes == 0 {
+		return defaultProfileNodes, nil
+	}
+	if maxNodes < 0 || maxNodes > profileNodeLimit {
+		return 0, invalidProfileQueryf(
+			"max nodes must be between 0 and %d",
+			profileNodeLimit,
+		)
+	}
+	return maxNodes, nil
 }
 
 // SelectSeries returns sample totals bucketed by time and exact profile labels.
@@ -460,7 +496,9 @@ func normalizeProfileGroupBy(groupBy []string) ([]string, error) {
 		switch name {
 		case "id", "hostname", "container_id", "container_hostname", "tracer":
 		default:
-			return nil, invalidProfileQueryf("invalid group-by label %q", name)
+			if !profiler.IsCollectionDimensionLabel(name) {
+				return nil, invalidProfileQueryf("invalid group-by label %q", name)
+			}
 		}
 		if _, ok := seen[name]; ok {
 			continue
@@ -518,6 +556,9 @@ func profileDocumentLabelValue(document *ProfileDocument, name string) string {
 	case "container_hostname":
 		return document.ContainerHostname
 	default:
+		if profiler.IsCollectionDimensionLabel(name) {
+			return document.TracerData.Flamedata.Labels[name]
+		}
 		return ""
 	}
 }

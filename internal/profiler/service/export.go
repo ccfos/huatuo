@@ -29,6 +29,8 @@ import (
 	"github.com/grafana/pyroscope/pkg/pprof"
 )
 
+const profileSVGStackLimit = 10000
+
 // SelectMergePprof returns the standard pprof profile for an exact target
 // selection. Broad and unsupported label queries are rejected before storage
 // access.
@@ -182,6 +184,15 @@ func profileFlamegraphStacks(
 			continue
 		}
 		key := strings.Join(names, stackSeparator)
+		if _, exists := counts[key]; !exists &&
+			len(counts) >= profileSVGStackLimit {
+			return nil, fmt.Errorf(
+				"%w: rendered SVG exceeds %d distinct stacks; narrow the "+
+					"time range or selector",
+				ErrProfileQueryLimitExceeded,
+				profileSVGStackLimit,
+			)
+		}
 		counts[key] += sample.Value[index]
 		stackNames[key] = names
 	}

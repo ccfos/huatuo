@@ -26,13 +26,17 @@ import (
 )
 
 func TestBuildAdjacentProfileDiffRequest(t *testing.T) {
-	request, err := buildAdjacentProfileDiffRequest(profileDiffRowsRequest{
-		ProfileTypeID: profiler.ProfileTypeCpuSample,
-		Hostname:      "node-a",
-		ContainerID:   `container\"a`,
-		Start:         2000,
-		End:           3000,
-		MaxNodes:      500,
+	request, err := buildAdjacentProfileDiffRequest(&profileDiffRowsRequest{
+		ProfileTypeID:  profiler.ProfileTypeCpuSample,
+		Hostname:       "node-a",
+		ContainerID:    `container\"a`,
+		ProfilingScope: "container",
+		CPU:            "2,4-7",
+		PID:            "4242",
+		TGID:           "4200",
+		Start:          2000,
+		End:            3000,
+		MaxNodes:       500,
 	})
 	if err != nil {
 		t.Fatalf("buildAdjacentProfileDiffRequest() error = %v", err)
@@ -52,7 +56,8 @@ func TestBuildAdjacentProfileDiffRequest(t *testing.T) {
 			request.Right.End,
 		)
 	}
-	wantSelector := `{container_id="container\\\"a"}`
+	wantSelector := `{container_id="container\\\"a",` +
+		`profiling_scope="container",cpu="2,4-7",pid="4242",tgid="4200"}`
 	if request.Left.LabelSelector != wantSelector ||
 		request.Right.LabelSelector != wantSelector {
 		t.Fatalf(
@@ -68,6 +73,9 @@ func TestBuildAdjacentProfileDiffRequest(t *testing.T) {
 }
 
 func TestBuildAdjacentProfileDiffRequestRequiresTargetAndPreviousWindow(t *testing.T) {
+	if _, err := buildAdjacentProfileDiffRequest(nil); err == nil {
+		t.Fatal("buildAdjacentProfileDiffRequest(nil) succeeded")
+	}
 	tests := []profileDiffRowsRequest{
 		{
 			ProfileTypeID: profiler.ProfileTypeCpuSample,
@@ -82,7 +90,7 @@ func TestBuildAdjacentProfileDiffRequestRequiresTargetAndPreviousWindow(t *testi
 		},
 	}
 	for _, request := range tests {
-		if _, err := buildAdjacentProfileDiffRequest(request); err == nil {
+		if _, err := buildAdjacentProfileDiffRequest(&request); err == nil {
 			t.Fatalf("buildAdjacentProfileDiffRequest(%+v) succeeded", request)
 		}
 	}
@@ -95,7 +103,7 @@ func TestBuildAdjacentProfileDiffRequestDefaultsAndBounds(t *testing.T) {
 		Start:         2000,
 		End:           3000,
 	}
-	request, err := buildAdjacentProfileDiffRequest(valid)
+	request, err := buildAdjacentProfileDiffRequest(&valid)
 	if err != nil {
 		t.Fatalf("buildAdjacentProfileDiffRequest() error = %v", err)
 	}
@@ -115,6 +123,13 @@ func TestBuildAdjacentProfileDiffRequestDefaultsAndBounds(t *testing.T) {
 		{
 			ProfileTypeID: profiler.ProfileTypeCpuSample,
 			Hostname:      strings.Repeat("h", maxProfileDiffTargetLength+1),
+			Start:         2000,
+			End:           3000,
+		},
+		{
+			ProfileTypeID: profiler.ProfileTypeCpuSample,
+			Hostname:      "node-a",
+			CPU:           strings.Repeat("1", maxProfileDiffTargetLength+1),
 			Start:         2000,
 			End:           3000,
 		},
@@ -146,14 +161,14 @@ func TestBuildAdjacentProfileDiffRequestDefaultsAndBounds(t *testing.T) {
 		},
 	}
 	for _, request := range tests {
-		if _, err := buildAdjacentProfileDiffRequest(request); err == nil {
+		if _, err := buildAdjacentProfileDiffRequest(&request); err == nil {
 			t.Fatalf("buildAdjacentProfileDiffRequest(%+v) succeeded", request)
 		}
 	}
 }
 
 func TestBuildAdjacentProfileDiffRequestEscapesSelectorInput(t *testing.T) {
-	request, err := buildAdjacentProfileDiffRequest(profileDiffRowsRequest{
+	request, err := buildAdjacentProfileDiffRequest(&profileDiffRowsRequest{
 		ProfileTypeID: profiler.ProfileTypeCpuSample,
 		Hostname:      "node\n\"a\\b",
 		Start:         2000,

@@ -13,3 +13,13 @@ datasources:
     secureJsonData:
       httpHeaderValue1: 'Bearer $HUATUO_GRAFANA_PROFILE_TOKEN'
     editable: false
+
+  - name: huatuo-bamai-pyroscope
+    type: grafana-pyroscope-datasource
+    uid: huatuo-bamai-pyroscope
+    access: proxy
+    orgId: 1
+    url: http://127.0.0.1:4040
+    jsonData:
+      minStep: '1s'
+    editable: false

@@ -89,12 +89,16 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 		return nil, fmt.Errorf("%w: request is required", ErrInvalidQuery)
 	}
 	log.Debugf("SelectMergeStacktracesRequest: %+v", req)
+	maxNodes, err := normalizeProfileMaxNodes(req.GetMaxNodes())
+	if err != nil {
+		return nil, err
+	}
 	tree, _, err := s.selectProfileTree(ctx, req, false)
 	if err != nil {
 		return nil, err
 	}
 	return &querierv1.SelectMergeStacktracesResponse{
-		Flamegraph: phlaremodel.NewFlameGraph(tree, req.GetMaxNodes()),
+		Flamegraph: phlaremodel.NewFlameGraph(tree, maxNodes),
 	}, nil
 }
 

@@ -17,6 +17,7 @@ package service
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -168,5 +169,46 @@ func TestRenderProfileSVGRejectsNilWriter(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "writer is nil") {
 		t.Fatalf("RenderProfileSVG() error = %v, want nil writer error", err)
+	}
+}
+
+func TestProfileFlamegraphStacksRejectsExcessiveCardinality(t *testing.T) {
+	profile := &profilev1.Profile{
+		StringTable: []string{"", "cpu"},
+		SampleType: []*profilev1.ValueType{{
+			Type: 1,
+		}},
+		Function: make([]*profilev1.Function, 0, profileSVGStackLimit+1),
+		Location: make([]*profilev1.Location, 0, profileSVGStackLimit+1),
+		Sample:   make([]*profilev1.Sample, 0, profileSVGStackLimit+1),
+	}
+	for index := range profileSVGStackLimit + 1 {
+		id := uint64(index + 1)
+		profile.StringTable = append(
+			profile.StringTable,
+			fmt.Sprintf("function-%d", index),
+		)
+		profile.Function = append(profile.Function, &profilev1.Function{
+			Id:   id,
+			Name: int64(len(profile.StringTable) - 1),
+		})
+		profile.Location = append(profile.Location, &profilev1.Location{
+			Id: id,
+			Line: []*profilev1.Line{{
+				FunctionId: id,
+			}},
+		})
+		profile.Sample = append(profile.Sample, &profilev1.Sample{
+			LocationId: []uint64{id},
+			Value:      []int64{1},
+		})
+	}
+
+	_, err := profileFlamegraphStacks(profile, "cpu")
+	if !errors.Is(err, ErrProfileQueryLimitExceeded) {
+		t.Fatalf(
+			"profileFlamegraphStacks() error = %v, want query limit",
+			err,
+		)
 	}
 }

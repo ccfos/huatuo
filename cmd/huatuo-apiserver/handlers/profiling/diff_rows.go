@@ -39,12 +39,16 @@ const (
 )
 
 type profileDiffRowsRequest struct {
-	ProfileTypeID string `json:"profile_type_id"`
-	Hostname      string `json:"hostname"`
-	ContainerID   string `json:"container_id"`
-	Start         int64  `json:"start"`
-	End           int64  `json:"end"`
-	MaxNodes      int64  `json:"max_nodes"`
+	ProfileTypeID  string `json:"profile_type_id"`
+	Hostname       string `json:"hostname"`
+	ContainerID    string `json:"container_id"`
+	ProfilingScope string `json:"profiling_scope"`
+	CPU            string `json:"cpu"`
+	PID            string `json:"pid"`
+	TGID           string `json:"tgid"`
+	Start          int64  `json:"start"`
+	End            int64  `json:"end"`
+	MaxNodes       int64  `json:"max_nodes"`
 }
 
 type profileDiffRow struct {
@@ -71,7 +75,7 @@ func (h *Handler) displayDiffRows(ctx *server.Context) error {
 		)
 	}
 
-	diffRequest, err := buildAdjacentProfileDiffRequest(request)
+	diffRequest, err := buildAdjacentProfileDiffRequest(&request)
 	if err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
@@ -135,8 +139,11 @@ func profileDiffResponseExceedsLimit(rows []profileDiffRow) (bool, error) {
 }
 
 func buildAdjacentProfileDiffRequest(
-	request profileDiffRowsRequest,
+	request *profileDiffRowsRequest,
 ) (*querierv1.DiffRequest, error) {
+	if request == nil {
+		return nil, fmt.Errorf("request is required")
+	}
 	if request.ProfileTypeID == "" {
 		return nil, fmt.Errorf("profile_type_id is required")
 	}
@@ -170,18 +177,43 @@ func buildAdjacentProfileDiffRequest(
 	if strings.TrimSpace(targetValue) == "" {
 		return nil, fmt.Errorf("hostname or container_id is required")
 	}
-	if len(targetValue) > maxProfileDiffTargetLength {
-		return nil, fmt.Errorf(
-			"%s must not exceed %d bytes",
-			targetName,
-			maxProfileDiffTargetLength,
+	selectors := []struct {
+		name  string
+		value string
+	}{
+		{name: targetName, value: targetValue},
+		{name: "profiling_scope", value: request.ProfilingScope},
+		{name: "cpu", value: request.CPU},
+		{name: "pid", value: request.PID},
+		{name: "tgid", value: request.TGID},
+	}
+	matchers := make([]string, 0, len(selectors))
+	for _, selector := range selectors {
+		if selector.value == "" {
+			continue
+		}
+		if len(selector.value) > maxProfileDiffTargetLength {
+			return nil, fmt.Errorf(
+				"%s must not exceed %d bytes",
+				selector.name,
+				maxProfileDiffTargetLength,
+			)
+		}
+		matcher, err := labels.NewMatcher(
+			labels.MatchEqual,
+			selector.name,
+			selector.value,
 		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"build %s selector: %w",
+				selector.name,
+				err,
+			)
+		}
+		matchers = append(matchers, matcher.String())
 	}
-	matcher, err := labels.NewMatcher(labels.MatchEqual, targetName, targetValue)
-	if err != nil {
-		return nil, fmt.Errorf("build target selector: %w", err)
-	}
-	selector := "{" + matcher.String() + "}"
+	selector := "{" + strings.Join(matchers, ",") + "}"
 
 	maxNodesValue := request.MaxNodes
 	if maxNodesValue == 0 {

@@ -27,6 +27,7 @@ import (
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
+	"github.com/grafana/pyroscope/pkg/pprof"
 )
 
 type fakeProfileQueryStorage struct {
@@ -83,6 +84,7 @@ func (*fakeProfileQueryStorage) AggregationsByFieldContext(
 
 func (s *fakeProfileQueryStorage) matchingDocuments(filter *SearchFilter) []*ProfileDocument {
 	documents := make([]*ProfileDocument, 0, len(s.documents))
+documentLoop:
 	for _, document := range s.documents {
 		if document == nil {
 			continue
@@ -115,6 +117,12 @@ func (s *fakeProfileQueryStorage) matchingDocuments(filter *SearchFilter) []*Pro
 		if filter.ContainerHostname != "" &&
 			filter.ContainerHostname != document.ContainerHostname {
 			continue
+		}
+		for name, value := range filter.Labels {
+			if value != "" &&
+				document.TracerData.Flamedata.Labels[name] != value {
+				continue documentLoop
+			}
 		}
 		documents = append(documents, document)
 	}
@@ -298,6 +306,7 @@ func TestBuildProfileSelectionRejectsBroadMatchers(t *testing.T) {
 		`{region="ap-guangzhou"}`,
 		`{arbitrary_label="value"}`,
 		`{id="trace-a",tracer="trace-b"}`,
+		`{pid=""}`,
 	} {
 		t.Run(selector, func(t *testing.T) {
 			_, err := buildProfileSelection(
@@ -345,6 +354,148 @@ func TestSelectSeriesBucketsAndGroups(t *testing.T) {
 	}}
 	if got := response.Series[0].Points; !reflect.DeepEqual(got, wantPoints) {
 		t.Fatalf("trace-a points = %#v, want %#v", got, wantPoints)
+	}
+}
+
+func TestCollectionDimensionsFilterAndGroupFixtureProfiles(t *testing.T) {
+	start := time.Date(2026, time.July, 25, 10, 30, 0, 0, time.UTC)
+	matching := testProfileDocument(
+		start.Add(time.Second),
+		"trace-pid-4242",
+		25,
+		"root",
+		"hot",
+	)
+	matching.TracerData.Flamedata.Labels = map[string]string{
+		profiler.LabelProfilingScope: "pid",
+		profiler.LabelCPU:            "2,4,5,6,7",
+		profiler.LabelPID:            "4242",
+	}
+	matching.TracerData.Flamedata.Profile.StringTable = append(
+		matching.TracerData.Flamedata.Profile.StringTable,
+		profiler.LabelProfilingScope,
+		"pid",
+		"2,4,5,6,7",
+		"4242",
+	)
+	matching.TracerData.Flamedata.Profile.Sample[0].Label = []*profilev1.Label{
+		{Key: 5, Str: 6},
+		{Key: 1, Str: 7},
+		{Key: 6, Str: 8},
+	}
+	other := testProfileDocument(
+		start.Add(2*time.Second),
+		"trace-pid-9000",
+		100,
+		"root",
+		"cold",
+	)
+	other.TracerData.Flamedata.Labels = map[string]string{
+		profiler.LabelProfilingScope: "pid",
+		profiler.LabelCPU:            "3",
+		profiler.LabelPID:            "9000",
+	}
+	service := newTestProfileService(&fakeProfileQueryStorage{
+		documents: []*ProfileDocument{matching, other},
+	})
+
+	response, err := service.SelectSeries(
+		t.Context(),
+		&querierv1.SelectSeriesRequest{
+			ProfileTypeID: profiler.ProfileTypeCpuSample,
+			LabelSelector: `{profiling_scope="pid",cpu="2,4,5,6,7"}`,
+			Start:         start.UnixMilli(),
+			End:           start.Add(time.Minute).UnixMilli(),
+			GroupBy:       []string{profiler.LabelPID},
+			Step:          10,
+		},
+	)
+	if err != nil {
+		t.Fatalf("SelectSeries() error = %v", err)
+	}
+	if len(response.Series) != 1 ||
+		len(response.Series[0].Labels) != 1 ||
+		response.Series[0].Labels[0].Name != profiler.LabelPID ||
+		response.Series[0].Labels[0].Value != "4242" ||
+		len(response.Series[0].Points) != 1 ||
+		response.Series[0].Points[0].Value != 25 {
+		t.Fatalf("dimensioned series = %#v", response.Series)
+	}
+
+	flamegraph, err := service.SelectMergeStacktraces(
+		t.Context(),
+		&querierv1.SelectMergeStacktracesRequest{
+			ProfileTypeID: profiler.ProfileTypeCpuSample,
+			LabelSelector: `{pid="4242"}`,
+			Start:         start.UnixMilli(),
+			End:           start.Add(time.Minute).UnixMilli(),
+		},
+	)
+	if err != nil {
+		t.Fatalf("SelectMergeStacktraces() error = %v", err)
+	}
+	if flamegraph.GetFlamegraph().GetTotal() != 25 {
+		t.Fatalf(
+			"dimensioned flame graph total = %d, want 25",
+			flamegraph.GetFlamegraph().GetTotal(),
+		)
+	}
+
+	payload, err := service.MarshalPprof(
+		t.Context(),
+		&querierv1.SelectMergeStacktracesRequest{
+			ProfileTypeID: profiler.ProfileTypeCpuSample,
+			LabelSelector: `{pid="4242"}`,
+			Start:         start.UnixMilli(),
+			End:           start.Add(time.Minute).UnixMilli(),
+		},
+	)
+	if err != nil {
+		t.Fatalf("MarshalPprof() error = %v", err)
+	}
+	exported, err := pprof.RawFromBytes(payload)
+	if err != nil {
+		t.Fatalf("decode exported pprof: %v", err)
+	}
+	if len(exported.Sample) != 1 || len(exported.Sample[0].Label) != 3 {
+		t.Fatalf("exported managed sample labels = %#v", exported.Sample)
+	}
+	exportedLabels := make(map[string]string, len(exported.Sample[0].Label))
+	for _, label := range exported.Sample[0].Label {
+		name, nameOK := profileString(exported.StringTable, label.Key)
+		value, valueOK := profileString(exported.StringTable, label.Str)
+		if nameOK && valueOK {
+			exportedLabels[name] = value
+		}
+	}
+	if !reflect.DeepEqual(
+		exportedLabels,
+		matching.TracerData.Flamedata.Labels,
+	) {
+		t.Fatalf(
+			"exported labels = %#v, want %#v",
+			exportedLabels,
+			matching.TracerData.Flamedata.Labels,
+		)
+	}
+}
+
+func TestProfileNodeLimits(t *testing.T) {
+	if got, err := normalizeProfileMaxNodes(0); err != nil ||
+		got != defaultProfileNodes {
+		t.Fatalf("normalizeProfileMaxNodes(0) = (%d, %v)", got, err)
+	}
+	for _, value := range []int64{-1, profileNodeLimit + 1} {
+		if _, err := normalizeProfileMaxNodes(value); !errors.Is(
+			err,
+			ErrInvalidQuery,
+		) {
+			t.Fatalf(
+				"normalizeProfileMaxNodes(%d) error = %v, want invalid query",
+				value,
+				err,
+			)
+		}
 	}
 }
 

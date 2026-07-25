@@ -31,6 +31,24 @@ import (
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 )
 
+const maxProfileSVGResponseBytes = 8 << 20
+
+type boundedProfileSVGBuffer struct {
+	bytes.Buffer
+}
+
+func (b *boundedProfileSVGBuffer) Write(payload []byte) (int, error) {
+	if b.Len() > maxProfileSVGResponseBytes ||
+		len(payload) > maxProfileSVGResponseBytes-b.Len() {
+		return 0, fmt.Errorf(
+			"%w: rendered SVG exceeds %d bytes; narrow the time range or selector",
+			profileService.ErrProfileQueryLimitExceeded,
+			maxProfileSVGResponseBytes,
+		)
+	}
+	return b.Buffer.Write(payload)
+}
+
 func handleProto[Request, Response any](
 	ctx *server.Context,
 	operation string,
@@ -159,7 +177,7 @@ func (h *Handler) displaySVGExport(ctx *server.Context) error {
 		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
 		return nil
 	}
-	var output bytes.Buffer
+	var output boundedProfileSVGBuffer
 	if err := h.profileService.RenderProfileSVG(
 		ctx.Request().Context(),
 		req,
