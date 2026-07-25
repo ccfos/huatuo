@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"huatuo-bamai/pkg/profiling"
+
 	"github.com/urfave/cli/v2"
 )
 
@@ -45,5 +47,28 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	case <-pctx.Ctx.Done():
 	case <-time.After(time.Second):
 		t.Fatal("ProfilerContext.Cancel() did not cancel context")
+	}
+}
+
+func TestLockTypeForProfile(t *testing.T) {
+	lockType, err := lockTypeForProfile(profiling.TypeLock, "")
+	if err != nil {
+		t.Fatalf("lockTypeForProfile() error = %v", err)
+	}
+	if lockType != profiling.LockTypeMutex {
+		t.Fatalf("default lock type = %q, want mutex", lockType)
+	}
+
+	lockType, err = lockTypeForProfile(profiling.TypeLock, "rwlock")
+	if err != nil {
+		t.Fatalf("lockTypeForProfile() error = %v", err)
+	}
+	if lockType != profiling.LockTypeRWLock {
+		t.Fatalf("lock type = %q, want rwlock", lockType)
+	}
+
+	_, err = lockTypeForProfile(profiling.TypeLock, "spinlock")
+	if err == nil {
+		t.Fatal("lockTypeForProfile() accepted unsupported spinlock")
 	}
 }

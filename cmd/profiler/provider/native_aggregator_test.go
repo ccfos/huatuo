@@ -32,6 +32,7 @@ func TestNativeAggregatorAggregatesLockTime(t *testing.T) {
 		User:      "foo;bar",
 		WaitTime:  10,
 		Contended: 2,
+		LockType:  profiling.LockTypeMutex,
 	}
 
 	aggregator.Aggregate(record)
@@ -58,6 +59,8 @@ func TestNativeAggregatorKeepsDistinctLockMetadata(t *testing.T) {
 		Kernel:    "mutex_lock",
 		WaitTime:  10,
 		Contended: 1,
+		LockType:  profiling.LockTypeRWLock,
+		Access:    "read",
 	}
 	differentPID := *base
 	differentPID.Proc = &processIDNameLock{
@@ -67,16 +70,36 @@ func TestNativeAggregatorKeepsDistinctLockMetadata(t *testing.T) {
 	}
 	differentKernel := *base
 	differentKernel.Kernel = "mutex_lock_nested"
+	differentAccess := *base
+	differentAccess.Access = "write"
 
 	aggregator.Aggregate(base)
 	aggregator.Aggregate(&differentPID)
 	aggregator.Aggregate(&differentKernel)
+	aggregator.Aggregate(&differentAccess)
 
-	if len(aggregator.lockAggrMap) != 3 {
+	if len(aggregator.lockAggrMap) != 4 {
 		t.Fatalf(
-			"lock records = %d, want 3 distinct metadata groups",
+			"lock records = %d, want 4 distinct metadata groups",
 			len(aggregator.lockAggrMap),
 		)
+	}
+}
+
+func TestLockPrefixFramesIncludesRWLockAccess(t *testing.T) {
+	frames, value := lockPrefixFrames(&lockStackEntry{
+		Proc:      &processIDNameLock{Pid: 12, Name: "app", Lock: 0xab},
+		WaitTime:  42,
+		Contended: 3,
+		LockType:  profiling.LockTypeRWLock,
+		Access:    "write",
+	})
+
+	if value != 42 {
+		t.Fatalf("value = %d, want 42", value)
+	}
+	if len(frames) < 2 || frames[1] != "lock type: rwlock:write" {
+		t.Fatalf("frames = %v, want rwlock write type", frames)
 	}
 }
 

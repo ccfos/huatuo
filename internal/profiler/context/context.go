@@ -148,6 +148,10 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 			return nil, err
 		}
 	}
+	lockType, err := lockTypeForProfile(typ, cliCtx.String("lock-type"))
+	if err != nil {
+		return nil, err
+	}
 	profilerContext := &ProfilerContext{
 		Ctx:    ctx,
 		Cancel: cancelProfiler,
@@ -174,7 +178,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		MemoryMode:                mode,
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
 		LockMode:                  lockModeForType(typ),
-		LockType:                  lockTypeForType(typ),
+		LockType:                  lockType,
 
 		TracerID: cliCtx.String("tracer-id"),
 
@@ -191,11 +195,17 @@ func lockModeForType(typ profiling.Type) profiling.LockMode {
 	return profiling.LockModeUnknown
 }
 
-func lockTypeForType(typ profiling.Type) profiling.LockType {
-	if typ == profiling.TypeLock {
-		return profiling.LockTypeMutex
+func lockTypeForProfile(
+	typ profiling.Type,
+	value string,
+) (profiling.LockType, error) {
+	if typ != profiling.TypeLock {
+		return profiling.LockTypeUnknown, nil
 	}
-	return profiling.LockTypeUnknown
+	if value == "" {
+		value = string(profiling.LockTypeMutex)
+	}
+	return profiling.ParseLockType(value)
 }
 
 func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*toolstream.Client, error) {

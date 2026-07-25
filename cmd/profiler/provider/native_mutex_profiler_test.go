@@ -22,21 +22,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestValidateMutexTarget(t *testing.T) {
-	require.NoError(t, validateMutexTarget(&pcontext.ProfilerContext{
+func TestValidateLockTarget(t *testing.T) {
+	require.NoError(t, validateLockTarget(&pcontext.ProfilerContext{
 		PIDs: []int{42},
 	}))
-	require.NoError(t, validateMutexTarget(&pcontext.ProfilerContext{
+	require.NoError(t, validateLockTarget(&pcontext.ProfilerContext{
 		ContainerID: "container",
 	}))
 	require.EqualError(
 		t,
-		validateMutexTarget(&pcontext.ProfilerContext{}),
+		validateLockTarget(&pcontext.ProfilerContext{}),
 		"native lock profiler requires exactly one PID or container target",
 	)
 	require.EqualError(
 		t,
-		validateMutexTarget(&pcontext.ProfilerContext{
+		validateLockTarget(&pcontext.ProfilerContext{
 			PIDs:        []int{42},
 			ContainerID: "container",
 		}),
@@ -45,14 +45,14 @@ func TestValidateMutexTarget(t *testing.T) {
 }
 
 func TestMutexAttachOptions(t *testing.T) {
-	oldTracepoints := hasMutexContentionTracepoints
+	oldTracepoints := hasLockContentionTracepoints
 	oldKprobe := hasMutexKprobeFunction
 	t.Cleanup(func() {
-		hasMutexContentionTracepoints = oldTracepoints
+		hasLockContentionTracepoints = oldTracepoints
 		hasMutexKprobeFunction = oldKprobe
 	})
 
-	hasMutexContentionTracepoints = func() bool { return true }
+	hasLockContentionTracepoints = func() bool { return true }
 	hasMutexKprobeFunction = func(string) bool { return false }
 	options, backend, err := mutexAttachOptions()
 	require.NoError(t, err)
@@ -60,7 +60,7 @@ func TestMutexAttachOptions(t *testing.T) {
 	require.Len(t, options, 2)
 	require.Equal(t, "trace_mutex_contention_begin", options[0].ProgramName)
 
-	hasMutexContentionTracepoints = func() bool { return false }
+	hasLockContentionTracepoints = func() bool { return false }
 	hasMutexKprobeFunction = func(symbol string) bool {
 		return symbol == mutexSlowpathSymbol
 	}
@@ -80,9 +80,9 @@ func TestMutexAttachOptions(t *testing.T) {
 	)
 }
 
-func TestAggregateMutexBatch(t *testing.T) {
+func TestAggregateLockContentionBatch(t *testing.T) {
 	comm := [TaskCommLen]byte{'a', 'p', 'p'}
-	first := &mutexEvent{
+	first := &lockContentionEvent{
 		ProfilerEventBase: ProfilerEventBase{
 			PidTgid:   uint64(42) << 32,
 			Comm:      comm,
@@ -95,15 +95,17 @@ func TestAggregateMutexBatch(t *testing.T) {
 	second := *first
 	second.Value = 5
 
-	aggregates := make(map[mutexAggregateKey]mutexAggregateValue)
-	aggregateMutexBatch(aggregates, []any{
+	aggregates := make(
+		map[lockContentionAggregateKey]lockContentionAggregateValue,
+	)
+	aggregateLockContentionBatch(aggregates, []any{
 		first,
 		&second,
-		&mutexEvent{ProfilerEventBase: ProfilerEventBase{Value: 0}},
+		&lockContentionEvent{ProfilerEventBase: ProfilerEventBase{Value: 0}},
 		"unexpected",
 	})
 
-	require.Equal(t, map[mutexAggregateKey]mutexAggregateValue{
+	require.Equal(t, map[lockContentionAggregateKey]lockContentionAggregateValue{
 		{
 			Pid:       42,
 			Comm:      comm,
