@@ -77,7 +77,7 @@ services:
     environment:
       ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST:-}
       ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
-      HUATUO_MODE: ${COMPOSE_PROFILES:-full}
+      HUATUO_MODE: ${COMPOSE_PROFILES:-profiling}
       PYROSCOPE_ADDRESS: ${PYROSCOPE_ADDRESS:-http://127.0.0.1:4040}
       RUN_PATH: ${RUN_PATH:-/home/huatuo-bamai}
     volumes:

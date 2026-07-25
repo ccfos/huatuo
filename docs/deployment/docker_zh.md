@@ -24,22 +24,26 @@ $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/
 也可以仅启动 profiling 所需服务。
 
 ```bash
+$ docker compose --project-directory ./build/docker up
+```
+
+默认的 `profiling` profile 只启动 huatuo-bamai、Pyroscope 和 Grafana，
+不启动或等待 Elasticsearch、Prometheus、huatuo-apiserver。huatuo-bamai
+会禁用 kubelet 发现，因此无需 kubelet 客户端证书；它会在不重新构建
+镜像的情况下写入
+`AutoTracing.Display.Backend = "pyroscope"`。Grafana 地址为
+http://localhost:3000，
+可打开 `HuaTuo AutoTracing Pyroscope Flamegraph` Dashboard。CPUIdle 或
+CPUSys 达到配置的 AutoTracing 阈值后，Dashboard 才会出现 profile。
+
+如需使用现有 huatuo-apiserver 展示链路：
+
+```bash
 $ COMPOSE_PROFILES=full docker compose --project-directory ./build/docker up
 ```
 
 `full` profile 会启动 huatuo-bamai、Elasticsearch、Prometheus、Pyroscope、
-Grafana 和 huatuo-apiserver。
-
-如果只需将 profiling 数据写入 Pyroscope：
-
-```bash
-$ COMPOSE_PROFILES=profiling docker compose --project-directory ./build/docker up
-```
-
-`profiling` profile 只启动 huatuo-bamai、Pyroscope 和 Grafana，不启动或等待
-Elasticsearch、Prometheus、huatuo-apiserver。huatuo-bamai 会禁用 kubelet
-发现，因此无需 kubelet 客户端证书。Grafana 地址为 http://localhost:3000，
-可打开 `HuaTuo AutoTracing Pyroscope Flamegraph` Dashboard。CPUIdle 或
-CPUSys 达到配置的 AutoTracing 阈值后，Dashboard 才会出现 profile。
+Grafana 和 huatuo-apiserver，并在运行时配置中写入
+`AutoTracing.Display.Backend = "apiserver"`。
 
 > Docker Compose 安装方法请参阅 https://docs.docker.com/compose/install/linux/。
