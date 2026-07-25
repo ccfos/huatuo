@@ -222,9 +222,9 @@ curl -sS \
 
 ### 6. 在 Grafana 中查看剖析结果
 
-Grafana provisioning 提供独立的宿主机和容器持续剖析 dashboard。两张
-dashboard 都展示选定时间范围内写入的剖析快照数量，以及合并后的火焰图
-和 Top 表：
+Grafana provisioning 提供宿主机、容器和时间窗口对比三张持续剖析
+dashboard。宿主机和容器 dashboard 展示剖析快照数量、剖析值时间线、
+按 tracer 分组的 Top 10 序列，以及合并后的火焰图和 Top 表：
 
 - 宿主机 dashboard 按 `hostname` 精确筛选，并排除容器剖析数据。
 - 容器 dashboard 按 `container_id` 精确查询剖析数据，并展示上报节点
@@ -242,9 +242,11 @@ export HUATUO_GRAFANA_PROFILE_TOKEN="<Auth.users.ID>"
 docker compose -f build/docker/docker-compose.yml up -d
 ```
 
-当前 dashboard 只依赖已有的合并栈查询接口。剖析值时间线、按维度分组的
-Top-N 序列和对比视图依赖兼容 Pyroscope 的 `SelectSeries`、`Diff` 接口，
-在这些接口可用前不进行 provisioning。
+时间线和 Top 10 面板使用 Pyroscope 兼容的 `SelectSeries` 接口。对比
+dashboard 通过有边界限制的 JSON 适配器调用 `Diff`，并把结果交给 Grafana
+火焰图面板。选定时间范围是当前窗口，对比对象是紧邻其前、长度相同的窗口；
+选择 `container_id` 时优先于 `hostname`。适配器默认最多返回 5,000 个
+节点，拒绝超过 10,000 的配置，并将 JSON 响应限制为 8 MiB。
 
 ### 7. 获取原始剖析数据
 
@@ -289,7 +291,7 @@ curl -sS -i \
 
 删除成功返回 `204 No Content`，不包含响应体。任务仍在运行时返回 `409 Conflict`。
 
-### 9. Pyroscope 兼容查询
+### 10. Pyroscope 兼容查询
 
 Profiling API 在
 `/v1/profiles/flamegraph/querier.v1.QuerierService/` 下实现 Pyroscope 的

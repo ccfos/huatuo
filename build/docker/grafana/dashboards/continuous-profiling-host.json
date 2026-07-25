@@ -36,6 +36,18 @@
       "tooltip": "Open the container profiling dashboard.",
       "type": "link",
       "url": "/d/continuous-profiling-container/continuous-profiling-container"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Compare windows",
+      "tooltip": "Compare the selected window with its preceding window.",
+      "type": "link",
+      "url": "/d/continuous-profiling-compare/continuous-profiling-compare"
     }
   ],
   "panels": [
@@ -162,6 +174,112 @@
         "type": "grafana-pyroscope-datasource",
         "uid": "huatuo-apiserver-pyroscope"
       },
+      "description": "Total profile value in each time bucket for the selected host.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "huatuo-apiserver-pyroscope"
+          },
+          "groupBy": [],
+          "labelSelector": "{hostname=\"$hostname\"}",
+          "limit": 1,
+          "profileTypeId": "$type",
+          "queryType": "metrics",
+          "refId": "A"
+        }
+      ],
+      "title": "Profile value over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "huatuo-apiserver-pyroscope"
+      },
+      "description": "Ten highest-value profiling jobs in the selected window.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "huatuo-apiserver-pyroscope"
+          },
+          "groupBy": [
+            "tracer"
+          ],
+          "labelSelector": "{hostname=\"$hostname\"}",
+          "limit": 10,
+          "profileTypeId": "$type",
+          "queryType": "metrics",
+          "refId": "A"
+        }
+      ],
+      "title": "Top 10 by tracer",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "huatuo-apiserver-pyroscope"
+      },
       "fieldConfig": {
         "defaults": {},
         "overrides": []
@@ -170,7 +288,7 @@
         "h": 20,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 12
       },
       "id": 1,
       "maxPerRow": 2,

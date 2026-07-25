@@ -85,6 +85,7 @@ func NewHandler(
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/ProfileTypes", Handle: h.displayProfileTypes},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/SelectSeries", Handle: h.displaySelectSeries},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/Diff", Handle: h.displayDiff},
+		{Typ: server.HttpPost, Uri: "/flamegraph/diff-rows", Handle: h.displayDiffRows},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/LabelNames", Handle: h.displayLabelNames},
 		{Typ: server.HttpPost, Uri: "/flamegraph/querier.v1.QuerierService/LabelValues", Handle: h.displayLabelValues},
 	}

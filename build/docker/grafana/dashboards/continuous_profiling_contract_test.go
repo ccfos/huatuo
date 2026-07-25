@@ -82,6 +82,22 @@ func dashboardStrings(value any, field string, values *[]string) {
 	}
 }
 
+func dashboardValues(value any, field string, values *[]any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for name, item := range typed {
+			if name == field {
+				*values = append(*values, item)
+			}
+			dashboardValues(item, field, values)
+		}
+	case []any:
+		for _, item := range typed {
+			dashboardValues(item, field, values)
+		}
+	}
+}
+
 func findDashboardVariable(t *testing.T, dashboard dashboardContract, name string) dashboardVariable {
 	t.Helper()
 
@@ -107,6 +123,67 @@ func requireSupportedProfileTypes(t *testing.T, dashboard dashboardContract) {
 	}
 }
 
+func requireExactProfileQueries(
+	t *testing.T,
+	raw any,
+	selector string,
+) {
+	t.Helper()
+
+	var selectors []string
+	dashboardStrings(raw, "labelSelector", &selectors)
+	if !slices.Equal(selectors, []string{selector, selector, selector}) {
+		t.Fatalf("profile selectors = %v, want exact %s selectors", selectors, selector)
+	}
+
+	var queryTypes []string
+	dashboardStrings(raw, "queryType", &queryTypes)
+	if !slices.Equal(queryTypes, []string{"metrics", "metrics", "profile"}) {
+		t.Fatalf("query types = %v, want two series and one profile query", queryTypes)
+	}
+
+	var groupBys []any
+	dashboardValues(raw, "groupBy", &groupBys)
+	if len(groupBys) != 3 {
+		t.Fatalf("profile groupBy values = %v, want three", groupBys)
+	}
+	if grouped, ok := groupBys[1].([]any); !ok ||
+		len(grouped) != 1 ||
+		grouped[0] != "tracer" {
+		t.Fatalf("Top series groupBy = %v, want tracer", groupBys[1])
+	}
+
+	var limits []any
+	dashboardValues(raw, "limit", &limits)
+	profileLimits := make([]float64, 0, len(limits))
+	for _, limit := range limits {
+		if number, ok := limit.(float64); ok {
+			profileLimits = append(profileLimits, number)
+		}
+	}
+	if !slices.Contains(profileLimits, float64(10)) {
+		t.Fatalf("dashboard limits = %v, want Top 10 bound", profileLimits)
+	}
+}
+
+func requireNoUnsupportedSelectors(t *testing.T, payload string) {
+	t.Helper()
+
+	for _, unsupported := range []string{
+		"profiling_scope",
+		"cgroup",
+		"process_group",
+		"process_lock",
+		"lock_type",
+		`=~`,
+		`!~`,
+	} {
+		if strings.Contains(payload, unsupported) {
+			t.Fatalf("dashboard contains unsupported selector %q", unsupported)
+		}
+	}
+}
+
 func TestContinuousProfilingHostDashboardContract(t *testing.T) {
 	dashboard, raw, payload := loadDashboard(t, "continuous-profiling-host.json")
 	if dashboard.UID != "continuous-profiling-host" {
@@ -119,14 +196,8 @@ func TestContinuousProfilingHostDashboardContract(t *testing.T) {
 		t.Fatalf("hostname query can select container profiles: %s", hostname.Definition)
 	}
 
-	var selectors []string
-	dashboardStrings(raw, "labelSelector", &selectors)
-	if !slices.Equal(selectors, []string{`{hostname="$hostname"}`}) {
-		t.Fatalf("profile selectors = %v, want exact hostname selector", selectors)
-	}
-	if strings.Contains(payload, "process_lock") {
-		t.Fatal("dashboard exposes lock profiling before the backend supports it")
-	}
+	requireExactProfileQueries(t, raw, `{hostname="$hostname"}`)
+	requireNoUnsupportedSelectors(t, payload)
 }
 
 func TestContinuousProfilingContainerDashboardContract(t *testing.T) {
@@ -145,34 +216,76 @@ func TestContinuousProfilingContainerDashboardContract(t *testing.T) {
 		t.Fatalf("hostname variable is not container scoped: %s", hostname.Definition)
 	}
 
-	var selectors []string
-	dashboardStrings(raw, "labelSelector", &selectors)
-	wantSelector := `{container_id="$container_id"}`
-	if !slices.Equal(selectors, []string{wantSelector}) {
-		t.Fatalf("profile selectors = %v, want %s", selectors, wantSelector)
-	}
+	requireExactProfileQueries(t, raw, `{container_id="$container_id"}`)
 	if strings.Contains(payload, "container_hostname") {
 		t.Fatal("dashboard uses non-unique container hostname")
 	}
-	if strings.Contains(payload, "process_lock") {
-		t.Fatal("dashboard exposes lock profiling before the backend supports it")
+	requireNoUnsupportedSelectors(t, payload)
+}
+
+func TestContinuousProfilingComparisonDashboardContract(t *testing.T) {
+	dashboard, raw, payload := loadDashboard(
+		t,
+		"continuous-profiling-compare.json",
+	)
+	if dashboard.UID != "continuous-profiling-compare" {
+		t.Fatalf("UID = %q, want continuous-profiling-compare", dashboard.UID)
 	}
+	requireSupportedProfileTypes(t, dashboard)
+
+	containerID := findDashboardVariable(t, dashboard, "container_id")
+	if !strings.Contains(containerID.Definition, `"field": "container_id.keyword"`) {
+		t.Fatalf("container variable does not use container ID: %s", containerID.Definition)
+	}
+
+	var urls []string
+	dashboardStrings(raw, "url", &urls)
+	if !slices.Contains(urls, "/v1/profiles/flamegraph/diff-rows") {
+		t.Fatalf("comparison URLs = %v, want bounded diff adapter", urls)
+	}
+	var roots []string
+	dashboardStrings(raw, "root_selector", &roots)
+	if !slices.Equal(roots, []string{"data"}) {
+		t.Fatalf("root selectors = %v, want data", roots)
+	}
+	var columns []string
+	dashboardStrings(raw, "selector", &columns)
+	if !slices.Equal(
+		columns,
+		[]string{"level", "value", "self", "valueRight", "selfRight", "label"},
+	) {
+		t.Fatalf("comparison columns = %v", columns)
+	}
+	var bodies []string
+	dashboardStrings(raw, "data", &bodies)
+	if len(bodies) != 1 ||
+		!strings.Contains(bodies[0], `"max_nodes": 5000`) ||
+		!strings.Contains(bodies[0], `${hostname:json}`) ||
+		!strings.Contains(bodies[0], `${container_id:json}`) {
+		t.Fatalf("comparison request is not bounded or JSON-escaped: %v", bodies)
+	}
+	requireNoUnsupportedSelectors(t, payload)
 }
 
 func TestContinuousProfilingDatasourceAuthenticationContract(t *testing.T) {
-	datasource, err := os.ReadFile("../datasources/pyroscope.yaml")
-	if err != nil {
-		t.Fatalf("read Pyroscope datasource: %v", err)
-	}
-	datasourceText := string(datasource)
-	if !strings.Contains(
-		datasourceText,
-		"'Bearer $HUATUO_GRAFANA_PROFILE_TOKEN'",
-	) {
-		t.Fatal("Pyroscope datasource does not use the runtime bearer token")
-	}
-	if strings.Contains(datasourceText, "REPLACE_WITH_RANDOM_HEX") {
-		t.Fatal("Pyroscope datasource contains a placeholder credential")
+	for _, filename := range []string{
+		"../datasources/pyroscope.yaml",
+		"../datasources/profiling-json.yaml",
+	} {
+		datasource, err := os.ReadFile(filename)
+		if err != nil {
+			t.Fatalf("read %s: %v", filename, err)
+		}
+		datasourceText := string(datasource)
+		if !strings.Contains(
+			datasourceText,
+			"'Bearer $HUATUO_GRAFANA_PROFILE_TOKEN'",
+		) {
+			t.Fatalf("%s does not use the runtime bearer token", filename)
+		}
+		if strings.Contains(datasourceText, "REPLACE_WITH_RANDOM_HEX") {
+			t.Fatalf("%s contains a placeholder credential", filename)
+		}
 	}
 
 	compose, err := os.ReadFile("../../docker-compose.yml")
@@ -184,5 +297,11 @@ func TestContinuousProfilingDatasourceAuthenticationContract(t *testing.T) {
 		"HUATUO_GRAFANA_PROFILE_TOKEN: ${HUATUO_GRAFANA_PROFILE_TOKEN:-}",
 	) {
 		t.Fatal("Grafana container does not receive the profile query token")
+	}
+	if !strings.Contains(
+		string(compose),
+		"./grafana/datasources/profiling-json.yaml:",
+	) {
+		t.Fatal("Grafana does not provision the profile JSON datasource")
 	}
 }

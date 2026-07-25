@@ -36,6 +36,7 @@ services:
       - ./grafana/datasources/prometheus.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro
       - ./grafana/datasources/infinity.yaml:/etc/grafana/provisioning/datasources/infinity.yaml:ro
       - ./grafana/datasources/pyroscope.yaml:/etc/grafana/provisioning/datasources/pyroscope.yaml:ro
+      - ./grafana/datasources/profiling-json.yaml:/etc/grafana/provisioning/datasources/profiling-json.yaml:ro
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
       - prometheus
