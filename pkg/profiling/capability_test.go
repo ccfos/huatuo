@@ -119,7 +119,11 @@ func TestParsers(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, mode, parsed)
 	}
-	for _, lockType := range []LockType{LockTypeMutex, LockTypeRWLock} {
+	for _, lockType := range []LockType{
+		LockTypeMutex,
+		LockTypeSpinlock,
+		LockTypeRWLock,
+	} {
 		parsed, err := ParseLockType(string(lockType))
 		require.NoError(t, err)
 		require.Equal(t, lockType, parsed)
@@ -129,11 +133,12 @@ func TestParsers(t *testing.T) {
 	require.EqualError(t, err, `unsupported language "rust"`)
 	_, err = ParseMemoryMode("unknown")
 	require.EqualError(t, err, `unsupported memory mode "unknown"`)
-	_, err = ParseLockType("spinlock")
+	_, err = ParseLockType("semaphore")
 	require.EqualError(
 		t,
 		err,
-		`unsupported lock type "spinlock" (expected: mutex or rwlock)`,
+		`unsupported lock type "semaphore" `+
+			`(expected: mutex, spinlock, or rwlock)`,
 	)
 }
 

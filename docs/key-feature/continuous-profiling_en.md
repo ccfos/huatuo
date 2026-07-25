@@ -395,7 +395,7 @@ Native profiling options:
 | `--memory-mode` | None | Native memory, Java memory | Memory profiling mode; required with `--type memory` |
 | `--cpuid` | All CPUs | Native CPU | Comma-separated CPU list or ranges, for example `1,3,5-10` |
 | `--thread-group` | `false` | Native | Also profile other threads in the target PID's thread group |
-| `--lock-type` | `mutex` | Native lock | Kernel lock primitive: `mutex` or `rwlock` |
+| `--lock-type` | `mutex` | Native lock | Kernel lock primitive: `mutex`, `spinlock`, or `rwlock` |
 | `--lock-wait-threshold` | `1us` | Native lock | Minimum contention wait included in the profile |
 | `--physical-memory-probability` | `100` | Native physical memory | Physical memory event sampling probability from 1 to 100 |
 | `--log-bpf-debug` | `false` | Native | Emit BPF debug events; not recommended for normal profiling |
@@ -482,12 +482,12 @@ sudo _output/bin/profiler \
 
 `--physical-memory-probability` applies only to `physical_alloc` and `physical_usage`. Lowering it reduces processing for high-frequency memory events, but flame-graph values are then estimates based on sampled events rather than counts of every event.
 
-Native lock profiling records contended mutex or queued rwlock wait time. On
-Linux 5.19 and later it uses the contention-only lock tracepoints and filters
-rwlock read and write waits separately. Older non-PREEMPT_RT kernels use only
-the mutex or queued rwlock slow paths. Kernels without these hooks are rejected;
-the profiler never falls back to global `_raw_read_lock` or `_raw_write_lock`
-instrumentation. A PID or container target is mandatory.
+Native lock profiling records contended mutex, spinlock, or queued rwlock wait
+time. Linux 5.19 and later uses contention-only lock tracepoints and filters
+spinlock from rwlock read/write waits. Older non-PREEMPT_RT kernels use only the
+mutex or queued rwlock slow paths. Spinlock profiling fails closed when the
+contention tracepoints are unavailable; the profiler never falls back to global
+raw-lock instrumentation. A PID or container target is mandatory.
 
 ```bash
 sudo _output/bin/profiler \

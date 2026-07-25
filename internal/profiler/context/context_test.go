@@ -67,8 +67,11 @@ func TestLockTypeForProfile(t *testing.T) {
 		t.Fatalf("lock type = %q, want rwlock", lockType)
 	}
 
-	_, err = lockTypeForProfile(profiling.TypeLock, "spinlock")
-	if err == nil {
-		t.Fatal("lockTypeForProfile() accepted unsupported spinlock")
+	lockType, err = lockTypeForProfile(profiling.TypeLock, "spinlock")
+	if err != nil {
+		t.Fatalf("lockTypeForProfile() error = %v", err)
+	}
+	if lockType != profiling.LockTypeSpinlock {
+		t.Fatalf("lock type = %q, want spinlock", lockType)
 	}
 }

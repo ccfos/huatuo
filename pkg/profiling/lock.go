@@ -30,6 +30,7 @@ type LockType string
 const (
 	LockTypeUnknown LockType = ""
 	LockTypeMutex   LockType = "mutex"
+	LockTypeSpinlock LockType = "spinlock"
 	LockTypeRWLock  LockType = "rwlock"
 )
 
@@ -37,11 +38,11 @@ const (
 func ParseLockType(value string) (LockType, error) {
 	lockType := LockType(value)
 	switch lockType {
-	case LockTypeMutex, LockTypeRWLock:
+	case LockTypeMutex, LockTypeSpinlock, LockTypeRWLock:
 		return lockType, nil
 	default:
 		return LockTypeUnknown, fmt.Errorf(
-			"unsupported lock type %q (expected: mutex or rwlock)",
+			"unsupported lock type %q (expected: mutex, spinlock, or rwlock)",
 			value,
 		)
 	}

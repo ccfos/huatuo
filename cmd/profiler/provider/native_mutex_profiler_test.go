@@ -80,6 +80,31 @@ func TestMutexAttachOptions(t *testing.T) {
 	)
 }
 
+func TestSpinlockAttachOptions(t *testing.T) {
+	oldTracepoints := hasLockContentionTracepoints
+	t.Cleanup(func() {
+		hasLockContentionTracepoints = oldTracepoints
+	})
+
+	hasLockContentionTracepoints = func() bool { return true }
+	options, backend, err := spinlockAttachOptions()
+	require.NoError(t, err)
+	require.Equal(t, spinlockBackendTracepoints, backend)
+	require.Len(t, options, 2)
+	require.Equal(t, "trace_spin_contention_begin", options[0].ProgramName)
+	require.Equal(t, "trace_spin_contention_end", options[1].ProgramName)
+
+	hasLockContentionTracepoints = func() bool { return false }
+	_, _, err = spinlockAttachOptions()
+	require.EqualError(
+		t,
+		err,
+		"spinlock contention requires lock:contention_begin/end "+
+			"tracepoints (Linux 5.19+); refusing unsafe "+
+			"spinlock slowpath probes",
+	)
+}
+
 func TestAggregateLockContentionBatch(t *testing.T) {
 	comm := [TaskCommLen]byte{'a', 'p', 'p'}
 	first := &lockContentionEvent{
