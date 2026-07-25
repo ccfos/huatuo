@@ -78,13 +78,15 @@ func buildCreateProfilingJobRequest(
 		TraceTimeout: cfg.ExecutionTimeout,
 	}
 
+	targetArgs, err := profilingTargetArgs(req)
+	if err != nil {
+		return nil, err
+	}
 	jobType, err := buildProfilingTracerArgs(&taskReq, req)
 	if err != nil {
 		return nil, err
 	}
-	if err := appendProfilingTargetArgs(&taskReq, req); err != nil {
-		return nil, err
-	}
+	taskReq.TracerArgs = append(taskReq.TracerArgs, targetArgs...)
 	if req.Duration < taskReq.Interval*2 {
 		return nil, errors.New("duration must cover at least two profiling intervals")
 	}
@@ -183,66 +185,73 @@ func appendProfilingToolPath(
 	return nil
 }
 
-func appendProfilingTargetArgs(
-	taskReq *job.AgentTaskRequest,
-	req *v1.CreateProfilingJobRequest,
-) error {
+func profilingTargetArgs(req *v1.CreateProfilingJobRequest) ([]string, error) {
+	switch req.ProfilingType {
+	case string(profiling.TypeCPU), string(profiling.TypeMemory):
+	default:
+		return nil, nil
+	}
 	language, err := profiling.ParseLanguage(req.Language)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	implementation, ok := profiling.ImplementationFor(language)
 	if !ok {
-		return fmt.Errorf("profiling implementation not found for %q", language)
+		return nil, fmt.Errorf("profiling implementation not found for %q", language)
 	}
 	native := implementation == profiling.ImplementationNative
 	hasNativeSelection := req.PID != 0 || req.ThreadGroup || len(req.CPUIDs) > 0
 	if hasNativeSelection && !native {
-		return errors.New("pid, cpu_ids, and thread_group are supported only by native profiling")
+		return nil, errors.New(
+			"pid, cpu_ids, and thread_group are supported only by native profiling",
+		)
 	}
 
+	targetArgs := make([]string, 0, 6)
 	if req.ContainerID != "" {
-		taskReq.TracerArgs = append(taskReq.TracerArgs, "--container-id", req.ContainerID)
+		targetArgs = append(targetArgs, "--container-id", req.ContainerID)
 	}
 	if !native {
-		return nil
+		return targetArgs, nil
 	}
 
 	if req.PID < 0 || int64(req.PID) > math.MaxInt32 {
-		return fmt.Errorf("pid must be between 1 and %d", math.MaxInt32)
+		return nil, fmt.Errorf("pid must be between 1 and %d", math.MaxInt32)
 	}
 	if req.PID != 0 && req.ContainerID != "" {
-		return errors.New("pid and container_id are mutually exclusive")
+		return nil, errors.New("pid and container_id are mutually exclusive")
 	}
 	if req.ThreadGroup && req.PID == 0 {
-		return errors.New("thread_group requires pid")
+		return nil, errors.New("thread_group requires pid")
 	}
 	if req.ProfilingType == string(profiling.TypeMemory) &&
 		req.PID == 0 && req.ContainerID == "" {
-		return errors.New("native memory profiling requires pid or container_id")
+		return nil, errors.New(
+			"native memory profiling requires pid or container_id",
+		)
 	}
 
 	if req.PID != 0 {
-		taskReq.TracerArgs = append(taskReq.TracerArgs, "--pid", strconv.Itoa(req.PID))
+		targetArgs = append(targetArgs, "--pid", strconv.Itoa(req.PID))
 	}
 	if req.ThreadGroup {
-		taskReq.TracerArgs = append(taskReq.TracerArgs, "--thread-group")
+		targetArgs = append(targetArgs, "--thread-group")
 	}
 	if len(req.CPUIDs) == 0 {
-		return nil
+		return targetArgs, nil
 	}
 	if req.ProfilingType != string(profiling.TypeCPU) {
-		return errors.New("cpu_ids are supported only by CPU profiling")
+		return nil, errors.New("cpu_ids are supported only by CPU profiling")
 	}
 
 	cpuIDs := append([]int(nil), req.CPUIDs...)
 	sort.Ints(cpuIDs)
 	for i, cpuID := range cpuIDs {
 		if cpuID < 0 {
-			return fmt.Errorf("cpu_id must not be negative: %d", cpuID)
+			return nil, fmt.Errorf("cpu_id must not be negative: %d", cpuID)
 		}
 		if i > 0 && cpuIDs[i-1] == cpuID {
-			return fmt.Errorf("duplicate cpu_id %d", cpuID)
+			return nil, fmt.Errorf("duplicate cpu_id %d", cpuID)
 		}
 	}
 	req.CPUIDs = cpuIDs
@@ -250,8 +259,8 @@ func appendProfilingTargetArgs(
 	for i, cpuID := range cpuIDs {
 		values[i] = strconv.Itoa(cpuID)
 	}
-	taskReq.TracerArgs = append(taskReq.TracerArgs, "--cpuid", strings.Join(values, ","))
-	return nil
+	targetArgs = append(targetArgs, "--cpuid", strings.Join(values, ","))
+	return targetArgs, nil
 }
 
 func newProfilingPrivateData(req *v1.CreateProfilingJobRequest) (json.RawMessage, error) {
