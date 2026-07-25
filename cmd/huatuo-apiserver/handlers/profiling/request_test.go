@@ -329,7 +329,7 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			},
 		},
 		{
-			name: "rwlock profiling is not available",
+			name: "rwlock profiling by PID",
 			req: v1.CreateProfilingJobRequest{
 				ProfilingType: "lock",
 				Language:      "go",
@@ -337,7 +337,19 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 				PID:           4242,
 				LockType:      profiletypes.LockType("rwlock"),
 			},
-			wantErr: `unsupported lock type "rwlock"`,
+			wantType: ProfilingLock,
+			wantTracerArgs: []string{
+				"-t", "lock",
+				"-l", "go",
+				"--lock-type", "rwlock",
+				"--lock-wait-threshold", "1us",
+				"--pid", "4242",
+				"--duration", "30",
+				"--aggr-interval", "10",
+				"--max-concurrent-procs", "2",
+				"--output-format", "remote",
+				"--output-storage", "/var/run/huatuo-toolstream.sock",
+			},
 		},
 		{
 			name: "spinlock profiling is not available",
@@ -348,7 +360,8 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 				PID:           4242,
 				LockType:      profiletypes.LockType("spinlock"),
 			},
-			wantErr: `unsupported lock type "spinlock"`,
+			wantErr: `unsupported lock type "spinlock" ` +
+				`(expected: mutex or rwlock)`,
 		},
 		{
 			name: "native memory requires a target",

@@ -328,8 +328,8 @@ func buildLockProfilingTracerArgs(
 	if lockType == profiling.LockTypeUnknown {
 		lockType = profiling.LockTypeMutex
 	}
-	if lockType != profiling.LockTypeMutex {
-		return "", fmt.Errorf("unsupported lock type %q", lockType)
+	if _, err := profiling.ParseLockType(string(lockType)); err != nil {
+		return "", err
 	}
 
 	threshold := strings.TrimSpace(req.LockWaitThreshold)

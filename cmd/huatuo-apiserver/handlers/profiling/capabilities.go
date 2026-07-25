@@ -54,7 +54,10 @@ func buildCapabilitiesResponse(h *Handler) v1.ProfilingCapabilitiesResponse {
 		MemoryLanguages:     memoryLanguages,
 		LockLanguages:       lockLanguages,
 		LockModes:           []profiling.LockMode{profiling.LockModeWaitTime},
-		LockTypes:           []profiling.LockType{profiling.LockTypeMutex},
+		LockTypes: []profiling.LockType{
+			profiling.LockTypeMutex,
+			profiling.LockTypeRWLock,
+		},
 		MemoryModes:         memoryModes,
 		AggregationInterval: cfg.AggregationInterval,
 		ExecutionTimeout:    cfg.ExecutionTimeout,
