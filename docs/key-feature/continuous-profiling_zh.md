@@ -57,9 +57,12 @@ curl -sS \
 
 | 字段 | 说明 |
 | --- | --- |
-| `types` | 支持的剖析类型：`cpu`、`memory` |
+| `types` | 支持的剖析类型：`cpu`、`memory`、`lock` |
 | `cpu_languages` | CPU 剖析支持的语言 |
 | `memory_languages` | 内存剖析支持的语言 |
+| `lock_languages` | 锁剖析支持的语言 |
+| `lock_modes` | 锁剖析的统计值；当前仅支持 `wait_time` |
+| `lock_types` | 锁原语；当前仅支持 `mutex` |
 | `memory_modes` | 内存剖析模式；键用于界面展示，值用于创建任务 |
 | `aggregation_interval` | 服务端采集数据的聚合周期，单位为秒 |
 | `execution_timeout` | 单个 profiler 子进程的执行超时，单位为秒 |
@@ -75,27 +78,33 @@ curl -sS \
 | `java` | `object_alloc` | JVM 对象分配 |
 | `java` | `object_usage` | JVM 存活对象 |
 
+锁剖析仅支持原生 `c`、`c++`、`go` 目标，只记录发生竞争的 mutex
+等待时间，不会启用宿主机级锁插桩。
+
 ### 3. 创建剖析任务
 
 `POST /v1/profiles` 的 JSON 参数如下：
 
 | 参数 | 是否必需 | 说明 |
 | --- | --- | --- |
-| `type` | 是 | 剖析类型：`cpu` 或 `memory` |
+| `type` | 是 | 剖析类型：`cpu`、`memory` 或 `lock` |
 | `language` | 是 | 目标进程语言，必须与剖析类型匹配 |
 | `duration` | 是 | 采集时长，单位为秒 |
 | `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
 | `container_id` | 否 | 目标容器 ID；不传表示对宿主机剖析 |
-| `pid` | 否 | 原生剖析的精确目标 PID；不能与 `container_id` 同时使用 |
-| `thread_group` | 否 | 采集 `pid` 所在线程组（TGID）的全部线程；必须同时指定 `pid` |
+| `pid` | 按 PID 采集原生任务时 | 精确目标 PID；原生内存和锁任务未指定 `container_id` 时必需 |
+| `thread_group` | 否 | 采集 `pid` 所在线程组（TGID）的全部线程；必须指定 `pid`，锁任务不支持 |
 | `cpu_ids` | 否 | 原生 CPU 剖析限定的 CPU ID |
 | `binary_match_path` | 否 | Java/Python CPU 剖析的目标可执行文件路径匹配条件；原生剖析不支持 |
 | `tool_path` | Java/Python 剖析必需 | Agent 主机上的工具安装目录：Java 使用 async-profiler，Python 使用 py-spy |
 | `memory_mode` | 内存剖析必需 | 内存剖析模式，必须与 `language` 匹配 |
+| `lock_mode` | 否 | 锁剖析统计值；仅支持且默认为 `wait_time` |
+| `lock_type` | 否 | 锁原语；仅支持且默认为 `mutex` |
+| `lock_wait_threshold` | 否 | 最小竞争等待时间，使用 `10us` 等 Go 时长，默认为 `1us` |
 
 `duration` 必须不小于两个 `aggregation_interval`，且 `duration + aggregation_interval` 必须小于 3600 秒。同一用户在同一节点上已有运行中的剖析任务时，服务端返回 `409 Conflict`。
 
-原生 CPU 剖析可以同时省略 `pid` 和 `container_id`，对整个宿主机采样。原生内存剖析必须指定其中一个。未启用 `thread_group` 时，`pid` 保持精确线程语义。
+原生 CPU 剖析可以同时省略 `pid` 和 `container_id`，对整个宿主机采样。原生内存和锁剖析必须指定其中一个。未启用 `thread_group` 时，`pid` 保持精确线程语义。
 
 创建限定 CPU 的 Go 线程组剖析任务：
 
@@ -135,6 +144,29 @@ curl -sS -i \
   "${API_BASE}/v1/profiles"
 ```
 
+创建限定 PID 的 Go mutex 竞争剖析任务：
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "lock",
+    "language": "go",
+    "duration": 60,
+    "pid": 4242,
+    "lock_mode": "wait_time",
+    "lock_type": "mutex",
+    "lock_wait_threshold": "10us",
+    "hostname": "node-01"
+  }' \
+  "${API_BASE}/v1/profiles"
+```
+
+锁剖析任务必须且只能指定 `pid` 或 `container_id` 之一。API 会拒绝
+宿主机级锁剖析和非原生语言。
+
 创建成功返回 `201 Created`，`Location` 响应头指向新任务，响应体包含后续查询所需的任务 ID：
 
 ```json
@@ -160,7 +192,7 @@ JOB_ID="<profile-job-id>"
 | `container_id` | 无 | 按容器 ID 精确过滤（兼容旧参数 `containerID`） |
 | `hostname` | 无 | 按节点主机名精确过滤 |
 | `status` | 无 | `pending`、`running`、`completed`、`failed`、`stopped` 或 `timeout` |
-| `type` | 无 | `cpu` 或 `memory`；不传时返回两种类型 |
+| `type` | 无 | `cpu`、`memory` 或 `lock`；不传时返回全部类型 |
 | `limit` | `50` | 每页数量，必须大于 0，最大为 500 |
 | `offset` | `0` | 起始偏移量，必须大于或等于 0 |
 | `sort` | `-start_time` | `start_time`、`end_time`、`host` 或 `container`；前置 `-` 表示降序 |
@@ -197,7 +229,7 @@ curl -sS \
 | `agent_task_id` | HUATUO Agent 任务 ID |
 | `container_id` | 目标容器 ID；宿主机任务为空 |
 | `hostname` | 目标节点主机名 |
-| `type` | `cpu` 或 `memory` |
+| `type` | `cpu`、`memory` 或 `lock` |
 | `language` | 目标进程语言 |
 | `memory_mode` | 内存剖析模式；CPU 任务为空 |
 | `binary_match_path` | 创建任务时指定的可执行文件匹配路径 |
@@ -205,6 +237,9 @@ curl -sS \
 | `pid` | 原生剖析的精确目标 PID；容器任务或宿主机级任务为空 |
 | `thread_group` | 是否采集该 PID 所在线程组 |
 | `cpu_ids` | 原生 CPU 剖析限定的 CPU ID |
+| `lock_mode` | 锁剖析统计值；当前锁任务为 `wait_time` |
+| `lock_type` | 锁原语；当前锁任务为 `mutex` |
+| `lock_wait_threshold` | profiler 记录的最小 mutex 竞争等待时间 |
 | `status` | 当前任务状态 |
 | `start_time`、`end_time` | 任务开始和结束时间；尚未产生时为空 |
 | `tracer_args` | huatuo-apiserver 实际下发给 profiler 的命令行参数 |

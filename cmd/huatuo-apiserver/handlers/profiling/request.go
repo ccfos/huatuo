@@ -22,9 +22,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/job"
+	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/pkg/profiling"
 )
@@ -35,6 +37,8 @@ type profilingJobListQuery struct {
 	Status      string `form:"status"`
 	Type        string `form:"type"`
 }
+
+const defaultLockWaitThreshold = "1us"
 
 type profilingJobListRequest struct {
 	ListParams server.ListParams
@@ -47,14 +51,17 @@ type patchProfilingJobRequest struct {
 }
 
 type profilingJobPrivateData struct {
-	BinaryMatchPath string `json:"binary_match_path"`
-	ToolPath        string `json:"tool_path"`
-	Duration        int    `json:"duration"`
-	Language        string `json:"language"`
-	MemoryMode      string `json:"memory_mode"`
-	CPUIDs          []int  `json:"cpu_ids,omitempty"`
-	PID             int    `json:"pid,omitempty"`
-	ThreadGroup     bool   `json:"thread_group,omitempty"`
+	BinaryMatchPath   string             `json:"binary_match_path"`
+	ToolPath          string             `json:"tool_path"`
+	Duration          int                `json:"duration"`
+	Language          string             `json:"language"`
+	MemoryMode        string             `json:"memory_mode"`
+	CPUIDs            []int              `json:"cpu_ids,omitempty"`
+	PID               int                `json:"pid,omitempty"`
+	ThreadGroup       bool               `json:"thread_group,omitempty"`
+	LockMode          profiling.LockMode `json:"lock_mode,omitempty"`
+	LockType          profiling.LockType `json:"lock_type,omitempty"`
+	LockWaitThreshold string             `json:"lock_wait_threshold,omitempty"`
 }
 
 func parseCreateProfilingJobRequest(ctx *server.Context) (*v1.CreateProfilingJobRequest, error) {
@@ -78,11 +85,20 @@ func buildCreateProfilingJobRequest(
 		TraceTimeout: cfg.ExecutionTimeout,
 	}
 
-	targetArgs, err := profilingTargetArgs(req)
-	if err != nil {
-		return nil, err
+	var targetArgs []string
+	var jobType job.JobType
+	var err error
+	if req.ProfilingType == string(profiling.TypeLock) {
+		jobType, err = buildProfilingTracerArgs(&taskReq, req)
+		if err == nil {
+			targetArgs, err = profilingTargetArgs(req)
+		}
+	} else {
+		targetArgs, err = profilingTargetArgs(req)
+		if err == nil {
+			jobType, err = buildProfilingTracerArgs(&taskReq, req)
+		}
 	}
-	jobType, err := buildProfilingTracerArgs(&taskReq, req)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +180,8 @@ func buildProfilingTracerArgs(
 			return "", err
 		}
 		return job.JobTypeProfilingMemory, nil
+	case string(profiling.TypeLock):
+		return buildLockProfilingTracerArgs(taskReq, req)
 	default:
 		return "", fmt.Errorf("unsupported profiling type %q", req.ProfilingType)
 	}
@@ -187,7 +205,8 @@ func appendProfilingToolPath(
 
 func profilingTargetArgs(req *v1.CreateProfilingJobRequest) ([]string, error) {
 	switch req.ProfilingType {
-	case string(profiling.TypeCPU), string(profiling.TypeMemory):
+	case string(profiling.TypeCPU), string(profiling.TypeMemory),
+		string(profiling.TypeLock):
 	default:
 		return nil, nil
 	}
@@ -208,27 +227,47 @@ func profilingTargetArgs(req *v1.CreateProfilingJobRequest) ([]string, error) {
 	}
 
 	targetArgs := make([]string, 0, 6)
+	if native {
+		if req.PID < 0 || int64(req.PID) > math.MaxInt32 {
+			return nil, fmt.Errorf("pid must be between 1 and %d", math.MaxInt32)
+		}
+		if req.PID != 0 && req.ContainerID != "" {
+			if req.ProfilingType == string(profiling.TypeLock) {
+				return nil, errors.New(
+					"lock profiling requires exactly one of pid or container_id",
+				)
+			}
+			return nil, errors.New("pid and container_id are mutually exclusive")
+		}
+		if req.ThreadGroup && req.PID == 0 {
+			return nil, errors.New("thread_group requires pid")
+		}
+		switch req.ProfilingType {
+		case string(profiling.TypeMemory):
+			if req.PID == 0 && req.ContainerID == "" {
+				return nil, errors.New(
+					"native memory profiling requires pid or container_id",
+				)
+			}
+		case string(profiling.TypeLock):
+			if req.PID == 0 && req.ContainerID == "" {
+				return nil, errors.New(
+					"lock profiling requires exactly one of pid or container_id",
+				)
+			}
+			if req.ContainerID != "" {
+				if err := pod.ValidateContainerID(req.ContainerID); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
 	if req.ContainerID != "" {
 		targetArgs = append(targetArgs, "--container-id", req.ContainerID)
 	}
 	if !native {
 		return targetArgs, nil
-	}
-
-	if req.PID < 0 || int64(req.PID) > math.MaxInt32 {
-		return nil, fmt.Errorf("pid must be between 1 and %d", math.MaxInt32)
-	}
-	if req.PID != 0 && req.ContainerID != "" {
-		return nil, errors.New("pid and container_id are mutually exclusive")
-	}
-	if req.ThreadGroup && req.PID == 0 {
-		return nil, errors.New("thread_group requires pid")
-	}
-	if req.ProfilingType == string(profiling.TypeMemory) &&
-		req.PID == 0 && req.ContainerID == "" {
-		return nil, errors.New(
-			"native memory profiling requires pid or container_id",
-		)
 	}
 
 	if req.PID != 0 {
@@ -263,16 +302,76 @@ func profilingTargetArgs(req *v1.CreateProfilingJobRequest) ([]string, error) {
 	return targetArgs, nil
 }
 
+func buildLockProfilingTracerArgs(
+	taskReq *job.AgentTaskRequest,
+	req *v1.CreateProfilingJobRequest,
+) (job.JobType, error) {
+	language, err := profiling.ParseLanguage(req.Language)
+	if err != nil || !profiling.IsSupported(language, profiling.TypeLock) {
+		return "", fmt.Errorf("lock profiling not supported for %q", req.Language)
+	}
+	if req.BinaryMatchPath != "" {
+		return "", errors.New("binary_match_path is not supported by lock profiling")
+	}
+	if req.MemoryMode != "" {
+		return "", errors.New("memory_mode is not supported by lock profiling")
+	}
+
+	mode := req.LockMode
+	if mode == profiling.LockModeUnknown {
+		mode = profiling.LockModeWaitTime
+	}
+	if mode != profiling.LockModeWaitTime {
+		return "", fmt.Errorf("unsupported lock mode %q", mode)
+	}
+	lockType := req.LockType
+	if lockType == profiling.LockTypeUnknown {
+		lockType = profiling.LockTypeMutex
+	}
+	if lockType != profiling.LockTypeMutex {
+		return "", fmt.Errorf("unsupported lock type %q", lockType)
+	}
+
+	threshold := strings.TrimSpace(req.LockWaitThreshold)
+	if threshold == "" {
+		threshold = defaultLockWaitThreshold
+	}
+	waitThreshold, err := time.ParseDuration(threshold)
+	if err != nil {
+		return "", fmt.Errorf("invalid lock_wait_threshold %q: %w", threshold, err)
+	}
+	if waitThreshold < 0 || waitThreshold > time.Hour {
+		return "", errors.New("lock_wait_threshold must be between 0 and 1h")
+	}
+
+	taskReq.TracerArgs = []string{
+		"-t", string(profiling.TypeLock),
+		"-l", string(language),
+	}
+	taskReq.TracerArgs = append(
+		taskReq.TracerArgs,
+		"--lock-type", string(lockType),
+		"--lock-wait-threshold", threshold,
+	)
+	req.LockMode = mode
+	req.LockType = lockType
+	req.LockWaitThreshold = threshold
+	return job.JobTypeProfilingLock, nil
+}
+
 func newProfilingPrivateData(req *v1.CreateProfilingJobRequest) (json.RawMessage, error) {
 	data, err := json.Marshal(profilingJobPrivateData{
-		BinaryMatchPath: req.BinaryMatchPath,
-		ToolPath:        strings.TrimSpace(req.ToolPath),
-		Duration:        req.Duration,
-		Language:        req.Language,
-		MemoryMode:      req.MemoryMode,
-		CPUIDs:          req.CPUIDs,
-		PID:             req.PID,
-		ThreadGroup:     req.ThreadGroup,
+		BinaryMatchPath:   req.BinaryMatchPath,
+		ToolPath:          strings.TrimSpace(req.ToolPath),
+		Duration:          req.Duration,
+		Language:          req.Language,
+		MemoryMode:        req.MemoryMode,
+		CPUIDs:            req.CPUIDs,
+		PID:               req.PID,
+		ThreadGroup:       req.ThreadGroup,
+		LockMode:          req.LockMode,
+		LockType:          req.LockType,
+		LockWaitThreshold: req.LockWaitThreshold,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encoding profiling private data: %w", err)
@@ -313,11 +412,17 @@ func buildProfilingJobQuery(query profilingJobListQuery) (job.JobQuery, error) {
 	}
 	switch query.Type {
 	case "":
-		jobQuery.Types = []job.JobType{job.JobTypeProfilingMemory, job.JobTypeProfilingCPU}
+		jobQuery.Types = []job.JobType{
+			job.JobTypeProfilingMemory,
+			job.JobTypeProfilingCPU,
+			job.JobTypeProfilingLock,
+		}
 	case "cpu":
 		jobQuery.Types = []job.JobType{job.JobTypeProfilingCPU}
 	case "memory":
 		jobQuery.Types = []job.JobType{job.JobTypeProfilingMemory}
+	case "lock":
+		jobQuery.Types = []job.JobType{job.JobTypeProfilingLock}
 	default:
 		return job.JobQuery{}, fmt.Errorf("invalid type %q", query.Type)
 	}

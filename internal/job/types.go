@@ -37,6 +37,8 @@ const (
 	JobTypeProfilingCPU JobType = "profiling_cpu"
 	// JobTypeProfilingMemory identifies memory profiling jobs.
 	JobTypeProfilingMemory JobType = "profiling_memory"
+	// JobTypeProfilingLock identifies lock profiling jobs.
+	JobTypeProfilingLock JobType = "profiling_lock"
 	// JobTypeTracing identifies tracing jobs.
 	JobTypeTracing JobType = "tracing"
 )
