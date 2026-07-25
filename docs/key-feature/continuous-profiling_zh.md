@@ -62,7 +62,7 @@ curl -sS \
 | `memory_languages` | 内存剖析支持的语言 |
 | `lock_languages` | 锁剖析支持的语言 |
 | `lock_modes` | 锁剖析的统计值；当前仅支持 `wait_time` |
-| `lock_types` | 锁原语；当前仅支持 `mutex` |
+| `lock_types` | 锁原语：`mutex`、`spinlock` 和 `rwlock` |
 | `memory_modes` | 内存剖析模式；键用于界面展示，值用于创建任务 |
 | `aggregation_interval` | 服务端采集数据的聚合周期，单位为秒 |
 | `execution_timeout` | 单个 profiler 子进程的执行超时，单位为秒 |
@@ -78,7 +78,8 @@ curl -sS \
 | `java` | `object_alloc` | JVM 对象分配 |
 | `java` | `object_usage` | JVM 存活对象 |
 
-锁剖析仅支持原生 `c`、`c++`、`go` 目标，只记录发生竞争的 mutex
+锁剖析仅支持原生 `c`、`c++`、`go` 目标，只记录发生竞争的 mutex、spinlock
+或 rwlock
 等待时间，不会启用宿主机级锁插桩。
 
 ### 3. 创建剖析任务
@@ -93,13 +94,13 @@ curl -sS \
 | `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
 | `container_id` | 否 | 目标容器 ID；不传表示对宿主机剖析 |
 | `pid` | 按 PID 采集原生任务时 | 精确目标 PID；原生内存和锁任务未指定 `container_id` 时必需 |
-| `thread_group` | 否 | 采集 `pid` 所在线程组（TGID）的全部线程；必须指定 `pid`，锁任务不支持 |
+| `thread_group` | 否 | 采集 `pid` 所在线程组（TGID）的全部线程；必须指定 `pid` |
 | `cpu_ids` | 否 | 原生 CPU 剖析限定的 CPU ID |
 | `binary_match_path` | 否 | Java/Python CPU 剖析的目标可执行文件路径匹配条件；原生剖析不支持 |
 | `tool_path` | Java/Python 剖析必需 | Agent 主机上的工具安装目录：Java 使用 async-profiler，Python 使用 py-spy |
 | `memory_mode` | 内存剖析必需 | 内存剖析模式，必须与 `language` 匹配 |
 | `lock_mode` | 否 | 锁剖析统计值；仅支持且默认为 `wait_time` |
-| `lock_type` | 否 | 锁原语；仅支持且默认为 `mutex` |
+| `lock_type` | 否 | 锁原语：`mutex`、`spinlock` 或 `rwlock`；默认为 `mutex` |
 | `lock_wait_threshold` | 否 | 最小竞争等待时间，使用 `10us` 等 Go 时长，默认为 `1us` |
 
 `duration` 必须不小于两个 `aggregation_interval`，且 `duration + aggregation_interval` 必须小于 3600 秒。同一用户在同一节点上已有运行中的剖析任务时，服务端返回 `409 Conflict`。
@@ -238,8 +239,8 @@ curl -sS \
 | `thread_group` | 是否采集该 PID 所在线程组 |
 | `cpu_ids` | 原生 CPU 剖析限定的 CPU ID |
 | `lock_mode` | 锁剖析统计值；当前锁任务为 `wait_time` |
-| `lock_type` | 锁原语；当前锁任务为 `mutex` |
-| `lock_wait_threshold` | profiler 记录的最小 mutex 竞争等待时间 |
+| `lock_type` | 锁原语：`mutex`、`spinlock` 或 `rwlock` |
+| `lock_wait_threshold` | profiler 记录的最小锁竞争等待时间 |
 | `status` | 当前任务状态 |
 | `start_time`、`end_time` | 任务开始和结束时间；尚未产生时为空 |
 | `tracer_args` | huatuo-apiserver 实际下发给 profiler 的命令行参数 |

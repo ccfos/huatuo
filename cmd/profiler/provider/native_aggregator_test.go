@@ -103,6 +103,22 @@ func TestLockPrefixFramesIncludesRWLockAccess(t *testing.T) {
 	}
 }
 
+func TestLockPrefixFramesIncludesSpinlockType(t *testing.T) {
+	frames, value := lockPrefixFrames(&lockStackEntry{
+		Proc:      &processIDNameLock{Pid: 12, Name: "app", Lock: 0xab},
+		WaitTime:  42,
+		Contended: 3,
+		LockType:  profiling.LockTypeSpinlock,
+	})
+
+	if value != 42 {
+		t.Fatalf("value = %d, want 42", value)
+	}
+	if len(frames) < 2 || frames[1] != "lock type: spinlock" {
+		t.Fatalf("frames = %v, want spinlock type", frames)
+	}
+}
+
 func requireSingleLockRecord(
 	t *testing.T,
 	aggregator *nativeAggregator,

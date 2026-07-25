@@ -28,6 +28,7 @@ import (
 	"huatuo-bamai/internal/profiler/output"
 	_ "huatuo-bamai/internal/profiler/output/flamegraph"
 	_ "huatuo-bamai/internal/profiler/output/raw"
+	"huatuo-bamai/internal/profiler/procutil"
 	psignal "huatuo-bamai/internal/profiler/signal"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/profiling"
@@ -73,6 +74,8 @@ type TracerData struct {
 	MetricData any                   `json:"metric_data,omitempty"`
 	FlameData  *profiler.ProfileData `json:"flamedata"`
 }
+
+var threadGroupID = procutil.ThreadGroupID
 
 func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, error) {
 	ctx, cancel := context.WithCancel(cliCtx.Context)
@@ -140,6 +143,13 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	language, err := profiling.ParseLanguage(cliCtx.String("language"))
 	if err != nil {
 		return nil, err
+	}
+	if cliCtx.Bool("thread-group") && len(pids) == 1 {
+		tgid, err := threadGroupID(pids[0])
+		if err != nil {
+			return nil, err
+		}
+		pids[0] = tgid
 	}
 	mode := profiling.MemoryModeUnknown
 	if cliCtx.String("memory-mode") != "" {

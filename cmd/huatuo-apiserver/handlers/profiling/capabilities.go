@@ -49,12 +49,16 @@ func buildCapabilitiesResponse(h *Handler) v1.ProfilingCapabilitiesResponse {
 	cfg := h.profilingConfig
 
 	return v1.ProfilingCapabilitiesResponse{
-		Types:               []string{string(profiling.TypeCPU), string(profiling.TypeMemory), string(profiling.TypeLock)},
-		CPULanguages:        cpuLanguages,
-		MemoryLanguages:     memoryLanguages,
-		LockLanguages:       lockLanguages,
-		LockModes:           []profiling.LockMode{profiling.LockModeWaitTime},
-		LockTypes:           []profiling.LockType{profiling.LockTypeMutex},
+		Types:           []string{string(profiling.TypeCPU), string(profiling.TypeMemory), string(profiling.TypeLock)},
+		CPULanguages:    cpuLanguages,
+		MemoryLanguages: memoryLanguages,
+		LockLanguages:   lockLanguages,
+		LockModes:       []profiling.LockMode{profiling.LockModeWaitTime},
+		LockTypes: []profiling.LockType{
+			profiling.LockTypeMutex,
+			profiling.LockTypeSpinlock,
+			profiling.LockTypeRWLock,
+		},
 		MemoryModes:         memoryModes,
 		AggregationInterval: cfg.AggregationInterval,
 		ExecutionTimeout:    cfg.ExecutionTimeout,

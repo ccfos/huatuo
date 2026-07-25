@@ -203,6 +203,7 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			req: v1.CreateProfilingJobRequest{
 				ProfilingType: "cpu",
 				Language:      "java",
+				ToolPath:      "/opt/async-profiler",
 				Duration:      30,
 				PID:           4242,
 			},
