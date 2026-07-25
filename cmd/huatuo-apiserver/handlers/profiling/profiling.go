@@ -24,6 +24,7 @@ import (
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler"
 	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
@@ -259,34 +260,28 @@ func getFlameGraphURL(base string, jobResult *job.Job) string {
 	var dashboardSlug string
 	var labelKey string
 	var labelVal string
+	var profileTypeID string
 
 	from := jobResult.StartTime.UTC().Format("2006-01-02T15:04:05.000Z")
 	to := jobResult.EndTime.UTC().Format("2006-01-02T15:04:05.000Z")
 
+	switch jobResult.Type {
+	case ProfilingMemory:
+		profileTypeID = profiler.ProfileTypeMemSample
+	case ProfilingCPU:
+		profileTypeID = profiler.ProfileTypeCpuSample
+	default:
+		return ""
+	}
+
 	if jobResult.ContainerID != "" {
-		switch jobResult.Type {
-		case ProfilingMemory:
-			dashboardUID = "container-memory-profiling"
-			dashboardSlug = "e5aeb9-e599a8-memory-profiling"
-		case ProfilingCPU:
-			dashboardUID = "container-cpu-profiling"
-			dashboardSlug = "e5aeb9-e599a8-cpu-profiling"
-		default:
-			return ""
-		}
+		dashboardUID = "continuous-profiling-container"
+		dashboardSlug = "continuous-profiling-container"
 		labelKey = "var-container_id"
 		labelVal = jobResult.ContainerID
 	} else {
-		switch jobResult.Type {
-		case ProfilingMemory:
-			dashboardUID = "host-memory-profiling"
-			dashboardSlug = "e5aebf-e4b8bb-e69cba-memory-profiling"
-		case ProfilingCPU:
-			dashboardUID = "host-cpu-profiling"
-			dashboardSlug = "e5aebf-e4b8bb-e69cba-cpu-profiling"
-		default:
-			return ""
-		}
+		dashboardUID = "continuous-profiling-host"
+		dashboardSlug = "continuous-profiling-host"
 		labelKey = "var-hostname"
 		labelVal = jobResult.Hostname
 	}
@@ -297,6 +292,7 @@ func getFlameGraphURL(base string, jobResult *job.Job) string {
 	query.Set("to", to)
 	query.Set("timezone", "browser")
 	query.Set(labelKey, labelVal)
+	query.Set("var-type", profileTypeID)
 
 	return fmt.Sprintf("%s/%s/%s?%s", base, dashboardUID, dashboardSlug, query.Encode())
 }

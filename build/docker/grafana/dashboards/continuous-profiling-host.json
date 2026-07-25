@@ -24,7 +24,20 @@
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Container profiles",
+      "tooltip": "Open the container profiling dashboard.",
+      "type": "link",
+      "url": "/d/continuous-profiling-container/continuous-profiling-container"
+    }
+  ],
   "panels": [
     {
       "datasource": {
@@ -140,7 +153,8 @@
           "timeField": "uploaded_time"
         }
       ],
-      "title": "",
+      "description": "Number of profile snapshots stored in each time bucket.",
+      "title": "Profile documents ingested",
       "type": "timeseries"
     },
     {
@@ -178,7 +192,8 @@
           "spanSelector": []
         }
       ],
-      "title": "$hostname",
+      "description": "Merged profile for the selected host, type, and time range.",
+      "title": "$hostname flame graph and Top table",
       "type": "flamegraph"
     }
   ],
@@ -217,29 +232,19 @@
             "selected": false,
             "text": "memory:alloc_space:bytes:space:bytes",
             "value": "memory:alloc_space:bytes:space:bytes"
-          },
-          {
-            "selected": false,
-            "text": "process_lock:lock:count:lock:count",
-            "value": "process_lock:lock:count:lock:count"
-          },
-          {
-            "selected": false,
-            "text": "process_lock:lock:nanoseconds:lock:nanoseconds",
-            "value": "process_lock:lock:nanoseconds:lock:nanoseconds"
           }
         ],
-        "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes,process_lock:lock:count:lock:count,process_lock:lock:nanoseconds:lock:nanoseconds",
+        "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes",
         "type": "custom"
       }
     ]
   },
   "time": {
-    "from": "now-1y",
+    "from": "now-1h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Continuous Profiling(host)",
+  "title": "Continuous Profiling (Host)",
   "uid": "continuous-profiling-host"
 }

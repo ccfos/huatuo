@@ -224,7 +224,38 @@ Profiling jobs use these statuses:
 | `failed` | The job failed; inspect `error_message` for the cause |
 | `timeout` | The job exceeded its allowed execution time |
 
-### 6. Get Raw Profiling Data
+### 6. Inspect Profiles in Grafana
+
+Grafana provisioning includes separate host and container continuous profiling
+dashboards. Both dashboards show the number of stored profile snapshots and a
+merged flame graph with a Top table for the selected time range:
+
+- The host dashboard selects an exact `hostname` and excludes container
+  profiles.
+- The container dashboard selects an exact `container_id` and the reporting
+  `hostname`. Container names are not used as identifiers because they are not
+  guaranteed to be unique.
+
+CPU and memory are the only profile types exposed by these dashboards. A
+completed job's `results.url` opens the corresponding dashboard with its
+target, profile type, and collection window preselected.
+
+The Pyroscope datasource sends queries to huatuo-apiserver. If API
+authentication is enabled, configure a dedicated user with
+`POST /v1/profiles/flamegraph/**` permission and pass the same user ID to the
+Grafana container without committing it:
+
+```bash
+export HUATUO_GRAFANA_PROFILE_TOKEN="<Auth.users.ID>"
+docker compose -f build/docker/docker-compose.yml up -d
+```
+
+The dashboards intentionally use the existing merged-stacktrace API.
+Profile-value timelines, grouped Top-N series, and comparison views require
+Pyroscope-compatible `SelectSeries` and `Diff` endpoints and are not
+provisioned until those endpoints are available.
+
+### 7. Get Raw Profiling Data
 
 `GET /v1/profiles/:id/raw` uses `agent_task_id` to query raw profiling data from storage. The response can be large, so it can be written directly to a file:
 
@@ -239,7 +270,7 @@ The raw records are in `data.data`; `data.limit`, `data.offset`, and
 `data.has_more` describe the page. If the job does not yet have an Agent task
 ID, the endpoint returns `400 Bad Request`.
 
-### 7. Stop a Profiling Job
+### 8. Stop a Profiling Job
 
 Only jobs in `pending` or `running` status can be stopped. The `PATCH` request accepts only `stopped` as the `status` value:
 
@@ -254,7 +285,7 @@ curl -sS \
 
 A successful stop returns `200 OK`. A job that has already ended returns `400 Bad Request`.
 
-### 8. Delete a Profiling Job
+### 9. Delete a Profiling Job
 
 Deletion removes only the job record. Jobs in `pending` or `running` status cannot be deleted directly and must be stopped first:
 
