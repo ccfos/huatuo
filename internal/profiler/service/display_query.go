@@ -108,6 +108,9 @@ func (s *Service) searchProfileDocuments(
 	if err != nil {
 		return nil, fmt.Errorf("count profiles: %w", err)
 	}
+	if count < 0 {
+		return nil, fmt.Errorf("count profiles: storage returned negative count %d", count)
+	}
 	if count > profileQueryLimit {
 		return nil, fmt.Errorf(
 			"%w: matched %d documents; narrow the time range or selector to at most %d",
@@ -126,10 +129,31 @@ func (s *Service) searchProfileDocuments(
 		if err != nil {
 			return nil, fmt.Errorf("search profiles at offset %d: %w", offset, err)
 		}
-		documents = append(documents, page...)
-		if len(page) < pageFilter.Limit {
-			break
+		if len(page) != pageFilter.Limit {
+			return nil, fmt.Errorf(
+				"search profiles at offset %d: storage returned %d documents, expected %d",
+				offset,
+				len(page),
+				pageFilter.Limit,
+			)
 		}
+		for index, document := range page {
+			if document == nil {
+				return nil, fmt.Errorf(
+					"search profiles at offset %d: storage returned nil document at page index %d",
+					offset,
+					index,
+				)
+			}
+		}
+		documents = append(documents, page...)
+	}
+	if int64(len(documents)) != count {
+		return nil, fmt.Errorf(
+			"search profiles: storage returned %d documents after count reported %d",
+			len(documents),
+			count,
+		)
 	}
 	return documents, nil
 }
@@ -161,26 +185,27 @@ func (s *Service) selectProfileTree(
 	}
 
 	tree := new(phlaremodel.Tree)
+	hasSamples := false
 	for _, document := range documents {
-		if document == nil {
-			continue
-		}
-		if err := addProfileDocumentToTree(tree, document, selection.sampleType); err != nil {
-			return nil, false, err
+		if addProfileDocumentToTree(tree, document, selection.sampleType) {
+			hasSamples = true
 		}
 	}
-	return tree, len(documents) > 0, nil
+	if !hasSamples && !allowEmpty {
+		return nil, false, ErrProfilesAbsent
+	}
+	return tree, hasSamples, nil
 }
 
 func addProfileDocumentToTree(
 	tree *phlaremodel.Tree,
 	document *ProfileDocument,
 	sampleType string,
-) error {
+) bool {
 	profile := &document.TracerData.Flamedata.Profile
-	sampleTypeIndex, err := profileSampleTypeIndex(profile, sampleType)
-	if err != nil {
-		return err
+	sampleTypeIndex, ok := profileSampleTypeIndex(profile, sampleType)
+	if !ok {
+		return false
 	}
 
 	locations := make(map[uint64]*profilev1.Location, len(profile.Location))
@@ -195,6 +220,7 @@ func addProfileDocumentToTree(
 			functions[function.Id] = function
 		}
 	}
+	inserted := false
 	for _, sample := range profile.Sample {
 		if sample == nil || sampleTypeIndex >= len(sample.Value) {
 			continue
@@ -202,21 +228,22 @@ func addProfileDocumentToTree(
 		stack := profileSampleStack(profile, locations, functions, sample.LocationId)
 		if len(stack) > 0 {
 			tree.InsertStack(sample.Value[sampleTypeIndex], stack...)
+			inserted = true
 		}
 	}
-	return nil
+	return inserted
 }
 
-func profileSampleTypeIndex(profile *profilev1.Profile, sampleType string) (int, error) {
+func profileSampleTypeIndex(profile *profilev1.Profile, sampleType string) (int, bool) {
 	for i, valueType := range profile.SampleType {
 		if valueType == nil {
 			continue
 		}
 		if name, ok := profileString(profile.StringTable, valueType.Type); ok && name == sampleType {
-			return i, nil
+			return i, true
 		}
 	}
-	return -1, invalidProfileQueryf("sample type %q not found", sampleType)
+	return -1, false
 }
 
 func profileSampleStack(
@@ -347,10 +374,7 @@ func (s *Service) SelectSeries(
 		if document == nil {
 			continue
 		}
-		value, found, err := profileDocumentSampleTotal(document, selection.sampleType)
-		if err != nil {
-			return nil, err
-		}
+		value, found := profileDocumentSampleTotal(document, selection.sampleType)
 		if !found {
 			continue
 		}
@@ -451,11 +475,11 @@ func normalizeProfileGroupBy(groupBy []string) ([]string, error) {
 func profileDocumentSampleTotal(
 	document *ProfileDocument,
 	sampleType string,
-) (float64, bool, error) {
+) (float64, bool) {
 	profile := &document.TracerData.Flamedata.Profile
-	index, err := profileSampleTypeIndex(profile, sampleType)
-	if err != nil {
-		return 0, false, err
+	index, ok := profileSampleTypeIndex(profile, sampleType)
+	if !ok {
+		return 0, false
 	}
 	var total float64
 	var found bool
@@ -466,7 +490,7 @@ func profileDocumentSampleTotal(
 		total += float64(sample.Value[index])
 		found = true
 	}
-	return total, found, nil
+	return total, found
 }
 
 func profileSeriesLabels(
