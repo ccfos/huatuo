@@ -132,3 +132,15 @@ func TestNormalizeProfileAggregationFieldSupportsDimensions(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildProfileSearchQueryUsesStablePaginationOrder(t *testing.T) {
+	query := buildProfileSearchQuery(&SearchFilter{Limit: 1000, Offset: 1000})
+	want := []driver.Sort{
+		{Field: profileFieldUploadedTime, Desc: true},
+		{Field: profileFieldTracerID},
+	}
+
+	if !reflect.DeepEqual(query.Sorts, want) {
+		t.Fatalf("query sorts = %#v, want %#v", query.Sorts, want)
+	}
+}

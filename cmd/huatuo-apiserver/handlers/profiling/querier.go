@@ -39,16 +39,11 @@ func handleProto[Request, Response any](
 
 	resp, err := invoke(ctx.Request().Context(), req)
 	if err != nil {
-		if errors.Is(err, profileService.ErrInvalidQuery) {
-			ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-			return nil
+		status, message := profileQueryHTTPError(err)
+		if status == http.StatusInternalServerError {
+			log.WithError(err).WithField("operation", operation).Error("profile query failed")
 		}
-		if errors.Is(err, profileService.ErrProfilesAbsent) {
-			ctx.JSON(http.StatusNotFound, map[string]any{"message": "profiles not found"})
-			return nil
-		}
-		log.WithError(err).WithField("operation", operation).Error("profile query failed")
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
+		ctx.JSON(status, map[string]any{"message": message})
 		return nil
 	}
 
@@ -57,12 +52,33 @@ func handleProto[Request, Response any](
 	return nil
 }
 
+func profileQueryHTTPError(err error) (int, string) {
+	switch {
+	case errors.Is(err, profileService.ErrInvalidQuery):
+		return http.StatusBadRequest, err.Error()
+	case errors.Is(err, profileService.ErrProfilesAbsent):
+		return http.StatusNotFound, "profiles not found"
+	case errors.Is(err, profileService.ErrProfileQueryLimitExceeded):
+		return http.StatusUnprocessableEntity, err.Error()
+	default:
+		return http.StatusInternalServerError, "internal error"
+	}
+}
+
 func (h *Handler) displaySelectMergeStacktraces(ctx *server.Context) error {
 	return handleProto(ctx, "select_merge_stacktraces", h.profileService.SelectMergeStacktraces)
 }
 
 func (h *Handler) displayProfileTypes(ctx *server.Context) error {
 	return handleProto(ctx, "profile_types", h.profileService.ProfileTypes)
+}
+
+func (h *Handler) displaySelectSeries(ctx *server.Context) error {
+	return handleProto(ctx, "select_series", h.profileService.SelectSeries)
+}
+
+func (h *Handler) displayDiff(ctx *server.Context) error {
+	return handleProto(ctx, "diff", h.profileService.Diff)
 }
 
 func (h *Handler) displayLabelNames(ctx *server.Context) error {

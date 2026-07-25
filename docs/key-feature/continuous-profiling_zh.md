@@ -263,6 +263,23 @@ curl -sS -i \
 
 删除成功返回 `204 No Content`，不包含响应体。任务仍在运行时返回 `409 Conflict`。
 
+### 9. Pyroscope 兼容查询
+
+Profiling API 在
+`/v1/profiles/flamegraph/querier.v1.QuerierService/` 下实现 Pyroscope 的
+`SelectSeries` 和 `Diff` protobuf 方法。`SelectSeries` 按时间桶返回求和或
+平均聚合结果；`Diff` 比较两个独立时间窗口并返回双向火焰图。
+
+选择器只支持精确匹配，可使用 `id`、`hostname`、`container_id`、
+`container_hostname` 和 `tracer`；剖析类型由 protobuf 请求单独提供。
+正则、否定匹配和任意标签会返回 `400 Bad Request`。
+
+服务读取剖析数据前会先统计匹配文档数。单次选择最多读取 10,000 条，
+每页 1,000 条并使用稳定排序。超过上限时返回
+`422 Unprocessable Entity`，调用方需要缩小时间范围或目标范围。合并查询
+没有数据，或差异查询两侧都没有数据时返回 `404 Not Found`；存储故障返回
+`500 Internal Server Error`。
+
 ## 📖 profiler 命令行功能概述
 
 `profiler` 是 HUATUO 提供的独立性能剖析命令行工具。它可以直接对宿主机进程或容器内进程采样，不依赖 huatuo-apiserver、Elasticsearch 或 Grafana。工具支持 C、C++、Go、Java 和 Python 进程，并将调用栈输出为折叠栈或 SVG 火焰图。
