@@ -18,23 +18,15 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
+	"huatuo-bamai/core/autotracing"
 )
 
 func TestNewProfileStoresRegistersElasticsearchAndPyroscope(t *testing.T) {
-	elasticsearch := httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-Elastic-Product", "Elasticsearch")
-			_, _ = w.Write([]byte(
-				`{"name":"test","version":{"number":"7.17.0"}}`,
-			))
-		},
-	))
-	t.Cleanup(elasticsearch.Close)
-
+	elasticsearch := newElasticsearchInfoServer(t)
 	cfg := &config.BamaiConfig{}
 	cfg.Storage.ES.Address = elasticsearch.URL
 	cfg.Storage.ES.Username = "elastic"
@@ -42,7 +34,11 @@ func TestNewProfileStoresRegistersElasticsearchAndPyroscope(t *testing.T) {
 	cfg.Storage.ES.Index = "profiles"
 	cfg.Storage.Pyroscope.Address = "http://127.0.0.1:4040"
 
-	stores, err := newProfileStores(context.Background(), cfg)
+	stores, err := newProfileStores(
+		context.Background(),
+		cfg,
+		autotracing.DisplayBackendPyroscope,
+	)
 	if err != nil {
 		t.Fatalf("newProfileStores returned error: %v", err)
 	}
@@ -68,7 +64,110 @@ func TestNewProfileStoresRejectsInvalidPyroscopeAuthentication(t *testing.T) {
 	cfg.Storage.Pyroscope.Address = "http://127.0.0.1:4040"
 	cfg.Storage.Pyroscope.Username = "user"
 
-	if _, err := newProfileStores(context.Background(), cfg); err == nil {
+	if _, err := newProfileStores(
+		context.Background(),
+		cfg,
+		autotracing.DisplayBackendPyroscope,
+	); err == nil {
 		t.Fatal("newProfileStores error = nil, want authentication error")
+	}
+}
+
+func TestNewProfileStoresAPIServerModeSkipsPyroscope(t *testing.T) {
+	elasticsearch := newElasticsearchInfoServer(t)
+	cfg := &config.BamaiConfig{}
+	cfg.Storage.ES.Address = elasticsearch.URL
+	cfg.Storage.ES.Username = "elastic"
+	cfg.Storage.ES.Password = "secret"
+	cfg.Storage.ES.Index = "profiles"
+	cfg.Storage.Pyroscope.Address = "http://127.0.0.1:4040"
+
+	stores, err := newProfileStores(
+		context.Background(),
+		cfg,
+		autotracing.DisplayBackendAPIServer,
+	)
+	if err != nil {
+		t.Fatalf("newProfileStores returned error: %v", err)
+	}
+	defer func() {
+		if err := closeProfileStores(context.Background(), stores); err != nil {
+			t.Errorf("closeProfileStores returned error: %v", err)
+		}
+	}()
+
+	if len(stores) != 1 || stores[0].Name != "elasticsearch" {
+		t.Fatalf("stores = %#v, want only elasticsearch", stores)
+	}
+}
+
+func newElasticsearchInfoServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Elastic-Product", "Elasticsearch")
+			_, _ = w.Write([]byte(
+				`{"name":"test","version":{"number":"7.17.0"}}`,
+			))
+		},
+	))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestValidateDisplayStorage(t *testing.T) {
+	tests := []struct {
+		name      string
+		backend   autotracing.DisplayBackend
+		configure func(*config.BamaiConfig)
+		esEnabled bool
+		want      string
+	}{
+		{
+			name:    "Pyroscope address required",
+			backend: autotracing.DisplayBackendPyroscope,
+			want:    "Storage.Pyroscope.Address",
+		},
+		{
+			name:    "API server Elasticsearch required",
+			backend: autotracing.DisplayBackendAPIServer,
+			want:    "Storage.ES address, username, and password",
+		},
+		{
+			name:    "Pyroscope configured",
+			backend: autotracing.DisplayBackendPyroscope,
+			configure: func(cfg *config.BamaiConfig) {
+				cfg.Storage.Pyroscope.Address = "http://127.0.0.1:4040"
+			},
+		},
+		{
+			name:      "API server configured",
+			backend:   autotracing.DisplayBackendAPIServer,
+			esEnabled: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.BamaiConfig{}
+			if tt.configure != nil {
+				tt.configure(cfg)
+			}
+			err := validateDisplayStorage(cfg, tt.backend, tt.esEnabled)
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("validateDisplayStorage returned error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf(
+					"validateDisplayStorage error = %v, want %q",
+					err,
+					tt.want,
+				)
+			}
+		})
 	}
 }

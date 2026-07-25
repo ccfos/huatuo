@@ -237,6 +237,23 @@ CPUIdle 和 CPUSys 自动追踪会保留原有 JSON 事件，并使用相同的 
 `cpu:nanoseconds`，并携带 `tracer_name`、`tracer_id`、`hostname`、适用时
 的 `container_id`、`tracer_type` 和 `profile_type` 标签。
 
+#### 5.4 AutoTracing 展示后端
+
+```toml
+[AutoTracing.Display]
+    Backend = "pyroscope"
+```
+
+- **Backend** 在运行时选择展示链路：
+  - `pyroscope`（默认）：profile 直接写入 Pyroscope，并由预置的 Grafana
+    Dashboard 展示，必须配置 `Storage.Pyroscope.Address`。
+  - `apiserver`：保留 Elasticsearch 和 huatuo-apiserver 展示链路，必须
+    配置 Elasticsearch 地址、用户名和密码。
+
+修改配置并重启 huatuo-bamai 即可切换模式。切换不会改变触发阈值、perf
+执行或快照采集。`pyroscope` 模式仍可保留 Elasticsearch，用于保存原有
+JSON 事件，同时将 Pyroscope 注册为 profile store。
+
 ### 6. 自动追踪配置
 
 自动追踪模块是 HUATUO 的智能特性之一，可根据阈值自动触发特定性能追踪，减少人工干预。

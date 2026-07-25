@@ -246,6 +246,24 @@ write a CPU pprof profile with the same tracer ID. The profile uses
 `hostname`, `container_id` when applicable, `tracer_type`, and `profile_type`
 labels.
 
+#### 5.4 AutoTracing Display Backend
+
+```toml
+[AutoTracing.Display]
+    Backend = "pyroscope"
+```
+
+- **Backend** selects the presentation path at runtime:
+  - `pyroscope` (default) writes profiles directly to Pyroscope for the
+    provisioned Grafana dashboard. `Storage.Pyroscope.Address` is required.
+  - `apiserver` keeps the existing Elasticsearch and huatuo-apiserver path.
+    The Elasticsearch address, username, and password are required.
+
+Changing the backend and restarting huatuo-bamai does not change trigger
+thresholds, perf execution, or snapshot collection. In `pyroscope` mode,
+Elasticsearch can remain configured for the existing JSON event stream and
+Pyroscope is added as a profile store.
+
 ### 6. Automatic Tracing
 
 The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.

@@ -15,6 +15,8 @@
 package config
 
 import (
+	"fmt"
+
 	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/core/events"
 	collector "huatuo-bamai/core/metrics"
@@ -96,6 +98,9 @@ func Load(path string) error {
 	if err := internalconfig.Load(path, cfg); err != nil {
 		return err
 	}
+	if _, err := cfg.AutoTracing.Display.ResolveBackend(); err != nil {
+		return fmt.Errorf("validate config: %w", err)
+	}
 
 	cfg.RuntimeCgroup.LimitMem *= 1024 * 1024
 	configFile = path
@@ -110,6 +115,17 @@ func Get() *BamaiConfig {
 
 // Set updates a config field by dot-separated key.
 func Set(key string, val any) error {
+	if key == "AutoTracing.Display.Backend" {
+		backend, ok := val.(string)
+		if !ok {
+			return fmt.Errorf("%s must be a string", key)
+		}
+		display := cfg.AutoTracing.Display
+		display.Backend = backend
+		if _, err := display.ResolveBackend(); err != nil {
+			return fmt.Errorf("validate config: %w", err)
+		}
+	}
 	if err := internalconfig.Set(cfg, key, val); err != nil {
 		return err
 	}

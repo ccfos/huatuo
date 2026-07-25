@@ -40,6 +40,18 @@ assert_services() {
 assert_services profiling "grafana huatuo-bamai pyroscope"
 assert_services full \
 	"elasticsearch grafana huatuo-apiserver huatuo-bamai prometheus pyroscope"
+default_services=$(
+	env -u COMPOSE_PROFILES docker compose \
+		--project-directory "$script_dir" \
+		config --services \
+		| sort \
+		| tr '\n' ' ' \
+		| sed 's/[[:space:]]*$//'
+)
+if [ "$default_services" != "grafana huatuo-bamai pyroscope" ]; then
+	echo "default services: got '$default_services', want profiling stack." >&2
+	exit 1
+fi
 
 profiling_compose=$(
 	COMPOSE_PROFILES=profiling docker compose \
@@ -89,6 +101,7 @@ PATH="$test_dir/fake-bin:$PATH" \
 test ! -e "$test_dir/curl-called"
 grep -q 'Address = ""' "$test_dir/rendered.conf"
 grep -q 'Address = "http://127.0.0.1:4040"' "$test_dir/rendered.conf"
+grep -q 'Backend = "pyroscope"' "$test_dir/rendered.conf"
 cmp "$project_dir/huatuo-bamai.conf" "$test_dir/source.conf"
 
 PATH="$test_dir/fake-bin:$PATH" \
@@ -103,6 +116,7 @@ PATH="$test_dir/fake-bin:$PATH" \
 test -e "$test_dir/curl-called"
 grep -q 'Address = "http://127.0.0.1:9200"' "$test_dir/full.conf"
 grep -q 'Address = "http://127.0.0.1:4040"' "$test_dir/full.conf"
+grep -q 'Backend = "apiserver"' "$test_dir/full.conf"
 cmp "$project_dir/huatuo-bamai.conf" "$test_dir/source.conf"
 
 if RUN_PATH="$test_dir/run" \
