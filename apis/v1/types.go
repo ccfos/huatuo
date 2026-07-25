@@ -22,13 +22,16 @@ import (
 
 // CreateProfilingJobRequest represents a request to create a profiling job.
 type CreateProfilingJobRequest struct {
-	ProfilingType   string `json:"type"`              // cpu or memory
-	BinaryMatchPath string `json:"binary_match_path"` // executable path used to match target processes
-	Language        string `json:"language"`          // programming language of the target process
-	MemoryMode      string `json:"memory_mode"`       // memory profiling mode
-	Duration        int    `json:"duration"`          // profiling duration in seconds
-	ContainerID     string `json:"container_id"`      // container ID
-	Hostname        string `json:"hostname"`          // host name
+	ProfilingType   string `json:"type"`                   // cpu or memory
+	BinaryMatchPath string `json:"binary_match_path"`      // executable path used to match target processes
+	Language        string `json:"language"`               // programming language of the target process
+	MemoryMode      string `json:"memory_mode"`            // memory profiling mode
+	Duration        int    `json:"duration"`               // profiling duration in seconds
+	ContainerID     string `json:"container_id"`           // container ID
+	Hostname        string `json:"hostname"`               // host name
+	CPUIDs          []int  `json:"cpu_ids,omitempty"`      // CPU IDs selected for native CPU profiling
+	PID             int    `json:"pid,omitempty"`          // exact PID selected for native profiling
+	ThreadGroup     bool   `json:"thread_group,omitempty"` // include the PID's thread group
 }
 
 // CreateProfilingJobResponse represents a response to create a profiling job.
@@ -38,21 +41,24 @@ type CreateProfilingJobResponse struct {
 
 // ProfilingJobResponse represents a profiling job response.
 type ProfilingJobResponse struct {
-	ID              string           `json:"id"`                // profiling job ID
-	AgentTaskID     string           `json:"agent_task_id"`     // agent task ID
-	ContainerID     string           `json:"container_id"`      // container ID
-	Hostname        string           `json:"hostname"`          // host name
-	Type            string           `json:"type"`              // cpu or memory
-	MemoryMode      string           `json:"memory_mode"`       // memory profiling mode
-	Language        string           `json:"language"`          // programming language of the target process
-	BinaryMatchPath string           `json:"binary_match_path"` // executable path used to match target processes
-	Status          string           `json:"status"`            // job status
-	StartTime       string           `json:"start_time"`        // start time
-	EndTime         string           `json:"end_time"`          // end time
-	TracerArgs      []string         `json:"tracer_args"`       // tracer arguments
-	Duration        int              `json:"duration"`          // profiling duration
-	Results         ProfilingResults `json:"results"`           // profiling results
-	ErrorMessage    string           `json:"error_message"`     // error message if any
+	ID              string           `json:"id"`                     // profiling job ID
+	AgentTaskID     string           `json:"agent_task_id"`          // agent task ID
+	ContainerID     string           `json:"container_id"`           // container ID
+	Hostname        string           `json:"hostname"`               // host name
+	Type            string           `json:"type"`                   // cpu or memory
+	MemoryMode      string           `json:"memory_mode"`            // memory profiling mode
+	Language        string           `json:"language"`               // programming language of the target process
+	BinaryMatchPath string           `json:"binary_match_path"`      // executable path used to match target processes
+	Status          string           `json:"status"`                 // job status
+	StartTime       string           `json:"start_time"`             // start time
+	EndTime         string           `json:"end_time"`               // end time
+	TracerArgs      []string         `json:"tracer_args"`            // tracer arguments
+	Duration        int              `json:"duration"`               // profiling duration
+	Results         ProfilingResults `json:"results"`                // profiling results
+	ErrorMessage    string           `json:"error_message"`          // error message if any
+	CPUIDs          []int            `json:"cpu_ids,omitempty"`      // CPU IDs selected for native CPU profiling
+	PID             int              `json:"pid,omitempty"`          // exact PID selected for native profiling
+	ThreadGroup     bool             `json:"thread_group,omitempty"` // include the PID's thread group
 }
 
 // ProfilingResults represents profiling results

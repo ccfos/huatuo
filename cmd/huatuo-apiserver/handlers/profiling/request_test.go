@@ -15,6 +15,7 @@
 package profiling
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 
@@ -31,20 +32,23 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 		wantErr        string
 	}{
 		{
-			name: "cpu profiling",
+			name: "native CPU profiling by thread group and CPU IDs",
 			req: v1.CreateProfilingJobRequest{
-				ProfilingType:   "cpu",
-				Language:        "go",
-				BinaryMatchPath: "/usr/bin/example",
-				Duration:        30,
-				ContainerID:     "container-2026",
-				Hostname:        "huatuo-dev",
+				ProfilingType: "cpu",
+				Language:      "go",
+				Duration:      30,
+				Hostname:      "huatuo-dev",
+				CPUIDs:        []int{3, 1},
+				PID:           4242,
+				ThreadGroup:   true,
 			},
 			wantType: ProfilingCPU,
 			wantTracerArgs: []string{
 				"-t", "cpu",
-				"--binary-match-path", "/usr/bin/example",
 				"-l", "go",
+				"--pid", "4242",
+				"--thread-group",
+				"--cpuid", "1,3",
 				"--duration", "30",
 				"--aggr-interval", "10",
 				"--max-concurrent-procs", "2",
@@ -53,24 +57,110 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			},
 		},
 		{
-			name: "memory profiling",
+			name: "native CPU profiling by container",
 			req: v1.CreateProfilingJobRequest{
-				ProfilingType: "memory",
+				ProfilingType: "cpu",
 				Language:      "c",
-				MemoryMode:    "physical_usage",
 				Duration:      30,
+				ContainerID:   "0123456789ab",
+				Hostname:      "huatuo-dev",
 			},
-			wantType: ProfilingMemory,
+			wantType: ProfilingCPU,
 			wantTracerArgs: []string{
-				"-t", "memory",
-				"--memory-mode", "physical_usage",
+				"-t", "cpu",
 				"-l", "c",
+				"--container-id", "0123456789ab",
 				"--duration", "30",
 				"--aggr-interval", "10",
 				"--max-concurrent-procs", "2",
 				"--output-format", "remote",
 				"--output-storage", "/var/run/huatuo-toolstream.sock",
 			},
+		},
+		{
+			name: "native memory profiling by exact PID",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "memory",
+				Language:      "c",
+				MemoryMode:    "physical_usage",
+				Duration:      30,
+				PID:           4242,
+			},
+			wantType: ProfilingMemory,
+			wantTracerArgs: []string{
+				"-t", "memory",
+				"--memory-mode", "physical_usage",
+				"-l", "c",
+				"--pid", "4242",
+				"--duration", "30",
+				"--aggr-interval", "10",
+				"--max-concurrent-procs", "2",
+				"--output-format", "remote",
+				"--output-storage", "/var/run/huatuo-toolstream.sock",
+			},
+		},
+		{
+			name: "native PID and container are mutually exclusive",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "cpu",
+				Language:      "go",
+				Duration:      30,
+				ContainerID:   "0123456789ab",
+				PID:           4242,
+			},
+			wantErr: "pid and container_id are mutually exclusive",
+		},
+		{
+			name: "thread group requires PID",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "cpu",
+				Language:      "go",
+				Duration:      30,
+				ThreadGroup:   true,
+			},
+			wantErr: "thread_group requires pid",
+		},
+		{
+			name: "CPU IDs require CPU profiling",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "memory",
+				Language:      "go",
+				MemoryMode:    "virtual_alloc",
+				Duration:      30,
+				PID:           4242,
+				CPUIDs:        []int{1},
+			},
+			wantErr: "cpu_ids are supported only by CPU profiling",
+		},
+		{
+			name: "CPU IDs reject duplicates",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "cpu",
+				Language:      "go",
+				Duration:      30,
+				CPUIDs:        []int{1, 1},
+			},
+			wantErr: "duplicate cpu_id 1",
+		},
+		{
+			name: "non-native profiling rejects native selection",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "cpu",
+				Language:      "java",
+				Duration:      30,
+				PID:           4242,
+			},
+			wantErr: "pid, cpu_ids, and thread_group are supported only by native profiling",
+		},
+		{
+			name: "native memory requires a target",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType: "memory",
+				Language:      "go",
+				MemoryMode:    "virtual_alloc",
+				Duration:      30,
+			},
+			wantErr: "native memory profiling requires pid or container_id",
 		},
 		{
 			name: "unsupported type",
@@ -119,6 +209,15 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			}
 			if !slices.Equal(got.AgentTask.TracerArgs, tt.wantTracerArgs) {
 				t.Errorf("TracerArgs=%q, want %q", got.AgentTask.TracerArgs, tt.wantTracerArgs)
+			}
+			var privateData profilingJobPrivateData
+			if err := json.Unmarshal(got.PrivateData, &privateData); err != nil {
+				t.Fatalf("json.Unmarshal(PrivateData) error=%v", err)
+			}
+			if !slices.Equal(privateData.CPUIDs, tt.req.CPUIDs) ||
+				privateData.PID != tt.req.PID ||
+				privateData.ThreadGroup != tt.req.ThreadGroup {
+				t.Errorf("PrivateData=%+v, want native target from request", privateData)
 			}
 		})
 	}
