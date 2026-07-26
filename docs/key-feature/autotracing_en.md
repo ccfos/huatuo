@@ -73,7 +73,7 @@ All events provide default values and work without configuration:
 
 | Event Name (tracer_name) | Target | Trigger Condition | Typical Scenario |
 | ------------------------ | ------ | ----------------- | ---------------- |
-| `cpusys` | Host | sys > 45% or delta_sys > 20% | Kernel-mode CPU spike, syscall hotspot |
+| `cpusys` | Host | sys > 45% and delta_sys > 20% | Kernel-mode CPU spike, syscall hotspot |
 | `cpuidle` | Container | (user>75% and delta_user>45%) or (sys>45% and delta_sys>20%) or (total>90% and delta_total>55%) | Container CPU spike, hotspot function analysis |
 | `dload` | Container | D-state process load EMA > 5 | D-state process accumulation, IO blocking |
 | `iotracing` | Host | Any IO metric exceeds threshold for two consecutive samples | Saturated disk IO, high IO wait latency |
@@ -99,7 +99,7 @@ All event records include the following common fields:
 
 ### 1. cpusys
 
-**Description** Periodically reads `/proc/stat` to calculate host CPU sys utilization and the delta between consecutive samples. When sys utilization exceeds the threshold (default 45%) or the delta exceeds its threshold (default 20%), a system-wide perf sampling run is triggered to generate a full-host CPU flame graph.
+**Description** Periodically reads `/proc/stat` to calculate host CPU sys utilization and the delta between consecutive samples. When sys utilization exceeds the threshold (default 45%) and the delta exceeds its threshold (default 20%), a system-wide perf sampling run is triggered to generate a full-host CPU flame graph.
 
 **Storage** Event data is automatically stored in Elasticsearch or a local disk file.
 

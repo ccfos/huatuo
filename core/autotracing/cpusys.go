@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,11 +16,15 @@ package autotracing
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,15 +36,45 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
+const (
+	cpuSysTracerName       = "cpusys"
+	procStatPath           = "/proc/stat"
+	perfExitGracePeriod    = 30 * time.Second
+	maxPerfErrorOutputLen  = 4096
+	maxIntervalSeconds     = int64(time.Duration(1<<63-1) / time.Second)
+	maxPerfDurationSeconds = int64(
+		(time.Duration(1<<63-1) - perfExitGracePeriod) / time.Second,
+	)
+)
+
 func init() {
-	tracing.RegisterEventTracing("cpusys", newCpuSys)
+	tracing.RegisterEventTracing(cpuSysTracerName, newCPUSys)
 }
 
-func newCpuSys() (*tracing.EventTracingAttr, error) {
+func newCPUSys() (*tracing.EventTracingAttr, error) {
+	intervalSeconds := cfg.CPUSys.Interval
+	perfDurationSeconds := cfg.CPUSys.RunTracingToolTimeout
+	threshold := cpuSysThreshold{
+		delta: cfg.CPUSys.DeltaSysThreshold,
+		usage: cfg.CPUSys.SysThreshold,
+	}
+	if err := validateCPUSysConfig(
+		intervalSeconds,
+		perfDurationSeconds,
+		threshold.usage,
+		threshold.delta,
+	); err != nil {
+		return nil, fmt.Errorf("validate cpu system config: %w", err)
+	}
+
 	return &tracing.EventTracingAttr{
-		TracingData: &cpuSysTracing{},
-		Interval:    20,
-		Flag:        tracing.FlagTracing,
+		TracingData: &cpuSysTracing{
+			interval:     time.Duration(intervalSeconds) * time.Second,
+			perfDuration: time.Duration(perfDurationSeconds) * time.Second,
+			threshold:    threshold,
+		},
+		Interval: 20,
+		Flag:     tracing.FlagTracing,
 	}, nil
 }
 
@@ -50,12 +84,20 @@ type cpuUsage struct {
 }
 
 type cpuSysTracing struct {
-	usage           *cpuUsage
-	sysPercent      int64
-	sysPercentDelta int64
+	interval     time.Duration
+	perfDuration time.Duration
+	threshold    cpuSysThreshold
 }
 
-type CpuSysTracingData struct {
+type cpuSysState struct {
+	previousUsage      cpuUsage
+	systemPercent      int64
+	systemPercentDelta int64
+	hasUsage           bool
+	hasSystemPercent   bool
+}
+
+type cpuSysTracingData struct {
 	NowSys            int64                  `json:"now_sys"`
 	SysThreshold      int64                  `json:"sys_threshold"`
 	DeltaSys          int64                  `json:"deltasys"`
@@ -68,114 +110,233 @@ type cpuSysThreshold struct {
 	usage int64
 }
 
-func cpuSysUsage() (*cpuUsage, error) {
-	f, err := os.Open("/proc/stat")
+func parseCPUUsage(r io.Reader) (cpuUsage, error) {
+	scanner := bufio.NewScanner(r)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return cpuUsage{}, fmt.Errorf("scan cpu statistics: %w", err)
+		}
+		return cpuUsage{}, errors.New("cpu statistics are empty")
+	}
+
+	fields := strings.Fields(scanner.Text())
+	if len(fields) < 5 {
+		return cpuUsage{}, errors.New("cpu statistics require at least 4 counters")
+	}
+	if fields[0] != "cpu" {
+		return cpuUsage{}, fmt.Errorf("unexpected cpu statistics label %q", fields[0])
+	}
+
+	// user and nice already include guest time, so guest fields must not be
+	// added again when calculating the total.
+	counterNames := [...]string{
+		"user",
+		"nice",
+		"system",
+		"idle",
+		"iowait",
+		"irq",
+		"softirq",
+		"steal",
+	}
+	counters := fields[1:]
+	if len(counters) > len(counterNames) {
+		counters = counters[:len(counterNames)]
+	}
+
+	var usage cpuUsage
+	for i, field := range counters {
+		value, err := strconv.ParseUint(field, 10, 64)
+		if err != nil {
+			return cpuUsage{}, fmt.Errorf(
+				"parse cpu %s counter %q: %w",
+				counterNames[i],
+				field,
+				err,
+			)
+		}
+
+		usage.total += value
+		if i == 2 {
+			usage.system = value
+		}
+	}
+
+	return usage, nil
+}
+
+func readCPUUsage() (cpuUsage, error) {
+	f, err := os.Open(procStatPath)
 	if err != nil {
-		return nil, err
+		return cpuUsage{}, fmt.Errorf("open %s: %w", procStatPath, err)
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	scanner.Scan()
-	fields := strings.Fields(scanner.Text())[1:]
-
-	var total, sys uint64
-	for i, field := range fields {
-		val, err := strconv.ParseUint(field, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-
-		total += val
-		if i == 2 {
-			sys = val
-		}
-	}
-
-	return &cpuUsage{system: sys, total: total}, nil
-}
-
-func (c *cpuSysTracing) updateCpuSysUsage() error {
-	usage, err := cpuSysUsage()
+	usage, err := parseCPUUsage(f)
 	if err != nil {
-		return err
+		return cpuUsage{}, fmt.Errorf("parse %s: %w", procStatPath, err)
 	}
-
-	if c.usage == nil {
-		c.usage = usage
-		return nil
-	}
-
-	sysUsageDelta := usage.system - c.usage.system
-	sysTotalDelta := usage.total - c.usage.total
-	if sysTotalDelta == 0 {
-		c.usage = usage
-		return nil
-	}
-
-	sysPercentage := int64(100 * sysUsageDelta / sysTotalDelta)
-
-	c.sysPercentDelta = sysPercentage - c.sysPercent
-	c.sysPercent = sysPercentage
-	c.usage = usage
-	return nil
+	return usage, nil
 }
 
-func (c *cpuSysTracing) shouldCareThisEvent(threshold *cpuSysThreshold) bool {
-	log.Debugf("sys %d, sys delta: %d", c.sysPercent, c.sysPercentDelta)
+func (s *cpuSysState) update(usage cpuUsage) bool {
+	previousUsage := s.previousUsage
+	s.previousUsage = usage
+	if !s.hasUsage {
+		s.hasUsage = true
+		return false
+	}
 
-	if c.sysPercent > threshold.usage || c.sysPercentDelta > threshold.delta {
+	// Counter rollback would underflow uint64 subtraction, so restart
+	// percentage tracking from the current sample.
+	if usage.system < previousUsage.system || usage.total < previousUsage.total {
+		s.hasSystemPercent = false
+		s.systemPercent = 0
+		s.systemPercentDelta = 0
+		return false
+	}
+
+	systemDelta := usage.system - previousUsage.system
+	totalDelta := usage.total - previousUsage.total
+
+	// System time is part of total CPU time, so a larger delta means the
+	// sampled counters are inconsistent.
+	if systemDelta > totalDelta {
+		s.hasSystemPercent = false
+		s.systemPercent = 0
+		s.systemPercentDelta = 0
+		return false
+	}
+
+	// No CPU time elapsed, so this sample cannot produce a percentage.
+	if totalDelta == 0 {
+		return false
+	}
+
+	systemPercent := int64(100 * systemDelta / totalDelta)
+	if !s.hasSystemPercent {
+		s.hasSystemPercent = true
+		s.systemPercent = systemPercent
+		s.systemPercentDelta = 0
 		return true
 	}
 
-	return false
+	s.systemPercentDelta = systemPercent - s.systemPercent
+	s.systemPercent = systemPercent
+	return true
 }
 
-func runPerfSystemWide(parent context.Context, timeOut int64) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(parent, time.Duration(timeOut+30)*time.Second)
+func (s cpuSysState) shouldTrace(threshold cpuSysThreshold) bool {
+	return s.systemPercent > threshold.usage &&
+		s.systemPercentDelta > threshold.delta
+}
+
+func runPerfSystemWide(parent context.Context, duration time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, duration+perfExitGracePeriod)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "perf"),
-		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "perf.o"),
-		"--duration", strconv.FormatInt(timeOut, 10))
+	cmd := exec.CommandContext(
+		ctx,
+		filepath.Join(tracing.TaskBinDir, "perf"),
+		"--bpf-path",
+		filepath.Join(internalconfig.CoreBpfDir, "perf.o"),
+		"--duration",
+		strconv.FormatInt(int64(duration/time.Second), 10),
+	)
 
-	return cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return output, nil
+	}
+
+	diagnostic := bytes.TrimSpace(output)
+	isTruncated := len(diagnostic) > maxPerfErrorOutputLen
+	if isTruncated {
+		diagnostic = diagnostic[:maxPerfErrorOutputLen]
+	}
+	if len(diagnostic) == 0 {
+		return nil, fmt.Errorf("run system-wide perf: %w", err)
+	}
+	if isTruncated {
+		return nil, fmt.Errorf("run system-wide perf: %w: output=%q (truncated)", err, diagnostic)
+	}
+	return nil, fmt.Errorf("run system-wide perf: %w: output=%q", err, diagnostic)
 }
 
-func (c *cpuSysTracing) buildAndSaveCPUSystem(traceTime time.Time, threshold *cpuSysThreshold, flamedata []byte) error {
-	tracerData := CpuSysTracingData{
-		NowSys:            c.sysPercent,
-		SysThreshold:      threshold.usage,
-		DeltaSys:          c.sysPercentDelta,
-		DeltaSysThreshold: threshold.delta,
+func (c *cpuSysTracing) saveCPUSysTrace(
+	traceTime time.Time,
+	state cpuSysState,
+	flameData []byte,
+) error {
+	tracerData := cpuSysTracingData{
+		NowSys:            state.systemPercent,
+		DeltaSys:          state.systemPercentDelta,
+		SysThreshold:      c.threshold.usage,
+		DeltaSysThreshold: c.threshold.delta,
 	}
 
-	if err := json.Unmarshal(flamedata, &tracerData.FlameData); err != nil {
-		return err
+	if err := json.Unmarshal(flameData, &tracerData.FlameData); err != nil {
+		return fmt.Errorf("decode system-wide perf output: %w", err)
 	}
 
-	log.Debugf("cpuidle flamedata %v", tracerData.FlameData)
 	if err := tracing.Save(&tracing.WriteRequest{
-		TracerName:    "cpusys",
+		TracerName:    cpuSysTracerName,
 		TracerTime:    traceTime,
 		TracerData:    &tracerData,
 		TracerRunType: tracing.TracerRunTypeAutotracing,
 	}); err != nil {
-		log.Warnf("failed to save tracing data: %v", err)
+		return fmt.Errorf("save cpu system trace: %w", err)
+	}
+	return nil
+}
+
+func validateCPUSysConfig(
+	intervalSeconds int64,
+	perfDurationSeconds int64,
+	systemThreshold int64,
+	systemDeltaThreshold int64,
+) error {
+	if intervalSeconds <= 0 {
+		return fmt.Errorf("cpu system interval must be positive, got %d", intervalSeconds)
+	}
+	if intervalSeconds > maxIntervalSeconds {
+		return fmt.Errorf(
+			"cpu system interval must not exceed %d seconds, got %d",
+			maxIntervalSeconds,
+			intervalSeconds,
+		)
+	}
+	if perfDurationSeconds <= 0 {
+		return fmt.Errorf("cpu system perf duration must be positive, got %d", perfDurationSeconds)
+	}
+	if perfDurationSeconds > maxPerfDurationSeconds {
+		return fmt.Errorf(
+			"cpu system perf duration must not exceed %d seconds, got %d",
+			maxPerfDurationSeconds,
+			perfDurationSeconds,
+		)
+	}
+	if systemThreshold < 0 || systemThreshold > 100 {
+		return fmt.Errorf("cpu system threshold must be between 0 and 100, got %d", systemThreshold)
+	}
+	if systemDeltaThreshold < 0 || systemDeltaThreshold > 100 {
+		return fmt.Errorf(
+			"cpu system delta threshold must be between 0 and 100, got %d",
+			systemDeltaThreshold,
+		)
 	}
 	return nil
 }
 
 func (c *cpuSysTracing) Start(ctx context.Context) error {
-	interval := cfg.CPUSys.Interval
-	perfRunTimeOut := cfg.CPUSys.RunTracingToolTimeout
-
-	threshold := &cpuSysThreshold{
-		delta: cfg.CPUSys.DeltaSysThreshold,
-		usage: cfg.CPUSys.SysThreshold,
+	var state cpuSysState
+	initialUsage, err := readCPUUsage()
+	if err != nil {
+		return err
 	}
+	state.update(initialUsage)
 
-	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
 	for {
@@ -183,30 +344,28 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
 		case <-ticker.C:
-			if err := c.updateCpuSysUsage(); err != nil {
+			usage, err := readCPUUsage()
+			if err != nil {
 				return err
 			}
-
-			if ok := c.shouldCareThisEvent(threshold); !ok {
+			if !state.update(usage) || !state.shouldTrace(c.threshold) {
 				continue
 			}
 
 			traceTime := time.Now()
+			log.WithField("cpu_system_percent", state.systemPercent).
+				WithField("cpu_system_delta", state.systemPercentDelta).
+				WithField("duration_seconds", int64(c.perfDuration/time.Second)).
+				Info("starting system-wide cpu profiling")
 
-			log.Infof("start perf system wide, cpu sys: %d, delta: %d, perf_run_timeout: %d",
-				c.sysPercent, c.sysPercentDelta, perfRunTimeOut)
-			flamedata, err := runPerfSystemWide(ctx, perfRunTimeOut)
+			flameData, err := runPerfSystemWide(ctx, c.perfDuration)
 			if err != nil {
-				log.Debugf("perf err: %v, output: %v", err, string(flamedata))
 				return err
 			}
-
-			if len(flamedata) == 0 {
-				log.Infof("perf output is null for system usage")
-				continue
+			if len(bytes.TrimSpace(flameData)) == 0 {
+				return errors.New("system-wide perf returned empty output")
 			}
-
-			if err := c.buildAndSaveCPUSystem(traceTime, threshold, flamedata); err != nil {
+			if err := c.saveCPUSysTrace(traceTime, state, flameData); err != nil {
 				return err
 			}
 		}
