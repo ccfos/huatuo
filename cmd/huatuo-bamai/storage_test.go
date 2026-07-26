@@ -34,11 +34,7 @@ func TestNewProfileStoresRegistersElasticsearchAndPyroscope(t *testing.T) {
 	cfg.Storage.Elasticsearch.Index = "profiles"
 	cfg.Storage.Pyroscope.Address = "http://127.0.0.1:4040"
 
-	stores, err := newProfileStores(
-		context.Background(),
-		cfg,
-		autotracing.DisplayBackendPyroscope,
-	)
+	stores, err := newProfileStores(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("newProfileStores returned error: %v", err)
 	}
@@ -64,16 +60,12 @@ func TestNewProfileStoresRejectsInvalidPyroscopeAuthentication(t *testing.T) {
 	cfg.Storage.Pyroscope.Address = "http://127.0.0.1:4040"
 	cfg.Storage.Pyroscope.Username = "user"
 
-	if _, err := newProfileStores(
-		context.Background(),
-		cfg,
-		autotracing.DisplayBackendPyroscope,
-	); err == nil {
+	if _, err := newProfileStores(context.Background(), cfg); err == nil {
 		t.Fatal("newProfileStores error = nil, want authentication error")
 	}
 }
 
-func TestNewProfileStoresAPIServerModeSkipsPyroscope(t *testing.T) {
+func TestNewProfileStoresRegistersConfiguredBackendsIndependently(t *testing.T) {
 	elasticsearch := newElasticsearchInfoServer(t)
 	cfg := &config.BamaiConfig{}
 	cfg.Storage.Elasticsearch.Address = elasticsearch.URL
@@ -82,11 +74,7 @@ func TestNewProfileStoresAPIServerModeSkipsPyroscope(t *testing.T) {
 	cfg.Storage.Elasticsearch.Index = "profiles"
 	cfg.Storage.Pyroscope.Address = "http://127.0.0.1:4040"
 
-	stores, err := newProfileStores(
-		context.Background(),
-		cfg,
-		autotracing.DisplayBackendAPIServer,
-	)
+	stores, err := newProfileStores(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("newProfileStores returned error: %v", err)
 	}
@@ -96,8 +84,11 @@ func TestNewProfileStoresAPIServerModeSkipsPyroscope(t *testing.T) {
 		}
 	}()
 
-	if len(stores) != 1 || stores[0].Name != "elasticsearch" {
-		t.Fatalf("stores = %#v, want only elasticsearch", stores)
+	if len(stores) != 2 {
+		t.Fatalf("store count = %d, want 2", len(stores))
+	}
+	if stores[0].Name != "elasticsearch" || stores[1].Name != "pyroscope" {
+		t.Fatalf("stores = %#v, want elasticsearch and pyroscope", stores)
 	}
 }
 

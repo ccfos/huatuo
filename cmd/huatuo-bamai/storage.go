@@ -93,11 +93,7 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
 	}
 
-	profileStores, err := newProfileStores(
-		context.Background(),
-		cfg,
-		displayBackend,
-	)
+	profileStores, err := newProfileStores(context.Background(), cfg)
 	if err != nil {
 		return err
 	}
@@ -114,7 +110,6 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 func newProfileStores(
 	ctx context.Context,
 	cfg *config.BamaiConfig,
-	displayBackend autotracing.DisplayBackend,
 ) ([]*storage.Store[*tracing.Document], error) {
 	profileStores := make([]*storage.Store[*tracing.Document], 0, 2)
 
@@ -132,7 +127,7 @@ func newProfileStores(
 		profileStores = append(profileStores, profileStore)
 	}
 
-	if displayBackend == autotracing.DisplayBackendPyroscope {
+	if cfg.Storage.Pyroscope.Address != "" {
 		profileStore, err := storage.NewFromConfig[*tracing.Document](ctx, &driver.Config{
 			Driver:                  "pyroscope",
 			PyroscopeAddress:        cfg.Storage.Pyroscope.Address,
