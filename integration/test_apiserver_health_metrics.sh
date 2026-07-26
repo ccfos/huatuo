@@ -21,7 +21,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-readonly API_USER="integration-admin"
+readonly API_TOKEN="integration-admin"
 readonly FAILURE_LOG_PATTERN='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
 
 command -v curl > /dev/null || skip "curl command is not installed"
@@ -61,7 +61,7 @@ assert_endpoints() {
 			-w '%{http_code}'
 		)
 		if [[ "${auth}" == "admin" ]]; then
-			curl_args+=(-H "Authorization: Bearer ${API_USER}")
+			curl_args+=(-H "Authorization: Bearer ${API_TOKEN}")
 		fi
 
 		status=$(curl "${curl_args[@]}" "${APISERVER_ADDR}${path}")

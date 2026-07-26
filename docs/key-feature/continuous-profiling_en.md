@@ -19,17 +19,17 @@ huatuo-apiserver exposes `/v1/profiles` for service-based continuous profiling. 
 
 ### 1. Request Conventions
 
-By default, huatuo-apiserver listens on `:12740`. The following examples use environment variables for the server address and user ID:
+By default, huatuo-apiserver listens on `:12740`. The following examples use environment variables for the server address and bearer token:
 
 ```bash
 API_BASE="http://127.0.0.1:12740"
-USER_ID="<Auth.users.ID>"
+API_TOKEN="<Auth.users.BearerToken>"
 ```
 
-Every request must pass the configured user ID as a bearer token:
+Every request must pass the configured bearer token:
 
 ```text
-Authorization: Bearer <Auth.users.ID>
+Authorization: Bearer <Auth.users.BearerToken>
 ```
 
 A non-administrator user requires both `/v1/profiles` and
@@ -51,7 +51,7 @@ Before creating a job, query the profiling types, languages, memory modes, and r
 
 ```bash
 curl -sS \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   "${API_BASE}/v1/profiles/capabilities"
 ```
 
@@ -98,7 +98,7 @@ Create a Go CPU profiling job on a host:
 ```bash
 curl -sS -i \
   -X POST \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "cpu",
@@ -114,7 +114,7 @@ Create a Java live-object profiling job in a container:
 ```bash
 curl -sS -i \
   -X POST \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "memory",
@@ -161,7 +161,7 @@ List the 20 most recent running CPU profiling jobs on `node-01`:
 
 ```bash
 curl -sS -G \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   --data-urlencode "hostname=node-01" \
   --data-urlencode "status=running" \
   --data-urlencode "type=cpu" \
@@ -177,7 +177,7 @@ curl -sS -G \
 
 ```bash
 curl -sS \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   "${API_BASE}/v1/profiles/${JOB_ID}"
 ```
 
@@ -216,7 +216,7 @@ Profiling jobs use these statuses:
 
 ```bash
 curl -sS \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   -o profile-raw.json \
   "${API_BASE}/v1/profiles/${JOB_ID}/raw?limit=100&offset=0"
 ```
@@ -232,7 +232,7 @@ Only jobs in `pending` or `running` status can be stopped. The `PATCH` request a
 ```bash
 curl -sS \
   -X PATCH \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"status":"stopped"}' \
   "${API_BASE}/v1/profiles/${JOB_ID}"
@@ -247,7 +247,7 @@ Deletion removes only the job record. Jobs in `pending` or `running` status cann
 ```bash
 curl -sS -i \
   -X DELETE \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   "${API_BASE}/v1/profiles/${JOB_ID}"
 ```
 

@@ -98,13 +98,13 @@ write_apiserver_apis_config() {
     JobStoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
 
 [[Auth.users]]
-    ID = "${API_USER}"
+    BearerToken = "${API_TOKEN}"
     Name = "Integration administrator"
     IsAdmin = true
 EOF
 }
 
-# The caller owns the API port, user ID, and expected profiling values.
+# The caller owns the API port, bearer token, and expected profiling values.
 write_apiserver_profile_capabilities_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
 [APIServer]
@@ -114,7 +114,7 @@ write_apiserver_profile_capabilities_config() {
     JobStoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
 
 [[Auth.users]]
-    ID = "${API_USER}"
+    BearerToken = "${API_TOKEN}"
     Name = "Integration administrator"
     IsAdmin = true
 
@@ -154,12 +154,12 @@ write_continuous_profiling_apiserver_config() {
     Index = "huatuo_continuous_profiling_test"
 
 [[Auth.users]]
-    ID = "${API_USER}"
+    BearerToken = "${API_TOKEN}"
     Name = "Integration administrator"
     IsAdmin = true
 
 [[Auth.users]]
-    ID = "${OTHER_USER}"
+    BearerToken = "${OTHER_API_TOKEN}"
     Name = "Integration user"
     Permissions = ["/v1/profiles", "/v1/profiles/**"]
 

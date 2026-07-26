@@ -21,7 +21,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
-readonly API_USER="integration-admin"
+readonly API_TOKEN="integration-admin"
 readonly CAPABILITIES_AGGREGATION_INTERVAL_SECONDS=7
 readonly CAPABILITIES_EXECUTION_TIMEOUT_SECONDS=14
 readonly CAPABILITIES_MAX_CONCURRENT_PROFILERS=3
@@ -81,7 +81,7 @@ assert_profile_capabilities() {
 	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/profile-capabilities.json"
 	local status curl_status=0
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
-		-H "Authorization: Bearer ${API_USER}" "${CAPABILITIES_URL}") \
+		-H "Authorization: Bearer ${API_TOKEN}" "${CAPABILITIES_URL}") \
 		|| curl_status=$?
 	if [[ -r "${response_file}" ]]; then
 		log_info "profile capabilities response: $(< "${response_file}")"

@@ -25,7 +25,7 @@ func TestLoadValidatesProfilingConfig(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
 	contents := []byte(`
 [[Auth.users]]
-ID = "test-token"
+BearerToken = "test-token"
 IsAdmin = true
 
 [Profiling]
@@ -48,7 +48,7 @@ func TestLoadFileDoesNotAccumulateMemoryConversion(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
 	contents := []byte(`
 [[Auth.users]]
-ID = "test-token"
+BearerToken = "test-token"
 IsAdmin = true
 
 [RuntimeCgroup]
@@ -100,7 +100,7 @@ func TestLoadFileDisablesElasticsearchByDefault(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
 	contents := []byte(`
 [[Auth.users]]
-ID = "test-token"
+BearerToken = "test-token"
 IsAdmin = true
 `)
 	if err := os.WriteFile(configFile, contents, 0o600); err != nil {
@@ -129,7 +129,7 @@ func TestLoadFileOverridesElasticsearchDefaults(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
 	contents := []byte(`
 [[Auth.users]]
-ID = "test-token"
+BearerToken = "test-token"
 IsAdmin = true
 
 [ElasticSearch]
@@ -161,7 +161,7 @@ func TestLoadFileRejectsPartialElasticsearchConfig(t *testing.T) {
 	configFile := filepath.Join(t.TempDir(), "apiserver.conf")
 	contents := []byte(`
 [[Auth.users]]
-ID = "test-token"
+BearerToken = "test-token"
 IsAdmin = true
 
 [ElasticSearch]
@@ -286,7 +286,7 @@ func TestProfilingConfigValidate(t *testing.T) {
 	}
 }
 
-func TestConfigValidateRejectsDuplicateUsers(t *testing.T) {
+func TestConfigValidateRejectsInvalidUsers(t *testing.T) {
 	cfg := Config{
 		RuntimeCgroup: RuntimeCgroupConfig{LimitCPU: 1, LimitMem: 1},
 		APIServer: APIServerConfig{
@@ -323,11 +323,24 @@ func TestConfigValidateRejectsDuplicateUsers(t *testing.T) {
 			FlameGraphBaseURL:   "http://localhost:8006/d",
 		},
 		Auth: AuthConfig{Users: []UserConfig{
-			{ID: "duplicate", IsAdmin: true},
-			{ID: "duplicate", IsAdmin: true},
+			{BearerToken: "duplicate", IsAdmin: true},
+			{BearerToken: "duplicate", IsAdmin: true},
 		}},
 	}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate ID") {
-		t.Fatalf("Validate() error=%v, want duplicate ID", err)
-	}
+	t.Run("missing bearer token", func(t *testing.T) {
+		cfg.Auth.Users = []UserConfig{{IsAdmin: true}}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "bearer token is required") {
+			t.Fatalf("Validate() error=%v, want missing bearer token", err)
+		}
+	})
+
+	t.Run("duplicate bearer token", func(t *testing.T) {
+		cfg.Auth.Users = []UserConfig{
+			{BearerToken: "duplicate", IsAdmin: true},
+			{BearerToken: "duplicate", IsAdmin: true},
+		}
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate bearer token") {
+			t.Fatalf("Validate() error=%v, want duplicate bearer token", err)
+		}
+	})
 }

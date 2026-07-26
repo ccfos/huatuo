@@ -66,7 +66,7 @@ func TestConfigureRuntimeAnchorsRelativeJobStoreToConfigDirectory(t *testing.T) 
 	configFile := "apiserver.conf"
 	contents := []byte(`
 [[Auth.users]]
-ID = "test-token"
+BearerToken = "test-token"
 IsAdmin = true
 
 [TaskConfig]
@@ -98,7 +98,7 @@ func TestConfigureRuntimeLogDebugOverridesConfigLevel(t *testing.T) {
 LogLevel = "Error"
 
 [[Auth.users]]
-ID = "test-token"
+BearerToken = "test-token"
 IsAdmin = true
 `)
 	if err := os.WriteFile(filepath.Join(configDir, configFile), contents, 0o600); err != nil {

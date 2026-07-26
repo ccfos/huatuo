@@ -77,7 +77,7 @@ func authUsers(users []config.UserConfig) []server.UserConfig {
 	result := make([]server.UserConfig, 0, len(users))
 	for _, user := range users {
 		result = append(result, server.UserConfig{
-			ID:          user.ID,
+			ID:          user.BearerToken,
 			Name:        user.Name,
 			Permissions: user.Permissions,
 			IsAdmin:     user.IsAdmin,

@@ -25,8 +25,8 @@ source "${ROOT_DIR}/integration/lib_storage.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
 readonly ES_PASSWORD="huatuo-integration"
-readonly API_USER="integration-admin"
-readonly OTHER_USER="integration-other"
+readonly API_TOKEN="integration-admin"
+readonly OTHER_API_TOKEN="integration-other"
 readonly PROFILE_DURATION=12
 readonly PROFILE_INTERVAL=5
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
@@ -81,7 +81,7 @@ create_native_cpu_profile() {
 	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/create-profile.json"
 	local status curl_status=0
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' -X POST \
-		-H "Authorization: Bearer ${API_USER}" \
+		-H "Authorization: Bearer ${API_TOKEN}" \
 		-H 'Content-Type: application/json' \
 		"${APISERVER_ADDR}/v1/profiles" \
 		-d "{\"type\":\"cpu\",\"language\":\"c\",\"duration_seconds\":${PROFILE_DURATION},\"hostname\":\"127.0.0.1\"}") \
@@ -102,7 +102,7 @@ create_native_cpu_profile() {
 
 profile_status_is() {
 	local expected_status=$1
-	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_USER}" \
+	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
 		"${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}" \
 		> "${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json" \
 		|| return 1
@@ -116,7 +116,7 @@ profiles_are_stored() {
 	local status
 	status=$(
 		curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
-			-H "Authorization: Bearer ${API_USER}" \
+			-H "Authorization: Bearer ${API_TOKEN}" \
 			"${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}/raw"
 	) || {
 		LAST_PROFILE_DIAGNOSTIC="raw profile request failed before receiving an HTTP response"
@@ -148,14 +148,14 @@ assert_profile_lifecycle() {
 	local status
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
 		-o "${HUATUO_BAMAI_TEST_TMPDIR}/forbidden.json" -w '%{http_code}' \
-		-H "Authorization: Bearer ${OTHER_USER}" \
+		-H "Authorization: Bearer ${OTHER_API_TOKEN}" \
 		"${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}")
 	assert_eq "${status}" "403" "non-owner profile access" \
 		|| fatal "profile was visible to a non-owner"
 
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
 		-o "${HUATUO_BAMAI_TEST_TMPDIR}/delete-running.json" -w '%{http_code}' \
-		-X DELETE -H "Authorization: Bearer ${API_USER}" \
+		-X DELETE -H "Authorization: Bearer ${API_TOKEN}" \
 		"${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}")
 	assert_eq "${status}" "409" "delete running profile" \
 		|| fatal "running profile deletion did not return conflict"
@@ -177,13 +177,13 @@ assert_profile_lifecycle() {
 	# Stack frame ordering is covered by lower-level profiler tests; this test
 	# verifies only the API, task lifecycle, transport, and storage contract.
 
-	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_USER}" \
+	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
 		"${APISERVER_ADDR}/v1/profiles?type=cpu&hostname=127.0.0.1&status=completed&limit=1&offset=0&sort=-created_at" \
 		| jq -e --arg id "${PROFILE_ID}" '.data.total >= 1 and .data.items[0].id == $id' \
 			> /dev/null || fatal "profile list filters did not return the completed task"
 
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o /dev/null -w '%{http_code}' -X DELETE \
-		-H "Authorization: Bearer ${API_USER}" "${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}")
+		-H "Authorization: Bearer ${API_TOKEN}" "${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}")
 	assert_eq "${status}" "204" "delete completed profile" \
 		|| fatal "completed profile deletion failed"
 }

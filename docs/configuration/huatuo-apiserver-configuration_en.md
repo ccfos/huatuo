@@ -22,8 +22,8 @@ so the application uses their built-in defaults. Remove `#` and set an
 appropriate value to override a default. Restart `huatuo-apiserver` after
 changing the configuration.
 
-**Note**: The Elasticsearch/OpenSearch password and user IDs in the examples
-are placeholders. Replace them in production and never commit real
+**Note**: The Elasticsearch/OpenSearch password and bearer tokens in the
+examples are placeholders. Replace them in production and never commit real
 credentials to version control.
 
 ### 2. Logging
@@ -237,7 +237,7 @@ does not depend on Elasticsearch/OpenSearch.
 
 `/healthz`, `/readyz`, `/metrics`, and `/version` are public. When pprof is enabled,
 `/debug/pprof/**` shares the API listener and is restricted to administrators.
-All other routes require `Authorization: Bearer <Auth.users.ID>`. Every
+All other routes require `Authorization: Bearer <Auth.users.BearerToken>`. Every
 `/v1/profiles/flamegraph/**` query route is restricted to administrators.
 
 Declare each user in a separate `[[Auth.users]]` array table. Multiple users
@@ -246,13 +246,13 @@ can be configured, for example:
 ```toml
 # Administrator: has access to all APIs; Permissions is ignored.
 [[Auth.users]]
-    ID      = "REPLACE_WITH_RANDOM_HEX"
-    Name    = "Administrator"
-    IsAdmin = true
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
+    Name        = "Administrator"
+    IsAdmin     = true
 
 # Regular user: read-only access to tracing and profiling APIs.
 [[Auth.users]]
-    ID          = "REPLACE_WITH_RANDOM_HEX"
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
     Name        = "huatuo-front"
     IsAdmin     = false
     Permissions = [
@@ -263,14 +263,13 @@ can be configured, for example:
     ]
 ```
 
-- **ID**: Unique user identifier and bearer credential.
+- **BearerToken**: Credential sent in the HTTP `Authorization` header.
 
   There is no default.
 
-  **Note**: The service uses the ID supplied by a client request to look up the
-  user. Treat this value as a sensitive credential and use a sufficiently
+  **Note**: Treat this value as a sensitive credential and use a sufficiently
   random string, for example one generated with `openssl rand -hex 16`. Do not
-  share an ID between users.
+  share a bearer token between users.
 
 - **Name**: User display name.
 
@@ -375,12 +374,12 @@ LogLevel = "Info"
     Index = "huatuo_bamai"
 
 [[Auth.users]]
-    ID = "REPLACE_WITH_RANDOM_HEX"
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
     Name = "Administrator"
     IsAdmin = true
 
 [[Auth.users]]
-    ID = "REPLACE_WITH_ANOTHER_RANDOM_HEX"
+    BearerToken = "REPLACE_WITH_ANOTHER_RANDOM_HEX"
     Name = "huatuo-front"
     IsAdmin = false
     Permissions = [
@@ -397,6 +396,6 @@ LogLevel = "Info"
     FlameGraphBaseURL = "https://grafana.example.com/d"
 ```
 
-Before deployment, replace the example password, user IDs, backend address,
+Before deployment, replace the example password, bearer tokens, backend address,
 and flame graph address. Adjust the resource and task concurrency limits for
 the capacity of the hosts and cluster.

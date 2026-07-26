@@ -19,17 +19,17 @@ huatuo-apiserver 通过 `/v1/profiles` 提供服务化的持续性能剖析能�
 
 ### 1. 请求约定
 
-huatuo-apiserver 默认监听 `:12740`。以下示例使用环境变量统一设置服务地址和用户 ID：
+huatuo-apiserver 默认监听 `:12740`。以下示例使用环境变量统一设置服务地址和 Bearer token：
 
 ```bash
 API_BASE="http://127.0.0.1:12740"
-USER_ID="<Auth.users.ID>"
+API_TOKEN="<Auth.users.BearerToken>"
 ```
 
-每个请求必须在 `Authorization` 请求头中以 Bearer token 传入配置的用户 ID：
+每个请求必须在 `Authorization` 请求头中传入配置的 Bearer token：
 
 ```text
-Authorization: Bearer <Auth.users.ID>
+Authorization: Bearer <Auth.users.BearerToken>
 ```
 
 非管理员用户需要配置 `/v1/profiles` 和 `/v1/profiles/**` 权限。权限可带
@@ -49,7 +49,7 @@ HTTP 方法前缀，例如 `GET /v1/profiles/**`。接口使用统一 JSON 响�
 
 ```bash
 curl -sS \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   "${API_BASE}/v1/profiles/capabilities"
 ```
 
@@ -96,7 +96,7 @@ curl -sS \
 ```bash
 curl -sS -i \
   -X POST \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "cpu",
@@ -112,7 +112,7 @@ curl -sS -i \
 ```bash
 curl -sS -i \
   -X POST \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "memory",
@@ -159,7 +159,7 @@ JOB_ID="<profile-job-id>"
 
 ```bash
 curl -sS -G \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   --data-urlencode "hostname=node-01" \
   --data-urlencode "status=running" \
   --data-urlencode "type=cpu" \
@@ -175,7 +175,7 @@ curl -sS -G \
 
 ```bash
 curl -sS \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   "${API_BASE}/v1/profiles/${JOB_ID}"
 ```
 
@@ -214,7 +214,7 @@ curl -sS \
 
 ```bash
 curl -sS \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   -o profile-raw.json \
   "${API_BASE}/v1/profiles/${JOB_ID}/raw?limit=100&offset=0"
 ```
@@ -230,7 +230,7 @@ curl -sS \
 ```bash
 curl -sS \
   -X PATCH \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"status":"stopped"}' \
   "${API_BASE}/v1/profiles/${JOB_ID}"
@@ -245,7 +245,7 @@ curl -sS \
 ```bash
 curl -sS -i \
   -X DELETE \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   "${API_BASE}/v1/profiles/${JOB_ID}"
 ```
 

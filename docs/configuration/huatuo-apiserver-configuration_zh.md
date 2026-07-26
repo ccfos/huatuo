@@ -18,8 +18,8 @@ weight: 5
 程序使用内置默认值；需要覆盖默认值时，应移除 `#` 并设置适合当前环境的
 值。修改配置后需重启 `huatuo-apiserver` 才能生效。
 
-**注意**：示例中的 Elasticsearch/OpenSearch 密码和用户 ID 仅用于说明，
-生产环境必须替换，并避免将真实凭据提交到版本控制系统。
+**注意**：示例中的 Elasticsearch/OpenSearch 密码和 Bearer token
+仅用于说明，生产环境必须替换，并避免将真实凭据提交到版本控制系统。
 
 ### 2. 日志配置
 
@@ -210,7 +210,7 @@ Elasticsearch/OpenSearch。
 
 `/healthz`、`/readyz`、`/metrics` 和 `/version` 无需认证。启用 pprof 后，
 `/debug/pprof/**` 与 API 共用监听端口，并且仅管理员可访问。其他接口必须
-携带 `Authorization: Bearer <Auth.users.ID>`。所有
+携带 `Authorization: Bearer <Auth.users.BearerToken>`。所有
 `/v1/profiles/flamegraph/**` 查询接口仅管理员可访问。
 
 每个用户使用一个 `[[Auth.users]]` 数组表声明。可配置多个用户，例如：
@@ -218,13 +218,13 @@ Elasticsearch/OpenSearch。
 ```toml
 # 管理员：拥有全部接口权限，Permissions 将被忽略。
 [[Auth.users]]
-    ID      = "REPLACE_WITH_RANDOM_HEX"
-    Name    = "Administrator"
-    IsAdmin = true
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
+    Name        = "Administrator"
+    IsAdmin     = true
 
 # 普通用户：仅允许读取追踪和性能剖析接口。
 [[Auth.users]]
-    ID          = "REPLACE_WITH_RANDOM_HEX"
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
     Name        = "huatuo-front"
     IsAdmin     = false
     Permissions = [
@@ -235,13 +235,12 @@ Elasticsearch/OpenSearch。
     ]
 ```
 
-- **ID**：用户唯一标识和 Bearer 认证凭据。
+- **BearerToken**：通过 HTTP `Authorization` 请求头传入的认证凭据。
 
   无默认值。
 
-  **说明**：服务根据客户端请求携带的 ID 查找用户。该值应视为敏感凭据，
-  使用足够随机的字符串，例如通过 `openssl rand -hex 16` 生成。不同用户
-  不得共用 ID。
+  **说明**：该值应视为敏感凭据，使用足够随机的字符串，例如通过
+  `openssl rand -hex 16` 生成。不同用户不得共用 Bearer token。
 
 - **Name**：用户显示名称。
 
@@ -336,12 +335,12 @@ LogLevel = "Info"
     Index = "huatuo_bamai"
 
 [[Auth.users]]
-    ID = "REPLACE_WITH_RANDOM_HEX"
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
     Name = "Administrator"
     IsAdmin = true
 
 [[Auth.users]]
-    ID = "REPLACE_WITH_ANOTHER_RANDOM_HEX"
+    BearerToken = "REPLACE_WITH_ANOTHER_RANDOM_HEX"
     Name = "huatuo-front"
     IsAdmin = false
     Permissions = [
@@ -358,5 +357,5 @@ LogLevel = "Info"
     FlameGraphBaseURL = "https://grafana.example.com/d"
 ```
 
-部署前应替换示例中的密码、用户 ID、后端地址和火焰图地址，并根据主机与
+部署前应替换示例中的密码、Bearer token、后端地址和火焰图地址，并根据主机与
 集群容量调整资源及任务并发限制。

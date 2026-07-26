@@ -54,7 +54,7 @@ type APIServerConfig struct {
 }
 
 type UserConfig struct {
-	ID          string
+	BearerToken string
 	Name        string
 	Permissions []string
 	IsAdmin     bool `default:"false"`
@@ -156,25 +156,25 @@ func (c *Config) Validate() error {
 	if len(c.Auth.Users) == 0 {
 		return errors.New("at least one auth user is required")
 	}
-	seenUsers := make(map[string]struct{}, len(c.Auth.Users))
+	seenTokens := make(map[string]struct{}, len(c.Auth.Users))
 	for i, user := range c.Auth.Users {
-		if strings.TrimSpace(user.ID) == "" {
-			return fmt.Errorf("auth user %d: ID is required", i)
+		if strings.TrimSpace(user.BearerToken) == "" {
+			return fmt.Errorf("auth user %d: bearer token is required", i)
 		}
-		if _, exists := seenUsers[user.ID]; exists {
-			return fmt.Errorf("auth user %d: duplicate ID %q", i, user.ID)
+		if _, exists := seenTokens[user.BearerToken]; exists {
+			return fmt.Errorf("auth user %d: duplicate bearer token", i)
 		}
-		seenUsers[user.ID] = struct{}{}
+		seenTokens[user.BearerToken] = struct{}{}
 		if !user.IsAdmin && len(user.Permissions) == 0 {
-			return fmt.Errorf("auth user %q: permissions are required for non-admin users", user.ID)
+			return fmt.Errorf("auth user %d: permissions are required for non-admin users", i)
 		}
 		for _, permission := range user.Permissions {
 			parts := strings.Fields(permission)
 			if len(parts) == 0 || len(parts) > 2 {
-				return fmt.Errorf("auth user %q: invalid permission %q", user.ID, permission)
+				return fmt.Errorf("auth user %d: invalid permission %q", i, permission)
 			}
 			if len(parts) == 2 && !isHTTPMethod(parts[0]) {
-				return fmt.Errorf("auth user %q: invalid permission method %q", user.ID, parts[0])
+				return fmt.Errorf("auth user %d: invalid permission method %q", i, parts[0])
 			}
 		}
 	}
