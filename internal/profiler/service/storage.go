@@ -293,7 +293,7 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 			id = filter.ID
 		}
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldTracerID,
+			Field: profileFieldTracerID + ".keyword",
 			Op:    driver.OpEq,
 			Value: id,
 		})

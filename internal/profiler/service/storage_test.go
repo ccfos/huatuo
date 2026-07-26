@@ -48,7 +48,7 @@ func TestBuildProfileAggregationQueryAddsTracerIDOnce(t *testing.T) {
 	query := buildProfileAggregationQuery(&SearchFilter{TracerID: "task-20260722-8f6a"})
 	want := []driver.Filter{
 		{
-			Field: profileFieldTracerID,
+			Field: profileFieldTracerID + ".keyword",
 			Op:    driver.OpEq,
 			Value: "task-20260722-8f6a",
 		},
