@@ -23,6 +23,7 @@ import (
 	"path"
 	"runtime"
 	"strconv"
+	"sync"
 	"time"
 
 	"huatuo-bamai/internal/cgroups"
@@ -89,13 +90,19 @@ type cpuIdleThreshold struct {
 // containersCPUIdleMap is the container information
 type containersCPUIdleMap map[string]*containerCPUInfo
 
-var containersCPUIdle = make(containersCPUIdleMap)
+var (
+	containersCPUIdle   = make(containersCPUIdleMap)
+	containersCPUIdleMu sync.Mutex
+)
 
 func updateContainersCPUIdle(f *matcher.ContainerMatcher) error {
 	containers, err := pod.NormalContainers()
 	if err != nil {
 		return err
 	}
+
+	containersCPUIdleMu.Lock()
+	defer containersCPUIdleMu.Unlock()
 
 	for _, container := range containers {
 		if !f.Match(container) {
@@ -120,6 +127,9 @@ func updateContainersCPUIdle(f *matcher.ContainerMatcher) error {
 }
 
 func (c *cpuIdleTracing) detectCPUIdleContainer(threshold *cpuIdleThreshold) (*containerCPUInfo, error) {
+	containersCPUIdleMu.Lock()
+	defer containersCPUIdleMu.Unlock()
+
 	for id, container := range containersCPUIdle {
 		if !container.alive {
 			delete(containersCPUIdle, id)
