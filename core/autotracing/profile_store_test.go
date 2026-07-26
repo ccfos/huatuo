@@ -34,7 +34,7 @@ import (
 	ptree "github.com/grafana/pyroscope/pkg/og/storage/tree"
 )
 
-func TestBuildAndSaveCPUSystemWritesJSONAndPprof(t *testing.T) {
+func TestSaveCPUSysTraceWritesJSONAndPprof(t *testing.T) {
 	tracingBackend := &captureProfileBackend{}
 	profileBackend := &captureProfileBackend{}
 	configureAutotracingStores(t, tracingBackend, profileBackend)
@@ -45,15 +45,23 @@ func TestBuildAndSaveCPUSystemWritesJSONAndPprof(t *testing.T) {
 		{"level":0,"value":5,"self":0,"label":"root"},
 		{"level":1,"value":5,"self":5,"label":"leaf"}
 	]`)
-	cpu := &cpuSysTracing{sysPercent: 70, sysPercentDelta: 25}
-	err := cpu.buildAndSaveCPUSystem(
+	cpu := &cpuSysTracing{
+		perfDuration: duration,
+		threshold: cpuSysThreshold{
+			usage: 45,
+			delta: 20,
+		},
+	}
+	err := cpu.saveCPUSysTrace(
 		start,
-		duration,
-		&cpuSysThreshold{usage: 45, delta: 20},
+		cpuSysState{
+			systemPercent:      70,
+			systemPercentDelta: 25,
+		},
 		rawFrames,
 	)
 	if err != nil {
-		t.Fatalf("buildAndSaveCPUSystem returned error: %v", err)
+		t.Fatalf("saveCPUSysTrace returned error: %v", err)
 	}
 
 	if len(tracingBackend.records) != 1 {
@@ -73,7 +81,7 @@ func TestBuildAndSaveCPUSystemWritesJSONAndPprof(t *testing.T) {
 		TracerID      string            `json:"tracer_id"`
 		TracerName    string            `json:"tracer_name"`
 		TracerRunType string            `json:"tracer_type"`
-		TracerData    CpuSysTracingData `json:"tracer_data"`
+		TracerData    cpuSysTracingData `json:"tracer_data"`
 	}
 	if err := json.Unmarshal(tracingBackend.records[0].Data, &event); err != nil {
 		t.Fatalf("decode tracing JSON: %v", err)
