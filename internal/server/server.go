@@ -286,7 +286,7 @@ func requestLogMiddleware() httpGin.HandlerFunc {
 			WithField("path", ctx.FullPath()).
 			WithField("status", ctx.Writer.Status()).
 			WithField("latency", time.Since(startedAt)).
-			Info("http request completed")
+			Debug("http request completed")
 	}
 }
 
