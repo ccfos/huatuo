@@ -269,6 +269,10 @@ Elasticsearch；Elasticsearch 会继续保存现有 JSON profiling 文档。凭�
 
 自动追踪模块是 HUATUO 的智能特性之一，可根据阈值自动触发特定性能追踪，减少人工干预。
 
+CPUIdle 和 CPUSys 会保留原有 JSON 事件，并使用相同的 tracer ID 额外写入
+CPU pprof。该 profile 以 99 Hz 采样，样本单位为 `cpu:nanoseconds`。
+profile 存储失败不会丢弃 JSON 事件。
+
 #### 7.1 CPUIdle 自动追踪 — 容器突发高 CPU 使用场景
 
 ```bash
