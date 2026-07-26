@@ -60,10 +60,10 @@ curl -sS \
 | `types` | 支持的剖析类型：`cpu`、`memory` |
 | `cpu_languages` | CPU 剖析支持的语言 |
 | `memory_languages` | 内存剖析支持的语言 |
-| `memory_modes` | 内存剖析模式；键用于界面展示，值用于创建任务 |
-| `aggregation_interval` | 服务端采集数据的聚合周期，单位为秒 |
-| `execution_timeout` | 单个 profiler 子进程的执行超时，单位为秒 |
-| `max_profiler_procs` | 第三方 profiler 子进程的最大并发数；`0` 表示不限制 |
+| `memory_modes` | 按语言分组的内存剖析模式；列表值可直接用于创建任务 |
+| `aggregation_interval_seconds` | 服务端采集数据的聚合周期 |
+| `execution_timeout_seconds` | 单个 profiler 进程的执行超时 |
+| `max_concurrent_profilers` | profiler 进程的最大并发数；`0` 表示不限制 |
 
 当前 CPU 剖析支持 `c`、`c++`、`go`、`java` 和 `python`。内存剖析支持以下组合：
 
@@ -83,13 +83,13 @@ curl -sS \
 | --- | --- | --- |
 | `type` | 是 | 剖析类型：`cpu` 或 `memory` |
 | `language` | 是 | 目标进程语言，必须与剖析类型匹配 |
-| `duration` | 是 | 采集时长，单位为秒 |
+| `duration_seconds` | 是 | 采集时长，单位为秒 |
 | `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
 | `container_id` | 否 | 目标容器 ID；不传表示对宿主机剖析 |
 | `binary_match_path` | 否 | Java/Python CPU 剖析的目标可执行文件路径匹配条件；原生剖析不支持 |
 | `memory_mode` | 内存剖析必需 | 内存剖析模式，必须与 `language` 匹配 |
 
-`duration` 必须不小于两个 `aggregation_interval`，且 `duration + aggregation_interval` 必须小于 3600 秒。同一用户在同一节点上已有运行中的剖析任务时，服务端返回 `409 Conflict`。
+`duration_seconds` 必须不小于两个 `aggregation_interval_seconds`，且二者之和必须小于 3600 秒。同一用户在同一节点上已有运行中的剖析任务时，服务端返回 `409 Conflict`。
 
 创建宿主机 Go CPU 剖析任务：
 
@@ -101,7 +101,7 @@ curl -sS -i \
   -d '{
     "type": "cpu",
     "language": "go",
-    "duration": 60,
+    "duration_seconds": 60,
     "hostname": "node-01"
   }' \
   "${API_BASE}/v1/profiles"
@@ -118,7 +118,7 @@ curl -sS -i \
     "type": "memory",
     "language": "java",
     "memory_mode": "object_usage",
-    "duration": 60,
+    "duration_seconds": 60,
     "container_id": "9f4c2f1a8b7d",
     "hostname": "node-01"
   }' \
@@ -153,7 +153,7 @@ JOB_ID="<profile-job-id>"
 | `type` | 无 | `cpu` 或 `memory`；不传时返回两种类型 |
 | `limit` | `50` | 每页数量，必须大于 0，最大为 500 |
 | `offset` | `0` | 起始偏移量，必须大于或等于 0 |
-| `sort` | `-start_time` | `start_time`、`end_time`、`host` 或 `container`；前置 `-` 表示降序 |
+| `sort` | `-created_at` | `created_at`、`finished_at`、`hostname`、`container_id`、`id`、`status` 或 `type`；前置 `-` 表示降序 |
 
 查询 `node-01` 上最新的 20 个运行中 CPU 剖析任务：
 
@@ -165,7 +165,7 @@ curl -sS -G \
   --data-urlencode "type=cpu" \
   --data-urlencode "limit=20" \
   --data-urlencode "offset=0" \
-  --data-urlencode "sort=-start_time" \
+  --data-urlencode "sort=-created_at" \
   "${API_BASE}/v1/profiles"
 ```
 
@@ -184,19 +184,18 @@ curl -sS \
 | 字段 | 说明 |
 | --- | --- |
 | `id` | Profiles API 任务 ID |
-| `agent_task_id` | HUATUO Agent 任务 ID |
-| `container_id` | 目标容器 ID；宿主机任务为空 |
+| `container_id` | 目标容器 ID；宿主机任务不返回该字段 |
 | `hostname` | 目标节点主机名 |
 | `type` | `cpu` 或 `memory` |
 | `language` | 目标进程语言 |
-| `memory_mode` | 内存剖析模式；CPU 任务为空 |
-| `binary_match_path` | 创建任务时指定的可执行文件匹配路径 |
+| `memory_mode` | 内存剖析模式；CPU 任务不返回该字段 |
+| `binary_match_path` | 可执行文件匹配路径；未使用时不返回该字段 |
 | `status` | 当前任务状态 |
-| `start_time`、`end_time` | 任务开始和结束时间；尚未产生时为空 |
-| `tracer_args` | huatuo-apiserver 实际下发给 profiler 的命令行参数 |
-| `duration` | 请求的剖析时长，单位为秒 |
-| `results.url` | 剖析结果的 Grafana 链接；结果尚未生成时为空 |
-| `error_message` | 任务失败或超时时的错误信息 |
+| `duration_seconds` | 请求的剖析时长，单位为秒 |
+| `created_at` | 任务创建时间 |
+| `finished_at` | 任务进入终态的时间；运行期间为 `null` |
+| `result_url` | 剖析结果的 Grafana 链接；结果尚未生成时为 `null` |
+| `status_reason` | 终态说明；无需说明时为 `null` |
 
 任务状态流转如下：
 
@@ -206,12 +205,12 @@ curl -sS \
 | `running` | Agent 正在采集剖析数据 |
 | `completed` | 任务正常完成 |
 | `stopped` | 任务被用户或任务管理器停止 |
-| `failed` | 任务执行失败，查看 `error_message` 定位原因 |
+| `failed` | 任务执行失败，查看 `status_reason` 定位原因 |
 | `timeout` | 任务超过允许的执行时间 |
 
 ### 6. 获取原始剖析数据
 
-`GET /v1/profiles/:id/raw` 根据 `agent_task_id` 查询存储中的原始剖析数据。数据量可能较大，可以直接保存到文件：
+`GET /v1/profiles/:id/raw` 返回该任务关联的原始剖析窗口。数据量可能较大，可以直接保存到文件：
 
 ```bash
 curl -sS \
@@ -220,9 +219,9 @@ curl -sS \
   "${API_BASE}/v1/profiles/${JOB_ID}/raw?limit=100&offset=0"
 ```
 
-原始剖析记录位于响应体的 `data.data` 字段；`data.limit`、`data.offset`
-和 `data.has_more` 描述分页。任务尚未分配 Agent 任务 ID 时，接口返回
-`400 Bad Request`。
+剖析窗口位于响应体的 `data.items` 字段；`data.limit`、`data.offset`
+和 `data.has_more` 描述分页。每条记录包含 `uploaded_at`、`captured_at`、
+`profile_type` 和兼容 pprof 的 `profile` 数据。
 
 ### 7. 停止任务
 
@@ -329,7 +328,7 @@ sudo _output/bin/profiler \
 | `--tool-path` | 无 | Java、Python | 第三方采集工具根目录，必填 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
 | `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
-| `--tracer-id` | 自动生成 | 全部 | 采集任务 ID，主要用于远端存储关联 |
+| `--tracer-id` | 空；本地输出时内部生成 | 全部；`remote` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
 | `--enable-pprof` | `false` | 工具自身 | 在 `:6000` 暴露 profiler 进程自身的 Go pprof 接口 |
 | `--version-format` | `text` | 版本查询 | `--version` 的输出格式：`text`、`json` 或 `short` |
 | `--help`, `-h` | - | 全部 | 显示命令帮助 |
@@ -488,7 +487,7 @@ main;handleRequest;parsePayload 428
 main;handleRequest;writeResponse 172
 ```
 
-需要保留原始数据并支持后续使用不同配色或过滤规则重新渲染时，选择 `collapsed`。只需直接定位热点时，选择 `flamegraph`。`remote` 依赖 HUATUO toolstream Unix socket，独立离线使用时不应选择该格式。
+需要保留原始数据并支持后续使用不同配色或过滤规则重新渲染时，选择 `collapsed`。只需直接定位热点时，选择 `flamegraph`。`remote` 依赖 HUATUO toolstream Unix socket，要求提供非空的 `--tracer-id`，独立离线使用时不应选择该格式。
 
 ### 7. 根据集成测试复现
 

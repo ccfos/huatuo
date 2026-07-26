@@ -62,10 +62,10 @@ The `data` object contains these fields:
 | `types` | Supported profiling types: `cpu` and `memory` |
 | `cpu_languages` | Languages supported by CPU profiling |
 | `memory_languages` | Languages supported by memory profiling |
-| `memory_modes` | Memory profiling modes; keys are display names and values are used when creating jobs |
-| `aggregation_interval` | Server-side data aggregation interval in seconds |
-| `execution_timeout` | Execution timeout for one profiler subprocess in seconds |
-| `max_profiler_procs` | Maximum number of concurrent third-party profiler subprocesses; `0` disables the limit |
+| `memory_modes` | Memory profiling modes grouped by language; values are accepted by job creation |
+| `aggregation_interval_seconds` | Server-side data aggregation interval |
+| `execution_timeout_seconds` | Execution timeout for one profiler process |
+| `max_concurrent_profilers` | Maximum number of concurrent profiler processes; `0` disables the limit |
 
 CPU profiling currently supports `c`, `c++`, `go`, `java`, and `python`. Memory profiling supports these combinations:
 
@@ -85,13 +85,13 @@ CPU profiling currently supports `c`, `c++`, `go`, `java`, and `python`. Memory 
 | --- | --- | --- |
 | `type` | Yes | Profiling type: `cpu` or `memory` |
 | `language` | Yes | Target process language; it must support the selected profiling type |
-| `duration` | Yes | Profiling duration in seconds |
+| `duration_seconds` | Yes | Profiling duration in seconds |
 | `hostname` | Yes | Hostname of the node running the target process; used for job scheduling |
 | `container_id` | No | Target container ID; omit it to profile the host |
 | `binary_match_path` | No | Executable path matcher for Java/Python CPU profiling; native profiling does not support it |
 | `memory_mode` | For memory profiling | Memory profiling mode; it must be supported by `language` |
 
-`duration` must cover at least two `aggregation_interval` periods, and `duration + aggregation_interval` must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
+`duration_seconds` must cover at least two `aggregation_interval_seconds` periods, and their sum must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
 
 Create a Go CPU profiling job on a host:
 
@@ -103,7 +103,7 @@ curl -sS -i \
   -d '{
     "type": "cpu",
     "language": "go",
-    "duration": 60,
+    "duration_seconds": 60,
     "hostname": "node-01"
   }' \
   "${API_BASE}/v1/profiles"
@@ -120,7 +120,7 @@ curl -sS -i \
     "type": "memory",
     "language": "java",
     "memory_mode": "object_usage",
-    "duration": 60,
+    "duration_seconds": 60,
     "container_id": "9f4c2f1a8b7d",
     "hostname": "node-01"
   }' \
@@ -155,7 +155,7 @@ JOB_ID="<profile-job-id>"
 | `type` | None | `cpu` or `memory`; omit it to return both types |
 | `limit` | `50` | Page size; must be greater than 0 and is capped at 500 |
 | `offset` | `0` | Starting offset; must be greater than or equal to 0 |
-| `sort` | `-start_time` | `start_time`, `end_time`, `host`, or `container`; prefix with `-` for descending order |
+| `sort` | `-created_at` | `created_at`, `finished_at`, `hostname`, `container_id`, `id`, `status`, or `type`; prefix with `-` for descending order |
 
 List the 20 most recent running CPU profiling jobs on `node-01`:
 
@@ -167,7 +167,7 @@ curl -sS -G \
   --data-urlencode "type=cpu" \
   --data-urlencode "limit=20" \
   --data-urlencode "offset=0" \
-  --data-urlencode "sort=-start_time" \
+  --data-urlencode "sort=-created_at" \
   "${API_BASE}/v1/profiles"
 ```
 
@@ -186,19 +186,18 @@ The `data` object contains the job details:
 | Field | Description |
 | --- | --- |
 | `id` | Profiles API job ID |
-| `agent_task_id` | HUATUO Agent task ID |
-| `container_id` | Target container ID; empty for host jobs |
+| `container_id` | Target container ID; omitted for host jobs |
 | `hostname` | Target node hostname |
 | `type` | `cpu` or `memory` |
 | `language` | Target process language |
-| `memory_mode` | Memory profiling mode; empty for CPU jobs |
-| `binary_match_path` | Executable path matcher specified when the job was created |
+| `memory_mode` | Memory profiling mode; omitted for CPU jobs |
+| `binary_match_path` | Executable path matcher; omitted when unused |
 | `status` | Current job status |
-| `start_time`, `end_time` | Job start and end times; empty until available |
-| `tracer_args` | Command-line arguments sent by huatuo-apiserver to profiler |
-| `duration` | Requested profiling duration in seconds |
-| `results.url` | Grafana URL for the profiling result; empty until the result is available |
-| `error_message` | Error details for a failed or timed-out job |
+| `duration_seconds` | Requested profiling duration in seconds |
+| `created_at` | Job creation time |
+| `finished_at` | Terminal status time; `null` while the job is active |
+| `result_url` | Grafana URL for the result; `null` until available |
+| `status_reason` | Terminal status details; `null` when no explanation is needed |
 
 Profiling jobs use these statuses:
 
@@ -208,12 +207,12 @@ Profiling jobs use these statuses:
 | `running` | The Agent is collecting profiling data |
 | `completed` | The job completed successfully |
 | `stopped` | The user or job manager stopped the job |
-| `failed` | The job failed; inspect `error_message` for the cause |
+| `failed` | The job failed; inspect `status_reason` for the cause |
 | `timeout` | The job exceeded its allowed execution time |
 
 ### 6. Get Raw Profiling Data
 
-`GET /v1/profiles/:id/raw` uses `agent_task_id` to query raw profiling data from storage. The response can be large, so it can be written directly to a file:
+`GET /v1/profiles/:id/raw` returns the raw profiling windows associated with the job. The response can be large, so it can be written directly to a file:
 
 ```bash
 curl -sS \
@@ -222,9 +221,9 @@ curl -sS \
   "${API_BASE}/v1/profiles/${JOB_ID}/raw?limit=100&offset=0"
 ```
 
-The raw records are in `data.data`; `data.limit`, `data.offset`, and
-`data.has_more` describe the page. If the job does not yet have an Agent task
-ID, the endpoint returns `400 Bad Request`.
+The profiling windows are in `data.items`; `data.limit`, `data.offset`, and
+`data.has_more` describe the page. Each item contains `uploaded_at`,
+`captured_at`, `profile_type`, and the pprof-compatible `profile` payload.
 
 ### 7. Stop a Profiling Job
 
@@ -331,7 +330,7 @@ sudo _output/bin/profiler \
 | `--tool-path` | None | Java, Python | Third-party profiler root directory; required |
 | `--binary-match-path` | None | Java, Python | Executable path used to match target processes |
 | `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address used to resolve container metadata |
-| `--tracer-id` | Generated | All | Profiling task ID, primarily used to associate remote storage records |
+| `--tracer-id` | Empty; generated internally for local output | All; required for `remote` | Stable profiling task ID used by toolstream and remote storage |
 | `--enable-pprof` | `false` | Profiler itself | Expose Go pprof endpoints for the profiler process on `:6000` |
 | `--version-format` | `text` | Version query | Output format for `--version`: `text`, `json`, or `short` |
 | `--help`, `-h` | - | All | Display command help |
@@ -490,7 +489,7 @@ main;handleRequest;parsePayload 428
 main;handleRequest;writeResponse 172
 ```
 
-Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote` depends on the HUATUO toolstream Unix socket and should not be selected for standalone offline use.
+Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote` depends on the HUATUO toolstream Unix socket, requires a non-empty `--tracer-id`, and should not be selected for standalone offline use.
 
 ### 7. Reproducing Integration Test Examples
 
