@@ -124,3 +124,49 @@ write_apiserver_profile_capabilities_config() {
     MaxProfilerProcs = ${CAPABILITIES_MAX_PROFILER_PROCS}
 EOF
 }
+
+# The storage address and credentials are initialized by the calling test.
+write_continuous_profiling_bamai_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "dropwatch"]
+
+[Storage.ES]
+    Address = "${ELASTICSEARCH_ADDR}"
+    Username = "elastic"
+    Password = "${ES_PASSWORD}"
+    Index = "huatuo_continuous_profiling_test"
+
+[Storage.LocalFile]
+    Path = ""
+EOF
+}
+
+# The API port, users, profiling interval, and storage are owned by the test.
+write_continuous_profiling_apiserver_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
+[APIServer]
+    TCPAddr = "127.0.0.1:${APISERVER_PORT}"
+
+[ElasticSearch]
+    Address = "${ELASTICSEARCH_ADDR}"
+    Username = "elastic"
+    Password = "${ES_PASSWORD}"
+    Index = "huatuo_continuous_profiling_test"
+
+[[Auth.users]]
+    ID = "${API_USER}"
+    Name = "Integration administrator"
+    IsAdmin = true
+
+[[Auth.users]]
+    ID = "${OTHER_USER}"
+    Name = "Integration user"
+    Permissions = ["/v1/profiles", "/v1/profiles/**"]
+
+[Profiling]
+    AggregationInterval = ${PROFILE_INTERVAL}
+    ExecutionTimeout = 20
+    MaxProfilerProcs = 1
+    FlameGraphBaseURL = "http://grafana.invalid/d"
+EOF
+}
