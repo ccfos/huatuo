@@ -52,6 +52,15 @@ type BamaiConfig struct {
 			RotationSize int    `default:"100"`
 			MaxRotation  int    `default:"10"`
 		}
+
+		Pyroscope struct {
+			Address        string
+			AppNamePrefix  string
+			Username       string
+			Password       string
+			BearerToken    string
+			TimeoutSeconds int `default:"5"`
+		}
 	}
 
 	Task struct {
