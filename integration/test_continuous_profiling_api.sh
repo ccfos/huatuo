@@ -84,7 +84,7 @@ create_native_cpu_profile() {
 		-H "Authorization: Bearer ${API_USER}" \
 		-H 'Content-Type: application/json' \
 		"${APISERVER_ADDR}/v1/profiles" \
-		-d "{\"type\":\"cpu\",\"language\":\"c\",\"duration\":${PROFILE_DURATION},\"hostname\":\"127.0.0.1\"}") \
+		-d "{\"type\":\"cpu\",\"language\":\"c\",\"duration_seconds\":${PROFILE_DURATION},\"hostname\":\"127.0.0.1\"}") \
 		|| curl_status=$?
 	if [[ -r "${response_file}" ]]; then
 		log_info "create native CPU profile response: $(< "${response_file}")"
@@ -123,7 +123,18 @@ profiles_are_stored() {
 		return 1
 	}
 	local count
-	count=$(jq -er '.data.data | length' "${response_file}" 2> /dev/null) || {
+	count=$(jq -er '
+		.data.items
+		| map(
+			has("uploaded_at")
+			and has("captured_at")
+			and has("profile_type")
+			and has("profile")
+			and (has("tracer_id") | not)
+			and (has("tracer_data") | not)
+		)
+		| if all then length else error("invalid raw profile contract") end
+	' "${response_file}" 2> /dev/null) || {
 		LAST_PROFILE_DIAGNOSTIC="raw profile response status=${status}, invalid body: $(< "${response_file}")"
 		return 1
 	}
@@ -151,7 +162,13 @@ assert_profile_lifecycle() {
 
 	wait_until 60 2 profile_status_is completed || fatal "profile did not complete"
 	jq -e --argjson duration "${PROFILE_DURATION}" \
-		'.data.duration == $duration and .data.results.url != ""' \
+		'.data.duration_seconds == $duration
+			and .data.created_at != null
+			and .data.finished_at != null
+			and .data.result_url != null
+			and .data.status_reason == null
+			and (.data | has("agent_task_id") | not)
+			and (.data | has("tracer_args") | not)' \
 		"${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json" > /dev/null \
 		|| fatal "completed profile metadata is incomplete"
 
@@ -161,7 +178,7 @@ assert_profile_lifecycle() {
 	# verifies only the API, task lifecycle, transport, and storage contract.
 
 	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_USER}" \
-		"${APISERVER_ADDR}/v1/profiles?type=cpu&host=127.0.0.1&status=completed&limit=1&offset=0" \
+		"${APISERVER_ADDR}/v1/profiles?type=cpu&hostname=127.0.0.1&status=completed&limit=1&offset=0&sort=-created_at" \
 		| jq -e --arg id "${PROFILE_ID}" '.data.total >= 1 and .data.items[0].id == $id' \
 			> /dev/null || fatal "profile list filters did not return the completed task"
 

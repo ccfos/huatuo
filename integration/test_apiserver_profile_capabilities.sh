@@ -22,9 +22,9 @@ source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
 readonly API_USER="integration-admin"
-readonly CAPABILITIES_AGGREGATION_INTERVAL=7
-readonly CAPABILITIES_EXECUTION_TIMEOUT=14
-readonly CAPABILITIES_MAX_PROFILER_PROCS=3
+readonly CAPABILITIES_AGGREGATION_INTERVAL_SECONDS=7
+readonly CAPABILITIES_EXECUTION_TIMEOUT_SECONDS=14
+readonly CAPABILITIES_MAX_CONCURRENT_PROFILERS=3
 readonly FAILURE_LOG_PATTERN='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
 
 command -v curl > /dev/null || skip "curl command is not installed"
@@ -94,23 +94,22 @@ assert_profile_capabilities() {
 		|| fatal "profile capabilities returned status ${status}"
 
 	jq -e \
-		--argjson aggregation_interval "${CAPABILITIES_AGGREGATION_INTERVAL}" \
-		--argjson execution_timeout "${CAPABILITIES_EXECUTION_TIMEOUT}" \
-		--argjson max_profiler_procs "${CAPABILITIES_MAX_PROFILER_PROCS}" \
+		--argjson aggregation_interval_seconds "${CAPABILITIES_AGGREGATION_INTERVAL_SECONDS}" \
+		--argjson execution_timeout_seconds "${CAPABILITIES_EXECUTION_TIMEOUT_SECONDS}" \
+		--argjson max_concurrent_profilers "${CAPABILITIES_MAX_CONCURRENT_PROFILERS}" \
 		'
 			.code == 0
 			and .message == "success"
 			and .data.types == ["cpu", "memory"]
 			and .data.cpu_languages == ["c", "c++", "go", "java", "python"]
 			and .data.memory_languages == ["c", "c++", "go", "java"]
-			and .data.memory_modes.NATIVE_VIRTUAL_ALLOC == "virtual_alloc"
-			and .data.memory_modes.NATIVE_PHYSICAL_ALLOC == "physical_alloc"
-			and .data.memory_modes.NATIVE_PHYSICAL_USAGE == "physical_usage"
-			and .data.memory_modes.OBJECT_ALLOC == "object_alloc"
-			and .data.memory_modes.OBJECT_USAGE == "object_usage"
-			and .data.aggregation_interval == $aggregation_interval
-			and .data.execution_timeout == $execution_timeout
-			and .data.max_profiler_procs == $max_profiler_procs
+			and .data.memory_modes.c == ["physical_alloc", "physical_usage", "virtual_alloc"]
+			and .data.memory_modes["c++"] == ["physical_alloc", "physical_usage", "virtual_alloc"]
+			and .data.memory_modes.go == ["physical_alloc", "physical_usage", "virtual_alloc"]
+			and .data.memory_modes.java == ["object_alloc", "object_usage"]
+			and .data.aggregation_interval_seconds == $aggregation_interval_seconds
+			and .data.execution_timeout_seconds == $execution_timeout_seconds
+			and .data.max_concurrent_profilers == $max_concurrent_profilers
 		' "${response_file}" > /dev/null \
 		|| fatal "profile capabilities response does not match the API contract"
 }
