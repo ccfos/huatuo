@@ -23,6 +23,7 @@ RUN_PATH=${RUN_PATH:-/home/huatuo-bamai}
 CONFIG_FILE=${CONFIG_FILE:-${RUN_PATH}/conf/huatuo-bamai.conf}
 HUATUO_MODE=${HUATUO_MODE:-profiling}
 PYROSCOPE_ADDRESS=${PYROSCOPE_ADDRESS:-http://127.0.0.1:4040}
+FOLDED_STACKS_DIR=${FOLDED_STACKS_DIR:-/var/lib/huatuo/autotracing-folded}
 ELASTICSEARCH_WAIT_SECONDS=${ELASTICSEARCH_WAIT_SECONDS:-180}
 ELASTICSEARCH_INIT_DELAY_SECONDS=${ELASTICSEARCH_INIT_DELAY_SECONDS:-5}
 
@@ -53,6 +54,12 @@ prepare_runtime_config() {
 		return 1
 		;;
 	esac
+	case "$FOLDED_STACKS_DIR" in
+	*\"* | *\\*)
+		echo "FOLDED_STACKS_DIR must not contain quotes or backslashes." >&2
+		return 1
+		;;
+	esac
 
 	runtime_config="${RUN_PATH}/conf/huatuo-bamai-${mode}.conf"
 	temp_config="${runtime_config}.tmp.$$"
@@ -65,6 +72,7 @@ prepare_runtime_config() {
 	if ! awk \
 		-v disable_elasticsearch="$disable_elasticsearch" \
 		-v display_backend="$display_backend" \
+		-v folded_stacks_dir="$FOLDED_STACKS_DIR" \
 		-v pyroscope_address="$PYROSCOPE_ADDRESS" '
 		/^[[:space:]]*\[Storage\.Elasticsearch\][[:space:]]*$/ {
 			section = "es"
@@ -110,13 +118,20 @@ prepare_runtime_config() {
 			seen_display_backend = 1
 			next
 		}
+		section == "display" &&
+			/^[[:space:]]*#?[[:space:]]*FoldedStacksDir[[:space:]]*=/ {
+			printf "        FoldedStacksDir = \"%s\"\n", folded_stacks_dir
+			seen_folded_stacks_dir = 1
+			next
+		}
 		{ print }
 		END {
 			if (!seen_es_address ||
 				!seen_pyroscope ||
 				!seen_pyroscope_address ||
 				!seen_display ||
-				!seen_display_backend) {
+				!seen_display_backend ||
+				!seen_folded_stacks_dir) {
 				exit 42
 			}
 		}

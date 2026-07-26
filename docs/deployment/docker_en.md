@@ -36,6 +36,16 @@ Open Grafana at
 http://localhost:3000 and open the
 `HuaTuo AutoTracing Pyroscope Flamegraph` dashboard. CPUIdle and CPUSys
 profiles appear after their configured AutoTracing thresholds are triggered.
+The same snapshots are exported as folded stacks in the `huatuo-data` volume:
+
+```bash
+$ docker compose --project-directory ./build/docker \
+    cp huatuo-bamai:/var/lib/huatuo/autotracing-folded/. ./folded/
+```
+
+These text files can be supplied directly to tools that accept Brendan Gregg
+folded-stack input. Pyroscope display does not depend on copying them; bamai
+also sends the corresponding pprof profile to Pyroscope.
 
 To use the existing huatuo-apiserver display path:
 
