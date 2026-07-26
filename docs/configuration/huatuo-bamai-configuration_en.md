@@ -281,6 +281,10 @@ configuration-file permissions because authentication fields contain secrets.
 
 The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.
 
+CPUIdle and CPUSys traces keep their existing JSON event and also write a CPU
+pprof profile with the same tracer ID. The profile uses `cpu:nanoseconds`
+samples at 99 Hz. Profile storage failures do not discard the JSON event.
+
 #### 7.1 CPUIdle Automatic Tracing — Sudden High CPU Usage in Containers
 
 ```bash
