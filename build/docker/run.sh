@@ -106,6 +106,26 @@ prepare_runtime_config() {
 			}
 			next
 		}
+		section == "es" &&
+			/^[[:space:]]*Username[[:space:]]*=/ {
+			seen_es_username = 1
+			if (disable_elasticsearch == "true") {
+				print "        Username = \"\""
+			} else {
+				print
+			}
+			next
+		}
+		section == "es" &&
+			/^[[:space:]]*Password[[:space:]]*=/ {
+			seen_es_password = 1
+			if (disable_elasticsearch == "true") {
+				print "        Password = \"\""
+			} else {
+				print
+			}
+			next
+		}
 		section == "pyroscope" &&
 			/^[[:space:]]*#?[[:space:]]*Address[[:space:]]*=/ {
 			printf "        Address = \"%s\"\n", pyroscope_address
@@ -127,6 +147,8 @@ prepare_runtime_config() {
 		{ print }
 		END {
 			if (!seen_es_address ||
+				!seen_es_username ||
+				!seen_es_password ||
 				!seen_pyroscope ||
 				!seen_pyroscope_address ||
 				!seen_display ||
