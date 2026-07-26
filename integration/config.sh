@@ -88,6 +88,22 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
 EOF
 }
 
+# The cpusys test controls proc/stat and perf through its isolated fixture root.
+write_cpusys_autotracing_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras", "runqlat", "sockstat", "softirq", "softirq_tracing", "softlockup", "tcp_memory", "tracing_status"]
+
+[AutoTracing.CPUSys]
+    SysThreshold = 45
+    DeltaSysThreshold = 20
+    Interval = 1
+    RunTracingToolTimeout = 1
+
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}
+
 # The apiserver port and workspace paths are allocated by the caller.
 write_apiserver_apis_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
