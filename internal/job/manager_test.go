@@ -332,6 +332,45 @@ func TestManagerPersistsPendingBeforeAgentDispatch(t *testing.T) {
 	}
 }
 
+func TestManagerAddsProfilingTracerID(t *testing.T) {
+	var dispatchedArgs []string
+	manager := newManagerWithStore(&stubJobStore{}, &stubNodeAgent{
+		startTaskFunc: func(_, _ string, args *AgentTaskRequest) (string, error) {
+			dispatchedArgs = append([]string(nil), args.TracerArgs...)
+			return args.RequestID, nil
+		},
+	}, ManagerConfig{TypePolicies: map[JobType]TypePolicy{
+		JobTypeProfilingCPU: {
+			Group:          "profiling",
+			MaxJobsPerHost: 1,
+			MaxTotalJobs:   1,
+		},
+	}})
+	defer func() { _ = manager.ShutdownContext(t.Context()) }()
+
+	request := &CreateJobRequest{
+		Hostname: "huatuo-dev",
+		Type:     JobTypeProfilingCPU,
+		AgentTask: &AgentTaskRequest{
+			TracerName:   "profiler",
+			TraceTimeout: 60,
+			TracerArgs:   []string{"--duration", "30"},
+		},
+	}
+	created, err := manager.CreateContext(t.Context(), request)
+	if err != nil {
+		t.Fatalf("CreateContext() error = %v", err)
+	}
+
+	wantArgs := []string{"--duration", "30", "--tracer-id", created.ID}
+	if !cmp.Equal(dispatchedArgs, wantArgs) {
+		t.Fatalf("dispatched args = %v, want %v", dispatchedArgs, wantArgs)
+	}
+	if !cmp.Equal(request.AgentTask.TracerArgs, []string{"--duration", "30"}) {
+		t.Fatalf("CreateContext() mutated request args: %v", request.AgentTask.TracerArgs)
+	}
+}
+
 func TestManagerRetainsQuotaWhenTerminalPersistenceFails(t *testing.T) {
 	storage := &stubJobStore{saveErr: errors.New("disk full")}
 	manager := newTestManager(storage, &stubNodeAgent{})

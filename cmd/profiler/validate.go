@@ -245,6 +245,9 @@ func validateCommonOptions(ctx *cli.Context) error {
 	if ctx.String("output-format") == "remote" && ctx.String("output-storage") == "" {
 		return fmt.Errorf("--output-storage must not be empty when --output-format=remote")
 	}
+	if ctx.String("output-format") == "remote" && ctx.String("tracer-id") == "" {
+		return fmt.Errorf("--tracer-id must not be empty when --output-format=remote")
+	}
 	if err := validateOutputFormat(ctx.String("output-format")); err != nil {
 		return err
 	}

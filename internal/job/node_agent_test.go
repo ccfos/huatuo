@@ -215,6 +215,22 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		}
 	})
 
+	t.Run("profiler requires tracer ID", func(t *testing.T) {
+		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("HTTP request sent without a profiler tracer ID")
+			return nil, nil
+		}))
+
+		_, err := agent.StartTask("huatuo-dev", "", &AgentTaskRequest{
+			TracerName:   "profiler",
+			TraceTimeout: 60,
+			DataType:     "db-json",
+		})
+		if err == nil || !strings.Contains(err.Error(), "profiling task requires a non-empty --tracer-id") {
+			t.Fatalf("StartTask() error=%v, want missing tracer ID error", err)
+		}
+	})
+
 	t.Run("non ok response", func(t *testing.T) {
 		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			return newHTTPResponse(http.StatusInternalServerError, "agent unavailable"), nil

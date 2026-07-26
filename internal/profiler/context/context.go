@@ -191,6 +191,7 @@ func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*too
 		SockPath: sockPath,
 		ToolName: "profiler",
 		Version:  "1",
+		TaskID:   cliCtx.String("tracer-id"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("toolstream connect %s: %w", sockPath, err)

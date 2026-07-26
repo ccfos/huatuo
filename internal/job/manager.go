@@ -312,6 +312,12 @@ func (m *Manager) createContext(ctx context.Context, req *CreateJobRequest, idAt
 	}
 	job.AgentTaskID = job.ID
 	job.AgentTask.RequestID = job.ID
+	if job.Type == JobTypeProfilingCPU || job.Type == JobTypeProfilingMemory {
+		job.AgentTask.TracerArgs = append(
+			append([]string(nil), job.AgentTask.TracerArgs...),
+			"--tracer-id", job.ID,
+		)
+	}
 
 	m.mu.Lock()
 	select {

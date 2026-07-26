@@ -18,12 +18,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"huatuo-bamai/internal/log"
@@ -116,6 +118,9 @@ func (c *HTTPNodeAgent) StartTaskContext(
 	defer func() { c.observeRequest("start", startedAt, returnedErr) }()
 	taskArgs := *args
 	taskArgs.ContainerID = container
+	if taskArgs.TracerName == "profiler" && !hasNonEmptyFlag(taskArgs.TracerArgs, "--tracer-id") {
+		return "", errors.New("profiling task requires a non-empty --tracer-id")
+	}
 	requestBodyBytes, err := json.Marshal(startTaskRequest{
 		RequestID:         taskArgs.RequestID,
 		TracerName:        taskArgs.TracerName,
@@ -174,6 +179,19 @@ func (c *HTTPNodeAgent) StartTaskContext(
 	}
 
 	return response.Data.TaskID, nil
+}
+
+func hasNonEmptyFlag(args []string, name string) bool {
+	prefix := name + "="
+	for i, arg := range args {
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix) != ""
+		}
+		if arg == name {
+			return i+1 < len(args) && args[i+1] != ""
+		}
+	}
+	return false
 }
 
 // StopTask stops a task on the agent
