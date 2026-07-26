@@ -18,9 +18,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"huatuo-bamai/internal/procfs"
 )
 
 type failingCPUStatReader struct {
@@ -132,6 +136,36 @@ func TestParseCPUUsage(t *testing.T) {
 				t.Fatalf("parseCPUUsage() = %+v, want %+v", actual, tt.expected)
 			}
 		})
+	}
+}
+
+func TestReadCPUUsageUsesProcfsPrefix(t *testing.T) {
+	originalPrefix := filepath.Dir(procfs.DefaultPath())
+	t.Cleanup(func() {
+		procfs.RootPrefix(originalPrefix)
+	})
+
+	root := t.TempDir()
+	procfs.RootPrefix(root)
+	procDir := filepath.Join(root, "proc")
+	if err := os.MkdirAll(procDir, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(procDir, "stat"),
+		[]byte("cpu 100 10 30 860\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	actual, err := readCPUUsage()
+	if err != nil {
+		t.Fatalf("readCPUUsage() error = %v", err)
+	}
+	expected := cpuUsage{system: 30, total: 1000}
+	if actual != expected {
+		t.Fatalf("readCPUUsage() = %+v, want %+v", actual, expected)
 	}
 }
 

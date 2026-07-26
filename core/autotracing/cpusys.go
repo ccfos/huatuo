@@ -32,13 +32,13 @@ import (
 	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
 
 const (
 	cpuSysTracerName       = "cpusys"
-	procStatPath           = "/proc/stat"
 	perfExitGracePeriod    = 30 * time.Second
 	maxPerfErrorOutputLen  = 4096
 	maxIntervalSeconds     = int64(time.Duration(1<<63-1) / time.Second)
@@ -166,15 +166,16 @@ func parseCPUUsage(r io.Reader) (cpuUsage, error) {
 }
 
 func readCPUUsage() (cpuUsage, error) {
-	f, err := os.Open(procStatPath)
+	statPath := procfs.Path("stat")
+	f, err := os.Open(statPath)
 	if err != nil {
-		return cpuUsage{}, fmt.Errorf("open %s: %w", procStatPath, err)
+		return cpuUsage{}, fmt.Errorf("open %s: %w", statPath, err)
 	}
 	defer f.Close()
 
 	usage, err := parseCPUUsage(f)
 	if err != nil {
-		return cpuUsage{}, fmt.Errorf("parse %s: %w", procStatPath, err)
+		return cpuUsage{}, fmt.Errorf("parse %s: %w", statPath, err)
 	}
 	return usage, nil
 }
