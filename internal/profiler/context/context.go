@@ -70,6 +70,14 @@ type TracerData struct {
 	FlameData  *profiler.ProfileData `json:"flamedata"`
 }
 
+// ProfileData exposes the native profile without coupling storage to this envelope.
+func (d *TracerData) ProfileData() *profiler.ProfileData {
+	if d == nil {
+		return nil
+	}
+	return d.FlameData
+}
+
 func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, error) {
 	ctx, cancel := context.WithCancel(cliCtx.Context)
 
