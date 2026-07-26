@@ -99,12 +99,33 @@ PATH="$test_dir/fake-bin:$PATH" \
 	"$script_dir/run.sh" > "$test_dir/rendered.conf"
 
 test ! -e "$test_dir/curl-called"
-grep -q 'Address = ""' "$test_dir/rendered.conf"
-grep -q 'Address = "http://127.0.0.1:4040"' "$test_dir/rendered.conf"
-grep -q 'Backend = "pyroscope"' "$test_dir/rendered.conf"
+profiling_config="$test_dir/run/conf/huatuo-bamai-profiling.conf"
+grep -q 'Address = ""' "$profiling_config"
+grep -q 'Username = ""' "$profiling_config"
+grep -q 'Password = ""' "$profiling_config"
+grep -q 'Address = "http://127.0.0.1:4040"' "$profiling_config"
+grep -q 'Backend = "pyroscope"' "$profiling_config"
 grep -q 'FoldedStacksDir = "/var/lib/huatuo/autotracing-folded"' \
-	"$test_dir/rendered.conf"
+	"$profiling_config"
 cmp "$project_dir/huatuo-bamai.conf" "$test_dir/source.conf"
+
+printf '%s\n' \
+	'package main' \
+	'import (' \
+	'	"fmt"' \
+	'	"os"' \
+	'	"huatuo-bamai/cmd/huatuo-bamai/config"' \
+	')' \
+	'func main() {' \
+	'	if err := config.Load(os.Args[1]); err != nil {' \
+	'		panic(fmt.Errorf("load rendered config: %w", err))' \
+	'	}' \
+	'}' \
+	> "$test_dir/validate-config.go"
+(
+	cd "$project_dir"
+	go run "$test_dir/validate-config.go" "$profiling_config"
+)
 
 PATH="$test_dir/fake-bin:$PATH" \
 	CURL_MARKER="$test_dir/curl-called" \
