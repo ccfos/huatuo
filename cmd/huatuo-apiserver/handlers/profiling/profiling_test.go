@@ -44,8 +44,12 @@ func TestNewHandlerRegistersStorageRoutesWhenEnabled(t *testing.T) {
 
 	want := []string{
 		"/:id/raw",
+		"/flamegraph/export/pprof",
+		"/flamegraph/diff-rows",
 		"/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces",
 		"/flamegraph/querier.v1.QuerierService/ProfileTypes",
+		"/flamegraph/querier.v1.QuerierService/SelectSeries",
+		"/flamegraph/querier.v1.QuerierService/Diff",
 		"/flamegraph/querier.v1.QuerierService/LabelNames",
 		"/flamegraph/querier.v1.QuerierService/LabelValues",
 	}
@@ -56,16 +60,48 @@ func TestNewHandlerRegistersStorageRoutesWhenEnabled(t *testing.T) {
 	}
 }
 
-func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
-	url := getFlameGraphURL("http://grafana.example/d", &job.Job{
-		Type:        ProfilingCPU,
-		ContainerID: "container+2026&debug",
-		CreatedAt:   time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC),
-		FinishedAt:  time.Date(2026, 6, 24, 10, 5, 0, 0, time.UTC),
-	})
+func TestGetFlameGraphURLTargetsProvisionedDashboards(t *testing.T) {
+	tests := []struct {
+		name          string
+		job           job.Job
+		wantPath      string
+		wantSelection string
+		wantType      string
+	}{
+		{
+			name: "host CPU",
+			job: job.Job{
+				Type:     ProfilingCPU,
+				Hostname: "node+2026&debug",
+			},
+			wantPath:      "/continuous-profiling-host/continuous-profiling-host?",
+			wantSelection: "var-hostname=node%2B2026%26debug",
+			wantType:      "var-type=process_cpu%3Acpu%3Ananoseconds%3Acpu%3Ananoseconds",
+		},
+		{
+			name: "container memory",
+			job: job.Job{
+				Type:        ProfilingMemory,
+				ContainerID: "container+2026&debug",
+			},
+			wantPath:      "/continuous-profiling-container/continuous-profiling-container?",
+			wantSelection: "var-container_id=container%2B2026%26debug",
+			wantType:      "var-type=memory%3Aalloc_space%3Abytes%3Aspace%3Abytes",
+		},
+	}
 
-	if !strings.Contains(url, "var-container_id=container%2B2026%26debug") {
-		t.Fatalf("url = %q, want escaped container label value", url)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.job.CreatedAt = time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC)
+			tc.job.FinishedAt = time.Date(2026, 6, 24, 10, 5, 0, 0, time.UTC)
+			url := getFlameGraphURL("http://grafana.example/d", &tc.job)
+
+			for _, want := range []string{tc.wantPath, tc.wantSelection, tc.wantType} {
+				if !strings.Contains(url, want) {
+					t.Fatalf("url = %q, want %q", url, want)
+				}
+			}
+		})
 	}
 }
 
@@ -79,6 +115,21 @@ func TestNewHandlerSnapshotsProfilingConfig(t *testing.T) {
 			"AggregationIntervalSeconds = %d, want 15",
 			h.profilingConfig.AggregationIntervalSeconds,
 		)
+	}
+}
+
+func TestNewHandlerRegistersProfileExports(t *testing.T) {
+	h := NewHandler(nil, &profileService.Service{}, Config{})
+	routes := make(map[string]bool, len(h.Handlers))
+	for _, handler := range h.Handlers {
+		routes[handler.Uri] = true
+	}
+	for _, route := range []string{
+		"/flamegraph/export/pprof",
+	} {
+		if !routes[route] {
+			t.Errorf("profile export route %q is not registered", route)
+		}
 	}
 }
 

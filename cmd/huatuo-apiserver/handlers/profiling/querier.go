@@ -17,13 +17,17 @@ package profiling
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"huatuo-bamai/internal/log"
 	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 
 	"github.com/gin-gonic/gin/binding"
+	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 )
 
 func handleProto[Request, Response any](
@@ -39,22 +43,30 @@ func handleProto[Request, Response any](
 
 	resp, err := invoke(ctx.Request().Context(), req)
 	if err != nil {
-		if errors.Is(err, profileService.ErrInvalidQuery) {
-			ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
-			return nil
+		status, message := profileQueryHTTPError(err)
+		if status == http.StatusInternalServerError {
+			log.WithError(err).WithField("operation", operation).Error("profile query failed")
 		}
-		if errors.Is(err, profileService.ErrProfilesAbsent) {
-			ctx.JSON(http.StatusNotFound, map[string]any{"message": "profiles not found"})
-			return nil
-		}
-		log.WithError(err).WithField("operation", operation).Error("profile query failed")
-		ctx.JSON(http.StatusInternalServerError, map[string]any{"message": "internal error"})
+		ctx.JSON(status, map[string]any{"message": message})
 		return nil
 	}
 
 	ctx.Header("Content-Type", "application/proto")
 	ctx.ProtoBuf(http.StatusOK, resp)
 	return nil
+}
+
+func profileQueryHTTPError(err error) (int, string) {
+	switch {
+	case errors.Is(err, profileService.ErrInvalidQuery):
+		return http.StatusBadRequest, err.Error()
+	case errors.Is(err, profileService.ErrProfilesAbsent):
+		return http.StatusNotFound, "profiles not found"
+	case errors.Is(err, profileService.ErrProfileQueryLimitExceeded):
+		return http.StatusUnprocessableEntity, err.Error()
+	default:
+		return http.StatusInternalServerError, "internal error"
+	}
 }
 
 func (h *Handler) displaySelectMergeStacktraces(ctx *server.Context) error {
@@ -65,10 +77,77 @@ func (h *Handler) displayProfileTypes(ctx *server.Context) error {
 	return handleProto(ctx, "profile_types", h.profileService.ProfileTypes)
 }
 
+func (h *Handler) displaySelectSeries(ctx *server.Context) error {
+	return handleProto(ctx, "select_series", h.profileService.SelectSeries)
+}
+
+func (h *Handler) displayDiff(ctx *server.Context) error {
+	return handleProto(ctx, "diff", h.profileService.Diff)
+}
+
 func (h *Handler) displayLabelNames(ctx *server.Context) error {
 	return handleProto(ctx, "label_names", h.profileService.LabelNames)
 }
 
 func (h *Handler) displayLabelValues(ctx *server.Context) error {
 	return handleProto(ctx, "label_values", h.profileService.LabelValues)
+}
+
+func profileExportRequest(
+	query func(string) string,
+) (*querierv1.SelectMergeStacktracesRequest, error) {
+	profileType := strings.TrimSpace(query("profile_type"))
+	if profileType == "" {
+		return nil, errors.New("profile_type is required")
+	}
+	selector := strings.TrimSpace(query("selector"))
+	if selector == "" {
+		return nil, errors.New("selector is required")
+	}
+	start, err := strconv.ParseInt(query("start"), 10, 64)
+	if err != nil {
+		return nil, errors.New("start must be a Unix timestamp in milliseconds")
+	}
+	end, err := strconv.ParseInt(query("end"), 10, 64)
+	if err != nil {
+		return nil, errors.New("end must be a Unix timestamp in milliseconds")
+	}
+	return &querierv1.SelectMergeStacktracesRequest{
+		ProfileTypeID: profileType,
+		LabelSelector: selector,
+		Start:         start,
+		End:           end,
+	}, nil
+}
+
+func writeProfileServiceError(ctx *server.Context, operation string, err error) {
+	status, message := profileQueryHTTPError(err)
+	if status == http.StatusInternalServerError {
+		log.WithError(err).WithField("operation", operation).Error("profile query failed")
+	}
+	ctx.JSON(status, map[string]any{"message": message})
+}
+
+func (h *Handler) displayPprofExport(ctx *server.Context) error {
+	req, err := profileExportRequest(ctx.Query)
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, map[string]any{"message": err.Error()})
+		return nil
+	}
+	payload, err := h.profileService.MarshalPprof(ctx.Request().Context(), req)
+	if err != nil {
+		writeProfileServiceError(ctx, "export_pprof", err)
+		return nil
+	}
+	ctx.Header("Content-Type", "application/octet-stream")
+	ctx.Header(
+		"Content-Disposition",
+		`attachment; filename="huatuo-profile.pb.gz"`,
+	)
+	ctx.Header("X-Content-Type-Options", "nosniff")
+	ctx.Writer().WriteHeader(http.StatusOK)
+	if _, err := ctx.Writer().Write(payload); err != nil {
+		return fmt.Errorf("write pprof export: %w", err)
+	}
+	return nil
 }
