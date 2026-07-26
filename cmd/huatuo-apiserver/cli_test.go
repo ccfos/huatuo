@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"huatuo-bamai/internal/log"
+
 	"github.com/urfave/cli/v2"
 )
 
@@ -37,6 +39,7 @@ func TestOptionsFromContextPreservesExplicitRelativeConfigDir(t *testing.T) {
 		"--config-dir", "relative-conf",
 		"--enable-pprof",
 		"--disable-cgroup",
+		"--log-debug",
 	}); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
@@ -52,6 +55,9 @@ func TestOptionsFromContextPreservesExplicitRelativeConfigDir(t *testing.T) {
 	}
 	if !opts.DisableCgroup {
 		t.Error("DisableCgroup = false, want true")
+	}
+	if !opts.LogDebug {
+		t.Error("LogDebug = false, want true")
 	}
 }
 
@@ -77,5 +83,37 @@ JobStoreDSN = "state/jobs.db"
 	want := filepath.Join(configDir, "state/jobs.db")
 	if got := opts.Config.TaskConfig.JobStoreDSN; got != want {
 		t.Fatalf("JobStoreDSN = %q, want %q", got, want)
+	}
+}
+
+func TestConfigureRuntimeLogDebugOverridesConfigLevel(t *testing.T) {
+	originalLevel := log.GetLevel()
+	t.Cleanup(func() {
+		log.SetLevel(originalLevel.String())
+	})
+
+	configDir := t.TempDir()
+	configFile := "apiserver.conf"
+	contents := []byte(`
+LogLevel = "Error"
+
+[[Auth.users]]
+ID = "test-token"
+IsAdmin = true
+`)
+	if err := os.WriteFile(filepath.Join(configDir, configFile), contents, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	opts := &Options{
+		ConfigDir:  configDir,
+		ConfigFile: configFile,
+		LogDebug:   true,
+	}
+	if err := configureRuntime(opts); err != nil {
+		t.Fatalf("configureRuntime() error = %v", err)
+	}
+	if got := log.GetLevel().String(); got != "debug" {
+		t.Fatalf("log level = %q, want %q", got, "debug")
 	}
 }

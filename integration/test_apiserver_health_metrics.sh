@@ -92,7 +92,8 @@ assert_metrics_endpoint() {
 }
 
 integration_huatuo_apiserver_start write_apiserver_apis_config \
-	--disable-cgroup
+	--disable-cgroup \
+	--log-debug
 assert_endpoints
 assert_metrics_endpoint
 ! grep -qiE "${FAILURE_LOG_PATTERN}" "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" \

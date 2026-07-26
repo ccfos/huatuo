@@ -3,7 +3,7 @@ title: huatuo-apiserver 配置
 type: docs
 description:
 author: HUATUO Team
-date: 2026-07-20
+date: 2026-07-26
 weight: 5
 ---
 
@@ -33,6 +33,11 @@ weight: 5
 
   **说明**：生产环境通常使用 `Info` 或 `Warn`。`Debug` 会输出更详细的
   调试信息，适合临时排查问题，但可能增加日志量。
+
+- **`--log-debug`**：强制将日志级别设置为 `Debug`。
+
+  该命令行参数的优先级高于配置文件中的 `LogLevel`，适合在不修改部署
+  配置的情况下临时排查问题。
 
 ### 3. 运行时资源限制
 

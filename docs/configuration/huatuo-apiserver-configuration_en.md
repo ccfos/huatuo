@@ -3,7 +3,7 @@ title: huatuo-apiserver Configuration
 type: docs
 description:
 author: HUATUO Team
-date: 2026-07-20
+date: 2026-07-26
 weight: 5
 ---
 
@@ -40,6 +40,12 @@ credentials to version control.
   **Note**: Use `Info` or `Warn` in most production environments. `Debug`
   provides more diagnostic details and is useful for temporary
   troubleshooting, but it may substantially increase log volume.
+
+- **`--log-debug`**: Force the log level to `Debug`.
+
+  This command-line flag has higher priority than `LogLevel` in the
+  configuration file. Use it for temporary troubleshooting without changing
+  the deployed configuration.
 
 ### 3. Runtime Resource Limits
 

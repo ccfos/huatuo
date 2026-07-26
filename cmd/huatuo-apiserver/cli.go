@@ -32,6 +32,7 @@ const (
 	cliFlagConfigDir     = "config-dir"
 	cliFlagEnablePProf   = "enable-pprof"
 	cliFlagDisableCgroup = "disable-cgroup"
+	cliFlagLogDebug      = "log-debug"
 )
 
 // Options holds CLI-derived configuration independently of urfave/cli.
@@ -40,6 +41,7 @@ type Options struct {
 	ConfigDir     string
 	EnablePProf   bool
 	DisableCgroup bool
+	LogDebug      bool
 	VersionInfo   version.Info
 	Config        *config.Config
 }
@@ -90,6 +92,10 @@ func (o *Options) AddFlags(app *cli.App) {
 			Name:  cliFlagDisableCgroup,
 			Usage: "disable self cgroup resource limit",
 		},
+		&cli.BoolFlag{
+			Name:  cliFlagLogDebug,
+			Usage: "force debug-level logging; overrides LogLevel from config file",
+		},
 	}
 }
 
@@ -98,6 +104,7 @@ func (o *Options) FromContext(ctx *cli.Context) error {
 	o.ConfigFile = ctx.String(cliFlagConfig)
 	o.EnablePProf = ctx.Bool(cliFlagEnablePProf)
 	o.DisableCgroup = ctx.Bool(cliFlagDisableCgroup)
+	o.LogDebug = ctx.Bool(cliFlagLogDebug)
 
 	var err error
 	if ctx.IsSet(cliFlagConfigDir) {
@@ -131,7 +138,12 @@ func configureRuntime(opts *Options) error {
 		cfg.TaskConfig.JobStoreDSN = filepath.Join(opts.ConfigDir, dsn)
 	}
 
-	if level := cfg.LogLevel; level != "" {
+	switch {
+	case opts.LogDebug:
+		log.SetLevel("Debug")
+		log.WithField("level", log.GetLevel()).Info("configured log level from --log-debug")
+	case cfg.LogLevel != "":
+		level := cfg.LogLevel
 		log.SetLevel(level)
 		log.WithField("level", log.GetLevel()).Info("configured log level")
 	}
