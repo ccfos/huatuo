@@ -169,7 +169,7 @@ bpf_tool_setup() {
 	TOOL_ERR="${TOOL_WORK_DIR}/${name}.err"
 }
 
-# Print text files under a directory; binary files are omitted from diagnostics.
+# Print non-empty text files; empty and binary files add no useful diagnostics.
 dump_text_files() {
 	local dir=$1
 	local file
@@ -177,10 +177,10 @@ dump_text_files() {
 	[[ -d "${dir}" ]] || return 0
 
 	while IFS= read -r -d '' file; do
-		[[ ! -s "${file}" ]] || grep -Iq '' "${file}" || continue
+		grep -Iq '' "${file}" || continue
 		log_error "----- FILE (${file}) -----"
 		sed -n '1,160p' "${file}" >&2
-	done < <(find "${dir}" -type f -print0)
+	done < <(find "${dir}" -type f -size +0c -print0)
 }
 
 # SIGTERM with graceful polling, then SIGKILL as fallback.
