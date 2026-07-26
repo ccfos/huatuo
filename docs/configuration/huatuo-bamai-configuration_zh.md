@@ -272,6 +272,7 @@ Elasticsearch；Elasticsearch 会继续保存现有 JSON profiling 文档。凭�
 ```toml
 [AutoTracing.Display]
     Backend = "pyroscope"
+    FoldedStacksDir = "huatuo-local/autotracing-folded"
 ```
 
 - **Backend** 在运行时选择展示链路：
@@ -279,10 +280,16 @@ Elasticsearch；Elasticsearch 会继续保存现有 JSON profiling 文档。凭�
     Dashboard 展示，必须配置 `Storage.Pyroscope.Address`。
   - `apiserver`：保留 Elasticsearch 和 huatuo-apiserver 展示链路，必须
     配置 Elasticsearch 地址、用户名和密码。
+- **FoldedStacksDir**：在 `pyroscope` 模式下，为每个 CPUIdle 或 CPUSys
+  快照写入一个 `.folded` 文件。每行包含分号分隔的调用栈和正的 self
+  样本计数。路径为空时禁用这项额外导出。
 
 修改配置并重启 huatuo-bamai 即可切换模式。切换不会改变触发阈值、perf
 执行或快照采集。`pyroscope` 模式仍可保留 Elasticsearch，用于保存原有
 JSON 事件，同时将 Pyroscope 注册为 profile store。
+
+folded 快照按调用栈排序，文件名包含 tracer 名称、UTC 快照时间和 tracer
+ID。文件以 `0600` 权限原子写入，文件监听器不会读取到不完整快照。
 
 自动追踪模块是 HUATUO 的智能特性之一，可根据阈值自动触发特定性能追踪，减少人工干预。
 

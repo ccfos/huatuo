@@ -39,6 +39,7 @@ func saveAutotracingCPUEvent(
 	}
 
 	tracingErr := tracing.Save(request)
+	foldedErr := exportAutotracingFoldedSnapshot(request, frames)
 	profileData, profileErr := profiler.ParseFlamegraphFrames(
 		request.TracerTime,
 		duration,
@@ -59,6 +60,7 @@ func saveAutotracingCPUEvent(
 
 	return errors.Join(
 		wrapAutotracingSaveError("JSON event", tracingErr),
+		wrapAutotracingSaveError("folded stacks", foldedErr),
 		wrapAutotracingSaveError("pprof profile", profileErr),
 	)
 }

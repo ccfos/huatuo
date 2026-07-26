@@ -71,6 +71,7 @@ IssuesList = [["dload", "jbd2"]]
 
 [AutoTracing.Display]
 Backend = "apiserver"
+FoldedStacksDir = "/var/lib/huatuo/folded"
 
 [EventTracing]
 IssuesList = [["net_rx_latency", "kernel_sched_tick"]]
@@ -158,6 +159,12 @@ ExcludedOnContainer = "writeback"
 	}
 	if backend != autotracing.DisplayBackendAPIServer {
 		t.Errorf("display backend = %q, want apiserver", backend)
+	}
+	if Get().AutoTracing.Display.FoldedStacksDir != "/var/lib/huatuo/folded" {
+		t.Errorf(
+			"folded stacks dir = %q",
+			Get().AutoTracing.Display.FoldedStacksDir,
+		)
 	}
 	if len(Get().EventTracing.IssuesList) != 1 {
 		t.Errorf("unexpected EventTracing.IssuesList length: %d", len(Get().EventTracing.IssuesList))
@@ -358,6 +365,13 @@ ExcludedOnContainer = "writeback"
 	if backend, err := Get().AutoTracing.Display.ResolveBackend(); err != nil ||
 		backend != autotracing.DisplayBackendPyroscope {
 		t.Fatalf("default display backend = %q, %v", backend, err)
+	}
+	if Get().AutoTracing.Display.FoldedStacksDir !=
+		"huatuo-local/autotracing-folded" {
+		t.Fatalf(
+			"default folded stacks dir = %q",
+			Get().AutoTracing.Display.FoldedStacksDir,
+		)
 	}
 
 	for _, kv := range []struct {
