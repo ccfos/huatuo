@@ -103,3 +103,24 @@ write_apiserver_apis_config() {
     IsAdmin = true
 EOF
 }
+
+# The caller owns the API port, user ID, and expected profiling values.
+write_apiserver_profile_capabilities_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
+[APIServer]
+    TCPAddr = "127.0.0.1:${APISERVER_PORT}"
+
+[TaskConfig]
+    JobStoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
+
+[[Auth.users]]
+    ID = "${API_USER}"
+    Name = "Integration administrator"
+    IsAdmin = true
+
+[Profiling]
+    AggregationInterval = ${CAPABILITIES_AGGREGATION_INTERVAL}
+    ExecutionTimeout = ${CAPABILITIES_EXECUTION_TIMEOUT}
+    MaxProfilerProcs = ${CAPABILITIES_MAX_PROFILER_PROCS}
+EOF
+}
