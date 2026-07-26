@@ -250,7 +250,12 @@ func runPerf(parent context.Context, containerId string, timeOut int64) ([]byte,
 	return cmd.CombinedOutput()
 }
 
-func buildAndSaveCPUIdleContainer(container *containerCPUInfo, threshold *cpuIdleThreshold, flamedata []byte) error {
+func buildAndSaveCPUIdleContainer(
+	container *containerCPUInfo,
+	duration time.Duration,
+	threshold *cpuIdleThreshold,
+	flamedata []byte,
+) error {
 	tracerData := CPUIdleTracingData{
 		NowUser:             container.nowUsagePercentage.user,
 		DeltaUser:           container.deltaUsagePercentage.user,
@@ -271,16 +276,13 @@ func buildAndSaveCPUIdleContainer(container *containerCPUInfo, threshold *cpuIdl
 	}
 
 	log.Debugf("cpuidle flamedata %v", tracerData.FlameData)
-	if err := tracing.Save(&tracing.WriteRequest{
+	return saveAutotracingCPUEvent(&tracing.WriteRequest{
 		TracerName:    "cpuidle",
 		ContainerID:   container.id,
 		TracerTime:    container.traceTime,
 		TracerData:    &tracerData,
 		TracerRunType: tracing.TracerRunTypeAutotracing,
-	}); err != nil {
-		log.Warnf("failed to save tracing data: %v", err)
-	}
-	return nil
+	}, duration, tracerData.FlameData)
 }
 
 type CPUIdleTracingData struct {
@@ -350,7 +352,14 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			_ = buildAndSaveCPUIdleContainer(container, threshold, flamedata)
+			if err := buildAndSaveCPUIdleContainer(
+				container,
+				time.Duration(perfRunTimeOut)*time.Second,
+				threshold,
+				flamedata,
+			); err != nil {
+				log.Warnf("failed to save cpuidle tracing data: %v", err)
+			}
 		}
 	}
 }

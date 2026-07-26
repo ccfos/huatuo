@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -142,7 +142,12 @@ func runPerfSystemWide(parent context.Context, timeOut int64) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-func (c *cpuSysTracing) buildAndSaveCPUSystem(traceTime time.Time, threshold *cpuSysThreshold, flamedata []byte) error {
+func (c *cpuSysTracing) buildAndSaveCPUSystem(
+	traceTime time.Time,
+	duration time.Duration,
+	threshold *cpuSysThreshold,
+	flamedata []byte,
+) error {
 	tracerData := CpuSysTracingData{
 		NowSys:            c.sysPercent,
 		SysThreshold:      threshold.usage,
@@ -155,15 +160,12 @@ func (c *cpuSysTracing) buildAndSaveCPUSystem(traceTime time.Time, threshold *cp
 	}
 
 	log.Debugf("cpuidle flamedata %v", tracerData.FlameData)
-	if err := tracing.Save(&tracing.WriteRequest{
+	return saveAutotracingCPUEvent(&tracing.WriteRequest{
 		TracerName:    "cpusys",
 		TracerTime:    traceTime,
 		TracerData:    &tracerData,
 		TracerRunType: tracing.TracerRunTypeAutotracing,
-	}); err != nil {
-		log.Warnf("failed to save tracing data: %v", err)
-	}
-	return nil
+	}, duration, tracerData.FlameData)
 }
 
 func (c *cpuSysTracing) Start(ctx context.Context) error {
@@ -206,8 +208,13 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 				continue
 			}
 
-			if err := c.buildAndSaveCPUSystem(traceTime, threshold, flamedata); err != nil {
-				return err
+			if err := c.buildAndSaveCPUSystem(
+				traceTime,
+				time.Duration(perfRunTimeOut)*time.Second,
+				threshold,
+				flamedata,
+			); err != nil {
+				log.Warnf("failed to save cpusys tracing data: %v", err)
 			}
 		}
 	}
