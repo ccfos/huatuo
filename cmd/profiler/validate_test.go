@@ -91,7 +91,8 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 				"--pid", strconv.Itoa(os.Getpid()),
 				"--lock-type", "semaphore",
 			},
-			wantError: `unsupported lock type "semaphore"`,
+			wantError: `unsupported lock type "semaphore" ` +
+				`(expected: mutex, spinlock, or rwlock)`,
 		},
 		{
 			name:      "native mutex contention requires a target",

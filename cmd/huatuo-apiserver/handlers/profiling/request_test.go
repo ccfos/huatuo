@@ -302,7 +302,8 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 				PID:           4242,
 				LockType:      profiletypes.LockType("semaphore"),
 			},
-			wantErr: `unsupported lock type "semaphore"`,
+			wantErr: `unsupported lock type "semaphore" ` +
+				`(expected: mutex, spinlock, or rwlock)`,
 		},
 		{
 			name: "mutex profiling accepts thread group target",
