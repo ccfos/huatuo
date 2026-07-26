@@ -98,11 +98,11 @@ type cpuSysState struct {
 }
 
 type cpuSysTracingData struct {
-	NowSys            int64                  `json:"now_sys"`
-	SysThreshold      int64                  `json:"sys_threshold"`
-	DeltaSys          int64                  `json:"deltasys"`
-	DeltaSysThreshold int64                  `json:"deltasys_threshold"`
-	FlameData         []flamegraph.FrameData `json:"flamedata"`
+	SystemPercent               int64                  `json:"system_percent"`
+	SystemPercentThreshold      int64                  `json:"system_percent_threshold"`
+	SystemPercentDelta          int64                  `json:"system_percent_delta"`
+	SystemPercentDeltaThreshold int64                  `json:"system_percent_delta_threshold"`
+	FlameData                   []flamegraph.FrameData `json:"flamedata"`
 }
 
 type cpuSysThreshold struct {
@@ -269,10 +269,10 @@ func (c *cpuSysTracing) saveCPUSysTrace(
 	flameData []byte,
 ) error {
 	tracerData := cpuSysTracingData{
-		NowSys:            state.systemPercent,
-		DeltaSys:          state.systemPercentDelta,
-		SysThreshold:      c.threshold.usage,
-		DeltaSysThreshold: c.threshold.delta,
+		SystemPercent:               state.systemPercent,
+		SystemPercentThreshold:      c.threshold.usage,
+		SystemPercentDelta:          state.systemPercentDelta,
+		SystemPercentDeltaThreshold: c.threshold.delta,
 	}
 
 	if err := json.Unmarshal(flameData, &tracerData.FlameData); err != nil {

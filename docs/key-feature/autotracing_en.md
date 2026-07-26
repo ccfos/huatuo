@@ -109,10 +109,10 @@ All event records include the following common fields:
 {
     "tracer_name": "cpusys",
     "tracer_data": {
-        "now_sys": 52,
-        "sys_threshold": 45,
-        "deltasys": 25,
-        "deltasys_threshold": 20,
+        "system_percent": 52,
+        "system_percent_threshold": 45,
+        "system_percent_delta": 25,
+        "system_percent_delta_threshold": 20,
         "flamedata": [
             {"level": 0, "value": 1000, "self": 0, "label": "all"},
             {"level": 1, "value": 350, "self": 350, "label": "do_syscall_64"}
@@ -123,10 +123,10 @@ All event records include the following common fields:
 
 **Field Descriptions**
 
-- **now_sys**: Host CPU sys utilization at trigger time (%)
-- **sys_threshold**: sys utilization trigger threshold (%)
-- **deltasys**: sys utilization delta between consecutive samples (%)
-- **deltasys_threshold**: sys delta trigger threshold (%)
+- **system_percent**: Host CPU sys utilization at trigger time (%)
+- **system_percent_threshold**: sys utilization trigger threshold (%)
+- **system_percent_delta**: sys utilization delta between consecutive samples (%)
+- **system_percent_delta_threshold**: sys delta trigger threshold (%)
 - **flamedata**: Flame graph frame data from perf sampling. Each frame contains:
   - **level**: Call stack depth level
   - **value**: Sample count for this frame including descendant frames

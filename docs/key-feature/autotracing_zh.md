@@ -109,10 +109,10 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 {
     "tracer_name": "cpusys",
     "tracer_data": {
-        "now_sys": 52,
-        "sys_threshold": 45,
-        "deltasys": 25,
-        "deltasys_threshold": 20,
+        "system_percent": 52,
+        "system_percent_threshold": 45,
+        "system_percent_delta": 25,
+        "system_percent_delta_threshold": 20,
         "flamedata": [
             {"level": 0, "value": 1000, "self": 0, "label": "all"},
             {"level": 1, "value": 350, "self": 350, "label": "do_syscall_64"}
@@ -123,10 +123,10 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 **字段含义解释**
 
-- **now_sys**：触发时物理机 CPU sys 占用率（%）
-- **sys_threshold**：sys 占用率触发阈值（%）
-- **deltasys**：相邻两次采样的 sys 占用率增量（%）
-- **deltasys_threshold**：sys 增量触发阈值（%）
+- **system_percent**：触发时物理机 CPU sys 占用率（%）
+- **system_percent_threshold**：sys 占用率触发阈值（%）
+- **system_percent_delta**：相邻两次采样的 sys 占用率增量（%）
+- **system_percent_delta_threshold**：sys 增量触发阈值（%）
 - **flamedata**：perf 采样生成的火焰图帧数据列表，每帧包含：
   - **level**：调用栈层级深度
   - **value**：该帧（含子帧）的采样计数

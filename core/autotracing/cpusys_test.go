@@ -15,6 +15,7 @@
 package autotracing
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -265,6 +266,40 @@ func TestCPUSysStateShouldTrace(t *testing.T) {
 				t.Fatalf("shouldTrace() = %t, want %t", actual, tt.expected)
 			}
 		})
+	}
+}
+
+func TestCPUSysTracingDataJSON(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := json.Marshal(cpuSysTracingData{
+		SystemPercent:               52,
+		SystemPercentThreshold:      45,
+		SystemPercentDelta:          25,
+		SystemPercentDeltaThreshold: 20,
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var actual map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &actual); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	expected := map[string]string{
+		"system_percent":                 "52",
+		"system_percent_threshold":       "45",
+		"system_percent_delta":           "25",
+		"system_percent_delta_threshold": "20",
+		"flamedata":                      "null",
+	}
+	if len(actual) != len(expected) {
+		t.Fatalf("JSON fields = %v, want %v", actual, expected)
+	}
+	for field, expectedValue := range expected {
+		if actualValue, ok := actual[field]; !ok || string(actualValue) != expectedValue {
+			t.Errorf("JSON field %q = %s, want %s", field, actualValue, expectedValue)
+		}
 	}
 }
 
