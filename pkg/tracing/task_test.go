@@ -211,6 +211,72 @@ func TestNewTaskExecution(t *testing.T) {
 	}
 }
 
+// TestRunTaskMarksStoreFailureAsFailed guards the contract that a command
+// which exits successfully but whose output the document store refuses to
+// persist is surfaced through the task status, not silently reported as
+// completed. Before the fix the store error was discarded by saveTaskOutputByType
+// and the task reported StatusCompleted with empty TaskData and no error.
+func TestRunTaskMarksStoreFailureAsFailed(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+
+	tmp := t.TempDir()
+	origBinDir := TaskBinDir
+	TaskBinDir = tmp
+	t.Cleanup(func() { TaskBinDir = origBinDir })
+
+	// A command that exits 0 but emits non-JSON output. TaskStorageDBJSON
+	// feeds the output through json.Unmarshal, which fails before any
+	// store backend is consulted, so an empty stores list is enough.
+	script := createExecutableScript(t, tmp, "plain.sh", "#!/bin/sh\necho not-json\n")
+
+	origWriter := taskDataWriter
+	taskDataWriter = newDocumentWriter(nil, DocumentOptions{})
+	t.Cleanup(func() { taskDataWriter = origWriter })
+
+	taskID := NewTask(filepath.Base(script), 2*time.Second, TaskStorageDBJSON, nil)
+	if taskID == "" {
+		t.Fatal("NewTask() returned empty id")
+	}
+
+	r := waitTaskFinal(taskID, 2*time.Second)
+	if r.TaskStatus != StatusFailed {
+		t.Fatalf("TaskStatus=%s, want %s; the document store error was discarded", r.TaskStatus, StatusFailed)
+	}
+	if r.TaskErr == nil {
+		t.Fatal("TaskErr=nil, want the store failure")
+	}
+	if !strings.Contains(r.TaskErr.Error(), "task output store") {
+		t.Errorf("TaskErr=%v, want an error rooted in the document store", r.TaskErr)
+	}
+}
+
+// TestSaveTaskOutputByTypeCapturesStoreError exercises the store-error capture
+// path directly, independent of process timing.
+func TestSaveTaskOutputByTypeCapturesStoreError(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+
+	origWriter := taskDataWriter
+	taskDataWriter = newDocumentWriter(nil, DocumentOptions{})
+	t.Cleanup(func() { taskDataWriter = origWriter })
+
+	task := &task{
+		id:         "task-store-err",
+		execBinary: "profiler",
+		storage:    TaskStorageDBJSON,
+	}
+	saveTaskOutputByType(task, time.Now(), []byte("definitely not json"))
+
+	task.mu.Lock()
+	storeErr := task.storeErr
+	task.mu.Unlock()
+
+	if storeErr == nil {
+		t.Fatal("storeErr=nil, want the json.Unmarshal failure")
+	}
+}
+
 func TestStopTask(t *testing.T) {
 	tests := []struct {
 		name     string
