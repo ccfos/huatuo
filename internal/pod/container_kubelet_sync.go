@@ -172,7 +172,7 @@ func ManagerInit(ctx *ManagerCtx) error {
 		// success or other error codes except connect refused
 		// only init css metadata collect when kubelet available.
 		if err == nil {
-			kubeletConfigCacheMustUpdate(ctx)
+			_ = kubeletConfigCacheMustUpdate(ctx)
 			return containerCgroupCssInit()
 		}
 
@@ -191,7 +191,7 @@ func ManagerInit(ctx *ManagerCtx) error {
 			case <-t.C:
 				if err := kubeletPodListPortCacheUpdate(ctx); err == nil {
 					log.Infof("kubelet is running now")
-					kubeletConfigCacheMustUpdate(ctx)
+					_ = kubeletConfigCacheMustUpdate(ctx)
 					_ = containerCgroupCssInit()
 					t.Stop()
 					return
