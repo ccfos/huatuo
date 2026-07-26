@@ -83,8 +83,8 @@ func (h *Handler) start(ctx *server.Context) error {
 		args.TracerName = req.Type
 	}
 
-	args.TraceTimeout = req.Duration
-	args.Duration = req.Duration
+	args.TraceTimeout = req.DurationSeconds
+	args.Duration = req.DurationSeconds
 
 	jobResult, err := h.jobManager.CreateContext(ctx.Request().Context(), &job.CreateJobRequest{
 		UserID:      ctx.UserID,
@@ -111,8 +111,8 @@ func validateCreateTraceJobRequest(req *v1.CreateTraceJobRequest) error {
 	if req.Hostname == "" {
 		return errors.New("hostname is required")
 	}
-	if req.Duration <= 0 || req.Duration > MaxTraceTimeout {
-		return errors.New("duration must be between 1 and 300 seconds")
+	if req.DurationSeconds <= 0 || req.DurationSeconds > MaxTraceTimeout {
+		return errors.New("duration_seconds must be between 1 and 300 seconds")
 	}
 	if req.Type == "" {
 		return errors.New("type is required")
@@ -146,9 +146,9 @@ func (h *Handler) list(ctx *server.Context) error {
 		return response.ErrInternal
 	}
 
-	items := make([]v1.TraceJobResponse, len(page.Items))
+	items := make([]v1.TraceJob, len(page.Items))
 	for i, j := range page.Items {
-		items[i] = convertJobToTraceResponse(j)
+		items[i] = buildTraceJob(j)
 	}
 
 	response.Success(ctx, v1.TraceJobListResponse{
@@ -180,7 +180,7 @@ func (h *Handler) get(ctx *server.Context) error {
 		return response.ErrForbidden
 	}
 
-	response.Success(ctx, convertJobToTraceResponse(jobResult))
+	response.Success(ctx, buildTraceJob(jobResult))
 	return nil
 }
 
@@ -284,21 +284,18 @@ func (h *Handler) delete(ctx *server.Context) error {
 	return nil
 }
 
-// convertJobToTraceResponse maps an internal *job.Job to the v1 wire type.
-func convertJobToTraceResponse(jobResult *job.Job) v1.TraceJobResponse {
-	return v1.TraceJobResponse{
-		ID:           jobResult.ID,
-		AgentTaskID:  jobResult.AgentTaskID,
-		ContainerID:  jobResult.ContainerID,
-		Hostname:     jobResult.Hostname,
-		Type:         traceAPIType(jobResult.AgentTask.TracerName),
-		Status:       string(jobResult.Status),
-		StartTime:    formatTime(jobResult.StartTime),
-		EndTime:      formatTime(jobResult.EndTime),
-		ErrorMessage: jobResult.ErrorMessage,
-		Results: v1.TraceResults{
-			URL: jobResult.Result.URL,
-		},
+func buildTraceJob(jobResult *job.Job) v1.TraceJob {
+	return v1.TraceJob{
+		ID:              jobResult.ID,
+		ContainerID:     jobResult.ContainerID,
+		Hostname:        jobResult.Hostname,
+		Type:            traceAPIType(jobResult.AgentTask.TracerName),
+		Status:          string(jobResult.Status),
+		DurationSeconds: jobResult.Duration,
+		CreatedAt:       jobResult.CreatedAt,
+		FinishedAt:      optionalTime(jobResult.FinishedAt),
+		ResultURL:       optionalString(jobResult.Result.URL),
+		StatusReason:    optionalString(jobResult.ErrorMessage),
 	}
 }
 
@@ -309,9 +306,16 @@ func traceAPIType(tracerName string) string {
 	return tracerName
 }
 
-func formatTime(value time.Time) string {
+func optionalTime(value time.Time) *time.Time {
 	if value.IsZero() {
-		return ""
+		return nil
 	}
-	return value.Format(time.RFC3339Nano)
+	return &value
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

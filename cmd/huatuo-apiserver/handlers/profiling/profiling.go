@@ -123,9 +123,9 @@ func (h *Handler) list(ctx *server.Context) error {
 		return response.ErrInternal
 	}
 
-	items := make([]v1.ProfilingJobResponse, len(page.Items))
+	items := make([]v1.ProfilingJob, len(page.Items))
 	for i, j := range page.Items {
-		items[i], err = buildProfilingJobResponse(j, h.profilingConfig.FlameGraphBaseURL)
+		items[i], err = buildProfilingJob(j, h.profilingConfig.FlameGraphBaseURL)
 		if err != nil {
 			log.WithError(err).WithField("job_id", j.ID).
 				Error("failed to build profiling job response")
@@ -161,21 +161,21 @@ func (h *Handler) get(ctx *server.Context) error {
 	if !ctx.CanAccessTask(jobResult.UserID) {
 		return response.ErrForbidden
 	}
-	profilingResponse, err := buildProfilingJobResponse(jobResult, h.profilingConfig.FlameGraphBaseURL)
+	profilingJob, err := buildProfilingJob(jobResult, h.profilingConfig.FlameGraphBaseURL)
 	if err != nil {
 		log.WithError(err).WithField("job_id", taskID).
 			Error("failed to build profiling job response")
 		return response.ErrInternal
 	}
 
-	response.Success(ctx, profilingResponse)
+	response.Success(ctx, profilingJob)
 	return nil
 }
 
-func buildProfilingJobResponse(jobResult *job.Job, flameGraphBaseURL string) (v1.ProfilingJobResponse, error) {
+func buildProfilingJob(jobResult *job.Job, flameGraphBaseURL string) (v1.ProfilingJob, error) {
 	profileType, err := profilingAPIType(jobResult.Type)
 	if err != nil {
-		return v1.ProfilingJobResponse{}, err
+		return v1.ProfilingJob{}, err
 	}
 
 	resultURL := jobResult.Result.URL
@@ -185,26 +185,22 @@ func buildProfilingJobResponse(jobResult *job.Job, flameGraphBaseURL string) (v1
 
 	privateData, err := decodeProfilingPrivateData(jobResult.PrivateData)
 	if err != nil {
-		return v1.ProfilingJobResponse{}, err
+		return v1.ProfilingJob{}, err
 	}
-	if privateData.Duration == 0 {
-		privateData.Duration = jobResult.AgentTask.Duration / 2
+	if privateData.DurationSeconds == 0 {
+		privateData.DurationSeconds = jobResult.AgentTask.Duration / 2
 	}
-	resp := v1.ProfilingJobResponse{
-		ID:          jobResult.ID,
-		AgentTaskID: jobResult.AgentTaskID,
-		ContainerID: jobResult.ContainerID,
-		Hostname:    jobResult.Hostname,
-		Status:      string(jobResult.Status),
-		Type:        profileType,
-		StartTime:   formatProfilingTime(jobResult.StartTime),
-		EndTime:     formatProfilingTime(jobResult.EndTime),
-		TracerArgs:  jobResult.AgentTask.TracerArgs,
-		Duration:    privateData.Duration,
-		Results: v1.ProfilingResults{
-			URL: resultURL,
-		},
-		ErrorMessage:    jobResult.ErrorMessage,
+	resp := v1.ProfilingJob{
+		ID:              jobResult.ID,
+		ContainerID:     jobResult.ContainerID,
+		Hostname:        jobResult.Hostname,
+		Status:          string(jobResult.Status),
+		Type:            profileType,
+		DurationSeconds: privateData.DurationSeconds,
+		CreatedAt:       jobResult.CreatedAt,
+		FinishedAt:      optionalTime(jobResult.FinishedAt),
+		ResultURL:       optionalString(resultURL),
+		StatusReason:    optionalString(jobResult.ErrorMessage),
 		MemoryMode:      privateData.MemoryMode,
 		BinaryMatchPath: privateData.BinaryMatchPath,
 		Language:        privateData.Language,
@@ -244,11 +240,18 @@ func decodeProfilingPrivateData(data json.RawMessage) (profilingJobPrivateData, 
 	return privateData, nil
 }
 
-func formatProfilingTime(value time.Time) string {
+func optionalTime(value time.Time) *time.Time {
 	if value.IsZero() {
-		return ""
+		return nil
 	}
-	return value.Format(time.RFC3339Nano)
+	return &value
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func getFlameGraphURL(base string, jobResult *job.Job) string {
@@ -257,8 +260,8 @@ func getFlameGraphURL(base string, jobResult *job.Job) string {
 	var labelKey string
 	var labelVal string
 
-	from := jobResult.StartTime.UTC().Format("2006-01-02T15:04:05.000Z")
-	to := jobResult.EndTime.UTC().Format("2006-01-02T15:04:05.000Z")
+	from := jobResult.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+	to := jobResult.FinishedAt.UTC().Format("2006-01-02T15:04:05.000Z")
 
 	if jobResult.ContainerID != "" {
 		switch jobResult.Type {
@@ -373,8 +376,13 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 	if hasMore {
 		profiles = profiles[:listParams.Limit]
 	}
-	response.Success(ctx, v1.RawDataResponse{
-		Data:    rawProfileResponses(profiles),
+	items, err := rawProfiles(profiles)
+	if err != nil {
+		log.WithError(err).WithField("job_id", taskID).Error("failed to build raw profiles")
+		return response.ErrInternal
+	}
+	response.Success(ctx, v1.RawProfilePage{
+		Items:   items,
 		Limit:   listParams.Limit,
 		Offset:  listParams.Offset,
 		HasMore: hasMore,
@@ -382,33 +390,28 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 	return nil
 }
 
-func rawProfileResponses(profiles []*profileService.ProfileDocument) []v1.RawProfile {
+func rawProfiles(profiles []*profileService.ProfileDocument) ([]v1.RawProfile, error) {
 	items := make([]v1.RawProfile, 0, len(profiles))
-	for _, profile := range profiles {
-		if profile == nil {
+	for _, document := range profiles {
+		if document == nil {
 			continue
 		}
+		profile, err := json.Marshal(&document.TracerData.Flamedata.Profile)
+		if err != nil {
+			return nil, fmt.Errorf("encoding raw profile: %w", err)
+		}
 		items = append(items, v1.RawProfile{
-			Hostname:               profile.Hostname,
-			Region:                 profile.Region,
-			UploadedTime:           profile.UploadedTime,
-			Time:                   profile.Time,
-			ContainerID:            profile.ContainerID,
-			ContainerHostname:      profile.ContainerHostname,
-			ContainerHostNamespace: profile.ContainerHostNamespace,
-			ContainerType:          profile.ContainerType,
-			ContainerQOS:           profile.ContainerQOS,
-			TracerName:             profile.TracerName,
-			TracerID:               profile.TracerID,
-			TracerTime:             profile.TracerTime,
-			TracerRunType:          profile.TracerRunType,
-			TracerData: v1.RawProfileTracerData{
-				Flamedata: v1.RawProfileFlameData{
-					ProfileType: profile.TracerData.Flamedata.ProfileType,
-					Profile:     &profile.TracerData.Flamedata.Profile,
-				},
-			},
+			Hostname:          document.Hostname,
+			Region:            document.Region,
+			UploadedAt:        document.UploadedTime,
+			CapturedAt:        document.CapturedAt(),
+			ContainerID:       document.ContainerID,
+			ContainerHostname: document.ContainerHostname,
+			ContainerType:     document.ContainerType,
+			ContainerQoS:      document.ContainerQOS,
+			ProfileType:       document.TracerData.Flamedata.ProfileType,
+			Profile:           profile,
 		})
 	}
-	return items
+	return items, nil
 }

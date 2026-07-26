@@ -60,8 +60,8 @@ func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 	url := getFlameGraphURL("http://grafana.example/d", &job.Job{
 		Type:        ProfilingCPU,
 		ContainerID: "container+2026&debug",
-		StartTime:   time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC),
-		EndTime:     time.Date(2026, 6, 24, 10, 5, 0, 0, time.UTC),
+		CreatedAt:   time.Date(2026, 6, 24, 10, 0, 0, 0, time.UTC),
+		FinishedAt:  time.Date(2026, 6, 24, 10, 5, 0, 0, time.UTC),
 	})
 
 	if !strings.Contains(url, "var-container_id=container%2B2026%26debug") {
@@ -90,7 +90,7 @@ func TestCapabilities(t *testing.T) {
 		ExecutionTimeout:    30,
 		MaxProfilerProcs:    5,
 	}}
-	resp := buildCapabilitiesResponse(h)
+	resp := buildCapabilities(h)
 
 	if len(resp.Types) != 2 {
 		t.Errorf("Types len = %d, want 2", len(resp.Types))
@@ -126,38 +126,38 @@ func TestCapabilities(t *testing.T) {
 		t.Errorf("MemoryLanguages len = %d, want 4 (c++, c, go, java)", len(resp.MemoryLanguages))
 	}
 
-	if len(resp.MemoryModes) != 5 {
-		t.Errorf("MemoryModes len = %d, want 5", len(resp.MemoryModes))
+	if len(resp.MemoryModes) != 4 {
+		t.Errorf("MemoryModes len = %d, want 4", len(resp.MemoryModes))
 	}
-	if _, ok := resp.MemoryModes["NATIVE_PHYSICAL_ALLOC"]; !ok {
-		t.Errorf("MemoryModes missing NATIVE_PHYSICAL_ALLOC")
+	if len(resp.MemoryModes["go"]) != 3 {
+		t.Errorf("MemoryModes[go] = %v, want 3 modes", resp.MemoryModes["go"])
 	}
-	if _, ok := resp.MemoryModes["OBJECT_USAGE"]; !ok {
-		t.Errorf("MemoryModes missing OBJECT_USAGE")
+	if len(resp.MemoryModes["java"]) != 2 {
+		t.Errorf("MemoryModes[java] = %v, want 2 modes", resp.MemoryModes["java"])
 	}
 
-	if resp.AggregationInterval != 15 {
-		t.Errorf("AggregationInterval = %d, want 15", resp.AggregationInterval)
+	if resp.AggregationIntervalSeconds != 15 {
+		t.Errorf("AggregationIntervalSeconds = %d, want 15", resp.AggregationIntervalSeconds)
 	}
-	if resp.ExecutionTimeout != 30 {
-		t.Errorf("ExecutionTimeout = %d, want 30", resp.ExecutionTimeout)
+	if resp.ExecutionTimeoutSeconds != 30 {
+		t.Errorf("ExecutionTimeoutSeconds = %d, want 30", resp.ExecutionTimeoutSeconds)
 	}
-	if resp.MaxProfilerProcs != 5 {
-		t.Errorf("MaxProfilerProcs = %d, want 5", resp.MaxProfilerProcs)
+	if resp.MaxConcurrentProfilers != 5 {
+		t.Errorf("MaxConcurrentProfilers = %d, want 5", resp.MaxConcurrentProfilers)
 	}
 }
 
 func TestCapabilitiesReturnsIndependentMemoryModeMap(t *testing.T) {
 	h := &Handler{}
-	resp := buildCapabilitiesResponse(h)
-	resp.MemoryModes["NEW_MODE"] = "new_mode"
-	resp.MemoryModes["NATIVE_PHYSICAL_ALLOC"] = "modified"
+	resp := buildCapabilities(h)
+	resp.MemoryModes["new"] = []string{"new_mode"}
+	resp.MemoryModes["go"][0] = "modified"
 
-	next := buildCapabilitiesResponse(h)
-	if next.MemoryModes["NATIVE_PHYSICAL_ALLOC"] != "physical_alloc" {
+	next := buildCapabilities(h)
+	if next.MemoryModes["go"][0] != "physical_alloc" {
 		t.Errorf("MemoryModes was mutated across responses")
 	}
-	if _, ok := next.MemoryModes["NEW_MODE"]; ok {
+	if _, ok := next.MemoryModes["new"]; ok {
 		t.Errorf("MemoryModes retained a caller mutation")
 	}
 }
@@ -165,7 +165,7 @@ func TestCapabilitiesReturnsIndependentMemoryModeMap(t *testing.T) {
 func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
 	data, err := newProfilingPrivateData(&v1.CreateProfilingJobRequest{
 		BinaryMatchPath: "/usr/bin/example",
-		Duration:        60,
+		DurationSeconds: 60,
 		Language:        "go",
 		MemoryMode:      "object_alloc",
 	})
@@ -178,26 +178,26 @@ func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
 		t.Fatalf("json.Unmarshal() error=%v", err)
 	}
 	if fields["binary_match_path"] != "/usr/bin/example" ||
-		fields["duration"] != float64(60) ||
+		fields["duration_seconds"] != float64(60) ||
 		fields["language"] != "go" ||
 		fields["memory_mode"] != "object_alloc" {
 		t.Errorf("newProfilingPrivateData()=%s, want request fields", data)
 	}
 }
 
-func TestConvertJobToProfilingResponseReadsRequestJSONNames(t *testing.T) {
-	resp, err := buildProfilingJobResponse(&job.Job{
+func TestBuildProfilingJobReadsPrivateData(t *testing.T) {
+	resp, err := buildProfilingJob(&job.Job{
 		Type:   ProfilingMemory,
 		Status: job.JobStatusRunning,
 		PrivateData: json.RawMessage(`{
 			"binary_match_path":"/usr/bin/example",
-			"duration":60,
+			"duration_seconds":60,
 			"language":"go",
 			"memory_mode":"object_alloc"
 		}`),
 	}, "")
 	if err != nil {
-		t.Fatalf("buildProfilingJobResponse() error = %v", err)
+		t.Fatalf("buildProfilingJob() error = %v", err)
 	}
 
 	if resp.BinaryMatchPath != "/usr/bin/example" {
@@ -209,25 +209,25 @@ func TestConvertJobToProfilingResponseReadsRequestJSONNames(t *testing.T) {
 	if resp.MemoryMode != "object_alloc" {
 		t.Errorf("MemoryMode=%q, want %q", resp.MemoryMode, "object_alloc")
 	}
-	if resp.Duration != 60 {
-		t.Errorf("Duration=%d, want 60", resp.Duration)
+	if resp.DurationSeconds != 60 {
+		t.Errorf("DurationSeconds=%d, want 60", resp.DurationSeconds)
 	}
 }
 
-func TestProfilingJobResponseRejectsNonProfilingJob(t *testing.T) {
-	_, err := buildProfilingJobResponse(&job.Job{Type: "trace"}, "")
+func TestBuildProfilingJobRejectsNonProfilingJob(t *testing.T) {
+	_, err := buildProfilingJob(&job.Job{Type: "trace"}, "")
 	if err == nil {
-		t.Fatal("buildProfilingJobResponse() error = nil, want non-nil")
+		t.Fatal("buildProfilingJob() error = nil, want non-nil")
 	}
 }
 
-func TestProfilingJobResponseRejectsInvalidPrivateData(t *testing.T) {
-	_, err := buildProfilingJobResponse(&job.Job{
+func TestBuildProfilingJobRejectsInvalidPrivateData(t *testing.T) {
+	_, err := buildProfilingJob(&job.Job{
 		Type:        ProfilingCPU,
-		PrivateData: json.RawMessage(`{"duration":`),
+		PrivateData: json.RawMessage(`{"duration_seconds":`),
 	}, "")
 	if err == nil {
-		t.Fatal("buildProfilingJobResponse() error = nil, want non-nil")
+		t.Fatal("buildProfilingJob() error = nil, want non-nil")
 	}
 }
 
@@ -252,62 +252,86 @@ func TestIsProfilingJobType(t *testing.T) {
 	}
 }
 
-func TestProfilingJobResponseBuildsURLWithoutMutatingJob(t *testing.T) {
+func TestBuildProfilingJobBuildsResultWithoutMutatingJob(t *testing.T) {
 	jobResult := &job.Job{
-		ID:          "profile-2026",
-		Type:        ProfilingCPU,
-		Hostname:    "huatuo-dev",
-		Status:      job.JobStatusCompleted,
-		StartTime:   time.Date(2026, time.July, 20, 10, 0, 0, 0, time.UTC),
-		EndTime:     time.Date(2026, time.July, 20, 10, 1, 0, 0, time.UTC),
-		PrivateData: json.RawMessage(`{"duration":60}`),
+		ID:           "profile-2026",
+		Type:         ProfilingCPU,
+		Hostname:     "huatuo-dev",
+		Status:       job.JobStatusCompleted,
+		CreatedAt:    time.Date(2026, time.July, 20, 10, 0, 0, 0, time.UTC),
+		FinishedAt:   time.Date(2026, time.July, 20, 10, 1, 0, 0, time.UTC),
+		ErrorMessage: "collection completed with partial symbols",
+		PrivateData:  json.RawMessage(`{"duration_seconds":60}`),
 	}
 
-	resp, err := buildProfilingJobResponse(jobResult, "http://grafana.example/d")
+	resp, err := buildProfilingJob(jobResult, "http://grafana.example/d")
 	if err != nil {
-		t.Fatalf("buildProfilingJobResponse() error = %v", err)
+		t.Fatalf("buildProfilingJob() error = %v", err)
 	}
-	if resp.Results.URL == "" {
-		t.Error("buildProfilingJobResponse() result URL is empty")
+	if resp.ResultURL == nil || *resp.ResultURL == "" {
+		t.Error("buildProfilingJob() result URL is empty")
 	}
 	if jobResult.Result.URL != "" {
 		t.Errorf("job result URL mutated to %q", jobResult.Result.URL)
 	}
-	if resp.Duration != 60 {
-		t.Errorf("Duration=%d, want 60", resp.Duration)
+	if resp.DurationSeconds != 60 {
+		t.Errorf("DurationSeconds=%d, want 60", resp.DurationSeconds)
+	}
+	if !resp.CreatedAt.Equal(jobResult.CreatedAt) {
+		t.Errorf("CreatedAt=%s, want %s", resp.CreatedAt, jobResult.CreatedAt)
+	}
+	if resp.FinishedAt == nil || !resp.FinishedAt.Equal(jobResult.FinishedAt) {
+		t.Errorf("FinishedAt=%v, want %s", resp.FinishedAt, jobResult.FinishedAt)
+	}
+	if resp.StatusReason == nil || *resp.StatusReason != jobResult.ErrorMessage {
+		t.Errorf("StatusReason=%v, want %q", resp.StatusReason, jobResult.ErrorMessage)
 	}
 }
 
-func TestProfilingJobResponseFormatsZeroEndTimeAsEmpty(t *testing.T) {
-	resp, err := buildProfilingJobResponse(&job.Job{Type: ProfilingCPU}, "")
+func TestBuildProfilingJobLeavesUnavailableFieldsNull(t *testing.T) {
+	resp, err := buildProfilingJob(&job.Job{Type: ProfilingCPU}, "")
 	if err != nil {
-		t.Fatalf("buildProfilingJobResponse() error = %v", err)
+		t.Fatalf("buildProfilingJob() error = %v", err)
 	}
-	if resp.EndTime != "" {
-		t.Errorf("EndTime=%q, want empty", resp.EndTime)
+	if resp.FinishedAt != nil {
+		t.Errorf("FinishedAt=%v, want nil", resp.FinishedAt)
+	}
+	if resp.ResultURL != nil {
+		t.Errorf("ResultURL=%v, want nil", resp.ResultURL)
+	}
+	if resp.StatusReason != nil {
+		t.Errorf("StatusReason=%v, want nil", resp.StatusReason)
 	}
 }
 
-func TestRawProfileResponsesMapsStableWireType(t *testing.T) {
+func TestRawProfilesMapsStableWireType(t *testing.T) {
+	uploadedAt := time.Date(2026, 7, 22, 10, 0, 1, 0, time.UTC)
 	document := &profileService.ProfileDocument{
-		Hostname:   "node-a",
-		TracerID:   "trace-a",
-		TracerTime: "2026-07-22T10:00:00Z",
+		Hostname:     "node-a",
+		UploadedTime: uploadedAt,
+		TracerID:     "internal-trace-id",
+		TracerTime:   "2026-07-22 10:00:00.000 +0000",
 	}
 	document.TracerData.Flamedata.ProfileType = "process_cpu"
 
-	items := rawProfileResponses([]*profileService.ProfileDocument{nil, document})
+	items, err := rawProfiles([]*profileService.ProfileDocument{nil, document})
+	if err != nil {
+		t.Fatalf("rawProfiles() error=%v", err)
+	}
 	if len(items) != 1 {
-		t.Fatalf("rawProfileResponses() length = %d, want 1", len(items))
+		t.Fatalf("rawProfiles() length = %d, want 1", len(items))
 	}
-	if items[0].Hostname != document.Hostname || items[0].TracerID != document.TracerID {
-		t.Fatalf(
-			"raw profile identity = (%q, %q), want document identity",
-			items[0].Hostname,
-			items[0].TracerID,
-		)
+	if items[0].Hostname != document.Hostname {
+		t.Fatalf("Hostname=%q, want %q", items[0].Hostname, document.Hostname)
 	}
-	if got := items[0].TracerData.Flamedata.ProfileType; got != "process_cpu" {
+	if got := items[0].ProfileType; got != "process_cpu" {
 		t.Fatalf("profile type = %q, want process_cpu", got)
+	}
+	wantCapturedAt := time.Date(2026, 7, 22, 10, 0, 0, 0, time.UTC)
+	if !items[0].CapturedAt.Equal(wantCapturedAt) {
+		t.Fatalf("CapturedAt=%s, want %s", items[0].CapturedAt, wantCapturedAt)
+	}
+	if len(items[0].Profile) == 0 {
+		t.Fatal("Profile is empty")
 	}
 }

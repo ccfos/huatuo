@@ -92,8 +92,8 @@ type Job struct {
 	ErrorMessage string           `json:"error_message,omitempty"`
 	Duration     int              `json:"duration"`
 	TraceTimeout int              `json:"trace_timeout"`
-	StartTime    time.Time        `json:"start_time"`
-	EndTime      time.Time        `json:"end_time"`
+	CreatedAt    time.Time        `json:"created_at"`
+	FinishedAt   time.Time        `json:"finished_at"`
 	AgentTask    AgentTaskRequest `json:"agent_task"`
 	Result       Result           `json:"result,omitempty"`
 

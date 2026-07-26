@@ -302,7 +302,7 @@ func (m *Manager) createContext(ctx context.Context, req *CreateJobRequest, idAt
 		ContainerID:  req.ContainerID,
 		Hostname:     req.Hostname,
 		Status:       JobStatusPending,
-		StartTime:    now,
+		CreatedAt:    now,
 		Duration:     req.AgentTask.Duration,
 		TraceTimeout: req.AgentTask.TraceTimeout,
 		AgentTask:    *req.AgentTask,
@@ -618,7 +618,7 @@ func (m *Manager) finishJob(ctx context.Context, job *Job, status JobStatus, err
 	snapshot := cloneJob(job)
 	snapshot.Status = status
 	snapshot.UpdatedAt = now
-	snapshot.EndTime = now
+	snapshot.FinishedAt = now
 	snapshot.ErrorMessage = errMessage
 	if result != nil {
 		snapshot.Result = *result
@@ -638,7 +638,7 @@ func (m *Manager) finishJob(ctx context.Context, job *Job, status JobStatus, err
 	}
 	current.Status = snapshot.Status
 	current.UpdatedAt = snapshot.UpdatedAt
-	current.EndTime = snapshot.EndTime
+	current.FinishedAt = snapshot.FinishedAt
 	current.ErrorMessage = snapshot.ErrorMessage
 	current.Result = snapshot.Result
 	select {
@@ -817,9 +817,9 @@ func (m *Manager) monitorJob(ctx context.Context, job *Job) {
 
 	var timeoutTime, durationEndTime time.Time
 	if job.Duration == 0 {
-		timeoutTime = job.StartTime.Add(time.Duration(job.TraceTimeout) * time.Second)
+		timeoutTime = job.CreatedAt.Add(time.Duration(job.TraceTimeout) * time.Second)
 	} else {
-		durationEndTime = job.StartTime.Add(time.Duration(job.Duration) * time.Second)
+		durationEndTime = job.CreatedAt.Add(time.Duration(job.Duration) * time.Second)
 	}
 
 	// Counter for status check (every 5 seconds)

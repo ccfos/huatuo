@@ -30,23 +30,23 @@ type storageStore struct {
 }
 
 type storagePayload struct {
-	Type        JobType          `json:"type"`
-	JobID       string           `json:"job_id"`
-	UserName    string           `json:"user_name"`
-	UserID      string           `json:"user_id"`
-	Container   string           `json:"container"`
-	Host        string           `json:"host"`
-	AgentTaskID string           `json:"agent_job_id"`
-	Status      JobStatus        `json:"status"`
-	Error       string           `json:"error,omitempty"`
-	Duration    int              `json:"duration"`
-	Timeout     int              `json:"timeout"`
-	StartTime   time.Time        `json:"start_time"`
-	EndTime     time.Time        `json:"end_time"`
-	Args        AgentTaskRequest `json:"args"`
-	Results     Result           `json:"results,omitempty"`
-	LastUpdate  time.Time        `json:"last_update"`
-	PrivateData json.RawMessage  `json:"private_data,omitempty"`
+	Type         JobType          `json:"type"`
+	ID           string           `json:"id"`
+	Username     string           `json:"username"`
+	UserID       string           `json:"user_id"`
+	ContainerID  string           `json:"container_id"`
+	Hostname     string           `json:"hostname"`
+	AgentTaskID  string           `json:"agent_task_id"`
+	Status       JobStatus        `json:"status"`
+	ErrorMessage string           `json:"error_message,omitempty"`
+	Duration     int              `json:"duration"`
+	TraceTimeout int              `json:"trace_timeout"`
+	CreatedAt    time.Time        `json:"created_at"`
+	FinishedAt   time.Time        `json:"finished_at"`
+	AgentTask    AgentTaskRequest `json:"agent_task"`
+	Result       Result           `json:"result,omitempty"`
+	UpdatedAt    time.Time        `json:"updated_at"`
+	PrivateData  json.RawMessage  `json:"private_data,omitempty"`
 }
 
 type storeMapper struct{}
@@ -57,14 +57,14 @@ func storageCollection() string {
 
 func storageFields(entity *Job) map[string]any {
 	return map[string]any{
-		"id":         entity.ID,
-		"user_id":    entity.UserID,
-		"container":  entity.ContainerID,
-		"host":       entity.Hostname,
-		"status":     string(entity.Status),
-		"type":       entity.Type,
-		"start_time": entity.StartTime,
-		"end_time":   entity.EndTime,
+		"id":           entity.ID,
+		"user_id":      entity.UserID,
+		"container_id": entity.ContainerID,
+		"hostname":     entity.Hostname,
+		"status":       string(entity.Status),
+		"type":         entity.Type,
+		"created_at":   entity.CreatedAt,
+		"finished_at":  entity.FinishedAt,
 	}
 }
 
@@ -72,12 +72,12 @@ func storageIndexes() []string {
 	return []string{
 		"user_id",
 		"id",
-		"container",
-		"host",
+		"container_id",
+		"hostname",
 		"status",
 		"type",
-		"start_time",
-		"end_time",
+		"created_at",
+		"finished_at",
 	}
 }
 
@@ -171,7 +171,7 @@ func validateJobQuery(query *JobQuery) error {
 		field = field[1:]
 	}
 	switch field {
-	case "", "id", "start_time", "end_time", "host", "container", "status", "type":
+	case "", "id", "created_at", "finished_at", "hostname", "container_id", "status", "type":
 		return nil
 	default:
 		return fmt.Errorf("%w: unsupported sort field %q", ErrInvalidQuery, field)
@@ -188,23 +188,23 @@ func (storeMapper) ID(entity *Job) string {
 
 func (storeMapper) Encode(entity *Job) ([]byte, error) {
 	payload := storagePayload{
-		Type:        entity.Type,
-		JobID:       entity.ID,
-		UserName:    entity.Username,
-		UserID:      entity.UserID,
-		Container:   entity.ContainerID,
-		Host:        entity.Hostname,
-		AgentTaskID: entity.AgentTaskID,
-		Status:      entity.Status,
-		Error:       entity.ErrorMessage,
-		Duration:    entity.Duration,
-		Timeout:     entity.TraceTimeout,
-		StartTime:   entity.StartTime,
-		EndTime:     entity.EndTime,
-		Args:        entity.AgentTask,
-		Results:     entity.Result,
-		LastUpdate:  entity.UpdatedAt,
-		PrivateData: entity.PrivateData,
+		Type:         entity.Type,
+		ID:           entity.ID,
+		Username:     entity.Username,
+		UserID:       entity.UserID,
+		ContainerID:  entity.ContainerID,
+		Hostname:     entity.Hostname,
+		AgentTaskID:  entity.AgentTaskID,
+		Status:       entity.Status,
+		ErrorMessage: entity.ErrorMessage,
+		Duration:     entity.Duration,
+		TraceTimeout: entity.TraceTimeout,
+		CreatedAt:    entity.CreatedAt,
+		FinishedAt:   entity.FinishedAt,
+		AgentTask:    entity.AgentTask,
+		Result:       entity.Result,
+		UpdatedAt:    entity.UpdatedAt,
+		PrivateData:  entity.PrivateData,
 	}
 
 	return json.Marshal(payload)
@@ -218,21 +218,21 @@ func (storeMapper) Decode(data []byte) (*Job, error) {
 
 	return &Job{
 		Type:         payload.Type,
-		ID:           payload.JobID,
-		Username:     payload.UserName,
+		ID:           payload.ID,
+		Username:     payload.Username,
 		UserID:       payload.UserID,
-		ContainerID:  payload.Container,
-		Hostname:     payload.Host,
+		ContainerID:  payload.ContainerID,
+		Hostname:     payload.Hostname,
 		AgentTaskID:  payload.AgentTaskID,
 		Status:       payload.Status,
-		ErrorMessage: payload.Error,
+		ErrorMessage: payload.ErrorMessage,
 		Duration:     payload.Duration,
-		TraceTimeout: payload.Timeout,
-		StartTime:    payload.StartTime,
-		EndTime:      payload.EndTime,
-		AgentTask:    payload.Args,
-		Result:       payload.Results,
-		UpdatedAt:    payload.LastUpdate,
+		TraceTimeout: payload.TraceTimeout,
+		CreatedAt:    payload.CreatedAt,
+		FinishedAt:   payload.FinishedAt,
+		AgentTask:    payload.AgentTask,
+		Result:       payload.Result,
+		UpdatedAt:    payload.UpdatedAt,
 		PrivateData:  payload.PrivateData,
 	}, nil
 }
@@ -259,10 +259,10 @@ func toStorageQuery(q *JobQuery) driver.Query {
 		filters = append(filters, driver.Filter{Field: "user_id", Op: driver.OpEq, Value: q.UserID})
 	}
 	if q.ContainerID != "" {
-		filters = append(filters, driver.Filter{Field: "container", Op: driver.OpEq, Value: q.ContainerID})
+		filters = append(filters, driver.Filter{Field: "container_id", Op: driver.OpEq, Value: q.ContainerID})
 	}
 	if q.Hostname != "" {
-		filters = append(filters, driver.Filter{Field: "host", Op: driver.OpEq, Value: q.Hostname})
+		filters = append(filters, driver.Filter{Field: "hostname", Op: driver.OpEq, Value: q.Hostname})
 	}
 	if len(q.Statuses) > 0 {
 		values := make([]string, len(q.Statuses))
@@ -291,7 +291,7 @@ func toStorageQuery(q *JobQuery) driver.Query {
 	field := q.Sort
 	desc := false
 	if field == "" {
-		field = "-start_time"
+		field = "-created_at"
 	}
 	if field[0] == '-' {
 		desc = true

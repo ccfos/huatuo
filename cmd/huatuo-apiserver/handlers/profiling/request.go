@@ -46,7 +46,7 @@ type patchProfilingJobRequest struct {
 
 type profilingJobPrivateData struct {
 	BinaryMatchPath string `json:"binary_match_path"`
-	Duration        int    `json:"duration"`
+	DurationSeconds int    `json:"duration_seconds"`
 	Language        string `json:"language"`
 	MemoryMode      string `json:"memory_mode"`
 }
@@ -76,22 +76,22 @@ func buildCreateProfilingJobRequest(
 	if err != nil {
 		return nil, err
 	}
-	if req.Duration < taskReq.Interval*2 {
-		return nil, errors.New("duration must cover at least two profiling intervals")
+	if req.DurationSeconds < taskReq.Interval*2 {
+		return nil, errors.New("duration_seconds must cover at least two profiling intervals")
 	}
-	if req.Duration+taskReq.Interval >= 3600 {
-		return nil, errors.New("duration plus profiling interval must be less than 3600 seconds")
+	if req.DurationSeconds+taskReq.Interval >= 3600 {
+		return nil, errors.New("duration_seconds plus profiling interval must be less than 3600 seconds")
 	}
-	if taskReq.TraceTimeout < req.Duration+taskReq.Interval {
-		taskReq.TraceTimeout = req.Duration + taskReq.Interval
+	if taskReq.TraceTimeout < req.DurationSeconds+taskReq.Interval {
+		taskReq.TraceTimeout = req.DurationSeconds + taskReq.Interval
 	}
 
 	// The job duration controls profiling lifetime while the agent task remains
 	// alive long enough to be stopped externally.
-	taskReq.Duration = req.Duration * 2
+	taskReq.Duration = req.DurationSeconds * 2
 	taskReq.TracerArgs = append(
 		taskReq.TracerArgs,
-		"--duration", strconv.Itoa(req.Duration),
+		"--duration", strconv.Itoa(req.DurationSeconds),
 		"--aggr-interval", strconv.Itoa(taskReq.Interval),
 		"--max-concurrent-procs", strconv.Itoa(cfg.MaxProfilerProcs),
 		"--output-format", "remote",
@@ -155,7 +155,7 @@ func buildProfilingTracerArgs(
 func newProfilingPrivateData(req *v1.CreateProfilingJobRequest) (json.RawMessage, error) {
 	data, err := json.Marshal(profilingJobPrivateData{
 		BinaryMatchPath: req.BinaryMatchPath,
-		Duration:        req.Duration,
+		DurationSeconds: req.DurationSeconds,
 		Language:        req.Language,
 		MemoryMode:      req.MemoryMode,
 	})

@@ -16,7 +16,6 @@ package profiling
 
 import (
 	"sort"
-	"strings"
 
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/server"
@@ -24,35 +23,34 @@ import (
 	"huatuo-bamai/pkg/profiling"
 )
 
-func buildCapabilitiesResponse(h *Handler) v1.ProfilingCapabilitiesResponse {
+func buildCapabilities(h *Handler) v1.ProfilingCapabilities {
 	cpuLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeCPU))
 	sort.Strings(cpuLanguages)
 
 	memoryLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeMemory))
 	sort.Strings(memoryLanguages)
 
-	memoryModes := map[string]string{}
+	memoryModes := make(map[string][]string, len(memoryLanguages))
 	for _, language := range profiling.LanguagesFor(profiling.TypeMemory) {
-		implementation, _ := profiling.ImplementationFor(language)
-		for _, mode := range profiling.MemoryModesFor(language) {
-			id := strings.ToUpper(string(mode))
-			if implementation == profiling.ImplementationNative {
-				id = "NATIVE_" + id
-			}
-			memoryModes[id] = string(mode)
+		modes := profiling.MemoryModesFor(language)
+		values := make([]string, 0, len(modes))
+		for _, mode := range modes {
+			values = append(values, string(mode))
 		}
+		sort.Strings(values)
+		memoryModes[string(language)] = values
 	}
 
 	cfg := h.profilingConfig
 
-	return v1.ProfilingCapabilitiesResponse{
-		Types:               []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
-		CPULanguages:        cpuLanguages,
-		MemoryLanguages:     memoryLanguages,
-		MemoryModes:         memoryModes,
-		AggregationInterval: cfg.AggregationInterval,
-		ExecutionTimeout:    cfg.ExecutionTimeout,
-		MaxProfilerProcs:    cfg.MaxProfilerProcs,
+	return v1.ProfilingCapabilities{
+		Types:                      []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
+		CPULanguages:               cpuLanguages,
+		MemoryLanguages:            memoryLanguages,
+		MemoryModes:                memoryModes,
+		AggregationIntervalSeconds: cfg.AggregationInterval,
+		ExecutionTimeoutSeconds:    cfg.ExecutionTimeout,
+		MaxConcurrentProfilers:     cfg.MaxProfilerProcs,
 	}
 }
 
@@ -69,6 +67,6 @@ func languageStrings(languages []profiling.Language) []string {
 // discover supported profiling types, languages, memory modes, and default
 // configuration values without hardcoding them.
 func (h *Handler) capabilities(ctx *server.Context) error {
-	response.Success(ctx, buildCapabilitiesResponse(h))
+	response.Success(ctx, buildCapabilities(h))
 	return nil
 }

@@ -154,7 +154,7 @@ const (
 )
 
 // ListParams holds pagination and sorting parameters for list endpoints.
-// Sort uses a leading "-" for descending, e.g. "-start_time".
+// Sort uses a leading "-" for descending, e.g. "-created_at".
 type ListParams struct {
 	Limit  int
 	Offset int

@@ -36,7 +36,7 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 				ProfilingType:   "cpu",
 				Language:        "go",
 				BinaryMatchPath: "/usr/bin/example",
-				Duration:        30,
+				DurationSeconds: 30,
 				ContainerID:     "container-2026",
 				Hostname:        "huatuo-dev",
 			},
@@ -55,10 +55,10 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 		{
 			name: "memory profiling",
 			req: v1.CreateProfilingJobRequest{
-				ProfilingType: "memory",
-				Language:      "c",
-				MemoryMode:    "physical_usage",
-				Duration:      30,
+				ProfilingType:   "memory",
+				Language:        "c",
+				MemoryMode:      "physical_usage",
+				DurationSeconds: 30,
 			},
 			wantType: ProfilingMemory,
 			wantTracerArgs: []string{
@@ -75,19 +75,19 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 		{
 			name: "unsupported type",
 			req: v1.CreateProfilingJobRequest{
-				ProfilingType: "offcpu",
-				Duration:      30,
+				ProfilingType:   "offcpu",
+				DurationSeconds: 30,
 			},
 			wantErr: `unsupported profiling type "offcpu"`,
 		},
 		{
 			name: "duration below two intervals",
 			req: v1.CreateProfilingJobRequest{
-				ProfilingType: "cpu",
-				Language:      "go",
-				Duration:      19,
+				ProfilingType:   "cpu",
+				Language:        "go",
+				DurationSeconds: 19,
 			},
-			wantErr: "duration must cover at least two profiling intervals",
+			wantErr: "duration_seconds must cover at least two profiling intervals",
 		},
 	}
 
@@ -114,8 +114,12 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			if got.UserID != "operator-2026" {
 				t.Errorf("UserID=%q, want operator-2026", got.UserID)
 			}
-			if got.AgentTask.Duration != tt.req.Duration*2 {
-				t.Errorf("AgentTask.Duration=%d, want %d", got.AgentTask.Duration, tt.req.Duration*2)
+			if got.AgentTask.Duration != tt.req.DurationSeconds*2 {
+				t.Errorf(
+					"AgentTask.Duration=%d, want %d",
+					got.AgentTask.Duration,
+					tt.req.DurationSeconds*2,
+				)
 			}
 			if !slices.Equal(got.AgentTask.TracerArgs, tt.wantTracerArgs) {
 				t.Errorf("TracerArgs=%q, want %q", got.AgentTask.TracerArgs, tt.wantTracerArgs)

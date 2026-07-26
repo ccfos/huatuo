@@ -54,8 +54,8 @@ func sampleStoredJobs(baseTime time.Time) []*Job {
 			Status:       JobStatusCompleted,
 			Duration:     120,
 			TraceTimeout: 120,
-			StartTime:    baseTime,
-			EndTime:      baseTime.Add(2 * time.Minute),
+			CreatedAt:    baseTime,
+			FinishedAt:   baseTime.Add(2 * time.Minute),
 			AgentTask: AgentTaskRequest{
 				TracerName:   "profiler",
 				TraceTimeout: 120,
@@ -78,8 +78,8 @@ func sampleStoredJobs(baseTime time.Time) []*Job {
 			Status:       JobStatusStopped,
 			Duration:     60,
 			TraceTimeout: 60,
-			StartTime:    baseTime.Add(1 * time.Hour),
-			EndTime:      baseTime.Add(61 * time.Minute),
+			CreatedAt:    baseTime.Add(1 * time.Hour),
+			FinishedAt:   baseTime.Add(61 * time.Minute),
 			AgentTask: AgentTaskRequest{
 				TracerName:   "tracer",
 				TraceTimeout: 60,
@@ -151,8 +151,91 @@ func TestStorageStoreSQLiteIntegration(t *testing.T) {
 }
 
 func TestValidateJobQueryRejectsUnsafeSort(t *testing.T) {
-	err := validateJobQuery(&JobQuery{Sort: "start_time; DROP TABLE jobs"})
+	err := validateJobQuery(&JobQuery{Sort: "created_at; DROP TABLE jobs"})
 	if !errors.Is(err, ErrInvalidQuery) {
 		t.Fatalf("validateJobQuery() error=%v, want ErrInvalidQuery", err)
+	}
+}
+
+func TestStorageMapperUsesJobFieldNames(t *testing.T) {
+	createdAt := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
+	entity := &Job{
+		ID:           "job-2026",
+		ContainerID:  "container-2026",
+		Hostname:     "host-2026",
+		ErrorMessage: "agent failed",
+		CreatedAt:    createdAt,
+		FinishedAt:   createdAt.Add(time.Minute),
+	}
+
+	data, err := (storeMapper{}).Encode(entity)
+	if err != nil {
+		t.Fatalf("Encode() error=%v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error=%v", err)
+	}
+
+	for _, field := range []string{
+		"id",
+		"username",
+		"container_id",
+		"hostname",
+		"agent_task_id",
+		"error_message",
+		"trace_timeout",
+		"created_at",
+		"finished_at",
+		"agent_task",
+		"result",
+		"updated_at",
+	} {
+		if _, ok := payload[field]; !ok {
+			t.Errorf("encoded field %q is missing", field)
+		}
+	}
+	for _, field := range []string{
+		"job_id",
+		"user_name",
+		"agent_job_id",
+		"error",
+		"timeout",
+		"start_time",
+		"end_time",
+		"args",
+		"results",
+		"last_update",
+	} {
+		if _, ok := payload[field]; ok {
+			t.Errorf("legacy encoded field %q is present", field)
+		}
+	}
+
+	fields := storageFields(entity)
+	for _, field := range []string{"container_id", "hostname", "created_at", "finished_at"} {
+		if _, ok := fields[field]; !ok {
+			t.Errorf("storage field %q is missing", field)
+		}
+	}
+}
+
+func TestToStorageQueryUsesJobFieldNames(t *testing.T) {
+	query := toStorageQuery(&JobQuery{
+		ContainerID: "container-2026",
+		Hostname:    "host-2026",
+	})
+
+	if len(query.Filters) != 2 {
+		t.Fatalf("filter count=%d, want 2", len(query.Filters))
+	}
+	if query.Filters[0].Field != "container_id" {
+		t.Errorf("first filter=%q, want container_id", query.Filters[0].Field)
+	}
+	if query.Filters[1].Field != "hostname" {
+		t.Errorf("second filter=%q, want hostname", query.Filters[1].Field)
+	}
+	if len(query.Sorts) == 0 || query.Sorts[0].Field != "created_at" || !query.Sorts[0].Desc {
+		t.Errorf("default sorts=%v, want descending created_at", query.Sorts)
 	}
 }
