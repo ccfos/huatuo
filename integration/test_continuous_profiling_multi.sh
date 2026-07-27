@@ -14,9 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Verify the complete native CPU continuous-profiling path: apiserver creates
-# a bamai task, profiler uploads multiple windows through toolstream, and the
-# apiserver reads the stored profiles back from Elasticsearch.
+# Verify that apiserver can run multiple continuous CPU profiles concurrently
+# against one host and keep each task's lifecycle and stored windows isolated.
 
 set -euo pipefail
 
@@ -29,6 +28,7 @@ readonly API_TOKEN="integration-admin"
 readonly OTHER_API_TOKEN="integration-other"
 readonly PROFILE_DURATION=12
 readonly PROFILE_INTERVAL=5
+readonly PROFILE_COUNT=2
 readonly PROFILE_FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 
 command -v docker > /dev/null || skip "docker command is not installed"
@@ -43,9 +43,9 @@ command -v timeout > /dev/null || fatal "timeout command is not installed"
 [[ -r "${ROOT_DIR}/_output/bpf/native_cpu_profiler.o" ]] \
 	|| fatal "native CPU profiler BPF object missing"
 [[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip "perf_event is unavailable"
-readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
-[[ "${PARANOID}" -le 2 ]] \
-	|| skip "kernel.perf_event_paranoid=${PARANOID} blocks sampling"
+readonly PROFILE_PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
+[[ "${PROFILE_PARANOID}" -le 2 ]] \
+	|| skip "kernel.perf_event_paranoid=${PROFILE_PARANOID} blocks sampling"
 
 APISERVER_PORT=$(allocate_available_port) || fatal "failed to allocate an apiserver port"
 readonly APISERVER_PORT
@@ -53,6 +53,7 @@ readonly APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
 
 TARGET_PID=""
 LAST_PROFILE_DIAGNOSTIC="no raw profile request made"
+PROFILE_IDS=()
 
 cleanup() {
 	local status=$?
@@ -78,7 +79,8 @@ start_native_cpu_fixture() {
 }
 
 create_native_cpu_profile() {
-	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/create-profile.json"
+	local index=$1
+	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/create-profile-${index}.json"
 	local status curl_status=0
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' -X POST \
 		-H "Authorization: Bearer ${API_TOKEN}" \
@@ -87,37 +89,73 @@ create_native_cpu_profile() {
 		-d "{\"type\":\"cpu\",\"language\":\"c\",\"duration_seconds\":${PROFILE_DURATION},\"hostname\":\"127.0.0.1\"}") \
 		|| curl_status=$?
 	if [[ -r "${response_file}" ]]; then
-		log_info "create native CPU profile response: $(< "${response_file}")"
+		log_info "create native CPU profile ${index} response: $(< "${response_file}")"
 	else
 		log_error "create native CPU profile response file missing: ${response_file}"
 	fi
 	[[ ${curl_status} -eq 0 ]] \
 		|| fatal "create native CPU profile request failed with curl exit code ${curl_status}"
-	assert_eq "${status}" "201" "create native CPU profile" \
+	assert_eq "${status}" "201" "create native CPU profile ${index}" \
 		|| fatal "profile creation failed: $(< "${response_file}")"
-	PROFILE_ID=$(jq -er '.data.id' "${response_file}") \
-		|| fatal "profile creation response has no task ID"
-	export PROFILE_ID
+}
+
+create_native_cpu_profiles() {
+	local index failed=0
+	local pids=()
+
+	for ((index = 0; index < PROFILE_COUNT; index++)); do
+		create_native_cpu_profile "${index}" &
+		pids+=("$!")
+	done
+	for index in "${!pids[@]}"; do
+		if ! wait "${pids[index]}"; then
+			failed=1
+		fi
+	done
+	[[ "${failed}" -eq 0 ]] || fatal "one or more profile creation requests failed"
+
+	local profile_id
+	for ((index = 0; index < PROFILE_COUNT; index++)); do
+		profile_id=$(jq -er '.data.id' \
+			"${HUATUO_BAMAI_TEST_TMPDIR}/create-profile-${index}.json") \
+			|| fatal "profile creation response ${index} has no task ID"
+		PROFILE_IDS+=("${profile_id}")
+	done
+
+	local unique_count
+	unique_count=$(printf '%s\n' "${PROFILE_IDS[@]}" | jq -R . | jq -s 'unique | length')
+	assert_eq "${unique_count}" "${PROFILE_COUNT}" "unique profile task IDs" \
+		|| fatal "concurrent profile creation returned duplicate task IDs"
 }
 
 profile_status_is() {
-	local expected_status=$1
+	local profile_id=$1
+	local expected_status=$2
 	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}" \
-		> "${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json" \
+		"${APISERVER_ADDR}/v1/profiles/${profile_id}" \
+		> "${HUATUO_BAMAI_TEST_TMPDIR}/profile-status-${profile_id}.json" \
 		|| return 1
 	jq -e --arg expected_status "${expected_status}" \
 		'.data.status == $expected_status' \
-		"${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json" > /dev/null
+		"${HUATUO_BAMAI_TEST_TMPDIR}/profile-status-${profile_id}.json" > /dev/null
+}
+
+all_profiles_have_status() {
+	local expected_status=$1
+	local profile_id
+	for profile_id in "${PROFILE_IDS[@]}"; do
+		profile_status_is "${profile_id}" "${expected_status}" || return 1
+	done
 }
 
 profiles_are_stored() {
-	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/profiles-raw.json"
+	local profile_id=$1
+	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/profiles-raw-${profile_id}.json"
 	local status
 	status=$(
 		curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
 			-H "Authorization: Bearer ${API_TOKEN}" \
-			"${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}/raw"
+			"${APISERVER_ADDR}/v1/profiles/${profile_id}/raw"
 	) || {
 		LAST_PROFILE_DIAGNOSTIC="raw profile request failed before receiving an HTTP response"
 		return 1
@@ -142,50 +180,48 @@ profiles_are_stored() {
 	[[ "${status}" == "200" && "${count}" -ge 2 ]]
 }
 
-assert_profile_lifecycle() {
-	wait_until 10 1 profile_status_is running || fatal "profile did not enter running state"
+assert_completed_profiles() {
+	wait_until 60 2 all_profiles_have_status completed \
+		|| fatal "concurrent profiles did not complete"
 
-	local status
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
-		-o "${HUATUO_BAMAI_TEST_TMPDIR}/forbidden.json" -w '%{http_code}' \
-		-H "Authorization: Bearer ${OTHER_API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}")
-	assert_eq "${status}" "403" "non-owner profile access" \
-		|| fatal "profile was visible to a non-owner"
+	local profile_id
+	for profile_id in "${PROFILE_IDS[@]}"; do
+		jq -e --argjson duration "${PROFILE_DURATION}" \
+			'.data.duration_seconds == $duration
+				and .data.created_at != null
+				and .data.finished_at != null
+				and .data.result_url != null
+				and .data.status_reason == null' \
+			"${HUATUO_BAMAI_TEST_TMPDIR}/profile-status-${profile_id}.json" > /dev/null \
+			|| fatal "completed profile ${profile_id} metadata is incomplete"
+		wait_until 90 2 profiles_are_stored "${profile_id}" \
+			|| fatal "profiling windows for ${profile_id} were not stored: ${LAST_PROFILE_DIAGNOSTIC}"
+	done
+}
 
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" \
-		-o "${HUATUO_BAMAI_TEST_TMPDIR}/delete-running.json" -w '%{http_code}' \
-		-X DELETE -H "Authorization: Bearer ${API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}")
-	assert_eq "${status}" "409" "delete running profile" \
-		|| fatal "running profile deletion did not return conflict"
-
-	wait_until 60 2 profile_status_is completed || fatal "profile did not complete"
-	jq -e --argjson duration "${PROFILE_DURATION}" \
-		'.data.duration_seconds == $duration
-			and .data.created_at != null
-			and .data.finished_at != null
-			and .data.result_url != null
-			and .data.status_reason == null
-			and (.data | has("agent_task_id") | not)
-			and (.data | has("tracer_args") | not)' \
-		"${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json" > /dev/null \
-		|| fatal "completed profile metadata is incomplete"
-
-	wait_until 90 2 profiles_are_stored \
-		|| fatal "profiling windows were not stored: ${LAST_PROFILE_DIAGNOSTIC}"
-	# Stack frame ordering is covered by lower-level profiler tests; this test
-	# verifies only the API, task lifecycle, transport, and storage contract.
-
+assert_profiles_are_listed() {
+	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/profiles-list.json"
 	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiles?type=cpu&hostname=127.0.0.1&status=completed&limit=1&offset=0&sort=-created_at" \
-		| jq -e --arg id "${PROFILE_ID}" '.data.total >= 1 and .data.items[0].id == $id' \
-			> /dev/null || fatal "profile list filters did not return the completed task"
+		"${APISERVER_ADDR}/v1/profiles?type=cpu&hostname=127.0.0.1&status=completed&limit=100&offset=0&sort=-created_at" \
+		> "${response_file}" || fatal "failed to list completed profiles"
 
-	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o /dev/null -w '%{http_code}' -X DELETE \
-		-H "Authorization: Bearer ${API_TOKEN}" "${APISERVER_ADDR}/v1/profiles/${PROFILE_ID}")
-	assert_eq "${status}" "204" "delete completed profile" \
-		|| fatal "completed profile deletion failed"
+	local profile_id
+	for profile_id in "${PROFILE_IDS[@]}"; do
+		jq -e --arg id "${profile_id}" \
+			'any(.data.items[]; .id == $id)' "${response_file}" > /dev/null \
+			|| fatal "profile list did not contain concurrent task ${profile_id}"
+	done
+}
+
+delete_profiles() {
+	local profile_id status
+	for profile_id in "${PROFILE_IDS[@]}"; do
+		status=$(curl -sS "${CURL_TIMEOUT[@]}" -o /dev/null -w '%{http_code}' -X DELETE \
+			-H "Authorization: Bearer ${API_TOKEN}" \
+			"${APISERVER_ADDR}/v1/profiles/${profile_id}")
+		assert_eq "${status}" "204" "delete completed profile" \
+			|| fatal "completed profile ${profile_id} deletion failed"
+	done
 }
 
 elasticsearch_start
@@ -197,10 +233,15 @@ integration_huatuo_bamai_start \
 integration_huatuo_apiserver_start write_continuous_profiling_apiserver_config
 
 start_native_cpu_fixture
-create_native_cpu_profile
-assert_profile_lifecycle
-readonly FAILURE_LOG_PATTERN='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
-! grep -qiE "${FAILURE_LOG_PATTERN}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
+create_native_cpu_profiles
+wait_until 10 1 all_profiles_have_status running \
+	|| fatal "profiles were not running concurrently on the same host"
+assert_completed_profiles
+assert_profiles_are_listed
+delete_profiles
+
+readonly PROFILE_FAILURE_LOG_PATTERN='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
+! grep -qiE "${PROFILE_FAILURE_LOG_PATTERN}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" \
 	|| fatal "huatuo-bamai log contains an unexpected failure"
-! grep -qiE "${FAILURE_LOG_PATTERN}" "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" \
+! grep -qiE "${PROFILE_FAILURE_LOG_PATTERN}" "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" \
 	|| fatal "huatuo-apiserver log contains an unexpected failure"
