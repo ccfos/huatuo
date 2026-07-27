@@ -3,7 +3,7 @@ title: Events Watch
 type: docs
 description: ""
 author: HUATUO Team
-date: 2026-05-18
+date: 2026-07-27
 weight: 3
 ---
 
@@ -216,26 +216,26 @@ The server also sends periodic heartbeat comment lines to keep the connection al
 
 ---
 
-### 4. EventsWatch Configuration
+### 4. HTTP Server Event Stream Configuration
 
-Configure the `[EventsWatch]` section in the HUATUO configuration file (`huatuo-bamai.conf`):
+Configure the event stream controls under `[HTTPServer]`:
 
 ```toml
-[EventsWatch]
+[HTTPServer]
     # Maximum number of concurrent client connections. New connections receive HTTP 429 when the limit is reached.
     # Default: 100
-    MaxClients = 100
+    MaxEventStreamClients = 100
 
     # SSE heartbeat interval in seconds. Prevents proxies and load balancers from closing idle connections.
     # The connection is closed after three consecutive heartbeat write failures.
     # Default: 30
-    KeepAliveInterval = 30
+    EventStreamKeepAliveIntervalSeconds = 30
 ```
 
 | Field | Default | Description |
 |---|---|---|
-| `MaxClients` | 100 | Maximum concurrent `/v1/events/watch` connections. Excess connections receive HTTP 429. |
-| `KeepAliveInterval` | 30 | Heartbeat interval in seconds. Should not exceed the upstream proxy's idle timeout. Recommended range: 15–60 s. |
+| `MaxEventStreamClients` | 100 | Maximum concurrent `/v1/events/watch` connections. Excess connections receive HTTP 429. |
+| `EventStreamKeepAliveIntervalSeconds` | 30 | Heartbeat interval. Keep it below the upstream proxy's idle timeout. |
 
 ---
 
@@ -528,7 +528,7 @@ sequenceDiagram
         else No match
             note over EW: Discard, do not push
         end
-        EW-->>C: : ping (keepalive, every KeepAliveInterval seconds)
+        EW-->>C: : ping (keepalive, configured interval)
     end
 ```
 

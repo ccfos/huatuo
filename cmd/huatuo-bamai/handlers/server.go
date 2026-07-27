@@ -51,8 +51,14 @@ func Start(opts ServerOptions) {
 	s.MustRegisterRoutes("/tracers", NewTracerHandler(opts.TracingManager).Handlers)
 	s.MustRegisterRoutes("", NewContainerHandler().Handlers)
 	s.MustRegisterRoutes("", NewConfigHandler().Handlers)
-	evtCfg := config.Get().EventsWatch
-	s.MustRegisterRoutes("/v1/events", NewEventsHandler(evtCfg.MaxClients, evtCfg.KeepAliveInterval).Handlers)
+	httpConfig := config.Get().HTTPServer
+	s.MustRegisterRoutes(
+		"/v1/events",
+		NewEventsHandler(
+			httpConfig.MaxEventStreamClients,
+			httpConfig.EventStreamKeepAliveIntervalSeconds,
+		).Handlers,
+	)
 
 	_ = s.Run(&server.Option{
 		Addr:          opts.Addr,

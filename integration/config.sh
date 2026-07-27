@@ -145,7 +145,7 @@ write_continuous_profiling_bamai_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "dropwatch"]
 
-[Storage.ES]
+[Storage.Elasticsearch]
     Address = "${ELASTICSEARCH_ADDR}"
     Username = "elastic"
     Password = "${ES_PASSWORD}"

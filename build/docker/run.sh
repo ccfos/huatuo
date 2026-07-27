@@ -26,11 +26,11 @@ wait_for_elasticsearch() {
 
 	# Try to extract Elasticsearch address from config file
 	if [ -f "huatuo-bamai.conf" ]; then
-		# Extract Address from [Storage.ES] section
-		# sed: range from [Storage.ES] to next section start [
+		# Extract Address from [Storage.Elasticsearch] section
+		# sed: range from [Storage.Elasticsearch] to next section start [
 		# grep: find Address line
 		# awk: extract text between double quotes
-		conf_addr=$(sed -n '/\[Storage\.ES\]/,/\[.*\]/p' huatuo-bamai.conf | grep '^[[:space:]]*Address' | head -n 1 | awk -F'"' '{print $2}')
+		conf_addr=$(sed -n '/\[Storage\.Elasticsearch\]/,/\[.*\]/p' huatuo-bamai.conf | grep '^[[:space:]]*Address' | head -n 1 | awk -F'"' '{print $2}')
 
 		if [ -n "$conf_addr" ]; then
 			echo "Found Elasticsearch address in config: $conf_addr"

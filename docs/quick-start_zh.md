@@ -1,7 +1,7 @@
 ---
 title: 快速开始
 description: 
-date: 2025-12-03
+date: 2026-07-27
 type: docs
 weight: 1
 ---
@@ -92,7 +92,7 @@ $ ./huatuo-bamai --region example --config huatuo-bamai.conf
 
         ES 存储配置如下：
         ```yaml
-        [Storage.ES]
+        [Storage.Elasticsearch]
             Address = "http://127.0.0.1:9200"
             Username = "elastic"
             Password = "huatuo-bamai"
@@ -103,22 +103,22 @@ $ ./huatuo-bamai --region example --config huatuo-bamai.conf
         ```yaml
         # tracer's record data
         # Path: all but the last element of path for per tracer
-        # RotationSize: the maximum size in Megabytes of a record file before it gets rotated for per subsystem
-        # MaxRotation: the maximum number of old log files to retain for per subsystem
+        # RotationSizeMiB：单个记录文件轮转前的最大容量
+        # MaxRotatedFiles：保留的轮转文件数量上限
         [Storage.LocalFile]
             Path = "huatuo-local"
-            RotationSize = 100
-            MaxRotation = 10
+            RotationSizeMiB = 100
+            MaxRotatedFiles = 10
         ```
 
 3. 事件阈值
     所有的内核事件采集 Events 和 AutoTracing 都可以配置触发阈值。默认的阈值都是在实际生产环境反复验证后的经验数据，你可以根据自身需求，在 huatuo-bamai.conf 中修改阈值。
 
 4. 资源限制
-    为保障物理机稳定性，我们对采集器进行了资源限制，其中 LimitInitCPU 表示采集器启动阶段占用的 CPU 资源，LimitCPU/LimitMem 表示采集器启动成功后常态占用的资源限制：
+    为保障物理机稳定性，可分别配置启动阶段和常态运行资源限制：
     ```yaml
-    [RuntimeCgroup]
-        LimitInitCPU = 0.5
-        LimitCPU = 2.0
-        LimitMem = 2048
+    [Runtime]
+        StartupCPULimitCores = 0.5
+        CPULimitCores = 2.0
+        MemoryLimitMiB = 2048
     ```

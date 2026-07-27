@@ -85,7 +85,7 @@ func (h *TaskHandler) create(ctx *server.Context) error {
 		time.Duration(req.Timeout)*time.Second,
 		storageDefault,
 		req.TracerArgs,
-		config.Get().Task.MaxRunningTask,
+		config.Get().Tasks.MaxConcurrent,
 	)
 	if err != nil {
 		if errors.Is(err, tracing.ErrTaskLimitExceeded) {

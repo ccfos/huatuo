@@ -40,13 +40,13 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 	var esStore *storage.Store[*tracing.Document]
 
 	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)
-	if cfg.Storage.ES.Enabled() {
+	if cfg.Storage.Elasticsearch.Enabled() {
 		store, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
-			ESAddresses: strutil.SplitCommaList(cfg.Storage.ES.Address),
-			ESUsername:  cfg.Storage.ES.Username,
-			ESPassword:  cfg.Storage.ES.Password,
-			ESIndex:     cfg.Storage.ES.Index,
+			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
+			ESUsername:  cfg.Storage.Elasticsearch.Username,
+			ESPassword:  cfg.Storage.Elasticsearch.Password,
+			ESIndex:     cfg.Storage.Elasticsearch.Index,
 		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new tracing document store (elasticsearch): %w", err)
@@ -59,8 +59,8 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		localFileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:                "localfile",
 			LocalFilePath:         cfg.Storage.LocalFile.Path,
-			LocalFileMaxRotation:  cfg.Storage.LocalFile.MaxRotation,
-			LocalFileRotationSize: cfg.Storage.LocalFile.RotationSize,
+			LocalFileMaxRotation:  cfg.Storage.LocalFile.MaxRotatedFiles,
+			LocalFileRotationSize: cfg.Storage.LocalFile.RotationSizeMiB,
 		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new tracing document store (localfile): %w", err)
@@ -80,13 +80,13 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
 	}
 
-	if cfg.Storage.ES.Enabled() {
+	if cfg.Storage.Elasticsearch.Enabled() {
 		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
-			ESAddresses: strutil.SplitCommaList(cfg.Storage.ES.Address),
-			ESUsername:  cfg.Storage.ES.Username,
-			ESPassword:  cfg.Storage.ES.Password,
-			ESIndex:     cfg.Storage.ES.Index,
+			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
+			ESUsername:  cfg.Storage.Elasticsearch.Username,
+			ESPassword:  cfg.Storage.Elasticsearch.Password,
+			ESIndex:     cfg.Storage.Elasticsearch.Index,
 		}, profiler.MetadataCollection, tracing.ProfileDocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)
