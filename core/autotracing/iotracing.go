@@ -32,12 +32,20 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-const iotracingToolName = "iotracing"
+const (
+	iotracingToolName      = "iotracing"
+	iotracingReportTimeout = 5 * time.Second
+)
 
 // pendingReasons correlates an inflight subprocess invocation (keyed by task ID)
 // with the disk-event reason captured by the core. The handler attaches it to
 // the saved record because the cmd has no concept of a trigger reason.
 var pendingReasons sync.Map
+
+type pendingIotracingReason struct {
+	reason  *ReasonSnapshot
+	handled chan struct{}
+}
 
 func init() {
 	tracing.RegisterEventTracing(iotracingToolName, newIoTracing)
@@ -47,7 +55,9 @@ func init() {
 func handleIotracingEvent(sess *toolstream.Session, ev *types.IOTracingReport) error {
 	var reason *ReasonSnapshot
 	if v, ok := pendingReasons.LoadAndDelete(sess.TaskID); ok {
-		reason = v.(*ReasonSnapshot)
+		pending := v.(*pendingIotracingReason)
+		reason = pending.reason
+		pending.handled <- struct{}{}
 	}
 
 	return tracing.Save(&tracing.WriteRequest{
@@ -309,7 +319,6 @@ func (c *ioTracing) Start(ctx context.Context) error {
 	if err := validateIoThresholds(&thresholds); err != nil {
 		return err
 	}
-
 	reasonSnapshot, err := waitingDiskEvents(ctx, 5, thresholds)
 	if err != nil {
 		return err
@@ -320,8 +329,11 @@ func (c *ioTracing) Start(ctx context.Context) error {
 	duration := cfg.IOTracing.RunTracingToolTimeout
 	taskID := fmt.Sprintf("iotracing-%d", time.Now().UnixNano())
 
-	pendingReasons.Store(taskID, reasonSnapshot)
-	defer pendingReasons.Delete(taskID)
+	pending := &pendingIotracingReason{
+		reason:  reasonSnapshot,
+		handled: make(chan struct{}, 1),
+	}
+	pendingReasons.Store(taskID, pending)
 
 	args := []string{
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "iotracing.o"),
@@ -332,6 +344,7 @@ func (c *ioTracing) Start(ctx context.Context) error {
 
 	cmd := exec.Command(path.Join(internalconfig.CoreBinDir, iotracingToolName), args...)
 	if err := cmd.Start(); err != nil {
+		pendingReasons.Delete(taskID)
 		return fmt.Errorf("start iotracing: %w", err)
 	}
 
@@ -346,14 +359,29 @@ func (c *ioTracing) Start(ctx context.Context) error {
 	case <-ctx.Done():
 		_ = cmd.Process.Kill()
 		<-done
+		pendingReasons.Delete(taskID)
 		log.Info("iotracing stopped")
 		return nil
 	case werr := <-done:
 		if werr != nil {
+			pendingReasons.Delete(taskID)
 			return fmt.Errorf("iotracing exited: %w", werr)
 		}
+	}
+
+	timer := time.NewTimer(iotracingReportTimeout)
+	defer timer.Stop()
+
+	select {
+	case <-pending.handled:
 		log.Info("iotracing exited")
 		return nil
+	case <-ctx.Done():
+		pendingReasons.Delete(taskID)
+		return nil
+	case <-timer.C:
+		pendingReasons.Delete(taskID)
+		return fmt.Errorf("iotracing exited without sending a report")
 	}
 }
 
