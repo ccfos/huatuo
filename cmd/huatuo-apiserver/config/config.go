@@ -70,24 +70,19 @@ type JobQuotaConfig struct {
 	MaxConcurrent        int
 }
 
-// JobsConfig controls job persistence, quotas, and shutdown behavior.
+// JobsConfig controls job persistence and quotas.
 type JobsConfig struct {
 	Profiling JobQuotaConfig
 	Tracing   JobQuotaConfig
 	StoreDSN  string
 }
 
-// StatusPollingConfig controls Agent task status polling.
-type StatusPollingConfig struct {
-	IntervalSeconds      int
-	MaxConsecutiveErrors int
-}
-
 // AgentConfig controls communication with huatuo-bamai Agents.
 type AgentConfig struct {
-	HTTPPort              int
-	RequestTimeoutSeconds int
-	StatusPolling         StatusPollingConfig
+	HTTPPort                          int
+	RequestTimeoutSeconds             int
+	StatusPollingIntervalSeconds      int
+	MaxConsecutiveStatusPollingErrors int
 }
 
 // Config contains API server configuration.
@@ -129,12 +124,10 @@ func defaultConfig() Config {
 			StoreDSN: "jobs.db",
 		},
 		Agent: AgentConfig{
-			HTTPPort:              19704,
-			RequestTimeoutSeconds: 10,
-			StatusPolling: StatusPollingConfig{
-				IntervalSeconds:      5,
-				MaxConsecutiveErrors: 3,
-			},
+			HTTPPort:                          19704,
+			RequestTimeoutSeconds:             10,
+			StatusPollingIntervalSeconds:      5,
+			MaxConsecutiveStatusPollingErrors: 3,
 		},
 		Elasticsearch: internalconfig.ElasticsearchConfig{
 			Index: "huatuo_bamai",
@@ -321,8 +314,8 @@ func (c AgentConfig) Validate() error {
 	}{
 		{name: "http port", value: c.HTTPPort},
 		{name: "request timeout", value: c.RequestTimeoutSeconds},
-		{name: "status polling interval", value: c.StatusPolling.IntervalSeconds},
-		{name: "maximum consecutive status polling errors", value: c.StatusPolling.MaxConsecutiveErrors},
+		{name: "status polling interval", value: c.StatusPollingIntervalSeconds},
+		{name: "maximum consecutive status polling errors", value: c.MaxConsecutiveStatusPollingErrors},
 	}
 	for _, item := range values {
 		if item.value <= 0 {

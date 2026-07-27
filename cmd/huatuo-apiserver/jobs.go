@@ -39,9 +39,11 @@ func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) err
 		MaxTotalJobs:   d.opts.Config.Jobs.Tracing.MaxConcurrent,
 	}
 	manager, err := job.NewManager(ctx, nodeAgent, job.ManagerConfig{
-		StoreDSN:                 d.opts.Config.Jobs.StoreDSN,
-		StatusPollInterval:       time.Duration(d.opts.Config.Agent.StatusPolling.IntervalSeconds) * time.Second,
-		MaxConsecutivePollErrors: d.opts.Config.Agent.StatusPolling.MaxConsecutiveErrors,
+		StoreDSN: d.opts.Config.Jobs.StoreDSN,
+		StatusPollInterval: time.Duration(
+			d.opts.Config.Agent.StatusPollingIntervalSeconds,
+		) * time.Second,
+		MaxConsecutivePollErrors: d.opts.Config.Agent.MaxConsecutiveStatusPollingErrors,
 		TypePolicies: map[job.JobType]job.TypePolicy{
 			job.JobTypeProfilingCPU:    profilingPolicy,
 			job.JobTypeProfilingMemory: profilingPolicy,

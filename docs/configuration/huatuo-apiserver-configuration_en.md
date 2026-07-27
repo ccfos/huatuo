@@ -63,10 +63,8 @@ and are not user configurable.
 [Agent]
     # HTTPPort = 19704
     # RequestTimeoutSeconds = 10
-
-[Agent.StatusPolling]
-    # IntervalSeconds      = 5
-    # MaxConsecutiveErrors = 3
+    # StatusPollingIntervalSeconds = 5
+    # MaxConsecutiveStatusPollingErrors = 3
 ```
 
 `StoreDSN` is the SQLite data source for durable job state. Relative paths are

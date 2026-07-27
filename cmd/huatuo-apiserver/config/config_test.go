@@ -47,7 +47,8 @@ Admin = true
 		t.Errorf("Tracing quota = %+v, want default values", cfg.Jobs.Tracing)
 	}
 	if cfg.Agent.HTTPPort != 19704 ||
-		cfg.Agent.StatusPolling != (StatusPollingConfig{5, 3}) {
+		cfg.Agent.StatusPollingIntervalSeconds != 5 ||
+		cfg.Agent.MaxConsecutiveStatusPollingErrors != 3 {
 		t.Errorf("Agent = %+v, want default values", cfg.Agent)
 	}
 	if cfg.Elasticsearch.Enabled() {
@@ -92,10 +93,8 @@ MaxConcurrent = 200
 [Agent]
 HTTPPort = 29704
 RequestTimeoutSeconds = 20
-
-[Agent.StatusPolling]
-IntervalSeconds = 7
-MaxConsecutiveErrors = 4
+StatusPollingIntervalSeconds = 7
+MaxConsecutiveStatusPollingErrors = 4
 
 [Elasticsearch]
 Address = "https://search.example:9443"
@@ -124,8 +123,9 @@ Permissions = ["GET /v1/profiling/**"]
 		cfg.Jobs.Tracing != (JobQuotaConfig{4, 200}) {
 		t.Errorf("Jobs = %+v, want quota overrides", cfg.Jobs)
 	}
-	if cfg.Agent.StatusPolling != (StatusPollingConfig{7, 4}) {
-		t.Errorf("StatusPolling = %+v, want overrides", cfg.Agent.StatusPolling)
+	if cfg.Agent.StatusPollingIntervalSeconds != 7 ||
+		cfg.Agent.MaxConsecutiveStatusPollingErrors != 4 {
+		t.Errorf("Agent = %+v, want status polling overrides", cfg.Agent)
 	}
 	if !cfg.Elasticsearch.Enabled() || cfg.Elasticsearch.Index != "profiles" {
 		t.Errorf("Elasticsearch = %+v, want enabled overrides", cfg.Elasticsearch)
@@ -198,6 +198,19 @@ Admin = true
 
 [Jobs]
 MaxConcurrentStops = 16
+`,
+		},
+		{
+			name: "status polling section",
+			contents: `
+[[Auth.Users]]
+ID = "admin"
+BearerToken = "secret"
+Admin = true
+
+[Agent.StatusPolling]
+IntervalSeconds = 5
+MaxConsecutiveErrors = 3
 `,
 		},
 	}
@@ -318,6 +331,20 @@ func TestConfigValidation(t *testing.T) {
 				cfg.Agent.HTTPPort = 65536
 			},
 			wantErr: "must not exceed 65535",
+		},
+		{
+			name: "invalid status polling interval",
+			mutate: func(cfg *Config) {
+				cfg.Agent.StatusPollingIntervalSeconds = 0
+			},
+			wantErr: "status polling interval",
+		},
+		{
+			name: "invalid consecutive status polling errors",
+			mutate: func(cfg *Config) {
+				cfg.Agent.MaxConsecutiveStatusPollingErrors = 0
+			},
+			wantErr: "maximum consecutive status polling errors",
 		},
 		{
 			name: "invalid aggregation interval",

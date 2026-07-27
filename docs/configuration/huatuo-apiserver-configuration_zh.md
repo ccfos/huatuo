@@ -60,10 +60,8 @@ weight: 5
 [Agent]
     # HTTPPort = 19704
     # RequestTimeoutSeconds = 10
-
-[Agent.StatusPolling]
-    # IntervalSeconds      = 5
-    # MaxConsecutiveErrors = 3
+    # StatusPollingIntervalSeconds = 5
+    # MaxConsecutiveStatusPollingErrors = 3
 ```
 
 `StoreDSN` 是持久化任务状态的 SQLite 数据源。相对路径基于配置文件目录
