@@ -45,6 +45,9 @@ VETH_PEER_IP6="fd00:dead:beef::2"
 TEST_PORT=19878
 
 ip link add "${VETH_HOST}" type veth peer name "${VETH_PEER}" 2> /dev/null || skip "veth creation failed"
+# Disable DAD so addresses are usable immediately (DAD can take ~1 s on veth).
+sysctl -qw "net.ipv6.conf.${VETH_HOST}.accept_dad=0" 2> /dev/null || true
+sysctl -qw "net.ipv6.conf.${VETH_PEER}.accept_dad=0" 2> /dev/null || true
 ip addr add "${VETH_HOST_IP6}/64" dev "${VETH_HOST}" 2> /dev/null || {
 	ip link del "${VETH_HOST}" 2> /dev/null || true
 	skip "IPv6 unavailable on host"
@@ -52,7 +55,7 @@ ip addr add "${VETH_HOST_IP6}/64" dev "${VETH_HOST}" 2> /dev/null || {
 ip addr add "${VETH_PEER_IP6}/64" dev "${VETH_PEER}" 2> /dev/null || true
 ip link set "${VETH_HOST}" up 2> /dev/null || true
 ip link set "${VETH_PEER}" up 2> /dev/null || true
-sleep 0.5
+sleep 1
 
 _original_args_str="${HUATUO_BAMAI_INTEGRATION_ARGS_STR}"
 _server_pid=""
@@ -106,7 +109,15 @@ cc -O2 -Wall -Wextra -o "${SLOW_TCP_SERVER}" \
 	> "${HUATUO_BAMAI_TEST_TMPDIR}/testserver.log" 2>&1 &
 server_pid=$!
 _server_pid="${server_pid}"
-sleep 0.5
+sleep 1
+
+# Verify IPv6 connectivity before generating traffic.
+if ! curl -s --connect-timeout 2 --max-time 3 \
+	--interface "${VETH_HOST_IP6}" \
+	"http://[${VETH_PEER_IP6}]:${TEST_PORT}/" > /dev/null 2>&1; then
+	dump_file "SERVER" "${HUATUO_BAMAI_TEST_TMPDIR}/testserver.log"
+	skip "IPv6 veth connectivity check failed"
+fi
 
 for i in $(seq 1 5); do
 	log_info "curl request #${i} to [${VETH_PEER_IP6}]:${TEST_PORT}"
