@@ -27,6 +27,7 @@ import (
 	"huatuo-bamai/internal/profiler/output"
 	_ "huatuo-bamai/internal/profiler/output/flamegraph"
 	_ "huatuo-bamai/internal/profiler/output/raw"
+	"huatuo-bamai/internal/profiler/procutil"
 	psignal "huatuo-bamai/internal/profiler/signal"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/profiling"
@@ -69,6 +70,8 @@ type TracerData struct {
 	MetricData any                   `json:"metric_data,omitempty"`
 	FlameData  *profiler.ProfileData `json:"flamedata"`
 }
+
+var threadGroupID = procutil.ThreadGroupID
 
 func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, error) {
 	ctx, cancel := context.WithCancel(cliCtx.Context)
@@ -129,6 +132,10 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	if err != nil {
 		return nil, err
 	}
+	pids, err = normalizeThreadGroupTarget(pids, cliCtx.Bool("thread-group"))
+	if err != nil {
+		return nil, err
+	}
 	typ, err := profiling.ParseType(cliCtx.String("type"))
 	if err != nil {
 		return nil, err
@@ -175,6 +182,20 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 	}
 	succeeded = true
 	return profilerContext, nil
+}
+
+func normalizeThreadGroupTarget(pids []int, threadGroup bool) ([]int, error) {
+	if !threadGroup || len(pids) != 1 {
+		return pids, nil
+	}
+	tgid, err := threadGroupID(pids[0])
+	if err != nil {
+		return nil, err
+	}
+
+	normalized := append([]int(nil), pids...)
+	normalized[0] = tgid
+	return normalized, nil
 }
 
 func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*toolstream.Client, error) {
