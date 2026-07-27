@@ -133,7 +133,9 @@ func (netdev *netdevHw) Update() ([]*metric.Data, error) {
 		if count == 0 {
 			// hardware drop = rx_dropped - software_drops
 			if sw, ok := netdev.ifaceSwDroppedCounter[iface]; ok {
-				count = counters["rx_dropped"] - sw
+				if counters["rx_dropped"] >= sw {
+					count = counters["rx_dropped"] - sw
+				}
 			}
 		}
 
@@ -207,7 +209,10 @@ func (netdev *netdevHw) Start(ctx context.Context) error {
 
 	prog.WaitDetachByBreaker(childCtx, cancel)
 
+	netdev.mutex.Lock()
 	netdev.prog = prog
+	netdev.mutex.Unlock()
+
 	netdev.running.Store(true)
 
 	<-childCtx.Done()
