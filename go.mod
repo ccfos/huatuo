@@ -14,7 +14,6 @@ require (
 	github.com/docker/docker v27.4.1+incompatible
 	github.com/ebitengine/purego v0.9.1
 	github.com/elastic/go-elasticsearch/v8 v8.17.1
-	github.com/ema/qdisc v1.0.0
 	github.com/gin-contrib/pprof v1.5.1
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-playground/validator/v10 v10.22.1

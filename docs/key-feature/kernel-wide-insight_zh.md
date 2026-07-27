@@ -614,7 +614,7 @@ huatuo_bamai_netdev_qdisc_requeues_total{device="ens2",host="hostname",kind="fq_
 
 |指标|意义|单位|对象| 标签 |
 |---|---|---|---|---|
-|qdisc_backlog|后备排队待发送的包数|字节|物理机| device, host, kind, region |
+|qdisc_backlog|后备排队待发送的字节数|字节|物理机| device, host, kind, region |
 |qdisc_current_queue_length|当前排队的包量|计数|物理机| device, host, kind, region |
 |qdisc_overlimits_total|超限次数|计数|物理机| device, host, kind, region |
 |qdisc_requeues_total|由于网卡/驱动暂时无法发送而被重新入队的次数|计数|物理机| device, host, kind, region |
