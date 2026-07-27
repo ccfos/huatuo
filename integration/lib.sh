@@ -94,19 +94,23 @@ wait_until() {
 		return 1
 	fi
 
+	local invocation="${func}"
+	if (($# > 0)); then
+		invocation+=" $*"
+	fi
 	local end=$(($(date +%s) + timeout))
 	local attempt=0
 
 	while [ "$(date +%s)" -lt "$end" ]; do
 		attempt=$((attempt + 1))
-		log_info "wait attempt #${attempt}: [${func} ${*}]"
+		log_info "wait attempt #${attempt}: [${invocation}]"
 		if "$func" "$@"; then
 			return 0
 		fi
 		sleep "$interval"
 	done
 
-	log_error "wait_until timeout: func/cmd: [${func} ${*}]"
+	log_error "wait_until timeout: func/cmd: [${invocation}]"
 	return 1
 }
 
