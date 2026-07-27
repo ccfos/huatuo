@@ -360,6 +360,44 @@ func TestDefaultBPF_MapOperations(t *testing.T) {
 	}
 }
 
+func TestDefaultBPF_DumpPerCPUMap(t *testing.T) {
+	requireBPFPermission(t)
+
+	m, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.PerCPUArray,
+		KeySize:    4,
+		ValueSize:  8,
+		MaxEntries: 1,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, m.Close()) })
+
+	possibleCPUs, err := ebpf.PossibleCPU()
+	require.NoError(t, err)
+
+	want := make([]uint64, possibleCPUs)
+	for cpu := range want {
+		want[cpu] = uint64(cpu + 1)
+	}
+	require.NoError(t, m.Put(uint32(0), want))
+
+	const mapID = uint32(1)
+	b := &defaultBPF{
+		mapSpecs: map[uint32]mapSpec{
+			mapID: {name: "per_cpu", cloned: m},
+		},
+	}
+
+	items, err := b.DumpMap(mapID)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, []byte{0, 0, 0, 0}, items[0].Key)
+
+	got := make([]uint64, possibleCPUs)
+	require.NoError(t, binary.Read(bytes.NewReader(items[0].Value), binary.LittleEndian, &got))
+	assert.Equal(t, want, got)
+}
+
 // TestDefaultBPF_Attach_SpecTypes tests the Attach function with various program types.
 //
 // Covered functions:
