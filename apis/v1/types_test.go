@@ -91,7 +91,6 @@ func TestProfilingCapabilitiesJSONFields(t *testing.T) {
 		"memory_languages",
 		"memory_modes",
 		"aggregation_interval_seconds",
-		"execution_timeout_seconds",
 		"max_concurrent_profilers",
 	}
 	if len(decoded) != len(fields) {

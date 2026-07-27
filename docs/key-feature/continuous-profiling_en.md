@@ -23,13 +23,13 @@ By default, huatuo-apiserver listens on `:12740`. The following examples use env
 
 ```bash
 API_BASE="http://127.0.0.1:12740"
-API_TOKEN="<Auth.users.BearerToken>"
+API_TOKEN="<Auth.Users.BearerToken>"
 ```
 
 Every request must pass the configured bearer token:
 
 ```text
-Authorization: Bearer <Auth.users.BearerToken>
+Authorization: Bearer <Auth.Users.BearerToken>
 ```
 
 A non-administrator user requires both `/v1/profiles` and
@@ -64,7 +64,6 @@ The `data` object contains these fields:
 | `memory_languages` | Languages supported by memory profiling |
 | `memory_modes` | Memory profiling modes grouped by language; values are accepted by job creation |
 | `aggregation_interval_seconds` | Server-side data aggregation interval |
-| `execution_timeout_seconds` | Execution timeout for one profiler process |
 | `max_concurrent_profilers` | Maximum number of concurrent profiler processes; `0` disables the limit |
 
 CPU profiling currently supports `c`, `c++`, `go`, `java`, and `python`. Memory profiling supports these combinations:

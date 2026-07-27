@@ -70,14 +70,14 @@ func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 }
 
 func TestNewHandlerSnapshotsProfilingConfig(t *testing.T) {
-	cfg := Config{AggregationInterval: 15}
+	cfg := Config{AggregationIntervalSeconds: 15}
 	h := NewHandler(nil, nil, cfg)
-	cfg.AggregationInterval = 30
+	cfg.AggregationIntervalSeconds = 30
 
-	if h.profilingConfig.AggregationInterval != 15 {
+	if h.profilingConfig.AggregationIntervalSeconds != 15 {
 		t.Fatalf(
-			"AggregationInterval = %d, want 15",
-			h.profilingConfig.AggregationInterval,
+			"AggregationIntervalSeconds = %d, want 15",
+			h.profilingConfig.AggregationIntervalSeconds,
 		)
 	}
 }
@@ -86,9 +86,8 @@ func TestNewHandlerSnapshotsProfilingConfig(t *testing.T) {
 // profiling types, languages, memory modes, and default configuration values.
 func TestCapabilities(t *testing.T) {
 	h := &Handler{profilingConfig: Config{
-		AggregationInterval: 15,
-		ExecutionTimeout:    30,
-		MaxProfilerProcs:    5,
+		AggregationIntervalSeconds:     15,
+		MaxConcurrentProfilerProcesses: 5,
 	}}
 	resp := buildCapabilities(h)
 
@@ -138,9 +137,6 @@ func TestCapabilities(t *testing.T) {
 
 	if resp.AggregationIntervalSeconds != 15 {
 		t.Errorf("AggregationIntervalSeconds = %d, want 15", resp.AggregationIntervalSeconds)
-	}
-	if resp.ExecutionTimeoutSeconds != 30 {
-		t.Errorf("ExecutionTimeoutSeconds = %d, want 30", resp.ExecutionTimeoutSeconds)
 	}
 	if resp.MaxConcurrentProfilers != 5 {
 		t.Errorf("MaxConcurrentProfilers = %d, want 5", resp.MaxConcurrentProfilers)
@@ -301,6 +297,19 @@ func TestBuildProfilingJobLeavesUnavailableFieldsNull(t *testing.T) {
 	}
 	if resp.StatusReason != nil {
 		t.Errorf("StatusReason=%v, want nil", resp.StatusReason)
+	}
+}
+
+func TestBuildProfilingJobOmitsResultURLWithoutDashboard(t *testing.T) {
+	resp, err := buildProfilingJob(&job.Job{
+		Type:   ProfilingCPU,
+		Status: job.JobStatusCompleted,
+	}, "")
+	if err != nil {
+		t.Fatalf("buildProfilingJob() error = %v", err)
+	}
+	if resp.ResultURL != nil {
+		t.Errorf("ResultURL=%v, want nil", resp.ResultURL)
 	}
 }
 

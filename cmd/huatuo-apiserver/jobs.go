@@ -24,27 +24,24 @@ import (
 
 func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
 	nodeAgent := job.NewHTTPNodeAgent(job.HTTPNodeAgentConfig{
-		Port:                d.opts.Config.Agent.Port,
-		RequestTimeout:      time.Duration(d.opts.Config.Agent.RequestTimeoutSeconds) * time.Second,
-		StatusRetryAttempts: d.opts.Config.Agent.StatusRetryAttempts,
-		StatusRetryBackoff:  time.Duration(d.opts.Config.Agent.StatusRetryBackoffMillis) * time.Millisecond,
-		Observe:             d.agentObserver,
+		Port:           d.opts.Config.Agent.HTTPPort,
+		RequestTimeout: time.Duration(d.opts.Config.Agent.RequestTimeoutSeconds) * time.Second,
+		Observe:        d.agentObserver,
 	})
 	profilingPolicy := job.TypePolicy{
 		Group:          "profiling",
-		MaxJobsPerHost: d.opts.Config.TaskConfig.MaxProfilingTasksPerHost,
-		MaxTotalJobs:   d.opts.Config.TaskConfig.MaxTotalProfilingTasks,
+		MaxJobsPerHost: d.opts.Config.Jobs.Profiling.MaxConcurrentPerHost,
+		MaxTotalJobs:   d.opts.Config.Jobs.Profiling.MaxConcurrent,
 	}
 	tracingPolicy := job.TypePolicy{
 		Group:          "tracing",
-		MaxJobsPerHost: d.opts.Config.TaskConfig.MaxTracingTasksPerHost,
-		MaxTotalJobs:   d.opts.Config.TaskConfig.MaxTotalTracingTasks,
+		MaxJobsPerHost: d.opts.Config.Jobs.Tracing.MaxConcurrentPerHost,
+		MaxTotalJobs:   d.opts.Config.Jobs.Tracing.MaxConcurrent,
 	}
 	manager, err := job.NewManager(ctx, nodeAgent, job.ManagerConfig{
-		StoreDSN:                 d.opts.Config.TaskConfig.JobStoreDSN,
-		ShutdownConcurrency:      d.opts.Config.TaskConfig.ShutdownConcurrency,
-		StatusPollInterval:       time.Duration(d.opts.Config.Agent.StatusPollIntervalSeconds) * time.Second,
-		MaxConsecutivePollErrors: d.opts.Config.Agent.MaxConsecutivePollErrors,
+		StoreDSN:                 d.opts.Config.Jobs.StoreDSN,
+		StatusPollInterval:       time.Duration(d.opts.Config.Agent.StatusPolling.IntervalSeconds) * time.Second,
+		MaxConsecutivePollErrors: d.opts.Config.Agent.StatusPolling.MaxConsecutiveErrors,
 		TypePolicies: map[job.JobType]job.TypePolicy{
 			job.JobTypeProfilingCPU:    profilingPolicy,
 			job.JobTypeProfilingMemory: profilingPolicy,

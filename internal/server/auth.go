@@ -29,7 +29,6 @@ type Permission string
 // User represents a user with permissions.
 type User struct {
 	ID          string
-	Name        string
 	Permissions []Permission
 	IsAdmin     bool
 }
@@ -37,19 +36,19 @@ type User struct {
 // UserConfig represents a user configuration for initialization.
 type UserConfig struct {
 	ID          string
-	Name        string
+	BearerToken string
 	Permissions []string
 	IsAdmin     bool
 }
 
 // authService handles authentication and authorization.
 type authService struct {
-	users sync.Map
+	usersByToken sync.Map
 }
 
 // NewService creates a new auth authService.
 func NewAuthService(users []UserConfig) *authService {
-	s := &authService{users: sync.Map{}}
+	s := &authService{usersByToken: sync.Map{}}
 
 	for _, cfgUser := range users {
 		permissions := make([]Permission, 0, len(cfgUser.Permissions))
@@ -57,9 +56,8 @@ func NewAuthService(users []UserConfig) *authService {
 			permissions = append(permissions, Permission(p))
 		}
 
-		s.users.Store(cfgUser.ID, User{
+		s.usersByToken.Store(cfgUser.BearerToken, User{
 			ID:          cfgUser.ID,
-			Name:        cfgUser.Name,
 			Permissions: permissions,
 			IsAdmin:     cfgUser.IsAdmin,
 		})
@@ -68,19 +66,9 @@ func NewAuthService(users []UserConfig) *authService {
 	return s
 }
 
-// Add adds a user to the authService.
-func (s *authService) Add(user User) {
-	s.users.Store(user.ID, user)
-}
-
-// Delete removes a user from the authService.
-func (s *authService) Delete(userID string) {
-	s.users.Delete(userID)
-}
-
-// GetUserByID gets a user by ID.
-func (s *authService) GetUserByID(userID string) (User, bool) {
-	value, exists := s.users.Load(userID)
+// Authenticate returns the principal associated with a bearer token.
+func (s *authService) Authenticate(token string) (User, bool) {
+	value, exists := s.usersByToken.Load(token)
 	if !exists {
 		return User{}, false
 	}
@@ -88,20 +76,13 @@ func (s *authService) GetUserByID(userID string) (User, bool) {
 }
 
 // Validate validates if a user has access to a specific path.
-func (s *authService) Validate(userID string, request ...string) error {
+func (s *authService) Validate(user User, request ...string) error {
 	method, path := "", ""
 	if len(request) == 1 {
 		path = request[0]
 	} else if len(request) >= 2 {
 		method, path = request[0], request[1]
 	}
-	value, exists := s.users.Load(userID)
-	if !exists {
-		return fmt.Errorf("user %s not found", userID)
-	}
-
-	user := value.(User)
-
 	// Admin has access to everything
 	if user.IsAdmin {
 		return nil
@@ -124,15 +105,6 @@ func splitPermission(permission string) (string, string) {
 		return strings.ToUpper(parts[0]), parts[1]
 	}
 	return "", permission
-}
-
-// IsAdmin checks if a user is an admin.
-func (s *authService) IsAdmin(userID string) bool {
-	value, exists := s.users.Load(userID)
-	if !exists {
-		return false
-	}
-	return value.(User).IsAdmin
 }
 
 // matchesPath performs simple path matching, supporting basic wildcards and path parameters.
@@ -197,13 +169,13 @@ func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFun
 			return
 		}
 
-		userID := bearerToken(ctx.Request().Header.Get("Authorization"))
-		if userID == "" {
+		token := bearerToken(ctx.Request().Header.Get("Authorization"))
+		if token == "" {
 			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "missing bearer token")
 			ctx.Abort()
 			return
 		}
-		user, exists := svc.GetUserByID(userID)
+		user, exists := svc.Authenticate(token)
 		if !exists {
 			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "invalid bearer token")
 			ctx.Abort()
@@ -214,13 +186,13 @@ func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFun
 			ctx.Abort()
 			return
 		}
-		if err := svc.Validate(userID, ctx.Request().Method, path); err != nil {
+		if err := svc.Validate(user, ctx.Request().Method, path); err != nil {
 			response.ErrorWithCode(ctx, http.StatusForbidden, response.ErrForbidden.Code, err.Error())
 			ctx.Abort()
 			return
 		}
-		ctx.UserID = userID
-		ctx.IsAdmin = svc.IsAdmin(userID)
+		ctx.UserID = user.ID
+		ctx.IsAdmin = user.IsAdmin
 		ctx.Next()
 	}
 }

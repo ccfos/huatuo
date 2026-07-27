@@ -65,11 +65,10 @@ func buildCreateProfilingJobRequest(
 	cfg *Config,
 ) (*job.CreateJobRequest, error) {
 	taskReq := job.AgentTaskRequest{
-		TracerName:   "profiler",
-		DataType:     "db-json",
-		ContainerID:  req.ContainerID,
-		Interval:     cfg.AggregationInterval,
-		TraceTimeout: cfg.ExecutionTimeout,
+		TracerName:  "profiler",
+		DataType:    "db-json",
+		ContainerID: req.ContainerID,
+		Interval:    cfg.AggregationIntervalSeconds,
 	}
 
 	jobType, err := buildProfilingTracerArgs(&taskReq, req)
@@ -82,9 +81,7 @@ func buildCreateProfilingJobRequest(
 	if req.DurationSeconds+taskReq.Interval >= 3600 {
 		return nil, errors.New("duration_seconds plus profiling interval must be less than 3600 seconds")
 	}
-	if taskReq.TraceTimeout < req.DurationSeconds+taskReq.Interval {
-		taskReq.TraceTimeout = req.DurationSeconds + taskReq.Interval
-	}
+	taskReq.TraceTimeout = req.DurationSeconds + taskReq.Interval
 
 	// The job duration controls profiling lifetime while the agent task remains
 	// alive long enough to be stopped externally.
@@ -93,7 +90,7 @@ func buildCreateProfilingJobRequest(
 		taskReq.TracerArgs,
 		"--duration", strconv.Itoa(req.DurationSeconds),
 		"--aggr-interval", strconv.Itoa(taskReq.Interval),
-		"--max-concurrent-procs", strconv.Itoa(cfg.MaxProfilerProcs),
+		"--max-concurrent-procs", strconv.Itoa(cfg.MaxConcurrentProfilerProcesses),
 		"--output-format", "remote",
 		"--output-storage", "/var/run/huatuo-toolstream.sock",
 	)

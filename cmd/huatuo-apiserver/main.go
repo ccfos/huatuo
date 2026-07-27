@@ -33,8 +33,9 @@ import (
 )
 
 const (
-	appName  = "huatuo-apiserver"
-	appUsage = "Control-plane API server for orchestrating HuaTuo profiling and tracing jobs across hosts"
+	appName                = "huatuo-apiserver"
+	appUsage               = "Control-plane API server for orchestrating HuaTuo profiling and tracing jobs across hosts"
+	defaultShutdownTimeout = 60 * time.Second
 )
 
 var (
@@ -103,15 +104,11 @@ func NewDaemon(opts *Options) *Daemon {
 // Run starts each module in order and tears initialized modules down in reverse.
 func (d *Daemon) Run(ctx context.Context) error {
 	cleanups := make([]func(context.Context) error, 0, len(d.steps))
-	shutdownTimeout := 60 * time.Second
-	if d.opts != nil && d.opts.Config != nil && d.opts.Config.APIServer.ShutdownTimeoutSeconds > 0 {
-		shutdownTimeout = time.Duration(d.opts.Config.APIServer.ShutdownTimeoutSeconds) * time.Second
-	}
 
 	shutdown := func() error {
 		shutdownCtx, cancel := context.WithTimeout(
 			context.WithoutCancel(ctx),
-			shutdownTimeout,
+			defaultShutdownTimeout,
 		)
 		defer cancel()
 

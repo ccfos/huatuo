@@ -23,7 +23,6 @@ source "${ROOT_DIR}/integration/config.sh"
 
 readonly API_TOKEN="integration-admin"
 readonly CAPABILITIES_AGGREGATION_INTERVAL_SECONDS=7
-readonly CAPABILITIES_EXECUTION_TIMEOUT_SECONDS=14
 readonly CAPABILITIES_MAX_CONCURRENT_PROFILERS=3
 readonly FAILURE_LOG_PATTERN='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
 
@@ -95,7 +94,6 @@ assert_profile_capabilities() {
 
 	jq -e \
 		--argjson aggregation_interval_seconds "${CAPABILITIES_AGGREGATION_INTERVAL_SECONDS}" \
-		--argjson execution_timeout_seconds "${CAPABILITIES_EXECUTION_TIMEOUT_SECONDS}" \
 		--argjson max_concurrent_profilers "${CAPABILITIES_MAX_CONCURRENT_PROFILERS}" \
 		'
 			.code == 0
@@ -108,7 +106,6 @@ assert_profile_capabilities() {
 			and .data.memory_modes.go == ["physical_alloc", "physical_usage", "virtual_alloc"]
 			and .data.memory_modes.java == ["object_alloc", "object_usage"]
 			and .data.aggregation_interval_seconds == $aggregation_interval_seconds
-			and .data.execution_timeout_seconds == $execution_timeout_seconds
 			and .data.max_concurrent_profilers == $max_concurrent_profilers
 		' "${response_file}" > /dev/null \
 		|| fatal "profile capabilities response does not match the API contract"

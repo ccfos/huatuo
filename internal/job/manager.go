@@ -38,11 +38,10 @@ var ErrCannotDeleteRunning = errors.New("cannot delete running job")
 // ManagerConfig holds configuration for the job manager.
 type ManagerConfig struct {
 	TypePolicies map[JobType]TypePolicy
-	// ShutdownConcurrency bounds simultaneous Agent stop requests.
-	ShutdownConcurrency int
 	// StoreDSN is the SQLite data source name for the job store.
 	// Defaults to "jobs.db" when empty.
 	StoreDSN                 string
+	StopAllConcurrency       int
 	StatusPollInterval       time.Duration
 	MaxConsecutivePollErrors int
 }
@@ -138,8 +137,8 @@ func validateManagerConfig(config ManagerConfig) error {
 }
 
 func newManagerWithStore(storage Store, nodeAgent NodeAgent, config ManagerConfig) *Manager {
-	if config.ShutdownConcurrency <= 0 {
-		config.ShutdownConcurrency = 16
+	if config.StopAllConcurrency <= 0 {
+		config.StopAllConcurrency = 16
 	}
 	if config.StatusPollInterval <= 0 {
 		config.StatusPollInterval = 5 * time.Second
@@ -199,7 +198,8 @@ func (m *Manager) recoverJobs(ctx context.Context) error {
 	return nil
 }
 
-// ShutdownContext stops monitors, waits for them, and closes the job store.
+// ShutdownContext stops monitors without interrupting Agent tasks, then closes
+// the job store so a replacement manager can recover active jobs.
 func (m *Manager) ShutdownContext(ctx context.Context) error {
 	m.shutdownMu.Lock()
 	if m.shuttingDown {
@@ -217,17 +217,37 @@ func (m *Manager) ShutdownContext(ctx context.Context) error {
 	m.shuttingDown = true
 	m.shutdownMu.Unlock()
 
-	stopErr := m.stopAllByTypes(ctx, nil)
 	m.mu.Lock()
+	activeJobs := make([]*Job, 0, len(m.jobs))
+	for _, activeJob := range m.jobs {
+		if activeJob.Status == JobStatusPending ||
+			activeJob.Status == JobStatusRunning {
+			activeJobs = append(activeJobs, cloneJob(activeJob))
+		}
+	}
 	close(m.stopChan)
 	m.mu.Unlock()
+	for _, activeJob := range activeJobs {
+		log.WithField("job_id", activeJob.ID).
+			WithField("job_type", activeJob.Type).
+			WithField("job_status", activeJob.Status).
+			WithField("user_id", activeJob.UserID).
+			WithField("hostname", activeJob.Hostname).
+			WithField("container_id", activeJob.ContainerID).
+			WithField("agent_task_id", activeJob.AgentTaskID).
+			Info("leaving active job running during manager shutdown")
+	}
+	if len(activeJobs) > 0 {
+		log.WithField("active_jobs", len(activeJobs)).
+			Info("active jobs will be recovered by the next manager")
+	}
 
 	closeCtx := context.WithoutCancel(ctx)
 	go func() {
 		m.monitorWG.Wait()
 		closeErr := m.storage.Close(closeCtx)
 		m.shutdownMu.Lock()
-		m.shutdownErr = errors.Join(stopErr, closeErr)
+		m.shutdownErr = closeErr
 		close(m.shutdownDone)
 		m.shutdownMu.Unlock()
 	}()
@@ -239,7 +259,7 @@ func (m *Manager) ShutdownContext(ctx context.Context) error {
 		return m.shutdownErr
 	case <-ctx.Done():
 		m.shutdownIncomplete.Add(1)
-		return errors.Join(stopErr, ctx.Err())
+		return ctx.Err()
 	}
 }
 
@@ -558,7 +578,7 @@ func (m *Manager) stopAllByTypes(ctx context.Context, expectedTypes []JobType) e
 
 	var errsMu sync.Mutex
 	var group errgroup.Group
-	group.SetLimit(m.config.ShutdownConcurrency)
+	group.SetLimit(m.config.StopAllConcurrency)
 	for _, id := range jobIDs {
 		jobID := id
 		group.Go(func() error {
@@ -832,13 +852,6 @@ func (m *Manager) monitorJob(ctx context.Context, job *Job) {
 		case <-job.stopCh:
 			return
 		case <-m.stopChan:
-			if err := m.stopAgent(ctx, job, true); err != nil {
-				log.WithError(err).WithField("job_id", job.ID).
-					Error("failed to stop job during shutdown")
-			}
-			if err := m.finishJob(ctx, job, JobStatusFailed, "job interrupted by manager shutdown", nil); err != nil {
-				log.WithError(err).WithField("job_id", job.ID).Error("failed to persist interrupted job")
-			}
 			return
 		case <-ticker.C:
 			now := time.Now()

@@ -108,15 +108,15 @@ EOF
 write_apiserver_apis_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
 [APIServer]
-    TCPAddr = "127.0.0.1:${APISERVER_PORT}"
+    ListenAddress = "127.0.0.1:${APISERVER_PORT}"
 
-[TaskConfig]
-    JobStoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
+[Jobs]
+    StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
 
-[[Auth.users]]
+[[Auth.Users]]
+    ID = "integration-admin-user"
     BearerToken = "${API_TOKEN}"
-    Name = "Integration administrator"
-    IsAdmin = true
+    Admin = true
 EOF
 }
 
@@ -124,20 +124,19 @@ EOF
 write_apiserver_profile_capabilities_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
 [APIServer]
-    TCPAddr = "127.0.0.1:${APISERVER_PORT}"
+    ListenAddress = "127.0.0.1:${APISERVER_PORT}"
 
-[TaskConfig]
-    JobStoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
+[Jobs]
+    StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
 
-[[Auth.users]]
+[[Auth.Users]]
+    ID = "integration-admin-user"
     BearerToken = "${API_TOKEN}"
-    Name = "Integration administrator"
-    IsAdmin = true
+    Admin = true
 
 [Profiling]
-    AggregationInterval = ${CAPABILITIES_AGGREGATION_INTERVAL_SECONDS}
-    ExecutionTimeout = ${CAPABILITIES_EXECUTION_TIMEOUT_SECONDS}
-    MaxProfilerProcs = ${CAPABILITIES_MAX_CONCURRENT_PROFILERS}
+    AggregationIntervalSeconds = ${CAPABILITIES_AGGREGATION_INTERVAL_SECONDS}
+    MaxConcurrentProfilerProcesses = ${CAPABILITIES_MAX_CONCURRENT_PROFILERS}
 EOF
 }
 
@@ -161,28 +160,27 @@ EOF
 write_continuous_profiling_apiserver_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
 [APIServer]
-    TCPAddr = "127.0.0.1:${APISERVER_PORT}"
+    ListenAddress = "127.0.0.1:${APISERVER_PORT}"
 
-[ElasticSearch]
+[Elasticsearch]
     Address = "${ELASTICSEARCH_ADDR}"
     Username = "elastic"
     Password = "${ES_PASSWORD}"
     Index = "huatuo_continuous_profiling_test"
 
-[[Auth.users]]
+[[Auth.Users]]
+    ID = "integration-admin-user"
     BearerToken = "${API_TOKEN}"
-    Name = "Integration administrator"
-    IsAdmin = true
+    Admin = true
 
-[[Auth.users]]
+[[Auth.Users]]
+    ID = "integration-readonly-user"
     BearerToken = "${OTHER_API_TOKEN}"
-    Name = "Integration user"
     Permissions = ["/v1/profiles", "/v1/profiles/**"]
 
 [Profiling]
-    AggregationInterval = ${PROFILE_INTERVAL}
-    ExecutionTimeout = 20
-    MaxProfilerProcs = 1
-    FlameGraphBaseURL = "http://grafana.invalid/d"
+    AggregationIntervalSeconds = ${PROFILE_INTERVAL}
+    MaxConcurrentProfilerProcesses = 1
+    DashboardBaseURL = "http://grafana.invalid/d"
 EOF
 }

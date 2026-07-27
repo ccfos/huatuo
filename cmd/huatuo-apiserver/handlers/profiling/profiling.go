@@ -125,7 +125,7 @@ func (h *Handler) list(ctx *server.Context) error {
 
 	items := make([]v1.ProfilingJob, len(page.Items))
 	for i, j := range page.Items {
-		items[i], err = buildProfilingJob(j, h.profilingConfig.FlameGraphBaseURL)
+		items[i], err = buildProfilingJob(j, h.profilingConfig.DashboardBaseURL)
 		if err != nil {
 			log.WithError(err).WithField("job_id", j.ID).
 				Error("failed to build profiling job response")
@@ -161,7 +161,7 @@ func (h *Handler) get(ctx *server.Context) error {
 	if !ctx.CanAccessTask(jobResult.UserID) {
 		return response.ErrForbidden
 	}
-	profilingJob, err := buildProfilingJob(jobResult, h.profilingConfig.FlameGraphBaseURL)
+	profilingJob, err := buildProfilingJob(jobResult, h.profilingConfig.DashboardBaseURL)
 	if err != nil {
 		log.WithError(err).WithField("job_id", taskID).
 			Error("failed to build profiling job response")
@@ -179,7 +179,7 @@ func buildProfilingJob(jobResult *job.Job, flameGraphBaseURL string) (v1.Profili
 	}
 
 	resultURL := jobResult.Result.URL
-	if resultURL == "" && profilingJobHasResults(jobResult.Status) {
+	if resultURL == "" && flameGraphBaseURL != "" && profilingJobHasResults(jobResult.Status) {
 		resultURL = getFlameGraphURL(flameGraphBaseURL, jobResult)
 	}
 

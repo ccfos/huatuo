@@ -65,12 +65,13 @@ func TestConfigureRuntimeAnchorsRelativeJobStoreToConfigDirectory(t *testing.T) 
 	configDir := t.TempDir()
 	configFile := "apiserver.conf"
 	contents := []byte(`
-[[Auth.users]]
+[[Auth.Users]]
+ID = "test-user"
 BearerToken = "test-token"
-IsAdmin = true
+Admin = true
 
-[TaskConfig]
-JobStoreDSN = "state/jobs.db"
+[Jobs]
+StoreDSN = "state/jobs.db"
 `)
 	if err := os.WriteFile(filepath.Join(configDir, configFile), contents, 0o600); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)
@@ -81,8 +82,8 @@ JobStoreDSN = "state/jobs.db"
 		t.Fatalf("configureRuntime() error = %v", err)
 	}
 	want := filepath.Join(configDir, "state/jobs.db")
-	if got := opts.Config.TaskConfig.JobStoreDSN; got != want {
-		t.Fatalf("JobStoreDSN = %q, want %q", got, want)
+	if got := opts.Config.Jobs.StoreDSN; got != want {
+		t.Fatalf("StoreDSN = %q, want %q", got, want)
 	}
 }
 
@@ -97,9 +98,10 @@ func TestConfigureRuntimeLogDebugOverridesConfigLevel(t *testing.T) {
 	contents := []byte(`
 LogLevel = "Error"
 
-[[Auth.users]]
+[[Auth.Users]]
+ID = "test-user"
 BearerToken = "test-token"
-IsAdmin = true
+Admin = true
 `)
 	if err := os.WriteFile(filepath.Join(configDir, configFile), contents, 0o600); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)

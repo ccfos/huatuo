@@ -92,9 +92,8 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 	}
 
 	cfg := Config{
-		AggregationInterval: 10,
-		ExecutionTimeout:    20,
-		MaxProfilerProcs:    2,
+		AggregationIntervalSeconds:     10,
+		MaxConcurrentProfilerProcesses: 2,
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -119,6 +118,14 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 					"AgentTask.Duration=%d, want %d",
 					got.AgentTask.Duration,
 					tt.req.DurationSeconds*2,
+				)
+			}
+			wantTraceTimeout := tt.req.DurationSeconds + cfg.AggregationIntervalSeconds
+			if got.AgentTask.TraceTimeout != wantTraceTimeout {
+				t.Errorf(
+					"AgentTask.TraceTimeout=%d, want %d",
+					got.AgentTask.TraceTimeout,
+					wantTraceTimeout,
 				)
 			}
 			if !slices.Equal(got.AgentTask.TracerArgs, tt.wantTracerArgs) {

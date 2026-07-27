@@ -35,10 +35,9 @@ type Handler struct {
 
 // Config contains profiling values used by request and response handling.
 type Config struct {
-	AggregationInterval int
-	ExecutionTimeout    int
-	MaxProfilerProcs    int
-	FlameGraphBaseURL   string
+	AggregationIntervalSeconds     int
+	MaxConcurrentProfilerProcesses int
+	DashboardBaseURL               string
 }
 
 // ProfileQueryService defines profile query operations consumed by the handler.

@@ -23,13 +23,13 @@ huatuo-apiserver 默认监听 `:12740`。以下示例使用环境变量统一设
 
 ```bash
 API_BASE="http://127.0.0.1:12740"
-API_TOKEN="<Auth.users.BearerToken>"
+API_TOKEN="<Auth.Users.BearerToken>"
 ```
 
 每个请求必须在 `Authorization` 请求头中传入配置的 Bearer token：
 
 ```text
-Authorization: Bearer <Auth.users.BearerToken>
+Authorization: Bearer <Auth.Users.BearerToken>
 ```
 
 非管理员用户需要配置 `/v1/profiles` 和 `/v1/profiles/**` 权限。权限可带
@@ -62,7 +62,6 @@ curl -sS \
 | `memory_languages` | 内存剖析支持的语言 |
 | `memory_modes` | 按语言分组的内存剖析模式；列表值可直接用于创建任务 |
 | `aggregation_interval_seconds` | 服务端采集数据的聚合周期 |
-| `execution_timeout_seconds` | 单个 profiler 进程的执行超时 |
 | `max_concurrent_profilers` | profiler 进程的最大并发数；`0` 表示不限制 |
 
 当前 CPU 剖析支持 `c`、`c++`、`go`、`java` 和 `python`。内存剖析支持以下组合：

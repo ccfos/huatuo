@@ -24,235 +24,324 @@ import (
 	internalconfig "huatuo-bamai/internal/config"
 )
 
-const maxAggregationInterval = 1200
+const maxAggregationIntervalSeconds = 1200
 
 // ProfilingConfig controls profiler subprocess execution.
 type ProfilingConfig struct {
-	AggregationInterval int `default:"10"`
-	ExecutionTimeout    int `default:"20"`
-	MaxProfilerProcs    int `default:"10"`
-	// FlameGraphBaseURL is the base URL for the flame graph dashboard.
-	FlameGraphBaseURL string `default:"http://localhost:8006/d"`
+	AggregationIntervalSeconds     int
+	MaxConcurrentProfilerProcesses int
+	DashboardBaseURL               string
 }
 
-type RuntimeCgroupConfig struct {
-	LimitCPU int64 `default:"20"`
-	LimitMem int64 `default:"4096"`
+// RuntimeConfig controls resource limits for the API server process.
+type RuntimeConfig struct {
+	CPULimitCores  int64
+	MemoryLimitMiB int64
 }
 
+// RateLimitConfig controls the process-wide HTTP token bucket.
+type RateLimitConfig struct {
+	RequestsPerSecond int
+	Burst             int
+}
+
+// APIServerConfig controls the HTTP server.
 type APIServerConfig struct {
-	TCPAddr                  string `default:":12740"`
-	ReadHeaderTimeoutSeconds int    `default:"10"`
-	ReadTimeoutSeconds       int    `default:"30"`
-	WriteTimeoutSeconds      int    `default:"60"`
-	IdleTimeoutSeconds       int    `default:"120"`
-	ShutdownTimeoutSeconds   int    `default:"60"`
-	MaxHeaderBytes           int    `default:"1048576"`
-	MaxBodyBytes             int64  `default:"4194304"`
-	RateLimit                int    `default:"200"`
-	RateBurst                int    `default:"200"`
+	ListenAddress string
+	RateLimit     RateLimitConfig
 }
 
+// UserConfig defines one authenticated principal.
 type UserConfig struct {
+	ID          string
 	BearerToken string
-	Name        string
 	Permissions []string
-	IsAdmin     bool `default:"false"`
+	Admin       bool
 }
 
+// AuthConfig controls authentication and authorization.
 type AuthConfig struct {
 	Users []UserConfig
 }
 
-type TaskConfig struct {
-	MaxProfilingTasksPerHost int    `default:"3"`
-	MaxTracingTasksPerHost   int    `default:"5"`
-	MaxTotalProfilingTasks   int    `default:"500"`
-	MaxTotalTracingTasks     int    `default:"1000"`
-	JobStoreDSN              string `default:"jobs.db"`
-	ShutdownConcurrency      int    `default:"16"`
+// JobQuotaConfig controls active jobs for one job category.
+type JobQuotaConfig struct {
+	MaxConcurrentPerHost int
+	MaxConcurrent        int
 }
 
+// JobsConfig controls job persistence, quotas, and shutdown behavior.
+type JobsConfig struct {
+	Profiling JobQuotaConfig
+	Tracing   JobQuotaConfig
+	StoreDSN  string
+}
+
+// StatusPollingConfig controls Agent task status polling.
+type StatusPollingConfig struct {
+	IntervalSeconds      int
+	MaxConsecutiveErrors int
+}
+
+// AgentConfig controls communication with huatuo-bamai Agents.
 type AgentConfig struct {
-	Port                      int `default:"19704"`
-	RequestTimeoutSeconds     int `default:"10"`
-	StatusRetryAttempts       int `default:"3"`
-	StatusRetryBackoffMillis  int `default:"100"`
-	StatusPollIntervalSeconds int `default:"5"`
-	MaxConsecutivePollErrors  int `default:"3"`
-}
-
-type ElasticSearchConfig = internalconfig.ElasticsearchConfig
-
-// Validate rejects profiling settings that cannot produce a valid job.
-func (c ProfilingConfig) Validate() error {
-	if c.AggregationInterval <= 0 {
-		return fmt.Errorf("aggregation interval must be greater than 0 seconds")
-	}
-	if c.AggregationInterval >= maxAggregationInterval {
-		return fmt.Errorf("aggregation interval must be less than %d seconds", maxAggregationInterval)
-	}
-	minimumTimeout := c.AggregationInterval * 2
-	if c.ExecutionTimeout < minimumTimeout {
-		return fmt.Errorf("execution timeout must be at least %d seconds", minimumTimeout)
-	}
-	if c.MaxProfilerProcs < 0 {
-		return fmt.Errorf("max profiler procs must not be negative")
-	}
-
-	flameGraphURL, err := url.Parse(c.FlameGraphBaseURL)
-	if err != nil {
-		return fmt.Errorf("parsing flame graph base url: %w", err)
-	}
-	if flameGraphURL.Scheme != "http" && flameGraphURL.Scheme != "https" {
-		return fmt.Errorf("flame graph base url must use http or https")
-	}
-	if flameGraphURL.Host == "" {
-		return fmt.Errorf("flame graph base url must include a host")
-	}
-
-	return nil
+	HTTPPort              int
+	RequestTimeoutSeconds int
+	StatusPolling         StatusPollingConfig
 }
 
 // Config contains API server configuration.
 type Config struct {
-	LogLevel string `default:"Info"`
+	LogLevel string
 
-	// RuntimeCgroup for huatuo resource
-	RuntimeCgroup RuntimeCgroupConfig
-
-	// APIServer addr
-	APIServer APIServerConfig
-
-	// Auth contains authentication-related configuration
-	Auth AuthConfig
-
-	// TaskConfig contains task-related configuration
-	TaskConfig TaskConfig
-
-	Agent AgentConfig
-
-	ElasticSearch ElasticSearchConfig
-
-	Profiling ProfilingConfig
+	Runtime       RuntimeConfig
+	APIServer     APIServerConfig
+	Auth          AuthConfig
+	Jobs          JobsConfig
+	Agent         AgentConfig
+	Elasticsearch internalconfig.ElasticsearchConfig
+	Profiling     ProfilingConfig
 }
 
-func (c *Config) Validate() error {
-	if _, _, err := net.SplitHostPort(c.APIServer.TCPAddr); err != nil {
-		return fmt.Errorf("invalid API server TCP address %q: %w", c.APIServer.TCPAddr, err)
+func defaultConfig() Config {
+	return Config{
+		LogLevel: "Info",
+		Runtime: RuntimeConfig{
+			CPULimitCores:  20,
+			MemoryLimitMiB: 4096,
+		},
+		APIServer: APIServerConfig{
+			ListenAddress: ":12740",
+			RateLimit: RateLimitConfig{
+				RequestsPerSecond: 200,
+				Burst:             200,
+			},
+		},
+		Jobs: JobsConfig{
+			Profiling: JobQuotaConfig{
+				MaxConcurrentPerHost: 3,
+				MaxConcurrent:        500,
+			},
+			Tracing: JobQuotaConfig{
+				MaxConcurrentPerHost: 5,
+				MaxConcurrent:        1000,
+			},
+			StoreDSN: "jobs.db",
+		},
+		Agent: AgentConfig{
+			HTTPPort:              19704,
+			RequestTimeoutSeconds: 10,
+			StatusPolling: StatusPollingConfig{
+				IntervalSeconds:      5,
+				MaxConsecutiveErrors: 3,
+			},
+		},
+		Elasticsearch: internalconfig.ElasticsearchConfig{
+			Index: "huatuo_bamai",
+		},
+		Profiling: ProfilingConfig{
+			AggregationIntervalSeconds:     10,
+			MaxConcurrentProfilerProcesses: 10,
+		},
 	}
-	if err := c.APIServer.Validate(); err != nil {
+}
+
+// Validate rejects invalid or incomplete API server configuration.
+func (c *Config) Validate() error {
+	if err := validateLogLevel(c.LogLevel); err != nil {
 		return err
 	}
-	if err := c.TaskConfig.Validate(); err != nil {
-		return fmt.Errorf("validating task config: %w", err)
+	if err := c.Runtime.Validate(); err != nil {
+		return fmt.Errorf("validating runtime config: %w", err)
+	}
+	if err := c.APIServer.Validate(); err != nil {
+		return fmt.Errorf("validating API server config: %w", err)
+	}
+	if err := c.Jobs.Validate(); err != nil {
+		return fmt.Errorf("validating jobs config: %w", err)
 	}
 	if err := c.Agent.Validate(); err != nil {
 		return fmt.Errorf("validating agent config: %w", err)
 	}
-	if c.RuntimeCgroup.LimitCPU <= 0 || c.RuntimeCgroup.LimitMem <= 0 {
-		return errors.New("runtime cgroup limits must be greater than zero")
-	}
-	if len(c.Auth.Users) == 0 {
-		return errors.New("at least one auth user is required")
-	}
-	seenTokens := make(map[string]struct{}, len(c.Auth.Users))
-	for i, user := range c.Auth.Users {
-		if strings.TrimSpace(user.BearerToken) == "" {
-			return fmt.Errorf("auth user %d: bearer token is required", i)
-		}
-		if _, exists := seenTokens[user.BearerToken]; exists {
-			return fmt.Errorf("auth user %d: duplicate bearer token", i)
-		}
-		seenTokens[user.BearerToken] = struct{}{}
-		if !user.IsAdmin && len(user.Permissions) == 0 {
-			return fmt.Errorf("auth user %d: permissions are required for non-admin users", i)
-		}
-		for _, permission := range user.Permissions {
-			parts := strings.Fields(permission)
-			if len(parts) == 0 || len(parts) > 2 {
-				return fmt.Errorf("auth user %d: invalid permission %q", i, permission)
-			}
-			if len(parts) == 2 && !isHTTPMethod(parts[0]) {
-				return fmt.Errorf("auth user %d: invalid permission method %q", i, parts[0])
-			}
-		}
+	if err := c.Auth.Validate(); err != nil {
+		return fmt.Errorf("validating auth config: %w", err)
 	}
 	if err := c.Profiling.Validate(); err != nil {
 		return fmt.Errorf("validating profiling config: %w", err)
 	}
-	if err := c.ElasticSearch.Validate(); err != nil {
+	if err := c.Elasticsearch.Validate(); err != nil {
 		return fmt.Errorf("validating Elasticsearch config: %w", err)
 	}
 	return nil
 }
 
+// Validate rejects profiling settings that cannot produce a valid job.
+func (c ProfilingConfig) Validate() error {
+	if c.AggregationIntervalSeconds <= 0 {
+		return errors.New("aggregation interval must be greater than zero seconds")
+	}
+	if c.AggregationIntervalSeconds >= maxAggregationIntervalSeconds {
+		return fmt.Errorf(
+			"aggregation interval must be less than %d seconds",
+			maxAggregationIntervalSeconds,
+		)
+	}
+	if c.MaxConcurrentProfilerProcesses < 0 {
+		return errors.New("maximum concurrent profiler processes must not be negative")
+	}
+	if c.DashboardBaseURL == "" {
+		return nil
+	}
+
+	dashboardURL, err := url.Parse(c.DashboardBaseURL)
+	if err != nil {
+		return fmt.Errorf("parsing dashboard base url: %w", err)
+	}
+	if dashboardURL.Scheme != "http" && dashboardURL.Scheme != "https" {
+		return errors.New("dashboard base url must use http or https")
+	}
+	if dashboardURL.Host == "" {
+		return errors.New("dashboard base url must include a host")
+	}
+	return nil
+}
+
+// Validate rejects invalid runtime resource limits.
+func (c RuntimeConfig) Validate() error {
+	if c.CPULimitCores <= 0 {
+		return errors.New("cpu limit must be greater than zero cores")
+	}
+	if c.MemoryLimitMiB <= 0 {
+		return errors.New("memory limit must be greater than zero MiB")
+	}
+	return nil
+}
+
+// Validate rejects invalid HTTP server settings.
+func (c *APIServerConfig) Validate() error {
+	if _, _, err := net.SplitHostPort(c.ListenAddress); err != nil {
+		return fmt.Errorf("invalid listen address %q: %w", c.ListenAddress, err)
+	}
+
+	values := []struct {
+		name  string
+		value int
+	}{
+		{name: "rate limit requests per second", value: c.RateLimit.RequestsPerSecond},
+		{name: "rate limit burst", value: c.RateLimit.Burst},
+	}
+	for _, item := range values {
+		if item.value <= 0 {
+			return fmt.Errorf("%s must be greater than zero", item.name)
+		}
+	}
+	return nil
+}
+
+// Validate rejects incomplete or conflicting authentication settings.
+func (c AuthConfig) Validate() error {
+	if len(c.Users) == 0 {
+		return errors.New("at least one user is required")
+	}
+
+	seenIDs := make(map[string]struct{}, len(c.Users))
+	seenTokens := make(map[string]struct{}, len(c.Users))
+	for i, user := range c.Users {
+		if strings.TrimSpace(user.ID) == "" {
+			return fmt.Errorf("user %d: id is required", i)
+		}
+		if _, exists := seenIDs[user.ID]; exists {
+			return fmt.Errorf("user %d: duplicate id %q", i, user.ID)
+		}
+		seenIDs[user.ID] = struct{}{}
+
+		if strings.TrimSpace(user.BearerToken) == "" {
+			return fmt.Errorf("user %d: bearer token is required", i)
+		}
+		if _, exists := seenTokens[user.BearerToken]; exists {
+			return fmt.Errorf("user %d: duplicate bearer token", i)
+		}
+		seenTokens[user.BearerToken] = struct{}{}
+
+		if !user.Admin && len(user.Permissions) == 0 {
+			return fmt.Errorf("user %d: permissions are required for non-admin users", i)
+		}
+		for _, permission := range user.Permissions {
+			parts := strings.Fields(permission)
+			if len(parts) == 0 || len(parts) > 2 {
+				return fmt.Errorf("user %d: invalid permission %q", i, permission)
+			}
+			if len(parts) == 2 && !isHTTPMethod(parts[0]) {
+				return fmt.Errorf(
+					"user %d: invalid permission method %q",
+					i,
+					parts[0],
+				)
+			}
+		}
+	}
+	return nil
+}
+
+// Validate rejects invalid job quotas or persistence settings.
+func (c JobsConfig) Validate() error {
+	if err := c.Profiling.validate("profiling"); err != nil {
+		return err
+	}
+	if err := c.Tracing.validate("tracing"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.StoreDSN) == "" {
+		return errors.New("store DSN is required")
+	}
+	return nil
+}
+
+func (c JobQuotaConfig) validate(category string) error {
+	if c.MaxConcurrentPerHost <= 0 {
+		return fmt.Errorf(
+			"maximum concurrent %s jobs per host must be greater than zero",
+			category,
+		)
+	}
+	if c.MaxConcurrent <= 0 {
+		return fmt.Errorf(
+			"maximum concurrent %s jobs must be greater than zero",
+			category,
+		)
+	}
+	return nil
+}
+
+// Validate rejects invalid Agent communication settings.
 func (c AgentConfig) Validate() error {
 	values := []struct {
 		name  string
 		value int
 	}{
-		{name: "port", value: c.Port},
+		{name: "http port", value: c.HTTPPort},
 		{name: "request timeout", value: c.RequestTimeoutSeconds},
-		{name: "status retry attempts", value: c.StatusRetryAttempts},
-		{name: "status retry backoff", value: c.StatusRetryBackoffMillis},
-		{name: "status poll interval", value: c.StatusPollIntervalSeconds},
-		{name: "max consecutive poll errors", value: c.MaxConsecutivePollErrors},
+		{name: "status polling interval", value: c.StatusPolling.IntervalSeconds},
+		{name: "maximum consecutive status polling errors", value: c.StatusPolling.MaxConsecutiveErrors},
 	}
 	for _, item := range values {
 		if item.value <= 0 {
-			return fmt.Errorf("agent %s must be greater than zero", item.name)
+			return fmt.Errorf("%s must be greater than zero", item.name)
 		}
 	}
-	if c.Port > 65535 {
-		return errors.New("agent port must not exceed 65535")
+	if c.HTTPPort > 65535 {
+		return errors.New("http port must not exceed 65535")
 	}
 	return nil
 }
 
-func (c *APIServerConfig) Validate() error {
-	values := []struct {
-		name  string
-		value int64
-	}{
-		{name: "read header timeout", value: int64(c.ReadHeaderTimeoutSeconds)},
-		{name: "read timeout", value: int64(c.ReadTimeoutSeconds)},
-		{name: "write timeout", value: int64(c.WriteTimeoutSeconds)},
-		{name: "idle timeout", value: int64(c.IdleTimeoutSeconds)},
-		{name: "shutdown timeout", value: int64(c.ShutdownTimeoutSeconds)},
-		{name: "max header bytes", value: int64(c.MaxHeaderBytes)},
-		{name: "max body bytes", value: c.MaxBodyBytes},
-		{name: "rate limit", value: int64(c.RateLimit)},
-		{name: "rate burst", value: int64(c.RateBurst)},
+func validateLogLevel(level string) error {
+	switch strings.ToLower(level) {
+	case "debug", "info", "warn", "error", "panic":
+		return nil
+	default:
+		return fmt.Errorf("unsupported log level %q", level)
 	}
-	for _, item := range values {
-		if item.value <= 0 {
-			return fmt.Errorf("API server %s must be greater than zero", item.name)
-		}
-	}
-	return nil
-}
-
-func (c TaskConfig) Validate() error {
-	limits := []struct {
-		name  string
-		value int
-	}{
-		{name: "max profiling tasks per host", value: c.MaxProfilingTasksPerHost},
-		{name: "max tracing tasks per host", value: c.MaxTracingTasksPerHost},
-		{name: "max total profiling tasks", value: c.MaxTotalProfilingTasks},
-		{name: "max total tracing tasks", value: c.MaxTotalTracingTasks},
-		{name: "shutdown concurrency", value: c.ShutdownConcurrency},
-	}
-	for _, limit := range limits {
-		if limit.value <= 0 {
-			return fmt.Errorf("%s must be greater than 0", limit.name)
-		}
-	}
-	if strings.TrimSpace(c.JobStoreDSN) == "" {
-		return fmt.Errorf("job store DSN is required")
-	}
-	return nil
 }
 
 func isHTTPMethod(value string) bool {
@@ -266,13 +355,12 @@ func isHTTPMethod(value string) bool {
 
 // LoadFile loads and validates a fresh configuration instance.
 func LoadFile(configFile string) (*Config, error) {
-	cfg := &Config{}
-	if err := internalconfig.Load(configFile, cfg); err != nil {
+	cfg := defaultConfig()
+	if err := internalconfig.Load(configFile, &cfg); err != nil {
 		return nil, err
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	cfg.RuntimeCgroup.LimitMem *= 1024 * 1024
-	return cfg, nil
+	return &cfg, nil
 }

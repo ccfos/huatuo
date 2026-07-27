@@ -130,6 +130,5 @@ type ProfilingCapabilities struct {
 	MemoryLanguages            []string            `json:"memory_languages"`             // languages supported by memory profiling
 	MemoryModes                map[string][]string `json:"memory_modes"`                 // supported modes by language
 	AggregationIntervalSeconds int                 `json:"aggregation_interval_seconds"` // server aggregation interval
-	ExecutionTimeoutSeconds    int                 `json:"execution_timeout_seconds"`    // profiler execution timeout
 	MaxConcurrentProfilers     int                 `json:"max_concurrent_profilers"`     // concurrent profiler limit
 }

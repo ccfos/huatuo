@@ -34,8 +34,8 @@ func setupCgroup(_ context.Context, d *Daemon) (func(context.Context) error, err
 	if err := cgroup.NewRuntime(
 		appName,
 		cgroups.ToSpec(
-			float64(d.opts.Config.RuntimeCgroup.LimitCPU),
-			d.opts.Config.RuntimeCgroup.LimitMem,
+			float64(d.opts.Config.Runtime.CPULimitCores),
+			d.opts.Config.Runtime.MemoryLimitMiB*1024*1024,
 		),
 	); err != nil {
 		return nil, fmt.Errorf("new runtime cgroup: %w", err)

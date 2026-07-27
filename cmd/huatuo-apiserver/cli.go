@@ -134,8 +134,8 @@ func configureRuntime(opts *Options) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	opts.Config = cfg
-	if dsn := cfg.TaskConfig.JobStoreDSN; !filepath.IsAbs(dsn) && !strings.HasPrefix(dsn, "file:") {
-		cfg.TaskConfig.JobStoreDSN = filepath.Join(opts.ConfigDir, dsn)
+	if dsn := cfg.Jobs.StoreDSN; !filepath.IsAbs(dsn) && !strings.HasPrefix(dsn, "file:") {
+		cfg.Jobs.StoreDSN = filepath.Join(opts.ConfigDir, dsn)
 	}
 
 	switch {

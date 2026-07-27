@@ -47,6 +47,33 @@ func TestNewServerRegistersMetricsRouteWithoutRegistry(t *testing.T) {
 	}
 }
 
+func TestNewServerUsesHTTPGuardDefaults(t *testing.T) {
+	s := NewServer(nil)
+
+	if s.config.ReadHeaderTimeout != defaultReadHeaderTimeout {
+		t.Errorf(
+			"ReadHeaderTimeout = %s, want %s",
+			s.config.ReadHeaderTimeout,
+			defaultReadHeaderTimeout,
+		)
+	}
+	if s.config.ReadTimeout != defaultReadTimeout {
+		t.Errorf("ReadTimeout = %s, want %s", s.config.ReadTimeout, defaultReadTimeout)
+	}
+	if s.config.WriteTimeout != defaultWriteTimeout {
+		t.Errorf("WriteTimeout = %s, want %s", s.config.WriteTimeout, defaultWriteTimeout)
+	}
+	if s.config.IdleTimeout != defaultIdleTimeout {
+		t.Errorf("IdleTimeout = %s, want %s", s.config.IdleTimeout, defaultIdleTimeout)
+	}
+	if s.config.MaxHeaderBytes != defaultMaxHeaderBytes {
+		t.Errorf("MaxHeaderBytes = %d, want %d", s.config.MaxHeaderBytes, defaultMaxHeaderBytes)
+	}
+	if s.config.MaxBodyBytes != defaultMaxBodyBytes {
+		t.Errorf("MaxBodyBytes = %d, want %d", s.config.MaxBodyBytes, defaultMaxBodyBytes)
+	}
+}
+
 func TestNewServerRegistersHealthzRoute(t *testing.T) {
 	s := NewServer(nil)
 
@@ -129,8 +156,8 @@ func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
 		EnablePProf: true,
 		AdminPaths:  []string{"/v1/profiles/flamegraph/**"},
 		AuthUsers: []UserConfig{
-			{ID: "admin-2026", IsAdmin: true},
-			{ID: "viewer-2026", Permissions: []string{
+			{ID: "admin-2026", BearerToken: "admin-secret", IsAdmin: true},
+			{ID: "viewer-2026", BearerToken: "viewer-secret", Permissions: []string{
 				"/debug/pprof/**",
 				"/v1/profiles/flamegraph/**",
 			}},
@@ -148,7 +175,7 @@ func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
 	}
 
 	viewerRequest := httptest.NewRequest(http.MethodGet, "/debug/pprof/", http.NoBody)
-	viewerRequest.Header.Set("Authorization", "Bearer viewer-2026")
+	viewerRequest.Header.Set("Authorization", "Bearer viewer-secret")
 	viewerRecorder := httptest.NewRecorder()
 	srv.engine.ServeHTTP(viewerRecorder, viewerRequest)
 	if viewerRecorder.Code != http.StatusForbidden {
@@ -156,7 +183,7 @@ func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
 	}
 
 	adminRequest := httptest.NewRequest(http.MethodGet, "/debug/pprof/", http.NoBody)
-	adminRequest.Header.Set("Authorization", "Bearer admin-2026")
+	adminRequest.Header.Set("Authorization", "Bearer admin-secret")
 	adminRecorder := httptest.NewRecorder()
 	srv.engine.ServeHTTP(adminRecorder, adminRequest)
 	if adminRecorder.Code != http.StatusOK {
@@ -168,7 +195,7 @@ func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
 		"/v1/profiles/flamegraph/query",
 		http.NoBody,
 	)
-	viewerFlameRequest.Header.Set("Authorization", "Bearer viewer-2026")
+	viewerFlameRequest.Header.Set("Authorization", "Bearer viewer-secret")
 	viewerFlameRecorder := httptest.NewRecorder()
 	srv.engine.ServeHTTP(viewerFlameRecorder, viewerFlameRequest)
 	if viewerFlameRecorder.Code != http.StatusForbidden {

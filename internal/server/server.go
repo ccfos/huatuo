@@ -36,6 +36,15 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const (
+	defaultReadHeaderTimeout = 10 * time.Second
+	defaultReadTimeout       = 30 * time.Second
+	defaultWriteTimeout      = 60 * time.Second
+	defaultIdleTimeout       = 120 * time.Second
+	defaultMaxHeaderBytes    = 1 << 20
+	defaultMaxBodyBytes      = 4 << 20
+)
+
 // Config defines the configuration options for the HTTP server.
 type Config struct {
 	EnablePProf       bool
@@ -67,12 +76,12 @@ var defaultConfig = &Config{
 	EnableRetry:       false,
 	PromReg:           nil,
 	Group:             "",
-	ReadHeaderTimeout: 10 * time.Second,
-	ReadTimeout:       30 * time.Second,
-	WriteTimeout:      60 * time.Second,
-	IdleTimeout:       120 * time.Second,
-	MaxHeaderBytes:    1 << 20,
-	MaxBodyBytes:      4 << 20,
+	ReadHeaderTimeout: defaultReadHeaderTimeout,
+	ReadTimeout:       defaultReadTimeout,
+	WriteTimeout:      defaultWriteTimeout,
+	IdleTimeout:       defaultIdleTimeout,
+	MaxHeaderBytes:    defaultMaxHeaderBytes,
+	MaxBodyBytes:      defaultMaxBodyBytes,
 }
 
 // Server is an HTTP server instance.

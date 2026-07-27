@@ -48,9 +48,8 @@ func buildCapabilities(h *Handler) v1.ProfilingCapabilities {
 		CPULanguages:               cpuLanguages,
 		MemoryLanguages:            memoryLanguages,
 		MemoryModes:                memoryModes,
-		AggregationIntervalSeconds: cfg.AggregationInterval,
-		ExecutionTimeoutSeconds:    cfg.ExecutionTimeout,
-		MaxConcurrentProfilers:     cfg.MaxProfilerProcs,
+		AggregationIntervalSeconds: cfg.AggregationIntervalSeconds,
+		MaxConcurrentProfilers:     cfg.MaxConcurrentProfilerProcesses,
 	}
 }
 

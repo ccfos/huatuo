@@ -15,14 +15,19 @@
 package job
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"huatuo-bamai/internal/log"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -944,10 +949,7 @@ func TestManagerCheckAndUpdateJobStatus(t *testing.T) {
 	}
 }
 
-// TestMonitorJobDeferNoNilPanic verifies that monitorJob's defer does not panic
-// when the manager is shut down while a job is still running. Before the fix,
-// the defer called err.Error() when err was nil, causing a nil pointer dereference.
-func TestMonitorJobDeferNoNilPanic(t *testing.T) {
+func TestMonitorJobShutdownPreservesRunningState(t *testing.T) {
 	storage := &stubJobStore{}
 	nodeAgent := &stubNodeAgent{
 		startTaskFunc: func(host, container string, args *AgentTaskRequest) (string, error) {
@@ -977,19 +979,23 @@ func TestMonitorJobDeferNoNilPanic(t *testing.T) {
 		t.Fatalf("Create() error=%v, want nil", err)
 	}
 
-	// Shutdown owns active jobs and stops them before releasing storage.
-	_ = manager.ShutdownContext(t.Context())
+	if err := manager.ShutdownContext(t.Context()); err != nil {
+		t.Fatalf("ShutdownContext() error=%v, want nil", err)
+	}
+	if got := nodeAgent.stopTaskCalls.Load(); got != 0 {
+		t.Errorf("StopTask() call count=%d, want 0", got)
+	}
 
 	savedJobs := storage.savedJobs()
 	if len(savedJobs) == 0 {
 		t.Fatal("storage.Save() call count=0, want at least 1")
 	}
 	lastSave := savedJobs[len(savedJobs)-1]
-	if lastSave.Status != JobStatusStopped {
-		t.Errorf("job.Status=%s, want %s", lastSave.Status, JobStatusStopped)
+	if lastSave.Status != JobStatusRunning {
+		t.Errorf("job.Status=%s, want %s", lastSave.Status, JobStatusRunning)
 	}
-	if lastSave.ErrorMessage == "" {
-		t.Errorf("job.ErrorMessage is empty, want non-empty error message")
+	if lastSave.ErrorMessage != "" {
+		t.Errorf("job.ErrorMessage=%q, want empty", lastSave.ErrorMessage)
 	}
 }
 
@@ -1148,6 +1154,60 @@ func TestManagerShutdownIsIdempotent(t *testing.T) {
 
 	_ = manager.ShutdownContext(t.Context())
 	_ = manager.ShutdownContext(t.Context())
+}
+
+func TestManagerShutdownLeavesActiveJobsRunning(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() {
+		log.SetOutput(os.Stdout)
+	})
+
+	storage := &stubJobStore{}
+	nodeAgent := &stubNodeAgent{}
+	manager := newTestManager(storage, nodeAgent)
+	running := newRunningJob("job-running-2026")
+	running.CreatedAt = time.Now()
+	pending := newRunningJob("job-pending-2026")
+	pending.Status = JobStatusPending
+	pending.CreatedAt = time.Now()
+
+	for _, activeJob := range []*Job{running, pending} {
+		manager.jobs[activeJob.ID] = activeJob
+		manager.monitorWG.Add(1)
+		go func() {
+			defer manager.monitorWG.Done()
+			manager.monitorJob(t.Context(), activeJob)
+		}()
+	}
+
+	if err := manager.ShutdownContext(t.Context()); err != nil {
+		t.Fatalf("ShutdownContext() error=%v", err)
+	}
+	if got := nodeAgent.stopTaskCalls.Load(); got != 0 {
+		t.Errorf("StopTask() call count=%d, want 0", got)
+	}
+	if len(storage.savedJobs()) != 0 {
+		t.Errorf("storage.Save() was called during shutdown")
+	}
+	if running.Status != JobStatusRunning {
+		t.Errorf("running job status=%q, want %q", running.Status, JobStatusRunning)
+	}
+	if pending.Status != JobStatusPending {
+		t.Errorf("pending job status=%q, want %q", pending.Status, JobStatusPending)
+	}
+	for _, expected := range []string{
+		"job-running-2026",
+		"job-pending-2026",
+		"huatuo-dev",
+		"agent-task-2026",
+		"leaving active job running during manager shutdown",
+		"active jobs will be recovered by the next manager",
+	} {
+		if !strings.Contains(logs.String(), expected) {
+			t.Errorf("shutdown logs do not contain %q: %s", expected, logs.String())
+		}
+	}
 }
 
 func TestManagerCheckAndUpdateJobStatusRejectsMissingResult(t *testing.T) {
