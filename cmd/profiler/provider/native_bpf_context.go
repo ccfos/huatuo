@@ -35,6 +35,12 @@ import (
 // drains the just-frozen ring. ~100ms balances responsiveness and overhead.
 const drainTick = 100 * time.Millisecond
 
+// validateStackID accepts any stack-map key returned by bpf_get_stackid.
+// Zero is a valid key; only negative values indicate lookup errors.
+func validateStackID(kernelStackID, userStackID int32) bool {
+	return kernelStackID >= 0 || userStackID >= 0
+}
+
 // ringBufferContext holds the shared ring buffer state for A/B buffer management.
 // It encapsulates all the common infrastructure needed for dual-buffer profiling
 // (readers, state map, stack maps) so profilers don't need to pass these around.
@@ -189,7 +195,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 			}
 
 			// Skip events without valid stacks
-			if base.Kernstack <= 0 && base.Userstack <= 0 {
+			if !validateStackID(base.Kernstack, base.Userstack) {
 				continue
 			}
 
@@ -287,7 +293,7 @@ func (r *ringBufferContext) aggregateStacksAndEnqueue(
 				continue
 			}
 
-			if stackIDs.KernelStackID > 0 {
+			if stackIDs.KernelStackID >= 0 {
 				if _, ok := kstackCache[stackIDs.KernelStackID]; !ok {
 					kstackCache[stackIDs.KernelStackID] = r.resolveKstackWithFallback(
 						ring,
@@ -295,7 +301,7 @@ func (r *ringBufferContext) aggregateStacksAndEnqueue(
 					)
 				}
 			}
-			if stackIDs.UserStackID > 0 {
+			if stackIDs.UserStackID >= 0 {
 				if _, ok := ustackCache[stackIDs.UserStackID]; !ok {
 					ustackCache[stackIDs.UserStackID] = r.resolveUstackWithFallback(
 						ring,
