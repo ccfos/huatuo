@@ -15,7 +15,8 @@
 package handlers
 
 import (
-	"time"
+	"context"
+	"net"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/server"
@@ -33,14 +34,21 @@ type ServerOptions struct {
 	VersionInfo    *version.Info
 }
 
+// RunningServer exposes the lifecycle of the HTTP listener.
+type RunningServer interface {
+	Shutdown(ctx context.Context) error
+	Done() <-chan struct{}
+	Wait(ctx context.Context) error
+	Addr() net.Addr
+}
+
 // Start starts the HTTP server with all handlers registered.
-func Start(opts ServerOptions) {
+func Start(opts ServerOptions) (RunningServer, error) {
 	s := server.NewServer(&server.Config{
 		EnablePProf:     true,
 		EnableRateLimit: true,
 		RateLimit:       200,
 		RateBurst:       200,
-		EnableRetry:     true,
 		PromReg:         opts.PromReg,
 		VersionInfo:     opts.VersionInfo,
 	})
@@ -54,9 +62,9 @@ func Start(opts ServerOptions) {
 	evtCfg := config.Get().EventsWatch
 	s.MustRegisterRoutes("/v1/events", NewEventsHandler(evtCfg.MaxClients, evtCfg.KeepAliveInterval).Handlers)
 
-	_ = s.Run(&server.Option{
-		Addr:          opts.Addr,
-		RetryMaxTime:  5 * time.Minute,
-		RetryInterval: 1 * time.Minute,
-	})
+	if err := s.Start(opts.Addr); err != nil {
+		return nil, err
+	}
+
+	return s, nil
 }
