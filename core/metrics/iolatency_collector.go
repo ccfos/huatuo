@@ -24,7 +24,11 @@ import (
 )
 
 func (c *iolatencyTracing) Update() ([]*metric.Data, error) {
-	if !c.running.Load() {
+	c.bpfObjectMu.RLock()
+	ready := c.bpfObject != nil
+	c.bpfObjectMu.RUnlock()
+
+	if !ready {
 		return nil, nil
 	}
 

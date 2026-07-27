@@ -74,7 +74,7 @@ type iolatencyTracing struct {
 	running          atomic.Bool
 	latestContainers map[string]*pod.Container
 	bpfObject        bpf.BPF
-	bpfObjectMu      sync.Mutex
+	bpfObjectMu      sync.RWMutex
 }
 
 func (c *iolatencyTracing) Start(ctx context.Context) error {
@@ -82,7 +82,6 @@ func (c *iolatencyTracing) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
-	defer b.Close()
 
 	// commit 1e1a9cecfab3 ("block: force noio scope in blk_mq_freeze_queue")
 	// made blk_mq_freeze_queue a static inline wrapper in v6.15; the
@@ -116,6 +115,15 @@ func (c *iolatencyTracing) Start(ctx context.Context) error {
 	c.running.Store(true)
 	defer c.running.Store(false)
 
+	defer func() {
+		c.bpfObjectMu.Lock()
+		c.bpfObject = nil
+		closeErr := b.Close()
+		c.bpfObjectMu.Unlock()
+
+		_ = closeErr
+	}()
+
 	for {
 		select {
 		case <-childCtx.Done():
@@ -129,8 +137,12 @@ func (c *iolatencyTracing) Start(ctx context.Context) error {
 }
 
 func (c *iolatencyTracing) dumpBlkdiskLatency() ([]BlkDiskEntry, error) {
-	c.bpfObjectMu.Lock()
-	defer c.bpfObjectMu.Unlock()
+	c.bpfObjectMu.RLock()
+	defer c.bpfObjectMu.RUnlock()
+
+	if c.bpfObject == nil {
+		return nil, nil
+	}
 
 	var latencyData []BlkDiskEntry
 
@@ -154,8 +166,12 @@ func (c *iolatencyTracing) dumpBlkdiskLatency() ([]BlkDiskEntry, error) {
 }
 
 func (c *iolatencyTracing) dumpContainerLatency() ([]BlkgqEntry, error) {
-	c.bpfObjectMu.Lock()
-	defer c.bpfObjectMu.Unlock()
+	c.bpfObjectMu.RLock()
+	defer c.bpfObjectMu.RUnlock()
+
+	if c.bpfObject == nil {
+		return nil, nil
+	}
 
 	var latencyData []BlkgqEntry
 
