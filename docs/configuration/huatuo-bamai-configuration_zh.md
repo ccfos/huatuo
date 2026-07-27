@@ -18,13 +18,19 @@ weight: 4
 ### 2. 全局黑名单
 
 ```bash
-# The global blacklist for tracing and metrics
-BlackList = ["netdev_hw", "metax_gpu"]
+# Global tracing and metrics configuration.
+#
+# - BlackList
+# Global blacklist for tracing and metrics.
+#
+BlackList = ["netdev_hw", "metax_gpu", "ascend_npu"]
 ```
 
 - **BlackList**：全局追踪与指标黑名单。 
 
-  用于排除特定模块或追踪和指标采集，避免无关噪声或高开销探针。例如 ["netdev_hw", "metax_gpu"]，即全局禁用网络设备硬件层（netdev_hw）和 Metax GPU 相关的追踪与指标。
+  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为
+  `["netdev_hw", "metax_gpu", "ascend_npu"]`，即全局禁用网络设备硬件层
+  （netdev_hw）、Metax GPU 和 Ascend NPU 相关的追踪与指标。
 
   **说明**：添加黑名单项可有效降低资源消耗，尤其在特定硬件环境中；支持数组格式，可根据实际业务扩展。
 
@@ -32,19 +38,18 @@ BlackList = ["netdev_hw", "metax_gpu"]
 
 ```bash
 # Log Configuration
-#
-# - Level
-# The log level for huatuo-bamai: Debug, Info, Warn, Error, Panic.
-# Default: Info
-#
-# - File
-# Store logs to where the logging file is. If it is empty, don't write log
-# to any file.
-# Default: empty
-#
 [Log]
-	# Level = "Info"
-	# File = ""
+    # - Level
+    # The log level for huatuo-bamai: Debug, Info, Warn, Error, Panic.
+    # Default: Info
+    #
+    # - File
+    # Store logs to where the logging file is. If it is empty, don't write log
+    # to any file.
+    # Default: empty
+    #
+    # Level = "Info"
+    # File = ""
 ```
 
 - **Level**：日志级别。 
@@ -62,7 +67,20 @@ BlackList = ["netdev_hw", "metax_gpu"]
 ### 4. 运行时资源限制
 
 ```bash
+# Runtime limits for the huatuo-bamai process.
 [Runtime]
+    # - StartupCPULimitCores
+    # CPU limit during startup, in cores.
+    # Default: 0.5
+    #
+    # - CPULimitCores
+    # CPU limit after startup, in cores.
+    # Default: 2.0
+    #
+    # - MemoryLimitMiB
+    # Memory limit in MiB.
+    # Default: 2048
+    #
     # StartupCPULimitCores = 0.5
     # CPULimitCores = 2.0
     # MemoryLimitMiB = 2048
@@ -77,12 +95,36 @@ BlackList = ["netdev_hw", "metax_gpu"]
 ### 5. HTTP 服务与任务
 
 ```toml
+# HTTP server configuration.
 [HTTPServer]
+    # - ListenAddress
+    # Listen address in "host:port" form.
+    # Default: ":19704"
+    #
+    # - MaxEventStreamClients
+    # Maximum number of concurrent clients allowed to hold an open
+    # /v1/events/watch SSE connection. Once the limit is reached, new requests
+    # are rejected with HTTP 429 until an existing client disconnects.
+    # Default: 100
+    #
+    # - EventStreamKeepAliveIntervalSeconds
+    # Interval in seconds at which the server sends an SSE comment ping to each
+    # connected client. The ping keeps the connection alive through load
+    # balancers and proxies that would otherwise time out idle connections. If
+    # writing the ping fails three consecutive times, the server closes the
+    # connection.
+    # Default: 30
+    #
     # ListenAddress = ":19704"
     # MaxEventStreamClients = 100
     # EventStreamKeepAliveIntervalSeconds = 30
 
+# Locally running tracing tasks.
 [Tasks]
+    # - MaxConcurrent
+    # Maximum number of concurrent tasks.
+    # Default: 10
+    #
     # MaxConcurrent = 10
 ```
 
@@ -587,8 +629,13 @@ BlackList = ["netdev_hw", "metax_gpu"]
 #### 7.6 已知问题过滤（IssuesList）
 
 ```bash
-# IssuesList for known issue filtering in autotracing
-IssuesList = []
+# Autotracing configuration.
+#
+# - IssuesList
+# Known issue filters for autotracing.
+#
+[AutoTracing]
+    IssuesList = []
 ```
 
 - **IssuesList**：已知问题过滤器。格式 `[["问题名称", "正则"], ...]`。采集到的堆栈匹配正则时标记为对应问题名称，默认 `[]`。当前用于 dload 追踪。
@@ -769,8 +816,13 @@ IssuesList = []
 #### 8.8 已知问题过滤（IssuesList）
 
 ```bash
-# IssuesList for known issue filtering in event tracing
-IssuesList = []
+# Linux kernel event tracing configuration.
+#
+# - IssuesList
+# Known issue filters for event tracing.
+#
+[EventTracing]
+    IssuesList = []
 ```
 
 - **IssuesList**：已知问题过滤器。格式和用法同 AutoTracing 的 `IssuesList`。匹配事件上下文，标记为对应问题名称，默认 `[]`。

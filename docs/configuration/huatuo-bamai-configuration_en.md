@@ -18,28 +18,35 @@ The configuration file uses **TOML** format and includes multiple sections such 
 ### 2. Global Blacklist
 
 ```bash
-# Global blacklist for tracing and metrics
-BlackList = ["netdev_hw", "metax_gpu"]
+# Global tracing and metrics configuration.
+#
+# - BlackList
+# Global blacklist for tracing and metrics.
+#
+BlackList = ["netdev_hw", "metax_gpu", "ascend_npu"]
 ```
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
-  Modules or hardware to exclude from tracing and metric collection. Default: `["netdev_hw", "metax_gpu"]`, which disables tracing and metrics for the network device hardware layer and Metax GPU. Supports arrays, extend as needed.
+  Modules or hardware to exclude from tracing and metric collection. Default:
+  `["netdev_hw", "metax_gpu", "ascend_npu"]`, which disables tracing and
+  metrics for the network device hardware layer, Metax GPU, and Ascend NPU.
+  Supports arrays; extend as needed.
 
 ### 3. Logging
 
 ```bash
 # Log Configuration
-#
-# - Level
-# Log level: Debug, Info, Warn, Error, Panic.
-# Default: Info
-#
-# - File
-# Log file path. If empty, logs go to stdout.
-# Default: empty
-#
 [Log]
+    # - Level
+    # The log level for huatuo-bamai: Debug, Info, Warn, Error, Panic.
+    # Default: Info
+    #
+    # - File
+    # Store logs to where the logging file is. If it is empty, don't write log
+    # to any file.
+    # Default: empty
+    #
     # Level = "Info"
     # File = ""
 ```
@@ -57,7 +64,20 @@ BlackList = ["netdev_hw", "metax_gpu"]
 ### 4. Runtime Resource Limits
 
 ```bash
+# Runtime limits for the huatuo-bamai process.
 [Runtime]
+    # - StartupCPULimitCores
+    # CPU limit during startup, in cores.
+    # Default: 0.5
+    #
+    # - CPULimitCores
+    # CPU limit after startup, in cores.
+    # Default: 2.0
+    #
+    # - MemoryLimitMiB
+    # Memory limit in MiB.
+    # Default: 2048
+    #
     # StartupCPULimitCores = 0.5
     # CPULimitCores = 2.0
     # MemoryLimitMiB = 2048
@@ -74,12 +94,36 @@ to bytes only when the cgroup limit is applied.
 ### 5. HTTP Server and Tasks
 
 ```toml
+# HTTP server configuration.
 [HTTPServer]
+    # - ListenAddress
+    # Listen address in "host:port" form.
+    # Default: ":19704"
+    #
+    # - MaxEventStreamClients
+    # Maximum number of concurrent clients allowed to hold an open
+    # /v1/events/watch SSE connection. Once the limit is reached, new requests
+    # are rejected with HTTP 429 until an existing client disconnects.
+    # Default: 100
+    #
+    # - EventStreamKeepAliveIntervalSeconds
+    # Interval in seconds at which the server sends an SSE comment ping to each
+    # connected client. The ping keeps the connection alive through load
+    # balancers and proxies that would otherwise time out idle connections. If
+    # writing the ping fails three consecutive times, the server closes the
+    # connection.
+    # Default: 30
+    #
     # ListenAddress = ":19704"
     # MaxEventStreamClients = 100
     # EventStreamKeepAliveIntervalSeconds = 30
 
+# Locally running tracing tasks.
 [Tasks]
+    # - MaxConcurrent
+    # Maximum number of concurrent tasks.
+    # Default: 10
+    #
     # MaxConcurrent = 10
 ```
 
@@ -583,8 +627,13 @@ This module detects sudden memory usage spikes on the host and automatically cap
 #### 7.6 Known Issue Filtering (IssuesList)
 
 ```bash
-# IssuesList for known issue filtering in autotracing
-IssuesList = []
+# Autotracing configuration.
+#
+# - IssuesList
+# Known issue filters for autotracing.
+#
+[AutoTracing]
+    IssuesList = []
 ```
 
 - **IssuesList**: Known issue filter. Format: `[["name", "regex"], ...]`. When a collected stack trace matches the regex, it is labeled with the issue name. Default `[]`.
@@ -769,8 +818,13 @@ This section is responsible for capturing key kernel events and monitoring laten
 #### 8.8 Known Issue Filtering (IssuesList)
 
 ```bash
-# IssuesList for known issue filtering in event tracing
-IssuesList = []
+# Linux kernel event tracing configuration.
+#
+# - IssuesList
+# Known issue filters for event tracing.
+#
+[EventTracing]
+    IssuesList = []
 ```
 
 - **IssuesList**: Known issue filter. Same format and usage as AutoTracing `IssuesList`. Matches event titles against regex patterns, labeling them with the issue name. Default `[]`.

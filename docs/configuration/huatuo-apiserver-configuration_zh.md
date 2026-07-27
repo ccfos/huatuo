@@ -15,10 +15,24 @@ weight: 5
 ### 2. 日志与运行时资源限制
 
 ```toml
+# Log Configuration
 [Log]
+    # - Level
+    # The log level for huatuo-apiserver: Debug, Info, Warn, Error, Panic.
+    # Default: Info
+    #
     # Level = "Info"
 
+# Runtime limits for the huatuo-apiserver process.
 [Runtime]
+    # - CPULimitCores
+    # CPU limit in cores.
+    # Default: 20
+    #
+    # - MemoryLimitMiB
+    # Memory limit in MiB.
+    # Default: 4096
+    #
     # CPULimitCores = 20
     # MemoryLimitMiB = 4096
 ```
@@ -33,12 +47,26 @@ weight: 5
 ### 3. HTTP 服务
 
 ```toml
+# HTTP server configuration.
 [APIServer]
+    # - ListenAddress
+    # Listen address in "host:port" form.
+    # Default: ":12740"
+    #
     # ListenAddress = ":12740"
 
-[APIServer.RateLimit]
-    # RequestsPerSecond = 200
-    # Burst             = 200
+    # Request rate limiting.
+    [APIServer.RateLimit]
+        # - RequestsPerSecond
+        # Maximum process-wide request rate per second.
+        # Default: 200
+        #
+        # - Burst
+        # Maximum process-wide request burst.
+        # Default: 200
+        #
+        # RequestsPerSecond = 200
+        # Burst = 200
 ```
 
 `ListenAddress` 使用 `host:port` 格式，主机为空表示监听所有网络接口。
@@ -48,18 +76,58 @@ weight: 5
 ### 4. 任务与 Agent 通信
 
 ```toml
+# Job persistence.
 [Jobs]
+    # - StoreDSN
+    # SQLite DSN. Relative paths are resolved from this file's directory.
+    # Default: "jobs.db"
+    #
     # StoreDSN = "jobs.db"
 
-[Jobs.Profiling]
-    # MaxConcurrentPerHost = 3
-    # MaxConcurrent        = 500
+    # Profiling and tracing retain independent quotas because their resource
+    # costs and expected concurrency differ.
+    [Jobs.Profiling]
+        # - MaxConcurrentPerHost
+        # Maximum concurrent profiling jobs on one host.
+        # Default: 3
+        #
+        # - MaxConcurrent
+        # Maximum concurrent profiling jobs across all hosts.
+        # Default: 500
+        #
+        # MaxConcurrentPerHost = 3
+        # MaxConcurrent = 500
 
-[Jobs.Tracing]
-    # MaxConcurrentPerHost = 5
-    # MaxConcurrent        = 1000
+    [Jobs.Tracing]
+        # - MaxConcurrentPerHost
+        # Maximum concurrent tracing jobs on one host.
+        # Default: 5
+        #
+        # - MaxConcurrent
+        # Maximum concurrent tracing jobs across all hosts.
+        # Default: 1000
+        #
+        # MaxConcurrentPerHost = 5
+        # MaxConcurrent = 1000
 
+# huatuo-bamai Agent HTTP client configuration.
 [Agent]
+    # - HTTPPort
+    # Agent HTTP server port.
+    # Default: 19704
+    #
+    # - RequestTimeoutSeconds
+    # Timeout in seconds for one Agent HTTP request.
+    # Default: 10
+    #
+    # - StatusPollingIntervalSeconds
+    # Interval in seconds between job status requests.
+    # Default: 5
+    #
+    # - MaxConsecutiveStatusPollingErrors
+    # Maximum consecutive status request errors before a job fails.
+    # Default: 3
+    #
     # HTTPPort = 19704
     # RequestTimeoutSeconds = 10
     # StatusPollingIntervalSeconds = 5
@@ -81,7 +149,24 @@ API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监
 ### 5. Elasticsearch/OpenSearch
 
 ```toml
+# Optional Elasticsearch/OpenSearch backend for querying profiling data.
 [Elasticsearch]
+    # Address, Username, and Password must be configured together to enable
+    # this backend.
+    #
+    # - Address
+    # Elasticsearch or OpenSearch HTTP address.
+    #
+    # - Username
+    # Elasticsearch or OpenSearch username.
+    #
+    # - Password
+    # Elasticsearch or OpenSearch password.
+    #
+    # - Index
+    # Index containing huatuo-bamai profiling data.
+    # Default: "huatuo_bamai"
+    #
     # Address = "https://elasticsearch.example.com:9200"
     # Username = "huatuo-apiserver"
     # Password = "REPLACE_WITH_STRONG_PASSWORD"
@@ -95,20 +180,36 @@ API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监
 ### 6. 认证与授权
 
 ```toml
-[[Auth.Users]]
-    ID = "administrator"
-    BearerToken = "REPLACE_WITH_RANDOM_HEX"
-    Admin = true
-
-[[Auth.Users]]
-    ID = "huatuo-front"
-    BearerToken = "REPLACE_WITH_ANOTHER_RANDOM_HEX"
-    Permissions = [
-        "GET /v1/traces",
-        "GET /v1/traces/**",
-        "GET /v1/profiles",
-        "GET /v1/profiles/**",
-    ]
+# Authentication configuration.
+[Auth]
+    # - ID
+    # Stable principal identifier stored with jobs.
+    #
+    # - BearerToken
+    # Secret used only to authenticate requests. IDs and tokens must be unique.
+    #
+    # - Admin
+    # Whether the principal has unrestricted API access.
+    #
+    # - Permissions
+    # API method and path patterns granted to a restricted principal.
+    #
+    # Administrator example:
+    # [[Auth.Users]]
+    #     ID = "administrator"
+    #     BearerToken = "REPLACE_WITH_RANDOM_HEX"
+    #     Admin = true
+    #
+    # Restricted example:
+    # [[Auth.Users]]
+    #     ID = "huatuo-front"
+    #     BearerToken = "REPLACE_WITH_ANOTHER_RANDOM_HEX"
+    #     Permissions = [
+    #         "GET /v1/traces",
+    #         "GET /v1/traces/**",
+    #         "GET /v1/profiles",
+    #         "GET /v1/profiles/**",
+    #     ]
 ```
 
 - `ID` 是必填的稳定主体标识，会随任务持久化。
@@ -126,7 +227,22 @@ API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监
 ### 7. 性能剖析
 
 ```toml
+# Profiling subprocess configuration.
 [Profiling]
+    # - AggregationIntervalSeconds
+    # Aggregation interval in seconds. Must be greater than 0 and less than
+    # 1200.
+    # Default: 10
+    #
+    # - MaxConcurrentProfilerProcesses
+    # Maximum concurrent third-party profiler processes. A value of 0 disables
+    # this process limit.
+    # Default: 10
+    #
+    # - DashboardBaseURL
+    # Optional dashboard base URL. Result URLs are omitted when empty.
+    # Default: empty
+    #
     # AggregationIntervalSeconds = 10
     # MaxConcurrentProfilerProcesses = 10
     # DashboardBaseURL = "https://grafana.example.com/d"
