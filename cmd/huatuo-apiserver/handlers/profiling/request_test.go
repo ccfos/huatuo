@@ -73,6 +73,48 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			},
 		},
 		{
+			name: "Java profiler tool",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:   "memory",
+				Language:        "java",
+				MemoryMode:      "object_usage",
+				BinaryToolPath:  " /opt/async-profiler ",
+				DurationSeconds: 30,
+			},
+			wantType: ProfilingMemory,
+			wantTracerArgs: []string{
+				"-t", "memory",
+				"--memory-mode", "object_usage",
+				"-l", "java",
+				"--tool-path", "/opt/async-profiler",
+				"--duration", "30",
+				"--aggr-interval", "10",
+				"--max-concurrent-procs", "2",
+				"--output-format", "remote",
+				"--output-storage", "/var/run/huatuo-toolstream.sock",
+			},
+		},
+		{
+			name: "Python profiler tool",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:   "cpu",
+				Language:        "python",
+				BinaryToolPath:  "/opt/py-spy",
+				DurationSeconds: 30,
+			},
+			wantType: ProfilingCPU,
+			wantTracerArgs: []string{
+				"-t", "cpu",
+				"-l", "python",
+				"--tool-path", "/opt/py-spy",
+				"--duration", "30",
+				"--aggr-interval", "10",
+				"--max-concurrent-procs", "2",
+				"--output-format", "remote",
+				"--output-storage", "/var/run/huatuo-toolstream.sock",
+			},
+		},
+		{
 			name: "unsupported type",
 			req: v1.CreateProfilingJobRequest{
 				ProfilingType:   "offcpu",
@@ -88,6 +130,35 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 				DurationSeconds: 19,
 			},
 			wantErr: "duration_seconds must cover at least two profiling intervals",
+		},
+		{
+			name: "Java tool required",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:   "cpu",
+				Language:        "java",
+				DurationSeconds: 30,
+			},
+			wantErr: `language "java" requires binary_tool_path`,
+		},
+		{
+			name: "Python tool required",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:   "cpu",
+				Language:        "python",
+				BinaryToolPath:  "  ",
+				DurationSeconds: 30,
+			},
+			wantErr: `language "python" requires binary_tool_path`,
+		},
+		{
+			name: "native tool rejected",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:   "cpu",
+				Language:        "go",
+				BinaryToolPath:  "/opt/profiler",
+				DurationSeconds: 30,
+			},
+			wantErr: "binary_tool_path is supported only by Java and Python profiling",
 		},
 	}
 

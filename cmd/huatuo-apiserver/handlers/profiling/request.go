@@ -46,6 +46,7 @@ type patchProfilingJobRequest struct {
 
 type profilingJobPrivateData struct {
 	BinaryMatchPath string `json:"binary_match_path"`
+	BinaryToolPath  string `json:"binary_tool_path,omitempty"`
 	DurationSeconds int    `json:"duration_seconds"`
 	Language        string `json:"language"`
 	MemoryMode      string `json:"memory_mode"`
@@ -128,6 +129,9 @@ func buildProfilingTracerArgs(
 			)
 		}
 		taskReq.TracerArgs = append(taskReq.TracerArgs, "-l", string(language))
+		if err := appendBinaryToolPath(taskReq, req.BinaryToolPath, language); err != nil {
+			return "", err
+		}
 		return job.JobTypeProfilingCPU, nil
 	case string(profiling.TypeMemory):
 		language, err := profiling.ParseLanguage(req.Language)
@@ -143,15 +147,43 @@ func buildProfilingTracerArgs(
 			"--memory-mode", string(mode),
 			"-l", string(language),
 		}
+		if err := appendBinaryToolPath(taskReq, req.BinaryToolPath, language); err != nil {
+			return "", err
+		}
 		return job.JobTypeProfilingMemory, nil
 	default:
 		return "", fmt.Errorf("unsupported profiling type %q", req.ProfilingType)
 	}
 }
 
+func appendBinaryToolPath(
+	taskReq *job.AgentTaskRequest,
+	binaryToolPath string,
+	language profiling.Language,
+) error {
+	implementation, ok := profiling.ImplementationFor(language)
+	if !ok {
+		return fmt.Errorf("profiling implementation not found for %q", language)
+	}
+	binaryToolPath = strings.TrimSpace(binaryToolPath)
+	if implementation == profiling.ImplementationNative {
+		if binaryToolPath != "" {
+			return errors.New("binary_tool_path is supported only by Java and Python profiling")
+		}
+		return nil
+	}
+	if binaryToolPath == "" {
+		return fmt.Errorf("language %q requires binary_tool_path", language)
+	}
+
+	taskReq.TracerArgs = append(taskReq.TracerArgs, "--tool-path", binaryToolPath)
+	return nil
+}
+
 func newProfilingPrivateData(req *v1.CreateProfilingJobRequest) (json.RawMessage, error) {
 	data, err := json.Marshal(profilingJobPrivateData{
 		BinaryMatchPath: req.BinaryMatchPath,
+		BinaryToolPath:  strings.TrimSpace(req.BinaryToolPath),
 		DurationSeconds: req.DurationSeconds,
 		Language:        req.Language,
 		MemoryMode:      req.MemoryMode,

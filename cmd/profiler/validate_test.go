@@ -292,6 +292,13 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			wantError: "--binary-match-path is not supported by native profilers",
 		},
 		{
+			name:      "native tool path",
+			language:  "go",
+			typ:       "cpu",
+			args:      []string{"--tool-path", "/opt/profiler"},
+			wantError: "--tool-path is supported only by Java and Python profiling",
+		},
+		{
 			name:      "Python physical memory probability",
 			language:  "python",
 			typ:       "cpu",

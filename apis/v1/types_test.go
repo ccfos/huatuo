@@ -31,12 +31,14 @@ func TestCreateJobRequestJSONFields(t *testing.T) {
 			request: CreateProfilingJobRequest{
 				ProfilingType:   "cpu",
 				BinaryMatchPath: "/usr/bin/example",
+				BinaryToolPath:  "/opt/async-profiler",
 				Language:        "go",
 				ContainerID:     "container-id",
 			},
 			fields: []string{
 				"type",
 				"binary_match_path",
+				"binary_tool_path",
 				"language",
 				"memory_mode",
 				"duration_seconds",
@@ -114,10 +116,12 @@ func TestStandardizedJobJSONFields(t *testing.T) {
 			value: ProfilingJob{
 				ContainerID:     "container-2026",
 				BinaryMatchPath: "/usr/bin/example",
+				BinaryToolPath:  "/opt/async-profiler",
 			},
 			fields: []string{
 				"container_id",
 				"binary_match_path",
+				"binary_tool_path",
 				"language",
 			},
 		},
@@ -163,6 +167,7 @@ func TestProfilingJobJSONFields(t *testing.T) {
 		ContainerID:     "container-2026",
 		MemoryMode:      "object_alloc",
 		BinaryMatchPath: "/usr/bin/example",
+		BinaryToolPath:  "/opt/async-profiler",
 	})
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
@@ -181,6 +186,7 @@ func TestProfilingJobJSONFields(t *testing.T) {
 		"memory_mode",
 		"language",
 		"binary_match_path",
+		"binary_tool_path",
 		"status",
 		"duration_seconds",
 		"created_at",
