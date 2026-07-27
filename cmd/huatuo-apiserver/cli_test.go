@@ -96,7 +96,8 @@ func TestConfigureRuntimeLogDebugOverridesConfigLevel(t *testing.T) {
 	configDir := t.TempDir()
 	configFile := "apiserver.conf"
 	contents := []byte(`
-LogLevel = "Error"
+[Log]
+Level = "Error"
 
 [[Auth.Users]]
 ID = "test-user"

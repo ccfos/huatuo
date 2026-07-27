@@ -26,6 +26,11 @@ import (
 
 const maxAggregationIntervalSeconds = 1200
 
+// LogConfig controls process logging.
+type LogConfig struct {
+	Level string
+}
+
 // ProfilingConfig controls profiler subprocess execution.
 type ProfilingConfig struct {
 	AggregationIntervalSeconds     int
@@ -87,8 +92,7 @@ type AgentConfig struct {
 
 // Config contains API server configuration.
 type Config struct {
-	LogLevel string
-
+	Log           LogConfig
 	Runtime       RuntimeConfig
 	APIServer     APIServerConfig
 	Auth          AuthConfig
@@ -100,7 +104,9 @@ type Config struct {
 
 func defaultConfig() Config {
 	return Config{
-		LogLevel: "Info",
+		Log: LogConfig{
+			Level: "Info",
+		},
 		Runtime: RuntimeConfig{
 			CPULimitCores:  20,
 			MemoryLimitMiB: 4096,
@@ -141,7 +147,7 @@ func defaultConfig() Config {
 
 // Validate rejects invalid or incomplete API server configuration.
 func (c *Config) Validate() error {
-	if err := validateLogLevel(c.LogLevel); err != nil {
+	if err := c.Log.Validate(); err != nil {
 		return err
 	}
 	if err := c.Runtime.Validate(); err != nil {
@@ -328,12 +334,13 @@ func (c AgentConfig) Validate() error {
 	return nil
 }
 
-func validateLogLevel(level string) error {
-	switch strings.ToLower(level) {
+// Validate rejects unsupported log levels.
+func (c LogConfig) Validate() error {
+	switch strings.ToLower(c.Level) {
 	case "debug", "info", "warn", "error", "panic":
 		return nil
 	default:
-		return fmt.Errorf("unsupported log level %q", level)
+		return fmt.Errorf("unsupported log level %q", c.Level)
 	}
 }
 

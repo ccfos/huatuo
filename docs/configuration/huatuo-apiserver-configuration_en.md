@@ -16,19 +16,20 @@ defaults shown below.
 ### 2. Logging and Runtime Limits
 
 ```toml
-# LogLevel = "Info"
+[Log]
+    # Level = "Info"
 
 [Runtime]
     # CPULimitCores = 20
     # MemoryLimitMiB = 4096
 ```
 
-- `LogLevel` supports `Debug`, `Info`, `Warn`, `Error`, and `Panic`.
+- `Log.Level` supports `Debug`, `Info`, `Warn`, `Error`, and `Panic`.
 - `CPULimitCores` limits the API server process in CPU cores.
 - `MemoryLimitMiB` limits the API server process in MiB.
 
 All resource limits must be greater than zero. `--log-debug` overrides
-`LogLevel`.
+`Log.Level`.
 
 ### 3. HTTP Server
 

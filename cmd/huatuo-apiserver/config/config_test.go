@@ -29,6 +29,9 @@ BearerToken = "secret"
 Admin = true
 `)
 
+	if cfg.Log.Level != "Info" {
+		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "Info")
+	}
 	if cfg.Runtime.CPULimitCores != 20 ||
 		cfg.Runtime.MemoryLimitMiB != 4096 {
 		t.Errorf("Runtime = %+v, want default limits", cfg.Runtime)
@@ -66,7 +69,8 @@ Admin = true
 
 func TestLoadFileCanonicalOverrides(t *testing.T) {
 	cfg := loadTestConfig(t, `
-LogLevel = "Warn"
+[Log]
+Level = "Warn"
 
 [Runtime]
 CPULimitCores = 8
@@ -116,6 +120,9 @@ Permissions = ["GET /v1/profiling/**"]
 	if cfg.Runtime.MemoryLimitMiB != 2048 {
 		t.Errorf("MemoryLimitMiB = %d, want 2048", cfg.Runtime.MemoryLimitMiB)
 	}
+	if cfg.Log.Level != "Warn" {
+		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "Warn")
+	}
 	if cfg.APIServer.RateLimit != (RateLimitConfig{20, 30}) {
 		t.Errorf("RateLimit = %+v, want overrides", cfg.APIServer.RateLimit)
 	}
@@ -143,6 +150,17 @@ func TestLoadFileRejectsLegacyKeys(t *testing.T) {
 		name     string
 		contents string
 	}{
+		{
+			name: "root log level",
+			contents: `
+LogLevel = "Info"
+
+[[Auth.Users]]
+ID = "admin"
+BearerToken = "secret"
+Admin = true
+`,
+		},
 		{
 			name: "task config",
 			contents: `
@@ -304,6 +322,13 @@ func TestConfigValidation(t *testing.T) {
 		mutate  func(*Config)
 		wantErr string
 	}{
+		{
+			name: "invalid log level",
+			mutate: func(cfg *Config) {
+				cfg.Log.Level = "verbose"
+			},
+			wantErr: "unsupported log level",
+		},
 		{
 			name: "invalid CPU limit",
 			mutate: func(cfg *Config) {

@@ -15,18 +15,20 @@ weight: 5
 ### 2. 日志与运行时资源限制
 
 ```toml
-# LogLevel = "Info"
+[Log]
+    # Level = "Info"
 
 [Runtime]
     # CPULimitCores = 20
     # MemoryLimitMiB = 4096
 ```
 
-- `LogLevel` 支持 `Debug`、`Info`、`Warn`、`Error` 和 `Panic`。
+- `Log.Level` 支持 `Debug`、`Info`、`Warn`、`Error` 和 `Panic`。
 - `CPULimitCores` 以 CPU 核数限制 API 服务进程。
 - `MemoryLimitMiB` 以 MiB 限制 API 服务进程。
 
-资源限制必须大于零。命令行参数 `--log-debug` 的优先级高于 `LogLevel`。
+资源限制必须大于零。命令行参数 `--log-debug` 的优先级高于
+`Log.Level`。
 
 ### 3. HTTP 服务
 

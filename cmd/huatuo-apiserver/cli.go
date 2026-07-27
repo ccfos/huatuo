@@ -94,7 +94,7 @@ func (o *Options) AddFlags(app *cli.App) {
 		},
 		&cli.BoolFlag{
 			Name:  cliFlagLogDebug,
-			Usage: "force debug-level logging; overrides LogLevel from config file",
+			Usage: "force debug-level logging; overrides Log.Level from config file",
 		},
 	}
 }
@@ -142,8 +142,8 @@ func configureRuntime(opts *Options) error {
 	case opts.LogDebug:
 		log.SetLevel("Debug")
 		log.WithField("level", log.GetLevel()).Info("configured log level from --log-debug")
-	case cfg.LogLevel != "":
-		level := cfg.LogLevel
+	case cfg.Log.Level != "":
+		level := cfg.Log.Level
 		log.SetLevel(level)
 		log.WithField("level", log.GetLevel()).Info("configured log level")
 	}
