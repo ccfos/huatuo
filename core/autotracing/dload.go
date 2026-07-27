@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package autotracing
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -41,25 +42,31 @@ func init() {
 }
 
 func newDload() (*tracing.EventTracingAttr, error) {
+	tracer, err := newDloadTracing(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	return &tracing.EventTracingAttr{
-		TracingData: &dloadTracing{},
+		TracingData: tracer,
 		Interval:    30,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
 
 type containerDloadInfo struct {
-	path      string
-	name      string
-	container *pod.Container
-	avgnrun   [2]uint64
-	load      [2]float64
-	avgnuni   [2]uint64
-	loaduni   [2]float64
-	alive     bool
-	traceTime time.Time
+	cpuPath     string
+	cgroupName  string
+	container   *pod.Container
+	runnableAvg [2]uint64
+	loadAvg     [2]float64
+	dLoadAvg    [2]uint64
+	dLoad       [2]float64
+	isSeen      bool
+	lastTraceAt time.Time
 }
 
+// DloadTracingData contains the load and task stacks captured by dload tracing.
 type DloadTracingData struct {
 	Threshold         uint64  `json:"threshold"`
 	NrSleeping        uint64  `json:"nr_sleeping"`
@@ -74,125 +81,162 @@ type DloadTracingData struct {
 }
 
 const (
-	taskHostType   = 1
-	taskCgroupType = 2
+	taskScopeHost taskScope = iota + 1
+	taskScopeCgroup
 )
 
-type containersDloadMap map[string]*containerDloadInfo
+type taskScope int
 
-// containersDloads is only accessed from the single dloadTracing.Start goroutine.
-var containersDloads = make(containersDloadMap)
+type dloadTracing struct {
+	containers map[string]*containerDloadInfo
+	interval   time.Duration
+	threshold  dloadThreshold
+}
 
-func updateContainersDload() error {
-	containers, err := pod.Containers()
-	if err != nil {
-		return err
+type dloadThreshold struct {
+	load             int64
+	minTraceInterval time.Duration
+	isDebug          bool
+}
+
+func newDloadTracing(config *Config) (*dloadTracing, error) {
+	if config.Dload.Interval <= 0 {
+		return nil, errors.New("dload sampling interval must be positive")
+	}
+	if config.Dload.IntervalTracing < 0 {
+		return nil, errors.New("dload tracing interval must be non-negative")
+	}
+	if config.Dload.ThresholdLoad < 0 {
+		return nil, errors.New("dload threshold must be non-negative")
 	}
 
+	return &dloadTracing{
+		containers: make(map[string]*containerDloadInfo),
+		interval:   time.Duration(config.Dload.Interval) * time.Second,
+		threshold: dloadThreshold{
+			load:             config.Dload.ThresholdLoad,
+			minTraceInterval: time.Duration(config.Dload.IntervalTracing) * time.Second,
+			isDebug:          config.Dload.EnableDebug,
+		},
+	}, nil
+}
+
+func (d *dloadTracing) reconcileContainers(containers map[string]*pod.Container) {
+	for _, info := range d.containers {
+		info.isSeen = false
+	}
 	for _, container := range containers {
-		if _, ok := containersDloads[container.ID]; ok {
-			containersDloads[container.ID].name = container.CgroupPath
-			containersDloads[container.ID].path = paths.Path(subsystem.SubsystemCPU, container.CgroupPath)
-			containersDloads[container.ID].container = container
-			containersDloads[container.ID].alive = true
+		info, ok := d.containers[container.ID]
+		if ok {
+			info.cgroupName = container.CgroupPath
+			info.cpuPath = paths.Path(subsystem.SubsystemCPU, container.CgroupPath)
+			info.container = container
+			info.isSeen = true
 			continue
 		}
 
-		containersDloads[container.ID] = &containerDloadInfo{
-			path:      paths.Path(subsystem.SubsystemCPU, container.CgroupPath),
-			name:      container.CgroupPath,
-			container: container,
-			alive:     true,
+		d.containers[container.ID] = &containerDloadInfo{
+			cpuPath:    paths.Path(subsystem.SubsystemCPU, container.CgroupPath),
+			cgroupName: container.CgroupPath,
+			container:  container,
+			isSeen:     true,
 		}
 	}
-
-	return nil
+	for id, info := range d.containers {
+		if !info.isSeen {
+			delete(d.containers, id)
+		}
+	}
 }
 
-func shouldCareThisLoadEvent(container *containerDloadInfo, threshold *dloadThreshold) bool {
-	nowtime := time.Now()
-	intervalTracing := nowtime.Sub(container.traceTime)
-
-	if int64(intervalTracing.Seconds()) > threshold.intervalTracing {
-		if container.loaduni[0] > float64(threshold.thresh) {
-			container.traceTime = nowtime
-			return true
-		}
-	}
-
-	if threshold.debug {
+func (d *dloadTracing) shouldTrace(container *containerDloadInfo, sampledAt time.Time) bool {
+	if d.threshold.isDebug {
 		return true
 	}
+	if container.dLoad[0] <= float64(d.threshold.load) {
+		return false
+	}
+	if sampledAt.Sub(container.lastTraceAt) < d.threshold.minTraceInterval {
+		return false
+	}
 
-	return false
+	return true
 }
 
-func detectDloadContainer(threshold *dloadThreshold) (*containerDloadInfo, cadvisorV1.LoadStats, error) {
-	empty := cadvisorV1.LoadStats{}
-
+func (d *dloadTracing) selectTraceTarget(
+	sampledAt time.Time,
+) (*containerDloadInfo, cadvisorV1.LoadStats, error) {
 	n, err := netlink.New()
 	if err != nil {
-		return nil, empty, err
+		return nil, cadvisorV1.LoadStats{}, fmt.Errorf("open dload netlink connection: %w", err)
 	}
 	defer n.Stop()
 
-	for id, container := range containersDloads {
-		if !container.alive {
-			delete(containersDloads, id)
-		} else {
-			container.alive = false
-
-			stats, err := n.GetCpuLoad(container.name, container.path)
-			if err != nil {
-				log.Debugf("failed to get %s load, probably the container has been deleted: %s", container.container.Hostname, err)
-				continue
-			}
-
-			updateLoad(container, stats.NrRunning, stats.NrUninterruptible)
-
-			if shouldCareThisLoadEvent(container, threshold) {
-				log.Infof("dload event: Threshold=%0.2f %+v, LoadAvg=%0.2f, DLoadAvg=%0.2f",
-					float64(threshold.thresh), stats, container.load[0], container.loaduni[0])
-				return container, stats, nil
-			}
+	for _, container := range d.containers {
+		stats, err := n.GetCpuLoad(container.cgroupName, container.cpuPath)
+		if err != nil {
+			log.WithError(err).
+				WithField("container_id", container.container.ID).
+				WithField("hostname", container.container.Hostname).
+				Debug("failed to read container cpu load")
+			continue
 		}
+
+		updateLoad(container, stats.NrRunning, stats.NrUninterruptible)
+		if !d.shouldTrace(container, sampledAt) {
+			continue
+		}
+
+		log.WithField("container_id", container.container.ID).
+			WithField("threshold", d.threshold.load).
+			WithField("load_average", container.loadAvg[0]).
+			WithField("dload_average", container.dLoad[0]).
+			Info("dload threshold exceeded")
+		return container, stats, nil
 	}
 
-	return nil, empty, fmt.Errorf("no dload containers")
+	return nil, cadvisorV1.LoadStats{}, nil
 }
 
-func buildAndSaveDloadContainer(thresh *dloadThreshold, container *containerDloadInfo, loadstat cadvisorV1.LoadStats) error {
-	cgrpPath := container.name
+func (d *dloadTracing) buildAndSave(
+	container *containerDloadInfo,
+	loadStats cadvisorV1.LoadStats,
+) error {
+	cgroupPath := container.cgroupName
 	containerID := container.container.ID
 
-	stackCgrp, err := dumpUninterruptibleTaskStack(taskCgroupType, cgrpPath, thresh.debug)
+	cgroupStack, err := dumpUninterruptibleTaskStack(
+		taskScopeCgroup,
+		cgroupPath,
+		d.threshold.isDebug,
+	)
 	if err != nil {
-		return err
+		return fmt.Errorf("capture container task stacks: %w", err)
 	}
 
-	if stackCgrp == "" && !thresh.debug {
+	if cgroupStack == "" && !d.threshold.isDebug {
 		return nil
 	}
 
-	stackHost, err := dumpUninterruptibleTaskStack(taskHostType, "", thresh.debug)
+	hostStack, err := dumpUninterruptibleTaskStack(taskScopeHost, "", d.threshold.isDebug)
 	if err != nil {
-		return err
+		return fmt.Errorf("capture host task stacks: %w", err)
 	}
 
 	data := &DloadTracingData{
-		NrSleeping:        loadstat.NrSleeping,
-		NrRunning:         loadstat.NrRunning,
-		NrStopped:         loadstat.NrStopped,
-		NrUninterruptible: loadstat.NrUninterruptible,
-		NrIoWait:          loadstat.NrIoWait,
-		LoadAvg:           container.load[0],
-		DLoadAvg:          container.loaduni[0],
-		Threshold:         uint64(thresh.thresh),
-		Stack:             fmt.Sprintf("%s%s", stackCgrp, stackHost),
+		NrSleeping:        loadStats.NrSleeping,
+		NrRunning:         loadStats.NrRunning,
+		NrStopped:         loadStats.NrStopped,
+		NrUninterruptible: loadStats.NrUninterruptible,
+		NrIoWait:          loadStats.NrIoWait,
+		LoadAvg:           container.loadAvg[0],
+		DLoadAvg:          container.dLoad[0],
+		Threshold:         uint64(d.threshold.load),
+		Stack:             cgroupStack + hostStack,
 	}
 
 	// Check if this is caused by known issues.
-	knownIssue, _ := matcher.Classify(cfg.IssuesList, stackCgrp)
+	knownIssue, _ := matcher.Classify(cfg.IssuesList, cgroupStack)
 	data.KnownIssue = knownIssue
 
 	if err := tracing.Save(&tracing.WriteRequest{
@@ -202,71 +246,59 @@ func buildAndSaveDloadContainer(thresh *dloadThreshold, container *containerDloa
 		TracerData:    data,
 		TracerRunType: tracing.TracerRunTypeAutotracing,
 	}); err != nil {
-		log.Warnf("failed to save tracing data: %v", err)
+		return fmt.Errorf("save dload trace: %w", err)
 	}
 	return nil
 }
 
 const (
-	fShift = 11
-	fixed1 = 1 << fShift
-	exp1   = 1884
-	exp5   = 2014
-	exp15  = 2037
+	loadFractionBits = 11
+	fixedOne         = 1 << loadFractionBits
+	expOneMinute     = 1884
+	expFiveMinutes   = 2014
 )
 
 func calcLoad(load, exp, active uint64) uint64 {
-	var newload uint64
+	newLoad := load*exp + active*(fixedOne-exp)
+	newLoad += 1 << (loadFractionBits - 1)
 
-	newload = load*exp + active*(fixed1-exp)
-	newload += 1 << (fShift - 1)
-
-	return newload / fixed1
+	return newLoad / fixedOne
 }
 
-func calcLoadavg(avgnrun [2]uint64, active uint64) (avgnresult [2]uint64) {
-	if active > 0 {
-		active *= fixed1
-	} else {
-		active = 0
+func calcLoadAvg(previous [2]uint64, active uint64) [2]uint64 {
+	active *= fixedOne
+
+	return [2]uint64{
+		calcLoad(previous[0], expOneMinute, active),
+		calcLoad(previous[1], expFiveMinutes, active),
+	}
+}
+
+func loadInt(load uint64) uint64 {
+	return load >> loadFractionBits
+}
+
+func loadFraction(load uint64) uint64 {
+	return loadInt((load & (fixedOne - 1)) * 100)
+}
+
+func loadAverages(averages [2]uint64, offset uint64, shift int) [2]float64 {
+	loads := [2]uint64{
+		(averages[0] + offset) << shift,
+		(averages[1] + offset) << shift,
 	}
 
-	avgnresult[0] = calcLoad(avgnrun[0], exp1, active)
-	avgnresult[1] = calcLoad(avgnrun[1], exp5, active)
-
-	return avgnresult
-}
-
-func loadInt(x uint64) (r uint64) {
-	r = x >> fShift
-	return r
-}
-
-func loadFrac(x uint64) (r uint64) {
-	r = loadInt((x & (fixed1 - 1)) * 100)
-	return r
-}
-
-func getAvenrun(avgnrun [2]uint64, offset uint64, shift int) (loadavgNew [2]float64) {
-	var loads [2]uint64
-
-	loads[0] = (avgnrun[0] + offset) << shift
-	loads[1] = (avgnrun[1] + offset) << shift
-
-	loadavgNew[0] = float64(loadInt(loads[0])) +
-		float64(loadFrac(loads[0]))/float64(100)
-
-	loadavgNew[1] = float64(loadInt(loads[1])) +
-		float64(loadFrac(loads[1]))/float64(100)
-
-	return loadavgNew
+	return [2]float64{
+		float64(loadInt(loads[0])) + float64(loadFraction(loads[0]))/100,
+		float64(loadInt(loads[1])) + float64(loadFraction(loads[1]))/100,
+	}
 }
 
 func updateLoad(info *containerDloadInfo, nrRunning, nrUninterruptible uint64) {
-	info.avgnrun = calcLoadavg(info.avgnrun, nrRunning+nrUninterruptible)
-	info.load = getAvenrun(info.avgnrun, fixed1/200, 0)
-	info.avgnuni = calcLoadavg(info.avgnuni, nrUninterruptible)
-	info.loaduni = getAvenrun(info.avgnuni, fixed1/200, 0)
+	info.runnableAvg = calcLoadAvg(info.runnableAvg, nrRunning+nrUninterruptible)
+	info.loadAvg = loadAverages(info.runnableAvg, fixedOne/200, 0)
+	info.dLoadAvg = calcLoadAvg(info.dLoadAvg, nrUninterruptible)
+	info.dLoad = loadAverages(info.dLoadAvg, fixedOne/200, 0)
 }
 
 func pidStack(pid int32) string {
@@ -274,42 +306,38 @@ func pidStack(pid int32) string {
 	return string(data)
 }
 
-func cgroupHostTasks(where int, path string) ([]int32, error) {
-	switch where {
-	case taskCgroupType:
+func cgroupHostTasks(scope taskScope, path string) ([]int32, error) {
+	switch scope {
+	case taskScopeCgroup:
 		cgroup, err := cgroups.NewManager()
 		if err != nil {
 			return nil, err
 		}
 
 		return cgroup.Pids(path)
-	case taskHostType:
-		var pidList []int32
-
+	case taskScopeHost:
 		procs, err := procfs.AllProcs()
 		if err != nil {
 			return nil, err
 		}
 
+		pidList := make([]int32, 0, len(procs))
 		for _, p := range procs {
 			pidList = append(pidList, int32(p.PID))
 		}
-		return pidList, err
+		return pidList, nil
 	default:
-		return nil, fmt.Errorf("type not supported")
+		return nil, fmt.Errorf("unsupported task scope %d", scope)
 	}
 }
 
-func dumpUninterruptibleTaskStack(where int, path string, all bool) (string, error) {
-	var appended bool
-
-	stacks := new(bytes.Buffer)
-
-	tasks, err := cgroupHostTasks(where, path)
+func dumpUninterruptibleTaskStack(scope taskScope, path string, all bool) (string, error) {
+	tasks, err := cgroupHostTasks(scope, path)
 	if err != nil {
 		return "", err
 	}
 
+	var stacks bytes.Buffer
 	for _, pid := range tasks {
 		proc, err := process.NewProcess(pid)
 		if err != nil {
@@ -321,76 +349,67 @@ func dumpUninterruptibleTaskStack(where int, path string, all bool) (string, err
 			continue
 		}
 
-		if status == "D" || status == "U" || all {
-			comm, err := proc.Name()
-			if err != nil {
-				continue
-			}
-			stack := pidStack(pid)
-			if stack == "" {
-				continue
-			}
-
-			fmt.Fprintf(stacks, "Comm: %s\tPid: %d\n%s\n", comm, pid, stack)
-			appended = true
+		if status != "D" && status != "U" && !all {
+			continue
 		}
-	}
-
-	if appended {
-		title := "\nstacktrace of D task in cgroup:\n"
-		if where == taskHostType {
-			title = "\nstacktrace of D task in host:\n"
+		comm, err := proc.Name()
+		if err != nil {
+			continue
+		}
+		stack := pidStack(pid)
+		if stack == "" {
+			continue
 		}
 
-		return fmt.Sprintf("%s%s", title, stacks), nil
+		fmt.Fprintf(&stacks, "Comm: %s\tPid: %d\n%s\n", comm, pid, stack)
 	}
 
-	return "", nil
-}
+	if stacks.Len() == 0 {
+		return "", nil
+	}
 
-type dloadTracing struct{}
-
-type dloadThreshold struct {
-	thresh          int64
-	intervalTracing int64
-	debug           bool
+	title := "\nstacktrace of D task in cgroup:\n"
+	if scope == taskScopeHost {
+		title = "\nstacktrace of D task in host:\n"
+	}
+	return title + stacks.String(), nil
 }
 
 // Start detect work, monitor the load of containers.
 // CGROUPSTATS_CMD_GET netlink API only works with cgroup v1.
-func (c *dloadTracing) Start(ctx context.Context) error {
+func (d *dloadTracing) Start(ctx context.Context) error {
 	if cgroups.CgroupMode() != cgroups.Legacy {
-		log.Infof("dload: skipping on cgroup v2 (netlink CGROUPSTATS_CMD_GET requires cgroup v1)")
+		log.Info("skipping dload tracing because cgroup v2 lacks load statistics")
 		<-ctx.Done()
 		return types.ErrExitByCancelCtx
 	}
 
-	interval := cfg.Dload.Interval
-
-	thresh := &dloadThreshold{
-		thresh:          cfg.Dload.ThresholdLoad,
-		intervalTracing: cfg.Dload.IntervalTracing,
-		debug:           cfg.Dload.EnableDebug,
-	}
-
-	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	ticker := time.NewTicker(d.interval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
-		case <-ticker.C:
-			if err := updateContainersDload(); err != nil {
+		case sampledAt := <-ticker.C:
+			containers, err := pod.Containers()
+			if err != nil {
+				return fmt.Errorf("list containers for dload sampling: %w", err)
+			}
+			d.reconcileContainers(containers)
+
+			container, loadStats, err := d.selectTraceTarget(sampledAt)
+			if err != nil {
 				return err
 			}
-
-			container, loadstat, err := detectDloadContainer(thresh)
-			if err != nil {
+			if container == nil {
 				continue
 			}
 
-			_ = buildAndSaveDloadContainer(thresh, container, loadstat)
+			if err := d.buildAndSave(container, loadStats); err != nil {
+				return err
+			}
+			container.lastTraceAt = sampledAt
 		}
 	}
 }
