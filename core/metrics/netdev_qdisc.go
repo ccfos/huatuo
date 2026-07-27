@@ -21,27 +21,16 @@ import (
 	"fmt"
 
 	"huatuo-bamai/internal/matcher"
+	"huatuo-bamai/internal/qdisc"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
-
-	"github.com/ema/qdisc"
 )
 
-type qdiscStats struct {
-	ifaceName  string
-	kind       string
-	bytes      uint64
-	packets    uint32
-	drops      uint32
-	requeues   uint32
-	overlimits uint32
-	qlen       uint32
-	backlog    uint32
+type qdiscCollector struct {
+	get func() ([]qdisc.Info, error)
 }
 
-const tcHMajMask = 0xFFFF0000
-
-type qdiscCollector struct{}
+const metricsPerQdisc = 7
 
 func init() {
 	tracing.RegisterEventTracing("netdev_qdisc", newQdiscCollector)
@@ -49,81 +38,44 @@ func init() {
 
 func newQdiscCollector() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
-		TracingData: &qdiscCollector{},
+		TracingData: &qdiscCollector{get: qdisc.Get},
 		Flag:        tracing.FlagMetric,
 	}, nil
 }
 
-// sum of same level(parent major) for a device, example:
-// <device0> (1+2, 3)
-// 1: qidsc <kind> handle0 parent0
-// 2: qidsc <kind> handle1 parent0
-// 3: qidsc <kind> handle2 parent1
-//
-// <device1> (1, 2+3)
-// 1: qidsc <kind> handle0 parent0
-// 2: qidsc <kind> handle1 parent1
-// 3: qidsc <kind> handle2 parent1
 func (c *qdiscCollector) Update() ([]*metric.Data, error) {
 	f, err := matcher.NewValueMatcher(cfg.Qdisc.DeviceIncluded, cfg.Qdisc.DeviceExcluded)
 	if err != nil {
 		return nil, fmt.Errorf("qdisc device filter: %w", err)
 	}
 
-	allQdisc, err := qdisc.Get()
+	allQdisc, err := c.get()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get qdiscs: %w", err)
 	}
 
-	allQdiscMap := make(map[string]map[uint32]*qdiscStats)
-	for _, q := range allQdisc {
-		if !f.Match(q.IfaceName) || q.Kind == "noqueue" {
+	rootQdiscs := make([]*qdisc.Info, 0)
+	for i := range allQdisc {
+		q := &allQdisc[i]
+		if !f.Match(q.IfaceName) || q.Kind == "noqueue" || q.Parent != 0 {
 			continue
 		}
-
-		parentMaj := (q.Parent & tcHMajMask) >> 16
-		if _, ok := allQdiscMap[q.IfaceName]; !ok {
-			allQdiscMap[q.IfaceName] = make(map[uint32]*qdiscStats)
-		}
-		netQdisc, ok := allQdiscMap[q.IfaceName][parentMaj]
-		if !ok {
-			allQdiscMap[q.IfaceName][parentMaj] = &qdiscStats{
-				ifaceName:  q.IfaceName,
-				kind:       q.Kind,
-				bytes:      q.Bytes,
-				packets:    q.Packets,
-				drops:      q.Drops,
-				requeues:   q.Requeues,
-				overlimits: q.Overlimits,
-				qlen:       q.Qlen,
-				backlog:    q.Backlog,
-			}
-		} else {
-			netQdisc.bytes += q.Bytes
-			netQdisc.packets += q.Packets
-			netQdisc.drops += q.Drops
-			netQdisc.requeues += q.Requeues
-			netQdisc.overlimits += q.Overlimits
-			netQdisc.qlen += q.Qlen
-			netQdisc.backlog += q.Backlog
-		}
+		rootQdiscs = append(rootQdiscs, q)
 	}
 
-	var metrics []*metric.Data
-	for _, netdevQdisc := range allQdiscMap {
-		for _, oneQdisc := range netdevQdisc {
-			tags := map[string]string{"device": oneQdisc.ifaceName, "kind": oneQdisc.kind}
-			metrics = append(
-				metrics,
-				metric.NewCounterData("bytes_total", float64(oneQdisc.bytes), "number of bytes sent.", tags),
-				metric.NewCounterData("packets_total", float64(oneQdisc.packets), "number of packets sent.", tags),
-				metric.NewCounterData("drops_total", float64(oneQdisc.drops), "number of packet drops.", tags),
-				metric.NewCounterData("requeues_total", float64(oneQdisc.requeues), "number of packets dequeued, not transmitted, and requeued.", tags),
-				metric.NewCounterData("overlimits_total", float64(oneQdisc.overlimits), "number of packet overlimits.", tags),
-				metric.NewGaugeData("current_queue_length", float64(oneQdisc.qlen), "number of packets currently in queue to be sent.", tags),
-				metric.NewGaugeData("backlog", float64(oneQdisc.backlog), "number of bytes currently in queue to be sent.", tags),
-			)
-		}
+	metrics := make([]*metric.Data, 0, len(rootQdiscs)*metricsPerQdisc)
+	for _, q := range rootQdiscs {
+		tags := map[string]string{"device": q.IfaceName, "kind": q.Kind}
+		metrics = append(
+			metrics,
+			metric.NewCounterData("bytes_total", float64(q.Bytes), "number of bytes sent.", tags),
+			metric.NewCounterData("packets_total", float64(q.Packets), "number of packets sent.", tags),
+			metric.NewCounterData("drops_total", float64(q.Drops), "number of packet drops.", tags),
+			metric.NewCounterData("requeues_total", float64(q.Requeues), "number of packets dequeued, not transmitted, and requeued.", tags),
+			metric.NewCounterData("overlimits_total", float64(q.Overlimits), "number of packet overlimits.", tags),
+			metric.NewGaugeData("current_queue_length", float64(q.Qlen), "number of packets currently in queue to be sent.", tags),
+			metric.NewGaugeData("backlog", float64(q.Backlog), "number of bytes currently in queue to be sent.", tags),
+		)
 	}
 
 	return metrics, nil
