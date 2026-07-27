@@ -145,18 +145,18 @@ All event records include the following common fields:
 {
     "tracer_name": "cpuidle",
     "tracer_data": {
-        "user": 80,
-        "user_threshold": 75,
-        "deltauser": 48,
-        "deltauser_threshold": 45,
-        "sys": 12,
-        "sys_threshold": 45,
-        "deltasys": 5,
-        "deltasys_threshold": 20,
-        "usage": 92,
-        "usage_threshold": 90,
-        "deltausage": 53,
-        "deltausage_threshold": 55,
+        "user_percent": 80,
+        "user_percent_threshold": 75,
+        "user_percent_delta": 48,
+        "user_percent_delta_threshold": 45,
+        "system_percent": 12,
+        "system_percent_threshold": 45,
+        "system_percent_delta": 5,
+        "system_percent_delta_threshold": 20,
+        "total_percent": 92,
+        "total_percent_threshold": 90,
+        "total_percent_delta": 53,
+        "total_percent_delta_threshold": 55,
         "flamedata": [
             {"level": 0, "value": 1000, "self": 0, "label": "all"},
             {"level": 1, "value": 800, "self": 800, "label": "java/com.example.App.main"}
@@ -167,12 +167,12 @@ All event records include the following common fields:
 
 **Field Descriptions**
 
-- **user / user_threshold**: Container CPU user utilization at trigger time (%) and its threshold
-- **deltauser / deltauser_threshold**: User utilization inter-sample delta (%) and its threshold
-- **sys / sys_threshold**: Container CPU sys utilization at trigger time (%) and its threshold
-- **deltasys / deltasys_threshold**: Sys utilization inter-sample delta (%) and its threshold
-- **usage / usage_threshold**: Container total CPU utilization at trigger time (%) and its threshold
-- **deltausage / deltausage_threshold**: Total utilization inter-sample delta (%) and its threshold
+- **user_percent / user_percent_threshold**: Container CPU user utilization at trigger time (%) and its threshold
+- **user_percent_delta / user_percent_delta_threshold**: User utilization inter-sample delta (%) and its threshold
+- **system_percent / system_percent_threshold**: Container CPU system utilization at trigger time (%) and its threshold
+- **system_percent_delta / system_percent_delta_threshold**: System utilization inter-sample delta (%) and its threshold
+- **total_percent / total_percent_threshold**: Container total CPU utilization at trigger time (%) and its threshold
+- **total_percent_delta / total_percent_delta_threshold**: Total utilization inter-sample delta (%) and its threshold
 - **flamedata**: Container-scoped perf flame graph frame data; field meanings same as `cpusys`
 
 ### 3. dload

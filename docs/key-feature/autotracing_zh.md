@@ -145,18 +145,18 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 {
     "tracer_name": "cpuidle",
     "tracer_data": {
-        "user": 80,
-        "user_threshold": 75,
-        "deltauser": 48,
-        "deltauser_threshold": 45,
-        "sys": 12,
-        "sys_threshold": 45,
-        "deltasys": 5,
-        "deltasys_threshold": 20,
-        "usage": 92,
-        "usage_threshold": 90,
-        "deltausage": 53,
-        "deltausage_threshold": 55,
+        "user_percent": 80,
+        "user_percent_threshold": 75,
+        "user_percent_delta": 48,
+        "user_percent_delta_threshold": 45,
+        "system_percent": 12,
+        "system_percent_threshold": 45,
+        "system_percent_delta": 5,
+        "system_percent_delta_threshold": 20,
+        "total_percent": 92,
+        "total_percent_threshold": 90,
+        "total_percent_delta": 53,
+        "total_percent_delta_threshold": 55,
         "flamedata": [
             {"level": 0, "value": 1000, "self": 0, "label": "all"},
             {"level": 1, "value": 800, "self": 800, "label": "java/com.example.App.main"}
@@ -167,12 +167,12 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 **字段含义解释**
 
-- **user / user_threshold**：触发时容器 CPU user 占用率（%）及其阈值
-- **deltauser / deltauser_threshold**：user 占用率增量（%）及其阈值
-- **sys / sys_threshold**：触发时容器 CPU sys 占用率（%）及其阈值
-- **deltasys / deltasys_threshold**：sys 占用率增量（%）及其阈值
-- **usage / usage_threshold**：触发时容器 CPU 总占用率（%）及其阈值
-- **deltausage / deltausage_threshold**：总占用率增量（%）及其阈值
+- **user_percent / user_percent_threshold**：触发时容器 CPU user 占用率（%）及其阈值
+- **user_percent_delta / user_percent_delta_threshold**：user 占用率增量（%）及其阈值
+- **system_percent / system_percent_threshold**：触发时容器 CPU system 占用率（%）及其阈值
+- **system_percent_delta / system_percent_delta_threshold**：system 占用率增量（%）及其阈值
+- **total_percent / total_percent_threshold**：触发时容器 CPU 总占用率（%）及其阈值
+- **total_percent_delta / total_percent_delta_threshold**：总占用率增量（%）及其阈值
 - **flamedata**：容器级 perf 采样火焰图帧数据，字段含义同 `cpusys`
 
 ### 3. dload
