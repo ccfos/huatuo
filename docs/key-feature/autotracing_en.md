@@ -51,6 +51,7 @@ All events provide default values and work without configuration:
 | `cpusys.sys_threshold` | `45` (%) | Host CPU sys utilization trigger threshold |
 | `cpusys.delta_sys_threshold` | `20` (%) | Host CPU sys utilization delta trigger threshold |
 | `cpusys.interval` | `10` (s) | Detection interval |
+| `cpusys.interval_tracing` | `1800` (s) | Global cooldown period between triggers |
 | `cpusys.run_tracing_tool_timeout` | `10` (s) | perf flame graph collection timeout |
 | `dload.threshold_load` | `5` | Container D-state process load EMA trigger threshold |
 | `dload.interval` | `10` (s) | Detection interval |
@@ -99,7 +100,7 @@ All event records include the following common fields:
 
 ### 1. cpusys
 
-**Description** Periodically reads `/proc/stat` to calculate host CPU sys utilization and the delta between consecutive samples. When sys utilization exceeds the threshold (default 45%) and the delta exceeds its threshold (default 20%), a system-wide perf sampling run is triggered to generate a full-host CPU flame graph.
+**Description** Periodically reads `/proc/stat` to calculate host CPU sys utilization and the delta between consecutive samples. When sys utilization exceeds the threshold (default 45%) and the delta exceeds its threshold (default 20%), a system-wide perf sampling run is triggered to generate a full-host CPU flame graph. A 30-minute global cooldown prevents repeated triggers.
 
 **Storage** Event data is automatically stored in Elasticsearch or a local disk file.
 

@@ -43,25 +43,28 @@ func init() {
 
 func newCPUSys() (*tracing.EventTracingAttr, error) {
 	intervalSeconds := cfg.CPUSys.Interval
+	minTraceIntervalSeconds := cfg.CPUSys.IntervalTracing
 	perfDurationSeconds := cfg.CPUSys.RunTracingToolTimeout
 	threshold := cpuSysThreshold{
 		delta: cfg.CPUSys.DeltaSysThreshold,
 		usage: cfg.CPUSys.SysThreshold,
 	}
-	if err := validateCPUSysConfig(
-		intervalSeconds,
-		perfDurationSeconds,
-		threshold.usage,
-		threshold.delta,
-	); err != nil {
+	if err := validateCPUConfig(cpuTracingConfig{
+		intervalSeconds:         intervalSeconds,
+		minTraceIntervalSeconds: minTraceIntervalSeconds,
+		perfDurationSeconds:     perfDurationSeconds,
+		systemThreshold:         threshold.usage,
+		systemDeltaThreshold:    threshold.delta,
+	}); err != nil {
 		return nil, fmt.Errorf("validate cpu system config: %w", err)
 	}
 
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuSysTracing{
-			interval:     time.Duration(intervalSeconds) * time.Second,
-			perfDuration: time.Duration(perfDurationSeconds) * time.Second,
-			threshold:    threshold,
+			interval:         time.Duration(intervalSeconds) * time.Second,
+			minTraceInterval: time.Duration(minTraceIntervalSeconds) * time.Second,
+			perfDuration:     time.Duration(perfDurationSeconds) * time.Second,
+			threshold:        threshold,
 		},
 		Interval: 20,
 		Flag:     tracing.FlagTracing,
@@ -74,9 +77,11 @@ type cpuUsage struct {
 }
 
 type cpuSysTracing struct {
-	interval     time.Duration
-	perfDuration time.Duration
-	threshold    cpuSysThreshold
+	interval         time.Duration
+	minTraceInterval time.Duration
+	perfDuration     time.Duration
+	threshold        cpuSysThreshold
+	lastTraceAt      time.Time
 }
 
 type cpuSysState struct {
@@ -217,9 +222,15 @@ func (s *cpuSysState) update(usage cpuUsage) bool {
 	return true
 }
 
-func (s cpuSysState) shouldTrace(threshold cpuSysThreshold) bool {
-	return s.systemPercent > threshold.usage &&
-		s.systemPercentDelta > threshold.delta
+func (c *cpuSysTracing) shouldTrace(state cpuSysState, sampledAt time.Time) bool {
+	exceedsThreshold := state.systemPercent > c.threshold.usage &&
+		state.systemPercentDelta > c.threshold.delta
+	if !exceedsThreshold {
+		return false
+	}
+
+	return c.lastTraceAt.IsZero() ||
+		sampledAt.Sub(c.lastTraceAt) >= c.minTraceInterval
 }
 
 func (c *cpuSysTracing) saveCPUSysTrace(
@@ -249,44 +260,6 @@ func (c *cpuSysTracing) saveCPUSysTrace(
 	return nil
 }
 
-func validateCPUSysConfig(
-	intervalSeconds int64,
-	perfDurationSeconds int64,
-	systemThreshold int64,
-	systemDeltaThreshold int64,
-) error {
-	if intervalSeconds <= 0 {
-		return fmt.Errorf("cpu system interval must be positive, got %d", intervalSeconds)
-	}
-	if intervalSeconds > maxTimerDurationSeconds {
-		return fmt.Errorf(
-			"cpu system interval must not exceed %d seconds, got %d",
-			maxTimerDurationSeconds,
-			intervalSeconds,
-		)
-	}
-	if perfDurationSeconds <= 0 {
-		return fmt.Errorf("cpu system perf duration must be positive, got %d", perfDurationSeconds)
-	}
-	if perfDurationSeconds > maxPerfDurationSeconds {
-		return fmt.Errorf(
-			"cpu system perf duration must not exceed %d seconds, got %d",
-			maxPerfDurationSeconds,
-			perfDurationSeconds,
-		)
-	}
-	if systemThreshold < 0 || systemThreshold > 100 {
-		return fmt.Errorf("cpu system threshold must be between 0 and 100, got %d", systemThreshold)
-	}
-	if systemDeltaThreshold < 0 || systemDeltaThreshold > 100 {
-		return fmt.Errorf(
-			"cpu system delta threshold must be between 0 and 100, got %d",
-			systemDeltaThreshold,
-		)
-	}
-	return nil
-}
-
 func (c *cpuSysTracing) Start(ctx context.Context) error {
 	var state cpuSysState
 	initialUsage, err := readCPUUsage()
@@ -302,12 +275,12 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
-		case <-ticker.C:
+		case sampledAt := <-ticker.C:
 			usage, err := readCPUUsage()
 			if err != nil {
 				return err
 			}
-			if !state.update(usage) || !state.shouldTrace(c.threshold) {
+			if !state.update(usage) || !c.shouldTrace(state, sampledAt) {
 				continue
 			}
 
@@ -326,6 +299,7 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 			if err := c.saveCPUSysTrace(traceTime, state, flameData); err != nil {
 				return err
 			}
+			c.lastTraceAt = traceTime
 		}
 	}
 }

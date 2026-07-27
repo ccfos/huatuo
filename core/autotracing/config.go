@@ -61,6 +61,7 @@ type Config struct {
 		SysThreshold          int64 `default:"45"`
 		DeltaSysThreshold     int64 `default:"20"`
 		Interval              int64 `default:"10"`
+		IntervalTracing       int64 `default:"1800"`
 		RunTracingToolTimeout int64 `default:"10"`
 	}
 

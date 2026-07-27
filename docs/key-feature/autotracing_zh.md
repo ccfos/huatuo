@@ -51,6 +51,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 | `cpusys.sys_threshold` | `45`（%） | 物理机 CPU sys 占用率触发阈值 |
 | `cpusys.delta_sys_threshold` | `20`（%） | 物理机 CPU sys 占用率增量触发阈值 |
 | `cpusys.interval` | `10`（秒） | 检测间隔 |
+| `cpusys.interval_tracing` | `1800`（秒） | 全局触发冷却时间 |
 | `cpusys.run_tracing_tool_timeout` | `10`（秒） | perf 火焰图采集超时 |
 | `dload.threshold_load` | `5` | 容器不可中断进程负载 EMA 触发阈值 |
 | `dload.interval` | `10`（秒） | 检测间隔 |
@@ -99,7 +100,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 ### 1. cpusys
 
-**功能描述** 周期性读取 `/proc/stat`，计算物理机 CPU sys 占用率及相邻两次采样的增量。当 sys 占用率超过阈值（默认 45%）且增量超过阈值（默认 20%）时，触发系统级 perf 采样，生成全机 CPU 火焰图数据。
+**功能描述** 周期性读取 `/proc/stat`，计算物理机 CPU sys 占用率及相邻两次采样的增量。当 sys 占用率超过阈值（默认 45%）且增量超过阈值（默认 20%）时，触发系统级 perf 采样，生成全机 CPU 火焰图数据。全局默认冷却 30 分钟，避免重复触发。
 
 **数据存储** 事件数据自动存储至 Elasticsearch 或物理机磁盘文件。
 

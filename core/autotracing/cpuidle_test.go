@@ -102,84 +102,45 @@ func TestValidateCPUIdleConfig(t *testing.T) {
 		delta:   cpuUsageBreakdown[int64]{user: 40, system: 20, total: 50},
 	}
 	tests := []struct {
-		name             string
-		interval         int64
-		minTraceInterval int64
-		perfDuration     int64
-		threshold        cpuIdleThreshold
-		wantError        string
+		name      string
+		config    cpuTracingConfig
+		threshold cpuIdleThreshold
+		wantError string
 	}{
 		{
-			name:             "valid",
-			interval:         10,
-			minTraceInterval: 1800,
-			perfDuration:     10,
-			threshold:        validThreshold,
+			name: "valid",
+			config: cpuTracingConfig{
+				intervalSeconds:         10,
+				minTraceIntervalSeconds: 1800,
+				perfDurationSeconds:     10,
+				systemThreshold:         45,
+				systemDeltaThreshold:    20,
+			},
+			threshold: validThreshold,
 		},
 		{
-			name:             "zero interval",
-			minTraceInterval: 1800,
-			perfDuration:     10,
-			threshold:        validThreshold,
-			wantError:        "interval must be positive",
-		},
-		{
-			name:             "interval overflow",
-			interval:         maxTimerDurationSeconds + 1,
-			minTraceInterval: 1800,
-			perfDuration:     10,
-			threshold:        validThreshold,
-			wantError:        "interval must not exceed",
-		},
-		{
-			name:         "zero minimum trace interval",
-			interval:     10,
-			perfDuration: 10,
-			threshold:    validThreshold,
-			wantError:    "minimum trace interval must be positive",
-		},
-		{
-			name:             "minimum trace interval overflow",
-			interval:         10,
-			minTraceInterval: maxTimerDurationSeconds + 1,
-			perfDuration:     10,
-			threshold:        validThreshold,
-			wantError:        "minimum trace interval must not exceed",
-		},
-		{
-			name:             "zero perf duration",
-			interval:         10,
-			minTraceInterval: 1800,
-			threshold:        validThreshold,
-			wantError:        "perf duration must be positive",
-		},
-		{
-			name:             "perf duration overflow",
-			interval:         10,
-			minTraceInterval: 1800,
-			perfDuration:     maxPerfDurationSeconds + 1,
-			threshold:        validThreshold,
-			wantError:        "perf duration must not exceed",
-		},
-		{
-			name:             "negative user threshold",
-			interval:         10,
-			minTraceInterval: 1800,
-			perfDuration:     10,
+			name: "negative user threshold",
+			config: cpuTracingConfig{
+				intervalSeconds:         10,
+				minTraceIntervalSeconds: 1800,
+				perfDurationSeconds:     10,
+			},
 			threshold: cpuIdleThreshold{
 				percent: cpuUsageBreakdown[int64]{user: -1},
 			},
-			wantError: "user threshold must be between 0 and 100",
+			wantError: "user threshold: cpu percentage must be between 0 and 100",
 		},
 		{
-			name:             "total delta threshold above maximum",
-			interval:         10,
-			minTraceInterval: 1800,
-			perfDuration:     10,
+			name: "total delta threshold above maximum",
+			config: cpuTracingConfig{
+				intervalSeconds:         10,
+				minTraceIntervalSeconds: 1800,
+				perfDurationSeconds:     10,
+			},
 			threshold: cpuIdleThreshold{
 				delta: cpuUsageBreakdown[int64]{total: 101},
 			},
-			wantError: "total delta threshold must be between 0 and 100",
+			wantError: "total delta threshold: cpu percentage must be between 0 and 100",
 		},
 	}
 
@@ -188,9 +149,9 @@ func TestValidateCPUIdleConfig(t *testing.T) {
 			t.Parallel()
 
 			err := validateCPUIdleConfig(
-				tt.interval,
-				tt.minTraceInterval,
-				tt.perfDuration,
+				tt.config.intervalSeconds,
+				tt.config.minTraceIntervalSeconds,
+				tt.config.perfDurationSeconds,
 				tt.threshold,
 			)
 			if tt.wantError == "" {

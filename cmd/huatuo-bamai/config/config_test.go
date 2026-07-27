@@ -72,6 +72,12 @@ ExcludedOnContainer = "writeback"
 	if len(Get().AutoTracing.IssuesList) != 1 {
 		t.Errorf("unexpected AutoTracing.IssuesList length: %d", len(Get().AutoTracing.IssuesList))
 	}
+	if Get().AutoTracing.CPUSys.IntervalTracing != 1800 {
+		t.Errorf(
+			"unexpected CPUSys.IntervalTracing: %d",
+			Get().AutoTracing.CPUSys.IntervalTracing,
+		)
+	}
 	if len(Get().EventTracing.IssuesList) != 1 {
 		t.Errorf("unexpected EventTracing.IssuesList length: %d", len(Get().EventTracing.IssuesList))
 	}

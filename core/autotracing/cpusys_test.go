@@ -43,6 +43,7 @@ func TestNewCPUSysBindsConfig(t *testing.T) {
 
 	testConfig := &Config{}
 	testConfig.CPUSys.Interval = 12
+	testConfig.CPUSys.IntervalTracing = 300
 	testConfig.CPUSys.RunTracingToolTimeout = 7
 	testConfig.CPUSys.SysThreshold = 50
 	testConfig.CPUSys.DeltaSysThreshold = 15
@@ -58,6 +59,9 @@ func TestNewCPUSysBindsConfig(t *testing.T) {
 	}
 	if tracer.interval != 12*time.Second {
 		t.Errorf("interval = %s, want 12s", tracer.interval)
+	}
+	if tracer.minTraceInterval != 300*time.Second {
+		t.Errorf("minTraceInterval = %s, want 5m0s", tracer.minTraceInterval)
 	}
 	if tracer.perfDuration != 7*time.Second {
 		t.Errorf("perfDuration = %s, want 7s", tracer.perfDuration)
@@ -272,20 +276,34 @@ func TestCPUSysStateUpdate(t *testing.T) {
 	}
 }
 
-func TestCPUSysStateShouldTrace(t *testing.T) {
+func TestCPUSysTracingShouldTrace(t *testing.T) {
 	t.Parallel()
 
-	threshold := cpuSysThreshold{usage: 45, delta: 20}
+	sampledAt := time.Unix(1000, 0)
 	tests := []struct {
 		name          string
 		systemPercent int64
 		systemDelta   int64
+		lastTraceAt   time.Time
 		expected      bool
 	}{
 		{name: "both exceed thresholds", systemPercent: 52, systemDelta: 25, expected: true},
 		{name: "only usage exceeds", systemPercent: 52, systemDelta: 10},
 		{name: "only delta exceeds", systemPercent: 40, systemDelta: 25},
 		{name: "values equal thresholds", systemPercent: 45, systemDelta: 20},
+		{
+			name:          "cooldown active",
+			systemPercent: 52,
+			systemDelta:   25,
+			lastTraceAt:   sampledAt.Add(-299 * time.Second),
+		},
+		{
+			name:          "cooldown elapsed",
+			systemPercent: 52,
+			systemDelta:   25,
+			lastTraceAt:   sampledAt.Add(-300 * time.Second),
+			expected:      true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -296,7 +314,12 @@ func TestCPUSysStateShouldTrace(t *testing.T) {
 				systemPercent:      tt.systemPercent,
 				systemPercentDelta: tt.systemDelta,
 			}
-			if actual := state.shouldTrace(threshold); actual != tt.expected {
+			tracer := cpuSysTracing{
+				minTraceInterval: 300 * time.Second,
+				threshold:        cpuSysThreshold{usage: 45, delta: 20},
+				lastTraceAt:      tt.lastTraceAt,
+			}
+			if actual := tracer.shouldTrace(state, sampledAt); actual != tt.expected {
 				t.Fatalf("shouldTrace() = %t, want %t", actual, tt.expected)
 			}
 		})
@@ -334,111 +357,6 @@ func TestCPUSysTracingDataJSON(t *testing.T) {
 		if actualValue, ok := actual[field]; !ok || string(actualValue) != expectedValue {
 			t.Errorf("JSON field %q = %s, want %s", field, actualValue, expectedValue)
 		}
-	}
-}
-
-func TestValidateCPUSysConfig(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name                 string
-		intervalSeconds      int64
-		perfDurationSeconds  int64
-		systemThreshold      int64
-		systemDeltaThreshold int64
-		wantError            string
-	}{
-		{
-			name:                 "valid",
-			intervalSeconds:      10,
-			perfDurationSeconds:  10,
-			systemThreshold:      45,
-			systemDeltaThreshold: 20,
-		},
-		{
-			name:                 "zero interval",
-			perfDurationSeconds:  10,
-			systemThreshold:      45,
-			systemDeltaThreshold: 20,
-			wantError:            "cpu system interval must be positive",
-		},
-		{
-			name:                 "zero perf duration",
-			intervalSeconds:      10,
-			systemThreshold:      45,
-			systemDeltaThreshold: 20,
-			wantError:            "cpu system perf duration must be positive",
-		},
-		{
-			name:                 "interval duration overflow",
-			intervalSeconds:      maxTimerDurationSeconds + 1,
-			perfDurationSeconds:  10,
-			systemThreshold:      45,
-			systemDeltaThreshold: 20,
-			wantError:            "cpu system interval must not exceed",
-		},
-		{
-			name:                 "perf duration overflow",
-			intervalSeconds:      10,
-			perfDurationSeconds:  maxPerfDurationSeconds + 1,
-			systemThreshold:      45,
-			systemDeltaThreshold: 20,
-			wantError:            "cpu system perf duration must not exceed",
-		},
-		{
-			name:                 "negative system threshold",
-			intervalSeconds:      10,
-			perfDurationSeconds:  10,
-			systemThreshold:      -1,
-			systemDeltaThreshold: 20,
-			wantError:            "cpu system threshold must be between 0 and 100",
-		},
-		{
-			name:                 "system threshold above maximum",
-			intervalSeconds:      10,
-			perfDurationSeconds:  10,
-			systemThreshold:      101,
-			systemDeltaThreshold: 20,
-			wantError:            "cpu system threshold must be between 0 and 100",
-		},
-		{
-			name:                 "negative delta threshold",
-			intervalSeconds:      10,
-			perfDurationSeconds:  10,
-			systemThreshold:      45,
-			systemDeltaThreshold: -1,
-			wantError:            "cpu system delta threshold must be between 0 and 100",
-		},
-		{
-			name:                 "delta threshold above maximum",
-			intervalSeconds:      10,
-			perfDurationSeconds:  10,
-			systemThreshold:      45,
-			systemDeltaThreshold: 101,
-			wantError:            "cpu system delta threshold must be between 0 and 100",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := validateCPUSysConfig(
-				tt.intervalSeconds,
-				tt.perfDurationSeconds,
-				tt.systemThreshold,
-				tt.systemDeltaThreshold,
-			)
-			if tt.wantError == "" {
-				if err != nil {
-					t.Fatalf("validateCPUSysConfig() error = %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
-				t.Fatalf("validateCPUSysConfig() error = %v, want contain %q", err, tt.wantError)
-			}
-		})
 	}
 }
 
