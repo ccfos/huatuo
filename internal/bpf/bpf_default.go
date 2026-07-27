@@ -372,6 +372,19 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) error {
 		if !ok {
 			return fmt.Errorf("bpf %s: unknown program %q", b, opt.ProgramName)
 		}
+		isRetprobe := spec.specType == ebpf.Kprobe &&
+			spec.sectionPrefix == "kretprobe"
+		if err = validateRetprobeMaxActive(
+			opt.RetprobeMaxActive,
+			isRetprobe,
+		); err != nil {
+			return fmt.Errorf(
+				"bpf %s: program %q: %w",
+				b,
+				opt.ProgramName,
+				err,
+			)
+		}
 		switch spec.specType {
 		case ebpf.TracePoint:
 			// opt.Symbol: <system>/<symbol>
@@ -386,7 +399,12 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) error {
 		case ebpf.Kprobe:
 			// opt.Symbol: <symbol>[+<offset>]
 			// opt.Symbol: <symbol>
-			if err = b.attachKprobe(progID, opt.Symbol, spec.sectionPrefix == "kretprobe"); err != nil {
+			if err = b.attachKprobe(
+				progID,
+				opt.Symbol,
+				isRetprobe,
+				opt.RetprobeMaxActive,
+			); err != nil {
 				return fmt.Errorf("attach kprobe: %w", err)
 			}
 		case ebpf.RawTracepoint:
@@ -452,7 +470,12 @@ func (b *defaultBPF) attach() error {
 				return fmt.Errorf("bpf %s: invalid section name: %q", b, spec.sectionName)
 			}
 
-			if err = b.attachKprobe(progID, symbols[1], symbols[0] == "kretprobe"); err != nil {
+			if err = b.attachKprobe(
+				progID,
+				symbols[1],
+				symbols[0] == "kretprobe",
+				0,
+			); err != nil {
 				return fmt.Errorf("attach kprobe: %w", err)
 			}
 		case ebpf.RawTracepoint:
@@ -473,7 +496,41 @@ func (b *defaultBPF) attach() error {
 	return nil
 }
 
-func (b *defaultBPF) attachKprobe(progID uint32, symbol string, isRetprobe bool) error {
+func validateRetprobeMaxActive(value int, isRetprobe bool) error {
+	if value < 0 {
+		return fmt.Errorf("retprobe max active must not be negative: %d", value)
+	}
+	if value != 0 && !isRetprobe {
+		return fmt.Errorf(
+			"retprobe max active is valid only for kretprobe programs",
+		)
+	}
+	return nil
+}
+
+func newKprobeOptions(
+	offset uint64,
+	retprobeMaxActive int,
+	isRetprobe bool,
+) (*link.KprobeOptions, error) {
+	if err := validateRetprobeMaxActive(
+		retprobeMaxActive,
+		isRetprobe,
+	); err != nil {
+		return nil, err
+	}
+	return &link.KprobeOptions{
+		Offset:            offset,
+		RetprobeMaxActive: retprobeMaxActive,
+	}, nil
+}
+
+func (b *defaultBPF) attachKprobe(
+	progID uint32,
+	symbol string,
+	isRetprobe bool,
+	retprobeMaxActive int,
+) error {
 	spec := b.programSpecs[progID]
 
 	if !isRetprobe { // kprobe
@@ -499,10 +556,11 @@ func (b *defaultBPF) attachKprobe(progID uint32, symbol string, isRetprobe bool)
 			return fmt.Errorf("bpf %s: duplicate symbol: %q", b, symbol)
 		}
 
-		opts := link.KprobeOptions{
-			Offset: offset,
+		opts, err := newKprobeOptions(offset, retprobeMaxActive, false)
+		if err != nil {
+			return err
 		}
-		l, err := link.Kprobe(symOffsets[0], spec.cloned, &opts)
+		l, err := link.Kprobe(symOffsets[0], spec.cloned, opts)
 		if err != nil {
 			return fmt.Errorf("attach kprobe %q: %w", symbol, err)
 		}
@@ -515,7 +573,11 @@ func (b *defaultBPF) attachKprobe(progID uint32, symbol string, isRetprobe bool)
 			return fmt.Errorf("bpf %s: duplicate symbol: %q", b, symbol)
 		}
 
-		l, err := link.Kretprobe(symbol, spec.cloned, nil)
+		opts, err := newKprobeOptions(0, retprobeMaxActive, true)
+		if err != nil {
+			return err
+		}
+		l, err := link.Kretprobe(symbol, spec.cloned, opts)
 		if err != nil {
 			return fmt.Errorf("attach kretprobe %q: %w", symbol, err)
 		}
