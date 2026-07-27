@@ -319,6 +319,16 @@ func (c *ioTracing) Start(ctx context.Context) error {
 	if err := validateIoThresholds(&thresholds); err != nil {
 		return err
 	}
+	if cfg.IOTracing.MaxProcDump <= 0 {
+		return fmt.Errorf("io max process dump must be positive, got %d", cfg.IOTracing.MaxProcDump)
+	}
+	if cfg.IOTracing.MaxFilesPerProcDump <= 0 {
+		return fmt.Errorf(
+			"io max files per process dump must be positive, got %d",
+			cfg.IOTracing.MaxFilesPerProcDump,
+		)
+	}
+
 	reasonSnapshot, err := waitingDiskEvents(ctx, 5, thresholds)
 	if err != nil {
 		return err
@@ -340,6 +350,8 @@ func (c *ioTracing) Start(ctx context.Context) error {
 		"--output-storage", toolstream.DefaultSockPath,
 		"--task-id", taskID,
 		"--duration", strconv.FormatUint(duration, 10),
+		"--max-process", strconv.Itoa(cfg.IOTracing.MaxProcDump),
+		"--max-files-per-process", strconv.Itoa(cfg.IOTracing.MaxFilesPerProcDump),
 	}
 
 	cmd := exec.Command(path.Join(internalconfig.CoreBinDir, iotracingToolName), args...)
