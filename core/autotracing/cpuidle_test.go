@@ -360,53 +360,27 @@ func TestContainerCPUStateUpdateResetsInvalidSamples(t *testing.T) {
 	}
 }
 
-func TestContainerCPUStateTraceCandidateScore(t *testing.T) {
+func TestContainerCPUStateTraceScore(t *testing.T) {
 	t.Parallel()
 
 	threshold := cpuIdleThreshold{
 		percent: cpuUsageBreakdown[int64]{user: 75, system: 45, total: 90},
 		delta:   cpuUsageBreakdown[int64]{user: 40, system: 20, total: 50},
 	}
-	now := time.Unix(1000, 0)
 	state := containerCPUState{
 		currentPercent: cpuUsageBreakdown[int64]{user: 80},
 		percentDelta:   cpuUsageBreakdown[int64]{user: 45},
 	}
-	score, isCandidate := state.traceCandidateScore(threshold, 30*time.Minute, now)
-	if !isCandidate {
-		t.Fatal("traceCandidateScore() candidate = false, want true")
+	score, exceedsThreshold := state.traceScore(threshold)
+	if !exceedsThreshold {
+		t.Fatal("traceScore() exceedsThreshold = false, want true")
 	}
 	if score != 10 {
-		t.Errorf("traceCandidateScore() score = %d, want 10", score)
-	}
-
-	state.lastTraceAt = now
-	score, isCandidate = state.traceCandidateScore(
-		threshold,
-		30*time.Minute,
-		now.Add(29*time.Minute),
-	)
-	if isCandidate {
-		t.Fatal("traceCandidateScore() before minimum interval candidate = true, want false")
-	}
-	if score != 0 {
-		t.Errorf("traceCandidateScore() before minimum interval score = %d, want 0", score)
-	}
-
-	score, isCandidate = state.traceCandidateScore(
-		threshold,
-		30*time.Minute,
-		now.Add(30*time.Minute),
-	)
-	if !isCandidate {
-		t.Fatal("traceCandidateScore() at minimum interval candidate = false, want true")
-	}
-	if score != 10 {
-		t.Errorf("traceCandidateScore() at minimum interval score = %d, want 10", score)
+		t.Errorf("traceScore() score = %d, want 10", score)
 	}
 }
 
-func TestCPUIdleTracingSyncContainerStates(t *testing.T) {
+func TestCPUIdleTracingReconcileContainerStates(t *testing.T) {
 	t.Parallel()
 
 	traceTime := time.Unix(100, 0)
@@ -426,7 +400,7 @@ func TestCPUIdleTracingSyncContainerStates(t *testing.T) {
 			},
 		},
 	}
-	tracer.syncContainerStates(map[string]*pod.Container{
+	tracer.reconcileContainerStates(map[string]*pod.Container{
 		"keep": {
 			ID:         "keep",
 			CgroupPath: "new",
@@ -451,7 +425,7 @@ func TestCPUIdleTracingSyncContainerStates(t *testing.T) {
 	}
 }
 
-func TestCPUIdleTracingSelectTraceCandidate(t *testing.T) {
+func TestCPUIdleTracingSelectTraceTarget(t *testing.T) {
 	t.Parallel()
 
 	reader := &stubContainerCPUReader{
@@ -478,35 +452,37 @@ func TestCPUIdleTracingSelectTraceCandidate(t *testing.T) {
 	}
 
 	sampledAt := time.Unix(100, 0)
-	target, err := tracer.selectTraceCandidate(sampledAt)
-	if err != nil {
-		t.Fatalf("selectTraceCandidate(first) error = %v", err)
+	if err := tracer.updateContainerCPUStates(sampledAt); err != nil {
+		t.Fatalf("updateContainerCPUStates(first) error = %v", err)
 	}
-	if target != nil {
-		t.Fatalf("first target = %q, want nil", target.containerID)
+	traceTarget := tracer.selectTraceTarget(sampledAt)
+	if traceTarget != nil {
+		t.Fatalf("first trace target = %q, want nil", traceTarget.containerID)
 	}
 
 	reader.usage["a"] = stats.CpuUsage{User: 100_000, Usage: 100_000}
 	reader.usage["b"] = stats.CpuUsage{User: 100_000, Usage: 100_000}
-	target, err = tracer.selectTraceCandidate(sampledAt.Add(time.Second))
-	if err != nil {
-		t.Fatalf("selectTraceCandidate(second) error = %v", err)
+	sampledAt = sampledAt.Add(time.Second)
+	if err := tracer.updateContainerCPUStates(sampledAt); err != nil {
+		t.Fatalf("updateContainerCPUStates(second) error = %v", err)
 	}
-	if target != nil {
-		t.Fatalf("second target = %q, want nil", target.containerID)
+	traceTarget = tracer.selectTraceTarget(sampledAt)
+	if traceTarget != nil {
+		t.Fatalf("second trace target = %q, want nil", traceTarget.containerID)
 	}
 
 	reader.usage["a"] = stats.CpuUsage{User: 900_000, Usage: 900_000}
 	reader.usage["b"] = stats.CpuUsage{User: 1_000_000, Usage: 1_000_000}
-	target, err = tracer.selectTraceCandidate(sampledAt.Add(2 * time.Second))
-	if err != nil {
-		t.Fatalf("selectTraceCandidate(third) error = %v", err)
+	sampledAt = sampledAt.Add(time.Second)
+	if err := tracer.updateContainerCPUStates(sampledAt); err != nil {
+		t.Fatalf("updateContainerCPUStates(third) error = %v", err)
 	}
-	if target == nil {
-		t.Fatal("third target = nil, want b")
+	traceTarget = tracer.selectTraceTarget(sampledAt)
+	if traceTarget == nil {
+		t.Fatal("third trace target = nil, want b")
 	}
-	if target.containerID != "b" {
-		t.Errorf("third target = %q, want %q", target.containerID, "b")
+	if traceTarget.containerID != "b" {
+		t.Errorf("third trace target = %q, want %q", traceTarget.containerID, "b")
 	}
 	if tracer.containers["a"].currentPercent.total != 80 {
 		t.Errorf(
@@ -516,9 +492,48 @@ func TestCPUIdleTracingSelectTraceCandidate(t *testing.T) {
 	}
 }
 
-func TestCPUIdleTracingSelectTraceCandidateErrors(t *testing.T) {
+func TestCPUIdleTracingSelectTraceTargetHonorsMinTraceInterval(t *testing.T) {
 	t.Parallel()
 
+	lastTraceAt := time.Unix(100, 0)
+	state := &containerCPUState{
+		containerID:    "container",
+		currentPercent: cpuUsageBreakdown[int64]{user: 80},
+		percentDelta:   cpuUsageBreakdown[int64]{user: 45},
+		hasPercent:     true,
+		lastTraceAt:    lastTraceAt,
+	}
+	tracer := &cpuIdleTracing{
+		minTraceInterval: 30 * time.Minute,
+		threshold: cpuIdleThreshold{
+			percent: cpuUsageBreakdown[int64]{user: 75},
+			delta:   cpuUsageBreakdown[int64]{user: 40},
+		},
+		containers: map[string]*containerCPUState{
+			state.containerID: state,
+		},
+	}
+
+	sampledAt := lastTraceAt.Add(29 * time.Minute)
+	state.lastSampleAt = sampledAt
+	if traceTarget := tracer.selectTraceTarget(sampledAt); traceTarget != nil {
+		t.Errorf(
+			"selectTraceTarget(before minimum interval) = %q, want nil",
+			traceTarget.containerID,
+		)
+	}
+
+	sampledAt = lastTraceAt.Add(30 * time.Minute)
+	state.lastSampleAt = sampledAt
+	if traceTarget := tracer.selectTraceTarget(sampledAt); traceTarget != state {
+		t.Errorf("selectTraceTarget(at minimum interval) = %p, want %p", traceTarget, state)
+	}
+}
+
+func TestCPUIdleTracingUpdateContainerCPUStatesErrors(t *testing.T) {
+	t.Parallel()
+
+	previousSampleAt := time.Unix(99, 0)
 	reader := &stubContainerCPUReader{
 		quotaErr: map[string]error{
 			"deleted": os.ErrNotExist,
@@ -528,25 +543,29 @@ func TestCPUIdleTracingSelectTraceCandidateErrors(t *testing.T) {
 		cgroupReader: reader,
 		containers: map[string]*containerCPUState{
 			"deleted": {
-				containerID: "deleted",
-				cgroupPath:  "deleted",
+				containerID:    "deleted",
+				cgroupPath:     "deleted",
+				currentPercent: cpuUsageBreakdown[int64]{user: 80},
+				percentDelta:   cpuUsageBreakdown[int64]{user: 45},
+				hasPercent:     true,
+				lastSampleAt:   previousSampleAt,
 			},
 		},
 	}
 
-	target, err := tracer.selectTraceCandidate(time.Unix(100, 0))
-	if err != nil {
-		t.Fatalf("selectTraceCandidate(deleted) error = %v", err)
+	sampledAt := time.Unix(100, 0)
+	if err := tracer.updateContainerCPUStates(sampledAt); err != nil {
+		t.Fatalf("updateContainerCPUStates(deleted) error = %v", err)
 	}
-	if target != nil {
-		t.Errorf("selectTraceCandidate(deleted) = %q, want nil", target.containerID)
+	if traceTarget := tracer.selectTraceTarget(sampledAt); traceTarget != nil {
+		t.Errorf("selectTraceTarget(deleted) = %q, want nil", traceTarget.containerID)
 	}
 
 	readErr := errors.New("permission denied")
 	reader.quotaErr["deleted"] = readErr
-	_, err = tracer.selectTraceCandidate(time.Unix(101, 0))
+	err := tracer.updateContainerCPUStates(time.Unix(101, 0))
 	if !errors.Is(err, readErr) {
-		t.Fatalf("selectTraceCandidate(failed) error = %v, want %v", err, readErr)
+		t.Fatalf("updateContainerCPUStates(failed) error = %v, want %v", err, readErr)
 	}
 }
 

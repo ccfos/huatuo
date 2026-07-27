@@ -224,7 +224,7 @@ func validateCPUPercentage(name string, value int64) error {
 	return nil
 }
 
-func (c *cpuIdleTracing) syncContainerStates(containers map[string]*pod.Container) {
+func (c *cpuIdleTracing) reconcileContainerStates(containers map[string]*pod.Container) {
 	for _, state := range c.containers {
 		state.seen = false
 	}
@@ -371,73 +371,62 @@ func (s *containerCPUState) resetPercentages() {
 	s.hasPercent = false
 }
 
-func (s *containerCPUState) traceCandidateScore(
-	threshold cpuIdleThreshold,
-	minTraceInterval time.Duration,
-	now time.Time,
-) (int64, bool) {
-	if !s.lastTraceAt.IsZero() && now.Sub(s.lastTraceAt) < minTraceInterval {
-		return 0, false
-	}
-
+func (s *containerCPUState) traceScore(threshold cpuIdleThreshold) (int64, bool) {
 	var score int64
-	var isCandidate bool
+	var exceedsThreshold bool
 	if s.currentPercent.user > threshold.percent.user &&
 		s.percentDelta.user > threshold.delta.user {
 		score = s.currentPercent.user - threshold.percent.user +
 			s.percentDelta.user - threshold.delta.user
-		isCandidate = true
+		exceedsThreshold = true
 	}
 	if s.currentPercent.system > threshold.percent.system &&
 		s.percentDelta.system > threshold.delta.system {
 		systemScore := s.currentPercent.system - threshold.percent.system +
 			s.percentDelta.system - threshold.delta.system
 		score = max(score, systemScore)
-		isCandidate = true
+		exceedsThreshold = true
 	}
 	if s.currentPercent.total > threshold.percent.total &&
 		s.percentDelta.total > threshold.delta.total {
 		totalScore := s.currentPercent.total - threshold.percent.total +
 			s.percentDelta.total - threshold.delta.total
 		score = max(score, totalScore)
-		isCandidate = true
+		exceedsThreshold = true
 	}
 
-	return score, isCandidate
+	return score, exceedsThreshold
 }
 
-func (c *cpuIdleTracing) updateContainerCPUState(
+func (c *cpuIdleTracing) readContainerCPUSample(
 	state *containerCPUState,
-	sampledAt time.Time,
-) (bool, error) {
+) (cpuUsageBreakdown[uint64], float64, error) {
 	quota, err := c.cgroupReader.CpuQuotaAndPeriod(state.cgroupPath)
 	if err != nil {
-		return false, fmt.Errorf("read cpu quota for %q: %w", state.containerID, err)
+		return cpuUsageBreakdown[uint64]{}, 0,
+			fmt.Errorf("read cpu quota for %q: %w", state.containerID, err)
 	}
 	capacity, err := containerCPUCapacity(quota)
 	if err != nil {
-		return false, fmt.Errorf("calculate cpu capacity for %q: %w", state.containerID, err)
+		return cpuUsageBreakdown[uint64]{}, 0,
+			fmt.Errorf("calculate cpu capacity for %q: %w", state.containerID, err)
 	}
 
 	usage, err := c.cgroupReader.CpuUsage(state.cgroupPath)
 	if err != nil {
-		return false, fmt.Errorf("read cpu usage for %q: %w", state.containerID, err)
+		return cpuUsageBreakdown[uint64]{}, 0,
+			fmt.Errorf("read cpu usage for %q: %w", state.containerID, err)
 	}
 
-	return state.update(cpuUsageMeasurement(usage), capacity, sampledAt), nil
+	return cpuUsageMeasurement(usage), capacity, nil
 }
 
-func (c *cpuIdleTracing) selectTraceCandidate(
-	sampledAt time.Time,
-) (*containerCPUState, error) {
-	var selectedState *containerCPUState
-	var selectedScore int64
-
+func (c *cpuIdleTracing) updateContainerCPUStates(sampledAt time.Time) error {
 	for _, state := range c.containers {
-		updated, err := c.updateContainerCPUState(state, sampledAt)
+		usage, capacity, err := c.readContainerCPUSample(state)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				return nil, err
+				return err
 			}
 
 			log.WithError(err).
@@ -446,27 +435,38 @@ func (c *cpuIdleTracing) selectTraceCandidate(
 				Debug("failed to sample container cpu")
 			continue
 		}
-		if !updated {
+		state.update(usage, capacity, sampledAt)
+	}
+
+	return nil
+}
+
+func (c *cpuIdleTracing) selectTraceTarget(sampledAt time.Time) *containerCPUState {
+	var traceTarget *containerCPUState
+	var highestScore int64
+
+	for _, state := range c.containers {
+		if !state.hasPercent || !state.lastSampleAt.Equal(sampledAt) {
+			continue
+		}
+		if !state.lastTraceAt.IsZero() &&
+			sampledAt.Sub(state.lastTraceAt) < c.minTraceInterval {
 			continue
 		}
 
-		score, isCandidate := state.traceCandidateScore(
-			c.threshold,
-			c.minTraceInterval,
-			sampledAt,
-		)
-		if !isCandidate {
+		score, exceedsThreshold := state.traceScore(c.threshold)
+		if !exceedsThreshold {
 			continue
 		}
-		if selectedState == nil ||
-			score > selectedScore ||
-			(score == selectedScore && state.containerID < selectedState.containerID) {
-			selectedState = state
-			selectedScore = score
+		if traceTarget == nil ||
+			score > highestScore ||
+			(score == highestScore && state.containerID < traceTarget.containerID) {
+			traceTarget = state
+			highestScore = score
 		}
 	}
 
-	return selectedState, nil
+	return traceTarget
 }
 
 func (c *cpuIdleTracing) saveCPUIdleTrace(
@@ -518,35 +518,35 @@ func (c *cpuIdleTracing) Start(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("list containers for cpu sampling: %w", err)
 			}
-			c.syncContainerStates(containers)
+			c.reconcileContainerStates(containers)
 
-			target, err := c.selectTraceCandidate(sampledAt)
-			if err != nil {
+			if err := c.updateContainerCPUStates(sampledAt); err != nil {
 				return err
 			}
-			if target == nil {
+			traceTarget := c.selectTraceTarget(sampledAt)
+			if traceTarget == nil {
 				continue
 			}
 
 			traceTime := time.Now()
-			log.WithField("container_id", target.containerID).
-				WithField("cgroup_path", target.cgroupPath).
-				WithField("cpu_percent", target.currentPercent).
-				WithField("cpu_percent_delta", target.percentDelta).
+			log.WithField("container_id", traceTarget.containerID).
+				WithField("cgroup_path", traceTarget.cgroupPath).
+				WithField("cpu_percent", traceTarget.currentPercent).
+				WithField("cpu_percent_delta", traceTarget.percentDelta).
 				WithField("duration_seconds", int64(c.perfDuration/time.Second)).
 				Info("starting container cpu profiling")
 
 			flameData, err := runPerfCommand(ctx, perfRequest{
 				duration:    c.perfDuration,
-				containerID: target.containerID,
+				containerID: traceTarget.containerID,
 			})
 			if err != nil {
 				return err
 			}
-			if err := c.saveCPUIdleTrace(target, traceTime, flameData); err != nil {
+			if err := c.saveCPUIdleTrace(traceTarget, traceTime, flameData); err != nil {
 				return err
 			}
-			target.lastTraceAt = traceTime
+			traceTarget.lastTraceAt = traceTime
 		}
 	}
 }
