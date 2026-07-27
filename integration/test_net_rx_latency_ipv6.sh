@@ -29,6 +29,15 @@ source "${ROOT_DIR}/integration/config.sh"
 
 [[ $EUID -eq 0 ]] || skip "requires root"
 
+# Print a labelled file to stderr for CI diagnostics (lib.sh has
+# dump_text_files for whole directories; this is for single files).
+dump_file() {
+	local label=$1 path=$2
+	[[ -f "${path}" ]] || return 0
+	log_error "----- ${label} (${path}) -----"
+	sed -n '1,160p' "${path}" >&2
+}
+
 VETH_HOST="veth-rxlat6-h"
 VETH_PEER="veth-rxlat6-p"
 VETH_HOST_IP6="fd00:dead:beef::1"
