@@ -17,8 +17,7 @@
 package bpf
 
 import (
-	"context"
-	"strings"
+	"errors"
 	"testing"
 )
 
@@ -30,70 +29,73 @@ func TestDefaultBPFMapOperationsRejectUnknownMap(t *testing.T) {
 
 	tests := []struct {
 		name string
-		run  func() error
+		run  func(*testing.T) error
 		want string
 	}{
 		{
 			name: "EventPipe",
-			run: func() error {
-				_, err := b.EventPipe(context.Background(), 42, 4096)
+			run: func(t *testing.T) error {
+				_, err := b.EventPipe(t.Context(), 42, 4096)
 				return err
 			},
-			want: "map 42 not found",
+			want: "bpf: map not found: ID 42",
 		},
 		{
 			name: "EventPipeByName",
-			run: func() error {
-				_, err := b.EventPipeByName(context.Background(), "missing", 4096)
+			run: func(t *testing.T) error {
+				_, err := b.EventPipeByName(t.Context(), "missing", 4096)
 				return err
 			},
-			want: `map "missing" not found`,
+			want: `bpf: map not found: name "missing"`,
 		},
 		{
 			name: "ReadMap",
-			run: func() error {
+			run: func(*testing.T) error {
 				_, err := b.ReadMap(42, nil)
 				return err
 			},
-			want: "map 42 not found",
+			want: "bpf: map not found: ID 42",
 		},
 		{
 			name: "WriteMapItems",
-			run: func() error {
+			run: func(*testing.T) error {
 				return b.WriteMapItems(42, nil)
 			},
-			want: "map 42 not found",
+			want: "bpf: map not found: ID 42",
 		},
 		{
 			name: "DeleteMapItems",
-			run: func() error {
+			run: func(*testing.T) error {
 				return b.DeleteMapItems(42, nil)
 			},
-			want: "map 42 not found",
+			want: "bpf: map not found: ID 42",
 		},
 		{
 			name: "DumpMap",
-			run: func() error {
+			run: func(*testing.T) error {
 				_, err := b.DumpMap(42)
 				return err
 			},
-			want: "map 42 not found",
+			want: "bpf: map not found: ID 42",
 		},
 		{
 			name: "DumpMapByName",
-			run: func() error {
+			run: func(*testing.T) error {
 				_, err := b.DumpMapByName("missing")
 				return err
 			},
-			want: `map "missing" not found`,
+			want: `bpf: map not found: name "missing"`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.run()
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Errorf("map operation error=%v, want error containing %q", err, tt.want)
+			err := tt.run(t)
+			if !errors.Is(err, ErrMapNotFound) {
+				t.Fatalf("map operation error=%v, want errors.Is ErrMapNotFound", err)
+			}
+			if err.Error() != tt.want {
+				t.Errorf("map operation error=%q, want %q", err, tt.want)
 			}
 		})
 	}

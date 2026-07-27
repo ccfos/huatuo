@@ -39,6 +39,9 @@ import (
 
 var DefaultObjDir = "bpf"
 
+// ErrMapNotFound indicates that a requested BPF map is unavailable.
+var ErrMapNotFound = errors.New("bpf: map not found")
+
 // NewManager initializes the bpf manager.
 func NewManager(opt *Option) error {
 	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
@@ -239,7 +242,7 @@ func (b *defaultBPF) MapIDByName(name string) uint32 {
 func (b *defaultBPF) requireMapIDByName(name string) (uint32, error) {
 	mapID, ok := b.mapName2IDs[name]
 	if !ok {
-		return 0, fmt.Errorf("map %q not found", name)
+		return 0, fmt.Errorf("%w: name %q", ErrMapNotFound, name)
 	}
 
 	return mapID, nil
@@ -248,7 +251,7 @@ func (b *defaultBPF) requireMapIDByName(name string) (uint32, error) {
 func (b *defaultBPF) mapByID(mapID uint32) (*ebpf.Map, error) {
 	spec, ok := b.mapSpecs[mapID]
 	if !ok || spec.cloned == nil {
-		return nil, fmt.Errorf("map %d not found", mapID)
+		return nil, fmt.Errorf("%w: ID %d", ErrMapNotFound, mapID)
 	}
 
 	return spec.cloned, nil
