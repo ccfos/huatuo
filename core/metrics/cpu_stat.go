@@ -118,8 +118,14 @@ func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Containe
 		deltaExterWaitSum = 0
 	} else {
 		deltaHierarchyWaitSum = stat.hierarchyWaitSum - cpu.hierarchyWaitSum
-		deltaThrottledSum = stat.throttledTime - cpu.throttledTime
-		deltaInnerWaitSum = stat.innerWaitSum - cpu.innerWaitSum
+
+		if stat.throttledTime >= cpu.throttledTime {
+			deltaThrottledSum = stat.throttledTime - cpu.throttledTime
+		}
+
+		if stat.innerWaitSum >= cpu.innerWaitSum {
+			deltaInnerWaitSum = stat.innerWaitSum - cpu.innerWaitSum
+		}
 
 		if deltaHierarchyWaitSum < deltaThrottledSum+deltaInnerWaitSum {
 			deltaHierarchyWaitSum = deltaThrottledSum + deltaInnerWaitSum
