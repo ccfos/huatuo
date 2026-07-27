@@ -16,20 +16,16 @@ package autotracing
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
@@ -38,13 +34,7 @@ import (
 )
 
 const (
-	cpuSysTracerName       = "cpusys"
-	perfExitGracePeriod    = 30 * time.Second
-	maxPerfErrorOutputLen  = 4096
-	maxIntervalSeconds     = int64(time.Duration(1<<63-1) / time.Second)
-	maxPerfDurationSeconds = int64(
-		(time.Duration(1<<63-1) - perfExitGracePeriod) / time.Second,
-	)
+	cpuSysTracerName = "cpusys"
 )
 
 func init() {
@@ -232,38 +222,6 @@ func (s cpuSysState) shouldTrace(threshold cpuSysThreshold) bool {
 		s.systemPercentDelta > threshold.delta
 }
 
-func runPerfSystemWide(parent context.Context, duration time.Duration) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(parent, duration+perfExitGracePeriod)
-	defer cancel()
-
-	cmd := exec.CommandContext(
-		ctx,
-		filepath.Join(tracing.TaskBinDir, "perf"),
-		"--bpf-path",
-		filepath.Join(internalconfig.CoreBpfDir, "perf.o"),
-		"--duration",
-		strconv.FormatInt(int64(duration/time.Second), 10),
-	)
-
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		return output, nil
-	}
-
-	diagnostic := bytes.TrimSpace(output)
-	isTruncated := len(diagnostic) > maxPerfErrorOutputLen
-	if isTruncated {
-		diagnostic = diagnostic[:maxPerfErrorOutputLen]
-	}
-	if len(diagnostic) == 0 {
-		return nil, fmt.Errorf("run system-wide perf: %w", err)
-	}
-	if isTruncated {
-		return nil, fmt.Errorf("run system-wide perf: %w: output=%q (truncated)", err, diagnostic)
-	}
-	return nil, fmt.Errorf("run system-wide perf: %w: output=%q", err, diagnostic)
-}
-
 func (c *cpuSysTracing) saveCPUSysTrace(
 	traceTime time.Time,
 	state cpuSysState,
@@ -300,10 +258,10 @@ func validateCPUSysConfig(
 	if intervalSeconds <= 0 {
 		return fmt.Errorf("cpu system interval must be positive, got %d", intervalSeconds)
 	}
-	if intervalSeconds > maxIntervalSeconds {
+	if intervalSeconds > maxTimerDurationSeconds {
 		return fmt.Errorf(
 			"cpu system interval must not exceed %d seconds, got %d",
-			maxIntervalSeconds,
+			maxTimerDurationSeconds,
 			intervalSeconds,
 		)
 	}
@@ -359,12 +317,11 @@ func (c *cpuSysTracing) Start(ctx context.Context) error {
 				WithField("duration_seconds", int64(c.perfDuration/time.Second)).
 				Info("starting system-wide cpu profiling")
 
-			flameData, err := runPerfSystemWide(ctx, c.perfDuration)
+			flameData, err := runPerfCommand(ctx, perfRequest{
+				duration: c.perfDuration,
+			})
 			if err != nil {
 				return err
-			}
-			if len(bytes.TrimSpace(flameData)) == 0 {
-				return errors.New("system-wide perf returned empty output")
 			}
 			if err := c.saveCPUSysTrace(traceTime, state, flameData); err != nil {
 				return err

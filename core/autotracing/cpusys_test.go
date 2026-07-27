@@ -371,7 +371,7 @@ func TestValidateCPUSysConfig(t *testing.T) {
 		},
 		{
 			name:                 "interval duration overflow",
-			intervalSeconds:      maxIntervalSeconds + 1,
+			intervalSeconds:      maxTimerDurationSeconds + 1,
 			perfDurationSeconds:  10,
 			systemThreshold:      45,
 			systemDeltaThreshold: 20,
