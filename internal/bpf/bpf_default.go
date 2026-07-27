@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -652,6 +652,11 @@ func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
 func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
 	m := b.mapSpecs[mapID].cloned
 
+	switch m.Type() {
+	case ebpf.PerCPUHash, ebpf.PerCPUArray, ebpf.LRUCPUHash, ebpf.PerCPUCGroupStorage:
+		return dumpPerCPUMap(mapID, m)
+	}
+
 	var items []MapItem
 	key := make([]byte, m.KeySize())
 	val := make([]byte, m.ValueSize())
@@ -667,6 +672,45 @@ func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
 	}
 
 	return items, nil
+}
+
+func dumpPerCPUMap(mapID uint32, m *ebpf.Map) ([]MapItem, error) {
+	var (
+		items       []MapItem
+		previousKey any
+		maxEntries  = m.MaxEntries()
+	)
+
+	for count := uint32(0); ; count++ {
+		key := make([]byte, m.KeySize())
+
+		err := m.NextKey(previousKey, key)
+		if errors.Is(err, ebpf.ErrKeyNotExist) {
+			// No next key means the map was fully traversed.
+			return items, nil
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("map %d: iterate: get next key: %w", mapID, err)
+		}
+
+		// A concurrent deletion can make NextKey restart from the first key.
+		if count == maxEntries {
+			return nil, fmt.Errorf("map %d: iterate: %w", mapID, ebpf.ErrIterationAborted)
+		}
+
+		value, err := m.LookupBytes(key)
+		if err != nil {
+			return nil, fmt.Errorf("map %d: iterate: look up next key: %w", mapID, err)
+		}
+		if value != nil {
+			items = append(items, MapItem{
+				Key:   key,
+				Value: value,
+			})
+		}
+		previousKey = key
+	}
 }
 
 // DumpMapByName dump all the context of the map.
