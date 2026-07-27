@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -122,7 +123,7 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 		if err := validateSinglePID(ctx, "native"); err != nil {
 			return err
 		}
-		if typ == profiling.TypeMemory {
+		if typ == profiling.TypeMemory || typ == profiling.TypeLock {
 			return validateExactlyOneTarget(ctx)
 		}
 
@@ -270,6 +271,7 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	native := implementation == profiling.ImplementationNative
 	nativeCPU := native && typ == profiling.TypeCPU
 	nativeMemory := native && typ == profiling.TypeMemory
+	nativeLock := native && typ == profiling.TypeLock
 
 	if lang == profiling.LanguageJava && typ == profiling.TypeCPU && ctx.Int("freq") > 1000 {
 		return fmt.Errorf("Java profiler frequency must not exceed 1000 samples per second")
@@ -283,6 +285,20 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.Bool("thread-group") && !native {
 		return fmt.Errorf("--thread-group is supported only by native profiling")
 	}
+	if nativeLock && ctx.Bool("thread-group") && ctx.String("pid") == "" {
+		return fmt.Errorf("--thread-group requires --pid")
+	}
+	if ctx.IsSet("lock-type") && !nativeLock {
+		return fmt.Errorf("--lock-type is supported only by native lock profiling")
+	}
+	if ctx.IsSet("lock-mode") && !nativeLock {
+		return fmt.Errorf("--lock-mode is supported only by native lock profiling")
+	}
+	if ctx.IsSet("lock-wait-threshold") && !nativeLock {
+		return fmt.Errorf(
+			"--lock-wait-threshold is supported only by native lock profiling",
+		)
+	}
 	if ctx.String("binary-match-path") != "" && native {
 		return fmt.Errorf("--binary-match-path is not supported by native profilers")
 	}
@@ -295,6 +311,20 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 		probability := ctx.Uint("physical-memory-probability")
 		if probability < 1 || probability > 100 {
 			return fmt.Errorf("physical memory probability must be between 1 and 100")
+		}
+	}
+	if nativeLock {
+		if _, err := profiling.ParseLockType(ctx.String("lock-type")); err != nil {
+			return err
+		}
+		if _, err := profiling.ParseLockMode(ctx.String("lock-mode")); err != nil {
+			return err
+		}
+		threshold := ctx.Duration("lock-wait-threshold")
+		if threshold < time.Microsecond || threshold > time.Hour {
+			return fmt.Errorf(
+				"--lock-wait-threshold must be between 1us and 1h",
+			)
 		}
 	}
 	return nil

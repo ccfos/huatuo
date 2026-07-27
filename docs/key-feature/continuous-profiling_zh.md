@@ -148,7 +148,10 @@ $ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
 
 ## 🌐 Profiles API
 
-huatuo-apiserver 通过 `/v1/profiles` 提供服务化的持续性能剖析能力。客户端可以创建 CPU 或内存剖析任务，查询任务状态和结果，或者停止、删除任务。任务由 huatuo-apiserver 调度到指定节点的 HUATUO Agent，采集结果可通过返回的 Grafana 链接或原始数据接口查看。
+huatuo-apiserver 通过 `/v1/profiles` 提供服务化的持续性能剖析能力。
+客户端可以创建 CPU、内存或原生锁竞争剖析任务，查询任务状态和结果，
+或者停止、删除任务。任务由 huatuo-apiserver 调度到指定节点的 HUATUO
+Agent，采集结果可通过返回的 Grafana 链接或原始数据接口查看。
 
 ### 1. 请求约定
 
@@ -190,10 +193,13 @@ curl -sS \
 
 | 字段 | 说明 |
 | --- | --- |
-| `types` | 支持的剖析类型：`cpu`、`memory` |
+| `types` | 支持的剖析类型：`cpu`、`memory`、`lock` |
 | `cpu_languages` | CPU 剖析支持的语言 |
 | `memory_languages` | 内存剖析支持的语言 |
 | `memory_modes` | 按语言分组的内存剖析模式；列表值可直接用于创建任务 |
+| `lock_languages` | 原生锁剖析支持的语言：`c`、`c++`、`go` |
+| `lock_modes` | 锁剖析值：`wait_time`、`count` |
+| `lock_types` | 支持的锁原语：`mutex`、`spinlock`、`rwlock` |
 | `aggregation_interval_seconds` | 服务端采集数据的聚合周期 |
 | `max_concurrent_profilers` | profiler 进程的最大并发数；`0` 表示不限制 |
 
@@ -213,13 +219,18 @@ curl -sS \
 
 | 参数 | 是否必需 | 说明 |
 | --- | --- | --- |
-| `type` | 是 | 剖析类型：`cpu` 或 `memory` |
+| `type` | 是 | 剖析类型：`cpu`、`memory` 或 `lock` |
 | `language` | 是 | 目标进程语言，必须与剖析类型匹配 |
 | `duration_seconds` | 是 | 采集时长，单位为秒 |
 | `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
 | `container_id` | 否 | 目标容器 ID；不传表示对宿主机剖析 |
 | `binary_match_path` | 否 | Java/Python CPU 剖析的目标可执行文件路径匹配条件；原生剖析不支持 |
 | `memory_mode` | 内存剖析必需 | 内存剖析模式，必须与 `language` 匹配 |
+| `pid` | 宿主机锁剖析必需 | 正整数宿主机 PID，与 `container_id` 二选一 |
+| `thread_group` | 否 | 采集目标 PID 的整个线程组；必须同时提供 `pid` |
+| `lock_type` | 否 | `mutex`（默认）、`spinlock` 或 `rwlock` |
+| `lock_mode` | 否 | `wait_time`（默认）或 `count` |
+| `lock_wait_threshold` | 否 | 最小等待阈值，使用 Go duration；默认值和最小值为 `1us`，最大值为 `1h` |
 
 `duration_seconds` 必须不小于两个 `aggregation_interval_seconds`，且二者之和必须小于 3600 秒。同一用户在同一节点上已有运行中的剖析任务时，服务端返回 `409 Conflict`。
 
@@ -257,7 +268,37 @@ curl -sS -i \
   "${API_BASE}/v1/profiles"
 ```
 
+创建进程级 mutex 竞争等待时间剖析任务：
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "lock",
+    "language": "go",
+    "pid": 24817,
+    "thread_group": true,
+    "lock_type": "mutex",
+    "lock_mode": "wait_time",
+    "lock_wait_threshold": "5us",
+    "duration_seconds": 60,
+    "hostname": "node-01"
+  }' \
+  "${API_BASE}/v1/profiles"
+```
+
+锁剖析只记录发生竞争的路径，并在 BPF 侧使用有界双缓冲哈希表聚合等待时间
+和竞争次数，再由用户态定期读取。mutex 和 rwlock 优先使用内核竞争
+tracepoint，旧内核使用安全的慢路径探针。spinlock 只有在
+`lock:contention_begin/end` tracepoint 可用时才启用；为避免主机失去响应，
+不会回退到全局 spinlock kprobe。
+
 创建成功返回 `201 Created`，`Location` 响应头指向新任务，响应体包含后续查询所需的任务 ID：
+
+锁剖析任务通过原始数据接口提供 pprof 结果。在专用锁仪表盘可用前，
+`result_url` 字段不会返回。
 
 ```json
 {
@@ -282,7 +323,7 @@ JOB_ID="<profile-job-id>"
 | `container_id` | 无 | 按容器 ID 精确过滤（兼容旧参数 `containerID`） |
 | `hostname` | 无 | 按节点主机名精确过滤 |
 | `status` | 无 | `pending`、`running`、`completed`、`failed`、`stopped` 或 `timeout` |
-| `type` | 无 | `cpu` 或 `memory`；不传时返回两种类型 |
+| `type` | 无 | `cpu`、`memory` 或 `lock`；不传时返回全部类型 |
 | `limit` | `50` | 每页数量，必须大于 0，最大为 500 |
 | `offset` | `0` | 起始偏移量，必须大于或等于 0 |
 | `sort` | `-created_at` | `created_at`、`finished_at`、`hostname`、`container_id`、`id`、`status` 或 `type`；前置 `-` 表示降序 |
@@ -318,9 +359,14 @@ curl -sS \
 | `id` | Profiles API 任务 ID |
 | `container_id` | 目标容器 ID；宿主机任务不返回该字段 |
 | `hostname` | 目标节点主机名 |
-| `type` | `cpu` 或 `memory` |
+| `type` | `cpu`、`memory` 或 `lock` |
 | `language` | 目标进程语言 |
 | `memory_mode` | 内存剖析模式；CPU 任务不返回该字段 |
+| `pid` | 锁剖析的宿主机 PID；容器目标不返回 |
+| `thread_group` | 锁剖析是否包含目标 PID 的线程组 |
+| `lock_type` | 锁剖析选择的内核锁原语 |
+| `lock_mode` | 锁剖析的 `wait_time` 或 `count` 值 |
+| `lock_wait_threshold` | 锁剖析记录的最小竞争等待时间 |
 | `binary_match_path` | 可执行文件匹配路径；未使用时不返回该字段 |
 | `status` | 当前任务状态 |
 | `duration_seconds` | 请求的剖析时长，单位为秒 |

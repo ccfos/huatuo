@@ -40,7 +40,7 @@ func main() {
 	signalLog := &bytes.Buffer{}
 	app := &cli.App{
 		Name:          profilerToolName,
-		Usage:         "Sample CPU and memory profiles for a process or container, with eBPF-based userland and Linux kernel stack collection",
+		Usage:         "Sample CPU, memory, and lock profiles for a process or container, with eBPF-based userland and Linux kernel stack collection",
 		AllowExtFlags: true,
 		Flags:         appFlags,
 		Before:        runBefore,
