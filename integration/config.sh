@@ -104,6 +104,25 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "dload", "d
 EOF
 }
 
+# The iotracing test controls proc/diskstats and the toolstream subprocess.
+write_iotracing_autotracing_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "dload", "dropwatch", "hungtask", "iolatency", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras", "runqlat", "sockstat", "softirq", "softirq_tracing", "softlockup", "tcp_memory", "tracing_status"]
+
+[AutoTracing.IOTracing]
+    RbpsThreshold = 1000
+    WbpsThreshold = 1000
+    UtilThreshold = 1
+    AwaitThreshold = 1000
+    RunTracingToolTimeout = 1
+    MaxProcDump = 1
+    MaxFilesPerProcDump = 1
+
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}
+
 # The apiserver port and workspace paths are allocated by the caller.
 write_apiserver_apis_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
