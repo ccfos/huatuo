@@ -211,7 +211,7 @@ All event records include the following common fields:
 
 - **comm**: Name of the process that triggered the event
 - **pid**: Process ID that triggered the event
-- **lat_stage**: Stage where latency occurred (`RX_STAGE_NETIF` driver-to-kernel / `RX_STAGE_TCPV4` kernel-to-TCP / `RX_STAGE_USERCOPY` TCP-to-user-space)
+- **lat_stage**: Stage where latency occurred (`RX_STAGE_NETIF` driver-to-kernel / `RX_STAGE_TCP` kernel-to-TCP / `RX_STAGE_USERCOPY` TCP-to-user-space)
 - **lat_ms**: Actual latency (milliseconds)
 - **tcp_state**: TCP connection state (all states are supported, e.g., `ESTABLISHED`, `SYN_SENT`, `FIN_WAIT`, `TIME_WAIT`)
 - **tcp_saddr / tcp_daddr**: Source IP / Destination IP address

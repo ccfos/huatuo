@@ -15,7 +15,7 @@
 
 volatile const long long mono_wall_offset = 0;
 volatile const long long rxlat_thresh_netif = 5 * 1000 * 1000;	    // 5ms
-volatile const long long rxlat_thresh_tcpv4 = 10 * 1000 * 1000;	    // 10ms
+volatile const long long rxlat_thresh_tcp = 10 * 1000 * 1000;	    // 10ms
 volatile const long long rxlat_thresh_usercopy = 115 * 1000 * 1000; // 115ms
 
 BPF_RATELIMIT(rate, 1, 100);
@@ -47,7 +47,7 @@ struct perf_event_t {
 
 enum rx_lat_stage {
 	RX_STAGE_NETIF,
-	RX_STAGE_TCPV4,
+	RX_STAGE_TCP,
 	RX_STAGE_USERCOPY,
 };
 
@@ -139,6 +139,9 @@ static inline u8 skb_tcp_family(struct sk_buff *skb)
 		struct ipv6hdr h;
 
 		bpf_probe_read(&h, sizeof(h), skb_network_header(skb));
+		// NOTE: nexthdr check does not walk extension header chains;
+		// IPv6+EH TCP packets are caught by the tcp_v6_rcv
+		// kprobe instead.
 		return (h.nexthdr == IPPROTO_TCP) ? AF_INET6 : 0;
 	}
 
@@ -234,11 +237,11 @@ int tcp_v4_rcv_prog(struct pt_regs *ctx)
 {
 	struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM1_CORE(ctx);
 
-	u64 delta = skb_latency_check(skb, rxlat_thresh_tcpv4);
+	u64 delta = skb_latency_check(skb, rxlat_thresh_tcp);
 	if (!delta)
 		return 0;
 
-	submit_rxlat_event(ctx, skb, delta, RX_STAGE_TCPV4, AF_INET);
+	submit_rxlat_event(ctx, skb, delta, RX_STAGE_TCP, AF_INET);
 	return 0;
 }
 
@@ -250,11 +253,11 @@ int tcp_v6_rcv_prog(struct pt_regs *ctx)
 {
 	struct sk_buff *skb = (struct sk_buff *)PT_REGS_PARM1_CORE(ctx);
 
-	u64 delta = skb_latency_check(skb, rxlat_thresh_tcpv4);
+	u64 delta = skb_latency_check(skb, rxlat_thresh_tcp);
 	if (!delta)
 		return 0;
 
-	submit_rxlat_event(ctx, skb, delta, RX_STAGE_TCPV4, AF_INET6);
+	submit_rxlat_event(ctx, skb, delta, RX_STAGE_TCP, AF_INET6);
 	return 0;
 }
 
