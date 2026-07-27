@@ -90,7 +90,7 @@ wait_until() {
 
 	while [ "$(date +%s)" -lt "$end" ]; do
 		attempt=$((attempt + 1))
-		log_info "wait attempt #${attempt}: func/cmd: [${func} ${*}]"
+		log_info "wait attempt #${attempt}: [${func} ${*}]"
 		if "$func" "$@"; then
 			return 0
 		fi
