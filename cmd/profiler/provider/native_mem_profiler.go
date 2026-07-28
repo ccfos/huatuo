@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
@@ -281,7 +282,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 		// Use unified drainActiveRingBuffer with Memory event factory
 		stackCountsByProc, ring, err := ringCtx.drainActiveRingBuffer(
-			func() any { return &ProfilerEventBase{} },
+			func() any { return &abi.ProfilerEventBase{} },
 			p.convertValueToBytes,
 		) // Convert pages to bytes
 		if err != nil {

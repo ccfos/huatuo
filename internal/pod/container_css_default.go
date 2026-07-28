@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
@@ -57,8 +58,6 @@ func parseContainerCSS(containerID string) (map[string]uint64, error) {
 }
 
 const (
-	cgroupSubsysCount                 = 13
-	kubeletContainerIDKnodeNameMaxlen = 85
 	kubeletContainerIDKnodeNameMinlen = 64
 )
 
@@ -86,14 +85,7 @@ type containerCssMetaData struct {
 	ContainerID string
 }
 
-type containerCssPerfEvent struct {
-	Cgroup      uint64
-	OpsType     uint64
-	CgroupRoot  int32
-	CgroupLevel int32
-	CSS         [cgroupSubsysCount]uint64
-	KnodeName   [kubeletContainerIDKnodeNameMaxlen + 2]byte
-}
+type containerCssPerfEvent = abi.CgroupCSSEvent
 
 func cgroupListCssDataByKnode(containerID string) []*containerCssMetaData {
 	res := []*containerCssMetaData{}

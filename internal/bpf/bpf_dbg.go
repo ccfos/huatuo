@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,13 +18,14 @@ import (
 	"context"
 	"fmt"
 
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/timeutil"
 )
 
 const (
-	BpfDbgMsgLen  = 64
-	BpfDbgFileLen = 64
+	BpfDbgMsgLen  = len(abi.BPFDebugEvent{}.Msg)
+	BpfDbgFileLen = len(abi.BPFDebugEvent{}.FileName)
 )
 
 // BpfDbg controls whether the BPF objects it is associated with have their
@@ -75,15 +76,7 @@ func (d *BpfDbg) WithBpfDbg(consts map[string]any) map[string]any {
 	return consts
 }
 
-// BpfDbgEvent mirrors struct bpf_dbg_event in bpf_dbg.h.
-type BpfDbgEvent struct {
-	FileName  [BpfDbgFileLen]byte
-	FileLine  uint32
-	Pad0      uint32
-	Msg       [BpfDbgMsgLen]byte
-	Args      [4]uint64
-	Timestamp uint64
-}
+type BpfDbgEvent = abi.BPFDebugEvent
 
 // debugEventLoop reads debug events in a loop and logs each at Debug level.
 // Blocks until ctx is canceled or the reader encounters a fatal error.

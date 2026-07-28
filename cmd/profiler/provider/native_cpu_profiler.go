@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
@@ -42,14 +43,6 @@ func init() {
 }
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_cpu_profiler.c -o $BPF_DIR/native_cpu_profiler.o
-
-// cpuEventKey is the on-wire/event representation emitted by the BPF program.
-type cpuEventKey struct {
-	ProfilerEventBase
-	Timestamp uint64
-	Cpu       uint32
-	Pad0      uint32
-}
 
 type cpuNativeProfiler struct {
 	bpf bpf.BPF
@@ -139,7 +132,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 		// Use unified drainActiveRingBuffer with CPU event factory
 		stackCountsByProc, ring, err := ringCtx.drainActiveRingBuffer(
-			func() any { return &cpuEventKey{} },
+			func() any { return &abi.ProfilerCPUEvent{} },
 			nil,
 		) // No value conversion needed for CPU profiler
 		if err != nil {

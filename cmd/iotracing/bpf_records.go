@@ -17,7 +17,7 @@ package main
 import (
 	"strings"
 
-	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/utils/bytesutil"
 )
 
@@ -53,19 +53,7 @@ type bpfFilesystemIO struct {
 	PathSegs        [8][32]byte
 }
 
-// bpfScheduleDelay mirrors one iodelay_perf_events ring-buffer record: a
-// task that stalled in io_schedule longer than the threshold, with
-// the kernel stack captured at the stall.
-type bpfScheduleDelay struct {
-	Stack      [symbol.KsymStackMinDepth]uint64
-	Timestamp  uint64
-	LatencyNs  uint64
-	StackDepth uint32
-	Pid        uint32
-	Tid        uint32
-	CPU        uint32
-	Comm       [16]byte
-}
+type bpfScheduleDelay = abi.IotracingScheduleDelayEvent
 
 // IsDirect reports whether the IO bypassed the page cache.
 func (r *bpfFilesystemIO) IsDirect() bool {

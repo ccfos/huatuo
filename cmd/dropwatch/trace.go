@@ -25,6 +25,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 )
 
@@ -105,7 +106,7 @@ func mainAction(c *cli.Context) error {
 	}
 	defer sinkCleanup()
 
-	var ev dropPacketEvent
+	var ev abi.DropwatchPacketEvent
 
 	for {
 		if runCtx.Err() != nil {

@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/linkstatus"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/packet"
@@ -103,13 +104,13 @@ func newWriter(opt *writerOption) (writer, func(), error) {
 	}
 }
 
-func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
+func formatEvent(ev *abi.DropwatchPacketEvent) *types.DropWatchTracing {
 	pkt := packet.Hdr{
-		EthProto:  ev.Raw.EthProto,
-		RawLen:    uint8(ev.Raw.RawLen),
-		HasEthHdr: uint8(ev.Raw.HasEthHdr),
-		SkState:   uint8(ev.Raw.SkState),
-		Raw:       ev.Raw.Raw,
+		EthProto:  ev.PktHdr.EthProto,
+		RawLen:    uint8(ev.PktHdr.RawLen),
+		HasEthHdr: uint8(ev.PktHdr.HasEthHdr),
+		SkState:   uint8(ev.PktHdr.SkState),
+		Raw:       ev.PktHdr.Raw,
 	}
 
 	p, err := packet.Parse(&pkt)
@@ -123,17 +124,17 @@ func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
 	return &types.DropWatchTracing{
 		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
 		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
-		Pid:                 ev.Meta.TgidPid >> 32,
-		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemoryCgroupCSSAddr),
+		Pid:                 ev.Meta.TGIDPID >> 32,
+		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemcgCSSAddr),
 		NetNamespaceCookie:  ev.Meta.NetCookie,
-		NetNamespaceInode:   ev.Meta.NetInode,
-		NetdevName:          bytesutil.ToStr(ev.Meta.NetdevName[:]),
-		NetdevIfindex:       ev.Meta.NetdevIfindex,
-		NetdevQueueMapping:  ev.Meta.NetdevQueueMapping,
-		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.NetdevFlags),
-		PacketSkbAddr:       kernaddr.Format(ev.Meta.SkbAddr),
-		PacketEthProto:      fmt.Sprintf("0x%04x", ev.Raw.EthProto),
-		PacketLen:           ev.Raw.PktLen,
+		NetNamespaceInode:   ev.Meta.NetInum,
+		NetdevName:          bytesutil.ToStr(ev.Meta.DevName[:]),
+		NetdevIfindex:       ev.Meta.Ifindex,
+		NetdevQueueMapping:  ev.Meta.QueueMapping,
+		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.DevFlags),
+		PacketSkbAddr:       kernaddr.Format(ev.Meta.KfreeSKBAddr),
+		PacketEthProto:      fmt.Sprintf("0x%04x", ev.PktHdr.EthProto),
+		PacketLen:           ev.PktHdr.PktLen,
 		Layers:              p,
 		Stack:               stackStr,
 	}

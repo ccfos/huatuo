@@ -108,13 +108,13 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 			continue
 		}
 
-		hostname, _ := executil.HostnameByPid(event.Pid)
+		hostname, _ := executil.HostnameByPid(event.PID)
 
 		ring[head] = types.IOScheduleEvent{
 			Comm:              bytesutil.ToStr(event.Comm[:]),
 			ContainerHostname: hostname,
-			Pid:               event.Pid,
-			LatencyUs:         event.LatencyNs / 1000,
+			Pid:               event.PID,
+			LatencyUs:         event.Cost / 1000,
 			Stack:             symbol.KsymStackStrs(event.Stack[:], symbol.KsymStackMinDepth),
 		}
 

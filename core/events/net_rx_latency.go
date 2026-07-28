@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/packet"
@@ -57,26 +58,6 @@ type NetTracingData struct {
 	TCPSeq             uint32  `json:"tcp_seq"`
 	TCPAckSeq          uint32  `json:"tcp_ack_seq"`
 	PktLen             uint64  `json:"pkt_len"`
-}
-
-// from bpf perf
-type netRcvPerfEvent struct {
-	Comm               [bpf.TaskCommLen]byte
-	Latency            uint64
-	TgidPid            uint64
-	PktLen             uint64
-	TCPSport           uint16
-	TCPDport           uint16
-	TCPSaddr           uint32
-	TCPDaddr           uint32
-	TCPSeq             uint32
-	TCPAckSeq          uint32
-	TCPState           uint8
-	LatStage           uint8
-	_                  [2]byte
-	NetdevName         [bpf.NetdevNameLen]byte
-	NetNamespaceInode  uint32
-	NetNamespaceCookie uint64
 }
 
 var latStageNames = []string{
@@ -160,7 +141,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var pd netRcvPerfEvent
+			var pd abi.NetRXLatencyEvent
 			if err := reader.ReadInto(&pd); err != nil {
 				return fmt.Errorf("read from perf event fail: %w", err)
 			}
@@ -180,7 +161,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			pktLen := pd.PktLen
 
 			comm := bytesutil.ToStr(pd.Comm[:])
-			pid := pd.TgidPid >> 32
+			pid := pd.TGIDPID >> 32
 
 			title := fmt.Sprintf("comm=%s:%d to=%s lat(ms)=%.2f state=%s saddr=%s sport=%d daddr=%s dport=%d seq=%d ackSeq=%d pktLen=%d",
 				comm, pid, where, lat, state, saddr, sport, daddr, dport, seq, ackSeq, pktLen)
@@ -199,8 +180,8 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				LatMs:              lat,
 				LatThresholds:      latThreshold,
 				NetdevName:         bytesutil.ToStr(pd.NetdevName[:]),
-				NetNamespaceInode:  pd.NetNamespaceInode,
-				NetNamespaceCookie: pd.NetNamespaceCookie,
+				NetNamespaceInode:  pd.NetnsInum,
+				NetNamespaceCookie: pd.NetCookie,
 				TCPState:           state,
 				TCPSaddr:           saddr,
 				TCPDaddr:           daddr,
@@ -234,8 +215,8 @@ func isQosExcluded(container *pod.Container) bool {
 	return false
 }
 
-func filterByConfigAndResolveContainerID(pd *netRcvPerfEvent, hostNetnsInode uint64) (string, bool) {
-	inode := uint64(pd.NetNamespaceInode)
+func filterByConfigAndResolveContainerID(pd *abi.NetRXLatencyEvent, hostNetnsInode uint64) (string, bool) {
+	inode := uint64(pd.NetnsInum)
 
 	if cfg.NetRxLatency.ExcludedHostNetnamespace && inode == hostNetnsInode {
 		return "", false
@@ -243,10 +224,10 @@ func filterByConfigAndResolveContainerID(pd *netRcvPerfEvent, hostNetnsInode uin
 
 	var container *pod.Container
 
-	if pd.NetNamespaceCookie != 0 {
-		ct, err := pod.ContainerByNetCookie(pd.NetNamespaceCookie)
+	if pd.NetCookie != 0 {
+		ct, err := pod.ContainerByNetCookie(pd.NetCookie)
 		if err != nil {
-			log.Debugf("net_rx_latency: net_cookie lookup %d failed: %v", pd.NetNamespaceCookie, err)
+			log.Debugf("net_rx_latency: net_cookie lookup %d failed: %v", pd.NetCookie, err)
 		} else if ct != nil {
 			container = ct
 		}

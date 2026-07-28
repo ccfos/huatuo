@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
@@ -83,19 +84,13 @@ const (
 //	trace_event_raw_non_standard_event: 60 − 4 = 56
 //	trace_event_raw_aer_event:          40 − 4 = 36
 const (
-	RAS_PERFEVENT_INFO_SIZE = 512
+	RAS_PERFEVENT_INFO_SIZE = len(abi.RASEvent{}.Info)
 	DETAIL_INFO_SIZE_EDAC   = RAS_PERFEVENT_INFO_SIZE - 60
 	DETAIL_INFO_SIZE_ACPI   = RAS_PERFEVENT_INFO_SIZE - 56
 	DETAIL_INFO_SIZE_AER    = RAS_PERFEVENT_INFO_SIZE - 36
 )
 
-// rasEvent mirrors the BPF-side struct event layout.
-type rasEvent struct {
-	Type      uint32
-	Pad0      uint32
-	Timestamp uint64
-	Info      [RAS_PERFEVENT_INFO_SIZE]byte
-}
+type rasEvent = abi.RASEvent
 
 // RasTracingData is the structured record persisted by tracing.Save.
 type RasTracingData struct {
@@ -553,16 +548,17 @@ func buildRasAerTracerData(data *rasEvent) (*RasTracingData, error) {
 }
 
 func buildRasThrTracerData(data *rasEvent) (*RasTracingData, error) {
-	// tracepointThrPayload mirrors BPF-side struct thr_info stored in event->info.
-	type tracepointThrPayload struct {
-		Vector uint32 `json:"vector"`
-		CPU    uint32 `json:"cpu"`
-	}
-	payload, err := decodePayload[tracepointThrPayload](data.Info[:])
+	payload, err := decodePayload[abi.RASThrInfo](data.Info[:])
 	if err != nil {
 		return nil, fmt.Errorf("parse THR payload: %w", err)
 	}
-	return newRasTracingData(data, "CPU", "MCE_THRESHOLD", ErrTypeCorrected, payload)
+	return newRasTracingData(data, "CPU", "MCE_THRESHOLD", ErrTypeCorrected, struct {
+		Vector uint32 `json:"vector"`
+		CPU    uint32 `json:"cpu"`
+	}{
+		Vector: payload.Vector,
+		CPU:    payload.CPU,
+	})
 }
 
 func buildRasArmGhesTracerData(data *rasEvent) (*RasTracingData, error) {

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kmsgutil"
@@ -31,12 +32,6 @@ import (
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/softlockup.c -o $BPF_DIR/softlockup.o
-
-type softLockupPerfEventData struct {
-	CPU  int32
-	Pid  int32
-	Comm [16]byte
-}
 
 // TracerData is the full data structure.
 type SoftLockupTracerData struct {
@@ -102,7 +97,7 @@ func (c *softLockupTracing) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var data softLockupPerfEventData
+			var data abi.SoftlockupEvent
 			if err := reader.ReadInto(&data); err != nil {
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
@@ -125,8 +120,8 @@ func (c *softLockupTracing) Start(ctx context.Context) error {
 				TracerName: "softlockup",
 				TracerTime: time.Now(),
 				TracerData: &SoftLockupTracerData{
-					CPU:       data.CPU,
-					Pid:       data.Pid,
+					CPU:       int32(data.CPU),
+					Pid:       int32(data.PID),
 					Comm:      bytesutil.ToStr(data.Comm[:]),
 					CPUsStack: bt,
 				},

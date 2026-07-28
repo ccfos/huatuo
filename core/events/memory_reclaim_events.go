@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
@@ -27,15 +28,7 @@ import (
 	"huatuo-bamai/pkg/tracing"
 )
 
-type (
-	memoryReclaimTracing   struct{}
-	memoryReclaimPerfEvent struct {
-		Comm      [bpf.TaskCommLen]byte
-		Deltatime uint64
-		CSS       uint64
-		Pid       uint64
-	}
-)
+type memoryReclaimTracing struct{}
 
 // MemoryReclaimTracingData is the full data structure.
 type MemoryReclaimTracingData struct {
@@ -101,7 +94,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var data memoryReclaimPerfEvent
+			var data abi.MemoryReclaimEvent
 			if err := reader.ReadInto(&data); err != nil {
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
@@ -131,9 +124,9 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 
 			// save storage
 			tracingData := &MemoryReclaimTracingData{
-				Pid:       data.Pid,
+				Pid:       data.PID,
 				Comm:      bytesutil.ToStr(data.Comm[:]),
-				Deltatime: data.Deltatime,
+				Deltatime: data.DeltaTime,
 			}
 
 			log.Infof("memory_reclaim saves storage: %+v", tracingData)
