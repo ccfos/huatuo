@@ -4,14 +4,9 @@
 #include "bpf_ratelimit.h"
 #include "bpf_tracepoint.h"
 #include "vmlinux_net.h"
+#include "abi/netdev_txqueue_timeout_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
-
-struct txqueue_timeout {
-	unsigned int queue_index;
-	char name[IFNAMSIZ];
-	char driver[IFNAMSIZ];
-};
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -22,7 +17,7 @@ struct {
 SEC("tracepoint/net/net_dev_xmit_timeout")
 int bpf_rxqueue_timeout(struct trace_event_raw_net_dev_xmit_timeout *ctx)
 {
-	struct txqueue_timeout data = {
+	struct netdev_txqueue_timeout_event data = {
 		.queue_index = ctx->queue_index,
 	};
 

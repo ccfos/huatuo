@@ -7,7 +7,7 @@
 char __license[] SEC("license") = "GPL";
 
 DEFINE_PROFILER_PAGE_TRACKING_MAP();
-DEFINE_PROFILER_MAPS(struct profiler_event_base_t);
+DEFINE_PROFILER_MAPS(struct profiler_event_base);
 
 #define COMPAT_PG_HEAD_BIT 6
 
@@ -83,7 +83,7 @@ int BPF_KPROBE(trace_page_alloc, void *page_or_folio)
 
 	SELECT_PROFILER_AB();
 
-	struct profiler_event_base_t *event = profiler_prepare_event_base(
+	struct profiler_event_base *event = profiler_prepare_event_base(
 		&event_buf, pid_tgid, ctx, select_profiler_stack_map);
 	if (!event)
 		return 0;
@@ -129,13 +129,13 @@ int BPF_KPROBE(trace_page_free, void *page_or_folio)
 		return 0;
 
 	u64 page_addr = (u64)page_or_folio;
-	struct profiler_event_base_t *stack_info =
+	struct profiler_event_base *stack_info =
 		bpf_map_lookup_elem(&page_to_stackid, &page_addr);
 	if (!stack_info)
 		return 0;
 
 	u32 idx = 0;
-	struct profiler_event_base_t *event = bpf_map_lookup_elem(&event_buf, &idx);
+	struct profiler_event_base *event = bpf_map_lookup_elem(&event_buf, &idx);
 	if (!event)
 		return 0;
 

@@ -6,6 +6,7 @@
 
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
+#include "abi/oom_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -17,21 +18,10 @@ struct {
 	__uint(value_size, sizeof(u32));
 } oom_perf_events SEC(".maps");
 
-struct oom_info {
-	char trigger_comm[COMPAT_TASK_COMM_LEN];
-	char victim_comm[COMPAT_TASK_COMM_LEN];
-	u32 trigger_pid;
-	u32 victim_pid;
-	u64 trigger_memcg_css;
-	u64 victim_memcg_css;
-	u64 mem_limit_pages;
-	u64 mem_usage_pages;
-};
-
 SEC("kprobe/oom_kill_process")
 int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 {
-	struct oom_info info = {};
+	struct oom_event info = {};
 	struct task_struct *trigger_task, *victim_task;
 
 	if (bpf_ratelimited_in_map(ctx, rate))

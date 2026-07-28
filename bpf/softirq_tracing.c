@@ -5,6 +5,7 @@
 
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
+#include "abi/softirq_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -25,16 +26,6 @@ struct timer_softirq_run_ts {
 	u64 soft_ts;
 };
 
-struct report_event {
-	u64 stack[PERF_MAX_STACK_DEPTH];
-	s64 stack_size;
-	u64 now;
-	u64 stall_time;
-	char comm[COMPAT_TASK_COMM_LEN];
-	u32 pid;
-	u32 cpu;
-};
-
 // the map for recording irq/softirq timer ts
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -47,7 +38,7 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(key_size, sizeof(u32)); // key = 0
-	__uint(value_size, sizeof(struct report_event));
+	__uint(value_size, sizeof(struct softirq_event));
 	__uint(max_entries, 1);
 } report_map SEC(".maps");
 
@@ -69,7 +60,7 @@ void probe_account_process_tick(struct pt_regs *ctx)
 	int key = 0;
 	struct timer_softirq_run_ts *ts;
 	// struct thresh_data *tdata;
-	struct report_event *event;
+	struct softirq_event *event;
 	u64 now;
 	u64 delta;
 
@@ -113,7 +104,7 @@ void probe_account_process_tick(struct pt_regs *ctx)
 
 		bpf_perf_event_output(ctx, &irqoff_event_map,
 				      COMPAT_BPF_F_CURRENT_CPU, event,
-				      sizeof(struct report_event));
+				      sizeof(struct softirq_event));
 	}
 
 	// update soft_ts, use for next trace

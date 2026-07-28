@@ -12,6 +12,7 @@
 #include "bpf_ratelimit.h"
 #include "bpf_sock.h"
 #include "vmlinux_net.h"
+#include "abi/net_rx_latency_types.h"
 
 volatile const long long mono_wall_offset = 0;
 volatile const long long rxlat_thresh_netif = 5 * 1000 * 1000;	    // 5ms
@@ -19,25 +20,6 @@ volatile const long long rxlat_thresh_tcpv4 = 10 * 1000 * 1000;	    // 10ms
 volatile const long long rxlat_thresh_usercopy = 115 * 1000 * 1000; // 115ms
 
 BPF_RATELIMIT(rate, 1, 100);
-
-struct perf_event_t {
-	char comm[COMPAT_TASK_COMM_LEN];
-	u64 latency;
-	u64 tgid_pid;
-	u64 pkt_len;
-	u16 tcp_sport;
-	u16 tcp_dport;
-	u32 tcp_saddr;
-	u32 tcp_daddr;
-	u32 tcp_seq;
-	u32 tcp_ack_seq;
-	u8 tcp_state;
-	u8 lat_stage;
-	u8 _pad[2];
-	char netdev_name[IFNAMSIZ];
-	u32 netns_inum;
-	u64 net_cookie;
-};
 
 enum rx_lat_stage {
 	RX_STAGE_NETIF,
@@ -135,7 +117,7 @@ static inline u64 skb_latency_check(struct sk_buff *skb, u64 threshold)
 static inline void
 submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 {
-	struct perf_event_t event = {};
+	struct net_rx_latency_event event = {};
 	struct iphdr ip_hdr;
 	struct tcphdr tcp_hdr;
 	struct net_device *dev;
@@ -173,7 +155,7 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 
 	bpf_perf_event_output(ctx, &net_recv_lat_event_map,
 			      COMPAT_BPF_F_CURRENT_CPU, &event,
-			      sizeof(struct perf_event_t));
+			      sizeof(struct net_rx_latency_event));
 }
 
 SEC("tracepoint/net/netif_receive_skb")
