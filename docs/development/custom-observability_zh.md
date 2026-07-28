@@ -96,7 +96,7 @@ func newExampleMetric() (*tracing.EventTracingAttr, error) {
 }
 ```
 
-### 管理 Start 和 Update 共享的 BPF 对象
+### 管理 BPF 对象
 
 同一个实现同时提供 `Start` 和 `Update` 时，两个方法可能并发执行。不要直接在
 collector 字段中读写 `bpf.BPF` 接口；使用

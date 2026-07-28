@@ -101,7 +101,7 @@ func newExampleMetric() (*tracing.EventTracingAttr, error) {
 }
 ```
 
-### Manage a BPF object shared by Start and Update
+### Manage BPF object
 
 When one implementation provides both `Start` and `Update`, the methods may
 run concurrently. Do not read and write a `bpf.BPF` interface directly in a
