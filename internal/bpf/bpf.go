@@ -14,52 +14,7 @@
 
 package bpf
 
-import (
-	"context"
-	"errors"
-)
-
-// ErrClosed is returned when an operation uses a closed BPF object.
-var ErrClosed = errors.New("bpf: object is closed")
-
-type Option struct {
-	KeepaliveTimeout int
-}
-
-// AttachOption is an option for attaching a program.
-type AttachOption struct {
-	ProgramName string
-	Symbol      string   // symbol for kprobe/kretprobe/tracepoint/raw_tracepoint
-	PerfEvent   struct { // BPF_PROG_TYPE_PERF_EVENT
-		SamplePeriod, SampleFreq uint64
-		CPUIDs                   []int
-	}
-}
-
-// Info holds loaded BPF object metadata.
-type Info struct {
-	MapsInfo     []MapInfo
-	ProgramsInfo []ProgramInfo
-}
-
-// MapInfo identifies a loaded BPF map.
-type MapInfo struct {
-	ID   uint32
-	Name string
-}
-
-// ProgramInfo identifies a loaded BPF program.
-type ProgramInfo struct {
-	ID          uint32
-	Name        string
-	SectionName string
-}
-
-// MapItem describes a map element with key-value.
-type MapItem struct {
-	Key   []byte
-	Value []byte
-}
+import "context"
 
 // BPF is safe for concurrent use. Close waits for in-flight operations.
 // Resource access and attach methods started after Close return ErrClosed;
