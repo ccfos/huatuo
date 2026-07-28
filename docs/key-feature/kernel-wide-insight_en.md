@@ -1158,6 +1158,51 @@ huatuo_bamai_iolatency_blkdisk_freeze{disk="253:1",host="hostname",region="dev"}
 |---|---|---|---|---|
 |iolatency_blkdisk_freeze|Host disk freeze event count|count|Host|host, region, disk|
 
+### Disk IO Statistics
+
+`disk_io` collects per-device disk IO metrics and system-wide CPU iowait by reading `/proc/diskstats` and `/proc/stat`. Unlike `iolatency`, `disk_io` is procfs-based rather than eBPF-based, providing cumulative counters and average latency metrics.
+
+Counter metrics are cumulative; use Prometheus `rate()` for per-second values (IOPS, throughput). Gauge metrics are point-in-time values. Latency metrics are computed as delta(ticks)/delta(IOs) and only emitted when delta > 0.
+
+```bash
+# HELP huatuo_bamai_disk_io_disk_read_requests_total Total number of read requests completed successfully.
+# TYPE huatuo_bamai_disk_io_disk_read_requests_total counter
+huatuo_bamai_disk_io_disk_read_requests_total{device="sda",host="hostname",region="dev"} 1000
+# HELP huatuo_bamai_disk_io_disk_write_requests_total Total number of write requests completed successfully.
+# TYPE huatuo_bamai_disk_io_disk_write_requests_total counter
+huatuo_bamai_disk_io_disk_write_requests_total{device="sda",host="hostname",region="dev"} 2000
+# HELP huatuo_bamai_disk_io_disk_read_bytes_total Total number of bytes read from the device.
+# TYPE huatuo_bamai_disk_io_disk_read_bytes_total counter
+huatuo_bamai_disk_io_disk_read_bytes_total{device="sda",host="hostname",region="dev"} 2.56e+07
+# HELP huatuo_bamai_disk_io_disk_written_bytes_total Total number of bytes written to the device.
+# TYPE huatuo_bamai_disk_io_disk_written_bytes_total counter
+huatuo_bamai_disk_io_disk_written_bytes_total{device="sda",host="hostname",region="dev"} 4.096e+07
+# HELP huatuo_bamai_disk_io_disk_io_in_progress Number of I/O requests currently in flight (queue depth).
+# TYPE huatuo_bamai_disk_io_disk_io_in_progress gauge
+huatuo_bamai_disk_io_disk_io_in_progress{device="sda",host="hostname",region="dev"} 50
+# HELP huatuo_bamai_disk_io_disk_read_latency_ms Average read request latency in milliseconds.
+# TYPE huatuo_bamai_disk_io_disk_read_latency_ms gauge
+huatuo_bamai_disk_io_disk_read_latency_ms{device="sda",host="hostname",region="dev"} 5
+# HELP huatuo_bamai_disk_io_disk_write_latency_ms Average write request latency in milliseconds.
+# TYPE huatuo_bamai_disk_io_disk_write_latency_ms gauge
+huatuo_bamai_disk_io_disk_write_latency_ms{device="sda",host="hostname",region="dev"} 5
+# HELP huatuo_bamai_disk_io_disk_iowait_ratio Percentage of CPU time spent waiting for I/O operations to complete.
+# TYPE huatuo_bamai_disk_io_disk_iowait_ratio gauge
+huatuo_bamai_disk_io_disk_iowait_ratio{host="hostname",region="dev"} 4.18
+```
+
+|Metric|Description|Unit|Scope|Labels|
+|---|---|---|---|---|
+|disk_read_requests_total|Cumulative read requests completed (field 4). Use `rate()` for read IOPS|count|Host|host, region, device|
+|disk_write_requests_total|Cumulative write requests completed (field 8). Use `rate()` for write IOPS|count|Host|host, region, device|
+|disk_read_bytes_total|Cumulative bytes read (field 6 × 512). Use `rate()` for read throughput|bytes|Host|host, region, device|
+|disk_written_bytes_total|Cumulative bytes written (field 10 × 512). Use `rate()` for write throughput|bytes|Host|host, region, device|
+|disk_io_in_progress|Current number of I/O requests in flight, i.e. queue depth (field 12)|count|Host|host, region, device|
+|disk_read_latency_ms|Average read latency, computed as: delta(field 7) / delta(field 4)|ms|Host|host, region, device|
+|disk_write_latency_ms|Average write latency, computed as: delta(field 11) / delta(field 8)|ms|Host|host, region, device|
+|disk_iowait_ratio|Percentage of CPU time spent waiting for I/O, computed as: iowait_ticks / total_ticks × 100|percent|Host|host, region|
+
+
 ## General System
 
 ### Soft Lockup
