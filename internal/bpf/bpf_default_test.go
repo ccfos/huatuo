@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	testutils "huatuo-bamai/internal/testing"
 
@@ -728,7 +729,10 @@ func TestDefaultBPF_Close_Idempotent(t *testing.T) {
 
 	require.NoError(t, b.Close())
 	require.NoError(t, b.Close())
-	require.True(t, b.closed.Load())
+
+	loaded, err := b.Loaded()
+	require.NoError(t, err)
+	require.False(t, loaded)
 }
 
 func TestDefaultBPF_Detach_AfterClose(t *testing.T) {
@@ -736,4 +740,132 @@ func TestDefaultBPF_Detach_AfterClose(t *testing.T) {
 
 	require.NoError(t, b.Close())
 	require.NoError(t, b.Detach())
+}
+
+func TestDefaultBPF_OperationsAfterClose(t *testing.T) {
+	b := loadMinimalBpfFromBytes(t)
+	mapID := b.MapIDByName("counter_map")
+	require.NotZero(t, mapID)
+	require.NoError(t, b.Close())
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "info",
+			run: func() error {
+				_, err := b.Info()
+				return err
+			},
+		},
+		{
+			name: "attach",
+			run:  b.Attach,
+		},
+		{
+			name: "attach with options",
+			run: func() error {
+				return b.AttachWithOptions(nil)
+			},
+		},
+		{
+			name: "event pipe",
+			run: func() error {
+				_, err := b.EventPipe(t.Context(), mapID, 1)
+				return err
+			},
+		},
+		{
+			name: "event pipe by name",
+			run: func() error {
+				_, err := b.EventPipeByName(t.Context(), "counter_map", 1)
+				return err
+			},
+		},
+		{
+			name: "attach and event pipe",
+			run: func() error {
+				_, err := b.AttachAndEventPipe(t.Context(), "counter_map", 1)
+				return err
+			},
+		},
+		{
+			name: "read map",
+			run: func() error {
+				_, err := b.ReadMap(mapID, make([]byte, 4))
+				return err
+			},
+		},
+		{
+			name: "write map",
+			run: func() error {
+				return b.WriteMapItems(mapID, nil)
+			},
+		},
+		{
+			name: "delete map",
+			run: func() error {
+				return b.DeleteMapItems(mapID, nil)
+			},
+		},
+		{
+			name: "dump map",
+			run: func() error {
+				_, err := b.DumpMap(mapID)
+				return err
+			},
+		},
+		{
+			name: "dump map by name",
+			run: func() error {
+				_, err := b.DumpMapByName("counter_map")
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.ErrorIs(t, tt.run(), ErrClosed)
+		})
+	}
+}
+
+func TestDefaultBPF_CloseWaitsForOperation(t *testing.T) {
+	b := &defaultBPF{}
+	b.mu.RLock()
+
+	closeStarted := make(chan struct{})
+	closeDone := make(chan error, 1)
+	go func() {
+		close(closeStarted)
+		closeDone <- b.Close()
+	}()
+	<-closeStarted
+
+	deadline := time.Now().Add(time.Second)
+	for b.mu.TryRLock() {
+		b.mu.RUnlock()
+		if time.Now().After(deadline) {
+			b.mu.RUnlock()
+			t.Fatal("Close() did not wait for the operation lock")
+		}
+		runtime.Gosched()
+	}
+
+	select {
+	case err := <-closeDone:
+		b.mu.RUnlock()
+		t.Fatalf("Close() returned before the operation completed: %v", err)
+	default:
+	}
+
+	b.mu.RUnlock()
+	select {
+	case err := <-closeDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Close() did not return after the operation completed")
+	}
 }

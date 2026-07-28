@@ -27,7 +27,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/types"
@@ -66,19 +66,17 @@ type programSpec struct {
 
 // defaultBPF holds loaded BPF maps and programs.
 //
-// NOTE: defaultBPF is NOT thread-safe. Concurrent calls to Attach/Detach/Close
-// or map operations will race. Callers must serialize lifecycle methods.
-// runtime.SetFinalizer may invoke Close from any goroutine once the object
-// becomes unreachable, so callers must retain a reference until explicitly
-// closed.
+// Close waits for in-flight operations before releasing kernel resources.
+// Attach and Detach are serialized with map and event operations.
 type defaultBPF struct {
+	mu              sync.RWMutex
 	name            string
 	mapSpecs        map[uint32]mapSpec
 	programSpecs    map[uint32]programSpec
 	mapName2IDs     map[string]uint32
 	programName2IDs map[string]uint32
 	innerPerfEvent  *perfEventAttach
-	closed          atomic.Bool
+	isClosed        bool
 }
 
 // _ is a type assertion
@@ -245,11 +243,34 @@ func (b *defaultBPF) ProgIDByName(name string) uint32 {
 
 // String returns the bpf string.
 func (b *defaultBPF) String() string {
-	return fmt.Sprintf("%s#%d#%d", b.name, len(b.mapSpecs), len(b.programSpecs))
+	return fmt.Sprintf("%s#%d#%d", b.name, len(b.mapName2IDs), len(b.programName2IDs))
+}
+
+func (b *defaultBPF) acquireReadLock() error {
+	b.mu.RLock()
+	if b.isClosed {
+		b.mu.RUnlock()
+		return ErrClosed
+	}
+	return nil
+}
+
+func (b *defaultBPF) acquireWriteLock() error {
+	b.mu.Lock()
+	if b.isClosed {
+		b.mu.Unlock()
+		return ErrClosed
+	}
+	return nil
 }
 
 // Info gets defaultBPF information.
 func (b *defaultBPF) Info() (*Info, error) {
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
 	info := &Info{
 		MapsInfo:     make([]MapInfo, 0, len(b.mapSpecs)),
 		ProgramsInfo: make([]ProgramInfo, 0, len(b.programSpecs)),
@@ -278,9 +299,13 @@ func (b *defaultBPF) Info() (*Info, error) {
 // Close the bpf. Collects individual close errors and returns a combined error
 // so callers can detect cleanup failures.
 func (b *defaultBPF) Close() error {
-	if b.closed.Swap(true) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.isClosed {
 		return nil
 	}
+	b.isClosed = true
 
 	var closeErrs []error
 
@@ -322,11 +347,20 @@ func (b *defaultBPF) Close() error {
 
 // AttachWithOptions attaches programs with options.
 func (b *defaultBPF) AttachWithOptions(opts []AttachOption) error {
+	if err := b.acquireWriteLock(); err != nil {
+		return err
+	}
+	defer b.mu.Unlock()
+
+	return b.attachWithOptions(opts)
+}
+
+func (b *defaultBPF) attachWithOptions(opts []AttachOption) error {
 	var err error
 
 	defer func() {
 		if err != nil { // detach all programs when error.
-			if detachErr := b.Detach(); detachErr != nil {
+			if detachErr := b.detach(); detachErr != nil {
 				log.Warnf("bpf %s: detach during attach failure also errored: %v", b, detachErr)
 			}
 		}
@@ -379,11 +413,20 @@ func (b *defaultBPF) AttachWithOptions(opts []AttachOption) error {
 
 // Attach the default programs.
 func (b *defaultBPF) Attach() error {
+	if err := b.acquireWriteLock(); err != nil {
+		return err
+	}
+	defer b.mu.Unlock()
+
+	return b.attach()
+}
+
+func (b *defaultBPF) attach() error {
 	var err error
 
 	defer func() {
 		if err != nil { // detach all programs when error.
-			if detachErr := b.Detach(); detachErr != nil {
+			if detachErr := b.detach(); detachErr != nil {
 				log.Warnf("bpf %s: detach during attach failure also errored: %v", b, detachErr)
 			}
 		}
@@ -545,10 +588,17 @@ func (b *defaultBPF) attachPerfEvent(opt *perfEventOption) error {
 // Detach all programs. Collects individual detach errors and returns a
 // combined error so callers can detect cleanup failures.
 func (b *defaultBPF) Detach() error {
-	if b.closed.Load() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.isClosed {
 		return nil
 	}
 
+	return b.detach()
+}
+
+func (b *defaultBPF) detach() error {
 	var detachErrs []error
 
 	for id, spec := range b.programSpecs {
@@ -576,11 +626,23 @@ func (b *defaultBPF) Detach() error {
 
 // Loaded checks bpf is still loaded.
 func (b *defaultBPF) Loaded() (bool, error) {
-	return true, nil
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	return !b.isClosed, nil
 }
 
 // EventPipe gets event-pipe and returns a PerfEventReader.
 func (b *defaultBPF) EventPipe(ctx context.Context, mapID, perCPUBufSize uint32) (PerfEventReader, error) {
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
+	return b.eventPipe(ctx, mapID, perCPUBufSize)
+}
+
+func (b *defaultBPF) eventPipe(ctx context.Context, mapID, perCPUBufSize uint32) (PerfEventReader, error) {
 	reader, err := newPerfEventReader(ctx, b.mapSpecs[mapID].cloned, int(perCPUBufSize))
 	if err != nil {
 		return nil, err
@@ -592,17 +654,27 @@ func (b *defaultBPF) EventPipe(ctx context.Context, mapID, perCPUBufSize uint32)
 
 // EventPipeByName gets event-pipe by the mapName and returns a PerfEventReader.
 func (b *defaultBPF) EventPipeByName(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error) {
-	return b.EventPipe(ctx, b.MapIDByName(mapName), perCPUBufSize)
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
+	return b.eventPipe(ctx, b.MapIDByName(mapName), perCPUBufSize)
 }
 
 // AttachAndEventPipe attaches and event-pipe and returns a PerfEventReader.
 func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, perCPUBufSize uint32) (PerfEventReader, error) {
-	reader, err := b.EventPipeByName(ctx, mapName, perCPUBufSize)
+	if err := b.acquireWriteLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.Unlock()
+
+	reader, err := b.eventPipe(ctx, b.MapIDByName(mapName), perCPUBufSize)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := b.Attach(); err != nil {
+	if err := b.attach(); err != nil {
 		return nil, errors.Join(err, reader.Close())
 	}
 
@@ -616,6 +688,15 @@ func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, per
 // obtained value is of byte type, which also needs to be converted to the
 // corresponding type.
 func (b *defaultBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
+	return b.readMap(mapID, key)
+}
+
+func (b *defaultBPF) readMap(mapID uint32, key []byte) ([]byte, error) {
 	val, err := b.mapSpecs[mapID].cloned.LookupBytes(key)
 	if err != nil {
 		return nil, err
@@ -626,6 +707,15 @@ func (b *defaultBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 
 // WriteMapItems write the value content corresponding to a key to a map.
 func (b *defaultBPF) WriteMapItems(mapID uint32, items []MapItem) error {
+	if err := b.acquireReadLock(); err != nil {
+		return err
+	}
+	defer b.mu.RUnlock()
+
+	return b.writeMapItems(mapID, items)
+}
+
+func (b *defaultBPF) writeMapItems(mapID uint32, items []MapItem) error {
 	m := b.mapSpecs[mapID].cloned
 
 	for _, item := range items {
@@ -638,6 +728,15 @@ func (b *defaultBPF) WriteMapItems(mapID uint32, items []MapItem) error {
 
 // DeleteMapItems deletes multiple items from a BPF map by keys.
 func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
+	if err := b.acquireReadLock(); err != nil {
+		return err
+	}
+	defer b.mu.RUnlock()
+
+	return b.deleteMapItems(mapID, keys)
+}
+
+func (b *defaultBPF) deleteMapItems(mapID uint32, keys [][]byte) error {
 	m := b.mapSpecs[mapID].cloned
 
 	for _, k := range keys {
@@ -650,6 +749,15 @@ func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
 
 // DumpMap dump all the context of the map
 func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
+	return b.dumpMap(mapID)
+}
+
+func (b *defaultBPF) dumpMap(mapID uint32) ([]MapItem, error) {
 	m := b.mapSpecs[mapID].cloned
 
 	switch m.Type() {
@@ -715,7 +823,12 @@ func dumpPerCPUMap(mapID uint32, m *ebpf.Map) ([]MapItem, error) {
 
 // DumpMapByName dump all the context of the map.
 func (b *defaultBPF) DumpMapByName(mapName string) ([]MapItem, error) {
-	return b.DumpMap(b.MapIDByName(mapName))
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
+	return b.dumpMap(b.MapIDByName(mapName))
 }
 
 // WaitDetachByBreaker check the bpf's status.

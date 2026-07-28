@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,7 +16,11 @@ package bpf
 
 import (
 	"context"
+	"errors"
 )
+
+// ErrClosed is returned when an operation uses a closed BPF object.
+var ErrClosed = errors.New("bpf: object is closed")
 
 type Option struct {
 	KeepaliveTimeout int
@@ -57,6 +61,9 @@ type MapItem struct {
 	Value []byte
 }
 
+// BPF is safe for concurrent use. Close waits for in-flight operations.
+// Resource access and attach methods started after Close return ErrClosed;
+// Close and Detach remain idempotent.
 type BPF interface {
 	// Name returns the bpf name.
 	Name() string
