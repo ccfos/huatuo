@@ -175,6 +175,9 @@ func offCPUCategory(kind, flags uint8) string {
 		}
 		return "off-CPU blocked"
 	case offCPUEventRunqueue:
+		if flags&offCPUFlagMissedWakeup != 0 {
+			return "scheduling delay (wakeup not observed)"
+		}
 		if flags&offCPUFlagPreempted != 0 {
 			return "scheduling delay (preempted)"
 		}

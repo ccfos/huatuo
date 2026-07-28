@@ -120,19 +120,23 @@ struct task_struct___5_14 {
 
 static __always_inline long offcpu_task_state(struct task_struct *task)
 {
+	struct task_struct___5_14 *new_task;
+
 	if (!task)
 		return -1;
 
 	if (bpf_core_field_exists(task->state))
 		return BPF_CORE_READ(task, state);
 
-	struct task_struct___5_14 *new_task = (void *)task;
+	new_task = (void *)task;
 	return (long)BPF_CORE_READ(new_task, __state);
 }
 
 static __always_inline void offcpu_count(__u32 index)
 {
-	__u64 *value = bpf_map_lookup_elem(&offcpu_stats, &index);
+	__u64 *value;
+
+	value = bpf_map_lookup_elem(&offcpu_stats, &index);
 	if (value)
 		(*value)++;
 }
@@ -153,10 +157,15 @@ static __always_inline void offcpu_emit(
 	__u8 kind,
 	__u8 extra_flags)
 {
+	struct offcpu_event_t *event;
+	__u64 duration;
+	__u32 zero = 0;
+	long err;
+
 	if (!offcpu_metric_enabled(kind) || end_ns <= state->phase_start_ns)
 		return;
 
-	__u64 duration = end_ns - state->phase_start_ns;
+	duration = end_ns - state->phase_start_ns;
 	if (duration < profiler_offcpu_min_ns) {
 		offcpu_count(OFFCPU_STAT_BELOW_THRESHOLD);
 		return;
@@ -166,8 +175,7 @@ static __always_inline void offcpu_emit(
 		return;
 	}
 
-	__u32 zero = 0;
-	struct offcpu_event_t *event = bpf_map_lookup_elem(&offcpu_event_buf, &zero);
+	event = bpf_map_lookup_elem(&offcpu_event_buf, &zero);
 	if (!event)
 		return;
 
@@ -181,8 +189,8 @@ static __always_inline void offcpu_emit(
 	event->kind = kind;
 	event->flags = state->flags | extra_flags;
 
-	long err = bpf_perf_event_output(ctx, &offcpu_output,
-					 COMPAT_BPF_F_CURRENT_CPU, event, sizeof(*event));
+	err = bpf_perf_event_output(ctx, &offcpu_output,
+				    COMPAT_BPF_F_CURRENT_CPU, event, sizeof(*event));
 	if (err < 0) {
 		offcpu_count(OFFCPU_STAT_OUTPUT_ERROR);
 		return;
@@ -196,15 +204,19 @@ static __always_inline int offcpu_wakeup(
 	struct bpf_raw_tracepoint_args *ctx,
 	struct task_struct *task)
 {
-	__u64 key = (__u64)task;
+	struct offcpu_state_t *state;
+	__u64 key;
+	__u64 now;
+
+	key = (__u64)task;
 	if (!key)
 		return 0;
 
-	struct offcpu_state_t *state = bpf_map_lookup_elem(&offcpu_states, &key);
+	state = bpf_map_lookup_elem(&offcpu_states, &key);
 	if (!state || state->phase != OFFCPU_PHASE_BLOCKED)
 		return 0;
 
-	__u64 now = bpf_ktime_get_ns();
+	now = bpf_ktime_get_ns();
 	offcpu_emit(ctx, state, now, OFFCPU_EVENT_BLOCKED, 0);
 
 	/* Preserve the captured stack and begin measuring scheduler delay. */
@@ -230,24 +242,31 @@ static __always_inline void offcpu_record_switch_out(
 	struct task_struct *prev,
 	__u64 now)
 {
-	__u64 pid_tgid = bpf_get_current_pid_tgid();
-	__u32 pid = (__u32)pid_tgid;
-	__u32 tgid = pid_tgid >> 32;
-	__u64 key = (__u64)prev;
+	struct offcpu_state_t state = {};
+	__u64 pid_tgid;
+	__u64 key;
+	__u32 pid;
+	__u32 tgid;
+	bool preempted;
+	long task_state;
+
+	pid_tgid = bpf_get_current_pid_tgid();
+	pid = (__u32)pid_tgid;
+	tgid = pid_tgid >> 32;
+	key = (__u64)prev;
 
 	if (!key || (pid == 0 && tgid == 0) ||
 	    !profiler_should_trace(pid_tgid, current_task_cpu_css_addr()))
 		return;
 
-	struct offcpu_state_t state = {};
 	if (profiler_fill_event_base(&state.base, pid_tgid, ctx,
 				     &offcpu_stack_map) < 0) {
 		offcpu_count(OFFCPU_STAT_STACK_ERROR);
 		return;
 	}
 
-	bool preempted = (__u64)ctx->args[0] != 0;
-	long task_state = offcpu_task_state(prev);
+	preempted = (__u64)ctx->args[0] != 0;
+	task_state = offcpu_task_state(prev);
 	state.phase_start_ns = now;
 	if (preempted || task_state == TASK_RUNNING) {
 		state.phase = OFFCPU_PHASE_RUNNABLE;
@@ -268,19 +287,27 @@ static __always_inline void offcpu_finish_switch_in(
 	struct task_struct *next,
 	__u64 now)
 {
-	__u64 key = (__u64)next;
+	struct offcpu_state_t *state;
+	__u64 key;
+
+	key = (__u64)next;
 	if (!key || BPF_CORE_READ(next, pid) == 0)
 		return;
 
-	struct offcpu_state_t *state = bpf_map_lookup_elem(&offcpu_states, &key);
+	state = bpf_map_lookup_elem(&offcpu_states, &key);
 	if (!state)
 		return;
 
 	if (state->phase == OFFCPU_PHASE_RUNNABLE) {
 		offcpu_emit(ctx, state, now, OFFCPU_EVENT_RUNQUEUE, 0);
 	} else {
-		/* Preserve real elapsed time but make the missing wakeup explicit. */
-		offcpu_emit(ctx, state, now, OFFCPU_EVENT_BLOCKED,
+		/*
+		 * The wakeup boundary is unknowable once its event is missed. Most
+		 * production tasks spend less time blocked than runnable, so avoid
+		 * charging the whole interval to blocking and keep the uncertainty
+		 * explicit for userspace.
+		 */
+		offcpu_emit(ctx, state, now, OFFCPU_EVENT_RUNQUEUE,
 			    OFFCPU_FLAG_MISSED_WAKEUP);
 		offcpu_count(OFFCPU_STAT_MISSED_WAKEUP);
 	}
@@ -300,24 +327,46 @@ int native_cpu_offcpu_switch(struct bpf_raw_tracepoint_args *ctx)
 	return 0;
 }
 
-static __always_inline int offcpu_cleanup_task(struct task_struct *task)
+static __always_inline int offcpu_finish_task(
+	struct bpf_raw_tracepoint_args *ctx,
+	struct task_struct *task,
+	bool emit_pending)
 {
-	__u64 key = (__u64)task;
-	if (key && bpf_map_lookup_elem(&offcpu_states, &key)) {
-		bpf_map_delete_elem(&offcpu_states, &key);
-		offcpu_count(OFFCPU_STAT_EXIT_CLEANUP);
+	struct offcpu_state_t *state;
+	__u64 key;
+	__u64 now;
+
+	key = (__u64)task;
+	if (!key)
+		return 0;
+
+	state = bpf_map_lookup_elem(&offcpu_states, &key);
+	if (!state)
+		return 0;
+
+	/* sched_process_exit is the last reliable boundary for a pending sample. */
+	if (emit_pending) {
+		now = bpf_ktime_get_ns();
+		if (state->phase == OFFCPU_PHASE_RUNNABLE)
+			offcpu_emit(ctx, state, now, OFFCPU_EVENT_RUNQUEUE, 0);
+		else
+			offcpu_emit(ctx, state, now, OFFCPU_EVENT_BLOCKED, 0);
 	}
+
+	bpf_map_delete_elem(&offcpu_states, &key);
+	offcpu_count(OFFCPU_STAT_EXIT_CLEANUP);
 	return 0;
 }
 
 SEC("raw_tracepoint/sched_process_exit")
 int native_cpu_offcpu_exit(struct bpf_raw_tracepoint_args *ctx)
 {
-	return offcpu_cleanup_task((void *)ctx->args[0]);
+	return offcpu_finish_task(ctx, (void *)ctx->args[0], true);
 }
 
 SEC("raw_tracepoint/sched_process_free")
 int native_cpu_offcpu_free(struct bpf_raw_tracepoint_args *ctx)
 {
-	return offcpu_cleanup_task((void *)ctx->args[0]);
+	/* Free can lag exit, so use it only as a stale-state cleanup fallback. */
+	return offcpu_finish_task(ctx, (void *)ctx->args[0], false);
 }

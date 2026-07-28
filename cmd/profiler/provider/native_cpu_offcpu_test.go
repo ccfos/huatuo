@@ -45,6 +45,7 @@ func TestOffCPUCategory(t *testing.T) {
 		{offCPUEventBlocked, 0, "off-CPU blocked"},
 		{offCPUEventBlocked, offCPUFlagMissedWakeup, "off-CPU blocked (wakeup not observed)"},
 		{offCPUEventRunqueue, 0, "scheduling delay"},
+		{offCPUEventRunqueue, offCPUFlagMissedWakeup, "scheduling delay (wakeup not observed)"},
 		{offCPUEventRunqueue, offCPUFlagPreempted, "scheduling delay (preempted)"},
 		{offCPUEventRunqueue, offCPUFlagYielded, "scheduling delay (yielded)"},
 		{99, 0, "off-CPU unknown"},
