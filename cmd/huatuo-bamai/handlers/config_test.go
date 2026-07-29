@@ -54,6 +54,87 @@ Log = { Level = "Info" }
 	}
 }
 
+func TestConfigHandlerUpdatesNumericConfig(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+
+	if err := config.Load(writeConfig(t, `
+[Runtime]
+StartupCPULimitCores = 0.5
+CPULimitCores = 2.0
+MemoryLimitMiB = 2048
+
+[Pod]
+KubeletReadOnlyPort = 10255
+`)); err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	engine := httpGin.New()
+	server.NewRoot(engine, "").PUT("/config", NewConfigHandler().update)
+
+	body := `{"config":{
+		"Runtime.StartupCPULimitCores":0.75,
+		"Runtime.CPULimitCores":1.5,
+		"Runtime.MemoryLimitMiB":1024,
+		"Pod.KubeletReadOnlyPort":10250
+	}}`
+	req := httptest.NewRequest(http.MethodPut, "/config", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	cfg := config.Get()
+	if cfg.Runtime.StartupCPULimitCores != 0.75 {
+		t.Errorf("StartupCPULimitCores = %v, want 0.75", cfg.Runtime.StartupCPULimitCores)
+	}
+	if cfg.Runtime.CPULimitCores != 1.5 {
+		t.Errorf("CPULimitCores = %v, want 1.5", cfg.Runtime.CPULimitCores)
+	}
+	if cfg.Runtime.MemoryLimitMiB != 1024 {
+		t.Errorf("MemoryLimitMiB = %d, want 1024", cfg.Runtime.MemoryLimitMiB)
+	}
+	if cfg.Pod.KubeletReadOnlyPort != 10250 {
+		t.Errorf("KubeletReadOnlyPort = %d, want 10250", cfg.Pod.KubeletReadOnlyPort)
+	}
+}
+
+func TestConfigHandlerRejectsFractionalInteger(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+
+	if err := config.Load(writeConfig(t, `
+[Runtime]
+StartupCPULimitCores = 0.5
+CPULimitCores = 2.0
+MemoryLimitMiB = 2048
+`)); err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	engine := httpGin.New()
+	server.NewRoot(engine, "").PUT("/config", NewConfigHandler().update)
+
+	req := httptest.NewRequest(
+		http.MethodPut,
+		"/config",
+		bytes.NewBufferString(`{"config":{"Runtime.MemoryLimitMiB":1024.5}}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if config.Get().Runtime.MemoryLimitMiB != 2048 {
+		t.Errorf("MemoryLimitMiB changed to %d after rejected update", config.Get().Runtime.MemoryLimitMiB)
+	}
+}
+
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
 

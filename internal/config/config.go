@@ -16,6 +16,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -83,9 +84,55 @@ func Set(cfg any, key string, val any) error {
 	rc := reflect.Indirect(c)
 	rval := reflect.ValueOf(val)
 	if rc.Kind() != rval.Kind() {
-		return fmt.Errorf("%s type %s is not assignable to type %s", key, rc.Kind(), rval.Kind())
+		converted, ok := convertJSONNumber(rc, rval)
+		if !ok {
+			return fmt.Errorf("%s type %s is not assignable to type %s", key, rval.Kind(), rc.Kind())
+		}
+		rval = converted
 	}
 
 	rc.Set(rval)
 	return nil
+}
+
+// convertJSONNumber converts the float64 representation produced by encoding/json
+// to the destination's numeric type without truncation or overflow.
+func convertJSONNumber(dst, src reflect.Value) (reflect.Value, bool) {
+	if src.Kind() != reflect.Float64 {
+		return reflect.Value{}, false
+	}
+
+	f := src.Float()
+	converted := reflect.New(dst.Type()).Elem()
+	switch dst.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if math.Trunc(f) != f ||
+			f < float64(math.MinInt64) ||
+			f >= -float64(math.MinInt64) {
+			return reflect.Value{}, false
+		}
+		value := int64(f)
+		if dst.OverflowInt(value) {
+			return reflect.Value{}, false
+		}
+		converted.SetInt(value)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if math.Trunc(f) != f || f < 0 || f >= math.Ldexp(1, 64) {
+			return reflect.Value{}, false
+		}
+		value := uint64(f)
+		if dst.OverflowUint(value) {
+			return reflect.Value{}, false
+		}
+		converted.SetUint(value)
+	case reflect.Float32, reflect.Float64:
+		if dst.OverflowFloat(f) {
+			return reflect.Value{}, false
+		}
+		converted.SetFloat(f)
+	default:
+		return reflect.Value{}, false
+	}
+
+	return converted, true
 }

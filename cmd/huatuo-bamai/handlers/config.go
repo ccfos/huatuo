@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,9 +15,7 @@
 package handlers
 
 import (
-	"math"
 	"net/http"
-	"reflect"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/log"
@@ -48,13 +46,6 @@ func (h *ConfigHandler) update(ctx *server.Context) error {
 	}
 
 	for k, v := range req.Config {
-		if reflect.ValueOf(v).Kind() == reflect.Float64 {
-			f := v.(float64)
-			if f > math.MaxInt64 || f < math.MinInt64 {
-				return response.ErrInvalidRequest.WithMessage("integer value out of range")
-			}
-			v = int64(f)
-		}
 		if err := config.Set(k, v); err != nil {
 			return response.ErrInvalidRequest.WithMessage(err.Error())
 		}
