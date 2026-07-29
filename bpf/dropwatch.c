@@ -10,6 +10,7 @@
 #include "bpf_ratelimit.h"
 #include "bpf_skb_filter.h"
 #include "vmlinux_net.h"
+#include "abi/dropwatch_types.h"
 
 #define TYPE_TCP_COMMON_DROP 1
 #define TYPE_TCP_SYN_FLOOD 2
@@ -21,41 +22,6 @@
 #define SK_FL_TYPE_SHIFT 16
 #define SK_FL_TYPE_MASK 0xffff0000
 
-#define PKT_RAW_LEN 120
-
-struct packet_meta {
-	u64 ktime_ns;            /* 8  */
-	u64 tgid_pid;            /* 8  */
-	u64 net_cookie;          /* 8  */
-	u64 kfree_skb_addr;      /* 8  */
-	u64 memcg_css_addr;           /* 8  */
-	u32 ifindex;             /* 4  */
-	u32 dev_flags;           /* 4  */
-	u32 queue_mapping;       /* 4  */
-	u32 drop_reason;         /* 4  */
-	u32 net_inum;             /* 4  */
-	u8  dev_name[IFNAMSIZ];  /* 16 */
-	u8  comm[COMPAT_TASK_COMM_LEN]; /* 16 */
-};                           /* 92 bytes + 4 tail pad = 96 */
-
-struct packet_raw {
-	u16 eth_proto;    /* 2  */
-	u16 raw_len;      /* 2  */
-	u16 has_eth_hdr;  /* 2: raw[] starts with Ethernet header; 0: starts at L3 */
-	u16 pad;          /* 2  */
-	u32 pkt_len;      /* 4  */
-	u32 sk_state;     /* 4  */
-	u8  raw[PKT_RAW_LEN]; /* PKT_RAW_LEN */
-};                    /* total: 136 bytes */
-
-struct drop_packet_event {
-	struct packet_meta meta;
-	struct packet_raw pkt_hdr;
-	u64 stack_size;
-	u64 stack[PERF_MAX_STACK_DEPTH];
-};
-
-
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
 	__uint(key_size, sizeof(int));
@@ -66,7 +32,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(max_entries, 1);
 	__uint(key_size, sizeof(u32));
-	__uint(value_size, sizeof(struct drop_packet_event));
+	__uint(value_size, sizeof(struct dropwatch_packet_event));
 } dropwatch_stackmap SEC(".maps");
 
 /* Runtime-configurable rate limiter. Userspace patches the three
@@ -77,7 +43,7 @@ BPF_RATELIMIT_IN_MAP_RC(dropwatch);
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-static const struct drop_packet_event zero_data = {};
+static const struct dropwatch_packet_event zero_data = {};
 static const u32 stackmap_key = 0;
 
 /* kfree_skb gained an skb drop reason field in v5.17, absent from the BTF this
@@ -160,7 +126,7 @@ static void sk_get_type_and_protocol(struct sock *sk, u16 *protocol, u16 *type)
 }
 
 static inline void skb_load_packet_raw(struct sk_buff *skb,
-					struct packet_raw *pkt_raw,
+					struct dropwatch_packet_raw *pkt_raw,
 					u16 skb_protocol)
 {
 	unsigned char *hdr;
@@ -178,17 +144,17 @@ static inline void skb_load_packet_raw(struct sk_buff *skb,
 		hdr = skb_network_header(skb);
 	}
 
-	if (bpf_probe_read(pkt_raw->raw, PKT_RAW_LEN, hdr) < 0)
+	if (bpf_probe_read(pkt_raw->raw, DROPWATCH_PACKET_RAW_LEN, hdr) < 0)
 		return;
 
-	pkt_raw->raw_len = PKT_RAW_LEN;
+	pkt_raw->raw_len = DROPWATCH_PACKET_RAW_LEN;
 }
 
 SEC("tracepoint/skb/kfree_skb")
 int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 {
 	struct sk_buff *skb = ctx->skbaddr;
-	struct drop_packet_event *data = NULL;
+	struct dropwatch_packet_event *data = NULL;
 	struct net_device *dev;
 	u16 skb_protocol;
 

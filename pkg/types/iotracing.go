@@ -14,10 +14,10 @@
 
 package types
 
-// IOTracingReport is the wire schema produced by one iotracing run and
+// IOTracingSnapshot is the wire schema produced by one iotracing run and
 // sent to huatuo-bamai over toolstream. The trigger reason snapshot is
 // attached by the daemon after receipt and is not part of this payload.
-type IOTracingReport struct {
+type IOTracingSnapshot struct {
 	Processes   []ProcessFileIOStats `json:"process_file_io_stats"`
 	StallStacks []IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
 }

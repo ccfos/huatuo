@@ -18,12 +18,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
-	"unsafe"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/bpfmap"
 	"huatuo-bamai/internal/profiler/procutil"
@@ -35,19 +34,6 @@ import (
 // or B chosen by transferCnt parity; userspace flips parity each tick, then
 // drains the just-frozen ring. ~100ms balances responsiveness and overhead.
 const drainTick = 100 * time.Millisecond
-
-// TaskCommLen is the length of task comm in BPF programs
-const TaskCommLen = 16
-
-// ProfilerEventBase contains the common fields shared by all profiler events.
-// This matches the BPF-side struct profiler_event_base_t for binary compatibility.
-type ProfilerEventBase struct {
-	PidTgid   uint64 // Full pid_tgid: tgid (process) in upper 32 bits, pid (thread) in lower 32 bits
-	Comm      [TaskCommLen]byte
-	Kernstack int32
-	Userstack int32
-	Value     int64 // CPU: always 1 (sample count), Memory: page/byte delta
-}
 
 // ringBufferContext holds the shared ring buffer state for A/B buffer management.
 // It encapsulates all the common infrastructure needed for dual-buffer profiling
@@ -192,15 +178,15 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 		totalRead += uint64(len(batch))
 
 		for _, rec := range batch {
-			// rec is a pointer to the event struct (*cpuEventKey or *ProfilerEventBase).
-			// Use reflection to get the pointer value, then convert to *ProfilerEventBase.
-			// For structs with embedded ProfilerEventBase, the base is at offset 0.
-			ptrValue := reflect.ValueOf(rec)
-			if ptrValue.Kind() != reflect.Ptr {
+			var base *abi.ProfilerEventBase
+			switch event := rec.(type) {
+			case *abi.ProfilerEventBase:
+				base = event
+			case *abi.ProfilerCPUEvent:
+				base = &event.Base
+			default:
 				continue
 			}
-			// Get the struct pointer and convert to *ProfilerEventBase
-			base := (*ProfilerEventBase)(unsafe.Pointer(ptrValue.Pointer()))
 
 			// Skip events without valid stacks
 			if base.Kernstack <= 0 && base.Userstack <= 0 {
@@ -219,7 +205,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 			// Aggregate by process and stack ID
 			pair := bpfmap.StackTraceID{KernelID: base.Kernstack, UserID: base.Userstack}
 			// Extract tgid (process ID) from upper 32 bits of pid_tgid
-			tgid := uint32(base.PidTgid >> 32)
+			tgid := uint32(base.PIDTGID >> 32)
 			pidName := processIDName{Pid: tgid, Name: procutil.CommToString(base.Comm)}
 
 			if stackCountsByProc[pidName] == nil {

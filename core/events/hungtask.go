@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kmsgutil"
@@ -34,11 +35,6 @@ import (
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/hungtask.c -o $BPF_DIR/hungtask.o
-
-type hungTaskPerfEventData struct {
-	Pid  int32
-	Comm [bpf.TaskCommLen]byte
-}
 
 // HungTaskTracerData is the full data structure.
 type HungTaskTracerData struct {
@@ -110,7 +106,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var data hungTaskPerfEventData
+			var data abi.HungtaskEvent
 			if err := reader.ReadInto(&data); err != nil {
 				return fmt.Errorf("hungtask ReadFromPerfEvent: %w", err)
 			}
@@ -138,7 +134,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 				TracerName: "hungtask",
 				TracerTime: time.Now(),
 				TracerData: &HungTaskTracerData{
-					Pid:                   data.Pid,
+					Pid:                   data.PID,
 					Comm:                  bytesutil.ToStr(data.Comm[:]),
 					CPUsStack:             cpusBT,
 					BlockedProcessesStack: blockedProcessesBT,

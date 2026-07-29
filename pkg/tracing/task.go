@@ -25,8 +25,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"huatuo-bamai/internal/log"
 )
 
 // Status represents the status of a task.
@@ -86,12 +84,15 @@ type task struct {
 
 var (
 	taskLifeTmpCache sync.Map
+	taskCreateMu     sync.Mutex
 	// ErrTaskNotFound Error returned when a task is not found.
 	ErrTaskNotFound = errors.New("task not found")
 	// ErrTaskTimeout Error returned when a task times out.
 	ErrTaskTimeout = errors.New("task timeout")
 	// ErrTaskCanceled Error returned when a task is canceled.
 	ErrTaskCanceled = errors.New("task canceled")
+	// ErrTaskLimitExceeded is returned when a new task would exceed the active limit.
+	ErrTaskLimitExceeded = errors.New("too many running tasks")
 )
 
 func init() {
@@ -107,7 +108,6 @@ func tasksGarbageCollect() {
 		taskLifeTmpCache.Range(func(key, value any) bool {
 			task, ok := value.(*task)
 			if !ok {
-				log.Warnf("task garbage collect: invalid task type for key %v", key)
 				taskLifeTmpCache.Delete(key)
 				return true
 			}
@@ -117,7 +117,6 @@ func tasksGarbageCollect() {
 				now.After(task.deadlineTime)
 			task.mu.Unlock()
 			if expired {
-				log.Infof("task %s deleted by timeout", key)
 				taskLifeTmpCache.Delete(key)
 			}
 			return true
@@ -148,8 +147,44 @@ func AllocTaskID() (string, error) {
 func NewTask(execBinary string, timeout time.Duration, storageType TaskStorageType, execArgs []string) string {
 	taskID, err := AllocTaskID()
 	if err != nil {
-		log.Errorf("alloc task id: %v", err)
 		return ""
+	}
+	if _, err := NewTaskWithID(taskID, execBinary, timeout, storageType, execArgs); err != nil {
+		return ""
+	}
+	return taskID
+}
+
+// NewTaskWithID creates a task with an idempotency key supplied by the caller.
+func NewTaskWithID(
+	taskID string,
+	execBinary string,
+	timeout time.Duration,
+	storageType TaskStorageType,
+	execArgs []string,
+) (string, error) {
+	return NewTaskWithIDLimit(taskID, execBinary, timeout, storageType, execArgs, 0)
+}
+
+// NewTaskWithIDLimit creates an idempotent task while enforcing an active limit.
+func NewTaskWithIDLimit(
+	taskID string,
+	execBinary string,
+	timeout time.Duration,
+	storageType TaskStorageType,
+	execArgs []string,
+	maxActive int,
+) (string, error) {
+	if taskID == "" {
+		return "", errors.New("task id is required")
+	}
+	taskCreateMu.Lock()
+	defer taskCreateMu.Unlock()
+	if _, loaded := taskLifeTmpCache.Load(taskID); loaded {
+		return taskID, nil
+	}
+	if maxActive > 0 && activeTaskCount() >= maxActive {
+		return "", ErrTaskLimitExceeded
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	task := &task{
@@ -165,7 +200,25 @@ func NewTask(execBinary string, timeout time.Duration, storageType TaskStorageTy
 
 	go runTask(ctx, task)
 
-	return taskID
+	return taskID, nil
+}
+
+func activeTaskCount() int {
+	count := 0
+	taskLifeTmpCache.Range(func(_, value any) bool {
+		task, ok := value.(*task)
+		if !ok {
+			return true
+		}
+		task.mu.Lock()
+		active := task.status == StatusPending || task.status == StatusRunning
+		task.mu.Unlock()
+		if active {
+			count++
+		}
+		return true
+	})
+	return count
 }
 
 func runTask(ctx context.Context, task *task) {
@@ -175,7 +228,6 @@ func runTask(ctx context.Context, task *task) {
 	task.mu.Lock()
 	task.status = StatusRunning
 	task.mu.Unlock()
-	log.Infof("task %s %s started", task.execBinary, task.id)
 
 	cmd := exec.CommandContext(ctx, path.Join(TaskBinDir, task.execBinary), task.execArgs...)
 	output, err := cmd.CombinedOutput()
@@ -195,7 +247,6 @@ func runTask(ctx context.Context, task *task) {
 		task.error = taskErr
 		task.deadlineTime = time.Now().Add(10 * time.Minute)
 		task.mu.Unlock()
-		log.Infof("task %s %s failed: %s", task.execBinary, task.id, taskErr)
 		return
 	}
 
@@ -205,36 +256,30 @@ func runTask(ctx context.Context, task *task) {
 	task.status = StatusCompleted
 	task.deadlineTime = time.Now().Add(10 * time.Minute)
 	task.mu.Unlock()
-	log.Infof("task %s completed: %s", task.id, fmt.Sprint(task.execBinary, task.execArgs))
 }
 
 func saveTaskOutputByType(task *task, startAt time.Time, output []byte) {
 	switch task.storage {
 	case TaskStorageDB:
-		if err := SaveTaskOutputText(&WriteRequest{
+		_ = SaveTaskOutputText(&WriteRequest{
 			TracerName: task.execBinary,
 			TracerID:   task.id,
 			TracerTime: startAt,
 			TracerData: string(output),
-		}); err != nil {
-			log.Infof("save task output %s %s failed: %v", task.execBinary, task.id, err)
-		}
+		})
 	case TaskStorageDBJSON:
-		if err := SaveTaskOutputJSON(&WriteRequest{
+		_ = SaveTaskOutputJSON(&WriteRequest{
 			TracerName: task.execBinary,
 			TracerID:   task.id,
 			TracerTime: startAt,
 			TracerData: string(output),
-		}); err != nil {
-			log.Infof("save task json output %s %s failed: %v", task.execBinary, task.id, err)
-		}
+		})
 	case TaskStorageStdout:
 		task.mu.Lock()
 		task.stdoutData = append(task.stdoutData, output...)
 		task.mu.Unlock()
 	case TaskStorageLocal:
 	default:
-		log.Warn("data storage type not supported")
 	}
 }
 
@@ -251,7 +296,6 @@ func RunningTaskCount() int {
 	taskLifeTmpCache.Range(func(key, value any) bool {
 		task, ok := value.(*task)
 		if !ok {
-			log.Warnf("running task count: invalid task type for key %v", key)
 			return true
 		}
 
@@ -271,7 +315,6 @@ func ListTasks() []TaskInfo {
 	taskLifeTmpCache.Range(func(key, value any) bool {
 		task, ok := value.(*task)
 		if !ok {
-			log.Warnf("list tasks: invalid task type for key %v", key)
 			return true
 		}
 
@@ -343,7 +386,6 @@ func StopTask(taskID string) error {
 	status := task.status
 	cancel := task.cancelFunc
 	doneCh := task.doneCh
-	id := task.id
 	task.mu.Unlock()
 	if cancel != nil && (status == StatusPending || status == StatusRunning) {
 		cancel()
@@ -352,6 +394,5 @@ func StopTask(taskID string) error {
 		<-doneCh
 	}
 	taskLifeTmpCache.Delete(taskID)
-	log.Infof("task %s stopped", id)
 	return nil
 }

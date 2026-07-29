@@ -43,6 +43,27 @@ assert_eq() {
 	return 1
 }
 
+assert_log_has_no_failure() {
+	local log_file=$1 component=$2
+	local failure_pattern='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
+
+	[[ -r "${log_file}" ]] || fatal "${component} log is not readable: ${log_file}"
+	! grep -qiE "${failure_pattern}" "${log_file}" \
+		|| fatal "${component} log contains an unexpected failure"
+}
+
+allocate_available_port() {
+	local attempt port
+	for ((attempt = 0; attempt < 20; attempt++)); do
+		port=$((20000 + RANDOM % 20001))
+		if ! ss -H -ltn | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
+			echo "${port}"
+			return 0
+		fi
+	done
+	return 1
+}
+
 # kernel_version_le <major> <minor>
 # Returns 0 when the running kernel version is less than or equal to major.minor.
 kernel_version_le() {
@@ -73,19 +94,23 @@ wait_until() {
 		return 1
 	fi
 
+	local invocation="${func}"
+	if (($# > 0)); then
+		invocation+=" $*"
+	fi
 	local end=$(($(date +%s) + timeout))
 	local attempt=0
 
 	while [ "$(date +%s)" -lt "$end" ]; do
 		attempt=$((attempt + 1))
-		log_info "wait attempt #${attempt}: func/cmd: [${func} ${*}]"
+		log_info "wait attempt #${attempt}: [${invocation}]"
 		if "$func" "$@"; then
 			return 0
 		fi
 		sleep "$interval"
 	done
 
-	log_error "wait_until timeout: func/cmd: [${func} ${*}]"
+	log_error "wait_until timeout: func/cmd: [${invocation}]"
 	return 1
 }
 
@@ -157,7 +182,7 @@ bpf_tool_setup() {
 	TOOL_ERR="${TOOL_WORK_DIR}/${name}.err"
 }
 
-# Print text files under a directory; binary files are omitted from diagnostics.
+# Print non-empty text files; empty and binary files add no useful diagnostics.
 dump_text_files() {
 	local dir=$1
 	local file
@@ -165,10 +190,10 @@ dump_text_files() {
 	[[ -d "${dir}" ]] || return 0
 
 	while IFS= read -r -d '' file; do
-		[[ ! -s "${file}" ]] || grep -Iq '' "${file}" || continue
+		grep -Iq '' "${file}" || continue
 		log_error "----- FILE (${file}) -----"
 		sed -n '1,160p' "${file}" >&2
-	done < <(find "${dir}" -type f -print0)
+	done < <(find "${dir}" -type f -size +0c -print0)
 }
 
 # SIGTERM with graceful polling, then SIGKILL as fallback.
@@ -243,6 +268,61 @@ huatuo_bamai_stop() {
 	rm -f "${test_workspace}/huatuo-bamai.pid"
 }
 
+# --------------------------- huatuo-apiserver -------------------------------
+
+huatuo_apiserver_start() {
+	[[ -x "${HUATUO_APISERVER_BIN}" ]] \
+		|| fatal "huatuo-apiserver binary not found: ${HUATUO_APISERVER_BIN}"
+
+	log_info "starting huatuo-apiserver: $*"
+	"${HUATUO_APISERVER_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" 2>&1 &
+	local pid=$!
+	echo "$pid" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"
+	log_info "huatuo-apiserver pid: ${pid}"
+
+	sleep 0.5
+	wait_until "${WAIT_HUATUO_APISERVER_TIMEOUT}" "${WAIT_HUATUO_APISERVER_INTERVAL}" \
+		huatuo_apiserver_ready
+}
+
+huatuo_apiserver_ready() {
+	local pid
+	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid" 2> /dev/null || echo "")
+	[[ -n "$pid" ]] || return 1
+
+	if ! kill -0 "${pid}" 2> /dev/null; then
+		log_error "huatuo-apiserver pid=${pid} exited"
+		return 1
+	fi
+
+	curl -sf "${CURL_TIMEOUT[@]}" "${APISERVER_ADDR}/healthz" > /dev/null
+}
+
+huatuo_apiserver_stop() {
+	local test_workspace=${1:-${HUATUO_BAMAI_TEST_TMPDIR}}
+	local pid
+	pid=$(cat "${test_workspace}/huatuo-apiserver.pid" 2> /dev/null || echo "")
+	[[ -n "$pid" ]] && stop_by_pid "${pid}"
+	rm -f "${test_workspace}/huatuo-apiserver.pid"
+}
+
+# integration_huatuo_apiserver_start [config_writer_func] [apiserver args...]
+# Builds config paths from the current test workspace before starting apiserver.
+integration_huatuo_apiserver_start() {
+	local config_writer=${1:-write_apiserver_apis_config}
+	if [[ $# -gt 0 ]]; then
+		shift
+	fi
+	local runtime_args=(
+		"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
+		"--config" "apiserver.conf"
+	)
+	runtime_args+=("$@")
+
+	"$config_writer"
+	huatuo_apiserver_start "${runtime_args[@]}"
+}
+
 # Stop shared services, then remove or report the runner-owned test workspace.
 integration_test_exit() {
 	local exit_code=$1
@@ -253,6 +333,7 @@ integration_test_exit() {
 		return 1
 	fi
 
+	huatuo_apiserver_stop "${test_workspace}" || true
 	huatuo_bamai_stop "${test_workspace}" || true
 
 	if [[ ${exit_code} -eq 0 ]]; then

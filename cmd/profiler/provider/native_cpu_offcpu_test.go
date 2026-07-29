@@ -19,6 +19,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"huatuo-bamai/internal/bpf/abi"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/pkg/profiling"
 
@@ -26,7 +27,7 @@ import (
 )
 
 func TestOffCPUEventABI(t *testing.T) {
-	var event offCPUEventKey
+	var event abi.ProfilerOffCPUEvent
 	require.Equal(t, uintptr(64), unsafe.Sizeof(event))
 	require.Equal(t, uintptr(40), unsafe.Offsetof(event.StartNS))
 	require.Equal(t, uintptr(48), unsafe.Offsetof(event.EndNS))

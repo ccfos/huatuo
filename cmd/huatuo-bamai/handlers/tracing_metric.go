@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,11 +22,11 @@ import (
 var tracingStatusCollector = &tracingHitCollector{}
 
 type tracingHitCollector struct {
-	mgrTracing *tracing.TracingManager
+	manager *tracing.Manager
 }
 
-func NewTracingHitCollector(mgrTracing *tracing.TracingManager) *tracingHitCollector {
-	return &tracingHitCollector{mgrTracing: mgrTracing}
+func NewTracingHitCollector(manager *tracing.Manager) *tracingHitCollector {
+	return &tracingHitCollector{manager: manager}
 }
 
 func init() {
@@ -38,30 +38,31 @@ func init() {
 	})
 }
 
-func SetTracingManager(mgrTracing *tracing.TracingManager) {
-	tracingStatusCollector.mgrTracing = mgrTracing
+func SetTracingManager(manager *tracing.Manager) {
+	tracingStatusCollector.manager = manager
 }
 
-func (trace *tracingHitCollector) Update() ([]*metric.Data, error) {
+func (c *tracingHitCollector) Update() ([]*metric.Data, error) {
 	var runningTracers int
-	hitMetric := make([]*metric.Data, 0)
 
-	if trace.mgrTracing == nil {
-		return hitMetric, nil
+	if c.manager == nil {
+		return nil, nil
 	}
 
-	for _, info := range trace.mgrTracing.Dump() {
-		hitMetric = append(hitMetric, metric.NewGaugeData(
+	snapshots := c.manager.Snapshots()
+	metrics := make([]*metric.Data, 0, len(snapshots)+1)
+	for _, snapshot := range snapshots {
+		metrics = append(metrics, metric.NewGaugeData(
 			"hitcount",
-			float64(info.HitCount),
+			float64(snapshot.RunCount),
 			"tracing hit count",
-			map[string]string{"tracing": info.Name},
+			map[string]string{"tracing": snapshot.Name},
 		))
-		if info.Running {
+		if snapshot.IsRunning {
 			runningTracers++
 		}
 	}
 
-	hitMetric = append(hitMetric, metric.NewGaugeData("running", float64(runningTracers), "running tracing number", nil))
-	return hitMetric, nil
+	metrics = append(metrics, metric.NewGaugeData("running", float64(runningTracers), "running tracing number", nil))
+	return metrics, nil
 }

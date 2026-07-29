@@ -17,14 +17,7 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 
 BPF_DBG_MAP(native_cpu_dbg);
 
-struct cpu_event_t {
-	struct profiler_event_base_t base;
-	__u64 timestamp;
-	__u32 cpu;
-	__u32 pad0;
-};
-
-DEFINE_PROFILER_MAPS(struct cpu_event_t);
+DEFINE_PROFILER_MAPS(struct profiler_cpu_event);
 
 SEC("perf_event/software/cpu_clock")
 int perf_event_sw_cpu_clock(struct pt_regs *ctx)
@@ -54,7 +47,7 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	}
 
 	u32 idx = 0;
-	struct cpu_event_t *event = bpf_map_lookup_elem(&event_buf, &idx);
+	struct profiler_cpu_event *event = bpf_map_lookup_elem(&event_buf, &idx);
 	if (!event)
 		return 0;
 

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/tracing"
@@ -28,14 +29,6 @@ type txqueueTracingData struct {
 	QueueIndex uint32 `json:"queue_index"`
 	Name       string `json:"device_name"`
 	Driver     string `json:"driver_name"`
-}
-
-const deviceNameLen = 16
-
-type txqueuePerfEvent struct {
-	QueueIndex uint32
-	Name       [deviceNameLen]byte
-	Driver     [deviceNameLen]byte
 }
 
 type txqueueTimeout struct{}
@@ -77,7 +70,7 @@ func (c *txqueueTimeout) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var event txqueuePerfEvent
+			var event abi.NetdevTxqueueTimeoutEvent
 
 			if err := reader.ReadInto(&event); err != nil {
 				return err

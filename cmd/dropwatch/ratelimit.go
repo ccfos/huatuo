@@ -17,9 +17,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"unsafe"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 )
 
@@ -29,20 +29,6 @@ const (
 	rlimitMaxBurstConst = "bpf_rlimit_max_burst_dropwatch"
 	rateLimitEventMap   = "event_bpf_rlimit_dropwatch"
 )
-
-type rateLimitEvent struct {
-	Interval      uint64
-	Begin         uint64
-	Burst         uint64
-	MaxBurst      uint64
-	Events        uint64
-	NMissed       uint64
-	TotalEvents   uint64
-	TotalNMissed  uint64
-	TotalInterval uint64
-}
-
-var _ = [1]struct{}{}[72-unsafe.Sizeof(rateLimitEvent{})]
 
 func withRateLimitConstants(consts map[string]any, maxEventsPerSecond uint64) map[string]any {
 	if maxEventsPerSecond == 0 {
@@ -66,7 +52,7 @@ func openRateLimitEventPipe(ctx context.Context, b bpf.BPF) (bpf.PerfEventReader
 }
 
 func readRateLimitEvents(ctx context.Context, r bpf.PerfEventReader, eventsPerSecond uint64) {
-	var ev rateLimitEvent
+	var ev abi.RatelimitEvent
 
 	for {
 		if ctx.Err() != nil {
@@ -84,6 +70,6 @@ func readRateLimitEvents(ctx context.Context, r bpf.PerfEventReader, eventsPerSe
 		}
 
 		log.Warnf("dropwatch: rate limit hit (configured=%d/s, window_events=%d, window_missed=%d, total_events=%d, total_missed=%d)",
-			eventsPerSecond, ev.Events, ev.NMissed, ev.TotalEvents, ev.TotalNMissed)
+			eventsPerSecond, ev.Events, ev.Nmissed, ev.TotalEvents, ev.TotalNmissed)
 	}
 }

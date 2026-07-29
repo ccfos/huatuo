@@ -24,22 +24,22 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-// writer is the single sink for an iotracing run's aggregated result.
+// writer is the single sink for an iotracing run's snapshot.
 type writer interface {
-	Write(report *types.IOTracingReport) error
+	Write(snapshot *types.IOTracingSnapshot) error
 }
 
 type textWriter struct{ w io.Writer }
 
-func (s *textWriter) Write(report *types.IOTracingReport) error {
-	printIOTracingReport(s.w, report)
+func (s *textWriter) Write(snapshot *types.IOTracingSnapshot) error {
+	printIOTracingSnapshot(s.w, snapshot)
 	return nil
 }
 
 type jsonWriter struct{ w io.Writer }
 
-func (s *jsonWriter) Write(report *types.IOTracingReport) error {
-	b, err := json.Marshal(report)
+func (s *jsonWriter) Write(snapshot *types.IOTracingSnapshot) error {
+	b, err := json.Marshal(snapshot)
 	if err != nil {
 		return err
 	}
@@ -52,8 +52,8 @@ func (s *jsonWriter) Write(report *types.IOTracingReport) error {
 
 type socketWriter struct{ client *toolstream.Client }
 
-func (s *socketWriter) Write(report *types.IOTracingReport) error {
-	return s.client.Send(report)
+func (s *socketWriter) Write(snapshot *types.IOTracingSnapshot) error {
+	return s.client.Send(snapshot)
 }
 
 // newWriter returns the appropriate writer based on flags. client may be nil.
@@ -68,13 +68,13 @@ func newWriter(outputFmt string, client *toolstream.Client) writer {
 	}
 }
 
-// printIOTracingReport renders the report as two tables: a per-process
+// printIOTracingSnapshot renders the snapshot as two tables: a per-process
 // summary, then a per-file detail block for each process.
-func printIOTracingReport(w io.Writer, report *types.IOTracingReport) {
+func printIOTracingSnapshot(w io.Writer, snapshot *types.IOTracingSnapshot) {
 	fmt.Fprintln(w, "PID      COMMAND              FS_READ FS_WRITE DISK_READ DISK_WRITE FILES")
 	fmt.Fprintln(w, "=======  ==================== ======= ======== ========= ========== =====")
 
-	for _, p := range report.Processes {
+	for _, p := range snapshot.Processes {
 		comm := p.Comm
 		if len(comm) > 20 {
 			comm = comm[:17] + "..."
@@ -93,7 +93,7 @@ func printIOTracingReport(w io.Writer, report *types.IOTracingReport) {
 	}
 	fmt.Fprintln(w)
 
-	for _, p := range report.Processes {
+	for _, p := range snapshot.Processes {
 		fmt.Fprintln(w, "===========================================================================")
 		fmt.Fprintf(w, "PID: %-7d TOTAL_IO: R=%s W=%s  FILES: %d\n",
 			p.Pid,

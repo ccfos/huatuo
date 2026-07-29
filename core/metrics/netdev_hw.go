@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,12 +18,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
 	"slices"
 	"sync"
-	"sync/atomic"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/log"
@@ -40,8 +40,7 @@ import (
 var deviceDriverList = []string{"mlx5_core", "i40e", "ixgbe", "bnxt_en", "virtio_net"}
 
 type netdevHw struct {
-	prog                  bpf.BPF
-	running               atomic.Bool
+	prog                  bpf.Reference
 	ifaceSwDroppedCounter map[string]uint64
 	ifaceList             map[string]*ethtool.DrvInfo
 	sysNetPath            string
@@ -104,15 +103,17 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 
 // Update the drop statistics metrics
 func (netdev *netdevHw) Update() ([]*metric.Data, error) {
-	if !netdev.running.Load() {
+	lease, ok := netdev.prog.Acquire()
+	if !ok {
 		return nil, nil
 	}
+	defer lease.Release()
 
 	// avoid data race
 	netdev.mutex.Lock()
 	defer netdev.mutex.Unlock()
 
-	if err := netdev.updateIfaceSwDroppedStat(); err != nil {
+	if err := netdev.updateIfaceSwDroppedStat(lease.BPF); err != nil {
 		return nil, err
 	}
 
@@ -133,7 +134,9 @@ func (netdev *netdevHw) Update() ([]*metric.Data, error) {
 		if count == 0 {
 			// hardware drop = rx_dropped - software_drops
 			if sw, ok := netdev.ifaceSwDroppedCounter[iface]; ok {
-				count = counters["rx_dropped"] - sw
+				if counters["rx_dropped"] >= sw {
+					count = counters["rx_dropped"] - sw
+				}
 			}
 		}
 
@@ -152,13 +155,13 @@ func (netdev *netdevHw) readSysNetclassStat(iface, stat string) (uint64, error) 
 }
 
 // store the software counter netdev.rx_dropped to bpf map.
-func (netdev *netdevHw) updateIfaceSwDroppedStat() error {
+func (netdev *netdevHw) updateIfaceSwDroppedStat(object bpf.BPF) error {
 	for iface := range netdev.ifaceList {
 		_, _ = parseutil.ReadUint(filepath.Join(netdev.sysNetPath, iface, "carrier_down_count"))
 	}
 
 	// dump rx_dropped counters
-	items, err := netdev.prog.DumpMapByName("rx_sw_dropped_stats")
+	items, err := object.DumpMapByName("rx_sw_dropped_stats")
 	if err != nil {
 		return err
 	}
@@ -191,27 +194,27 @@ func (netdev *netdevHw) updateIfaceSwDroppedStat() error {
 	return nil
 }
 
-func (netdev *netdevHw) Start(ctx context.Context) error {
-	prog, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+func (netdev *netdevHw) Start(ctx context.Context) (retErr error) {
+	object, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
-	defer prog.Close()
 
-	if err := prog.Attach(); err != nil {
-		return err
+	if err := object.Attach(); err != nil {
+		return errors.Join(err, object.Close())
 	}
+	if err := netdev.prog.Publish(object); err != nil {
+		return errors.Join(err, object.Close())
+	}
+	defer func() {
+		retErr = errors.Join(retErr, netdev.prog.UnPublish())
+	}()
 
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	prog.WaitDetachByBreaker(childCtx, cancel)
-
-	netdev.prog = prog
-	netdev.running.Store(true)
+	object.WaitDetachByBreaker(childCtx, cancel)
 
 	<-childCtx.Done()
-
-	netdev.running.Store(false)
 	return nil
 }

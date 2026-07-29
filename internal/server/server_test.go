@@ -15,7 +15,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -45,6 +47,33 @@ func TestNewServerRegistersMetricsRouteWithoutRegistry(t *testing.T) {
 	}
 }
 
+func TestNewServerUsesHTTPGuardDefaults(t *testing.T) {
+	s := NewServer(nil)
+
+	if s.config.ReadHeaderTimeout != defaultReadHeaderTimeout {
+		t.Errorf(
+			"ReadHeaderTimeout = %s, want %s",
+			s.config.ReadHeaderTimeout,
+			defaultReadHeaderTimeout,
+		)
+	}
+	if s.config.ReadTimeout != defaultReadTimeout {
+		t.Errorf("ReadTimeout = %s, want %s", s.config.ReadTimeout, defaultReadTimeout)
+	}
+	if s.config.WriteTimeout != defaultWriteTimeout {
+		t.Errorf("WriteTimeout = %s, want %s", s.config.WriteTimeout, defaultWriteTimeout)
+	}
+	if s.config.IdleTimeout != defaultIdleTimeout {
+		t.Errorf("IdleTimeout = %s, want %s", s.config.IdleTimeout, defaultIdleTimeout)
+	}
+	if s.config.MaxHeaderBytes != defaultMaxHeaderBytes {
+		t.Errorf("MaxHeaderBytes = %d, want %d", s.config.MaxHeaderBytes, defaultMaxHeaderBytes)
+	}
+	if s.config.MaxBodyBytes != defaultMaxBodyBytes {
+		t.Errorf("MaxBodyBytes = %d, want %d", s.config.MaxBodyBytes, defaultMaxBodyBytes)
+	}
+}
+
 func TestNewServerRegistersHealthzRoute(t *testing.T) {
 	s := NewServer(nil)
 
@@ -58,6 +87,28 @@ func TestNewServerRegistersHealthzRoute(t *testing.T) {
 	}
 	if recorder.Body.Len() != 0 {
 		t.Errorf("response body = %q, want empty body", recorder.Body.String())
+	}
+}
+
+func TestNewServerReadinessRoute(t *testing.T) {
+	tests := []struct {
+		name       string
+		ready      func(context.Context) error
+		wantStatus int
+	}{
+		{name: "ready", ready: func(context.Context) error { return nil }, wantStatus: http.StatusNoContent},
+		{name: "not ready", ready: func(context.Context) error { return errors.New("store unavailable") }, wantStatus: http.StatusServiceUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := NewServer(&Config{Ready: test.ready})
+			request := httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody)
+			recorder := httptest.NewRecorder()
+			s.engine.ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatus {
+				t.Errorf("response status = %d, want %d", recorder.Code, test.wantStatus)
+			}
+		})
 	}
 }
 
@@ -96,6 +147,59 @@ func TestNewServerRegistersVersionRoute(t *testing.T) {
 	}
 	if got.Data != info {
 		t.Errorf("version response = %+v, want %+v", got.Data, info)
+	}
+}
+
+func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
+	srv := NewServer(&Config{
+		RequireAuth: true,
+		EnablePProf: true,
+		AdminPaths:  []string{"/v1/profiles/flamegraph/**"},
+		AuthUsers: []UserConfig{
+			{ID: "admin-2026", BearerToken: "admin-secret", IsAdmin: true},
+			{ID: "viewer-2026", BearerToken: "viewer-secret", Permissions: []string{
+				"/debug/pprof/**",
+				"/v1/profiles/flamegraph/**",
+			}},
+		},
+	})
+	srv.engine.POST("/v1/profiles/flamegraph/query", func(ctx *httpGin.Context) {
+		ctx.Status(http.StatusNoContent)
+	})
+
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody)
+	metricsRecorder := httptest.NewRecorder()
+	srv.engine.ServeHTTP(metricsRecorder, metricsRequest)
+	if metricsRecorder.Code != http.StatusNotImplemented {
+		t.Fatalf("anonymous metrics status=%d, want %d", metricsRecorder.Code, http.StatusNotImplemented)
+	}
+
+	viewerRequest := httptest.NewRequest(http.MethodGet, "/debug/pprof/", http.NoBody)
+	viewerRequest.Header.Set("Authorization", "Bearer viewer-secret")
+	viewerRecorder := httptest.NewRecorder()
+	srv.engine.ServeHTTP(viewerRecorder, viewerRequest)
+	if viewerRecorder.Code != http.StatusForbidden {
+		t.Fatalf("viewer pprof status=%d, want %d", viewerRecorder.Code, http.StatusForbidden)
+	}
+
+	adminRequest := httptest.NewRequest(http.MethodGet, "/debug/pprof/", http.NoBody)
+	adminRequest.Header.Set("Authorization", "Bearer admin-secret")
+	adminRecorder := httptest.NewRecorder()
+	srv.engine.ServeHTTP(adminRecorder, adminRequest)
+	if adminRecorder.Code != http.StatusOK {
+		t.Fatalf("admin pprof status=%d, want %d", adminRecorder.Code, http.StatusOK)
+	}
+
+	viewerFlameRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/profiles/flamegraph/query",
+		http.NoBody,
+	)
+	viewerFlameRequest.Header.Set("Authorization", "Bearer viewer-secret")
+	viewerFlameRecorder := httptest.NewRecorder()
+	srv.engine.ServeHTTP(viewerFlameRecorder, viewerFlameRequest)
+	if viewerFlameRecorder.Code != http.StatusForbidden {
+		t.Fatalf("viewer flamegraph status=%d, want %d", viewerFlameRecorder.Code, http.StatusForbidden)
 	}
 }
 

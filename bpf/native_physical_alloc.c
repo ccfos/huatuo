@@ -6,7 +6,7 @@
 
 char __license[] SEC("license") = "GPL";
 
-DEFINE_PROFILER_MAPS(struct profiler_event_base_t);
+DEFINE_PROFILER_MAPS(struct profiler_event_base);
 
 SEC("kprobe/page_add_new_anon_rmap")
 int BPF_KPROBE(trace_page_alloc, struct page *page,
@@ -33,7 +33,7 @@ int BPF_KPROBE(trace_page_alloc, struct page *page,
 
 	SELECT_PROFILER_AB();
 
-	struct profiler_event_base_t *event = profiler_prepare_event_base(
+	struct profiler_event_base *event = profiler_prepare_event_base(
 		&event_buf, pid_tgid, ctx, select_profiler_stack_map);
 	if (!event)
 		return 0;

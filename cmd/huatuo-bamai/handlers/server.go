@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import (
 // ServerOptions groups the dependencies required to start the HTTP server.
 type ServerOptions struct {
 	Addr           string
-	TracingManager *tracing.TracingManager
+	TracingManager *tracing.Manager
 	PromReg        *prometheus.Registry
 	VersionInfo    *version.Info
 }
@@ -51,8 +51,14 @@ func Start(opts ServerOptions) {
 	s.MustRegisterRoutes("/tracers", NewTracerHandler(opts.TracingManager).Handlers)
 	s.MustRegisterRoutes("", NewContainerHandler().Handlers)
 	s.MustRegisterRoutes("", NewConfigHandler().Handlers)
-	evtCfg := config.Get().EventsWatch
-	s.MustRegisterRoutes("/v1/events", NewEventsHandler(evtCfg.MaxClients, evtCfg.KeepAliveInterval).Handlers)
+	httpConfig := config.Get().HTTPServer
+	s.MustRegisterRoutes(
+		"/v1/events",
+		NewEventsHandler(
+			httpConfig.MaxEventStreamClients,
+			httpConfig.EventStreamKeepAliveIntervalSeconds,
+		).Handlers,
+	)
 
 	_ = s.Run(&server.Option{
 		Addr:          opts.Addr,

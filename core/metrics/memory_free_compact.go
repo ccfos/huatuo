@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
-	"sync/atomic"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/pkg/metric"
@@ -41,8 +41,7 @@ func newReclaimCompact() (*tracing.EventTracingAttr, error) {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_free_compact.c -o $BPF_DIR/memory_free_compact.o
 
 type reclaimCompact struct {
-	bpf     bpf.BPF
-	running atomic.Bool
+	bpf bpf.Reference
 }
 
 type memoryLatency struct {
@@ -53,11 +52,13 @@ type memoryLatency struct {
 }
 
 func (c *reclaimCompact) Update() ([]*metric.Data, error) {
-	if !c.running.Load() {
+	lease, ok := c.bpf.Acquire()
+	if !ok {
 		return nil, nil
 	}
+	defer lease.Release()
 
-	items, err := c.bpf.DumpMapByName("mm_free_compact_map")
+	items, err := lease.DumpMapByName("mm_free_compact_map")
 	if err != nil {
 		return nil, fmt.Errorf("dump map mm_free_compact_map: %w", err)
 	}
@@ -85,27 +86,28 @@ func (c *reclaimCompact) Update() ([]*metric.Data, error) {
 }
 
 // Start detect work, load bpf and wait data
-func (c *reclaimCompact) Start(ctx context.Context) error {
+func (c *reclaimCompact) Start(ctx context.Context) (retErr error) {
 	obj, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
-	defer obj.Close()
 
 	if err := obj.Attach(); err != nil {
-		return err
+		return errors.Join(err, obj.Close())
 	}
+	if err := c.bpf.Publish(obj); err != nil {
+		return errors.Join(err, obj.Close())
+	}
+	defer func() {
+		retErr = errors.Join(retErr, c.bpf.UnPublish())
+	}()
 
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	obj.WaitDetachByBreaker(childCtx, cancel)
 
-	c.bpf = obj
-	c.running.Store(true)
-
 	// wait stop
 	<-childCtx.Done()
-	c.running.Store(false)
 	return nil
 }

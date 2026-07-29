@@ -37,7 +37,7 @@ import (
 // seconds, then dumps and aggregates io_source_map. The duration timeout
 // and signal handler are scoped to this call so the BPF object is always
 // detached and closed before returning.
-func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[string]any) (*types.IOTracingReport, error) {
+func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[string]any) (*types.IOTracingSnapshot, error) {
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
 		return nil, fmt.Errorf("read bpf object: %w", err)
@@ -75,7 +75,7 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 		return nil, err
 	}
 
-	return &types.IOTracingReport{Processes: processes, StallStacks: stalls}, nil
+	return &types.IOTracingSnapshot{Processes: processes, StallStacks: stalls}, nil
 }
 
 // collectStalls drains the iodelay perf reader until ctx cancellation
@@ -108,13 +108,13 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 			continue
 		}
 
-		hostname, _ := executil.HostnameByPid(event.Pid)
+		hostname, _ := executil.HostnameByPid(event.PID)
 
 		ring[head] = types.IOScheduleEvent{
 			Comm:              bytesutil.ToStr(event.Comm[:]),
 			ContainerHostname: hostname,
-			Pid:               event.Pid,
-			LatencyUs:         event.LatencyNs / 1000,
+			Pid:               event.PID,
+			LatencyUs:         event.Cost / 1000,
 			Stack:             symbol.KsymStackStrs(event.Stack[:], symbol.KsymStackMinDepth),
 		}
 

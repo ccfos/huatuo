@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/utils/bytesutil"
@@ -33,16 +34,6 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/softirq_tracing.c -o $BPF_DIR/softirq_tracing.o
 
 type softirqTracing struct{}
-
-type softirqPerfEvent struct {
-	Stack     [symbol.KsymStackMaxDepth]uint64
-	StackSize int64
-	Now       uint64
-	StallTime uint64
-	Comm      [bpf.TaskCommLen]byte
-	Pid       uint32
-	CPU       uint32
-}
 
 // SoftirqTracingData is the full data structure.
 type SoftirqTracingData struct {
@@ -96,7 +87,7 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var data softirqPerfEvent
+			var data abi.SoftirqEvent
 
 			if err := reader.ReadInto(&data); err != nil {
 				return fmt.Errorf("Read From Perf Event fail: %w", err)
@@ -128,7 +119,7 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 					OffTime:   data.StallTime,
 					Threshold: softirqThresh,
 					Comm:      comm,
-					Pid:       data.Pid,
+					Pid:       data.PID,
 					CPU:       data.CPU,
 					Now:       data.Now,
 					Stack:     fmt.Sprintf("stack:\n%s", stack),

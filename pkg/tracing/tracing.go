@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,118 +12,175 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tracing is the core scheduling and lifecycle layer for HuaTuo
-// tracers and event sources.
-//
-// It defines the ITracingEvent and ITracingMetric interfaces, manages
-// per-tracer goroutines through EventTracing, and exposes a global
-// manager for registering, starting, and stopping tracing tasks.
-// The package also provides the document model and watch-event publish/
-// subscribe mechanism used to deliver tracer output to consumers.
+// Package tracing schedules tracers and manages their lifecycle.
 package tracing
 
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/types"
 )
 
-// EventTracing represents a tracing
-type EventTracing struct {
-	ic        ITracingEvent
-	name      string
-	interval  int
-	hitCount  int
-	cancelCtx context.CancelFunc
-	exit      bool
-	isRunning bool
-	flag      uint32
-}
-
-// ITracingEvent represents a tracing/event
-type ITracingEvent interface {
+type starter interface {
 	Start(ctx context.Context) error
 }
 
-// NewTracingEvent create a new tracing
-func NewTracingEvent(tracing *EventTracingAttr, name string) *EventTracing {
-	return &EventTracing{
-		ic:       tracing.TracingData.(ITracingEvent),
-		name:     name,
-		interval: tracing.Interval,
-		flag:     tracing.Flag,
+type eventRunner struct {
+	starter         starter
+	name            string
+	restartInterval time.Duration
+	roles           uint32
+
+	mu       sync.RWMutex
+	cancel   context.CancelFunc
+	done     <-chan struct{}
+	runCount int
+}
+
+func newEventRunner(
+	name string,
+	starter starter,
+	restartInterval time.Duration,
+	roles uint32,
+) *eventRunner {
+	return &eventRunner{
+		starter:         starter,
+		name:            name,
+		restartInterval: restartInterval,
+		roles:           roles,
 	}
 }
 
-// Start do work
-func (c *EventTracing) Start() error {
-	c.isRunning = true
-	c.exit = false
+func (r *eventRunner) start(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return newTracerContextError("start", r.name, err)
+	}
 
-	go func() {
-		for !c.exit {
-			c.doStart()
+	r.mu.Lock()
+	if r.done != nil {
+		r.mu.Unlock()
+		return newTracerStateError(ErrTracerAlreadyRunning, r.name)
+	}
 
-			c.hitCount++
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	r.cancel = cancel
+	r.done = done
+	r.mu.Unlock()
 
-			if c.exit {
-				break
-			}
+	go r.run(runCtx, done)
 
-			time.Sleep(time.Duration(c.interval) * time.Second)
-		}
-
-		c.isRunning = false
-		log.Infof("tracing exited: %s", c.name)
-	}()
-
-	log.Infof("start tracing %s", c.name)
 	return nil
 }
 
-func (c *EventTracing) doStart() {
-	ctx, cancel := context.WithCancel(context.Background())
-	c.cancelCtx = cancel
-	defer c.cancelCtx()
+func (r *eventRunner) run(ctx context.Context, done chan<- struct{}) {
+	log.WithField("tracer", r.name).Info("tracer started")
+	defer r.finish(done)
 
-	if err := c.ic.Start(ctx); err != nil {
-		if !(errors.Is(err, types.ErrExitByCancelCtx) ||
-			errors.Is(err, types.ErrDisconnectedHuatuo) ||
-			errors.Is(err, types.ErrNotSupported)) {
-			log.Errorf("start tracing %s: %v", c.name, err)
+	for {
+		err := r.starter.Start(ctx)
+		r.incrementRunCount()
+
+		if ctx.Err() != nil || errors.Is(err, types.ErrNotSupported) {
+			return
 		}
 
-		if errors.Is(err, types.ErrNotSupported) {
-			c.exit = true
+		if err != nil &&
+			!errors.Is(err, types.ErrExitByCancelCtx) &&
+			!errors.Is(err, types.ErrDisconnectedHuatuo) {
+			log.WithError(err).
+				WithField("tracer", r.name).
+				Error("tracer failed")
+		}
+
+		timer := time.NewTimer(r.restartInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+
+			return
+		case <-timer.C:
 		}
 	}
 }
 
-// Stop stop tracing
-func (c *EventTracing) Stop() {
-	c.exit = true
-	c.cancelCtx()
+func (r *eventRunner) finish(done chan<- struct{}) {
+	r.mu.Lock()
+	close(done)
+	r.cancel = nil
+	r.done = nil
+	r.mu.Unlock()
+
+	log.WithField("tracer", r.name).Info("tracer stopped")
 }
 
-// EventTracingInfo represents tracing information
-type EventTracingInfo struct {
-	Name     string `json:"name"`
-	Running  bool   `json:"running"`
-	HitCount int    `json:"hit"`
-	Interval int    `json:"restart_interval"`
-	Flag     uint32 `json:"flag"`
+func (r *eventRunner) incrementRunCount() {
+	r.mu.Lock()
+	r.runCount++
+	r.mu.Unlock()
 }
 
-// Info return tracing's base information
-func (c *EventTracing) Info() *EventTracingInfo {
-	return &EventTracingInfo{
-		Name:     c.name,
-		Running:  c.isRunning,
-		HitCount: c.hitCount,
-		Interval: c.interval,
-		Flag:     c.flag,
+func (r *eventRunner) stop(ctx context.Context) error {
+	done, err := r.cancelRun()
+	if err != nil {
+		return err
+	}
+
+	return waitForRunner(ctx, r.name, done)
+}
+
+func (r *eventRunner) cancelRun() (<-chan struct{}, error) {
+	r.mu.RLock()
+	if r.done == nil {
+		r.mu.RUnlock()
+		return nil, newTracerStateError(ErrTracerNotRunning, r.name)
+	}
+
+	cancel := r.cancel
+	done := r.done
+	r.mu.RUnlock()
+
+	cancel()
+
+	return done, nil
+}
+
+func waitForRunner(ctx context.Context, name string, done <-chan struct{}) error {
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		select {
+		case <-done:
+			return nil
+		default:
+			return newTracerContextError("stop", name, ctx.Err())
+		}
+	}
+}
+
+// LifecycleSnapshot contains a tracer's current lifecycle state.
+type LifecycleSnapshot struct {
+	Name            string `json:"name"`
+	IsRunning       bool   `json:"running"`
+	RunCount        int    `json:"hit"`
+	RestartInterval int    `json:"restart_interval"`
+	Roles           uint32 `json:"flag"`
+}
+
+func (r *eventRunner) snapshot() LifecycleSnapshot {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return LifecycleSnapshot{
+		Name:            r.name,
+		IsRunning:       r.done != nil,
+		RunCount:        r.runCount,
+		RestartInterval: int(r.restartInterval / time.Second),
+		Roles:           r.roles,
 	}
 }

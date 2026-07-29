@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/bpfmap"
 	"huatuo-bamai/internal/profiler/procutil"
@@ -103,7 +104,7 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(ctx context.Context, enqueue func
 	}
 
 	for {
-		batch, err := p.offCPUReader.reader.ReadBatch(&offCPUEventKey{})
+		batch, err := p.offCPUReader.reader.ReadBatch(&abi.ProfilerOffCPUEvent{})
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
@@ -126,7 +127,7 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(ctx context.Context, enqueue func
 func (r *nativeOffCPUReader) aggregateBatch(batch []any, enqueue func(any)) {
 	counts := make(map[offCPUStackKey]int64)
 	for _, record := range batch {
-		event, ok := record.(*offCPUEventKey)
+		event, ok := record.(*abi.ProfilerOffCPUEvent)
 		if !ok {
 			log.Warnf("unexpected off-CPU event type %T", record)
 			continue

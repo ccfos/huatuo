@@ -56,19 +56,8 @@ static volatile const __u64 profiler_offcpu_max_ns = 0;
 
 BPF_DBG_MAP(native_cpu_offcpu_dbg);
 
-/* Fixed ABI v1: 40-byte base + 24-byte off-CPU metadata. */
-struct offcpu_event_t {
-	struct profiler_event_base_t base;
-	__u64 start_ns;
-	__u64 end_ns;
-	__u32 cpu;
-	__u16 abi_version;
-	__u8 kind;
-	__u8 flags;
-};
-
 struct offcpu_state_t {
-	struct profiler_event_base_t base;
+	struct profiler_event_base base;
 	__u64 phase_start_ns;
 	__u8 phase;
 	__u8 flags;
@@ -96,7 +85,7 @@ struct {
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__type(key, __u32);
-	__type(value, struct offcpu_event_t);
+	__type(value, struct profiler_offcpu_event);
 	__uint(max_entries, 1);
 } offcpu_event_buf SEC(".maps");
 
@@ -157,7 +146,7 @@ static __always_inline void offcpu_emit(
 	__u8 kind,
 	__u8 extra_flags)
 {
-	struct offcpu_event_t *event;
+	struct profiler_offcpu_event *event;
 	__u64 duration;
 	__u32 zero = 0;
 	long err;

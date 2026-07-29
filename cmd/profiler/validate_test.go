@@ -64,6 +64,17 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "remote output requires tracer ID",
+			args: []string{
+				"--type", "cpu",
+				"--language", "c",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--output-format", "remote",
+				"--output-storage", "/var/run/huatuo-toolstream.sock",
+			},
+			wantError: "--tracer-id must not be empty when --output-format=remote",
+		},
+		{
 			name:      "legacy mem type",
 			args:      []string{"--type", "mem", "--language", "c"},
 			wantError: `unsupported profiling type "mem" (expected: cpu or memory)`,

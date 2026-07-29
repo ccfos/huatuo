@@ -68,7 +68,7 @@ COMPOSE_DEV := docker compose \
 
 BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
 
-all: bpf-build build sync
+all: build sync
 
 build-nostatic:
 	@$(MAKE) BUILD_MODE=nostatic all
@@ -87,13 +87,13 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			go generate {}'
 	@mkdir -p $(APP_CMD_OUTPUT) && touch $@
 
-sync:
+sync: bpf-build
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
 	@cp *.conf $(APP_CMD_OUTPUT)/conf/
 
-build: gen-build $(APP_CMD_BIN_TARGETS)
-$(APP_CMD_BIN_TARGETS): $(GO_SRCS)
+build: $(APP_CMD_BIN_TARGETS)
+$(APP_CMD_BIN_TARGETS): gen-build $(GO_SRCS)
 $(APP_CMD_OUTPUT)/bin/%:
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
 	$(GO_BUILD_IMPL) -o $@ ./$(APP_CMD_DIR)/$*
@@ -141,13 +141,14 @@ clean:
 		$(FIND_EXCLUDE_PATHS) \
 		-delete
 
-gen-build:
+gen-build: bpf-build
+	@go run ./build/bpfabi-tool
 	@go generate -run "mockery.*" -x ./...
 	@go generate -run "capnp.*" ./...
 
 test: unit integration e2e
 
-unit: bpf-build gen-build
+unit: gen-build
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 

@@ -31,6 +31,7 @@ var (
 	ErrInvalidField  = errors.New("storage: invalid field")
 	ErrEncodeFailed  = errors.New("storage: encode failed")
 	ErrDecodeFailed  = errors.New("storage: decode failed")
+	ErrAlreadyExists = errors.New("storage: already exists")
 
 	// ErrNegativePagination is returned when Limit or Offset is negative.
 	ErrNegativePagination = fmt.Errorf("%w: limit and offset must be non-negative", ErrInvalidQuery)
@@ -136,4 +137,9 @@ type Backend interface {
 	Count(ctx context.Context, q Query) (int64, error)
 	Values(ctx context.Context, field string, q Query, size int) ([]string, error)
 	Close(ctx context.Context) error
+}
+
+// Creator is implemented by backends that support insert-only writes.
+type Creator interface {
+	Create(ctx context.Context, rec Record) error
 }

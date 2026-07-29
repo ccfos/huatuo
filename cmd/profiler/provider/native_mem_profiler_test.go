@@ -23,21 +23,13 @@ import (
 )
 
 func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
-	restore := stubHasKprobeFunction(func(name string) bool {
-		switch name {
-		case symbolPageAddNewAnonRmap, symbolPageRemoveRmap:
-			return true
-		default:
-			return false
-		}
-	})
-	defer restore()
-
 	tests := []struct {
 		name            string
 		mode            profiling.MemoryMode
+		available       map[string]bool
 		wantObject      string
 		wantAttach      []bpf.AttachOption
+		wantConstants   map[string]any
 		wantProbability bool
 	}{
 		{
@@ -49,18 +41,45 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			},
 		},
 		{
-			name:            "physical usage",
-			mode:            profiling.MemoryModePhysicalUsage,
+			name: "physical usage",
+			mode: profiling.MemoryModePhysicalUsage,
+			available: map[string]bool{
+				symbolPageAddNewAnonRmap: true,
+				symbolPageRemoveRmap:     true,
+			},
 			wantObject:      "native_physical_usage.o",
 			wantProbability: true,
 			wantAttach: []bpf.AttachOption{
 				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
 				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
 			},
+			wantConstants: map[string]any{
+				"profiler_folio_npages": false,
+			},
 		},
 		{
-			name:            "physical alloc",
-			mode:            profiling.MemoryModePhysicalAlloc,
+			name: "physical usage folio",
+			mode: profiling.MemoryModePhysicalUsage,
+			available: map[string]bool{
+				symbolFolioAddNewAnonRmap: true,
+				symbolFolioRemoveRmapPtes: true,
+			},
+			wantObject:      "native_physical_usage.o",
+			wantProbability: true,
+			wantAttach: []bpf.AttachOption{
+				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+				{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+			},
+			wantConstants: map[string]any{
+				"profiler_folio_npages": true,
+			},
+		},
+		{
+			name: "physical alloc",
+			mode: profiling.MemoryModePhysicalAlloc,
+			available: map[string]bool{
+				symbolPageAddNewAnonRmap: true,
+			},
 			wantObject:      "native_physical_alloc.o",
 			wantProbability: true,
 			wantAttach: []bpf.AttachOption{
@@ -72,6 +91,11 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			restore := stubHasKprobeFunction(func(name string) bool {
+				return tc.available[name]
+			})
+			defer restore()
+
 			cfg, err := newNativeMemoryBPFLoadConfig(tc.mode, 123, 456, true, 42)
 			if err != nil {
 				t.Fatalf("newNativeMemoryBPFLoadConfig() error = %v", err)
@@ -91,6 +115,21 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 			}
 			if tc.wantProbability && probability != uint8(42) {
 				t.Fatalf("profiler_sampling_prob = %v, want 42", probability)
+			}
+			for key, want := range tc.wantConstants {
+				if got := cfg.Constants[key]; !reflect.DeepEqual(got, want) {
+					t.Fatalf("Constants[%q] = %#v, want %#v", key, got, want)
+				}
+			}
+			if tc.mode == profiling.MemoryModePhysicalUsage {
+				for _, key := range []string{
+					"profiler_alloc_reads_folio_nr_pages",
+					"profiler_free_has_nr_pages",
+				} {
+					if _, ok := cfg.Constants[key]; ok {
+						t.Fatalf("unexpected obsolete constant %q", key)
+					}
+				}
 			}
 		})
 	}
@@ -133,8 +172,16 @@ func TestNewPhysicalAllocAttachOption(t *testing.T) {
 			want: bpf.AttachOption{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
 		},
 		{
-			name: "folio rmap fallback",
+			name: "folio rmap",
 			available: map[string]bool{
+				symbolFolioAddNewAnonRmap: true,
+			},
+			want: bpf.AttachOption{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+		},
+		{
+			name: "mixed rmap",
+			available: map[string]bool{
+				symbolPageAddNewAnonRmap:  true,
 				symbolFolioAddNewAnonRmap: true,
 			},
 			want: bpf.AttachOption{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
@@ -170,11 +217,11 @@ func TestNewPhysicalAllocAttachOption(t *testing.T) {
 	}
 }
 
-func TestNewPhysicalUsageAttachOptions(t *testing.T) {
+func TestNewPhysicalUsageAttachConfig(t *testing.T) {
 	tests := []struct {
 		name      string
 		available map[string]bool
-		want      []bpf.AttachOption
+		want      physicalUsageAttachConfig
 		wantErr   bool
 	}{
 		{
@@ -183,20 +230,67 @@ func TestNewPhysicalUsageAttachOptions(t *testing.T) {
 				symbolPageAddNewAnonRmap: true,
 				symbolPageRemoveRmap:     true,
 			},
-			want: []bpf.AttachOption{
-				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
-				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+			want: physicalUsageAttachConfig{
+				AttachOpts: []bpf.AttachOption{
+					{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
+					{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+				},
 			},
 		},
 		{
-			name: "folio rmap pair fallback",
+			name: "folio rmap pair",
 			available: map[string]bool{
 				symbolFolioAddNewAnonRmap: true,
 				symbolFolioRemoveRmapPtes: true,
 			},
-			want: []bpf.AttachOption{
-				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-				{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+			want: physicalUsageAttachConfig{
+				AttachOpts: []bpf.AttachOption{
+					{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+					{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+				},
+				CountFolioPages: true,
+			},
+		},
+		{
+			name: "mixed folio alloc page free",
+			available: map[string]bool{
+				symbolFolioAddNewAnonRmap: true,
+				symbolPageRemoveRmap:      true,
+			},
+			want: physicalUsageAttachConfig{
+				AttachOpts: []bpf.AttachOption{
+					{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+					{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+				},
+			},
+		},
+		{
+			name: "prefer folio rmap pair",
+			available: map[string]bool{
+				symbolFolioAddNewAnonRmap: true,
+				symbolFolioRemoveRmapPtes: true,
+				symbolPageRemoveRmap:      true,
+			},
+			want: physicalUsageAttachConfig{
+				AttachOpts: []bpf.AttachOption{
+					{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+					{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+				},
+				CountFolioPages: true,
+			},
+		},
+		{
+			name: "prefer mixed rmap over page rmap",
+			available: map[string]bool{
+				symbolPageAddNewAnonRmap:  true,
+				symbolFolioAddNewAnonRmap: true,
+				symbolPageRemoveRmap:      true,
+			},
+			want: physicalUsageAttachConfig{
+				AttachOpts: []bpf.AttachOption{
+					{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+					{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+				},
 			},
 		},
 		{
@@ -216,18 +310,18 @@ func TestNewPhysicalUsageAttachOptions(t *testing.T) {
 			})
 			defer restore()
 
-			got, err := newPhysicalUsageAttachOptions()
+			got, err := newPhysicalUsageAttachConfig()
 			if tc.wantErr {
 				if err == nil {
-					t.Fatal("newPhysicalUsageAttachOptions() error = nil, want non-nil")
+					t.Fatal("newPhysicalUsageAttachConfig() error = nil, want non-nil")
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("newPhysicalUsageAttachOptions() error = %v", err)
+				t.Fatalf("newPhysicalUsageAttachConfig() error = %v", err)
 			}
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("newPhysicalUsageAttachOptions() = %#v, want %#v", got, tc.want)
+				t.Fatalf("newPhysicalUsageAttachConfig() = %#v, want %#v", got, tc.want)
 			}
 		})
 	}

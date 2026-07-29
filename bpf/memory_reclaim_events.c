@@ -7,6 +7,7 @@
 #include "bpf_common.h"
 #include "bpf_func_trace.h"
 #include "bpf_ratelimit.h"
+#include "abi/memory_reclaim_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -17,13 +18,6 @@ struct {
 	__uint(key_size, sizeof(int));
 	__uint(value_size, sizeof(u32));
 } reclaim_perf_events SEC(".maps");
-
-struct reclaim_entry {
-	char comm[COMPAT_TASK_COMM_LEN];
-	u64 delta_time;
-	u64 css;
-	u64 pid;
-};
 
 SEC("kprobe/try_to_free_pages")
 int kprobe_try_to_free_pages(struct pt_regs *ctx)
@@ -45,7 +39,7 @@ int kretprobe_try_to_free_pages(struct pt_regs *ctx)
 	if (entry->delta_ns > deltath) {
 		task = (struct task_struct *)bpf_get_current_task();
 
-		struct reclaim_entry data = {
+		struct memory_reclaim_event data = {
 			.pid	    = entry->id,
 			.css	    = (u64)BPF_CORE_READ(task, cgroups,
 							 subsys[cpu_cgrp_id]),
@@ -56,7 +50,7 @@ int kretprobe_try_to_free_pages(struct pt_regs *ctx)
 
 		bpf_perf_event_output(ctx, &reclaim_perf_events,
 				      COMPAT_BPF_F_CURRENT_CPU, &data,
-				      sizeof(struct reclaim_entry));
+				      sizeof(struct memory_reclaim_event));
 	}
 
 	func_trace_destroy(entry->id);

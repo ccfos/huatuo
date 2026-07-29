@@ -5,18 +5,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "bpf_common.h"
-
-#define CGROUP_KNODE_NAME_MAXLEN 85
-#define CGROUP_KNODE_NAME_MINLEN 64
-
-struct cgroup_perf_event_t {
-	u64 cgroup;
-	u64 ops_type;
-	s32 cgroup_root;
-	s32 cgroup_level;
-	u64 css[CGROUP_SUBSYS_COUNT];
-	char knode_name[CGROUP_KNODE_NAME_MAXLEN + 2];
-};
+#include "abi/cgroup_types.h"
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -31,7 +20,7 @@ static int
 bpf_cgroup_event_class_prog(struct bpf_raw_tracepoint_args *ctx, u64 type)
 {
 	struct cgroup *cgrp		= (void *)ctx->args[0];
-	struct cgroup_perf_event_t data = {};
+	struct cgroup_css_event data = {};
 	int knode_len;
 
 	/* knode name */

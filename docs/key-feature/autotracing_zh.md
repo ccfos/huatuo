@@ -51,6 +51,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 | `cpusys.sys_threshold` | `45`（%） | 物理机 CPU sys 占用率触发阈值 |
 | `cpusys.delta_sys_threshold` | `20`（%） | 物理机 CPU sys 占用率增量触发阈值 |
 | `cpusys.interval` | `10`（秒） | 检测间隔 |
+| `cpusys.interval_tracing` | `1800`（秒） | 全局触发冷却时间 |
 | `cpusys.run_tracing_tool_timeout` | `10`（秒） | perf 火焰图采集超时 |
 | `dload.threshold_load` | `5` | 容器不可中断进程负载 EMA 触发阈值 |
 | `dload.interval` | `10`（秒） | 检测间隔 |
@@ -73,7 +74,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 | 事件名称（tracer_name） | 观测对象 | 触发条件 | 典型场景 |
 | ----------------------- | -------- | -------- | -------- |
-| `cpusys` | 物理机 | sys > 45% 或 delta_sys > 20% | 内核态 CPU 突增、系统调用热点 |
+| `cpusys` | 物理机 | sys > 45% 且 delta_sys > 20% | 内核态 CPU 突增、系统调用热点 |
 | `cpuidle` | 容器 | (user>75% 且 delta_user>45%) 或 (sys>45% 且 delta_sys>20%) 或 (total>90% 且 delta_total>55%) | 容器 CPU 使用率突增、热点函数分析 |
 | `dload` | 容器 | 不可中断进程负载 EMA > 5 | D 状态进程堆积、IO 阻塞 |
 | `iotracing` | 物理机 | 磁盘 IO 指标连续两次超阈值 | 磁盘 IO 打满、IO 等待高延迟 |
@@ -99,7 +100,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 ### 1. cpusys
 
-**功能描述** 周期性读取 `/proc/stat`，计算物理机 CPU sys 占用率及相邻两次采样的增量。当 sys 占用率超过阈值（默认 45%）或增量超过阈值（默认 20%）时，触发系统级 perf 采样，生成全机 CPU 火焰图数据。
+**功能描述** 周期性读取 `/proc/stat`，计算物理机 CPU sys 占用率及相邻两次采样的增量。当 sys 占用率超过阈值（默认 45%）且增量超过阈值（默认 20%）时，触发系统级 perf 采样，生成全机 CPU 火焰图数据。全局默认冷却 30 分钟，避免重复触发。
 
 **数据存储** 事件数据自动存储至 Elasticsearch 或物理机磁盘文件。
 
@@ -109,10 +110,10 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 {
     "tracer_name": "cpusys",
     "tracer_data": {
-        "now_sys": 52,
-        "sys_threshold": 45,
-        "deltasys": 25,
-        "deltasys_threshold": 20,
+        "system_percent": 52,
+        "system_percent_threshold": 45,
+        "system_percent_delta": 25,
+        "system_percent_delta_threshold": 20,
         "flamedata": [
             {"level": 0, "value": 1000, "self": 0, "label": "all"},
             {"level": 1, "value": 350, "self": 350, "label": "do_syscall_64"}
@@ -123,10 +124,10 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 **字段含义解释**
 
-- **now_sys**：触发时物理机 CPU sys 占用率（%）
-- **sys_threshold**：sys 占用率触发阈值（%）
-- **deltasys**：相邻两次采样的 sys 占用率增量（%）
-- **deltasys_threshold**：sys 增量触发阈值（%）
+- **system_percent**：触发时物理机 CPU sys 占用率（%）
+- **system_percent_threshold**：sys 占用率触发阈值（%）
+- **system_percent_delta**：相邻两次采样的 sys 占用率增量（%）
+- **system_percent_delta_threshold**：sys 增量触发阈值（%）
 - **flamedata**：perf 采样生成的火焰图帧数据列表，每帧包含：
   - **level**：调用栈层级深度
   - **value**：该帧（含子帧）的采样计数
@@ -145,18 +146,18 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 {
     "tracer_name": "cpuidle",
     "tracer_data": {
-        "user": 80,
-        "user_threshold": 75,
-        "deltauser": 48,
-        "deltauser_threshold": 45,
-        "sys": 12,
-        "sys_threshold": 45,
-        "deltasys": 5,
-        "deltasys_threshold": 20,
-        "usage": 92,
-        "usage_threshold": 90,
-        "deltausage": 53,
-        "deltausage_threshold": 55,
+        "user_percent": 80,
+        "user_percent_threshold": 75,
+        "user_percent_delta": 48,
+        "user_percent_delta_threshold": 45,
+        "system_percent": 12,
+        "system_percent_threshold": 45,
+        "system_percent_delta": 5,
+        "system_percent_delta_threshold": 20,
+        "total_percent": 92,
+        "total_percent_threshold": 90,
+        "total_percent_delta": 53,
+        "total_percent_delta_threshold": 55,
         "flamedata": [
             {"level": 0, "value": 1000, "self": 0, "label": "all"},
             {"level": 1, "value": 800, "self": 800, "label": "java/com.example.App.main"}
@@ -167,12 +168,12 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 **字段含义解释**
 
-- **user / user_threshold**：触发时容器 CPU user 占用率（%）及其阈值
-- **deltauser / deltauser_threshold**：user 占用率增量（%）及其阈值
-- **sys / sys_threshold**：触发时容器 CPU sys 占用率（%）及其阈值
-- **deltasys / deltasys_threshold**：sys 占用率增量（%）及其阈值
-- **usage / usage_threshold**：触发时容器 CPU 总占用率（%）及其阈值
-- **deltausage / deltausage_threshold**：总占用率增量（%）及其阈值
+- **user_percent / user_percent_threshold**：触发时容器 CPU user 占用率（%）及其阈值
+- **user_percent_delta / user_percent_delta_threshold**：user 占用率增量（%）及其阈值
+- **system_percent / system_percent_threshold**：触发时容器 CPU system 占用率（%）及其阈值
+- **system_percent_delta / system_percent_delta_threshold**：system 占用率增量（%）及其阈值
+- **total_percent / total_percent_threshold**：触发时容器 CPU 总占用率（%）及其阈值
+- **total_percent_delta / total_percent_delta_threshold**：总占用率增量（%）及其阈值
 - **flamedata**：容器级 perf 采样火焰图帧数据，字段含义同 `cpusys`
 
 ### 3. dload

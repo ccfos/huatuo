@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 package metric
 
 import (
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -68,12 +69,20 @@ func NewCollectorManager(blackListed []string, region string) (*CollectorManager
 		return nil, err
 	}
 
-	collectors := make(map[string]*CollectorWrapper)
+	collectors := make(map[string]*CollectorWrapper, len(tracings))
 	for key, trace := range tracings {
 		if trace.Flag&tracing.FlagMetric == 0 {
 			continue
 		}
-		collector := trace.TracingData.(Collector)
+
+		collector, ok := trace.TracingData.(Collector)
+		if !ok {
+			return nil, fmt.Errorf(
+				"%w: %q does not implement metric.Collector",
+				tracing.ErrInvalidTracer,
+				key,
+			)
+		}
 		collectors[key] = &CollectorWrapper{
 			collector: collector,
 			mu:        sync.Mutex{},

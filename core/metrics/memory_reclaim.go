@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"sync/atomic"
+	"errors"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups/subsystem"
@@ -46,14 +46,15 @@ type memoryBpfStruct struct {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim.c -o $BPF_DIR/memory_reclaim.o
 
 type memoryCgroupReclaim struct {
-	bpf     bpf.BPF
-	running atomic.Bool
+	bpf bpf.Reference
 }
 
 func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
-	if !c.running.Load() {
+	lease, ok := c.bpf.Acquire()
+	if !ok {
 		return nil, nil
 	}
+	defer lease.Release()
 
 	containers, err := pod.NormalContainers()
 	if err != nil {
@@ -62,7 +63,7 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 
 	containersCssMem := pod.BuildCssContainers(containers, subsystem.SubsystemMemory)
 
-	items, err := c.bpf.DumpMapByName("memory_cgroup_allocpages_stall")
+	items, err := lease.DumpMapByName("memory_cgroup_allocpages_stall")
 	if err != nil {
 		return nil, err
 	}
@@ -100,27 +101,28 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 	return data, nil
 }
 
-func (c *memoryCgroupReclaim) Start(ctx context.Context) error {
+func (c *memoryCgroupReclaim) Start(ctx context.Context) (retErr error) {
 	obj, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
-	defer obj.Close()
 
 	if err := obj.Attach(); err != nil {
-		return err
+		return errors.Join(err, obj.Close())
 	}
+	if err := c.bpf.Publish(obj); err != nil {
+		return errors.Join(err, obj.Close())
+	}
+	defer func() {
+		retErr = errors.Join(retErr, c.bpf.UnPublish())
+	}()
 
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	obj.WaitDetachByBreaker(childCtx, cancel)
 
-	c.bpf = obj
-	c.running.Store(true)
-
 	// wait stop
 	<-childCtx.Done()
-	c.running.Store(false)
 	return nil
 }

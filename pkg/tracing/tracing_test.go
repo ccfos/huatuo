@@ -17,151 +17,202 @@ package tracing
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	pkgtypes "huatuo-bamai/pkg/types"
 )
 
-type traceEventStub struct {
-	startFunc func(ctx context.Context) error
+type starterStub struct {
+	startFunc func(context.Context) error
 }
 
-func (s *traceEventStub) Start(ctx context.Context) error {
+func (s *starterStub) Start(ctx context.Context) error {
 	return s.startFunc(ctx)
 }
 
-func waitUntil(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
+func TestNewEventRunner(t *testing.T) {
+	starter := &starterStub{
+		startFunc: func(context.Context) error { return pkgtypes.ErrNotSupported },
+	}
+	runner := newEventRunner("cpu", starter, 2*time.Second, FlagTracing)
+
+	got := runner.snapshot()
+	want := LifecycleSnapshot{
+		Name:            "cpu",
+		RestartInterval: 2,
+		Roles:           FlagTracing,
+	}
+	if got != want {
+		t.Errorf("newEventRunner().snapshot() = %+v, want %+v", got, want)
+	}
+}
+
+func TestEventRunnerLifecycle(t *testing.T) {
+	started := make(chan struct{})
+	starter := &starterStub{
+		startFunc: func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+
+			return pkgtypes.ErrExitByCancelCtx
+		},
+	}
+	runner := newEventRunner("trace-2026", starter, time.Hour, FlagTracing)
+
+	if err := runner.start(t.Context()); err != nil {
+		t.Fatalf("eventRunner.start() error = %v, want nil", err)
+	}
+	<-started
+
+	if err := runner.start(t.Context()); !errors.Is(err, ErrTracerAlreadyRunning) {
+		t.Errorf("eventRunner.start() error = %v, want ErrTracerAlreadyRunning", err)
+	}
+
+	runningSnapshot := runner.snapshot()
+	if !runningSnapshot.IsRunning {
+		t.Error("eventRunner.snapshot().IsRunning = false, want true")
+	}
+
+	if err := runner.stop(t.Context()); err != nil {
+		t.Fatalf("eventRunner.stop() error = %v, want nil", err)
+	}
+
+	stoppedSnapshot := runner.snapshot()
+	if stoppedSnapshot.IsRunning {
+		t.Error("eventRunner.snapshot().IsRunning = true, want false")
+	}
+	if stoppedSnapshot.RunCount != 1 {
+		t.Errorf("eventRunner.snapshot().RunCount = %d, want 1", stoppedSnapshot.RunCount)
+	}
+	if err := runner.stop(t.Context()); !errors.Is(err, ErrTracerNotRunning) {
+		t.Errorf("eventRunner.stop() error = %v, want ErrTracerNotRunning", err)
+	}
+}
+
+func TestEventRunnerRejectsCanceledStartContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	runner := newEventRunner(
+		"canceled",
+		&starterStub{startFunc: func(context.Context) error { return nil }},
+		time.Second,
+		FlagTracing,
+	)
+
+	if err := runner.start(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("eventRunner.start() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestEventRunnerStopHonorsContext(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	runner := newEventRunner(
+		"slow-stop",
+		&starterStub{
+			startFunc: func(context.Context) error {
+				close(started)
+				<-release
+
+				return nil
+			},
+		},
+		time.Hour,
+		FlagTracing,
+	)
+
+	if err := runner.start(t.Context()); err != nil {
+		t.Fatalf("eventRunner.start() error = %v, want nil", err)
+	}
+	<-started
+
+	runner.mu.RLock()
+	done := runner.done
+	runner.mu.RUnlock()
+
+	stopCtx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := runner.stop(stopCtx); !errors.Is(err, context.Canceled) {
+		t.Errorf("eventRunner.stop() error = %v, want context.Canceled", err)
+	}
+
+	close(release)
+	<-done
+}
+
+func TestWaitForRunnerPrefersCompletion(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	for range 100 {
+		if err := waitForRunner(ctx, "completed", done); err != nil {
+			t.Fatalf("waitForRunner() error = %v, want nil", err)
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	return cond()
-}
-
-func TestNewTracingEvent(t *testing.T) {
-	attr := &EventTracingAttr{
-		Interval: 2,
-		Flag:     FlagTracing,
-		TracingData: &traceEventStub{
-			startFunc: func(ctx context.Context) error { return nil },
-		},
-	}
-
-	te := NewTracingEvent(attr, "cpu")
-	if te == nil {
-		t.Fatalf("NewTracingEvent() should not return nil")
-	}
-	if te.name != "cpu" {
-		t.Errorf("name=%q, want %q", te.name, "cpu")
-	}
-	if te.interval != 2 {
-		t.Errorf("interval=%d, want 2", te.interval)
-	}
-	if te.flag != FlagTracing {
-		t.Errorf("flag=%d, want %d", te.flag, FlagTracing)
 	}
 }
 
-func TestEventTracingDoStart(t *testing.T) {
-	tests := []struct {
-		name     string
-		setup    func() *EventTracing
-		validate func(*testing.T, *EventTracing)
-	}{
-		{
-			name: "not supported sets exit",
-			setup: func() *EventTracing {
-				return &EventTracing{
-					ic: &traceEventStub{
-						startFunc: func(ctx context.Context) error { return pkgtypes.ErrNotSupported },
-					},
-					name: "trace-do-start",
-				}
-			},
-			validate: func(t *testing.T, te *EventTracing) {
-				if !te.exit {
-					t.Errorf("exit=%v, want %v", te.exit, true)
-				}
-			},
-		},
-		{
-			name: "cancel context does not set exit",
-			setup: func() *EventTracing {
-				return &EventTracing{
-					ic: &traceEventStub{
-						startFunc: func(ctx context.Context) error { return pkgtypes.ErrExitByCancelCtx },
-					},
-					name: "trace-do-start",
-				}
-			},
-			validate: func(t *testing.T, te *EventTracing) {
-				if te.exit {
-					t.Errorf("exit=%v, want %v", te.exit, false)
-				}
-			},
-		},
-		{
-			name: "normal error does not set exit",
-			setup: func() *EventTracing {
-				return &EventTracing{
-					ic: &traceEventStub{
-						startFunc: func(ctx context.Context) error { return errors.New("boom") },
-					},
-					name: "trace-do-start",
-				}
-			},
-			validate: func(t *testing.T, te *EventTracing) {
-				if te.exit {
-					t.Errorf("exit=%v, want %v", te.exit, false)
-				}
-			},
+func TestEventRunnerStopsDuringRestartInterval(t *testing.T) {
+	firstRun := make(chan struct{})
+	var runCount atomic.Int32
+	starter := &starterStub{
+		startFunc: func(context.Context) error {
+			if runCount.Add(1) == 1 {
+				close(firstRun)
+			}
+
+			return nil
 		},
 	}
+	runner := newEventRunner("trace-restart", starter, time.Hour, FlagTracing)
 
-	for i := range tests {
-		t.Run(tests[i].name, func(t *testing.T) {
-			te := tests[i].setup()
-			te.doStart()
-			tests[i].validate(t, te)
-		})
+	if err := runner.start(t.Context()); err != nil {
+		t.Fatalf("eventRunner.start() error = %v, want nil", err)
+	}
+	<-firstRun
+
+	if err := runner.stop(t.Context()); err != nil {
+		t.Fatalf("eventRunner.stop() error = %v, want nil", err)
+	}
+	if got := runCount.Load(); got != 1 {
+		t.Errorf("starter.Start() calls = %d, want 1", got)
 	}
 }
 
-func TestEventTracingStartStopAndInfo(t *testing.T) {
-	te := &EventTracing{
-		ic: &traceEventStub{
-			startFunc: func(ctx context.Context) error {
-				<-ctx.Done()
-				return pkgtypes.ErrExitByCancelCtx
-			},
+func TestEventRunnerNotSupportedStops(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	starter := &starterStub{
+		startFunc: func(context.Context) error {
+			close(started)
+			<-release
+
+			return pkgtypes.ErrNotSupported
 		},
-		name:     "trace-2026",
-		interval: 1,
-		flag:     FlagTracing,
 	}
+	runner := newEventRunner("unsupported", starter, time.Hour, FlagTracing)
 
-	err := te.Start()
-	if err != nil {
-		t.Fatalf("Start() error=%v", err)
+	if err := runner.start(t.Context()); err != nil {
+		t.Fatalf("eventRunner.start() error = %v, want nil", err)
 	}
+	<-started
 
-	ready := waitUntil(500*time.Millisecond, func() bool { return te.cancelCtx != nil && te.isRunning })
-	if !ready {
-		t.Fatalf("tracing did not enter running state in time")
+	runner.mu.RLock()
+	done := runner.done
+	runner.mu.RUnlock()
+	close(release)
+	<-done
+
+	got := runner.snapshot()
+	if got.IsRunning {
+		t.Error("eventRunner.snapshot().IsRunning = true, want false")
 	}
-
-	info := te.Info()
-	if info.Name != "trace-2026" || !info.Running || info.Interval != 1 || info.Flag != FlagTracing {
-		t.Errorf("Info() mismatch: %+v", info)
-	}
-
-	te.Stop()
-	stopped := waitUntil(500*time.Millisecond, func() bool { return !te.isRunning })
-	if !stopped {
-		t.Errorf("tracing did not stop in time")
+	if got.RunCount != 1 {
+		t.Errorf("eventRunner.snapshot().RunCount = %d, want 1", got.RunCount)
 	}
 }

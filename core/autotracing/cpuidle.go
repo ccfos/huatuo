@@ -17,17 +17,15 @@ package autotracing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
-	"os/exec"
-	"path"
+	"os"
 	"runtime"
-	"strconv"
 	"time"
 
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/stats"
-	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
@@ -36,321 +34,446 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
+const cpuIdleTracerName = "cpuidle"
+
 func init() {
-	tracing.RegisterEventTracing("cpuidle", newCPUIdle)
+	tracing.RegisterEventTracing(cpuIdleTracerName, newCPUIdle)
 }
 
 func newCPUIdle() (*tracing.EventTracingAttr, error) {
-	// NewManager only returns nil alongside an error (default branch); v1/v2 never return nil on success
-	cgroup, err := cgroups.NewManager()
+	cgroupReader, err := cgroups.NewManager()
+	if err != nil {
+		return nil, err
+	}
+
+	tracer, err := newCPUIdleTracing(cgroupReader, cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	return &tracing.EventTracingAttr{
-		TracingData: &cpuIdleTracing{cgroupMgr: cgroup},
+		TracingData: tracer,
 		Interval:    20,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
 
-type cpuIdleTracing struct {
-	cgroupMgr cgroups.Cgroup
-}
-
-type cpuStats struct {
-	user  int64
-	sys   int64
-	total int64
-}
-
-type containerCPUInfo struct {
-	prevUsagePercentage  cpuStats
-	nowUsagePercentage   cpuStats
-	deltaUsagePercentage cpuStats
-	prevUsage            cpuStats
-	path                 string
-	alive                bool
-	id                   string
-	traceTime            time.Time
-	updateTime           time.Time
+type cpuUsageBreakdown[T ~int64 | ~uint64] struct {
+	user   T
+	system T
+	total  T
 }
 
 type cpuIdleThreshold struct {
-	deltaUser       int64
-	deltaSys        int64
-	deltaTotal      int64
-	usageUser       int64
-	usageSys        int64
-	usageTotal      int64
-	intervalTracing int64
+	percent cpuUsageBreakdown[int64]
+	delta   cpuUsageBreakdown[int64]
 }
 
-// containersCPUIdleMap is the container information
-type containersCPUIdleMap map[string]*containerCPUInfo
+type cpuIdleTracing struct {
+	cgroupReader     cgroups.Cgroup
+	interval         time.Duration
+	perfDuration     time.Duration
+	minTraceInterval time.Duration
+	threshold        cpuIdleThreshold
+	filter           *matcher.ContainerMatcher
+	containers       map[string]*containerCPUState
+}
 
-var containersCPUIdle = make(containersCPUIdleMap)
+type containerCPUState struct {
+	previousUsage   cpuUsageBreakdown[uint64]
+	currentPercent  cpuUsageBreakdown[int64]
+	previousPercent cpuUsageBreakdown[int64]
+	percentDelta    cpuUsageBreakdown[int64]
 
-func updateContainersCPUIdle(f *matcher.ContainerMatcher) error {
-	containers, err := pod.NormalContainers()
+	containerID  string
+	cgroupPath   string
+	seen         bool
+	hasUsage     bool
+	hasPercent   bool
+	lastSampleAt time.Time
+	lastTraceAt  time.Time
+}
+
+type cpuIdleTracingData struct {
+	UserPercent                 int64                  `json:"user_percent"`
+	UserPercentThreshold        int64                  `json:"user_percent_threshold"`
+	UserPercentDelta            int64                  `json:"user_percent_delta"`
+	UserPercentDeltaThreshold   int64                  `json:"user_percent_delta_threshold"`
+	SystemPercent               int64                  `json:"system_percent"`
+	SystemPercentThreshold      int64                  `json:"system_percent_threshold"`
+	SystemPercentDelta          int64                  `json:"system_percent_delta"`
+	SystemPercentDeltaThreshold int64                  `json:"system_percent_delta_threshold"`
+	TotalPercent                int64                  `json:"total_percent"`
+	TotalPercentThreshold       int64                  `json:"total_percent_threshold"`
+	TotalPercentDelta           int64                  `json:"total_percent_delta"`
+	TotalPercentDeltaThreshold  int64                  `json:"total_percent_delta_threshold"`
+	FlameData                   []flamegraph.FrameData `json:"flamedata"`
+}
+
+func newCPUIdleTracing(
+	cgroupReader cgroups.Cgroup,
+	config *Config,
+) (*cpuIdleTracing, error) {
+	threshold := cpuIdleThreshold{
+		percent: cpuUsageBreakdown[int64]{
+			user:   config.CPUIdle.UserThreshold,
+			system: config.CPUIdle.SysThreshold,
+			total:  config.CPUIdle.UsageThreshold,
+		},
+		delta: cpuUsageBreakdown[int64]{
+			user:   config.CPUIdle.DeltaUserThreshold,
+			system: config.CPUIdle.DeltaSysThreshold,
+			total:  config.CPUIdle.DeltaUsageThreshold,
+		},
+	}
+	if err := validateCPUIdleConfig(
+		config.CPUIdle.Interval,
+		config.CPUIdle.IntervalTracing,
+		config.CPUIdle.RunTracingToolTimeout,
+		threshold,
+	); err != nil {
+		return nil, fmt.Errorf("validate container cpu config: %w", err)
+	}
+
+	filter, err := config.CPUIdle.Filter.Build()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("build container filter: %w", err)
+	}
+
+	return &cpuIdleTracing{
+		cgroupReader:     cgroupReader,
+		interval:         time.Duration(config.CPUIdle.Interval) * time.Second,
+		perfDuration:     time.Duration(config.CPUIdle.RunTracingToolTimeout) * time.Second,
+		minTraceInterval: time.Duration(config.CPUIdle.IntervalTracing) * time.Second,
+		threshold:        threshold,
+		filter:           filter,
+		containers:       make(map[string]*containerCPUState),
+	}, nil
+}
+
+func (c *cpuIdleTracing) reconcileContainerStates(containers map[string]*pod.Container) {
+	for _, state := range c.containers {
+		state.seen = false
 	}
 
 	for _, container := range containers {
-		if !f.Match(container) {
+		if !c.filter.Match(container) {
 			continue
 		}
 
-		if _, ok := containersCPUIdle[container.ID]; ok {
-			containersCPUIdle[container.ID].path = container.CgroupPath
-			containersCPUIdle[container.ID].alive = true
-			containersCPUIdle[container.ID].id = container.ID
+		state, ok := c.containers[container.ID]
+		if !ok {
+			c.containers[container.ID] = &containerCPUState{
+				containerID: container.ID,
+				cgroupPath:  container.CgroupPath,
+				seen:        true,
+			}
 			continue
 		}
 
-		containersCPUIdle[container.ID] = &containerCPUInfo{
-			path:  container.CgroupPath,
-			alive: true,
-			id:    container.ID,
+		if state.cgroupPath != container.CgroupPath {
+			state.resetMeasurements()
+			state.cgroupPath = container.CgroupPath
 		}
+		state.seen = true
+	}
+
+	for containerID, state := range c.containers {
+		if !state.seen {
+			delete(c.containers, containerID)
+		}
+	}
+}
+
+func (s *containerCPUState) resetMeasurements() {
+	s.previousUsage = cpuUsageBreakdown[uint64]{}
+	s.currentPercent = cpuUsageBreakdown[int64]{}
+	s.previousPercent = cpuUsageBreakdown[int64]{}
+	s.percentDelta = cpuUsageBreakdown[int64]{}
+	s.hasUsage = false
+	s.hasPercent = false
+	s.lastSampleAt = time.Time{}
+}
+
+func cpuUsageMeasurement(usage *stats.CpuUsage) cpuUsageBreakdown[uint64] {
+	return cpuUsageBreakdown[uint64]{
+		user:   usage.User,
+		system: usage.System,
+		total:  usage.Usage,
+	}
+}
+
+func cpuUsageDelta(
+	current cpuUsageBreakdown[uint64],
+	previous cpuUsageBreakdown[uint64],
+) (cpuUsageBreakdown[uint64], bool) {
+	if current.user < previous.user ||
+		current.system < previous.system ||
+		current.total < previous.total {
+		return cpuUsageBreakdown[uint64]{}, false
+	}
+
+	return cpuUsageBreakdown[uint64]{
+		user:   current.user - previous.user,
+		system: current.system - previous.system,
+		total:  current.total - previous.total,
+	}, true
+}
+
+func containerCPUCapacity(quota *stats.CpuQuota) (float64, error) {
+	if quota.Quota == math.MaxUint64 {
+		return float64(runtime.NumCPU()), nil
+	}
+	if quota.Quota == 0 {
+		return 0, fmt.Errorf("container cpu quota must be positive")
+	}
+	if quota.Period == 0 {
+		return 0, fmt.Errorf("container cpu period must be positive")
+	}
+
+	return float64(quota.Quota) / float64(quota.Period), nil
+}
+
+func (s *containerCPUState) update(
+	usage cpuUsageBreakdown[uint64],
+	cpuCapacity float64,
+	sampledAt time.Time,
+) bool {
+	previousUsage := s.previousUsage
+	s.previousUsage = usage
+	if !s.hasUsage {
+		s.hasUsage = true
+		s.lastSampleAt = sampledAt
+		return false
+	}
+
+	usageDelta, ok := cpuUsageDelta(usage, previousUsage)
+	if !ok {
+		s.resetPercentages()
+		s.lastSampleAt = sampledAt
+		return false
+	}
+
+	elapsed := sampledAt.Sub(s.lastSampleAt)
+	s.lastSampleAt = sampledAt
+	elapsedMicroseconds := elapsed.Microseconds()
+	if elapsedMicroseconds <= 0 || cpuCapacity <= 0 {
+		s.resetPercentages()
+		return false
+	}
+
+	elapsedMicros := float64(elapsedMicroseconds)
+	s.currentPercent = cpuUsageBreakdown[int64]{
+		user: int64(
+			float64(usageDelta.user) * 100 / elapsedMicros / cpuCapacity,
+		),
+		system: int64(
+			float64(usageDelta.system) * 100 / elapsedMicros / cpuCapacity,
+		),
+		total: int64(
+			float64(usageDelta.total) * 100 / elapsedMicros / cpuCapacity,
+		),
+	}
+	if !s.hasPercent {
+		s.previousPercent = s.currentPercent
+		s.percentDelta = cpuUsageBreakdown[int64]{}
+		s.hasPercent = true
+		return true
+	}
+
+	s.percentDelta = cpuUsageBreakdown[int64]{
+		user:   s.currentPercent.user - s.previousPercent.user,
+		system: s.currentPercent.system - s.previousPercent.system,
+		total:  s.currentPercent.total - s.previousPercent.total,
+	}
+	s.previousPercent = s.currentPercent
+
+	return true
+}
+
+func (s *containerCPUState) resetPercentages() {
+	s.currentPercent = cpuUsageBreakdown[int64]{}
+	s.previousPercent = cpuUsageBreakdown[int64]{}
+	s.percentDelta = cpuUsageBreakdown[int64]{}
+	s.hasPercent = false
+}
+
+func (s *containerCPUState) traceScore(threshold cpuIdleThreshold) (int64, bool) {
+	var score int64
+	var exceedsThreshold bool
+	if s.currentPercent.user > threshold.percent.user &&
+		s.percentDelta.user > threshold.delta.user {
+		score = s.currentPercent.user - threshold.percent.user +
+			s.percentDelta.user - threshold.delta.user
+		exceedsThreshold = true
+	}
+	if s.currentPercent.system > threshold.percent.system &&
+		s.percentDelta.system > threshold.delta.system {
+		systemScore := s.currentPercent.system - threshold.percent.system +
+			s.percentDelta.system - threshold.delta.system
+		score = max(score, systemScore)
+		exceedsThreshold = true
+	}
+	if s.currentPercent.total > threshold.percent.total &&
+		s.percentDelta.total > threshold.delta.total {
+		totalScore := s.currentPercent.total - threshold.percent.total +
+			s.percentDelta.total - threshold.delta.total
+		score = max(score, totalScore)
+		exceedsThreshold = true
+	}
+
+	return score, exceedsThreshold
+}
+
+func (c *cpuIdleTracing) readContainerCPUSample(
+	state *containerCPUState,
+) (cpuUsageBreakdown[uint64], float64, error) {
+	quota, err := c.cgroupReader.CpuQuotaAndPeriod(state.cgroupPath)
+	if err != nil {
+		return cpuUsageBreakdown[uint64]{}, 0,
+			fmt.Errorf("read cpu quota for %q: %w", state.containerID, err)
+	}
+	capacity, err := containerCPUCapacity(quota)
+	if err != nil {
+		return cpuUsageBreakdown[uint64]{}, 0,
+			fmt.Errorf("calculate cpu capacity for %q: %w", state.containerID, err)
+	}
+
+	usage, err := c.cgroupReader.CpuUsage(state.cgroupPath)
+	if err != nil {
+		return cpuUsageBreakdown[uint64]{}, 0,
+			fmt.Errorf("read cpu usage for %q: %w", state.containerID, err)
+	}
+
+	return cpuUsageMeasurement(usage), capacity, nil
+}
+
+func (c *cpuIdleTracing) updateContainerCPUStates(sampledAt time.Time) error {
+	for _, state := range c.containers {
+		usage, capacity, err := c.readContainerCPUSample(state)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+
+			log.WithError(err).
+				WithField("container_id", state.containerID).
+				WithField("cgroup_path", state.cgroupPath).
+				Debug("failed to sample container cpu")
+			continue
+		}
+		state.update(usage, capacity, sampledAt)
 	}
 
 	return nil
 }
 
-func (c *cpuIdleTracing) detectCPUIdleContainer(threshold *cpuIdleThreshold) (*containerCPUInfo, error) {
-	for id, container := range containersCPUIdle {
-		if !container.alive {
-			delete(containersCPUIdle, id)
-		} else {
-			container.alive = false
+func (c *cpuIdleTracing) selectTraceTarget(sampledAt time.Time) *containerCPUState {
+	var traceTarget *containerCPUState
+	var highestScore int64
 
-			if err := c.updateContainerCpuUsage(container); err != nil {
-				log.Debugf("cpuidle update container [%s]: %v", container.path, err)
-				continue
-			}
+	for _, state := range c.containers {
+		if !state.hasPercent || !state.lastSampleAt.Equal(sampledAt) {
+			continue
+		}
+		if !state.lastTraceAt.IsZero() &&
+			sampledAt.Sub(state.lastTraceAt) < c.minTraceInterval {
+			continue
+		}
 
-			log.Debugf("container [%s], usage: %v", container.path, container.nowUsagePercentage)
-
-			if shouldCareThisCPUIdle(container, threshold) {
-				return container, nil
-			}
+		score, exceedsThreshold := state.traceScore(c.threshold)
+		if !exceedsThreshold {
+			continue
+		}
+		if traceTarget == nil ||
+			score > highestScore ||
+			(score == highestScore && state.containerID < traceTarget.containerID) {
+			traceTarget = state
+			highestScore = score
 		}
 	}
 
-	return nil, fmt.Errorf("no cpuidle containers")
+	return traceTarget
 }
 
-func containerCpuUsage(usage *stats.CpuUsage) cpuStats {
-	return cpuStats{
-		user:  int64(usage.User),
-		sys:   int64(usage.System),
-		total: int64(usage.Usage),
+func (c *cpuIdleTracing) saveCPUIdleTrace(
+	state *containerCPUState,
+	traceTime time.Time,
+	flameData []byte,
+) error {
+	tracerData := cpuIdleTracingData{
+		UserPercent:                 state.currentPercent.user,
+		UserPercentThreshold:        c.threshold.percent.user,
+		UserPercentDelta:            state.percentDelta.user,
+		UserPercentDeltaThreshold:   c.threshold.delta.user,
+		SystemPercent:               state.currentPercent.system,
+		SystemPercentThreshold:      c.threshold.percent.system,
+		SystemPercentDelta:          state.percentDelta.system,
+		SystemPercentDeltaThreshold: c.threshold.delta.system,
+		TotalPercent:                state.currentPercent.total,
+		TotalPercentThreshold:       c.threshold.percent.total,
+		TotalPercentDelta:           state.percentDelta.total,
+		TotalPercentDeltaThreshold:  c.threshold.delta.total,
 	}
-}
-
-func containerCpuUsageDelta(cpu1, cpu2 *cpuStats) cpuStats {
-	return cpuStats{
-		user:  cpu1.user - cpu2.user,
-		sys:   cpu1.sys - cpu2.sys,
-		total: cpu1.total - cpu2.total,
-	}
-}
-
-func (c *cpuIdleTracing) updateContainerCpuUsage(container *containerCPUInfo) error {
-	cpuQuotaPeriod, err := c.cgroupMgr.CpuQuotaAndPeriod(container.path)
-	if err != nil {
-		return err
-	}
-
-	var cpuCores int64
-	if cpuQuotaPeriod.Quota == math.MaxUint64 { // no limit
-		cpuCores = int64(runtime.NumCPU())
-	} else {
-		cpuCores = int64(cpuQuotaPeriod.Quota / cpuQuotaPeriod.Period)
+	if err := json.Unmarshal(flameData, &tracerData.FlameData); err != nil {
+		return fmt.Errorf("decode container perf output: %w", err)
 	}
 
-	if cpuCores <= 0 {
-		return fmt.Errorf("cpu too small")
-	}
-
-	usage, err := c.cgroupMgr.CpuUsage(container.path)
-	if err != nil {
-		return err
-	}
-
-	if container.prevUsage == (cpuStats{}) {
-		container.prevUsage = containerCpuUsage(usage)
-		container.updateTime = time.Now()
-		return fmt.Errorf("cpu usage first update")
-	}
-
-	delta := containerCpuUsageDelta(
-		&cpuStats{
-			user:  int64(usage.User),
-			sys:   int64(usage.System),
-			total: int64(usage.Usage),
-		}, &container.prevUsage,
-	)
-	if delta.total == 0 {
-		container.updateTime = time.Now()
-		return fmt.Errorf("cpu usage no changed")
-	}
-
-	updateElapsed := time.Since(container.updateTime).Microseconds()
-
-	container.nowUsagePercentage.user = 100 * delta.user / updateElapsed / cpuCores
-	container.nowUsagePercentage.sys = 100 * delta.sys / updateElapsed / cpuCores
-	container.nowUsagePercentage.total = 100 * delta.total / updateElapsed / cpuCores
-
-	if container.prevUsagePercentage == (cpuStats{}) {
-		container.prevUsagePercentage = container.nowUsagePercentage
-	}
-
-	container.deltaUsagePercentage = containerCpuUsageDelta(
-		&container.nowUsagePercentage,
-		&container.prevUsagePercentage,
-	)
-	container.prevUsagePercentage = container.nowUsagePercentage
-	container.prevUsage = containerCpuUsage(usage)
-	container.updateTime = time.Now()
-	return nil
-}
-
-func shouldCareThisCPUIdle(container *containerCPUInfo, threshold *cpuIdleThreshold) bool {
-	nowtime := time.Now()
-	intervalContinuousPerf := nowtime.Sub(container.traceTime)
-
-	if int64(intervalContinuousPerf.Seconds()) > threshold.intervalTracing {
-		if (container.nowUsagePercentage.user > threshold.usageUser &&
-			container.deltaUsagePercentage.user > threshold.deltaUser) ||
-			(container.nowUsagePercentage.sys > threshold.usageSys &&
-				container.deltaUsagePercentage.sys > threshold.deltaSys) ||
-			(container.nowUsagePercentage.total > threshold.usageTotal &&
-				container.deltaUsagePercentage.total > threshold.deltaTotal) {
-			container.traceTime = nowtime
-			container.prevUsage = cpuStats{}
-			return true
-		}
-	}
-
-	return false
-}
-
-func runPerf(parent context.Context, containerId string, timeOut int64) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(parent, time.Duration(timeOut+30)*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, path.Join(tracing.TaskBinDir, "perf"),
-		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "perf.o"),
-		"--container-id", containerId,
-		"--duration", strconv.FormatInt(timeOut, 10))
-
-	return cmd.CombinedOutput()
-}
-
-func buildAndSaveCPUIdleContainer(container *containerCPUInfo, threshold *cpuIdleThreshold, flamedata []byte) error {
-	tracerData := CPUIdleTracingData{
-		NowUser:             container.nowUsagePercentage.user,
-		DeltaUser:           container.deltaUsagePercentage.user,
-		UserThreshold:       threshold.usageUser,
-		DeltaUserThreshold:  threshold.deltaUser,
-		NowSys:              container.nowUsagePercentage.sys,
-		DeltaSys:            container.deltaUsagePercentage.sys,
-		SysThreshold:        threshold.usageSys,
-		DeltaSysThreshold:   threshold.deltaSys,
-		NowUsage:            container.nowUsagePercentage.total,
-		DeltaUsage:          container.deltaUsagePercentage.total,
-		UsageThreshold:      threshold.usageTotal,
-		DeltaUsageThreshold: threshold.deltaTotal,
-	}
-
-	if err := json.Unmarshal(flamedata, &tracerData.FlameData); err != nil {
-		return err
-	}
-
-	log.Debugf("cpuidle flamedata %v", tracerData.FlameData)
 	if err := tracing.Save(&tracing.WriteRequest{
-		TracerName:    "cpuidle",
-		ContainerID:   container.id,
-		TracerTime:    container.traceTime,
+		TracerName:    cpuIdleTracerName,
+		ContainerID:   state.containerID,
+		TracerTime:    traceTime,
 		TracerData:    &tracerData,
 		TracerRunType: tracing.TracerRunTypeAutotracing,
 	}); err != nil {
-		log.Warnf("failed to save tracing data: %v", err)
+		return fmt.Errorf("save container cpu trace: %w", err)
 	}
+
 	return nil
 }
 
-type CPUIdleTracingData struct {
-	NowUser             int64                  `json:"user"`
-	UserThreshold       int64                  `json:"user_threshold"`
-	DeltaUser           int64                  `json:"deltauser"`
-	DeltaUserThreshold  int64                  `json:"deltauser_threshold"`
-	NowSys              int64                  `json:"sys"`
-	SysThreshold        int64                  `json:"sys_threshold"`
-	DeltaSys            int64                  `json:"deltasys"`
-	DeltaSysThreshold   int64                  `json:"deltasys_threshold"`
-	NowUsage            int64                  `json:"usage"`
-	UsageThreshold      int64                  `json:"usage_threshold"`
-	DeltaUsage          int64                  `json:"deltausage"`
-	DeltaUsageThreshold int64                  `json:"deltausage_threshold"`
-	FlameData           []flamegraph.FrameData `json:"flamedata"`
-}
-
 func (c *cpuIdleTracing) Start(ctx context.Context) error {
-	interval := cfg.CPUIdle.Interval
-	perfRunTimeOut := cfg.CPUIdle.RunTracingToolTimeout
-
-	threshold := &cpuIdleThreshold{
-		deltaUser:       cfg.CPUIdle.DeltaUserThreshold,
-		deltaSys:        cfg.CPUIdle.DeltaSysThreshold,
-		deltaTotal:      cfg.CPUIdle.DeltaUsageThreshold,
-		usageUser:       cfg.CPUIdle.UserThreshold,
-		usageSys:        cfg.CPUIdle.SysThreshold,
-		usageTotal:      cfg.CPUIdle.UsageThreshold,
-		intervalTracing: cfg.CPUIdle.IntervalTracing,
-	}
-
-	containerFilter, err := cfg.CPUIdle.Filter.Build()
-	if err != nil {
-		return fmt.Errorf("container filter: %w", err)
-	}
-
-	ticker := time.NewTicker(time.Duration(interval) * time.Second)
+	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
-		case <-ticker.C:
-			if err := updateContainersCPUIdle(containerFilter); err != nil {
+		case sampledAt := <-ticker.C:
+			containers, err := pod.NormalContainers()
+			if err != nil {
+				return fmt.Errorf("list containers for cpu sampling: %w", err)
+			}
+			c.reconcileContainerStates(containers)
+
+			if err := c.updateContainerCPUStates(sampledAt); err != nil {
 				return err
 			}
-
-			container, err := c.detectCPUIdleContainer(threshold)
-			if err != nil {
+			traceTarget := c.selectTraceTarget(sampledAt)
+			if traceTarget == nil {
 				continue
 			}
 
-			log.Infof("start perf container [%s], id [%s] with usage: %v, perf_run_timeout: %d",
-				container.path, container.id,
-				container.nowUsagePercentage,
-				perfRunTimeOut)
-			flamedata, err := runPerf(ctx, container.id, perfRunTimeOut)
+			traceTime := time.Now()
+			log.WithField("container_id", traceTarget.containerID).
+				WithField("cgroup_path", traceTarget.cgroupPath).
+				WithField("cpu_percent", traceTarget.currentPercent).
+				WithField("cpu_percent_delta", traceTarget.percentDelta).
+				WithField("duration_seconds", int64(c.perfDuration/time.Second)).
+				Info("starting container cpu profiling")
+
+			flameData, err := runPerfCommand(ctx, perfRequest{
+				duration:    c.perfDuration,
+				containerID: traceTarget.containerID,
+			})
 			if err != nil {
-				log.Debugf("perf err: %v, output: %v", err, string(flamedata))
 				return err
 			}
-
-			if len(flamedata) == 0 {
-				log.Infof("perf output is null for container id [%s]", container.id)
-				continue
+			if err := c.saveCPUIdleTrace(traceTarget, traceTime, flameData); err != nil {
+				return err
 			}
-
-			_ = buildAndSaveCPUIdleContainer(container, threshold, flamedata)
+			traceTarget.lastTraceAt = traceTime
 		}
 	}
 }

@@ -13,13 +13,252 @@ HUATUO is an operating-system observability project open sourced by DiDi and inc
 </div>
 {{% /alert %}}
 
-## 📖 Overview
+## 🌐 Profiles API
+
+huatuo-apiserver exposes `/v1/profiles` for service-based continuous profiling. Clients can create CPU or memory profiling jobs, query job status and results, and stop or delete jobs. huatuo-apiserver schedules each job on the HUATUO Agent running on the specified node. Profiling results are available through the returned Grafana URL or the raw data endpoint.
+
+### 1. Request Conventions
+
+By default, huatuo-apiserver listens on `:12740`. The following examples use environment variables for the server address and bearer token:
+
+```bash
+API_BASE="http://127.0.0.1:12740"
+API_TOKEN="<Auth.Users.BearerToken>"
+```
+
+Every request must pass the configured bearer token:
+
+```text
+Authorization: Bearer <Auth.Users.BearerToken>
+```
+
+A non-administrator user requires both `/v1/profiles` and
+`/v1/profiles/**` permissions. Permissions may include an HTTP method, such as
+`GET /v1/profiles/**`. The API uses the following common JSON response
+envelope:
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {}
+}
+```
+
+### 2. Query Profiling Capabilities
+
+Before creating a job, query the profiling types, languages, memory modes, and runtime settings supported by the server:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  "${API_BASE}/v1/profiles/capabilities"
+```
+
+The `data` object contains these fields:
+
+| Field | Description |
+| --- | --- |
+| `types` | Supported profiling types: `cpu` and `memory` |
+| `cpu_languages` | Languages supported by CPU profiling |
+| `memory_languages` | Languages supported by memory profiling |
+| `memory_modes` | Memory profiling modes grouped by language; values are accepted by job creation |
+| `aggregation_interval_seconds` | Server-side data aggregation interval |
+| `max_concurrent_profilers` | Maximum number of concurrent profiler processes; `0` disables the limit |
+
+CPU profiling currently supports `c`, `c++`, `go`, `java`, and `python`. Memory profiling supports these combinations:
+
+| Language | `memory_mode` | Description |
+| --- | --- | --- |
+| `c`, `c++`, `go` | `virtual_alloc` | Virtual address-space allocation |
+| `c`, `c++`, `go` | `physical_alloc` | Physical page allocation |
+| `c`, `c++`, `go` | `physical_usage` | Current physical page residency |
+| `java` | `object_alloc` | JVM object allocation |
+| `java` | `object_usage` | JVM live objects |
+
+### 3. Create a Profiling Job
+
+`POST /v1/profiles` accepts the following JSON fields:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `type` | Yes | Profiling type: `cpu` or `memory` |
+| `language` | Yes | Target process language; it must support the selected profiling type |
+| `duration_seconds` | Yes | Profiling duration in seconds |
+| `hostname` | Yes | Hostname of the node running the target process; used for job scheduling |
+| `container_id` | No | Target container ID; omit it to profile the host |
+| `binary_match_path` | No | Executable path matcher for Java/Python CPU profiling; native profiling does not support it |
+| `memory_mode` | For memory profiling | Memory profiling mode; it must be supported by `language` |
+
+`duration_seconds` must cover at least two `aggregation_interval_seconds` periods, and their sum must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
+
+Create a Go CPU profiling job on a host:
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "cpu",
+    "language": "go",
+    "duration_seconds": 60,
+    "hostname": "node-01"
+  }' \
+  "${API_BASE}/v1/profiles"
+```
+
+Create a Java live-object profiling job in a container:
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "memory",
+    "language": "java",
+    "memory_mode": "object_usage",
+    "duration_seconds": 60,
+    "container_id": "9f4c2f1a8b7d",
+    "hostname": "node-01"
+  }' \
+  "${API_BASE}/v1/profiles"
+```
+
+A successful request returns `201 Created`. The `Location` response header identifies the new job, and the response body contains the job ID used by subsequent requests:
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": "<profile-job-id>"
+  }
+}
+```
+
+```bash
+JOB_ID="<profile-job-id>"
+```
+
+### 4. List Profiling Jobs
+
+`GET /v1/profiles` supports these query parameters:
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `container_id` | None | Exact container ID filter (`containerID` remains accepted for compatibility) |
+| `hostname` | None | Exact node hostname filter |
+| `status` | None | `pending`, `running`, `completed`, `failed`, `stopped`, or `timeout` |
+| `type` | None | `cpu` or `memory`; omit it to return both types |
+| `limit` | `50` | Page size; must be greater than 0 and is capped at 500 |
+| `offset` | `0` | Starting offset; must be greater than or equal to 0 |
+| `sort` | `-created_at` | `created_at`, `finished_at`, `hostname`, `container_id`, `id`, `status`, or `type`; prefix with `-` for descending order |
+
+List the 20 most recent running CPU profiling jobs on `node-01`:
+
+```bash
+curl -sS -G \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  --data-urlencode "hostname=node-01" \
+  --data-urlencode "status=running" \
+  --data-urlencode "type=cpu" \
+  --data-urlencode "limit=20" \
+  --data-urlencode "offset=0" \
+  --data-urlencode "sort=-created_at" \
+  "${API_BASE}/v1/profiles"
+```
+
+`data.items` contains the job array. `data.total` is the number of matching jobs before pagination, while `data.limit` and `data.offset` are the effective pagination parameters. Non-administrator users can list only jobs they created.
+
+### 5. Get a Profiling Job
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  "${API_BASE}/v1/profiles/${JOB_ID}"
+```
+
+The `data` object contains the job details:
+
+| Field | Description |
+| --- | --- |
+| `id` | Profiles API job ID |
+| `container_id` | Target container ID; omitted for host jobs |
+| `hostname` | Target node hostname |
+| `type` | `cpu` or `memory` |
+| `language` | Target process language |
+| `memory_mode` | Memory profiling mode; omitted for CPU jobs |
+| `binary_match_path` | Executable path matcher; omitted when unused |
+| `status` | Current job status |
+| `duration_seconds` | Requested profiling duration in seconds |
+| `created_at` | Job creation time |
+| `finished_at` | Terminal status time; `null` while the job is active |
+| `result_url` | Grafana URL for the result; `null` until available |
+| `status_reason` | Terminal status details; `null` when no explanation is needed |
+
+Profiling jobs use these statuses:
+
+| Status | Description |
+| --- | --- |
+| `pending` | The job has been created and is waiting for the Agent |
+| `running` | The Agent is collecting profiling data |
+| `completed` | The job completed successfully |
+| `stopped` | The user or job manager stopped the job |
+| `failed` | The job failed; inspect `status_reason` for the cause |
+| `timeout` | The job exceeded its allowed execution time |
+
+### 6. Get Raw Profiling Data
+
+`GET /v1/profiles/:id/raw` returns the raw profiling windows associated with the job. The response can be large, so it can be written directly to a file:
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -o profile-raw.json \
+  "${API_BASE}/v1/profiles/${JOB_ID}/raw?limit=100&offset=0"
+```
+
+The profiling windows are in `data.items`; `data.limit`, `data.offset`, and
+`data.has_more` describe the page. Each item contains `uploaded_at`,
+`captured_at`, `profile_type`, and the pprof-compatible `profile` payload.
+
+### 7. Stop a Profiling Job
+
+Only jobs in `pending` or `running` status can be stopped. The `PATCH` request accepts only `stopped` as the `status` value:
+
+```bash
+curl -sS \
+  -X PATCH \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"stopped"}' \
+  "${API_BASE}/v1/profiles/${JOB_ID}"
+```
+
+A successful stop returns `200 OK`. A job that has already ended returns `400 Bad Request`.
+
+### 8. Delete a Profiling Job
+
+Deletion removes only the job record. Jobs in `pending` or `running` status cannot be deleted directly and must be stopped first:
+
+```bash
+curl -sS -i \
+  -X DELETE \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  "${API_BASE}/v1/profiles/${JOB_ID}"
+```
+
+A successful deletion returns `204 No Content` with no response body. If the job is still active, the endpoint returns `409 Conflict`.
+
+## 📖 profiler CLI Overview
 
 `profiler` is HUATUO's standalone performance profiling CLI. It samples host processes or processes inside containers without requiring huatuo-apiserver, Elasticsearch, or Grafana. The tool supports C, C++, Go, Java, and Python processes and writes call stacks as folded stacks or SVG flame graphs.
 
 C, C++, and Go use the eBPF-based native collector to observe on-CPU usage, off-CPU blocking and scheduling delay, virtual memory allocation, physical memory allocation, and physical memory residency. Java uses async-profiler to observe CPU usage, object allocation, and live objects. Python uses py-spy to observe CPU usage. The results can be used to locate hot functions, attribute memory growth, analyze processes inside containers, and preserve performance data for later diagnosis.
 
-This document covers only standalone use of `_output/bin/profiler`. Service-based continuous profiling, in which tasks are created through apiserver and queried through Grafana, is outside its scope.
+The remainder of this section covers standalone use of `_output/bin/profiler`. For service-based continuous profiling, see the Profiles API section above.
 
 ## 🎯 Use Cases
 
@@ -90,7 +329,7 @@ sudo _output/bin/profiler \
 | `--tool-path` | None | Java, Python | Third-party profiler root directory; required |
 | `--binary-match-path` | None | Java, Python | Executable path used to match target processes |
 | `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address used to resolve container metadata |
-| `--tracer-id` | Generated | All | Profiling task ID, primarily used to associate remote storage records |
+| `--tracer-id` | Empty; generated internally for local output | All; required for `remote` | Stable profiling task ID used by toolstream and remote storage |
 | `--enable-pprof` | `false` | Profiler itself | Expose Go pprof endpoints for the profiler process on `:6000` |
 | `--version-format` | `text` | Version query | Output format for `--version`: `text`, `json`, or `short` |
 | `--help`, `-h` | - | All | Display command help |
@@ -266,7 +505,7 @@ main;handleRequest;parsePayload 428
 main;handleRequest;writeResponse 172
 ```
 
-Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote` depends on the HUATUO toolstream Unix socket and should not be selected for standalone offline use.
+Choose `collapsed` when you need to retain raw data and later render it with different colors or filters. Choose `flamegraph` when you want to inspect hotspots directly. `remote` depends on the HUATUO toolstream Unix socket, requires a non-empty `--tracer-id`, and should not be selected for standalone offline use.
 
 ### 7. Reproducing Integration Test Examples
 

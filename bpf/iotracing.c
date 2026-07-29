@@ -6,6 +6,7 @@
 
 #include "bpf_common.h"
 #include "bpf_compat_7_0.h"
+#include "abi/iotracing_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -511,21 +512,10 @@ int bpf_filemap_fault(struct pt_regs *ctx)
 	return 0;
 }
 
-struct iodelay_entry {
-	u64 stack[PERF_MIN_STACK_DEPTH];
-	u64 ts;
-	u64 cost;
-	int stack_size;
-	u32 pid;
-	u32 tid;
-	u32 cpu;
-	char comm[COMPAT_TASK_COMM_LEN];
-};
-
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(key_size, sizeof(u32));
-	__uint(value_size, sizeof(struct iodelay_entry));
+	__uint(value_size, sizeof(struct iotracing_schedule_delay_event));
 	__uint(max_entries, 128);
 } io_schedule_stack SEC(".maps");
 
@@ -537,7 +527,7 @@ struct {
 
 static __always_inline int detect_io_schedule(struct pt_regs *ctx)
 {
-	struct iodelay_entry entry = {};
+	struct iotracing_schedule_delay_event entry = {};
 	u64 id			   = bpf_get_current_pid_tgid();
 	u32 pid			   = id & 0xffffffff;
 
@@ -562,7 +552,7 @@ int bpf_io_schedule_timeout(struct pt_regs *ctx)
 
 static __always_inline int detect_io_schedule_return(struct pt_regs *ctx)
 {
-	struct iodelay_entry *entry;
+	struct iotracing_schedule_delay_event *entry;
 	u64 id	= bpf_get_current_pid_tgid();
 	u32 pid = id & 0xffffffff;
 	u64 now = bpf_ktime_get_ns();
@@ -577,7 +567,7 @@ static __always_inline int detect_io_schedule_return(struct pt_regs *ctx)
 		entry->cost = now - entry->ts;
 		bpf_perf_event_output(ctx, &iodelay_perf_events,
 				      COMPAT_BPF_F_CURRENT_CPU, entry,
-				      sizeof(struct iodelay_entry));
+				      sizeof(struct iotracing_schedule_delay_event));
 	}
 	bpf_map_delete_elem(&io_schedule_stack, &pid);
 

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
@@ -44,6 +45,11 @@ const (
 	symbolFolioAddNewAnonRmap = "folio_add_new_anon_rmap"
 	symbolFolioRemoveRmapPtes = "folio_remove_rmap_ptes"
 )
+
+type physicalUsageAttachConfig struct {
+	AttachOpts      []bpf.AttachOption
+	CountFolioPages bool
+}
 
 type memNativeProfiler struct {
 	bpf bpf.BPF
@@ -166,16 +172,17 @@ func newNativeMemoryBPFLoadConfig(internalMode profiling.MemoryMode, pid int, cs
 			},
 		}, nil
 	case profiling.MemoryModePhysicalUsage:
-		attachOpts, err := newPhysicalUsageAttachOptions()
+		attachCfg, err := newPhysicalUsageAttachConfig()
 		if err != nil {
 			return nil, err
 		}
 
 		constants["profiler_sampling_prob"] = uint8(probability)
+		constants["profiler_folio_npages"] = attachCfg.CountFolioPages
 		return &nativeMemoryBPFLoadConfig{
 			ObjectFile: "native_physical_usage.o",
 			Constants:  constants,
-			AttachOpts: attachOpts,
+			AttachOpts: attachCfg.AttachOpts,
 		}, nil
 	case profiling.MemoryModePhysicalAlloc:
 		attachOpt, err := newPhysicalAllocAttachOption()
@@ -195,13 +202,6 @@ func newNativeMemoryBPFLoadConfig(internalMode profiling.MemoryMode, pid int, cs
 }
 
 func newPhysicalAllocAttachOption() (bpf.AttachOption, error) {
-	if hasKprobeFunction(symbolPageAddNewAnonRmap) {
-		return bpf.AttachOption{
-			ProgramName: programTracePageAlloc,
-			Symbol:      symbolPageAddNewAnonRmap,
-		}, nil
-	}
-
 	if hasKprobeFunction(symbolFolioAddNewAnonRmap) {
 		return bpf.AttachOption{
 			ProgramName: programTracePageAlloc,
@@ -209,30 +209,50 @@ func newPhysicalAllocAttachOption() (bpf.AttachOption, error) {
 		}, nil
 	}
 
+	if hasKprobeFunction(symbolPageAddNewAnonRmap) {
+		return bpf.AttachOption{
+			ProgramName: programTracePageAlloc,
+			Symbol:      symbolPageAddNewAnonRmap,
+		}, nil
+	}
+
 	return bpf.AttachOption{}, fmt.Errorf("no supported physical alloc kprobe found: tried %s, %s",
 		symbolPageAddNewAnonRmap, symbolFolioAddNewAnonRmap)
 }
 
-func newPhysicalUsageAttachOptions() ([]bpf.AttachOption, error) {
-	if hasKprobeFunction(symbolPageAddNewAnonRmap) && hasKprobeFunction(symbolPageRemoveRmap) {
-		return []bpf.AttachOption{
-			{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
-			{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
-		}, nil
-	}
-
+func newPhysicalUsageAttachConfig() (physicalUsageAttachConfig, error) {
 	if hasKprobeFunction(symbolFolioAddNewAnonRmap) && hasKprobeFunction(symbolFolioRemoveRmapPtes) {
-		return []bpf.AttachOption{
-			{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
-			// folio_remove_rmap_ptes can cover multiple pages; parse nr_pages before
-			// treating a single free event as more than one page.
-			{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+		return physicalUsageAttachConfig{
+			AttachOpts: []bpf.AttachOption{
+				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+				{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+			},
+			CountFolioPages: true,
 		}, nil
 	}
 
-	return nil, fmt.Errorf("no supported physical usage kprobe pair found: tried %s/%s, %s/%s",
-		symbolPageAddNewAnonRmap, symbolPageRemoveRmap,
-		symbolFolioAddNewAnonRmap, symbolFolioRemoveRmapPtes)
+	if hasKprobeFunction(symbolFolioAddNewAnonRmap) && hasKprobeFunction(symbolPageRemoveRmap) {
+		return physicalUsageAttachConfig{
+			AttachOpts: []bpf.AttachOption{
+				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+			},
+		}, nil
+	}
+
+	if hasKprobeFunction(symbolPageAddNewAnonRmap) && hasKprobeFunction(symbolPageRemoveRmap) {
+		return physicalUsageAttachConfig{
+			AttachOpts: []bpf.AttachOption{
+				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
+				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+			},
+		}, nil
+	}
+
+	return physicalUsageAttachConfig{}, fmt.Errorf("no supported physical usage kprobe pair found: tried %s/%s, %s/%s, %s/%s",
+		symbolFolioAddNewAnonRmap, symbolFolioRemoveRmapPtes,
+		symbolFolioAddNewAnonRmap, symbolPageRemoveRmap,
+		symbolPageAddNewAnonRmap, symbolPageRemoveRmap)
 }
 
 func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
@@ -262,7 +282,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 		// Use unified drainActiveRingBuffer with Memory event factory
 		stackCountsByProc, ring, err := ringCtx.drainActiveRingBuffer(
-			func() any { return &ProfilerEventBase{} },
+			func() any { return &abi.ProfilerEventBase{} },
 			p.convertValueToBytes,
 		) // Convert pages to bytes
 		if err != nil {

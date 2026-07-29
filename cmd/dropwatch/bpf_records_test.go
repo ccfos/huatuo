@@ -19,14 +19,11 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/utils/bytesutil"
 )
 
-// TestPacketMetaParse decodes a perf sample laid out exactly like struct
-// packet_meta in bpf/dropwatch.c and checks that every field lands where the
-// kernel wrote it. It fails if the Go mirror drifts from the C layout, e.g.
-// the stale 4-byte Type field that shifted net_inum, dev_name and comm.
-func TestPacketMetaParse(t *testing.T) {
+func TestDropwatchPacketEventParse(t *testing.T) {
 	const (
 		wantKtimeNS             uint64 = 12_345_678_901_234_567
 		wantTgidPid             uint64 = uint64(4321)<<32 | 8765
@@ -40,9 +37,14 @@ func TestPacketMetaParse(t *testing.T) {
 		wantNetInode            uint32 = 0xf000_0000
 		wantNetdevName                 = "eth0"
 		wantComm                       = "nginx-worker"
+		wantEthProto            uint16 = 0x0800
+		wantRawLen              uint16 = 120
+		wantStackSize           uint64 = 2
+		wantFirstStack          uint64 = 0xffff_8880_dead_beef
+		wantLastStack           uint64 = 0xffff_8880_cafe_babe
 	)
 
-	buf := make([]byte, 96)
+	buf := make([]byte, abi.DropwatchPacketEventSize)
 
 	native := binary.NativeEndian
 	native.PutUint64(buf[0:], wantKtimeNS)              // ktime_ns
@@ -58,30 +60,45 @@ func TestPacketMetaParse(t *testing.T) {
 	copy(buf[60:], wantNetdevName)                      // dev_name[16]
 	copy(buf[76:], wantComm)                            // comm[16]
 	// buf[92:96] is the C tail padding, zero.
+	native.PutUint16(buf[96:], wantEthProto)    // pkt_hdr.eth_proto
+	native.PutUint16(buf[98:], wantRawLen)      // pkt_hdr.raw_len
+	native.PutUint64(buf[232:], wantStackSize)  // stack_size
+	native.PutUint64(buf[240:], wantFirstStack) // stack[0]
+	native.PutUint64(buf[1248:], wantLastStack) // stack[126]
 
-	var meta packetMeta
-	if err := binary.Read(bytes.NewReader(buf), binary.NativeEndian, &meta); err != nil {
+	var event abi.DropwatchPacketEvent
+	if err := binary.Read(bytes.NewReader(buf), binary.NativeEndian, &event); err != nil {
 		t.Fatalf("binary.Read: %v", err)
 	}
+	meta := event.Meta
 
 	if meta.DropReason != wantDropReason {
 		t.Errorf("DropReason = %d, want %d", meta.DropReason, wantDropReason)
 	}
-	if meta.NetInode != wantNetInode {
-		t.Errorf("NetInode = %d, want %d", meta.NetInode, wantNetInode)
+	if meta.NetInum != wantNetInode {
+		t.Errorf("NetInum = %d, want %d", meta.NetInum, wantNetInode)
 	}
-	if got := bytesutil.ToStr(meta.NetdevName[:]); got != wantNetdevName {
-		t.Errorf("NetdevName = %q, want %q", got, wantNetdevName)
+	if got := bytesutil.ToStr(meta.DevName[:]); got != wantNetdevName {
+		t.Errorf("DevName = %q, want %q", got, wantNetdevName)
 	}
 	if got := bytesutil.ToStr(meta.Comm[:]); got != wantComm {
 		t.Errorf("Comm = %q, want %q", got, wantComm)
 	}
-	if meta.KtimeNS != wantKtimeNS || meta.TgidPid != wantTgidPid || meta.NetCookie != wantNetCookie ||
-		meta.SkbAddr != wantSkbAddr || meta.MemoryCgroupCSSAddr != wantMemoryCgroupCSSAddr {
+	if meta.KtimeNS != wantKtimeNS || meta.TGIDPID != wantTgidPid || meta.NetCookie != wantNetCookie ||
+		meta.KfreeSKBAddr != wantSkbAddr || meta.MemcgCSSAddr != wantMemoryCgroupCSSAddr {
 		t.Errorf("u64 header fields misparsed: %+v", meta)
 	}
-	if meta.NetdevIfindex != wantNetdevIfindex || meta.NetdevFlags != wantNetdevFlags ||
-		meta.NetdevQueueMapping != wantNetdevQueueMapping {
+	if meta.Ifindex != wantNetdevIfindex || meta.DevFlags != wantNetdevFlags ||
+		meta.QueueMapping != wantNetdevQueueMapping {
 		t.Errorf("netdev fields misparsed: %+v", meta)
+	}
+	if event.PktHdr.EthProto != wantEthProto || event.PktHdr.RawLen != wantRawLen {
+		t.Errorf("packet header misparsed: %+v", event.PktHdr)
+	}
+	if event.StackSize != wantStackSize ||
+		event.Stack[0] != wantFirstStack ||
+		event.Stack[len(event.Stack)-1] != wantLastStack {
+		t.Errorf("stack fields misparsed: size=%d first=%x last=%x",
+			event.StackSize, event.Stack[0], event.Stack[len(event.Stack)-1])
 	}
 }

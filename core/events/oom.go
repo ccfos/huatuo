@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
@@ -32,16 +33,6 @@ import (
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/oom.c -o $BPF_DIR/oom.o
-
-// perfEventData mirrors the BPF perf event struct for OOM events.
-type perfEventData struct {
-	TriggerComm     [bpf.TaskCommLen]byte
-	VictimComm      [bpf.TaskCommLen]byte
-	TriggerPid      int32
-	VictimPid       int32
-	TriggerMemcgCSS uint64
-	VictimMemcgCSS  uint64
-}
 
 type OOMActor struct {
 	MemoryCgroupCSSAddr string                   `json:"memory_cgroup_css_addr"`
@@ -139,7 +130,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var data perfEventData
+			var data abi.OOMEvent
 			if err := reader.ReadInto(&data); err != nil {
 				return fmt.Errorf("failed to read perf event: %w", err)
 			}
@@ -173,7 +164,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 	}
 }
 
-func buildTracingData(data perfEventData, containers map[string]*pod.Container, cgroup cgroups.Cgroup) *OOMTracingData {
+func buildTracingData(data abi.OOMEvent, containers map[string]*pod.Container, cgroup cgroups.Cgroup) *OOMTracingData {
 	cssContainers := pod.BuildCssContainersID(containers, subsystem.SubsystemMemory)
 
 	triggerID := cssContainers[data.TriggerMemcgCSS]
@@ -183,13 +174,13 @@ func buildTracingData(data perfEventData, containers map[string]*pod.Container, 
 		Trigger: OOMActor{
 			MemoryCgroupCSSAddr: kernaddr.Format(data.TriggerMemcgCSS),
 			ContainerID:         triggerID,
-			Pid:                 data.TriggerPid,
+			Pid:                 int32(data.TriggerPID),
 			Comm:                bytesutil.ToStr(data.TriggerComm[:]),
 		},
 		Victim: OOMActor{
 			MemoryCgroupCSSAddr: kernaddr.Format(data.VictimMemcgCSS),
 			ContainerID:         victimID,
-			Pid:                 data.VictimPid,
+			Pid:                 int32(data.VictimPID),
 			Comm:                bytesutil.ToStr(data.VictimComm[:]),
 		},
 	}

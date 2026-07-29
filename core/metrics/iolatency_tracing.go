@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
@@ -70,17 +70,15 @@ type BlkgqEntry struct {
 }
 
 type iolatencyTracing struct {
-	running          atomic.Bool
 	latestContainers map[string]*pod.Container
-	bpfObject        bpf.BPF
+	bpfObject        bpf.Reference
 }
 
-func (c *iolatencyTracing) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+func (c *iolatencyTracing) Start(ctx context.Context) (retErr error) {
+	object, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
-	defer b.Close()
 
 	// commit 1e1a9cecfab3 ("block: force noio scope in blk_mq_freeze_queue")
 	// made blk_mq_freeze_queue a static inline wrapper in v6.15; the
@@ -91,42 +89,44 @@ func (c *iolatencyTracing) Start(ctx context.Context) error {
 		freezeQueueSym = "blk_mq_freeze_queue_nomemsave"
 	}
 
-	if err := b.AttachWithOptions([]bpf.AttachOption{
+	if err := object.AttachWithOptions([]bpf.AttachOption{
 		{ProgramName: "kprobe_start_request", Symbol: "blk_mq_start_request"},
 		{ProgramName: "kprobe_done_bio", Symbol: "__rq_qos_done_bio"},
 		{ProgramName: "kprobe_freeze_queue", Symbol: freezeQueueSym},
 	}); err != nil {
-		return err
+		return errors.Join(err, object.Close())
 	}
+	if err := c.bpfObject.Publish(object); err != nil {
+		return errors.Join(err, object.Close())
+	}
+	defer func() {
+		retErr = errors.Join(retErr, c.bpfObject.UnPublish())
+	}()
 
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	object.WaitDetachByBreaker(childCtx, cancel)
 
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
-
-	c.bpfObject = b
-	c.running.Store(true)
-	defer c.running.Store(false)
 
 	for {
 		select {
 		case <-childCtx.Done():
 			return nil
 		case <-ticker.C:
-			if err := c.updateContainerBlkDisk(b); err != nil {
+			if err := c.updateContainerBlkDisk(object); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func (c *iolatencyTracing) dumpBlkdiskLatency() ([]BlkDiskEntry, error) {
+func (c *iolatencyTracing) dumpBlkdiskLatency(object bpf.BPF) ([]BlkDiskEntry, error) {
 	var latencyData []BlkDiskEntry
 
-	disks, err := c.bpfObject.DumpMapByName(blkDiskLatencyMap)
+	disks, err := object.DumpMapByName(blkDiskLatencyMap)
 	if err != nil {
 		return nil, err
 	}
@@ -145,10 +145,10 @@ func (c *iolatencyTracing) dumpBlkdiskLatency() ([]BlkDiskEntry, error) {
 	return latencyData, nil
 }
 
-func (c *iolatencyTracing) dumpContainerLatency() ([]BlkgqEntry, error) {
+func (c *iolatencyTracing) dumpContainerLatency(object bpf.BPF) ([]BlkgqEntry, error) {
 	var latencyData []BlkgqEntry
 
-	containersData, err := c.bpfObject.DumpMapByName(blkContainerLatencyMap)
+	containersData, err := object.DumpMapByName(blkContainerLatencyMap)
 	if err != nil {
 		return nil, err
 	}

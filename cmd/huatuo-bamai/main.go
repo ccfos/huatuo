@@ -77,7 +77,7 @@ type Daemon struct {
 
 	cgr     cgroups.Cgroup
 	metrics *prometheus.Registry
-	tracer  *tracing.TracingManager
+	tracer  *tracing.Manager
 }
 
 func NewDaemon(opts *Options) *Daemon {

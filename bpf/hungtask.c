@@ -7,6 +7,7 @@
 #include "bpf_common.h"
 #include "bpf_compat_7_0.h"
 #include "bpf_ratelimit.h"
+#include "abi/hungtask_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -16,15 +17,10 @@ struct {
 	__uint(value_size, sizeof(u32));
 } hungtask_perf_events SEC(".maps");
 
-struct hungtask_info {
-	int32_t pid;
-	char comm[COMPAT_TASK_COMM_LEN];
-};
-
 SEC("tracepoint/sched/sched_process_hang")
 int tracepoint_sched_process_hang(struct trace_event_raw_sched_process_hang *ctx)
 {
-	struct hungtask_info info = {};
+	struct hungtask_event info = {};
 
 	info.pid = ctx->pid;
 

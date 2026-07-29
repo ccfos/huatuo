@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
@@ -43,26 +44,6 @@ func init() {
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_cpu_profiler.c -o $BPF_DIR/native_cpu_profiler.o
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_cpu_offcpu_profiler.c -o $BPF_DIR/native_cpu_offcpu_profiler.o
-
-// cpuEventKey is the on-wire/event representation emitted by the BPF program.
-type cpuEventKey struct {
-	ProfilerEventBase
-	Timestamp uint64
-	Cpu       uint32
-	Pad0      uint32
-}
-
-// offCPUEventKey mirrors struct offcpu_event_t. Value in the embedded base is
-// the selected blocked or runnable duration in nanoseconds.
-type offCPUEventKey struct {
-	ProfilerEventBase
-	StartNS    uint64
-	EndNS      uint64
-	CPU        uint32
-	ABIVersion uint16
-	Kind       uint8
-	Flags      uint8
-}
 
 type cpuNativeProfiler struct {
 	bpf          bpf.BPF
@@ -149,6 +130,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 func nativeCPUOnCPUAttachOptions(pctx *pcontext.ProfilerContext) []bpf.AttachOption {
 	opt := bpf.AttachOption{ProgramName: "perf_event_sw_cpu_clock"}
 	opt.PerfEvent.SampleFreq = uint64(pctx.Freq)
+	opt.PerfEvent.SamplePeriod = 0
 	opt.PerfEvent.CPUIDs = pctx.CPUIDs
 	return []bpf.AttachOption{opt}
 }
@@ -222,8 +204,9 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 		// Use unified drainActiveRingBuffer with CPU event factory
 		stackCountsByProc, ring, err := ringCtx.drainActiveRingBuffer(
-			func() any { return &cpuEventKey{} }, nil,
-		)
+			func() any { return &abi.ProfilerCPUEvent{} },
+			nil,
+		) // No value conversion needed for CPU profiler
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
