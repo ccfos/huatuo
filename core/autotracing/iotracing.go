@@ -275,6 +275,84 @@ func buildDiskMetric(
 	return metrics, true
 }
 
+func evaluateThresholds(
+	currentRawStats []blockdevice.Diskstats,
+	lastRawStats map[string]*blockdevice.Diskstats,
+	lastMetrics map[string]diskStatus,
+	thresholds ioThresholds,
+	intervalSeconds uint64,
+) *reasonSnapshot {
+	currentDevices := make(map[string]struct{}, len(currentRawStats))
+	for i := range currentRawStats {
+		current := &currentRawStats[i]
+
+		if strings.HasPrefix(current.DeviceName, "md") {
+			continue
+		}
+		currentDevices[current.DeviceName] = struct{}{}
+
+		if previous, ok := lastRawStats[current.DeviceName]; ok {
+			if previous.MajorNumber != current.MajorNumber ||
+				previous.MinorNumber != current.MinorNumber {
+				delete(lastMetrics, current.DeviceName)
+				lastRawStats[current.DeviceName] = current
+				continue
+			}
+			metric, valid := buildDiskMetric(previous, current, intervalSeconds)
+			if !valid {
+				delete(lastMetrics, current.DeviceName)
+				lastRawStats[current.DeviceName] = current
+				continue
+			}
+
+			log.WithField("device", current.DeviceName).
+				WithField("io_util_percent", metric.IOUtil).
+				WithField("queue_size", metric.QueueSize).
+				WithField("read_kbps", metric.ReadBPS/1024).
+				WithField("write_kbps", metric.WriteBPS/1024).
+				WithField("read_iops", metric.ReadIOPS).
+				WithField("write_iops", metric.WriteIOPS).
+				WithField("read_await_ms", metric.ReadAwait).
+				WithField("write_await_ms", metric.WriteAwait).
+				Debug("sampled disk io metrics")
+
+			reasonType := thresholdReasonFor(
+				lastMetrics[current.DeviceName],
+				metric,
+				thresholds,
+				strings.HasPrefix(current.DeviceName, "nvme"),
+			)
+			if reasonType != ioReasonNone {
+				device := fmt.Sprintf(
+					"%s(%d:%d)",
+					current.DeviceName,
+					current.MajorNumber,
+					current.MinorNumber,
+				)
+				return &reasonSnapshot{
+					Type:        string(reasonType),
+					Device:      current.DeviceName,
+					MajorNumber: current.MajorNumber,
+					MinorNumber: current.MinorNumber,
+					IOStatus:    metric,
+					Summary: iotracingSummary(
+						reasonType,
+						device,
+						metric,
+						thresholds,
+					),
+				}
+			}
+
+			lastMetrics[current.DeviceName] = metric
+		}
+
+		lastRawStats[current.DeviceName] = current
+	}
+	deleteMissingDiskState(lastRawStats, lastMetrics, currentDevices)
+	return nil
+}
+
 func waitForDiskEvent(
 	ctx context.Context,
 	intervalSeconds uint64,
@@ -295,74 +373,15 @@ func waitForDiskEvent(
 				return nil, err
 			}
 
-			currentDevices := make(map[string]struct{}, len(currentRawStats))
-			for i := range currentRawStats {
-				current := &currentRawStats[i]
-
-				if strings.HasPrefix(current.DeviceName, "md") {
-					continue
-				}
-				currentDevices[current.DeviceName] = struct{}{}
-
-				if previous, ok := lastRawStats[current.DeviceName]; ok {
-					if previous.MajorNumber != current.MajorNumber ||
-						previous.MinorNumber != current.MinorNumber {
-						delete(lastMetrics, current.DeviceName)
-						lastRawStats[current.DeviceName] = current
-						continue
-					}
-					metric, valid := buildDiskMetric(previous, current, intervalSeconds)
-					if !valid {
-						delete(lastMetrics, current.DeviceName)
-						lastRawStats[current.DeviceName] = current
-						continue
-					}
-
-					log.WithField("device", current.DeviceName).
-						WithField("io_util_percent", metric.IOUtil).
-						WithField("queue_size", metric.QueueSize).
-						WithField("read_kbps", metric.ReadBPS/1024).
-						WithField("write_kbps", metric.WriteBPS/1024).
-						WithField("read_iops", metric.ReadIOPS).
-						WithField("write_iops", metric.WriteIOPS).
-						WithField("read_await_ms", metric.ReadAwait).
-						WithField("write_await_ms", metric.WriteAwait).
-						Debug("sampled disk io metrics")
-
-					reasonType := thresholdReasonFor(
-						lastMetrics[current.DeviceName],
-						metric,
-						thresholds,
-						strings.HasPrefix(current.DeviceName, "nvme"),
-					)
-					if reasonType != ioReasonNone {
-						device := fmt.Sprintf(
-							"%s(%d:%d)",
-							current.DeviceName,
-							current.MajorNumber,
-							current.MinorNumber,
-						)
-						return &reasonSnapshot{
-							Type:        string(reasonType),
-							Device:      current.DeviceName,
-							MajorNumber: current.MajorNumber,
-							MinorNumber: current.MinorNumber,
-							IOStatus:    metric,
-							Summary: iotracingSummary(
-								reasonType,
-								device,
-								metric,
-								thresholds,
-							),
-						}, nil
-					}
-
-					lastMetrics[current.DeviceName] = metric
-				}
-
-				lastRawStats[current.DeviceName] = current
+			if reason := evaluateThresholds(
+				currentRawStats,
+				lastRawStats,
+				lastMetrics,
+				thresholds,
+				intervalSeconds,
+			); reason != nil {
+				return reason, nil
 			}
-			deleteMissingDiskState(lastRawStats, lastMetrics, currentDevices)
 		}
 	}
 }
