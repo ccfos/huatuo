@@ -1,5 +1,5 @@
 ---
-title: Data Source Configuration
+title: Data Source
 type: docs
 description:
 author: HUATUO Team
@@ -7,46 +7,117 @@ date: 2026-05-05
 weight: 2
 ---
 
-HUATUO supports integrating with Prometheus for metrics collection and Elasticsearch for log storage. This document describes how to configure data sources and import dashboards in Grafana.
+HUATUO integrates with Prometheus for metrics collection and Elasticsearch for log storage. This document covers data source configuration and dashboard provisioning in Grafana.
 
-### Metrics Collection
+Two deployment paths are supported:
 
-#### 1. Port Forwarding for Testing
+- **Docker Compose** — recommended for development and testing; all components are pre-configured.
+- **Kubernetes** — for production clusters; requires manual data source configuration.
+
+## Quick Start (Docker Compose)
+
+The `build/docker/` directory contains a complete stack. All default credentials and ports listed below match this setup.
 
 ```bash
-$ kubectl port-forward -n default --address=0.0.0.0 pod/huatuo-XXXX 19704:19704
+cd build/docker
+docker compose up -d
 ```
 
-#### 2. Verify Metrics Endpoint
+This starts four services on the host network:
 
-Access the metrics endpoint to verify it's working:
+| Service | Port | Purpose |
+|---|---|---|
+| Elasticsearch | 9200 | Log storage |
+| Prometheus | 9090 | Metrics collection |
+| Grafana | 3000 | Visualization |
+| huatuo-bamai | 19704 | Agent (metrics + tracing) |
 
+**Default credentials:**
+
+| Service | Username | Password |
+|---|---|---|
+| Elasticsearch | `elastic` | `huatuo-bamai` |
+| Grafana | `admin` | `admin` |
+
+Data sources and dashboards are auto-provisioned. Access Grafana at `http://<host>:3000`.
+
+### Verify the Stack
+
+```bash
+# Elasticsearch
+curl -s -u elastic:huatuo-bamai http://localhost:9200/_cluster/health?pretty
+
+# Prometheus — should show huatuo target as "up"
+curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health}'
+
+# Grafana
+curl -s http://localhost:3000/api/health | jq .version
+
+# HuaTuo metrics
+curl -s http://localhost:19704/metrics | head -5
 ```
-http://172.16.20.113:19704/metrics
+
+### Provisioned Data Sources
+
+The following data sources are created automatically via `build/docker/grafana/datasources/`:
+
+| Name | Type | UID |
+|---|---|---|
+| huatuo-bamai-prom | Prometheus | `huatuo-bamai-prom` |
+| huatuo-bamai-es | Elasticsearch | `huatuo-bamai-es` |
+| huatuo-bamai-infinity | Infinity | `huatuo-bamai-infinity-auto-flamegraph` |
+
+### Provisioned Dashboards
+
+Six dashboards are loaded from `build/docker/grafana/dashboards/`:
+
+- Metric Dashboard — Host View
+- Metric Dashboard — Container View
+- HuaTuo Root Cause Analysis AutoTracing
+- Continuous Profiling (Host)
+- Continuous Profiling (Container)
+- AutoTracing Flame Redirect
+
+No manual import is needed when using Docker Compose.
+
+## Metrics Collection (Kubernetes)
+
+### 1. Verify Metrics Endpoint
+
+After deploying huatuo-bamai to Kubernetes, expose the metrics endpoint:
+
+```bash
+kubectl port-forward -n default --address=0.0.0.0 pod/huatuo-XXXX 19704:19704
 ```
 
-If metrics are displayed, the service is running correctly.
+Verify:
 
-#### 3. Configure Prometheus Scraping
+```bash
+curl http://localhost:19704/metrics
+```
 
-There are two approaches to configure Prometheus for scraping HUATUO metrics:
+Metrics output confirms the agent is running correctly.
 
-**Option 1: Using Annotations**
+### 2. Configure Prometheus Scraping
 
-Add annotations to the Pod template metadata:
+**Option A: Pod Annotations**
+
+Add annotations to the Pod template metadata. This requires a Prometheus setup with Kubernetes pod service discovery enabled (e.g., `kubernetes_sd_configs` with `role: pod`).
 
 ```yaml
 template:
     metadata:
-      annotations:                     
+      annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "19704"
         prometheus.io/path: "/metrics"
 ```
 
-**Option 2: Using ServiceMonitor**
+**Option B: ServiceMonitor**
 
-Create `huatuo-service.yaml`:
+Requires [Prometheus Operator](https://prometheus-operator.dev/). Create two resources:
+
+`huatuo-service.yaml`:
 
 ```yaml
 apiVersion: v1
@@ -66,7 +137,7 @@ spec:
     app: huatuo
 ```
 
-Create `huatuo-servicemonitor.yaml`:
+`huatuo-servicemonitor.yaml`:
 
 ```yaml
 apiVersion: monitoring.coreos.com/v1
@@ -90,44 +161,49 @@ spec:
       scrapeTimeout: 10s
 ```
 
-#### 4. Query Metrics in Prometheus
+### 3. Query Metrics in Prometheus
 
-Use the following pattern to query HUATUO metrics:
-
-```bash
+```promql
 huatuo_*
 ```
 
 If results are returned, metrics collection is working properly.
 
-### Log Collection
+## Log Collection (Kubernetes)
 
 Query logs from Elasticsearch:
 
 ```bash
-$ curl -u elastic:123456 "http://172.16.15.118:9200/huatuo_bamai/_search?pretty"
+curl -u elastic:<password> "http://<es-host>:9200/huatuo_bamai/_search?pretty"
 ```
 
-### Grafana Data Source Configuration
+Replace `<password>` and `<es-host>` with your Elasticsearch credentials and address.
 
-#### 1. Configure Prometheus Data Source
+## Manual Grafana Data Source Configuration
 
-Refer to `build/docker/datasource/` for detailed configuration files.
+When not using Docker Compose (e.g., external Grafana), configure data sources manually.
 
-#### 2. Configure Elasticsearch Data Source
+### Prometheus Data Source
 
-In Grafana, add a new Elasticsearch data source with the following settings:
+Refer to `build/docker/grafana/datasources/prometheus.yaml` for the provisioning file, or configure via Grafana UI:
 
-- **URL**: `http://172.16.15.118:9200`
+- **URL**: `http://<prometheus-host>:9090`
+- **Access**: Server (proxy)
+
+### Elasticsearch Data Source
+
+Configure via Grafana UI or provisioning:
+
+- **URL**: `http://<es-host>:9200`
 - **Authentication**: Basic Authentication
 - **Username**: `elastic`
-- **Password**: `123456`
+- **Password**: `<your-elasticsearch-password>`
 - **Index name**: `huatuo_bamai`
 - **Time field name**: `uploaded_time`
 
-### Dashboard Import
+## Dashboard Import
 
-#### 1. Export Dashboard from Console
+When using Docker Compose, dashboards are provisioned automatically. To import additional dashboards from the HUAUO console:
 
 1. Access `http://console.huatuo.tech/dashboards` (Username: `huatuo`, Password: `huatuo1024`)
 2. Select the desired dashboard
@@ -135,19 +211,43 @@ In Grafana, add a new Elasticsearch data source with the following settings:
 4. Check "Export the dashboard to use in another instance"
 5. Click **Copy to clipboard**
 
-#### 2. Import Dashboard to Local Grafana
+Then in your Grafana instance:
 
-1. In your local Grafana, navigate to **Dashboards** -> **Import**
-2. Paste the copied JSON content
+1. Navigate to **Dashboards** -> **Import**
+2. Paste the JSON content
 3. Click **Load**
-4. Configure data sources and click **Import**
+4. Select the correct data sources and click **Import**
 
-### Troubleshooting
+## Troubleshooting
 
-**Issue**: "datasource not found" error when importing the "HuaTuo Root Cause Analysis AutoTracing" dashboard.
+### "datasource not found" when importing dashboard
 
-**Solution**: 
-1. Manually replace the datasource UID in the dashboard JSON
-2. Find your Elasticsearch datasource UID from the URL (e.g., `dflcs0w2ghybka` from `http://172.16.15.118:3000/connections/datasources/edit/dflcs0w2ghybka`)
-3. Replace all occurrences of `"uid": "${DS_HUATUO-BAMAI-ES}"` with your actual datasource UID
-4. Re-import the dashboard
+This occurs when the dashboard JSON references a datasource UID that does not exist in your Grafana instance.
+
+**Solution:**
+
+1. Find your Elasticsearch datasource UID from the Grafana UI URL: `http://<grafana-host>:3000/connections/datasources/edit/<uid>`
+2. In the dashboard JSON, replace all occurrences of `"uid": "${DS_HUATUO-BAMAI-ES}"` with your actual UID
+3. Re-import the dashboard
+
+### Prometheus target shows "down"
+
+- Verify huatuo-bamai is running: `curl http://<host>:19704/metrics`
+- Check Prometheus configuration matches the agent's address and port
+- For Kubernetes: ensure pod annotations are correct or ServiceMonitor selector matches
+
+### Elasticsearch index is empty
+
+- Verify Elasticsearch is reachable: `curl -u elastic:<password> http://<host>:9200/_cat/indices`
+- Check huatuo-bamai config `[Storage.ES]` section has correct `Address`, `Username`, `Password`
+- Default index name is `huatuo_bamai`
+
+### "socket path already exists" on startup
+
+This occurs when a previous huatuo-bamai process was not cleanly stopped.
+
+**Solution:**
+
+```bash
+rm -f /var/run/huatuo-toolstream.sock
+```

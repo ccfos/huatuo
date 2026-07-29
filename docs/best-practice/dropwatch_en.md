@@ -1,5 +1,5 @@
 ---
-title: Network Drop Monitoring (dropwatch)
+title: Network Drop Monitoring
 type: docs
 description: ""
 author: HUATUO Team
