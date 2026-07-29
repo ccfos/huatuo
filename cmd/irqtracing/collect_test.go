@@ -243,7 +243,7 @@ type orderMockBPF struct {
 	vals      map[uint32][]byte
 }
 
-func (m *orderMockBPF) Detach() error {
+func (m *orderMockBPF) Detach(...string) error {
 	m.calls = append(m.calls, "detach")
 	return m.detachErr
 }

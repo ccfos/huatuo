@@ -71,7 +71,7 @@ func (s *tracerBPFStub) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 	return nil, errors.New("unexpected map read")
 }
 
-func (s *tracerBPFStub) Detach() error {
+func (s *tracerBPFStub) Detach(...string) error {
 	s.operations = append(s.operations, "detach")
 	return s.detachErr
 }

@@ -84,8 +84,12 @@ func (s *objectStub) AttachWithOptions([]bpf.AttachOption) error {
 	}
 	return nil
 }
-func (s *objectStub) Detach() error { s.operations = append(s.operations, "detach"); return nil }
-func (s *objectStub) Close() error  { s.operations = append(s.operations, "close"); return s.closeErr }
+
+func (s *objectStub) Detach(...string) error {
+	s.operations = append(s.operations, "detach")
+	return nil
+}
+func (s *objectStub) Close() error { s.operations = append(s.operations, "close"); return s.closeErr }
 
 func newObjectStub() *objectStub {
 	return &objectStub{

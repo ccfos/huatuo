@@ -31,6 +31,7 @@ import (
 	"time"
 
 	testutils "github.com/ccfos/huatuo/internal/testing"
+	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/cilium/ebpf"
 	"github.com/stretchr/testify/assert"
@@ -525,6 +526,64 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDefaultBPF_AttachWithOptionsRollbackPolicy(t *testing.T) {
+	for _, keep := range []bool{false, true} {
+		t.Run(fmt.Sprintf("keep_%t", keep), func(t *testing.T) {
+			b := loadMinimalBpfFromBytes(t)
+			require.NoError(t, b.AttachWithOptions([]AttachOption{{
+				ProgramName: "eventpipe_prog", Symbol: "syscalls/sys_enter_nanosleep",
+			}}))
+			err := b.AttachWithOptions([]AttachOption{
+				{ProgramName: "eventpipe_prog", Symbol: "syscalls/sys_enter_clock_nanosleep"},
+				{
+					ProgramName: "test_kprobe", Symbol: "huatuo_test_nonexistent_kprobe_target",
+					KeepAttachedOnError: keep,
+				},
+			})
+			require.Error(t, err)
+			program := b.programsByID[b.ProgramIDByName("eventpipe_prog")]
+			if keep {
+				require.Len(t, program.links, 2, "retain links from earlier calls and this batch")
+			} else {
+				require.Empty(t, program.links, "default failure must still roll back all links")
+			}
+		})
+	}
+}
+
+func TestDefaultBPF_DetachSelectedPrograms(t *testing.T) {
+	requireBPFPermission(t)
+	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(loadMinimalObjBytes(t)))
+	require.NoError(t, err)
+	// Qualify PerfEvent cleanup with the real program type, not its name.
+	spec.Programs["perf_event_prog"].Type = ebpf.PerfEvent
+	spec.Programs["perf_event_prog"].SectionName = "perf_event"
+	object, err := LoadBPFFromCollectionSpec("test_minimal.elf", spec, nil)
+	require.NoError(t, err)
+	b, ok := object.(*defaultBPF)
+	require.True(t, ok)
+	defer b.Close()
+
+	require.NoError(t, b.AttachWithOptions([]AttachOption{
+		{ProgramName: "eventpipe_prog", Symbol: "syscalls/sys_enter_nanosleep"},
+		{ProgramName: "eventpipe_prog", Symbol: "syscalls/sys_enter_clock_nanosleep"},
+		{ProgramName: "test_kprobe", Symbol: "sys_openat"},
+	}))
+	program := b.programsByID[b.ProgramIDByName("eventpipe_prog")]
+	other := b.programsByID[b.ProgramIDByName("test_kprobe")]
+	require.ErrorContains(t, b.Detach("eventpipe_prog", "missing_program"), "unknown BPF program")
+	require.ErrorIs(t, b.Detach("eventpipe_prog", "perf_event_prog"), types.ErrNotSupported)
+	require.Len(t, program.links, 2)
+	require.Len(t, other.links, 1)
+	require.NoError(t, b.Detach("eventpipe_prog"))
+	require.Empty(t, program.links)
+	require.Len(t, other.links, 1)
+	require.NoError(t, b.Detach("eventpipe_prog"))
+	require.Len(t, other.links, 1)
+	require.NoError(t, b.Detach("eventpipe_prog", "test_kprobe"))
+	require.Empty(t, other.links)
 }
 
 // TestDefaultBPF_EventPipe_Flow tests the event pipe functionality.
