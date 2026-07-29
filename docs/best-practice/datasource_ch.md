@@ -2,49 +2,118 @@
 title: 数据源配置
 type: docs
 description:
-author: admin-dong
+author: HUATUO Team
 date: 2026-05-05
 weight: 2
 ---
 
-HUATUO 支持与 Prometheus 集成进行指标采集，并使用 Elasticsearch 存储日志。本文档介绍如何在 Grafana 中配置数据源和导入仪表盘。
+HUATUO 通过 Prometheus 采集指标，并将事件数据写入 Elasticsearch。本文介绍 Docker Compose 和 Kubernetes 环境下的数据源与仪表盘配置方法。
 
-### 指标采集
+> 不要在同一节点同时运行 Docker Compose、systemd 和 Kubernetes 版本的
+> huatuo-bamai。它们会争用 `19704` 端口和
+> `/var/run/huatuo-toolstream.sock`。
 
-#### 1. 端口转发测试
+## Docker Compose
+
+`build/docker/` 提供已配置完成的 Prometheus、Elasticsearch、Grafana 和 HUATUO 组件。
 
 ```bash
-$ kubectl port-forward -n default --address=0.0.0.0 pod/huatuo-XXXX 19704:19704
+export ELASTIC_PASSWORD=huatuo-bamai
+docker compose --project-directory ./build/docker up -d
 ```
 
-#### 2. 验证指标端点
+服务使用宿主机网络：
 
-访问指标端点以验证服务是否正常运行：
+| 服务 | 地址 | 用途 |
+|---|---|---|
+| Elasticsearch | `http://localhost:9200` | 事件存储 |
+| Prometheus | `http://localhost:9090` | 指标采集 |
+| Grafana | `http://localhost:3000` | 可视化 |
+| huatuo-bamai | `http://localhost:19704` | 指标和事件采集 |
 
-```
-http://172.16.20.113:19704/metrics
-```
+Grafana 默认账号为 `admin/admin`。首次登录后应立即修改密码。
 
-如果显示指标数据，说明服务运行正常。
+### 已预配置的数据源
 
-#### 3. 配置 Prometheus 采集
+数据源由 `build/docker/grafana/datasources/` 自动加载：
 
-有两种方式配置 Prometheus 采集 HUATUO 指标：
+| 名称 | 类型 | UID |
+|---|---|---|
+| `huatuo-bamai-prom` | Prometheus | `huatuo-bamai-prom` |
+| `huatuo-bamai-es` | Elasticsearch | `huatuo-bamai-es` |
+| `huatuo-bamai-infinity` | Infinity | `huatuo-bamai-infinity-auto-flamegraph` |
 
-**方案一：使用注解**
+### 已预配置的仪表盘
 
-在 Pod 模板元数据中添加注解：
+仪表盘由 `build/docker/grafana/dashboards/` 自动加载：
+
+- Metric 大盘（宿主机）
+- Metric 大盘（容器）
+- HuaTuo 根因定位 AutoTracing
+- Continuous Profiling（宿主机）
+- Continuous Profiling（容器）
+- AutoTracing Flame Redirect
+
+使用 Docker Compose 时不需要手动配置数据源或导入仪表盘。
+
+## Kubernetes
+
+Prometheus 可以通过 Pod 注解或 ServiceMonitor 采集 HUATUO 指标。两种方式选择一种即可，避免重复采集。
+
+### Pod 注解
+
+`build/huatuo-daemonset.minimal.yaml` 默认包含以下注解：
 
 ```yaml
 template:
-    metadata:
-      annotations:                     
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "19704"
-        prometheus.io/path: "/metrics"
+  metadata:
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "19704"
+      prometheus.io/path: "/metrics"
 ```
 
-**方案二：使用 ServiceMonitor**
+Helm Chart 根据 `charts/huatuo/values.yaml` 中的以下配置生成注解：
+
+```yaml
+metrics:
+  enabled: true
+  port: 19704
+  path: /metrics
+```
+
+Prometheus 需要启用 Kubernetes Pod 服务发现，并通过 relabel 读取注解：
+
+```yaml
+scrape_configs:
+  - job_name: k8s-pods
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels:
+          [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        regex: (.+)
+        target_label: __metrics_path__
+      - source_labels: [__meta_kubernetes_namespace]
+        action: replace
+        target_label: kubernetes_namespace
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: kubernetes_pod_name
+```
+
+### ServiceMonitor
+
+ServiceMonitor 仅适用于安装了 Prometheus Operator 和 ServiceMonitor CRD 的集群。以下示例假设 Helm release 名和命名空间均为 `huatuo`。如果实际名称不同，需要同步修改命名空间和 `app.kubernetes.io/instance` 标签。
 
 创建 `huatuo-service.yaml`：
 
@@ -53,17 +122,20 @@ apiVersion: v1
 kind: Service
 metadata:
   name: huatuo
+  namespace: huatuo
   labels:
-    app: huatuo
+    app.kubernetes.io/name: huatuo
+    app.kubernetes.io/instance: huatuo
 spec:
   clusterIP: None
+  selector:
+    app.kubernetes.io/name: huatuo
+    app.kubernetes.io/instance: huatuo
   ports:
     - name: metrics
       port: 19704
       targetPort: 19704
       protocol: TCP
-  selector:
-    app: huatuo
 ```
 
 创建 `huatuo-servicemonitor.yaml`：
@@ -73,16 +145,17 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: huatuo
-  namespace: default
+  namespace: huatuo
   labels:
     release: prometheus
 spec:
   namespaceSelector:
     matchNames:
-      - default
+      - huatuo
   selector:
     matchLabels:
-      app: huatuo
+      app.kubernetes.io/name: huatuo
+      app.kubernetes.io/instance: huatuo
   endpoints:
     - port: metrics
       path: /metrics
@@ -90,64 +163,62 @@ spec:
       scrapeTimeout: 10s
 ```
 
-#### 4. 在 Prometheus 中查询指标
+`release: prometheus` 必须匹配 Prometheus 实例的 `spec.serviceMonitorSelector`。不同 Prometheus Operator 安装方式可能使用不同标签。
 
-使用以下模式查询 HUATUO 指标：
+如果使用 `build/huatuo-daemonset.minimal.yaml`，Pod 标签是 `app: huatuo`，需要将 Service 的 `spec.selector` 改为：
 
-```bash
-huatuo_*
+```yaml
+selector:
+  app: huatuo
 ```
 
-如果返回结果，说明指标采集配置成功。
+ServiceMonitor 选择的是 Service 的 `metadata.labels`，不是 Pod 标签。
 
-### 日志采集
-
-从 Elasticsearch 查询日志：
+应用配置：
 
 ```bash
-$ curl -u elastic:123456 "http://172.16.15.118:9200/huatuo_bamai/_search?pretty"
+kubectl apply -f huatuo-service.yaml
+kubectl apply -f huatuo-servicemonitor.yaml
 ```
 
-### Grafana 数据源配置
+## Grafana 数据源
 
-#### 1. 配置 Prometheus 数据源
+不使用 Docker Compose 时，在 Grafana 中手动添加数据源。
 
-详细配置文件请参考 `build/docker/datasource/` 目录。
+### Prometheus
 
-#### 2. 配置 Elasticsearch 数据源
+- URL：`http://<prometheus-host>:9090`
+- Access：Server (proxy)
+- UID：`huatuo-bamai-prom`
 
-在 Grafana 中添加新的 Elasticsearch 数据源，配置如下：
+### Elasticsearch
 
-- **URL**：`http://172.16.15.118:9200`
-- **认证方式**：Basic Authentication
-- **用户名**：`elastic`
-- **密码**：`123456`
-- **索引名称**：`huatuo_bamai`
-- **时间字段名**：`uploaded_time`
+- URL：`http://<elasticsearch-host>:9200`
+- Authentication：Basic Authentication
+- Username：`elastic`
+- Password：`<password>`
+- Index name：`huatuo_bamai*`
+- Time field name：`uploaded_time`
+- UID：`huatuo-bamai-es`
 
-### 仪表盘导入
+Provisioning 配置示例见 `build/docker/grafana/datasources/`。
 
-#### 1. 从控制台导出仪表盘
+## 导入仪表盘
 
-1. 访问 `http://console.huatuo.tech/dashboards`（用户名：`huatuo`，密码：`huatuo1024`）
-2. 选择所需的仪表盘
+Docker Compose 会自动加载仓库内置仪表盘。外部 Grafana 按以下步骤导入：
+
+1. 打开 Grafana 的 **Dashboards** -> **Import**
+2. 上传或粘贴 `build/docker/grafana/dashboards/*.json`
+3. 点击 **Load**
+4. 选择 `huatuo-bamai-prom` 和 `huatuo-bamai-es` 数据源
+5. 点击 **Import**
+
+也可以从 HUATUO 控制台导出仪表盘：
+
+1. 访问 `http://console.huatuo.tech/dashboards`
+2. 登录并选择仪表盘
 3. 点击 **Export** -> **Export as JSON**
 4. 勾选 "Export the dashboard to use in another instance"
-5. 点击 **Copy to clipboard**
+5. 复制 JSON 并导入目标 Grafana
 
-#### 2. 导入仪表盘到本地 Grafana
-
-1. 在本地 Grafana 中，导航到 **Dashboards** -> **Import**
-2. 粘贴复制的 JSON 内容
-3. 点击 **Load**
-4. 配置数据源并点击 **Import**
-
-### 故障排除
-
-**问题**：导入 "HuaTuo 根因定位 AutoTracing" 仪表盘时出现 "datasource not found" 错误。
-
-**解决方案**：
-1. 手动替换仪表盘 JSON 中的数据源 UID
-2. 从 URL 中查找 Elasticsearch 数据源 UID（例如从 `http://172.16.15.118:3000/connections/datasources/edit/dflcs0w2ghybka` 中获取 `dflcs0w2ghybka`）
-3. 将所有 `"uid": "${DS_HUATUO-BAMAI-ES}"` 替换为实际的数据源 UID
-4. 重新导入仪表盘
+控制台登录凭证由部署管理员提供，不应保存在公开文档中。
