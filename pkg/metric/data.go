@@ -77,6 +77,30 @@ type Data struct {
 	labelValue []string
 }
 
+// Name returns the metric name without namespace or collector prefixes.
+func (d *Data) Name() string {
+	return d.name
+}
+
+// Type returns the metric value type.
+func (d *Data) Type() int {
+	return d.valueType
+}
+
+// Help returns the metric help text.
+func (d *Data) Help() string {
+	return d.help
+}
+
+// Labels returns a copy of the metric labels.
+func (d *Data) Labels() map[string]string {
+	labels := make(map[string]string, len(d.labelKey))
+	for i, key := range d.labelKey {
+		labels[key] = d.labelValue[i]
+	}
+	return labels
+}
+
 // IsNoDataError is a function that checks whether the passed in error is the specific "NoData" error.
 func IsNoDataError(err error) bool {
 	return errors.Is(err, ErrNoData)

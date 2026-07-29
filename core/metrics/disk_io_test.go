@@ -15,42 +15,25 @@
 package collector
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/procfs/blockdevice"
+	metricpkg "huatuo-bamai/pkg/metric"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// mockProcFS creates a temporary directory structure mimicking /proc with the
-// given diskstats and stat file contents.
-func mockProcFS(t *testing.T, diskstats, stat string) string {
-	t.Helper()
-	tmpDir := t.TempDir()
-
-	procDir := filepath.Join(tmpDir, "proc")
-	require.NoError(t, os.MkdirAll(procDir, 0o755))
-
-	// sys dir is needed by blockdevice.FS
-	sysDir := filepath.Join(tmpDir, "sys")
-	require.NoError(t, os.MkdirAll(sysDir, 0o755))
-
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"), []byte(diskstats), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(stat), 0o644))
-
-	return tmpDir
-}
-
-const testDiskstats = `   8       0 sda 1000 200 50000 3000 2000 400 80000 6000 50 9000 15000 0 0 0 0 100 500
+const (
+	testDiskstats = `   8       0 sda 1000 200 50000 3000 2000 400 80000 6000 50 9000 15000 0 0 0 0 100 500
    8       1 sda1 800 100 40000 2000 1500 300 60000 4000 30 6000 10000 0 0 0 0 80 300
 `
-
-const testStat = `cpu  10000 2000 5000 50000 3000 1000 500 200 0 0
+	testStat = `cpu  10000 2000 5000 50000 3000 1000 500 200 0 0
 cpu0 5000 1000 2500 25000 1500 500 250 100 0 0
 cpu1 5000 1000 2500 25000 1500 500 250 100 0 0
 intr 100000 50 60 70
@@ -61,309 +44,345 @@ procs_running 3
 procs_blocked 1
 softirq 50000 100 200 300 400 500 600 700 800 900 1000
 `
+	testStatWithIOWaitSpike = `cpu  10100 2000 5000 50000 3100 1000 500 200 0 0
+cpu0 5000 1000 2500 25000 1500 500 250 100 0 0
+cpu1 5000 1000 2500 25000 1500 500 250 100 0 0
+intr 100000 50 60 70
+ctxt 200000
+btime 1700000000
+processes 5000
+procs_running 3
+procs_blocked 1
+softirq 50000 100 200 300 400 500 600 700 800 900 1000
+`
+	testStatWithInvalidIOWait = `cpu  8100 2000 5000 50000 5000 1000 500 200 0 0
+cpu0 5000 1000 2500 25000 1500 500 250 100 0 0
+cpu1 5000 1000 2500 25000 1500 500 250 100 0 0
+intr 100000 50 60 70
+ctxt 200000
+btime 1700000000
+processes 5000
+procs_running 3
+procs_blocked 1
+softirq 50000 100 200 300 400 500 600 700 800 900 1000
+`
+)
 
-func newTestCollector(t *testing.T) *diskIOCollector {
+func newTestCollector(t testing.TB, diskstats, stat string) (*diskIOStatsCollector, string) {
 	t.Helper()
-	tmpRoot := mockProcFS(t, testDiskstats, testStat)
 
-	originalPrefix := filepath.Dir(procfs.DefaultPath())
-	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
-	procfs.RootPrefix(tmpRoot)
-
-	devFS, err := blockdevice.NewDefaultFS()
-	require.NoError(t, err)
-
-	procFS, err := procfs.NewDefaultFS()
-	require.NoError(t, err)
-
-	return &diskIOCollector{
-		prev:   make(map[string]*diskDeviceStats),
-		devFS:  devFS,
-		procFS: procFS,
-	}
-}
-
-func TestDiskIOCollector_Update_FirstCall(t *testing.T) {
-	c := newTestCollector(t)
-
-	metrics, err := c.Update()
-	require.NoError(t, err)
-	assert.NotEmpty(t, metrics)
-
-	// First call: 2 devices × 4 counters + 2 queue depth gauges + 1 iowait = 11
-	// No latency gauges yet (no previous data for delta).
-	assert.Equal(t, 11, len(metrics), "first call should return 11 metrics")
-
-	// Verify previous data was cached for both devices.
-	assert.Contains(t, c.prev, "sda")
-	assert.Contains(t, c.prev, "sda1")
-	assert.Equal(t, uint64(1000), c.prev["sda"].readIOs)
-	assert.Equal(t, uint64(2000), c.prev["sda"].writeIOs)
-}
-
-func TestDiskIOCollector_Update_SecondCall(t *testing.T) {
-	c := newTestCollector(t)
-
-	// First call to populate previous values.
-	_, err := c.Update()
-	require.NoError(t, err)
-
-	// Wait briefly so elapsed time > 0 for rate calculations.
-	time.Sleep(10 * time.Millisecond)
-
-	// Second call with the same mock data — all deltas are zero,
-	// so no latency gauges are emitted.
-	metrics, err := c.Update()
-	require.NoError(t, err)
-	assert.NotEmpty(t, metrics)
-
-	// With identical data between calls, delta-based gauges are not produced.
-	// 2 devices × (4 counters + 1 queue depth) + 1 iowait = 11
-	assert.Equal(t, 11, len(metrics), "second call with same data should return same metric count")
-}
-
-func TestDiskIOCollector_CollectIOWait(t *testing.T) {
-	tmpRoot := mockProcFS(t, "", testStat)
-	originalPrefix := filepath.Dir(procfs.DefaultPath())
-	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
-	procfs.RootPrefix(tmpRoot)
-
-	procFS, err := procfs.NewDefaultFS()
-	require.NoError(t, err)
-
-	c := &diskIOCollector{
-		prev:   make(map[string]*diskDeviceStats),
-		procFS: procFS,
-	}
-
-	metrics, err := c.collectIOWait()
-	require.NoError(t, err)
-	require.Len(t, metrics, 1)
-
-	// iowait = 3000, total = 10000+2000+5000+50000+3000+1000+500+200 = 71700
-	// ratio = 3000/71700 * 100 ≈ 4.184%
-	assert.InDelta(t, 4.184, metrics[0].Value, 0.01)
-}
-
-func TestDiskIOCollector_CollectDiskstats_DeviceCount(t *testing.T) {
-	c := newTestCollector(t)
-
-	metrics, err := c.collectDiskstats()
-	require.NoError(t, err)
-
-	// 2 devices × (4 counters + 1 queue depth gauge) = 10
-	assert.Equal(t, 10, len(metrics))
-}
-
-func TestDiskIOCollector_EmptyDiskstats(t *testing.T) {
-	tmpRoot := mockProcFS(t, "", testStat)
-	originalPrefix := filepath.Dir(procfs.DefaultPath())
-	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
-	procfs.RootPrefix(tmpRoot)
-
-	devFS, err := blockdevice.NewDefaultFS()
-	require.NoError(t, err)
-
-	procFS, err := procfs.NewDefaultFS()
-	require.NoError(t, err)
-
-	c := &diskIOCollector{
-		prev:   make(map[string]*diskDeviceStats),
-		devFS:  devFS,
-		procFS: procFS,
-	}
-
-	metrics, err := c.Update()
-	require.NoError(t, err)
-
-	// Should still have iowait metric even with empty diskstats.
-	assert.NotEmpty(t, metrics)
-	assert.Equal(t, 1, len(metrics), "only iowait metric expected")
-}
-
-func TestDiskIOCollector_PrevStatsTracking(t *testing.T) {
-	c := newTestCollector(t)
-
-	// First call.
-	_, err := c.Update()
-	require.NoError(t, err)
-
-	sda := c.prev["sda"]
-	require.NotNil(t, sda)
-	assert.Equal(t, uint64(1000), sda.readIOs)
-	assert.Equal(t, uint64(2000), sda.writeIOs)
-	assert.Equal(t, uint64(3000), sda.readTicks)
-	assert.Equal(t, uint64(6000), sda.writeTicks)
-	assert.NotZero(t, sda.lastUpdate)
-}
-
-// TestDiskIOCollector_CounterReset verifies that when counters decrease
-// (simulating a device reset or hot-unplug), latency gauges are skipped.
-func TestDiskIOCollector_CounterReset(t *testing.T) {
-	tmpDir := t.TempDir()
-	procDir := filepath.Join(tmpDir, "proc")
-	sysDir := filepath.Join(tmpDir, "sys")
+	tmpRoot := t.TempDir()
+	procDir := filepath.Join(tmpRoot, "proc")
 	require.NoError(t, os.MkdirAll(procDir, 0o755))
-	require.NoError(t, os.MkdirAll(sysDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(testStat), 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "diskstats"),
+		[]byte(diskstats),
+		0o600,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "stat"),
+		[]byte(stat),
+		0o600,
+	))
 
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
 	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
-	procfs.RootPrefix(tmpDir)
+	procfs.RootPrefix(tmpRoot)
 
-	// First diskstats: high values.
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 1000 200 50000 3000 2000 400 80000 6000 50 9000 15000\n"), 0o644))
-
-	devFS, err := blockdevice.NewDefaultFS()
+	devFS, err := blockdevice.NewDiskstatsFS()
 	require.NoError(t, err)
 	procFS, err := procfs.NewDefaultFS()
 	require.NoError(t, err)
 
-	c := &diskIOCollector{
-		prev:   make(map[string]*diskDeviceStats),
+	return &diskIOStatsCollector{
 		devFS:  devFS,
 		procFS: procFS,
-	}
-
-	// First call to populate prev.
-	_, err = c.Update()
-	require.NoError(t, err)
-
-	// Second diskstats: counters DECREASED (simulating reset).
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 500 100 25000 1500 1000 200 40000 3000 25 4500 7500\n"), 0o644))
-
-	// Re-create devFS to pick up new file.
-	devFS, err = blockdevice.NewDefaultFS()
-	require.NoError(t, err)
-	c.devFS = devFS
-
-	time.Sleep(10 * time.Millisecond)
-
-	metrics, err := c.Update()
-	require.NoError(t, err)
-
-	// With counter reset, no latency gauges should be emitted.
-	// 1 device × (4 counters + 1 queue depth) + 1 iowait = 6
-	assert.Equal(t, 6, len(metrics), "counter reset should skip latency gauges")
+	}, procDir
 }
 
-// TestDiskIOCollector_LatencyComputation verifies that latency gauges are
-// correctly computed when counters increase between calls.
-func TestDiskIOCollector_LatencyComputation(t *testing.T) {
-	tmpDir := t.TempDir()
-	procDir := filepath.Join(tmpDir, "proc")
-	sysDir := filepath.Join(tmpDir, "sys")
-	require.NoError(t, os.MkdirAll(procDir, 0o755))
-	require.NoError(t, os.MkdirAll(sysDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(testStat), 0o644))
-
-	originalPrefix := filepath.Dir(procfs.DefaultPath())
-	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
-	procfs.RootPrefix(tmpDir)
-
-	// First diskstats: readIOs=1000, readTicks=3000; writeIOs=2000, writeTicks=6000.
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 1000 200 50000 3000 2000 400 80000 6000 50 9000 15000\n"), 0o644))
-
-	devFS, err := blockdevice.NewDefaultFS()
-	require.NoError(t, err)
-	procFS, err := procfs.NewDefaultFS()
-	require.NoError(t, err)
-
-	c := &diskIOCollector{
-		prev:   make(map[string]*diskDeviceStats),
-		devFS:  devFS,
-		procFS: procFS,
+func metricValues(metrics []*metricpkg.Data) []float64 {
+	values := make([]float64, 0, len(metrics))
+	for _, data := range metrics {
+		values = append(values, data.Value)
 	}
+	return values
+}
 
-	// First call to populate prev.
-	_, err = c.Update()
-	require.NoError(t, err)
-
-	// Second diskstats: readIOs increased by 100, readTicks by 500 → avg latency = 5ms.
-	// writeIOs increased by 200, writeTicks by 1000 → avg latency = 5ms.
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 1100 200 55000 3500 2200 400 90000 7000 50 9000 15000\n"), 0o644))
-
-	// Re-create devFS to pick up new file.
-	devFS, err = blockdevice.NewDefaultFS()
-	require.NoError(t, err)
-	c.devFS = devFS
-
-	time.Sleep(10 * time.Millisecond)
-
-	metrics, err := c.Update()
-	require.NoError(t, err)
-
-	// Find latency gauges by checking values.
-	// With 1 device and actual deltas, we should have:
-	// 4 counters + 1 queue depth + 2 latency gauges + 1 iowait = 8
-	assert.Equal(t, 8, len(metrics), "latency gauges should be emitted with actual deltas")
-
-	// Verify latency values are correct.
-	// deltaReadTicks=500 / deltaReadIOs=100 = 5.0 ms
-	// deltaWriteTicks=1000 / deltaWriteIOs=200 = 5.0 ms
-	// The latency values should be 5.0 ms each.
-	var latencyValues []float64
-	for _, m := range metrics {
-		if m.Value == 5.0 {
-			latencyValues = append(latencyValues, m.Value)
+func countMetricValue(metrics []*metricpkg.Data, expected float64) int {
+	var count int
+	for _, data := range metrics {
+		if data.Value == expected {
+			count++
 		}
 	}
-	assert.GreaterOrEqual(t, len(latencyValues), 2, "should have at least 2 latency values of 5.0ms")
+	return count
 }
 
-// TestDiskIOCollector_ZeroTicks verifies that when ticks remain zero
-// (e.g., old md devices on kernel < 5.14 that don't support IO accounting),
-// no latency gauges are emitted even though IOs increase.
-func TestDiskIOCollector_ZeroTicks(t *testing.T) {
-	tmpDir := t.TempDir()
-	procDir := filepath.Join(tmpDir, "proc")
-	sysDir := filepath.Join(tmpDir, "sys")
+func TestDiskIOStatsCollector_Update(t *testing.T) {
+	collector, procDir := newTestCollector(t, testDiskstats, testStat)
+
+	metrics, err := collector.Update()
+	require.NoError(t, err)
+	require.Len(t, metrics, 14)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "stat"),
+		[]byte(testStatWithIOWaitSpike),
+		0o600,
+	))
+
+	metrics, err = collector.Update()
+	require.NoError(t, err)
+	require.Len(t, metrics, 15)
+	assert.Equal(t, 2, countMetricValue(metrics, 50))
+}
+
+func TestNewDiskIO_UsesProcfsPrefixWithoutSysfs(t *testing.T) {
+	tmpRoot := t.TempDir()
+	procDir := filepath.Join(tmpRoot, "proc")
 	require.NoError(t, os.MkdirAll(procDir, 0o755))
-	require.NoError(t, os.MkdirAll(sysDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(testStat), 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "diskstats"),
+		[]byte(testDiskstats),
+		0o600,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "stat"),
+		[]byte(testStat),
+		0o600,
+	))
 
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
 	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
-	procfs.RootPrefix(tmpDir)
+	procfs.RootPrefix(tmpRoot)
 
-	// First diskstats: readIOs=1000, readTicks=0 (no IO accounting).
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 1000 200 50000 0 2000 400 80000 0 50 9000 15000\n"), 0o644))
-
-	devFS, err := blockdevice.NewDefaultFS()
+	attr, err := newDiskIO()
 	require.NoError(t, err)
-	procFS, err := procfs.NewDefaultFS()
-	require.NoError(t, err)
+	collector, ok := attr.TracingData.(*diskIOStatsCollector)
+	require.True(t, ok)
 
-	c := &diskIOCollector{
-		prev:   make(map[string]*diskDeviceStats),
-		devFS:  devFS,
-		procFS: procFS,
+	metrics, err := collector.Update()
+	require.NoError(t, err)
+	assert.Len(t, metrics, 14)
+}
+
+func TestDiskIOStatsCollector_CollectDiskstats(t *testing.T) {
+	collector, _ := newTestCollector(t, testDiskstats, testStat)
+
+	metrics, err := collector.collectDiskstats()
+	require.NoError(t, err)
+	require.Len(t, metrics, 14)
+
+	assert.ElementsMatch(t, []float64{
+		1000, 2000, 25_600_000, 40_960_000, 3, 6, 50,
+		800, 1500, 20_480_000, 30_720_000, 2, 4, 30,
+	}, metricValues(metrics))
+}
+
+func TestDiskIOStatsCollector_MetricContract(t *testing.T) {
+	collector, procDir := newTestCollector(t, testDiskstats, testStat)
+
+	metrics, err := collector.collectDiskstats()
+	require.NoError(t, err)
+	require.Len(t, metrics, 14)
+
+	expected := []struct {
+		name       string
+		metricType int
+	}{
+		{name: "read_requests_total", metricType: metricpkg.MetricTypeCounter},
+		{name: "write_requests_total", metricType: metricpkg.MetricTypeCounter},
+		{name: "read_bytes_total", metricType: metricpkg.MetricTypeCounter},
+		{name: "written_bytes_total", metricType: metricpkg.MetricTypeCounter},
+		{name: "read_time_seconds_total", metricType: metricpkg.MetricTypeCounter},
+		{name: "write_time_seconds_total", metricType: metricpkg.MetricTypeCounter},
+		{name: "io_in_progress", metricType: metricpkg.MetricTypeGauge},
+	}
+	for i := range expected {
+		assert.Equal(t, expected[i].name, metrics[i].Name())
+		assert.Equal(
+			t,
+			"huatuo_bamai_diskio_"+expected[i].name,
+			prometheus.BuildFQName(metricpkg.DefaultNamespace, "diskio", metrics[i].Name()),
+		)
+		assert.Equal(t, expected[i].metricType, metrics[i].Type())
+		assert.Equal(t, "sda", metrics[i].Labels()["device"])
+		assert.NotEmpty(t, metrics[i].Help())
 	}
 
-	// First call to populate prev.
-	_, err = c.Update()
+	iowaitMetrics, err := collector.collectIOWait()
+	require.NoError(t, err)
+	assert.Empty(t, iowaitMetrics)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "stat"),
+		[]byte(testStatWithIOWaitSpike),
+		0o600,
+	))
+	iowaitMetrics, err = collector.collectIOWait()
+	require.NoError(t, err)
+	require.Len(t, iowaitMetrics, 1)
+	assert.Equal(t, "disk_iowait_percent", iowaitMetrics[0].Name())
+	assert.Equal(t, metricpkg.MetricTypeGauge, iowaitMetrics[0].Type())
+	assert.NotEmpty(t, iowaitMetrics[0].Help())
+}
+
+func TestDiskIOStatsCollector_CollectDiskstats_ZeroTicks(t *testing.T) {
+	const diskstats = "8 0 sda 1000 0 50000 0 2000 0 80000 0 0 0 0\n"
+	collector, _ := newTestCollector(t, diskstats, testStat)
+
+	metrics, err := collector.collectDiskstats()
+	require.NoError(t, err)
+	require.Len(t, metrics, 7)
+
+	assert.Equal(t, 3, countMetricValue(metrics, 0))
+}
+
+func TestDiskIOStatsCollector_CollectIOWait(t *testing.T) {
+	collector, procDir := newTestCollector(t, "", testStat)
+
+	metrics, err := collector.collectIOWait()
+	require.NoError(t, err)
+	assert.Empty(t, metrics)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "stat"),
+		[]byte(testStatWithIOWaitSpike),
+		0o600,
+	))
+
+	metrics, err = collector.collectIOWait()
+	require.NoError(t, err)
+	require.Len(t, metrics, 1)
+	assert.InDelta(t, 50, metrics[0].Value, 0.001)
+}
+
+func TestDiskIOStatsCollector_CollectIOWait_CounterReset(t *testing.T) {
+	collector, procDir := newTestCollector(t, "", testStatWithIOWaitSpike)
+
+	metrics, err := collector.collectIOWait()
+	require.NoError(t, err)
+	assert.Empty(t, metrics)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "stat"),
+		[]byte(testStat),
+		0o600,
+	))
+
+	metrics, err = collector.collectIOWait()
+	require.NoError(t, err)
+	assert.Empty(t, metrics)
+	assert.Equal(t, cpuIOWaitSample{iowait: 30, total: 717}, collector.prevCPU)
+}
+
+func TestDiskIOStatsCollector_CollectIOWait_InvalidDelta(t *testing.T) {
+	collector, procDir := newTestCollector(t, "", testStat)
+
+	metrics, err := collector.collectIOWait()
+	require.NoError(t, err)
+	assert.Empty(t, metrics)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "stat"),
+		[]byte(testStatWithInvalidIOWait),
+		0o600,
+	))
+
+	metrics, err = collector.collectIOWait()
+	require.NoError(t, err)
+	assert.Empty(t, metrics)
+}
+
+func TestDiskIOStatsCollector_Update_EmptyDiskstats(t *testing.T) {
+	collector, procDir := newTestCollector(t, "", testStat)
+
+	metrics, err := collector.Update()
+	assert.ErrorIs(t, err, metricpkg.ErrNoData)
+	assert.Empty(t, metrics)
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "stat"),
+		[]byte(testStatWithIOWaitSpike),
+		0o600,
+	))
+
+	metrics, err = collector.Update()
+	require.NoError(t, err)
+	require.Len(t, metrics, 1)
+	assert.InDelta(t, 50, metrics[0].Value, 0.001)
+}
+
+func TestDiskIOStatsCollector_Update_ReturnsIOWaitOnDiskstatsFailure(t *testing.T) {
+	collector, procDir := newTestCollector(t, testDiskstats, testStat)
+
+	_, err := collector.Update()
 	require.NoError(t, err)
 
-	// Second diskstats: IOs increased but ticks still 0.
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 1100 200 55000 0 2200 400 90000 0 50 9000 15000\n"), 0o644))
+	require.NoError(t, os.Remove(filepath.Join(procDir, "diskstats")))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(procDir, "stat"),
+		[]byte(testStatWithIOWaitSpike),
+		0o600,
+	))
 
-	// Re-create devFS to pick up new file.
-	devFS, err = blockdevice.NewDefaultFS()
-	require.NoError(t, err)
-	c.devFS = devFS
+	metrics, err := collector.Update()
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "collect diskstats")
+	require.Len(t, metrics, 1)
+	assert.InDelta(t, 50, metrics[0].Value, 0.001)
+}
 
-	time.Sleep(10 * time.Millisecond)
+func TestDiskIOStatsCollector_Update_PropagatesErrors(t *testing.T) {
+	tests := []struct {
+		name            string
+		remove          []string
+		errContain      []string
+		wantMetricCount int
+	}{
+		{
+			name:       "diskstats failure",
+			remove:     []string{"diskstats"},
+			errContain: []string{"collect diskstats"},
+		},
+		{
+			name:            "stat failure",
+			remove:          []string{"stat"},
+			errContain:      []string{"collect iowait"},
+			wantMetricCount: 14,
+		},
+		{
+			name:       "both failures",
+			remove:     []string{"diskstats", "stat"},
+			errContain: []string{"collect diskstats", "collect iowait"},
+		},
+	}
 
-	metrics, err := c.Update()
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			collector, procDir := newTestCollector(t, testDiskstats, testStat)
+			for _, name := range tt.remove {
+				require.NoError(t, os.Remove(filepath.Join(procDir, name)))
+			}
 
-	// With zero ticks, no latency gauges should be emitted.
-	// 1 device × (4 counters + 1 queue depth) + 1 iowait = 6
-	assert.Equal(t, 6, len(metrics), "zero ticks should skip latency gauges")
+			metrics, err := collector.Update()
+			require.Error(t, err)
+			assert.False(t, errors.Is(err, metricpkg.ErrNoData))
+			assert.Len(t, metrics, tt.wantMetricCount)
+			for _, text := range tt.errContain {
+				assert.ErrorContains(t, err, text)
+			}
+		})
+	}
+}
+
+func BenchmarkDiskIOStatsCollector_CollectDiskstats(b *testing.B) {
+	collector, _ := newTestCollector(b, testDiskstats, testStat)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := collector.collectDiskstats(); err != nil {
+			b.Fatal(err)
+		}
+	}
 }

@@ -15,55 +15,58 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"sync"
-	"time"
 
-	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/procfs/blockdevice"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )
 
-const sectorSize = 512
+const (
+	sectorSize = 512
 
-// diskDeviceStats holds the raw counters from /proc/diskstats for a single device,
-// along with the timestamp of the last collection used for delta-based latency calculations.
-type diskDeviceStats struct {
-	readIOs    uint64
-	writeIOs   uint64
-	readTicks  uint64 // ms spent reading
-	writeTicks uint64 // ms spent writing
+	diskIOReadRequestsMetric  = "read_requests_total"
+	diskIOWriteRequestsMetric = "write_requests_total"
+	diskIOReadBytesMetric     = "read_bytes_total"
+	diskIOWrittenBytesMetric  = "written_bytes_total"
+	diskIOReadTimeMetric      = "read_time_seconds_total"
+	diskIOWriteTimeMetric     = "write_time_seconds_total"
+	diskIOInProgressMetric    = "io_in_progress"
+	diskIOIOWaitPercentMetric = "disk_iowait_percent"
+)
 
-	lastUpdate time.Time
+type cpuIOWaitSample struct {
+	iowait float64
+	total  float64
 }
 
-type diskIOCollector struct {
-	mu     sync.Mutex
-	prev   map[string]*diskDeviceStats
-	devFS  blockdevice.FS
-	procFS procfs.FS
+type diskIOStatsCollector struct {
+	mu      sync.Mutex
+	prevCPU cpuIOWaitSample
+	devFS   blockdevice.DiskstatsFS
+	procFS  procfs.FS
 }
 
 func init() {
-	tracing.RegisterEventTracing("disk_io", newDiskIO)
+	tracing.RegisterEventTracing("diskio", newDiskIO)
 }
 
 func newDiskIO() (*tracing.EventTracingAttr, error) {
-	devFS, err := blockdevice.NewDefaultFS()
+	devFS, err := blockdevice.NewDiskstatsFS()
 	if err != nil {
-		return nil, fmt.Errorf("disk_io: init blockdevice fs: %w", err)
+		return nil, fmt.Errorf("diskio: init blockdevice fs: %w", err)
 	}
 
 	procFS, err := procfs.NewDefaultFS()
 	if err != nil {
-		return nil, fmt.Errorf("disk_io: init procfs: %w", err)
+		return nil, fmt.Errorf("diskio: init procfs: %w", err)
 	}
 
 	return &tracing.EventTracingAttr{
-		TracingData: &diskIOCollector{
-			prev:   make(map[string]*diskDeviceStats),
+		TracingData: &diskIOStatsCollector{
 			devFS:  devFS,
 			procFS: procFS,
 		},
@@ -71,30 +74,33 @@ func newDiskIO() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func (c *diskIOCollector) Update() ([]*metric.Data, error) {
-	var metrics []*metric.Data
+func (c *diskIOStatsCollector) Update() ([]*metric.Data, error) {
+	metrics := make([]*metric.Data, 0)
+	var diskstatsErr, iowaitErr error
 
-	// Collect per-device disk IO metrics from /proc/diskstats.
 	deviceMetrics, err := c.collectDiskstats()
 	if err != nil {
-		log.Infof("disk_io: collect diskstats: %v", err)
+		diskstatsErr = fmt.Errorf("collect diskstats: %w", err)
 	} else {
 		metrics = append(metrics, deviceMetrics...)
 	}
 
-	// Collect system-wide iowait from /proc/stat.
 	iowaitMetrics, err := c.collectIOWait()
 	if err != nil {
-		log.Infof("disk_io: collect iowait: %v", err)
+		iowaitErr = fmt.Errorf("collect iowait: %w", err)
 	} else {
 		metrics = append(metrics, iowaitMetrics...)
 	}
 
+	collectionErr := errors.Join(diskstatsErr, iowaitErr)
 	if len(metrics) == 0 {
+		if collectionErr != nil {
+			return nil, collectionErr
+		}
 		return nil, metric.ErrNoData
 	}
 
-	return metrics, nil
+	return metrics, collectionErr
 }
 
 // collectDiskstats reads /proc/diskstats and produces per-device metrics.
@@ -113,11 +119,11 @@ func (c *diskIOCollector) Update() ([]*metric.Data, error) {
 //	Field  4: reads completed successfully (cumulative counter)
 //	Field  5: reads merged (adjacent reads merged into one I/O) — not used
 //	Field  6: sectors read (each sector = 512 bytes)
-//	Field  7: time spent reading in milliseconds (cumulative counter, internal only)
+//	Field  7: time spent reading in milliseconds (cumulative counter)
 //	Field  8: writes completed successfully (cumulative counter)
 //	Field  9: writes merged — not used
 //	Field 10: sectors written (each sector = 512 bytes)
-//	Field 11: time spent writing in milliseconds (cumulative counter, internal only)
+//	Field 11: time spent writing in milliseconds (cumulative counter)
 //	Field 12: I/Os currently in progress (gauge, only field that can decrease)
 //	Field 13: time spent doing I/Os in ms (only counts when field 12 > 0) — not used
 //	Field 14: weighted time spent doing I/Os (for backlog measurement) — not used
@@ -126,46 +132,38 @@ func (c *diskIOCollector) Update() ([]*metric.Data, error) {
 //
 // ## Counter Metrics (cumulative; use Prometheus rate() for per-second values)
 //
-//   - disk_read_requests_total (Counter):
+//   - read_requests_total (Counter):
 //     Source: field 4. Cumulative count of read requests completed.
 //     Use rate() in Prometheus to get read IOPS.
 //
-//   - disk_write_requests_total (Counter):
+//   - write_requests_total (Counter):
 //     Source: field 8. Cumulative count of write requests completed.
 //     Use rate() in Prometheus to get write IOPS.
 //
-//   - disk_read_bytes_total (Counter):
+//   - read_bytes_total (Counter):
 //     Source: field 6 × 512 (sector size). Cumulative bytes read.
 //     Use rate() in Prometheus to get read throughput.
 //
-//   - disk_written_bytes_total (Counter):
+//   - written_bytes_total (Counter):
 //     Source: field 10 × 512 (sector size). Cumulative bytes written.
 //     Use rate() in Prometheus to get write throughput.
 //
+//   - read_time_seconds_total (Counter):
+//     Source: field 7. Cumulative seconds spent by completed reads.
+//     Divide rate() of this metric by read request rate() for average latency.
+//
+//   - write_time_seconds_total (Counter):
+//     Source: field 11. Cumulative seconds spent by completed writes.
+//     Divide rate() of this metric by write request rate() for average latency.
+//
 // ## Gauge Metrics (point-in-time values)
 //
-//   - disk_io_in_progress (Gauge):
+//   - io_in_progress (Gauge):
 //     Source: field 12. Current number of I/O requests in flight (queue depth).
 //
-//   - disk_read_latency_ms (Gauge):
-//     Computed as delta(field 7) / delta(field 4) between collection intervals.
-//     Fields 7 and 4 are read internally but not exposed as separate metrics,
-//     since they are only meaningful when combined to produce average latency.
-//     Only emitted when delta(field 4) > 0 and delta(field 7) > 0.
-//
-//   - disk_write_latency_ms (Gauge):
-//     Computed as delta(field 11) / delta(field 8) between collection intervals.
-//     Only emitted when delta(field 8) > 0 and delta(field 11) > 0.
-//
-//   - disk_iowait_ratio (Gauge):
+//   - disk_iowait_percent (Gauge):
 //     Source: /proc/stat cpu line (system-wide, not per-device).
-//     Computed as: iowait_ticks / total_ticks × 100.
-//
-// # Counter Reset Handling
-//
-// All counters reset at boot, device reattachment, or counter overflow.
-// The collector detects resets by checking if current < previous.
-// When a reset is detected, delta-based metrics (latency) are skipped for that interval.
+//     Computed from the iowait and total CPU time deltas between collections.
 //
 // # Device Compatibility
 //
@@ -175,108 +173,80 @@ func (c *diskIOCollector) Update() ([]*metric.Data, error) {
 //   - raid1: commit a0159832e51e ("md/raid1: enable io accounting")
 //
 // On kernels older than 5.14, md devices may appear in /proc/diskstats but
-// fields 7/11 (read/write ticks) may be zero, resulting in no latency metrics.
+// fields 7/11 (read/write ticks) may remain zero.
 // dm-* (device-mapper) devices generally have IO statistics available.
-func (c *diskIOCollector) collectDiskstats() ([]*metric.Data, error) {
+func (c *diskIOStatsCollector) collectDiskstats() ([]*metric.Data, error) {
 	diskstats, err := c.devFS.ProcDiskstats()
 	if err != nil {
 		return nil, err
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	metrics := make([]*metric.Data, 0, len(diskstats)*7)
 
-	var metrics []*metric.Data
-	now := time.Now()
-
-	for _, ds := range diskstats {
+	for i := range diskstats {
+		ds := &diskstats[i]
 		device := ds.DeviceName
 
 		deviceLabel := map[string]string{"device": device}
 
-		// Cumulative counters — use Prometheus rate() for per-second values.
-		metrics = append(metrics,
-			metric.NewCounterData("disk_read_requests_total", float64(ds.ReadIOs),
+		metrics = append(
+			metrics,
+			metric.NewCounterData(diskIOReadRequestsMetric, float64(ds.ReadIOs),
 				"Total number of read requests completed successfully.", deviceLabel),
-			metric.NewCounterData("disk_write_requests_total", float64(ds.WriteIOs),
+			metric.NewCounterData(diskIOWriteRequestsMetric, float64(ds.WriteIOs),
 				"Total number of write requests completed successfully.", deviceLabel),
-			metric.NewCounterData("disk_read_bytes_total", float64(ds.ReadSectors)*sectorSize,
+			metric.NewCounterData(diskIOReadBytesMetric, float64(ds.ReadSectors)*sectorSize,
 				"Total number of bytes read from the device.", deviceLabel),
-			metric.NewCounterData("disk_written_bytes_total", float64(ds.WriteSectors)*sectorSize,
+			metric.NewCounterData(diskIOWrittenBytesMetric, float64(ds.WriteSectors)*sectorSize,
 				"Total number of bytes written to the device.", deviceLabel),
-		)
-
-		// Gauge: current queue depth.
-		metrics = append(metrics,
-			metric.NewGaugeData("disk_io_in_progress", float64(ds.IOsInProgress),
+			metric.NewCounterData(diskIOReadTimeMetric, float64(ds.ReadTicks)/1000,
+				"Total seconds spent by completed read requests.", deviceLabel),
+			metric.NewCounterData(diskIOWriteTimeMetric, float64(ds.WriteTicks)/1000,
+				"Total seconds spent by completed write requests.", deviceLabel),
+			metric.NewGaugeData(diskIOInProgressMetric, float64(ds.IOsInProgress),
 				"Number of I/O requests currently in flight (queue depth).", deviceLabel),
 		)
-
-		// Gauge: average read/write latency computed from delta counters.
-		prev, ok := c.prev[device]
-		if ok {
-			elapsed := now.Sub(prev.lastUpdate).Seconds()
-			if elapsed > 0 {
-				// Guard against counter reset (hot-unplug, reboot, wrap-around):
-				// if the new value is less than the previous, skip delta computation.
-				if ds.ReadIOs >= prev.readIOs && ds.ReadTicks >= prev.readTicks {
-					deltaReadIOs := ds.ReadIOs - prev.readIOs
-					deltaReadTicks := ds.ReadTicks - prev.readTicks
-					// Skip when no IOs or ticks are zero (device may not support IO accounting).
-					if deltaReadIOs > 0 && deltaReadTicks > 0 {
-						avgReadLatency := float64(deltaReadTicks) / float64(deltaReadIOs)
-						metrics = append(metrics,
-							metric.NewGaugeData("disk_read_latency_ms", avgReadLatency,
-								"Average read request latency in milliseconds.", deviceLabel),
-						)
-					}
-				}
-
-				if ds.WriteIOs >= prev.writeIOs && ds.WriteTicks >= prev.writeTicks {
-					deltaWriteIOs := ds.WriteIOs - prev.writeIOs
-					deltaWriteTicks := ds.WriteTicks - prev.writeTicks
-					// Skip when no IOs or ticks are zero (device may not support IO accounting).
-					if deltaWriteIOs > 0 && deltaWriteTicks > 0 {
-						avgWriteLatency := float64(deltaWriteTicks) / float64(deltaWriteIOs)
-						metrics = append(metrics,
-							metric.NewGaugeData("disk_write_latency_ms", avgWriteLatency,
-								"Average write request latency in milliseconds.", deviceLabel),
-						)
-					}
-				}
-			}
-		}
-
-		// Update cached previous values for delta-based latency computation.
-		c.prev[device] = &diskDeviceStats{
-			readIOs:    ds.ReadIOs,
-			writeIOs:   ds.WriteIOs,
-			readTicks:  ds.ReadTicks,
-			writeTicks: ds.WriteTicks,
-			lastUpdate: now,
-		}
 	}
 
 	return metrics, nil
 }
 
-// collectIOWait reads /proc/stat and returns the system-wide iowait ratio.
-func (c *diskIOCollector) collectIOWait() ([]*metric.Data, error) {
+// collectIOWait returns iowait over the interval between successful reads.
+func (c *diskIOStatsCollector) collectIOWait() ([]*metric.Data, error) {
 	stat, err := c.procFS.Stat()
 	if err != nil {
 		return nil, err
 	}
 
 	cpu := stat.CPUTotal
-	total := cpu.User + cpu.Nice + cpu.System + cpu.Idle + cpu.Iowait + cpu.IRQ + cpu.SoftIRQ + cpu.Steal
-	if total == 0 {
+	current := cpuIOWaitSample{
+		iowait: cpu.Iowait,
+		total: cpu.User + cpu.Nice + cpu.System + cpu.Idle +
+			cpu.Iowait + cpu.IRQ + cpu.SoftIRQ + cpu.Steal,
+	}
+	if current.total == 0 {
 		return nil, nil
 	}
 
-	iowaitRatio := cpu.Iowait / total * 100
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	previous := c.prevCPU
+	c.prevCPU = current
+	if previous.total == 0 {
+		return nil, nil
+	}
+
+	deltaTotal := current.total - previous.total
+	deltaIOWait := current.iowait - previous.iowait
+	if deltaTotal <= 0 || deltaIOWait < 0 || deltaIOWait > deltaTotal {
+		return nil, nil
+	}
+
+	iowaitPercent := deltaIOWait / deltaTotal * 100
 
 	return []*metric.Data{
-		metric.NewGaugeData("disk_iowait_ratio", iowaitRatio,
-			"Percentage of CPU time spent waiting for I/O operations to complete.", nil),
+		metric.NewGaugeData(diskIOIOWaitPercentMetric, iowaitPercent,
+			"CPU time spent waiting for I/O during the collection interval.", nil),
 	}, nil
 }
