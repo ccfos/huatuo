@@ -400,11 +400,27 @@ huatuo_bamai_collect_metrics() {
 	huatuo_bamai_metrics > "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
 }
 
-# huatuo_bamai_await_metrics waits until the metrics endpoint responds, then saves.
+# huatuo_bamai_collect_expected_metrics saves /metrics output and verifies that
+# every expected pattern has appeared. Collectors may populate asynchronously
+# after the endpoint starts responding.
+huatuo_bamai_collect_expected_metrics() {
+	huatuo_bamai_collect_metrics || return 1
+
+	local metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
+	local prefix="huatuo_bamai_"
+	local pattern
+	for pattern in "$@"; do
+		grep -qE "${prefix}(${pattern})" "${metrics_file}" || return 1
+	done
+}
+
+# huatuo_bamai_await_metrics [expected_pattern...]
+# Waits until the metrics endpoint responds and all optional expected patterns
+# have appeared, then saves the successful response.
 huatuo_bamai_await_metrics() {
 	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		huatuo_bamai_collect_metrics
+		huatuo_bamai_collect_expected_metrics "$@"
 }
 
 # check_metrics <desc> <present_pattern>... [-- <absent_pattern>...]
