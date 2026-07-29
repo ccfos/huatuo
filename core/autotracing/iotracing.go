@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ import (
 
 	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/procfs/blockdevice"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
@@ -255,10 +257,51 @@ func readRawDiskstatsSnapshot() (*rawDiskstatsSnapshot, error) {
 	}
 	for i := range stats {
 		current := stats[i]
+		if !isMonitoredDisk(&current) {
+			continue
+		}
 		snapshot.devices[current.DeviceName] = current
 		snapshot.order = append(snapshot.order, current.DeviceName)
 	}
 	return snapshot, nil
+}
+
+func isMonitoredDisk(stat *blockdevice.Diskstats) bool {
+	if stat == nil || stat.DeviceName == "" || isPseudoDisk(stat.DeviceName) {
+		return false
+	}
+
+	devicePath := filepath.Join(
+		procfs.DefaultPathByType("sys"),
+		"dev",
+		"block",
+		fmt.Sprintf("%d:%d", stat.MajorNumber, stat.MinorNumber),
+	)
+	if _, err := os.Stat(devicePath); err != nil {
+		return false
+	}
+
+	_, err := os.Stat(filepath.Join(devicePath, "partition"))
+	if err == nil {
+		return false
+	}
+	if !os.IsNotExist(err) {
+		return false
+	}
+
+	// Confirm that a concurrent removal did not make the partition file
+	// disappear before treating the entry as a whole device.
+	_, err = os.Stat(devicePath)
+	return err == nil
+}
+
+func isPseudoDisk(name string) bool {
+	for _, prefix := range []string{"loop", "ram", "zram", "fd"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func validDiskstatsWindow(
