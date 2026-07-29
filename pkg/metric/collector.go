@@ -39,7 +39,8 @@ var DefaultNamespace = "huatuo_bamai"
 //
 //go:generate mockery --name=Collector --dir=. --filename=mock_collector_test.go --inpackage --case=underscore
 type Collector interface {
-	// Get new metrics and expose them via prometheus registry.
+	// Get new metrics and expose them via prometheus registry. Implementations
+	// may return partial metrics with an error when only part of a scrape fails.
 	Update() ([]*Data, error)
 }
 
@@ -157,11 +158,12 @@ func (m *CollectorManager) doCollect(collectorName string, c *CollectorWrapper, 
 		}
 		success = 0
 	} else {
-		for _, data := range metrics {
-			ch <- data.prometheusMetric(collectorName)
-		}
 		log.Debugf("collector %s succeeded, duration_seconds %f", collectorName, duration.Seconds())
 		success = 1
+	}
+
+	for _, data := range metrics {
+		ch <- data.prometheusMetric(collectorName)
 	}
 
 	ch <- prometheus.MustNewConstMetric(m.scrapeDurationDesc, prometheus.GaugeValue, duration.Seconds(), m.hostname, m.region, collectorName)
