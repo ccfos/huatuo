@@ -11,5 +11,5 @@ datasources:
       minStep: '15s'
       httpHeaderName1: 'Authorization'
     secureJsonData:
-      httpHeaderValue1: REPLACE_WITH_RANDOM_HEX
+      httpHeaderValue1: 'Bearer REPLACE_WITH_RANDOM_HEX'
     editable: false
