@@ -1,5 +1,5 @@
 ---
-title: Docker Compose 容器部署
+title: 容器部署
 type: docs
 description: 
 author: HUATUO Team, hao022
