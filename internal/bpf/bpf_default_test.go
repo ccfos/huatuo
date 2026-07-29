@@ -527,6 +527,50 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 	}
 }
 
+func TestDefaultBPF_AttachIndependentlyPreservesEarlierLink(t *testing.T) {
+	b := loadMinimalBpfFromBytes(t)
+	defer b.Close()
+
+	const programName = "eventpipe_prog"
+	err := b.AttachIndependently(&AttachOption{
+		ProgramName: programName,
+		Symbol:      "syscalls/sys_enter_nanosleep",
+	})
+	require.NoError(t, err)
+
+	progID := b.ProgramIDByName(programName)
+	program, ok := b.programsByID[progID]
+	require.True(t, ok)
+	require.Len(t, program.links, 1)
+
+	err = b.AttachIndependently(&AttachOption{
+		ProgramName: "missing_program",
+		Symbol:      "syscalls/sys_enter_nanosleep",
+	})
+	require.Error(t, err)
+	require.Len(t, program.links, 1, "failed independent attach must not roll back an earlier link")
+}
+
+func TestDefaultBPF_DetachIndependentlyPreservesOtherTargets(t *testing.T) {
+	b := loadMinimalBpfFromBytes(t)
+	defer b.Close()
+
+	first := &AttachOption{ProgramName: "eventpipe_prog", Symbol: "syscalls/sys_enter_nanosleep"}
+	second := &AttachOption{ProgramName: first.ProgramName, Symbol: "syscalls/sys_enter_clock_nanosleep"}
+	require.NoError(t, b.AttachIndependently(first))
+	require.NoError(t, b.AttachIndependently(second))
+	program := b.programsByID[b.ProgramIDByName(first.ProgramName)]
+	require.Len(t, program.links, 2)
+	retained := program.links[second.Symbol]
+
+	require.NoError(t, b.DetachIndependently(first))
+	require.NotContains(t, program.links, first.Symbol)
+	require.Len(t, program.links, 1)
+	require.Same(t, retained, program.links[second.Symbol])
+	require.NoError(t, b.DetachIndependently(first))
+	require.Len(t, program.links, 1)
+}
+
 // TestDefaultBPF_EventPipe_Flow tests the event pipe functionality.
 //
 // Covered functions:
