@@ -13,7 +13,7 @@ HUATUO is an operating-system observability project open sourced by DiDi and inc
 </div>
 {{% /alert %}}
 
-## 🚀 Quick Start: Host CPU Profiling (Docker Compose)
+## 🚀 Quick Start
 
 This guide uses `build/docker/docker-compose.yml` to start all services, create a host CPU profiling job, and view the flame graph in Grafana.
 
@@ -138,7 +138,7 @@ Steps:
 3. The flame graph loads aggregated call stacks for the selected time range and updates dynamically
 4. Click a frame to zoom in; use the top table for symbol sorting, filtering, and statistics
 
-![continuous-profiling-grafana-host.png](../img/continuous-profiling-grafana-host.png)
+![continuous-profiling-grafana-host.png](/docs/img/continuous-profiling-grafana-host.png)
 
 For more profiling dimensions, see the Profiles API section below.
 

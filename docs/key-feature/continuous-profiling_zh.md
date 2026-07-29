@@ -13,7 +13,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 </div>
 {{% /alert %}}
 
-## 🚀 快速上手：对本机 CPU 性能剖析（Docker Compose）
+## 🚀 快速上手
 
 示例基于仓库根目录下的 `build/docker/docker-compose.yml`，从零开始完成一次宿主机 CPU 性能剖析，并在 Grafana 中选择时间范围分析火焰图。
 
@@ -141,7 +141,7 @@ $ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
 3. 火焰图面板自动加载该时间窗口的聚合调用栈，随选择时间范围变化而自动聚合更新，focus block 可选定关心的调用栈
 4. symbol 排序、统计、筛选等操作在 top table 中进行，选择 Both 可展示
 
-![continuous-profiling-grafana-host.png](../img/continuous-profiling-grafana-host.png)
+![continuous-profiling-grafana-host.png](/docs/img/continuous-profiling-grafana-host.png)
 
 其他更多丰富维度的剖析任务参考 Profiles API。
 
