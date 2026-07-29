@@ -40,8 +40,8 @@ func mockProcFS(t *testing.T, diskstats, stat string) string {
 	sysDir := filepath.Join(tmpDir, "sys")
 	require.NoError(t, os.MkdirAll(sysDir, 0o755))
 
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"), []byte(diskstats), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(stat), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"), []byte(diskstats), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(stat), 0o600))
 
 	return tmpDir
 }
@@ -205,7 +205,7 @@ func TestDiskIOCollector_CounterReset(t *testing.T) {
 	sysDir := filepath.Join(tmpDir, "sys")
 	require.NoError(t, os.MkdirAll(procDir, 0o755))
 	require.NoError(t, os.MkdirAll(sysDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(testStat), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(testStat), 0o600))
 
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
 	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
@@ -213,7 +213,7 @@ func TestDiskIOCollector_CounterReset(t *testing.T) {
 
 	// First diskstats: high values.
 	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 1000 200 50000 3000 2000 400 80000 6000 50 9000 15000\n"), 0o644))
+		[]byte("   8       0 sda 1000 200 50000 3000 2000 400 80000 6000 50 9000 15000\n"), 0o600))
 
 	devFS, err := blockdevice.NewDefaultFS()
 	require.NoError(t, err)
@@ -232,7 +232,7 @@ func TestDiskIOCollector_CounterReset(t *testing.T) {
 
 	// Second diskstats: counters DECREASED (simulating reset).
 	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 500 100 25000 1500 1000 200 40000 3000 25 4500 7500\n"), 0o644))
+		[]byte("   8       0 sda 500 100 25000 1500 1000 200 40000 3000 25 4500 7500\n"), 0o600))
 
 	// Re-create devFS to pick up new file.
 	devFS, err = blockdevice.NewDefaultFS()
@@ -257,7 +257,7 @@ func TestDiskIOCollector_LatencyComputation(t *testing.T) {
 	sysDir := filepath.Join(tmpDir, "sys")
 	require.NoError(t, os.MkdirAll(procDir, 0o755))
 	require.NoError(t, os.MkdirAll(sysDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(testStat), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(testStat), 0o600))
 
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
 	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
@@ -265,7 +265,7 @@ func TestDiskIOCollector_LatencyComputation(t *testing.T) {
 
 	// First diskstats: readIOs=1000, readTicks=3000; writeIOs=2000, writeTicks=6000.
 	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 1000 200 50000 3000 2000 400 80000 6000 50 9000 15000\n"), 0o644))
+		[]byte("   8       0 sda 1000 200 50000 3000 2000 400 80000 6000 50 9000 15000\n"), 0o600))
 
 	devFS, err := blockdevice.NewDefaultFS()
 	require.NoError(t, err)
@@ -285,7 +285,7 @@ func TestDiskIOCollector_LatencyComputation(t *testing.T) {
 	// Second diskstats: readIOs increased by 100, readTicks by 500 → avg latency = 5ms.
 	// writeIOs increased by 200, writeTicks by 1000 → avg latency = 5ms.
 	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 1100 200 55000 3500 2200 400 90000 7000 50 9000 15000\n"), 0o644))
+		[]byte("   8       0 sda 1100 200 55000 3500 2200 400 90000 7000 50 9000 15000\n"), 0o600))
 
 	// Re-create devFS to pick up new file.
 	devFS, err = blockdevice.NewDefaultFS()
@@ -324,7 +324,7 @@ func TestDiskIOCollector_ZeroTicks(t *testing.T) {
 	sysDir := filepath.Join(tmpDir, "sys")
 	require.NoError(t, os.MkdirAll(procDir, 0o755))
 	require.NoError(t, os.MkdirAll(sysDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(testStat), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(procDir, "stat"), []byte(testStat), 0o600))
 
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
 	t.Cleanup(func() { procfs.RootPrefix(originalPrefix) })
@@ -332,7 +332,7 @@ func TestDiskIOCollector_ZeroTicks(t *testing.T) {
 
 	// First diskstats: readIOs=1000, readTicks=0 (no IO accounting).
 	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 1000 200 50000 0 2000 400 80000 0 50 9000 15000\n"), 0o644))
+		[]byte("   8       0 sda 1000 200 50000 0 2000 400 80000 0 50 9000 15000\n"), 0o600))
 
 	devFS, err := blockdevice.NewDefaultFS()
 	require.NoError(t, err)
@@ -351,7 +351,7 @@ func TestDiskIOCollector_ZeroTicks(t *testing.T) {
 
 	// Second diskstats: IOs increased but ticks still 0.
 	require.NoError(t, os.WriteFile(filepath.Join(procDir, "diskstats"),
-		[]byte("   8       0 sda 1100 200 55000 0 2200 400 90000 0 50 9000 15000\n"), 0o644))
+		[]byte("   8       0 sda 1100 200 55000 0 2200 400 90000 0 50 9000 15000\n"), 0o600))
 
 	// Re-create devFS to pick up new file.
 	devFS, err = blockdevice.NewDefaultFS()

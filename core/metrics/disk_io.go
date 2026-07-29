@@ -189,7 +189,8 @@ func (c *diskIOCollector) collectDiskstats() ([]*metric.Data, error) {
 	var metrics []*metric.Data
 	now := time.Now()
 
-	for _, ds := range diskstats {
+	for i := range diskstats {
+		ds := &diskstats[i]
 		device := ds.DeviceName
 
 		deviceLabel := map[string]string{"device": device}
@@ -204,10 +205,6 @@ func (c *diskIOCollector) collectDiskstats() ([]*metric.Data, error) {
 				"Total number of bytes read from the device.", deviceLabel),
 			metric.NewCounterData("disk_written_bytes_total", float64(ds.WriteSectors)*sectorSize,
 				"Total number of bytes written to the device.", deviceLabel),
-		)
-
-		// Gauge: current queue depth.
-		metrics = append(metrics,
 			metric.NewGaugeData("disk_io_in_progress", float64(ds.IOsInProgress),
 				"Number of I/O requests currently in flight (queue depth).", deviceLabel),
 		)
