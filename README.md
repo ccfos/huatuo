@@ -45,7 +45,7 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 - **Instant Observability**: An event-driven runtime context capture mechanism that instruments kernel slow paths. It automatically triggers on events such as page faults, scheduling delays, generating detailed data for immediate analysis.
 - **AutoTracing**: Employs automated snapshot retention to resolve performance jitters typical in cloud‑native and AI infrastructure environments, tackling issues such as CPU idle drops, CPU sys spikes, I/O surges, and Loadavg spikes.
 - **Continuous Profiling**: A comprehensive and continuous performance profiling of the operating system and applications, covering CPU, Memory, I/O, and Locks. This drives business innovation and plays a key role in Chaos, HA and Stability Engineering.
-- **Distributed Tracing**: Network-centric distributed tracing for service requests, which maps system call hierarchies and node relationships. It provides end-to-end visibility of microservice interactions in large-scale distributed systems.
+- **Heterogeneous Computing Hardware**: Encompassing core system components such as CPUs, memory, PCIe interconnects, network adapters, and storage, alongside specialized AI accelerators including GPUs and NPUs.
 - **Ecosystem Integration**: Integration with mainstream open-source observability stacks like Prometheus, Grafana, Pyroscope, and Elasticsearch. It automatically associates K8s container labels/annotations. Achieved through zero-instrumentation, kernel-level programming with eBPF, ensuring broad compatibility across hardware platforms and Linux distributions.
 
 ## Big Picture
