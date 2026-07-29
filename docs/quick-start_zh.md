@@ -34,7 +34,7 @@ weight: 1
 
 1. 启动容器：
 ```bash
-$ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+$ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
 ```
 
 2. 获取指标：打开另外一个终端，通过 curl 获取。
@@ -68,7 +68,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 
 运行容器：
 ```bash
-$ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+$ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
 ```
 
 或从容器 `/home/huatuo-bamai` 路径下拷贝出所有文件后本地手动运行：

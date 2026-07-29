@@ -30,7 +30,7 @@ If you want to understand the underlying principles and deploy HUATUO to your ow
 
 - **Direct Execution**：
     ```bash
-    $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+    $ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
     ```
 
 - **Metric Collection**：In another terminal, collect metrics
@@ -62,7 +62,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 #### 3.2 Execution
 - Run container:
     ```bash
-    $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+    $ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
     ```
 
 - Or copy all files from the container path `/home/huatuo-bamai` and run manually locally:

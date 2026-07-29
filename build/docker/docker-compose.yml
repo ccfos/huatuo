@@ -63,6 +63,7 @@ services:
     image: huatuo/huatuo-bamai:latest
     container_name: huatuo-bamai
     network_mode: host
+    pid: host
     cgroup: host
     privileged: true
     working_dir: ${RUN_PATH:-/home/huatuo-bamai}
