@@ -58,7 +58,11 @@ type ProfileTree struct {
 
 // LevelsToTree converts flamebearer format into a tree. This is needed to then convert it into nested set format
 func LevelsToTree(levels []*Level, names []string) *ProfileTree {
-	if len(levels) == 0 {
+	if len(levels) == 0 || levels[0] == nil || len(levels[0].Values) < ItemOffest {
+		return nil
+	}
+	rootName, ok := flamebearerName(names, levels[0].Values[NameOffest])
+	if !ok {
 		return nil
 	}
 
@@ -67,7 +71,7 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 		Value: levels[0].Values[ValueOffest],
 		Self:  levels[0].Values[SelfOffest],
 		Level: 0,
-		Name:  names[levels[0].Values[NameOffest]],
+		Name:  rootName,
 	}
 
 	parentsStack := []*ProfileTree{tree}
@@ -84,6 +88,10 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 			break
 		}
 
+		if levels[currentLevel] == nil {
+			break
+		}
+
 		var nextParentsStack []*ProfileTree
 		currentParent := parentsStack[:1][0]
 		parentsStack = parentsStack[1:]
@@ -93,7 +101,7 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 
 		// Cycle through bar in a level
 		for {
-			if itemIndex >= len(levels[currentLevel].Values) {
+			if itemIndex+ItemOffest > len(levels[currentLevel].Values) {
 				break
 			}
 
@@ -104,13 +112,17 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 			parentEnd := currentParent.Start + currentParent.Value
 
 			if itemStart >= currentParent.Start && itemEnd <= parentEnd {
+				name, ok := flamebearerName(names, levels[currentLevel].Values[itemIndex+NameOffest])
+				if !ok {
+					break
+				}
 				// We have an item that is in the bounds of current parent item, so it should be its child
 				treeItem := &ProfileTree{
 					Start: itemStart,
 					Value: itemValue,
 					Self:  selfValue,
 					Level: currentLevel,
-					Name:  names[levels[currentLevel].Values[itemIndex+NameOffest]],
+					Name:  name,
 				}
 				// Add to parent
 				currentParent.Nodes = append(currentParent.Nodes, treeItem)
@@ -136,6 +148,14 @@ func LevelsToTree(levels []*Level, names []string) *ProfileTree {
 	}
 
 	return tree
+}
+
+func flamebearerName(names []string, index int64) (string, bool) {
+	if index < 0 || index >= int64(len(names)) {
+		return "", false
+	}
+
+	return names[index], true
 }
 
 // TreeToNestedSetDataFrame walks the tree depth first and adds items into the dataframe. This is a nested set format
