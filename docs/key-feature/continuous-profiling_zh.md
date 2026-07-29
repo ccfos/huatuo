@@ -13,6 +13,139 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 </div>
 {{% /alert %}}
 
+## 🚀 快速上手：对本机 CPU 性能剖析（Docker Compose）
+
+示例基于仓库根目录下的 `build/docker/docker-compose.yml`，从零开始完成一次宿主机 CPU 性能剖析，并在 Grafana 中选择时间范围分析火焰图。
+
+### 1. 启动服务
+
+先修改配置，确保 huatuo-bamai 和 huatuo-apiserver 有写入 ES 的能力，才能正常保存 profile 数据。配置文件通过 docker compose 挂载到容器中，因此直接修改项目根目录下的文件即可。
+
+huatuo-bamai.conf 中配置：
+```toml
+[Storage]
+    [Storage.Elasticsearch]
+        Address = "http://127.0.0.1:9200"
+        Index = "huatuo_bamai"
+        Username = "elastic"
+        Password = "huatuo-bamai"
+```
+
+huatuo-apiserver.conf 中配置：
+```toml
+[Elasticsearch]
+    Address = "http://127.0.0.1:9200"
+    Username = "elastic"
+    Password = "huatuo-bamai"
+    Index = "huatuo_bamai"
+
+[Auth]
+    [[Auth.Users]]
+        ID = "administrator"
+        BearerToken = "REPLACE_WITH_RANDOM_HEX"
+        Admin = true
+```
+
+然后项目根目录执行：
+
+```bash
+docker compose --project-directory ./build/docker up
+```
+
+> 不加 `-d`，方便观察各组件启动日志。如需后台运行可另开终端操作，或自行加 `-d`。
+
+启动后运行的组件及作用：
+
+| 服务 | 作用 | 默认端口 |
+| --- | --- | --- |
+| `huatuo-bamai` | 采集 Agent，执行 profiler 采样 | `19704` |
+| `huatuo-apiserver` | API 入口，创建任务、下发、查询火焰图 | `12740` |
+| `elasticsearch` | 存储 profile 数据（index：`huatuo_bamai`） | `9200` |
+| `grafana` | 火焰图面板展示 | `3000` |
+
+### 2. 确认服务就绪
+
+新开一个终端，执行以下命令确认服务就绪：
+
+```bash
+# Agent 健康检查
+$ curl -s http://localhost:19704/version | jq .data.name
+
+"huatuo-bamai"
+
+# API Server 健康检查
+$ curl -s http://localhost:12740/version | jq .data.name
+
+"huatuo-apiserver"
+
+# ES 索引状态
+$ curl -s -u elastic:huatuo-bamai "http://localhost:9200/_cat/indices/huatuo_bamai?v"
+
+health status index        uuid                   pri rep docs.count docs.deleted store.size pri.store.size dataset.size
+yellow open   huatuo_bamai 147fzHJhQ820GjCKFLh5ZQ   1   1         42            0    297.8kb        297.8kb      297.8kb
+```
+
+设置环境变量便于后续调用：
+
+```bash
+API_BASE="http://127.0.0.1:12740"
+API_TOKEN="REPLACE_WITH_RANDOM_HEX"
+```
+
+
+### 3. 创建宿主机 CPU 剖析任务
+
+以 `c` 语言（原生，覆盖 C/C++/Go 等）为例，对宿主机整体采样 30 秒：
+
+```bash
+# hostname 需要使用节点的实际主机名
+HOSTNAME=$(hostname)
+
+JOB_ID=$(curl -s -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"type\": \"cpu\",
+    \"language\": \"c\",
+    \"duration_seconds\": 30,
+    \"hostname\": \"${HOSTNAME}\"
+  }" \
+  "${API_BASE}/v1/profiles" | jq -r .data.id)
+
+echo "Job ID: $JOB_ID"
+```
+
+### 4. 验证数据已写入 ES
+
+每 10 秒生成一个聚合窗口，30 秒任务约产生 3 条采样数据，等待 30 秒后确认数据写入：
+
+```bash
+$ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
+  -H "Content-Type: application/json" \
+  -d '{"query":{"exists":{"field":"tracer_data.flamedata"}}}' | jq .count
+
+3
+```
+
+### 5. Grafana 面板查看火焰图
+
+示例是对本机进行剖析，打开 **Continuous Profiling (host)** 面板（容器是独立的面板）：
+
+- 地址：[http://localhost:3000/d/continuous-profiling-host](http://localhost:3000/d/continuous-profiling-host) （根据实际环境地址替换 `localhost:3000`）
+- 账号/密码：`admin / admin` （首次登陆提示修改默认账号密码，暂时跳过即可）
+
+操作步骤：
+
+1. 右上角选择时间范围，确保覆盖采样时间段
+2. 变量栏选择输入你的 `hostname` 和 选择 `type` 为 `process_cpu:cpu:nanoseconds:cpu:nanoseconds`
+3. 火焰图面板自动加载该时间窗口的聚合调用栈，随选择时间范围变化而自动聚合更新，focus block 可选定关心的调用栈
+4. symbol 排序、统计、筛选等操作在 top table 中进行，选择 Both 可展示
+
+![continuous-profiling-grafana-host.png](../img/continuous-profiling-grafana-host.png)
+
+其他更多丰富维度的剖析任务参考 Profiles API。
+
+
 ## 🌐 Profiles API
 
 huatuo-apiserver 通过 `/v1/profiles` 提供服务化的持续性能剖析能力。客户端可以创建 CPU 或内存剖析任务，查询任务状态和结果，或者停止、删除任务。任务由 huatuo-apiserver 调度到指定节点的 HUATUO Agent，采集结果可通过返回的 Grafana 链接或原始数据接口查看。
@@ -23,13 +156,13 @@ huatuo-apiserver 默认监听 `:12740`。以下示例使用环境变量统一设
 
 ```bash
 API_BASE="http://127.0.0.1:12740"
-API_TOKEN="<Auth.Users.BearerToken>"
+API_TOKEN="REPLACE_WITH_RANDOM_HEX"
 ```
 
 每个请求必须在 `Authorization` 请求头中传入配置的 Bearer token：
 
 ```text
-Authorization: Bearer <Auth.Users.BearerToken>
+Authorization: Bearer REPLACE_WITH_RANDOM_HEX
 ```
 
 非管理员用户需要配置 `/v1/profiles` 和 `/v1/profiles/**` 权限。权限可带
@@ -276,7 +409,7 @@ C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 CPU、虚拟内�
 
 通过容器 ID 自动解析容器内目标进程，适合 Docker 和 containerd 工作负载。Java 和 Python 还支持逗号分隔的多个 PID，并可限制同时运行的采集子进程数量，适用于同一服务的多实例或父子进程分析。
 
-## 🚀 功能使用
+## 🛠️ 功能使用
 
 ### 1. 构建与运行条件
 
