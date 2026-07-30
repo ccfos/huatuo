@@ -159,7 +159,7 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 			labels["cpuid"] = strconv.Itoa(cpuid)
 			for zoneid, zone := range lat.TotalLatency {
 				labels["zone"] = strconv.Itoa(zoneid)
-				metricData = append(metricData, metric.NewGaugeData("latency", float64(zone), "softirq latency", labels))
+				metricData = append(metricData, metric.NewCounterData("latency", float64(zone), "softirq latency", labels))
 			}
 		}
 	}

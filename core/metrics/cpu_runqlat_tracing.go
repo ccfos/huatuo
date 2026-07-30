@@ -155,10 +155,10 @@ func (c *runqlatCollector) fetchHostRunqlat(object bpf.BPF) []*metric.Data {
 	}
 
 	return []*metric.Data{
-		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone0), "cpu run queue latency for the host", map[string]string{"zone": "0"}),
-		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone1), "cpu run queue latency for the host", map[string]string{"zone": "1"}),
-		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone2), "cpu run queue latency for the host", map[string]string{"zone": "2"}),
-		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone3), "cpu run queue latency for the host", map[string]string{"zone": "3"}),
+		metric.NewCounterData("latency", float64(c.runqlatHost.NumLatencyZone0), "cpu run queue latency for the host", map[string]string{"zone": "0"}),
+		metric.NewCounterData("latency", float64(c.runqlatHost.NumLatencyZone1), "cpu run queue latency for the host", map[string]string{"zone": "1"}),
+		metric.NewCounterData("latency", float64(c.runqlatHost.NumLatencyZone2), "cpu run queue latency for the host", map[string]string{"zone": "2"}),
+		metric.NewCounterData("latency", float64(c.runqlatHost.NumLatencyZone3), "cpu run queue latency for the host", map[string]string{"zone": "3"}),
 	}
 }
 
@@ -196,10 +196,10 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 		}
 
 		data = append(data,
-			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone0), "cpu run queue latency for the containers", map[string]string{"zone": "0"}),
-			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone1), "cpu run queue latency for the containers", map[string]string{"zone": "1"}),
-			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone2), "cpu run queue latency for the containers", map[string]string{"zone": "2"}),
-			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone3), "cpu run queue latency for the containers", map[string]string{"zone": "3"}))
+			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone0), "cpu run queue latency for the containers", map[string]string{"zone": "0"}),
+			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone1), "cpu run queue latency for the containers", map[string]string{"zone": "1"}),
+			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone2), "cpu run queue latency for the containers", map[string]string{"zone": "2"}),
+			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone3), "cpu run queue latency for the containers", map[string]string{"zone": "3"}))
 	}
 
 	return append(data, c.fetchHostRunqlat(lease.BPF)...), nil
