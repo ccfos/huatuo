@@ -69,7 +69,7 @@ func (c *iolatencyTracing) fetchContainerIOlatency(object bpf.BPF) ([]*metric.Da
 				continue
 			}
 
-			metrics = append(metrics, metric.NewContainerGaugeData(
+			metrics = append(metrics, metric.NewContainerCounterData(
 				container, "blkdisk_q2c", float64(cnt),
 				"container blkio q2c latency",
 				map[string]string{"disk": diskDev, "zone": strconv.Itoa(zone)},
@@ -86,7 +86,7 @@ func (c *iolatencyTracing) fetchContainerIOlatency(object bpf.BPF) ([]*metric.Da
 				continue
 			}
 
-			metrics = append(metrics, metric.NewContainerGaugeData(
+			metrics = append(metrics, metric.NewContainerCounterData(
 				container, "blkdisk_d2c", float64(cnt),
 				"container blkio d2c latency",
 				map[string]string{"disk": diskDev, "zone": strconv.Itoa(zone)},
@@ -109,7 +109,7 @@ func (c *iolatencyTracing) fetchBlkDiskIOlatency(object bpf.BPF) ([]*metric.Data
 		diskDev := fmt.Sprintf("%d:%d", disk.Major, disk.Minor)
 
 		for zone, cnt := range disk.Q2CZone {
-			metrics = append(metrics, metric.NewGaugeData(
+			metrics = append(metrics, metric.NewCounterData(
 				"blkdisk_q2c", float64(cnt),
 				"the disk q2c latency",
 				map[string]string{"disk": diskDev, "zone": strconv.Itoa(zone)},
@@ -117,14 +117,14 @@ func (c *iolatencyTracing) fetchBlkDiskIOlatency(object bpf.BPF) ([]*metric.Data
 		}
 
 		for zone, cnt := range disk.D2CZone {
-			metrics = append(metrics, metric.NewGaugeData(
+			metrics = append(metrics, metric.NewCounterData(
 				"blkdisk_d2c", float64(cnt),
 				"the disk d2c latency",
 				map[string]string{"disk": diskDev, "zone": strconv.Itoa(zone)},
 			))
 		}
 
-		metrics = append(metrics, metric.NewGaugeData(
+		metrics = append(metrics, metric.NewCounterData(
 			"blkdisk_freeze", float64(disk.FreezeNr),
 			"the disk freeze event count",
 			map[string]string{"disk": diskDev},
