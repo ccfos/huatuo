@@ -104,7 +104,7 @@ func TestNewPerfEventReader_Failure(t *testing.T) {
 	mapID := b.MapIDByName(info.MapsInfo[0].Name)
 	require.NotZero(t, mapID)
 
-	_, err = newPerfEventReader(t.Context(), b.mapSpecs[mapID].cloned, 0)
+	_, err = newPerfEventReader(t.Context(), b.mapsByID[mapID].handle, 0)
 	assert.Error(t, err)
 }
 
@@ -179,18 +179,18 @@ func getPerfEventArrayMap(t *testing.T) *ebpf.Map {
 			continue
 		}
 
-		spec := b.mapSpecs[id]
-		if spec.cloned == nil {
+		m := b.mapsByID[id]
+		if m.handle == nil {
 			continue
 		}
 
-		mapInfo, err := spec.cloned.Info()
+		mapInfo, err := m.handle.Info()
 		if err != nil {
 			continue
 		}
 
 		if mapInfo.Type == ebpf.PerfEventArray {
-			return spec.cloned
+			return m.handle
 		}
 	}
 

@@ -384,8 +384,8 @@ func TestDefaultBPF_DumpPerCPUMap(t *testing.T) {
 
 	const mapID = uint32(1)
 	b := &defaultBPF{
-		mapSpecs: map[uint32]mapSpec{
-			mapID: {name: "per_cpu", cloned: m},
+		mapsByID: map[uint32]loadedMap{
+			mapID: {name: "per_cpu", handle: m},
 		},
 	}
 
@@ -403,9 +403,9 @@ func TestDefaultBPF_DumpPerCPUMap(t *testing.T) {
 //
 // Covered functions:
 // - Attach() error
-// - attachTracepoint(spec *programSpec, system, symbol string) error
-// - attachKprobe(spec *programSpec, symbol string, isRetprobe bool) error
-// - attachRawTracepoint(spec *programSpec, symbol string) error
+// - attachTracepoint(program *loadedProgram, system, symbol string) error
+// - attachKprobe(program *loadedProgram, symbol string, isRetprobe bool) error
+// - attachRawTracepoint(program *loadedProgram, symbol string) error
 func TestDefaultBPF_Attach(t *testing.T) {
 	b := loadMinimalBpfFromBytes(t)
 
@@ -679,7 +679,7 @@ func TestDefaultBPF_CloseOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	hasLinks := false
-	for _, p := range b.programSpecs {
+	for _, p := range b.programsByID {
 		if len(p.links) > 0 {
 			hasLinks = true
 			break
@@ -703,7 +703,7 @@ func TestDefaultBPF_DetachOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	hasLinks := false
-	for _, p := range b.programSpecs {
+	for _, p := range b.programsByID {
 		if len(p.links) > 0 {
 			hasLinks = true
 			break
@@ -715,7 +715,7 @@ func TestDefaultBPF_DetachOrder(t *testing.T) {
 	require.NoError(t, detachErr, "Detach should only close links and perf event, not programs or maps")
 
 	noLinks := true
-	for _, p := range b.programSpecs {
+	for _, p := range b.programsByID {
 		if len(p.links) > 0 {
 			noLinks = false
 			break

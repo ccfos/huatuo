@@ -50,17 +50,17 @@ func NewManager(opt *Option) error {
 // Close closes the bpf manager.
 func Close() {}
 
-type mapSpec struct {
+type loadedMap struct {
 	name   string
-	cloned *ebpf.Map
+	handle *ebpf.Map
 }
 
-type programSpec struct {
+type loadedProgram struct {
 	name          string
-	specType      ebpf.ProgramType
+	programType   ebpf.ProgramType
 	sectionName   string
 	sectionPrefix string
-	cloned        *ebpf.Program
+	handle        *ebpf.Program
 	links         map[string]link.Link
 }
 
@@ -69,14 +69,14 @@ type programSpec struct {
 // Close waits for in-flight operations before releasing kernel resources.
 // Attach and Detach are serialized with map and event operations.
 type defaultBPF struct {
-	mu              sync.RWMutex
-	name            string
-	mapSpecs        map[uint32]mapSpec
-	programSpecs    map[uint32]programSpec
-	mapName2IDs     map[string]uint32
-	programName2IDs map[string]uint32
-	innerPerfEvent  *perfEventAttach
-	isClosed        bool
+	mu               sync.RWMutex
+	name             string
+	mapsByID         map[uint32]loadedMap
+	programsByID     map[uint32]*loadedProgram
+	mapIDsByName     map[string]uint32
+	programIDsByName map[string]uint32
+	perfEvent        *perfEventAttach
+	isClosed         bool
 }
 
 // _ is a type assertion
@@ -143,8 +143,8 @@ func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 
 	b := &defaultBPF{
 		name:         bpfName,
-		mapSpecs:     make(map[uint32]mapSpec),
-		programSpecs: make(map[uint32]programSpec),
+		mapsByID:     make(map[uint32]loadedMap),
+		programsByID: make(map[uint32]*loadedProgram),
 	}
 
 	// maps
@@ -169,9 +169,9 @@ func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 			return nil, fmt.Errorf("clone map: %w", err)
 		}
 
-		b.mapSpecs[uint32(id)] = mapSpec{
+		b.mapsByID[uint32(id)] = loadedMap{
 			name:   spec.Name,
-			cloned: cloned,
+			handle: cloned,
 		}
 	}
 
@@ -197,24 +197,24 @@ func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 			return nil, fmt.Errorf("clone program: %w", err)
 		}
 
-		b.programSpecs[uint32(id)] = programSpec{
+		b.programsByID[uint32(id)] = &loadedProgram{
 			name:          spec.Name,
-			specType:      spec.Type,
+			programType:   spec.Type,
 			sectionName:   spec.SectionName,
 			sectionPrefix: strings.SplitN(spec.SectionName, "/", 2)[0],
-			cloned:        cloned,
+			handle:        cloned,
 			links:         make(map[string]link.Link),
 		}
 	}
 
-	b.mapName2IDs = make(map[string]uint32, len(b.mapSpecs))
-	for id, m := range b.mapSpecs {
-		b.mapName2IDs[m.name] = id
+	b.mapIDsByName = make(map[string]uint32, len(b.mapsByID))
+	for id, m := range b.mapsByID {
+		b.mapIDsByName[m.name] = id
 	}
 
-	b.programName2IDs = make(map[string]uint32, len(b.programSpecs))
-	for id, p := range b.programSpecs {
-		b.programName2IDs[p.name] = id
+	b.programIDsByName = make(map[string]uint32, len(b.programsByID))
+	for id, p := range b.programsByID {
+		b.programIDsByName[p.name] = id
 	}
 
 	log.Debugf("loaded bpf: %s", b)
@@ -231,11 +231,11 @@ func (b *defaultBPF) Name() string {
 
 // MapIDByName gets mapID by Name. Returns 0 if the name does not exist.
 func (b *defaultBPF) MapIDByName(name string) uint32 {
-	return b.mapName2IDs[name]
+	return b.mapIDsByName[name]
 }
 
 func (b *defaultBPF) mapByName(name string) (*ebpf.Map, error) {
-	mapID, ok := b.mapName2IDs[name]
+	mapID, ok := b.mapIDsByName[name]
 	if !ok {
 		return nil, fmt.Errorf("%w: name %q", ErrMapNotFound, name)
 	}
@@ -244,22 +244,22 @@ func (b *defaultBPF) mapByName(name string) (*ebpf.Map, error) {
 }
 
 func (b *defaultBPF) mapByID(mapID uint32) (*ebpf.Map, error) {
-	spec, ok := b.mapSpecs[mapID]
-	if !ok || spec.cloned == nil {
+	m, ok := b.mapsByID[mapID]
+	if !ok || m.handle == nil {
 		return nil, fmt.Errorf("%w: id %d", ErrMapNotFound, mapID)
 	}
 
-	return spec.cloned, nil
+	return m.handle, nil
 }
 
 // ProgIDByName gets progID by Name. Returns 0 if the name does not exist.
 func (b *defaultBPF) ProgIDByName(name string) uint32 {
-	return b.programName2IDs[name]
+	return b.programIDsByName[name]
 }
 
 // String returns the bpf string.
 func (b *defaultBPF) String() string {
-	return fmt.Sprintf("%s#%d#%d", b.name, len(b.mapName2IDs), len(b.programName2IDs))
+	return fmt.Sprintf("%s#%d#%d", b.name, len(b.mapIDsByName), len(b.programIDsByName))
 }
 
 func (b *defaultBPF) acquireReadLock() error {
@@ -288,12 +288,12 @@ func (b *defaultBPF) Info() (*Info, error) {
 	defer b.mu.RUnlock()
 
 	info := &Info{
-		MapsInfo:     make([]MapInfo, 0, len(b.mapSpecs)),
-		ProgramsInfo: make([]ProgramInfo, 0, len(b.programSpecs)),
+		MapsInfo:     make([]MapInfo, 0, len(b.mapsByID)),
+		ProgramsInfo: make([]ProgramInfo, 0, len(b.programsByID)),
 	}
 
 	// maps
-	for id, m := range b.mapSpecs {
+	for id, m := range b.mapsByID {
 		info.MapsInfo = append(info.MapsInfo, MapInfo{
 			ID:   id,
 			Name: m.name,
@@ -301,7 +301,7 @@ func (b *defaultBPF) Info() (*Info, error) {
 	}
 
 	// programs
-	for id, p := range b.programSpecs {
+	for id, p := range b.programsByID {
 		info.ProgramsInfo = append(info.ProgramsInfo, ProgramInfo{
 			ID:          id,
 			Name:        p.name,
@@ -325,7 +325,7 @@ func (b *defaultBPF) Close() error {
 
 	var closeErrs []error
 
-	for _, p := range b.programSpecs {
+	for _, p := range b.programsByID {
 		for linkKey, l := range p.links {
 			if l != nil {
 				if err := l.Close(); err != nil {
@@ -335,27 +335,27 @@ func (b *defaultBPF) Close() error {
 		}
 	}
 
-	for _, p := range b.programSpecs {
-		if p.cloned != nil {
-			if err := p.cloned.Close(); err != nil {
+	for _, p := range b.programsByID {
+		if p.handle != nil {
+			if err := p.handle.Close(); err != nil {
 				closeErrs = append(closeErrs, fmt.Errorf("close program %s: %w", p.name, err))
 			}
 		}
 	}
 
-	for _, m := range b.mapSpecs {
-		if m.cloned != nil {
-			if err := m.cloned.Close(); err != nil {
+	for _, m := range b.mapsByID {
+		if m.handle != nil {
+			if err := m.handle.Close(); err != nil {
 				closeErrs = append(closeErrs, fmt.Errorf("close map %s: %w", m.name, err))
 			}
 		}
 	}
 
-	if b.innerPerfEvent != nil {
-		if err := b.innerPerfEvent.detach(); err != nil {
+	if b.perfEvent != nil {
+		if err := b.perfEvent.detach(); err != nil {
 			closeErrs = append(closeErrs, fmt.Errorf("detach perf event: %w", err))
 		}
-		b.innerPerfEvent = nil
+		b.perfEvent = nil
 	}
 
 	return errors.Join(closeErrs...)
@@ -384,11 +384,11 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) error {
 
 	for _, opt := range opts {
 		progID := b.ProgIDByName(opt.ProgramName)
-		spec, ok := b.programSpecs[progID]
+		program, ok := b.programsByID[progID]
 		if !ok {
 			return fmt.Errorf("bpf %s: unknown program %q", b, opt.ProgramName)
 		}
-		switch spec.specType {
+		switch program.programType {
 		case ebpf.TracePoint:
 			// opt.Symbol: <system>/<symbol>
 			symbols := strings.SplitN(opt.Symbol, "/", 2)
@@ -396,31 +396,31 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) error {
 				return fmt.Errorf("bpf %s: invalid symbol: %q", b, opt.Symbol)
 			}
 
-			if err = b.attachTracepoint(&spec, symbols[0], symbols[1]); err != nil {
+			if err = b.attachTracepoint(program, symbols[0], symbols[1]); err != nil {
 				return fmt.Errorf("attach tracepoint: %w", err)
 			}
 		case ebpf.Kprobe:
 			// opt.Symbol: <symbol>[+<offset>]
 			// opt.Symbol: <symbol>
-			if err = b.attachKprobe(&spec, opt.Symbol, spec.sectionPrefix == "kretprobe"); err != nil {
+			if err = b.attachKprobe(program, opt.Symbol, program.sectionPrefix == "kretprobe"); err != nil {
 				return fmt.Errorf("attach kprobe: %w", err)
 			}
 		case ebpf.RawTracepoint:
 			// opt.Symbol: <symbol>
-			if err = b.attachRawTracepoint(&spec, opt.Symbol); err != nil {
+			if err = b.attachRawTracepoint(program, opt.Symbol); err != nil {
 				return fmt.Errorf("attach raw tracepoint: %w", err)
 			}
 		case ebpf.PerfEvent:
 			if err = b.attachPerfEvent(&perfEventOption{
 				samplePeriodFreq: opt.PerfEvent.SampleFreq,
 				sampleType:       sampleTypeFreq,
-				program:          spec.cloned,
+				program:          program.handle,
 				cpuIDs:           opt.PerfEvent.CPUIDs,
 			}); err != nil {
 				return fmt.Errorf("attach perf event: %w", err)
 			}
 		default:
-			return fmt.Errorf("bpf %s: unsupported program type: %q", b, spec.specType)
+			return fmt.Errorf("bpf %s: unsupported program type: %q", b, program.programType)
 		}
 	}
 
@@ -448,48 +448,48 @@ func (b *defaultBPF) attach() error {
 		}
 	}()
 
-	for _, spec := range b.programSpecs {
-		switch spec.specType {
+	for _, program := range b.programsByID {
+		switch program.programType {
 		case ebpf.TracePoint:
 			// section: tracepoint/<system>/<symbol>
-			symbols := strings.SplitN(spec.sectionName, "/", 3)
+			symbols := strings.SplitN(program.sectionName, "/", 3)
 			if len(symbols) != 3 {
-				return fmt.Errorf("bpf %s: invalid section name: %q", b, spec.sectionName)
+				return fmt.Errorf("bpf %s: invalid section name: %q", b, program.sectionName)
 			}
 
-			if err = b.attachTracepoint(&spec, symbols[1], symbols[2]); err != nil {
+			if err = b.attachTracepoint(program, symbols[1], symbols[2]); err != nil {
 				return fmt.Errorf("attach tracepoint: %w", err)
 			}
 		case ebpf.Kprobe:
 			// section: kprobe/<symbol>[+<offset>]
 			// section: kretprobe/<symbol>
-			symbols := strings.SplitN(spec.sectionName, "/", 2)
+			symbols := strings.SplitN(program.sectionName, "/", 2)
 			if len(symbols) != 2 {
-				return fmt.Errorf("bpf %s: invalid section name: %q", b, spec.sectionName)
+				return fmt.Errorf("bpf %s: invalid section name: %q", b, program.sectionName)
 			}
 
-			if err = b.attachKprobe(&spec, symbols[1], symbols[0] == "kretprobe"); err != nil {
+			if err = b.attachKprobe(program, symbols[1], symbols[0] == "kretprobe"); err != nil {
 				return fmt.Errorf("attach kprobe: %w", err)
 			}
 		case ebpf.RawTracepoint:
 			// section: raw_tracepoint/<symbol>
-			symbols := strings.SplitN(spec.sectionName, "/", 2)
+			symbols := strings.SplitN(program.sectionName, "/", 2)
 			if len(symbols) != 2 {
-				return fmt.Errorf("bpf %s: invalid section name: %q", b, spec.sectionName)
+				return fmt.Errorf("bpf %s: invalid section name: %q", b, program.sectionName)
 			}
 
-			if err = b.attachRawTracepoint(&spec, symbols[1]); err != nil {
+			if err = b.attachRawTracepoint(program, symbols[1]); err != nil {
 				return fmt.Errorf("attach raw tracepoint: %w", err)
 			}
 		default:
-			return fmt.Errorf("bpf %s: unsupported program type: %q", b, spec.specType)
+			return fmt.Errorf("bpf %s: unsupported program type: %q", b, program.programType)
 		}
 	}
 
 	return nil
 }
 
-func (b *defaultBPF) attachKprobe(spec *programSpec, symbol string, isRetprobe bool) error {
+func (b *defaultBPF) attachKprobe(program *loadedProgram, symbol string, isRetprobe bool) error {
 	if !isRetprobe { // kprobe
 		// : <symbol>[+<offset>]
 		// : <symbol>
@@ -509,75 +509,75 @@ func (b *defaultBPF) attachKprobe(spec *programSpec, symbol string, isRetprobe b
 		}
 
 		linkKey := fmt.Sprintf("%s+%d", symOffsets[0], offset)
-		if _, ok := spec.links[linkKey]; ok {
+		if _, ok := program.links[linkKey]; ok {
 			return fmt.Errorf("bpf %s: duplicate symbol: %q", b, symbol)
 		}
 
 		opts := link.KprobeOptions{
 			Offset: offset,
 		}
-		l, err := link.Kprobe(symOffsets[0], spec.cloned, &opts)
+		l, err := link.Kprobe(symOffsets[0], program.handle, &opts)
 		if err != nil {
 			return fmt.Errorf("attach kprobe %q: %w", symbol, err)
 		}
 
-		spec.links[linkKey] = l
-		log.Debugf("attach kprobe %s, links: %d", symbol, len(spec.links))
+		program.links[linkKey] = l
+		log.Debugf("attach kprobe %s, links: %d", symbol, len(program.links))
 	} else { // kretprobe
 		linkKey := symbol
-		if _, ok := spec.links[linkKey]; ok {
+		if _, ok := program.links[linkKey]; ok {
 			return fmt.Errorf("bpf %s: duplicate symbol: %q", b, symbol)
 		}
 
-		l, err := link.Kretprobe(symbol, spec.cloned, nil)
+		l, err := link.Kretprobe(symbol, program.handle, nil)
 		if err != nil {
 			return fmt.Errorf("attach kretprobe %q: %w", symbol, err)
 		}
 
-		spec.links[linkKey] = l
-		log.Debugf("attach kretprobe %s, links: %d", symbol, len(spec.links))
+		program.links[linkKey] = l
+		log.Debugf("attach kretprobe %s, links: %d", symbol, len(program.links))
 	}
 
 	return nil
 }
 
-func (b *defaultBPF) attachTracepoint(spec *programSpec, system, symbol string) error {
+func (b *defaultBPF) attachTracepoint(program *loadedProgram, system, symbol string) error {
 	linkKey := fmt.Sprintf("%s/%s", system, symbol)
-	if _, ok := spec.links[linkKey]; ok {
+	if _, ok := program.links[linkKey]; ok {
 		return fmt.Errorf("bpf %s: duplicate symbol: %q", b, symbol)
 	}
 
-	l, err := link.Tracepoint(system, symbol, spec.cloned, nil)
+	l, err := link.Tracepoint(system, symbol, program.handle, nil)
 	if err != nil {
 		return fmt.Errorf("attach tracepoint %s/%s: %w", system, symbol, err)
 	}
 
-	spec.links[linkKey] = l
-	log.Debugf("attach tracepoint %s/%s, links: %d", system, symbol, len(spec.links))
+	program.links[linkKey] = l
+	log.Debugf("attach tracepoint %s/%s, links: %d", system, symbol, len(program.links))
 	return nil
 }
 
-func (b *defaultBPF) attachRawTracepoint(spec *programSpec, symbol string) error {
+func (b *defaultBPF) attachRawTracepoint(program *loadedProgram, symbol string) error {
 	linkKey := symbol
-	if _, ok := spec.links[linkKey]; ok {
+	if _, ok := program.links[linkKey]; ok {
 		return fmt.Errorf("bpf %s: duplicate symbol: %q", b, symbol)
 	}
 
 	l, err := link.AttachRawTracepoint(link.RawTracepointOptions{
 		Name:    symbol,
-		Program: spec.cloned,
+		Program: program.handle,
 	})
 	if err != nil {
 		return fmt.Errorf("attach raw tracepoint %q: %w", symbol, err)
 	}
 
-	spec.links[linkKey] = l
-	log.Debugf("attach raw tracepoint %s, links: %d", symbol, len(spec.links))
+	program.links[linkKey] = l
+	log.Debugf("attach raw tracepoint %s, links: %d", symbol, len(program.links))
 	return nil
 }
 
 func (b *defaultBPF) attachPerfEvent(opt *perfEventOption) error {
-	if b.innerPerfEvent != nil {
+	if b.perfEvent != nil {
 		return fmt.Errorf("bpf %s: duplicate perf event attach", b)
 	}
 
@@ -590,7 +590,7 @@ func (b *defaultBPF) attachPerfEvent(opt *perfEventOption) error {
 		return fmt.Errorf("attach perf event: %w", err)
 	}
 
-	b.innerPerfEvent = event
+	b.perfEvent = event
 	log.Debugf("attach perf event, cpuIDs=%v", opt.cpuIDs)
 	return nil
 }
@@ -611,24 +611,23 @@ func (b *defaultBPF) Detach() error {
 func (b *defaultBPF) detach() error {
 	var detachErrs []error
 
-	for id, spec := range b.programSpecs {
-		for linkKey, l := range spec.links {
+	for _, program := range b.programsByID {
+		for linkKey, l := range program.links {
 			if l != nil {
 				if err := l.Close(); err != nil {
-					detachErrs = append(detachErrs, fmt.Errorf("detach link %s in program %s: %w", linkKey, spec.name, err))
-					log.Debugf("detach %s in %v: %v", spec.sectionName, spec.cloned, err)
+					detachErrs = append(detachErrs, fmt.Errorf("detach link %s in program %s: %w", linkKey, program.name, err))
+					log.Debugf("detach %s in %v: %v", program.sectionName, program.handle, err)
 				}
 			}
 		}
-		spec.links = make(map[string]link.Link)
-		b.programSpecs[id] = spec
+		program.links = make(map[string]link.Link)
 	}
 
-	if b.innerPerfEvent != nil {
-		if err := b.innerPerfEvent.detach(); err != nil {
+	if b.perfEvent != nil {
+		if err := b.perfEvent.detach(); err != nil {
 			detachErrs = append(detachErrs, fmt.Errorf("detach perf event: %w", err))
 		}
-		b.innerPerfEvent = nil
+		b.perfEvent = nil
 	}
 
 	return errors.Join(detachErrs...)
