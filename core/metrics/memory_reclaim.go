@@ -102,7 +102,7 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 }
 
 func (c *memoryCgroupReclaim) Start(ctx context.Context) (retErr error) {
-	obj, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	obj, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func (c *memoryCgroupReclaim) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	obj.WaitDetachByBreaker(childCtx, cancel)
+	obj.DetachOnContextDone(childCtx, cancel)
 
 	// wait stop
 	<-childCtx.Done()

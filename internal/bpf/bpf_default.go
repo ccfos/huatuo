@@ -82,28 +82,28 @@ type defaultBPF struct {
 // _ is a type assertion
 var _ BPF = (*defaultBPF)(nil)
 
-// LoadBpfFromBytes loads the bpf from bytes.
-func LoadBpfFromBytes(bpfName string, bpfBytes []byte, consts map[string]any) (BPF, error) {
+// LoadBPFFromBytes loads the BPF object from bytes.
+func LoadBPFFromBytes(bpfName string, bpfBytes []byte, consts map[string]any) (BPF, error) {
 	if err := validateName(bpfName); err != nil {
 		return nil, err
 	}
-	return loadBpfFromReader(bpfName, bytes.NewReader(bpfBytes), consts)
+	return loadBPFFromReader(bpfName, bytes.NewReader(bpfBytes), consts)
 }
 
-// LoadBpfFromCollectionSpec loads the bpf from a prepared collection spec.
+// LoadBPFFromCollectionSpec loads the BPF object from a prepared collection spec.
 // This allows callers to modify the spec (e.g., inject pcap filters) before loading.
-func LoadBpfFromCollectionSpec(bpfName string, spec *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
+func LoadBPFFromCollectionSpec(bpfName string, spec *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
 	if spec == nil {
 		return nil, errors.New("nil collection spec")
 	}
 	if err := validateName(bpfName); err != nil {
 		return nil, err
 	}
-	return loadBpfFromCollectionSpec(bpfName, spec, consts)
+	return loadBPFFromCollectionSpec(bpfName, spec, consts)
 }
 
-// LoadBpf loads the BPF object from the default directory and returns it.
-func LoadBpf(bpfName string, consts map[string]any) (BPF, error) {
+// LoadBPF loads the BPF object from the default directory and returns it.
+func LoadBPF(bpfName string, consts map[string]any) (BPF, error) {
 	if err := validateName(bpfName); err != nil {
 		return nil, err
 	}
@@ -113,20 +113,20 @@ func LoadBpf(bpfName string, consts map[string]any) (BPF, error) {
 	}
 	defer f.Close()
 
-	return loadBpfFromReader(bpfName, f, consts)
+	return loadBPFFromReader(bpfName, f, consts)
 }
 
-// loadBpfFromReader loads the bpf from reader.
-func loadBpfFromReader(bpfName string, rd io.ReaderAt, consts map[string]any) (BPF, error) {
+// loadBPFFromReader loads the BPF object from reader.
+func loadBPFFromReader(bpfName string, rd io.ReaderAt, consts map[string]any) (BPF, error) {
 	specs, err := ebpf.LoadCollectionSpecFromReader(rd)
 	if err != nil {
 		return nil, fmt.Errorf("parse BPF object %q: %w", bpfName, err)
 	}
 
-	return loadBpfFromCollectionSpec(bpfName, specs, consts)
+	return loadBPFFromCollectionSpec(bpfName, specs, consts)
 }
 
-func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
+func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, consts map[string]any) (BPF, error) {
 	// RewriteConstants
 	if consts != nil {
 		if err := specs.RewriteConstants(consts); err != nil {
@@ -252,8 +252,8 @@ func (b *defaultBPF) mapByID(mapID uint32) (*ebpf.Map, error) {
 	return m.handle, nil
 }
 
-// ProgIDByName gets progID by Name. Returns 0 if the name does not exist.
-func (b *defaultBPF) ProgIDByName(name string) uint32 {
+// ProgramIDByName returns the program ID for name, or zero if it does not exist.
+func (b *defaultBPF) ProgramIDByName(name string) uint32 {
 	return b.programIDsByName[name]
 }
 
@@ -383,7 +383,7 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) error {
 	}()
 
 	for _, opt := range opts {
-		progID := b.ProgIDByName(opt.ProgramName)
+		progID := b.ProgramIDByName(opt.ProgramName)
 		program, ok := b.programsByID[progID]
 		if !ok {
 			return fmt.Errorf("bpf %s: unknown program %q", b, opt.ProgramName)
@@ -633,8 +633,8 @@ func (b *defaultBPF) detach() error {
 	return errors.Join(detachErrs...)
 }
 
-// Loaded checks bpf is still loaded.
-func (b *defaultBPF) Loaded() (bool, error) {
+// IsLoaded reports whether the BPF object is still loaded.
+func (b *defaultBPF) IsLoaded() (bool, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -874,7 +874,7 @@ func (b *defaultBPF) DumpMapByName(mapName string) ([]MapItem, error) {
 	return items, nil
 }
 
-// WaitDetachByBreaker check the bpf's status.
-func (b *defaultBPF) WaitDetachByBreaker(ctx context.Context, cancel context.CancelFunc) {
+// DetachOnContextDone is a hook for context-driven detach handling.
+func (b *defaultBPF) DetachOnContextDone(ctx context.Context, cancel context.CancelFunc) {
 	// TODO: implement
 }

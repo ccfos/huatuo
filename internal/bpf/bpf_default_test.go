@@ -56,13 +56,13 @@ func TestManager_InitAndClose(t *testing.T) {
 	}
 }
 
-// TestLoad* tests the basic logic of LoadBpfFromBytes and LoadBpf.
-func TestLoadBpfFromBytes_InvalidELF(t *testing.T) {
-	_, err := LoadBpfFromBytes("invalid", []byte("not-an-elf"), nil)
+// TestLoad* tests the basic logic of LoadBPFFromBytes and LoadBPF.
+func TestLoadBPFFromBytes_InvalidELF(t *testing.T) {
+	_, err := LoadBPFFromBytes("invalid", []byte("not-an-elf"), nil)
 	require.Error(t, err)
 }
 
-// Empty names plus any cleaned form starting with ".." would let LoadBpf
+// Empty names plus any cleaned form starting with ".." would let LoadBPF
 // escape DefaultObjDir once joined.
 var rejectedNames = []string{
 	"",
@@ -105,56 +105,56 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
-func TestLoadBpfFromBytes_InvalidName(t *testing.T) {
+func TestLoadBPFFromBytes_InvalidName(t *testing.T) {
 	for _, name := range rejectedNames {
 		t.Run(name, func(t *testing.T) {
-			_, err := LoadBpfFromBytes(name, []byte("x"), nil)
+			_, err := LoadBPFFromBytes(name, []byte("x"), nil)
 			if !errors.Is(err, errInvalidName) {
-				t.Errorf("LoadBpfFromBytes(%q) = %v, want %v", name, err, errInvalidName)
+				t.Errorf("LoadBPFFromBytes(%q) = %v, want %v", name, err, errInvalidName)
 			}
 		})
 	}
 }
 
-func TestLoadBpf_InvalidName(t *testing.T) {
+func TestLoadBPF_InvalidName(t *testing.T) {
 	for _, name := range rejectedNames {
 		t.Run(name, func(t *testing.T) {
-			_, err := LoadBpf(name, nil)
+			_, err := LoadBPF(name, nil)
 			if !errors.Is(err, errInvalidName) {
-				t.Errorf("LoadBpf(%q) = %v, want %v", name, err, errInvalidName)
+				t.Errorf("LoadBPF(%q) = %v, want %v", name, err, errInvalidName)
 			}
 		})
 	}
 }
 
-func TestLoadBpf_FileNotFound(t *testing.T) {
+func TestLoadBPF_FileNotFound(t *testing.T) {
 	old := DefaultObjDir
 	DefaultObjDir = t.TempDir()
 	t.Cleanup(func() { DefaultObjDir = old })
 
-	_, err := LoadBpf("definitely_not_exists.o", nil)
+	_, err := LoadBPF("definitely_not_exists.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_DefaultObjDir_Empty(t *testing.T) {
+func TestLoadBPF_DefaultObjDir_Empty(t *testing.T) {
 	old := DefaultObjDir
 	DefaultObjDir = ""
 	t.Cleanup(func() { DefaultObjDir = old })
 
-	_, err := LoadBpf("definitely_not_exists.o", nil)
+	_, err := LoadBPF("definitely_not_exists.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_DefaultObjDir_Relative(t *testing.T) {
+func TestLoadBPF_DefaultObjDir_Relative(t *testing.T) {
 	old := DefaultObjDir
 	DefaultObjDir = "./definitely_not_exists_dir"
 	t.Cleanup(func() { DefaultObjDir = old })
 
-	_, err := LoadBpf("definitely_not_exists.o", nil)
+	_, err := LoadBPF("definitely_not_exists.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_DefaultObjDir_Unreadable(t *testing.T) {
+func TestLoadBPF_DefaultObjDir_Unreadable(t *testing.T) {
 	t.Helper()
 	old := DefaultObjDir
 	unreadableDir := filepath.Join(t.TempDir(), "nope")
@@ -165,11 +165,11 @@ func TestLoadBpf_DefaultObjDir_Unreadable(t *testing.T) {
 		_ = os.Chmod(unreadableDir, 0o700)
 	})
 
-	_, err := LoadBpf("anything.o", nil)
+	_, err := LoadBPF("anything.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_LoadsFromDir(t *testing.T) {
+func TestLoadBPF_LoadsFromDir(t *testing.T) {
 	t.Helper()
 	requireBPFPermission(t)
 
@@ -182,7 +182,7 @@ func TestLoadBpf_LoadsFromDir(t *testing.T) {
 	objPath := filepath.Join(DefaultObjDir, "test_minimal.elf")
 	require.NoError(t, os.WriteFile(objPath, objBytes, 0o600))
 
-	b, err := LoadBpf("test_minimal.elf", nil)
+	b, err := LoadBPF("test_minimal.elf", nil)
 	if errors.Is(err, ebpf.ErrNotSupported) {
 		t.Skipf("skipping: ebpf not supported: %v", err)
 	}
@@ -197,10 +197,10 @@ func TestLoadBpf_LoadsFromDir(t *testing.T) {
 // Covered functions:
 // - Name()
 // - MapIDByName(name string) uint32
-// - ProgIDByName(name string) uint32
+// - ProgramIDByName(name string) uint32
 // - String() string
 // - Info() (*Info, error)
-// - Loaded() (bool, error)
+// - IsLoaded() (bool, error)
 // - Close() error
 func TestDefaultBPF_Lifecycle_And_Accessors(t *testing.T) {
 	b := loadMinimalBpfFromBytes(t)
@@ -222,9 +222,9 @@ func TestDefaultBPF_Lifecycle_And_Accessors(t *testing.T) {
 			},
 		},
 		{
-			"ProgIDByName",
+			"ProgramIDByName",
 			func(t *testing.T) {
-				assert.Zero(t, b.ProgIDByName("non_existent_prog"))
+				assert.Zero(t, b.ProgramIDByName("non_existent_prog"))
 			},
 		},
 		{
@@ -245,9 +245,9 @@ func TestDefaultBPF_Lifecycle_And_Accessors(t *testing.T) {
 			},
 		},
 		{
-			"Loaded",
+			"IsLoaded",
 			func(t *testing.T) {
-				loaded, err := b.Loaded()
+				loaded, err := b.IsLoaded()
 				require.NoError(t, err)
 				assert.True(t, loaded)
 			},
@@ -579,11 +579,11 @@ func TestDefaultBPF_EventPipe_Flow(t *testing.T) {
 	}
 }
 
-func TestDefaultBPF_WaitDetachByBreaker(t *testing.T) {
+func TestDefaultBPF_DetachOnContextDone(t *testing.T) {
 	b := &defaultBPF{}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	b.WaitDetachByBreaker(ctx, cancel)
+	b.DetachOnContextDone(ctx, cancel)
 }
 
 func loadMinimalObjBytes(t *testing.T) []byte {
@@ -602,7 +602,7 @@ func loadMinimalBpfFromBytes(t *testing.T) *defaultBPF {
 	requireBPFPermission(t)
 
 	objBytes := loadMinimalObjBytes(t)
-	obj, err := LoadBpfFromBytes("test_minimal.elf", objBytes, nil)
+	obj, err := LoadBPFFromBytes("test_minimal.elf", objBytes, nil)
 	if errors.Is(err, ebpf.ErrNotSupported) {
 		t.Skipf("skipping: ebpf not supported: %v", err)
 	}
@@ -730,7 +730,7 @@ func TestDefaultBPF_Close_Idempotent(t *testing.T) {
 	require.NoError(t, b.Close())
 	require.NoError(t, b.Close())
 
-	loaded, err := b.Loaded()
+	loaded, err := b.IsLoaded()
 	require.NoError(t, err)
 	require.False(t, loaded)
 }

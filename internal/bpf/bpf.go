@@ -26,8 +26,8 @@ type BPF interface {
 	// MapIDByName gets mapID by Name.
 	MapIDByName(name string) uint32
 
-	// ProgIDByName gets progID by Name.
-	ProgIDByName(name string) uint32
+	// ProgramIDByName returns the program ID for name.
+	ProgramIDByName(name string) uint32
 
 	// String returns the bpf string.
 	String() string
@@ -47,8 +47,8 @@ type BPF interface {
 	// Detach all programs.
 	Detach() error
 
-	// Loaded checks bpf is still loaded.
-	Loaded() (bool, error)
+	// IsLoaded reports whether the BPF object is still loaded.
+	IsLoaded() (bool, error)
 
 	// EventPipe gets event-pipe and returns a PerfEventReader.
 	EventPipe(ctx context.Context, mapID, perCPUBufSize uint32) (PerfEventReader, error)
@@ -78,6 +78,6 @@ type BPF interface {
 	// DumpMapByName dump all the context of the map.
 	DumpMapByName(mapName string) ([]MapItem, error)
 
-	// WaitDetachByBreaker check the bpf's status.
-	WaitDetachByBreaker(ctx context.Context, cancel context.CancelFunc)
+	// DetachOnContextDone is a hook for context-driven detach handling.
+	DetachOnContextDone(ctx context.Context, cancel context.CancelFunc)
 }

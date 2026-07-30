@@ -37,5 +37,5 @@ func Load(bpfName string, obj []byte, filterExpr string, consts map[string]any) 
 		return nil, fmt.Errorf("inject filters: %w", err)
 	}
 
-	return bpf.LoadBpfFromCollectionSpec(bpfName, spec, consts)
+	return bpf.LoadBPFFromCollectionSpec(bpfName, spec, consts)
 }

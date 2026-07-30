@@ -75,7 +75,7 @@ type iolatencyTracing struct {
 }
 
 func (c *iolatencyTracing) Start(ctx context.Context) (retErr error) {
-	object, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	object, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
@@ -106,7 +106,7 @@ func (c *iolatencyTracing) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	object.WaitDetachByBreaker(childCtx, cancel)
+	object.DetachOnContextDone(childCtx, cancel)
 
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()

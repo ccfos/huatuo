@@ -74,7 +74,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	p.dbg = bpf.NewDbg(pctx.LogBpfDebug)
 
-	b, err := bpf.LoadBpf(
+	b, err := bpf.LoadBPF(
 		"native_cpu_profiler.o",
 		p.dbg.WithBpfDbg(newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)),
 	)

@@ -55,7 +55,7 @@ const cssCacheTTL = 5 * time.Second
 //
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim_events.c -o $BPF_DIR/memory_reclaim_events.o
 func (c *memoryReclaimTracing) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), map[string]any{
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), map[string]any{
 		"deltath": cfg.MemoryReclaim.BlockedThreshold,
 	})
 	if err != nil {
@@ -72,7 +72,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	b.DetachOnContextDone(childCtx, cancel)
 
 	var (
 		cssToContainer map[uint64]*pod.Container

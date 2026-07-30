@@ -87,7 +87,7 @@ func (c *reclaimCompact) Update() ([]*metric.Data, error) {
 
 // Start detect work, load bpf and wait data
 func (c *reclaimCompact) Start(ctx context.Context) (retErr error) {
-	obj, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	obj, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
@@ -105,7 +105,7 @@ func (c *reclaimCompact) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	obj.WaitDetachByBreaker(childCtx, cancel)
+	obj.DetachOnContextDone(childCtx, cancel)
 
 	// wait stop
 	<-childCtx.Done()

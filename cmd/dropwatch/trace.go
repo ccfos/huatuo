@@ -92,7 +92,7 @@ func mainAction(c *cli.Context) error {
 	}
 	defer reader.Close()
 
-	bpfObj.WaitDetachByBreaker(runCtx, cancel)
+	bpfObj.DetachOnContextDone(runCtx, cancel)
 
 	sink, sinkCleanup, err := newWriter(&writerOption{
 		outputFmt: outputFmt,

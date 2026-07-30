@@ -48,7 +48,7 @@ func newTxqueueTimeout() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *txqueueTimeout) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func (c *txqueueTimeout) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	b.DetachOnContextDone(childCtx, cancel)
 
 	for {
 		select {
