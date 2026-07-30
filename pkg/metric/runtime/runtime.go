@@ -20,16 +20,26 @@ package runtime
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+
+	"huatuo-bamai/pkg/metric"
 )
 
 // RegisterCollector registers the standard process and Go runtime
 // collectors with reg, prefixing their metric names with namespace so
 // they share a consistent prefix with the rest of the HuaTuo metrics.
+// All registered metrics carry host and region labels for unified
+// dashboard variable filtering.
 func RegisterCollector(reg *prometheus.Registry, namespace string) {
-	reg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{
-		Namespace: namespace,
-	}))
+	prefix := ""
+	if namespace != "" {
+		prefix = namespace + "_"
+	}
 
-	prefixedReg := prometheus.WrapRegistererWithPrefix(namespace+"_", reg)
-	prefixedReg.MustRegister(collectors.NewGoCollector())
+	labeledReg := prometheus.WrapRegistererWith(prometheus.Labels{
+		metric.LabelHost:   metric.DefaultHostname(),
+		metric.LabelRegion: metric.DefaultRegion(),
+	}, prometheus.WrapRegistererWithPrefix(prefix, reg))
+
+	labeledReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	labeledReg.MustRegister(collectors.NewGoCollector())
 }
