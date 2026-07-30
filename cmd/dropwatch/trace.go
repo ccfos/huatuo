@@ -33,10 +33,10 @@ func mainAction(c *cli.Context) error {
 	duration := c.Int(cliFlagDuration)
 	outputFmt := c.String(cliFlagOutput)
 
-	if err := bpf.NewManager(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
-		return fmt.Errorf("dropwatch: init bpf manager: %w", err)
+	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
+		return fmt.Errorf("dropwatch: init bpf: %w", err)
 	}
-	defer bpf.Close()
+	defer bpf.Shutdown()
 
 	netdevFilterMode, devIfindexes, err := parseNetdevFilterFlags(c.String(cliFlagDevice), c.String(cliFlagDeviceExcluded))
 	if err != nil {

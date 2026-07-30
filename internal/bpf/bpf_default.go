@@ -39,16 +39,16 @@ import (
 
 var DefaultObjDir = "bpf"
 
-// NewManager initializes the bpf manager.
-func NewManager(opt *Option) error {
+// Init initializes package-level BPF resources.
+func Init(_ *Option) error {
 	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
 		Cur: unix.RLIM_INFINITY,
 		Max: unix.RLIM_INFINITY,
 	})
 }
 
-// Close closes the bpf manager.
-func Close() {}
+// Shutdown releases package-level BPF resources.
+func Shutdown() {}
 
 type loadedMap struct {
 	name   string

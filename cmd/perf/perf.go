@@ -57,12 +57,12 @@ func mainAction(ctx *cli.Context) error {
 		targetCssAddr = c.CgroupCss["cpu"]
 	}
 
-	if err := bpf.NewManager(&bpf.Option{
+	if err := bpf.Init(&bpf.Option{
 		KeepaliveTimeout: optDuration,
 	}); err != nil {
 		return fmt.Errorf("init bpf err %w", err)
 	}
-	defer bpf.Close()
+	defer bpf.Shutdown()
 
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {

@@ -46,14 +46,9 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestManager_InitAndClose(t *testing.T) {
-	// Just verify they don't panic.
-	if err := NewManager(nil); err != nil {
-		// It might fail on non-Linux or without permissions.
-		t.Fatalf("InitBpfManager returned: %v", err)
-	} else {
-		Close()
-	}
+func TestInitAndShutdown(t *testing.T) {
+	require.NoError(t, Init(nil))
+	Shutdown()
 }
 
 // TestLoad* tests the basic logic of LoadBPFFromBytes and LoadBPF.
