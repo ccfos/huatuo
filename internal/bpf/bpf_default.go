@@ -39,6 +39,9 @@ import (
 
 var DefaultObjDir = "bpf"
 
+// ErrMapNotFound indicates that a requested BPF map is unavailable.
+var ErrMapNotFound = errors.New("bpf: map not found")
+
 // NewManager initializes the bpf manager.
 func NewManager(opt *Option) error {
 	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
@@ -234,6 +237,24 @@ func (b *defaultBPF) Name() string {
 // MapIDByName gets mapID by Name. Returns 0 if the name does not exist.
 func (b *defaultBPF) MapIDByName(name string) uint32 {
 	return b.mapName2IDs[name]
+}
+
+func (b *defaultBPF) requireMapIDByName(name string) (uint32, error) {
+	mapID, ok := b.mapName2IDs[name]
+	if !ok {
+		return 0, fmt.Errorf("%w: name %q", ErrMapNotFound, name)
+	}
+
+	return mapID, nil
+}
+
+func (b *defaultBPF) mapByID(mapID uint32) (*ebpf.Map, error) {
+	spec, ok := b.mapSpecs[mapID]
+	if !ok || spec.cloned == nil {
+		return nil, fmt.Errorf("%w: ID %d", ErrMapNotFound, mapID)
+	}
+
+	return spec.cloned, nil
 }
 
 // ProgIDByName gets progID by Name. Returns 0 if the name does not exist.
@@ -643,7 +664,12 @@ func (b *defaultBPF) EventPipe(ctx context.Context, mapID, perCPUBufSize uint32)
 }
 
 func (b *defaultBPF) eventPipe(ctx context.Context, mapID, perCPUBufSize uint32) (PerfEventReader, error) {
-	reader, err := newPerfEventReader(ctx, b.mapSpecs[mapID].cloned, int(perCPUBufSize))
+	m, err := b.mapByID(mapID)
+	if err != nil {
+		return nil, err
+	}
+
+	reader, err := newPerfEventReader(ctx, m, int(perCPUBufSize))
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +685,12 @@ func (b *defaultBPF) EventPipeByName(ctx context.Context, mapName string, perCPU
 	}
 	defer b.mu.RUnlock()
 
-	return b.eventPipe(ctx, b.MapIDByName(mapName), perCPUBufSize)
+	mapID, err := b.requireMapIDByName(mapName)
+	if err != nil {
+		return nil, err
+	}
+
+	return b.eventPipe(ctx, mapID, perCPUBufSize)
 }
 
 // AttachAndEventPipe attaches and event-pipe and returns a PerfEventReader.
@@ -697,7 +728,12 @@ func (b *defaultBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 }
 
 func (b *defaultBPF) readMap(mapID uint32, key []byte) ([]byte, error) {
-	val, err := b.mapSpecs[mapID].cloned.LookupBytes(key)
+	m, err := b.mapByID(mapID)
+	if err != nil {
+		return nil, err
+	}
+
+	val, err := m.LookupBytes(key)
 	if err != nil {
 		return nil, err
 	}
@@ -716,7 +752,10 @@ func (b *defaultBPF) WriteMapItems(mapID uint32, items []MapItem) error {
 }
 
 func (b *defaultBPF) writeMapItems(mapID uint32, items []MapItem) error {
-	m := b.mapSpecs[mapID].cloned
+	m, err := b.mapByID(mapID)
+	if err != nil {
+		return err
+	}
 
 	for _, item := range items {
 		if err := m.Update(item.Key, item.Value, ebpf.UpdateAny); err != nil {
@@ -737,7 +776,10 @@ func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
 }
 
 func (b *defaultBPF) deleteMapItems(mapID uint32, keys [][]byte) error {
-	m := b.mapSpecs[mapID].cloned
+	m, err := b.mapByID(mapID)
+	if err != nil {
+		return err
+	}
 
 	for _, k := range keys {
 		if err := m.Delete(k); err != nil {
@@ -758,7 +800,10 @@ func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
 }
 
 func (b *defaultBPF) dumpMap(mapID uint32) ([]MapItem, error) {
-	m := b.mapSpecs[mapID].cloned
+	m, err := b.mapByID(mapID)
+	if err != nil {
+		return nil, err
+	}
 
 	switch m.Type() {
 	case ebpf.PerCPUHash, ebpf.PerCPUArray, ebpf.LRUCPUHash, ebpf.PerCPUCGroupStorage:
@@ -828,7 +873,12 @@ func (b *defaultBPF) DumpMapByName(mapName string) ([]MapItem, error) {
 	}
 	defer b.mu.RUnlock()
 
-	return b.dumpMap(b.MapIDByName(mapName))
+	mapID, err := b.requireMapIDByName(mapName)
+	if err != nil {
+		return nil, err
+	}
+
+	return b.dumpMap(mapID)
 }
 
 // WaitDetachByBreaker check the bpf's status.
