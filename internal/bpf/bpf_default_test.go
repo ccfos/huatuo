@@ -351,7 +351,7 @@ func TestDefaultBPF_MapOperations(t *testing.T) {
 			fn: func(t *testing.T) {
 				err := b.WriteMapItems(99999, []MapItem{{Key: key, Value: val}})
 				require.ErrorIs(t, err, ErrMapNotFound)
-				assert.EqualError(t, err, "bpf: map not found: ID 99999")
+				assert.EqualError(t, err, "bpf: map not found: id 99999")
 			},
 		},
 	}
@@ -403,9 +403,9 @@ func TestDefaultBPF_DumpPerCPUMap(t *testing.T) {
 //
 // Covered functions:
 // - Attach() error
-// - attachTracepoint(progID uint32, system, symbol string) error
-// - attachKprobe(progID uint32, symbol string, isRetprobe bool) error
-// - attachRawTracepoint(progID uint32, symbol string) error
+// - attachTracepoint(spec *programSpec, system, symbol string) error
+// - attachKprobe(spec *programSpec, symbol string, isRetprobe bool) error
+// - attachRawTracepoint(spec *programSpec, symbol string) error
 func TestDefaultBPF_Attach(t *testing.T) {
 	b := loadMinimalBpfFromBytes(t)
 

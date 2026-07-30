@@ -19,6 +19,9 @@ import "errors"
 // ErrClosed is returned when an operation uses a closed BPF object.
 var ErrClosed = errors.New("bpf: object is closed")
 
+// ErrMapNotFound indicates that a requested BPF map is unavailable.
+var ErrMapNotFound = errors.New("bpf: map not found")
+
 type Option struct {
 	KeepaliveTimeout int
 }

@@ -39,9 +39,6 @@ import (
 
 var DefaultObjDir = "bpf"
 
-// ErrMapNotFound indicates that a requested BPF map is unavailable.
-var ErrMapNotFound = errors.New("bpf: map not found")
-
 // NewManager initializes the bpf manager.
 func NewManager(opt *Option) error {
 	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
@@ -210,13 +207,11 @@ func loadBpfFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 		}
 	}
 
-	// mapName2IDs
 	b.mapName2IDs = make(map[string]uint32, len(b.mapSpecs))
 	for id, m := range b.mapSpecs {
 		b.mapName2IDs[m.name] = id
 	}
 
-	// programName2IDs
 	b.programName2IDs = make(map[string]uint32, len(b.programSpecs))
 	for id, p := range b.programSpecs {
 		b.programName2IDs[p.name] = id
@@ -239,19 +234,19 @@ func (b *defaultBPF) MapIDByName(name string) uint32 {
 	return b.mapName2IDs[name]
 }
 
-func (b *defaultBPF) requireMapIDByName(name string) (uint32, error) {
+func (b *defaultBPF) mapByName(name string) (*ebpf.Map, error) {
 	mapID, ok := b.mapName2IDs[name]
 	if !ok {
-		return 0, fmt.Errorf("%w: name %q", ErrMapNotFound, name)
+		return nil, fmt.Errorf("%w: name %q", ErrMapNotFound, name)
 	}
 
-	return mapID, nil
+	return b.mapByID(mapID)
 }
 
 func (b *defaultBPF) mapByID(mapID uint32) (*ebpf.Map, error) {
 	spec, ok := b.mapSpecs[mapID]
 	if !ok || spec.cloned == nil {
-		return nil, fmt.Errorf("%w: ID %d", ErrMapNotFound, mapID)
+		return nil, fmt.Errorf("%w: id %d", ErrMapNotFound, mapID)
 	}
 
 	return spec.cloned, nil
@@ -401,18 +396,18 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) error {
 				return fmt.Errorf("bpf %s: invalid symbol: %q", b, opt.Symbol)
 			}
 
-			if err = b.attachTracepoint(progID, symbols[0], symbols[1]); err != nil {
+			if err = b.attachTracepoint(&spec, symbols[0], symbols[1]); err != nil {
 				return fmt.Errorf("attach tracepoint: %w", err)
 			}
 		case ebpf.Kprobe:
 			// opt.Symbol: <symbol>[+<offset>]
 			// opt.Symbol: <symbol>
-			if err = b.attachKprobe(progID, opt.Symbol, spec.sectionPrefix == "kretprobe"); err != nil {
+			if err = b.attachKprobe(&spec, opt.Symbol, spec.sectionPrefix == "kretprobe"); err != nil {
 				return fmt.Errorf("attach kprobe: %w", err)
 			}
 		case ebpf.RawTracepoint:
 			// opt.Symbol: <symbol>
-			if err = b.attachRawTracepoint(progID, opt.Symbol); err != nil {
+			if err = b.attachRawTracepoint(&spec, opt.Symbol); err != nil {
 				return fmt.Errorf("attach raw tracepoint: %w", err)
 			}
 		case ebpf.PerfEvent:
@@ -453,7 +448,7 @@ func (b *defaultBPF) attach() error {
 		}
 	}()
 
-	for progID, spec := range b.programSpecs {
+	for _, spec := range b.programSpecs {
 		switch spec.specType {
 		case ebpf.TracePoint:
 			// section: tracepoint/<system>/<symbol>
@@ -462,7 +457,7 @@ func (b *defaultBPF) attach() error {
 				return fmt.Errorf("bpf %s: invalid section name: %q", b, spec.sectionName)
 			}
 
-			if err = b.attachTracepoint(progID, symbols[1], symbols[2]); err != nil {
+			if err = b.attachTracepoint(&spec, symbols[1], symbols[2]); err != nil {
 				return fmt.Errorf("attach tracepoint: %w", err)
 			}
 		case ebpf.Kprobe:
@@ -473,7 +468,7 @@ func (b *defaultBPF) attach() error {
 				return fmt.Errorf("bpf %s: invalid section name: %q", b, spec.sectionName)
 			}
 
-			if err = b.attachKprobe(progID, symbols[1], symbols[0] == "kretprobe"); err != nil {
+			if err = b.attachKprobe(&spec, symbols[1], symbols[0] == "kretprobe"); err != nil {
 				return fmt.Errorf("attach kprobe: %w", err)
 			}
 		case ebpf.RawTracepoint:
@@ -483,7 +478,7 @@ func (b *defaultBPF) attach() error {
 				return fmt.Errorf("bpf %s: invalid section name: %q", b, spec.sectionName)
 			}
 
-			if err = b.attachRawTracepoint(progID, symbols[1]); err != nil {
+			if err = b.attachRawTracepoint(&spec, symbols[1]); err != nil {
 				return fmt.Errorf("attach raw tracepoint: %w", err)
 			}
 		default:
@@ -494,9 +489,7 @@ func (b *defaultBPF) attach() error {
 	return nil
 }
 
-func (b *defaultBPF) attachKprobe(progID uint32, symbol string, isRetprobe bool) error {
-	spec := b.programSpecs[progID]
-
+func (b *defaultBPF) attachKprobe(spec *programSpec, symbol string, isRetprobe bool) error {
 	if !isRetprobe { // kprobe
 		// : <symbol>[+<offset>]
 		// : <symbol>
@@ -548,9 +541,7 @@ func (b *defaultBPF) attachKprobe(progID uint32, symbol string, isRetprobe bool)
 	return nil
 }
 
-func (b *defaultBPF) attachTracepoint(progID uint32, system, symbol string) error {
-	spec := b.programSpecs[progID]
-
+func (b *defaultBPF) attachTracepoint(spec *programSpec, system, symbol string) error {
 	linkKey := fmt.Sprintf("%s/%s", system, symbol)
 	if _, ok := spec.links[linkKey]; ok {
 		return fmt.Errorf("bpf %s: duplicate symbol: %q", b, symbol)
@@ -566,9 +557,7 @@ func (b *defaultBPF) attachTracepoint(progID uint32, system, symbol string) erro
 	return nil
 }
 
-func (b *defaultBPF) attachRawTracepoint(progID uint32, symbol string) error {
-	spec := b.programSpecs[progID]
-
+func (b *defaultBPF) attachRawTracepoint(spec *programSpec, symbol string) error {
 	linkKey := symbol
 	if _, ok := spec.links[linkKey]; ok {
 		return fmt.Errorf("bpf %s: duplicate symbol: %q", b, symbol)
@@ -660,10 +649,6 @@ func (b *defaultBPF) EventPipe(ctx context.Context, mapID, perCPUBufSize uint32)
 	}
 	defer b.mu.RUnlock()
 
-	return b.eventPipe(ctx, mapID, perCPUBufSize)
-}
-
-func (b *defaultBPF) eventPipe(ctx context.Context, mapID, perCPUBufSize uint32) (PerfEventReader, error) {
 	m, err := b.mapByID(mapID)
 	if err != nil {
 		return nil, err
@@ -685,12 +670,18 @@ func (b *defaultBPF) EventPipeByName(ctx context.Context, mapName string, perCPU
 	}
 	defer b.mu.RUnlock()
 
-	mapID, err := b.requireMapIDByName(mapName)
+	m, err := b.mapByName(mapName)
 	if err != nil {
 		return nil, err
 	}
 
-	return b.eventPipe(ctx, mapID, perCPUBufSize)
+	reader, err := newPerfEventReader(ctx, m, int(perCPUBufSize))
+	if err != nil {
+		return nil, err
+	}
+
+	log.Debugf("event-pipe %s, perCPUBufSize %d", mapName, perCPUBufSize)
+	return reader, nil
 }
 
 // AttachAndEventPipe attaches and event-pipe and returns a PerfEventReader.
@@ -700,7 +691,12 @@ func (b *defaultBPF) AttachAndEventPipe(ctx context.Context, mapName string, per
 	}
 	defer b.mu.Unlock()
 
-	reader, err := b.eventPipe(ctx, b.MapIDByName(mapName), perCPUBufSize)
+	m, err := b.mapByName(mapName)
+	if err != nil {
+		return nil, err
+	}
+
+	reader, err := newPerfEventReader(ctx, m, int(perCPUBufSize))
 	if err != nil {
 		return nil, err
 	}
@@ -724,10 +720,6 @@ func (b *defaultBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 	}
 	defer b.mu.RUnlock()
 
-	return b.readMap(mapID, key)
-}
-
-func (b *defaultBPF) readMap(mapID uint32, key []byte) ([]byte, error) {
 	m, err := b.mapByID(mapID)
 	if err != nil {
 		return nil, err
@@ -748,10 +740,6 @@ func (b *defaultBPF) WriteMapItems(mapID uint32, items []MapItem) error {
 	}
 	defer b.mu.RUnlock()
 
-	return b.writeMapItems(mapID, items)
-}
-
-func (b *defaultBPF) writeMapItems(mapID uint32, items []MapItem) error {
 	m, err := b.mapByID(mapID)
 	if err != nil {
 		return err
@@ -772,10 +760,6 @@ func (b *defaultBPF) DeleteMapItems(mapID uint32, keys [][]byte) error {
 	}
 	defer b.mu.RUnlock()
 
-	return b.deleteMapItems(mapID, keys)
-}
-
-func (b *defaultBPF) deleteMapItems(mapID uint32, keys [][]byte) error {
 	m, err := b.mapByID(mapID)
 	if err != nil {
 		return err
@@ -796,18 +780,23 @@ func (b *defaultBPF) DumpMap(mapID uint32) ([]MapItem, error) {
 	}
 	defer b.mu.RUnlock()
 
-	return b.dumpMap(mapID)
-}
-
-func (b *defaultBPF) dumpMap(mapID uint32) ([]MapItem, error) {
 	m, err := b.mapByID(mapID)
 	if err != nil {
 		return nil, err
 	}
 
+	items, err := b.dumpMap(m)
+	if err != nil {
+		return nil, fmt.Errorf("map %d: %w", mapID, err)
+	}
+
+	return items, nil
+}
+
+func (b *defaultBPF) dumpMap(m *ebpf.Map) ([]MapItem, error) {
 	switch m.Type() {
 	case ebpf.PerCPUHash, ebpf.PerCPUArray, ebpf.LRUCPUHash, ebpf.PerCPUCGroupStorage:
-		return dumpPerCPUMap(mapID, m)
+		return dumpPerCPUMap(m)
 	}
 
 	var items []MapItem
@@ -821,13 +810,13 @@ func (b *defaultBPF) dumpMap(mapID uint32) ([]MapItem, error) {
 		})
 	}
 	if err := iter.Err(); err != nil {
-		return nil, fmt.Errorf("map %d: iterate: %w", mapID, err)
+		return nil, fmt.Errorf("iterate: %w", err)
 	}
 
 	return items, nil
 }
 
-func dumpPerCPUMap(mapID uint32, m *ebpf.Map) ([]MapItem, error) {
+func dumpPerCPUMap(m *ebpf.Map) ([]MapItem, error) {
 	var (
 		items       []MapItem
 		previousKey any
@@ -844,17 +833,17 @@ func dumpPerCPUMap(mapID uint32, m *ebpf.Map) ([]MapItem, error) {
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("map %d: iterate: get next key: %w", mapID, err)
+			return nil, fmt.Errorf("iterate: get next key: %w", err)
 		}
 
 		// A concurrent deletion can make NextKey restart from the first key.
 		if count == maxEntries {
-			return nil, fmt.Errorf("map %d: iterate: %w", mapID, ebpf.ErrIterationAborted)
+			return nil, fmt.Errorf("iterate: %w", ebpf.ErrIterationAborted)
 		}
 
 		value, err := m.LookupBytes(key)
 		if err != nil {
-			return nil, fmt.Errorf("map %d: iterate: look up next key: %w", mapID, err)
+			return nil, fmt.Errorf("iterate: look up next key: %w", err)
 		}
 		if value != nil {
 			items = append(items, MapItem{
@@ -873,12 +862,17 @@ func (b *defaultBPF) DumpMapByName(mapName string) ([]MapItem, error) {
 	}
 	defer b.mu.RUnlock()
 
-	mapID, err := b.requireMapIDByName(mapName)
+	m, err := b.mapByName(mapName)
 	if err != nil {
 		return nil, err
 	}
 
-	return b.dumpMap(mapID)
+	items, err := b.dumpMap(m)
+	if err != nil {
+		return nil, fmt.Errorf("map %q: %w", mapName, err)
+	}
+
+	return items, nil
 }
 
 // WaitDetachByBreaker check the bpf's status.
