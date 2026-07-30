@@ -38,6 +38,9 @@
 #define COMPAT_BPF_EXIST	2 /* update existing element */
 #define COMPAT_BPF_F_LOCK	4 /* spin_lock-ed map_lookup/map_update */
 
+/* flags for BPF map creation */
+#define COMPAT_BPF_F_NO_PREALLOC	(1U << 0)
+
 #define NR_SOFTIRQS_MAX 16
 
 #define NSEC_PER_MSEC 1000000UL
