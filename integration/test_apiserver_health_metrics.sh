@@ -85,7 +85,7 @@ assert_metrics_endpoint() {
 		|| fatal "/metrics returned status ${status}"
 	grep -qi '^Content-Type: text/plain' "${headers}" \
 		|| fatal "/metrics did not return a Prometheus text content type"
-	grep -q '^huatuo_apiserver_go_goroutines ' "${body}" \
+	grep -q '^huatuo_apiserver_go_goroutines[{ ]' "${body}" \
 		|| fatal "/metrics omitted huatuo-apiserver runtime metrics"
 	grep -q '^huatuo_http_server_requests_total{method="GET",route="/healthz",status="204"} ' "${body}" \
 		|| fatal "/metrics omitted the /healthz HTTP request counter"
