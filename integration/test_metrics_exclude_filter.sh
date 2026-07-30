@@ -26,7 +26,7 @@ integration_huatuo_bamai_start write_exclude_filter_config
 huatuo_bamai_await_metrics
 
 check_metrics "exclude filter" \
-	"memory_vmstat_thp_split_pmd" "memory_vmstat_balloon_inflate" \
+	"memory_vmstat_thp_split_pmd" \
 	'netdev_.*device="eth0"' 'netdev_.*device="eth1"' \
 	-- \
 	"memory_vmstat_thp_zero_page_alloc" "memory_vmstat_thp_swpout" \
