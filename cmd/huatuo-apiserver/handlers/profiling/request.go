@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/job"
@@ -45,10 +46,15 @@ type patchProfilingJobRequest struct {
 }
 
 type profilingJobPrivateData struct {
-	BinaryMatchPath string `json:"binary_match_path"`
-	DurationSeconds int    `json:"duration_seconds"`
-	Language        string `json:"language"`
-	MemoryMode      string `json:"memory_mode"`
+	BinaryMatchPath   string             `json:"binary_match_path"`
+	DurationSeconds   int                `json:"duration_seconds"`
+	Language          string             `json:"language"`
+	MemoryMode        string             `json:"memory_mode"`
+	LockMode          profiling.LockMode `json:"lock_mode,omitempty"`
+	LockType          profiling.LockType `json:"lock_type,omitempty"`
+	LockWaitThreshold string             `json:"lock_wait_threshold,omitempty"`
+	PID               int                `json:"pid,omitempty"`
+	ThreadGroup       bool               `json:"thread_group,omitempty"`
 }
 
 func parseCreateProfilingJobRequest(ctx *server.Context) (*v1.CreateProfilingJobRequest, error) {
@@ -144,6 +150,84 @@ func buildProfilingTracerArgs(
 			"-l", string(language),
 		}
 		return job.JobTypeProfilingMemory, nil
+	case string(profiling.TypeLock):
+		language, err := profiling.ParseLanguage(req.Language)
+		if err != nil || !profiling.IsSupported(language, profiling.TypeLock) {
+			return "", fmt.Errorf("lock profiling not supported for %q", req.Language)
+		}
+		if req.PID < 0 {
+			return "", errors.New("pid must be greater than zero")
+		}
+		hasPID := req.PID > 0
+		hasContainer := req.ContainerID != ""
+		if hasPID == hasContainer {
+			return "", errors.New(
+				"lock profiling requires exactly one pid or container_id",
+			)
+		}
+		if req.ThreadGroup && !hasPID {
+			return "", errors.New("thread_group requires pid")
+		}
+
+		lockMode := req.LockMode
+		if lockMode == profiling.LockModeUnknown {
+			lockMode = profiling.LockModeWaitTime
+		}
+		lockMode, err = profiling.ParseLockMode(string(lockMode))
+		if err != nil {
+			return "", err
+		}
+		lockType := req.LockType
+		if lockType == profiling.LockTypeUnknown {
+			lockType = profiling.LockTypeMutex
+		}
+		lockType, err = profiling.ParseLockType(string(lockType))
+		if err != nil {
+			return "", err
+		}
+		thresholdText := req.LockWaitThreshold
+		if thresholdText == "" {
+			thresholdText = "1us"
+		}
+		threshold, err := time.ParseDuration(thresholdText)
+		if err != nil {
+			return "", fmt.Errorf(
+				"invalid lock_wait_threshold %q: %w",
+				thresholdText,
+				err,
+			)
+		}
+		if threshold < time.Microsecond || threshold > time.Hour {
+			return "", errors.New(
+				"lock_wait_threshold must be between 1us and 1h",
+			)
+		}
+
+		req.LockMode = lockMode
+		req.LockType = lockType
+		req.LockWaitThreshold = thresholdText
+		taskReq.TracerArgs = []string{
+			"-t", string(profiling.TypeLock),
+			"--lock-type", string(lockType),
+			"--lock-mode", string(lockMode),
+			"--lock-wait-threshold", thresholdText,
+			"-l", string(language),
+		}
+		if hasPID {
+			taskReq.TracerArgs = append(
+				taskReq.TracerArgs,
+				"--pid", strconv.Itoa(req.PID),
+			)
+		} else {
+			taskReq.TracerArgs = append(
+				taskReq.TracerArgs,
+				"--container-id", req.ContainerID,
+			)
+		}
+		if req.ThreadGroup {
+			taskReq.TracerArgs = append(taskReq.TracerArgs, "--thread-group")
+		}
+		return job.JobTypeProfilingLock, nil
 	default:
 		return "", fmt.Errorf("unsupported profiling type %q", req.ProfilingType)
 	}
@@ -151,10 +235,15 @@ func buildProfilingTracerArgs(
 
 func newProfilingPrivateData(req *v1.CreateProfilingJobRequest) (json.RawMessage, error) {
 	data, err := json.Marshal(profilingJobPrivateData{
-		BinaryMatchPath: req.BinaryMatchPath,
-		DurationSeconds: req.DurationSeconds,
-		Language:        req.Language,
-		MemoryMode:      req.MemoryMode,
+		BinaryMatchPath:   req.BinaryMatchPath,
+		DurationSeconds:   req.DurationSeconds,
+		Language:          req.Language,
+		MemoryMode:        req.MemoryMode,
+		LockMode:          req.LockMode,
+		LockType:          req.LockType,
+		LockWaitThreshold: req.LockWaitThreshold,
+		PID:               req.PID,
+		ThreadGroup:       req.ThreadGroup,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encoding profiling private data: %w", err)
@@ -195,11 +284,17 @@ func buildProfilingJobQuery(query profilingJobListQuery) (job.JobQuery, error) {
 	}
 	switch query.Type {
 	case "":
-		jobQuery.Types = []job.JobType{job.JobTypeProfilingMemory, job.JobTypeProfilingCPU}
+		jobQuery.Types = []job.JobType{
+			job.JobTypeProfilingMemory,
+			job.JobTypeProfilingCPU,
+			job.JobTypeProfilingLock,
+		}
 	case "cpu":
 		jobQuery.Types = []job.JobType{job.JobTypeProfilingCPU}
 	case "memory":
 		jobQuery.Types = []job.JobType{job.JobTypeProfilingMemory}
+	case "lock":
+		jobQuery.Types = []job.JobType{job.JobTypeProfilingLock}
 	default:
 		return job.JobQuery{}, fmt.Errorf("invalid type %q", query.Type)
 	}

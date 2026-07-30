@@ -211,6 +211,11 @@ func TestManagerTypePoliciesShareQuotaWithinGroup(t *testing.T) {
 			MaxJobsPerHost: 1,
 			MaxTotalJobs:   2,
 		},
+		"profiling_lock": {
+			Group:          "profiling",
+			MaxJobsPerHost: 1,
+			MaxTotalJobs:   2,
+		},
 		"tracing": {
 			Group:          "tracing",
 			MaxJobsPerHost: 1,
@@ -233,18 +238,25 @@ func TestManagerTypePoliciesShareQuotaWithinGroup(t *testing.T) {
 	}
 	defer func() { _ = manager.ShutdownContext(t.Context()) }()
 
-	_, err = manager.CreateContext(t.Context(), &CreateJobRequest{
-		UserID:   "operator-2026",
-		Hostname: "huatuo-dev",
-		Type:     "profiling_memory",
-		AgentTask: &AgentTaskRequest{
-			TracerName:   "profiler",
-			TraceTimeout: 60,
-			DataType:     "db-json",
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "maximum number of profiling jobs") {
-		t.Fatalf("create memory profiling job error = %v, want shared quota error", err)
+	for _, jobType := range []JobType{"profiling_memory", "profiling_lock"} {
+		_, err = manager.CreateContext(t.Context(), &CreateJobRequest{
+			UserID:   "operator-2026",
+			Hostname: "huatuo-dev",
+			Type:     jobType,
+			AgentTask: &AgentTaskRequest{
+				TracerName:   "profiler",
+				TraceTimeout: 60,
+				DataType:     "db-json",
+			},
+		})
+		if err == nil ||
+			!strings.Contains(err.Error(), "maximum number of profiling jobs") {
+			t.Fatalf(
+				"create %s job error = %v, want shared quota error",
+				jobType,
+				err,
+			)
+		}
 	}
 
 	traceJob, err := manager.CreateContext(t.Context(), &CreateJobRequest{
@@ -373,6 +385,41 @@ func TestManagerAddsProfilingTracerID(t *testing.T) {
 	}
 	if !cmp.Equal(request.AgentTask.TracerArgs, []string{"--duration", "30"}) {
 		t.Fatalf("CreateContext() mutated request args: %v", request.AgentTask.TracerArgs)
+	}
+}
+
+func TestManagerAddsLockProfilingTracerID(t *testing.T) {
+	var dispatchedArgs []string
+	manager := newManagerWithStore(&stubJobStore{}, &stubNodeAgent{
+		startTaskFunc: func(_, _ string, args *AgentTaskRequest) (string, error) {
+			dispatchedArgs = append([]string(nil), args.TracerArgs...)
+			return args.RequestID, nil
+		},
+	}, ManagerConfig{TypePolicies: map[JobType]TypePolicy{
+		JobTypeProfilingLock: {
+			Group:          "profiling",
+			MaxJobsPerHost: 1,
+			MaxTotalJobs:   1,
+		},
+	}})
+	defer func() { _ = manager.ShutdownContext(t.Context()) }()
+
+	created, err := manager.CreateContext(t.Context(), &CreateJobRequest{
+		Hostname: "huatuo-dev",
+		Type:     JobTypeProfilingLock,
+		AgentTask: &AgentTaskRequest{
+			TracerName:   "profiler",
+			TraceTimeout: 60,
+			TracerArgs:   []string{"--type", "lock"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateContext() error = %v", err)
+	}
+
+	wantArgs := []string{"--type", "lock", "--tracer-id", created.ID}
+	if !cmp.Equal(dispatchedArgs, wantArgs) {
+		t.Fatalf("dispatched args = %v, want %v", dispatchedArgs, wantArgs)
 	}
 }
 

@@ -15,6 +15,7 @@
 package provider
 
 import (
+	"strings"
 	"testing"
 
 	"huatuo-bamai/internal/profiler"
@@ -25,13 +26,14 @@ import (
 func TestNativeAggregatorAggregatesLockTime(t *testing.T) {
 	aggregator := &nativeAggregator{
 		aggrMap:     map[string]*stackEntry{},
-		lockAggrMap: map[string]*lockStackEntry{},
+		lockAggrMap: map[lockAggregateKey]*lockStackEntry{},
 	}
 	record := &lockStackEntry{
 		Proc:      &processIDNameLock{Pid: 12, Name: "app", Lock: 0xab},
 		User:      "foo;bar",
 		WaitTime:  10,
 		Contended: 2,
+		LockType:  profiling.LockTypeMutex,
 	}
 
 	aggregator.Aggregate(record)
@@ -45,9 +47,42 @@ func TestNativeAggregatorAggregatesLockTime(t *testing.T) {
 	if sampleType != profiler.ProfileTypeLockTimeSample {
 		t.Fatalf("sample type = %q, want %q", sampleType, profiler.ProfileTypeLockTimeSample)
 	}
+
+	frames, value := lockPrefixFrames(record, profiling.LockModeCount)
+	if value != 2 {
+		t.Errorf("count value = %d, want 2", value)
+	}
+	for _, frame := range frames {
+		if strings.HasPrefix(frame, "contended count:") {
+			t.Errorf("dynamic contention count leaked into stack frames")
+		}
+		if strings.Contains(frame, "ab") {
+			t.Errorf("kernel lock address leaked into stack frame %q", frame)
+		}
+	}
+
+	_, sampleType, err = profileTypeOptions(&pcontext.ProfilerContext{
+		Type:     profiling.TypeLock,
+		LockMode: profiling.LockModeCount,
+	})
+	if err != nil {
+		t.Fatalf("profileTypeOptions(count) error = %v", err)
+	}
+	if sampleType != profiler.ProfileTypeLockCountSample {
+		t.Fatalf(
+			"count sample type = %q, want %q",
+			sampleType,
+			profiler.ProfileTypeLockCountSample,
+		)
+	}
 }
 
-func requireSingleLockRecord(t *testing.T, aggregator *nativeAggregator, waitTime uint64, contended uint32) {
+func requireSingleLockRecord(
+	t *testing.T,
+	aggregator *nativeAggregator,
+	waitTime uint64,
+	contended uint64,
+) {
 	t.Helper()
 	if len(aggregator.lockAggrMap) != 1 {
 		t.Fatalf("lock records = %d, want 1", len(aggregator.lockAggrMap))

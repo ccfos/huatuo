@@ -144,7 +144,12 @@ For more profiling dimensions, see the Profiles API section below.
 
 ## 🌐 Profiles API
 
-huatuo-apiserver exposes `/v1/profiles` for service-based continuous profiling. Clients can create CPU or memory profiling jobs, query job status and results, and stop or delete jobs. huatuo-apiserver schedules each job on the HUATUO Agent running on the specified node. Profiling results are available through the returned Grafana URL or the raw data endpoint.
+huatuo-apiserver exposes `/v1/profiles` for service-based continuous profiling.
+Clients can create CPU, memory, or native lock-contention profiling jobs,
+query job status and results, and stop or delete jobs. huatuo-apiserver
+schedules each job on the HUATUO Agent running on the specified node.
+Profiling results are available through the returned Grafana URL or the raw
+data endpoint.
 
 ### 1. Request Conventions
 
@@ -188,10 +193,13 @@ The `data` object contains these fields:
 
 | Field | Description |
 | --- | --- |
-| `types` | Supported profiling types: `cpu` and `memory` |
+| `types` | Supported profiling types: `cpu`, `memory`, and `lock` |
 | `cpu_languages` | Languages supported by CPU profiling |
 | `memory_languages` | Languages supported by memory profiling |
 | `memory_modes` | Memory profiling modes grouped by language; values are accepted by job creation |
+| `lock_languages` | Languages supported by native lock profiling: `c`, `c++`, and `go` |
+| `lock_modes` | Lock profile values: `wait_time` and `count` |
+| `lock_types` | Supported primitives: `mutex`, `spinlock`, and `rwlock` |
 | `aggregation_interval_seconds` | Server-side data aggregation interval |
 | `max_concurrent_profilers` | Maximum number of concurrent profiler processes; `0` disables the limit |
 
@@ -211,13 +219,18 @@ CPU profiling currently supports `c`, `c++`, `go`, `java`, and `python`. Memory 
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `type` | Yes | Profiling type: `cpu` or `memory` |
+| `type` | Yes | Profiling type: `cpu`, `memory`, or `lock` |
 | `language` | Yes | Target process language; it must support the selected profiling type |
 | `duration_seconds` | Yes | Profiling duration in seconds |
 | `hostname` | Yes | Hostname of the node running the target process; used for job scheduling |
 | `container_id` | No | Target container ID; omit it to profile the host |
 | `binary_match_path` | No | Executable path matcher for Java/Python CPU profiling; native profiling does not support it |
 | `memory_mode` | For memory profiling | Memory profiling mode; it must be supported by `language` |
+| `pid` | For host lock profiling | Positive host PID; mutually exclusive with `container_id` |
+| `thread_group` | No | Include every thread in the target PID's thread group; requires `pid` |
+| `lock_type` | No | `mutex` (default), `spinlock`, or `rwlock` |
+| `lock_mode` | No | `wait_time` (default) or `count` |
+| `lock_wait_threshold` | No | Minimum wait recorded as a Go duration; default and minimum `1us`, maximum `1h` |
 
 `duration_seconds` must cover at least two `aggregation_interval_seconds` periods, and their sum must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
 
@@ -255,7 +268,39 @@ curl -sS -i \
   "${API_BASE}/v1/profiles"
 ```
 
+Create a wait-time profile for mutex contention in a process:
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "lock",
+    "language": "go",
+    "pid": 24817,
+    "thread_group": true,
+    "lock_type": "mutex",
+    "lock_mode": "wait_time",
+    "lock_wait_threshold": "5us",
+    "duration_seconds": 60,
+    "hostname": "node-01"
+  }' \
+  "${API_BASE}/v1/profiles"
+```
+
+Lock profiling records contention only. It aggregates wait time and contention
+count in bounded, double-buffered BPF hash maps before userspace drains the
+data. Mutex and rwlock profiling use the kernel contention tracepoints when
+available and safe slow-path probes on older kernels. Spinlock profiling fails
+closed unless `lock:contention_begin/end` tracepoints are available; broad
+spinlock kprobes are intentionally not used because they can make a host
+unresponsive.
+
 A successful request returns `201 Created`. The `Location` response header identifies the new job, and the response body contains the job ID used by subsequent requests:
+
+Lock jobs expose their pprof result through the raw data endpoint. They omit
+`result_url` until a dedicated lock dashboard is available.
 
 ```json
 {
@@ -280,7 +325,7 @@ JOB_ID="<profile-job-id>"
 | `container_id` | None | Exact container ID filter (`containerID` remains accepted for compatibility) |
 | `hostname` | None | Exact node hostname filter |
 | `status` | None | `pending`, `running`, `completed`, `failed`, `stopped`, or `timeout` |
-| `type` | None | `cpu` or `memory`; omit it to return both types |
+| `type` | None | `cpu`, `memory`, or `lock`; omit it to return all types |
 | `limit` | `50` | Page size; must be greater than 0 and is capped at 500 |
 | `offset` | `0` | Starting offset; must be greater than or equal to 0 |
 | `sort` | `-created_at` | `created_at`, `finished_at`, `hostname`, `container_id`, `id`, `status`, or `type`; prefix with `-` for descending order |
@@ -316,9 +361,14 @@ The `data` object contains the job details:
 | `id` | Profiles API job ID |
 | `container_id` | Target container ID; omitted for host jobs |
 | `hostname` | Target node hostname |
-| `type` | `cpu` or `memory` |
+| `type` | `cpu`, `memory`, or `lock` |
 | `language` | Target process language |
 | `memory_mode` | Memory profiling mode; omitted for CPU jobs |
+| `pid` | Host PID for lock jobs; omitted for container targets |
+| `thread_group` | Whether the lock job includes the PID's thread group |
+| `lock_type` | Kernel primitive selected by a lock job |
+| `lock_mode` | `wait_time` or `count` for a lock job |
+| `lock_wait_threshold` | Minimum contention wait recorded by a lock job |
 | `binary_match_path` | Executable path matcher; omitted when unused |
 | `status` | Current job status |
 | `duration_seconds` | Requested profiling duration in seconds |
