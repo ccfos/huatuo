@@ -104,7 +104,7 @@ docker logs opensearch
 
 #### 3. Configure huatuo-bamai
 
-Add the following configuration to `huatuo-bamai.conf`. The default username and password for the OpenSearch container image are both `admin`. For a full description of storage configuration options, see the [Configuration Guide](../configuration/huatuo-bamai-configuration_en.md).
+Add the following configuration to `huatuo-bamai.conf`. The default username and password for the OpenSearch container image are both `admin`. For a full description of storage configuration options, see the [Configuration Guide](/docs/configuration/huatuo-bamai-configuration_en.md).
 
 ```toml
 [Storage.Elasticsearch]
@@ -228,7 +228,7 @@ Example response:
 
 #### 3. Configure huatuo-bamai
 
-Add the following configuration to `huatuo-bamai.conf`. The default username for the Elasticsearch container image is `elastic`; the password is set via the `ELASTIC_PASSWORD` environment variable. For a full description of storage configuration options, see the [Configuration Guide](../configuration/huatuo-bamai-configuration_en.md).
+Add the following configuration to `huatuo-bamai.conf`. The default username for the Elasticsearch container image is `elastic`; the password is set via the `ELASTIC_PASSWORD` environment variable. For a full description of storage configuration options, see the [Configuration Guide](/docs/configuration/huatuo-bamai-configuration_en.md).
 
 ```toml
 [Storage.Elasticsearch]

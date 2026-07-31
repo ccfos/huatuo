@@ -64,7 +64,7 @@ sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubuse
 
 ### 4. 修改配置
 
-根据实际部署环境编辑 `/opt/huatuo-bamai/conf/huatuo-bamai.conf` 和 `/opt/huatuo-bamai/conf/huatuo-apiserver.conf`。详细配置项说明请参见 [`huatuo-bamai` 配置](../configuration/huatuo-bamai-configuration_zh.md) 和 [`huatuo-apiserver` 配置](../configuration/huatuo-apiserver-configuration_zh.md)。
+根据实际部署环境编辑 `/opt/huatuo-bamai/conf/huatuo-bamai.conf` 和 `/opt/huatuo-bamai/conf/huatuo-apiserver.conf`。详细配置项说明请参见 [`huatuo-bamai` 配置](/docs/configuration/huatuo-bamai-configuration_zh.md) 和 [`huatuo-apiserver` 配置](/docs/configuration/huatuo-apiserver-configuration_zh.md)。
 
 ### 5. 注册 HUATUO 服务
 
@@ -118,7 +118,7 @@ sudo dnf install ./huatuo-bamai-2.1.0-2.oc9.aarch64.rpm
 
 ### 3. 修改配置
 
-根据实际部署环境编辑 `/etc/huatuo-bamai/huatuo-bamai.conf`。详细配置项说明请参见 [`huatuo-bamai` 配置](../configuration/huatuo-bamai-configuration_zh.md)。
+根据实际部署环境编辑 `/etc/huatuo-bamai/huatuo-bamai.conf`。详细配置项说明请参见 [`huatuo-bamai` 配置](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
 ### 4. 启动 HUATUO 服务
 

@@ -19,7 +19,7 @@ curl -L -o huatuo-bamai.conf https://github.com/ccfos/huatuo/raw/main/huatuo-bam
 
 ### 1.2 修改配置文件
 
-根据实际部署环境修改配置文件，例如调整存储后端、Pod 信息获取方式等配置项，详见[配置指南](../configuration/huatuo-bamai-configuration_zh.md)。
+根据实际部署环境修改配置文件，例如调整存储后端、Pod 信息获取方式等配置项，详见[配置指南](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
 ### 1.3 创建 ConfigMap
 
