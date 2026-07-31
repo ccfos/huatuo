@@ -19,7 +19,6 @@ import (
 	"errors"
 	"math"
 	"os"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/cgroups/stats"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/utils/cpuutil"
 )
 
 type stubContainerCPUReader struct {
@@ -177,29 +177,34 @@ func TestContainerCPUCapacity(t *testing.T) {
 		wantError string
 	}{
 		{
-			name:  "half cpu",
-			quota: stats.CpuQuota{Quota: 50_000, Period: 100_000},
+			name:  "quota below cpuset",
+			quota: stats.CpuQuota{Quota: 50_000, Period: 100_000, EffectiveCPUCount: 4},
 			want:  0.5,
 		},
 		{
-			name:  "one and a half cpus",
-			quota: stats.CpuQuota{Quota: 150_000, Period: 100_000},
-			want:  1.5,
+			name:  "quota above cpuset",
+			quota: stats.CpuQuota{Quota: 150_000, Period: 100_000, EffectiveCPUCount: 1},
+			want:  1,
 		},
 		{
 			name:  "unlimited",
-			quota: stats.CpuQuota{Quota: math.MaxUint64},
-			want:  float64(runtime.NumCPU()),
+			quota: stats.CpuQuota{Quota: math.MaxUint64, EffectiveCPUCount: 4},
+			want:  4,
 		},
 		{
 			name:      "zero quota",
-			quota:     stats.CpuQuota{Period: 100_000},
+			quota:     stats.CpuQuota{Period: 100_000, EffectiveCPUCount: 1},
 			wantError: "quota must be positive",
 		},
 		{
 			name:      "zero period",
-			quota:     stats.CpuQuota{Quota: 100_000},
+			quota:     stats.CpuQuota{Quota: 100_000, EffectiveCPUCount: 1},
 			wantError: "period must be positive",
+		},
+		{
+			name:      "zero effective CPU count",
+			quota:     stats.CpuQuota{Quota: math.MaxUint64},
+			wantError: "effective CPU count must be positive",
 		},
 	}
 
@@ -207,18 +212,21 @@ func TestContainerCPUCapacity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			actual, err := containerCPUCapacity(&tt.quota)
+			actual, err := cpuutil.CPUCapacity(
+				tt.quota.Quota, tt.quota.Period,
+				tt.quota.EffectiveCPUCount, 0,
+			)
 			if tt.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
-					t.Fatalf("containerCPUCapacity() error = %v, want contain %q", err, tt.wantError)
+					t.Fatalf("cpuutil.CPUCapacity() error = %v, want contain %q", err, tt.wantError)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("containerCPUCapacity() error = %v", err)
+				t.Fatalf("cpuutil.CPUCapacity() error = %v", err)
 			}
 			if actual != tt.want {
-				t.Errorf("containerCPUCapacity() = %v, want %v", actual, tt.want)
+				t.Errorf("cpuutil.CPUCapacity() = %v, want %v", actual, tt.want)
 			}
 		})
 	}
@@ -395,8 +403,8 @@ func TestCPUIdleTracingSelectTraceTarget(t *testing.T) {
 			"b": {},
 		},
 		quota: map[string]stats.CpuQuota{
-			"a": {Quota: 100_000, Period: 100_000},
-			"b": {Quota: 100_000, Period: 100_000},
+			"a": {Quota: 100_000, Period: 100_000, EffectiveCPUCount: 1},
+			"b": {Quota: 100_000, Period: 100_000, EffectiveCPUCount: 1},
 		},
 	}
 	tracer := &cpuIdleTracing{

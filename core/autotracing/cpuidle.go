@@ -19,9 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"os"
-	"runtime"
 	"time"
 
 	"huatuo-bamai/internal/cgroups"
@@ -30,6 +28,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/utils/cpuutil"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
@@ -77,6 +76,7 @@ type cpuIdleTracing struct {
 	threshold        cpuIdleThreshold
 	filter           *matcher.ContainerMatcher
 	containers       map[string]*containerCPUState
+	hostCPUCount     uint64
 }
 
 type containerCPUState struct {
@@ -139,6 +139,10 @@ func newCPUIdleTracing(
 	if err != nil {
 		return nil, fmt.Errorf("build container filter: %w", err)
 	}
+	hostCPUCount, err := cpuutil.HostOnlineCPUCount()
+	if err != nil {
+		return nil, fmt.Errorf("read online CPUs: %w", err)
+	}
 
 	return &cpuIdleTracing{
 		cgroupReader:     cgroupReader,
@@ -148,6 +152,7 @@ func newCPUIdleTracing(
 		threshold:        threshold,
 		filter:           filter,
 		containers:       make(map[string]*containerCPUState),
+		hostCPUCount:     hostCPUCount,
 	}, nil
 }
 
@@ -218,20 +223,6 @@ func cpuUsageDelta(
 		system: current.system - previous.system,
 		total:  current.total - previous.total,
 	}, true
-}
-
-func containerCPUCapacity(quota *stats.CpuQuota) (float64, error) {
-	if quota.Quota == math.MaxUint64 {
-		return float64(runtime.NumCPU()), nil
-	}
-	if quota.Quota == 0 {
-		return 0, fmt.Errorf("container cpu quota must be positive")
-	}
-	if quota.Period == 0 {
-		return 0, fmt.Errorf("container cpu period must be positive")
-	}
-
-	return float64(quota.Quota) / float64(quota.Period), nil
 }
 
 func (s *containerCPUState) update(
@@ -333,7 +324,10 @@ func (c *cpuIdleTracing) readContainerCPUSample(
 		return cpuUsageBreakdown[uint64]{}, 0,
 			fmt.Errorf("read cpu quota for %q: %w", state.containerID, err)
 	}
-	capacity, err := containerCPUCapacity(quota)
+	capacity, err := cpuutil.CPUCapacity(
+		quota.Quota, quota.Period,
+		quota.EffectiveCPUCount, c.hostCPUCount,
+	)
 	if err != nil {
 		return cpuUsageBreakdown[uint64]{}, 0,
 			fmt.Errorf("calculate cpu capacity for %q: %w", state.containerID, err)

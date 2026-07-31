@@ -16,7 +16,9 @@ package v2
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"strconv"
 
@@ -24,6 +26,7 @@ import (
 	"huatuo-bamai/internal/cgroups/pids"
 	"huatuo-bamai/internal/cgroups/stats"
 	"huatuo-bamai/internal/cgroups/subsystem"
+	"huatuo-bamai/internal/utils/cpuutil"
 	"huatuo-bamai/internal/utils/parseutil"
 
 	extv2 "github.com/containerd/cgroups/v3/cgroup2"
@@ -169,8 +172,17 @@ func (c *CgroupV2) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 		return nil, err
 	}
 
+	effectiveCPUCount, err := readEffectiveCPUCount(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+
 	if maxQuota == "max" {
-		return &stats.CpuQuota{Quota: math.MaxUint64, Period: period}, nil
+		return &stats.CpuQuota{
+			Quota:             math.MaxUint64,
+			Period:            period,
+			EffectiveCPUCount: effectiveCPUCount,
+		}, nil
 	}
 
 	quota, err := strconv.ParseUint(maxQuota, 10, 64)
@@ -178,7 +190,15 @@ func (c *CgroupV2) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 		return nil, err
 	}
 
-	return &stats.CpuQuota{Quota: quota, Period: period}, nil
+	return &stats.CpuQuota{
+		Quota:             quota,
+		Period:            period,
+		EffectiveCPUCount: effectiveCPUCount,
+	}, nil
+}
+
+func readEffectiveCPUCount(path string) (uint64, error) {
+	return cpuutil.CPUSetCount(paths.Path(path, "cpuset.cpus.effective"))
 }
 
 func (c *CgroupV2) MemoryStatRaw(path string) (map[string]uint64, error) {
