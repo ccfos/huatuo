@@ -58,7 +58,7 @@
           "url_options": {
             "body_content_type": "application/json",
             "body_type": "raw",
-            "data": "{\n  \"query\":{\n    \"match\":{\n      \"_id\": \"$id\"\n      }\n  }\n}",
+            "data": "{\n  \"query\": {\n    \"ids\": {\n      \"values\": [\n        \"$id\"\n      ]\n    }\n  }\n}",
             "method": "POST"
           }
         }
@@ -69,7 +69,9 @@
   ],
   "preload": false,
   "schemaVersion": 41,
-  "tags": [],
+  "tags": [
+    "autotracing"
+  ],
   "templating": {
     "list": [
       {
