@@ -137,9 +137,10 @@ func TestCapabilities(t *testing.T) {
 		resp.LockModes[1] != profiling.LockModeCount {
 		t.Errorf("LockModes = %v, want wait_time and count", resp.LockModes)
 	}
-	if len(resp.LockTypes) != 1 ||
-		resp.LockTypes[0] != profiling.LockTypeMutex {
-		t.Errorf("LockTypes = %v, want mutex", resp.LockTypes)
+	if len(resp.LockTypes) != 2 ||
+		resp.LockTypes[0] != profiling.LockTypeMutex ||
+		resp.LockTypes[1] != profiling.LockTypeRWLock {
+		t.Errorf("LockTypes = %v, want mutex, rwlock", resp.LockTypes)
 	}
 
 	if len(resp.MemoryModes) != 4 {

@@ -45,19 +45,86 @@ func TestValidateLockTarget(t *testing.T) {
 
 func TestLockAttachOptions(t *testing.T) {
 	oldTracepoints := hasLockContentionTracepoints
-	t.Cleanup(func() { hasLockContentionTracepoints = oldTracepoints })
+	t.Cleanup(func() {
+		hasLockContentionTracepoints = oldTracepoints
+	})
+
 	hasLockContentionTracepoints = func() bool { return true }
-	_, options, backend, err := lockAttachOptions(profiling.LockTypeMutex)
-	if err != nil || backend != lockBackendContentionTracepoints || len(options) != 2 {
-		t.Fatalf("mutex tracepoint options: backend=%q len=%d err=%v", backend, len(options), err)
+	for _, test := range []struct {
+		lockType profiling.LockType
+		prefix   string
+	}{
+		{lockType: profiling.LockTypeMutex, prefix: "mutex"},
+		{lockType: profiling.LockTypeRWLock, prefix: "rwlock"},
+	} {
+		_, options, backend, err := lockAttachOptions(test.lockType)
+		if err != nil {
+			t.Fatalf("lockAttachOptions(%q) error = %v", test.lockType, err)
+		}
+		if backend != lockBackendContentionTracepoints || len(options) != 2 {
+			t.Errorf(
+				"lockAttachOptions(%q) = backend %q, options %d",
+				test.lockType,
+				backend,
+				len(options),
+			)
+		}
+		if options[0].ProgramName !=
+			"trace_"+test.prefix+"_contention_begin" ||
+			options[1].ProgramName !=
+				"trace_"+test.prefix+"_contention_end" {
+			t.Errorf(
+				"lockAttachOptions(%q) programs = %q, %q",
+				test.lockType,
+				options[0].ProgramName,
+				options[1].ProgramName,
+			)
+		}
 	}
+
 	hasLockContentionTracepoints = func() bool { return false }
-	_, options, backend, err = lockAttachOptions(profiling.LockTypeMutex)
-	if err != nil || backend != lockBackendMutexSlowpath || len(options) != 2 || options[1].RetprobeMaxActive != lockRetprobeMaxActive {
-		t.Fatalf("mutex fallback options: backend=%q len=%d err=%v", backend, len(options), err)
+	if _, options, backend, err := lockAttachOptions(
+		profiling.LockTypeMutex,
+	); err != nil || backend != lockBackendMutexSlowpath ||
+		len(options) != 2 {
+		t.Errorf(
+			"mutex fallback = backend %q, options %d, error %v",
+			backend,
+			len(options),
+			err,
+		)
+	} else if options[0].RetprobeMaxActive != 0 ||
+		options[1].RetprobeMaxActive != lockRetprobeMaxActive {
+		t.Errorf(
+			"mutex fallback maxactive = %d, %d",
+			options[0].RetprobeMaxActive,
+			options[1].RetprobeMaxActive,
+		)
 	}
-	if _, _, _, err := lockAttachOptions(profiling.LockTypeRWLock); err == nil {
-		t.Fatal("rwlock should remain unsupported in mutex slice")
+	if _, options, backend, err := lockAttachOptions(
+		profiling.LockTypeRWLock,
+	); err != nil || backend != lockBackendRWLockSlowpaths ||
+		len(options) != 4 {
+		t.Errorf(
+			"rwlock fallback = backend %q, options %d, error %v",
+			backend,
+			len(options),
+			err,
+		)
+	} else if options[0].RetprobeMaxActive != 0 ||
+		options[1].RetprobeMaxActive != lockRetprobeMaxActive ||
+		options[2].RetprobeMaxActive != 0 ||
+		options[3].RetprobeMaxActive != lockRetprobeMaxActive {
+		t.Errorf(
+			"rwlock fallback maxactive = %d, %d, %d, %d",
+			options[0].RetprobeMaxActive,
+			options[1].RetprobeMaxActive,
+			options[2].RetprobeMaxActive,
+			options[3].RetprobeMaxActive,
+		)
+	}
+	if _, _, _, err := lockAttachOptions(profiling.LockTypeSpinlock); err == nil {
+		t.Fatal("spinlock should remain unsupported in rwlock slice")
 	}
 }
 

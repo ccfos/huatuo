@@ -107,7 +107,7 @@ assert_profile_capabilities() {
 			and .data.memory_modes.java == ["object_alloc", "object_usage"]
 			and .data.lock_languages == ["c", "c++", "go"]
 			and .data.lock_modes == ["wait_time", "count"]
-			and .data.lock_types == ["mutex"]
+			and .data.lock_types == ["mutex", "rwlock"]
 			and .data.aggregation_interval_seconds == $aggregation_interval_seconds
 			and .data.max_concurrent_profilers == $max_concurrent_profilers
 		' "${response_file}" > /dev/null \

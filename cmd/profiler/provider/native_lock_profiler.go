@@ -34,6 +34,7 @@ import (
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_mutex_profiler.c -o $BPF_DIR/native_mutex_profiler.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_rwlock_profiler.c -o $BPF_DIR/native_rwlock_profiler.o
 
 const (
 	lockBackendContentionTracepoints = "contention tracepoints"
@@ -206,19 +207,32 @@ func lockContentionTracepointsAvailable() bool {
 func lockAttachOptions(
 	lockType profiling.LockType,
 ) (string, []bpf.AttachOption, string, error) {
-	if lockType != profiling.LockTypeMutex {
+	if lockType != profiling.LockTypeMutex && lockType != profiling.LockTypeRWLock {
 		return "", nil, "", fmt.Errorf("unsupported native lock type %q", lockType)
 	}
 	if hasLockContentionTracepoints() {
-		return "native_mutex_profiler.o", []bpf.AttachOption{
-			{ProgramName: "trace_mutex_contention_begin", Symbol: "lock/contention_begin"},
-			{ProgramName: "trace_mutex_contention_end", Symbol: "lock/contention_end"},
+		objectPrefix := string(lockType)
+		return "native_" + objectPrefix + "_profiler.o", []bpf.AttachOption{
+			{ProgramName: "trace_" + objectPrefix + "_contention_begin", Symbol: "lock/contention_begin"},
+			{ProgramName: "trace_" + objectPrefix + "_contention_end", Symbol: "lock/contention_end"},
 		}, lockBackendContentionTracepoints, nil
 	}
-	return "native_mutex_profiler.o", []bpf.AttachOption{
-		{ProgramName: "trace_mutex_lock_slowpath", Symbol: mutexSlowpathSymbol},
-		{ProgramName: "trace_mutex_lock_slowpath_return", Symbol: mutexSlowpathSymbol, RetprobeMaxActive: lockRetprobeMaxActive},
-	}, lockBackendMutexSlowpath, nil
+	switch lockType {
+	case profiling.LockTypeMutex:
+		return "native_mutex_profiler.o", []bpf.AttachOption{
+			{ProgramName: "trace_mutex_lock_slowpath", Symbol: mutexSlowpathSymbol},
+			{ProgramName: "trace_mutex_lock_slowpath_return", Symbol: mutexSlowpathSymbol, RetprobeMaxActive: lockRetprobeMaxActive},
+		}, lockBackendMutexSlowpath, nil
+	case profiling.LockTypeRWLock:
+		return "native_rwlock_profiler.o", []bpf.AttachOption{
+			{ProgramName: "trace_rwlock_read_slowpath", Symbol: rwlockReadSlowpathSymbol},
+			{ProgramName: "trace_rwlock_read_slowpath_return", Symbol: rwlockReadSlowpathSymbol, RetprobeMaxActive: lockRetprobeMaxActive},
+			{ProgramName: "trace_rwlock_write_slowpath", Symbol: rwlockWriteSlowpathSymbol},
+			{ProgramName: "trace_rwlock_write_slowpath_return", Symbol: rwlockWriteSlowpathSymbol, RetprobeMaxActive: lockRetprobeMaxActive},
+		}, lockBackendRWLockSlowpaths, nil
+	default:
+		return "", nil, "", fmt.Errorf("unsupported native lock type %q", lockType)
+	}
 }
 
 type lockStatsDrainer struct {
