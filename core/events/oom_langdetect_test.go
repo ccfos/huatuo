@@ -31,3 +31,36 @@ func TestDetectLanguageInfoReadsRunningGoExecutable(t *testing.T) {
 			info.Victim, processlang.LanguageGo)
 	}
 }
+
+func TestCompleteLanguageInfoUsesExitCmdline(t *testing.T) {
+	oomData := &OOMTracingData{
+		Victim: OOMActor{
+			Cmdline: "/usr/bin/python3 worker.py",
+			Comm:    "java",
+		},
+		LanguageInfo: &OOMLanguageInfo{
+			Victim: processlang.LanguageUnknown,
+		},
+	}
+
+	completeLanguageInfo(oomData)
+	if oomData.LanguageInfo.Victim != processlang.LanguagePython {
+		t.Fatalf("exit cmdline language = %q, want %q",
+			oomData.LanguageInfo.Victim, processlang.LanguagePython)
+	}
+}
+
+func TestCompleteLanguageInfoUsesCommWithoutExitCmdline(t *testing.T) {
+	oomData := &OOMTracingData{
+		Victim: OOMActor{Comm: "java"},
+		LanguageInfo: &OOMLanguageInfo{
+			Victim: processlang.LanguageUnknown,
+		},
+	}
+
+	completeLanguageInfo(oomData)
+	if oomData.LanguageInfo.Victim != processlang.LanguageJava {
+		t.Fatalf("comm language = %q, want %q",
+			oomData.LanguageInfo.Victim, processlang.LanguageJava)
+	}
+}

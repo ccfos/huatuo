@@ -33,3 +33,21 @@ func detectLanguageInfo(victimPID uint32) *OOMLanguageInfo {
 
 	return &OOMLanguageInfo{Victim: detected}
 }
+
+/*
+ * completeLanguageInfo retries only an unknown live result with process
+ * metadata. Cmdline takes precedence over the kernel command name.
+ */
+func completeLanguageInfo(oomData *OOMTracingData) {
+	if oomData == nil ||
+		(oomData.LanguageInfo != nil &&
+			oomData.LanguageInfo.Victim != processlang.LanguageUnknown) {
+		return
+	}
+
+	detected := processlang.DetectLanguage(processlang.ProcessDetails{
+		Cmdline: oomData.Victim.Cmdline,
+		Comm:    oomData.Victim.Comm,
+	})
+	oomData.LanguageInfo = &OOMLanguageInfo{Victim: detected}
+}

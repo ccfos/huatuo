@@ -211,6 +211,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			}
 			mergeOOMExitContext(oomData, exitContext)
 		}
+		completeLanguageInfo(oomData)
 
 		processMu.Lock()
 		defer processMu.Unlock()
