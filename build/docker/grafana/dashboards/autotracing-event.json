@@ -207,33 +207,6 @@
           "timeField": "uploaded_time"
         },
         {
-          "alias": "waitrate",
-          "bucketAggs": [
-            {
-              "field": "uploaded_time",
-              "id": "2",
-              "settings": {
-                "interval": "auto"
-              },
-              "type": "date_histogram"
-            }
-          ],
-          "datasource": {
-            "type": "elasticsearch",
-            "uid": "huatuo-bamai-es"
-          },
-          "hide": false,
-          "metrics": [
-            {
-              "id": "1",
-              "type": "count"
-            }
-          ],
-          "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
-          "refId": "D",
-          "timeField": "uploaded_time"
-        },
-        {
           "alias": "reclaim",
           "bucketAggs": [
             {
@@ -257,7 +230,7 @@
             }
           ],
           "query": "tracer_name:memory_reclaim_events AND region:$region AND hostname:$hostname",
-          "refId": "E",
+          "refId": "D",
           "timeField": "uploaded_time"
         },
         {
@@ -284,7 +257,7 @@
             }
           ],
           "query": "tracer_name:oom AND region:$region AND hostname:$hostname",
-          "refId": "F",
+          "refId": "E",
           "timeField": "uploaded_time"
         },
         {
@@ -311,7 +284,7 @@
             }
           ],
           "query": "tracer_name:memburst AND region:$region AND hostname:$hostname",
-          "refId": "G",
+          "refId": "F",
           "timeField": "uploaded_time"
         },
         {
@@ -338,7 +311,7 @@
             }
           ],
           "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
-          "refId": "H",
+          "refId": "G",
           "timeField": "uploaded_time"
         },
         {
@@ -365,7 +338,7 @@
             }
           ],
           "query": "tracer_name:dropwatch AND region:$region AND hostname:$hostname",
-          "refId": "I",
+          "refId": "H",
           "timeField": "uploaded_time"
         },
         {
@@ -392,7 +365,7 @@
             }
           ],
           "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
-          "refId": "J",
+          "refId": "I",
           "timeField": "uploaded_time"
         },
         {
@@ -419,7 +392,7 @@
             }
           ],
           "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*down*",
-          "refId": "K",
+          "refId": "J",
           "timeField": "uploaded_time"
         },
         {
@@ -446,7 +419,7 @@
             }
           ],
           "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev_bonding_lacp",
-          "refId": "L",
+          "refId": "K",
           "timeField": "uploaded_time"
         },
         {
@@ -473,7 +446,7 @@
             }
           ],
           "query": "tracer_name:softirq_tracing AND region:$region AND hostname:$hostname",
-          "refId": "M",
+          "refId": "L",
           "timeField": "uploaded_time"
         },
         {
@@ -500,7 +473,7 @@
             }
           ],
           "query": "tracer_name:softlockup AND region:$region AND hostname:$hostname",
-          "refId": "N",
+          "refId": "M",
           "timeField": "uploaded_time"
         },
         {
@@ -527,7 +500,7 @@
             }
           ],
           "query": "tracer_name:hungtask AND region:$region AND hostname:$hostname",
-          "refId": "O",
+          "refId": "N",
           "timeField": "uploaded_time"
         },
         {
@@ -554,7 +527,7 @@
             }
           ],
           "query": "tracer_name:ras AND region:$region AND hostname:$hostname",
-          "refId": "P",
+          "refId": "O",
           "timeField": "uploaded_time"
         },
         {
@@ -581,7 +554,7 @@
             }
           ],
           "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
-          "refId": "Q",
+          "refId": "P",
           "timeField": "uploaded_time"
         }
       ],
@@ -3793,7 +3766,7 @@
                     "value": [
                       {
                         "targetBlank": true,
-                        "title": "火焰图跳转",
+                        "title": "Click to view flame graph",
                         "url": "/d/autotracing-flame-redirect/autotracing-flame-redirect?var-id=${__data.fields._id}"
                       }
                     ]
@@ -11486,7 +11459,10 @@
   "refresh": "",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": [],
+  "tags": [
+    "autotracing",
+    "event"
+  ],
   "templating": {
     "list": [
       {

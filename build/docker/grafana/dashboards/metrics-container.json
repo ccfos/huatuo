@@ -24,36 +24,48 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 1,
-  "links": [],
+  "id": 11,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Help",
+      "tooltip": "Official Documentation Details",
+      "type": "link",
+      "url": "https://docs.huatuo.tech/en/latest/key-feature/kernel-wide-insight/"
+    }
+  ],
+  "liveNow": false,
   "panels": [
     {
       "datasource": {
         "type": "prometheus",
         "uid": "huatuo-bamai-prom"
       },
+      "description": "Arbitrary metric selected from the $metric variable, filtered by container host and region.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
-            "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
-            "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 20,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
@@ -61,7 +73,7 @@
               "type": "linear"
             },
             "showPoints": "never",
-            "spanNulls": false,
+            "spanNulls": true,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -75,7 +87,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green"
+                "color": "green",
+                "value": null
               },
               {
                 "color": "red",
@@ -103,7 +116,8 @@
           ],
           "displayMode": "table",
           "placement": "right",
-          "showLegend": true
+          "showLegend": true,
+          "width": 300
         },
         "tooltip": {
           "hideZeros": false,
@@ -127,921 +141,20 @@
           "refId": "A"
         }
       ],
-      "title": "指标：$metric",
+      "title": "Selected Metric: $metric",
       "type": "timeseries"
     },
     {
       "collapsed": true,
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 9
-      },
-      "id": 49,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "description": "",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 24,
-            "x": 0,
-            "y": 10
-          },
-          "id": 47,
-          "options": {
-            "legend": {
-              "calcs": [
-                "max",
-                "mean"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true,
-              "sortBy": "Mean",
-              "sortDesc": false
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.0.3",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "increase(huatuo_bamai_iolatency_container_q2c{container_host=~\"$container_host\",region=\"$region\"}[5m])",
-              "interval": "",
-              "legendFormat": "{{container_host}} [zone={{zone}}]",
-              "refId": "A"
-            }
-          ],
-          "title": "容器访问磁盘q2c延迟超过20ms的IO个数统计（5分钟增量）",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "description": "",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 7,
-            "w": 24,
-            "x": 0,
-            "y": 206
-          },
-          "id": 50,
-          "options": {
-            "legend": {
-              "calcs": [
-                "max",
-                "mean"
-              ],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true,
-              "sortBy": "Max",
-              "sortDesc": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.0.3",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "editorMode": "code",
-              "exemplar": true,
-              "expr": "increase(huatuo_bamai_iolatency_container_d2c{container_host=~\"$container_host\",region=\"$region\"}[5m])",
-              "interval": "",
-              "legendFormat": "{{container_host}} [zone={{zone}}]",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "容器访问磁盘d2c延迟超过20ms的IO个数统计（5分钟增量）",
-          "type": "timeseries"
-        }
-      ],
-      "title": "IO",
-      "type": "row"
-    },
-    {
-      "collapsed": true,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 10
-      },
-      "id": 38,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "none"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 24,
-            "x": 0,
-            "y": 804
-          },
-          "id": 39,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "huatuo_bamai_memory_others_container_asyncreclaim_time{container_host=~\"$container_host\",region=\"$region\"}/1000000",
-              "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
-              "refId": "A"
-            }
-          ],
-          "title": "$container_host 异步回收耗时(ms)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "ns"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 24,
-            "x": 0,
-            "y": 813
-          },
-          "id": 40,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "huatuo_bamai_memory_others_container_directstall_time{container_host=~\"$container_host\",region=\"$region\"}",
-              "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
-              "refId": "A"
-            }
-          ],
-          "title": "$container_host try_charge 直接回收耗时",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "MB",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "bytes"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 24,
-            "x": 0,
-            "y": 822
-          },
-          "id": 41,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "huatuo_bamai_memory_stat_container_pgsteal_cswapd{container_host=~\"$container_host\",region=\"$region\"}/1024/1024",
-              "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
-              "refId": "A"
-            }
-          ],
-          "title": "$container_host 异步回收量（累计值）",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "MB",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "bytes"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 24,
-            "x": 0,
-            "y": 831
-          },
-          "id": 42,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "huatuo_bamai_memory_stat_container_pgsteal_direct{container_host=~\"$container_host\",region=\"$region\"}",
-              "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
-              "refId": "A"
-            }
-          ],
-          "title": "宿主直接回收和 try_charge 对 $container_host 直接回收的总量（累计值）",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "MB",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "bytes"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 24,
-            "x": 0,
-            "y": 840
-          },
-          "id": 45,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "huatuo_bamai_memory_stat_container_pgsteal_kswapd{container_host=~\"$container_host\",region=\"$region\"}",
-              "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
-              "refId": "A"
-            }
-          ],
-          "title": "宿主kswapd和容器cswapd 对 $container_host 的异步回收的总量（累计值）",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "MB",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "bytes"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 24,
-            "x": 0,
-            "y": 849
-          },
-          "id": 43,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "table",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "huatuo_bamai_memory_stat_container_pgsteal_globaldirect{container_host=~\"$container_host\",region=\"$region\"}",
-              "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
-              "refId": "A"
-            }
-          ],
-          "title": "宿主直接回收对 $container_host 容器的回收量(累计值)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "huatuo-bamai-prom"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "MB",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "bytes"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 24,
-            "x": 0,
-            "y": 858
-          },
-          "id": 44,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "right",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "8.3.7",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "huatuo-bamai-prom"
-              },
-              "exemplar": true,
-              "expr": "huatuo_bamai_memory_stat_container_pgsteal_globalkswapd{container_host=~\"$container_host\",region=\"$region\"}",
-              "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
-              "refId": "A"
-            }
-          ],
-          "title": "宿主kswapd回收对 $container_host 容器的回收量(累计值)",
-          "type": "timeseries"
-        }
-      ],
-      "title": "Memory",
-      "type": "row"
-    },
-    {
-      "collapsed": true,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 11
       },
       "id": 4,
       "panels": [
@@ -1050,28 +163,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Per-container user-space CPU utilization.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
-                "barWidthFactor": 0.6,
                 "drawStyle": "line",
-                "fillOpacity": 10,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -1079,7 +190,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -1094,7 +205,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "red",
@@ -1110,7 +222,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 12
+            "y": 10
           },
           "id": 2,
           "options": {
@@ -1122,7 +234,8 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
               "hideZeros": false,
@@ -1144,7 +257,7 @@
               "refId": "A"
             }
           ],
-          "title": "容器usr",
+          "title": "Container CPU User",
           "type": "timeseries"
         },
         {
@@ -1152,28 +265,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Per-container kernel-space CPU utilization.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
-                "barWidthFactor": 0.6,
                 "drawStyle": "line",
-                "fillOpacity": 10,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -1181,7 +292,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -1196,7 +307,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "red",
@@ -1212,7 +324,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 165
+            "y": 19
           },
           "id": 6,
           "options": {
@@ -1224,7 +336,8 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
               "hideZeros": false,
@@ -1246,7 +359,7 @@
               "refId": "A"
             }
           ],
-          "title": "容器sys",
+          "title": "Container CPU Sys",
           "type": "timeseries"
         },
         {
@@ -1254,28 +367,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Wait time caused by cgroup quota limits within the container.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
-                "barWidthFactor": 0.6,
                 "drawStyle": "line",
-                "fillOpacity": 10,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -1283,7 +394,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -1298,7 +409,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "red",
@@ -1314,7 +426,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 174
+            "y": 28
           },
           "id": 7,
           "options": {
@@ -1326,7 +438,8 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
               "hideZeros": false,
@@ -1348,7 +461,7 @@
               "refId": "A"
             }
           ],
-          "title": "容器内部争抢",
+          "title": "Container Internal Contention",
           "type": "timeseries"
         },
         {
@@ -1356,27 +469,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Wait time caused by host-level resource contention outside the container's cgroup.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 10,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -1384,7 +496,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -1399,7 +511,8 @@
                 "mode": "absolute",
                 "steps": [
                   {
-                    "color": "green"
+                    "color": "green",
+                    "value": null
                   },
                   {
                     "color": "red",
@@ -1415,7 +528,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 183
+            "y": 37
           },
           "id": 8,
           "options": {
@@ -1427,14 +540,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -1448,7 +563,7 @@
               "refId": "A"
             }
           ],
-          "title": "容器外部争抢",
+          "title": "Container External Contention",
           "type": "timeseries"
         },
         {
@@ -1456,27 +571,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "CPU throttling events when container exceeds its cgroup CPU quota.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 10,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -1484,7 +598,340 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 46
+          },
+          "id": 9,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max",
+                "min"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "width": 300
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "exemplar": true,
+              "expr": "huatuo_bamai_cpu_stat_container_throttle_wait_rate{container_host=~\"$container_host\",region=\"$region\", container_type != \"sidecar\"}",
+              "interval": "",
+              "legendFormat": "{{host}}/{{container_host}}: {{container_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Container CPU Throttle",
+          "type": "timeseries"
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "refId": "A"
+        }
+      ],
+      "title": "🐳 CPU",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "id": 38,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "Asynchronous memory reclaim latency for all the container (ms).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "none"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 11
+          },
+          "id": 39,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max",
+                "min"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "width": 300
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "exemplar": true,
+              "expr": "huatuo_bamai_memory_others_container_asyncreclaim_time{container_host=~\"$container_host\",region=\"$region\"}/1000000",
+              "interval": "",
+              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Container Async Reclaim Latency",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "Direct memory reclaim latency triggered by try_charge for all the containers.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "ns"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 20
+          },
+          "id": 40,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max",
+                "min"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "width": 300
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "exemplar": true,
+              "expr": "huatuo_bamai_memory_others_container_directstall_time{container_host=~\"$container_host\",region=\"$region\"}",
+              "interval": "",
+              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Container try_charge Direct Reclaim Latency",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "Cumulative count of pages reclaimed asynchronously for the container.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "MB",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -1507,7 +954,7 @@
                   }
                 ]
               },
-              "unit": "short"
+              "unit": "bytes"
             },
             "overrides": []
           },
@@ -1515,9 +962,9 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 192
+            "y": 29
           },
-          "id": 9,
+          "id": 41,
           "options": {
             "legend": {
               "calcs": [
@@ -1527,14 +974,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -1542,26 +991,442 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "huatuo_bamai_cpu_stat_container_throttle_wait_rate{container_host=~\"$container_host\",region=\"$region\", container_type != \"sidecar\"}",
+              "expr": "huatuo_bamai_memory_vmstat_container_pgsteal_cswapd{container_host=~\"$container_host\",region=\"$region\"}/1024/1024",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}: {{container_type}}",
+              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
-          "title": "容器throttle",
+          "title": "Container Async Reclaim Volume (Cumulative)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "Cumulative total of host direct reclaim and try_charge direct reclaim pages for the container.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "MB",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 38
+          },
+          "id": 42,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max",
+                "min"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "width": 300
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "exemplar": true,
+              "expr": "huatuo_bamai_memory_vmstat_container_pgsteal_direct{container_host=~\"$container_host\",region=\"$region\"}",
+              "interval": "",
+              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Host Direct Reclaim + Container try_charge Total (Cumulative)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "Cumulative total of host kswapd and container cswapd async reclaim pages for all the containers.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "MB",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 47
+          },
+          "id": 45,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max",
+                "min"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "width": 300
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "exemplar": true,
+              "expr": "huatuo_bamai_memory_vmstat_container_pgsteal_kswapd{container_host=~\"$container_host\",region=\"$region\"}",
+              "interval": "",
+              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Host kswapd + Container cswapd Async Reclaim Total (Cumulative)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "Cumulative count of pages reclaimed by host direct reclaim path for all the containers.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "MB",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 56
+          },
+          "id": 43,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max",
+                "min"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "width": 300
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "exemplar": true,
+              "expr": "huatuo_bamai_memory_vmstat_container_pgsteal_globaldirect{container_host=~\"$container_host\",region=\"$region\"}",
+              "interval": "",
+              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Host Direct Reclaim Volume (Cumulative)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "Cumulative count of pages reclaimed by host kswapd daemon for all the containers.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "MB",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 65
+          },
+          "id": 44,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max",
+                "min"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "width": 300
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "exemplar": true,
+              "expr": "huatuo_bamai_memory_vmstat_container_pgsteal_globalkswapd{container_host=~\"$container_host\",region=\"$region\"}",
+              "interval": "",
+              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Host kswapd Reclaim Volume (Cumulative)",
           "type": "timeseries"
         }
       ],
-      "title": "CPU",
+      "targets": [
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "refId": "A"
+        }
+      ],
+      "title": "🐳 Memory",
       "type": "row"
     },
     {
       "collapsed": true,
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 11
       },
       "id": 10,
       "panels": [
@@ -1570,28 +1435,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Total received bytes per second across all network interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
-                "barWidthFactor": 0.6,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -1599,7 +1462,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -1629,7 +1492,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 13
+            "y": 12
           },
           "id": 11,
           "options": {
@@ -1641,7 +1504,8 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
               "hideZeros": false,
@@ -1664,7 +1528,7 @@
               "refId": "B"
             }
           ],
-          "title": "receive_bytes_total(Byte/s)",
+          "title": "Rx Bytes",
           "type": "timeseries"
         },
         {
@@ -1672,28 +1536,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Total received packets per second across all network interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
-                "barWidthFactor": 0.6,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -1701,7 +1563,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -1731,7 +1593,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 22
+            "y": 21
           },
           "id": 12,
           "options": {
@@ -1743,7 +1605,8 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
               "hideZeros": false,
@@ -1766,7 +1629,7 @@
               "refId": "B"
             }
           ],
-          "title": "receive_packets_total(packets/s)",
+          "title": "Rx Packets",
           "type": "timeseries"
         },
         {
@@ -1774,28 +1637,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Total transmitted bytes per second across all network interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
-                "barWidthFactor": 0.6,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -1803,7 +1664,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -1833,7 +1694,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 31
+            "y": 30
           },
           "id": 13,
           "options": {
@@ -1845,7 +1706,8 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
               "hideZeros": false,
@@ -1868,7 +1730,7 @@
               "refId": "B"
             }
           ],
-          "title": "transmit_bytes_total(Byte/s)",
+          "title": "Tx Bytes",
           "type": "timeseries"
         },
         {
@@ -1876,27 +1738,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Total transmitted packets per second across all network interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -1904,7 +1765,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -1934,7 +1795,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 40
+            "y": 39
           },
           "id": 14,
           "options": {
@@ -1946,14 +1807,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -1968,7 +1831,7 @@
               "refId": "B"
             }
           ],
-          "title": "transmit_packets_total(packets/s)",
+          "title": "Tx Packets",
           "type": "timeseries"
         },
         {
@@ -1976,27 +1839,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Receive-side anomaly stats: drops, errors, FIFO overruns, frame errors (packets/s).",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 10,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -2004,7 +1866,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -2035,7 +1897,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 49
+            "y": 48
           },
           "id": 15,
           "options": {
@@ -2047,14 +1909,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -2080,7 +1944,7 @@
               "refId": "B"
             }
           ],
-          "title": "接收方向异常统计(packets/s)",
+          "title": "Rx Anomaly",
           "type": "timeseries"
         },
         {
@@ -2088,27 +1952,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Transmit-side anomaly stats: drops, errors, FIFO overruns, carrier errors (packets/s).",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 10,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -2116,7 +1979,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -2147,7 +2010,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 58
+            "y": 57
           },
           "id": 16,
           "options": {
@@ -2159,14 +2022,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -2197,7 +2062,7 @@
                 "uid": "huatuo-bamai-prom"
               },
               "exemplar": true,
-              "expr": "rate(huatuo_bamai_netdev_contianer_transmit_carrier_total{container_host=~\"$container_host\",region=\"$region\"}[30s])",
+              "expr": "rate(huatuo_bamai_netdev_container_transmit_carrier_total{container_host=~\"$container_host\",region=\"$region\"}[30s])",
               "hide": false,
               "interval": "",
               "legendFormat": "carrier: {{container_host}}",
@@ -2216,7 +2081,7 @@
               "refId": "D"
             }
           ],
-          "title": "发送方向异常统计(packets/s)",
+          "title": "Tx Anomaly",
           "type": "timeseries"
         },
         {
@@ -2224,27 +2089,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Total ARP request and reply packets on all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -2252,7 +2116,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -2303,7 +2167,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 67
+            "y": 66
           },
           "id": 20,
           "options": {
@@ -2315,14 +2179,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -2340,7 +2206,7 @@
               "refId": "B"
             }
           ],
-          "title": "arp",
+          "title": "ARP Packets",
           "type": "timeseries"
         },
         {
@@ -2348,27 +2214,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Number of TCP sockets currently in use.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -2376,7 +2241,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -2427,7 +2292,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 76
+            "y": 75
           },
           "id": 21,
           "options": {
@@ -2439,14 +2304,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -2464,7 +2331,7 @@
               "refId": "B"
             }
           ],
-          "title": "TCP inuse(sockets)",
+          "title": "TCP Inuse",
           "type": "timeseries"
         },
         {
@@ -2472,27 +2339,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Number of TCP sockets in TIME_WAIT state.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -2500,7 +2366,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -2551,7 +2417,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 85
+            "y": 84
           },
           "id": 22,
           "options": {
@@ -2563,14 +2429,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -2588,7 +2456,7 @@
               "refId": "B"
             }
           ],
-          "title": "TCP tw(sockets)",
+          "title": "TCP Timewait",
           "type": "timeseries"
         },
         {
@@ -2596,27 +2464,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Total socket count across all protocols (TCP, UDP, RAW, etc.).",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -2624,7 +2491,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -2675,7 +2542,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 94
+            "y": 93
           },
           "id": 24,
           "options": {
@@ -2687,14 +2554,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -2712,7 +2581,7 @@
               "refId": "B"
             }
           ],
-          "title": "容器socket总量",
+          "title": "All Sockets",
           "type": "timeseries"
         },
         {
@@ -2720,27 +2589,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Aggregated kernel netstat counters (SNMP/netstat).",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -2748,7 +2616,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -2779,7 +2647,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 103
+            "y": 102
           },
           "id": 25,
           "options": {
@@ -2791,14 +2659,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -2906,7 +2776,7 @@
               "refId": "E"
             }
           ],
-          "title": "netstat 指标",
+          "title": "Netstat Metrics",
           "type": "timeseries"
         },
         {
@@ -2914,27 +2784,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Packet loss rate derived from netstat counters.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -2942,7 +2811,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -2973,7 +2842,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 112
+            "y": 111
           },
           "id": 27,
           "options": {
@@ -2985,14 +2854,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -3190,7 +3061,7 @@
               "refId": "M"
             }
           ],
-          "title": "netstat 丢包",
+          "title": "Packet Loss",
           "type": "timeseries"
         },
         {
@@ -3198,27 +3069,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Network error counters: InErrors, OutErrors, InCsumErrors, etc.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -3226,7 +3096,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -3257,7 +3127,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 121
+            "y": 120
           },
           "id": 26,
           "options": {
@@ -3269,14 +3139,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -3429,7 +3301,7 @@
               "refId": "H"
             }
           ],
-          "title": "netstat 错误",
+          "title": "Netstat Errors",
           "type": "timeseries"
         },
         {
@@ -3437,27 +3309,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "TCP segment retransmission rate and count.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -3465,7 +3336,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -3496,7 +3367,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 130
+            "y": 129
           },
           "id": 36,
           "options": {
@@ -3508,14 +3379,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -3608,7 +3481,7 @@
               "refId": "D"
             }
           ],
-          "title": "netstat 重传",
+          "title": "Retransmission",
           "type": "timeseries"
         },
         {
@@ -3616,27 +3489,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "Packets dropped due to socket receive buffer exhaustion (RcvbufErrors, SndbufErrors).",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -3644,7 +3516,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -3675,7 +3547,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 139
+            "y": 138
           },
           "id": 35,
           "options": {
@@ -3687,14 +3559,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -3727,7 +3601,7 @@
               "refId": "A"
             }
           ],
-          "title": "netstat 因缓存区不足导致丢包",
+          "title": "Buffer Drops",
           "type": "timeseries"
         },
         {
@@ -3735,27 +3609,26 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
+          "description": "TCP SYN packet statistics: SYN received, SYN sent, SYN retransmissions.",
           "fieldConfig": {
             "defaults": {
               "color": {
                 "mode": "palette-classic"
               },
               "custom": {
-                "axisBorderShow": false,
                 "axisCenteredZero": false,
                 "axisColorMode": "text",
                 "axisLabel": "",
                 "axisPlacement": "auto",
                 "barAlignment": 0,
                 "drawStyle": "line",
-                "fillOpacity": 0,
+                "fillOpacity": 20,
                 "gradientMode": "none",
                 "hideFrom": {
                   "legend": false,
                   "tooltip": false,
                   "viz": false
                 },
-                "insertNulls": false,
                 "lineInterpolation": "linear",
                 "lineWidth": 1,
                 "pointSize": 5,
@@ -3763,7 +3636,7 @@
                   "type": "linear"
                 },
                 "showPoints": "never",
-                "spanNulls": false,
+                "spanNulls": true,
                 "stacking": {
                   "group": "A",
                   "mode": "none"
@@ -3794,7 +3667,7 @@
             "h": 9,
             "w": 24,
             "x": 0,
-            "y": 148
+            "y": 147
           },
           "id": 51,
           "options": {
@@ -3806,14 +3679,16 @@
               ],
               "displayMode": "table",
               "placement": "right",
-              "showLegend": true
+              "showLegend": true,
+              "width": 300
             },
             "tooltip": {
+              "hideZeros": false,
               "mode": "multi",
               "sort": "desc"
             }
           },
-          "pluginVersion": "8.3.7",
+          "pluginVersion": "12.0.3",
           "targets": [
             {
               "datasource": {
@@ -3831,18 +3706,262 @@
               "refId": "C"
             }
           ],
-          "title": "TCP SYN 包全量统计（包括接收/发送/重传）",
+          "title": "SYN Stats",
           "type": "timeseries"
         }
       ],
-      "title": "Network",
+      "targets": [
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "refId": "A"
+        }
+      ],
+      "title": "🐳 Networking",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "datasource": {
+        "type": "elasticsearch",
+        "uid": "huatuo-bamai-es"
+      },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 49,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "Disk IO count where queue-to-completion (q2c) latency exceeds 20ms, 5-minute incremental.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 24,
+            "x": 0,
+            "y": 13
+          },
+          "id": 47,
+          "options": {
+            "legend": {
+              "calcs": [
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "sortBy": "Mean",
+              "sortDesc": true,
+              "width": 300
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "exemplar": true,
+              "expr": "increase(huatuo_bamai_iolatency_container_blkdisk_q2c{container_host=~\"$container_host\",region=\"$region\"}[5m])",
+              "interval": "",
+              "legendFormat": "{{container_host}} [{{latency}}]",
+              "refId": "A"
+            }
+          ],
+          "title": "Slow IO (q2c)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "description": "Disk IO count where device-to-completion (d2c) latency exceeds 20ms, 5-minute incremental.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 24,
+            "x": 0,
+            "y": 20
+          },
+          "id": 50,
+          "options": {
+            "legend": {
+              "calcs": [
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "sortBy": "Mean",
+              "sortDesc": true,
+              "width": 300
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.0.3",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "editorMode": "code",
+              "exemplar": true,
+              "expr": "increase(huatuo_bamai_iolatency_container_blkdisk_d2c{container_host=~\"$container_host\",region=\"$region\"}[5m])",
+              "interval": "",
+              "legendFormat": "{{container_host}} [{{latency}}]",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Slow IO (d2c)",
+          "type": "timeseries"
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "refId": "A"
+        }
+      ],
+      "title": "🐳 IO",
       "type": "row"
     }
   ],
-  "preload": false,
   "refresh": "",
-  "schemaVersion": 41,
-  "tags": [],
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": [
+    "metrics"
+  ],
   "templating": {
     "list": [
       {
@@ -3854,17 +3973,20 @@
           "type": "prometheus",
           "uid": "huatuo-bamai-prom"
         },
-        "definition": "label_values(huatuo_bamai_arp_entries, region)",
-        "includeAll": false,
+        "definition": "label_values(huatuo_bamai_cpu_util_usr, region)",
+        "hide": 0,
+        "includeAll": true,
         "label": "region",
+        "multi": false,
         "name": "region",
         "options": [],
         "query": {
-          "query": "label_values(huatuo_bamai_arp_entries, region)",
+          "query": "label_values(huatuo_bamai_cpu_util_usr, region)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
         "regex": "",
+        "skipUrlSync": false,
         "sort": 2,
         "type": "query"
       },
@@ -3877,59 +3999,63 @@
           "type": "prometheus",
           "uid": "huatuo-bamai-prom"
         },
-        "definition": "label_values(huatuo_bamai_arp_container_entries{region=\"$region\"}, container_hostnamespace)",
+        "definition": "label_values(huatuo_bamai_cpu_util_container_usr{region=\"$region\"}, container_hostnamespace)",
+        "hide": 0,
         "includeAll": true,
         "label": "ns",
         "multi": true,
         "name": "ns",
         "options": [],
         "query": {
-          "query": "label_values(huatuo_bamai_arp_container_entries{region=\"$region\"}, container_hostnamespace)",
+          "query": "label_values(huatuo_bamai_cpu_util_container_usr{region=\"$region\"}, container_hostnamespace)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
         "regex": "",
+        "skipUrlSync": false,
         "sort": 2,
         "type": "query"
       },
       {
         "current": {
           "text": "All",
-          "value": [
-            "$__all"
-          ]
+          "value": "$__all"
         },
         "datasource": {
           "type": "prometheus",
           "uid": "huatuo-bamai-prom"
         },
-        "definition": "label_values(huatuo_bamai_arp_container_entries{container_hostnamespace =~\"$ns\"}, container_host)",
+        "definition": "label_values(huatuo_bamai_cpu_util_container_usr{container_hostnamespace =~\"$ns\"}, container_host)",
+        "hide": 0,
         "includeAll": true,
         "label": "container_host",
         "multi": true,
         "name": "container_host",
         "options": [],
         "query": {
-          "query": "label_values(huatuo_bamai_arp_container_entries{container_hostnamespace =~\"$ns\"}, container_host)",
+          "query": "label_values(huatuo_bamai_cpu_util_container_usr{container_hostnamespace =~\"$ns\"}, container_host)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
         "regex": "",
+        "skipUrlSync": false,
         "sort": 2,
         "type": "query"
       },
       {
         "current": {
-          "text": "huatuo_bamai_arp_container_entries",
-          "value": "huatuo_bamai_arp_container_entries"
+          "text": "huatuo_bamai_sockstat_TCP_tw",
+          "value": "huatuo_bamai_sockstat_TCP_tw"
         },
         "datasource": {
           "type": "prometheus",
           "uid": "huatuo-bamai-prom"
         },
         "definition": "metrics(huatuo_bamai_)",
+        "hide": 0,
         "includeAll": false,
         "label": "metric",
+        "multi": false,
         "name": "metric",
         "options": [],
         "query": {
@@ -3938,6 +4064,7 @@
         },
         "refresh": 1,
         "regex": "",
+        "skipUrlSync": false,
         "sort": 2,
         "type": "query"
       }
@@ -3949,7 +4076,8 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Metric 大盘 - 容器视图",
-  "uid": "metrics-container",
-  "version": 1
+  "title": "v2.3.0 Metric Dashboard - Container View",
+  "uid": "huatuo-metrics-ctr-v2-3-0",
+  "version": 3,
+  "weekStart": ""
 }

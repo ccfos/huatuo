@@ -184,7 +184,9 @@
   ],
   "preload": false,
   "schemaVersion": 41,
-  "tags": [],
+  "tags": [
+    "profiling"
+  ],
   "templating": {
     "list": [
       {
