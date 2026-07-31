@@ -35,6 +35,7 @@ import (
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_mutex_profiler.c -o $BPF_DIR/native_mutex_profiler.o
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_rwlock_profiler.c -o $BPF_DIR/native_rwlock_profiler.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_spinlock_profiler.c -o $BPF_DIR/native_spinlock_profiler.o
 
 const (
 	lockBackendContentionTracepoints = "contention tracepoints"
@@ -207,31 +208,69 @@ func lockContentionTracepointsAvailable() bool {
 func lockAttachOptions(
 	lockType profiling.LockType,
 ) (string, []bpf.AttachOption, string, error) {
-	if lockType != profiling.LockTypeMutex && lockType != profiling.LockTypeRWLock {
-		return "", nil, "", fmt.Errorf("unsupported native lock type %q", lockType)
-	}
 	if hasLockContentionTracepoints() {
 		objectPrefix := string(lockType)
+		programPrefix := objectPrefix
+		if lockType == profiling.LockTypeSpinlock {
+			programPrefix = "spin"
+		}
 		return "native_" + objectPrefix + "_profiler.o", []bpf.AttachOption{
-			{ProgramName: "trace_" + objectPrefix + "_contention_begin", Symbol: "lock/contention_begin"},
-			{ProgramName: "trace_" + objectPrefix + "_contention_end", Symbol: "lock/contention_end"},
+			{
+				ProgramName: "trace_" + programPrefix + "_contention_begin",
+				Symbol:      "lock/contention_begin",
+			},
+			{
+				ProgramName: "trace_" + programPrefix + "_contention_end",
+				Symbol:      "lock/contention_end",
+			},
 		}, lockBackendContentionTracepoints, nil
 	}
+
 	switch lockType {
 	case profiling.LockTypeMutex:
 		return "native_mutex_profiler.o", []bpf.AttachOption{
-			{ProgramName: "trace_mutex_lock_slowpath", Symbol: mutexSlowpathSymbol},
-			{ProgramName: "trace_mutex_lock_slowpath_return", Symbol: mutexSlowpathSymbol, RetprobeMaxActive: lockRetprobeMaxActive},
+			{
+				ProgramName: "trace_mutex_lock_slowpath",
+				Symbol:      mutexSlowpathSymbol,
+			},
+			{
+				ProgramName:       "trace_mutex_lock_slowpath_return",
+				Symbol:            mutexSlowpathSymbol,
+				RetprobeMaxActive: lockRetprobeMaxActive,
+			},
 		}, lockBackendMutexSlowpath, nil
 	case profiling.LockTypeRWLock:
 		return "native_rwlock_profiler.o", []bpf.AttachOption{
-			{ProgramName: "trace_rwlock_read_slowpath", Symbol: rwlockReadSlowpathSymbol},
-			{ProgramName: "trace_rwlock_read_slowpath_return", Symbol: rwlockReadSlowpathSymbol, RetprobeMaxActive: lockRetprobeMaxActive},
-			{ProgramName: "trace_rwlock_write_slowpath", Symbol: rwlockWriteSlowpathSymbol},
-			{ProgramName: "trace_rwlock_write_slowpath_return", Symbol: rwlockWriteSlowpathSymbol, RetprobeMaxActive: lockRetprobeMaxActive},
+			{
+				ProgramName: "trace_rwlock_read_slowpath",
+				Symbol:      rwlockReadSlowpathSymbol,
+			},
+			{
+				ProgramName:       "trace_rwlock_read_slowpath_return",
+				Symbol:            rwlockReadSlowpathSymbol,
+				RetprobeMaxActive: lockRetprobeMaxActive,
+			},
+			{
+				ProgramName: "trace_rwlock_write_slowpath",
+				Symbol:      rwlockWriteSlowpathSymbol,
+			},
+			{
+				ProgramName:       "trace_rwlock_write_slowpath_return",
+				Symbol:            rwlockWriteSlowpathSymbol,
+				RetprobeMaxActive: lockRetprobeMaxActive,
+			},
 		}, lockBackendRWLockSlowpaths, nil
+	case profiling.LockTypeSpinlock:
+		return "", nil, "", fmt.Errorf(
+			"spinlock contention requires lock:contention_begin/end " +
+				"tracepoints (Linux 5.19+); refusing unsafe " +
+				"spinlock slowpath probes",
+		)
 	default:
-		return "", nil, "", fmt.Errorf("unsupported native lock type %q", lockType)
+		return "", nil, "", fmt.Errorf(
+			"unsupported native lock type %q",
+			lockType,
+		)
 	}
 }
 

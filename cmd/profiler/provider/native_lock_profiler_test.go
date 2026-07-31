@@ -55,6 +55,7 @@ func TestLockAttachOptions(t *testing.T) {
 		prefix   string
 	}{
 		{lockType: profiling.LockTypeMutex, prefix: "mutex"},
+		{lockType: profiling.LockTypeSpinlock, prefix: "spin"},
 		{lockType: profiling.LockTypeRWLock, prefix: "rwlock"},
 	} {
 		_, options, backend, err := lockAttachOptions(test.lockType)
@@ -123,8 +124,10 @@ func TestLockAttachOptions(t *testing.T) {
 			options[3].RetprobeMaxActive,
 		)
 	}
-	if _, _, _, err := lockAttachOptions(profiling.LockTypeSpinlock); err == nil {
-		t.Fatal("spinlock should remain unsupported in rwlock slice")
+	if _, _, _, err := lockAttachOptions(
+		profiling.LockTypeSpinlock,
+	); err == nil {
+		t.Fatal("spinlock fallback error = nil")
 	}
 }
 

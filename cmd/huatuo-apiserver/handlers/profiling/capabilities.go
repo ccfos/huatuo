@@ -63,6 +63,7 @@ func buildCapabilities(h *Handler) v1.ProfilingCapabilities {
 		LockTypes: []profiling.LockType{
 			profiling.LockTypeMutex,
 			profiling.LockTypeRWLock,
+			profiling.LockTypeSpinlock,
 		},
 		AggregationIntervalSeconds: cfg.AggregationIntervalSeconds,
 		MaxConcurrentProfilers:     cfg.MaxConcurrentProfilerProcesses,
