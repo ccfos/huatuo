@@ -104,7 +104,7 @@ docker logs opensearch
 
 #### 3. 配置 huatuo-bamai
 
-在 `huatuo-bamai.conf` 中添加以下配置。OpenSearch 容器镜像默认用户名和密码均为 `admin`。存储配置的详细说明请参见[配置指南](../configuration/huatuo-bamai-configuration_zh.md)。
+在 `huatuo-bamai.conf` 中添加以下配置。OpenSearch 容器镜像默认用户名和密码均为 `admin`。存储配置的详细说明请参见[配置指南](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
 ```toml
 [Storage.Elasticsearch]
@@ -227,7 +227,7 @@ curl -k -u elastic:123456 https://localhost:9200
 
 #### 3. 配置 huatuo-bamai
 
-在 `huatuo-bamai.conf` 中添加以下配置。Elasticsearch 容器镜像默认用户名为 `elastic`，密码通过环境变量 `ELASTIC_PASSWORD` 设置。存储配置的详细说明请参见[配置指南](../configuration/huatuo-bamai-configuration_zh.md)。
+在 `huatuo-bamai.conf` 中添加以下配置。Elasticsearch 容器镜像默认用户名为 `elastic`，密码通过环境变量 `ELASTIC_PASSWORD` 设置。存储配置的详细说明请参见[配置指南](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
 ```toml
 [Storage.Elasticsearch]

@@ -19,7 +19,7 @@ curl -L -o huatuo-bamai.conf https://github.com/ccfos/huatuo/raw/main/huatuo-bam
 
 ### 1.2 Modify the configuration file
 
-Modify the configuration file for the deployment environment. For example, configure the storage backend and the method used to obtain Pod information. See the [Configuration Guide](../configuration/huatuo-bamai-configuration_en.md) for details.
+Modify the configuration file for the deployment environment. For example, configure the storage backend and the method used to obtain Pod information. See the [Configuration Guide](/docs/configuration/huatuo-bamai-configuration_en.md) for details.
 
 ### 1.3 Create the ConfigMap
 

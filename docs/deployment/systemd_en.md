@@ -64,7 +64,7 @@ sudo wget -O /etc/systemd/system/huatuo-apiserver.service "https://raw.githubuse
 
 ### 4. Modify the configurations
 
-Edit `/opt/huatuo-bamai/conf/huatuo-bamai.conf` and `/opt/huatuo-bamai/conf/huatuo-apiserver.conf` to match the deployment environment. For detailed configuration options, see the [`huatuo-bamai` configuration](../configuration/huatuo-bamai-configuration_en.md) and [`huatuo-apiserver` configuration](../configuration/huatuo-apiserver-configuration_en.md).
+Edit `/opt/huatuo-bamai/conf/huatuo-bamai.conf` and `/opt/huatuo-bamai/conf/huatuo-apiserver.conf` to match the deployment environment. For detailed configuration options, see the [`huatuo-bamai` configuration](/docs/configuration/huatuo-bamai-configuration_en.md) and [`huatuo-apiserver` configuration](/docs/configuration/huatuo-apiserver-configuration_en.md).
 
 ### 5. Register the HUATUO services
 
@@ -118,7 +118,7 @@ sudo dnf install ./huatuo-bamai-2.1.0-2.oc9.aarch64.rpm
 
 ### 3. Modify the configuration
 
-Edit `/etc/huatuo-bamai/huatuo-bamai.conf` to match the deployment environment. For detailed configuration options, see the [`huatuo-bamai` configuration](../configuration/huatuo-bamai-configuration_en.md).
+Edit `/etc/huatuo-bamai/huatuo-bamai.conf` to match the deployment environment. For detailed configuration options, see the [`huatuo-bamai` configuration](/docs/configuration/huatuo-bamai-configuration_en.md).
 
 ### 4. Start the HUATUO service
 
