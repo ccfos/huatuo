@@ -55,6 +55,47 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "lock contention",
+			args: []string{
+				"--type", "lock",
+				"--language", "go",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--lock-type", "rwlock",
+				"--lock-mode", "count",
+				"--lock-wait-threshold", "2us",
+			},
+		},
+		{
+			name: "invalid lock type",
+			args: []string{
+				"--type", "lock",
+				"--language", "go",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--lock-type", "semaphore",
+			},
+			wantError: `unsupported lock type "semaphore"`,
+		},
+		{
+			name: "negative lock wait threshold",
+			args: []string{
+				"--type", "lock",
+				"--language", "go",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--lock-wait-threshold", "-1us",
+			},
+			wantError: "--lock-wait-threshold must be between 1us and 1h",
+		},
+		{
+			name: "zero lock wait threshold",
+			args: []string{
+				"--type", "lock",
+				"--language", "go",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--lock-wait-threshold", "0",
+			},
+			wantError: "--lock-wait-threshold must be between 1us and 1h",
+		},
+		{
 			name: "tracer ID",
 			args: []string{
 				"--type", "cpu",
@@ -77,7 +118,7 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 		{
 			name:      "legacy mem type",
 			args:      []string{"--type", "mem", "--language", "c"},
-			wantError: `unsupported profiling type "mem" (expected: cpu or memory)`,
+			wantError: `unsupported profiling type "mem" (expected: cpu, memory, or lock)`,
 		},
 		{
 			name:      "removed flags option",
@@ -282,8 +323,32 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			args:      []string{"--thread-group"},
 			wantError: "--thread-group is supported only by native profiling",
 		},
-		{name: "native CPU thread group", language: "go", typ: "cpu", args: []string{"--thread-group"}},
-		{name: "native memory thread group", language: "c", typ: "memory", args: []string{"--thread-group"}},
+		{
+			name:     "native CPU thread group",
+			language: "go",
+			typ:      "cpu",
+			args:     []string{"--thread-group", "--pid", "42"},
+		},
+		{
+			name:     "native memory thread group",
+			language: "c",
+			typ:      "memory",
+			args:     []string{"--thread-group", "--pid", "42"},
+		},
+		{
+			name:      "thread group without PID",
+			language:  "go",
+			typ:       "lock",
+			args:      []string{"--thread-group"},
+			wantError: "--thread-group requires --pid",
+		},
+		{
+			name:      "lock flag on CPU profiling",
+			language:  "go",
+			typ:       "cpu",
+			args:      []string{"--lock-mode", "count"},
+			wantError: "--lock-mode is supported only by native lock profiling",
+		},
 		{
 			name:      "native exec path",
 			language:  "c",

@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/output"
@@ -59,6 +60,9 @@ type ProfilerContext struct {
 	LogBpfDebug               bool
 	MemoryMode                profiling.MemoryMode
 	PhysicalMemoryProbability uint
+	LockMode                  profiling.LockMode
+	LockType                  profiling.LockType
+	LockWaitThreshold         time.Duration
 
 	TracerID string
 
@@ -144,6 +148,18 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 			return nil, err
 		}
 	}
+	lockMode := profiling.LockModeUnknown
+	lockType := profiling.LockTypeUnknown
+	if typ == profiling.TypeLock {
+		lockMode, err = profiling.ParseLockMode(cliCtx.String("lock-mode"))
+		if err != nil {
+			return nil, err
+		}
+		lockType, err = profiling.ParseLockType(cliCtx.String("lock-type"))
+		if err != nil {
+			return nil, err
+		}
+	}
 	profilerContext := &ProfilerContext{
 		Ctx:    ctx,
 		Cancel: cancelProfiler,
@@ -168,6 +184,9 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		OutputFormat:              outputFormat,
 		MemoryMode:                mode,
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
+		LockMode:                  lockMode,
+		LockType:                  lockType,
+		LockWaitThreshold:         cliCtx.Duration("lock-wait-threshold"),
 
 		TracerID: cliCtx.String("tracer-id"),
 

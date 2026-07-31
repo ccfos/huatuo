@@ -33,6 +33,7 @@ import (
 const (
 	ProfilingMemory = job.JobTypeProfilingMemory
 	ProfilingCPU    = job.JobTypeProfilingCPU
+	ProfilingLock   = job.JobTypeProfilingLock
 )
 
 // create creates a profiling job.
@@ -76,7 +77,13 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 	}
 	taskID := req.ID
 
-	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
+	jobResult, err := h.jobManager.GetByTypesContext(
+		ctx.Request().Context(),
+		taskID,
+		ProfilingCPU,
+		ProfilingMemory,
+		ProfilingLock,
+	)
 	if err != nil {
 		if errors.Is(err, job.ErrNotFound) {
 			return response.ErrNotFound
@@ -93,7 +100,14 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage("job already completed")
 	}
 
-	if err := h.jobManager.StopByTypesContext(ctx.Request().Context(), taskID, false, ProfilingCPU, ProfilingMemory); err != nil {
+	if err := h.jobManager.StopByTypesContext(
+		ctx.Request().Context(),
+		taskID,
+		false,
+		ProfilingCPU,
+		ProfilingMemory,
+		ProfilingLock,
+	); err != nil {
 		log.WithError(err).WithField("job_id", taskID).Error("failed to stop profiling job")
 		return response.ErrInternal
 	}
@@ -149,7 +163,13 @@ func (h *Handler) get(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
+	jobResult, err := h.jobManager.GetByTypesContext(
+		ctx.Request().Context(),
+		taskID,
+		ProfilingCPU,
+		ProfilingMemory,
+		ProfilingLock,
+	)
 	if err != nil {
 		if errors.Is(err, job.ErrNotFound) {
 			return response.ErrNotFound
@@ -191,26 +211,33 @@ func buildProfilingJob(jobResult *job.Job, flameGraphBaseURL string) (v1.Profili
 		privateData.DurationSeconds = jobResult.AgentTask.Duration / 2
 	}
 	resp := v1.ProfilingJob{
-		ID:              jobResult.ID,
-		ContainerID:     jobResult.ContainerID,
-		Hostname:        jobResult.Hostname,
-		Status:          string(jobResult.Status),
-		Type:            profileType,
-		DurationSeconds: privateData.DurationSeconds,
-		CreatedAt:       jobResult.CreatedAt,
-		FinishedAt:      optionalTime(jobResult.FinishedAt),
-		ResultURL:       optionalString(resultURL),
-		StatusReason:    optionalString(jobResult.ErrorMessage),
-		MemoryMode:      privateData.MemoryMode,
-		BinaryMatchPath: privateData.BinaryMatchPath,
-		Language:        privateData.Language,
+		ID:                jobResult.ID,
+		ContainerID:       jobResult.ContainerID,
+		Hostname:          jobResult.Hostname,
+		Status:            string(jobResult.Status),
+		Type:              profileType,
+		DurationSeconds:   privateData.DurationSeconds,
+		CreatedAt:         jobResult.CreatedAt,
+		FinishedAt:        optionalTime(jobResult.FinishedAt),
+		ResultURL:         optionalString(resultURL),
+		StatusReason:      optionalString(jobResult.ErrorMessage),
+		MemoryMode:        privateData.MemoryMode,
+		LockMode:          privateData.LockMode,
+		LockType:          privateData.LockType,
+		LockWaitThreshold: privateData.LockWaitThreshold,
+		PID:               privateData.PID,
+		ThreadGroup:       privateData.ThreadGroup,
+		BinaryMatchPath:   privateData.BinaryMatchPath,
+		Language:          privateData.Language,
 	}
 
 	return resp, nil
 }
 
 func isProfilingJobType(jobType job.JobType) bool {
-	return jobType == ProfilingCPU || jobType == ProfilingMemory
+	return jobType == ProfilingCPU ||
+		jobType == ProfilingMemory ||
+		jobType == ProfilingLock
 }
 
 func profilingAPIType(jobType job.JobType) (string, error) {
@@ -219,6 +246,8 @@ func profilingAPIType(jobType job.JobType) (string, error) {
 		return string(profiling.TypeMemory), nil
 	case ProfilingCPU:
 		return string(profiling.TypeCPU), nil
+	case ProfilingLock:
+		return string(profiling.TypeLock), nil
 	default:
 		return "", fmt.Errorf("job %q is not a profiling job", jobType)
 	}
@@ -308,7 +337,13 @@ func (h *Handler) delete(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
+	jobResult, err := h.jobManager.GetByTypesContext(
+		ctx.Request().Context(),
+		taskID,
+		ProfilingCPU,
+		ProfilingMemory,
+		ProfilingLock,
+	)
 	if err != nil {
 		if errors.Is(err, job.ErrNotFound) {
 			return response.ErrNotFound
@@ -321,7 +356,13 @@ func (h *Handler) delete(ctx *server.Context) error {
 		return response.ErrForbidden
 	}
 
-	if err := h.jobManager.DeleteByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory); err != nil {
+	if err := h.jobManager.DeleteByTypesContext(
+		ctx.Request().Context(),
+		taskID,
+		ProfilingCPU,
+		ProfilingMemory,
+		ProfilingLock,
+	); err != nil {
 		if errors.Is(err, job.ErrCannotDeleteRunning) {
 			return response.ErrConflict.WithMessage("cannot delete running job")
 		}
@@ -344,7 +385,13 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, ProfilingCPU, ProfilingMemory)
+	jobResult, err := h.jobManager.GetByTypesContext(
+		ctx.Request().Context(),
+		taskID,
+		ProfilingCPU,
+		ProfilingMemory,
+		ProfilingLock,
+	)
 	if err != nil {
 		if errors.Is(err, job.ErrNotFound) {
 			return response.ErrNotFound

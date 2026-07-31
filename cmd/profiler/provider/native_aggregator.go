@@ -70,7 +70,19 @@ type lockStackEntry struct {
 	User      string
 	Kernel    string
 	WaitTime  uint64
-	Contended uint32
+	Contended uint64
+	LockType  profiling.LockType
+	Access    string
+}
+
+type lockAggregateKey struct {
+	Pid      uint32
+	Name     string
+	User     string
+	Kernel   string
+	Lock     uint64
+	LockType profiling.LockType
+	Access   string
 }
 
 type nativeAggregator struct {
@@ -78,7 +90,8 @@ type nativeAggregator struct {
 
 	formatter        output.Formatter
 	aggrMap          map[string]*stackEntry
-	lockAggrMap      map[string]*lockStackEntry
+	lockAggrMap      map[lockAggregateKey]*lockStackEntry
+	lockMode         profiling.LockMode
 	isLockFoldedDone bool
 }
 
@@ -91,7 +104,8 @@ func newNativeAggregator(pctx *pcontext.ProfilerContext) (*nativeAggregator, err
 	return &nativeAggregator{
 		formatter:   f,
 		aggrMap:     make(map[string]*stackEntry),
-		lockAggrMap: make(map[string]*lockStackEntry),
+		lockAggrMap: make(map[lockAggregateKey]*lockStackEntry),
+		lockMode:    pctx.LockMode,
 	}, nil
 }
 
@@ -128,7 +142,15 @@ func (a *nativeAggregator) Aggregate(rec any) {
 		}
 
 	case *lockStackEntry:
-		key := fmt.Sprintf("%s\x00%d", v.User, v.Proc.Lock)
+		key := lockAggregateKey{
+			Pid:      v.Proc.Pid,
+			Name:     v.Proc.Name,
+			User:     v.User,
+			Kernel:   v.Kernel,
+			Lock:     v.Proc.Lock,
+			LockType: v.LockType,
+			Access:   v.Access,
+		}
 		if existed, ok := a.lockAggrMap[key]; ok {
 			existed.Contended += v.Contended
 			existed.WaitTime += v.WaitTime
@@ -139,6 +161,8 @@ func (a *nativeAggregator) Aggregate(rec any) {
 				Kernel:    v.Kernel,
 				WaitTime:  v.WaitTime,
 				Contended: v.Contended,
+				LockType:  v.LockType,
+				Access:    v.Access,
 			}
 		}
 
@@ -170,7 +194,7 @@ func (a *nativeAggregator) Reset() {
 	}
 
 	a.aggrMap = make(map[string]*stackEntry)
-	a.lockAggrMap = make(map[string]*lockStackEntry)
+	a.lockAggrMap = make(map[lockAggregateKey]*lockStackEntry)
 	a.isLockFoldedDone = false
 }
 
@@ -184,7 +208,7 @@ func (a *nativeAggregator) OutputFormatter() output.Formatter {
 
 func (a *nativeAggregator) buildLockFolded() {
 	for _, rec := range a.lockAggrMap {
-		frames, value := lockPrefixFrames(rec)
+		frames, value := lockPrefixFrames(rec, a.lockMode)
 		frames = appendStackFrames(frames, rec.User, rec.Kernel)
 		if err := a.formatter.Add(&output.Sample{Frames: frames, Count: int64(value)}); err != nil {
 			log.Warnf("formatter add lock sample: %v", err)
@@ -222,7 +246,7 @@ func (a *nativeAggregator) snapshotLockProfile(pctx *pcontext.ProfilerContext) (
 
 	tree := make([]*profiler.TreeItem, 0, len(a.lockAggrMap))
 	for _, rec := range a.lockAggrMap {
-		prefixes, value := lockPrefixFrames(rec)
+		prefixes, value := lockPrefixFrames(rec, pctx.LockMode)
 		tree = append(tree, buildTreeItem(prefixes, rec.User, rec.Kernel, value))
 	}
 	return buildPprofData(pctx, tree)
@@ -314,12 +338,22 @@ func buildPprofData(pctx *pcontext.ProfilerContext, tree []*profiler.TreeItem) (
 	return data, nil
 }
 
-func lockPrefixFrames(rec *lockStackEntry) ([]string, uint64) {
+func lockPrefixFrames(
+	rec *lockStackEntry,
+	mode profiling.LockMode,
+) ([]string, uint64) {
+	lockType := string(rec.LockType)
+	if rec.Access != "" {
+		lockType += ":" + rec.Access
+	}
+	value := rec.WaitTime
+	if mode == profiling.LockModeCount {
+		value = rec.Contended
+	}
 	return []string{
-		fmt.Sprintf("lock: %x", rec.Proc.Lock),
+		fmt.Sprintf("lock type: %s", lockType),
 		fmt.Sprintf("PID: %d, COMMAND: %s", rec.Proc.Pid, rec.Proc.Name),
-		fmt.Sprintf("contended count: %d", rec.Contended),
-	}, rec.WaitTime
+	}, value
 }
 
 func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, error) {
@@ -329,7 +363,16 @@ func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, 
 	case profiling.TypeMemory:
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil
 	case profiling.TypeLock:
-		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeLockTimeSample, nil
+		switch pctx.LockMode {
+		case profiling.LockModeUnknown, profiling.LockModeWaitTime:
+			return &profiler.ParseOption{SampleRate: profiler.NoSampleRate},
+				profiler.ProfileTypeLockTimeSample, nil
+		case profiling.LockModeCount:
+			return &profiler.ParseOption{SampleRate: profiler.NoSampleRate},
+				profiler.ProfileTypeLockCountSample, nil
+		default:
+			return nil, "", fmt.Errorf("unsupported lock mode %q", pctx.LockMode)
+		}
 	default:
 		return nil, "", fmt.Errorf("unsupported profile type %q", pctx.Type)
 	}

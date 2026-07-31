@@ -98,13 +98,16 @@ assert_profile_capabilities() {
 		'
 			.code == 0
 			and .message == "success"
-			and .data.types == ["cpu", "memory"]
+			and .data.types == ["cpu", "memory", "lock"]
 			and .data.cpu_languages == ["c", "c++", "go", "java", "python"]
 			and .data.memory_languages == ["c", "c++", "go", "java"]
 			and .data.memory_modes.c == ["physical_alloc", "physical_usage", "virtual_alloc"]
 			and .data.memory_modes["c++"] == ["physical_alloc", "physical_usage", "virtual_alloc"]
 			and .data.memory_modes.go == ["physical_alloc", "physical_usage", "virtual_alloc"]
 			and .data.memory_modes.java == ["object_alloc", "object_usage"]
+			and .data.lock_languages == ["c", "c++", "go"]
+			and .data.lock_modes == ["wait_time", "count"]
+			and .data.lock_types == ["mutex"]
 			and .data.aggregation_interval_seconds == $aggregation_interval_seconds
 			and .data.max_concurrent_profilers == $max_concurrent_profilers
 		' "${response_file}" > /dev/null \

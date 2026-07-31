@@ -17,17 +17,24 @@ package v1
 import (
 	"encoding/json"
 	"time"
+
+	"huatuo-bamai/pkg/profiling"
 )
 
 // CreateProfilingJobRequest represents a request to create a profiling job.
 type CreateProfilingJobRequest struct {
-	ProfilingType   string `json:"type"`              // cpu or memory
-	BinaryMatchPath string `json:"binary_match_path"` // executable path used to match target processes
-	Language        string `json:"language"`          // programming language of the target process
-	MemoryMode      string `json:"memory_mode"`       // memory profiling mode
-	DurationSeconds int    `json:"duration_seconds"`  // profiling duration in seconds
-	ContainerID     string `json:"container_id"`      // container ID
-	Hostname        string `json:"hostname"`          // host name
+	ProfilingType     string             `json:"type"`                // cpu or memory
+	BinaryMatchPath   string             `json:"binary_match_path"`   // executable path used to match target processes
+	Language          string             `json:"language"`            // programming language of the target process
+	MemoryMode        string             `json:"memory_mode"`         // memory profiling mode
+	LockMode          profiling.LockMode `json:"lock_mode"`           // lock profile value
+	LockType          profiling.LockType `json:"lock_type"`           // kernel lock primitive
+	LockWaitThreshold string             `json:"lock_wait_threshold"` // minimum recorded contention wait
+	PID               int                `json:"pid"`                 // host PID for native profiling
+	ThreadGroup       bool               `json:"thread_group"`        // include the target PID's thread group
+	DurationSeconds   int                `json:"duration_seconds"`    // profiling duration in seconds
+	ContainerID       string             `json:"container_id"`        // container ID
+	Hostname          string             `json:"hostname"`            // host name
 }
 
 // CreateProfilingJobResponse represents a response to create a profiling job.
@@ -37,19 +44,24 @@ type CreateProfilingJobResponse struct {
 
 // ProfilingJob describes a profiling job exposed by the API.
 type ProfilingJob struct {
-	ID              string     `json:"id"`                          // profiling job ID
-	ContainerID     string     `json:"container_id,omitempty"`      // container ID
-	Hostname        string     `json:"hostname"`                    // host name
-	Type            string     `json:"type"`                        // cpu or memory
-	MemoryMode      string     `json:"memory_mode,omitempty"`       // memory profiling mode
-	Language        string     `json:"language"`                    // programming language of the target process
-	BinaryMatchPath string     `json:"binary_match_path,omitempty"` // executable path used to match target processes
-	Status          string     `json:"status"`                      // job status
-	DurationSeconds int        `json:"duration_seconds"`            // profiling duration in seconds
-	CreatedAt       time.Time  `json:"created_at"`                  // job creation time
-	FinishedAt      *time.Time `json:"finished_at"`                 // terminal status time
-	ResultURL       *string    `json:"result_url"`                  // URL to view the results
-	StatusReason    *string    `json:"status_reason"`               // reason for the current terminal status
+	ID                string             `json:"id"`                            // profiling job ID
+	ContainerID       string             `json:"container_id,omitempty"`        // container ID
+	Hostname          string             `json:"hostname"`                      // host name
+	Type              string             `json:"type"`                          // cpu or memory
+	MemoryMode        string             `json:"memory_mode,omitempty"`         // memory profiling mode
+	LockMode          profiling.LockMode `json:"lock_mode,omitempty"`           // lock profile value
+	LockType          profiling.LockType `json:"lock_type,omitempty"`           // kernel lock primitive
+	LockWaitThreshold string             `json:"lock_wait_threshold,omitempty"` // minimum recorded contention wait
+	PID               int                `json:"pid,omitempty"`                 // host PID for native profiling
+	ThreadGroup       bool               `json:"thread_group,omitempty"`        // include the target PID's thread group
+	Language          string             `json:"language"`                      // programming language of the target process
+	BinaryMatchPath   string             `json:"binary_match_path,omitempty"`   // executable path used to match target processes
+	Status            string             `json:"status"`                        // job status
+	DurationSeconds   int                `json:"duration_seconds"`              // profiling duration in seconds
+	CreatedAt         time.Time          `json:"created_at"`                    // job creation time
+	FinishedAt        *time.Time         `json:"finished_at"`                   // terminal status time
+	ResultURL         *string            `json:"result_url"`                    // URL to view the results
+	StatusReason      *string            `json:"status_reason"`                 // reason for the current terminal status
 }
 
 // RawProfile describes one profiling window without exposing its storage layout.
@@ -125,10 +137,13 @@ type ProfilingJobListResponse struct {
 
 // ProfilingCapabilities describes supported profiling options and runtime limits.
 type ProfilingCapabilities struct {
-	Types                      []string            `json:"types"`                        // supported profiling types
-	CPULanguages               []string            `json:"cpu_languages"`                // languages supported by CPU profiling
-	MemoryLanguages            []string            `json:"memory_languages"`             // languages supported by memory profiling
-	MemoryModes                map[string][]string `json:"memory_modes"`                 // supported modes by language
-	AggregationIntervalSeconds int                 `json:"aggregation_interval_seconds"` // server aggregation interval
-	MaxConcurrentProfilers     int                 `json:"max_concurrent_profilers"`     // concurrent profiler limit
+	Types                      []string             `json:"types"`                        // supported profiling types
+	CPULanguages               []string             `json:"cpu_languages"`                // languages supported by CPU profiling
+	MemoryLanguages            []string             `json:"memory_languages"`             // languages supported by memory profiling
+	MemoryModes                map[string][]string  `json:"memory_modes"`                 // supported modes by language
+	LockLanguages              []string             `json:"lock_languages"`               // languages supported by lock profiling
+	LockModes                  []profiling.LockMode `json:"lock_modes"`                   // supported lock profile values
+	LockTypes                  []profiling.LockType `json:"lock_types"`                   // supported kernel lock primitives
+	AggregationIntervalSeconds int                  `json:"aggregation_interval_seconds"` // server aggregation interval
+	MaxConcurrentProfilers     int                  `json:"max_concurrent_profilers"`     // concurrent profiler limit
 }

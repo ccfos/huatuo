@@ -23,6 +23,7 @@ import (
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/job"
 	profileService "huatuo-bamai/internal/profiler/service"
+	"huatuo-bamai/pkg/profiling"
 )
 
 func TestNewHandlerOmitsStorageRoutesWhenDisabled(t *testing.T) {
@@ -91,11 +92,12 @@ func TestCapabilities(t *testing.T) {
 	}}
 	resp := buildCapabilities(h)
 
-	if len(resp.Types) != 2 {
-		t.Errorf("Types len = %d, want 2", len(resp.Types))
+	if len(resp.Types) != 3 {
+		t.Errorf("Types len = %d, want 3", len(resp.Types))
 	}
 	hasCPU := false
 	hasMemory := false
+	hasLock := false
 	for _, pt := range resp.Types {
 		if pt == "cpu" {
 			hasCPU = true
@@ -103,9 +105,12 @@ func TestCapabilities(t *testing.T) {
 		if pt == "memory" {
 			hasMemory = true
 		}
+		if pt == "lock" {
+			hasLock = true
+		}
 	}
-	if !hasCPU || !hasMemory {
-		t.Errorf("Types = %v, want contain both cpu and memory", resp.Types)
+	if !hasCPU || !hasMemory || !hasLock {
+		t.Errorf("Types = %v, want contain cpu, memory, and lock", resp.Types)
 	}
 
 	if len(resp.CPULanguages) != 5 {
@@ -123,6 +128,18 @@ func TestCapabilities(t *testing.T) {
 
 	if len(resp.MemoryLanguages) != 4 {
 		t.Errorf("MemoryLanguages len = %d, want 4 (c++, c, go, java)", len(resp.MemoryLanguages))
+	}
+	if len(resp.LockLanguages) != 3 {
+		t.Errorf("LockLanguages len = %d, want 3 (c++, c, go)", len(resp.LockLanguages))
+	}
+	if len(resp.LockModes) != 2 ||
+		resp.LockModes[0] != profiling.LockModeWaitTime ||
+		resp.LockModes[1] != profiling.LockModeCount {
+		t.Errorf("LockModes = %v, want wait_time and count", resp.LockModes)
+	}
+	if len(resp.LockTypes) != 1 ||
+		resp.LockTypes[0] != profiling.LockTypeMutex {
+		t.Errorf("LockTypes = %v, want mutex", resp.LockTypes)
 	}
 
 	if len(resp.MemoryModes) != 4 {
@@ -160,10 +177,15 @@ func TestCapabilitiesReturnsIndependentMemoryModeMap(t *testing.T) {
 
 func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
 	data, err := newProfilingPrivateData(&v1.CreateProfilingJobRequest{
-		BinaryMatchPath: "/usr/bin/example",
-		DurationSeconds: 60,
-		Language:        "go",
-		MemoryMode:      "object_alloc",
+		BinaryMatchPath:   "/usr/bin/example",
+		DurationSeconds:   60,
+		Language:          "go",
+		MemoryMode:        "object_alloc",
+		LockMode:          profiling.LockModeCount,
+		LockType:          profiling.LockTypeRWLock,
+		LockWaitThreshold: "2us",
+		PID:               42,
+		ThreadGroup:       true,
 	})
 	if err != nil {
 		t.Fatalf("newProfilingPrivateData() error=%v", err)
@@ -176,7 +198,12 @@ func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
 	if fields["binary_match_path"] != "/usr/bin/example" ||
 		fields["duration_seconds"] != float64(60) ||
 		fields["language"] != "go" ||
-		fields["memory_mode"] != "object_alloc" {
+		fields["memory_mode"] != "object_alloc" ||
+		fields["lock_mode"] != "count" ||
+		fields["lock_type"] != "rwlock" ||
+		fields["lock_wait_threshold"] != "2us" ||
+		fields["pid"] != float64(42) ||
+		fields["thread_group"] != true {
 		t.Errorf("newProfilingPrivateData()=%s, want request fields", data)
 	}
 }
@@ -210,6 +237,38 @@ func TestBuildProfilingJobReadsPrivateData(t *testing.T) {
 	}
 }
 
+func TestBuildProfilingJobReadsLockPrivateData(t *testing.T) {
+	resp, err := buildProfilingJob(&job.Job{
+		Type:       ProfilingLock,
+		Status:     job.JobStatusCompleted,
+		FinishedAt: time.Now(),
+		PrivateData: json.RawMessage(`{
+			"duration_seconds":60,
+			"language":"go",
+			"lock_mode":"count",
+			"lock_type":"rwlock",
+			"lock_wait_threshold":"2us",
+			"pid":42,
+			"thread_group":true
+		}`),
+	}, "http://grafana.example/d")
+	if err != nil {
+		t.Fatalf("buildProfilingJob() error = %v", err)
+	}
+
+	if resp.Type != "lock" ||
+		resp.LockMode != profiling.LockModeCount ||
+		resp.LockType != profiling.LockTypeRWLock ||
+		resp.LockWaitThreshold != "2us" ||
+		resp.PID != 42 ||
+		!resp.ThreadGroup {
+		t.Fatalf("lock profiling response = %+v", resp)
+	}
+	if resp.ResultURL != nil {
+		t.Fatalf("lock profiling ResultURL = %q, want nil", *resp.ResultURL)
+	}
+}
+
 func TestBuildProfilingJobRejectsNonProfilingJob(t *testing.T) {
 	_, err := buildProfilingJob(&job.Job{Type: "trace"}, "")
 	if err == nil {
@@ -235,6 +294,7 @@ func TestIsProfilingJobType(t *testing.T) {
 	}{
 		{name: "cpu profiling", jobType: ProfilingCPU, want: true},
 		{name: "memory profiling", jobType: ProfilingMemory, want: true},
+		{name: "lock profiling", jobType: ProfilingLock, want: true},
 		{name: "trace job", jobType: job.JobType("trace"), want: false},
 		{name: "empty type", want: false},
 	}

@@ -30,6 +30,9 @@ func buildCapabilities(h *Handler) v1.ProfilingCapabilities {
 	memoryLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeMemory))
 	sort.Strings(memoryLanguages)
 
+	lockLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeLock))
+	sort.Strings(lockLanguages)
+
 	memoryModes := make(map[string][]string, len(memoryLanguages))
 	for _, language := range profiling.LanguagesFor(profiling.TypeMemory) {
 		modes := profiling.MemoryModesFor(language)
@@ -44,10 +47,22 @@ func buildCapabilities(h *Handler) v1.ProfilingCapabilities {
 	cfg := h.profilingConfig
 
 	return v1.ProfilingCapabilities{
-		Types:                      []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
-		CPULanguages:               cpuLanguages,
-		MemoryLanguages:            memoryLanguages,
-		MemoryModes:                memoryModes,
+		Types: []string{
+			string(profiling.TypeCPU),
+			string(profiling.TypeMemory),
+			string(profiling.TypeLock),
+		},
+		CPULanguages:    cpuLanguages,
+		MemoryLanguages: memoryLanguages,
+		MemoryModes:     memoryModes,
+		LockLanguages:   lockLanguages,
+		LockModes: []profiling.LockMode{
+			profiling.LockModeWaitTime,
+			profiling.LockModeCount,
+		},
+		LockTypes: []profiling.LockType{
+			profiling.LockTypeMutex,
+		},
 		AggregationIntervalSeconds: cfg.AggregationIntervalSeconds,
 		MaxConcurrentProfilers:     cfg.MaxConcurrentProfilerProcesses,
 	}
