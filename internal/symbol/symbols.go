@@ -42,6 +42,11 @@ type stackFrames struct {
 	bytes   [][]byte
 }
 
+const (
+	maxELFSymbolMetadataBytes = 16 << 20
+	maxELFSymbolCount         = 500_000
+)
+
 // symbol is the unified symbol descriptor shared by all resolvers.
 type symbol struct {
 	Addr   uint64
@@ -220,17 +225,89 @@ func scanKallsyms(path string, capacity int) (symbols, error) {
 	return syms, scanner.Err()
 }
 
-// elfSymbols extracts all STT_FUNC entries from .dynsym and .symtab.
-func elfSymbols(f *elf.File) symbols {
-	syms := symbols{}
-	type section struct {
-		name  string
-		fetch func() ([]elf.Symbol, error)
+type elfSymbolSource struct {
+	name      string
+	typ       elf.SectionType
+	versioned bool
+	fetch     func() ([]elf.Symbol, error)
+}
+
+func elfSymbolSourceUsage(f *elf.File, source elfSymbolSource, metadataBudget, symbolBudget uint64) (uint64, uint64, error) {
+	section := f.SectionByType(source.typ)
+	if section == nil {
+		return 0, 0, nil
 	}
-	for _, s := range []section{{"dynsym", f.DynamicSymbols}, {"symtab", f.Symbols}} {
-		elfsyms, err := s.fetch()
+
+	var symbolSize uint64
+	switch f.Class {
+	case elf.ELFCLASS32:
+		symbolSize = elf.Sym32Size
+	case elf.ELFCLASS64:
+		symbolSize = elf.Sym64Size
+	default:
+		return 0, 0, fmt.Errorf("unsupported ELF class %s", f.Class)
+	}
+
+	symbolCount := section.Size / symbolSize
+	if symbolCount > symbolBudget {
+		return 0, 0, fmt.Errorf("%d symbols exceed the remaining limit of %d", symbolCount, symbolBudget)
+	}
+
+	var metadataBytes uint64
+	addSection := func(section *elf.Section) error {
+		if section.Size > metadataBudget-metadataBytes {
+			return fmt.Errorf("metadata exceeds the remaining %d-byte limit", metadataBudget)
+		}
+		metadataBytes += section.Size
+		return nil
+	}
+	if err := addSection(section); err != nil {
+		return 0, 0, err
+	}
+	if section.Link == 0 || section.Link >= uint32(len(f.Sections)) {
+		return 0, 0, fmt.Errorf("symbol section has invalid string table link %d", section.Link)
+	}
+	if err := addSection(f.Sections[section.Link]); err != nil {
+		return 0, 0, err
+	}
+
+	// DynamicSymbols also loads GNU version sections when a versym table exists.
+	if source.versioned {
+		if versionSection := f.SectionByType(elf.SHT_GNU_VERSYM); versionSection != nil {
+			for _, typ := range []elf.SectionType{elf.SHT_GNU_VERSYM, elf.SHT_GNU_VERDEF, elf.SHT_GNU_VERNEED} {
+				if related := f.SectionByType(typ); related != nil {
+					if err := addSection(related); err != nil {
+						return 0, 0, err
+					}
+				}
+			}
+		}
+	}
+
+	return metadataBytes, symbolCount, nil
+}
+
+func elfSymbolsFromSources(f *elf.File, sources []elfSymbolSource) symbols {
+	syms := symbols{}
+	var metadataBytes uint64
+	var symbolCount uint64
+	for _, source := range sources {
+		usageBytes, usageSymbols, err := elfSymbolSourceUsage(
+			f,
+			source,
+			maxELFSymbolMetadataBytes-metadataBytes,
+			maxELFSymbolCount-symbolCount,
+		)
 		if err != nil {
-			log.Infof("symbol: %s not available in %s: %v", s.name, f.FileHeader.Type, err)
+			log.Warnf("symbol: skip %s in %s: %v", source.name, f.FileHeader.Type, err)
+			continue
+		}
+		metadataBytes += usageBytes
+		symbolCount += usageSymbols
+
+		elfsyms, err := source.fetch()
+		if err != nil {
+			log.Infof("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
 			continue
 		}
 		before := len(syms)
@@ -239,10 +316,18 @@ func elfSymbols(f *elf.File) symbols {
 				syms = append(syms, &symbol{Addr: sym.Value, Size: sym.Size, Name: sym.Name})
 			}
 		}
-		log.Infof("symbol: %s extracted %d func symbols", s.name, len(syms)-before)
+		log.Infof("symbol: %s extracted %d func symbols", source.name, len(syms)-before)
 	}
 	syms.sort()
 	return syms
+}
+
+// elfSymbols extracts all STT_FUNC entries from .dynsym and .symtab.
+func elfSymbols(f *elf.File) symbols {
+	return elfSymbolsFromSources(f, []elfSymbolSource{
+		{name: "dynsym", typ: elf.SHT_DYNSYM, versioned: true, fetch: f.DynamicSymbols},
+		{name: "symtab", typ: elf.SHT_SYMTAB, fetch: f.Symbols},
+	})
 }
 
 // backedPaths is the set of pseudo-paths in /proc/<pid>/maps with no ELF symbols.

@@ -483,6 +483,140 @@ func TestElfSymbols(t *testing.T) {
 	}
 }
 
+func TestElfSymbolsSkipsOversizedSource(t *testing.T) {
+	f := &elf.File{
+		FileHeader: elf.FileHeader{Class: elf.ELFCLASS64, Type: elf.ET_DYN},
+		Sections: []*elf.Section{
+			{},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: maxELFSymbolMetadataBytes}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_DYNSYM, Size: elf.Sym64Size, Link: 1}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: 1}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_SYMTAB, Size: elf.Sym64Size, Link: 3}},
+		},
+	}
+
+	dynsymCalled := false
+	symtabCalled := false
+	got := elfSymbolsFromSources(f, []elfSymbolSource{
+		{
+			name: "dynsym", typ: elf.SHT_DYNSYM,
+			fetch: func() ([]elf.Symbol, error) {
+				dynsymCalled = true
+				return nil, nil
+			},
+		},
+		{
+			name: "symtab", typ: elf.SHT_SYMTAB,
+			fetch: func() ([]elf.Symbol, error) {
+				symtabCalled = true
+				return []elf.Symbol{{Name: "kept", Info: byte(elf.STT_FUNC), Value: 0x1000}}, nil
+			},
+		},
+	})
+
+	if dynsymCalled {
+		t.Error("oversized dynsym source was fetched")
+	}
+	if !symtabCalled {
+		t.Error("symtab source was not fetched after oversized dynsym was skipped")
+	}
+	if len(got) != 1 || got[0].Name != "kept" {
+		t.Fatalf("elfSymbolsFromSources(): got %v, want one kept symbol", got)
+	}
+}
+
+func TestElfSymbolsAppliesCumulativeMetadataLimit(t *testing.T) {
+	const stringTableSize = 9 << 20
+	f := &elf.File{
+		FileHeader: elf.FileHeader{Class: elf.ELFCLASS64, Type: elf.ET_EXEC},
+		Sections: []*elf.Section{
+			{},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: stringTableSize}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_DYNSYM, Size: elf.Sym64Size, Link: 1}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: stringTableSize}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_SYMTAB, Size: elf.Sym64Size, Link: 3}},
+		},
+	}
+
+	dynsymCalled := false
+	symtabCalled := false
+	got := elfSymbolsFromSources(f, []elfSymbolSource{
+		{
+			name: "dynsym", typ: elf.SHT_DYNSYM,
+			fetch: func() ([]elf.Symbol, error) {
+				dynsymCalled = true
+				return []elf.Symbol{{Name: "kept", Info: byte(elf.STT_FUNC), Value: 0x2000}}, nil
+			},
+		},
+		{
+			name: "symtab", typ: elf.SHT_SYMTAB,
+			fetch: func() ([]elf.Symbol, error) {
+				symtabCalled = true
+				return nil, nil
+			},
+		},
+	})
+
+	if !dynsymCalled {
+		t.Error("dynsym source was not fetched")
+	}
+	if symtabCalled {
+		t.Error("symtab source exceeding the remaining metadata budget was fetched")
+	}
+	if len(got) != 1 || got[0].Name != "kept" {
+		t.Fatalf("elfSymbolsFromSources(): got %v, want one kept symbol", got)
+	}
+}
+
+func TestELFSymbolSourceUsageIncludesGNUVersionSections(t *testing.T) {
+	f := &elf.File{
+		FileHeader: elf.FileHeader{Class: elf.ELFCLASS64},
+		Sections: []*elf.Section{
+			{},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: 1}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_DYNSYM, Size: elf.Sym64Size, Link: 1}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_GNU_VERSYM, Size: maxELFSymbolMetadataBytes}},
+		},
+	}
+
+	_, _, err := elfSymbolSourceUsage(
+		f,
+		elfSymbolSource{name: "dynsym", typ: elf.SHT_DYNSYM, versioned: true},
+		maxELFSymbolMetadataBytes,
+		maxELFSymbolCount,
+	)
+	if err == nil {
+		t.Fatal("elfSymbolSourceUsage(): got nil error for oversized GNU version metadata")
+	}
+}
+
+func TestELFSymbolSourceUsageLimitsSymbolCount(t *testing.T) {
+	f := &elf.File{
+		FileHeader: elf.FileHeader{Class: elf.ELFCLASS64},
+		Sections: []*elf.Section{
+			{},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: 1}},
+			{
+				SectionHeader: elf.SectionHeader{
+					Type: elf.SHT_SYMTAB,
+					Size: (maxELFSymbolCount + 1) * elf.Sym64Size,
+					Link: 1,
+				},
+			},
+		},
+	}
+
+	_, _, err := elfSymbolSourceUsage(
+		f,
+		elfSymbolSource{name: "symtab", typ: elf.SHT_SYMTAB},
+		maxELFSymbolMetadataBytes,
+		maxELFSymbolCount,
+	)
+	if err == nil {
+		t.Fatal("elfSymbolSourceUsage(): got nil error for excessive symbol count")
+	}
+}
+
 func TestIsLibPath(t *testing.T) {
 	tests := []struct {
 		name  string
