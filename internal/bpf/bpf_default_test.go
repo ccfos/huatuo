@@ -33,6 +33,7 @@ import (
 	testutils "huatuo-bamai/internal/testing"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/link"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -416,6 +417,62 @@ func TestDefaultBPF_Attach(t *testing.T) {
 		t.Errorf("Attach() expected error on second call (duplicate attach), got nil")
 	} else {
 		t.Logf("Got expected error on second Attach: %v", err)
+	}
+}
+
+func TestNewKprobeOptions(t *testing.T) {
+	tests := []struct {
+		name              string
+		offset            uint64
+		retprobeMaxActive int
+		isRetprobe        bool
+		wantErr           string
+	}{
+		{
+			name:              "kretprobe max active",
+			retprobeMaxActive: 128,
+			isRetprobe:        true,
+		},
+		{
+			name:       "kprobe offset",
+			offset:     32,
+			isRetprobe: false,
+		},
+		{
+			name:              "ordinary kprobe rejects max active",
+			retprobeMaxActive: 128,
+			wantErr: "retprobe max active is valid only for " +
+				"kretprobe programs",
+		},
+		{
+			name:              "negative max active",
+			retprobeMaxActive: -1,
+			isRetprobe:        true,
+			wantErr:           "retprobe max active must not be negative: -1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := newKprobeOptions(
+				tt.offset,
+				tt.retprobeMaxActive,
+				tt.isRetprobe,
+			)
+			if tt.wantErr != "" {
+				require.EqualError(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(
+				t,
+				&link.KprobeOptions{
+					Offset:            tt.offset,
+					RetprobeMaxActive: tt.retprobeMaxActive,
+				},
+				got,
+			)
+		})
 	}
 }
 
