@@ -26,6 +26,10 @@ struct oom_event {
 	u64 victim_memcg_css;
 	u64 mem_limit_pages;
 	u64 mem_usage_pages;
+	u64 victim_rss_anon_pages;
+	u64 victim_rss_file_pages;
+	u64 victim_rss_shmem_pages;
+	u64 victim_total_vm_pages;
 };
 
 BPF_ABI_EXPORT(oom_event);

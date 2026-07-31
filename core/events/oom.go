@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -41,6 +42,10 @@ type OOMActor struct {
 	ContainerHostname   string                   `json:"container_hostname,omitempty"`
 	Pid                 int32                    `json:"pid"`
 	Comm                string                   `json:"comm"`
+	RssAnonBytes        uint64                   `json:"rss_anon_bytes,omitempty"`
+	RssFileBytes        uint64                   `json:"rss_file_bytes,omitempty"`
+	RssShmemBytes       uint64                   `json:"rss_shmem_bytes,omitempty"`
+	TotalVmBytes        uint64                   `json:"total_vm_bytes,omitempty"`
 	Cgroup              *OOMCgroupMemorySnapshot `json:"cgroup,omitempty"`
 }
 
@@ -64,6 +69,7 @@ var (
 	outOfMemoryCounterHost      float64
 	outOfMemoryCounterContainer = make(map[string]*oomMetric)
 	mutex                       sync.Mutex
+	pageSize                    = uint64(os.Getpagesize())
 )
 
 func init() {
@@ -152,7 +158,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 				return fmt.Errorf("failed to fetch containers: %w", err)
 			}
 
-			oomData := buildTracingData(data, containers, c.cgroup)
+			oomData := buildTracingData(&data, containers, c.cgroup)
 			oomData.LanguageInfo = languageInfo
 
 			mutex.Lock()
@@ -177,7 +183,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 	}
 }
 
-func buildTracingData(data abi.OOMEvent, containers map[string]*pod.Container, cgroup cgroups.Cgroup) *OOMTracingData {
+func buildTracingData(data *abi.OOMEvent, containers map[string]*pod.Container, cgroup cgroups.Cgroup) *OOMTracingData {
 	cssContainers := pod.BuildCssContainersID(containers, subsystem.SubsystemMemory)
 
 	triggerID := cssContainers[data.TriggerMemcgCSS]
@@ -195,6 +201,10 @@ func buildTracingData(data abi.OOMEvent, containers map[string]*pod.Container, c
 			ContainerID:         victimID,
 			Pid:                 int32(data.VictimPID),
 			Comm:                bytesutil.ToStr(data.VictimComm[:]),
+			RssAnonBytes:        data.VictimRssAnonPages * pageSize,
+			RssFileBytes:        data.VictimRssFilePages * pageSize,
+			RssShmemBytes:       data.VictimRssShmemPages * pageSize,
+			TotalVmBytes:        data.VictimTotalVmPages * pageSize,
 		},
 	}
 
