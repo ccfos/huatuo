@@ -48,6 +48,7 @@ type OOMTracingData struct {
 	Trigger        OOMActor           `json:"trigger"`
 	Victim         OOMActor           `json:"victim"`
 	MemorySnapshot *OOMMemorySnapshot `json:"memory_snapshot,omitempty"`
+	LanguageInfo   *OOMLanguageInfo   `json:"language_info,omitempty"`
 }
 
 type oomMetric struct {
@@ -140,12 +141,19 @@ func (c *oomCollector) Start(ctx context.Context) error {
 				return fmt.Errorf("failed to read perf event: %w", err)
 			}
 
+			/*
+			 * Read live procfs before container synchronization and
+			 * snapshot collection give the victim time to disappear.
+			 */
+			languageInfo := detectLanguageInfo(data.VictimPID)
+
 			containers, err := pod.Containers()
 			if err != nil {
 				return fmt.Errorf("failed to fetch containers: %w", err)
 			}
 
 			oomData := buildTracingData(data, containers, c.cgroup)
+			oomData.LanguageInfo = languageInfo
 
 			mutex.Lock()
 
