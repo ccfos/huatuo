@@ -15,9 +15,8 @@
 package collector
 
 import (
-	"math"
+	"fmt"
 	"reflect"
-	"runtime"
 	"sync"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"huatuo-bamai/internal/cgroups/stats"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/utils/cpuutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -55,9 +55,14 @@ func newCpuCollector() (*tracing.EventTracingAttr, error) {
 		return nil, err
 	}
 
+	numCores, err := cpuutil.HostOnlineCPUCount()
+	if err != nil {
+		return nil, fmt.Errorf("read online CPUs: %w", err)
+	}
+
 	return &tracing.EventTracingAttr{
 		TracingData: &cpuUtilCollector{
-			numCores: float64(runtime.NumCPU()),
+			numCores: float64(numCores),
 			cgroup:   cgroup,
 		},
 		Flag: tracing.FlagMetric,
@@ -140,14 +145,12 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			continue
 		}
 
-		var numCores float64
-		if cpuQuota.Quota == math.MaxUint64 {
-			numCores = float64(runtime.NumCPU())
-		} else {
-			numCores = float64(cpuQuota.Quota) / float64(cpuQuota.Period)
-		}
-
-		if numCores <= 0 {
+		numCores, err := cpuutil.CPUCapacity(
+			cpuQuota.Quota, cpuQuota.Period,
+			cpuQuota.EffectiveCPUCount, uint64(c.numCores),
+		)
+		if err != nil {
+			log.Infof("calculate cpu capacity for container [%s]: %v", container, err)
 			continue
 		}
 
@@ -156,16 +159,17 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			log.Warnf("cpu_util: LifeResources for container %s returned unexpected type or nil", container)
 			continue
 		}
-		containerDataCache := dataCache
-		if err := c.updateDataCache(containerDataCache, container, numCores); err != nil {
+		if err := c.updateDataCache(dataCache, container, numCores); err != nil {
 			log.Infof("failed to update cpu info of %s, %v", container, err)
 			continue
 		}
 
-		metrics = append(metrics, metric.NewContainerGaugeData(container, "cores", numCores, "cpu core number for the containers", nil),
-			metric.NewContainerGaugeData(container, "usr", containerDataCache.usrUtil, "cpu usr for the containers", nil),
-			metric.NewContainerGaugeData(container, "sys", containerDataCache.sysUtil, "cpu sys for the containers", nil),
-			metric.NewContainerGaugeData(container, "total", containerDataCache.totalUtil, "cpu total for the containers", nil))
+		metrics = append(metrics,
+			metric.NewContainerGaugeData(container, "cores", numCores, "cpu core number for the containers", nil),
+			metric.NewContainerGaugeData(container, "usr", dataCache.usrUtil, "cpu usr for the containers", nil),
+			metric.NewContainerGaugeData(container, "sys", dataCache.sysUtil, "cpu sys for the containers", nil),
+			metric.NewContainerGaugeData(container, "total", dataCache.totalUtil, "cpu total for the containers", nil),
+		)
 	}
 
 	more, err := c.updateHostDataCache()
