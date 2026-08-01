@@ -33,10 +33,36 @@ kubectl apply -f -
 
 ### 1.4 部署采集器
 
+下载 DaemonSet 清单：
+
 ```bash
-kubectl apply -f \
+curl -L -o huatuo-daemonset.yaml \
   https://raw.githubusercontent.com/ccfos/huatuo/main/build/huatuo-daemonset.minimal.yaml
 ```
+
+部署到生产环境前，将 `huatuo` 容器的 `resources` 调整为以下初始基线：
+
+```yaml
+resources:
+  limits:
+    cpu: "2"
+    memory: 4Gi
+  requests:
+    cpu: "1"
+    memory: 1Gi
+```
+
+应用修改后的清单：
+
+```bash
+kubectl apply -f ./huatuo-daemonset.yaml
+```
+
+`requests` 提供调度保障，`limits` 限制异常任务对节点的影响。`4 GiB` 容器内存
+上限为默认的 `2048 MiB` 进程上限预留运行时空间，降低 OOM 风险。
+
+示例值为初始基线，应根据节点规格、采集任务和资源峰值调整。容器上限不得低于
+`huatuo-bamai.conf` 中的 `[Runtime]` 进程上限。
 
 ### 1.5 验证部署
 
@@ -49,6 +75,10 @@ kubectl get pods \
   --namespace default \
   --selector app=huatuo \
   --output wide
+
+kubectl get daemonset huatuo \
+  --namespace default \
+  --output jsonpath='{.spec.template.spec.containers[?(@.name=="huatuo")].resources}'
 ```
 
 更新 `huatuo-bamai.conf` 后，重新执行 1.3 节更新 ConfigMap，并手工触发滚动更新：

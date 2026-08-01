@@ -33,10 +33,39 @@ kubectl apply -f -
 
 ### 1.4 Deploy the collector
 
+Download the DaemonSet manifest:
+
 ```bash
-kubectl apply -f \
+curl -L -o huatuo-daemonset.yaml \
   https://raw.githubusercontent.com/ccfos/huatuo/main/build/huatuo-daemonset.minimal.yaml
 ```
+
+Before deploying to production, set the `huatuo` container resources to this
+initial baseline:
+
+```yaml
+resources:
+  limits:
+    cpu: "2"
+    memory: 4Gi
+  requests:
+    cpu: "1"
+    memory: 1Gi
+```
+
+Apply the modified manifest:
+
+```bash
+kubectl apply -f ./huatuo-daemonset.yaml
+```
+
+`requests` provide scheduling guarantees, while `limits` isolate abnormal jobs
+from the node. The `4 GiB` container limit leaves runtime headroom above the
+default `2048 MiB` process limit, reducing OOM risk.
+
+These values are an initial baseline. Adjust them based on node capacity,
+collection jobs, and observed resource peaks. Container limits must not be lower
+than the `[Runtime]` process limits in `huatuo-bamai.conf`.
 
 ### 1.5 Verify the deployment
 
@@ -49,6 +78,10 @@ kubectl get pods \
   --namespace default \
   --selector app=huatuo \
   --output wide
+
+kubectl get daemonset huatuo \
+  --namespace default \
+  --output jsonpath='{.spec.template.spec.containers[?(@.name=="huatuo")].resources}'
 ```
 
 After updating `huatuo-bamai.conf`, rerun section 1.3 to update the ConfigMap, then manually restart the DaemonSet:

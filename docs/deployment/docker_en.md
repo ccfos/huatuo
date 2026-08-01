@@ -14,10 +14,37 @@ Image repository: https://hub.docker.com/r/huatuo/huatuo-bamai/tags
 ### Start a container with Docker
 
 ```bash
-$ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+docker run --detach \
+  --name huatuo-bamai \
+  --restart unless-stopped \
+  --privileged \
+  --pid=host \
+  --cgroupns=host \
+  --network=host \
+  --cpus=2 \
+  --memory=4g \
+  --volume /sys:/sys \
+  --volume /proc:/proc \
+  --volume /run:/run \
+  huatuo/huatuo-bamai:latest
 ```
 
-> ⚠️ When this method is used, the container relies on the built-in default configuration file. That configuration does not connect to the kubelet or Elasticsearch.
+> Note: The built-in default configuration does not connect to kubelet or Elasticsearch.
+
+Limit CPU and memory in production to isolate abnormal collection workloads.
+The `4 GiB` container limit leaves runtime headroom above the default `2048 MiB`
+process limit, reducing OOM risk.
+
+Verify that the limits are active and observe actual usage:
+
+```bash
+docker inspect huatuo-bamai \
+  --format 'NanoCPUs={{.HostConfig.NanoCpus}} Memory={{.HostConfig.Memory}}'
+docker stats huatuo-bamai
+```
+
+These values are an initial baseline. Adjust them based on node capacity,
+collection jobs, and observed resource peaks.
 
 ### Start containers with Docker
 
