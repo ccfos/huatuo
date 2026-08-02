@@ -340,7 +340,38 @@ curl -sS \
 | `failed` | 任务执行失败，查看 `status_reason` 定位原因 |
 | `timeout` | 任务超过允许的执行时间 |
 
-### 6. 获取原始剖析数据
+### 6. 在 Grafana 中查看剖析结果
+
+Grafana provisioning 提供宿主机、容器和时间窗口对比三张持续剖析
+dashboard。宿主机和容器 dashboard 展示剖析快照数量、剖析值时间线、
+按所选维度分组的 Top 10 序列，以及合并后的火焰图和 Top 表：
+
+- 宿主机 dashboard 按 `hostname` 精确筛选，并排除容器剖析数据。
+- 容器 dashboard 按 `container_id` 精确查询剖析数据，并展示上报节点
+  `hostname` 作为上下文。容器名不保证唯一，因此不作为容器标识。
+- 两张 dashboard 都可继续按精确的 `profiling_scope`、`cpu`、`pid` 和
+  `tgid` 筛选。Top 10 可按这些维度、`container_id` 或 tracer 分组。
+
+dashboard 只提供当前已支持的 CPU 和内存剖析类型。任务完成后，
+`results.url` 会打开对应 dashboard，并预选目标、剖析类型和采集时间窗口。
+
+Pyroscope datasource 通过 huatuo-apiserver 查询数据。启用 API 鉴权时，
+应创建只拥有 `POST /v1/profiles/flamegraph/**` 权限的专用用户，并通过
+环境变量将同一个用户 ID 传给 Grafana，不要把它提交到仓库：
+
+```bash
+export HUATUO_GRAFANA_PROFILE_TOKEN="<Auth.users.ID>"
+docker compose -f build/docker/docker-compose.yml up -d
+```
+
+时间线和 Top 10 面板使用 Pyroscope 兼容的 `SelectSeries` 接口。对比
+dashboard 通过有边界限制的 JSON 适配器调用 `Diff`，并把结果交给 Grafana
+火焰图面板。选定时间范围是当前窗口，对比对象是紧邻其前、长度相同的窗口；
+选择 `container_id` 时优先于 `hostname`，并把相同的可选采集维度应用到
+两侧时间窗。适配器默认最多返回 5,000 个节点，拒绝超过 10,000 的配置，
+并将 JSON 响应限制为 8 MiB。
+
+### 7. 获取原始剖析数据
 
 `GET /v1/profiles/:id/raw` 返回该任务关联的原始剖析窗口。数据量可能较大，可以直接保存到文件：
 
@@ -355,7 +386,29 @@ curl -sS \
 和 `data.has_more` 描述分页。每条记录包含 `uploaded_at`、`captured_at`、
 `profile_type` 和兼容 pprof 的 `profile` 数据。
 
-### 7. 停止任务
+#### 导出合并后的 pprof
+
+导出接口根据剖析类型、时间范围和精确目标标签合并存储中的快照：
+
+```bash
+curl -sS --get \
+  -H "Authorization: Bearer ${USER_ID}" \
+  --data-urlencode \
+  "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
+  --data-urlencode 'selector={hostname="node-a"}' \
+  --data-urlencode "start=${START_MILLISECONDS}" \
+  --data-urlencode "end=${END_MILLISECONDS}" \
+  -o profile.pb.gz \
+  "${API_BASE}/v1/profiles/flamegraph/export/pprof"
+```
+
+选择器接受精确的 `id`、`hostname`、`container_id`、
+`container_hostname`、`profiling_scope`、`cpu`、`pid` 或 `tgid`
+匹配，并且至少需要一个目标或采集维度标签。服务会先统计匹配文档数，再分页
+读取。匹配超过 10,000 个文档时返回 `422 Unprocessable Entity`，此时需要
+缩小时间范围。下载文件可由 `go tool pprof` 或其他兼容 pprof 的查看器打开。
+
+### 8. 停止任务
 
 只有 `pending` 或 `running` 状态的任务可以停止。`PATCH` 请求的 `status` 只接受 `stopped`：
 
@@ -370,7 +423,7 @@ curl -sS \
 
 停止成功返回 `200 OK`。已结束的任务返回 `400 Bad Request`。
 
-### 8. 删除任务
+### 9. 删除任务
 
 删除操作只移除任务记录。`pending` 或 `running` 状态的任务不能直接删除，需要先停止任务：
 
@@ -382,6 +435,26 @@ curl -sS -i \
 ```
 
 删除成功返回 `204 No Content`，不包含响应体。任务仍在运行时返回 `409 Conflict`。
+
+### 10. Pyroscope 兼容查询
+
+Profiling API 在
+`/v1/profiles/flamegraph/querier.v1.QuerierService/` 下实现 Pyroscope 的
+`SelectSeries` 和 `Diff` protobuf 方法。`SelectSeries` 按时间桶返回求和或
+平均聚合结果；`Diff` 比较两个独立时间窗口并返回双向火焰图。
+
+选择器只支持精确匹配，可使用 `id`、`hostname`、`container_id`、
+`container_hostname`、`tracer`、`profiling_scope`、`cpu`、`pid` 和
+`tgid`；剖析类型由 protobuf 请求单独提供。`SelectSeries` 可按相同的
+managed dimension 分组。正则、否定匹配和任意标签会返回
+`400 Bad Request`。
+
+服务读取剖析数据前会先统计匹配文档数。单次选择最多读取 10,000 条，
+每页 1,000 条并使用稳定排序。超过上限时返回
+`422 Unprocessable Entity`，调用方需要缩小时间范围或目标范围。Merge 和
+Diff 火焰图默认 5,000 个节点，并拒绝超过 10,000 的配置。合并查询没有
+数据，或差异查询两侧都没有数据时返回 `404 Not Found`；存储故障返回
+`500 Internal Server Error`。
 
 ## 📖 profiler 命令行功能概述
 

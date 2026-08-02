@@ -338,7 +338,46 @@ Profiling jobs use these statuses:
 | `failed` | The job failed; inspect `status_reason` for the cause |
 | `timeout` | The job exceeded its allowed execution time |
 
-### 6. Get Raw Profiling Data
+### 6. Inspect Profiles in Grafana
+
+Grafana provisioning includes host, container, and comparison continuous
+profiling dashboards. The host and container dashboards show the number of
+stored profile snapshots, total profile value over time, Top 10 series grouped
+by a selected dimension, and a merged flame graph with a Top table:
+
+- The host dashboard selects an exact `hostname` and excludes container
+  profiles.
+- The container dashboard queries profiles by exact `container_id` and shows
+  the reporting `hostname` for context. Container names are not used as
+  identifiers because they are not guaranteed to be unique.
+- Both dashboards can additionally filter exact `profiling_scope`, `cpu`,
+  `pid`, and `tgid` values. The Top 10 panel can group by those dimensions,
+  `container_id`, or tracer.
+
+CPU and memory are the only profile types exposed by these dashboards. A
+completed job's `results.url` opens the corresponding dashboard with its
+target, profile type, and collection window preselected.
+
+The Pyroscope datasource sends queries to huatuo-apiserver. If API
+authentication is enabled, configure a dedicated user with
+`POST /v1/profiles/flamegraph/**` permission and pass the same user ID to the
+Grafana container without committing it:
+
+```bash
+export HUATUO_GRAFANA_PROFILE_TOKEN="<Auth.users.ID>"
+docker compose -f build/docker/docker-compose.yml up -d
+```
+
+The timeline and Top 10 panels use the Pyroscope-compatible `SelectSeries`
+endpoint. The comparison dashboard uses `Diff` through a bounded JSON adapter
+for Grafana's flame graph panel. The selected range is the current window and
+is compared with the immediately preceding window of the same duration. A
+selected `container_id` takes precedence over `hostname`. The same optional
+collection dimensions are applied to both windows. The adapter defaults to
+5,000 nodes, rejects values above 10,000, and limits its JSON response to
+8 MiB.
+
+### 7. Get Raw Profiling Data
 
 `GET /v1/profiles/:id/raw` returns the raw profiling windows associated with the job. The response can be large, so it can be written directly to a file:
 
@@ -353,7 +392,32 @@ The profiling windows are in `data.items`; `data.limit`, `data.offset`, and
 `data.has_more` describe the page. Each item contains `uploaded_at`,
 `captured_at`, `profile_type`, and the pprof-compatible `profile` payload.
 
-### 7. Stop a Profiling Job
+#### Export merged pprof
+
+The export endpoint merges the stored snapshots selected by profile type, time
+range, and an exact target label:
+
+```bash
+curl -sS --get \
+  -H "Authorization: Bearer ${USER_ID}" \
+  --data-urlencode \
+  "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
+  --data-urlencode 'selector={hostname="node-a"}' \
+  --data-urlencode "start=${START_MILLISECONDS}" \
+  --data-urlencode "end=${END_MILLISECONDS}" \
+  -o profile.pb.gz \
+  "${API_BASE}/v1/profiles/flamegraph/export/pprof"
+```
+
+Selectors accept exact `id`, `hostname`, `container_id`,
+`container_hostname`, `profiling_scope`, `cpu`, `pid`, or `tgid` matches. At
+least one target or collection-dimension label is required. The service counts
+matching documents before fetching them, reads them in pages, and returns
+`422 Unprocessable Entity` when more than 10,000 documents match. Narrow the
+time range in that case. The downloaded file can be opened by `go tool pprof`
+or another pprof-compatible viewer.
+
+### 8. Stop a Profiling Job
 
 Only jobs in `pending` or `running` status can be stopped. The `PATCH` request accepts only `stopped` as the `status` value:
 
@@ -368,7 +432,7 @@ curl -sS \
 
 A successful stop returns `200 OK`. A job that has already ended returns `400 Bad Request`.
 
-### 8. Delete a Profiling Job
+### 9. Delete a Profiling Job
 
 Deletion removes only the job record. Jobs in `pending` or `running` status cannot be deleted directly and must be stopped first:
 
@@ -380,6 +444,26 @@ curl -sS -i \
 ```
 
 A successful deletion returns `204 No Content` with no response body. If the job is still active, the endpoint returns `409 Conflict`.
+
+### 10. Pyroscope-compatible Queries
+
+The profiling API implements the Pyroscope `SelectSeries` and `Diff` protobuf
+methods under `/v1/profiles/flamegraph/querier.v1.QuerierService/`. `SelectSeries`
+returns time buckets using sum or average aggregation. `Diff` compares two
+independent time windows and returns a double flame graph.
+
+Selectors are intentionally exact. They accept `id`, `hostname`,
+`container_id`, `container_hostname`, `tracer`, `profiling_scope`, `cpu`,
+`pid`, and `tgid`; the profile type is supplied by the protobuf request.
+`SelectSeries` can group by the same managed dimensions. Regular expressions,
+negative matchers, and arbitrary labels are rejected with `400 Bad Request`.
+
+Each selection is counted before profile data is loaded. Up to 10,000 documents
+are read in stable pages of 1,000. A larger selection returns
+`422 Unprocessable Entity` and must be narrowed by time or target. Merge
+and diff flame graphs default to 5,000 nodes and reject values above 10,000.
+Merge requests, and diff requests with neither side populated, return
+`404 Not Found`; storage failures return `500 Internal Server Error`.
 
 ## 📖 profiler CLI Overview
 

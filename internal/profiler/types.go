@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,6 +36,8 @@ const MetadataCollection = "profiling_metadata"
 // ProfileData is the data saved by the profiler.
 type ProfileData struct {
 	ProfileType string `json:"profile_type,omitempty"`
+	// Labels expose indexed dimensions to profile display backends.
+	Labels map[string]string `json:"labels,omitempty"`
 	// Please note:
 	//
 	//	In pyroscope 1.13.0, use profilev1.Profile instead of ptree.Profile, but it depends

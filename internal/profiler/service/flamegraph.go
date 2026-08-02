@@ -22,12 +22,11 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler"
 
-	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	phlaremodel "github.com/grafana/pyroscope/pkg/model"
-	"github.com/grafana/pyroscope/pkg/pprof"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 )
@@ -36,9 +35,21 @@ type ElasticSearchConfig struct {
 	Address, Username, Password, Index string
 }
 
+type profileQueryStorage interface {
+	Close(ctx context.Context) error
+	Ready(ctx context.Context) error
+	SearchProfilesContext(ctx context.Context, filter *SearchFilter) ([]*ProfileDocument, error)
+	CountProfilesContext(ctx context.Context, filter *SearchFilter) (int64, error)
+	AggregationsByFieldContext(
+		ctx context.Context,
+		filter *SearchFilter,
+		field string,
+	) ([]string, error)
+}
+
 // Service provides profile query operations.
 type Service struct {
-	profileStorage *ProfileStorage
+	profileStorage profileQueryStorage
 }
 
 // NewService initializes a profile query service.
@@ -77,152 +88,17 @@ func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.Sel
 	if req == nil {
 		return nil, fmt.Errorf("%w: request is required", ErrInvalidQuery)
 	}
-	if req.End < req.Start {
-		return nil, fmt.Errorf("%w: end time precedes start time", ErrInvalidQuery)
-	}
-	filter := &SearchFilter{
-		StartTime:   time.UnixMilli(req.Start),
-		EndTime:     time.UnixMilli(req.End),
-		ProfileType: req.ProfileTypeID,
-		Limit:       100,
-	}
-
 	log.Debugf("SelectMergeStacktracesRequest: %+v", req)
-
-	profileTypes := strings.Split(filter.ProfileType, ":")
-	if len(profileTypes) != 5 {
-		return nil, fmt.Errorf("%w: invalid profile type %q", ErrInvalidQuery, filter.ProfileType)
-	}
-
-	// labels
-	labels, err := parser.ParseMetricSelector(req.LabelSelector)
+	maxNodes, err := normalizeProfileMaxNodes(req.GetMaxNodes())
 	if err != nil {
-		return nil, errors.Join(ErrInvalidQuery, fmt.Errorf("parse matchers: %w", err))
+		return nil, err
 	}
-
-	for _, label := range labels {
-		// skip empty or "All"
-		if label.Value == "" || label.Value == "all" || label.Value == "All" || label.Value == "*" {
-			continue
-		}
-
-		if err := applyProfileMatcher(filter, label); err != nil {
-			return nil, err
-		}
-	}
-
-	if filter.ID == "" && filter.Hostname == "" && filter.ContainerID == "" && filter.ContainerHostname == "" {
-		return nil, fmt.Errorf("%w: id, hostname, or container must be specified", ErrInvalidQuery)
-	}
-
-	// search
-	profileDocs, err := s.profileStorage.SearchProfilesContext(ctx, filter)
+	tree, _, err := s.selectProfileTree(ctx, req, false)
 	if err != nil {
-		return nil, fmt.Errorf("search profiles: %w", err)
+		return nil, err
 	}
-	if len(profileDocs) == 0 {
-		return nil, ErrProfilesAbsent
-	}
-
-	// merge profileDocs
-	var profilesMerge pprof.ProfileMerge
-	for _, profileDoc := range profileDocs {
-		profile := &profileDoc.TracerData.Flamedata.Profile
-		if err := profilesMerge.Merge(profile); err != nil {
-			return nil, fmt.Errorf("merge profile: %w", err)
-		}
-	}
-	profile := profilesMerge.Profile()
-	if profile == nil {
-		return nil, ErrProfilesAbsent
-	}
-	sampleType := profileTypes[1]
-
-	// convert profilev1.Profile to phlaremodel.Tree
-	phlaremodelTree := new(phlaremodel.Tree)
-
-	// Find the index of the sample type we're interested in
-	sampleTypeIndex := -1
-	for i, st := range profile.SampleType {
-		if st == nil {
-			continue
-		}
-		if value, ok := profileString(profile.StringTable, st.Type); ok && value == sampleType {
-			sampleTypeIndex = i
-			break
-		}
-	}
-	if sampleTypeIndex == -1 {
-		return nil, fmt.Errorf("%w: sample type %q not found", ErrInvalidQuery, sampleType)
-	}
-
-	// Create a map for quick location lookup
-	locationMap := make(map[uint64]*googlev1.Location, len(profile.Location))
-	for _, loc := range profile.Location {
-		if loc == nil {
-			continue
-		}
-		locationMap[loc.Id] = loc
-	}
-
-	// Create a map for quick function lookup
-	functionMap := make(map[uint64]*googlev1.Function, len(profile.Function))
-	for _, fn := range profile.Function {
-		if fn == nil {
-			continue
-		}
-		functionMap[fn.Id] = fn
-	}
-
-	// Process each sample
-	for _, sample := range profile.Sample {
-		if sample == nil {
-			continue
-		}
-		// Get the value for our sample type
-		if len(sample.Value) <= sampleTypeIndex {
-			continue
-		}
-		value := sample.Value[sampleTypeIndex]
-
-		// Build stack trace string from location ids
-		stack := make([]string, 0, len(sample.LocationId))
-		for _, locId := range sample.LocationId {
-			loc, exists := locationMap[locId]
-			if !exists || len(loc.Line) == 0 {
-				continue
-			}
-
-			// Get the first line entry (primary function)
-			line := loc.Line[0]
-			if line == nil {
-				continue
-			}
-			fn, exists := functionMap[line.FunctionId]
-			if !exists {
-				continue
-			}
-
-			// Get function name from string table
-			funcName, ok := profileString(profile.StringTable, fn.Name)
-			if !ok {
-				continue
-			}
-			stack = append(stack, funcName)
-		}
-
-		// Insert stack into tree (leaf is at stack[0], so we need to reverse for phlaremodel.Tree)
-		if len(stack) > 0 {
-			for i, j := 0, len(stack)-1; i < j; i, j = i+1, j-1 {
-				stack[i], stack[j] = stack[j], stack[i]
-			}
-			phlaremodelTree.InsertStack(value, stack...)
-		}
-	}
-
-	// convert phlaremodel.Tree to FlameGraph
 	return &querierv1.SelectMergeStacktracesResponse{
-		Flamegraph: phlaremodel.NewFlameGraph(phlaremodelTree, -1),
+		Flamegraph: phlaremodel.NewFlameGraph(tree, maxNodes),
 	}, nil
 }
 
@@ -239,10 +115,18 @@ func applyProfileMatcher(filter *SearchFilter, matcher *labels.Matcher) error {
 		filter.ContainerID = matcher.Value
 	case "container_hostname":
 		filter.ContainerHostname = matcher.Value
+	case "tracer":
+		filter.TracerID = matcher.Value
 	case "__profile_type__":
 		filter.ProfileType = matcher.Value
 	default:
-		return fmt.Errorf("%w: invalid label %q", ErrInvalidQuery, matcher.Name)
+		if !profiler.IsCollectionDimensionLabel(matcher.Name) {
+			return fmt.Errorf("%w: invalid label %q", ErrInvalidQuery, matcher.Name)
+		}
+		if filter.Labels == nil {
+			filter.Labels = make(map[string]string)
+		}
+		filter.Labels[matcher.Name] = matcher.Value
 	}
 	return nil
 }
@@ -300,8 +184,20 @@ func (s *Service) ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesR
 //	request: typesv1.LabelNamesRequest
 //	response: typesv1.LabelNamesResponse
 func (s *Service) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
+	names := []string{
+		"region",
+		"hostname",
+		"container_id",
+		"container_hostname",
+		"container_host_namespace",
+	}
+	for _, name := range profiler.CollectionDimensionLabelNames() {
+		if name != profiler.LabelContainerID {
+			names = append(names, name)
+		}
+	}
 	response := &typesv1.LabelNamesResponse{
-		Names: []string{"region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
+		Names: names,
 	}
 	return response, nil
 }
