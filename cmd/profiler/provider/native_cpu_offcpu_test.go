@@ -32,7 +32,7 @@ func TestOffCPUEventABI(t *testing.T) {
 	require.Equal(t, uintptr(40), unsafe.Offsetof(event.StartNS))
 	require.Equal(t, uintptr(48), unsafe.Offsetof(event.EndNS))
 	require.Equal(t, uintptr(56), unsafe.Offsetof(event.CPU))
-	require.Equal(t, uintptr(60), unsafe.Offsetof(event.ABIVersion))
+	require.Equal(t, uintptr(60), unsafe.Offsetof(event.AbiVersion))
 	require.Equal(t, uintptr(62), unsafe.Offsetof(event.Kind))
 	require.Equal(t, uintptr(63), unsafe.Offsetof(event.Flags))
 }

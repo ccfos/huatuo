@@ -132,26 +132,26 @@ func (r *nativeOffCPUReader) aggregateBatch(batch []any, enqueue func(any)) {
 			log.Warnf("unexpected off-CPU event type %T", record)
 			continue
 		}
-		if event.ABIVersion != offCPUEventABIVersion {
-			log.Warnf("unsupported off-CPU event ABI %d", event.ABIVersion)
+		if event.AbiVersion != offCPUEventABIVersion {
+			log.Warnf("unsupported off-CPU event ABI %d", event.AbiVersion)
 			continue
 		}
-		if event.Value <= 0 {
+		if event.Base.Value <= 0 {
 			continue
 		}
 
 		key := offCPUStackKey{
 			Process: processIDName{
-				Pid:  uint32(event.PidTgid >> 32),
-				Name: procutil.CommToString(event.Comm),
+				Pid:  uint32(event.Base.PIDTGID >> 32),
+				Name: procutil.CommToString(event.Base.Comm),
 			},
 			Category: offCPUCategory(event.Kind, event.Flags),
 			Stack: bpfmap.StackTraceID{
-				KernelID: event.Kernstack,
-				UserID:   event.Userstack,
+				KernelID: event.Base.Kernstack,
+				UserID:   event.Base.Userstack,
 			},
 		}
-		counts[key] += event.Value
+		counts[key] += event.Base.Value
 	}
 
 	for key, duration := range counts {
