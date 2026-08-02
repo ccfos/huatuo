@@ -17,6 +17,7 @@ package symbol
 import (
 	"bufio"
 	"debug/elf"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -42,10 +43,22 @@ type stackFrames struct {
 	bytes   [][]byte
 }
 
-const (
-	maxELFSymbolMetadataBytes = 16 << 20
-	maxELFSymbolCount         = 500_000
-)
+// ErrELFSymbolLimit reports that an ELF symbol source exceeded its configured budget.
+var ErrELFSymbolLimit = errors.New("ELF symbol resource limit exceeded")
+
+// ELFSymbolLimits bounds the metadata materialized while parsing one ELF.
+type ELFSymbolLimits struct {
+	MaxMetadataBytes uint64
+	MaxSymbolCount   uint64
+}
+
+// DefaultELFSymbolLimits returns the default per-ELF symbol parsing limits.
+func DefaultELFSymbolLimits() ELFSymbolLimits {
+	return ELFSymbolLimits{
+		MaxMetadataBytes: 16 << 20,
+		MaxSymbolCount:   500_000,
+	}
+}
 
 // symbol is the unified symbol descriptor shared by all resolvers.
 type symbol struct {
@@ -250,13 +263,13 @@ func elfSymbolSourceUsage(f *elf.File, source elfSymbolSource, metadataBudget, s
 
 	symbolCount := section.Size / symbolSize
 	if symbolCount > symbolBudget {
-		return 0, 0, fmt.Errorf("%d symbols exceed the remaining limit of %d", symbolCount, symbolBudget)
+		return 0, 0, fmt.Errorf("%w: %d symbols exceed the remaining limit of %d", ErrELFSymbolLimit, symbolCount, symbolBudget)
 	}
 
 	var metadataBytes uint64
 	addSection := func(section *elf.Section) error {
 		if section.Size > metadataBudget-metadataBytes {
-			return fmt.Errorf("metadata exceeds the remaining %d-byte limit", metadataBudget)
+			return fmt.Errorf("%w: metadata exceeds the remaining %d-byte limit", ErrELFSymbolLimit, metadataBudget)
 		}
 		metadataBytes += section.Size
 		return nil
@@ -287,29 +300,36 @@ func elfSymbolSourceUsage(f *elf.File, source elfSymbolSource, metadataBudget, s
 	return metadataBytes, symbolCount, nil
 }
 
-func elfSymbolsFromSources(f *elf.File, sources []elfSymbolSource) symbols {
+func elfSymbolsFromSources(f *elf.File, sources []elfSymbolSource, limits ELFSymbolLimits) (symbols, error) {
 	syms := symbols{}
 	var metadataBytes uint64
 	var symbolCount uint64
+	var limitErrors []error
 	for _, source := range sources {
 		usageBytes, usageSymbols, err := elfSymbolSourceUsage(
 			f,
 			source,
-			maxELFSymbolMetadataBytes-metadataBytes,
-			maxELFSymbolCount-symbolCount,
+			limits.MaxMetadataBytes-metadataBytes,
+			limits.MaxSymbolCount-symbolCount,
 		)
 		if err != nil {
-			log.Warnf("symbol: skip %s in %s: %v", source.name, f.FileHeader.Type, err)
+			if errors.Is(err, ErrELFSymbolLimit) {
+				limitErrors = append(limitErrors, fmt.Errorf("%s: %w", source.name, err))
+			} else {
+				log.Infof("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
+			}
 			continue
 		}
-		metadataBytes += usageBytes
-		symbolCount += usageSymbols
 
 		elfsyms, err := source.fetch()
 		if err != nil {
 			log.Infof("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
 			continue
 		}
+		// Only successful sources consume the cumulative budget. A malformed
+		// source must not prevent a valid fallback source from being parsed.
+		metadataBytes += usageBytes
+		symbolCount += usageSymbols
 		before := len(syms)
 		for _, sym := range elfsyms {
 			if elf.ST_TYPE(sym.Info) == elf.STT_FUNC {
@@ -319,15 +339,15 @@ func elfSymbolsFromSources(f *elf.File, sources []elfSymbolSource) symbols {
 		log.Infof("symbol: %s extracted %d func symbols", source.name, len(syms)-before)
 	}
 	syms.sort()
-	return syms
+	return syms, errors.Join(limitErrors...)
 }
 
 // elfSymbols extracts all STT_FUNC entries from .dynsym and .symtab.
-func elfSymbols(f *elf.File) symbols {
+func elfSymbols(f *elf.File, limits ELFSymbolLimits) (symbols, error) {
 	return elfSymbolsFromSources(f, []elfSymbolSource{
 		{name: "dynsym", typ: elf.SHT_DYNSYM, versioned: true, fetch: f.DynamicSymbols},
 		{name: "symtab", typ: elf.SHT_SYMTAB, fetch: f.Symbols},
-	})
+	}, limits)
 }
 
 // backedPaths is the set of pseudo-paths in /proc/<pid>/maps with no ELF symbols.

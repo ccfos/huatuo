@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/utils/fileutil"
@@ -41,22 +42,48 @@ type cacheKey struct {
 
 // UsymResolver resolves user-space stack addresses to symbol names across pids.
 type UsymResolver struct {
-	exeCache  map[cacheKey]*elfCache // inode+xfs → elfcache
-	exeKeys   map[uint32]cacheKey    // pid → cachekey
-	libcaches map[cacheKey]*libCache // inode+xfs → libcache
-	libKeys   map[string]cacheKey    // libpath → cachekey
-	procmaps  map[uint32]sections
+	exeCache        map[cacheKey]*elfCache // inode+xfs → elfcache
+	exeKeys         map[uint32]cacheKey    // pid → cachekey
+	libcaches       map[cacheKey]*libCache // inode+xfs → libcache
+	libKeys         map[string]cacheKey    // libpath → cachekey
+	procmaps        map[uint32]sections
+	elfSymbolLimits ELFSymbolLimits
+}
+
+// UsymResolverOption configures a UsymResolver.
+type UsymResolverOption func(*UsymResolver)
+
+// WithELFSymbolLimits configures per-ELF symbol parsing limits.
+func WithELFSymbolLimits(limits ELFSymbolLimits) UsymResolverOption {
+	return func(r *UsymResolver) {
+		r.elfSymbolLimits = limits
+	}
 }
 
 // NewUsymResolver creates a UsymResolver with shared caches across pids.
-func NewUsymResolver() *UsymResolver {
-	return &UsymResolver{
-		exeCache:  make(map[cacheKey]*elfCache),
-		exeKeys:   make(map[uint32]cacheKey),
-		libcaches: make(map[cacheKey]*libCache),
-		libKeys:   make(map[string]cacheKey),
-		procmaps:  make(map[uint32]sections),
+func NewUsymResolver(options ...UsymResolverOption) *UsymResolver {
+	r := &UsymResolver{
+		exeCache:        make(map[cacheKey]*elfCache),
+		exeKeys:         make(map[uint32]cacheKey),
+		libcaches:       make(map[cacheKey]*libCache),
+		libKeys:         make(map[string]cacheKey),
+		procmaps:        make(map[uint32]sections),
+		elfSymbolLimits: DefaultELFSymbolLimits(),
 	}
+	for _, option := range options {
+		option(r)
+	}
+	return r
+}
+
+func (r *UsymResolver) loadELFSymbols(f *elf.File, path string) symbols {
+	syms, err := elfSymbols(f, r.elfSymbolLimits)
+	if err != nil {
+		// A limit degrades only symbol resolution. Perf and profiler callers
+		// remain able to process kernel and other resolvable stack frames.
+		log.Warnf("symbol: limits reached while parsing %q: %v", path, err)
+	}
+	return syms
 }
 
 // UsymStackBytes resolves user-space stack addresses into byte frames (innermost first).
@@ -177,7 +204,7 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
 
 	cache = &elfCache{
 		secs: secs,
-		syms: elfSymbols(f),
+		syms: r.loadELFSymbols(f, path),
 	}
 	r.exeCache[key] = cache
 	r.exeKeys[pid] = key
@@ -222,7 +249,7 @@ func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*libCache, erro
 	}
 	defer f.Close()
 
-	cache = &libCache{syms: elfSymbols(f)}
+	cache = &libCache{syms: r.loadELFSymbols(f, libPath)}
 	r.libcaches[key] = cache
 	r.libKeys[libPath] = key
 	return cache, nil

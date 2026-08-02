@@ -129,6 +129,15 @@ func TestNewUsymResolver(t *testing.T) {
 	if resolver.exeCache == nil || resolver.libcaches == nil || resolver.procmaps == nil {
 		t.Errorf("NewUsymResolver(): caches not initialized")
 	}
+	if resolver.elfSymbolLimits != DefaultELFSymbolLimits() {
+		t.Errorf("NewUsymResolver(): got limits %+v, want defaults %+v", resolver.elfSymbolLimits, DefaultELFSymbolLimits())
+	}
+
+	customLimits := ELFSymbolLimits{MaxMetadataBytes: 1024, MaxSymbolCount: 32}
+	configured := NewUsymResolver(WithELFSymbolLimits(customLimits))
+	if configured.elfSymbolLimits != customLimits {
+		t.Errorf("NewUsymResolver(WithELFSymbolLimits): got %+v, want %+v", configured.elfSymbolLimits, customLimits)
+	}
 }
 
 func TestUsymResolverExePath(t *testing.T) {

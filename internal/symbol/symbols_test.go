@@ -16,6 +16,7 @@ package symbol
 
 import (
 	"debug/elf"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -472,7 +473,10 @@ func TestElfSymbols(t *testing.T) {
 	}
 	defer elfFile.Close()
 
-	got := elfSymbols(elfFile)
+	got, err := elfSymbols(elfFile, DefaultELFSymbolLimits())
+	if err != nil {
+		t.Fatalf("elfSymbols(%q): %v", executablePath, err)
+	}
 	if len(got) == 0 {
 		t.Errorf("elfSymbols(%q): got 0 symbols, want >0", executablePath)
 	}
@@ -488,7 +492,7 @@ func TestElfSymbolsSkipsOversizedSource(t *testing.T) {
 		FileHeader: elf.FileHeader{Class: elf.ELFCLASS64, Type: elf.ET_DYN},
 		Sections: []*elf.Section{
 			{},
-			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: maxELFSymbolMetadataBytes}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: DefaultELFSymbolLimits().MaxMetadataBytes}},
 			{SectionHeader: elf.SectionHeader{Type: elf.SHT_DYNSYM, Size: elf.Sym64Size, Link: 1}},
 			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: 1}},
 			{SectionHeader: elf.SectionHeader{Type: elf.SHT_SYMTAB, Size: elf.Sym64Size, Link: 3}},
@@ -497,7 +501,7 @@ func TestElfSymbolsSkipsOversizedSource(t *testing.T) {
 
 	dynsymCalled := false
 	symtabCalled := false
-	got := elfSymbolsFromSources(f, []elfSymbolSource{
+	got, err := elfSymbolsFromSources(f, []elfSymbolSource{
 		{
 			name: "dynsym", typ: elf.SHT_DYNSYM,
 			fetch: func() ([]elf.Symbol, error) {
@@ -512,7 +516,10 @@ func TestElfSymbolsSkipsOversizedSource(t *testing.T) {
 				return []elf.Symbol{{Name: "kept", Info: byte(elf.STT_FUNC), Value: 0x1000}}, nil
 			},
 		},
-	})
+	}, DefaultELFSymbolLimits())
+	if !errors.Is(err, ErrELFSymbolLimit) {
+		t.Fatalf("elfSymbolsFromSources(): got error %v, want ErrELFSymbolLimit", err)
+	}
 
 	if dynsymCalled {
 		t.Error("oversized dynsym source was fetched")
@@ -540,7 +547,7 @@ func TestElfSymbolsAppliesCumulativeMetadataLimit(t *testing.T) {
 
 	dynsymCalled := false
 	symtabCalled := false
-	got := elfSymbolsFromSources(f, []elfSymbolSource{
+	got, err := elfSymbolsFromSources(f, []elfSymbolSource{
 		{
 			name: "dynsym", typ: elf.SHT_DYNSYM,
 			fetch: func() ([]elf.Symbol, error) {
@@ -555,7 +562,10 @@ func TestElfSymbolsAppliesCumulativeMetadataLimit(t *testing.T) {
 				return nil, nil
 			},
 		},
-	})
+	}, DefaultELFSymbolLimits())
+	if !errors.Is(err, ErrELFSymbolLimit) {
+		t.Fatalf("elfSymbolsFromSources(): got error %v, want ErrELFSymbolLimit", err)
+	}
 
 	if !dynsymCalled {
 		t.Error("dynsym source was not fetched")
@@ -568,6 +578,41 @@ func TestElfSymbolsAppliesCumulativeMetadataLimit(t *testing.T) {
 	}
 }
 
+func TestElfSymbolsFailedSourceDoesNotConsumeBudget(t *testing.T) {
+	const stringTableSize = 9 << 20
+	f := &elf.File{
+		FileHeader: elf.FileHeader{Class: elf.ELFCLASS64, Type: elf.ET_EXEC},
+		Sections: []*elf.Section{
+			{},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: stringTableSize}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_DYNSYM, Size: elf.Sym64Size, Link: 1}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: stringTableSize}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_SYMTAB, Size: elf.Sym64Size, Link: 3}},
+		},
+	}
+
+	got, err := elfSymbolsFromSources(f, []elfSymbolSource{
+		{
+			name: "dynsym", typ: elf.SHT_DYNSYM,
+			fetch: func() ([]elf.Symbol, error) {
+				return nil, errors.New("malformed dynsym")
+			},
+		},
+		{
+			name: "symtab", typ: elf.SHT_SYMTAB,
+			fetch: func() ([]elf.Symbol, error) {
+				return []elf.Symbol{{Name: "fallback", Info: byte(elf.STT_FUNC), Value: 0x3000}}, nil
+			},
+		},
+	}, DefaultELFSymbolLimits())
+	if err != nil {
+		t.Fatalf("elfSymbolsFromSources(): unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "fallback" {
+		t.Fatalf("elfSymbolsFromSources(): got %v, want one fallback symbol", got)
+	}
+}
+
 func TestELFSymbolSourceUsageIncludesGNUVersionSections(t *testing.T) {
 	f := &elf.File{
 		FileHeader: elf.FileHeader{Class: elf.ELFCLASS64},
@@ -575,18 +620,18 @@ func TestELFSymbolSourceUsageIncludesGNUVersionSections(t *testing.T) {
 			{},
 			{SectionHeader: elf.SectionHeader{Type: elf.SHT_STRTAB, Size: 1}},
 			{SectionHeader: elf.SectionHeader{Type: elf.SHT_DYNSYM, Size: elf.Sym64Size, Link: 1}},
-			{SectionHeader: elf.SectionHeader{Type: elf.SHT_GNU_VERSYM, Size: maxELFSymbolMetadataBytes}},
+			{SectionHeader: elf.SectionHeader{Type: elf.SHT_GNU_VERSYM, Size: DefaultELFSymbolLimits().MaxMetadataBytes}},
 		},
 	}
 
 	_, _, err := elfSymbolSourceUsage(
 		f,
 		elfSymbolSource{name: "dynsym", typ: elf.SHT_DYNSYM, versioned: true},
-		maxELFSymbolMetadataBytes,
-		maxELFSymbolCount,
+		DefaultELFSymbolLimits().MaxMetadataBytes,
+		DefaultELFSymbolLimits().MaxSymbolCount,
 	)
-	if err == nil {
-		t.Fatal("elfSymbolSourceUsage(): got nil error for oversized GNU version metadata")
+	if !errors.Is(err, ErrELFSymbolLimit) {
+		t.Fatalf("elfSymbolSourceUsage(): got error %v, want ErrELFSymbolLimit", err)
 	}
 }
 
@@ -599,7 +644,7 @@ func TestELFSymbolSourceUsageLimitsSymbolCount(t *testing.T) {
 			{
 				SectionHeader: elf.SectionHeader{
 					Type: elf.SHT_SYMTAB,
-					Size: (maxELFSymbolCount + 1) * elf.Sym64Size,
+					Size: (DefaultELFSymbolLimits().MaxSymbolCount + 1) * elf.Sym64Size,
 					Link: 1,
 				},
 			},
@@ -609,11 +654,11 @@ func TestELFSymbolSourceUsageLimitsSymbolCount(t *testing.T) {
 	_, _, err := elfSymbolSourceUsage(
 		f,
 		elfSymbolSource{name: "symtab", typ: elf.SHT_SYMTAB},
-		maxELFSymbolMetadataBytes,
-		maxELFSymbolCount,
+		DefaultELFSymbolLimits().MaxMetadataBytes,
+		DefaultELFSymbolLimits().MaxSymbolCount,
 	)
-	if err == nil {
-		t.Fatal("elfSymbolSourceUsage(): got nil error for excessive symbol count")
+	if !errors.Is(err, ErrELFSymbolLimit) {
+		t.Fatalf("elfSymbolSourceUsage(): got error %v, want ErrELFSymbolLimit", err)
 	}
 }
 
