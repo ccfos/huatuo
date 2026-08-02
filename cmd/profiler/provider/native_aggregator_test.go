@@ -24,14 +24,15 @@ import (
 
 func TestNativeAggregatorAggregatesLockTime(t *testing.T) {
 	aggregator := &nativeAggregator{
-		aggrMap:     map[string]*stackEntry{},
-		lockAggrMap: map[string]*lockStackEntry{},
+		aggrMap:     map[string]*stackSample{},
+		lockAggrMap: map[string]*lockSample{},
 	}
-	record := &lockStackEntry{
-		Proc:      &processIDNameLock{Pid: 12, Name: "app", Lock: 0xab},
-		User:      "foo;bar",
-		WaitTime:  10,
-		Contended: 2,
+	record := &lockSample{
+		Process:         processKey{PID: 12, Comm: "app"},
+		LockAddress:     0xab,
+		UserStack:       "foo;bar",
+		WaitNanoseconds: 10,
+		ContentionCount: 2,
 	}
 
 	aggregator.Aggregate(record)
@@ -53,11 +54,11 @@ func requireSingleLockRecord(t *testing.T, aggregator *nativeAggregator, waitTim
 		t.Fatalf("lock records = %d, want 1", len(aggregator.lockAggrMap))
 	}
 	for _, record := range aggregator.lockAggrMap {
-		if record.WaitTime != waitTime || record.Contended != contended {
+		if record.WaitNanoseconds != waitTime || record.ContentionCount != contended {
 			t.Fatalf(
 				"lock record = (wait=%d, contended=%d), want (wait=%d, contended=%d)",
-				record.WaitTime,
-				record.Contended,
+				record.WaitNanoseconds,
+				record.ContentionCount,
 				waitTime,
 				contended,
 			)

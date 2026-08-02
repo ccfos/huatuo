@@ -96,7 +96,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 	p.offCPU = pctx.CPUMode == profiling.CPUModeOffCPU
 
-	b, err := bpf.LoadBpf(objectName, p.dbg.WithBpfDbg(constants))
+	b, err := bpf.LoadBPF(objectName, p.dbg.WithBpfDbg(constants))
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}

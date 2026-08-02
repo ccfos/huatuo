@@ -78,7 +78,7 @@ func (r *nativeOffCPUReader) Close() error {
 }
 
 type offCPUStackKey struct {
-	Process  processIDName
+	Process  processKey
 	Stack    bpfmap.StackTraceID
 	Category string
 }
@@ -141,9 +141,9 @@ func (r *nativeOffCPUReader) aggregateBatch(batch []any, enqueue func(any)) {
 		}
 
 		key := offCPUStackKey{
-			Process: processIDName{
-				Pid:  uint32(event.Base.PIDTGID >> 32),
-				Name: procutil.CommToString(event.Base.Comm),
+			Process: processKey{
+				PID:  uint32(event.Base.PIDTGID >> 32),
+				Comm: procutil.CommToString(event.Base.Comm),
 			},
 			Category: offCPUCategory(event.Kind, event.Flags),
 			Stack: bpfmap.StackTraceID{
@@ -155,15 +155,12 @@ func (r *nativeOffCPUReader) aggregateBatch(batch []any, enqueue func(any)) {
 	}
 
 	for key, duration := range counts {
-		enqueue(&stackEntry{
-			Proc: &processIDName{
-				Pid:  key.Process.Pid,
-				Name: key.Process.Name,
-			},
-			User:     r.resolveUserStack(key.Stack.UserID, key.Process.Pid),
-			Kernel:   r.resolveKernelStack(key.Stack.KernelID),
-			Samples:  duration,
-			Category: key.Category,
+		enqueue(&stackSample{
+			Process:     key.Process,
+			UserStack:   r.resolveUserStack(key.Stack.UserID, key.Process.PID),
+			KernelStack: r.resolveKernelStack(key.Stack.KernelID),
+			Value:       duration,
+			Category:    key.Category,
 		})
 	}
 }

@@ -61,7 +61,7 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 func (c *softirqTracing) Start(ctx context.Context) error {
 	softirqThresh := cfg.Softirq.DisabledThreshold
 
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), map[string]any{"softirq_thresh": softirqThresh})
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), map[string]any{"softirq_thresh": softirqThresh})
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}
@@ -80,7 +80,7 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	b.DetachOnContextDone(childCtx, cancel)
 
 	for {
 		select {

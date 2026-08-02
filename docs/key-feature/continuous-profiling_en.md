@@ -13,6 +13,135 @@ HUATUO is an operating-system observability project open sourced by DiDi and inc
 </div>
 {{% /alert %}}
 
+## 🚀 Quick Start
+
+This guide uses `build/docker/docker-compose.yml` to start all services, create a host CPU profiling job, and view the flame graph in Grafana.
+
+### 1. Start Services
+
+First, configure Elasticsearch credentials so that huatuo-bamai and huatuo-apiserver can persist profile data. The config files are volume-mounted into the containers, so edit them directly in the project root.
+
+In `huatuo-bamai.conf`:
+```toml
+[Storage]
+    [Storage.Elasticsearch]
+        Address = "http://127.0.0.1:9200"
+        Index = "huatuo_bamai"
+        Username = "elastic"
+        Password = "huatuo-bamai"
+```
+
+In `huatuo-apiserver.conf`:
+```toml
+[Elasticsearch]
+    Address = "http://127.0.0.1:9200"
+    Username = "elastic"
+    Password = "huatuo-bamai"
+    Index = "huatuo_bamai"
+
+[Auth]
+    [[Auth.Users]]
+        ID = "administrator"
+        BearerToken = "REPLACE_WITH_RANDOM_HEX"
+        Admin = true
+```
+
+Then start all services from the project root:
+
+```bash
+docker compose --project-directory ./build/docker up
+```
+
+> Run without `-d` to observe startup logs. Add `-d` for background mode.
+
+| Service | Role | Default Port |
+| --- | --- | --- |
+| `huatuo-bamai` | Agent, runs profiler sampling | `19704` |
+| `huatuo-apiserver` | API entry point, creates and dispatches jobs | `12740` |
+| `elasticsearch` | Stores profile data (index: `huatuo_bamai`) | `9200` |
+| `grafana` | Flame graph visualization | `3000` |
+
+### 2. Verify Services
+
+In a new terminal, confirm all services are ready:
+
+```bash
+# Agent health check
+$ curl -s http://localhost:19704/version | jq .data.name
+
+"huatuo-bamai"
+
+# API Server health check
+$ curl -s http://localhost:12740/version | jq .data.name
+
+"huatuo-apiserver"
+
+# ES index status
+$ curl -s -u elastic:huatuo-bamai "http://localhost:9200/_cat/indices/huatuo_bamai?v"
+
+health status index        uuid                   pri rep docs.count docs.deleted store.size pri.store.size dataset.size
+yellow open   huatuo_bamai 147fzHJhQ820GjCKFLh5ZQ   1   1         42            0    297.8kb        297.8kb      297.8kb
+```
+
+Set environment variables for subsequent API calls:
+
+```bash
+API_BASE="http://127.0.0.1:12740"
+API_TOKEN="REPLACE_WITH_RANDOM_HEX"
+```
+
+### 3. Create a Host CPU Profiling Job
+
+Use `c` language (native, covers C/C++/Go) to sample the entire host for 30 seconds:
+
+```bash
+# Use the actual hostname of the node
+HOSTNAME=$(hostname)
+
+JOB_ID=$(curl -s -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"type\": \"cpu\",
+    \"language\": \"c\",
+    \"duration_seconds\": 30,
+    \"hostname\": \"${HOSTNAME}\"
+  }" \
+  "${API_BASE}/v1/profiles" | jq -r .data.id)
+
+echo "Job ID: $JOB_ID"
+```
+
+### 4. Verify Data in Elasticsearch
+
+Each aggregation window is 10 seconds. A 30-second job produces approximately 3 profile documents. Wait for completion, then verify:
+
+```bash
+$ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
+  -H "Content-Type: application/json" \
+  -d '{"query":{"exists":{"field":"tracer_data.flamedata"}}}' | jq .count
+
+3
+```
+
+### 5. View the Flame Graph in Grafana
+
+Open the **Continuous Profiling (host)** dashboard:
+
+- URL: [http://localhost:3000/d/continuous-profiling-host](http://localhost:3000/d/continuous-profiling-host) (replace `localhost:3000` with your environment)
+- Credentials: `admin / admin` (skip the default password change prompt)
+
+Steps:
+
+1. Select a time range covering the profiling period
+2. Choose your `hostname` and set `type` to `process_cpu:cpu:nanoseconds:cpu:nanoseconds`
+3. The flame graph loads aggregated call stacks for the selected time range and updates dynamically
+4. Click a frame to zoom in; use the top table for symbol sorting, filtering, and statistics
+
+![continuous-profiling-grafana-host.png](/docs/img/continuous-profiling-grafana-host.png)
+
+For more profiling dimensions, see the Profiles API section below.
+
 ## 🌐 Profiles API
 
 huatuo-apiserver exposes `/v1/profiles` for service-based continuous profiling. Clients can create CPU or memory profiling jobs, query job status and results, and stop or delete jobs. huatuo-apiserver schedules each job on the HUATUO Agent running on the specified node. Profiling results are available through the returned Grafana URL or the raw data endpoint.
@@ -23,13 +152,13 @@ By default, huatuo-apiserver listens on `:12740`. The following examples use env
 
 ```bash
 API_BASE="http://127.0.0.1:12740"
-API_TOKEN="<Auth.Users.BearerToken>"
+API_TOKEN="REPLACE_WITH_RANDOM_HEX"
 ```
 
 Every request must pass the configured bearer token:
 
 ```text
-Authorization: Bearer <Auth.Users.BearerToken>
+Authorization: Bearer REPLACE_WITH_RANDOM_HEX
 ```
 
 A non-administrator user requires both `/v1/profiles` and

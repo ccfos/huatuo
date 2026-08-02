@@ -635,7 +635,7 @@ func dispatchRasTracerData(data *rasEvent) (*RasTracingData, error) {
 }
 
 func (ras *rasTracing) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}
@@ -650,7 +650,7 @@ func (ras *rasTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	b.DetachOnContextDone(childCtx, cancel)
 
 	return ras.rasEventLoop(childCtx, reader)
 }

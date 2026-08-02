@@ -84,7 +84,7 @@ func TestApply(t *testing.T) {
 
 	dumpPrograms(t, specs, "Program")
 
-	if _, err := bpf.LoadBpfFromCollectionSpec("dropwatch-spec.o", specs, nil); err != nil {
+	if _, err := bpf.LoadBPFFromCollectionSpec("dropwatch-spec.o", specs, nil); err != nil {
 		t.Fatalf("load bpf: %v", err)
 	}
 }

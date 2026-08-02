@@ -1,5 +1,5 @@
 ---
-title: Docker Compose 容器部署
+title: 容器部署
 type: docs
 description: 
 author: HUATUO Team, hao022
@@ -13,7 +13,7 @@ weight: 1
 ### 使用 Docker 启动容器
 
 ```bash
-$ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+$ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
 ```
 
 > ⚠️：注意：此方式使用容器内置的默认配置文件，该配置不会连接 kubelet 与 Elasticsearch。

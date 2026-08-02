@@ -63,10 +63,10 @@ func TestValidOffCPUStackIDIncludesZero(t *testing.T) {
 }
 
 func TestNativeAggregatorSeparatesOffCPUCategories(t *testing.T) {
-	aggr := &nativeAggregator{aggrMap: make(map[string]*stackEntry)}
-	proc := &processIDName{Pid: 123, Name: "worker"}
-	aggr.Aggregate(&stackEntry{Proc: proc, User: "main;wait;", Samples: 10, Category: "off-CPU blocked"})
-	aggr.Aggregate(&stackEntry{Proc: proc, User: "main;wait;", Samples: 20, Category: "scheduling delay"})
+	aggr := &nativeAggregator{aggrMap: make(map[string]*stackSample)}
+	proc := processKey{PID: 123, Comm: "worker"}
+	aggr.Aggregate(&stackSample{Process: proc, UserStack: "main;wait;", Value: 10, Category: "off-CPU blocked"})
+	aggr.Aggregate(&stackSample{Process: proc, UserStack: "main;wait;", Value: 20, Category: "scheduling delay"})
 	require.Len(t, aggr.aggrMap, 2)
 }
 

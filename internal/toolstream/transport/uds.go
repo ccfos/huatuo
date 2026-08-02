@@ -15,9 +15,12 @@
 package transport
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"syscall"
+	"time"
 )
 
 type udsListener struct {
@@ -32,12 +35,9 @@ func (l *udsListener) Close() error {
 }
 
 // ListenUDS binds a Unix socket at path.
-// If path already exists it is removed first (leftover from a previous
-// unclean shutdown); an active listener on the same path will cause
-// net.Listen to fail regardless.
 func ListenUDS(path string) (net.Listener, error) {
-	if _, err := os.Stat(path); err == nil {
-		_ = os.Remove(path)
+	if err := prepareSocketPath(path); err != nil {
+		return nil, err
 	}
 
 	l, err := net.Listen("unix", path)
@@ -54,6 +54,36 @@ func ListenUDS(path string) (net.Listener, error) {
 	}
 
 	return &udsListener{Listener: l, path: path}, nil
+}
+
+func prepareSocketPath(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("transport: inspect socket path %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("transport: socket path exists and is not a Unix socket: %s", path)
+	}
+
+	conn, err := net.DialTimeout("unix", path, time.Second)
+	if err == nil {
+		_ = conn.Close()
+		return fmt.Errorf("transport: socket already has an active listener: %s", path)
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) {
+		return fmt.Errorf("transport: probe existing socket %s: %w", path, err)
+	}
+
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("transport: remove stale socket %s: %w", path, err)
+	}
+	return nil
 }
 
 // DialUDS connects to a Unix socket at path.

@@ -1158,6 +1158,54 @@ huatuo_bamai_iolatency_blkdisk_freeze{disk="253:1",host="hostname",region="dev"}
 |---|---|---|---|---|
 |iolatency_blkdisk_freeze|Host disk freeze event count|count|Host|host, region, disk|
 
+### Disk IO Statistics
+
+`diskio` collects per-device disk IO metrics and system-wide CPU iowait by reading `/proc/diskstats` and `/proc/stat`. Unlike `iolatency`, `diskio` is procfs-based rather than eBPF-based, providing cumulative counters that support rate-based latency calculations.
+
+The default configuration disables this collector through `BlackList`. Remove
+`diskio` from `BlackList` to enable these metrics.
+
+Counter metrics are cumulative; use Prometheus `rate()` for per-second values (IOPS, throughput). Gauge metrics are point-in-time values. Average latency is computed in PromQL by dividing the I/O time rate by the request rate.
+
+```bash
+# HELP huatuo_bamai_diskio_read_requests_total Total number of read requests completed successfully.
+# TYPE huatuo_bamai_diskio_read_requests_total counter
+huatuo_bamai_diskio_read_requests_total{device="sda",host="hostname",region="dev"} 1000
+# HELP huatuo_bamai_diskio_write_requests_total Total number of write requests completed successfully.
+# TYPE huatuo_bamai_diskio_write_requests_total counter
+huatuo_bamai_diskio_write_requests_total{device="sda",host="hostname",region="dev"} 2000
+# HELP huatuo_bamai_diskio_read_bytes_total Total number of bytes read from the device.
+# TYPE huatuo_bamai_diskio_read_bytes_total counter
+huatuo_bamai_diskio_read_bytes_total{device="sda",host="hostname",region="dev"} 2.56e+07
+# HELP huatuo_bamai_diskio_written_bytes_total Total number of bytes written to the device.
+# TYPE huatuo_bamai_diskio_written_bytes_total counter
+huatuo_bamai_diskio_written_bytes_total{device="sda",host="hostname",region="dev"} 4.096e+07
+# HELP huatuo_bamai_diskio_io_in_progress Number of I/O requests currently in flight (queue depth).
+# TYPE huatuo_bamai_diskio_io_in_progress gauge
+huatuo_bamai_diskio_io_in_progress{device="sda",host="hostname",region="dev"} 50
+# HELP huatuo_bamai_diskio_read_time_seconds_total Total seconds spent by completed read requests.
+# TYPE huatuo_bamai_diskio_read_time_seconds_total counter
+huatuo_bamai_diskio_read_time_seconds_total{device="sda",host="hostname",region="dev"} 3
+# HELP huatuo_bamai_diskio_write_time_seconds_total Total seconds spent by completed write requests.
+# TYPE huatuo_bamai_diskio_write_time_seconds_total counter
+huatuo_bamai_diskio_write_time_seconds_total{device="sda",host="hostname",region="dev"} 6
+# HELP huatuo_bamai_diskio_disk_iowait_percent CPU time spent waiting for I/O during the collection interval.
+# TYPE huatuo_bamai_diskio_disk_iowait_percent gauge
+huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
+```
+
+|Metric|Description|Unit|Scope|Labels|
+|---|---|---|---|---|
+|read_requests_total|Cumulative read requests completed (field 4). Use `rate()` for read IOPS|count|Host|host, region, device|
+|write_requests_total|Cumulative write requests completed (field 8). Use `rate()` for write IOPS|count|Host|host, region, device|
+|read_bytes_total|Cumulative bytes read (field 6 × 512). Use `rate()` for read throughput|bytes|Host|host, region, device|
+|written_bytes_total|Cumulative bytes written (field 10 × 512). Use `rate()` for write throughput|bytes|Host|host, region, device|
+|read_time_seconds_total|Cumulative seconds spent by completed reads (field 7)|seconds|Host|host, region, device|
+|write_time_seconds_total|Cumulative seconds spent by completed writes (field 11)|seconds|Host|host, region, device|
+|io_in_progress|Current number of I/O requests in flight, i.e. queue depth (field 12)|count|Host|host, region, device|
+|disk_iowait_percent|CPU time spent waiting for I/O during the collection interval|percent|Host|host, region|
+
+
 ## General System
 
 ### Soft Lockup

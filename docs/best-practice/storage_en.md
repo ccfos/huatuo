@@ -1,5 +1,5 @@
 ---
-title: Storage
+title: Storage Service
 type: docs
 description: ""
 author: HUATUO Team
@@ -104,7 +104,7 @@ docker logs opensearch
 
 #### 3. Configure huatuo-bamai
 
-Add the following configuration to `huatuo-bamai.conf`. The default username and password for the OpenSearch container image are both `admin`. For a full description of storage configuration options, refer to the Configuration Guide.
+Add the following configuration to `huatuo-bamai.conf`. The default username and password for the OpenSearch container image are both `admin`. For a full description of storage configuration options, see the [Configuration Guide](/docs/configuration/huatuo-bamai-configuration_en.md).
 
 ```toml
 [Storage.Elasticsearch]
@@ -228,7 +228,7 @@ Example response:
 
 #### 3. Configure huatuo-bamai
 
-Add the following configuration to `huatuo-bamai.conf`. The default username for the Elasticsearch container image is `elastic`; the password is set via the `ELASTIC_PASSWORD` environment variable. For a full description of storage configuration options, refer to the Configuration Guide.
+Add the following configuration to `huatuo-bamai.conf`. The default username for the Elasticsearch container image is `elastic`; the password is set via the `ELASTIC_PASSWORD` environment variable. For a full description of storage configuration options, see the [Configuration Guide](/docs/configuration/huatuo-bamai-configuration_en.md).
 
 ```toml
 [Storage.Elasticsearch]
@@ -389,10 +389,7 @@ curl -k -u elastic:123456 -X GET "http://localhost:9200/huatuo_bamai/_count?pret
 
 ### System Architecture
 
-The HUATUO Storage module runs on each node. It writes kernel events captured
-by the Tracer to the local directory and to Elasticsearch or OpenSearch. Both
-backends share the same `[Storage.Elasticsearch]` configuration interface and
-are differentiated by address.
+The HUATUO Storage module runs on each node. It writes kernel events captured by the Tracer to the local directory and to Elasticsearch or OpenSearch. Both backends share the same `[Storage.Elasticsearch]` configuration interface and are differentiated by address.
 
 The remote write path uses the ES/OpenSearch **Bulk API** (`_bulk`): events are queued in an in-memory buffer and submitted in batches by background workers based on size and time thresholds, with transport-layer retries on transient failures.
 

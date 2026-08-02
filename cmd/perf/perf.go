@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -57,19 +57,19 @@ func mainAction(ctx *cli.Context) error {
 		targetCssAddr = c.CgroupCss["cpu"]
 	}
 
-	if err := bpf.NewManager(&bpf.Option{
+	if err := bpf.Init(&bpf.Option{
 		KeepaliveTimeout: optDuration,
 	}); err != nil {
 		return fmt.Errorf("init bpf err %w", err)
 	}
-	defer bpf.Close()
+	defer bpf.Shutdown()
 
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
 		return fmt.Errorf("read bpf object: %w", err)
 	}
 
-	b, err := bpf.LoadBpfFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
+	b, err := bpf.LoadBPFFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}

@@ -1238,6 +1238,53 @@ huatuo_bamai_iolatency_blkdisk_freeze{disk="253:1",host="hostname",region="dev"}
 |---|---|---|---|---|
 |iolatency_blkdisk_freeze|宿主机磁盘 freeze 事件次数|计数|宿主|host, region, disk|
 
+### 磁盘 IO 统计
+
+`diskio` 通过读取 `/proc/diskstats` 和 `/proc/stat` 采集 per-device 磁盘 IO 指标和系统级 CPU iowait。与 `iolatency` 不同，`diskio` 基于 procfs 而非 eBPF，提供可通过 rate 计算延迟的累积计数器。
+
+默认配置通过 `BlackList` 禁用该 collector。需要启用这些指标时，从
+`BlackList` 中移除 `diskio`。
+
+Counter 指标为累积值，需使用 Prometheus `rate()` 计算 per-second 值（IOPS、吞吐量）。Gauge 指标为瞬时值。平均延迟通过 PromQL 中的 I/O 时间 rate 除以请求 rate 计算。
+
+```bash
+# HELP huatuo_bamai_diskio_read_requests_total Total number of read requests completed successfully.
+# TYPE huatuo_bamai_diskio_read_requests_total counter
+huatuo_bamai_diskio_read_requests_total{device="sda",host="hostname",region="dev"} 1000
+# HELP huatuo_bamai_diskio_write_requests_total Total number of write requests completed successfully.
+# TYPE huatuo_bamai_diskio_write_requests_total counter
+huatuo_bamai_diskio_write_requests_total{device="sda",host="hostname",region="dev"} 2000
+# HELP huatuo_bamai_diskio_read_bytes_total Total number of bytes read from the device.
+# TYPE huatuo_bamai_diskio_read_bytes_total counter
+huatuo_bamai_diskio_read_bytes_total{device="sda",host="hostname",region="dev"} 2.56e+07
+# HELP huatuo_bamai_diskio_written_bytes_total Total number of bytes written to the device.
+# TYPE huatuo_bamai_diskio_written_bytes_total counter
+huatuo_bamai_diskio_written_bytes_total{device="sda",host="hostname",region="dev"} 4.096e+07
+# HELP huatuo_bamai_diskio_io_in_progress Number of I/O requests currently in flight (queue depth).
+# TYPE huatuo_bamai_diskio_io_in_progress gauge
+huatuo_bamai_diskio_io_in_progress{device="sda",host="hostname",region="dev"} 50
+# HELP huatuo_bamai_diskio_read_time_seconds_total Total seconds spent by completed read requests.
+# TYPE huatuo_bamai_diskio_read_time_seconds_total counter
+huatuo_bamai_diskio_read_time_seconds_total{device="sda",host="hostname",region="dev"} 3
+# HELP huatuo_bamai_diskio_write_time_seconds_total Total seconds spent by completed write requests.
+# TYPE huatuo_bamai_diskio_write_time_seconds_total counter
+huatuo_bamai_diskio_write_time_seconds_total{device="sda",host="hostname",region="dev"} 6
+# HELP huatuo_bamai_diskio_disk_iowait_percent CPU time spent waiting for I/O during the collection interval.
+# TYPE huatuo_bamai_diskio_disk_iowait_percent gauge
+huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
+```
+
+|指标|意义|单位|对象|标签|
+|---|---|---|---|---|
+|read_requests_total|累积读请求完成数（field 4），使用 `rate()` 计算读 IOPS|计数|宿主|host, region, device|
+|write_requests_total|累积写请求完成数（field 8），使用 `rate()` 计算写 IOPS|计数|宿主|host, region, device|
+|read_bytes_total|累积读取字节数（field 6 × 512），使用 `rate()` 计算读吞吐量|字节|宿主|host, region, device|
+|written_bytes_total|累积写入字节数（field 10 × 512），使用 `rate()` 计算写吞吐量|字节|宿主|host, region, device|
+|read_time_seconds_total|已完成读请求的累积耗时（field 7）|秒|宿主|host, region, device|
+|write_time_seconds_total|已完成写请求的累积耗时（field 11）|秒|宿主|host, region, device|
+|io_in_progress|当前正在进行的 I/O 请求数，即队列深度（field 12）|计数|宿主|host, region, device|
+|disk_iowait_percent|采集区间内 CPU 等待 I/O 完成的时间占比|百分比|宿主|host, region|
+
 
 ## 通用系统
 

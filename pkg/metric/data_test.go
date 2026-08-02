@@ -134,6 +134,34 @@ func TestNewGaugeData(t *testing.T) {
 	}
 }
 
+func TestDataMetadata(t *testing.T) {
+	data := NewGaugeData(
+		"cpu_usage",
+		1.25,
+		"cpu usage",
+		map[string]string{"device": "sda"},
+	)
+
+	if data.Name() != "cpu_usage" {
+		t.Errorf("Name()=%q, want %q", data.Name(), "cpu_usage")
+	}
+	if data.Type() != MetricTypeGauge {
+		t.Errorf("Type()=%d, want %d", data.Type(), MetricTypeGauge)
+	}
+	if data.Help() != "cpu usage" {
+		t.Errorf("Help()=%q, want %q", data.Help(), "cpu usage")
+	}
+
+	labels := data.Labels()
+	if labels["device"] != "sda" {
+		t.Errorf("Labels()[device]=%q, want %q", labels["device"], "sda")
+	}
+	labels["device"] = "changed"
+	if data.Labels()["device"] != "sda" {
+		t.Error("Labels() returned mutable internal state")
+	}
+}
+
 func TestNewCounterData_DiffPoint(t *testing.T) {
 	tests := []struct {
 		name     string

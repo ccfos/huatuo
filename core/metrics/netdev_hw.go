@@ -195,7 +195,7 @@ func (netdev *netdevHw) updateIfaceSwDroppedStat(object bpf.BPF) error {
 }
 
 func (netdev *netdevHw) Start(ctx context.Context) (retErr error) {
-	object, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	object, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
@@ -213,7 +213,7 @@ func (netdev *netdevHw) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	object.WaitDetachByBreaker(childCtx, cancel)
+	object.DetachOnContextDone(childCtx, cancel)
 
 	<-childCtx.Done()
 	return nil

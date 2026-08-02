@@ -23,15 +23,16 @@ The configuration file uses **TOML** format and includes multiple sections such 
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "metax_gpu", "ascend_npu"]
+BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio"]
 ```
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
   Modules or hardware to exclude from tracing and metric collection. Default:
-  `["netdev_hw", "metax_gpu", "ascend_npu"]`, which disables tracing and
-  metrics for the network device hardware layer, Metax GPU, and Ascend NPU.
-  Supports arrays; extend as needed.
+  `["netdev_hw", "metax_gpu", "ascend_npu", "diskio"]`, which disables
+  tracing and metrics for the network device hardware layer, Metax GPU,
+  Ascend NPU, and procfs-based disk I/O statistics. Remove `diskio` to enable
+  disk I/O metrics. Supports arrays; extend as needed.
 
 ### 3. Logging
 

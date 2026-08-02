@@ -104,7 +104,7 @@ docker logs opensearch
 
 #### 3. 配置 huatuo-bamai
 
-在 `huatuo-bamai.conf` 中添加以下配置。OpenSearch 容器镜像默认用户名和密码均为 `admin`。存储配置的详细说明请参见《配置指南》章节。
+在 `huatuo-bamai.conf` 中添加以下配置。OpenSearch 容器镜像默认用户名和密码均为 `admin`。存储配置的详细说明请参见[配置指南](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
 ```toml
 [Storage.Elasticsearch]
@@ -227,7 +227,7 @@ curl -k -u elastic:123456 https://localhost:9200
 
 #### 3. 配置 huatuo-bamai
 
-在 `huatuo-bamai.conf` 中添加以下配置。Elasticsearch 容器镜像默认用户名为 `elastic`，密码通过环境变量 `ELASTIC_PASSWORD` 设置。存储配置的详细说明请参见《配置指南》章节。
+在 `huatuo-bamai.conf` 中添加以下配置。Elasticsearch 容器镜像默认用户名为 `elastic`，密码通过环境变量 `ELASTIC_PASSWORD` 设置。存储配置的详细说明请参见[配置指南](/docs/configuration/huatuo-bamai-configuration_zh.md)。
 
 ```toml
 [Storage.Elasticsearch]
@@ -385,9 +385,7 @@ curl -k -u elastic:123456 \
 
 ### 系统架构
 
-HUATUO Storage 模块部署在节点上，将采集到的内核事件同时写入本地目录和
-Elasticsearch 或 OpenSearch。两种存储后端共用同一套
-`[Storage.Elasticsearch]` 配置接口，通过地址区分。
+HUATUO Storage 模块部署在节点上，将采集到的内核事件同时写入本地目录和 Elasticsearch 或 OpenSearch。两种存储后端共用同一套 `[Storage.Elasticsearch]` 配置接口，通过地址区分。
 
 写入远端时使用 ES/OpenSearch 的 **Bulk API**（`_bulk`）：事件先进入节点内的批量缓冲，由后台 worker 按"大小或时间"的阈值聚合后一次提交多条记录，并在传输层失败时按策略自动重试。
 

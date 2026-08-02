@@ -23,14 +23,15 @@ weight: 4
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "metax_gpu", "ascend_npu"]
+BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio"]
 ```
 
 - **BlackList**：全局追踪与指标黑名单。 
 
   用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为
-  `["netdev_hw", "metax_gpu", "ascend_npu"]`，即全局禁用网络设备硬件层
-  （netdev_hw）、Metax GPU 和 Ascend NPU 相关的追踪与指标。
+  `["netdev_hw", "metax_gpu", "ascend_npu", "diskio"]`，即全局禁用网络设备
+  硬件层（netdev_hw）、Metax GPU、Ascend NPU 和基于 procfs 的磁盘 I/O
+  指标。需要启用磁盘 I/O 指标时，从黑名单中移除 `diskio`。
 
   **说明**：添加黑名单项可有效降低资源消耗，尤其在特定硬件环境中；支持数组格式，可根据实际业务扩展。
 

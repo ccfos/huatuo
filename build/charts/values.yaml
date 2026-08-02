@@ -1,0 +1,54 @@
+image:
+  repository: docker.io/huatuo/huatuo-bamai
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+config:
+  name: huatuo-bamai-config
+  fileName: huatuo-bamai.conf
+  mountPath: /home/huatuo-bamai/conf/huatuo-bamai.conf
+  content: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "19704"
+  prometheus.io/path: /metrics
+
+podLabels: {}
+
+hostNetwork: true
+hostPID: true
+dnsPolicy: ClusterFirst
+
+securityContext:
+  privileged: true
+
+resources:
+  limits:
+    cpu: "1"
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+nodeSelector: {}
+
+tolerations:
+  - operator: Exists
+
+affinity: {}
+
+hostPaths:
+  proc: /proc
+  sys: /sys
+  run: /run
+  var: /var
+  etc: /etc
+  data: /var/log/huatuo/huatuo-local
+
+localStorage:
+  mountPath: /home/huatuo-bamai/huatuo-local

@@ -99,12 +99,12 @@ func mainAction(c *cli.Context) error {
 		defer client.End()
 	}
 
-	if err := bpf.NewManager(&bpf.Option{
+	if err := bpf.Init(&bpf.Option{
 		KeepaliveTimeout: int(cfg.durationSecond),
 	}); err != nil {
 		return fmt.Errorf("init bpf: %w", err)
 	}
-	defer bpf.Close()
+	defer bpf.Shutdown()
 
 	result, err := runTrace(c.Context, c.String(cliFlagBpfPath), cfg, filters)
 	if err != nil {

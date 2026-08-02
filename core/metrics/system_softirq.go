@@ -159,7 +159,7 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 			labels["cpuid"] = strconv.Itoa(cpuid)
 			for zoneid, zone := range lat.TotalLatency {
 				labels["zone"] = strconv.Itoa(zoneid)
-				metricData = append(metricData, metric.NewGaugeData("latency", float64(zone), "softirq latency", labels))
+				metricData = append(metricData, metric.NewCounterData("latency", float64(zone), "softirq latency", labels))
 			}
 		}
 	}
@@ -168,7 +168,7 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 }
 
 func (s *softirqLatency) Start(ctx context.Context) (retErr error) {
-	object, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	object, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
@@ -186,7 +186,7 @@ func (s *softirqLatency) Start(ctx context.Context) (retErr error) {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	object.WaitDetachByBreaker(childCtx, cancel)
+	object.DetachOnContextDone(childCtx, cancel)
 
 	<-childCtx.Done()
 	return nil

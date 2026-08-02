@@ -91,7 +91,7 @@ func TestReferenceUnPublishWaitsForLease(t *testing.T) {
 		t.Fatal("UnPublish() did not return after Release()")
 	}
 
-	loaded, err := object.Loaded()
+	loaded, err := object.IsLoaded()
 	require.NoError(t, err)
 	require.False(t, loaded)
 }
