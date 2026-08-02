@@ -60,6 +60,12 @@ prepare_runtime_config() {
 		return 1
 		;;
 	esac
+	case "${ELASTICSEARCH_HOST}${ELASTIC_PASSWORD}" in
+	*\"* | *\\*)
+		echo "Elasticsearch host and password must not contain quotes or backslashes." >&2
+		return 1
+		;;
+	esac
 
 	runtime_config="${RUN_PATH}/conf/huatuo-bamai-${mode}.conf"
 	temp_config="${runtime_config}.tmp.$$"
@@ -72,6 +78,8 @@ prepare_runtime_config() {
 	if ! awk \
 		-v disable_elasticsearch="$disable_elasticsearch" \
 		-v display_backend="$display_backend" \
+		-v elasticsearch_address="http://${ELASTICSEARCH_HOST}:9200" \
+		-v elasticsearch_password="$ELASTIC_PASSWORD" \
 		-v folded_stacks_dir="$FOLDED_STACKS_DIR" \
 		-v pyroscope_address="$PYROSCOPE_ADDRESS" '
 		/^[[:space:]]*\[Storage\.Elasticsearch\][[:space:]]*$/ {
@@ -97,32 +105,32 @@ prepare_runtime_config() {
 			next
 		}
 		section == "es" &&
-			/^[[:space:]]*Address[[:space:]]*=/ {
+			/^[[:space:]]*#?[[:space:]]*Address[[:space:]]*=/ {
 			seen_es_address = 1
 			if (disable_elasticsearch == "true") {
 				print "        Address = \"\""
 			} else {
-				print
+				printf "        Address = \"%s\"\n", elasticsearch_address
 			}
 			next
 		}
 		section == "es" &&
-			/^[[:space:]]*Username[[:space:]]*=/ {
+			/^[[:space:]]*#?[[:space:]]*Username[[:space:]]*=/ {
 			seen_es_username = 1
 			if (disable_elasticsearch == "true") {
 				print "        Username = \"\""
 			} else {
-				print
+				print "        Username = \"elastic\""
 			}
 			next
 		}
 		section == "es" &&
-			/^[[:space:]]*Password[[:space:]]*=/ {
+			/^[[:space:]]*#?[[:space:]]*Password[[:space:]]*=/ {
 			seen_es_password = 1
 			if (disable_elasticsearch == "true") {
 				print "        Password = \"\""
 			} else {
-				print
+				printf "        Password = \"%s\"\n", elasticsearch_password
 			}
 			next
 		}
