@@ -24,7 +24,6 @@ import (
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler/bpfmap"
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/types"
@@ -79,7 +78,7 @@ func (r *nativeOffCPUReader) Close() error {
 
 type offCPUStackKey struct {
 	Process  processKey
-	Stack    bpfmap.StackTraceID
+	Stack    stackIDPair
 	Category string
 }
 
@@ -146,9 +145,9 @@ func (r *nativeOffCPUReader) aggregateBatch(batch []any, enqueue func(any)) {
 				Comm: procutil.CommToString(event.Base.Comm),
 			},
 			Category: offCPUCategory(event.Kind, event.Flags),
-			Stack: bpfmap.StackTraceID{
-				KernelID: event.Base.Kernstack,
-				UserID:   event.Base.Userstack,
+			Stack: stackIDPair{
+				KernelStackID: event.Base.Kernstack,
+				UserStackID:   event.Base.Userstack,
 			},
 		}
 		counts[key] += event.Base.Value
@@ -157,8 +156,8 @@ func (r *nativeOffCPUReader) aggregateBatch(batch []any, enqueue func(any)) {
 	for key, duration := range counts {
 		enqueue(&stackSample{
 			Process:     key.Process,
-			UserStack:   r.resolveUserStack(key.Stack.UserID, key.Process.PID),
-			KernelStack: r.resolveKernelStack(key.Stack.KernelID),
+			UserStack:   r.resolveUserStack(key.Stack.UserStackID, key.Process.PID),
+			KernelStack: r.resolveKernelStack(key.Stack.KernelStackID),
 			Value:       duration,
 			Category:    key.Category,
 		})
