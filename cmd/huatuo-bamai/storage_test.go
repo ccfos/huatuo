@@ -18,11 +18,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
-	"huatuo-bamai/core/autotracing"
 )
 
 func TestNewProfileStoresRegistersElasticsearchAndPyroscope(t *testing.T) {
@@ -107,58 +105,8 @@ func newElasticsearchInfoServer(t *testing.T) *httptest.Server {
 	return server
 }
 
-func TestValidateDisplayStorage(t *testing.T) {
-	tests := []struct {
-		name      string
-		backend   autotracing.DisplayBackend
-		configure func(*config.BamaiConfig)
-		esEnabled bool
-		want      string
-	}{
-		{
-			name:    "Pyroscope address required",
-			backend: autotracing.DisplayBackendPyroscope,
-			want:    "Storage.Pyroscope.Address",
-		},
-		{
-			name:    "API server Elasticsearch required",
-			backend: autotracing.DisplayBackendAPIServer,
-			want:    "Storage.Elasticsearch address, username, and password",
-		},
-		{
-			name:    "Pyroscope configured",
-			backend: autotracing.DisplayBackendPyroscope,
-			configure: func(cfg *config.BamaiConfig) {
-				cfg.Storage.Pyroscope.Address = "http://127.0.0.1:4040"
-			},
-		},
-		{
-			name:      "API server configured",
-			backend:   autotracing.DisplayBackendAPIServer,
-			esEnabled: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.BamaiConfig{}
-			if tt.configure != nil {
-				tt.configure(cfg)
-			}
-			err := validateDisplayStorage(cfg, tt.backend, tt.esEnabled)
-			if tt.want == "" {
-				if err != nil {
-					t.Fatalf("validateDisplayStorage returned error: %v", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf(
-					"validateDisplayStorage error = %v, want %q",
-					err,
-					tt.want,
-				)
-			}
-		})
+func TestInitStorageAllowsNoRemoteProfileBackend(t *testing.T) {
+	if err := initStorage("test", &config.BamaiConfig{}); err != nil {
+		t.Fatalf("initStorage returned error: %v", err)
 	}
 }
