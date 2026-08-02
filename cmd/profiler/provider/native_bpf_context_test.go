@@ -18,20 +18,18 @@ import "testing"
 
 func TestValidateStackID(t *testing.T) {
 	tests := []struct {
-		name          string
-		kernelStackID int32
-		userStackID   int32
-		want          bool
+		name    string
+		stackID int32
+		want    bool
 	}{
-		{name: "no stack", kernelStackID: -1, userStackID: -1, want: false},
-		{name: "kernel stack zero", kernelStackID: 0, userStackID: -1, want: true},
-		{name: "user stack zero", kernelStackID: -1, userStackID: 0, want: true},
-		{name: "positive stack IDs", kernelStackID: 1, userStackID: 2, want: true},
+		{name: "negative ID", stackID: -1, want: false},
+		{name: "zero ID", stackID: 0, want: true},
+		{name: "positive ID", stackID: 1, want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := validateStackID(tt.kernelStackID, tt.userStackID); got != tt.want {
-				t.Fatalf("validateStackID() = %t, want %t", got, tt.want)
+			if got := validateStackID(tt.stackID); got != tt.want {
+				t.Fatalf("validateStackID(%d) = %t, want %t", tt.stackID, got, tt.want)
 			}
 		})
 	}
