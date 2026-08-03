@@ -233,6 +233,8 @@ func applyProfileMatcher(filter *SearchFilter, matcher *labels.Matcher) error {
 	switch matcher.Name {
 	case "id":
 		filter.ID = matcher.Value
+	case "region":
+		filter.Region = matcher.Value
 	case "hostname":
 		filter.Hostname = matcher.Value
 	case "container_id":

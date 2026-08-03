@@ -58,3 +58,21 @@ func TestBuildProfileAggregationQueryAddsTracerIDOnce(t *testing.T) {
 		t.Fatalf("query filters = %#v, want %#v", query.Filters, want)
 	}
 }
+
+func TestBuildProfileAggregationQueryFiltersByRegion(t *testing.T) {
+	query := buildProfileAggregationQuery(&SearchFilter{
+		Region:   "cn-beijing",
+		Hostname: "node-1",
+	})
+
+	found := false
+	for _, f := range query.Filters {
+		if f.Field == profileFieldRegion+".keyword" && f.Value == "cn-beijing" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("query filters = %#v, want region filter present", query.Filters)
+	}
+}
