@@ -7,6 +7,9 @@ huatuo_bamai_memory_vmstat_balloon_inflate{host="huatuo-dev",region="dev"} 0
 # HELP huatuo_bamai_memory_vmstat_balloon_migrate
 # TYPE huatuo_bamai_memory_vmstat_balloon_migrate gauge
 huatuo_bamai_memory_vmstat_balloon_migrate{host="huatuo-dev",region="dev"} 0
+# HELP huatuo_bamai_memory_vmstat_pgfault
+# TYPE huatuo_bamai_memory_vmstat_pgfault gauge
+huatuo_bamai_memory_vmstat_pgfault{host="huatuo-dev",region="dev"} 123456
 # HELP huatuo_bamai_memory_vmstat_swap_ra
 # TYPE huatuo_bamai_memory_vmstat_swap_ra gauge
 huatuo_bamai_memory_vmstat_swap_ra{host="huatuo-dev",region="dev"} 0
