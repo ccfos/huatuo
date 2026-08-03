@@ -46,10 +46,9 @@ func init() {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_cpu_offcpu_profiler.c -o $BPF_DIR/native_cpu_offcpu_profiler.o
 
 type cpuNativeProfiler struct {
-	bpf          bpf.BPF
-	dbg          *bpf.BpfDbg
-	offCPU       bool
-	offCPUReader *nativeOffCPUReader
+	bpf    bpf.BPF
+	dbg    *bpf.BpfDbg
+	offCPU bool
 }
 
 func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
@@ -57,12 +56,6 @@ func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 }
 
 func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
-	if p.offCPUReader != nil {
-		if err := p.offCPUReader.Close(); err != nil {
-			log.Warnf("closing off-CPU reader: %v", err)
-		}
-		p.offCPUReader = nil
-	}
 	if p.offCPU {
 		logNativeOffCPUStats(p.bpf)
 	}
@@ -102,19 +95,8 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	p.bpf = b
-	if p.offCPU {
-		p.offCPUReader, err = newNativeOffCPUReader(p.bpf, pctx.Ctx)
-		if err != nil {
-			_ = p.bpf.Close()
-			return fmt.Errorf("create off-CPU event reader: %w", err)
-		}
-	}
 
 	if err := p.bpf.AttachWithOptions(attachOptions); err != nil {
-		if p.offCPUReader != nil {
-			_ = p.offCPUReader.Close()
-			p.offCPUReader = nil
-		}
 		if cerr := p.bpf.Close(); cerr != nil {
 			log.Warnf("closing eBPF after attach failure: %v", cerr)
 		}

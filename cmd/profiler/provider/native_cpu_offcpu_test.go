@@ -15,14 +15,18 @@
 package provider
 
 import (
+	"errors"
 	"math"
 	"testing"
 	"unsafe"
 
+	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/bpf/abi"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/pkg/profiling"
+	"huatuo-bamai/pkg/types"
 
+	"github.com/cilium/ebpf"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,10 +60,67 @@ func TestOffCPUCategory(t *testing.T) {
 	}
 }
 
-func TestValidOffCPUStackIDIncludesZero(t *testing.T) {
-	require.True(t, validOffCPUStackID(0))
-	require.True(t, validOffCPUStackID(1))
-	require.False(t, validOffCPUStackID(-1))
+func TestPerfEventReadErrorWithoutLoss(t *testing.T) {
+	lostErr := &bpf.PerfEventSamplesLostError{Count: 7}
+	require.NoError(t, perfEventReadErrorWithoutLoss(lostErr))
+
+	readErr := errors.New("read failed")
+	require.ErrorIs(t, perfEventReadErrorWithoutLoss(errors.Join(readErr, lostErr)), readErr)
+	require.ErrorIs(
+		t,
+		perfEventReadErrorWithoutLoss(errors.Join(types.ErrExitByCancelCtx, lostErr)),
+		types.ErrExitByCancelCtx,
+	)
+}
+
+type stackLookupMissBPF struct {
+	bpf.BPF
+}
+
+func (stackLookupMissBPF) ReadMap(uint32, []byte) ([]byte, error) {
+	return nil, ebpf.ErrKeyNotExist
+}
+
+func TestAggregateOffCPUBatch(t *testing.T) {
+	event := func(pid uint32, value int64, kind uint8, kernelStackID, userStackID int32) any {
+		return &abi.ProfilerOffCPUEvent{
+			Base: abi.ProfilerEventBase{
+				PIDTGID:   uint64(pid) << 32,
+				Value:     value,
+				Kernstack: kernelStackID,
+				Userstack: userStackID,
+			},
+			AbiVersion: offCPUEventABIVersion,
+			Kind:       kind,
+		}
+	}
+
+	batch := []any{
+		event(100, 10, offCPUEventBlocked, 0, -1),
+		event(100, 20, offCPUEventBlocked, 0, -1),
+		event(100, 30, offCPUEventRunqueue, 0, -1),
+		event(200, 40, offCPUEventBlocked, 0, -1),
+		event(300, 50, offCPUEventBlocked, -1, -1),
+	}
+
+	ringCtx := &ringBufferContext{bpf: stackLookupMissBPF{}, stackMapAID: 1}
+	var samples []*stackSample
+	ringCtx.aggregateOffCPUBatch(batch, func(record any) {
+		samples = append(samples, record.(*stackSample))
+	})
+
+	require.Len(t, samples, 3)
+	type sampleKey struct {
+		PID      uint32
+		Category string
+	}
+	values := make(map[sampleKey]int64)
+	for _, sample := range samples {
+		values[sampleKey{sample.Process.PID, sample.Category}] = sample.Value
+	}
+	require.Equal(t, int64(30), values[sampleKey{100, "off-CPU blocked"}])
+	require.Equal(t, int64(30), values[sampleKey{100, "scheduling delay"}])
+	require.Equal(t, int64(40), values[sampleKey{200, "off-CPU blocked"}])
 }
 
 func TestNativeAggregatorSeparatesOffCPUCategories(t *testing.T) {

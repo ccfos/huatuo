@@ -25,7 +25,6 @@ import (
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/procutil"
-	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -40,56 +39,16 @@ const (
 	offCPUFlagMissedWakeup uint8 = 1 << 2
 )
 
-type nativeOffCPUReader struct {
-	bpf        bpf.BPF
-	reader     bpf.PerfEventReader
-	stackMapID uint32
-	usym       *symbol.UsymResolver
-}
-
-func newNativeOffCPUReader(obj bpf.BPF, ctx context.Context) (*nativeOffCPUReader, error) {
-	reader, err := obj.EventPipeByName(ctx, "offcpu_output", 4096*257)
-	if err != nil {
-		return nil, err
-	}
-
-	stackMapID := obj.MapIDByName("offcpu_stack_map")
-	if stackMapID == 0 {
-		_ = reader.Close()
-		return nil, fmt.Errorf("offcpu_stack_map not found")
-	}
-
-	return &nativeOffCPUReader{
-		bpf:        obj,
-		reader:     reader,
-		stackMapID: stackMapID,
-		usym:       symbol.NewUsymResolver(),
-	}, nil
-}
-
-func (r *nativeOffCPUReader) Close() error {
-	if r == nil || r.reader == nil {
-		return nil
-	}
-	err := r.reader.Close()
-	r.reader = nil
-	return err
-}
-
 type offCPUStackKey struct {
-	Process  processKey
 	Stack    stackIDPair
 	Category string
 }
 
 func (p *cpuNativeProfiler) readOffCPUDataLoop(ctx context.Context, enqueue func(any)) error {
 	log.Infof("off-CPU data reading loop started")
+	var lostSamples uint64
 	defer func() {
-		lost := uint64(0)
-		if p.offCPUReader != nil && p.offCPUReader.reader != nil {
-			lost = p.offCPUReader.reader.LostSamples()
-		}
-		log.Infof("off-CPU data reading loop ended: lost_samples=%d", lost)
+		log.Infof("off-CPU data reading loop ended: lost_samples=%d", lostSamples)
 	}()
 
 	stopDbg, err := p.dbg.StartDebugEventLoop(ctx, p.bpf, "dbg_native_cpu_offcpu_dbg_events")
@@ -98,18 +57,38 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(ctx context.Context, enqueue func
 	}
 	defer stopDbg()
 
-	if p.offCPUReader == nil {
-		return fmt.Errorf("off-CPU event reader is not initialized")
+	ringCtx, err := newSingleRingBufferContext(
+		p.bpf,
+		ctx,
+		4096*257,
+		"offcpu_output",
+		"offcpu_stack_map",
+	)
+	if err != nil {
+		return err
 	}
+	defer ringCtx.Close()
 
 	for {
-		batch, err := p.offCPUReader.reader.ReadBatch(&abi.ProfilerOffCPUEvent{})
+		batch, err := ringCtx.readerA.ReadBatch(func() any { return &abi.ProfilerOffCPUEvent{} })
+		ringCtx.aggregateOffCPUBatch(batch, enqueue)
+
 		if err != nil {
-			if errors.Is(err, types.ErrExitByCancelCtx) {
+			var lostErr *bpf.PerfEventSamplesLostError
+			if errors.As(err, &lostErr) {
+				lostSamples += lostErr.Count
+				log.Warnf("off-CPU perf event samples lost: %d", lostErr.Count)
+			}
+
+			readErr := perfEventReadErrorWithoutLoss(err)
+			if errors.Is(readErr, types.ErrExitByCancelCtx) {
 				return nil
 			}
-			return fmt.Errorf("read off-CPU events: %w", err)
+			if readErr != nil {
+				return fmt.Errorf("read off-CPU events: %w", readErr)
+			}
 		}
+
 		if len(batch) == 0 {
 			select {
 			case <-ctx.Done():
@@ -119,12 +98,35 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(ctx context.Context, enqueue func
 			}
 		}
 
-		p.offCPUReader.aggregateBatch(batch, enqueue)
 	}
 }
 
-func (r *nativeOffCPUReader) aggregateBatch(batch []any, enqueue func(any)) {
-	counts := make(map[offCPUStackKey]int64)
+func perfEventReadErrorWithoutLoss(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	type multiUnwrapper interface {
+		Unwrap() []error
+	}
+	if joined, ok := err.(multiUnwrapper); ok {
+		var remaining []error
+		for _, nestedErr := range joined.Unwrap() {
+			if !errors.Is(nestedErr, bpf.ErrPerfEventSamplesLost) {
+				remaining = append(remaining, nestedErr)
+			}
+		}
+		return errors.Join(remaining...)
+	}
+
+	if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+		return nil
+	}
+	return err
+}
+
+func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any)) {
+	countsByProcess := make(map[processKey]map[offCPUStackKey]int64)
 	for _, record := range batch {
 		event, ok := record.(*abi.ProfilerOffCPUEvent)
 		if !ok {
@@ -138,29 +140,37 @@ func (r *nativeOffCPUReader) aggregateBatch(batch []any, enqueue func(any)) {
 		if event.Base.Value <= 0 {
 			continue
 		}
+		if !validateStackID(event.Base.Kernstack) && !validateStackID(event.Base.Userstack) {
+			continue
+		}
 
-		key := offCPUStackKey{
-			Process: processKey{
-				PID:  uint32(event.Base.PIDTGID >> 32),
-				Comm: procutil.CommToString(event.Base.Comm),
-			},
+		process := processKey{
+			PID:  uint32(event.Base.PIDTGID >> 32),
+			Comm: procutil.CommToString(event.Base.Comm),
+		}
+		stack := offCPUStackKey{
 			Category: offCPUCategory(event.Kind, event.Flags),
 			Stack: stackIDPair{
 				KernelStackID: event.Base.Kernstack,
 				UserStackID:   event.Base.Userstack,
 			},
 		}
-		counts[key] += event.Base.Value
+		if countsByProcess[process] == nil {
+			countsByProcess[process] = make(map[offCPUStackKey]int64)
+		}
+		countsByProcess[process][stack] += event.Base.Value
 	}
 
-	for key, duration := range counts {
-		enqueue(&stackSample{
-			Process:     key.Process,
-			UserStack:   r.resolveUserStack(key.Stack.UserStackID, key.Process.PID),
-			KernelStack: r.resolveKernelStack(key.Stack.KernelStackID),
-			Value:       duration,
-			Category:    key.Category,
-		})
+	for process, stacks := range countsByProcess {
+		for stack, duration := range stacks {
+			enqueue(&stackSample{
+				Process:     process,
+				UserStack:   r.resolveUserStack(r.stackMapAID, stack.Stack.UserStackID, process.PID),
+				KernelStack: r.resolveKernelStack(r.stackMapAID, stack.Stack.KernelStackID),
+				Value:       duration,
+				Category:    stack.Category,
+			})
+		}
 	}
 }
 
@@ -185,33 +195,6 @@ func offCPUCategory(kind, flags uint8) string {
 	default:
 		return "off-CPU unknown"
 	}
-}
-
-// Stack ID zero is valid. Only negative IDs indicate bpf_get_stackid failure.
-func (r *nativeOffCPUReader) resolveKernelStack(stackID int32) string {
-	if !validOffCPUStackID(stackID) {
-		return ""
-	}
-	trace, ok := readStackTrace(r.bpf, r.stackMapID, stackID)
-	if !ok {
-		return ""
-	}
-	return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
-}
-
-func (r *nativeOffCPUReader) resolveUserStack(stackID int32, pid uint32) string {
-	if !validOffCPUStackID(stackID) {
-		return ""
-	}
-	trace, ok := readStackTrace(r.bpf, r.stackMapID, stackID)
-	if !ok {
-		return ""
-	}
-	return strings.Join(r.usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
-}
-
-func validOffCPUStackID(stackID int32) bool {
-	return stackID >= 0
 }
 
 var offCPUStatNames = []string{
