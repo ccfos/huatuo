@@ -17,12 +17,35 @@ package service
 import (
 	"strings"
 	"testing"
+
+	"github.com/prometheus/prometheus/model/labels"
 )
 
 func TestServiceReadyRejectsUninitializedStorage(t *testing.T) {
 	err := (*Service)(nil).Ready(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "not initialized") {
 		t.Fatalf("Ready() error = %v, want initialization error", err)
+	}
+}
+
+func TestApplyProfileMatcherRegion(t *testing.T) {
+	filter := &SearchFilter{}
+	matcher := &labels.Matcher{Name: "region", Value: "cn-beijing", Type: labels.MatchEqual}
+
+	if err := applyProfileMatcher(filter, matcher); err != nil {
+		t.Fatalf("applyProfileMatcher() error = %v", err)
+	}
+	if filter.Region != "cn-beijing" {
+		t.Errorf("filter.Region = %q, want %q", filter.Region, "cn-beijing")
+	}
+}
+
+func TestApplyProfileMatcherRejectsUnknownLabel(t *testing.T) {
+	filter := &SearchFilter{}
+	matcher := &labels.Matcher{Name: "unknown", Value: "x", Type: labels.MatchEqual}
+
+	if err := applyProfileMatcher(filter, matcher); err == nil {
+		t.Fatal("applyProfileMatcher() error = nil, want error for unknown label")
 	}
 }
 

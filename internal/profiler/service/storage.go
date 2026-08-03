@@ -88,6 +88,7 @@ func (d *ProfileDocument) CapturedAt() time.Time {
 // SearchFilter defines the search filter.
 type SearchFilter struct {
 	ID                string
+	Region            string
 	Hostname          string
 	ContainerID       string
 	ContainerHostname string
@@ -301,6 +302,13 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 			Field: profileFieldTracerID + ".keyword",
 			Op:    driver.OpEq,
 			Value: id,
+		})
+	}
+	if filter.Region != "" {
+		query.Filters = append(query.Filters, driver.Filter{
+			Field: profileFieldRegion + ".keyword",
+			Op:    driver.OpEq,
+			Value: filter.Region,
 		})
 	}
 	if filter.Hostname != "" {
