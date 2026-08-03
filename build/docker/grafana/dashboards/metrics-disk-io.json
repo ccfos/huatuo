@@ -120,7 +120,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_read_requests_total{host=~\"$host\",region=\"$region\",device!~\"loop.*\"}[5m])",
+          "expr": "rate(huatuo_bamai_diskio_read_requests_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m])",
           "legendFormat": "Read IOPS - {{device}}",
           "refId": "A"
         },
@@ -129,7 +129,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_write_requests_total{host=~\"$host\",region=\"$region\",device!~\"loop.*\"}[5m])",
+          "expr": "rate(huatuo_bamai_diskio_write_requests_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m])",
           "legendFormat": "Write IOPS - {{device}}",
           "refId": "B"
         }
@@ -225,7 +225,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_read_bytes_total{host=~\"$host\",region=\"$region\",device!~\"loop.*\"}[5m])",
+          "expr": "rate(huatuo_bamai_diskio_read_bytes_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m])",
           "legendFormat": "Read BPS - {{device}}",
           "refId": "A"
         },
@@ -234,7 +234,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_written_bytes_total{host=~\"$host\",region=\"$region\",device!~\"loop.*\"}[5m])",
+          "expr": "rate(huatuo_bamai_diskio_written_bytes_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m])",
           "legendFormat": "Write BPS - {{device}}",
           "refId": "B"
         }
@@ -330,7 +330,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_read_time_seconds_total{host=~\"$host\",region=\"$region\",device!~\"loop.*\"}[5m]) / clamp_min(rate(huatuo_bamai_diskio_read_requests_total{host=~\"$host\",region=\"$region\",device!~\"loop.*\"}[5m]), 1e-9) * 1000",
+          "expr": "rate(huatuo_bamai_diskio_read_time_seconds_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m]) / clamp_min(rate(huatuo_bamai_diskio_read_requests_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m]), 1e-9) * 1000",
           "legendFormat": "Read Latency - {{device}}",
           "refId": "A"
         },
@@ -339,7 +339,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "rate(huatuo_bamai_diskio_write_time_seconds_total{host=~\"$host\",region=\"$region\",device!~\"loop.*\"}[5m]) / clamp_min(rate(huatuo_bamai_diskio_write_requests_total{host=~\"$host\",region=\"$region\",device!~\"loop.*\"}[5m]), 1e-9) * 1000",
+          "expr": "rate(huatuo_bamai_diskio_write_time_seconds_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m]) / clamp_min(rate(huatuo_bamai_diskio_write_requests_total{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}[5m]), 1e-9) * 1000",
           "legendFormat": "Write Latency - {{device}}",
           "refId": "B"
         }
@@ -435,7 +435,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "huatuo_bamai_diskio_io_in_progress{host=~\"$host\",region=\"$region\",device!~\"loop.*\"}",
+          "expr": "huatuo_bamai_diskio_io_in_progress{host=~\"$host\",region=~\"$region\",device!~\"loop.*\"}",
           "legendFormat": "Queue Depth - {{device}}",
           "refId": "A"
         }
@@ -510,7 +510,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "expr": "huatuo_bamai_diskio_disk_iowait_percent{host=~\"$host\",region=\"$region\"}",
+          "expr": "huatuo_bamai_diskio_disk_iowait_percent{host=~\"$host\",region=~\"$region\"}",
           "refId": "A",
           "legendFormat": "IO Wait %"
         }
@@ -536,8 +536,9 @@
         },
         "query": "label_values(huatuo_bamai_diskio_disk_iowait_percent, region)",
         "refresh": 2,
-        "includeAll": false,
-        "multi": false
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*"
       },
       {
         "name": "host",
