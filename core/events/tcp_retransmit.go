@@ -1,4 +1,4 @@
-// Copyright 2025, 2026 The HuaTuo Authors
+// Copyright 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ import (
 	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/utils/executil"
@@ -32,47 +31,58 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-type dropWatchTracing struct{}
+type tcpRetransmitTracing struct{}
+
+const (
+	tcpRetransmitTracerName = "tcp_retransmit"
+	tcpSharkToolName        = "tcpshark"
+)
 
 func init() {
-	tracing.RegisterEventTracing("dropwatch", newDropWatch)
-	toolstream.RegisterDefault[*types.DropWatchTracing]("dropwatch", handleDropwatchEvent)
+	tracing.RegisterEventTracing(tcpRetransmitTracerName, newTCPRetransmit)
+	toolstream.RegisterDefault[*types.TCPRetransmitTracing](tcpSharkToolName, handleTCPRetransmitEvent)
 }
 
-func newDropWatch() (*tracing.EventTracingAttr, error) {
+func newTCPRetransmit() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
-		TracingData: &dropWatchTracing{},
+		TracingData: &tcpRetransmitTracing{},
 		Interval:    10,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
 
-// Start launches dropwatch as a subprocess and waits for it to finish.
+// Start launches tcpshark in retransmit mode and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
-func (c *dropWatchTracing) Start(ctx context.Context) error {
+func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
+	globalDropwatchTCPRetransmitCache.enable()
+	defer globalDropwatchTCPRetransmitCache.disable()
+
 	args := []string{
-		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "dropwatch.o"),
+		"--mode", "retransmit",
+		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "tcp_retransmit.o"),
 		"--output-storage", toolstream.DefaultSockPath,
-		"--filter", cfg.Dropwatch.Filter,
-		"--max-events-per-second", strconv.FormatUint(cfg.Dropwatch.MaxEventsPerSecond, 10),
+		"--max-events-per-second", strconv.FormatUint(cfg.TCPRetransmit.MaxEventsPerSecond, 10),
 		"--source-types", toolstream.SourceTypesEvent,
 	}
 
-	result := executil.ExecCmd(ctx, 0, path.Join(internalconfig.CoreBinDir, "dropwatch"), args...)
+	if cfg.TCPRetransmit.Filter != "" {
+		args = append(args, "--filter", cfg.TCPRetransmit.Filter)
+	}
+	if cfg.TCPRetransmit.EnableTLP {
+		args = append(args, "--enable-tlp")
+	}
+
+	result := executil.ExecCmd(ctx, 0, path.Join(internalconfig.CoreBinDir, tcpSharkToolName), args...)
 	if errors.Is(result.CmdErr, context.Canceled) {
 		return nil
 	}
 	if result.CmdErr != nil {
-		return fmt.Errorf("run dropwatch: %w", executil.VerifyResults([]executil.CmdResult{result}))
+		return fmt.Errorf("run %s: %w", tcpSharkToolName, executil.VerifyResults([]executil.CmdResult{result}))
 	}
 	return nil
 }
 
-func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
-	if ignoreDropwatch(ev) {
-		return nil
-	}
-
+func handleTCPRetransmitEvent(_ *toolstream.Session, ev *types.TCPRetransmitTracing) error {
 	if ev.ContainerID == "" {
 		ev.ContainerID = pod.ContainerIDByCgroupNetNS(pod.ContainerCgroupNetNS{
 			MemoryCgroupCSSAddr: kernaddr.ParseOrZero(ev.MemoryCgroupCSSAddr),
@@ -81,27 +91,15 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 		})
 	}
 
-	globalDropwatchTCPRetransmitCache.add(ev)
+	if ev.DropLocation == "" {
+		causal, _ := globalDropwatchTCPRetransmitCache.correlate(ev)
+		ev.DropLocation = causalToDropLocation(causal)
+	}
 
 	return tracing.Save(&tracing.WriteRequest{
-		TracerName:  "dropwatch",
+		TracerName:  tcpRetransmitTracerName,
 		ContainerID: ev.ContainerID,
 		TracerTime:  time.Now(),
 		TracerData:  ev,
 	})
-}
-
-// ignoreDropwatch returns true for configured noisy events that should not be forwarded.
-func ignoreDropwatch(data *types.DropWatchTracing) bool {
-	// Operator-configured stack-frame noise rules (e.g. bnxt_tx_int,
-	// neigh_invalidate). Patterns live in events.IssuesList; see
-	// net_rx_latency.go for the same pattern. Match against data.Stack
-	// (frames joined by '\n').
-	if cfg != nil {
-		if _, found := matcher.Classify(cfg.IssuesList, data.Stack); found {
-			return true
-		}
-	}
-
-	return false
 }

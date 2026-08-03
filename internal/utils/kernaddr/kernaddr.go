@@ -46,3 +46,9 @@ func Parse(s string) (uint64, bool) {
 	}
 	return v, true
 }
+
+// ParseOrZero parses a kernel pointer string, returning zero for an invalid value.
+func ParseOrZero(s string) uint64 {
+	addr, _ := Parse(s)
+	return addr
+}

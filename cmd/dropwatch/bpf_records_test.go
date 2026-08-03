@@ -27,14 +27,14 @@ func TestDropwatchPacketEventParse(t *testing.T) {
 	const (
 		wantKtimeNS             uint64 = 12_345_678_901_234_567
 		wantTgidPid             uint64 = uint64(4321)<<32 | 8765
-		wantNetCookie           uint64 = 0x0123_4567_89ab_cdef
+		wantNetNSCookie         uint64 = 0x0123_4567_89ab_cdef
 		wantSkbAddr             uint64 = 0xffff_8880_1234_5678
 		wantMemoryCgroupCSSAddr uint64 = 0xffff_8880_abcd_ef00
 		wantNetdevIfindex       uint32 = 42
 		wantNetdevFlags         uint32 = 0x1003
 		wantNetdevQueueMapping  uint32 = 17
 		wantDropReason          uint32 = 6
-		wantNetInode            uint32 = 0xf000_0000
+		wantNetNSInum           uint32 = 0xf000_0000
 		wantNetdevName                 = "eth0"
 		wantComm                       = "nginx-worker"
 		wantEthProto            uint16 = 0x0800
@@ -49,14 +49,14 @@ func TestDropwatchPacketEventParse(t *testing.T) {
 	native := binary.NativeEndian
 	native.PutUint64(buf[0:], wantKtimeNS)              // ktime_ns
 	native.PutUint64(buf[8:], wantTgidPid)              // tgid_pid
-	native.PutUint64(buf[16:], wantNetCookie)           // net_cookie
+	native.PutUint64(buf[16:], wantNetNSCookie)         // netns_cookie
 	native.PutUint64(buf[24:], wantSkbAddr)             // kfree_skb_addr
 	native.PutUint64(buf[32:], wantMemoryCgroupCSSAddr) // memcg_css_addr
 	native.PutUint32(buf[40:], wantNetdevIfindex)       // ifindex
 	native.PutUint32(buf[44:], wantNetdevFlags)         // dev_flags
 	native.PutUint32(buf[48:], wantNetdevQueueMapping)  // queue_mapping
 	native.PutUint32(buf[52:], wantDropReason)          // drop_reason
-	native.PutUint32(buf[56:], wantNetInode)            // net_inum
+	native.PutUint32(buf[56:], wantNetNSInum)           // netns_inum
 	copy(buf[60:], wantNetdevName)                      // dev_name[16]
 	copy(buf[76:], wantComm)                            // comm[16]
 	// buf[92:96] is the C tail padding, zero.
@@ -75,8 +75,8 @@ func TestDropwatchPacketEventParse(t *testing.T) {
 	if meta.DropReason != wantDropReason {
 		t.Errorf("DropReason = %d, want %d", meta.DropReason, wantDropReason)
 	}
-	if meta.NetInum != wantNetInode {
-		t.Errorf("NetInum = %d, want %d", meta.NetInum, wantNetInode)
+	if meta.NetNSInum != wantNetNSInum {
+		t.Errorf("NetNSInum = %d, want %d", meta.NetNSInum, wantNetNSInum)
 	}
 	if got := bytesutil.ToStr(meta.DevName[:]); got != wantNetdevName {
 		t.Errorf("DevName = %q, want %q", got, wantNetdevName)
@@ -84,7 +84,7 @@ func TestDropwatchPacketEventParse(t *testing.T) {
 	if got := bytesutil.ToStr(meta.Comm[:]); got != wantComm {
 		t.Errorf("Comm = %q, want %q", got, wantComm)
 	}
-	if meta.KtimeNS != wantKtimeNS || meta.TGIDPID != wantTgidPid || meta.NetCookie != wantNetCookie ||
+	if meta.KtimeNS != wantKtimeNS || meta.TGIDPID != wantTgidPid || meta.NetNSCookie != wantNetNSCookie ||
 		meta.KfreeSKBAddr != wantSkbAddr || meta.MemcgCSSAddr != wantMemoryCgroupCSSAddr {
 		t.Errorf("u64 header fields misparsed: %+v", meta)
 	}

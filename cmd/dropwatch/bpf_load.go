@@ -23,6 +23,8 @@ import (
 	"huatuo-bamai/internal/pcapfilter"
 )
 
+var eventRateLimiter = bpf.NewRateLimiter("dropwatch")
+
 func loadDropwatchBPFWithFilter(bpfPath, filterExpr string, devMode uint32, maxEventsPerSecond uint64) (bpf.BPF, error) {
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
@@ -35,6 +37,9 @@ func loadDropwatchBPFWithFilter(bpfPath, filterExpr string, devMode uint32, maxE
 		bpfName,
 		bpfBytes,
 		filterExpr,
-		withRateLimitConstants(map[string]any{"filter_dev_mode": devMode}, maxEventsPerSecond),
+		eventRateLimiter.ApplyConstants(
+			map[string]any{"filter_dev_mode": devMode},
+			maxEventsPerSecond,
+		),
 	)
 }
