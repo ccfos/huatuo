@@ -28,7 +28,7 @@ import (
 // prefix family above.
 type DropWatchTracing struct {
 	ObservedTimestamp   string         `json:"observed_timestamp"`
-	Type                string         `json:"type"`
+	Type                string         `json:"type,omitempty"`
 	DropReason          string         `json:"drop_reason"`
 	Source              string         `json:"source,omitempty"`
 	Comm                string         `json:"comm"`
@@ -36,7 +36,7 @@ type DropWatchTracing struct {
 	ContainerID         string         `json:"container_id,omitempty"`
 	MemoryCgroupCSSAddr string         `json:"memory_cgroup_css_addr"`
 	NetNamespaceCookie  uint64         `json:"net_namespace_cookie"`
-	NetNamespaceInode   uint32         `json:"net_namespace_inode"`
+	NetNamespaceInum    uint32         `json:"net_namespace_inum"`
 	NetdevName          string         `json:"netdev_name"`
 	NetdevIfindex       uint32         `json:"netdev_ifindex"`
 	NetdevQueueMapping  uint32         `json:"netdev_queue_mapping"`
@@ -47,9 +47,3 @@ type DropWatchTracing struct {
 	Layers              *packet.Packet `json:"layers,omitempty"`
 	Stack               string         `json:"stack"`
 }
-
-// Values for DropWatchTracing.Source.
-const (
-	DropSourceTypesEvent = "events"
-	DropSourceTypesTool  = "tools"
-)

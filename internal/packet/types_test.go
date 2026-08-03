@@ -36,17 +36,17 @@ func TestPacketJSONNested(t *testing.T) {
 		{
 			name: "ipv4_tcp",
 			pkt: &Packet{
-				Ether: &Ether{Src: mac("aa:bb:cc:dd:ee:ff"), Dst: mac("11:22:33:44:55:66"), Type: "IPv4"},
-				IPv4:  &IPv4{Src: net.IPv4(10, 0, 0, 1), Dst: net.IPv4(10, 0, 0, 2)},
-				TCP:   &TCP{SrcPort: 1234, DstPort: 80, Flags: "SYN", SkState: "ESTABLISHED"},
+				Ether: &Ether{Saddr: mac("aa:bb:cc:dd:ee:ff"), Daddr: mac("11:22:33:44:55:66"), Type: "IPv4"},
+				IPv4:  &IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
+				TCP:   &TCP{Sport: 1234, Dport: 80, Flags: "SYN", SkState: "ESTABLISHED"},
 			},
 			wantKeys: []string{"ether", "ipv4", "label", "tcp"},
 		},
 		{
 			name: "ipv6_udp",
 			pkt: &Packet{
-				IPv6: &IPv6{Src: net.ParseIP("::1"), Dst: net.ParseIP("::2")},
-				UDP:  &UDP{SrcPort: 53, DstPort: 1234, Length: 64, Checksum: 0xabcd},
+				IPv6: &IPv6{Saddr: net.ParseIP("::1"), Daddr: net.ParseIP("::2")},
+				UDP:  &UDP{Sport: 53, Dport: 1234, Length: 64, Checksum: 0xabcd},
 			},
 			wantKeys: []string{"ipv6", "label", "udp"},
 		},
@@ -94,16 +94,16 @@ func TestPacketJSONNested(t *testing.T) {
 func TestPacketJSONRoundTrip(t *testing.T) {
 	cases := []*Packet{
 		{
-			Ether: &Ether{Src: mac("aa:bb:cc:dd:ee:ff"), Dst: mac("11:22:33:44:55:66"), Type: "IPv4"},
-			IPv4:  &IPv4{Src: net.IPv4(10, 0, 0, 1), Dst: net.IPv4(10, 0, 0, 2)},
+			Ether: &Ether{Saddr: mac("aa:bb:cc:dd:ee:ff"), Daddr: mac("11:22:33:44:55:66"), Type: "IPv4"},
+			IPv4:  &IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
 			TCP: &TCP{
-				SrcPort: 1234, DstPort: 80, Seq: 1, Ack: 2, Window: 3,
+				Sport: 1234, Dport: 80, Seq: 1, AckSeq: 2, Window: 3,
 				Flags: "SYN|ACK", SkState: "ESTABLISHED",
 			},
 		},
 		{
-			IPv6: &IPv6{Src: net.ParseIP("::1"), Dst: net.ParseIP("::2")},
-			UDP:  &UDP{SrcPort: 53, DstPort: 1234, Length: 64, Checksum: 0xabcd},
+			IPv6: &IPv6{Saddr: net.ParseIP("::1"), Daddr: net.ParseIP("::2")},
+			UDP:  &UDP{Sport: 53, Dport: 1234, Length: 64, Checksum: 0xabcd},
 		},
 		{
 			ARP: &ARP{
@@ -146,11 +146,11 @@ func TestPacketJSONMACWireFormat(t *testing.T) {
 		{
 			name: "ether",
 			pkt: &Packet{
-				Ether: &Ether{Src: "aa:bb:cc:dd:ee:ff", Dst: "11:22:33:44:55:66", Type: "IPv4"},
+				Ether: &Ether{Saddr: "aa:bb:cc:dd:ee:ff", Daddr: "11:22:33:44:55:66", Type: "IPv4"},
 			},
 			want: []string{
-				`"src":"aa:bb:cc:dd:ee:ff"`,
-				`"dst":"11:22:33:44:55:66"`,
+				`"saddr":"aa:bb:cc:dd:ee:ff"`,
+				`"daddr":"11:22:33:44:55:66"`,
 			},
 		},
 		{
@@ -178,6 +178,70 @@ func TestPacketJSONMACWireFormat(t *testing.T) {
 			for _, w := range tc.want {
 				if !strings.Contains(string(b), w) {
 					t.Errorf("missing %s in JSON wire output: %s", w, b)
+				}
+			}
+		})
+	}
+}
+
+func TestLayerJSONFieldNames(t *testing.T) {
+	tests := []struct {
+		name     string
+		layer    any
+		want     []string
+		rejected []string
+	}{
+		{
+			name:     "ether",
+			layer:    &Ether{Saddr: "aa:bb:cc:dd:ee:ff", Daddr: "11:22:33:44:55:66"},
+			want:     []string{"saddr", "daddr"},
+			rejected: []string{"src", "dst"},
+		},
+		{
+			name:     "ipv4",
+			layer:    &IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
+			want:     []string{"saddr", "daddr"},
+			rejected: []string{"src", "dst"},
+		},
+		{
+			name:     "ipv6",
+			layer:    &IPv6{Saddr: net.ParseIP("2001:db8::1"), Daddr: net.ParseIP("2001:db8::2")},
+			want:     []string{"saddr", "daddr"},
+			rejected: []string{"src", "dst"},
+		},
+		{
+			name:     "tcp",
+			layer:    &TCP{Sport: 1234, Dport: 80, AckSeq: 42},
+			want:     []string{"sport", "dport", "ack_seq"},
+			rejected: []string{"src_port", "dst_port", "ack"},
+		},
+		{
+			name:     "udp",
+			layer:    &UDP{Sport: 53, Dport: 5353},
+			want:     []string{"sport", "dport"},
+			rejected: []string{"src_port", "dst_port"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encoded, err := json.Marshal(tt.layer)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+
+			fields := map[string]any{}
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			for _, field := range tt.want {
+				if _, ok := fields[field]; !ok {
+					t.Errorf("field %q is absent from %s", field, encoded)
+				}
+			}
+			for _, field := range tt.rejected {
+				if _, ok := fields[field]; ok {
+					t.Errorf("legacy field %q is present in %s", field, encoded)
 				}
 			}
 		})
@@ -225,9 +289,9 @@ func TestPacketString(t *testing.T) {
 			name: "ipv4_tcp",
 			pkt: &Packet{
 				Label: "IPv4/TCP",
-				Ether: &Ether{Src: mac("aa:bb:cc:dd:ee:ff"), Dst: mac("11:22:33:44:55:66"), Type: "IPv4"},
-				IPv4:  &IPv4{Src: net.IPv4(10, 0, 0, 1), Dst: net.IPv4(10, 0, 0, 2)},
-				TCP:   &TCP{SrcPort: 1234, DstPort: 80, Flags: "SYN", SkState: "ESTABLISHED"},
+				Ether: &Ether{Saddr: mac("aa:bb:cc:dd:ee:ff"), Daddr: mac("11:22:33:44:55:66"), Type: "IPv4"},
+				IPv4:  &IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
+				TCP:   &TCP{Sport: 1234, Dport: 80, Flags: "SYN", SkState: "ESTABLISHED"},
 			},
 			wantParts: []string{
 				"IPv4/TCP", "10.0.0.1:1234", "10.0.0.2:80", "[SYN]",
@@ -238,8 +302,8 @@ func TestPacketString(t *testing.T) {
 			name: "ipv6_udp",
 			pkt: &Packet{
 				Label: "IPv6/UDP",
-				IPv6:  &IPv6{Src: net.ParseIP("::1"), Dst: net.ParseIP("::2")},
-				UDP:   &UDP{SrcPort: 53, DstPort: 1234, Length: 64, Checksum: 0xabcd},
+				IPv6:  &IPv6{Saddr: net.ParseIP("::1"), Daddr: net.ParseIP("::2")},
+				UDP:   &UDP{Sport: 53, Dport: 1234, Length: 64, Checksum: 0xabcd},
 			},
 			wantParts: []string{"IPv6/UDP", "[::1]:53", "[::2]:1234", "len=64", "chk=0xabcd"},
 		},
@@ -261,12 +325,12 @@ func TestPacketString(t *testing.T) {
 		},
 		{
 			name:      "ipv4_only",
-			pkt:       &Packet{Label: "IPv4", IPv4: &IPv4{Src: net.IPv4(10, 0, 0, 1), Dst: net.IPv4(10, 0, 0, 2)}},
+			pkt:       &Packet{Label: "IPv4", IPv4: &IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)}},
 			wantParts: []string{"IPv4", "10.0.0.1 > 10.0.0.2"},
 		},
 		{
 			name:      "ipv6_only",
-			pkt:       &Packet{Label: "IPv6", IPv6: &IPv6{Src: net.ParseIP("::1"), Dst: net.ParseIP("::2")}},
+			pkt:       &Packet{Label: "IPv6", IPv6: &IPv6{Saddr: net.ParseIP("::1"), Daddr: net.ParseIP("::2")}},
 			wantParts: []string{"IPv6", "::1 > ::2"},
 		},
 		{"nil_packet", nil, []string{"unknown"}},
