@@ -172,15 +172,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 	// number of events read equals the BPF-reported count.
 	totalRead := uint64(0)
 	for {
-		batch, err := ring.reader.ReadBatch(newEvent())
-		if err != nil {
-			if errors.Is(err, types.ErrExitByCancelCtx) {
-				return nil, activeRingBuffer{}, err
-			}
-			log.Warnf("read batch: %v", err)
-			break
-		}
-
+		batch, err := ring.reader.ReadBatch(newEvent)
 		totalRead += uint64(len(batch))
 
 		for _, rec := range batch {
@@ -219,6 +211,14 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 				sampleCountsByProcess[process] = make(map[stackIDPair]int64)
 			}
 			sampleCountsByProcess[process][stackIDs] += value
+		}
+
+		if err != nil {
+			if errors.Is(err, types.ErrExitByCancelCtx) {
+				return nil, activeRingBuffer{}, err
+			}
+			log.WithError(err).Warn("failed to read BPF event batch")
+			break
 		}
 
 		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch), totalRead, len(sampleCountsByProcess))
