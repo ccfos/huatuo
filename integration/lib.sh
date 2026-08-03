@@ -36,6 +36,10 @@ skip() {
 
 # --------------------------------- utils ------------------------------------
 
+require_python3() {
+	command -v python3 > /dev/null 2>&1 || fatal "python3 not found"
+}
+
 assert_eq() {
 	local actual=$1 expect=$2 msg=${3:-""}
 	[[ "$actual" == "$expect" ]] && return 0
