@@ -57,13 +57,15 @@ func TestParseKprobeAttachOptions(t *testing.T) {
 
 	program := &loadedProgram{}
 	tests := []struct {
-		name           string
-		symbol         string
-		isRetprobe     bool
-		wantSymbol     string
-		wantOffset     uint64
-		wantIsRetprobe bool
-		wantErr        bool
+		name              string
+		symbol            string
+		isRetprobe        bool
+		retprobeMaxActive int
+		wantSymbol        string
+		wantOffset        uint64
+		wantIsRetprobe    bool
+		wantMaxActive     int
+		wantErr           bool
 	}{
 		{
 			name:       "kprobe",
@@ -77,11 +79,33 @@ func TestParseKprobeAttachOptions(t *testing.T) {
 			wantOffset: 16,
 		},
 		{
-			name:           "kretprobe",
+			name:           "kretprobe default max active",
 			symbol:         "do_sys_open",
 			isRetprobe:     true,
 			wantSymbol:     "do_sys_open",
 			wantIsRetprobe: true,
+		},
+		{
+			name:              "kretprobe custom max active",
+			symbol:            "do_sys_open",
+			isRetprobe:        true,
+			retprobeMaxActive: 128,
+			wantSymbol:        "do_sys_open",
+			wantIsRetprobe:    true,
+			wantMaxActive:     128,
+		},
+		{
+			name:              "negative max active",
+			symbol:            "do_sys_open",
+			isRetprobe:        true,
+			retprobeMaxActive: -1,
+			wantErr:           true,
+		},
+		{
+			name:              "max active on kprobe",
+			symbol:            "do_sys_open",
+			retprobeMaxActive: 128,
+			wantErr:           true,
 		},
 		{name: "empty symbol", wantErr: true},
 		{name: "empty base symbol", symbol: "+16", wantErr: true},
@@ -95,7 +119,12 @@ func TestParseKprobeAttachOptions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := parseKprobeAttachOptions(program, tt.symbol, tt.isRetprobe)
+			got, err := parseKprobeAttachOptions(
+				program,
+				tt.symbol,
+				tt.isRetprobe,
+				tt.retprobeMaxActive,
+			)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("parseKprobeAttachOptions(%q) error = %v, wantErr %t", tt.symbol, err, tt.wantErr)
 			}
@@ -113,6 +142,14 @@ func TestParseKprobeAttachOptions(t *testing.T) {
 			}
 			if got.isRetprobe != tt.wantIsRetprobe {
 				t.Errorf("isRetprobe = %t, want %t", got.isRetprobe, tt.wantIsRetprobe)
+			}
+			gotMaxActive := got.linkOptions.RetprobeMaxActive //nolint:staticcheck // Verify explicit deprecated opt-in propagation.
+			if gotMaxActive != tt.wantMaxActive {
+				t.Errorf(
+					"RetprobeMaxActive = %d, want %d",
+					gotMaxActive,
+					tt.wantMaxActive,
+				)
 			}
 		})
 	}

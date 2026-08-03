@@ -59,14 +59,30 @@ func parseKprobeAttachOptions(
 	program *loadedProgram,
 	symbol string,
 	isRetprobe bool,
+	retprobeMaxActive int,
 ) (kprobeAttachOptions, error) {
+	if symbol == "" {
+		return kprobeAttachOptions{}, errors.New("empty kprobe symbol")
+	}
+	if retprobeMaxActive < 0 {
+		return kprobeAttachOptions{}, fmt.Errorf(
+			"invalid retprobe max active %d",
+			retprobeMaxActive,
+		)
+	}
+	if !isRetprobe && retprobeMaxActive != 0 {
+		return kprobeAttachOptions{}, errors.New(
+			"retprobe max active requires a kretprobe",
+		)
+	}
+
 	opts := kprobeAttachOptions{
 		program:    program,
 		symbol:     symbol,
 		isRetprobe: isRetprobe,
-	}
-	if symbol == "" {
-		return kprobeAttachOptions{}, errors.New("empty kprobe symbol")
+		linkOptions: link.KprobeOptions{
+			RetprobeMaxActive: retprobeMaxActive,
+		},
 	}
 	if isRetprobe {
 		if strings.Contains(symbol, "+") {
@@ -192,6 +208,7 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 				program,
 				opt.Symbol,
 				program.sectionPrefix == "kretprobe",
+				opt.Kprobe.RetprobeMaxActive,
 			)
 			if parseErr != nil {
 				return parseErr
@@ -271,6 +288,7 @@ func (b *defaultBPF) attach() (err error) {
 				program,
 				symbol,
 				program.sectionPrefix == "kretprobe",
+				0,
 			)
 			if parseErr != nil {
 				return fmt.Errorf("parse BPF section %q: %w", program.sectionName, parseErr)

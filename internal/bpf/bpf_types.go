@@ -34,8 +34,15 @@ type Option struct {
 // AttachOption is an option for attaching a program.
 type AttachOption struct {
 	ProgramName string
-	Symbol      string   // symbol for kprobe/kretprobe/tracepoint/raw_tracepoint
-	PerfEvent   struct { // BPF_PROG_TYPE_PERF_EVENT
+	Symbol      string // symbol for kprobe/kretprobe/tracepoint/raw_tracepoint
+
+	Kprobe struct {
+		// RetprobeMaxActive limits concurrent kretprobe instances.
+		// A non-zero value forces cilium/ebpf to use tracefs.
+		RetprobeMaxActive int
+	}
+
+	PerfEvent struct { // BPF_PROG_TYPE_PERF_EVENT
 		SamplePeriod, SampleFreq uint64
 		CPUIDs                   []int
 	}
