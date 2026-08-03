@@ -53,7 +53,7 @@ func openRateLimitEventPipe(ctx context.Context, b bpf.BPF) (bpf.PerfEventReader
 }
 
 func readRateLimitEvents(ctx context.Context, r bpf.PerfEventReader, eventsPerSecond uint64) {
-	var ev abi.RatelimitEvent
+	var ev abi.BPFRatelimitEvent
 
 	for {
 		if ctx.Err() != nil {
