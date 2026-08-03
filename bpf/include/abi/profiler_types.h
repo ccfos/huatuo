@@ -32,7 +32,18 @@ struct profiler_cpu_event {
 	u32 pad0;
 };
 
+struct profiler_offcpu_event {
+	struct profiler_event_base base;
+	u64 start_ns;
+	u64 end_ns;
+	u32 cpu;
+	u16 abi_version;
+	u8 kind;
+	u8 flags;
+};
+
 BPF_ABI_EXPORT(profiler_event_base);
 BPF_ABI_EXPORT(profiler_cpu_event);
+BPF_ABI_EXPORT(profiler_offcpu_event);
 
 #endif /* __BPF_ABI_PROFILER_H__ */

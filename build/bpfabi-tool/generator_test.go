@@ -26,12 +26,13 @@ import (
 
 func TestGoName(t *testing.T) {
 	tests := map[string]string{
-		"bpf_debug_event":    "BPFDebugEvent",
-		"n_missed":           "NMissed",
-		"net_rx_latency":     "NetRXLatency",
-		"pid_tgid":           "PIDTGID",
-		"total_n_missed":     "TotalNMissed",
-		"unnamed_plain_name": "UnnamedPlainName",
+		"bpf_debug_event":       "BPFDebugEvent",
+		"n_missed":              "NMissed",
+		"net_rx_latency":        "NetRXLatency",
+		"pid_tgid":              "PIDTGID",
+		"profiler_offcpu_event": "ProfilerOffCPUEvent",
+		"total_n_missed":        "TotalNMissed",
+		"unnamed_plain_name":    "UnnamedPlainName",
 	}
 	for input, want := range tests {
 		if got := goName(input); got != want {
