@@ -3,10 +3,10 @@
 
 #include <bpf/bpf_helpers.h>
 
-#include "abi/ratelimit_types.h"
+#include "abi/bpf_ratelimit_types.h"
 
 #define BPF_RATELIMIT(name, interval, burst)                                   \
-	struct ratelimit_event name = {interval, 0, burst, 0, 0, 0, 0, 0, 0}
+	struct bpf_ratelimit_event name = {interval, 0, burst, 0, 0, 0, 0, 0, 0}
 
 // bpf_ratelimited: whether the threshold is exceeded
 //
@@ -14,7 +14,7 @@
 // @return:
 //   true: the threshold is exceeded
 //   false: the threshold is not exceeded
-static __always_inline bool bpf_ratelimited(struct ratelimit_event *rate)
+static __always_inline bool bpf_ratelimited(struct bpf_ratelimit_event *rate)
 {
 	// validate
 	if (rate == NULL || rate->interval == 0)
@@ -46,7 +46,7 @@ static __always_inline bool bpf_ratelimited(struct ratelimit_event *rate)
 	struct {                                                               \
 		__uint(type, BPF_MAP_TYPE_ARRAY);                              \
 		__uint(key_size, sizeof(u32));                                 \
-		__uint(value_size, sizeof(struct ratelimit_event));            \
+		__uint(value_size, sizeof(struct bpf_ratelimit_event));        \
 		__uint(max_entries, 1);                                        \
 	} bpf_rlimit_##name SEC(".maps");                                      \
 	struct {                                                               \
@@ -54,7 +54,7 @@ static __always_inline bool bpf_ratelimited(struct ratelimit_event *rate)
 		__uint(key_size, sizeof(int));                                 \
 		__uint(value_size, sizeof(u32));                               \
 	} event_bpf_rlimit_##name SEC(".maps");                                \
-	volatile const struct ratelimit_event ___bpf_rlimit_cfg_##name = {     \
+	volatile const struct bpf_ratelimit_event ___bpf_rlimit_cfg_##name = { \
 		interval, 0, burst, max_burst, 0, 0, 0, 0, 0}
 
 // bpf_ratelimited_in_map: whether the threshold is exceeded
@@ -78,7 +78,7 @@ static __always_inline bool bpf_ratelimited(struct ratelimit_event *rate)
 	struct {                                                               \
 		__uint(type, BPF_MAP_TYPE_ARRAY);                              \
 		__uint(key_size, sizeof(u32));                                 \
-		__uint(value_size, sizeof(struct ratelimit_event));            \
+		__uint(value_size, sizeof(struct bpf_ratelimit_event));        \
 		__uint(max_entries, 1);                                        \
 	} bpf_rlimit_##name SEC(".maps");                                      \
 	struct {                                                               \
@@ -97,7 +97,7 @@ static __always_inline bool bpf_ratelimited(struct ratelimit_event *rate)
 	({                                                                     \
 		bool __ret = false;                                            \
 		if (bpf_rlimit_interval_##name != 0) {                         \
-			struct ratelimit_event __cfg = {                       \
+			struct bpf_ratelimit_event __cfg = {                   \
 				.interval  = bpf_rlimit_interval_##name,       \
 				.burst	   = bpf_rlimit_burst_##name,          \
 				.max_burst = bpf_rlimit_max_burst_##name,      \
@@ -111,10 +111,10 @@ static __always_inline bool bpf_ratelimited(struct ratelimit_event *rate)
 
 static __always_inline bool
 bpf_ratelimited_core_in_map(void *ctx, void *map, void *perf_map,
-			    const volatile struct ratelimit_event *cfg)
+			    const volatile struct bpf_ratelimit_event *cfg)
 {
 	u32 key			   = 0;
-	struct ratelimit_event *rate = NULL;
+	struct bpf_ratelimit_event *rate = NULL;
 
 	rate = bpf_map_lookup_elem(map, &key);
 	if (rate == NULL)
@@ -136,7 +136,7 @@ bpf_ratelimited_core_in_map(void *ctx, void *map, void *perf_map,
 	if (old_nmissed == 0 || (rate->max_burst > 0 &&
 				 rate->nmissed > rate->max_burst - rate->burst))
 		bpf_perf_event_output(ctx, perf_map, COMPAT_BPF_F_CURRENT_CPU, rate,
-				      sizeof(struct ratelimit_event));
+				      sizeof(struct bpf_ratelimit_event));
 	return true;
 }
 

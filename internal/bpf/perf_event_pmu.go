@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,8 +15,6 @@
 // A simple link type implemented by referring to the Cilium community.
 // link/perf_event.go
 
-//go:build !didi
-
 package bpf
 
 import (
@@ -28,9 +26,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var errInvalidPerfEventOption = errors.New("invalid perf event option")
+
+type perfEventSampleMode uint8
+
 const (
-	sampleTypePeriod = 1
-	sampleTypeFreq   = 2
+	perfEventSampleFrequency perfEventSampleMode = iota
+	perfEventSamplePeriod
 )
 
 type perfEventAttach struct {
@@ -38,48 +40,56 @@ type perfEventAttach struct {
 }
 
 type perfEventOption struct {
-	samplePeriodFreq uint64
-	sampleType       uint32
-	program          *ebpf.Program
-	cpuIDs           []int
+	sample     uint64
+	sampleMode perfEventSampleMode
+	program    *ebpf.Program
+	cpuIDs     []int
 }
 
 func (opt *perfEventOption) Validate() error {
 	if opt == nil {
-		return fmt.Errorf("perf event option required")
+		return fmt.Errorf("%w: option required", errInvalidPerfEventOption)
 	}
 
 	var errs []error
 
 	if opt.program == nil {
-		errs = append(errs, fmt.Errorf("program required"))
+		errs = append(errs, fmt.Errorf(
+			"%w: program required", errInvalidPerfEventOption,
+		))
 	}
 
-	if opt.samplePeriodFreq == 0 {
-		errs = append(errs, fmt.Errorf("samplePeriodFreq required"))
+	if opt.sample == 0 {
+		errs = append(errs, fmt.Errorf(
+			"%w: sample value required", errInvalidPerfEventOption,
+		))
 	}
 
 	if len(errs) == 0 {
 		return nil
 	}
 
-	return fmt.Errorf("invalid perf event option: %v", errs)
+	return errors.Join(errs...)
 }
 
 func openPerfEvent(attr *unix.PerfEventAttr, progFD, cpuID int) (int, error) {
 	fd, err := unix.PerfEventOpen(attr, -1, cpuID, -1, unix.PERF_FLAG_FD_CLOEXEC)
 	if err != nil {
-		return -1, err
+		return -1, fmt.Errorf("open perf event on cpu %d: %w", cpuID, err)
 	}
 
 	if err := unix.IoctlSetInt(fd, unix.PERF_EVENT_IOC_SET_BPF, progFD); err != nil {
-		_ = unix.Close(fd)
-		return -1, err
+		return -1, errors.Join(
+			fmt.Errorf("set bpf program on perf event for cpu %d: %w", cpuID, err),
+			closePerfEventFDs([]int{fd}),
+		)
 	}
 
 	if err := unix.IoctlSetInt(fd, unix.PERF_EVENT_IOC_ENABLE, 0); err != nil {
-		_ = unix.Close(fd)
-		return -1, err
+		return -1, errors.Join(
+			fmt.Errorf("enable perf event on cpu %d: %w", cpuID, err),
+			closePerfEventFDs([]int{fd}),
+		)
 	}
 
 	return fd, nil
@@ -95,47 +105,42 @@ func attachPerfEvent(opt *perfEventOption) (*perfEventAttach, error) {
 		Size:   unix.PERF_ATTR_SIZE_VER0,
 		Config: unix.PERF_COUNT_SW_CPU_CLOCK,
 		Bits:   unix.PerfBitFreq,
-		Sample: opt.samplePeriodFreq,
+		Sample: opt.sample,
 	}
 
-	if opt.sampleType == sampleTypePeriod {
+	if opt.sampleMode == perfEventSamplePeriod {
 		attr.Bits = 0
 	}
 
-	var fds []int
-	if len(opt.cpuIDs) > 0 {
-		fds = make([]int, 0, len(opt.cpuIDs))
-		for _, cpuID := range opt.cpuIDs {
-			fd, err := openPerfEvent(&attr, opt.program.FD(), cpuID)
-			if err != nil {
-				for _, prevFD := range fds {
-					_ = unix.Close(prevFD)
-				}
-				return nil, err
-			}
-			fds = append(fds, fd)
+	cpuIDs := opt.cpuIDs
+	if len(cpuIDs) == 0 {
+		cpuIDs = make([]int, runtime.NumCPU())
+		for cpuID := range cpuIDs {
+			cpuIDs[cpuID] = cpuID
 		}
-	} else {
-		fds = make([]int, 0, runtime.NumCPU())
-		for i := 0; i < runtime.NumCPU(); i++ {
-			fd, err := openPerfEvent(&attr, opt.program.FD(), i)
-			if err != nil {
-				for _, prevFD := range fds {
-					_ = unix.Close(prevFD)
-				}
-				return nil, err
-			}
+	}
 
-			fds = append(fds, fd)
+	fds := make([]int, 0, len(cpuIDs))
+	for _, cpuID := range cpuIDs {
+		fd, err := openPerfEvent(&attr, opt.program.FD(), cpuID)
+		if err != nil {
+			return nil, errors.Join(err, closePerfEventFDs(fds))
 		}
+		fds = append(fds, fd)
 	}
 
 	return &perfEventAttach{fds: fds}, nil
 }
 
 func (p *perfEventAttach) detach() error {
+	fds := p.fds
+	p.fds = nil
+	return closePerfEventFDs(fds)
+}
+
+func closePerfEventFDs(fds []int) error {
 	var errs []error
-	for _, fd := range p.fds {
+	for _, fd := range fds {
 		if err := unix.Close(fd); err != nil {
 			errs = append(errs, fmt.Errorf("close perf fd %d: %w", fd, err))
 		}

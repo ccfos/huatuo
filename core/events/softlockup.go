@@ -16,6 +16,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -99,6 +100,10 @@ func (c *softLockupTracing) Start(ctx context.Context) error {
 		default:
 			var data abi.SoftlockupEvent
 			if err := reader.ReadInto(&data); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
 

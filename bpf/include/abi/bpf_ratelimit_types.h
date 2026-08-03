@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef __BPF_ABI_RATELIMIT_H__
-#define __BPF_ABI_RATELIMIT_H__
+#ifndef __BPF_ABI_BPF_RATELIMIT_H__
+#define __BPF_ABI_BPF_RATELIMIT_H__
 
 #include "bpf_abi.h"
 
-struct ratelimit_event {
+struct bpf_ratelimit_event {
 	u64 interval;
 	u64 begin;
 	u64 burst;
@@ -29,6 +29,6 @@ struct ratelimit_event {
 	u64 total_interval;
 };
 
-BPF_ABI_EXPORT(ratelimit_event);
+BPF_ABI_EXPORT(bpf_ratelimit_event);
 
-#endif /* __BPF_ABI_RATELIMIT_H__ */
+#endif /* __BPF_ABI_BPF_RATELIMIT_H__ */

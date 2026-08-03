@@ -16,6 +16,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -96,6 +97,10 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 		default:
 			var data abi.MemoryReclaimEvent
 			if err := reader.ReadInto(&data); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
 

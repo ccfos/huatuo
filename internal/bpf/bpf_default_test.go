@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !didi
-
 package bpf
 
 import (
@@ -398,9 +396,9 @@ func TestDefaultBPF_DumpPerCPUMap(t *testing.T) {
 //
 // Covered functions:
 // - Attach() error
-// - attachTracepoint(program *loadedProgram, system, symbol string) error
-// - attachKprobe(program *loadedProgram, symbol string, isRetprobe bool) error
-// - attachRawTracepoint(program *loadedProgram, symbol string) error
+// - attachTracepoint(opts tracepointAttachOptions) error
+// - attachKprobe(opts kprobeAttachOptions) error
+// - attachRawTracepoint(opts rawTracepointAttachOptions) error
 func TestDefaultBPF_Attach(t *testing.T) {
 	b := loadMinimalBpfFromBytes(t)
 

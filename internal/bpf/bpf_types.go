@@ -14,13 +14,18 @@
 
 package bpf
 
-import "errors"
+import (
+	"errors"
+)
 
-// ErrClosed is returned when an operation uses a closed BPF object.
-var ErrClosed = errors.New("bpf: object is closed")
-
-// ErrMapNotFound indicates that a requested BPF map is unavailable.
-var ErrMapNotFound = errors.New("bpf: map not found")
+var (
+	// ErrClosed is returned when an operation uses a closed BPF object.
+	ErrClosed = errors.New("bpf: object is closed")
+	// ErrMapNotFound indicates that a requested BPF map is unavailable.
+	ErrMapNotFound = errors.New("bpf: map not found")
+	// ErrDuplicateAttach indicates that a BPF attach target is already in use.
+	ErrDuplicateAttach = errors.New("bpf: duplicate attach")
+)
 
 type Option struct {
 	KeepaliveTimeout int
@@ -29,8 +34,15 @@ type Option struct {
 // AttachOption is an option for attaching a program.
 type AttachOption struct {
 	ProgramName string
-	Symbol      string   // symbol for kprobe/kretprobe/tracepoint/raw_tracepoint
-	PerfEvent   struct { // BPF_PROG_TYPE_PERF_EVENT
+	Symbol      string // symbol for kprobe/kretprobe/tracepoint/raw_tracepoint
+
+	Kprobe struct {
+		// RetprobeMaxActive limits concurrent kretprobe instances.
+		// A non-zero value forces cilium/ebpf to use tracefs.
+		RetprobeMaxActive int
+	}
+
+	PerfEvent struct { // BPF_PROG_TYPE_PERF_EVENT
 		SamplePeriod, SampleFreq uint64
 		CPUIDs                   []int
 	}

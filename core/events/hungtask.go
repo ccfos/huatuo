@@ -16,6 +16,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -108,6 +109,10 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 		default:
 			var data abi.HungtaskEvent
 			if err := reader.ReadInto(&data); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return fmt.Errorf("hungtask ReadFromPerfEvent: %w", err)
 			}
 

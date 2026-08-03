@@ -35,6 +35,12 @@ import (
 // drains the just-frozen ring. ~100ms balances responsiveness and overhead.
 const drainTick = 100 * time.Millisecond
 
+// validateStackID reports whether an ID returned by bpf_get_stackid can index a stack map.
+// Zero is a valid key; only negative values indicate lookup errors.
+func validateStackID(stackID int32) bool {
+	return stackID >= 0
+}
+
 // ringBufferContext holds the shared ring buffer state for A/B buffer management.
 // It encapsulates all the common infrastructure needed for dual-buffer profiling
 // (readers, state map, stack maps) so profilers don't need to pass these around.
@@ -166,15 +172,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 	// number of events read equals the BPF-reported count.
 	totalRead := uint64(0)
 	for {
-		batch, err := ring.reader.ReadBatch(newEvent())
-		if err != nil {
-			if errors.Is(err, types.ErrExitByCancelCtx) {
-				return nil, activeRingBuffer{}, err
-			}
-			log.Warnf("read batch: %v", err)
-			break
-		}
-
+		batch, err := ring.reader.ReadBatch(newEvent)
 		totalRead += uint64(len(batch))
 
 		for _, rec := range batch {
@@ -189,7 +187,8 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 			}
 
 			// Skip events without valid stacks
-			if base.Kernstack <= 0 && base.Userstack <= 0 {
+			if !validateStackID(base.Kernstack) &&
+				!validateStackID(base.Userstack) {
 				continue
 			}
 
@@ -212,6 +211,14 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 				sampleCountsByProcess[process] = make(map[stackIDPair]int64)
 			}
 			sampleCountsByProcess[process][stackIDs] += value
+		}
+
+		if err != nil {
+			if errors.Is(err, types.ErrExitByCancelCtx) {
+				return nil, activeRingBuffer{}, err
+			}
+			log.WithError(err).Warn("failed to read BPF event batch")
+			break
 		}
 
 		log.Debugf("drain batch: read=%d total=%d procs=%d", len(batch), totalRead, len(sampleCountsByProcess))
@@ -287,7 +294,7 @@ func (r *ringBufferContext) aggregateStacksAndEnqueue(
 				continue
 			}
 
-			if stackIDs.KernelStackID > 0 {
+			if validateStackID(stackIDs.KernelStackID) {
 				if _, ok := kstackCache[stackIDs.KernelStackID]; !ok {
 					kstackCache[stackIDs.KernelStackID] = r.resolveKstackWithFallback(
 						ring,
@@ -295,7 +302,7 @@ func (r *ringBufferContext) aggregateStacksAndEnqueue(
 					)
 				}
 			}
-			if stackIDs.UserStackID > 0 {
+			if validateStackID(stackIDs.UserStackID) {
 				if _, ok := ustackCache[stackIDs.UserStackID]; !ok {
 					ustackCache[stackIDs.UserStackID] = r.resolveUstackWithFallback(
 						ring,

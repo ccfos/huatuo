@@ -16,6 +16,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -80,6 +81,10 @@ func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
 		default:
 			var tmp abi.NetdevBondingLACPEvent
 			if err := reader.ReadInto(&tmp); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return fmt.Errorf("read lacp perf event fail: %w", err)
 			}
 

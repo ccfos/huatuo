@@ -161,6 +161,10 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader) 
 			default:
 				var data containerCssPerfEvent
 				if err := reader.ReadInto(&data); err != nil {
+					if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+						log.WithError(err).Warn("lost BPF perf event samples")
+						continue
+					}
 					if !errors.Is(err, types.ErrExitByCancelCtx) {
 						log.Errorf("cgroup css sync read events: %v", err)
 					}

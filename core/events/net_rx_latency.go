@@ -16,6 +16,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -143,6 +144,10 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 		default:
 			var pd abi.NetRXLatencyEvent
 			if err := reader.ReadInto(&pd); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return fmt.Errorf("read from perf event fail: %w", err)
 			}
 

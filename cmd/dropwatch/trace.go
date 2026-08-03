@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -116,6 +117,10 @@ func mainAction(c *cli.Context) error {
 		if err := reader.ReadInto(&ev); err != nil {
 			if runCtx.Err() != nil {
 				return nil
+			}
+			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+				log.WithError(err).Warn("lost BPF perf event samples")
+				continue
 			}
 
 			log.Errorf("dropwatch: read: %v", err)

@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !didi
-
 package bpf
 
 import (
@@ -32,6 +30,7 @@ import (
 	"github.com/cilium/ebpf/perf"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 // emptyBpfContext is the smallest-possible BPF input context to be used for
@@ -44,23 +43,11 @@ import (
 // removing the Layer 2 header.
 var emptyBpfContext = make([]byte, 15)
 
-func TestPerfEventReaderLostSamples(t *testing.T) {
-	reader := &perfEventReader{}
-	reader.lostSamples.Add(7)
-	require.Equal(t, uint64(7), reader.LostSamples())
-}
-
 func TestPerfEventReader_Lifecycle(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-
 	reader := newTestPerfEventReader(t, ctx)
-	defer reader.Close()
-
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		cancel()
-	}()
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	cancel()
 
 	var data int32
 	err := reader.ReadInto(&data)
@@ -88,8 +75,6 @@ func TestPerfEventReader_ReadInto_Closed(t *testing.T) {
 		errCh <- reader.ReadInto(&data)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
-
 	require.NoError(t, reader.Close())
 
 	select {
@@ -115,9 +100,6 @@ func TestNewPerfEventReader_Failure(t *testing.T) {
 }
 
 func TestPerfEventReader_ReadInto_And_Close_ProgTest(t *testing.T) {
-	// This is the additional coverage you requested (modeled after ebpf/perf/reader_test.go):
-	// Use prog.Test(...) to emit one perf sample and ensure ReadInto consumes it.
-	t.Helper()
 	requireBPFPermission(t)
 
 	events := perfEventArray(t)
@@ -125,10 +107,9 @@ func TestPerfEventReader_ReadInto_And_Close_ProgTest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("perf.NewReader: %v", err)
 	}
-	defer rd.Close()
 
 	ctx, cancel := context.WithCancel(t.Context())
-	r := &perfEventReader{ctx: ctx, rd: rd, cancelCtx: cancel}
+	r := &perfEventReader{done: ctx.Done(), rd: rd, cancel: cancel}
 
 	sampleSize := 8
 	buf := emptyBpfContext
@@ -164,7 +145,11 @@ func newTestPerfEventReader(t *testing.T, ctx context.Context) PerfEventReader {
 
 	reader, err := newPerfEventReader(ctx, perfMap, 4096)
 	if err != nil {
-		t.Skipf("skipping test: newPerfEventReader failed: %v", err)
+		if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) ||
+			errors.Is(err, unix.ENOMEM) {
+			t.Skipf("skipping: perf event reader unavailable: %v", err)
+		}
+		t.Fatalf("newPerfEventReader: %v", err)
 	}
 
 	return reader
@@ -192,7 +177,7 @@ func getPerfEventArrayMap(t *testing.T) *ebpf.Map {
 
 		mapInfo, err := m.handle.Info()
 		if err != nil {
-			continue
+			t.Fatalf("read map %q info: %v", mi.Name, err)
 		}
 
 		if mapInfo.Type == ebpf.PerfEventArray {
@@ -200,6 +185,7 @@ func getPerfEventArrayMap(t *testing.T) *ebpf.Map {
 		}
 	}
 
+	t.Fatal("perf event array map not found")
 	return nil
 }
 
@@ -215,7 +201,11 @@ func perfEventArray(tb testing.TB) *ebpf.Map {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() { m.Close() })
+	tb.Cleanup(func() {
+		if err := m.Close(); err != nil {
+			tb.Errorf("close perf event array: %v", err)
+		}
+	})
 	return m
 }
 
@@ -277,6 +267,10 @@ func outputSamplesProg(tb testing.TB, events *ebpf.Map, sampleSizes ...byte) *eb
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() { prog.Close() })
+	tb.Cleanup(func() {
+		if err := prog.Close(); err != nil {
+			tb.Errorf("close sample program: %v", err)
+		}
+	})
 	return prog
 }
