@@ -88,10 +88,13 @@ func (r *perfEventReader) ReadBatch(pdata any) ([]any, error) {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				return batch, nil
 			}
-			if errors.Is(err, perf.ErrClosed) {
-				return batch, fmt.Errorf("perf event reader closed: %w", types.ErrExitByCancelCtx)
+
+			readErr := normalizePerfReadError(err)
+			if errors.Is(readErr, types.ErrExitByCancelCtx) {
+				return batch, readErr
 			}
-			return nil, fmt.Errorf("read event: %w", err)
+
+			return nil, readErr
 		}
 
 		if rec.LostSamples != 0 {
@@ -100,7 +103,7 @@ func (r *perfEventReader) ReadBatch(pdata any) ([]any, error) {
 
 		dst := reflect.New(elemType).Interface()
 		if err := binary.Read(bytes.NewBuffer(rec.RawSample), binary.NativeEndian, dst); err != nil {
-			return nil, fmt.Errorf("parse event: %w", err)
+			return nil, fmt.Errorf("parse perf event: %w", err)
 		}
 
 		batch = append(batch, dst)
@@ -120,12 +123,11 @@ func (r *perfEventReader) ReadInto(pdata any) error {
 			// read the event
 			record, err := r.rd.Read()
 			if err != nil {
-				if errors.Is(err, perf.ErrClosed) { // Close
-					return fmt.Errorf("perf event reader closed: %w", types.ErrExitByCancelCtx)
-				} else if errors.Is(err, os.ErrDeadlineExceeded) { // poll deadline
+				if errors.Is(err, os.ErrDeadlineExceeded) { // poll deadline
 					continue
 				}
-				return fmt.Errorf("read event: %w", err)
+
+				return normalizePerfReadError(err)
 			}
 
 			if record.LostSamples != 0 {
@@ -134,10 +136,18 @@ func (r *perfEventReader) ReadInto(pdata any) error {
 
 			// parse the event
 			if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.NativeEndian, pdata); err != nil {
-				return fmt.Errorf("failed to parse the event: %w", err)
+				return fmt.Errorf("parse perf event: %w", err)
 			}
 
 			return nil
 		}
 	}
+}
+
+func normalizePerfReadError(err error) error {
+	if errors.Is(err, perf.ErrClosed) {
+		return types.ErrExitByCancelCtx
+	}
+
+	return fmt.Errorf("read perf event: %w", err)
 }

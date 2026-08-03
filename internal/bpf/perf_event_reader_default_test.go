@@ -92,6 +92,38 @@ func TestPerfEventReader_ReadInto_Closed(t *testing.T) {
 	}
 }
 
+func TestNormalizePerfReadError(t *testing.T) {
+	t.Parallel()
+
+	readErr := errors.New("read failed")
+	tests := []struct {
+		name    string
+		err     error
+		wantErr error
+	}{
+		{
+			name:    "closed reader",
+			err:     perf.ErrClosed,
+			wantErr: types.ErrExitByCancelCtx,
+		},
+		{
+			name:    "read failure",
+			err:     readErr,
+			wantErr: readErr,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := normalizePerfReadError(tt.err); !errors.Is(err, tt.wantErr) {
+				t.Errorf("normalizePerfReadError() error = %v, want an error matching %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestNewPerfEventReader_Failure(t *testing.T) {
 	// Keep the original coverage: perCPUBufSize must be > 0. Use any map type; reader creation should fail.
 	b := loadMinimalBpfFromBytes(t)

@@ -107,6 +107,67 @@ func TestAttachPerfEvent(t *testing.T) {
 	}
 }
 
+func TestPerfEventOptionValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		opt      *perfEventOption
+		wantErrs []error
+	}{
+		{
+			name:     "nil option",
+			wantErrs: []error{errInvalidPerfEventOption, errPerfEventOptionRequired},
+		},
+		{
+			name: "missing program",
+			opt: &perfEventOption{
+				samplePeriodFreq: 1,
+			},
+			wantErrs: []error{errInvalidPerfEventOption, errPerfEventProgramRequired},
+		},
+		{
+			name: "missing sample frequency",
+			opt: &perfEventOption{
+				program: new(ebpf.Program),
+			},
+			wantErrs: []error{errInvalidPerfEventOption, errPerfEventSampleFreqRequired},
+		},
+		{
+			name: "missing program and sample frequency",
+			opt:  new(perfEventOption),
+			wantErrs: []error{
+				errInvalidPerfEventOption,
+				errPerfEventProgramRequired,
+				errPerfEventSampleFreqRequired,
+			},
+		},
+		{
+			name: "valid",
+			opt: &perfEventOption{
+				program:          new(ebpf.Program),
+				samplePeriodFreq: 1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := tt.opt.Validate()
+			if len(tt.wantErrs) == 0 {
+				require.NoError(t, err)
+				return
+			}
+
+			for _, wantErr := range tt.wantErrs {
+				require.ErrorIs(t, err, wantErr)
+			}
+		})
+	}
+}
+
 // TestAttachPerfEvent_AttachTwice verifies that attaching the same program twice is safe.
 func TestAttachPerfEvent_AttachTwice(t *testing.T) {
 	prog := newTestProgram(t)

@@ -31,6 +31,13 @@ const (
 	sampleTypeFreq   = 2
 )
 
+var (
+	errInvalidPerfEventOption      = errors.New("invalid perf event option")
+	errPerfEventOptionRequired     = fmt.Errorf("%w: option required", errInvalidPerfEventOption)
+	errPerfEventProgramRequired    = fmt.Errorf("%w: program required", errInvalidPerfEventOption)
+	errPerfEventSampleFreqRequired = fmt.Errorf("%w: sample frequency required", errInvalidPerfEventOption)
+)
+
 type perfEventAttach struct {
 	fds []int
 }
@@ -44,24 +51,24 @@ type perfEventOption struct {
 
 func (opt *perfEventOption) Validate() error {
 	if opt == nil {
-		return fmt.Errorf("perf event option required")
+		return errPerfEventOptionRequired
 	}
 
 	var errs []error
 
 	if opt.program == nil {
-		errs = append(errs, fmt.Errorf("program required"))
+		errs = append(errs, errPerfEventProgramRequired)
 	}
 
 	if opt.samplePeriodFreq == 0 {
-		errs = append(errs, fmt.Errorf("samplePeriodFreq required"))
+		errs = append(errs, errPerfEventSampleFreqRequired)
 	}
 
 	if len(errs) == 0 {
 		return nil
 	}
 
-	return fmt.Errorf("invalid perf event option: %v", errs)
+	return errors.Join(errs...)
 }
 
 func openPerfEvent(attr *unix.PerfEventAttr, progFD, cpuID int) (int, error) {
