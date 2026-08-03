@@ -74,9 +74,10 @@ func (a *nativeAggregator) Aggregate(rec any) {
 	switch v := rec.(type) {
 	case *stackSample:
 		key := fmt.Sprintf(
-			"%d\x00%s\x00%s\x00%s",
+			"%d\x00%s\x00%s\x00%s\x00%s",
 			v.Process.PID,
 			v.Process.Comm,
+			v.Category,
 			v.UserStack,
 			v.KernelStack,
 		)
@@ -89,6 +90,7 @@ func (a *nativeAggregator) Aggregate(rec any) {
 				UserStack:   v.UserStack,
 				KernelStack: v.KernelStack,
 				Value:       v.Value,
+				Category:    v.Category,
 			}
 		}
 
@@ -97,6 +99,9 @@ func (a *nativeAggregator) Aggregate(rec any) {
 		if a.formatter != nil {
 			frames := []string{
 				fmt.Sprintf("process %d:%s", v.Process.PID, v.Process.Comm),
+			}
+			if v.Category != "" {
+				frames = append(frames, v.Category)
 			}
 			frames = appendStackFrames(frames, v.UserStack, v.KernelStack)
 			log.Debugf("formatter add: frames=%v count=%d", frames, v.Value)
@@ -187,6 +192,9 @@ func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext)
 		}
 
 		prefixes := []string{fmt.Sprintf("process %d:%s", rec.Process.PID, rec.Process.Comm)}
+		if rec.Category != "" {
+			prefixes = append(prefixes, rec.Category)
+		}
 		item := buildTreeItem(prefixes, rec.UserStack, rec.KernelStack, uint64(rec.Value))
 		tree = append(tree, item)
 	}
@@ -304,6 +312,9 @@ func lockPrefixFrames(rec *lockSample) ([]string, uint64) {
 func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, error) {
 	switch pctx.Type {
 	case profiling.TypeCPU:
+		if pctx.CPUMode == profiling.CPUModeOffCPU {
+			return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeOffCpuSample, nil
+		}
 		return &profiler.ParseOption{SampleRate: int64(pctx.Freq)}, profiler.ProfileTypeCpuSample, nil
 	case profiling.TypeMemory:
 		return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeMemSample, nil
