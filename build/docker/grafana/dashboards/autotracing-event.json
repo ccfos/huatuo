@@ -148,7 +148,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:cpusys AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         },
@@ -175,7 +175,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:cpuidle AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "B",
           "timeField": "uploaded_time"
         },
@@ -202,7 +202,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:dload AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:dload AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "C",
           "timeField": "uploaded_time"
         },
@@ -229,7 +229,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:memory_reclaim_events AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:memory_reclaim_events AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "D",
           "timeField": "uploaded_time"
         },
@@ -256,7 +256,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:oom AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:oom AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "E",
           "timeField": "uploaded_time"
         },
@@ -283,7 +283,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:memburst AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:memburst AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "F",
           "timeField": "uploaded_time"
         },
@@ -310,7 +310,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:iotracing AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "G",
           "timeField": "uploaded_time"
         },
@@ -337,7 +337,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:dropwatch AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:dropwatch AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "H",
           "timeField": "uploaded_time"
         },
@@ -364,7 +364,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:net_rx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "I",
           "timeField": "uploaded_time"
         },
@@ -391,7 +391,7 @@
               "type": "count"
             }
           ],
-          "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*down*",
+          "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*down*",
           "refId": "J",
           "timeField": "uploaded_time"
         },
@@ -418,7 +418,7 @@
               "type": "count"
             }
           ],
-          "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev_bonding_lacp",
+          "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev_bonding_lacp",
           "refId": "K",
           "timeField": "uploaded_time"
         },
@@ -445,7 +445,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:softirq_tracing AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:softirq_tracing AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "L",
           "timeField": "uploaded_time"
         },
@@ -472,7 +472,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:softlockup AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:softlockup AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "M",
           "timeField": "uploaded_time"
         },
@@ -499,7 +499,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:hungtask AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:hungtask AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "N",
           "timeField": "uploaded_time"
         },
@@ -526,7 +526,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:ras AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:ras AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "O",
           "timeField": "uploaded_time"
         },
@@ -553,7 +553,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "P",
           "timeField": "uploaded_time"
         }
@@ -672,7 +672,7 @@
               "type": "count"
             }
           ],
-          "query": "region:$region AND hostname:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR tracer_name:oom \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch \nOR tracer_name:net_rx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:softirq_tracing \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
+          "query": "region.keyword:$region AND hostname.keyword:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR tracer_name:oom \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch \nOR tracer_name:net_rx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:softirq_tracing \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -793,7 +793,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:cpusys AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -913,7 +913,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:softirq_tracing AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:softirq_tracing AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1033,7 +1033,7 @@
               "type": "count"
             }
           ],
-          "query": "region:$region \nAND hostname:$hostname \nAND (\n  (tracer_name:netdev AND tracer_data.linkstatus:*down*)\n  OR tracer_name:netdev_bonding_lacp\n)",
+          "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND (\n  (tracer_name:netdev AND tracer_data.linkstatus:*down*)\n  OR tracer_name:netdev_bonding_lacp\n)",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1113,7 +1113,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:cpuidle AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1233,7 +1233,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:dload AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:dload AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1353,7 +1353,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:net_rx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1473,7 +1473,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:softlockup AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:softlockup AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1593,7 +1593,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:ras AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:ras AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1713,7 +1713,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:iotracing AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1833,7 +1833,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:oom AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:oom AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -1953,7 +1953,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2073,7 +2073,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:null AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:null AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2193,7 +2193,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:hungtask AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:hungtask AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2313,7 +2313,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:memory_reclaim_events AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:memory_reclaim_events AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2433,7 +2433,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:dropwatch AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:dropwatch AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2553,7 +2553,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:memburst AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:memburst AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2673,7 +2673,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:netdev_txqueue_timeout AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:netdev_txqueue_timeout AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2793,7 +2793,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:null AND region:$region AND hostname:$hostname",
+          "query": "tracer_name:null AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2988,7 +2988,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:cpusys AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -3136,7 +3136,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:cpusys AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -3291,7 +3291,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:cpusys AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:cpusys AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -3523,7 +3523,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:cpuidle AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -3674,7 +3674,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:cpuidle AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -3853,7 +3853,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:cpuidle AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:cpuidle AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -4132,7 +4132,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:dload AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:dload AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -4280,7 +4280,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:dload AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:dload AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -4450,7 +4450,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:dload AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:dload AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -4635,7 +4635,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -4783,7 +4783,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -4910,7 +4910,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -5117,7 +5117,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:memory_reclaim_events AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:memory_reclaim_events AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -5265,7 +5265,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:memory_reclaim_events AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:memory_reclaim_events AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -5427,7 +5427,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:memory_reclaim_events AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:memory_reclaim_events AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -5599,7 +5599,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:oom AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:oom AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -5747,7 +5747,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:oom AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:oom AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -5881,7 +5881,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:oom AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:oom AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -6063,7 +6063,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:memburst AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:memburst AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -6211,7 +6211,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:memburst AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:memburst AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -6352,7 +6352,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:memburst AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:memburst AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -6540,7 +6540,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -6688,7 +6688,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -6857,7 +6857,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:iotracing AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:iotracing AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -7066,7 +7066,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:dropwatch AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:dropwatch AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -7217,7 +7217,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:dropwatch AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:dropwatch AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -7359,7 +7359,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:dropwatch AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:dropwatch AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -7553,7 +7553,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -7702,7 +7702,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -7836,7 +7836,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:net_rx_latency AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:net_rx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -8030,7 +8030,7 @@
                   "type": "count"
                 }
               ],
-              "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*carrierdown*",
+              "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*carrierdown*",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -8142,7 +8142,7 @@
                   "type": "count"
                 }
               ],
-              "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*carrierdown*",
+              "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*carrierdown*",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -8235,7 +8235,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*carrierdown*",
+              "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*carrierdown*",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -8404,7 +8404,7 @@
                   "type": "count"
                 }
               ],
-              "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*admindown*",
+              "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*admindown*",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -8516,7 +8516,7 @@
                   "type": "count"
                 }
               ],
-              "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*admindown*",
+              "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*admindown*",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -8603,7 +8603,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*admindown*",
+              "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev \nAND tracer_data.linkstatus:*admindown*",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -8770,7 +8770,7 @@
                   "type": "count"
                 }
               ],
-              "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev_bonding_lacp",
+              "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev_bonding_lacp",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -8882,7 +8882,7 @@
                   "type": "count"
                 }
               ],
-              "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev_bonding_lacp",
+              "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev_bonding_lacp",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -8987,7 +8987,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "region:$region \nAND hostname:$hostname \nAND tracer_name:netdev_bonding_lacp",
+              "query": "region.keyword:$region \nAND hostname.keyword:$hostname \nAND tracer_name:netdev_bonding_lacp",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9174,7 +9174,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:softirq_tracing AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:softirq_tracing AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9322,7 +9322,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:softirq_tracing AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:softirq_tracing AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9516,7 +9516,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:softirq_tracing AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:softirq_tracing AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9689,7 +9689,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:softlockup AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:softlockup AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9837,7 +9837,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:softlockup AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:softlockup AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9983,7 +9983,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:softlockup AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:softlockup AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -10149,7 +10149,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:hungtask AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:hungtask AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -10297,7 +10297,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:hungtask AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:hungtask AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -10443,7 +10443,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:hungtask AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:hungtask AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -10609,7 +10609,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:ras AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:ras AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -10757,7 +10757,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:ras AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:ras AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -10904,7 +10904,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:ras AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:ras AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -11076,7 +11076,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -11224,7 +11224,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -11371,7 +11371,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:waitrate AND region:$region AND hostname:$hostname",
+              "query": "tracer_name:waitrate AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -11476,13 +11476,13 @@
           "type": "elasticsearch",
           "uid": "huatuo-bamai-es"
         },
-        "definition": "{\"find\": \"terms\", \"field\": \"region\", \"size\": 100}",
+        "definition": "{\"find\": \"terms\", \"field\": \"region.keyword\", \"size\": 100}",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "region",
         "options": [],
-        "query": "{\"find\": \"terms\", \"field\": \"region\", \"size\": 100}",
+        "query": "{\"find\": \"terms\", \"field\": \"region.keyword\", \"size\": 100}",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
@@ -11499,13 +11499,13 @@
           "type": "elasticsearch",
           "uid": "huatuo-bamai-es"
         },
-        "definition": "{\"find\": \"terms\", \"field\": \"hostname\", \"query\": \"region:$region\", \"size\":20000}",
+        "definition": "{\"find\": \"terms\", \"field\": \"hostname.keyword\", \"query\": \"region.keyword:$region\", \"size\":20000}",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "hostname",
         "options": [],
-        "query": "{\"find\": \"terms\", \"field\": \"hostname\", \"query\": \"region:$region\", \"size\":20000}",
+        "query": "{\"find\": \"terms\", \"field\": \"hostname.keyword\", \"query\": \"region.keyword:$region\", \"size\":20000}",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
