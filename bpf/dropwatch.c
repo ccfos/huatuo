@@ -9,7 +9,7 @@
 #include "bpf_pcap_stub.h"
 #include "bpf_ratelimit.h"
 #include "bpf_skb_filter.h"
-#include "vmlinux_net.h"
+#include "bpf_skbuff.h"
 #include "abi/dropwatch_types.h"
 
 #define TYPE_TCP_COMMON_DROP 1
@@ -51,16 +51,14 @@ static const u32 stackmap_key = 0;
  * the anonymous enum field matches the kernel's enum skb_drop_reason by the name
  * "reason". No reason constants are hardcoded (their values shift across kernels);
  * names are resolved at runtime from kernel BTF in userspace (loadDropReasonNames).
- *
- * SKB_DROP_REASON_UNSUPPORT = -1 satisfies C's "enum needs >=1 enumerator" rule
- * and is the out-of-band fallback for kernels predating the field: as (u32)-1 it
- * can never collide with real reasons (which grow from 0). */
+ * SKB_DROP_REASON_NOT_SUPPORTED is the out-of-band fallback for kernels
+ * predating the field. */
 struct trace_event_raw_kfree_skb___reason {
-	enum { SKB_DROP_REASON_UNSUPPORT = -1 } reason;
+	enum { SKB_DROP_REASON_NOT_SUPPORTED = -1 } reason;
 } __attribute__((preserve_access_index));
 
 /* Return the kernel skb drop reason when the running kernel supports it,
- * otherwise the out-of-band SKB_DROP_REASON_UNSUPPORT sentinel. */
+ * otherwise the out-of-band SKB_DROP_REASON_NOT_SUPPORTED sentinel. */
 static inline u32 skb_get_drop_reason(struct trace_event_raw_kfree_skb *ctx)
 {
 	struct trace_event_raw_kfree_skb___reason *ctx_reason = (void *)ctx;
@@ -68,7 +66,7 @@ static inline u32 skb_get_drop_reason(struct trace_event_raw_kfree_skb *ctx)
 	if (bpf_core_field_exists(ctx_reason->reason))
 		return BPF_CORE_READ(ctx_reason, reason);
 
-	return SKB_DROP_REASON_UNSUPPORT;
+	return SKB_DROP_REASON_NOT_SUPPORTED;
 }
 
 struct sock___5_10 {
@@ -210,9 +208,9 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 	}
 	data->meta.memcg_css_addr = skb_memcg_css_addr(skb);
 
-	/* net cookie and net namespace inode from device or socket */
-	data->meta.net_cookie = skb_netns_cookie(skb);
-	data->meta.net_inum = skb_netns_inum(skb);
+	/* net namespace cookie and inum from device or socket */
+	data->meta.netns_cookie = skb_netns_cookie(skb);
+	data->meta.netns_inum = skb_netns_inum(skb);
 
 	/* device info */
 	data->meta.dev_name[0] = '-';

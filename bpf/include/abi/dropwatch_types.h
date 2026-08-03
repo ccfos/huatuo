@@ -22,14 +22,14 @@
 struct dropwatch_packet_meta {
 	u64 ktime_ns;
 	u64 tgid_pid;
-	u64 net_cookie;
+	u64 netns_cookie;
 	u64 kfree_skb_addr;
 	u64 memcg_css_addr;
 	u32 ifindex;
 	u32 dev_flags;
 	u32 queue_mapping;
 	u32 drop_reason;
-	u32 net_inum;
+	u32 netns_inum;
 	u8 dev_name[IFNAMSIZ];
 	u8 comm[COMPAT_TASK_COMM_LEN];
 };

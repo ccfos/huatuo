@@ -10,8 +10,7 @@
 #include "bpf_common.h"
 #include "bpf_net_namespace.h"
 #include "bpf_ratelimit.h"
-#include "bpf_sock.h"
-#include "vmlinux_net.h"
+#include "bpf_skbuff.h"
 #include "abi/net_rx_latency_types.h"
 
 volatile const long long mono_wall_offset = 0;
@@ -140,7 +139,7 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 	event.netdev_name[0] = '-';
 	event.comm[0] = '-';
 	event.netns_inum = skb_netns_inum(skb);
-	event.net_cookie = skb_netns_cookie(skb);
+	event.netns_cookie = skb_netns_cookie(skb);
 	event.tgid_pid = 0;
 
 	if (likely(where == RX_STAGE_USERCOPY)) {
