@@ -41,13 +41,19 @@ func detectLanguageInfo(
 }
 
 /*
- * completeLanguageInfo retries only an unknown live result with process
- * metadata. Cmdline takes precedence over the kernel command name.
+ * completeLanguageInfo retries an unknown live result with exit context.
+ * A Go buildinfo marker takes precedence over cmdline and comm metadata.
  */
-func completeLanguageInfo(oomData *OOMTracingData) {
+func completeLanguageInfo(
+	oomData *OOMTracingData, exitContext *oomExitContext,
+) {
 	if oomData == nil ||
 		(oomData.LanguageInfo != nil &&
 			oomData.LanguageInfo.Victim != processlang.LanguageUnknown) {
+		return
+	}
+	if exitContext != nil && exitContext.goBuildInfo {
+		oomData.LanguageInfo = &OOMLanguageInfo{Victim: processlang.LanguageGo}
 		return
 	}
 

@@ -49,7 +49,7 @@ func TestCompleteLanguageInfoUsesExitCmdline(t *testing.T) {
 		},
 	}
 
-	completeLanguageInfo(oomData)
+	completeLanguageInfo(oomData, nil)
 	if oomData.LanguageInfo.Victim != processlang.LanguagePython {
 		t.Fatalf("exit cmdline language = %q, want %q",
 			oomData.LanguageInfo.Victim, processlang.LanguagePython)
@@ -64,9 +64,24 @@ func TestCompleteLanguageInfoUsesCommWithoutExitCmdline(t *testing.T) {
 		},
 	}
 
-	completeLanguageInfo(oomData)
+	completeLanguageInfo(oomData, nil)
 	if oomData.LanguageInfo.Victim != processlang.LanguageJava {
 		t.Fatalf("comm language = %q, want %q",
 			oomData.LanguageInfo.Victim, processlang.LanguageJava)
+	}
+}
+
+func TestCompleteLanguageInfoUsesExitGoBuildInfo(t *testing.T) {
+	oomData := &OOMTracingData{
+		Victim: OOMActor{Comm: "oom-go"},
+		LanguageInfo: &OOMLanguageInfo{
+			Victim: processlang.LanguageUnknown,
+		},
+	}
+
+	completeLanguageInfo(oomData, &oomExitContext{goBuildInfo: true})
+	if oomData.LanguageInfo.Victim != processlang.LanguageGo {
+		t.Fatalf("exit buildinfo language = %q, want %q",
+			oomData.LanguageInfo.Victim, processlang.LanguageGo)
 	}
 }

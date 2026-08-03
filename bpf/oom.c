@@ -145,6 +145,32 @@ capture_user_region(u8 *dst, u32 capacity, unsigned long start,
 	return (u16)length;
 }
 
+/*
+ * Go places this buildinfo magic at mm->start_data for normal internal-link
+ * executables. Check only that fixed address; do not scan victim memory.
+ */
+#define GO_BUILDINFO_MAGIC "\xff Go buildinf:"
+#define GO_BUILDINFO_MAGIC_LEN 14
+
+static __always_inline u8
+has_go_buildinfo_at_start_data(unsigned long start_data)
+{
+	u8 actual[GO_BUILDINFO_MAGIC_LEN];
+	u8 expected[] = GO_BUILDINFO_MAGIC;
+	int i;
+
+	if (!start_data ||
+	    compat_bpf_probe_read(actual, sizeof(actual), (void *)start_data) != 0)
+		return 0;
+
+#pragma unroll
+	for (i = 0; i < GO_BUILDINFO_MAGIC_LEN; i++) {
+		if (actual[i] != expected[i])
+			return 0;
+	}
+	return 1;
+}
+
 SEC("kprobe/oom_kill_process")
 int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 {
@@ -222,7 +248,7 @@ int BPF_KPROBE(do_exit_trace, long code)
 	struct oom_exit_event *exit_event;
 	struct task_struct *victim_task;
 	struct mm_struct *victim_mm;
-	unsigned long arg_start, arg_end, env_start, env_end;
+	unsigned long arg_start, arg_end, env_start, env_end, start_data;
 
 	/*
 	 * Most exits stop at this global-data check. The hash lookup is only paid
@@ -264,6 +290,9 @@ int BPF_KPROBE(do_exit_trace, long code)
 	arg_end = BPF_CORE_READ(victim_mm, arg_end);
 	env_start = BPF_CORE_READ(victim_mm, env_start);
 	env_end = BPF_CORE_READ(victim_mm, env_end);
+	start_data = BPF_CORE_READ(victim_mm, start_data);
+	exit_event->go_build_info =
+	    has_go_buildinfo_at_start_data(start_data);
 
 	exit_event->cmdline_len = capture_user_region(
 	    exit_event->victim_cmdline, sizeof(exit_event->victim_cmdline),

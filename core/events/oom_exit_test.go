@@ -28,8 +28,9 @@ import (
 func TestOOMExitEventCacheCorrelatesAndDecodes(t *testing.T) {
 	cache := newOOMExitEventCache()
 	event := &abi.OOMExitEvent{
-		VictimTGID: 42,
-		Timestamp:  101,
+		VictimTGID:  42,
+		Timestamp:   101,
+		GoBuildInfo: 1,
 	}
 	event.CmdlineLen = uint16(copy(
 		event.VictimCmdline[:], "python3\x00worker.py\x00"))
@@ -51,6 +52,9 @@ func TestOOMExitEventCacheCorrelatesAndDecodes(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.environ, []string{"ROLE=worker", "EMPTY="}) {
 		t.Fatalf("environ = %q", got.environ)
+	}
+	if !got.goBuildInfo {
+		t.Fatal("Go buildinfo marker was not preserved")
 	}
 }
 

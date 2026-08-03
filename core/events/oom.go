@@ -207,15 +207,16 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			executable.Close()
 		}
 
+		var exitContext *oomExitContext
 		if waitForExit {
-			exitContext := oomExitEvents.wait(
+			exitContext = oomExitEvents.wait(
 				exitWaitCtx, data.VictimPID, data.Timestamp)
 			if childCtx.Err() != nil {
 				return
 			}
 			mergeOOMExitContext(oomData, exitContext)
 		}
-		completeLanguageInfo(oomData)
+		completeLanguageInfo(oomData, exitContext)
 
 		processMu.Lock()
 		defer processMu.Unlock()

@@ -47,7 +47,8 @@ struct oom_exit_event {
 	u16 environ_len;
 	u8 cmdline_flags;
 	u8 environ_flags;
-	u8 pad[6];
+	u8 go_build_info;
+	u8 pad[5];
 	u8 victim_cmdline[OOM_CMDLINE_MAX];
 	u8 victim_environ[OOM_ENVIRON_MAX];
 };
