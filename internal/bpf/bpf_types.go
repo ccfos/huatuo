@@ -22,6 +22,9 @@ var ErrClosed = errors.New("bpf: object is closed")
 // ErrMapNotFound indicates that a requested BPF map is unavailable.
 var ErrMapNotFound = errors.New("bpf: map not found")
 
+// ErrDuplicateAttach indicates that a BPF attach target is already in use.
+var ErrDuplicateAttach = errors.New("bpf: duplicate attach")
+
 type Option struct {
 	KeepaliveTimeout int
 }
