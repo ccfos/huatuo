@@ -31,6 +31,7 @@ import (
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/metric"
+	"huatuo-bamai/pkg/processlang"
 	"huatuo-bamai/pkg/tracing"
 )
 
@@ -187,21 +188,24 @@ func (c *oomCollector) Start(ctx context.Context) error {
 	 * their base data instead of creating unbounded goroutines.
 	 */
 	processEvent := func(data *abi.OOMEvent, eventTime time.Time,
-		waitForExit bool,
+		executable *os.File, waitForExit bool,
 	) {
 		if childCtx.Err() != nil {
+			if executable != nil {
+				executable.Close()
+			}
 			return
 		}
 
-		/*
-		 * Read live procfs before container synchronization and snapshot
-		 * collection give the victim time to disappear.
-		 */
-		languageInfo := detectLanguageInfo(data.VictimPID)
-
 		processMu.Lock()
-		oomData := c.prepareOOMEvent(data, languageInfo)
+		oomData := c.prepareOOMEvent(data)
 		processMu.Unlock()
+
+		/* The retained executable remains readable after snapshot collection. */
+		oomData.LanguageInfo = detectLanguageInfo(data.VictimPID, executable)
+		if executable != nil {
+			executable.Close()
+		}
 
 		if waitForExit {
 			exitContext := oomExitEvents.wait(
@@ -266,6 +270,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 				}
 				return fmt.Errorf("failed to read perf event: %w", err)
 			}
+			executable := processlang.OpenExecutable(int(data.VictimPID))
 			eventTime := time.Now()
 
 			/*
@@ -274,7 +279,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			 * collection synchronously.
 			 */
 			if exitWaitCtx.Err() != nil || data.Timestamp == 0 {
-				processEvent(data, eventTime, false)
+				processEvent(data, eventTime, executable, false)
 				continue
 			}
 
@@ -285,13 +290,15 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			select {
 			case asyncWorkerSlots <- struct{}{}:
 				workers.Add(1)
-				go func(data *abi.OOMEvent, eventTime time.Time) {
+				go func(data *abi.OOMEvent, eventTime time.Time,
+					executable *os.File,
+				) {
 					defer workers.Done()
 					defer func() { <-asyncWorkerSlots }()
-					processEvent(data, eventTime, true)
-				}(data, eventTime)
+					processEvent(data, eventTime, executable, true)
+				}(data, eventTime, executable)
 			default:
-				processEvent(data, eventTime, false)
+				processEvent(data, eventTime, executable, false)
 			}
 		}
 	}
@@ -302,9 +309,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
  * accounting before waiting for the victim exit event. Container discovery
  * failures degrade enrichment without discarding the base OOM event.
  */
-func (c *oomCollector) prepareOOMEvent(
-	data *abi.OOMEvent, languageInfo *OOMLanguageInfo,
-) *OOMTracingData {
+func (c *oomCollector) prepareOOMEvent(data *abi.OOMEvent) *OOMTracingData {
 	containers, err := pod.Containers()
 	containerLookupSucceeded := err == nil
 	if err != nil {
@@ -313,7 +318,6 @@ func (c *oomCollector) prepareOOMEvent(
 	}
 
 	oomData := buildTracingData(data, containers, c.cgroup)
-	oomData.LanguageInfo = languageInfo
 
 	mutex.Lock()
 	if container, ok := containers[oomData.Victim.ContainerID]; ok {

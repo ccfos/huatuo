@@ -16,16 +16,22 @@
 
 package events
 
-import "huatuo-bamai/pkg/processlang"
+import (
+	"os"
+
+	"huatuo-bamai/pkg/processlang"
+)
 
 /* OOMLanguageInfo captures the selected victim's detected language. */
 type OOMLanguageInfo struct {
 	Victim processlang.Language `json:"victim"`
 }
 
-func detectLanguageInfo(victimPID uint32) *OOMLanguageInfo {
-	detected := processlang.LanguageUnknown
-	if victimPID > 0 {
+func detectLanguageInfo(
+	victimPID uint32, executable *os.File,
+) *OOMLanguageInfo {
+	detected := processlang.DetectLanguageFromExecutable(executable)
+	if detected == processlang.LanguageUnknown && victimPID > 0 {
 		detected = processlang.DetectLanguage(processlang.ProcessDetails{
 			PID: int(victimPID),
 		})

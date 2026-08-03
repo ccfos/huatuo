@@ -23,8 +23,14 @@ import (
 	"huatuo-bamai/pkg/processlang"
 )
 
-func TestDetectLanguageInfoReadsRunningGoExecutable(t *testing.T) {
-	info := detectLanguageInfo(uint32(os.Getpid()))
+func TestDetectLanguageInfoReadsRetainedGoExecutable(t *testing.T) {
+	executable := processlang.OpenExecutable(os.Getpid())
+	if executable == nil {
+		t.Fatal("failed to open current executable")
+	}
+	defer executable.Close()
+
+	info := detectLanguageInfo(0, executable)
 
 	if info.Victim != processlang.LanguageGo {
 		t.Fatalf("current Go test process detected as %q, want %q",

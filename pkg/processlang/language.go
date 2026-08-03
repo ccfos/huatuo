@@ -61,14 +61,34 @@ func DetectLanguage(details ProcessDetails) Language {
 	return languageFromRunningProcess(details.PID)
 }
 
+/* OpenExecutable retains a live process executable for deferred detection. */
+func OpenExecutable(pid int) *os.File {
+	if pid <= 0 {
+		return nil
+	}
+
+	file, _ := os.Open(procPath(pid, "exe"))
+	return file
+}
+
+/* DetectLanguageFromExecutable detects a runtime from an open executable. */
+func DetectLanguageFromExecutable(executable *os.File) Language {
+	if executable != nil {
+		if _, err := buildinfo.Read(executable); err == nil {
+			return LanguageGo
+		}
+	}
+	return LanguageUnknown
+}
+
 func languageFromRunningProcess(pid int) Language {
-	exeFile, _ := os.Open(procPath(pid, "exe"))
+	exeFile := OpenExecutable(pid)
 	if exeFile != nil {
 		defer exeFile.Close()
 
 		/* Go binaries contain readable Go build information. */
-		if _, err := buildinfo.Read(exeFile); err == nil {
-			return LanguageGo
+		if detected := DetectLanguageFromExecutable(exeFile); detected != LanguageUnknown {
+			return detected
 		}
 	}
 
