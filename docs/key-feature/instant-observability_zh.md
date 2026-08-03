@@ -19,7 +19,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 相比传统的基于内核日志（dmesg/syslog）采集方案，eBPF 事件观测具备更低的数据丢失风险——不会因内核日志缓冲区满溢而丢失关键事件；同时可捕获不会写入内核日志的短暂性异常（如软中断关闭时间过长）；并提供容器级别的事件关联信息，满足云原生场景下的精准定位需求。
 
-当前支持 11 类事件的持续观测，覆盖 CPU 调度健康状态（softirq_tracing、softlockup、hungtask）、内存压力（oom、memory_reclaim_events）、网络协议栈（dropwatch、net_rx_latency、netdev_events、netdev_bonding_lacp、netdev_txqueue_timeout）以及硬件可靠性（ras）等方面。
+当前支持 12 类事件的持续观测，覆盖 CPU 调度健康状态（softirq_tracing、softlockup、hungtask）、内存压力（oom、memory_reclaim_events）、网络协议栈（dropwatch、tcp_retransmit、net_rx_latency、netdev_events、netdev_bonding_lacp、netdev_txqueue_timeout）以及硬件可靠性（ras）等方面。
 
 ## 🎯 场景
 
@@ -27,7 +27,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 **AI 训练集群硬件故障感知**：在 GPU 训练服务器上，ras 事件持续采集 MCE（Machine Check Exception）、EDAC 内存控制器错误和 PCIe AER（Advanced Error Reporting）错误，对错误进行严重程度分级（Corrected / UncorrectedRecoverable / UncorrectedFatal），在训练任务中断前提前感知硬件老化或单点故障，减少因硬件故障导致的训练任务损失。
 
-**网络性能毛刺分析**：dropwatch 观测 TCP 协议栈丢包行为（含 syn_flood、listen_overflow 等类型），net_rx_latency 检测单个数据包从网卡驱动到用户态的完整接收路径延迟，按阶段（网卡到内核、内核到 TCP、TCP 到用户态）分别设置阈值（默认 5ms / 10ms / 115ms），精准定位造成业务超时的网络层位置，提升网络问题根因定位效率。
+**网络性能毛刺分析**：dropwatch 观测内核网络协议栈丢包行为，tcp_retransmit 观测 TCP 重传活动，net_rx_latency 检测单个数据包从网卡驱动到用户态的完整接收路径延迟，按阶段（网卡到内核、内核到 TCP、TCP 到用户态）分别设置阈值（默认 5ms / 10ms / 115ms），精准定位造成业务超时的网络层位置，提升网络问题根因定位效率。
 
 **主机调度健康观测**：softirq_tracing（软中断关闭时间，默认阈值 10ms）、softlockup（CPU 无法调度，约 1 秒）、hungtask（D 状态进程任务挂起）三类事件联合覆盖 CPU 调度路径的异常状态，当系统出现卡顿、响应超时等现象时，自动保留内核调用栈等诊断信息，支持在故障消失后的离线分析。
 
@@ -46,10 +46,12 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 | `net_rx_latency.driver2userspace` | `115`（ms） | 从网卡驱动到用户态拷贝（`skb_copy_datagram_iovec`）的延迟阈值 |
 | `net_rx_latency.excluded_host_netnamespace` | `true` | 是否过滤宿主机网络命名空间（默认仅观测容器） |
 | `net_rx_latency.excluded_container_qos` | `[]` | 需要排除的容器 QoS 级别列表 |
-| `dropwatch.excluded_neigh_invalidate` | `true` | 是否过滤 `neigh_invalidate` 引起的邻居表丢包噪声 |
+| `dropwatch.filter` | `tcp` | 在 dropwatch 事件输出前执行的 tcpdump 风格报文过滤表达式 |
+| `dropwatch.max_events_per_second` | `100` | 每秒最多输出的 dropwatch 事件数；`0` 表示不限速 |
+| `dropwatch.exclude_containers` | `[]` | 预留字段；当前 dropwatch 事件链路不会应用该配置 |
 | `netdev.device_list` | `[]` | 需要监控链路状态的网卡设备名称列表 |
 | `ras.mce_thr_backoff` | `1800`（秒） | MCE 阈值中断（THR）事件上报冷却时间，防止中断风暴 |
-| `issues_list` | `[]` | 已知问题过滤规则列表（用于 net_rx_latency） |
+| `issues_list` | `[]` | 已知问题抑制规则；分别匹配 net_rx_latency 事件标题和 dropwatch 内核调用栈 |
 
 ### 事件列表
 
@@ -61,11 +63,14 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 | `oom` | kprobe | OOM Killer 触发 | 容器/宿主机内存耗尽 |
 | `memory_reclaim_events` | kprobe | 容器进程直接回收时间 > 阈值（默认 900ms） | 内存压力导致业务卡顿 |
 | `ras` | tracepoint | CPU/MEM/PCIe 硬件错误 | 硬件故障感知 |
-| `dropwatch` | kprobe | TCP 协议栈丢包 | 协议栈丢包导致业务毛刺 |
+| `dropwatch` | tracepoint | 内核网络协议栈丢包 | 协议栈丢包导致业务毛刺 |
+| `tcp_retransmit` | tracepoint；TLP 使用可选 kprobe | TCP 重传或 Tail Loss Probe | TCP 丢包、乱序、拥塞及延迟诊断 |
 | `net_rx_latency` | kprobe | 协议栈接收延迟超分段阈值 | 接收延迟引起业务超时 |
 | `netdev_events` | netlink | 网卡链路状态变化 | 网卡物理链路故障 |
 | `netdev_bonding_lacp` | kprobe | LACP 协议状态变化（仅 802.3ad 模式环境） | 物理机与交换机故障边界界定 |
 | `netdev_txqueue_timeout` | kprobe | 网卡发送队列超时 | 网卡发送队列硬件故障 |
+
+tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpshark 文档](/docs/best-practice/tcpshark_zh.md)。
 
 ### 通用字段说明
 
@@ -126,7 +131,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 ### 2. dropwatch 协议栈丢包
 
-**功能描述** 检测内核网络协议栈中的丢包行为，输出丢包时的内核调用栈、网络五元组、TCP 状态等信息。支持识别 4 种丢包类型：`common_drop`（通用丢包）、`syn_flood`（SYN 洪泛）、`listen_overflow_handshake1`（半连接队列溢出）、`listen_overflow_handshake3`（全连接队列溢出）。过滤器默认排除 `neigh_invalidate` 邻居表过期丢包和 bnxt 驱动发送侧丢包等已知噪声。
+**功能描述** 检测内核网络协议栈中的丢包行为，输出丢包时的内核调用栈、网络五元组、TCP 状态等信息。可通过可选的调用栈过滤器抑制经本机验证的噪声模式。`type` 字段为兼容 TCP 丢包类型而预留，当前未赋值。
 
 **数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
 
@@ -135,48 +140,58 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 ```json
 {
     "tracer_data": {
-        "type": "common_drop",
+        "observed_timestamp": "2026-07-23T02:14:40.304775546Z",
+        "drop_reason": "SKB_DROP_REASON_NOT_SPECIFIED",
+        "source": "events",
         "comm": "kubelet",
         "pid": 1687046,
-        "saddr": "10.79.68.62",
-        "daddr": "10.134.72.4",
-        "sport": 8080,
-        "dport": 49000,
-        "src_hostname": "<nil>",
-        "dest_hostname": "<nil>",
-        "max_ack_backlog": 128,
-        "seq": 1009085774,
-        "ack_seq": 689410995,
-        "pkt_len": 1460,
-        "sk_state": "ESTABLISHED",
-        "stack": "kfree_skb/...",
+        "net_namespace_cookie": 123456789,
+        "net_namespace_inum": 402653184,
         "netdev_queue_mapping": 3,
         "netdev_linkstatus": ["linkStatusUp"],
         "netdev_name": "eth0",
         "netdev_ifindex": 2,
-        "net_cookie": 123456789
+        "packet_eth_proto": "0x0800",
+        "packet_len": 1460,
+        "layers": {
+            "label": "IPv4/TCP",
+            "ipv4": {
+                "saddr": "10.79.68.62",
+                "daddr": "10.134.72.4",
+                "protocol": "TCP"
+            },
+            "tcp": {
+                "sport": 8080,
+                "dport": 49000,
+                "seq": 1009085774,
+                "ack_seq": 689410995,
+                "flags": "ACK",
+                "sk_state": "ESTABLISHED"
+            }
+        },
+        "stack": "kfree_skb/..."
     }
 }
 ```
 
 **字段含义解释**
 
-- **type**：丢包类型（`common_drop` / `syn_flood` / `listen_overflow_handshake1` / `listen_overflow_handshake3`）
+- **type**：预留丢包类型，当前未赋值且不会出现在 JSON 中；预留编码为 `1`（通用丢包）、`2`（SYN 洪泛）、`3`（半连接队列溢出）、`4`（全连接队列溢出）
+- **drop_reason**：内核数据包丢弃原因
+- **source**：事件来源（独立运行 dropwatch 时为 `tools`，由 huatuo-bamai 启动时为 `events`）
 - **comm**：触发丢包的进程名称
 - **pid**：进程 ID
-- **saddr / daddr**：源 IP / 目的 IP 地址
-- **sport / dport**：源端口 / 目的端口
-- **src_hostname / dest_hostname**：源/目的 IP 的反向 DNS 解析结果
-- **max_ack_backlog**：socket 最大 accept 队列长度
-- **seq / ack_seq**：TCP 序列号 / 确认序列号
-- **pkt_len**：数据包长度（字节）
-- **sk_state**：丢包时 TCP 连接状态
-- **stack**：丢包发生时的内核调用栈
+- **net_namespace_cookie / net_namespace_inum**：用于容器归属解析的网络命名空间值
 - **netdev_queue_mapping**：网卡队列索引
 - **netdev_linkstatus**：网卡链路状态标志列表
 - **netdev_name**：网卡设备名称
 - **netdev_ifindex**：网卡接口索引
-- **net_cookie**：网络命名空间标识符
+- **packet_len**：数据包长度（字节）
+- **layers.ipv4.saddr / layers.ipv4.daddr**：源 IP 和目的 IP 地址
+- **layers.tcp.sport / layers.tcp.dport**：源端口和目的端口
+- **layers.tcp.seq / layers.tcp.ack_seq**：TCP 序列号和确认序列号
+- **layers.tcp.sk_state**：丢包时 TCP 连接状态
+- **stack**：丢包发生时的内核调用栈
 
 ### 3. net_rx_latency 协议栈延迟
 
@@ -201,7 +216,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
         "tcp_seq": 1009085774,
         "tcp_ack_seq": 689410995,
         "net_namespace_cookie": 123456789,
-        "net_namespace_inode": 402653184,
+        "net_namespace_inum": 402653184,
         "pkt_len": 26064
     }
 }
@@ -218,7 +233,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 - **tcp_sport / tcp_dport**：源端口 / 目的端口
 - **tcp_seq / tcp_ack_seq**：TCP 序列号 / 确认序列号
 - **net_namespace_cookie**：网络命名空间 cookie（内核 ≥ 5.14 可用，用于高效容器关联）
-- **net_namespace_inode**：网络命名空间 inode
+- **net_namespace_inum**：网络命名空间 inum
 - **pkt_len**：数据包长度（字节）
 
 ### 4. oom 内存耗尽
@@ -500,8 +515,8 @@ HUATUO 的异常事件观测基于 eBPF 技术，在内核态以极低的性能�
 graph TB
     subgraph "Linux Kernel"
         direction TB
-        K1["kprobe 挂钩\n(softirq_tracing / softlockup / hungtask\n oom / memory_reclaim_events / dropwatch\n net_rx_latency / netdev_txqueue_timeout)"]
-        K2["tracepoint 挂钩\n(ras: MCE / EDAC / AER / ACPI)"]
+        K1["kprobe 挂钩\n(softirq_tracing / softlockup / hungtask\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP，可选)"]
+        K2["tracepoint 挂钩\n(ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
         K3["netlink 订阅\n(netdev_events: RTM_NEWLINK)"]
         K4["kprobe 挂钩\n(netdev_bonding_lacp: 802.3ad)"]
         PEB["Perf Event 环形缓冲区\n(8192 页)"]

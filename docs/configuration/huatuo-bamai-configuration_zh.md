@@ -23,15 +23,12 @@ weight: 4
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio"]
+BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 ```
 
-- **BlackList**：全局追踪与指标黑名单。 
+- **BlackList**：全局追踪与指标黑名单。
 
-  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为
-  `["netdev_hw", "metax_gpu", "ascend_npu", "diskio"]`，即全局禁用网络设备
-  硬件层（netdev_hw）、Metax GPU、Ascend NPU 和基于 procfs 的磁盘 I/O
-  指标。需要启用磁盘 I/O 指标时，从黑名单中移除 `diskio`。
+  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]`，即全局禁用网络设备硬件层（netdev_hw）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标和 TCP 重传追踪。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪及其丢包关联缓存时移除 `tcp_retransmit`。
 
   **说明**：添加黑名单项可有效降低资源消耗，尤其在特定硬件环境中；支持数组格式，可根据实际业务扩展。
 
@@ -771,26 +768,64 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio"]
 
 #### 8.5 丢包监控（[EventTracing.Dropwatch]）
 
-```bash
-# dropwatch
-#
-# monitor packets dropped events in the Linux kernel.
-#
-# - ExcludedNeighInvalidate
-# Don't care of neigh_invalidate drop events.
-# Default: true
-#
+```toml
 [EventTracing.Dropwatch]
-	# ExcludedNeighInvalidate = true
+    # tcpdump 风格过滤表达式，转发给 dropwatch --filter。
+    # 默认值："tcp"
+    Filter = "tcp"
+
+    # 转发给 dropwatch --max-events-per-second。
+    # 默认值：100；0 表示不限速。
+    MaxEventsPerSecond = 100
+
+    # 预留配置字段。当前 dropwatch 事件链路未消费该字段，
+    # 因此不会产生容器过滤效果。
+    # 默认值：[]
+    ExcludeContainers = []
 ```
 
-- **ExcludedNeighInvalidate**：是否排除邻居表无效化（neigh_invalidate）导致的丢包事件。
+- **Filter**：传给 `dropwatch --filter` 的 tcpdump 风格报文过滤表达式，在事件输出前由 BPF 程序执行。
 
-  默认 true。 
+  默认值：`"tcp"`。
 
-  **说明**：邻居表相关丢包通常为正常行为，排除可减少误报。
+- **MaxEventsPerSecond**：BPF 侧每秒最多输出的 dropwatch 事件数。
 
-#### 8.6 硬件错误事件追踪（EventTracing.Ras）
+  默认值：`100`，设置为 `0` 表示不限速。
+
+- **ExcludeContainers**：预留的容器排除列表。
+
+  默认值：`[]`。该字段存在于配置结构中，但当前 dropwatch 事件链路既不读取也不转发它，因此配置后不会生效。运维侧如需按调用栈抑制 dropwatch 噪声，应使用 `EventTracing.IssuesList`。
+
+#### 8.6 TCP 重传追踪（[EventTracing.TCPRetransmit]）
+
+```bash
+[EventTracing.TCPRetransmit]
+    # Forwarded to tcpshark --filter.
+    # Only tcp_retransmit_skb events are filtered.
+    # Default: ""
+    Filter = ""
+
+    # Forwarded as tcpshark --enable-tlp. Default: false.
+    EnableTLP = false
+
+    # Forwarded as tcpshark --max-events-per-second.
+    # Default: 100; 0 disables rate limiting.
+    MaxEventsPerSecond = 100
+```
+
+- **Filter**：传给 `tcpshark --filter` 的 tcpdump 风格过滤表达式。
+
+  默认空字符串。仅过滤 `tcp_retransmit_skb` 事件。
+
+- **EnableTLP**：是否采集 `tcp_send_loss_probe` 事件。
+
+  默认 false。
+
+- **MaxEventsPerSecond**：BPF 侧每秒最多输出的 TCP 重传事件数。
+
+  默认 100，设置为 0 表示不限速。超限时 `tcpshark` 会输出 `rate limit hit` 日志。
+
+#### 8.7 硬件错误事件追踪（EventTracing.Ras）
 
 ```bash
 # ras
@@ -826,11 +861,11 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio"]
     IssuesList = []
 ```
 
-- **IssuesList**：已知问题过滤器。格式和用法同 AutoTracing 的 `IssuesList`。匹配事件上下文，标记为对应问题名称，默认 `[]`。
+- **IssuesList**：已知问题抑制规则，格式为 `[["名称", "正则"], ...]`，默认值为 `[]`。
 
-  示例：`IssuesList = [["known_issue1", "comm=ignored_process"]]`
+  对 `net_rx_latency`，正则匹配生成的事件标题；对 `dropwatch`，正则匹配以换行符连接的内核调用栈。匹配后事件会被丢弃；配置的名称只用于标识规则，不会写入已保存事件。
 
-**注意**：当前仅支持 `net_rx_latency` 事件的过滤，其他事件暂不支持。
+  示例：`IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
 
 ### 9. 指标采集器配置
 
