@@ -22,7 +22,8 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
-	executil "huatuo-bamai/internal/profiler/exec"
+	profilerexec "huatuo-bamai/internal/profiler/exec"
+	"huatuo-bamai/internal/utils/executil"
 )
 
 const (
@@ -71,7 +72,7 @@ func RetrySampleProfiler(ctx context.Context, pid, dur, freq int, toolPath, outp
 			if attempt == maxRetries {
 				msg := fmt.Sprintf("PID[%d] sampling failed after %d retries: profiler still running", pid, maxRetries)
 
-				if err := executil.StopProfiler(asprofPath(toolPath), pid); err != nil {
+				if err := profilerexec.StopProfiler(asprofPath(toolPath), pid); err != nil {
 					log.Warnf("stop profiler for pid %d: %v", pid, err)
 				}
 				cmdRes.Pid = pid

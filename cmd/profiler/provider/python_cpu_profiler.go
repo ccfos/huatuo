@@ -24,9 +24,10 @@ import (
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	executil "huatuo-bamai/internal/profiler/exec"
+	profilerexec "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
+	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/profiling"
 )
 
@@ -156,7 +157,7 @@ func runPySpy(ctx context.Context, pids []int, dur, freq int, pyspyPath string) 
 	durStr := strconv.Itoa(dur)
 	freqStr := strconv.Itoa(freq)
 
-	return executil.ExecCmds(ctx, pids, pyspyBin, func(pid int) []string {
+	return profilerexec.ExecCmds(ctx, pids, pyspyBin, func(pid int) []string {
 		return buildPySpyArgs(pid, durStr, freqStr)
 	})
 }

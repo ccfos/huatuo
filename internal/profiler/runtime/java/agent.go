@@ -26,9 +26,10 @@ import (
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
-	executil "huatuo-bamai/internal/profiler/exec"
+	profilerexec "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/fileutil"
 	"huatuo-bamai/internal/profiler/procutil"
+	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/tracing"
 )
 
@@ -131,7 +132,7 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 
 	asprofBin := asprofPath(opt.ToolPath)
 	startCtx, cancel := context.WithTimeout(ctx, asprofCommandTimeout)
-	cmdResults := executil.ExecCmds(startCtx, opt.Pids, asprofBin, func(pid int) []string {
+	cmdResults := profilerexec.ExecCmds(startCtx, opt.Pids, asprofBin, func(pid int) []string {
 		return argsByPID[pid]
 	})
 	startCtxErr := startCtx.Err()
@@ -250,7 +251,7 @@ func stopActiveAsprofProcesses(ctx context.Context, opt *AsprofSamplingOption) e
 	defer cancel()
 
 	activePIDs := opt.activePIDList()
-	results := executil.ExecCmds(stopCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
+	results := profilerexec.ExecCmds(stopCtx, activePIDs, asprofPath(opt.ToolPath), func(pid int) []string {
 		return []string{
 			"stop",
 			"--libpath", "/tmp/libasyncProfiler.so",
