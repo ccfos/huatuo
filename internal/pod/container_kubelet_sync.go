@@ -387,13 +387,13 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 	}
 
 	// net namespace
-	nsInode, err := netutil.NetNSInodeByPid(initPid)
+	nsInum, err := netutil.NetNSInumByPid(initPid)
 	if err != nil {
-		return fmt.Errorf("failed to get net namespace inode by pid: %w", err)
+		return fmt.Errorf("failed to get net namespace inum by pid: %w", err)
 	}
 
 	// net namespace cookie (Linux 5.14+; falls back to 0 on older kernels)
-	netCookie, err := netutil.NetNSCookieByPid(initPid)
+	netNSCookie, err := netutil.NetNSCookieByPid(initPid)
 	if err != nil {
 		log.Debugf("failed to get net namespace cookie for pid %d: %v", initPid, err)
 	}
@@ -425,8 +425,8 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 		Type:               containerType,
 		Qos:                containerQos,
 		IPAddress:          parseContainerIPAddress(pod),
-		NetNamespaceInode:  nsInode,
-		NetNamespaceCookie: netCookie,
+		NetNamespaceInum:   nsInum,
+		NetNamespaceCookie: netNSCookie,
 		InitPid:            initPid,
 		CgroupPath:         cgroupPath,
 		CgroupCss:          css,

@@ -35,10 +35,10 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 		{
 			name: "ipv4_tcp",
 			pkt: &packet.Packet{
-				Ether: &packet.Ether{Src: mustMAC("aa:bb:cc:dd:ee:ff"), Dst: mustMAC("11:22:33:44:55:66"), Type: "IPv4"},
-				IPv4:  &packet.IPv4{Src: net.IPv4(10, 0, 0, 1), Dst: net.IPv4(10, 0, 0, 2)},
+				Ether: &packet.Ether{Saddr: mustMAC("aa:bb:cc:dd:ee:ff"), Daddr: mustMAC("11:22:33:44:55:66"), Type: "IPv4"},
+				IPv4:  &packet.IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
 				TCP: &packet.TCP{
-					SrcPort: 1234, DstPort: 80, Seq: 1, Ack: 2, Window: 3,
+					Sport: 1234, Dport: 80, Seq: 1, AckSeq: 2, Window: 3,
 					Flags: "FIN|ACK", SkState: "CLOSE_WAIT",
 				},
 			},
@@ -46,15 +46,15 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 		{
 			name: "ipv6_udp",
 			pkt: &packet.Packet{
-				Ether: &packet.Ether{Src: mustMAC("aa:bb:cc:dd:ee:ff"), Dst: mustMAC("11:22:33:44:55:66"), Type: "IPv6"},
-				IPv6:  &packet.IPv6{Src: net.ParseIP("::1"), Dst: net.ParseIP("::2")},
-				UDP:   &packet.UDP{SrcPort: 53, DstPort: 1234, Length: 64, Checksum: 0xabcd},
+				Ether: &packet.Ether{Saddr: mustMAC("aa:bb:cc:dd:ee:ff"), Daddr: mustMAC("11:22:33:44:55:66"), Type: "IPv6"},
+				IPv6:  &packet.IPv6{Saddr: net.ParseIP("::1"), Daddr: net.ParseIP("::2")},
+				UDP:   &packet.UDP{Sport: 53, Dport: 1234, Length: 64, Checksum: 0xabcd},
 			},
 		},
 		{
 			name: "arp",
 			pkt: &packet.Packet{
-				Ether: &packet.Ether{Src: mustMAC("aa:bb:cc:dd:ee:ff"), Dst: mustMAC("11:22:33:44:55:66"), Type: "ARP"},
+				Ether: &packet.Ether{Saddr: mustMAC("aa:bb:cc:dd:ee:ff"), Daddr: mustMAC("11:22:33:44:55:66"), Type: "ARP"},
 				ARP: &packet.ARP{
 					Operation: "request",
 					SenderMAC: mustMAC("aa:bb:cc:dd:ee:ff"), SenderIP: net.IPv4(10, 0, 0, 1),

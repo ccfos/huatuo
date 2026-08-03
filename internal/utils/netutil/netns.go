@@ -24,8 +24,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// NetNSInodeByPid returns the inode of the network namespace for the given pid.
-func NetNSInodeByPid(pid int) (uint64, error) {
+// NetNSInumByPid returns the inum of the network namespace for the given pid.
+func NetNSInumByPid(pid int) (uint64, error) {
 	netnsStat, err := os.Stat(fmt.Sprintf("/proc/%d/ns/net", pid))
 	if err != nil {
 		return 0, err
