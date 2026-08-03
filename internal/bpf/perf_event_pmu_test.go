@@ -42,10 +42,11 @@ func TestAttachPerfEvent(t *testing.T) {
 			wantOK: true,
 		},
 		{
-			name: "zero mode uses frequency",
+			name: "ok period sampling",
 			opt: &perfEventOption{
-				sample:  1,
-				program: prog,
+				sample:     1,
+				sampleMode: perfEventSamplePeriod,
+				program:    prog,
 			},
 			wantOK: true,
 		},
@@ -249,7 +250,7 @@ func newTestProgram(t *testing.T) *ebpf.Program {
 // skipPerfEventIfNotAvailable skips tests if perf is unavailable due to kernel restrictions or permissions.
 func skipPerfEventIfNotAvailable(t *testing.T, err error) {
 	t.Helper()
-	if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.ENOENT) || errors.Is(err, unix.EINVAL) {
+	if errors.Is(err, unix.EPERM) || errors.Is(err, unix.EACCES) || errors.Is(err, unix.ENOENT) {
 		t.Skipf("skipping: perf event unavailable in this environment: %v", err)
 	}
 }

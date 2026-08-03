@@ -75,15 +75,21 @@ func (opt *perfEventOption) Validate() error {
 func openPerfEvent(attr *unix.PerfEventAttr, progFD, cpuID int) (int, error) {
 	fd, err := unix.PerfEventOpen(attr, -1, cpuID, -1, unix.PERF_FLAG_FD_CLOEXEC)
 	if err != nil {
-		return -1, err
+		return -1, fmt.Errorf("open perf event on cpu %d: %w", cpuID, err)
 	}
 
 	if err := unix.IoctlSetInt(fd, unix.PERF_EVENT_IOC_SET_BPF, progFD); err != nil {
-		return -1, errors.Join(err, closePerfEventFDs([]int{fd}))
+		return -1, errors.Join(
+			fmt.Errorf("set bpf program on perf event for cpu %d: %w", cpuID, err),
+			closePerfEventFDs([]int{fd}),
+		)
 	}
 
 	if err := unix.IoctlSetInt(fd, unix.PERF_EVENT_IOC_ENABLE, 0); err != nil {
-		return -1, errors.Join(err, closePerfEventFDs([]int{fd}))
+		return -1, errors.Join(
+			fmt.Errorf("enable perf event on cpu %d: %w", cpuID, err),
+			closePerfEventFDs([]int{fd}),
+		)
 	}
 
 	return fd, nil
