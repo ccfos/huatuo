@@ -58,6 +58,10 @@ type ProfilerContext struct {
 	ToolPath                  string
 	LogBpfDebug               bool
 	MemoryMode                profiling.MemoryMode
+	CPUMode                   profiling.CPUMode
+	OffCPUMetric              profiling.OffCPUMetric
+	OffCPUMinUS               uint64
+	OffCPUMaxUS               uint64
 	PhysicalMemoryProbability uint
 
 	TracerID string
@@ -144,6 +148,22 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 			return nil, err
 		}
 	}
+	cpuModeValue := cliCtx.String("cpu-mode")
+	if cpuModeValue == "" {
+		cpuModeValue = string(profiling.CPUModeOnCPU)
+	}
+	cpuMode, err := profiling.ParseCPUMode(cpuModeValue)
+	if err != nil {
+		return nil, err
+	}
+	offcpuMetricValue := cliCtx.String("offcpu-metric")
+	if offcpuMetricValue == "" {
+		offcpuMetricValue = string(profiling.OffCPUMetricTotal)
+	}
+	offcpuMetric, err := profiling.ParseOffCPUMetric(offcpuMetricValue)
+	if err != nil {
+		return nil, err
+	}
 	profilerContext := &ProfilerContext{
 		Ctx:    ctx,
 		Cancel: cancelProfiler,
@@ -167,6 +187,10 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		OutputPath:                cliCtx.String("output-path"),
 		OutputFormat:              outputFormat,
 		MemoryMode:                mode,
+		CPUMode:                   cpuMode,
+		OffCPUMetric:              offcpuMetric,
+		OffCPUMinUS:               cliCtx.Uint64("offcpu-min-us"),
+		OffCPUMaxUS:               cliCtx.Uint64("offcpu-max-us"),
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
 
 		TracerID: cliCtx.String("tracer-id"),

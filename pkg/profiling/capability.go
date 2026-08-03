@@ -50,6 +50,24 @@ const (
 	MemoryModePhysicalUsage MemoryMode = "physical_usage"
 )
 
+// CPUMode selects whether native CPU profiling samples running tasks or
+// attributes time spent descheduled to the stack that caused the deschedule.
+type CPUMode string
+
+const (
+	CPUModeOnCPU  CPUMode = "oncpu"
+	CPUModeOffCPU CPUMode = "offcpu"
+)
+
+// OffCPUMetric selects which part of a deschedule interval is accumulated.
+type OffCPUMetric string
+
+const (
+	OffCPUMetricTotal    OffCPUMetric = "total"
+	OffCPUMetricBlocked  OffCPUMetric = "blocked"
+	OffCPUMetricRunnable OffCPUMetric = "runnable"
+)
+
 type Implementation string
 
 const (
@@ -123,6 +141,22 @@ func ParseMemoryMode(value string) (MemoryMode, error) {
 		}
 	}
 	return MemoryModeUnknown, fmt.Errorf("unsupported memory mode %q", value)
+}
+
+func ParseCPUMode(value string) (CPUMode, error) {
+	mode := CPUMode(value)
+	if mode == CPUModeOnCPU || mode == CPUModeOffCPU {
+		return mode, nil
+	}
+	return "", fmt.Errorf("unsupported CPU mode %q (expected: oncpu or offcpu)", value)
+}
+
+func ParseOffCPUMetric(value string) (OffCPUMetric, error) {
+	metric := OffCPUMetric(value)
+	if metric == OffCPUMetricTotal || metric == OffCPUMetricBlocked || metric == OffCPUMetricRunnable {
+		return metric, nil
+	}
+	return "", fmt.Errorf("unsupported off-CPU metric %q (expected: total, blocked, or runnable)", value)
 }
 
 func IsSupported(language Language, typ Type) bool {
