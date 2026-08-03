@@ -5,7 +5,7 @@
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 
-#include "vmlinux_net.h"
+#include "bpf_skbuff.h"
 
 /*
  * Device filter injected via RewriteConstants + map population at load time.

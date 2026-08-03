@@ -3,7 +3,7 @@
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
 #include "bpf_tracepoint.h"
-#include "vmlinux_net.h"
+#include "bpf_skbuff.h"
 #include "abi/netdev_txqueue_timeout_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";

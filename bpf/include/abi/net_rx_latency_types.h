@@ -33,7 +33,7 @@ struct net_rx_latency_event {
 	u8 pad[2];
 	u8 netdev_name[IFNAMSIZ];
 	u32 netns_inum;
-	u64 net_cookie;
+	u64 netns_cookie;
 };
 
 BPF_ABI_EXPORT(net_rx_latency_event);
