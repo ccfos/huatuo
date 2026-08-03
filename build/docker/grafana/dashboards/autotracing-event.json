@@ -72,7 +72,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "Shows the percentage breakdown of each event type relative to the total number of captured events.  \nProvides a quick overview of dominant event categories and their proportional impact.",
+      "description": "Event type distribution by percentage.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -607,7 +607,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "Displays the temporal distribution of captured events along the timeline.  \nHelps analyze event occurrence patterns, bursts, and correlations over time.",
+      "description": "Event occurrence over time.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -726,7 +726,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## cpusys(Autotracing)\n\nDetects abnormal spikes in system CPU usage (`sys`, kernel space) on physical hosts.  \nWhen triggered, it automatically generates flame graphs and provides process-level context for root cause analysis.\n\nHelps identify and resolve application jitter and latency issues caused by abnormal system load.\n\n### Threshold Definition\n\n**Trigger conditions (ANY of the following):**\n- `sys` CPU usage > 50%\n- `sys` CPU usage fluctuation > 30% within 1 second",
+      "description": "Detects abnormal system CPU (sys) spikes. Triggers automatic call stack capture.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -846,7 +846,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## softirq(Event)\n\nDetects excessively long softirq disabled duration in the kernel.  \nOutputs kernel call stack and process context information for analysis.\n\nHelps identify and resolve system stalls, network latency, and scheduling delays.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Softirq disabled duration > 100 ms",
+      "description": "Detects excessive softirq-disabled durations. Outputs kernel call stack.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -966,7 +966,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## netdev down (Event)\n\nDetects network device link status changes.\n\nIdentifies both physical link failures and administrative (software-triggered) link-down events on network interfaces.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Network interface down event detected (physical layer down or administrative down)",
+      "description": "Detects network device link state changes (physical or administrative).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1046,7 +1046,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## cpuidle (Autotracing)\n\nDetects abnormal decreases in container CPU idle rate, automatically generates flame graphs and provides process context information.\n\nAddresses abnormal container CPU usage and helps analyze process hotspots.\n\n### Threshold Definition\n\n**Trigger conditions (ANY of the following):**\n- `sys` CPU usage > 45%  \n- `user` CPU usage > 75% AND fluctuation > 30% within 10 seconds  \n- `usage` CPU usage > 90% AND fluctuation > 30% within 10 seconds  ",
+      "description": "Detects abnormal container CPU idle rate drops. Generates flame graphs.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1166,7 +1166,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## container loadavg (Autotracing)\n\nDetects sudden increases in container load average.  \nAutomatically captures call stack information of D-state processes within the container.\n\nHelps identify and resolve issues caused by spikes in D-state processes, resource contention, or long-held locks.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- D-state process detected in container",
+      "description": "Detects sudden container load average increases. Captures call stacks.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1286,7 +1286,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## net rx latency (Event)\n\nDetects latency events along the network receive path (driver → protocol stack → user space).\n\nHelps identify and resolve application timeouts and jitter caused by receive-side latency.\n\n### Threshold Definition\n\n**Trigger conditions (ANY of the following):**\n- NIC → driver receive latency > 5 ms  \n- NIC → protocol stack receive latency > 10 ms  \n- NIC → user-space copy latency > 115 ms  \n\n**Latency location filters (`where`):**\n- `TO_NETIF_RCV`  \n- `TO_TCPV4_RCV`  \n- `TO_USER_COPY`  \n\n> Note: Most events are attributed to `TO_USER_COPY`, indicating delays caused by user-space read operations exceeding the threshold.",
+      "description": "Detects latency along the network receive path (driver -> stack -> userspace).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1406,7 +1406,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## softlockup (Event)\n\nDetects softlockup events and provides target process and kernel stack information.\n\nHelps locate and resolve system softlockup issues.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Softlockup event detected",
+      "description": "Detects softlockup events. Provides target process and kernel stack info.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1526,7 +1526,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## ras (Event)\n\nDetects hardware faults across CPU, memory, PCIe, and other subsystems.\n\nEnables timely detection of hardware failures to minimize impact on applications.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Hardware error event detected",
+      "description": "Detects hardware faults (CPU, memory, PCIe).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1646,7 +1646,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## iotracing (Autotracing)\n\nDetects abnormal disk I/O latency on physical hosts.  \nAutomatically captures related process, container, disk, and file-level context.\n\nHelps identify and resolve application latency and system performance jitter caused by I/O saturation or sudden spikes in disk access.\n\n### Threshold Definition\n\n**Trigger conditions (ANY of the following):**\n\n**1. HDD / SATA SSD:**\n- `io.util` > 90% sustained for > 2 seconds  \n- 2-second average I/O latency > 100 ms  \n\n**2. NVMe SSD:**\n- `io.util` > 90% AND I/O bandwidth exceeds:\n  - Read > 2000 MB/s **OR**\n  - Write > 1500 MB/s  \n- 2-second average I/O latency > 100 ms",
+      "description": "Detects abnormal disk I/O latency. Captures related process stacks.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1766,7 +1766,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## oom (Event)\n\nDetects Out-Of-Memory (OOM) events on the host or within containers.\n\nFocuses on memory exhaustion issues and provides detailed fault snapshots for analysis.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- OOM event detected on host or container",
+      "description": "Detects OOM events on host or containers. Records OOM score and victim process.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1886,7 +1886,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## waitrate (Autotracing)\n\nDetects abnormal increases in container wait rate based on statistical anomaly detection.  \nContinuously analyzes historical wait rate behavior and identifies significant deviations.\n\nHelps identify performance degradation caused by resource contention, scheduling delays, or blocking operations.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- For each container, compute `mean` and `std` of wait rate over the past 30 minutes  \n- Alert is triggered when:\n  - `waitrate > mean + std × factor`\n\n**Service levels:**\n- Level 0: factor = 30  \n- Level 1: factor = 40  \n- Level 2: factor = 60  ",
+      "description": "Detects abnormal container wait rate increases via statistical anomaly detection.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2006,7 +2006,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "pad...",
+      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2126,7 +2126,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## hungtask (Event)\n\nDetects hung task events and outputs all processes in D-state along with their stack traces.\n\nCaptures transient scenarios with large numbers of D-state processes and preserves the fault context for analysis.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Hung task event detected",
+      "description": "Detects hung tasks. Outputs D-state processes and their stack traces.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2246,7 +2246,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## reclaim (Event)\n\nDetects direct memory reclaim events, recording reclaim duration along with process and container context.\n\nHelps identify and resolve application stalls caused by memory pressure.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Within a 1-second sampling window, cumulative time a process spends in `sys` state > 900 ms  \n  *(Note: due to non-preemptible kernel execution, observed duration may exceed 1 second)*",
+      "description": "Detects direct memory reclaim events. Records duration and process/container context.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2366,7 +2366,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## dropwatch (Event)\n\nDetects packet drops within the kernel network protocol stack.  \nOutputs kernel call stack and network context for analysis.\n\nHelps identify and resolve application jitter and latency caused by packet drops in the protocol stack.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- TCP request traffic AND TCP state != `CLOSED`\n\n**Excluded scenarios:**\n- Out-of-order (OOO) packets in `CLOSE_WAIT` state\n\n```\n// state: CLOSE_WAIT\n// stack:\n//  1. kfree_skb/ffffffff963047b0\n//  2. kfree_skb/ffffffff963047b0\n//  3. skb_rbtree_purge/ffffffff963089e0\n//  4. tcp_fin/ffffffff963ac200\n//  5. ...\n```",
+      "description": "Detects packet drops in the kernel network stack. Outputs call stack and interface.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2486,7 +2486,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## memburst (Autotracing)\n\nDetects sudden bursts in memory allocation on physical hosts.  \nAutomatically captures process-level memory usage context.\n\nHelps identify scenarios with rapid memory growth that may trigger direct reclaim or OOM conditions.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Memory usage doubles within the last 5 minutes AND current anonymous memory usage on the host ≥ 70%",
+      "description": "Detects sudden memory allocation bursts. Captures process allocation stacks.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2606,7 +2606,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "## TX queue timeout (Event)\n\nDetects network interface transmit queue timeout events.\n\nHelps identify and locate hardware or driver issues in the NIC transmit queue.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Transmit queue timeout event detected",
+      "description": "Detects NIC transmit queue timeout events. Identifies hardware/driver failures.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2726,7 +2726,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "pad...",
+      "description": "",
       "fieldConfig": {
         "defaults": {
           "color": {

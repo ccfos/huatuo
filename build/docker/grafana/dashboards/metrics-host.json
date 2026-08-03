@@ -72,7 +72,7 @@
         "type": "prometheus",
         "uid": "huatuo-bamai-prom"
       },
-      "description": "List of all containers running on this host.",
+      "description": "Containers on this host.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -311,7 +311,7 @@
       ],
       "title": "Selected Metric: $metric",
       "type": "timeseries",
-      "description": "Arbitrary metric selected from the $metric variable, filtered by host and region."
+      "description": "Selected metric filtered by host and region."
     },
     {
       "collapsed": true,
@@ -332,7 +332,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Host-level user-space CPU utilization",
+          "description": "Host user CPU utilization.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -435,7 +435,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Host-level kernel-space CPU utilization",
+          "description": "Host kernel CPU utilization.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -535,7 +535,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Per-container user-space CPU utilization on host.",
+          "description": "Per-container user CPU utilization.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -637,7 +637,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Per-container kernel-space CPU utilization on host.",
+          "description": "Per-container kernel CPU utilization.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -736,7 +736,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Wait time caused by host-level resource contention outside the container's cgroup.",
+          "description": "Wait time from host-level resource contention.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -835,7 +835,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Wait time caused by cgroup quota limits within the\ncontainer.",
+          "description": "Wait time from cgroup CPU quota limits.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -934,7 +934,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "CPU throttling events when container exceeds its cgroup CPU quota.",
+          "description": "CPU throttle events when cgroup quota exceeded.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1034,7 +1034,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "CPU run queue latency distribution by zone (rate)",
+          "description": "Run queue latency distribution by zone (rate).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1137,7 +1137,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Softirq latency distribution by type and zone (rate)",
+          "description": "Softirq latency distribution by type and zone (rate).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1267,7 +1267,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Cumulative count of pages reclaimed synchronously by the  process itself (direct reclaim path)",
+          "description": "Pages reclaimed via direct reclaim path (cumulative).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1367,7 +1367,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Cumulative count of pages reclaimed asynchronously by the kswapd background daemon.",
+          "description": "Pages reclaimed by kswapd daemon (cumulative).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1467,7 +1467,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Real-time count of memory pages modified but not yet written to disk.",
+          "description": "Dirty pages not yet written to disk.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1567,7 +1567,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Real-time count of memory pages currently being flushed to disk.",
+          "description": "Pages being flushed to disk.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1666,7 +1666,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Real-time count of unallocated memory pages available on the host.",
+          "description": "Free memory pages available.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1765,7 +1765,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Real-time size of file-backed page cache in memory.",
+          "description": "File-backed page cache size.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1864,7 +1864,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Real-time anonymous memory usage including shared memory (shmem/tmpfs).",
+          "description": "Anonymous memory including shmem/tmpfs.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1992,7 +1992,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total received bytes per second across all network interfaces.",
+          "description": "Rx bytes/s across all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2105,7 +2105,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total received packets per second across all network interfaces.",
+          "description": "Rx packets/s across all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2217,7 +2217,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total transmitted bytes per second across all network interfaces.",
+          "description": "Tx bytes/s across all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2328,7 +2328,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total transmitted packets per second across all network interfaces.",
+          "description": "Tx packets/s across all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2439,7 +2439,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Receive-side anomaly stats: drops, errors, FIFO overruns, frame errors (packets/s).",
+          "description": "Rx anomalies: drops, errors, overruns, frame errors (pkt/s).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2551,7 +2551,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Transmit-side anomaly stats: drops, errors, FIFO overruns, carrier errors (packets/s).",
+          "description": "Tx anomalies: drops, errors, overruns, carrier errors (pkt/s).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2687,7 +2687,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Queueing discipline total throughput (MiB/s).",
+          "description": "Qdisc throughput (MiB/s).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2810,7 +2810,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Queueing discipline total packet rate (packets/s).",
+          "description": "Qdisc packet rate (pkt/s).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2933,7 +2933,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Qdisc-level anomaly stats: drops, backlog, overlimits, requeues (packets/s).",
+          "description": "Qdisc anomalies: drops, backlog, overlimits, requeues (pkt/s).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3105,7 +3105,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total ARP request and reply packets on all interfaces.",
+          "description": "ARP packets/s on all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3258,7 +3258,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Number of TCP sockets currently in use.",
+          "description": "TCP sockets in use.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3397,7 +3397,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Number of TCP sockets in TIME_WAIT state.",
+          "description": "TCP sockets in TIME_WAIT.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3536,7 +3536,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total socket count across all protocols (TCP, UDP, RAW, etc.).",
+          "description": "Total sockets across all protocols.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3675,7 +3675,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total memory consumed by TCP socket buffers (bytes).",
+          "description": "TCP socket buffer memory (bytes).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3814,7 +3814,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total memory consumed by UDP socket buffers (bytes).",
+          "description": "UDP socket buffer memory (bytes).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3953,7 +3953,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Number of UDP sockets currently in use.",
+          "description": "UDP sockets in use.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4092,7 +4092,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Aggregated kernel netstat counters (SNMP/netstat).",
+          "description": "Kernel netstat counters (SNMP).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4286,7 +4286,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Packet loss rate derived from netstat counters.",
+          "description": "Packet loss rate from netstat.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4570,7 +4570,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Network error counters: InErrors, OutErrors, InCsumErrors, etc.",
+          "description": "Network errors: InErrors, OutErrors, InCsumErrors.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4809,7 +4809,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "TCP segment retransmission rate and count.",
+          "description": "TCP retransmission rate and count.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4988,7 +4988,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Packets dropped due to socket receive buffer exhaustion (RcvbufErrors, SndbufErrors).",
+          "description": "Packets dropped from buffer exhaustion (RcvbufErrors, SndbufErrors).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5107,7 +5107,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "TCP SYN packet statistics: SYN received, SYN sent, SYN retransmissions.",
+          "description": "TCP SYN stats: received, sent, retransmissions.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5256,7 +5256,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Packets dropped at the NIC hardware/driver level (packets/s).",
+          "description": "NIC hardware/driver drops (pkt/s).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5387,7 +5387,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Disk IO count where queue-to-completion (q2c) latency exceeds 20ms, 5-minute incremental.",
+          "description": "Disk IO with q2c latency >20ms (5-min incremental).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5488,7 +5488,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Disk IO count where device-to-completion (d2c) latency exceeds 20ms, 5-minute incremental.",
+          "description": "Disk IO with d2c latency >20ms (5-min incremental).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5614,7 +5614,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Disk IO count where RAID flush latency exceeds 20ms, 5-minute incremental.",
+          "description": "Disk IO with RAID flush latency >20ms (5-min incremental).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5742,7 +5742,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "XFS fragmentation level measured as average blocks per extent per second.",
+          "description": "XFS fragmentation: avg blocks per extent.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5846,7 +5846,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "XFS inode cache hit rate, 5-minute rolling average per second.",
+          "description": "XFS inode cache hit rate (5-min avg).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -5950,7 +5950,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "XFS buffer lock contention: number of waits for locked buffers per second.",
+          "description": "XFS buffer lock contention waits/s.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -6054,7 +6054,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "XFS buffer busy acquisition: number of retries on busy buffers per second.",
+          "description": "XFS buffer busy retries/s.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -6158,7 +6158,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Remaining free space in the XFS journal/write-ahead log (bytes).",
+          "description": "XFS journal free space (bytes).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -6262,7 +6262,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Count of sleeps per second due to XFS journal space exhaustion.",
+          "description": "XFS journal exhaustion sleeps/s.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -6393,7 +6393,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Process CPU usage as percentage of one core, derived from process_cpu_seconds_total rate.",
+          "description": "Process CPU usage (% of one core).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -6494,7 +6494,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Process RSS: total physical memory held by the OS. Go Runtime Total: all memory obtained from the OS by the Go runtime. Go Heap In-Use: live objects on the Go heap. Go Stack: goroutine stack memory.",
+          "description": "Process RSS and Go runtime memory breakdown. Go Heap In-Use: live objects on the Go heap. Go Stack: goroutine stack memory.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -6634,7 +6634,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Current number of open file descriptors of the huatuo-bamai process.",
+          "description": "Open file descriptors.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -6735,7 +6735,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Goroutines: number of Go goroutines. OS Threads: number of OS-level threads created by the Go runtime. A growing thread count may indicate a thread leak.",
+          "description": "Goroutine and OS thread count. count may indicate a thread leak.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -6849,7 +6849,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Number of live objects allocated on the Go heap. A sustained upward trend may indicate an object leak.",
+          "description": "Live heap objects; sustained growth may indicate a leak.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -6950,7 +6950,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Average Go GC stop-the-world pause time per collection cycle. High values cause request latency spikes.",
+          "description": "Avg GC stop-the-world pause per cycle.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -7051,7 +7051,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Current GOGC setting controlling GC frequency. 100 means GC triggers when heap doubles. Lower values increase GC frequency and reduce memory usage.",
+          "description": "GOGC setting controlling GC trigger threshold.cy and reduce memory usage.",
           "fieldConfig": {
             "defaults": {
               "color": {

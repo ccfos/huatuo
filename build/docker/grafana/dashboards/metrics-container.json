@@ -46,7 +46,7 @@
         "type": "prometheus",
         "uid": "huatuo-bamai-prom"
       },
-      "description": "Arbitrary metric selected from the $metric variable, filtered by container host and region.",
+      "description": "Selected metric filtered by container host and region.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -163,7 +163,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Per-container user-space CPU utilization.",
+          "description": "Per-container user CPU utilization.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -265,7 +265,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Per-container kernel-space CPU utilization.",
+          "description": "Per-container kernel CPU utilization.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -367,7 +367,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Wait time caused by cgroup quota limits within the container.",
+          "description": "Wait time from cgroup CPU quota limits.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -469,7 +469,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Wait time caused by host-level resource contention outside the container's cgroup.",
+          "description": "Wait time from host-level resource contention.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -571,7 +571,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "CPU throttling events when container exceeds its cgroup CPU quota.",
+          "description": "CPU throttle events when cgroup quota exceeded.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -700,7 +700,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Asynchronous memory reclaim latency for all the container (ms).",
+          "description": "Async memory reclaim latency (ms).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -802,7 +802,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Direct memory reclaim latency triggered by try_charge for all the containers.",
+          "description": "Direct reclaim latency from try_charge (ms).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -904,7 +904,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Cumulative count of pages reclaimed asynchronously for the container.",
+          "description": "Pages reclaimed asynchronously (cumulative).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1005,7 +1005,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Cumulative total of host direct reclaim and try_charge direct reclaim pages for the container.",
+          "description": "Host + try_charge direct reclaim pages (cumulative).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1106,7 +1106,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Cumulative total of host kswapd and container cswapd async reclaim pages for all the containers.",
+          "description": "Host kswapd + container cswapd reclaim pages (cumulative).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1207,7 +1207,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Cumulative count of pages reclaimed by host direct reclaim path for all the containers.",
+          "description": "Pages reclaimed by host direct reclaim (cumulative).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1435,7 +1435,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total received bytes per second across all network interfaces.",
+          "description": "Rx bytes/s across all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1536,7 +1536,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total received packets per second across all network interfaces.",
+          "description": "Rx packets/s across all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1637,7 +1637,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total transmitted bytes per second across all network interfaces.",
+          "description": "Tx bytes/s across all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1738,7 +1738,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total transmitted packets per second across all network interfaces.",
+          "description": "Tx packets/s across all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1839,7 +1839,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Receive-side anomaly stats: drops, errors, FIFO overruns, frame errors (packets/s).",
+          "description": "Rx anomalies: drops, errors, overruns, frame errors (pkt/s).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -1952,7 +1952,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Transmit-side anomaly stats: drops, errors, FIFO overruns, carrier errors (packets/s).",
+          "description": "Tx anomalies: drops, errors, overruns, carrier errors (pkt/s).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2089,7 +2089,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total ARP request and reply packets on all interfaces.",
+          "description": "ARP packets/s on all interfaces.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2214,7 +2214,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Number of TCP sockets currently in use.",
+          "description": "TCP sockets in use.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2339,7 +2339,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Number of TCP sockets in TIME_WAIT state.",
+          "description": "TCP sockets in TIME_WAIT.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2464,7 +2464,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Total socket count across all protocols (TCP, UDP, RAW, etc.).",
+          "description": "Total sockets across all protocols.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2589,7 +2589,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Aggregated kernel netstat counters (SNMP/netstat).",
+          "description": "Kernel netstat counters (SNMP).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2784,7 +2784,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Packet loss rate derived from netstat counters.",
+          "description": "Packet loss rate from netstat.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3069,7 +3069,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Network error counters: InErrors, OutErrors, InCsumErrors, etc.",
+          "description": "Network errors: InErrors, OutErrors, InCsumErrors.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3309,7 +3309,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "TCP segment retransmission rate and count.",
+          "description": "TCP retransmission rate and count.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3489,7 +3489,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Packets dropped due to socket receive buffer exhaustion (RcvbufErrors, SndbufErrors).",
+          "description": "Packets dropped from buffer exhaustion (RcvbufErrors, SndbufErrors).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3609,7 +3609,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "TCP SYN packet statistics: SYN received, SYN sent, SYN retransmissions.",
+          "description": "TCP SYN stats: received, sent, retransmissions.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3741,7 +3741,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Disk IO count where queue-to-completion (q2c) latency exceeds 20ms, 5-minute incremental.",
+          "description": "Disk IO with q2c latency >20ms (5-min incremental).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3843,7 +3843,7 @@
             "type": "prometheus",
             "uid": "huatuo-bamai-prom"
           },
-          "description": "Disk IO count where device-to-completion (d2c) latency exceeds 20ms, 5-minute incremental.",
+          "description": "Disk IO with d2c latency >20ms (5-min incremental).",
           "fieldConfig": {
             "defaults": {
               "color": {
