@@ -14,16 +14,18 @@
 
 package bpf
 
-import "errors"
+import (
+	"errors"
+)
 
-// ErrClosed is returned when an operation uses a closed BPF object.
-var ErrClosed = errors.New("bpf: object is closed")
-
-// ErrMapNotFound indicates that a requested BPF map is unavailable.
-var ErrMapNotFound = errors.New("bpf: map not found")
-
-// ErrDuplicateAttach indicates that a BPF attach target is already in use.
-var ErrDuplicateAttach = errors.New("bpf: duplicate attach")
+var (
+	// ErrClosed is returned when an operation uses a closed BPF object.
+	ErrClosed = errors.New("bpf: object is closed")
+	// ErrMapNotFound indicates that a requested BPF map is unavailable.
+	ErrMapNotFound = errors.New("bpf: map not found")
+	// ErrDuplicateAttach indicates that a BPF attach target is already in use.
+	ErrDuplicateAttach = errors.New("bpf: duplicate attach")
+)
 
 type Option struct {
 	KeepaliveTimeout int
