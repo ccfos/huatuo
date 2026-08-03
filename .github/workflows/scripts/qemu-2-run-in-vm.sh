@@ -15,6 +15,7 @@ COMMAMND_DEPS=(
 	"kubectl"
 	"curl"
 	"wget"
+	"python3"
 )
 
 function check_command_deps() {
@@ -99,7 +100,12 @@ function install_golang() {
 function prapre_test_env() {
 	case $OS_DISTRO in
 	ubuntu*)
-		packages=("make" "libbpf-dev" "clang" "git" "gcc" "jq" "capnproto")
+		packages=(
+			# basic
+			"make" "libbpf-dev" "clang" "git" "gcc" "jq" "capnproto"
+			# tcpshark retransmit integration test deps
+			"iptables" "iproute2" "python3"
+		)
 		missing_packages=()
 
 		for pkg in "${packages[@]}"; do
