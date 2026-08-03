@@ -31,8 +31,11 @@ import (
 )
 
 func mainAction(c *cli.Context) error {
+	reasonNames = loadDropReasonNames()
+
 	duration := c.Int(cliFlagDuration)
 	outputFmt := c.String(cliFlagOutput)
+	sourceTypes := c.String(cliFlagSourceTypes)
 
 	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
 		return fmt.Errorf("dropwatch: init bpf: %w", err)
@@ -78,13 +81,13 @@ func mainAction(c *cli.Context) error {
 	}()
 
 	if maxEventsPerSecond > 0 {
-		rlReader, err := openRateLimitEventPipe(runCtx, bpfObj)
+		rlReader, err := eventRateLimiter.OpenEventPipe(runCtx, bpfObj)
 		if err != nil {
 			return err
 		}
 		defer rlReader.Close()
 
-		go readRateLimitEvents(runCtx, rlReader, maxEventsPerSecond)
+		go eventRateLimiter.ReadEvents(runCtx, rlReader, maxEventsPerSecond)
 	}
 
 	reader, err := bpfObj.AttachAndEventPipe(runCtx, "perf_events", 8192)
@@ -128,7 +131,9 @@ func mainAction(c *cli.Context) error {
 			continue
 		}
 
-		if err := sink.Write(formatEvent(&ev)); err != nil {
+		event := formatEvent(&ev)
+		event.Source = sourceTypes
+		if err := sink.Write(event); err != nil {
 			log.Errorf("dropwatch: send event: %v", err)
 			return nil
 		}

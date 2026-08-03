@@ -41,16 +41,14 @@ type writer interface {
 type textWriter struct{ w io.Writer }
 
 func (s *textWriter) Write(ev *types.DropWatchTracing) error {
-	if _, err := fmt.Fprintf(s.w, "%s %s len=%d dev=%s pid=%d[%s] addr=%s\n",
-		ev.ObservedTimestamp, ev.Layers,
-		ev.PacketLen, ev.NetdevName, ev.Pid, ev.Comm, ev.PacketSkbAddr); err != nil {
+	if _, err := fmt.Fprintf(s.w, "%s %s reason=%s len=%d dev=%s pid=%d[%s] addr=%s source=%s\n",
+		ev.ObservedTimestamp, ev.Layers, ev.DropReason,
+		ev.PacketLen, ev.NetdevName, ev.Pid, ev.Comm, ev.PacketSkbAddr, ev.Source); err != nil {
 		return err
 	}
 
-	if ev.Stack != "" {
-		if err := symbol.FormatStackLines(s.w, ev.Stack); err != nil {
-			return err
-		}
+	if err := symbol.FormatStackLines(s.w, ev.Stack); err != nil {
+		return err
 	}
 
 	return nil
@@ -123,11 +121,12 @@ func formatEvent(ev *abi.DropwatchPacketEvent) *types.DropWatchTracing {
 
 	return &types.DropWatchTracing{
 		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+		DropReason:          reasonNames.resolve(ev.Meta.DropReason),
 		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
 		Pid:                 ev.Meta.TGIDPID >> 32,
 		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemcgCSSAddr),
-		NetNamespaceCookie:  ev.Meta.NetCookie,
-		NetNamespaceInode:   ev.Meta.NetInum,
+		NetNamespaceCookie:  ev.Meta.NetNSCookie,
+		NetNamespaceInum:    ev.Meta.NetNSInum,
 		NetdevName:          bytesutil.ToStr(ev.Meta.DevName[:]),
 		NetdevIfindex:       ev.Meta.Ifindex,
 		NetdevQueueMapping:  ev.Meta.QueueMapping,

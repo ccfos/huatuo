@@ -33,6 +33,7 @@ var (
 	AppBuildTime string
 
 	versionInfo version.Info
+	reasonNames dropReasonNames
 )
 
 func main() {

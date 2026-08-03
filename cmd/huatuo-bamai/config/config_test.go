@@ -67,6 +67,11 @@ IssuesList = [["net_rx_latency", "kernel_sched_tick"]]
 [EventTracing.NetRxLatency]
 ExcludedContainerQos = ["bestEffort"]
 
+[EventTracing.TCPRetransmit]
+Filter = "dst port 443"
+EnableTLP = true
+MaxEventsPerSecond = 42
+
 [MetricCollector.Vmstat]
 IncludedOnHost = "pgscan_direct"
 ExcludedOnHost = "total"
@@ -129,6 +134,15 @@ ExcludedOnContainer = "writeback"
 	}
 	if len(Get().EventTracing.NetRxLatency.ExcludedContainerQos) != 1 {
 		t.Errorf("unexpected ExcludedContainerQos length: %d", len(Get().EventTracing.NetRxLatency.ExcludedContainerQos))
+	}
+	if Get().EventTracing.TCPRetransmit.Filter != "dst port 443" {
+		t.Errorf("unexpected TCPRetransmit.Filter: %q", Get().EventTracing.TCPRetransmit.Filter)
+	}
+	if !Get().EventTracing.TCPRetransmit.EnableTLP {
+		t.Errorf("TCPRetransmit.EnableTLP should be true")
+	}
+	if Get().EventTracing.TCPRetransmit.MaxEventsPerSecond != 42 {
+		t.Errorf("unexpected TCPRetransmit.MaxEventsPerSecond: %d", Get().EventTracing.TCPRetransmit.MaxEventsPerSecond)
 	}
 	if Get().Storage.Elasticsearch.Enabled() {
 		t.Error("Elasticsearch is enabled without connection settings")

@@ -21,6 +21,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/toolstream"
 )
 
 const (
@@ -33,6 +34,7 @@ const (
 	cliFlagOutputStorage      = "output-storage"
 	cliFlagTaskID             = "task-id"
 	cliFlagMaxEventsPerSecond = "max-events-per-second"
+	cliFlagSourceTypes        = "source-types"
 )
 
 const (
@@ -81,6 +83,11 @@ func appFlags() []cli.Flag {
 			Name:  cliFlagMaxEventsPerSecond,
 			Usage: "rate limit to N events/sec (0 = unlimited)",
 			Value: 0,
+		},
+		&cli.StringFlag{
+			Name:   cliFlagSourceTypes,
+			Value:  toolstream.SourceTypesTool,
+			Hidden: true,
 		},
 	}
 }
