@@ -29,6 +29,7 @@ type stackSample struct {
 	UserStack   string
 	KernelStack string
 	Value       int64
+	Category    string
 }
 
 type lockSample struct {

@@ -83,6 +83,31 @@ func newRingBufferContext(b bpf.BPF, ctx context.Context, bufferSize int, needsF
 	}, nil
 }
 
+func newSingleRingBufferContext(
+	b bpf.BPF,
+	ctx context.Context,
+	bufferSize int,
+	outputMapName string,
+	stackMapName string,
+) (*ringBufferContext, error) {
+	stackMapID := b.MapIDByName(stackMapName)
+	if stackMapID == 0 {
+		return nil, fmt.Errorf("%s not found", stackMapName)
+	}
+
+	reader, err := b.EventPipeByName(ctx, outputMapName, uint32(bufferSize))
+	if err != nil {
+		return nil, fmt.Errorf("create reader: %w", err)
+	}
+
+	return &ringBufferContext{
+		bpf:         b,
+		readerA:     reader,
+		stackMapAID: stackMapID,
+		usym:        symbol.NewUsymResolver(),
+	}, nil
+}
+
 // Close releases the ring buffer readers. Should be called when profiling ends.
 func (r *ringBufferContext) Close() {
 	if r.readerA != nil {
@@ -337,16 +362,13 @@ func (r *ringBufferContext) aggregateStacksAndEnqueue(
 // Fast path: lookup primary stackMapID (90-95% hit rate).
 // Slow path: fallback to another stackMapID if primary lookup fails.
 func (r *ringBufferContext) resolveKstackWithFallback(ring activeRingBuffer, kernelID int32) string {
-	trace, ok := readStackTrace(r.bpf, ring.stackMapID, kernelID)
-	if ok {
-		return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
+	stack := r.resolveKernelStack(ring.stackMapID, kernelID)
+	if stack != "" {
+		return stack
 	}
 
 	if ring.fallbackStackMapID != 0 {
-		trace, ok = readStackTrace(r.bpf, ring.fallbackStackMapID, kernelID)
-		if ok {
-			return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
-		}
+		return r.resolveKernelStack(ring.fallbackStackMapID, kernelID)
 	}
 
 	return ""
@@ -356,19 +378,42 @@ func (r *ringBufferContext) resolveKstackWithFallback(ring activeRingBuffer, ker
 // Fast path: lookup primary stackMapID (90-95% hit rate).
 // Slow path: fallback to another stackMapID if primary lookup fails.
 func (r *ringBufferContext) resolveUstackWithFallback(ring activeRingBuffer, userID int32, pid uint32) string {
-	trace, ok := readStackTrace(r.bpf, ring.stackMapID, userID)
-	if ok {
-		return strings.Join(r.usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
+	stack := r.resolveUserStack(ring.stackMapID, userID, pid)
+	if stack != "" {
+		return stack
 	}
 
 	if ring.fallbackStackMapID != 0 {
-		trace, ok = readStackTrace(r.bpf, ring.fallbackStackMapID, userID)
-		if ok {
-			return strings.Join(r.usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
-		}
+		return r.resolveUserStack(ring.fallbackStackMapID, userID, pid)
 	}
 
 	return ""
+}
+
+func (r *ringBufferContext) resolveKernelStack(stackMapID uint32, stackID int32) string {
+	if !validateStackID(stackID) {
+		return ""
+	}
+
+	trace, ok := readStackTrace(r.bpf, stackMapID, stackID)
+	if !ok {
+		return ""
+	}
+
+	return strings.Join(symbol.KsymStackStrsReversed(trace[:], len(trace)), ";") + ";"
+}
+
+func (r *ringBufferContext) resolveUserStack(stackMapID uint32, stackID int32, pid uint32) string {
+	if !validateStackID(stackID) {
+		return ""
+	}
+
+	trace, ok := readStackTrace(r.bpf, stackMapID, stackID)
+	if !ok {
+		return ""
+	}
+
+	return strings.Join(r.usym.UsymStackStrsReversed(pid, trace[:], len(trace)), ";") + ";"
 }
 
 // closeBpfSafe safely closes a BPF object, handling nil checks and logging errors.

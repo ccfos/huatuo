@@ -21,6 +21,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestParseCPUMode(t *testing.T) {
+	for _, mode := range []CPUMode{CPUModeOnCPU, CPUModeOffCPU} {
+		got, err := ParseCPUMode(string(mode))
+		require.NoError(t, err)
+		require.Equal(t, mode, got)
+	}
+	_, err := ParseCPUMode("sleep")
+	require.EqualError(t, err, `unsupported CPU mode "sleep" (expected: oncpu or offcpu)`)
+}
+
+func TestParseOffCPUMetric(t *testing.T) {
+	for _, metric := range []OffCPUMetric{OffCPUMetricTotal, OffCPUMetricBlocked, OffCPUMetricRunnable} {
+		got, err := ParseOffCPUMetric(string(metric))
+		require.NoError(t, err)
+		require.Equal(t, metric, got)
+	}
+	_, err := ParseOffCPUMetric("wait")
+	require.EqualError(t, err, `unsupported off-CPU metric "wait" (expected: total, blocked, or runnable)`)
+}
+
 func TestCapabilities(t *testing.T) {
 	nativeModes := []MemoryMode{
 		MemoryModeVirtualAlloc,
