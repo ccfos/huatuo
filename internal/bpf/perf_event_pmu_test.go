@@ -36,20 +36,16 @@ func TestAttachPerfEvent(t *testing.T) {
 		{
 			name: "ok freq sampling",
 			opt: &perfEventOption{
-				sampleType:       sampleTypeFreq,
-				samplePeriodFreq: 1,
-				program:          prog,
+				sample:  1,
+				program: prog,
 			},
 			wantOK: true,
 		},
 		{
-			// sampleType 0 is undefined; current implementation falls through
-			// to freq because only sampleTypePeriod clears PerfBitFreq.
-			name: "undefined sample type defaults to freq behavior",
+			name: "zero mode uses frequency",
 			opt: &perfEventOption{
-				sampleType:       0,
-				samplePeriodFreq: 1,
-				program:          prog,
+				sample:  1,
+				program: prog,
 			},
 			wantOK: true,
 		},
@@ -61,17 +57,14 @@ func TestAttachPerfEvent(t *testing.T) {
 		{
 			name: "nil program",
 			opt: &perfEventOption{
-				sampleType:       sampleTypeFreq,
-				samplePeriodFreq: 1,
-				program:          nil,
+				sample: 1,
 			},
 			wantOK: false,
 		},
 		{
 			name: "closed program",
 			opt: &perfEventOption{
-				sampleType:       sampleTypeFreq,
-				samplePeriodFreq: 1,
+				sample: 1,
 				program: func() *ebpf.Program {
 					p := newTestProgram(t)
 					p.Close()
@@ -83,9 +76,7 @@ func TestAttachPerfEvent(t *testing.T) {
 		{
 			name: "zero sample freq",
 			opt: &perfEventOption{
-				sampleType:       sampleTypeFreq,
-				samplePeriodFreq: 0,
-				program:          prog,
+				program: prog,
 			},
 			wantOK: false,
 		},
@@ -99,70 +90,9 @@ func TestAttachPerfEvent(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, pmu)
 				require.NotEmpty(t, pmu.fds)
-				t.Cleanup(func() { _ = pmu.detach() })
+				t.Cleanup(func() { require.NoError(t, pmu.detach()) })
 			} else {
 				require.Error(t, err)
-			}
-		})
-	}
-}
-
-func TestPerfEventOptionValidate(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		opt      *perfEventOption
-		wantErrs []error
-	}{
-		{
-			name:     "nil option",
-			wantErrs: []error{errInvalidPerfEventOption, errPerfEventOptionRequired},
-		},
-		{
-			name: "missing program",
-			opt: &perfEventOption{
-				samplePeriodFreq: 1,
-			},
-			wantErrs: []error{errInvalidPerfEventOption, errPerfEventProgramRequired},
-		},
-		{
-			name: "missing sample frequency",
-			opt: &perfEventOption{
-				program: new(ebpf.Program),
-			},
-			wantErrs: []error{errInvalidPerfEventOption, errPerfEventSampleFreqRequired},
-		},
-		{
-			name: "missing program and sample frequency",
-			opt:  new(perfEventOption),
-			wantErrs: []error{
-				errInvalidPerfEventOption,
-				errPerfEventProgramRequired,
-				errPerfEventSampleFreqRequired,
-			},
-		},
-		{
-			name: "valid",
-			opt: &perfEventOption{
-				program:          new(ebpf.Program),
-				samplePeriodFreq: 1,
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := tt.opt.Validate()
-			if len(tt.wantErrs) == 0 {
-				require.NoError(t, err)
-				return
-			}
-
-			for _, wantErr := range tt.wantErrs {
-				require.ErrorIs(t, err, wantErr)
 			}
 		})
 	}
@@ -173,20 +103,19 @@ func TestAttachPerfEvent_AttachTwice(t *testing.T) {
 	prog := newTestProgram(t)
 
 	opt := &perfEventOption{
-		sampleType:       sampleTypeFreq,
-		samplePeriodFreq: 1,
-		program:          prog,
+		sample:  1,
+		program: prog,
 	}
 
 	pmu1, err := attachPerfEvent(opt)
 	skipPerfEventIfNotAvailable(t, err)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = pmu1.detach() })
+	t.Cleanup(func() { require.NoError(t, pmu1.detach()) })
 
 	pmu2, err := attachPerfEvent(opt)
 	skipPerfEventIfNotAvailable(t, err)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = pmu2.detach() })
+	t.Cleanup(func() { require.NoError(t, pmu2.detach()) })
 }
 
 // TestOpenPerfEvent tests openPerfEvent syscall helper using table-driven style.
@@ -241,7 +170,7 @@ func TestOpenPerfEvent(t *testing.T) {
 				skipPerfEventIfNotAvailable(t, err)
 				require.NoError(t, err)
 				require.GreaterOrEqual(t, fd, 0)
-				t.Cleanup(func() { _ = unix.Close(fd) })
+				t.Cleanup(func() { require.NoError(t, unix.Close(fd)) })
 			} else {
 				require.Error(t, err)
 			}
@@ -274,7 +203,7 @@ func TestPerfEventAttach_Detach(t *testing.T) {
 func TestPerfEventAttach_DetachTwice(t *testing.T) {
 	pmu := &perfEventAttach{fds: []int{-1, -2}}
 	require.Error(t, pmu.detach())
-	require.Error(t, pmu.detach())
+	require.NoError(t, pmu.detach())
 }
 
 // TestPerfEventAttach_DetachValidFDs verifies that detach() correctly closes valid fds.
@@ -282,9 +211,8 @@ func TestPerfEventAttach_DetachValidFDs(t *testing.T) {
 	prog := newTestProgram(t)
 
 	opt := &perfEventOption{
-		sampleType:       sampleTypeFreq,
-		samplePeriodFreq: 1,
-		program:          prog,
+		sample:  1,
+		program: prog,
 	}
 
 	pmu, err := attachPerfEvent(opt)

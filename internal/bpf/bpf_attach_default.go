@@ -125,6 +125,32 @@ func parseRawTracepointAttachOptions(
 	}, nil
 }
 
+func parsePerfEventAttachOptions(
+	program *loadedProgram,
+	samplePeriod uint64,
+	sampleFreq uint64,
+	cpuIDs []int,
+) (*perfEventOption, error) {
+	if samplePeriod != 0 && sampleFreq != 0 {
+		return nil, fmt.Errorf(
+			"%w: sample period and frequency are mutually exclusive",
+			errInvalidPerfEventOption,
+		)
+	}
+
+	opt := &perfEventOption{
+		sample:  sampleFreq,
+		program: program.handle,
+		cpuIDs:  cpuIDs,
+	}
+	if samplePeriod != 0 {
+		opt.sample = samplePeriod
+		opt.sampleMode = perfEventSamplePeriod
+	}
+
+	return opt, nil
+}
+
 // AttachWithOptions attaches programs with options.
 func (b *defaultBPF) AttachWithOptions(opts []AttachOption) error {
 	if err := b.acquireWriteLock(); err != nil {
@@ -182,12 +208,16 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 				return err
 			}
 		case ebpf.PerfEvent:
-			if err = b.attachPerfEvent(&perfEventOption{
-				samplePeriodFreq: opt.PerfEvent.SampleFreq,
-				sampleType:       sampleTypeFreq,
-				program:          program.handle,
-				cpuIDs:           opt.PerfEvent.CPUIDs,
-			}); err != nil {
+			attachOpts, parseErr := parsePerfEventAttachOptions(
+				program,
+				opt.PerfEvent.SamplePeriod,
+				opt.PerfEvent.SampleFreq,
+				opt.PerfEvent.CPUIDs,
+			)
+			if parseErr != nil {
+				return parseErr
+			}
+			if err = b.attachPerfEvent(attachOpts); err != nil {
 				return err
 			}
 		default:
@@ -340,7 +370,7 @@ func (b *defaultBPF) attachPerfEvent(opt *perfEventOption) error {
 		return fmt.Errorf("%w: perf event", ErrDuplicateAttach)
 	}
 
-	if opt.samplePeriodFreq == 0 {
+	if opt.sample == 0 {
 		return types.ErrArgsInvalid
 	}
 
