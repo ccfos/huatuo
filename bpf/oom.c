@@ -90,6 +90,61 @@ struct {
 	__uint(value_size, sizeof(u32));
 } oom_perf_events SEC(".maps");
 
+/*
+ * Maps an OOM victim TGID to its correlation timestamp.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, sizeof(u64));
+	__uint(max_entries, 256);
+} oom_victims SEC(".maps");
+
+/*
+ * A direct .bss read avoids a map lookup on every ordinary process exit.
+ */
+static volatile u32 oom_victim_count;
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+	__uint(key_size, sizeof(int));
+	__uint(value_size, sizeof(u32));
+} oom_exit_perf_events SEC(".maps");
+
+/*
+ * A per-CPU scratch value keeps the exit event off the 512-byte BPF stack.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, sizeof(struct oom_exit_event));
+	__uint(max_entries, 1);
+} oom_exit_event_buf SEC(".maps");
+
+/*
+ * Copy a bounded argv or environment region with the legacy probe_read
+ * helper supported by CentOS 8.2.
+ */
+static __always_inline u16
+capture_user_region(u8 *dst, u32 capacity, unsigned long start,
+		    unsigned long end, u8 *flags)
+{
+	u64 length;
+
+	if (!start || end <= start)
+		return 0;
+
+	length = end - start;
+	if (length > capacity) {
+		length = capacity;
+		*flags |= OOM_CAPTURE_TRUNC;
+	}
+	if (compat_bpf_probe_read(dst, (u32)length, (void *)start) != 0)
+		return 0;
+
+	return (u16)length;
+}
+
 SEC("kprobe/oom_kill_process")
 int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 {
@@ -107,7 +162,7 @@ int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 	victim_task	 = BPF_CORE_READ(oc, chosen);
 
 	info.trigger_pid = BPF_CORE_READ(trigger_task, pid);
-	info.victim_pid	 = BPF_CORE_READ(victim_task, pid);
+	info.victim_pid	 = BPF_CORE_READ(victim_task, tgid);
 	BPF_CORE_READ_STR_INTO(&info.trigger_comm, trigger_task, comm);
 	BPF_CORE_READ_STR_INTO(&info.victim_comm, victim_task, comm);
 
@@ -135,7 +190,90 @@ int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 		    (u64)BPF_CORE_READ(memcg, memory.usage.counter);
 	}
 
+	/*
+	 * NOEXIST preserves the first registration for a TGID. A zero timestamp
+	 * tells userspace that registration failed and it must not wait for exit.
+	 */
+	info.timestamp = bpf_ktime_get_ns();
+	if (bpf_map_update_elem(&oom_victims, &info.victim_pid,
+				&info.timestamp, COMPAT_BPF_NOEXIST) == 0) {
+		__sync_fetch_and_add(&oom_victim_count, 1);
+	} else {
+		info.timestamp = 0;
+	}
+
 	bpf_perf_event_output(ctx, &oom_perf_events, COMPAT_BPF_F_CURRENT_CPU,
 			      &info, sizeof(info));
+	return 0;
+}
+
+/*
+ * Ordinary exits only read the pending counter. An OOM victim additionally
+ * looks up and removes its key, captures argv and environ before mm teardown,
+ * then emits a separately correlated event.
+ */
+SEC("kprobe/do_exit")
+int BPF_KPROBE(do_exit_trace, long code)
+{
+	u32 zero = 0;
+	u32 victim_tgid;
+	u64 event_ts;
+	u64 *victim_ts;
+	struct oom_exit_event *exit_event;
+	struct task_struct *victim_task;
+	struct mm_struct *victim_mm;
+	unsigned long arg_start, arg_end, env_start, env_end;
+
+	/*
+	 * Most exits stop at this global-data check. The hash lookup is only paid
+	 * while at least one OOM victim is pending.
+	 */
+	if (oom_victim_count == 0)
+		return 0;
+
+	victim_tgid = (u32)(bpf_get_current_pid_tgid() >> 32);
+	victim_ts =
+	    bpf_map_lookup_elem(&oom_victims, &victim_tgid);
+	if (!victim_ts)
+		return 0;
+
+	event_ts = *victim_ts;
+	/*
+	 * Consume the registration before capture so a later failure cannot make
+	 * this victim run the expensive path again.
+	 */
+	if (bpf_map_delete_elem(&oom_victims, &victim_tgid) != 0)
+		return 0;
+	__sync_fetch_and_add(&oom_victim_count, -1);
+
+	exit_event = bpf_map_lookup_elem(&oom_exit_event_buf, &zero);
+	if (!exit_event)
+		return 0;
+
+	exit_event->timestamp = event_ts;
+	exit_event->victim_tgid = victim_tgid;
+	exit_event->cmdline_flags = 0;
+	exit_event->environ_flags = 0;
+
+	victim_task = (struct task_struct *)bpf_get_current_task();
+	victim_mm = BPF_CORE_READ(victim_task, mm);
+	if (!victim_mm)
+		return 0;
+
+	arg_start = BPF_CORE_READ(victim_mm, arg_start);
+	arg_end = BPF_CORE_READ(victim_mm, arg_end);
+	env_start = BPF_CORE_READ(victim_mm, env_start);
+	env_end = BPF_CORE_READ(victim_mm, env_end);
+
+	exit_event->cmdline_len = capture_user_region(
+	    exit_event->victim_cmdline, sizeof(exit_event->victim_cmdline),
+	    arg_start, arg_end, &exit_event->cmdline_flags);
+	exit_event->environ_len = capture_user_region(
+	    exit_event->victim_environ, sizeof(exit_event->victim_environ),
+	    env_start, env_end, &exit_event->environ_flags);
+
+	bpf_perf_event_output(ctx, &oom_exit_perf_events,
+			      COMPAT_BPF_F_CURRENT_CPU, exit_event,
+			      sizeof(*exit_event));
 	return 0;
 }

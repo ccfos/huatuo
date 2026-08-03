@@ -42,6 +42,10 @@ type OOMActor struct {
 	ContainerHostname   string                   `json:"container_hostname,omitempty"`
 	Pid                 int32                    `json:"pid"`
 	Comm                string                   `json:"comm"`
+	Cmdline             string                   `json:"cmdline,omitempty"`
+	CmdlineTruncated    bool                     `json:"cmdline_truncated,omitempty"`
+	Environ             []string                 `json:"environ,omitempty"`
+	EnvironTruncated    bool                     `json:"environ_truncated,omitempty"`
 	RssAnonBytes        uint64                   `json:"rss_anon_bytes,omitempty"`
 	RssFileBytes        uint64                   `json:"rss_file_bytes,omitempty"`
 	RssShmemBytes       uint64                   `json:"rss_shmem_bytes,omitempty"`
@@ -64,6 +68,8 @@ type oomMetric struct {
 type oomCollector struct {
 	cgroup cgroups.Cgroup
 }
+
+const oomExitWorkerLimit = 8
 
 var (
 	outOfMemoryCounterHost      float64
@@ -115,21 +121,131 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 	return metrics, nil
 }
 
-func (c *oomCollector) Start(ctx context.Context) error {
+/*
+ * openOOMBPF opens the optional exit stream before attaching the OOM object.
+ * Failure to create that stream only disables exit-context enrichment.
+ */
+func openOOMBPF(ctx context.Context) (
+	bpf.BPF, bpf.PerfEventReader, bpf.PerfEventReader, error,
+) {
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	exitReader, err := b.EventPipeByName(ctx, "oom_exit_perf_events", 8192)
+	if err != nil {
+		log.Warnf("oom exit context disabled: %v", err)
+		exitReader = nil
+	}
+
+	reader, err := b.AttachAndEventPipe(ctx, "oom_perf_events", 8192)
+	if err != nil {
+		if exitReader != nil {
+			exitReader.Close()
+		}
+		b.Close()
+		return nil, nil, nil, err
+	}
+
+	return b, reader, exitReader, nil
+}
+
+/*
+ * Start reads OOM events continuously while separate workers correlate exit
+ * context. A failed exit reader disables context enrichment without
+ * interrupting the primary OOM event stream.
+ */
+func (c *oomCollector) Start(ctx context.Context) error {
+	childCtx, cancel := context.WithCancel(ctx)
+	b, reader, exitReader, err := openOOMBPF(childCtx)
+	if err != nil {
+		cancel()
 		return err
 	}
 	defer b.Close()
 
-	childCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	reader, err := b.AttachAndEventPipe(childCtx, "oom_perf_events", 8192)
-	if err != nil {
-		return err
+	var workers sync.WaitGroup
+	/*
+	 * Preparation and saving touch shared OOM accounting and tracing state.
+	 * Exit-context waits deliberately stay outside this lock.
+	 */
+	var processMu sync.Mutex
+	asyncWorkerSlots := make(chan struct{}, oomExitWorkerLimit)
+	/*
+	 * childCtx owns the collector lifetime. exitWaitCtx can be canceled alone
+	 * to disable exit enrichment while the base OOM reader keeps running.
+	 */
+	exitWaitCtx, cancelExitWait := context.WithCancel(childCtx)
+	if exitReader == nil {
+		cancelExitWait()
 	}
-	defer reader.Close()
+
+	/*
+	 * processEvent preserves the original serialized enrichment and storage.
+	 * Only workers with a slot wait for exit context; overflow events retain
+	 * their base data instead of creating unbounded goroutines.
+	 */
+	processEvent := func(data *abi.OOMEvent, eventTime time.Time,
+		waitForExit bool,
+	) {
+		if childCtx.Err() != nil {
+			return
+		}
+
+		/*
+		 * Read live procfs before container synchronization and snapshot
+		 * collection give the victim time to disappear.
+		 */
+		languageInfo := detectLanguageInfo(data.VictimPID)
+
+		processMu.Lock()
+		oomData := c.prepareOOMEvent(data, languageInfo)
+		processMu.Unlock()
+
+		if waitForExit {
+			exitContext := oomExitEvents.wait(
+				exitWaitCtx, data.VictimPID, data.Timestamp)
+			if childCtx.Err() != nil {
+				return
+			}
+			mergeOOMExitContext(oomData, exitContext)
+		}
+
+		processMu.Lock()
+		defer processMu.Unlock()
+		if childCtx.Err() != nil {
+			return
+		}
+		saveOOMEvent(oomData, eventTime)
+	}
+
+	defer func() {
+		cancelExitWait()
+		cancel()
+		reader.Close()
+		if exitReader != nil {
+			exitReader.Close()
+		}
+		workers.Wait()
+	}()
+
+	/*
+	 * Drain the exit stream independently; otherwise its large records could
+	 * fill the perf buffer while a base event is being enriched or stored.
+	 */
+	if exitReader != nil {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			if err := startOOMExitReader(childCtx, exitReader); err != nil {
+				cancelExitWait()
+				log.Warnf(
+					"oom exit context disabled after reader failure: %v",
+					err)
+			}
+		}()
+	}
 
 	b.DetachOnContextDone(childCtx, cancel)
 
@@ -138,48 +254,89 @@ func (c *oomCollector) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var data abi.OOMEvent
-			if err := reader.ReadInto(&data); err != nil {
+			data := new(abi.OOMEvent)
+			if err := reader.ReadInto(data); err != nil {
+				if childCtx.Err() != nil {
+					return nil
+				}
 				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
 					log.WithError(err).Warn("lost BPF perf event samples")
 					continue
 				}
 				return fmt.Errorf("failed to read perf event: %w", err)
 			}
+			eventTime := time.Now()
 
 			/*
-			 * Read live procfs before container synchronization and
-			 * snapshot collection give the victim time to disappear.
+			 * Bound asynchronous exit waits to the kernel pending-map
+			 * capacity. Registration failures and overflow retain base
+			 * collection synchronously.
 			 */
-			languageInfo := detectLanguageInfo(data.VictimPID)
-
-			containers, err := pod.Containers()
-			if err != nil {
-				return fmt.Errorf("failed to fetch containers: %w", err)
+			if exitWaitCtx.Err() != nil || data.Timestamp == 0 {
+				processEvent(data, eventTime, false)
+				continue
 			}
 
-			oomData := buildTracingData(&data, containers, c.cgroup)
-			oomData.LanguageInfo = languageInfo
-
-			mutex.Lock()
-
-			if container, ok := containers[oomData.Victim.ContainerID]; ok {
-				containerCounterUpdate(container.ID, oomData.Victim.Comm)
-			} else {
-				outOfMemoryCounterHost++
-			}
-
-			mutex.Unlock()
-
-			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:  "oom",
-				TracerTime:  time.Now(),
-				TracerData:  oomData,
-				ContainerID: oomData.Victim.ContainerID,
-			}); err != nil {
-				log.Warnf("failed to save tracing data: %v", err)
+			/*
+			 * Slot acquisition is non-blocking. During an OOM storm, preserving
+			 * the base event takes priority over waiting for optional context.
+			 */
+			select {
+			case asyncWorkerSlots <- struct{}{}:
+				workers.Add(1)
+				go func(data *abi.OOMEvent, eventTime time.Time) {
+					defer workers.Done()
+					defer func() { <-asyncWorkerSlots }()
+					processEvent(data, eventTime, true)
+				}(data, eventTime)
+			default:
+				processEvent(data, eventTime, false)
 			}
 		}
+	}
+}
+
+/*
+ * prepareOOMEvent captures container association, resource snapshots, and
+ * accounting before waiting for the victim exit event. Container discovery
+ * failures degrade enrichment without discarding the base OOM event.
+ */
+func (c *oomCollector) prepareOOMEvent(
+	data *abi.OOMEvent, languageInfo *OOMLanguageInfo,
+) *OOMTracingData {
+	containers, err := pod.Containers()
+	containerLookupSucceeded := err == nil
+	if err != nil {
+		log.Warnf("failed to fetch containers for oom enrichment: %v", err)
+		containers = nil
+	}
+
+	oomData := buildTracingData(data, containers, c.cgroup)
+	oomData.LanguageInfo = languageInfo
+
+	mutex.Lock()
+	if container, ok := containers[oomData.Victim.ContainerID]; ok {
+		containerCounterUpdate(container.ID, oomData.Victim.Comm)
+	} else if containerLookupSucceeded {
+		outOfMemoryCounterHost++
+	}
+	mutex.Unlock()
+
+	return oomData
+}
+
+/*
+ * saveOOMEvent writes the enriched base event and any correlated exit context
+ * as one tracing record.
+ */
+func saveOOMEvent(oomData *OOMTracingData, eventTime time.Time) {
+	if err := tracing.Save(&tracing.WriteRequest{
+		TracerName:  "oom",
+		TracerTime:  eventTime,
+		TracerData:  oomData,
+		ContainerID: oomData.Victim.ContainerID,
+	}); err != nil {
+		log.Warnf("failed to save tracing data: %v", err)
 	}
 }
 
