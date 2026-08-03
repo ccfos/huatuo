@@ -16,6 +16,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
@@ -73,6 +74,10 @@ func (c *txqueueTimeout) Start(ctx context.Context) error {
 			var event abi.NetdevTxqueueTimeoutEvent
 
 			if err := reader.ReadInto(&event); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return err
 			}
 

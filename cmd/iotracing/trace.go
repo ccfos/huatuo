@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/executil"
@@ -97,6 +98,10 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 
 	for {
 		if err := reader.ReadInto(&event); err != nil {
+			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+				log.WithError(err).Warn("lost BPF perf event samples")
+				continue
+			}
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				break
 			}

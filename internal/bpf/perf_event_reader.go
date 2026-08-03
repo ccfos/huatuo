@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,8 +37,9 @@ func (e *PerfEventSamplesLostError) Unwrap() error {
 
 // PerfEventReader reads the eBPF perf_event.
 type PerfEventReader interface {
-	// ReadInto reads the eBPF perf_event into pdata.
-	ReadInto(pdata any) error
+	// ReadInto reads the next eBPF perf event into dst. Sample loss returns
+	// ErrPerfEventSamplesLost and may be retried.
+	ReadInto(dst any) error
 
 	// ReadBatch drains all per-CPU ring buffers currently available within a
 	// bounded deadline. newEvent must return a new event destination per call.

@@ -121,8 +121,8 @@ func (r *perfEventReader) ReadBatch(newEvent func() any) ([]any, error) {
 	}
 }
 
-// ReadInto reads the eBPF perf_event into pdata.
-func (r *perfEventReader) ReadInto(pdata any) error {
+// ReadInto reads the next eBPF perf event into dst.
+func (r *perfEventReader) ReadInto(dst any) error {
 	for {
 		select {
 		case <-r.done:
@@ -145,7 +145,7 @@ func (r *perfEventReader) ReadInto(pdata any) error {
 				return newPerfEventSamplesLostError(record.LostSamples)
 			}
 
-			if err := decodePerfEvent(record.RawSample, pdata); err != nil {
+			if err := decodePerfEvent(record.RawSample, dst); err != nil {
 				return err
 			}
 

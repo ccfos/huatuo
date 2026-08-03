@@ -90,6 +90,10 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 			var data abi.SoftirqEvent
 
 			if err := reader.ReadInto(&data); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return fmt.Errorf("Read From Perf Event fail: %w", err)
 			}
 			comm := bytesutil.ToStr(data.Comm[:])

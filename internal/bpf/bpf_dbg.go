@@ -16,6 +16,7 @@ package bpf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"huatuo-bamai/internal/bpf/abi"
@@ -100,6 +101,10 @@ func (d *BpfDbg) debugEventLoop(ctx context.Context, reader PerfEventReader) err
 
 		var event BpfDbgEvent
 		if err := reader.ReadInto(&event); err != nil {
+			if errors.Is(err, ErrPerfEventSamplesLost) {
+				log.WithError(err).Warn("lost BPF perf event samples")
+				continue
+			}
 			return fmt.Errorf("read debug event: %w", err)
 		}
 

@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"huatuo-bamai/internal/bpf"
@@ -62,6 +63,10 @@ func readRateLimitEvents(ctx context.Context, r bpf.PerfEventReader, eventsPerSe
 		if err := r.ReadInto(&ev); err != nil {
 			if ctx.Err() != nil {
 				return
+			}
+			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+				log.WithError(err).Warn("lost BPF perf event samples")
+				continue
 			}
 
 			log.Errorf("dropwatch: rate-limit reader: %v", err)
