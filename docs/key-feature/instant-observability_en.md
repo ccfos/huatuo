@@ -19,7 +19,7 @@ HUATUO uses eBPF technology to observe anomalous events in real time across core
 
 Compared to traditional kernel log (dmesg/syslog) collection, eBPF-based event observation reduces the risk of data loss from log buffer overflow; it can capture transient anomalies that never appear in kernel logs (such as excessive softirq disable time); and it provides container-level event correlation for precise root-cause analysis in cloud-native environments.
 
-Eleven event types are continuously observed, covering CPU scheduling health (softirq_tracing, softlockup, hungtask), memory pressure (oom, memory_reclaim_events), the network protocol stack (dropwatch, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
+Twelve event types are continuously observed, covering CPU scheduling health (softirq_tracing, softlockup, hungtask), memory pressure (oom, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
 
 ## 🎯 Use Cases
 
@@ -27,7 +27,7 @@ Eleven event types are continuously observed, covering CPU scheduling health (so
 
 **AI Training Cluster Hardware Fault Detection**: On GPU training servers, the ras event continuously collects MCE (Machine Check Exception), EDAC memory controller errors, and PCIe AER (Advanced Error Reporting) errors, classifying them by severity (Corrected / UncorrectedRecoverable / UncorrectedFatal). This enables early detection of hardware aging or single-point failures before training jobs are interrupted, reducing training task losses caused by hardware faults.
 
-**Network Performance Jitter Analysis**: The dropwatch event observes TCP protocol stack packet drops (including syn_flood and listen_overflow types), while net_rx_latency detects end-to-end receive-path latency for individual packets from the network card driver to user space. Separate thresholds are configured per stage (driver to kernel: 5ms, kernel to TCP: 10ms, TCP to user space: 115ms), precisely identifying which network layer causes business timeouts.
+**Network Performance Jitter Analysis**: dropwatch observes packet drops in the kernel network stack, tcp_retransmit observes TCP retransmission activity, and net_rx_latency detects end-to-end receive-path latency for individual packets from the network card driver to user space. Separate thresholds are configured per stage (driver to kernel: 5ms, kernel to TCP: 10ms, TCP to user space: 115ms), precisely identifying which network layer causes business timeouts.
 
 **Host Scheduling Health Observation**: The softirq_tracing (softirq disable time, default threshold 10ms), softlockup (CPU unable to schedule, ~1 second), and hungtask (D-state process hang) events jointly cover anomalies along the CPU scheduling path. When system stalls or response timeouts occur, kernel call stacks and other diagnostic data are automatically preserved, supporting offline analysis after the fault clears.
 
@@ -46,10 +46,12 @@ All events provide default values and are operational without any configuration.
 | `net_rx_latency.driver2userspace` | `115` (ms) | Latency threshold from NIC driver to user-space copy (`skb_copy_datagram_iovec`) |
 | `net_rx_latency.excluded_host_netnamespace` | `true` | Whether to exclude the host network namespace (observe containers only by default) |
 | `net_rx_latency.excluded_container_qos` | `[]` | List of container QoS levels to exclude |
-| `dropwatch.excluded_neigh_invalidate` | `true` | Whether to filter packet drops caused by `neigh_invalidate` (neighbor table expiry noise) |
+| `dropwatch.filter` | `tcp` | tcpdump-style packet filter applied before dropwatch events are emitted |
+| `dropwatch.max_events_per_second` | `100` | Maximum dropwatch events emitted per second; `0` disables rate limiting |
+| `dropwatch.exclude_containers` | `[]` | Reserved field; the current dropwatch event path does not apply it |
 | `netdev.device_list` | `[]` | List of network device names to monitor for link state changes |
 | `ras.mce_thr_backoff` | `1800` (seconds) | MCE threshold interrupt (THR) event reporting cooldown to suppress interrupt storms |
-| `issues_list` | `[]` | Known-issue filter rules (applied to net_rx_latency) |
+| `issues_list` | `[]` | Known-issue suppression rules; matched against net_rx_latency titles and dropwatch kernel call stacks |
 
 ### Supported Events
 
@@ -61,11 +63,14 @@ All events provide default values and are operational without any configuration.
 | `oom` | kprobe | OOM Killer triggered | Container/host memory exhaustion |
 | `memory_reclaim_events` | kprobe | Container process direct reclaim time > threshold (default 900ms) | Business stalls caused by memory pressure |
 | `ras` | tracepoint | CPU/MEM/PCIe hardware errors | Hardware fault detection |
-| `dropwatch` | kprobe | TCP protocol stack packet drop | Business jitter caused by protocol stack drops |
+| `dropwatch` | tracepoint | Kernel network stack packet drop | Business jitter caused by protocol stack drops |
+| `tcp_retransmit` | tracepoint; optional kprobe for TLP | TCP retransmission or Tail Loss Probe | TCP loss, reordering, congestion, and latency diagnosis |
 | `net_rx_latency` | kprobe | Protocol stack receive latency exceeds per-stage threshold | Business timeouts caused by receive latency |
 | `netdev_events` | netlink | NIC link state change | Physical NIC link failures |
 | `netdev_bonding_lacp` | kprobe | LACP protocol state change (IEEE 802.3ad mode only) | Fault boundary between physical machines and switches |
 | `netdev_txqueue_timeout` | kprobe | NIC transmit queue timeout | NIC transmit queue hardware failure |
+
+For tcp_retransmit usage, fields, classification, and drop correlation, refer to the [tcpshark documentation](/docs/best-practice/tcpshark_en.md).
 
 ### Fields
 
@@ -126,7 +131,7 @@ All event records include the following common fields:
 
 ### 2. dropwatch
 
-**Description** Detects packet drop behavior in the kernel network protocol stack. Outputs the kernel call stack, network 5-tuple, and TCP state at the time of the drop. Supports identifying four drop types: `common_drop`, `syn_flood`, `listen_overflow_handshake1` (SYN queue overflow), and `listen_overflow_handshake3` (accept queue overflow). The filter excludes known noisy drops including `neigh_invalidate` neighbor table expiry (configurable) and bnxt driver TX-side drops.
+**Description** Detects packet drop behavior in the kernel network protocol stack. Outputs the kernel call stack, network 5-tuple, and TCP state at the time of the drop. Optional call-stack filters can suppress locally validated noise patterns. The `type` field is reserved for TCP drop-type compatibility and is currently unset.
 
 **Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
 
@@ -135,48 +140,58 @@ All event records include the following common fields:
 ```json
 {
     "tracer_data": {
-        "type": "common_drop",
+        "observed_timestamp": "2026-07-23T02:14:40.304775546Z",
+        "drop_reason": "SKB_DROP_REASON_NOT_SPECIFIED",
+        "source": "events",
         "comm": "kubelet",
         "pid": 1687046,
-        "saddr": "10.79.68.62",
-        "daddr": "10.134.72.4",
-        "sport": 8080,
-        "dport": 49000,
-        "src_hostname": "<nil>",
-        "dest_hostname": "<nil>",
-        "max_ack_backlog": 128,
-        "seq": 1009085774,
-        "ack_seq": 689410995,
-        "pkt_len": 1460,
-        "sk_state": "ESTABLISHED",
-        "stack": "kfree_skb/...",
+        "net_namespace_cookie": 123456789,
+        "net_namespace_inum": 402653184,
         "netdev_queue_mapping": 3,
         "netdev_linkstatus": ["linkStatusUp"],
         "netdev_name": "eth0",
         "netdev_ifindex": 2,
-        "net_cookie": 123456789
+        "packet_eth_proto": "0x0800",
+        "packet_len": 1460,
+        "layers": {
+            "label": "IPv4/TCP",
+            "ipv4": {
+                "saddr": "10.79.68.62",
+                "daddr": "10.134.72.4",
+                "protocol": "TCP"
+            },
+            "tcp": {
+                "sport": 8080,
+                "dport": 49000,
+                "seq": 1009085774,
+                "ack_seq": 689410995,
+                "flags": "ACK",
+                "sk_state": "ESTABLISHED"
+            }
+        },
+        "stack": "kfree_skb/..."
     }
 }
 ```
 
 **Fields**
 
-- **type**: Drop type (`common_drop` / `syn_flood` / `listen_overflow_handshake1` / `listen_overflow_handshake3`)
+- **type**: Reserved drop type, currently unset and omitted from JSON; reserved codes are `1` (common drop), `2` (SYN flood), `3` (SYN queue overflow), and `4` (accept queue overflow)
+- **drop_reason**: Kernel packet-drop reason
+- **source**: Event source (`tools` for standalone dropwatch or `events` when launched by huatuo-bamai)
 - **comm**: Name of the process that triggered the packet drop
 - **pid**: Process ID
-- **saddr / daddr**: Source IP / Destination IP address
-- **sport / dport**: Source port / Destination port
-- **src_hostname / dest_hostname**: Reverse DNS lookup result for source/destination IP
-- **max_ack_backlog**: Maximum accept queue length of the socket
-- **seq / ack_seq**: TCP sequence number / Acknowledgment sequence number
-- **pkt_len**: Packet length (bytes)
-- **sk_state**: TCP connection state at the time of the drop
-- **stack**: Kernel call stack at the time of the drop
+- **net_namespace_cookie / net_namespace_inum**: Network namespace values used for container resolution
 - **netdev_queue_mapping**: NIC queue index
 - **netdev_linkstatus**: List of NIC link status flags
 - **netdev_name**: Network device name
 - **netdev_ifindex**: Network interface index
-- **net_cookie**: Network namespace identifier
+- **packet_len**: Packet length (bytes)
+- **layers.ipv4.saddr / layers.ipv4.daddr**: Source and destination IP addresses
+- **layers.tcp.sport / layers.tcp.dport**: Source and destination ports
+- **layers.tcp.seq / layers.tcp.ack_seq**: TCP sequence and acknowledgment sequence numbers
+- **layers.tcp.sk_state**: TCP connection state at the time of the drop
+- **stack**: Kernel call stack at the time of the drop
 
 ### 3. net_rx_latency
 
@@ -201,7 +216,7 @@ All event records include the following common fields:
         "tcp_seq": 1009085774,
         "tcp_ack_seq": 689410995,
         "net_namespace_cookie": 123456789,
-        "net_namespace_inode": 402653184,
+        "net_namespace_inum": 402653184,
         "pkt_len": 26064
     }
 }
@@ -218,7 +233,7 @@ All event records include the following common fields:
 - **tcp_sport / tcp_dport**: Source port / Destination port
 - **tcp_seq / tcp_ack_seq**: TCP sequence number / Acknowledgment sequence number
 - **net_namespace_cookie**: Network namespace cookie (available on kernel ≥ 5.14, used for efficient container association)
-- **net_namespace_inode**: Network namespace inode
+- **net_namespace_inum**: Network namespace inum
 - **pkt_len**: Packet length (bytes)
 
 ### 4. oom
@@ -500,8 +515,8 @@ HUATUO's anomalous event observation is built on eBPF technology. Event data is 
 graph TB
     subgraph "Linux Kernel"
         direction TB
-        K1["kprobe hooks\n(softirq_tracing / softlockup / hungtask\n oom / memory_reclaim_events / dropwatch\n net_rx_latency / netdev_txqueue_timeout)"]
-        K2["tracepoint hooks\n(ras: MCE / EDAC / AER / ACPI)"]
+        K1["kprobe hooks\n(softirq_tracing / softlockup / hungtask\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
+        K2["tracepoint hooks\n(ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
         K3["netlink subscription\n(netdev_events: RTM_NEWLINK)"]
         K4["kprobe hooks\n(netdev_bonding_lacp: 802.3ad)"]
         PEB["Perf Event Ring Buffer\n(8192 pages)"]

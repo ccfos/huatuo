@@ -188,7 +188,7 @@ sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --filter "tcp and port 4
 sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp and port 443" --duration 60 --output json
 
 # Forward events to a running huatuo-bamai instance
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo/events.sock
+sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
 
 # Use jq to filter and show only RST packets
 sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | jq 'select(.layers.tcp.flags == "RST")'
@@ -200,7 +200,7 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 's
 sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'del(.stack)'
 ```
 
-`jq -c` compresses each matching event into a single-line JSON, convenient for saving as NDJSON or further pipe processing. `test("ip_finish_output")` checks whether `stack` matches the regex; `not` negates the result, so the command above excludes stacks containing `ip_finish_output`. Remove `| not` to keep only those containing `ip_finish_output`. `del(.stack)` removes the `stack` field from the jq output, useful for viewing just the timestamp, device, process, `packet_*` metadata, and `layers` protocol fields. For kernel-side call-stack filtering, configure `EventTracing.IssuesList` in huatuo-bamai (see Section 4).
+`jq -c` compresses each matching event into a single-line JSON, convenient for saving as NDJSON or further pipe processing. `test("ip_finish_output")` checks whether `stack` matches the regex; `not` negates the result, so the command above excludes stacks containing `ip_finish_output`. Remove `| not` to keep only those containing `ip_finish_output`. `del(.stack)` removes the `stack` field from the jq output, useful for viewing just the timestamp, device, process, `packet_*` metadata, and `layers` protocol fields. For userspace call-stack filtering before storage, configure `EventTracing.IssuesList` in huatuo-bamai (see Section 4).
 
 ---
 
@@ -210,16 +210,16 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 
 | Field                    | Type     | Description                                                   |
 | ------------------------ | -------- | ------------------------------------------------------------- |
-| `observed_timestamp`     | string   | UTC timestamp when the event was captured (RFC3339Nano)       |
-| `type`                   | string   | Event type reserved field; currently empty string             |
-| `drop_reason`            | string   | Drop reason reserved field; currently empty string            |
-| `source`                 | string   | Event source; when present, indicates `events` or `tools` (omitempty) |
+| `observed_timestamp`     | string   | UTC userspace receive/format time (RFC3339Nano), not the kernel hook timestamp |
+| `type`                   | string   | Reserved TCP type; currently unset (`1` common, `2` SYN flood, `3`/`4` listen overflow) |
+| `drop_reason`            | string   | Kernel `skb_drop_reason` name resolved from BTF; numeric fallback, or `NOT_SUPPORTED` when unavailable |
+| `source`                 | string   | Event source; `tools` for standalone dropwatch and `events` when launched by huatuo-bamai |
 | `comm`                   | string   | Process name at the time of the drop                          |
 | `pid`                    | uint64   | Process TGID                                                  |
 | `container_id`           | string   | Container ID (populated by huatuo-bamai resolution, omitempty) |
 | `memory_cgroup_css_addr` | string   | Memory cgroup CSS address, used for container resolution       |
 | `net_namespace_cookie`   | uint64   | Network namespace cookie, used for container resolution        |
-| `net_namespace_inode`    | uint32   | Network namespace inode, used for container resolution         |
+| `net_namespace_inum`    | uint32   | Network namespace inum, used for container resolution          |
 | `netdev_name`            | string   | Network device name (e.g. `eth0`)                             |
 | `netdev_ifindex`         | uint32   | Network interface index                                       |
 | `netdev_queue_mapping`   | uint32   | TX queue mapping                                              |
@@ -235,10 +235,10 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 | Field          | Description                                                                                              |
 | -------------- | -------------------------------------------------------------------------------------------------------- |
 | `layers.label` | Protocol combination label, e.g. `IPv4/TCP`, `IPv6/UDP`, `ARP`, `unknown`                                |
-| `layers.ether` | L2 fields: `src`, `dst`, `type`, `len` (present only for 802.3 frames)                                   |
-| `layers.ipv4`  | IPv4 fields: `version`, `ihl`, `tos`, `len`, `id`, `flags`, `frag_offset`, `ttl`, `protocol`, `checksum`, `src`, `dst` |
-| `layers.ipv6`  | IPv6 fields: `version`, `traffic_class`, `flow_label`, `len`, `next_header`, `hop_limit`, `src`, `dst`  |
-| `layers.tcp`   | TCP fields: `sport`, `dport`, `seq`, `ack`, `data_offset`, `flags`, `window`, `checksum`, `urgent`, `sk_state` |
+| `layers.ether` | L2 fields when a real Ethernet header is present: `saddr`, `daddr`, `type`, `len`; `len` is non-zero only for IEEE 802.3 framing |
+| `layers.ipv4`  | IPv4 fields: `version`, `ihl`, `tos`, `len`, `id`, `flags`, `frag_offset`, `ttl`, `protocol`, `checksum`, `saddr`, `daddr` |
+| `layers.ipv6`  | IPv6 fields: `version`, `traffic_class`, `flow_label`, `len`, `next_header`, `hop_limit`, `saddr`, `daddr`  |
+| `layers.tcp`   | TCP fields: `sport`, `dport`, `seq`, `ack_seq`, `data_offset`, `flags`, `window`, `checksum`, `urgent`, `sk_state` |
 | `layers.udp`   | UDP fields: `sport`, `dport`, `len`, `checksum`                                                         |
 | `layers.icmp`  | ICMP/ICMPv6 fields: `type`, `code`, `checksum`, `id`, `seq`                                             |
 | `layers.arp`   | ARP fields: `addr_type`, `protocol`, `hw_address_size`, `prot_address_size`, `operation`, `sender_mac`, `sender_ip`, `target_mac`, `target_ip` |
@@ -252,7 +252,7 @@ huatuo-bamai launches `dropwatch` as a subprocess and uses `--output-storage` to
 ```bash
 dropwatch \
   --bpf-path <CoreBpfDir>/dropwatch.o \
-  --output-storage /var/run/huatuo/events.sock \
+  --output-storage /var/run/huatuo-toolstream.sock \
   --filter "tcp"
 ```
 
@@ -260,9 +260,9 @@ dropwatch \
 
 ```toml
 [EventTracing]
-    # Known noisy call-stack filters. dropwatch discards events whose stack matches these regexes.
-    # The default examples cover neighbor table cleanup and bnxt TX completion SKB frees.
-    IssuesList = [["neigh_invalidate", "neigh_invalidate"], ["bnxt_tx_int", "bnxt_tx_int"]]
+    # Optional call-stack filters. dropwatch discards events whose stack matches a configured regex.
+    # Default: []
+    IssuesList = []
 
 [EventTracing.Dropwatch]
     # tcpdump filter expression, forwarded to dropwatch --filter.
@@ -276,11 +276,10 @@ dropwatch \
 
 #### 4.2 Noise Filtering
 
-The following three categories of `kfree_skb` events are filtered by default because they are not real data-plane drops:
+No call-stack noise rule is enabled by default. When `EventTracing.IssuesList` is configured, huatuo-bamai discards matching events. The following patterns are possible operator-configured filters; validate them against the local kernel and workload before enabling them:
 
 | Pattern                                | Stack Frame Prefix                | Reason                                                                                                      |
 | -------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| TCP `CLOSE_WAIT` + `skb_rbtree_purge`  | `skb_rbtree_purge/`               | Normal socket teardown: the kernel releases in-flight SKBs when closing a socket in `CLOSE_WAIT` state.     |
 | ARP/neighbor table expiry              | `neigh_invalidate/`               | Neighbor table entry expiration cleanup; does not affect any active data flow. Remove the rule from `EventTracing.IssuesList` to disable this filter. |
 | bnxt NIC TX completion                 | `bnxt_tx_int/` or `__bnxt_tx_int/` | The Broadcom bnxt NIC driver calls `kfree_skb` to release SKBs after DMA transmit completion; this is normal behavior, not a drop. |
 
