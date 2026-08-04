@@ -12,13 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// MD transition records retain the watcher's observation time.
 package iohealth
 
 import "time"
 
 const (
-	MDFieldSyncAction = "sync_action"
-	MDFieldDegraded   = "degraded"
+	MDFieldSyncAction  = "sync_action"
+	MDFieldDegraded    = "degraded"
+	MDFieldMemberState = "member_state"
+
+	// MDMemberStateRemoved is emitted when a member disappears from an active
+	// array before its final state notification can be read.
+	MDMemberStateRemoved = "removed"
 )
 
 // MDChange describes one observed MD state transition. Member is empty for
