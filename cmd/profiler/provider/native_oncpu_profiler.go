@@ -47,7 +47,7 @@ func init() {
 type cpuNativeProfiler struct {
 	bpf                bpf.BPF
 	dbg                *bpf.BpfDbg
-	offCPU             bool
+	offCPUMode         bool
 	offCPUStatsEnabled bool
 }
 
@@ -131,7 +131,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	p.bpf = b
 	p.dbg = dbg
-	p.offCPU = offCPU
+	p.offCPUMode = offCPU
 	p.offCPUStatsEnabled = offCPU && pctx.OffCPUStatsEnabled
 	log.Infof("eBPF attached")
 
@@ -153,7 +153,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 	}
 	defer stopDbg()
 
-	if p.offCPU {
+	if p.offCPUMode {
 		return p.readOffCPUDataLoop(ctx, enqueue)
 	}
 	return p.readOnCPUDataLoop(ctx, enqueue)
