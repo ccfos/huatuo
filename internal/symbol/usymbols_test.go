@@ -133,7 +133,7 @@ func TestNewUsymResolver(t *testing.T) {
 		t.Errorf("NewUsymResolver(): got limits %+v, want defaults %+v", resolver.elfSymbolLimits, DefaultELFSymbolLimits())
 	}
 
-	customLimits := ELFSymbolLimits{MaxMetadataBytes: 1024, MaxSymbolCount: 32}
+	customLimits := ELFSymbolLimits{MaxMetadataBytes: 1024, MaxSymbolCount: 32, MaxNameBytes: 512}
 	configured := NewUsymResolver(WithELFSymbolLimits(customLimits))
 	if configured.elfSymbolLimits != customLimits {
 		t.Errorf("NewUsymResolver(WithELFSymbolLimits): got %+v, want %+v", configured.elfSymbolLimits, customLimits)
