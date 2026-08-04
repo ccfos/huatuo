@@ -88,18 +88,6 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(
 	ctx context.Context,
 	enqueue func(any),
 ) error {
-	log.Infof("off-CPU data reading loop started")
-	var lostSamples uint64
-	defer func() {
-		log.Infof("off-CPU data reading loop ended: lost_samples=%d", lostSamples)
-	}()
-
-	stopDbg, err := p.dbg.StartDebugEventLoop(ctx, p.bpf, "dbg_native_cpu_offcpu_dbg_events")
-	if err != nil {
-		return fmt.Errorf("start off-CPU bpf debug loop: %w", err)
-	}
-	defer stopDbg()
-
 	ringCtx, err := newSingleRingBufferContext(
 		p.bpf,
 		ctx,
@@ -119,7 +107,6 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(
 		if err != nil {
 			var lostErr *bpf.PerfEventSamplesLostError
 			if errors.As(err, &lostErr) {
-				lostSamples += lostErr.Count
 				log.Warnf("off-CPU perf event samples lost: %d", lostErr.Count)
 			}
 

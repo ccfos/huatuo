@@ -54,7 +54,7 @@ static volatile const __u32 profiler_offcpu_metric = OFFCPU_METRIC_TOTAL;
 static volatile const __u64 profiler_offcpu_min_ns = 1000000;
 static volatile const __u64 profiler_offcpu_max_ns = 0;
 
-BPF_DBG_MAP(native_cpu_offcpu_dbg);
+BPF_DBG_MAP(native_cpu_dbg);
 
 struct offcpu_state_t {
 	struct profiler_event_base base;

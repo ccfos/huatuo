@@ -133,18 +133,19 @@ func nativeOnCPUAttachOptions(pctx *pcontext.ProfilerContext) []bpf.AttachOption
 }
 
 func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	if p.offCPU {
-		return p.readOffCPUDataLoop(ctx, enqueue)
-	}
-	log.Infof("data reading loop started")
-	defer log.Infof("data reading loop ended")
-
 	stopDbg, err := p.dbg.StartDebugEventLoop(ctx, p.bpf, "dbg_native_cpu_dbg_events")
 	if err != nil {
-		return fmt.Errorf("start bpf debug loop: %w", err)
+		return fmt.Errorf("start native CPU BPF debug loop: %w", err)
 	}
 	defer stopDbg()
 
+	if p.offCPU {
+		return p.readOffCPUDataLoop(ctx, enqueue)
+	}
+	return p.readOnCPUDataLoop(ctx, enqueue)
+}
+
+func (p *cpuNativeProfiler) readOnCPUDataLoop(ctx context.Context, enqueue func(any)) error {
 	// Initialize ring buffer context once, reuse throughout the profiling loop
 	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257, false)
 	if err != nil {
