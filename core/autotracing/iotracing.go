@@ -232,26 +232,40 @@ func readDiskStats() ([]blockdevice.Diskstats, error) {
 	return fs.ProcDiskstats()
 }
 
-func buildDiskMetric(
-	previous *blockdevice.Diskstats,
-	current *blockdevice.Diskstats,
-	intervalSeconds uint64,
-) diskStatus {
-	if intervalSeconds == 0 {
-		return diskStatus{}
+func validDiskstatsWindow(
+	prev *blockdevice.Diskstats,
+	curr *blockdevice.Diskstats,
+) bool {
+	if prev == nil || curr == nil ||
+		prev.MajorNumber != curr.MajorNumber ||
+		prev.MinorNumber != curr.MinorNumber {
+		return false
 	}
+
 	// Kernel counters reset when a device is removed and re-registered
 	// under the same name (hotplug, driver rebind, LVM rebuild). Without
 	// this guard the reset causes uint64 underflow in the delta below,
 	// producing a fake metric that triggers a false IO alert.
-	if current.ReadIOs < previous.ReadIOs || current.WriteIOs < previous.WriteIOs ||
-		current.IOsTotalTicks < previous.IOsTotalTicks ||
-		current.ReadSectors < previous.ReadSectors ||
-		current.WriteSectors < previous.WriteSectors ||
-		current.ReadTicks < previous.ReadTicks ||
-		current.WriteTicks < previous.WriteTicks ||
-		current.WeightedIOTicks < previous.WeightedIOTicks {
-		return diskStatus{}
+	return curr.ReadIOs >= prev.ReadIOs &&
+		curr.WriteIOs >= prev.WriteIOs &&
+		curr.IOsTotalTicks >= prev.IOsTotalTicks &&
+		curr.ReadSectors >= prev.ReadSectors &&
+		curr.WriteSectors >= prev.WriteSectors &&
+		curr.ReadTicks >= prev.ReadTicks &&
+		curr.WriteTicks >= prev.WriteTicks &&
+		curr.WeightedIOTicks >= prev.WeightedIOTicks
+}
+
+func buildDiskMetric(
+	previous *blockdevice.Diskstats,
+	current *blockdevice.Diskstats,
+	intervalSeconds uint64,
+) (diskStatus, bool) {
+	if intervalSeconds == 0 {
+		return diskStatus{}, false
+	}
+	if !validDiskstatsWindow(previous, current) {
+		return diskStatus{}, false
 	}
 
 	deltaReadIOs := current.ReadIOs - previous.ReadIOs
@@ -273,7 +287,7 @@ func buildDiskMetric(
 		metrics.WriteAwait = (current.WriteTicks - previous.WriteTicks) / deltaWriteIOs
 	}
 
-	return metrics
+	return metrics, true
 }
 
 func evaluateThresholds(
@@ -293,13 +307,12 @@ func evaluateThresholds(
 		currentDevices[current.DeviceName] = struct{}{}
 
 		if previous, ok := lastRawStats[current.DeviceName]; ok {
-			if previous.MajorNumber != current.MajorNumber ||
-				previous.MinorNumber != current.MinorNumber {
+			metric, valid := buildDiskMetric(previous, current, intervalSeconds)
+			if !valid {
 				delete(lastMetrics, current.DeviceName)
 				lastRawStats[current.DeviceName] = current
 				continue
 			}
-			metric := buildDiskMetric(previous, current, intervalSeconds)
 
 			log.WithField("device", current.DeviceName).
 				WithField("io_util_percent", metric.IOUtil).
