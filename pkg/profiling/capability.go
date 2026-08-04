@@ -55,14 +55,16 @@ const (
 type CPUMode string
 
 const (
-	CPUModeOnCPU  CPUMode = "oncpu"
-	CPUModeOffCPU CPUMode = "offcpu"
+	CPUModeUnknown CPUMode = ""
+	CPUModeOnCPU   CPUMode = "oncpu"
+	CPUModeOffCPU  CPUMode = "offcpu"
 )
 
 // OffCPUPhase selects which part of a deschedule interval is accumulated.
 type OffCPUPhase string
 
 const (
+	OffCPUPhaseUnknown  OffCPUPhase = ""
 	OffCPUPhaseAll      OffCPUPhase = "all"
 	OffCPUPhaseBlocked  OffCPUPhase = "blocked"
 	OffCPUPhaseRunqueue OffCPUPhase = "runqueue"
@@ -120,7 +122,7 @@ func ParseType(value string) (Type, error) {
 	if typ == TypeCPU || typ == TypeMemory {
 		return typ, nil
 	}
-	return TypeUnknown, fmt.Errorf("unsupported profiling type %q (expected: cpu or memory)", value)
+	return TypeUnknown, fmt.Errorf("unsupported profiling type %q", value)
 }
 
 func ParseLanguage(value string) (Language, error) {
@@ -148,7 +150,7 @@ func ParseCPUMode(value string) (CPUMode, error) {
 	if mode == CPUModeOnCPU || mode == CPUModeOffCPU {
 		return mode, nil
 	}
-	return "", fmt.Errorf("unsupported CPU mode %q (expected: oncpu or offcpu)", value)
+	return CPUModeUnknown, fmt.Errorf("unsupported CPU mode %q", value)
 }
 
 func ParseOffCPUPhase(value string) (OffCPUPhase, error) {
@@ -156,7 +158,7 @@ func ParseOffCPUPhase(value string) (OffCPUPhase, error) {
 	if phase == OffCPUPhaseAll || phase == OffCPUPhaseBlocked || phase == OffCPUPhaseRunqueue {
 		return phase, nil
 	}
-	return "", fmt.Errorf("unsupported off-CPU phase %q (expected: all, blocked, or runqueue)", value)
+	return OffCPUPhaseUnknown, fmt.Errorf("unsupported off-CPU phase %q", value)
 }
 
 func IsSupported(language Language, typ Type) bool {

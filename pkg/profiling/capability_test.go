@@ -27,8 +27,9 @@ func TestParseCPUMode(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, mode, got)
 	}
-	_, err := ParseCPUMode("sleep")
-	require.EqualError(t, err, `unsupported CPU mode "sleep" (expected: oncpu or offcpu)`)
+	mode, err := ParseCPUMode("sleep")
+	require.Equal(t, CPUModeUnknown, mode)
+	require.EqualError(t, err, `unsupported CPU mode "sleep"`)
 }
 
 func TestParseOffCPUPhase(t *testing.T) {
@@ -37,8 +38,9 @@ func TestParseOffCPUPhase(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, phase, got)
 	}
-	_, err := ParseOffCPUPhase("wait")
-	require.EqualError(t, err, `unsupported off-CPU phase "wait" (expected: all, blocked, or runqueue)`)
+	phase, err := ParseOffCPUPhase("wait")
+	require.Equal(t, OffCPUPhaseUnknown, phase)
+	require.EqualError(t, err, `unsupported off-CPU phase "wait"`)
 }
 
 func TestCapabilities(t *testing.T) {
@@ -148,7 +150,7 @@ func TestParsers(t *testing.T) {
 
 func TestParseTypeRejectsLegacyMemoryValue(t *testing.T) {
 	_, err := ParseType("mem")
-	require.EqualError(t, err, `unsupported profiling type "mem" (expected: cpu or memory)`)
+	require.EqualError(t, err, `unsupported profiling type "mem"`)
 }
 
 func allMemoryModes() []MemoryMode {

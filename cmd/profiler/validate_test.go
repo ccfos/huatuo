@@ -77,7 +77,7 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 		{
 			name:      "legacy mem type",
 			args:      []string{"--type", "mem", "--language", "c"},
-			wantError: `unsupported profiling type "mem" (expected: cpu or memory)`,
+			wantError: `unsupported profiling type "mem"`,
 		},
 		{
 			name:      "removed flags option",
@@ -294,7 +294,7 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			language:  "go",
 			typ:       "cpu",
 			args:      []string{"--cpu-mode", "offcpu", "--offcpu-phase", "wait"},
-			wantError: `unsupported off-CPU phase "wait" (expected: all, blocked, or runqueue)`,
+			wantError: `unsupported off-CPU phase "wait"`,
 		},
 		{
 			name:      "Java cpuid",
