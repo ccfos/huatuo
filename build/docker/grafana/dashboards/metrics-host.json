@@ -287,7 +287,7 @@
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "width": 300
+          "width": 500
         },
         "tooltip": {
           "hideZeros": false,
@@ -305,7 +305,7 @@
           "exemplar": true,
           "expr": "$metric{host=~\"$host\",region=~\"$region\"}",
           "interval": "",
-          "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+          "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
           "refId": "A"
         }
       ],
@@ -403,7 +403,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -505,7 +505,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -607,7 +607,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -625,7 +625,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_cpu_util_container_usr{host=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}/{{container_name}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}|{{container_name}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -707,7 +707,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -724,7 +724,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_cpu_util_container_sys{host=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}|{{container_name}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -806,7 +806,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -823,7 +823,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_cpu_stat_container_exter_wait_rate{host=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -905,7 +905,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -922,7 +922,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_cpu_stat_container_inner_wait_rate{host=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1005,7 +1005,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -1022,7 +1022,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_cpu_stat_container_throttle_wait_rate{host=~\"$host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1105,7 +1105,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1208,7 +1208,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1337,7 +1337,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1355,7 +1355,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_pgsteal_direct{host=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}",
               "refId": "A"
             }
           ],
@@ -1437,7 +1437,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1455,7 +1455,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_pgsteal_kswapd{host=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}",
               "refId": "A"
             }
           ],
@@ -1537,7 +1537,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1555,7 +1555,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_nr_dirty{host=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}",
               "refId": "A"
             }
           ],
@@ -1637,7 +1637,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -1654,7 +1654,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_nr_writeback{host=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}",
               "refId": "A"
             }
           ],
@@ -1736,7 +1736,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -1753,7 +1753,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_nr_free_pages{host=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}",
               "refId": "A"
             }
           ],
@@ -1835,7 +1835,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -1852,7 +1852,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_nr_inactive_file{host=~\"$host\",region=~\"$region\"}/256 + huatuo_bamai_memory_vmstat_nr_active_file{host=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}",
               "refId": "A"
             }
           ],
@@ -1934,7 +1934,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -1952,7 +1952,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_nr_inactive_anon{host=~\"$host\",region=~\"$region\"}/256 + huatuo_bamai_memory_vmstat_nr_active_anon{host=~\"$host\",region=~\"$region\"}/256",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}",
               "range": true,
               "refId": "A"
             }
@@ -2062,7 +2062,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -2175,7 +2175,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -2287,7 +2287,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -2398,7 +2398,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -2510,7 +2510,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -2622,7 +2622,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -2778,7 +2778,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -2901,7 +2901,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -3028,7 +3028,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -3196,7 +3196,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -3349,7 +3349,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -3488,7 +3488,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -3627,7 +3627,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -3766,7 +3766,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -3905,7 +3905,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -4044,7 +4044,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -4163,7 +4163,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -4357,7 +4357,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -4641,7 +4641,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -4880,7 +4880,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -5059,7 +5059,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -5178,7 +5178,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -5327,7 +5327,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -5458,7 +5458,7 @@
               "showLegend": true,
               "sortBy": "Mean",
               "sortDesc": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -5584,7 +5584,7 @@
               "showLegend": true,
               "sortBy": "Mean",
               "sortDesc": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -5685,7 +5685,7 @@
               "showLegend": true,
               "sortBy": "Mean",
               "sortDesc": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -5813,7 +5813,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -5917,7 +5917,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -6021,7 +6021,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -6125,7 +6125,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -6229,7 +6229,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -6333,7 +6333,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "multi",
@@ -6464,7 +6464,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -6565,7 +6565,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -6705,7 +6705,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -6806,7 +6806,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -6920,7 +6920,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -7021,7 +7021,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -7122,7 +7122,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "mode": "single",
@@ -7171,8 +7171,9 @@
     "list": [
       {
         "current": {
-          "text": "example",
-          "value": "example"
+          "text": "All",
+          "value": "$__all",
+          "selected": true
         },
         "datasource": {
           "type": "prometheus",
@@ -7212,6 +7213,7 @@
         "multi": true,
         "name": "host",
         "options": [],
+        "allValue": ".*",
         "query": {
           "query": "label_values(huatuo_bamai_cpu_util_usr{region=~\"$region\"}, host)",
           "refId": "StandardVariableQuery"
