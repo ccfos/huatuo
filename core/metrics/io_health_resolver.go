@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Health evidence resolves to one physical device generation so stacked
+// devices cannot cause speculative command fan-out.
 package collector
 
 import (
@@ -21,6 +23,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/ccfos/huatuo/internal/iohealth"
 )
@@ -38,6 +41,7 @@ var (
 type ioHealthResolvedTarget struct {
 	eventDevice string
 	target      string
+	identity    string
 	protocol    string
 	reason      string
 }
@@ -132,16 +136,35 @@ func (r ioHealthResolver) resolveBlockName(device string) ioHealthResolvedTarget
 				reason:      iohealth.CollectionReasonTargetUnsupported,
 			}
 		}
+		identity := ioHealthPathIdentity(filepath.Join(
+			r.sysClassNVMePath,
+			controller,
+		))
+		if identity == "" {
+			return ioHealthResolvedTarget{
+				eventDevice: device,
+				reason:      iohealth.CollectionReasonTargetUnresolved,
+			}
+		}
 		return ioHealthResolvedTarget{
 			eventDevice: device,
 			target:      controller,
+			identity:    identity,
 			protocol:    ioHealthProtocolNVMe,
 		}
 	}
 	if strings.HasPrefix(target, "sd") {
+		identity := r.blockIdentity(target)
+		if identity == "" {
+			return ioHealthResolvedTarget{
+				eventDevice: device,
+				reason:      iohealth.CollectionReasonTargetUnresolved,
+			}
+		}
 		return ioHealthResolvedTarget{
 			eventDevice: device,
 			target:      target,
+			identity:    identity,
 			protocol:    ioHealthProtocolSCSI,
 		}
 	}
@@ -149,6 +172,51 @@ func (r ioHealthResolver) resolveBlockName(device string) ioHealthResolvedTarget
 		eventDevice: device,
 		reason:      iohealth.CollectionReasonTargetUnsupported,
 	}
+}
+
+func (r ioHealthResolver) blockIdentity(device string) string {
+	path := filepath.Join(r.sysClassBlockPath, device)
+	identity := ioHealthPathIdentity(path)
+	if identity == "" {
+		return ""
+	}
+	for _, field := range []string{"dev", "diskseq"} {
+		value, err := os.ReadFile(filepath.Join(path, field))
+		if err == nil {
+			identity += "\x00" + field + "=" + strings.TrimSpace(string(value))
+		}
+	}
+	return identity
+}
+
+func ioHealthPathIdentity(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return ""
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	// Include the canonical sysfs path and its live kernfs inode. Optional
+	// device fields added by callers strengthen this identity on kernels that
+	// expose them; the value is used only across the bounded evidence window.
+	return fmt.Sprintf("%s\x00ino=%d", resolved, stat.Ino)
+}
+
+//nolint:gocritic // The callback contract uses an immutable request snapshot.
+func (r ioHealthResolver) evidenceTargetCurrent(request iohealth.EvidenceRequest) bool {
+	if request.Identity == "" {
+		return true
+	}
+	target := r.resolveBlockName(request.Trigger.Device)
+	return target.reason == "" &&
+		target.target == request.Target &&
+		target.identity == request.Identity
 }
 
 func (r ioHealthResolver) blockLeaves(device string, visiting map[string]bool) ([]string, error) {
@@ -242,7 +310,8 @@ func (r ioHealthResolver) nvmeController(namespace, controllerInstance string) (
 
 func (r ioHealthResolver) resolveSCSI(host, channel, target, lun uint32) ioHealthResolvedTarget {
 	hctl := fmt.Sprintf("%d:%d:%d:%d", host, channel, target, lun)
-	entries, err := os.ReadDir(filepath.Join(r.sysClassSCSIPath, hctl, "device", "block"))
+	blockPath := filepath.Join(r.sysClassSCSIPath, hctl, "device", "block")
+	entries, err := os.ReadDir(blockPath)
 	if err != nil || len(entries) != 1 {
 		return ioHealthResolvedTarget{
 			eventDevice: "unknown",
@@ -250,9 +319,20 @@ func (r ioHealthResolver) resolveSCSI(host, channel, target, lun uint32) ioHealt
 		}
 	}
 	device := entries[0].Name()
+	identity := r.blockIdentity(device)
+	if identity == "" {
+		identity = ioHealthPathIdentity(filepath.Join(blockPath, device))
+	}
+	if identity == "" {
+		return ioHealthResolvedTarget{
+			eventDevice: device,
+			reason:      iohealth.CollectionReasonTargetUnresolved,
+		}
+	}
 	return ioHealthResolvedTarget{
 		eventDevice: device,
 		target:      device,
+		identity:    identity,
 		protocol:    ioHealthProtocolSCSI,
 	}
 }

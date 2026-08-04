@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Evidence requests share one bounded serial queue while target generations
+// prevent replacement devices from inheriting old suppression state.
 package iohealth
 
 import (
@@ -31,6 +33,7 @@ const (
 	EvidenceProtocolSCSI EvidenceProtocol = "scsi"
 
 	CollectionReasonTargetUnresolved  = "target_unresolved"
+	CollectionReasonTargetChanged     = "target_changed"
 	CollectionReasonToolUnavailable   = "tool_unavailable"
 	CollectionReasonTargetUnsupported = "target_unsupported"
 	CollectionReasonTimeout           = "timeout"
@@ -38,7 +41,8 @@ const (
 	CollectionReasonOutputTooLarge    = "output_too_large"
 	CollectionReasonParseError        = "parse_error"
 
-	evidenceCooldown = 60 * time.Second
+	evidenceCooldown      = 60 * time.Second
+	evidenceQueueCapacity = 1024
 )
 
 // EvidenceRequest describes one event-triggered health collection. Target is
@@ -48,6 +52,7 @@ const (
 type EvidenceRequest struct {
 	Trigger     types.IOHealthEvent
 	Target      string
+	Identity    string
 	Protocol    EvidenceProtocol
 	TriggeredAt time.Time
 	Reason      string
@@ -64,28 +69,40 @@ type EvidenceResult struct {
 }
 
 type EvidenceWorkerOptions struct {
-	OnResult func(EvidenceResult)
+	OnResult         func(EvidenceResult)
+	ValidateIdentity func(EvidenceRequest) bool
+}
+
+type evidenceRequestKey struct {
+	target   string
+	identity string
+}
+
+type evidenceCooldownState struct {
+	key   evidenceRequestKey
+	until time.Time
 }
 
 type queuedEvidenceRequest struct {
 	request EvidenceRequest
-	key     string
-	target  string
+	key     evidenceRequestKey
 }
 
 // EvidenceWorker owns one serial external-command queue. In-flight and
-// cooldown state admit at most one request per target, so repeated events for
-// one disk cannot grow the queue. Serial execution intentionally avoids adding
-// command load to several unhealthy storage paths at once. One worker lives
-// for the collector run, so its state remains intact across BPF session
-// retries.
+// cooldown state admit at most one request per target generation. A new device
+// generation does not inherit the old generation's suppression state, while a
+// fixed queue capacity bounds a hotplug storm. Serial execution intentionally
+// avoids adding command load to several unhealthy storage paths at once. One
+// worker lives for the collector run, so its state remains intact across BPF
+// session retries.
 type EvidenceWorker struct {
-	onResult func(EvidenceResult)
+	onResult         func(EvidenceResult)
+	validateIdentity func(EvidenceRequest) bool
 
 	mu            sync.Mutex
 	queue         []queuedEvidenceRequest
-	inflight      map[string]struct{}
-	cooldownUntil map[string]time.Time
+	inflight      map[evidenceRequestKey]struct{}
+	cooldownUntil map[string]evidenceCooldownState
 	wake          chan struct{}
 	done          chan struct{}
 	started       bool
@@ -98,6 +115,7 @@ type EvidenceWorker struct {
 	cooldown       time.Duration
 	commandTimeout time.Duration
 	maxOutputBytes int
+	queueCapacity  int
 }
 
 func NewEvidenceWorker(options EvidenceWorkerOptions) *EvidenceWorker {
@@ -105,18 +123,24 @@ func NewEvidenceWorker(options EvidenceWorkerOptions) *EvidenceWorker {
 	if onResult == nil {
 		onResult = func(EvidenceResult) {}
 	}
+	validateIdentity := options.ValidateIdentity
+	if validateIdentity == nil {
+		validateIdentity = func(EvidenceRequest) bool { return true }
+	}
 	return &EvidenceWorker{
-		onResult:       onResult,
-		inflight:       make(map[string]struct{}),
-		cooldownUntil:  make(map[string]time.Time),
-		wake:           make(chan struct{}, 1),
-		done:           make(chan struct{}),
-		now:            time.Now,
-		lookupPath:     exec.LookPath,
-		runCommand:     runEvidenceCommand,
-		cooldown:       evidenceCooldown,
-		commandTimeout: evidenceCommandTimeout,
-		maxOutputBytes: evidenceOutputLimit,
+		onResult:         onResult,
+		validateIdentity: validateIdentity,
+		inflight:         make(map[evidenceRequestKey]struct{}),
+		cooldownUntil:    make(map[string]evidenceCooldownState),
+		wake:             make(chan struct{}, 1),
+		done:             make(chan struct{}),
+		now:              time.Now,
+		lookupPath:       exec.LookPath,
+		runCommand:       runEvidenceCommand,
+		cooldown:         evidenceCooldown,
+		commandTimeout:   evidenceCommandTimeout,
+		maxOutputBytes:   evidenceOutputLimit,
+		queueCapacity:    evidenceQueueCapacity,
 	}
 }
 
@@ -153,7 +177,11 @@ func (w *EvidenceWorker) Submit(request EvidenceRequest) bool {
 	if _, ok := w.inflight[key]; ok {
 		return false
 	}
-	if w.now().Before(w.cooldownUntil[key]) {
+	if cooldown, ok := w.cooldownUntil[target]; ok &&
+		cooldown.key == key && w.now().Before(cooldown.until) {
+		return false
+	}
+	if len(w.queue) >= w.queueCapacity {
 		return false
 	}
 
@@ -161,7 +189,6 @@ func (w *EvidenceWorker) Submit(request EvidenceRequest) bool {
 	w.queue = append(w.queue, queuedEvidenceRequest{
 		request: request,
 		key:     key,
-		target:  target,
 	})
 	select {
 	case w.wake <- struct{}{}:
@@ -184,9 +211,13 @@ func (w *EvidenceWorker) loop(ctx context.Context) {
 
 	for {
 		if request, ok := w.take(); ok {
-			result := w.collectEvidence(ctx, request.request, request.target)
+			result, applyCooldown := w.collectEvidence(
+				ctx,
+				request.request,
+				request.key.target,
+			)
 			w.onResult(result)
-			w.finish(request.key)
+			w.finish(&request, applyCooldown)
 			continue
 		}
 		select {
@@ -212,13 +243,27 @@ func (w *EvidenceWorker) take() (queuedEvidenceRequest, bool) {
 	request := w.queue[0]
 	w.queue[0] = queuedEvidenceRequest{}
 	w.queue = w.queue[1:]
-	w.cooldownUntil[request.key] = w.now().Add(w.cooldown)
 	return request, true
 }
 
-func (w *EvidenceWorker) finish(key string) {
+func (w *EvidenceWorker) finish(
+	request *queuedEvidenceRequest,
+	applyCooldown bool,
+) {
 	w.mu.Lock()
-	delete(w.inflight, key)
+	delete(w.inflight, request.key)
+	if applyCooldown {
+		now := w.now()
+		current, exists := w.cooldownUntil[request.key.target]
+		// An unresolved request has no generation identity. Keep reporting it,
+		// but do not let it displace an active, verified generation.
+		if request.key.identity != "" || !exists || !now.Before(current.until) {
+			w.cooldownUntil[request.key.target] = evidenceCooldownState{
+				key:   request.key,
+				until: now.Add(w.cooldown),
+			}
+		}
+	}
 	w.mu.Unlock()
 }
 
@@ -230,7 +275,7 @@ func (w *EvidenceWorker) hasQueued() bool {
 
 func (w *EvidenceWorker) prepare(
 	request *EvidenceRequest,
-) (EvidenceRequest, string, string, bool) {
+) (EvidenceRequest, string, evidenceRequestKey, bool) {
 	if request.Trigger.Device == "" {
 		request.Trigger.Device = "unknown"
 	}
@@ -244,7 +289,7 @@ func (w *EvidenceWorker) prepare(
 	if request.Reason != "" &&
 		request.Reason != CollectionReasonTargetUnresolved &&
 		request.Reason != CollectionReasonTargetUnsupported {
-		return EvidenceRequest{}, "", "", false
+		return EvidenceRequest{}, "", evidenceRequestKey{}, false
 	}
 
 	target, validTarget := commandTarget(request.Target)
@@ -266,11 +311,10 @@ func (w *EvidenceWorker) prepare(
 	if resultTarget == "" {
 		resultTarget = request.Trigger.Device
 	}
-	key := resultTarget
-	if strings.TrimSpace(key) == "" {
-		key = "unknown"
-		resultTarget = key
+	if strings.TrimSpace(resultTarget) == "" {
+		resultTarget = "unknown"
 	}
+	key := evidenceRequestKey{target: resultTarget, identity: request.Identity}
 	return *request, resultTarget, key, true
 }
 
