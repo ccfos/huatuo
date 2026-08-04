@@ -54,8 +54,8 @@ func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggre
 	return newNativeAggregator(pctx)
 }
 
-func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
-	if p.offCPU {
+func (p *cpuNativeProfiler) Stop(pctx *pcontext.ProfilerContext) error {
+	if p.offCPU && pctx.OffCPUStatsEnabled {
 		logOffCPUBPFStats(p.bpf)
 	}
 	return closeBpfSafe(p.bpf)

@@ -49,6 +49,7 @@ enum offcpu_stat {
 static volatile const __u32 profiler_offcpu_phase = OFFCPU_PHASE_FILTER_ALL;
 static volatile const __u64 profiler_offcpu_min_duration_ns = 1000000;
 static volatile const __u32 profiler_offcpu_cpu_set_enabled = 0;
+static volatile const __u32 profiler_offcpu_stats_enabled = 0;
 
 BPF_DBG_MAP(native_cpu_dbg);
 
@@ -110,6 +111,9 @@ struct {
 static __always_inline void offcpu_stat_inc(__u32 stat)
 {
 	__u64 *value;
+
+	if (!profiler_offcpu_stats_enabled)
+		return;
 
 	value = bpf_map_lookup_elem(&offcpu_stats, &stat);
 	if (value)

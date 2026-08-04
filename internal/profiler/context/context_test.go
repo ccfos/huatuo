@@ -29,6 +29,10 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	set.String("language", "c", "")
 	set.String("output-format", "collapsed", "")
 	set.String("tracer-id", "trace-123", "")
+	set.Bool("offcpu-stats", false, "")
+	if err := set.Parse([]string{"--offcpu-stats"}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
 	cliCtx := cli.NewContext(nil, set, nil)
 
 	pctx, err := NewProfilerContext(cliCtx, &bytes.Buffer{})
@@ -37,6 +41,9 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	}
 	if pctx.TracerID != "trace-123" {
 		t.Fatalf("TracerID = %q, want trace-123", pctx.TracerID)
+	}
+	if !pctx.OffCPUStatsEnabled {
+		t.Fatal("OffCPUStatsEnabled = false, want true")
 	}
 	pctx.Cancel()
 	pctx.Cancel()

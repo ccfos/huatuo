@@ -475,6 +475,7 @@ Native profiling options:
 | `--cpu-mode` | `oncpu` | Native CPU | `oncpu` for frequency sampling or `offcpu` for blocked/runqueue time attribution |
 | `--offcpu-phase` | `all` | Native off-CPU | Accumulate `all`, `blocked`, or `runqueue` time |
 | `--offcpu-min-duration-us` | `1000` | Native off-CPU | Discard phases shorter than this duration in microseconds |
+| `--offcpu-stats` | `false` | Native off-CPU | Collect BPF diagnostic statistics; adds overhead to error and cleanup paths |
 | `--thread-group` | `false` | Native | Also profile other threads in the target PID's thread group |
 | `--physical-memory-probability` | `100` | Native physical memory | Physical memory event sampling probability from 1 to 100 |
 | `--log-bpf-debug` | `false` | Native | Emit BPF debug events; not recommended for normal profiling |

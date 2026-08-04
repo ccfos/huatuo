@@ -55,6 +55,10 @@ var appFlags = []cli.Flag{
 		Usage: "Minimum off-CPU phase duration to record in microseconds",
 		Value: 1000,
 	},
+	&cli.BoolFlag{
+		Name:  "offcpu-stats",
+		Usage: "Enable off-CPU diagnostics",
+	},
 	&cli.StringFlag{
 		Name:  "container-id",
 		Usage: "Target container ID",

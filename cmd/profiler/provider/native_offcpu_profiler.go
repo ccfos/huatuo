@@ -66,8 +66,12 @@ func newNativeOffCPUBPFConstants(pctx *pcontext.ProfilerContext, cssAddr uint64)
 	constants["profiler_offcpu_phase"] = offCPUPhaseCode(pctx.OffCPUPhase)
 	constants["profiler_offcpu_min_duration_ns"] = microsecondsToNanoseconds(pctx.OffCPUMinDurationUS)
 	constants["profiler_offcpu_cpu_set_enabled"] = uint32(0)
+	constants["profiler_offcpu_stats_enabled"] = uint32(0)
 	if len(pctx.CPUIDs) != 0 {
 		constants["profiler_offcpu_cpu_set_enabled"] = uint32(1)
+	}
+	if pctx.OffCPUStatsEnabled {
+		constants["profiler_offcpu_stats_enabled"] = uint32(1)
 	}
 	return constants
 }

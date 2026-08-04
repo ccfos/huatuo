@@ -291,6 +291,9 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.IsSet("offcpu-min-duration-us") && !offCPU {
 		return fmt.Errorf("--offcpu-min-duration-us requires native CPU profiling with --cpu-mode=offcpu")
 	}
+	if ctx.Bool("offcpu-stats") && !offCPU {
+		return fmt.Errorf("--offcpu-stats requires native CPU profiling with --cpu-mode=offcpu")
+	}
 	if offCPU {
 		if ctx.IsSet("freq") {
 			return fmt.Errorf("--freq is not used with --cpu-mode=offcpu")

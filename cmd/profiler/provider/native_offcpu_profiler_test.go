@@ -123,6 +123,7 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 		ThreadGroup:         true,
 		OffCPUPhase:         profiling.OffCPUPhaseRunqueue,
 		OffCPUMinDurationUS: 250,
+		OffCPUStatsEnabled:  true,
 	}
 	constants := newNativeOffCPUBPFConstants(pctx, 456)
 	require.Equal(t, uint32(123), constants["profiler_filter_pid"])
@@ -131,11 +132,13 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 	require.Equal(t, uint32(2), constants["profiler_offcpu_phase"])
 	require.Equal(t, uint64(250000), constants["profiler_offcpu_min_duration_ns"])
 	require.Equal(t, uint32(1), constants["profiler_offcpu_cpu_set_enabled"])
+	require.Equal(t, uint32(1), constants["profiler_offcpu_stats_enabled"])
 }
 
 func TestNativeOffCPUBPFConstantsDisablesEmptyCPUSet(t *testing.T) {
 	constants := newNativeOffCPUBPFConstants(&pcontext.ProfilerContext{}, 0)
 	require.Equal(t, uint32(0), constants["profiler_offcpu_cpu_set_enabled"])
+	require.Equal(t, uint32(0), constants["profiler_offcpu_stats_enabled"])
 }
 
 func TestOffCPUStatNames(t *testing.T) {

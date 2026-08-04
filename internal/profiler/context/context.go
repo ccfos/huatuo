@@ -61,6 +61,7 @@ type ProfilerContext struct {
 	CPUMode                   profiling.CPUMode
 	OffCPUPhase               profiling.OffCPUPhase
 	OffCPUMinDurationUS       uint64
+	OffCPUStatsEnabled        bool
 	PhysicalMemoryProbability uint
 
 	TracerID string
@@ -189,6 +190,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		CPUMode:                   cpuMode,
 		OffCPUPhase:               offCPUPhase,
 		OffCPUMinDurationUS:       cliCtx.Uint64("offcpu-min-duration-us"),
+		OffCPUStatsEnabled:        cliCtx.Bool("offcpu-stats"),
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
 
 		TracerID: cliCtx.String("tracer-id"),

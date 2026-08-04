@@ -269,6 +269,19 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			args:     []string{"--cpu-mode", "offcpu", "--cpuid", "1"},
 		},
 		{
+			name:     "native off-CPU stats",
+			language: "c",
+			typ:      "cpu",
+			args:     []string{"--cpu-mode", "offcpu", "--offcpu-stats"},
+		},
+		{
+			name:      "off-CPU stats require mode",
+			language:  "go",
+			typ:       "cpu",
+			args:      []string{"--offcpu-stats"},
+			wantError: "--offcpu-stats requires native CPU profiling with --cpu-mode=offcpu",
+		},
+		{
 			name:      "off-CPU rejects explicit frequency",
 			language:  "go",
 			typ:       "cpu",
@@ -384,6 +397,11 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestOffCPUStatsFlag(t *testing.T) {
+	require.False(t, newValidationCLIContext(t).Bool("offcpu-stats"))
+	require.True(t, newValidationCLIContext(t, "--offcpu-stats").Bool("offcpu-stats"))
 }
 
 func TestValidateOutputFormat(t *testing.T) {
