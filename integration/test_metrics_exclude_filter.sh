@@ -23,7 +23,18 @@ source "${ROOT_DIR}/integration/config.sh"
 
 integration_huatuo_bamai_start write_exclude_filter_config
 
-huatuo_bamai_await_metrics
+# The metrics endpoint can become ready before the netdev collector publishes
+# its first sample on slower VMs. Wait for both fixture interfaces so the
+# filter assertions do not race collector initialization.
+collect_exclude_filter_metrics() {
+	huatuo_bamai_collect_metrics || return 1
+	grep -qE 'huatuo_bamai_netdev_.*device="eth0"' "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt" &&
+		grep -qE 'huatuo_bamai_netdev_.*device="eth1"' "${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
+}
+
+wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" \
+	"${WAIT_HUATUO_BAMAI_INTERVAL}" \
+	collect_exclude_filter_metrics
 
 check_metrics "exclude filter" \
 	"memory_vmstat_thp_split_pmd" \
