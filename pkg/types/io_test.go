@@ -12,13 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Tests cover public IO health event serialization.
+// Tests cover public IO snapshot and health event serialization.
 package types
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestIOTracingSnapshotFailureReason(t *testing.T) {
+	for _, failure := range []string{"", IOTracingFailureReader} {
+		snapshot := IOTracingSnapshot{
+			FailureReason: failure,
+			StallStacks:   []IOScheduleEvent{{PID: 1, TID: 2, CPU: 3, ScheduleLatencyUS: 4}},
+		}
+		data, err := json.Marshal(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "failure_reason") != (failure != "") {
+			t.Fatalf("optional failure marker: %s", data)
+		}
+		var decoded IOTracingSnapshot
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.FailureReason != failure || !reflect.DeepEqual(decoded.StallStacks, snapshot.StallStacks) {
+			t.Fatalf("wire fields changed: %+v", decoded)
+		}
+	}
+}
 
 // IO health event payloads.
 
