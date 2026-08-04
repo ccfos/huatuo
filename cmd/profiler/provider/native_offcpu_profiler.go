@@ -34,12 +34,12 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_offcpu_profiler.c -o $BPF_DIR/native_offcpu_profiler.o
 
 const (
-	offCPUEventBlocked  uint16 = 1
-	offCPUEventRunqueue uint16 = 2
-
-	offCPUFlagPreempted    uint16 = 1 << 0
-	offCPUFlagYielded      uint16 = 1 << 1
-	offCPUFlagMissedWakeup uint16 = 1 << 2
+	offCPUEventUnknown uint32 = iota
+	offCPUEventBlocked
+	offCPUEventRunqueue
+	offCPUEventRunqueuePreempted
+	offCPUEventRunqueueYielded
+	offCPUEventRunqueueMissedWakeup
 
 	offCPUCPUSetMapName   = "offcpu_cpu_set"
 	offCPUCPUSetWordBits  = 64
@@ -195,7 +195,7 @@ func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any))
 			Comm: procutil.CommToString(event.Base.Comm),
 		}
 		stack := offCPUStackKey{
-			Category: offCPUCategory(event.Kind, event.Flags),
+			Category: offCPUCategory(event.Kind),
 			Stack: stackIDPair{
 				KernelStackID: event.Base.Kernstack,
 				UserStackID:   event.Base.Userstack,
@@ -220,27 +220,20 @@ func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any))
 	}
 }
 
-func offCPUCategory(kind, flags uint16) string {
-	switch kind {
-	case offCPUEventBlocked:
-		if flags&offCPUFlagMissedWakeup != 0 {
-			return "off-CPU blocked (wakeup not observed)"
-		}
-		return "off-CPU blocked"
-	case offCPUEventRunqueue:
-		if flags&offCPUFlagMissedWakeup != 0 {
-			return "scheduling delay (wakeup not observed)"
-		}
-		if flags&offCPUFlagPreempted != 0 {
-			return "scheduling delay (preempted)"
-		}
-		if flags&offCPUFlagYielded != 0 {
-			return "scheduling delay (yielded)"
-		}
-		return "scheduling delay"
-	default:
-		return "off-CPU unknown"
+var offCPUCategories = [...]string{
+	"off-CPU unknown",
+	"off-CPU blocked",
+	"scheduling delay",
+	"scheduling delay (preempted)",
+	"scheduling delay (yielded)",
+	"scheduling delay (wakeup not observed)",
+}
+
+func offCPUCategory(kind uint32) string {
+	if kind >= uint32(len(offCPUCategories)) {
+		return offCPUCategories[offCPUEventUnknown]
 	}
+	return offCPUCategories[kind]
 }
 
 var offCPUStatNames = []string{

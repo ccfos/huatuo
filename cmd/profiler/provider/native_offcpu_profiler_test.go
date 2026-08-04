@@ -32,30 +32,25 @@ import (
 
 func TestOffCPUEventABI(t *testing.T) {
 	var event abi.ProfilerOffCPUEvent
-	require.Equal(t, uintptr(64), unsafe.Sizeof(event))
-	require.Equal(t, uintptr(40), unsafe.Offsetof(event.StartNS))
-	require.Equal(t, uintptr(48), unsafe.Offsetof(event.EndNS))
-	require.Equal(t, uintptr(56), unsafe.Offsetof(event.CPU))
-	require.Equal(t, uintptr(60), unsafe.Offsetof(event.Kind))
-	require.Equal(t, uintptr(62), unsafe.Offsetof(event.Flags))
+	require.Equal(t, uintptr(48), unsafe.Sizeof(event))
+	require.Equal(t, uintptr(40), unsafe.Offsetof(event.Kind))
 }
 
 func TestOffCPUCategory(t *testing.T) {
 	tests := []struct {
-		kind  uint16
-		flags uint16
-		want  string
+		kind uint32
+		want string
 	}{
-		{offCPUEventBlocked, 0, "off-CPU blocked"},
-		{offCPUEventBlocked, offCPUFlagMissedWakeup, "off-CPU blocked (wakeup not observed)"},
-		{offCPUEventRunqueue, 0, "scheduling delay"},
-		{offCPUEventRunqueue, offCPUFlagMissedWakeup, "scheduling delay (wakeup not observed)"},
-		{offCPUEventRunqueue, offCPUFlagPreempted, "scheduling delay (preempted)"},
-		{offCPUEventRunqueue, offCPUFlagYielded, "scheduling delay (yielded)"},
-		{99, 0, "off-CPU unknown"},
+		{offCPUEventUnknown, "off-CPU unknown"},
+		{offCPUEventBlocked, "off-CPU blocked"},
+		{offCPUEventRunqueue, "scheduling delay"},
+		{offCPUEventRunqueuePreempted, "scheduling delay (preempted)"},
+		{offCPUEventRunqueueYielded, "scheduling delay (yielded)"},
+		{offCPUEventRunqueueMissedWakeup, "scheduling delay (wakeup not observed)"},
+		{99, "off-CPU unknown"},
 	}
 	for _, tt := range tests {
-		require.Equal(t, tt.want, offCPUCategory(tt.kind, tt.flags))
+		require.Equal(t, tt.want, offCPUCategory(tt.kind))
 	}
 }
 
@@ -68,7 +63,7 @@ func (stackLookupMissBPF) ReadMap(uint32, []byte) ([]byte, error) {
 }
 
 func TestAggregateOffCPUBatch(t *testing.T) {
-	event := func(pid uint32, value int64, kind uint16, kernelStackID, userStackID int32) any {
+	event := func(pid uint32, value int64, kind uint32, kernelStackID, userStackID int32) any {
 		return &abi.ProfilerOffCPUEvent{
 			Base: abi.ProfilerEventBase{
 				PIDTGID:   uint64(pid) << 32,

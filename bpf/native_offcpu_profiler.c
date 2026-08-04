@@ -21,22 +21,6 @@ enum offcpu_phase_filter {
 	OFFCPU_PHASE_FILTER_RUNQUEUE,
 };
 
-enum offcpu_event_kind {
-	OFFCPU_EVENT_BLOCKED = 1,
-	OFFCPU_EVENT_RUNQUEUE,
-};
-
-enum offcpu_event_flag {
-	OFFCPU_FLAG_PREEMPTED = 1 << 0,
-	OFFCPU_FLAG_YIELDED = 1 << 1,
-	OFFCPU_FLAG_MISSED_WAKEUP = 1 << 2,
-};
-
-enum offcpu_state_phase {
-	OFFCPU_STATE_BLOCKED = 1,
-	OFFCPU_STATE_RUNNABLE,
-};
-
 enum offcpu_stat {
 	OFFCPU_STAT_STACK_ERROR = 0,
 	OFFCPU_STAT_STATE_ERROR,
@@ -56,10 +40,8 @@ BPF_DBG_MAP(native_cpu_dbg);
 struct offcpu_state {
 	struct profiler_event_base base;
 	__u64 phase_start_ns;
-	__u32 cpu;
-	__u8 phase;
-	__u8 flags;
-	__u8 pad0[2];
+	__u32 kind;
+	__u32 pad0;
 };
 
 /*
@@ -120,13 +102,13 @@ static __always_inline void offcpu_stat_inc(__u32 stat)
 		(*value)++;
 }
 
-static __always_inline bool offcpu_event_enabled(__u8 kind)
+static __always_inline bool offcpu_event_enabled(__u32 kind)
 {
 	if (profiler_offcpu_phase == OFFCPU_PHASE_FILTER_ALL)
 		return true;
 	if (profiler_offcpu_phase == OFFCPU_PHASE_FILTER_BLOCKED)
-		return kind == OFFCPU_EVENT_BLOCKED;
-	return kind == OFFCPU_EVENT_RUNQUEUE;
+		return kind == PROFILER_OFFCPU_EVENT_BLOCKED;
+	return kind != PROFILER_OFFCPU_EVENT_BLOCKED;
 }
 
 static __always_inline bool offcpu_cpu_selected(__u32 cpu)
@@ -146,9 +128,9 @@ static __always_inline bool offcpu_cpu_selected(__u32 cpu)
 	return mask && (*mask & (1ULL << (cpu & 63)));
 }
 
-static __always_inline void
-offcpu_emit_event(void *ctx, const struct offcpu_state *state, __u64 end_ns,
-		  __u8 kind, __u8 extra_flags)
+static __always_inline void offcpu_emit_event(void *ctx,
+					      const struct offcpu_state *state,
+					      __u64 end_ns, __u32 kind)
 {
 	struct profiler_offcpu_event *event;
 	__u64 duration;
@@ -166,14 +148,11 @@ offcpu_emit_event(void *ctx, const struct offcpu_state *state, __u64 end_ns,
 	if (!event)
 		return;
 
-	/* Every ABI byte is overwritten below; clearing adds eight stores. */
+	/* Every ABI byte is overwritten below, so clearing only adds stores. */
 	profiler_copy_event_base(&event->base, &state->base);
 	event->base.value = (__s64)duration;
-	event->start_ns = state->phase_start_ns;
-	event->end_ns = end_ns;
-	event->cpu = state->cpu;
 	event->kind = kind;
-	event->flags = state->flags | extra_flags;
+	event->pad0 = 0;
 
 	err = bpf_perf_event_output(ctx, &profiler_output_a,
 				    COMPAT_BPF_F_CURRENT_CPU, event,
@@ -197,11 +176,11 @@ offcpu_handle_wakeup(struct bpf_raw_tracepoint_args *ctx,
 		return 0;
 
 	state = bpf_map_lookup_elem(&offcpu_states, &key);
-	if (!state || state->phase != OFFCPU_STATE_BLOCKED)
+	if (!state || state->kind != PROFILER_OFFCPU_EVENT_BLOCKED)
 		return 0;
 
 	now = bpf_ktime_get_ns();
-	offcpu_emit_event(ctx, state, now, OFFCPU_EVENT_BLOCKED, 0);
+	offcpu_emit_event(ctx, state, now, PROFILER_OFFCPU_EVENT_BLOCKED);
 
 	if (profiler_offcpu_phase == OFFCPU_PHASE_FILTER_BLOCKED) {
 		bpf_map_delete_elem(&offcpu_states, &key);
@@ -209,7 +188,7 @@ offcpu_handle_wakeup(struct bpf_raw_tracepoint_args *ctx,
 	}
 
 	/* Preserve the captured stack and begin measuring scheduler delay. */
-	state->phase = OFFCPU_STATE_RUNNABLE;
+	state->kind = PROFILER_OFFCPU_EVENT_RUNQUEUE;
 	state->phase_start_ns = now;
 	return 0;
 }
@@ -262,13 +241,12 @@ offcpu_record_sched_out(struct bpf_raw_tracepoint_args *ctx,
 	}
 
 	state.phase_start_ns = now;
-	state.cpu = cpu;
 	if (is_runnable) {
-		state.phase = OFFCPU_STATE_RUNNABLE;
-		state.flags = preempted ? OFFCPU_FLAG_PREEMPTED
-					: OFFCPU_FLAG_YIELDED;
+		state.kind = preempted
+				     ? PROFILER_OFFCPU_EVENT_RUNQUEUE_PREEMPTED
+				     : PROFILER_OFFCPU_EVENT_RUNQUEUE_YIELDED;
 	} else {
-		state.phase = OFFCPU_STATE_BLOCKED;
+		state.kind = PROFILER_OFFCPU_EVENT_BLOCKED;
 	}
 
 	if (bpf_map_update_elem(&offcpu_states, &key, &state, BPF_ANY) < 0) {
@@ -282,7 +260,7 @@ offcpu_finish_sched_in(struct bpf_raw_tracepoint_args *ctx,
 		       struct task_struct *next, __u64 now)
 {
 	struct offcpu_state *state;
-	__u8 event_flags = 0;
+	__u32 kind;
 	__u64 key;
 
 	key = (__u64)next;
@@ -296,18 +274,18 @@ offcpu_finish_sched_in(struct bpf_raw_tracepoint_args *ctx,
 	if (!state)
 		return;
 
-	if (state->phase != OFFCPU_STATE_RUNNABLE) {
+	kind = state->kind;
+	if (kind == PROFILER_OFFCPU_EVENT_BLOCKED) {
 		/*
 		 * The wakeup boundary is unknowable once its event is missed.
 		 * Most production tasks spend less time blocked than runnable,
 		 * so avoid charging the whole interval to blocking and keep the
 		 * uncertainty explicit for userspace.
 		 */
-		event_flags = OFFCPU_FLAG_MISSED_WAKEUP;
-	}
-	offcpu_emit_event(ctx, state, now, OFFCPU_EVENT_RUNQUEUE, event_flags);
-	if (event_flags)
+		kind = PROFILER_OFFCPU_EVENT_RUNQUEUE_MISSED_WAKEUP;
 		offcpu_stat_inc(OFFCPU_STAT_MISSED_WAKEUP);
+	}
+	offcpu_emit_event(ctx, state, now, kind);
 	bpf_map_delete_elem(&offcpu_states, &key);
 }
 
@@ -334,7 +312,6 @@ offcpu_cleanup_task_state(struct bpf_raw_tracepoint_args *ctx,
 	struct offcpu_state *state;
 	__u64 key;
 	__u64 now;
-	__u8 event_kind;
 
 	key = (__u64)task;
 	if (!key)
@@ -350,10 +327,7 @@ offcpu_cleanup_task_state(struct bpf_raw_tracepoint_args *ctx,
 	 */
 	if (emit_pending) {
 		now = bpf_ktime_get_ns();
-		event_kind = state->phase == OFFCPU_STATE_RUNNABLE
-				     ? OFFCPU_EVENT_RUNQUEUE
-				     : OFFCPU_EVENT_BLOCKED;
-		offcpu_emit_event(ctx, state, now, event_kind, 0);
+		offcpu_emit_event(ctx, state, now, state->kind);
 	}
 
 	bpf_map_delete_elem(&offcpu_states, &key);

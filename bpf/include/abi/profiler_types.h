@@ -32,13 +32,19 @@ struct profiler_oncpu_event {
 	u32 pad0;
 };
 
+enum profiler_offcpu_event_kind {
+	PROFILER_OFFCPU_EVENT_UNKNOWN = 0,
+	PROFILER_OFFCPU_EVENT_BLOCKED,
+	PROFILER_OFFCPU_EVENT_RUNQUEUE,
+	PROFILER_OFFCPU_EVENT_RUNQUEUE_PREEMPTED,
+	PROFILER_OFFCPU_EVENT_RUNQUEUE_YIELDED,
+	PROFILER_OFFCPU_EVENT_RUNQUEUE_MISSED_WAKEUP,
+};
+
 struct profiler_offcpu_event {
 	struct profiler_event_base base;
-	u64 start_ns;
-	u64 end_ns;
-	u32 cpu;
-	u16 kind;
-	u16 flags;
+	u32 kind;
+	u32 pad0;
 };
 
 BPF_ABI_EXPORT(profiler_event_base);
