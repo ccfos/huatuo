@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path"
@@ -33,6 +34,7 @@ import (
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/procfs/blockdevice"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
@@ -102,11 +104,12 @@ func newIOTracing() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
 		TracingData: tracer,
 		Interval:    5,
-		Flag:        tracing.FlagTracing,
+		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }
 
 type ioTracing struct {
+	latest       atomic.Pointer[diskStatusSnapshot]
 	childRunning atomic.Bool
 
 	thresholds              ioThresholds
@@ -633,6 +636,8 @@ func (i *ioTracing) Start(ctx context.Context) error {
 			}
 
 			snapshot := buildDiskStatusSnapshot(previous, current)
+			// Neither this map nor its values are mutated after publication.
+			i.latest.Store(snapshot)
 			reason, nextMetrics := evaluateThresholds(
 				current,
 				snapshot,
@@ -752,6 +757,84 @@ func killIOTracingProcessAndWait(
 	case <-timer.C:
 		return errors.New("timed out waiting for iotracing to stop")
 	}
+}
+
+// round2 rounds v to two decimal places. All iotracing gauge values are
+// exported at this precision so scrapes stay free of floating point noise.
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
+}
+
+// Update exports the immutable diskstats snapshot produced by Start. It does
+// not read /proc/diskstats or recompute a delta.
+func (i *ioTracing) Update() ([]*metric.Data, error) {
+	snapshot := i.latest.Load()
+	if snapshot == nil || len(snapshot.devices) == 0 {
+		return nil, metric.ErrNoData
+	}
+
+	metrics := make([]*metric.Data, 0, len(snapshot.devices)*8)
+	for _, device := range snapshot.order {
+		status, ok := snapshot.devices[device]
+		if !ok {
+			continue
+		}
+		labels := map[string]string{"device": device}
+		metrics = append(metrics,
+			metric.NewGaugeData(
+				"read_bytes_per_second",
+				round2(status.ReadBPS),
+				"Disk read throughput over the latest sampling window in bytes per second.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"write_bytes_per_second",
+				round2(status.WriteBPS),
+				"Disk write throughput over the latest sampling window in bytes per second.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"read_iops",
+				round2(status.ReadIOPS),
+				"Disk read operations per second over the latest sampling window.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"write_iops",
+				round2(status.WriteIOPS),
+				"Disk write operations per second over the latest sampling window.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"read_await_seconds",
+				round2(status.ReadAwait/1000),
+				"Average read completion time over the latest sampling window in seconds.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"write_await_seconds",
+				round2(status.WriteAwait/1000),
+				"Average write completion time over the latest sampling window in seconds.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"io_utilization_percent",
+				round2(status.IOUtil),
+				"Percentage of the latest sampling window spent doing I/O.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"average_queue_size",
+				round2(status.QueueSize),
+				"Average disk I/O queue size over the latest sampling window.",
+				labels,
+			),
+		)
+	}
+	if len(metrics) == 0 {
+		return nil, metric.ErrNoData
+	}
+	return metrics, nil
 }
 
 func iotracingSummary(
