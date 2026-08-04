@@ -26,6 +26,16 @@ import (
 func buildCapabilities(h *Handler) v1.ProfilingCapabilities {
 	cpuLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeCPU))
 	sort.Strings(cpuLanguages)
+	cpuModes := make(map[string][]string, len(cpuLanguages))
+	for _, language := range profiling.LanguagesFor(profiling.TypeCPU) {
+		modes := profiling.CPUModesFor(language)
+		values := make([]string, 0, len(modes))
+		for _, mode := range modes {
+			values = append(values, string(mode))
+		}
+		sort.Strings(values)
+		cpuModes[string(language)] = values
+	}
 
 	memoryLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeMemory))
 	sort.Strings(memoryLanguages)
@@ -46,6 +56,7 @@ func buildCapabilities(h *Handler) v1.ProfilingCapabilities {
 	return v1.ProfilingCapabilities{
 		Types:                      []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
 		CPULanguages:               cpuLanguages,
+		CPUModes:                   cpuModes,
 		MemoryLanguages:            memoryLanguages,
 		MemoryModes:                memoryModes,
 		AggregationIntervalSeconds: cfg.AggregationIntervalSeconds,
@@ -63,8 +74,8 @@ func languageStrings(languages []profiling.Language) []string {
 
 // capabilities returns the profiling capabilities supported by the server.
 // This is a read-only endpoint that allows frontends, CLIs, and agents to
-// discover supported profiling types, languages, memory modes, and default
-// configuration values without hardcoding them.
+// discover supported profiling types, languages, CPU and memory modes, and
+// default configuration values without hardcoding them.
 func (h *Handler) capabilities(ctx *server.Context) error {
 	response.Success(ctx, buildCapabilities(h))
 	return nil

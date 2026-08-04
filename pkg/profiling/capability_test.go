@@ -31,18 +31,44 @@ func TestCapabilities(t *testing.T) {
 		language       Language
 		implementation Implementation
 		types          []Type
+		cpuModes       []CPUMode
 		memoryModes    []MemoryMode
 	}{
-		{LanguageC, ImplementationNative, []Type{TypeCPU, TypeMemory}, nativeModes},
-		{LanguageCPP, ImplementationNative, []Type{TypeCPU, TypeMemory}, nativeModes},
-		{LanguageGo, ImplementationNative, []Type{TypeCPU, TypeMemory}, nativeModes},
+		{
+			LanguageC,
+			ImplementationNative,
+			[]Type{TypeCPU, TypeMemory},
+			[]CPUMode{CPUModeOnCPU, CPUModeOffCPU},
+			nativeModes,
+		},
+		{
+			LanguageCPP,
+			ImplementationNative,
+			[]Type{TypeCPU, TypeMemory},
+			[]CPUMode{CPUModeOnCPU, CPUModeOffCPU},
+			nativeModes,
+		},
+		{
+			LanguageGo,
+			ImplementationNative,
+			[]Type{TypeCPU, TypeMemory},
+			[]CPUMode{CPUModeOnCPU, CPUModeOffCPU},
+			nativeModes,
+		},
 		{
 			LanguageJava,
 			ImplementationJava,
 			[]Type{TypeCPU, TypeMemory},
+			[]CPUMode{CPUModeOnCPU},
 			[]MemoryMode{MemoryModeObjectAlloc, MemoryModeObjectUsage},
 		},
-		{LanguagePython, ImplementationPython, []Type{TypeCPU}, []MemoryMode{}},
+		{
+			LanguagePython,
+			ImplementationPython,
+			[]Type{TypeCPU},
+			[]CPUMode{CPUModeOnCPU},
+			[]MemoryMode{},
+		},
 	}
 
 	for _, tt := range tests {
@@ -54,6 +80,7 @@ func TestCapabilities(t *testing.T) {
 			for _, typ := range []Type{TypeCPU, TypeMemory, TypeLock} {
 				require.Equal(t, slices.Contains(tt.types, typ), IsSupported(tt.language, typ))
 			}
+			require.Equal(t, tt.cpuModes, CPUModesFor(tt.language))
 			require.Equal(t, tt.memoryModes, MemoryModesFor(tt.language))
 			for _, mode := range allMemoryModes() {
 				require.Equal(
@@ -85,6 +112,13 @@ func TestMemoryModesForReturnsCopy(t *testing.T) {
 	require.Equal(t, MemoryModeObjectAlloc, MemoryModesFor(LanguageJava)[0])
 }
 
+func TestCPUModesForReturnsCopy(t *testing.T) {
+	modes := CPUModesFor(LanguageGo)
+	modes[0] = CPUModeUnknown
+
+	require.Equal(t, CPUModeOnCPU, CPUModesFor(LanguageGo)[0])
+}
+
 func TestCapabilityDefinitionsAreUnique(t *testing.T) {
 	languages := map[Language]bool{}
 	for _, capability := range capabilities {
@@ -93,6 +127,7 @@ func TestCapabilityDefinitionsAreUnique(t *testing.T) {
 		require.False(t, languages[capability.Language], "duplicate language %q", capability.Language)
 		languages[capability.Language] = true
 		require.Equal(t, len(capability.Types), len(unique(capability.Types)))
+		require.Equal(t, len(capability.CPUModes), len(unique(capability.CPUModes)))
 		require.Equal(t, len(capability.MemoryModes), len(unique(capability.MemoryModes)))
 	}
 }

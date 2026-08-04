@@ -176,7 +176,7 @@ envelope:
 
 ### 2. Query Profiling Capabilities
 
-Before creating a job, query the profiling types, languages, memory modes, and runtime settings supported by the server:
+Before creating a job, query the profiling types, languages, CPU modes, memory modes, and runtime settings supported by the server:
 
 ```bash
 curl -sS \
@@ -190,12 +190,14 @@ The `data` object contains these fields:
 | --- | --- |
 | `types` | Supported profiling types: `cpu` and `memory` |
 | `cpu_languages` | Languages supported by CPU profiling |
+| `cpu_modes` | CPU profiling modes grouped by language |
 | `memory_languages` | Languages supported by memory profiling |
 | `memory_modes` | Memory profiling modes grouped by language; values are accepted by job creation |
 | `aggregation_interval_seconds` | Server-side data aggregation interval |
 | `max_concurrent_profilers` | Maximum number of concurrent profiler processes; `0` disables the limit |
 
-CPU profiling currently supports `c`, `c++`, `go`, `java`, and `python`. Memory profiling supports these combinations:
+CPU profiling supports `oncpu` and `offcpu` for `c`, `c++`, and `go`;
+`java` and `python` support only `oncpu`. Memory profiling supports these combinations:
 
 | Language | `memory_mode` | Description |
 | --- | --- | --- |

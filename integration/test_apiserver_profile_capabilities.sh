@@ -100,6 +100,11 @@ assert_profile_capabilities() {
 			and .message == "success"
 			and .data.types == ["cpu", "memory"]
 			and .data.cpu_languages == ["c", "c++", "go", "java", "python"]
+			and .data.cpu_modes.c == ["offcpu", "oncpu"]
+			and .data.cpu_modes["c++"] == ["offcpu", "oncpu"]
+			and .data.cpu_modes.go == ["offcpu", "oncpu"]
+			and .data.cpu_modes.java == ["oncpu"]
+			and .data.cpu_modes.python == ["oncpu"]
 			and .data.memory_languages == ["c", "c++", "go", "java"]
 			and .data.memory_modes.c == ["physical_alloc", "physical_usage", "virtual_alloc"]
 			and .data.memory_modes["c++"] == ["physical_alloc", "physical_usage", "virtual_alloc"]

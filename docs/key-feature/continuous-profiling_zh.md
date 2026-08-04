@@ -178,7 +178,7 @@ HTTP 方法前缀，例如 `GET /v1/profiles/**`。接口使用统一 JSON 响�
 
 ### 2. 查询剖析能力
 
-创建任务前，建议先查询服务端支持的剖析类型、语言、内存模式和运行参数：
+创建任务前，建议先查询服务端支持的剖析类型、语言、CPU 模式、内存模式和运行参数：
 
 ```bash
 curl -sS \
@@ -192,12 +192,14 @@ curl -sS \
 | --- | --- |
 | `types` | 支持的剖析类型：`cpu`、`memory` |
 | `cpu_languages` | CPU 剖析支持的语言 |
+| `cpu_modes` | 按语言分组的 CPU 剖析模式 |
 | `memory_languages` | 内存剖析支持的语言 |
 | `memory_modes` | 按语言分组的内存剖析模式；列表值可直接用于创建任务 |
 | `aggregation_interval_seconds` | 服务端采集数据的聚合周期 |
 | `max_concurrent_profilers` | profiler 进程的最大并发数；`0` 表示不限制 |
 
-当前 CPU 剖析支持 `c`、`c++`、`go`、`java` 和 `python`。内存剖析支持以下组合：
+当前 `c`、`c++` 和 `go` CPU 剖析支持 `oncpu`、`offcpu`，`java` 和
+`python` 仅支持 `oncpu`。内存剖析支持以下组合：
 
 | 语言 | `memory_mode` | 说明 |
 | --- | --- | --- |

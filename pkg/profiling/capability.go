@@ -52,6 +52,7 @@ type capability struct {
 	Language       Language
 	Implementation Implementation
 	Types          []Type
+	CPUModes       []CPUMode
 	MemoryModes    []MemoryMode
 }
 
@@ -63,12 +64,14 @@ var capabilities = []capability{
 		Language:       LanguageJava,
 		Implementation: ImplementationJava,
 		Types:          []Type{TypeCPU, TypeMemory},
+		CPUModes:       []CPUMode{CPUModeOnCPU},
 		MemoryModes:    []MemoryMode{MemoryModeObjectAlloc, MemoryModeObjectUsage},
 	},
 	{
 		Language:       LanguagePython,
 		Implementation: ImplementationPython,
 		Types:          []Type{TypeCPU},
+		CPUModes:       []CPUMode{CPUModeOnCPU},
 		MemoryModes:    []MemoryMode{},
 	},
 }
@@ -78,6 +81,7 @@ func newNativeCapability(language Language) capability {
 		Language:       language,
 		Implementation: ImplementationNative,
 		Types:          []Type{TypeCPU, TypeMemory},
+		CPUModes:       []CPUMode{CPUModeOnCPU, CPUModeOffCPU},
 		MemoryModes: []MemoryMode{
 			MemoryModeVirtualAlloc,
 			MemoryModePhysicalAlloc,
@@ -130,6 +134,14 @@ func MemoryModesFor(language Language) []MemoryMode {
 		return []MemoryMode{}
 	}
 	return slices.Clone(capability.MemoryModes)
+}
+
+func CPUModesFor(language Language) []CPUMode {
+	capability, ok := capabilityFor(language)
+	if !ok {
+		return []CPUMode{}
+	}
+	return slices.Clone(capability.CPUModes)
 }
 
 func ImplementationFor(language Language) (Implementation, bool) {

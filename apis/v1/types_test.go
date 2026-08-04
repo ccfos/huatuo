@@ -88,6 +88,7 @@ func TestProfilingCapabilitiesJSONFields(t *testing.T) {
 	fields := []string{
 		"types",
 		"cpu_languages",
+		"cpu_modes",
 		"memory_languages",
 		"memory_modes",
 		"aggregation_interval_seconds",
