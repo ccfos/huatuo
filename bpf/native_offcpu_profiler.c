@@ -11,9 +11,13 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-#define TASK_RUNNING	     0
-#define OFFCPU_STATE_ENTRIES 32768
-#define OFFCPU_CPU_SET_WORDS 128
+#define TASK_RUNNING        0
+
+enum {
+	OFFCPU_STATE_MAX_ENTRIES = 32768,
+	OFFCPU_CPU_SET_WORD_BITS = 64,
+	OFFCPU_CPU_SET_WORDS = 128,
+};
 
 enum offcpu_phase_filter {
 	OFFCPU_PHASE_FILTER_ALL = 0,
@@ -80,7 +84,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, __u64);
 	__type(value, struct offcpu_state);
-	__uint(max_entries, OFFCPU_STATE_ENTRIES);
+	__uint(max_entries, OFFCPU_STATE_MAX_ENTRIES);
 } offcpu_states SEC(".maps");
 
 struct {
@@ -92,18 +96,18 @@ struct {
 
 static __always_inline void offcpu_stat_inc(__u32 stat)
 {
-	__u64 *value;
+	__u64 *counter;
 
 	if (!profiler_offcpu_stats_enabled)
 		return;
 
-	value = bpf_map_lookup_elem(&offcpu_stats, &stat);
-	if (value)
-		(*value)++;
+	counter = bpf_map_lookup_elem(&offcpu_stats, &stat);
+	if (counter)
+		(*counter)++;
 }
 
 static __always_inline bool
-offcpu_event_enabled(enum profiler_offcpu_event_kind kind)
+offcpu_kind_enabled(enum profiler_offcpu_event_kind kind)
 {
 	if (profiler_offcpu_phase == OFFCPU_PHASE_FILTER_ALL)
 		return true;
@@ -121,25 +125,23 @@ static __always_inline bool offcpu_cpu_selected(__u32 cpu)
 	if (!profiler_offcpu_cpu_set_enabled)
 		return true;
 
-	word = cpu >> 6;
+	word = cpu / OFFCPU_CPU_SET_WORD_BITS;
 	if (word >= OFFCPU_CPU_SET_WORDS)
 		return false;
 
 	mask = bpf_map_lookup_elem(&offcpu_cpu_set, &word);
-	return mask && (*mask & (1ULL << (cpu & 63)));
+	return mask && (*mask & (1ULL << (cpu % OFFCPU_CPU_SET_WORD_BITS)));
 }
 
-static __always_inline void offcpu_emit_event(void *ctx,
-					      const struct offcpu_state *state,
-					      __u64 end_ns,
-					      enum profiler_offcpu_event_kind kind)
+static __always_inline void offcpu_emit_event(
+	void *ctx, const struct offcpu_state *state, __u64 end_ns,
+	enum profiler_offcpu_event_kind kind)
 {
 	struct profiler_offcpu_event *event;
 	__u64 duration;
 	__u32 zero = 0;
-	long err;
 
-	if (!offcpu_event_enabled(kind) || end_ns <= state->phase_start_ns)
+	if (!offcpu_kind_enabled(kind) || end_ns <= state->phase_start_ns)
 		return;
 
 	duration = end_ns - state->phase_start_ns;
@@ -156,13 +158,10 @@ static __always_inline void offcpu_emit_event(void *ctx,
 	event->kind = kind;
 	event->pad0 = 0;
 
-	err = bpf_perf_event_output(ctx, &profiler_output_a,
-				    COMPAT_BPF_F_CURRENT_CPU, event,
-				    sizeof(*event));
-	if (err < 0) {
+	if (bpf_perf_event_output(ctx, &profiler_output_a,
+				  COMPAT_BPF_F_CURRENT_CPU, event,
+				  sizeof(*event)) < 0)
 		offcpu_stat_inc(OFFCPU_STAT_OUTPUT_ERROR);
-		return;
-	}
 }
 
 static __always_inline int
@@ -217,7 +216,7 @@ offcpu_record_sched_out(struct bpf_raw_tracepoint_args *ctx,
 	__u32 cpu;
 	bool is_runnable;
 	bool preempted;
-	long prev_state;
+	int err;
 
 	pid_tgid = bpf_get_current_pid_tgid();
 	key = (__u64)prev;
@@ -231,22 +230,22 @@ offcpu_record_sched_out(struct bpf_raw_tracepoint_args *ctx,
 		return;
 
 	preempted = (__u64)ctx->args[0] != 0;
-	prev_state = task_state(prev);
-	is_runnable = preempted || prev_state == TASK_RUNNING;
+	is_runnable = preempted || task_state(prev) == TASK_RUNNING;
 	if (is_runnable && profiler_offcpu_phase == OFFCPU_PHASE_FILTER_BLOCKED)
 		return;
 
-	if (profiler_fill_event_base(&state.base, pid_tgid, ctx, &stack_map_a) <
-	    0) {
+	err = profiler_fill_event_base(&state.base, pid_tgid, ctx,
+				       &stack_map_a);
+	if (err < 0) {
 		offcpu_stat_inc(OFFCPU_STAT_STACK_ERROR);
 		return;
 	}
 
 	state.phase_start_ns = now;
 	if (is_runnable) {
-		state.kind = preempted
-				     ? PROFILER_OFFCPU_EVENT_RUNQUEUE_PREEMPTED
-				     : PROFILER_OFFCPU_EVENT_RUNQUEUE_YIELDED;
+		state.kind = PROFILER_OFFCPU_EVENT_RUNQUEUE_YIELDED;
+		if (preempted)
+			state.kind = PROFILER_OFFCPU_EVENT_RUNQUEUE_PREEMPTED;
 	} else {
 		state.kind = PROFILER_OFFCPU_EVENT_BLOCKED;
 	}
