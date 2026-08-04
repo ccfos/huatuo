@@ -130,12 +130,22 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 	require.Equal(t, true, constants["profiler_filter_threads"])
 	require.Equal(t, uint32(2), constants["profiler_offcpu_phase"])
 	require.Equal(t, uint64(250000), constants["profiler_offcpu_min_duration_ns"])
-	require.Equal(t, uint32(1), constants["profiler_offcpu_cpu_filter_enabled"])
+	require.Equal(t, uint32(1), constants["profiler_offcpu_cpu_set_enabled"])
 }
 
-func TestNativeOffCPUBPFConstantsDisablesEmptyCPUFilter(t *testing.T) {
+func TestNativeOffCPUBPFConstantsDisablesEmptyCPUSet(t *testing.T) {
 	constants := newNativeOffCPUBPFConstants(&pcontext.ProfilerContext{}, 0)
-	require.Equal(t, uint32(0), constants["profiler_offcpu_cpu_filter_enabled"])
+	require.Equal(t, uint32(0), constants["profiler_offcpu_cpu_set_enabled"])
+}
+
+func TestOffCPUStatNames(t *testing.T) {
+	require.Equal(t, []string{
+		"stack_error",
+		"state_error",
+		"output_error",
+		"missed_wakeup",
+		"exit_cleanup",
+	}, offCPUStatNames)
 }
 
 func TestOffCPUCPUSetItems(t *testing.T) {

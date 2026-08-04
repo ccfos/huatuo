@@ -60,18 +60,12 @@ trap cleanup EXIT
 
 compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
 
-read_offcpu_stat() {
-	local log_file=$1 stat_name=$2
-	sed -nE "s/.*off-CPU stats:.*${stat_name}=([0-9]+).*/\\1/p" "${log_file}" | tail -n 1
-}
-
 verify_offcpu_cpuid() {
 	local cpuid=$1 expected=$2
 	local output_dir="${WORK_DIR}/cpu-${cpuid}"
 	local tool_out="${output_dir}/profiler.out"
 	local tool_err="${output_dir}/profiler.err"
 	local match_count=0
-	local tracked blocked_emitted
 
 	case "${expected}" in
 	present | absent) ;;
@@ -106,23 +100,14 @@ verify_offcpu_cpuid() {
 	wait "${TARGET_PID}" 2> /dev/null || true
 	TARGET_PID=""
 
-	tracked=$(read_offcpu_stat "${tool_out}" tracked)
-	blocked_emitted=$(read_offcpu_stat "${tool_out}" blocked_emitted)
-	[[ "${tracked}" =~ ^[0-9]+$ ]] || fatal "off-CPU tracked stat missing for CPU ${cpuid}"
-	[[ "${blocked_emitted}" =~ ^[0-9]+$ ]] || fatal "off-CPU blocked_emitted stat missing for CPU ${cpuid}"
-
 	if compgen -G "${output_dir}/perf_*.folded" > /dev/null; then
 		match_count=$(grep -hE "${BLOCKED_PATTERN}" "${output_dir}"/perf_*.folded | wc -l) || true
 	fi
 	case "${expected}" in
 	present)
-		[[ "${tracked}" -gt 0 ]] || fatal "no off-CPU intervals tracked for CPU ${cpuid}"
-		[[ "${blocked_emitted}" -gt 0 ]] || fatal "no blocked events emitted for CPU ${cpuid}"
 		[[ "${match_count}" -gt 0 ]] || fatal "blocking wait stack not found for CPU ${cpuid}"
 		;;
 	absent)
-		[[ "${tracked}" -eq 0 ]] || fatal "off-CPU intervals unexpectedly tracked for CPU ${cpuid}"
-		[[ "${blocked_emitted}" -eq 0 ]] || fatal "blocked events unexpectedly emitted for CPU ${cpuid}"
 		[[ "${match_count}" -eq 0 ]] || fatal "blocking wait stack unexpectedly found for CPU ${cpuid}"
 		;;
 	esac

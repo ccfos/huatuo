@@ -65,9 +65,9 @@ func newNativeOffCPUBPFConstants(pctx *pcontext.ProfilerContext, cssAddr uint64)
 	constants := newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
 	constants["profiler_offcpu_phase"] = offCPUPhaseCode(pctx.OffCPUPhase)
 	constants["profiler_offcpu_min_duration_ns"] = microsecondsToNanoseconds(pctx.OffCPUMinDurationUS)
-	constants["profiler_offcpu_cpu_filter_enabled"] = uint32(0)
+	constants["profiler_offcpu_cpu_set_enabled"] = uint32(0)
 	if len(pctx.CPUIDs) != 0 {
-		constants["profiler_offcpu_cpu_filter_enabled"] = uint32(1)
+		constants["profiler_offcpu_cpu_set_enabled"] = uint32(1)
 	}
 	return constants
 }
@@ -240,10 +240,6 @@ func offCPUCategory(kind, flags uint16) string {
 }
 
 var offCPUStatNames = []string{
-	"tracked",
-	"blocked_emitted",
-	"runqueue_emitted",
-	"below_min_duration",
 	"stack_error",
 	"state_error",
 	"output_error",
