@@ -18,11 +18,8 @@ package collector
 //	- netstat_linux.go
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
@@ -121,41 +118,4 @@ func buildNetAndSnmpStat(container *pod.Container, f *matcher.ValueMatcher) ([]*
 	}
 
 	return metrics, nil
-}
-
-func parseNetStat(fileName string) (map[string]map[string]string, error) {
-	file, err := os.Open(fileName)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var (
-		stats   = map[string]map[string]string{}
-		scanner = bufio.NewScanner(file)
-	)
-
-	for scanner.Scan() {
-		nameParts := strings.Split(scanner.Text(), " ")
-
-		scanner.Scan()
-		valueParts := strings.Split(scanner.Text(), " ")
-
-		// remove trailing ":"
-		protocol := nameParts[0][:len(nameParts[0])-1]
-		if protocol != "Tcp" && protocol != "TcpExt" {
-			continue
-		}
-
-		stats[protocol] = map[string]string{}
-		if len(nameParts) != len(valueParts) {
-			return nil, fmt.Errorf("mismatch: %s:%s", fileName, protocol)
-		}
-
-		for i := 1; i < len(nameParts); i++ {
-			stats[protocol][nameParts[i]] = valueParts[i]
-		}
-	}
-
-	return stats, scanner.Err()
 }
