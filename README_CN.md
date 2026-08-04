@@ -86,6 +86,8 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
     </small>
     </div>
 
+    ![](/docs/img/quickstart-autotrcing-event.png)
+
 - **注意**
   请勿将 latest 标签的镜像部署至生产环境，此为开发测试分支。请使用正式发版的镜像或二进制文件。
 
