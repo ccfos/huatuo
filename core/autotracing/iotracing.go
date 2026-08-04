@@ -236,9 +236,9 @@ func buildDiskMetric(
 	previous *blockdevice.Diskstats,
 	current *blockdevice.Diskstats,
 	intervalSeconds uint64,
-) diskStatus {
+) (diskStatus, bool) {
 	if intervalSeconds == 0 {
-		return diskStatus{}
+		return diskStatus{}, false
 	}
 	// Kernel counters reset when a device is removed and re-registered
 	// under the same name (hotplug, driver rebind, LVM rebuild). Without
@@ -251,7 +251,7 @@ func buildDiskMetric(
 		current.ReadTicks < previous.ReadTicks ||
 		current.WriteTicks < previous.WriteTicks ||
 		current.WeightedIOTicks < previous.WeightedIOTicks {
-		return diskStatus{}
+		return diskStatus{}, false
 	}
 
 	deltaReadIOs := current.ReadIOs - previous.ReadIOs
@@ -273,7 +273,7 @@ func buildDiskMetric(
 		metrics.WriteAwait = (current.WriteTicks - previous.WriteTicks) / deltaWriteIOs
 	}
 
-	return metrics
+	return metrics, true
 }
 
 func waitForDiskEvent(
@@ -312,7 +312,12 @@ func waitForDiskEvent(
 						lastRawStats[current.DeviceName] = current
 						continue
 					}
-					metric := buildDiskMetric(previous, current, intervalSeconds)
+					metric, valid := buildDiskMetric(previous, current, intervalSeconds)
+					if !valid {
+						delete(lastMetrics, current.DeviceName)
+						lastRawStats[current.DeviceName] = current
+						continue
+					}
 
 					log.WithField("device", current.DeviceName).
 						WithField("io_util_percent", metric.IOUtil).
