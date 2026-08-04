@@ -12,17 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// IO health sources update counters and persist events. Health commands run
+// on a separate evidence worker; scrapes read only local counters.
 package collector
 
 import (
 	"context"
-	"github.com/ccfos/huatuo/internal/timeutil"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/iohealth"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
 	"github.com/ccfos/huatuo/pkg/types"
@@ -77,9 +81,11 @@ type ioHealthCollector struct {
 	now            func() time.Time
 	saveEvent      func(time.Time, types.IOHealthEvent) error
 
-	mu               sync.RWMutex
-	counters         map[ioHealthCounterKey]uint64
-	collectionErrors map[ioHealthCollectionErrorKey]uint64
+	mu                  sync.RWMutex
+	counters            map[ioHealthCounterKey]uint64
+	collectionErrors    map[ioHealthCollectionErrorKey]uint64
+	persistenceFailures uint64
+	freezeObject        bpf.BPF
 }
 
 func newIOHealthCollector(sysRoot, procMDStatPath string) *ioHealthCollector {
@@ -103,12 +109,18 @@ func (c *ioHealthCollector) persistEvent(
 	event types.IOHealthEvent,
 ) {
 	if err := c.saveEvent(triggeredAt, event); err != nil {
+		c.mu.Lock()
+		c.persistenceFailures++
+		c.mu.Unlock()
 		log.Warnf("io_health: save event: %v", err)
 	}
 }
 
 //nolint:gocritic // Store an immutable value snapshot of the event.
-func saveIOHealthEvent(triggeredAt time.Time, event types.IOHealthEvent) error {
+func saveIOHealthEvent(
+	triggeredAt time.Time,
+	event types.IOHealthEvent,
+) error {
 	return tracing.Save(&tracing.WriteRequest{
 		TracerName:        ioHealthName,
 		ObservedTimestamp: timeutil.Timestamp{Time: triggeredAt},
@@ -139,12 +151,16 @@ func (c *ioHealthCollector) handleEvidenceResult(result iohealth.EvidenceResult)
 	c.persistEvent(result.TriggeredAt, result.Event)
 }
 
-// Update implements metric.Collector using only process-local counters.
+// Update combines event counters with the current kernel freeze counts.
 func (c *ioHealthCollector) Update() ([]*metric.Data, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	metrics := make([]*metric.Data, 0, len(c.counters)+len(c.collectionErrors))
+	metricCount := len(c.counters) + len(c.collectionErrors)
+	if c.persistenceFailures != 0 {
+		metricCount++
+	}
+	metrics := make([]*metric.Data, 0, metricCount)
 	for key, value := range c.counters {
 		metrics = append(metrics, ioHealthKernelMetric(key, value))
 	}
@@ -159,8 +175,53 @@ func (c *ioHealthCollector) Update() ([]*metric.Data, error) {
 			},
 		))
 	}
+	if c.persistenceFailures != 0 {
+		metrics = append(metrics, metric.NewCounterData(
+			"event_persistence_failures_total",
+			float64(c.persistenceFailures),
+			"Count of IO health event save calls that returned an error.",
+			map[string]string{"reason": "save_error"},
+		))
+	}
+	freeze, err := c.freezeMetrics()
+	metrics = append(metrics, freeze...)
+	if err != nil {
+		return metrics, err
+	}
 	if len(metrics) == 0 {
 		return nil, metric.ErrNoData
+	}
+	return metrics, nil
+}
+
+// The collector lock also prevents object withdrawal during a map read.
+func (c *ioHealthCollector) freezeMetrics() ([]*metric.Data, error) {
+	if c.freezeObject == nil {
+		return nil, nil
+	}
+	// Only disk replacement changes rows, and transition samples may be
+	// discarded. Read raw counts rather than subtracting reusable baselines.
+	items, err := c.freezeObject.DumpMapByName("io_health_freeze_counts")
+	if err != nil {
+		return nil, fmt.Errorf("read IO health freeze counters: %w", err)
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	metrics := make([]*metric.Data, 0, len(items))
+	for _, item := range items {
+		var key, count uint64
+		if err := decodeBPFMapData(item.Key, &key); err != nil {
+			return nil, fmt.Errorf("decode IO health freeze key: %w", err)
+		}
+		if err := decodeBPFMapData(item.Value, &count); err != nil {
+			return nil, fmt.Errorf("decode IO health freeze count: %w", err)
+		}
+		disk := c.resolver.resolveBlockDevice(uint32(key>>32)<<20 | uint32(key)).eventDevice
+		if disk != "" && disk != "unknown" {
+			metrics = append(metrics, metric.NewCounterData("blkdisk_freeze",
+				float64(count), "the disk freeze event count", map[string]string{"disk": disk}))
+		}
 	}
 	return metrics, nil
 }

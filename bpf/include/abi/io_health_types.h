@@ -42,6 +42,7 @@ struct io_health_event {
 	u8 type;
 	u8 operation;
 	u8 rwbs[2];
+	u64 topology_generation;
 };
 
 BPF_ABI_EXPORT(io_health_event);
