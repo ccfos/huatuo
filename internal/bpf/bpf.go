@@ -14,7 +14,10 @@
 
 package bpf
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // BPF is safe for concurrent use. Close waits for in-flight operations.
 // Resource access and attach methods started after Close return ErrClosed;
@@ -80,4 +83,36 @@ type BPF interface {
 
 	// DetachOnContextDone is a hook for context-driven detach handling.
 	DetachOnContextDone(ctx context.Context, cancel context.CancelFunc)
+}
+
+type independentAttacher interface {
+	attachIndependently(AttachOption) error
+}
+
+type programDetacher interface {
+	DetachProgram(string) error
+}
+
+// AttachIndependently asks a BPF implementation to attach one program without
+// rolling back links attached by earlier independent calls. It is intended for
+// collectors whose optional hooks may degrade separately.
+//
+// defaultBPF provides the independent rollback semantics. Other BPF
+// implementations fall back to their normal single-option AttachWithOptions
+// behavior and therefore retain only the guarantees of that implementation.
+func AttachIndependently(b BPF, opt AttachOption) error {
+	if attacher, ok := b.(independentAttacher); ok {
+		return attacher.attachIndependently(opt)
+	}
+	return b.AttachWithOptions([]AttachOption{opt})
+}
+
+// DetachProgram detaches links owned by one loaded program while preserving
+// links attached by other programs.
+func DetachProgram(b BPF, programName string) error {
+	detacher, ok := b.(programDetacher)
+	if !ok {
+		return fmt.Errorf("BPF %s does not support per-program detach", b.Name())
+	}
+	return detacher.DetachProgram(programName)
 }
