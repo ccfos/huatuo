@@ -15,6 +15,8 @@
 package collector
 
 import (
+	"context"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -47,19 +49,33 @@ type ioHealthCollectionErrorKey struct {
 	reason string
 }
 
+type ioHealthMDWatcher interface {
+	Start(context.Context) error
+	Wait() error
+	Changes() <-chan health.MDChange
+}
+
 type ioHealthCollector struct {
-	resolver  ioHealthResolver
-	now       func() time.Time
-	saveEvent func(time.Time, types.IOHealthEvent) error
+	resolver       ioHealthResolver
+	procMDStatPath string
+	sysBlockPath   string
+	newMDWatcher   func(string, string) ioHealthMDWatcher
+	now            func() time.Time
+	saveEvent      func(time.Time, types.IOHealthEvent) error
 
 	mu               sync.RWMutex
 	counters         map[ioHealthCounterKey]uint64
 	collectionErrors map[ioHealthCollectionErrorKey]uint64
 }
 
-func newIOHealthCollector(sysRoot string) *ioHealthCollector {
+func newIOHealthCollector(sysRoot, procMDStatPath string) *ioHealthCollector {
 	return &ioHealthCollector{
-		resolver:         newIOHealthResolver(sysRoot),
+		resolver:       newIOHealthResolver(sysRoot),
+		procMDStatPath: procMDStatPath,
+		sysBlockPath:   filepath.Join(sysRoot, "block"),
+		newMDWatcher: func(procMDStatPath, sysBlockPath string) ioHealthMDWatcher {
+			return health.NewMDWatcher(procMDStatPath, sysBlockPath)
+		},
 		now:              time.Now,
 		saveEvent:        saveIOHealthEvent,
 		counters:         make(map[ioHealthCounterKey]uint64),
