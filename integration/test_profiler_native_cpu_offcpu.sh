@@ -19,7 +19,7 @@ readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_offcpu.user.c"
 
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -r "${ROOT_DIR}/_output/bpf/native_cpu_offcpu_profiler.o" ]] || fatal "native off-CPU bpf object missing"
+[[ -r "${ROOT_DIR}/_output/bpf/native_offcpu_profiler.o" ]] || fatal "native off-CPU bpf object missing"
 
 readonly PROFILER_DURATION=10
 readonly PROFILER_AGGR_INTERVAL=5

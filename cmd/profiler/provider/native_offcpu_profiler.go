@@ -29,14 +29,12 @@ import (
 )
 
 const (
-	offCPUEventABIVersion uint16 = 1
+	offCPUEventBlocked  uint16 = 1
+	offCPUEventRunqueue uint16 = 2
 
-	offCPUEventBlocked  uint8 = 1
-	offCPUEventRunqueue uint8 = 2
-
-	offCPUFlagPreempted    uint8 = 1 << 0
-	offCPUFlagYielded      uint8 = 1 << 1
-	offCPUFlagMissedWakeup uint8 = 1 << 2
+	offCPUFlagPreempted    uint16 = 1 << 0
+	offCPUFlagYielded      uint16 = 1 << 1
+	offCPUFlagMissedWakeup uint16 = 1 << 2
 )
 
 type offCPUStackKey struct {
@@ -132,10 +130,6 @@ func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any))
 			log.Warnf("unexpected off-CPU event type %T", record)
 			continue
 		}
-		if event.AbiVersion != offCPUEventABIVersion {
-			log.Warnf("unsupported off-CPU event ABI %d", event.AbiVersion)
-			continue
-		}
 		if event.Base.Value <= 0 {
 			continue
 		}
@@ -173,7 +167,7 @@ func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any))
 	}
 }
 
-func offCPUCategory(kind, flags uint8) string {
+func offCPUCategory(kind, flags uint16) string {
 	switch kind {
 	case offCPUEventBlocked:
 		if flags&offCPUFlagMissedWakeup != 0 {

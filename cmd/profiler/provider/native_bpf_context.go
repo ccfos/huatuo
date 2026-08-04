@@ -205,7 +205,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 			switch event := rec.(type) {
 			case *abi.ProfilerEventBase:
 				base = event
-			case *abi.ProfilerCPUEvent:
+			case *abi.ProfilerOnCPUEvent:
 				base = &event.Base
 			default:
 				continue

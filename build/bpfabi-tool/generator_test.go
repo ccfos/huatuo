@@ -31,6 +31,7 @@ func TestGoName(t *testing.T) {
 		"net_rx_latency":        "NetRXLatency",
 		"pid_tgid":              "PIDTGID",
 		"profiler_offcpu_event": "ProfilerOffCPUEvent",
+		"profiler_oncpu_event":  "ProfilerOnCPUEvent",
 		"total_n_missed":        "TotalNMissed",
 		"unnamed_plain_name":    "UnnamedPlainName",
 	}

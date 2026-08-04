@@ -36,15 +36,14 @@ func TestOffCPUEventABI(t *testing.T) {
 	require.Equal(t, uintptr(40), unsafe.Offsetof(event.StartNS))
 	require.Equal(t, uintptr(48), unsafe.Offsetof(event.EndNS))
 	require.Equal(t, uintptr(56), unsafe.Offsetof(event.CPU))
-	require.Equal(t, uintptr(60), unsafe.Offsetof(event.AbiVersion))
-	require.Equal(t, uintptr(62), unsafe.Offsetof(event.Kind))
-	require.Equal(t, uintptr(63), unsafe.Offsetof(event.Flags))
+	require.Equal(t, uintptr(60), unsafe.Offsetof(event.Kind))
+	require.Equal(t, uintptr(62), unsafe.Offsetof(event.Flags))
 }
 
 func TestOffCPUCategory(t *testing.T) {
 	tests := []struct {
-		kind  uint8
-		flags uint8
+		kind  uint16
+		flags uint16
 		want  string
 	}{
 		{offCPUEventBlocked, 0, "off-CPU blocked"},
@@ -82,7 +81,7 @@ func (stackLookupMissBPF) ReadMap(uint32, []byte) ([]byte, error) {
 }
 
 func TestAggregateOffCPUBatch(t *testing.T) {
-	event := func(pid uint32, value int64, kind uint8, kernelStackID, userStackID int32) any {
+	event := func(pid uint32, value int64, kind uint16, kernelStackID, userStackID int32) any {
 		return &abi.ProfilerOffCPUEvent{
 			Base: abi.ProfilerEventBase{
 				PIDTGID:   uint64(pid) << 32,
@@ -90,8 +89,7 @@ func TestAggregateOffCPUBatch(t *testing.T) {
 				Kernstack: kernelStackID,
 				Userstack: userStackID,
 			},
-			AbiVersion: offCPUEventABIVersion,
-			Kind:       kind,
+			Kind: kind,
 		}
 	}
 

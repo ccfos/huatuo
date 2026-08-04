@@ -30,6 +30,7 @@ var initialisms = map[string]string{
 	"n":      "N",
 	"ns":     "NS",
 	"offcpu": "OffCPU",
+	"oncpu":  "OnCPU",
 	"oom":    "OOM",
 	"pid":    "PID",
 	"ras":    "RAS",

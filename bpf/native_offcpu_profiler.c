@@ -13,7 +13,6 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 
 #define TASK_RUNNING 0
 #define OFFCPU_STATE_ENTRIES 32768
-#define OFFCPU_EVENT_ABI_VERSION 1
 
 enum offcpu_metric {
 	OFFCPU_METRIC_TOTAL = 0,
@@ -157,7 +156,6 @@ static __always_inline void offcpu_emit(
 	event->start_ns = state->phase_start_ns;
 	event->end_ns = end_ns;
 	event->cpu = bpf_get_smp_processor_id();
-	event->abi_version = OFFCPU_EVENT_ABI_VERSION;
 	event->kind = kind;
 	event->flags = state->flags | extra_flags;
 

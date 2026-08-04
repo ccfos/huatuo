@@ -25,7 +25,7 @@ struct profiler_event_base {
 	s64 value;
 };
 
-struct profiler_cpu_event {
+struct profiler_oncpu_event {
 	struct profiler_event_base base;
 	u64 timestamp;
 	u32 cpu;
@@ -37,13 +37,12 @@ struct profiler_offcpu_event {
 	u64 start_ns;
 	u64 end_ns;
 	u32 cpu;
-	u16 abi_version;
-	u8 kind;
-	u8 flags;
+	u16 kind;
+	u16 flags;
 };
 
 BPF_ABI_EXPORT(profiler_event_base);
-BPF_ABI_EXPORT(profiler_cpu_event);
+BPF_ABI_EXPORT(profiler_oncpu_event);
 BPF_ABI_EXPORT(profiler_offcpu_event);
 
 #endif /* __BPF_ABI_PROFILER_H__ */

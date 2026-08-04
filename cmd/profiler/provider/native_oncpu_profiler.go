@@ -43,7 +43,7 @@ func init() {
 }
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_cpu_profiler.c -o $BPF_DIR/native_cpu_profiler.o
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_cpu_offcpu_profiler.c -o $BPF_DIR/native_cpu_offcpu_profiler.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_offcpu_profiler.c -o $BPF_DIR/native_offcpu_profiler.o
 
 type cpuNativeProfiler struct {
 	bpf    bpf.BPF
@@ -83,7 +83,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	constants := newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
 	attachOptions := nativeCPUOnCPUAttachOptions(pctx)
 	if pctx.CPUMode == profiling.CPUModeOffCPU {
-		objectName = "native_cpu_offcpu_profiler.o"
+		objectName = "native_offcpu_profiler.o"
 		constants = newNativeOffCPUBPFConstants(pctx, cssAddr)
 		attachOptions = nativeCPUOffCPUAttachOptions()
 	}
@@ -186,7 +186,7 @@ func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 		// Use unified drainActiveRingBuffer with CPU event factory
 		stackCountsByProc, ring, err := ringCtx.drainActiveRingBuffer(
-			func() any { return &abi.ProfilerCPUEvent{} },
+			func() any { return &abi.ProfilerOnCPUEvent{} },
 			nil,
 		) // No value conversion needed for CPU profiler
 		if err != nil {
