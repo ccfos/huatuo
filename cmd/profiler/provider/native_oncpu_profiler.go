@@ -45,17 +45,18 @@ func init() {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_oncpu_profiler.c -o $BPF_DIR/native_oncpu_profiler.o
 
 type cpuNativeProfiler struct {
-	bpf    bpf.BPF
-	dbg    *bpf.BpfDbg
-	offCPU bool
+	bpf                bpf.BPF
+	dbg                *bpf.BpfDbg
+	offCPU             bool
+	offCPUStatsEnabled bool
 }
 
 func (n *cpuNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
 	return newNativeAggregator(pctx)
 }
 
-func (p *cpuNativeProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	if p.offCPU && pctx.OffCPUStatsEnabled {
+func (p *cpuNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
+	if p.offCPUStatsEnabled {
 		logOffCPUBPFStats(p.bpf)
 	}
 	return closeBpfSafe(p.bpf)
@@ -131,6 +132,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	p.bpf = b
 	p.dbg = dbg
 	p.offCPU = offCPU
+	p.offCPUStatsEnabled = offCPU && pctx.OffCPUStatsEnabled
 	log.Infof("eBPF attached")
 
 	return nil

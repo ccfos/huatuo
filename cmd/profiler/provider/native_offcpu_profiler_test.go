@@ -143,12 +143,12 @@ func TestNativeOffCPUBPFConstantsDisablesEmptyCPUSet(t *testing.T) {
 }
 
 func TestOffCPUStatNames(t *testing.T) {
-	require.Equal(t, []string{
-		"stack_error",
-		"state_error",
-		"output_error",
-		"missed_wakeup",
-		"exit_cleanup",
+	require.Equal(t, [abi.ProfilerOffCPUStatMax]string{
+		abi.ProfilerOffCPUStatStackFailure:       "stack_failure",
+		abi.ProfilerOffCPUStatStateUpdateFailure: "state_update_failure",
+		abi.ProfilerOffCPUStatOutputFailure:      "output_failure",
+		abi.ProfilerOffCPUStatMissedWakeup:       "missed_wakeup",
+		abi.ProfilerOffCPUStatStateCleanup:       "state_cleanup",
 	}, offCPUStatNames)
 }
 

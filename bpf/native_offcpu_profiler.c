@@ -25,15 +25,6 @@ enum offcpu_phase_filter {
 	OFFCPU_PHASE_FILTER_RUNQUEUE,
 };
 
-enum offcpu_stat {
-	OFFCPU_STAT_STACK_ERROR = 0,
-	OFFCPU_STAT_STATE_ERROR,
-	OFFCPU_STAT_OUTPUT_ERROR,
-	OFFCPU_STAT_MISSED_WAKEUP,
-	OFFCPU_STAT_EXIT_CLEANUP,
-	OFFCPU_STAT_COUNT,
-};
-
 static volatile const __u32 profiler_offcpu_phase = OFFCPU_PHASE_FILTER_ALL;
 static volatile const __u64 profiler_offcpu_min_duration_ns = 1000000;
 static volatile const __u32 profiler_offcpu_cpu_set_enabled = 0;
@@ -90,10 +81,10 @@ struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__type(key, __u32);
 	__type(value, __u64);
-	__uint(max_entries, OFFCPU_STAT_COUNT);
+	__uint(max_entries, PROFILER_OFFCPU_STAT_MAX);
 } offcpu_stats SEC(".maps");
 
-static __always_inline void offcpu_stat_inc(__u32 stat)
+static __always_inline void offcpu_stat_inc(enum profiler_offcpu_stat stat)
 {
 	__u64 *counter;
 
@@ -160,7 +151,7 @@ offcpu_emit_event(void *ctx, const struct offcpu_state *state, __u64 end_ns,
 	if (bpf_perf_event_output(ctx, &profiler_output_a,
 				  COMPAT_BPF_F_CURRENT_CPU, event,
 				  sizeof(*event)) < 0)
-		offcpu_stat_inc(OFFCPU_STAT_OUTPUT_ERROR);
+		offcpu_stat_inc(PROFILER_OFFCPU_STAT_OUTPUT_FAILURE);
 }
 
 static __always_inline int
@@ -237,7 +228,7 @@ offcpu_record_sched_out(struct bpf_raw_tracepoint_args *ctx,
 	err = profiler_fill_event_base(&state.base, pid_tgid, ctx,
 				       &stack_map_a);
 	if (err < 0) {
-		offcpu_stat_inc(OFFCPU_STAT_STACK_ERROR);
+		offcpu_stat_inc(PROFILER_OFFCPU_STAT_STACK_FAILURE);
 		return;
 	}
 
@@ -251,7 +242,7 @@ offcpu_record_sched_out(struct bpf_raw_tracepoint_args *ctx,
 	}
 
 	if (bpf_map_update_elem(&offcpu_states, &key, &state, BPF_ANY) < 0) {
-		offcpu_stat_inc(OFFCPU_STAT_STATE_ERROR);
+		offcpu_stat_inc(PROFILER_OFFCPU_STAT_STATE_UPDATE_FAILURE);
 		return;
 	}
 }
@@ -280,7 +271,7 @@ offcpu_finish_sched_in(struct bpf_raw_tracepoint_args *ctx,
 		 * misattributing it.
 		 */
 		kind = PROFILER_OFFCPU_EVENT_RUNQUEUE_MISSED_WAKEUP;
-		offcpu_stat_inc(OFFCPU_STAT_MISSED_WAKEUP);
+		offcpu_stat_inc(PROFILER_OFFCPU_STAT_MISSED_WAKEUP);
 	}
 
 	offcpu_emit_event(ctx, state, now, kind);
@@ -323,7 +314,7 @@ offcpu_cleanup_task_state(struct bpf_raw_tracepoint_args *ctx,
 	}
 
 	bpf_map_delete_elem(&offcpu_states, &key);
-	offcpu_stat_inc(OFFCPU_STAT_EXIT_CLEANUP);
+	offcpu_stat_inc(PROFILER_OFFCPU_STAT_STATE_CLEANUP);
 	return 0;
 }
 

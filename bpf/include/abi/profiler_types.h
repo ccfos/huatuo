@@ -41,6 +41,15 @@ enum profiler_offcpu_event_kind {
 	PROFILER_OFFCPU_EVENT_RUNQUEUE_MISSED_WAKEUP,
 };
 
+enum profiler_offcpu_stat {
+	PROFILER_OFFCPU_STAT_STACK_FAILURE = 0,
+	PROFILER_OFFCPU_STAT_STATE_UPDATE_FAILURE,
+	PROFILER_OFFCPU_STAT_OUTPUT_FAILURE,
+	PROFILER_OFFCPU_STAT_MISSED_WAKEUP,
+	PROFILER_OFFCPU_STAT_STATE_CLEANUP,
+	PROFILER_OFFCPU_STAT_MAX,
+};
+
 struct profiler_offcpu_event {
 	struct profiler_event_base base;
 	enum profiler_offcpu_event_kind kind;
@@ -51,5 +60,6 @@ BPF_ABI_EXPORT(profiler_event_base);
 BPF_ABI_EXPORT(profiler_oncpu_event);
 BPF_ABI_EXPORT(profiler_offcpu_event);
 BPF_ABI_EXPORT_ENUM(profiler_offcpu_event_kind);
+BPF_ABI_EXPORT_ENUM(profiler_offcpu_stat);
 
 #endif /* __BPF_ABI_PROFILER_H__ */

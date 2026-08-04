@@ -230,12 +230,12 @@ func offCPUCategory(kind abi.ProfilerOffCPUEventKind) string {
 	return offCPUCategories[index]
 }
 
-var offCPUStatNames = []string{
-	"stack_error",
-	"state_error",
-	"output_error",
-	"missed_wakeup",
-	"exit_cleanup",
+var offCPUStatNames = [abi.ProfilerOffCPUStatMax]string{
+	abi.ProfilerOffCPUStatStackFailure:       "stack_failure",
+	abi.ProfilerOffCPUStatStateUpdateFailure: "state_update_failure",
+	abi.ProfilerOffCPUStatOutputFailure:      "output_failure",
+	abi.ProfilerOffCPUStatMissedWakeup:       "missed_wakeup",
+	abi.ProfilerOffCPUStatStateCleanup:       "state_cleanup",
 }
 
 func logOffCPUBPFStats(obj bpf.BPF) {
