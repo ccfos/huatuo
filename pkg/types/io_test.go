@@ -17,6 +17,8 @@ package types
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -128,6 +130,29 @@ func TestIOTracingSnapshotJSON(t *testing.T) {
 			require.NoError(t, json.Unmarshal(encoded, &decoded))
 			assert.Equal(t, tt.snapshot, decoded)
 		})
+	}
+}
+
+func TestIOTracingSnapshotFailureReason(t *testing.T) {
+	for _, failure := range []string{"", IOTracingFailureReader} {
+		snapshot := IOTracingSnapshot{
+			FailureReason: failure,
+			StallStacks:   []IOScheduleEvent{{PID: 1, TID: 2, CPU: 3, ScheduleLatencyUS: 4}},
+		}
+		data, err := json.Marshal(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "failure_reason") != (failure != "") {
+			t.Fatalf("optional failure marker: %s", data)
+		}
+		var decoded IOTracingSnapshot
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.FailureReason != failure || !reflect.DeepEqual(decoded.StallStacks, snapshot.StallStacks) {
+			t.Fatalf("wire fields changed: %+v", decoded)
+		}
 	}
 }
 
