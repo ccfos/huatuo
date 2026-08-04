@@ -40,7 +40,7 @@ BPF_DBG_MAP(native_cpu_dbg);
 struct offcpu_state {
 	struct profiler_event_base base;
 	__u64 phase_start_ns;
-	__u32 kind;
+	enum profiler_offcpu_event_kind kind;
 	__u32 pad0;
 };
 
@@ -102,7 +102,8 @@ static __always_inline void offcpu_stat_inc(__u32 stat)
 		(*value)++;
 }
 
-static __always_inline bool offcpu_event_enabled(__u32 kind)
+static __always_inline bool
+offcpu_event_enabled(enum profiler_offcpu_event_kind kind)
 {
 	if (profiler_offcpu_phase == OFFCPU_PHASE_FILTER_ALL)
 		return true;
@@ -130,7 +131,8 @@ static __always_inline bool offcpu_cpu_selected(__u32 cpu)
 
 static __always_inline void offcpu_emit_event(void *ctx,
 					      const struct offcpu_state *state,
-					      __u64 end_ns, __u32 kind)
+					      __u64 end_ns,
+					      enum profiler_offcpu_event_kind kind)
 {
 	struct profiler_offcpu_event *event;
 	__u64 duration;
@@ -260,7 +262,7 @@ offcpu_finish_sched_in(struct bpf_raw_tracepoint_args *ctx,
 		       struct task_struct *next, __u64 now)
 {
 	struct offcpu_state *state;
-	__u32 kind;
+	enum profiler_offcpu_event_kind kind;
 	__u64 key;
 
 	key = (__u64)next;

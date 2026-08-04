@@ -43,12 +43,13 @@ enum profiler_offcpu_event_kind {
 
 struct profiler_offcpu_event {
 	struct profiler_event_base base;
-	u32 kind;
+	enum profiler_offcpu_event_kind kind;
 	u32 pad0;
 };
 
 BPF_ABI_EXPORT(profiler_event_base);
 BPF_ABI_EXPORT(profiler_oncpu_event);
 BPF_ABI_EXPORT(profiler_offcpu_event);
+BPF_ABI_EXPORT_ENUM(profiler_offcpu_event_kind);
 
 #endif /* __BPF_ABI_PROFILER_H__ */

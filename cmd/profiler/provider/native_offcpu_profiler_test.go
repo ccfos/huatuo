@@ -38,15 +38,15 @@ func TestOffCPUEventABI(t *testing.T) {
 
 func TestOffCPUCategory(t *testing.T) {
 	tests := []struct {
-		kind uint32
+		kind abi.ProfilerOffCPUEventKind
 		want string
 	}{
-		{offCPUEventUnknown, "off-CPU unknown"},
-		{offCPUEventBlocked, "off-CPU blocked"},
-		{offCPUEventRunqueue, "scheduling delay"},
-		{offCPUEventRunqueuePreempted, "scheduling delay (preempted)"},
-		{offCPUEventRunqueueYielded, "scheduling delay (yielded)"},
-		{offCPUEventRunqueueMissedWakeup, "scheduling delay (wakeup not observed)"},
+		{abi.ProfilerOffCPUEventUnknown, "off-CPU unknown"},
+		{abi.ProfilerOffCPUEventBlocked, "off-CPU blocked"},
+		{abi.ProfilerOffCPUEventRunqueue, "scheduling delay"},
+		{abi.ProfilerOffCPUEventRunqueuePreempted, "scheduling delay (preempted)"},
+		{abi.ProfilerOffCPUEventRunqueueYielded, "scheduling delay (yielded)"},
+		{abi.ProfilerOffCPUEventRunqueueMissedWakeup, "scheduling delay (wakeup not observed)"},
 		{99, "off-CPU unknown"},
 	}
 	for _, tt := range tests {
@@ -63,7 +63,13 @@ func (stackLookupMissBPF) ReadMap(uint32, []byte) ([]byte, error) {
 }
 
 func TestAggregateOffCPUBatch(t *testing.T) {
-	event := func(pid uint32, value int64, kind uint32, kernelStackID, userStackID int32) any {
+	event := func(
+		pid uint32,
+		value int64,
+		kind abi.ProfilerOffCPUEventKind,
+		kernelStackID,
+		userStackID int32,
+	) any {
 		return &abi.ProfilerOffCPUEvent{
 			Base: abi.ProfilerEventBase{
 				PIDTGID:   uint64(pid) << 32,
@@ -76,11 +82,11 @@ func TestAggregateOffCPUBatch(t *testing.T) {
 	}
 
 	batch := []any{
-		event(100, 10, offCPUEventBlocked, 0, -1),
-		event(100, 20, offCPUEventBlocked, 0, -1),
-		event(100, 30, offCPUEventRunqueue, 0, -1),
-		event(200, 40, offCPUEventBlocked, 0, -1),
-		event(300, 50, offCPUEventBlocked, -1, -1),
+		event(100, 10, abi.ProfilerOffCPUEventBlocked, 0, -1),
+		event(100, 20, abi.ProfilerOffCPUEventBlocked, 0, -1),
+		event(100, 30, abi.ProfilerOffCPUEventRunqueue, 0, -1),
+		event(200, 40, abi.ProfilerOffCPUEventBlocked, 0, -1),
+		event(300, 50, abi.ProfilerOffCPUEventBlocked, -1, -1),
 	}
 
 	ringCtx := &ringBufferContext{bpf: stackLookupMissBPF{}, stackMapAID: 1}

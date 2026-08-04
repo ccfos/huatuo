@@ -34,13 +34,6 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_offcpu_profiler.c -o $BPF_DIR/native_offcpu_profiler.o
 
 const (
-	offCPUEventUnknown uint32 = iota
-	offCPUEventBlocked
-	offCPUEventRunqueue
-	offCPUEventRunqueuePreempted
-	offCPUEventRunqueueYielded
-	offCPUEventRunqueueMissedWakeup
-
 	offCPUCPUSetMapName   = "offcpu_cpu_set"
 	offCPUCPUSetWordBits  = 64
 	offCPUCPUSetWordCount = 128
@@ -221,19 +214,20 @@ func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any))
 }
 
 var offCPUCategories = [...]string{
-	"off-CPU unknown",
-	"off-CPU blocked",
-	"scheduling delay",
-	"scheduling delay (preempted)",
-	"scheduling delay (yielded)",
-	"scheduling delay (wakeup not observed)",
+	abi.ProfilerOffCPUEventUnknown:              "off-CPU unknown",
+	abi.ProfilerOffCPUEventBlocked:              "off-CPU blocked",
+	abi.ProfilerOffCPUEventRunqueue:             "scheduling delay",
+	abi.ProfilerOffCPUEventRunqueuePreempted:    "scheduling delay (preempted)",
+	abi.ProfilerOffCPUEventRunqueueYielded:      "scheduling delay (yielded)",
+	abi.ProfilerOffCPUEventRunqueueMissedWakeup: "scheduling delay (wakeup not observed)",
 }
 
-func offCPUCategory(kind uint32) string {
-	if kind >= uint32(len(offCPUCategories)) {
-		return offCPUCategories[offCPUEventUnknown]
+func offCPUCategory(kind abi.ProfilerOffCPUEventKind) string {
+	index := uint64(kind)
+	if index >= uint64(len(offCPUCategories)) {
+		return offCPUCategories[abi.ProfilerOffCPUEventUnknown]
 	}
-	return offCPUCategories[kind]
+	return offCPUCategories[index]
 }
 
 var offCPUStatNames = []string{
