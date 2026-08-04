@@ -26,7 +26,9 @@ import (
 )
 
 const (
-	ioHealthEventBlockError = 1
+	ioHealthEventBlockError = iota + 1
+	ioHealthEventSCSITimeout
+	ioHealthEventSCSIDispatchError
 )
 
 // ioHealthPerfEvent mirrors struct health_event in bpf/io_health.c.
@@ -34,6 +36,10 @@ type ioHealthPerfEvent struct {
 	Sector    uint64
 	Dev       uint32
 	Status    int32
+	Host      uint32
+	Channel   uint32
+	Target    uint32
+	LUN       uint32
 	Type      uint8
 	Operation uint8
 	Pad       [6]uint8
@@ -54,6 +60,11 @@ var ioHealthBlockCompleteHook = ioHealthHook{
 	symbol:  "block_rq_complete",
 }
 
+var ioHealthHooks = []ioHealthHook{
+	{program: "trace_scsi_timeout", symbol: "scsi/scsi_dispatch_cmd_timeout"},
+	{program: "trace_scsi_dispatch_error", symbol: "scsi/scsi_dispatch_cmd_error"},
+}
+
 func attachIOHealthHooks(
 	object bpf.BPF,
 	legacyBlockCompleteSupported bool,
@@ -63,28 +74,41 @@ func attachIOHealthHooks(
 		Symbol:      ioHealthBlockErrorHook.symbol,
 	})
 	if err == nil {
-		return 1
-	}
-	log.Warnf(
-		"io_health: attach optional hook %s: %v",
-		ioHealthBlockErrorHook.symbol,
-		err,
-	)
-	if !errors.Is(err, unix.ENOENT) || !legacyBlockCompleteSupported {
-		return 0
-	}
-	if err := bpf.AttachIndependently(object, bpf.AttachOption{
-		ProgramName: ioHealthBlockCompleteHook.program,
-		Symbol:      ioHealthBlockCompleteHook.symbol,
-	}); err != nil {
+		attached++
+	} else {
 		log.Warnf(
 			"io_health: attach optional hook %s: %v",
-			ioHealthBlockCompleteHook.symbol,
+			ioHealthBlockErrorHook.symbol,
 			err,
 		)
-		return 0
+		if errors.Is(err, unix.ENOENT) && legacyBlockCompleteSupported {
+			if err := bpf.AttachIndependently(object, bpf.AttachOption{
+				ProgramName: ioHealthBlockCompleteHook.program,
+				Symbol:      ioHealthBlockCompleteHook.symbol,
+			}); err != nil {
+				log.Warnf(
+					"io_health: attach optional hook %s: %v",
+					ioHealthBlockCompleteHook.symbol,
+					err,
+				)
+			} else {
+				attached++
+			}
+		}
 	}
-	return 1
+
+	for _, hook := range ioHealthHooks {
+		if err := bpf.AttachIndependently(object, bpf.AttachOption{
+			ProgramName: hook.program,
+			Symbol:      hook.symbol,
+		}); err != nil {
+			log.Warnf("io_health: attach optional hook %s: %v", hook.symbol, err)
+			continue
+		}
+		attached++
+	}
+
+	return attached
 }
 
 func detectIOHealthKernelRelease() string {
