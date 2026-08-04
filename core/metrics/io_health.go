@@ -49,18 +49,33 @@ type ioHealthCollectionErrorKey struct {
 }
 
 type ioHealthCollector struct {
-	saveEvent func(time.Time, types.IOHealthEvent) error
+	resolver   ioHealthResolver
+	nvmeStates map[uint32]string
+	now        func() time.Time
+	saveEvent  func(time.Time, types.IOHealthEvent) error
 
 	mu               sync.RWMutex
 	counters         map[ioHealthCounterKey]uint64
 	collectionErrors map[ioHealthCollectionErrorKey]uint64
 }
 
-func newIOHealthCollector() *ioHealthCollector {
+func newIOHealthCollector(sysRoot string) *ioHealthCollector {
 	return &ioHealthCollector{
+		resolver:         newIOHealthResolver(sysRoot),
+		now:              time.Now,
 		saveEvent:        saveIOHealthEvent,
 		counters:         make(map[ioHealthCounterKey]uint64),
 		collectionErrors: make(map[ioHealthCollectionErrorKey]uint64),
+	}
+}
+
+//nolint:gocritic // Preserve a value snapshot across the storage callback.
+func (c *ioHealthCollector) persistEvent(
+	triggeredAt time.Time,
+	event types.IOHealthEvent,
+) {
+	if err := c.saveEvent(triggeredAt, event); err != nil {
+		log.Warnf("io_health: save event: %v", err)
 	}
 }
 
@@ -93,9 +108,7 @@ func (c *ioHealthCollector) handleEvidenceResult(result iohealth.EvidenceResult)
 	}
 	c.mu.Unlock()
 
-	if err := c.saveEvent(result.TriggeredAt, result.Event); err != nil {
-		log.Warnf("io_health: save evidence event: %v", err)
-	}
+	c.persistEvent(result.TriggeredAt, result.Event)
 }
 
 // Update implements metric.Collector using only process-local counters.
