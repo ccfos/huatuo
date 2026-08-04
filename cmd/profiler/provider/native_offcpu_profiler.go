@@ -103,13 +103,8 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(
 			if errors.As(err, &lostErr) {
 				log.Warnf("off-CPU perf event samples lost: %d", lostErr.Count)
 			}
-
-			readErr := perfEventReadErrorWithoutLoss(err)
-			if errors.Is(readErr, types.ErrExitByCancelCtx) {
+			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
-			}
-			if readErr != nil {
-				return fmt.Errorf("read off-CPU events: %w", readErr)
 			}
 		}
 
@@ -122,30 +117,6 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(
 			}
 		}
 	}
-}
-
-func perfEventReadErrorWithoutLoss(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	type multiUnwrapper interface {
-		Unwrap() []error
-	}
-	if joined, ok := err.(multiUnwrapper); ok {
-		var remaining []error
-		for _, nestedErr := range joined.Unwrap() {
-			if !errors.Is(nestedErr, bpf.ErrPerfEventSamplesLost) {
-				remaining = append(remaining, nestedErr)
-			}
-		}
-		return errors.Join(remaining...)
-	}
-
-	if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
-		return nil
-	}
-	return err
 }
 
 func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any)) {

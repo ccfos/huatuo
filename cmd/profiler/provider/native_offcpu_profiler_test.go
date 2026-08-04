@@ -15,7 +15,6 @@
 package provider
 
 import (
-	"errors"
 	"math"
 	"testing"
 	"unsafe"
@@ -24,7 +23,6 @@ import (
 	"huatuo-bamai/internal/bpf/abi"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/pkg/profiling"
-	"huatuo-bamai/pkg/types"
 
 	"github.com/cilium/ebpf"
 	"github.com/stretchr/testify/require"
@@ -57,19 +55,6 @@ func TestOffCPUCategory(t *testing.T) {
 	for _, tt := range tests {
 		require.Equal(t, tt.want, offCPUCategory(tt.kind, tt.flags))
 	}
-}
-
-func TestPerfEventReadErrorWithoutLoss(t *testing.T) {
-	lostErr := &bpf.PerfEventSamplesLostError{Count: 7}
-	require.NoError(t, perfEventReadErrorWithoutLoss(lostErr))
-
-	readErr := errors.New("read failed")
-	require.ErrorIs(t, perfEventReadErrorWithoutLoss(errors.Join(readErr, lostErr)), readErr)
-	require.ErrorIs(
-		t,
-		perfEventReadErrorWithoutLoss(errors.Join(types.ErrExitByCancelCtx, lostErr)),
-		types.ErrExitByCancelCtx,
-	)
 }
 
 type stackLookupMissBPF struct {
