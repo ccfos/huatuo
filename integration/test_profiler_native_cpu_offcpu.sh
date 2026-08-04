@@ -36,7 +36,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
+# Ubuntu 20.04 enables PIE by default, which can prevent the profiler from
+# resolving the fixture's local wait-loop symbols from sampled addresses.
+compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}" -no-pie
 "${FIXTURE_BIN}" > /dev/null 2>&1 &
 TARGET_PID=$!
 kill -0 "${TARGET_PID}" 2> /dev/null || fatal "fixture exited immediately (pid=${TARGET_PID})"
