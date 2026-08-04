@@ -51,13 +51,9 @@ var appFlags = []cli.Flag{
 		Value: "all",
 	},
 	&cli.Uint64Flag{
-		Name:  "offcpu-min-us",
-		Usage: "Minimum off-CPU interval to record in microseconds",
+		Name:  "offcpu-min-duration-us",
+		Usage: "Minimum off-CPU phase duration to record in microseconds",
 		Value: 1000,
-	},
-	&cli.Uint64Flag{
-		Name:  "offcpu-max-us",
-		Usage: "Maximum off-CPU interval to record in microseconds; 0 disables the limit",
 	},
 	&cli.StringFlag{
 		Name:  "container-id",

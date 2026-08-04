@@ -277,11 +277,11 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			wantError: "--freq is not used with --cpu-mode=offcpu",
 		},
 		{
-			name:      "off-CPU duration range",
+			name:      "off-CPU minimum duration requires mode",
 			language:  "c++",
 			typ:       "cpu",
-			args:      []string{"--cpu-mode", "offcpu", "--offcpu-min-us", "100", "--offcpu-max-us", "99"},
-			wantError: "--offcpu-max-us must be zero or at least --offcpu-min-us",
+			args:      []string{"--offcpu-min-duration-us", "100"},
+			wantError: "--offcpu-min-duration-us requires native CPU profiling with --cpu-mode=offcpu",
 		},
 		{
 			name:      "off-CPU metric requires mode",

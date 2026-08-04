@@ -472,8 +472,7 @@ Native profiling options:
 | `--cpuid` | All CPUs | Native CPU | Comma-separated CPU list or ranges, for example `1,3,5-10` |
 | `--cpu-mode` | `oncpu` | Native CPU | `oncpu` for frequency sampling or `offcpu` for blocked/runqueue time attribution |
 | `--offcpu-phase` | `all` | Native off-CPU | Accumulate `all`, `blocked`, or `runqueue` time |
-| `--offcpu-min-us` | `1000` | Native off-CPU | Discard phase intervals shorter than this many microseconds |
-| `--offcpu-max-us` | `0` | Native off-CPU | Discard phase intervals longer than this value; `0` disables the maximum |
+| `--offcpu-min-duration-us` | `1000` | Native off-CPU | Discard phases shorter than this duration in microseconds |
 | `--thread-group` | `false` | Native | Also profile other threads in the target PID's thread group |
 | `--physical-memory-probability` | `100` | Native physical memory | Physical memory event sampling probability from 1 to 100 |
 | `--log-bpf-debug` | `false` | Native | Emit BPF debug events; not recommended for normal profiling |
@@ -525,7 +524,7 @@ To attribute time spent outside the CPU to the call path that descheduled, selec
 sudo _output/bin/profiler \
   --type cpu --language go --pid 12345 --thread-group \
   --cpu-mode offcpu --offcpu-phase all \
-  --offcpu-min-us 1000 \
+  --offcpu-min-duration-us 1000 \
   --duration 30 --aggr-interval 10 \
   --output-format flamegraph --output-path ./profiles/go-offcpu
 ```

@@ -474,8 +474,7 @@ sudo _output/bin/profiler \
 | `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围，例如 `1,3,5-10` |
 | `--cpu-mode` | `oncpu` | 原生 CPU | `oncpu` 按频率采样，`offcpu` 归因阻塞与可运行调度延迟 |
 | `--offcpu-phase` | `all` | 原生 off-CPU | 累计 `all`、`blocked` 或 `runqueue` 时间 |
-| `--offcpu-min-us` | `1000` | 原生 off-CPU | 丢弃小于该微秒数的阶段延迟 |
-| `--offcpu-max-us` | `0` | 原生 off-CPU | 丢弃大于该微秒数的阶段延迟；`0` 表示不限制 |
+| `--offcpu-min-duration-us` | `1000` | 原生 off-CPU | 丢弃持续时间小于该微秒数的阶段 |
 | `--thread-group` | `false` | 原生 | 同时采集目标 PID 所在线程组中的其他线程 |
 | `--physical-memory-probability` | `100` | 原生物理内存 | 物理内存事件采样概率，范围为 1～100 |
 | `--log-bpf-debug` | `false` | 原生 | 输出 BPF 调试事件，常规采集不建议启用 |
@@ -527,7 +526,7 @@ sudo _output/bin/profiler \
 sudo _output/bin/profiler \
   --type cpu --language go --pid 12345 --thread-group \
   --cpu-mode offcpu --offcpu-phase all \
-  --offcpu-min-us 1000 \
+  --offcpu-min-duration-us 1000 \
   --duration 30 --aggr-interval 10 \
   --output-format flamegraph --output-path ./profiles/go-offcpu
 ```

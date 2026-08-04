@@ -116,19 +116,17 @@ func TestNativeAggregatorSeparatesOffCPUCategories(t *testing.T) {
 
 func TestNativeOffCPUBPFConstants(t *testing.T) {
 	pctx := &pcontext.ProfilerContext{
-		PIDs:        []int{123},
-		ThreadGroup: true,
-		OffCPUPhase: profiling.OffCPUPhaseRunqueue,
-		OffCPUMinUS: 250,
-		OffCPUMaxUS: 5000,
+		PIDs:                []int{123},
+		ThreadGroup:         true,
+		OffCPUPhase:         profiling.OffCPUPhaseRunqueue,
+		OffCPUMinDurationUS: 250,
 	}
 	constants := newNativeOffCPUBPFConstants(pctx, 456)
 	require.Equal(t, uint32(123), constants["profiler_filter_pid"])
 	require.Equal(t, uint64(456), constants["profiler_filter_css"])
 	require.Equal(t, true, constants["profiler_filter_threads"])
 	require.Equal(t, uint32(2), constants["profiler_offcpu_phase"])
-	require.Equal(t, uint64(250000), constants["profiler_offcpu_min_ns"])
-	require.Equal(t, uint64(5000000), constants["profiler_offcpu_max_ns"])
+	require.Equal(t, uint64(250000), constants["profiler_offcpu_min_duration_ns"])
 }
 
 func TestMicrosecondsToNanosecondsSaturates(t *testing.T) {

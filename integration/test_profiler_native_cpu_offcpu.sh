@@ -47,7 +47,7 @@ if ! "${TOOL_BIN}" \
 	--language c \
 	--cpu-mode offcpu \
 	--offcpu-phase blocked \
-	--offcpu-min-us 100 \
+	--offcpu-min-duration-us 100 \
 	--pid "${TARGET_PID}" \
 	--duration "${PROFILER_DURATION}" \
 	--aggr-interval "${PROFILER_AGGR_INTERVAL}" \

@@ -288,8 +288,8 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.IsSet("offcpu-phase") && !offCPU {
 		return fmt.Errorf("--offcpu-phase requires native CPU profiling with --cpu-mode=offcpu")
 	}
-	if (ctx.IsSet("offcpu-min-us") || ctx.IsSet("offcpu-max-us")) && !offCPU {
-		return fmt.Errorf("off-CPU duration filters require native CPU profiling with --cpu-mode=offcpu")
+	if ctx.IsSet("offcpu-min-duration-us") && !offCPU {
+		return fmt.Errorf("--offcpu-min-duration-us requires native CPU profiling with --cpu-mode=offcpu")
 	}
 	if offCPU {
 		if ctx.String("cpuid") != "" {
@@ -297,10 +297,6 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 		}
 		if ctx.IsSet("freq") {
 			return fmt.Errorf("--freq is not used with --cpu-mode=offcpu")
-		}
-		minUS, maxUS := ctx.Uint64("offcpu-min-us"), ctx.Uint64("offcpu-max-us")
-		if maxUS != 0 && maxUS < minUS {
-			return fmt.Errorf("--offcpu-max-us must be zero or at least --offcpu-min-us")
 		}
 	}
 

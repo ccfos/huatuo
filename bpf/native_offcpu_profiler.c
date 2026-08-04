@@ -40,8 +40,7 @@ enum offcpu_stat {
 	OFFCPU_STAT_TRACKED = 0,
 	OFFCPU_STAT_BLOCKED_EMITTED,
 	OFFCPU_STAT_RUNQUEUE_EMITTED,
-	OFFCPU_STAT_BELOW_THRESHOLD,
-	OFFCPU_STAT_ABOVE_THRESHOLD,
+	OFFCPU_STAT_BELOW_MIN_DURATION,
 	OFFCPU_STAT_STACK_ERROR,
 	OFFCPU_STAT_STATE_ERROR,
 	OFFCPU_STAT_OUTPUT_ERROR,
@@ -51,8 +50,7 @@ enum offcpu_stat {
 };
 
 static volatile const __u32 profiler_offcpu_phase = OFFCPU_PHASE_FILTER_ALL;
-static volatile const __u64 profiler_offcpu_min_ns = 1000000;
-static volatile const __u64 profiler_offcpu_max_ns = 0;
+static volatile const __u64 profiler_offcpu_min_duration_ns = 1000000;
 
 BPF_DBG_MAP(native_cpu_dbg);
 
@@ -137,12 +135,8 @@ static __always_inline void offcpu_emit(
 		return;
 
 	duration = end_ns - state->phase_start_ns;
-	if (duration < profiler_offcpu_min_ns) {
-		offcpu_count(OFFCPU_STAT_BELOW_THRESHOLD);
-		return;
-	}
-	if (profiler_offcpu_max_ns != 0 && duration > profiler_offcpu_max_ns) {
-		offcpu_count(OFFCPU_STAT_ABOVE_THRESHOLD);
+	if (duration < profiler_offcpu_min_duration_ns) {
+		offcpu_count(OFFCPU_STAT_BELOW_MIN_DURATION);
 		return;
 	}
 
