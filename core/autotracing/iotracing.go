@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path"
 	"strconv"
 	"strings"
@@ -75,9 +76,10 @@ func handleIotracingEvent(sess *toolstream.Session, ev *types.IOTracingSnapshot)
 		TracerName:       iotracingToolName,
 		StartedTimestamp: pending.startedTimestamp,
 		TracerData: &ioStatusData{
-			Reason:      reason,
-			Processes:   ev.Processes,
-			StallStacks: ev.StallStacks,
+			Reason:        reason,
+			FailureReason: ev.FailureReason,
+			Processes:     ev.Processes,
+			StallStacks:   ev.StallStacks,
 		},
 		TracerRunType: types.TracerRunTypeAutotracing,
 	})
@@ -113,9 +115,10 @@ type ioTracing struct {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
 
 type ioStatusData struct {
-	Reason      *reasonSnapshot            `json:"reason_snapshot"`
-	Processes   []types.ProcessFileIOStats `json:"process_file_io_stats"`
-	StallStacks []types.IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
+	Reason        *reasonSnapshot            `json:"reason_snapshot"`
+	FailureReason string                     `json:"failure_reason,omitempty"`
+	Processes     []types.ProcessFileIOStats `json:"process_file_io_stats"`
+	StallStacks   []types.IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
 }
 
 type diskStatus struct {
@@ -451,32 +454,62 @@ func (i *ioTracing) Start(ctx context.Context) error {
 	}
 	runErr := process.Run(ctx)
 	_, outputErr := process.Stdout()
-	if err := errors.Join(runErr, outputErr); err != nil {
-		pendingReasons.Delete(taskID)
+	processErr := errors.Join(runErr, outputErr)
+	if err := processErr; err != nil {
 		if errors.Is(err, executil.ErrStopFailed) {
+			pendingReasons.Delete(taskID)
 			stopErr := process.Stop(ctx)
 			if stopErr == nil {
 				log.Info("iotracing stopped")
 				return nil
 			}
 			err = errors.Join(err, fmt.Errorf("retry stop iotracing: %w", stopErr))
+			if stderr := process.Stderr(); len(stderr) > 0 {
+				return fmt.Errorf("run iotracing: %w; stderr: %s", err, stderr)
+			}
+			return fmt.Errorf("run iotracing: %w", err)
 		} else if ctx.Err() != nil {
+			pendingReasons.Delete(taskID)
 			log.Info("iotracing stopped")
 			return nil
 		}
 		if stderr := process.Stderr(); len(stderr) > 0 {
-			return fmt.Errorf("run iotracing: %w; stderr: %s", err, stderr)
+			processErr = fmt.Errorf("run iotracing: %w; stderr: %s", err, stderr)
+		} else {
+			processErr = fmt.Errorf("run iotracing: %w", err)
 		}
-		return fmt.Errorf("run iotracing: %w", err)
+		// A failed launch has no snapshot. A child exit can still have sent
+		// partial output which arrives after the process is reaped.
+		var exitErr *exec.ExitError
+		if runErr != nil && !errors.As(runErr, &exitErr) {
+			pendingReasons.Delete(taskID)
+			return processErr
+		}
 	}
 
-	return waitForSnapshot(
+	return waitForSnapshotAfterExit(
 		ctx,
 		taskID,
 		pending,
+		processErr,
 		iotracingSnapshotTimeout,
 		iotracingSnapshotSaveTimeout,
 	)
+}
+
+func waitForSnapshotAfterExit(
+	ctx context.Context,
+	taskID string,
+	pending *pendingIOTracingReason,
+	exitErr error,
+	reportTimeout time.Duration,
+	saveTimeout time.Duration,
+) error {
+	snapshotErr := waitForSnapshot(ctx, taskID, pending, reportTimeout, saveTimeout)
+	if ctx.Err() != nil {
+		return nil
+	}
+	return errors.Join(exitErr, snapshotErr)
 }
 
 func waitForSnapshot(
