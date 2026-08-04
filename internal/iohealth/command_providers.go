@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Health commands share time and output bounds so event-triggered evidence
+// cannot add unbounded load to an unhealthy storage path.
 package iohealth
 
 import (
@@ -111,7 +113,7 @@ func (w *EvidenceWorker) collectEvidence(
 	ctx context.Context,
 	request EvidenceRequest,
 	target string,
-) EvidenceResult {
+) (EvidenceResult, bool) {
 	result := EvidenceResult{
 		Target:      target,
 		TriggeredAt: request.TriggeredAt,
@@ -123,7 +125,12 @@ func (w *EvidenceWorker) collectEvidence(
 	if request.Reason != "" {
 		result.Reasons = []string{request.Reason}
 		result.Event.CollectionStatus = "unsupported"
-		return result
+		return result, true
+	}
+	if request.Identity != "" && !w.validateIdentity(request) {
+		result.Reasons = []string{CollectionReasonTargetChanged}
+		result.Event.CollectionStatus = "unsupported"
+		return result, false
 	}
 
 	switch request.Protocol {
@@ -143,7 +150,14 @@ func (w *EvidenceWorker) collectEvidence(
 		result.Reasons = []string{CollectionReasonTargetUnsupported}
 		result.Event.CollectionStatus = "unsupported"
 	}
-	return result
+	if request.Identity != "" && !w.validateIdentity(request) {
+		result.Event.NVMe = nil
+		result.Event.SCSI = nil
+		result.Reasons = []string{CollectionReasonTargetChanged}
+		result.Event.CollectionStatus = "unsupported"
+		return result, false
+	}
+	return result, true
 }
 
 func (w *EvidenceWorker) collectNVMe(
@@ -289,6 +303,7 @@ func collectionStatus(hasEvidence bool, reasons []string) string {
 	}
 	for _, reason := range reasons {
 		if reason == CollectionReasonTargetUnresolved ||
+			reason == CollectionReasonTargetChanged ||
 			reason == CollectionReasonToolUnavailable ||
 			reason == CollectionReasonTargetUnsupported {
 			return "unsupported"
