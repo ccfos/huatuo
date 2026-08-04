@@ -29,7 +29,7 @@ write_include_filter_config() {
 BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
 
 [MetricCollector.Vmstat]
-    IncludedOnHost = "thp_split_pmd|thp_split_pud"
+    IncludedOnHost = "pgfault"
     ExcludedOnHost = ""
     IncludedOnContainer = ""
     ExcludedOnContainer = ""

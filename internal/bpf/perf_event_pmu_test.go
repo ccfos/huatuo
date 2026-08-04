@@ -44,7 +44,7 @@ func TestAttachPerfEvent(t *testing.T) {
 		{
 			name: "ok period sampling",
 			opt: &perfEventOption{
-				sample:     1,
+				sample:     1_000_000,
 				sampleMode: perfEventSamplePeriod,
 				program:    prog,
 			},

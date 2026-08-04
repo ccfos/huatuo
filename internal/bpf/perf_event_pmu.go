@@ -104,12 +104,13 @@ func attachPerfEvent(opt *perfEventOption) (*perfEventAttach, error) {
 		Type:   unix.PERF_TYPE_SOFTWARE,
 		Size:   unix.PERF_ATTR_SIZE_VER0,
 		Config: unix.PERF_COUNT_SW_CPU_CLOCK,
-		Bits:   unix.PerfBitFreq,
+		Bits:   unix.PerfBitFreq | unix.PerfBitDisabled,
 		Sample: opt.sample,
 	}
 
 	if opt.sampleMode == perfEventSamplePeriod {
-		attr.Bits = 0
+		// Clear only frequency mode and preserve any other perf event flags.
+		attr.Bits &^= unix.PerfBitFreq
 	}
 
 	cpuIDs := opt.cpuIDs
