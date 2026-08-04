@@ -12,23 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// IO health sources feed local counters and a bounded event writer; scrapes
+// never run device commands.
 package collector
 
 import (
 	"context"
-	"github.com/ccfos/huatuo/internal/timeutil"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/iohealth"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
 const ioHealthName = "io_health"
+
+const (
+	ioHealthPersistenceQueueCapacity = 1024
+	ioHealthPersistenceTimeout       = 5 * time.Second
+
+	ioHealthPersistenceQueueFull       = "queue_full"
+	ioHealthPersistenceSaveError       = "save_error"
+	ioHealthPersistenceWriterTimeout   = "writer_timeout"
+	ioHealthPersistenceWriterStopped   = "writer_stopped"
+	ioHealthPersistenceShutdownDiscard = "shutdown_discard"
+)
 
 const (
 	ioHealthCounterBlockError = iota + 1
@@ -75,11 +88,15 @@ type ioHealthCollector struct {
 	newMDWatcher   func(string, string) ioHealthMDWatcher
 	nvmeStates     map[uint32]string
 	now            func() time.Time
-	saveEvent      func(time.Time, types.IOHealthEvent) error
+	saveEvent      func(context.Context, time.Time, types.IOHealthEvent) error
 
-	mu               sync.RWMutex
-	counters         map[ioHealthCounterKey]uint64
-	collectionErrors map[ioHealthCollectionErrorKey]uint64
+	persistMu   sync.RWMutex
+	submitEvent func(time.Time, types.IOHealthEvent)
+
+	mu                  sync.RWMutex
+	counters            map[ioHealthCounterKey]uint64
+	collectionErrors    map[ioHealthCollectionErrorKey]uint64
+	persistenceFailures map[string]uint64
 }
 
 func newIOHealthCollector(sysRoot, procMDStatPath string) *ioHealthCollector {
@@ -90,10 +107,11 @@ func newIOHealthCollector(sysRoot, procMDStatPath string) *ioHealthCollector {
 		newMDWatcher: func(procMDStatPath, sysBlockPath string) ioHealthMDWatcher {
 			return iohealth.NewMDWatcher(procMDStatPath, sysBlockPath)
 		},
-		now:              time.Now,
-		saveEvent:        saveIOHealthEvent,
-		counters:         make(map[ioHealthCounterKey]uint64),
-		collectionErrors: make(map[ioHealthCollectionErrorKey]uint64),
+		now:                 time.Now,
+		saveEvent:           saveIOHealthEvent,
+		counters:            make(map[ioHealthCounterKey]uint64),
+		collectionErrors:    make(map[ioHealthCollectionErrorKey]uint64),
+		persistenceFailures: make(map[string]uint64),
 	}
 }
 
@@ -102,18 +120,187 @@ func (c *ioHealthCollector) persistEvent(
 	triggeredAt time.Time,
 	event types.IOHealthEvent,
 ) {
-	if err := c.saveEvent(triggeredAt, event); err != nil {
-		log.Warnf("io_health: save event: %v", err)
+	c.persistMu.RLock()
+	submit := c.submitEvent
+	c.persistMu.RUnlock()
+	if submit != nil {
+		submit(triggeredAt, event)
+		return
 	}
+	c.incrementPersistenceFailure(ioHealthPersistenceWriterStopped)
 }
 
 //nolint:gocritic // Store an immutable value snapshot of the event.
-func saveIOHealthEvent(triggeredAt time.Time, event types.IOHealthEvent) error {
-	return tracing.Save(&tracing.WriteRequest{
+func saveIOHealthEvent(
+	ctx context.Context,
+	triggeredAt time.Time,
+	event types.IOHealthEvent,
+) error {
+	return tracing.SaveContext(ctx, &tracing.WriteRequest{
 		TracerName:        ioHealthName,
 		ObservedTimestamp: timeutil.Timestamp{Time: triggeredAt},
 		TracerData:        event,
 	})
+}
+
+type ioHealthPersistRequest struct {
+	triggeredAt time.Time
+	event       types.IOHealthEvent
+}
+
+type ioHealthEventWriter struct {
+	saveEvent func(context.Context, time.Time, types.IOHealthEvent) error
+	onFailure func(string)
+	timeout   time.Duration
+	queue     chan ioHealthPersistRequest
+	done      chan struct{}
+
+	mu         sync.Mutex
+	accepting  bool
+	stopReason string
+}
+
+func newIOHealthEventWriter(
+	saveEvent func(context.Context, time.Time, types.IOHealthEvent) error,
+	onFailure func(string),
+	capacity int,
+	timeout time.Duration,
+) *ioHealthEventWriter {
+	return &ioHealthEventWriter{
+		saveEvent: saveEvent,
+		onFailure: onFailure,
+		timeout:   timeout,
+		queue:     make(chan ioHealthPersistRequest, capacity),
+		done:      make(chan struct{}),
+	}
+}
+
+func (w *ioHealthEventWriter) Start(ctx context.Context) {
+	w.mu.Lock()
+	w.accepting = true
+	w.stopReason = ioHealthPersistenceWriterStopped
+	w.mu.Unlock()
+	go w.loop(ctx)
+}
+
+//nolint:gocritic // Queue an immutable event snapshot without blocking its source.
+func (w *ioHealthEventWriter) Submit(
+	triggeredAt time.Time,
+	event types.IOHealthEvent,
+) {
+	w.mu.Lock()
+	if !w.accepting {
+		reason := w.stopReason
+		w.mu.Unlock()
+		w.onFailure(reason)
+		return
+	}
+	select {
+	case w.queue <- ioHealthPersistRequest{triggeredAt: triggeredAt, event: event}:
+		w.mu.Unlock()
+	default:
+		w.mu.Unlock()
+		w.onFailure(ioHealthPersistenceQueueFull)
+	}
+}
+
+func (w *ioHealthEventWriter) Wait() {
+	<-w.done
+}
+
+func (w *ioHealthEventWriter) loop(ctx context.Context) {
+	defer close(w.done)
+	for {
+		select {
+		case <-ctx.Done():
+			w.stop(ioHealthPersistenceShutdownDiscard)
+			return
+		default:
+		}
+
+		select {
+		case <-ctx.Done():
+			w.stop(ioHealthPersistenceShutdownDiscard)
+			return
+		case request := <-w.queue:
+			if !w.persist(ctx, &request) {
+				w.stop(ioHealthPersistenceShutdownDiscard)
+				return
+			}
+		}
+	}
+}
+
+func (w *ioHealthEventWriter) persist(
+	ctx context.Context,
+	request *ioHealthPersistRequest,
+) bool {
+	saveCtx, cancel := context.WithTimeout(ctx, w.timeout)
+	defer cancel()
+
+	result := make(chan error, 1)
+	go func() {
+		result <- w.saveEvent(saveCtx, request.triggeredAt, request.event)
+	}()
+
+	var err error
+	select {
+	case err = <-result:
+	case <-saveCtx.Done():
+		// Prefer a completed save when the result and deadline become ready
+		// together, including backends that return their context error.
+		select {
+		case err = <-result:
+		default:
+			if ctx.Err() != nil {
+				w.onFailure(ioHealthPersistenceShutdownDiscard)
+				return false
+			}
+			w.onFailure(ioHealthPersistenceWriterTimeout)
+			log.Warnf("io_health: save event exceeded %s", w.timeout)
+			// Keep at most one save in flight, but resume when it returns.
+			// Cancellation must still release the owner if the backend stalls.
+			select {
+			case err = <-result:
+			case <-ctx.Done():
+				return false
+			}
+		}
+	}
+	if err != nil {
+		w.onFailure(ioHealthPersistenceSaveError)
+		log.Warnf("io_health: save event: %v", err)
+	}
+	return true
+}
+
+func (w *ioHealthEventWriter) stop(reason string) {
+	w.mu.Lock()
+	w.accepting = false
+	w.stopReason = reason
+	w.mu.Unlock()
+	for {
+		select {
+		case <-w.queue:
+			w.onFailure(reason)
+		default:
+			return
+		}
+	}
+}
+
+func (c *ioHealthCollector) setEventSubmitter(
+	submit func(time.Time, types.IOHealthEvent),
+) {
+	c.persistMu.Lock()
+	c.submitEvent = submit
+	c.persistMu.Unlock()
+}
+
+func (c *ioHealthCollector) incrementPersistenceFailure(reason string) {
+	c.mu.Lock()
+	c.persistenceFailures[reason]++
+	c.mu.Unlock()
 }
 
 func (c *ioHealthCollector) incrementCounter(key ioHealthCounterKey) {
@@ -144,7 +331,11 @@ func (c *ioHealthCollector) Update() ([]*metric.Data, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	metrics := make([]*metric.Data, 0, len(c.counters)+len(c.collectionErrors))
+	metrics := make(
+		[]*metric.Data,
+		0,
+		len(c.counters)+len(c.collectionErrors)+len(c.persistenceFailures),
+	)
 	for key, value := range c.counters {
 		metrics = append(metrics, ioHealthKernelMetric(key, value))
 	}
@@ -157,6 +348,14 @@ func (c *ioHealthCollector) Update() ([]*metric.Data, error) {
 				"device": key.device,
 				"reason": key.reason,
 			},
+		))
+	}
+	for reason, value := range c.persistenceFailures {
+		metrics = append(metrics, metric.NewCounterData(
+			"event_persistence_failures_total",
+			float64(value),
+			"Count of IO health event writes dropped or left unconfirmed by the bounded persistence queue.",
+			map[string]string{"reason": reason},
 		))
 	}
 	if len(metrics) == 0 {

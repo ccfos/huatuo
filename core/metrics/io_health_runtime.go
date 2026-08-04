@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// IO health keeps MD and kernel sources independent while sharing bounded
+// evidence and persistence pipelines across kernel-session retries.
 package collector
 
 import (
@@ -35,6 +37,8 @@ const (
 	ioHealthMDRetryInterval  = ioHealthRestartWait * time.Second
 )
 
+var errIOHealthAttachRetry = errors.New("retry incomplete IO health hook set")
+
 type ioHealthBPFLoader func(string, map[string]any) (bpf.BPF, error)
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/io_health.c -o $BPF_DIR/io_health.o
@@ -49,8 +53,17 @@ func (c *ioHealthCollector) start(
 	retryInterval time.Duration,
 ) error {
 	childCtx, cancel := context.WithCancel(ctx)
+	eventWriter := newIOHealthEventWriter(
+		c.saveEvent,
+		c.incrementPersistenceFailure,
+		ioHealthPersistenceQueueCapacity,
+		ioHealthPersistenceTimeout,
+	)
+	eventWriter.Start(childCtx)
+	c.setEventSubmitter(eventWriter.Submit)
 	worker := iohealth.NewEvidenceWorker(iohealth.EvidenceWorkerOptions{
-		OnResult: c.handleEvidenceResult,
+		OnResult:         c.handleEvidenceResult,
+		ValidateIdentity: c.resolver.evidenceTargetCurrent,
 	})
 	worker.Start(childCtx)
 
@@ -67,10 +80,17 @@ func (c *ioHealthCollector) start(
 		mdRetry.Stop()
 		consumers.Wait()
 		worker.Wait()
+		eventWriter.Wait()
+		c.setEventSubmitter(nil)
 	}()
 
 	for {
-		attached, retryable, err := c.runBPFSession(childCtx, worker, loadBPF)
+		attached, retryable, err := c.runBPFSession(
+			childCtx,
+			worker,
+			loadBPF,
+			retryInterval,
+		)
 		if ctx.Err() != nil {
 			if retryable {
 				return nil
@@ -84,6 +104,9 @@ func (c *ioHealthCollector) start(
 				return nil
 			}
 			log.Warnf("io_health: kernel event source failed: %v; will retry", err)
+			if errors.Is(err, errIOHealthAttachRetry) {
+				continue
+			}
 			if !waitIOHealthRetryAfter(ctx, retryInterval) {
 				return nil
 			}
@@ -106,22 +129,27 @@ func (c *ioHealthCollector) runBPFSession(
 	ctx context.Context,
 	worker ioHealthEvidenceSubmitter,
 	loadBPF ioHealthBPFLoader,
+	attachRetryInterval time.Duration,
 ) (attached int, retryable bool, retErr error) {
 	states, quietMask := loadIOHealthKernelEnums()
-	object, err := loadBPF("io_health.o", map[string]any{"io_health_rqf_quiet_mask": quietMask})
+	object, err := loadBPF("io_health.o", map[string]any{
+		"io_health_rqf_quiet_mask": quietMask,
+	})
 	if err != nil {
 		return 0, true, fmt.Errorf("load BPF: %w", err)
 	}
 	c.nvmeStates = states
 	defer func() {
-		if err := object.Close(); err != nil {
+		if err := closeIOHealthBPF(ctx, object, attachRetryInterval); err != nil {
 			retryable = false
 			retErr = errors.Join(retErr, fmt.Errorf("close BPF: %w", err))
 		}
 	}()
 
+	readerCtx, cancelReader := context.WithCancel(ctx)
+	defer cancelReader()
 	reader, err := object.EventPipeByName(
-		ctx,
+		readerCtx,
 		ioHealthEventMap,
 		ioHealthPerfBufferBytes,
 	)
@@ -135,10 +163,18 @@ func (c *ioHealthCollector) runBPFSession(
 		}
 	}()
 
-	attached = attachIOHealthHooks(
+	var attachErr error
+	attached, attachErr = attachIOHealthHooks(
 		object,
 		c.resolver.primeNVMeControllerNames,
 	)
+	if attachErr != nil {
+		if attached == 0 {
+			return 0, true, attachErr
+		}
+		retryTimer := time.AfterFunc(attachRetryInterval, cancelReader)
+		defer retryTimer.Stop()
+	}
 	if attached == 0 {
 		return 0, false, nil
 	}
@@ -146,7 +182,16 @@ func (c *ioHealthCollector) runBPFSession(
 	for {
 		var event ioHealthPerfEvent
 		if err := reader.ReadInto(&event); err != nil {
-			if ctx.Err() != nil || errors.Is(err, types.ErrExitByCancelCtx) {
+			if ctx.Err() != nil {
+				return attached, false, nil
+			}
+			if attachErr != nil && readerCtx.Err() != nil {
+				return attached, true, errors.Join(
+					errIOHealthAttachRetry,
+					attachErr,
+				)
+			}
+			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return attached, false, nil
 			}
 			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
@@ -156,6 +201,32 @@ func (c *ioHealthCollector) runBPFSession(
 			return attached, true, fmt.Errorf("read event: %w", err)
 		}
 		c.handleKernelEvent(event, worker)
+	}
+}
+
+// Retain the object until cleanup is confirmed. Cancellation returns unresolved
+// cleanup errors to the collector owner.
+func closeIOHealthBPF(ctx context.Context, object bpf.BPF, retryInterval time.Duration) error {
+	for {
+		err := object.Close()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+
+		loaded, lookupErr := object.IsLoaded()
+		if lookupErr == nil && !loaded {
+			return nil
+		}
+		if lookupErr != nil {
+			err = errors.Join(err, fmt.Errorf("confirm BPF cleanup: %w", lookupErr))
+		}
+		log.Warnf("io_health: BPF cleanup unconfirmed: %v; will retry", err)
+		if !waitIOHealthRetryAfter(ctx, retryInterval) {
+			return err
+		}
 	}
 }
 

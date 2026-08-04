@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Kernel and MD health observations retain source-specific identity before
+// entering bounded evidence collection and persistence.
 package collector
 
 import (
 	"errors"
-	"github.com/cilium/ebpf/btf"
+	"fmt"
 	"strings"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/pkg/types"
 
+	"github.com/cilium/ebpf/btf"
 	"golang.org/x/sys/unix"
 )
 
@@ -57,6 +60,26 @@ const (
 	reqOpWrite
 	reqOpFlush
 	reqOpDiscard
+)
+
+// These values are the blk_status_t ABI passed by block_rq_complete.
+const (
+	blkStatusNotSupported int32 = iota + 1
+	blkStatusTimeout
+	blkStatusNoSpace
+	blkStatusTransport
+	blkStatusTarget
+	blkStatusNexus
+	blkStatusMedium
+	blkStatusProtection
+	blkStatusResource
+	blkStatusIOError
+	blkStatusDMRequeue
+	blkStatusAgain
+	blkStatusDeviceResource
+	blkStatusZoneResource
+	blkStatusZoneOpenResource
+	blkStatusZoneActiveResource
 )
 
 // These values mirror the SCSI_MLQUEUE_* dispatch return values.
@@ -140,13 +163,14 @@ var ioHealthHooks = []ioHealthHook{
 func attachIOHealthHooks(
 	object bpf.BPF,
 	primeNVMeControllers func() error,
-) (attached int) {
+) (attached int, retryErr error) {
 	for _, hook := range ioHealthNVMeAddHooks {
 		if err := bpf.AttachIndependently(object, &bpf.AttachOption{
 			ProgramName: hook.program,
 			Symbol:      hook.symbol,
 		}); err != nil {
 			log.Warnf("io_health: attach optional hook %s: %v", hook.symbol, err)
+			retryErr = errors.Join(retryErr, ioHealthHookRetryError(hook, err))
 			break
 		}
 	}
@@ -159,6 +183,10 @@ func attachIOHealthHooks(
 			ioHealthNVMeDeleteHook.symbol,
 			err,
 		)
+		retryErr = errors.Join(
+			retryErr,
+			ioHealthHookRetryError(ioHealthNVMeDeleteHook, err),
+		)
 	}
 
 	if err := bpf.AttachIndependently(object, &bpf.AttachOption{
@@ -170,10 +198,18 @@ func attachIOHealthHooks(
 			ioHealthNVMeMappingHook.symbol,
 			err,
 		)
+		retryErr = errors.Join(
+			retryErr,
+			ioHealthHookRetryError(ioHealthNVMeMappingHook, err),
+		)
 	} else {
 		if primeNVMeControllers != nil {
 			if err := primeNVMeControllers(); err != nil {
 				log.Warnf("io_health: map NVMe controllers: %v", err)
+				retryErr = errors.Join(
+					retryErr,
+					fmt.Errorf("map NVMe controllers: %w", err),
+				)
 			}
 		}
 		if err := bpf.DetachProgram(object, ioHealthNVMeMappingHook.program); err != nil {
@@ -182,7 +218,11 @@ func attachIOHealthHooks(
 				ioHealthNVMeMappingHook.symbol,
 				err,
 			)
-			return 0
+			return 0, fmt.Errorf(
+				"detach bootstrap hook %s: %w",
+				ioHealthNVMeMappingHook.symbol,
+				err,
+			)
 		}
 	}
 
@@ -209,6 +249,10 @@ func attachIOHealthHooks(
 			blockHook.symbol,
 			err,
 		)
+		retryErr = errors.Join(
+			retryErr,
+			ioHealthHookRetryError(blockHook, err),
+		)
 	}
 
 	stateHooksAttached := true
@@ -218,6 +262,7 @@ func attachIOHealthHooks(
 			Symbol:      hook.symbol,
 		}); err != nil {
 			log.Warnf("io_health: attach optional hook %s: %v", hook.symbol, err)
+			retryErr = errors.Join(retryErr, ioHealthHookRetryError(hook, err))
 			stateHooksAttached = false
 			break
 		}
@@ -232,12 +277,68 @@ func attachIOHealthHooks(
 			Symbol:      hook.symbol,
 		}); err != nil {
 			log.Warnf("io_health: attach optional hook %s: %v", hook.symbol, err)
+			retryErr = errors.Join(retryErr, ioHealthHookRetryError(hook, err))
 			continue
 		}
 		attached++
 	}
 
-	return attached
+	return attached, retryErr
+}
+
+func ioHealthHookRetryError(hook ioHealthHook, err error) error {
+	if err == nil ||
+		errors.Is(err, unix.EOPNOTSUPP) ||
+		errors.Is(err, unix.EINVAL) ||
+		errors.Is(err, types.ErrNotSupported) {
+		return nil
+	}
+	return fmt.Errorf("attach %s: %w", hook.symbol, err)
+}
+
+func loadIOHealthKernelEnums() (map[uint32]string, uint32) {
+	// Older request flags are macros, with no enum in BTF.
+	quietMask := uint32(1 << 11)
+	spec, err := btf.LoadKernelSpec()
+	if err != nil {
+		return nil, quietMask
+	}
+	quietMask = ioHealthRequestQuietMask(spec)
+	states := ioHealthNVMeStates(spec)
+	if len(states) == 0 {
+		if module, err := btf.LoadKernelModuleSpec("nvme_core"); err == nil {
+			states = ioHealthNVMeStates(module)
+		}
+	}
+	return states, quietMask
+}
+
+func ioHealthRequestQuietMask(spec *btf.Spec) uint32 {
+	var flags *btf.Enum
+	if err := spec.TypeByName("rqf_flags", &flags); err != nil {
+		return 1 << 11
+	}
+	for _, flag := range flags.Values {
+		if flag.Name == "__RQF_QUIET" && flag.Value < 32 {
+			return uint32(1) << flag.Value
+		}
+	}
+	return 0
+}
+
+func ioHealthNVMeStates(spec *btf.Spec) map[uint32]string {
+	var state *btf.Enum
+	if err := spec.TypeByName("nvme_ctrl_state", &state); err != nil {
+		return nil
+	}
+	names := make(map[uint32]string, len(state.Values))
+	for _, value := range state.Values {
+		if strings.HasPrefix(value.Name, "NVME_CTRL_") {
+			names[uint32(value.Value)] = strings.ToLower(
+				strings.TrimPrefix(value.Name, "NVME_CTRL_"))
+		}
+	}
+	return names
 }
 
 type ioHealthEvidenceSubmitter interface {
@@ -257,11 +358,15 @@ func (c *ioHealthCollector) handleKernelEvent(
 	switch raw.Type {
 	case ioHealthEventBlockError:
 		target := c.resolver.resolveBlockDevice(raw.Dev)
+		status := ioHealthBlockStatus(raw.Status)
+		if raw.Status > 0 {
+			status = ioHealthBlockStatusFromBlkStatus(raw.Status)
+		}
 		event := types.IOHealthEvent{
 			Type:      ioHealthTypeBlockError,
 			Device:    target.eventDevice,
 			Operation: ioHealthOperation(raw.Operation),
-			Status:    ioHealthBlockStatus(raw.Status),
+			Status:    status,
 			Sector:    uint64Pointer(raw.Sector),
 		}
 		c.incrementCounter(ioHealthCounterKey{
@@ -406,16 +511,20 @@ func (c *ioHealthCollector) collectEvidenceOrPersist(
 	case ioHealthProtocolSCSI:
 		protocol = iohealth.EvidenceProtocolSCSI
 	}
-	if worker != nil && worker.Submit(iohealth.EvidenceRequest{
+	if worker == nil {
+		c.persistEvent(triggeredAt, event)
+		return
+	}
+	if !worker.Submit(iohealth.EvidenceRequest{
 		Trigger:     event,
 		Target:      target.target,
+		Identity:    target.identity,
 		Protocol:    protocol,
 		TriggeredAt: triggeredAt,
 		Reason:      target.reason,
 	}) {
-		return
+		c.persistEvent(triggeredAt, event)
 	}
-	c.persistEvent(triggeredAt, event)
 }
 
 func ioHealthControllerName(raw [ioHealthNVMeControllerNameLength]uint8) string {
@@ -488,6 +597,33 @@ func ioHealthBlockStatus(status int32) string {
 	}
 }
 
+func ioHealthBlockStatusFromBlkStatus(status int32) string {
+	switch status {
+	case blkStatusNotSupported:
+		return "not_supported"
+	case blkStatusTimeout:
+		return "timeout"
+	case blkStatusNoSpace:
+		return "no_space"
+	case blkStatusTransport, blkStatusTarget, blkStatusNexus:
+		return "transport"
+	case blkStatusMedium:
+		return "medium_error"
+	case blkStatusProtection:
+		return "protection"
+	case blkStatusResource,
+		blkStatusDMRequeue,
+		blkStatusAgain,
+		blkStatusDeviceResource,
+		blkStatusZoneResource,
+		blkStatusZoneOpenResource,
+		blkStatusZoneActiveResource:
+		return "resource"
+	default:
+		return "io_error"
+	}
+}
+
 func ioHealthSCSIDispatchStatus(status int32) string {
 	switch status {
 	case scsiMLQueueHostBusy:
@@ -505,49 +641,4 @@ func ioHealthSCSIDispatchStatus(status int32) string {
 
 func uint64Pointer(value uint64) *uint64 {
 	return &value
-}
-
-func loadIOHealthKernelEnums() (map[uint32]string, uint32) {
-	// Older request flags are macros, with no enum in BTF.
-	quietMask := uint32(1 << 11)
-	spec, err := btf.LoadKernelSpec()
-	if err != nil {
-		return nil, quietMask
-	}
-	quietMask = ioHealthRequestQuietMask(spec)
-	states := ioHealthNVMeStates(spec)
-	if len(states) == 0 {
-		if module, err := btf.LoadKernelModuleSpec("nvme_core"); err == nil {
-			states = ioHealthNVMeStates(module)
-		}
-	}
-	return states, quietMask
-}
-
-func ioHealthRequestQuietMask(spec *btf.Spec) uint32 {
-	var flags *btf.Enum
-	if err := spec.TypeByName("rqf_flags", &flags); err != nil {
-		return 1 << 11
-	}
-	for _, flag := range flags.Values {
-		if flag.Name == "__RQF_QUIET" && flag.Value < 32 {
-			return uint32(1) << flag.Value
-		}
-	}
-	return 0
-}
-
-func ioHealthNVMeStates(spec *btf.Spec) map[uint32]string {
-	var state *btf.Enum
-	if err := spec.TypeByName("nvme_ctrl_state", &state); err != nil {
-		return nil
-	}
-	names := make(map[uint32]string, len(state.Values))
-	for _, value := range state.Values {
-		if strings.HasPrefix(value.Name, "NVME_CTRL_") {
-			names[uint32(value.Value)] = strings.ToLower(
-				strings.TrimPrefix(value.Name, "NVME_CTRL_"))
-		}
-	}
-	return names
 }
