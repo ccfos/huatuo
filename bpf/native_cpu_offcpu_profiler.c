@@ -7,6 +7,7 @@
 #include "bpf_dbg.h"
 #include "bpf_map.h"
 #include "bpf_profiler.h"
+#include "bpf_sched.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -102,24 +103,6 @@ struct {
 	__type(value, __u64);
 	__uint(max_entries, OFFCPU_STAT_COUNT);
 } offcpu_stats SEC(".maps");
-
-struct task_struct___5_14 {
-	unsigned int __state;
-} __attribute__((preserve_access_index));
-
-static __always_inline long offcpu_task_state(struct task_struct *task)
-{
-	struct task_struct___5_14 *new_task;
-
-	if (!task)
-		return -1;
-
-	if (bpf_core_field_exists(task->state))
-		return BPF_CORE_READ(task, state);
-
-	new_task = (void *)task;
-	return (long)BPF_CORE_READ(new_task, __state);
-}
 
 static __always_inline void offcpu_count(__u32 index)
 {
@@ -237,7 +220,7 @@ static __always_inline void offcpu_record_switch_out(
 	__u32 pid;
 	__u32 tgid;
 	bool preempted;
-	long task_state;
+	long prev_state;
 
 	pid_tgid = bpf_get_current_pid_tgid();
 	pid = (__u32)pid_tgid;
@@ -255,9 +238,9 @@ static __always_inline void offcpu_record_switch_out(
 	}
 
 	preempted = (__u64)ctx->args[0] != 0;
-	task_state = offcpu_task_state(prev);
+	prev_state = task_state(prev);
 	state.phase_start_ns = now;
-	if (preempted || task_state == TASK_RUNNING) {
+	if (preempted || prev_state == TASK_RUNNING) {
 		state.phase = OFFCPU_PHASE_RUNNABLE;
 		state.flags = preempted ? OFFCPU_FLAG_PREEMPTED : OFFCPU_FLAG_YIELDED;
 	} else {

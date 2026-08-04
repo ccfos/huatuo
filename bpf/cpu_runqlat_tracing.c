@@ -5,6 +5,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "bpf_common.h"
+#include "bpf_sched.h"
 
 // defaultly, we use task_group address as key to operate map.
 #define TG_ADDR_KEY
@@ -105,27 +106,6 @@ int sched_wakeup_entry(struct trace_event_raw_sched_wakeup_template *ctx)
 	return trace_enqueue(ctx->pid);
 }
 
-struct task_struct___5_14 {
-	unsigned int	__state;
-} __attribute__((preserve_access_index));
-
-long get_task_state(struct task_struct *task)
-{
-	long state;
-
-	if (task == NULL)
-		return -1;
-
-	if (bpf_core_field_exists(task->state))
-		state = BPF_CORE_READ(task, state);
-	else {
-		struct task_struct___5_14 *task_new = (struct task_struct___5_14 *)task;
-		state = (long)BPF_CORE_READ(task_new, __state);
-	}
-
-	return state;
-}
-
 SEC("raw_tracepoint/sched_switch")
 int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 {
@@ -150,7 +130,7 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 	u32 key = BPF_CORE_READ(prev, nsproxy, pid_ns_for_children, ns.inum);
 #endif
 
-	state = get_task_state(prev);
+	state = task_state(prev);
 
 	// ivcsw: treat like an enqueue event and store timestamp
 	prev_pid = BPF_CORE_READ(prev, pid);
