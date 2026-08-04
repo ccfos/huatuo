@@ -535,29 +535,20 @@ func newIOTracer(config *Config) (*ioTracing, error) {
 	}, nil
 }
 
-// Start waits for a disk-burst trigger then runs the iotracing tool as a
-// subprocess; results stream back via toolstream. The trigger reason is
-// stashed under a generated task ID so handleIotracingEvent can attach it.
-func (i *ioTracing) Start(ctx context.Context) error {
-	reasonSnapshot, err := waitForDiskEvent(
-		ctx,
-		time.Duration(i.samplingIntervalSeconds)*time.Second,
-		i.thresholds,
-	)
-	if err != nil {
-		return err
-	}
-
-	log.WithField("reason_snapshot", reasonSnapshot).
-		Debug("detected disk io event")
-
+func runIOTracingChild(
+	ctx context.Context,
+	reason *reasonSnapshot,
+	duration uint64,
+	maxProcesses int,
+	maxFilesPerProcess int,
+) error {
 	taskID, err := tracing.AllocTaskID()
 	if err != nil {
 		return fmt.Errorf("allocate iotracing task id: %w", err)
 	}
 
 	pending := &pendingIOTracingReason{
-		reason:   reasonSnapshot,
+		reason:   reason,
 		received: make(chan struct{}),
 		result:   make(chan error, 1),
 	}
@@ -567,9 +558,9 @@ func (i *ioTracing) Start(ctx context.Context) error {
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "iotracing.o"),
 		"--output-storage", toolstream.DefaultSockPath,
 		"--task-id", taskID,
-		"--duration", strconv.FormatUint(i.runDurationSeconds, 10),
-		"--max-process", strconv.Itoa(i.maxProcesses),
-		"--max-files-per-process", strconv.Itoa(i.maxFilesPerProcess),
+		"--duration", strconv.FormatUint(duration, 10),
+		"--max-process", strconv.Itoa(maxProcesses),
+		"--max-files-per-process", strconv.Itoa(maxFilesPerProcess),
 	}
 
 	cmd := exec.CommandContext(
@@ -631,6 +622,31 @@ func waitForSnapshotAfterExit(
 		return snapshotErr
 	}
 	return errors.Join(fmt.Errorf("iotracing exited: %w", exitErr), snapshotErr)
+}
+
+// Start waits for a disk-burst trigger then runs the iotracing tool as a
+// subprocess; results stream back via toolstream. The trigger reason is
+// stashed under a generated task ID so handleIotracingEvent can attach it.
+func (i *ioTracing) Start(ctx context.Context) error {
+	reasonSnapshot, err := waitForDiskEvent(
+		ctx,
+		time.Duration(i.samplingIntervalSeconds)*time.Second,
+		i.thresholds,
+	)
+	if err != nil {
+		return err
+	}
+
+	log.WithField("reason_snapshot", reasonSnapshot).
+		Debug("detected disk io event")
+
+	return runIOTracingChild(
+		ctx,
+		reasonSnapshot,
+		i.runDurationSeconds,
+		i.maxProcesses,
+		i.maxFilesPerProcess,
+	)
 }
 
 func waitForSnapshot(
