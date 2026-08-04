@@ -305,6 +305,12 @@ func waitForDiskEvent(
 				currentDevices[current.DeviceName] = struct{}{}
 
 				if previous, ok := lastRawStats[current.DeviceName]; ok {
+					if previous.MajorNumber != current.MajorNumber ||
+						previous.MinorNumber != current.MinorNumber {
+						delete(lastMetrics, current.DeviceName)
+						lastRawStats[current.DeviceName] = current
+						continue
+					}
 					metric := buildDiskMetric(previous, current, intervalSeconds)
 
 					log.WithField("device", current.DeviceName).
