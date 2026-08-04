@@ -200,7 +200,7 @@ var offCPUStatNames = []string{
 	"exit_cleanup",
 }
 
-func logNativeOffCPUStats(obj bpf.BPF) {
+func logOffCPUBPFStats(obj bpf.BPF) {
 	if obj == nil {
 		return
 	}
