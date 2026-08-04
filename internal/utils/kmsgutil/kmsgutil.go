@@ -63,21 +63,15 @@ func GetSysrqMsg(command string) (string, error) {
 		return "", err
 	}
 
-	fd := kmsgFile.Fd()
-	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
-	if errno != 0 {
-		return "", err
-	}
-
-	_, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFL, flags|syscall.O_NONBLOCK)
-	if errno != 0 {
+	fd := int(kmsgFile.Fd())
+	if err := setNonblocking(fd); err != nil {
 		return "", err
 	}
 
 	var buffer strings.Builder
 	buf := make([]byte, 1024)
 	for {
-		n, err := syscall.Read(int(fd), buf)
+		n, err := syscall.Read(fd, buf)
 		if n > 0 {
 			buffer.Write(buf[:n])
 		}
@@ -90,6 +84,13 @@ func GetSysrqMsg(command string) (string, error) {
 	}
 
 	return formatKmsgs(buffer.String()), nil
+}
+
+func setNonblocking(fd int) error {
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return fmt.Errorf("set kmsg nonblocking: %w", err)
+	}
+	return nil
 }
 
 // format kmsg to human-readable format
