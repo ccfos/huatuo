@@ -213,9 +213,21 @@ func waitForMDIntegrationFailure(
 			defer quietTimer.Stop()
 			select {
 			case change := <-watcher.Changes():
+				// mdadm --fail can move a RAID1 member through intermediate
+				// states (in_sync -> blocked,faulty -> faulty) before it
+				// settles, so an extra member transition is legitimate. Only a
+				// no-op duplicate or a transition out of a failed state is
+				// spurious.
 				if change.Field == MDFieldMemberState && change.Member == member {
-					t.Fatalf("received duplicate MD member fault notification: %+v", change)
+					if change.OldState == change.NewState {
+						t.Fatalf("received duplicate MD member state notification: %+v", change)
+					}
+					if !mdIntegrationStateContains(change.NewState, "faulty") &&
+						!mdIntegrationStateContains(change.NewState, "blocked") {
+						t.Fatalf("MD member %s left its failed state: %+v", member, change)
+					}
 				}
+				continue
 			case <-quietTimer.C:
 				return
 			}
@@ -230,11 +242,13 @@ func waitForMDIntegrationFailure(
 				}
 			case MDFieldMemberState:
 				if change.Member == member {
-					assertMDIntegrationFailureChange(t, change, array, member)
-					if memberFault {
-						t.Fatalf("received duplicate MD member fault: %+v", change)
+					if change.OldState == change.NewState {
+						t.Fatalf("received duplicate MD member state notification: %+v", change)
 					}
-					memberFault = true
+					if !memberFault {
+						assertMDIntegrationFailureChange(t, change, array, member)
+						memberFault = true
+					}
 				}
 			}
 		case <-timer.C:

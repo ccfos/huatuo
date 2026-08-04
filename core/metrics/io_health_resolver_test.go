@@ -143,3 +143,33 @@ func TestIOHealthResolverTreatsMissingDeviceAsUnresolved(t *testing.T) {
 		t.Fatalf("resolved target = %+v", target)
 	}
 }
+
+func TestIOHealthResolverPrimesOnlyControllerStateFiles(t *testing.T) {
+	root := t.TempDir()
+	nvmeClass := filepath.Join(root, "class", "nvme")
+	controllerState := filepath.Join(nvmeClass, "nvme0", "state")
+	if err := os.MkdirAll(filepath.Dir(controllerState), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(controllerState, []byte("live\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ignoredState := filepath.Join(nvmeClass, "nvme0n1", "state")
+	if err := os.MkdirAll(ignoredState, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := newIOHealthResolver(root)
+	if err := resolver.primeNVMeControllerNames(); err != nil {
+		t.Fatalf("primeNVMeControllerNames() error = %v", err)
+	}
+	if err := os.Remove(controllerState); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(controllerState, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := resolver.primeNVMeControllerNames(); err == nil {
+		t.Fatal("primeNVMeControllerNames() error = nil, want state read error")
+	}
+}
