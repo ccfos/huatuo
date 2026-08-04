@@ -56,29 +56,41 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 	signalCtx, signalCancel := signal.NotifyContext(timeCtx, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGINT, syscall.SIGTERM)
 	defer signalCancel()
 
+	// Earlier hooks can account IO while the remaining hooks are attaching.
+	started := time.Now()
 	reader, disabled, err := attachAndEventPipe(signalCtx, b)
 	if err != nil {
 		return nil, err
 	}
 	defer reader.Close()
 
-	stalls, err := collectStalls(reader, cfg.maxStack)
-	if err != nil {
-		return nil, err
+	snapshot, err := collectReport(b, reader, cfg, started)
+	if snapshot != nil {
+		snapshot.DisabledFilesystems = disabled
 	}
+	return snapshot, err
+}
+
+// Detach before dumping so partial output includes a stable final IO snapshot.
+func collectReport(b bpf.BPF, reader bpf.PerfEventReader, cfg ioConfig, started time.Time) (*types.IOTracingSnapshot, error) {
+	stalls, collectErr := collectStalls(reader, cfg.maxStack)
 
 	if err := b.Detach(); err != nil {
 		return nil, fmt.Errorf("detach bpf: %w", err)
 	}
 
-	processes, err := dumpAndAggregate(b, cfg)
+	// The configured deadline is not the sample duration after an early exit.
+	elapsed := time.Since(started)
+	processes, err := dumpAndAggregate(b, cfg, elapsed)
 	if err != nil {
 		return nil, err
 	}
 
-	return &types.IOTracingSnapshot{
-		Processes: processes, StallStacks: stalls, DisabledFilesystems: disabled,
-	}, nil
+	snapshot := &types.IOTracingSnapshot{Processes: processes, StallStacks: stalls}
+	if collectErr != nil {
+		snapshot.FailureReason = types.IOTracingFailureReader
+	}
+	return snapshot, collectErr
 }
 
 // collectStalls drains the iodelay perf reader until ctx cancellation
@@ -88,10 +100,11 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 // of the window.
 func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOScheduleEvent, error) {
 	var (
-		event bpfScheduleDelay
-		ring  []types.IOScheduleEvent
-		head  uint64
-		count uint64
+		event   bpfScheduleDelay
+		ring    []types.IOScheduleEvent
+		readErr error
+		head    uint64
+		count   uint64
 	)
 
 	if maxStack > 0 {
@@ -108,7 +121,8 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 				break
 			}
 
-			return nil, fmt.Errorf("read event: %w", err)
+			readErr = fmt.Errorf("read event: %w", err)
+			break
 		}
 
 		if maxStack == 0 {
@@ -134,7 +148,7 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 	}
 
 	if count < maxStack {
-		return ring[:count], nil
+		return ring[:count], readErr
 	}
 
 	// Buffer wrapped: head points to the oldest entry. Stitch
@@ -143,13 +157,13 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 	out = append(out, ring[head:]...)
 	out = append(out, ring[:head]...)
 
-	return out, nil
+	return out, readErr
 }
 
 // dumpAndAggregate reads io_source_map after detach and reduces it into
 // per-process stats, ordered by total block IO and capped by
 // cfg.maxProcess / cfg.maxFilesPerProcess.
-func dumpAndAggregate(b bpf.BPF, cfg ioConfig) ([]types.ProcessFileIOStats, error) {
+func dumpAndAggregate(b bpf.BPF, cfg ioConfig, elapsed time.Duration) ([]types.ProcessFileIOStats, error) {
 	iodata, err := b.DumpMapByName(bpfSourceMapName)
 	if err != nil {
 		return nil, fmt.Errorf("dump %s: %w", bpfSourceMapName, err)
@@ -172,7 +186,7 @@ func dumpAndAggregate(b bpf.BPF, cfg ioConfig) ([]types.ProcessFileIOStats, erro
 
 	processes := make([]types.ProcessFileIOStats, 0, len(groups))
 	for _, g := range groups {
-		processes = append(processes, buildProcessFileIOStats(g, cfg))
+		processes = append(processes, buildProcessFileIOStats(g, cfg, elapsed))
 	}
 
 	return processes, nil

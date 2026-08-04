@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path"
 	"strconv"
 	"strings"
@@ -80,6 +81,7 @@ func handleIotracingEvent(_ context.Context, request *toolstream.Request[types.I
 		StartedTimestamp: pending.startedTimestamp,
 		TracerData: &ioStatusData{
 			Reason:              reason,
+			FailureReason:       ev.FailureReason,
 			Processes:           ev.Processes,
 			StallStacks:         ev.StallStacks,
 			DisabledFilesystems: ev.DisabledFilesystems,
@@ -119,6 +121,7 @@ type ioTracing struct {
 
 type ioStatusData struct {
 	Reason              *reasonSnapshot            `json:"reason_snapshot"`
+	FailureReason       string                     `json:"failure_reason,omitempty"`
 	Processes           []types.ProcessFileIOStats `json:"process_file_io_stats"`
 	StallStacks         []types.IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
 	DisabledFilesystems map[string]string          `json:"disabled_filesystems,omitempty"`
@@ -447,32 +450,57 @@ func (i *ioTracing) Start(ctx context.Context) error {
 		"--max-files-per-process", strconv.Itoa(i.maxFilesPerProcess),
 	}
 
-	result, err := executil.Run(ctx, executil.Spec{
+	result, runErr := executil.Run(ctx, executil.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, iotracingToolName),
 		Args: args,
 	})
-	if err != nil {
-		pendingReasons.Delete(taskID)
+	processErr := runErr
+	if err := processErr; err != nil {
 		if errors.Is(err, executil.ErrRunCanceled) || errors.Is(err, executil.ErrRunTimeout) {
+			pendingReasons.Delete(taskID)
 			log.Info("iotracing stopped")
 			return nil
 		}
 		if len(result.Stderr) > 0 {
-			return fmt.Errorf("run iotracing: %w; stderr: %s", err, result.Stderr)
+			processErr = fmt.Errorf("run iotracing: %w; stderr: %s", err, result.Stderr)
+		} else {
+			processErr = fmt.Errorf("run iotracing: %w", err)
 		}
-		return fmt.Errorf("run iotracing: %w", err)
+		// A failed launch has no snapshot. A child exit can still have sent
+		// partial output which arrives after the process is reaped.
+		var exitErr *exec.ExitError
+		if runErr != nil && !errors.As(runErr, &exitErr) {
+			pendingReasons.Delete(taskID)
+			return processErr
+		}
 	}
 	if stderr := strings.TrimSpace(string(result.Stderr)); stderr != "" {
 		log.WithField("stderr", stderr).Warn("iotracing completed with warnings")
 	}
 
-	return waitForSnapshot(
+	return waitForSnapshotAfterExit(
 		ctx,
 		taskID,
 		pending,
+		processErr,
 		iotracingSnapshotTimeout,
 		iotracingSnapshotSaveTimeout,
 	)
+}
+
+func waitForSnapshotAfterExit(
+	ctx context.Context,
+	taskID string,
+	pending *pendingIOTracingReason,
+	exitErr error,
+	reportTimeout time.Duration,
+	saveTimeout time.Duration,
+) error {
+	snapshotErr := waitForSnapshot(ctx, taskID, pending, reportTimeout, saveTimeout)
+	if ctx.Err() != nil {
+		return nil
+	}
+	return errors.Join(exitErr, snapshotErr)
 }
 
 func waitForSnapshot(
