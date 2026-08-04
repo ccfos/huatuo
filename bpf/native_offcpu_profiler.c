@@ -219,13 +219,13 @@ static __always_inline int offcpu_wakeup(
 }
 
 SEC("raw_tracepoint/sched_wakeup")
-int native_cpu_offcpu_wakeup(struct bpf_raw_tracepoint_args *ctx)
+int native_offcpu_wakeup(struct bpf_raw_tracepoint_args *ctx)
 {
 	return offcpu_wakeup(ctx, (void *)ctx->args[0]);
 }
 
 SEC("raw_tracepoint/sched_wakeup_new")
-int native_cpu_offcpu_wakeup_new(struct bpf_raw_tracepoint_args *ctx)
+int native_offcpu_wakeup_new(struct bpf_raw_tracepoint_args *ctx)
 {
 	return offcpu_wakeup(ctx, (void *)ctx->args[0]);
 }
@@ -312,7 +312,7 @@ static __always_inline void offcpu_finish_switch_in(
 }
 
 SEC("raw_tracepoint/sched_switch")
-int native_cpu_offcpu_switch(struct bpf_raw_tracepoint_args *ctx)
+int native_offcpu_switch(struct bpf_raw_tracepoint_args *ctx)
 {
 	struct task_struct *prev = (void *)ctx->args[1];
 	struct task_struct *next = (void *)ctx->args[2];
@@ -356,13 +356,13 @@ static __always_inline int offcpu_finish_task(
 }
 
 SEC("raw_tracepoint/sched_process_exit")
-int native_cpu_offcpu_exit(struct bpf_raw_tracepoint_args *ctx)
+int native_offcpu_exit(struct bpf_raw_tracepoint_args *ctx)
 {
 	return offcpu_finish_task(ctx, (void *)ctx->args[0], true);
 }
 
 SEC("raw_tracepoint/sched_process_free")
-int native_cpu_offcpu_free(struct bpf_raw_tracepoint_args *ctx)
+int native_offcpu_free(struct bpf_raw_tracepoint_args *ctx)
 {
 	/* Free can lag exit, so use it only as a stale-state cleanup fallback. */
 	return offcpu_finish_task(ctx, (void *)ctx->args[0], false);

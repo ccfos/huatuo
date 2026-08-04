@@ -204,9 +204,9 @@ func TestMicrosecondsToNanosecondsSaturates(t *testing.T) {
 func TestNativeCPUOffCPUAttachOptions(t *testing.T) {
 	opts := nativeOffCPUAttachOptions()
 	require.Len(t, opts, 5)
-	require.Equal(t, "native_cpu_offcpu_switch", opts[0].ProgramName)
+	require.Equal(t, "native_offcpu_switch", opts[0].ProgramName)
 	require.Equal(t, "sched_switch", opts[0].Symbol)
-	require.Equal(t, "native_cpu_offcpu_free", opts[4].ProgramName)
+	require.Equal(t, "native_offcpu_free", opts[4].ProgramName)
 	require.Equal(t, "sched_process_free", opts[4].Symbol)
 }
 

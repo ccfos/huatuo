@@ -53,11 +53,11 @@ type offCPUStackKey struct {
 
 func nativeOffCPUAttachOptions() []bpf.AttachOption {
 	return []bpf.AttachOption{
-		{ProgramName: "native_cpu_offcpu_switch", Symbol: "sched_switch"},
-		{ProgramName: "native_cpu_offcpu_wakeup", Symbol: "sched_wakeup"},
-		{ProgramName: "native_cpu_offcpu_wakeup_new", Symbol: "sched_wakeup_new"},
-		{ProgramName: "native_cpu_offcpu_exit", Symbol: "sched_process_exit"},
-		{ProgramName: "native_cpu_offcpu_free", Symbol: "sched_process_free"},
+		{ProgramName: "native_offcpu_switch", Symbol: "sched_switch"},
+		{ProgramName: "native_offcpu_wakeup", Symbol: "sched_wakeup"},
+		{ProgramName: "native_offcpu_wakeup_new", Symbol: "sched_wakeup_new"},
+		{ProgramName: "native_offcpu_exit", Symbol: "sched_process_exit"},
+		{ProgramName: "native_offcpu_free", Symbol: "sched_process_free"},
 	}
 }
 
