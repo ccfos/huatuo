@@ -62,7 +62,7 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
   To launch the HUATUO service with Docker:
 
-        $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /run:/run huatuo/huatuo-bamai:latest
+        $ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /run:/run huatuo/huatuo-bamai:latest
 
   To pull metrics from another terminal:
 

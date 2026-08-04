@@ -23,7 +23,7 @@ $ docker build --network host -t huatuo/huatuo-bamai-dev:latest -f ./Dockerfile.
 
 **2. 启动编译容器** 
 ```bash
-$ docker run -it --privileged --cgroupns=host --network=host -v $(pwd):/go/huatuo-bamai huatuo/huatuo-bamai-dev:latest sh
+$ docker run -it --pid=host --privileged --cgroupns=host --network=host -v $(pwd):/go/huatuo-bamai huatuo/huatuo-bamai-dev:latest sh
 ```
 
 **3. 进入容器编译**
