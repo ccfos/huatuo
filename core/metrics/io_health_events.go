@@ -23,7 +23,9 @@ import (
 )
 
 const (
-	ioHealthEventBlockError = 1
+	ioHealthEventBlockError = iota + 1
+	ioHealthEventSCSITimeout
+	ioHealthEventSCSIDispatchError
 )
 
 // ioHealthPerfEvent mirrors struct health_event in bpf/io_health.c.
@@ -31,6 +33,10 @@ type ioHealthPerfEvent struct {
 	Sector    uint64
 	Dev       uint32
 	Status    int32
+	Host      uint32
+	Channel   uint32
+	Target    uint32
+	LUN       uint32
 	Type      uint8
 	Operation uint8
 	Pad       [6]uint8
@@ -49,6 +55,11 @@ var ioHealthBlockErrorHook = ioHealthHook{
 var ioHealthBlockCompleteHook = ioHealthHook{
 	program: "trace_block_rq_complete_error",
 	symbol:  "block_rq_complete",
+}
+
+var ioHealthHooks = []ioHealthHook{
+	{program: "trace_scsi_timeout", symbol: "scsi/scsi_dispatch_cmd_timeout"},
+	{program: "trace_scsi_dispatch_error", symbol: "scsi/scsi_dispatch_cmd_error"},
 }
 
 func attachIOHealthHooks(
