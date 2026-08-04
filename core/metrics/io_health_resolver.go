@@ -46,6 +46,7 @@ type ioHealthResolver struct {
 	sysDevBlockPath   string
 	sysClassBlockPath string
 	sysClassSCSIPath  string
+	sysClassNVMePath  string
 }
 
 func newIOHealthResolver(sysRoot string) ioHealthResolver {
@@ -53,7 +54,34 @@ func newIOHealthResolver(sysRoot string) ioHealthResolver {
 		sysDevBlockPath:   filepath.Join(sysRoot, "dev", "block"),
 		sysClassBlockPath: filepath.Join(sysRoot, "class", "block"),
 		sysClassSCSIPath:  filepath.Join(sysRoot, "class", "scsi_device"),
+		sysClassNVMePath:  filepath.Join(sysRoot, "class", "nvme"),
 	}
+}
+
+func (r ioHealthResolver) primeNVMeControllerNames() error {
+	entries, err := os.ReadDir(r.sysClassNVMePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var firstErr error
+	for _, entry := range entries {
+		controller := entry.Name()
+		if !ioHealthNVMeControllerPattern.MatchString(controller) {
+			continue
+		}
+		if _, err := os.ReadFile(filepath.Join(
+			r.sysClassNVMePath,
+			controller,
+			"state",
+		)); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("read %s state: %w", controller, err)
+		}
+	}
+	return firstErr
 }
 
 func (r ioHealthResolver) resolveBlockDevice(dev uint32) ioHealthResolvedTarget {
