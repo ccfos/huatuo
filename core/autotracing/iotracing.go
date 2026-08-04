@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
@@ -106,11 +107,17 @@ func newIOTracing() (*tracing.EventTracingAttr, error) {
 }
 
 type ioTracing struct {
+	childRunning atomic.Bool
+
 	thresholds              ioThresholds
 	samplingIntervalSeconds uint64
 	runDurationSeconds      uint64
 	maxProcesses            int
 	maxFilesPerProcess      int
+
+	readSnapshot func() (*rawDiskstatsSnapshot, error)
+	sampleTicks  <-chan time.Time
+	runChild     func(context.Context, *reasonSnapshot, uint64, int, int) error
 }
 
 type diskStatusSnapshot struct {
@@ -389,19 +396,14 @@ func evaluateThresholds(
 	snapshot *diskStatusSnapshot,
 	lastMetrics map[string]diskStatus,
 	thresholds ioThresholds,
-) *reasonSnapshot {
-	for name := range lastMetrics {
-		if _, valid := snapshot.devices[name]; !valid {
-			delete(lastMetrics, name)
-		}
-	}
-
+) (*reasonSnapshot, map[string]diskStatus) {
+	nextMetrics := make(map[string]diskStatus, len(snapshot.devices))
+	var firstReason *reasonSnapshot
 	for _, name := range snapshot.order {
-		if strings.HasPrefix(name, "md") {
-			continue
-		}
-
 		status := snapshot.devices[name]
+		previous, hadPrevious := lastMetrics[name]
+		nextMetrics[name] = status
+
 		log.WithField("device", name).
 			WithField("io_util_percent", status.IOUtil).
 			WithField("queue_size", status.QueueSize).
@@ -413,77 +415,41 @@ func evaluateThresholds(
 			WithField("write_await_ms", status.WriteAwait).
 			Debug("sampled disk io metrics")
 
+		if !hadPrevious || strings.HasPrefix(name, "md") || firstReason != nil {
+			continue
+		}
 		reasonType := thresholdReasonFor(
-			lastMetrics[name],
+			previous,
 			status,
 			thresholds,
 			strings.HasPrefix(name, "nvme"),
 		)
-		if reasonType != ioReasonNone {
-			device := raw.devices[name]
-			deviceLabel := fmt.Sprintf(
-				"%s(%d:%d)",
-				name,
-				device.MajorNumber,
-				device.MinorNumber,
-			)
-			return &reasonSnapshot{
-				Type:        string(reasonType),
-				Device:      name,
-				MajorNumber: device.MajorNumber,
-				MinorNumber: device.MinorNumber,
-				IOStatus:    status,
-				Summary: iotracingSummary(
-					reasonType,
-					deviceLabel,
-					status,
-					thresholds,
-				),
-			}
+		if reasonType == ioReasonNone {
+			continue
 		}
 
-		lastMetrics[name] = status
-	}
-	return nil
-}
-
-func waitForDiskEvent(
-	ctx context.Context,
-	interval time.Duration,
-	thresholds ioThresholds,
-) (*reasonSnapshot, error) {
-	var previous *rawDiskstatsSnapshot
-	lastMetrics := make(map[string]diskStatus)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, types.ErrExitByCancelCtx
-		case <-ticker.C:
-			current, err := readRawDiskstatsSnapshot()
-			if err != nil {
-				return nil, err
-			}
-			if previous == nil {
-				previous = current
-				continue
-			}
-
-			snapshot := buildDiskStatusSnapshot(previous, current)
-			reason := evaluateThresholds(
-				current,
-				snapshot,
-				lastMetrics,
+		device := raw.devices[name]
+		deviceLabel := fmt.Sprintf(
+			"%s(%d:%d)",
+			name,
+			device.MajorNumber,
+			device.MinorNumber,
+		)
+		firstReason = &reasonSnapshot{
+			Type:        string(reasonType),
+			Device:      name,
+			MajorNumber: device.MajorNumber,
+			MinorNumber: device.MinorNumber,
+			IOStatus:    status,
+			Summary: iotracingSummary(
+				reasonType,
+				deviceLabel,
+				status,
 				thresholds,
-			)
-			if reason != nil {
-				return reason, nil
-			}
-			previous = current
+			),
 		}
 	}
+	return firstReason, nextMetrics
 }
 
 func deleteMissingDiskState(
@@ -624,29 +590,92 @@ func waitForSnapshotAfterExit(
 	return errors.Join(fmt.Errorf("iotracing exited: %w", exitErr), snapshotErr)
 }
 
-// Start waits for a disk-burst trigger then runs the iotracing tool as a
-// subprocess; results stream back via toolstream. The trigger reason is
-// stashed under a generated task ID so handleIotracingEvent can attach it.
+// Start owns the process's only diskstats read loop. Diagnostic children run
+// independently so sampling never pauses for them.
 func (i *ioTracing) Start(ctx context.Context) error {
-	reasonSnapshot, err := waitForDiskEvent(
-		ctx,
-		time.Duration(i.samplingIntervalSeconds)*time.Second,
-		i.thresholds,
-	)
-	if err != nil {
-		return err
+	interval := time.Duration(i.samplingIntervalSeconds) * time.Second
+	readSnapshot := i.readSnapshot
+	if readSnapshot == nil {
+		readSnapshot = readRawDiskstatsSnapshot
 	}
 
-	log.WithField("reason_snapshot", reasonSnapshot).
-		Debug("detected disk io event")
+	var childWG sync.WaitGroup
+	defer childWG.Wait()
 
-	return runIOTracingChild(
-		ctx,
-		reasonSnapshot,
-		i.runDurationSeconds,
-		i.maxProcesses,
-		i.maxFilesPerProcess,
-	)
+	var previous *rawDiskstatsSnapshot
+	if first, err := readSnapshot(); err != nil {
+		log.WithError(err).Warn("read initial /proc/diskstats")
+	} else {
+		previous = first
+	}
+
+	lastMetrics := make(map[string]diskStatus)
+	sampleTicks := i.sampleTicks
+	if sampleTicks == nil {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		sampleTicks = ticker.C
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return types.ErrExitByCancelCtx
+		case <-sampleTicks:
+			current, err := readSnapshot()
+			if err != nil {
+				log.WithError(err).Warn("read /proc/diskstats")
+				continue
+			}
+			if previous == nil {
+				previous = current
+				continue
+			}
+
+			snapshot := buildDiskStatusSnapshot(previous, current)
+			reason, nextMetrics := evaluateThresholds(
+				current,
+				snapshot,
+				lastMetrics,
+				i.thresholds,
+			)
+			lastMetrics = nextMetrics
+			if reason != nil {
+				i.startDiagnostic(ctx, reason, &childWG)
+			}
+			previous = current
+		}
+	}
+}
+
+func (i *ioTracing) startDiagnostic(
+	ctx context.Context,
+	reason *reasonSnapshot,
+	wg *sync.WaitGroup,
+) {
+	if !i.childRunning.CompareAndSwap(false, true) {
+		return
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer i.childRunning.Store(false)
+
+		runChild := i.runChild
+		if runChild == nil {
+			runChild = runIOTracingChild
+		}
+		if err := runChild(
+			ctx,
+			reason,
+			i.runDurationSeconds,
+			i.maxProcesses,
+			i.maxFilesPerProcess,
+		); err != nil {
+			log.WithError(err).Warn("iotracing child")
+		}
+	}()
 }
 
 func waitForSnapshot(
