@@ -59,17 +59,17 @@ func nativeOffCPUAttachOptions() []bpf.AttachOption {
 
 func newNativeOffCPUBPFConstants(pctx *pcontext.ProfilerContext, cssAddr uint64) map[string]any {
 	constants := newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
-	constants["profiler_offcpu_metric"] = offCPUMetricCode(pctx.OffCPUMetric)
+	constants["profiler_offcpu_phase"] = offCPUPhaseCode(pctx.OffCPUPhase)
 	constants["profiler_offcpu_min_ns"] = microsecondsToNanoseconds(pctx.OffCPUMinUS)
 	constants["profiler_offcpu_max_ns"] = microsecondsToNanoseconds(pctx.OffCPUMaxUS)
 	return constants
 }
 
-func offCPUMetricCode(metric profiling.OffCPUMetric) uint32 {
-	switch metric {
-	case profiling.OffCPUMetricBlocked:
+func offCPUPhaseCode(phase profiling.OffCPUPhase) uint32 {
+	switch phase {
+	case profiling.OffCPUPhaseBlocked:
 		return 1
-	case profiling.OffCPUMetricRunnable:
+	case profiling.OffCPUPhaseRunqueue:
 		return 2
 	default:
 		return 0

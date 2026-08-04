@@ -274,7 +274,7 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if err != nil {
 		return err
 	}
-	if _, err := profiling.ParseOffCPUMetric(ctx.String("offcpu-metric")); err != nil {
+	if _, err := profiling.ParseOffCPUPhase(ctx.String("offcpu-phase")); err != nil {
 		return err
 	}
 	offCPU := nativeCPU && cpuMode == profiling.CPUModeOffCPU
@@ -285,8 +285,8 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.IsSet("cpu-mode") && typ != profiling.TypeCPU {
 		return fmt.Errorf("--cpu-mode is valid only when --type=cpu")
 	}
-	if ctx.IsSet("offcpu-metric") && !offCPU {
-		return fmt.Errorf("--offcpu-metric requires native CPU profiling with --cpu-mode=offcpu")
+	if ctx.IsSet("offcpu-phase") && !offCPU {
+		return fmt.Errorf("--offcpu-phase requires native CPU profiling with --cpu-mode=offcpu")
 	}
 	if (ctx.IsSet("offcpu-min-us") || ctx.IsSet("offcpu-max-us")) && !offCPU {
 		return fmt.Errorf("off-CPU duration filters require native CPU profiling with --cpu-mode=offcpu")

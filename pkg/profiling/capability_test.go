@@ -31,14 +31,14 @@ func TestParseCPUMode(t *testing.T) {
 	require.EqualError(t, err, `unsupported CPU mode "sleep" (expected: oncpu or offcpu)`)
 }
 
-func TestParseOffCPUMetric(t *testing.T) {
-	for _, metric := range []OffCPUMetric{OffCPUMetricTotal, OffCPUMetricBlocked, OffCPUMetricRunnable} {
-		got, err := ParseOffCPUMetric(string(metric))
+func TestParseOffCPUPhase(t *testing.T) {
+	for _, phase := range []OffCPUPhase{OffCPUPhaseAll, OffCPUPhaseBlocked, OffCPUPhaseRunqueue} {
+		got, err := ParseOffCPUPhase(string(phase))
 		require.NoError(t, err)
-		require.Equal(t, metric, got)
+		require.Equal(t, phase, got)
 	}
-	_, err := ParseOffCPUMetric("wait")
-	require.EqualError(t, err, `unsupported off-CPU metric "wait" (expected: total, blocked, or runnable)`)
+	_, err := ParseOffCPUPhase("wait")
+	require.EqualError(t, err, `unsupported off-CPU phase "wait" (expected: all, blocked, or runqueue)`)
 }
 
 func TestCapabilities(t *testing.T) {

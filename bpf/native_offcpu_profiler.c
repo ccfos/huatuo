@@ -14,10 +14,10 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define TASK_RUNNING 0
 #define OFFCPU_STATE_ENTRIES 32768
 
-enum offcpu_metric {
-	OFFCPU_METRIC_TOTAL = 0,
-	OFFCPU_METRIC_BLOCKED,
-	OFFCPU_METRIC_RUNNABLE,
+enum offcpu_phase_filter {
+	OFFCPU_PHASE_FILTER_ALL = 0,
+	OFFCPU_PHASE_FILTER_BLOCKED,
+	OFFCPU_PHASE_FILTER_RUNQUEUE,
 };
 
 enum offcpu_event_kind {
@@ -50,7 +50,7 @@ enum offcpu_stat {
 	OFFCPU_STAT_COUNT,
 };
 
-static volatile const __u32 profiler_offcpu_metric = OFFCPU_METRIC_TOTAL;
+static volatile const __u32 profiler_offcpu_phase = OFFCPU_PHASE_FILTER_ALL;
 static volatile const __u64 profiler_offcpu_min_ns = 1000000;
 static volatile const __u64 profiler_offcpu_max_ns = 0;
 
@@ -112,11 +112,11 @@ static __always_inline void offcpu_count(__u32 index)
 		(*value)++;
 }
 
-static __always_inline bool offcpu_metric_enabled(__u8 kind)
+static __always_inline bool offcpu_phase_enabled(__u8 kind)
 {
-	if (profiler_offcpu_metric == OFFCPU_METRIC_TOTAL)
+	if (profiler_offcpu_phase == OFFCPU_PHASE_FILTER_ALL)
 		return true;
-	if (profiler_offcpu_metric == OFFCPU_METRIC_BLOCKED)
+	if (profiler_offcpu_phase == OFFCPU_PHASE_FILTER_BLOCKED)
 		return kind == OFFCPU_EVENT_BLOCKED;
 	return kind == OFFCPU_EVENT_RUNQUEUE;
 }
@@ -133,7 +133,7 @@ static __always_inline void offcpu_emit(
 	__u32 zero = 0;
 	long err;
 
-	if (!offcpu_metric_enabled(kind) || end_ns <= state->phase_start_ns)
+	if (!offcpu_phase_enabled(kind) || end_ns <= state->phase_start_ns)
 		return;
 
 	duration = end_ns - state->phase_start_ns;

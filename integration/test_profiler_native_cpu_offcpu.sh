@@ -46,7 +46,7 @@ if ! "${TOOL_BIN}" \
 	--type cpu \
 	--language c \
 	--cpu-mode offcpu \
-	--offcpu-metric blocked \
+	--offcpu-phase blocked \
 	--offcpu-min-us 100 \
 	--pid "${TARGET_PID}" \
 	--duration "${PROFILER_DURATION}" \

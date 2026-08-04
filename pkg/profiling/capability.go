@@ -59,13 +59,13 @@ const (
 	CPUModeOffCPU CPUMode = "offcpu"
 )
 
-// OffCPUMetric selects which part of a deschedule interval is accumulated.
-type OffCPUMetric string
+// OffCPUPhase selects which part of a deschedule interval is accumulated.
+type OffCPUPhase string
 
 const (
-	OffCPUMetricTotal    OffCPUMetric = "total"
-	OffCPUMetricBlocked  OffCPUMetric = "blocked"
-	OffCPUMetricRunnable OffCPUMetric = "runnable"
+	OffCPUPhaseAll      OffCPUPhase = "all"
+	OffCPUPhaseBlocked  OffCPUPhase = "blocked"
+	OffCPUPhaseRunqueue OffCPUPhase = "runqueue"
 )
 
 type Implementation string
@@ -151,12 +151,12 @@ func ParseCPUMode(value string) (CPUMode, error) {
 	return "", fmt.Errorf("unsupported CPU mode %q (expected: oncpu or offcpu)", value)
 }
 
-func ParseOffCPUMetric(value string) (OffCPUMetric, error) {
-	metric := OffCPUMetric(value)
-	if metric == OffCPUMetricTotal || metric == OffCPUMetricBlocked || metric == OffCPUMetricRunnable {
-		return metric, nil
+func ParseOffCPUPhase(value string) (OffCPUPhase, error) {
+	phase := OffCPUPhase(value)
+	if phase == OffCPUPhaseAll || phase == OffCPUPhaseBlocked || phase == OffCPUPhaseRunqueue {
+		return phase, nil
 	}
-	return "", fmt.Errorf("unsupported off-CPU metric %q (expected: total, blocked, or runnable)", value)
+	return "", fmt.Errorf("unsupported off-CPU phase %q (expected: all, blocked, or runqueue)", value)
 }
 
 func IsSupported(language Language, typ Type) bool {

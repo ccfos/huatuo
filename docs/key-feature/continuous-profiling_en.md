@@ -470,8 +470,8 @@ Native profiling options:
 | --- | --- | --- | --- |
 | `--memory-mode` | None | Native memory, Java memory | Memory profiling mode; required with `--type memory` |
 | `--cpuid` | All CPUs | Native CPU | Comma-separated CPU list or ranges, for example `1,3,5-10` |
-| `--cpu-mode` | `oncpu` | Native CPU | `oncpu` for frequency sampling or `offcpu` for blocked/runnable delay attribution |
-| `--offcpu-metric` | `total` | Native off-CPU | Accumulate `total`, `blocked`, or `runnable` time |
+| `--cpu-mode` | `oncpu` | Native CPU | `oncpu` for frequency sampling or `offcpu` for blocked/runqueue time attribution |
+| `--offcpu-phase` | `all` | Native off-CPU | Accumulate `all`, `blocked`, or `runqueue` time |
 | `--offcpu-min-us` | `1000` | Native off-CPU | Discard phase intervals shorter than this many microseconds |
 | `--offcpu-max-us` | `0` | Native off-CPU | Discard phase intervals longer than this value; `0` disables the maximum |
 | `--thread-group` | `false` | Native | Also profile other threads in the target PID's thread group |
@@ -524,13 +524,13 @@ To attribute time spent outside the CPU to the call path that descheduled, selec
 ```bash
 sudo _output/bin/profiler \
   --type cpu --language go --pid 12345 --thread-group \
-  --cpu-mode offcpu --offcpu-metric total \
+  --cpu-mode offcpu --offcpu-phase all \
   --offcpu-min-us 1000 \
   --duration 30 --aggr-interval 10 \
   --output-format flamegraph --output-path ./profiles/go-offcpu
 ```
 
-Off-CPU output is event-driven, so `--freq` does not apply. `--cpuid` is also rejected because scheduler tracepoints observe task migration globally. Flame graphs use nanoseconds directly and add roots such as `off-CPU blocked`, `scheduling delay (preempted)`, and `scheduling delay (yielded)`. In `total` mode, blocked and runnable phases are both included but remain separated by these roots. A single stable BPF stack map is used so a long sleep cannot be resolved against a later rotating stack-map generation.
+Off-CPU output is event-driven, so `--freq` does not apply. `--cpuid` is also rejected because scheduler tracepoints observe task migration globally. Flame graphs use nanoseconds directly and add roots such as `off-CPU blocked`, `scheduling delay (preempted)`, and `scheduling delay (yielded)`. The `all` phase includes blocked and runqueue time but keeps them separated by these roots. A single stable BPF stack map is used so a long sleep cannot be resolved against a later rotating stack-map generation.
 
 Native memory profiling supports these dimensions:
 

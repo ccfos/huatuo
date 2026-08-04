@@ -46,9 +46,9 @@ var appFlags = []cli.Flag{
 		Value: "oncpu",
 	},
 	&cli.StringFlag{
-		Name:  "offcpu-metric",
-		Usage: "Off-CPU time to attribute: total|blocked|runnable",
-		Value: "total",
+		Name:  "offcpu-phase",
+		Usage: "Off-CPU phase to attribute: all|blocked|runqueue",
+		Value: "all",
 	},
 	&cli.Uint64Flag{
 		Name:  "offcpu-min-us",

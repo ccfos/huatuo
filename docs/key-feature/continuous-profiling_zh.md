@@ -473,7 +473,7 @@ sudo _output/bin/profiler \
 | `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；使用 `--type memory` 时必填 |
 | `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围，例如 `1,3,5-10` |
 | `--cpu-mode` | `oncpu` | 原生 CPU | `oncpu` 按频率采样，`offcpu` 归因阻塞与可运行调度延迟 |
-| `--offcpu-metric` | `total` | 原生 off-CPU | 累计 `total`、`blocked` 或 `runnable` 时间 |
+| `--offcpu-phase` | `all` | 原生 off-CPU | 累计 `all`、`blocked` 或 `runqueue` 时间 |
 | `--offcpu-min-us` | `1000` | 原生 off-CPU | 丢弃小于该微秒数的阶段延迟 |
 | `--offcpu-max-us` | `0` | 原生 off-CPU | 丢弃大于该微秒数的阶段延迟；`0` 表示不限制 |
 | `--thread-group` | `false` | 原生 | 同时采集目标 PID 所在线程组中的其他线程 |
@@ -526,13 +526,13 @@ sudo _output/bin/profiler \
 ```bash
 sudo _output/bin/profiler \
   --type cpu --language go --pid 12345 --thread-group \
-  --cpu-mode offcpu --offcpu-metric total \
+  --cpu-mode offcpu --offcpu-phase all \
   --offcpu-min-us 1000 \
   --duration 30 --aggr-interval 10 \
   --output-format flamegraph --output-path ./profiles/go-offcpu
 ```
 
-off-CPU 是事件驱动采集，因此不使用 `--freq`；由于调度 tracepoint 需要全局观察任务迁移，也不支持 `--cpuid`。火焰图直接以纳秒为数值，并增加 `off-CPU blocked`、`scheduling delay (preempted)`、`scheduling delay (yielded)` 等根节点。`total` 模式同时累计阻塞与可运行阶段，但仍按这些根节点分开显示。采集端使用单一稳定的 BPF stack map，避免长时间睡眠跨越多轮读取后被错误解析到另一代栈。
+off-CPU 是事件驱动采集，因此不使用 `--freq`；由于调度 tracepoint 需要全局观察任务迁移，也不支持 `--cpuid`。火焰图直接以纳秒为数值，并增加 `off-CPU blocked`、`scheduling delay (preempted)`、`scheduling delay (yielded)` 等根节点。`all` 阶段同时累计阻塞与 runqueue 等待时间，但仍按这些根节点分开显示。采集端使用单一稳定的 BPF stack map，避免长时间睡眠跨越多轮读取后被错误解析到另一代栈。
 
 原生内存支持以下维度：
 
