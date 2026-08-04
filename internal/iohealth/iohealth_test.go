@@ -35,8 +35,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Bounded evidence requests.
-
 // Bounded command output and protocol parsing.
 
 func TestRunEvidenceCommandCapsCombinedOutput(t *testing.T) {
@@ -275,6 +273,213 @@ func TestCollectSCSIAcceptsHealthExitBitsAndUsesWhitelistedCommand(t *testing.T)
 	}
 }
 
+func TestEvidenceWorkerCommandResults(t *testing.T) {
+	execFailure := commandExecution{exitCode: -1, err: errors.New("command failed")}
+	criticalWarning := uint8(0)
+	mediaErrors := uint64(12)
+	emptyErrorLog := []types.NVMeErrorLogEntry{}
+	failedHealth := false
+
+	for _, test := range []struct {
+		name         string
+		protocol     EvidenceProtocol
+		lookupErr    error
+		executions   []commandExecution
+		timeoutFirst bool
+		wantStatus   string
+		wantReasons  []string
+		wantNVMe     *types.NVMeHealthEvidence
+		wantSCSI     *types.SCSIHealthEvidence
+	}{
+		{
+			name:        "nvme tool missing",
+			protocol:    EvidenceProtocolNVMe,
+			lookupErr:   errors.New("nvme not found"),
+			wantStatus:  "unsupported",
+			wantReasons: []string{CollectionReasonToolUnavailable},
+		},
+		{
+			name:        "scsi tool missing",
+			protocol:    EvidenceProtocolSCSI,
+			lookupErr:   errors.New("smartctl not found"),
+			wantStatus:  "unsupported",
+			wantReasons: []string{CollectionReasonToolUnavailable},
+		},
+		{
+			name:        "scsi execution failure",
+			protocol:    EvidenceProtocolSCSI,
+			executions:  []commandExecution{execFailure},
+			wantStatus:  "error",
+			wantReasons: []string{CollectionReasonExecError},
+		},
+		{
+			name:         "scsi command deadline",
+			protocol:     EvidenceProtocolSCSI,
+			executions:   []commandExecution{{}},
+			timeoutFirst: true,
+			wantStatus:   "timeout",
+			wantReasons:  []string{CollectionReasonTimeout},
+		},
+		{
+			name:     "nvme deadline leaves next command usable",
+			protocol: EvidenceProtocolNVMe,
+			executions: []commandExecution{
+				{},
+				{stdout: []byte(`{"errors":[]}`)},
+			},
+			timeoutFirst: true,
+			wantStatus:   "partial",
+			wantReasons:  []string{CollectionReasonTimeout},
+			wantNVMe:     &types.NVMeHealthEvidence{ErrorLog: &emptyErrorLog},
+		},
+		{
+			name:        "nvme execution failures deduplicate reason",
+			protocol:    EvidenceProtocolNVMe,
+			executions:  []commandExecution{execFailure, execFailure},
+			wantStatus:  "error",
+			wantReasons: []string{CollectionReasonExecError},
+		},
+		{
+			name:     "nvme retains smart evidence after error-log failure",
+			protocol: EvidenceProtocolNVMe,
+			executions: []commandExecution{
+				{stdout: []byte(`{"critical_warning":0,"media_errors":12}`)},
+				execFailure,
+			},
+			wantStatus:  "partial",
+			wantReasons: []string{CollectionReasonExecError},
+			wantNVMe: &types.NVMeHealthEvidence{
+				CriticalWarning:  &criticalWarning,
+				MediaErrorsTotal: &mediaErrors,
+			},
+		},
+		{
+			name:     "scsi retains complete evidence with execution error",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{{
+				stdout:   []byte(`{"smart_status":{"passed":false}}`),
+				exitCode: 2,
+				err:      errors.New("smartctl device access failure"),
+			}},
+			wantStatus:  "partial",
+			wantReasons: []string{CollectionReasonExecError},
+			wantSCSI:    &types.SCSIHealthEvidence{SmartPassed: &failedHealth},
+		},
+		{
+			name:     "scsi retains partial evidence with reported execution error",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{{
+				stdout: []byte(`{"smartctl":{"exit_status":2},` +
+					`"smart_status":{"passed":false},"scsi_grown_defect_list":"invalid"}`),
+			}},
+			wantStatus:  "partial",
+			wantReasons: []string{CollectionReasonParseError, CollectionReasonExecError},
+			wantSCSI:    &types.SCSIHealthEvidence{SmartPassed: &failedHealth},
+		},
+		{
+			name:     "scsi health exit bits are successful evidence",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{{
+				stdout:   []byte(`{"smartctl":{"exit_status":8},"smart_status":{"passed":false}}`),
+				exitCode: 8,
+				err:      errors.New("smartctl reported failed health"),
+			}},
+			wantStatus: "ok",
+			wantSCSI:   &types.SCSIHealthEvidence{SmartPassed: &failedHealth},
+		},
+		{
+			name:     "scsi oversized output is not trusted",
+			protocol: EvidenceProtocolSCSI,
+			executions: []commandExecution{{
+				stdout:   []byte(`{"smart_status":{"passed":false}}`),
+				tooLarge: true,
+			}},
+			wantStatus:  "error",
+			wantReasons: []string{CollectionReasonOutputTooLarge},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			results := make(chan EvidenceResult, 2)
+			worker := NewEvidenceWorker(EvidenceWorkerOptions{
+				OnResult: func(result EvidenceResult) { results <- result },
+			})
+			worker.lookupPath = func(name string) (string, error) {
+				if test.lookupErr != nil {
+					return "", test.lookupErr
+				}
+				return "/usr/bin/" + name, nil
+			}
+			if test.timeoutFirst {
+				worker.commandTimeout = 20 * time.Millisecond
+			}
+			calls := 0
+			worker.runCommand = func(ctx context.Context, _ string, _ []string, _ int) commandExecution {
+				calls++
+				if calls > len(test.executions) {
+					t.Errorf("unexpected command call %d", calls)
+					return execFailure
+				}
+				if test.timeoutFirst && calls == 1 {
+					<-ctx.Done()
+					return commandExecution{exitCode: -1, err: ctx.Err()}
+				}
+				return test.executions[calls-1]
+			}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			worker.Start(ctx)
+			done := make(chan struct{})
+			go func() {
+				worker.Wait()
+				close(done)
+			}()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Error("evidence worker did not stop")
+				}
+			})
+			target := "sda"
+			if test.protocol == EvidenceProtocolNVMe {
+				target = "nvme0"
+			}
+			request := EvidenceRequest{
+				Trigger:     types.IOHealthEvent{Type: "block_error", Device: target},
+				Target:      target,
+				Protocol:    test.protocol,
+				TriggeredAt: time.Unix(50, 0),
+			}
+			if !worker.Submit(request) {
+				t.Fatal("evidence request was not accepted")
+			}
+			result := receiveEvidenceResult(t, results)
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("evidence worker did not stop after callback")
+			}
+			wantEvent := request.Trigger
+			wantEvent.CollectionStatus = test.wantStatus
+			wantEvent.NVMe = test.wantNVMe
+			wantEvent.SCSI = test.wantSCSI
+			if !reflect.DeepEqual(result.Event, wantEvent) ||
+				!reflect.DeepEqual(result.Reasons, test.wantReasons) ||
+				result.Target != target || !result.TriggeredAt.Equal(request.TriggeredAt) {
+				t.Fatalf("result = %#v, want event=%#v reasons=%v", result, wantEvent, test.wantReasons)
+			}
+			if calls != len(test.executions) {
+				t.Fatalf("command calls = %d, want %d", calls, len(test.executions))
+			}
+			if len(results) != 0 {
+				t.Fatal("one accepted request produced duplicate callbacks")
+			}
+		})
+	}
+}
+
 // Serialized requests, cooldowns, and generation isolation.
 
 func TestEvidenceWorkerSerializesDeduplicatesAndAppliesCooldown(t *testing.T) {
@@ -393,6 +598,216 @@ func TestEvidenceWorkerSerializesDeduplicatesAndAppliesCooldown(t *testing.T) {
 	worker.Wait()
 }
 
+func TestEvidenceWorkerSeparatesReusedTargetGenerations(t *testing.T) {
+	clock := &fakeEvidenceClock{now: time.Unix(100, 0)}
+	results := make(chan EvidenceResult, 3)
+	started := make(chan struct{}, 1)
+	releaseFirst := make(chan struct{})
+	var calls atomic.Int32
+
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) {
+			results <- result
+		},
+	})
+	worker.now = clock.Now
+	worker.lookupPath = func(string) (string, error) {
+		return "/usr/bin/smartctl", nil
+	}
+	worker.runCommand = func(
+		ctx context.Context,
+		_ string,
+		_ []string,
+		_ int,
+	) commandExecution {
+		if calls.Add(1) == 1 {
+			close(started)
+			select {
+			case <-releaseFirst:
+			case <-ctx.Done():
+				return commandExecution{exitCode: -1, err: ctx.Err()}
+			}
+		}
+		return commandExecution{
+			stdout:   []byte(`{"smart_status":{"passed":true}}`),
+			exitCode: 0,
+		}
+	}
+
+	request := func(identity string) EvidenceRequest {
+		return EvidenceRequest{
+			Trigger:  types.IOHealthEvent{Type: "block_error", Device: "sda"},
+			Target:   "sda",
+			Identity: identity,
+			Protocol: EvidenceProtocolSCSI,
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	if !worker.Submit(request("generation-1")) {
+		t.Fatal("first generation was not accepted")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first generation did not start")
+	}
+	if !worker.Submit(request("generation-2")) {
+		t.Fatal("replacement generation inherited old inflight state")
+	}
+	if worker.Submit(request("generation-2")) {
+		t.Fatal("duplicate replacement generation was not merged")
+	}
+	close(releaseFirst)
+	receiveEvidenceResult(t, results)
+	receiveEvidenceResult(t, results)
+	if worker.Submit(request("generation-2")) {
+		t.Fatal("replacement generation bypassed its own cooldown")
+	}
+
+	cancel()
+	worker.Wait()
+}
+
+func TestEvidenceWorkerStaleGenerationDoesNotReplaceCurrentCooldown(t *testing.T) {
+	results := make(chan EvidenceResult, 2)
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) {
+			results <- result
+		},
+		ValidateIdentity: func(request EvidenceRequest) bool {
+			return request.Identity == "generation-2"
+		},
+	})
+	worker.lookupPath = func(string) (string, error) {
+		return "/usr/bin/smartctl", nil
+	}
+	worker.runCommand = func(
+		context.Context,
+		string,
+		[]string,
+		int,
+	) commandExecution {
+		return commandExecution{
+			stdout:   []byte(`{"smart_status":{"passed":true}}`),
+			exitCode: 0,
+		}
+	}
+	request := func(identity string) EvidenceRequest {
+		return EvidenceRequest{
+			Trigger:  types.IOHealthEvent{Type: "block_error", Device: "sda"},
+			Target:   "sda",
+			Identity: identity,
+			Protocol: EvidenceProtocolSCSI,
+		}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	if !worker.Submit(request("generation-2")) {
+		t.Fatal("current generation was not accepted")
+	}
+	if result := receiveEvidenceResult(t, results); result.Event.CollectionStatus != "ok" {
+		t.Fatalf("current-generation result = %#v", result)
+	}
+	if !worker.Submit(request("generation-1")) {
+		t.Fatal("stale generation was not accepted for identity validation")
+	}
+	result := receiveEvidenceResult(t, results)
+	if result.Event.CollectionStatus != "unsupported" ||
+		len(result.Reasons) != 1 ||
+		result.Reasons[0] != CollectionReasonTargetChanged {
+		t.Fatalf("stale-generation result = %#v", result)
+	}
+	if worker.Submit(request("generation-2")) {
+		t.Fatal("stale generation replaced the current generation cooldown")
+	}
+	if !worker.Submit(EvidenceRequest{
+		Trigger: types.IOHealthEvent{Type: "block_error", Device: "sda"},
+		Reason:  CollectionReasonTargetUnresolved,
+	}) {
+		t.Fatal("unresolved request was not accepted for reporting")
+	}
+	result = receiveEvidenceResult(t, results)
+	if result.Event.CollectionStatus != "unsupported" ||
+		len(result.Reasons) != 1 ||
+		result.Reasons[0] != CollectionReasonTargetUnresolved {
+		t.Fatalf("unresolved result = %#v", result)
+	}
+	if worker.Submit(request("generation-2")) {
+		t.Fatal("unresolved request replaced the current generation cooldown")
+	}
+
+	cancel()
+	worker.Wait()
+}
+
+func TestEvidenceWorkerBoundsDistinctGenerationQueue(t *testing.T) {
+	started := make(chan struct{}, 1)
+	releaseFirst := make(chan struct{})
+	results := make(chan EvidenceResult, 2)
+	var calls atomic.Int32
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) {
+			results <- result
+		},
+	})
+	worker.queueCapacity = 1
+	worker.lookupPath = func(string) (string, error) {
+		return "/usr/bin/smartctl", nil
+	}
+	worker.runCommand = func(
+		ctx context.Context,
+		_ string,
+		_ []string,
+		_ int,
+	) commandExecution {
+		if calls.Add(1) == 1 {
+			close(started)
+			select {
+			case <-releaseFirst:
+			case <-ctx.Done():
+				return commandExecution{exitCode: -1, err: ctx.Err()}
+			}
+		}
+		return commandExecution{
+			stdout:   []byte(`{"smart_status":{"passed":true}}`),
+			exitCode: 0,
+		}
+	}
+	request := func(identity string) EvidenceRequest {
+		return EvidenceRequest{
+			Trigger:  types.IOHealthEvent{Type: "block_error", Device: "sda"},
+			Target:   "sda",
+			Identity: identity,
+			Protocol: EvidenceProtocolSCSI,
+		}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	if !worker.Submit(request("generation-1")) {
+		t.Fatal("running generation was not accepted")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("running generation did not start")
+	}
+	if !worker.Submit(request("generation-2")) {
+		t.Fatal("queued generation was not accepted")
+	}
+	if worker.Submit(request("generation-3")) {
+		t.Fatal("distinct-generation queue exceeded its capacity")
+	}
+
+	close(releaseFirst)
+	receiveEvidenceResult(t, results)
+	receiveEvidenceResult(t, results)
+	cancel()
+	worker.Wait()
+}
+
 func TestEvidenceWorkerReportsUnsupportedAttemptWithoutCommand(t *testing.T) {
 	results := make(chan EvidenceResult, 1)
 	var commandCalled atomic.Bool
@@ -435,6 +850,183 @@ func TestEvidenceWorkerReportsUnsupportedAttemptWithoutCommand(t *testing.T) {
 	}
 	cancel()
 	worker.Wait()
+}
+
+func TestEvidenceWorkerRejectsReusedTargetBeforeCommand(t *testing.T) {
+	results := make(chan EvidenceResult, 1)
+	var commandCalled atomic.Bool
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) {
+			results <- result
+		},
+		ValidateIdentity: func(EvidenceRequest) bool {
+			return false
+		},
+	})
+	worker.runCommand = func(
+		context.Context,
+		string,
+		[]string,
+		int,
+	) commandExecution {
+		commandCalled.Store(true)
+		return commandExecution{exitCode: -1, err: errors.New("unexpected command")}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	if !worker.Submit(EvidenceRequest{
+		Trigger: types.IOHealthEvent{
+			Type:   "block_error",
+			Device: "sda",
+		},
+		Target:      "sda",
+		Identity:    "8:0/diskseq=1",
+		Protocol:    EvidenceProtocolSCSI,
+		TriggeredAt: time.Unix(1, 0),
+	}) {
+		t.Fatal("identity-qualified request was not accepted")
+	}
+	result := receiveEvidenceResult(t, results)
+	if result.Event.CollectionStatus != "unsupported" ||
+		len(result.Reasons) != 1 ||
+		result.Reasons[0] != CollectionReasonTargetChanged {
+		t.Fatalf("reused-target result = %#v", result)
+	}
+	if commandCalled.Load() {
+		t.Fatal("reused target executed an evidence command")
+	}
+	cancel()
+	worker.Wait()
+}
+
+func TestEvidenceWorkerRejectsTargetChangedDuringCommand(t *testing.T) {
+	results := make(chan EvidenceResult, 1)
+	var validations atomic.Int32
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) {
+			results <- result
+		},
+		ValidateIdentity: func(EvidenceRequest) bool {
+			return validations.Add(1) == 1
+		},
+	})
+	worker.lookupPath = func(string) (string, error) {
+		return "/usr/bin/smartctl", nil
+	}
+	worker.runCommand = func(
+		context.Context,
+		string,
+		[]string,
+		int,
+	) commandExecution {
+		return commandExecution{
+			stdout:   []byte(`{"smart_status":{"passed":true}}`),
+			exitCode: 0,
+		}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	if !worker.Submit(EvidenceRequest{
+		Trigger:  types.IOHealthEvent{Type: "block_error", Device: "sda"},
+		Target:   "sda",
+		Identity: "old-generation",
+		Protocol: EvidenceProtocolSCSI,
+	}) {
+		t.Fatal("identity-qualified request was not accepted")
+	}
+	result := receiveEvidenceResult(t, results)
+	if result.Event.CollectionStatus != "unsupported" ||
+		result.Event.SCSI != nil ||
+		len(result.Reasons) != 1 ||
+		result.Reasons[0] != CollectionReasonTargetChanged {
+		t.Fatalf("changed-during-command result = %#v", result)
+	}
+	cancel()
+	worker.Wait()
+}
+
+func TestEvidenceWorkerCancellationDrainsAcceptedRequests(t *testing.T) {
+	results := make(chan EvidenceResult, 3)
+	started := make(chan struct{}, 1)
+	worker := NewEvidenceWorker(EvidenceWorkerOptions{
+		OnResult: func(result EvidenceResult) { results <- result },
+	})
+	worker.lookupPath = func(string) (string, error) {
+		return "/usr/bin/smartctl", nil
+	}
+	worker.commandTimeout = time.Hour
+	worker.runCommand = func(ctx context.Context, _ string, _ []string, _ int) commandExecution {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return commandExecution{exitCode: -1, err: ctx.Err()}
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	worker.Start(ctx)
+	done := make(chan struct{})
+	go func() {
+		worker.Wait()
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("evidence worker did not stop")
+		}
+	})
+	request := func(target string) EvidenceRequest {
+		return EvidenceRequest{
+			Trigger:     types.IOHealthEvent{Type: "block_error", Device: target},
+			Target:      target,
+			Protocol:    EvidenceProtocolSCSI,
+			TriggeredAt: time.Unix(50, 0),
+		}
+	}
+	if !worker.Submit(request("sda")) {
+		t.Fatal("running request was not accepted")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first evidence command did not start")
+	}
+	if !worker.Submit(request("sdb")) {
+		t.Fatal("queued request was not accepted")
+	}
+
+	cancel()
+	if worker.Submit(request("sdc")) {
+		t.Fatal("request was accepted after cancellation")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not stop the running command and drain the queue")
+	}
+	if got := len(results); got != 2 {
+		t.Fatalf("callback count = %d, want one per accepted request (2)", got)
+	}
+	for _, target := range []string{"sda", "sdb"} {
+		result := receiveEvidenceResult(t, results)
+		if result.Target != target || result.Event.Device != target ||
+			result.Event.Type != "block_error" ||
+			!result.TriggeredAt.Equal(time.Unix(50, 0)) ||
+			result.Event.CollectionStatus != "error" ||
+			result.Event.NVMe != nil || result.Event.SCSI != nil ||
+			len(result.Reasons) != 1 || result.Reasons[0] != CollectionReasonExecError {
+			t.Fatalf("canceled result for %s = %#v", target, result)
+		}
+	}
+	if worker.Submit(request("sdc")) {
+		t.Fatal("request was accepted after worker exit")
+	}
 }
 
 type fakeEvidenceClock struct {

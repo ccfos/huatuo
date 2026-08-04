@@ -21,23 +21,25 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/cilium/ebpf/btf"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/document"
 	"github.com/ccfos/huatuo/internal/iohealth"
+	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
+	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 
+	"github.com/cilium/ebpf/btf"
 	"golang.org/x/sys/unix"
 )
-
-// IO health events and target identity.
 
 // Kernel event routing and evidence accounting.
 
@@ -63,6 +65,7 @@ type ioHealthEventRecorder struct {
 
 //nolint:gocritic // Record the same immutable value passed to storage.
 func (r *ioHealthEventRecorder) save(
+	_ context.Context,
 	at time.Time,
 	event types.IOHealthEvent,
 ) error {
@@ -77,7 +80,12 @@ func newRecordingIOHealthCollector(
 	t.Helper()
 	collector := newIOHealthCollector(root, filepath.Join(root, "proc", "mdstat"))
 	recorder := &ioHealthEventRecorder{}
-	collector.saveEvent = recorder.save
+	collector.setEventSubmitter(func(at time.Time, event types.IOHealthEvent) {
+		if err := recorder.save(t.Context(), at, event); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Cleanup(func() { collector.setEventSubmitter(nil) })
 	return collector, recorder
 }
 
@@ -112,6 +120,45 @@ func ioHealthControllerBytes(name string) [ioHealthNVMeControllerNameLength]uint
 	var raw [ioHealthNVMeControllerNameLength]uint8
 	copy(raw[:], name)
 	return raw
+}
+
+func TestSaveIOHealthEventUsesObservedTimestamp(t *testing.T) {
+	tracing.DisableDocumentWriter()
+	t.Cleanup(tracing.DisableDocumentWriter)
+	store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(t.Context()); err != nil {
+			t.Errorf("close event store: %v", err)
+		}
+	})
+	if err := tracing.EnableDocumentWriter(store, document.New("health-region")); err != nil {
+		t.Fatal(err)
+	}
+	documents, unsubscribe := store.Subscribe()
+	defer unsubscribe()
+	triggeredAt := time.Unix(123, 456)
+	event := types.IOHealthEvent{
+		Type:   ioHealthTypeBlockError,
+		Device: "sda",
+		Status: "io_error",
+	}
+	if err := saveIOHealthEvent(t.Context(), triggeredAt, event); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case saved := <-documents:
+		if saved.TracerName != ioHealthName || saved.TracerRunType != types.TracerRunTypeEvent ||
+			saved.ObservedTimestamp == nil || !saved.ObservedTimestamp.Equal(triggeredAt) ||
+			saved.StartedTimestamp != nil || saved.KernelObservedTimestamp != nil ||
+			!reflect.DeepEqual(saved.TracerData, event) {
+			t.Fatalf("saved health event = %+v", saved)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("health event was not published through the document writer")
+	}
 }
 
 func TestIOHealthKernelABIAndLabels(t *testing.T) {
@@ -160,6 +207,37 @@ func TestIOHealthKernelABIAndLabels(t *testing.T) {
 		}
 	}
 
+	for _, test := range []struct {
+		raw  int32
+		want string
+	}{
+		{raw: blkStatusNotSupported, want: "not_supported"},
+		{raw: blkStatusTimeout, want: "timeout"},
+		{raw: blkStatusNoSpace, want: "no_space"},
+		{raw: blkStatusTransport, want: "transport"},
+		{raw: blkStatusTarget, want: "transport"},
+		{raw: blkStatusNexus, want: "transport"},
+		{raw: blkStatusMedium, want: "medium_error"},
+		{raw: blkStatusProtection, want: "protection"},
+		{raw: blkStatusResource, want: "resource"},
+		{raw: blkStatusAgain, want: "resource"},
+		{raw: blkStatusDeviceResource, want: "resource"},
+		{raw: blkStatusZoneResource, want: "resource"},
+		{raw: blkStatusZoneOpenResource, want: "resource"},
+		{raw: blkStatusZoneActiveResource, want: "resource"},
+		{raw: blkStatusIOError, want: "io_error"},
+		{raw: 255, want: "io_error"},
+	} {
+		if got := ioHealthBlockStatusFromBlkStatus(test.raw); got != test.want {
+			t.Errorf(
+				"ioHealthBlockStatusFromBlkStatus(%d) = %q, want %q",
+				test.raw,
+				got,
+				test.want,
+			)
+		}
+	}
+
 	if got := ioHealthSCSIDispatchStatus(scsiMLQueueTargetBusy); got != "target_busy" {
 		t.Fatalf("target-busy status = %q", got)
 	}
@@ -169,10 +247,107 @@ func TestIOHealthKernelABIAndLabels(t *testing.T) {
 	if got := ioHealthControllerName(ioHealthControllerBytes("sda")); got != "unknown" {
 		t.Fatalf("invalid controller name = %q, want unknown", got)
 	}
-
 }
 
-func TestIOHealthPersistsEachEvidenceTriggerExactlyOnce(t *testing.T) {
+func ioHealthEnumSpec(t *testing.T, enum *btf.Enum) *btf.Spec {
+	t.Helper()
+	builder, err := btf.NewBuilder([]btf.Type{enum})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := builder.Marshal(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := btf.LoadSpecFromReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spec
+}
+
+func TestIOHealthNVMeStatesFromBTF(t *testing.T) {
+	// Member values, including vendor backports, determine the exported name.
+	for _, test := range []struct {
+		name  string
+		value uint64
+	}{
+		{"ADMIN_ONLY", 2},
+		{"RESETTING", 2},
+		{"DELETING_NOIO", 5},
+		{"DELETING_NOIO", 9},
+	} {
+		t.Run(fmt.Sprintf("%s-%d", test.name, test.value), func(t *testing.T) {
+			spec := ioHealthEnumSpec(t, &btf.Enum{
+				Name: "nvme_ctrl_state", Size: 4,
+				Values: []btf.EnumValue{{Name: "NVME_CTRL_" + test.name, Value: test.value}},
+			})
+			states := ioHealthNVMeStates(spec)
+			want := strings.ToLower(test.name)
+			if got := ioHealthNVMeStateName(states, uint32(test.value)); got != want {
+				t.Fatalf("state %d = %q, want %q", test.value, got, want)
+			}
+			if got := ioHealthNVMeStateName(states, 255); got != "unknown" {
+				t.Fatalf("unknown state = %q", got)
+			}
+		})
+	}
+	spec := ioHealthEnumSpec(t, &btf.Enum{Name: "other_enum", Size: 4})
+	if got := ioHealthNVMeStateName(ioHealthNVMeStates(spec), 1); got != "unknown" {
+		t.Fatalf("missing NVMe enum = %q", got)
+	}
+}
+
+func TestIOHealthRequestQuietFlagsFromBTF(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		enum   *btf.Enum
+		wanted uint32
+	}{
+		{"macro flags", &btf.Enum{Name: "other_enum", Size: 4}, 1 << 11},
+		{"enum flags", &btf.Enum{
+			Name: "rqf_flags", Size: 4,
+			Values: []btf.EnumValue{{Name: "__RQF_QUIET", Value: 7}},
+		}, 1 << 7},
+		{"renumbered flags", &btf.Enum{
+			Name: "rqf_flags", Size: 4,
+			Values: []btf.EnumValue{{Name: "__RQF_QUIET", Value: 12}},
+		}, 1 << 12},
+		{"absent quiet flag", &btf.Enum{Name: "rqf_flags", Size: 4}, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ioHealthRequestQuietMask(ioHealthEnumSpec(t, test.enum)); got != test.wanted {
+				t.Fatalf("quiet mask = %#x, want %#x", got, test.wanted)
+			}
+		})
+	}
+}
+
+func TestIOHealthRoutesBlockStatusCompletion(t *testing.T) {
+	root := t.TempDir()
+	dev := writeIOHealthBlockDevice(t, root, "sda", 8, 0)
+	collector, recorder := newRecordingIOHealthCollector(t, root)
+
+	collector.handleKernelEvent(ioHealthPerfEvent{
+		Dev:       dev,
+		Status:    blkStatusTimeout,
+		Type:      ioHealthEventBlockError,
+		Operation: reqOpWrite,
+	}, nil)
+
+	if len(recorder.events) != 1 {
+		t.Fatalf("saved block-status events = %d, want 1", len(recorder.events))
+	}
+	event := recorder.events[0].event
+	if event.Type != ioHealthTypeBlockError ||
+		event.Device != "sda" ||
+		event.Operation != "write" ||
+		event.Status != "timeout" {
+		t.Fatalf("block-status event = %+v", event)
+	}
+}
+
+func TestIOHealthPersistsSuppressedEvidenceTriggers(t *testing.T) {
 	root := t.TempDir()
 	dev := writeIOHealthBlockDevice(t, root, "sda", 8, 0)
 	collector, recorder := newRecordingIOHealthCollector(t, root)
@@ -214,8 +389,8 @@ func TestIOHealthPersistsEachEvidenceTriggerExactlyOnce(t *testing.T) {
 
 	submitter.accept = false
 	collector.handleKernelEvent(raw, submitter)
-	if len(recorder.events) != 1 || recorder.events[0].event.Type != ioHealthTypeBlockError {
-		t.Fatalf("suppressed event records = %+v", recorder.events)
+	if len(recorder.events) != 1 || recorder.events[0].at != triggeredAt[1] {
+		t.Fatalf("suppressed trigger was not retained: %+v", recorder.events)
 	}
 	collector.handleEvidenceResult(iohealth.EvidenceResult{
 		Target:      submitter.requests[0].Target,
@@ -223,16 +398,13 @@ func TestIOHealthPersistsEachEvidenceTriggerExactlyOnce(t *testing.T) {
 		Event:       submitter.requests[0].Trigger,
 	})
 	if len(recorder.events) != 2 {
-		t.Fatalf("two raw events produced %d records", len(recorder.events))
+		t.Fatalf("two triggers produced %d records, want 2", len(recorder.events))
 	}
-	recordsByTime := make(map[time.Time]int)
-	for _, record := range recorder.events {
-		recordsByTime[record.at]++
+	if recorder.events[1].at != triggeredAt[0] {
+		t.Fatalf("evidence trigger time = %v, want %v", recorder.events[1].at, triggeredAt[0])
 	}
-	for _, at := range triggeredAt {
-		if recordsByTime[at] != 1 {
-			t.Fatalf("records by trigger time = %v, want one for %v", recordsByTime, at)
-		}
+	if len(collector.persistenceFailures) != 0 {
+		t.Fatalf("successful persistence was reported as failure: %+v", collector.persistenceFailures)
 	}
 	key := ioHealthCounterKey{
 		kind:      ioHealthCounterBlockError,
@@ -247,6 +419,12 @@ func TestIOHealthPersistsEachEvidenceTriggerExactlyOnce(t *testing.T) {
 
 func TestIOHealthRoutesNVMeEventsWithoutResetEvidence(t *testing.T) {
 	root := t.TempDir()
+	if err := os.MkdirAll(
+		filepath.Join(root, "class", "nvme", "nvme7"),
+		0o755,
+	); err != nil {
+		t.Fatal(err)
+	}
 	dev := writeIOHealthBlockDevice(t, root, "nvme0c7n1", 259, 0)
 	collector, recorder := newRecordingIOHealthCollector(t, root)
 	collector.nvmeStates = map[uint32]string{1: "live"}
@@ -308,6 +486,46 @@ func TestIOHealthRoutesNVMeEventsWithoutResetEvidence(t *testing.T) {
 		device: "nvme7",
 	}]; got != 1 {
 		t.Fatalf("NVMe reset counter = %d, want 1", got)
+	}
+}
+
+func TestIOHealthRetainsUnknownNVMeState(t *testing.T) {
+	collector, recorder := newRecordingIOHealthCollector(t, t.TempDir())
+	collector.handleKernelEvent(ioHealthPerfEvent{
+		Type: ioHealthEventNVMeStateChange, NewStateRaw: 253,
+		Controller: ioHealthControllerBytes("nvme0"),
+	}, nil)
+	if len(recorder.events) != 1 || recorder.events[0].event.NewState != "unknown" ||
+		recorder.events[0].event.NewStateRaw == nil || *recorder.events[0].event.NewStateRaw != 253 {
+		t.Fatalf("unknown kernel state was not retained: %+v", recorder.events)
+	}
+}
+
+func TestIOHealthPreservesMDTriggerDuringEvidenceCooldown(t *testing.T) {
+	root := t.TempDir()
+	dev := writeIOHealthBlockDevice(t, root, "sda", 8, 0)
+	collector, recorder := newRecordingIOHealthCollector(t, root)
+	worker := &recordingEvidenceSubmitter{accept: true}
+	collector.handleKernelEvent(ioHealthPerfEvent{
+		Type: ioHealthEventBlockError, Dev: dev, Status: -int32(unix.EIO),
+	}, worker)
+	worker.accept = false
+	at := time.Unix(200, 0)
+	collector.handleMDChange(iohealth.MDChange{
+		Array: "md0", Member: "sda", Field: iohealth.MDFieldMemberState,
+		NewState: "faulty", ObservedAt: at,
+	}, worker)
+	if len(recorder.events) != 1 || recorder.events[0].at != at ||
+		recorder.events[0].event.Type != ioHealthTypeMDMemberState ||
+		recorder.events[0].event.NewState != "faulty" {
+		t.Fatalf("MD trigger was suppressed with its evidence: %+v", recorder.events)
+	}
+	collector.handleEvidenceResult(iohealth.EvidenceResult{
+		Target: worker.requests[0].Target, TriggeredAt: worker.requests[0].TriggeredAt,
+		Event: worker.requests[0].Trigger,
+	})
+	if len(recorder.events) != 2 || recorder.events[1].event.Type != ioHealthTypeBlockError {
+		t.Fatalf("original block trigger was not retained: %+v", recorder.events)
 	}
 }
 
@@ -529,12 +747,80 @@ func TestIOHealthResolverUsesExplicitNVMeControllerPath(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(
+		filepath.Join(root, "class", "nvme", "nvme1"),
+		0o755,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	target := newIOHealthResolver(root).resolveBlockName("nvme0c1n1")
 	if target.target != "nvme1" ||
 		target.protocol != ioHealthProtocolNVMe ||
 		target.reason != "" {
 		t.Fatalf("resolved target = %+v", target)
+	}
+}
+
+func TestIOHealthResolverUsesNVMeControllerGenerationIdentity(t *testing.T) {
+	root := t.TempDir()
+	controllerOne := filepath.Join(root, "devices", "pci0000:00", "nvme", "nvme0")
+	controllerTwo := filepath.Join(root, "devices", "pci0000:01", "nvme", "nvme0")
+	for _, controller := range []string{controllerOne, controllerTwo} {
+		if err := os.MkdirAll(controller, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	classNVMe := filepath.Join(root, "class", "nvme")
+	if err := os.MkdirAll(classNVMe, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	controllerLink := filepath.Join(classNVMe, "nvme0")
+	if err := os.Symlink(controllerOne, controllerLink); err != nil {
+		t.Fatal(err)
+	}
+
+	classBlock := filepath.Join(root, "class", "block")
+	for _, namespace := range []string{"nvme0n1", "nvme0n2"} {
+		namespacePath := filepath.Join(controllerOne, namespace)
+		if err := os.MkdirAll(namespacePath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		classNamespace := filepath.Join(classBlock, namespace)
+		if err := os.MkdirAll(filepath.Join(classNamespace, "slaves"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(
+			namespacePath,
+			filepath.Join(classNamespace, "device"),
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resolver := newIOHealthResolver(root)
+	first := resolver.resolveBlockName("nvme0n1")
+	second := resolver.resolveBlockName("nvme0n2")
+	if first.reason != "" || first.identity == "" ||
+		first.target != "nvme0" || first.identity != second.identity {
+		t.Fatalf("controller identities = %+v, %+v", first, second)
+	}
+	request := iohealth.EvidenceRequest{
+		Trigger:  types.IOHealthEvent{Device: "nvme0n1"},
+		Target:   first.target,
+		Identity: first.identity,
+	}
+	if !resolver.evidenceTargetCurrent(request) {
+		t.Fatal("initial NVMe controller identity was not current")
+	}
+	if err := os.Remove(controllerLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(controllerTwo, controllerLink); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.evidenceTargetCurrent(request) {
+		t.Fatal("replacement NVMe controller inherited namespace identity")
 	}
 }
 
@@ -572,6 +858,38 @@ func TestIOHealthResolverTreatsMissingDeviceAsUnresolved(t *testing.T) {
 	}
 }
 
+func TestIOHealthResolverRejectsReusedEvidenceTarget(t *testing.T) {
+	root := t.TempDir()
+	devicePath := filepath.Join(root, "class", "block", "sda")
+	if err := os.MkdirAll(filepath.Join(devicePath, "slaves"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devicePath, "dev"), []byte("8:0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	diskseqPath := filepath.Join(devicePath, "diskseq")
+	if err := os.WriteFile(diskseqPath, []byte("41\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := newIOHealthResolver(root)
+	target := resolver.resolveBlockName("sda")
+	request := iohealth.EvidenceRequest{
+		Trigger:  types.IOHealthEvent{Device: "sda"},
+		Target:   target.target,
+		Identity: target.identity,
+	}
+	if target.identity == "" || !resolver.evidenceTargetCurrent(request) {
+		t.Fatalf("initial evidence target = %+v", target)
+	}
+	if err := os.WriteFile(diskseqPath, []byte("42\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.evidenceTargetCurrent(request) {
+		t.Fatal("reused device identity remained valid")
+	}
+}
+
 func TestIOHealthResolverPrimesOnlyControllerStateFiles(t *testing.T) {
 	root := t.TempDir()
 	nvmeClass := filepath.Join(root, "class", "nvme")
@@ -602,8 +920,6 @@ func TestIOHealthResolverPrimesOnlyControllerStateFiles(t *testing.T) {
 	}
 }
 
-// IO health hooks and collector lifecycle.
-
 // Collector lifecycle and persistence boundaries.
 
 type fakeIOHealthMDWatcher struct {
@@ -614,12 +930,22 @@ type fakeIOHealthMDWatcher struct {
 }
 
 type fakeIOHealthPerfReader struct {
-	ctx context.Context
+	ctx      context.Context
+	events   <-chan ioHealthPerfEvent
+	readInto func(context.Context, any) error
 }
 
-func (r *fakeIOHealthPerfReader) ReadInto(any) error {
-	<-r.ctx.Done()
-	return types.ErrExitByCancelCtx
+func (r *fakeIOHealthPerfReader) ReadInto(value any) error {
+	if r.readInto != nil {
+		return r.readInto(r.ctx, value)
+	}
+	select {
+	case event := <-r.events:
+		*value.(*ioHealthPerfEvent) = event
+		return nil
+	case <-r.ctx.Done():
+		return types.ErrExitByCancelCtx
+	}
 }
 
 func (r *fakeIOHealthPerfReader) ReadBatch(func() any) (bpf.PerfEventBatch, error) {
@@ -632,9 +958,24 @@ func (r *fakeIOHealthPerfReader) Close() error {
 
 type fakeIOHealthRuntimeBPF struct {
 	bpf.BPF
+	attachErr    error
+	attachErrors map[string]error
+	closeFunc    func() error
+	loadedFunc   func() (bool, error)
+	events       <-chan ioHealthPerfEvent
+	readInto     func(context.Context, any) error
 }
 
-func (b *fakeIOHealthRuntimeBPF) AttachWithOptions([]bpf.AttachOption) error {
+func (b *fakeIOHealthRuntimeBPF) AttachWithOptions(options []bpf.AttachOption) error {
+	if len(options) != 1 {
+		return errors.New("test expects one independent attach option")
+	}
+	if b.attachErr != nil {
+		return b.attachErr
+	}
+	if b.attachErrors != nil {
+		return b.attachErrors[options[0].ProgramName]
+	}
 	return nil
 }
 
@@ -647,11 +988,21 @@ func (b *fakeIOHealthRuntimeBPF) EventPipeByName(
 	_ string,
 	_ uint32,
 ) (bpf.PerfEventReader, error) {
-	return &fakeIOHealthPerfReader{ctx: ctx}, nil
+	return &fakeIOHealthPerfReader{ctx: ctx, events: b.events, readInto: b.readInto}, nil
 }
 
 func (b *fakeIOHealthRuntimeBPF) Close() error {
+	if b.closeFunc != nil {
+		return b.closeFunc()
+	}
 	return nil
+}
+
+func (b *fakeIOHealthRuntimeBPF) IsLoaded() (bool, error) {
+	if b.loadedFunc != nil {
+		return b.loadedFunc()
+	}
+	return true, nil
 }
 
 func newFakeIOHealthMDWatcher() *fakeIOHealthMDWatcher {
@@ -709,10 +1060,18 @@ func TestIOHealthMDSupervisorRetriesStartAndRuntimeFailures(t *testing.T) {
 		return watchers[next-1]
 	}
 	saved := make(chan types.IOHealthEvent, 1)
-	collector.saveEvent = func(_ time.Time, event types.IOHealthEvent) error {
+	collector.saveEvent = func(
+		_ context.Context,
+		_ time.Time,
+		event types.IOHealthEvent,
+	) error {
 		saved <- event
 		return nil
 	}
+	collector.setEventSubmitter(func(at time.Time, event types.IOHealthEvent) {
+		_ = collector.saveEvent(t.Context(), at, event)
+	})
+	t.Cleanup(func() { collector.setEventSubmitter(nil) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	retry := make(chan time.Time, 2)
@@ -768,10 +1127,18 @@ func TestIOHealthFinishMDWatcherDrainsChanges(t *testing.T) {
 	}
 
 	saved := make(chan types.IOHealthEvent, 1)
-	collector.saveEvent = func(_ time.Time, event types.IOHealthEvent) error {
+	collector.saveEvent = func(
+		_ context.Context,
+		_ time.Time,
+		event types.IOHealthEvent,
+	) error {
 		saved <- event
 		return nil
 	}
+	collector.setEventSubmitter(func(at time.Time, event types.IOHealthEvent) {
+		_ = collector.saveEvent(t.Context(), at, event)
+	})
+	t.Cleanup(func() { collector.setEventSubmitter(nil) })
 	err := collector.finishMDWatcher(
 		errors.New("poll failed"),
 		changes,
@@ -801,7 +1168,11 @@ func TestIOHealthStartKeepsMDActiveAcrossBPFLoadFailures(t *testing.T) {
 		return watcher
 	}
 	saved := make(chan types.IOHealthEvent, 1)
-	collector.saveEvent = func(_ time.Time, event types.IOHealthEvent) error {
+	collector.saveEvent = func(
+		_ context.Context,
+		_ time.Time,
+		event types.IOHealthEvent,
+	) error {
 		saved <- event
 		return nil
 	}
@@ -900,6 +1271,597 @@ func TestIOHealthCancellationDuringBPFLoadIsNormal(t *testing.T) {
 	}
 }
 
+func TestIOHealthBPFSessionContinuesAfterPerfSampleLoss(t *testing.T) {
+	collector := newIOHealthCollector(t.TempDir(), filepath.Join(t.TempDir(), "mdstat"))
+	saved := make(chan types.IOHealthEvent, 1)
+	collector.setEventSubmitter(func(_ time.Time, event types.IOHealthEvent) {
+		saved <- event
+	})
+	t.Cleanup(func() { collector.setEventSubmitter(nil) })
+	reads := 0
+	object := &fakeIOHealthRuntimeBPF{readInto: func(ctx context.Context, value any) error {
+		reads++
+		switch reads {
+		case 1:
+			return &bpf.PerfEventSamplesLostError{Count: 3}
+		case 2:
+			*value.(*ioHealthPerfEvent) = ioHealthPerfEvent{
+				Type:       ioHealthEventNVMeReset,
+				Controller: ioHealthControllerBytes("nvme7"),
+			}
+			return nil
+		default:
+			<-ctx.Done()
+			return types.ErrExitByCancelCtx
+		}
+	}}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		_, retryable, err := collector.runBPFSession(
+			ctx,
+			nil,
+			func(string, map[string]any) (bpf.BPF, error) { return object, nil },
+			time.Millisecond,
+		)
+		if retryable {
+			t.Error("sample loss made the BPF session retryable")
+		}
+		done <- err
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+			t.Error("BPF session did not stop during cleanup")
+		}
+	})
+	select {
+	case event := <-saved:
+		if event.Type != ioHealthTypeNVMeReset || event.Device != "nvme7" {
+			t.Fatalf("event after sample loss = %+v", event)
+		}
+	case err := <-done:
+		t.Fatalf("BPF session stopped before the event after sample loss: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("sample loss prevented the next health event")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("BPF session cancellation error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("BPF session did not stop after cancellation")
+	}
+	metrics, err := collector.Update()
+	if err != nil || len(metrics) != 1 || metrics[0].Value != 1 {
+		t.Fatalf("metrics after sample loss = (%+v, %v), want one counted event", metrics, err)
+	}
+}
+
+func TestIOHealthBPFSessionRetriesTransientAttachFailure(t *testing.T) {
+	collector := newIOHealthCollector(t.TempDir(), filepath.Join(t.TempDir(), "mdstat"))
+	object := &fakeIOHealthRuntimeBPF{attachErrors: map[string]error{
+		"kprobe_nvme_timeout": errors.New("temporary attach transport failure"),
+	}}
+	attached, retryable, err := collector.runBPFSession(
+		t.Context(),
+		&recordingEvidenceSubmitter{},
+		func(string, map[string]any) (bpf.BPF, error) { return object, nil },
+		time.Millisecond,
+	)
+	if attached == 0 {
+		t.Fatal("unaffected hooks were not attached before retry")
+	}
+	if !retryable || err == nil {
+		t.Fatalf("runBPFSession() = (%d, %t, %v), want retryable attach error", attached, retryable, err)
+	}
+}
+
+func TestIOHealthBPFRecoversAfterAttachAndCleanupFailure(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		name := "zero attach"
+		if partial {
+			name = "partial attach"
+		}
+		t.Run(name, func(t *testing.T) {
+			collector := newIOHealthCollector(t.TempDir(), filepath.Join(t.TempDir(), "mdstat"))
+			watcher := newFakeIOHealthMDWatcher()
+			mdStarts := 0
+			collector.newMDWatcher = func(string, string) ioHealthMDWatcher {
+				mdStarts++
+				return watcher
+			}
+			saved := make(chan types.IOHealthEvent, 2)
+			collector.saveEvent = func(_ context.Context, _ time.Time, event types.IOHealthEvent) error {
+				saved <- event
+				return nil
+			}
+
+			attachErr := errors.New("remote attach rejected")
+			first := &fakeIOHealthRuntimeBPF{attachErr: attachErr}
+			if partial {
+				first.attachErr = nil
+				first.attachErrors = map[string]error{"kprobe_nvme_timeout": attachErr}
+			}
+			cleanupStarted := make(chan struct{}, 1)
+			allowCleanup := make(chan struct{})
+			cleanupSucceeded := false
+			first.closeFunc = func() error {
+				select {
+				case <-allowCleanup:
+					cleanupSucceeded = true
+					return nil
+				default:
+				}
+				select {
+				case cleanupStarted <- struct{}{}:
+				default:
+				}
+				return errors.New("remote unload unavailable")
+			}
+			first.loadedFunc = func() (bool, error) {
+				// A failed query cannot establish that the old object is gone.
+				return false, errors.New("remote object lookup unavailable")
+			}
+			events := make(chan ioHealthPerfEvent, 1)
+			attempts := make(chan int, 2)
+			loads := 0
+			loadBPF := func(string, map[string]any) (bpf.BPF, error) {
+				loads++
+				attempts <- loads
+				if loads == 1 {
+					return first, nil
+				}
+				if !cleanupSucceeded {
+					t.Errorf("loaded session %d before old object cleanup succeeded", loads)
+				}
+				return &fakeIOHealthRuntimeBPF{events: events}, nil
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan error, 1)
+			go func() { done <- collector.start(ctx, loadBPF, time.Millisecond) }()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Errorf("collector stop error = %v", err)
+					}
+				case <-time.After(time.Second):
+					t.Error("collector did not stop after cancellation")
+				}
+			})
+
+			waitIOHealthAttempt(t, attempts, 1)
+			select {
+			case <-cleanupStarted:
+			case <-time.After(time.Second):
+				t.Fatal("session did not attempt cleanup after attach failure")
+			}
+			watcher.changes <- iohealth.MDChange{
+				Array: "md0", Field: iohealth.MDFieldSyncAction,
+				OldState: "idle", NewState: "recover", ObservedAt: time.Unix(1, 0),
+			}
+			select {
+			case event := <-saved:
+				if event.Type != ioHealthTypeMDSyncAction {
+					t.Fatalf("event during BPF cleanup = %+v", event)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("MD monitoring stopped during BPF cleanup failure")
+			}
+			close(allowCleanup)
+			waitIOHealthAttempt(t, attempts, 2)
+			events <- ioHealthPerfEvent{Type: ioHealthEventNVMeReset}
+			select {
+			case event := <-saved:
+				if event.Type != ioHealthTypeNVMeReset {
+					t.Fatalf("event after BPF recovery = %+v", event)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("kernel events did not resume after cleanup recovered")
+			}
+			if mdStarts != 1 {
+				t.Fatalf("MD watcher starts = %d, want 1", mdStarts)
+			}
+		})
+	}
+}
+
+func TestIOHealthBPFSessionConfirmsCleanupAfterUnloadError(t *testing.T) {
+	lookupErr := errors.New("object lookup failed")
+	for _, test := range []struct {
+		name       string
+		loaded     bool
+		lookupErr  error
+		wantCloses int
+	}{
+		{name: "object still loaded", loaded: true, wantCloses: 2},
+		{name: "unload response lost but object absent", wantCloses: 1},
+		{name: "lookup failed", lookupErr: lookupErr, wantCloses: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			collector := newIOHealthCollector(t.TempDir(), filepath.Join(t.TempDir(), "mdstat"))
+			attachErr := errors.New("attach failed")
+			closes := 0
+			object := &fakeIOHealthRuntimeBPF{
+				attachErr: attachErr,
+				closeFunc: func() error {
+					closes++
+					if closes == 1 {
+						return errors.New("unload response unavailable")
+					}
+					return nil
+				},
+				loadedFunc: func() (bool, error) { return test.loaded, test.lookupErr },
+			}
+			_, retryable, err := collector.runBPFSession(
+				t.Context(), &recordingEvidenceSubmitter{},
+				func(string, map[string]any) (bpf.BPF, error) { return object, nil },
+				time.Millisecond,
+			)
+			if !retryable || !errors.Is(err, attachErr) {
+				t.Fatalf("session result = (%t, %v), want retryable original attach error", retryable, err)
+			}
+			if closes != test.wantCloses {
+				t.Fatalf("unload attempts = %d, want %d", closes, test.wantCloses)
+			}
+		})
+	}
+}
+
+func TestIOHealthCancellationStopsCleanupRetry(t *testing.T) {
+	collector := newIOHealthCollector(t.TempDir(), filepath.Join(t.TempDir(), "mdstat"))
+	collector.newMDWatcher = func(string, string) ioHealthMDWatcher {
+		return newFakeIOHealthMDWatcher()
+	}
+	closeErr := errors.New("remote unload unavailable")
+	cleanupStarted := make(chan struct{}, 1)
+	object := &fakeIOHealthRuntimeBPF{
+		attachErr: errors.New("remote attach unavailable"),
+		closeFunc: func() error {
+			return closeErr
+		},
+		loadedFunc: func() (bool, error) {
+			cleanupStarted <- struct{}{}
+			return true, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- collector.start(ctx,
+			func(string, map[string]any) (bpf.BPF, error) { return object, nil },
+			time.Hour,
+		)
+	}()
+	select {
+	case <-cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("session did not reach cleanup")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, closeErr) {
+			t.Fatalf("collector stop error = %v, want unresolved cleanup error", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("collector did not cancel the cleanup retry delay")
+	}
+}
+
+func TestIOHealthEventWriterWaitsForTimedOutSave(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		saveErr       error
+		cancelBlocked bool
+	}{
+		{name: "late success"},
+		{name: "late error", saveErr: errors.New("late save failure")},
+		{name: "cancel uncooperative save", cancelBlocked: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			first := time.Unix(1, 0)
+			queued := time.Unix(2, 0)
+			fresh := time.Unix(3, 0)
+			saveStarted := make(chan struct{})
+			releaseSave := make(chan struct{}, 1)
+			saveFinished := make(chan struct{})
+			saved := make(chan time.Time, 2)
+			failures := make(chan string, 8)
+			var mu sync.Mutex
+			active, maxActive := 0, 0
+			writer := newIOHealthEventWriter(
+				func(_ context.Context, at time.Time, _ types.IOHealthEvent) error {
+					mu.Lock()
+					active++
+					maxActive = max(maxActive, active)
+					mu.Unlock()
+					defer func() {
+						mu.Lock()
+						active--
+						mu.Unlock()
+						if at.Equal(first) {
+							close(saveFinished)
+						}
+					}()
+					if at.Equal(first) {
+						close(saveStarted)
+						<-releaseSave
+						return test.saveErr
+					}
+					saved <- at
+					return nil
+				},
+				func(reason string) { failures <- reason },
+				1,
+				100*time.Millisecond,
+			)
+			ctx, cancel := context.WithCancel(t.Context())
+			writer.Start(ctx)
+			done := make(chan struct{})
+			go func() {
+				writer.Wait()
+				close(done)
+			}()
+			t.Cleanup(func() {
+				cancel()
+				close(releaseSave)
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Error("writer did not stop during cleanup")
+				}
+				select {
+				case <-saveFinished:
+				case <-time.After(time.Second):
+					t.Error("released save did not return")
+				}
+			})
+			writer.Submit(first, types.IOHealthEvent{Type: ioHealthTypeBlockError})
+			select {
+			case <-saveStarted:
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for save")
+			}
+			writer.Submit(queued, types.IOHealthEvent{Type: ioHealthTypeBlockError})
+			select {
+			case reason := <-failures:
+				if reason != ioHealthPersistenceWriterTimeout {
+					t.Fatalf("persistence failure = %q, want writer_timeout", reason)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("blocked save did not report its deadline")
+			}
+			writer.Submit(fresh, types.IOHealthEvent{Type: ioHealthTypeBlockError})
+			select {
+			case reason := <-failures:
+				if reason != ioHealthPersistenceQueueFull {
+					t.Fatalf("persistence failure = %q, want queue_full", reason)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("timed-out save did not retain its bounded queue")
+			}
+			select {
+			case <-done:
+				t.Fatal("writer stopped before cancellation or save completion")
+			default:
+			}
+
+			if !test.cancelBlocked {
+				releaseSave <- struct{}{}
+				for _, want := range []time.Time{queued, fresh} {
+					if want.Equal(fresh) {
+						writer.Submit(fresh, types.IOHealthEvent{Type: ioHealthTypeBlockError})
+					}
+					select {
+					case got := <-saved:
+						if !got.Equal(want) {
+							t.Fatalf("saved event time = %v, want %v", got, want)
+						}
+					case <-time.After(time.Second):
+						t.Fatalf("writer did not save event %v after recovery", want)
+					}
+				}
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("writer did not stop after cancellation")
+			}
+			select {
+			case at := <-saved:
+				t.Fatalf("unexpected save while the first save was blocked: %v", at)
+			default:
+			}
+			mu.Lock()
+			gotMax := maxActive
+			mu.Unlock()
+			if gotMax != 1 {
+				t.Fatalf("maximum concurrent saves = %d, want 1", gotMax)
+			}
+			counts := make(map[string]int)
+			for len(failures) != 0 {
+				counts[<-failures]++
+			}
+			if test.cancelBlocked {
+				if counts[ioHealthPersistenceShutdownDiscard] == 0 || len(writer.queue) != 0 {
+					t.Fatalf("queued event was not observably discarded: %v, queue=%d", counts, len(writer.queue))
+				}
+			} else {
+				wantErrors := 0
+				if test.saveErr != nil {
+					wantErrors = 1
+				}
+				if counts[ioHealthPersistenceSaveError] != wantErrors {
+					t.Fatalf("save errors = %d, want %d", counts[ioHealthPersistenceSaveError], wantErrors)
+				}
+			}
+			if counts[ioHealthPersistenceWriterTimeout] != 0 || counts[ioHealthPersistenceWriterStopped] != 0 {
+				t.Fatalf("unexpected persistence failures after timeout: %v", counts)
+			}
+		})
+	}
+}
+
+func TestIOHealthSourcesDoNotBlockOnPersistence(t *testing.T) {
+	root := t.TempDir()
+	dev := writeIOHealthBlockDevice(t, root, "sda", 8, 0)
+	collector := newIOHealthCollector(root, filepath.Join(root, "proc", "mdstat"))
+	saveStarted := make(chan struct{})
+	writer := newIOHealthEventWriter(
+		func(ctx context.Context, _ time.Time, _ types.IOHealthEvent) error {
+			select {
+			case <-saveStarted:
+			default:
+				close(saveStarted)
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		collector.incrementPersistenceFailure,
+		4,
+		time.Hour,
+	)
+	ctx, cancel := context.WithCancel(t.Context())
+	writer.Start(ctx)
+	collector.setEventSubmitter(writer.Submit)
+	t.Cleanup(func() { collector.setEventSubmitter(nil) })
+
+	sourcesDone := make(chan struct{})
+	go func() {
+		collector.handleKernelEvent(ioHealthPerfEvent{
+			Dev:       dev,
+			Status:    -int32(unix.ETIMEDOUT),
+			Type:      ioHealthEventBlockError,
+			Operation: reqOpRead,
+		}, nil)
+		collector.handleMDChange(iohealth.MDChange{
+			Array:      "md0",
+			Field:      iohealth.MDFieldSyncAction,
+			OldState:   "idle",
+			NewState:   "recover",
+			ObservedAt: time.Unix(2, 0),
+		}, &recordingEvidenceSubmitter{})
+		collector.handleEvidenceResult(iohealth.EvidenceResult{
+			Target:      "sda",
+			TriggeredAt: time.Unix(3, 0),
+			Event:       types.IOHealthEvent{Type: ioHealthTypeSCSITimeout},
+		})
+		close(sourcesDone)
+	}()
+	select {
+	case <-sourcesDone:
+	case <-time.After(time.Second):
+		t.Fatal("an IO health source blocked on persistence")
+	}
+	select {
+	case <-saveStarted:
+	case <-time.After(time.Second):
+		t.Fatal("persistence writer did not receive an event")
+	}
+
+	cancel()
+	writer.Wait()
+	if got := collector.counters[ioHealthCounterKey{
+		kind:      ioHealthCounterBlockError,
+		device:    "sda",
+		operation: "read",
+		status:    "timeout",
+	}]; got != 1 {
+		t.Fatalf("block error counter = %d, want 1", got)
+	}
+}
+
+func TestIOHealthPersistenceBackpressureIsBoundedAndObservable(t *testing.T) {
+	root := t.TempDir()
+	dev := writeIOHealthBlockDevice(t, root, "sda", 8, 0)
+	collector := newIOHealthCollector(root, filepath.Join(root, "proc", "mdstat"))
+	saveStarted := make(chan struct{})
+	writer := newIOHealthEventWriter(
+		func(ctx context.Context, _ time.Time, _ types.IOHealthEvent) error {
+			select {
+			case <-saveStarted:
+			default:
+				close(saveStarted)
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		collector.incrementPersistenceFailure,
+		2,
+		time.Hour,
+	)
+	ctx, cancel := context.WithCancel(t.Context())
+	writer.Start(ctx)
+	collector.setEventSubmitter(writer.Submit)
+	t.Cleanup(func() { collector.setEventSubmitter(nil) })
+
+	raw := ioHealthPerfEvent{
+		Dev:       dev,
+		Status:    -int32(unix.ETIMEDOUT),
+		Type:      ioHealthEventBlockError,
+		Operation: reqOpRead,
+	}
+	collector.handleKernelEvent(raw, nil)
+	select {
+	case <-saveStarted:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for blocked persistence")
+	}
+	for range 10 {
+		collector.handleKernelEvent(raw, nil)
+	}
+
+	if got := len(writer.queue); got != cap(writer.queue) {
+		t.Fatalf("queued writes = %d, want bounded capacity %d", got, cap(writer.queue))
+	}
+	collector.mu.RLock()
+	queueFull := collector.persistenceFailures[ioHealthPersistenceQueueFull]
+	count := collector.counters[ioHealthCounterKey{
+		kind:      ioHealthCounterBlockError,
+		device:    "sda",
+		operation: "read",
+		status:    "timeout",
+	}]
+	collector.mu.RUnlock()
+	if queueFull != 8 {
+		t.Fatalf("queue-full failures = %d, want 8", queueFull)
+	}
+	if count != 11 {
+		t.Fatalf("in-memory block error count = %d, want 11", count)
+	}
+
+	data, err := collector.Update()
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if len(data) != 2 {
+		t.Fatalf("Update() returned %d metrics, want 2", len(data))
+	}
+	foundFailureMetric := false
+	for _, sample := range data {
+		if sample.Value == 8 {
+			foundFailureMetric = true
+		}
+	}
+	if !foundFailureMetric {
+		t.Fatalf("persistence failure metric missing from %+v", data)
+	}
+
+	cancel()
+	writer.Wait()
+}
+
 // Optional hook selection and attachment recovery.
 
 type fakeIOHealthAttachBPF struct {
@@ -930,10 +1892,13 @@ func (f *fakeIOHealthAttachBPF) DetachProgram(programName string) error {
 func TestAttachIOHealthHooksDetachesNVMeBootstrapAfterHotplugHooks(t *testing.T) {
 	object := &fakeIOHealthAttachBPF{}
 	primeAfter := -1
-	attached := attachIOHealthHooks(object, func() error {
+	attached, retryErr := attachIOHealthHooks(object, func() error {
 		primeAfter = len(object.programs)
 		return nil
 	})
+	if retryErr != nil {
+		t.Fatalf("attachIOHealthHooks() retry error = %v", retryErr)
+	}
 
 	if want := len(ioHealthHooks) + 2; attached != want {
 		t.Fatalf("attached event sources = %d, want %d", attached, want)
@@ -969,20 +1934,24 @@ func TestAttachIOHealthHooksDetachesNVMeBootstrapAfterHotplugHooks(t *testing.T)
 
 func TestAttachIOHealthHooksDegradesOptionalSources(t *testing.T) {
 	object := &fakeIOHealthAttachBPF{attachErrors: map[string]error{
-		"trace_block_rq_error":         errors.New("remote attach failed"),
-		"kprobe_nvme_sysfs_show_state": errors.New("mapping unavailable"),
-		"kretprobe_nvme_change_state":  errors.New("state unavailable"),
+		"trace_block_rq_error":          types.ErrNotSupported,
+		"trace_block_rq_complete_error": types.ErrNotSupported,
+		"kprobe_nvme_sysfs_show_state":  types.ErrNotSupported,
+		"kretprobe_nvme_change_state":   types.ErrNotSupported,
 	}}
 	primed := false
-	attached := attachIOHealthHooks(object, func() error {
+	attached, retryErr := attachIOHealthHooks(object, func() error {
 		primed = true
 		return nil
 	})
+	if retryErr != nil {
+		t.Fatalf("unsupported hooks requested retry: %v", retryErr)
+	}
 
 	if primed {
 		t.Fatal("NVMe bootstrap ran without the mapping hook")
 	}
-	if want := len(ioHealthHooks) + 1; attached != want {
+	if want := len(ioHealthHooks); attached != want {
 		t.Fatalf("attached event sources = %d, want %d", attached, want)
 	}
 	if len(object.detachAfter) != 0 {
@@ -1005,19 +1974,67 @@ func TestAttachIOHealthHooksDegradesOptionalSources(t *testing.T) {
 	if !reflect.DeepEqual(object.programs[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("attach prefix = %v, want %v", object.programs, wantPrefix)
 	}
-	if got := object.symbols[4:6]; !reflect.DeepEqual(got, []string{
-		"block/block_rq_error",
-		"block_rq_complete",
-	}) {
-		t.Fatalf("block error symbols = %v", got)
+	if got := object.symbols[5]; got != "block_rq_complete" {
+		t.Fatalf("block error symbol = %q", got)
 	}
 }
 
-func TestAttachIOHealthHooksContinuesAfterNVMePrimeFailure(t *testing.T) {
+func TestAttachIOHealthHooksDoesNotFallbackOnPermissionFailure(t *testing.T) {
+	object := &fakeIOHealthAttachBPF{attachErrors: map[string]error{
+		"trace_block_rq_error": unix.EPERM,
+	}}
+	attached, retryErr := attachIOHealthHooks(object, nil)
+	if !errors.Is(retryErr, unix.EPERM) {
+		t.Fatalf("permission failure = %v, want EPERM", retryErr)
+	}
+
+	if want := len(ioHealthHooks) + 1; attached != want {
+		t.Fatalf("attached event sources = %d, want %d", attached, want)
+	}
+	for _, program := range object.programs {
+		if program == "trace_block_rq_complete_error" {
+			t.Fatalf("completion fallback hid permission failure: %v", object.programs)
+		}
+	}
+}
+
+func TestAttachIOHealthHooksUsesBlockCompletionFallback(t *testing.T) {
+	object := &fakeIOHealthAttachBPF{attachErrors: map[string]error{
+		"trace_block_rq_error": types.ErrNotSupported,
+	}}
+	attached, retryErr := attachIOHealthHooks(
+		object,
+		nil,
+	)
+	if retryErr != nil {
+		t.Fatalf("unsupported block_rq_error requested retry: %v", retryErr)
+	}
+	if want := len(ioHealthHooks) + 2; attached != want {
+		t.Fatalf("attached event sources = %d, want %d", attached, want)
+	}
+	if got := object.programs[5]; got != "trace_block_rq_complete_error" {
+		t.Fatalf("block completion program = %q", got)
+	}
+}
+
+func TestAttachIOHealthHooksRetriesSourceThatMayAppearLater(t *testing.T) {
+	object := &fakeIOHealthAttachBPF{attachErrors: map[string]error{
+		"kprobe_nvme_timeout": unix.ENOENT,
+	}}
+	_, retryErr := attachIOHealthHooks(object, nil)
+	if retryErr == nil {
+		t.Fatal("temporarily absent hook did not request a session retry")
+	}
+}
+
+func TestAttachIOHealthHooksRetriesAfterNVMePrimeFailure(t *testing.T) {
 	object := &fakeIOHealthAttachBPF{}
-	attached := attachIOHealthHooks(object, func() error {
+	attached, retryErr := attachIOHealthHooks(object, func() error {
 		return errors.New("read controller state")
 	})
+	if retryErr == nil {
+		t.Fatal("NVMe prime error did not request retry")
+	}
 
 	if want := len(ioHealthHooks) + 2; attached != want {
 		t.Fatalf("attached event sources = %d, want %d", attached, want)
@@ -1032,10 +2049,16 @@ func TestAttachIOHealthHooksContinuesAfterNVMePrimeFailure(t *testing.T) {
 
 func TestAttachIOHealthHooksStopsWhenNVMeBootstrapCannotDetach(t *testing.T) {
 	object := &fakeIOHealthAttachBPF{detachErr: errors.New("detach failed")}
-	attached := attachIOHealthHooks(object, func() error { return nil })
+	attached, retryErr := attachIOHealthHooks(
+		object,
+		func() error { return nil },
+	)
 
 	if attached != 0 {
 		t.Fatalf("attached event sources = %d, want 0", attached)
+	}
+	if retryErr == nil {
+		t.Fatal("NVMe bootstrap detach failure did not request a retry")
 	}
 	if !reflect.DeepEqual(object.programs, []string{
 		"kretprobe_nvme_cdev_add",
@@ -1044,119 +2067,5 @@ func TestAttachIOHealthHooksStopsWhenNVMeBootstrapCannotDetach(t *testing.T) {
 		"kprobe_nvme_sysfs_show_state",
 	}) {
 		t.Fatalf("programs after detach failure = %v", object.programs)
-	}
-}
-
-func ioHealthEnumSpec(t *testing.T, enum *btf.Enum) *btf.Spec {
-	t.Helper()
-	builder, err := btf.NewBuilder([]btf.Type{enum})
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := builder.Marshal(nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, err := btf.LoadSpecFromReader(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return spec
-}
-
-func TestIOHealthNVMeStatesFromBTF(t *testing.T) {
-	// Member values, including vendor backports, determine the exported name.
-	for _, test := range []struct {
-		name  string
-		value uint64
-	}{
-		{"ADMIN_ONLY", 2},
-		{"RESETTING", 2},
-		{"DELETING_NOIO", 5},
-		{"DELETING_NOIO", 9},
-	} {
-		t.Run(fmt.Sprintf("%s-%d", test.name, test.value), func(t *testing.T) {
-			spec := ioHealthEnumSpec(t, &btf.Enum{
-				Name: "nvme_ctrl_state", Size: 4,
-				Values: []btf.EnumValue{{Name: "NVME_CTRL_" + test.name, Value: test.value}},
-			})
-			states := ioHealthNVMeStates(spec)
-			want := strings.ToLower(test.name)
-			if got := ioHealthNVMeStateName(states, uint32(test.value)); got != want {
-				t.Fatalf("state %d = %q, want %q", test.value, got, want)
-			}
-			if got := ioHealthNVMeStateName(states, 255); got != "unknown" {
-				t.Fatalf("unknown state = %q", got)
-			}
-		})
-	}
-	spec := ioHealthEnumSpec(t, &btf.Enum{Name: "other_enum", Size: 4})
-	if got := ioHealthNVMeStateName(ioHealthNVMeStates(spec), 1); got != "unknown" {
-		t.Fatalf("missing NVMe enum = %q", got)
-	}
-}
-
-func TestIOHealthRequestQuietFlagsFromBTF(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		enum   *btf.Enum
-		wanted uint32
-	}{
-		{"macro flags", &btf.Enum{Name: "other_enum", Size: 4}, 1 << 11},
-		{"enum flags", &btf.Enum{
-			Name: "rqf_flags", Size: 4,
-			Values: []btf.EnumValue{{Name: "__RQF_QUIET", Value: 7}},
-		}, 1 << 7},
-		{"renumbered flags", &btf.Enum{
-			Name: "rqf_flags", Size: 4,
-			Values: []btf.EnumValue{{Name: "__RQF_QUIET", Value: 12}},
-		}, 1 << 12},
-		{"absent quiet flag", &btf.Enum{Name: "rqf_flags", Size: 4}, 0},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := ioHealthRequestQuietMask(ioHealthEnumSpec(t, test.enum)); got != test.wanted {
-				t.Fatalf("quiet mask = %#x, want %#x", got, test.wanted)
-			}
-		})
-	}
-}
-
-func TestIOHealthRetainsUnknownNVMeState(t *testing.T) {
-	collector, recorder := newRecordingIOHealthCollector(t, t.TempDir())
-	collector.handleKernelEvent(ioHealthPerfEvent{
-		Type: ioHealthEventNVMeStateChange, NewStateRaw: 253,
-		Controller: ioHealthControllerBytes("nvme0"),
-	}, nil)
-	if len(recorder.events) != 1 || recorder.events[0].event.NewState != "unknown" ||
-		recorder.events[0].event.NewStateRaw == nil || *recorder.events[0].event.NewStateRaw != 253 {
-		t.Fatalf("unknown kernel state was not retained: %+v", recorder.events)
-	}
-}
-
-func TestIOHealthPreservesMDTriggerDuringEvidenceCooldown(t *testing.T) {
-	root := t.TempDir()
-	dev := writeIOHealthBlockDevice(t, root, "sda", 8, 0)
-	collector, recorder := newRecordingIOHealthCollector(t, root)
-	worker := &recordingEvidenceSubmitter{accept: true}
-	collector.handleKernelEvent(ioHealthPerfEvent{
-		Type: ioHealthEventBlockError, Dev: dev, Status: -int32(unix.EIO),
-	}, worker)
-	worker.accept = false
-	at := time.Unix(200, 0)
-	collector.handleMDChange(iohealth.MDChange{
-		Array: "md0", Member: "sda", Field: iohealth.MDFieldMemberState,
-		NewState: "faulty", ObservedAt: at,
-	}, worker)
-	if len(recorder.events) != 1 || recorder.events[0].at != at ||
-		recorder.events[0].event.Type != ioHealthTypeMDMemberState ||
-		recorder.events[0].event.NewState != "faulty" {
-		t.Fatalf("MD trigger was suppressed with its evidence: %+v", recorder.events)
-	}
-	collector.handleEvidenceResult(iohealth.EvidenceResult{
-		Target: worker.requests[0].Target, TriggeredAt: worker.requests[0].TriggeredAt,
-		Event: worker.requests[0].Trigger,
-	})
-	if len(recorder.events) != 2 || recorder.events[1].event.Type != ioHealthTypeBlockError {
-		t.Fatalf("original block trigger was not retained: %+v", recorder.events)
 	}
 }

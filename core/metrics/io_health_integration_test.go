@@ -14,6 +14,7 @@
 
 //go:build linux
 
+// Tests cover real evidence commands, metrics requests, and target discovery.
 package collector
 
 import (
@@ -203,10 +204,18 @@ func runIOHealthRealCommandEvidence(
 
 	collector := newIOHealthCollector("/sys", "/proc/mdstat")
 	saved := make(chan recordedIOHealthEvent, 1)
-	collector.saveEvent = func(at time.Time, event types.IOHealthEvent) error {
+	collector.saveEvent = func(
+		_ context.Context,
+		at time.Time,
+		event types.IOHealthEvent,
+	) error {
 		saved <- recordedIOHealthEvent{at: at, event: event}
 		return nil
 	}
+	collector.setEventSubmitter(func(at time.Time, event types.IOHealthEvent) {
+		_ = collector.saveEvent(t.Context(), at, event)
+	})
+	t.Cleanup(func() { collector.setEventSubmitter(nil) })
 	worker := iohealth.NewEvidenceWorker(iohealth.EvidenceWorkerOptions{
 		OnResult: collector.handleEvidenceResult,
 	})

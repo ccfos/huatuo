@@ -33,6 +33,7 @@ import (
 	testutils "github.com/ccfos/huatuo/internal/testing"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/link"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
@@ -544,11 +545,22 @@ func TestDefaultBPF_AttachIndependentlyPreservesEarlierLink(t *testing.T) {
 	require.Len(t, program.links, 1)
 
 	err = AttachIndependently(b, &AttachOption{
-		ProgramName: "missing_program",
-		Symbol:      "syscalls/sys_enter_nanosleep",
+		// Use a loaded program so failure comes from the attach helper,
+		// not the unknown-program guard before the rollback boundary.
+		ProgramName: "test_kprobe",
+		Symbol:      "huatuo_test_nonexistent_kprobe_target",
 	})
 	require.Error(t, err)
 	require.Len(t, program.links, 1, "failed independent attach must not roll back an earlier link")
+	// Detach closes links without removing their map entries. Check the
+	// underlying perf event after failure, not just the retained entry.
+	for _, attached := range program.links {
+		perfEvent, ok := attached.(link.PerfEvent)
+		require.True(t, ok)
+		file, err := perfEvent.PerfEvent()
+		require.NoError(t, err, "earlier link must remain open")
+		require.NoError(t, file.Close())
+	}
 }
 
 func TestDefaultBPF_DetachProgramPreservesOtherLinks(t *testing.T) {

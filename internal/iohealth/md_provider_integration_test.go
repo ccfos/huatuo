@@ -14,6 +14,7 @@
 
 //go:build linux
 
+// Tests cover real MD lifecycle and deterministic cleanup.
 package iohealth
 
 import (
