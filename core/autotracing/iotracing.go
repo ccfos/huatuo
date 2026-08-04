@@ -112,6 +112,17 @@ type ioTracing struct {
 	maxFilesPerProcess      int
 }
 
+type diskStatusSnapshot struct {
+	devices map[string]diskMetricStatus
+	order   []string
+}
+
+type rawDiskstatsSnapshot struct {
+	timestamp time.Time
+	devices   map[string]blockdevice.Diskstats
+	order     []string
+}
+
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
 
 type ioStatusData struct {
@@ -130,6 +141,19 @@ type diskStatus struct {
 	WriteAwait uint64 `json:"write_await"`
 	IOUtil     uint64 `json:"io_util"`
 	QueueSize  uint64 `json:"queue_size"`
+}
+
+// diskMetricStatus preserves fractional values for threshold and Prometheus
+// calculations without changing the persisted diskStatus contract.
+type diskMetricStatus struct {
+	ReadBPS    float64
+	ReadIOPS   float64
+	ReadAwait  float64
+	WriteBPS   float64
+	WriteIOPS  float64
+	WriteAwait float64
+	IOUtil     float64
+	QueueSize  float64
 }
 
 type reasonSnapshot struct {
@@ -160,21 +184,21 @@ const (
 )
 
 func thresholdReasonFor(
-	previous diskStatus,
-	current diskStatus,
+	previous diskMetricStatus,
+	current diskMetricStatus,
 	thresholds ioThresholds,
 	isNVMe bool,
 ) thresholdReason {
-	if previous.IOUtil > thresholds.UtilThreshold &&
-		current.IOUtil > thresholds.UtilThreshold {
+	if previous.IOUtil > float64(thresholds.UtilThreshold) &&
+		current.IOUtil > float64(thresholds.UtilThreshold) {
 		if isNVMe {
 			// https://man7.org/linux/man-pages/man1/iostat.1.html
-			if previous.ReadBPS > thresholds.RBPSThreshold*1024*1024 &&
-				current.ReadBPS > thresholds.RBPSThreshold*1024*1024 {
+			if previous.ReadBPS > float64(thresholds.RBPSThreshold)*1024*1024 &&
+				current.ReadBPS > float64(thresholds.RBPSThreshold)*1024*1024 {
 				return ioReasonReadBPS
 			}
-			if previous.WriteBPS > thresholds.WBPSThreshold*1024*1024 &&
-				current.WriteBPS > thresholds.WBPSThreshold*1024*1024 {
+			if previous.WriteBPS > float64(thresholds.WBPSThreshold)*1024*1024 &&
+				current.WriteBPS > float64(thresholds.WBPSThreshold)*1024*1024 {
 				return ioReasonWriteBPS
 			}
 		} else {
@@ -182,13 +206,13 @@ func thresholdReasonFor(
 		}
 	}
 
-	if previous.ReadAwait > thresholds.AwaitThreshold &&
-		current.ReadAwait > thresholds.AwaitThreshold {
+	if previous.ReadAwait > float64(thresholds.AwaitThreshold) &&
+		current.ReadAwait > float64(thresholds.AwaitThreshold) {
 		return ioReasonReadAwait
 	}
 
-	if previous.WriteAwait > thresholds.AwaitThreshold &&
-		current.WriteAwait > thresholds.AwaitThreshold {
+	if previous.WriteAwait > float64(thresholds.AwaitThreshold) &&
+		current.WriteAwait > float64(thresholds.AwaitThreshold) {
 		return ioReasonWriteAwait
 	}
 
@@ -232,6 +256,25 @@ func readDiskStats() ([]blockdevice.Diskstats, error) {
 	return fs.ProcDiskstats()
 }
 
+func readRawDiskstatsSnapshot() (*rawDiskstatsSnapshot, error) {
+	stats, err := readDiskStats()
+	if err != nil {
+		return nil, err
+	}
+
+	snapshot := &rawDiskstatsSnapshot{
+		timestamp: time.Now(),
+		devices:   make(map[string]blockdevice.Diskstats, len(stats)),
+		order:     make([]string, 0, len(stats)),
+	}
+	for i := range stats {
+		current := stats[i]
+		snapshot.devices[current.DeviceName] = current
+		snapshot.order = append(snapshot.order, current.DeviceName)
+	}
+	return snapshot, nil
+}
+
 func validDiskstatsWindow(
 	prev *blockdevice.Diskstats,
 	curr *blockdevice.Diskstats,
@@ -256,120 +299,131 @@ func validDiskstatsWindow(
 		curr.WeightedIOTicks >= prev.WeightedIOTicks
 }
 
+// blockdevice.Diskstats is heavy (168 bytes); consider passing it by pointer
 func buildDiskMetric(
-	previous *blockdevice.Diskstats,
-	current *blockdevice.Diskstats,
-	intervalSeconds uint64,
-) (diskStatus, bool) {
-	if intervalSeconds == 0 {
-		return diskStatus{}, false
-	}
-	if !validDiskstatsWindow(previous, current) {
-		return diskStatus{}, false
+	prev *blockdevice.Diskstats,
+	curr *blockdevice.Diskstats,
+	elapsed time.Duration,
+) (diskMetricStatus, bool) {
+	if elapsed <= 0 || !validDiskstatsWindow(prev, curr) {
+		return diskMetricStatus{}, false
 	}
 
-	deltaReadIOs := current.ReadIOs - previous.ReadIOs
-	deltaWriteIOs := current.WriteIOs - previous.WriteIOs
-
-	metrics := diskStatus{
-		IOUtil:    (current.IOsTotalTicks - previous.IOsTotalTicks) / (intervalSeconds * 10),
-		QueueSize: (current.WeightedIOTicks - previous.WeightedIOTicks) / (intervalSeconds * 1000),
-		ReadBPS:   ((current.ReadSectors - previous.ReadSectors) * 512) / intervalSeconds,
-		WriteBPS:  ((current.WriteSectors - previous.WriteSectors) * 512) / intervalSeconds,
-		ReadIOPS:  deltaReadIOs / intervalSeconds,
-		WriteIOPS: deltaWriteIOs / intervalSeconds,
+	elapsedSeconds := elapsed.Seconds()
+	readIOs := curr.ReadIOs - prev.ReadIOs
+	writeIOs := curr.WriteIOs - prev.WriteIOs
+	status := diskMetricStatus{
+		ReadBPS:   float64(curr.ReadSectors-prev.ReadSectors) * 512 / elapsedSeconds,
+		ReadIOPS:  float64(readIOs) / elapsedSeconds,
+		WriteBPS:  float64(curr.WriteSectors-prev.WriteSectors) * 512 / elapsedSeconds,
+		WriteIOPS: float64(writeIOs) / elapsedSeconds,
+		IOUtil:    float64(curr.IOsTotalTicks-prev.IOsTotalTicks) / (elapsedSeconds * 1000) * 100,
+		QueueSize: float64(curr.WeightedIOTicks-prev.WeightedIOTicks) / (elapsedSeconds * 1000),
 	}
 
-	if deltaReadIOs > 0 {
-		metrics.ReadAwait = (current.ReadTicks - previous.ReadTicks) / deltaReadIOs
+	if readIOs > 0 {
+		// milliseconds
+		status.ReadAwait = float64(curr.ReadTicks-prev.ReadTicks) / float64(readIOs)
 	}
-	if deltaWriteIOs > 0 {
-		metrics.WriteAwait = (current.WriteTicks - previous.WriteTicks) / deltaWriteIOs
+	if writeIOs > 0 {
+		status.WriteAwait = float64(curr.WriteTicks-prev.WriteTicks) / float64(writeIOs)
 	}
 
-	return metrics, true
+	return status, true
+}
+
+func buildDiskStatusSnapshot(
+	previous *rawDiskstatsSnapshot,
+	current *rawDiskstatsSnapshot,
+) *diskStatusSnapshot {
+	snapshot := &diskStatusSnapshot{
+		devices: make(map[string]diskMetricStatus, len(current.devices)),
+		order:   make([]string, 0, len(current.order)),
+	}
+	elapsed := current.timestamp.Sub(previous.timestamp)
+	for _, name := range current.order {
+		currentDisk := current.devices[name]
+		previousDisk, ok := previous.devices[name]
+		if !ok {
+			continue
+		}
+		status, ok := buildDiskMetric(&previousDisk, &currentDisk, elapsed)
+		if !ok {
+			continue
+		}
+		snapshot.devices[name] = status
+		snapshot.order = append(snapshot.order, name)
+	}
+	return snapshot
 }
 
 func evaluateThresholds(
-	currentRawStats []blockdevice.Diskstats,
-	lastRawStats map[string]*blockdevice.Diskstats,
-	lastMetrics map[string]diskStatus,
+	raw *rawDiskstatsSnapshot,
+	snapshot *diskStatusSnapshot,
+	lastMetrics map[string]diskMetricStatus,
 	thresholds ioThresholds,
-	intervalSeconds uint64,
 ) *reasonSnapshot {
-	currentDevices := make(map[string]struct{}, len(currentRawStats))
-	for i := range currentRawStats {
-		current := &currentRawStats[i]
+	for name := range lastMetrics {
+		if _, valid := snapshot.devices[name]; !valid {
+			delete(lastMetrics, name)
+		}
+	}
 
-		if strings.HasPrefix(current.DeviceName, "md") {
+	for _, name := range snapshot.order {
+		if strings.HasPrefix(name, "md") {
 			continue
 		}
-		currentDevices[current.DeviceName] = struct{}{}
 
-		if previous, ok := lastRawStats[current.DeviceName]; ok {
-			metric, valid := buildDiskMetric(previous, current, intervalSeconds)
-			if !valid {
-				delete(lastMetrics, current.DeviceName)
-				lastRawStats[current.DeviceName] = current
-				continue
+		status := snapshot.devices[name]
+		log.WithField("device", name).
+			WithField("io_util_percent", status.IOUtil).
+			WithField("queue_size", status.QueueSize).
+			WithField("read_kbps", status.ReadBPS/1024).
+			WithField("write_kbps", status.WriteBPS/1024).
+			WithField("read_iops", status.ReadIOPS).
+			WithField("write_iops", status.WriteIOPS).
+			WithField("read_await_ms", status.ReadAwait).
+			WithField("write_await_ms", status.WriteAwait).
+			Debug("sampled disk io metrics")
+
+		reasonType := thresholdReasonFor(lastMetrics[name], status, thresholds, strings.HasPrefix(name, "nvme"))
+		if reasonType != ioReasonNone {
+			device := raw.devices[name]
+			persisted := persistedDiskStatus(status)
+			return &reasonSnapshot{
+				Type:        string(reasonType),
+				Device:      device.DeviceName,
+				MajorNumber: device.MajorNumber,
+				MinorNumber: device.MinorNumber,
+				IOStatus:    persisted,
+				Summary: iotracingSummary(reasonType,
+					fmt.Sprintf("%s(%d:%d)", device.DeviceName, device.MajorNumber, device.MinorNumber),
+					persisted, thresholds),
 			}
-
-			log.WithField("device", current.DeviceName).
-				WithField("io_util_percent", metric.IOUtil).
-				WithField("queue_size", metric.QueueSize).
-				WithField("read_kbps", metric.ReadBPS/1024).
-				WithField("write_kbps", metric.WriteBPS/1024).
-				WithField("read_iops", metric.ReadIOPS).
-				WithField("write_iops", metric.WriteIOPS).
-				WithField("read_await_ms", metric.ReadAwait).
-				WithField("write_await_ms", metric.WriteAwait).
-				Debug("sampled disk io metrics")
-
-			reasonType := thresholdReasonFor(
-				lastMetrics[current.DeviceName],
-				metric,
-				thresholds,
-				strings.HasPrefix(current.DeviceName, "nvme"),
-			)
-			if reasonType != ioReasonNone {
-				device := fmt.Sprintf(
-					"%s(%d:%d)",
-					current.DeviceName,
-					current.MajorNumber,
-					current.MinorNumber,
-				)
-				return &reasonSnapshot{
-					Type:        string(reasonType),
-					Device:      current.DeviceName,
-					MajorNumber: current.MajorNumber,
-					MinorNumber: current.MinorNumber,
-					IOStatus:    metric,
-					Summary: iotracingSummary(
-						reasonType,
-						device,
-						metric,
-						thresholds,
-					),
-				}
-			}
-
-			lastMetrics[current.DeviceName] = metric
 		}
 
-		lastRawStats[current.DeviceName] = current
+		lastMetrics[name] = status
 	}
-	deleteMissingDiskState(lastRawStats, lastMetrics, currentDevices)
 	return nil
 }
 
-func waitForDiskEvent(
-	ctx context.Context,
-	intervalSeconds uint64,
-	thresholds ioThresholds,
-) (*reasonSnapshot, error) {
-	lastRawStats := make(map[string]*blockdevice.Diskstats)
-	lastMetrics := make(map[string]diskStatus)
-	ticker := time.NewTicker(time.Duration(int64(intervalSeconds)) * time.Second)
+func persistedDiskStatus(status diskMetricStatus) diskStatus {
+	return diskStatus{
+		ReadBPS:    uint64(status.ReadBPS),
+		ReadIOPS:   uint64(status.ReadIOPS),
+		ReadAwait:  uint64(status.ReadAwait),
+		WriteBPS:   uint64(status.WriteBPS),
+		WriteIOPS:  uint64(status.WriteIOPS),
+		WriteAwait: uint64(status.WriteAwait),
+		IOUtil:     uint64(status.IOUtil),
+		QueueSize:  uint64(status.QueueSize),
+	}
+}
+
+func waitForDiskEvent(ctx context.Context, intervalSeconds uint64, thresholds ioThresholds) (*reasonSnapshot, error) {
+	var previous *rawDiskstatsSnapshot
+	lastMetrics := make(map[string]diskMetricStatus)
+	ticker := time.NewTicker(time.Duration(intervalSeconds) * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -377,31 +431,27 @@ func waitForDiskEvent(
 		case <-ctx.Done():
 			return nil, types.ErrExitByCancelCtx
 		case <-ticker.C:
-			currentRawStats, err := readDiskStats()
+			current, err := readRawDiskstatsSnapshot()
 			if err != nil {
 				return nil, err
 			}
+			if previous == nil {
+				previous = current
+				continue
+			}
 
-			if reason := evaluateThresholds(
-				currentRawStats, lastRawStats, lastMetrics, thresholds, intervalSeconds,
-			); reason != nil {
+			snapshot := buildDiskStatusSnapshot(previous, current)
+			reason := evaluateThresholds(
+				current,
+				snapshot,
+				lastMetrics,
+				thresholds,
+			)
+			if reason != nil {
 				return reason, nil
 			}
+			previous = current
 		}
-	}
-}
-
-func deleteMissingDiskState(
-	rawStats map[string]*blockdevice.Diskstats,
-	metrics map[string]diskStatus,
-	currentDevices map[string]struct{},
-) {
-	for device := range rawStats {
-		if _, ok := currentDevices[device]; ok {
-			continue
-		}
-		delete(rawStats, device)
-		delete(metrics, device)
 	}
 }
 
