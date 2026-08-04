@@ -42,8 +42,7 @@ func init() {
 	})
 }
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_cpu_profiler.c -o $BPF_DIR/native_cpu_profiler.o
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_offcpu_profiler.c -o $BPF_DIR/native_offcpu_profiler.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_oncpu_profiler.c -o $BPF_DIR/native_oncpu_profiler.o
 
 type cpuNativeProfiler struct {
 	bpf    bpf.BPF
@@ -66,92 +65,71 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	if err := validateNativePIDs("CPU", pctx.PIDs); err != nil {
 		return err
 	}
+
+	var offCPU bool
+	switch pctx.CPUMode {
+	case profiling.CPUModeOnCPU:
+	case profiling.CPUModeOffCPU:
+		offCPU = true
+	default:
+		return fmt.Errorf("start native CPU profiler: unsupported mode %q", pctx.CPUMode)
+	}
+
 	if err := requireRoot(); err != nil {
 		return err
 	}
 
-	log.Infof("starting native cpu profiler")
+	log.Infof("starting native CPU profiler: mode=%s", pctx.CPUMode)
 
 	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemCPU)
 	if err != nil {
 		return err
 	}
 
-	p.dbg = bpf.NewDbg(pctx.LogBpfDebug)
-
-	objectName := "native_cpu_profiler.o"
-	constants := newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
-	attachOptions := nativeCPUOnCPUAttachOptions(pctx)
-	if pctx.CPUMode == profiling.CPUModeOffCPU {
+	var objectName string
+	var constants map[string]any
+	var attachOptions []bpf.AttachOption
+	if offCPU {
 		objectName = "native_offcpu_profiler.o"
 		constants = newNativeOffCPUBPFConstants(pctx, cssAddr)
-		attachOptions = nativeCPUOffCPUAttachOptions()
+		attachOptions = nativeOffCPUAttachOptions()
+	} else {
+		objectName = "native_oncpu_profiler.o"
+		constants = newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
+		attachOptions = nativeOnCPUAttachOptions(pctx)
 	}
-	p.offCPU = pctx.CPUMode == profiling.CPUModeOffCPU
 
-	b, err := bpf.LoadBPF(objectName, p.dbg.WithBpfDbg(constants))
+	dbg := bpf.NewDbg(pctx.LogBpfDebug)
+	b, err := bpf.LoadBPF(objectName, dbg.WithBpfDbg(constants))
 	if err != nil {
-		return fmt.Errorf("failed to load bpf: %w", err)
+		return fmt.Errorf("load native CPU %s BPF object %q: %w", pctx.CPUMode, objectName, err)
+	}
+
+	if err := b.AttachWithOptions(attachOptions); err != nil {
+		attachErr := fmt.Errorf("attach native CPU %s probes: %w", pctx.CPUMode, err)
+		if closeErr := b.Close(); closeErr != nil {
+			return errors.Join(
+				attachErr,
+				fmt.Errorf("close BPF after attach failure: %w", closeErr),
+			)
+		}
+		return attachErr
 	}
 
 	p.bpf = b
-
-	if err := p.bpf.AttachWithOptions(attachOptions); err != nil {
-		if cerr := p.bpf.Close(); cerr != nil {
-			log.Warnf("closing eBPF after attach failure: %v", cerr)
-		}
-
-		return fmt.Errorf("failed to attach native CPU %s probes: %w", pctx.CPUMode, err)
-	}
-
+	p.dbg = dbg
+	p.offCPU = offCPU
 	log.Infof("eBPF attached")
 
 	return nil
 }
 
-func nativeCPUOnCPUAttachOptions(pctx *pcontext.ProfilerContext) []bpf.AttachOption {
+func nativeOnCPUAttachOptions(pctx *pcontext.ProfilerContext) []bpf.AttachOption {
 	opt := bpf.AttachOption{ProgramName: "perf_event_sw_cpu_clock"}
 	opt.PerfEvent.SampleFreq = uint64(pctx.Freq)
 	opt.PerfEvent.SamplePeriod = 0
 	opt.PerfEvent.CPUIDs = pctx.CPUIDs
 	return []bpf.AttachOption{opt}
-}
-
-func nativeCPUOffCPUAttachOptions() []bpf.AttachOption {
-	return []bpf.AttachOption{
-		{ProgramName: "native_cpu_offcpu_switch", Symbol: "sched_switch"},
-		{ProgramName: "native_cpu_offcpu_wakeup", Symbol: "sched_wakeup"},
-		{ProgramName: "native_cpu_offcpu_wakeup_new", Symbol: "sched_wakeup_new"},
-		{ProgramName: "native_cpu_offcpu_exit", Symbol: "sched_process_exit"},
-		{ProgramName: "native_cpu_offcpu_free", Symbol: "sched_process_free"},
-	}
-}
-
-func newNativeOffCPUBPFConstants(pctx *pcontext.ProfilerContext, cssAddr uint64) map[string]any {
-	constants := newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
-	constants["profiler_offcpu_metric"] = offCPUMetricCode(pctx.OffCPUMetric)
-	constants["profiler_offcpu_min_ns"] = microsecondsToNanoseconds(pctx.OffCPUMinUS)
-	constants["profiler_offcpu_max_ns"] = microsecondsToNanoseconds(pctx.OffCPUMaxUS)
-	return constants
-}
-
-func offCPUMetricCode(metric profiling.OffCPUMetric) uint32 {
-	switch metric {
-	case profiling.OffCPUMetricBlocked:
-		return 1
-	case profiling.OffCPUMetricRunnable:
-		return 2
-	default:
-		return 0
-	}
-}
-
-func microsecondsToNanoseconds(value uint64) uint64 {
-	const nsPerMicrosecond = uint64(time.Microsecond)
-	if value > ^uint64(0)/nsPerMicrosecond {
-		return ^uint64(0)
-	}
-	return value * nsPerMicrosecond
 }
 
 func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {

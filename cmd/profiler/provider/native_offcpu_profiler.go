@@ -20,13 +20,18 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
+	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/procutil"
+	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/types"
 )
+
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_offcpu_profiler.c -o $BPF_DIR/native_offcpu_profiler.o
 
 const (
 	offCPUEventBlocked  uint16 = 1
@@ -42,7 +47,47 @@ type offCPUStackKey struct {
 	Category string
 }
 
-func (p *cpuNativeProfiler) readOffCPUDataLoop(ctx context.Context, enqueue func(any)) error {
+func nativeOffCPUAttachOptions() []bpf.AttachOption {
+	return []bpf.AttachOption{
+		{ProgramName: "native_cpu_offcpu_switch", Symbol: "sched_switch"},
+		{ProgramName: "native_cpu_offcpu_wakeup", Symbol: "sched_wakeup"},
+		{ProgramName: "native_cpu_offcpu_wakeup_new", Symbol: "sched_wakeup_new"},
+		{ProgramName: "native_cpu_offcpu_exit", Symbol: "sched_process_exit"},
+		{ProgramName: "native_cpu_offcpu_free", Symbol: "sched_process_free"},
+	}
+}
+
+func newNativeOffCPUBPFConstants(pctx *pcontext.ProfilerContext, cssAddr uint64) map[string]any {
+	constants := newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
+	constants["profiler_offcpu_metric"] = offCPUMetricCode(pctx.OffCPUMetric)
+	constants["profiler_offcpu_min_ns"] = microsecondsToNanoseconds(pctx.OffCPUMinUS)
+	constants["profiler_offcpu_max_ns"] = microsecondsToNanoseconds(pctx.OffCPUMaxUS)
+	return constants
+}
+
+func offCPUMetricCode(metric profiling.OffCPUMetric) uint32 {
+	switch metric {
+	case profiling.OffCPUMetricBlocked:
+		return 1
+	case profiling.OffCPUMetricRunnable:
+		return 2
+	default:
+		return 0
+	}
+}
+
+func microsecondsToNanoseconds(value uint64) uint64 {
+	const nsPerMicrosecond = uint64(time.Microsecond)
+	if value > ^uint64(0)/nsPerMicrosecond {
+		return ^uint64(0)
+	}
+	return value * nsPerMicrosecond
+}
+
+func (p *cpuNativeProfiler) readOffCPUDataLoop(
+	ctx context.Context,
+	enqueue func(any),
+) error {
 	log.Infof("off-CPU data reading loop started")
 	var lostSamples uint64
 	defer func() {

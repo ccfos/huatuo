@@ -19,7 +19,7 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 
 readonly PROFILER_BIN="${ROOT_DIR}/_output/bin/profiler"
-readonly NATIVE_BPF_OBJECT="${ROOT_DIR}/_output/bpf/native_cpu_profiler.o"
+readonly NATIVE_BPF_OBJECT="${ROOT_DIR}/_output/bpf/native_oncpu_profiler.o"
 readonly CPU_LIMIT_PERCENT=10
 readonly SAMPLE_SECONDS=5
 readonly PROFILER_DURATION=15

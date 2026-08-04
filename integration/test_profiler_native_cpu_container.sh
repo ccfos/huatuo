@@ -24,7 +24,7 @@ source "${ROOT_DIR}/integration/lib.sh"
 is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
 
 readonly PROFILER_BIN="${ROOT_DIR}/_output/bin/profiler"
-readonly PROFILER_BPF="${ROOT_DIR}/_output/bpf/native_cpu_profiler.o"
+readonly PROFILER_BPF="${ROOT_DIR}/_output/bpf/native_oncpu_profiler.o"
 readonly CSS_BPF="${ROOT_DIR}/_output/bpf/cgroup_css_sync.o"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 readonly DEFAULT_CONTAINER_IMAGE="${NATIVE_PROFILER_CONTAINER_IMAGE:-busybox:1.36.1}"

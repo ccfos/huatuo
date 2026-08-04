@@ -30,7 +30,7 @@ readonly PROFILER_FREQ=99
 readonly PROFILER_AGGR_INTERVAL=2
 
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -r "${ROOT_DIR}/_output/bpf/native_cpu_profiler.o" ]] || fatal "native bpf object missing"
+[[ -r "${ROOT_DIR}/_output/bpf/native_oncpu_profiler.o" ]] || fatal "native bpf object missing"
 [[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip "perf_event_paranoid not readable: perf unavailable"
 readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
 [[ "${PARANOID}" -le 2 ]] || skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"

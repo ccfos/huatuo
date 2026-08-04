@@ -35,7 +35,7 @@ continuous_profiling_requirements() {
 		|| fatal "huatuo-bamai binary missing"
 	[[ -x "${ROOT_DIR}/_output/bin/profiler" ]] \
 		|| fatal "profiler binary missing"
-	[[ -r "${ROOT_DIR}/_output/bpf/native_cpu_profiler.o" ]] \
+	[[ -r "${ROOT_DIR}/_output/bpf/native_oncpu_profiler.o" ]] \
 		|| fatal "native CPU profiler BPF object missing"
 	[[ -r /proc/sys/kernel/perf_event_paranoid ]] \
 		|| skip "perf_event is unavailable"

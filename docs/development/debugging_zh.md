@@ -95,7 +95,7 @@ profiler 支持该开关：
 - `args`：最多三个 `u64` 参数；全部为零时省略。
 
 ```text
-bpf_dbg: file=native_cpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456Z msg=enter prog args=[0x1f4 0xffff8881 0x0]
+bpf_dbg: file=native_oncpu_profiler.c line=120 ts=2026-01-11T08:30:00.123456Z msg=enter prog args=[0x1f4 0xffff8881 0x0]
 ```
 
 只有同时使用 `BPF_DEBUG=1` 编译并在运行时指定 `--log-bpf-debug`，才会产生
