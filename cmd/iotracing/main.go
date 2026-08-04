@@ -115,16 +115,17 @@ func mainAction(c *cli.Context) (returnErr error) {
 	defer bpf.Shutdown()
 
 	result, err := runTrace(c.Context, c.String(cliFlagBpfPath), cfg, filters)
-	if err != nil {
+	if result == nil {
 		return err
 	}
 
 	sink := newWriter(c.String(cliFlagOutput), client)
-	if err := sink.Write(result); err != nil {
-		return fmt.Errorf("write output: %w", err)
+	writeErr := sink.Write(result)
+	if writeErr != nil {
+		writeErr = fmt.Errorf("write output: %w", writeErr)
 	}
 
-	return nil
+	return errors.Join(err, writeErr)
 }
 
 // openToolstream returns a connected toolstream client when

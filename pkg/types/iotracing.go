@@ -14,12 +14,17 @@
 
 package types
 
+// IOTracingFailureReader means the perf reader failed before the capture
+// window completed. Data collected before the failure may still be present.
+const IOTracingFailureReader = "reader_error"
+
 // IOTracingSnapshot is the wire schema produced by one iotracing run and
 // sent to huatuo-bamai over toolstream. The trigger reason snapshot is
 // attached by the daemon after receipt and is not part of this payload.
 type IOTracingSnapshot struct {
-	Processes   []ProcessFileIOStats `json:"process_file_io_stats"`
-	StallStacks []IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
+	FailureReason string               `json:"failure_reason,omitempty"`
+	Processes     []ProcessFileIOStats `json:"process_file_io_stats"`
+	StallStacks   []IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
 }
 
 // IOScheduleEvent records one task that spent longer than the configured

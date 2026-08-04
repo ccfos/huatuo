@@ -73,9 +73,10 @@ func handleIotracingEvent(sess *toolstream.Session, ev *types.IOTracingSnapshot)
 		TracerName: iotracingToolName,
 		TracerTime: time.Now(),
 		TracerData: &ioStatusData{
-			Reason:      reason,
-			Processes:   ev.Processes,
-			StallStacks: ev.StallStacks,
+			Reason:        reason,
+			FailureReason: ev.FailureReason,
+			Processes:     ev.Processes,
+			StallStacks:   ev.StallStacks,
 		},
 		TracerRunType: tracing.TracerRunTypeAutotracing,
 	})
@@ -113,9 +114,10 @@ type ioTracing struct {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iotracing.c -o $BPF_DIR/iotracing.o
 
 type ioStatusData struct {
-	Reason      *reasonSnapshot            `json:"reason_snapshot"`
-	Processes   []types.ProcessFileIOStats `json:"process_file_io_stats"`
-	StallStacks []types.IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
+	Reason        *reasonSnapshot            `json:"reason_snapshot"`
+	FailureReason string                     `json:"failure_reason,omitempty"`
+	Processes     []types.ProcessFileIOStats `json:"process_file_io_stats"`
+	StallStacks   []types.IOScheduleEvent    `json:"io_schedule_timeout_stacks"`
 }
 
 type diskStatus struct {
@@ -457,6 +459,7 @@ func (i *ioTracing) Start(ctx context.Context) error {
 		done <- cmd.Wait()
 	}()
 
+	var exitErr error
 	select {
 	case <-ctx.Done():
 		pendingReasons.Delete(taskID)
@@ -475,19 +478,29 @@ func (i *ioTracing) Start(ctx context.Context) error {
 			log.Info("iotracing stopped")
 			return nil
 		}
-		if werr != nil {
-			pendingReasons.Delete(taskID)
-			return fmt.Errorf("iotracing exited: %w", werr)
-		}
+		exitErr = werr
 	}
 
-	return waitForSnapshot(
+	return waitForSnapshotAfterExit(ctx, taskID, pending, exitErr)
+}
+
+func waitForSnapshotAfterExit(
+	ctx context.Context,
+	taskID string,
+	pending *pendingIOTracingReason,
+	exitErr error,
+) error {
+	snapshotErr := waitForSnapshot(
 		ctx,
 		taskID,
 		pending,
 		iotracingSnapshotTimeout,
 		iotracingSnapshotSaveTimeout,
 	)
+	if exitErr == nil {
+		return snapshotErr
+	}
+	return errors.Join(fmt.Errorf("iotracing exited: %w", exitErr), snapshotErr)
 }
 
 func waitForSnapshot(
