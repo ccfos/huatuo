@@ -24,7 +24,9 @@ import (
 )
 
 const (
-	ioHealthEventBlockError = 1
+	ioHealthEventBlockError = iota + 1
+	ioHealthEventSCSITimeout
+	ioHealthEventSCSIDispatchError
 )
 
 type ioHealthHook struct {
@@ -40,6 +42,11 @@ var ioHealthBlockErrorHook = ioHealthHook{
 var ioHealthBlockCompleteHook = ioHealthHook{
 	program: "trace_block_rq_complete_error",
 	symbol:  "block_rq_complete",
+}
+
+var ioHealthHooks = []ioHealthHook{
+	{program: "trace_scsi_timeout", symbol: "scsi/scsi_dispatch_cmd_timeout"},
+	{program: "trace_scsi_dispatch_error", symbol: "scsi/scsi_dispatch_cmd_error"},
 }
 
 func attachIOHealthHooks(

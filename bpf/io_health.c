@@ -38,6 +38,8 @@ const volatile u32 io_health_rqf_quiet_mask = 1U << 11;
 
 enum health_event_type {
 	HEALTH_EVENT_BLOCK_ERROR = 1,
+	HEALTH_EVENT_SCSI_TIMEOUT,
+	HEALTH_EVENT_SCSI_DISPATCH_ERROR,
 };
 
 struct {
@@ -59,6 +61,27 @@ struct trace_event_raw_block_rq_completion___io_health {
 	int error;
 	char rwbs[2];
 } __attribute__((preserve_access_index));
+
+/*
+ * SCSI trace-event types may live in module BTF. Mirror the stable prefix
+ * from include/trace/events/scsi.h instead of depending on those types.
+ */
+struct io_health_scsi_timeout_ctx {
+	u64 trace_entry;
+	u32 host_no;
+	u32 channel;
+	u32 id;
+	u32 lun;
+};
+
+struct io_health_scsi_dispatch_error_ctx {
+	u64 trace_entry;
+	u32 host_no;
+	u32 channel;
+	u32 id;
+	u32 lun;
+	s32 rtn;
+};
 
 static __always_inline u32 encode_dev(u32 major, u32 minor)
 {
@@ -182,4 +205,35 @@ int trace_block_rq_complete_error(struct bpf_raw_tracepoint_args *ctx)
 		return 0;
 
 	return submit_block_error(ctx, req, status);
+}
+
+SEC("tracepoint/scsi/scsi_dispatch_cmd_timeout")
+int trace_scsi_timeout(struct io_health_scsi_timeout_ctx *ctx)
+{
+	struct io_health_event event = {
+		.type = HEALTH_EVENT_SCSI_TIMEOUT,
+		.host = ctx->host_no,
+		.channel = ctx->channel,
+		.target = ctx->id,
+		.lun = ctx->lun,
+	};
+
+	submit_event(ctx, &event);
+	return 0;
+}
+
+SEC("tracepoint/scsi/scsi_dispatch_cmd_error")
+int trace_scsi_dispatch_error(struct io_health_scsi_dispatch_error_ctx *ctx)
+{
+	struct io_health_event event = {
+		.type = HEALTH_EVENT_SCSI_DISPATCH_ERROR,
+		.status = ctx->rtn,
+		.host = ctx->host_no,
+		.channel = ctx->channel,
+		.target = ctx->id,
+		.lun = ctx->lun,
+	};
+
+	submit_event(ctx, &event);
+	return 0;
 }
