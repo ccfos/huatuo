@@ -149,6 +149,52 @@ func TestWaitForSnapshotTimeouts(t *testing.T) {
 	})
 }
 
+func TestWaitForSnapshotAfterFailedExitKeepsReason(t *testing.T) {
+	const taskID = "failed-child-snapshot-task"
+	exitErr := errors.New("child failed")
+	pending := &pendingIOTracingReason{
+		reason:   &reasonSnapshot{Type: string(ioReasonUtil)},
+		received: make(chan struct{}),
+		result:   make(chan error, 1),
+	}
+	pendingReasons.Store(taskID, pending)
+	t.Cleanup(func() {
+		pendingReasons.Delete(taskID)
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- waitForSnapshotAfterExit(
+			context.Background(),
+			taskID,
+			pending,
+			exitErr,
+		)
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("wait returned before snapshot delivery: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	value, ok := pendingReasons.LoadAndDelete(taskID)
+	if !ok || value != pending {
+		t.Fatal("failed child did not retain its pending reason")
+	}
+	close(pending.received)
+	pending.result <- nil
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, exitErr) {
+			t.Fatalf("wait error = %v, want child exit error", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("wait did not finish after snapshot delivery")
+	}
+}
+
 func TestKillIOTracingProcessAndWait(t *testing.T) {
 	stopErr := errors.New("permission denied")
 	tests := []struct {
