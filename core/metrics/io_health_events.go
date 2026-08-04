@@ -27,7 +27,9 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/io_health.c -o $BPF_DIR/io_health.o
 
 const (
-	ioHealthEventBlockError = uint8(abi.HealthEventBlockError)
+	ioHealthEventBlockError        = uint8(abi.HealthEventBlockError)
+	ioHealthEventSCSITimeout       = uint8(abi.HealthEventScsiTimeout)
+	ioHealthEventSCSIDispatchError = uint8(abi.HealthEventScsiDispatchError)
 )
 
 type ioHealthHook struct {
@@ -43,6 +45,11 @@ var ioHealthBlockErrorHook = ioHealthHook{
 var ioHealthBlockCompleteHook = ioHealthHook{
 	program: "trace_block_rq_complete_error",
 	symbol:  "block_rq_complete",
+}
+
+var ioHealthHooks = []ioHealthHook{
+	{program: "trace_scsi_timeout", symbol: "scsi/scsi_dispatch_cmd_timeout"},
+	{program: "trace_scsi_dispatch_error", symbol: "scsi/scsi_dispatch_cmd_error"},
 }
 
 func attachIOHealthHooks(
