@@ -20,10 +20,20 @@
 //     repair, reshape, frozen, or unknown transitions.
 //   - /sys/block/mdX/md/degraded reports unavailable-member count changes.
 //
+// MD member monitoring:
+//
+//   - /sys/block/mdX/md/dev-*/state reports notification-backed state changes.
+//   - degraded notifications refresh every member so simultaneous changes are
+//     emitted separately.
+//   - topology rebuilds report a previously known member that disappears as
+//     removed.
+//
 // The files are opened once and waited on with poll notifications. Initial
 // values establish a baseline; only later transitions are emitted. No periodic
 // polling or external mdadm command is used.
 
+// MD monitoring reports notification-backed transitions; initial state is a
+// baseline rather than a stream of startup health events.
 package iohealth
 
 import (
@@ -37,6 +47,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -55,14 +66,17 @@ const (
 )
 
 // MDChange describes one observed MD state transition. Member is empty for
-// array-level fields. ObservedAt is the watcher's observation time.
+// array-level fields. MemberIdentity is the observed block-device sysfs node,
+// retained with removal events so a same-name replacement cannot supply evidence.
+// ObservedAt is the watcher's observation time.
 type MDChange struct {
-	Array      string
-	Member     string
-	Field      string
-	OldState   string
-	NewState   string
-	ObservedAt time.Time
+	Array          string
+	Member         string
+	MemberIdentity string
+	Field          string
+	OldState       string
+	NewState       string
+	ObservedAt     time.Time
 }
 
 const (
@@ -70,6 +84,7 @@ const (
 	mdLevel        = "level"
 	mdSyncAction   = "sync_action"
 	mdDegraded     = "degraded"
+	mdMemberState  = "state"
 	mdMaxReadBytes = 4096
 	mdStatMaxBytes = 1 << 20
 )
@@ -77,9 +92,11 @@ const (
 type mdPollFunc func([]unix.PollFd, int) (int, error)
 
 type mdWatchFile struct {
-	file  *os.File
-	array string
-	field string
+	file     *os.File
+	array    string
+	member   string
+	field    string
+	identity string
 }
 
 type mdArrayState struct {
@@ -97,7 +114,9 @@ type MDWatcher struct {
 	now            func() time.Time
 	ctx            context.Context
 
+	// Start initializes state before run becomes its sole owner.
 	arrays  map[string]mdArrayState
+	members map[string]map[string]string
 	files   map[int32]*mdWatchFile
 	changes chan MDChange
 
@@ -120,6 +139,7 @@ func newMDWatcher(procMDStatPath, sysBlockPath string, poll mdPollFunc) *MDWatch
 		poll:           poll,
 		now:            time.Now,
 		arrays:         make(map[string]mdArrayState),
+		members:        make(map[string]map[string]string),
 		files:          make(map[int32]*mdWatchFile),
 		changes:        make(chan MDChange, 64),
 		wakeRead:       -1,
@@ -143,6 +163,7 @@ func (w *MDWatcher) Start(ctx context.Context) error {
 	if err := unix.Pipe2(wake, unix.O_CLOEXEC|unix.O_NONBLOCK); err != nil {
 		return fmt.Errorf("md watcher: create wake pipe: %w", err)
 	}
+
 	w.ctx = ctx
 	err := w.rebuild(false)
 	if err != nil {
@@ -197,6 +218,7 @@ func (w *MDWatcher) run(ctx context.Context, wakeRead, wakeWrite int, done chan 
 	<-wakerDone
 	unix.Close(wakeRead)
 	unix.Close(wakeWrite)
+
 	w.closeFiles()
 
 	w.lifecycleMu.Lock()
@@ -230,7 +252,6 @@ func (w *MDWatcher) pollLoop(wakeRead int) error {
 }
 
 func (w *MDWatcher) pollFDs(wakeRead int) ([]unix.PollFd, []*mdWatchFile) {
-
 	pollFDs := make([]unix.PollFd, 1, len(w.files)+1)
 	targets := make([]*mdWatchFile, 1, len(w.files)+1)
 	pollFDs[0] = unix.PollFd{Fd: int32(wakeRead), Events: unix.POLLIN}
@@ -246,7 +267,6 @@ func (w *MDWatcher) pollFDs(wakeRead int) ([]unix.PollFd, []*mdWatchFile) {
 }
 
 func (w *MDWatcher) handleEvent(target *mdWatchFile, events int16) error {
-
 	fd := int32(target.file.Fd())
 	if w.files[fd] != target {
 		return nil
@@ -271,7 +291,14 @@ func (w *MDWatcher) handleEvent(target *mdWatchFile, events int16) error {
 	case mdSyncAction:
 		return w.handleSyncActionEvent(target)
 	case mdDegraded:
-		return w.handleDegradedEvent(target)
+		if err := w.handleDegradedEvent(target); err != nil {
+			return err
+		}
+		for _, change := range w.refreshMemberStates(target.array) {
+			w.emitChange(change)
+		}
+	case mdMemberState:
+		return w.handleMemberEvent(target)
 	}
 	return nil
 }
@@ -299,6 +326,28 @@ func (w *MDWatcher) handleSyncActionEvent(target *mdWatchFile) error {
 	status.syncAction = action
 	w.arrays[target.array] = status
 	w.emitChange(change)
+	return nil
+}
+
+func (w *MDWatcher) handleMemberEvent(target *mdWatchFile) error {
+	value, err := readOpenMDFile(target.file)
+	if err != nil {
+		return w.rebuildAfterError(target, err)
+	}
+	state := normalizeMDMemberState(value)
+	oldState := w.members[target.array][target.member]
+	if state == oldState {
+		return nil
+	}
+	w.members[target.array][target.member] = state
+	w.emitChange(MDChange{
+		Array:          target.array,
+		Member:         target.member,
+		MemberIdentity: target.identity,
+		Field:          MDFieldMemberState,
+		OldState:       oldState,
+		NewState:       state,
+	})
 	return nil
 }
 
@@ -334,7 +383,8 @@ func (w *MDWatcher) handleDegradedEvent(target *mdWatchFile) error {
 }
 
 func (w *MDWatcher) rebuildAfterError(target *mdWatchFile, err error) error {
-	log.Warnf("md watcher: read %s/%s: %v", target.array, target.field, err)
+	log.Warnf("md watcher: read %s/%s/%s: %v",
+		target.array, target.member, target.field, err)
 	if rebuildErr := w.rebuild(true); rebuildErr != nil {
 		return fmt.Errorf("md watcher: rebuild watches: %w", rebuildErr)
 	}
@@ -364,9 +414,11 @@ func (w *MDWatcher) rebuild(emitChanges bool) error {
 	sort.Strings(devices)
 
 	nextArrays := make(map[string]mdArrayState, len(devices))
+	nextMembers := make(map[string]map[string]string, len(devices))
 	for _, device := range devices {
 		mdDir := filepath.Join(w.sysBlockPath, device, "md")
 		status := mdArrayState{}
+		nextMembers[device] = make(map[string]string)
 
 		level, _, err := openMDWatchFile(filepath.Join(mdDir, mdLevel))
 		if err != nil {
@@ -398,21 +450,73 @@ func (w *MDWatcher) rebuild(emitChanges bool) error {
 		if degradedErr != nil {
 			return fmt.Errorf("md watcher: parse %s degraded: %w", device, degradedErr)
 		}
+
+		memberEntries, err := os.ReadDir(mdDir)
+		if err != nil {
+			return fmt.Errorf("md watcher: enumerate %s members: %w", device, err)
+		}
+		for _, entry := range memberEntries {
+			entryName := entry.Name()
+			if !strings.HasPrefix(entryName, "dev-") {
+				continue
+			}
+			member := strings.TrimPrefix(entryName, "dev-")
+			if member == "" {
+				continue
+			}
+			statePath := filepath.Join(mdDir, entryName, mdMemberState)
+			if err := addMDPathWatch(
+				nextFiles,
+				statePath,
+				device,
+				member,
+				mdMemberState,
+				func(value string) {
+					nextMembers[device][member] = normalizeMDMemberState(value)
+				},
+			); err != nil {
+				return fmt.Errorf(
+					"md watcher: read %s member %s: %w",
+					device,
+					member,
+					err,
+				)
+			}
+		}
 		nextArrays[device] = status
 	}
 
 	var changes []MDChange
 	if emitChanges {
 		changes = changedMDArrayFields(w.arrays, nextArrays)
+		changes = append(changes, changedMDMembers(w.members, nextMembers)...)
 		// Open level files pin their identities across same-name replacement.
 		// A new array's initial fields and members are not old-array transitions.
 		kept := 0
 		for i := range changes {
 			change := &changes[i]
-			if os.SameFile(w.arrays[change.Array].identity, nextArrays[change.Array].identity) {
-				changes[kept] = *change
-				kept++
+			if !os.SameFile(w.arrays[change.Array].identity, nextArrays[change.Array].identity) {
+				continue
 			}
+			if previous := mdMemberWatch(w.files, change.Array, change.Member); previous != nil {
+				change.MemberIdentity = previous.identity
+				if current := mdMemberWatch(nextFiles, change.Array, change.Member); current != nil {
+					oldInfo, err := previous.file.Stat()
+					if err != nil {
+						return fmt.Errorf("md watcher: stat previous %s member %s: %w", change.Array, change.Member, err)
+					}
+					newInfo, err := current.file.Stat()
+					if err != nil {
+						return fmt.Errorf("md watcher: stat current %s member %s: %w", change.Array, change.Member, err)
+					}
+					// Same-name membership replacement establishes a new baseline.
+					if !os.SameFile(oldInfo, newInfo) {
+						continue
+					}
+				}
+			}
+			changes[kept] = *change
+			kept++
 		}
 		changes = changes[:kept]
 	}
@@ -420,11 +524,21 @@ func (w *MDWatcher) rebuild(emitChanges bool) error {
 	oldFiles := w.files
 	w.files = nextFiles
 	w.arrays = nextArrays
+	w.members = nextMembers
 	committed = true
 	for _, change := range changes {
 		w.emitChange(change)
 	}
 	closeMDWatchFiles(oldFiles)
+	return nil
+}
+
+func mdMemberWatch(files map[int32]*mdWatchFile, array, member string) *mdWatchFile {
+	for _, target := range files {
+		if target.array == array && target.member == member && target.field == mdMemberState {
+			return target
+		}
+	}
 	return nil
 }
 
@@ -466,6 +580,88 @@ func changedMDArrayFields(
 	return changes
 }
 
+func changedMDMembers(
+	previous, current map[string]map[string]string,
+) []MDChange {
+	arrays := make([]string, 0, len(current))
+	for array := range current {
+		arrays = append(arrays, array)
+	}
+	sort.Strings(arrays)
+
+	var changes []MDChange
+	for _, array := range arrays {
+		oldMembers, ok := previous[array]
+		if !ok {
+			continue
+		}
+		members := make([]string, 0, len(oldMembers))
+		for member := range oldMembers {
+			members = append(members, member)
+		}
+		sort.Strings(members)
+		for _, member := range members {
+			oldState := oldMembers[member]
+			newState, exists := current[array][member]
+			if !exists {
+				newState = MDMemberStateRemoved
+			}
+			if oldState == newState {
+				continue
+			}
+			changes = append(changes, MDChange{
+				Array:    array,
+				Member:   member,
+				Field:    MDFieldMemberState,
+				OldState: oldState,
+				NewState: newState,
+			})
+		}
+	}
+	return changes
+}
+
+func (w *MDWatcher) refreshMemberStates(array string) []MDChange {
+	targets := make([]*mdWatchFile, 0)
+	for _, target := range w.files {
+		if target.array == array && target.field == mdMemberState {
+			targets = append(targets, target)
+		}
+	}
+	sort.Slice(targets, func(i, j int) bool {
+		return targets[i].member < targets[j].member
+	})
+
+	var changes []MDChange
+	for _, target := range targets {
+		value, err := readOpenMDFile(target.file)
+		if err != nil {
+			log.Warnf(
+				"md watcher: %s member %s state: %v",
+				array,
+				target.member,
+				err,
+			)
+			continue
+		}
+		state := normalizeMDMemberState(value)
+		oldState := w.members[array][target.member]
+		if state == oldState {
+			continue
+		}
+		w.members[array][target.member] = state
+		changes = append(changes, MDChange{
+			Array:          array,
+			Member:         target.member,
+			MemberIdentity: target.identity,
+			Field:          MDFieldMemberState,
+			OldState:       oldState,
+			NewState:       state,
+		})
+	}
+	return changes
+}
+
 //nolint:gocritic // Send a value copy so queued changes remain immutable.
 func (w *MDWatcher) emitChange(change MDChange) {
 	change.ObservedAt = w.now()
@@ -491,7 +687,14 @@ func addMDAttributeWatch(
 	mdDir, array, field string,
 	consume func(string),
 ) error {
-	return addMDPathWatch(files, filepath.Join(mdDir, field), array, field, consume)
+	return addMDPathWatch(
+		files,
+		filepath.Join(mdDir, field),
+		array,
+		"",
+		field,
+		consume,
+	)
 }
 
 func addOptionalMDAttributeWatch(
@@ -508,7 +711,7 @@ func addOptionalMDAttributeWatch(
 
 func addMDPathWatch(
 	files map[int32]*mdWatchFile,
-	path, array, field string,
+	path, array, member, field string,
 	consume func(string),
 ) error {
 	file, value, err := openMDWatchFile(path)
@@ -518,10 +721,22 @@ func addMDPathWatch(
 	if consume != nil {
 		consume(value)
 	}
+	var identity string
+	if member != "" {
+		identity = BlockDeviceIdentity(filepath.Join(filepath.Dir(path), "block"))
+		// Bind identity to this open state node, not a replaced sysfs path.
+		opened, openedErr := file.Stat()
+		current, currentErr := os.Stat(path)
+		if openedErr != nil || currentErr != nil || !os.SameFile(opened, current) {
+			identity = ""
+		}
+	}
 	files[int32(file.Fd())] = &mdWatchFile{
-		file:  file,
-		array: array,
-		field: field,
+		file:     file,
+		array:    array,
+		member:   member,
+		field:    field,
+		identity: identity,
 	}
 	return nil
 }
@@ -577,6 +792,38 @@ func readOpenMDFileLimit(file *os.File, limit int64) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
+// BlockDeviceIdentity is shared by observed MD members and evidence targets.
+func BlockDeviceIdentity(path string) string {
+	identity := DevicePathIdentity(path)
+	if identity == "" {
+		return ""
+	}
+	for _, field := range []string{"dev", "diskseq"} {
+		value, err := os.ReadFile(filepath.Join(path, field))
+		if err == nil {
+			identity += "\x00" + field + "=" + strings.TrimSpace(string(value))
+		}
+	}
+	return identity
+}
+
+// DevicePathIdentity uses the canonical sysfs path and its live kernfs inode.
+func DevicePathIdentity(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return ""
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%s\x00ino=%d", resolved, stat.Ino)
+}
+
 func parseActiveMDStatDevices(data string) map[string]bool {
 	devices := make(map[string]bool)
 	for _, line := range strings.Split(data, "\n") {
@@ -610,4 +857,12 @@ func normalizeMDSyncAction(value string) string {
 	default:
 		return "unknown"
 	}
+}
+
+func normalizeMDMemberState(value string) string {
+	fields := strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
+	sort.Strings(fields)
+	return strings.Join(fields, ",")
 }
