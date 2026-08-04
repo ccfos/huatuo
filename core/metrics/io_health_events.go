@@ -12,11 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Kernel and MD health observations retain source-specific identity before
+// entering bounded evidence collection and persistence.
 package collector
 
 import (
+	"context"
 	"errors"
-	"github.com/cilium/ebpf/btf"
+	"fmt"
 	"strings"
 	"time"
 
@@ -26,6 +29,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/pkg/types"
 
+	"github.com/cilium/ebpf/btf"
 	"golang.org/x/sys/unix"
 )
 
@@ -149,51 +153,81 @@ var ioHealthHooks = []ioHealthHook{
 }
 
 func attachIOHealthHooks(
+	ctx context.Context,
 	object bpf.BPF,
 	primeNVMeControllers func() error,
-) (attached int) {
-	// Binding writers require a working cleanup source, including bootstrap.
-	cleanupAttached := true
-	for index, hook := range ioHealthNVMeDeleteHooks {
-		if err := object.AttachIndependently(&bpf.AttachOption{
-			ProgramName: hook.program,
-			Symbol:      hook.symbol,
-		}); err != nil {
-			log.Warnf("io_health: attach optional hook %s: %v", hook.symbol, err)
-			for _, previous := range ioHealthNVMeDeleteHooks[:index] {
-				if err := object.DetachProgram(previous.program); err != nil {
-					log.Warnf("io_health: detach incomplete hook %s: %v", previous.symbol, err)
-					return 0
-				}
+	retryInterval time.Duration,
+) (attached int, topologyReady bool, retErr error) {
+	attach := func(hook ioHealthHook) error {
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			cleanupAttached = false
-			break
+			err := retryIOControlAttach(ctx, retryInterval, func() error {
+				return object.AttachIndependently(&bpf.AttachOption{
+					ProgramName: hook.program,
+					Symbol:      hook.symbol,
+				})
+			})
+			if hook.symbol != "blk_mq_freeze_queue" || !ioControlHookUnavailable(err) {
+				return err
+			}
+			// Attach is the capability check; no separate tracefs scan is needed.
+			hook.symbol = "blk_mq_freeze_queue_nomemsave"
 		}
 	}
-	if cleanupAttached {
-		for _, hook := range ioHealthNVMeAddHooks {
-			if err := object.AttachIndependently(&bpf.AttachOption{
-				ProgramName: hook.program,
-				Symbol:      hook.symbol,
-			}); err != nil {
-				log.Warnf("io_health: attach optional hook %s: %v", hook.symbol, err)
-				break
+	// Entry/return pairs are one source. Roll back only an incomplete pair;
+	// unavailable optional sources must not withdraw working event sources.
+	attachGroup := func(hooks ...ioHealthHook) (bool, error) {
+		for index, hook := range hooks {
+			err := attach(hook)
+			if err == nil {
+				continue
 			}
+			if ctx.Err() == nil {
+				log.Warnf("io_health: optional hook %s disabled: %v", hook.symbol, err)
+			}
+			var cleanupErr error
+			for _, previous := range hooks[:index] {
+				if err := object.DetachProgram(previous.program); err != nil {
+					cleanupErr = errors.Join(cleanupErr,
+						fmt.Errorf("detach incomplete hook %s: %w", previous.program, err))
+				}
+			}
+			if cleanupErr != nil {
+				return false, fmt.Errorf("%w: %w", types.ErrTracingStopped, cleanupErr)
+			}
+			return false, ctx.Err()
 		}
-
-		if err := object.AttachIndependently(&bpf.AttachOption{
-			ProgramName: ioHealthNVMeMappingHook.program,
-			Symbol:      ioHealthNVMeMappingHook.symbol,
-		}); err != nil {
-			log.Warnf(
-				"io_health: attach optional hook %s: %v",
-				ioHealthNVMeMappingHook.symbol,
-				err,
-			)
-		} else {
+		return true, nil
+	}
+	// Observe replacement before any source can buffer an evidence trigger.
+	var err error
+	topologyReady, err = attachGroup(
+		ioHealthHook{program: "io_health_freeze_disk_removed", symbol: "del_gendisk"},
+		ioHealthHook{program: "io_health_disk_publishing", symbol: "device_add"},
+		ioHealthHook{program: "io_health_freeze_disk_added", symbol: "blk_register_queue"},
+	)
+	if err != nil {
+		return 0, false, err
+	}
+	// Binding writers require a working cleanup source, including bootstrap.
+	if cleanupAttached, err := attachGroup(ioHealthNVMeDeleteHooks...); err != nil {
+		return 0, topologyReady, err
+	} else if cleanupAttached {
+		if _, err := attachGroup(ioHealthNVMeAddHooks...); err != nil {
+			return 0, topologyReady, err
+		}
+		if ok, err := attachGroup(ioHealthNVMeMappingHook); err != nil {
+			return 0, topologyReady, err
+		} else if ok {
 			if primeNVMeControllers != nil {
 				if err := primeNVMeControllers(); err != nil {
 					log.Warnf("io_health: map NVMe controllers: %v", err)
+					retErr = errors.Join(
+						retErr,
+						fmt.Errorf("map NVMe controllers: %w", err),
+					)
 				}
 			}
 			if err := object.DetachProgram(ioHealthNVMeMappingHook.program); err != nil {
@@ -202,63 +236,100 @@ func attachIOHealthHooks(
 					ioHealthNVMeMappingHook.symbol,
 					err,
 				)
-				return 0
+				return 0, topologyReady, fmt.Errorf(
+					"detach bootstrap hook %s: %w",
+					ioHealthNVMeMappingHook.symbol,
+					err,
+				)
 			}
 		}
 	}
 
 	blockHook := ioHealthBlockErrorHook
-	err := object.AttachIndependently(&bpf.AttachOption{
-		ProgramName: blockHook.program,
-		Symbol:      blockHook.symbol,
-	})
-	if errors.Is(err, unix.ENOENT) ||
-		errors.Is(err, unix.EOPNOTSUPP) ||
-		errors.Is(err, unix.EINVAL) ||
-		errors.Is(err, types.ErrNotSupported) {
+	err = attach(blockHook)
+	if ioControlHookUnavailable(err) {
 		blockHook = ioHealthBlockCompleteHook
-		err = object.AttachIndependently(&bpf.AttachOption{
-			ProgramName: blockHook.program,
-			Symbol:      blockHook.symbol,
-		})
+		err = attach(blockHook)
 	}
 	if err == nil {
 		attached++
-	} else {
+	} else if ctx.Err() == nil {
 		log.Warnf(
-			"io_health: attach optional hook %s: %v",
+			"io_health: optional hook %s disabled: %v",
 			blockHook.symbol,
 			err,
 		)
 	}
 
-	stateHooksAttached := true
-	for _, hook := range ioHealthNVMeStateHooks {
-		if err := object.AttachIndependently(&bpf.AttachOption{
-			ProgramName: hook.program,
-			Symbol:      hook.symbol,
-		}); err != nil {
-			log.Warnf("io_health: attach optional hook %s: %v", hook.symbol, err)
-			stateHooksAttached = false
-			break
-		}
-	}
-	if stateHooksAttached {
+	if ok, err := attachGroup(ioHealthNVMeStateHooks...); err != nil {
+		return 0, topologyReady, err
+	} else if ok {
 		attached++
 	}
 
 	for _, hook := range ioHealthHooks {
-		if err := object.AttachIndependently(&bpf.AttachOption{
-			ProgramName: hook.program,
-			Symbol:      hook.symbol,
-		}); err != nil {
-			log.Warnf("io_health: attach optional hook %s: %v", hook.symbol, err)
-			continue
+		if ok, err := attachGroup(hook); err != nil {
+			return 0, topologyReady, err
+		} else if ok {
+			attached++
 		}
-		attached++
+	}
+	if topologyReady {
+		if ok, err := attachGroup(ioHealthHook{
+			program: "io_health_freeze_queue", symbol: "blk_mq_freeze_queue",
+		}); err != nil {
+			return 0, topologyReady, err
+		} else if ok {
+			attached++
+		}
 	}
 
-	return attached
+	return attached, topologyReady, retErr
+}
+
+func loadIOHealthKernelEnums() (map[uint32]string, uint32) {
+	// Older request flags are macros, with no enum in BTF.
+	quietMask := uint32(1 << 11)
+	spec, err := btf.LoadKernelSpec()
+	if err != nil {
+		return nil, quietMask
+	}
+	quietMask = ioHealthRequestQuietMask(spec)
+	states := ioHealthNVMeStates(spec)
+	if len(states) == 0 {
+		if module, err := btf.LoadKernelModuleSpec("nvme_core"); err == nil {
+			states = ioHealthNVMeStates(module)
+		}
+	}
+	return states, quietMask
+}
+
+func ioHealthRequestQuietMask(spec *btf.Spec) uint32 {
+	var flags *btf.Enum
+	if err := spec.TypeByName("rqf_flags", &flags); err != nil {
+		return 1 << 11
+	}
+	for _, flag := range flags.Values {
+		if flag.Name == "__RQF_QUIET" && flag.Value < 32 {
+			return uint32(1) << flag.Value
+		}
+	}
+	return 0
+}
+
+func ioHealthNVMeStates(spec *btf.Spec) map[uint32]string {
+	var state *btf.Enum
+	if err := spec.TypeByName("nvme_ctrl_state", &state); err != nil {
+		return nil
+	}
+	names := make(map[uint32]string, len(state.Values))
+	for _, value := range state.Values {
+		if strings.HasPrefix(value.Name, "NVME_CTRL_") {
+			names[uint32(value.Value)] = strings.ToLower(
+				strings.TrimPrefix(value.Name, "NVME_CTRL_"))
+		}
+	}
+	return names
 }
 
 type ioHealthEvidenceSubmitter interface {
@@ -268,8 +339,18 @@ type ioHealthEvidenceSubmitter interface {
 func (c *ioHealthCollector) handleKernelEvent(
 	raw abi.IOHealthEvent,
 	worker ioHealthEvidenceSubmitter,
+	current func() bool,
 ) {
 	triggeredAt := c.now()
+	// Validate after resolution: a buffered event must not inherit the new
+	// disk's name or evidence. Worker identity checks cover later replacement.
+	resolve := func(target ioHealthResolvedTarget) ioHealthResolvedTarget {
+		if current != nil && !current() {
+			worker = nil
+			return ioHealthResolvedTarget{eventDevice: "unknown"}
+		}
+		return target
+	}
 
 	// Block errors, NVMe timeouts, and SCSI anomalies may collect evidence
 	// after resolving one target. NVMe resets only update their counter and
@@ -277,7 +358,7 @@ func (c *ioHealthCollector) handleKernelEvent(
 	// later nvme-cli query cannot recover its pre-reset state.
 	switch raw.Type {
 	case ioHealthEventBlockError:
-		target := c.resolver.resolveBlockDevice(raw.Dev)
+		target := resolve(c.resolver.resolveBlockDevice(raw.Dev))
 		status := ioHealthBlockStatus(raw.Status)
 		if raw.Status > 0 {
 			status = ioHealthBlockStatusFromBlkStatus(raw.Status)
@@ -304,7 +385,7 @@ func (c *ioHealthCollector) handleKernelEvent(
 		}
 		var target ioHealthResolvedTarget
 		if raw.Dev != 0 {
-			target = c.resolver.resolveBlockDevice(raw.Dev)
+			target = resolve(c.resolver.resolveBlockDevice(raw.Dev))
 			event.Device = target.eventDevice
 		}
 		c.incrementCounter(ioHealthCounterKey{
@@ -338,12 +419,12 @@ func (c *ioHealthCollector) handleKernelEvent(
 		})
 
 	case ioHealthEventSCSITimeout:
-		target := c.resolver.resolveSCSI(
+		target := resolve(c.resolver.resolveSCSI(
 			raw.Host,
 			raw.Channel,
 			raw.Target,
 			raw.Lun,
-		)
+		))
 		event := types.IOHealthEvent{
 			Type:   ioHealthTypeSCSITimeout,
 			Device: target.eventDevice,
@@ -355,12 +436,12 @@ func (c *ioHealthCollector) handleKernelEvent(
 		c.collectEvidenceOrPersist(worker, triggeredAt, event, target)
 
 	case ioHealthEventSCSIDispatchError:
-		target := c.resolver.resolveSCSI(
+		target := resolve(c.resolver.resolveSCSI(
 			raw.Host,
 			raw.Channel,
 			raw.Target,
 			raw.Lun,
-		)
+		))
 		event := types.IOHealthEvent{
 			Type:   ioHealthTypeSCSIDispatchError,
 			Device: target.eventDevice,
@@ -428,16 +509,20 @@ func (c *ioHealthCollector) collectEvidenceOrPersist(
 	event types.IOHealthEvent,
 	target ioHealthResolvedTarget,
 ) {
-	if worker != nil && worker.Submit(iohealth.EvidenceRequest{
+	if worker == nil {
+		c.persistEvent(triggeredAt, event)
+		return
+	}
+	if !worker.Submit(iohealth.EvidenceRequest{
 		Trigger:     event,
 		Target:      target.target,
+		Identity:    target.identity,
 		Protocol:    target.protocol,
 		TriggeredAt: triggeredAt,
 		Reason:      target.reason,
 	}) {
-		return
+		c.persistEvent(triggeredAt, event)
 	}
-	c.persistEvent(triggeredAt, event)
 }
 
 func ioHealthControllerName(raw [ioHealthNVMeControllerNameLength]uint8) string {
@@ -576,49 +661,4 @@ func ioHealthSCSIDispatchStatus(status int32) string {
 
 func uint64Pointer(value uint64) *uint64 {
 	return &value
-}
-
-func loadIOHealthKernelEnums() (map[uint32]string, uint32) {
-	// Older request flags are macros, with no enum in BTF.
-	quietMask := uint32(1 << 11)
-	spec, err := btf.LoadKernelSpec()
-	if err != nil {
-		return nil, quietMask
-	}
-	quietMask = ioHealthRequestQuietMask(spec)
-	states := ioHealthNVMeStates(spec)
-	if len(states) == 0 {
-		if module, err := btf.LoadKernelModuleSpec("nvme_core"); err == nil {
-			states = ioHealthNVMeStates(module)
-		}
-	}
-	return states, quietMask
-}
-
-func ioHealthRequestQuietMask(spec *btf.Spec) uint32 {
-	var flags *btf.Enum
-	if err := spec.TypeByName("rqf_flags", &flags); err != nil {
-		return 1 << 11
-	}
-	for _, flag := range flags.Values {
-		if flag.Name == "__RQF_QUIET" && flag.Value < 32 {
-			return uint32(1) << flag.Value
-		}
-	}
-	return 0
-}
-
-func ioHealthNVMeStates(spec *btf.Spec) map[uint32]string {
-	var state *btf.Enum
-	if err := spec.TypeByName("nvme_ctrl_state", &state); err != nil {
-		return nil
-	}
-	names := make(map[uint32]string, len(state.Values))
-	for _, value := range state.Values {
-		if strings.HasPrefix(value.Name, "NVME_CTRL_") {
-			names[uint32(value.Value)] = strings.ToLower(
-				strings.TrimPrefix(value.Name, "NVME_CTRL_"))
-		}
-	}
-	return names
 }

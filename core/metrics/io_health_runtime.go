@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// IO health keeps MD and kernel sources independent while retaining one
+// evidence worker across kernel-session retries. Events are saved synchronously.
 package collector
 
 import (
@@ -38,6 +40,24 @@ const (
 
 type ioHealthBPFLoader func(string, map[string]any) (bpf.BPF, error)
 
+func ioHealthKernelEventCurrent(object bpf.BPF, expected uint64) bool {
+	mapID := object.MapIDByName("io_health_topology")
+	if mapID == 0 {
+		return false
+	}
+	data, err := object.ReadMap(mapID, []byte{0, 0, 0, 0})
+	if err != nil {
+		log.Warnf("io_health: skip kernel evidence: read disk topology: %v", err)
+		return false
+	}
+	var generation uint64
+	if err := decodeBPFMapData(data, &generation); err != nil {
+		log.Warnf("io_health: skip kernel evidence: decode disk topology: %v", err)
+		return false
+	}
+	return generation == expected
+}
+
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/io_health.c -o $BPF_DIR/io_health.o
 
 func (c *ioHealthCollector) Start(ctx context.Context) error {
@@ -51,7 +71,8 @@ func (c *ioHealthCollector) start(
 ) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	worker := iohealth.NewEvidenceWorker(iohealth.EvidenceWorkerOptions{
-		OnResult: c.handleEvidenceResult,
+		OnResult:         c.handleEvidenceResult,
+		ValidateIdentity: c.resolver.evidenceTargetCurrent,
 	})
 	worker.Start(childCtx)
 
@@ -71,7 +92,12 @@ func (c *ioHealthCollector) start(
 	}()
 
 	for {
-		attached, retryable, err := c.runBPFSession(childCtx, worker, loadBPF)
+		attached, retryable, err := c.runBPFSession(
+			childCtx,
+			worker,
+			loadBPF,
+			retryInterval,
+		)
 		if ctx.Err() != nil {
 			if retryable {
 				return nil
@@ -107,9 +133,12 @@ func (c *ioHealthCollector) runBPFSession(
 	ctx context.Context,
 	worker ioHealthEvidenceSubmitter,
 	loadBPF ioHealthBPFLoader,
+	attachRetryInterval time.Duration,
 ) (attached int, retryable bool, retErr error) {
 	states, quietMask := loadIOHealthKernelEnums()
-	object, err := loadBPF("io_health.o", map[string]any{"io_health_rqf_quiet_mask": quietMask})
+	object, err := loadBPF("io_health.o", map[string]any{
+		"io_health_rqf_quiet_mask": quietMask,
+	})
 	if err != nil {
 		return 0, true, fmt.Errorf("load BPF: %w", err)
 	}
@@ -136,18 +165,35 @@ func (c *ioHealthCollector) runBPFSession(
 		}
 	}()
 
-	attached = attachIOHealthHooks(
+	var topologyReady bool
+	attached, topologyReady, err = attachIOHealthHooks(
+		ctx,
 		object,
 		c.resolver.primeNVMeControllerNames,
+		attachRetryInterval,
 	)
+	if err != nil {
+		return attached, !errors.Is(err, types.ErrTracingStopped), err
+	}
 	if attached == 0 {
 		return 0, false, nil
 	}
+	c.mu.Lock()
+	c.freezeObject = object
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.freezeObject = nil
+		c.mu.Unlock()
+	}()
 
 	for {
 		var event abi.IOHealthEvent
 		if err := reader.ReadInto(&event); err != nil {
-			if ctx.Err() != nil || errors.Is(err, types.ErrExitByCancelCtx) {
+			if ctx.Err() != nil {
+				return attached, false, nil
+			}
+			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return attached, false, nil
 			}
 			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
@@ -156,7 +202,9 @@ func (c *ioHealthCollector) runBPFSession(
 			}
 			return attached, true, fmt.Errorf("read event: %w", err)
 		}
-		c.handleKernelEvent(event, worker)
+		c.handleKernelEvent(event, worker, func() bool {
+			return topologyReady && ioHealthKernelEventCurrent(object, event.TopologyGeneration)
+		})
 	}
 }
 

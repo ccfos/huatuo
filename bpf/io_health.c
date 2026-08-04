@@ -37,6 +37,28 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define NVME_CTRL_NAME_ENTRIES 256
 #define NVME_CDEV_CALL_ENTRIES 256
 #define NVME_STATE_CALL_ENTRIES 1024
+#define IO_HEALTH_FREEZE_ENTRIES 128
+
+/* Only freeze events touch this table. Disk registration resets a reused
+ * device number; removal releases its row. No queue identity cache is needed.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(max_entries, IO_HEALTH_FREEZE_ENTRIES);
+	__type(key, u64);
+	__type(value, u64);
+} io_health_freeze_counts SEC(".maps");
+
+/* Buffered events must not collect evidence from a replacement device.
+ * Snapshot this word before resolving an event's kernel identity; Go checks
+ * it after resolving the command target. Ordinary IO never reads this map.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, u64);
+} io_health_topology SEC(".maps");
 
 /* Macro-based request flags use bit 11; Go relocates enum-based flags. */
 const volatile u32 io_health_rqf_quiet_mask = 1U << 11;
@@ -98,6 +120,124 @@ struct {
 struct request_queue___5_14 {
 	struct gendisk *disk;
 } __attribute__((preserve_access_index));
+
+static __always_inline u64 io_health_topology_generation(bool changed)
+{
+	u32 key = 0;
+	u64 *generation = bpf_map_lookup_elem(&io_health_topology, &key);
+
+	if (!generation)
+		return 0;
+	if (changed)
+		__sync_fetch_and_add(generation, 1);
+	return *generation;
+}
+
+/* Queue registration follows sysfs publication. Advance the generation at
+ * device_add entry so late old-disk events cannot resolve to the replacement
+ * during that gap. Device types distinguish disks from unrelated devices.
+ */
+SEC("kprobe/device_add")
+int io_health_disk_publishing(struct pt_regs *ctx)
+{
+	struct device *dev = (void *)PT_REGS_PARM1_CORE(ctx);
+	const struct device_type *type;
+	const char *type_name;
+	char name[6] = {};
+
+	if (!dev)
+		return 0;
+	type = BPF_CORE_READ(dev, type);
+	if (!type)
+		return 0;
+	type_name = BPF_CORE_READ(type, name);
+	if (bpf_probe_read_str(name, sizeof(name), type_name) != sizeof("disk"))
+		return 0;
+	if (name[0] == 'd' && name[1] == 'i' &&
+	    name[2] == 's' && name[3] == 'k')
+		io_health_topology_generation(true);
+	return 0;
+}
+
+static __always_inline u64 io_health_freeze_key(struct gendisk *disk)
+{
+	char name[5] = {};
+	u32 major, minor;
+
+	if (!disk || bpf_core_read(name, sizeof(name), &disk->disk_name))
+		return 0;
+	if (!((name[0] == 's' && name[1] == 'd') ||
+	      (name[0] == 'v' && name[1] == 'd') ||
+	      (name[0] == 'n' && name[1] == 'v' &&
+	       name[2] == 'm' && name[3] == 'e')))
+		return 0;
+	major = BPF_CORE_READ(disk, major);
+	minor = BPF_CORE_READ(disk, first_minor);
+	return ((u64)major << 32) | minor;
+}
+
+SEC("kprobe/blk_register_queue")
+int io_health_freeze_disk_added(struct pt_regs *ctx)
+{
+	u64 key;
+	u64 zero = 0;
+
+	key = io_health_freeze_key((void *)PT_REGS_PARM1_CORE(ctx));
+	if (key)
+		bpf_map_update_elem(&io_health_freeze_counts, &key, &zero,
+				    COMPAT_BPF_ANY);
+	return 0;
+}
+
+SEC("kprobe/del_gendisk")
+int io_health_freeze_disk_removed(struct pt_regs *ctx)
+{
+	u64 key;
+
+	io_health_topology_generation(true);
+	key = io_health_freeze_key((void *)PT_REGS_PARM1_CORE(ctx));
+	if (key)
+		bpf_map_delete_elem(&io_health_freeze_counts, &key);
+	return 0;
+}
+
+SEC("kprobe/blk_mq_freeze_queue")
+int io_health_freeze_queue(struct pt_regs *ctx)
+{
+	struct request_queue *q = (void *)PT_REGS_PARM1_CORE(ctx);
+	struct request_queue___5_14 *current = (void *)q;
+	struct gendisk *disk;
+	struct kobject *parent;
+	u64 key, one = 1;
+	u64 *count;
+
+	if (bpf_core_field_exists(current->disk)) {
+		disk = BPF_CORE_READ(current, disk);
+	} else {
+		/* Registered legacy queues are children of disk_to_dev(disk).
+		 * Unregistered queues have no disk association and are skipped.
+		 */
+		parent = BPF_CORE_READ(q, kobj.parent);
+		if (!parent)
+			return 0;
+		disk = (void *)((char *)parent -
+			compat_bpf_core_field_offset(((struct device *)0)->kobj) -
+			compat_bpf_core_field_offset(((struct gendisk *)0)->part0.__dev));
+	}
+	key = io_health_freeze_key(disk);
+	if (!key)
+		return 0;
+	count = bpf_map_lookup_elem(&io_health_freeze_counts, &key);
+	if (!count) {
+		if (!bpf_map_update_elem(&io_health_freeze_counts, &key, &one,
+					 COMPAT_BPF_NOEXIST))
+			return 0;
+		count = bpf_map_lookup_elem(&io_health_freeze_counts, &key);
+	}
+	if (count)
+		__sync_fetch_and_add(count, 1);
+	return 0;
+}
 
 /* The dedicated error tracepoint uses this event class. */
 struct trace_event_raw_block_rq_completion___io_health {
@@ -226,6 +366,7 @@ static __always_inline int submit_block_error(void *ctx, struct request *req,
 					      s32 status)
 {
 	struct io_health_event event = {
+		.topology_generation = io_health_topology_generation(false),
 		.type = HEALTH_EVENT_BLOCK_ERROR,
 		.status = status,
 	};
@@ -244,6 +385,7 @@ int trace_block_rq_error(
 	struct trace_event_raw_block_rq_completion___io_health *ctx)
 {
 	struct io_health_event event = {
+		.topology_generation = io_health_topology_generation(false),
 		.type = HEALTH_EVENT_BLOCK_ERROR,
 		.operation = REQ_OP_MASK,
 	};
@@ -301,6 +443,7 @@ SEC("tracepoint/scsi/scsi_dispatch_cmd_timeout")
 int trace_scsi_timeout(struct io_health_scsi_timeout_ctx *ctx)
 {
 	struct io_health_event event = {
+		.topology_generation = io_health_topology_generation(false),
 		.type = HEALTH_EVENT_SCSI_TIMEOUT,
 		.host = ctx->host_no,
 		.channel = ctx->channel,
@@ -316,6 +459,7 @@ SEC("tracepoint/scsi/scsi_dispatch_cmd_error")
 int trace_scsi_dispatch_error(struct io_health_scsi_dispatch_error_ctx *ctx)
 {
 	struct io_health_event event = {
+		.topology_generation = io_health_topology_generation(false),
 		.type = HEALTH_EVENT_SCSI_DISPATCH_ERROR,
 		.status = ctx->rtn,
 		.host = ctx->host_no,
@@ -414,6 +558,7 @@ SEC("kprobe/nvme_timeout")
 int BPF_KPROBE(kprobe_nvme_timeout, struct request *req)
 {
 	struct io_health_event event = {
+		.topology_generation = io_health_topology_generation(false),
 		.type = HEALTH_EVENT_NVME_TIMEOUT,
 	};
 
@@ -428,6 +573,7 @@ SEC("kprobe/nvme_reset_ctrl")
 int BPF_KPROBE(kprobe_nvme_reset, void *raw_ctrl)
 {
 	struct io_health_event event = {
+		.topology_generation = io_health_topology_generation(false),
 		.type = HEALTH_EVENT_NVME_RESET,
 	};
 
@@ -456,6 +602,7 @@ SEC("kretprobe/nvme_change_ctrl_state")
 int BPF_KRETPROBE(kretprobe_nvme_change_state)
 {
 	struct io_health_event event = {
+		.topology_generation = io_health_topology_generation(false),
 		.type = HEALTH_EVENT_NVME_STATE_CHANGE,
 	};
 	u64 pid_tgid = bpf_get_current_pid_tgid();
