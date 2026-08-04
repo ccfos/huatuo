@@ -232,6 +232,30 @@ func readDiskStats() ([]blockdevice.Diskstats, error) {
 	return fs.ProcDiskstats()
 }
 
+func validDiskstatsWindow(
+	prev *blockdevice.Diskstats,
+	curr *blockdevice.Diskstats,
+) bool {
+	if prev == nil || curr == nil ||
+		prev.MajorNumber != curr.MajorNumber ||
+		prev.MinorNumber != curr.MinorNumber {
+		return false
+	}
+
+	// Kernel counters reset when a device is removed and re-registered
+	// under the same name (hotplug, driver rebind, LVM rebuild). Without
+	// this guard the reset causes uint64 underflow in the delta below,
+	// producing a fake metric that triggers a false IO alert.
+	return curr.ReadIOs >= prev.ReadIOs &&
+		curr.WriteIOs >= prev.WriteIOs &&
+		curr.IOsTotalTicks >= prev.IOsTotalTicks &&
+		curr.ReadSectors >= prev.ReadSectors &&
+		curr.WriteSectors >= prev.WriteSectors &&
+		curr.ReadTicks >= prev.ReadTicks &&
+		curr.WriteTicks >= prev.WriteTicks &&
+		curr.WeightedIOTicks >= prev.WeightedIOTicks
+}
+
 func buildDiskMetric(
 	previous *blockdevice.Diskstats,
 	current *blockdevice.Diskstats,
@@ -240,17 +264,7 @@ func buildDiskMetric(
 	if intervalSeconds == 0 {
 		return diskStatus{}, false
 	}
-	// Kernel counters reset when a device is removed and re-registered
-	// under the same name (hotplug, driver rebind, LVM rebuild). Without
-	// this guard the reset causes uint64 underflow in the delta below,
-	// producing a fake metric that triggers a false IO alert.
-	if current.ReadIOs < previous.ReadIOs || current.WriteIOs < previous.WriteIOs ||
-		current.IOsTotalTicks < previous.IOsTotalTicks ||
-		current.ReadSectors < previous.ReadSectors ||
-		current.WriteSectors < previous.WriteSectors ||
-		current.ReadTicks < previous.ReadTicks ||
-		current.WriteTicks < previous.WriteTicks ||
-		current.WeightedIOTicks < previous.WeightedIOTicks {
+	if !validDiskstatsWindow(previous, current) {
 		return diskStatus{}, false
 	}
 
@@ -293,12 +307,6 @@ func evaluateThresholds(
 		currentDevices[current.DeviceName] = struct{}{}
 
 		if previous, ok := lastRawStats[current.DeviceName]; ok {
-			if previous.MajorNumber != current.MajorNumber ||
-				previous.MinorNumber != current.MinorNumber {
-				delete(lastMetrics, current.DeviceName)
-				lastRawStats[current.DeviceName] = current
-				continue
-			}
 			metric, valid := buildDiskMetric(previous, current, intervalSeconds)
 			if !valid {
 				delete(lastMetrics, current.DeviceName)
