@@ -184,8 +184,9 @@ func (b *defaultBPF) AttachWithOptions(opts []AttachOption) error {
 }
 
 func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
+	var opt AttachOption
 	defer func() {
-		if err != nil { // detach all programs when error.
+		if err != nil && !opt.KeepAttachedOnError {
 			if detachErr := b.detach(); detachErr != nil {
 				log.WithError(detachErr).WithField("bpf", b.name).
 					Warn("failed to detach BPF after attach failure")
@@ -193,7 +194,7 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 		}
 	}()
 
-	for _, opt := range opts {
+	for _, opt = range opts {
 		progID := b.ProgramIDByName(opt.ProgramName)
 		program, ok := b.programsByID[progID]
 		if !ok {
@@ -413,9 +414,8 @@ func (b *defaultBPF) attachPerfEvent(opt *perfEventOption) error {
 	return nil
 }
 
-// Detach all programs. Collects individual detach errors and returns a
-// combined error so callers can detect cleanup failures.
-func (b *defaultBPF) Detach() error {
+// Detach closes selected programs' links, or all attachments without names.
+func (b *defaultBPF) Detach(programNames ...string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -423,7 +423,42 @@ func (b *defaultBPF) Detach() error {
 		return nil
 	}
 
-	return b.detach()
+	if len(programNames) == 0 {
+		return b.detach()
+	}
+
+	programs := make(map[uint32]*loadedProgram, len(programNames))
+	for _, name := range programNames {
+		programID := b.ProgramIDByName(name)
+		program, ok := b.programsByID[programID]
+		if !ok {
+			return fmt.Errorf("unknown BPF program %q", name)
+		}
+		if program.programType == ebpf.PerfEvent {
+			return fmt.Errorf("%w: perf event program %q requires Detach() or Close()",
+				types.ErrNotSupported, name)
+		}
+		programs[programID] = program
+	}
+
+	var detachErrs []error
+	for _, program := range programs {
+		for linkKey, l := range program.links {
+			if l != nil {
+				if err := l.Close(); err != nil {
+					detachErrs = append(detachErrs, fmt.Errorf(
+						"detach link %q from program %q: %w",
+						linkKey,
+						program.name,
+						err,
+					))
+					continue
+				}
+			}
+			delete(program.links, linkKey)
+		}
+	}
+	return errors.Join(detachErrs...)
 }
 
 func (b *defaultBPF) detach() error {

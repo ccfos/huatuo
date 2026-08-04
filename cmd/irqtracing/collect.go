@@ -36,7 +36,7 @@ import (
 // mapSnapshotter is the narrow backend surface used to detach the probes and
 // read the final drop counters.
 type mapSnapshotter interface {
-	Detach() error
+	Detach(programNames ...string) error
 	MapIDByName(name string) uint32
 	ReadMap(mapID uint32, key []byte) ([]byte, error)
 }

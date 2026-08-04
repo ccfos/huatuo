@@ -35,6 +35,9 @@ type Option struct {
 type AttachOption struct {
 	ProgramName string
 	Symbol      string // symbol for kprobe/kretprobe/tracepoint/raw_tracepoint
+	// KeepAttachedOnError preserves existing links if this attachment fails.
+	// The batch still stops and returns the error so callers can handle it.
+	KeepAttachedOnError bool
 
 	Kprobe struct {
 		// RetprobeMaxActive limits concurrent kretprobe instances.

@@ -44,8 +44,9 @@ type BPF interface {
 	// Attach the default programs.
 	Attach() error
 
-	// Detach all programs.
-	Detach() error
+	// Detach closes the selected programs' links, or all links if no names are
+	// supplied. PerfEvent sampling requires Detach() without names.
+	Detach(programNames ...string) error
 
 	// IsLoaded reports whether the BPF object is still loaded.
 	IsLoaded() (bool, error)
