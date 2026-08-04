@@ -5,9 +5,9 @@
 
 # Verify the native off-CPU profiler attributes blocked time: a fixture that
 # loops in nanosleep must produce folded output containing the blocked category
-# root and the wait_loop user chain. The assertion anchors on wait_loop because
-# user-stack capture depth varies by kernel and glibc build: older combos can
-# drop the inner blocking_wait frame while still resolving the outer chain.
+# root and a blocking wait frame. User-stack capture depth and symbolization
+# vary by kernel and glibc build: Ubuntu 20.04 can stop at clock_nanosleep,
+# while newer combinations also resolve the fixture's wait_loop frame.
 
 set -euo pipefail
 
@@ -23,7 +23,7 @@ readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_offcpu.user
 
 readonly PROFILER_DURATION=10
 readonly PROFILER_AGGR_INTERVAL=5
-readonly BLOCKED_PATTERN='off-CPU blocked;.*;wait_loop'
+readonly BLOCKED_PATTERN='off-CPU blocked;.*(wait_loop|clock_nanosleep)'
 
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-offcpu.XXXXXX")
 TOOL_OUT="${WORK_DIR}/profiler.out"
@@ -36,9 +36,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Ubuntu 20.04 enables PIE by default, which can prevent the profiler from
-# resolving the fixture's local wait-loop symbols from sampled addresses.
-compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}" -no-pie
+compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
 "${FIXTURE_BIN}" > /dev/null 2>&1 &
 TARGET_PID=$!
 kill -0 "${TARGET_PID}" 2> /dev/null || fatal "fixture exited immediately (pid=${TARGET_PID})"
