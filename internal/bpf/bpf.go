@@ -41,11 +41,18 @@ type BPF interface {
 	// AttachWithOptions attaches programs with options.
 	AttachWithOptions(opts []AttachOption) error
 
+	// AttachIndependently attaches one program without rolling back earlier links.
+	AttachIndependently(opt *AttachOption) error
+
 	// Attach the default programs.
 	Attach() error
 
 	// Detach all programs.
 	Detach() error
+
+	// DetachProgram closes one program's links while preserving other programs.
+	// PerfEvent programs require Detach or Close.
+	DetachProgram(programName string) error
 
 	// IsLoaded reports whether the BPF object is still loaded.
 	IsLoaded() (bool, error)

@@ -261,6 +261,15 @@ func (b *defaultBPF) attachOne(opt *AttachOption) (err error) {
 	return nil
 }
 
+func (b *defaultBPF) AttachIndependently(opt *AttachOption) error {
+	if err := b.acquireWriteLock(); err != nil {
+		return err
+	}
+	defer b.mu.Unlock()
+
+	return b.attachOne(opt)
+}
+
 // Attach the default programs.
 func (b *defaultBPF) Attach() error {
 	if err := b.acquireWriteLock(); err != nil {
@@ -460,5 +469,42 @@ func (b *defaultBPF) detach() error {
 		b.perfEvent = nil
 	}
 
+	return errors.Join(detachErrs...)
+}
+
+// DetachProgram detaches every link owned by one program.
+func (b *defaultBPF) DetachProgram(programName string) error {
+	if err := b.acquireWriteLock(); err != nil {
+		return err
+	}
+	defer b.mu.Unlock()
+
+	progID, ok := b.programIDsByName[programName]
+	if !ok {
+		return fmt.Errorf("unknown BPF program %q", programName)
+	}
+
+	program := b.programsByID[progID]
+	if program.programType == ebpf.PerfEvent {
+		return fmt.Errorf(
+			"%w: perf event program %q requires Detach or Close",
+			types.ErrNotSupported, programName,
+		)
+	}
+	var detachErrs []error
+	for linkKey, attachedLink := range program.links {
+		if attachedLink != nil {
+			if err := attachedLink.Close(); err != nil {
+				detachErrs = append(detachErrs, fmt.Errorf(
+					"detach link %q from program %q: %w",
+					linkKey,
+					programName,
+					err,
+				))
+				continue
+			}
+		}
+		delete(program.links, linkKey)
+	}
 	return errors.Join(detachErrs...)
 }
