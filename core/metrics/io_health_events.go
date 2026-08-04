@@ -46,6 +46,9 @@ const (
 	ioHealthTypeNVMeStateChange   = "nvme_state_change"
 	ioHealthTypeSCSITimeout       = "scsi_timeout"
 	ioHealthTypeSCSIDispatchError = "scsi_dispatch_error"
+	ioHealthTypeMDSyncAction      = "md_sync_action"
+	ioHealthTypeMDDegraded        = "md_degraded"
+	ioHealthTypeMDMemberState     = "md_member_state"
 )
 
 // These values mirror the stable REQ_OP definitions decoded from cmd_flags.
@@ -425,6 +428,47 @@ func (c *ioHealthCollector) handleKernelEvent(
 		})
 		c.collectEvidenceOrPersist(worker, triggeredAt, event, target)
 	}
+}
+
+func (c *ioHealthCollector) handleMDChange(
+	change health.MDChange,
+	worker ioHealthEvidenceSubmitter,
+) {
+	event := types.IOHealthEvent{
+		Array:    change.Array,
+		Member:   change.Member,
+		OldState: change.OldState,
+		NewState: change.NewState,
+	}
+	switch change.Field {
+	case health.MDFieldSyncAction:
+		event.Type = ioHealthTypeMDSyncAction
+	case health.MDFieldDegraded:
+		event.Type = ioHealthTypeMDDegraded
+	case health.MDFieldMemberState:
+		event.Type = ioHealthTypeMDMemberState
+	default:
+		return
+	}
+
+	if change.Field != health.MDFieldMemberState ||
+		!ioHealthMDMemberFault(change.NewState) {
+		c.persistEvent(change.ObservedAt, event)
+		return
+	}
+	target := c.resolver.resolveBlockName(change.Member)
+	event.Device = target.eventDevice
+	c.collectEvidenceOrPersist(worker, change.ObservedAt, event, target)
+}
+
+func ioHealthMDMemberFault(state string) bool {
+	for _, value := range strings.Split(state, ",") {
+		switch value {
+		case "faulty", "blocked", "write_error", health.MDMemberStateRemoved:
+			return true
+		}
+	}
+	return false
 }
 
 func (c *ioHealthCollector) collectEvidenceOrPersist(
