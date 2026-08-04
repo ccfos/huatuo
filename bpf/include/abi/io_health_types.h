@@ -18,10 +18,15 @@
 
 #include "bpf_abi.h"
 
+#define IO_HEALTH_CONTROLLER_NAME_LEN 16
+
 enum io_health_event_type {
 	HEALTH_EVENT_BLOCK_ERROR = 1,
 	HEALTH_EVENT_SCSI_TIMEOUT,
 	HEALTH_EVENT_SCSI_DISPATCH_ERROR,
+	HEALTH_EVENT_NVME_TIMEOUT,
+	HEALTH_EVENT_NVME_RESET,
+	HEALTH_EVENT_NVME_STATE_CHANGE,
 };
 
 struct io_health_event {
@@ -32,10 +37,11 @@ struct io_health_event {
 	u32 channel;
 	u32 target;
 	u32 lun;
+	u8 controller[IO_HEALTH_CONTROLLER_NAME_LEN];
+	u32 new_state_raw;
 	u8 type;
 	u8 operation;
 	u8 rwbs[2];
-	u8 pad[4];
 };
 
 BPF_ABI_EXPORT(io_health_event);
