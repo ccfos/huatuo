@@ -97,7 +97,9 @@ var (
 
 // Load loads the config file and updates module level configs.
 func Load(path string) error {
-	loaded := &BamaiConfig{}
+	loaded := &BamaiConfig{
+		MetricCollector: collector.DefaultConfig(),
+	}
 	if err := internalconfig.Load(path, loaded); err != nil {
 		return err
 	}

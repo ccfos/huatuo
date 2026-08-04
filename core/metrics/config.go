@@ -61,14 +61,30 @@ type Config struct {
 	MountPointStat struct {
 		MountPointsIncluded string
 	}
+
+	IOHealth struct {
+		Enabled bool `default:"true"`
+	}
 }
 
-var cfg = &Config{}
+// DefaultConfig supplies defaults before TOML decoding so omitted sections
+// retain their shipped behavior.
+func DefaultConfig() Config {
+	var c Config
+	c.IOHealth.Enabled = true
+	return c
+}
+
+var cfg = func() *Config {
+	c := DefaultConfig()
+	return &c
+}()
 
 // Set updates the package level config.
 func Set(c *Config) {
 	if c == nil {
-		cfg = &Config{}
+		defaults := DefaultConfig()
+		cfg = &defaults
 		return
 	}
 	cfg = c

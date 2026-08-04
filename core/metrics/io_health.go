@@ -37,6 +37,21 @@ const (
 	ioHealthCounterSCSIDispatchError
 )
 
+func init() {
+	tracing.RegisterEventTracing(ioHealthName, newIOHealth)
+}
+
+func newIOHealth() (*tracing.EventTracingAttr, error) {
+	if !cfg.IOHealth.Enabled {
+		return nil, types.ErrNotSupported
+	}
+	return &tracing.EventTracingAttr{
+		TracingData: newIOHealthCollector("/sys", "/proc/mdstat"),
+		Interval:    ioHealthRestartWait,
+		Flag:        tracing.FlagMetric | tracing.FlagTracing,
+	}, nil
+}
+
 type ioHealthCounterKey struct {
 	kind      uint8
 	device    string
