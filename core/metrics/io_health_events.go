@@ -29,20 +29,27 @@ const (
 	ioHealthEventBlockError = iota + 1
 	ioHealthEventSCSITimeout
 	ioHealthEventSCSIDispatchError
+	ioHealthEventNVMeTimeout
+	ioHealthEventNVMeReset
+	ioHealthEventNVMeStateChange
 )
+
+const ioHealthNVMeControllerNameLength = 16
 
 // ioHealthPerfEvent mirrors struct health_event in bpf/io_health.c.
 type ioHealthPerfEvent struct {
-	Sector    uint64
-	Dev       uint32
-	Status    int32
-	Host      uint32
-	Channel   uint32
-	Target    uint32
-	LUN       uint32
-	Type      uint8
-	Operation uint8
-	Pad       [6]uint8
+	Sector      uint64
+	Dev         uint32
+	Status      int32
+	Host        uint32
+	Channel     uint32
+	Target      uint32
+	LUN         uint32
+	Controller  [ioHealthNVMeControllerNameLength]uint8
+	NewStateRaw uint32
+	Type        uint8
+	Operation   uint8
+	Pad         [2]uint8
 }
 
 type ioHealthHook struct {
@@ -60,15 +67,95 @@ var ioHealthBlockCompleteHook = ioHealthHook{
 	symbol:  "block_rq_complete",
 }
 
+var ioHealthNVMeMappingHook = ioHealthHook{
+	program: "kprobe_nvme_sysfs_show_state",
+	symbol:  "nvme_sysfs_show_state",
+}
+
+var ioHealthNVMeAddHooks = []ioHealthHook{
+	{
+		program: "kretprobe_nvme_cdev_add",
+		symbol:  "cdev_device_add",
+	},
+	{
+		program: "kprobe_nvme_cdev_add",
+		symbol:  "cdev_device_add",
+	},
+}
+
+var ioHealthNVMeDeleteHook = ioHealthHook{
+	program: "kprobe_nvme_cdev_del",
+	symbol:  "cdev_device_del",
+}
+
+var ioHealthNVMeStateHooks = []ioHealthHook{
+	{
+		program: "kretprobe_nvme_change_state",
+		symbol:  "nvme_change_ctrl_state",
+	},
+	{
+		program: "kprobe_nvme_change_state",
+		symbol:  "nvme_change_ctrl_state",
+	},
+}
+
 var ioHealthHooks = []ioHealthHook{
+	{program: "kprobe_nvme_timeout", symbol: "nvme_timeout"},
+	{program: "kprobe_nvme_reset", symbol: "nvme_reset_ctrl"},
 	{program: "trace_scsi_timeout", symbol: "scsi/scsi_dispatch_cmd_timeout"},
 	{program: "trace_scsi_dispatch_error", symbol: "scsi/scsi_dispatch_cmd_error"},
 }
 
 func attachIOHealthHooks(
 	object bpf.BPF,
+	primeNVMeControllers func() error,
 	legacyBlockCompleteSupported bool,
 ) (attached int) {
+	for _, hook := range ioHealthNVMeAddHooks {
+		if err := bpf.AttachIndependently(object, bpf.AttachOption{
+			ProgramName: hook.program,
+			Symbol:      hook.symbol,
+		}); err != nil {
+			log.Warnf("io_health: attach optional hook %s: %v", hook.symbol, err)
+			break
+		}
+	}
+	if err := bpf.AttachIndependently(object, bpf.AttachOption{
+		ProgramName: ioHealthNVMeDeleteHook.program,
+		Symbol:      ioHealthNVMeDeleteHook.symbol,
+	}); err != nil {
+		log.Warnf(
+			"io_health: attach optional hook %s: %v",
+			ioHealthNVMeDeleteHook.symbol,
+			err,
+		)
+	}
+
+	if err := bpf.AttachIndependently(object, bpf.AttachOption{
+		ProgramName: ioHealthNVMeMappingHook.program,
+		Symbol:      ioHealthNVMeMappingHook.symbol,
+	}); err != nil {
+		log.Warnf(
+			"io_health: attach optional hook %s: %v",
+			ioHealthNVMeMappingHook.symbol,
+			err,
+		)
+	} else {
+		if primeNVMeControllers != nil {
+			if err := primeNVMeControllers(); err != nil {
+				log.Warnf("io_health: map NVMe controllers: %v", err)
+			}
+		}
+		if err := bpf.DetachProgram(object, ioHealthNVMeMappingHook.program); err != nil {
+			log.Warnf(
+				"io_health: detach bootstrap hook %s: %v",
+				ioHealthNVMeMappingHook.symbol,
+				err,
+			)
+			return 0
+		}
+	}
+
 	err := bpf.AttachIndependently(object, bpf.AttachOption{
 		ProgramName: ioHealthBlockErrorHook.program,
 		Symbol:      ioHealthBlockErrorHook.symbol,
@@ -95,6 +182,21 @@ func attachIOHealthHooks(
 				attached++
 			}
 		}
+	}
+
+	stateHooksAttached := true
+	for _, hook := range ioHealthNVMeStateHooks {
+		if err := bpf.AttachIndependently(object, bpf.AttachOption{
+			ProgramName: hook.program,
+			Symbol:      hook.symbol,
+		}); err != nil {
+			log.Warnf("io_health: attach optional hook %s: %v", hook.symbol, err)
+			stateHooksAttached = false
+			break
+		}
+	}
+	if stateHooksAttached {
+		attached++
 	}
 
 	for _, hook := range ioHealthHooks {
