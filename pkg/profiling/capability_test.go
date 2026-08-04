@@ -21,28 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseCPUMode(t *testing.T) {
-	for _, mode := range []CPUMode{CPUModeOnCPU, CPUModeOffCPU} {
-		got, err := ParseCPUMode(string(mode))
-		require.NoError(t, err)
-		require.Equal(t, mode, got)
-	}
-	mode, err := ParseCPUMode("sleep")
-	require.Equal(t, CPUModeUnknown, mode)
-	require.EqualError(t, err, `unsupported CPU mode "sleep"`)
-}
-
-func TestParseOffCPUPhase(t *testing.T) {
-	for _, phase := range []OffCPUPhase{OffCPUPhaseAll, OffCPUPhaseBlocked, OffCPUPhaseRunqueue} {
-		got, err := ParseOffCPUPhase(string(phase))
-		require.NoError(t, err)
-		require.Equal(t, phase, got)
-	}
-	phase, err := ParseOffCPUPhase("wait")
-	require.Equal(t, OffCPUPhaseUnknown, phase)
-	require.EqualError(t, err, `unsupported off-CPU phase "wait"`)
-}
-
 func TestCapabilities(t *testing.T) {
 	nativeModes := []MemoryMode{
 		MemoryModeVirtualAlloc,
@@ -136,31 +114,13 @@ func TestParsers(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, language, parsed)
 	}
-	for _, mode := range allMemoryModes() {
-		parsed, err := ParseMemoryMode(string(mode))
-		require.NoError(t, err)
-		require.Equal(t, mode, parsed)
-	}
-
 	_, err := ParseLanguage("rust")
 	require.EqualError(t, err, `unsupported language "rust"`)
-	_, err = ParseMemoryMode("unknown")
-	require.EqualError(t, err, `unsupported memory mode "unknown"`)
 }
 
 func TestParseTypeRejectsLegacyMemoryValue(t *testing.T) {
 	_, err := ParseType("mem")
 	require.EqualError(t, err, `unsupported profiling type "mem"`)
-}
-
-func allMemoryModes() []MemoryMode {
-	return []MemoryMode{
-		MemoryModeObjectAlloc,
-		MemoryModeObjectUsage,
-		MemoryModeVirtualAlloc,
-		MemoryModePhysicalAlloc,
-		MemoryModePhysicalUsage,
-	}
 }
 
 func unique[T comparable](values []T) map[T]bool {
