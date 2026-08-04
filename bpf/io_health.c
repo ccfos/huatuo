@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The HuaTuo Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include "vmlinux.h"
 
 #include <bpf/bpf_core_read.h>
@@ -283,7 +299,8 @@ int trace_block_rq_error(
 
 /*
  * Use completion when the dedicated error tracepoint is unavailable.
- * Its rq/status slots are stable; userspace interprets the status value.
+ * Its stable rq/status slots carry either a negative errno or a positive
+ * blk_status_t; userspace selects the interpretation by sign.
  *
  * Match the dedicated error tracepoint's old-kernel emission rules closely
  * so passthrough health commands and quiet requests do not recursively
@@ -297,7 +314,7 @@ int trace_block_rq_complete_error(struct bpf_raw_tracepoint_args *ctx)
 	u32 operation;
 	u32 rq_flags;
 
-	if (status >= 0 || !req)
+	if (!status || !req)
 		return 0;
 
 	/* blk_update_request() returns before reporting errors without a bio. */
