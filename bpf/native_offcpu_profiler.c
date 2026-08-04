@@ -11,7 +11,7 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-#define TASK_RUNNING        0
+#define TASK_RUNNING 0
 
 enum {
 	OFFCPU_STATE_MAX_ENTRIES = 32768,
@@ -48,8 +48,7 @@ struct offcpu_state {
 	__u32 pad0;
 };
 
-/*
- * A single stack map is intentional. An off-CPU interval can outlive any
+/* A single stack map is intentional. An off-CPU interval can outlive any
  * userspace drain period; rotating A/B stack maps could resolve a delayed
  * stack ID against the wrong map.
  */
@@ -133,9 +132,9 @@ static __always_inline bool offcpu_cpu_selected(__u32 cpu)
 	return mask && (*mask & (1ULL << (cpu % OFFCPU_CPU_SET_WORD_BITS)));
 }
 
-static __always_inline void offcpu_emit_event(
-	void *ctx, const struct offcpu_state *state, __u64 end_ns,
-	enum profiler_offcpu_event_kind kind)
+static __always_inline void
+offcpu_emit_event(void *ctx, const struct offcpu_state *state, __u64 end_ns,
+		  enum profiler_offcpu_event_kind kind)
 {
 	struct profiler_offcpu_event *event;
 	__u64 duration;
@@ -211,11 +210,11 @@ offcpu_record_sched_out(struct bpf_raw_tracepoint_args *ctx,
 			struct task_struct *prev, __u64 now)
 {
 	struct offcpu_state state = {};
+	bool is_runnable;
 	__u64 pid_tgid;
+	bool preempted;
 	__u64 key;
 	__u32 cpu;
-	bool is_runnable;
-	bool preempted;
 	int err;
 
 	pid_tgid = bpf_get_current_pid_tgid();
@@ -224,6 +223,7 @@ offcpu_record_sched_out(struct bpf_raw_tracepoint_args *ctx,
 	if (!key || pid_tgid == 0 ||
 	    !profiler_should_trace(pid_tgid, current_task_cpu_css_addr()))
 		return;
+
 	/* Unrelated context switches must not pay for the bitmap lookup. */
 	cpu = bpf_get_smp_processor_id();
 	if (!offcpu_cpu_selected(cpu))
@@ -260,32 +260,29 @@ static __always_inline void
 offcpu_finish_sched_in(struct bpf_raw_tracepoint_args *ctx,
 		       struct task_struct *next, __u64 now)
 {
-	struct offcpu_state *state;
 	enum profiler_offcpu_event_kind kind;
+	struct offcpu_state *state;
 	__u64 key;
 
 	key = (__u64)next;
 	if (!key)
 		return;
 
-	/*
-	 * Idle tasks are never tracked, so the state lookup filters them too.
-	 */
+	/* The state lookup also filters idle tasks, which are never tracked. */
 	state = bpf_map_lookup_elem(&offcpu_states, &key);
 	if (!state)
 		return;
 
 	kind = state->kind;
 	if (kind == PROFILER_OFFCPU_EVENT_BLOCKED) {
-		/*
-		 * The wakeup boundary is unknowable once its event is missed.
-		 * Most production tasks spend less time blocked than runnable,
-		 * so avoid charging the whole interval to blocking and keep the
-		 * uncertainty explicit for userspace.
+		/* A missed wakeup makes the blocked/runqueue boundary
+		 * unknowable. Report the interval separately instead of
+		 * misattributing it.
 		 */
 		kind = PROFILER_OFFCPU_EVENT_RUNQUEUE_MISSED_WAKEUP;
 		offcpu_stat_inc(OFFCPU_STAT_MISSED_WAKEUP);
 	}
+
 	offcpu_emit_event(ctx, state, now, kind);
 	bpf_map_delete_elem(&offcpu_states, &key);
 }
@@ -297,10 +294,7 @@ int native_offcpu_switch(struct bpf_raw_tracepoint_args *ctx)
 	struct task_struct *next = (void *)ctx->args[2];
 	__u64 now = bpf_ktime_get_ns();
 
-	/*
-	 * Complete next before recording prev; sched_switch guarantees they
-	 * differ.
-	 */
+	/* Complete next first; sched_switch guarantees prev != next. */
 	offcpu_finish_sched_in(ctx, next, now);
 	offcpu_record_sched_out(ctx, prev, now);
 	return 0;
@@ -322,10 +316,7 @@ offcpu_cleanup_task_state(struct bpf_raw_tracepoint_args *ctx,
 	if (!state)
 		return 0;
 
-	/*
-	 * sched_process_exit is the last reliable boundary for a pending
-	 * sample.
-	 */
+	/* sched_process_exit is the last reliable pending-sample boundary. */
 	if (emit_pending) {
 		now = bpf_ktime_get_ns();
 		offcpu_emit_event(ctx, state, now, state->kind);
@@ -345,8 +336,6 @@ int native_offcpu_exit(struct bpf_raw_tracepoint_args *ctx)
 SEC("raw_tracepoint/sched_process_free")
 int native_offcpu_free(struct bpf_raw_tracepoint_args *ctx)
 {
-	/*
-	 * Free can lag exit, so use it only as a stale-state cleanup fallback.
-	 */
+	/* Free can lag exit, so use it only for stale-state cleanup. */
 	return offcpu_cleanup_task_state(ctx, (void *)ctx->args[0], false);
 }
