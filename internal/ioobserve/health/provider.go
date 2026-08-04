@@ -17,8 +17,13 @@ package health
 import "time"
 
 const (
-	MDFieldSyncAction = "sync_action"
-	MDFieldDegraded   = "degraded"
+	MDFieldSyncAction  = "sync_action"
+	MDFieldDegraded    = "degraded"
+	MDFieldMemberState = "member_state"
+
+	// MDMemberStateRemoved is emitted when a member disappears from an active
+	// array before its final state notification can be read.
+	MDMemberStateRemoved = "removed"
 )
 
 // MDChange describes one observed MD state transition. Member is empty for
