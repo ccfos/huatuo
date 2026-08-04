@@ -20,12 +20,18 @@
 
 enum io_health_event_type {
 	HEALTH_EVENT_BLOCK_ERROR = 1,
+	HEALTH_EVENT_SCSI_TIMEOUT,
+	HEALTH_EVENT_SCSI_DISPATCH_ERROR,
 };
 
 struct io_health_event {
 	u64 sector;
 	u32 dev;
 	s32 status;
+	u32 host;
+	u32 channel;
+	u32 target;
+	u32 lun;
 	u8 type;
 	u8 operation;
 	u8 rwbs[2];
