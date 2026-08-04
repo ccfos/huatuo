@@ -18,9 +18,12 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/ioobserve/health"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/pkg/types"
 
 	"golang.org/x/sys/unix"
 )
@@ -35,6 +38,31 @@ const (
 )
 
 const ioHealthNVMeControllerNameLength = 16
+
+const (
+	ioHealthTypeBlockError        = "block_error"
+	ioHealthTypeNVMeTimeout       = "nvme_timeout"
+	ioHealthTypeNVMeReset         = "nvme_reset"
+	ioHealthTypeNVMeStateChange   = "nvme_state_change"
+	ioHealthTypeSCSITimeout       = "scsi_timeout"
+	ioHealthTypeSCSIDispatchError = "scsi_dispatch_error"
+)
+
+// These values mirror the stable REQ_OP definitions decoded from cmd_flags.
+const (
+	reqOpRead uint8 = iota
+	reqOpWrite
+	reqOpFlush
+	reqOpDiscard
+)
+
+// These values mirror the SCSI_MLQUEUE_* dispatch return values.
+const (
+	scsiMLQueueHostBusy   int32 = 0x1055
+	scsiMLQueueDeviceBusy int32 = 0x1056
+	scsiMLQueueEHRetry    int32 = 0x1057
+	scsiMLQueueTargetBusy int32 = 0x1058
+)
 
 // ioHealthPerfEvent mirrors struct health_event in bpf/io_health.c.
 type ioHealthPerfEvent struct {
@@ -51,6 +79,42 @@ type ioHealthPerfEvent struct {
 	Operation   uint8
 	Pad         [2]uint8
 }
+
+type ioHealthNVMeStateLayout uint8
+
+const (
+	ioHealthNVMeStateUnknown ioHealthNVMeStateLayout = iota
+	ioHealthNVMeStateLinux418
+	ioHealthNVMeStateLinux510
+)
+
+// Linux 4.18 includes ADMIN_ONLY. Linux 5.10 and later include
+// DELETING_NOIO instead, so their raw enum values require separate tables.
+var ioHealthNVMeStatesLinux418 = [...]string{
+	"new",
+	"live",
+	"admin_only",
+	"resetting",
+	"connecting",
+	"deleting",
+	"dead",
+}
+
+var ioHealthNVMeStatesLinux510 = [...]string{
+	"new",
+	"live",
+	"resetting",
+	"connecting",
+	"deleting",
+	"deleting_noio",
+	"dead",
+}
+
+var ioHealthHostKernelRelease = detectIOHealthKernelRelease()
+
+var ioHealthHostNVMeStateLayout = ioHealthNVMeStateLayoutForRelease(
+	ioHealthHostKernelRelease,
+)
 
 type ioHealthHook struct {
 	program string
@@ -251,4 +315,250 @@ func ioHealthLegacyBlockCompleteSupported(release string) bool {
 		return false
 	}
 	return major < 5 || (major == 5 && minor <= 15)
+}
+
+type ioHealthEvidenceSubmitter interface {
+	Submit(health.EvidenceRequest) bool
+}
+
+func (c *ioHealthCollector) handleKernelEvent(
+	raw ioHealthPerfEvent,
+	worker ioHealthEvidenceSubmitter,
+) {
+	triggeredAt := c.now()
+
+	// Block errors, NVMe timeouts, and SCSI anomalies may collect evidence
+	// after resolving one target. NVMe resets only update their counter and
+	// persist the event: the controller may be unavailable during reset, and a
+	// later nvme-cli query cannot recover its pre-reset state.
+	switch raw.Type {
+	case ioHealthEventBlockError:
+		target := c.resolver.resolveBlockDevice(raw.Dev)
+		event := types.IOHealthEvent{
+			Type:      ioHealthTypeBlockError,
+			Device:    target.eventDevice,
+			Operation: ioHealthOperation(raw.Operation),
+			Status:    ioHealthBlockStatus(raw.Status),
+			Sector:    uint64Pointer(raw.Sector),
+		}
+		c.incrementCounter(ioHealthCounterKey{
+			kind:      ioHealthCounterBlockError,
+			device:    event.Device,
+			operation: event.Operation,
+			status:    event.Status,
+		})
+		c.collectEvidenceOrPersist(worker, triggeredAt, event, target)
+
+	case ioHealthEventNVMeTimeout:
+		event := types.IOHealthEvent{
+			Type:   ioHealthTypeNVMeTimeout,
+			Device: "unknown",
+		}
+		var target ioHealthResolvedTarget
+		if raw.Dev != 0 {
+			target = c.resolver.resolveBlockDevice(raw.Dev)
+			event.Device = target.eventDevice
+		}
+		c.incrementCounter(ioHealthCounterKey{
+			kind:   ioHealthCounterNVMeTimeout,
+			device: event.Device,
+		})
+		if raw.Dev == 0 {
+			c.persistEvent(triggeredAt, event)
+			return
+		}
+		c.collectEvidenceOrPersist(worker, triggeredAt, event, target)
+
+	case ioHealthEventNVMeReset:
+		event := types.IOHealthEvent{
+			Type:   ioHealthTypeNVMeReset,
+			Device: ioHealthControllerName(raw.Controller),
+		}
+		c.incrementCounter(ioHealthCounterKey{
+			kind:   ioHealthCounterNVMeReset,
+			device: event.Device,
+		})
+		c.persistEvent(triggeredAt, event)
+
+	case ioHealthEventNVMeStateChange:
+		newStateRaw := raw.NewStateRaw
+		c.persistEvent(triggeredAt, types.IOHealthEvent{
+			Type:        ioHealthTypeNVMeStateChange,
+			Device:      ioHealthControllerName(raw.Controller),
+			NewState:    ioHealthNVMeStateName(ioHealthHostNVMeStateLayout, newStateRaw),
+			NewStateRaw: &newStateRaw,
+		})
+
+	case ioHealthEventSCSITimeout:
+		target := c.resolver.resolveSCSI(
+			raw.Host,
+			raw.Channel,
+			raw.Target,
+			raw.LUN,
+		)
+		event := types.IOHealthEvent{
+			Type:   ioHealthTypeSCSITimeout,
+			Device: target.eventDevice,
+		}
+		c.incrementCounter(ioHealthCounterKey{
+			kind:   ioHealthCounterSCSITimeout,
+			device: event.Device,
+		})
+		c.collectEvidenceOrPersist(worker, triggeredAt, event, target)
+
+	case ioHealthEventSCSIDispatchError:
+		target := c.resolver.resolveSCSI(
+			raw.Host,
+			raw.Channel,
+			raw.Target,
+			raw.LUN,
+		)
+		event := types.IOHealthEvent{
+			Type:   ioHealthTypeSCSIDispatchError,
+			Device: target.eventDevice,
+			Status: ioHealthSCSIDispatchStatus(raw.Status),
+		}
+		c.incrementCounter(ioHealthCounterKey{
+			kind:   ioHealthCounterSCSIDispatchError,
+			device: event.Device,
+			status: event.Status,
+		})
+		c.collectEvidenceOrPersist(worker, triggeredAt, event, target)
+	}
+}
+
+func (c *ioHealthCollector) collectEvidenceOrPersist(
+	worker ioHealthEvidenceSubmitter,
+	triggeredAt time.Time,
+	event types.IOHealthEvent,
+	target ioHealthResolvedTarget,
+) {
+	protocol := health.EvidenceProtocol("")
+	switch target.protocol {
+	case ioHealthProtocolNVMe:
+		protocol = health.EvidenceProtocolNVMe
+	case ioHealthProtocolSCSI:
+		protocol = health.EvidenceProtocolSCSI
+	}
+	if worker != nil && worker.Submit(health.EvidenceRequest{
+		Trigger:     event,
+		Target:      target.target,
+		Protocol:    protocol,
+		TriggeredAt: triggeredAt,
+		Reason:      target.reason,
+	}) {
+		return
+	}
+	c.persistEvent(triggeredAt, event)
+}
+
+func ioHealthControllerName(raw [ioHealthNVMeControllerNameLength]uint8) string {
+	length := len(raw)
+	for index, value := range raw {
+		if value == 0 {
+			length = index
+			break
+		}
+	}
+	name := string(raw[:length])
+	if !ioHealthNVMeControllerPattern.MatchString(name) {
+		return "unknown"
+	}
+	return name
+}
+
+func ioHealthNVMeStateLayoutForRelease(release string) ioHealthNVMeStateLayout {
+	major, minor, ok := ioHealthKernelVersion(release)
+	if !ok {
+		return ioHealthNVMeStateUnknown
+	}
+
+	if major == 4 && minor == 18 {
+		return ioHealthNVMeStateLinux418
+	}
+	if major > 5 || major == 5 && minor >= 10 {
+		return ioHealthNVMeStateLinux510
+	}
+	return ioHealthNVMeStateUnknown
+}
+
+func ioHealthNVMeStateName(layout ioHealthNVMeStateLayout, raw uint32) string {
+	switch layout {
+	case ioHealthNVMeStateLinux418:
+		if raw < uint32(len(ioHealthNVMeStatesLinux418)) {
+			return ioHealthNVMeStatesLinux418[raw]
+		}
+	case ioHealthNVMeStateLinux510:
+		if raw < uint32(len(ioHealthNVMeStatesLinux510)) {
+			return ioHealthNVMeStatesLinux510[raw]
+		}
+	}
+	return "unknown"
+}
+
+func ioHealthOperation(operation uint8) string {
+	switch operation {
+	case reqOpRead:
+		return "read"
+	case reqOpWrite:
+		return "write"
+	case reqOpFlush:
+		return "flush"
+	case reqOpDiscard:
+		return "discard"
+	default:
+		return "unknown"
+	}
+}
+
+func ioHealthBlockStatus(status int32) string {
+	switch status {
+	case -int32(unix.EOPNOTSUPP):
+		return "not_supported"
+	case -int32(unix.ETIMEDOUT):
+		return "timeout"
+	case -int32(unix.ENOSPC):
+		return "no_space"
+	case -int32(unix.ENOLINK),
+		-int32(unix.EREMOTEIO),
+		-int32(unix.EBADE):
+		return "transport"
+	case -int32(unix.ENODATA):
+		return "medium_error"
+	case -int32(unix.EILSEQ):
+		return "protection"
+	case -int32(unix.ENOMEM),
+		-int32(unix.EBUSY),
+		-int32(unix.EAGAIN),
+		-int32(unix.EREMCHG),
+		-int32(unix.ETOOMANYREFS),
+		-int32(unix.EOVERFLOW):
+		return "resource"
+	case -int32(unix.ENODEV):
+		return "offline"
+	default:
+		if status == 0 {
+			return "unknown"
+		}
+		return "io_error"
+	}
+}
+
+func ioHealthSCSIDispatchStatus(status int32) string {
+	switch status {
+	case scsiMLQueueHostBusy:
+		return "host_busy"
+	case scsiMLQueueDeviceBusy:
+		return "device_busy"
+	case scsiMLQueueEHRetry:
+		return "eh_retry"
+	case scsiMLQueueTargetBusy:
+		return "target_busy"
+	default:
+		return "unknown"
+	}
+}
+
+func uint64Pointer(value uint64) *uint64 {
+	return &value
 }
