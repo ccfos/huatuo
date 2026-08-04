@@ -102,16 +102,32 @@ func run(root string) error {
 
 func recordGoNames(names map[string]string, types []mergedType) error {
 	for _, typ := range types {
-		if previous, ok := names[typ.goName]; ok && previous != typ.cName {
-			return fmt.Errorf(
-				"go type name %q collides for c types %q and %q",
-				typ.goName,
-				previous,
-				typ.cName,
-			)
+		if err := recordGoName(names, typ.goName, typ.cName); err != nil {
+			return err
 		}
-		names[typ.goName] = typ.cName
+		enum, ok := stripQualifiers(typ.typ).(*btf.Enum)
+		if !ok {
+			continue
+		}
+		for _, value := range enum.Values {
+			if err := recordGoName(names, goName(value.Name), value.Name); err != nil {
+				return err
+			}
+		}
 	}
+	return nil
+}
+
+func recordGoName(names map[string]string, goName, cName string) error {
+	if previous, ok := names[goName]; ok {
+		return fmt.Errorf(
+			"go name %q collides for c names %q and %q",
+			goName,
+			previous,
+			cName,
+		)
+	}
+	names[goName] = cName
 	return nil
 }
 
@@ -168,6 +184,9 @@ func generateDomain(types []mergedType) ([]byte, error) {
 	formatter := btf.GoFormatter{
 		Names:      names,
 		Identifier: goName,
+		EnumIdentifier: func(_, element string) string {
+			return goName(element)
+		},
 	}
 
 	var out strings.Builder
@@ -186,11 +205,15 @@ func generateDomain(types []mergedType) ([]byte, error) {
 		}
 		fmt.Fprintf(&out, "const %sSize = %d\n\n", typ.goName, size)
 		out.WriteString("var (\n")
+		zeroValue := typ.goName + "{}"
+		if _, ok := stripQualifiers(typ.typ).(*btf.Enum); ok {
+			zeroValue = typ.goName + "(0)"
+		}
 		fmt.Fprintf(
 			&out,
-			"_ [%sSize]byte = [unsafe.Sizeof(%s{})]byte{}\n",
+			"_ [%sSize]byte = [unsafe.Sizeof(%s)]byte{}\n",
 			typ.goName,
-			typ.goName,
+			zeroValue,
 		)
 
 		strct, ok := stripQualifiers(typ.typ).(*btf.Struct)

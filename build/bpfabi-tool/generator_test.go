@@ -26,18 +26,65 @@ import (
 
 func TestGoName(t *testing.T) {
 	tests := map[string]string{
-		"bpf_debug_event":       "BPFDebugEvent",
-		"n_missed":              "NMissed",
-		"net_rx_latency":        "NetRXLatency",
-		"pid_tgid":              "PIDTGID",
-		"profiler_offcpu_event": "ProfilerOffCPUEvent",
-		"profiler_oncpu_event":  "ProfilerOnCPUEvent",
-		"total_n_missed":        "TotalNMissed",
-		"unnamed_plain_name":    "UnnamedPlainName",
+		"PROFILER_OFFCPU_EVENT_UNKNOWN": "ProfilerOffCPUEventUnknown",
+		"bpf_debug_event":               "BPFDebugEvent",
+		"n_missed":                      "NMissed",
+		"net_rx_latency":                "NetRXLatency",
+		"pid_tgid":                      "PIDTGID",
+		"profiler_offcpu_event":         "ProfilerOffCPUEvent",
+		"profiler_oncpu_event":          "ProfilerOnCPUEvent",
+		"total_n_missed":                "TotalNMissed",
+		"unnamed_plain_name":            "UnnamedPlainName",
 	}
 	for input, want := range tests {
 		if got := goName(input); got != want {
 			t.Errorf("goName(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestGenerateDomainExportsEnum(t *testing.T) {
+	u32 := &btf.Int{Name: "u32", Size: 4}
+	kind := &btf.Enum{
+		Name:   "sample_event_kind",
+		Size:   4,
+		Signed: true,
+		Values: []btf.EnumValue{
+			{Name: "SAMPLE_EVENT_UNKNOWN", Value: 0},
+			{Name: "SAMPLE_EVENT_READY", Value: 1},
+		},
+	}
+	event := &btf.Struct{
+		Name: "sample_event",
+		Size: 8,
+		Members: []btf.Member{
+			{Name: "kind", Type: kind, Offset: 0},
+			{Name: "value", Type: u32, Offset: 32},
+		},
+	}
+	types, err := mergeCandidates([]candidate{
+		{cName: kind.Name, typ: kind, objectPath: "sample.o"},
+		{cName: event.Name, typ: event, objectPath: "sample.o"},
+	})
+	if err != nil {
+		t.Fatalf("merge enum candidates: %v", err)
+	}
+
+	output, err := generateDomain(types)
+	if err != nil {
+		t.Fatalf("generate enum domain: %v", err)
+	}
+	for _, fragment := range []string{
+		"type SampleEventKind int32",
+		"SampleEventUnknown SampleEventKind = 0",
+		"SampleEventReady",
+		"SampleEventKind = 1",
+		"Kind  SampleEventKind",
+		"const SampleEventKindSize = 4",
+		"unsafe.Sizeof(SampleEventKind(0))",
+	} {
+		if !bytes.Contains(output, []byte(fragment)) {
+			t.Errorf("generated output does not contain %q:\n%s", fragment, output)
 		}
 	}
 }
@@ -170,6 +217,29 @@ func TestRecordGoNamesRejectsCollision(t *testing.T) {
 	}
 }
 
+func TestRecordGoNamesRejectsEnumConstantCollision(t *testing.T) {
+	first := &btf.Enum{
+		Name:   "first_state",
+		Size:   4,
+		Values: []btf.EnumValue{{Name: "SHARED_STATE_READY", Value: 1}},
+	}
+	second := &btf.Enum{
+		Name:   "second_state",
+		Size:   4,
+		Values: []btf.EnumValue{{Name: "shared_state_ready", Value: 2}},
+	}
+	err := recordGoNames(
+		make(map[string]string),
+		[]mergedType{
+			{cName: first.Name, goName: goName(first.Name), typ: first},
+			{cName: second.Name, goName: goName(second.Name), typ: second},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "go name \"SharedStateReady\" collides") {
+		t.Fatalf("recordGoNames error = %v", err)
+	}
+}
+
 func TestMergeCandidates(t *testing.T) {
 	u32 := &btf.Int{Name: "u32", Size: 4}
 	first := &btf.Struct{
@@ -207,6 +277,26 @@ func TestMergeCandidates(t *testing.T) {
 	}
 }
 
+func TestMergeCandidatesRejectsDifferentEnums(t *testing.T) {
+	first := &btf.Enum{
+		Name:   "sample_state",
+		Size:   4,
+		Values: []btf.EnumValue{{Name: "SAMPLE_STATE_READY", Value: 1}},
+	}
+	different := &btf.Enum{
+		Name:   "sample_state",
+		Size:   4,
+		Values: []btf.EnumValue{{Name: "SAMPLE_STATE_READY", Value: 2}},
+	}
+	_, err := mergeCandidates([]candidate{
+		{cName: first.Name, typ: first, objectPath: "a.o"},
+		{cName: different.Name, typ: different, objectPath: "b.o"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "differs between objects") {
+		t.Fatalf("merge different enums error = %v", err)
+	}
+}
+
 func TestValidateTypeRejectsUnsafeLayouts(t *testing.T) {
 	u32 := &btf.Int{Name: "u32", Size: 4}
 	tests := map[string]btf.Type{
@@ -230,7 +320,8 @@ func TestValidateTypeRejectsUnsafeLayouts(t *testing.T) {
 			Size:    8,
 			Members: []btf.Member{{Name: "value", Type: u32, Offset: 4}},
 		},
-		"bool": &btf.Int{Name: "bool", Size: 1, Encoding: btf.Bool},
+		"bool":      &btf.Int{Name: "bool", Size: 1, Encoding: btf.Bool},
+		"enum size": &btf.Enum{Name: "bad_enum", Size: 3},
 	}
 	for name, typ := range tests {
 		t.Run(name, func(t *testing.T) {

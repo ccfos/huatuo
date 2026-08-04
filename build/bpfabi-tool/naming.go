@@ -49,6 +49,7 @@ func goName(cName string) string {
 		if part == "" {
 			continue
 		}
+		part = strings.ToLower(part)
 		if initialism, ok := initialisms[part]; ok {
 			b.WriteString(initialism)
 			continue

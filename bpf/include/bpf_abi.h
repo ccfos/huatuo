@@ -20,7 +20,10 @@
  * the pointee type without adding a BPF map or copying the event into rodata.
  */
 #define BPF_ABI_EXPORT(type)                                                   \
-	static const struct type *const __bpf_abi_##type                        \
+	static const struct type *const __bpf_abi_##type                       \
 		__attribute__((used)) = 0
+
+#define BPF_ABI_EXPORT_ENUM(type)                                              \
+	static const enum type *const __bpf_abi_##type __attribute__((used)) = 0
 
 #endif /* __BPF_ABI_H__ */

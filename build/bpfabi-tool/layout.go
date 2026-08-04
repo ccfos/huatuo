@@ -55,6 +55,17 @@ func canonicalType(typ btf.Type, active map[btf.Type]bool) (string, error) {
 			return "", fmt.Errorf("boolean %q is unsupported", t.Name)
 		}
 		return fmt.Sprintf("int(%s,%d,%d)", t.Name, t.Size, t.Encoding), nil
+	case *btf.Enum:
+		if _, err := integerAlign(t.Size); err != nil {
+			return "", fmt.Errorf("enum %q: %w", t.Name, err)
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "enum(%s,%d,%t){", t.Name, t.Size, t.Signed)
+		for _, value := range t.Values {
+			fmt.Fprintf(&b, "%s=%d;", value.Name, value.Value)
+		}
+		b.WriteByte('}')
+		return b.String(), nil
 	case *btf.Array:
 		if t.Nelems == 0 {
 			return "", fmt.Errorf("flexible or zero-length array is unsupported")
@@ -118,6 +129,12 @@ func goTypeLayout(typ btf.Type, active map[btf.Type]bool) (typeLayout, error) {
 		align, err := integerAlign(t.Size)
 		if err != nil {
 			return typeLayout{}, err
+		}
+		return typeLayout{size: t.Size, align: align}, nil
+	case *btf.Enum:
+		align, err := integerAlign(t.Size)
+		if err != nil {
+			return typeLayout{}, fmt.Errorf("enum %q: %w", t.Name, err)
 		}
 		return typeLayout{size: t.Size, align: align}, nil
 	case *btf.Array:
