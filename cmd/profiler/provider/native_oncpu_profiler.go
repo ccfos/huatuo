@@ -104,6 +104,18 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	if err != nil {
 		return fmt.Errorf("load native CPU %s BPF object %q: %w", pctx.CPUMode, objectName, err)
 	}
+	if offCPU {
+		if err := configureOffCPUSet(b, pctx.CPUIDs); err != nil {
+			configureErr := fmt.Errorf("configure native CPU off-CPU filter: %w", err)
+			if closeErr := b.Close(); closeErr != nil {
+				return errors.Join(
+					configureErr,
+					fmt.Errorf("close BPF after configure failure: %w", closeErr),
+				)
+			}
+			return configureErr
+		}
+	}
 
 	if err := b.AttachWithOptions(attachOptions); err != nil {
 		attachErr := fmt.Errorf("attach native CPU %s probes: %w", pctx.CPUMode, err)

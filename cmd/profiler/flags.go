@@ -38,7 +38,7 @@ var appFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:  "cpuid",
-		Usage: "CPU IDs to sample: comma-separated list and ranges (e.g., 1,3,5-10). Empty for all CPUs",
+		Usage: "CPU IDs to profile: comma-separated list and ranges (e.g., 1,3,5-10). Empty for all CPUs",
 	},
 	&cli.StringFlag{
 		Name:  "cpu-mode",

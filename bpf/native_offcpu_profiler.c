@@ -13,6 +13,7 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 
 #define TASK_RUNNING 0
 #define OFFCPU_STATE_ENTRIES 32768
+#define OFFCPU_CPU_FILTER_WORDS 128
 
 enum offcpu_phase_filter {
 	OFFCPU_PHASE_FILTER_ALL = 0,
@@ -51,15 +52,17 @@ enum offcpu_stat {
 
 static volatile const __u32 profiler_offcpu_phase = OFFCPU_PHASE_FILTER_ALL;
 static volatile const __u64 profiler_offcpu_min_duration_ns = 1000000;
+static volatile const __u32 profiler_offcpu_cpu_filter_enabled = 0;
 
 BPF_DBG_MAP(native_cpu_dbg);
 
 struct offcpu_state_t {
 	struct profiler_event_base base;
 	__u64 phase_start_ns;
+	__u32 cpu;
 	__u8 phase;
 	__u8 flags;
-	__u8 pad0[6];
+	__u8 pad0[2];
 };
 
 /*
@@ -79,6 +82,13 @@ struct {
 	__uint(key_size, sizeof(int));
 	__uint(value_size, sizeof(__u32));
 } profiler_output_a SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__type(key, __u32);
+	__type(value, __u64);
+	__uint(max_entries, OFFCPU_CPU_FILTER_WORDS);
+} offcpu_cpu_set SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -119,6 +129,25 @@ static __always_inline bool offcpu_phase_enabled(__u8 kind)
 	return kind == OFFCPU_EVENT_RUNQUEUE;
 }
 
+static __always_inline bool offcpu_cpu_enabled(void)
+{
+	__u64 *mask;
+	__u32 word;
+	__u32 cpu;
+
+	/* Keep the default path map-lookup free after constant rewriting. */
+	if (!profiler_offcpu_cpu_filter_enabled)
+		return true;
+
+	cpu = bpf_get_smp_processor_id();
+	word = cpu >> 6;
+	if (word >= OFFCPU_CPU_FILTER_WORDS)
+		return false;
+
+	mask = bpf_map_lookup_elem(&offcpu_cpu_set, &word);
+	return mask && (*mask & (1ULL << (cpu & 63)));
+}
+
 static __always_inline void offcpu_emit(
 	void *ctx,
 	const struct offcpu_state_t *state,
@@ -149,7 +178,7 @@ static __always_inline void offcpu_emit(
 	event->base.value = (__s64)duration;
 	event->start_ns = state->phase_start_ns;
 	event->end_ns = end_ns;
-	event->cpu = bpf_get_smp_processor_id();
+	event->cpu = state->cpu;
 	event->kind = kind;
 	event->flags = state->flags | extra_flags;
 
@@ -222,6 +251,9 @@ static __always_inline void offcpu_record_switch_out(
 	if (!key || (pid == 0 && tgid == 0) ||
 	    !profiler_should_trace(pid_tgid, current_task_cpu_css_addr()))
 		return;
+	/* Unrelated context switches must not pay for the bitmap lookup. */
+	if (!offcpu_cpu_enabled())
+		return;
 
 	if (profiler_fill_event_base(&state.base, pid_tgid, ctx,
 				     &stack_map_a) < 0) {
@@ -232,6 +264,7 @@ static __always_inline void offcpu_record_switch_out(
 	preempted = (__u64)ctx->args[0] != 0;
 	prev_state = task_state(prev);
 	state.phase_start_ns = now;
+	state.cpu = bpf_get_smp_processor_id();
 	if (preempted || prev_state == TASK_RUNNING) {
 		state.phase = OFFCPU_PHASE_RUNNABLE;
 		state.flags = preempted ? OFFCPU_FLAG_PREEMPTED : OFFCPU_FLAG_YIELDED;

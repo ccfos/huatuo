@@ -263,11 +263,10 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			wantError: "--cpu-mode=offcpu is supported only by native CPU profiling",
 		},
 		{
-			name:      "off-CPU rejects cpuid",
-			language:  "c",
-			typ:       "cpu",
-			args:      []string{"--cpu-mode", "offcpu", "--cpuid", "1"},
-			wantError: "--cpuid is not supported with --cpu-mode=offcpu",
+			name:     "native off-CPU cpuid",
+			language: "c",
+			typ:      "cpu",
+			args:     []string{"--cpu-mode", "offcpu", "--cpuid", "1"},
 		},
 		{
 			name:      "off-CPU rejects explicit frequency",

@@ -15,6 +15,8 @@
 package provider
 
 import (
+	"encoding/binary"
+	"errors"
 	"math"
 	"testing"
 	"unsafe"
@@ -117,6 +119,7 @@ func TestNativeAggregatorSeparatesOffCPUCategories(t *testing.T) {
 func TestNativeOffCPUBPFConstants(t *testing.T) {
 	pctx := &pcontext.ProfilerContext{
 		PIDs:                []int{123},
+		CPUIDs:              []int{2, 4},
 		ThreadGroup:         true,
 		OffCPUPhase:         profiling.OffCPUPhaseRunqueue,
 		OffCPUMinDurationUS: 250,
@@ -127,6 +130,70 @@ func TestNativeOffCPUBPFConstants(t *testing.T) {
 	require.Equal(t, true, constants["profiler_filter_threads"])
 	require.Equal(t, uint32(2), constants["profiler_offcpu_phase"])
 	require.Equal(t, uint64(250000), constants["profiler_offcpu_min_duration_ns"])
+	require.Equal(t, uint32(1), constants["profiler_offcpu_cpu_filter_enabled"])
+}
+
+func TestNativeOffCPUBPFConstantsDisablesEmptyCPUFilter(t *testing.T) {
+	constants := newNativeOffCPUBPFConstants(&pcontext.ProfilerContext{}, 0)
+	require.Equal(t, uint32(0), constants["profiler_offcpu_cpu_filter_enabled"])
+}
+
+func TestOffCPUCPUSetItems(t *testing.T) {
+	items, err := offCPUCPUSetItems([]int{0, 1, 63, 64, 127})
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	require.Equal(t, uint32(0), binary.LittleEndian.Uint32(items[0].Key))
+	require.Equal(t, uint64(1<<63|3), binary.LittleEndian.Uint64(items[0].Value))
+	require.Equal(t, uint32(1), binary.LittleEndian.Uint32(items[1].Key))
+	require.Equal(t, uint64(1<<63|1), binary.LittleEndian.Uint64(items[1].Value))
+
+	_, err = offCPUCPUSetItems([]int{offCPUCPUSetWordBits * offCPUCPUSetWordCount})
+	require.EqualError(t, err, "cpuid 8192 exceeds off-CPU filter limit 8191")
+}
+
+type offCPUCPUSetBPF struct {
+	bpf.BPF
+	mapID      uint32
+	writeErr   error
+	writtenMap uint32
+	items      []bpf.MapItem
+}
+
+func (f *offCPUCPUSetBPF) MapIDByName(string) uint32 {
+	return f.mapID
+}
+
+func (f *offCPUCPUSetBPF) WriteMapItems(mapID uint32, items []bpf.MapItem) error {
+	f.writtenMap = mapID
+	f.items = items
+	return f.writeErr
+}
+
+func TestConfigureOffCPUSet(t *testing.T) {
+	t.Run("disabled", func(t *testing.T) {
+		obj := &offCPUCPUSetBPF{}
+		require.NoError(t, configureOffCPUSet(obj, nil))
+		require.Zero(t, obj.writtenMap)
+	})
+
+	t.Run("missing map", func(t *testing.T) {
+		obj := &offCPUCPUSetBPF{}
+		err := configureOffCPUSet(obj, []int{1})
+		require.EqualError(t, err, `BPF map "offcpu_cpu_set" not found`)
+	})
+
+	t.Run("write failure", func(t *testing.T) {
+		obj := &offCPUCPUSetBPF{mapID: 7, writeErr: errors.New("update failed")}
+		err := configureOffCPUSet(obj, []int{1})
+		require.EqualError(t, err, `write BPF map "offcpu_cpu_set": update failed`)
+	})
+
+	t.Run("configured", func(t *testing.T) {
+		obj := &offCPUCPUSetBPF{mapID: 7}
+		require.NoError(t, configureOffCPUSet(obj, []int{1, 65}))
+		require.Equal(t, uint32(7), obj.writtenMap)
+		require.Len(t, obj.items, 2)
+	})
 }
 
 func TestMicrosecondsToNanosecondsSaturates(t *testing.T) {

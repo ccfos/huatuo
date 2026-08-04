@@ -3,11 +3,9 @@
 # Copyright 2026 The HuaTuo Authors.
 # SPDX-License-Identifier: Apache-2.0
 
-# Verify the native off-CPU profiler attributes blocked time: a fixture that
-# loops in nanosleep must produce folded output containing the blocked category
-# root and the wait_loop user chain. The assertion anchors on wait_loop because
-# user-stack capture depth varies by kernel and glibc build: older combos can
-# drop the inner blocking_wait frame while still resolving the outer chain.
+# Verify the native off-CPU profiler attributes blocked time to the CPU from
+# which the task switched out. The assertion anchors on wait_loop because user
+# stack depth varies by kernel and glibc build.
 
 set -euo pipefail
 
@@ -18,8 +16,10 @@ is_container && skip "native off-CPU profiler requires scheduler tracepoint acce
 readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_offcpu.user.c"
 
+command -v taskset > /dev/null || skip "taskset(1) not in PATH"
 [[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
 [[ -r "${ROOT_DIR}/_output/bpf/native_offcpu_profiler.o" ]] || fatal "native off-CPU bpf object missing"
+[[ "$(nproc)" -ge 2 ]] || skip "need at least 2 CPUs"
 
 readonly PROFILER_DURATION=10
 readonly PROFILER_AGGR_INTERVAL=5
@@ -37,32 +37,45 @@ cleanup() {
 trap cleanup EXIT
 
 compile_user_fixture "${FIXTURE_SRC}" "${FIXTURE_BIN}"
-"${FIXTURE_BIN}" > /dev/null 2>&1 &
+taskset -c 0 "${FIXTURE_BIN}" > /dev/null 2>&1 &
 TARGET_PID=$!
 kill -0 "${TARGET_PID}" 2> /dev/null || fatal "fixture exited immediately (pid=${TARGET_PID})"
 
-log_info "running off-CPU profiler for ${PROFILER_DURATION}s against pid=${TARGET_PID}"
-if ! "${TOOL_BIN}" \
-	--type cpu \
-	--language c \
-	--cpu-mode offcpu \
-	--offcpu-phase blocked \
-	--offcpu-min-duration-us 100 \
-	--pid "${TARGET_PID}" \
-	--duration "${PROFILER_DURATION}" \
-	--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
-	--output-format collapsed \
-	--output-path "${WORK_DIR}" \
-	> "${TOOL_OUT}" 2> "${TOOL_ERR}"; then
-	fatal "off-CPU profiler exited non-zero (see ${TOOL_ERR})"
-fi
+verify_offcpu_cpuid() {
+	local cpuid=$1 expected=$2
+	local output_dir="${WORK_DIR}/cpu-${cpuid}"
+	local match_count=0
+	mkdir -p "${output_dir}"
 
-mapfile -t FOLDED_FILES < <(find "${WORK_DIR}" -maxdepth 1 -name 'perf_*.folded' -type f)
-[[ ${#FOLDED_FILES[@]} -gt 0 ]] || fatal "no perf_*.folded file produced in ${WORK_DIR}"
+	log_info "running off-CPU profiler with --cpuid ${cpuid}, expect ${expected} stack"
+	if ! "${TOOL_BIN}" \
+		--type cpu \
+		--language c \
+		--cpu-mode offcpu \
+		--offcpu-phase blocked \
+		--offcpu-min-duration-us 100 \
+		--cpuid "${cpuid}" \
+		--pid "${TARGET_PID}" \
+		--duration "${PROFILER_DURATION}" \
+		--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
+		--output-format collapsed \
+		--output-path "${output_dir}" \
+		> "${TOOL_OUT}" 2> "${TOOL_ERR}"; then
+		fatal "off-CPU profiler exited non-zero (see ${TOOL_ERR})"
+	fi
 
-MATCH_COUNT=$(grep -hE "${BLOCKED_PATTERN}" "${FOLDED_FILES[@]}" | wc -l) || true
-if [[ "${MATCH_COUNT}" -eq 0 ]]; then
-	fatal "blocking wait stack not found in off-CPU folded output"
-fi
+	if compgen -G "${output_dir}/perf_*.folded" > /dev/null; then
+		match_count=$(grep -hE "${BLOCKED_PATTERN}" "${output_dir}"/perf_*.folded | wc -l) || true
+	fi
+	case "${expected}" in
+	present)
+		[[ "${match_count}" -gt 0 ]] || fatal "blocking wait stack not found for CPU ${cpuid}"
+		;;
+	absent)
+		[[ "${match_count}" -eq 0 ]] || fatal "blocking wait stack unexpectedly found for CPU ${cpuid}"
+		;;
+	esac
+}
 
-log_info "matched off-CPU blocking stacks: got ${MATCH_COUNT}, want >= 1"
+verify_offcpu_cpuid 0 present
+verify_offcpu_cpuid 1 absent

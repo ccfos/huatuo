@@ -40,6 +40,10 @@ const (
 	offCPUFlagPreempted    uint16 = 1 << 0
 	offCPUFlagYielded      uint16 = 1 << 1
 	offCPUFlagMissedWakeup uint16 = 1 << 2
+
+	offCPUCPUSetMapName   = "offcpu_cpu_set"
+	offCPUCPUSetWordBits  = 64
+	offCPUCPUSetWordCount = 128
 )
 
 type offCPUStackKey struct {
@@ -61,7 +65,56 @@ func newNativeOffCPUBPFConstants(pctx *pcontext.ProfilerContext, cssAddr uint64)
 	constants := newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
 	constants["profiler_offcpu_phase"] = offCPUPhaseCode(pctx.OffCPUPhase)
 	constants["profiler_offcpu_min_duration_ns"] = microsecondsToNanoseconds(pctx.OffCPUMinDurationUS)
+	constants["profiler_offcpu_cpu_filter_enabled"] = uint32(0)
+	if len(pctx.CPUIDs) != 0 {
+		constants["profiler_offcpu_cpu_filter_enabled"] = uint32(1)
+	}
 	return constants
+}
+
+func configureOffCPUSet(obj bpf.BPF, cpuIDs []int) error {
+	if len(cpuIDs) == 0 {
+		return nil
+	}
+
+	mapID := obj.MapIDByName(offCPUCPUSetMapName)
+	if mapID == 0 {
+		return fmt.Errorf("BPF map %q not found", offCPUCPUSetMapName)
+	}
+
+	items, err := offCPUCPUSetItems(cpuIDs)
+	if err != nil {
+		return err
+	}
+	if err := obj.WriteMapItems(mapID, items); err != nil {
+		return fmt.Errorf("write BPF map %q: %w", offCPUCPUSetMapName, err)
+	}
+	return nil
+}
+
+func offCPUCPUSetItems(cpuIDs []int) ([]bpf.MapItem, error) {
+	var masks [offCPUCPUSetWordCount]uint64
+	for _, cpuID := range cpuIDs {
+		if cpuID < 0 || cpuID >= offCPUCPUSetWordBits*offCPUCPUSetWordCount {
+			return nil, fmt.Errorf("cpuid %d exceeds off-CPU filter limit %d",
+				cpuID, offCPUCPUSetWordBits*offCPUCPUSetWordCount-1)
+		}
+		word := cpuID / offCPUCPUSetWordBits
+		masks[word] |= uint64(1) << uint(cpuID%offCPUCPUSetWordBits)
+	}
+
+	items := make([]bpf.MapItem, 0, len(cpuIDs))
+	for word, mask := range &masks {
+		if mask == 0 {
+			continue
+		}
+		key := make([]byte, 4)
+		binary.LittleEndian.PutUint32(key, uint32(word))
+		value := make([]byte, 8)
+		binary.LittleEndian.PutUint64(value, mask)
+		items = append(items, bpf.MapItem{Key: key, Value: value})
+	}
+	return items, nil
 }
 
 func offCPUPhaseCode(phase profiling.OffCPUPhase) uint32 {
