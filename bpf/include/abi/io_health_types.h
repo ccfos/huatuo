@@ -18,6 +18,8 @@
 
 #include "bpf_abi.h"
 
+#define IO_HEALTH_CONTROLLER_NAME_LEN 16
+
 struct io_health_event {
 	u64 sector;
 	u32 dev;
@@ -26,10 +28,11 @@ struct io_health_event {
 	u32 channel;
 	u32 target;
 	u32 lun;
+	u8 controller[IO_HEALTH_CONTROLLER_NAME_LEN];
+	u32 new_state_raw;
 	u8 type;
 	u8 operation;
 	u8 rwbs[2];
-	u8 pad[4];
 };
 
 BPF_ABI_EXPORT(io_health_event);
