@@ -117,7 +117,7 @@
           "displayMode": "table",
           "placement": "right",
           "showLegend": true,
-          "width": 300
+          "width": 500
         },
         "tooltip": {
           "hideZeros": false,
@@ -136,7 +136,7 @@
           "exemplar": true,
           "expr": "$metric{container_host=~\"$container_host\",region=~\"$region\",container_type!=\"Sidecar\"}",
           "interval": "",
-          "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+          "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
           "range": true,
           "refId": "A"
         }
@@ -235,7 +235,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -253,7 +253,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_cpu_util_container_usr{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}: {{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}：{{container_type}}",
               "refId": "A"
             }
           ],
@@ -337,7 +337,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -355,7 +355,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_cpu_util_container_sys{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}: {{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}：{{container_type}}",
               "refId": "A"
             }
           ],
@@ -439,7 +439,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -457,7 +457,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_cpu_stat_container_inner_wait_rate{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}: {{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}：{{container_type}}",
               "refId": "A"
             }
           ],
@@ -541,7 +541,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -559,7 +559,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_cpu_stat_container_exter_wait_rate{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}: {{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}：{{container_type}}",
               "refId": "A"
             }
           ],
@@ -643,7 +643,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -661,7 +661,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_cpu_stat_container_throttle_wait_rate{container_host=~\"$container_host\",region=~\"$region\", container_type != \"sidecar\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}: {{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}：{{container_type}}",
               "refId": "A"
             }
           ],
@@ -772,7 +772,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -790,7 +790,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_others_container_asyncreclaim_time{container_host=~\"$container_host\",region=~\"$region\"}/1000000",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -874,7 +874,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -892,7 +892,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_others_container_directstall_time{container_host=~\"$container_host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -975,7 +975,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -993,7 +993,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_container_pgsteal_cswapd{container_host=~\"$container_host\",region=~\"$region\"}/1024/1024",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1076,7 +1076,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1094,7 +1094,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_container_pgsteal_direct{container_host=~\"$container_host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1177,7 +1177,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1195,7 +1195,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_container_pgsteal_kswapd{container_host=~\"$container_host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1278,7 +1278,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1296,7 +1296,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_container_pgsteal_globaldirect{container_host=~\"$container_host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1378,7 +1378,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1396,7 +1396,7 @@
               "exemplar": true,
               "expr": "huatuo_bamai_memory_vmstat_container_pgsteal_globalkswapd{container_host=~\"$container_host\",region=~\"$region\"}",
               "interval": "",
-              "legendFormat": "{{host}}/{{container_host}}:{{container_type}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -1505,7 +1505,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1524,7 +1524,7 @@
               "expr": "rate(huatuo_bamai_netdev_container_receive_bytes_total{container_host=~\"$container_host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             }
           ],
@@ -1606,7 +1606,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1625,7 +1625,7 @@
               "expr": "rate(huatuo_bamai_netdev_container_receive_packets_total{container_host=~\"$container_host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             }
           ],
@@ -1707,7 +1707,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1726,7 +1726,7 @@
               "expr": "rate(huatuo_bamai_netdev_container_transmit_bytes_total{container_host=~\"$container_host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             }
           ],
@@ -1808,7 +1808,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1827,7 +1827,7 @@
               "expr": "rate(huatuo_bamai_netdev_container_transmit_packets_total{container_host=~\"$container_host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             }
           ],
@@ -1910,7 +1910,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -1928,7 +1928,7 @@
               "exemplar": true,
               "expr": "rate(huatuo_bamai_netdev_container_receive_dropped_total{container_host=~\"$container_host\",region=~\"$region\"}[30s])",
               "interval": "",
-              "legendFormat": "dropped: {{container_host}}",
+              "legendFormat": "dropped: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             },
             {
@@ -1940,7 +1940,7 @@
               "expr": "rate(huatuo_bamai_netdev_container_receive_errors_total{container_host=~\"$container_host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "errors: {{container_host}}",
+              "legendFormat": "errors: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             }
           ],
@@ -2023,7 +2023,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -2041,7 +2041,7 @@
               "exemplar": true,
               "expr": "rate(huatuo_bamai_netdev_container_transmit_dropped_total{container_host=~\"$container_host\",region=~\"$region\"}[30s])",
               "interval": "",
-              "legendFormat": "dropped: {{container_host}}",
+              "legendFormat": "dropped: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             },
             {
@@ -2053,7 +2053,7 @@
               "expr": "rate(huatuo_bamai_netdev_container_transmit_errors_total{container_host=~\"$container_host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "errors: {{container_host}}",
+              "legendFormat": "errors: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             },
             {
@@ -2065,7 +2065,7 @@
               "expr": "rate(huatuo_bamai_netdev_container_transmit_carrier_total{container_host=~\"$container_host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "carrier: {{container_host}}",
+              "legendFormat": "carrier: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "C"
             },
             {
@@ -2077,7 +2077,7 @@
               "expr": "rate(huatuo_bamai_netdev_container_transmit_colls_total{container_host=~\"$container_host\",region=~\"$region\"}[30s])",
               "hide": false,
               "interval": "",
-              "legendFormat": "colls: {{container_host}}",
+              "legendFormat": "colls: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "D"
             }
           ],
@@ -2180,7 +2180,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -2202,7 +2202,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             }
           ],
@@ -2305,7 +2305,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -2327,7 +2327,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             }
           ],
@@ -2430,7 +2430,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -2452,7 +2452,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             }
           ],
@@ -2555,7 +2555,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -2577,7 +2577,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             }
           ],
@@ -2660,7 +2660,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -2682,7 +2682,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "InSegs: {{container_host}}",
+              "legendFormat": "InSegs: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "F"
             },
             {
@@ -2697,7 +2697,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "OutSegs: {{container_host}}",
+              "legendFormat": "OutSegs: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "G"
             },
             {
@@ -2712,7 +2712,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPDelivered: {{container_host}}",
+              "legendFormat": "TCPDelivered: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "C"
             },
             {
@@ -2727,7 +2727,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPOrigDataSent: {{container_host}}",
+              "legendFormat": "TCPOrigDataSent: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             },
             {
@@ -2742,7 +2742,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "ActiveOpens: {{container_host}}",
+              "legendFormat": "ActiveOpens: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             },
             {
@@ -2757,7 +2757,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "CurrEstab: {{container_host}}",
+              "legendFormat": "CurrEstab: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "D"
             },
             {
@@ -2772,7 +2772,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "PassiveOpens: {{container_host}}",
+              "legendFormat": "PassiveOpens: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "E"
             }
           ],
@@ -2855,7 +2855,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -2877,7 +2877,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "ListenDrops: {{container_host}}",
+              "legendFormat": "ListenDrops: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "C"
             },
             {
@@ -2892,7 +2892,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "ListenOverflows: {{container_host}}",
+              "legendFormat": "ListenOverflows: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             },
             {
@@ -2907,7 +2907,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPReqQFullDoCookies: {{container_host}}",
+              "legendFormat": "TCPReqQFullDoCookies: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "J"
             },
             {
@@ -2922,7 +2922,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "PFMemallocDrop: {{container_host}}",
+              "legendFormat": "PFMemallocDrop: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             },
             {
@@ -2937,7 +2937,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPBacklogDrop: {{container_host}}",
+              "legendFormat": "TCPBacklogDrop: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "D"
             },
             {
@@ -2952,7 +2952,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPRcvQDrop: {{container_host}}",
+              "legendFormat": "TCPRcvQDrop: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "I"
             },
             {
@@ -2967,7 +2967,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPTimeouts: {{container_host}}",
+              "legendFormat": "TCPTimeouts: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "L"
             },
             {
@@ -2982,7 +2982,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPLossFailures: {{container_host}}",
+              "legendFormat": "TCPLossFailures: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "E"
             },
             {
@@ -2997,7 +2997,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPSACKDiscard: {{container_host}}",
+              "legendFormat": "TCPSACKDiscard: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "F"
             },
             {
@@ -3012,7 +3012,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPMemoryPressures: {{container_host}}",
+              "legendFormat": "TCPMemoryPressures: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "G"
             },
             {
@@ -3027,7 +3027,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPMinTTLDrop: {{container_host}}",
+              "legendFormat": "TCPMinTTLDrop: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "H"
             },
             {
@@ -3042,7 +3042,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPMinTTLDrop: {{container_host}}",
+              "legendFormat": "TCPMinTTLDrop: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "K"
             },
             {
@@ -3057,7 +3057,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPTimeWaitOverflow: {{container_host}}",
+              "legendFormat": "TCPTimeWaitOverflow: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "M"
             }
           ],
@@ -3140,7 +3140,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -3162,7 +3162,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "InErrs: {{container_host}}",
+              "legendFormat": "InErrs: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "J"
             },
             {
@@ -3177,7 +3177,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "InCsumErrors: {{container_host}}",
+              "legendFormat": "InCsumErrors: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "I"
             },
             {
@@ -3192,7 +3192,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPAbortOnMemory: {{container_host}}",
+              "legendFormat": "TCPAbortOnMemory: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "C"
             },
             {
@@ -3207,7 +3207,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPAbortOnTimeout: {{container_host}}",
+              "legendFormat": "TCPAbortOnTimeout: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             },
             {
@@ -3222,7 +3222,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPRetransFail: {{container_host}}",
+              "legendFormat": "TCPRetransFail: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             },
             {
@@ -3237,7 +3237,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPSackFailures: {{container_host}}",
+              "legendFormat": "TCPSackFailures: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "D"
             },
             {
@@ -3252,7 +3252,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPSackRecoveryFail: {{container_host}}",
+              "legendFormat": "TCPSackRecoveryFail: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "E"
             },
             {
@@ -3267,7 +3267,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "SyncookiesFailed: {{container_host}}",
+              "legendFormat": "SyncookiesFailed: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "F"
             },
             {
@@ -3282,7 +3282,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPWqueueTooBig: {{container_host}}",
+              "legendFormat": "TCPWqueueTooBig: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "G"
             },
             {
@@ -3297,7 +3297,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "AttemptFails: {{container_host}}",
+              "legendFormat": "AttemptFails: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "H"
             }
           ],
@@ -3380,7 +3380,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -3402,7 +3402,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "RetransSegs: {{container_host}}",
+              "legendFormat": "RetransSegs: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "F"
             },
             {
@@ -3417,7 +3417,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPSynRetrans: {{container_host}}",
+              "legendFormat": "TCPSynRetrans: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "E"
             },
             {
@@ -3432,7 +3432,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPFastRetrans: {{container_host}}",
+              "legendFormat": "TCPFastRetrans: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "C"
             },
             {
@@ -3447,7 +3447,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPSlowStartRetrans: {{container_host}}",
+              "legendFormat": "TCPSlowStartRetrans: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             },
             {
@@ -3462,7 +3462,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPSpuriousRTOs: {{container_host}}",
+              "legendFormat": "TCPSpuriousRTOs: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "B"
             },
             {
@@ -3477,7 +3477,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "TCPSpuriousRtxHostQueues: {{container_host}}",
+              "legendFormat": "TCPSpuriousRtxHostQueues: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "D"
             }
           ],
@@ -3560,7 +3560,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -3582,7 +3582,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "PruneCalled: {{container_host}}",
+              "legendFormat": "PruneCalled: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "C"
             },
             {
@@ -3597,7 +3597,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "RcvPruned: {{container_host}}",
+              "legendFormat": "RcvPruned: {{host}}|{{container_host}}:{{container_type}}",
               "refId": "A"
             }
           ],
@@ -3680,7 +3680,7 @@
               "displayMode": "table",
               "placement": "right",
               "showLegend": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -3702,7 +3702,7 @@
               "instant": false,
               "interval": "",
               "intervalFactor": 1,
-              "legendFormat": "{{container_host}}",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}}",
               "refId": "C"
             }
           ],
@@ -3813,7 +3813,7 @@
               "showLegend": true,
               "sortBy": "Mean",
               "sortDesc": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -3831,7 +3831,7 @@
               "exemplar": true,
               "expr": "increase(huatuo_bamai_iolatency_container_blkdisk_q2c{container_host=~\"$container_host\",region=~\"$region\"}[5m])",
               "interval": "",
-              "legendFormat": "{{container_host}} [{{latency}}]",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}} [{{latency}}]",
               "refId": "A"
             }
           ],
@@ -3915,7 +3915,7 @@
               "showLegend": true,
               "sortBy": "Mean",
               "sortDesc": true,
-              "width": 300
+              "width": 500
             },
             "tooltip": {
               "hideZeros": false,
@@ -3934,7 +3934,7 @@
               "exemplar": true,
               "expr": "increase(huatuo_bamai_iolatency_container_blkdisk_d2c{container_host=~\"$container_host\",region=~\"$region\"}[5m])",
               "interval": "",
-              "legendFormat": "{{container_host}} [{{latency}}]",
+              "legendFormat": "{{host}}|{{container_host}}:{{container_type}} [{{latency}}]",
               "range": true,
               "refId": "A"
             }
@@ -3966,8 +3966,9 @@
     "list": [
       {
         "current": {
-          "text": "example",
-          "value": "example"
+          "text": "All",
+          "value": "$__all",
+          "selected": true
         },
         "datasource": {
           "type": "prometheus",
@@ -4000,7 +4001,7 @@
           "type": "prometheus",
           "uid": "huatuo-bamai-prom"
         },
-        "definition": "label_values(huatuo_bamai_cpu_util_container_usr{region=\"$region\"}, container_hostnamespace)",
+        "definition": "label_values(huatuo_bamai_cpu_util_container_usr{region=~\"$region\"}, container_hostnamespace)",
         "hide": 0,
         "includeAll": true,
         "label": "ns",
@@ -4008,7 +4009,7 @@
         "name": "ns",
         "options": [],
         "query": {
-          "query": "label_values(huatuo_bamai_cpu_util_container_usr{region=\"$region\"}, container_hostnamespace)",
+          "query": "label_values(huatuo_bamai_cpu_util_container_usr{region=~\"$region\"}, container_hostnamespace)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -4033,6 +4034,7 @@
         "multi": true,
         "name": "container_host",
         "options": [],
+        "allValue": ".*",
         "query": "label_values(huatuo_bamai_cpu_util_container_usr{container_hostnamespace =~\"$ns\",region=~\"$region\"}, container_host)",
         "refresh": 1,
         "regex": "",
