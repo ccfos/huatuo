@@ -17,6 +17,12 @@
 
 #include "bpf_abi.h"
 
+/*
+ * Addresses are stored as 16-byte fields so a single layout serves both
+ * families: IPv4 occupies the low 4 bytes (network order, rest zero), IPv6
+ * uses all 16. addr_family (AF_INET / AF_INET6) tells userspace how to
+ * format them.
+ */
 struct net_rx_latency_event {
 	u8 comm[COMPAT_TASK_COMM_LEN];
 	u64 latency;
@@ -24,8 +30,10 @@ struct net_rx_latency_event {
 	u64 pkt_len;
 	u16 tcp_sport;
 	u16 tcp_dport;
-	u32 tcp_saddr;
-	u32 tcp_daddr;
+	u8 addr_family;
+	u8 pad1[3];
+	u8 tcp_saddr[16];
+	u8 tcp_daddr[16];
 	u32 tcp_seq;
 	u32 tcp_ack_seq;
 	u8 tcp_state;

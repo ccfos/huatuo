@@ -26,20 +26,22 @@
 #define SOF_TIMESTAMPING_RX_SOFTWARE (1 << 2)
 #endif
 
-#define BIND_IP	  "10.200.1.2"
-#define BIND_PORT 19876
+#define BIND_IP6 "fd00:dead:beef::2"
+#define BIND_PORT 19878
 
 int main(void)
 {
 
-	int tsfd = socket(AF_INET, SOCK_DGRAM, 0);
+	// SOF_TIMESTAMPING_RX_SOFTWARE is system-wide once enabled; mirror the
+	// IPv4 sink and request it on a UDPv6 socket too.
+	int tsfd = socket(AF_INET6, SOCK_DGRAM, 0);
 	if (tsfd >= 0) {
 		int val = SOF_TIMESTAMPING_RX_SOFTWARE;
 		setsockopt(tsfd, SOL_SOCKET, SO_TIMESTAMPING, &val,
 			   sizeof(val));
 	}
 
-	int lfd = socket(AF_INET, SOCK_STREAM, 0);
+	int lfd = socket(AF_INET6, SOCK_STREAM, 0);
 	if (lfd < 0) {
 		perror("socket");
 		return 1;
@@ -48,12 +50,12 @@ int main(void)
 	int opt = 1;
 	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-	struct sockaddr_in addr = {
-		.sin_family = AF_INET,
-		.sin_port = htons(BIND_PORT),
+	struct sockaddr_in6 addr = {
+		.sin6_family = AF_INET6,
+		.sin6_port = htons(BIND_PORT),
 	};
-	if (inet_pton(AF_INET, BIND_IP, &addr.sin_addr) != 1) {
-		fprintf(stderr, "invalid address: %s\n", BIND_IP);
+	if (inet_pton(AF_INET6, BIND_IP6, &addr.sin6_addr) != 1) {
+		fprintf(stderr, "invalid address: %s\n", BIND_IP6);
 		return 1;
 	}
 	if (bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {

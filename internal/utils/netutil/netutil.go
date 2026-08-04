@@ -38,6 +38,12 @@ func Inetv4Ntop(addr uint32) net.IP {
 	).To4()
 }
 
+// Inetv6Ntop converts an IPv6 address (16 bytes, network order) from binary to
+// net.IP. Mirror of Inetv4Ntop for the v6 path.
+func Inetv6Ntop(addr [16]byte) net.IP {
+	return net.IP(addr[:])
+}
+
 // Ntohs
 // converts the unsigned short integer netshort from network byte order to host byte order.
 //
