@@ -74,13 +74,13 @@ struct {
 	__uint(key_size, sizeof(__u32));
 	__uint(value_size, PERF_MAX_STACK_DEPTH * sizeof(__u64));
 	__uint(max_entries, STACK_MAP_ENTRIES);
-} offcpu_stack_map SEC(".maps");
+} stack_map_a SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
 	__uint(key_size, sizeof(int));
 	__uint(value_size, sizeof(__u32));
-} offcpu_output SEC(".maps");
+} profiler_output_a SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -159,7 +159,7 @@ static __always_inline void offcpu_emit(
 	event->kind = kind;
 	event->flags = state->flags | extra_flags;
 
-	err = bpf_perf_event_output(ctx, &offcpu_output,
+	err = bpf_perf_event_output(ctx, &profiler_output_a,
 				    COMPAT_BPF_F_CURRENT_CPU, event, sizeof(*event));
 	if (err < 0) {
 		offcpu_count(OFFCPU_STAT_OUTPUT_ERROR);
@@ -230,7 +230,7 @@ static __always_inline void offcpu_record_switch_out(
 		return;
 
 	if (profiler_fill_event_base(&state.base, pid_tgid, ctx,
-				     &offcpu_stack_map) < 0) {
+				     &stack_map_a) < 0) {
 		offcpu_count(OFFCPU_STAT_STACK_ERROR);
 		return;
 	}

@@ -87,17 +87,15 @@ func newSingleRingBufferContext(
 	b bpf.BPF,
 	ctx context.Context,
 	bufferSize int,
-	outputMapName string,
-	stackMapName string,
 ) (*ringBufferContext, error) {
-	stackMapID := b.MapIDByName(stackMapName)
+	stackMapID := b.MapIDByName("stack_map_a")
 	if stackMapID == 0 {
-		return nil, fmt.Errorf("%s not found", stackMapName)
+		return nil, errors.New("stack_map_a not found")
 	}
 
-	reader, err := b.EventPipeByName(ctx, outputMapName, uint32(bufferSize))
+	reader, err := b.EventPipeByName(ctx, "profiler_output_a", uint32(bufferSize))
 	if err != nil {
-		return nil, fmt.Errorf("create reader: %w", err)
+		return nil, fmt.Errorf("create readerA: %w", err)
 	}
 
 	return &ringBufferContext{

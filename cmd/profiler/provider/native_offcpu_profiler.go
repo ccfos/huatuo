@@ -88,13 +88,7 @@ func (p *cpuNativeProfiler) readOffCPUDataLoop(
 	ctx context.Context,
 	enqueue func(any),
 ) error {
-	ringCtx, err := newSingleRingBufferContext(
-		p.bpf,
-		ctx,
-		4096*257,
-		"offcpu_output",
-		"offcpu_stack_map",
-	)
+	ringCtx, err := newSingleRingBufferContext(p.bpf, ctx, 4096*257)
 	if err != nil {
 		return err
 	}
