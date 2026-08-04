@@ -84,9 +84,8 @@ func TestNetArpCache(t *testing.T) {
 		require.NoError(t, err)
 
 		stats, err := NetArpCache()
-		require.NoError(t, err)
-		require.NotNil(t, stats)
-		require.Empty(t, stats.Stats)
+		require.EqualError(t, err, "arp cache values are missing")
+		require.Nil(t, stats)
 	})
 
 	t.Run("EmptyFile", func(t *testing.T) {
@@ -96,9 +95,8 @@ func TestNetArpCache(t *testing.T) {
 		require.NoError(t, err)
 
 		stats, err := NetArpCache()
-		require.NoError(t, err)
-		require.NotNil(t, stats)
-		require.Empty(t, stats.Stats)
+		require.EqualError(t, err, "arp cache header is missing")
+		require.Nil(t, stats)
 	})
 
 	t.Run("MismatchedFieldsFewerValues", func(t *testing.T) {
@@ -108,9 +106,18 @@ func TestNetArpCache(t *testing.T) {
 		require.NoError(t, err)
 
 		stats, err := NetArpCache()
+		require.EqualError(t, err, "arp cache field count mismatch: got 2 values for 3 headers")
+		require.Nil(t, stats)
+	})
+
+	t.Run("MismatchedFieldsMoreValues", func(t *testing.T) {
+		content := `entries allocs
+0a 0b 0c`
+		err = os.WriteFile(arpCachePath, []byte(content), 0o600)
 		require.NoError(t, err)
-		require.Len(t, stats.Stats, 2)
-		require.Equal(t, uint64(10), stats.Stats["entries"])
-		require.Equal(t, uint64(11), stats.Stats["allocs"])
+
+		stats, err := NetArpCache()
+		require.EqualError(t, err, "arp cache field count mismatch: got 3 values for 2 headers")
+		require.Nil(t, stats)
 	})
 }
