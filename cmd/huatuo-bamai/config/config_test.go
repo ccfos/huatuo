@@ -132,6 +132,9 @@ ExcludedOnContainer = "writeback"
 	if Get().MetricCollector.Vmstat.IncludedOnContainer != "inactive_file" {
 		t.Errorf("unexpected Vmstat.IncludedOnContainer: %q", Get().MetricCollector.Vmstat.IncludedOnContainer)
 	}
+	if !Get().MetricCollector.IOHealth.Enabled {
+		t.Error("IOHealth must remain enabled when its section is omitted")
+	}
 	if len(Get().EventTracing.NetRxLatency.ExcludedContainerQos) != 1 {
 		t.Errorf("unexpected ExcludedContainerQos length: %d", len(Get().EventTracing.NetRxLatency.ExcludedContainerQos))
 	}
@@ -329,6 +332,7 @@ ExcludedOnContainer = "writeback"
 		{"EventTracing.IssuesList", [][]string{{"dropwatch", "kfree_skb"}}},
 		{"MetricCollector.Vmstat.IncludedOnHost", "pgsteal_direct"},
 		{"MetricCollector.Vmstat.IncludedOnContainer", "workingset_refault_file"},
+		{"MetricCollector.IOHealth.Enabled", false},
 	} {
 		if err := Set(kv.key, kv.val); err != nil {
 			t.Fatalf("Set %s returned error: %v", kv.key, err)
@@ -351,6 +355,9 @@ ExcludedOnContainer = "writeback"
 	}
 	if Get().MetricCollector.Vmstat.IncludedOnContainer != "workingset_refault_file" {
 		t.Errorf("unexpected Vmstat.IncludedOnContainer after reload: %q", Get().MetricCollector.Vmstat.IncludedOnContainer)
+	}
+	if Get().MetricCollector.IOHealth.Enabled {
+		t.Error("IOHealth runtime update was not persisted")
 	}
 	if len(Get().AutoTracing.IssuesList) != 1 || len(Get().AutoTracing.IssuesList[0]) != 2 || Get().AutoTracing.IssuesList[0][0] != "cpuidle" {
 		t.Errorf("unexpected AutoTracing.IssuesList after reload: %#v", Get().AutoTracing.IssuesList)
