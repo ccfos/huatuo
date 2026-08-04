@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/document"
-	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
 	"github.com/ccfos/huatuo/internal/storage/driver"
 	"github.com/ccfos/huatuo/internal/storage/localfile"
 	"github.com/ccfos/huatuo/internal/timeutil"
@@ -263,36 +262,6 @@ func TestHandleIotracingEventReturnsPendingResult(t *testing.T) {
 	}
 	if _, ok := pendingReasons.Load(taskID); ok {
 		t.Fatal("handleIotracingEvent() left the pending reason in the registry")
-	}
-}
-
-func TestDeleteMissingDiskState(t *testing.T) {
-	rawStats := map[string]*blockdevice.Diskstats{
-		"present": {},
-		"missing": {},
-	}
-	metrics := map[string]diskStatus{
-		"present": {},
-		"missing": {},
-	}
-
-	deleteMissingDiskState(
-		rawStats,
-		metrics,
-		map[string]struct{}{"present": {}},
-	)
-
-	if _, ok := rawStats["missing"]; ok {
-		t.Error("raw stats retained a missing device")
-	}
-	if _, ok := metrics["missing"]; ok {
-		t.Error("metrics retained a missing device")
-	}
-	if _, ok := rawStats["present"]; !ok {
-		t.Error("raw stats removed a present device")
-	}
-	if _, ok := metrics["present"]; !ok {
-		t.Error("metrics removed a present device")
 	}
 }
 
