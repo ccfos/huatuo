@@ -186,3 +186,54 @@ func TestTCPRetransmitTracingOmitEmpty(t *testing.T) {
 		}
 	}
 }
+
+func TestTCPRetransmitPhaseString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		phase TCPRetransmitPhase
+		want  string
+	}{
+		{name: "connect", phase: TCPRetransmitPhaseConnect, want: "connect"},
+		{name: "data", phase: TCPRetransmitPhaseData, want: "data"},
+		{name: "close", phase: TCPRetransmitPhaseClose, want: "close"},
+		{name: "unknown", phase: TCPRetransmitPhase(99), want: "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.phase.String(); got != tt.want {
+				t.Errorf("TCPRetransmitPhase(%d).String() = %q, want %q", tt.phase, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTCPRetransmitReasonString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		reason TCPRetransmitReason
+		want   string
+	}{
+		{name: "rto", reason: TCPRetransmitReasonRTO, want: "RTO"},
+		{name: "fast", reason: TCPRetransmitReasonFast, want: "fast_retransmit"},
+		{name: "reorder prone", reason: TCPRetransmitReasonReorderProneFast, want: "reorder_prone_fast"},
+		{name: "tlp", reason: TCPRetransmitReasonTLP, want: "TLP"},
+		{name: "spurious", reason: TCPRetransmitReasonSpurious, want: "spurious"},
+		{name: "unknown", reason: TCPRetransmitReasonUnknown, want: "unknown"},
+		{name: "out of range", reason: TCPRetransmitReason(99), want: "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.reason.String(); got != tt.want {
+				t.Errorf("TCPRetransmitReason(%d).String() = %q, want %q", tt.reason, got, tt.want)
+			}
+		})
+	}
+}
