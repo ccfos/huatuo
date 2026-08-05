@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 
 	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/core/events"
@@ -93,11 +94,13 @@ var (
 	configFile = ""
 	cfg        = &BamaiConfig{}
 	Region     string
+	configMu   sync.Mutex
 )
 
 // Load loads the config file and updates module level configs.
 func Load(path string) error {
 	loaded := &BamaiConfig{
+		AutoTracing:     autotracing.DefaultConfig(),
 		MetricCollector: collector.DefaultConfig(),
 	}
 	if err := internalconfig.Load(path, loaded); err != nil {
@@ -132,6 +135,9 @@ func (c *BamaiConfig) Validate() error {
 	}
 	if err := c.Pod.Validate(); err != nil {
 		return fmt.Errorf("validating pod config: %w", err)
+	}
+	if err := c.AutoTracing.Validate(); err != nil {
+		return fmt.Errorf("validating autotracing config: %w", err)
 	}
 	return nil
 }
@@ -214,8 +220,16 @@ func Get() *BamaiConfig {
 
 // Set updates a config field by dot-separated key.
 func Set(key string, val any) error {
+	configMu.Lock()
+	defer configMu.Unlock()
+
+	previous := *cfg
 	if err := internalconfig.Set(cfg, key, val); err != nil {
 		return err
+	}
+	if err := cfg.AutoTracing.Validate(); err != nil {
+		*cfg = previous
+		return fmt.Errorf("validate config after setting %s: %w", key, err)
 	}
 	setCoreModuleConfig()
 	return nil
@@ -223,6 +237,9 @@ func Set(key string, val any) error {
 
 // Sync writes the config back to the current config file.
 func Sync() error {
+	configMu.Lock()
+	defer configMu.Unlock()
+
 	return internalconfig.Sync(configFile, cfg)
 }
 

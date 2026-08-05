@@ -40,11 +40,10 @@ import (
 )
 
 const (
-	iotracingToolName                = "iotracing"
-	iotracingSnapshotTimeout         = 5 * time.Second
-	iotracingSnapshotSaveTimeout     = 30 * time.Second
-	iotracingProcessWaitTimeout      = 5 * time.Second
-	iotracingSamplingIntervalSeconds = 5
+	iotracingToolName            = "iotracing"
+	iotracingSnapshotTimeout     = 5 * time.Second
+	iotracingSnapshotSaveTimeout = 30 * time.Second
+	iotracingProcessWaitTimeout  = 5 * time.Second
 )
 
 // pendingReasons correlates an inflight subprocess invocation with
@@ -113,7 +112,7 @@ type ioTracing struct {
 	childRunning atomic.Bool
 
 	thresholds              ioThresholds
-	samplingIntervalSeconds uint64
+	samplingIntervalSeconds int64
 	runDurationSeconds      uint64
 	maxProcesses            int
 	maxFilesPerProcess      int
@@ -497,7 +496,7 @@ func newIOTracer(config *Config) (*ioTracing, error) {
 
 	return &ioTracing{
 		thresholds:              thresholds,
-		samplingIntervalSeconds: iotracingSamplingIntervalSeconds,
+		samplingIntervalSeconds: config.IOTracing.Interval,
 		runDurationSeconds:      config.IOTracing.RunTracingToolTimeout,
 		maxProcesses:            config.IOTracing.MaxProcDump,
 		maxFilesPerProcess:      config.IOTracing.MaxFilesPerProcDump,
@@ -596,7 +595,10 @@ func waitForSnapshotAfterExit(
 // Start owns the process's only diskstats read loop. Diagnostic children run
 // independently so sampling never pauses for them.
 func (i *ioTracing) Start(ctx context.Context) error {
-	interval := time.Duration(i.samplingIntervalSeconds) * time.Second
+	interval, err := ioTracingInterval(i.samplingIntervalSeconds)
+	if err != nil {
+		return err
+	}
 	readSnapshot := i.readSnapshot
 	if readSnapshot == nil {
 		readSnapshot = readRawDiskstatsSnapshot
@@ -614,27 +616,43 @@ func (i *ioTracing) Start(ctx context.Context) error {
 
 	lastMetrics := make(map[string]diskStatus)
 	sampleTicks := i.sampleTicks
+	var (
+		ticker          *time.Ticker
+		intervalChanges <-chan struct{}
+	)
 	if sampleTicks == nil {
-		ticker := time.NewTicker(interval)
+		ticker = time.NewTicker(interval)
 		defer ticker.Stop()
 		sampleTicks = ticker.C
+		intervalChanges = ioTracingIntervalChanged
 	}
 
 	for {
+		var nextInterval time.Duration
 		select {
 		case <-ctx.Done():
 			return types.ErrExitByCancelCtx
 		case <-sampleTicks:
-			current, err := readSnapshot()
-			if err != nil {
-				log.WithError(err).Warn("read /proc/diskstats")
+		case <-intervalChanges:
+			updated, intervalErr := ioTracingInterval(
+				ioTracingIntervalSeconds.Load(),
+			)
+			if intervalErr != nil {
+				log.WithError(intervalErr).Warn("apply iotracing interval")
 				continue
 			}
-			if previous == nil {
-				previous = current
+			if updated == interval {
 				continue
 			}
+			nextInterval = updated
+		}
 
+		current, readErr := readSnapshot()
+		if readErr != nil {
+			log.WithError(readErr).Warn("read /proc/diskstats")
+		} else if previous == nil {
+			previous = current
+		} else {
 			snapshot := buildDiskStatusSnapshot(previous, current)
 			// Neither this map nor its values are mutated after publication.
 			i.latest.Store(snapshot)
@@ -649,6 +667,11 @@ func (i *ioTracing) Start(ctx context.Context) error {
 				i.startDiagnostic(ctx, reason, &childWG)
 			}
 			previous = current
+		}
+
+		if nextInterval != 0 {
+			ticker.Reset(nextInterval)
+			interval = nextInterval
 		}
 	}
 }

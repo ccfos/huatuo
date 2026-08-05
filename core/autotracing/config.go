@@ -14,7 +14,15 @@
 
 package autotracing
 
-import "huatuo-bamai/internal/matcher"
+import (
+	"fmt"
+	"sync/atomic"
+	"time"
+
+	"huatuo-bamai/internal/matcher"
+)
+
+const defaultIOTracingIntervalSeconds int64 = 5
 
 // ContainerFilterConfig is the serializable form of a container filter.
 // It is converted to a *matcher.ContainerMatcher at runtime.
@@ -73,6 +81,7 @@ type Config struct {
 	}
 
 	IOTracing struct {
+		Interval              int64  `default:"5"`
 		RbpsThreshold         uint64 `default:"2000"`
 		WbpsThreshold         uint64 `default:"1500"`
 		UtilThreshold         uint64 `default:"90"`
@@ -88,14 +97,64 @@ type Config struct {
 	IssuesList [][]string
 }
 
-var cfg = &Config{}
+// DefaultConfig also makes the IO sampling default available to callers that
+// construct Config without going through the TOML decoder.
+func DefaultConfig() Config {
+	var c Config
+	c.IOTracing.Interval = defaultIOTracingIntervalSeconds
+	return c
+}
 
-// Set sets the autotracing config. A nil argument resets to the zero value so
-// callers never need to nil-check cfg.
+var cfg = func() *Config {
+	c := DefaultConfig()
+	return &c
+}()
+
+var (
+	ioTracingIntervalSeconds atomic.Int64
+	ioTracingIntervalChanged = make(chan struct{}, 1)
+)
+
+func init() {
+	ioTracingIntervalSeconds.Store(defaultIOTracingIntervalSeconds)
+}
+
+// Set sets the autotracing config. A nil argument restores package defaults.
 func Set(c *Config) {
 	if c == nil {
-		cfg = &Config{}
-		return
+		defaults := DefaultConfig()
+		c = &defaults
 	}
 	cfg = c
+	if ioTracingIntervalSeconds.Swap(c.IOTracing.Interval) == c.IOTracing.Interval {
+		return
+	}
+	select {
+	case ioTracingIntervalChanged <- struct{}{}:
+	default:
+	}
+}
+
+// Validate rejects an unusable or overflowing diskstats sampling interval.
+func (c *Config) Validate() error {
+	if c == nil {
+		return nil
+	}
+
+	if _, err := ioTracingInterval(c.IOTracing.Interval); err != nil {
+		return fmt.Errorf("AutoTracing.IOTracing.Interval: %w", err)
+	}
+	return nil
+}
+
+func ioTracingInterval(seconds int64) (time.Duration, error) {
+	if seconds <= 0 {
+		return 0, fmt.Errorf("must be greater than 0")
+	}
+	const maxDuration = time.Duration(1<<63 - 1)
+	maxSeconds := int64(maxDuration / time.Second)
+	if seconds > maxSeconds {
+		return 0, fmt.Errorf("%d seconds overflows time.Duration", seconds)
+	}
+	return time.Duration(seconds) * time.Second, nil
 }
