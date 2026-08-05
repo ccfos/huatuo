@@ -113,7 +113,7 @@ func TestRegisterAndReceive(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	defer c.End()
+	defer endClient(t, c)
 
 	events := []testEvent{
 		{ID: 1, Value: "alpha"},
@@ -167,7 +167,7 @@ func TestUnregisteredToolIsIgnored(t *testing.T) {
 	}
 
 	_ = c.Send(testEvent{ID: 99})
-	c.End()
+	endClient(t, c)
 
 	// Give the server a moment to process, then assert no handler was called.
 	time.Sleep(100 * time.Millisecond)
@@ -208,7 +208,7 @@ func TestMultipleChunksThenEnd(t *testing.T) {
 		}
 	}
 
-	c.End() // sends end frame + closes connection
+	endClient(t, c)
 
 	got := rec.waitN(t, 5)
 
@@ -310,7 +310,7 @@ func TestStartAfterClose(t *testing.T) {
 		t.Fatalf("NewClient after restart: %v", err)
 	}
 
-	defer c.End()
+	defer endClient(t, c)
 
 	if err := c.Send(testEvent{ID: 42, Value: "after-restart"}); err != nil {
 		t.Fatalf("Send: %v", err)
@@ -319,6 +319,13 @@ func TestStartAfterClose(t *testing.T) {
 	got := rec.waitN(t, 1)
 	if got[0].event.ID != 42 {
 		t.Errorf("restarted server: event ID got %d, want 42", got[0].event.ID)
+	}
+}
+
+func endClient(t *testing.T, client *toolstream.Client) {
+	t.Helper()
+	if err := client.End(); err != nil {
+		t.Errorf("End() error = %v", err)
 	}
 }
 
