@@ -94,9 +94,12 @@ func TestValidateFlags(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "negative duration", args: []string{"--duration", "-1"}, want: "--duration must be non-negative"},
+		{name: "negative duration", args: []string{"--duration", "-1"}, want: "invalid --duration"},
+		{name: "duration overflow", args: []string{"--duration", "9223372037"}, want: "invalid --duration"},
 		{name: "task ID without storage", args: []string{"--task-id", "task"}, want: "--task-id requires --output-storage"},
 		{name: "mutually exclusive devices", args: []string{"--device", "eth0", "--device-excluded", "eth1"}, want: "mutually exclusive"},
+		{name: "invalid source type", args: []string{"--source-types", "invalid"}, want: "invalid --source-types"},
+		{name: "unexpected argument", args: []string{"extra"}, want: "unexpected arguments"},
 	}
 
 	for _, tt := range tests {

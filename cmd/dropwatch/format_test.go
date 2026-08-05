@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net"
 	"testing"
 
@@ -29,6 +30,15 @@ import (
 type errWriter struct{ err error }
 
 func (w errWriter) Write(_ []byte) (int, error) { return 0, w.err }
+
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	return len(p) - 1, nil
+}
 
 func TestTextWriterFormatsAllEventFields(t *testing.T) {
 	var output bytes.Buffer
@@ -93,5 +103,17 @@ func TestJSONWriterPropagatesIOError(t *testing.T) {
 	err := w.Write(&types.DropWatchTracing{ObservedTimestamp: "now"})
 	if !errors.Is(err, boom) {
 		t.Fatalf("got %v, want %v", err, boom)
+	}
+}
+
+func TestWritersRejectShortWrites(t *testing.T) {
+	t.Parallel()
+
+	event := &types.DropWatchTracing{ObservedTimestamp: "now"}
+	if err := (&textWriter{w: shortWriter{}}).Write(event); !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("text writer error = %v, want %v", err, io.ErrShortWrite)
+	}
+	if err := (&jsonWriter{w: shortWriter{}}).Write(event); !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("JSON writer error = %v, want %v", err, io.ErrShortWrite)
 	}
 }
