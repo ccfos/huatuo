@@ -16,7 +16,6 @@ package symbol
 
 import (
 	"bufio"
-	"bytes"
 	"debug/elf"
 	"errors"
 	"fmt"
@@ -52,6 +51,7 @@ type ELFSymbolLimits struct {
 	MaxMetadataBytes uint64
 	MaxSymbolCount   uint64
 	MaxNameBytes     uint64
+	MaxNameLength    uint64
 }
 
 // DefaultELFSymbolLimits returns the default per-ELF symbol parsing limits.
@@ -60,6 +60,7 @@ func DefaultELFSymbolLimits() ELFSymbolLimits {
 		MaxMetadataBytes: 16 << 20,
 		MaxSymbolCount:   500_000,
 		MaxNameBytes:     16 << 20,
+		MaxNameLength:    1 << 20,
 	}
 }
 
@@ -278,7 +279,7 @@ func elfSymbolSourceSections(f *elf.File, source elfSymbolSource) (*elf.Section,
 	return section, stringsSection, nil
 }
 
-func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSource) (symbols, error) {
+func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSource, pcs ...uint64) (symbols, error) {
 	section, stringsSection, err := elfSymbolSourceSections(f, source)
 	if err != nil {
 		return nil, err
@@ -323,18 +324,21 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 	if err != nil {
 		return nil, fmt.Errorf("load symbol section: %w", err)
 	}
-	stringsData, err := stringsSection.Data()
-	if err != nil {
-		return nil, fmt.Errorf("load string table: %w", err)
-	}
-	if uint64(len(data)) != section.Size || uint64(len(stringsData)) != stringsSection.Size {
+	if uint64(len(data)) != section.Size {
 		return nil, fmt.Errorf("ELF section data size differs from its declared size")
 	}
 
 	sharedNames := state.names[stringsSection]
 	localNames := make(map[uint32]string)
 	var nameBytes uint64
-	result := make(symbols, 0)
+	type candidate struct {
+		nameOffset uint32
+		value      uint64
+		size       uint64
+	}
+	candidates := make(map[uint64]candidate, len(pcs))
+	allSymbols := len(pcs) == 0
+	result := make(symbols, 0, len(pcs))
 	for offset := symbolSize; offset < uint64(len(data)); offset += symbolSize {
 		entry := data[offset : offset+symbolSize]
 		var nameOffset uint32
@@ -354,29 +358,47 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 		if elf.ST_TYPE(info) != elf.STT_FUNC {
 			continue
 		}
+		if !allSymbols {
+			for _, pc := range pcs {
+				if value <= pc {
+					if current, ok := candidates[pc]; !ok || value > current.value {
+						candidates[pc] = candidate{nameOffset: nameOffset, value: value, size: size}
+					}
+				}
+			}
+			continue
+		}
+		candidates[uint64(len(candidates))] = candidate{nameOffset: nameOffset, value: value, size: size}
+	}
 
-		name, ok := sharedNames[nameOffset]
+	for pc, matched := range candidates {
+		if !allSymbols && matched.size != 0 && pc >= matched.value+matched.size {
+			// Keep the unnamed floor candidate so a lower symbol from another
+			// table cannot incorrectly resolve this PC.
+			result = append(result, &symbol{Addr: matched.value, Size: matched.size})
+			continue
+		}
+		name, ok := sharedNames[matched.nameOffset]
 		if !ok {
-			name, ok = localNames[nameOffset]
+			name, ok = localNames[matched.nameOffset]
 		}
 		if !ok {
-			if uint64(nameOffset) >= uint64(len(stringsData)) {
-				return nil, fmt.Errorf("symbol name offset %d exceeds string table size %d", nameOffset, len(stringsData))
-			}
-			nameData := stringsData[nameOffset:]
-			end := bytes.IndexByte(nameData, 0)
-			if end < 0 {
-				return nil, fmt.Errorf("symbol name at offset %d is not NUL-terminated", nameOffset)
+			if uint64(matched.nameOffset) >= stringsSection.Size {
+				return nil, fmt.Errorf("symbol name offset %d exceeds string table size %d", matched.nameOffset, stringsSection.Size)
 			}
 			remainingNames := state.limits.MaxNameBytes - state.nameBytes - nameBytes
-			if uint64(end) > remainingNames {
-				return nil, fmt.Errorf("%w: expanded symbol names exceed the remaining %d-byte limit", ErrELFSymbolLimit, remainingNames)
+			maxNameLength := state.limits.MaxNameLength
+			if maxNameLength == 0 || maxNameLength > remainingNames {
+				maxNameLength = remainingNames
 			}
-			name = string(nameData[:end])
-			localNames[nameOffset] = name
-			nameBytes += uint64(end)
+			name, err = readELFSymbolName(stringsSection, matched.nameOffset, maxNameLength)
+			if err != nil {
+				return nil, err
+			}
+			localNames[matched.nameOffset] = name
+			nameBytes += uint64(len(name))
 		}
-		result = append(result, &symbol{Addr: value, Size: size, Name: name})
+		result = append(result, &symbol{Addr: matched.value, Size: matched.size, Name: name})
 	}
 
 	state.metadataBytes += metadataBytes
@@ -392,6 +414,27 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 		sharedNames[offset] = name
 	}
 	return result, nil
+}
+
+func readELFSymbolName(section *elf.Section, offset uint32, limit uint64) (string, error) {
+	if limit >= uint64(^uint64(0)>>1) {
+		return "", fmt.Errorf("%w: symbol name limit is too large", ErrELFSymbolLimit)
+	}
+	reader := section.Open()
+	if _, err := reader.Seek(int64(offset), io.SeekStart); err != nil {
+		return "", fmt.Errorf("seek symbol name at offset %d: %w", offset, err)
+	}
+	available := section.Size - uint64(offset)
+	readLimit := min(available, limit+1)
+	bufferSize := int(min(readLimit, 4096))
+	name, err := bufio.NewReaderSize(io.LimitReader(reader, int64(readLimit)), bufferSize).ReadBytes(0)
+	if len(name) > 0 && name[len(name)-1] == 0 {
+		return string(name[:len(name)-1]), nil
+	}
+	if uint64(len(name)) > limit {
+		return "", fmt.Errorf("%w: symbol name at offset %d exceeds the %d-byte limit", ErrELFSymbolLimit, offset, limit)
+	}
+	return "", fmt.Errorf("symbol name at offset %d is not NUL-terminated: %w", offset, err)
 }
 
 func elfSymbolsFromSources(f *elf.File, sources []elfSymbolSource, limits ELFSymbolLimits) (symbols, error) {
@@ -423,6 +466,28 @@ func elfSymbols(f *elf.File, limits ELFSymbolLimits) (symbols, error) {
 		{name: "dynsym", typ: elf.SHT_DYNSYM},
 		{name: "symtab", typ: elf.SHT_SYMTAB},
 	}, limits)
+}
+
+// elfSymbolsForPCs scans bounded symbol metadata but materializes names only
+// for the symbols that cover the requested ELF-relative PCs.
+func elfSymbolsForPCs(f *elf.File, pcs []uint64, limits ELFSymbolLimits) (symbols, error) {
+	syms := symbols{}
+	state := newELFSymbolParseState(limits)
+	var limitErrors []error
+	for _, source := range []elfSymbolSource{{name: "dynsym", typ: elf.SHT_DYNSYM}, {name: "symtab", typ: elf.SHT_SYMTAB}} {
+		sourceSymbols, err := state.parseSource(f, source, pcs...)
+		if err != nil {
+			if errors.Is(err, ErrELFSymbolLimit) {
+				limitErrors = append(limitErrors, fmt.Errorf("%s: %w", source.name, err))
+			} else {
+				log.Infof("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
+			}
+			continue
+		}
+		syms = append(syms, sourceSymbols...)
+	}
+	syms.sort()
+	return syms, errors.Join(limitErrors...)
 }
 
 // backedPaths is the set of pseudo-paths in /proc/<pid>/maps with no ELF symbols.

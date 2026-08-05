@@ -778,6 +778,56 @@ func TestElfSymbolsFiltersBeforeCopyingNamesInRealELF(t *testing.T) {
 	}
 }
 
+func TestElfSymbolsForPCsDoesNotMaterializeLargeStringTable(t *testing.T) {
+	const ignoredNameSize = 8 << 20
+	stringTable := append([]byte{0}, bytes.Repeat([]byte{'x'}, ignoredNameSize)...)
+	stringTable = append(stringTable, 0)
+	targetOffset := uint32(len(stringTable))
+	stringTable = append(stringTable, "target\x00"...)
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: stringTable,
+		nameOffsets: []uint32{1, targetOffset},
+	})
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 9 << 20,
+		MaxSymbolCount:   2,
+		MaxNameBytes:     32,
+		MaxNameLength:    16,
+	}
+
+	benchmark := testing.Benchmark(func(b *testing.B) {
+		for range b.N {
+			got, err := elfSymbolsForPCs(f, []uint64{0x1011}, limits)
+			if err != nil || len(got) != 1 || got[0].Name != "target" {
+				b.Fatalf("elfSymbolsForPCs: got %v, err %v; want target", got, err)
+			}
+		}
+	})
+	t.Logf("address-driven parse: %d bytes/op for an 8 MiB string table", benchmark.AllocedBytesPerOp())
+	if allocated := benchmark.AllocedBytesPerOp(); allocated >= 1<<20 {
+		t.Fatalf("address-driven parse allocated %d bytes/op for an 8 MiB string table; want < 1 MiB", allocated)
+	}
+}
+
+func TestElfSymbolsForPCsLimitsSingleName(t *testing.T) {
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: []byte("\x00name-too-long\x00"),
+		nameOffsets: []uint32{1},
+	})
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 1024,
+		MaxSymbolCount:   1,
+		MaxNameBytes:     64,
+		MaxNameLength:    4,
+	}
+	got, err := elfSymbolsForPCs(f, []uint64{0x1001}, limits)
+	if !errors.Is(err, ErrELFSymbolLimit) || len(got) != 0 {
+		t.Fatalf("single-name limit: got %v, err %v; want no symbols and ErrELFSymbolLimit", got, err)
+	}
+}
+
 func TestElfSymbolsSkipsOversizedRealSourceAndKeepsFallback(t *testing.T) {
 	oversizedStrings := append([]byte{0}, bytes.Repeat([]byte{'x'}, 4096)...)
 	oversizedStrings = append(oversizedStrings, 0)
