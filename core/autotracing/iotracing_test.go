@@ -369,6 +369,7 @@ func TestNewIOTracerBindsConfig(t *testing.T) {
 
 func validIOTracingConfig() *Config {
 	config := &Config{}
+	config.IOTracing.Interval = defaultIOTracingIntervalSeconds
 	config.IOTracing.RbpsThreshold = 1
 	config.IOTracing.WbpsThreshold = 1
 	config.IOTracing.UtilThreshold = 1

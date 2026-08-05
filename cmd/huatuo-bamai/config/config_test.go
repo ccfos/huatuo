@@ -15,9 +15,11 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -149,6 +151,12 @@ ExcludedOnContainer = "writeback"
 	}
 	if Get().Storage.Elasticsearch.Enabled() {
 		t.Error("Elasticsearch is enabled without connection settings")
+	}
+	if Get().AutoTracing.IOTracing.Interval != 5 {
+		t.Errorf(
+			"default AutoTracing.IOTracing.Interval = %d, want 5",
+			Get().AutoTracing.IOTracing.Interval,
+		)
 	}
 }
 
@@ -381,5 +389,119 @@ ExcludedOnContainer = "writeback"
 	}
 	if !strings.Contains(string(raw), "MemoryLimitMiB = 2048") {
 		t.Errorf("synced config should preserve the public memory unit, got %s", string(raw))
+	}
+}
+func TestLoadRejectsInvalidIOTracingInterval(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "invalid-io.conf", `
+[AutoTracing.IOTracing]
+Interval = 0
+`)
+	err := Load(path)
+	if err == nil ||
+		!strings.Contains(err.Error(), "AutoTracing.IOTracing.Interval") {
+		t.Fatalf("Load() error = %v, want startup validation key", err)
+	}
+}
+
+func TestLoadAcceptsCustomIOTracingInterval(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "iotracing.conf", `
+[AutoTracing.IOTracing]
+Interval = 17
+`)
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() rejected custom IOTracing interval: %v", err)
+	}
+	if Get().AutoTracing.IOTracing.Interval != 17 {
+		t.Fatalf(
+			"AutoTracing.IOTracing.Interval = %d, want 17",
+			Get().AutoTracing.IOTracing.Interval,
+		)
+	}
+}
+
+func TestSetRejectsInvalidIOTracingIntervalWithoutChangingConfig(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "iotracing.conf", "")
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	err := Set("AutoTracing.IOTracing.Interval", int64(0))
+	if err == nil ||
+		!strings.Contains(err.Error(), "AutoTracing.IOTracing.Interval") {
+		t.Fatalf("Set() error = %v, want interval validation error", err)
+	}
+	if Get().AutoTracing.IOTracing.Interval != 5 {
+		t.Fatalf(
+			"interval after rejected Set = %d, want 5",
+			Get().AutoTracing.IOTracing.Interval,
+		)
+	}
+}
+
+func TestSetAndSyncSerializeConcurrentValidation(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "iotracing.conf", "")
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	const iterations = 64
+	start := make(chan struct{})
+	errs := make(chan error, iterations*3)
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		<-start
+		for range iterations {
+			if err := Set("AutoTracing.IOTracing.Interval", int64(17)); err != nil {
+				errs <- fmt.Errorf("Set(valid): %w", err)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for range iterations {
+			err := Set("AutoTracing.IOTracing.Interval", int64(0))
+			if err == nil ||
+				!strings.Contains(err.Error(), "AutoTracing.IOTracing.Interval") {
+				errs <- fmt.Errorf("Set(invalid) error = %v", err)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for range iterations {
+			if err := Sync(); err != nil {
+				errs <- fmt.Errorf("Sync(): %w", err)
+			}
+		}
+	}()
+
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if t.Failed() {
+		return
+	}
+
+	if err := Set("AutoTracing.IOTracing.Interval", int64(17)); err != nil {
+		t.Fatalf("final Set() error = %v", err)
+	}
+	if err := Sync(); err != nil {
+		t.Fatalf("final Sync() error = %v", err)
+	}
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() after concurrent updates error = %v", err)
+	}
+	if Get().AutoTracing.IOTracing.Interval != 17 {
+		t.Fatalf(
+			"persisted interval = %d, want 17",
+			Get().AutoTracing.IOTracing.Interval,
+		)
 	}
 }
