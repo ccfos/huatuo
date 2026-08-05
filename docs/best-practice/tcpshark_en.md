@@ -1,7 +1,7 @@
 ---
-title: TCP Retransmission Tracing (tcpshark)
+title: TCP Retransmission Tracing
 type: docs
-description: Observe TCP retransmission-related kernel activity with eBPF, reason classification, and drop correlation
+description: ""
 author: HUATUO Team
 date: 2026-07-20
 weight: 5
@@ -47,7 +47,7 @@ Run dropwatch and tcp_retransmit in the same huatuo-bamai process to correlate p
 
 ### 1. Running tcpshark
 
-```
+```text
 tcpshark --mode retransmit [flags]
 ```
 
@@ -191,13 +191,13 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 
 Text retains its terminal-friendly layout while covering the same event variables as JSON. Variables tagged with `omitempty` appear only when non-zero or non-empty, and string values are not JSON-quoted or escaped. For compatibility with the original text format, `state`, `skb`, `seq`, `end`, `ack`, `flags`, `ca`, and `retrans` correspond to the JSON fields `tcp_state`, `skb_addr`, `tcp_seq`, `tcp_end_seq`, `tcp_ack_seq`, `tcp_flags`, `ca_state`, and `icsk_retransmits`, respectively.
 
-```
+```text
 <timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [source=<SOURCE>]
 ```
 
 Example:
 
-```
+```text
 2026-07-23T02:14:40.304775546Z [data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 state=ESTABLISHED event_type=tcp_retransmit_skb skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 ack=948393597 flags=ACK|PSH pid=1420 comm=kube-apiserver ca=4 retrans=4 icsk_pending=0 net_namespace_inum=4026531992
 ```
 
@@ -291,7 +291,7 @@ When building alerts, aggregate by service or connection and compare against tra
 
 ---
 
-### 5. Correlation with dropwatch (`drop_location`)
+### 5. Correlation with dropwatch
 
 When dropwatch and tcpshark feed the same huatuo-bamai process, dropwatch events are retained in a userspace cache for two seconds from their arrival time. A tcpshark event immediately queries previously received, unexpired drop events using a direction-independent connection key. The implementation does not wait for later drop events and does not revise an event after storage.
 
