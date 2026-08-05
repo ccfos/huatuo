@@ -33,7 +33,7 @@ import (
 
 	"github.com/cilium/ebpf/asm"
 	"github.com/cloudflare/cbpfc"
-	"github.com/packetcap/go-pcap/filter"
+	"github.com/huatuo-ai/go-pcap/filter"
 	cbpf "golang.org/x/net/bpf"
 )
 
@@ -48,16 +48,6 @@ var (
 	// ErrL2OnlyFilter is returned when the filter matches an L2-only protocol (e.g. arp)
 	// with no L3 equivalent; buildL2L3FilterInsts substitutes a reject-all L3 program.
 	ErrL2OnlyFilter = errors.New("matches L2-only protocol")
-)
-
-const (
-	// ethernetHeaderLen is the L2 Ethernet header length assumed by go-pcap's
-	// filter compiler. We subtract it from packet offsets to retarget filters
-	// at L3 (DLT_RAW) packets.
-	ethernetHeaderLen = 14
-
-	etherTypeIPv4 = 0x0800
-	etherTypeIPv6 = 0x86dd
 )
 
 // L2StubSymbol and L3StubSymbol are the __noinline BPF function names that mark
@@ -212,97 +202,23 @@ func patchPacketLoads(insts asm.Instructions, resultLabel string) (asm.Instructi
 }
 
 // compileCBPF compiles expr to cBPF via go-pcap (pure Go, no libpcap dependency).
-// When l3 is true, packet offsets are retargeted from Ethernet-relative to raw-IP.
 func compileCBPF(expr string, l3 bool) ([]cbpf.Instruction, error) {
-	e := filter.NewExpression(expr)
-	if e == nil {
+	linkType := filter.LinkTypeEthernet
+	if l3 {
+		linkType = filter.LinkTypeRaw
+	}
+
+	insns, err := filter.Compile(expr, linkType)
+	if errors.Is(err, filter.ErrEmptyFilter) {
 		return nil, ErrEmptyFilter
 	}
-	f := e.Compile()
-	if f == nil {
-		return nil, fmt.Errorf("%w: %q", ErrInvalidFilter, expr)
+	if errors.Is(err, filter.ErrL2OnlyLinkType) {
+		return nil, fmt.Errorf("filter %q: %w", expr, ErrL2OnlyFilter)
 	}
-	insns, err := f.Compile()
 	if err != nil {
-		return nil, fmt.Errorf("go-pcap compile: %w", err)
-	}
-	if l3 {
-		var l2Only bool
-		insns, l2Only, err = retargetToL3(insns)
-		if err != nil {
-			return nil, err
-		}
-		if l2Only {
-			return nil, fmt.Errorf("filter %q: %w", expr, ErrL2OnlyFilter)
-		}
+		return nil, fmt.Errorf("%w: %w", ErrInvalidFilter, err)
 	}
 	return boundJumps(insns), nil
-}
-
-// retargetToL3 retargets an Ethernet-relative cBPF program (as emitted by
-// go-pcap) at raw-IP (DLT_RAW) packets by subtracting the Ethernet header
-// length from every packet offset and rewriting the ethertype probe.
-//
-// The rewrite preserves instruction count, so all relative jump offsets in
-// JumpIf/Jump remain valid. The second return value is true when the filter
-// only matches L2 ethertypes (ARP/RARP/STP/…) that cannot appear on a raw
-// L3 link, signaling the caller to substitute reject-all.
-func retargetToL3(insns []cbpf.Instruction) ([]cbpf.Instruction, bool, error) {
-	out := make([]cbpf.Instruction, len(insns))
-	var sawProbe, anyPass bool
-	for i, ins := range insns {
-		switch v := ins.(type) {
-		case cbpf.LoadAbsolute:
-			// Offset 12 is the Ethernet ethertype field — no equivalent on DLT_RAW.
-			// Replace with a constant that makes the following JumpIf behave correctly.
-			if v.Off == 12 && v.Size == 2 {
-				rep, pass, err := fakeEthertypeLoad(insns, i)
-				if err != nil {
-					return nil, false, err
-				}
-				sawProbe = true
-				if pass {
-					anyPass = true
-				}
-				out[i] = rep
-				continue
-			}
-			v.Off = stripEtherOffset(v.Off)
-			out[i] = v
-		case cbpf.LoadIndirect:
-			v.Off = stripEtherOffset(v.Off)
-			out[i] = v
-		case cbpf.LoadMemShift:
-			v.Off = stripEtherOffset(v.Off)
-			out[i] = v
-		default:
-			out[i] = ins
-		}
-	}
-	return out, sawProbe && !anyPass, nil
-}
-
-// fakeEthertypeLoad returns a LoadConstant that stands in for the Ethernet
-// ethertype load (LoadAbsolute{Off:12}) on a DLT_RAW link. It inspects the
-// immediately following JumpIf and returns a constant that makes the jump
-// behave correctly: true (pass) for IPv4/IPv6, false for everything else.
-func fakeEthertypeLoad(insns []cbpf.Instruction, idx int) (cbpf.Instruction, bool, error) {
-	if idx+1 >= len(insns) {
-		return nil, false, fmt.Errorf("ethertype load at [%d]: no successor instruction", idx)
-	}
-	j, ok := insns[idx+1].(cbpf.JumpIf)
-	if !ok {
-		return nil, false, fmt.Errorf("ethertype load at [%d]: expected JumpIf, got %T", idx, insns[idx+1])
-	}
-	if j.Cond != cbpf.JumpEqual && j.Cond != cbpf.JumpNotEqual {
-		return nil, false, fmt.Errorf("ethertype load at [%d]: unexpected JumpIf cond %v", idx, j.Cond)
-	}
-	switch j.Val {
-	case etherTypeIPv4, etherTypeIPv6:
-		return cbpf.LoadConstant{Dst: cbpf.RegA, Val: j.Val}, true, nil
-	default:
-		return cbpf.LoadConstant{Dst: cbpf.RegA, Val: 0}, false, nil
-	}
 }
 
 // boundJumps rewrites out-of-bounds jump offsets to land on the last instruction.
@@ -342,13 +258,6 @@ func boundJumps(insns []cbpf.Instruction) []cbpf.Instruction {
 		}
 	}
 	return out
-}
-
-func stripEtherOffset(off uint32) uint32 {
-	if off >= ethernetHeaderLen {
-		return off - ethernetHeaderLen
-	}
-	return off
 }
 
 func clampJumpSkips(skipTrue, skipFalse uint8, maxSkip int) (uint8, uint8) {
