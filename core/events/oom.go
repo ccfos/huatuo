@@ -336,6 +336,7 @@ func (c *oomCollector) prepareOOMEvent(data *abi.OOMEvent) *OOMTracingData {
  * as one tracing record.
  */
 func saveOOMEvent(oomData *OOMTracingData, eventTime time.Time) {
+	oomData.Victim.Environ = redactOOMEnviron(oomData.Victim.Environ)
 	if err := tracing.Save(&tracing.WriteRequest{
 		TracerName:  "oom",
 		TracerTime:  eventTime,

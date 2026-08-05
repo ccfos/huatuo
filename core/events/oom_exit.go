@@ -99,8 +99,8 @@ func (c *oomExitEventCache) store(evt *abi.OOMExitEvent) {
 		context.cmdlineTruncated = evt.CmdlineFlags&oomCaptureTrunc != 0
 	}
 	if evt.EnvironLen > 0 {
-		context.environ = decodeExitNUL(
-			evt.VictimEnviron[:], evt.EnvironLen)
+		context.environ = redactOOMEnviron(decodeExitNUL(
+			evt.VictimEnviron[:], evt.EnvironLen))
 		context.environTruncated = evt.EnvironFlags&oomCaptureTrunc != 0
 	}
 

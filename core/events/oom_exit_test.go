@@ -35,7 +35,8 @@ func TestOOMExitEventCacheCorrelatesAndDecodes(t *testing.T) {
 	event.CmdlineLen = uint16(copy(
 		event.VictimCmdline[:], "python3\x00worker.py\x00"))
 	event.EnvironLen = uint16(copy(
-		event.VictimEnviron[:], "ROLE=worker\x00EMPTY=\x00"))
+		event.VictimEnviron[:],
+		"ROLE=worker\x00GITHUB_TOKEN=top-secret\x00EMPTY=\x00"))
 	cache.store(event)
 
 	canceled, cancel := context.WithCancel(context.Background())
@@ -50,11 +51,63 @@ func TestOOMExitEventCacheCorrelatesAndDecodes(t *testing.T) {
 	if got.cmdline != "python3 worker.py" {
 		t.Fatalf("cmdline = %q", got.cmdline)
 	}
-	if !reflect.DeepEqual(got.environ, []string{"ROLE=worker", "EMPTY="}) {
+	if !reflect.DeepEqual(got.environ, []string{
+		"ROLE=worker",
+		"GITHUB_TOKEN=" + oomEnvironRedactedValue,
+		"EMPTY=",
+	}) {
 		t.Fatalf("environ = %q", got.environ)
 	}
 	if !got.goBuildInfo {
 		t.Fatal("Go buildinfo marker was not preserved")
+	}
+}
+
+func TestRedactOOMEnviron(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"ROLE=worker", "ROLE=worker"},
+		{"GOMEMLIMIT=8GiB", "GOMEMLIMIT=8GiB"},
+		{"EMPTY=", "EMPTY="},
+		{"EMBEDDED_EQUALS=a=b=c", "EMBEDDED_EQUALS=a=b=c"},
+		{"DB_PASSWORD=value", "DB_PASSWORD=" + oomEnvironRedactedValue},
+		{"LEGACY_PASSWD=value", "LEGACY_PASSWD=" + oomEnvironRedactedValue},
+		{"SERVICE_TOKEN=value", "SERVICE_TOKEN=" + oomEnvironRedactedValue},
+		{"JWT_SECRET=value", "JWT_SECRET=" + oomEnvironRedactedValue},
+		{"CLOUD_CREDENTIAL=value", "CLOUD_CREDENTIAL=" + oomEnvironRedactedValue},
+		{"API_KEY=value", "API_KEY=" + oomEnvironRedactedValue},
+		{"ACCESS_KEY_ID=value", "ACCESS_KEY_ID=" + oomEnvironRedactedValue},
+		{"PRIVATE_KEY_DATA=value", "PRIVATE_KEY_DATA=" + oomEnvironRedactedValue},
+		{"HTTP_COOKIE=value", "HTTP_COOKIE=" + oomEnvironRedactedValue},
+		{"USER_SESSION=value", "USER_SESSION=" + oomEnvironRedactedValue},
+		{"proxy_auth=value", "proxy_auth=" + oomEnvironRedactedValue},
+		{"EMPTY_TOKEN=", "EMPTY_TOKEN=" + oomEnvironRedactedValue},
+		{"DATABASE_URL=value", "DATABASE_URL=" + oomEnvironRedactedValue},
+		{"DB_URL=value", "DB_URL=" + oomEnvironRedactedValue},
+		{"REDIS_URL=value", "REDIS_URL=" + oomEnvironRedactedValue},
+		{"MONGO_URI=value", "MONGO_URI=" + oomEnvironRedactedValue},
+		{"DATABASE_DSN=value", "DATABASE_DSN=" + oomEnvironRedactedValue},
+		{"CONNECTION_STRING=value", "CONNECTION_STRING=" + oomEnvironRedactedValue},
+		{"SERVICE_ENDPOINT=value", "SERVICE_ENDPOINT=" + oomEnvironRedactedValue},
+		{"MALFORMED_SECRET", oomEnvironRedactedValue},
+		{"=missing-name", oomEnvironRedactedValue},
+	}
+
+	for _, test := range tests {
+		original := []string{test.input}
+		got := redactOOMEnviron(original)
+		if !reflect.DeepEqual(got, []string{test.want}) {
+			t.Errorf("redactOOMEnviron(%q) = %q, want %q",
+				test.input, got, test.want)
+		}
+		if original[0] != test.input {
+			t.Errorf("input mutated: %q", original)
+		}
+		if gotAgain := redactOOMEnviron(got); !reflect.DeepEqual(gotAgain, got) {
+			t.Errorf("redaction is not idempotent: %q", gotAgain)
+		}
 	}
 }
 
