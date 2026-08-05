@@ -121,6 +121,8 @@ struct {
 	__uint(max_entries, 1);
 } oom_exit_event_buf SEC(".maps");
 
+static const struct oom_exit_event zero_oom_exit_event = {};
+
 /*
  * Copy a bounded argv or environment region with the legacy probe_read
  * helper supported by CentOS 8.2.
@@ -272,14 +274,20 @@ int BPF_KPROBE(do_exit_trace, long code)
 		return 0;
 	__sync_fetch_and_add(&oom_victim_count, -1);
 
+	/*
+	 * The per-CPU scratch value is reused and the entire structure is sent to
+	 * userspace. Clear it so short or failed captures cannot expose bytes left
+	 * by a previous OOM victim beyond the current lengths.
+	 */
+	if (bpf_map_update_elem(&oom_exit_event_buf, &zero,
+				&zero_oom_exit_event, COMPAT_BPF_EXIST) != 0)
+		return 0;
 	exit_event = bpf_map_lookup_elem(&oom_exit_event_buf, &zero);
 	if (!exit_event)
 		return 0;
 
 	exit_event->timestamp = event_ts;
 	exit_event->victim_tgid = victim_tgid;
-	exit_event->cmdline_flags = 0;
-	exit_event->environ_flags = 0;
 
 	victim_task = (struct task_struct *)bpf_get_current_task();
 	victim_mm = BPF_CORE_READ(victim_task, mm);
