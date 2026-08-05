@@ -55,7 +55,7 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 		"--output-storage", toolstream.DefaultSockPath,
 		"--filter", cfg.Dropwatch.Filter,
 		"--max-events-per-second", strconv.FormatUint(cfg.Dropwatch.MaxEventsPerSecond, 10),
-		"--source-types", toolstream.SourceTypesEvent,
+		"--source-types", toolstream.SourceTypeEvent,
 	}
 
 	result := executil.ExecCmd(ctx, 0, path.Join(internalconfig.CoreBinDir, "dropwatch"), args...)

@@ -88,7 +88,7 @@ func appFlags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name:   cliFlagSourceTypes,
-			Value:  toolstream.SourceTypesTool,
+			Value:  toolstream.SourceTypeTool,
 			Hidden: true,
 		},
 	}

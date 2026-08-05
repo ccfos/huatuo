@@ -342,7 +342,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 			ev: &types.TCPRetransmitTracing{
 				ObservedTimestamp:   "2026-07-23T02:14:40.304775546Z",
 				TCPReason:           "RTO",
-				Source:              toolstream.SourceTypesTool,
+				Source:              toolstream.SourceTypeTool,
 				Comm:                "worker thread",
 				Pid:                 1420,
 				ContainerID:         "container-1",

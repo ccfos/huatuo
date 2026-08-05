@@ -62,7 +62,7 @@ func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "tcp_retransmit.o"),
 		"--output-storage", toolstream.DefaultSockPath,
 		"--max-events-per-second", strconv.FormatUint(cfg.TCPRetransmit.MaxEventsPerSecond, 10),
-		"--source-types", toolstream.SourceTypesEvent,
+		"--source-types", toolstream.SourceTypeEvent,
 	}
 
 	if cfg.TCPRetransmit.Filter != "" {

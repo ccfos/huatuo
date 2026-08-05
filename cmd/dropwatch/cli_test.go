@@ -33,11 +33,11 @@ func TestAppSourceTypes(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "tools by default", want: toolstream.SourceTypesTool},
+		{name: "tools by default", want: toolstream.SourceTypeTool},
 		{
 			name: "events",
-			args: []string{"--source-types", toolstream.SourceTypesEvent},
-			want: toolstream.SourceTypesEvent,
+			args: []string{"--source-types", toolstream.SourceTypeEvent},
+			want: toolstream.SourceTypeEvent,
 		},
 	}
 

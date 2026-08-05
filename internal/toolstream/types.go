@@ -16,6 +16,6 @@ package toolstream
 
 // Values for tracing event Source fields.
 const (
-	SourceTypesEvent = "events"
-	SourceTypesTool  = "tools"
+	SourceTypeEvent = "events"
+	SourceTypeTool  = "tools"
 )
