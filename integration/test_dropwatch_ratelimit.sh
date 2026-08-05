@@ -70,10 +70,9 @@ wait "${DROPWATCH_PID}" || true
 DROPWATCH_PID=""
 
 events=$(grep -c "IPv4/UDP" "${TOOL_OUT}" || true)
-# Both event lines and rate-limit warnings are emitted on stdout by
-# huatuo-bamai/internal/log; ERR captures any unexpected stderr (panics,
-# etc.) for post-mortem only.
-warns=$(grep -c "rate limit hit" "${TOOL_OUT}" || true)
+# Event lines are emitted on stdout; structured logs, including rate-limit
+# warnings, are emitted on stderr.
+warns=$(grep -h "rate limit hit" "${TOOL_OUT}" "${TOOL_ERR}" 2> /dev/null | wc -l || true)
 
 log_info "events=${events} (cap=${EXPECTED_MAX}), rate-limit warnings=${warns}"
 
