@@ -52,14 +52,14 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 	}
 	defer bpf.Shutdown()
 
-	netdevFilterMode, devIfindexes, err := parseNetdevFilterOptions(options.device, options.deviceExcluded)
+	netdevFilter, err := parseNetdevFilterOptions(options.device, options.deviceExcluded)
 	if err != nil {
 		return err
 	}
 
 	bpfLimiter := bpf.NewRateLimiter("dropwatch", options.maxEventsPerSecond)
 	bpfObj, err := loadDropwatchBPF(
-		options.bpfPath, options.filterExpression, netdevFilterMode, bpfLimiter,
+		options.bpfPath, options.filterExpression, netdevFilter.mode, bpfLimiter,
 	)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
@@ -70,8 +70,8 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 		}
 	}()
 
-	if err := configureNetdevFilter(bpfObj, netdevFilterMode, devIfindexes); err != nil {
-		return fmt.Errorf("apply device filter: %w", err)
+	if err := configureNetdevFilter(bpfObj, netdevFilter); err != nil {
+		return fmt.Errorf("configure netdev filter: %w", err)
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
