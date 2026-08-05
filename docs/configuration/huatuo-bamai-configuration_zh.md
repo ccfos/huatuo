@@ -494,8 +494,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 # linux tasks D state profiling for containers.
 #
 # - ThresholdLoad
-# The loadavg threshold value, when reaching this threshold, dload profiling
-# is triggered.
+# 容器 D 状态任务数量的一分钟 EMA 阈值，超过该值时触发 dload 剖析。
 # Default: 5
 #
 # - Interval
@@ -513,9 +512,9 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 	# IntervalTracing = 1800
 ```
 
-- **ThresholdLoad**：容器的系统负载平均值（loadavg）阈值。
+- **ThresholdLoad**：容器不可中断睡眠（D 状态）任务数量的一分钟 EMA 阈值。
 
-  默认 5。 当 loadavg 达到该值时，触发 D 状态（不可中断睡眠）任务剖析。
+  默认 5。当 D 状态任务 EMA 超过该值时触发剖析。
 
   **说明**：用于诊断容器中大量进程进入 D 状态的场景。
 

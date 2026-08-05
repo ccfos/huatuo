@@ -23,6 +23,7 @@ import (
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/config"
 	"github.com/ccfos/huatuo/cmd/huatuo-bamai/handlers"
 	"github.com/ccfos/huatuo/internal/bpf"
+	cgroupV2 "github.com/ccfos/huatuo/internal/cgroups/v2"
 	"github.com/ccfos/huatuo/internal/document"
 	nodecloudevents "github.com/ccfos/huatuo/internal/nodeagent/cloudevents"
 	"github.com/ccfos/huatuo/internal/profiling"
@@ -39,7 +40,11 @@ func setupBPF(_ *Daemon) (func(context.Context) error, error) {
 	}
 
 	return func(context.Context) error {
+		closeErr := cgroupV2.CloseLoadStats()
 		bpf.Shutdown()
+		if closeErr != nil {
+			return fmt.Errorf("close cgroup v2 load stats: %w", closeErr)
+		}
 		return nil
 	}, nil
 }
