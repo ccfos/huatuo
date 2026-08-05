@@ -176,18 +176,8 @@ static __always_inline void read_retransmit_skb_tcp_fields(struct tcp_retransmit
 		ev->tcp_ack = BPF_CORE_READ((struct tcp_sock *)sk, rcv_nxt);
 }
 
-struct tcp_retransmit_skb_ctx {
-	unsigned short common_type;
-	unsigned char common_flags;
-	unsigned char common_preempt_count;
-	int common_pid;
-
-	const void *skbaddr;
-	const void *skaddr;
-};
-
 SEC("tracepoint/tcp/tcp_retransmit_skb")
-int retrans_skb(struct tcp_retransmit_skb_ctx *ctx)
+int retrans_skb(struct trace_event_raw_tcp_event_sk_skb *ctx)
 {
 	struct sk_buff *skb = (struct sk_buff *)ctx->skbaddr;
 
