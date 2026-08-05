@@ -178,7 +178,7 @@ All event records include the following common fields:
 
 ### 3. dload
 
-**Description** Reads container process states via netlink and cgroup, then computes an exponential weighted moving average (EMA) of the load contribution from uninterruptible (D-state) processes per container. When the EMA exceeds the threshold (default 5), kernel call stacks are collected for all D-state processes inside the container and on the host. Known-issue filtering (`issues_list`) reduces false positives. A 30-minute per-container cooldown applies.
+**Description** Reads container process states through netlink on cgroup v1 and through a batched BPF task iterator on cgroup v2. It computes an exponential weighted moving average (EMA) of the load contribution from uninterruptible (D-state) processes per container. When the EMA exceeds the threshold (default 5), kernel call stacks are collected for all D-state processes inside the container and on the host. Known-issue filtering (`issues_list`) reduces false positives. A 30-minute per-container cooldown applies. The cgroup v2 path walks all host tasks per sample; it requires readable kernel BTF and the BPF `task` iterator. Counts are non-hierarchical and include only tasks directly attached to each target cgroup. On unsupported or verifier-incompatible kernels, the first sample marks `dload` as unsupported and stops this detector without periodically retrying the BPF load.
 
 Kubernetes deployments must run Huatuo with `hostPID: true`. Without host PID namespace visibility, cgroup v2 dload is reported as unsupported instead of returning misleading zero counts.
 
