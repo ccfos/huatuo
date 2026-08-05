@@ -18,39 +18,48 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"os/signal"
+	"io"
 	"time"
 
-	"github.com/urfave/cli/v2"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/version"
 )
 
-func mainAction(c *cli.Context, versionInfo *version.Info) (returnErr error) {
+type dropwatchOptions struct {
+	bpfPath            string
+	filterExpression   string
+	device             string
+	deviceExcluded     string
+	durationSeconds    int
+	outputFormat       string
+	outputStorage      string
+	taskID             string
+	maxEventsPerSecond uint64
+	sourceType         string
+	version            string
+	output             io.Writer
+}
+
+func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error) {
 	names := loadDropReasonNames()
-	duration := c.Int(cliFlagDuration)
+	duration := options.durationSeconds
 
 	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
 		return fmt.Errorf("init bpf: %w", err)
 	}
 	defer bpf.Shutdown()
 
-	netdevFilterMode, devIfindexes, err := parseNetdevFilterFlags(
-		c.String(cliFlagDevice), c.String(cliFlagDeviceExcluded),
-	)
+	netdevFilterMode, devIfindexes, err := parseNetdevFilterFlags(options.device, options.deviceExcluded)
 	if err != nil {
 		return err
 	}
 
-	bpfLimiter := bpf.NewRateLimiter("dropwatch", c.Uint64(cliFlagMaxEventsPerSecond))
-	bpfObj, err := loadDropwatchBPFWithFilter(
-		c.String(cliFlagBpfPath), c.String(cliFlagFilter), netdevFilterMode, bpfLimiter,
+	bpfLimiter := bpf.NewRateLimiter("dropwatch", options.maxEventsPerSecond)
+	bpfObj, err := loadDropwatchBPF(
+		options.bpfPath, options.filterExpression, netdevFilterMode, bpfLimiter,
 	)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
@@ -65,7 +74,7 @@ func mainAction(c *cli.Context, versionInfo *version.Info) (returnErr error) {
 		return fmt.Errorf("apply device filter: %w", err)
 	}
 
-	runCtx, cancel := signal.NotifyContext(c.Context, unix.SIGINT, unix.SIGTERM)
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if duration > 0 {
 		var durationCancel context.CancelFunc
@@ -98,12 +107,12 @@ func mainAction(c *cli.Context, versionInfo *version.Info) (returnErr error) {
 	}()
 	bpfObj.DetachOnContextDone(runCtx, cancel)
 
-	sink, sinkCleanup, err := newWriter(os.Stdout, &writerOptions{
-		outputFormat: c.String(cliFlagOutput),
-		socketPath:   c.String(cliFlagOutputStorage),
+	sink, sinkCleanup, err := newWriter(options.output, &writerOptions{
+		outputFormat: options.outputFormat,
+		socketPath:   options.outputStorage,
 		toolName:     dropwatchToolName,
-		version:      versionInfo.Version,
-		taskID:       c.String(cliFlagTaskID),
+		version:      options.version,
+		taskID:       options.taskID,
 	})
 	if err != nil {
 		return err
@@ -113,7 +122,7 @@ func mainAction(c *cli.Context, versionInfo *version.Info) (returnErr error) {
 		group.Go(func() error { return bpfLimiter.ReadEvents(groupCtx) })
 	}
 	group.Go(func() error {
-		return streamDropwatchEvents(groupCtx, reader, sink, names, c.String(cliFlagSourceTypes))
+		return streamDropwatchEvents(groupCtx, reader, sink, names, options.sourceType)
 	})
 
 	streamErr := group.Wait()

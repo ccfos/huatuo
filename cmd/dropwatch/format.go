@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,10 +41,26 @@ type writer interface {
 type textWriter struct{ w io.Writer }
 
 func (s *textWriter) Write(ev *types.DropWatchTracing) error {
-	line := fmt.Sprintf("%s %s reason=%s len=%d dev=%s pid=%d[%s] addr=%s source=%s\n",
-		ev.ObservedTimestamp, ev.Layers, ev.DropReason,
-		ev.PacketLen, ev.NetdevName, ev.Pid, ev.Comm, ev.PacketSkbAddr, ev.Source)
-	n, err := io.WriteString(s.w, line)
+	line := make([]byte, 0, 256)
+	line = append(line, ev.ObservedTimestamp...)
+	line = append(line, ' ')
+	line = append(line, ev.Layers.String()...)
+	line = append(line, " reason="...)
+	line = append(line, ev.DropReason...)
+	line = append(line, " len="...)
+	line = strconv.AppendUint(line, uint64(ev.PacketLen), 10)
+	line = append(line, " dev="...)
+	line = append(line, ev.NetdevName...)
+	line = append(line, " pid="...)
+	line = strconv.AppendUint(line, ev.Pid, 10)
+	line = append(line, '[')
+	line = append(line, ev.Comm...)
+	line = append(line, "] addr="...)
+	line = append(line, ev.PacketSkbAddr...)
+	line = append(line, " source="...)
+	line = append(line, ev.Source...)
+	line = append(line, '\n')
+	n, err := s.w.Write(line)
 	if err != nil {
 		return err
 	}
@@ -141,7 +158,7 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReasonNames, sourceType
 		NetdevQueueMapping:  ev.Meta.QueueMapping,
 		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.DevFlags),
 		PacketSkbAddr:       kernaddr.Format(ev.Meta.KfreeSKBAddr),
-		PacketEthProto:      fmt.Sprintf("0x%04x", ev.PktHdr.EthProto),
+		PacketEthProto:      "0x" + strconv.FormatUint(uint64(ev.PktHdr.EthProto), 16),
 		PacketLen:           ev.PktHdr.PktLen,
 		Layers:              p,
 		Stack:               stackStr,

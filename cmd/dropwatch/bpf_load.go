@@ -23,7 +23,7 @@ import (
 	"huatuo-bamai/internal/pcapfilter"
 )
 
-func loadDropwatchBPFWithFilter(
+func loadDropwatchBPF(
 	bpfPath string,
 	filterExpr string,
 	devMode uint32,
