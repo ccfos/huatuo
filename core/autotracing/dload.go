@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"time"
 
@@ -88,9 +89,10 @@ const (
 type taskScope int
 
 type dloadTracing struct {
-	containers map[string]*containerDloadInfo
-	interval   time.Duration
-	threshold  dloadThreshold
+	containers   map[string]*containerDloadInfo
+	interval     time.Duration
+	decayFactors [2]uint64
+	threshold    dloadThreshold
 }
 
 type dloadThreshold struct {
@@ -110,9 +112,11 @@ func newDloadTracing(config *Config) (*dloadTracing, error) {
 		return nil, errors.New("dload threshold must be non-negative")
 	}
 
+	interval := time.Duration(config.Dload.Interval) * time.Second
 	return &dloadTracing{
-		containers: make(map[string]*containerDloadInfo),
-		interval:   time.Duration(config.Dload.Interval) * time.Second,
+		containers:   make(map[string]*containerDloadInfo),
+		interval:     interval,
+		decayFactors: loadDecayFactors(interval),
 		threshold: dloadThreshold{
 			load:             config.Dload.ThresholdLoad,
 			minTraceInterval: time.Duration(config.Dload.IntervalTracing) * time.Second,
@@ -182,7 +186,7 @@ func (d *dloadTracing) selectTraceTarget(
 			continue
 		}
 
-		updateLoad(container, stats.NrRunning, stats.NrUninterruptible)
+		updateLoad(container, stats.NrRunning, stats.NrUninterruptible, d.decayFactors)
 		if !d.shouldTrace(container, sampledAt) {
 			continue
 		}
@@ -256,9 +260,22 @@ func (d *dloadTracing) buildAndSave(
 const (
 	loadFractionBits = 11
 	fixedOne         = 1 << loadFractionBits
-	expOneMinute     = 1884
-	expFiveMinutes   = 2014
+	loadOneMinute    = time.Minute
+	loadFiveMinutes  = 5 * time.Minute
 )
+
+func loadDecayFactor(interval, window time.Duration) uint64 {
+	return uint64(math.Round(
+		math.Exp(-float64(interval)/float64(window)) * fixedOne,
+	))
+}
+
+func loadDecayFactors(interval time.Duration) [2]uint64 {
+	return [2]uint64{
+		loadDecayFactor(interval, loadOneMinute),
+		loadDecayFactor(interval, loadFiveMinutes),
+	}
+}
 
 func calcLoad(load, exp, active uint64) uint64 {
 	newLoad := load*exp + active*(fixedOne-exp)
@@ -267,12 +284,12 @@ func calcLoad(load, exp, active uint64) uint64 {
 	return newLoad / fixedOne
 }
 
-func calcLoadAvg(previous [2]uint64, active uint64) [2]uint64 {
+func calcLoadAvg(previous [2]uint64, active uint64, decayFactors [2]uint64) [2]uint64 {
 	active *= fixedOne
 
 	return [2]uint64{
-		calcLoad(previous[0], expOneMinute, active),
-		calcLoad(previous[1], expFiveMinutes, active),
+		calcLoad(previous[0], decayFactors[0], active),
+		calcLoad(previous[1], decayFactors[1], active),
 	}
 }
 
@@ -296,10 +313,15 @@ func loadAverages(averages [2]uint64, offset uint64, shift int) [2]float64 {
 	}
 }
 
-func updateLoad(info *containerDloadInfo, nrRunning, nrUninterruptible uint64) {
-	info.runnableAvg = calcLoadAvg(info.runnableAvg, nrRunning+nrUninterruptible)
+func updateLoad(
+	info *containerDloadInfo,
+	nrRunning, nrUninterruptible uint64,
+	decayFactors [2]uint64,
+) {
+	info.runnableAvg = calcLoadAvg(
+		info.runnableAvg, nrRunning+nrUninterruptible, decayFactors)
 	info.loadAvg = loadAverages(info.runnableAvg, fixedOne/200, 0)
-	info.dLoadAvg = calcLoadAvg(info.dLoadAvg, nrUninterruptible)
+	info.dLoadAvg = calcLoadAvg(info.dLoadAvg, nrUninterruptible, decayFactors)
 	info.dLoad = loadAverages(info.dLoadAvg, fixedOne/200, 0)
 }
 
