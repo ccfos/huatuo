@@ -18,8 +18,6 @@ import (
 	"fmt"
 
 	"github.com/cilium/ebpf/btf"
-
-	"huatuo-bamai/internal/log"
 )
 
 // Must match SKB_DROP_REASON_NOT_SUPPORTED in bpf/dropwatch.c.
@@ -31,13 +29,11 @@ type dropReason map[uint32]string
 func NewDropReason() dropReason {
 	spec, err := btf.LoadKernelSpec()
 	if err != nil {
-		log.WithError(err).Debug("load kernel BTF for drop reason names")
 		return nil
 	}
 
 	var enum btf.Enum
 	if err := spec.TypeByName("skb_drop_reason", &enum); err != nil {
-		log.WithError(err).Debug("load skb_drop_reason enum from kernel BTF")
 		return nil
 	}
 
