@@ -23,144 +23,132 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v2"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/version"
 )
 
-func mainAction(c *cli.Context) (returnErr error) {
-	reasonNames = loadDropReasonNames()
-
+func mainAction(c *cli.Context, versionInfo *version.Info) (returnErr error) {
+	names := loadDropReasonNames()
 	duration := c.Int(cliFlagDuration)
-	outputFmt := c.String(cliFlagOutput)
-	sourceTypes := c.String(cliFlagSourceTypes)
 
 	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
-		return fmt.Errorf("dropwatch: init bpf: %w", err)
+		return fmt.Errorf("init bpf: %w", err)
 	}
 	defer bpf.Shutdown()
 
-	netdevFilterMode, devIfindexes, err := parseNetdevFilterFlags(c.String(cliFlagDevice), c.String(cliFlagDeviceExcluded))
-	if err != nil {
-		return fmt.Errorf("dropwatch: %w", err)
-	}
-
-	maxEventsPerSecond := c.Uint64(cliFlagMaxEventsPerSecond)
-	bpfLimiter := bpf.NewRateLimiter("dropwatch", maxEventsPerSecond)
-
-	bpfObj, err := loadDropwatchBPFWithFilter(
-		c.String(cliFlagBpfPath),
-		c.String(cliFlagFilter),
-		netdevFilterMode,
-		bpfLimiter,
+	netdevFilterMode, devIfindexes, err := parseNetdevFilterFlags(
+		c.String(cliFlagDevice), c.String(cliFlagDeviceExcluded),
 	)
 	if err != nil {
-		return fmt.Errorf("dropwatch: load bpf: %w", err)
-	}
-	defer bpfObj.Close()
-
-	if err := applyDeviceFilter(bpfObj, netdevFilterMode, devIfindexes); err != nil {
-		return fmt.Errorf("dropwatch: device filter map: %w", err)
+		return err
 	}
 
-	runCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if duration > 0 {
-		var dcancel context.CancelFunc
-		runCtx, dcancel = context.WithTimeout(runCtx, time.Duration(duration)*time.Second)
-		defer dcancel()
+	bpfLimiter := bpf.NewRateLimiter("dropwatch", c.Uint64(cliFlagMaxEventsPerSecond))
+	bpfObj, err := loadDropwatchBPFWithFilter(
+		c.String(cliFlagBpfPath), c.String(cliFlagFilter), netdevFilterMode, bpfLimiter,
+	)
+	if err != nil {
+		return fmt.Errorf("load bpf: %w", err)
 	}
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, unix.SIGINT, unix.SIGTERM)
-	defer signal.Stop(sig)
-
-	go func() {
-		select {
-		case <-sig:
-			cancel()
-		case <-runCtx.Done():
+	defer func() {
+		if err := bpfObj.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close bpf: %w", err))
 		}
 	}()
 
+	if err := applyDeviceFilter(bpfObj, netdevFilterMode, devIfindexes); err != nil {
+		return fmt.Errorf("apply device filter: %w", err)
+	}
+
+	runCtx, cancel := signal.NotifyContext(c.Context, unix.SIGINT, unix.SIGTERM)
+	defer cancel()
+	if duration > 0 {
+		var durationCancel context.CancelFunc
+		runCtx, durationCancel = context.WithTimeout(
+			runCtx, time.Duration(duration)*time.Second,
+		)
+		defer durationCancel()
+	}
+
+	group, groupCtx := errgroup.WithContext(runCtx)
 	if bpfLimiter.Enabled() {
-		if err := bpfLimiter.OpenEventPipe(runCtx, bpfObj); err != nil {
+		if err := bpfLimiter.OpenEventPipe(groupCtx, bpfObj); err != nil {
 			return err
 		}
 		defer func() {
 			if err := bpfLimiter.CloseEventPipe(); err != nil {
-				returnErr = errors.Join(
-					returnErr,
-					fmt.Errorf("dropwatch: close rate limiter: %w", err),
-				)
+				returnErr = errors.Join(returnErr, fmt.Errorf("close rate limiter: %w", err))
 			}
 		}()
 	}
 
-	reader, err := bpfObj.AttachAndEventPipe(runCtx, "perf_events", 8192)
+	reader, err := bpfObj.AttachAndEventPipe(groupCtx, "perf_events", 8192)
 	if err != nil {
-		return fmt.Errorf("dropwatch: attach: %w", err)
+		return fmt.Errorf("attach BPF programs: %w", err)
 	}
-	defer reader.Close()
-
+	defer func() {
+		if err := reader.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("close event pipe: %w", err))
+		}
+	}()
 	bpfObj.DetachOnContextDone(runCtx, cancel)
 
-	sink, sinkCleanup, err := newWriter(&writerOption{
-		outputFmt: outputFmt,
-		sockPath:  c.String(cliFlagOutputStorage),
-		toolName:  dropwatchToolName,
-		version:   versionInfo.Version,
-		taskID:    c.String(cliFlagTaskID),
+	sink, sinkCleanup, err := newWriter(os.Stdout, &writerOptions{
+		outputFormat: c.String(cliFlagOutput),
+		socketPath:   c.String(cliFlagOutputStorage),
+		toolName:     dropwatchToolName,
+		version:      versionInfo.Version,
+		taskID:       c.String(cliFlagTaskID),
 	})
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := sinkCleanup(); err != nil {
-			returnErr = errors.Join(
-				returnErr,
-				fmt.Errorf("dropwatch: close event sink: %w", err),
-			)
-		}
-	}()
 
 	if bpfLimiter.Enabled() {
-		go func() {
-			if err := bpfLimiter.ReadEvents(runCtx); err != nil {
-				log.WithError(err).Error("dropwatch: rate-limit reader stopped")
-			}
-		}()
+		group.Go(func() error { return bpfLimiter.ReadEvents(groupCtx) })
 	}
+	group.Go(func() error {
+		return streamDropwatchEvents(groupCtx, reader, sink, names, c.String(cliFlagSourceTypes))
+	})
 
-	var ev abi.DropwatchPacketEvent
+	streamErr := group.Wait()
+	if err := sinkCleanup(); err != nil {
+		streamErr = errors.Join(streamErr, fmt.Errorf("close event sink: %w", err))
+	}
+	return streamErr
+}
 
+func streamDropwatchEvents(
+	ctx context.Context,
+	reader bpf.PerfEventReader,
+	sink writer,
+	names dropReasonNames,
+	sourceType string,
+) error {
 	for {
-		if runCtx.Err() != nil {
+		if ctx.Err() != nil {
 			return nil
 		}
 
+		var ev abi.DropwatchPacketEvent
 		if err := reader.ReadInto(&ev); err != nil {
-			if runCtx.Err() != nil {
+			if ctx.Err() != nil {
 				return nil
 			}
 			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
-				log.WithError(err).Warn("lost BPF perf event samples")
+				log.WithError(err).Warn("perf event samples lost")
 				continue
 			}
-
-			log.Errorf("dropwatch: read: %v", err)
-
-			continue
+			return fmt.Errorf("read event: %w", err)
 		}
 
-		event := formatEvent(&ev)
-		event.Source = sourceTypes
-		if err := sink.Write(event); err != nil {
-			log.Errorf("dropwatch: send event: %v", err)
-			return nil
+		if err := sink.Write(formatEvent(&ev, names, sourceType)); err != nil {
+			return fmt.Errorf("write event: %w", err)
 		}
 	}
 }

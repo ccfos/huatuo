@@ -30,13 +30,13 @@ type dropReasonNames map[uint32]string
 func loadDropReasonNames() dropReasonNames {
 	spec, err := btf.LoadKernelSpec()
 	if err != nil {
-		log.Debugf("dropwatch: load kernel BTF for drop reason names: %v", err)
+		log.WithError(err).Debug("load kernel BTF for drop reason names")
 		return nil
 	}
 
 	var enum btf.Enum
 	if err := spec.TypeByName("skb_drop_reason", &enum); err != nil {
-		log.Debugf("dropwatch: skb_drop_reason enum not found in kernel BTF (kernel < 5.17?): %v", err)
+		log.WithError(err).Debug("load skb_drop_reason enum from kernel BTF")
 		return nil
 	}
 

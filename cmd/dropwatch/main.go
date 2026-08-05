@@ -31,9 +31,6 @@ var (
 	AppVersion   string
 	AppGitCommit string
 	AppBuildTime string
-
-	versionInfo version.Info
-	reasonNames dropReasonNames
 )
 
 func main() {
@@ -41,19 +38,20 @@ func main() {
 		Name:   dropwatchToolName,
 		Usage:  "eBPF tracer for Linux kernel packet drops",
 		Flags:  appFlags(),
-		Action: mainAction,
 		Before: validateFlags,
 	}
-
-	versionInfo = version.Wire(app, version.Seed{
+	versionInfo := version.Wire(app, version.Seed{
 		Name:      dropwatchToolName,
 		Version:   AppVersion,
 		GitCommit: AppGitCommit,
 		BuildTime: AppBuildTime,
 	})
+	app.Action = func(c *cli.Context) error {
+		return mainAction(c, &versionInfo)
+	}
 
 	if err := app.Run(os.Args); err != nil {
-		log.Errorf("%v", err)
+		log.WithError(err).Error("run dropwatch")
 		os.Exit(1)
 	}
 }

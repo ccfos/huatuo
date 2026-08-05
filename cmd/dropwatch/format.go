@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -41,10 +40,15 @@ type writer interface {
 type textWriter struct{ w io.Writer }
 
 func (s *textWriter) Write(ev *types.DropWatchTracing) error {
-	if _, err := fmt.Fprintf(s.w, "%s %s reason=%s len=%d dev=%s pid=%d[%s] addr=%s source=%s\n",
+	line := fmt.Sprintf("%s %s reason=%s len=%d dev=%s pid=%d[%s] addr=%s source=%s\n",
 		ev.ObservedTimestamp, ev.Layers, ev.DropReason,
-		ev.PacketLen, ev.NetdevName, ev.Pid, ev.Comm, ev.PacketSkbAddr, ev.Source); err != nil {
+		ev.PacketLen, ev.NetdevName, ev.Pid, ev.Comm, ev.PacketSkbAddr, ev.Source)
+	n, err := io.WriteString(s.w, line)
+	if err != nil {
 		return err
+	}
+	if n != len(line) {
+		return io.ErrShortWrite
 	}
 
 	if err := symbol.FormatStackLines(s.w, ev.Stack); err != nil {
@@ -62,7 +66,10 @@ func (s *jsonWriter) Write(ev *types.DropWatchTracing) error {
 		return err
 	}
 	b = append(b, '\n')
-	_, err = s.w.Write(b)
+	n, err := s.w.Write(b)
+	if err == nil && n != len(b) {
+		return io.ErrShortWrite
+	}
 	return err
 }
 
@@ -72,37 +79,39 @@ func (s *socketWriter) Write(ev *types.DropWatchTracing) error {
 	return s.client.Send(ev)
 }
 
-type writerOption struct {
-	outputFmt string
-	sockPath  string
-	toolName  string
-	version   string
-	taskID    string
+type writerOptions struct {
+	outputFormat string
+	socketPath   string
+	toolName     string
+	version      string
+	taskID       string
 }
 
-func newWriter(opt *writerOption) (writer, func() error, error) {
-	if opt.sockPath != "" {
+func newWriter(output io.Writer, options *writerOptions) (writer, func() error, error) {
+	if options.socketPath != "" {
 		client, err := toolstream.NewClient(toolstream.ClientOptions{
-			SockPath: opt.sockPath,
-			ToolName: opt.toolName,
-			Version:  opt.version,
-			TaskID:   opt.taskID,
+			SockPath: options.socketPath,
+			ToolName: options.toolName,
+			Version:  options.version,
+			TaskID:   options.taskID,
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("dropwatch: --output-storage: %w", err)
+			return nil, nil, fmt.Errorf("create event sink: %w", err)
 		}
 		return &socketWriter{client: client}, client.End, nil
 	}
 
-	switch opt.outputFmt {
+	switch options.outputFormat {
 	case "json":
-		return &jsonWriter{w: os.Stdout}, func() error { return nil }, nil
+		return &jsonWriter{w: output}, func() error { return nil }, nil
+	case "text":
+		return &textWriter{w: output}, func() error { return nil }, nil
 	default:
-		return &textWriter{w: os.Stdout}, func() error { return nil }, nil
+		return nil, nil, fmt.Errorf("unsupported output format %q", options.outputFormat)
 	}
 }
 
-func formatEvent(ev *abi.DropwatchPacketEvent) *types.DropWatchTracing {
+func formatEvent(ev *abi.DropwatchPacketEvent, names dropReasonNames, sourceType string) *types.DropWatchTracing {
 	pkt := packet.Hdr{
 		EthProto:  ev.PktHdr.EthProto,
 		RawLen:    uint8(ev.PktHdr.RawLen),
@@ -113,7 +122,7 @@ func formatEvent(ev *abi.DropwatchPacketEvent) *types.DropWatchTracing {
 
 	p, err := packet.Parse(&pkt)
 	if err != nil {
-		log.Debugf("dropwatch: parse packet: %v", err)
+		log.WithError(err).Debug("parse dropwatch packet")
 	}
 
 	frames := symbol.KsymStackStrs(ev.Stack[:], symbol.KsymStackMaxDepth)
@@ -121,7 +130,7 @@ func formatEvent(ev *abi.DropwatchPacketEvent) *types.DropWatchTracing {
 
 	return &types.DropWatchTracing{
 		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
-		DropReason:          reasonNames.resolve(ev.Meta.DropReason),
+		DropReason:          names.resolve(ev.Meta.DropReason),
 		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
 		Pid:                 ev.Meta.TGIDPID >> 32,
 		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemcgCSSAddr),
@@ -136,5 +145,6 @@ func formatEvent(ev *abi.DropwatchPacketEvent) *types.DropWatchTracing {
 		PacketLen:           ev.PktHdr.PktLen,
 		Layers:              p,
 		Stack:               stackStr,
+		Source:              sourceType,
 	}
 }

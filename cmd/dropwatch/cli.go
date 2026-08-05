@@ -20,7 +20,6 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/toolstream"
 )
 
@@ -96,11 +95,19 @@ func validateFlags(c *cli.Context) error {
 	if v := c.String(cliFlagOutput); v != outputJSON && v != outputText {
 		return fmt.Errorf("--output: invalid value %q, want json or text", v)
 	}
-	if c.IsSet(cliFlagOutput) && c.String(cliFlagOutputStorage) != "" {
-		log.Warnf("--output is ignored because --output-storage is set")
-	}
 	if c.String(cliFlagDevice) != "" && c.String(cliFlagDeviceExcluded) != "" {
 		return errors.New("--device and --device-excluded are mutually exclusive")
+	}
+	if c.Int(cliFlagDuration) < 0 {
+		return errors.New("--duration must be non-negative")
+	}
+	if c.String(cliFlagTaskID) != "" && c.String(cliFlagOutputStorage) == "" {
+		return errors.New("--task-id requires --output-storage")
+	}
+	if c.IsSet(cliFlagOutput) && c.String(cliFlagOutputStorage) != "" {
+		if _, err := fmt.Fprintln(c.App.ErrWriter, "warning: --output is ignored because --output-storage is set"); err != nil {
+			return fmt.Errorf("write warning: %w", err)
+		}
 	}
 	return nil
 }
