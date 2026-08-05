@@ -73,7 +73,7 @@ ip netns exec "${NS_C}" ip addr add "${C_ADDR}/${NET_MASK}" dev "${VETH_C}"
 ip netns exec "${NS_C}" ip link set "${VETH_C}" up
 ip netns exec "${NS_C}" ip link set lo up
 ip netns exec "${NS_C}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
-	-m connbytes --connbytes 30:30 --connbytes-dir reply \
+	-m connbytes --connbytes 30:60 --connbytes-dir reply \
 	--connbytes-mode packets -j DROP
 
 "${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" \
