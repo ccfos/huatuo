@@ -139,9 +139,12 @@ func newCPUIdleTracing(
 	if err != nil {
 		return nil, fmt.Errorf("build container filter: %w", err)
 	}
-	hostCPUCount, err := cpuutil.HostOnlineCPUCount()
+	hostCPUCount, err := cpuutil.ParseOnlineCores(cpuutil.SystemCPUOnlinePath)
 	if err != nil {
 		return nil, fmt.Errorf("read online CPUs: %w", err)
+	}
+	if hostCPUCount == 0 {
+		return nil, fmt.Errorf("host online cpu count must be positive")
 	}
 
 	return &cpuIdleTracing{
@@ -324,7 +327,7 @@ func (c *cpuIdleTracing) readContainerCPUSample(
 		return cpuUsageBreakdown[uint64]{}, 0,
 			fmt.Errorf("read cpu quota for %q: %w", state.containerID, err)
 	}
-	capacity, err := cpuutil.CPUCapacity(
+	capacity, err := cpuutil.BoundCores(
 		quota.Quota, quota.Period,
 		quota.EffectiveCPUCount, c.hostCPUCount,
 	)

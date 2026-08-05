@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -55,9 +55,12 @@ func newCpuCollector() (*tracing.EventTracingAttr, error) {
 		return nil, err
 	}
 
-	numCores, err := cpuutil.HostOnlineCPUCount()
+	numCores, err := cpuutil.ParseOnlineCores(cpuutil.SystemCPUOnlinePath)
 	if err != nil {
 		return nil, fmt.Errorf("read online CPUs: %w", err)
+	}
+	if numCores == 0 {
+		return nil, fmt.Errorf("host online cpu count must be positive")
 	}
 
 	return &tracing.EventTracingAttr{
@@ -145,7 +148,7 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			continue
 		}
 
-		numCores, err := cpuutil.CPUCapacity(
+		numCores, err := cpuutil.BoundCores(
 			cpuQuota.Quota, cpuQuota.Period,
 			cpuQuota.EffectiveCPUCount, uint64(c.numCores),
 		)
@@ -164,7 +167,8 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			continue
 		}
 
-		metrics = append(metrics,
+		metrics = append(
+			metrics,
 			metric.NewContainerGaugeData(container, "cores", numCores, "cpu core number for the containers", nil),
 			metric.NewContainerGaugeData(container, "usr", dataCache.usrUtil, "cpu usr for the containers", nil),
 			metric.NewContainerGaugeData(container, "sys", dataCache.sysUtil, "cpu sys for the containers", nil),

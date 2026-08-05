@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -150,7 +150,7 @@ func (c *CgroupV1) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 }
 
 func readEffectiveCPUCount(path string) (uint64, error) {
-	return cpuutil.CPUSetCount(paths.Path(subsystem.SubsystemCPUSet, path, "cpuset.cpus"))
+	return cpuutil.ParseOnlineCores(paths.Path(subsystem.SubsystemCPUSet, path, "cpuset.cpus"))
 }
 
 func (c *CgroupV1) MemoryStatRaw(path string) (map[string]uint64, error) {

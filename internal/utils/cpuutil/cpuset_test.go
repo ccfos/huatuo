@@ -15,23 +15,30 @@
 package cpuutil
 
 import (
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
-func TestCPUSetCount(t *testing.T) {
+func TestParseOnlineCores(t *testing.T) {
 	tests := []struct {
-		name    string
-		content string
-		want    uint64
-		wantErr bool
+		name         string
+		content      string
+		want         uint64
+		wantErr      bool
+		wantParseErr bool
 	}{
 		{name: "ranges", content: "0-3,8,10-11\n", want: 7},
 		{name: "single", content: "7\n", want: 1},
 		{name: "invalid range", content: "3-1\n", wantErr: true},
-		{name: "empty", content: "\n", wantErr: true},
+		{name: "invalid range end", content: "1-x\n", wantErr: true, wantParseErr: true},
+		{name: "count overflow", content: "7,0-18446744073709551615\n", wantErr: true},
+		{name: "accumulated count overflow", content: "0-18446744073709551614,7\n", wantErr: true},
+		{name: "empty", content: "\n"},
+		{name: "whitespace", content: " \t\n"},
 	}
 
 	for _, tt := range tests {
@@ -41,29 +48,33 @@ func TestCPUSetCount(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, err := CPUSetCount(path)
+			got, err := ParseOnlineCores(path)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatal("CPUSetCount() error = nil, want error")
+					t.Fatal("ParseOnlineCores() error = nil, want error")
+				}
+				var parseErr *strconv.NumError
+				if tt.wantParseErr && !errors.As(err, &parseErr) {
+					t.Errorf("ParseOnlineCores() error = %v, want *strconv.NumError", err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("CPUSetCount() error = %v", err)
+				t.Fatalf("ParseOnlineCores() error = %v", err)
 			}
 			if got != tt.want {
-				t.Errorf("CPUSetCount() = %d, want %d", got, tt.want)
+				t.Errorf("ParseOnlineCores() = %d, want %d", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestCPUCapacityFallback(t *testing.T) {
-	got, err := CPUCapacity(math.MaxUint64, 0, 0, 4)
+func TestBoundCoresFallback(t *testing.T) {
+	got, err := BoundCores(math.MaxUint64, 0, 0, 4)
 	if err != nil {
-		t.Fatalf("CPUCapacity() error = %v", err)
+		t.Fatalf("BoundCores() error = %v", err)
 	}
 	if got != 4 {
-		t.Errorf("CPUCapacity() = %v, want 4", got)
+		t.Errorf("BoundCores() = %v, want 4", got)
 	}
 }

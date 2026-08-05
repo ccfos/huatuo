@@ -167,7 +167,7 @@ func TestValidateCPUIdleConfig(t *testing.T) {
 	}
 }
 
-func TestContainerCPUCapacity(t *testing.T) {
+func TestBoundCores(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -194,17 +194,17 @@ func TestContainerCPUCapacity(t *testing.T) {
 		{
 			name:      "zero quota",
 			quota:     stats.CpuQuota{Period: 100_000, EffectiveCPUCount: 1},
-			wantError: "quota must be positive",
+			wantError: "cpu quota is zero",
 		},
 		{
 			name:      "zero period",
 			quota:     stats.CpuQuota{Quota: 100_000, EffectiveCPUCount: 1},
-			wantError: "period must be positive",
+			wantError: "cpu period is zero",
 		},
 		{
 			name:      "zero effective CPU count",
 			quota:     stats.CpuQuota{Quota: math.MaxUint64},
-			wantError: "effective CPU count must be positive",
+			wantError: "effective cpu count is zero",
 		},
 	}
 
@@ -212,21 +212,21 @@ func TestContainerCPUCapacity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			actual, err := cpuutil.CPUCapacity(
+			actual, err := cpuutil.BoundCores(
 				tt.quota.Quota, tt.quota.Period,
 				tt.quota.EffectiveCPUCount, 0,
 			)
 			if tt.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
-					t.Fatalf("cpuutil.CPUCapacity() error = %v, want contain %q", err, tt.wantError)
+					t.Fatalf("cpuutil.BoundCores() error = %v, want contain %q", err, tt.wantError)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("cpuutil.CPUCapacity() error = %v", err)
+				t.Fatalf("cpuutil.BoundCores() error = %v", err)
 			}
 			if actual != tt.want {
-				t.Errorf("cpuutil.CPUCapacity() = %v, want %v", actual, tt.want)
+				t.Errorf("cpuutil.BoundCores() = %v, want %v", actual, tt.want)
 			}
 		})
 	}
