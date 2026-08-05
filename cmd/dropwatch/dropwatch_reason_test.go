@@ -36,7 +36,7 @@ func TestDropReasonNamesResolve(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := names.resolve(tt.input)
+			got := names.Resolve(tt.input)
 			if got != tt.want {
 				t.Errorf("resolve(%d): got %q, want %q", tt.input, got, tt.want)
 			}
@@ -59,7 +59,7 @@ func TestDropReasonNamesNilResolve(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := names.resolve(tt.input)
+			got := names.Resolve(tt.input)
 			if got != tt.want {
 				t.Errorf("resolve(%d): got %q, want %q", tt.input, got, tt.want)
 			}

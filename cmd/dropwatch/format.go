@@ -147,7 +147,7 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType stri
 
 	return &types.DropWatchTracing{
 		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
-		DropReason:          names.resolve(ev.Meta.DropReason),
+		DropReason:          names.Resolve(ev.Meta.DropReason),
 		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
 		Pid:                 ev.Meta.TGIDPID >> 32,
 		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemcgCSSAddr),

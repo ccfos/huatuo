@@ -44,7 +44,8 @@ func NewDropReason() dropReason {
 	return names
 }
 
-func (r dropReason) resolve(v uint32) string {
+// Resolve returns the kernel name for a drop reason or its numeric value.
+func (r dropReason) Resolve(v uint32) string {
 	if int32(v) == skbDropReasonNotSupported {
 		return "NOT_SUPPORTED"
 	}
