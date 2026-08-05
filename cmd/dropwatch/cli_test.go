@@ -46,10 +46,14 @@ func TestAppSourceTypes(t *testing.T) {
 			t.Parallel()
 
 			var sourceTypes string
-			app := newDropwatchTestApp(func(c *cli.Context) error {
-				sourceTypes = c.String(cliFlagSourceTypes)
-				return nil
-			})
+			app := &cli.App{
+				Name: dropwatchToolName, Flags: appFlags(), Before: validateFlags,
+				Writer: io.Discard, ErrWriter: io.Discard,
+				Action: func(c *cli.Context) error {
+					sourceTypes = c.String(cliFlagSourceTypes)
+					return nil
+				},
+			}
 			args := []string{"dropwatch", "--bpf-path", "unused.o"}
 			args = append(args, tt.args...)
 
@@ -67,7 +71,11 @@ func TestAppHelpHidesSourceTypes(t *testing.T) {
 	t.Parallel()
 
 	var output bytes.Buffer
-	app := newDropwatchTestApp(func(_ *cli.Context) error { return nil })
+	app := &cli.App{
+		Name: dropwatchToolName, Flags: appFlags(), Before: validateFlags,
+		Action: func(_ *cli.Context) error { return nil },
+		Writer: io.Discard, ErrWriter: io.Discard,
+	}
 	app.Writer = &output
 
 	if err := app.Run([]string{"dropwatch", "--help"}); err != nil {
@@ -78,13 +86,30 @@ func TestAppHelpHidesSourceTypes(t *testing.T) {
 	}
 }
 
-func newDropwatchTestApp(action cli.ActionFunc) *cli.App {
-	return &cli.App{
-		Name:      dropwatchToolName,
-		Flags:     appFlags(),
-		Action:    action,
-		Before:    validateFlags,
-		Writer:    io.Discard,
-		ErrWriter: io.Discard,
+func TestValidateFlags(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "negative duration", args: []string{"--duration", "-1"}, want: "--duration must be non-negative"},
+		{name: "task ID without storage", args: []string{"--task-id", "task"}, want: "--task-id requires --output-storage"},
+		{name: "mutually exclusive devices", args: []string{"--device", "eth0", "--device-excluded", "eth1"}, want: "mutually exclusive"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := &cli.App{
+				Name: dropwatchToolName, Flags: appFlags(), Before: validateFlags,
+				Action: func(_ *cli.Context) error { return nil },
+				Writer: io.Discard, ErrWriter: io.Discard,
+			}
+			err := app.Run(append([]string{"dropwatch", "--bpf-path", "unused.o"}, tt.args...))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Run() error = %v, want substring %q", err, tt.want)
+			}
+		})
 	}
 }
