@@ -25,7 +25,9 @@ import (
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
+	cgroupStats "github.com/ccfos/huatuo/internal/cgroups/stats"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	cgroupV2 "github.com/ccfos/huatuo/internal/cgroups/v2"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/matcher"
 	"github.com/ccfos/huatuo/internal/pod"
@@ -43,7 +45,9 @@ func init() {
 }
 
 func newDload() (*tracing.EventTracingAttr, error) {
-	tracer, err := newDloadTracing(configSnapshot())
+	config := configSnapshot()
+
+	tracer, err := newDloadTracing(config)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +97,7 @@ type dloadTracing struct {
 	interval     time.Duration
 	decayFactors [2]uint64
 	threshold    dloadThreshold
+	v2LoadStats  func([]string) (map[string]cgroupStats.LoadStats, error)
 }
 
 type dloadThreshold struct {
@@ -105,8 +110,16 @@ func newDloadTracing(config *Config) (*dloadTracing, error) {
 	if config.Dload.Interval <= 0 {
 		return nil, errors.New("dload sampling interval must be positive")
 	}
+	if config.Dload.Interval > maxDurationSeconds {
+		return nil, fmt.Errorf("dload sampling interval must not exceed %d seconds",
+			maxDurationSeconds)
+	}
 	if config.Dload.IntervalTracing < 0 {
 		return nil, errors.New("dload tracing interval must be non-negative")
+	}
+	if config.Dload.IntervalTracing > maxDurationSeconds {
+		return nil, fmt.Errorf("dload tracing interval must not exceed %d seconds",
+			maxDurationSeconds)
 	}
 	if config.Dload.ThresholdLoad < 0 {
 		return nil, errors.New("dload threshold must be non-negative")
@@ -117,6 +130,9 @@ func newDloadTracing(config *Config) (*dloadTracing, error) {
 		containers:   make(map[string]*containerDloadInfo),
 		interval:     interval,
 		decayFactors: loadDecayFactors(interval),
+		v2LoadStats: func(paths []string) (map[string]cgroupStats.LoadStats, error) {
+			return cgroupV2.SharedLoadStats(cgroupV2.LoadStatsConsumerDload, paths)
+		},
 		threshold: dloadThreshold{
 			load:             config.Dload.ThresholdLoad,
 			minTraceInterval: time.Duration(config.Dload.IntervalTracing) * time.Second,
@@ -169,15 +185,53 @@ func (d *dloadTracing) shouldTrace(container *containerDloadInfo, sampledAt time
 
 func (d *dloadTracing) selectTraceTarget(
 	sampledAt time.Time,
-) (*containerDloadInfo, cadvisorV1.LoadStats, error) {
-	n, err := netlink.New()
-	if err != nil {
-		return nil, cadvisorV1.LoadStats{}, fmt.Errorf("open dload netlink connection: %w", err)
+	mode cgroups.Mode,
+) (*containerDloadInfo, cgroupStats.LoadStats, error) {
+	var legacyReader *netlink.NetlinkReader
+	var unifiedStats map[string]cgroupStats.LoadStats
+	switch mode {
+	case cgroups.Legacy, cgroups.Hybrid:
+		var err error
+		legacyReader, err = netlink.New()
+		if err != nil {
+			return nil, cgroupStats.LoadStats{}, fmt.Errorf(
+				"open dload netlink connection: %w", err)
+		}
+		defer legacyReader.Stop()
+	case cgroups.Unified:
+		paths := make([]string, 0, len(d.containers))
+		for _, container := range d.containers {
+			paths = append(paths, container.cgroupName)
+		}
+		var err error
+		unifiedStats, err = d.v2LoadStats(paths)
+		if err != nil {
+			if errors.Is(err, cgroupV2.ErrTaskIteratorNotSupported) {
+				log.WithError(err).Warn(
+					"cgroup v2 dload is unavailable and will remain stopped")
+				return nil, cgroupStats.LoadStats{}, fmt.Errorf(
+					"%w: cgroup v2 dload requires BPF task iterator support: %w",
+					types.ErrNotSupported, err)
+			}
+			if len(unifiedStats) == 0 {
+				return nil, cgroupStats.LoadStats{}, fmt.Errorf(
+					"collect cgroup v2 dload snapshot: %w", err)
+			}
+			log.WithError(err).
+				WithField("containers_collected", len(unifiedStats)).
+				Debug("partially collected cgroup v2 dload snapshot")
+		}
+	case cgroups.Unavailable:
+		return nil, cgroupStats.LoadStats{}, errors.New(
+			"collect dload stats: cgroup filesystem is unavailable")
+	default:
+		return nil, cgroupStats.LoadStats{}, fmt.Errorf(
+			"collect dload stats: unsupported cgroup mode %d", mode)
 	}
-	defer n.Stop()
 
 	for _, container := range d.containers {
-		stats, err := n.GetCpuLoad(container.cgroupName, container.cpuPath)
+		stats, err := d.containerLoadStats(
+			mode, legacyReader, unifiedStats, container)
 		if err != nil {
 			log.WithError(err).
 				WithField("container_id", container.container.ID).
@@ -199,12 +253,45 @@ func (d *dloadTracing) selectTraceTarget(
 		return container, stats, nil
 	}
 
-	return nil, cadvisorV1.LoadStats{}, nil
+	return nil, cgroupStats.LoadStats{}, nil
+}
+
+func (d *dloadTracing) containerLoadStats(
+	mode cgroups.Mode,
+	legacyReader *netlink.NetlinkReader,
+	unifiedStats map[string]cgroupStats.LoadStats,
+	container *containerDloadInfo,
+) (cgroupStats.LoadStats, error) {
+	if mode == cgroups.Unified {
+		load, ok := unifiedStats[container.cgroupName]
+		if !ok {
+			return cgroupStats.LoadStats{}, fmt.Errorf(
+				"cgroup v2 path %q disappeared", container.cgroupName)
+		}
+		return load, nil
+	}
+
+	load, err := legacyReader.GetCpuLoad(container.cgroupName, container.cpuPath)
+	if err != nil {
+		return cgroupStats.LoadStats{}, err
+	}
+
+	return legacyLoadStats(load), nil
+}
+
+func legacyLoadStats(load cadvisorV1.LoadStats) cgroupStats.LoadStats {
+	return cgroupStats.LoadStats{
+		NrSleeping:        load.NrSleeping,
+		NrRunning:         load.NrRunning,
+		NrStopped:         load.NrStopped,
+		NrUninterruptible: load.NrUninterruptible,
+		NrIoWait:          load.NrIoWait,
+	}
 }
 
 func (d *dloadTracing) buildAndSave(
 	container *containerDloadInfo,
-	loadStats cadvisorV1.LoadStats,
+	loadStats cgroupStats.LoadStats,
 ) error {
 	startedTimestamp := time.Now().UTC()
 	cgroupPath := container.cgroupName
@@ -258,10 +345,11 @@ func (d *dloadTracing) buildAndSave(
 }
 
 const (
-	loadFractionBits = 11
-	fixedOne         = 1 << loadFractionBits
-	loadOneMinute    = time.Minute
-	loadFiveMinutes  = 5 * time.Minute
+	maxDurationSeconds = int64(time.Duration(1<<63-1) / time.Second)
+	loadFractionBits   = 11
+	fixedOne           = 1 << loadFractionBits
+	loadOneMinute      = time.Minute
+	loadFiveMinutes    = 5 * time.Minute
 )
 
 func loadDecayFactor(interval, window time.Duration) uint64 {
@@ -400,12 +488,11 @@ func dumpUninterruptibleTaskStack(scope taskScope, path string, all bool) (strin
 }
 
 // Start detect work, monitor the load of containers.
-// CGROUPSTATS_CMD_GET netlink API only works with cgroup v1.
 func (d *dloadTracing) Start(ctx context.Context) error {
-	if cgroups.CgroupMode() != cgroups.Legacy {
-		log.Info("skipping dload tracing because cgroup v2 lacks load statistics")
-		<-ctx.Done()
-		return types.ErrExitByCancelCtx
+	mode := cgroups.CgroupMode()
+	if mode == cgroups.Unified {
+		defer cgroupV2.ForgetSharedLoadStatsConsumer(
+			cgroupV2.LoadStatsConsumerDload)
 	}
 
 	ticker := time.NewTicker(d.interval)
@@ -422,7 +509,7 @@ func (d *dloadTracing) Start(ctx context.Context) error {
 			}
 			d.reconcileContainers(containers)
 
-			container, loadStats, err := d.selectTraceTarget(sampledAt)
+			container, loadStats, err := d.selectTraceTarget(sampledAt, mode)
 			if err != nil {
 				return err
 			}
