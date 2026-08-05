@@ -52,7 +52,7 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 	}
 	defer bpf.Shutdown()
 
-	netdevFilterMode, devIfindexes, err := parseNetdevFilterFlags(options.device, options.deviceExcluded)
+	netdevFilterMode, devIfindexes, err := parseNetdevFilterOptions(options.device, options.deviceExcluded)
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 		}
 	}()
 
-	if err := applyDeviceFilter(bpfObj, netdevFilterMode, devIfindexes); err != nil {
+	if err := configureNetdevFilter(bpfObj, netdevFilterMode, devIfindexes); err != nil {
 		return fmt.Errorf("apply device filter: %w", err)
 	}
 
@@ -121,6 +121,7 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 	if bpfLimiter.Enabled() {
 		group.Go(func() error { return bpfLimiter.ReadEvents(groupCtx) })
 	}
+
 	group.Go(func() error {
 		return streamDropwatchEvents(groupCtx, reader, sink, names, options.sourceType)
 	})

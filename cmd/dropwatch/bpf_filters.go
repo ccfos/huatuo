@@ -25,15 +25,15 @@ import (
 )
 
 const (
-	netdevFilterModeOff uint32 = iota
-	netdevFilterModeWhitelist
-	netdevFilterModeBlacklist
+	netdevFilterModeDisabled uint32 = iota
+	netdevFilterModeAllow
+	netdevFilterModeDeny
 )
 
 const netdevFilterModeMap = "skb_filter_dev_map"
 
-func applyDeviceFilter(b bpf.BPF, mode uint32, ifindexes []uint32) error {
-	if mode == netdevFilterModeOff {
+func configureNetdevFilter(b bpf.BPF, mode uint32, ifindexes []uint32) error {
+	if mode == netdevFilterModeDisabled {
 		return nil
 	}
 	mapID := b.MapIDByName(netdevFilterModeMap)
@@ -50,18 +50,18 @@ func applyDeviceFilter(b bpf.BPF, mode uint32, ifindexes []uint32) error {
 	return b.WriteMapItems(mapID, items)
 }
 
-func parseNetdevFilterFlags(device, excluded string) (uint32, []uint32, error) {
+func parseNetdevFilterOptions(device, excluded string) (uint32, []uint32, error) {
 	var (
 		list string
 		mode uint32
 	)
 	switch {
 	case device != "":
-		list, mode = device, netdevFilterModeWhitelist
+		list, mode = device, netdevFilterModeAllow
 	case excluded != "":
-		list, mode = excluded, netdevFilterModeBlacklist
+		list, mode = excluded, netdevFilterModeDeny
 	default:
-		return netdevFilterModeOff, nil, nil
+		return netdevFilterModeDisabled, nil, nil
 	}
 
 	var ifindexes []uint32
