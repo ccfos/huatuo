@@ -25,19 +25,27 @@ import (
 
 const rateLimitEventBufferSize = 64
 
+var (
+	errRateLimitEventPipeAlreadyOpen = errors.New("bpf: rate-limit event pipe already open")
+	errRateLimitEventPipeNotOpen     = errors.New("bpf: rate-limit event pipe not open")
+)
+
 // RateLimiter connects userspace configuration and alerts to a named BPF rate limiter.
 type RateLimiter struct {
 	name             string
+	eventsPerSecond  uint64
 	intervalConstant string
 	burstConstant    string
 	maxBurstConstant string
 	eventMap         string
+	reader           PerfEventReader
 }
 
 // NewRateLimiter creates a userspace controller for a BPF_RATELIMIT_IN_MAP_RC instance.
-func NewRateLimiter(name string) *RateLimiter {
+func NewRateLimiter(name string, eventsPerSecond uint64) *RateLimiter {
 	return &RateLimiter{
 		name:             name,
+		eventsPerSecond:  eventsPerSecond,
 		intervalConstant: "bpf_rlimit_interval_" + name,
 		burstConstant:    "bpf_rlimit_burst_" + name,
 		maxBurstConstant: "bpf_rlimit_max_burst_" + name,
@@ -45,9 +53,14 @@ func NewRateLimiter(name string) *RateLimiter {
 	}
 }
 
-// ApplyConstants adds the rate-limit constants when maxEventsPerSecond is nonzero.
-func (r *RateLimiter) ApplyConstants(consts map[string]any, maxEventsPerSecond uint64) map[string]any {
-	if maxEventsPerSecond == 0 {
+// Enabled reports whether the rate limiter is configured to admit events.
+func (r *RateLimiter) Enabled() bool {
+	return r.eventsPerSecond > 0
+}
+
+// Constants adds the rate-limit constants when the limiter is enabled.
+func (r *RateLimiter) Constants(consts map[string]any) map[string]any {
+	if !r.Enabled() {
 		return consts
 	}
 	if consts == nil {
@@ -55,50 +68,70 @@ func (r *RateLimiter) ApplyConstants(consts map[string]any, maxEventsPerSecond u
 	}
 
 	consts[r.intervalConstant] = uint64(1)
-	consts[r.burstConstant] = maxEventsPerSecond
+	consts[r.burstConstant] = r.eventsPerSecond
 	consts[r.maxBurstConstant] = uint64(0)
 	return consts
 }
 
 // OpenEventPipe opens the perf event pipe used for rate-limit alerts.
-func (r *RateLimiter) OpenEventPipe(ctx context.Context, b BPF) (PerfEventReader, error) {
+func (r *RateLimiter) OpenEventPipe(ctx context.Context, b BPF) error {
+	if r.reader != nil {
+		return fmt.Errorf("%s: %w", r.name, errRateLimitEventPipeAlreadyOpen)
+	}
+
 	reader, err := b.EventPipeByName(ctx, r.eventMap, rateLimitEventBufferSize)
 	if err != nil {
-		return nil, fmt.Errorf("%s: open rate-limit event pipe: %w", r.name, err)
+		return fmt.Errorf("%s: open rate-limit event pipe: %w", r.name, err)
 	}
-	return reader, nil
+	r.reader = reader
+	return nil
 }
 
 // ReadEvents reads and logs rate-limit alerts until ctx is canceled.
-func (r *RateLimiter) ReadEvents(ctx context.Context, reader PerfEventReader, eventsPerSecond uint64) {
+func (r *RateLimiter) ReadEvents(ctx context.Context) error {
+	reader := r.reader
+	if reader == nil {
+		return fmt.Errorf("%s: %w", r.name, errRateLimitEventPipeNotOpen)
+	}
+
 	var event abi.BPFRatelimitEvent
 
 	for {
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 
 		if err := reader.ReadInto(&event); err != nil {
 			if ctx.Err() != nil {
-				return
+				return nil
 			}
 			if errors.Is(err, ErrPerfEventSamplesLost) {
 				log.WithError(err).Warn("lost BPF perf event samples")
 				continue
 			}
 
-			log.Errorf("%s: rate-limit reader: %v", r.name, err)
-			continue
+			return fmt.Errorf("%s: read rate-limit event: %w", r.name, err)
 		}
 
 		log.Warnf(
 			"%s: rate limit hit (configured=%d/s, window_events=%d, window_missed=%d, total_events=%d, total_missed=%d)",
 			r.name,
-			eventsPerSecond,
+			r.eventsPerSecond,
 			event.Events,
 			event.Nmissed,
 			event.TotalEvents,
 			event.TotalNmissed,
 		)
 	}
+}
+
+// CloseEventPipe closes the perf event pipe owned by the rate limiter.
+func (r *RateLimiter) CloseEventPipe() error {
+	if r.reader == nil {
+		return nil
+	}
+	if err := r.reader.Close(); err != nil {
+		return fmt.Errorf("%s: close rate-limit event pipe: %w", r.name, err)
+	}
+	return nil
 }

@@ -80,7 +80,7 @@ type writerOption struct {
 	taskID    string
 }
 
-func newWriter(opt *writerOption) (writer, func(), error) {
+func newWriter(opt *writerOption) (writer, func() error, error) {
 	if opt.sockPath != "" {
 		client, err := toolstream.NewClient(toolstream.ClientOptions{
 			SockPath: opt.sockPath,
@@ -96,9 +96,9 @@ func newWriter(opt *writerOption) (writer, func(), error) {
 
 	switch opt.outputFmt {
 	case "json":
-		return &jsonWriter{w: os.Stdout}, func() {}, nil
+		return &jsonWriter{w: os.Stdout}, func() error { return nil }, nil
 	default:
-		return &textWriter{w: os.Stdout}, func() {}, nil
+		return &textWriter{w: os.Stdout}, func() error { return nil }, nil
 	}
 }
 

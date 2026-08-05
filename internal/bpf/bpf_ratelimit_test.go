@@ -14,18 +14,21 @@
 
 package bpf
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+)
 
-func TestRateLimiterApplyConstants(t *testing.T) {
+func TestRateLimiterConstants(t *testing.T) {
 	t.Parallel()
-
-	limiter := NewRateLimiter("tcp_retransmit")
 
 	t.Run("disabled returns original map", func(t *testing.T) {
 		t.Parallel()
 
+		limiter := NewRateLimiter("tcp_retransmit", 0)
 		consts := map[string]any{"existing": uint64(7)}
-		got := limiter.ApplyConstants(consts, 0)
+		got := limiter.Constants(consts)
 
 		if len(got) != 1 || got["existing"] != uint64(7) {
 			t.Fatalf("constants = %#v, want original map only", got)
@@ -35,7 +38,8 @@ func TestRateLimiterApplyConstants(t *testing.T) {
 	t.Run("enabled initializes nil map", func(t *testing.T) {
 		t.Parallel()
 
-		got := limiter.ApplyConstants(nil, 100)
+		limiter := NewRateLimiter("tcp_retransmit", 100)
+		got := limiter.Constants(nil)
 
 		if got["bpf_rlimit_interval_tcp_retransmit"] != uint64(1) {
 			t.Fatalf("interval = %v, want 1", got["bpf_rlimit_interval_tcp_retransmit"])
@@ -51,8 +55,9 @@ func TestRateLimiterApplyConstants(t *testing.T) {
 	t.Run("enabled preserves existing constants", func(t *testing.T) {
 		t.Parallel()
 
+		limiter := NewRateLimiter("tcp_retransmit", 10)
 		consts := map[string]any{"existing": uint64(7)}
-		got := limiter.ApplyConstants(consts, 10)
+		got := limiter.Constants(consts)
 
 		if got["existing"] != uint64(7) {
 			t.Fatalf("existing constant = %v, want 7", got["existing"])
@@ -61,4 +66,135 @@ func TestRateLimiterApplyConstants(t *testing.T) {
 			t.Fatalf("burst = %v, want 10", got["bpf_rlimit_burst_tcp_retransmit"])
 		}
 	})
+}
+
+func TestRateLimiterEnabled(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		eventsPerSecond uint64
+		want            bool
+	}{
+		{name: "disabled", eventsPerSecond: 0, want: false},
+		{name: "enabled", eventsPerSecond: 1, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := NewRateLimiter("tcp_retransmit", tt.eventsPerSecond).Enabled()
+			if got != tt.want {
+				t.Fatalf("Enabled() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRateLimiterReadEventsReturnsUnexpectedReadError(t *testing.T) {
+	t.Parallel()
+
+	readErr := errors.New("read failed")
+	reader := &rateLimitReaderStub{readErr: readErr}
+	limiter := NewRateLimiter("tcp_retransmit", 100)
+	limiter.reader = reader
+	err := limiter.ReadEvents(context.Background())
+	if !errors.Is(err, readErr) {
+		t.Fatalf("ReadEvents() error = %v, want %v", err, readErr)
+	}
+}
+
+func TestRateLimiterReadEventsRequiresOpenEventPipe(t *testing.T) {
+	t.Parallel()
+
+	err := NewRateLimiter("tcp_retransmit", 100).ReadEvents(context.Background())
+	if !errors.Is(err, errRateLimitEventPipeNotOpen) {
+		t.Fatalf(
+			"ReadEvents() error = %v, want %v",
+			err,
+			errRateLimitEventPipeNotOpen,
+		)
+	}
+}
+
+func TestRateLimiterReadEventsStopsOnCanceledContext(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	reader := &rateLimitReaderStub{readErr: errors.New("must not read")}
+	limiter := NewRateLimiter("tcp_retransmit", 100)
+	limiter.reader = reader
+	if err := limiter.ReadEvents(ctx); err != nil {
+		t.Fatalf("ReadEvents() error = %v, want nil", err)
+	}
+	if reader.reads != 0 {
+		t.Fatalf("reader calls = %d, want 0", reader.reads)
+	}
+}
+
+func TestRateLimiterOpenEventPipeRejectsDuplicateOpen(t *testing.T) {
+	t.Parallel()
+
+	limiter := NewRateLimiter("tcp_retransmit", 100)
+	limiter.reader = &rateLimitReaderStub{}
+	err := limiter.OpenEventPipe(context.Background(), nil)
+	if !errors.Is(err, errRateLimitEventPipeAlreadyOpen) {
+		t.Fatalf(
+			"OpenEventPipe() error = %v, want %v",
+			err,
+			errRateLimitEventPipeAlreadyOpen,
+		)
+	}
+}
+
+func TestRateLimiterCloseEventPipe(t *testing.T) {
+	t.Parallel()
+
+	t.Run("before open", func(t *testing.T) {
+		t.Parallel()
+
+		if err := NewRateLimiter("tcp_retransmit", 100).CloseEventPipe(); err != nil {
+			t.Fatalf("CloseEventPipe() error = %v, want nil", err)
+		}
+	})
+
+	t.Run("reader error", func(t *testing.T) {
+		t.Parallel()
+
+		closeErr := errors.New("close failed")
+		reader := &rateLimitReaderStub{closeErr: closeErr}
+		limiter := NewRateLimiter("tcp_retransmit", 100)
+		limiter.reader = reader
+
+		err := limiter.CloseEventPipe()
+		if !errors.Is(err, closeErr) {
+			t.Fatalf("CloseEventPipe() error = %v, want %v", err, closeErr)
+		}
+		if reader.closes != 1 {
+			t.Fatalf("reader close calls = %d, want 1", reader.closes)
+		}
+	})
+}
+
+type rateLimitReaderStub struct {
+	readErr  error
+	closeErr error
+	reads    int
+	closes   int
+}
+
+func (r *rateLimitReaderStub) ReadInto(any) error {
+	r.reads++
+	return r.readErr
+}
+
+func (*rateLimitReaderStub) ReadBatch(func() any) ([]any, error) {
+	return []any{}, nil
+}
+
+func (r *rateLimitReaderStub) Close() error {
+	r.closes++
+	return r.closeErr
 }

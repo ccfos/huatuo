@@ -30,7 +30,7 @@ import (
 	"huatuo-bamai/internal/log"
 )
 
-func mainAction(c *cli.Context) error {
+func mainAction(c *cli.Context) (returnErr error) {
 	reasonNames = loadDropReasonNames()
 
 	duration := c.Int(cliFlagDuration)
@@ -48,8 +48,14 @@ func mainAction(c *cli.Context) error {
 	}
 
 	maxEventsPerSecond := c.Uint64(cliFlagMaxEventsPerSecond)
+	bpfLimiter := bpf.NewRateLimiter("dropwatch", maxEventsPerSecond)
 
-	bpfObj, err := loadDropwatchBPFWithFilter(c.String(cliFlagBpfPath), c.String(cliFlagFilter), netdevFilterMode, maxEventsPerSecond)
+	bpfObj, err := loadDropwatchBPFWithFilter(
+		c.String(cliFlagBpfPath),
+		c.String(cliFlagFilter),
+		netdevFilterMode,
+		bpfLimiter,
+	)
 	if err != nil {
 		return fmt.Errorf("dropwatch: load bpf: %w", err)
 	}
@@ -80,14 +86,18 @@ func mainAction(c *cli.Context) error {
 		}
 	}()
 
-	if maxEventsPerSecond > 0 {
-		rlReader, err := eventRateLimiter.OpenEventPipe(runCtx, bpfObj)
-		if err != nil {
+	if bpfLimiter.Enabled() {
+		if err := bpfLimiter.OpenEventPipe(runCtx, bpfObj); err != nil {
 			return err
 		}
-		defer rlReader.Close()
-
-		go eventRateLimiter.ReadEvents(runCtx, rlReader, maxEventsPerSecond)
+		defer func() {
+			if err := bpfLimiter.CloseEventPipe(); err != nil {
+				returnErr = errors.Join(
+					returnErr,
+					fmt.Errorf("dropwatch: close rate limiter: %w", err),
+				)
+			}
+		}()
 	}
 
 	reader, err := bpfObj.AttachAndEventPipe(runCtx, "perf_events", 8192)
@@ -108,7 +118,22 @@ func mainAction(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	defer sinkCleanup()
+	defer func() {
+		if err := sinkCleanup(); err != nil {
+			returnErr = errors.Join(
+				returnErr,
+				fmt.Errorf("dropwatch: close event sink: %w", err),
+			)
+		}
+	}()
+
+	if bpfLimiter.Enabled() {
+		go func() {
+			if err := bpfLimiter.ReadEvents(runCtx); err != nil {
+				log.WithError(err).Error("dropwatch: rate-limit reader stopped")
+			}
+		}()
+	}
 
 	var ev abi.DropwatchPacketEvent
 
