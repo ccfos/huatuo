@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -33,6 +34,12 @@ type errWriter struct{ err error }
 
 func (w errWriter) Write(_ []byte) (int, error) {
 	return 0, w.err
+}
+
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) {
+	return len(p) / 2, nil
 }
 
 func TestFormatEventSkbAddr(t *testing.T) {
@@ -59,7 +66,11 @@ func TestFormatEventSkbAddr(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := formatEvent(&abi.TCPRetransmitEvent{SKBAddr: tt.skbAddr})
+			event := formatEvent(&abi.TCPRetransmitEvent{
+				SKBAddr:   tt.skbAddr,
+				EventType: uint8(abi.TCPRetransmitEventSKB),
+				Family:    unix.AF_INET,
+			}, toolstream.SourceTypeTool)
 			if event.SkbAddr != tt.want {
 				t.Fatalf("SkbAddr = %q, want %q", event.SkbAddr, tt.want)
 			}
@@ -108,7 +119,11 @@ func TestFormatEventMemoryCgroupCSSAddr(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := formatEvent(&abi.TCPRetransmitEvent{MemcgCSSAddr: tt.addr})
+			event := formatEvent(&abi.TCPRetransmitEvent{
+				MemcgCSSAddr: tt.addr,
+				EventType:    uint8(abi.TCPRetransmitEventSKB),
+				Family:       unix.AF_INET,
+			}, toolstream.SourceTypeTool)
 			if event.MemoryCgroupCSSAddr != tt.want {
 				t.Fatalf("MemoryCgroupCSSAddr = %q, want %q", event.MemoryCgroupCSSAddr, tt.want)
 			}
@@ -139,7 +154,9 @@ func TestFormatEventNetNamespaceIDs(t *testing.T) {
 	event := formatEvent(&abi.TCPRetransmitEvent{
 		NetNSCookie: 0x2000,
 		NetNSInum:   4026531992,
-	})
+		EventType:   uint8(abi.TCPRetransmitEventSKB),
+		Family:      unix.AF_INET,
+	}, toolstream.SourceTypeTool)
 	if event.NetNamespaceCookie != 0x2000 {
 		t.Fatalf("NetNamespaceCookie = %d, want %d", event.NetNamespaceCookie, uint64(0x2000))
 	}
@@ -163,6 +180,18 @@ func TestFormatEventNetNamespaceIDs(t *testing.T) {
 	}
 }
 
+func TestFormatEventSource(t *testing.T) {
+	t.Parallel()
+
+	event := formatEvent(&abi.TCPRetransmitEvent{
+		EventType: uint8(abi.TCPRetransmitEventSKB),
+		Family:    unix.AF_INET,
+	}, toolstream.SourceTypeTool)
+	if event.Source != toolstream.SourceTypeTool {
+		t.Fatalf("Source = %q, want %q", event.Source, toolstream.SourceTypeTool)
+	}
+}
+
 func TestFormatEventTCPFlags(t *testing.T) {
 	t.Parallel()
 
@@ -174,7 +203,8 @@ func TestFormatEventTCPFlags(t *testing.T) {
 		{
 			name: "skb flags",
 			ev: &abi.TCPRetransmitEvent{
-				EventType: tcpRetransmitEventSKB,
+				EventType: uint8(abi.TCPRetransmitEventSKB),
+				Family:    unix.AF_INET,
 				TCPFlags:  0x18,
 			},
 			want: "ACK|PSH",
@@ -182,7 +212,8 @@ func TestFormatEventTCPFlags(t *testing.T) {
 		{
 			name: "synack flags derived from event type",
 			ev: &abi.TCPRetransmitEvent{
-				EventType: tcpRetransmitEventSYNACK,
+				EventType: uint8(abi.TCPRetransmitEventSynack),
+				Family:    unix.AF_INET,
 			},
 			want: "SYN|ACK",
 		},
@@ -192,7 +223,7 @@ func TestFormatEventTCPFlags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := formatEvent(tt.ev)
+			event := formatEvent(tt.ev, toolstream.SourceTypeTool)
 			if event.TCPFlags != tt.want {
 				t.Fatalf("TCPFlags = %q, want %q", event.TCPFlags, tt.want)
 			}
@@ -216,10 +247,11 @@ func TestFormatEventTLP(t *testing.T) {
 	t.Parallel()
 
 	event := formatEvent(&abi.TCPRetransmitEvent{
-		EventType: tcpRetransmitEventTLP,
+		EventType: uint8(abi.TCPRetransmitEventTlp),
+		Family:    unix.AF_INET,
 		TCPSeq:    123,
 		TCPAck:    100,
-	})
+	}, toolstream.SourceTypeTool)
 
 	if event.EventType != "tcp_send_loss_probe" {
 		t.Errorf("EventType = %q, want tcp_send_loss_probe", event.EventType)
@@ -250,9 +282,10 @@ func TestFormatEventAddresses(t *testing.T) {
 		{
 			name: "ipv4 uses first four bytes",
 			ev: &abi.TCPRetransmitEvent{
-				Family: unix.AF_INET,
-				Saddr:  [16]byte{127, 0, 0, 1, 0xff},
-				Daddr:  [16]byte{10, 0, 0, 1, 0xff},
+				EventType: uint8(abi.TCPRetransmitEventSKB),
+				Family:    unix.AF_INET,
+				Saddr:     [16]byte{127, 0, 0, 1, 0xff},
+				Daddr:     [16]byte{10, 0, 0, 1, 0xff},
 			},
 			wantSaddr: "127.0.0.1",
 			wantDaddr: "10.0.0.1",
@@ -260,7 +293,8 @@ func TestFormatEventAddresses(t *testing.T) {
 		{
 			name: "ipv6 uses full sixteen bytes",
 			ev: &abi.TCPRetransmitEvent{
-				Family: unix.AF_INET6,
+				EventType: uint8(abi.TCPRetransmitEventSKB),
+				Family:    unix.AF_INET6,
 			},
 			wantSaddr: "2001:db8::1",
 			wantDaddr: "2001:db8::2",
@@ -274,7 +308,7 @@ func TestFormatEventAddresses(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			event := formatEvent(tt.ev)
+			event := formatEvent(tt.ev, toolstream.SourceTypeTool)
 			if event.TCPSaddr != tt.wantSaddr {
 				t.Fatalf("TCPSaddr = %q, want %q", event.TCPSaddr, tt.wantSaddr)
 			}
@@ -434,5 +468,240 @@ func TestJSONWriterPropagatesIOError(t *testing.T) {
 	err := w.Write(&types.TCPRetransmitTracing{ObservedTimestamp: "now"})
 	if !errors.Is(err, boom) {
 		t.Fatalf("Write() error = %v, want %v", err, boom)
+	}
+}
+
+func TestWritersDetectShortWrites(t *testing.T) {
+	t.Parallel()
+
+	event := &types.TCPRetransmitTracing{ObservedTimestamp: "now"}
+	writers := []writer{
+		&textWriter{w: shortWriter{}},
+		&jsonWriter{w: shortWriter{}},
+	}
+	for _, output := range writers {
+		if err := output.Write(event); !errors.Is(err, io.ErrShortWrite) {
+			t.Errorf("Write() error = %v, want %v", err, io.ErrShortWrite)
+		}
+	}
+}
+
+func TestJSONWriterWritesNDJSON(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	w := &jsonWriter{w: &output}
+	event := &types.TCPRetransmitTracing{
+		ObservedTimestamp: "2026-08-05T00:00:00Z",
+		TCPReason:         "RTO",
+	}
+	if err := w.Write(event); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	encoded := output.String()
+	if !strings.HasSuffix(encoded, "\n") || strings.Count(encoded, "\n") != 1 {
+		t.Fatalf("output = %q, want one newline-terminated JSON object", encoded)
+	}
+	var got types.TCPRetransmitTracing
+	if err := json.Unmarshal([]byte(strings.TrimSuffix(encoded, "\n")), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if got.ObservedTimestamp != event.ObservedTimestamp || got.TCPReason != event.TCPReason {
+		t.Fatalf("decoded event = %+v, want timestamp %q and reason %q", got, event.ObservedTimestamp, event.TCPReason)
+	}
+}
+
+func TestNewWriterUsesInjectedOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		outputFormat string
+		wantType     string
+	}{
+		{name: "text", outputFormat: outputText, wantType: "text"},
+		{name: "json", outputFormat: outputJSON, wantType: "json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var output bytes.Buffer
+			got, cleanup, err := newWriter(&output, &writerOptions{outputFormat: tt.outputFormat})
+			if err != nil {
+				t.Fatalf("newWriter() error = %v", err)
+			}
+			if err := cleanup(); err != nil {
+				t.Fatalf("cleanup() error = %v", err)
+			}
+
+			switch tt.wantType {
+			case "text":
+				if _, ok := got.(*textWriter); !ok {
+					t.Fatalf("newWriter() type = %T, want *textWriter", got)
+				}
+			case "json":
+				if _, ok := got.(*jsonWriter); !ok {
+					t.Fatalf("newWriter() type = %T, want *jsonWriter", got)
+				}
+			}
+		})
+	}
+}
+
+func TestNewWriterRejectsInvalidOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		output  io.Writer
+		options writerOptions
+		wantErr string
+	}{
+		{
+			name:    "nil output",
+			options: writerOptions{outputFormat: outputText},
+			wantErr: "output is nil",
+		},
+		{
+			name:    "unsupported format",
+			output:  io.Discard,
+			options: writerOptions{outputFormat: "yaml"},
+			wantErr: `unsupported output "yaml"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, err := newWriter(tt.output, &tt.options)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("newWriter() error = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestFormatEventHandlesUnknownABIValues(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		event         abi.TCPRetransmitEvent
+		wantEventType string
+		wantSaddr     string
+		wantDaddr     string
+	}{
+		{
+			name: "unknown event type",
+			event: abi.TCPRetransmitEvent{
+				EventType: 99,
+				Family:    unix.AF_INET,
+			},
+			wantEventType: "unknown",
+			wantSaddr:     "0.0.0.0",
+			wantDaddr:     "0.0.0.0",
+		},
+		{
+			name: "unknown address family",
+			event: abi.TCPRetransmitEvent{
+				EventType: uint8(abi.TCPRetransmitEventSKB),
+				Family:    unix.AF_UNSPEC,
+			},
+			wantEventType: "tcp_retransmit_skb",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			event := formatEvent(&tt.event, toolstream.SourceTypeTool)
+			if event.EventType != tt.wantEventType {
+				t.Fatalf("EventType = %q, want %q", event.EventType, tt.wantEventType)
+			}
+			if event.TCPSaddr != tt.wantSaddr {
+				t.Fatalf("TCPSaddr = %q, want %q", event.TCPSaddr, tt.wantSaddr)
+			}
+			if event.TCPDaddr != tt.wantDaddr {
+				t.Fatalf("TCPDaddr = %q, want %q", event.TCPDaddr, tt.wantDaddr)
+			}
+		})
+	}
+}
+
+func BenchmarkTextWriter(b *testing.B) {
+	event := benchmarkEvent()
+	w := &textWriter{w: io.Discard}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := w.Write(event); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkFormatEvent(b *testing.B) {
+	event := abi.TCPRetransmitEvent{
+		EventType: uint8(abi.TCPRetransmitEventSKB),
+		State:     unix.BPF_TCP_ESTABLISHED,
+		TCPFlags:  tcpFlagACK,
+		CaState:   uint8(abi.TCPRetransmitCaRecovery),
+		Family:    unix.AF_INET,
+	}
+
+	b.ReportAllocs()
+	var formatted *types.TCPRetransmitTracing
+	for b.Loop() {
+		formatted = formatEvent(&event, toolstream.SourceTypeTool)
+	}
+	_ = formatted
+}
+
+func BenchmarkJSONWriter(b *testing.B) {
+	event := benchmarkEvent()
+	w := &jsonWriter{w: io.Discard}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := w.Write(event); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func benchmarkEvent() *types.TCPRetransmitTracing {
+	return &types.TCPRetransmitTracing{
+		ObservedTimestamp:   "2026-07-23T02:14:40.304775546Z",
+		TCPReason:           "RTO",
+		Source:              toolstream.SourceTypeTool,
+		Comm:                "worker",
+		Pid:                 1420,
+		ContainerID:         "container-1",
+		MemoryCgroupCSSAddr: "0xffff888012345678",
+		NetNamespaceCookie:  2,
+		NetNamespaceInum:    4026531992,
+		TCPState:            "ESTABLISHED",
+		TCPSaddr:            "127.0.0.1",
+		TCPDaddr:            "127.0.0.1",
+		TCPSport:            19996,
+		TCPDport:            42128,
+		Phase:               "data",
+		EventType:           "tcp_retransmit_skb",
+		CaState:             4,
+		IcskRetransmits:     4,
+		IcskPending:         1,
+		ReordSeen:           2,
+		DsackDups:           3,
+		TCPSeq:              3154974646,
+		TCPAckSeq:           948393597,
+		TCPEndSeq:           3154991030,
+		TCPFlags:            "ACK|PSH",
+		SkbAddr:             "0xffff931c14fdf800",
+		DropLocation:        "host_software",
 	}
 }

@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
+	"strconv"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -32,7 +32,15 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-const tcpFlagsSynAck uint8 = 0x12 // SYN(0x02) | ACK(0x10)
+const tcpFlagsSynAck = tcpFlagSYN | tcpFlagACK
+
+const textEventBufferSize = 512
+
+var retransmitEventTypeNames = map[abi.TCPRetransmitEventType]string{
+	abi.TCPRetransmitEventSKB:    "tcp_retransmit_skb",
+	abi.TCPRetransmitEventSynack: "tcp_retransmit_synack",
+	abi.TCPRetransmitEventTlp:    "tcp_send_loss_probe",
+}
 
 // writer is the single write destination for a tcpshark session.
 type writer interface {
@@ -42,64 +50,93 @@ type writer interface {
 type textWriter struct{ w io.Writer }
 
 func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
-	detail := fmt.Sprintf(
-		"[%s/%s] %s:%d > %s:%d state=%s event_type=%s",
-		ev.Phase,
-		ev.TCPReason,
-		ev.TCPSaddr,
-		ev.TCPSport,
-		ev.TCPDaddr,
-		ev.TCPDport,
-		ev.TCPState,
-		ev.EventType,
-	)
+	// Full events are normally below 512 bytes, so one allocation covers the
+	// common hot path without retaining an unbounded buffer between events.
+	line := make([]byte, 0, textEventBufferSize)
+	line = append(line, ev.ObservedTimestamp...)
+	line = append(line, " ["...)
+	line = append(line, ev.Phase...)
+	line = append(line, '/')
+	line = append(line, ev.TCPReason...)
+	line = append(line, "] "...)
+	line = append(line, ev.TCPSaddr...)
+	line = append(line, ':')
+	line = strconv.AppendUint(line, uint64(ev.TCPSport), 10)
+	line = append(line, " > "...)
+	line = append(line, ev.TCPDaddr...)
+	line = append(line, ':')
+	line = strconv.AppendUint(line, uint64(ev.TCPDport), 10)
+	line = append(line, " state="...)
+	line = append(line, ev.TCPState...)
+	line = append(line, " event_type="...)
+	line = append(line, ev.EventType...)
 	if ev.EventType == "tcp_retransmit_synack" {
-		detail += " [SYNACK]"
+		line = append(line, " [SYNACK]"...)
 	}
 	if ev.SkbAddr != "" {
-		detail += " skb=" + ev.SkbAddr
+		line = append(line, " skb="...)
+		line = append(line, ev.SkbAddr...)
 	}
-	detail += fmt.Sprintf(" seq=%d", ev.TCPSeq)
+	line = append(line, " seq="...)
+	line = strconv.AppendUint(line, uint64(ev.TCPSeq), 10)
 	if ev.TCPEndSeq != 0 {
-		detail += fmt.Sprintf(" end=%d", ev.TCPEndSeq)
+		line = append(line, " end="...)
+		line = strconv.AppendUint(line, uint64(ev.TCPEndSeq), 10)
 	}
-	detail += fmt.Sprintf(" ack=%d", ev.TCPAckSeq)
+	line = append(line, " ack="...)
+	line = strconv.AppendUint(line, uint64(ev.TCPAckSeq), 10)
 	if ev.TCPFlags != "" {
-		detail += " flags=" + ev.TCPFlags
+		line = append(line, " flags="...)
+		line = append(line, ev.TCPFlags...)
 	}
-	detail += fmt.Sprintf(
-		" pid=%d comm=%s ca=%d retrans=%d icsk_pending=%d",
-		ev.Pid,
-		ev.Comm,
-		ev.CaState,
-		ev.IcskRetransmits,
-		ev.IcskPending,
-	)
+	line = append(line, " pid="...)
+	line = strconv.AppendUint(line, ev.Pid, 10)
+	line = append(line, " comm="...)
+	line = append(line, ev.Comm...)
+	line = append(line, " ca="...)
+	line = strconv.AppendUint(line, uint64(ev.CaState), 10)
+	line = append(line, " retrans="...)
+	line = strconv.AppendUint(line, uint64(ev.IcskRetransmits), 10)
+	line = append(line, " icsk_pending="...)
+	line = strconv.AppendUint(line, uint64(ev.IcskPending), 10)
 	if ev.ReordSeen != 0 {
-		detail += fmt.Sprintf(" reord_seen=%d", ev.ReordSeen)
+		line = append(line, " reord_seen="...)
+		line = strconv.AppendUint(line, uint64(ev.ReordSeen), 10)
 	}
 	if ev.DsackDups != 0 {
-		detail += fmt.Sprintf(" dsack_dups=%d", ev.DsackDups)
+		line = append(line, " dsack_dups="...)
+		line = strconv.AppendUint(line, uint64(ev.DsackDups), 10)
 	}
 	if ev.ContainerID != "" {
-		detail += " container_id=" + ev.ContainerID
+		line = append(line, " container_id="...)
+		line = append(line, ev.ContainerID...)
 	}
 	if ev.MemoryCgroupCSSAddr != "" {
-		detail += " memory_cgroup_css_addr=" + ev.MemoryCgroupCSSAddr
+		line = append(line, " memory_cgroup_css_addr="...)
+		line = append(line, ev.MemoryCgroupCSSAddr...)
 	}
 	if ev.NetNamespaceCookie != 0 {
-		detail += fmt.Sprintf(" net_namespace_cookie=%d", ev.NetNamespaceCookie)
+		line = append(line, " net_namespace_cookie="...)
+		line = strconv.AppendUint(line, ev.NetNamespaceCookie, 10)
 	}
 	if ev.NetNamespaceInum != 0 {
-		detail += fmt.Sprintf(" net_namespace_inum=%d", ev.NetNamespaceInum)
+		line = append(line, " net_namespace_inum="...)
+		line = strconv.AppendUint(line, uint64(ev.NetNamespaceInum), 10)
 	}
 	if ev.DropLocation != "" {
-		detail += " drop_location=" + ev.DropLocation
+		line = append(line, " drop_location="...)
+		line = append(line, ev.DropLocation...)
 	}
 	if ev.Source != "" {
-		detail += " source=" + ev.Source
+		line = append(line, " source="...)
+		line = append(line, ev.Source...)
 	}
-	_, err := fmt.Fprintf(s.w, "%s %s\n", ev.ObservedTimestamp, detail)
+	line = append(line, '\n')
+
+	n, err := s.w.Write(line)
+	if err == nil && n != len(line) {
+		return io.ErrShortWrite
+	}
 	return err
 }
 
@@ -111,7 +148,10 @@ func (s *jsonWriter) Write(ev *types.TCPRetransmitTracing) error {
 		return err
 	}
 	b = append(b, '\n')
-	_, err = s.w.Write(b)
+	n, err := s.w.Write(b)
+	if err == nil && n != len(b) {
+		return io.ErrShortWrite
+	}
 	return err
 }
 
@@ -121,43 +161,57 @@ func (s *socketWriter) Write(ev *types.TCPRetransmitTracing) error {
 	return s.client.Send(ev)
 }
 
-type writerOption struct {
-	outputFmt string
-	sockPath  string
-	toolName  string
-	version   string
-	taskID    string
+type writerOptions struct {
+	outputFormat string
+	socketPath   string
+	toolName     string
+	version      string
+	taskID       string
 }
 
-func newWriter(opt *writerOption) (writer, func(), error) {
-	if opt.sockPath != "" {
+func newWriter(output io.Writer, options *writerOptions) (writer, func() error, error) {
+	if options.socketPath != "" {
 		client, err := toolstream.NewClient(toolstream.ClientOptions{
-			SockPath: opt.sockPath,
-			ToolName: opt.toolName,
-			Version:  opt.version,
-			TaskID:   opt.taskID,
+			SockPath: options.socketPath,
+			ToolName: options.toolName,
+			Version:  options.version,
+			TaskID:   options.taskID,
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("tcpshark: --output-storage: %w", err)
+			return nil, nil, fmt.Errorf("--output-storage: %w", err)
 		}
 		return &socketWriter{client: client}, client.End, nil
 	}
+	if output == nil {
+		return nil, nil, fmt.Errorf("output is nil")
+	}
 
-	switch opt.outputFmt {
+	switch options.outputFormat {
 	case outputJSON:
-		return &jsonWriter{w: os.Stdout}, func() {}, nil
+		return &jsonWriter{w: output}, func() error { return nil }, nil
+	case outputText:
+		return &textWriter{w: output}, func() error { return nil }, nil
 	default:
-		return &textWriter{w: os.Stdout}, func() {}, nil
+		return nil, nil, fmt.Errorf("unsupported output %q", options.outputFormat)
 	}
 }
 
-func formatEvent(ev *abi.TCPRetransmitEvent) *types.TCPRetransmitTracing {
+func formatEvent(
+	ev *abi.TCPRetransmitEvent,
+	sourceType string,
+) *types.TCPRetransmitTracing {
+	rawEventType := abi.TCPRetransmitEventType(ev.EventType)
 	tcpFlagsRaw := ev.TCPFlags
-	if ev.EventType == tcpRetransmitEventSYNACK {
+	if rawEventType == abi.TCPRetransmitEventSynack {
 		tcpFlagsRaw = tcpFlagsSynAck
 	}
 	tcpFlags := packet.TCPFlagStrings[tcpFlagsRaw]
-	phase, reason := classifyEvent(ev, tcpFlags)
+
+	classification := classifyRetransmit(ev)
+	eventType, ok := retransmitEventTypeNames[rawEventType]
+	if !ok {
+		eventType = "unknown"
+	}
 
 	var saddr, daddr string
 	switch ev.Family {
@@ -169,25 +223,16 @@ func formatEvent(ev *abi.TCPRetransmitEvent) *types.TCPRetransmitTracing {
 		daddr = net.IP(ev.Daddr[:]).String()
 	}
 
-	eventTypeStr := "unknown"
-	switch ev.EventType {
-	case tcpRetransmitEventSKB:
-		eventTypeStr = "tcp_retransmit_skb"
-	case tcpRetransmitEventSYNACK:
-		eventTypeStr = "tcp_retransmit_synack"
-	case tcpRetransmitEventTLP:
-		eventTypeStr = "tcp_send_loss_probe"
-	}
-
 	return &types.TCPRetransmitTracing{
 		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
-		TCPReason:           reason.String(),
+		TCPReason:           classification.reason.String(),
+		Source:              sourceType,
 		Comm:                bytesutil.ToStr(ev.Comm[:]),
 		Pid:                 ev.TGIDPID >> 32,
 		MemoryCgroupCSSAddr: kernaddr.Format(ev.MemcgCSSAddr),
 		NetNamespaceCookie:  ev.NetNSCookie,
 		NetNamespaceInum:    ev.NetNSInum,
-		TCPState:            tcpStateNameRaw(uint8(ev.State)),
+		TCPState:            packet.TCPStateName(uint8(ev.State)),
 		TCPSaddr:            saddr,
 		TCPDaddr:            daddr,
 		TCPSport:            ev.Sport,
@@ -196,8 +241,8 @@ func formatEvent(ev *abi.TCPRetransmitEvent) *types.TCPRetransmitTracing {
 		TCPAckSeq:           ev.TCPAck,
 		TCPEndSeq:           ev.TCPEndSeq,
 		TCPFlags:            tcpFlags,
-		Phase:               phase.String(),
-		EventType:           eventTypeStr,
+		Phase:               classification.phase.String(),
+		EventType:           eventType,
 		CaState:             ev.CaState,
 		IcskRetransmits:     ev.IcskRetransmits,
 		IcskPending:         ev.IcskPending,
@@ -205,16 +250,4 @@ func formatEvent(ev *abi.TCPRetransmitEvent) *types.TCPRetransmitTracing {
 		DsackDups:           ev.DsackDups,
 		SkbAddr:             kernaddr.Format(ev.SKBAddr),
 	}
-}
-
-func tcpStateNameRaw(state uint8) string {
-	names := []string{
-		"unknown", "ESTABLISHED", "SYN_SENT", "SYN_RECV",
-		"FIN_WAIT1", "FIN_WAIT2", "TIME_WAIT", "CLOSE",
-		"CLOSE_WAIT", "LAST_ACK", "LISTEN", "CLOSING", "NEW_SYN_RECV",
-	}
-	if int(state) < len(names) {
-		return names[state]
-	}
-	return fmt.Sprintf("UNKNOWN(%d)", state)
 }

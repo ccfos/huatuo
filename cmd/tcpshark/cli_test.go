@@ -25,26 +25,16 @@ import (
 	"huatuo-bamai/internal/toolstream"
 )
 
-func TestAppName(t *testing.T) {
-	t.Parallel()
-
-	if got := newApp().Name; got != "tcpshark" {
-		t.Fatalf("app name = %q, want tcpshark", got)
-	}
-}
-
 func TestAppModeValidation(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
-		name          string
-		args          []string
-		expectedError string
+		name      string
+		args      []string
+		wantError string
 	}{
 		{
-			name:          "mode is required",
-			args:          []string{"tcpshark", "--bpf-path", "unused.o"},
-			expectedError: "Required flag \"mode\" not set",
+			name:      "mode is required",
+			args:      []string{"tcpshark", "--bpf-path", "unused.o"},
+			wantError: "Required flag \"mode\" not set",
 		},
 		{
 			name: "retransmit mode",
@@ -57,46 +47,40 @@ func TestAppModeValidation(t *testing.T) {
 			args: []string{
 				"tcpshark", "--mode", "invalid", "--bpf-path", "unused.o",
 			},
-			expectedError: `--mode: invalid value "invalid", want retransmit`,
+			wantError: `invalid --mode "invalid"; want "retransmit"`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			app := newTestApp(func(_ *cli.Context) error { return nil })
 			err := app.Run(tt.args)
-			if tt.expectedError == "" {
+			if tt.wantError == "" {
 				if err != nil {
 					t.Fatalf("Run() error = %v", err)
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
-				t.Fatalf("Run() error = %v, want containing %q", err, tt.expectedError)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Run() error = %v, want containing %q", err, tt.wantError)
 			}
 		})
 	}
 }
 
 func TestAppTLPFlag(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
-		name     string
-		flag     string
-		expected bool
+		name string
+		flag string
+		want bool
 	}{
-		{name: "disabled by default", expected: false},
-		{name: "long flag", flag: "--enable-tlp", expected: true},
-		{name: "short alias", flag: "--tlp", expected: true},
+		{name: "disabled by default"},
+		{name: "long flag", flag: "--enable-tlp", want: true},
+		{name: "short alias", flag: "--tlp", want: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			var isTLPEnabled bool
 			app := newTestApp(func(c *cli.Context) error {
 				isTLPEnabled = c.Bool(cliFlagEnableTLP)
@@ -112,35 +96,31 @@ func TestAppTLPFlag(t *testing.T) {
 			if err := app.Run(args); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
-			if isTLPEnabled != tt.expected {
-				t.Fatalf("TLP enabled = %t, want %t", isTLPEnabled, tt.expected)
+			if isTLPEnabled != tt.want {
+				t.Fatalf("TLP enabled = %t, want %t", isTLPEnabled, tt.want)
 			}
 		})
 	}
 }
 
 func TestAppRateLimitFlag(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
-		name     string
-		args     []string
-		expected uint64
+		name string
+		args []string
+		want uint64
 	}{
 		{
 			name: "disabled by default",
 		},
 		{
-			name:     "explicit limit",
-			args:     []string{"--max-events-per-second", "100"},
-			expected: 100,
+			name: "explicit limit",
+			args: []string{"--max-events-per-second", "100"},
+			want: 100,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			var maxEventsPerSecond uint64
 			app := newTestApp(func(c *cli.Context) error {
 				maxEventsPerSecond = c.Uint64(cliFlagMaxEventsPerSecond)
@@ -154,16 +134,14 @@ func TestAppRateLimitFlag(t *testing.T) {
 			if err := app.Run(args); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
-			if maxEventsPerSecond != tt.expected {
-				t.Fatalf("max events/sec = %d, want %d", maxEventsPerSecond, tt.expected)
+			if maxEventsPerSecond != tt.want {
+				t.Fatalf("max events/sec = %d, want %d", maxEventsPerSecond, tt.want)
 			}
 		})
 	}
 }
 
 func TestAppSourceTypes(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		name string
 		args []string
@@ -179,11 +157,9 @@ func TestAppSourceTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			var sourceTypes string
+			var sourceType string
 			app := newTestApp(func(c *cli.Context) error {
-				sourceTypes = c.String(cliFlagSourceTypes)
+				sourceType = c.String(cliFlagSourceTypes)
 				return nil
 			})
 			args := []string{"tcpshark", "--mode", "retransmit", "--bpf-path", "unused.o"}
@@ -192,16 +168,14 @@ func TestAppSourceTypes(t *testing.T) {
 			if err := app.Run(args); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
-			if sourceTypes != tt.want {
-				t.Fatalf("source types = %q, want %q", sourceTypes, tt.want)
+			if sourceType != tt.want {
+				t.Fatalf("source type = %q, want %q", sourceType, tt.want)
 			}
 		})
 	}
 }
 
 func TestAppHelpHidesSourceTypes(t *testing.T) {
-	t.Parallel()
-
 	var output bytes.Buffer
 	app := newTestApp(func(_ *cli.Context) error { return nil })
 	app.Writer = &output
@@ -214,10 +188,85 @@ func TestAppHelpHidesSourceTypes(t *testing.T) {
 	}
 }
 
+func TestAppRejectsInvalidFlags(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantError string
+	}{
+		{
+			name:      "negative duration",
+			args:      []string{"--duration", "-1"},
+			wantError: "invalid --duration -1",
+		},
+		{
+			name:      "task id without storage",
+			args:      []string{"--task-id", "task-1"},
+			wantError: "--task-id requires --output-storage",
+		},
+		{
+			name:      "unknown source type",
+			args:      []string{"--source-types", "unknown"},
+			wantError: `invalid --source-types "unknown"`,
+		},
+		{
+			name:      "unknown output format",
+			args:      []string{"--output", "yaml"},
+			wantError: `invalid --output "yaml"`,
+		},
+		{
+			name:      "positional argument",
+			args:      []string{"unexpected"},
+			wantError: "unexpected arguments",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := []string{
+				"tcpshark", "--mode", "retransmit", "--bpf-path", "unused.o",
+			}
+			args = append(args, tt.args...)
+			err := newTestApp(func(_ *cli.Context) error { return nil }).Run(args)
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Run() error = %v, want containing %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestAppWritesOutputStorageWarningToStderr(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	app := newTestApp(func(_ *cli.Context) error { return nil })
+	app.Writer = &stdout
+	app.ErrWriter = &stderr
+
+	err := app.Run([]string{
+		"tcpshark",
+		"--mode", "retransmit",
+		"--bpf-path", "unused.o",
+		"--output", "json",
+		"--output-storage", "/tmp/unused.sock",
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := stdout.String(); got != "" {
+		t.Fatalf("stdout = %q, want empty", got)
+	}
+	if got := stderr.String(); got != "warning: --output is ignored because --output-storage is set\n" {
+		t.Fatalf("stderr = %q, want output warning", got)
+	}
+}
+
 func newTestApp(action cli.ActionFunc) *cli.App {
-	app := newApp()
-	app.Action = action
-	app.Writer = io.Discard
-	app.ErrWriter = io.Discard
-	return app
+	return &cli.App{
+		Name:      tcpSharkToolName,
+		Flags:     appFlags(),
+		Action:    action,
+		Before:    validateFlags,
+		Writer:    io.Discard,
+		ErrWriter: io.Discard,
+	}
 }

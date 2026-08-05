@@ -61,7 +61,7 @@ tcpshark --mode retransmit [flags]
 | `--max-events-per-second <n>` | 0 | BPF 侧事件限速，0 表示不限速。 |
 | `--output <json\|text>` | `text` | 输出格式；设置 `--output-storage` 时会被忽略。 |
 | `--output-storage <path>` | （无） | 通过 Unix socket 将事件发送给 huatuo-bamai。 |
-| `--task-id <id>` | （无） | toolstream 会话关联的任务 ID；与 `--output-storage` 一起使用时生效。 |
+| `--task-id <id>` | （无） | toolstream 会话关联的任务 ID；必须与 `--output-storage` 一起使用。 |
 
 显式同时指定 `--output` 和 `--output-storage` 时，`--output` 会被忽略并打印警告。
 

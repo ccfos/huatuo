@@ -15,6 +15,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -23,16 +25,14 @@ import (
 	"huatuo-bamai/internal/pcapfilter"
 )
 
-var eventRateLimiter = bpf.NewRateLimiter("tcp_retransmit")
-
-func loadTCPRetransmitBPFWithFilter(
+func loadRetransmitBPF(
 	bpfPath string,
 	filterExpr string,
-	maxEventsPerSecond uint64,
+	bpfLimiter *bpf.RateLimiter,
 ) (bpf.BPF, error) {
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
-		return nil, fmt.Errorf("read bpf object: %w", err)
+		return nil, fmt.Errorf("read bpf: %w", err)
 	}
 
 	bpfName := fmt.Sprintf("tcp_retransmit_%d.o", time.Now().UnixNano())
@@ -40,6 +40,50 @@ func loadTCPRetransmitBPFWithFilter(
 		bpfName,
 		bpfBytes,
 		filterExpr,
-		eventRateLimiter.ApplyConstants(nil, maxEventsPerSecond),
+		bpfLimiter.Constants(nil),
 	)
+}
+
+func attachRetransmitPrograms(
+	ctx context.Context,
+	bpfObj bpf.BPF,
+	isTLPEnabled bool,
+) (bpf.PerfEventReader, error) {
+	reader, err := bpfObj.EventPipeByName(ctx, "perf_events", 8192)
+	if err != nil {
+		return nil, fmt.Errorf("open event pipe: %w", err)
+	}
+
+	if err := bpfObj.AttachWithOptions(retransmitAttachOptions(isTLPEnabled)); err != nil {
+		attachErr := fmt.Errorf("attach programs: %w", err)
+		if closeErr := reader.Close(); closeErr != nil {
+			return nil, errors.Join(
+				attachErr,
+				fmt.Errorf("close event pipe: %w", closeErr),
+			)
+		}
+		return nil, attachErr
+	}
+	return reader, nil
+}
+
+func retransmitAttachOptions(isTLPEnabled bool) []bpf.AttachOption {
+	options := []bpf.AttachOption{
+		{
+			ProgramName: "retrans_skb",
+			Symbol:      "tcp/tcp_retransmit_skb",
+		},
+		{
+			ProgramName: "retrans_synack",
+			Symbol:      "tcp/tcp_retransmit_synack",
+		},
+	}
+	if isTLPEnabled {
+		options = append(options, bpf.AttachOption{
+			ProgramName: "retrans_tlp",
+			Symbol:      "tcp_send_loss_probe",
+		})
+	}
+
+	return options
 }

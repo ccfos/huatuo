@@ -61,7 +61,7 @@ tcpshark --mode retransmit [flags]
 | `--max-events-per-second <n>` | 0 | BPF-side event rate limit; 0 means unlimited. |
 | `--output <json\|text>` | `text` | Output format; ignored when `--output-storage` is set. |
 | `--output-storage <path>` | (none) | Send events to huatuo-bamai over a Unix socket. |
-| `--task-id <id>` | (none) | Task ID associated with the toolstream session; effective with `--output-storage`. |
+| `--task-id <id>` | (none) | Task ID for the toolstream session; requires `--output-storage`. |
 
 When both `--output` and `--output-storage` are explicitly specified, `--output` is ignored and a warning is printed.
 

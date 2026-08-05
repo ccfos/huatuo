@@ -17,6 +17,21 @@
 
 #include "bpf_abi.h"
 
+enum tcp_retransmit_event_type {
+	TCP_RETRANSMIT_EVENT_UNKNOWN = 0,
+	TCP_RETRANSMIT_EVENT_SKB,
+	TCP_RETRANSMIT_EVENT_SYNACK,
+	TCP_RETRANSMIT_EVENT_TLP,
+};
+
+enum tcp_retransmit_ca_state {
+	TCP_RETRANSMIT_CA_OPEN = 0,
+	TCP_RETRANSMIT_CA_DISORDER,
+	TCP_RETRANSMIT_CA_CWR,
+	TCP_RETRANSMIT_CA_RECOVERY,
+	TCP_RETRANSMIT_CA_LOSS,
+};
+
 struct tcp_retransmit_event {
 	u64 ktime_ns;
 	u64 tgid_pid;
@@ -48,5 +63,7 @@ struct tcp_retransmit_event {
 };
 
 BPF_ABI_EXPORT(tcp_retransmit_event);
+BPF_ABI_EXPORT_ENUM(tcp_retransmit_event_type);
+BPF_ABI_EXPORT_ENUM(tcp_retransmit_ca_state);
 
 #endif /* __BPF_ABI_TCP_RETRANSMIT_H__ */

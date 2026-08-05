@@ -18,170 +18,151 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"os/signal"
+	"io"
 	"time"
 
-	"github.com/urfave/cli/v2"
-	"golang.org/x/sys/unix"
+	"golang.org/x/sync/errgroup"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 )
 
-const (
-	bpfProgramTCPRetransmitSKB    = "retrans_skb"
-	bpfProgramTCPRetransmitSynack = "retrans_synack"
-	bpfProgramTCPRetransmitTLP    = "retrans_tlp"
-)
-
-func mainAction(c *cli.Context) error {
-	switch c.String(cliFlagMode) {
-	case modeRetransmit:
-		return runRetransmit(c)
-	default:
-		return fmt.Errorf("tcpshark: unsupported mode %q", c.String(cliFlagMode))
-	}
+type retransmitOptions struct {
+	bpfPath            string
+	filterExpression   string
+	durationSeconds    int
+	outputFormat       string
+	outputStorage      string
+	taskID             string
+	sourceType         string
+	maxEventsPerSecond uint64
+	isTLPEnabled       bool
+	version            string
+	output             io.Writer
 }
 
-func runRetransmit(c *cli.Context) error {
-	duration := c.Int(cliFlagDuration)
-	outputFmt := c.String(cliFlagOutput)
-	sourceTypes := c.String(cliFlagSourceTypes)
-	maxEventsPerSecond := c.Uint64(cliFlagMaxEventsPerSecond)
-
-	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
-		return fmt.Errorf("tcpshark: init bpf: %w", err)
+func runRetransmit(ctx context.Context, options *retransmitOptions) (returnErr error) {
+	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: options.durationSeconds}); err != nil {
+		return fmt.Errorf("init bpf: %w", err)
 	}
 	defer bpf.Shutdown()
 
-	bpfObj, err := loadTCPRetransmitBPFWithFilter(
-		c.String(cliFlagBpfPath),
-		c.String(cliFlagFilter),
-		maxEventsPerSecond,
-	)
+	bpfLimiter := bpf.NewRateLimiter("tcp_retransmit", options.maxEventsPerSecond)
+
+	bpfObj, err := loadRetransmitBPF(options.bpfPath, options.filterExpression, bpfLimiter)
 	if err != nil {
-		return fmt.Errorf("tcpshark: load retransmit bpf: %w", err)
+		return fmt.Errorf("load bpf: %w", err)
 	}
-	defer bpfObj.Close()
-
-	runCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if duration > 0 {
-		var dcancel context.CancelFunc
-		runCtx, dcancel = context.WithTimeout(runCtx, time.Duration(duration)*time.Second)
-		defer dcancel()
-	}
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, unix.SIGINT, unix.SIGTERM)
-	defer signal.Stop(sig)
-
-	go func() {
-		select {
-		case <-sig:
-			cancel()
-		case <-runCtx.Done():
+	defer func() {
+		if err := bpfObj.Close(); err != nil {
+			returnErr = errors.Join(
+				returnErr,
+				fmt.Errorf("close bpf: %w", err),
+			)
 		}
 	}()
 
-	if maxEventsPerSecond > 0 {
-		rlReader, err := eventRateLimiter.OpenEventPipe(runCtx, bpfObj)
-		if err != nil {
+	runCtx := ctx
+	if options.durationSeconds > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(
+			ctx,
+			time.Duration(options.durationSeconds)*time.Second,
+		)
+		defer cancel()
+	}
+
+	group, groupCtx := errgroup.WithContext(runCtx)
+
+	if bpfLimiter.Enabled() {
+		if err := bpfLimiter.OpenEventPipe(groupCtx, bpfObj); err != nil {
 			return err
 		}
-		defer rlReader.Close()
-
-		go eventRateLimiter.ReadEvents(runCtx, rlReader, maxEventsPerSecond)
+		defer func() {
+			if err := bpfLimiter.CloseEventPipe(); err != nil {
+				returnErr = errors.Join(returnErr, err)
+			}
+		}()
 	}
 
 	reader, err := attachRetransmitPrograms(
-		runCtx,
+		groupCtx,
 		bpfObj,
-		c.Bool(cliFlagEnableTLP),
+		options.isTLPEnabled,
 	)
 	if err != nil {
-		return fmt.Errorf("tcpshark: attach retransmit probes: %w", err)
+		return err
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			returnErr = errors.Join(
+				returnErr,
+				fmt.Errorf("close event pipe: %w", err),
+			)
+		}
+	}()
 
-	bpfObj.DetachOnContextDone(runCtx, cancel)
-
-	sink, sinkCleanup, err := newWriter(&writerOption{
-		outputFmt: outputFmt,
-		sockPath:  c.String(cliFlagOutputStorage),
-		toolName:  tcpSharkToolName,
-		version:   versionInfo.Version,
-		taskID:    c.String(cliFlagTaskID),
+	sink, sinkCleanup, err := newWriter(options.output, &writerOptions{
+		outputFormat: options.outputFormat,
+		socketPath:   options.outputStorage,
+		toolName:     tcpSharkToolName,
+		version:      options.version,
+		taskID:       options.taskID,
 	})
 	if err != nil {
 		return err
 	}
-	defer sinkCleanup()
 
+	if bpfLimiter.Enabled() {
+		group.Go(func() error {
+			return bpfLimiter.ReadEvents(groupCtx)
+		})
+	}
+
+	group.Go(func() error {
+		return streamRetransmitEvents(
+			groupCtx,
+			reader,
+			sink,
+			options.sourceType,
+		)
+	})
+
+	streamErr := group.Wait()
+
+	cleanupErr := sinkCleanup()
+	if cleanupErr != nil {
+		cleanupErr = fmt.Errorf("close output: %w", cleanupErr)
+	}
+	return errors.Join(streamErr, cleanupErr)
+}
+
+func streamRetransmitEvents(
+	ctx context.Context,
+	reader bpf.PerfEventReader,
+	sink writer,
+	sourceType string,
+) error {
 	for {
-		if runCtx.Err() != nil {
+		if ctx.Err() != nil {
 			return nil
 		}
 
 		var ev abi.TCPRetransmitEvent
 		if err := reader.ReadInto(&ev); err != nil {
-			if runCtx.Err() != nil {
+			if ctx.Err() != nil {
 				return nil
 			}
 			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
-				log.WithError(err).Warn("lost BPF perf event samples")
+				log.WithError(err).Warn("perf event samples lost")
 				continue
 			}
-			log.Errorf("tcpshark: read retransmit event: %v", err)
-			continue
+			return fmt.Errorf("read event: %w", err)
 		}
 
-		event := formatEvent(&ev)
-		event.Source = sourceTypes
-		if err := sink.Write(event); err != nil {
-			log.Errorf("tcpshark: send retransmit event: %v", err)
-			return nil
+		if err := sink.Write(formatEvent(&ev, sourceType)); err != nil {
+			return fmt.Errorf("write event: %w", err)
 		}
 	}
-}
-
-func attachRetransmitPrograms(
-	ctx context.Context,
-	bpfObj bpf.BPF,
-	isTLPEnabled bool,
-) (bpf.PerfEventReader, error) {
-	reader, err := bpfObj.EventPipeByName(ctx, "perf_events", 8192)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := bpfObj.AttachWithOptions(retransmitAttachOptions(isTLPEnabled)); err != nil {
-		reader.Close()
-		return nil, err
-	}
-	return reader, nil
-}
-
-func retransmitAttachOptions(isTLPEnabled bool) []bpf.AttachOption {
-	options := []bpf.AttachOption{
-		{
-			ProgramName: bpfProgramTCPRetransmitSKB,
-			Symbol:      "tcp/tcp_retransmit_skb",
-		},
-		{
-			ProgramName: bpfProgramTCPRetransmitSynack,
-			Symbol:      "tcp/tcp_retransmit_synack",
-		},
-	}
-	if isTLPEnabled {
-		options = append(options, bpf.AttachOption{
-			ProgramName: bpfProgramTCPRetransmitTLP,
-			Symbol:      "tcp_send_loss_probe",
-		})
-	}
-
-	return options
 }

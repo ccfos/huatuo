@@ -13,10 +13,6 @@
 #include "bpf_skbuff.h"
 #include "abi/tcp_retransmit_types.h"
 
-#define RETRANSMIT_EVENT_SKB    1
-#define RETRANSMIT_EVENT_SYNACK 2
-#define RETRANSMIT_EVENT_TLP    3
-
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
 	__uint(key_size, sizeof(int));
@@ -202,7 +198,7 @@ int retrans_skb(struct tcp_retransmit_skb_ctx *ctx)
 
 	struct tcp_retransmit_event ev = {};
 
-	init_retransmit_event(&ev, RETRANSMIT_EVENT_SKB);
+	init_retransmit_event(&ev, TCP_RETRANSMIT_EVENT_SKB);
 
 	struct sock *sk = (struct sock *)ctx->skaddr;
 
@@ -229,7 +225,7 @@ int retrans_synack(struct trace_event_raw_tcp_retransmit_synack *ctx)
 
 	struct tcp_retransmit_event ev = {};
 
-	init_retransmit_event(&ev, RETRANSMIT_EVENT_SYNACK);
+	init_retransmit_event(&ev, TCP_RETRANSMIT_EVENT_SYNACK);
 
 	if (sk) {
 		ev.family = BPF_CORE_READ(sk, __sk_common.skc_family);
@@ -267,7 +263,7 @@ int retrans_tlp(struct pt_regs *ctx)
 	if (!sk || bpf_ratelimited_in_map_rc(ctx, tcp_retransmit))
 		return 0;
 
-	init_retransmit_event(&ev, RETRANSMIT_EVENT_TLP);
+	init_retransmit_event(&ev, TCP_RETRANSMIT_EVENT_TLP);
 
 	fill_retransmit_event_from_sk(&ev, sk);
 	read_tlp_tcp_info(&ev, sk);

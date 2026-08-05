@@ -22,123 +22,88 @@ import (
 )
 
 const (
-	// Keep these values synchronized with RETRANSMIT_EVENT_* in
-	// bpf/tcp_retransmit.c. C preprocessor macros are not part of BTF, so the
-	// ABI generator cannot generate these constants.
-	tcpRetransmitEventSKB    = 1
-	tcpRetransmitEventSYNACK = 2
-	tcpRetransmitEventTLP    = 3
+	tcpFlagFIN uint8 = 0x01
+	tcpFlagSYN uint8 = 0x02
+	tcpFlagACK uint8 = 0x10
 )
 
-const (
-	tcpCAOpen uint8 = iota
-	tcpCADisorder
-	tcpCACWR
-	tcpCARecovery
-	tcpCALoss
-)
+type tcpRetransmitClassification struct {
+	valid  bool
+	phase  types.TCPRetransmitPhase
+	reason types.TCPRetransmitReason
+}
 
-func classifyEvent(ev *abi.TCPRetransmitEvent, tcpFlags string) (types.TCPRetransmitPhase, types.TCPRetransmitReason) {
-	switch ev.EventType {
-	case tcpRetransmitEventSYNACK:
-		return types.TCPRetransmitPhaseConnect, types.TCPRetransmitReasonRTO
-	case tcpRetransmitEventTLP:
-		return types.TCPRetransmitPhaseData, types.TCPRetransmitReasonTLP
-	default:
-		return classifyRetransmit(
-			uint8(ev.State),
-			tcpFlags,
-			ev.CaState,
-			ev.ReordSeen,
-			ev.DsackDups,
-		)
+var retransmitEventClassifications = [...]tcpRetransmitClassification{
+	abi.TCPRetransmitEventSynack: {
+		valid:  true,
+		phase:  types.TCPRetransmitPhaseConnect,
+		reason: types.TCPRetransmitReasonRTO,
+	},
+	abi.TCPRetransmitEventTlp: {
+		valid:  true,
+		phase:  types.TCPRetransmitPhaseData,
+		reason: types.TCPRetransmitReasonTLP,
+	},
+}
+
+func classifyRetransmit(ev *abi.TCPRetransmitEvent) tcpRetransmitClassification {
+	eventType := abi.TCPRetransmitEventType(ev.EventType)
+	if eventType < abi.TCPRetransmitEventTlp+1 {
+		classification := retransmitEventClassifications[eventType]
+		if classification.valid {
+			return classification
+		}
+	}
+
+	phase := classifySKBPhase(uint8(ev.State), ev.TCPFlags)
+	return tcpRetransmitClassification{
+		phase:  phase,
+		reason: classifySKBReason(ev, phase),
 	}
 }
 
-func classifyRetransmit(
-	skStateNum uint8,
-	tcpFlags string,
-	caState uint8,
-	reordSeen uint32,
-	dsackDups uint32,
-) (types.TCPRetransmitPhase, types.TCPRetransmitReason) {
-	phase := phaseFromState(skStateNum, tcpFlags)
-	reason := reasonFromTree(caState, reordSeen, dsackDups, phase)
-	return phase, reason
-}
-
-func phaseFromState(skStateNum uint8, tcpFlags string) types.TCPRetransmitPhase {
-	switch skStateNum {
-	case unix.BPF_TCP_SYN_SENT:
-		return types.TCPRetransmitPhaseConnect
-	case unix.BPF_TCP_SYN_RECV, unix.BPF_TCP_NEW_SYN_RECV:
+func classifySKBPhase(state, tcpFlags uint8) types.TCPRetransmitPhase {
+	switch state {
+	case unix.BPF_TCP_SYN_SENT, unix.BPF_TCP_SYN_RECV, unix.BPF_TCP_NEW_SYN_RECV:
 		return types.TCPRetransmitPhaseConnect
 	case unix.BPF_TCP_ESTABLISHED:
 		return types.TCPRetransmitPhaseData
 	case unix.BPF_TCP_FIN_WAIT1, unix.BPF_TCP_CLOSE_WAIT,
-		unix.BPF_TCP_LAST_ACK, unix.BPF_TCP_CLOSING:
-		return types.TCPRetransmitPhaseClose
-	case unix.BPF_TCP_FIN_WAIT2, unix.BPF_TCP_TIME_WAIT:
+		unix.BPF_TCP_LAST_ACK, unix.BPF_TCP_CLOSING,
+		unix.BPF_TCP_FIN_WAIT2, unix.BPF_TCP_TIME_WAIT:
 		return types.TCPRetransmitPhaseClose
 	default:
 		return phaseFromFlags(tcpFlags)
 	}
 }
 
-func reasonFromTree(
-	caState uint8,
-	reordSeen uint32,
-	dsackDups uint32,
+func classifySKBReason(
+	ev *abi.TCPRetransmitEvent,
 	phase types.TCPRetransmitPhase,
 ) types.TCPRetransmitReason {
-	switch caState {
-	case tcpCALoss:
+	switch abi.TCPRetransmitCaState(ev.CaState) {
+	case abi.TCPRetransmitCaLoss:
 		return types.TCPRetransmitReasonRTO
-	case tcpCARecovery:
-		if isReorderProne(reordSeen, dsackDups) {
+	case abi.TCPRetransmitCaRecovery:
+		if ev.ReordSeen != 0 || ev.DsackDups != 0 {
 			return types.TCPRetransmitReasonReorderProneFast
 		}
 		return types.TCPRetransmitReasonFast
 	default:
-		return reasonFromPhase(phase)
+		if phase == types.TCPRetransmitPhaseConnect ||
+			phase == types.TCPRetransmitPhaseClose {
+			return types.TCPRetransmitReasonRTO
+		}
+		return types.TCPRetransmitReasonUnknown
 	}
 }
 
-func isReorderProne(reordSeen, dsackDups uint32) bool {
-	return reordSeen > 0 || dsackDups > 0
-}
-
-func phaseFromFlags(flags string) types.TCPRetransmitPhase {
-	if flags == "" {
-		return types.TCPRetransmitPhaseData
-	}
-	if containsFlag(flags, "SYN") && !containsFlag(flags, "ACK") {
+func phaseFromFlags(flags uint8) types.TCPRetransmitPhase {
+	if flags&tcpFlagSYN != 0 {
 		return types.TCPRetransmitPhaseConnect
 	}
-	if containsFlag(flags, "SYN") && containsFlag(flags, "ACK") {
-		return types.TCPRetransmitPhaseConnect
-	}
-	if containsFlag(flags, "FIN") {
+	if flags&tcpFlagFIN != 0 {
 		return types.TCPRetransmitPhaseClose
 	}
 	return types.TCPRetransmitPhaseData
-}
-
-func reasonFromPhase(phase types.TCPRetransmitPhase) types.TCPRetransmitReason {
-	if phase == types.TCPRetransmitPhaseConnect {
-		return types.TCPRetransmitReasonRTO
-	}
-	if phase == types.TCPRetransmitPhaseClose {
-		return types.TCPRetransmitReasonRTO
-	}
-	return types.TCPRetransmitReasonUnknown
-}
-
-func containsFlag(flags, flag string) bool {
-	for i := 0; i <= len(flags)-len(flag); i++ {
-		if flags[i:i+len(flag)] == flag {
-			return true
-		}
-	}
-	return false
 }

@@ -16,10 +16,10 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/urfave/cli/v2"
 
-	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/toolstream"
 )
 
@@ -41,6 +41,8 @@ const (
 
 	outputText = "text"
 	outputJSON = "json"
+
+	maxDurationSeconds = int64(1<<63-1) / int64(time.Second)
 )
 
 func appFlags() []cli.Flag {
@@ -71,7 +73,6 @@ func appFlags() []cli.Flag {
 		&cli.Uint64Flag{
 			Name:  cliFlagMaxEventsPerSecond,
 			Usage: "rate limit to N events/sec (0 = unlimited)",
-			Value: 0,
 		},
 		&cli.StringFlag{
 			Name:  cliFlagOutput,
@@ -95,14 +96,35 @@ func appFlags() []cli.Flag {
 }
 
 func validateFlags(c *cli.Context) error {
-	if mode := c.String(cliFlagMode); mode != modeRetransmit {
-		return fmt.Errorf("--mode: invalid value %q, want %s", mode, modeRetransmit)
+	if c.NArg() != 0 {
+		return fmt.Errorf("unexpected arguments: %q", c.Args().Slice())
 	}
-	if v := c.String(cliFlagOutput); v != outputJSON && v != outputText {
-		return fmt.Errorf("--output: invalid value %q, want json or text", v)
+	if mode := c.String(cliFlagMode); mode != modeRetransmit {
+		return fmt.Errorf("invalid --mode %q; want %q", mode, modeRetransmit)
+	}
+	if duration := c.Int(cliFlagDuration); duration < 0 || int64(duration) > maxDurationSeconds {
+		return fmt.Errorf("invalid --duration %d; want 0..%d seconds", duration, maxDurationSeconds)
+	}
+	if outputFormat := c.String(cliFlagOutput); outputFormat != outputJSON && outputFormat != outputText {
+		return fmt.Errorf("invalid --output %q; want json or text", outputFormat)
+	}
+	if taskID := c.String(cliFlagTaskID); taskID != "" && c.String(cliFlagOutputStorage) == "" {
+		return fmt.Errorf("--task-id requires --output-storage")
+	}
+	switch sourceType := c.String(cliFlagSourceTypes); sourceType {
+	case toolstream.SourceTypeEvent, toolstream.SourceTypeTool:
+	default:
+		return fmt.Errorf(
+			"invalid --source-types %q; want %q or %q",
+			sourceType,
+			toolstream.SourceTypeTool,
+			toolstream.SourceTypeEvent,
+		)
 	}
 	if c.IsSet(cliFlagOutput) && c.String(cliFlagOutputStorage) != "" {
-		log.Warnf("--output is ignored because --output-storage is set")
+		if _, err := fmt.Fprintln(c.App.ErrWriter, "warning: --output is ignored because --output-storage is set"); err != nil {
+			return fmt.Errorf("write warning: %w", err)
+		}
 	}
 	return nil
 }

@@ -15,9 +15,12 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
 
 	"github.com/urfave/cli/v2"
+	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/version"
@@ -31,31 +34,50 @@ var (
 	AppVersion   string
 	AppGitCommit string
 	AppBuildTime string
-
-	versionInfo version.Info
 )
 
-func newApp() *cli.App {
-	return &cli.App{
-		Name:   tcpSharkToolName,
-		Usage:  "trace TCP events",
-		Flags:  appFlags(),
-		Action: mainAction,
-		Before: validateFlags,
-	}
-}
-
 func main() {
-	app := newApp()
-	versionInfo = version.Wire(app, version.Seed{
+	log.SetOutput(os.Stderr)
+
+	app := &cli.App{
+		Name:      tcpSharkToolName,
+		Usage:     "trace TCP events",
+		Flags:     appFlags(),
+		Before:    validateFlags,
+		Writer:    os.Stdout,
+		ErrWriter: os.Stderr,
+	}
+	versionInfo := version.Wire(app, version.Seed{
 		Name:      tcpSharkToolName,
 		Version:   AppVersion,
 		GitCommit: AppGitCommit,
 		BuildTime: AppBuildTime,
 	})
+	app.Action = func(c *cli.Context) error {
+		return runRetransmit(c.Context, &retransmitOptions{
+			bpfPath:            c.String(cliFlagBpfPath),
+			filterExpression:   c.String(cliFlagFilter),
+			durationSeconds:    c.Int(cliFlagDuration),
+			outputFormat:       c.String(cliFlagOutput),
+			outputStorage:      c.String(cliFlagOutputStorage),
+			taskID:             c.String(cliFlagTaskID),
+			sourceType:         c.String(cliFlagSourceTypes),
+			maxEventsPerSecond: c.Uint64(cliFlagMaxEventsPerSecond),
+			isTLPEnabled:       c.Bool(cliFlagEnableTLP),
+			version:            versionInfo.Version,
+			output:             c.App.Writer,
+		})
+	}
 
-	if err := app.Run(os.Args); err != nil {
-		log.Errorf("%v", err)
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		unix.SIGINT,
+		unix.SIGTERM,
+	)
+	defer stop()
+
+	if err := app.RunContext(ctx, os.Args); err != nil {
+		log.WithError(err).Error("run tcpshark")
 		os.Exit(1)
 	}
 }
