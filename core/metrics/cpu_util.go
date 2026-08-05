@@ -15,6 +15,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -57,10 +58,10 @@ func newCpuCollector() (*tracing.EventTracingAttr, error) {
 
 	numCores, err := cpuutil.ParseOnlineCores(cpuutil.SystemCPUOnlinePath)
 	if err != nil {
-		return nil, fmt.Errorf("read online CPUs: %w", err)
+		return nil, fmt.Errorf("read online cpu: %w", err)
 	}
 	if numCores == 0 {
-		return nil, fmt.Errorf("host online cpu count must be positive")
+		return nil, errors.New("no online cpu")
 	}
 
 	return &tracing.EventTracingAttr{
@@ -144,7 +145,7 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 	for _, container := range containers {
 		cpuQuota, err := c.cgroup.CpuQuotaAndPeriod(container.CgroupPath)
 		if err != nil {
-			log.Infof("fetch container [%s] cpu quota and period: %v", container, err)
+			log.Infof("cpu quota: container=%s err=%v", container, err)
 			continue
 		}
 
@@ -153,17 +154,17 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 			cpuQuota.EffectiveCPUCount, uint64(c.numCores),
 		)
 		if err != nil {
-			log.Infof("calculate cpu capacity for container [%s]: %v", container, err)
+			log.Infof("cpu capacity: container=%s err=%v", container, err)
 			continue
 		}
 
 		dataCache, ok := container.LifeResources("collector_cpu_util").(*cpuUtilStat)
 		if !ok || dataCache == nil {
-			log.Warnf("cpu_util: LifeResources for container %s returned unexpected type or nil", container)
+			log.Warnf("cpu cache: container=%s unavailable", container)
 			continue
 		}
 		if err := c.updateDataCache(dataCache, container, numCores); err != nil {
-			log.Infof("failed to update cpu info of %s, %v", container, err)
+			log.Infof("cpu usage: container=%s err=%v", container, err)
 			continue
 		}
 
@@ -178,7 +179,7 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 
 	more, err := c.updateHostDataCache()
 	if err != nil {
-		log.Warnf("cpu_util: failed to update host data cache: %v", err)
+		log.Warnf("host cpu usage: %v", err)
 	}
 
 	return append(metrics, more...), nil
