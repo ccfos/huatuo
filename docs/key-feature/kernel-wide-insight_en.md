@@ -202,6 +202,8 @@ huatuo_bamai_loadavg_container_nr_uninterruptible{container_host="coredns-855c4d
 
 Host `nr_uninterruptible` is not added: [`procs_blocked` in `/proc/stat`](https://www.kernel.org/doc/html/latest/filesystems/proc.html) counts tasks waiting for IO, not all uninterruptible tasks. IO metrics remain outside this change.
 
+Kubernetes deployments must run Huatuo with `hostPID: true`. Without host PID namespace visibility, cgroup v2 container metrics are omitted as unsupported instead of exporting misleading zeros.
+
 ## Memory System
 
 ### Reclaim

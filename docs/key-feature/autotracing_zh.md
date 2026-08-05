@@ -180,6 +180,8 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 **功能描述** 通过 netlink 及 cgroup 读取容器内进程状态，对不可中断（D 状态）进程的负载贡献进行指数加权移动平均（EMA）计算。当容器 D 状态负载 EMA 超过阈值（默认 5）时，采集容器内及宿主机中所有 D 状态进程的内核调用栈，支持已知问题过滤（`issues_list`）降低误报率。同一容器默认 30 分钟冷却。
 
+Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机 PID namespace 时，cgroup v2 dload 会被标记为不支持，而不是返回有误导性的全零计数。
+
 **数据存储** 事件数据自动存储至 Elasticsearch 或物理机磁盘文件。
 
 **示例数据**
