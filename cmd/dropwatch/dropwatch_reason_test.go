@@ -17,7 +17,7 @@ package main
 import "testing"
 
 func TestDropReasonNamesResolve(t *testing.T) {
-	names := dropReasonNames{
+	names := dropReason{
 		0: "SKB_DROP_REASON_NOT_SPECIFIED",
 		1: "SKB_DROP_REASON_NO_SOCKET",
 		3: "SKB_DROP_REASON_TCP_CSUM",
@@ -45,7 +45,7 @@ func TestDropReasonNamesResolve(t *testing.T) {
 }
 
 func TestDropReasonNamesNilResolve(t *testing.T) {
-	var names dropReasonNames
+	var names dropReason
 
 	tests := []struct {
 		name  string

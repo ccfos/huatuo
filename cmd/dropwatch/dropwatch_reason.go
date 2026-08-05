@@ -25,9 +25,10 @@ import (
 // Must match SKB_DROP_REASON_NOT_SUPPORTED in bpf/dropwatch.c.
 const skbDropReasonNotSupported int32 = -1
 
-type dropReasonNames map[uint32]string
+type dropReason map[uint32]string
 
-func loadDropReasonNames() dropReasonNames {
+// NewDropReason loads kernel drop-reason names when BTF exposes them.
+func NewDropReason() dropReason {
 	spec, err := btf.LoadKernelSpec()
 	if err != nil {
 		log.WithError(err).Debug("load kernel BTF for drop reason names")
@@ -40,19 +41,19 @@ func loadDropReasonNames() dropReasonNames {
 		return nil
 	}
 
-	names := make(dropReasonNames, len(enum.Values))
+	names := make(dropReason, len(enum.Values))
 	for _, v := range enum.Values {
 		names[uint32(v.Value)] = v.Name
 	}
 	return names
 }
 
-func (m dropReasonNames) resolve(v uint32) string {
+func (r dropReason) resolve(v uint32) string {
 	if int32(v) == skbDropReasonNotSupported {
 		return "NOT_SUPPORTED"
 	}
-	if m != nil {
-		if name, ok := m[v]; ok {
+	if r != nil {
+		if name, ok := r[v]; ok {
 			return name
 		}
 	}

@@ -128,7 +128,7 @@ func newWriter(output io.Writer, options *writerOptions) (writer, func() error, 
 	}
 }
 
-func formatEvent(ev *abi.DropwatchPacketEvent, names dropReasonNames, sourceType string) *types.DropWatchTracing {
+func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType string) *types.DropWatchTracing {
 	pkt := packet.Hdr{
 		EthProto:  ev.PktHdr.EthProto,
 		RawLen:    uint8(ev.PktHdr.RawLen),

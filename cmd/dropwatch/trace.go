@@ -44,7 +44,7 @@ type dropwatchOptions struct {
 }
 
 func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error) {
-	names := loadDropReasonNames()
+	names := NewDropReason()
 	duration := options.durationSeconds
 
 	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
@@ -136,7 +136,7 @@ func streamDropwatchEvents(
 	ctx context.Context,
 	reader bpf.PerfEventReader,
 	sink writer,
-	names dropReasonNames,
+	names dropReason,
 	sourceType string,
 ) error {
 	for {
