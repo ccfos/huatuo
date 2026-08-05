@@ -196,6 +196,8 @@ huatuo_bamai_loadavg_container_nr_uninterruptible{container_host="coredns-855c4d
 
 未补主机 `nr_uninterruptible`：[`/proc/stat` 的 `procs_blocked`](https://www.kernel.org/doc/html/latest/filesystems/proc.html) 表示等待 IO 的任务数，不等价于全部不可中断任务；本轮不扩展 IO 指标。
 
+Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机 PID namespace 时，cgroup v2 容器指标会作为不支持而省略，不会输出有误导性的全零数据。
+
 ## 内存系统
 
 ### 资源回收

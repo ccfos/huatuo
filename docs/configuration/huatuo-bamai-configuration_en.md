@@ -508,7 +508,8 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 # linux tasks D state profiling for containers.
 #
 # - ThresholdLoad
-# Load average threshold. When exceeded, D-state profiling triggers.
+# One-minute EMA threshold for the number of D-state tasks. Profiling triggers
+# when this value is exceeded.
 # Default: 5
 #
 # - Interval
@@ -526,9 +527,10 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 	# IntervalTracing = 1800
 ```
 
-- **ThresholdLoad**: System load average (loadavg) threshold for containers.
+- **ThresholdLoad**: One-minute EMA threshold for the number of uninterruptible
+  (D-state) tasks in a container.
 
-  Default: 5. Triggers D-state (uninterruptible sleep) task profiling when loadavg reaches this value.
+  Default: 5. Profiling triggers when the D-state task EMA exceeds this value.
 
 - **Interval**: Monitoring interval.
 
