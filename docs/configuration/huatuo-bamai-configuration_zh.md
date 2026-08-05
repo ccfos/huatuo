@@ -506,6 +506,9 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 # damage to the system.
 # Default: 1800s
 #
+# cgroup v2 dload 使用 BPF task iterator，每次采样遍历宿主机全部任务。
+# Kubernetes 部署必须设置 hostPID: true。
+#
 [AutoTracing.Dload]
 	# ThresholdLoad = 5
 	# Interval = 10
@@ -525,6 +528,9 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 - **IntervalTracing**：连续运行间隔（秒）。
 
   默认 1800s（30 分钟）。 两次自动追踪之间的最小间隔，防止频繁执行对系统造成压力。
+
+- **Cgroup v2**：随 `dload` 启用，cgroup v1 保持 netlink 路径。v2 实现要求内核 BTF 可读并支持 BPF `task` iterator；统计仅包含
+  直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。
 
 #### 7.4 IOTracing 自动追踪 — 容器 IO 性能剖析
 
@@ -943,6 +949,11 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 ```bash
 # Metric Collector
 [MetricCollector]
+	# 开启 cgroup v2 容器负载指标。BPF task iterator 每次抓取会遍历一次
+	# 宿主机全部任务。关闭时仍保留宿主机 loadavg 和 cgroup v1 容器指标。
+	# Kubernetes 部署必须设置 hostPID: true。
+	[MetricCollector.Loadavg]
+
 	# Netdev statistic
 	#
 	# - EnableNetlink
