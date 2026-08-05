@@ -18,6 +18,7 @@ set -euo pipefail
 
 source "$(dirname "$0")/env.sh"
 source "${ROOT_DIR}/integration/lib.sh"
+source "${ROOT_DIR}/integration/lib_namespace.sh"
 
 TCPSHARK_BIN="${ROOT_DIR}/_output/bin/tcpshark"
 BPF_OBJ="${ROOT_DIR}/_output/bpf/tcp_retransmit.o"
@@ -25,13 +26,8 @@ OUTPUT_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/tcp-retransmit-fast.XXXXXX")
 TEST_PORT=19998
 PAYLOAD_SIZE=2097152 # 2 MB
 
-NS_S="ts_fast"
-NS_C="tc_fast"
-VETH_S="vs_fast"
-VETH_C="vc_fast"
 S_ADDR="10.99.0.1"
 C_ADDR="10.99.0.2"
-NET_MASK="24"
 
 [[ -x "${TCPSHARK_BIN}" ]] || fatal "tcpshark binary not found: ${TCPSHARK_BIN}"
 [[ -f "${BPF_OBJ}" ]] || fatal "BPF object not found: ${BPF_OBJ}"
@@ -45,52 +41,38 @@ fi
 require_python3
 
 cleanup() {
-	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true
-	[[ -n "${SRV_PID:-}" ]] && kill "${SRV_PID}" 2> /dev/null || true
-	[[ -n "${CLI_PID:-}" ]] && kill "${CLI_PID}" 2> /dev/null || true
-	ip netns del "${NS_S}" 2> /dev/null || true
-	ip netns del "${NS_C}" 2> /dev/null || true
+	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2>/dev/null || true
+	[[ -n "${SRV_PID:-}" ]] && kill "${SRV_PID}" 2>/dev/null || true
+	[[ -n "${CLI_PID:-}" ]] && kill "${CLI_PID}" 2>/dev/null || true
+	tcp_namespace_cleanup
 }
 trap cleanup EXIT
 
 log_info "fast_retransmit: drop one data segment via netns+veth+connbytes → dup ACK → Recovery"
 
 # 1. Build netns+veth topology.
-ip netns add "${NS_S}" || fatal "failed to create server netns"
-ip netns add "${NS_C}" || fatal "failed to create client netns"
-
-ip link add "${VETH_S}" type veth peer name "${VETH_C}"
-ip link set "${VETH_S}" netns "${NS_S}"
-ip link set "${VETH_C}" netns "${NS_C}"
-
-ip netns exec "${NS_S}" ip addr add "${S_ADDR}/${NET_MASK}" dev "${VETH_S}"
-ip netns exec "${NS_S}" ip link set "${VETH_S}" up
-ip netns exec "${NS_S}" ip link set lo up
-
-ip netns exec "${NS_C}" ip addr add "${C_ADDR}/${NET_MASK}" dev "${VETH_C}"
-ip netns exec "${NS_C}" ip link set "${VETH_C}" up
-ip netns exec "${NS_C}" ip link set lo up
+tcp_namespace_setup fast "${S_ADDR}" "${C_ADDR}"
 
 # Limit GSO segments so each TCP segment is a distinct sk_buff (deterministic
 # connbytes counting). Without this, veth GSO may coalesce segments.
-ip netns exec "${NS_S}" ip link set dev "${VETH_S}" gso_max_segs 1
+ip netns exec "${TCP_NS_SERVER}" ip link set dev "${TCP_NS_VETH_SERVER}" gso_max_segs 1
 
-log_info "netns topology ready: ${NS_S}(${S_ADDR}) ←→ ${NS_C}(${C_ADDR})"
+log_info "netns topology ready: ${TCP_NS_SERVER}(${S_ADDR}) ←→ ${TCP_NS_CLIENT}(${C_ADDR})"
 
 # 2. Client-side: drop the 30th reply-direction packet (a single
 #    server→client data segment). Subsequent segments arrive out-of-order
 #    → receiver sends 3 dup ACKs → sender enters Recovery and
 #    fast-retransmits the lost segment.
-ip netns exec "${NS_C}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
+ip netns exec "${TCP_NS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT}" \
 	-m connbytes --connbytes 30:30 --connbytes-dir reply \
 	--connbytes-mode packets -j DROP
 log_info "connbytes rule: drop reply packet #30 in client netns"
 
 # 3. Start tcpshark in retransmit mode in the root netns (sees all netns traffic via BPF).
-"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --duration 15 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
+"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --duration 15 --output json >"${OUTPUT_DIR}/events.json" 2>"${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 sleep 1
-if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
+if ! kill -0 "${TCPSHARK_PID}" 2>/dev/null; then
 	TCPSHARK_STATUS=0
 	wait "${TCPSHARK_PID}" || TCPSHARK_STATUS=$?
 	TCPSHARK_PID=""
@@ -98,20 +80,20 @@ if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
 fi
 
 # 4. Server: listen and send 2 MB of data.
-ip netns exec "${NS_S}" timeout 10 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
-	--listen-address "${S_ADDR}" --port "${TEST_PORT}" \
-	--payload-bytes "${PAYLOAD_SIZE}" > /dev/null 2>&1 &
+ip netns exec "${TCP_NS_SERVER}" timeout 10 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
+	--listen-address "${TCP_NS_SERVER_ADDR}" --port "${TEST_PORT}" \
+	--payload-bytes "${PAYLOAD_SIZE}" >/dev/null 2>&1 &
 SRV_PID=$!
 sleep 0.5
 
 # 5. Client: connect and receive data to /dev/null.
-ip netns exec "${NS_C}" timeout 8 bash -c "exec 3<>/dev/tcp/${S_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
+ip netns exec "${TCP_NS_CLIENT}" timeout 8 bash -c "exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2>/dev/null &
 CLI_PID=$!
 
 # 6. Wait for data transfer + fast retransmit (3 dup ACKs are fast on veth).
 sleep 10
 
-if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
+if ! kill -0 "${TCPSHARK_PID}" 2>/dev/null; then
 	TCPSHARK_STATUS=0
 	wait "${TCPSHARK_PID}" || TCPSHARK_STATUS=$?
 	TCPSHARK_PID=""
@@ -122,20 +104,20 @@ wait "${TCPSHARK_PID}" || true
 TCPSHARK_PID=""
 
 # Filter events for our test port (server-side tcp_sport).
-grep "\"tcp_sport\":${TEST_PORT}" "${OUTPUT_DIR}/events.json" > "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true
+grep "\"tcp_sport\":${TEST_PORT}" "${OUTPUT_DIR}/events.json" >"${OUTPUT_DIR}/filtered.json" 2>/dev/null || true
 
-RAW_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/events.json" 2> /dev/null || true)
+RAW_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/events.json" 2>/dev/null || true)
 RAW_COUNT=${RAW_COUNT:-0}
-PORT_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
+PORT_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
 PORT_COUNT=${PORT_COUNT:-0}
 
-FAST_COUNT=$(grep -c '"tcp_reason":"fast_retransmit"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
+FAST_COUNT=$(grep -c '"tcp_reason":"fast_retransmit"' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
 FAST_COUNT=${FAST_COUNT:-0}
-REORDER_FAST=$(grep -c '"tcp_reason":"reorder_prone_fast"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
+REORDER_FAST=$(grep -c '"tcp_reason":"reorder_prone_fast"' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
 REORDER_FAST=${REORDER_FAST:-0}
-RECOVERY=$(grep -c '"ca_state":3' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
+RECOVERY=$(grep -c '"ca_state":3' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
 RECOVERY=${RECOVERY:-0}
-RTO_COUNT=$(grep -c '"tcp_reason":"RTO"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
+RTO_COUNT=$(grep -c '"tcp_reason":"RTO"' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
 RTO_COUNT=${RTO_COUNT:-0}
 
 log_info "captured retransmit events: raw=${RAW_COUNT}, tcp_sport=${TEST_PORT}: ${PORT_COUNT}"
