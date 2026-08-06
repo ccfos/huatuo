@@ -147,6 +147,9 @@ func nativeOnCPUAttachOptions(pctx *pcontext.ProfilerContext) []bpf.AttachOption
 }
 
 func (p *cpuNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
+	log.Info("data reading loop started")
+	defer log.Info("data reading loop ended")
+
 	stopDbg, err := p.dbg.StartDebugEventLoop(ctx, p.bpf, "dbg_native_cpu_dbg_events")
 	if err != nil {
 		return fmt.Errorf("start native CPU BPF debug loop: %w", err)
