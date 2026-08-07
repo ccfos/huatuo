@@ -39,3 +39,12 @@ check_metrics "include filter" \
 	'netdev_.*device="eth1"' 'netdev_.*device="docker0"' \
 	'mountpoint_perm_ro{.*mountpoint="/sys/fs/cgroup"' \
 	'mountpoint_perm_ro{.*mountpoint="/home/root/containers'
+
+# Large output exposed SIGPIPE when check_metrics piped matches into grep -q.
+metrics_file="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
+for ((i = 0; i < 4096; i++)); do
+	printf 'huatuo_bamai_synthetic_metric_%04d{padding="%080d"} 1\n' \
+		"${i}" 0
+done > "${metrics_file}"
+
+check_metrics "large metrics output" "synthetic_metric_.*"

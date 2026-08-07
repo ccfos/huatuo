@@ -413,8 +413,6 @@ huatuo_bamai_await_metrics() {
 }
 
 # check_metrics <desc> <present_pattern>... [-- <absent_pattern>...]
-# Single-pass metric assertion: verifies present patterns exist and absent
-# patterns do not, using at most 2 grep invocations regardless of pattern count.
 check_metrics() {
 	local desc=$1
 	shift
@@ -441,16 +439,10 @@ check_metrics() {
 	fi
 
 	if [[ ${#present[@]} -gt 0 ]]; then
-		local present_re
-		present_re=$(
-			IFS='|'
-			echo "${present[*]}"
-		)
-		local matches
-		matches=$(grep -oE "${prefix}(${present_re})" "$metrics_file" || true)
 		local pat
 		for pat in "${present[@]}"; do
-			echo "$matches" | grep -q "$pat" || fatal "${desc}: expected present but not found: ${pat}"
+			grep -qE "${prefix}(${pat})" "$metrics_file" \
+				|| fatal "${desc}: expected present but not found: ${pat}"
 		done
 	fi
 }
