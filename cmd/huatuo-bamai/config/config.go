@@ -53,10 +53,21 @@ type LocalFileConfig struct {
 	MaxRotatedFiles int    `default:"10"`
 }
 
+// PyroscopeConfig controls pprof profile storage in Pyroscope.
+type PyroscopeConfig struct {
+	Address        string
+	AppNamePrefix  string
+	Username       string
+	Password       string
+	BearerToken    string
+	TimeoutSeconds int `default:"5"`
+}
+
 // StorageConfig controls tracing data storage.
 type StorageConfig struct {
 	Elasticsearch internalconfig.ElasticsearchConfig
 	LocalFile     LocalFileConfig
+	Pyroscope     PyroscopeConfig
 }
 
 // TasksConfig controls locally running tracing tasks.
@@ -103,6 +114,9 @@ func Load(path string) error {
 	}
 	if err := loaded.Validate(); err != nil {
 		return err
+	}
+	if _, err := loaded.AutoTracing.Display.ResolveBackend(); err != nil {
+		return fmt.Errorf("validate config: %w", err)
 	}
 
 	cfg = loaded
@@ -212,6 +226,17 @@ func Get() *BamaiConfig {
 
 // Set updates a config field by dot-separated key.
 func Set(key string, val any) error {
+	if key == "AutoTracing.Display.Backend" {
+		backend, ok := val.(string)
+		if !ok {
+			return fmt.Errorf("%s must be a string", key)
+		}
+		display := cfg.AutoTracing.Display
+		display.Backend = backend
+		if _, err := display.ResolveBackend(); err != nil {
+			return fmt.Errorf("validate config: %w", err)
+		}
+	}
 	if err := internalconfig.Set(cfg, key, val); err != nil {
 		return err
 	}
