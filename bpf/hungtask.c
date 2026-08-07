@@ -5,8 +5,8 @@
 #include <bpf/bpf_tracing.h>
 
 #include "bpf_common.h"
-#include "bpf_compat_7_0.h"
 #include "bpf_ratelimit.h"
+#include "bpf_tracepoint.h"
 #include "abi/hungtask_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
@@ -32,8 +32,8 @@ int tracepoint_sched_process_hang(struct trace_event_raw_sched_process_hang *ctx
 	if (bpf_core_field_exists(ctx->comm)) {
 		BPF_CORE_READ_STR_INTO(&info.comm, ctx, comm);
 	} else {
-		struct trace_event_raw_sched_process_hang___7_0 *ctx7 =
-			(struct trace_event_raw_sched_process_hang___7_0 *)ctx;
+		struct trace_event_raw_sched_process_hang___7_0_compat *ctx7 =
+			(struct trace_event_raw_sched_process_hang___7_0_compat *)ctx;
 		u32 dl = BPF_CORE_READ(ctx7, __data_loc_comm);
 
 		bpf_probe_read_str(info.comm, sizeof(info.comm),

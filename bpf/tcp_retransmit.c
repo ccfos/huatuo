@@ -11,6 +11,7 @@
 #include "bpf_pcap_stub.h"
 #include "bpf_ratelimit.h"
 #include "bpf_skbuff.h"
+#include "bpf_tracepoint.h"
 #include "abi/tcp_retransmit_types.h"
 
 struct {
@@ -177,7 +178,7 @@ static __always_inline void read_retransmit_skb_tcp_fields(struct tcp_retransmit
 }
 
 SEC("tracepoint/tcp/tcp_retransmit_skb")
-int retrans_skb(struct trace_event_raw_tcp_event_sk_skb *ctx)
+int retrans_skb(struct trace_event_raw_tcp_event_sk_skb_compat *ctx)
 {
 	struct sk_buff *skb = (struct sk_buff *)ctx->skbaddr;
 
