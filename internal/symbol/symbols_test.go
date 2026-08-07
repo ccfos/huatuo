@@ -584,7 +584,8 @@ func newELF64SymbolFixture(t *testing.T, tables ...elf64SymbolTableFixture) *elf
 	}
 	copy(image, encodeELFStruct(t, header))
 
-	for tableIndex, table := range encodedTables {
+	for tableIndex := range encodedTables {
+		table := &encodedTables[tableIndex]
 		copy(image[table.stringsOffset:], table.fixture.stringTable)
 		copy(image[table.symbolsOffset:], table.encodedSymbols)
 		stringsHeader := elf.Section64{

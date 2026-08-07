@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -417,7 +418,7 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 }
 
 func readELFSymbolName(section *elf.Section, offset uint32, limit uint64) (string, error) {
-	if limit >= uint64(^uint64(0)>>1) {
+	if limit >= math.MaxInt64 {
 		return "", fmt.Errorf("%w: symbol name limit is too large", ErrELFSymbolLimit)
 	}
 	reader := section.Open()
