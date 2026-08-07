@@ -4,8 +4,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Verify the native off-CPU profiler attributes blocked time to the CPU from
-# which the task switched out. The assertion anchors on wait_loop because user
-# stack depth varies by kernel and glibc build.
+# which the task switched out. The assertion anchors on the process and blocked
+# category because older kernels may truncate the userspace call chain.
 
 set -euo pipefail
 
@@ -45,14 +45,12 @@ readonly EXCLUDED_CPU=${CPU_IDS[1]}
 
 readonly PROFILER_DURATION=10
 readonly PROFILER_AGGR_INTERVAL=5
-readonly BLOCKED_PATTERN='off-CPU blocked;.*;wait_loop'
-
 WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-offcpu.XXXXXX")
 FIXTURE_BIN="${WORK_DIR}/offcpu-fixture"
 TARGET_PID=""
 
 cleanup() {
-	[[ -n "${TARGET_PID}" ]] || return
+	[[ -n "${TARGET_PID}" ]] || return 0
 	stop_by_pid "${TARGET_PID}" 1 || true
 	wait "${TARGET_PID}" 2> /dev/null || true
 }
@@ -65,6 +63,7 @@ verify_offcpu_cpuid() {
 	local output_dir="${WORK_DIR}/cpu-${cpuid}"
 	local tool_out="${output_dir}/profiler.out"
 	local tool_err="${output_dir}/profiler.err"
+	local blocked_prefix
 	local match_count=0
 
 	case "${expected}" in
@@ -75,9 +74,10 @@ verify_offcpu_cpuid() {
 	mkdir -p "${output_dir}"
 	taskset -c "${SELECTED_CPU}" "${FIXTURE_BIN}" > /dev/null 2>&1 &
 	TARGET_PID=$!
+	blocked_prefix="process ${TARGET_PID}:offcpu-fixture;off-CPU blocked;"
 	kill -0 "${TARGET_PID}" 2> /dev/null || fatal "fixture exited immediately (pid=${TARGET_PID})"
 
-	log_info "fixture on CPU ${SELECTED_CPU}; profiler --cpuid ${cpuid}; expect ${expected} stack"
+	log_info "fixture on CPU ${SELECTED_CPU}; profiler --cpuid ${cpuid}; expect ${expected} event"
 	if ! "${TOOL_BIN}" \
 		--type cpu \
 		--language c \
@@ -101,14 +101,14 @@ verify_offcpu_cpuid() {
 	TARGET_PID=""
 
 	if compgen -G "${output_dir}/perf_*.folded" > /dev/null; then
-		match_count=$(grep -hE "${BLOCKED_PATTERN}" "${output_dir}"/perf_*.folded | wc -l) || true
+		match_count=$(grep -hF "${blocked_prefix}" "${output_dir}"/perf_*.folded | wc -l) || true
 	fi
 	case "${expected}" in
 	present)
-		[[ "${match_count}" -gt 0 ]] || fatal "blocking wait stack not found for CPU ${cpuid}"
+		[[ "${match_count}" -gt 0 ]] || fatal "blocked event not found for CPU ${cpuid}"
 		;;
 	absent)
-		[[ "${match_count}" -eq 0 ]] || fatal "blocking wait stack unexpectedly found for CPU ${cpuid}"
+		[[ "${match_count}" -eq 0 ]] || fatal "blocked event unexpectedly found for CPU ${cpuid}"
 		;;
 	esac
 }
