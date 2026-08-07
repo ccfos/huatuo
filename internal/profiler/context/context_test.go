@@ -16,6 +16,7 @@ package context
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"testing"
 	"time"
@@ -52,5 +53,40 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	case <-pctx.Ctx.Done():
 	case <-time.After(time.Second):
 		t.Fatal("ProfilerContext.Cancel() did not cancel context")
+	}
+}
+
+func TestNormalizeThreadGroupTarget(t *testing.T) {
+	previous := threadGroupID
+	threadGroupID = func(pid int) (int, error) {
+		if pid != 4243 {
+			t.Fatalf("threadGroupID() pid=%d, want 4243", pid)
+		}
+		return 4242, nil
+	}
+	t.Cleanup(func() { threadGroupID = previous })
+
+	input := []int{4243}
+	got, err := normalizeThreadGroupTarget(input, true)
+	if err != nil {
+		t.Fatalf("normalizeThreadGroupTarget() error=%v", err)
+	}
+	if got[0] != 4242 {
+		t.Errorf("normalizeThreadGroupTarget()=%v, want [4242]", got)
+	}
+	if input[0] != 4243 {
+		t.Errorf("input mutated to %v", input)
+	}
+}
+
+func TestNormalizeThreadGroupTargetReturnsResolverError(t *testing.T) {
+	previous := threadGroupID
+	wantErr := errors.New("status unavailable")
+	threadGroupID = func(int) (int, error) { return 0, wantErr }
+	t.Cleanup(func() { threadGroupID = previous })
+
+	_, err := normalizeThreadGroupTarget([]int{4243}, true)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("normalizeThreadGroupTarget() error=%v, want %v", err, wantErr)
 	}
 }

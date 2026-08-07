@@ -337,8 +337,26 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			args:      []string{"--thread-group"},
 			wantError: "--thread-group is supported only by native profiling",
 		},
-		{name: "native CPU thread group", language: "go", typ: "cpu", args: []string{"--thread-group"}},
-		{name: "native memory thread group", language: "c", typ: "memory", args: []string{"--thread-group"}},
+		{
+			name:      "native CPU thread group without PID",
+			language:  "go",
+			typ:       "cpu",
+			args:      []string{"--thread-group"},
+			wantError: "--thread-group requires --pid",
+		},
+		{
+			name:      "native memory thread group without PID",
+			language:  "c",
+			typ:       "memory",
+			args:      []string{"--thread-group"},
+			wantError: "--thread-group requires --pid",
+		},
+		{
+			name:     "native CPU thread group",
+			language: "go",
+			typ:      "cpu",
+			args:     []string{"--thread-group", "--pid", "123"},
+		},
 		{
 			name:      "native exec path",
 			language:  "c",

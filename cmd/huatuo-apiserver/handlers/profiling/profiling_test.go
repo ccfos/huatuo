@@ -190,6 +190,9 @@ func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
 		DurationSeconds: 60,
 		Language:        "go",
 		MemoryMode:      "object_alloc",
+		PID:             4321,
+		CPUIDs:          []int{1, 3},
+		ThreadGroup:     true,
 	})
 	if err != nil {
 		t.Fatalf("newProfilingPrivateData() error=%v", err)
@@ -202,8 +205,15 @@ func TestProfilingPrivateDataUsesRequestJSONNames(t *testing.T) {
 	if fields["binary_match_path"] != "/usr/bin/example" ||
 		fields["duration_seconds"] != float64(60) ||
 		fields["language"] != "go" ||
-		fields["memory_mode"] != "object_alloc" {
+		fields["memory_mode"] != "object_alloc" ||
+		fields["pid"] != float64(4321) ||
+		fields["thread_group"] != true {
 		t.Errorf("newProfilingPrivateData()=%s, want request fields", data)
+	}
+	cpuIDs, ok := fields["cpu_ids"].([]any)
+	if !ok || len(cpuIDs) != 2 ||
+		cpuIDs[0] != float64(1) || cpuIDs[1] != float64(3) {
+		t.Errorf("newProfilingPrivateData() CPU IDs=%v, want [1 3]", fields["cpu_ids"])
 	}
 }
 
@@ -215,7 +225,10 @@ func TestBuildProfilingJobReadsPrivateData(t *testing.T) {
 			"binary_match_path":"/usr/bin/example",
 			"duration_seconds":60,
 			"language":"go",
-			"memory_mode":"object_alloc"
+			"memory_mode":"object_alloc",
+			"pid":4321,
+			"cpu_ids":[1,3],
+			"thread_group":true
 		}`),
 	}, "")
 	if err != nil {
@@ -233,6 +246,15 @@ func TestBuildProfilingJobReadsPrivateData(t *testing.T) {
 	}
 	if resp.DurationSeconds != 60 {
 		t.Errorf("DurationSeconds=%d, want 60", resp.DurationSeconds)
+	}
+	if resp.PID != 4321 {
+		t.Errorf("PID=%d, want 4321", resp.PID)
+	}
+	if len(resp.CPUIDs) != 2 || resp.CPUIDs[0] != 1 || resp.CPUIDs[1] != 3 {
+		t.Errorf("CPUIDs=%v, want [1 3]", resp.CPUIDs)
+	}
+	if !resp.ThreadGroup {
+		t.Error("ThreadGroup=false, want true")
 	}
 }
 

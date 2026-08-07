@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -49,6 +51,9 @@ type profilingJobPrivateData struct {
 	DurationSeconds int    `json:"duration_seconds"`
 	Language        string `json:"language"`
 	MemoryMode      string `json:"memory_mode"`
+	PID             int    `json:"pid,omitempty"`
+	CPUIDs          []int  `json:"cpu_ids,omitempty"`
+	ThreadGroup     bool   `json:"thread_group,omitempty"`
 }
 
 func parseCreateProfilingJobRequest(ctx *server.Context) (*v1.CreateProfilingJobRequest, error) {
@@ -64,50 +69,80 @@ func buildCreateProfilingJobRequest(
 	userID string,
 	cfg *Config,
 ) (*job.CreateJobRequest, error) {
-	taskReq := job.AgentTaskRequest{
-		TracerName:  "profiler",
-		DataType:    "db-json",
-		ContainerID: req.ContainerID,
-		Interval:    cfg.AggregationIntervalSeconds,
-	}
-
-	jobType, err := buildProfilingTracerArgs(&taskReq, req)
+	normalizedReq, err := normalizeProfilingJobRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	if req.DurationSeconds < taskReq.Interval*2 {
+
+	taskReq := job.AgentTaskRequest{
+		TracerName:  "profiler",
+		DataType:    "db-json",
+		ContainerID: normalizedReq.ContainerID,
+		Interval:    cfg.AggregationIntervalSeconds,
+	}
+
+	jobType, err := buildProfilingTracerArgs(&taskReq, normalizedReq)
+	if err != nil {
+		return nil, err
+	}
+	if err := appendProfilingTargetArgs(&taskReq, normalizedReq); err != nil {
+		return nil, err
+	}
+	if normalizedReq.DurationSeconds < taskReq.Interval*2 {
 		return nil, errors.New("duration_seconds must cover at least two profiling intervals")
 	}
-	if req.DurationSeconds+taskReq.Interval >= 3600 {
+	if normalizedReq.DurationSeconds+taskReq.Interval >= 3600 {
 		return nil, errors.New("duration_seconds plus profiling interval must be less than 3600 seconds")
 	}
-	taskReq.TraceTimeout = req.DurationSeconds + taskReq.Interval
+	taskReq.TraceTimeout = normalizedReq.DurationSeconds + taskReq.Interval
 
 	// The job duration controls profiling lifetime while the agent task remains
 	// alive long enough to be stopped externally.
-	taskReq.Duration = req.DurationSeconds * 2
+	taskReq.Duration = normalizedReq.DurationSeconds * 2
 	taskReq.TracerArgs = append(
 		taskReq.TracerArgs,
-		"--duration", strconv.Itoa(req.DurationSeconds),
+		"--duration", strconv.Itoa(normalizedReq.DurationSeconds),
 		"--aggr-interval", strconv.Itoa(taskReq.Interval),
 		"--max-concurrent-procs", strconv.Itoa(cfg.MaxConcurrentProfilerProcesses),
 		"--output-format", "remote",
 		"--output-storage", "/var/run/huatuo-toolstream.sock",
 	)
 
-	privateData, err := newProfilingPrivateData(req)
+	privateData, err := newProfilingPrivateData(normalizedReq)
 	if err != nil {
 		return nil, err
 	}
 
 	return &job.CreateJobRequest{
 		UserID:      userID,
-		ContainerID: req.ContainerID,
-		Hostname:    req.Hostname,
+		ContainerID: normalizedReq.ContainerID,
+		Hostname:    normalizedReq.Hostname,
 		Type:        jobType,
 		AgentTask:   &taskReq,
 		PrivateData: privateData,
 	}, nil
+}
+
+func normalizeProfilingJobRequest(
+	req *v1.CreateProfilingJobRequest,
+) (*v1.CreateProfilingJobRequest, error) {
+	if req == nil {
+		return nil, errors.New("profiling job request is required")
+	}
+
+	normalized := *req
+	normalized.CPUIDs = append([]int(nil), req.CPUIDs...)
+	sort.Ints(normalized.CPUIDs)
+	for i, cpuID := range normalized.CPUIDs {
+		if cpuID < 0 {
+			return nil, fmt.Errorf("cpu_id must not be negative: %d", cpuID)
+		}
+		if i > 0 && normalized.CPUIDs[i-1] == cpuID {
+			return nil, fmt.Errorf("duplicate cpu_id %d", cpuID)
+		}
+	}
+
+	return &normalized, nil
 }
 
 func buildProfilingTracerArgs(
@@ -149,12 +184,70 @@ func buildProfilingTracerArgs(
 	}
 }
 
+func appendProfilingTargetArgs(
+	taskReq *job.AgentTaskRequest,
+	req *v1.CreateProfilingJobRequest,
+) error {
+	language, err := profiling.ParseLanguage(req.Language)
+	if err != nil {
+		return err
+	}
+	implementation, ok := profiling.ImplementationFor(language)
+	if !ok {
+		return fmt.Errorf("profiling implementation not found for %q", language)
+	}
+	native := implementation == profiling.ImplementationNative
+
+	if !native && (req.ThreadGroup || len(req.CPUIDs) > 0) {
+		return errors.New("cpu_ids and thread_group are supported only by native profiling")
+	}
+	if req.PID < 0 || int64(req.PID) > math.MaxInt32 {
+		return fmt.Errorf("pid must be between 1 and %d", math.MaxInt32)
+	}
+	if req.PID != 0 && req.ContainerID != "" {
+		return errors.New("pid and container_id are mutually exclusive")
+	}
+	if req.ThreadGroup && req.PID == 0 {
+		return errors.New("thread_group requires pid")
+	}
+	if len(req.CPUIDs) > 0 && (!native || req.ProfilingType != string(profiling.TypeCPU)) {
+		return errors.New("cpu_ids are supported only by native CPU profiling")
+	}
+
+	requiresTarget := !native || req.ProfilingType == string(profiling.TypeMemory)
+	if requiresTarget && req.PID == 0 && req.ContainerID == "" {
+		return errors.New("exactly one of pid or container_id must be provided")
+	}
+
+	if req.ContainerID != "" {
+		taskReq.TracerArgs = append(taskReq.TracerArgs, "--container-id", req.ContainerID)
+	}
+	if req.PID != 0 {
+		taskReq.TracerArgs = append(taskReq.TracerArgs, "--pid", strconv.Itoa(req.PID))
+	}
+	if req.ThreadGroup {
+		taskReq.TracerArgs = append(taskReq.TracerArgs, "--thread-group")
+	}
+	if len(req.CPUIDs) > 0 {
+		values := make([]string, len(req.CPUIDs))
+		for i, cpuID := range req.CPUIDs {
+			values[i] = strconv.Itoa(cpuID)
+		}
+		taskReq.TracerArgs = append(taskReq.TracerArgs, "--cpuid", strings.Join(values, ","))
+	}
+
+	return nil
+}
+
 func newProfilingPrivateData(req *v1.CreateProfilingJobRequest) (json.RawMessage, error) {
 	data, err := json.Marshal(profilingJobPrivateData{
 		BinaryMatchPath: req.BinaryMatchPath,
 		DurationSeconds: req.DurationSeconds,
 		Language:        req.Language,
 		MemoryMode:      req.MemoryMode,
+		PID:             req.PID,
+		CPUIDs:          append([]int(nil), req.CPUIDs...),
+		ThreadGroup:     req.ThreadGroup,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encoding profiling private data: %w", err)
