@@ -38,7 +38,7 @@ func TestOptionsFromContextPreservesExplicitRelativeConfigDir(t *testing.T) {
 	if err := flags.Parse([]string{
 		"--config-dir", "relative-conf",
 		"--enable-pprof",
-		"--disable-cgroup",
+		"--enable-cgroup",
 		"--log-debug",
 	}); err != nil {
 		t.Fatalf("parse flags: %v", err)
@@ -53,8 +53,8 @@ func TestOptionsFromContextPreservesExplicitRelativeConfigDir(t *testing.T) {
 	if !opts.EnablePProf {
 		t.Error("EnablePProf = false, want true")
 	}
-	if !opts.DisableCgroup {
-		t.Error("DisableCgroup = false, want true")
+	if !opts.EnableCgroup {
+		t.Error("EnableCgroup = false, want true")
 	}
 	if !opts.LogDebug {
 		t.Error("LogDebug = false, want true")

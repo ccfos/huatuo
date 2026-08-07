@@ -396,7 +396,6 @@ integration_huatuo_bamai_start() {
 			"--procfs-prefix" "${HUATUO_BAMAI_TEST_FIXTURES}"
 			"--disable-storage"
 			"--disable-kubelet"
-			"--disable-cgroup"
 			"--log-debug"
 		)
 	fi

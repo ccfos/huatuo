@@ -117,7 +117,6 @@ assert_profile_capabilities() {
 }
 
 integration_huatuo_apiserver_start write_apiserver_profile_capabilities_config \
-	--disable-cgroup \
 	--log-debug
 assert_profile_capabilities_authentication
 assert_profile_capabilities

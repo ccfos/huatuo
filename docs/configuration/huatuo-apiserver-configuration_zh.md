@@ -14,6 +14,9 @@ weight: 5
 
 ### 2. 日志与运行时资源限制
 
+默认不创建 huatuo-apiserver 自身 cgroup。只有显式传入 `--enable-cgroup` 时，
+本节 `[Runtime]` 配置才会生效；Kubernetes 和 systemd 部署应使用各自的资源管理配置。
+
 ```toml
 # Log Configuration
 [Log]

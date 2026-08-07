@@ -21,7 +21,7 @@ docker run --detach \
   --cgroupns=host \
   --network=host \
   --cpus=2 \
-  --memory=4g \
+  --memory=2g \
   --volume /sys:/sys \
   --volume /proc:/proc \
   --volume /run:/run \
@@ -30,8 +30,9 @@ docker run --detach \
 
 > 注意：容器内置的默认配置不会连接 kubelet 和 Elasticsearch。
 
-生产环境应限制 CPU 和内存，避免异常采集任务影响宿主机业务。`4 GiB` 容器
-内存上限为默认的 `2048 MiB` 进程上限预留运行时空间，降低 OOM 风险。
+生产环境应限制 CPU 和内存，避免异常采集任务影响宿主机业务。Docker 的容器 cgroup
+负责资源限制；Huatuo 默认不创建自身 cgroup，也不要在 Docker 部署中传入
+`--enable-cgroup`。
 
 通过以下命令确认限制已经生效，并观察实际使用量：
 
