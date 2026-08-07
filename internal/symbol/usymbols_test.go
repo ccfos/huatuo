@@ -129,6 +129,15 @@ func TestNewUsymResolver(t *testing.T) {
 	if resolver.exeCache == nil || resolver.libcaches == nil || resolver.procmaps == nil {
 		t.Errorf("NewUsymResolver(): caches not initialized")
 	}
+	if resolver.elfSymbolLimits != DefaultELFSymbolLimits() {
+		t.Errorf("NewUsymResolver(): got limits %+v, want defaults %+v", resolver.elfSymbolLimits, DefaultELFSymbolLimits())
+	}
+
+	customLimits := ELFSymbolLimits{MaxMetadataBytes: 1024, MaxSymbolCount: 32, MaxNameBytes: 512}
+	configured := NewUsymResolver(WithELFSymbolLimits(customLimits))
+	if configured.elfSymbolLimits != customLimits {
+		t.Errorf("NewUsymResolver(WithELFSymbolLimits): got %+v, want %+v", configured.elfSymbolLimits, customLimits)
+	}
 }
 
 func TestUsymResolverExePath(t *testing.T) {
@@ -247,6 +256,9 @@ func TestUsymResolverLoadElfCaches(t *testing.T) {
 		}
 		if len(resolver.exeCache) != 1 {
 			t.Errorf("loadElfCaches: got %d cache entries, want 1 (shared backing file on same xfs)", len(resolver.exeCache))
+		}
+		if len(cacheFirst.paths) != 2 {
+			t.Errorf("loadElfCaches: cached %d per-pid paths, want 2", len(cacheFirst.paths))
 		}
 	})
 }
@@ -368,6 +380,37 @@ func TestUsymStackMainElf(t *testing.T) {
 	byteFrames := resolver.UsymStackBytes(processID, []uint64{functionAddr}, 1)
 	if !slices.Equal(bytesFramesToStrings(byteFrames), []string{functionName}) {
 		t.Errorf("UsymStackBytes main ELF: got %v, want [%s]", bytesFramesToStrings(byteFrames), functionName)
+	}
+}
+
+func TestUsymResolverBatchesAndRelocatesPIEAddresses(t *testing.T) {
+	const (
+		pid      = uint32(1001)
+		baseAddr = uint64(0x70000000)
+		module   = "/usr/bin/huatuo-pie"
+	)
+	key := cacheKey{inode: 1}
+	cache := &elfCache{
+		syms:     symbols{&symbol{Addr: 0x1000, Size: 0x20, Name: "pie_func"}},
+		module:   module,
+		typ:      elf.ET_DYN,
+		resolved: make(map[uint64]string),
+	}
+	resolver := NewUsymResolver()
+	resolver.exeKeys[pid] = key
+	resolver.exeCache[key] = cache
+	resolver.procmaps[pid] = sections{&procfs.ProcMap{
+		StartAddr: uintptr(baseAddr),
+		EndAddr:   uintptr(baseAddr + 0x2000),
+		Pathname:  module,
+	}}
+
+	got := resolver.resolveAddrs(pid, []uint64{baseAddr + 0x1001, baseAddr + 0x1001})
+	if !slices.Equal(got, []string{"pie_func", "pie_func"}) {
+		t.Fatalf("resolveAddrs(PIE): got %v, want duplicate pie_func frames", got)
+	}
+	if len(cache.resolved) != 1 {
+		t.Fatalf("resolveAddrs(PIE): cached %d PCs, want one deduplicated PC", len(cache.resolved))
 	}
 }
 

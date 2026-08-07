@@ -17,8 +17,10 @@ package symbol
 import (
 	"bufio"
 	"debug/elf"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -40,6 +42,27 @@ const (
 type stackFrames struct {
 	strings []string
 	bytes   [][]byte
+}
+
+// ErrELFSymbolLimit reports that an ELF symbol source exceeded its configured budget.
+var ErrELFSymbolLimit = errors.New("ELF symbol resource limit exceeded")
+
+// ELFSymbolLimits bounds the metadata materialized while parsing one ELF.
+type ELFSymbolLimits struct {
+	MaxMetadataBytes uint64
+	MaxSymbolCount   uint64
+	MaxNameBytes     uint64
+	MaxNameLength    uint64
+}
+
+// DefaultELFSymbolLimits returns the default per-ELF symbol parsing limits.
+func DefaultELFSymbolLimits() ELFSymbolLimits {
+	return ELFSymbolLimits{
+		MaxMetadataBytes: 16 << 20,
+		MaxSymbolCount:   500_000,
+		MaxNameBytes:     16 << 20,
+		MaxNameLength:    1 << 20,
+	}
 }
 
 // symbol is the unified symbol descriptor shared by all resolvers.
@@ -220,29 +243,252 @@ func scanKallsyms(path string, capacity int) (symbols, error) {
 	return syms, scanner.Err()
 }
 
-// elfSymbols extracts all STT_FUNC entries from .dynsym and .symtab.
-func elfSymbols(f *elf.File) symbols {
-	syms := symbols{}
-	type section struct {
-		name  string
-		fetch func() ([]elf.Symbol, error)
+type elfSymbolSource struct {
+	name string
+	typ  elf.SectionType
+}
+
+type elfSymbolParseState struct {
+	limits           ELFSymbolLimits
+	metadataBytes    uint64
+	symbolCount      uint64
+	nameBytes        uint64
+	metadataSections map[*elf.Section]struct{}
+	names            map[*elf.Section]map[uint32]string
+}
+
+func newELFSymbolParseState(limits ELFSymbolLimits) *elfSymbolParseState {
+	return &elfSymbolParseState{
+		limits:           limits,
+		metadataSections: make(map[*elf.Section]struct{}),
+		names:            make(map[*elf.Section]map[uint32]string),
 	}
-	for _, s := range []section{{"dynsym", f.DynamicSymbols}, {"symtab", f.Symbols}} {
-		elfsyms, err := s.fetch()
-		if err != nil {
-			log.Infof("symbol: %s not available in %s: %v", s.name, f.FileHeader.Type, err)
+}
+
+func elfSymbolSourceSections(f *elf.File, source elfSymbolSource) (*elf.Section, *elf.Section, error) {
+	section := f.SectionByType(source.typ)
+	if section == nil {
+		return nil, nil, elf.ErrNoSymbols
+	}
+	if section.Link == 0 || section.Link >= uint32(len(f.Sections)) {
+		return nil, nil, fmt.Errorf("symbol section has invalid string table link %d", section.Link)
+	}
+	stringsSection := f.Sections[section.Link]
+	if stringsSection.Type != elf.SHT_STRTAB {
+		return nil, nil, fmt.Errorf("symbol section links to %s instead of SHT_STRTAB", stringsSection.Type)
+	}
+	return section, stringsSection, nil
+}
+
+func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSource, pcs ...uint64) (symbols, error) {
+	section, stringsSection, err := elfSymbolSourceSections(f, source)
+	if err != nil {
+		return nil, err
+	}
+
+	var symbolSize uint64
+	switch f.Class {
+	case elf.ELFCLASS32:
+		symbolSize = elf.Sym32Size
+	case elf.ELFCLASS64:
+		symbolSize = elf.Sym64Size
+	default:
+		return nil, fmt.Errorf("unsupported ELF class %s", f.Class)
+	}
+
+	if section.Size == 0 || section.Size%symbolSize != 0 {
+		return nil, fmt.Errorf("symbol section size %d is not a non-zero multiple of %d", section.Size, symbolSize)
+	}
+	// The first symbol is the required all-zero entry and is not returned.
+	symbolCount := section.Size/symbolSize - 1
+	remainingSymbols := state.limits.MaxSymbolCount - state.symbolCount
+	if symbolCount > remainingSymbols {
+		return nil, fmt.Errorf("%w: %d symbols exceed the remaining limit of %d", ErrELFSymbolLimit, symbolCount, remainingSymbols)
+	}
+
+	var metadataBytes uint64
+	for _, candidate := range []*elf.Section{section, stringsSection} {
+		if _, loaded := state.metadataSections[candidate]; loaded {
 			continue
 		}
-		before := len(syms)
-		for _, sym := range elfsyms {
-			if elf.ST_TYPE(sym.Info) == elf.STT_FUNC {
-				syms = append(syms, &symbol{Addr: sym.Value, Size: sym.Size, Name: sym.Name})
-			}
+		remainingMetadata := state.limits.MaxMetadataBytes - state.metadataBytes - metadataBytes
+		if candidate.Size > remainingMetadata {
+			return nil, fmt.Errorf("%w: metadata exceeds the remaining %d-byte limit", ErrELFSymbolLimit, remainingMetadata)
 		}
-		log.Infof("symbol: %s extracted %d func symbols", s.name, len(syms)-before)
+		metadataBytes += candidate.Size
+	}
+
+	// Do not use File.Symbols or File.DynamicSymbols here. debug/elf expands
+	// every symbol name before callers can filter by type, so repeated offsets
+	// can multiply a bounded string table into unbounded allocations.
+	data, err := section.Data()
+	if err != nil {
+		return nil, fmt.Errorf("load symbol section: %w", err)
+	}
+	if uint64(len(data)) != section.Size {
+		return nil, fmt.Errorf("ELF section data size differs from its declared size")
+	}
+
+	sharedNames := state.names[stringsSection]
+	localNames := make(map[uint32]string)
+	var nameBytes uint64
+	type candidate struct {
+		nameOffset uint32
+		value      uint64
+		size       uint64
+	}
+	candidates := make(map[uint64]candidate, len(pcs))
+	allSymbols := len(pcs) == 0
+	result := make(symbols, 0, len(pcs))
+	for offset := symbolSize; offset < uint64(len(data)); offset += symbolSize {
+		entry := data[offset : offset+symbolSize]
+		var nameOffset uint32
+		var info byte
+		var value, size uint64
+		if f.Class == elf.ELFCLASS32 {
+			nameOffset = f.ByteOrder.Uint32(entry[0:4])
+			value = uint64(f.ByteOrder.Uint32(entry[4:8]))
+			size = uint64(f.ByteOrder.Uint32(entry[8:12]))
+			info = entry[12]
+		} else {
+			nameOffset = f.ByteOrder.Uint32(entry[0:4])
+			info = entry[4]
+			value = f.ByteOrder.Uint64(entry[8:16])
+			size = f.ByteOrder.Uint64(entry[16:24])
+		}
+		if elf.ST_TYPE(info) != elf.STT_FUNC {
+			continue
+		}
+		if !allSymbols {
+			for _, pc := range pcs {
+				if value <= pc {
+					if current, ok := candidates[pc]; !ok || value > current.value {
+						candidates[pc] = candidate{nameOffset: nameOffset, value: value, size: size}
+					}
+				}
+			}
+			continue
+		}
+		candidates[uint64(len(candidates))] = candidate{nameOffset: nameOffset, value: value, size: size}
+	}
+
+	for pc, matched := range candidates {
+		if !allSymbols && matched.size != 0 && pc >= matched.value+matched.size {
+			// Keep the unnamed floor candidate so a lower symbol from another
+			// table cannot incorrectly resolve this PC.
+			result = append(result, &symbol{Addr: matched.value, Size: matched.size})
+			continue
+		}
+		name, ok := sharedNames[matched.nameOffset]
+		if !ok {
+			name, ok = localNames[matched.nameOffset]
+		}
+		if !ok {
+			if uint64(matched.nameOffset) >= stringsSection.Size {
+				return nil, fmt.Errorf("symbol name offset %d exceeds string table size %d", matched.nameOffset, stringsSection.Size)
+			}
+			remainingNames := state.limits.MaxNameBytes - state.nameBytes - nameBytes
+			maxNameLength := state.limits.MaxNameLength
+			if maxNameLength == 0 || maxNameLength > remainingNames {
+				maxNameLength = remainingNames
+			}
+			name, err = readELFSymbolName(stringsSection, matched.nameOffset, maxNameLength)
+			if err != nil {
+				return nil, err
+			}
+			localNames[matched.nameOffset] = name
+			nameBytes += uint64(len(name))
+		}
+		result = append(result, &symbol{Addr: matched.value, Size: matched.size, Name: name})
+	}
+
+	state.metadataBytes += metadataBytes
+	state.symbolCount += symbolCount
+	state.nameBytes += nameBytes
+	state.metadataSections[section] = struct{}{}
+	state.metadataSections[stringsSection] = struct{}{}
+	if sharedNames == nil {
+		sharedNames = make(map[uint32]string, len(localNames))
+		state.names[stringsSection] = sharedNames
+	}
+	for offset, name := range localNames {
+		sharedNames[offset] = name
+	}
+	return result, nil
+}
+
+func readELFSymbolName(section *elf.Section, offset uint32, limit uint64) (string, error) {
+	if limit >= math.MaxInt64 {
+		return "", fmt.Errorf("%w: symbol name limit is too large", ErrELFSymbolLimit)
+	}
+	reader := section.Open()
+	if _, err := reader.Seek(int64(offset), io.SeekStart); err != nil {
+		return "", fmt.Errorf("seek symbol name at offset %d: %w", offset, err)
+	}
+	available := section.Size - uint64(offset)
+	readLimit := min(available, limit+1)
+	bufferSize := int(min(readLimit, 4096))
+	name, err := bufio.NewReaderSize(io.LimitReader(reader, int64(readLimit)), bufferSize).ReadBytes(0)
+	if len(name) > 0 && name[len(name)-1] == 0 {
+		return string(name[:len(name)-1]), nil
+	}
+	if uint64(len(name)) > limit {
+		return "", fmt.Errorf("%w: symbol name at offset %d exceeds the %d-byte limit", ErrELFSymbolLimit, offset, limit)
+	}
+	return "", fmt.Errorf("symbol name at offset %d is not NUL-terminated: %w", offset, err)
+}
+
+func elfSymbolsFromSources(f *elf.File, sources []elfSymbolSource, limits ELFSymbolLimits) (symbols, error) {
+	syms := symbols{}
+	state := newELFSymbolParseState(limits)
+	var limitErrors []error
+	for _, source := range sources {
+		sourceSymbols, err := state.parseSource(f, source)
+		if err != nil {
+			if errors.Is(err, ErrELFSymbolLimit) {
+				limitErrors = append(limitErrors, fmt.Errorf("%s: %w", source.name, err))
+			} else {
+				log.Infof("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
+			}
+			continue
+		}
+		syms = append(syms, sourceSymbols...)
+		log.Infof("symbol: %s extracted %d func symbols", source.name, len(sourceSymbols))
 	}
 	syms.sort()
-	return syms
+	return syms, errors.Join(limitErrors...)
+}
+
+// elfSymbols extracts all STT_FUNC entries from .dynsym and .symtab. Version
+// metadata is intentionally not parsed because the resolver only consumes the
+// symbol name, address, and size.
+func elfSymbols(f *elf.File, limits ELFSymbolLimits) (symbols, error) {
+	return elfSymbolsFromSources(f, []elfSymbolSource{
+		{name: "dynsym", typ: elf.SHT_DYNSYM},
+		{name: "symtab", typ: elf.SHT_SYMTAB},
+	}, limits)
+}
+
+// elfSymbolsForPCs scans bounded symbol metadata but materializes names only
+// for the symbols that cover the requested ELF-relative PCs.
+func elfSymbolsForPCs(f *elf.File, pcs []uint64, limits ELFSymbolLimits) (symbols, error) {
+	syms := symbols{}
+	state := newELFSymbolParseState(limits)
+	var limitErrors []error
+	for _, source := range []elfSymbolSource{{name: "dynsym", typ: elf.SHT_DYNSYM}, {name: "symtab", typ: elf.SHT_SYMTAB}} {
+		sourceSymbols, err := state.parseSource(f, source, pcs...)
+		if err != nil {
+			if errors.Is(err, ErrELFSymbolLimit) {
+				limitErrors = append(limitErrors, fmt.Errorf("%s: %w", source.name, err))
+			} else {
+				log.Infof("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
+			}
+			continue
+		}
+		syms = append(syms, sourceSymbols...)
+	}
+	syms.sort()
+	return syms, errors.Join(limitErrors...)
 }
 
 // backedPaths is the set of pseudo-paths in /proc/<pid>/maps with no ELF symbols.
