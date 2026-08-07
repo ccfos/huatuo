@@ -20,9 +20,15 @@ import (
 	"testing"
 	"time"
 
+	"huatuo-bamai/internal/profiler"
 	profctx "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
+	"huatuo-bamai/internal/toolstream"
 )
+
+type pipelineProfileEvent struct {
+	TracerData *profctx.TracerData `json:"tracer_data"`
+}
 
 func TestNewPipeline_DoesNotMutateContext(t *testing.T) {
 	pctx := &profctx.ProfilerContext{}
@@ -200,4 +206,91 @@ func TestPipelineAggregateAndExport_EmptyFormatter(t *testing.T) {
 	}
 
 	aggr.AssertNotCalled(t, "Reset")
+}
+
+func TestPipelineAggregateAndSnapshotInjectsCollectionDimensionLabels(t *testing.T) {
+	sockPath := t.TempDir() + "/toolstream.sock"
+	server, err := toolstream.NewServer(sockPath)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	events := make(chan pipelineProfileEvent, 1)
+	toolstream.Register(
+		server,
+		"profiler",
+		func(_ *toolstream.Session, event pipelineProfileEvent) error {
+			events <- event
+			return nil
+		},
+	)
+	if err := server.Start(); err != nil {
+		t.Fatalf("server.Start() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Errorf("server.Close() error = %v", err)
+		}
+	})
+
+	client, err := toolstream.NewClient(toolstream.ClientOptions{
+		SockPath: sockPath,
+		ToolName: "profiler",
+		Version:  "1",
+		TaskID:   "profile-label-test",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	t.Cleanup(client.End)
+
+	data, err := profiler.ParseTree(
+		time.Unix(1, 0),
+		profiler.ProfileTypeCpuSample,
+		[]*profiler.TreeItem{{Stack: [][]byte{[]byte("work")}, Value: 1}},
+		&profiler.ParseOption{SampleRate: 99},
+	)
+	if err != nil {
+		t.Fatalf("ParseTree() error = %v", err)
+	}
+
+	pctx := &profctx.ProfilerContext{
+		Ctx:              t.Context(),
+		PIDs:             []int{42},
+		ThreadGroup:      true,
+		OutputFormat:     output.FormatRemote,
+		TracerID:         "profile-label-test",
+		ToolstreamClient: client,
+	}
+	aggr := NewMockAggregator(t)
+	aggr.On("Snapshot", pctx).Return(data, nil).Once()
+	aggr.On("Reset").Once()
+	pipeline := NewPipeline(pctx, aggr)
+
+	if err := pipeline.aggregateAndSnapshot(t.Context(), false); err != nil {
+		t.Fatalf("aggregateAndSnapshot() error = %v", err)
+	}
+
+	select {
+	case event := <-events:
+		flameData := event.TracerData.FlameData
+		if got := flameData.Labels[profiler.LabelProfilingScope]; got != "thread_group" {
+			t.Fatalf("profiling_scope = %q, want thread_group", got)
+		}
+		if got := flameData.Labels[profiler.LabelTGID]; got != "42" {
+			t.Fatalf("tgid = %q, want 42", got)
+		}
+		if len(flameData.Profile.Sample) != 1 {
+			t.Fatalf("samples = %d, want 1", len(flameData.Profile.Sample))
+		}
+		got := make(map[string]string)
+		for _, label := range flameData.Profile.Sample[0].Label {
+			got[flameData.Profile.StringTable[label.Key]] = flameData.Profile.StringTable[label.Str]
+		}
+		if got[profiler.LabelProfilingScope] != "thread_group" ||
+			got[profiler.LabelTGID] != "42" {
+			t.Fatalf("sample labels = %#v", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for profiling event")
+	}
 }
