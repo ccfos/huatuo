@@ -99,9 +99,20 @@ func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, container *pod.Co
 	}
 
 	// allow statistics 0
-	deltaTotalTime := stat.Usage - cache.lastUsage.Usage
-	deltaUsrTime := stat.User - cache.lastUsage.User
-	deltaSysTime := stat.System - cache.lastUsage.System
+	var deltaTotalTime, deltaUsrTime, deltaSysTime uint64
+
+	if stat.Usage >= cache.lastUsage.Usage {
+		deltaTotalTime = stat.Usage - cache.lastUsage.Usage
+	}
+
+	if stat.User >= cache.lastUsage.User {
+		deltaUsrTime = stat.User - cache.lastUsage.User
+	}
+
+	if stat.System >= cache.lastUsage.System {
+		deltaSysTime = stat.System - cache.lastUsage.System
+	}
+
 	deltaRealWorldTime := numCores * float64(now.Sub(cache.lastTimestamp).Microseconds())
 
 	if (float64(deltaTotalTime) > deltaRealWorldTime) || (float64(deltaUsrTime+deltaSysTime) > deltaRealWorldTime) {
