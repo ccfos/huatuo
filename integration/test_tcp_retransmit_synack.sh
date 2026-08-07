@@ -32,10 +32,10 @@ C_ADDR="10.99.3.2"
 require_python3
 
 cleanup() {
-	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2>/dev/null || true
-	[[ -n "${SRV_PID:-}" ]] && kill "${SRV_PID}" 2>/dev/null || true
+	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true
+	[[ -n "${SRV_PID:-}" ]] && kill "${SRV_PID}" 2> /dev/null || true
 	sleep 0.2
-	[[ -n "${TCPSHARK_PID:-}" ]] && kill -9 "${TCPSHARK_PID}" 2>/dev/null || true
+	[[ -n "${TCPSHARK_PID:-}" ]] && kill -9 "${TCPSHARK_PID}" 2> /dev/null || true
 	tcp_namespace_cleanup
 	rm -rf "${OUTPUT_DIR}"
 }
@@ -47,7 +47,7 @@ tcp_namespace_setup synack "${S_ADDR}" "${C_ADDR}"
 
 # 1. Hold a listening socket while the kernel handles the 3-way handshake.
 ip netns exec "${TCP_NS_SERVER}" timeout 8 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
-	--listen-address "${TCP_NS_SERVER_ADDR}" --port "${TEST_PORT}" >/dev/null 2>&1 &
+	--listen-address "${TCP_NS_SERVER_ADDR}" --port "${TEST_PORT}" > /dev/null 2>&1 &
 SRV_PID=$!
 sleep 0.5
 
@@ -59,30 +59,30 @@ ip netns exec "${TCP_NS_CLIENT}" iptables -I OUTPUT 1 -p tcp --dport "${TEST_POR
 log_info "iptables: DROP pure ACK (dport=${TEST_PORT})"
 
 # 3. Start tcpshark in retransmit mode.
-"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --duration 8 --output json >"${OUTPUT_DIR}/events.json" 2>"${OUTPUT_DIR}/stderr.log" &
+"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --duration 8 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 sleep 1
 
 # 4. Client connects: SYN → server, SYNACK → client, ACK → dropped.
 timeout 3 ip netns exec "${TCP_NS_CLIENT}" bash -c \
-	"exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}" 2>/dev/null || true
+	"exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}" 2> /dev/null || true
 
 # 5. Wait for SYNACK retransmissions (initial RTO ~1s, exponential backoff).
 sleep 5
 
-kill "${TCPSHARK_PID}" 2>/dev/null || true
+kill "${TCPSHARK_PID}" 2> /dev/null || true
 sleep 0.3
 TCPSHARK_PID=""
 
 # Filter events for our test port (server-side tcp_sport).
-grep "\"tcp_sport\":${TEST_PORT}" "${OUTPUT_DIR}/events.json" >"${OUTPUT_DIR}/filtered.json" 2>/dev/null || true
+grep "\"tcp_sport\":${TEST_PORT}" "${OUTPUT_DIR}/events.json" > "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true
 
-RAW_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/events.json" 2>/dev/null || true)
+RAW_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/events.json" 2> /dev/null || true)
 RAW_COUNT=${RAW_COUNT:-0}
-PORT_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
+PORT_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 PORT_COUNT=${PORT_COUNT:-0}
 
-SYNACK_COUNT=$(grep -c '"event_type":"tcp_retransmit_synack"' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
+SYNACK_COUNT=$(grep -c '"event_type":"tcp_retransmit_synack"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 SYNACK_COUNT=${SYNACK_COUNT:-0}
 
 log_info "captured retransmit events: raw=${RAW_COUNT}, tcp_sport=${TEST_PORT}: ${PORT_COUNT}"
@@ -99,7 +99,7 @@ else
 fi
 
 if ((SYNACK_COUNT == 0)); then
-	cat "${OUTPUT_DIR}/events.json" 2>/dev/null || true
-	cat "${OUTPUT_DIR}/stderr.log" 2>/dev/null || true
+	cat "${OUTPUT_DIR}/events.json" 2> /dev/null || true
+	cat "${OUTPUT_DIR}/stderr.log" 2> /dev/null || true
 	fatal "synack test failed"
 fi
