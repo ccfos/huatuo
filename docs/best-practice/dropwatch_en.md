@@ -15,7 +15,7 @@ HUATUO is an OS-level deep observability project open-sourced by DiDi and incuba
 
 ## Overview
 
-dropwatch is a kernel network drop observability tool provided by HUATUO. It attaches to the kernel tracepoint `tracepoint/skb/kfree_skb` to capture network drop events in real time, and outputs the full drop context: protocol type, IP five-tuple, process name, PID, network device, MAC address, and the complete kernel call stack that triggered the drop.
+dropwatch observes software drops through `tracepoint/skb/kfree_skb` and hardware drops reported by capable drivers through `raw_tracepoint/devlink_trap_report`. It outputs protocol fields, the IP tuple, network device, drop reason, and kernel stack.
 
 dropwatch supports kernel-side filtering based on tcpdump-style filter expressions. The filter logic is compiled into eBPF bytecode at load time by the built-in pure-Go pcap compiler `internal/pcapfilter`. Filtering is performed entirely in kernel mode — only matching packets are reported to user space, reducing performance impact on the host.
 
@@ -169,6 +169,8 @@ dropwatch [flags]
 
 `--filter` and device filtering are orthogonal; when both are specified, both apply (AND semantics). If neither `--device` nor `--device-excluded` is specified, all devices are collected. `--device` and `--device-excluded` are mutually exclusive; whitelist mode drops SKBs without a `net_device`, while blacklist mode passes them.
 
+At startup, dropwatch detects `devlink:devlink_trap_report`. When supported, it loads both software and hardware drop probes. Otherwise, it logs a warning and loads only the software drop probe. Hardware collection also requires a driver that registers devlink drop traps and a target trap whose action is `trap`. With action `drop`, hardware sends no packet copy to the CPU, so dropwatch cannot inspect it.
+
 #### Examples
 
 ```bash
@@ -212,7 +214,10 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 | ------------------------ | -------- | ------------------------------------------------------------- |
 | `observed_timestamp`     | string   | UTC userspace receive/format time (RFC3339Nano), not the kernel hook timestamp |
 | `type`                   | string   | Reserved TCP type; currently unset (`1` common, `2` SYN flood, `3`/`4` listen overflow) |
-| `drop_reason`            | string   | Kernel `skb_drop_reason` name resolved from BTF; numeric fallback, or `NOT_SUPPORTED` when unavailable |
+| `drop_source`            | string   | Drop source: `software` or `hardware`                         |
+| `drop_reason`            | string   | `skb_drop_reason` for software or the devlink trap name for hardware |
+| `drop_reason_group`      | string   | Devlink trap group; empty for software drops                  |
+| `drop_location`          | string   | Software `kfree_skb` call site; empty for hardware drops      |
 | `source`                 | string   | Event source; `tools` for standalone dropwatch and `events` when launched by huatuo-bamai |
 | `comm`                   | string   | Process name at the time of the drop                          |
 | `pid`                    | uint64   | Process TGID                                                  |

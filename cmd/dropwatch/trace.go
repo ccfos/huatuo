@@ -58,8 +58,19 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 	}
 
 	bpfLimiter := bpf.NewRateLimiter("dropwatch", options.maxEventsPerSecond)
+	hardwareDropSupported, err := detectHardwareDropSupport()
+	if err != nil {
+		return fmt.Errorf("detect hardware drop support: %w", err)
+	}
+	if !hardwareDropSupported {
+		log.Warn("devlink trap tracepoint unsupported; hardware drop tracing disabled")
+	}
 	bpfObj, err := loadDropwatchBPF(
-		options.bpfPath, options.filterExpression, netdevFilter.mode, bpfLimiter,
+		options.bpfPath,
+		options.filterExpression,
+		netdevFilter.mode,
+		bpfLimiter,
+		hardwareDropSupported,
 	)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)

@@ -18,20 +18,31 @@
 #include "bpf_abi.h"
 
 #define DROPWATCH_PACKET_RAW_LEN 120
+#define DROPWATCH_TRAP_NAME_LEN 64
+
+enum dropwatch_drop_source {
+	DROPWATCH_DROP_SOURCE_UNKNOWN = 0,
+	DROPWATCH_DROP_SOURCE_SOFTWARE,
+	DROPWATCH_DROP_SOURCE_HARDWARE,
+};
 
 struct dropwatch_packet_meta {
 	u64 ktime_ns;
 	u64 tgid_pid;
 	u64 netns_cookie;
-	u64 kfree_skb_addr;
+	u64 skb_addr;
+	u64 drop_location;
 	u64 memcg_css_addr;
 	u32 ifindex;
 	u32 dev_flags;
 	u32 queue_mapping;
 	u32 drop_reason;
 	u32 netns_inum;
+	u32 drop_source;
 	u8 dev_name[IFNAMSIZ];
 	u8 comm[COMPAT_TASK_COMM_LEN];
+	u8 trap_name[DROPWATCH_TRAP_NAME_LEN];
+	u8 trap_group_name[DROPWATCH_TRAP_NAME_LEN];
 };
 
 struct dropwatch_packet_raw {
@@ -54,5 +65,6 @@ struct dropwatch_packet_event {
 BPF_ABI_EXPORT(dropwatch_packet_meta);
 BPF_ABI_EXPORT(dropwatch_packet_raw);
 BPF_ABI_EXPORT(dropwatch_packet_event);
+BPF_ABI_EXPORT_ENUM(dropwatch_drop_source);
 
 #endif /* __BPF_ABI_DROPWATCH_H__ */

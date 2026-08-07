@@ -15,7 +15,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 ## 📖 概述
 
-dropwatch 是 HUATUO 提供的内核网络丢包观测工具。它通过挂载内核 Tracepoint `tracepoint/skb/kfree_skb` 实时采集网络丢包事件，输出完整的丢包上下文：协议类型、IP 五元组、进程名、PID、网络设备、MAC 地址，以及触发丢包的完整内核调用栈。
+dropwatch 是 HUATUO 提供的网络丢包观测工具。它通过 `tracepoint/skb/kfree_skb` 采集软件丢包，并通过 `raw_tracepoint/devlink_trap_report` 采集支持 devlink trap 的硬件丢包，输出协议类型、IP 五元组、网络设备、丢包原因和内核调用栈。
 
 dropwatch 支持基于 tcpdump 风格过滤表达式的内核侧过滤，过滤逻辑由内置的纯 Go pcap 编译器 `internal/pcapfilter` 在加载时编译为 eBPF 字节码，过滤完全在内核态执行，只有匹配的数据包才会上报到用户空间，降低对宿主机的性能影响。
 
@@ -170,6 +170,8 @@ dropwatch [flags]
 
 `--filter` 与设备过滤相互正交，同时指定时两者均生效（AND 语义）。不指定 `--device` / `--device-excluded` 时采集所有设备。`--device` 和 `--device-excluded` 不能同时使用；白名单模式会丢弃没有 `net_device` 的 SKB，黑名单模式会放行没有 `net_device` 的 SKB。
 
+dropwatch 启动时自动检测 `devlink:devlink_trap_report`。内核支持时同时加载软硬件丢包探针；不支持时记录 warning 并仅加载软件丢包探针。硬件丢包采集还要求网卡驱动注册 devlink drop trap，并将目标 trap action 配置为 `trap`。action 为 `drop` 时硬件不会向 CPU 提供报文副本，dropwatch 无法获取报文。
+
 #### 常用命令
 
 ```bash
@@ -213,7 +215,10 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'd
 | ------------------------ | -------- | --------------------------------------------- |
 | `observed_timestamp`     | string   | 用户态接收/格式化事件时生成的 UTC 时间（RFC3339Nano），不是内核 hook 时间 |
 | `type`                   | string   | 预留 TCP 事件类型，当前未设置（`1` 普通丢包、`2` SYN flood、`3`/`4` listen overflow） |
-| `drop_reason`            | string   | 通过 BTF 解析的内核 `skb_drop_reason` 名称；无法解析时为数值，内核不支持时为 `NOT_SUPPORTED` |
+| `drop_source`            | string   | 丢包来源：`software` 或 `hardware`             |
+| `drop_reason`            | string   | 软件丢包为 `skb_drop_reason`；硬件丢包为 devlink trap 名称 |
+| `drop_reason_group`      | string   | devlink trap 原因分组；软件丢包为空             |
+| `drop_location`          | string   | 软件 `kfree_skb` 调用位置；硬件丢包为空         |
 | `source`                 | string   | 事件来源；独立运行 dropwatch 时为 `tools`，由 huatuo-bamai 启动时为 `events` |
 | `comm`                   | string   | 丢包时的进程名                                |
 | `pid`                    | uint64   | 进程 TGID                                     |

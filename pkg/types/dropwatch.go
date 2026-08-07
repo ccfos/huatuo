@@ -29,7 +29,10 @@ import (
 type DropWatchTracing struct {
 	ObservedTimestamp   string         `json:"observed_timestamp"`
 	Type                string         `json:"type,omitempty"`
+	DropSource          string         `json:"drop_source"`
 	DropReason          string         `json:"drop_reason"`
+	DropReasonGroup     string         `json:"drop_reason_group,omitempty"`
+	DropLocation        string         `json:"drop_location,omitempty"`
 	Source              string         `json:"source,omitempty"`
 	Comm                string         `json:"comm"`
 	Pid                 uint64         `json:"pid"`

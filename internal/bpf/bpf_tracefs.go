@@ -16,8 +16,11 @@ package bpf
 
 import (
 	"bufio"
+	"errors"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -30,6 +33,10 @@ var (
 	kprobeFunctionFiles = []string{
 		"/sys/kernel/tracing/available_filter_functions",
 		"/sys/kernel/debug/tracing/available_filter_functions",
+	}
+	traceFSRoots = []string{
+		"/sys/kernel/tracing",
+		"/sys/kernel/debug/tracing",
 	}
 )
 
@@ -80,4 +87,22 @@ func HasKprobeFunction(name string) bool {
 
 	_, ok := kprobeCache[name]
 	return ok
+}
+
+// TracepointAvailable reports whether tracefs exposes the tracepoint event.
+func TracepointAvailable(group, name string) (bool, error) {
+	var statErrors []error
+	for _, root := range traceFSRoots {
+		path := filepath.Join(root, "events", group, name, "id")
+		_, err := os.Stat(path)
+		switch {
+		case err == nil:
+			return true, nil
+		case errors.Is(err, os.ErrNotExist):
+			continue
+		default:
+			statErrors = append(statErrors, fmt.Errorf("check tracepoint %q: %w", path, err))
+		}
+	}
+	return false, errors.Join(statErrors...)
 }

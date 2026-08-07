@@ -62,6 +62,24 @@ func dumpPrograms(t *testing.T, spec *ebpf.CollectionSpec, prefix string) {
 	}
 }
 
+func TestExcludeProgramSections(t *testing.T) {
+	t.Parallel()
+
+	spec := &ebpf.CollectionSpec{Programs: map[string]*ebpf.ProgramSpec{
+		"software": {SectionName: "tracepoint/skb/kfree_skb"},
+		"hardware": {SectionName: "raw_tracepoint/devlink_trap_report"},
+	}}
+
+	excludeProgramSections(spec, []string{"raw_tracepoint/devlink_trap_report"})
+
+	if _, ok := spec.Programs["hardware"]; ok {
+		t.Fatal("hardware program was not excluded")
+	}
+	if _, ok := spec.Programs["software"]; !ok {
+		t.Fatal("software program was excluded")
+	}
+}
+
 func TestApply(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("Skipping: requires root")
