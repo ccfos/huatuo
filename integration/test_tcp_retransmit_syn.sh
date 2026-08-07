@@ -31,9 +31,9 @@ C_ADDR="10.99.2.2"
 [[ -f "${BPF_OBJ}" ]] || fatal "BPF object not found: ${BPF_OBJ}"
 
 cleanup() {
-	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2>/dev/null || true
+	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true
 	sleep 0.2
-	[[ -n "${TCPSHARK_PID:-}" ]] && kill -9 "${TCPSHARK_PID}" 2>/dev/null || true
+	[[ -n "${TCPSHARK_PID:-}" ]] && kill -9 "${TCPSHARK_PID}" 2> /dev/null || true
 	tcp_namespace_cleanup
 	rm -rf "${OUTPUT_DIR}"
 }
@@ -46,29 +46,29 @@ tcp_namespace_setup syn "${S_ADDR}" "${C_ADDR}"
 # Drop SYN packets in the peer namespace so the client enters TCP RTO retry.
 ip netns exec "${TCP_NS_SERVER}" iptables -I INPUT 1 -p tcp --dport "${TEST_PORT}" -j DROP
 
-"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --duration 6 --output json >"${OUTPUT_DIR}/events.json" 2>"${OUTPUT_DIR}/stderr.log" &
+"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --duration 6 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 sleep 1
 
 timeout 7 ip netns exec "${TCP_NS_CLIENT}" bash -c \
-	"exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}" 2>/dev/null || true
+	"exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}" 2> /dev/null || true
 sleep 1
 
-kill "${TCPSHARK_PID}" 2>/dev/null || true
+kill "${TCPSHARK_PID}" 2> /dev/null || true
 sleep 0.3
 TCPSHARK_PID=""
 
 # Filter events for our test port (active-open destination tcp_dport).
-grep "\"tcp_dport\":${TEST_PORT}" "${OUTPUT_DIR}/events.json" >"${OUTPUT_DIR}/filtered.json" 2>/dev/null || true
+grep "\"tcp_dport\":${TEST_PORT}" "${OUTPUT_DIR}/events.json" > "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true
 
-RAW_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/events.json" 2>/dev/null || true)
+RAW_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/events.json" 2> /dev/null || true)
 RAW_COUNT=${RAW_COUNT:-0}
-PORT_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
+PORT_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 PORT_COUNT=${PORT_COUNT:-0}
 
-SYN_COUNT=$(grep '"phase":"connect"' "${OUTPUT_DIR}/filtered.json" 2>/dev/null |
-	grep '"tcp_reason":"RTO"' |
-	grep -c '"event_type":"tcp_retransmit_skb"' || true)
+SYN_COUNT=$(grep '"phase":"connect"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null \
+	| grep '"tcp_reason":"RTO"' \
+	| grep -c '"event_type":"tcp_retransmit_skb"' || true)
 SYN_COUNT=${SYN_COUNT:-0}
 
 log_info "captured retransmit events: raw=${RAW_COUNT}, tcp_dport=${TEST_PORT}: ${PORT_COUNT}"
@@ -85,7 +85,7 @@ else
 fi
 
 if ((SYN_COUNT == 0)); then
-	cat "${OUTPUT_DIR}/events.json" 2>/dev/null || true
-	cat "${OUTPUT_DIR}/stderr.log" 2>/dev/null || true
+	cat "${OUTPUT_DIR}/events.json" 2> /dev/null || true
+	cat "${OUTPUT_DIR}/stderr.log" 2> /dev/null || true
 	fatal "EXP1 failed"
 fi

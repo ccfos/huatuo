@@ -41,9 +41,9 @@ fi
 require_python3
 
 cleanup() {
-	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2>/dev/null || true
-	[[ -n "${SRV_PID:-}" ]] && kill "${SRV_PID}" 2>/dev/null || true
-	[[ -n "${CLI_PID:-}" ]] && kill "${CLI_PID}" 2>/dev/null || true
+	[[ -n "${TCPSHARK_PID:-}" ]] && kill "${TCPSHARK_PID}" 2> /dev/null || true
+	[[ -n "${SRV_PID:-}" ]] && kill "${SRV_PID}" 2> /dev/null || true
+	[[ -n "${CLI_PID:-}" ]] && kill "${CLI_PID}" 2> /dev/null || true
 	tcp_namespace_cleanup
 }
 trap cleanup EXIT
@@ -69,10 +69,10 @@ ip netns exec "${TCP_NS_CLIENT}" iptables -I INPUT 1 -p tcp --sport "${TEST_PORT
 log_info "connbytes rule: drop reply packet #30 in client netns"
 
 # 3. Start tcpshark in retransmit mode in the root netns (sees all netns traffic via BPF).
-"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --duration 15 --output json >"${OUTPUT_DIR}/events.json" 2>"${OUTPUT_DIR}/stderr.log" &
+"${TCPSHARK_BIN}" --mode retransmit --bpf-path "${BPF_OBJ}" --duration 15 --output json > "${OUTPUT_DIR}/events.json" 2> "${OUTPUT_DIR}/stderr.log" &
 TCPSHARK_PID=$!
 sleep 1
-if ! kill -0 "${TCPSHARK_PID}" 2>/dev/null; then
+if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
 	TCPSHARK_STATUS=0
 	wait "${TCPSHARK_PID}" || TCPSHARK_STATUS=$?
 	TCPSHARK_PID=""
@@ -82,18 +82,18 @@ fi
 # 4. Server: listen and send 2 MB of data.
 ip netns exec "${TCP_NS_SERVER}" timeout 10 python3 "${ROOT_DIR}/integration/testdata/tcp_server.py" \
 	--listen-address "${TCP_NS_SERVER_ADDR}" --port "${TEST_PORT}" \
-	--payload-bytes "${PAYLOAD_SIZE}" >/dev/null 2>&1 &
+	--payload-bytes "${PAYLOAD_SIZE}" > /dev/null 2>&1 &
 SRV_PID=$!
 sleep 0.5
 
 # 5. Client: connect and receive data to /dev/null.
-ip netns exec "${TCP_NS_CLIENT}" timeout 8 bash -c "exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2>/dev/null &
+ip netns exec "${TCP_NS_CLIENT}" timeout 8 bash -c "exec 3<>/dev/tcp/${TCP_NS_SERVER_ADDR}/${TEST_PORT}; cat <&3 >/dev/null" 2> /dev/null &
 CLI_PID=$!
 
 # 6. Wait for data transfer + fast retransmit (3 dup ACKs are fast on veth).
 sleep 10
 
-if ! kill -0 "${TCPSHARK_PID}" 2>/dev/null; then
+if ! kill -0 "${TCPSHARK_PID}" 2> /dev/null; then
 	TCPSHARK_STATUS=0
 	wait "${TCPSHARK_PID}" || TCPSHARK_STATUS=$?
 	TCPSHARK_PID=""
@@ -104,20 +104,20 @@ wait "${TCPSHARK_PID}" || true
 TCPSHARK_PID=""
 
 # Filter events for our test port (server-side tcp_sport).
-grep "\"tcp_sport\":${TEST_PORT}" "${OUTPUT_DIR}/events.json" >"${OUTPUT_DIR}/filtered.json" 2>/dev/null || true
+grep "\"tcp_sport\":${TEST_PORT}" "${OUTPUT_DIR}/events.json" > "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true
 
-RAW_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/events.json" 2>/dev/null || true)
+RAW_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/events.json" 2> /dev/null || true)
 RAW_COUNT=${RAW_COUNT:-0}
-PORT_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
+PORT_COUNT=$(grep -c '"event_type":' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 PORT_COUNT=${PORT_COUNT:-0}
 
-FAST_COUNT=$(grep -c '"tcp_reason":"fast_retransmit"' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
+FAST_COUNT=$(grep -c '"tcp_reason":"fast_retransmit"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 FAST_COUNT=${FAST_COUNT:-0}
-REORDER_FAST=$(grep -c '"tcp_reason":"reorder_prone_fast"' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
+REORDER_FAST=$(grep -c '"tcp_reason":"reorder_prone_fast"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 REORDER_FAST=${REORDER_FAST:-0}
-RECOVERY=$(grep -c '"ca_state":3' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
+RECOVERY=$(grep -c '"ca_state":3' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 RECOVERY=${RECOVERY:-0}
-RTO_COUNT=$(grep -c '"tcp_reason":"RTO"' "${OUTPUT_DIR}/filtered.json" 2>/dev/null || true)
+RTO_COUNT=$(grep -c '"tcp_reason":"RTO"' "${OUTPUT_DIR}/filtered.json" 2> /dev/null || true)
 RTO_COUNT=${RTO_COUNT:-0}
 
 log_info "captured retransmit events: raw=${RAW_COUNT}, tcp_sport=${TEST_PORT}: ${PORT_COUNT}"

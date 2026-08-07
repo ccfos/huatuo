@@ -56,7 +56,7 @@ compile_user_fixture \
 	"${SLOW_TCP_SERVER}"
 
 ip netns exec "${TCP_NS_SERVER}" "${SLOW_TCP_SERVER}" \
-	>"${WORK_DIR}/testserver.log" 2>&1 &
+	> "${WORK_DIR}/testserver.log" 2>&1 &
 server_pid=$!
 _server_pid="${server_pid}"
 sleep 0.5
@@ -65,7 +65,7 @@ for i in $(seq 1 5); do
 	log_info "curl request #${i} to ${TCP_NS_SERVER_ADDR}:${TEST_PORT}"
 	ip netns exec "${TCP_NS_CLIENT}" curl -s --connect-timeout 1 --max-time 2 \
 		http://${TCP_NS_SERVER_ADDR}:${TEST_PORT}/ \
-		>>"${WORK_DIR}/curl.log" 2>&1 || true
+		>> "${WORK_DIR}/curl.log" 2>&1 || true
 done
 
 sleep 5
@@ -76,9 +76,9 @@ EVENTS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/events/net_rx_latency"
 # Filter events matching our veth IP pair, then validate.
 MATCHED=$(jq -s --arg saddr "${TCP_NS_CLIENT_ADDR}" --arg daddr "${TCP_NS_SERVER_ADDR}" \
 	'[.[] | select(.tracer_data.tcp_saddr == $saddr and .tracer_data.tcp_daddr == $daddr)]' \
-	"${EVENTS_FILE}" 2>/dev/null)
+	"${EVENTS_FILE}" 2> /dev/null)
 
-event_count=$(echo "${MATCHED}" | jq 'length' 2>/dev/null || echo 0)
+event_count=$(echo "${MATCHED}" | jq 'length' 2> /dev/null || echo 0)
 event_count=$(echo "${event_count}" | tr -d '[:space:]')
 log_info "net_rx_latency events (${TCP_NS_CLIENT_ADDR} -> ${TCP_NS_SERVER_ADDR}): ${event_count}"
 
@@ -88,4 +88,4 @@ fi
 
 log_info "net_rx_latency integration test passed: ${event_count} events"
 log_info "event details:"
-echo "${MATCHED}" | jq '.' 2>/dev/null || echo "${MATCHED}"
+echo "${MATCHED}" | jq '.' 2> /dev/null || echo "${MATCHED}"

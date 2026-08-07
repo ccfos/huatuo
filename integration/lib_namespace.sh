@@ -49,6 +49,6 @@ tcp_namespace_setup() {
 }
 
 tcp_namespace_cleanup() {
-	[[ -z "${TCP_NS_SERVER}" ]] || ip netns del "${TCP_NS_SERVER}" 2>/dev/null || true
-	[[ -z "${TCP_NS_CLIENT}" ]] || ip netns del "${TCP_NS_CLIENT}" 2>/dev/null || true
+	[[ -z "${TCP_NS_SERVER}" ]] || ip netns del "${TCP_NS_SERVER}" 2> /dev/null || true
+	[[ -z "${TCP_NS_CLIENT}" ]] || ip netns del "${TCP_NS_CLIENT}" 2> /dev/null || true
 }
