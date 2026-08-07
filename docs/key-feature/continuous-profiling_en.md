@@ -219,9 +219,14 @@ CPU profiling supports `oncpu` and `offcpu` for `c`, `c++`, and `go`;
 | `hostname` | Yes | Hostname of the node running the target process; used for job scheduling |
 | `container_id` | No | Target container ID; omit it to profile the host |
 | `binary_match_path` | No | Executable path matcher for Java/Python CPU profiling; native profiling does not support it |
+| `binary_tool_path` | For Java/Python | Profiler installation directory on the target Agent; native profiling rejects it |
 | `memory_mode` | For memory profiling | Memory profiling mode; it must be supported by `language` |
 
 `duration_seconds` must cover at least two `aggregation_interval_seconds` periods, and their sum must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
+
+For Java, `binary_tool_path` is the async-profiler installation root
+containing `bin/asprof` and `lib/libasyncProfiler.so`. For Python, it is the
+directory containing `py-spy`.
 
 Create a Go CPU profiling job on a host:
 
@@ -250,6 +255,7 @@ curl -sS -i \
     "type": "memory",
     "language": "java",
     "memory_mode": "object_usage",
+    "binary_tool_path": "/opt/async-profiler",
     "duration_seconds": 60,
     "container_id": "9f4c2f1a8b7d",
     "hostname": "node-01"
@@ -322,6 +328,7 @@ The `data` object contains the job details:
 | `language` | Target process language |
 | `memory_mode` | Memory profiling mode; omitted for CPU jobs |
 | `binary_match_path` | Executable path matcher; omitted when unused |
+| `binary_tool_path` | Java/Python profiler installation directory; omitted when unused |
 | `status` | Current job status |
 | `duration_seconds` | Requested profiling duration in seconds |
 | `created_at` | Job creation time |
