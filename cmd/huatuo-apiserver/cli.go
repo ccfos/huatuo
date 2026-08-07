@@ -28,22 +28,22 @@ import (
 )
 
 const (
-	cliFlagConfig        = "config"
-	cliFlagConfigDir     = "config-dir"
-	cliFlagEnablePProf   = "enable-pprof"
-	cliFlagDisableCgroup = "disable-cgroup"
-	cliFlagLogDebug      = "log-debug"
+	cliFlagConfig       = "config"
+	cliFlagConfigDir    = "config-dir"
+	cliFlagEnablePProf  = "enable-pprof"
+	cliFlagEnableCgroup = "enable-cgroup"
+	cliFlagLogDebug     = "log-debug"
 )
 
 // Options holds CLI-derived configuration independently of urfave/cli.
 type Options struct {
-	ConfigFile    string
-	ConfigDir     string
-	EnablePProf   bool
-	DisableCgroup bool
-	LogDebug      bool
-	VersionInfo   version.Info
-	Config        *config.Config
+	ConfigFile   string
+	ConfigDir    string
+	EnablePProf  bool
+	EnableCgroup bool
+	LogDebug     bool
+	VersionInfo  version.Info
+	Config       *config.Config
 }
 
 func buildCommand(seed version.Seed) *cli.App {
@@ -89,8 +89,8 @@ func (o *Options) AddFlags(app *cli.App) {
 			Usage: "package pprof serves via its HTTP server runtime profiling data, default(false)",
 		},
 		&cli.BoolFlag{
-			Name:  cliFlagDisableCgroup,
-			Usage: "disable self cgroup resource limit",
+			Name:  cliFlagEnableCgroup,
+			Usage: "enable self cgroup resource limit",
 		},
 		&cli.BoolFlag{
 			Name:  cliFlagLogDebug,
@@ -103,7 +103,7 @@ func (o *Options) AddFlags(app *cli.App) {
 func (o *Options) FromContext(ctx *cli.Context) error {
 	o.ConfigFile = ctx.String(cliFlagConfig)
 	o.EnablePProf = ctx.Bool(cliFlagEnablePProf)
-	o.DisableCgroup = ctx.Bool(cliFlagDisableCgroup)
+	o.EnableCgroup = ctx.Bool(cliFlagEnableCgroup)
 	o.LogDebug = ctx.Bool(cliFlagLogDebug)
 
 	var err error

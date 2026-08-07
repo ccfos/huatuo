@@ -82,7 +82,6 @@ integration_huatuo_bamai_start \
 	--region dev \
 	--procfs-prefix "${IOTRACING_FIXTURE_ROOT}" \
 	--disable-kubelet \
-	--disable-cgroup \
 	--log-debug
 
 # Hold each counter value across a five-second sampling tick. Two consecutive

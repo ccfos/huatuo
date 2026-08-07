@@ -26,14 +26,14 @@ ProtectHome=true
 
 # Resource limits
 LimitNOFILE=65536
-LimitNPROC=32768
 
-# Disable cgroup resource management
-Delegate=yes
-MemoryAccounting=false
-CPUAccounting=false
-BlockIOAccounting=false
-TasksAccounting=false
+CPUAccounting=yes
+CPUQuota=200%
+MemoryAccounting=yes
+MemoryMax=2G
+TasksAccounting=yes
+TasksMax=32768
+KillMode=control-group
 
 [Install]
 WantedBy=multi-user.target

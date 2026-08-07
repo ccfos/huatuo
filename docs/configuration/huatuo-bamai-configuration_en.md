@@ -60,6 +60,8 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 ### 4. Runtime Resource Limits
 
+Huatuo does not create its own cgroup by default. This section applies only when `--enable-cgroup` is passed; Kubernetes and systemd deployments should use their native resource controls.
+
 ```bash
 # Runtime limits for the huatuo-bamai process.
 [Runtime]
@@ -1073,7 +1075,7 @@ huatuo-bamai --region <region> [options]
 | `--region` | Deployment region (required) | - |
 | `--disable-kubelet` | Disable kubelet Pod fetching | `false` |
 | `--disable-storage` | Disable storage backends | `false` |
-| `--disable-cgroup` | Disable self cgroup resource limits | `false` |
+| `--enable-cgroup` | Enable self cgroup resource limits (disabled by default) | `false` |
 | `--disable-tracing` | Disable specified tracing modules (may be repeated) | - |
 | `--log-debug` | Force log level to Debug | `false` |
 | `--dry-run` | Load-only test; exit gracefully after startup | `false` |
@@ -1094,12 +1096,13 @@ Specific rules:
 
 2. **Tracing blacklist**: `--disable-tracing` is merged with the configuration file `BlackList` (they complement each other rather than override).
 
-3. **Other boolean switches** (`--disable-kubelet`, `--disable-storage`, `--disable-cgroup`): When explicitly set on the command line, they override the configuration file.
+3. **Other boolean switches** (`--disable-kubelet`, `--disable-storage`): When explicitly set on the command line, they override the configuration file.
 
 ### 13. Best Practices and Important Notes
 
-- **Resource Control**: In production, tune CPU and memory limits under
-  `[Runtime]` to avoid impacting business containers.
+- **Resource Control**: Kubernetes uses Pod resources and systemd uses service limits.
+  Use `--enable-cgroup` and `[Runtime]` only for direct execution without an
+  external manager.
 - **Storage Choice**: For small-scale deployments, prefer [Storage.LocalFile] for local troubleshooting. For large clusters, configure Elasticsearch for centralized storage and querying.
 - **AutoTracing Tuning**: Adjust thresholds based on workload characteristics. Thresholds that are too low cause frequent triggering; thresholds that are too high may miss issues. Validate gradually in a test environment.
 - **Security**: Use strong passwords for ES configuration and consider enabling HTTPS. Avoid hard-coding sensitive information in the configuration file.

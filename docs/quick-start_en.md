@@ -114,8 +114,8 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 
 - Resource Limits
 
-    To ensure host stability, configure startup and steady-state limits:
-    ```yaml
+    Kubernetes and systemd deployments let kubelet or systemd manage Huatuo cgroups by default, so Huatuo does not migrate its own PID. For direct execution without an external manager, pass `--enable-cgroup` and configure:
+    ```toml
     [Runtime]
         StartupCPULimitCores = 0.5
         CPULimitCores = 2.0

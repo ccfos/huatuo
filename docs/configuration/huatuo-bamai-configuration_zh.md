@@ -64,6 +64,8 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 ### 4. 运行时资源限制
 
+默认不创建 Huatuo 自身 cgroup。只有显式传入 `--enable-cgroup` 时，本节配置才会生效；Kubernetes 和 systemd 部署应使用各自的资源管理配置。
+
 ```bash
 # Runtime limits for the huatuo-bamai process.
 [Runtime]
@@ -1090,7 +1092,7 @@ huatuo-bamai --region <region> [选项]
 | `--region` | 部署区域（必填） | - |
 | `--disable-kubelet` | 禁用 kubelet Pod 获取 | `false` |
 | `--disable-storage` | 禁用存储后端 | `false` |
-| `--disable-cgroup` | 禁用自身 cgroup 资源限制 | `false` |
+| `--enable-cgroup` | 启用自身 cgroup 资源限制（默认关闭） | `false` |
 | `--disable-tracing` | 禁用指定追踪模块（可多次指定） | - |
 | `--log-debug` | 强制设置日志级别为 Debug | `false` |
 | `--dry-run` | 仅加载测试，启动后优雅退出 | `false` |
@@ -1111,11 +1113,11 @@ huatuo-bamai --region <region> [选项]
 
 2. **追踪黑名单**：`--disable-tracing` 与配置文件 `BlackList` 合并（两者互补，非覆盖）
 
-3. **其他布尔开关**（`--disable-kubelet`、`--disable-storage`、`--disable-cgroup`）：命令行显式设置时覆盖配置文件
+3. **其他布尔开关**（`--disable-kubelet`、`--disable-storage`）：命令行显式设置时覆盖配置文件
 
 ### 13. 配置最佳实践与注意事项
 
-- **资源控制**：生产环境优先调整 `[Runtime]` 中的 CPU 和内存限制，避免影响业务容器。
+- **资源控制**：Kubernetes 使用 Pod resources，systemd 使用 service 的资源限制。只有直接运行且没有外部管理器时，才使用 `--enable-cgroup` 和 [Runtime]。
 - **存储选择**：小规模部署可优先使用 LocalFile 进行本地排查；大规模集群推荐配置 Elasticsearch 实现集中存储与查询。
 - **自动追踪调优**：根据业务负载特征调整阈值，过低阈值会导致频繁触发，过高则可能遗漏问题。建议在测试环境逐步验证。
 - **安全性**：ES 配置中请使用强密码，并考虑启用 HTTPS；避免在配置文件中硬编码敏感信息。
