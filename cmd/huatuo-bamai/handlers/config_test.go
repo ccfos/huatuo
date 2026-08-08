@@ -54,6 +54,34 @@ Log = { Level = "Info" }
 	}
 }
 
+func TestConfigHandlerRejectsRequestAtomically(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+
+	if err := config.Load(writeConfig(t, `
+Log = { Level = "Info" }
+`)); err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	engine := httpGin.New()
+	server.NewRoot(engine, "").PUT("/config", NewConfigHandler().update)
+
+	req := httptest.NewRequest(http.MethodPut, "/config", bytes.NewBufferString(
+		`{"config":{"Log.Level":"Debug","NotExist":1}}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if config.Get().Log.Level != "Info" {
+		t.Errorf("Log.Level = %q, want rejected request to leave it unchanged", config.Get().Log.Level)
+	}
+}
+
 func writeConfig(t *testing.T, content string) string {
 	t.Helper()
 
