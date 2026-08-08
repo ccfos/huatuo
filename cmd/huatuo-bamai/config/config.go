@@ -24,6 +24,7 @@ import (
 	"huatuo-bamai/core/events"
 	collector "huatuo-bamai/core/metrics"
 	internalconfig "huatuo-bamai/internal/config"
+	"huatuo-bamai/internal/matcher"
 )
 
 // LogConfig controls process logging.
@@ -130,6 +131,12 @@ func (c *BamaiConfig) Validate() error {
 	}
 	if err := c.Pod.Validate(); err != nil {
 		return fmt.Errorf("validating pod config: %w", err)
+	}
+	if err := matcher.ValidateClassifications(c.AutoTracing.IssuesList); err != nil {
+		return fmt.Errorf("validating autotracing issues list: %w", err)
+	}
+	if err := matcher.ValidateClassifications(c.EventTracing.IssuesList); err != nil {
+		return fmt.Errorf("validating event tracing issues list: %w", err)
 	}
 	return nil
 }

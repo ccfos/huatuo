@@ -271,6 +271,20 @@ func TestBamaiConfigValidate(t *testing.T) {
 			},
 			wantErr: "kubelet read-only port",
 		},
+		{
+			name: "invalid autotracing issue expression",
+			mutate: func(cfg *BamaiConfig) {
+				cfg.AutoTracing.IssuesList = [][]string{{"broken", "["}}
+			},
+			wantErr: "validating autotracing issues list",
+		},
+		{
+			name: "invalid event tracing issue shape",
+			mutate: func(cfg *BamaiConfig) {
+				cfg.EventTracing.IssuesList = [][]string{{"missing-expression"}}
+			},
+			wantErr: "validating event tracing issues list",
+		},
 	}
 
 	for _, tt := range tests {
@@ -282,6 +296,18 @@ func TestBamaiConfigValidate(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want contain %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsInvalidIssuesListExpression(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[EventTracing]
+IssuesList = [["broken", "["]]
+`)
+	err := Load(path)
+	if err == nil || !strings.Contains(err.Error(),
+		`rule 0 "broken" has invalid regular expression "["`) {
+		t.Fatalf("Load() error = %v, want actionable expression error", err)
 	}
 }
 
