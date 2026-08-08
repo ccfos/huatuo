@@ -43,6 +43,14 @@ type Config struct {
 		ExcludedContainerQos     []string
 	}
 
+	NetTxLatency struct {
+		Sendmsg2Qdisc            uint64 `default:"50"`
+		Qdisc2DevXmit            uint64 `default:"10"`
+		DevXmit2Nic              uint64 `default:"1"`
+		ExcludedHostNetnamespace bool   `default:"true"`
+		ExcludedContainerQos     []string
+	}
+
 	Dropwatch struct {
 		Filter             string `default:"tcp"`
 		MaxEventsPerSecond uint64 `default:"100"`
@@ -102,6 +110,7 @@ func (c *Config) Clone() *Config {
 
 	dst := *c
 	dst.NetRxLatency.ExcludedContainerQos = slices.Clone(c.NetRxLatency.ExcludedContainerQos)
+	dst.NetTxLatency.ExcludedContainerQos = slices.Clone(c.NetTxLatency.ExcludedContainerQos)
 	dst.Dropwatch.ExcludeContainers = slices.Clone(c.Dropwatch.ExcludeContainers)
 	dst.Netdev.DeviceList = slices.Clone(c.Netdev.DeviceList)
 	dst.IssuesList = slices.Clone(c.IssuesList)
