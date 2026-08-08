@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 package handlers
 
 import (
+	"errors"
 	"math"
 	"net/http"
 	"reflect"
@@ -47,6 +48,7 @@ func (h *ConfigHandler) update(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
+	updates := make(map[string]any, len(req.Config))
 	for k, v := range req.Config {
 		if reflect.ValueOf(v).Kind() == reflect.Float64 {
 			f := v.(float64)
@@ -55,14 +57,15 @@ func (h *ConfigHandler) update(ctx *server.Context) error {
 			}
 			v = int64(f)
 		}
-		if err := config.Set(k, v); err != nil {
-			return response.ErrInvalidRequest.WithMessage(err.Error())
-		}
+		updates[k] = v
 	}
 
-	if err := config.Sync(); err != nil {
-		log.Warnf("config sync error: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+	if err := config.Update(updates); err != nil {
+		if errors.Is(err, config.ErrPersistence) {
+			log.Warnf("config sync error: %v", err)
+			return response.ErrInternal.WithMessage(err.Error())
+		}
+		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
 	ctx.Status(http.StatusNoContent)

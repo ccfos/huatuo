@@ -15,6 +15,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -374,5 +375,73 @@ ExcludedOnContainer = "writeback"
 	}
 	if !strings.Contains(string(raw), "MemoryLimitMiB = 2048") {
 		t.Errorf("synced config should preserve the public memory unit, got %s", string(raw))
+	}
+}
+
+func TestUpdateRejectsPartialChanges(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Log]
+Level = "Info"
+`)
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	err := Update(map[string]any{
+		"Log.Level": "Debug",
+		"NotExist":  int64(1),
+	})
+	if err == nil {
+		t.Fatal("Update() error = nil, want invalid field error")
+	}
+	if Get().Log.Level != "Info" {
+		t.Errorf("Log.Level = %q, want unchanged value %q", Get().Log.Level, "Info")
+	}
+
+	raw, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("read config: %v", readErr)
+	}
+	if strings.Contains(string(raw), "Debug") {
+		t.Errorf("persisted config contains rejected update: %s", raw)
+	}
+}
+
+func TestUpdateRejectsInvalidCombinedConfig(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Log]
+Level = "Info"
+`)
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	err := Update(map[string]any{"Log.Level": "Verbose"})
+	if err == nil {
+		t.Fatal("Update() error = nil, want validation error")
+	}
+	if Get().Log.Level != "Info" {
+		t.Errorf("Log.Level = %q, want unchanged value %q", Get().Log.Level, "Info")
+	}
+}
+
+func TestUpdatePersistenceFailureDoesNotPublish(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Log]
+Level = "Info"
+`)
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	originalConfigFile := configFile
+	t.Cleanup(func() { configFile = originalConfigFile })
+	configFile = filepath.Join(t.TempDir(), "missing", "huatuo-bamai.conf")
+	err := Update(map[string]any{"Log.Level": "Debug"})
+	if !errors.Is(err, ErrPersistence) {
+		t.Fatalf("Update() error = %v, want ErrPersistence", err)
+	}
+	if Get().Log.Level != "Info" {
+		t.Errorf("Log.Level = %q, want persistence failure to leave it unchanged", Get().Log.Level)
 	}
 }

@@ -19,11 +19,14 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 
 	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/core/events"
 	collector "huatuo-bamai/core/metrics"
 	internalconfig "huatuo-bamai/internal/config"
+
+	"github.com/pelletier/go-toml"
 )
 
 // LogConfig controls process logging.
@@ -93,10 +96,17 @@ var (
 	configFile = ""
 	cfg        = &BamaiConfig{}
 	Region     string
+	updateMu   sync.Mutex
 )
+
+// ErrPersistence identifies failures that occur while saving a staged update.
+var ErrPersistence = errors.New("persist configuration")
 
 // Load loads the config file and updates module level configs.
 func Load(path string) error {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+
 	loaded := &BamaiConfig{}
 	if err := internalconfig.Load(path, loaded); err != nil {
 		return err
@@ -212,16 +222,71 @@ func Get() *BamaiConfig {
 
 // Set updates a config field by dot-separated key.
 func Set(key string, val any) error {
-	if err := internalconfig.Set(cfg, key, val); err != nil {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+
+	updated, err := stageUpdates(map[string]any{key: val})
+	if err != nil {
 		return err
 	}
+	cfg = updated
+	setCoreModuleConfig()
+	return nil
+}
+
+// Update validates and persists a complete configuration change before making
+// it visible to runtime modules.
+func Update(values map[string]any) error {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+
+	updated, err := stageUpdates(values)
+	if err != nil {
+		return err
+	}
+	if err := internalconfig.Sync(configFile, updated); err != nil {
+		return fmt.Errorf("%w: %w", ErrPersistence, err)
+	}
+
+	cfg = updated
 	setCoreModuleConfig()
 	return nil
 }
 
 // Sync writes the config back to the current config file.
 func Sync() error {
+	updateMu.Lock()
+	defer updateMu.Unlock()
+
 	return internalconfig.Sync(configFile, cfg)
+}
+
+func stageUpdates(values map[string]any) (*BamaiConfig, error) {
+	updated, err := cloneConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("clone configuration: %w", err)
+	}
+	for key, value := range values {
+		if err := internalconfig.Set(updated, key, value); err != nil {
+			return nil, err
+		}
+	}
+	if err := updated.Validate(); err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func cloneConfig(src *BamaiConfig) (*BamaiConfig, error) {
+	data, err := toml.Marshal(src)
+	if err != nil {
+		return nil, err
+	}
+	cloned := &BamaiConfig{}
+	if err := toml.Unmarshal(data, cloned); err != nil {
+		return nil, err
+	}
+	return cloned, nil
 }
 
 func setCoreModuleConfig() {
