@@ -34,6 +34,14 @@ type Config struct {
 		ExcludedContainerQos     []string
 	}
 
+	NetTxLatency struct {
+		Sendmsg2Qdisc            uint64 `default:"50"`
+		Qdisc2DevXmit            uint64 `default:"10"`
+		DevXmit2Nic              uint64 `default:"1"`
+		ExcludedHostNetnamespace bool   `default:"true"`
+		ExcludedContainerQos     []string
+	}
+
 	Dropwatch struct {
 		Filter             string `default:"tcp"`
 		MaxEventsPerSecond uint64 `default:"100"`
