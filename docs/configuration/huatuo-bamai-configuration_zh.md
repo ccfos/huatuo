@@ -200,7 +200,22 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 **整体说明**：ES/OS 存储用于持久化内核追踪和事件数据，便于后续检索与分析。如果用户不关心 Linux 内核事件、Autotracing 数据则可以关闭该配置。
 
-#### 6.2 本地文件存储
+#### 6.2 ClickHouse 存储
+
+ClickHouse 可通过 HTTP 接口接收追踪文档。请预先创建数据库，HUATUO 会自动创建 MergeTree 表。当前该后端作为事件写入端使用；HUATUO 的交互式任务与性能剖析查询仍使用 Elasticsearch/OpenSearch。
+
+```toml
+[Storage.ClickHouse]
+    Address = "http://127.0.0.1:8123"
+    Username = "default"
+    Password = "REPLACE_WITH_PASSWORD"
+    Database = "default"
+    Table = "huatuo_bamai"
+```
+
+将 `Address` 留空即可禁用该后端。`Database` 和 `Table` 必须是普通的 ClickHouse 标识符。
+
+#### 6.3 本地文件存储
 
 ```bash
 # LocalFile Storage

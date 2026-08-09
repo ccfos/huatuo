@@ -68,6 +68,21 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 		tracingMetadataStores = append(tracingMetadataStores, localFileStore)
 	}
 
+	if cfg.Storage.ClickHouse.Enabled() {
+		clickHouseStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
+			Driver:             "clickhouse",
+			ClickHouseAddress:  cfg.Storage.ClickHouse.Address,
+			ClickHouseUsername: cfg.Storage.ClickHouse.Username,
+			ClickHousePassword: cfg.Storage.ClickHouse.Password,
+			ClickHouseDatabase: cfg.Storage.ClickHouse.Database,
+			ClickHouseTable:    cfg.Storage.ClickHouse.Table,
+		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
+		if err != nil {
+			return fmt.Errorf("new tracing document store (ClickHouse): %w", err)
+		}
+		tracingMetadataStores = append(tracingMetadataStores, clickHouseStore)
+	}
+
 	if len(tracingMetadataStores) > 0 {
 		tracing.SetTracingStore(
 			tracingMetadataStores,

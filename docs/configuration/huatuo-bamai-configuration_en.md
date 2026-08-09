@@ -201,7 +201,22 @@ idle timeout; 15–60 seconds is typical.
 
 **Overall**: ES/OS storage persists kernel tracing and event data for later search and analysis.
 
-#### 6.2 Local File Storage
+#### 6.2 ClickHouse Storage
+
+ClickHouse can receive tracing documents through its HTTP interface. Configure an existing database; HUATUO creates the MergeTree table automatically. The backend is currently an event sink, so interactive HUATUO task and profile queries continue to use Elasticsearch/OpenSearch.
+
+```toml
+[Storage.ClickHouse]
+    Address = "http://127.0.0.1:8123"
+    Username = "default"
+    Password = "REPLACE_WITH_PASSWORD"
+    Database = "default"
+    Table = "huatuo_bamai"
+```
+
+Leave `Address` empty to disable the backend. `Database` and `Table` must be plain ClickHouse identifiers.
+
+#### 6.3 Local File Storage
 
 ```bash
 # LocalFile Storage

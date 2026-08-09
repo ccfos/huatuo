@@ -195,6 +195,37 @@ Address = "http://127.0.0.1:9200"
 	}
 }
 
+func TestLoadEnablesClickHouseConfig(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Storage.ClickHouse]
+Address = "http://127.0.0.1:8123"
+Username = "huatuo"
+Password = "secret"
+`)
+
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !Get().Storage.ClickHouse.Enabled() {
+		t.Fatal("ClickHouse is disabled with an HTTP address")
+	}
+	if Get().Storage.ClickHouse.Database != "default" || Get().Storage.ClickHouse.Table != "huatuo_bamai" {
+		t.Fatalf("ClickHouse defaults = %q.%q", Get().Storage.ClickHouse.Database, Get().Storage.ClickHouse.Table)
+	}
+}
+
+func TestLoadRejectsInvalidClickHouseConfig(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Storage.ClickHouse]
+Address = "tcp://127.0.0.1:9000"
+`)
+
+	err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "invalid ClickHouse HTTP address") {
+		t.Fatalf("Load() error = %v, want invalid ClickHouse address error", err)
+	}
+}
+
 func TestLoadRejectsLegacyKeys(t *testing.T) {
 	tests := []struct {
 		name     string
