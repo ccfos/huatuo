@@ -245,6 +245,28 @@ idle timeout; 15–60 seconds is typical.
 
   **Description**: Oldest files are automatically deleted once the limit is reached, controlling disk usage.
 
+#### 6.3 Kafka Event Sink
+
+```toml
+[Storage.Kafka]
+    # Brokers = "kafka-1.example:9092,kafka-2.example:9092"
+    # Topic = "huatuo-bamai"
+    # ClientID = "huatuo-bamai"
+```
+
+- **Brokers**: Comma-separated bootstrap brokers in `host:port` form. Kafka
+  export is disabled when this value is empty.
+- **Topic**: Destination topic. Default: `huatuo-bamai`. The topic must exist
+  before `huatuo-bamai` starts.
+- **ClientID**: Client identifier shown in Kafka broker metrics and logs.
+  Default: `huatuo-bamai`.
+
+Each tracing document is produced synchronously as one JSON record. Its
+document ID is the Kafka message key. The HUATUO collection name and string
+metadata are attached as headers prefixed with `huatuo-`. This backend is an
+export sink: querying and deleting Kafka records through HUATUO APIs is not
+supported.
+
 ### 7. Automatic Tracing
 
 The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.
