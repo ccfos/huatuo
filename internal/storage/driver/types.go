@@ -53,10 +53,11 @@ type Config struct {
 	LocalFileRotationSize int
 	LocalFileMaxRotation  int
 
-	ESAddresses []string
-	ESUsername  string
-	ESPassword  string
-	ESIndex     string
+	ESAddresses        []string
+	ESUsername         string
+	ESPassword         string
+	ESIndex            string
+	ESILMRetentionDays int
 }
 
 // Op is a storage query operator.
