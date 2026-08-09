@@ -33,8 +33,18 @@ type Store struct {
 
 // Config contains optional persistence backend settings.
 type Config struct {
+	ClickHouse    *ClickHouseConfig
 	Elasticsearch *ElasticsearchConfig
 	LocalFile     *LocalFileConfig
+}
+
+// ClickHouseConfig contains ClickHouse backend settings.
+type ClickHouseConfig struct {
+	Address  string
+	Username string
+	Password string
+	Database string
+	Table    string
 }
 
 // ElasticsearchConfig contains Elasticsearch backend settings.
@@ -55,6 +65,9 @@ type LocalFileConfig struct {
 func (c Config) validate() error {
 	if c.Elasticsearch != nil && len(c.Elasticsearch.Addresses) == 0 {
 		return errors.New("tracing store: Elasticsearch addresses are required")
+	}
+	if c.ClickHouse != nil && c.ClickHouse.Address == "" {
+		return errors.New("tracing store: ClickHouse address is required")
 	}
 	if c.LocalFile == nil {
 		return nil
@@ -98,6 +111,22 @@ func NewFromConfig(
 		}, Collection, mapper{})
 		if err != nil {
 			return nil, fmt.Errorf("new tracing document store (elasticsearch): %w", err)
+		}
+		backends = append(backends, backend)
+	}
+
+	if config.ClickHouse != nil {
+		backendConfig := config.ClickHouse
+		backend, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
+			Driver:             "clickhouse",
+			ClickHouseAddress:  backendConfig.Address,
+			ClickHouseUsername: backendConfig.Username,
+			ClickHousePassword: backendConfig.Password,
+			ClickHouseDatabase: backendConfig.Database,
+			ClickHouseTable:    backendConfig.Table,
+		}, Collection, mapper{})
+		if err != nil {
+			return nil, fmt.Errorf("new tracing document store (ClickHouse): %w", err)
 		}
 		backends = append(backends, backend)
 	}

@@ -92,6 +92,15 @@ func initStorage(
 	}()
 
 	tracingConfig := tracingstore.Config{}
+	if cfg.Storage.ClickHouse.Enabled() {
+		tracingConfig.ClickHouse = &tracingstore.ClickHouseConfig{
+			Address:  cfg.Storage.ClickHouse.Address,
+			Username: cfg.Storage.ClickHouse.Username,
+			Password: cfg.Storage.ClickHouse.Password,
+			Database: cfg.Storage.ClickHouse.Database,
+			Table:    cfg.Storage.ClickHouse.Table,
+		}
+	}
 	if cfg.Storage.Elasticsearch.Enabled() {
 		tracingConfig.Elasticsearch = &tracingstore.ElasticsearchConfig{
 			Addresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
