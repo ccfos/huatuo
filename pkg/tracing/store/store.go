@@ -39,10 +39,11 @@ type Config struct {
 
 // ElasticsearchConfig contains Elasticsearch backend settings.
 type ElasticsearchConfig struct {
-	Addresses []string
-	Username  string
-	Password  string
-	Index     string
+	Addresses        []string
+	Username         string
+	Password         string
+	Index            string
+	ILMRetentionDays int
 }
 
 // LocalFileConfig contains local file backend settings.
@@ -90,11 +91,12 @@ func NewFromConfig(
 	if config.Elasticsearch != nil {
 		backendConfig := config.Elasticsearch
 		backend, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
-			Driver:      "elasticsearch",
-			ESAddresses: backendConfig.Addresses,
-			ESUsername:  backendConfig.Username,
-			ESPassword:  backendConfig.Password,
-			ESIndex:     backendConfig.Index,
+			Driver:             "elasticsearch",
+			ESAddresses:        backendConfig.Addresses,
+			ESUsername:         backendConfig.Username,
+			ESPassword:         backendConfig.Password,
+			ESIndex:            backendConfig.Index,
+			ESILMRetentionDays: backendConfig.ILMRetentionDays,
 		}, Collection, mapper{})
 		if err != nil {
 			return nil, fmt.Errorf("new tracing document store (elasticsearch): %w", err)
