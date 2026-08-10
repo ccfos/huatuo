@@ -22,14 +22,19 @@
 #define SK_FL_TYPE_SHIFT 16
 #define SK_FL_TYPE_MASK 0xffff0000
 
-#define DEVLINK_TRAP_TYPE_DROP 0
 #define HARDWARE_DROP_DEDUP_WINDOW_NS 1000000000ULL
+
+enum devlink_trap_type___local {
+	DEVLINK_TRAP_TYPE_DROP___local,
+	DEVLINK_TRAP_TYPE_EXCEPTION___local,
+	DEVLINK_TRAP_TYPE_CONTROL___local,
+};
 
 struct devlink_trap_metadata___local {
 	const char *trap_name;
 	const char *trap_group_name;
 	struct net_device *input_dev;
-	int trap_type;
+	enum devlink_trap_type___local trap_type;
 } __attribute__((preserve_access_index));
 
 struct {
@@ -295,7 +300,8 @@ int bpf_devlink_trap_report_prog(struct bpf_raw_tracepoint_args *ctx)
 	if (!skb || !metadata)
 		return 0;
 
-	if (BPF_CORE_READ(metadata, trap_type) != DEVLINK_TRAP_TYPE_DROP)
+	if (BPF_CORE_READ(metadata, trap_type) !=
+	    DEVLINK_TRAP_TYPE_DROP___local)
 		return 0;
 
 	dev = BPF_CORE_READ(metadata, input_dev);
