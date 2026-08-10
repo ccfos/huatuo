@@ -27,8 +27,22 @@ import (
 	"strings"
 	"testing"
 
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
 )
+
+func captureSymbolLogs(t *testing.T, level string) *bytes.Buffer {
+	t.Helper()
+	originalLevel := log.GetLevel()
+	var output bytes.Buffer
+	log.SetOutput(&output)
+	log.SetLevel(level)
+	t.Cleanup(func() {
+		log.SetOutput(os.Stdout)
+		log.SetLevel(originalLevel.String())
+	})
+	return &output
+}
 
 func writeKallsymsFixture(t *testing.T, lines []string) string {
 	t.Helper()
@@ -826,6 +840,29 @@ func TestElfSymbolsForPCsLimitsSingleName(t *testing.T) {
 	got, err := elfSymbolsForPCs(f, []uint64{0x1001}, limits)
 	if !errors.Is(err, ErrELFSymbolLimit) || len(got) != 0 {
 		t.Fatalf("single-name limit: got %v, err %v; want no symbols and ErrELFSymbolLimit", got, err)
+	}
+}
+
+func TestElfSymbolsForPCsDoesNotLogMissingSourceAtInfo(t *testing.T) {
+	output := captureSymbolLogs(t, "info")
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: []byte("\x00target\x00"),
+		nameOffsets: []uint32{1},
+	})
+	limits := ELFSymbolLimits{
+		MaxMetadataBytes: 1024,
+		MaxSymbolCount:   1,
+		MaxNameBytes:     32,
+		MaxNameLength:    16,
+	}
+
+	got, err := elfSymbolsForPCs(f, []uint64{0x1001}, limits)
+	if err != nil || len(got) != 1 || got[0].Name != "target" {
+		t.Fatalf("elfSymbolsForPCs: got %v, err %v; want target", got, err)
+	}
+	if strings.Contains(output.String(), "dynsym not available") {
+		t.Fatalf("missing optional dynsym logged at info: %s", output.String())
 	}
 }
 

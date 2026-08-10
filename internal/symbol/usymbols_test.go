@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"huatuo-bamai/internal/procfs"
@@ -137,6 +138,27 @@ func TestNewUsymResolver(t *testing.T) {
 	configured := NewUsymResolver(WithELFSymbolLimits(customLimits))
 	if configured.elfSymbolLimits != customLimits {
 		t.Errorf("NewUsymResolver(WithELFSymbolLimits): got %+v, want %+v", configured.elfSymbolLimits, customLimits)
+	}
+}
+
+func TestResolveELFPCsDoesNotLogLimitsAtInfo(t *testing.T) {
+	output := captureSymbolLogs(t, "info")
+	executablePath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	resolver := NewUsymResolver(WithELFSymbolLimits(ELFSymbolLimits{
+		MaxMetadataBytes: 1,
+		MaxSymbolCount:   ^uint64(0),
+		MaxNameBytes:     1024,
+		MaxNameLength:    1024,
+	}))
+
+	if err := resolver.resolveELFPCs(executablePath, nil, make(map[uint64]string), []uint64{1}); err != nil {
+		t.Fatalf("resolveELFPCs: %v", err)
+	}
+	if strings.Contains(output.String(), "limits reached") {
+		t.Fatalf("repeated ELF limit logged above debug: %s", output.String())
 	}
 }
 

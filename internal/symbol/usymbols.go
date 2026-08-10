@@ -113,7 +113,7 @@ func (r *UsymResolver) resolveELFPCs(path string, fallback symbols, resolved map
 	defer f.Close()
 	syms, err := elfSymbolsForPCs(f, unresolved, r.elfSymbolLimits)
 	if err != nil {
-		log.Warnf("symbol: limits reached while parsing %q: %v", path, err)
+		log.Debugf("symbol: limits reached while parsing %q: %v", path, err)
 	}
 	for _, pc := range unresolved {
 		resolved[pc] = syms.resolve(pc)

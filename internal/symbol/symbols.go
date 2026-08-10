@@ -481,7 +481,7 @@ func elfSymbolsForPCs(f *elf.File, pcs []uint64, limits ELFSymbolLimits) (symbol
 			if errors.Is(err, ErrELFSymbolLimit) {
 				limitErrors = append(limitErrors, fmt.Errorf("%s: %w", source.name, err))
 			} else {
-				log.Infof("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
+				log.Debugf("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
 			}
 			continue
 		}
