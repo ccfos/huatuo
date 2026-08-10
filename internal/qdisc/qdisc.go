@@ -18,258 +18,275 @@ package qdisc
 import (
 	"errors"
 	"fmt"
-	"math"
 	"net"
-	"syscall"
 
 	"github.com/mdlayher/netlink"
 	"github.com/mdlayher/netlink/nlenc"
+	"golang.org/x/sys/unix"
 )
 
 const (
-	netlinkRoute = 0
-	rtmGetQdisc  = 38
-)
-
-// Linux rtnetlink TCA_* values used by RTM_GETQDISC messages.
-const (
-	tcaUnspec = iota
-	tcaKind
-	tcaOptions
-	tcaStats
-	tcaXStats
-	tcaRate
-	tcaFCnt
-	tcaStats2
-	tcaStab
-	// __TCA_MAX
+	tcMessageLen              = 20
+	netlinkAttributeHeaderLen = 4
+	netlinkAttributeTypeMask  = 0x3fff
+	rootParentHandle          = ^uint32(0)
 )
 
 // Nested TCA_STATS2 values defined by Linux gen_stats.h.
 const (
-	tcaStatsUnspec = iota
-	tcaStatsBasic
-	tcaStatsRateEst
-	tcaStatsQueue
-	tcaStatsApp
-	tcaStatsRateEst64
-	tcaStatsPad
-	tcaStatsBasicHardware
-	tcaStatsPacket64
-	// __TCA_STATS_MAX
+	tcaStatsBasic         = 1
+	tcaStatsQueue         = 3
+	tcaStatsBasicHardware = 7
+	tcaStatsPacket64      = 8
 )
 
-// Info contains the statistics exported for one queuing discipline.
-type Info struct {
-	IfaceName  string
-	Parent     uint32
-	Kind       string
-	Bytes      uint64
-	Packets    uint64
-	Drops      uint32
-	Requeues   uint32
-	Overlimits uint32
-	Qlen       uint32
-	Backlog    uint32
+// Stats contains the measurements for one queuing discipline.
+type Stats struct {
+	Netdev       string
+	Kind         string
+	Bytes        uint64
+	Packets      uint64
+	Parent       uint32
+	Drops        uint32
+	Requeues     uint32
+	Overlimits   uint32
+	QueueLength  uint32
+	BacklogBytes uint32
 }
 
-type stats struct {
-	bytes      uint64
-	packets    uint64
-	drops      uint32
-	requeues   uint32
-	overlimits uint32
-	qlen       uint32
-	backlog    uint32
+// IsRoot reports whether the statistics belong to a root qdisc.
+func (s *Stats) IsRoot() bool {
+	return s.Parent == rootParentHandle
 }
 
-// Get returns the queuing disciplines configured on the current network namespace.
-func Get() ([]Info, error) {
-	conn, err := netlink.Dial(netlinkRoute, nil)
+type counters struct {
+	bytes        uint64
+	packets      uint64
+	drops        uint32
+	requeues     uint32
+	overlimits   uint32
+	queueLength  uint32
+	backlogBytes uint32
+}
+
+// Read returns the queuing disciplines configured on the current network namespace.
+func Read() ([]Stats, error) {
+	conn, err := netlink.Dial(unix.NETLINK_ROUTE, nil)
 	if err != nil {
 		return nil, fmt.Errorf("dial qdisc netlink socket: %w", err)
 	}
 	defer conn.Close()
 
 	if err := conn.SetOption(netlink.GetStrictCheck, true); err != nil {
-		// silently accept ENOPROTOOPT errors when kernel is not > 4.20
-		if !errors.Is(err, syscall.ENOPROTOOPT) {
+		// Kernels before 4.20 do not implement strict netlink checks.
+		if !errors.Is(err, unix.ENOPROTOOPT) {
 			return nil, fmt.Errorf("enable qdisc netlink strict checks: %w", err)
 		}
 	}
 
 	messages, err := conn.Execute(netlink.Message{
 		Header: netlink.Header{
-			Type:  rtmGetQdisc,
+			Type:  unix.RTM_GETQDISC,
 			Flags: netlink.Request | netlink.Dump,
 		},
-		Data: make([]byte, 20),
+		Data: make([]byte, tcMessageLen),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("dump qdiscs: %w", err)
+		return nil, fmt.Errorf("dump qdisc statistics: %w", err)
 	}
 
-	ifaceNames, err := interfaceNames()
+	netdevNames, err := readNetdevNames()
 	if err != nil {
 		return nil, err
 	}
 
-	infos := make([]Info, 0, len(messages))
-	for _, message := range messages {
-		info, err := parseMessage(message, ifaceNames)
+	qdiscStats := make([]Stats, 0, len(messages))
+	for i := range messages {
+		stat, err := decodeMessage(messages[i].Data, netdevNames)
 		if err != nil {
 			return nil, err
 		}
-		infos = append(infos, info)
+		qdiscStats = append(qdiscStats, stat)
 	}
 
-	return infos, nil
+	return qdiscStats, nil
 }
 
-func interfaceNames() (map[int]string, error) {
+func readNetdevNames() (map[int]string, error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil, fmt.Errorf("list network interfaces: %w", err)
 	}
 
 	names := make(map[int]string, len(interfaces))
-	for _, iface := range interfaces {
-		names[iface.Index] = iface.Name
+	for i := range interfaces {
+		names[interfaces[i].Index] = interfaces[i].Name
 	}
 
 	return names, nil
 }
 
-func parseMessage(message netlink.Message, ifaceNames map[int]string) (Info, error) {
-	var info Info
-
-	/*
-	   struct tcmsg {
-	       unsigned char   tcm_family;
-	       unsigned char   tcm__pad1;
-	       unsigned short  tcm__pad2;
-	       int     tcm_ifindex;
-	       __u32       tcm_handle;
-	       __u32       tcm_parent;
-	       __u32       tcm_info;
-	   };
-	*/
-
-	if len(message.Data) < 20 {
-		return info, fmt.Errorf("qdisc message is short: got %d bytes", len(message.Data))
+func decodeMessage(data []byte, netdevNames map[int]string) (Stats, error) {
+	var stat Stats
+	if len(data) < tcMessageLen {
+		return stat, fmt.Errorf(
+			"qdisc message length is %d bytes, want at least %d",
+			len(data),
+			tcMessageLen,
+		)
 	}
 
-	ifaceIndex := int(nlenc.Uint32(message.Data[4:8]))
-	info.Parent = nlenc.Uint32(message.Data[12:16])
-	if info.Parent == math.MaxUint32 {
-		info.Parent = 0
-	}
+	ifindex := int(nlenc.Uint32(data[4:8]))
+	stat.Netdev = netdevNames[ifindex]
+	stat.Parent = nlenc.Uint32(data[12:16])
 
-	attributes, err := netlink.UnmarshalAttributes(message.Data[20:])
-	if err != nil {
-		return info, fmt.Errorf("unmarshal qdisc attributes: %w", err)
-	}
+	var selected counters
+	var hasStats2 bool
+	attributes := data[tcMessageLen:]
+	for len(attributes) > 0 {
+		attributeType, payload, remaining, err := nextAttribute(attributes)
+		if err != nil {
+			return stat, fmt.Errorf("decode qdisc attributes: %w", err)
+		}
+		attributes = remaining
 
-	var legacyStats *stats
-	var stats2 *stats
-	for _, attribute := range attributes {
-		switch attribute.Type {
-		case tcaKind:
-			info.Kind = nlenc.String(attribute.Data)
-		case tcaStats:
-			parsed, err := parseLegacyStats(attribute.Data)
+		switch attributeType {
+		case unix.TCA_KIND:
+			stat.Kind = nlenc.String(payload)
+		case unix.TCA_STATS:
+			legacy, err := decodeLegacyStats(payload)
 			if err != nil {
-				return info, err
+				return stat, err
 			}
-			legacyStats = &parsed
-		case tcaStats2:
-			parsed, err := parseStats2(attribute.Data)
+			if !hasStats2 {
+				selected = legacy
+			}
+		case unix.TCA_STATS2:
+			selected, err = decodeStats2(payload)
 			if err != nil {
-				return info, err
+				return stat, err
 			}
-			stats2 = &parsed
+			hasStats2 = true
 		}
 	}
 
-	if stats2 != nil {
-		applyStats(&info, *stats2)
-	} else if legacyStats != nil {
-		applyStats(&info, *legacyStats)
-	}
-	info.IfaceName = ifaceNames[ifaceIndex]
+	stat.Bytes = selected.bytes
+	stat.Packets = selected.packets
+	stat.Drops = selected.drops
+	stat.Requeues = selected.requeues
+	stat.Overlimits = selected.overlimits
+	stat.QueueLength = selected.queueLength
+	stat.BacklogBytes = selected.backlogBytes
 
-	return info, nil
+	return stat, nil
 }
 
-func parseStats2(data []byte) (stats, error) {
-	attributes, err := netlink.UnmarshalAttributes(data)
-	if err != nil {
-		return stats{}, fmt.Errorf("unmarshal qdisc statistics: %w", err)
-	}
-
-	var result stats
+func decodeStats2(attributes []byte) (counters, error) {
+	var decoded counters
 	var basicPackets uint32
 	var packets64 uint64
 	var hasPackets64 bool
 	var previousType uint16
-	for _, attribute := range attributes {
-		switch attribute.Type {
+	for len(attributes) > 0 {
+		attributeType, payload, remaining, err := nextAttribute(attributes)
+		if err != nil {
+			return counters{}, fmt.Errorf("decode qdisc statistics: %w", err)
+		}
+		attributes = remaining
+
+		switch attributeType {
 		case tcaStatsBasic:
-			if len(attribute.Data) < 12 {
-				return stats{}, fmt.Errorf("qdisc basic statistics are short: got %d bytes", len(attribute.Data))
+			if len(payload) < 12 {
+				return counters{}, fmt.Errorf(
+					"qdisc basic statistics length is %d bytes, want at least 12",
+					len(payload),
+				)
 			}
-			result.bytes = nlenc.Uint64(attribute.Data[0:8])
-			basicPackets = nlenc.Uint32(attribute.Data[8:12])
+			decoded.bytes = nlenc.Uint64(payload[0:8])
+			basicPackets = nlenc.Uint32(payload[8:12])
 		case tcaStatsQueue:
-			if len(attribute.Data) < 20 {
-				return stats{}, fmt.Errorf("qdisc queue statistics are short: got %d bytes", len(attribute.Data))
+			if len(payload) < 20 {
+				return counters{}, fmt.Errorf(
+					"qdisc queue statistics length is %d bytes, want at least 20",
+					len(payload),
+				)
 			}
-			result.qlen = nlenc.Uint32(attribute.Data[0:4])
-			result.backlog = nlenc.Uint32(attribute.Data[4:8])
-			result.drops = nlenc.Uint32(attribute.Data[8:12])
-			result.requeues = nlenc.Uint32(attribute.Data[12:16])
-			result.overlimits = nlenc.Uint32(attribute.Data[16:20])
+			decoded.queueLength = nlenc.Uint32(payload[0:4])
+			decoded.backlogBytes = nlenc.Uint32(payload[4:8])
+			decoded.drops = nlenc.Uint32(payload[8:12])
+			decoded.requeues = nlenc.Uint32(payload[12:16])
+			decoded.overlimits = nlenc.Uint32(payload[16:20])
 		case tcaStatsPacket64:
-			if len(attribute.Data) < 8 {
-				return stats{}, fmt.Errorf("qdisc 64-bit packet statistics are short: got %d bytes", len(attribute.Data))
+			if len(payload) < 8 {
+				return counters{}, fmt.Errorf(
+					"qdisc 64-bit packet statistics length is %d bytes, want at least 8",
+					len(payload),
+				)
 			}
 			if previousType == tcaStatsBasic {
-				packets64 = nlenc.Uint64(attribute.Data[0:8])
+				packets64 = nlenc.Uint64(payload[0:8])
 				hasPackets64 = true
 			}
 		}
-		previousType = attribute.Type
+		previousType = attributeType
 	}
 
-	result.packets = uint64(basicPackets)
+	decoded.packets = uint64(basicPackets)
 	if hasPackets64 {
-		result.packets = packets64
+		decoded.packets = packets64
 	}
 
-	return result, nil
+	return decoded, nil
 }
 
-func parseLegacyStats(data []byte) (stats, error) {
+func decodeLegacyStats(data []byte) (counters, error) {
 	if len(data) < 36 {
-		return stats{}, fmt.Errorf("legacy qdisc statistics are short: got %d bytes", len(data))
+		return counters{}, fmt.Errorf(
+			"legacy qdisc statistics length is %d bytes, want at least 36",
+			len(data),
+		)
 	}
 
-	return stats{
-		bytes:      nlenc.Uint64(data[0:8]),
-		packets:    uint64(nlenc.Uint32(data[8:12])),
-		drops:      nlenc.Uint32(data[12:16]),
-		overlimits: nlenc.Uint32(data[16:20]),
-		qlen:       nlenc.Uint32(data[28:32]),
-		backlog:    nlenc.Uint32(data[32:36]),
+	return counters{
+		bytes:        nlenc.Uint64(data[0:8]),
+		packets:      uint64(nlenc.Uint32(data[8:12])),
+		drops:        nlenc.Uint32(data[12:16]),
+		overlimits:   nlenc.Uint32(data[16:20]),
+		queueLength:  nlenc.Uint32(data[28:32]),
+		backlogBytes: nlenc.Uint32(data[32:36]),
 	}, nil
 }
 
-func applyStats(info *Info, stats stats) {
-	info.Bytes = stats.bytes
-	info.Packets = stats.packets
-	info.Drops = stats.drops
-	info.Requeues = stats.requeues
-	info.Overlimits = stats.overlimits
-	info.Qlen = stats.qlen
-	info.Backlog = stats.backlog
+func nextAttribute(data []byte) (uint16, []byte, []byte, error) {
+	if len(data) < netlinkAttributeHeaderLen {
+		return 0, nil, nil, fmt.Errorf(
+			"netlink attribute has %d bytes, want at least %d",
+			len(data),
+			netlinkAttributeHeaderLen,
+		)
+	}
+
+	attributeLen := int(nlenc.Uint16(data[0:2]))
+	if attributeLen < netlinkAttributeHeaderLen {
+		return 0, nil, nil, fmt.Errorf(
+			"netlink attribute length is %d bytes, want at least %d",
+			attributeLen,
+			netlinkAttributeHeaderLen,
+		)
+	}
+	if attributeLen > len(data) {
+		return 0, nil, nil, fmt.Errorf(
+			"netlink attribute length is %d bytes, only %d bytes remain",
+			attributeLen,
+			len(data),
+		)
+	}
+
+	nextOffset := (attributeLen + 3) &^ 3
+	if nextOffset > len(data) {
+		nextOffset = len(data)
+	}
+
+	attributeType := nlenc.Uint16(data[2:4]) & netlinkAttributeTypeMask
+	return attributeType, data[netlinkAttributeHeaderLen:attributeLen], data[nextOffset:], nil
 }

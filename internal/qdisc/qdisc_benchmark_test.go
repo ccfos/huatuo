@@ -18,44 +18,29 @@ import (
 	"testing"
 
 	"github.com/mdlayher/netlink"
-	"github.com/mdlayher/netlink/nlenc"
+	"golang.org/x/sys/unix"
 )
 
-var benchmarkInfo Info
+var benchmarkStats Stats
 
-func BenchmarkParseMessagePacket64(b *testing.B) {
-	basic := make([]byte, 12)
-	nlenc.PutUint64(basic[0:8], 1_024)
-	nlenc.PutUint32(basic[8:12], 767_358_010)
-	packet64 := make([]byte, 8)
-	nlenc.PutUint64(packet64, 9_357_292_602)
-	stats, err := netlink.MarshalAttributes([]netlink.Attribute{
-		{Type: tcaStatsBasic, Data: basic},
-		{Type: tcaStatsPacket64, Data: packet64},
+func BenchmarkDecodeMessagePacket64(b *testing.B) {
+	stats2 := marshalAttributes(b, []netlink.Attribute{
+		{Type: tcaStatsBasic, Data: basicStats(1_024, 767_358_010)},
+		{Type: tcaStatsPacket64, Data: uint64Stats(9_357_292_602)},
 	})
-	if err != nil {
-		b.Fatalf("marshal qdisc statistics: %v", err)
-	}
-	attrs, err := netlink.MarshalAttributes([]netlink.Attribute{
-		{Type: tcaKind, Data: []byte("mq\x00")},
-		{Type: tcaStats2, Data: stats},
+	message := qdiscMessage(b, 1, 0, []netlink.Attribute{
+		{Type: unix.TCA_KIND, Data: []byte("mq\x00")},
+		{Type: unix.TCA_STATS2, Data: stats2},
 	})
-	if err != nil {
-		b.Fatalf("marshal qdisc attributes: %v", err)
-	}
-	data := make([]byte, 20+len(attrs))
-	nlenc.PutUint32(data[4:8], 1)
-	copy(data[20:], attrs)
-	message := netlink.Message{Data: data}
-	ifaceNames := map[int]string{1: "eth0"}
+	netdevNames := map[int]string{1: "eth0"}
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		info, err := parseMessage(message, ifaceNames)
+	for b.Loop() {
+		stats, err := decodeMessage(message, netdevNames)
 		if err != nil {
-			b.Fatalf("parse qdisc message: %v", err)
+			b.Fatalf("decode qdisc message: %v", err)
 		}
-		benchmarkInfo = info
+		benchmarkStats = stats
 	}
 }

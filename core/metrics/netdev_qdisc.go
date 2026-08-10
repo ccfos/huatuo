@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,7 +27,9 @@ import (
 )
 
 type qdiscCollector struct {
-	get func() ([]qdisc.Info, error)
+	deviceMatcher *matcher.ValueMatcher
+	// Keeping rtnetlink I/O replaceable makes Update independent of host qdisc state in tests.
+	readStats func() ([]qdisc.Stats, error)
 }
 
 const metricsPerQdisc = 7
@@ -37,46 +39,94 @@ func init() {
 }
 
 func newQdiscCollector() (*tracing.EventTracingAttr, error) {
-	return &tracing.EventTracingAttr{
-		TracingData: &qdiscCollector{get: qdisc.Get},
-		Flag:        tracing.FlagMetric,
-	}, nil
-}
-
-func (c *qdiscCollector) Update() ([]*metric.Data, error) {
-	f, err := matcher.NewValueMatcher(cfg.Qdisc.DeviceIncluded, cfg.Qdisc.DeviceExcluded)
+	deviceMatcher, err := matcher.NewValueMatcher(
+		cfg.Qdisc.DeviceIncluded,
+		cfg.Qdisc.DeviceExcluded,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("qdisc device filter: %w", err)
 	}
 
-	allQdisc, err := c.get()
+	return &tracing.EventTracingAttr{
+		TracingData: &qdiscCollector{
+			deviceMatcher: deviceMatcher,
+			readStats:     qdisc.Read,
+		},
+		Flag: tracing.FlagMetric,
+	}, nil
+}
+
+func (c *qdiscCollector) Update() ([]*metric.Data, error) {
+	stats, err := c.readStats()
 	if err != nil {
-		return nil, fmt.Errorf("get qdiscs: %w", err)
+		return nil, fmt.Errorf("read qdisc statistics: %w", err)
 	}
 
-	rootQdiscs := make([]*qdisc.Info, 0)
-	for i := range allQdisc {
-		q := &allQdisc[i]
-		if !f.Match(q.IfaceName) || q.Kind == "noqueue" || q.Parent != 0 {
+	metrics := make([]*metric.Data, 0, len(stats)*metricsPerQdisc)
+	labels := map[string]string{"device": "", "kind": ""}
+	for i := range stats {
+		stat := &stats[i]
+		if !c.deviceMatcher.Match(stat.Netdev) || stat.Kind == "noqueue" || !stat.IsRoot() {
 			continue
 		}
-		rootQdiscs = append(rootQdiscs, q)
-	}
 
-	metrics := make([]*metric.Data, 0, len(rootQdiscs)*metricsPerQdisc)
-	for _, q := range rootQdiscs {
-		tags := map[string]string{"device": q.IfaceName, "kind": q.Kind}
-		metrics = append(
-			metrics,
-			metric.NewCounterData("bytes_total", float64(q.Bytes), "number of bytes sent.", tags),
-			metric.NewCounterData("packets_total", float64(q.Packets), "number of packets sent.", tags),
-			metric.NewCounterData("drops_total", float64(q.Drops), "number of packet drops.", tags),
-			metric.NewCounterData("requeues_total", float64(q.Requeues), "number of packets dequeued, not transmitted, and requeued.", tags),
-			metric.NewCounterData("overlimits_total", float64(q.Overlimits), "number of packet overlimits.", tags),
-			metric.NewGaugeData("current_queue_length", float64(q.Qlen), "number of packets currently in queue to be sent.", tags),
-			metric.NewGaugeData("backlog", float64(q.Backlog), "number of bytes currently in queue to be sent.", tags),
-		)
+		labels["device"] = stat.Netdev
+		labels["kind"] = stat.Kind
+		// Metric constructors copy labels, so one map serves the entire scrape.
+		metrics = appendQdiscMetrics(metrics, stat, labels)
 	}
 
 	return metrics, nil
+}
+
+func appendQdiscMetrics(
+	metrics []*metric.Data,
+	stat *qdisc.Stats,
+	labels map[string]string,
+) []*metric.Data {
+	return append(
+		metrics,
+		metric.NewCounterData(
+			"bytes_total",
+			float64(stat.Bytes),
+			"number of bytes sent.",
+			labels,
+		),
+		metric.NewCounterData(
+			"packets_total",
+			float64(stat.Packets),
+			"number of packets sent.",
+			labels,
+		),
+		metric.NewCounterData(
+			"drops_total",
+			float64(stat.Drops),
+			"number of packet drops.",
+			labels,
+		),
+		metric.NewCounterData(
+			"requeues_total",
+			float64(stat.Requeues),
+			"number of packets dequeued, not transmitted, and requeued.",
+			labels,
+		),
+		metric.NewCounterData(
+			"overlimits_total",
+			float64(stat.Overlimits),
+			"number of packet overlimits.",
+			labels,
+		),
+		metric.NewGaugeData(
+			"current_queue_length",
+			float64(stat.QueueLength),
+			"number of packets currently in queue to be sent.",
+			labels,
+		),
+		metric.NewGaugeData(
+			"backlog",
+			float64(stat.BacklogBytes),
+			"number of bytes currently in queue to be sent.",
+			labels,
+		),
+	)
 }
