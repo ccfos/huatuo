@@ -32,6 +32,8 @@ import (
 
 var debug = flag.Bool("debug", false, "dump pcapfilter test program details")
 
+const devlinkTrapReportSection = "raw_tracepoint/devlink_trap_report"
+
 func TestMain(m *testing.M) {
 	log.SetLevel("debug")
 
@@ -67,10 +69,10 @@ func TestExcludeProgramSections(t *testing.T) {
 
 	spec := &ebpf.CollectionSpec{Programs: map[string]*ebpf.ProgramSpec{
 		"software": {SectionName: "tracepoint/skb/kfree_skb"},
-		"hardware": {SectionName: "raw_tracepoint/devlink_trap_report"},
+		"hardware": {SectionName: devlinkTrapReportSection},
 	}}
 
-	excludeProgramSections(spec, []string{"raw_tracepoint/devlink_trap_report"})
+	excludeProgramSections(spec, []string{devlinkTrapReportSection})
 
 	if _, ok := spec.Programs["hardware"]; ok {
 		t.Fatal("hardware program was not excluded")
@@ -102,6 +104,7 @@ func TestApply(t *testing.T) {
 
 	dumpPrograms(t, specs, "Program")
 
+	excludeProgramSections(specs, []string{devlinkTrapReportSection})
 	if _, err := bpf.LoadBPFFromCollectionSpec("dropwatch-spec.o", specs, nil); err != nil {
 		t.Fatalf("load bpf: %v", err)
 	}
