@@ -62,6 +62,9 @@ func parseTcpMemory() (*tcpMemoryStat, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(values) < 3 {
+		return nil, fmt.Errorf("tcp_mem: expected at least 3 values, got %d", len(values))
+	}
 
 	stat4, err := fs.NetSockstat()
 	if err != nil {
