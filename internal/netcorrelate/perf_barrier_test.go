@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ type fakePerfBarrierBPF struct {
 	bpf.BPF
 
 	active       uint32
-	stats        [dropwatchEpochSlots][]perfEpochStats
+	stats        [dropwatchEpochSlotCount][]perfEpochStats
 	readErr      error
 	writeErr     error
 	hasActiveMap bool
@@ -75,15 +76,24 @@ func (f *fakePerfBarrierBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 		return value, nil
 	case fakeEpochStatsMapID:
 		slot := binary.NativeEndian.Uint32(key)
-		if slot >= dropwatchEpochSlots {
+		if slot >= dropwatchEpochSlotCount {
 			return nil, errors.New("invalid fake epoch")
 		}
 		value := make([]byte, len(f.stats[slot])*dropwatchEpochStatsSize)
 		for cpu, stats := range f.stats[slot] {
 			offset := cpu * dropwatchEpochStatsSize
-			binary.NativeEndian.PutUint64(value[offset:offset+8], stats.inflight)
-			binary.NativeEndian.PutUint64(value[offset+8:offset+16], stats.perfLost)
-			binary.NativeEndian.PutUint64(value[offset+16:offset+24], stats.rateLimited)
+			raw := abi.DropwatchPerfEpochStats{
+				Inflight:    stats.inflight,
+				PerfLost:    stats.perfLost,
+				RateLimited: stats.rateLimited,
+			}
+			if _, err := binary.Encode(
+				value[offset:offset+dropwatchEpochStatsSize],
+				binary.NativeEndian,
+				raw,
+			); err != nil {
+				return nil, err
+			}
 		}
 		return value, nil
 	default:

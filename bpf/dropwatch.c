@@ -50,14 +50,6 @@ struct {
 	__uint(value_size, sizeof(struct dropwatch_packet_event));
 } dropwatch_stackmap SEC(".maps");
 
-#define DROPWATCH_EPOCH_SLOTS 2
-
-struct dropwatch_epoch_stats_value {
-	u64 inflight;
-	u64 perf_lost;
-	u64 rate_limited;
-};
-
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, 1);
@@ -67,9 +59,9 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(max_entries, DROPWATCH_EPOCH_SLOTS);
+	__uint(max_entries, DROPWATCH_EPOCH_SLOT_COUNT);
 	__type(key, u32);
-	__type(value, struct dropwatch_epoch_stats_value);
+	__type(value, struct dropwatch_perf_epoch_stats);
 } dropwatch_epoch_stats SEC(".maps");
 
 struct {
@@ -94,11 +86,11 @@ static const u32 active_epoch_key = 0;
 /* Acquire the current epoch before taking event time. Rechecking after the
  * increment closes the userspace map-update race: a stale acquisition never
  * enters the event critical section. */
-static __always_inline struct dropwatch_epoch_stats_value *
+static __always_inline struct dropwatch_perf_epoch_stats *
 dropwatch_epoch_acquire(void)
 {
 	volatile u32 *active;
-	struct dropwatch_epoch_stats_value *stats;
+	struct dropwatch_perf_epoch_stats *stats;
 	u32 candidate;
 	int i;
 
@@ -108,9 +100,9 @@ dropwatch_epoch_acquire(void)
 		return NULL;
 
 #pragma unroll
-	for (i = 0; i < DROPWATCH_EPOCH_SLOTS; i++) {
+	for (i = 0; i < DROPWATCH_EPOCH_SLOT_COUNT; i++) {
 		candidate = *active;
-		if (candidate >= DROPWATCH_EPOCH_SLOTS)
+		if (candidate >= DROPWATCH_EPOCH_SLOT_COUNT)
 			return NULL;
 
 		stats = bpf_map_lookup_elem(&dropwatch_epoch_stats, &candidate);
@@ -120,7 +112,7 @@ dropwatch_epoch_acquire(void)
 		__sync_fetch_and_add(&stats->inflight, 1);
 		if (*active == candidate)
 			return stats;
-		if (i == DROPWATCH_EPOCH_SLOTS - 1)
+		if (i == DROPWATCH_EPOCH_SLOT_COUNT - 1)
 			__sync_fetch_and_add(&stats->perf_lost, 1);
 		__sync_fetch_and_sub(&stats->inflight, 1);
 	}
@@ -230,28 +222,6 @@ static inline void skb_load_packet_raw(struct sk_buff *skb,
 	pkt_raw->raw_len = DROPWATCH_PACKET_RAW_LEN;
 }
 
-static __always_inline u32 skb_l3_len(struct sk_buff *skb)
-{
-	unsigned char *head = BPF_CORE_READ(skb, head);
-	unsigned char *data = BPF_CORE_READ(skb, data);
-	u32 network_offset = BPF_CORE_READ(skb, network_header);
-	u64 data_offset;
-	u64 packet_end;
-
-	if (!head || !data || network_offset == 0xffff)
-		return 0;
-
-	data_offset = (u64)data - (u64)head;
-	packet_end = data_offset + BPF_CORE_READ(skb, len);
-	if (packet_end < network_offset ||
-	    packet_end - network_offset > 0xffffffff)
-		return 0;
-
-	/* skb->len starts at skb->data, which may precede or follow the network
-	 * header depending on the drop point. */
-	return packet_end - network_offset;
-}
-
 static __always_inline bool
 dropwatch_skip_hardware_duplicate(struct sk_buff *skb, u64 now)
 {
@@ -275,10 +245,16 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 	       const char *trap_name, const char *trap_group_name)
 {
 	struct dropwatch_packet_event *data;
-	struct dropwatch_epoch_stats_value *epoch_stats;
+	struct dropwatch_perf_epoch_stats *epoch_stats;
 	struct sock *sk;
 	u16 skb_protocol;
 	long output_ret;
+
+	if (!skb_filter_pass_netdev(dev))
+		return 0;
+
+	if (!PCAP_STUB_PASS_SKB(skb))
+		return 0;
 
 	epoch_stats = dropwatch_epoch_acquire();
 	if (!epoch_stats)
@@ -286,12 +262,6 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 	u64 event_ktime = bpf_ktime_get_ns();
 	/* skb->protocol is __be16 on every supported kernel. */
 	skb_protocol = bpf_ntohs(BPF_CORE_READ(skb, protocol));
-
-	if (!skb_filter_pass_netdev(dev))
-		goto out;
-
-	if (!PCAP_STUB_PASS_SKB(skb))
-		goto out;
 
 	if (bpf_ratelimited_in_map_rc(ctx, dropwatch)) {
 		__sync_fetch_and_add(&epoch_stats->rate_limited, 1);

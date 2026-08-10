@@ -20,10 +20,22 @@
 #define DROPWATCH_PACKET_RAW_LEN 120
 #define DROPWATCH_TRAP_NAME_LEN 64
 
+enum dropwatch_epoch_slot {
+	DROPWATCH_EPOCH_SLOT_0 = 0,
+	DROPWATCH_EPOCH_SLOT_1,
+	DROPWATCH_EPOCH_SLOT_COUNT,
+};
+
 enum dropwatch_drop_source {
 	DROPWATCH_DROP_SOURCE_UNKNOWN = 0,
 	DROPWATCH_DROP_SOURCE_SOFTWARE,
 	DROPWATCH_DROP_SOURCE_HARDWARE,
+};
+
+struct dropwatch_perf_epoch_stats {
+	u64 inflight;
+	u64 perf_lost;
+	u64 rate_limited;
 };
 
 struct dropwatch_packet_meta {
@@ -65,6 +77,8 @@ struct dropwatch_packet_event {
 BPF_ABI_EXPORT(dropwatch_packet_meta);
 BPF_ABI_EXPORT(dropwatch_packet_raw);
 BPF_ABI_EXPORT(dropwatch_packet_event);
+BPF_ABI_EXPORT(dropwatch_perf_epoch_stats);
+BPF_ABI_EXPORT_ENUM(dropwatch_epoch_slot);
 BPF_ABI_EXPORT_ENUM(dropwatch_drop_source);
 
 #endif /* __BPF_ABI_DROPWATCH_H__ */

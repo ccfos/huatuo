@@ -21,6 +21,7 @@ import (
 	"math/bits"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/timeutil"
 	"huatuo-bamai/pkg/types"
 )
@@ -29,8 +30,8 @@ const (
 	dropwatchActiveEpochMapName = "dropwatch_active_epoch"
 	//nolint:gosec // BPF map name, not a credential.
 	dropwatchEpochStatsMapName = "dropwatch_epoch_stats"
-	dropwatchEpochSlots        = 2
-	dropwatchEpochStatsSize    = 24
+	dropwatchEpochSlotCount    = uint32(abi.DropwatchEpochSlotCount)
+	dropwatchEpochStatsSize    = abi.DropwatchPerfEpochStatsSize
 )
 
 type perfEpochStats struct {
@@ -50,7 +51,7 @@ type PerfBarrier struct {
 	obj              bpf.BPF
 	activeEpochMapID uint32
 	epochStatsMapID  uint32
-	baselines        [dropwatchEpochSlots]perfEpochStats
+	baselines        [dropwatchEpochSlotCount]perfEpochStats
 	totals           perfEpochStats
 	drain            perfDrainState
 	draining         bool
@@ -80,7 +81,7 @@ func NewPerfBarrier(obj bpf.BPF) (*PerfBarrier, error) {
 		)
 	}
 
-	for slot := uint32(0); slot < dropwatchEpochSlots; slot++ {
+	for slot := uint32(0); slot < dropwatchEpochSlotCount; slot++ {
 		stats, err := barrier.readEpochStats(slot)
 		if err != nil {
 			return nil, err
@@ -251,12 +252,12 @@ func (b *PerfBarrier) readActiveEpoch() (uint32, error) {
 		)
 	}
 	activeSlot := binary.NativeEndian.Uint32(value)
-	if activeSlot >= dropwatchEpochSlots {
+	if activeSlot >= dropwatchEpochSlotCount {
 		return 0, fmt.Errorf(
 			"netcorrelate: decode map %q: epoch %d outside [0,%d)",
 			dropwatchActiveEpochMapName,
 			activeSlot,
-			dropwatchEpochSlots,
+			dropwatchEpochSlotCount,
 		)
 	}
 	return activeSlot, nil
@@ -303,10 +304,23 @@ func (b *PerfBarrier) readEpochStats(slot uint32) (perfEpochStats, error) {
 
 	var total perfEpochStats
 	for offset := 0; offset < len(value); offset += dropwatchEpochStatsSize {
+		var raw abi.DropwatchPerfEpochStats
+		if _, err := binary.Decode(
+			value[offset:offset+dropwatchEpochStatsSize],
+			binary.NativeEndian,
+			&raw,
+		); err != nil {
+			return perfEpochStats{}, fmt.Errorf(
+				"netcorrelate: decode map %q epoch %d: %w",
+				dropwatchEpochStatsMapName,
+				slot,
+				err,
+			)
+		}
 		var carry uint64
 		total.inflight, carry = bits.Add64(
 			total.inflight,
-			binary.NativeEndian.Uint64(value[offset:offset+8]),
+			raw.Inflight,
 			0,
 		)
 		if carry != 0 {
@@ -318,7 +332,7 @@ func (b *PerfBarrier) readEpochStats(slot uint32) (perfEpochStats, error) {
 		}
 		total.perfLost, carry = bits.Add64(
 			total.perfLost,
-			binary.NativeEndian.Uint64(value[offset+8:offset+16]),
+			raw.PerfLost,
 			0,
 		)
 		if carry != 0 {
@@ -330,7 +344,7 @@ func (b *PerfBarrier) readEpochStats(slot uint32) (perfEpochStats, error) {
 		}
 		total.rateLimited, carry = bits.Add64(
 			total.rateLimited,
-			binary.NativeEndian.Uint64(value[offset+16:offset+24]),
+			raw.RateLimited,
 			0,
 		)
 		if carry != 0 {

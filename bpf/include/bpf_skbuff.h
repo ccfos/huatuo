@@ -34,6 +34,28 @@ static __always_inline unsigned char *skb_transport_header(struct sk_buff *skb)
 	return BPF_CORE_READ(skb, head) + BPF_CORE_READ(skb, transport_header);
 }
 
+static __always_inline u32 skb_l3_len(struct sk_buff *skb)
+{
+	unsigned char *head = BPF_CORE_READ(skb, head);
+	unsigned char *data = BPF_CORE_READ(skb, data);
+	u32 network_offset = BPF_CORE_READ(skb, network_header);
+	u64 data_offset;
+	u64 packet_end;
+
+	if (!head || !data || network_offset == 0xffff)
+		return 0;
+
+	data_offset = (u64)data - (u64)head;
+	packet_end = data_offset + BPF_CORE_READ(skb, len);
+	if (packet_end < network_offset ||
+	    packet_end - network_offset > 0xffffffff)
+		return 0;
+
+	/* skb->len starts at skb->data, which may precede or follow the network
+	 * header depending on the drop point. */
+	return packet_end - network_offset;
+}
+
 static __always_inline bool
 skb_tcp_header(struct sk_buff *skb, struct tcphdr *tcp_hdr)
 {

@@ -27,6 +27,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/netcorrelate"
 	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/pkg/types"
@@ -145,7 +146,7 @@ func (b *finalDrainBPF) ReadMap(mapID uint32, key []byte) ([]byte, error) {
 		binary.NativeEndian.PutUint32(value, b.activeEpoch)
 		return value, nil
 	case 2:
-		value := make([]byte, 24)
+		value := make([]byte, abi.DropwatchPerfEpochStatsSize)
 		if len(key) < 4 || binary.NativeEndian.Uint32(key) != 0 ||
 			b.activeEpoch != 1 || b.holdDrain == nil {
 			return value, nil
