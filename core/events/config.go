@@ -16,6 +16,7 @@ package events
 
 import (
 	"slices"
+	"strings"
 	"sync/atomic"
 )
 
@@ -46,9 +47,10 @@ type Config struct {
 	}
 
 	TCPRetransmit struct {
-		Filter             string `default:""`
-		EnableTLP          bool   `default:"false"`
-		MaxEventsPerSecond uint64 `default:"100"`
+		Filter                     string `default:""`
+		EnableTLP                  bool   `default:"false"`
+		EnableDropwatchCorrelation bool   `default:"false"`
+		MaxEventsPerSecond         uint64 `default:"100"`
 	}
 
 	Netdev struct {
@@ -93,4 +95,20 @@ func (c *Config) Clone() *Config {
 		dst.IssuesList[i] = slices.Clone(c.IssuesList[i])
 	}
 	return &dst
+}
+
+func effectiveDropwatchFilter(config *Config) string {
+	filter := strings.TrimSpace(config.Dropwatch.Filter)
+	if filter == "" {
+		return "tcp"
+	}
+	return filter
+}
+
+func effectiveTCPRetransmitFilter(config *Config) string {
+	filter := strings.TrimSpace(config.TCPRetransmit.Filter)
+	if filter == "" && config.TCPRetransmit.EnableDropwatchCorrelation {
+		return "tcp"
+	}
+	return filter
 }

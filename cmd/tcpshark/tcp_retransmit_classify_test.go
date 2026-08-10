@@ -20,6 +20,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf/abi"
+	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -40,7 +41,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "SYN retrans (SYN_SENT)",
 			skState:    unix.BPF_TCP_SYN_SENT,
-			tcpFlags:   tcpFlagSYN,
+			tcpFlags:   packet.TCPFlagSYN,
 			caState:    abi.TCPRetransmitCaLoss,
 			wantPhase:  types.TCPRetransmitPhaseConnect,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -48,7 +49,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "SYN retrans (SYN_SENT) no caState",
 			skState:    unix.BPF_TCP_SYN_SENT,
-			tcpFlags:   tcpFlagSYN,
+			tcpFlags:   packet.TCPFlagSYN,
 			caState:    abi.TCPRetransmitCaOpen,
 			wantPhase:  types.TCPRetransmitPhaseConnect,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -56,7 +57,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "SYNACK retrans (SYN_RECV)",
 			skState:    unix.BPF_TCP_SYN_RECV,
-			tcpFlags:   tcpFlagSYN | tcpFlagACK,
+			tcpFlags:   packet.TCPFlagSYN | packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaLoss,
 			wantPhase:  types.TCPRetransmitPhaseConnect,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -64,7 +65,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "SYNACK retrans (NEW_SYN_RECV)",
 			skState:    unix.BPF_TCP_NEW_SYN_RECV,
-			tcpFlags:   tcpFlagSYN | tcpFlagACK,
+			tcpFlags:   packet.TCPFlagSYN | packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaOpen,
 			wantPhase:  types.TCPRetransmitPhaseConnect,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -73,7 +74,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "RTO retrans (ESTABLISHED + Loss)",
 			skState:    unix.BPF_TCP_ESTABLISHED,
-			tcpFlags:   tcpFlagACK,
+			tcpFlags:   packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaLoss,
 			wantPhase:  types.TCPRetransmitPhaseData,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -82,7 +83,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "Fast retrans (Recovery)",
 			skState:    unix.BPF_TCP_ESTABLISHED,
-			tcpFlags:   tcpFlagACK,
+			tcpFlags:   packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaRecovery,
 			wantPhase:  types.TCPRetransmitPhaseData,
 			wantReason: types.TCPRetransmitReasonFast,
@@ -91,7 +92,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "Unknown (Open)",
 			skState:    unix.BPF_TCP_ESTABLISHED,
-			tcpFlags:   tcpFlagACK,
+			tcpFlags:   packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaOpen,
 			wantPhase:  types.TCPRetransmitPhaseData,
 			wantReason: types.TCPRetransmitReasonUnknown,
@@ -99,7 +100,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "Unknown (Disorder)",
 			skState:    unix.BPF_TCP_ESTABLISHED,
-			tcpFlags:   tcpFlagACK,
+			tcpFlags:   packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaDisorder,
 			wantPhase:  types.TCPRetransmitPhaseData,
 			wantReason: types.TCPRetransmitReasonUnknown,
@@ -108,7 +109,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "Fast retrans + reord_seen>0 -> reorder_prone_fast",
 			skState:    unix.BPF_TCP_ESTABLISHED,
-			tcpFlags:   tcpFlagACK,
+			tcpFlags:   packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaRecovery,
 			reordSeen:  1,
 			wantPhase:  types.TCPRetransmitPhaseData,
@@ -117,7 +118,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "Fast retrans + dsack_dups>0 -> reorder_prone_fast",
 			skState:    unix.BPF_TCP_ESTABLISHED,
-			tcpFlags:   tcpFlagACK,
+			tcpFlags:   packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaRecovery,
 			dsackDups:  2,
 			wantPhase:  types.TCPRetransmitPhaseData,
@@ -126,7 +127,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "RTO + reorder fields (irrelevant for RTO)",
 			skState:    unix.BPF_TCP_ESTABLISHED,
-			tcpFlags:   tcpFlagACK,
+			tcpFlags:   packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaLoss,
 			reordSeen:  5,
 			dsackDups:  3,
@@ -137,7 +138,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "FIN retrans (FIN_WAIT1)",
 			skState:    unix.BPF_TCP_FIN_WAIT1,
-			tcpFlags:   tcpFlagFIN | tcpFlagACK,
+			tcpFlags:   packet.TCPFlagFIN | packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaLoss,
 			wantPhase:  types.TCPRetransmitPhaseClose,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -145,7 +146,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "FIN retrans (LAST_ACK) no caState",
 			skState:    unix.BPF_TCP_LAST_ACK,
-			tcpFlags:   tcpFlagFIN | tcpFlagACK,
+			tcpFlags:   packet.TCPFlagFIN | packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaOpen,
 			wantPhase:  types.TCPRetransmitPhaseClose,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -153,7 +154,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "CLOSE_WAIT residual data Recovery",
 			skState:    unix.BPF_TCP_CLOSE_WAIT,
-			tcpFlags:   tcpFlagACK,
+			tcpFlags:   packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaRecovery,
 			wantPhase:  types.TCPRetransmitPhaseClose,
 			wantReason: types.TCPRetransmitReasonFast,
@@ -161,7 +162,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "CLOSE_WAIT no caState -> RTO fallback",
 			skState:    unix.BPF_TCP_CLOSE_WAIT,
-			tcpFlags:   tcpFlagACK,
+			tcpFlags:   packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaOpen,
 			wantPhase:  types.TCPRetransmitPhaseClose,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -170,7 +171,7 @@ func TestRetransmitClassification(t *testing.T) {
 			name:       "SYNACK event overrides socket state",
 			eventType:  abi.TCPRetransmitEventSynack,
 			skState:    unix.BPF_TCP_ESTABLISHED,
-			tcpFlags:   tcpFlagACK,
+			tcpFlags:   packet.TCPFlagACK,
 			caState:    abi.TCPRetransmitCaRecovery,
 			wantPhase:  types.TCPRetransmitPhaseConnect,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -179,7 +180,7 @@ func TestRetransmitClassification(t *testing.T) {
 			name:       "TLP event overrides socket state",
 			eventType:  abi.TCPRetransmitEventTlp,
 			skState:    unix.BPF_TCP_SYN_SENT,
-			tcpFlags:   tcpFlagSYN,
+			tcpFlags:   packet.TCPFlagSYN,
 			caState:    abi.TCPRetransmitCaLoss,
 			wantPhase:  types.TCPRetransmitPhaseData,
 			wantReason: types.TCPRetransmitReasonTLP,
@@ -187,7 +188,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "unknown state falls back to SYN flag",
 			skState:    unix.BPF_TCP_CLOSE,
-			tcpFlags:   tcpFlagSYN,
+			tcpFlags:   packet.TCPFlagSYN,
 			caState:    abi.TCPRetransmitCaOpen,
 			wantPhase:  types.TCPRetransmitPhaseConnect,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -195,7 +196,7 @@ func TestRetransmitClassification(t *testing.T) {
 		{
 			name:       "unknown state falls back to FIN flag",
 			skState:    unix.BPF_TCP_LISTEN,
-			tcpFlags:   tcpFlagFIN,
+			tcpFlags:   packet.TCPFlagFIN,
 			caState:    abi.TCPRetransmitCaOpen,
 			wantPhase:  types.TCPRetransmitPhaseClose,
 			wantReason: types.TCPRetransmitReasonRTO,
@@ -252,7 +253,7 @@ func TestRetransmitClassificationAllStates(t *testing.T) {
 
 			classification := classifyRetransmit(&abi.TCPRetransmitEvent{
 				State:    uint32(tt.state),
-				TCPFlags: tcpFlagACK,
+				TCPFlags: packet.TCPFlagACK,
 				CaState:  uint8(abi.TCPRetransmitCaOpen),
 			})
 			if classification.phase != tt.want {
@@ -271,7 +272,7 @@ func BenchmarkClassifyRetransmit(b *testing.B) {
 			name: "state",
 			event: abi.TCPRetransmitEvent{
 				State:    unix.BPF_TCP_ESTABLISHED,
-				TCPFlags: tcpFlagACK,
+				TCPFlags: packet.TCPFlagACK,
 				CaState:  uint8(abi.TCPRetransmitCaRecovery),
 			},
 		},
@@ -279,7 +280,7 @@ func BenchmarkClassifyRetransmit(b *testing.B) {
 			name: "flags",
 			event: abi.TCPRetransmitEvent{
 				State:    unix.BPF_TCP_CLOSE,
-				TCPFlags: tcpFlagFIN | tcpFlagACK,
+				TCPFlags: packet.TCPFlagFIN | packet.TCPFlagACK,
 				CaState:  uint8(abi.TCPRetransmitCaOpen),
 			},
 		},

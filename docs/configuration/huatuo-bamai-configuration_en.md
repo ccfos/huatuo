@@ -28,7 +28,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
-  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]`, which disables tracing and metrics for the network device hardware layer, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, and TCP retransmission tracing. Remove `diskio` to enable disk I/O metrics or `tcp_retransmit` to enable TCP retransmission tracing and its drop-correlation cache. Supports arrays; extend as needed.
+  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]`, which disables tracing and metrics for the network device hardware layer, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, and TCP retransmission tracing. Remove `diskio` to enable disk I/O metrics or `tcp_retransmit` to enable TCP retransmission tracing. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
 
 ### 3. Logging
 
@@ -773,7 +773,7 @@ This section is responsible for capturing key kernel events and monitoring laten
 
 ```toml
 [EventTracing.Dropwatch]
-    # tcpdump-style filter expression, forwarded to dropwatch --filter.
+    # Shared filter for standalone dropwatch and tcpshark local correlation.
     # Default: "tcp"
     Filter = "tcp"
 
@@ -787,7 +787,7 @@ This section is responsible for capturing key kernel events and monitoring laten
     ExcludeContainers = []
 ```
 
-- **Filter**: tcpdump-style packet filter passed to `dropwatch --filter` and applied by the BPF program before events are emitted.
+- **Filter**: tcpdump-style packet filter passed to standalone dropwatch and both tcpshark local-correlation inputs. Local correlation rejects Ethernet-address primitives because its retransmission input exposes a synthetic L3 packet; safe ethertype checks are rewritten for L3. Use a direction-symmetric expression so reverse ACK and SYN-ACK evidence remains in scope.
 
   Default: `"tcp"`.
 
@@ -803,26 +803,28 @@ This section is responsible for capturing key kernel events and monitoring laten
 
 ```bash
 [EventTracing.TCPRetransmit]
-    # Forwarded to tcpshark --filter.
-    # Applies only to tcp_retransmit_skb events.
-    # Default: ""
+    # Retransmission filter. Local correlation applies it to both inputs.
+    # Default: empty (no flag when disabled; "tcp" when enabled).
     Filter = ""
 
     # Forwarded as tcpshark --enable-tlp. Default: false.
     EnableTLP = false
+
+    # Run tcpshark with an embedded dropwatch source. Default: false.
+    EnableDropwatchCorrelation = false
 
     # Forwarded as tcpshark --max-events-per-second.
     # Default: 100; 0 disables rate limiting.
     MaxEventsPerSecond = 100
 ```
 
-- **Filter**: tcpdump-style filter expression passed to `tcpshark --filter`.
-
-  Default: empty string. It applies only to `tcp_retransmit_skb` events.
-
 - **EnableTLP**: Whether to collect `tcp_send_loss_probe` events.
 
   Default: false.
+
+- **Filter**: Tcpdump-style retransmission filter used in both modes. Local correlation applies the normalized expression to both tcpshark inputs and defaults an empty value to `tcp`. When correlation is disabled, an empty value passes no `--filter` flag. `Dropwatch.Filter` independently controls standalone dropwatch.
+
+- **EnableDropwatchCorrelation**: Whether tcpshark should load a private dropwatch source and finalize retransmissions locally. The default is false. `tcp_retransmit` must be removed from `BlackList`; standalone `dropwatch` may remain blacklisted. A strict same-namespace match reports `host_software`. Every no-match reports `unknown` with stable `correlation_reasons`, because source readiness does not prove that earlier causal history was observed. Reasons also identify cross-namespace candidates, partial or unusable delivered evidence, perf loss, rate limiting, incomplete drain, unsupported retransmissions, and bounded-buffer eviction.
 
 - **MaxEventsPerSecond**: Maximum TCP retransmission events emitted by BPF per second.
 

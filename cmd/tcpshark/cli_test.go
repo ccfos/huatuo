@@ -141,6 +141,133 @@ func TestAppRateLimitFlag(t *testing.T) {
 	}
 }
 
+func TestAppDropwatchCorrelationValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantError string
+	}{
+		{
+			name: "off by default",
+		},
+		{
+			name: "local correlation",
+			args: []string{
+				"--dropwatch-correlation", "local",
+				"--dropwatch-bpf-path", "dropwatch.o",
+			},
+		},
+		{
+			name: "local correlation accepts ethertype",
+			args: []string{
+				"--dropwatch-correlation", "local",
+				"--dropwatch-bpf-path", "dropwatch.o",
+				"--filter", "ether proto ip and tcp",
+			},
+		},
+		{
+			name: "local correlation rejects Ethernet addresses",
+			args: []string{
+				"--dropwatch-correlation", "local",
+				"--dropwatch-bpf-path", "dropwatch.o",
+				"--filter", "ether host 02:00:00:00:00:01",
+			},
+			wantError: "filter requires ethernet header fields unavailable " +
+				"to local correlation",
+		},
+		{
+			name: "off permits Ethernet addresses",
+			args: []string{
+				"--filter", "ether host 02:00:00:00:00:01",
+			},
+		},
+		{
+			name: "local requires BPF path",
+			args: []string{"--dropwatch-correlation", "local"},
+			wantError: "--dropwatch-bpf-path is required " +
+				"when --dropwatch-correlation=local",
+		},
+		{
+			name:      "invalid mode",
+			args:      []string{"--dropwatch-correlation", "remote"},
+			wantError: `invalid --dropwatch-correlation "remote"`,
+		},
+		{
+			name: "off ignores local options",
+			args: []string{
+				"--dropwatch-bpf-path", "unused.o",
+				"--dropwatch-max-events-per-second", "50",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := []string{
+				"tcpshark", "--mode", "retransmit", "--bpf-path", "unused.o",
+			}
+			args = append(args, tt.args...)
+			err := newTestApp(func(_ *cli.Context) error { return nil }).Run(args)
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("Run() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Run() error = %v, want containing %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestEffectiveFilter(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "off keeps empty filter"},
+		{
+			name: "local defaults to TCP",
+			args: []string{
+				"--dropwatch-correlation", "local",
+				"--dropwatch-bpf-path", "dropwatch.o",
+			},
+			want: "tcp",
+		},
+		{
+			name: "local normalizes shared filter",
+			args: []string{
+				"--dropwatch-correlation", "local",
+				"--dropwatch-bpf-path", "dropwatch.o",
+				"--filter", "  tcp and port 443  ",
+			},
+			want: "tcp and port 443",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			app := newTestApp(func(c *cli.Context) error {
+				got = effectiveFilter(c)
+				return nil
+			})
+			args := []string{
+				"tcpshark", "--mode", "retransmit", "--bpf-path", "unused.o",
+			}
+			args = append(args, tt.args...)
+			if err := app.Run(args); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("effectiveFilter() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppSourceTypes(t *testing.T) {
 	tests := []struct {
 		name string

@@ -50,16 +50,13 @@ func newDropWatch() (*tracing.EventTracingAttr, error) {
 // Start launches dropwatch as a subprocess and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *dropWatchTracing) Start(ctx context.Context) error {
-	cfg := configSnapshot()
-	args := []string{
-		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "dropwatch.o"),
-		"--output-storage", toolstream.DefaultSockPath,
-		"--filter", cfg.Dropwatch.Filter,
-		"--max-events-per-second", strconv.FormatUint(cfg.Dropwatch.MaxEventsPerSecond, 10),
-		"--source-types", toolstream.SourceTypeEvent,
-	}
-
-	result := executil.ExecCmd(ctx, 0, path.Join(internalconfig.CoreBinDir, "dropwatch"), args...)
+	config := configSnapshot()
+	result := executil.ExecCmd(
+		ctx,
+		0,
+		path.Join(internalconfig.CoreBinDir, "dropwatch"),
+		dropwatchArgs(config)...,
+	)
 	if errors.Is(result.CmdErr, context.Canceled) {
 		return nil
 	}
@@ -67,6 +64,16 @@ func (c *dropWatchTracing) Start(ctx context.Context) error {
 		return fmt.Errorf("run dropwatch: %w", executil.VerifyResults([]executil.CmdResult{result}))
 	}
 	return nil
+}
+
+func dropwatchArgs(config *Config) []string {
+	return []string{
+		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "dropwatch.o"),
+		"--output-storage", toolstream.DefaultSockPath,
+		"--filter", effectiveDropwatchFilter(config),
+		"--max-events-per-second", strconv.FormatUint(config.Dropwatch.MaxEventsPerSecond, 10),
+		"--source-types", toolstream.SourceTypeEvent,
+	}
 }
 
 func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
@@ -81,8 +88,6 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 			NetNamespaceInum:    uint64(ev.NetNamespaceInum),
 		})
 	}
-
-	globalDropwatchTCPRetransmitCache.add(ev)
 
 	return tracing.Save(&tracing.WriteRequest{
 		TracerName:  "dropwatch",

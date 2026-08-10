@@ -19,7 +19,7 @@ HUATUO is an OS-level deep observability project open-sourced by DiDi and incuba
 
 The userspace classifier derives a connection phase and a reason label from the event type, `sk_state`, `ca_state`, and reorder counters. These labels are operational heuristics, not packet-loss root-cause proof.
 
-Filter expressions are compiled at load time by `internal/pcapfilter` and run in the kernel. Filters apply only to events that have an SKB (`tcp_retransmit_skb`); SYN-ACK and TLP events bypass the pcap filter.
+Filter expressions are compiled at load time by `internal/pcapfilter` and run in the kernel. In local correlation mode, tcpshark applies the exact same expression to its retransmission probes and embedded dropwatch source. Local mode rejects filters that read Ethernet addresses because retransmission probes expose a synthetic L3 packet. Safe ethertype checks such as `ether proto ip` are rewritten for L3. Use a direction-symmetric expression when reverse ACK or SYN-ACK evidence must remain in scope.
 
 ---
 
@@ -39,7 +39,7 @@ Align TCP retransmission events with application latency, error-rate, and throug
 
 ### 4. Locating Packet Loss with dropwatch Correlation
 
-Run dropwatch and tcp_retransmit in the same huatuo-bamai process to correlate packet drops with retransmissions by SKB pointer or connection 4-tuple. The result helps indicate whether the problem is more likely in the host network stack or the external network, but remains heuristic evidence that should be validated with stack traces and network metrics.
+Run tcpshark in local correlation mode to correlate retransmissions with packet drops in the same process. Matching checks the network namespace, tuple direction, TCP sequence or ACK evidence, and kernel monotonic ordering. A strict match identifies an observed host software drop. A no-match remains `unknown` because source readiness does not establish that the retransmission's earlier causal history was observed.
 
 ---
 
@@ -56,7 +56,10 @@ tcpshark --mode retransmit [flags]
 | `--mode retransmit` | required | Select TCP retransmission tracing mode. |
 | `--enable-tlp`, `--tlp` | disabled | Also attach `tcp_send_loss_probe` and emit TLP events. |
 | `--bpf-path <path>` | required | Path to the `tcp_retransmit.o` eBPF object file. |
-| `--filter <expr>` | (none) | tcpdump-style filter for `tcp_retransmit_skb` events; see §2. |
+| `--filter <expr>` | (none) | tcpdump-style filter shared with embedded dropwatch in local mode; see §2. |
+| `--dropwatch-correlation <off\|local>` | `off` | `off` emits retransmissions directly; `local` correlates them with an embedded dropwatch source. |
+| `--dropwatch-bpf-path <path>` | (none) | Path to `dropwatch.o`; required in local mode. |
+| `--dropwatch-max-events-per-second <n>` | `100` | Embedded dropwatch rate limit; 0 means unlimited. |
 | `--duration <n>` | 0 | Stop after N seconds (0 = run until Ctrl-C). |
 | `--max-events-per-second <n>` | 0 | BPF-side event rate limit; 0 means unlimited. |
 | `--output <json\|text>` | `text` | Output format; ignored when `--output-storage` is set. |
@@ -76,6 +79,11 @@ sudo tcpshark --mode retransmit --bpf-path bpf/tcp_retransmit.o --output json
 
 # BPF-side filter for regular retransmitted SKBs to one destination host and port
 sudo tcpshark --mode retransmit --bpf-path bpf/tcp_retransmit.o --filter "dst host 10.0.0.1 and dst port 443"
+
+# Correlate locally; both BPF inputs use the same direction-symmetric filter
+sudo tcpshark --mode retransmit --bpf-path bpf/tcp_retransmit.o \
+  --filter "tcp and port 443" --dropwatch-correlation local \
+  --dropwatch-bpf-path bpf/dropwatch.o
 
 # Include Tail Loss Probe events (disabled by default)
 sudo tcpshark --mode retransmit --enable-tlp --bpf-path bpf/tcp_retransmit.o
@@ -105,18 +113,20 @@ tcpshark uses the same `--output-storage` and toolstream flow as dropwatch. For 
 
 ```toml
 [EventTracing.TCPRetransmit]
-    # Forwarded to tcpshark --filter; applies only to tcp_retransmit_skb.
-    # Default: ""
+    # Used only when local correlation is disabled. Default: empty.
     Filter = ""
 
     # Forwarded as tcpshark --enable-tlp. Default: false.
     EnableTLP = false
 
+    # Run tcpshark with an embedded dropwatch source. Default: false.
+    EnableDropwatchCorrelation = false
+
     # Forwarded as tcpshark --max-events-per-second. Default: 100; 0 disables it.
     MaxEventsPerSecond = 100
 ```
 
-The `tcp_retransmit` tracer is in the global `BlackList` by default. Remove it from the list and restart huatuo-bamai to enable the tracer. Its drop-correlation cache is enabled only while the tracer is running and is cleared when the tracer stops. After enabling it, use the HTTP API to start or stop tracing:
+`EventTracing.TCPRetransmit.Filter` controls retransmission collection in both modes. With local correlation disabled, an empty value passes no `--filter` flag. With local correlation enabled, the normalized expression is passed to both tcpshark inputs and an empty value becomes `tcp`. `EventTracing.Dropwatch.Filter` remains independent and controls only standalone dropwatch. The `tcp_retransmit` tracer is in the global `BlackList` by default. Remove it from the list and restart huatuo-bamai to enable the tracer. Standalone `dropwatch` may remain blacklisted because local correlation owns a private dropwatch source. After enabling it, use the HTTP API to start or stop tracing:
 
 ```bash
 curl -X PUT http://localhost:19704/tracers/tcp_retransmit/start
@@ -137,7 +147,9 @@ tcpshark uses the same tcpdump-style filter expressions as dropwatch. For comple
 --filter "(src net 10.10.0.0/16 and dst net 10.20.0.0/16) or (src net 10.20.0.0/16 and dst net 10.10.0.0/16)"
 ```
 
-> `--filter` applies only to `tcp_retransmit_skb`. The `tcp_retransmit_synack` and enabled `tcp_send_loss_probe` events have no SKB and bypass the filter.
+> In local mode the same expression must cover both traffic directions. A directional selector can exclude reverse ACK or SYN-ACK drop evidence and make the result less useful.
+
+> Local mode rejects Ethernet-address primitives such as `ether host 02:00:00:00:00:01`. Ethertype primitives such as `ether proto ip` and `ether proto ip6` are supported because they can be rewritten as raw-IP version checks.
 
 ---
 
@@ -162,17 +174,21 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 | `phase` | string | Classifier output: `connect`, `data`, or `close`. |
 | `tcp_reason` | string | Classifier output: `RTO`, `fast_retransmit`, `reorder_prone_fast`, `TLP`, or `unknown`. |
 | `event_type` | string | `tcp_retransmit_skb`, `tcp_retransmit_synack`, or `tcp_send_loss_probe`. |
+| `ktime_ns` | uint64 | Kernel monotonic timestamp used by local correlation; it is not wall-clock time. |
 | `ca_state` | uint8 | Congestion-control state: 0=Open, 1=Disorder, 2=CWR, 3=Recovery, 4=Loss. |
 | `icsk_retransmits` | uint8 | Current retransmission counter snapshot. |
 | `icsk_pending` | uint8 | Raw pending timer state from `inet_connection_sock`; see the value table below. |
 | `reord_seen` | uint32 | Cumulative flow reorder counter. |
 | `dsack_dups` | uint32 | Cumulative DSACK duplicate counter. |
-| `tcp_seq` | uint32 | `TCP_SKB_CB(skb)->seq` for SKB events; `snd_nxt` for TLP events; zero for SYN-ACK events. |
-| `tcp_ack_seq` | uint32 | `tcp_sk(sk)->rcv_nxt` for SKB events; `snd_una` for TLP events; zero for SYN-ACK events. |
-| `tcp_end_seq` | uint32 | `TCP_SKB_CB(skb)->end_seq` for SKB events; omitted for SYN-ACK and TLP events. |
+| `tcp_seq` | uint32 | `TCP_SKB_CB(skb)->seq` for SKB events; `snd_nxt` for TLP; request `snt_isn` for SYN-ACK when available. |
+| `tcp_ack_seq` | uint32 | `tcp_sk(sk)->rcv_nxt` for SKB events; `snd_una` for TLP; request `rcv_nxt` for SYN-ACK when available. |
+| `tcp_end_seq` | uint32 | `TCP_SKB_CB(skb)->end_seq` for SKB events; request `snt_isn + 1` for SYN-ACK when available; omitted for TLP. |
 | `tcp_flags` | string | Rendered TCP flag set such as `SYN|ACK` or `ACK|PSH`; SKB events use `TCP_SKB_CB(skb)->tcp_flags`, SYN-ACK events derive it from the event type, and TLP events omit it. |
 | `skb_addr` | string | Retransmission-queue SKB pointer in hex; absent for SYN-ACK and TLP events. |
-| `drop_location` | string | huatuo-bamai correlation heuristic; see §5. |
+| `drop_location` | string | Local correlation result: `host_software` or `unknown`; see §5. |
+| `correlation_reasons` | string array | Stable machine-readable reasons why a no-match remains `unknown`. |
+| `dropwatch_perf_status` | object | Dropwatch drain frontier and cumulative `perf_lost` / `rate_limited` counters for a no-match. |
+| `drop_stack` | string | Matched drop stack; unmatched stacks are not symbolized. |
 | `source` | string | Event source. It is `tools` when tcpshark runs standalone and `events` when huatuo-bamai launches it. |
 
 `icsk_pending` is a timer-state snapshot at the hook, not a stable retransmission-reason enum. TLP classification uses the explicit `event_type=tcp_send_loss_probe` and does not depend on `icsk_pending=5`.
@@ -192,7 +208,7 @@ Each event is an NDJSON object (`types.TCPRetransmitTracing`). Fields tagged wit
 Text retains its terminal-friendly layout while covering the same event variables as JSON. Variables tagged with `omitempty` appear only when non-zero or non-empty, and string values are not JSON-quoted or escaped. For compatibility with the original text format, `state`, `skb`, `seq`, `end`, `ack`, `flags`, `ca`, and `retrans` correspond to the JSON fields `tcp_state`, `skb_addr`, `tcp_seq`, `tcp_end_seq`, `tcp_ack_seq`, `tcp_flags`, `ca_state`, and `icsk_retransmits`, respectively.
 
 ```text
-<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [source=<SOURCE>]
+<timestamp> [<phase>/<tcp_reason>] <saddr>:<sport> > <daddr>:<dport> state=<STATE> event_type=<TYPE> [ktime_ns=<N>] [SYNACK] [skb=<ADDR>] seq=<N> [end=<N>] ack=<N> [flags=<FLAGS>] pid=<N> comm=<COMM> ca=<N> retrans=<N> icsk_pending=<N> [reord_seen=<N>] [dsack_dups=<N>] [container_id=<ID>] [memory_cgroup_css_addr=<ADDR>] [net_namespace_cookie=<N>] [net_namespace_inum=<N>] [drop_location=<LOCATION>] [correlation_reasons=<REASON,...>] [dropwatch_drained_through_ktime_ns=<N> dropwatch_perf_lost=<N> dropwatch_rate_limited=<N>] [source=<SOURCE>]
 ```
 
 Example:
@@ -202,6 +218,9 @@ Example:
 ```
 
 The `pid` and `comm` in this example describe the execution context in which the hook ran; use `container_id` and socket metadata for workload attribution.
+
+A non-empty `drop_stack` is rendered as indented lines after the event line,
+not as an inline `drop_stack=` token.
 
 #### 3.2 Container ID Resolution
 
@@ -293,28 +312,56 @@ When building alerts, aggregate by service or connection and compare against tra
 
 ### 5. Correlation with dropwatch
 
-When dropwatch and tcpshark feed the same huatuo-bamai process, dropwatch events are retained in a userspace cache for two seconds from their arrival time. A tcpshark event immediately queries previously received, unexpired drop events using a direction-independent connection key. The implementation does not wait for later drop events and does not revise an event after storage.
+Local mode owns the retransmission and dropwatch perf inputs in one tcpshark process. A retransmission is finalized after a strict drop match or after the dropwatch perf input has drained through its kernel timestamp. The embedded source never emits raw drop documents; a separately enabled standalone dropwatch remains an independent raw-event stream.
 
 #### 5.1 Correlation Results
 
-| Internal result | Match | `drop_location` | Safe interpretation |
-|-----------------|-------|-----------------|---------------------|
-| `TCPRetransmitDropDirect` | Within the same connection-cache bucket, non-empty `dropwatch.packet_skb_addr` and `tcpshark.skb_addr` are equal. | `host_software` | Strong evidence that the observed host drop and retransmission refer to the same SKB pointer. |
-| `TCPRetransmitDrop4Tuple` | A cached TCP drop matches the addresses and ports in either direction. | `host_software` | A host drop was observed on the same connection near the retransmission; causality is not proven. |
-| `TCPRetransmitNoDrop` | No matching live cache entry exists. | `network_or_host_hardware` | Current fallback label only; it does not prove a network or hardware drop. |
+| Result | Required evidence | Output |
+|--------|-------------------|--------|
+| Outbound segment match | Same network namespace, family, direction, tuple, monotonic ordering, and overlapping SYN/data/FIN sequence range. | `host_software` with `drop_stack`. |
+| Reverse ACK match | Reverse tuple in the same namespace, ACK flag set, monotonic ordering, and ACK covering the retransmitted sequence end. | `host_software` with `drop_stack`. |
+| No strict match | Negative evidence is not conclusive because source startup does not cover earlier causal history. Other coverage failures are listed separately. | `unknown` with `correlation_reasons` and `dropwatch_perf_status`. |
 
-`network_or_host_hardware` can also be produced when dropwatch is disabled, its filter does not cover the flow, an event is suppressed or lost, delivery is reordered, or the relevant drop falls outside the retention window. Likewise, a 4-tuple match can pair unrelated packets from a busy connection. The cache key does not include a network-namespace or container identifier, so identical address/port tuples in different network namespaces can also collide.
+There is no tuple-only, SKB-pointer-only, cross-namespace, or ambiguous positive match. A drop that satisfies every check except namespace is reported as `cross_netns_candidate`, not matched. A matched drop is consumed once, while later drops on the same connection remain available. Stack symbolization runs only after a match.
 
-#### 5.2 Requirements and Troubleshooting
+#### 5.2 Unknown Reasons
+
+| Reason | Meaning |
+|--------|---------|
+| `startup_history_incomplete` | Observation began without a reliable causal-start boundary for the retransmission. |
+| `cross_netns_candidate` | Drop evidence passed tuple, time, and sequence checks but belongs to another network namespace. |
+| `drop_evidence_unusable` | A delivered drop record could not be normalized by the matcher, for example a partial IPv4 fragment without a TCP header. |
+| `perf_frontier_incomplete` | Dropwatch had not drained through the retransmission timestamp. |
+| `perf_events_lost` / `drop_rate_limited` | Evidence was lost before userspace or rejected by the embedded rate limiter. |
+| `drop_evidence_evicted` / `pending_capacity_exceeded` | A bounded correlation buffer reached capacity. |
+| `unsupported_retransmission` | The retransmission lacks the event type, namespace, time, or sequence evidence required for strict matching. |
+| `dropwatch_input_inactive` | The source stopped before the no-match was finalized. |
+
+#### 5.3 Dropwatch Perf Status
+
+Every no-match reports:
+
+| Field | Meaning |
+|-------|---------|
+| `drained_through_ktime_ns` | Kernel monotonic frontier through which the dropwatch perf input has been consumed. A drained boundary covers the event only when this value is greater than or equal to its `ktime_ns`. |
+| `perf_lost` | Cumulative losses from this embedded dropwatch perf input. It does not include tcpshark or unrelated perf streams. |
+| `rate_limited` | Cumulative events rejected by this embedded dropwatch rate limiter. |
+
+Both loss counters describe the current BPF load. They reset when the object is loaded again; old events are already finalized before shutdown and are not reused after reload.
+
+#### 5.4 Requirements and Troubleshooting
 
 | Observation | Checks |
 |-------------|--------|
-| `host_software` with a direct match | Inspect the matching dropwatch stack, device, and drop metadata. |
-| `host_software` from a connection match | Verify direction, TCP sequence/ack context, and timing before assigning causality. |
-| `network_or_host_hardware` | First confirm dropwatch is running in the same huatuo-bamai process and its filter covers the flow; then inspect NIC and network counters. |
-| `drop_location` absent | Expected in standalone output; correlation is performed by huatuo-bamai, not the CLI. |
+| `host_software` | Inspect the matched stack together with tuple, direction, sequence, and namespace evidence. |
+| `unknown` with loss counters | Narrow the shared filter, increase perf capacity, or adjust the embedded dropwatch rate limit, then capture again. |
+| `unknown` without a sealed frontier | Collection ended before the drop source covered the retransmission; capture again. |
+| `unknown` with `cross_netns_candidate` | Inspect the named namespace independently; cross-namespace evidence is never promoted to a positive match. |
+| `unknown` with `startup_history_incomplete` | A no-match cannot exclude a software drop that occurred before the embedded source became ready. |
+| `unknown` with `drop_evidence_unusable` | A delivered record was partial or lacked fields required for strict matching. |
+| `drop_location` absent | Expected in `off` mode. Local mode, including the huatuo-bamai child, performs correlation. |
 
-For reliable negative evidence, dropwatch must be active with a filter that is at least as broad as the tcpshark traffic of interest. The current schema has no separate `unknown` or `dropwatch_not_observed` value, so consumers should treat `network_or_host_hardware` as an investigation hint rather than a fact.
+huatuo-bamai passes one normalized `EventTracing.TCPRetransmit.Filter` value to both local-correlation inputs. Keeping those scopes identical prevents the two sources from observing different traffic, but it does not make a no-match conclusive without a reliable causal-start boundary.
 
 ---
 

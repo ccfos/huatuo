@@ -28,7 +28,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 - **BlackList**：全局追踪与指标黑名单。
 
-  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]`，即全局禁用网络设备硬件层（netdev_hw）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标和 TCP 重传追踪。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪及其丢包关联缓存时移除 `tcp_retransmit`。
+  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]`，即全局禁用网络设备硬件层（netdev_hw）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标和 TCP 重传追踪。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪时移除 `tcp_retransmit`。local 关联不依赖 standalone `dropwatch` tracer。
 
   **说明**：添加黑名单项可有效降低资源消耗，尤其在特定硬件环境中；支持数组格式，可根据实际业务扩展。
 
@@ -772,7 +772,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 ```toml
 [EventTracing.Dropwatch]
-    # tcpdump 风格过滤表达式，转发给 dropwatch --filter。
+    # standalone dropwatch 与 tcpshark local 关联共用的 filter。
     # 默认值："tcp"
     Filter = "tcp"
 
@@ -786,7 +786,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
     ExcludeContainers = []
 ```
 
-- **Filter**：传给 `dropwatch --filter` 的 tcpdump 风格报文过滤表达式，在事件输出前由 BPF 程序执行。
+- **Filter**：传给 standalone dropwatch 与 tcpshark local 关联两个输入的 tcpdump 风格过滤表达式。由于重传输入使用合成 L3 报文，local 关联会拒绝依赖以太网地址的 primitive；安全的 ethertype 判断会转换为 L3 判断。应使用方向对称的表达式，避免排除反向 ACK 或 SYN-ACK 证据。
 
   默认值：`"tcp"`。
 
@@ -802,26 +802,28 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 ```bash
 [EventTracing.TCPRetransmit]
-    # Forwarded to tcpshark --filter.
-    # Only tcp_retransmit_skb events are filtered.
-    # Default: ""
+    # 重传过滤条件；local 关联会把它应用到两个输入。
+    # 默认值：空（关闭关联时不传参数，开启关联时使用 "tcp"）。
     Filter = ""
 
     # Forwarded as tcpshark --enable-tlp. Default: false.
     EnableTLP = false
+
+    # Run tcpshark with an embedded dropwatch source. Default: false.
+    EnableDropwatchCorrelation = false
 
     # Forwarded as tcpshark --max-events-per-second.
     # Default: 100; 0 disables rate limiting.
     MaxEventsPerSecond = 100
 ```
 
-- **Filter**：传给 `tcpshark --filter` 的 tcpdump 风格过滤表达式。
-
-  默认空字符串。仅过滤 `tcp_retransmit_skb` 事件。
-
 - **EnableTLP**：是否采集 `tcp_send_loss_probe` 事件。
 
   默认 false。
+
+- **Filter**：两种模式都使用的 TCP 重传过滤条件。开启 local 关联后，两个 tcpshark 输入统一使用规范化后的表达式，空值回退为 `tcp`；关闭关联时，空值不传 `--filter`。`Dropwatch.Filter` 保持独立，只控制 standalone dropwatch。
+
+- **EnableDropwatchCorrelation**：是否让 tcpshark 加载私有 dropwatch source 并在本地完成重传结果定型，默认 false。必须从 `BlackList` 移除 `tcp_retransmit`；standalone `dropwatch` 可以继续位于黑名单中。同 netns 的严格匹配输出 `host_software`。所有 no-match 都输出 `unknown` 及稳定的 `correlation_reasons`，因为 source ready 不能证明更早的因果历史已被观测。原因还会区分跨 netns 候选、已送达但不完整或不可用的证据、perf 丢失、限速、drain 不完整、不受支持的重传和有界缓存淘汰。
 
 - **MaxEventsPerSecond**：BPF 侧每秒最多输出的 TCP 重传事件数。
 

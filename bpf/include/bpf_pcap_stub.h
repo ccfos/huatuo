@@ -70,6 +70,18 @@ static __noinline bool pcap_stub_l2(void *_ctx, void *__ctx, void *___ctx,
 	return a4 != a5 && a1 == a2 && a2 == a3;
 }
 
+static __always_inline bool
+pcap_stub_pass_l3(void *ctx, void *data, void *data_end)
+{
+	return pcap_stub_l3(ctx, ctx, ctx, data, data_end);
+}
+
+static __always_inline bool
+pcap_stub_pass_l2(void *ctx, void *data, void *data_end)
+{
+	return pcap_stub_l2(ctx, ctx, ctx, data, data_end);
+}
+
 /*
  * PCAP_STUB_PASS_SKB(skb): dispatch L2/L3 stub based on skb->mac_len.
  * Returns true if the filter accepts the packet (or no filter is injected),
@@ -86,9 +98,9 @@ static __noinline bool pcap_stub_l2(void *_ctx, void *__ctx, void *___ctx,
 	void *__l2      = skb_mac_header(skb);                              \
 	bool __pass;                                                        \
 	if (BPF_CORE_READ((skb), mac_len) == 0)                             \
-		__pass = pcap_stub_l3((skb), (skb), (skb), __l3, __pkt_end);\
+		__pass = pcap_stub_pass_l3((skb), __l3, __pkt_end);          \
 	else                                                                \
-		__pass = pcap_stub_l2((skb), (skb), (skb), __l2, __pkt_end);\
+		__pass = pcap_stub_pass_l2((skb), __l2, __pkt_end);          \
 	__pass;                                                             \
 })
 

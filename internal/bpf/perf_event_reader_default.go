@@ -154,6 +154,36 @@ func (r *perfEventReader) ReadInto(dst any) error {
 	}
 }
 
+// PollInto waits up to timeout for one eBPF perf event.
+func (r *perfEventReader) PollInto(dst any, timeout time.Duration) (bool, error) {
+	select {
+	case <-r.done:
+		return false, types.ErrExitByCancelCtx
+	default:
+	}
+
+	r.rd.SetDeadline(time.Now().Add(timeout))
+	var record perf.Record
+	if err := r.rd.ReadInto(&record); err != nil {
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return false, nil
+		}
+		return false, normalizePerfReadError(err)
+	}
+	if record.LostSamples != 0 {
+		return false, newPerfEventSamplesLostError(record.LostSamples)
+	}
+	if err := decodePerfEvent(record.RawSample, dst); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// Flush requests a reader boundary after records already queued in the rings.
+func (r *perfEventReader) Flush() error {
+	return normalizePerfReadError(r.rd.Flush())
+}
+
 func decodePerfEvent(sample []byte, dst any) error {
 	if _, err := binary.Decode(sample, binary.NativeEndian, dst); err != nil {
 		return fmt.Errorf("parse perf event: %w", err)
@@ -171,6 +201,12 @@ func newPerfEventSamplesLostError(count uint64) error {
 }
 
 func normalizePerfReadError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, perf.ErrFlushed) {
+		return ErrPerfFlushed
+	}
 	if errors.Is(err, perf.ErrClosed) {
 		return types.ErrExitByCancelCtx
 	}
