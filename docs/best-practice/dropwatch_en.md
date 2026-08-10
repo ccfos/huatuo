@@ -171,6 +171,33 @@ dropwatch [flags]
 
 At startup, dropwatch detects `devlink:devlink_trap_report`. When supported, it loads both software and hardware drop probes. Otherwise, it logs a warning and loads only the software drop probe. Hardware collection also requires a driver that registers devlink drop traps and a target trap whose action is `trap`. With action `drop`, hardware sends no packet copy to the CPU, so dropwatch cannot inspect it.
 
+#### devlink Hardware Drop Detection
+
+dropwatch requires no additional startup flags. Before using hardware drop detection, verify that the kernel, driver, and target trap meet the requirements:
+
+```bash
+# 1. Verify that the kernel provides the devlink trap tracepoint
+test -e /sys/kernel/tracing/events/devlink/devlink_trap_report/id || \
+  test -e /sys/kernel/debug/tracing/events/devlink/devlink_trap_report/id
+
+# 2. List devlink devices and traps registered by the driver
+sudo devlink dev show
+sudo devlink trap show <bus/device>
+
+# 3. Enable packet reporting for the target DROP trap
+sudo devlink trap set <bus/device> trap <trap-name> action trap
+
+# 4. Start dropwatch and display only hardware drops
+sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | \
+  jq -c 'select(.drop_source == "hardware")'
+```
+
+`<bus/device>` is the device identifier returned by `devlink dev show`, such as `pci/0000:03:00.0`. After diagnosis, restore the trap to its previous action.
+
+This capability collects only packets that the driver reports through `DEVLINK_TRAP_TYPE_DROP`. It does not capture all hardware packets and does not replace NIC hardware-drop counters. Drops such as hardware queue overflows are visible only when the driver implements and reports them as devlink drop traps. Traps of type `exception` or `control` are not reported as drop events.
+
+`--filter`, `--device`, `--device-excluded`, and `--max-events-per-second` apply to both software and hardware events. Text output formats a hardware reason as `reason=<group>/<trap> drop_source=hardware`. JSON output uses the separate `drop_reason_group`, `drop_reason`, and `drop_source` fields.
+
 #### Examples
 
 ```bash
@@ -214,10 +241,10 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 | ------------------------ | -------- | ------------------------------------------------------------- |
 | `observed_timestamp`     | string   | UTC userspace receive/format time (RFC3339Nano), not the kernel hook timestamp |
 | `type`                   | string   | Reserved TCP type; currently unset (`1` common, `2` SYN flood, `3`/`4` listen overflow) |
-| `drop_source`            | string   | Drop source: `software` or `hardware`                         |
-| `drop_reason`            | string   | `skb_drop_reason` for software or the devlink trap name for hardware |
-| `drop_reason_group`      | string   | Devlink trap group; empty for software drops                  |
-| `drop_location`          | string   | Software `kfree_skb` call site; empty for hardware drops      |
+| `drop_source`            | string   | Drop source: `software` for the kernel network stack or `hardware` for a devlink DROP trap |
+| `drop_reason`            | string   | `SKB_DROP_REASON_*` for software drops; if kernel BTF resolution fails, dropwatch logs a warning and falls back to the numeric value. For hardware drops, this is the devlink trap name |
+| `drop_reason_group`      | string   | Devlink trap group used to classify hardware drops; omitted for software drops |
+| `drop_location`          | string   | Hexadecimal `kfree_skb` call address for software drops; omitted for hardware drops |
 | `source`                 | string   | Event source; `tools` for standalone dropwatch and `events` when launched by huatuo-bamai |
 | `comm`                   | string   | Process name at the time of the drop                          |
 | `pid`                    | uint64   | Process TGID                                                  |
@@ -234,6 +261,8 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 | `packet_len`             | uint32   | Packet length in bytes                                        |
 | `layers`                 | object   | Layered protocol parse result; missing layers are omitted      |
 | `stack`                  | string   | Kernel call stack (newline-separated)                         |
+
+For hardware events, `stack` is the kernel call stack at which the driver reports the devlink trap. It does not identify the actual drop location inside the ASIC. Use `drop_reason_group`, `drop_reason`, device information, and driver documentation to diagnose hardware drops.
 
 `layers` uses fixed fields to express the protocol stack, without relying on a separate protocol enumeration:
 
