@@ -172,18 +172,23 @@ compile_bpf_fixture() {
 
 # ------------------------- bpf tool test scaffolding -------------------------
 
+# bpf_tool_setup <binary-name> [bpf-name] [work-prefix]
 bpf_tool_setup() {
-	local name=$1
-	TOOL_BIN="${ROOT_DIR}/_output/bin/${name}"
-	TOOL_BPF="${ROOT_DIR}/_output/bpf/${name}.o"
+	[[ $# -ge 1 ]] || fatal "bpf_tool_setup requires a binary name"
+
+	local binary_name=$1
+	local bpf_name=${2:-${binary_name}}
+	local work_prefix=${3:-${binary_name}}
+	TOOL_BIN="${ROOT_DIR}/_output/bin/${binary_name}"
+	TOOL_BPF="${ROOT_DIR}/_output/bpf/${bpf_name}.o"
 
 	[[ $EUID -eq 0 ]] || fatal "requires root (BPF requires CAP_BPF/CAP_SYS_ADMIN)"
-	[[ -x ${TOOL_BIN} ]] || fatal "missing ${name} binary: ${TOOL_BIN}"
-	[[ -r ${TOOL_BPF} ]] || fatal "missing ${name} bpf object: ${TOOL_BPF}"
+	[[ -x ${TOOL_BIN} ]] || fatal "missing ${binary_name} binary: ${TOOL_BIN}"
+	[[ -r ${TOOL_BPF} ]] || fatal "missing ${bpf_name} bpf object: ${TOOL_BPF}"
 
-	TOOL_WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${name}.XXXXXX")
-	TOOL_OUT="${TOOL_WORK_DIR}/${name}.out"
-	TOOL_ERR="${TOOL_WORK_DIR}/${name}.err"
+	TOOL_WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${work_prefix}.XXXXXX")
+	TOOL_OUT="${TOOL_WORK_DIR}/${binary_name}.out"
+	TOOL_ERR="${TOOL_WORK_DIR}/${binary_name}.err"
 }
 
 # Print non-empty text files; empty and binary files add no useful diagnostics.

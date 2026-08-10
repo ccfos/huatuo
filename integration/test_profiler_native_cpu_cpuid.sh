@@ -24,13 +24,11 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
 
-readonly PROFILER_BIN="${ROOT_DIR}/_output/bin/profiler"
-readonly PROFILER_BPF="${ROOT_DIR}/_output/bpf/native_oncpu_profiler.o"
+bpf_tool_setup profiler native_oncpu_profiler profiler-cpuid
+readonly PROFILER_BIN=${TOOL_BIN}
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
 
 command -v taskset > /dev/null || skip "taskset(1) not in PATH"
-[[ -x "${PROFILER_BIN}" ]] || fatal "profiler binary missing: ${PROFILER_BIN}"
-[[ -r "${PROFILER_BPF}" ]] || fatal "native bpf object missing: ${PROFILER_BPF}"
 [[ -r /proc/sys/kernel/perf_event_paranoid ]] || skip "perf_event_paranoid not readable: perf unavailable"
 readonly PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid)
 [[ "${PARANOID}" -le 2 ]] || skip "kernel.perf_event_paranoid=${PARANOID} (>2) blocks perf sampling"
@@ -40,7 +38,7 @@ readonly CHAIN_PATTERN=';f1;f2;f3 [0-9]+$'
 
 # --- workspace + cleanup -----------------------------------------------------
 
-readonly FIXTURE_OUTDIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-cpuid.XXXXXX")
+readonly FIXTURE_OUTDIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${FIXTURE_OUTDIR}/callchain"
 PROFILER_OUT="${FIXTURE_OUTDIR}/profiler.out"
 PROFILER_ERR="${FIXTURE_OUTDIR}/profiler.err"

@@ -13,12 +13,10 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 is_container && skip "native off-CPU PID filtering requires host PID namespace"
 
-readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
+bpf_tool_setup profiler native_offcpu_profiler profiler-offcpu
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_offcpu.user.c"
 
 command -v taskset > /dev/null || skip "taskset(1) not in PATH"
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -r "${ROOT_DIR}/_output/bpf/native_offcpu_profiler.o" ]] || fatal "native off-CPU bpf object missing"
 
 allowed_cpu_ids() {
 	local allowed_list segment start end cpu
@@ -45,7 +43,7 @@ readonly EXCLUDED_CPU=${CPU_IDS[1]}
 
 readonly PROFILER_DURATION=10
 readonly PROFILER_AGGR_INTERVAL=5
-WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-offcpu.XXXXXX")
+WORK_DIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${WORK_DIR}/offcpu-fixture"
 TARGET_PID=""
 

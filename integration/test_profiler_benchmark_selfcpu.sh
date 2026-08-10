@@ -18,17 +18,14 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-readonly PROFILER_BIN="${ROOT_DIR}/_output/bin/profiler"
-readonly NATIVE_BPF_OBJECT="${ROOT_DIR}/_output/bpf/native_oncpu_profiler.o"
 readonly CPU_LIMIT_PERCENT=10
 readonly SAMPLE_SECONDS=5
 readonly PROFILER_DURATION=15
 
 is_container && skip "native CPU profiler requires bare-metal cgroup/PMU access"
 
-[[ -x "${PROFILER_BIN}" ]] || fatal "profiler binary not found: ${PROFILER_BIN}"
-[[ -r "${NATIVE_BPF_OBJECT}" ]] || fatal \
-	"native CPU profiler BPF object not found: ${NATIVE_BPF_OBJECT}"
+bpf_tool_setup profiler native_oncpu_profiler profiler-selfcpu
+readonly PROFILER_BIN=${TOOL_BIN}
 perf_event_paranoid=$(cat /proc/sys/kernel/perf_event_paranoid) || fatal \
 	"perf_event_paranoid not readable: perf unavailable"
 if ((perf_event_paranoid > 2)); then
@@ -39,7 +36,7 @@ clock_ticks=$(getconf CLK_TCK) || fatal "cannot determine kernel clock tick rate
 [[ "${clock_ticks}" =~ ^[1-9][0-9]*$ ]] || fatal \
 	"invalid kernel clock tick rate: ${clock_ticks}"
 
-WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-selfcpu.XXXXXX")
+WORK_DIR=${TOOL_WORK_DIR}
 PROFILER_STDOUT="${WORK_DIR}/profiler.stdout"
 PROFILER_STDERR="${WORK_DIR}/profiler.stderr"
 PROFILER_TARGET_PID=""

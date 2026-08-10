@@ -20,16 +20,15 @@ source "$(dirname "$0")/env.sh"
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_namespace.sh"
 
-TCPSHARK_BIN="${ROOT_DIR}/_output/bin/tcpshark"
-BPF_OBJ="${ROOT_DIR}/_output/bpf/tcp_retransmit.o"
-OUTPUT_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/tcp-retransmit-tlp.XXXXXX")
+bpf_tool_setup tcpshark tcp_retransmit tcp-retransmit-tlp
+TCPSHARK_BIN=${TOOL_BIN}
+BPF_OBJ=${TOOL_BPF}
+OUTPUT_DIR=${TOOL_WORK_DIR}
 TEST_PORT=19996
 PAYLOAD_SIZE=262144 # 256 KB
 S_ADDR="10.99.4.1"
 C_ADDR="10.99.4.2"
 
-[[ -x "${TCPSHARK_BIN}" ]] || fatal "tcpshark binary not found: ${TCPSHARK_BIN}"
-[[ -f "${BPF_OBJ}" ]] || fatal "BPF object not found: ${BPF_OBJ}"
 require_python3
 
 cleanup() {
