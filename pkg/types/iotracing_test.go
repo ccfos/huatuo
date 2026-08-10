@@ -18,64 +18,108 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestIOTracingReportJSONContract(t *testing.T) {
+func TestIOTracingSnapshotJSON(t *testing.T) {
 	tests := []struct {
 		name     string
-		report   IOTracingReport
+		snapshot IOTracingSnapshot
 		wantJSON string
 	}{
 		{
-			name:     "empty report preserves top-level field names",
-			report:   IOTracingReport{},
-			wantJSON: `{"process_file_io_stats":null,"io_schedule_timeout_stacks":null}`,
+			name:     "empty snapshot",
+			snapshot: IOTracingSnapshot{},
+			wantJSON: `{
+				"process_file_io_stats": null,
+				"io_schedule_timeout_stacks": null
+			}`,
 		},
 		{
-			name: "populated report preserves nested wire schema",
-			report: IOTracingReport{
+			name: "all fields",
+			snapshot: IOTracingSnapshot{
 				Processes: []ProcessFileIOStats{{
-					Pid:            42,
-					Comm:           "worker",
-					TotalFileCount: 1,
+					Pid:               42,
+					Comm:              "worker",
+					ContainerHostname: "container-1",
+					TotalFsReadBps:    100,
+					TotalFsWriteBps:   200,
+					TotalDiskReadBps:  300,
+					TotalDiskWriteBps: 400,
 					TotalFiles: []FileIOStats{{
-						DevName: "sda",
-						Path:    "/data/file",
+						Major:        8,
+						Minor:        1,
+						DevName:      "sda1",
+						Inode:        123,
+						Path:         "/data/file",
+						IsDirect:     true,
+						FsReadBps:    10,
+						FsWriteBps:   20,
+						DiskReadBps:  30,
+						DiskWriteBps: 40,
+						Q2CUs:        50,
+						D2CUs:        60,
+						MaxQ2CUs:     70,
+						MaxD2CUs:     80,
 					}},
+					TotalFileCount: 1,
 				}},
-				StallStacks: []IOScheduleEvent{{Pid: 42, Comm: "worker", Stack: []string{"io_schedule"}}},
+				StallStacks: []IOScheduleEvent{{
+					Pid:               43,
+					Comm:              "kworker",
+					ContainerHostname: "container-2",
+					LatencyUs:         90,
+					Stack:             []string{"io_schedule", "worker_thread"},
+				}},
 			},
-			wantJSON: `{"process_file_io_stats":[{"pid":42,"comm":"worker","container_hostname":"","total_fs_read_bps":0,"total_fs_write_bps":0,"total_disk_read_bps":0,"total_disk_write_bps":0,"total_files":[{"major":0,"minor":0,"dev_name":"sda","inode":0,"path":"/data/file","is_direct":false,"fs_read_bps":0,"fs_write_bps":0,"disk_read_bps":0,"disk_write_bps":0,"q2c_us":0,"d2c_us":0,"max_q2c_us":0,"max_d2c_us":0}],"total_file_count":1}],"io_schedule_timeout_stacks":[{"pid":42,"comm":"worker","container_hostname":"","schedule_latency_us":0,"stack":["io_schedule"]}]}`,
+			wantJSON: `{
+				"process_file_io_stats": [{
+					"pid": 42,
+					"comm": "worker",
+					"container_hostname": "container-1",
+					"total_fs_read_bps": 100,
+					"total_fs_write_bps": 200,
+					"total_disk_read_bps": 300,
+					"total_disk_write_bps": 400,
+					"total_files": [{
+						"major": 8,
+						"minor": 1,
+						"dev_name": "sda1",
+						"inode": 123,
+						"path": "/data/file",
+						"is_direct": true,
+						"fs_read_bps": 10,
+						"fs_write_bps": 20,
+						"disk_read_bps": 30,
+						"disk_write_bps": 40,
+						"q2c_us": 50,
+						"d2c_us": 60,
+						"max_q2c_us": 70,
+						"max_d2c_us": 80
+					}],
+					"total_file_count": 1
+				}],
+				"io_schedule_timeout_stacks": [{
+					"pid": 43,
+					"comm": "kworker",
+					"container_hostname": "container-2",
+					"schedule_latency_us": 90,
+					"stack": ["io_schedule", "worker_thread"]
+				}]
+			}`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encoded, err := json.Marshal(tt.report)
-			if err != nil {
-				t.Fatalf("json.Marshal() error = %v", err)
-			}
+			encoded, err := json.Marshal(tt.snapshot)
+			require.NoError(t, err)
+			assert.JSONEq(t, tt.wantJSON, string(encoded))
 
-			var gotJSON map[string]any
-			if err := json.Unmarshal(encoded, &gotJSON); err != nil {
-				t.Fatalf("json.Unmarshal() output error = %v", err)
-			}
-			var wantJSON map[string]any
-			if err := json.Unmarshal([]byte(tt.wantJSON), &wantJSON); err != nil {
-				t.Fatalf("json.Unmarshal() expected JSON error = %v", err)
-			}
-			if diff := cmp.Diff(wantJSON, gotJSON); diff != "" {
-				t.Errorf("JSON mismatch (-want +got):\n%s", diff)
-			}
-
-			var gotReport IOTracingReport
-			if err := json.Unmarshal(encoded, &gotReport); err != nil {
-				t.Fatalf("json.Unmarshal() round-trip error = %v", err)
-			}
-			if diff := cmp.Diff(tt.report, gotReport); diff != "" {
-				t.Errorf("round-trip mismatch (-want +got):\n%s", diff)
-			}
+			var decoded IOTracingSnapshot
+			require.NoError(t, json.Unmarshal(encoded, &decoded))
+			assert.Equal(t, tt.snapshot, decoded)
 		})
 	}
 }
