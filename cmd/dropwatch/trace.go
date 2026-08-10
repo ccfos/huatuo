@@ -44,7 +44,10 @@ type dropwatchOptions struct {
 }
 
 func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error) {
-	names := NewDropReason()
+	names, err := NewDropReason()
+	if err != nil {
+		log.WithError(err).Warn("kernel drop-reason names unavailable; using numeric drop reasons")
+	}
 	duration := options.durationSeconds
 
 	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
