@@ -245,13 +245,72 @@ idle timeout; 15–60 seconds is typical.
 
   Default: 10.
 
-  **Description**: Oldest files are automatically deleted once the limit is reached, controlling disk usage.
+**Description**: Oldest files are automatically deleted once the limit is reached, controlling disk usage.
+
+#### 6.3 Pyroscope Profile Storage
+
+```toml
+[Storage.Pyroscope]
+    Address = "https://profiles.example.com"
+    AppNamePrefix = "huatuo"
+    # Username = "profiles-user"
+    # Password = "change-me"
+    # BearerToken = "token"
+    TimeoutSeconds = 5
+```
+
+- **Address**: Pyroscope server base URL. An empty value disables this
+  backend. The backend appends `/ingest` and accepts only HTTP or HTTPS URLs.
+- **AppNamePrefix**: Prefix for Pyroscope application names. The default is
+  `huatuo`.
+- **Username / Password**: Optional Basic Auth credentials. Both fields must
+  be set together.
+- **BearerToken**: Optional bearer token. It cannot be combined with Basic
+  Auth.
+- **TimeoutSeconds**: Timeout for each ingest request. The default is 5
+  seconds.
+
+Pyroscope stores profiling data as pprof protobuf. Elasticsearch can remain
+enabled at the same time and continues to store its existing JSON profiling
+documents. Use HTTPS when credentials leave the local host, and restrict
+configuration-file permissions because authentication fields contain secrets.
 
 ### 7. Automatic Tracing
 
+#### 7.1 AutoTracing Display Backend
+
+```toml
+[AutoTracing.Display]
+    Backend = "pyroscope"
+    FoldedStacksDir = "huatuo-local/autotracing-folded"
+```
+
+- **Backend** selects the presentation path at runtime:
+  - `pyroscope` (default) writes profiles directly to Pyroscope for the
+    provisioned Grafana dashboard. `Storage.Pyroscope.Address` is required.
+  - `apiserver` keeps the existing Elasticsearch and huatuo-apiserver path.
+    The Elasticsearch address, username, and password are required.
+- **FoldedStacksDir** writes one `.folded` file for every CPUIdle or CPUSys
+  snapshot in `pyroscope` mode. Each line contains a semicolon-delimited stack
+  and its positive self-sample count. An empty path disables this additional
+  export.
+
+Changing the backend and restarting huatuo-bamai does not change trigger
+thresholds, perf execution, or snapshot collection. In `pyroscope` mode,
+Elasticsearch can remain configured for the existing JSON event stream and
+Pyroscope is added as a profile store.
+
+Folded snapshots use deterministic sorted output and filenames containing the
+tracer name, UTC snapshot time, and tracer ID. Files are written atomically
+with mode `0600`, so a watcher never observes a partial snapshot.
+
 The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.
 
-#### 7.1 CPUIdle Automatic Tracing — Sudden High CPU Usage in Containers
+CPUIdle and CPUSys traces keep their existing JSON event and also write a CPU
+pprof profile with the same tracer ID. The profile uses `cpu:nanoseconds`
+samples at 99 Hz. Profile storage failures do not discard the JSON event.
+
+#### 7.2 CPUIdle Automatic Tracing — Sudden High CPU Usage in Containers
 
 ```bash
 # Autotracing configuration 
@@ -383,7 +442,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
   Default: no rules, all containers monitored.
 
-#### 7.2 CPUSys Automatic Tracing — Sudden High System CPU on Host
+#### 7.3 CPUSys Automatic Tracing — Sudden High System CPU on Host
 
 ```bash
 # cpusys
@@ -443,7 +502,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
 **Trigger Logic**: Tracing is triggered when both SysThreshold and DeltaSysThreshold are satisfied.
 
-#### 7.3 Dload AutoTracing — D-State Task Profiling for Containers
+#### 7.4 Dload AutoTracing — D-State Task Profiling for Containers
 
 ```bash
 # dload
@@ -481,7 +540,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
   Default: 1800s (30 minutes).
 
-#### 7.4 IOTracing AutoTracing — Container IO Performance Profiling
+#### 7.5 IOTracing AutoTracing — Container IO Performance Profiling
 
 ```bash
 # iotracing
@@ -558,7 +617,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
 **Description**: Used for diagnosing IO hotspots in containers, especially under high disk load.
 
-#### 7.5 MemoryBurst AutoTracing
+#### 7.6 MemoryBurst AutoTracing
 
 This module detects sudden memory usage spikes on the host and automatically captures kernel context to help diagnose memory pressure events.
 
@@ -623,7 +682,7 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
   Default: 10.
 
-#### 7.6 Known Issue Filtering (IssuesList)
+#### 7.7 Known Issue Filtering (IssuesList)
 
 ```bash
 # Autotracing configuration.

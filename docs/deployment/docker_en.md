@@ -48,10 +48,40 @@ collection jobs, and observed resource peaks.
 
 ### Start containers with Docker
 
-The `docker compose` command allows you to quickly set up a complete local environment where you manage the collector, Elasticsearch, Prometheus, Grafana, and other components yourself.
+[Docker Compose](https://docs.docker.com/compose/) allows you to run either
+the complete stack or a profile-only stack.
 
 ```bash
 $ docker compose --project-directory ./build/docker up
 ```
 
-For installation instructions, see https://docs.docker.com/compose/install/linux/.
+The default `profiling` profile starts only huatuo-bamai, Pyroscope, and Grafana.
+huatuo-bamai does not wait for Elasticsearch and starts with kubelet discovery
+disabled, so kubelet client certificates are not required. It renders
+`AutoTracing.Display.Backend = "pyroscope"` without rebuilding the image.
+Open Grafana at
+http://localhost:3000 and open the
+`HuaTuo AutoTracing Pyroscope Flamegraph` dashboard. CPUIdle and CPUSys
+profiles appear after their configured AutoTracing thresholds are triggered.
+The same snapshots are exported as folded stacks in the `huatuo-data` volume:
+
+```bash
+$ docker compose --project-directory ./build/docker \
+    cp huatuo-bamai:/var/lib/huatuo/autotracing-folded/. ./folded/
+```
+
+These text files can be supplied directly to tools that accept Brendan Gregg
+folded-stack input. Pyroscope display does not depend on copying them; bamai
+also sends the corresponding pprof profile to Pyroscope.
+
+To use the existing huatuo-apiserver display path:
+
+```bash
+$ COMPOSE_PROFILES=full docker compose --project-directory ./build/docker up
+```
+
+The `full` profile starts huatuo-bamai, Elasticsearch, Prometheus, Pyroscope,
+Grafana, and huatuo-apiserver. It renders
+`AutoTracing.Display.Backend = "apiserver"` into the runtime configuration.
+
+For Docker Compose installation instructions, see https://docs.docker.com/compose/install/linux/.

@@ -99,6 +99,9 @@ BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "dload", "d
     Interval = 1
     RunTracingToolTimeout = 1
 
+[AutoTracing.Display]
+    FoldedStacksDir = ""
+
 [Storage.LocalFile]
     Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 EOF
