@@ -279,35 +279,35 @@ func runTask(ctx context.Context, task *task) {
 // storage policy. DB failures are captured on the task instead of being
 // discarded: see runTask. Stdout and Local always succeed.
 func saveTaskOutputByType(task *task, startAt time.Time, output []byte) {
+	var storeErr error
+
 	switch task.storage {
 	case TaskStorageDB:
-		if err := SaveTaskOutputText(&WriteRequest{
+		storeErr = SaveTaskOutputText(&WriteRequest{
 			TracerName: task.execBinary,
 			TracerID:   task.id,
 			TracerTime: startAt,
 			TracerData: string(output),
-		}); err != nil {
-			task.mu.Lock()
-			task.storeErr = err
-			task.mu.Unlock()
-		}
+		})
 	case TaskStorageDBJSON:
-		if err := SaveTaskOutputJSON(&WriteRequest{
+		storeErr = SaveTaskOutputJSON(&WriteRequest{
 			TracerName: task.execBinary,
 			TracerID:   task.id,
 			TracerTime: startAt,
 			TracerData: string(output),
-		}); err != nil {
-			task.mu.Lock()
-			task.storeErr = err
-			task.mu.Unlock()
-		}
+		})
 	case TaskStorageStdout:
 		task.mu.Lock()
 		task.stdoutData = append(task.stdoutData, output...)
 		task.mu.Unlock()
 	case TaskStorageLocal:
 	default:
+	}
+
+	if storeErr != nil {
+		task.mu.Lock()
+		task.storeErr = storeErr
+		task.mu.Unlock()
 	}
 }
 
