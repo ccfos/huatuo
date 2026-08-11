@@ -44,7 +44,10 @@ type dropwatchOptions struct {
 }
 
 func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error) {
-	names := NewDropReason()
+	names, err := NewDropReason()
+	if err != nil {
+		log.WithError(err).Warn("kernel drop-reason names unavailable; using numeric drop reasons")
+	}
 	duration := options.durationSeconds
 
 	if err := bpf.Init(&bpf.Option{KeepaliveTimeout: duration}); err != nil {
@@ -58,8 +61,19 @@ func mainAction(ctx context.Context, options *dropwatchOptions) (returnErr error
 	}
 
 	bpfLimiter := bpf.NewRateLimiter("dropwatch", options.maxEventsPerSecond)
+	hardwareDropSupported, err := detectHardwareDropSupport()
+	if err != nil {
+		return fmt.Errorf("detect hardware drop support: %w", err)
+	}
+	if !hardwareDropSupported {
+		log.Warn("devlink trap tracepoint unsupported; hardware drop tracing disabled")
+	}
 	bpfObj, err := loadDropwatchBPF(
-		options.bpfPath, options.filterExpression, netdevFilter.mode, bpfLimiter,
+		options.bpfPath,
+		options.filterExpression,
+		netdevFilter.mode,
+		bpfLimiter,
+		hardwareDropSupported,
 	)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)

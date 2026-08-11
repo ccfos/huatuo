@@ -22,18 +22,13 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 is_container && skip "native memory profiler requires bare-metal cgroup/PMU access"
 
-readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
+bpf_tool_setup profiler native_virtual_alloc profiler-thread-group
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_thread_group.user.c"
 readonly EXPECTED_SYMBOL="do_mmap"
 readonly PROFILER_DURATION=10
 readonly PROFILER_AGGR_INTERVAL=5
 
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -r "${ROOT_DIR}/_output/bpf/native_virtual_alloc.o" ]] || fatal "native bpf object missing"
-
-WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-thread-group.XXXXXX")
-TOOL_OUT="${WORK_DIR}/profiler.out"
-TOOL_ERR="${WORK_DIR}/profiler.err"
+WORK_DIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${WORK_DIR}/thread_group_workload"
 TARGET_PID=""
 PROFILER_PID=""

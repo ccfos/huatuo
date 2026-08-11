@@ -15,6 +15,10 @@ defaults shown below.
 
 ### 2. Logging and Runtime Limits
 
+huatuo-apiserver does not create its own cgroup by default. The `[Runtime]` section
+applies only when `--enable-cgroup` is explicitly passed; Kubernetes and systemd
+deployments should use their native resource controls.
+
 ```toml
 # Log Configuration
 [Log]

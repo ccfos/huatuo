@@ -27,8 +27,8 @@ import (
 const bytesPerMiB = 1024 * 1024
 
 func setupCgroup(d *Daemon) (func(context.Context) error, error) {
-	if d.opts.DisableCgroup {
-		log.Infof("self cgroup resource limit disabled by --disable-cgroup")
+	if !d.opts.EnableCgroup {
+		log.Infof("self cgroup resource limit disabled by default")
 		return nil, nil
 	}
 

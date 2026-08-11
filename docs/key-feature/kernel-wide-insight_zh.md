@@ -133,20 +133,11 @@ Ref:
 - https://docs.kernel.org/scheduler/sched-bwc.html#statistics
 - https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#cpu-interface-files
 
-此外，滴滴内核支持如下争抢指标，未来会开放：
+内核导出 `wait_sum` 时提供以下争抢指标：
 ```bash
-# HELP huatuo_bamai_cpu_stat_container_wait_rate wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_wait_rate gauge
-huatuo_bamai_cpu_stat_container_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_throttle_wait_rate throttle wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_throttle_wait_rate gauge
-huatuo_bamai_cpu_stat_container_throttle_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_inner_wait_rate inner wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_inner_wait_rate gauge
-huatuo_bamai_cpu_stat_container_inner_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_exter_wait_rate exter wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_exter_wait_rate gauge
-huatuo_bamai_cpu_stat_container_exter_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_cpu_stat_container_wait_sum_percent percentage of CFS cgroup schedulable time spent waiting on the parent runqueue (requires kernel.sched_schedstats=1)
+# TYPE huatuo_bamai_cpu_stat_container_wait_sum_percent gauge
+huatuo_bamai_cpu_stat_container_wait_sum_percent{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
 ```
 
 ### 资源突发
@@ -614,7 +605,7 @@ huatuo_bamai_netdev_qdisc_requeues_total{device="ens2",host="hostname",kind="fq_
 
 |指标|意义|单位|对象| 标签 |
 |---|---|---|---|---|
-|qdisc_backlog|后备排队待发送的包数|字节|物理机| device, host, kind, region |
+|qdisc_backlog|后备排队待发送的字节数|字节|物理机| device, host, kind, region |
 |qdisc_current_queue_length|当前排队的包量|计数|物理机| device, host, kind, region |
 |qdisc_overlimits_total|超限次数|计数|物理机| device, host, kind, region |
 |qdisc_requeues_total|由于网卡/驱动暂时无法发送而被重新入队的次数|计数|物理机| device, host, kind, region |

@@ -25,11 +25,8 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 is_container && skip "native memory profiler requires bare-metal cgroup/PMU access"
 
-readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
+bpf_tool_setup profiler native_virtual_alloc profiler-mem
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_mmap.user.c"
-
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -r "${ROOT_DIR}/_output/bpf/native_virtual_alloc.o" ]] || fatal "native bpf object missing"
 
 # --- tunables ----------------------------------------------------------------
 
@@ -51,9 +48,7 @@ readonly EXPECTED_SYMBOL
 
 # --- workspace + cleanup -----------------------------------------------------
 
-WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-mem.XXXXXX")
-TOOL_OUT="${WORK_DIR}/profiler.out"
-TOOL_ERR="${WORK_DIR}/profiler.err"
+WORK_DIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${WORK_DIR}/mmap_workload"
 FIXTURE_OUT="${WORK_DIR}/mmap.out"
 FIXTURE_ERR="${WORK_DIR}/mmap.err"

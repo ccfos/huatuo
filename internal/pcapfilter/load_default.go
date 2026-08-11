@@ -26,16 +26,43 @@ import (
 )
 
 // Load compiles filterExpr and injects it into obj, then loads the result
-// through the default CollectionSpec-based path.
-func Load(bpfName string, obj []byte, filterExpr string, consts map[string]any) (bpf.BPF, error) {
+// through the default CollectionSpec-based path. Programs in excludedSections
+// are removed before the collection is loaded.
+func Load(
+	bpfName string,
+	obj []byte,
+	filterExpr string,
+	consts map[string]any,
+	excludedSections ...string,
+) (bpf.BPF, error) {
 	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(obj))
 	if err != nil {
 		return nil, fmt.Errorf("load collection spec: %w", err)
 	}
 
+	excludeProgramSections(spec, excludedSections)
 	if err := Apply(spec, filterExpr); err != nil {
 		return nil, fmt.Errorf("inject filters: %w", err)
 	}
 
 	return bpf.LoadBPFFromCollectionSpec(bpfName, spec, consts)
+}
+
+func excludeProgramSections(spec *ebpf.CollectionSpec, excludedSections []string) {
+	if len(excludedSections) == 0 {
+		return
+	}
+
+	excluded := make(map[string]struct{}, len(excludedSections))
+	for _, section := range excludedSections {
+		excluded[section] = struct{}{}
+	}
+	for name, program := range spec.Programs {
+		if program == nil {
+			continue
+		}
+		if _, ok := excluded[program.SectionName]; ok {
+			delete(spec.Programs, name)
+		}
+	}
 }

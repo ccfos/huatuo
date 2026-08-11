@@ -20,16 +20,13 @@ source "${ROOT_DIR}/integration/lib.sh"
 
 is_container && skip "native memory profiler requires bare-metal cgroup/PMU access"
 
-readonly TOOL_BIN="${ROOT_DIR}/_output/bin/profiler"
+bpf_tool_setup profiler native_physical_usage profiler-physical-usage
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_physical_usage.user.c"
 readonly PROFILER_DURATION=6
 readonly PROFILER_AGGR_INTERVAL=2
 readonly PROFILER_READY_TIMEOUT=15
 readonly PROFILER_READY_INTERVAL=1
 
-[[ -x "${TOOL_BIN}" ]] || fatal "profiler binary missing: ${TOOL_BIN}"
-[[ -r "${ROOT_DIR}/_output/bpf/native_physical_alloc.o" ]] || fatal "native physical alloc bpf object missing"
-[[ -r "${ROOT_DIR}/_output/bpf/native_physical_usage.o" ]] || fatal "native physical usage bpf object missing"
 if kprobe_available folio_add_new_anon_rmap && kprobe_available folio_remove_rmap_ptes; then
 	log_info "using folio rmap kprobes"
 elif kprobe_available folio_add_new_anon_rmap && kprobe_available page_remove_rmap; then
@@ -40,7 +37,7 @@ else
 	skip "no supported physical usage kprobe pair found"
 fi
 
-WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/profiler-physical-usage.XXXXXX")
+WORK_DIR=${TOOL_WORK_DIR}
 FIXTURE_BIN="${WORK_DIR}/physical_usage_workload"
 TARGET_PID=""
 PROFILER_PID=""

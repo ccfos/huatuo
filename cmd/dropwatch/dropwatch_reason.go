@@ -26,22 +26,22 @@ const skbDropReasonNotSupported int32 = -1
 type dropReason map[uint32]string
 
 // NewDropReason loads kernel drop-reason names when BTF exposes them.
-func NewDropReason() dropReason {
+func NewDropReason() (dropReason, error) {
 	spec, err := btf.LoadKernelSpec()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("load kernel BTF: %w", err)
 	}
 
-	var enum btf.Enum
+	var enum *btf.Enum
 	if err := spec.TypeByName("skb_drop_reason", &enum); err != nil {
-		return nil
+		return nil, fmt.Errorf("load skb_drop_reason: %w", err)
 	}
 
 	names := make(dropReason, len(enum.Values))
 	for _, v := range enum.Values {
 		names[uint32(v.Value)] = v.Name
 	}
-	return names
+	return names, nil
 }
 
 // Resolve returns the kernel name for a drop reason or its numeric value.

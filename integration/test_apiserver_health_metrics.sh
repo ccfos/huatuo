@@ -92,7 +92,6 @@ assert_metrics_endpoint() {
 }
 
 integration_huatuo_apiserver_start write_apiserver_apis_config \
-	--disable-cgroup \
 	--log-debug
 assert_endpoints
 assert_metrics_endpoint

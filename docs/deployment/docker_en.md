@@ -22,7 +22,7 @@ docker run --detach \
   --cgroupns=host \
   --network=host \
   --cpus=2 \
-  --memory=4g \
+  --memory=2g \
   --volume /sys:/sys \
   --volume /proc:/proc \
   --volume /run:/run \
@@ -32,8 +32,8 @@ docker run --detach \
 > Note: The built-in default configuration does not connect to kubelet or Elasticsearch.
 
 Limit CPU and memory in production to isolate abnormal collection workloads.
-The `4 GiB` container limit leaves runtime headroom above the default `2048 MiB`
-process limit, reducing OOM risk.
+Docker manages the container cgroup; Huatuo does not create its own cgroup by default,
+so do not pass `--enable-cgroup` in a Docker deployment.
 
 Verify that the limits are active and observe actual usage:
 

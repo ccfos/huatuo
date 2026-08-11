@@ -47,10 +47,10 @@ initial baseline:
 resources:
   limits:
     cpu: "2"
-    memory: 4Gi
+    memory: 2Gi
   requests:
-    cpu: "1"
-    memory: 1Gi
+    cpu: "2"
+    memory: 2Gi
 ```
 
 Apply the modified manifest:
@@ -59,13 +59,14 @@ Apply the modified manifest:
 kubectl apply -f ./huatuo-daemonset.yaml
 ```
 
-`requests` provide scheduling guarantees, while `limits` isolate abnormal jobs
-from the node. The `4 GiB` container limit leaves runtime headroom above the
-default `2048 MiB` process limit, reducing OOM risk.
+`requests` provide scheduling guarantees, while `limits` are enforced by the
+Pod cgroup managed by kubelet. Huatuo does not create its own cgroup by default,
+so it remains under `kubepods` and can be reclaimed normally after containerd
+restart or Pod deletion.
 
-These values are an initial baseline. Adjust them based on node capacity,
-collection jobs, and observed resource peaks. Container limits must not be lower
-than the `[Runtime]` process limits in `huatuo-bamai.conf`.
+These values are an initial baseline with matching requests and limits, so the
+Pod has Guaranteed QoS. `[Runtime]` applies only when `--enable-cgroup` is
+explicitly passed; do not pass that flag in Kubernetes.
 
 ### 1.5 Verify the deployment
 
@@ -124,10 +125,10 @@ image:
 resources:
   limits:
     cpu: "2"
-    memory: 4Gi
+    memory: 2Gi
   requests:
-    cpu: "1"
-    memory: 1Gi
+    cpu: "2"
+    memory: 2Gi
 
 nodeSelector:
   kubernetes.io/os: linux

@@ -20,9 +20,10 @@ source "$(dirname "$0")/env.sh"
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/lib_namespace.sh"
 
-TCPSHARK_BIN="${ROOT_DIR}/_output/bin/tcpshark"
-BPF_OBJ="${ROOT_DIR}/_output/bpf/tcp_retransmit.o"
-OUTPUT_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/tcp-retransmit-ratelimit.XXXXXX")
+bpf_tool_setup tcpshark tcp_retransmit tcp-retransmit-ratelimit
+TCPSHARK_BIN=${TOOL_BIN}
+BPF_OBJ=${TOOL_BPF}
+OUTPUT_DIR=${TOOL_WORK_DIR}
 RATE=1
 DURATION=8
 EXPECTED_MAX=$((RATE * (DURATION + 1)))
@@ -31,9 +32,6 @@ PAYLOAD_SIZE=2097152
 
 S_ADDR="10.99.1.1"
 C_ADDR="10.99.1.2"
-
-[[ -x "${TCPSHARK_BIN}" ]] || fatal "tcpshark binary not found: ${TCPSHARK_BIN}"
-[[ -f "${BPF_OBJ}" ]] || fatal "BPF object not found: ${BPF_OBJ}"
 
 if ! iptables -m connbytes -h 2>&1 | grep -q connbytes; then
 	log_info "SKIP: iptables connbytes module not available on this kernel"

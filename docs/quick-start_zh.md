@@ -115,8 +115,8 @@ $ ./huatuo-bamai --region example --config huatuo-bamai.conf
     所有的内核事件采集 Events 和 AutoTracing 都可以配置触发阈值。默认的阈值都是在实际生产环境反复验证后的经验数据，你可以根据自身需求，在 huatuo-bamai.conf 中修改阈值。
 
 4. 资源限制
-    为保障物理机稳定性，可分别配置启动阶段和常态运行资源限制：
-    ```yaml
+    Kubernetes 和 systemd 部署默认由 kubelet 或 systemd 管理 Huatuo 的 cgroup，Huatuo 不会迁移自身 PID。只有直接运行且没有外部管理器时，才使用 `--enable-cgroup` 并配置：
+    ```toml
     [Runtime]
         StartupCPULimitCores = 0.5
         CPULimitCores = 2.0

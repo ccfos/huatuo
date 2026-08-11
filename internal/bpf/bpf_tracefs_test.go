@@ -69,6 +69,65 @@ func TestHasKprobeFunctionRetriesFailedReads(t *testing.T) {
 	}
 }
 
+func TestTracepointAvailable(t *testing.T) {
+	availableRoot := t.TempDir()
+	tracepointID := filepath.Join(
+		availableRoot,
+		"events",
+		"devlink",
+		"devlink_trap_report",
+		"id",
+	)
+	if err := os.MkdirAll(filepath.Dir(tracepointID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tracepointID, []byte("1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name             string
+		roots            []string
+		want             bool
+		wantErrSubstring string
+	}{
+		{
+			name:  "available in fallback root",
+			roots: []string{t.TempDir(), availableRoot},
+			want:  true,
+		},
+		{
+			name:  "unavailable",
+			roots: []string{t.TempDir(), t.TempDir()},
+		},
+		{
+			name:             "stat error",
+			roots:            []string{"\x00"},
+			wantErrSubstring: "check tracepoint",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetTraceFSRootsForTest(t, tt.roots)
+
+			got, err := TracepointAvailable("devlink", "devlink_trap_report")
+			if tt.wantErrSubstring != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErrSubstring) {
+					t.Fatalf("TracepointAvailable() error = %v, want %q", err, tt.wantErrSubstring)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("TracepointAvailable() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("TracepointAvailable() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
 func resetKprobeCacheForTest(t *testing.T, paths []string) {
 	t.Helper()
 
@@ -87,5 +146,15 @@ func resetKprobeCacheForTest(t *testing.T, paths []string) {
 		kprobeFunctionFiles = oldFiles
 		kprobeCache = oldCache
 		kprobeCached = oldCached
+	})
+}
+
+func resetTraceFSRootsForTest(t *testing.T, roots []string) {
+	t.Helper()
+
+	oldRoots := traceFSRoots
+	traceFSRoots = roots
+	t.Cleanup(func() {
+		traceFSRoots = oldRoots
 	})
 }

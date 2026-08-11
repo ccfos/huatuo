@@ -85,7 +85,6 @@ integration_huatuo_bamai_start \
 	--procfs-prefix "${CPUSYS_FIXTURE_ROOT}" \
 	--tools-bin-dir "${CPUSYS_FIXTURE_ROOT}/tools" \
 	--disable-kubelet \
-	--disable-cgroup \
 	--log-debug
 
 # Sample 2: total=1100 and system=110. The 10/100 delta establishes a 10%

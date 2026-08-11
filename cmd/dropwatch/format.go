@@ -46,7 +46,19 @@ func (s *textWriter) Write(ev *types.DropWatchTracing) error {
 	line = append(line, ' ')
 	line = append(line, ev.Layers.String()...)
 	line = append(line, " reason="...)
+	if ev.DropReasonGroup != "" {
+		line = append(line, ev.DropReasonGroup...)
+		line = append(line, '/')
+	}
 	line = append(line, ev.DropReason...)
+	if ev.DropSource != "" {
+		line = append(line, " drop_source="...)
+		line = append(line, ev.DropSource...)
+	}
+	if ev.DropLocation != "" {
+		line = append(line, " drop_location="...)
+		line = append(line, ev.DropLocation...)
+	}
 	line = append(line, " len="...)
 	line = strconv.AppendUint(line, uint64(ev.PacketLen), 10)
 	line = append(line, " dev="...)
@@ -144,10 +156,19 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType stri
 
 	frames := symbol.KsymStackStrs(ev.Stack[:], symbol.KsymStackMaxDepth)
 	stackStr := strings.Join(frames, "\n")
+	dropSourceValue := abi.DropwatchDropSource(ev.Meta.DropSource)
+	dropSource := dropSourceName(dropSourceValue)
+	dropReason := names.Resolve(ev.Meta.DropReason)
+	if dropSourceValue == abi.DropwatchDropSourceHardware {
+		dropReason = bytesutil.ToStr(ev.Meta.TrapName[:])
+	}
 
 	return &types.DropWatchTracing{
 		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
-		DropReason:          names.Resolve(ev.Meta.DropReason),
+		DropSource:          dropSource,
+		DropReason:          dropReason,
+		DropReasonGroup:     bytesutil.ToStr(ev.Meta.TrapGroupName[:]),
+		DropLocation:        kernaddr.Format(ev.Meta.DropLocation),
 		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
 		Pid:                 ev.Meta.TGIDPID >> 32,
 		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemcgCSSAddr),
@@ -157,11 +178,22 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType stri
 		NetdevIfindex:       ev.Meta.Ifindex,
 		NetdevQueueMapping:  ev.Meta.QueueMapping,
 		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.DevFlags),
-		PacketSkbAddr:       kernaddr.Format(ev.Meta.KfreeSKBAddr),
+		PacketSkbAddr:       kernaddr.Format(ev.Meta.SKBAddr),
 		PacketEthProto:      "0x" + strconv.FormatUint(uint64(ev.PktHdr.EthProto), 16),
 		PacketLen:           ev.PktHdr.PktLen,
 		Layers:              p,
 		Stack:               stackStr,
 		Source:              sourceType,
+	}
+}
+
+func dropSourceName(source abi.DropwatchDropSource) string {
+	switch source {
+	case abi.DropwatchDropSourceSoftware:
+		return dropSourceSoftware
+	case abi.DropwatchDropSourceHardware:
+		return dropSourceHardware
+	default:
+		return "unknown"
 	}
 }
