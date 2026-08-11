@@ -100,6 +100,8 @@ assert_shutdown_log() {
 		|| fatal "shutdown log did not include job ID ${PROFILE_ID}"
 }
 
+continuous_profiling_start_stack
+
 continuous_profiling_start_native_cpu_fixture TARGET_PID
 continuous_profile_create_cpu "${PROFILE_CREATE_RESPONSE}" "${PROFILE_DURATION}"
 PROFILE_ID=$(jq -er '.data.id' "${PROFILE_CREATE_RESPONSE}") \
