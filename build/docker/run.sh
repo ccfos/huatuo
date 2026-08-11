@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright 2025 The HuaTuo Authors
+# Copyright 2025, 2026 The HuaTuo Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,22 +15,137 @@
 # limitations under the License.
 #
 
+set -eu
+
 ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-localhost}
 ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-huatuo-bamai}
-
 RUN_PATH=${RUN_PATH:-/home/huatuo-bamai}
+CONFIG_FILE=${CONFIG_FILE:-${RUN_PATH}/conf/huatuo-bamai.conf}
+HUATUO_MODE=${HUATUO_MODE:-profiling}
+PYROSCOPE_ADDRESS=${PYROSCOPE_ADDRESS:-http://127.0.0.1:4040}
+ELASTICSEARCH_WAIT_SECONDS=${ELASTICSEARCH_WAIT_SECONDS:-180}
+ELASTICSEARCH_INIT_DELAY_SECONDS=${ELASTICSEARCH_INIT_DELAY_SECONDS:-5}
 
-# Wait for Elasticsearch to be ready
+profile_enabled() {
+	case ",${HUATUO_MODE}," in
+	*,"$1",*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+prepare_runtime_config() {
+	mode=$1
+	if [ ! -f "$CONFIG_FILE" ]; then
+		echo "huatuo-bamai config not found: $CONFIG_FILE" >&2
+		return 1
+	fi
+
+	case "$PYROSCOPE_ADDRESS" in
+	http://* | https://*) ;;
+	*)
+		echo "PYROSCOPE_ADDRESS must use http or https." >&2
+		return 1
+		;;
+	esac
+	case "$PYROSCOPE_ADDRESS" in
+	*\"* | *\\*)
+		echo "PYROSCOPE_ADDRESS must not contain quotes or backslashes." >&2
+		return 1
+		;;
+	esac
+
+	runtime_config="${RUN_PATH}/conf/huatuo-bamai-${mode}.conf"
+	temp_config="${runtime_config}.tmp.$$"
+	disable_elasticsearch=false
+	display_backend=apiserver
+	if [ "$mode" = "profiling" ]; then
+		disable_elasticsearch=true
+		display_backend=pyroscope
+	fi
+	if ! awk \
+		-v disable_elasticsearch="$disable_elasticsearch" \
+		-v display_backend="$display_backend" \
+		-v pyroscope_address="$PYROSCOPE_ADDRESS" '
+		/^[[:space:]]*\[Storage\.Elasticsearch\][[:space:]]*$/ {
+			section = "es"
+			print
+			next
+		}
+		/^[[:space:]]*\[Storage\.Pyroscope\][[:space:]]*$/ {
+			section = "pyroscope"
+			seen_pyroscope = 1
+			print
+			next
+		}
+		/^[[:space:]]*\[AutoTracing\.Display\][[:space:]]*$/ {
+			section = "display"
+			seen_display = 1
+			print
+			next
+		}
+		/^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+			section = ""
+			print
+			next
+		}
+		section == "es" &&
+			/^[[:space:]]*Address[[:space:]]*=/ {
+			seen_es_address = 1
+			if (disable_elasticsearch == "true") {
+				print "        Address = \"\""
+			} else {
+				print
+			}
+			next
+		}
+		section == "pyroscope" &&
+			/^[[:space:]]*#?[[:space:]]*Address[[:space:]]*=/ {
+			printf "        Address = \"%s\"\n", pyroscope_address
+			seen_pyroscope_address = 1
+			next
+		}
+		section == "display" &&
+			/^[[:space:]]*#?[[:space:]]*Backend[[:space:]]*=/ {
+			printf "        Backend = \"%s\"\n", display_backend
+			seen_display_backend = 1
+			next
+		}
+		{ print }
+		END {
+			if (!seen_es_address ||
+				!seen_pyroscope ||
+				!seen_pyroscope_address ||
+				!seen_display ||
+				!seen_display_backend) {
+				exit 42
+			}
+		}
+	' "$CONFIG_FILE" > "$temp_config"; then
+		rm -f "$temp_config"
+		echo "Storage or AutoTracing.Display is missing from $CONFIG_FILE." >&2
+		return 1
+	fi
+
+	chmod 600 "$temp_config"
+	mv "$temp_config" "$runtime_config"
+	CONFIG_FILE=$runtime_config
+	if [ "$mode" = "profiling" ]; then
+		echo "Profiling mode: AutoTracing uses Grafana and Pyroscope."
+	else
+		echo "Full mode: AutoTracing uses huatuo-apiserver."
+	fi
+}
+
 wait_for_elasticsearch() {
 	target_url="http://${ELASTICSEARCH_HOST}:9200/"
 
-	# Try to extract Elasticsearch address from config file
-	if [ -f "huatuo-bamai.conf" ]; then
-		# Extract Address from [Storage.Elasticsearch] section
-		# sed: range from [Storage.Elasticsearch] to next section start [
-		# grep: find Address line
-		# awk: extract text between double quotes
-		conf_addr=$(sed -n '/\[Storage\.Elasticsearch\]/,/\[.*\]/p' huatuo-bamai.conf | grep '^[[:space:]]*Address' | head -n 1 | awk -F'"' '{print $2}')
+	if [ -f "$CONFIG_FILE" ]; then
+		conf_addr=$(
+			sed -n '/\[Storage\.Elasticsearch\]/,/\[.*\]/p' "$CONFIG_FILE" \
+				| grep '^[[:space:]]*Address' \
+				| head -n 1 \
+				| awk -F'"' '{print $2}'
+		)
 
 		if [ -n "$conf_addr" ]; then
 			echo "Found Elasticsearch address in config: $conf_addr"
@@ -38,40 +153,41 @@ wait_for_elasticsearch() {
 		fi
 	fi
 
-	args="-s -D- -m15 -w '%{http_code}' ${target_url}"
-	if [ -n "${ELASTIC_PASSWORD}" ]; then
-		args="$args -u elastic:${ELASTIC_PASSWORD}"
-	fi
-
 	result=1
 	output=""
-
-	# retry for up to 180 seconds
-	for sec in $(seq 1 180); do
+	sec=1
+	while [ "$sec" -le "$ELASTICSEARCH_WAIT_SECONDS" ]; do
 		exit_code=0
-		output=$(eval "curl $args") || exit_code=$?
-		# echo "exec curl $args, exit code: $exit_code, output: $output"
-		if [ $exit_code -ne 0 ]; then
+		if [ -n "$ELASTIC_PASSWORD" ]; then
+			output=$(
+				curl -sS -D- -m15 -w '%{http_code}' \
+					-u "elastic:${ELASTIC_PASSWORD}" "$target_url"
+			) || exit_code=$?
+		else
+			output=$(curl -sS -D- -m15 -w '%{http_code}' "$target_url") \
+				|| exit_code=$?
+		fi
+		if [ "$exit_code" -ne 0 ]; then
 			result=$exit_code
 		fi
 
-		# Extract the last three characters of the output to check the HTTP status code
-		http_code=$(echo "$output" | tail -c 4)
-		if [ "$http_code" -eq 200 ]; then
+		http_code=$(printf '%s' "$output" | tail -c 3)
+		if [ "$http_code" = "200" ]; then
 			result=0
 			break
 		fi
 
 		echo "Waiting for Elasticsearch ready... ${sec}s"
 		sleep 1
+		sec=$((sec + 1))
 	done
 
-	if [ $result -ne 0 ] && [ "$http_code" -ne 000 ]; then
-		echo "$output" | head -c -3
+	if [ "$result" -ne 0 ] && [ "$http_code" != "000" ]; then
+		printf '%s' "$output" | head -c -3
 	fi
 
-	if [ $result -ne 0 ]; then
-		case $result in
+	if [ "$result" -ne 0 ]; then
+		case "$result" in
 		6)
 			echo 'Could not resolve host. Is Elasticsearch running?'
 			;;
@@ -86,14 +202,29 @@ wait_for_elasticsearch() {
 			;;
 		esac
 
-		exit $result
+		return "$result"
 	fi
 }
 
-wait_for_elasticsearch
-sleep 5 # Waiting for initialization of Elasticsearch built-in users
-echo "Elasticsearch is ready."
+if profile_enabled profiling; then
+	if profile_enabled full; then
+		echo "HUATUO_MODE must select either full or profiling, not both." >&2
+		exit 1
+	fi
+	prepare_runtime_config profiling
+elif profile_enabled full; then
+	prepare_runtime_config full
+	wait_for_elasticsearch
+	sleep "$ELASTICSEARCH_INIT_DELAY_SECONDS"
+	echo "Elasticsearch is ready."
+else
+	echo "HUATUO_MODE must select full or profiling." >&2
+	exit 1
+fi
 
-# Run huatuo-bamai
-cd $RUN_PATH
-exec ./bin/huatuo-bamai --region example --config huatuo-bamai.conf
+cd "$RUN_PATH"
+exec ./bin/huatuo-bamai \
+	--region example \
+	--config-dir "$(dirname "$CONFIG_FILE")" \
+	--config "$(basename "$CONFIG_FILE")" \
+	--disable-kubelet
