@@ -194,19 +194,49 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 		}
 
 		if available.waitPercent {
-			metrics = append(metrics, metric.NewContainerGaugeData(container, "wait_sum_percent", containerDataCache.waitPercent, "percentage of CFS cgroup schedulable time spent waiting on the parent runqueue (requires kernel.sched_schedstats=1)", nil))
+			metrics = append(metrics, metric.NewContainerGaugeData(
+				container,
+				"wait_sum_percent",
+				containerDataCache.waitPercent,
+				"CFS cgroup runqueue wait as a percentage of total schedulable time (requires kernel.sched_schedstats=1)",
+				nil,
+			))
 		}
 		if available.nrThrottled {
-			metrics = append(metrics, metric.NewContainerGaugeData(container, "nr_throttled", float64(containerDataCache.nrThrottled), "throttle nr for the containers", nil))
+			metrics = append(metrics, metric.NewContainerGaugeData(
+				container,
+				"nr_throttled",
+				float64(containerDataCache.nrThrottled),
+				"number of CFS periods in which the cgroup was throttled",
+				nil,
+			))
 		}
 		if available.throttledTime {
-			metrics = append(metrics, metric.NewContainerGaugeData(container, "throttled_time", float64(containerDataCache.throttledTime), "throttle time for the containers", nil))
+			metrics = append(metrics, metric.NewContainerGaugeData(
+				container,
+				"throttled_time",
+				float64(containerDataCache.throttledTime),
+				"total CFS cgroup throttled time in nanoseconds",
+				nil,
+			))
 		}
 		if available.nrBursts {
-			metrics = append(metrics, metric.NewContainerGaugeData(container, "nr_bursts", float64(containerDataCache.nrBursts), "burst nr for the containers", nil))
+			metrics = append(metrics, metric.NewContainerGaugeData(
+				container,
+				"nr_bursts",
+				float64(containerDataCache.nrBursts),
+				"number of CFS periods in which the cgroup used burst capacity",
+				nil,
+			))
 		}
 		if available.burstTime {
-			metrics = append(metrics, metric.NewContainerGaugeData(container, "burst_time", float64(containerDataCache.burstTime), "burst time for the containers", nil))
+			metrics = append(metrics, metric.NewContainerGaugeData(
+				container,
+				"burst_time",
+				float64(containerDataCache.burstTime),
+				"total CFS cgroup burst time in nanoseconds",
+				nil,
+			))
 		}
 	}
 
