@@ -48,6 +48,7 @@ require (
 	golang.org/x/time v0.9.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	k8s.io/api v0.31.3
+	k8s.io/apimachinery v0.31.3
 	k8s.io/cri-client v0.31.3
 	modernc.org/sqlite v1.44.0
 	sigs.k8s.io/yaml v1.5.0
@@ -212,7 +213,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.1 // indirect
-	k8s.io/apimachinery v0.31.3 // indirect
 	k8s.io/client-go v0.31.3 // indirect
 	k8s.io/component-base v0.31.3 // indirect
 	k8s.io/cri-api v0.31.3 // indirect
