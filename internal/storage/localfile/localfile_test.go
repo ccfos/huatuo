@@ -71,7 +71,7 @@ func TestBackendConcurrentSave(t *testing.T) {
 				Fields: map[string]any{
 					"tracer_name": name,
 				},
-			}); err != nil {
+			}, driver.SaveOptions{}); err != nil {
 				t.Errorf("Save(%q): %v", name, err)
 			}
 		}()
