@@ -34,7 +34,6 @@ import (
 type Storage struct {
 	lock         sync.Mutex
 	files        map[string]io.Writer
-	writerCache  sync.Map
 	path         string
 	rotationSize int
 	maxRotation  int
@@ -111,26 +110,14 @@ func (b *Storage) Close(_ context.Context) error {
 
 func (b *Storage) newFileWriter(filename string) io.Writer {
 	fp := path.Join(b.path, filename)
-
-	fileWriter, ok := b.writerCache.Load(fp)
-	if !ok {
-		fileWriter = filerotate.NewFileRotator(fp, b.maxRotation, b.rotationSize)
-		b.writerCache.Store(fp, fileWriter)
-	}
-
-	b.files[filename] = fileWriter.(io.Writer)
+	b.files[filename] = filerotate.NewFileRotator(fp, b.maxRotation, b.rotationSize)
 	return b.files[filename]
 }
 
 func (b *Storage) writerByName(name string) (io.Writer, error) {
-	if fileWriter, ok := b.files[name]; ok {
-		return fileWriter, nil
-	}
-
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
-	// Double-check after acquiring lock
 	if fileWriter, ok := b.files[name]; ok {
 		return fileWriter, nil
 	}
