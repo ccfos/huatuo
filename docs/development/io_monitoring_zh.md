@@ -61,12 +61,21 @@ MD 异常，并在能够唯一定位设备时采集健康证据。
 | `scsi_timeouts_total` | device | SCSI timeout 次数 |
 | `scsi_dispatch_errors_total` | device、status | SCSI 派发失败次数 |
 | `collection_errors_total` | device、reason | 健康取证失败次数 |
+| `event_persistence_failures_total` | reason | 事件持久化被丢弃或结果未确认的次数 |
 
 MD 和 NVMe controller 状态变化只保存为事件，不导出当前状态 Gauge。
 
+进程内事件 Counter 在事件到达时更新，不依赖存储速度。事件文档通过容量为
+1024 的有界队列串行保存，单次保存设置 5 秒超时。存储未及时返回时记录超时，
+待这次保存返回后继续消费；取消时退出，不等待阻塞的存储。取证命令使用另一条容量为
+1024 的串行队列；同一设备代际的请求处于执行中或 60 秒冷却期时会被合并，
+设备名复用后的新代际不继承旧代际状态。任一队列满、存储不响应、停止期间未完成
+等情况不会阻塞 BPF、MD 或取证来源，但相应文档可能被丢弃或结果无法确认，并通过
+`event_persistence_failures_total` 的 `reason` 标签计数。
+
 ## 事件内容
 
-每次健康事件独立保存，不适用或未取得的可选字段会被省略：
+队列接受的健康事件按独立文档保存，不适用或未取得的可选字段会被省略：
 
 | 字段 | 含义 |
 | --- | --- |
