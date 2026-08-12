@@ -33,6 +33,7 @@ import (
 	tracingstore "github.com/ccfos/huatuo/pkg/tracing/store"
 	"github.com/ccfos/huatuo/pkg/types"
 
+	promblockdevice "github.com/prometheus/procfs/blockdevice"
 )
 
 // A blocking backend observes the real writer path before persistence completes.
@@ -262,6 +263,34 @@ func TestHandleIotracingEventReturnsPendingResult(t *testing.T) {
 	}
 	if _, ok := pendingReasons.Load(taskID); ok {
 		t.Fatal("handleIotracingEvent() left the pending reason in the registry")
+	}
+}
+
+func TestDiskSnapshotsDeleteMissingDiskState(t *testing.T) {
+	previous := metricTestSnapshot(time.Unix(100, 0), "present", 8, 0, &promblockdevice.IOStats{})
+	missing := previous.devices["present"]
+	missing.DeviceName = "missing"
+	missing.MinorNumber = 16
+	previous.devices["missing"] = missing
+	previous.order = append(previous.order, "missing")
+	current := metricTestSnapshot(time.Unix(101, 0), "present", 8, 0, &promblockdevice.IOStats{})
+	metrics := map[string]diskMetricStatus{
+		"present": {},
+		"missing": {},
+	}
+	snapshot := buildDiskStatusSnapshot(previous, current)
+	if _, ok := snapshot.devices["missing"]; ok {
+		t.Error("raw window retained a missing device")
+	}
+	if _, ok := snapshot.devices["present"]; !ok {
+		t.Error("raw window removed a present device")
+	}
+	evaluateThresholds(current, snapshot, metrics, ioThresholds{})
+	if _, ok := metrics["missing"]; ok {
+		t.Error("threshold history retained a missing device")
+	}
+	if _, ok := metrics["present"]; !ok {
+		t.Error("threshold history removed a present device")
 	}
 }
 
