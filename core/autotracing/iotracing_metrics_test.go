@@ -16,6 +16,7 @@
 package autotracing
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
+	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
 
 	promblockdevice "github.com/prometheus/procfs/blockdevice"
@@ -56,12 +58,31 @@ func metricTestSnapshot(
 	}
 }
 
-func metricTestValues(metrics []*metric.Data) []float64 {
-	values := make([]float64, 0, len(metrics))
-	for _, data := range metrics {
-		values = append(values, data.Value)
+func assertDiskMetrics(t *testing.T, metrics []*metric.Data, device string, values []float64) {
+	t.Helper()
+	names := []string{
+		"read_bytes_per_second",
+		"write_bytes_per_second",
+		"read_iops",
+		"write_iops",
+		"read_await_milliseconds",
+		"write_await_milliseconds",
+		"io_utilization_percent",
+		"average_queue_size",
 	}
-	return values
+	require.Len(t, metrics, len(names))
+	require.Len(t, values, len(names))
+	for i, name := range names {
+		require.NotNil(t, metrics[i], name)
+		assert.Equal(t, name, metrics[i].Name())
+		assert.Equal(t, metric.MetricTypeGauge, metrics[i].Type(), name)
+		assert.Equal(t, values[i], metrics[i].Value, name)
+		assert.NotEmpty(t, metrics[i].Help(), name)
+		labels := metrics[i].Labels()
+		delete(labels, metric.LabelHost)
+		delete(labels, metric.LabelRegion)
+		assert.Equal(t, map[string]string{"device": device}, labels, name)
+	}
 }
 
 func TestNewIOTracingInitializesMetricBaseline(t *testing.T) {
@@ -88,6 +109,7 @@ func TestNewIOTracingInitializesMetricBaseline(t *testing.T) {
 
 	attr, err := newIOTracing()
 	require.NoError(t, err)
+	assert.Equal(t, tracing.FlagTracing|tracing.FlagMetric, attr.Flag)
 	tracer, ok := attr.TracingData.(*ioTracing)
 	require.True(t, ok)
 	require.NotNil(t, tracer.metricPrevious)
@@ -162,7 +184,7 @@ func TestIOTracingUpdateUsesConsecutiveMetricReads(t *testing.T) {
 
 	first, err := tracer.Update()
 	require.NoError(t, err)
-	assert.Equal(t, []float64{
+	assertDiskMetrics(t, first, "sda", []float64{
 		1280,
 		1792,
 		1.5,
@@ -171,11 +193,11 @@ func TestIOTracingUpdateUsesConsecutiveMetricReads(t *testing.T) {
 		2500.6,
 		95,
 		0.12,
-	}, metricTestValues(first))
+	})
 
 	second, err := tracer.Update()
 	require.NoError(t, err)
-	assert.Equal(t, []float64{
+	assertDiskMetrics(t, second, "sda", []float64{
 		5120,
 		2048,
 		4,
@@ -184,7 +206,7 @@ func TestIOTracingUpdateUsesConsecutiveMetricReads(t *testing.T) {
 		500,
 		50,
 		0.2,
-	}, metricTestValues(second))
+	})
 	assert.Equal(t, 2, readIndex)
 }
 
@@ -343,7 +365,7 @@ func TestIOTracingUpdateExportsMDSnapshot(t *testing.T) {
 
 	metrics, err := tracer.Update()
 	require.NoError(t, err)
-	assert.Len(t, metrics, 8)
+	assertDiskMetrics(t, metrics, "md0", make([]float64, 8))
 }
 
 func TestIOTracingRealDiskstatsMetrics(t *testing.T) {
@@ -537,29 +559,31 @@ func TestIsMonitoredDiskFiltersPartitionsAndPseudoDevices(t *testing.T) {
 		{
 			name: "loop",
 			stat: &blockdevice.Diskstats{
-				Info: promblockdevice.Info{DeviceName: "loop0"},
+				Info: promblockdevice.Info{DeviceName: "loop0", MajorNumber: 8},
 			},
 		},
 		{
 			name: "ram",
 			stat: &blockdevice.Diskstats{
-				Info: promblockdevice.Info{DeviceName: "ram0"},
+				Info: promblockdevice.Info{DeviceName: "ram0", MajorNumber: 8},
 			},
 		},
 		{
 			name: "zram",
 			stat: &blockdevice.Diskstats{
-				Info: promblockdevice.Info{DeviceName: "zram0"},
+				Info: promblockdevice.Info{DeviceName: "zram0", MajorNumber: 8},
 			},
 		},
 		{
 			name: "floppy",
 			stat: &blockdevice.Diskstats{
-				Info: promblockdevice.Info{DeviceName: "fd0"},
+				Info: promblockdevice.Info{DeviceName: "fd0", MajorNumber: 8},
 			},
 		},
 	}
 
+	// Pseudo names also resolve to the valid 8:0 whole-device fixture, so
+	// missing sysfs cannot hide a regression in the name exclusion rule.
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(t, test.want, isMonitoredDisk(test.stat))
@@ -595,4 +619,137 @@ func TestMDSnapshotDoesNotTriggerDiagnostic(t *testing.T) {
 
 	assert.Nil(t, reason)
 	assert.Contains(t, lastMetrics, "md0")
+}
+
+func TestIOTracingThresholdsRequireConsecutiveWindows(t *testing.T) {
+	thresholds := ioThresholds{
+		UtilThreshold:  90,
+		RBPSThreshold:  1,
+		WBPSThreshold:  1,
+		AwaitThreshold: 10,
+	}
+	busy := diskMetricStatus{IOUtil: 90.5}
+	nvmeRead := diskMetricStatus{IOUtil: 90.5, ReadBPS: 1024*1024 + 0.5}
+	nvmeWrite := diskMetricStatus{IOUtil: 90.5, WriteBPS: 1024*1024 + 0.5}
+	readAwait := diskMetricStatus{ReadAwait: 10.5}
+	writeAwait := diskMetricStatus{WriteAwait: 10.5}
+	tests := []struct {
+		name     string
+		device   string
+		previous diskMetricStatus
+		current  diskMetricStatus
+		want     thresholdReason
+	}{
+		{"disk busy twice", "sda", busy, busy, ioReasonUtil},
+		{"one busy window", "sda", diskMetricStatus{}, busy, ioReasonNone},
+		{"busy then idle", "sda", busy, diskMetricStatus{}, ioReasonNone},
+		{"util equals threshold", "sda", busy, diskMetricStatus{IOUtil: 90}, ioReasonNone},
+		{"NVMe util alone", "nvme0n1", busy, busy, ioReasonNone},
+		{"NVMe read throughput", "nvme0n1", nvmeRead, nvmeRead, ioReasonReadBPS},
+		{"NVMe write throughput", "nvme0n1", nvmeWrite, nvmeWrite, ioReasonWriteBPS},
+		{
+			"NVMe throughput equals threshold", "nvme0n1", nvmeRead,
+			diskMetricStatus{IOUtil: 90.5, ReadBPS: 1024 * 1024},
+			ioReasonNone,
+		},
+		{
+			"NVMe util equals threshold", "nvme0n1", nvmeRead,
+			diskMetricStatus{IOUtil: 90, ReadBPS: 1024*1024 + 0.5},
+			ioReasonNone,
+		},
+		{"read await", "sda", readAwait, readAwait, ioReasonReadAwait},
+		{"write await", "nvme0n1", writeAwait, writeAwait, ioReasonWriteAwait},
+		{"await equals threshold", "sda", readAwait, diskMetricStatus{ReadAwait: 10}, ioReasonNone},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := metricTestSnapshot(time.Unix(100, 0), test.device, 8, 0, &promblockdevice.IOStats{})
+			lastMetrics := make(map[string]diskMetricStatus)
+			for i, status := range []diskMetricStatus{test.previous, test.current} {
+				snapshot := &diskStatusSnapshot{
+					devices: map[string]diskMetricStatus{test.device: status},
+					order:   []string{test.device},
+				}
+				reason := evaluateThresholds(raw, snapshot, lastMetrics, thresholds)
+				if i == 0 || test.want == ioReasonNone {
+					assert.Nil(t, reason)
+					continue
+				}
+				require.NotNil(t, reason)
+				assert.Equal(t, string(test.want), reason.Type)
+				assert.Equal(t, test.device, reason.Device)
+			}
+		})
+	}
+}
+
+func TestIOTracingDiagnosticRestartsAfterInvalidWindow(t *testing.T) {
+	tests := []struct {
+		name       string
+		invalidate func(*blockdevice.Diskstats)
+	}{
+		{"major changed", func(stat *blockdevice.Diskstats) { stat.MajorNumber++ }},
+		{"minor changed", func(stat *blockdevice.Diskstats) { stat.MinorNumber++ }},
+		{"counter reset", func(stat *blockdevice.Diskstats) { stat.ReadIOs = 0 }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			previous := metricTestSnapshot(time.Unix(100, 0), "sda", 8, 0,
+				&promblockdevice.IOStats{ReadIOs: 100, IOsTotalTicks: 1000})
+			lastMetrics := make(map[string]diskMetricStatus)
+			// A busy window, an invalid window, then two new busy windows.
+			// Only the final window may trigger; old history cannot bridge the gap.
+			for step := 0; step < 4; step++ {
+				stat := previous.devices["sda"]
+				stat.ReadIOs++
+				stat.IOsTotalTicks += 950
+				if step == 1 {
+					test.invalidate(&stat)
+				}
+				current := metricTestSnapshot(previous.timestamp.Add(time.Second),
+					"sda", stat.MajorNumber, stat.MinorNumber, &stat.IOStats)
+				reason := evaluateThresholds(current,
+					buildDiskStatusSnapshot(previous, current), lastMetrics,
+					ioThresholds{UtilThreshold: 90})
+				if step < 3 {
+					assert.Nil(t, reason, "step %d", step)
+				} else {
+					require.NotNil(t, reason)
+					assert.Equal(t, "ioutil", reason.Type)
+					assert.Equal(t, "sda", reason.Device)
+				}
+				if step == 1 {
+					assert.NotContains(t, lastMetrics, "sda")
+				}
+				previous = current
+			}
+		})
+	}
+}
+
+func TestReasonSnapshotPreservesIntegerDiskStatusSchema(t *testing.T) {
+	status := persistedDiskStatus(diskMetricStatus{
+		ReadBPS:    1.75,
+		ReadIOPS:   2.5,
+		ReadAwait:  3.25,
+		WriteBPS:   4.75,
+		WriteIOPS:  5.5,
+		WriteAwait: 6.25,
+		IOUtil:     7.75,
+		QueueSize:  8.5,
+	})
+
+	raw, err := json.Marshal(reasonSnapshot{
+		Type:     string(ioReasonUtil),
+		Device:   "sda",
+		IOStatus: status,
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t,
+		`{"type":"ioutil","device":"sda","major_num":0,"minor_num":0,"iostatus":`+
+			`{"read_bps":1,"read_iops":2,"read_await":3,`+
+			`"write_bps":4,"write_iops":5,"write_await":6,`+
+			`"io_util":7,"queue_size":8},"summary":""}`,
+		string(raw),
+	)
 }
