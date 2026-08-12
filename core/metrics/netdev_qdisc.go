@@ -39,6 +39,7 @@ func init() {
 }
 
 func newQdiscCollector() (*tracing.EventTracingAttr, error) {
+	cfg := configSnapshot()
 	deviceMatcher, err := matcher.NewValueMatcher(
 		cfg.Qdisc.DeviceIncluded,
 		cfg.Qdisc.DeviceExcluded,

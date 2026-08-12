@@ -112,6 +112,7 @@ func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 
 // Core function
 func (c *memBurstTracing) Start(ctx context.Context) error {
+	cfg := configSnapshot()
 	if err := validateMemBurst(&cfg.MemoryBurst); err != nil {
 		return err
 	}

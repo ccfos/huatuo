@@ -57,6 +57,7 @@ func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
 	globalDropwatchTCPRetransmitCache.enable()
 	defer globalDropwatchTCPRetransmitCache.disable()
 
+	cfg := configSnapshot()
 	args := []string{
 		"--mode", "retransmit",
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "tcp_retransmit.o"),

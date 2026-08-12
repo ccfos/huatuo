@@ -59,6 +59,7 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *softirqTracing) Start(ctx context.Context) error {
+	cfg := configSnapshot()
 	softirqThresh := cfg.Softirq.DisabledThreshold
 
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), map[string]any{"softirq_thresh": softirqThresh})

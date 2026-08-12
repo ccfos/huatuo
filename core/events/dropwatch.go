@@ -50,6 +50,7 @@ func newDropWatch() (*tracing.EventTracingAttr, error) {
 // Start launches dropwatch as a subprocess and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *dropWatchTracing) Start(ctx context.Context) error {
+	cfg := configSnapshot()
 	args := []string{
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "dropwatch.o"),
 		"--output-storage", toolstream.DefaultSockPath,
@@ -97,10 +98,9 @@ func ignoreDropwatch(data *types.DropWatchTracing) bool {
 	// neigh_invalidate). Patterns live in events.IssuesList; see
 	// net_rx_latency.go for the same pattern. Match against data.Stack
 	// (frames joined by '\n').
-	if cfg != nil {
-		if _, found := matcher.Classify(cfg.IssuesList, data.Stack); found {
-			return true
-		}
+	cfg := configSnapshot()
+	if _, found := matcher.Classify(cfg.IssuesList, data.Stack); found {
+		return true
 	}
 
 	return false

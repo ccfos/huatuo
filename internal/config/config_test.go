@@ -15,6 +15,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,5 +185,73 @@ func TestSyncAndSet(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "name = \"huatuo-region\"") {
 		t.Errorf("synced file should contain updated name, got: %s", string(raw))
+	}
+}
+
+func TestSetRejectsInvalidAssignments(t *testing.T) {
+	cfg := &sampleConfig{}
+	tests := []struct {
+		name string
+		dst  any
+		key  string
+		val  any
+	}{
+		{name: "non-pointer", dst: sampleConfig{}, key: "Count", val: 1},
+		{name: "nil pointer", dst: (*sampleConfig)(nil), key: "Count", val: 1},
+		{name: "unknown field", dst: cfg, key: "Missing", val: 1},
+		{name: "wrong type", dst: cfg, key: "Count", val: "1"},
+		{name: "fractional integer", dst: cfg, key: "Count", val: json.RawMessage("1.5")},
+		{name: "integer overflow", dst: cfg, key: "Count", val: json.RawMessage("18446744073709551616")},
+		{name: "null", dst: cfg, key: "Name", val: json.RawMessage("null")},
+		{
+			name: "unknown nested field",
+			dst:  cfg,
+			key:  "Nested",
+			val:  json.RawMessage(`{"Unknown":"value"}`),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := Set(tt.dst, tt.key, tt.val); err == nil {
+				t.Fatal("Set() error = nil, want invalid assignment error")
+			}
+		})
+	}
+}
+
+func TestSetDecodesJSONValue(t *testing.T) {
+	cfg := &sampleConfig{}
+	if err := Set(cfg, "Count", json.RawMessage("8")); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if cfg.Count != 8 {
+		t.Fatalf("Count = %d, want 8", cfg.Count)
+	}
+}
+
+func TestSyncPreservesOriginalOnEncodeFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := writeConfigFile(t, dir, "config.toml", "name = \"original\"\n")
+	unsupported := struct {
+		Values chan int
+	}{Values: make(chan int)}
+
+	if err := Sync(path, unsupported); err == nil {
+		t.Fatal("Sync() error = nil, want encoding error")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read original config: %v", err)
+	}
+	if got := string(raw); got != "name = \"original\"\n" {
+		t.Fatalf("config contents = %q, want original contents", got)
+	}
+	temps, err := filepath.Glob(filepath.Join(dir, ".config.toml.tmp-*"))
+	if err != nil {
+		t.Fatalf("find temporary files: %v", err)
+	}
+	if len(temps) != 0 {
+		t.Fatalf("temporary config files remain: %v", temps)
 	}
 }

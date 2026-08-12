@@ -120,6 +120,7 @@ func newRasTracing() (*tracing.EventTracingAttr, error) {
 	}
 
 	backoffDur := defaultThrEventBackoff
+	cfg := configSnapshot()
 	if cfg.Ras.MceThrBackoff > 0 {
 		backoffDur = time.Duration(cfg.Ras.MceThrBackoff) * time.Second
 	}

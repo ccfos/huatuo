@@ -45,7 +45,7 @@ func newCPUIdle() (*tracing.EventTracingAttr, error) {
 		return nil, err
 	}
 
-	tracer, err := newCPUIdleTracing(cgroupReader, cfg)
+	tracer, err := newCPUIdleTracing(cgroupReader, configSnapshot())
 	if err != nil {
 		return nil, err
 	}

@@ -15,12 +15,14 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync"
 
 	"github.com/pelletier/go-toml"
 )
@@ -30,8 +32,6 @@ var (
 	CoreBinDir = ""
 	// CoreBpfDir is the directory where BPF object files are stored.
 	CoreBpfDir = ""
-
-	lock = sync.Mutex{}
 )
 
 func init() {
@@ -52,40 +52,98 @@ func Load(path string, dst any) error {
 	return toml.NewDecoder(f).Strict(true).Decode(dst)
 }
 
-// Sync encodes src as toml and writes it to path.
-func Sync(path string, src any) error {
-	lock.Lock()
-	defer lock.Unlock()
-
-	f, err := os.Create(path)
+// Sync atomically replaces path with the TOML encoding of src. Callers must
+// prevent concurrent mutation of src until Sync returns.
+func Sync(path string, src any) (retErr error) {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("creating temporary config file: %w", err)
 	}
-	defer f.Close()
+	tempPath := f.Name()
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		if err := f.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			retErr = errors.Join(retErr, fmt.Errorf("closing temporary config file: %w", err))
+		}
+		if err := os.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			retErr = errors.Join(retErr, fmt.Errorf("removing temporary config file: %w", err))
+		}
+	}()
 
-	return toml.NewEncoder(f).Encode(src)
+	mode := os.FileMode(0o600)
+	info, err := os.Stat(path)
+	switch {
+	case err == nil:
+		mode = info.Mode().Perm()
+	case !errors.Is(err, os.ErrNotExist):
+		return fmt.Errorf("stating config file: %w", err)
+	}
+	if err := f.Chmod(mode); err != nil {
+		return fmt.Errorf("setting temporary config file permissions: %w", err)
+	}
+
+	if err := toml.NewEncoder(f).Encode(src); err != nil {
+		return fmt.Errorf("encoding config: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing temporary config file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing temporary config file: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("replacing config file: %w", err)
+	}
+
+	return nil
 }
 
-// Set modifies a field in cfg (a pointer to a struct) by dot-separated key.
+// Set modifies an unpublished config value by dot-separated key. Callers must
+// provide exclusive access to cfg until Set returns.
 func Set(cfg any, key string, val any) error {
-	lock.Lock()
-	defer lock.Unlock()
-
 	c := reflect.ValueOf(cfg)
-	for _, k := range strings.Split(key, ".") {
-		elem := c.Elem().FieldByName(k)
-		if !elem.IsValid() || !elem.CanAddr() {
-			return fmt.Errorf("invalid elem %s: %v", key, elem)
+	if c.Kind() != reflect.Pointer || c.IsNil() {
+		return errors.New("config must be a non-nil pointer")
+	}
+
+	parts := strings.Split(key, ".")
+	for i, part := range parts {
+		c = reflect.Indirect(c)
+		if c.Kind() != reflect.Struct {
+			return fmt.Errorf("config path %q does not refer to a struct", strings.Join(parts[:i], "."))
 		}
-		c = elem.Addr()
+
+		field := c.FieldByName(part)
+		if !field.IsValid() || !field.CanSet() {
+			return fmt.Errorf("config field %q does not exist or is not settable", key)
+		}
+		c = field
 	}
 
-	rc := reflect.Indirect(c)
-	rval := reflect.ValueOf(val)
-	if rc.Kind() != rval.Kind() {
-		return fmt.Errorf("%s type %s is not assignable to type %s", key, rc.Kind(), rval.Kind())
+	value := reflect.ValueOf(val)
+	if !value.IsValid() {
+		return fmt.Errorf("config field %q cannot be assigned nil", key)
+	}
+	if raw, ok := val.(json.RawMessage); ok {
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return fmt.Errorf("config field %q cannot be assigned null", key)
+		}
+		decoded := reflect.New(c.Type())
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(decoded.Interface()); err != nil {
+			return fmt.Errorf("decoding config field %q as %s: %w", key, c.Type(), err)
+		}
+		c.Set(decoded.Elem())
+		return nil
+	}
+	if value.Type().AssignableTo(c.Type()) {
+		c.Set(value)
+		return nil
 	}
 
-	rc.Set(rval)
-	return nil
+	return fmt.Errorf("config field %q requires %s, got %s", key, c.Type(), value.Type())
 }

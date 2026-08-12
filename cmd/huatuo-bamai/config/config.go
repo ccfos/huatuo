@@ -18,7 +18,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/core/events"
@@ -73,8 +76,8 @@ type PodConfig struct {
 	DockerAPIVersion      string `default:"1.24"`
 }
 
-// BamaiConfig is the global huatuo-bamai configuration.
-type BamaiConfig struct {
+// Config is the global huatuo-bamai configuration.
+type Config struct {
 	BlackList []string
 
 	Log        LogConfig
@@ -91,29 +94,42 @@ type BamaiConfig struct {
 }
 
 var (
-	configFile = ""
-	cfg        = &BamaiConfig{}
-	Region     string
+	// ErrInvalidUpdate identifies a config update rejected before publication.
+	ErrInvalidUpdate = errors.New("config: invalid update")
+
+	configState = struct {
+		writerMu sync.Mutex
+		current  atomic.Pointer[Config]
+		path     string
+	}{}
+
+	Region string
 )
+
+func init() {
+	configState.current.Store(&Config{})
+}
 
 // Load loads the config file and updates module level configs.
 func Load(path string) error {
-	loaded := &BamaiConfig{}
+	loaded := &Config{}
 	if err := internalconfig.Load(path, loaded); err != nil {
-		return err
+		return fmt.Errorf("loading config: %w", err)
 	}
 	if err := loaded.Validate(); err != nil {
 		return err
 	}
 
-	cfg = loaded
-	configFile = path
-	setCoreModuleConfig()
+	configState.writerMu.Lock()
+	defer configState.writerMu.Unlock()
+
+	configState.path = path
+	publishConfig(loaded.Clone())
 	return nil
 }
 
 // Validate rejects invalid operational settings before startup side effects.
-func (c *BamaiConfig) Validate() error {
+func (c *Config) Validate() error {
 	if err := c.Log.Validate(); err != nil {
 		return fmt.Errorf("validating log config: %w", err)
 	}
@@ -212,27 +228,88 @@ func (c PodConfig) Validate() error {
 	return nil
 }
 
-// Get returns the bamai configuration.
-func Get() *BamaiConfig {
-	return cfg
+// Get returns the current immutable bamai configuration snapshot. Callers must
+// not modify the returned value or any nested reference.
+func Get() *Config {
+	return configState.current.Load()
 }
 
-// Set updates a config field by dot-separated key.
-func Set(key string, val any) error {
-	if err := internalconfig.Set(cfg, key, val); err != nil {
-		return err
+// Update atomically updates runtime configuration without persisting it.
+func Update(values map[string]any) error {
+	return update(values, false)
+}
+
+// UpdateAndSync atomically updates runtime and persisted configuration.
+func UpdateAndSync(values map[string]any) error {
+	return update(values, true)
+}
+
+func update(values map[string]any, persist bool) error {
+	configState.writerMu.Lock()
+	defer configState.writerMu.Unlock()
+
+	next := configState.current.Load().Clone()
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
 	}
-	setCoreModuleConfig()
+	slices.Sort(keys)
+
+	if err := rejectOverlappingKeys(keys); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidUpdate, err)
+	}
+	for _, key := range keys {
+		if err := internalconfig.Set(next, key, values[key]); err != nil {
+			return fmt.Errorf("%w: setting %q: %w", ErrInvalidUpdate, key, err)
+		}
+	}
+	if err := next.Validate(); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidUpdate, err)
+	}
+
+	// Detach values supplied by the caller before publishing the snapshot.
+	next = next.Clone()
+	if persist {
+		if configState.path == "" {
+			return errors.New("config path is not initialized")
+		}
+		if err := internalconfig.Sync(configState.path, next); err != nil {
+			return fmt.Errorf("persisting config: %w", err)
+		}
+	}
+
+	publishConfig(next)
 	return nil
 }
 
-// Sync writes the config back to the current config file.
-func Sync() error {
-	return internalconfig.Sync(configFile, cfg)
+func rejectOverlappingKeys(keys []string) error {
+	for i := range keys {
+		for j := i + 1; j < len(keys); j++ {
+			if strings.HasPrefix(keys[j], keys[i]+".") {
+				return fmt.Errorf("config fields %q and %q overlap", keys[i], keys[j])
+			}
+		}
+	}
+	return nil
 }
 
-func setCoreModuleConfig() {
-	autotracing.Set(&cfg.AutoTracing)
-	events.Set(&cfg.EventTracing)
-	collector.Set(&cfg.MetricCollector)
+func publishConfig(next *Config) {
+	autotracing.Set(&next.AutoTracing)
+	events.Set(&next.EventTracing)
+	collector.Set(&next.MetricCollector)
+	configState.current.Store(next)
+}
+
+// Clone returns a deep copy suitable for immutable publication.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		return &Config{}
+	}
+
+	dst := *c
+	dst.BlackList = slices.Clone(c.BlackList)
+	dst.AutoTracing = *c.AutoTracing.Clone()
+	dst.EventTracing = *c.EventTracing.Clone()
+	dst.MetricCollector = *c.MetricCollector.Clone()
+	return &dst
 }

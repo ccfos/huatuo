@@ -63,6 +63,7 @@ func newNetdevHw() (*tracing.EventTracingAttr, error) {
 		return nil, err
 	}
 
+	cfg := configSnapshot()
 	deviceMatcher, err := matcher.NewListMatcher(cfg.NetdevHW.DeviceList)
 	if err != nil {
 		return nil, fmt.Errorf("netdev hw device list: %w", err)

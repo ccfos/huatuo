@@ -36,7 +36,7 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	return nil, initStorage(d.opts.Region, config.Get())
 }
 
-func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
+func initStorage(storageRegion string, cfg *config.Config) error {
 	var esStore *storage.Store[*tracing.Document]
 
 	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)

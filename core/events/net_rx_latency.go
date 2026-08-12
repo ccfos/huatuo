@@ -80,6 +80,7 @@ func newNetRcvLat() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netRecvLatTracing) Start(ctx context.Context) error {
+	cfg := configSnapshot()
 	rxlatThreshNetif := cfg.NetRxLatency.Driver2NetRx        // ms, before RPS to a core recv(__netif_receive_skb)
 	rxlatThreshTcpv4 := cfg.NetRxLatency.Driver2TCP          // ms, before RPS to TCP recv(tcp_v4_rcv)
 	rxlatThreshUsercopy := cfg.NetRxLatency.Driver2Userspace // ms, before RPS to user recv(skb_copy_datagram_iovec)
@@ -151,7 +152,12 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				return fmt.Errorf("read from perf event fail: %w", err)
 			}
 
-			containerID, ok := filterByConfigAndResolveContainerID(&pd, hostNetNSInum)
+			eventConfig := configSnapshot()
+			containerID, ok := filterByConfigAndResolveContainerID(
+				&pd,
+				hostNetNSInum,
+				eventConfig,
+			)
 			if !ok {
 				continue
 			}
@@ -172,7 +178,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 				comm, pid, where, lat, state, saddr, sport, daddr, dport, seq, ackSeq, pktLen)
 
 			// known issue filter
-			_, found := matcher.Classify(cfg.IssuesList, title)
+			_, found := matcher.Classify(eventConfig.IssuesList, title)
 			if found {
 				log.Debugf("net_rx_latency known issue")
 				continue
@@ -211,7 +217,7 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	}
 }
 
-func isQosExcluded(container *pod.Container) bool {
+func isQosExcluded(container *pod.Container, cfg *Config) bool {
 	for _, level := range cfg.NetRxLatency.ExcludedContainerQos {
 		if strings.EqualFold(container.Qos.String(), level) {
 			return true
@@ -220,7 +226,11 @@ func isQosExcluded(container *pod.Container) bool {
 	return false
 }
 
-func filterByConfigAndResolveContainerID(pd *abi.NetRXLatencyEvent, hostNetNSInum uint64) (string, bool) {
+func filterByConfigAndResolveContainerID(
+	pd *abi.NetRXLatencyEvent,
+	hostNetNSInum uint64,
+	cfg *Config,
+) (string, bool) {
 	inum := uint64(pd.NetNSInum)
 
 	if cfg.NetRxLatency.ExcludedHostNetnamespace && inum == hostNetNSInum {
@@ -250,7 +260,7 @@ func filterByConfigAndResolveContainerID(pd *abi.NetRXLatencyEvent, hostNetNSInu
 		container = ct
 	}
 
-	if isQosExcluded(container) {
+	if isQosExcluded(container, cfg) {
 		return container.ID, false
 	}
 	return container.ID, true

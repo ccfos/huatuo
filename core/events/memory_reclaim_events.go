@@ -56,6 +56,7 @@ const cssCacheTTL = 5 * time.Second
 //
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim_events.c -o $BPF_DIR/memory_reclaim_events.o
 func (c *memoryReclaimTracing) Start(ctx context.Context) error {
+	cfg := configSnapshot()
 	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), map[string]any{
 		"deltath": cfg.MemoryReclaim.BlockedThreshold,
 	})

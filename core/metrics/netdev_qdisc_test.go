@@ -27,11 +27,12 @@ import (
 )
 
 func TestQdiscCollectorUpdate(t *testing.T) {
-	originalConfig := cfg
-	t.Cleanup(func() { cfg = originalConfig })
-	cfg = &Config{}
-	cfg.Qdisc.DeviceIncluded = `^eth[01]$`
-	cfg.Qdisc.DeviceExcluded = `^eth1$`
+	originalConfig := configSnapshot()
+	t.Cleanup(func() { Set(originalConfig) })
+	testConfig := &Config{}
+	testConfig.Qdisc.DeviceIncluded = `^eth[01]$`
+	testConfig.Qdisc.DeviceExcluded = `^eth1$`
+	Set(testConfig)
 
 	attr, err := newQdiscCollector()
 	if err != nil {
@@ -93,10 +94,11 @@ func TestQdiscCollectorUpdateReadError(t *testing.T) {
 }
 
 func TestNewQdiscCollectorRejectsInvalidDeviceFilter(t *testing.T) {
-	originalConfig := cfg
-	t.Cleanup(func() { cfg = originalConfig })
-	cfg = &Config{}
-	cfg.Qdisc.DeviceIncluded = "["
+	originalConfig := configSnapshot()
+	t.Cleanup(func() { Set(originalConfig) })
+	testConfig := &Config{}
+	testConfig.Qdisc.DeviceIncluded = "["
+	Set(testConfig)
 
 	_, err := newQdiscCollector()
 	if err == nil || !strings.Contains(err.Error(), "qdisc device filter") {

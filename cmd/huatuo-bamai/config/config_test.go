@@ -15,10 +15,15 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	testutils "huatuo-bamai/internal/testing"
 )
 
 func writeConfigFile(t *testing.T, dir, name, content string) string {
@@ -216,71 +221,71 @@ func TestLoadRejectsLegacyKeys(t *testing.T) {
 	}
 }
 
-func TestBamaiConfigValidate(t *testing.T) {
+func TestConfigValidate(t *testing.T) {
 	tests := []struct {
 		name    string
-		mutate  func(*BamaiConfig)
+		mutate  func(*Config)
 		wantErr string
 	}{
 		{
 			name: "invalid log level",
-			mutate: func(cfg *BamaiConfig) {
+			mutate: func(cfg *Config) {
 				cfg.Log.Level = "verbose"
 			},
 			wantErr: "unsupported log level",
 		},
 		{
 			name: "invalid startup cpu limit",
-			mutate: func(cfg *BamaiConfig) {
+			mutate: func(cfg *Config) {
 				cfg.Runtime.StartupCPULimitCores = 0
 			},
 			wantErr: "startup cpu limit",
 		},
 		{
 			name: "invalid listen address",
-			mutate: func(cfg *BamaiConfig) {
+			mutate: func(cfg *Config) {
 				cfg.HTTPServer.ListenAddress = "missing-port"
 			},
 			wantErr: "invalid listen address",
 		},
 		{
 			name: "invalid event stream clients",
-			mutate: func(cfg *BamaiConfig) {
+			mutate: func(cfg *Config) {
 				cfg.HTTPServer.MaxEventStreamClients = 0
 			},
 			wantErr: "maximum event stream clients",
 		},
 		{
 			name: "invalid task concurrency",
-			mutate: func(cfg *BamaiConfig) {
+			mutate: func(cfg *Config) {
 				cfg.Tasks.MaxConcurrent = 0
 			},
 			wantErr: "maximum concurrent tasks",
 		},
 		{
 			name: "invalid local rotation size",
-			mutate: func(cfg *BamaiConfig) {
+			mutate: func(cfg *Config) {
 				cfg.Storage.LocalFile.RotationSizeMiB = 0
 			},
 			wantErr: "local file rotation size",
 		},
 		{
 			name: "invalid kubelet port",
-			mutate: func(cfg *BamaiConfig) {
+			mutate: func(cfg *Config) {
 				cfg.Pod.KubeletReadOnlyPort = 65536
 			},
 			wantErr: "kubelet read-only port",
 		},
 		{
 			name: "invalid autotracing issue expression",
-			mutate: func(cfg *BamaiConfig) {
+			mutate: func(cfg *Config) {
 				cfg.AutoTracing.IssuesList = [][]string{{"broken", "["}}
 			},
 			wantErr: "validating autotracing issues list",
 		},
 		{
 			name: "invalid event tracing issue shape",
-			mutate: func(cfg *BamaiConfig) {
+			mutate: func(cfg *Config) {
 				cfg.EventTracing.IssuesList = [][]string{{"missing-expression"}}
 			},
 			wantErr: "validating event tracing issues list",
@@ -311,17 +316,23 @@ IssuesList = [["broken", "["]]
 	}
 }
 
-func loadConfigDefaults(t *testing.T) *BamaiConfig {
+func loadConfigDefaults(t *testing.T) *Config {
 	t.Helper()
 	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", "")
 	if err := Load(path); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	loaded := *Get()
-	return &loaded
+	return Get().Clone()
 }
 
-func TestSetAndSync(t *testing.T) {
+func TestConfigCloneDoesNotShareMutableReferences(t *testing.T) {
+	source := &Config{}
+	testutils.PopulateCloneSource(t, source)
+
+	testutils.AssertDeepClone(t, source, source.Clone())
+}
+
+func TestUpdateAndSync(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := writeConfigFile(t, tmpDir, "huatuo-bamai.conf", `
 BlackList = ["netdev_hw"]
@@ -346,23 +357,14 @@ ExcludedOnContainer = "writeback"
 		t.Fatalf("Load returned error: %v", err)
 	}
 
-	for _, kv := range []struct {
-		key string
-		val any
-	}{
-		{"BlackList", []string{"netdev_hw", "metax_gpu"}},
-		{"AutoTracing.IssuesList", [][]string{{"cpuidle", "perf"}}},
-		{"EventTracing.IssuesList", [][]string{{"dropwatch", "kfree_skb"}}},
-		{"MetricCollector.Vmstat.IncludedOnHost", "pgsteal_direct"},
-		{"MetricCollector.Vmstat.IncludedOnContainer", "workingset_refault_file"},
-	} {
-		if err := Set(kv.key, kv.val); err != nil {
-			t.Fatalf("Set %s returned error: %v", kv.key, err)
-		}
-	}
-
-	if err := Sync(); err != nil {
-		t.Fatalf("Sync returned error: %v", err)
+	if err := UpdateAndSync(map[string]any{
+		"BlackList":                                  []string{"netdev_hw", "metax_gpu"},
+		"AutoTracing.IssuesList":                     [][]string{{"cpuidle", "perf"}},
+		"EventTracing.IssuesList":                    [][]string{{"dropwatch", "kfree_skb"}},
+		"MetricCollector.Vmstat.IncludedOnHost":      "pgsteal_direct",
+		"MetricCollector.Vmstat.IncludedOnContainer": "workingset_refault_file",
+	}); err != nil {
+		t.Fatalf("UpdateAndSync returned error: %v", err)
 	}
 
 	if err := Load(path); err != nil {
@@ -400,5 +402,113 @@ ExcludedOnContainer = "writeback"
 	}
 	if !strings.Contains(string(raw), "MemoryLimitMiB = 2048") {
 		t.Errorf("synced config should preserve the public memory unit, got %s", string(raw))
+	}
+}
+
+func TestUpdateRollsBackInvalidBatch(t *testing.T) {
+	loadConfigDefaults(t)
+	before := Get()
+
+	err := Update(map[string]any{
+		"BlackList": []string{"dropwatch"},
+		"NotExist":  1,
+	})
+	if !errors.Is(err, ErrInvalidUpdate) {
+		t.Fatalf("Update() error = %v, want ErrInvalidUpdate", err)
+	}
+	if Get() != before {
+		t.Fatal("Update() published a partial config")
+	}
+}
+
+func TestUpdateRejectsOverlappingKeys(t *testing.T) {
+	loadConfigDefaults(t)
+
+	err := Update(map[string]any{
+		"Runtime":                Get().Runtime,
+		"Runtime.MemoryLimitMiB": int64(1024),
+	})
+	if !errors.Is(err, ErrInvalidUpdate) || !strings.Contains(err.Error(), "overlap") {
+		t.Fatalf("Update() error = %v, want overlapping-fields error", err)
+	}
+}
+
+func TestUpdateDetachesCallerValues(t *testing.T) {
+	loadConfigDefaults(t)
+	blacklist := []string{"dropwatch"}
+
+	if err := Update(map[string]any{"BlackList": blacklist}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	blacklist[0] = "netdev_hw"
+
+	if got := Get().BlackList[0]; got != "dropwatch" {
+		t.Fatalf("BlackList[0] = %q, want detached value", got)
+	}
+}
+
+func TestUpdatePublishesConsistentSnapshots(t *testing.T) {
+	loadConfigDefaults(t)
+
+	type limits struct {
+		cpu    float64
+		memory int64
+	}
+	pairs := []limits{{cpu: 3, memory: 300}, {cpu: 4, memory: 400}}
+	valid := map[limits]bool{
+		{cpu: Get().Runtime.CPULimitCores, memory: Get().Runtime.MemoryLimitMiB}: true,
+		pairs[0]: true,
+		pairs[1]: true,
+	}
+
+	start := make(chan struct{})
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	for _, pair := range pairs {
+		wg.Add(1)
+		go func(pair limits) {
+			defer wg.Done()
+			<-start
+			for range 200 {
+				if err := Update(map[string]any{
+					"Runtime.CPULimitCores":  pair.cpu,
+					"Runtime.MemoryLimitMiB": pair.memory,
+				}); err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					return
+				}
+			}
+		}(pair)
+	}
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 1_000 {
+				snapshot := Get()
+				got := limits{
+					cpu:    snapshot.Runtime.CPULimitCores,
+					memory: snapshot.Runtime.MemoryLimitMiB,
+				}
+				if !valid[got] {
+					select {
+					case errCh <- fmt.Errorf("observed mixed config snapshot: %+v", got):
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
 	}
 }

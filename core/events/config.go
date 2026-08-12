@@ -14,6 +14,11 @@
 
 package events
 
+import (
+	"slices"
+	"sync/atomic"
+)
+
 // Config holds event tracing configuration.
 type Config struct {
 	Softirq struct {
@@ -57,14 +62,35 @@ type Config struct {
 	IssuesList [][]string
 }
 
-var cfg = &Config{}
+var currentConfig atomic.Pointer[Config]
 
-// Set sets the events config. A nil argument resets to the zero value so
-// callers never need to nil-check cfg.
+func init() {
+	currentConfig.Store(&Config{})
+}
+
+// Set atomically publishes an immutable copy of the events config. A nil
+// argument resets it to the zero value.
 func Set(c *Config) {
+	currentConfig.Store(c.Clone())
+}
+
+func configSnapshot() *Config {
+	return currentConfig.Load()
+}
+
+// Clone returns a deep copy suitable for immutable publication.
+func (c *Config) Clone() *Config {
 	if c == nil {
-		cfg = &Config{}
-		return
+		return &Config{}
 	}
-	cfg = c
+
+	dst := *c
+	dst.NetRxLatency.ExcludedContainerQos = slices.Clone(c.NetRxLatency.ExcludedContainerQos)
+	dst.Dropwatch.ExcludeContainers = slices.Clone(c.Dropwatch.ExcludeContainers)
+	dst.Netdev.DeviceList = slices.Clone(c.Netdev.DeviceList)
+	dst.IssuesList = slices.Clone(c.IssuesList)
+	for i := range dst.IssuesList {
+		dst.IssuesList[i] = slices.Clone(c.IssuesList[i])
+	}
+	return &dst
 }

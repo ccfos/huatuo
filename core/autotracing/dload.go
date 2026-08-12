@@ -42,7 +42,7 @@ func init() {
 }
 
 func newDload() (*tracing.EventTracingAttr, error) {
-	tracer, err := newDloadTracing(cfg)
+	tracer, err := newDloadTracing(configSnapshot())
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +236,7 @@ func (d *dloadTracing) buildAndSave(
 	}
 
 	// Check if this is caused by known issues.
+	cfg := configSnapshot()
 	knownIssue, _ := matcher.Classify(cfg.IssuesList, cgroupStack)
 	data.KnownIssue = knownIssue
 

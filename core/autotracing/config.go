@@ -14,7 +14,12 @@
 
 package autotracing
 
-import "huatuo-bamai/internal/matcher"
+import (
+	"slices"
+	"sync/atomic"
+
+	"huatuo-bamai/internal/matcher"
+)
 
 // ContainerFilterConfig is the serializable form of a container filter.
 // It is converted to a *matcher.ContainerMatcher at runtime.
@@ -88,14 +93,38 @@ type Config struct {
 	IssuesList [][]string
 }
 
-var cfg = &Config{}
+var currentConfig atomic.Pointer[Config]
 
-// Set sets the autotracing config. A nil argument resets to the zero value so
-// callers never need to nil-check cfg.
+func init() {
+	currentConfig.Store(&Config{})
+}
+
+// Set atomically publishes an immutable copy of the autotracing config. A nil
+// argument resets it to the zero value.
 func Set(c *Config) {
+	currentConfig.Store(c.Clone())
+}
+
+func configSnapshot() *Config {
+	return currentConfig.Load()
+}
+
+// Clone returns a deep copy suitable for immutable publication.
+func (c *Config) Clone() *Config {
 	if c == nil {
-		cfg = &Config{}
-		return
+		return &Config{}
 	}
-	cfg = c
+
+	dst := *c
+	dst.IssuesList = slices.Clone(c.IssuesList)
+	for i := range dst.IssuesList {
+		dst.IssuesList[i] = slices.Clone(c.IssuesList[i])
+	}
+	if c.CPUIdle.Filter != nil {
+		filter := *c.CPUIdle.Filter
+		filter.Included = matcher.CloneRules(c.CPUIdle.Filter.Included)
+		filter.Excluded = matcher.CloneRules(c.CPUIdle.Filter.Excluded)
+		dst.CPUIdle.Filter = &filter
+	}
+	return &dst
 }

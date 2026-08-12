@@ -36,7 +36,7 @@ func (r failingCPUStatReader) Read([]byte) (int, error) {
 }
 
 func TestNewCPUSysBindsConfig(t *testing.T) {
-	originalConfig := cfg
+	originalConfig := configSnapshot()
 	t.Cleanup(func() {
 		Set(originalConfig)
 	})

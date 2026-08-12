@@ -90,7 +90,7 @@ func handleIotracingEvent(sess *toolstream.Session, ev *types.IOTracingSnapshot)
 }
 
 func newIOTracing() (*tracing.EventTracingAttr, error) {
-	tracer, err := newIOTracer(cfg)
+	tracer, err := newIOTracer(configSnapshot())
 	if err != nil {
 		return nil, err
 	}

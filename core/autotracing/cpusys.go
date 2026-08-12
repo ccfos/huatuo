@@ -42,6 +42,7 @@ func init() {
 }
 
 func newCPUSys() (*tracing.EventTracingAttr, error) {
+	cfg := configSnapshot()
 	intervalSeconds := cfg.CPUSys.Interval
 	minTraceIntervalSeconds := cfg.CPUSys.IntervalTracing
 	perfDurationSeconds := cfg.CPUSys.RunTracingToolTimeout
