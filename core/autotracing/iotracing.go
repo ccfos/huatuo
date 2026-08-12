@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path"
@@ -37,6 +38,7 @@ import (
 	"github.com/ccfos/huatuo/internal/randomid"
 	"github.com/ccfos/huatuo/internal/toolstream"
 	"github.com/ccfos/huatuo/internal/tracing"
+	"github.com/ccfos/huatuo/pkg/metric"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
@@ -100,14 +102,22 @@ func newIOTracing() (*tracing.EventTracingAttr, error) {
 		return nil, err
 	}
 
+	if previous, err := readRawDiskstatsSnapshot(); err != nil {
+		log.WithError(err).Warn("read initial /proc/diskstats for metrics")
+	} else {
+		tracer.metricPrevious = previous
+	}
+
 	return &tracing.EventTracingAttr{
 		TracingData: tracer,
 		Interval:    5,
-		Flag:        tracing.FlagTracing,
+		Flag:        tracing.FlagTracing | tracing.FlagMetric,
 	}, nil
 }
 
 type ioTracing struct {
+	metricPrevious          *rawDiskstatsSnapshot
+	readMetricSnapshot      func() (*rawDiskstatsSnapshot, error)
 	thresholds              ioThresholds
 	samplingIntervalSeconds uint64
 	runDurationSeconds      uint64
@@ -623,6 +633,94 @@ func (i *ioTracing) Start(ctx context.Context) error {
 		iotracingSnapshotTimeout,
 		iotracingSnapshotSaveTimeout,
 	)
+}
+
+// round2 rounds v to two decimal places. All iotracing gauge values are
+// exported at this precision so scrapes stay free of floating point noise.
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
+}
+
+// Update calculates disk metrics between consecutive successful metric reads.
+func (c *ioTracing) Update() ([]*metric.Data, error) {
+	readSnapshot := c.readMetricSnapshot
+	if readSnapshot == nil {
+		readSnapshot = readRawDiskstatsSnapshot
+	}
+
+	current, err := readSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	previous := c.metricPrevious
+	c.metricPrevious = current
+	if previous == nil {
+		return nil, metric.ErrNoData
+	}
+	snapshot := buildDiskStatusSnapshot(previous, current)
+
+	metrics := make([]*metric.Data, 0, len(snapshot.devices)*8)
+	for _, device := range snapshot.order {
+		status, ok := snapshot.devices[device]
+		if !ok {
+			continue
+		}
+		labels := map[string]string{"device": device}
+		metrics = append(metrics,
+			metric.NewGaugeData(
+				"read_bytes_per_second",
+				round2(status.ReadBPS),
+				"Disk read throughput between consecutive metric reads in bytes per second.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"write_bytes_per_second",
+				round2(status.WriteBPS),
+				"Disk write throughput between consecutive metric reads in bytes per second.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"read_iops",
+				round2(status.ReadIOPS),
+				"Disk read operations per second between consecutive metric reads.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"write_iops",
+				round2(status.WriteIOPS),
+				"Disk write operations per second between consecutive metric reads.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"read_await_milliseconds",
+				round2(status.ReadAwait),
+				"Average read completion time between consecutive metric reads in milliseconds.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"write_await_milliseconds",
+				round2(status.WriteAwait),
+				"Average write completion time between consecutive metric reads in milliseconds.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"io_utilization_percent",
+				round2(status.IOUtil),
+				"Percentage of time spent doing I/O between consecutive metric reads.",
+				labels,
+			),
+			metric.NewGaugeData(
+				"average_queue_size",
+				round2(status.QueueSize),
+				"Average disk I/O queue size between consecutive metric reads.",
+				labels,
+			),
+		)
+	}
+	if len(metrics) == 0 {
+		return nil, metric.ErrNoData
+	}
+	return metrics, nil
 }
 
 func waitForSnapshotAfterExit(
