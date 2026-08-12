@@ -99,3 +99,29 @@ func TestListenUDSRejectsNonSocketPath(t *testing.T) {
 		t.Fatalf("regular file content = %q, want keep", got)
 	}
 }
+
+func TestListenerClosePreservesReplacedPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "toolstream.sock")
+	listener, err := ListenUDS(path)
+	if err != nil {
+		t.Fatalf("ListenUDS: %v", err)
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove socket path: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatalf("create replacement path: %v", err)
+	}
+
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read replacement path: %v", err)
+	}
+	if string(data) != "replacement" {
+		t.Fatalf("replacement content = %q, want replacement", data)
+	}
+}
