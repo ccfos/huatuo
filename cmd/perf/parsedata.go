@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025-2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@ type eventdata struct {
 
 // CgDumpTrace is an interface for dump stacks in cgusage case
 func CgDumpTrace(addrs []uint64) string {
-	stacks := symbol.KsymStackStrsReversed(addrs, perfStackDepth)
+	stacks := symbol.KsymStackStrs(addrs, perfStackDepth)
 	return strings.Join(stacks, "\n")
 }
 
@@ -142,7 +142,7 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 		}
 
 		if kv.Key.UstackSize > 0 {
-			frames := u.UsymStackStrsReversed(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
+			frames := u.UsymStackStrs(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
 			for _, frame := range frames {
 				if frame != "" {
 					index, functionNames = findOrAdd(frame, functionNames)
