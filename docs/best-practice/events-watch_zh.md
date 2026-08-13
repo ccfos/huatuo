@@ -155,6 +155,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 | `cpusys`                 | CPU 系统态占用率异常（AutoTracing 自动触发）   |
 | `dload`                  | 系统负载异常（AutoTracing 自动触发）           |
 | `iotracing`              | I/O 延迟异常（AutoTracing 自动触发）           |
+| `io_health`              | Block、NVMe、SCSI 和 MD 健康事件               |
 | `memburst`               | 内存突增异常（AutoTracing 自动触发）           |
 
 ---
