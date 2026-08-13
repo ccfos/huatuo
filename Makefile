@@ -21,7 +21,7 @@ endif
 
 APP_COMMIT ?= $(shell git describe --dirty --long --always)
 APP_BUILD_TIME = $(shell date "+%Y%m%d%H%M%S")
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 APP_CMD_DIR := cmd
 APP_CMD_OUTPUT := _output
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
