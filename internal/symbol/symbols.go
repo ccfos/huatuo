@@ -265,6 +265,12 @@ type elfSectionKey struct {
 	size   uint64
 }
 
+type elfSymbolCandidate struct {
+	nameOffset uint32
+	value      uint64
+	size       uint64
+}
+
 func sectionKey(section *elf.Section) elfSectionKey {
 	return elfSectionKey{typ: section.Type, offset: section.Offset, size: section.Size}
 }
@@ -351,17 +357,35 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 		return nil, fmt.Errorf("ELF section data size differs from its declared size")
 	}
 
-	sharedNames := state.names[stringsID]
-	localNames := make(map[uint32]string)
-	var nameBytes uint64
-	type candidate struct {
-		nameOffset uint32
-		value      uint64
-		size       uint64
+	candidates := scanELFSymbolEntries(f, data, symbolSize, pcs)
+	result, nameBytes, localNames, err := materializeELFSymbolCandidates(stringsSection, candidates, pcs, state)
+	if err != nil {
+		return nil, err
 	}
-	candidates := make(map[uint64]candidate, len(pcs))
+	sharedNames := state.names[stringsID]
+
+	state.metadataBytes += metadataBytes
+	if !symbolsAlreadyCounted {
+		state.symbolCount += symbolCount
+	}
+	state.nameBytes += nameBytes
+	state.metadataSections[sectionID] = struct{}{}
+	if len(pcs) == 0 {
+		state.metadataSections[stringsID] = struct{}{}
+	}
+	if sharedNames == nil {
+		sharedNames = make(map[uint32]string, len(localNames))
+		state.names[stringsID] = sharedNames
+	}
+	for offset, name := range localNames {
+		sharedNames[offset] = name
+	}
+	return result, nil
+}
+
+func scanELFSymbolEntries(f *elf.File, data []byte, symbolSize uint64, pcs []uint64) map[uint64]elfSymbolCandidate {
+	candidates := make(map[uint64]elfSymbolCandidate, len(pcs))
 	allSymbols := len(pcs) == 0
-	result := make(symbols, 0, len(pcs))
 	for offset := symbolSize; offset < uint64(len(data)); offset += symbolSize {
 		entry := data[offset : offset+symbolSize]
 		var nameOffset uint32
@@ -381,23 +405,29 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 		if elf.ST_TYPE(info) != elf.STT_FUNC {
 			continue
 		}
-		if !allSymbols {
-			for _, pc := range pcs {
-				if value <= pc {
-					if current, ok := candidates[pc]; !ok || value > current.value {
-						candidates[pc] = candidate{nameOffset: nameOffset, value: value, size: size}
-					}
-				}
-			}
+		if allSymbols {
+			candidates[uint64(len(candidates))] = elfSymbolCandidate{nameOffset: nameOffset, value: value, size: size}
 			continue
 		}
-		candidates[uint64(len(candidates))] = candidate{nameOffset: nameOffset, value: value, size: size}
+		for _, pc := range pcs {
+			if value <= pc {
+				if current, ok := candidates[pc]; !ok || value > current.value {
+					candidates[pc] = elfSymbolCandidate{nameOffset: nameOffset, value: value, size: size}
+				}
+			}
+		}
 	}
+	return candidates
+}
 
+func materializeELFSymbolCandidates(stringsSection *elf.Section, candidates map[uint64]elfSymbolCandidate, pcs []uint64, state *elfSymbolParseState) (symbols, uint64, map[uint32]string, error) {
+	sharedNames := state.names[sectionKey(stringsSection)]
+	localNames := make(map[uint32]string)
+	var nameBytes uint64
+	result := make(symbols, 0, len(candidates))
+	allSymbols := len(pcs) == 0
 	for pc, matched := range candidates {
 		if !allSymbols && matched.size != 0 && pc >= matched.value+matched.size {
-			// Keep the unnamed floor candidate so a lower symbol from another
-			// table cannot incorrectly resolve this PC.
 			result = append(result, &symbol{Addr: matched.value, Size: matched.size})
 			continue
 		}
@@ -407,40 +437,24 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 		}
 		if !ok {
 			if uint64(matched.nameOffset) >= stringsSection.Size {
-				return nil, fmt.Errorf("symbol name offset %d exceeds string table size %d", matched.nameOffset, stringsSection.Size)
+				return nil, 0, nil, fmt.Errorf("symbol name offset %d exceeds string table size %d", matched.nameOffset, stringsSection.Size)
 			}
 			remainingNames := state.limits.MaxNameBytes - state.nameBytes - nameBytes
 			maxNameLength := state.limits.MaxNameLength
 			if maxNameLength == 0 || maxNameLength > remainingNames {
 				maxNameLength = remainingNames
 			}
+			var err error
 			name, err = readELFSymbolName(stringsSection, matched.nameOffset, maxNameLength)
 			if err != nil {
-				return nil, err
+				return nil, 0, nil, err
 			}
 			localNames[matched.nameOffset] = name
 			nameBytes += uint64(len(name))
 		}
 		result = append(result, &symbol{Addr: matched.value, Size: matched.size, Name: name})
 	}
-
-	state.metadataBytes += metadataBytes
-	if !symbolsAlreadyCounted {
-		state.symbolCount += symbolCount
-	}
-	state.nameBytes += nameBytes
-	state.metadataSections[sectionID] = struct{}{}
-	if len(pcs) == 0 {
-		state.metadataSections[stringsID] = struct{}{}
-	}
-	if sharedNames == nil {
-		sharedNames = make(map[uint32]string, len(localNames))
-		state.names[stringsID] = sharedNames
-	}
-	for offset, name := range localNames {
-		sharedNames[offset] = name
-	}
-	return result, nil
+	return result, nameBytes, localNames, nil
 }
 
 func readELFSymbolName(section *elf.Section, offset uint32, limit uint64) (string, error) {
