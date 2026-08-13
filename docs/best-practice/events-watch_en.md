@@ -155,6 +155,7 @@ The `data` field contains the standard HUATUO event record:
 | `cpusys` | CPU system-mode usage anomaly (AutoTracing, auto-triggered) |
 | `dload` | System load anomaly (AutoTracing, auto-triggered) |
 | `iotracing` | I/O latency anomaly (AutoTracing, auto-triggered) |
+| `io_health` | Block, NVMe, SCSI, and MD health events |
 | `memburst` | Memory usage spike anomaly (AutoTracing, auto-triggered) |
 
 ---
