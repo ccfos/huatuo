@@ -475,6 +475,7 @@ sudo _output/bin/profiler \
 | `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；使用 `--type memory` 时必填 |
 | `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围；off-CPU 样本按任务切出时所在 CPU 过滤 |
 | `--cpu-mode` | `oncpu` | 原生 CPU | `oncpu` 按频率采样，`offcpu` 归因阻塞与可运行调度延迟 |
+| `--require-hardware-pmu` | `false` | 原生 on-CPU | 强制使用硬件 PMU 采样；不可用时失败，不回退软件 CPU clock |
 | `--offcpu-phase` | `all` | 原生 off-CPU | 累计 `all`、`blocked` 或 `runqueue` 时间 |
 | `--offcpu-min-duration-us` | `1000` | 原生 off-CPU | 丢弃持续时间小于该微秒数的阶段 |
 | `--offcpu-stats` | `false` | 原生 off-CPU | 收集 BPF 诊断统计；错误和清理路径会产生额外开销 |
@@ -508,6 +509,10 @@ sudo _output/bin/profiler \
 ```
 
 如需包含同一进程的工作线程，增加 `--thread-group`。如需限定 CPU，增加 `--cpuid 2,4-7`。原生 CPU 也支持容器和宿主机级采样：
+
+原生 on-CPU 采集优先使用硬件 CPU cycle event；硬件 PMU 不可用时回退软件
+CPU clock。两种采样源下 `--freq` 均表示每秒采样次数。若软件时钟回退会掩盖
+IRQ 关闭期间的 CPU 时间，可指定 `--require-hardware-pmu`。
 
 ```bash
 # 采集指定容器

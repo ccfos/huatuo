@@ -46,6 +46,7 @@ type ProfilerContext struct {
 	AggrInterval         int
 	IsOneShotAgg         bool
 	CPUIDs               []int
+	RequireHardwarePMU   bool
 
 	ServerAddress             string
 	OutputFormat              output.OutputFormat
@@ -175,6 +176,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		MaxProfilerProcesses: cliCtx.Int("max-concurrent-procs"),
 		AggrInterval:         cliCtx.Int("aggr-interval"),
 		CPUIDs:               cpuIDs,
+		RequireHardwarePMU:   cliCtx.Bool("require-hardware-pmu"),
 
 		ServerAddress:             cliCtx.String("huatuo-api-address"),
 		Type:                      typ,

@@ -254,6 +254,7 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 		wantError string
 	}{
 		{name: "native CPU cpuid", language: "go", typ: "cpu", args: []string{"--cpuid", "1"}},
+		{name: "native hardware PMU", language: "go", typ: "cpu", args: []string{"--require-hardware-pmu"}},
 		{name: "native off-CPU", language: "go", typ: "cpu", args: []string{"--cpu-mode", "offcpu"}},
 		{
 			name:      "Java off-CPU",
@@ -289,6 +290,13 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			wantError: "--freq is not used with --cpu-mode=offcpu",
 		},
 		{
+			name:      "off-CPU rejects hardware PMU",
+			language:  "go",
+			typ:       "cpu",
+			args:      []string{"--cpu-mode", "offcpu", "--require-hardware-pmu"},
+			wantError: "--require-hardware-pmu requires native CPU profiling with --cpu-mode=oncpu",
+		},
+		{
 			name:      "off-CPU minimum duration requires mode",
 			language:  "c++",
 			typ:       "cpu",
@@ -315,6 +323,13 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			typ:       "cpu",
 			args:      []string{"--cpuid", "1"},
 			wantError: "--cpuid is supported only by native CPU profiling",
+		},
+		{
+			name:      "Java hardware PMU",
+			language:  "java",
+			typ:       "cpu",
+			args:      []string{"--require-hardware-pmu"},
+			wantError: "--require-hardware-pmu requires native CPU profiling with --cpu-mode=oncpu",
 		},
 		{
 			name:      "Python BPF debug",

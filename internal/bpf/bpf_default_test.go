@@ -434,6 +434,8 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 			SamplePeriod uint64
 			SampleFreq   uint64
 			CPUIDs       []int
+			Type         uint32
+			Config       uint64
 		}
 		wantErr bool
 	}{
@@ -463,7 +465,13 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 				SamplePeriod uint64
 				SampleFreq   uint64
 				CPUIDs       []int
-			}{SampleFreq: 99},
+				Type         uint32
+				Config       uint64
+			}{
+				SampleFreq: 99,
+				Type:       unix.PERF_TYPE_SOFTWARE,
+				Config:     unix.PERF_COUNT_SW_CPU_CLOCK,
+			},
 			wantErr: false,
 		},
 		{
@@ -474,6 +482,8 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 				SamplePeriod uint64
 				SampleFreq   uint64
 				CPUIDs       []int
+				Type         uint32
+				Config       uint64
 			}{SampleFreq: 0},
 			wantErr: true,
 		},

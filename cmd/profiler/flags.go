@@ -73,6 +73,10 @@ var appFlags = []cli.Flag{
 		Usage:   "The number of samples to collect per second",
 		Value:   99,
 	},
+	&cli.BoolFlag{
+		Name:  "require-hardware-pmu",
+		Usage: "Require native on-CPU profiling to use the hardware PMU",
+	},
 	&cli.UintFlag{
 		Name:  "physical-memory-probability",
 		Usage: "Native physical-memory sampling probability, from 1 to 100 percent",

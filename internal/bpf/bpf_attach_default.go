@@ -146,6 +146,8 @@ func parsePerfEventAttachOptions(
 	samplePeriod uint64,
 	sampleFreq uint64,
 	cpuIDs []int,
+	eventType uint32,
+	eventConfig uint64,
 ) (*perfEventOption, error) {
 	if samplePeriod != 0 && sampleFreq != 0 {
 		return nil, fmt.Errorf(
@@ -155,9 +157,11 @@ func parsePerfEventAttachOptions(
 	}
 
 	opt := &perfEventOption{
-		sample:  sampleFreq,
-		program: program.handle,
-		cpuIDs:  cpuIDs,
+		sample:      sampleFreq,
+		program:     program.handle,
+		cpuIDs:      cpuIDs,
+		eventType:   eventType,
+		eventConfig: eventConfig,
 	}
 	if samplePeriod != 0 {
 		opt.sample = samplePeriod
@@ -230,6 +234,8 @@ func (b *defaultBPF) attachWithOptions(opts []AttachOption) (err error) {
 				opt.PerfEvent.SamplePeriod,
 				opt.PerfEvent.SampleFreq,
 				opt.PerfEvent.CPUIDs,
+				opt.PerfEvent.Type,
+				opt.PerfEvent.Config,
 			)
 			if parseErr != nil {
 				return parseErr
@@ -398,7 +404,10 @@ func (b *defaultBPF) attachPerfEvent(opt *perfEventOption) error {
 	}
 
 	b.perfEvent = event
-	log.WithField("cpu_ids", opt.cpuIDs).Debug("attached BPF perf event")
+	log.WithField("cpu_ids", opt.cpuIDs).
+		WithField("perf_event_type", opt.eventType).
+		WithField("perf_event_config", opt.eventConfig).
+		Debug("attached BPF perf event")
 	return nil
 }
 

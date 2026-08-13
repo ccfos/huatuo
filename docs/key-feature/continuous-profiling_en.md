@@ -473,6 +473,7 @@ Native profiling options:
 | `--memory-mode` | None | Native memory, Java memory | Memory profiling mode; required with `--type memory` |
 | `--cpuid` | All CPUs | Native CPU | Comma-separated CPU list or ranges; off-CPU samples use the task's switch-out CPU |
 | `--cpu-mode` | `oncpu` | Native CPU | `oncpu` for frequency sampling or `offcpu` for blocked/runqueue time attribution |
+| `--require-hardware-pmu` | `false` | Native on-CPU | Require hardware PMU sampling; fail instead of falling back to the software CPU clock |
 | `--offcpu-phase` | `all` | Native off-CPU | Accumulate `all`, `blocked`, or `runqueue` time |
 | `--offcpu-min-duration-us` | `1000` | Native off-CPU | Discard phases shorter than this duration in microseconds |
 | `--offcpu-stats` | `false` | Native off-CPU | Collect BPF diagnostic statistics; adds overhead to error and cleanup paths |
@@ -506,6 +507,11 @@ sudo _output/bin/profiler \
 ```
 
 Add `--thread-group` to include worker threads in the same process. Add `--cpuid 2,4-7` to limit collection to selected CPUs. Native CPU profiling also supports container-level and host-level collection:
+
+Native on-CPU profiling first uses hardware CPU-cycle events and falls back to
+the software CPU clock when the hardware PMU is unavailable. `--freq` remains
+samples per second for either source. Use `--require-hardware-pmu` when software
+clock fallback would hide IRQ-disabled CPU time.
 
 ```bash
 # Profile a specific container

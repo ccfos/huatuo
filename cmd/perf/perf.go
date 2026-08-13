@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v2"
+	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/command/container"
@@ -79,6 +80,8 @@ func mainAction(ctx *cli.Context) error {
 		ProgramName: "perf_event_sw_cpu_clock",
 	}
 	opt.PerfEvent.SampleFreq = 99
+	opt.PerfEvent.Type = unix.PERF_TYPE_SOFTWARE
+	opt.PerfEvent.Config = unix.PERF_COUNT_SW_CPU_CLOCK
 	if err := b.AttachWithOptions([]bpf.AttachOption{opt}); err != nil {
 		return fmt.Errorf("attach err %w", err)
 	}

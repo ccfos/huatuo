@@ -30,7 +30,8 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	set.String("output-format", "collapsed", "")
 	set.String("tracer-id", "trace-123", "")
 	set.Bool("offcpu-stats", false, "")
-	if err := set.Parse([]string{"--offcpu-stats"}); err != nil {
+	set.Bool("require-hardware-pmu", false, "")
+	if err := set.Parse([]string{"--offcpu-stats", "--require-hardware-pmu"}); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
 	cliCtx := cli.NewContext(nil, set, nil)
@@ -44,6 +45,9 @@ func TestProfilerContextCancelStopsSignalListener(t *testing.T) {
 	}
 	if !pctx.OffCPUStatsEnabled {
 		t.Fatal("OffCPUStatsEnabled = false, want true")
+	}
+	if !pctx.RequireHardwarePMU {
+		t.Fatal("RequireHardwarePMU = false, want true")
 	}
 	pctx.Cancel()
 	pctx.Cancel()

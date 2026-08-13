@@ -119,6 +119,8 @@ func TestParsePerfEventAttachOptions(t *testing.T) {
 				tt.samplePeriod,
 				tt.sampleFreq,
 				nil,
+				0,
+				0,
 			)
 			if tt.wantErr {
 				require.ErrorIs(t, err, errInvalidPerfEventOption)

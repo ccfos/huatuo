@@ -29,6 +29,8 @@ import (
 	"huatuo-bamai/internal/profiler/registry"
 	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/types"
+
+	"golang.org/x/sys/unix"
 )
 
 func init() {
@@ -89,15 +91,12 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	var objectName string
 	var constants map[string]any
-	var attachOptions []bpf.AttachOption
 	if offCPU {
 		objectName = "native_offcpu_profiler.o"
 		constants = newNativeOffCPUBPFConstants(pctx, cssAddr)
-		attachOptions = nativeOffCPUAttachOptions()
 	} else {
 		objectName = "native_oncpu_profiler.o"
 		constants = newNativeBPFConstants(pctx.PID(), cssAddr, pctx.ThreadGroup)
-		attachOptions = nativeOnCPUAttachOptions(pctx)
 	}
 
 	dbg := bpf.NewDbg(pctx.LogBpfDebug)
@@ -118,8 +117,14 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		}
 	}
 
-	if err := b.AttachWithOptions(attachOptions); err != nil {
-		attachErr := fmt.Errorf("attach native CPU %s probes: %w", pctx.CPUMode, err)
+	var attachErr error
+	if offCPU {
+		attachErr = b.AttachWithOptions(nativeOffCPUAttachOptions())
+	} else {
+		attachErr = attachNativeOnCPU(b.AttachWithOptions, pctx)
+	}
+	if attachErr != nil {
+		attachErr = fmt.Errorf("attach native CPU %s probes: %w", pctx.CPUMode, attachErr)
 		if closeErr := b.Close(); closeErr != nil {
 			return errors.Join(
 				attachErr,
@@ -138,11 +143,50 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	return nil
 }
 
-func nativeOnCPUAttachOptions(pctx *pcontext.ProfilerContext) []bpf.AttachOption {
+func attachNativeOnCPU(
+	attach func(opts []bpf.AttachOption) error,
+	pctx *pcontext.ProfilerContext,
+) error {
+	hardware := nativeOnCPUAttachOptions(
+		pctx,
+		unix.PERF_TYPE_HARDWARE,
+		unix.PERF_COUNT_HW_CPU_CYCLES,
+	)
+	hardwareErr := attach(hardware)
+	if hardwareErr == nil {
+		return nil
+	}
+	if pctx.RequireHardwarePMU {
+		return fmt.Errorf("attach required hardware PMU: %w", hardwareErr)
+	}
+
+	software := nativeOnCPUAttachOptions(
+		pctx,
+		unix.PERF_TYPE_SOFTWARE,
+		unix.PERF_COUNT_SW_CPU_CLOCK,
+	)
+	if softwareErr := attach(software); softwareErr != nil {
+		return errors.Join(
+			fmt.Errorf("attach hardware PMU: %w", hardwareErr),
+			fmt.Errorf("attach software CPU clock: %w", softwareErr),
+		)
+	}
+
+	log.WithError(hardwareErr).Warn("hardware PMU unavailable; using software CPU clock")
+	return nil
+}
+
+func nativeOnCPUAttachOptions(
+	pctx *pcontext.ProfilerContext,
+	eventType uint32,
+	eventConfig uint64,
+) []bpf.AttachOption {
 	opt := bpf.AttachOption{ProgramName: "perf_event_sw_cpu_clock"}
 	opt.PerfEvent.SampleFreq = uint64(pctx.Freq)
 	opt.PerfEvent.SamplePeriod = 0
 	opt.PerfEvent.CPUIDs = pctx.CPUIDs
+	opt.PerfEvent.Type = eventType
+	opt.PerfEvent.Config = eventConfig
 	return []bpf.AttachOption{opt}
 }
 

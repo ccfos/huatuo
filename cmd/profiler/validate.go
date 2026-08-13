@@ -299,6 +299,9 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 			return fmt.Errorf("--freq is not used with --cpu-mode=offcpu")
 		}
 	}
+	if ctx.Bool("require-hardware-pmu") && (!nativeCPU || offCPU) {
+		return fmt.Errorf("--require-hardware-pmu requires native CPU profiling with --cpu-mode=oncpu")
+	}
 
 	if lang == profiling.LanguageJava && typ == profiling.TypeCPU && ctx.Int("freq") > 1000 {
 		return fmt.Errorf("Java profiler frequency must not exceed 1000 samples per second")

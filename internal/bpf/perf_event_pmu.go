@@ -40,10 +40,12 @@ type perfEventAttach struct {
 }
 
 type perfEventOption struct {
-	sample     uint64
-	sampleMode perfEventSampleMode
-	program    *ebpf.Program
-	cpuIDs     []int
+	sample      uint64
+	sampleMode  perfEventSampleMode
+	program     *ebpf.Program
+	cpuIDs      []int
+	eventType   uint32
+	eventConfig uint64
 }
 
 func (opt *perfEventOption) Validate() error {
@@ -100,19 +102,7 @@ func attachPerfEvent(opt *perfEventOption) (*perfEventAttach, error) {
 		return nil, err
 	}
 
-	attr := unix.PerfEventAttr{
-		Type:   unix.PERF_TYPE_SOFTWARE,
-		Size:   unix.PERF_ATTR_SIZE_VER0,
-		Config: unix.PERF_COUNT_SW_CPU_CLOCK,
-		Bits:   unix.PerfBitFreq | unix.PerfBitDisabled,
-		Sample: opt.sample,
-	}
-
-	if opt.sampleMode == perfEventSamplePeriod {
-		// Clear only frequency mode and preserve any other perf event flags.
-		attr.Bits &^= unix.PerfBitFreq
-	}
-
+	attr := newPerfEventAttr(opt)
 	cpuIDs := opt.cpuIDs
 	if len(cpuIDs) == 0 {
 		cpuIDs = make([]int, runtime.NumCPU())
@@ -131,6 +121,22 @@ func attachPerfEvent(opt *perfEventOption) (*perfEventAttach, error) {
 	}
 
 	return &perfEventAttach{fds: fds}, nil
+}
+
+func newPerfEventAttr(opt *perfEventOption) unix.PerfEventAttr {
+	attr := unix.PerfEventAttr{
+		Type:   opt.eventType,
+		Size:   unix.PERF_ATTR_SIZE_VER0,
+		Config: opt.eventConfig,
+		Bits:   unix.PerfBitFreq | unix.PerfBitDisabled,
+		Sample: opt.sample,
+	}
+
+	if opt.sampleMode == perfEventSamplePeriod {
+		// Clear only frequency mode and preserve any other perf event flags.
+		attr.Bits &^= unix.PerfBitFreq
+	}
+	return attr
 }
 
 func (p *perfEventAttach) detach() error {
