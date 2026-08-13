@@ -17,12 +17,13 @@
 package pod
 
 import (
-	"strings"
-
 	corev1 "k8s.io/api/core/v1"
 )
 
-var sidecarModules = "istio-proxy"
+// sidecarModules lists the container names that should be classified as
+// sidecars. Names are compared exactly so partial matches (e.g. "proxy",
+// "istio") are not misclassified.
+var sidecarModules = []string{"istio-proxy"}
 
 func parseContainerType(container *corev1.Container, pod *corev1.Pod) (ContainerType, error) {
 	// List of objects depended by this object. If ALL objects in the list have
@@ -42,8 +43,10 @@ func parseContainerType(container *corev1.Container, pod *corev1.Pod) (Container
 		return ContainerTypeDaemonSet, nil
 	}
 
-	if strings.Contains(sidecarModules, container.Name) {
-		return ContainerTypeSidecar, nil
+	for _, name := range sidecarModules {
+		if container.Name == name {
+			return ContainerTypeSidecar, nil
+		}
 	}
 
 	// kind:
