@@ -248,20 +248,32 @@ type elfSymbolSource struct {
 	typ  elf.SectionType
 }
 
+const maxELFSymbolNameBufferSize = 4096
+
 type elfSymbolParseState struct {
 	limits           ELFSymbolLimits
 	metadataBytes    uint64
 	symbolCount      uint64
 	nameBytes        uint64
-	metadataSections map[*elf.Section]struct{}
-	names            map[*elf.Section]map[uint32]string
+	metadataSections map[elfSectionKey]struct{}
+	names            map[elfSectionKey]map[uint32]string
+}
+
+type elfSectionKey struct {
+	typ    elf.SectionType
+	offset uint64
+	size   uint64
+}
+
+func sectionKey(section *elf.Section) elfSectionKey {
+	return elfSectionKey{typ: section.Type, offset: section.Offset, size: section.Size}
 }
 
 func newELFSymbolParseState(limits ELFSymbolLimits) *elfSymbolParseState {
 	return &elfSymbolParseState{
 		limits:           limits,
-		metadataSections: make(map[*elf.Section]struct{}),
-		names:            make(map[*elf.Section]map[uint32]string),
+		metadataSections: make(map[elfSectionKey]struct{}),
+		names:            make(map[elfSectionKey]map[uint32]string),
 	}
 }
 
@@ -301,14 +313,24 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 	}
 	// The first symbol is the required all-zero entry and is not returned.
 	symbolCount := section.Size/symbolSize - 1
-	remainingSymbols := state.limits.MaxSymbolCount - state.symbolCount
-	if symbolCount > remainingSymbols {
+	symbolsAlreadyCounted := false
+	sectionID := sectionKey(section)
+	stringsID := sectionKey(stringsSection)
+	if _, loaded := state.metadataSections[sectionID]; loaded {
+		symbolsAlreadyCounted = true
+	}
+	if !symbolsAlreadyCounted && (state.symbolCount > state.limits.MaxSymbolCount || symbolCount > state.limits.MaxSymbolCount-state.symbolCount) {
+		remainingSymbols := state.limits.MaxSymbolCount - min(state.symbolCount, state.limits.MaxSymbolCount)
 		return nil, fmt.Errorf("%w: %d symbols exceed the remaining limit of %d", ErrELFSymbolLimit, symbolCount, remainingSymbols)
 	}
 
 	var metadataBytes uint64
-	for _, candidate := range []*elf.Section{section, stringsSection} {
-		if _, loaded := state.metadataSections[candidate]; loaded {
+	metadataSections := []*elf.Section{section}
+	if len(pcs) == 0 {
+		metadataSections = append(metadataSections, stringsSection)
+	}
+	for _, candidate := range metadataSections {
+		if _, loaded := state.metadataSections[sectionKey(candidate)]; loaded {
 			continue
 		}
 		remainingMetadata := state.limits.MaxMetadataBytes - state.metadataBytes - metadataBytes
@@ -329,7 +351,7 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 		return nil, fmt.Errorf("ELF section data size differs from its declared size")
 	}
 
-	sharedNames := state.names[stringsSection]
+	sharedNames := state.names[stringsID]
 	localNames := make(map[uint32]string)
 	var nameBytes uint64
 	type candidate struct {
@@ -403,13 +425,17 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 	}
 
 	state.metadataBytes += metadataBytes
-	state.symbolCount += symbolCount
+	if !symbolsAlreadyCounted {
+		state.symbolCount += symbolCount
+	}
 	state.nameBytes += nameBytes
-	state.metadataSections[section] = struct{}{}
-	state.metadataSections[stringsSection] = struct{}{}
+	state.metadataSections[sectionID] = struct{}{}
+	if len(pcs) == 0 {
+		state.metadataSections[stringsID] = struct{}{}
+	}
 	if sharedNames == nil {
 		sharedNames = make(map[uint32]string, len(localNames))
-		state.names[stringsSection] = sharedNames
+		state.names[stringsID] = sharedNames
 	}
 	for offset, name := range localNames {
 		sharedNames[offset] = name
@@ -427,7 +453,7 @@ func readELFSymbolName(section *elf.Section, offset uint32, limit uint64) (strin
 	}
 	available := section.Size - uint64(offset)
 	readLimit := min(available, limit+1)
-	bufferSize := int(min(readLimit, 4096))
+	bufferSize := int(min(readLimit, maxELFSymbolNameBufferSize))
 	name, err := bufio.NewReaderSize(io.LimitReader(reader, int64(readLimit)), bufferSize).ReadBytes(0)
 	if len(name) > 0 && name[len(name)-1] == 0 {
 		return string(name[:len(name)-1]), nil
@@ -472,11 +498,18 @@ func elfSymbols(f *elf.File, limits ELFSymbolLimits) (symbols, error) {
 // elfSymbolsForPCs scans bounded symbol metadata but materializes names only
 // for the symbols that cover the requested ELF-relative PCs.
 func elfSymbolsForPCs(f *elf.File, pcs []uint64, limits ELFSymbolLimits) (symbols, error) {
+	return elfSymbolsForPCsWithState(f, pcs, newELFSymbolParseState(limits))
+}
+
+func elfSymbolsForPCsWithState(f *elf.File, pcs []uint64, state *elfSymbolParseState) (symbols, error) {
 	syms := symbols{}
-	state := newELFSymbolParseState(limits)
 	var limitErrors []error
-	for _, source := range []elfSymbolSource{{name: "dynsym", typ: elf.SHT_DYNSYM}, {name: "symtab", typ: elf.SHT_SYMTAB}} {
-		sourceSymbols, err := state.parseSource(f, source, pcs...)
+	remainingPCs := pcs
+	for _, source := range []elfSymbolSource{{name: "symtab", typ: elf.SHT_SYMTAB}, {name: "dynsym", typ: elf.SHT_DYNSYM}} {
+		if len(pcs) > 0 && len(remainingPCs) == 0 {
+			break
+		}
+		sourceSymbols, err := state.parseSource(f, source, remainingPCs...)
 		if err != nil {
 			if errors.Is(err, ErrELFSymbolLimit) {
 				limitErrors = append(limitErrors, fmt.Errorf("%s: %w", source.name, err))
@@ -486,6 +519,25 @@ func elfSymbolsForPCs(f *elf.File, pcs []uint64, limits ELFSymbolLimits) (symbol
 			continue
 		}
 		syms = append(syms, sourceSymbols...)
+		if len(remainingPCs) > 0 {
+			resolved := make(map[uint64]struct{}, len(sourceSymbols))
+			for _, sym := range sourceSymbols {
+				if sym.Name != "" {
+					for _, pc := range remainingPCs {
+						if sym.Size == 0 || (pc >= sym.Addr && pc < sym.Addr+sym.Size) {
+							resolved[pc] = struct{}{}
+						}
+					}
+				}
+			}
+			next := remainingPCs[:0]
+			for _, pc := range remainingPCs {
+				if _, ok := resolved[pc]; !ok {
+					next = append(next, pc)
+				}
+			}
+			remainingPCs = next
+		}
 	}
 	syms.sort()
 	return syms, errors.Join(limitErrors...)

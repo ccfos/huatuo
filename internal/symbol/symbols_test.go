@@ -843,6 +843,45 @@ func TestElfSymbolsForPCsLimitsSingleName(t *testing.T) {
 	}
 }
 
+func TestElfSymbolsForPCsReusesNameBudgetAcrossCalls(t *testing.T) {
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: []byte("\x00target\x00"),
+		nameOffsets: []uint32{1, 1},
+	})
+	state := newELFSymbolParseState(ELFSymbolLimits{
+		MaxMetadataBytes: 1024,
+		MaxSymbolCount:   2,
+		MaxNameBytes:     uint64(len("target")),
+		MaxNameLength:    32,
+	})
+	for _, pc := range []uint64{0x1001, 0x1011} {
+		got, err := elfSymbolsForPCsWithState(f, []uint64{pc}, state)
+		if err != nil || len(got) != 1 {
+			t.Fatalf("elfSymbolsForPCsWithState(%#x): got %v, err %v; want one symbol", pc, got, err)
+		}
+	}
+}
+
+func TestElfSymbolsForPCsPrefersSymtabAndFallsBackForUnresolvedPCs(t *testing.T) {
+	f := newELF64SymbolFixture(t,
+		elf64SymbolTableFixture{
+			typ:         elf.SHT_DYNSYM,
+			stringTable: []byte("\x00dynamic\x00"),
+			nameOffsets: []uint32{1},
+		},
+		elf64SymbolTableFixture{
+			typ:         elf.SHT_SYMTAB,
+			stringTable: []byte("\x00static\x00"),
+			nameOffsets: []uint32{1},
+		},
+	)
+	got, err := elfSymbolsForPCs(f, []uint64{0x1001}, DefaultELFSymbolLimits())
+	if err != nil || len(got) != 1 || got[0].Name != "static" {
+		t.Fatalf("elfSymbolsForPCs: got %v, err %v; want symtab symbol", got, err)
+	}
+}
+
 func TestElfSymbolsForPCsDoesNotLogMissingSourceAtInfo(t *testing.T) {
 	output := captureSymbolLogs(t, "info")
 	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
