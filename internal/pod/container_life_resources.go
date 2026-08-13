@@ -32,7 +32,7 @@ var lifeResourcesTpl sync.Map
 //	data := map[string]int{"acct": 0, "usage": 0}
 //	RegisterContainerLifeResources("cpu", reflect.TypeOf(data))
 func RegisterContainerLifeResources(key string, anythingType reflect.Type) error {
-	if anythingType.Kind() != reflect.Pointer && anythingType.Elem().Kind() != reflect.Struct {
+	if anythingType.Kind() != reflect.Pointer || anythingType.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("invalid anythingType: %v, only support pointer of struct", anythingType)
 	}
 
