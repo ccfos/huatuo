@@ -194,6 +194,12 @@ type pendingELFPCs struct {
 	failures []string
 }
 
+type elfGroupKey struct {
+	path     string
+	module   string
+	loadBias uint64
+}
+
 func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 	result := make([]string, len(addrs))
 	cache, err := r.loadElfCaches(pid)
@@ -204,7 +210,7 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 		return result
 	}
 
-	groups := make(map[any]*pendingELFPCs)
+	groups := make(map[elfGroupKey]*pendingELFPCs)
 	for index, addr := range addrs {
 		module := cache.module
 		if cache.modules != nil {
@@ -221,10 +227,11 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 						if cache.resolved == nil {
 							cache.resolved = make(map[uint64]string)
 						}
-						group := groups[cache]
+						groupKey := elfGroupKey{path: path, module: module, loadBias: baseAddr}
+						group := groups[groupKey]
 						if group == nil {
 							group = &pendingELFPCs{path: path, syms: cache.syms, state: cache.state, resolved: cache.resolved}
-							groups[cache] = group
+							groups[groupKey] = group
 						}
 						group.pcs = append(group.pcs, addr-baseAddr)
 						group.indices = append(group.indices, index)
@@ -238,10 +245,11 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 			if cache.resolved == nil {
 				cache.resolved = make(map[uint64]string)
 			}
-			group := groups[cache]
+			groupKey := elfGroupKey{path: path, module: module}
+			group := groups[groupKey]
 			if group == nil {
 				group = &pendingELFPCs{path: path, syms: cache.syms, state: cache.state, resolved: cache.resolved}
-				groups[cache] = group
+				groups[groupKey] = group
 			}
 			group.pcs = append(group.pcs, addr)
 			group.indices = append(group.indices, index)
@@ -279,10 +287,11 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 		if libCache.resolved == nil {
 			libCache.resolved = make(map[uint64]string)
 		}
-		group := groups[libCache]
+		groupKey := elfGroupKey{path: libPath, module: m.Pathname, loadBias: baseAddr}
+		group := groups[groupKey]
 		if group == nil {
 			group = &pendingELFPCs{path: libPath, syms: libCache.syms, state: libCache.state, resolved: libCache.resolved}
-			groups[libCache] = group
+			groups[groupKey] = group
 		}
 		group.pcs = append(group.pcs, addr-baseAddr)
 		group.indices = append(group.indices, index)
