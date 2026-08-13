@@ -219,7 +219,7 @@ stop_by_pid() {
 	kill -KILL "${pid}" 2> /dev/null || true
 }
 
-# --------------------------- container detection ----------------------------
+# ------------------------- virtualization detection -------------------------
 
 # Returns 0 when running inside a container.
 # Method 1: overlay/btrfs rootfs — container runtimes mount an overlay or
@@ -238,6 +238,30 @@ is_container() {
 	fi
 
 	return 1
+}
+
+# Returns 0 when running inside a virtual machine.
+is_virtual_machine() {
+	if command -v systemd-detect-virt > /dev/null 2>&1; then
+		systemd-detect-virt --vm --quiet
+		return $?
+	fi
+
+	[[ -r /sys/hypervisor/type ]] && return 0
+	grep -qiE '(^|[[:space:]])hypervisor([[:space:]]|$)' /proc/cpuinfo && return 0
+
+	local dmi="" path
+	for path in \
+		/sys/class/dmi/id/sys_vendor \
+		/sys/class/dmi/id/product_name \
+		/sys/class/dmi/id/board_vendor; do
+		[[ -r "${path}" ]] || continue
+		dmi+=" $(< "${path}")"
+	done
+
+	grep -qiE \
+		'kvm|qemu|vmware|virtualbox|virtual machine|xen|bochs|bhyve|parallels|amazon ec2|google compute engine|openstack|alibaba cloud|nutanix|digitalocean' \
+		<<< "${dmi}"
 }
 
 # ----------------------------- huatuo-bamai ----------------------------------

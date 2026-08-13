@@ -24,6 +24,7 @@ source "${ROOT_DIR}/integration/lib.sh"
 # --- preconditions -----------------------------------------------------------
 
 is_container && skip "hardware PMU profiling requires bare-metal access"
+is_virtual_machine && skip "hardware PMU profiling requires a physical machine"
 
 bpf_tool_setup profiler native_oncpu_profiler profiler-hardware-pmu
 readonly FIXTURE_SRC="${ROOT_DIR}/integration/testdata/test_profiler_callchain.user.c"
