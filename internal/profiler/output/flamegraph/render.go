@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"unicode/utf8"
 )
 
 type frame struct {
@@ -191,11 +192,22 @@ func (r *renderer) fitText(text string, width float32) string {
 		return ""
 	}
 
-	if len(text) < avail {
+	if utf8.RuneCountInString(text) < avail {
 		return html.EscapeString(text)
 	}
 
-	return html.EscapeString(text[:avail-2]) + ".."
+	maxRunes := avail - 2
+	end := len(text)
+	runes := 0
+	for index := range text {
+		if runes == maxRunes {
+			end = index
+			break
+		}
+		runes++
+	}
+
+	return html.EscapeString(text[:end]) + ".."
 }
 
 // RenderStyle writes a flame graph SVG for stacks using the given style.
