@@ -93,6 +93,8 @@ var (
 	ErrTaskCanceled = errors.New("task canceled")
 	// ErrTaskLimitExceeded is returned when a new task would exceed the active limit.
 	ErrTaskLimitExceeded = errors.New("too many running tasks")
+	// ErrInvalidTaskExecutable is returned when a task executable could escape TaskBinDir.
+	ErrInvalidTaskExecutable = errors.New("invalid task executable")
 )
 
 func init() {
@@ -182,6 +184,9 @@ func NewTaskWithIDLimit(
 	defer taskCreateMu.Unlock()
 	if _, loaded := taskLifeTmpCache.Load(taskID); loaded {
 		return taskID, nil
+	}
+	if execBinary == "" || execBinary == "." || execBinary == ".." || path.Base(execBinary) != execBinary {
+		return "", fmt.Errorf("%w: %q", ErrInvalidTaskExecutable, execBinary)
 	}
 	if maxActive > 0 && activeTaskCount() >= maxActive {
 		return "", ErrTaskLimitExceeded
