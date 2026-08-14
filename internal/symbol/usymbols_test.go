@@ -16,6 +16,7 @@ package symbol
 
 import (
 	"debug/elf"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -154,8 +155,8 @@ func TestResolveELFPCsDoesNotLogLimitsAtInfo(t *testing.T) {
 		MaxNameLength:    1024,
 	}))
 
-	if err := resolver.resolveELFPCs(executablePath, nil, make(map[uint64]string), []uint64{1}); err != nil {
-		t.Fatalf("resolveELFPCs: %v", err)
+	if err := resolver.resolveELFPCs(executablePath, nil, make(map[uint64]string), []uint64{1}); !errors.Is(err, ErrELFSymbolLimit) {
+		t.Fatalf("resolveELFPCs: got %v, want ErrELFSymbolLimit", err)
 	}
 	if strings.Contains(output.String(), "limits reached") {
 		t.Fatalf("repeated ELF limit logged above debug: %s", output.String())

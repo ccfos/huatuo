@@ -112,10 +112,20 @@ func (syms symbols) resolve(key uint64) string {
 	if sym == nil || sym.Name == "" {
 		return ""
 	}
-	if sym.Size == 0 || key < sym.Addr+sym.Size {
+	if symbolCovers(sym.Addr, sym.Size, key) {
 		return sym.Name
 	}
 	return ""
+}
+
+func symbolCovers(addr, size, key uint64) bool {
+	if key < addr {
+		return false
+	}
+	if size == 0 {
+		return true
+	}
+	return size <= math.MaxUint64-addr && key < addr+size
 }
 
 func (secs sections) sort() {
@@ -256,6 +266,7 @@ type elfSymbolParseState struct {
 	symbolCount      uint64
 	nameBytes        uint64
 	metadataSections map[elfSectionKey]struct{}
+	indexes          map[elfSectionKey][]elfSymbolCandidate
 	names            map[elfSectionKey]map[uint32]string
 }
 
@@ -279,6 +290,7 @@ func newELFSymbolParseState(limits ELFSymbolLimits) *elfSymbolParseState {
 	return &elfSymbolParseState{
 		limits:           limits,
 		metadataSections: make(map[elfSectionKey]struct{}),
+		indexes:          make(map[elfSectionKey][]elfSymbolCandidate),
 		names:            make(map[elfSectionKey]map[uint32]string),
 	}
 }
@@ -346,18 +358,24 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 		metadataBytes += candidate.Size
 	}
 
-	// Do not use File.Symbols or File.DynamicSymbols here. debug/elf expands
-	// every symbol name before callers can filter by type, so repeated offsets
-	// can multiply a bounded string table into unbounded allocations.
-	data, err := section.Data()
-	if err != nil {
-		return nil, fmt.Errorf("load symbol section: %w", err)
-	}
-	if uint64(len(data)) != section.Size {
-		return nil, fmt.Errorf("ELF section data size differs from its declared size")
+	index, indexed := state.indexes[sectionID]
+	if !indexed {
+		// Do not use File.Symbols or File.DynamicSymbols here. debug/elf
+		// expands every symbol name before callers can filter by type, so
+		// repeated offsets can multiply a bounded string table into unbounded
+		// allocations.
+		data, err := section.Data()
+		if err != nil {
+			return nil, fmt.Errorf("load symbol section: %w", err)
+		}
+		if uint64(len(data)) != section.Size {
+			return nil, fmt.Errorf("ELF section data size differs from its declared size")
+		}
+		index = buildELFSymbolIndex(f, data, symbolSize)
+		state.indexes[sectionID] = index
 	}
 
-	candidates := scanELFSymbolEntries(f, data, symbolSize, pcs)
+	candidates := selectELFSymbolCandidates(index, pcs)
 	result, nameBytes, localNames, err := materializeELFSymbolCandidates(stringsSection, candidates, pcs, state)
 	if err != nil {
 		return nil, err
@@ -420,6 +438,35 @@ func scanELFSymbolEntries(f *elf.File, data []byte, symbolSize uint64, pcs []uin
 	return candidates
 }
 
+func buildELFSymbolIndex(f *elf.File, data []byte, symbolSize uint64) []elfSymbolCandidate {
+	candidates := scanELFSymbolEntries(f, data, symbolSize, nil)
+	index := make([]elfSymbolCandidate, 0, len(candidates))
+	for offset := uint64(0); offset < uint64(len(candidates)); offset++ {
+		index = append(index, candidates[offset])
+	}
+	sort.SliceStable(index, func(i, j int) bool {
+		return index[i].value < index[j].value
+	})
+	return index
+}
+
+func selectELFSymbolCandidates(index []elfSymbolCandidate, pcs []uint64) map[uint64]elfSymbolCandidate {
+	selected := make(map[uint64]elfSymbolCandidate, len(pcs))
+	if len(pcs) == 0 {
+		for offset, candidate := range index {
+			selected[uint64(offset)] = candidate
+		}
+		return selected
+	}
+	for _, pc := range pcs {
+		candidateIndex := searchFloorIndex(len(index), func(i int) bool { return index[i].value > pc })
+		if candidateIndex >= 0 {
+			selected[pc] = index[candidateIndex]
+		}
+	}
+	return selected
+}
+
 func materializeELFSymbolCandidates(stringsSection *elf.Section, candidates map[uint64]elfSymbolCandidate, pcs []uint64, state *elfSymbolParseState) (symbols, uint64, map[uint32]string, error) {
 	sharedNames := state.names[sectionKey(stringsSection)]
 	localNames := make(map[uint32]string)
@@ -427,7 +474,7 @@ func materializeELFSymbolCandidates(stringsSection *elf.Section, candidates map[
 	result := make(symbols, 0, len(candidates))
 	allSymbols := len(pcs) == 0
 	for pc, matched := range candidates {
-		if !allSymbols && matched.size != 0 && pc >= matched.value+matched.size {
+		if !allSymbols && !symbolCovers(matched.value, matched.size, pc) {
 			result = append(result, &symbol{Addr: matched.value, Size: matched.size})
 			continue
 		}
@@ -516,8 +563,12 @@ func elfSymbolsForPCs(f *elf.File, pcs []uint64, limits ELFSymbolLimits) (symbol
 }
 
 func elfSymbolsForPCsWithState(f *elf.File, pcs []uint64, state *elfSymbolParseState) (symbols, error) {
+	if len(pcs) == 0 {
+		return nil, nil
+	}
 	syms := symbols{}
 	var limitErrors []error
+	var parseErrors []error
 	remainingPCs := pcs
 	for _, source := range []elfSymbolSource{{name: "symtab", typ: elf.SHT_SYMTAB}, {name: "dynsym", typ: elf.SHT_DYNSYM}} {
 		if len(pcs) > 0 && len(remainingPCs) == 0 {
@@ -529,6 +580,9 @@ func elfSymbolsForPCsWithState(f *elf.File, pcs []uint64, state *elfSymbolParseS
 				limitErrors = append(limitErrors, fmt.Errorf("%s: %w", source.name, err))
 			} else {
 				log.Debugf("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
+				if !errors.Is(err, elf.ErrNoSymbols) {
+					parseErrors = append(parseErrors, fmt.Errorf("%s: %w", source.name, err))
+				}
 			}
 			continue
 		}
@@ -544,7 +598,7 @@ func elfSymbolsForPCsWithState(f *elf.File, pcs []uint64, state *elfSymbolParseS
 					}
 				}
 			}
-			next := remainingPCs[:0]
+			next := make([]uint64, 0, len(remainingPCs))
 			for _, pc := range remainingPCs {
 				if _, ok := resolved[pc]; !ok {
 					next = append(next, pc)
@@ -554,7 +608,7 @@ func elfSymbolsForPCsWithState(f *elf.File, pcs []uint64, state *elfSymbolParseS
 		}
 	}
 	syms.sort()
-	return syms, errors.Join(limitErrors...)
+	return syms, errors.Join(append(limitErrors, parseErrors...)...)
 }
 
 // backedPaths is the set of pseudo-paths in /proc/<pid>/maps with no ELF symbols.

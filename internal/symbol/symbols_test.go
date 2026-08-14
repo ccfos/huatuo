@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -131,6 +132,7 @@ func TestSymbolsResolve(t *testing.T) {
 		{name: "kernel-style-size-zero-resolves-any-offset", key: 0x1800, wantName: "kernel_sched_tick"},
 		{name: "user-style-in-range-resolves", key: 0x20ff, wantName: "user_func_malloc"},
 		{name: "user-style-end-exclusive", key: 0x2100, wantName: ""},
+		{name: "user-style-overflowing-end-does-not-wrap", key: math.MaxUint64, wantName: ""},
 		{name: "below-first-symbol", key: 0x0500, wantName: ""},
 	}
 
@@ -902,6 +904,22 @@ func TestElfSymbolsForPCsDoesNotLogMissingSourceAtInfo(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "dynsym not available") {
 		t.Fatalf("missing optional dynsym logged at info: %s", output.String())
+	}
+}
+
+func TestElfSymbolsForPCsEmptyPCsReturnsEmpty(t *testing.T) {
+	f := newELF64SymbolFixture(t, elf64SymbolTableFixture{
+		typ:         elf.SHT_SYMTAB,
+		stringTable: []byte("\x00target\x00"),
+		nameOffsets: []uint32{1},
+	})
+
+	got, err := elfSymbolsForPCs(f, nil, DefaultELFSymbolLimits())
+	if err != nil {
+		t.Fatalf("elfSymbolsForPCs: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("elfSymbolsForPCs(nil): got %d symbols, want 0", len(got))
 	}
 }
 

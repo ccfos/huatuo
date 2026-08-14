@@ -122,12 +122,16 @@ func (r *UsymResolver) resolveELFPCsWithState(path string, fallback symbols, res
 	}
 	syms, err := elfSymbolsForPCsWithState(f, unresolved, state)
 	if err != nil {
-		log.Debugf("symbol: limits reached while parsing %q: %v", path, err)
+		log.Debugf("symbol: parse ELF PCs for %q: %v", path, err)
 	}
 	for _, pc := range unresolved {
-		resolved[pc] = syms.resolve(pc)
+		name := syms.resolve(pc)
+		if name == "" {
+			name = fallback.resolve(pc)
+		}
+		resolved[pc] = name
 	}
-	return nil
+	return err
 }
 
 // UsymStackBytes resolves user-space stack addresses into byte frames (innermost first).
@@ -201,12 +205,9 @@ type elfGroupKey struct {
 }
 
 func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
-	result := make([]string, len(addrs))
+	result := slices.Repeat([]string{failFrame("elf-load-fail", "")}, len(addrs))
 	cache, err := r.loadElfCaches(pid)
 	if err != nil {
-		for index := range result {
-			result[index] = failFrame("elf-load-fail", "")
-		}
 		return result
 	}
 
@@ -223,21 +224,20 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 		if cache.typ == elf.ET_DYN && module != "" {
 			if err = r.loadProcMaps(pid); err == nil {
 				if m := r.procmaps[pid].find(addr); m != nil && m.Pathname == module {
-					if baseAddr, ok := r.procmaps[pid].findBaseAddr(module); ok {
-						if cache.resolved == nil {
-							cache.resolved = make(map[uint64]string)
-						}
-						groupKey := elfGroupKey{path: path, module: module, loadBias: baseAddr}
-						group := groups[groupKey]
-						if group == nil {
-							group = &pendingELFPCs{path: path, syms: cache.syms, state: cache.state, resolved: cache.resolved}
-							groups[groupKey] = group
-						}
-						group.pcs = append(group.pcs, addr-baseAddr)
-						group.indices = append(group.indices, index)
-						group.failures = append(group.failures, failFrame("elf-no-sym", ""))
-						continue
+					baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
+					if cache.resolved == nil {
+						cache.resolved = make(map[uint64]string)
 					}
+					groupKey := elfGroupKey{path: path, module: module, loadBias: baseAddr}
+					group := groups[groupKey]
+					if group == nil {
+						group = &pendingELFPCs{path: path, syms: cache.syms, state: cache.state, resolved: cache.resolved}
+						groups[groupKey] = group
+					}
+					group.pcs = append(group.pcs, addr-baseAddr)
+					group.indices = append(group.indices, index)
+					group.failures = append(group.failures, failFrame("elf-no-sym", ""))
+					continue
 				}
 			}
 		}
@@ -279,11 +279,7 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 			result[index] = failFrame("lib-load-fail", m.Pathname)
 			continue
 		}
-		baseAddr, ok := r.procmaps[pid].findBaseAddr(m.Pathname)
-		if !ok {
-			result[index] = failFrame("no-baseaddr", m.Pathname)
-			continue
-		}
+		baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
 		if libCache.resolved == nil {
 			libCache.resolved = make(map[uint64]string)
 		}
@@ -300,10 +296,7 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 
 	for _, group := range groups {
 		if err := r.resolveELFPCsWithState(group.path, group.syms, group.resolved, group.pcs, group.state); err != nil {
-			for offset, index := range group.indices {
-				result[index] = group.failures[offset]
-			}
-			continue
+			log.Debugf("symbol: resolve ELF PCs for %q: %v", group.path, err)
 		}
 		for offset, pc := range group.pcs {
 			name := group.resolved[pc]
