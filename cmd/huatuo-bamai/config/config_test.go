@@ -63,6 +63,11 @@ Path = "records"
 RotationSizeMiB = 64
 MaxRotatedFiles = 4
 
+[Storage.Kafka]
+Brokers = "kafka-1.example:9092,kafka-2.example:9092"
+Topic = "huatuo-events"
+ClientID = "huatuo-node-a"
+
 [AutoTracing]
 IssuesList = [["dload", "jbd2"]]
 
@@ -118,6 +123,13 @@ ExcludedOnContainer = "writeback"
 		MaxRotatedFiles: 4,
 	}) {
 		t.Errorf("Storage.LocalFile = %+v, want overrides", Get().Storage.LocalFile)
+	}
+	if Get().Storage.Kafka != (KafkaConfig{
+		Brokers:  "kafka-1.example:9092,kafka-2.example:9092",
+		Topic:    "huatuo-events",
+		ClientID: "huatuo-node-a",
+	}) {
+		t.Errorf("Storage.Kafka = %+v, want overrides", Get().Storage.Kafka)
 	}
 	if len(Get().AutoTracing.IssuesList) != 1 {
 		t.Errorf("unexpected AutoTracing.IssuesList length: %d", len(Get().AutoTracing.IssuesList))
@@ -195,6 +207,38 @@ Address = "http://127.0.0.1:9200"
 	}
 }
 
+func TestLoadKafkaDefaults(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Storage.Kafka]
+Brokers = "127.0.0.1:9092"
+`)
+
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !Get().Storage.Kafka.Enabled() {
+		t.Fatal("Kafka is disabled with brokers configured")
+	}
+	if Get().Storage.Kafka.Topic != "huatuo-bamai" {
+		t.Errorf("Kafka topic = %q, want default", Get().Storage.Kafka.Topic)
+	}
+	if Get().Storage.Kafka.ClientID != "huatuo-bamai" {
+		t.Errorf("Kafka client ID = %q, want default", Get().Storage.Kafka.ClientID)
+	}
+}
+
+func TestLoadRejectsInvalidKafkaConfig(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[Storage.Kafka]
+Brokers = "missing-port"
+`)
+
+	err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), "invalid Kafka broker") {
+		t.Fatalf("Load() error = %v, want invalid Kafka broker error", err)
+	}
+}
+
 func TestLoadRejectsLegacyKeys(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -268,6 +312,14 @@ func TestConfigValidate(t *testing.T) {
 				cfg.Storage.LocalFile.RotationSizeMiB = 0
 			},
 			wantErr: "local file rotation size",
+		},
+		{
+			name: "invalid Kafka topic",
+			mutate: func(cfg *BamaiConfig) {
+				cfg.Storage.Kafka.Brokers = "127.0.0.1:9092"
+				cfg.Storage.Kafka.Topic = ""
+			},
+			wantErr: "Kafka topic",
 		},
 		{
 			name: "invalid kubelet port",

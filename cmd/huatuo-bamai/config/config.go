@@ -57,9 +57,45 @@ type LocalFileConfig struct {
 	MaxRotatedFiles int    `default:"10"`
 }
 
+// KafkaConfig controls the optional Kafka event sink.
+type KafkaConfig struct {
+	Brokers  string
+	Topic    string `default:"huatuo-bamai"`
+	ClientID string `default:"huatuo-bamai"`
+}
+
+// Enabled reports whether Kafka brokers opt in to the event sink.
+func (c KafkaConfig) Enabled() bool {
+	return strings.TrimSpace(c.Brokers) != ""
+}
+
+// Validate accepts either a complete Kafka sink configuration or no brokers.
+func (c KafkaConfig) Validate() error {
+	if !c.Enabled() {
+		return nil
+	}
+	if strings.TrimSpace(c.Topic) == "" {
+		return errors.New("Kafka topic must not be empty")
+	}
+	if strings.TrimSpace(c.ClientID) == "" {
+		return errors.New("Kafka client ID must not be empty")
+	}
+	for _, broker := range strings.Split(c.Brokers, ",") {
+		trimmed := strings.TrimSpace(broker)
+		if trimmed == "" {
+			return errors.New("Kafka broker must not be empty")
+		}
+		if _, _, err := net.SplitHostPort(trimmed); err != nil {
+			return fmt.Errorf("invalid Kafka broker %q: %w", broker, err)
+		}
+	}
+	return nil
+}
+
 // StorageConfig controls tracing data storage.
 type StorageConfig struct {
 	Elasticsearch internalconfig.ElasticsearchConfig
+	Kafka         KafkaConfig
 	LocalFile     LocalFileConfig
 }
 
@@ -207,6 +243,9 @@ func (c TasksConfig) Validate() error {
 func (c *StorageConfig) Validate() error {
 	if err := c.Elasticsearch.Validate(); err != nil {
 		return fmt.Errorf("validating Elasticsearch config: %w", err)
+	}
+	if err := c.Kafka.Validate(); err != nil {
+		return fmt.Errorf("validating Kafka config: %w", err)
 	}
 	if c.LocalFile.RotationSizeMiB <= 0 {
 		return errors.New("local file rotation size must be greater than zero MiB")

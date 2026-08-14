@@ -68,6 +68,19 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 		tracingMetadataStores = append(tracingMetadataStores, localFileStore)
 	}
 
+	if cfg.Storage.Kafka.Enabled() {
+		kafkaStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
+			Driver:        "kafka",
+			KafkaBrokers:  strutil.SplitCommaList(cfg.Storage.Kafka.Brokers),
+			KafkaTopic:    cfg.Storage.Kafka.Topic,
+			KafkaClientID: cfg.Storage.Kafka.ClientID,
+		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
+		if err != nil {
+			return fmt.Errorf("new tracing document store (Kafka): %w", err)
+		}
+		tracingMetadataStores = append(tracingMetadataStores, kafkaStore)
+	}
+
 	if len(tracingMetadataStores) > 0 {
 		tracing.SetTracingStore(
 			tracingMetadataStores,
