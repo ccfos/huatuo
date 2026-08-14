@@ -25,6 +25,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
@@ -40,6 +41,8 @@ type CmdResult struct {
 	Success bool
 	CmdErr  error
 }
+
+const processTerminateGracePeriod = 500 * time.Millisecond
 
 // ExecCmd executes one command, captures its output, and terminates its
 // process group when the context is canceled.
@@ -76,7 +79,17 @@ func ExecCmd(ctx context.Context, pid int, binPath string, args ...string) CmdRe
 		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 			log.Warnf("kill process group %d: %v", cmd.Process.Pid, err)
 		}
-		<-done
+
+		graceTimer := time.NewTimer(processTerminateGracePeriod)
+		select {
+		case <-done:
+			graceTimer.Stop()
+		case <-graceTimer.C:
+			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				log.Warnf("force kill process group %d: %v", cmd.Process.Pid, err)
+			}
+			<-done
+		}
 		cmdErr := ctx.Err()
 		log.Debugf("command stopped: command=%q error=%v", cmdArgs, cmdErr)
 		return CmdResult{
