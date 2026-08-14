@@ -36,6 +36,9 @@ func RegisterBackend(name string, factory BackendFactory) {
 
 // NewBackend creates a backend from Config.
 func NewBackend(cfg *Config) (Backend, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("storage: backend config is nil")
+	}
 	if cfg.Driver == "" {
 		return nil, fmt.Errorf("storage: backend driver is empty")
 	}
