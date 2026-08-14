@@ -57,6 +57,12 @@ type Config struct {
 	ESUsername  string
 	ESPassword  string
 	ESIndex     string
+
+	ClickHouseAddress  string
+	ClickHouseUsername string
+	ClickHousePassword string
+	ClickHouseDatabase string
+	ClickHouseTable    string
 }
 
 // Op is a storage query operator.
