@@ -175,6 +175,21 @@ func cstring(buf []byte, rawOffset, base uint32) string {
 	return string(buf[off:])
 }
 
+func bytesField(buf []byte, rawOffset, base, length uint32) []byte {
+	absOff := rawOffset & 0xffff
+	if absOff < base || length == 0 {
+		return nil
+	}
+
+	off := uint64(absOff - base)
+	if off >= uint64(len(buf)) {
+		return nil
+	}
+
+	end := min(off+uint64(length), uint64(len(buf)))
+	return bytes.Clone(buf[off:end])
+}
+
 // Bank's MCi_STATUS MSR
 //
 // #define MCI_STATUS_DEFERRED     BIT_ULL(44)  /* uncorrected error, deferred exception */
@@ -482,11 +497,7 @@ func buildRasAcpiTracerData(data *rasEvent) (*RasTracingData, error) {
 	const nonStandardBase uint32 = 56
 	fru := cstring(payload.Msg[:], payload.FruTxtOffset, nonStandardBase)
 
-	// Extract raw bytes at the FRU text location for the hex dump.
-	var rawData []byte
-	if absOff := payload.FruTxtOffset & 0xffff; absOff >= nonStandardBase {
-		rawData = bytes.Clone(payload.Msg[absOff-nonStandardBase : absOff-nonStandardBase+payload.Len])
-	}
+	rawData := bytesField(payload.Msg[:], payload.BufOffset, nonStandardBase, payload.Len)
 
 	return newRasTracingData(data, "ACPI", "NON_STANDARD", acpiErrType(payload.Sev), struct {
 		Severity uint8  `json:"severity"`
