@@ -149,6 +149,9 @@ func (dcb *dcbCollector) Update() ([]*metric.Data, error) {
 		}
 
 		for _, m := range msgs {
+			if len(m) < sizeofDcbmsg {
+				return nil, fmt.Errorf("dcb netlink message too short: got %d, want at least %d", len(m), sizeofDcbmsg)
+			}
 			attrs, err := nl.ParseRouteAttr(m[sizeofDcbmsg:])
 			if err != nil {
 				return nil, err
