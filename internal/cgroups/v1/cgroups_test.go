@@ -38,8 +38,8 @@ func TestCpuUsageReadsCPUAcctSubsystem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantUser := uint64(100 * microsecondsInSecond / clockTicks)
-	wantSystem := uint64(50 * microsecondsInSecond / clockTicks)
+	wantUser := 100 * microsecondsInSecond / clockTicks
+	wantSystem := 50 * microsecondsInSecond / clockTicks
 	if usage.User != wantUser || usage.System != wantSystem || usage.Usage != 1500 {
 		t.Errorf("CpuUsage() = %+v, want User=%d System=%d Usage=1500", usage, wantUser, wantSystem)
 	}
