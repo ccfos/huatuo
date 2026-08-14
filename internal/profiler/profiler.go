@@ -318,17 +318,31 @@ func extractJavaMainClassFromPid(pid int) (string, error) {
 		return "", err
 	}
 
+	res := javaMainClass(cmdlineSlice)
+
+	if strings.HasPrefix(res, "-") || res == "" {
+		parts := strings.Fields(cmdlineStr)
+		if len(parts) > 0 {
+			return parts[len(parts)-1], nil
+		}
+		return "", fmt.Errorf("couldn't get java thread name")
+	}
+
+	return res, nil
+}
+
+func javaMainClass(cmdline []string) string {
 	skipNext := false
-	var res string
-	for i := 1; i < len(cmdlineSlice); i++ {
-		arg := cmdlineSlice[i]
+	for i := 1; i < len(cmdline); i++ {
+		arg := cmdline[i]
 
 		if skipNext {
 			skipNext = false
 			continue
 		}
 
-		if arg == "-cp" || arg == "-classpath" || arg == "--module-path" || arg == "-p" || arg == "--add-opens" {
+		if arg == "-cp" || arg == "-classpath" || arg == "--class-path" ||
+			arg == "--module-path" || arg == "-p" || arg == "--add-opens" {
 			skipNext = true
 			continue
 		}
@@ -341,26 +355,13 @@ func extractJavaMainClassFromPid(pid int) (string, error) {
 			continue
 		}
 
-		if arg == "-jar" && i+1 < len(cmdlineSlice) {
-			res = cmdlineSlice[i+1]
-		} else if res == "" {
-			res = arg
+		if arg == "-jar" && i+1 < len(cmdline) {
+			return cmdline[i+1]
 		}
-
-		if res != "" {
-			break
-		}
+		return arg
 	}
 
-	if strings.HasPrefix(res, "-") || res == "" {
-		parts := strings.Fields(cmdlineStr)
-		if len(parts) > 0 {
-			return parts[len(parts)-1], nil
-		}
-		return "", fmt.Errorf("couldn't get java thread name")
-	}
-
-	return res, nil
+	return ""
 }
 
 func extractPythonThreadNameFromPid(pid int) (string, error) {
