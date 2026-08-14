@@ -90,13 +90,13 @@ func (c *CgroupV1) Procs(path string) ([]int32, error) {
 }
 
 func (c *CgroupV1) CpuUsage(path string) (*stats.CpuUsage, error) {
-	statPath := paths.Path(subsystem.SubsystemCPU, path, "cpuacct.stat")
+	statPath := paths.Path(subsystem.SubsystemCPUAcct, path, "cpuacct.stat")
 	raw, err := parseutil.RawKV(statPath)
 	if err != nil {
 		return nil, err
 	}
 
-	usagePath := paths.Path(subsystem.SubsystemCPU, path, "cpuacct.usage")
+	usagePath := paths.Path(subsystem.SubsystemCPUAcct, path, "cpuacct.usage")
 	usage, err := parseutil.ReadUint(usagePath)
 	if err != nil {
 		return nil, err
