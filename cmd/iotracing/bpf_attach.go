@@ -33,11 +33,11 @@ func attachAndEventPipe(ctx context.Context, b bpf.BPF) (reader bpf.PerfEventRea
 		return nil, fmt.Errorf("get event pipe: %w", err)
 	}
 
-	defer func() {
+	defer func(openReader bpf.PerfEventReader) {
 		if err != nil {
-			reader.Close()
+			openReader.Close()
 		}
-	}()
+	}(reader)
 
 	infos, err := b.Info()
 	if err != nil {
