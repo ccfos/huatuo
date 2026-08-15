@@ -17,6 +17,9 @@ package aggregator
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"huatuo-bamai/core/autotracing"
@@ -37,6 +40,7 @@ func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
 	if !ok {
 		return fmt.Errorf("invalid pprof data for uploading: %T", data)
 	}
+	setProfileCollectionLabels(flameData, p.pctx)
 
 	tracerData := &profctx.TracerData{
 		MetricData: newMetrics(int(p.overflowCount.Load())),
@@ -60,4 +64,71 @@ func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
 	log.WithField("tracer_id", p.tracerID).Infof("profiling event sent via toolstream")
 
 	return nil
+}
+
+func setProfileCollectionLabels(
+	data *profiler.ProfileData,
+	pctx *profctx.ProfilerContext,
+) {
+	if data.Labels == nil {
+		data.Labels = make(map[string]string)
+	}
+	for _, name := range profiler.CollectionDimensionLabelNames() {
+		delete(data.Labels, name)
+	}
+	for name, value := range profileCollectionLabels(pctx) {
+		data.Labels[name] = value
+	}
+}
+
+func profileCollectionLabels(pctx *profctx.ProfilerContext) map[string]string {
+	labels := map[string]string{
+		profiler.LabelProfilingScope: profileCollectionScope(pctx),
+	}
+	if cpu := formatProfileLabelIDs(pctx.CPUIDs); cpu != "" {
+		labels[profiler.LabelCPU] = cpu
+	}
+	if pctx.ThreadGroup {
+		if tgid := formatProfileLabelIDs(pctx.PIDs); tgid != "" {
+			labels[profiler.LabelTGID] = tgid
+		}
+	} else if pid := formatProfileLabelIDs(pctx.PIDs); pid != "" {
+		labels[profiler.LabelPID] = pid
+	}
+	if pctx.ContainerID != "" {
+		labels[profiler.LabelContainerID] = pctx.ContainerID
+	}
+	return labels
+}
+
+func profileCollectionScope(pctx *profctx.ProfilerContext) string {
+	switch {
+	case pctx.ContainerID != "":
+		return "container"
+	case pctx.ThreadGroup:
+		return "thread_group"
+	case len(pctx.PIDs) != 0:
+		return "pid"
+	case len(pctx.CPUIDs) != 0:
+		return "cpu"
+	default:
+		return "host"
+	}
+}
+
+func formatProfileLabelIDs(ids []int) string {
+	if len(ids) == 0 {
+		return ""
+	}
+
+	sorted := append([]int(nil), ids...)
+	sort.Ints(sorted)
+	values := make([]string, 0, len(sorted))
+	for index, id := range sorted {
+		if index > 0 && id == sorted[index-1] {
+			continue
+		}
+		values = append(values, strconv.Itoa(id))
+	}
+	return strings.Join(values, ",")
 }
