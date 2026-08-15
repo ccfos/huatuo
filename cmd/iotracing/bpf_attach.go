@@ -39,7 +39,10 @@ func attachAndEventPipe(ctx context.Context, b bpf.BPF) (reader bpf.PerfEventRea
 		}
 	}()
 
-	infos, _ := b.Info()
+	infos, err := b.Info()
+	if err != nil {
+		return nil, fmt.Errorf("get BPF info: %w", err)
+	}
 
 	options, err := buildAttachOptions(infos.ProgramsInfo)
 	if err != nil {
