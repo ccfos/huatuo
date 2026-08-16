@@ -385,6 +385,34 @@ curl -sS -i \
 
 删除成功返回 `204 No Content`，不包含响应体。任务仍在运行时返回 `409 Conflict`。
 
+### 10. 迁移缺少 `profile_storage_id` 的历史数据
+
+旧版本写入的 profile 文档没有唯一的 `profile_storage_id` 排序键。使用长时间
+窗口查询前，先为 Elasticsearch/OpenSearch 创建快照，停止仍不会写入该字段的
+旧版 huatuo-bamai，再部署新版 writer，并对每个物理 profile 索引执行一次
+幂等迁移。脚本会拒绝 alias 和 data stream：
+
+```bash
+ELASTICSEARCH_URL="http://localhost:9200" \
+ELASTICSEARCH_INDEX="huatuo_bamai" \
+ELASTICSEARCH_USERNAME="elastic" \
+ELASTICSEARCH_PASSWORD="REPLACE_WITH_PASSWORD" \
+./build/migrate-profile-storage-id.sh --check
+
+ELASTICSEARCH_URL="http://localhost:9200" \
+ELASTICSEARCH_INDEX="huatuo_bamai" \
+ELASTICSEARCH_USERNAME="elastic" \
+ELASTICSEARCH_PASSWORD="REPLACE_WITH_PASSWORD" \
+./build/migrate-profile-storage-id.sh
+```
+
+脚本只更新缺少该字段的 profile 文档，并复制其现有 Elasticsearch `_id`；
+已有 ID 和非 profile 文档不会变化，同时创建或校验可排序的
+`profile_storage_id.keyword` mapping；如果该 multi-field 是后加的，还会重索引
+已有 ID。如果仍存在未迁移或不可排序的文档，脚本会失败，因此中断后可安全
+重试。停止旧 writer 后应再次运行 `--check`。
+`_update_by_query` 会消耗集群 I/O，大索引应在低流量时段执行。
+
 ## 📖 profiler 命令行功能概述
 
 `profiler` 是 HUATUO 提供的独立性能剖析命令行工具。它可以直接对宿主机进程或容器内进程采样，不依赖 huatuo-apiserver、Elasticsearch 或 Grafana。工具支持 C、C++、Go、Java 和 Python 进程，并将调用栈输出为折叠栈或 SVG 火焰图。
