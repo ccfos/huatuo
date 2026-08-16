@@ -43,6 +43,8 @@ type Config struct {
 // ProfileQueryService defines profile query operations consumed by the handler.
 type ProfileQueryService interface {
 	SelectMergeStacktraces(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error)
+	SelectSeries(ctx context.Context, req *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesResponse, error)
+	MarshalPprof(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) ([]byte, error)
 	ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error)
 	LabelNames(ctx context.Context, req *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error)
 	LabelValues(ctx context.Context, req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse, error)
@@ -83,6 +85,11 @@ func NewHandler(
 			h.Handlers,
 			server.Handle{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
 			server.Handle{
+				Typ:    server.HttpGet,
+				Uri:    "/flamegraph/export/pprof",
+				Handle: h.displayPprofExport,
+			},
+			server.Handle{
 				Typ:    server.HttpPost,
 				Uri:    "/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces",
 				Handle: h.displaySelectMergeStacktraces,
@@ -91,6 +98,11 @@ func NewHandler(
 				Typ:    server.HttpPost,
 				Uri:    "/flamegraph/querier.v1.QuerierService/ProfileTypes",
 				Handle: h.displayProfileTypes,
+			},
+			server.Handle{
+				Typ:    server.HttpPost,
+				Uri:    "/flamegraph/querier.v1.QuerierService/SelectSeries",
+				Handle: h.displaySelectSeries,
 			},
 			server.Handle{
 				Typ:    server.HttpPost,
