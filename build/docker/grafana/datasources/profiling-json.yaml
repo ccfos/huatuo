@@ -1,14 +1,15 @@
 apiVersion: 1
 
 datasources:
-  - name: huatuo-apiserver-pyroscope
-    type: grafana-pyroscope-datasource
-    uid: huatuo-apiserver-pyroscope
+  - name: huatuo-apiserver-profile-json
+    type: yesoreyeram-infinity-datasource
+    uid: huatuo-apiserver-profile-json
     access: proxy
     orgId: 1
-    url: http://127.0.0.1:12740/v1/profiles/flamegraph/
+    url: http://127.0.0.1:12740
     jsonData:
-      minStep: '15s'
+      allowedHosts:
+        - http://127.0.0.1:12740
       httpHeaderName1: 'Authorization'
     secureJsonData:
       httpHeaderValue1: 'Bearer $HUATUO_GRAFANA_PROFILE_TOKEN'

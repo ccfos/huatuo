@@ -1,0 +1,303 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Host profiles",
+      "tooltip": "Open the host profiling dashboard.",
+      "type": "link",
+      "url": "/d/continuous-profiling-host/continuous-profiling-host"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Container profiles",
+      "tooltip": "Open the container profiling dashboard.",
+      "type": "link",
+      "url": "/d/continuous-profiling-container/continuous-profiling-container"
+    }
+  ],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana",
+        "uid": "-- Grafana --"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "The selected Grafana time range is the current (right) window. It is compared with the immediately preceding window of the same duration. Select a container ID for container profiles; otherwise the exact hostname is used.",
+        "mode": "markdown"
+      },
+      "pluginVersion": "12.0.3",
+      "title": "Comparison window",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "huatuo-apiserver-profile-json"
+      },
+      "description": "Compares the selected window with the immediately preceding window of the same duration.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 18,
+        "w": 24,
+        "x": 0,
+        "y": 3
+      },
+      "id": 2,
+      "options": {},
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "columns": [
+            {
+              "selector": "level",
+              "text": "level",
+              "type": "number"
+            },
+            {
+              "selector": "value",
+              "text": "value",
+              "type": "number"
+            },
+            {
+              "selector": "self",
+              "text": "self",
+              "type": "number"
+            },
+            {
+              "selector": "valueRight",
+              "text": "valueRight",
+              "type": "number"
+            },
+            {
+              "selector": "selfRight",
+              "text": "selfRight",
+              "type": "number"
+            },
+            {
+              "selector": "label",
+              "text": "label",
+              "type": "string"
+            }
+          ],
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "huatuo-apiserver-profile-json"
+          },
+          "filters": [],
+          "format": "table",
+          "global_query_id": "",
+          "parser": "backend",
+          "refId": "A",
+          "root_selector": "data",
+          "source": "url",
+          "type": "json",
+          "url": "/v1/profiles/flamegraph/diff-rows?profile_type_id=${type:percentencode}&hostname=${hostname:percentencode}&container_id=${container_id:percentencode}&profiling_scope=${profiling_scope:percentencode}&cpu=${cpu:percentencode}&pid=${pid:percentencode}&tgid=${tgid:percentencode}&start=${__from}&end=${__to}&max_nodes=5000",
+          "url_options": {
+            "method": "POST"
+          }
+        }
+      ],
+      "title": "Current versus previous window",
+      "type": "flamegraph"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 41,
+  "tags": [
+    "profiling",
+    "continuous profiling"
+  ],
+  "templating": {
+    "list": [
+      {
+        "description": "profiling type",
+        "label": "type",
+        "name": "type",
+        "options": [
+          {
+            "selected": true,
+            "text": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+            "value": "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+          },
+          {
+            "selected": false,
+            "text": "memory:alloc_space:bytes:space:bytes",
+            "value": "memory:alloc_space:bytes:space:bytes"
+          }
+        ],
+        "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes",
+        "type": "custom"
+      },
+      {
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND NOT _exists_:container_hostname\",\n  \"size\": 5000\n}",
+        "description": "Used when no container ID is selected.",
+        "label": "hostname",
+        "name": "hostname",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"hostname.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND NOT _exists_:container_hostname\",\n  \"size\": 5000\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "__all",
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"container_id.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "description": "Overrides hostname when a stable container ID is selected.",
+        "includeAll": true,
+        "label": "container ID",
+        "multi": false,
+        "name": "container_id",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"container_id.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 5000\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "__all",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.profiling_scope.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact collection-scope filter.",
+        "includeAll": true,
+        "label": "scope",
+        "multi": false,
+        "name": "profiling_scope",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.profiling_scope.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "__all",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cpu.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact logical CPU-set filter.",
+        "includeAll": true,
+        "label": "CPU set",
+        "multi": false,
+        "name": "cpu",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cpu.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "__all",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.pid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact process or thread target filter.",
+        "includeAll": true,
+        "label": "PID",
+        "multi": false,
+        "name": "pid",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.pid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "__all",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.tgid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "description": "Optional exact thread-group target filter.",
+        "includeAll": true,
+        "label": "TGID",
+        "multi": false,
+        "name": "tgid",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.tgid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Continuous profiling comparison",
+  "uid": "continuous-profiling-compare",
+  "version": 1,
+  "weekStart": ""
+}

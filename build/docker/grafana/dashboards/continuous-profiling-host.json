@@ -24,7 +24,32 @@
   "editable": false,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "links": [],
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Container profiles",
+      "tooltip": "Open the container profiling dashboard.",
+      "type": "link",
+      "url": "/d/continuous-profiling-container/continuous-profiling-container"
+    },
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Compare windows",
+      "tooltip": "Compare the selected window with its preceding window.",
+      "type": "link",
+      "url": "/d/continuous-profiling-compare/continuous-profiling-compare"
+    }
+  ],
   "panels": [
     {
       "datasource": {
@@ -140,7 +165,114 @@
           "timeField": "uploaded_time"
         }
       ],
-      "title": "",
+      "description": "Number of profile snapshots stored in each time bucket.",
+      "title": "Profile documents ingested",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "huatuo-apiserver-pyroscope"
+      },
+      "description": "Total profile value in each time bucket for the selected host.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "huatuo-apiserver-pyroscope"
+          },
+          "groupBy": [],
+          "labelSelector": "{hostname=\"$hostname\",profiling_scope=\"$profiling_scope\",cpu=\"$cpu\",pid=\"$pid\",tgid=\"$tgid\"}",
+          "limit": 1,
+          "profileTypeId": "$type",
+          "queryType": "metrics",
+          "refId": "A"
+        }
+      ],
+      "title": "Profile value over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "huatuo-apiserver-pyroscope"
+      },
+      "description": "Ten highest-value profiling jobs in the selected window.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "huatuo-apiserver-pyroscope"
+          },
+          "groupBy": [
+            "tracer"
+          ],
+          "labelSelector": "{hostname=\"$hostname\",profiling_scope=\"$profiling_scope\",cpu=\"$cpu\",pid=\"$pid\",tgid=\"$tgid\"}",
+          "limit": 10,
+          "profileTypeId": "$type",
+          "queryType": "metrics",
+          "refId": "A"
+        }
+      ],
+      "title": "Top 10 by tracer",
       "type": "timeseries"
     },
     {
@@ -156,7 +288,7 @@
         "h": 20,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 12
       },
       "id": 1,
       "maxPerRow": 2,
@@ -171,14 +303,15 @@
             "uid": "huatuo-apiserver-pyroscope"
           },
           "groupBy": [],
-          "labelSelector": "{hostname=\"$hostname\"}",
+          "labelSelector": "{hostname=\"$hostname\",profiling_scope=\"$profiling_scope\",cpu=\"$cpu\",pid=\"$pid\",tgid=\"$tgid\"}",
           "profileTypeId": "$type",
           "queryType": "profile",
           "refId": "A",
           "spanSelector": []
         }
       ],
-      "title": "$hostname",
+      "description": "Merged profile for the selected host, type, and time range.",
+      "title": "$hostname flame graph and Top table",
       "type": "flamegraph"
     }
   ],
@@ -219,29 +352,95 @@
             "selected": false,
             "text": "memory:alloc_space:bytes:space:bytes",
             "value": "memory:alloc_space:bytes:space:bytes"
-          },
-          {
-            "selected": false,
-            "text": "process_lock:lock:count:lock:count",
-            "value": "process_lock:lock:count:lock:count"
-          },
-          {
-            "selected": false,
-            "text": "process_lock:lock:nanoseconds:lock:nanoseconds",
-            "value": "process_lock:lock:nanoseconds:lock:nanoseconds"
           }
         ],
-        "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes,process_lock:lock:count:lock:count,process_lock:lock:nanoseconds:lock:nanoseconds",
+        "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes",
         "type": "custom"
+      },
+      {
+        "allValue": "__all",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.profiling_scope.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "description": "Optional exact collection-scope filter.",
+        "includeAll": true,
+        "label": "scope",
+        "multi": false,
+        "name": "profiling_scope",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.profiling_scope.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "__all",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cpu.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "description": "Optional exact logical CPU-set filter.",
+        "includeAll": true,
+        "label": "CPU set",
+        "multi": false,
+        "name": "cpu",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.cpu.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "__all",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.pid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "description": "Optional exact process or thread target filter.",
+        "includeAll": true,
+        "label": "PID",
+        "multi": false,
+        "name": "pid",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.pid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": "__all",
+        "allowCustomValue": true,
+        "datasource": {
+          "type": "elasticsearch",
+          "uid": "huatuo-bamai-es"
+        },
+        "definition": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.tgid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "description": "Optional exact thread-group target filter.",
+        "includeAll": true,
+        "label": "TGID",
+        "multi": false,
+        "name": "tgid",
+        "options": [],
+        "query": "{\n  \"find\": \"terms\",\n  \"field\": \"tracer_data.flamedata.labels.tgid.keyword\",\n  \"query\": \"tracer_data.flamedata.profile_type.keyword:$type AND hostname.keyword:$hostname AND NOT _exists_:container_hostname\",\n  \"size\": 500\n}",
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
       }
     ]
   },
   "time": {
-    "from": "now-1y",
+    "from": "now-1h",
     "to": "now"
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Continuous Profiling(host)",
+  "title": "Continuous Profiling (Host)",
   "uid": "continuous-profiling-host"
 }
