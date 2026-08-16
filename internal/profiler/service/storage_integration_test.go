@@ -66,7 +66,8 @@ func TestProfileStorageSearchProfilesElasticsearch(t *testing.T) {
 			"profile_storage_id":%q,
 			"uploaded_time":%q,
 			"tracer_id":%q,
-			"tracer_time":%q
+			"tracer_time":%q,
+			"tracer_data":{"flamedata":{"profile_type":"process_cpu:cpu:nanoseconds:cpu:nanoseconds"}}
 		}`, document.storageID, document.capturedAt, document.tracerID, document.capturedAt)
 		requestElasticsearch(
 			t,
@@ -90,6 +91,18 @@ func TestProfileStorageSearchProfilesElasticsearch(t *testing.T) {
 		if !slices.Equal(values, want) {
 			t.Errorf("AggregationsByFieldContext(%q) = %#v, want %#v", field, values, want)
 		}
+	}
+	profileTypes, err := storage.AggregationsByFieldContext(
+		t.Context(),
+		&SearchFilter{Hostname: "node-1", Limit: 10},
+		profileFieldProfileType,
+	)
+	if err != nil {
+		t.Fatalf("profile type aggregation error = %v", err)
+	}
+	wantProfileTypes := []string{"process_cpu:cpu:nanoseconds:cpu:nanoseconds"}
+	if !slices.Equal(profileTypes, wantProfileTypes) {
+		t.Errorf("profile type aggregation = %#v, want %#v", profileTypes, wantProfileTypes)
 	}
 
 	filter := &SearchFilter{Hostname: "node-1", Limit: 2}

@@ -16,6 +16,19 @@ package profiler
 
 import "testing"
 
+func TestProfileIdentifierLabelNamesReturnsCopy(t *testing.T) {
+	names := ProfileIdentifierLabelNames()
+	names[0] = "changed"
+
+	want := []string{LabelProfileID, LabelTracer}
+	got := ProfileIdentifierLabelNames()
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("profile identifier labels = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestCollectionDimensionLabelNamesReturnsCopy(t *testing.T) {
 	names := CollectionDimensionLabelNames()
 	names[0] = "changed"

@@ -18,6 +18,7 @@ import (
 	"reflect"
 	"testing"
 
+	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/storage/driver"
 )
 
@@ -75,12 +76,70 @@ func TestProfileDocumentMapperUsesProfileStorageID(t *testing.T) {
 	}
 }
 
-func TestNormalizeProfileAggregationFieldUsesKeywords(t *testing.T) {
+func TestProfileDocumentMapperIndexesCollectionDimensions(t *testing.T) {
+	document := &ProfileDocument{}
+	document.ContainerID = "containerd://abc"
+	document.TracerData.Flamedata.Labels = map[string]string{
+		profiler.LabelProfilingScope: "thread_group",
+		profiler.LabelTGID:           "4242",
+		profiler.LabelContainerID:    document.ContainerID,
+	}
+
+	fields, err := (profileDocumentMapper{}).Fields(document)
+	if err != nil {
+		t.Fatalf("Fields() error = %v", err)
+	}
+	if got := fields[profileLabelField(profiler.LabelProfilingScope)]; got != "thread_group" {
+		t.Fatalf("profiling_scope field = %v, want thread_group", got)
+	}
+	if got := fields[profileLabelField(profiler.LabelTGID)]; got != "4242" {
+		t.Fatalf("tgid field = %v, want 4242", got)
+	}
+	if _, duplicated := fields[profileLabelField(profiler.LabelContainerID)]; duplicated {
+		t.Fatal("container_id duplicated under profile labels")
+	}
+}
+
+func TestBuildProfileAggregationQueryAddsDimensionMatchers(t *testing.T) {
+	query := buildProfileAggregationQuery(&SearchFilter{
+		ContainerID: "containerd://abc",
+		Labels: map[string]string{
+			profiler.LabelProfilingScope: "thread_group",
+			profiler.LabelTGID:           "4242",
+			"unmanaged":                  "ignored",
+		},
+	})
+	want := []driver.Filter{
+		{
+			Field: profileFieldContainerID + ".keyword",
+			Op:    driver.OpEq,
+			Value: "containerd://abc",
+		},
+		{
+			Field: profileLabelKeywordField(profiler.LabelProfilingScope),
+			Op:    driver.OpEq,
+			Value: "thread_group",
+		},
+		{
+			Field: profileLabelKeywordField(profiler.LabelTGID),
+			Op:    driver.OpEq,
+			Value: "4242",
+		},
+	}
+
+	if !reflect.DeepEqual(query.Filters, want) {
+		t.Fatalf("query filters = %#v, want %#v", query.Filters, want)
+	}
+}
+
+func TestNormalizeProfileAggregationFieldSupportsDimensionsAndAliases(t *testing.T) {
 	tests := map[string]string{
-		"id":                    profileFieldTracerID + ".keyword",
-		"tracer":                profileFieldTracerID + ".keyword",
-		profileFieldContainerID: profileFieldContainerID + ".keyword",
-		profileFieldProfileType: profileFieldProfileType + ".keyword",
+		profiler.LabelProfileID:   profileFieldTracerID + ".keyword",
+		profiler.LabelTracer:      profileFieldTracerID + ".keyword",
+		profiler.LabelPID:         profileLabelKeywordField(profiler.LabelPID),
+		profiler.LabelTGID:        profileLabelKeywordField(profiler.LabelTGID),
+		profiler.LabelContainerID: profileFieldContainerID + ".keyword",
+		profileFieldProfileType:   profileFieldProfileType + ".keyword",
 	}
 	for input, want := range tests {
 		got, err := normalizeProfileAggregationField(input)

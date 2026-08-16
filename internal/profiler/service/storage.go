@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/timeutil"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
@@ -76,6 +77,7 @@ type ProfileDocument struct {
 	TracerData struct {
 		Flamedata struct {
 			ProfileType string            `json:"profile_type,omitempty"`
+			Labels      map[string]string `json:"labels,omitempty"`
 			Profile     profilev1.Profile `json:"profile,omitempty"`
 		} `json:"flamedata,omitempty"`
 		// others
@@ -98,6 +100,7 @@ type SearchFilter struct {
 	StartTime         time.Time
 	EndTime           time.Time
 	ProfileType       string
+	Labels            map[string]string
 	Limit             int
 	Offset            int
 }
@@ -187,6 +190,15 @@ func (s *ProfileStorage) SearchProfilesPageContext(
 	return documents, nextCursor, nil
 }
 
+// CountProfilesContext counts profiles matching a filter.
+func (s *ProfileStorage) CountProfilesContext(ctx context.Context, filter *SearchFilter) (int64, error) {
+	if s == nil || s.store == nil {
+		return 0, errors.New("profile storage is not initialized")
+	}
+	query := buildProfileAggregationQuery(filter)
+	return s.store.Count(ctx, &query)
+}
+
 // AggregationsByField gets aggregations by field.
 func (s *ProfileStorage) AggregationsByField(filter *SearchFilter, field string) ([]string, error) {
 	return s.AggregationsByFieldContext(context.Background(), filter, field)
@@ -239,7 +251,7 @@ func (profileDocumentMapper) Decode(data []byte) (*ProfileDocument, error) {
 }
 
 func (profileDocumentMapper) Fields(document *ProfileDocument) (map[string]any, error) {
-	return map[string]any{
+	fields := map[string]any{
 		profileFieldHostname:          document.Hostname,
 		profileFieldRegion:            document.Region,
 		profileFieldUploadedTime:      document.UploadedTime,
@@ -255,11 +267,20 @@ func (profileDocumentMapper) Fields(document *ProfileDocument) (map[string]any, 
 		profileFieldTracerTime:        parseProfileDocumentTime(document.TracerTime, document.UploadedTime),
 		profileFieldTracerType:        document.TracerRunType,
 		profileFieldProfileType:       document.TracerData.Flamedata.ProfileType,
-	}, nil
+	}
+	for _, label := range profiler.CollectionDimensionLabelNames() {
+		if label == profiler.LabelContainerID {
+			continue
+		}
+		if value := document.TracerData.Flamedata.Labels[label]; value != "" {
+			fields[profileLabelField(label)] = value
+		}
+	}
+	return fields, nil
 }
 
 func (profileDocumentMapper) Indexes() []driver.Index {
-	return []driver.Index{
+	indexes := []driver.Index{
 		{Field: profileFieldTracerID},
 		{Field: profileFieldHostname},
 		{Field: profileFieldRegion},
@@ -276,6 +297,12 @@ func (profileDocumentMapper) Indexes() []driver.Index {
 		{Field: profileFieldTracerType},
 		{Field: profileFieldProfileType},
 	}
+	for _, label := range profiler.CollectionDimensionLabelNames() {
+		if label != profiler.LabelContainerID {
+			indexes = append(indexes, driver.Index{Field: profileLabelField(label)})
+		}
+	}
+	return indexes
 }
 
 func buildProfileSearchQuery(filter *SearchFilter) driver.Query {
@@ -373,13 +400,31 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 			Value: filter.ProfileType,
 		})
 	}
+	for _, name := range profiler.CollectionDimensionLabelNames() {
+		if name == profiler.LabelContainerID {
+			continue
+		}
+		if value := filter.Labels[name]; value != "" {
+			query.Filters = append(query.Filters, driver.Filter{
+				Field: profileLabelKeywordField(name),
+				Op:    driver.OpEq,
+				Value: value,
+			})
+		}
+	}
 
 	return query
 }
 
 func normalizeProfileAggregationField(field string) (string, error) {
+	if profiler.IsCollectionDimensionLabel(field) {
+		if field == profiler.LabelContainerID {
+			return profileFieldContainerID + ".keyword", nil
+		}
+		return profileLabelKeywordField(field), nil
+	}
 	switch field {
-	case "id", "tracer":
+	case profiler.LabelProfileID, profiler.LabelTracer:
 		return profileFieldTracerID + ".keyword", nil
 	case profileFieldRegion,
 		profileFieldHostname,
@@ -396,6 +441,14 @@ func normalizeProfileAggregationField(field string) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid aggregation field: %q", field)
 	}
+}
+
+func profileLabelField(name string) string {
+	return "tracer_data.flamedata.labels." + name
+}
+
+func profileLabelKeywordField(name string) string {
+	return profileLabelField(name) + ".keyword"
 }
 
 func normalizeProfileSearchLimit(filter *SearchFilter) int {

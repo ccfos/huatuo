@@ -15,6 +15,10 @@
 package profiler
 
 const (
+	// LabelProfileID identifies a stored profile through the Profiles API job ID.
+	LabelProfileID = "id"
+	// LabelTracer identifies a stored profile through the Pyroscope-compatible alias.
+	LabelTracer = "tracer"
 	// LabelProfilingScope identifies the target selector used for collection.
 	LabelProfilingScope = "profiling_scope"
 	// LabelCPU identifies the CPUs selected for native CPU collection.
@@ -27,12 +31,24 @@ const (
 	LabelContainerID = "container_id"
 )
 
+var profileIdentifierLabels = [...]string{
+	LabelProfileID,
+	LabelTracer,
+}
+
 var collectionDimensionLabels = [...]string{
 	LabelProfilingScope,
 	LabelCPU,
 	LabelPID,
 	LabelTGID,
 	LabelContainerID,
+}
+
+// ProfileIdentifierLabelNames returns aliases for the stored profile identifier.
+func ProfileIdentifierLabelNames() []string {
+	names := make([]string, len(profileIdentifierLabels))
+	copy(names, profileIdentifierLabels[:])
+	return names
 }
 
 // CollectionDimensionLabelNames returns labels managed by collection filters.

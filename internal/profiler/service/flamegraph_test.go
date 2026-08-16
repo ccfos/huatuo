@@ -15,11 +15,53 @@
 package service
 
 import (
+	"context"
+	"reflect"
 	"strings"
 	"testing"
 
+	"huatuo-bamai/internal/profiler"
+
+	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
 	"github.com/prometheus/prometheus/model/labels"
 )
+
+type labelValuesStorage struct {
+	aggregationField string
+}
+
+func (*labelValuesStorage) Close(context.Context) error { return nil }
+func (*labelValuesStorage) Ready(context.Context) error { return nil }
+func (*labelValuesStorage) SearchProfilesContext(
+	context.Context,
+	*SearchFilter,
+) ([]*ProfileDocument, error) {
+	return nil, nil
+}
+
+func (*labelValuesStorage) SearchProfilesPageContext(
+	context.Context,
+	*SearchFilter,
+	[]any,
+) ([]*ProfileDocument, []any, error) {
+	return nil, nil, nil
+}
+
+func (*labelValuesStorage) CountProfilesContext(
+	context.Context,
+	*SearchFilter,
+) (int64, error) {
+	return 0, nil
+}
+
+func (s *labelValuesStorage) AggregationsByFieldContext(
+	_ context.Context,
+	_ *SearchFilter,
+	field string,
+) ([]string, error) {
+	s.aggregationField = field
+	return []string{"profile-a"}, nil
+}
 
 func TestServiceReadyRejectsUninitializedStorage(t *testing.T) {
 	err := (*Service)(nil).Ready(t.Context())
@@ -46,6 +88,61 @@ func TestApplyProfileMatcherRejectsUnknownLabel(t *testing.T) {
 
 	if err := applyProfileMatcher(filter, matcher); err == nil {
 		t.Fatal("applyProfileMatcher() error = nil, want error for unknown label")
+	}
+}
+
+func TestLabelNamesIncludesProfileIdentifierAliases(t *testing.T) {
+	response, err := (&Service{}).LabelNames(
+		t.Context(),
+		&typesv1.LabelNamesRequest{},
+	)
+	if err != nil {
+		t.Fatalf("LabelNames() error = %v", err)
+	}
+
+	want := []string{
+		profiler.LabelProfileID,
+		profiler.LabelTracer,
+		"region",
+		"hostname",
+		"container_id",
+		"container_hostname",
+		"container_host_namespace",
+		profiler.LabelProfilingScope,
+		profiler.LabelCPU,
+		profiler.LabelPID,
+		profiler.LabelTGID,
+	}
+	if !reflect.DeepEqual(response.Names, want) {
+		t.Fatalf("LabelNames() = %v, want %v", response.Names, want)
+	}
+}
+
+func TestLabelValuesAcceptsProfileIdentifierAliases(t *testing.T) {
+	for _, name := range profiler.ProfileIdentifierLabelNames() {
+		t.Run(name, func(t *testing.T) {
+			storage := &labelValuesStorage{}
+			service := &Service{profileStorage: storage}
+			response, err := service.LabelValues(t.Context(), &typesv1.LabelValuesRequest{
+				Name: name,
+				Matchers: []string{
+					`{__profile_type__="process_cpu:cpu:nanoseconds:cpu:nanoseconds"}`,
+				},
+			})
+			if err != nil {
+				t.Fatalf("LabelValues(%q) error = %v", name, err)
+			}
+			if storage.aggregationField != name {
+				t.Fatalf(
+					"aggregation field = %q, want %q",
+					storage.aggregationField,
+					name,
+				)
+			}
+			if !reflect.DeepEqual(response.Names, []string{"profile-a"}) {
+				t.Fatalf("LabelValues(%q) = %v", name, response.Names)
+			}
+		})
 	}
 }
 
