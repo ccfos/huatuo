@@ -15,16 +15,35 @@
 package profiling
 
 import (
+	"context"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
 
 	"huatuo-bamai/internal/profiler"
 	profileService "huatuo-bamai/internal/profiler/service"
+	"huatuo-bamai/internal/server"
 
+	httpGin "github.com/gin-gonic/gin"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 )
+
+type recordingProfileDiffService struct {
+	*profileService.Service
+	request *querierv1.DiffRequest
+}
+
+func (s *recordingProfileDiffService) Diff(
+	_ context.Context,
+	request *querierv1.DiffRequest,
+) (*querierv1.DiffResponse, error) {
+	s.request = request
+	return &querierv1.DiffResponse{Flamegraph: &querierv1.FlameGraphDiff{}}, nil
+}
 
 func TestBuildAdjacentProfileDiffRequest(t *testing.T) {
 	request, err := buildAdjacentProfileDiffRequest(&profileDiffRowsRequest{
@@ -94,6 +113,58 @@ func TestBuildAdjacentProfileDiffRequestRequiresTargetAndPreviousWindow(t *testi
 		if _, err := buildAdjacentProfileDiffRequest(&request); err == nil {
 			t.Fatalf("buildAdjacentProfileDiffRequest(%+v) succeeded", request)
 		}
+	}
+}
+
+func TestBuildAdjacentProfileDiffRequestSkipsDashboardAllSentinel(t *testing.T) {
+	request, err := buildAdjacentProfileDiffRequest(&profileDiffRowsRequest{
+		ProfileTypeID:  profiler.ProfileTypeCpuSample,
+		Hostname:       "node-a",
+		ContainerID:    profileService.ProfileAllValue,
+		ProfilingScope: profileService.ProfileAllValue,
+		CPU:            profileService.ProfileAllValue,
+		PID:            profileService.ProfileAllValue,
+		TGID:           profileService.ProfileAllValue,
+		Start:          2000,
+		End:            3000,
+	})
+	if err != nil {
+		t.Fatalf("buildAdjacentProfileDiffRequest() error = %v", err)
+	}
+	if request.Left.LabelSelector != `{hostname="node-a"}` {
+		t.Fatalf("selector = %q, want hostname only", request.Left.LabelSelector)
+	}
+}
+
+func TestDisplayDiffRowsBindsEncodedQueryFromEmptyPost(t *testing.T) {
+	service := &recordingProfileDiffService{Service: &profileService.Service{}}
+	handler := &Handler{profileService: service}
+	engine := httpGin.New()
+	server.NewRoot(engine, "").POST("/diff", handler.displayDiffRows)
+
+	values := url.Values{
+		"profile_type_id": {profiler.ProfileTypeCpuSample},
+		"hostname":        {"node a\"\\b"},
+		"start":           {"2000"},
+		"end":             {"3000"},
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/diff?"+values.Encode(),
+		http.NoBody,
+	)
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	}
+	if service.request == nil {
+		t.Fatal("Diff() request was not recorded")
+	}
+	want := `{hostname="node a\"\\b"}`
+	if service.request.Left.LabelSelector != want {
+		t.Fatalf("selector = %q, want %q", service.request.Left.LabelSelector, want)
 	}
 }
 

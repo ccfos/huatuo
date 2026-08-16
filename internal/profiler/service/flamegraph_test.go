@@ -91,6 +91,22 @@ func TestApplyProfileMatcherRejectsUnknownLabel(t *testing.T) {
 	}
 }
 
+func TestApplyProfileMatcherSkipsDashboardAllSentinel(t *testing.T) {
+	filter := &SearchFilter{}
+	matcher := &labels.Matcher{
+		Name:  profiler.LabelCPU,
+		Value: ProfileAllValue,
+		Type:  labels.MatchEqual,
+	}
+
+	if err := applyProfileMatcher(filter, matcher); err != nil {
+		t.Fatalf("applyProfileMatcher() error = %v", err)
+	}
+	if len(filter.Labels) != 0 {
+		t.Fatalf("filter labels = %#v, want empty", filter.Labels)
+	}
+}
+
 func TestLabelNamesIncludesProfileIdentifierAliases(t *testing.T) {
 	response, err := (&Service{}).LabelNames(
 		t.Context(),

@@ -122,6 +122,10 @@ func applyProfileMatcher(filter *SearchFilter, matcher *labels.Matcher) error {
 	if matcher.Type != labels.MatchEqual {
 		return fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, matcher.Name)
 	}
+	if matcher.Value == ProfileAllValue &&
+		profiler.IsCollectionDimensionLabel(matcher.Name) {
+		return nil
+	}
 	switch matcher.Name {
 	case profiler.LabelProfileID:
 		filter.ID = matcher.Value

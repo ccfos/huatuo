@@ -34,6 +34,8 @@ import (
 const (
 	profileQueryPageSize = 1000
 	profileSeriesLimit   = 10
+	// ProfileAllValue is the explicit dashboard sentinel for an omitted filter.
+	ProfileAllValue = "__all"
 	// DefaultProfileMaxNodes is the flame graph node limit used when omitted.
 	DefaultProfileMaxNodes int64 = 5000
 	// MaxProfileNodes is the largest accepted flame graph node limit.

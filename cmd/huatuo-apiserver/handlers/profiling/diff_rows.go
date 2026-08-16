@@ -39,16 +39,16 @@ const (
 )
 
 type profileDiffRowsRequest struct {
-	ProfileTypeID  string `json:"profile_type_id"`
-	Hostname       string `json:"hostname"`
-	ContainerID    string `json:"container_id"`
-	ProfilingScope string `json:"profiling_scope"`
-	CPU            string `json:"cpu"`
-	PID            string `json:"pid"`
-	TGID           string `json:"tgid"`
-	Start          int64  `json:"start"`
-	End            int64  `json:"end"`
-	MaxNodes       int64  `json:"max_nodes"`
+	ProfileTypeID  string `form:"profile_type_id" json:"profile_type_id"`
+	Hostname       string `form:"hostname" json:"hostname"`
+	ContainerID    string `form:"container_id" json:"container_id"`
+	ProfilingScope string `form:"profiling_scope" json:"profiling_scope"`
+	CPU            string `form:"cpu" json:"cpu"`
+	PID            string `form:"pid" json:"pid"`
+	TGID           string `form:"tgid" json:"tgid"`
+	Start          int64  `form:"start" json:"start"`
+	End            int64  `form:"end" json:"end"`
+	MaxNodes       int64  `form:"max_nodes" json:"max_nodes"`
 }
 
 type profileDiffRow struct {
@@ -69,7 +69,13 @@ type profileDiffNode struct {
 
 func (h *Handler) displayDiffRows(ctx *server.Context) error {
 	var request profileDiffRowsRequest
-	if err := ctx.ShouldBindJSON(&request); err != nil {
+	var err error
+	if ctx.Request().ContentLength == 0 {
+		err = ctx.ShouldBindQuery(&request)
+	} else {
+		err = ctx.ShouldBindJSON(&request)
+	}
+	if err != nil {
 		return response.ErrInvalidRequest.WithMessage(
 			"invalid profile diff request",
 		)
@@ -169,10 +175,11 @@ func buildAdjacentProfileDiffRequest(
 	}
 
 	targetName := "hostname"
-	targetValue := request.Hostname
-	if request.ContainerID != "" {
+	targetValue := profileDiffFilterValue(request.Hostname)
+	containerID := profileDiffFilterValue(request.ContainerID)
+	if containerID != "" {
 		targetName = "container_id"
-		targetValue = request.ContainerID
+		targetValue = containerID
 	}
 	if strings.TrimSpace(targetValue) == "" {
 		return nil, fmt.Errorf("hostname or container_id is required")
@@ -182,10 +189,10 @@ func buildAdjacentProfileDiffRequest(
 		value string
 	}{
 		{name: targetName, value: targetValue},
-		{name: "profiling_scope", value: request.ProfilingScope},
-		{name: "cpu", value: request.CPU},
-		{name: "pid", value: request.PID},
-		{name: "tgid", value: request.TGID},
+		{name: "profiling_scope", value: profileDiffFilterValue(request.ProfilingScope)},
+		{name: "cpu", value: profileDiffFilterValue(request.CPU)},
+		{name: "pid", value: profileDiffFilterValue(request.PID)},
+		{name: "tgid", value: profileDiffFilterValue(request.TGID)},
 	}
 	matchers := make([]string, 0, len(selectors))
 	for _, selector := range selectors {
@@ -236,6 +243,13 @@ func buildAdjacentProfileDiffRequest(
 			MaxNodes:      maxNodes,
 		},
 	}, nil
+}
+
+func profileDiffFilterValue(value string) string {
+	if value == profileService.ProfileAllValue {
+		return ""
+	}
+	return value
 }
 
 func profileDiffRows(graph *querierv1.FlameGraphDiff) ([]profileDiffRow, error) {
