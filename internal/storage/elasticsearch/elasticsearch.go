@@ -229,7 +229,15 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 		if hit.Id_ != nil {
 			id = *hit.Id_
 		}
-		records = append(records, driver.Record{ID: id, Data: driver.CloneBytes(hit.Source_)})
+		sortValues := make([]any, len(hit.Sort))
+		for i, value := range hit.Sort {
+			sortValues[i] = value
+		}
+		records = append(records, driver.Record{
+			ID:         id,
+			Data:       driver.CloneBytes(hit.Source_),
+			SortValues: sortValues,
+		})
 	}
 	return records, nil
 }

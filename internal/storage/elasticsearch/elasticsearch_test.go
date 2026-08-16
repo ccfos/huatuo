@@ -780,6 +780,64 @@ func TestBuildSearchRequest(t *testing.T) {
 			},
 		},
 		{
+			name: "search-after",
+			query: driver.Query{
+				Sorts: []driver.Sort{
+					{Field: "created_at", Desc: true},
+					{Field: "id.keyword"},
+				},
+				SearchAfter: []any{1720000000000.0, "job-alpha"},
+				Limit:       1000,
+			},
+			validate: func(t *testing.T, got map[string]any, err error) {
+				if err != nil {
+					t.Errorf("buildSearchRequest() error = %v", err)
+					return
+				}
+				if _, found := got["from"]; found {
+					t.Errorf("from = %v, want omitted", got["from"])
+				}
+				cursor := toAnySlice(got["search_after"])
+				if len(cursor) != 2 || cursor[0] != 1720000000000.0 || cursor[1] != "job-alpha" {
+					t.Errorf("search_after = %#v, want [1720000000000 job-alpha]", cursor)
+				}
+			},
+		},
+		{
+			name: "search-after-with-offset",
+			query: driver.Query{
+				Sorts:       []driver.Sort{{Field: "id.keyword"}},
+				SearchAfter: []any{"job-alpha"},
+				Offset:      1,
+			},
+			validate: func(t *testing.T, _ map[string]any, err error) {
+				if !errors.Is(err, driver.ErrInvalidQuery) {
+					t.Errorf("buildSearchRequest() error = %v, want ErrInvalidQuery", err)
+				}
+			},
+		},
+		{
+			name:  "search-after-without-sort",
+			query: driver.Query{SearchAfter: []any{"job-alpha"}},
+			validate: func(t *testing.T, _ map[string]any, err error) {
+				if !errors.Is(err, driver.ErrInvalidQuery) {
+					t.Errorf("buildSearchRequest() error = %v, want ErrInvalidQuery", err)
+				}
+			},
+		},
+		{
+			name: "search-after-sort-count-mismatch",
+			query: driver.Query{
+				Sorts:       []driver.Sort{{Field: "created_at"}, {Field: "id.keyword"}},
+				SearchAfter: []any{"job-alpha"},
+			},
+			validate: func(t *testing.T, _ map[string]any, err error) {
+				if !errors.Is(err, driver.ErrInvalidQuery) {
+					t.Errorf("buildSearchRequest() error = %v, want ErrInvalidQuery", err)
+				}
+			},
+		},
+		{
 			name: "invalid-pagination",
 			query: driver.Query{
 				Limit: -1,
