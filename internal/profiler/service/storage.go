@@ -149,7 +149,7 @@ func (s *ProfileStorage) Ready(ctx context.Context) error {
 	if s == nil || s.store == nil {
 		return errors.New("profile storage is not initialized")
 	}
-	if _, err := s.store.Count(ctx, driver.Query{Limit: 1}); err != nil {
+	if _, err := s.store.Count(ctx, &driver.Query{Limit: 1}); err != nil {
 		return fmt.Errorf("profile storage readiness: %w", err)
 	}
 	return nil
@@ -179,7 +179,7 @@ func (s *ProfileStorage) SearchProfilesPageContext(
 	query := buildProfileSearchQuery(filter)
 	query.SearchAfter = cursor
 
-	documents, nextCursor, err := s.store.QueryPage(ctx, query)
+	documents, nextCursor, err := s.store.QueryPage(ctx, &query)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -203,10 +203,11 @@ func (s *ProfileStorage) AggregationsByFieldContext(ctx context.Context, filter 
 		return nil, err
 	}
 
+	query := buildProfileAggregationQuery(filter)
 	terms, err := s.store.Values(
 		ctx,
 		normalizedField,
-		buildProfileAggregationQuery(filter),
+		&query,
 		normalizeProfileSearchLimit(filter),
 	)
 	if err != nil {
