@@ -62,6 +62,7 @@ Admin = true
 	}
 	if cfg.Profiling.AggregationIntervalSeconds != 10 ||
 		cfg.Profiling.MaxConcurrentProfilerProcesses != 10 ||
+		cfg.Profiling.MaxQueryDocuments != 0 ||
 		cfg.Profiling.DashboardBaseURL != "" {
 		t.Errorf("Profiling = %+v, want default values", cfg.Profiling)
 	}
@@ -109,6 +110,7 @@ Index = "profiles"
 [Profiling]
 AggregationIntervalSeconds = 15
 MaxConcurrentProfilerProcesses = 6
+MaxQueryDocuments = 250000
 DashboardBaseURL = "https://grafana.example/d"
 
 [[Auth.Users]]
@@ -137,8 +139,9 @@ Permissions = ["GET /v1/profiling/**"]
 	if !cfg.Elasticsearch.Enabled() || cfg.Elasticsearch.Index != "profiles" {
 		t.Errorf("Elasticsearch = %+v, want enabled overrides", cfg.Elasticsearch)
 	}
-	if cfg.Profiling.DashboardBaseURL != "https://grafana.example/d" {
-		t.Errorf("DashboardBaseURL = %q, want override", cfg.Profiling.DashboardBaseURL)
+	if cfg.Profiling.DashboardBaseURL != "https://grafana.example/d" ||
+		cfg.Profiling.MaxQueryDocuments != 250000 {
+		t.Errorf("Profiling = %+v, want query and dashboard overrides", cfg.Profiling)
 	}
 	if cfg.Auth.Users[0].ID != "operator" {
 		t.Errorf("user ID = %q, want operator", cfg.Auth.Users[0].ID)
@@ -377,6 +380,13 @@ func TestConfigValidation(t *testing.T) {
 				cfg.Profiling.AggregationIntervalSeconds = 1200
 			},
 			wantErr: "less than 1200 seconds",
+		},
+		{
+			name: "invalid profile query limit",
+			mutate: func(cfg *Config) {
+				cfg.Profiling.MaxQueryDocuments = -1
+			},
+			wantErr: "maximum profile query documents",
 		},
 		{
 			name: "invalid dashboard URL",
