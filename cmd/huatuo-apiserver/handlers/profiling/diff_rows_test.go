@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"huatuo-bamai/internal/profiler"
+	profileService "huatuo-bamai/internal/profiler/service"
 
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
 )
@@ -107,8 +108,8 @@ func TestBuildAdjacentProfileDiffRequestDefaultsAndBounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAdjacentProfileDiffRequest() error = %v", err)
 	}
-	if request.Left.GetMaxNodes() != defaultProfileDiffMaxNodes ||
-		request.Right.GetMaxNodes() != defaultProfileDiffMaxNodes {
+	if request.Left.GetMaxNodes() != profileService.DefaultProfileMaxNodes ||
+		request.Right.GetMaxNodes() != profileService.DefaultProfileMaxNodes {
 		t.Fatal("default max_nodes was not applied to both selections")
 	}
 
@@ -157,7 +158,7 @@ func TestBuildAdjacentProfileDiffRequestDefaultsAndBounds(t *testing.T) {
 			Hostname:      "node-a",
 			Start:         2000,
 			End:           3000,
-			MaxNodes:      maxProfileDiffMaxNodes + 1,
+			MaxNodes:      profileService.MaxProfileNodes + 1,
 		},
 	}
 	for _, request := range tests {
@@ -219,6 +220,86 @@ func TestProfileDiffRowsBuildsNestedSetOrder(t *testing.T) {
 	}
 }
 
+func TestProfileDiffParentSearchesSortedRanges(t *testing.T) {
+	leftParent := &profileDiffNode{
+		row:        profileDiffRow{Value: 10},
+		leftStart:  0,
+		rightStart: 0,
+	}
+	rightParent := &profileDiffNode{
+		row:        profileDiffRow{ValueRight: 10},
+		leftStart:  10,
+		rightStart: 0,
+	}
+	boundaryParent := &profileDiffNode{
+		row:        profileDiffRow{Value: 10},
+		leftStart:  10,
+		rightStart: 10,
+	}
+	parents := []*profileDiffNode{
+		leftParent,
+		rightParent,
+		boundaryParent,
+	}
+
+	tests := []struct {
+		name  string
+		child *profileDiffNode
+		want  *profileDiffNode
+	}{
+		{
+			name: "left range touching parent end",
+			child: &profileDiffNode{
+				row:       profileDiffRow{Value: 2},
+				leftStart: 8,
+			},
+			want: leftParent,
+		},
+		{
+			name: "right range only",
+			child: &profileDiffNode{
+				row:        profileDiffRow{ValueRight: 1},
+				rightStart: 9,
+			},
+			want: rightParent,
+		},
+		{
+			name: "next parent at shared boundary",
+			child: &profileDiffNode{
+				row:       profileDiffRow{Value: 1},
+				leftStart: 10,
+			},
+			want: boundaryParent,
+		},
+		{
+			name: "range crosses parent boundary",
+			child: &profileDiffNode{
+				row:       profileDiffRow{Value: 2},
+				leftStart: 9,
+			},
+		},
+		{
+			name: "zero width on both sides",
+			child: &profileDiffNode{
+				leftStart:  5,
+				rightStart: 5,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := profileDiffParent(parents, test.child); got != test.want {
+				t.Fatalf("profileDiffParent() = %p, want %p", got, test.want)
+			}
+		})
+	}
+
+	child := &profileDiffNode{row: profileDiffRow{Value: 1}}
+	if got := profileDiffParent(nil, child); got != nil {
+		t.Fatalf("profileDiffParent(nil) = %p, want nil", got)
+	}
+}
+
 func TestProfileDiffRowsRejectsMalformedLevel(t *testing.T) {
 	_, err := profileDiffRows(&querierv1.FlameGraphDiff{
 		Names:  []string{"total"},
@@ -267,9 +348,13 @@ func TestProfileDiffRowsRejectsMaliciousValues(t *testing.T) {
 
 func TestProfileDiffRowsLimitsTotalNodes(t *testing.T) {
 	level := &querierv1.Level{
-		Values: make([]int64, 0, maxProfileDiffMaxNodes*diffFlamegraphNodeWidth),
+		Values: make(
+			[]int64,
+			0,
+			profileService.MaxProfileNodes*diffFlamegraphNodeWidth,
+		),
 	}
-	for range maxProfileDiffMaxNodes {
+	for range profileService.MaxProfileNodes {
 		level.Values = append(level.Values, 0, 0, 0, 0, 0, 0, 0)
 	}
 
@@ -295,4 +380,52 @@ func TestProfileDiffResponseSizeLimit(t *testing.T) {
 	if !tooLarge {
 		t.Fatal("profile diff response exceeded the byte limit")
 	}
+}
+
+func BenchmarkProfileDiffParent(b *testing.B) {
+	const parentCount = 10_000
+	parents := make([]*profileDiffNode, parentCount)
+	for index := range parents {
+		start := int64(index * 2)
+		parents[index] = &profileDiffNode{
+			row:        profileDiffRow{Value: 2, ValueRight: 2},
+			leftStart:  start,
+			rightStart: start,
+		}
+	}
+	child := &profileDiffNode{
+		row: profileDiffRow{
+			Value:      1,
+			ValueRight: 1,
+		},
+		leftStart:  int64((parentCount - 1) * 2),
+		rightStart: int64((parentCount - 1) * 2),
+	}
+
+	b.Run("binary", func(b *testing.B) {
+		for range b.N {
+			if profileDiffParent(parents, child) == nil {
+				b.Fatal("parent not found")
+			}
+		}
+	})
+	b.Run("linear_reference", func(b *testing.B) {
+		for range b.N {
+			var found *profileDiffNode
+			for _, parent := range parents {
+				if profileDiffRangeContains(
+					parent.leftStart,
+					parent.row.Value,
+					child.leftStart,
+					child.row.Value,
+				) {
+					found = parent
+					break
+				}
+			}
+			if found == nil {
+				b.Fatal("parent not found")
+			}
+		}
+	})
 }

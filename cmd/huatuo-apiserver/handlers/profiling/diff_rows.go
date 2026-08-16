@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strings"
 
 	"huatuo-bamai/internal/log"
+	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 
@@ -31,8 +33,6 @@ import (
 
 const (
 	diffFlamegraphNodeWidth     = 7
-	defaultProfileDiffMaxNodes  = 5000
-	maxProfileDiffMaxNodes      = 10000
 	maxProfileDiffTargetLength  = 512
 	maxProfileDiffTypeLength    = 256
 	maxProfileDiffResponseBytes = 8 << 20
@@ -161,10 +161,10 @@ func buildAdjacentProfileDiffRequest(
 		return nil, fmt.Errorf("selected range has no preceding window")
 	}
 	if request.MaxNodes < 0 ||
-		request.MaxNodes > maxProfileDiffMaxNodes {
+		request.MaxNodes > profileService.MaxProfileNodes {
 		return nil, fmt.Errorf(
 			"max_nodes must be between 0 and %d",
-			maxProfileDiffMaxNodes,
+			profileService.MaxProfileNodes,
 		)
 	}
 
@@ -217,7 +217,7 @@ func buildAdjacentProfileDiffRequest(
 
 	maxNodesValue := request.MaxNodes
 	if maxNodesValue == 0 {
-		maxNodesValue = defaultProfileDiffMaxNodes
+		maxNodesValue = profileService.DefaultProfileMaxNodes
 	}
 	maxNodes := &maxNodesValue
 	return &querierv1.DiffRequest{
@@ -254,10 +254,10 @@ func profileDiffRows(graph *querierv1.FlameGraphDiff) ([]profileDiffRow, error) 
 			)
 		}
 		nodeCount += len(level.Values) / diffFlamegraphNodeWidth
-		if nodeCount > maxProfileDiffMaxNodes {
+		if nodeCount > int(profileService.MaxProfileNodes) {
 			return nil, fmt.Errorf(
 				"diff flame graph exceeds %d nodes",
-				maxProfileDiffMaxNodes,
+				profileService.MaxProfileNodes,
 			)
 		}
 		nodes := make(
@@ -373,13 +373,29 @@ func profileDiffParent(
 	parents []*profileDiffNode,
 	child *profileDiffNode,
 ) *profileDiffNode {
-	for _, parent := range parents {
+	// Delta decoding starts each interval at or after the preceding interval's
+	// end, so the last start not after the child is its only possible parent.
+	leftIndex := sort.Search(len(parents), func(index int) bool {
+		return parents[index].leftStart > child.leftStart
+	})
+	if leftIndex > 0 {
+		parent := parents[leftIndex-1]
 		if profileDiffRangeContains(
 			parent.leftStart,
 			parent.row.Value,
 			child.leftStart,
 			child.row.Value,
-		) || profileDiffRangeContains(
+		) {
+			return parent
+		}
+	}
+
+	rightIndex := sort.Search(len(parents), func(index int) bool {
+		return parents[index].rightStart > child.rightStart
+	})
+	if rightIndex > 0 {
+		parent := parents[rightIndex-1]
+		if profileDiffRangeContains(
 			parent.rightStart,
 			parent.row.ValueRight,
 			child.rightStart,
