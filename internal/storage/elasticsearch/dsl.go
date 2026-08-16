@@ -60,7 +60,7 @@ func validateFieldName(field string) error {
 	return nil
 }
 
-func buildSearchRequest(q driver.Query) ([]byte, error) {
+func buildSearchRequest(q *driver.Query) ([]byte, error) {
 	if q.Limit < 0 || q.Offset < 0 {
 		return nil, driver.ErrNegativePagination
 	}
@@ -112,7 +112,7 @@ func buildSearchRequest(q driver.Query) ([]byte, error) {
 	return json.Marshal(req)
 }
 
-func buildCountRequest(q driver.Query) ([]byte, error) {
+func buildCountRequest(q *driver.Query) ([]byte, error) {
 	if q.Limit < 0 || q.Offset < 0 {
 		return nil, driver.ErrNegativePagination
 	}
@@ -124,7 +124,7 @@ func buildCountRequest(q driver.Query) ([]byte, error) {
 	return json.Marshal(escount.Request{Query: query})
 }
 
-func buildValuesRequest(field string, q driver.Query, size int) ([]byte, error) {
+func buildValuesRequest(field string, q *driver.Query, size int) ([]byte, error) {
 	if err := validateFieldName(field); err != nil {
 		return nil, err
 	}

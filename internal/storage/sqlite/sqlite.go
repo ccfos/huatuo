@@ -183,8 +183,8 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, error) {
-	querySQL, args, err := buildSelectSQL(s.table, q)
+func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, error) { //nolint:gocritic // driver.Storage requires Query by value.
+	querySQL, args, err := buildSelectSQL(s.table, &q)
 	if err != nil {
 		return nil, err
 	}
@@ -216,8 +216,8 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 	return records, nil
 }
 
-func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
-	countSQL, args, err := buildCountSQL(s.table, q)
+func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) { //nolint:gocritic // driver.Storage requires Query by value.
+	countSQL, args, err := buildCountSQL(s.table, &q)
 	if err != nil {
 		return 0, err
 	}
@@ -229,12 +229,12 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	return count, nil
 }
 
-func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size int) ([]string, error) {
+func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size int) ([]string, error) { //nolint:gocritic // driver.Storage requires Query by value.
 	if err := validateIdentifier(field); err != nil {
 		return nil, err
 	}
 
-	valuesSQL, args, err := buildValuesSQL(s.table, field, q, size)
+	valuesSQL, args, err := buildValuesSQL(s.table, field, &q, size)
 	if err != nil {
 		return nil, err
 	}

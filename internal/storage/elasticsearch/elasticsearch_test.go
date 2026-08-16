@@ -852,7 +852,7 @@ func TestBuildSearchRequest(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rawBody, err := buildSearchRequest(tc.query)
+			rawBody, err := buildSearchRequest(&tc.query)
 			body := decodeJSONMap(t, rawBody)
 			tc.validate(t, body, err)
 		})

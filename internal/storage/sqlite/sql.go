@@ -34,7 +34,7 @@ var binaryOpSQL = map[driver.Op]string{
 	driver.OpLte: "<=",
 }
 
-func buildSelectSQL(collection string, q driver.Query) (string, []any, error) {
+func buildSelectSQL(collection string, q *driver.Query) (string, []any, error) {
 	if q.Limit < 0 || q.Offset < 0 {
 		return "", nil, driver.ErrNegativePagination
 	}
@@ -78,7 +78,7 @@ func buildSelectSQL(collection string, q driver.Query) (string, []any, error) {
 	return sb.String(), args, nil
 }
 
-func buildCountSQL(collection string, q driver.Query) (string, []any, error) {
+func buildCountSQL(collection string, q *driver.Query) (string, []any, error) {
 	if q.Limit < 0 || q.Offset < 0 {
 		return "", nil, driver.ErrNegativePagination
 	}
@@ -94,7 +94,7 @@ func buildCountSQL(collection string, q driver.Query) (string, []any, error) {
 	return baseSQL + " WHERE " + whereSQL, args, nil
 }
 
-func buildValuesSQL(collection, field string, q driver.Query, size int) (string, []any, error) {
+func buildValuesSQL(collection, field string, q *driver.Query, size int) (string, []any, error) {
 	if q.Limit < 0 || q.Offset < 0 {
 		return "", nil, driver.ErrNegativePagination
 	}

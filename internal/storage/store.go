@@ -139,19 +139,19 @@ func (s *Store[T]) Close(ctx context.Context) error {
 }
 
 // Query returns objects matching q; all filter and sort fields must be registered indexes.
-func (s *Store[T]) Query(ctx context.Context, q driver.Query) ([]T, error) {
+func (s *Store[T]) Query(ctx context.Context, q *driver.Query) ([]T, error) {
 	values, _, err := s.QueryPage(ctx, q)
 	return values, err
 }
 
 // QueryPage returns objects matching q and the last record's backend sort
 // values. Passing those values as Query.SearchAfter retrieves the next page.
-func (s *Store[T]) QueryPage(ctx context.Context, q driver.Query) ([]T, []any, error) {
+func (s *Store[T]) QueryPage(ctx context.Context, q *driver.Query) ([]T, []any, error) {
 	if err := s.validateQuery(q); err != nil {
 		return nil, nil, err
 	}
 
-	records, err := s.backend.Query(driver.WithContext(ctx), q)
+	records, err := s.backend.Query(driver.WithContext(ctx), *q)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -173,16 +173,16 @@ func (s *Store[T]) QueryPage(ctx context.Context, q driver.Query) ([]T, []any, e
 }
 
 // Count returns the number of objects matching the given query.
-func (s *Store[T]) Count(ctx context.Context, q driver.Query) (int64, error) {
+func (s *Store[T]) Count(ctx context.Context, q *driver.Query) (int64, error) {
 	if err := s.validateQuery(q); err != nil {
 		return 0, err
 	}
 
-	return s.backend.Count(driver.WithContext(ctx), q)
+	return s.backend.Count(driver.WithContext(ctx), *q)
 }
 
 // Values returns up to size distinct values for field, filtered by q.
-func (s *Store[T]) Values(ctx context.Context, field string, q driver.Query, size int) ([]string, error) {
+func (s *Store[T]) Values(ctx context.Context, field string, q *driver.Query, size int) ([]string, error) {
 	if size < 0 {
 		return nil, driver.ErrNegativeSize
 	}
@@ -190,11 +190,14 @@ func (s *Store[T]) Values(ctx context.Context, field string, q driver.Query, siz
 		return nil, err
 	}
 
-	return s.backend.Values(driver.WithContext(ctx), field, q, size)
+	return s.backend.Values(driver.WithContext(ctx), field, *q, size)
 }
 
 // validateQuery checks that limit and offset are non-negative.
-func (s *Store[T]) validateQuery(q driver.Query) error {
+func (s *Store[T]) validateQuery(q *driver.Query) error {
+	if q == nil {
+		return fmt.Errorf("%w: query is nil", driver.ErrInvalidQuery)
+	}
 	if q.Limit < 0 || q.Offset < 0 {
 		return driver.ErrNegativePagination
 	}
