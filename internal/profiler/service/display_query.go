@@ -322,6 +322,54 @@ func profileSampleStack(
 	return stack
 }
 
+// Diff compares two independently selected profile windows.
+func (s *Service) Diff(
+	ctx context.Context,
+	req *querierv1.DiffRequest,
+) (*querierv1.DiffResponse, error) {
+	if req == nil || req.Left == nil || req.Right == nil {
+		return nil, invalidProfileQueryf("left and right profile selections are required")
+	}
+	if req.Left.ProfileTypeID != req.Right.ProfileTypeID {
+		return nil, invalidProfileQueryf("left and right profile types must match")
+	}
+	maxNodes, err := diffMaxNodes(req)
+	if err != nil {
+		return nil, err
+	}
+	left, leftFound, err := s.selectProfileTree(ctx, req.Left, true)
+	if err != nil {
+		return nil, fmt.Errorf("select left profiles: %w", err)
+	}
+	right, rightFound, err := s.selectProfileTree(ctx, req.Right, true)
+	if err != nil {
+		return nil, fmt.Errorf("select right profiles: %w", err)
+	}
+	if !leftFound && !rightFound {
+		return nil, ErrProfilesAbsent
+	}
+	flamegraph, err := phlaremodel.NewFlamegraphDiff(left, right, maxNodes)
+	if err != nil {
+		return nil, fmt.Errorf("build flamegraph diff: %w", err)
+	}
+	return &querierv1.DiffResponse{Flamegraph: flamegraph}, nil
+}
+
+func diffMaxNodes(req *querierv1.DiffRequest) (int64, error) {
+	left, err := normalizeProfileMaxNodes(req.Left.GetMaxNodes())
+	if err != nil {
+		return 0, fmt.Errorf("left selection: %w", err)
+	}
+	right, err := normalizeProfileMaxNodes(req.Right.GetMaxNodes())
+	if err != nil {
+		return 0, fmt.Errorf("right selection: %w", err)
+	}
+	if right < left {
+		return right, nil
+	}
+	return left, nil
+}
+
 func normalizeProfileMaxNodes(maxNodes int64) (int64, error) {
 	if maxNodes == 0 {
 		return DefaultProfileMaxNodes, nil

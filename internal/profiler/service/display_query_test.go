@@ -710,6 +710,36 @@ func TestProfileNodeLimits(t *testing.T) {
 	}
 }
 
+func TestDiffBuildsDoubleFlamegraph(t *testing.T) {
+	start := time.Date(2026, time.July, 25, 11, 0, 0, 0, time.UTC)
+	service := newTestProfileService(&fakeProfileQueryStorage{documents: []*ProfileDocument{
+		testProfileDocument(start.Add(time.Second), "left", 10, "root", "hot"),
+	}})
+	maxNodes := int64(100)
+	response, err := service.Diff(t.Context(), &querierv1.DiffRequest{
+		Left: &querierv1.SelectMergeStacktracesRequest{
+			ProfileTypeID: profiler.ProfileTypeCpuSample,
+			LabelSelector: `{id="left"}`,
+			Start:         start.UnixMilli(),
+			End:           start.Add(5 * time.Second).UnixMilli(),
+			MaxNodes:      &maxNodes,
+		},
+		Right: &querierv1.SelectMergeStacktracesRequest{
+			ProfileTypeID: profiler.ProfileTypeCpuSample,
+			LabelSelector: `{id="right"}`,
+			Start:         start.Add(10 * time.Second).UnixMilli(),
+			End:           start.Add(15 * time.Second).UnixMilli(),
+			MaxNodes:      &maxNodes,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Diff() error = %v", err)
+	}
+	if response.Flamegraph == nil || response.Flamegraph.LeftTicks != 10 {
+		t.Fatalf("Diff() response = %#v, want 10 left ticks", response)
+	}
+}
+
 func TestEmptyStoredProfileHasNoUsableSamples(t *testing.T) {
 	start := time.Date(2026, time.July, 25, 12, 0, 0, 0, time.UTC)
 	document := &ProfileDocument{

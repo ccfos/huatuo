@@ -44,6 +44,7 @@ type Config struct {
 type ProfileQueryService interface {
 	SelectMergeStacktraces(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error)
 	SelectSeries(ctx context.Context, req *querierv1.SelectSeriesRequest) (*querierv1.SelectSeriesResponse, error)
+	Diff(ctx context.Context, req *querierv1.DiffRequest) (*querierv1.DiffResponse, error)
 	MarshalPprof(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) ([]byte, error)
 	ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error)
 	LabelNames(ctx context.Context, req *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error)
@@ -103,6 +104,11 @@ func NewHandler(
 				Typ:    server.HttpPost,
 				Uri:    "/flamegraph/querier.v1.QuerierService/SelectSeries",
 				Handle: h.displaySelectSeries,
+			},
+			server.Handle{
+				Typ:    server.HttpPost,
+				Uri:    "/flamegraph/querier.v1.QuerierService/Diff",
+				Handle: h.displayDiff,
 			},
 			server.Handle{
 				Typ:    server.HttpPost,

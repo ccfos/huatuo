@@ -81,6 +81,10 @@ func (h *Handler) displaySelectSeries(ctx *server.Context) error {
 	return handleProto(ctx, "select_series", h.profileService.SelectSeries)
 }
 
+func (h *Handler) displayDiff(ctx *server.Context) error {
+	return handleProto(ctx, "diff", h.profileService.Diff)
+}
+
 func (h *Handler) displayLabelNames(ctx *server.Context) error {
 	return handleProto(ctx, "label_names", h.profileService.LabelNames)
 }

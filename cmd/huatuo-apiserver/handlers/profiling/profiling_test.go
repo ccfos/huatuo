@@ -49,6 +49,7 @@ func TestNewHandlerRegistersStorageRoutesWhenEnabled(t *testing.T) {
 		"/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces",
 		"/flamegraph/querier.v1.QuerierService/ProfileTypes",
 		"/flamegraph/querier.v1.QuerierService/SelectSeries",
+		"/flamegraph/querier.v1.QuerierService/Diff",
 		"/flamegraph/querier.v1.QuerierService/LabelNames",
 		"/flamegraph/querier.v1.QuerierService/LabelValues",
 	}
