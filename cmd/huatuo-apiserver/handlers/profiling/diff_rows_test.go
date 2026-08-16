@@ -153,6 +153,7 @@ func TestDisplayDiffRowsBindsEncodedQueryFromEmptyPost(t *testing.T) {
 		"/diff?"+values.Encode(),
 		http.NoBody,
 	)
+	request.ContentLength = -1
 	recorder := httptest.NewRecorder()
 	engine.ServeHTTP(recorder, request)
 

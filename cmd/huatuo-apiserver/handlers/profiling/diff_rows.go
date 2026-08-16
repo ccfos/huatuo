@@ -70,7 +70,7 @@ type profileDiffNode struct {
 func (h *Handler) displayDiffRows(ctx *server.Context) error {
 	var request profileDiffRowsRequest
 	var err error
-	if ctx.Request().ContentLength == 0 {
+	if ctx.Request().ContentLength <= 0 {
 		err = ctx.ShouldBindQuery(&request)
 	} else {
 		err = ctx.ShouldBindJSON(&request)
