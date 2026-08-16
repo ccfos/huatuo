@@ -17,7 +17,7 @@
 set -euo pipefail
 
 usage() {
-	cat <<'EOF'
+	cat << 'EOF'
 Usage: migrate-profile-storage-id.sh [--check]
 
 Environment:
@@ -44,11 +44,11 @@ case "${1:-}" in
 	;;
 esac
 
-command -v curl >/dev/null || {
+command -v curl > /dev/null || {
 	echo "curl is required" >&2
 	exit 1
 }
-command -v jq >/dev/null || {
+command -v jq > /dev/null || {
 	echo "jq is required" >&2
 	exit 1
 }
@@ -126,8 +126,8 @@ missing_sort_value_query='{
 index_mapping=$(curl "${curl_options[@]}" \
 	--request GET \
 	"${elasticsearch_url}/${elasticsearch_index}/_mapping")
-resolved_indices=$(jq -r 'keys[]' <<<"${index_mapping}")
-if [[ $(wc -l <<<"${resolved_indices}") -ne 1 || ${resolved_indices} != "${elasticsearch_index}" ]]; then
+resolved_indices=$(jq -r 'keys[]' <<< "${index_mapping}")
+if [[ $(wc -l <<< "${resolved_indices}") -ne 1 || ${resolved_indices} != "${elasticsearch_index}" ]]; then
 	echo "ELASTICSEARCH_INDEX must resolve to one physical index with the same name" >&2
 	echo "Resolved indices: ${resolved_indices//$'\n'/, }" >&2
 	exit 2
@@ -136,11 +136,11 @@ fi
 profile_storage_type=$(jq -r \
 	--arg index "${elasticsearch_index}" \
 	'.[$index].mappings.properties.profile_storage_id.type // ""' \
-	<<<"${index_mapping}")
+	<<< "${index_mapping}")
 profile_storage_keyword_type=$(jq -r \
 	--arg index "${elasticsearch_index}" \
 	'.[$index].mappings.properties.profile_storage_id.fields.keyword.type // ""' \
-	<<<"${index_mapping}")
+	<<< "${index_mapping}")
 
 ensure_profile_storage_mapping() {
 	if [[ ${profile_storage_keyword_type} == "keyword" ]]; then
@@ -168,7 +168,7 @@ ensure_profile_storage_mapping() {
 	curl "${curl_options[@]}" \
 		--request PUT \
 		--data-binary "${mapping}" \
-		"${elasticsearch_url}/${elasticsearch_index}/_mapping" >/dev/null
+		"${elasticsearch_url}/${elasticsearch_index}/_mapping" > /dev/null
 
 	local keyword_mapping
 	keyword_mapping=$(curl "${curl_options[@]}" \
@@ -177,7 +177,7 @@ ensure_profile_storage_mapping() {
 	if ! jq -e \
 		--arg index "${elasticsearch_index}" \
 		'.[$index].mappings["profile_storage_id.keyword"].mapping.keyword.type == "keyword"' \
-		>/dev/null <<<"${keyword_mapping}"; then
+		> /dev/null <<< "${keyword_mapping}"; then
 		echo "profile_storage_id.keyword mapping was not created" >&2
 		exit 1
 	fi
@@ -187,16 +187,16 @@ count_legacy_profiles() {
 	curl "${curl_options[@]}" \
 		--request POST \
 		--data-binary "${profile_query}" \
-		"${elasticsearch_url}/${elasticsearch_index}/_count" |
-		jq -er '.count'
+		"${elasticsearch_url}/${elasticsearch_index}/_count" \
+		| jq -er '.count'
 }
 
 count_missing_sort_values() {
 	curl "${curl_options[@]}" \
 		--request POST \
 		--data-binary "${missing_sort_value_query}" \
-		"${elasticsearch_url}/${elasticsearch_index}/_count" |
-		jq -er '.count'
+		"${elasticsearch_url}/${elasticsearch_index}/_count" \
+		| jq -er '.count'
 }
 
 pending=$(count_legacy_profiles)
@@ -242,12 +242,12 @@ if [[ ${missing_sort_values} -ne 0 ]]; then
       }
     }' \
 		"${elasticsearch_url}/${elasticsearch_index}/_update_by_query?refresh=true")
-	if ! jq -e '.failures | length == 0' >/dev/null <<<"${refresh_response}"; then
+	if ! jq -e '.failures | length == 0' > /dev/null <<< "${refresh_response}"; then
 		echo "profile storage ID sort refresh returned document failures" >&2
-		jq '.failures' <<<"${refresh_response}" >&2
+		jq '.failures' <<< "${refresh_response}" >&2
 		exit 1
 	fi
-	echo "Reindexed existing profile storage IDs: $(jq -er '.updated' <<<"${refresh_response}")"
+	echo "Reindexed existing profile storage IDs: $(jq -er '.updated' <<< "${refresh_response}")"
 fi
 
 if [[ ${pending} -eq 0 ]]; then
@@ -287,13 +287,13 @@ update_response=$(curl "${curl_options[@]}" \
   }' \
 	"${elasticsearch_url}/${elasticsearch_index}/_update_by_query?refresh=true")
 
-if ! jq -e '.failures | length == 0' >/dev/null <<<"${update_response}"; then
+if ! jq -e '.failures | length == 0' > /dev/null <<< "${update_response}"; then
 	echo "profile storage ID migration returned document failures" >&2
-	jq '.failures' <<<"${update_response}" >&2
+	jq '.failures' <<< "${update_response}" >&2
 	exit 1
 fi
 
-updated=$(jq -er '.updated' <<<"${update_response}")
+updated=$(jq -er '.updated' <<< "${update_response}")
 remaining=$(count_legacy_profiles)
 remaining_sort_values=$(count_missing_sort_values)
 echo "Updated profile documents: ${updated}"
