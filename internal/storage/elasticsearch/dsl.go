@@ -64,6 +64,20 @@ func buildSearchRequest(q driver.Query) ([]byte, error) {
 	if q.Limit < 0 || q.Offset < 0 {
 		return nil, driver.ErrNegativePagination
 	}
+	if len(q.SearchAfter) > 0 && q.Offset > 0 {
+		return nil, fmt.Errorf("%w: search_after cannot be combined with a non-zero offset", driver.ErrInvalidQuery)
+	}
+	if len(q.SearchAfter) > 0 && len(q.Sorts) == 0 {
+		return nil, fmt.Errorf("%w: search_after requires at least one sort field", driver.ErrInvalidQuery)
+	}
+	if len(q.SearchAfter) > 0 && len(q.SearchAfter) != len(q.Sorts) {
+		return nil, fmt.Errorf(
+			"%w: search_after has %d values for %d sort fields",
+			driver.ErrInvalidQuery,
+			len(q.SearchAfter),
+			len(q.Sorts),
+		)
+	}
 
 	query, err := buildQuery(q.Filters)
 	if err != nil {
@@ -81,6 +95,12 @@ func buildSearchRequest(q driver.Query) ([]byte, error) {
 	}
 	if q.Offset > 0 {
 		req.From = &q.Offset
+	}
+	if len(q.SearchAfter) > 0 {
+		req.SearchAfter = make([]types.FieldValue, len(q.SearchAfter))
+		for i, value := range q.SearchAfter {
+			req.SearchAfter[i] = value
+		}
 	}
 	if len(q.Sorts) > 0 {
 		sorts, err := buildSort(q.Sorts)

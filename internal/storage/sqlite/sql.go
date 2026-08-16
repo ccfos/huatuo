@@ -38,6 +38,9 @@ func buildSelectSQL(collection string, q driver.Query) (string, []any, error) {
 	if q.Limit < 0 || q.Offset < 0 {
 		return "", nil, driver.ErrNegativePagination
 	}
+	if len(q.SearchAfter) > 0 {
+		return "", nil, fmt.Errorf("%w: sqlite does not support search_after", driver.ErrUnsupportedOp)
+	}
 
 	baseSQL := fmt.Sprintf(`SELECT id, data, fields FROM %s`, quoteIdentifier(collection))
 	whereSQL, args, err := buildWhereSQL(q.Filters)

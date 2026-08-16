@@ -140,25 +140,36 @@ func (s *Store[T]) Close(ctx context.Context) error {
 
 // Query returns objects matching q; all filter and sort fields must be registered indexes.
 func (s *Store[T]) Query(ctx context.Context, q driver.Query) ([]T, error) {
+	values, _, err := s.QueryPage(ctx, q)
+	return values, err
+}
+
+// QueryPage returns objects matching q and the last record's backend sort
+// values. Passing those values as Query.SearchAfter retrieves the next page.
+func (s *Store[T]) QueryPage(ctx context.Context, q driver.Query) ([]T, []any, error) {
 	if err := s.validateQuery(q); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	records, err := s.backend.Query(driver.WithContext(ctx), q)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	values := make([]T, 0, len(records))
 	for _, rec := range records {
 		value, decodeErr := s.mapper.Decode(rec.Data)
 		if decodeErr != nil {
-			return nil, fmt.Errorf("%w: %w", driver.ErrDecodeFailed, decodeErr)
+			return nil, nil, fmt.Errorf("%w: %w", driver.ErrDecodeFailed, decodeErr)
 		}
 		values = append(values, value)
 	}
 
-	return values, nil
+	if len(records) == 0 || len(records[len(records)-1].SortValues) == 0 {
+		return values, nil, nil
+	}
+	cursor := append([]any(nil), records[len(records)-1].SortValues...)
+	return values, cursor, nil
 }
 
 // Count returns the number of objects matching the given query.
@@ -186,6 +197,23 @@ func (s *Store[T]) Values(ctx context.Context, field string, q driver.Query, siz
 func (s *Store[T]) validateQuery(q driver.Query) error {
 	if q.Limit < 0 || q.Offset < 0 {
 		return driver.ErrNegativePagination
+	}
+	if len(q.SearchAfter) == 0 {
+		return nil
+	}
+	if q.Offset > 0 {
+		return fmt.Errorf("%w: search_after cannot be combined with a non-zero offset", driver.ErrInvalidQuery)
+	}
+	if len(q.Sorts) == 0 {
+		return fmt.Errorf("%w: search_after requires at least one sort field", driver.ErrInvalidQuery)
+	}
+	if len(q.SearchAfter) != len(q.Sorts) {
+		return fmt.Errorf(
+			"%w: search_after has %d values for %d sort fields",
+			driver.ErrInvalidQuery,
+			len(q.SearchAfter),
+			len(q.Sorts),
+		)
 	}
 
 	return nil
