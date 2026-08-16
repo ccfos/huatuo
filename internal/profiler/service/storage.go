@@ -286,8 +286,8 @@ func buildProfileSearchQuery(filter *SearchFilter) driver.Query {
 	query.Sorts = []driver.Sort{
 		{Field: profileFieldUploadedTime, Desc: true},
 		{Field: profileFieldTracerID + ".keyword"},
-		// Older documents lack this field; migrating them or using PIT is required
-		// to make timestamp collisions strictly ordered across historical data.
+		// The migration script copies legacy Elasticsearch _id values into this
+		// field so historical timestamp collisions remain strictly ordered.
 		{Field: profileFieldStorageID + ".keyword"},
 	}
 	return query
