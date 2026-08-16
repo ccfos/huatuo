@@ -112,6 +112,11 @@ func NewHandler(
 			},
 			server.Handle{
 				Typ:    server.HttpPost,
+				Uri:    "/flamegraph/diff-rows",
+				Handle: h.displayDiffRows,
+			},
+			server.Handle{
+				Typ:    server.HttpPost,
 				Uri:    "/flamegraph/querier.v1.QuerierService/LabelNames",
 				Handle: h.displayLabelNames,
 			},
