@@ -23,6 +23,9 @@ TCP_NS_VETH_CLIENT=""
 TCP_NS_SERVER_ADDR=""
 TCP_NS_CLIENT_ADDR=""
 
+PROCESS_NET_NAMESPACE=""
+PROCESS_NET_NAMESPACE_PID=""
+
 tcp_namespace_setup() {
 	local prefix=$1 server_addr=$2 client_addr=$3 netmask=${4:-24}
 
@@ -51,4 +54,43 @@ tcp_namespace_setup() {
 tcp_namespace_cleanup() {
 	[[ -z "${TCP_NS_SERVER}" ]] || ip netns del "${TCP_NS_SERVER}" 2> /dev/null || true
 	[[ -z "${TCP_NS_CLIENT}" ]] || ip netns del "${TCP_NS_CLIENT}" 2> /dev/null || true
+}
+
+process_network_namespace_setup() {
+	local prefix=$1
+	local attempt
+
+	PROCESS_NET_NAMESPACE="pn_${prefix}_$$"
+	ip netns add "${PROCESS_NET_NAMESPACE}" \
+		|| fatal "failed to create process netns ${PROCESS_NET_NAMESPACE}"
+	ip netns exec "${PROCESS_NET_NAMESPACE}" sleep 300 &
+	local launcher_pid=$!
+
+	for ((attempt = 0; attempt < 50; attempt++)); do
+		PROCESS_NET_NAMESPACE_PID=$(ip netns pids "${PROCESS_NET_NAMESPACE}" | head -n 1)
+		[[ -n "${PROCESS_NET_NAMESPACE_PID}" ]] && break
+		sleep 0.1
+	done
+	if [[ -z "${PROCESS_NET_NAMESPACE_PID}" ]]; then
+		kill "${launcher_pid}" 2> /dev/null || true
+		fatal "no live process found in netns ${PROCESS_NET_NAMESPACE}"
+	fi
+
+	local process_inode namespace_inode
+	process_inode=$(stat -Lc '%i' "/proc/${PROCESS_NET_NAMESPACE_PID}/ns/net")
+	namespace_inode=$(stat -Lc '%i' "/run/netns/${PROCESS_NET_NAMESPACE}")
+	[[ "${process_inode}" == "${namespace_inode}" ]] \
+		|| fatal "pid ${PROCESS_NET_NAMESPACE_PID} is not in ${PROCESS_NET_NAMESPACE}"
+}
+
+process_network_namespace_cleanup() {
+	if [[ -n "${PROCESS_NET_NAMESPACE_PID}" ]]; then
+		kill "${PROCESS_NET_NAMESPACE_PID}" 2> /dev/null || true
+		wait "${PROCESS_NET_NAMESPACE_PID}" 2> /dev/null || true
+	fi
+	[[ -z "${PROCESS_NET_NAMESPACE}" ]] \
+		|| ip netns del "${PROCESS_NET_NAMESPACE}" 2> /dev/null \
+		|| true
+	PROCESS_NET_NAMESPACE=""
+	PROCESS_NET_NAMESPACE_PID=""
 }
