@@ -17,7 +17,6 @@ package handlers
 import (
 	"context"
 	"errors"
-	"net"
 
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
@@ -44,16 +43,8 @@ type ServerOptions struct {
 	Ready               func(context.Context) error
 }
 
-// RunningServer exposes the lifecycle of the API listener.
-type RunningServer interface {
-	Shutdown(ctx context.Context) error
-	Done() <-chan struct{}
-	Wait(ctx context.Context) error
-	Addr() net.Addr
-}
-
 // Start starts the API service with the given configuration.
-func Start(opts *ServerOptions) (RunningServer, error) {
+func Start(opts *ServerOptions) (*server.Server, error) {
 	if opts == nil {
 		return nil, errors.New("start API server: options are required")
 	}
@@ -76,7 +67,10 @@ func Start(opts *ServerOptions) (RunningServer, error) {
 	})
 
 	// Register trace routes
-	httpServer.MustRegisterRoutes("/v1/traces", trace.NewHandler(opts.TraceJobManager).Handlers)
+	httpServer.MustRegisterRoutes(
+		"/v1/traces",
+		trace.NewHandler(opts.TraceJobManager).Handlers,
+	)
 	httpServer.MustRegisterRoutes(
 		"/v1/profiles",
 		profiling.NewHandler(opts.ProfilingJobManager, opts.ProfileService, opts.ProfilingConfig).Handlers,

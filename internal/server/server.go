@@ -85,7 +85,7 @@ var defaultConfig = &Config{
 }
 
 // Server is an HTTP server instance.
-type server struct {
+type Server struct {
 	engine       *httpGin.Engine
 	promRegistry *prometheus.Registry
 	rootGroup    *routerGroup
@@ -98,7 +98,7 @@ type server struct {
 }
 
 // Start binds addr before returning and serves requests in the background.
-func (s *server) Start(addr string) error {
+func (s *Server) Start(addr string) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", addr, err)
@@ -141,7 +141,7 @@ func (s *server) Start(addr string) error {
 }
 
 // Shutdown stops accepting requests and waits for the serving goroutine.
-func (s *server) Shutdown(ctx context.Context) error {
+func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	httpServer := s.httpServer
 	s.mu.Unlock()
@@ -161,14 +161,14 @@ func (s *server) Shutdown(ctx context.Context) error {
 }
 
 // Done is closed when the serving goroutine exits.
-func (s *server) Done() <-chan struct{} {
+func (s *Server) Done() <-chan struct{} {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.serveDone
 }
 
 // Addr returns the bound listener address after Start.
-func (s *server) Addr() net.Addr {
+func (s *Server) Addr() net.Addr {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.listener == nil {
@@ -178,7 +178,7 @@ func (s *server) Addr() net.Addr {
 }
 
 // Wait returns the serving result or the context error.
-func (s *server) Wait(ctx context.Context) error {
+func (s *Server) Wait(ctx context.Context) error {
 	s.mu.Lock()
 	done := s.serveDone
 	s.mu.Unlock()
@@ -202,7 +202,7 @@ type Option struct {
 }
 
 // NewServer creates a new HTTP server with the given configuration.
-func NewServer(cfg *Config) *server {
+func NewServer(cfg *Config) *Server {
 	httpGin.SetMode(httpGin.ReleaseMode)
 
 	if cfg == nil {
@@ -212,7 +212,7 @@ func NewServer(cfg *Config) *server {
 	normalizeServerConfig(&effectiveConfig)
 	cfg = &effectiveConfig
 
-	s := &server{
+	s := &Server{
 		engine:       httpGin.New(),
 		promRegistry: cfg.PromReg,
 		config:       *cfg,
@@ -328,14 +328,14 @@ func newHTTPMetricsMiddleware(reg prometheus.Registerer) httpGin.HandlerFunc {
 	}
 }
 
-func (s *server) healthzHandler() ErrHandlerContextFunc {
+func (s *Server) healthzHandler() ErrHandlerContextFunc {
 	return func(ctx *Context) error {
 		ctx.Status(http.StatusNoContent)
 		return nil
 	}
 }
 
-func (s *server) readyzHandler() ErrHandlerContextFunc {
+func (s *Server) readyzHandler() ErrHandlerContextFunc {
 	return func(ctx *Context) error {
 		if s.config.Ready == nil {
 			ctx.Status(http.StatusNoContent)
@@ -351,7 +351,7 @@ func (s *server) readyzHandler() ErrHandlerContextFunc {
 	}
 }
 
-func (s *server) promServerHandler() ErrHandlerContextFunc {
+func (s *Server) promServerHandler() ErrHandlerContextFunc {
 	if s.promRegistry == nil {
 		return func(ctx *Context) error {
 			ctx.JSON(http.StatusNotImplemented, map[string]any{"status": "Prometheus registry not supported now"})
@@ -419,7 +419,7 @@ func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
 }
 
 // Group return the cgroup for this httpserver
-func (s *server) Group() *routerGroup {
+func (s *Server) Group() *routerGroup {
 	return s.rootGroup
 }
 
@@ -437,7 +437,7 @@ type Handle struct {
 	Handle ErrHandlerContextFunc
 }
 
-func (s *server) MustRegisterRoutes(subGroup string, handlers []Handle) {
+func (s *Server) MustRegisterRoutes(subGroup string, handlers []Handle) {
 	var g *routerGroup = s.rootGroup
 
 	if subGroup != "" {
@@ -462,7 +462,7 @@ func (s *server) MustRegisterRoutes(subGroup string, handlers []Handle) {
 	}
 }
 
-func (s *server) run(addr string) error {
+func (s *Server) run(addr string) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %w", err)
@@ -472,7 +472,7 @@ func (s *server) run(addr string) error {
 }
 
 // Run starts the TCP server with retry mechanism.
-func (s *server) Run(option *Option) error {
+func (s *Server) Run(option *Option) error {
 	if option.RetryMaxTime > 0 && option.RetryInterval > 0 {
 		go func() {
 			b := backoff.New(option.RetryMaxTime, option.RetryInterval)

@@ -27,6 +27,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pidfile"
 	profileService "huatuo-bamai/internal/profiler/service"
+	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/version"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -80,11 +81,8 @@ type Daemon struct {
 	jobManager     *job.Manager
 	profileService *profileService.Service
 	agentObserver  job.AgentRequestObserver
-	apiServer      interface {
-		Done() <-chan struct{}
-		Wait(ctx context.Context) error
-	}
-	steps []daemonStep
+	apiServer      *server.Server
+	steps          []daemonStep
 }
 
 func NewDaemon(opts *Options) *Daemon {

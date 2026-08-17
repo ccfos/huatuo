@@ -204,7 +204,7 @@ func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
 }
 
 func TestPromServerHandlerWithRegistry(t *testing.T) {
-	s := &server{promRegistry: prometheus.NewRegistry()}
+	s := &Server{promRegistry: prometheus.NewRegistry()}
 
 	handler := s.promServerHandler()
 	ctx, recorder := newTestServerContext(http.MethodGet, "/metrics", "")
