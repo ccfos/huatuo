@@ -38,7 +38,9 @@ func NetArpCache() (*ArpCacheStats, error) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	scanner.Scan()
+	if !scanner.Scan() {
+		return &ArpCacheStats{Stats: make(map[string]uint64)}, scanner.Err()
+	}
 
 	// First string is always a header for stats
 	var headers []string
@@ -47,8 +49,13 @@ func NetArpCache() (*ArpCacheStats, error) {
 	// Fast path ...
 	cache := &ArpCacheStats{Stats: make(map[string]uint64)}
 
-	scanner.Scan()
+	if !scanner.Scan() {
+		return cache, scanner.Err()
+	}
 	for num, counter := range strings.Fields(scanner.Text()) {
+		if num >= len(headers) {
+			break
+		}
 		value, err := strconv.ParseUint(counter, 16, 64)
 		if err != nil {
 			return nil, err
