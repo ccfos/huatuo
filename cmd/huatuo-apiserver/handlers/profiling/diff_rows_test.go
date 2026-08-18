@@ -62,16 +62,16 @@ func TestBuildAdjacentProfileDiffRequest(t *testing.T) {
 		t.Fatalf("buildAdjacentProfileDiffRequest() error = %v", err)
 	}
 
-	if request.Left.Start != 1000 || request.Left.End != 1999 {
+	if request.Left.Start != 1000 || request.Left.End != 2000 {
 		t.Fatalf(
-			"left range = %d..%d, want 1000..1999",
+			"left range = [%d, %d), want [1000, 2000)",
 			request.Left.Start,
 			request.Left.End,
 		)
 	}
 	if request.Right.Start != 2000 || request.Right.End != 3000 {
 		t.Fatalf(
-			"right range = %d..%d, want 2000..3000",
+			"right range = [%d, %d), want [2000, 3000)",
 			request.Right.Start,
 			request.Right.End,
 		)

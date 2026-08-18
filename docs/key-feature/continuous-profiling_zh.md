@@ -379,7 +379,8 @@ docker compose -f build/docker/docker-compose.yml up -d
 时间线和 Top 10 面板使用 Pyroscope 兼容的 `SelectSeries` 接口。对比
 dashboard 通过有边界限制的 JSON 适配器调用 `Diff`，并把结果交给 Grafana
 火焰图面板。选定时间范围是当前窗口，对比对象是紧邻其前、长度相同的窗口；
-选择 `container_id` 时优先于 `hostname`，并把相同的可选采集维度应用到
+两侧窗口都使用半开区间 `[start, end)`，边界无重叠也无缺口。选择
+`container_id` 时优先于 `hostname`，并把相同的可选采集维度应用到
 两侧时间窗。适配器默认最多返回 5,000 个节点，拒绝超过 10,000 的配置，
 并将 JSON 响应限制为 8 MiB。
 
@@ -417,8 +418,10 @@ curl -sS --get \
 选择器接受精确的 `id`、`hostname`、`container_id`、
 `container_hostname`、`profiling_scope`、`cpu`、`pid` 或 `tgid`
 匹配，并且至少需要一个目标或采集维度标签。服务仅在配置
-`Profiling.MaxQueryDocuments` 时先统计匹配文档数，并始终按固定大小分页处理。
-查询超过配置上限时返回 `422 Unprocessable Entity`；默认值 0 表示不限制。
+`Profiling.MaxQueryDocuments` 为正数时先统计匹配文档数，并始终按固定大小
+分页处理。
+查询超过配置上限时返回 `422 Unprocessable Entity`；默认上限为
+100,000 条文档，显式配置为 0 表示不限制。
 下载文件可由 `go tool pprof` 或其他兼容 pprof 的查看器打开。
 
 ### 8. 停止任务
@@ -468,11 +471,11 @@ Profiling API 在
 调用 API 时应省略不使用的 matcher，不要发送该保留值。
 
 剖析文档按稳定顺序分页处理，每页 1,000 条。可选的
-`Profiling.MaxQueryDocuments` 限制单次查询处理的文档数；默认值 0
-表示不限制。超过上限时返回 `422 Unprocessable Entity`。Merge 和
-Diff 火焰图默认 5,000 个节点，并拒绝超过 10,000 的配置。合并查询没有
-数据，或差异查询两侧都没有数据时返回 `404 Not Found`；存储故障返回
-`500 Internal Server Error`。
+`Profiling.MaxQueryDocuments` 限制单次查询处理的文档数；默认上限为
+100,000 条文档，显式配置为 0 表示不限制。超过上限时返回
+`422 Unprocessable Entity`。Merge 和 Diff 火焰图默认 5,000 个节点，并拒绝超过
+10,000 的配置。合并查询没有数据，或差异查询两侧都没有数据时返回
+`404 Not Found`；存储故障返回 `500 Internal Server Error`。
 
 ### 11. 迁移缺少 `profile_storage_id` 的历史数据
 

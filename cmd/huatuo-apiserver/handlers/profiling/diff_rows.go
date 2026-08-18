@@ -232,7 +232,7 @@ func buildAdjacentProfileDiffRequest(
 			ProfileTypeID: request.ProfileTypeID,
 			LabelSelector: selector,
 			Start:         request.Start - window,
-			End:           request.Start - 1,
+			End:           request.Start,
 			MaxNodes:      maxNodes,
 		},
 		Right: &querierv1.SelectMergeStacktracesRequest{

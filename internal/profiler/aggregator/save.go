@@ -105,7 +105,7 @@ func profileCollectionScope(pctx *profctx.ProfilerContext) string {
 	switch {
 	case pctx.ContainerID != "":
 		return "container"
-	case pctx.ThreadGroup:
+	case pctx.ThreadGroup && len(pctx.PIDs) != 0:
 		return "thread_group"
 	case len(pctx.PIDs) != 0:
 		return "pid"

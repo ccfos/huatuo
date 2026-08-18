@@ -17,10 +17,36 @@ package service
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/storage/driver"
 )
+
+func TestBuildProfileAggregationQueryUsesHalfOpenTimeRange(t *testing.T) {
+	start := time.Date(2026, time.August, 18, 9, 0, 0, 123456789, time.UTC)
+	end := time.Date(2026, time.August, 18, 9, 0, 1, 987654321, time.UTC)
+	query := buildProfileAggregationQuery(&SearchFilter{
+		StartTime: start,
+		EndTime:   end,
+	})
+	want := []driver.Filter{
+		{
+			Field: profileFieldUploadedTime,
+			Op:    driver.OpGte,
+			Value: start.Format(time.RFC3339Nano),
+		},
+		{
+			Field: profileFieldUploadedTime,
+			Op:    driver.OpLt,
+			Value: end.Format(time.RFC3339Nano),
+		},
+	}
+
+	if !reflect.DeepEqual(query.Filters, want) {
+		t.Fatalf("query filters = %#v, want %#v", query.Filters, want)
+	}
+}
 
 func TestBuildProfileAggregationQueryPreservesTargetMatchers(t *testing.T) {
 	query := buildProfileAggregationQuery(&SearchFilter{

@@ -71,6 +71,24 @@ func TestProfileCollectionLabels(t *testing.T) {
 			},
 		},
 		{
+			name: "thread group without PID falls back to host",
+			pctx: &profctx.ProfilerContext{ThreadGroup: true},
+			want: map[string]string{
+				profiler.LabelProfilingScope: "host",
+			},
+		},
+		{
+			name: "thread group without PID preserves CPU scope",
+			pctx: &profctx.ProfilerContext{
+				CPUIDs:      []int{6, 2, 6},
+				ThreadGroup: true,
+			},
+			want: map[string]string{
+				profiler.LabelProfilingScope: "cpu",
+				profiler.LabelCPU:            "2,6",
+			},
+		},
+		{
 			name: "container takes scope precedence",
 			pctx: &profctx.ProfilerContext{
 				ContainerID: "container-a",

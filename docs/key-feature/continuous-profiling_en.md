@@ -385,11 +385,12 @@ docker compose -f build/docker/docker-compose.yml up -d
 The timeline and Top 10 panels use the Pyroscope-compatible `SelectSeries`
 endpoint. The comparison dashboard uses `Diff` through a bounded JSON adapter
 for Grafana's flame graph panel. The selected range is the current window and
-is compared with the immediately preceding window of the same duration. A
-selected `container_id` takes precedence over `hostname`. The same optional
-collection dimensions are applied to both windows. The adapter defaults to
-5,000 nodes, rejects values above 10,000, and limits its JSON response to
-8 MiB.
+is compared with the immediately preceding window of the same duration. Both
+windows use half-open `[start, end)` boundaries so they meet without overlap
+or gaps. A selected `container_id` takes precedence over `hostname`. The same
+optional collection dimensions are applied to both windows. The adapter
+defaults to 5,000 nodes, rejects values above 10,000, and limits its JSON
+response to 8 MiB.
 
 ### 7. Get Raw Profiling Data
 
@@ -426,9 +427,10 @@ curl -sS --get \
 Selectors accept exact `id`, `hostname`, `container_id`,
 `container_hostname`, `profiling_scope`, `cpu`, `pid`, or `tgid` matches. At
 least one target or collection-dimension label is required. The service counts
-matching documents only when `Profiling.MaxQueryDocuments` is configured and
-always processes them in bounded pages. A query above the configured limit
-returns `422 Unprocessable Entity`; the default of zero disables the limit.
+matching documents when `Profiling.MaxQueryDocuments` is positive and always
+processes them in bounded pages. A query above the configured limit
+returns `422 Unprocessable Entity`; the default limit is 100,000 documents,
+and an explicit zero disables it.
 The downloaded file can be opened by `go tool pprof` or another
 pprof-compatible viewer.
 
@@ -483,11 +485,11 @@ that sentinel.
 
 Profile documents are processed in stable pages of 1,000. The optional
 `Profiling.MaxQueryDocuments` setting limits documents processed by one query;
-its default of zero disables the limit. A larger selection returns
-`422 Unprocessable Entity`. Merge and diff flame graphs default to 5,000 nodes
-and reject values above 10,000. Merge requests, and diff requests with neither
-side populated, return `404 Not Found`; storage failures return
-`500 Internal Server Error`.
+the default is 100,000 documents, and an explicit zero disables the limit. A
+larger selection returns `422 Unprocessable Entity`. Merge and diff flame
+graphs default to 5,000 nodes and reject values above 10,000. Merge requests,
+and diff requests with neither side populated, return `404 Not Found`; storage
+failures return `500 Internal Server Error`.
 
 ### 11. Migrate Profiles Written Before `profile_storage_id`
 
