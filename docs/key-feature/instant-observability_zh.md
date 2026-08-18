@@ -236,6 +236,10 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 - **net_namespace_inum**：网络命名空间 inum
 - **pkt_len**：数据包长度（字节）
 
+
+**使用提醒**：`net_rx_latency` 依赖 `skb->tstamp` 里的收包时间。少数驱动、内核路径或自定义网络处理逻辑可能会在探针读到它之前把这个字段清零；这时 HUATUO 会把 `0` 当作起点，算出来的延迟会像是 40 多年。这个值通常不是网络真的卡住了，而是时间戳已经失效。
+
+如果在某类机器上持续看到这种超大延迟，建议先关闭 `EventTracing.NetRxLatency`，或者只在确认 `skb->tstamp` 会被保留的节点上开启，避免误报淹没真正的网络问题。
 ### 4. oom 内存耗尽
 
 **功能描述** 检测宿主机或容器内发生的 OOM（Out of Memory）事件，记录被 OOM Killer 终止的进程（victim）与触发 OOM 的进程（trigger）信息，以及对应容器和 memory cgroup 的详细信息，提供完整的故障快照。同时维护宿主机和各容器的 OOM 计数指标。
