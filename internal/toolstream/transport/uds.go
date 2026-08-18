@@ -25,12 +25,16 @@ import (
 
 type udsListener struct {
 	net.Listener
-	path string
+	path     string
+	fileInfo os.FileInfo
 }
 
 func (l *udsListener) Close() error {
 	err := l.Listener.Close()
-	_ = os.Remove(l.path)
+	info, statErr := os.Lstat(l.path)
+	if statErr == nil && os.SameFile(l.fileInfo, info) {
+		_ = os.Remove(l.path)
+	}
 	return err
 }
 
@@ -44,6 +48,11 @@ func ListenUDS(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("transport: listen %s: %w", path, err)
 	}
+	if unixListener, ok := l.(*net.UnixListener); ok {
+		// Own unlinking below so Close cannot delete a path that has been
+		// replaced since this listener was bound.
+		unixListener.SetUnlinkOnClose(false)
+	}
 
 	// chmod is the security boundary for who can connect; if it fails the socket
 	// would silently keep the umask-derived permissions, so refuse to expose it.
@@ -53,7 +62,14 @@ func ListenUDS(path string) (net.Listener, error) {
 		return nil, fmt.Errorf("transport: chmod %s: %w", path, err)
 	}
 
-	return &udsListener{Listener: l, path: path}, nil
+	info, err := os.Lstat(path)
+	if err != nil {
+		_ = l.Close()
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("transport: inspect bound socket %s: %w", path, err)
+	}
+
+	return &udsListener{Listener: l, path: path, fileInfo: info}, nil
 }
 
 func prepareSocketPath(path string) error {
