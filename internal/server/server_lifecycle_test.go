@@ -87,10 +87,10 @@ func TestServerRejectsOperationsWhileStopping(t *testing.T) {
 	releaseHandler := make(chan struct{})
 	release := sync.OnceFunc(func() { close(releaseHandler) })
 	t.Cleanup(release)
-	srv.MustRegisterRoutes("", []Handle{{
-		Typ: HttpGet,
-		Uri: "/block",
-		Handle: func(ctx *Context) error {
+	srv.MustRegisterRoutes("", []Route{{
+		Method: http.MethodGet,
+		Path:   "/block",
+		Handler: func(ctx *Context) error {
 			close(handlerStarted)
 			select {
 			case <-releaseHandler:

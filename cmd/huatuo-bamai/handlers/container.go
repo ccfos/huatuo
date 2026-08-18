@@ -24,7 +24,7 @@ import (
 )
 
 type ContainerHandler struct {
-	Handlers []server.Handle
+	Handlers []server.Route
 }
 
 type ContainersJSONReq struct {
@@ -33,8 +33,8 @@ type ContainersJSONReq struct {
 
 func NewContainerHandler() *ContainerHandler {
 	h := &ContainerHandler{}
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpGet, Uri: "/containers/json", Handle: h.list},
+	h.Handlers = []server.Route{
+		{Method: http.MethodGet, Path: "/containers/json", Handler: h.list},
 	}
 	return h
 }

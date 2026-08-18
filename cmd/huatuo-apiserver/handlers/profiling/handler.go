@@ -16,6 +16,7 @@ package profiling
 
 import (
 	"context"
+	"net/http"
 
 	"huatuo-bamai/internal/job"
 	profileService "huatuo-bamai/internal/profiler/service"
@@ -30,7 +31,7 @@ type Handler struct {
 	jobManager          JobManager
 	profileQueryService ProfileQueryService
 	profilingConfig     Config
-	Handlers            []server.Handle
+	Handlers            []server.Route
 }
 
 // Config contains profiling values used by request and response handling.
@@ -70,33 +71,33 @@ func NewHandler(
 		profilingConfig:     profilingConfig,
 	}
 
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpGet, Uri: "/capabilities", Handle: h.capabilities},
-		{Typ: server.HttpPost, Uri: "", Handle: h.create},
-		{Typ: server.HttpGet, Uri: "", Handle: h.list},
-		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
-		{Typ: server.HttpPatch, Uri: "/:id", Handle: h.patchOne},
-		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.delete},
-		{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
+	h.Handlers = []server.Route{
+		{Method: http.MethodGet, Path: "/capabilities", Handler: h.capabilities},
+		{Method: http.MethodPost, Path: "", Handler: h.create},
+		{Method: http.MethodGet, Path: "", Handler: h.list},
+		{Method: http.MethodGet, Path: "/:id", Handler: h.get},
+		{Method: http.MethodPatch, Path: "/:id", Handler: h.patchOne},
+		{Method: http.MethodDelete, Path: "/:id", Handler: h.delete},
+		{Method: http.MethodGet, Path: "/:id/raw", Handler: h.getRawData},
 		{
-			Typ:    server.HttpPost,
-			Uri:    "/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces",
-			Handle: h.displaySelectMergeStacktraces,
+			Method:  http.MethodPost,
+			Path:    "/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces",
+			Handler: h.displaySelectMergeStacktraces,
 		},
 		{
-			Typ:    server.HttpPost,
-			Uri:    "/flamegraph/querier.v1.QuerierService/ProfileTypes",
-			Handle: h.displayProfileTypes,
+			Method:  http.MethodPost,
+			Path:    "/flamegraph/querier.v1.QuerierService/ProfileTypes",
+			Handler: h.displayProfileTypes,
 		},
 		{
-			Typ:    server.HttpPost,
-			Uri:    "/flamegraph/querier.v1.QuerierService/LabelNames",
-			Handle: h.displayLabelNames,
+			Method:  http.MethodPost,
+			Path:    "/flamegraph/querier.v1.QuerierService/LabelNames",
+			Handler: h.displayLabelNames,
 		},
 		{
-			Typ:    server.HttpPost,
-			Uri:    "/flamegraph/querier.v1.QuerierService/LabelValues",
-			Handle: h.displayLabelValues,
+			Method:  http.MethodPost,
+			Path:    "/flamegraph/querier.v1.QuerierService/LabelValues",
+			Handler: h.displayLabelValues,
 		},
 	}
 

@@ -29,13 +29,13 @@ var errProfilingDisabled = response.NewAPIError(
 )
 
 // DisabledHandlers rejects all profiling requests when profile storage is disabled.
-func DisabledHandlers() []server.Handle {
+func DisabledHandlers() []server.Route {
 	disabled := func(*server.Context) error {
 		return errProfilingDisabled
 	}
 
-	return []server.Handle{
-		{Typ: server.HttpAny, Uri: "", Handle: disabled},
-		{Typ: server.HttpAny, Uri: "/*path", Handle: disabled},
+	return []server.Route{
+		{Method: server.MethodAny, Path: "", Handler: disabled},
+		{Method: server.MethodAny, Path: "/*path", Handler: disabled},
 	}
 }

@@ -27,15 +27,15 @@ import (
 
 type TracerHandler struct {
 	tracingManager *tracing.Manager
-	Handlers       []server.Handle
+	Handlers       []server.Route
 }
 
 func NewTracerHandler(manager *tracing.Manager) *TracerHandler {
 	h := &TracerHandler{tracingManager: manager}
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpGet, Uri: "", Handle: h.list},
-		{Typ: server.HttpPut, Uri: "/:name/start", Handle: h.start},
-		{Typ: server.HttpPut, Uri: "/:name/stop", Handle: h.stop},
+	h.Handlers = []server.Route{
+		{Method: http.MethodGet, Path: "", Handler: h.list},
+		{Method: http.MethodPut, Path: "/:name/start", Handler: h.start},
+		{Method: http.MethodPut, Path: "/:name/stop", Handler: h.stop},
 	}
 	return h
 }

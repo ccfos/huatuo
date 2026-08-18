@@ -234,14 +234,18 @@ func NewServer(cfg *Config) *Server {
 		pprof.Register(s.engine)
 	}
 	s.rootGroup = NewRoot(s.engine, effectiveConfig.Group)
-	s.MustRegisterRoutes("", []Handle{
-		{Typ: HttpGet, Uri: "/healthz", Handle: s.healthzHandler()},
-		{Typ: HttpGet, Uri: "/readyz", Handle: s.readyzHandler()},
-		{Typ: HttpGet, Uri: "/metrics", Handle: s.metricsHandler()},
+	s.MustRegisterRoutes("", []Route{
+		{Method: http.MethodGet, Path: "/healthz", Handler: s.healthzHandler()},
+		{Method: http.MethodGet, Path: "/readyz", Handler: s.readyzHandler()},
+		{Method: http.MethodGet, Path: "/metrics", Handler: s.metricsHandler()},
 	})
 	if effectiveConfig.VersionInfo != nil {
-		s.MustRegisterRoutes("", []Handle{
-			{Typ: HttpGet, Uri: "/version", Handle: newVersionHandler(effectiveConfig.VersionInfo)},
+		s.MustRegisterRoutes("", []Route{
+			{
+				Method:  http.MethodGet,
+				Path:    "/version",
+				Handler: newVersionHandler(effectiveConfig.VersionInfo),
+			},
 		})
 	}
 	return s
@@ -273,44 +277,31 @@ func (s *Server) Group() *routerGroup {
 	return s.rootGroup
 }
 
-const (
-	HttpPost   = 1
-	HttpDelete = 2
-	HttpGet    = 3
-	HttpPut    = 4
-	HttpPatch  = 5
-	HttpAny    = 6
-)
+// MethodAny registers a route for all HTTP methods supported by Gin.
+const MethodAny = "*"
 
-type Handle struct {
-	Typ    int
-	Uri    string
-	Handle ErrHandlerContextFunc
+// Route defines an HTTP route.
+type Route struct {
+	Method  string
+	Path    string
+	Handler ErrHandlerContextFunc
 }
 
-func (s *Server) MustRegisterRoutes(subGroup string, handlers []Handle) {
-	var g *routerGroup = s.rootGroup
+func (s *Server) MustRegisterRoutes(subGroup string, routes []Route) {
+	g := s.rootGroup
 
 	if subGroup != "" {
 		g = s.rootGroup.Group(subGroup)
 	}
 
-	for _, h := range handlers {
-		switch h.Typ {
-		case HttpAny:
-			g.Any(h.Uri, h.Handle)
-		case HttpPost:
-			g.POST(h.Uri, h.Handle)
-		case HttpDelete:
-			g.DELETE(h.Uri, h.Handle)
-		case HttpGet:
-			g.GET(h.Uri, h.Handle)
-		case HttpPut:
-			g.PUT(h.Uri, h.Handle)
-		case HttpPatch:
-			g.PATCH(h.Uri, h.Handle)
+	for _, route := range routes {
+		switch route.Method {
+		case "":
+			panic(fmt.Sprintf("route %q has no http method", route.Path))
+		case MethodAny:
+			g.Any(route.Path, route.Handler)
 		default:
-			panic("unknown type")
+			g.Handle(route.Method, route.Path, route.Handler)
 		}
 	}
 }

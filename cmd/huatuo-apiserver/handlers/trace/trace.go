@@ -17,6 +17,7 @@ package trace
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
 
 	v1 "huatuo-bamai/apis/v1"
@@ -34,7 +35,7 @@ const traceJobType = job.JobTypeTracing
 // Handler handles trace-related HTTP requests.
 type Handler struct {
 	jobManager JobManager
-	Handlers   []server.Handle
+	Handlers   []server.Route
 }
 
 // JobManager defines the trace handler's job operations.
@@ -51,13 +52,13 @@ type JobManager interface {
 func NewHandler(jm JobManager) *Handler {
 	h := &Handler{jobManager: jm}
 
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpPost, Uri: "", Handle: h.start},
-		{Typ: server.HttpGet, Uri: "", Handle: h.list},
-		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
-		{Typ: server.HttpPatch, Uri: "", Handle: h.patchBulk},
-		{Typ: server.HttpPatch, Uri: "/:id", Handle: h.patchOne},
-		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.delete},
+	h.Handlers = []server.Route{
+		{Method: http.MethodPost, Path: "", Handler: h.start},
+		{Method: http.MethodGet, Path: "", Handler: h.list},
+		{Method: http.MethodGet, Path: "/:id", Handler: h.get},
+		{Method: http.MethodPatch, Path: "", Handler: h.patchBulk},
+		{Method: http.MethodPatch, Path: "/:id", Handler: h.patchOne},
+		{Method: http.MethodDelete, Path: "/:id", Handler: h.delete},
 	}
 	return h
 }

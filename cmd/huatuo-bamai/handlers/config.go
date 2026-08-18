@@ -26,7 +26,7 @@ import (
 )
 
 type ConfigHandler struct {
-	Handlers []server.Handle
+	Handlers []server.Route
 }
 
 type ConfigRequest struct {
@@ -35,8 +35,8 @@ type ConfigRequest struct {
 
 func NewConfigHandler() *ConfigHandler {
 	h := &ConfigHandler{}
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpPut, Uri: "/config", Handle: h.update},
+	h.Handlers = []server.Route{
+		{Method: http.MethodPut, Path: "/config", Handler: h.update},
 	}
 	return h
 }

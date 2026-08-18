@@ -290,10 +290,10 @@ func TestNewServerRateLimit(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			s := NewServer(&Config{RateLimit: test.rateLimit})
-			s.MustRegisterRoutes("", []Handle{{
-				Typ: HttpGet,
-				Uri: "/tasks",
-				Handle: func(ctx *Context) error {
+			s.MustRegisterRoutes("", []Route{{
+				Method: http.MethodGet,
+				Path:   "/tasks",
+				Handler: func(ctx *Context) error {
 					ctx.Status(http.StatusNoContent)
 					return nil
 				},
@@ -340,52 +340,60 @@ func TestServerGroupReturnsConfiguredRootGroup(t *testing.T) {
 
 func TestServerMustRegisterRoutes(t *testing.T) {
 	s := NewServer(&Config{Group: "/api"})
-	s.MustRegisterRoutes("/tasks", []Handle{
+	s.MustRegisterRoutes("/tasks", []Route{
 		{
-			Typ: HttpAny,
-			Uri: "/disabled",
-			Handle: func(ctx *Context) error {
+			Method: MethodAny,
+			Path:   "/disabled",
+			Handler: func(ctx *Context) error {
 				ctx.JSON(http.StatusServiceUnavailable, map[string]string{"method": ctx.Request().Method})
 				return nil
 			},
 		},
 		{
-			Typ: HttpGet,
-			Uri: "/status",
-			Handle: func(ctx *Context) error {
+			Method: http.MethodGet,
+			Path:   "/status",
+			Handler: func(ctx *Context) error {
 				ctx.JSON(http.StatusOK, map[string]string{"method": http.MethodGet})
 				return nil
 			},
 		},
 		{
-			Typ: HttpPost,
-			Uri: "",
-			Handle: func(ctx *Context) error {
+			Method: http.MethodPost,
+			Path:   "",
+			Handler: func(ctx *Context) error {
 				ctx.JSON(http.StatusCreated, map[string]string{"method": http.MethodPost})
 				return nil
 			},
 		},
 		{
-			Typ: HttpDelete,
-			Uri: "/task-20250226",
-			Handle: func(ctx *Context) error {
+			Method: http.MethodDelete,
+			Path:   "/task-20250226",
+			Handler: func(ctx *Context) error {
 				ctx.Status(http.StatusNoContent)
 				return nil
 			},
 		},
 		{
-			Typ: HttpPut,
-			Uri: "/task-20250226",
-			Handle: func(ctx *Context) error {
+			Method: http.MethodPut,
+			Path:   "/task-20250226",
+			Handler: func(ctx *Context) error {
 				ctx.JSON(http.StatusAccepted, map[string]string{"method": http.MethodPut})
 				return nil
 			},
 		},
 		{
-			Typ: HttpPatch,
-			Uri: "/task-20250226",
-			Handle: func(ctx *Context) error {
+			Method: http.MethodPatch,
+			Path:   "/task-20250226",
+			Handler: func(ctx *Context) error {
 				ctx.JSON(http.StatusOK, map[string]string{"method": http.MethodPatch})
+				return nil
+			},
+		},
+		{
+			Method: "PROPFIND",
+			Path:   "/extended",
+			Handler: func(ctx *Context) error {
+				ctx.Status(http.StatusNoContent)
 				return nil
 			},
 		},
@@ -404,6 +412,12 @@ func TestServerMustRegisterRoutes(t *testing.T) {
 			target:       "/api/tasks/disabled",
 			wantStatus:   http.StatusServiceUnavailable,
 			wantBodyPart: `"method":"OPTIONS"`,
+		},
+		{
+			name:       "extension-method-route",
+			method:     "PROPFIND",
+			target:     "/api/tasks/extended",
+			wantStatus: http.StatusNoContent,
 		},
 		{
 			name:         "get-route",
@@ -458,20 +472,24 @@ func TestServerMustRegisterRoutes(t *testing.T) {
 	}
 }
 
-func TestServerMustRegisterRoutesPanicsOnUnknownType(t *testing.T) {
+func TestServerMustRegisterRoutesPanicsWithoutMethod(t *testing.T) {
 	s := NewServer(nil)
 	defer func() {
 		recovered := recover()
 		if recovered == nil {
-			t.Errorf("MustRegisterRoutes() did not panic for unknown handler type")
+			t.Errorf("MustRegisterRoutes() did not panic for missing HTTP method")
 			return
 		}
-		if recovered != "unknown type" {
-			t.Errorf("panic value = %v, want %q", recovered, "unknown type")
+		if recovered != `route "/tasks" has no http method` {
+			t.Errorf(
+				"panic value = %v, want %q",
+				recovered,
+				`route "/tasks" has no http method`,
+			)
 		}
 	}()
 
-	s.MustRegisterRoutes("", []Handle{
-		{Typ: 99, Uri: "/tasks"},
+	s.MustRegisterRoutes("", []Route{
+		{Path: "/tasks"},
 	})
 }

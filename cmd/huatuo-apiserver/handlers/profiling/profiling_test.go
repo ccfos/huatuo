@@ -34,7 +34,7 @@ func TestNewHandlerRegistersAllRoutes(t *testing.T) {
 	handler := NewHandler(nil, &profileService.Service{}, Config{})
 	routes := make(map[string]struct{}, len(handler.Handlers))
 	for _, route := range handler.Handlers {
-		routes[route.Uri] = struct{}{}
+		routes[route.Path] = struct{}{}
 	}
 
 	want := []string{
@@ -59,29 +59,29 @@ func TestDisabledHandlersRejectAllProfilePaths(t *testing.T) {
 
 	wantPaths := []string{"", "/*path"}
 	for i, route := range routes {
-		if route.Typ != server.HttpAny {
-			t.Errorf("route %q type = %d, want HttpAny", route.Uri, route.Typ)
+		if route.Method != server.MethodAny {
+			t.Errorf("route %q method = %q, want MethodAny", route.Path, route.Method)
 		}
-		if route.Uri != wantPaths[i] {
-			t.Errorf("route %d path = %q, want %q", i, route.Uri, wantPaths[i])
+		if route.Path != wantPaths[i] {
+			t.Errorf("route %d path = %q, want %q", i, route.Path, wantPaths[i])
 		}
 
-		err := route.Handle(nil)
+		err := route.Handler(nil)
 		var apiErr *response.APIError
 		if !errors.As(err, &apiErr) {
-			t.Fatalf("route %q error type = %T, want *response.APIError", route.Uri, err)
+			t.Fatalf("route %q error type = %T, want *response.APIError", route.Path, err)
 		}
 		if apiErr.HTTPStatus != http.StatusServiceUnavailable || apiErr.Code != v1.ErrorCodeProfilingDisabled {
 			t.Errorf(
 				"route %q status/code = %d/%q, want 503/%q",
-				route.Uri,
+				route.Path,
 				apiErr.HTTPStatus,
 				apiErr.Code,
 				v1.ErrorCodeProfilingDisabled,
 			)
 		}
 		if apiErr.Message != "profiling is disabled: configure profile storage to enable it" {
-			t.Errorf("route %q message = %q, want actionable disabled message", route.Uri, apiErr.Message)
+			t.Errorf("route %q message = %q, want actionable disabled message", route.Path, apiErr.Message)
 		}
 	}
 }

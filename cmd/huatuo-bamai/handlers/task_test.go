@@ -15,16 +15,15 @@
 package handlers
 
 import (
+	"net/http"
 	"testing"
-
-	"huatuo-bamai/internal/server"
 )
 
 func TestTaskHandlerRegistersListRoute(t *testing.T) {
 	h := NewTaskHandler()
 
 	for _, route := range h.Handlers {
-		if route.Typ == server.HttpGet && route.Uri == "" {
+		if route.Method == http.MethodGet && route.Path == "" {
 			return
 		}
 	}
