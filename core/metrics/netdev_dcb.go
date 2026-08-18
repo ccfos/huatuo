@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -89,7 +89,7 @@ type ieeePfc struct {
 }
 
 func deserializeIEEEPfc(b []byte) (*ieeePfc, error) {
-	size := int(unsafe.Sizeof(ieeePfc{}))
+	size := int(unsafe.Sizeof(ipfc{}))
 	if len(b) < size {
 		return nil, fmt.Errorf("ieee pfc attr too short: got %d, want at least %d", len(b), size)
 	}
