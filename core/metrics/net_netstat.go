@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -146,7 +146,10 @@ func parseNetStat(fileName string) (map[string]map[string]string, error) {
 		}
 
 		if !scanner.Scan() {
-			break
+			if err := scanner.Err(); err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("netstat: missing value line after header in %s", fileName)
 		}
 		valueParts := strings.Split(scanner.Text(), " ")
 
