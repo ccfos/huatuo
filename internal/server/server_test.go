@@ -246,6 +246,27 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 	}
 }
 
+func TestMaxBodyBytesMiddlewarePreservesNoBody(t *testing.T) {
+	engine := httpGin.New()
+	bodyPreserved := false
+	engine.Use(maxBodyBytesMiddleware(1))
+	engine.POST("/diff", func(ctx *httpGin.Context) {
+		bodyPreserved = ctx.Request.Body == http.NoBody
+		ctx.Status(http.StatusNoContent)
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/diff", http.NoBody)
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if !bodyPreserved {
+		t.Fatal("body limit middleware replaced http.NoBody")
+	}
+}
+
 func TestServerGroupReturnsConfiguredRootGroup(t *testing.T) {
 	s := NewServer(&Config{Group: "/v1"})
 

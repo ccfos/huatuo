@@ -16,6 +16,7 @@ package profiling
 
 import (
 	"context"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -166,6 +167,50 @@ func TestDisplayDiffRowsBindsEncodedQueryFromEmptyPost(t *testing.T) {
 	want := `{hostname="node a\"\\b"}`
 	if service.request.Left.LabelSelector != want {
 		t.Fatalf("selector = %q, want %q", service.request.Left.LabelSelector, want)
+	}
+}
+
+func TestDisplayDiffRowsBindsUnknownLengthJSON(t *testing.T) {
+	service := &recordingProfileDiffService{Service: &profileService.Service{}}
+	handler := &Handler{profileService: service}
+	engine := httpGin.New()
+	server.NewRoot(engine, "").POST("/diff", handler.displayDiffRows)
+
+	reader, writer := io.Pipe()
+	request := httptest.NewRequest(http.MethodPost, "/diff", reader)
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	if request.ContentLength != -1 {
+		t.Fatalf("ContentLength = %d, want -1", request.ContentLength)
+	}
+
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(writer, `{
+			"profile_type_id":"process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+			"hostname":"node-a",
+			"start":2000,
+			"end":3000
+		}`)
+		if closeErr := writer.Close(); err == nil {
+			err = closeErr
+		}
+		writeErr <- err
+	}()
+
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+	if err := <-writeErr; err != nil {
+		t.Fatalf("write request body: %v", err)
+	}
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	}
+	if service.request == nil {
+		t.Fatal("Diff() request was not recorded")
+	}
+	if selector := service.request.Left.LabelSelector; selector != `{hostname="node-a"}` {
+		t.Fatalf("selector = %q, want hostname", selector)
 	}
 }
 

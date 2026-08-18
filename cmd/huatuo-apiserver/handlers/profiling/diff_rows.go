@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"mime"
 	"net/http"
 	"sort"
 	"strings"
@@ -69,13 +70,7 @@ type profileDiffNode struct {
 
 func (h *Handler) displayDiffRows(ctx *server.Context) error {
 	var request profileDiffRowsRequest
-	var err error
-	if ctx.Request().ContentLength <= 0 {
-		err = ctx.ShouldBindQuery(&request)
-	} else {
-		err = ctx.ShouldBindJSON(&request)
-	}
-	if err != nil {
+	if err := bindProfileDiffRowsRequest(ctx, &request); err != nil {
 		return response.ErrInvalidRequest.WithMessage(
 			"invalid profile diff request",
 		)
@@ -130,6 +125,25 @@ func (h *Handler) displayDiffRows(ctx *server.Context) error {
 	}
 	response.Success(ctx, rows)
 	return nil
+}
+
+func bindProfileDiffRowsRequest(
+	ctx *server.Context,
+	request *profileDiffRowsRequest,
+) error {
+	httpRequest := ctx.Request()
+	if httpRequest.Body == nil || httpRequest.Body == http.NoBody {
+		return ctx.ShouldBindQuery(request)
+	}
+
+	mediaType, _, err := mime.ParseMediaType(httpRequest.Header.Get("Content-Type"))
+	if err != nil {
+		return fmt.Errorf("parse Content-Type: %w", err)
+	}
+	if !strings.EqualFold(mediaType, "application/json") {
+		return fmt.Errorf("Content-Type must be application/json")
+	}
+	return ctx.ShouldBindJSON(request)
 }
 
 func profileDiffResponseExceedsLimit(rows []profileDiffRow) (bool, error) {
