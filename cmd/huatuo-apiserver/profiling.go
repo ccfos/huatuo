@@ -29,10 +29,11 @@ func setupProfileFlamegraph(ctx context.Context, d *Daemon) (func(context.Contex
 	}
 
 	esConfig := &service.ElasticSearchConfig{
-		Address:  d.opts.Config.Elasticsearch.Address,
-		Username: d.opts.Config.Elasticsearch.Username,
-		Password: d.opts.Config.Elasticsearch.Password,
-		Index:    d.opts.Config.Elasticsearch.Index,
+		Address:           d.opts.Config.Elasticsearch.Address,
+		Username:          d.opts.Config.Elasticsearch.Username,
+		Password:          d.opts.Config.Elasticsearch.Password,
+		Index:             d.opts.Config.Elasticsearch.Index,
+		MaxQueryDocuments: d.opts.Config.Profiling.MaxQueryDocuments,
 	}
 	profileService, err := service.NewService(ctx, esConfig)
 	if err != nil {

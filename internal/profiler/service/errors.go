@@ -17,6 +17,7 @@ package service
 import "errors"
 
 var (
-	ErrInvalidQuery   = errors.New("invalid profile query")
-	ErrProfilesAbsent = errors.New("profiles not found")
+	ErrInvalidQuery              = errors.New("invalid profile query")
+	ErrProfilesAbsent            = errors.New("profiles not found")
+	ErrProfileQueryLimitExceeded = errors.New("profile query limit exceeded")
 )

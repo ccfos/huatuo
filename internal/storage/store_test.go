@@ -137,19 +137,19 @@ func (b *testBackend) Delete(_ context.Context, id string) error {
 	return b.deleteErr
 }
 
-func (b *testBackend) Query(_ context.Context, q driver.Query) ([]driver.Record, error) {
+func (b *testBackend) Query(_ context.Context, q driver.Query) ([]driver.Record, error) { //nolint:gocritic // driver.Storage requires Query by value.
 	b.queryCalls++
 	b.lastQuery = q
 	return b.queryRecords, b.queryErr
 }
 
-func (b *testBackend) Count(_ context.Context, q driver.Query) (int64, error) {
+func (b *testBackend) Count(_ context.Context, q driver.Query) (int64, error) { //nolint:gocritic // driver.Storage requires Query by value.
 	b.countCalls++
 	b.lastQuery = q
 	return b.countValue, b.countErr
 }
 
-func (b *testBackend) Values(_ context.Context, field string, q driver.Query, size int) ([]string, error) {
+func (b *testBackend) Values(_ context.Context, field string, q driver.Query, size int) ([]string, error) { //nolint:gocritic // driver.Storage requires Query by value.
 	b.valuesCalls++
 	b.valuesField = field
 	b.lastQuery = q
@@ -641,9 +641,99 @@ func TestStoreQuery(t *testing.T) {
 				return
 			}
 
-			entities, queryErr := store.Query(t.Context(), tc.query)
+			entities, queryErr := store.Query(t.Context(), &tc.query)
 			tc.validate(t, entities, queryErr, tc.backend)
 		})
+	}
+}
+
+func TestStoreQueryPageReturnsLastSortValues(t *testing.T) {
+	backend := &testBackend{
+		queryRecords: []driver.Record{
+			{
+				ID:         "job-first",
+				Data:       mustEncodeEntity(testEntity{ID: "job-first"}),
+				SortValues: []any{2000.0, "job-first"},
+			},
+			{
+				ID:         "job-second",
+				Data:       mustEncodeEntity(testEntity{ID: "job-second"}),
+				SortValues: []any{1000.0, "job-second"},
+			},
+		},
+	}
+	store, err := NewStore[testEntity](t.Context(), "query-page", backend, "jobs", newTestMapper())
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	values, cursor, err := store.QueryPage(t.Context(), &driver.Query{
+		Sorts: []driver.Sort{{Field: "cost", Desc: true}, {Field: "id"}},
+		Limit: 2,
+	})
+	if err != nil {
+		t.Fatalf("QueryPage() error = %v", err)
+	}
+	if len(values) != 2 {
+		t.Fatalf("QueryPage() values = %d, want 2", len(values))
+	}
+	if len(cursor) != 2 || cursor[0] != 1000.0 || cursor[1] != "job-second" {
+		t.Fatalf("QueryPage() cursor = %#v, want [1000 job-second]", cursor)
+	}
+
+	cursor[1] = "changed"
+	if backend.queryRecords[1].SortValues[1] != "job-second" {
+		t.Fatal("QueryPage() cursor aliases backend sort values")
+	}
+}
+
+func TestStoreRejectsInvalidSearchAfter(t *testing.T) {
+	tests := map[string]driver.Query{
+		"with offset": {
+			Sorts:       []driver.Sort{{Field: "id"}},
+			SearchAfter: []any{"job-first"},
+			Offset:      1,
+		},
+		"without sort": {
+			SearchAfter: []any{"job-first"},
+		},
+		"sort count mismatch": {
+			Sorts:       []driver.Sort{{Field: "cost"}, {Field: "id"}},
+			SearchAfter: []any{"job-first"},
+		},
+	}
+
+	for name, query := range tests {
+		t.Run(name, func(t *testing.T) {
+			backend := &testBackend{}
+			store, err := NewStore[testEntity](t.Context(), name, backend, "jobs", newTestMapper())
+			if err != nil {
+				t.Fatalf("NewStore() error = %v", err)
+			}
+
+			_, _, err = store.QueryPage(t.Context(), &query)
+			if !errors.Is(err, driver.ErrInvalidQuery) {
+				t.Fatalf("QueryPage() error = %v, want ErrInvalidQuery", err)
+			}
+			if backend.queryCalls != 0 {
+				t.Fatalf("backend Query() calls = %d, want 0", backend.queryCalls)
+			}
+		})
+	}
+}
+
+func TestStoreRejectsNilQuery(t *testing.T) {
+	backend := &testBackend{}
+	store, err := NewStore[testEntity](t.Context(), "nil-query", backend, "jobs", newTestMapper())
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	if _, err = store.Query(t.Context(), nil); !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("Query() error = %v, want ErrInvalidQuery", err)
+	}
+	if backend.queryCalls != 0 {
+		t.Fatalf("backend Query() calls = %d, want 0", backend.queryCalls)
 	}
 }
 
@@ -723,7 +813,7 @@ func TestStoreCount(t *testing.T) {
 				return
 			}
 
-			count, countErr := store.Count(t.Context(), tc.query)
+			count, countErr := store.Count(t.Context(), &tc.query)
 			tc.validate(t, count, countErr, tc.backend)
 		})
 	}
@@ -816,7 +906,7 @@ func TestStoreTerms(t *testing.T) {
 				return
 			}
 
-			terms, valuesErr := store.Values(t.Context(), tc.field, tc.query, tc.size)
+			terms, valuesErr := store.Values(t.Context(), tc.field, &tc.query, tc.size)
 			tc.validate(t, terms, valuesErr, tc.backend)
 		})
 	}

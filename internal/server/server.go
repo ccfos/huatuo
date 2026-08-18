@@ -280,7 +280,7 @@ func normalizeServerConfig(cfg *Config) {
 
 func maxBodyBytesMiddleware(limit int64) httpGin.HandlerFunc {
 	return func(ctx *httpGin.Context) {
-		if ctx.Request.Body != nil {
+		if ctx.Request.Body != nil && ctx.Request.Body != http.NoBody {
 			ctx.Request.Body = http.MaxBytesReader(ctx.Writer, ctx.Request.Body, limit)
 		}
 		ctx.Next()

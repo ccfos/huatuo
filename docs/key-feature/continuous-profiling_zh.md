@@ -143,7 +143,16 @@ $ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
 
 ![continuous-profiling-grafana-host.png](/docs/img/continuous-profiling-grafana-host.png)
 
-其他更多丰富维度的剖析任务参考 Profiles API。
+容器面板使用稳定的容器 ID，提供相同的时序、Top 10 和火焰图视图：
+
+![continuous-profiling-grafana-container.png](/docs/img/continuous-profiling-grafana-container.png)
+
+对比面板将所选时间范围与其前一个等长时间窗口进行比较：
+
+![continuous-profiling-grafana-compare.png](/docs/img/continuous-profiling-grafana-compare.png)
+
+以上截图使用 Grafana 12.0.3、Elasticsearch 8.15.5 和代表性 profile 数据
+实际生成。其他更多丰富维度的剖析任务参考 Profiles API。
 
 
 ## 🌐 Profiles API
@@ -342,7 +351,41 @@ curl -sS \
 | `failed` | 任务执行失败，查看 `status_reason` 定位原因 |
 | `timeout` | 任务超过允许的执行时间 |
 
-### 6. 获取原始剖析数据
+### 6. 在 Grafana 中查看剖析结果
+
+Grafana provisioning 提供宿主机、容器和时间窗口对比三张持续剖析
+dashboard。宿主机和容器 dashboard 展示剖析快照数量、剖析值时间线、
+按 tracer 分组的 Top 10 序列，以及合并后的火焰图和 Top 表：
+
+- 宿主机 dashboard 按 `hostname` 精确筛选，并排除容器剖析数据。
+- 容器 dashboard 按 `container_id` 精确查询剖析数据，并展示上报节点
+  `hostname` 作为上下文。容器名不保证唯一，因此不作为容器标识。
+- 两张 dashboard 都可继续按精确的 `profiling_scope`、`cpu`、`pid` 和
+  `tgid` 筛选。Grafana Pyroscope datasource 不会对 `groupBy` 数组插值，
+  因此 Top 10 固定按 tracer 分组。
+
+dashboard 只提供当前已支持的 CPU 和内存剖析类型。任务完成后，
+`results.url` 会打开对应 dashboard，并预选目标、剖析类型和采集时间窗口。
+
+Pyroscope datasource 通过 huatuo-apiserver 查询数据。剖析展示路由仅允许
+管理员访问。启用 API 鉴权时，应将配置了 `Admin = true` 的用户
+`BearerToken` 通过环境变量传给 Grafana，不要把 token 提交到仓库。可以
+复用快速上手中的管理员 token：
+
+```bash
+export HUATUO_GRAFANA_PROFILE_TOKEN="${API_TOKEN}"
+docker compose -f build/docker/docker-compose.yml up -d
+```
+
+时间线和 Top 10 面板使用 Pyroscope 兼容的 `SelectSeries` 接口。对比
+dashboard 通过有边界限制的 JSON 适配器调用 `Diff`，并把结果交给 Grafana
+火焰图面板。选定时间范围是当前窗口，对比对象是紧邻其前、长度相同的窗口；
+两侧窗口都使用半开区间 `[start, end)`，边界无重叠也无缺口。选择
+`container_id` 时优先于 `hostname`，并把相同的可选采集维度应用到
+两侧时间窗。适配器默认最多返回 5,000 个节点，拒绝超过 10,000 的配置，
+并将 JSON 响应限制为 8 MiB。
+
+### 7. 获取原始剖析数据
 
 `GET /v1/profiles/:id/raw` 返回该任务关联的原始剖析窗口。数据量可能较大，可以直接保存到文件：
 
@@ -357,7 +400,32 @@ curl -sS \
 和 `data.has_more` 描述分页。每条记录包含 `uploaded_at`、`captured_at`、
 `profile_type` 和兼容 pprof 的 `profile` 数据。
 
-### 7. 停止任务
+#### 导出合并后的 pprof
+
+导出接口根据剖析类型、时间范围和精确目标标签合并存储中的快照：
+
+```bash
+curl -sS --get \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  --data-urlencode \
+  "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
+  --data-urlencode 'selector={hostname="node-a"}' \
+  --data-urlencode "start=${START_MILLISECONDS}" \
+  --data-urlencode "end=${END_MILLISECONDS}" \
+  -o profile.pb.gz \
+  "${API_BASE}/v1/profiles/flamegraph/export/pprof"
+```
+
+选择器接受精确的 `id`、`hostname`、`container_id`、
+`container_hostname`、`profiling_scope`、`cpu`、`pid` 或 `tgid`
+匹配，并且至少需要一个目标或采集维度标签。服务仅在配置
+`Profiling.MaxQueryDocuments` 为正数时先统计匹配文档数，并始终按固定大小
+分页处理。
+查询超过配置上限时返回 `422 Unprocessable Entity`；默认上限为
+100,000 条文档，显式配置为 0 表示不限制。
+下载文件可由 `go tool pprof` 或其他兼容 pprof 的查看器打开。
+
+### 8. 停止任务
 
 只有 `pending` 或 `running` 状态的任务可以停止。`PATCH` 请求的 `status` 只接受 `stopped`：
 
@@ -372,7 +440,7 @@ curl -sS \
 
 停止成功返回 `200 OK`。已结束的任务返回 `400 Bad Request`。
 
-### 8. 删除任务
+### 9. 删除任务
 
 删除操作只移除任务记录。`pending` 或 `running` 状态的任务不能直接删除，需要先停止任务：
 
@@ -384,6 +452,59 @@ curl -sS -i \
 ```
 
 删除成功返回 `204 No Content`，不包含响应体。任务仍在运行时返回 `409 Conflict`。
+
+### 10. Pyroscope 兼容查询
+
+Profiling API 在
+`/v1/profiles/flamegraph/querier.v1.QuerierService/` 下实现 Pyroscope 的
+`SelectSeries` 和 `Diff` protobuf 方法。`SelectSeries` 按时间桶返回求和或
+平均聚合结果，并保留值最高的 10 个序列；`Diff` 比较两个独立时间窗口
+并返回双向火焰图。
+
+选择器只支持精确匹配，可使用 `id`、`hostname`、`container_id`、
+`container_hostname`、`tracer`、`profiling_scope`、`cpu`、`pid` 和
+`tgid`；剖析类型由 protobuf 请求单独提供。`id` 和 `tracer` 是同一个
+存储剖析标识符的兼容别名，`LabelNames` 会同时返回两者；如果选择器为两者
+指定了不同值，请求会被拒绝。`SelectSeries` 可按相同的 managed dimension
+分组。正则、否定匹配和任意标签会返回 `400 Bad Request`。
+
+预置 Grafana 面板使用保留值 `__all` 表示未设置 managed dimension。直接
+调用 API 时应省略不使用的 matcher，不要发送该保留值。
+
+剖析文档按稳定顺序分页处理，每页 1,000 条。可选的
+`Profiling.MaxQueryDocuments` 限制单次查询处理的文档数；默认上限为
+100,000 条文档，显式配置为 0 表示不限制。超过上限时返回
+`422 Unprocessable Entity`。Merge 和 Diff 火焰图默认 5,000 个节点，并拒绝超过
+10,000 的配置。合并查询没有数据，或差异查询两侧都没有数据时返回
+`404 Not Found`；存储故障返回 `500 Internal Server Error`。
+
+### 11. 迁移缺少 `profile_storage_id` 的历史数据
+
+旧版本写入的 profile 文档没有唯一的 `profile_storage_id` 排序键。使用长时间
+窗口查询前，先为 Elasticsearch/OpenSearch 创建快照，停止仍不会写入该字段的
+旧版 huatuo-bamai，再部署新版 writer，并对每个物理 profile 索引执行一次
+幂等迁移。脚本会拒绝 alias 和 data stream：
+
+```bash
+ELASTICSEARCH_URL="http://localhost:9200" \
+ELASTICSEARCH_INDEX="huatuo_bamai" \
+ELASTICSEARCH_USERNAME="elastic" \
+ELASTICSEARCH_PASSWORD="REPLACE_WITH_PASSWORD" \
+./build/migrate-profile-storage-id.sh --check
+
+ELASTICSEARCH_URL="http://localhost:9200" \
+ELASTICSEARCH_INDEX="huatuo_bamai" \
+ELASTICSEARCH_USERNAME="elastic" \
+ELASTICSEARCH_PASSWORD="REPLACE_WITH_PASSWORD" \
+./build/migrate-profile-storage-id.sh
+```
+
+脚本只更新缺少该字段的 profile 文档，并复制其现有 Elasticsearch `_id`；
+已有 ID 和非 profile 文档不会变化，同时创建或校验可排序的
+`profile_storage_id.keyword` mapping；如果该 multi-field 是后加的，还会重索引
+已有 ID。如果仍存在未迁移或不可排序的文档，脚本会失败，因此中断后可安全
+重试。停止旧 writer 后应再次运行 `--check`。
+`_update_by_query` 会消耗集群 I/O，大索引应在低流量时段执行。
 
 ## 📖 profiler 命令行功能概述
 

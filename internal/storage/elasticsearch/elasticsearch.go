@@ -201,8 +201,8 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, error) {
-	body, err := buildSearchRequest(q)
+func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, error) { //nolint:gocritic // driver.Storage requires Query by value.
+	body, err := buildSearchRequest(&q)
 	if err != nil {
 		return nil, err
 	}
@@ -229,13 +229,21 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 		if hit.Id_ != nil {
 			id = *hit.Id_
 		}
-		records = append(records, driver.Record{ID: id, Data: driver.CloneBytes(hit.Source_)})
+		sortValues := make([]any, len(hit.Sort))
+		for i, value := range hit.Sort {
+			sortValues[i] = value
+		}
+		records = append(records, driver.Record{
+			ID:         id,
+			Data:       driver.CloneBytes(hit.Source_),
+			SortValues: sortValues,
+		})
 	}
 	return records, nil
 }
 
-func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
-	body, err := buildCountRequest(q)
+func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) { //nolint:gocritic // driver.Storage requires Query by value.
+	body, err := buildCountRequest(&q)
 	if err != nil {
 		return 0, err
 	}
@@ -258,8 +266,8 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	return payload.Count, nil
 }
 
-func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size int) ([]string, error) {
-	body, err := buildValuesRequest(field, q, size)
+func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size int) ([]string, error) { //nolint:gocritic // driver.Storage requires Query by value.
+	body, err := buildValuesRequest(field, &q, size)
 	if err != nil {
 		return nil, err
 	}

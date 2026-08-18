@@ -1,0 +1,50 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package profiler
+
+import "testing"
+
+func TestProfileIdentifierLabelNamesReturnsCopy(t *testing.T) {
+	names := ProfileIdentifierLabelNames()
+	names[0] = "changed"
+
+	want := []string{LabelProfileID, LabelTracer}
+	got := ProfileIdentifierLabelNames()
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("profile identifier labels = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestCollectionDimensionLabelNamesReturnsCopy(t *testing.T) {
+	names := CollectionDimensionLabelNames()
+	names[0] = "changed"
+
+	if got := CollectionDimensionLabelNames()[0]; got != LabelProfilingScope {
+		t.Fatalf("first collection label = %q, want %q", got, LabelProfilingScope)
+	}
+}
+
+func TestIsCollectionDimensionLabel(t *testing.T) {
+	for _, name := range CollectionDimensionLabelNames() {
+		if !IsCollectionDimensionLabel(name) {
+			t.Errorf("IsCollectionDimensionLabel(%q) = false", name)
+		}
+	}
+	if IsCollectionDimensionLabel("arbitrary") {
+		t.Fatal("IsCollectionDimensionLabel(arbitrary) = true")
+	}
+}
