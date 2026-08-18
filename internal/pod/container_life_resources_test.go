@@ -37,6 +37,13 @@ func TestRegisterContainerLifeResourcesRejectsNonPointer(t *testing.T) {
 	}
 }
 
+func TestRegisterContainerLifeResourcesRejectsNilType(t *testing.T) {
+	err := RegisterContainerLifeResources("cpu-nil", nil)
+	if err == nil {
+		t.Fatal("expected an error for a nil type")
+	}
+}
+
 func TestRegisterContainerLifeResourcesRejectsPointerToNonStruct(t *testing.T) {
 	err := RegisterContainerLifeResources("cpu-int", reflect.TypeOf(new(int)))
 	if err == nil {
