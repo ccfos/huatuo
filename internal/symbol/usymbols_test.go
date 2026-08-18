@@ -126,8 +126,23 @@ func TestNewUsymResolver(t *testing.T) {
 	if resolver == nil {
 		t.Fatalf("NewUsymResolver(): got nil resolver")
 	}
-	if resolver.exeCache == nil || resolver.libcaches == nil || resolver.procmaps == nil {
+	if resolver.exeCache == nil || resolver.libcaches == nil || resolver.procmaps == nil || resolver.names == nil {
 		t.Errorf("NewUsymResolver(): caches not initialized")
+	}
+}
+
+func TestUsymResolverDisplayName(t *testing.T) {
+	resolver := NewUsymResolver()
+	name := "_ZN5doris6Thread16supervise_threadEPv"
+
+	if got, want := resolver.displayName(name), "doris::Thread::supervise_thread(void*)"; got != want {
+		t.Errorf("displayName(%q): got %q, want %q", name, got, want)
+	}
+
+	// Poison the entry: only a cache read can return the sentinel.
+	resolver.names[name] = "cached-sentinel"
+	if got, want := resolver.displayName(name), "cached-sentinel"; got != want {
+		t.Errorf("displayName(%q) cached: got %q, want %q", name, got, want)
 	}
 }
 

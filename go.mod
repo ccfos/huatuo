@@ -25,6 +25,7 @@ require (
 	github.com/grafana/grafana-plugin-sdk-go v0.251.0
 	github.com/grafana/pyroscope v1.7.1
 	github.com/grafana/pyroscope/api v0.4.0
+	github.com/ianlancetaylor/demangle v0.0.0-20260724033716-83e58baca724
 	github.com/jsimonetti/rtnetlink v1.4.2
 	github.com/mdlayher/netlink v1.7.2
 	github.com/opencontainers/runtime-spec v1.2.0

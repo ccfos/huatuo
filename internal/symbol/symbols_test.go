@@ -483,6 +483,28 @@ func TestElfSymbols(t *testing.T) {
 	}
 }
 
+func TestDemangleSymbolName(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{
+			name: "_ZN5doris6Thread16supervise_threadEPv",
+			want: "doris::Thread::supervise_thread(void*)",
+		},
+		{name: "malloc", want: "malloc"},
+		{name: "_ZN5doris_invalid", want: "_ZN5doris_invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := demangleSymbolName(tt.name); got != tt.want {
+				t.Errorf("demangleSymbolName(%q): got %q, want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsLibPath(t *testing.T) {
 	tests := []struct {
 		name  string
