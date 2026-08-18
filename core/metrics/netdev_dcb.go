@@ -89,7 +89,7 @@ type ieeePfc struct {
 }
 
 func deserializeIEEEPfc(b []byte) (*ieeePfc, error) {
-	size := int(unsafe.Sizeof(ipfc{}))
+	size := int(unsafe.Sizeof(ieeePfc{}))
 	if len(b) < size {
 		return nil, fmt.Errorf("ieee pfc attr too short: got %d, want at least %d", len(b), size)
 	}
