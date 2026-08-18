@@ -16,27 +16,27 @@ package fileutil
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestStatInodeSuccess(t *testing.T) {
-	f, err := os.CreateTemp("", "huatuo-test-*")
-	if err != nil {
-		t.Fatalf("CreateTemp() error = %v", err)
+	path := filepath.Join(t.TempDir(), "huatuo-file")
+	if err := os.WriteFile(path, []byte("huatuo"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
-	defer os.Remove(f.Name())
 
-	ino, err := StatInode(f.Name())
+	ino, err := StatInode(path)
 	if err != nil {
-		t.Fatalf("StatInode(%q) error = %v", f.Name(), err)
+		t.Fatalf("StatInode(%q) error = %v", path, err)
 	}
 	if ino == 0 {
-		t.Errorf("StatInode(%q) = 0, want non-zero", f.Name())
+		t.Errorf("StatInode(%q) = 0, want non-zero", path)
 	}
 }
 
 func TestStatInodeMissingFile(t *testing.T) {
-	_, err := StatInode("/does/not/exist/huatuo-test-missing")
+	_, err := StatInode(filepath.Join(t.TempDir(), "missing"))
 	if err == nil {
 		t.Fatal("StatInode() error = nil, want non-nil")
 	}
