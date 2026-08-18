@@ -117,7 +117,7 @@ documentLoop:
 		if !filter.StartTime.IsZero() && timestamp.Before(filter.StartTime) {
 			continue
 		}
-		if !filter.EndTime.IsZero() && timestamp.After(filter.EndTime) {
+		if !filter.EndTime.IsZero() && !timestamp.Before(filter.EndTime) {
 			continue
 		}
 		if filter.ProfileType != "" &&
@@ -737,6 +737,45 @@ func TestDiffBuildsDoubleFlamegraph(t *testing.T) {
 	}
 	if response.Flamegraph == nil || response.Flamegraph.LeftTicks != 10 {
 		t.Fatalf("Diff() response = %#v, want 10 left ticks", response)
+	}
+}
+
+func TestDiffUsesHalfOpenAdjacentWindows(t *testing.T) {
+	boundary := time.Date(2026, time.July, 25, 11, 0, 1, 0, time.UTC)
+	service := newTestProfileService(&fakeProfileQueryStorage{documents: []*ProfileDocument{
+		testProfileDocument(boundary.Add(-time.Nanosecond), "left-last", 10, "root"),
+		testProfileDocument(boundary, "right-first", 20, "root"),
+		testProfileDocument(boundary.Add(time.Second-time.Nanosecond), "right-last", 30, "root"),
+		testProfileDocument(boundary.Add(time.Second), "after-right", 40, "root"),
+	}})
+
+	response, err := service.Diff(t.Context(), &querierv1.DiffRequest{
+		Left: &querierv1.SelectMergeStacktracesRequest{
+			ProfileTypeID: profiler.ProfileTypeCpuSample,
+			LabelSelector: `{hostname="node-a"}`,
+			Start:         boundary.Add(-time.Second).UnixMilli(),
+			End:           boundary.UnixMilli(),
+		},
+		Right: &querierv1.SelectMergeStacktracesRequest{
+			ProfileTypeID: profiler.ProfileTypeCpuSample,
+			LabelSelector: `{hostname="node-a"}`,
+			Start:         boundary.UnixMilli(),
+			End:           boundary.Add(time.Second).UnixMilli(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Diff() error = %v", err)
+	}
+	if response.Flamegraph == nil {
+		t.Fatal("Diff() returned no flame graph")
+	}
+	if response.Flamegraph.LeftTicks != 10 ||
+		response.Flamegraph.RightTicks != 50 {
+		t.Fatalf(
+			"Diff() ticks = (%d, %d), want (10, 50)",
+			response.Flamegraph.LeftTicks,
+			response.Flamegraph.RightTicks,
+		)
 	}
 }
 

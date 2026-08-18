@@ -89,7 +89,8 @@ func (d *ProfileDocument) CapturedAt() time.Time {
 	return parseProfileDocumentTime(d.TracerTime, d.UploadedTime)
 }
 
-// SearchFilter defines the search filter.
+// SearchFilter defines query criteria. Non-zero time bounds use
+// [StartTime, EndTime) so adjacent queries neither overlap nor leave gaps.
 type SearchFilter struct {
 	ID                string
 	Region            string
@@ -340,7 +341,7 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 	if !filter.EndTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
 			Field: profileFieldUploadedTime,
-			Op:    driver.OpLte,
+			Op:    driver.OpLt,
 			Value: filter.EndTime.UTC().Format(time.RFC3339Nano),
 		})
 	}
