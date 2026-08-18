@@ -115,7 +115,7 @@ func (s *Server) Start(addr string) error {
 	}
 
 	httpServer := &http.Server{
-		Handler:           s.engine,
+		Handler:           s.engine.Handler(),
 		ReadHeaderTimeout: s.config.ReadHeaderTimeout,
 		ReadTimeout:       s.config.ReadTimeout,
 		WriteTimeout:      s.config.WriteTimeout,
