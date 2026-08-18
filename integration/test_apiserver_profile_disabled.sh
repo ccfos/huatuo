@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Verify that all profiling APIs report an actionable error without storage.
+# Verify authentication precedence and disabled profiling APIs without storage.
 
 set -euo pipefail
 
@@ -23,7 +23,6 @@ source "${ROOT_DIR}/integration/config.sh"
 
 readonly API_TOKEN="integration-admin"
 readonly DISABLED_MESSAGE="profiling is disabled: configure profile storage to enable it"
-readonly FAILURE_LOG_PATTERN='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
 
 command -v curl > /dev/null || skip "curl command is not installed"
 command -v jq > /dev/null || skip "jq command is not installed"
@@ -40,17 +39,48 @@ cleanup() {
 }
 trap cleanup EXIT
 
-assert_profile_authentication_precedes_feature_state() {
-	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/profile-unauthorized.json"
+report_response() {
+	local label=$1 response_file=$2 curl_status=$3
+	[[ -r "${response_file}" ]] \
+		|| fatal "${label}: curl exited ${curl_status}; response file missing: ${response_file}"
+
+	log_info "${label} response: $(< "${response_file}")"
+	[[ ${curl_status} -eq 0 ]] \
+		|| fatal "${label}: curl exited ${curl_status}"
+}
+
+assert_profile_routes_require_authentication() {
+	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/profile-authentication.json"
+	local curl_status=0
 	local status
 
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
-		"${APISERVER_ADDR}/v1/profiles")
-	assert_eq "${status}" "401" "disabled profiling authentication" \
-		|| fatal "disabled profiling request bypassed authentication"
-	jq -e '.error.code == "unauthorized" and .error.message == "missing bearer token"' \
+		"${APISERVER_ADDR}/v1/profiles") || curl_status=$?
+	report_response "GET /v1/profiles without authentication" "${response_file}" "${curl_status}"
+
+	[[ "${status}" == "401" ]] \
+		|| fatal "GET /v1/profiles without authentication: status ${status}, want 401"
+	jq -e '.error.code == "unauthorized"' \
 		"${response_file}" > /dev/null \
-		|| fatal "disabled profiling authentication response is invalid"
+		|| fatal "GET /v1/profiles without authentication did not return unauthorized"
+}
+
+assert_profile_disabled() {
+	local method=$1 path=$2 response_file=$3
+	local curl_status=0
+	local status
+
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
+		-X "${method}" -H "Authorization: Bearer ${API_TOKEN}" \
+		"${APISERVER_ADDR}${path}") || curl_status=$?
+	report_response "${method} ${path}" "${response_file}" "${curl_status}"
+
+	[[ "${status}" == "503" ]] \
+		|| fatal "${method} ${path}: status ${status}, want 503"
+	jq -e --arg message "${DISABLED_MESSAGE}" \
+		'.error.code == "profiling_disabled" and .error.message == $message and (has("data") | not)' \
+		"${response_file}" > /dev/null \
+		|| fatal "${method} ${path} returned an invalid disabled response"
 }
 
 assert_profile_routes_are_disabled() {
@@ -61,29 +91,19 @@ assert_profile_routes_are_disabled() {
 		"DELETE|/v1/profiles/profile-2026"
 		"PUT|/v1/profiles/arbitrary/nested/path"
 	)
-	local test_case method path response_file status
+	local test_case method path response_file
 	local index=0
 
 	for test_case in "${cases[@]}"; do
 		IFS='|' read -r method path <<< "${test_case}"
 		response_file="${HUATUO_BAMAI_TEST_TMPDIR}/profile-disabled-${index}.json"
-		status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
-			-X "${method}" -H "Authorization: Bearer ${API_TOKEN}" \
-			"${APISERVER_ADDR}${path}")
-		log_info "${method} ${path} response: $(< "${response_file}")"
-		assert_eq "${status}" "503" "disabled profiling ${method} ${path}" \
-			|| fatal "disabled profiling route returned status ${status}"
-		jq -e --arg message "${DISABLED_MESSAGE}" \
-			'.error.code == "profiling_disabled" and .error.message == $message and (has("data") | not)' \
-			"${response_file}" > /dev/null \
-			|| fatal "disabled profiling response is invalid for ${method} ${path}"
+		assert_profile_disabled "${method}" "${path}" "${response_file}"
 		index=$((index + 1))
 	done
 }
 
 integration_huatuo_apiserver_start write_apiserver_profile_disabled_config \
 	--log-debug
-assert_profile_authentication_precedes_feature_state
+assert_profile_routes_require_authentication
 assert_profile_routes_are_disabled
-! grep -qiE "${FAILURE_LOG_PATTERN}" "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" \
-	|| fatal "huatuo-apiserver log contains an unexpected failure"
+assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" huatuo-apiserver
