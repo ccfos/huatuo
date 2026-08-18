@@ -253,7 +253,7 @@ change job ownership because tokens are never used as principal IDs.
     # - MaxQueryDocuments
     # Maximum profile documents processed by one display query. A value of 0
     # disables this query limit. Documents are processed in bounded pages.
-    # Default: 0
+    # Default: 100000
     #
     # - DashboardBaseURL
     # Optional dashboard base URL. Result URLs are omitted when empty.
@@ -261,7 +261,7 @@ change job ownership because tokens are never used as principal IDs.
     #
     # AggregationIntervalSeconds = 10
     # MaxConcurrentProfilerProcesses = 10
-    # MaxQueryDocuments = 0
+    # MaxQueryDocuments = 100000
     # DashboardBaseURL = "https://grafana.example.com/d"
 ```
 
@@ -269,8 +269,8 @@ change job ownership because tokens are never used as principal IDs.
 - `MaxConcurrentProfilerProcesses` limits third-party profiler subprocesses.
   Zero disables this process limit; negative values are invalid.
 - `MaxQueryDocuments` limits how many stored profiles one flame graph, diff,
-  series, or pprof export query may process. Zero disables the limit; negative
-  values are invalid.
+  series, or pprof export query may process. The default is 100000. Zero
+  explicitly disables the limit; negative values are invalid.
 - `DashboardBaseURL` is optional and must use HTTP or HTTPS when configured.
   Completed jobs omit a result URL when it is empty.
 

@@ -62,7 +62,7 @@ Admin = true
 	}
 	if cfg.Profiling.AggregationIntervalSeconds != 10 ||
 		cfg.Profiling.MaxConcurrentProfilerProcesses != 10 ||
-		cfg.Profiling.MaxQueryDocuments != 0 ||
+		cfg.Profiling.MaxQueryDocuments != 100000 ||
 		cfg.Profiling.DashboardBaseURL != "" {
 		t.Errorf("Profiling = %+v, want default values", cfg.Profiling)
 	}
@@ -145,6 +145,25 @@ Permissions = ["GET /v1/profiling/**"]
 	}
 	if cfg.Auth.Users[0].ID != "operator" {
 		t.Errorf("user ID = %q, want operator", cfg.Auth.Users[0].ID)
+	}
+}
+
+func TestLoadFileAllowsUnlimitedProfileQueries(t *testing.T) {
+	cfg := loadTestConfig(t, `
+[Profiling]
+MaxQueryDocuments = 0
+
+[[Auth.Users]]
+ID = "admin"
+BearerToken = "secret"
+Admin = true
+`)
+
+	if cfg.Profiling.MaxQueryDocuments != 0 {
+		t.Fatalf(
+			"Profiling.MaxQueryDocuments = %d, want explicit zero",
+			cfg.Profiling.MaxQueryDocuments,
+		)
 	}
 }
 

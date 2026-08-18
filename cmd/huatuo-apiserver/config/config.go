@@ -24,7 +24,10 @@ import (
 	internalconfig "huatuo-bamai/internal/config"
 )
 
-const maxAggregationIntervalSeconds = 1200
+const (
+	maxAggregationIntervalSeconds = 1200
+	defaultMaxQueryDocuments      = 100000
+)
 
 // LogConfig controls process logging.
 type LogConfig struct {
@@ -142,6 +145,7 @@ func defaultConfig() Config {
 		Profiling: ProfilingConfig{
 			AggregationIntervalSeconds:     10,
 			MaxConcurrentProfilerProcesses: 10,
+			MaxQueryDocuments:              defaultMaxQueryDocuments,
 		},
 	}
 }

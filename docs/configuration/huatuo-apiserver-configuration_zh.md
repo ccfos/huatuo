@@ -245,7 +245,7 @@ API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监
     # - MaxQueryDocuments
     # 单次展示查询最多处理的 profile 文档数。配置为 0 表示不限制。文档按
     # 固定大小分页处理。
-    # Default: 0
+    # Default: 100000
     #
     # - DashboardBaseURL
     # Optional dashboard base URL. Result URLs are omitted when empty.
@@ -253,7 +253,7 @@ API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监
     #
     # AggregationIntervalSeconds = 10
     # MaxConcurrentProfilerProcesses = 10
-    # MaxQueryDocuments = 0
+    # MaxQueryDocuments = 100000
     # DashboardBaseURL = "https://grafana.example.com/d"
 ```
 
@@ -261,7 +261,7 @@ API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监
 - `MaxConcurrentProfilerProcesses` 限制第三方 profiler 子进程并发数。
   配置为零表示禁用该进程数限制，负数无效。
 - `MaxQueryDocuments` 限制单次火焰图、diff、时序或 pprof 导出查询可处理的
-  profile 文档数。配置为零表示不限制，负数无效。
+  profile 文档数。默认值为 100000；显式配置为零表示不限制，负数无效。
 - `DashboardBaseURL` 可选；配置时必须使用 HTTP 或 HTTPS。为空时，已完成
   任务不生成结果 URL。
 
