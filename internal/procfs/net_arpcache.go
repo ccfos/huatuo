@@ -16,7 +16,6 @@ package procfs
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -40,7 +39,7 @@ func NetArpCache() (*ArpCacheStats, error) {
 
 	scanner := bufio.NewScanner(file)
 	if !scanner.Scan() {
-		return nil, fmt.Errorf("arp_cache: empty file or missing header")
+		return &ArpCacheStats{Stats: make(map[string]uint64)}, scanner.Err()
 	}
 
 	// First string is always a header for stats
@@ -51,7 +50,7 @@ func NetArpCache() (*ArpCacheStats, error) {
 	cache := &ArpCacheStats{Stats: make(map[string]uint64)}
 
 	if !scanner.Scan() {
-		return nil, fmt.Errorf("arp_cache: missing data line")
+		return cache, scanner.Err()
 	}
 	for num, counter := range strings.Fields(scanner.Text()) {
 		if num >= len(headers) {
