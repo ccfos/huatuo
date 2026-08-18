@@ -372,13 +372,13 @@ CPU and memory are the only profile types exposed by these dashboards. A
 completed job's `results.url` opens the corresponding dashboard with its
 target, profile type, and collection window preselected.
 
-The Pyroscope datasource sends queries to huatuo-apiserver. If API
-authentication is enabled, configure a dedicated user with
-`POST /v1/profiles/flamegraph/**` permission and pass the same user ID to the
-Grafana container without committing it:
+The Pyroscope datasource sends queries to huatuo-apiserver. Profile display
+routes are admin-only. If API authentication is enabled, pass the
+`BearerToken` of a user configured with `Admin = true` to the Grafana container
+without committing it. The quick-start administrator token can be reused:
 
 ```bash
-export HUATUO_GRAFANA_PROFILE_TOKEN="<Auth.users.ID>"
+export HUATUO_GRAFANA_PROFILE_TOKEN="${API_TOKEN}"
 docker compose -f build/docker/docker-compose.yml up -d
 ```
 
@@ -414,7 +414,7 @@ range, and an exact target label:
 
 ```bash
 curl -sS --get \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   --data-urlencode \
   "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
   --data-urlencode 'selector={hostname="node-a"}' \

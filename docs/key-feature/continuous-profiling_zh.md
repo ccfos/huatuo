@@ -367,12 +367,13 @@ dashboard。宿主机和容器 dashboard 展示剖析快照数量、剖析值时
 dashboard 只提供当前已支持的 CPU 和内存剖析类型。任务完成后，
 `results.url` 会打开对应 dashboard，并预选目标、剖析类型和采集时间窗口。
 
-Pyroscope datasource 通过 huatuo-apiserver 查询数据。启用 API 鉴权时，
-应创建只拥有 `POST /v1/profiles/flamegraph/**` 权限的专用用户，并通过
-环境变量将同一个用户 ID 传给 Grafana，不要把它提交到仓库：
+Pyroscope datasource 通过 huatuo-apiserver 查询数据。剖析展示路由仅允许
+管理员访问。启用 API 鉴权时，应将配置了 `Admin = true` 的用户
+`BearerToken` 通过环境变量传给 Grafana，不要把 token 提交到仓库。可以
+复用快速上手中的管理员 token：
 
 ```bash
-export HUATUO_GRAFANA_PROFILE_TOKEN="<Auth.users.ID>"
+export HUATUO_GRAFANA_PROFILE_TOKEN="${API_TOKEN}"
 docker compose -f build/docker/docker-compose.yml up -d
 ```
 
@@ -405,7 +406,7 @@ curl -sS \
 
 ```bash
 curl -sS --get \
-  -H "Authorization: Bearer ${USER_ID}" \
+  -H "Authorization: Bearer ${API_TOKEN}" \
   --data-urlencode \
   "profile_type=process_cpu:cpu:nanoseconds:cpu:nanoseconds" \
   --data-urlencode 'selector={hostname="node-a"}' \

@@ -399,3 +399,39 @@ func TestContinuousProfilingDatasourceAuthenticationContract(t *testing.T) {
 		t.Fatal("Grafana does not provision the profile JSON datasource")
 	}
 }
+
+func TestContinuousProfilingDocsUseAdminBearerToken(t *testing.T) {
+	tests := []struct {
+		path          string
+		adminContract string
+	}{
+		{
+			path:          "../../../../docs/key-feature/continuous-profiling_en.md",
+			adminContract: "Admin = true",
+		},
+		{
+			path:          "../../../../docs/key-feature/continuous-profiling_zh.md",
+			adminContract: "Admin = true",
+		},
+	}
+	for _, test := range tests {
+		document, err := os.ReadFile(test.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", test.path, err)
+		}
+		text := string(document)
+		for _, required := range []string{
+			test.adminContract,
+			`HUATUO_GRAFANA_PROFILE_TOKEN="${API_TOKEN}"`,
+		} {
+			if !strings.Contains(text, required) {
+				t.Errorf("%s missing %q", test.path, required)
+			}
+		}
+		for _, invalid := range []string{"Auth.users.ID", "${USER_ID}"} {
+			if strings.Contains(text, invalid) {
+				t.Errorf("%s contains invalid credential %q", test.path, invalid)
+			}
+		}
+	}
+}
