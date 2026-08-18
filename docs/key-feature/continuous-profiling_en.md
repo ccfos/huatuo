@@ -383,6 +383,37 @@ curl -sS -i \
 
 A successful deletion returns `204 No Content` with no response body. If the job is still active, the endpoint returns `409 Conflict`.
 
+### 10. Migrate Profiles Written Before `profile_storage_id`
+
+Profile documents written before this release do not contain the unique
+`profile_storage_id` sort key. Take an Elasticsearch/OpenSearch snapshot, then
+stop old huatuo-bamai writers that do not persist this field. Deploy the
+new writer and run the idempotent migration once for every physical profile
+index before using long window queries. Aliases and data streams are rejected:
+
+```bash
+ELASTICSEARCH_URL="http://localhost:9200" \
+ELASTICSEARCH_INDEX="huatuo_bamai" \
+ELASTICSEARCH_USERNAME="elastic" \
+ELASTICSEARCH_PASSWORD="REPLACE_WITH_PASSWORD" \
+./build/migrate-profile-storage-id.sh --check
+
+ELASTICSEARCH_URL="http://localhost:9200" \
+ELASTICSEARCH_INDEX="huatuo_bamai" \
+ELASTICSEARCH_USERNAME="elastic" \
+ELASTICSEARCH_PASSWORD="REPLACE_WITH_PASSWORD" \
+./build/migrate-profile-storage-id.sh
+```
+
+The script updates only profiling documents that lack the field and copies
+their existing Elasticsearch `_id`. Existing IDs and non-profiling documents
+are unchanged. It also creates or validates the sortable
+`profile_storage_id.keyword` mapping and reindexes existing IDs when that
+multi-field was added later. It fails if any matching legacy or unsortable
+documents remain, so rerunning it after an interrupted migration is safe. Run
+`--check` again after the old writers are stopped. `_update_by_query` consumes
+cluster I/O; run it during a low-traffic period for large indices.
+
 ## 📖 profiler CLI Overview
 
 `profiler` is HUATUO's standalone performance profiling CLI. It samples host processes or processes inside containers without requiring huatuo-apiserver, Elasticsearch, or Grafana. The tool supports C, C++, Go, Java, and Python processes and writes call stacks as folded stacks or SVG flame graphs.

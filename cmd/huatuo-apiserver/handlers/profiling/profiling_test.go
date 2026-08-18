@@ -45,8 +45,12 @@ func TestNewHandlerRegistersStorageRoutesWhenEnabled(t *testing.T) {
 
 	want := []string{
 		"/:id/raw",
+		"/flamegraph/export/pprof",
 		"/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces",
 		"/flamegraph/querier.v1.QuerierService/ProfileTypes",
+		"/flamegraph/querier.v1.QuerierService/SelectSeries",
+		"/flamegraph/querier.v1.QuerierService/Diff",
+		"/flamegraph/diff-rows",
 		"/flamegraph/querier.v1.QuerierService/LabelNames",
 		"/flamegraph/querier.v1.QuerierService/LabelValues",
 	}

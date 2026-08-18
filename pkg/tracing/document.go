@@ -24,6 +24,8 @@ import (
 	"github.com/rs/xid"
 )
 
+const tracingDocumentTimeLayout = "2006-01-02 15:04:05.000 -0700"
+
 // DocumentCollection is the storage collection name for tracing documents.
 const DocumentCollection = "tracing_documents"
 
@@ -36,8 +38,27 @@ type ProfileDocumentStoreMapper struct {
 }
 
 // ID returns a unique storage ID while tracer_id keeps snapshots queryable as one task.
-func (ProfileDocumentStoreMapper) ID(_ *Document) string {
-	return xid.New().String()
+func (ProfileDocumentStoreMapper) ID(document *Document) string {
+	if document.ProfileStorageID == "" {
+		document.ProfileStorageID = xid.New().String()
+	}
+	return document.ProfileStorageID
+}
+
+func (m ProfileDocumentStoreMapper) Fields(document *Document) (map[string]any, error) {
+	// Regenerate on every save so callers reusing a Document cannot overwrite a window.
+	document.ProfileStorageID = xid.New().String()
+	fields, err := m.DocumentStoreMapper.Fields(document)
+	if err != nil {
+		return nil, err
+	}
+	fields["profile_storage_id"] = document.ProfileStorageID
+	return fields, nil
+}
+
+func (m ProfileDocumentStoreMapper) Indexes() []driver.Index {
+	indexes := m.DocumentStoreMapper.Indexes()
+	return append(indexes, driver.Index{Field: "profile_storage_id"})
 }
 
 func tracingDocumentTimeValue(raw string, fallback time.Time) time.Time {
