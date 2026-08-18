@@ -15,7 +15,10 @@
 package toolstream_test
 
 import (
+	"context"
 	"errors"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -217,6 +220,94 @@ func TestMultipleChunksThenEnd(t *testing.T) {
 			t.Errorf("event %d: ID=%d want %d", i, g.event.ID, i)
 		}
 	}
+}
+
+func TestQuiesceAndDrainCanResumeAfterHandlerTimeout(t *testing.T) {
+	srv, sockPath := newTestServer(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+
+	toolstream.Register(srv, "blocked-tool", func(_ *toolstream.Session, _ testEvent) error {
+		close(started)
+		<-release
+		return nil
+	})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+
+	client, err := toolstream.NewClient(toolstream.ClientOptions{
+		SockPath: sockPath,
+		ToolName: "blocked-tool",
+		Version:  "1.0",
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if err := client.Send(testEvent{ID: 1}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not start")
+	}
+	if err := client.End(); err != nil {
+		t.Fatalf("End: %v", err)
+	}
+
+	waitersBefore := drainWaiterCount()
+	for range 8 {
+		drainCtx, cancel := context.WithCancel(t.Context())
+		cancel()
+		err = srv.QuiesceAndDrain(drainCtx)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("QuiesceAndDrain error = %v, want context canceled", err)
+		}
+		if !errors.Is(err, toolstream.ErrDrainTimeout) {
+			t.Fatalf("QuiesceAndDrain error = %v, want ErrDrainTimeout", err)
+		}
+	}
+	runtime.Gosched()
+	if waitersAfter := drainWaiterCount(); waitersAfter != waitersBefore {
+		t.Fatalf("QuiesceAndDrain waiter goroutines = %d, want %d", waitersAfter, waitersBefore)
+	}
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- srv.Close()
+	}()
+	select {
+	case err := <-closeDone:
+		if !errors.Is(err, toolstream.ErrHandlersActive) {
+			t.Fatalf("Close error = %v, want ErrHandlersActive", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close blocked on an active handler")
+	}
+
+	unblock()
+	retryCtx, retryCancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer retryCancel()
+	if err := srv.QuiesceAndDrain(retryCtx); err != nil {
+		t.Fatalf("second QuiesceAndDrain: %v", err)
+	}
+	if err := srv.Close(); err != nil {
+		t.Fatalf("Close after handler returned: %v", err)
+	}
+	if err := srv.Close(); err != nil {
+		t.Fatalf("repeated Close: %v", err)
+	}
+}
+
+func drainWaiterCount() int {
+	buf := make([]byte, 1<<20)
+	n := runtime.Stack(buf, true)
+	return strings.Count(string(buf[:n]), ".QuiesceAndDrain.func")
 }
 
 func TestStartNilServer(t *testing.T) {

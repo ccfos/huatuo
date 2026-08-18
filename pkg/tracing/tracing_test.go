@@ -130,7 +130,7 @@ func TestEventRunnerStopHonorsContext(t *testing.T) {
 	<-started
 
 	runner.mu.RLock()
-	done := runner.done
+	done := runner.active.done
 	runner.mu.RUnlock()
 
 	stopCtx, cancel := context.WithCancel(t.Context())
@@ -203,7 +203,7 @@ func TestEventRunnerNotSupportedStops(t *testing.T) {
 	<-started
 
 	runner.mu.RLock()
-	done := runner.done
+	done := runner.active.done
 	runner.mu.RUnlock()
 	close(release)
 	<-done

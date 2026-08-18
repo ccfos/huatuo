@@ -29,13 +29,30 @@ import (
 
 // Server accepts connections and dispatches ChunkMsg events to a caller-supplied handler.
 type Server struct {
-	mutex       sync.Mutex
-	waitGroup   sync.WaitGroup
-	connections map[net.Conn]struct{}
-	listener    net.Listener
-	handler     func(*Session, ChunkMsg)
-	cancel      context.CancelFunc
+	mutex          sync.Mutex
+	connectionWG   sync.WaitGroup
+	connections    map[net.Conn]struct{}
+	listener       net.Listener
+	handler        func(*Session, ChunkMsg)
+	cancel         context.CancelFunc
+	acceptDone     chan struct{}
+	drainDone      chan struct{}
+	handlersDone   chan struct{}
+	listenerOnce   sync.Once
+	listenerErr    error
+	accepting      bool
+	forceClosing   bool
+	activeHandlers int
 }
+
+var (
+	// ErrDrainTimeout reports that active streams did not drain before the
+	// caller's context expired; their sockets have been force-closed.
+	ErrDrainTimeout = errors.New("transport: drain timed out")
+	// ErrHandlersActive reports that Close released network resources while a
+	// caller-owned handler was still running.
+	ErrHandlersActive = errors.New("transport: close incomplete: handlers still active")
+)
 
 // Serve starts accepting connections from l in the background.
 func Serve(l net.Listener, handler func(*Session, ChunkMsg)) (*Server, error) {
@@ -44,28 +61,125 @@ func Serve(l net.Listener, handler func(*Session, ChunkMsg)) (*Server, error) {
 	}
 
 	srv := &Server{
-		listener:    l,
-		connections: make(map[net.Conn]struct{}),
-		handler:     handler,
+		listener:     l,
+		connections:  make(map[net.Conn]struct{}),
+		handler:      handler,
+		accepting:    true,
+		acceptDone:   make(chan struct{}),
+		drainDone:    make(chan struct{}),
+		handlersDone: make(chan struct{}),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	srv.cancel = cancel
-	srv.waitGroup.Add(1)
-
 	go func() {
-		defer srv.waitGroup.Done()
+		defer close(srv.acceptDone)
 		srv.acceptLoop(ctx)
+	}()
+	go func() {
+		// Waiting for acceptDone first guarantees that no Add can race with Wait.
+		<-srv.acceptDone
+		srv.connectionWG.Wait()
+		close(srv.drainDone)
 	}()
 
 	return srv, nil
+}
+
+// QuiesceAndDrain stops accepting connections and waits for active streams.
+func (s *Server) QuiesceAndDrain(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("transport: drain context must not be nil")
+	}
+
+	listenerErr := s.stopAccepting()
+
+	select {
+	case <-s.drainDone:
+		return listenerErr
+	case <-ctx.Done():
+		closeErr, _ := s.forceCloseConnections()
+		return errors.Join(
+			listenerErr,
+			closeErr,
+			ErrDrainTimeout,
+			fmt.Errorf("transport: drain active streams: %w", ctx.Err()),
+		)
+	}
+}
+
+// Close releases network resources. It returns ErrHandlersActive rather than
+// waiting indefinitely for a handler that does not honor shutdown.
+func (s *Server) Close() error {
+	if s.cancel != nil {
+		s.cancel()
+	}
+
+	listenerErr := s.stopAccepting()
+	closeErr, activeHandlers := s.forceCloseConnections()
+	if activeHandlers > 0 {
+		select {
+		case <-s.handlersDone:
+			return errors.Join(listenerErr, closeErr)
+		default:
+			return errors.Join(listenerErr, closeErr, ErrHandlersActive)
+		}
+	}
+
+	// forceClosing prevents decoded frames from starting new handlers. Connection
+	// goroutines may still be unwinding, but none can reach caller-owned storage.
+	<-s.handlersDone
+	return errors.Join(listenerErr, closeErr)
+}
+
+func (s *Server) stopAccepting() error {
+	s.mutex.Lock()
+	s.accepting = false
+	s.mutex.Unlock()
+
+	s.listenerOnce.Do(func() {
+		s.listenerErr = s.listener.Close()
+		if errors.Is(s.listenerErr, net.ErrClosed) {
+			s.listenerErr = nil
+		}
+	})
+	return s.listenerErr
+}
+
+func (s *Server) forceCloseConnections() (error, int) {
+	s.mutex.Lock()
+	if !s.forceClosing {
+		s.forceClosing = true
+		if s.activeHandlers == 0 {
+			close(s.handlersDone)
+		}
+	}
+	activeHandlers := s.activeHandlers
+	conns := make([]net.Conn, 0, len(s.connections))
+	for conn := range s.connections {
+		conns = append(conns, conn)
+		delete(s.connections, conn)
+	}
+	s.mutex.Unlock()
+
+	var errs []error
+	for _, conn := range conns {
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			errs = append(errs, fmt.Errorf("transport: close connection: %w", err))
+		}
+	}
+
+	return errors.Join(errs...), activeHandlers
 }
 
 func (s *Server) acceptLoop(ctx context.Context) {
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			if ctx.Err() != nil {
+			s.mutex.Lock()
+			accepting := s.accepting
+			s.mutex.Unlock()
+			if ctx.Err() != nil || !accepting || errors.Is(err, net.ErrClosed) {
 				return
 			}
 
@@ -74,10 +188,15 @@ func (s *Server) acceptLoop(ctx context.Context) {
 		}
 
 		s.mutex.Lock()
+		if !s.accepting {
+			s.mutex.Unlock()
+			_ = conn.Close()
+			continue
+		}
 		s.connections[conn] = struct{}{}
 		s.mutex.Unlock()
 
-		s.waitGroup.Add(1)
+		s.connectionWG.Add(1)
 
 		go func() {
 			defer func() {
@@ -90,7 +209,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 					_ = conn.Close()
 				}
 
-				s.waitGroup.Done()
+				s.connectionWG.Done()
 			}()
 
 			s.handleConn(ctx, conn)
@@ -148,7 +267,9 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			return
 		}
 
-		s.handler(sess, chunk)
+		if !s.callHandler(sess, chunk) {
+			return
+		}
 
 		if chunk.End {
 			return
@@ -217,37 +338,24 @@ func parseChunk(msg *capnp.Message) (ChunkMsg, error) {
 	}, nil
 }
 
-// Close shuts down the server and waits for all goroutines to finish.
-func (s *Server) Close() error {
-	if s.cancel != nil {
-		s.cancel()
-	}
-
-	var errs []error
-
-	if err := s.listener.Close(); err != nil {
-		errs = append(errs, err)
-	}
-
-	// snapshot under lock, close outside to avoid holding the lock during I/O
+func (s *Server) callHandler(sess *Session, chunk ChunkMsg) bool {
 	s.mutex.Lock()
-	conns := make([]net.Conn, 0, len(s.connections))
-
-	for c := range s.connections {
-		conns = append(conns, c)
-		delete(s.connections, c)
+	if s.forceClosing {
+		s.mutex.Unlock()
+		return false
 	}
-
+	s.activeHandlers++
 	s.mutex.Unlock()
 
-	// closing each conn unblocks handleConn goroutines stuck in Decode
-	for _, c := range conns {
-		if err := c.Close(); err != nil {
-			errs = append(errs, err)
+	defer func() {
+		s.mutex.Lock()
+		s.activeHandlers--
+		if s.forceClosing && s.activeHandlers == 0 {
+			close(s.handlersDone)
 		}
-	}
+		s.mutex.Unlock()
+	}()
 
-	s.waitGroup.Wait()
-
-	return errors.Join(errs...)
+	s.handler(sess, chunk)
+	return true
 }

@@ -33,7 +33,10 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 		return nil, nil
 	}
 
-	return nil, initStorage(d.opts.Region, config.Get())
+	if err := initStorage(d.opts.Region, config.Get()); err != nil {
+		return nil, err
+	}
+	return tracing.CloseStores, nil
 }
 
 func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
