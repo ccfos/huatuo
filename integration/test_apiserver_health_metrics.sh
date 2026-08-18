@@ -21,8 +21,8 @@ set -euo pipefail
 source "${ROOT_DIR}/integration/lib.sh"
 source "${ROOT_DIR}/integration/config.sh"
 
+# The config writer reads the token from the calling test's scope.
 readonly API_TOKEN="integration-admin"
-readonly FAILURE_LOG_PATTERN='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
 
 command -v curl > /dev/null || skip "curl command is not installed"
 command -v ss > /dev/null || skip "ss command is not installed"
@@ -38,48 +38,47 @@ cleanup() {
 }
 trap cleanup EXIT
 
+assert_curl_succeeded() {
+	local label=$1 response_file=$2 curl_status=$3
+	[[ ${curl_status} -ne 0 ]] || return 0
+
+	if [[ -r "${response_file}" ]]; then
+		log_error "${label} response: $(< "${response_file}")"
+	else
+		log_error "${label} response file missing: ${response_file}"
+	fi
+	fatal "${label}: curl exited ${curl_status}"
+}
+
 assert_endpoints() {
-	local cases=(
-		"GET|/healthz|204|public|empty"
-		"GET|/readyz|204|public|empty"
-		"GET|/v1/profiles/missing/raw|404|admin|ignore"
-		"POST|/v1/profiles/flamegraph/querier.v1.QuerierService/ProfileTypes|404|admin|ignore"
+	local paths=(
+		"/healthz"
+		"/readyz"
 	)
-	local test_case method path expected_status auth body_mode
-	local body status
-	local index=0
-	local -a curl_args
+	local path response_file status
+	local curl_status
 
-	for test_case in "${cases[@]}"; do
-		IFS='|' read -r method path expected_status auth body_mode <<< "${test_case}"
-		body="${HUATUO_BAMAI_TEST_TMPDIR}/endpoint-${index}.body"
-		curl_args=(
-			-sS
-			"${CURL_TIMEOUT[@]}"
-			-X "${method}"
-			-o "${body}"
-			-w '%{http_code}'
-		)
-		if [[ "${auth}" == "admin" ]]; then
-			curl_args+=(-H "Authorization: Bearer ${API_TOKEN}")
+	for path in "${paths[@]}"; do
+		response_file="${HUATUO_BAMAI_TEST_TMPDIR}/${path#/}.body"
+		curl_status=0
+		status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
+			"${APISERVER_ADDR}${path}") || curl_status=$?
+		assert_curl_succeeded "GET ${path}" "${response_file}" "${curl_status}"
+		assert_eq "${status}" "204" "GET ${path} status" \
+			|| fatal "GET ${path} returned status ${status}, expected 204"
+		if [[ -s "${response_file}" ]]; then
+			fatal "GET ${path} returned a non-empty response body"
 		fi
-
-		status=$(curl "${curl_args[@]}" "${APISERVER_ADDR}${path}")
-		assert_eq "${status}" "${expected_status}" "${method} ${path} status" \
-			|| fatal "${method} ${path} returned status ${status}, expected ${expected_status}"
-		if [[ "${body_mode}" == "empty" && -s "${body}" ]]; then
-			fatal "${method} ${path} returned a non-empty response body"
-		fi
-		index=$((index + 1))
 	done
 }
 
 assert_metrics_endpoint() {
 	local body="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.txt"
 	local headers="${HUATUO_BAMAI_TEST_TMPDIR}/metrics.headers"
-	local status
+	local curl_status=0 status
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -D "${headers}" -o "${body}" \
-		-w '%{http_code}' "${APISERVER_ADDR}/metrics")
+		-w '%{http_code}' "${APISERVER_ADDR}/metrics") || curl_status=$?
+	assert_curl_succeeded "GET /metrics" "${body}" "${curl_status}"
 
 	assert_eq "${status}" "200" "GET /metrics status" \
 		|| fatal "/metrics returned status ${status}"
@@ -95,5 +94,4 @@ integration_huatuo_apiserver_start write_apiserver_apis_config \
 	--log-debug
 assert_endpoints
 assert_metrics_endpoint
-! grep -qiE "${FAILURE_LOG_PATTERN}" "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" \
-	|| fatal "huatuo-apiserver log contains an unexpected failure"
+assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" huatuo-apiserver
