@@ -74,6 +74,29 @@ func TestNewServerUsesHTTPGuardDefaults(t *testing.T) {
 	}
 }
 
+func TestNewServerDoesNotModifyConfig(t *testing.T) {
+	cfg := Config{ReadTimeout: time.Second}
+
+	s := NewServer(&cfg)
+
+	if cfg.ReadHeaderTimeout != 0 {
+		t.Errorf("input ReadHeaderTimeout = %s, want zero", cfg.ReadHeaderTimeout)
+	}
+	if cfg.ReadTimeout != time.Second {
+		t.Errorf("input ReadTimeout = %s, want %s", cfg.ReadTimeout, time.Second)
+	}
+	if s.config.ReadHeaderTimeout != defaultReadHeaderTimeout {
+		t.Errorf(
+			"effective ReadHeaderTimeout = %s, want %s",
+			s.config.ReadHeaderTimeout,
+			defaultReadHeaderTimeout,
+		)
+	}
+	if s.config.ReadTimeout != time.Second {
+		t.Errorf("effective ReadTimeout = %s, want %s", s.config.ReadTimeout, time.Second)
+	}
+}
+
 func TestNewServerRegistersHealthzRoute(t *testing.T) {
 	s := NewServer(nil)
 
@@ -201,12 +224,12 @@ func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
 func TestPromServerHandlerWithRegistry(t *testing.T) {
 	s := &Server{promRegistry: prometheus.NewRegistry()}
 
-	handler := s.promServerHandler()
+	handler := s.metricsHandler()
 	ctx, recorder := newTestServerContext(http.MethodGet, "/metrics", "")
 
 	err := handler(ctx)
 	if err != nil {
-		t.Errorf("promServerHandler() error = %v", err)
+		t.Errorf("metricsHandler() error = %v", err)
 	}
 	if recorder.Code != http.StatusOK {
 		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusOK)
