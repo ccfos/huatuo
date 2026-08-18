@@ -150,6 +150,10 @@ $ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
 
 huatuo-apiserver 通过 `/v1/profiles` 提供服务化的持续性能剖析能力。客户端可以创建 CPU 或内存剖析任务，查询任务状态和结果，或者停止、删除任务。任务由 huatuo-apiserver 调度到指定节点的 HUATUO Agent，采集结果可通过返回的 Grafana 链接或原始数据接口查看。
 
+持续性能剖析使用 Elasticsearch 存储剖析数据。仅在配置 Elasticsearch profile
+存储后，huatuo-apiserver 才启用该能力。未配置时，所有 `/v1/profiles` 请求
+均返回 HTTP 503，错误码为 `profiling_disabled`。
+
 ### 1. 请求约定
 
 huatuo-apiserver 默认监听 `:12740`。以下示例使用环境变量统一设置服务地址和 Bearer token：
@@ -166,15 +170,26 @@ Authorization: Bearer REPLACE_WITH_RANDOM_HEX
 ```
 
 非管理员用户需要配置 `/v1/profiles` 和 `/v1/profiles/**` 权限。权限可带
-HTTP 方法前缀，例如 `GET /v1/profiles/**`。接口使用统一 JSON 响应格式：
+HTTP 方法前缀，例如 `GET /v1/profiles/**`。成功响应仅包含 `data`：
 
 ```json
 {
-  "code": 0,
-  "message": "success",
   "data": {}
 }
 ```
+
+错误响应包含稳定错误码和可读消息：
+
+```json
+{
+  "error": {
+    "code": "profiling_disabled",
+    "message": "profiling is disabled: configure profile storage to enable it"
+  }
+}
+```
+
+客户端应根据 `error.code` 分支处理，不应解析 `error.message`。
 
 ### 2. 查询剖析能力
 
@@ -263,8 +278,6 @@ curl -sS -i \
 
 ```json
 {
-  "code": 0,
-  "message": "success",
   "data": {
     "id": "<profile-job-id>"
   }

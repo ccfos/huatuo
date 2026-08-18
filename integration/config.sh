@@ -139,8 +139,8 @@ write_apiserver_apis_config() {
 EOF
 }
 
-# The caller owns the API port, bearer token, and expected profiling values.
-write_apiserver_profile_capabilities_config() {
+# The caller owns the API port and bearer token.
+write_apiserver_profile_disabled_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
 [APIServer]
     ListenAddress = "127.0.0.1:${APISERVER_PORT}"
@@ -152,10 +152,6 @@ write_apiserver_profile_capabilities_config() {
     ID = "integration-admin-user"
     BearerToken = "${API_TOKEN}"
     Admin = true
-
-[Profiling]
-    AggregationIntervalSeconds = ${CAPABILITIES_AGGREGATION_INTERVAL_SECONDS}
-    MaxConcurrentProfilerProcesses = ${CAPABILITIES_MAX_CONCURRENT_PROFILERS}
 EOF
 }
 

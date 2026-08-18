@@ -146,6 +146,11 @@ For more profiling dimensions, see the Profiles API section below.
 
 huatuo-apiserver exposes `/v1/profiles` for service-based continuous profiling. Clients can create CPU or memory profiling jobs, query job status and results, and stop or delete jobs. huatuo-apiserver schedules each job on the HUATUO Agent running on the specified node. Profiling results are available through the returned Grafana URL or the raw data endpoint.
 
+Continuous profiling requires Elasticsearch to store profile data.
+huatuo-apiserver enables profiling only when Elasticsearch profile storage is
+configured. Otherwise, it rejects all `/v1/profiles` requests with HTTP 503 and
+the `profiling_disabled` error code.
+
 ### 1. Request Conventions
 
 By default, huatuo-apiserver listens on `:12740`. The following examples use environment variables for the server address and bearer token:
@@ -163,16 +168,26 @@ Authorization: Bearer REPLACE_WITH_RANDOM_HEX
 
 A non-administrator user requires both `/v1/profiles` and
 `/v1/profiles/**` permissions. Permissions may include an HTTP method, such as
-`GET /v1/profiles/**`. The API uses the following common JSON response
-envelope:
+`GET /v1/profiles/**`. Successful responses contain only `data`:
 
 ```json
 {
-  "code": 0,
-  "message": "success",
   "data": {}
 }
 ```
+
+Error responses contain a stable code and a human-readable message:
+
+```json
+{
+  "error": {
+    "code": "profiling_disabled",
+    "message": "profiling is disabled: configure profile storage to enable it"
+  }
+}
+```
+
+Clients must branch on `error.code` and must not parse `error.message`.
 
 ### 2. Query Profiling Capabilities
 
@@ -261,8 +276,6 @@ A successful request returns `201 Created`. The `Location` response header ident
 
 ```json
 {
-  "code": 0,
-  "message": "success",
   "data": {
     "id": "<profile-job-id>"
   }

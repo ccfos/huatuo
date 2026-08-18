@@ -67,10 +67,15 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 		"/v1/traces",
 		trace.NewHandler(opts.JobManager).Handlers,
 	)
-	httpServer.MustRegisterRoutes(
-		"/v1/profiles",
-		profiling.NewHandler(opts.JobManager, opts.ProfileService, opts.ProfilingConfig).Handlers,
-	)
+	profileHandlers := profiling.DisabledHandlers()
+	if opts.ProfileService != nil {
+		profileHandlers = profiling.NewHandler(
+			opts.JobManager,
+			opts.ProfileService,
+			opts.ProfilingConfig,
+		).Handlers
+	}
+	httpServer.MustRegisterRoutes("/v1/profiles", profileHandlers)
 
 	if err := httpServer.Start(opts.Addr); err != nil {
 		return nil, err

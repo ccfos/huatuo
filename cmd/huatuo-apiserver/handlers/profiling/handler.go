@@ -77,32 +77,27 @@ func NewHandler(
 		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
 		{Typ: server.HttpPatch, Uri: "/:id", Handle: h.patchOne},
 		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.delete},
-	}
-	if profileQueryService != nil {
-		h.Handlers = append(
-			h.Handlers,
-			server.Handle{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
-			server.Handle{
-				Typ:    server.HttpPost,
-				Uri:    "/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces",
-				Handle: h.displaySelectMergeStacktraces,
-			},
-			server.Handle{
-				Typ:    server.HttpPost,
-				Uri:    "/flamegraph/querier.v1.QuerierService/ProfileTypes",
-				Handle: h.displayProfileTypes,
-			},
-			server.Handle{
-				Typ:    server.HttpPost,
-				Uri:    "/flamegraph/querier.v1.QuerierService/LabelNames",
-				Handle: h.displayLabelNames,
-			},
-			server.Handle{
-				Typ:    server.HttpPost,
-				Uri:    "/flamegraph/querier.v1.QuerierService/LabelValues",
-				Handle: h.displayLabelValues,
-			},
-		)
+		{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
+		{
+			Typ:    server.HttpPost,
+			Uri:    "/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces",
+			Handle: h.displaySelectMergeStacktraces,
+		},
+		{
+			Typ:    server.HttpPost,
+			Uri:    "/flamegraph/querier.v1.QuerierService/ProfileTypes",
+			Handle: h.displayProfileTypes,
+		},
+		{
+			Typ:    server.HttpPost,
+			Uri:    "/flamegraph/querier.v1.QuerierService/LabelNames",
+			Handle: h.displayLabelNames,
+		},
+		{
+			Typ:    server.HttpPost,
+			Uri:    "/flamegraph/querier.v1.QuerierService/LabelValues",
+			Handle: h.displayLabelValues,
+		},
 	}
 
 	return h

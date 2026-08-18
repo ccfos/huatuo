@@ -16,6 +16,8 @@ package profiling
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -24,19 +26,11 @@ import (
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/job"
 	profileService "huatuo-bamai/internal/profiler/service"
+	"huatuo-bamai/internal/server"
+	"huatuo-bamai/internal/server/response"
 )
 
-func TestNewHandlerOmitsStorageRoutesWhenDisabled(t *testing.T) {
-	handler := NewHandler(nil, nil, Config{})
-
-	for _, route := range handler.Handlers {
-		if route.Uri == "/:id/raw" || strings.HasPrefix(route.Uri, "/flamegraph/") {
-			t.Errorf("storage route %q registered without profile storage", route.Uri)
-		}
-	}
-}
-
-func TestNewHandlerRegistersStorageRoutesWhenEnabled(t *testing.T) {
+func TestNewHandlerRegistersAllRoutes(t *testing.T) {
 	handler := NewHandler(nil, &profileService.Service{}, Config{})
 	routes := make(map[string]struct{}, len(handler.Handlers))
 	for _, route := range handler.Handlers {
@@ -57,6 +51,41 @@ func TestNewHandlerRegistersStorageRoutesWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestDisabledHandlersRejectAllProfilePaths(t *testing.T) {
+	routes := DisabledHandlers()
+	if len(routes) != 2 {
+		t.Fatalf("DisabledHandlers() len = %d, want 2", len(routes))
+	}
+
+	wantPaths := []string{"", "/*path"}
+	for i, route := range routes {
+		if route.Typ != server.HttpAny {
+			t.Errorf("route %q type = %d, want HttpAny", route.Uri, route.Typ)
+		}
+		if route.Uri != wantPaths[i] {
+			t.Errorf("route %d path = %q, want %q", i, route.Uri, wantPaths[i])
+		}
+
+		err := route.Handle(nil)
+		var apiErr *response.APIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("route %q error type = %T, want *response.APIError", route.Uri, err)
+		}
+		if apiErr.HTTPStatus != http.StatusServiceUnavailable || apiErr.Code != v1.ErrorCodeProfilingDisabled {
+			t.Errorf(
+				"route %q status/code = %d/%q, want 503/%q",
+				route.Uri,
+				apiErr.HTTPStatus,
+				apiErr.Code,
+				v1.ErrorCodeProfilingDisabled,
+			)
+		}
+		if apiErr.Message != "profiling is disabled: configure profile storage to enable it" {
+			t.Errorf("route %q message = %q, want actionable disabled message", route.Uri, apiErr.Message)
+		}
+	}
+}
+
 func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 	url := getFlameGraphURL("http://grafana.example/d", &job.Job{
 		Type:        ProfilingCPU,
@@ -72,7 +101,7 @@ func TestGetFlameGraphURLEscapesLabelValue(t *testing.T) {
 
 func TestNewHandlerSnapshotsProfilingConfig(t *testing.T) {
 	cfg := Config{AggregationIntervalSeconds: 15}
-	h := NewHandler(nil, nil, cfg)
+	h := NewHandler(nil, &profileService.Service{}, cfg)
 	cfg.AggregationIntervalSeconds = 30
 
 	if h.profilingConfig.AggregationIntervalSeconds != 15 {
