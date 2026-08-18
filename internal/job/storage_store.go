@@ -250,7 +250,7 @@ func (storeMapper) Indexes() []driver.Index {
 	return indexes
 }
 
-func toStorageQuery(q *JobQuery) driver.Query {
+func toStorageQuery(q *JobQuery) *driver.Query {
 	if q == nil {
 		q = &JobQuery{}
 	}
@@ -298,7 +298,7 @@ func toStorageQuery(q *JobQuery) driver.Query {
 		field = field[1:]
 	}
 	query.Sorts = []driver.Sort{{Field: field, Desc: desc}, {Field: "id", Desc: desc}}
-	return query
+	return &query
 }
 
 func cloneJob(entity *Job) *Job {

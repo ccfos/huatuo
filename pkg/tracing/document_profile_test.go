@@ -14,13 +14,38 @@
 
 package tracing
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestProfileDocumentStoreMapperUsesUniqueIDs(t *testing.T) {
 	mapper := ProfileDocumentStoreMapper{}
 	document := &Document{TracerID: "profile-task-2026"}
 
+	fields, err := mapper.Fields(document)
+	if err != nil {
+		t.Fatalf("Fields() error = %v", err)
+	}
 	first := mapper.ID(document)
+	if fields["profile_storage_id"] != first {
+		t.Fatalf("profile_storage_id field = %v, want %q", fields["profile_storage_id"], first)
+	}
+	encoded, err := mapper.Encode(document)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	var source Document
+	if err := json.Unmarshal(encoded, &source); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if source.ProfileStorageID != first {
+		t.Fatalf("encoded profile storage ID = %q, want %q", source.ProfileStorageID, first)
+	}
+
+	if _, err := mapper.Fields(document); err != nil {
+		t.Fatalf("second Fields() error = %v", err)
+	}
 	second := mapper.ID(document)
 	if first == "" || second == "" {
 		t.Fatal("ProfileDocumentStoreMapper.ID() returned an empty ID")
@@ -30,5 +55,16 @@ func TestProfileDocumentStoreMapperUsesUniqueIDs(t *testing.T) {
 	}
 	if document.TracerID != "profile-task-2026" {
 		t.Fatalf("ProfileDocumentStoreMapper.ID() changed tracer ID to %q", document.TracerID)
+	}
+
+	foundIndex := false
+	for _, index := range mapper.Indexes() {
+		if index.Field == "profile_storage_id" {
+			foundIndex = true
+			break
+		}
+	}
+	if !foundIndex {
+		t.Fatal("ProfileDocumentStoreMapper.Indexes() is missing profile_storage_id")
 	}
 }
