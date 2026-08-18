@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"time"
 
+	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
@@ -53,10 +54,15 @@ type NewTaskReq struct {
 func handleBindError(ctx *server.Context, err error) {
 	var validationError *validator.ValidationErrors
 	if errors.As(err, &validationError) {
-		response.ErrorWithCode(ctx, http.StatusBadRequest, 400, (*validationError)[0].Namespace())
+		response.ErrorWithCode(
+			ctx,
+			http.StatusBadRequest,
+			v1.ErrorCodeInvalidRequest,
+			(*validationError)[0].Namespace(),
+		)
 		return
 	}
-	response.ErrorWithCode(ctx, http.StatusBadRequest, 400, err.Error())
+	response.ErrorWithCode(ctx, http.StatusBadRequest, v1.ErrorCodeInvalidRequest, err.Error())
 }
 
 func (h *TaskHandler) create(ctx *server.Context) error {

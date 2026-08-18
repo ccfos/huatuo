@@ -135,15 +135,10 @@ func TestNewServerRegistersVersionRoute(t *testing.T) {
 	}
 
 	var got struct {
-		Code    int          `json:"code"`
-		Message string       `json:"message"`
-		Data    version.Info `json:"data"`
+		Data version.Info `json:"data"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v; body=%s", err, recorder.Body.String())
-	}
-	if got.Code != 0 || got.Message != "success" {
-		t.Fatalf("response code/message = %d/%q, want 0/success", got.Code, got.Message)
 	}
 	if got.Data != info {
 		t.Errorf("version response = %+v, want %+v", got.Data, info)
@@ -241,8 +236,64 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 	if secondRecorder.Code != http.StatusTooManyRequests {
 		t.Errorf("second response status = %d, want %d", secondRecorder.Code, http.StatusTooManyRequests)
 	}
-	if !strings.Contains(secondRecorder.Body.String(), `"message":"too many requests"`) {
-		t.Errorf("second response body = %q, want rate limit message", secondRecorder.Body.String())
+	if !strings.Contains(
+		secondRecorder.Body.String(),
+		`"error":{"code":"rate_limited","message":"too many requests"}`,
+	) {
+		t.Errorf("second response body = %q, want rate limit error", secondRecorder.Body.String())
+	}
+}
+
+func TestNewServerRateLimit(t *testing.T) {
+	tests := []struct {
+		name                 string
+		rateLimit            *RateLimitConfig
+		expectedSecondStatus int
+	}{
+		{
+			name:                 "disabled by default",
+			expectedSecondStatus: http.StatusNoContent,
+		},
+		{
+			name: "enabled when configured",
+			rateLimit: &RateLimitConfig{
+				RequestsPerSecond: 1,
+				Burst:             1,
+			},
+			expectedSecondStatus: http.StatusTooManyRequests,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			s := NewServer(&Config{RateLimit: test.rateLimit})
+			s.MustRegisterRoutes("", []Handle{{
+				Typ: HttpGet,
+				Uri: "/tasks",
+				Handle: func(ctx *Context) error {
+					ctx.Status(http.StatusNoContent)
+					return nil
+				},
+			}})
+
+			firstRequest := httptest.NewRequest(http.MethodGet, "/tasks", http.NoBody)
+			firstRecorder := httptest.NewRecorder()
+			s.engine.ServeHTTP(firstRecorder, firstRequest)
+			if firstRecorder.Code != http.StatusNoContent {
+				t.Fatalf("first response status = %d, want %d", firstRecorder.Code, http.StatusNoContent)
+			}
+
+			secondRequest := httptest.NewRequest(http.MethodGet, "/tasks", http.NoBody)
+			secondRecorder := httptest.NewRecorder()
+			s.engine.ServeHTTP(secondRecorder, secondRequest)
+			if secondRecorder.Code != test.expectedSecondStatus {
+				t.Errorf(
+					"second response status = %d, want %d",
+					secondRecorder.Code,
+					test.expectedSecondStatus,
+				)
+			}
+		})
 	}
 }
 
@@ -267,6 +318,14 @@ func TestServerGroupReturnsConfiguredRootGroup(t *testing.T) {
 func TestServerMustRegisterRoutes(t *testing.T) {
 	s := NewServer(&Config{Group: "/api"})
 	s.MustRegisterRoutes("/tasks", []Handle{
+		{
+			Typ: HttpAny,
+			Uri: "/disabled",
+			Handle: func(ctx *Context) error {
+				ctx.JSON(http.StatusServiceUnavailable, map[string]string{"method": ctx.Request().Method})
+				return nil
+			},
+		},
 		{
 			Typ: HttpGet,
 			Uri: "/status",
@@ -316,6 +375,13 @@ func TestServerMustRegisterRoutes(t *testing.T) {
 		wantStatus   int
 		wantBodyPart string
 	}{
+		{
+			name:         "any-route",
+			method:       http.MethodOptions,
+			target:       "/api/tasks/disabled",
+			wantStatus:   http.StatusServiceUnavailable,
+			wantBodyPart: `"method":"OPTIONS"`,
+		},
 		{
 			name:         "get-route",
 			method:       http.MethodGet,

@@ -25,7 +25,9 @@ import (
 	"syscall"
 	"time"
 
+	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
 
 	"github.com/cloudflare/backoff"
@@ -48,9 +50,7 @@ const (
 // Config defines the configuration options for the HTTP server.
 type Config struct {
 	EnablePProf       bool
-	EnableRateLimit   bool
-	RateLimit         rate.Limit
-	RateBurst         int
+	RateLimit         *RateLimitConfig
 	EnableRetry       bool
 	RequireAuth       bool
 	AuthUsers         []UserConfig
@@ -70,9 +70,6 @@ type Config struct {
 
 var defaultConfig = &Config{
 	EnablePProf:       false,
-	EnableRateLimit:   false,
-	RateLimit:         200,
-	RateBurst:         200,
 	EnableRetry:       false,
 	PromReg:           nil,
 	Group:             "",
@@ -82,6 +79,12 @@ var defaultConfig = &Config{
 	IdleTimeout:       defaultIdleTimeout,
 	MaxHeaderBytes:    defaultMaxHeaderBytes,
 	MaxBodyBytes:      defaultMaxBodyBytes,
+}
+
+// RateLimitConfig enables per-client rate limiting.
+type RateLimitConfig struct {
+	RequestsPerSecond int
+	Burst             int
 }
 
 // Server is an HTTP server instance.
@@ -235,8 +238,14 @@ func NewServer(cfg *Config) *Server {
 		middleWares = append(middleWares, wrapHandler(NewAuthMiddleware(svc, publicPaths, adminPaths)))
 	}
 
-	if cfg.EnableRateLimit {
-		middleWares = append(middleWares, newRateLimitMiddleware(cfg.RateLimit, cfg.RateBurst))
+	if cfg.RateLimit != nil {
+		middleWares = append(
+			middleWares,
+			newRateLimitMiddleware(
+				rate.Limit(cfg.RateLimit.RequestsPerSecond),
+				cfg.RateLimit.Burst,
+			),
+		)
 	}
 
 	s.engine.Use(middleWares...)
@@ -406,11 +415,12 @@ func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
 		mu.Unlock()
 		if !allowed {
 			ctx := internalContext(c)
-			ctx.JSON(http.StatusTooManyRequests, map[string]any{
-				"code":    429,
-				"message": "too many requests",
-				"data":    nil,
-			})
+			response.ErrorWithCode(
+				ctx,
+				http.StatusTooManyRequests,
+				v1.ErrorCodeRateLimited,
+				"too many requests",
+			)
 			c.Abort()
 			return
 		}
@@ -429,6 +439,7 @@ const (
 	HttpGet    = 3
 	HttpPut    = 4
 	HttpPatch  = 5
+	HttpAny    = 6
 )
 
 type Handle struct {
@@ -446,6 +457,8 @@ func (s *Server) MustRegisterRoutes(subGroup string, handlers []Handle) {
 
 	for _, h := range handlers {
 		switch h.Typ {
+		case HttpAny:
+			g.Any(h.Uri, h.Handle)
 		case HttpPost:
 			g.POST(h.Uri, h.Handle)
 		case HttpDelete:

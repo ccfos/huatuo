@@ -23,8 +23,6 @@ import (
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
 	"huatuo-bamai/internal/server"
-
-	"golang.org/x/time/rate"
 )
 
 func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {
@@ -47,8 +45,10 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 		AuthUsers:   authUsers(d.opts.Config.Auth.Users),
 		EnablePProf: d.opts.EnablePProf,
 		VersionInfo: &d.opts.VersionInfo,
-		RateLimit:   rate.Limit(d.opts.Config.APIServer.RateLimit.RequestsPerSecond),
-		RateBurst:   d.opts.Config.APIServer.RateLimit.Burst,
+		RateLimit: &server.RateLimitConfig{
+			RequestsPerSecond: d.opts.Config.APIServer.RateLimit.RequestsPerSecond,
+			Burst:             d.opts.Config.APIServer.RateLimit.Burst,
+		},
 		Ready: func(ctx context.Context) error {
 			err := d.jobManager.Ready(ctx)
 			if d.profileService == nil {

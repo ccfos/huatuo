@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,74 +17,76 @@ package response
 import (
 	"fmt"
 	"net/http"
+
+	v1 "huatuo-bamai/apis/v1"
 )
 
 // APIError represents a standardized API error.
 type APIError struct {
-	Code       int
+	Code       v1.ErrorCode
 	Message    string
 	HTTPStatus int
 }
 
 // Error implements the error interface.
 func (e *APIError) Error() string {
-	return fmt.Sprintf("code=%d, message=%s, http_status=%d", e.Code, e.Message, e.HTTPStatus)
+	return fmt.Sprintf("code=%s, message=%s, http_status=%d", e.Code, e.Message, e.HTTPStatus)
 }
 
 // Predefined errors
 var (
 	// ErrInvalidRequest represents a bad request error.
 	ErrInvalidRequest = &APIError{
-		Code:       400,
+		Code:       v1.ErrorCodeInvalidRequest,
 		Message:    "invalid request",
 		HTTPStatus: http.StatusBadRequest,
 	}
 
 	// ErrUnauthorized represents an authentication error.
 	ErrUnauthorized = &APIError{
-		Code:       401,
+		Code:       v1.ErrorCodeUnauthorized,
 		Message:    "unauthorized",
 		HTTPStatus: http.StatusUnauthorized,
 	}
 
 	// ErrForbidden represents a permission denied error.
 	ErrForbidden = &APIError{
-		Code:       403,
+		Code:       v1.ErrorCodeForbidden,
 		Message:    "permission denied",
 		HTTPStatus: http.StatusForbidden,
 	}
 
 	// ErrNotFound represents a resource not found error.
 	ErrNotFound = &APIError{
-		Code:       404,
+		Code:       v1.ErrorCodeNotFound,
 		Message:    "not found",
 		HTTPStatus: http.StatusNotFound,
 	}
 
 	// ErrConflict represents a conflict error (e.g., resource already exists).
 	ErrConflict = &APIError{
-		Code:       409,
+		Code:       v1.ErrorCodeConflict,
 		Message:    "conflict",
 		HTTPStatus: http.StatusConflict,
 	}
 
 	// ErrInternal represents an internal server error.
 	ErrInternal = &APIError{
-		Code:       500,
+		Code:       v1.ErrorCodeInternal,
 		Message:    "internal error",
 		HTTPStatus: http.StatusInternalServerError,
 	}
 
 	// ErrTooManyRequests represents a rate limit exceeded error.
 	ErrTooManyRequests = &APIError{
-		Code:       429,
+		Code:       v1.ErrorCodeRateLimited,
 		Message:    "too many requests",
 		HTTPStatus: http.StatusTooManyRequests,
 	}
 )
 
 // NewAPIError creates a new APIError with the given parameters.
-func NewAPIError(code int, message string, httpStatus int) *APIError {
+func NewAPIError(code v1.ErrorCode, message string, httpStatus int) *APIError {
 	return &APIError{
 		Code:       code,
 		Message:    message,
@@ -96,7 +98,7 @@ func NewAPIError(code int, message string, httpStatus int) *APIError {
 func (e *APIError) GetHTTPStatus() int { return e.HTTPStatus }
 
 // GetCode returns the application error code.
-func (e *APIError) GetCode() int { return e.Code }
+func (e *APIError) GetCode() v1.ErrorCode { return e.Code }
 
 // GetMessage returns the error message.
 func (e *APIError) GetMessage() string { return e.Message }

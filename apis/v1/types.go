@@ -19,6 +19,11 @@ import (
 	"time"
 )
 
+// Response is the successful API response envelope.
+type Response[T any] struct {
+	Data T `json:"data"`
+}
+
 // CreateProfilingJobRequest represents a request to create a profiling job.
 type CreateProfilingJobRequest struct {
 	ProfilingType   string `json:"type"`              // cpu or memory

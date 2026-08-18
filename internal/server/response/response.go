@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@ package response
 import (
 	"errors"
 	"net/http"
+
+	v1 "huatuo-bamai/apis/v1"
 )
 
 // JSONWriter is the minimal interface required for writing JSON responses.
@@ -25,19 +27,10 @@ type JSONWriter interface {
 	JSON(code int, obj any)
 }
 
-// Response represents the standard response format for API calls.
-type Response struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    any    `json:"data,omitempty"`
-}
-
 // Success sends a successful response with HTTP 200 status code.
 func Success(w JSONWriter, data any) {
-	w.JSON(http.StatusOK, Response{
-		Code:    0,
-		Message: "success",
-		Data:    data,
+	w.JSON(http.StatusOK, v1.Response[any]{
+		Data: data,
 	})
 }
 
@@ -48,10 +41,8 @@ func Created(w interface {
 }, location string, data any,
 ) {
 	w.Header("Location", location)
-	w.JSON(http.StatusCreated, Response{
-		Code:    0,
-		Message: "success",
-		Data:    data,
+	w.JSON(http.StatusCreated, v1.Response[any]{
+		Data: data,
 	})
 }
 
@@ -64,28 +55,35 @@ func NoContent(w interface{ Status(code int) }) {
 // If err is an APIError, it uses the error's HTTP status code.
 // Otherwise, it returns HTTP 500 Internal Server Error.
 func Error(w JSONWriter, err error) {
-	var apiErr *APIError
+	var apiErr interface {
+		GetHTTPStatus() int
+		GetCode() v1.ErrorCode
+		GetMessage() string
+	}
 	if errors.As(err, &apiErr) {
-		w.JSON(apiErr.HTTPStatus, Response{
-			Code:    apiErr.Code,
-			Message: apiErr.Message,
-			Data:    nil,
+		w.JSON(apiErr.GetHTTPStatus(), v1.ErrorResponse{
+			Error: v1.Error{
+				Code:    apiErr.GetCode(),
+				Message: apiErr.GetMessage(),
+			},
 		})
 		return
 	}
 
-	w.JSON(http.StatusInternalServerError, Response{
-		Code:    ErrInternal.Code,
-		Message: err.Error(),
-		Data:    nil,
+	w.JSON(http.StatusInternalServerError, v1.ErrorResponse{
+		Error: v1.Error{
+			Code:    ErrInternal.Code,
+			Message: ErrInternal.Message,
+		},
 	})
 }
 
 // ErrorWithCode sends an error response with a custom HTTP status code and error code.
-func ErrorWithCode(w JSONWriter, status, code int, message string) {
-	w.JSON(status, Response{
-		Code:    code,
-		Message: message,
-		Data:    nil,
+func ErrorWithCode(w JSONWriter, status int, code v1.ErrorCode, message string) {
+	w.JSON(status, v1.ErrorResponse{
+		Error: v1.Error{
+			Code:    code,
+			Message: message,
+		},
 	})
 }

@@ -36,13 +36,14 @@ type ServerOptions struct {
 // Start starts the HTTP server with all handlers registered.
 func Start(opts ServerOptions) {
 	s := server.NewServer(&server.Config{
-		EnablePProf:     true,
-		EnableRateLimit: true,
-		RateLimit:       200,
-		RateBurst:       200,
-		EnableRetry:     true,
-		PromReg:         opts.PromReg,
-		VersionInfo:     opts.VersionInfo,
+		EnablePProf: true,
+		RateLimit: &server.RateLimitConfig{
+			RequestsPerSecond: 200,
+			Burst:             200,
+		},
+		EnableRetry: true,
+		PromReg:     opts.PromReg,
+		VersionInfo: opts.VersionInfo,
 	})
 
 	SetTracingManager(opts.TracingManager)

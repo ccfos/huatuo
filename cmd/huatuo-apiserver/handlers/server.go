@@ -24,7 +24,6 @@ import (
 	"huatuo-bamai/internal/version"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/time/rate"
 )
 
 // ServerOptions groups the dependencies required to start the API server.
@@ -38,8 +37,7 @@ type ServerOptions struct {
 	AuthUsers           []server.UserConfig
 	EnablePProf         bool
 	VersionInfo         *version.Info
-	RateLimit           rate.Limit
-	RateBurst           int
+	RateLimit           *server.RateLimitConfig
 	Ready               func(context.Context) error
 }
 
@@ -52,12 +50,10 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 		return nil, errors.New("start API server: job managers are required")
 	}
 	httpServer := server.NewServer(&server.Config{
-		RequireAuth:     true,
-		EnablePProf:     opts.EnablePProf,
-		EnableRateLimit: true,
-		RateLimit:       opts.RateLimit,
-		RateBurst:       opts.RateBurst,
-		AuthUsers:       opts.AuthUsers,
+		RequireAuth: true,
+		EnablePProf: opts.EnablePProf,
+		RateLimit:   opts.RateLimit,
+		AuthUsers:   opts.AuthUsers,
 		AdminPaths: []string{
 			"/v1/profiles/flamegraph/**",
 		},
