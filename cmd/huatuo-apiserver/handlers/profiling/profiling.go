@@ -361,10 +361,10 @@ func (h *Handler) getRawData(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage("agent job ID not found")
 	}
 
-	if h.profileService == nil {
+	if h.profileQueryService == nil {
 		return response.ErrInternal
 	}
-	profiles, err := h.profileService.GetProfilesByTracerIDPage(
+	profiles, err := h.profileQueryService.GetProfilesByTracerIDPage(
 		ctx.Request().Context(), jobResult.AgentTaskID, listParams.Limit+1, listParams.Offset,
 	)
 	if err != nil {

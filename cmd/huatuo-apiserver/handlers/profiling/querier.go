@@ -58,17 +58,17 @@ func handleProto[Request, Response any](
 }
 
 func (h *Handler) displaySelectMergeStacktraces(ctx *server.Context) error {
-	return handleProto(ctx, "select_merge_stacktraces", h.profileService.SelectMergeStacktraces)
+	return handleProto(ctx, "select_merge_stacktraces", h.profileQueryService.SelectMergeStacktraces)
 }
 
 func (h *Handler) displayProfileTypes(ctx *server.Context) error {
-	return handleProto(ctx, "profile_types", h.profileService.ProfileTypes)
+	return handleProto(ctx, "profile_types", h.profileQueryService.ProfileTypes)
 }
 
 func (h *Handler) displayLabelNames(ctx *server.Context) error {
-	return handleProto(ctx, "label_names", h.profileService.LabelNames)
+	return handleProto(ctx, "label_names", h.profileQueryService.LabelNames)
 }
 
 func (h *Handler) displayLabelValues(ctx *server.Context) error {
-	return handleProto(ctx, "label_values", h.profileService.LabelValues)
+	return handleProto(ctx, "label_values", h.profileQueryService.LabelValues)
 }

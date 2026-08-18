@@ -27,16 +27,15 @@ import (
 
 func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {
 	var profileQueryService profiling.ProfileQueryService
-	if d.profileService != nil {
-		profileQueryService = d.profileService
+	if d.profileQueryService != nil {
+		profileQueryService = d.profileQueryService
 	}
 
 	runningServer, err := handlers.Start(&handlers.ServerOptions{
-		Addr:                d.opts.Config.APIServer.ListenAddress,
-		PromReg:             d.metrics,
-		TraceJobManager:     d.jobManager,
-		ProfilingJobManager: d.jobManager,
-		ProfileService:      profileQueryService,
+		Addr:           d.opts.Config.APIServer.ListenAddress,
+		PromReg:        d.metrics,
+		JobManager:     d.jobManager,
+		ProfileService: profileQueryService,
 		ProfilingConfig: profiling.Config{
 			AggregationIntervalSeconds:     d.opts.Config.Profiling.AggregationIntervalSeconds,
 			MaxConcurrentProfilerProcesses: d.opts.Config.Profiling.MaxConcurrentProfilerProcesses,
@@ -51,15 +50,16 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 		},
 		Ready: func(ctx context.Context) error {
 			err := d.jobManager.Ready(ctx)
-			if d.profileService == nil {
+			if d.profileQueryService == nil {
 				return err
 			}
-			return errors.Join(err, d.profileService.Ready(ctx))
+			return errors.Join(err, d.profileQueryService.Ready(ctx))
 		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start api server: %w", err)
 	}
+
 	d.apiServer = runningServer
 
 	return runningServer.Shutdown, nil

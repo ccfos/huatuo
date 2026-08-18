@@ -22,7 +22,7 @@ import (
 	"huatuo-bamai/internal/profiler/service"
 )
 
-func setupProfileFlamegraph(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
+func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
 	if !d.opts.Config.Elasticsearch.Enabled() {
 		log.Info("profile storage disabled")
 		return nil, nil
@@ -34,11 +34,11 @@ func setupProfileFlamegraph(ctx context.Context, d *Daemon) (func(context.Contex
 		Password: d.opts.Config.Elasticsearch.Password,
 		Index:    d.opts.Config.Elasticsearch.Index,
 	}
-	profileService, err := service.NewService(ctx, esConfig)
+	profileQueryService, err := service.NewService(ctx, esConfig)
 	if err != nil {
-		return nil, fmt.Errorf("initialize profiling flamegraph: %w", err)
+		return nil, fmt.Errorf("initialize profile query service: %w", err)
 	}
-	d.profileService = profileService
+	d.profileQueryService = profileQueryService
 
-	return profileService.Close, nil
+	return profileQueryService.Close, nil
 }

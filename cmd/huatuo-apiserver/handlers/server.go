@@ -20,6 +20,7 @@ import (
 
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
+	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/version"
 
@@ -28,17 +29,16 @@ import (
 
 // ServerOptions groups the dependencies required to start the API server.
 type ServerOptions struct {
-	Addr                string
-	PromReg             *prometheus.Registry
-	TraceJobManager     trace.JobManager
-	ProfilingJobManager profiling.JobManager
-	ProfileService      profiling.ProfileQueryService
-	ProfilingConfig     profiling.Config
-	AuthUsers           []server.UserConfig
-	EnablePProf         bool
-	VersionInfo         *version.Info
-	RateLimit           *server.RateLimitConfig
-	Ready               func(context.Context) error
+	Addr            string
+	PromReg         *prometheus.Registry
+	JobManager      *job.Manager
+	ProfileService  profiling.ProfileQueryService
+	ProfilingConfig profiling.Config
+	AuthUsers       []server.UserConfig
+	EnablePProf     bool
+	VersionInfo     *version.Info
+	RateLimit       *server.RateLimitConfig
+	Ready           func(context.Context) error
 }
 
 // Start starts the API service with the given configuration.
@@ -46,8 +46,8 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 	if opts == nil {
 		return nil, errors.New("start API server: options are required")
 	}
-	if opts.TraceJobManager == nil || opts.ProfilingJobManager == nil {
-		return nil, errors.New("start API server: job managers are required")
+	if opts.JobManager == nil {
+		return nil, errors.New("start API server: job manager is required")
 	}
 	httpServer := server.NewServer(&server.Config{
 		RequireAuth: true,
@@ -65,11 +65,11 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 	// Register trace routes
 	httpServer.MustRegisterRoutes(
 		"/v1/traces",
-		trace.NewHandler(opts.TraceJobManager).Handlers,
+		trace.NewHandler(opts.JobManager).Handlers,
 	)
 	httpServer.MustRegisterRoutes(
 		"/v1/profiles",
-		profiling.NewHandler(opts.ProfilingJobManager, opts.ProfileService, opts.ProfilingConfig).Handlers,
+		profiling.NewHandler(opts.JobManager, opts.ProfileService, opts.ProfilingConfig).Handlers,
 	)
 
 	if err := httpServer.Start(opts.Addr); err != nil {

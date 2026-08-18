@@ -20,19 +20,19 @@ import (
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
 )
 
-func TestSetupProfileFlamegraphSkipsDisabledStorage(t *testing.T) {
+func TestSetupProfileQueryServiceSkipsDisabledStorage(t *testing.T) {
 	daemon := &Daemon{
 		opts: &Options{Config: &config.Config{}},
 	}
 
-	cleanup, err := setupProfileFlamegraph(t.Context(), daemon)
+	cleanup, err := setupProfileQueryService(t.Context(), daemon)
 	if err != nil {
-		t.Fatalf("setupProfileFlamegraph() error = %v", err)
+		t.Fatalf("setupProfileQueryService() error = %v", err)
 	}
 	if cleanup != nil {
-		t.Error("setupProfileFlamegraph() cleanup is not nil")
+		t.Error("setupProfileQueryService() cleanup is not nil")
 	}
-	if daemon.profileService != nil {
-		t.Error("profileService is initialized when storage is disabled")
+	if daemon.profileQueryService != nil {
+		t.Error("profileQueryService is initialized when storage is disabled")
 	}
 }

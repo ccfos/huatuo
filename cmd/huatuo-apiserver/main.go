@@ -77,12 +77,12 @@ type daemonStep struct {
 type Daemon struct {
 	opts *Options
 
-	metrics        *prometheus.Registry
-	jobManager     *job.Manager
-	profileService *profileService.Service
-	agentObserver  job.AgentRequestObserver
-	apiServer      *server.Server
-	steps          []daemonStep
+	metrics             *prometheus.Registry
+	jobManager          *job.Manager
+	profileQueryService *profileService.Service
+	agentObserver       job.AgentRequestObserver
+	apiServer           *server.Server
+	steps               []daemonStep
 }
 
 func NewDaemon(opts *Options) *Daemon {
@@ -91,7 +91,7 @@ func NewDaemon(opts *Options) *Daemon {
 		steps: []daemonStep{
 			{name: "pidfile", setup: lockPidfile},
 			{name: "cgroup", setup: setupCgroup},
-			{name: "profiling-flamegraph", setup: setupProfileFlamegraph},
+			{name: "profile-query-service", setup: setupProfileQueryService},
 			{name: "metrics", setup: setupMetrics},
 			{name: "job-managers", setup: setupJobManagers},
 			{name: "handlers", setup: startHandlers},

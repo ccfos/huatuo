@@ -27,10 +27,10 @@ import (
 
 // Handler handles profiling-related HTTP requests.
 type Handler struct {
-	jobManager      JobManager
-	profileService  ProfileQueryService
-	profilingConfig Config
-	Handlers        []server.Handle
+	jobManager          JobManager
+	profileQueryService ProfileQueryService
+	profilingConfig     Config
+	Handlers            []server.Handle
 }
 
 // Config contains profiling values used by request and response handling.
@@ -61,13 +61,13 @@ type JobManager interface {
 // NewHandler creates a new profiling handler.
 func NewHandler(
 	jm JobManager,
-	profileSvc ProfileQueryService,
+	profileQueryService ProfileQueryService,
 	profilingConfig Config,
 ) *Handler {
 	h := &Handler{
-		jobManager:      jm,
-		profileService:  profileSvc,
-		profilingConfig: profilingConfig,
+		jobManager:          jm,
+		profileQueryService: profileQueryService,
+		profilingConfig:     profilingConfig,
 	}
 
 	h.Handlers = []server.Handle{
@@ -78,7 +78,7 @@ func NewHandler(
 		{Typ: server.HttpPatch, Uri: "/:id", Handle: h.patchOne},
 		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.delete},
 	}
-	if profileSvc != nil {
+	if profileQueryService != nil {
 		h.Handlers = append(
 			h.Handlers,
 			server.Handle{Typ: server.HttpGet, Uri: "/:id/raw", Handle: h.getRawData},
