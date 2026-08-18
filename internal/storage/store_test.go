@@ -89,6 +89,7 @@ type testBackend struct {
 	queryErr     error
 	countErr     error
 	valuesErr    error
+	closeErr     error
 	getRecord    driver.Record
 	queryRecords []driver.Record
 	countValue   int64
@@ -99,6 +100,7 @@ type testBackend struct {
 	queryCalls   int
 	countCalls   int
 	valuesCalls  int
+	closeCalls   int
 	collection   string
 	indexes      []driver.Index
 	savedRecord  driver.Record
@@ -157,7 +159,34 @@ func (b *testBackend) Values(_ context.Context, field string, q driver.Query, si
 	return b.valuesValue, b.valuesErr
 }
 
-func (b *testBackend) Close(context.Context) error { return nil }
+func (b *testBackend) Close(context.Context) error {
+	b.closeCalls++
+	return b.closeErr
+}
+
+func TestNewFromConfigClosesBackendOnInitializationFailure(t *testing.T) {
+	backend := &testBackend{}
+	driverName := "test-init-cleanup"
+	driver.RegisterBackend(driverName, func(*driver.Config) (driver.Backend, error) {
+		return backend, nil
+	})
+
+	store, err := NewFromConfig[testEntity](
+		t.Context(),
+		&driver.Config{Driver: driverName},
+		"jobs",
+		&testMapper{indexes: []driver.Index{{Field: ""}}},
+	)
+	if err == nil {
+		t.Fatal("NewFromConfig() error = nil, want initialization error")
+	}
+	if store != nil {
+		t.Fatalf("NewFromConfig() store = %#v, want nil", store)
+	}
+	if backend.closeCalls != 1 {
+		t.Fatalf("backend Close() calls = %d, want 1", backend.closeCalls)
+	}
+}
 
 func newTestMapper() *testMapper {
 	return &testMapper{

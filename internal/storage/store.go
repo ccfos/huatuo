@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"huatuo-bamai/internal/storage/driver"
@@ -36,7 +37,15 @@ func NewFromConfig[T any](ctx context.Context, cfg *driver.Config, collection st
 		return nil, err
 	}
 
-	return NewStore(ctx, cfg.Driver, backend, collection, mapper)
+	store, err := NewStore(ctx, cfg.Driver, backend, collection, mapper)
+	if err != nil {
+		if backend == nil {
+			return nil, err
+		}
+		return nil, errors.Join(err, backend.Close(driver.WithContext(ctx)))
+	}
+
+	return store, nil
 }
 
 // NewStore validates that backend and mapper are non-nil, verifies the collection
