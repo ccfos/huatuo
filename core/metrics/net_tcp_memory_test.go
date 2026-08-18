@@ -17,6 +17,7 @@ package collector
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,12 +36,18 @@ func TestParseTcpMemoryBoundary(t *testing.T) {
 	defer procfs.RootPrefix("/")
 
 	tests := []struct {
-		name    string
-		content string
+		name      string
+		content   string
+		wantErr   bool
+		wantInErr string
 	}{
-		{"empty_file", ""},
-		{"one_value", "100"},
-		{"two_values", "100 200"},
+		{"empty_file", "", true, "tcp_mem"},
+		{"one_value", "100", true, "tcp_mem"},
+		{"two_values", "100 200", true, "tcp_mem"},
+		// With 3+ values the guard passes; NetSockstat will fail because
+		// no sockstat file exists in the temp procfs, but the error must
+		// NOT be the tcp_mem guard error.
+		{"three_values_passes_guard", "100 200 300", true, ""},
 	}
 
 	for _, tt := range tests {
@@ -50,7 +57,11 @@ func TestParseTcpMemoryBoundary(t *testing.T) {
 
 			_, err = parseTcpMemory()
 			require.Error(t, err)
-			require.Contains(t, err.Error(), "tcp_mem")
+			if tt.wantInErr != "" {
+				require.True(t, strings.Contains(err.Error(), tt.wantInErr))
+			} else {
+				require.False(t, strings.Contains(err.Error(), "tcp_mem"))
+			}
 		})
 	}
 }
