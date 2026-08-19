@@ -151,8 +151,8 @@ func (c *Config) Validate() error {
 	if err := matcher.ValidateClassifications(c.AutoTracing.IssuesList); err != nil {
 		return fmt.Errorf("validating autotracing issues list: %w", err)
 	}
-	if err := matcher.ValidateClassifications(c.EventTracing.IssuesList); err != nil {
-		return fmt.Errorf("validating event tracing issues list: %w", err)
+	if err := c.EventTracing.Validate(); err != nil {
+		return fmt.Errorf("validating event tracing config: %w", err)
 	}
 	return nil
 }

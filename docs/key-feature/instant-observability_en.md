@@ -17,7 +17,7 @@ HUATUO is an operating system deep observability project open-sourced by DiDi an
 
 HUATUO uses eBPF technology to observe anomalous events in real time across core Linux kernel subsystems, including CPU scheduling, memory management, the network protocol stack, and hardware error reporting. When the kernel encounters anomalies such as softlockup, OOM, or hardware MCE errors, eBPF programs hook into kernel functions (kprobes) or kernel tracepoints, capturing process information, kernel call stacks, and network context at the moment the event occurs. The data is passed to user-space handlers via the perf event ring buffer and persisted to Elasticsearch or local disk files.
 
-Compared to traditional kernel log (dmesg/syslog) collection, eBPF-based event observation reduces the risk of data loss from log buffer overflow; it can capture transient anomalies that never appear in kernel logs (such as excessive softirq disable time); and it provides container-level event correlation for precise root-cause analysis in cloud-native environments.
+Compared to traditional kernel log (dmesg/syslog) collection, eBPF-based event observation reduces the risk of data loss from log buffer overflow; it can capture transient anomalies that never appear in kernel logs (such as excessive scheduler tick intervals); and it provides container-level event correlation for precise root-cause analysis in cloud-native environments.
 
 Twelve event types are continuously observed, covering CPU scheduling health (softirq_tracing, softlockup, hungtask), memory pressure (oom, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
 
@@ -29,7 +29,7 @@ Twelve event types are continuously observed, covering CPU scheduling health (so
 
 **Network Performance Jitter Analysis**: dropwatch observes packet drops in the kernel network stack, tcp_retransmit observes TCP retransmission activity, and net_rx_latency detects end-to-end receive-path latency for individual packets from the network card driver to user space. Separate thresholds are configured per stage (driver to kernel: 5ms, kernel to TCP: 10ms, TCP to user space: 115ms), precisely identifying which network layer causes business timeouts.
 
-**Host Scheduling Health Observation**: The softirq_tracing (softirq disable time, default threshold 10ms), softlockup (CPU unable to schedule, ~1 second), and hungtask (D-state process hang) events jointly cover anomalies along the CPU scheduling path. When system stalls or response timeouts occur, kernel call stacks and other diagnostic data are automatically preserved, supporting offline analysis after the fault clears.
+**Host Scheduling Health Observation**: The softirq_tracing (scheduler tick interval, default threshold 10ms), softlockup (CPU unable to schedule, ~1 second), and hungtask (D-state process hang) events jointly cover anomalies along the CPU scheduling path. When system stalls or response timeouts occur, kernel call stacks and other diagnostic data are automatically preserved, supporting offline analysis after the fault clears.
 
 ## 🚀 Usage
 
@@ -39,7 +39,7 @@ All events provide default values and are operational without any configuration.
 
 | Parameter | Default | Description |
 | --------- | ------- | ----------- |
-| `softirq.disabled_threshold` | `10000000` (10ms, nanoseconds) | Softirq disable time trigger threshold |
+| `softirq.disabled_threshold` | `10000000` (10ms, nanoseconds) | Scheduler tick interval threshold |
 | `memory_reclaim.blocked_threshold` | `900000000` (900ms, nanoseconds) | Direct memory reclaim time trigger threshold |
 | `net_rx_latency.driver2net_rx` | `5` (ms) | Latency threshold from NIC driver to `__netif_receive_skb` |
 | `net_rx_latency.driver2tcp` | `10` (ms) | Latency threshold from NIC driver to `tcp_v4_rcv` |
@@ -57,7 +57,7 @@ All events provide default values and are operational without any configuration.
 
 | Event Name (tracer_name) | Probe Type | Trigger Condition | Typical Scenarios |
 | ------------------------ | ---------- | ----------------- | ----------------- |
-| `softirq_tracing` | kprobe | Softirq disable time > threshold (default 10ms) | System stalls, network latency, scheduling delays |
+| `softirq_tracing` | kprobe | Scheduler tick interval >= threshold (default 10ms) | System stalls, network latency, scheduling delays |
 | `softlockup` | kprobe | CPU unable to schedule for extended time (~1 second) | Soft lockup, response anomalies |
 | `hungtask` | kprobe | D-state process task hang | Transient mass D-state processes, IO blocking |
 | `oom` | kprobe | OOM Killer triggered | Container/host memory exhaustion |
@@ -92,7 +92,7 @@ All event records include the following common fields:
 
 ### 1. softirq_tracing
 
-**Description** Triggered when the kernel disables softirqs for longer than the configured threshold. Records the kernel call stack during the disable period and current process information to help analyze interrupt-related latency issues. The filter automatically excludes noise events from `ksoftirqd` and `swapper` processes.
+**Description** Measures the interval between scheduler ticks. When the interval reaches the threshold, it records the current kernel call stack and process information. The event can reveal long IRQ-off sections, CPU stalls, or virtualization scheduling delays, but does not by itself prove that softirqs were disabled. `comm` and `pid` identify the task interrupted by the reporting tick; they do not identify the cause of the delay.
 
 **Data Storage** Event data is automatically stored in Elasticsearch or as files on the physical machine disk.
 
@@ -122,12 +122,12 @@ All event records include the following common fields:
 **Fields**
 
 - **comm**: Name of the process that triggered the event
-- **stack**: Kernel call stack during the softirq disable period
+- **stack**: Kernel call stack captured on the first scheduler tick after the delay
 - **now**: Monotonic clock timestamp at the time of the event (nanoseconds)
-- **offtime**: Duration that softirqs were disabled (nanoseconds)
+- **offtime**: Total interval between adjacent scheduler ticks (nanoseconds)
 - **cpu**: CPU number where the event occurred
-- **threshold**: Trigger threshold (nanoseconds); events are recorded when this is exceeded
-- **pid**: Process ID that triggered the event
+- **threshold**: Inclusive scheduler tick interval threshold (nanoseconds)
+- **pid**: Process ID of the task interrupted by the reporting tick
 
 ### 2. dropwatch
 

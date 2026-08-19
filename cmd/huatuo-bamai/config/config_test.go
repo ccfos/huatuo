@@ -284,11 +284,18 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: "validating autotracing issues list",
 		},
 		{
+			name: "invalid softirq threshold",
+			mutate: func(cfg *Config) {
+				cfg.EventTracing.Softirq.DisabledThreshold = 0
+			},
+			wantErr: "validating event tracing config: softirq disabled threshold",
+		},
+		{
 			name: "invalid event tracing issue shape",
 			mutate: func(cfg *Config) {
 				cfg.EventTracing.IssuesList = [][]string{{"missing-expression"}}
 			},
-			wantErr: "validating event tracing issues list",
+			wantErr: "validating event tracing config: validating issues list",
 		},
 	}
 

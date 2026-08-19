@@ -648,17 +648,17 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 该 section 负责内核关键事件的捕获与延迟监控，包括软中断、内存回收、网络接收延迟、网卡事件及丢包监控等，是 HUATUO 内核级异常上下文采集的核心模块。
 
-#### 8.1 软中断禁用追踪
+#### 8.1 调度 tick 间隔追踪
 
 ```bash
 # linux kernel events capturing configuration
 [EventTracing]
 	# softirq
 	#
-	# tracing the softirq disabled events of linux kernel.
+	# Trace long scheduler tick intervals.
 	#
 	# - DisabledThreshold
-	# When the disable duration of softirq exceeds the threshold, huatuo-bamai
+	# When the scheduler tick interval reaches the threshold, huatuo-bamai
 	# will collect kernel context.
 	# Default: 10000000 in nanoseconds, 10ms
 	#
@@ -666,7 +666,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 		# DisabledThreshold = 10000000
 ```
 
-- **DisabledThreshold**：软中断禁用持续时间阈值（纳秒）。默认 10000000 ns（10ms）。 当内核软中断被禁用时间超过该阈值时，huatuo-bamai 将自动采集内核上下文。 说明：软中断长时间禁用可能导致网络、定时器等延迟，适合诊断中断风暴或高负载场景。
+- **DisabledThreshold**：调度 tick 间隔阈值（纳秒）。默认 10000000 ns（10ms）。达到该阈值时采集事件。字段名为兼容现有配置而保留。该事件通过过长的 tick 间隔推断 CPU 异常停顿，不能单独证明软中断被禁用。
 
 #### 8.2 内存回收阻塞追踪
 

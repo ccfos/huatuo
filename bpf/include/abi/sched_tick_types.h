@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef __BPF_ABI_SOFTIRQ_H__
-#define __BPF_ABI_SOFTIRQ_H__
+#ifndef __BPF_ABI_SCHED_TICK_H__
+#define __BPF_ABI_SCHED_TICK_H__
 
 #include "bpf_abi.h"
 
-struct softirq_event {
+struct sched_tick_event {
 	u64 stack[PERF_MAX_STACK_DEPTH];
 	s64 stack_size;
-	u64 now;
-	u64 stall_time;
+	u64 timestamp_ns;
+	u64 tick_interval_ns;
 	u8 comm[COMPAT_TASK_COMM_LEN];
-	u32 pid;
+	u32 tgid;
 	u32 cpu;
 };
 
-BPF_ABI_EXPORT(softirq_event);
+BPF_ABI_EXPORT(sched_tick_event);
 
-#endif /* __BPF_ABI_SOFTIRQ_H__ */
+#endif /* __BPF_ABI_SCHED_TICK_H__ */

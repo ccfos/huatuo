@@ -40,29 +40,25 @@ var tickRestartKprobeSymbols = []string{
 	"__tick_nohz_idle_restart_tick",
 }
 
-func selectTickRestartKprobeSymbol() (string, error) {
-	for _, candidate := range tickRestartKprobeSymbols {
-		if bpf.HasKprobeFunction(candidate) {
-			return candidate, nil
+func selectRestartTickKprobeSymbol() (string, error) {
+	for _, symbolName := range tickRestartKprobeSymbols {
+		if bpf.HasKprobeFunction(symbolName) {
+			return symbolName, nil
 		}
 	}
 
-	return "", fmt.Errorf(
-		"none of the softirq restart hooks [%s] are available: %w",
-		strings.Join(tickRestartKprobeSymbols, ", "),
-		os.ErrNotExist,
-	)
+	return "", os.ErrNotExist
 }
 
-// SoftirqTracingData is the full data structure.
-type SoftirqTracingData struct {
-	OffTime   uint64 `json:"offtime"`
-	Threshold uint64 `json:"threshold"`
-	Comm      string `json:"comm"`
-	Pid       uint32 `json:"pid"`
-	CPU       uint32 `json:"cpu"`
-	Now       uint64 `json:"now"`
-	Stack     string `json:"stack"`
+// SchedTickTracingData is the full scheduler tick tracing record.
+type SchedTickTracingData struct {
+	TickIntervalNS uint64 `json:"offtime"` // The JSON name is retained for compatibility.
+	ThresholdNS    uint64 `json:"threshold"`
+	Comm           string `json:"comm"`
+	TGID           uint32 `json:"pid"`
+	CPU            uint32 `json:"cpu"`
+	TimestampNS    uint64 `json:"now"`
+	Stack          string `json:"stack"`
 }
 
 func init() {
@@ -77,11 +73,16 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func (c *softirqTracing) Start(ctx context.Context) error {
+func (*softirqTracing) Start(ctx context.Context) error {
 	cfg := configSnapshot()
-	softirqThresh := cfg.Softirq.DisabledThreshold
+	tickIntervalThresholdNS := cfg.Softirq.DisabledThreshold
 
-	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), map[string]any{"softirq_thresh": softirqThresh})
+	b, err := bpf.LoadBPF(
+		bpf.ThisBpfOBJ(),
+		map[string]any{
+			"sched_tick_interval_threshold_ns": tickIntervalThresholdNS,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}
@@ -90,15 +91,38 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	reader, err := attachIrqAndEventPipe(childCtx, b)
+	reader, err := b.EventPipeByName(childCtx, "sched_tick_events", 8192)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return types.ErrNotSupported
 		}
 
-		return fmt.Errorf("attach irq and event pipe: %w", err)
+		return fmt.Errorf("open scheduler tick event reader: %w", err)
 	}
 	defer reader.Close()
+
+	/*
+	 * NOTE: There might be more than 100ms gap between hook attachments.
+	 * Attach both NO_HZ state hooks before account_process_tick so incomplete
+	 * state cannot produce events. Detachment order is uncontrolled, so a few
+	 * false positives may occur during shutdown.
+	 */
+	restartTickSymbol, err := selectRestartTickKprobeSymbol()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return types.ErrNotSupported
+		}
+
+		return fmt.Errorf("select scheduler tick restart kprobe: %w", err)
+	}
+
+	if err := b.AttachWithOptions(schedTickAttachOptions(restartTickSymbol)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return types.ErrNotSupported
+		}
+
+		return fmt.Errorf("attach scheduler tick tracing: %w", err)
+	}
 
 	b.DetachOnContextDone(childCtx, cancel)
 
@@ -107,46 +131,34 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var data abi.SoftirqEvent
+			var data abi.SchedTickEvent
 
 			if err := reader.ReadInto(&data); err != nil {
 				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
 					log.WithError(err).Warn("lost BPF perf event samples")
 					continue
 				}
-				return fmt.Errorf("Read From Perf Event fail: %w", err)
+				return fmt.Errorf("read scheduler tick event: %w", err)
 			}
 			comm := bytesutil.ToStr(data.Comm[:])
-			index := strings.Index(comm, "ksoftirqd")
-
-			if index == 0 {
-				continue
-			}
-
-			// stop recording the noise from swapper
-			index = strings.Index(comm, "swapper")
-
-			if index == 0 {
-				continue
-			}
 
 			var stack string
 
-			if data.StackSize > 0 {
-				stack = softirqDumpTrace(data.Stack[:])
+			if stackAddrs := schedTickStackAddrs(&data); len(stackAddrs) > 0 {
+				stack = formatSchedTickStack(stackAddrs)
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
 				TracerName: "softirq_tracing",
 				TracerTime: time.Now(),
-				TracerData: &SoftirqTracingData{
-					OffTime:   data.StallTime,
-					Threshold: softirqThresh,
-					Comm:      comm,
-					Pid:       data.PID,
-					CPU:       data.CPU,
-					Now:       data.Now,
-					Stack:     fmt.Sprintf("stack:\n%s", stack),
+				TracerData: &SchedTickTracingData{
+					TickIntervalNS: data.TickIntervalNS,
+					ThresholdNS:    tickIntervalThresholdNS,
+					Comm:           comm,
+					TGID:           data.TGID,
+					CPU:            data.CPU,
+					TimestampNS:    data.TimestampNS,
+					Stack:          fmt.Sprintf("stack:\n%s", stack),
 				},
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
@@ -155,55 +167,42 @@ func (c *softirqTracing) Start(ctx context.Context) error {
 	} // forever
 }
 
-// softirqDumpTrace is an interface for dump stacks in this case with offset and module info
-func softirqDumpTrace(addrs []uint64) string {
+// formatSchedTickStack adds symbol offsets and module names to stack frames.
+func formatSchedTickStack(addrs []uint64) string {
 	stacks := symbol.KsymStackStrs(addrs, symbol.KsymStackMaxDepth)
 	return strings.Join(stacks, "\n")
 }
 
-func attachIrqAndEventPipe(ctx context.Context, b bpf.BPF) (bpf.PerfEventReader, error) {
-	reader, err := b.EventPipeByName(ctx, "irqoff_event_map", 8192)
-	if err != nil {
-		return nil, err
+func schedTickStackAddrs(data *abi.SchedTickEvent) []uint64 {
+	const kernelAddressSize = 8
+
+	if data.StackSize <= 0 {
+		return nil
 	}
 
-	// Ubuntu 20.04's 5.4 kernel may only expose the idle restart symbol.
-	// Upstream removed that helper in 5.14, so prefer the current symbol.
-	restartSymbol, err := selectTickRestartKprobeSymbol()
-	if err != nil {
-		reader.Close()
-		return nil, err
+	stackSize := data.StackSize
+	maxStackSize := int64(len(data.Stack) * kernelAddressSize)
+	if stackSize > maxStackSize {
+		stackSize = maxStackSize
 	}
 
-	/*
-	 * NOTE: There might be more than 100ms gap between the attachment of hooks,
-	 * so the order of attaching the kprobe and tracepoint is important for us.
-	 * probe_scheduler_tick should not be attached before probe_tick_stop and not be
-	 * attached later than probe_tick_nohz_restart_sched_tick. So only
-	 * probe_tick_stop -> probe_scheduler_tick -> probe_tick_nohz_restart_sched_tick
-	 * works for the scenario.
-	 *
-	 * But we can't control the order of detachment, as it is executed in a random
-	 * sequence in HuaTuo. Therefore, when we exit due to some special reasons, a
-	 * small number of false alarm might be hit.
-	 */
-	if err := b.AttachWithOptions([]bpf.AttachOption{
+	depth := int(stackSize) / kernelAddressSize
+	return data.Stack[:depth]
+}
+
+func schedTickAttachOptions(restartSchedTickSymbol string) []bpf.AttachOption {
+	return []bpf.AttachOption{
 		{
-			ProgramName: "probe_account_process_tick",
-			Symbol:      "account_process_tick",
+			ProgramName: "trace_sched_tick_restart",
+			Symbol:      restartSchedTickSymbol,
 		},
 		{
-			ProgramName: "probe_tick_nohz_restart_sched_tick",
-			Symbol:      restartSymbol,
-		},
-		{
-			ProgramName: "probe_tick_stop",
+			ProgramName: "trace_sched_tick_stop",
 			Symbol:      "timer/tick_stop",
 		},
-	}); err != nil {
-		reader.Close()
-		return nil, err
+		{
+			ProgramName: "trace_sched_tick_interval",
+			Symbol:      "account_process_tick",
+		},
 	}
-
-	return reader, nil
 }

@@ -846,7 +846,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "Detects excessive softirq-disabled durations. Outputs kernel call stack.",
+      "description": "Detects scheduler tick intervals that reach the configured threshold. Outputs kernel call stack.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -9097,7 +9097,7 @@
               "showLineNumbers": false,
               "showMiniMap": false
             },
-            "content": "## softirq(Event)\n\nDetects excessively long softirq disabled duration in the kernel.  \nOutputs kernel call stack and process context information for analysis.\n\nHelps identify and resolve system stalls, network latency, and scheduling delays.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Softirq disabled duration > 100 ms",
+            "content": "## softirq(Event)\n\nDetects scheduler tick intervals that reach the configured threshold.  \nOutputs kernel call stack and sampled process context for analysis.\n\nHelps identify and resolve system stalls, network latency, and scheduling delays.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Scheduler tick interval >= 100 ms",
             "mode": "markdown"
           },
           "pluginVersion": "9.5.21",

@@ -645,17 +645,17 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
 This section is responsible for capturing key kernel events and monitoring latency, including softirq, memory reclaim, network receive latency, network device events, and packet drop monitoring. It is the core module for kernel-level anomaly context collection in HUATUO.
 
-#### 8.1 Softirq Disable Tracing
+#### 8.1 Scheduler Tick Interval Tracing
 
 ```bash
 # linux kernel events capturing configuration
 [EventTracing]
 	# softirq
 	#
-	# Trace softirq disabled events in the Linux kernel.
+	# Trace long scheduler tick intervals.
 	#
 	# - DisabledThreshold
-	# When the disable duration of softirq exceeds the threshold, huatuo-bamai
+	# When the scheduler tick interval reaches the threshold, huatuo-bamai
 	# will collect kernel context.
 	# Default: 10000000 in nanoseconds, 10ms
 	#
@@ -663,11 +663,11 @@ This section is responsible for capturing key kernel events and monitoring laten
 		# DisabledThreshold = 10000000
 ```
 
-- **DisabledThreshold**: Softirq disable duration threshold (nanoseconds).
+- **DisabledThreshold**: Scheduler tick interval threshold, in nanoseconds.
 
-  Default: 10,000,000 ns (10ms). When softirq is disabled longer than this threshold, kernel context is collected.
+  Default: 10,000,000 ns (10ms). The field name is retained for configuration compatibility.
 
-  **Description**: Long softirq disable periods can cause delays in networking, timers, etc. Useful for diagnosing interrupt storms or high-load scenarios.
+  **Description**: The event infers CPU stalls from long scheduler tick intervals. It does not by itself prove that softirqs were disabled.
 
 #### 8.2 Memory Reclaim Blocking Tracing
 

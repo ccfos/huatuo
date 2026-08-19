@@ -16,11 +16,61 @@ package events
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
 	testutils "huatuo-bamai/internal/testing"
 )
+
+func TestConfigValidate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		configure func(*Config)
+		wantError string
+	}{
+		{
+			name: "valid config",
+		},
+		{
+			name: "zero softirq threshold",
+			configure: func(cfg *Config) {
+				cfg.Softirq.DisabledThreshold = 0
+			},
+			wantError: "softirq disabled threshold must be greater than zero",
+		},
+		{
+			name: "invalid issues list",
+			configure: func(cfg *Config) {
+				cfg.IssuesList = [][]string{{"missing-expression"}}
+			},
+			wantError: "validating issues list",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{}
+			cfg.Softirq.DisabledThreshold = 1
+			if tt.configure != nil {
+				tt.configure(cfg)
+			}
+
+			err := cfg.Validate()
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("Validate() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Validate() error = %v, want contain %q", err, tt.wantError)
+			}
+		})
+	}
+}
 
 func TestConfigCloneDoesNotShareMutableReferences(t *testing.T) {
 	source := &Config{}

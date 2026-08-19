@@ -17,7 +17,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统、网络协议栈、硬件错误等核心子系统实施实时异常事件观测。当内核触发 softlockup、OOM、硬件 MCE 等异常状态时，eBPF 程序通过挂钩（hook）内核函数（kprobe）或内核 tracepoint，在事件发生的第一时间采集进程信息、内核调用栈、网络上下文等现场数据，并经由 perf event 环形缓冲区传递至用户态处理程序，最终持久化至 Elasticsearch 或本地磁盘文件。
 
-相比传统的基于内核日志（dmesg/syslog）采集方案，eBPF 事件观测具备更低的数据丢失风险——不会因内核日志缓冲区满溢而丢失关键事件；同时可捕获不会写入内核日志的短暂性异常（如软中断关闭时间过长）；并提供容器级别的事件关联信息，满足云原生场景下的精准定位需求。
+相比传统的基于内核日志（dmesg/syslog）采集方案，eBPF 事件观测具备更低的数据丢失风险——不会因内核日志缓冲区满溢而丢失关键事件；同时可捕获不会写入内核日志的短暂性异常（如调度 tick 间隔过长）；并提供容器级别的事件关联信息，满足云原生场景下的精准定位需求。
 
 当前支持 12 类事件的持续观测，覆盖 CPU 调度健康状态（softirq_tracing、softlockup、hungtask）、内存压力（oom、memory_reclaim_events）、网络协议栈（dropwatch、tcp_retransmit、net_rx_latency、netdev_events、netdev_bonding_lacp、netdev_txqueue_timeout）以及硬件可靠性（ras）等方面。
 
@@ -29,7 +29,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 **网络性能毛刺分析**：dropwatch 观测内核网络协议栈丢包行为，tcp_retransmit 观测 TCP 重传活动，net_rx_latency 检测单个数据包从网卡驱动到用户态的完整接收路径延迟，按阶段（网卡到内核、内核到 TCP、TCP 到用户态）分别设置阈值（默认 5ms / 10ms / 115ms），精准定位造成业务超时的网络层位置，提升网络问题根因定位效率。
 
-**主机调度健康观测**：softirq_tracing（软中断关闭时间，默认阈值 10ms）、softlockup（CPU 无法调度，约 1 秒）、hungtask（D 状态进程任务挂起）三类事件联合覆盖 CPU 调度路径的异常状态，当系统出现卡顿、响应超时等现象时，自动保留内核调用栈等诊断信息，支持在故障消失后的离线分析。
+**主机调度健康观测**：softirq_tracing（调度 tick 间隔，默认阈值 10ms）、softlockup（CPU 无法调度，约 1 秒）、hungtask（D 状态进程任务挂起）三类事件联合覆盖 CPU 调度路径的异常状态，当系统出现卡顿、响应超时等现象时，自动保留内核调用栈等诊断信息，支持在故障消失后的离线分析。
 
 ## 🚀 使用
 
@@ -39,7 +39,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 | 参数 | 默认值 | 说明 |
 | ---- | ------ | ---- |
-| `softirq.disabled_threshold` | `10000000`（10ms，纳秒） | 软中断关闭时间触发阈值 |
+| `softirq.disabled_threshold` | `10000000`（10ms，纳秒） | 调度 tick 间隔阈值 |
 | `memory_reclaim.blocked_threshold` | `900000000`（900ms，纳秒） | 直接内存回收时间触发阈值 |
 | `net_rx_latency.driver2net_rx` | `5`（ms） | 从网卡驱动到 `__netif_receive_skb` 的延迟阈值 |
 | `net_rx_latency.driver2tcp` | `10`（ms） | 从网卡驱动到 `tcp_v4_rcv` 的延迟阈值 |
@@ -57,7 +57,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 | 事件名称（tracer_name） | 探针类型 | 触发条件 | 典型场景 |
 | ----------------------- | -------- | -------- | -------- |
-| `softirq_tracing` | kprobe | 软中断关闭时间 > 阈值（默认 10ms） | 系统卡顿、网络延迟、调度延迟 |
+| `softirq_tracing` | kprobe | 调度 tick 间隔 >= 阈值（默认 10ms） | 系统卡顿、网络延迟、调度延迟 |
 | `softlockup` | kprobe | CPU 长时间无法调度（约 1 秒） | 系统软锁死、响应异常 |
 | `hungtask` | kprobe | D 状态进程任务挂起 | 瞬时批量 D 进程、IO 阻塞 |
 | `oom` | kprobe | OOM Killer 触发 | 容器/宿主机内存耗尽 |
@@ -90,9 +90,9 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 - **tracer_type**：触发类型（手动触发或自动触发）
 - **tracer_data**：特定事件私有数据（详见各事件说明）
 
-### 1. softirq_tracing 软中断关闭
+### 1. softirq_tracing 调度 tick 间隔
 
-**功能描述** 检测内核关闭软中断时间过长时触发，记录关闭软中断期间的内核调用栈、当前进程信息等关键数据，帮助分析中断相关延迟问题。过滤器自动排除 `ksoftirqd` 和 `swapper` 进程产生的噪声事件。
+**功能描述** 检测相邻调度 tick 的总间隔；间隔达到阈值时记录当前内核调用栈和进程信息。该事件可发现 IRQ 长时间关闭、CPU 停顿或虚拟化调度延迟等问题，但不能单独证明软中断被禁用。`comm` 和 `pid` 表示上报 tick 所中断的任务，不表示造成延迟的任务。
 
 **数据存储** 事件数据自动存储至 Elasticsearch 或物理机磁盘文件。
 
@@ -122,12 +122,12 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 **字段含义解释**
 
 - **comm**：触发事件的进程名称
-- **stack**：关闭软中断期间的内核调用栈
+- **stack**：延迟结束后的首个调度 tick 上采集的内核调用栈
 - **now**：事件发生时的单调时钟时间戳（纳秒）
-- **offtime**：软中断关闭的持续时间（纳秒）
+- **offtime**：相邻调度 tick 的总间隔（纳秒）
 - **cpu**：发生事件的 CPU 编号
-- **threshold**：触发阈值（纳秒），超过该值则记录事件
-- **pid**：触发事件的进程 ID
+- **threshold**：调度 tick 间隔阈值（纳秒），达到该值则记录事件
+- **pid**：上报 tick 所中断任务的进程 ID
 
 ### 2. dropwatch 协议栈丢包
 

@@ -148,7 +148,7 @@ The `data` field contains the standard HUATUO event record:
 | `netdev_txqueue_timeout` | Network device transmit queue timeout events |
 | `netdev_bonding_lacp` | Bond device LACP protocol anomaly events |
 | `net_rx_latency` | Network receive latency anomaly events |
-| `softirq_tracing` | Soft IRQ excessive latency tracing events |
+| `softirq_tracing` | Scheduler tick interval tracing events |
 | `memory_reclaim_events` | Memory reclaim anomaly events |
 | `cpuidle` | CPU idle rate anomaly (AutoTracing, auto-triggered) |
 | `cpusys` | CPU system-mode usage anomaly (AutoTracing, auto-triggered) |

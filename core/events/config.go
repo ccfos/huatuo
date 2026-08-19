@@ -15,8 +15,12 @@
 package events
 
 import (
+	"errors"
+	"fmt"
 	"slices"
 	"sync/atomic"
+
+	"huatuo-bamai/internal/matcher"
 )
 
 // Config holds event tracing configuration.
@@ -76,6 +80,18 @@ func Set(c *Config) {
 
 func configSnapshot() *Config {
 	return currentConfig.Load()
+}
+
+// Validate rejects invalid event tracing settings.
+func (c *Config) Validate() error {
+	if c.Softirq.DisabledThreshold == 0 {
+		return errors.New("softirq disabled threshold must be greater than zero")
+	}
+	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
+		return fmt.Errorf("validating issues list: %w", err)
+	}
+
+	return nil
 }
 
 // Clone returns a deep copy suitable for immutable publication.

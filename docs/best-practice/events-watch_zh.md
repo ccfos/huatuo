@@ -148,7 +148,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 | `netdev_txqueue_timeout` | 网络设备发送队列超时事件                        |
 | `netdev_bonding_lacp`    | Bond 设备 LACP 协议异常事件                    |
 | `net_rx_latency`         | 网络接收延迟异常事件                            |
-| `softirq_tracing`        | 软中断耗时异常追踪事件                          |
+| `softirq_tracing`        | 调度 tick 间隔异常追踪事件                     |
 | `memory_reclaim_events`  | 内存回收异常事件                               |
 | `cpuidle`                | CPU 空闲率异常（AutoTracing 自动触发）         |
 | `cpusys`                 | CPU 系统态占用率异常（AutoTracing 自动触发）   |
