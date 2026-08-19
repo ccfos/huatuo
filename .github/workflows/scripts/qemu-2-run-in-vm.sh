@@ -103,6 +103,10 @@ function prapre_test_env() {
 		packages=(
 			# basic
 			"make" "libbpf-dev" "clang" "git" "gcc" "jq" "capnproto"
+			# memray bundle
+			"g++" "python3-dev" "python3-pip" "python3-setuptools" "python3-wheel"
+			"python3-pkgconfig" "cython3" "pkg-config" "liblz4-dev" "libunwind-dev"
+			"libdebuginfod-dev"
 			# tcpshark retransmit integration test deps
 			"iptables" "iproute2" "python3"
 		)

@@ -27,10 +27,22 @@ BuildRequires: curl
 BuildRequires: git
 BuildRequires: golang
 BuildRequires: unzip
+BuildRequires: gcc-c++
+BuildRequires: pkgconf-pkg-config
+BuildRequires: python3-devel
+BuildRequires: python3-pip
+BuildRequires: python3-setuptools
+BuildRequires: python3-wheel
+BuildRequires: python3-Cython
+BuildRequires: python3-pkgconfig
+BuildRequires: libunwind-devel
+BuildRequires: lz4-devel
 
 # Runtime dependencies
 Requires: systemd
 Requires: glibc >= 2.17
+Requires: libunwind
+Requires: lz4-libs
 Requires(post): systemd
 Requires(preun): systemd
 Requires(postun): systemd
@@ -68,7 +80,7 @@ file _output/bin/huatuo-bamai | grep -q "%{_target_cpu}" || {
 }
 
 # Check if required directories exist
-for dir in _output/conf _output/bpf; do
+for dir in _output/conf _output/bpf _output/tools/memray-lite/runtimes; do
     if [ ! -d "$dir" ]; then
         echo "ERROR: Required directory $dir not found"
         exit 1
@@ -96,7 +108,8 @@ sed -i 's/"http:\/\/127.0.0.1:9200"/""/' _output/conf/huatuo-bamai.conf
 
 # Install main application to /opt
 mkdir -p %{buildroot}/opt/huatuo-bamai
-cp -r _output/bin _output/conf _output/bpf LICENSE %{buildroot}/opt/huatuo-bamai/
+cp -r _output/bin _output/conf _output/bpf _output/tools LICENSE \
+    %{buildroot}/opt/huatuo-bamai/
 
 # Install grafana-example directory (extract from zip)
 mkdir -p %{buildroot}/opt/huatuo-bamai/grafana-example
@@ -134,6 +147,7 @@ rm -rf %{buildroot}
 /opt/huatuo-bamai/bin/
 /opt/huatuo-bamai/conf/
 /opt/huatuo-bamai/bpf/
+/opt/huatuo-bamai/tools/
 /opt/huatuo-bamai/grafana-example/
 /usr/local/bin/huatuo-bamai
 /etc/systemd/system/huatuo-bamai.service
