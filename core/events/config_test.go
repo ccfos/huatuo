@@ -35,11 +35,11 @@ func TestConfigValidate(t *testing.T) {
 			name: "valid config",
 		},
 		{
-			name: "zero softirq threshold",
+			name: "zero scheduler tick threshold",
 			configure: func(cfg *Config) {
-				cfg.Softirq.DisabledThreshold = 0
+				cfg.SchedTick.IntervalThreshold = 0
 			},
-			wantError: "softirq disabled threshold must be greater than zero",
+			wantError: "scheduler tick interval threshold must be greater than zero",
 		},
 		{
 			name: "invalid issues list",
@@ -53,7 +53,7 @@ func TestConfigValidate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &Config{}
-			cfg.Softirq.DisabledThreshold = 1
+			cfg.SchedTick.IntervalThreshold = 1
 			if tt.configure != nil {
 				tt.configure(cfg)
 			}

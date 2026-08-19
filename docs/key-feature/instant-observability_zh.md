@@ -19,7 +19,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 相比传统的基于内核日志（dmesg/syslog）采集方案，eBPF 事件观测具备更低的数据丢失风险——不会因内核日志缓冲区满溢而丢失关键事件；同时可捕获不会写入内核日志的短暂性异常（如调度 tick 间隔过长）；并提供容器级别的事件关联信息，满足云原生场景下的精准定位需求。
 
-当前支持 12 类事件的持续观测，覆盖 CPU 调度健康状态（softirq_tracing、softlockup、hungtask）、内存压力（oom、memory_reclaim_events）、网络协议栈（dropwatch、tcp_retransmit、net_rx_latency、netdev_events、netdev_bonding_lacp、netdev_txqueue_timeout）以及硬件可靠性（ras）等方面。
+当前支持 12 类事件的持续观测，覆盖 CPU 调度健康状态（sched_tick、softlockup、hungtask）、内存压力（oom、memory_reclaim_events）、网络协议栈（dropwatch、tcp_retransmit、net_rx_latency、netdev_events、netdev_bonding_lacp、netdev_txqueue_timeout）以及硬件可靠性（ras）等方面。
 
 ## 🎯 场景
 
@@ -29,7 +29,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 **网络性能毛刺分析**：dropwatch 观测内核网络协议栈丢包行为，tcp_retransmit 观测 TCP 重传活动，net_rx_latency 检测单个数据包从网卡驱动到用户态的完整接收路径延迟，按阶段（网卡到内核、内核到 TCP、TCP 到用户态）分别设置阈值（默认 5ms / 10ms / 115ms），精准定位造成业务超时的网络层位置，提升网络问题根因定位效率。
 
-**主机调度健康观测**：softirq_tracing（调度 tick 间隔，默认阈值 10ms）、softlockup（CPU 无法调度，约 1 秒）、hungtask（D 状态进程任务挂起）三类事件联合覆盖 CPU 调度路径的异常状态，当系统出现卡顿、响应超时等现象时，自动保留内核调用栈等诊断信息，支持在故障消失后的离线分析。
+**主机调度健康观测**：sched_tick（调度 tick 间隔，默认阈值 10ms）、softlockup（CPU 无法调度，约 1 秒）、hungtask（D 状态进程任务挂起）三类事件联合覆盖 CPU 调度路径的异常状态，当系统出现卡顿、响应超时等现象时，自动保留内核调用栈等诊断信息，支持在故障消失后的离线分析。
 
 ## 🚀 使用
 
@@ -39,7 +39,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 | 参数 | 默认值 | 说明 |
 | ---- | ------ | ---- |
-| `softirq.disabled_threshold` | `10000000`（10ms，纳秒） | 调度 tick 间隔阈值 |
+| `sched_tick.interval_threshold` | `10000000`（10ms，纳秒） | 调度 tick 间隔阈值 |
 | `memory_reclaim.blocked_threshold` | `900000000`（900ms，纳秒） | 直接内存回收时间触发阈值 |
 | `net_rx_latency.driver2net_rx` | `5`（ms） | 从网卡驱动到 `__netif_receive_skb` 的延迟阈值 |
 | `net_rx_latency.driver2tcp` | `10`（ms） | 从网卡驱动到 `tcp_v4_rcv` 的延迟阈值 |
@@ -57,7 +57,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 | 事件名称（tracer_name） | 探针类型 | 触发条件 | 典型场景 |
 | ----------------------- | -------- | -------- | -------- |
-| `softirq_tracing` | kprobe | 调度 tick 间隔 >= 阈值（默认 10ms） | 系统卡顿、网络延迟、调度延迟 |
+| `sched_tick` | kprobe | 调度 tick 间隔 >= 阈值（默认 10ms） | 系统卡顿、网络延迟、调度延迟 |
 | `softlockup` | kprobe | CPU 长时间无法调度（约 1 秒） | 系统软锁死、响应异常 |
 | `hungtask` | kprobe | D 状态进程任务挂起 | 瞬时批量 D 进程、IO 阻塞 |
 | `oom` | kprobe | OOM Killer 触发 | 容器/宿主机内存耗尽 |
@@ -84,15 +84,23 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 - **container_host_namespace**：如果事件关联容器，则记录容器的 K8s 命名空间
 - **container_type**：容器类型，例如 `normal` 普通容器，`sidecar` 边车容器等
 - **container_qos**：容器 QoS 级别
-- **tracer_name**：事件名称（如 `softirq_tracing`、`oom` 等）
+- **tracer_name**：事件名称（如 `sched_tick`、`oom` 等）
 - **tracer_id**：此次的 tracing ID
 - **tracer_time**：触发 tracing 时间
 - **tracer_type**：触发类型（手动触发或自动触发）
 - **tracer_data**：特定事件私有数据（详见各事件说明）
 
-### 1. softirq_tracing 调度 tick 间隔
+### 1. sched_tick 调度 tick 间隔
 
 **功能描述** 检测相邻调度 tick 的总间隔；间隔达到阈值时记录当前内核调用栈和进程信息。该事件可发现 IRQ 长时间关闭、CPU 停顿或虚拟化调度延迟等问题，但不能单独证明软中断被禁用。`comm` 和 `pid` 表示上报 tick 所中断的任务，不表示造成延迟的任务。
+
+**适用场景**
+
+- 内核或驱动长时间关闭本地中断，或 hardirq/NMI 长时间占用 CPU。
+- 虚拟机 vCPU 被宿主机长时间抢占，包括高 steal time 和调度停顿。
+- SMI、固件停顿、clockevent 延迟投递或丢失等底层异常。
+
+**使用边界** 成功进入 NO_HZ 的正常停 tick 会被过滤。普通 CPU 高负载或 softirq backlog 本身不等同于 tick 延迟。阈值应高于目标机器的正常 tick 周期；事件栈仅表示延迟结束后首个 tick 的现场，需要结合 IRQ、steal time 和硬件指标定位根因。
 
 **数据存储** 事件数据自动存储至 Elasticsearch 或物理机磁盘文件。
 
@@ -115,7 +123,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
     "tracer_type": "auto",
     "time": "2025-06-11 16:05:16.251 +0800",
     "region": "***",
-    "tracer_name": "softirq_tracing"
+    "tracer_name": "sched_tick"
 }
 ```
 
@@ -515,7 +523,7 @@ HUATUO 的异常事件观测基于 eBPF 技术，在内核态以极低的性能�
 graph TB
     subgraph "Linux Kernel"
         direction TB
-        K1["kprobe 挂钩\n(softirq_tracing / softlockup / hungtask\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP，可选)"]
+        K1["kprobe 挂钩\n(sched_tick / softlockup / hungtask\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP，可选)"]
         K2["tracepoint 挂钩\n(ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
         K3["netlink 订阅\n(netdev_events: RTM_NEWLINK)"]
         K4["kprobe 挂钩\n(netdev_bonding_lacp: 802.3ad)"]

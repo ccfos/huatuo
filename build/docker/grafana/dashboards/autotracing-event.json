@@ -423,7 +423,7 @@
           "timeField": "uploaded_time"
         },
         {
-          "alias": "softirq",
+          "alias": "sched_tick",
           "bucketAggs": [
             {
               "field": "uploaded_time",
@@ -445,7 +445,7 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:softirq_tracing AND region.keyword:$region AND hostname.keyword:$hostname",
+          "query": "tracer_name:sched_tick AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "L",
           "timeField": "uploaded_time"
         },
@@ -672,7 +672,7 @@
               "type": "count"
             }
           ],
-          "query": "region.keyword:$region AND hostname.keyword:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR tracer_name:oom \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch \nOR tracer_name:net_rx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:softirq_tracing \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
+          "query": "region.keyword:$region AND hostname.keyword:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR tracer_name:oom \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch \nOR tracer_name:net_rx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:sched_tick \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -913,12 +913,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:softirq_tracing AND region.keyword:$region AND hostname.keyword:$hostname",
+          "query": "tracer_name:sched_tick AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
       ],
-      "title": "softirq",
+      "title": "sched_tick",
       "transformations": [
         {
           "id": "organize",
@@ -9075,7 +9075,7 @@
               "showLineNumbers": false,
               "showMiniMap": false
             },
-            "content": "<div style=\"\n  margin: 15px 0 10px 0; \n  padding-top: 4px; \n  border-top: 3px solid #39A7BB; /* 固定为 huatuo 主题色 */\n\">\n  <h3 style=\"\n    margin: 8px 0 0 0; \n    font-size: 15px; \n    font-weight: 700; \n    color: var(--text-primary);\n    display: flex;\n    align-items: center;\n  \">\n    <span style=\"\n      display: inline-block; \n      width: 8px; \n      height: 8px; \n      background-color: #39A7BB; \n      border-radius: 50%; \n      margin-right: 10px;\n    \"></span>\n    softirq\n  </h3>\n</div>",
+            "content": "<div style=\"\n  margin: 15px 0 10px 0; \n  padding-top: 4px; \n  border-top: 3px solid #39A7BB; /* 固定为 huatuo 主题色 */\n\">\n  <h3 style=\"\n    margin: 8px 0 0 0; \n    font-size: 15px; \n    font-weight: 700; \n    color: var(--text-primary);\n    display: flex;\n    align-items: center;\n  \">\n    <span style=\"\n      display: inline-block; \n      width: 8px; \n      height: 8px; \n      background-color: #39A7BB; \n      border-radius: 50%; \n      margin-right: 10px;\n    \"></span>\n    sched_tick\n  </h3>\n</div>",
             "mode": "html"
           },
           "pluginVersion": "9.5.21",
@@ -9097,7 +9097,7 @@
               "showLineNumbers": false,
               "showMiniMap": false
             },
-            "content": "## softirq(Event)\n\nDetects scheduler tick intervals that reach the configured threshold.  \nOutputs kernel call stack and sampled process context for analysis.\n\nHelps identify and resolve system stalls, network latency, and scheduling delays.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Scheduler tick interval >= 100 ms",
+            "content": "## sched_tick (Event)\n\nDetects scheduler tick intervals that reach the configured threshold.  \nOutputs kernel call stack and sampled process context for analysis.\n\nHelps identify and resolve system stalls, network latency, and scheduling delays.\n\n### Threshold Definition\n\n**Trigger conditions:**\n- Scheduler tick interval >= 10 ms",
             "mode": "markdown"
           },
           "pluginVersion": "9.5.21",
@@ -9174,7 +9174,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:softirq_tracing AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:sched_tick AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9322,7 +9322,7 @@
                   "type": "count"
                 }
               ],
-              "query": "tracer_name:softirq_tracing AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:sched_tick AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }
@@ -9516,7 +9516,7 @@
                   "type": "logs"
                 }
               ],
-              "query": "tracer_name:softirq_tracing AND region.keyword:$region AND hostname.keyword:$hostname",
+              "query": "tracer_name:sched_tick AND region.keyword:$region AND hostname.keyword:$hostname",
               "refId": "A",
               "timeField": "uploaded_time"
             }

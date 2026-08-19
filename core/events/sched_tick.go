@@ -31,17 +31,19 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/softirq_tracing.c -o $BPF_DIR/softirq_tracing.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/sched_tick.c -o $BPF_DIR/sched_tick.o
 
-type softirqTracing struct{}
+const schedTickTracerName = "sched_tick"
 
-var tickRestartKprobeSymbols = []string{
+type schedTickTracing struct{}
+
+var tickRestartSymbols = []string{
 	"tick_nohz_restart_sched_tick",
 	"__tick_nohz_idle_restart_tick",
 }
 
-func selectRestartTickKprobeSymbol() (string, error) {
-	for _, symbolName := range tickRestartKprobeSymbols {
+func selectRestartSchedTickSymbol() (string, error) {
+	for _, symbolName := range tickRestartSymbols {
 		if bpf.HasKprobeFunction(symbolName) {
 			return symbolName, nil
 		}
@@ -62,20 +64,20 @@ type SchedTickTracingData struct {
 }
 
 func init() {
-	tracing.RegisterEventTracing("softirq_tracing", newSoftirq)
+	tracing.RegisterEventTracing(schedTickTracerName, newSchedTick)
 }
 
-func newSoftirq() (*tracing.EventTracingAttr, error) {
+func newSchedTick() (*tracing.EventTracingAttr, error) {
 	return &tracing.EventTracingAttr{
-		TracingData: &softirqTracing{},
+		TracingData: &schedTickTracing{},
 		Interval:    10,
 		Flag:        tracing.FlagTracing,
 	}, nil
 }
 
-func (*softirqTracing) Start(ctx context.Context) error {
+func (*schedTickTracing) Start(ctx context.Context) error {
 	cfg := configSnapshot()
-	tickIntervalThresholdNS := cfg.Softirq.DisabledThreshold
+	tickIntervalThresholdNS := cfg.SchedTick.IntervalThreshold
 
 	b, err := bpf.LoadBPF(
 		bpf.ThisBpfOBJ(),
@@ -107,7 +109,7 @@ func (*softirqTracing) Start(ctx context.Context) error {
 	 * state cannot produce events. Detachment order is uncontrolled, so a few
 	 * false positives may occur during shutdown.
 	 */
-	restartTickSymbol, err := selectRestartTickKprobeSymbol()
+	restartSchedTickSymbol, err := selectRestartSchedTickSymbol()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return types.ErrNotSupported
@@ -116,7 +118,7 @@ func (*softirqTracing) Start(ctx context.Context) error {
 		return fmt.Errorf("select scheduler tick restart kprobe: %w", err)
 	}
 
-	if err := b.AttachWithOptions(schedTickAttachOptions(restartTickSymbol)); err != nil {
+	if err := b.AttachWithOptions(schedTickAttachOptions(restartSchedTickSymbol)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return types.ErrNotSupported
 		}
@@ -149,7 +151,7 @@ func (*softirqTracing) Start(ctx context.Context) error {
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: "softirq_tracing",
+				TracerName: schedTickTracerName,
 				TracerTime: time.Now(),
 				TracerData: &SchedTickTracingData{
 					TickIntervalNS: data.TickIntervalNS,
@@ -190,11 +192,11 @@ func schedTickStackAddrs(data *abi.SchedTickEvent) []uint64 {
 	return data.Stack[:depth]
 }
 
-func schedTickAttachOptions(restartSchedTickSymbol string) []bpf.AttachOption {
+func schedTickAttachOptions(restartTickSymbol string) []bpf.AttachOption {
 	return []bpf.AttachOption{
 		{
 			ProgramName: "trace_sched_tick_restart",
-			Symbol:      restartSchedTickSymbol,
+			Symbol:      restartTickSymbol,
 		},
 		{
 			ProgramName: "trace_sched_tick_stop",

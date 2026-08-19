@@ -69,6 +69,9 @@ IssuesList = [["dload", "jbd2"]]
 [EventTracing]
 IssuesList = [["net_rx_latency", "kernel_sched_tick"]]
 
+[EventTracing.SchedTick]
+IntervalThreshold = 20000000
+
 [EventTracing.NetRxLatency]
 ExcludedContainerQos = ["bestEffort"]
 
@@ -121,6 +124,12 @@ ExcludedOnContainer = "writeback"
 	}
 	if len(Get().AutoTracing.IssuesList) != 1 {
 		t.Errorf("unexpected AutoTracing.IssuesList length: %d", len(Get().AutoTracing.IssuesList))
+	}
+	if Get().EventTracing.SchedTick.IntervalThreshold != 20000000 {
+		t.Errorf(
+			"EventTracing.SchedTick.IntervalThreshold = %d, want 20000000",
+			Get().EventTracing.SchedTick.IntervalThreshold,
+		)
 	}
 	if Get().AutoTracing.CPUSys.IntervalTracing != 1800 {
 		t.Errorf(
@@ -284,11 +293,11 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: "validating autotracing issues list",
 		},
 		{
-			name: "invalid softirq threshold",
+			name: "invalid scheduler tick threshold",
 			mutate: func(cfg *Config) {
-				cfg.EventTracing.Softirq.DisabledThreshold = 0
+				cfg.EventTracing.SchedTick.IntervalThreshold = 0
 			},
-			wantErr: "validating event tracing config: softirq disabled threshold",
+			wantErr: "validating event tracing config: scheduler tick interval threshold",
 		},
 		{
 			name: "invalid event tracing issue shape",

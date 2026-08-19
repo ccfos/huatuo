@@ -34,7 +34,7 @@ Event 常态监听内核事件或阈值条件，在异常发生时保存内核�
 面向需要持续开启的低开销观测，数据写入 Elasticsearch 和本地文件，也可以
 同步生成 Prometheus 指标。内置事件包括：
 
-- 软中断异常 `softirq_tracing`。
+- 调度 tick 间隔异常 `sched_tick`。
 - 内存异常分配 `oom`。
 - 软锁定 `softlockup`。
 - D 状态进程 `hungtask`。

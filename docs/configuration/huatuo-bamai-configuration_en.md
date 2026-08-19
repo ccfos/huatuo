@@ -643,29 +643,29 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
 ### 8. Event Tracing
 
-This section is responsible for capturing key kernel events and monitoring latency, including softirq, memory reclaim, network receive latency, network device events, and packet drop monitoring. It is the core module for kernel-level anomaly context collection in HUATUO.
+This section captures key kernel events and latency, including scheduler tick intervals, memory reclaim, network receive latency, network device events, and packet drops. It is the core module for kernel-level anomaly context collection in HUATUO.
 
 #### 8.1 Scheduler Tick Interval Tracing
 
 ```bash
 # linux kernel events capturing configuration
 [EventTracing]
-	# softirq
+	# scheduler tick
 	#
 	# Trace long scheduler tick intervals.
 	#
-	# - DisabledThreshold
+	# - IntervalThreshold
 	# When the scheduler tick interval reaches the threshold, huatuo-bamai
 	# will collect kernel context.
 	# Default: 10000000 in nanoseconds, 10ms
 	#
-	[EventTracing.Softirq]
-		# DisabledThreshold = 10000000
+	[EventTracing.SchedTick]
+		# IntervalThreshold = 10000000
 ```
 
-- **DisabledThreshold**: Scheduler tick interval threshold, in nanoseconds.
+- **IntervalThreshold**: Scheduler tick interval threshold, in nanoseconds.
 
-  Default: 10,000,000 ns (10ms). The field name is retained for configuration compatibility.
+  Default: 10,000,000 ns (10ms).
 
   **Description**: The event infers CPU stalls from long scheduler tick intervals. It does not by itself prove that softirqs were disabled.
 

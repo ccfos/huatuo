@@ -646,27 +646,27 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
 ### 8. 事件追踪配置
 
-该 section 负责内核关键事件的捕获与延迟监控，包括软中断、内存回收、网络接收延迟、网卡事件及丢包监控等，是 HUATUO 内核级异常上下文采集的核心模块。
+该 section 负责内核关键事件的捕获与延迟监控，包括调度 tick 间隔、内存回收、网络接收延迟、网卡事件及丢包监控等，是 HUATUO 内核级异常上下文采集的核心模块。
 
 #### 8.1 调度 tick 间隔追踪
 
 ```bash
 # linux kernel events capturing configuration
 [EventTracing]
-	# softirq
+	# scheduler tick
 	#
 	# Trace long scheduler tick intervals.
 	#
-	# - DisabledThreshold
+	# - IntervalThreshold
 	# When the scheduler tick interval reaches the threshold, huatuo-bamai
 	# will collect kernel context.
 	# Default: 10000000 in nanoseconds, 10ms
 	#
-	[EventTracing.Softirq]
-		# DisabledThreshold = 10000000
+	[EventTracing.SchedTick]
+		# IntervalThreshold = 10000000
 ```
 
-- **DisabledThreshold**：调度 tick 间隔阈值（纳秒）。默认 10000000 ns（10ms）。达到该阈值时采集事件。字段名为兼容现有配置而保留。该事件通过过长的 tick 间隔推断 CPU 异常停顿，不能单独证明软中断被禁用。
+- **IntervalThreshold**：调度 tick 间隔阈值（纳秒）。默认 10000000 ns（10ms）。达到该阈值时采集事件。该事件通过过长的 tick 间隔推断 CPU 异常停顿，不能单独证明软中断被禁用。
 
 #### 8.2 内存回收阻塞追踪
 

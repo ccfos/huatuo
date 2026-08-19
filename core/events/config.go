@@ -25,9 +25,9 @@ import (
 
 // Config holds event tracing configuration.
 type Config struct {
-	Softirq struct {
+	SchedTick struct {
 		// 10ms
-		DisabledThreshold uint64 `default:"10000000"`
+		IntervalThreshold uint64 `default:"10000000"`
 	}
 
 	MemoryReclaim struct {
@@ -84,8 +84,8 @@ func configSnapshot() *Config {
 
 // Validate rejects invalid event tracing settings.
 func (c *Config) Validate() error {
-	if c.Softirq.DisabledThreshold == 0 {
-		return errors.New("softirq disabled threshold must be greater than zero")
+	if c.SchedTick.IntervalThreshold == 0 {
+		return errors.New("scheduler tick interval threshold must be greater than zero")
 	}
 	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
 		return fmt.Errorf("validating issues list: %w", err)

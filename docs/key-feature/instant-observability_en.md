@@ -19,7 +19,7 @@ HUATUO uses eBPF technology to observe anomalous events in real time across core
 
 Compared to traditional kernel log (dmesg/syslog) collection, eBPF-based event observation reduces the risk of data loss from log buffer overflow; it can capture transient anomalies that never appear in kernel logs (such as excessive scheduler tick intervals); and it provides container-level event correlation for precise root-cause analysis in cloud-native environments.
 
-Twelve event types are continuously observed, covering CPU scheduling health (softirq_tracing, softlockup, hungtask), memory pressure (oom, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
+Twelve event types are continuously observed, covering CPU scheduling health (sched_tick, softlockup, hungtask), memory pressure (oom, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
 
 ## 🎯 Use Cases
 
@@ -29,7 +29,7 @@ Twelve event types are continuously observed, covering CPU scheduling health (so
 
 **Network Performance Jitter Analysis**: dropwatch observes packet drops in the kernel network stack, tcp_retransmit observes TCP retransmission activity, and net_rx_latency detects end-to-end receive-path latency for individual packets from the network card driver to user space. Separate thresholds are configured per stage (driver to kernel: 5ms, kernel to TCP: 10ms, TCP to user space: 115ms), precisely identifying which network layer causes business timeouts.
 
-**Host Scheduling Health Observation**: The softirq_tracing (scheduler tick interval, default threshold 10ms), softlockup (CPU unable to schedule, ~1 second), and hungtask (D-state process hang) events jointly cover anomalies along the CPU scheduling path. When system stalls or response timeouts occur, kernel call stacks and other diagnostic data are automatically preserved, supporting offline analysis after the fault clears.
+**Host Scheduling Health Observation**: The sched_tick (scheduler tick interval, default threshold 10ms), softlockup (CPU unable to schedule, ~1 second), and hungtask (D-state process hang) events jointly cover anomalies along the CPU scheduling path. When system stalls or response timeouts occur, kernel call stacks and other diagnostic data are automatically preserved, supporting offline analysis after the fault clears.
 
 ## 🚀 Usage
 
@@ -39,7 +39,7 @@ All events provide default values and are operational without any configuration.
 
 | Parameter | Default | Description |
 | --------- | ------- | ----------- |
-| `softirq.disabled_threshold` | `10000000` (10ms, nanoseconds) | Scheduler tick interval threshold |
+| `sched_tick.interval_threshold` | `10000000` (10ms, nanoseconds) | Scheduler tick interval threshold |
 | `memory_reclaim.blocked_threshold` | `900000000` (900ms, nanoseconds) | Direct memory reclaim time trigger threshold |
 | `net_rx_latency.driver2net_rx` | `5` (ms) | Latency threshold from NIC driver to `__netif_receive_skb` |
 | `net_rx_latency.driver2tcp` | `10` (ms) | Latency threshold from NIC driver to `tcp_v4_rcv` |
@@ -57,7 +57,7 @@ All events provide default values and are operational without any configuration.
 
 | Event Name (tracer_name) | Probe Type | Trigger Condition | Typical Scenarios |
 | ------------------------ | ---------- | ----------------- | ----------------- |
-| `softirq_tracing` | kprobe | Scheduler tick interval >= threshold (default 10ms) | System stalls, network latency, scheduling delays |
+| `sched_tick` | kprobe | Scheduler tick interval >= threshold (default 10ms) | System stalls, network latency, scheduling delays |
 | `softlockup` | kprobe | CPU unable to schedule for extended time (~1 second) | Soft lockup, response anomalies |
 | `hungtask` | kprobe | D-state process task hang | Transient mass D-state processes, IO blocking |
 | `oom` | kprobe | OOM Killer triggered | Container/host memory exhaustion |
@@ -84,15 +84,23 @@ All event records include the following common fields:
 - **container_host_namespace**: Kubernetes namespace of the container if the event is associated with a container
 - **container_type**: Container type, e.g., `normal` for regular containers, `sidecar` for sidecar containers
 - **container_qos**: Container QoS level
-- **tracer_name**: Event name (e.g., `softirq_tracing`, `oom`)
+- **tracer_name**: Event name (e.g., `sched_tick`, `oom`)
 - **tracer_id**: Tracing ID for this event
 - **tracer_time**: Time when the tracing was triggered
 - **tracer_type**: Trigger type — manual or automatic
 - **tracer_data**: Event-specific private data (see individual event descriptions below)
 
-### 1. softirq_tracing
+### 1. sched_tick
 
 **Description** Measures the interval between scheduler ticks. When the interval reaches the threshold, it records the current kernel call stack and process information. The event can reveal long IRQ-off sections, CPU stalls, or virtualization scheduling delays, but does not by itself prove that softirqs were disabled. `comm` and `pid` identify the task interrupted by the reporting tick; they do not identify the cause of the delay.
+
+**Applicable Scenarios**
+
+- The kernel or a driver disables local interrupts for too long, or hardirq/NMI processing monopolizes the CPU.
+- A VM vCPU is descheduled by the host, including high steal time and scheduling stalls.
+- Low-level anomalies such as SMI or firmware stalls, delayed clockevent delivery, or lost timer events.
+
+**Usage Boundaries** Normal tick suppression after a successful NO_HZ transition is excluded. Ordinary CPU load or a softirq backlog alone does not imply tick delay. Set the threshold above the target system's normal tick period. The captured stack represents the first tick after the delay and should be correlated with IRQ, steal-time, and hardware metrics.
 
 **Data Storage** Event data is automatically stored in Elasticsearch or as files on the physical machine disk.
 
@@ -115,7 +123,7 @@ All event records include the following common fields:
     "tracer_type": "auto",
     "time": "2025-06-11 16:05:16.251 +0800",
     "region": "***",
-    "tracer_name": "softirq_tracing"
+    "tracer_name": "sched_tick"
 }
 ```
 
@@ -515,7 +523,7 @@ HUATUO's anomalous event observation is built on eBPF technology. Event data is 
 graph TB
     subgraph "Linux Kernel"
         direction TB
-        K1["kprobe hooks\n(softirq_tracing / softlockup / hungtask\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
+        K1["kprobe hooks\n(sched_tick / softlockup / hungtask\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
         K2["tracepoint hooks\n(ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
         K3["netlink subscription\n(netdev_events: RTM_NEWLINK)"]
         K4["kprobe hooks\n(netdev_bonding_lacp: 802.3ad)"]
