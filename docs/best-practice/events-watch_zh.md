@@ -112,7 +112,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
     "container_hostname": "app-pod",
     "container_host_namespace": "prod",
     "container_type": "docker",
-    "container_qos": "Guaranteed"
+    "container_qos": "guaranteed"
   }
 }
 ```
