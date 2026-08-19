@@ -37,6 +37,7 @@ const (
 	profileFieldRegion            = "region"
 	profileFieldUploadedTime      = "uploaded_time"
 	profileFieldTime              = "time"
+	profileFieldStorageID         = "profile_storage_id"
 	profileFieldContainerID       = "container_id"
 	profileFieldContainerHostname = "container_hostname"
 	profileFieldContainerHostNS   = "container_host_namespace"
@@ -53,9 +54,10 @@ const (
 
 // ProfileDocument defines the document structure used in profiling storage.
 type ProfileDocument struct {
-	Hostname     string    `json:"hostname"`
-	Region       string    `json:"region"`
-	UploadedTime time.Time `json:"uploaded_time"`
+	Hostname         string    `json:"hostname"`
+	Region           string    `json:"region"`
+	UploadedTime     time.Time `json:"uploaded_time"`
+	ProfileStorageID string    `json:"profile_storage_id,omitempty"`
 	// equal to `TracerTime`, supported the old version.
 	Time string `json:"time"`
 
@@ -147,7 +149,7 @@ func (s *ProfileStorage) Ready(ctx context.Context) error {
 	if s == nil || s.store == nil {
 		return errors.New("profile storage is not initialized")
 	}
-	if _, err := s.store.Count(ctx, driver.Query{Limit: 1}); err != nil {
+	if _, err := s.store.Count(ctx, &driver.Query{Limit: 1}); err != nil {
 		return fmt.Errorf("profile storage readiness: %w", err)
 	}
 	return nil
@@ -160,17 +162,29 @@ func (s *ProfileStorage) SearchProfiles(filter *SearchFilter) ([]*ProfileDocumen
 
 // SearchProfilesContext searches profiles with caller-owned cancellation.
 func (s *ProfileStorage) SearchProfilesContext(ctx context.Context, filter *SearchFilter) ([]*ProfileDocument, error) {
+	documents, _, err := s.SearchProfilesPageContext(ctx, filter, nil)
+	return documents, err
+}
+
+// SearchProfilesPageContext searches one page and returns the backend cursor
+// needed to continue without relying on Elasticsearch's bounded offset window.
+func (s *ProfileStorage) SearchProfilesPageContext(
+	ctx context.Context,
+	filter *SearchFilter,
+	cursor []any,
+) ([]*ProfileDocument, []any, error) {
 	if s == nil || s.store == nil {
-		return nil, errors.New("profile storage is not initialized")
+		return nil, nil, errors.New("profile storage is not initialized")
 	}
 	query := buildProfileSearchQuery(filter)
+	query.SearchAfter = cursor
 
-	documents, err := s.store.Query(ctx, query)
+	documents, nextCursor, err := s.store.QueryPage(ctx, &query)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return documents, nil
+	return documents, nextCursor, nil
 }
 
 // AggregationsByField gets aggregations by field.
@@ -189,10 +203,11 @@ func (s *ProfileStorage) AggregationsByFieldContext(ctx context.Context, filter 
 		return nil, err
 	}
 
+	query := buildProfileAggregationQuery(filter)
 	terms, err := s.store.Values(
 		ctx,
 		normalizedField,
-		buildProfileAggregationQuery(filter),
+		&query,
 		normalizeProfileSearchLimit(filter),
 	)
 	if err != nil {
@@ -203,6 +218,10 @@ func (s *ProfileStorage) AggregationsByFieldContext(ctx context.Context, filter 
 }
 
 func (profileDocumentMapper) ID(document *ProfileDocument) string {
+	if document.ProfileStorageID != "" {
+		return document.ProfileStorageID
+	}
+	// Legacy documents predate profile_storage_id and used tracer_id as their ID.
 	return document.TracerID
 }
 
@@ -224,6 +243,7 @@ func (profileDocumentMapper) Fields(document *ProfileDocument) (map[string]any, 
 		profileFieldHostname:          document.Hostname,
 		profileFieldRegion:            document.Region,
 		profileFieldUploadedTime:      document.UploadedTime,
+		profileFieldStorageID:         document.ProfileStorageID,
 		profileFieldTime:              parseProfileDocumentTime(document.Time, document.UploadedTime),
 		profileFieldContainerID:       document.ContainerID,
 		profileFieldContainerHostname: document.ContainerHostname,
@@ -244,6 +264,7 @@ func (profileDocumentMapper) Indexes() []driver.Index {
 		{Field: profileFieldHostname},
 		{Field: profileFieldRegion},
 		{Field: profileFieldUploadedTime},
+		{Field: profileFieldStorageID},
 		{Field: profileFieldTime},
 		{Field: profileFieldContainerID},
 		{Field: profileFieldContainerHostname},
@@ -265,6 +286,10 @@ func buildProfileSearchQuery(filter *SearchFilter) driver.Query {
 	}
 	query.Sorts = []driver.Sort{
 		{Field: profileFieldUploadedTime, Desc: true},
+		{Field: profileFieldTracerID + ".keyword"},
+		// The migration script copies legacy Elasticsearch _id values into this
+		// field so historical timestamp collisions remain strictly ordered.
+		{Field: profileFieldStorageID + ".keyword"},
 	}
 	return query
 }
@@ -354,8 +379,8 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 
 func normalizeProfileAggregationField(field string) (string, error) {
 	switch field {
-	case "id":
-		return profileFieldTracerID, nil
+	case "id", "tracer":
+		return profileFieldTracerID + ".keyword", nil
 	case profileFieldRegion,
 		profileFieldHostname,
 		profileFieldContainerHostname,
@@ -367,7 +392,7 @@ func normalizeProfileAggregationField(field string) (string, error) {
 		profileFieldTracerID,
 		profileFieldTracerType,
 		profileFieldProfileType:
-		return field, nil
+		return field + ".keyword", nil
 	default:
 		return "", fmt.Errorf("invalid aggregation field: %q", field)
 	}
