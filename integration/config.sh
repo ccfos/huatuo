@@ -88,15 +88,29 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
 EOF
 }
 
-# Isolate sched_tick lifecycle metrics from unrelated tracers.
-write_sched_tick_config() {
-	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << 'EOF'
+# Keep sched_tick tests isolated while allowing each scenario to set its threshold.
+write_sched_tick_config_with_threshold() {
+	local interval_threshold=$1
+
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras", "runqlat", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
 
 [EventTracing.SchedTick]
-    # Keep this smoke test focused on load and attachment.
-    IntervalThreshold = 60000000000
+    IntervalThreshold = ${interval_threshold}
+
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
 EOF
+}
+
+# Keep the lifecycle test focused on load and attachment.
+write_sched_tick_config() {
+	write_sched_tick_config_with_threshold 60000000000
+}
+
+# Let normal ticks exercise the irqoff reporting path without disabling IRQs.
+write_sched_tick_irqoff_config() {
+	write_sched_tick_config_with_threshold 1
 }
 
 # The cpusys test controls proc/stat and perf through its isolated fixture root.
