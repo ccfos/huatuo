@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ package pod
 
 import (
 	"encoding/json"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 )
@@ -54,11 +53,11 @@ func parseContainerQos(typ ContainerType, pod *corev1.Pod) (ContainerQos, error)
 func (p ContainerQos) String() string {
 	switch p {
 	case containerQosBurstable:
-		return strings.ToLower(string(corev1.PodQOSBurstable))
+		return "burstable"
 	case containerQosBestEffort:
-		return strings.ToLower(string(corev1.PodQOSBestEffort))
+		return "besteffort"
 	case containerQosGuaranteed:
-		return strings.ToLower(string(corev1.PodQOSGuaranteed))
+		return "guaranteed"
 	default:
 		return "unknown"
 	}
@@ -77,11 +76,11 @@ func (p *ContainerQos) UnmarshalJSON(data []byte) error {
 	}
 
 	switch s {
-	case string(corev1.PodQOSBurstable):
+	case "burstable", string(corev1.PodQOSBurstable):
 		*p = containerQosBurstable
-	case string(corev1.PodQOSBestEffort):
+	case "besteffort", string(corev1.PodQOSBestEffort):
 		*p = containerQosBestEffort
-	case string(corev1.PodQOSGuaranteed):
+	case "guaranteed", string(corev1.PodQOSGuaranteed):
 		*p = containerQosGuaranteed
 	default:
 		*p = containerQosUnknown
