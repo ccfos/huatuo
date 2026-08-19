@@ -70,7 +70,7 @@ var capabilities = []capability{
 	{
 		Language:       LanguagePython,
 		Implementation: ImplementationPython,
-		Types:          []Type{TypeCPU},
+		Types:          []Type{TypeCPU, TypeMemory},
 		CPUModes:       []CPUMode{CPUModeOnCPU},
 		MemoryModes:    []MemoryMode{},
 	},

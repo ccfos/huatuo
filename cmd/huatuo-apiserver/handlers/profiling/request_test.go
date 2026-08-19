@@ -73,6 +73,34 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			},
 		},
 		{
+			name: "Python memory profiling",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:   "memory",
+				Language:        "python",
+				DurationSeconds: 30,
+			},
+			wantType: ProfilingMemory,
+			wantTracerArgs: []string{
+				"-t", "memory",
+				"-l", "python",
+				"--duration", "30",
+				"--aggr-interval", "10",
+				"--max-concurrent-procs", "2",
+				"--output-format", "remote",
+				"--output-storage", "/var/run/huatuo-toolstream.sock",
+			},
+		},
+		{
+			name: "Python memory profiling rejects memory mode",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:   "memory",
+				Language:        "python",
+				MemoryMode:      "object_usage",
+				DurationSeconds: 30,
+			},
+			wantErr: "memory_mode is not used by Python memory profiling",
+		},
+		{
 			name: "unsupported type",
 			req: v1.CreateProfilingJobRequest{
 				ProfilingType:   "offcpu",

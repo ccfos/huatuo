@@ -46,6 +46,36 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "Python memory with hybrid stacks",
+			args: []string{
+				"--type", "memory",
+				"--language", "python",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--python-memory-stack", "hybrid",
+				"--python-memory-merge-threads",
+			},
+		},
+		{
+			name: "invalid Python memory stack mode",
+			args: []string{
+				"--type", "memory",
+				"--language", "python",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--python-memory-stack", "mixed",
+			},
+			wantError: "invalid --python-memory-stack",
+		},
+		{
+			name: "Python memory rejects generic memory mode",
+			args: []string{
+				"--type", "memory",
+				"--language", "python",
+				"--pid", strconv.Itoa(os.Getpid()),
+				"--memory-mode", "object_usage",
+			},
+			wantError: "--memory-mode is not used by Python memory profiling",
+		},
+		{
 			name: "maximum profiler processes",
 			args: []string{
 				"--type", "cpu",
@@ -583,12 +613,11 @@ func TestValidatePythonProfileOptions(t *testing.T) {
 	}{
 		{name: "Python CPU one-shot", language: "python", typ: "cpu", duration: 10, interval: 10},
 		{
-			name:      "Python memory",
-			language:  "python",
-			typ:       "memory",
-			duration:  10,
-			interval:  10,
-			wantError: "Python profiler supports only --type=cpu",
+			name:     "Python memory",
+			language: "python",
+			typ:      "memory",
+			duration: 10,
+			interval: 10,
 		},
 		{
 			name:      "Python continuous profiling",
