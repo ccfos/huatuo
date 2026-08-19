@@ -60,16 +60,20 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 	}
 
 	d.tracer = mgr
-	// Stop collectors first, then drain bulk-buffered writes before BPF teardown.
+	return closeTracingManager(mgr), nil
+}
+
+type tracingManagerCloser interface {
+	Close(ctx context.Context) error
+}
+
+func closeTracingManager(mgr tracingManagerCloser) func(context.Context) error {
 	return func(ctx context.Context) error {
 		if err := mgr.Close(ctx); err != nil {
 			return fmt.Errorf("stop: %w", err)
 		}
-		if err := tracing.CloseStores(ctx); err != nil {
-			return fmt.Errorf("close stores: %w", err)
-		}
 		return nil
-	}, nil
+	}
 }
 
 func startHandlers(d *Daemon) (func(context.Context) error, error) {

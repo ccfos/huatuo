@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
@@ -27,21 +28,54 @@ import (
 	"huatuo-bamai/pkg/tracing"
 )
 
+type documentStoreFactory func(
+	context.Context,
+	*driver.Config,
+	string,
+	driver.Mapper[*tracing.Document],
+) (*storage.Store[*tracing.Document], error)
+
 func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	if d.opts.DisableStorage {
 		log.Infof("storage backends disabled by --disable-storage")
 		return nil, nil
 	}
 
-	return nil, initStorage(d.opts.Region, config.Get())
+	if err := initStorage(d.opts.Region, config.Get()); err != nil {
+		return nil, err
+	}
+	return tracing.CloseStores, nil
 }
 
 func initStorage(storageRegion string, cfg *config.Config) error {
+	return initStorageWithFactory(
+		storageRegion,
+		cfg,
+		storage.NewFromConfig[*tracing.Document],
+	)
+}
+
+func initStorageWithFactory(
+	storageRegion string,
+	cfg *config.Config,
+	newStore documentStoreFactory,
+) (retErr error) {
 	var esStore *storage.Store[*tracing.Document]
+	var profileStore *storage.Store[*tracing.Document]
 
 	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)
+	initializedStores := make([]*storage.Store[*tracing.Document], 0, 3)
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(
+				retErr,
+				closeInitializedStores(context.Background(), initializedStores),
+			)
+		}
+	}()
+
 	if cfg.Storage.Elasticsearch.Enabled() {
-		store, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
+		store, err := newStore(context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
 			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
 			ESUsername:  cfg.Storage.Elasticsearch.Username,
@@ -53,10 +87,11 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 		}
 		esStore = store
 		tracingMetadataStores = append(tracingMetadataStores, esStore)
+		initializedStores = append(initializedStores, esStore)
 	}
 
 	if cfg.Storage.LocalFile.Path != "" {
-		localFileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
+		localFileStore, err := newStore(context.Background(), &driver.Config{
 			Driver:                "localfile",
 			LocalFilePath:         cfg.Storage.LocalFile.Path,
 			LocalFileMaxRotation:  cfg.Storage.LocalFile.MaxRotatedFiles,
@@ -66,22 +101,11 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 			return fmt.Errorf("new tracing document store (localfile): %w", err)
 		}
 		tracingMetadataStores = append(tracingMetadataStores, localFileStore)
-	}
-
-	if len(tracingMetadataStores) > 0 {
-		tracing.SetTracingStore(
-			tracingMetadataStores,
-			tracing.DocumentOptions{
-				Region: storageRegion,
-			},
-		)
-	}
-	if esStore != nil {
-		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
+		initializedStores = append(initializedStores, localFileStore)
 	}
 
 	if cfg.Storage.Elasticsearch.Enabled() {
-		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
+		store, err := newStore(context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
 			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
 			ESUsername:  cfg.Storage.Elasticsearch.Username,
@@ -91,11 +115,41 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 		if err != nil {
 			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)
 		}
-		tracing.SetProfileStore(
-			[]*storage.Store[*tracing.Document]{profileStore},
-			tracing.DocumentOptions{Region: storageRegion},
-		)
+		profileStore = store
+		initializedStores = append(initializedStores, profileStore)
+	}
+
+	options := tracing.DocumentOptions{Region: storageRegion}
+	if len(tracingMetadataStores) > 0 {
+		tracing.SetTracingStore(tracingMetadataStores, options)
+	}
+	if esStore != nil {
+		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, options)
+	}
+	if profileStore != nil {
+		tracing.SetProfileStore([]*storage.Store[*tracing.Document]{profileStore}, options)
 	}
 
 	return nil
+}
+
+func closeInitializedStores(
+	ctx context.Context,
+	stores []*storage.Store[*tracing.Document],
+) error {
+	seen := make(map[*storage.Store[*tracing.Document]]struct{}, len(stores))
+	var errs []error
+	for _, store := range stores {
+		if store == nil {
+			continue
+		}
+		if _, ok := seen[store]; ok {
+			continue
+		}
+		seen[store] = struct{}{}
+		if err := store.Close(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("close initialized store %q: %w", store.Name, err))
+		}
+	}
+	return errors.Join(errs...)
 }

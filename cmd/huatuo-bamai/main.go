@@ -80,6 +80,11 @@ type Daemon struct {
 	tracer  *tracing.Manager
 }
 
+type daemonSetupStep struct {
+	name  string
+	setup func(*Daemon) (func(context.Context) error, error)
+}
+
 func NewDaemon(opts *Options) *Daemon {
 	return &Daemon{opts: opts}
 }
@@ -118,22 +123,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return nil
 	}
 
-	steps := []struct {
-		name  string
-		setup func(*Daemon) (func(context.Context) error, error)
-	}{
-		{"pidfile", lockPidfile},
-		{"cgroup", setupCgroup},
-		{"storage", setupStorage},
-		{"bpf", setupBPF},
-		{"pod", setupPodManager},
-		{"metrics", setupMetrics},
-		{"toolstream", startToolstream},
-		{"tracing", startTracing},
-		{"handlers", startHandlers},
-		{"cgroup-cpu-quota", applyCgroupCPUQuota},
-	}
-	for _, s := range steps {
+	for _, s := range daemonSetupSteps() {
 		if err := run(s.name, s.setup); err != nil {
 			return err
 		}
@@ -148,6 +138,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func daemonSetupSteps() []daemonSetupStep {
+	return []daemonSetupStep{
+		{"pidfile", lockPidfile},
+		{"cgroup", setupCgroup},
+		{"bpf", setupBPF},
+		{"storage", setupStorage},
+		{"pod", setupPodManager},
+		{"metrics", setupMetrics},
+		{"toolstream", startToolstream},
+		{"tracing", startTracing},
+		{"handlers", startHandlers},
+		{"cgroup-cpu-quota", applyCgroupCPUQuota},
+	}
 }
 
 func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {
