@@ -35,6 +35,25 @@ import (
 
 type softirqTracing struct{}
 
+var tickRestartKprobeSymbols = []string{
+	"tick_nohz_restart_sched_tick",
+	"__tick_nohz_idle_restart_tick",
+}
+
+func selectTickRestartKprobeSymbol() (string, error) {
+	for _, candidate := range tickRestartKprobeSymbols {
+		if bpf.HasKprobeFunction(candidate) {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf(
+		"none of the softirq restart hooks [%s] are available: %w",
+		strings.Join(tickRestartKprobeSymbols, ", "),
+		os.ErrNotExist,
+	)
+}
+
 // SoftirqTracingData is the full data structure.
 type SoftirqTracingData struct {
 	OffTime   uint64 `json:"offtime"`
@@ -148,6 +167,14 @@ func attachIrqAndEventPipe(ctx context.Context, b bpf.BPF) (bpf.PerfEventReader,
 		return nil, err
 	}
 
+	// Ubuntu 20.04's 5.4 kernel may only expose the idle restart symbol.
+	// Upstream removed that helper in 5.14, so prefer the current symbol.
+	restartSymbol, err := selectTickRestartKprobeSymbol()
+	if err != nil {
+		reader.Close()
+		return nil, err
+	}
+
 	/*
 	 * NOTE: There might be more than 100ms gap between the attachment of hooks,
 	 * so the order of attaching the kprobe and tracepoint is important for us.
@@ -167,7 +194,7 @@ func attachIrqAndEventPipe(ctx context.Context, b bpf.BPF) (bpf.PerfEventReader,
 		},
 		{
 			ProgramName: "probe_tick_nohz_restart_sched_tick",
-			Symbol:      "tick_nohz_restart_sched_tick",
+			Symbol:      restartSymbol,
 		},
 		{
 			ProgramName: "probe_tick_stop",
