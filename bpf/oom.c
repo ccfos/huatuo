@@ -10,7 +10,7 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-BPF_RATELIMIT_IN_MAP(rate, 1, COMPAT_CPU_NUM * 10000, 0);
+BPF_RATELIMIT(rate, 1, COMPAT_CPU_NUM * 10000);
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -25,7 +25,7 @@ int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 	struct task_struct *trigger_task, *victim_task;
 	u64 memory_cgrp_id_val;
 
-	if (bpf_ratelimited_in_map(ctx, rate))
+	if (bpf_ratelimited(&rate))
 		return 0;
 
 	if (!oc)
