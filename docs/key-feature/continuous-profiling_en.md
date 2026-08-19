@@ -221,6 +221,7 @@ CPU profiling supports `oncpu` and `offcpu` for `c`, `c++`, and `go`;
 | `c`, `c++`, `go` | `physical_usage` | Current physical page residency |
 | `java` | `object_alloc` | JVM object allocation |
 | `java` | `object_usage` | JVM live objects |
+| `python` | Omit `memory_mode` | Retained memory attributed to Python call stacks |
 
 ### 3. Create a Profiling Job
 
@@ -234,7 +235,7 @@ CPU profiling supports `oncpu` and `offcpu` for `c`, `c++`, and `go`;
 | `hostname` | Yes | Hostname of the node running the target process; used for job scheduling |
 | `container_id` | No | Target container ID; omit it to profile the host |
 | `binary_match_path` | No | Executable path matcher for Java/Python CPU profiling; native profiling does not support it |
-| `memory_mode` | For memory profiling | Memory profiling mode; it must be supported by `language` |
+| `memory_mode` | For memory profiling except Python | Memory profiling mode; omit it for Python |
 
 `duration_seconds` must cover at least two `aggregation_interval_seconds` periods, and their sum must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
 
@@ -265,6 +266,24 @@ curl -sS -i \
     "type": "memory",
     "language": "java",
     "memory_mode": "object_usage",
+    "duration_seconds": 60,
+    "container_id": "9f4c2f1a8b7d",
+    "hostname": "node-01"
+  }' \
+  "${API_BASE}/v1/profiles"
+```
+
+Create a Python retained-memory profiling job. Python does not use
+`memory_mode`; API jobs use the Python stack view:
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "memory",
+    "language": "python",
     "duration_seconds": 60,
     "container_id": "9f4c2f1a8b7d",
     "hostname": "node-01"
@@ -400,7 +419,7 @@ A successful deletion returns `204 No Content` with no response body. If the job
 
 `profiler` is HUATUO's standalone performance profiling CLI. It samples host processes or processes inside containers without requiring huatuo-apiserver, Elasticsearch, or Grafana. The tool supports C, C++, Go, Java, and Python processes and writes call stacks as folded stacks or SVG flame graphs.
 
-C, C++, and Go use the eBPF-based native collector to observe on-CPU usage, off-CPU blocking and scheduling delay, virtual memory allocation, physical memory allocation, and physical memory residency. Java uses async-profiler to observe CPU usage, object allocation, and live objects. Python uses py-spy to observe CPU usage. The results can be used to locate hot functions, attribute memory growth, analyze processes inside containers, and preserve performance data for later diagnosis.
+C, C++, and Go use the eBPF-based native collector to observe on-CPU usage, off-CPU blocking and scheduling delay, virtual memory allocation, physical memory allocation, and physical memory residency. Java uses async-profiler to observe CPU usage, object allocation, and live objects. Python uses py-spy for CPU profiling and the bundled Memray-Lite runtime for retained-memory profiling. The results can be used to locate hot functions, attribute memory growth, analyze processes inside containers, and preserve performance data for later diagnosis.
 
 The remainder of this section covers standalone use of `_output/bin/profiler`. For service-based continuous profiling, see the Profiles API section above.
 
@@ -418,7 +437,14 @@ Observe virtual address-space allocation, physical page allocation, and current 
 
 Use async-profiler to collect Java object allocation or live-object call stacks. Object allocation profiles help locate high allocation rates and sources of GC pressure. Live-object profiles help identify objects that remain referenced during the collection window and the paths where they were allocated.
 
-### 4. Analyze Containers and Multi-process Workloads
+### 4. Attribute Retained Python Memory
+
+Attach Memray-Lite to a running Python process and attribute memory that
+remains live at the end of the profiling window. Select Python-only, native,
+or merged hybrid stacks depending on whether the allocation path crosses
+Python extension or interpreter code.
+
+### 5. Analyze Containers and Multi-process Workloads
 
 Use a container ID to resolve and profile target processes inside Docker or containerd workloads. Java and Python also accept comma-separated PID lists and can limit the number of concurrently running collector subprocesses, which is useful for service replicas and parent-child process groups.
 
@@ -432,7 +458,16 @@ Build all artifacts from the repository root:
 make all
 ```
 
-The resulting executable is `_output/bin/profiler`. Native profiling depends on Linux eBPF, perf events, and the BPF objects built from this repository. It generally requires root privileges and a `kernel.perf_event_paranoid` setting that permits sampling. Java profiling requires async-profiler; `--tool-path` must point to a directory containing `bin/asprof` and `lib/libasyncProfiler.so`. Python profiling requires py-spy; `--tool-path` must point to a directory containing the `py-spy` executable.
+The resulting executable is `_output/bin/profiler`. The default build also
+creates versioned Memray-Lite runtimes under
+`_output/tools/memray-lite/runtimes`. Native profiling depends on Linux eBPF,
+perf events, and the BPF objects built from this repository. It generally
+requires root privileges and a `kernel.perf_event_paranoid` setting that
+permits sampling. Java profiling requires async-profiler; `--tool-path` must
+point to a directory containing `bin/asprof` and
+`lib/libasyncProfiler.so`. Python CPU profiling requires py-spy and an
+explicit `--tool-path`. Python memory profiling uses the bundled runtime by
+default and does not require `--tool-path`.
 
 Display the complete help for the current version:
 
@@ -470,7 +505,7 @@ sudo _output/bin/profiler \
 | `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, or `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | Unix socket used for remote upload |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collector subprocesses; `0` means unlimited |
-| `--tool-path` | None | Java, Python | Third-party profiler root directory; required |
+| `--tool-path` | None | Java, Python CPU, optional Python memory override | Third-party profiler root directory |
 | `--binary-match-path` | None | Java, Python | Executable path used to match target processes |
 | `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address used to resolve container metadata |
 | `--tracer-id` | Empty; generated internally for local output | All; required for `remote` | Stable profiling task ID used by toolstream and remote storage |
@@ -483,7 +518,9 @@ Native profiling options:
 
 | Option | Default | Scope | Description |
 | --- | --- | --- | --- |
-| `--memory-mode` | None | Native memory, Java memory | Memory profiling mode; required with `--type memory` |
+| `--memory-mode` | None | Native memory, Java memory | Memory profiling mode; omit for Python memory |
+| `--python-memory-stack` | `python` | Python memory | Stack view: `python`, `hybrid`, or `native` |
+| `--python-memory-merge-threads` | `false` | Python memory | Merge allocation data from all target threads |
 | `--cpuid` | All CPUs | Native CPU | Comma-separated CPU list or ranges; off-CPU samples use the task's switch-out CPU |
 | `--cpu-mode` | `oncpu` | Native CPU | `oncpu` for frequency sampling or `offcpu` for blocked/runqueue time attribution |
 | `--require-hardware-pmu` | `false` | Native on-CPU | Require hardware PMU sampling; fail instead of falling back to the software CPU clock |
@@ -620,7 +657,9 @@ To target a container, replace `--pid` with `--container-id <container-id>`. If 
 
 ### 5. Observing Python
 
-Python currently supports CPU profiling only. `--aggr-interval` must equal `--duration`, so one collection produces one aggregation window. `--tool-path` must point to the directory containing `py-spy`.
+Python CPU profiling uses py-spy. `--aggr-interval` must equal `--duration`,
+so one collection produces one aggregation window. `--tool-path` must point
+to the directory containing py-spy.
 
 ```bash
 _output/bin/profiler \
@@ -636,7 +675,27 @@ _output/bin/profiler \
   --output-path ./profiles/python-cpu
 ```
 
-Python does not support `--type memory`. Use a separate memory analysis tool for Python memory profiling; the current `profiler` command does not invoke memray to generate Python memory profiles.
+Python memory profiling uses the Memray-Lite bundle built by `make all`. It
+reports memory still live at the end of the profiling window, rather than
+allocation throughput over time. Do not pass `--memory-mode` or `--tool-path`
+for the normal bundled setup:
+
+```bash
+sudo _output/bin/profiler \
+  --type memory \
+  --language python \
+  --pid 12345 \
+  --duration 30 \
+  --aggr-interval 10 \
+  --python-memory-stack hybrid \
+  --python-memory-merge-threads \
+  --output-format flamegraph \
+  --output-path ./profiles/python-memory
+```
+
+`--python-memory-stack=python` shows Python frames only. `hybrid` merges
+Python and native frames, while `native` shows only the native call path. A
+container target can be supplied with `--container-id` instead of `--pid`.
 
 ### 6. Choosing a Flame Graph and Output Format
 
@@ -647,7 +706,7 @@ Python does not support `--type memory`. Use a separate memory analysis tool for
 | `svg` | The same interactive SVG as `flamegraph` | Compatibility with callers that explicitly request SVG; currently equivalent to `flamegraph` |
 | `remote` | No local flame graph; uploads pprof-compatible data through a Unix socket | Integration with the HUATUO storage pipeline; not suitable for offline viewing |
 
-A flame graph shows the call direction from bottom to top. Rectangle width represents the cumulative value for that call stack in the selected profiling mode. For CPU profiles, width represents the proportion of CPU time derived from sample counts. For memory profiles, it represents virtual allocation, physical allocation, physical residency, Java object allocation, or live-object volume, depending on the selected mode. Horizontal position does not represent chronological order.
+A flame graph shows the call direction from bottom to top. Rectangle width represents the cumulative value for that call stack in the selected profiling mode. For CPU profiles, width represents the proportion of CPU time derived from sample counts. For memory profiles, it represents virtual allocation, physical allocation, physical residency, Java object allocation, JVM live-object volume, or retained Python memory. Horizontal position does not represent chronological order.
 
 Example folded stacks:
 
@@ -685,17 +744,19 @@ Container, thread-group, and CPU-selection examples are available in `test_profi
 
 ## ⚙️ How It Works
 
-`profiler` first selects a collector based on the language and profile type. The native on-CPU collector attaches eBPF programs to perf events; off-CPU mode attaches scheduler switch, wakeup, exit, and task-free tracepoints. Native memory collectors record allocation and release paths through kernel events. The Java and Python collectors start async-profiler and py-spy subprocesses, respectively. Collected records enter a common aggregation pipeline, which merges counts by call stack and then writes a local file or uploads the result to remote storage.
+`profiler` first selects a collector based on the language and profile type. The native on-CPU collector attaches eBPF programs to perf events; off-CPU mode attaches scheduler switch, wakeup, exit, and task-free tracepoints. Native memory collectors record allocation and release paths through kernel events. Java starts async-profiler. Python CPU starts py-spy, while Python memory injects the bundled Memray-Lite runtime and decodes its socket stream. Collected records enter a common aggregation pipeline, which merges counts by call stack and then writes a local file or uploads the result to remote storage.
 
 ```mermaid
 flowchart LR
     CLI[profiler CLI options] --> Select{Language and profile type}
     Select -->|C/C++/Go| Native[Native eBPF collector]
     Select -->|Java| Java[async-profiler]
-    Select -->|Python| Python[py-spy]
+    Select -->|Python CPU| PythonCPU[py-spy]
+    Select -->|Python memory| PythonMemory[Memray-Lite]
     Native --> Queue[Sample record queue]
     Java --> Queue
-    Python --> Queue
+    PythonCPU --> Queue
+    PythonMemory --> Queue
     Queue --> Aggregate[Aggregate by call stack]
     Aggregate --> Folded[Collapsed stacks]
     Aggregate --> SVG[Interactive SVG flame graph]
