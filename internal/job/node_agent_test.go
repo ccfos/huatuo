@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -228,6 +229,38 @@ func TestHTTPNodeAgentStartTask(t *testing.T) {
 		})
 		if err == nil || !strings.Contains(err.Error(), "profiling task requires a non-empty --tracer-id") {
 			t.Fatalf("StartTask() error=%v, want missing tracer ID error", err)
+		}
+	})
+
+	t.Run("profiler receives container target", func(t *testing.T) {
+		var requestBody startTaskRequest
+		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if err := json.NewDecoder(req.Body).Decode(&requestBody); err != nil {
+				t.Fatalf("Decode() error=%v", err)
+			}
+			return newHTTPResponse(
+				http.StatusOK,
+				`{"code":0,"message":"ok","data":{"task_id":"agent-task-2026"}}`,
+			), nil
+		}))
+		args := &AgentTaskRequest{
+			TracerName:   "profiler",
+			TraceTimeout: 60,
+			DataType:     "db-json",
+			TracerArgs:   []string{"--tracer-id", "job-2026"},
+		}
+
+		if _, err := agent.StartTask("huatuo-dev", "container-2026", args); err != nil {
+			t.Fatalf("StartTask() error=%v", err)
+		}
+		want := []string{
+			"--tracer-id", "job-2026", "--container-id", "container-2026",
+		}
+		if !slices.Equal(requestBody.TracerArgs, want) {
+			t.Fatalf("trace_args=%q, want %q", requestBody.TracerArgs, want)
+		}
+		if !slices.Equal(args.TracerArgs, []string{"--tracer-id", "job-2026"}) {
+			t.Fatalf("StartTask() mutated source trace_args=%q", args.TracerArgs)
 		}
 	})
 

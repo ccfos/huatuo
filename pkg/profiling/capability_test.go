@@ -65,7 +65,7 @@ func TestCapabilities(t *testing.T) {
 		{
 			LanguagePython,
 			ImplementationPython,
-			[]Type{TypeCPU},
+			[]Type{TypeCPU, TypeMemory},
 			[]CPUMode{CPUModeOnCPU},
 			[]MemoryMode{},
 		},
@@ -99,7 +99,7 @@ func TestCapabilities(t *testing.T) {
 	)
 	require.Equal(
 		t,
-		[]Language{LanguageC, LanguageCPP, LanguageGo, LanguageJava},
+		[]Language{LanguageC, LanguageCPP, LanguageGo, LanguageJava, LanguagePython},
 		LanguagesFor(TypeMemory),
 	)
 	require.Empty(t, LanguagesFor(TypeLock))

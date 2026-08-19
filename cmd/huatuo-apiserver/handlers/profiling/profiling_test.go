@@ -161,18 +161,21 @@ func TestCapabilities(t *testing.T) {
 		t.Errorf("CPUModes[java] = %v, want [oncpu]", got)
 	}
 
-	if len(resp.MemoryLanguages) != 4 {
-		t.Errorf("MemoryLanguages len = %d, want 4 (c++, c, go, java)", len(resp.MemoryLanguages))
+	if len(resp.MemoryLanguages) != 5 {
+		t.Errorf("MemoryLanguages len = %d, want 5 (c++, c, go, java, python)", len(resp.MemoryLanguages))
 	}
 
-	if len(resp.MemoryModes) != 4 {
-		t.Errorf("MemoryModes len = %d, want 4", len(resp.MemoryModes))
+	if len(resp.MemoryModes) != 5 {
+		t.Errorf("MemoryModes len = %d, want 5", len(resp.MemoryModes))
 	}
 	if len(resp.MemoryModes["go"]) != 3 {
 		t.Errorf("MemoryModes[go] = %v, want 3 modes", resp.MemoryModes["go"])
 	}
 	if len(resp.MemoryModes["java"]) != 2 {
 		t.Errorf("MemoryModes[java] = %v, want 2 modes", resp.MemoryModes["java"])
+	}
+	if len(resp.MemoryModes["python"]) != 0 {
+		t.Errorf("MemoryModes[python] = %v, want no mode", resp.MemoryModes["python"])
 	}
 
 	if resp.AggregationIntervalSeconds != 15 {
