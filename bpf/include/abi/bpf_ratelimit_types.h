@@ -18,15 +18,15 @@
 #include "bpf_abi.h"
 
 struct bpf_ratelimit_event {
-	u64 interval;
-	u64 begin;
+	u64 interval_ns;
+	u64 window_start_ns;
 	u64 burst;
 	u64 max_burst;
-	u64 events;
-	u64 nmissed;
+	u64 events_in_window;
+	u64 missed_in_window;
 	u64 total_events;
-	u64 total_nmissed;
-	u64 total_interval;
+	u64 total_missed;
+	u64 total_elapsed_ns;
 };
 
 BPF_ABI_EXPORT(bpf_ratelimit_event);

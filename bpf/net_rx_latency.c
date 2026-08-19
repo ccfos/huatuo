@@ -18,7 +18,7 @@ volatile const long long rxlat_thresh_netif = 5 * 1000 * 1000;	    // 5ms
 volatile const long long rxlat_thresh_tcpv4 = 10 * 1000 * 1000;	    // 10ms
 volatile const long long rxlat_thresh_usercopy = 115 * 1000 * 1000; // 115ms
 
-BPF_RATELIMIT(rate, 1, 100);
+BPF_RATELIMIT(rate, BPF_NSEC_PER_SEC, 100);
 
 enum rx_lat_stage {
 	RX_STAGE_NETIF,

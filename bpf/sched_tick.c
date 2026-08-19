@@ -4,6 +4,7 @@
 #include <bpf/bpf_tracing.h>
 
 #include "bpf_common.h"
+#include "bpf_ratelimit.h"
 #include "abi/sched_tick_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
@@ -17,27 +18,9 @@ volatile const u64 sched_tick_interval_threshold_ns =
 
 struct sched_tick_state {
 	u64 last_tick_ns;
-	u64 report_window_start_ns;
-	u32 reports_in_window;
+	struct bpf_percpu_ratelimit_state report_ratelimit;
 	u32 tick_stopped;
 };
-
-static __always_inline bool
-try_reserve_sched_tick_report(struct sched_tick_state *state, u64 now)
-{
-	if (!state->report_window_start_ns ||
-	    now - state->report_window_start_ns >= SCHED_TICK_REPORT_WINDOW_NS) {
-		state->report_window_start_ns = now;
-		state->reports_in_window = 0;
-	}
-
-	if (state->reports_in_window >=
-	    MAX_SCHED_TICK_REPORTS_PER_CPU_PER_SECOND)
-		return false;
-
-	state->reports_in_window++;
-	return true;
-}
 
 /*
  * Keep timing state per CPU because scheduler ticks and NO_HZ state are local.
@@ -66,11 +49,11 @@ struct {
 SEC("kprobe/account_process_tick")
 void trace_sched_tick_interval(struct pt_regs *ctx)
 {
-	u32 key = 0;
 	struct sched_tick_state *state;
 	struct sched_tick_event *event;
-	u64 now;
 	u64 tick_interval;
+	u64 now;
+	u32 key = 0;
 
 	state = bpf_map_lookup_elem(&sched_tick_states, &key);
 	if (!state || state->tick_stopped)
@@ -85,7 +68,9 @@ void trace_sched_tick_interval(struct pt_regs *ctx)
 	tick_interval = now - state->last_tick_ns;
 	state->last_tick_ns = now;
 	if (tick_interval < sched_tick_interval_threshold_ns ||
-	    !try_reserve_sched_tick_report(state, now))
+	    bpf_percpu_ratelimited_ns(
+		&state->report_ratelimit, SCHED_TICK_REPORT_WINDOW_NS,
+		MAX_SCHED_TICK_REPORTS_PER_CPU_PER_SECOND))
 		return;
 
 	event = bpf_map_lookup_elem(&sched_tick_event_buf, &key);

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
@@ -32,24 +33,24 @@ var (
 
 // RateLimiter connects userspace configuration and alerts to a named BPF rate limiter.
 type RateLimiter struct {
-	name             string
-	eventsPerSecond  uint64
-	intervalConstant string
-	burstConstant    string
-	maxBurstConstant string
-	eventMap         string
-	reader           PerfEventReader
+	name               string
+	eventsPerSecond    uint64
+	intervalNSConstant string
+	burstConstant      string
+	maxBurstConstant   string
+	eventMap           string
+	reader             PerfEventReader
 }
 
 // NewRateLimiter creates a userspace controller for a BPF_RATELIMIT_IN_MAP_RC instance.
 func NewRateLimiter(name string, eventsPerSecond uint64) *RateLimiter {
 	return &RateLimiter{
-		name:             name,
-		eventsPerSecond:  eventsPerSecond,
-		intervalConstant: "bpf_rlimit_interval_" + name,
-		burstConstant:    "bpf_rlimit_burst_" + name,
-		maxBurstConstant: "bpf_rlimit_max_burst_" + name,
-		eventMap:         "event_bpf_rlimit_" + name,
+		name:               name,
+		eventsPerSecond:    eventsPerSecond,
+		intervalNSConstant: "bpf_rlimit_interval_ns_" + name,
+		burstConstant:      "bpf_rlimit_burst_" + name,
+		maxBurstConstant:   "bpf_rlimit_max_burst_" + name,
+		eventMap:           "event_bpf_rlimit_" + name,
 	}
 }
 
@@ -67,7 +68,7 @@ func (r *RateLimiter) Constants(consts map[string]any) map[string]any {
 		consts = make(map[string]any)
 	}
 
-	consts[r.intervalConstant] = uint64(1)
+	consts[r.intervalNSConstant] = uint64(time.Second)
 	consts[r.burstConstant] = r.eventsPerSecond
 	consts[r.maxBurstConstant] = uint64(0)
 	return consts
@@ -117,10 +118,10 @@ func (r *RateLimiter) ReadEvents(ctx context.Context) error {
 			"%s: rate limit hit (configured=%d/s, window_events=%d, window_missed=%d, total_events=%d, total_missed=%d)",
 			r.name,
 			r.eventsPerSecond,
-			event.Events,
-			event.Nmissed,
+			event.EventsInWindow,
+			event.MissedInWindow,
 			event.TotalEvents,
-			event.TotalNmissed,
+			event.TotalMissed,
 		)
 	}
 }

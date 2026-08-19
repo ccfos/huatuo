@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestRateLimiterConstants(t *testing.T) {
@@ -41,8 +42,12 @@ func TestRateLimiterConstants(t *testing.T) {
 		limiter := NewRateLimiter("tcp_retransmit", 100)
 		got := limiter.Constants(nil)
 
-		if got["bpf_rlimit_interval_tcp_retransmit"] != uint64(1) {
-			t.Fatalf("interval = %v, want 1", got["bpf_rlimit_interval_tcp_retransmit"])
+		if got["bpf_rlimit_interval_ns_tcp_retransmit"] != uint64(time.Second) {
+			t.Fatalf(
+				"interval = %v, want %d",
+				got["bpf_rlimit_interval_ns_tcp_retransmit"],
+				time.Second,
+			)
 		}
 		if got["bpf_rlimit_burst_tcp_retransmit"] != uint64(100) {
 			t.Fatalf("burst = %v, want 100", got["bpf_rlimit_burst_tcp_retransmit"])
