@@ -74,10 +74,10 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 
 func startHandlers(d *Daemon) (func(context.Context) error, error) {
 	runningServer, err := handlers.Start(handlers.ServerOptions{
-		Addr:            config.Get().HTTPServer.ListenAddress,
+		Addr:           config.Get().HTTPServer.ListenAddress,
 		TracingManager: d.tracer,
-		PromReg:         d.metrics,
-		VersionInfo:     &d.opts.VersionInfo,
+		PromReg:        d.metrics,
+		VersionInfo:    &d.opts.VersionInfo,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start handlers: %w", err)
