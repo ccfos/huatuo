@@ -40,3 +40,20 @@ func TestRenderStyleKeepsSymbolsOutOfJavaScript(t *testing.T) {
 		t.Fatalf("SVG does not preserve the escaped symbol as data: %s", content)
 	}
 }
+
+func TestRenderStyleUsesConfiguredValueUnit(t *testing.T) {
+	style := DefaultStyle
+	style.ValueUnit = ValueUnitBytes
+
+	var output bytes.Buffer
+	if err := RenderStyle([]Stack{{
+		Names:   []string{"root"},
+		Samples: 1024,
+	}}, &output, style); err != nil {
+		t.Fatalf("RenderStyle() error = %v", err)
+	}
+
+	if !strings.Contains(output.String(), "root (1024 bytes, 100.00%)") {
+		t.Fatalf("SVG does not use the configured value unit: %s", output.String())
+	}
+}
