@@ -236,6 +236,23 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 - **net_namespace_inum**：网络命名空间 inum
 - **pkt_len**：数据包长度（字节）
 
+**失效场景**
+
+`net_rx_latency` 通过计算 `ts_current - skb->tstamp` 得到分段延迟。当 `skb->tstamp` 被内核置零时，延迟计算公式失效（eBPF 层会直接返回 0，不产生事件）。已知存在以下 `skb->tstamp` 被清零的场景，在这些场景中本功能无法观测收包延迟：
+
+| 场景 | 影响路径 | 相关内核补丁 |
+| ---- | -------- | ------------ |
+| **loopback 接口** | `loopback_xmit()` 在 `drivers/net/loopback.c` 中调用 `skb_tx_timestamp()` 后将 `skb->tstamp` 清零，避免不同时钟基准（CLOCK_MONOTONIC vs CLOCK_REALTIME）引起的混淆 | `4c16128b6271` ("net: loopback: clear skb->tstamp before netif_rx()") |
+| **跨网络命名空间转发** | `skb_scrub_packet(skb, xnet=true)` 在 `net/core/skbuff.c` 中将 `skb->tstamp` 清零，影响容器跨网络命名空间转发流量的延迟观测 | `c47d8c2f38f8` ("net: Clear skb->tstamp only on the forwarding path") |
+| **Unix socket / Netlink** | Unix 域套接字与 Netlink 通信路径不投递 `skb->tstamp`，报文时间戳始终为 0 | — |
+| **部分虚拟设备** | tun 设备、禁用 NAPI 的虚拟网卡等不会触发 `net_timestamp_check()` 为 `skb->tstamp` 赋值 | — |
+| **BPF 程序干扰** | 内核 v5.18（commit `9bb984f28d5bc`）引入 `bpf_skb_set_tstamp()` helper，允许 TC/BPF 程序修改或清零 `skb->tstamp`。若宿主机部署了修改时间戳的 BPF 程序，可能导致本功能失效 | `9bb984f28d5bc`（v5.18+） |
+| **高版本内核 `tstamp_type` 语义扩展** | 内核 v5.18+ 引入的 `tstamp_type` 字段（commit `4d25ca2d6801`）将 `skb->tstamp` 的语义从单一的接收时间戳扩展为支持多种时钟基准（REALTIME/MONO/TAI），不同基准混用时可能导致延迟计算异常 | `4d25ca2d6801`（v5.18+） |
+
+**建议**：在上述场景中，可通过将 `net_rx_latency` 的阈值配置为 `0` 或通过 `issues_list` 配置过滤规则来关闭该功能，避免产生无效事件。
+
+**历史说明**：在早期版本中，由于未对 `skb->tstamp = 0` 做防御性判断，延迟计算公式 `ts_current - 0 = ts_current` 会将当前系统时间（自 1970 年起的纳秒数）误报为约 50 年的收包延迟，产生大量无效事件。现已通过 eBPF 层的零值检查修复该问题。
+
 ### 4. oom 内存耗尽
 
 **功能描述** 检测宿主机或容器内发生的 OOM（Out of Memory）事件，记录被 OOM Killer 终止的进程（victim）与触发 OOM 的进程（trigger）信息，以及对应容器和 memory cgroup 的详细信息，提供完整的故障快照。同时维护宿主机和各容器的 OOM 计数指标。
