@@ -37,30 +37,34 @@ const (
 // ContainerQosLevelMin is the minimum priority.
 const ContainerQosLevelMin = containerQosUnknown
 
-func parseContainerQos(typ ContainerType, pod *corev1.Pod) (ContainerQos, error) {
-	switch pod.Status.QOSClass {
-	case corev1.PodQOSBurstable:
-		return containerQosBurstable, nil
-	case corev1.PodQOSBestEffort:
-		return containerQosBestEffort, nil
-	case corev1.PodQOSGuaranteed:
-		return containerQosGuaranteed, nil
-	default:
-		return containerQosUnknown, nil
-	}
+var containerQosStrings = [...]string{
+	containerQosUnknown:    "unknown",
+	containerQosGuaranteed: "guaranteed",
+	containerQosBurstable:  "burstable",
+	containerQosBestEffort: "besteffort",
+}
+
+var containerQosByString = map[string]ContainerQos{
+	"unknown":    containerQosUnknown,
+	"guaranteed": containerQosGuaranteed,
+	"burstable":  containerQosBurstable,
+	"besteffort": containerQosBestEffort,
+
+	string(corev1.PodQOSGuaranteed): containerQosGuaranteed,
+	string(corev1.PodQOSBurstable):  containerQosBurstable,
+	string(corev1.PodQOSBestEffort): containerQosBestEffort,
+}
+
+func parseContainerQos(_ ContainerType, pod *corev1.Pod) (ContainerQos, error) {
+	return containerQosByString[string(pod.Status.QOSClass)], nil
 }
 
 func (p ContainerQos) String() string {
-	switch p {
-	case containerQosBurstable:
-		return "burstable"
-	case containerQosBestEffort:
-		return "besteffort"
-	case containerQosGuaranteed:
-		return "guaranteed"
-	default:
-		return "unknown"
+	if p < containerQosUnknown || p >= containerQosMax {
+		return containerQosStrings[containerQosUnknown]
 	}
+
+	return containerQosStrings[p]
 }
 
 // MarshalJSON marshal container qos to json.
@@ -75,17 +79,7 @@ func (p *ContainerQos) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	switch s {
-	case "burstable", string(corev1.PodQOSBurstable):
-		*p = containerQosBurstable
-	case "besteffort", string(corev1.PodQOSBestEffort):
-		*p = containerQosBestEffort
-	case "guaranteed", string(corev1.PodQOSGuaranteed):
-		*p = containerQosGuaranteed
-	default:
-		*p = containerQosUnknown
-	}
-
+	*p = containerQosByString[s]
 	return nil
 }
 
