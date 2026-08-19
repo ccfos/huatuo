@@ -22,8 +22,6 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-readonly TRACEPOINT_ID="/sys/kernel/tracing/events/devlink/devlink_trap_report/id"
-readonly DEBUGFS_TRACEPOINT_ID="/sys/kernel/debug/tracing/events/devlink/devlink_trap_report/id"
 readonly NETDEVSIM_BUS="/sys/bus/netdevsim"
 readonly DROPWATCH_DURATION=10
 
@@ -46,9 +44,8 @@ trap cleanup EXIT
 for command in devlink ip jq modprobe; do
 	command -v "${command}" > /dev/null 2>&1 || skip "${command} command is not installed"
 done
-if [[ ! -e "${TRACEPOINT_ID}" && ! -e "${DEBUGFS_TRACEPOINT_ID}" ]]; then
-	skip "devlink:devlink_trap_report is unavailable"
-fi
+tracepoint_available devlink devlink_trap_report \
+	|| skip "devlink/devlink_trap_report tracepoint is not available"
 
 bpf_tool_setup dropwatch
 modprobe netdevsim > "${TOOL_WORK_DIR}/modprobe.out" 2> "${TOOL_WORK_DIR}/modprobe.err" \

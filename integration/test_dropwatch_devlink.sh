@@ -22,13 +22,11 @@ set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
 
-readonly TRACEPOINT_ID="/sys/kernel/tracing/events/devlink/devlink_trap_report/id"
-readonly DEBUGFS_TRACEPOINT_ID="/sys/kernel/debug/tracing/events/devlink/devlink_trap_report/id"
 readonly UNSUPPORTED_WARNING="devlink trap tracepoint unsupported; hardware drop tracing disabled"
 
-tracepoint_available=false
-if [[ -e "${TRACEPOINT_ID}" || -e "${DEBUGFS_TRACEPOINT_ID}" ]]; then
-	tracepoint_available=true
+has_devlink_tracepoint=false
+if tracepoint_available devlink devlink_trap_report; then
+	has_devlink_tracepoint=true
 fi
 
 bpf_tool_setup dropwatch
@@ -39,7 +37,7 @@ bpf_tool_setup dropwatch
 	> "${TOOL_OUT}" 2> "${TOOL_ERR}"
 
 assert_log_has_no_failure "${TOOL_ERR}" "dropwatch"
-if [[ "${tracepoint_available}" == true ]]; then
+if [[ "${has_devlink_tracepoint}" == true ]]; then
 	if grep -Fq "${UNSUPPORTED_WARNING}" "${TOOL_ERR}"; then
 		fatal "dropwatch disabled hardware tracing despite devlink tracepoint support"
 	fi

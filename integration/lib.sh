@@ -125,7 +125,7 @@ profiler_ready() {
 
 kprobe_available() {
 	local symbol=$1
-	local file candidate
+	local file
 	local files=(
 		"/sys/kernel/tracing/available_filter_functions"
 		"/sys/kernel/debug/tracing/available_filter_functions"
@@ -133,9 +133,20 @@ kprobe_available() {
 
 	for file in "${files[@]}"; do
 		[[ -r "${file}" ]] || continue
-		for candidate in "${symbol}" "__x64_${symbol}"; do
-			awk -v sym="${candidate}" '$1 == sym { found = 1; exit } END { exit !found }' "${file}" && return 0
-		done
+		awk -v sym="${symbol}" '$1 == sym { found = 1; exit } END { exit !found }' "${file}" && return 0
+	done
+
+	return 1
+}
+
+# Tracefs may be mounted independently or exposed through debugfs.
+tracepoint_available() {
+	local group=$1 name=$2 root
+
+	for root in \
+		/sys/kernel/tracing \
+		/sys/kernel/debug/tracing; do
+		[[ -e "${root}/events/${group}/${name}/id" ]] && return 0
 	done
 
 	return 1
