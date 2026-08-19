@@ -193,6 +193,7 @@ func schedTickStackAddrs(data *abi.SchedTickEvent) []uint64 {
 }
 
 func schedTickAttachOptions(restartTickSymbol string) []bpf.AttachOption {
+	// Attach restart before stop to avoid stale state; enable interval tracking last.
 	return []bpf.AttachOption{
 		{
 			ProgramName: "trace_sched_tick_restart",
