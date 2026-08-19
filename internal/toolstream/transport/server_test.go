@@ -15,6 +15,8 @@
 package transport
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -395,5 +397,95 @@ func TestClientRoundTrip(t *testing.T) {
 	}
 	if !got[1].End {
 		t.Errorf("second chunk End=false want true")
+	}
+}
+
+func TestQuiesceAndDrainForceClosesIdleConnections(t *testing.T) {
+	tests := []struct {
+		name      string
+		handshake bool
+	}{
+		{name: "before handshake"},
+		{name: "after handshake", handshake: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sockPath := t.TempDir() + "/test.sock"
+			handled := make(chan struct{}, 1)
+			listener, err := ListenUDS(sockPath)
+			if err != nil {
+				t.Fatalf("ListenUDS: %v", err)
+			}
+			srv, err := Serve(listener, func(*Session, ChunkMsg) {
+				handled <- struct{}{}
+			})
+			if err != nil {
+				t.Fatalf("Serve: %v", err)
+			}
+			t.Cleanup(func() { _ = srv.Close() })
+
+			client, err := DialUDS(sockPath)
+			if err != nil {
+				t.Fatalf("DialUDS: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Close() })
+			if tt.handshake {
+				encoder := capnp.NewEncoder(client)
+				if err := handshake(
+					t,
+					encoder,
+					client,
+					"idle-tool",
+					"1.0",
+					"",
+				); err != nil {
+					t.Fatalf("handshake: %v", err)
+				}
+				if err := sendChunk(t, encoder, []byte(`{}`), false, false, ""); err != nil {
+					t.Fatalf("sendChunk: %v", err)
+				}
+				select {
+				case <-handled:
+				case <-time.After(2 * time.Second):
+					t.Fatal("post-handshake chunk was not handled")
+				}
+			}
+			waitForConnectionCount(t, srv, 1)
+
+			drainCtx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+			err = srv.QuiesceAndDrain(drainCtx)
+			cancel()
+			if !errors.Is(err, ErrDrainTimeout) {
+				t.Fatalf("QuiesceAndDrain error = %v, want ErrDrainTimeout", err)
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("QuiesceAndDrain error = %v, want deadline exceeded", err)
+			}
+			if err := srv.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			if err := srv.Close(); err != nil {
+				t.Fatalf("repeated Close: %v", err)
+			}
+		})
+	}
+}
+
+func waitForConnectionCount(t *testing.T, srv *Server, want int) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		srv.mutex.Lock()
+		got := len(srv.connections)
+		srv.mutex.Unlock()
+		if got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("active connections = %d, want %d", got, want)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

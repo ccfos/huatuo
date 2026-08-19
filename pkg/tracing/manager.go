@@ -118,26 +118,28 @@ func (m *Manager) Close(ctx context.Context) error {
 	m.isClosed = true
 
 	type pendingStop struct {
-		name string
-		done <-chan struct{}
+		runner      *eventRunner
+		completions []*runCompletion
 	}
 
 	pending := make([]pendingStop, 0, len(m.runners))
 	var errs []error
-	for name, runner := range m.runners {
-		done, err := runner.cancelRun()
-		if err != nil && !errors.Is(err, ErrTracerNotRunning) {
-			errs = append(errs, err)
-			continue
+	for _, runner := range m.runners {
+		cancel, completions := runner.prepareStop()
+		if cancel != nil {
+			cancel()
 		}
-		if done != nil {
-			pending = append(pending, pendingStop{name: name, done: done})
+		if len(completions) != 0 {
+			pending = append(pending, pendingStop{
+				runner:      runner,
+				completions: completions,
+			})
 		}
 	}
 	m.mu.Unlock()
 
-	for _, runner := range pending {
-		if err := waitForRunner(ctx, runner.name, runner.done); err != nil {
+	for _, stop := range pending {
+		if err := stop.runner.waitForCompletions(ctx, stop.completions); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -149,12 +151,23 @@ func (m *Manager) Close(ctx context.Context) error {
 func (m *Manager) StopByName(ctx context.Context, name string) error {
 	m.mu.RLock()
 	runner, ok := m.runners[name]
-	m.mu.RUnlock()
 	if !ok {
+		m.mu.RUnlock()
 		return newTracerStateError(ErrTracerNotFound, name)
 	}
+	managerClosed := m.isClosed
+	cancel, completions := runner.prepareStop()
+	m.mu.RUnlock()
 
-	return runner.stop(ctx)
+	if len(completions) == 0 {
+		if managerClosed {
+			// Close has already accounted for every generation and prevents new ones.
+			return nil
+		}
+		return newTracerStateError(ErrTracerNotRunning, name)
+	}
+
+	return runner.stopCompletions(ctx, cancel, completions)
 }
 
 // Snapshots returns lifecycle snapshots for all registered tracers.

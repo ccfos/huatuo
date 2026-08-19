@@ -80,6 +80,7 @@ func tracerAPIError(err error) error {
 		return response.ErrNotFound.WithMessage(err.Error())
 	case errors.Is(err, tracing.ErrTracerAlreadyRunning),
 		errors.Is(err, tracing.ErrTracerNotRunning),
+		errors.Is(err, tracing.ErrTracerRunErrorPending),
 		errors.Is(err, tracing.ErrManagerClosed):
 		return response.ErrConflict.WithMessage(err.Error())
 	case errors.Is(err, context.Canceled):

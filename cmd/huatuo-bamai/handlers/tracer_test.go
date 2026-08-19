@@ -47,6 +47,11 @@ func TestTracerAPIError(t *testing.T) {
 			httpStatus: http.StatusConflict,
 		},
 		{
+			name:       "run error pending",
+			err:        tracing.ErrTracerRunErrorPending,
+			httpStatus: http.StatusConflict,
+		},
+		{
 			name:       "manager closed",
 			err:        tracing.ErrManagerClosed,
 			httpStatus: http.StatusConflict,

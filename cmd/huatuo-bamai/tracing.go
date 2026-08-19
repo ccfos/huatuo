@@ -16,7 +16,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/cmd/huatuo-bamai/handlers"
@@ -24,6 +26,11 @@ import (
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
 )
+
+type toolstreamServer interface {
+	QuiesceAndDrain(ctx context.Context) error
+	Close() error
+}
 
 func setupBPF(_ *Daemon) (func(context.Context) error, error) {
 	if err := bpf.Init(&bpf.Option{}); err != nil {
@@ -46,7 +53,60 @@ func startToolstream(_ *Daemon) (func(context.Context) error, error) {
 		return nil, fmt.Errorf("start: %w", err)
 	}
 
-	return func(context.Context) error { return srv.Close() }, nil
+	return func(ctx context.Context) error {
+		return closeToolstream(ctx, srv)
+	}, nil
+}
+
+func closeToolstream(ctx context.Context, srv toolstreamServer) error {
+	initialDrainCtx, cancelInitialDrain := initialToolstreamDrainContext(ctx)
+	drainErr := srv.QuiesceAndDrain(initialDrainCtx)
+	cancelInitialDrain()
+	closeErr := srv.Close()
+	if errors.Is(closeErr, toolstream.ErrHandlersActive) && ctx.Err() == nil {
+		retryDrainErr := srv.QuiesceAndDrain(ctx)
+		retryCloseErr := srv.Close()
+		if retryDrainErr == nil && retryCloseErr == nil {
+			return nil
+		}
+		drainErr = errors.Join(drainErr, retryDrainErr)
+		closeErr = errors.Join(closeErr, retryCloseErr)
+		if !errors.Is(retryCloseErr, toolstream.ErrHandlersActive) {
+			return &cleanupBoundaryError{err: errors.Join(drainErr, closeErr)}
+		}
+	}
+
+	err := errors.Join(drainErr, closeErr)
+	if err == nil {
+		return nil
+	}
+
+	// Close without ErrHandlersActive establishes that dispatch cannot enter a
+	// handler again, so storage cleanup is safe even if draining timed out.
+	var blocked cleanupDependency
+	if errors.Is(closeErr, toolstream.ErrHandlersActive) {
+		blocked = dependencyToolstreamStopped
+	}
+	return &cleanupBoundaryError{
+		err:     err,
+		blocked: blocked,
+	}
+}
+
+func initialToolstreamDrainContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return context.WithCancel(ctx)
+	}
+
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return context.WithCancel(ctx)
+	}
+
+	// Leave half of the cleanup budget for a handler that owns a decoded frame
+	// after the initial drain force-closes idle connections.
+	return context.WithTimeout(ctx, remaining/2)
 }
 
 func startTracing(d *Daemon) (func(context.Context) error, error) {
@@ -60,13 +120,9 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 	}
 
 	d.tracer = mgr
-	// Stop collectors first, then drain bulk-buffered writes before BPF teardown.
 	return func(ctx context.Context) error {
 		if err := mgr.Close(ctx); err != nil {
 			return fmt.Errorf("stop: %w", err)
-		}
-		if err := tracing.CloseStores(ctx); err != nil {
-			return fmt.Errorf("close stores: %w", err)
 		}
 		return nil
 	}, nil

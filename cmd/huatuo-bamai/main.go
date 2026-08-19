@@ -80,6 +80,40 @@ type Daemon struct {
 	tracer  *tracing.Manager
 }
 
+type cleanupStep struct {
+	name               string
+	cleanup            func(context.Context) error
+	requires           cleanupDependency
+	blocksOnIncomplete cleanupDependency
+}
+
+type cleanupDependency uint8
+
+const (
+	dependencyTracingStopped cleanupDependency = 1 << iota
+	dependencyToolstreamStopped
+)
+
+type daemonSetupStep struct {
+	name               string
+	setup              func(*Daemon) (func(context.Context) error, error)
+	requires           cleanupDependency
+	blocksOnIncomplete cleanupDependency
+}
+
+// cleanupBoundaryError records which later cleanup is unsafe after a failed
+// cleanup. Its Error omits this internal control state.
+type cleanupBoundaryError struct {
+	err     error
+	blocked cleanupDependency
+}
+
+func (e *cleanupBoundaryError) Error() string { return e.err.Error() }
+func (e *cleanupBoundaryError) Unwrap() error { return e.err }
+func (e *cleanupBoundaryError) blockedCleanupDependencies() cleanupDependency {
+	return e.blocked
+}
+
 func NewDaemon(opts *Options) *Daemon {
 	return &Daemon{opts: opts}
 }
@@ -89,52 +123,41 @@ func NewDaemon(opts *Options) *Daemon {
 // signal arrives and runs the stack in reverse. A setup failure tears
 // down whatever already came up before returning the original error.
 func (d *Daemon) Run(ctx context.Context) error {
-	var cleanups []func(context.Context) error
+	var cleanups []cleanupStep
 
-	shutdown := func() error {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-
-		var errs []error
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			if err := cleanups[i](shutdownCtx); err != nil {
-				errs = append(errs, err)
-			}
-		}
-
-		return errors.Join(errs...)
+	steps := []daemonSetupStep{
+		{name: "pidfile", setup: lockPidfile},
+		{name: "cgroup", setup: setupCgroup},
+		{
+			name:     "storage",
+			setup:    setupStorage,
+			requires: dependencyTracingStopped | dependencyToolstreamStopped,
+		},
+		{name: "bpf", setup: setupBPF, requires: dependencyTracingStopped},
+		{name: "pod", setup: setupPodManager, requires: dependencyTracingStopped},
+		{name: "metrics", setup: setupMetrics},
+		{
+			name:               "toolstream",
+			setup:              startToolstream,
+			requires:           dependencyTracingStopped,
+			blocksOnIncomplete: dependencyToolstreamStopped,
+		},
+		{
+			name:               "tracing",
+			setup:              startTracing,
+			blocksOnIncomplete: dependencyTracingStopped,
+		},
+		{name: "handlers", setup: startHandlers},
+		{name: "cgroup-cpu-quota", setup: applyCgroupCPUQuota},
 	}
-
-	run := func(name string, setup func(*Daemon) (func(context.Context) error, error)) error {
-		cleanup, err := setup(d)
-		if err != nil {
-			_ = shutdown()
-			return fmt.Errorf("%s: %w", name, err)
-		}
-		if cleanup != nil {
-			cleanups = append(cleanups, cleanup)
-		}
-
-		return nil
-	}
-
-	steps := []struct {
-		name  string
-		setup func(*Daemon) (func(context.Context) error, error)
-	}{
-		{"pidfile", lockPidfile},
-		{"cgroup", setupCgroup},
-		{"storage", setupStorage},
-		{"bpf", setupBPF},
-		{"pod", setupPodManager},
-		{"metrics", setupMetrics},
-		{"toolstream", startToolstream},
-		{"tracing", startTracing},
-		{"handlers", startHandlers},
-		{"cgroup-cpu-quota", applyCgroupCPUQuota},
-	}
-	for _, s := range steps {
-		if err := run(s.name, s.setup); err != nil {
+	for _, step := range steps {
+		if err := runSetupStep(
+			ctx,
+			d,
+			&cleanups,
+			step,
+			shutdownTimeout,
+		); err != nil {
 			return err
 		}
 	}
@@ -143,11 +166,71 @@ func (d *Daemon) Run(ctx context.Context) error {
 	s := d.waitForSignal(ctx)
 	log.Infof("huatuo-bamai received signal %v, shutting down", s)
 
-	if err := shutdown(); err != nil {
-		log.Warnf("shutdown completed with errors: %v", err)
+	if err := runCleanups(ctx, cleanups, shutdownTimeout); err != nil {
+		return fmt.Errorf("shutdown: %w", err)
 	}
 
 	return nil
+}
+
+func runSetupStep(
+	ctx context.Context,
+	d *Daemon,
+	cleanups *[]cleanupStep,
+	step daemonSetupStep,
+	rollbackTimeout time.Duration,
+) error {
+	cleanup, setupErr := step.setup(d)
+	if setupErr != nil {
+		rollbackErr := runCleanups(ctx, *cleanups, rollbackTimeout)
+		return errors.Join(
+			fmt.Errorf("%s: %w", step.name, setupErr),
+			rollbackErr,
+		)
+	}
+	if cleanup != nil {
+		*cleanups = append(*cleanups, cleanupStep{
+			name:               step.name,
+			cleanup:            cleanup,
+			requires:           step.requires,
+			blocksOnIncomplete: step.blocksOnIncomplete,
+		})
+	}
+
+	return nil
+}
+
+func runCleanups(ctx context.Context, cleanups []cleanupStep, stepTimeout time.Duration) error {
+	var errs []error
+	var blocked cleanupDependency
+
+	for i := len(cleanups) - 1; i >= 0; i-- {
+		step := cleanups[i]
+		if step.requires&blocked != 0 {
+			continue
+		}
+		stepCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stepTimeout)
+		err := step.cleanup(stepCtx)
+		incomplete := stepCtx.Err() != nil
+		cancel()
+		if err == nil {
+			continue
+		}
+
+		errs = append(errs, fmt.Errorf("%s cleanup: %w", step.name, err))
+		var boundary interface {
+			blockedCleanupDependencies() cleanupDependency
+		}
+		if errors.As(err, &boundary) {
+			blocked |= boundary.blockedCleanupDependencies()
+			continue
+		}
+		if incomplete {
+			blocked |= step.blocksOnIncomplete
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 func (d *Daemon) waitForSignal(ctx context.Context) os.Signal {

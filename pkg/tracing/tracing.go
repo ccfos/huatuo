@@ -35,10 +35,16 @@ type eventRunner struct {
 	restartInterval time.Duration
 	roles           uint32
 
-	mu       sync.RWMutex
-	cancel   context.CancelFunc
-	done     <-chan struct{}
-	runCount int
+	mu          sync.RWMutex
+	cancel      context.CancelFunc
+	active      *runCompletion
+	completions []*runCompletion
+	runCount    int
+}
+
+type runCompletion struct {
+	done        chan struct{}
+	terminalErr error
 }
 
 func newEventRunner(
@@ -61,31 +67,56 @@ func (r *eventRunner) start(ctx context.Context) error {
 	}
 
 	r.mu.Lock()
-	if r.done != nil {
+	if r.active != nil {
 		r.mu.Unlock()
 		return newTracerStateError(ErrTracerAlreadyRunning, r.name)
 	}
+	r.discardSuccessfulCompletionsLocked()
+	if len(r.completions) != 0 {
+		r.mu.Unlock()
+		return newTracerRunErrorPending(r.name)
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
+	completion := &runCompletion{done: make(chan struct{})}
 	r.cancel = cancel
-	r.done = done
+	r.active = completion
+	r.completions = append(r.completions, completion)
 	r.mu.Unlock()
 
-	go r.run(runCtx, done)
+	go r.run(runCtx, completion)
 
 	return nil
 }
 
-func (r *eventRunner) run(ctx context.Context, done chan<- struct{}) {
+func (r *eventRunner) discardSuccessfulCompletionsLocked() {
+	live := r.completions[:0]
+	for _, completion := range r.completions {
+		if completion.terminalErr != nil {
+			live = append(live, completion)
+		}
+	}
+	clear(r.completions[len(live):])
+	r.completions = live
+}
+
+func (r *eventRunner) run(ctx context.Context, completion *runCompletion) {
 	log.WithField("tracer", r.name).Info("tracer started")
-	defer r.finish(done)
+	var terminalErr error
+	defer func() {
+		r.finish(completion, terminalErr)
+	}()
 
 	for {
 		err := r.starter.Start(ctx)
 		r.incrementRunCount()
 
-		if ctx.Err() != nil || errors.Is(err, types.ErrNotSupported) {
+		if ctx.Err() != nil {
+			terminalErr = unexpectedStopError(err)
+			return
+		}
+		if errors.Is(err, types.ErrNotSupported) {
+			terminalErr = unexpectedStopError(err)
 			return
 		}
 
@@ -108,14 +139,62 @@ func (r *eventRunner) run(ctx context.Context, done chan<- struct{}) {
 	}
 }
 
-func (r *eventRunner) finish(done chan<- struct{}) {
+func (r *eventRunner) finish(completion *runCompletion, terminalErr error) {
 	r.mu.Lock()
-	close(done)
-	r.cancel = nil
-	r.done = nil
+	completion.terminalErr = terminalErr
+	if r.active == completion {
+		r.cancel = nil
+		r.active = nil
+	}
+	close(completion.done)
 	r.mu.Unlock()
 
 	log.WithField("tracer", r.name).Info("tracer stopped")
+}
+
+func unexpectedStopError(err error) error {
+	if err == nil || containsOnlyStopErrors(err) {
+		return nil
+	}
+	return err
+}
+
+func containsOnlyStopErrors(err error) bool {
+	if err == nil {
+		return true
+	}
+
+	var multiple interface{ Unwrap() []error }
+	if errors.As(err, &multiple) {
+		errs := multiple.Unwrap()
+		if len(errs) == 0 {
+			return isStopError(err)
+		}
+		for _, unwrapped := range errs {
+			if !containsOnlyStopErrors(unwrapped) {
+				return false
+			}
+		}
+		return true
+	}
+
+	var single interface{ Unwrap() error }
+	if errors.As(err, &single) {
+		unwrapped := single.Unwrap()
+		if unwrapped != nil {
+			return containsOnlyStopErrors(unwrapped)
+		}
+	}
+
+	return isStopError(err)
+}
+
+func isStopError(err error) bool {
+	return errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, types.ErrExitByCancelCtx) ||
+		errors.Is(err, types.ErrDisconnectedHuatuo) ||
+		errors.Is(err, types.ErrNotSupported)
 }
 
 func (r *eventRunner) incrementRunCount() {
@@ -125,28 +204,72 @@ func (r *eventRunner) incrementRunCount() {
 }
 
 func (r *eventRunner) stop(ctx context.Context) error {
-	done, err := r.cancelRun()
-	if err != nil {
-		return err
+	cancel, completions := r.prepareStop()
+	if len(completions) == 0 {
+		return newTracerStateError(ErrTracerNotRunning, r.name)
 	}
 
-	return waitForRunner(ctx, r.name, done)
+	return r.stopCompletions(ctx, cancel, completions)
 }
 
-func (r *eventRunner) cancelRun() (<-chan struct{}, error) {
-	r.mu.RLock()
-	if r.done == nil {
-		r.mu.RUnlock()
-		return nil, newTracerStateError(ErrTracerNotRunning, r.name)
+func (r *eventRunner) stopCompletions(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	completions []*runCompletion,
+) error {
+	if cancel != nil {
+		cancel()
 	}
 
+	return r.waitForCompletions(ctx, completions)
+}
+
+func (r *eventRunner) prepareStop() (context.CancelFunc, []*runCompletion) {
+	r.mu.RLock()
 	cancel := r.cancel
-	done := r.done
+	completions := append([]*runCompletion(nil), r.completions...)
 	r.mu.RUnlock()
 
-	cancel()
+	return cancel, completions
+}
 
-	return done, nil
+func (r *eventRunner) waitForCompletions(
+	ctx context.Context,
+	completions []*runCompletion,
+) error {
+	var errs []error
+	for _, completion := range completions {
+		if err := waitForRunner(ctx, r.name, completion.done); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+
+		terminalErr, ok := r.consumeCompletion(completion)
+		if ok && terminalErr != nil {
+			errs = append(errs, newTracerRunError(r.name, terminalErr))
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (r *eventRunner) consumeCompletion(completion *runCompletion) (error, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for i, pending := range r.completions {
+		if pending != completion {
+			continue
+		}
+
+		terminalErr := pending.terminalErr
+		copy(r.completions[i:], r.completions[i+1:])
+		r.completions[len(r.completions)-1] = nil
+		r.completions = r.completions[:len(r.completions)-1]
+		return terminalErr, true
+	}
+
+	return nil, false
 }
 
 func waitForRunner(ctx context.Context, name string, done <-chan struct{}) error {
@@ -178,7 +301,7 @@ func (r *eventRunner) snapshot() LifecycleSnapshot {
 
 	return LifecycleSnapshot{
 		Name:            r.name,
-		IsRunning:       r.done != nil,
+		IsRunning:       r.active != nil,
 		RunCount:        r.runCount,
 		RestartInterval: int(r.restartInterval / time.Second),
 		Roles:           r.roles,

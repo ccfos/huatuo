@@ -16,6 +16,7 @@
 package toolstream
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,10 @@ var (
 	ErrNotInitialized = errors.New("toolstream: server not initialized")
 	// ErrAlreadyStarted is returned by Start when the server is already running.
 	ErrAlreadyStarted = errors.New("toolstream: server already started")
+	// ErrDrainTimeout means active streams did not finish before the drain context.
+	ErrDrainTimeout = transport.ErrDrainTimeout
+	// ErrHandlersActive means network resources are closed but a handler has not returned.
+	ErrHandlersActive = transport.ErrHandlersActive
 )
 
 var (
@@ -147,8 +152,27 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Close shuts down the server and waits for all goroutines to finish.
-// Calling Close more than once is safe and a no-op after the first call.
+// QuiesceAndDrain rejects new connections and waits for active streams.
+func (s *Server) QuiesceAndDrain(ctx context.Context) error {
+	if s == nil || s.sockPath == "" {
+		return ErrNotInitialized
+	}
+
+	s.innerMu.Lock()
+	inner := s.inner
+	s.innerMu.Unlock()
+	if inner == nil {
+		return nil
+	}
+
+	if err := inner.QuiesceAndDrain(ctx); err != nil {
+		return fmt.Errorf("toolstream: quiesce and drain: %w", err)
+	}
+	return nil
+}
+
+// Close shuts down the server. A handler that has not returned is reported so
+// callers do not close storage that the handler may still use.
 func (s *Server) Close() error {
 	if s == nil {
 		return ErrNotInitialized
@@ -161,8 +185,11 @@ func (s *Server) Close() error {
 		return nil
 	}
 	inner := s.inner
-	s.inner = nil
-	return inner.Close()
+	err := inner.Close()
+	if !errors.Is(err, transport.ErrHandlersActive) {
+		s.inner = nil
+	}
+	return err
 }
 
 func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {

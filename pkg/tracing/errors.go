@@ -26,6 +26,9 @@ var (
 	ErrTracerAlreadyRunning = errors.New("tracer already running")
 	// ErrTracerNotRunning indicates that a tracer is inactive.
 	ErrTracerNotRunning = errors.New("tracer not running")
+	// ErrTracerRunErrorPending indicates that a completed run error has not
+	// yet been collected by StopByName or Close.
+	ErrTracerRunErrorPending = errors.New("tracer run error pending")
 	// ErrInvalidTracer indicates that a tracing registration is invalid.
 	ErrInvalidTracer = errors.New("invalid tracer")
 	// ErrManagerClosed indicates that the manager no longer accepts starts.
@@ -38,4 +41,16 @@ func newTracerStateError(err error, name string) error {
 
 func newTracerContextError(operation, name string, err error) error {
 	return fmt.Errorf("%s %q: %w", operation, name, err)
+}
+
+func newTracerRunError(name string, err error) error {
+	return fmt.Errorf("tracer %q: %w", name, err)
+}
+
+func newTracerRunErrorPending(name string) error {
+	return fmt.Errorf(
+		"%q: %w; stop the tracer to collect the previous error before restarting",
+		name,
+		ErrTracerRunErrorPending,
+	)
 }
