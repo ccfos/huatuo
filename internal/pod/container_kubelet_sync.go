@@ -192,7 +192,9 @@ func InitManager(ctx *ManagerCtx) error {
 				if err := kubeletPodListPortCacheUpdate(ctx); err == nil {
 					log.Infof("kubelet is running now")
 					_ = kubeletConfigCacheMustUpdate(ctx)
-					_ = containerCgroupCssInit()
+					if err := containerCgroupCssInit(); err != nil {
+						log.Errorf("initialize container cgroup CSS: %v", err)
+					}
 					t.Stop()
 					return
 				}
