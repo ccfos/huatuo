@@ -155,8 +155,8 @@ func TestResolveELFPCsDoesNotLogLimitsAtInfo(t *testing.T) {
 		MaxNameLength:    1024,
 	}))
 
-	if err := resolver.resolveELFPCs(executablePath, nil, make(map[uint64]string), []uint64{1}); !errors.Is(err, ErrELFSymbolLimit) {
-		t.Fatalf("resolveELFPCs: got %v, want ErrELFSymbolLimit", err)
+	if err := resolver.resolveELFPCs(executablePath, nil, make(map[uint64]string), []uint64{1}); !errors.Is(err, errELFSymbolLimit) {
+		t.Fatalf("resolveELFPCs: got %v, want errELFSymbolLimit", err)
 	}
 	if strings.Contains(output.String(), "limits reached") {
 		t.Fatalf("repeated ELF limit logged above debug: %s", output.String())
@@ -280,8 +280,8 @@ func TestUsymResolverLoadElfCaches(t *testing.T) {
 		if len(resolver.exeCache) != 1 {
 			t.Errorf("loadElfCaches: got %d cache entries, want 1 (shared backing file on same xfs)", len(resolver.exeCache))
 		}
-		if len(cacheFirst.paths) != 2 {
-			t.Errorf("loadElfCaches: cached %d per-pid paths, want 2", len(cacheFirst.paths))
+		if len(resolver.processPaths) != 2 {
+			t.Errorf("loadElfCaches: cached %d per-pid paths, want 2", len(resolver.processPaths))
 		}
 	})
 }

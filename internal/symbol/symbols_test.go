@@ -129,7 +129,7 @@ func TestSymbolsResolve(t *testing.T) {
 		key      uint64
 		wantName string
 	}{
-		{name: "kernel-style-size-zero-resolves-any-offset", key: 0x1800, wantName: "kernel_sched_tick"},
+		{name: "zero-size-symbol-does-not-cover-higher-offset", key: 0x1800, wantName: ""},
 		{name: "user-style-in-range-resolves", key: 0x20ff, wantName: "user_func_malloc"},
 		{name: "user-style-end-exclusive", key: 0x2100, wantName: ""},
 		{name: "user-style-overflowing-end-does-not-wrap", key: math.MaxUint64, wantName: ""},
@@ -759,8 +759,8 @@ func TestElfSymbolsRejectsDistinctExpandedNamesInRealELF(t *testing.T) {
 	}
 
 	got, err := elfSymbols(f, limits)
-	if !errors.Is(err, ErrELFSymbolLimit) {
-		t.Fatalf("elfSymbols(real expanded-name ELF): got error %v, want ErrELFSymbolLimit", err)
+	if !errors.Is(err, errELFSymbolLimit) {
+		t.Fatalf("elfSymbols(real expanded-name ELF): got error %v, want errELFSymbolLimit", err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("elfSymbols(real expanded-name ELF): got %d symbols from rejected source, want 0", len(got))
@@ -840,8 +840,8 @@ func TestElfSymbolsForPCsLimitsSingleName(t *testing.T) {
 		MaxNameLength:    4,
 	}
 	got, err := elfSymbolsForPCs(f, []uint64{0x1001}, limits)
-	if !errors.Is(err, ErrELFSymbolLimit) || len(got) != 0 {
-		t.Fatalf("single-name limit: got %v, err %v; want no symbols and ErrELFSymbolLimit", got, err)
+	if !errors.Is(err, errELFSymbolLimit) || len(got) != 0 {
+		t.Fatalf("single-name limit: got %v, err %v; want no symbols and errELFSymbolLimit", got, err)
 	}
 }
 
@@ -945,8 +945,8 @@ func TestElfSymbolsSkipsOversizedRealSourceAndKeepsFallback(t *testing.T) {
 	}
 
 	got, err := elfSymbols(f, limits)
-	if !errors.Is(err, ErrELFSymbolLimit) {
-		t.Fatalf("elfSymbols(real fallback ELF): got error %v, want ErrELFSymbolLimit", err)
+	if !errors.Is(err, errELFSymbolLimit) {
+		t.Fatalf("elfSymbols(real fallback ELF): got error %v, want errELFSymbolLimit", err)
 	}
 	if len(got) != 1 || got[0].Name != "fallback" {
 		t.Fatalf("elfSymbols(real fallback ELF): got %v, want one fallback symbol", got)
@@ -966,8 +966,8 @@ func TestElfSymbolsLimitsRealSymbolCount(t *testing.T) {
 	}
 
 	got, err := elfSymbols(f, limits)
-	if !errors.Is(err, ErrELFSymbolLimit) {
-		t.Fatalf("elfSymbols(real symbol-count ELF): got error %v, want ErrELFSymbolLimit", err)
+	if !errors.Is(err, errELFSymbolLimit) {
+		t.Fatalf("elfSymbols(real symbol-count ELF): got error %v, want errELFSymbolLimit", err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("elfSymbols(real symbol-count ELF): got %d symbols, want 0", len(got))

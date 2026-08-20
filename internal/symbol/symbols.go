@@ -44,8 +44,7 @@ type stackFrames struct {
 	bytes   [][]byte
 }
 
-// ErrELFSymbolLimit reports that an ELF symbol source exceeded its configured budget.
-var ErrELFSymbolLimit = errors.New("ELF symbol resource limit exceeded")
+var errELFSymbolLimit = errors.New("ELF symbol resource limit exceeded")
 
 // ELFSymbolLimits bounds the metadata materialized while parsing one ELF.
 type ELFSymbolLimits struct {
@@ -123,7 +122,7 @@ func symbolCovers(addr, size, key uint64) bool {
 		return false
 	}
 	if size == 0 {
-		return true
+		return false
 	}
 	return size <= math.MaxUint64-addr && key < addr+size
 }
@@ -339,7 +338,7 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 	}
 	if !symbolsAlreadyCounted && (state.symbolCount > state.limits.MaxSymbolCount || symbolCount > state.limits.MaxSymbolCount-state.symbolCount) {
 		remainingSymbols := state.limits.MaxSymbolCount - min(state.symbolCount, state.limits.MaxSymbolCount)
-		return nil, fmt.Errorf("%w: %d symbols exceed the remaining limit of %d", ErrELFSymbolLimit, symbolCount, remainingSymbols)
+		return nil, fmt.Errorf("%w: %d symbols exceed the remaining limit of %d", errELFSymbolLimit, symbolCount, remainingSymbols)
 	}
 
 	var metadataBytes uint64
@@ -353,7 +352,7 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolSourc
 		}
 		remainingMetadata := state.limits.MaxMetadataBytes - state.metadataBytes - metadataBytes
 		if candidate.Size > remainingMetadata {
-			return nil, fmt.Errorf("%w: metadata exceeds the remaining %d-byte limit", ErrELFSymbolLimit, remainingMetadata)
+			return nil, fmt.Errorf("%w: metadata exceeds the remaining %d-byte limit", errELFSymbolLimit, remainingMetadata)
 		}
 		metadataBytes += candidate.Size
 	}
@@ -475,7 +474,6 @@ func materializeELFSymbolCandidates(stringsSection *elf.Section, candidates map[
 	allSymbols := len(pcs) == 0
 	for pc, matched := range candidates {
 		if !allSymbols && !symbolCovers(matched.value, matched.size, pc) {
-			result = append(result, &symbol{Addr: matched.value, Size: matched.size})
 			continue
 		}
 		name, ok := sharedNames[matched.nameOffset]
@@ -506,7 +504,7 @@ func materializeELFSymbolCandidates(stringsSection *elf.Section, candidates map[
 
 func readELFSymbolName(section *elf.Section, offset uint32, limit uint64) (string, error) {
 	if limit >= math.MaxInt64 {
-		return "", fmt.Errorf("%w: symbol name limit is too large", ErrELFSymbolLimit)
+		return "", fmt.Errorf("%w: symbol name limit is too large", errELFSymbolLimit)
 	}
 	reader := section.Open()
 	if _, err := reader.Seek(int64(offset), io.SeekStart); err != nil {
@@ -520,7 +518,7 @@ func readELFSymbolName(section *elf.Section, offset uint32, limit uint64) (strin
 		return string(name[:len(name)-1]), nil
 	}
 	if uint64(len(name)) > limit {
-		return "", fmt.Errorf("%w: symbol name at offset %d exceeds the %d-byte limit", ErrELFSymbolLimit, offset, limit)
+		return "", fmt.Errorf("%w: symbol name at offset %d exceeds the %d-byte limit", errELFSymbolLimit, offset, limit)
 	}
 	return "", fmt.Errorf("symbol name at offset %d is not NUL-terminated: %w", offset, err)
 }
@@ -529,21 +527,21 @@ func elfSymbolsFromSources(f *elf.File, sources []elfSymbolSource, limits ELFSym
 	syms := symbols{}
 	state := newELFSymbolParseState(limits)
 	var limitErrors []error
+	var parseErrors []error
 	for _, source := range sources {
 		sourceSymbols, err := state.parseSource(f, source)
 		if err != nil {
-			if errors.Is(err, ErrELFSymbolLimit) {
+			if errors.Is(err, errELFSymbolLimit) {
 				limitErrors = append(limitErrors, fmt.Errorf("%s: %w", source.name, err))
-			} else {
-				log.Infof("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
+			} else if !errors.Is(err, elf.ErrNoSymbols) {
+				parseErrors = append(parseErrors, fmt.Errorf("%s: %w", source.name, err))
 			}
 			continue
 		}
 		syms = append(syms, sourceSymbols...)
-		log.Infof("symbol: %s extracted %d func symbols", source.name, len(sourceSymbols))
 	}
 	syms.sort()
-	return syms, errors.Join(limitErrors...)
+	return syms, errors.Join(append(limitErrors, parseErrors...)...)
 }
 
 // elfSymbols extracts all STT_FUNC entries from .dynsym and .symtab. Version
@@ -576,7 +574,7 @@ func elfSymbolsForPCsWithState(f *elf.File, pcs []uint64, state *elfSymbolParseS
 		}
 		sourceSymbols, err := state.parseSource(f, source, remainingPCs...)
 		if err != nil {
-			if errors.Is(err, ErrELFSymbolLimit) {
+			if errors.Is(err, errELFSymbolLimit) {
 				limitErrors = append(limitErrors, fmt.Errorf("%s: %w", source.name, err))
 			} else {
 				log.Debugf("symbol: %s not available in %s: %v", source.name, f.FileHeader.Type, err)
@@ -592,7 +590,7 @@ func elfSymbolsForPCsWithState(f *elf.File, pcs []uint64, state *elfSymbolParseS
 			for _, sym := range sourceSymbols {
 				if sym.Name != "" {
 					for _, pc := range remainingPCs {
-						if sym.Size == 0 || (pc >= sym.Addr && pc < sym.Addr+sym.Size) {
+						if symbolCovers(sym.Addr, sym.Size, pc) {
 							resolved[pc] = struct{}{}
 						}
 					}

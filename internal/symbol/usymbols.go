@@ -34,8 +34,6 @@ type elfCache struct {
 	path     string
 	module   string
 	typ      elf.Type
-	paths    map[uint32]string
-	modules  map[uint32]string
 	resolved map[uint64]string
 }
 
@@ -57,7 +55,13 @@ type UsymResolver struct {
 	libcaches       map[cacheKey]*libCache // inode+xfs → libcache
 	libKeys         map[string]cacheKey    // libpath → cachekey
 	procmaps        map[uint32]sections
+	processPaths    map[uint32]elfProcessPath
 	elfSymbolLimits ELFSymbolLimits
+}
+
+type elfProcessPath struct {
+	path   string
+	module string
 }
 
 // UsymResolverOption configures a UsymResolver.
@@ -78,16 +82,13 @@ func NewUsymResolver(options ...UsymResolverOption) *UsymResolver {
 		libcaches:       make(map[cacheKey]*libCache),
 		libKeys:         make(map[string]cacheKey),
 		procmaps:        make(map[uint32]sections),
+		processPaths:    make(map[uint32]elfProcessPath),
 		elfSymbolLimits: DefaultELFSymbolLimits(),
 	}
 	for _, option := range options {
 		option(r)
 	}
 	return r
-}
-
-func (r *UsymResolver) resolveELFPCs(path string, fallback symbols, resolved map[uint64]string, pcs []uint64) error {
-	return r.resolveELFPCsWithState(path, fallback, resolved, pcs, nil)
 }
 
 func (r *UsymResolver) resolveELFPCsWithState(path string, fallback symbols, resolved map[uint64]string, pcs []uint64, state *elfSymbolParseState) error {
@@ -214,12 +215,10 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 	groups := make(map[elfGroupKey]*pendingELFPCs)
 	for index, addr := range addrs {
 		module := cache.module
-		if cache.modules != nil {
-			module = cache.modules[pid]
-		}
 		path := cache.path
-		if cache.paths != nil {
-			path = cache.paths[pid]
+		if processPath, ok := r.processPaths[pid]; ok {
+			path = processPath.path
+			module = processPath.module
 		}
 		if cache.typ == elf.ET_DYN && module != "" {
 			if err = r.loadProcMaps(pid); err == nil {
@@ -309,6 +308,10 @@ func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
 	return result
 }
 
+func (r *UsymResolver) resolveELFPCs(path string, fallback symbols, resolved map[uint64]string, pcs []uint64) error {
+	return r.resolveELFPCsWithState(path, fallback, resolved, pcs, nil)
+}
+
 func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
 	if key, ok := r.exeKeys[pid]; ok {
 		if cache, ok := r.exeCache[key]; ok {
@@ -327,14 +330,10 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
 	}
 	cache, ok := r.exeCache[key]
 	if ok {
-		if cache.paths == nil {
-			cache.paths = make(map[uint32]string)
+		r.processPaths[pid] = elfProcessPath{
+			path:   path,
+			module: strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid))),
 		}
-		if cache.modules == nil {
-			cache.modules = make(map[uint32]string)
-		}
-		cache.paths[pid] = path
-		cache.modules[pid] = strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid)))
 		r.exeKeys[pid] = key
 		return cache, nil
 	}
@@ -360,13 +359,12 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
 		path:     path,
 		module:   strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid))),
 		typ:      f.Type,
-		paths:    map[uint32]string{pid: path},
-		modules:  map[uint32]string{pid: strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid)))},
 		resolved: make(map[uint64]string),
 		state:    newELFSymbolParseState(r.elfSymbolLimits),
 	}
 	r.exeCache[key] = cache
 	r.exeKeys[pid] = key
+	r.processPaths[pid] = elfProcessPath{path: path, module: cache.module}
 	return cache, nil
 }
 
