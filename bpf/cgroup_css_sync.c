@@ -22,6 +22,7 @@ int bpf_cgroup_subsys_state_prog(struct pt_regs *ctx)
 	struct cgroup *cgrp		= BPF_CORE_READ(css, cgroup);
 	struct cgroup_css_event data = {};
 	int knode_len;
+	u32 css_size;
 
 	/* knode name */
 	knode_len =
@@ -36,8 +37,10 @@ int bpf_cgroup_subsys_state_prog(struct pt_regs *ctx)
 	data.cgroup_level = BPF_CORE_READ(cgrp, level);
 
 	/* css */
-	bpf_probe_read(&data.css, sizeof(u64) * CGROUP_SUBSYS_COUNT,
-		       BPF_CORE_READ(cgrp, subsys));
+	css_size = bpf_core_field_size(cgrp->subsys);
+	if (css_size > sizeof(data.css))
+		css_size = sizeof(data.css);
+	bpf_probe_read(&data.css, css_size, BPF_CORE_READ(cgrp, subsys));
 
 	/* output */
 	bpf_perf_event_output(ctx, &cgroup_perf_events, COMPAT_BPF_F_CURRENT_CPU,

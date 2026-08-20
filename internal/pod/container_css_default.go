@@ -17,7 +17,6 @@
 package pod
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -38,6 +37,7 @@ import (
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/types"
 
+	"github.com/cilium/ebpf/btf"
 	mapset "github.com/deckarep/golang-set"
 )
 
@@ -248,26 +248,43 @@ func cgroupCssNotifyFile() {
 }
 
 func cgroupInitSubSysIDs() error {
-	file, err := os.Open("/proc/cgroups")
+	spec, err := btf.LoadSpec("/sys/kernel/btf/vmlinux")
+	if err != nil {
+		return fmt.Errorf("load kernel BTF: %w", err)
+	}
+
+	var subsystems *btf.Enum
+	if err := spec.TypeByName("cgroup_subsys_id", &subsystems); err != nil {
+		return fmt.Errorf("find cgroup_subsys_id in kernel BTF: %w", err)
+	}
+
+	ids, err := cgroupSubSysIDNameMap(subsystems.Values)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	scanner.Split(bufio.ScanLines)
+	cgroupCssID2SubSysNameMap = ids
+	return nil
+}
 
-	// skip frst head
-	scanner.Scan()
-
-	ssid := 0
-	for scanner.Scan() {
-		arr := strings.SplitN(scanner.Text(), "\t", 2)
-		cgroupCssID2SubSysNameMap[ssid] = arr[0]
-		ssid++
+func cgroupSubSysIDNameMap(values []btf.EnumValue) (map[int]string, error) {
+	ids := make(map[int]string, len(values))
+	for _, value := range values {
+		name, ok := strings.CutSuffix(value.Name, "_cgrp_id")
+		if !ok {
+			continue
+		}
+		if value.Value >= uint64(len(containerCssPerfEvent{}.CSS)) {
+			continue
+		}
+		ids[int(value.Value)] = name
 	}
 
-	return nil
+	if len(ids) == 0 {
+		return nil, errors.New("cgroup_subsys_id has no subsystem values")
+	}
+
+	return ids, nil
 }
 
 func cgroupCssInitEventSync() error {

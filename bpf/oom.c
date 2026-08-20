@@ -23,6 +23,7 @@ int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 {
 	struct oom_event info = {};
 	struct task_struct *trigger_task, *victim_task;
+	u64 memory_cgrp_id_val;
 
 	if (bpf_ratelimited_in_map(ctx, rate))
 		return 0;
@@ -37,10 +38,12 @@ int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 	BPF_CORE_READ_STR_INTO(&info.trigger_comm, trigger_task, comm);
 	BPF_CORE_READ_STR_INTO(&info.victim_comm, victim_task, comm);
 
+	memory_cgrp_id_val =
+		bpf_core_enum_value(enum cgroup_subsys_id, memory_cgrp_id);
 	info.victim_memcg_css =
-	    (u64)BPF_CORE_READ(victim_task, cgroups, subsys[memory_cgrp_id]);
+	    (u64)BPF_CORE_READ(victim_task, cgroups, subsys[memory_cgrp_id_val]);
 	info.trigger_memcg_css =
-	    (u64)BPF_CORE_READ(trigger_task, cgroups, subsys[memory_cgrp_id]);
+	    (u64)BPF_CORE_READ(trigger_task, cgroups, subsys[memory_cgrp_id_val]);
 
 	info.mem_limit_pages = BPF_CORE_READ(oc, totalpages);
 	struct mem_cgroup *memcg = BPF_CORE_READ(oc, memcg);

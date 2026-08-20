@@ -19,7 +19,31 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cilium/ebpf/btf"
 )
+
+func TestCgroupSubSysIDNameMap(t *testing.T) {
+	ids, err := cgroupSubSysIDNameMap([]btf.EnumValue{
+		{Name: "cpuset_cgrp_id", Value: 0},
+		{Name: "cpu_cgrp_id", Value: 1},
+		{Name: "memory_cgrp_id", Value: 4},
+		{Name: "CGROUP_SUBSYS_COUNT", Value: 13},
+		{Name: "future_cgrp_id", Value: 13},
+	})
+	if err != nil {
+		t.Fatalf("cgroupSubSysIDNameMap() error = %v", err)
+	}
+
+	for id, want := range map[int]string{0: "cpuset", 1: "cpu", 4: "memory"} {
+		if got := ids[id]; got != want {
+			t.Errorf("ids[%d] = %q, want %q", id, got, want)
+		}
+	}
+	if _, ok := ids[13]; ok {
+		t.Error("controllers outside the CSS event ABI must not be mapped")
+	}
+}
 
 func TestExtractContainerID(t *testing.T) {
 	for _, tc := range []struct {

@@ -2,21 +2,23 @@
 #define __BPF_CGROUP_H__
 
 #include "vmlinux.h"
-#include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
+#include <bpf/bpf_helpers.h>
 
 static __always_inline u64 current_task_cpu_css_addr(void)
 {
 	struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-
-	return (u64)BPF_CORE_READ(task, cgroups, subsys[cpu_cgrp_id]);
+	u64 cpu_cgrp_id_val =
+		bpf_core_enum_value(enum cgroup_subsys_id, cpu_cgrp_id);
+	return (u64)BPF_CORE_READ(task, cgroups, subsys[cpu_cgrp_id_val]);
 }
 
 static __always_inline u64 current_task_memory_css_addr(void)
 {
 	struct task_struct *task = (struct task_struct *)bpf_get_current_task();
-
-	return (u64)BPF_CORE_READ(task, cgroups, subsys[memory_cgrp_id]);
+	u64 memory_cgrp_id_val =
+		bpf_core_enum_value(enum cgroup_subsys_id, memory_cgrp_id);
+	return (u64)BPF_CORE_READ(task, cgroups, subsys[memory_cgrp_id_val]);
 }
 
 /* skb_memcg_css_addr returns the memory cgroup subsystem state address for the

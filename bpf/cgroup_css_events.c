@@ -22,6 +22,7 @@ bpf_cgroup_event_class_prog(struct bpf_raw_tracepoint_args *ctx, u64 type)
 	struct cgroup *cgrp		= (void *)ctx->args[0];
 	struct cgroup_css_event data = {};
 	int knode_len;
+	u32 css_size;
 
 	/* knode name */
 	knode_len =
@@ -35,8 +36,10 @@ bpf_cgroup_event_class_prog(struct bpf_raw_tracepoint_args *ctx, u64 type)
 	data.cgroup_root  = BPF_CORE_READ(cgrp, root, hierarchy_id);
 	data.cgroup_level = BPF_CORE_READ(cgrp, level);
 
-	bpf_probe_read(&data.css, sizeof(u64) * CGROUP_SUBSYS_COUNT,
-		       BPF_CORE_READ(cgrp, subsys));
+	css_size = bpf_core_field_size(cgrp->subsys);
+	if (css_size > sizeof(data.css))
+		css_size = sizeof(data.css);
+	bpf_probe_read(&data.css, css_size, BPF_CORE_READ(cgrp, subsys));
 
 	bpf_perf_event_output(ctx, &cgroup_perf_events, COMPAT_BPF_F_CURRENT_CPU,
 			      &data, sizeof(data));
