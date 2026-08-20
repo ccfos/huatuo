@@ -20,9 +20,15 @@
 #define CGROUP_KNODE_NAME_MAXLEN 85
 #define CGROUP_KNODE_NAME_MINLEN 64
 
+enum cgroup_css_operation {
+	CGROUP_CSS_OPERATION_UPDATE = 0,
+	CGROUP_CSS_OPERATION_REMOVE = 1,
+};
+
 struct cgroup_css_event {
 	u64 cgroup;
-	u64 ops_type;
+	enum cgroup_css_operation operation;
+	u32 pad0;
 	s32 cgroup_root;
 	s32 cgroup_level;
 	u64 css[CGROUP_SUBSYS_COUNT];
@@ -30,5 +36,6 @@ struct cgroup_css_event {
 };
 
 BPF_ABI_EXPORT(cgroup_css_event);
+BPF_ABI_EXPORT_ENUM(cgroup_css_operation);
 
 #endif /* __BPF_ABI_CGROUP_H__ */

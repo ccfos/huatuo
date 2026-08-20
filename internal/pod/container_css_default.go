@@ -173,13 +173,13 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader) 
 
 				log.Debugf("sync container css data: %+v", data)
 
-				switch data.OpsType {
-				case 0: // mkdir cgroup, or cgroupv1/v2 read specific file to collect css
+				switch data.Operation {
+				case abi.CgroupCSSOperationUpdate:
 					_ = cgroupUpdateOrCreateCssData(&data)
-				case 1: // rmdir cgroup
+				case abi.CgroupCSSOperationRemove:
 					_ = cgroupDeleteCssData(&data)
 				default:
-					log.Errorf("css event opstype not supported: %+v", data)
+					log.Errorf("unsupported cgroup CSS operation: %+v", data)
 				}
 			}
 		}
