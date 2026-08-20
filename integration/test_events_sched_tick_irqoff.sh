@@ -67,13 +67,14 @@ sched_tick_event_is_valid() {
 			and (.tracer_id | type == "string")
 			and (.tracer_time | type == "string")
 			and .tracer_type == "event"
-			and .tracer_data.threshold == 1
-			and (.tracer_data.offtime | type == "number")
-			and .tracer_data.offtime >= .tracer_data.threshold
+			and .tracer_data.tick_interval_threshold_ns == 1
+			and (.tracer_data.tick_interval_ns | type == "number")
+			and .tracer_data.tick_interval_ns >= .tracer_data.tick_interval_threshold_ns
 			and (.tracer_data.comm | type == "string")
 			and (.tracer_data.pid | type == "number")
 			and (.tracer_data.cpu | type == "number")
-			and (.tracer_data.now | type == "number")
+			and (.tracer_data | has("now") | not)
+			and (.tracer_data | has("ktime_ns") | not)
 			and (.tracer_data.stack | type == "string")
 		))
 	' "${SCHED_TICK_EVENT}" > "${VALID_SCHED_TICK_EVENT}" 2> /dev/null

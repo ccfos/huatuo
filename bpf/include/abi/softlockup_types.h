@@ -19,7 +19,7 @@
 
 struct softlockup_event {
 	u32 cpu;
-	u32 pid;
+	u32 tgid;
 	u8 comm[COMPAT_TASK_COMM_LEN];
 };
 

@@ -33,8 +33,8 @@ int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 
 	trigger_task	 = (struct task_struct *)bpf_get_current_task();
 	victim_task	 = BPF_CORE_READ(oc, chosen);
-	info.trigger_pid = BPF_CORE_READ(trigger_task, pid);
-	info.victim_pid	 = BPF_CORE_READ(victim_task, pid);
+	info.trigger_tgid = BPF_CORE_READ(trigger_task, tgid);
+	info.victim_tgid  = BPF_CORE_READ(victim_task, tgid);
 	BPF_CORE_READ_STR_INTO(&info.trigger_comm, trigger_task, comm);
 	BPF_CORE_READ_STR_INTO(&info.victim_comm, victim_task, comm);
 

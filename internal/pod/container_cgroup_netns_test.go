@@ -21,7 +21,7 @@ import (
 	"huatuo-bamai/internal/cgroups/subsystem"
 )
 
-func TestContainerIDByCgroupNetNS(t *testing.T) {
+func TestContainerIDByCgroupNetNamespace(t *testing.T) {
 	previousContainers := containers
 	previousUpdatedAt := lastUpdatedAt
 
@@ -50,12 +50,12 @@ func TestContainerIDByCgroupNetNS(t *testing.T) {
 
 	tests := []struct {
 		name string
-		ids  ContainerCgroupNetNS
+		ids  ContainerCgroupNetNamespace
 		want string
 	}{
 		{
 			name: "css takes precedence",
-			ids: ContainerCgroupNetNS{
+			ids: ContainerCgroupNetNamespace{
 				MemoryCgroupCSSAddr: 11,
 				NetNamespaceCookie:  22,
 				NetNamespaceInum:    33,
@@ -64,7 +64,7 @@ func TestContainerIDByCgroupNetNS(t *testing.T) {
 		},
 		{
 			name: "net namespace cookie falls back after CSS miss",
-			ids: ContainerCgroupNetNS{
+			ids: ContainerCgroupNetNamespace{
 				MemoryCgroupCSSAddr: 99,
 				NetNamespaceCookie:  22,
 				NetNamespaceInum:    33,
@@ -73,7 +73,7 @@ func TestContainerIDByCgroupNetNS(t *testing.T) {
 		},
 		{
 			name: "net namespace inum falls back after CSS and cookie misses",
-			ids: ContainerCgroupNetNS{
+			ids: ContainerCgroupNetNamespace{
 				MemoryCgroupCSSAddr: 99,
 				NetNamespaceCookie:  88,
 				NetNamespaceInum:    33,
@@ -82,7 +82,7 @@ func TestContainerIDByCgroupNetNS(t *testing.T) {
 		},
 		{
 			name: "no matching metadata",
-			ids: ContainerCgroupNetNS{
+			ids: ContainerCgroupNetNamespace{
 				MemoryCgroupCSSAddr: 99,
 				NetNamespaceCookie:  88,
 				NetNamespaceInum:    77,
@@ -93,9 +93,9 @@ func TestContainerIDByCgroupNetNS(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ContainerIDByCgroupNetNS(tt.ids)
+			got := ContainerIDByCgroupNetNamespace(tt.ids)
 			if got != tt.want {
-				t.Errorf("ContainerIDByCgroupNetNS(%+v) = %q, want %q", tt.ids, got, tt.want)
+				t.Errorf("ContainerIDByCgroupNetNamespace(%+v) = %q, want %q", tt.ids, got, tt.want)
 			}
 		})
 	}

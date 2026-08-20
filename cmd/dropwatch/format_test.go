@@ -52,10 +52,10 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 		DropLocation:      "0xffffffff81000000",
 		Source:            "tools",
 		Comm:              "worker thread",
-		Pid:               1420,
+		PID:               1420,
 		NetdevName:        "eth0",
 		PacketSkbAddr:     "0xffff888012345678",
-		PacketLen:         1500,
+		PacketLenBytes:    1500,
 		Layers: &packet.Packet{
 			Label: "IPv4/TCP",
 			IPv4: &packet.IPv4{
@@ -171,7 +171,7 @@ func BenchmarkTextWriter(b *testing.B) {
 		DropSource:        dropSourceHardware,
 		DropReason:        "ingress_vlan_filter",
 		DropReasonGroup:   "l2_drops",
-		PacketLen:         1500,
+		PacketLenBytes:    1500,
 		NetdevName:        "eth0",
 	}
 	w := &textWriter{w: io.Discard}

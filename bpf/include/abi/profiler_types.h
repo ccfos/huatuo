@@ -27,7 +27,7 @@ struct profiler_event_base {
 
 struct profiler_oncpu_event {
 	struct profiler_event_base base;
-	u64 timestamp;
+	u64 ktime_ns;
 	u32 cpu;
 	u32 pad0;
 };

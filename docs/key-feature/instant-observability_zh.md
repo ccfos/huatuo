@@ -111,12 +111,11 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
     "uploaded_time": "2025-06-11T16:05:16.251152703+08:00",
     "hostname": "***",
     "tracer_data": {
-        "offtime": 237328905,
-        "threshold": 10000000,
+        "tick_interval_ns": 237328905,
+        "tick_interval_threshold_ns": 10000000,
         "comm": "***-agent",
         "pid": 688073,
         "cpu": 1,
-        "now": 5532940660025295,
         "stack": "scheduler_tick/..."
     },
     "tracer_time": "2025-06-11 16:05:16.251 +0800",
@@ -131,10 +130,9 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 - **comm**：触发事件的进程名称
 - **stack**：延迟结束后的首个调度 tick 上采集的内核调用栈
-- **now**：事件发生时的单调时钟时间戳（纳秒）
-- **offtime**：相邻调度 tick 的总间隔（纳秒）
+- **tick_interval_ns**：相邻调度 tick 的总间隔（纳秒）
 - **cpu**：发生事件的 CPU 编号
-- **threshold**：调度 tick 间隔阈值（纳秒），达到该值则记录事件
+- **tick_interval_threshold_ns**：调度 tick 间隔阈值（纳秒），达到该值则记录事件
 - **pid**：上报 tick 所中断任务的进程 ID
 
 ### 2. dropwatch 协议栈丢包
@@ -160,7 +158,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
         "netdev_name": "eth0",
         "netdev_ifindex": 2,
         "packet_eth_proto": "0x0800",
-        "packet_len": 1460,
+        "packet_len_bytes": 1460,
         "layers": {
             "label": "IPv4/TCP",
             "ipv4": {
@@ -194,7 +192,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 - **netdev_linkstatus**：网卡链路状态标志列表
 - **netdev_name**：网卡设备名称
 - **netdev_ifindex**：网卡接口索引
-- **packet_len**：数据包长度（字节）
+- **packet_len_bytes**：数据包长度（字节）
 - **layers.ipv4.saddr / layers.ipv4.daddr**：源 IP 和目的 IP 地址
 - **layers.tcp.sport / layers.tcp.dport**：源端口和目的端口
 - **layers.tcp.seq / layers.tcp.ack_seq**：TCP 序列号和确认序列号
@@ -214,8 +212,9 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
     "tracer_data": {
         "comm": "nginx",
         "pid": 2921092,
-        "lat_stage": "RX_STAGE_USERCOPY",
-        "lat_ms": 95973,
+        "latency_stage": "RX_STAGE_USERCOPY",
+        "latency_ms": 95973,
+        "latency_threshold_ms": 115,
         "tcp_state": "ESTABLISHED",
         "tcp_saddr": "10.156.248.76",
         "tcp_daddr": "10.134.72.4",
@@ -225,7 +224,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
         "tcp_ack_seq": 689410995,
         "net_namespace_cookie": 123456789,
         "net_namespace_inum": 402653184,
-        "pkt_len": 26064
+        "packet_len_bytes": 26064
     }
 }
 ```
@@ -234,15 +233,16 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 - **comm**：触发事件的进程名称
 - **pid**：触发事件的进程 ID
-- **lat_stage**：延迟发生的阶段（`RX_STAGE_NETIF` 网卡到内核 / `RX_STAGE_TCPV4` 内核到 TCP / `RX_STAGE_USERCOPY` TCP 到用户态）
-- **lat_ms**：实际延迟时间（毫秒）
+- **latency_stage**：延迟发生的阶段（`RX_STAGE_NETIF` 网卡到内核 / `RX_STAGE_TCPV4` 内核到 TCP / `RX_STAGE_USERCOPY` TCP 到用户态）
+- **latency_ms**：实际延迟时间（毫秒）
+- **latency_threshold_ms**：触发事件的延迟阈值（毫秒）
 - **tcp_state**：TCP 连接状态（支持所有状态，如 `ESTABLISHED`、`SYN_SENT`、`FIN_WAIT`、`TIME_WAIT` 等）
 - **tcp_saddr / tcp_daddr**：源 IP / 目的 IP 地址
 - **tcp_sport / tcp_dport**：源端口 / 目的端口
 - **tcp_seq / tcp_ack_seq**：TCP 序列号 / 确认序列号
 - **net_namespace_cookie**：网络命名空间 cookie（内核 ≥ 5.14 可用，用于高效容器关联）
 - **net_namespace_inum**：网络命名空间 inum
-- **pkt_len**：数据包长度（字节）
+- **packet_len_bytes**：数据包长度（字节）
 
 ### 4. oom 内存耗尽
 
@@ -354,7 +354,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 ```json
 {
     "tracer_data": {
-        "pid": 2567042,
+        "tid": 2567042,
         "comm": "kworker/u48:2",
         "cpus_stack": "2025-06-10 09:57:14 sysrq: Show backtrace of all active CPUs\nNMI backtrace for cpu 33\n...",
         "blocked_processes_stack": "task:java            state:D stack:    0 pid: 12345 ..."
@@ -364,8 +364,8 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 **字段含义解释**
 
-- **pid**：触发 hungtask 检测的进程 PID
-- **comm**：触发 hungtask 检测的进程名称
+- **tid**：触发 hungtask 检测的任务 TID
+- **comm**：触发 hungtask 检测的任务名称
 - **cpus_stack**：所有 CPU 的 NMI 回溯信息（多行文本，包含时间戳和调用栈）
 - **blocked_processes_stack**：D 状态进程的内核栈信息
 
@@ -381,8 +381,9 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 {
     "tracer_data": {
         "pid": 1896137,
+        "tid": 1896138,
         "comm": "java",
-        "deltatime": 1412702917
+        "reclaim_duration_ns": 1412702917
     }
 }
 ```
@@ -391,7 +392,8 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 - **comm**：触发直接内存回收的进程名称
 - **pid**：触发进程的 PID
-- **deltatime**：直接回收耗时（纳秒）
+- **tid**：触发线程的 TID
+- **reclaim_duration_ns**：直接回收耗时（纳秒）
 
 ### 8. ras 硬件错误
 
@@ -407,7 +409,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
         "dev": "CPU/MEM",
         "event": "MCE",
         "type": "UncorrectedRecoverable",
-        "timestamp": 1749600000000000000,
+        "observed_timestamp": "2025-06-11T00:00:00Z",
         "info": "{\"mcg_cpu_cap\":4096,\"banks_msr_status\":9295429630892703744,\"cpu\":2,\"socketid\":0,\"bank\":5}"
     }
 }
@@ -421,7 +423,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
         "dev": "PCIe 0000:3b:00.0",
         "event": "AER",
         "type": "UncorrectedRecoverable",
-        "timestamp": 1749600000000000000,
+        "observed_timestamp": "2025-06-11T00:00:00Z",
         "info": "{\"dev_name\":\"0000:3b:00.0\",\"err_type\":\"UncorrectedRecoverable\",\"err_reason\":\"Completion Timeout\",\"tlp_header\":\"not available\"}"
     }
 }
@@ -432,7 +434,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 - **dev**：发生错误的硬件设备（如 `CPU/MEM`、`PCIe 0000:3b:00.0`）
 - **event**：错误类型（`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`）
 - **type**：错误严重程度（`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`）
-- **timestamp**：硬件错误发生时的时间戳
+- **observed_timestamp**：硬件错误发生时的 UTC 时间
 - **info**：JSON 格式的详细错误信息，内容因 event 类型不同而不同
 
 ### 9. netdev_events 网络设备

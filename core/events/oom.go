@@ -39,7 +39,7 @@ type OOMActor struct {
 	MemoryCgroupCSSAddr string                   `json:"memory_cgroup_css_addr"`
 	ContainerID         string                   `json:"container_id,omitempty"`
 	ContainerHostname   string                   `json:"container_hostname,omitempty"`
-	Pid                 int32                    `json:"pid"`
+	PID                 uint32                   `json:"pid"`
 	Comm                string                   `json:"comm"`
 	Cgroup              *OOMCgroupMemorySnapshot `json:"cgroup,omitempty"`
 }
@@ -179,13 +179,13 @@ func buildTracingData(data abi.OOMEvent, containers map[string]*pod.Container, c
 		Trigger: OOMActor{
 			MemoryCgroupCSSAddr: kernaddr.Format(data.TriggerMemcgCSS),
 			ContainerID:         triggerID,
-			Pid:                 int32(data.TriggerPID),
+			PID:                 data.TriggerTGID,
 			Comm:                bytesutil.ToStr(data.TriggerComm[:]),
 		},
 		Victim: OOMActor{
 			MemoryCgroupCSSAddr: kernaddr.Format(data.VictimMemcgCSS),
 			ContainerID:         victimID,
-			Pid:                 int32(data.VictimPID),
+			PID:                 data.VictimTGID,
 			Comm:                bytesutil.ToStr(data.VictimComm[:]),
 		},
 	}

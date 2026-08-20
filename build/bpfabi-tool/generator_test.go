@@ -30,7 +30,7 @@ func TestGoName(t *testing.T) {
 		"bpf_debug_event":               "BPFDebugEvent",
 		"n_missed":                      "NMissed",
 		"net_rx_latency":                "NetRXLatency",
-		"netns_inum":                    "NetNSInum",
+		"netns_inum":                    "NetNamespaceInum",
 		"pid_tgid":                      "PIDTGID",
 		"profiler_offcpu_event":         "ProfilerOffCPUEvent",
 		"profiler_oncpu_event":          "ProfilerOnCPUEvent",

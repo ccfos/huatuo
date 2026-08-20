@@ -63,9 +63,9 @@ type softirqLatency struct {
 }
 
 type softirqLatencyData struct {
-	Enable       uint64
-	Timestamp    uint64
-	TotalLatency [4]uint64
+	Enable        uint64
+	StartNS       uint64
+	LatencyCounts [4]uint64
 }
 
 const (
@@ -157,7 +157,7 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 				break
 			}
 			labels["cpuid"] = strconv.Itoa(cpuid)
-			for zoneid, zone := range lat.TotalLatency {
+			for zoneid, zone := range lat.LatencyCounts {
 				labels["zone"] = strconv.Itoa(zoneid)
 				metricData = append(metricData, metric.NewCounterData("latency", float64(zone), "softirq latency", labels))
 			}

@@ -75,7 +75,7 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 	}
 
 	if ev.ContainerID == "" {
-		ev.ContainerID = pod.ContainerIDByCgroupNetNS(pod.ContainerCgroupNetNS{
+		ev.ContainerID = pod.ContainerIDByCgroupNetNamespace(pod.ContainerCgroupNetNamespace{
 			MemoryCgroupCSSAddr: kernaddr.ParseOrZero(ev.MemoryCgroupCSSAddr),
 			NetNamespaceCookie:  ev.NetNamespaceCookie,
 			NetNamespaceInum:    uint64(ev.NetNamespaceInum),

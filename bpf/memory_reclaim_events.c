@@ -12,7 +12,7 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-volatile const unsigned long deltath = 0;
+volatile const u64 reclaim_duration_threshold_ns = 0;
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -23,7 +23,7 @@ struct {
 SEC("kprobe/try_to_free_pages")
 int kprobe_try_to_free_pages(struct pt_regs *ctx)
 {
-	func_trace_begain(bpf_get_current_pid_tgid());
+	func_trace_begin(bpf_get_current_pid_tgid());
 	return 0;
 }
 
@@ -36,11 +36,12 @@ int kretprobe_try_to_free_pages(struct pt_regs *ctx)
 	if (!entry)
 		return 0;
 
-	if (entry->delta_ns > deltath) {
+	if (entry->duration_ns > reclaim_duration_threshold_ns) {
 		struct memory_reclaim_event data = {
-			.pid	    = entry->id,
-			.css	    = current_task_cpu_css_addr(),
-			.delta_time = entry->delta_ns,
+			.reclaim_duration_ns = entry->duration_ns,
+			.cpu_css_addr	    = current_task_cpu_css_addr(),
+			.tgid		    = entry->id >> 32,
+			.tid		    = (u32)entry->id,
 		};
 
 		bpf_get_current_comm(data.comm, sizeof(data.comm));

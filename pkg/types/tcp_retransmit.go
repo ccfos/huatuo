@@ -71,7 +71,7 @@ type TCPRetransmitTracing struct {
 	TCPReason           string `json:"tcp_reason"` // "RTO", "fast_retransmit", "reorder_prone_fast", "TLP", "spurious", "unknown"
 	Source              string `json:"source,omitempty"`
 	Comm                string `json:"comm"`
-	Pid                 uint64 `json:"pid"`
+	PID                 uint64 `json:"pid"`
 	ContainerID         string `json:"container_id,omitempty"`
 	MemoryCgroupCSSAddr string `json:"memory_cgroup_css_addr,omitempty"`
 	NetNamespaceCookie  uint64 `json:"net_namespace_cookie,omitempty"`

@@ -50,7 +50,7 @@ struct dropwatch_packet_raw {
 	u16 raw_len;
 	u16 has_eth_hdr;
 	u16 pad;
-	u32 pkt_len;
+	u32 packet_len_bytes;
 	u32 sk_state;
 	u8 raw[DROPWATCH_PACKET_RAW_LEN];
 };

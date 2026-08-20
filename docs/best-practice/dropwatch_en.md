@@ -258,7 +258,7 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 | `netdev_linkstatus`      | []string | Network device link status flags                              |
 | `packet_skb_addr`        | string   | SKB address (hexadecimal, omitempty)                         |
 | `packet_eth_proto`       | string   | Raw EtherType (hexadecimal, e.g. `0x0800`)                   |
-| `packet_len`             | uint32   | Packet length in bytes                                        |
+| `packet_len_bytes`       | uint32   | Packet length in bytes                                        |
 | `layers`                 | object   | Layered protocol parse result; missing layers are omitted      |
 | `stack`                  | string   | Kernel call stack (newline-separated)                         |
 

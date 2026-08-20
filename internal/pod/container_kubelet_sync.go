@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -389,13 +389,13 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 	}
 
 	// net namespace
-	nsInum, err := netutil.NetNSInumByPid(initPid)
+	nsInum, err := netutil.NetNamespaceInumByPID(initPid)
 	if err != nil {
 		return fmt.Errorf("failed to get net namespace inum by pid: %w", err)
 	}
 
 	// net namespace cookie (Linux 5.14+; falls back to 0 on older kernels)
-	netNSCookie, err := netutil.NetNSCookieByPid(initPid)
+	netNamespaceCookie, err := netutil.NetNamespaceCookieByPID(initPid)
 	if err != nil {
 		log.Debugf("failed to get net namespace cookie for pid %d: %v", initPid, err)
 	}
@@ -428,7 +428,7 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 		Qos:                containerQos,
 		IPAddress:          parseContainerIPAddress(pod),
 		NetNamespaceInum:   nsInum,
-		NetNamespaceCookie: netNSCookie,
+		NetNamespaceCookie: netNamespaceCookie,
 		InitPid:            initPid,
 		CgroupPath:         cgroupPath,
 		CgroupCss:          css,

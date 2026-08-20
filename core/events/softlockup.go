@@ -36,8 +36,8 @@ import (
 
 // TracerData is the full data structure.
 type SoftLockupTracerData struct {
-	CPU       int32  `json:"cpu"`
-	Pid       int32  `json:"pid"`
+	CPU       uint32 `json:"cpu"`
+	PID       uint32 `json:"pid"`
 	Comm      string `json:"comm"`
 	CPUsStack string `json:"cpus_stack"`
 }
@@ -125,8 +125,8 @@ func (c *softLockupTracing) Start(ctx context.Context) error {
 				TracerName: "softlockup",
 				TracerTime: time.Now(),
 				TracerData: &SoftLockupTracerData{
-					CPU:       int32(data.CPU),
-					Pid:       int32(data.PID),
+					CPU:       data.CPU,
+					PID:       data.TGID,
 					Comm:      bytesutil.ToStr(data.Comm[:]),
 					CPUsStack: bt,
 				},

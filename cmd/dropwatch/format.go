@@ -60,11 +60,11 @@ func (s *textWriter) Write(ev *types.DropWatchTracing) error {
 		line = append(line, ev.DropLocation...)
 	}
 	line = append(line, " len="...)
-	line = strconv.AppendUint(line, uint64(ev.PacketLen), 10)
+	line = strconv.AppendUint(line, uint64(ev.PacketLenBytes), 10)
 	line = append(line, " dev="...)
 	line = append(line, ev.NetdevName...)
 	line = append(line, " pid="...)
-	line = strconv.AppendUint(line, ev.Pid, 10)
+	line = strconv.AppendUint(line, ev.PID, 10)
 	line = append(line, '[')
 	line = append(line, ev.Comm...)
 	line = append(line, "] addr="...)
@@ -170,17 +170,17 @@ func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType stri
 		DropReasonGroup:     bytesutil.ToStr(ev.Meta.TrapGroupName[:]),
 		DropLocation:        kernaddr.Format(ev.Meta.DropLocation),
 		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
-		Pid:                 ev.Meta.TGIDPID >> 32,
+		PID:                 ev.Meta.TGIDPID >> 32,
 		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemcgCSSAddr),
-		NetNamespaceCookie:  ev.Meta.NetNSCookie,
-		NetNamespaceInum:    ev.Meta.NetNSInum,
+		NetNamespaceCookie:  ev.Meta.NetNamespaceCookie,
+		NetNamespaceInum:    ev.Meta.NetNamespaceInum,
 		NetdevName:          bytesutil.ToStr(ev.Meta.DevName[:]),
 		NetdevIfindex:       ev.Meta.Ifindex,
 		NetdevQueueMapping:  ev.Meta.QueueMapping,
 		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.DevFlags),
 		PacketSkbAddr:       kernaddr.Format(ev.Meta.SKBAddr),
 		PacketEthProto:      "0x" + strconv.FormatUint(uint64(ev.PktHdr.EthProto), 16),
-		PacketLen:           ev.PktHdr.PktLen,
+		PacketLenBytes:      ev.PktHdr.PacketLenBytes,
 		Layers:              p,
 		Stack:               stackStr,
 		Source:              sourceType,

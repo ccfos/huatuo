@@ -86,7 +86,7 @@ func TestSchedTickAttachOptions(t *testing.T) {
 		},
 	}
 
-	got := schedTickAttachOptions()
+	got := schedTickAttachOptions("tick_nohz_restart_sched_tick")
 	if len(got) != len(expected) {
 		t.Fatalf("schedTickAttachOptions() length = %d, want %d", len(got), len(expected))
 	}

@@ -152,10 +152,10 @@ func TestFormatEventNetNamespaceIDs(t *testing.T) {
 	t.Parallel()
 
 	event := formatEvent(&abi.TCPRetransmitEvent{
-		NetNSCookie: 0x2000,
-		NetNSInum:   4026531992,
-		EventType:   uint8(abi.TCPRetransmitEventSKB),
-		Family:      unix.AF_INET,
+		NetNamespaceCookie: 0x2000,
+		NetNamespaceInum:   4026531992,
+		EventType:          uint8(abi.TCPRetransmitEventSKB),
+		Family:             unix.AF_INET,
 	}, toolstream.SourceTypeTool)
 	if event.NetNamespaceCookie != 0x2000 {
 		t.Fatalf("NetNamespaceCookie = %d, want %d", event.NetNamespaceCookie, uint64(0x2000))
@@ -378,7 +378,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 				TCPReason:           "RTO",
 				Source:              toolstream.SourceTypeTool,
 				Comm:                "worker thread",
-				Pid:                 1420,
+				PID:                 1420,
 				ContainerID:         "container-1",
 				MemoryCgroupCSSAddr: "0xffff888012345678",
 				NetNamespaceCookie:  2,
@@ -680,7 +680,7 @@ func benchmarkEvent() *types.TCPRetransmitTracing {
 		TCPReason:           "RTO",
 		Source:              toolstream.SourceTypeTool,
 		Comm:                "worker",
-		Pid:                 1420,
+		PID:                 1420,
 		ContainerID:         "container-1",
 		MemoryCgroupCSSAddr: "0xffff888012345678",
 		NetNamespaceCookie:  2,

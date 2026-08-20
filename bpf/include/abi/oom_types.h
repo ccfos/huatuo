@@ -20,8 +20,8 @@
 struct oom_event {
 	u8 trigger_comm[COMPAT_TASK_COMM_LEN];
 	u8 victim_comm[COMPAT_TASK_COMM_LEN];
-	u32 trigger_pid;
-	u32 victim_pid;
+	u32 trigger_tgid;
+	u32 victim_tgid;
 	u64 trigger_memcg_css;
 	u64 victim_memcg_css;
 	u64 mem_limit_pages;

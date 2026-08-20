@@ -43,7 +43,7 @@ struct {
 static __always_inline void event_init(struct ras_event *event, u32 type)
 {
 	__builtin_memset(event, 0, sizeof(*event));
-	event->timestamp = bpf_ktime_get_ns();
+	event->ktime_ns = bpf_ktime_get_ns();
 	event->type	 = type;
 }
 

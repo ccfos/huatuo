@@ -33,7 +33,7 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 				TCPReason:           "reorder_prone_fast",
 				Source:              "events",
 				Comm:                "kube-apiserver",
-				Pid:                 1234,
+				PID:                 1234,
 				ContainerID:         "abc123",
 				MemoryCgroupCSSAddr: "0xffff888012345678",
 				NetNamespaceCookie:  0x2000,

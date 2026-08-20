@@ -83,7 +83,7 @@ func printIOTracingSnapshot(w io.Writer, snapshot *types.IOTracingSnapshot) {
 		}
 
 		fmt.Fprintf(w, "%-7d  %s %7s %8s %9s %10s %5d\n",
-			p.Pid,
+			p.PID,
 			comm,
 			formatBytes(p.TotalFsReadBps),
 			formatBytes(p.TotalFsWriteBps),
@@ -96,7 +96,7 @@ func printIOTracingSnapshot(w io.Writer, snapshot *types.IOTracingSnapshot) {
 	for _, p := range snapshot.Processes {
 		fmt.Fprintln(w, "===========================================================================")
 		fmt.Fprintf(w, "PID: %-7d TOTAL_IO: R=%s W=%s  FILES: %d\n",
-			p.Pid,
+			p.PID,
 			formatBytes(p.TotalFsReadBps),
 			formatBytes(p.TotalFsWriteBps),
 			p.TotalFileCount)

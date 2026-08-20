@@ -38,8 +38,8 @@ type bpfBlockLatency struct {
 // bpfFilesystemIO mirrors one io_source_map entry: per-file IO totals,
 // latency, comm and dentry path captured during the trace window.
 type bpfFilesystemIO struct {
-	Tgid            uint32
-	Pid             uint32
+	TGID            uint32
+	Initialized     uint32
 	DevID           uint32
 	Flags           uint32
 	FsWriteBytes    uint64

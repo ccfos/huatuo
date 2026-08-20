@@ -54,7 +54,7 @@ volatile const u32 bpf_dbg_enabled = 0;
 	do {                                                                   \
 		if (bpf_dbg_enabled) {                                         \
 			struct bpf_debug_event __event = {                     \
-				.timestamp = bpf_ktime_get_ns(),               \
+				.ktime_ns = bpf_ktime_get_ns(),                \
 				.file_line = __LINE__,                         \
 				.args = {a1, a2, a3, 0},                       \
 			};                                                     \

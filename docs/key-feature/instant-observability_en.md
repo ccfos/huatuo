@@ -111,12 +111,11 @@ All event records include the following common fields:
     "uploaded_time": "2025-06-11T16:05:16.251152703+08:00",
     "hostname": "***",
     "tracer_data": {
-        "offtime": 237328905,
-        "threshold": 10000000,
+        "tick_interval_ns": 237328905,
+        "tick_interval_threshold_ns": 10000000,
         "comm": "***-agent",
         "pid": 688073,
         "cpu": 1,
-        "now": 5532940660025295,
         "stack": "scheduler_tick/..."
     },
     "tracer_time": "2025-06-11 16:05:16.251 +0800",
@@ -131,10 +130,9 @@ All event records include the following common fields:
 
 - **comm**: Name of the process that triggered the event
 - **stack**: Kernel call stack captured on the first scheduler tick after the delay
-- **now**: Monotonic clock timestamp at the time of the event (nanoseconds)
-- **offtime**: Total interval between adjacent scheduler ticks (nanoseconds)
+- **tick_interval_ns**: Total interval between adjacent scheduler ticks (nanoseconds)
 - **cpu**: CPU number where the event occurred
-- **threshold**: Inclusive scheduler tick interval threshold (nanoseconds)
+- **tick_interval_threshold_ns**: Inclusive scheduler tick interval threshold (nanoseconds)
 - **pid**: Process ID of the task interrupted by the reporting tick
 
 ### 2. dropwatch
@@ -160,7 +158,7 @@ All event records include the following common fields:
         "netdev_name": "eth0",
         "netdev_ifindex": 2,
         "packet_eth_proto": "0x0800",
-        "packet_len": 1460,
+        "packet_len_bytes": 1460,
         "layers": {
             "label": "IPv4/TCP",
             "ipv4": {
@@ -194,7 +192,7 @@ All event records include the following common fields:
 - **netdev_linkstatus**: List of NIC link status flags
 - **netdev_name**: Network device name
 - **netdev_ifindex**: Network interface index
-- **packet_len**: Packet length (bytes)
+- **packet_len_bytes**: Packet length (bytes)
 - **layers.ipv4.saddr / layers.ipv4.daddr**: Source and destination IP addresses
 - **layers.tcp.sport / layers.tcp.dport**: Source and destination ports
 - **layers.tcp.seq / layers.tcp.ack_seq**: TCP sequence and acknowledgment sequence numbers
@@ -214,8 +212,9 @@ All event records include the following common fields:
     "tracer_data": {
         "comm": "nginx",
         "pid": 2921092,
-        "lat_stage": "RX_STAGE_USERCOPY",
-        "lat_ms": 95973,
+        "latency_stage": "RX_STAGE_USERCOPY",
+        "latency_ms": 95973,
+        "latency_threshold_ms": 115,
         "tcp_state": "ESTABLISHED",
         "tcp_saddr": "10.156.248.76",
         "tcp_daddr": "10.134.72.4",
@@ -225,7 +224,7 @@ All event records include the following common fields:
         "tcp_ack_seq": 689410995,
         "net_namespace_cookie": 123456789,
         "net_namespace_inum": 402653184,
-        "pkt_len": 26064
+        "packet_len_bytes": 26064
     }
 }
 ```
@@ -234,15 +233,16 @@ All event records include the following common fields:
 
 - **comm**: Name of the process that triggered the event
 - **pid**: Process ID that triggered the event
-- **lat_stage**: Stage where latency occurred (`RX_STAGE_NETIF` driver-to-kernel / `RX_STAGE_TCPV4` kernel-to-TCP / `RX_STAGE_USERCOPY` TCP-to-user-space)
-- **lat_ms**: Actual latency (milliseconds)
+- **latency_stage**: Stage where latency occurred (`RX_STAGE_NETIF` driver-to-kernel / `RX_STAGE_TCPV4` kernel-to-TCP / `RX_STAGE_USERCOPY` TCP-to-user-space)
+- **latency_ms**: Actual latency (milliseconds)
+- **latency_threshold_ms**: Latency threshold that triggered the event (milliseconds)
 - **tcp_state**: TCP connection state (all states are supported, e.g., `ESTABLISHED`, `SYN_SENT`, `FIN_WAIT`, `TIME_WAIT`)
 - **tcp_saddr / tcp_daddr**: Source IP / Destination IP address
 - **tcp_sport / tcp_dport**: Source port / Destination port
 - **tcp_seq / tcp_ack_seq**: TCP sequence number / Acknowledgment sequence number
 - **net_namespace_cookie**: Network namespace cookie (available on kernel ≥ 5.14, used for efficient container association)
 - **net_namespace_inum**: Network namespace inum
-- **pkt_len**: Packet length (bytes)
+- **packet_len_bytes**: Packet length (bytes)
 
 ### 4. oom
 
@@ -354,7 +354,7 @@ All event records include the following common fields:
 ```json
 {
     "tracer_data": {
-        "pid": 2567042,
+        "tid": 2567042,
         "comm": "kworker/u48:2",
         "cpus_stack": "2025-06-10 09:57:14 sysrq: Show backtrace of all active CPUs\nNMI backtrace for cpu 33\n...",
         "blocked_processes_stack": "task:java            state:D stack:    0 pid: 12345 ..."
@@ -364,8 +364,8 @@ All event records include the following common fields:
 
 **Fields**
 
-- **pid**: PID of the process that triggered the hungtask detection
-- **comm**: Name of the process that triggered the hungtask detection
+- **tid**: TID of the task that triggered hungtask detection
+- **comm**: Name of the task that triggered hungtask detection
 - **cpus_stack**: NMI backtrace for all CPUs (multi-line text containing timestamps and call stacks)
 - **blocked_processes_stack**: Kernel stack information of D-state processes
 
@@ -381,8 +381,9 @@ All event records include the following common fields:
 {
     "tracer_data": {
         "pid": 1896137,
+        "tid": 1896138,
         "comm": "java",
-        "deltatime": 1412702917
+        "reclaim_duration_ns": 1412702917
     }
 }
 ```
@@ -391,7 +392,8 @@ All event records include the following common fields:
 
 - **comm**: Name of the process that triggered direct memory reclaim
 - **pid**: PID of the triggering process
-- **deltatime**: Direct reclaim duration (nanoseconds)
+- **tid**: TID of the triggering thread
+- **reclaim_duration_ns**: Direct reclaim duration (nanoseconds)
 
 ### 8. ras
 
@@ -407,7 +409,7 @@ All event records include the following common fields:
         "dev": "CPU/MEM",
         "event": "MCE",
         "type": "UncorrectedRecoverable",
-        "timestamp": 1749600000000000000,
+        "observed_timestamp": "2025-06-11T00:00:00Z",
         "info": "{\"mcg_cpu_cap\":4096,\"banks_msr_status\":9295429630892703744,\"cpu\":2,\"socketid\":0,\"bank\":5}"
     }
 }
@@ -421,7 +423,7 @@ All event records include the following common fields:
         "dev": "PCIe 0000:3b:00.0",
         "event": "AER",
         "type": "UncorrectedRecoverable",
-        "timestamp": 1749600000000000000,
+        "observed_timestamp": "2025-06-11T00:00:00Z",
         "info": "{\"dev_name\":\"0000:3b:00.0\",\"err_type\":\"UncorrectedRecoverable\",\"err_reason\":\"Completion Timeout\",\"tlp_header\":\"not available\"}"
     }
 }
@@ -432,7 +434,7 @@ All event records include the following common fields:
 - **dev**: Hardware device where the error occurred (e.g., `CPU/MEM`, `PCIe 0000:3b:00.0`)
 - **event**: Error type (`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`)
 - **type**: Error severity (`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`)
-- **timestamp**: Timestamp when the hardware error occurred
+- **observed_timestamp**: UTC time when the hardware error occurred
 - **info**: JSON-formatted detailed error information; content varies by event type
 
 ### 9. netdev_events

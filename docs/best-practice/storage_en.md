@@ -149,15 +149,15 @@ Example response:
       "tracer_data" : {
         "comm" : "<nil>",
         "pid" : 0,
-        "where" : "RX_STAGE_NETIF",
+        "latency_stage" : "RX_STAGE_NETIF",
         "latency_ms" : 1776078133565,
-        "saddr" : "127.0.0.1",
-        "daddr" : "127.0.0.1",
-        "sport" : 37736,
-        "dport" : 9200,
-        "seq" : 1080592402,
-        "ack_seq" : 2465063876,
-        "pkt_len" : 781
+        "tcp_saddr" : "127.0.0.1",
+        "tcp_daddr" : "127.0.0.1",
+        "tcp_sport" : 37736,
+        "tcp_dport" : 9200,
+        "tcp_seq" : 1080592402,
+        "tcp_ack_seq" : 2465063876,
+        "packet_len_bytes" : 781
       }
     }
 }
@@ -273,15 +273,15 @@ Example response:
       "tracer_data" : {
         "comm" : "<nil>",
         "pid" : 0,
-        "where" : "RX_STAGE_NETIF",
+        "latency_stage" : "RX_STAGE_NETIF",
         "latency_ms" : 1776078133565,
-        "saddr" : "127.0.0.1",
-        "daddr" : "127.0.0.1",
-        "sport" : 2379,
-        "dport" : 36706,
-        "seq" : 950542706,
-        "ack_seq" : 1960972383,
-        "pkt_len" : 91
+        "tcp_saddr" : "127.0.0.1",
+        "tcp_daddr" : "127.0.0.1",
+        "tcp_sport" : 2379,
+        "tcp_dport" : 36706,
+        "tcp_seq" : 950542706,
+        "tcp_ack_seq" : 1960972383,
+        "packet_len_bytes" : 91
       }
     }
 }

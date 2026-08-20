@@ -259,7 +259,7 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'd
 | `netdev_linkstatus`      | []string | 网络设备链路标志                              |
 | `packet_skb_addr`        | string   | SKB 地址（十六进制，omitempty）              |
 | `packet_eth_proto`       | string   | 原始 EtherType（十六进制，如 `0x0800`）       |
-| `packet_len`             | uint32   | 数据包长度（字节）                            |
+| `packet_len_bytes`       | uint32   | 数据包长度（字节）                            |
 | `layers`                 | object   | 分层协议解析结果，缺失的层会省略              |
 | `stack`                  | string   | 内核调用栈（换行分隔）                        |
 

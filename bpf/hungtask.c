@@ -22,7 +22,8 @@ int tracepoint_sched_process_hang(struct trace_event_raw_sched_process_hang *ctx
 {
 	struct hungtask_event info = {};
 
-	info.pid = ctx->pid;
+	/* sched_process_hang::pid identifies the hung task's TID. */
+	info.tid = ctx->pid;
 
 	/*
 	 * trace_event_raw_sched_process_hang::comm changed across kernels:

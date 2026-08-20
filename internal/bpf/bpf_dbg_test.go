@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,9 +36,9 @@ func TestBpfDbgEventSize(t *testing.T) {
 
 func TestBpfDbgEventRoundTrip(t *testing.T) {
 	e := bpf.BpfDbgEvent{
-		Timestamp: 123456789,
-		FileLine:  42,
-		Args:      [4]uint64{1, 2, 3, 4},
+		KtimeNS:  123456789,
+		FileLine: 42,
+		Args:     [4]uint64{1, 2, 3, 4},
 	}
 	copy(e.FileName[:], "foo.c\x00")
 	copy(e.Msg[:], "hello world\x00")
@@ -55,7 +55,7 @@ func TestBpfDbgEventRoundTrip(t *testing.T) {
 	if err := binary.Read(bytes.NewReader(buf.Bytes()), binary.NativeEndian, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Timestamp != e.Timestamp || decoded.FileName != e.FileName ||
+	if decoded.KtimeNS != e.KtimeNS || decoded.FileName != e.FileName ||
 		decoded.FileLine != e.FileLine || decoded.Args != e.Args {
 		t.Fatalf("round-trip mismatch: %+v != %+v", decoded, e)
 	}

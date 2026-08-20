@@ -229,7 +229,7 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 					  sizeof(data->meta.trap_group_name),
 					  trap_group_name);
 
-	data->pkt_hdr.pkt_len = BPF_CORE_READ(skb, len);
+	data->pkt_hdr.packet_len_bytes = BPF_CORE_READ(skb, len);
 
 	struct sock *sk = BPF_CORE_READ(skb, sk);
 	if (sk) {

@@ -19,17 +19,17 @@ import (
 	"huatuo-bamai/internal/log"
 )
 
-// ContainerCgroupNetNS contains cgroup and network namespace values used to find an event's container.
+// ContainerCgroupNetNamespace contains the identifiers used to resolve an event's container.
 // The fields are ordered by lookup priority.
-type ContainerCgroupNetNS struct {
+type ContainerCgroupNetNamespace struct {
 	MemoryCgroupCSSAddr uint64
 	NetNamespaceCookie  uint64
 	NetNamespaceInum    uint64
 }
 
-// ContainerIDByCgroupNetNS finds a container ID from cgroup and network namespace values.
+// ContainerIDByCgroupNetNamespace finds a container ID from cgroup and network namespace values.
 // It prefers the memory cgroup CSS address, then the network namespace cookie, and finally the network namespace inum.
-func ContainerIDByCgroupNetNS(ids ContainerCgroupNetNS) string {
+func ContainerIDByCgroupNetNamespace(ids ContainerCgroupNetNamespace) string {
 	if ids.MemoryCgroupCSSAddr != 0 {
 		container, err := ContainerByCSS(ids.MemoryCgroupCSSAddr, subsystem.SubsystemMemory)
 		if err != nil {
@@ -40,7 +40,7 @@ func ContainerIDByCgroupNetNS(ids ContainerCgroupNetNS) string {
 	}
 
 	if ids.NetNamespaceCookie != 0 {
-		container, err := ContainerByNetNSCookie(ids.NetNamespaceCookie)
+		container, err := ContainerByNetNamespaceCookie(ids.NetNamespaceCookie)
 		if err != nil {
 			log.Debugf("container cgroup/netns: netns_cookie lookup %d: %v", ids.NetNamespaceCookie, err)
 		} else if container != nil {
@@ -49,7 +49,7 @@ func ContainerIDByCgroupNetNS(ids ContainerCgroupNetNS) string {
 	}
 
 	if ids.NetNamespaceInum != 0 {
-		container, err := ContainerByNetNSInum(ids.NetNamespaceInum)
+		container, err := ContainerByNetNamespaceInum(ids.NetNamespaceInum)
 		if err != nil {
 			log.Debugf("container cgroup/netns: netns_inum lookup %d: %v", ids.NetNamespaceInum, err)
 		} else if container != nil {

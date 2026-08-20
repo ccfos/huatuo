@@ -5405,7 +5405,7 @@
             "sortBy": [
               {
                 "desc": true,
-                "displayName": "deltatime"
+                "displayName": "reclaim_duration_ns"
               }
             ]
           },
@@ -5456,12 +5456,12 @@
                 "indexByName": {
                   "_id": 2,
                   "_index": 3,
-                  "_source": 21,
+                  "_source": 22,
                   "_type": 4,
-                  "container_host_namespace": 18,
+                  "container_host_namespace": 19,
                   "container_hostname": 6,
                   "container_id": 7,
-                  "container_qos": 19,
+                  "container_qos": 20,
                   "container_type": 8,
                   "es_index_time": 9,
                   "highlight": 10,
@@ -5470,17 +5470,19 @@
                   "sort": 12,
                   "time": 13,
                   "tracer_data.comm": 15,
-                  "tracer_data.deltatime": 17,
+                  "tracer_data.reclaim_duration_ns": 17,
                   "tracer_data.pid": 16,
+                  "tracer_data.tid": 18,
                   "tracer_name": 14,
                   "tracer_time": 0,
-                  "tracer_type": 20,
+                  "tracer_type": 21,
                   "uploaded_time": 1
                 },
                 "renameByName": {
                   "tracer_data.comm": "comm",
-                  "tracer_data.deltatime": "deltatime",
-                  "tracer_data.pid": "pid"
+                  "tracer_data.reclaim_duration_ns": "reclaim_duration_ns",
+                  "tracer_data.pid": "pid",
+                  "tracer_data.tid": "tid"
                 }
               }
             }
@@ -7405,7 +7407,7 @@
                   "tracer_data.dport": 21,
                   "tracer_data.max_ack_backlog": 27,
                   "tracer_data.pid": 14,
-                  "tracer_data.pkt_len": 23,
+                  "tracer_data.packet_len_bytes": 23,
                   "tracer_data.queue_mapping": 24,
                   "tracer_data.saddr": 16,
                   "tracer_data.seq": 26,
@@ -7426,7 +7428,7 @@
                   "tracer_data.dport": "dport",
                   "tracer_data.max_ack_backlog": "max_ack_backlog",
                   "tracer_data.pid": "pid",
-                  "tracer_data.pkt_len": "pkt_len",
+                  "tracer_data.packet_len_bytes": "packet_len_bytes",
                   "tracer_data.queue_mapping": "queue_mapping",
                   "tracer_data.saddr": "saddr",
                   "tracer_data.sport": "sport",
@@ -7863,7 +7865,7 @@
                 "indexByName": {
                   "_id": 2,
                   "_index": 3,
-                  "_source": 30,
+                  "_source": 31,
                   "_type": 4,
                   "container_host_namespace": 27,
                   "container_hostname": 5,
@@ -7876,18 +7878,19 @@
                   "region": 12,
                   "sort": 13,
                   "time": 14,
-                  "tracer_data.ack_seq": 26,
+                  "tracer_data.tcp_ack_seq": 26,
                   "tracer_data.comm": 17,
-                  "tracer_data.daddr": 19,
-                  "tracer_data.dport": 20,
+                  "tracer_data.tcp_daddr": 19,
+                  "tracer_data.tcp_dport": 20,
+                  "tracer_data.latency_stage": 16,
                   "tracer_data.latency_ms": 8,
+                  "tracer_data.latency_threshold_ms": 30,
                   "tracer_data.pid": 18,
-                  "tracer_data.pkt_len": 23,
-                  "tracer_data.saddr": 21,
-                  "tracer_data.seq": 25,
-                  "tracer_data.sport": 22,
-                  "tracer_data.state": 24,
-                  "tracer_data.where": 16,
+                  "tracer_data.packet_len_bytes": 23,
+                  "tracer_data.tcp_saddr": 21,
+                  "tracer_data.tcp_seq": 25,
+                  "tracer_data.tcp_sport": 22,
+                  "tracer_data.tcp_state": 24,
                   "tracer_name": 15,
                   "tracer_time": 0,
                   "tracer_type": 29,
@@ -7897,19 +7900,19 @@
                   "_id": "",
                   "container_host_ns": "",
                   "container_hostname": "",
-                  "tracer_data.ack_seq": "ack_seq",
+                  "tracer_data.tcp_ack_seq": "tcp_ack_seq",
                   "tracer_data.comm": "comm",
-                  "tracer_data.daddr": "daddr",
-                  "tracer_data.dport": "dport",
-                  "tracer_data.latency(ms)": "latency",
+                  "tracer_data.tcp_daddr": "tcp_daddr",
+                  "tracer_data.tcp_dport": "tcp_dport",
+                  "tracer_data.latency_stage": "latency_stage",
                   "tracer_data.latency_ms": "latency_ms",
+                  "tracer_data.latency_threshold_ms": "latency_threshold_ms",
                   "tracer_data.pid": "pid",
-                  "tracer_data.pkt_len": "pkt_len",
-                  "tracer_data.saddr": "saddr",
-                  "tracer_data.seq": "seq",
-                  "tracer_data.sport": "sport",
-                  "tracer_data.state": "state",
-                  "tracer_data.where": "where",
+                  "tracer_data.packet_len_bytes": "packet_len_bytes",
+                  "tracer_data.tcp_saddr": "tcp_saddr",
+                  "tracer_data.tcp_seq": "tcp_seq",
+                  "tracer_data.tcp_sport": "tcp_sport",
+                  "tracer_data.tcp_state": "tcp_state",
                   "tracer_name": ""
                 }
               }
@@ -9402,7 +9405,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "tracer_data.offtime"
+                  "options": "tracer_data.tick_interval_ns"
                 },
                 "properties": [
                   {
@@ -9414,7 +9417,7 @@
               {
                 "matcher": {
                   "id": "byName",
-                  "options": "tracer_data.threshold"
+                  "options": "tracer_data.tick_interval_threshold_ns"
                 },
                 "properties": [
                   {
@@ -9553,11 +9556,10 @@
                   "time": 10,
                   "tracer_data.comm": 12,
                   "tracer_data.cpu": 17,
-                  "tracer_data.now": 16,
-                  "tracer_data.offtime": 14,
+                  "tracer_data.tick_interval_ns": 14,
                   "tracer_data.pid": 13,
                   "tracer_data.stack": 18,
-                  "tracer_data.threshold": 15,
+                  "tracer_data.tick_interval_threshold_ns": 15,
                   "tracer_name": 11,
                   "tracer_time": 0,
                   "tracer_type": 19,
@@ -9566,11 +9568,10 @@
                 "renameByName": {
                   "tracer_data.comm": "comm",
                   "tracer_data.cpu": "cpu",
-                  "tracer_data.now": "now",
-                  "tracer_data.offtime": "offtime",
+                  "tracer_data.tick_interval_ns": "tick_interval_ns",
                   "tracer_data.pid": "pid",
                   "tracer_data.stack": "stack",
-                  "tracer_data.threshold": "threshold"
+                  "tracer_data.tick_interval_threshold_ns": "tick_interval_threshold_ns"
                 }
               }
             }
@@ -10020,7 +10021,7 @@
                   "tracer_data.blocked_processes_stack": 12,
                   "tracer_data.comm": 13,
                   "tracer_data.cpus_stack": 14,
-                  "tracer_data.pid": 15,
+                  "tracer_data.tid": 15,
                   "tracer_name": 11,
                   "tracer_time": 0,
                   "tracer_type": 16,
@@ -10030,7 +10031,7 @@
                   "tracer_data.blocked_processes_stack": "blocked_processes_stack",
                   "tracer_data.comm": "comm",
                   "tracer_data.cpus_stack": "cpus_stack",
-                  "tracer_data.pid": "pid"
+                  "tracer_data.tid": "tid"
                 }
               }
             }
@@ -10939,10 +10940,10 @@
                   "sort": 9,
                   "time": 10,
                   "tracer_data.dev": 13,
-                  "tracer_data.errtype": 14,
+                  "tracer_data.type": 14,
                   "tracer_data.event": 15,
                   "tracer_data.info": 16,
-                  "tracer_data.timestamp": 17,
+                  "tracer_data.observed_timestamp": 17,
                   "tracer_name": 11,
                   "tracer_time": 0,
                   "tracer_type": 12,
@@ -10953,11 +10954,11 @@
                   "tracer_data.comm": "comm",
                   "tracer_data.cpus_stack": "cpus_stack",
                   "tracer_data.dev": "dev",
-                  "tracer_data.errtype": "errtype",
+                  "tracer_data.type": "type",
                   "tracer_data.event": "event",
                   "tracer_data.info": "info",
                   "tracer_data.pid": "pid",
-                  "tracer_data.timestamp": "timestamp"
+                  "tracer_data.observed_timestamp": "observed_timestamp"
                 }
               }
             }

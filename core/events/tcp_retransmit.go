@@ -85,7 +85,7 @@ func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
 
 func handleTCPRetransmitEvent(_ *toolstream.Session, ev *types.TCPRetransmitTracing) error {
 	if ev.ContainerID == "" {
-		ev.ContainerID = pod.ContainerIDByCgroupNetNS(pod.ContainerCgroupNetNS{
+		ev.ContainerID = pod.ContainerIDByCgroupNetNamespace(pod.ContainerCgroupNetNamespace{
 			MemoryCgroupCSSAddr: kernaddr.ParseOrZero(ev.MemoryCgroupCSSAddr),
 			NetNamespaceCookie:  ev.NetNamespaceCookie,
 			NetNamespaceInum:    uint64(ev.NetNamespaceInum),

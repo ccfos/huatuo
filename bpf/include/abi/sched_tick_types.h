@@ -20,7 +20,6 @@
 struct sched_tick_event {
 	u64 stack[PERF_MAX_STACK_DEPTH];
 	s64 stack_size;
-	u64 timestamp_ns;
 	u64 tick_interval_ns;
 	u8 comm[COMPAT_TASK_COMM_LEN];
 	u32 tgid;

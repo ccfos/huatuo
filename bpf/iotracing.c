@@ -52,7 +52,7 @@ struct latency_info {
 };
 
 struct io_key {
-	u32 pid;
+	u32 tgid;
 	u32 dev;
 	u64 inode;
 };
@@ -65,7 +65,7 @@ struct hash_key {
 
 struct io_start_info {
 	u64 inode;
-	u32 pid;
+	u32 tgid;
 	u32 dev;
 	u64 data_len;
 	struct blkcg_gq *bi_blkg;
@@ -74,7 +74,8 @@ struct io_start_info {
 
 struct io_data {
 	u32 tgid;
-	u32 pid;
+	/* TGID is zero for kernel threads, so it cannot mark initialization. */
+	u32 initialized;
 	u32 dev;
 	u32 flag;
 	u64 fs_write_bytes;
@@ -227,7 +228,7 @@ int bpf_rq_qos_issue(struct pt_regs *ctx)
 	else
 		info.dev = BPF_CORE_READ(inode, i_sb, s_dev);
 
-	info.pid      = bpf_get_current_pid_tgid() >> 32;
+	info.tgid     = bpf_get_current_pid_tgid() >> 32;
 	info.bi_blkg  = BPF_CORE_READ(bio, bi_blkg);
 	info.data_len = BPF_CORE_READ(req, __data_len);
 	bpf_get_current_comm(info.comm, COMPAT_TASK_COMM_LEN);
@@ -271,9 +272,9 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 
 	io_key.dev   = info->dev;
 	io_key.inode = info->inode;
-	/* for direct IO, set pid value in key */
+	/* Direct IO has no inode, so keep process attribution in the key. */
 	if (io_key.inode == 0)
-		io_key.pid = info->pid;
+		io_key.tgid = info->tgid;
 
 	entry = bpf_map_lookup_elem(&io_source_map, &io_key);
 	if (!entry)
@@ -303,11 +304,12 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 
 	if (entry == &data) {
 		entry->blkcg_gq = (u64)info->bi_blkg;
-		entry->pid	= info->pid;
+		entry->tgid	= info->tgid;
 		entry->dev	= info->dev;
 		entry->inode	= info->inode;
 		bpf_probe_read_kernel_str(entry->comm, COMPAT_TASK_COMM_LEN,
 				   info->comm);
+		entry->initialized = 1;
 		bpf_map_update_elem(&io_source_map, &io_key, &data,
 				    COMPAT_BPF_ANY);
 	}
@@ -317,13 +319,9 @@ int bpf_rq_qos_done(struct pt_regs *ctx)
 }
 
 static __always_inline void
-init_io_data(struct io_data *entry, struct dentry *root_dentry,
-	     struct dentry *dentry, struct inode *inode)
+init_io_data(struct io_data *entry, struct dentry *dentry, u32 dev, u64 inode)
 {
-	u64 t = bpf_get_current_pid_tgid();
-
-	entry->pid  = t >> 32;
-	entry->tgid = t & 0xffffffff;
+	entry->tgid = bpf_get_current_pid_tgid() >> 32;
 
 	bpf_get_current_comm(entry->comm, COMPAT_TASK_COMM_LEN);
 	for (int i = 0; i < FILEPATH_MAX_DEPTH; i++) {
@@ -342,6 +340,9 @@ init_io_data(struct io_data *entry, struct dentry *root_dentry,
 		}
 		dentry = BPF_CORE_READ(dentry, d_parent);
 	}
+	entry->dev = dev;
+	entry->inode = inode;
+	entry->initialized = 1;
 }
 
 struct iov_iter___5_14 {
@@ -354,7 +355,6 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 	struct io_data data   = {};
 	struct io_data *entry = NULL;
 	struct dentry *dentry;
-	struct dentry *root_dentry;
 	struct inode *inode;
 	struct io_key key = {};
 	struct iov_iter *from;
@@ -372,13 +372,9 @@ static __always_inline int bpf_file_read_write(struct pt_regs *ctx)
 	if (!entry)
 		entry = &data;
 
-	dentry	    = BPF_CORE_READ(iocb, ki_filp, f_path.dentry);
-	root_dentry = BPF_CORE_READ(iocb, ki_filp, f_path.mnt, mnt_root);
-	if (entry->tgid == 0) {
-		init_io_data(entry, root_dentry, dentry, inode);
-		entry->dev   = key.dev;
-		entry->inode = key.inode;
-	}
+	dentry = BPF_CORE_READ(iocb, ki_filp, f_path.dentry);
+	if (!entry->initialized)
+		init_io_data(entry, dentry, key.dev, key.inode);
 
 	from  = (struct iov_iter *)PT_REGS_PARM2(ctx);
 	count = BPF_CORE_READ(from, count);
@@ -448,15 +444,11 @@ static __always_inline int bpf_filemap_page_mkwrite(struct pt_regs *ctx)
 	if (!entry)
 		entry = &data;
 
-	if (entry->tgid == 0) {
+	if (!entry->initialized) {
 		struct dentry *dentry;
-		struct dentry *root_dentry;
 
-		dentry	    = BPF_CORE_READ(vma, vm_file, f_path.dentry);
-		root_dentry = BPF_CORE_READ(vma, vm_file, f_path.mnt, mnt_root);
-		init_io_data(entry, root_dentry, dentry, inode);
-		entry->dev   = key.dev;
-		entry->inode = key.inode;
+		dentry = BPF_CORE_READ(vma, vm_file, f_path.dentry);
+		init_io_data(entry, dentry, key.dev, key.inode);
 	}
 
 	entry->fs_write_bytes += PAGE_SIZE;
@@ -493,15 +485,11 @@ int bpf_filemap_fault(struct pt_regs *ctx)
 	if (!entry)
 		entry = &data;
 
-	if (entry->tgid == 0) {
+	if (!entry->initialized) {
 		struct dentry *dentry;
-		struct dentry *root_dentry;
 
-		dentry	    = BPF_CORE_READ(vma, vm_file, f_path.dentry);
-		root_dentry = BPF_CORE_READ(vma, vm_file, f_path.mnt, mnt_root);
-		init_io_data(entry, root_dentry, dentry, inode);
-		entry->dev   = key.dev;
-		entry->inode = key.inode;
+		dentry = BPF_CORE_READ(vma, vm_file, f_path.dentry);
+		init_io_data(entry, dentry, key.dev, key.inode);
 	}
 	entry->fs_read_bytes += PAGE_SIZE;
 
@@ -529,14 +517,14 @@ static __always_inline int detect_io_schedule(struct pt_regs *ctx)
 {
 	struct iotracing_schedule_delay_event entry = {};
 	u64 id			   = bpf_get_current_pid_tgid();
-	u32 pid			   = id & 0xffffffff;
+	u32 tid			   = (u32)id;
 
-	entry.ts = bpf_ktime_get_ns();
+	entry.start_ns = bpf_ktime_get_ns();
 	bpf_get_current_comm(entry.comm, COMPAT_TASK_COMM_LEN);
 
 	entry.stack_size =
 	    bpf_get_stack(ctx, entry.stack, sizeof(entry.stack), 0);
-	bpf_map_update_elem(&io_schedule_stack, &pid, &entry, COMPAT_BPF_ANY);
+	bpf_map_update_elem(&io_schedule_stack, &tid, &entry, COMPAT_BPF_ANY);
 
 	return 0;
 }
@@ -554,22 +542,23 @@ static __always_inline int detect_io_schedule_return(struct pt_regs *ctx)
 {
 	struct iotracing_schedule_delay_event *entry;
 	u64 id	= bpf_get_current_pid_tgid();
-	u32 pid = id & 0xffffffff;
+	u32 tid = (u32)id;
 	u64 now = bpf_ktime_get_ns();
 
-	entry = bpf_map_lookup_elem(&io_schedule_stack, &pid);
+	entry = bpf_map_lookup_elem(&io_schedule_stack, &tid);
 	if (!entry)
 		return 0;
 
-	if (now - entry->ts > FILTER_EVENT_TIMEOUT) {
-		entry->pid  = (id >> 32) & 0xffffffff;
-		entry->tid  = pid;
-		entry->cost = now - entry->ts;
+	if (now - entry->start_ns > FILTER_EVENT_TIMEOUT) {
+		entry->tgid	    = id >> 32;
+		entry->tid	    = tid;
+		entry->cpu	    = bpf_get_smp_processor_id();
+		entry->duration_ns = now - entry->start_ns;
 		bpf_perf_event_output(ctx, &iodelay_perf_events,
 				      COMPAT_BPF_F_CURRENT_CPU, entry,
 				      sizeof(struct iotracing_schedule_delay_event));
 	}
-	bpf_map_delete_elem(&io_schedule_stack, &pid);
+	bpf_map_delete_elem(&io_schedule_stack, &tid);
 
 	return 0;
 }

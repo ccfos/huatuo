@@ -31,7 +31,7 @@ int kprobe_softlockup(struct pt_regs *ctx)
 
 	struct softlockup_event info = {
 		.cpu = bpf_get_smp_processor_id(),
-		.pid = bpf_get_current_pid_tgid() >> 32,
+		.tgid = bpf_get_current_pid_tgid() >> 32,
 	};
 
 	struct task_struct *task = (struct task_struct *)bpf_get_current_task();

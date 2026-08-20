@@ -75,7 +75,20 @@ EVENTS_FILE="${HUATUO_BAMAI_TEST_TMPDIR}/events/net_rx_latency"
 
 # Filter events matching our veth IP pair, then validate.
 MATCHED=$(jq -s --arg saddr "${TCP_NS_CLIENT_ADDR}" --arg daddr "${TCP_NS_SERVER_ADDR}" \
-	'[.[] | select(.tracer_data.tcp_saddr == $saddr and .tracer_data.tcp_daddr == $daddr)]' \
+	'[.[] | select(
+		(.tracer_data.tcp_saddr == $saddr)
+		and (.tracer_data.tcp_daddr == $daddr)
+		and (.tracer_data.latency_stage | type == "string")
+		and (.tracer_data.latency_ms | type == "number")
+		and (.tracer_data.latency_threshold_ms | type == "number")
+		and (.tracer_data.packet_len_bytes | type == "number")
+		and (.tracer_data.net_namespace_inum | type == "number")
+		and (.tracer_data.net_namespace_cookie | type == "number")
+		and (.tracer_data | has("lat_stage") | not)
+		and (.tracer_data | has("lat_ms") | not)
+		and (.tracer_data | has("lat_thresholds") | not)
+		and (.tracer_data | has("pkt_len") | not)
+	)]' \
 	"${EVENTS_FILE}" 2> /dev/null)
 
 event_count=$(echo "${MATCHED}" | jq 'length' 2> /dev/null || echo 0)
@@ -87,5 +100,5 @@ if [[ "${event_count}" -eq 0 ]]; then
 fi
 
 log_info "net_rx_latency integration test passed: ${event_count} events"
-log_info "event details:"
-echo "${MATCHED}" | jq '.' 2> /dev/null || echo "${MATCHED}"
+log_info "valid event:"
+echo "${MATCHED}" | jq '.[0]' 2> /dev/null || echo "${MATCHED}"

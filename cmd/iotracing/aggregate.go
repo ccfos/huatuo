@@ -92,13 +92,13 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 		})
 	}
 
-	cmdline, err := executil.ProcNameByPid(g.Pid)
+	cmdline, err := executil.ProcNameByPid(g.PID)
 	if err != nil {
 		cmdline = comm
 	}
 
 	out := types.ProcessFileIOStats{
-		Pid:               g.Pid,
+		PID:               g.PID,
 		Comm:              cmdline,
 		TotalFsReadBps:    read,
 		TotalFsWriteBps:   write,
@@ -107,7 +107,7 @@ func buildProcessFileIOStats(g *pidGroup, cfg ioConfig) types.ProcessFileIOStats
 		TotalFiles:        fileStats,
 		TotalFileCount:    uint64(len(g.Files)),
 	}
-	out.ContainerHostname, _ = executil.HostnameByPid(g.Pid)
+	out.ContainerHostname, _ = executil.HostnameByPid(g.PID)
 
 	return out
 }

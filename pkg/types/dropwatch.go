@@ -35,7 +35,7 @@ type DropWatchTracing struct {
 	DropLocation        string         `json:"drop_location,omitempty"`
 	Source              string         `json:"source,omitempty"`
 	Comm                string         `json:"comm"`
-	Pid                 uint64         `json:"pid"`
+	PID                 uint64         `json:"pid"`
 	ContainerID         string         `json:"container_id,omitempty"`
 	MemoryCgroupCSSAddr string         `json:"memory_cgroup_css_addr"`
 	NetNamespaceCookie  uint64         `json:"net_namespace_cookie"`
@@ -46,7 +46,7 @@ type DropWatchTracing struct {
 	NetdevLinkStatus    []string       `json:"netdev_linkstatus"`
 	PacketSkbAddr       string         `json:"packet_skb_addr,omitempty"`
 	PacketEthProto      string         `json:"packet_eth_proto"`
-	PacketLen           uint32         `json:"packet_len"`
+	PacketLenBytes      uint32         `json:"packet_len_bytes"`
 	Layers              *packet.Packet `json:"layers,omitempty"`
 	Stack               string         `json:"stack"`
 }

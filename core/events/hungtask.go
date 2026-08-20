@@ -39,7 +39,7 @@ import (
 
 // HungTaskTracerData is the full data structure.
 type HungTaskTracerData struct {
-	Pid                   int32  `json:"pid"`
+	TID                   uint32 `json:"tid"`
 	Comm                  string `json:"comm"`
 	CPUsStack             string `json:"cpus_stack"`
 	BlockedProcessesStack string `json:"blocked_processes_stack"`
@@ -139,7 +139,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 				TracerName: "hungtask",
 				TracerTime: time.Now(),
 				TracerData: &HungTaskTracerData{
-					Pid:                   data.PID,
+					TID:                   data.TID,
 					Comm:                  bytesutil.ToStr(data.Comm[:]),
 					CPUsStack:             cpusBT,
 					BlockedProcessesStack: blockedProcessesBT,

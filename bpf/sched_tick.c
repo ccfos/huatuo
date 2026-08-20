@@ -77,7 +77,6 @@ void trace_sched_tick_interval(struct pt_regs *ctx)
 	if (!event)
 		return;
 
-	event->timestamp_ns = now;
 	event->tick_interval_ns = tick_interval;
 	if (bpf_get_current_comm(event->comm, sizeof(event->comm)))
 		return;

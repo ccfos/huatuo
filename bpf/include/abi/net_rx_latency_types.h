@@ -19,9 +19,9 @@
 
 struct net_rx_latency_event {
 	u8 comm[COMPAT_TASK_COMM_LEN];
-	u64 latency;
+	u64 latency_ns;
 	u64 tgid_pid;
-	u64 pkt_len;
+	u64 packet_len_bytes;
 	u16 tcp_sport;
 	u16 tcp_dport;
 	u32 tcp_saddr;
@@ -29,7 +29,7 @@ struct net_rx_latency_event {
 	u32 tcp_seq;
 	u32 tcp_ack_seq;
 	u8 tcp_state;
-	u8 lat_stage;
+	u8 latency_stage;
 	u8 pad[2];
 	u8 netdev_name[IFNAMSIZ];
 	u32 netns_inum;

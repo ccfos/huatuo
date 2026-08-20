@@ -90,7 +90,7 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 		line = append(line, ev.TCPFlags...)
 	}
 	line = append(line, " pid="...)
-	line = strconv.AppendUint(line, ev.Pid, 10)
+	line = strconv.AppendUint(line, ev.PID, 10)
 	line = append(line, " comm="...)
 	line = append(line, ev.Comm...)
 	line = append(line, " ca="...)
@@ -228,10 +228,10 @@ func formatEvent(
 		TCPReason:           classification.reason.String(),
 		Source:              sourceType,
 		Comm:                bytesutil.ToStr(ev.Comm[:]),
-		Pid:                 ev.TGIDPID >> 32,
+		PID:                 ev.TGIDPID >> 32,
 		MemoryCgroupCSSAddr: kernaddr.Format(ev.MemcgCSSAddr),
-		NetNamespaceCookie:  ev.NetNSCookie,
-		NetNamespaceInum:    ev.NetNSInum,
+		NetNamespaceCookie:  ev.NetNamespaceCookie,
+		NetNamespaceInum:    ev.NetNamespaceInum,
 		TCPState:            packet.TCPStateName(uint8(ev.State)),
 		TCPSaddr:            saddr,
 		TCPDaddr:            daddr,

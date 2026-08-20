@@ -26,7 +26,7 @@ struct bpf_debug_event {
 	u32 pad0;
 	u8 msg[BPF_DEBUG_MSG_LEN];
 	u64 args[4];
-	u64 timestamp;
+	u64 ktime_ns;
 };
 
 BPF_ABI_EXPORT(bpf_debug_event);

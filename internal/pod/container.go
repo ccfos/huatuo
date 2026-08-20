@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -174,8 +174,8 @@ func containerBy[T comparable](selector func(*Container) T, val T) (*Container, 
 	return nil, nil
 }
 
-// ContainerByNetNSInum returns the container whose network namespace inum matches.
-func ContainerByNetNSInum(inum uint64) (*Container, error) {
+// ContainerByNetNamespaceInum returns the container whose network namespace inum matches.
+func ContainerByNetNamespaceInum(inum uint64) (*Container, error) {
 	return containerBy(func(c *Container) uint64 { return c.NetNamespaceInum }, inum)
 }
 
@@ -219,8 +219,8 @@ func ContainerByCSS(css uint64, subsys string) (*Container, error) {
 	return containerBy(func(c *Container) uint64 { return c.CgroupCss[subsys] }, css)
 }
 
-// ContainerByNetNSCookie returns the container whose net namespace cookie matches cookie.
-func ContainerByNetNSCookie(cookie uint64) (*Container, error) {
+// ContainerByNetNamespaceCookie returns the container whose network namespace cookie matches.
+func ContainerByNetNamespaceCookie(cookie uint64) (*Container, error) {
 	if cookie == 0 {
 		return nil, nil
 	}

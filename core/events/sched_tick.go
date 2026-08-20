@@ -54,13 +54,12 @@ func selectRestartSchedTickSymbol() (string, error) {
 
 // SchedTickTracingData is the full scheduler tick tracing record.
 type SchedTickTracingData struct {
-	TickIntervalNS uint64 `json:"offtime"` // The JSON name is retained for compatibility.
-	ThresholdNS    uint64 `json:"threshold"`
-	Comm           string `json:"comm"`
-	TGID           uint32 `json:"pid"`
-	CPU            uint32 `json:"cpu"`
-	TimestampNS    uint64 `json:"now"`
-	Stack          string `json:"stack"`
+	TickIntervalNS          uint64 `json:"tick_interval_ns"`
+	TickIntervalThresholdNS uint64 `json:"tick_interval_threshold_ns"`
+	Comm                    string `json:"comm"`
+	PID                     uint32 `json:"pid"`
+	CPU                     uint32 `json:"cpu"`
+	Stack                   string `json:"stack"`
 }
 
 func init() {
@@ -154,13 +153,12 @@ func (*schedTickTracing) Start(ctx context.Context) error {
 				TracerName: schedTickTracerName,
 				TracerTime: time.Now(),
 				TracerData: &SchedTickTracingData{
-					TickIntervalNS: data.TickIntervalNS,
-					ThresholdNS:    tickIntervalThresholdNS,
-					Comm:           comm,
-					TGID:           data.TGID,
-					CPU:            data.CPU,
-					TimestampNS:    data.TimestampNS,
-					Stack:          fmt.Sprintf("stack:\n%s", stack),
+					TickIntervalNS:          data.TickIntervalNS,
+					TickIntervalThresholdNS: tickIntervalThresholdNS,
+					Comm:                    comm,
+					PID:                     data.TGID,
+					CPU:                     data.CPU,
+					Stack:                   fmt.Sprintf("stack:\n%s", stack),
 				},
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)

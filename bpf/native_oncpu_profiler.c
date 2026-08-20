@@ -54,7 +54,7 @@ int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 	SELECT_PROFILER_AB();
 
 	event->cpu = bpf_get_smp_processor_id();
-	event->timestamp = bpf_ktime_get_ns();
+	event->ktime_ns = bpf_ktime_get_ns();
 	event->base.value = 1;
 
 	if (profiler_fill_event_base(&event->base, pid_tgid, ctx, select_profiler_stack_map) < 0) {

@@ -108,7 +108,7 @@ func (d *BpfDbg) debugEventLoop(ctx context.Context, reader PerfEventReader) err
 			return fmt.Errorf("read debug event: %w", err)
 		}
 
-		ts, err := timeutil.KtimeToTime(event.Timestamp)
+		ts, err := timeutil.KtimeToTime(event.KtimeNS)
 		if err != nil {
 			return fmt.Errorf("convert bpf timestamp: %w", err)
 		}
