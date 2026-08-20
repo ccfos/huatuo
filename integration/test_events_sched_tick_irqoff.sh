@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Simulate an irqoff report with a low threshold; host IRQs remain enabled.
+# Verify threshold filtering without disabling host IRQs.
 
 set -euo pipefail
 
@@ -23,6 +23,7 @@ source "${ROOT_DIR}/integration/config.sh"
 
 readonly SCHED_TICK_REPORT_TIMEOUT=5
 readonly SCHED_TICK_REPORT_INTERVAL=0.1
+readonly SCHED_TICK_NO_EVENT_WINDOW=2
 readonly SCHED_TICK_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/events/sched_tick"
 readonly VALID_SCHED_TICK_EVENT="${HUATUO_BAMAI_TEST_TMPDIR}/valid-sched-tick-event.json"
 
@@ -34,6 +35,17 @@ cleanup() {
 	wait "${workload_pid}" 2> /dev/null || true
 }
 trap cleanup EXIT
+
+start_sched_tick_test() {
+	local config_writer=$1
+
+	integration_huatuo_bamai_start \
+		"${config_writer}" \
+		--region dev \
+		--procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
+		--disable-kubelet \
+		--log-debug
+}
 
 [[ $EUID -eq 0 ]] || skip "requires root"
 
@@ -83,22 +95,32 @@ sched_tick_event_is_valid() {
 taskset -c 0 bash -c 'while :; do :; done' &
 workload_pid=$!
 
-integration_huatuo_bamai_start \
-	write_sched_tick_irqoff_config \
-	--region dev \
-	--procfs-prefix "${HUATUO_BAMAI_TEST_FIXTURES}" \
-	--disable-kubelet \
-	--log-debug
+start_sched_tick_test write_sched_tick_config
+
+huatuo_bamai_collect_metrics
+check_metrics "sched_tick high threshold" \
+	'tracing_status_running\{[^}]*\} 1$'
+
+sleep "${SCHED_TICK_NO_EVENT_WINDOW}"
+
+[[ ! -s "${SCHED_TICK_EVENT}" ]] \
+	|| fatal "sched_tick persisted an event with the configured high threshold"
+
+assert_log_has_no_failure \
+	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"
+
+huatuo_bamai_stop
+
+start_sched_tick_test write_sched_tick_irqoff_config
 
 wait_until "${SCHED_TICK_REPORT_TIMEOUT}" "${SCHED_TICK_REPORT_INTERVAL}" \
 	sched_tick_event_is_valid \
 	|| fatal "sched_tick did not persist a valid event within ${SCHED_TICK_REPORT_TIMEOUT}s"
 
-cleanup
-workload_pid=""
-
 assert_log_has_no_failure \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"
+
+cleanup
 
 log_info "sched_tick irqoff simulation test passed"
 log_info "valid sched_tick event:"
