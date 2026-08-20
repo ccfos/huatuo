@@ -269,6 +269,7 @@ func cgroupInitSubSysIDs() error {
 
 func cgroupSubSysIDNameMap(values []btf.EnumValue) (map[int]string, error) {
 	ids := make(map[int]string, len(values))
+	nameIDs := make(map[string]int, len(values))
 	for _, value := range values {
 		name, ok := strings.CutSuffix(value.Name, "_cgrp_id")
 		if !ok {
@@ -277,7 +278,31 @@ func cgroupSubSysIDNameMap(values []btf.EnumValue) (map[int]string, error) {
 		if value.Value >= uint64(len(containerCssPerfEvent{}.CSS)) {
 			continue
 		}
-		ids[int(value.Value)] = name
+
+		if name == "io" {
+			name = subsystem.SubsystemBlkIO
+		}
+
+		id := int(value.Value)
+		if previous, ok := ids[id]; ok {
+			return nil, fmt.Errorf(
+				"cgroup subsystem id %d maps to both %q and %q",
+				id,
+				previous,
+				name,
+			)
+		}
+		if previous, ok := nameIDs[name]; ok {
+			return nil, fmt.Errorf(
+				"cgroup subsystem %q maps to both ids %d and %d",
+				name,
+				previous,
+				id,
+			)
+		}
+
+		ids[id] = name
+		nameIDs[name] = id
 	}
 
 	if len(ids) == 0 {

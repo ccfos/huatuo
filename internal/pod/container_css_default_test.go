@@ -15,6 +15,7 @@
 package pod
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,24 +25,84 @@ import (
 )
 
 func TestCgroupSubSysIDNameMap(t *testing.T) {
-	ids, err := cgroupSubSysIDNameMap([]btf.EnumValue{
-		{Name: "cpuset_cgrp_id", Value: 0},
-		{Name: "cpu_cgrp_id", Value: 1},
-		{Name: "memory_cgrp_id", Value: 4},
-		{Name: "CGROUP_SUBSYS_COUNT", Value: 13},
-		{Name: "future_cgrp_id", Value: 13},
-	})
-	if err != nil {
-		t.Fatalf("cgroupSubSysIDNameMap() error = %v", err)
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		values    []btf.EnumValue
+		want      map[int]string
+		wantError string
+	}{
+		{
+			name: "maps valid values and ignores unrelated or out-of-range values",
+			values: []btf.EnumValue{
+				{Name: "cpuset_cgrp_id", Value: 0},
+				{Name: "cpu_cgrp_id", Value: 1},
+				{Name: "unrelated", Value: 2},
+				{Name: "io_cgrp_id", Value: 3},
+				{Name: "memory_cgrp_id", Value: 4},
+				{Name: "CGROUP_SUBSYS_COUNT", Value: 13},
+				{Name: "future_cgrp_id", Value: 13},
+			},
+			want: map[int]string{
+				0: "cpuset",
+				1: "cpu",
+				3: "blkio",
+				4: "memory",
+			},
+		},
+		{
+			name:   "accepts a sparse kernel configuration",
+			values: []btf.EnumValue{{Name: "memory_cgrp_id", Value: 4}},
+			want:   map[int]string{4: "memory"},
+		},
+		{
+			name: "rejects no subsystem values",
+			values: []btf.EnumValue{
+				{Name: "CGROUP_SUBSYS_COUNT", Value: 13},
+				{Name: "future_cgrp_id", Value: 13},
+			},
+			wantError: "cgroup_subsys_id has no subsystem values",
+		},
+		{
+			name: "rejects duplicate IDs",
+			values: []btf.EnumValue{
+				{Name: "cpu_cgrp_id", Value: 1},
+				{Name: "memory_cgrp_id", Value: 1},
+			},
+			wantError: `cgroup subsystem id 1 maps to both "cpu" and "memory"`,
+		},
+		{
+			name: "rejects duplicate normalized names",
+			values: []btf.EnumValue{
+				{Name: "io_cgrp_id", Value: 3},
+				{Name: "blkio_cgrp_id", Value: 4},
+			},
+			wantError: `cgroup subsystem "blkio" maps to both ids 3 and 4`,
+		},
 	}
 
-	for id, want := range map[int]string{0: "cpuset", 1: "cpu", 4: "memory"} {
-		if got := ids[id]; got != want {
-			t.Errorf("ids[%d] = %q, want %q", id, got, want)
-		}
-	}
-	if _, ok := ids[13]; ok {
-		t.Error("controllers outside the CSS event ABI must not be mapped")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := cgroupSubSysIDNameMap(tt.values)
+			if tt.wantError != "" {
+				if err == nil {
+					t.Fatalf("cgroupSubSysIDNameMap() error = nil, want %q", tt.wantError)
+				}
+				if !strings.Contains(err.Error(), tt.wantError) {
+					t.Fatalf("cgroupSubSysIDNameMap() error = %q, want %q", err, tt.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("cgroupSubSysIDNameMap() error = %v", err)
+			}
+			if !maps.Equal(got, tt.want) {
+				t.Errorf("cgroupSubSysIDNameMap() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
