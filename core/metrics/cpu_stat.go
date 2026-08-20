@@ -41,7 +41,7 @@ type cpuStat struct {
 	lastUpdate time.Time
 }
 
-type cpuStatMetrics struct {
+type cpuStatAvailability struct {
 	waitPercent   bool
 	nrThrottled   bool
 	throttledTime bool
@@ -86,21 +86,16 @@ func durationNanoseconds(raw map[string]uint64, nanosecondKey, microsecondKey st
 	return value * 1000, true
 }
 
-func counterDelta(current, previous uint64) (uint64, bool) {
-	if current < previous {
-		return 0, false
-	}
-
-	return current - previous, true
-}
-
 func calculateWaitPercent(current, previous *cpuStat) (float64, bool) {
-	deltaWait, waitOK := counterDelta(current.waitSum, previous.waitSum)
-	deltaCPU, cpuOK := counterDelta(current.cpuTotal, previous.cpuTotal)
-	if !waitOK || !cpuOK {
+	// Live-cgroup counters are normally monotonic; guard rare resets or
+	// wraparound to prevent unsigned underflow.
+	if current.waitSum < previous.waitSum ||
+		current.cpuTotal < previous.cpuTotal {
 		return 0, false
 	}
 
+	deltaWait := current.waitSum - previous.waitSum
+	deltaCPU := current.cpuTotal - previous.cpuTotal
 	if deltaWait == 0 && deltaCPU == 0 {
 		return 0, true
 	}
@@ -108,7 +103,7 @@ func calculateWaitPercent(current, previous *cpuStat) (float64, bool) {
 	return float64(deltaWait) * 100 / (float64(deltaWait) + float64(deltaCPU)), true
 }
 
-func newCPUStatSample(raw map[string]uint64, cpuTotal uint64, now time.Time) (cpuStat, cpuStatMetrics) {
+func newCPUStatSample(raw map[string]uint64, cpuTotal uint64, now time.Time) (cpuStat, cpuStatAvailability) {
 	nrThrottled, nrThrottledOK := raw["nr_throttled"]
 	throttledTime, throttledTimeOK := durationNanoseconds(raw, "throttled_time", "throttled_usec")
 	waitSum, waitSumOK := raw["wait_sum"]
@@ -123,7 +118,7 @@ func newCPUStatSample(raw map[string]uint64, cpuTotal uint64, now time.Time) (cp
 			burstTime:     burstTime,
 			cpuTotal:      cpuTotal,
 			lastUpdate:    now,
-		}, cpuStatMetrics{
+		}, cpuStatAvailability{
 			waitPercent:   waitSumOK,
 			nrThrottled:   nrThrottledOK,
 			throttledTime: throttledTimeOK,
@@ -132,44 +127,44 @@ func newCPUStatSample(raw map[string]uint64, cpuTotal uint64, now time.Time) (cp
 		}
 }
 
-func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Container) (cpuStatMetrics, error) {
-	var metrics cpuStatMetrics
+func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Container) (cpuStatAvailability, error) {
+	var availability cpuStatAvailability
 
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	now := time.Now()
 	if now.Sub(cpu.lastUpdate) < time.Second {
-		return metrics, nil
+		return availability, nil
 	}
 
 	raw, err := c.cgroup.CpuStatRaw(container.CgroupPath)
 	if err != nil {
-		return metrics, err
+		return availability, err
 	}
 
 	usage, err := c.cgroup.CpuUsage(container.CgroupPath)
 	if err != nil {
-		return metrics, err
+		return availability, err
 	}
 
-	stat, metrics := newCPUStatSample(raw, usage.Usage*1000, now)
-	if !metrics.waitPercent {
+	stat, availability := newCPUStatSample(raw, usage.Usage*1000, now)
+	if !availability.waitPercent {
 		stat.lastUpdate = time.Time{}
 		*cpu = stat
-		return metrics, nil
+		return availability, nil
 	}
 
 	if cpu.lastUpdate.IsZero() {
-		metrics.waitPercent = false
+		availability.waitPercent = false
 		*cpu = stat
-		return metrics, nil
+		return availability, nil
 	}
 
-	stat.waitPercent, metrics.waitPercent = calculateWaitPercent(&stat, cpu)
+	stat.waitPercent, availability.waitPercent = calculateWaitPercent(&stat, cpu)
 
 	*cpu = stat
-	return metrics, nil
+	return availability, nil
 }
 
 func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
@@ -186,8 +181,7 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			log.Warnf("cpu_stat: LifeResources for container %s returned unexpected type or nil", container)
 			continue
 		}
-		containerDataCache := dataCache
-		available, err := c.updateDataCache(containerDataCache, container)
+		available, err := c.updateDataCache(dataCache, container)
 		if err != nil {
 			log.Infof("failed to update cpu info of %s, %v", container, err)
 			continue
@@ -197,7 +191,7 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			metrics = append(metrics, metric.NewContainerGaugeData(
 				container,
 				"wait_sum_percent",
-				containerDataCache.waitPercent,
+				dataCache.waitPercent,
 				"CFS cgroup runqueue wait as a percentage of total schedulable time (requires kernel.sched_schedstats=1)",
 				nil,
 			))
@@ -206,7 +200,7 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			metrics = append(metrics, metric.NewContainerGaugeData(
 				container,
 				"nr_throttled",
-				float64(containerDataCache.nrThrottled),
+				float64(dataCache.nrThrottled),
 				"number of CFS periods in which the cgroup was throttled",
 				nil,
 			))
@@ -215,7 +209,7 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			metrics = append(metrics, metric.NewContainerGaugeData(
 				container,
 				"throttled_time",
-				float64(containerDataCache.throttledTime),
+				float64(dataCache.throttledTime),
 				"total CFS cgroup throttled time in nanoseconds",
 				nil,
 			))
@@ -224,7 +218,7 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			metrics = append(metrics, metric.NewContainerGaugeData(
 				container,
 				"nr_bursts",
-				float64(containerDataCache.nrBursts),
+				float64(dataCache.nrBursts),
 				"number of CFS periods in which the cgroup used burst capacity",
 				nil,
 			))
@@ -233,7 +227,7 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 			metrics = append(metrics, metric.NewContainerGaugeData(
 				container,
 				"burst_time",
-				float64(containerDataCache.burstTime),
+				float64(dataCache.burstTime),
 				"total CFS cgroup burst time in nanoseconds",
 				nil,
 			))
