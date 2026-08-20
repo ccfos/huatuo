@@ -15,11 +15,14 @@
 package pod
 
 import (
+	"encoding/binary"
 	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"huatuo-bamai/internal/cgroups/subsystem"
 
 	"github.com/cilium/ebpf/btf"
 )
@@ -41,14 +44,16 @@ func TestCgroupSubSysIDNameMap(t *testing.T) {
 				{Name: "unrelated", Value: 2},
 				{Name: "io_cgrp_id", Value: 3},
 				{Name: "memory_cgrp_id", Value: 4},
+				{Name: "rdma_cgrp_id", Value: 12},
 				{Name: "CGROUP_SUBSYS_COUNT", Value: 13},
 				{Name: "future_cgrp_id", Value: 13},
 			},
 			want: map[int]string{
-				0: "cpuset",
-				1: "cpu",
-				3: "blkio",
-				4: "memory",
+				0:  "cpuset",
+				1:  "cpu",
+				3:  subsystem.SubsystemBlkIO,
+				4:  "memory",
+				12: "rdma",
 			},
 		},
 		{
@@ -174,5 +179,141 @@ func TestResolveCgroupFilesystemPathRejectsMissingNotificationFile(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), filepath.Join(cgroupPath, cgroupv2NotifyFile)) {
 		t.Fatalf("resolveCgroupFilesystemPath() error = %q, want notification path", err)
+	}
+}
+
+func TestKernfsNodeIDOffset(t *testing.T) {
+	for _, typ := range []btf.Type{
+		&btf.Int{Name: "u64", Size: 8},
+		&btf.Union{Name: "kernfs_node_id", Size: 8},
+	} {
+		offset, err := kernfsNodeIDOffset(&btf.Struct{Members: []btf.Member{{
+			Name:   "id",
+			Type:   typ,
+			Offset: 192,
+		}}})
+		if err != nil || offset != 24 {
+			t.Fatalf("kernfsNodeIDOffset() = %d, %v; want 24, nil", offset, err)
+		}
+	}
+}
+
+func TestKernfsNodeIDOffsetFromTypes(t *testing.T) {
+	newKernfsNode := func(offset btf.Bits) *btf.Struct {
+		return &btf.Struct{Members: []btf.Member{{
+			Name:   "id",
+			Type:   &btf.Union{Name: "kernfs_node_id", Size: 8},
+			Offset: offset,
+		}}}
+	}
+
+	offset, err := kernfsNodeIDOffsetFromTypes([]btf.Type{
+		newKernfsNode(192),
+		newKernfsNode(192),
+	})
+	if err != nil || offset != 24 {
+		t.Fatalf("kernfsNodeIDOffsetFromTypes() = %d, %v; want 24, nil", offset, err)
+	}
+
+	_, err = kernfsNodeIDOffsetFromTypes([]btf.Type{
+		newKernfsNode(192),
+		newKernfsNode(256),
+	})
+	if err == nil {
+		t.Fatal("kernfsNodeIDOffsetFromTypes() error = nil, want non-nil")
+	}
+}
+
+func TestCgroup2PathOnMount(t *testing.T) {
+	mountInfo := "36 25 0:32 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime - cgroup2 cgroup rw\n" +
+		"37 25 0:33 / /sys/fs/cgroup/cpu rw,nosuid,nodev,noexec,relatime - cgroup cgroup rw,cpu\n" //nolint:dupword // v1 fstype and mount source are both "cgroup"
+
+	path, err := cgroup2PathOnMount(mountInfo, "/kubepods/pod/container")
+	if err != nil {
+		t.Fatalf("cgroup2PathOnMount: %v", err)
+	}
+	if want := "/sys/fs/cgroup/kubepods/pod/container"; path != want {
+		t.Fatalf("cgroup2 path = %q, want %q", path, want)
+	}
+}
+
+func TestCgroup2PathOnMountWithSubtreeRoot(t *testing.T) {
+	mountInfo := "36 25 0:32 /delegated /cgroup2 rw,nosuid,nodev,noexec,relatime - cgroup2 cgroup rw\n"
+
+	path, err := cgroup2PathOnMount(mountInfo, "/delegated/pod/container")
+	if err != nil {
+		t.Fatalf("cgroup2PathOnMount: %v", err)
+	}
+	if want := "/cgroup2/pod/container"; path != want {
+		t.Fatalf("cgroup2 path = %q, want %q", path, want)
+	}
+
+	if _, err := cgroup2PathOnMount(mountInfo, "/other/container"); err == nil {
+		t.Fatal("path outside cgroup2 mount root must fail")
+	}
+}
+
+func TestCgroupIDFromHandleBytes(t *testing.T) {
+	handle := make([]byte, cgroupV2HandleSize)
+	const want uint64 = 0x1020304050607080
+	binary.NativeEndian.PutUint64(handle, want)
+
+	got, err := cgroupIDFromHandleBytes(handle)
+	if err != nil || got != want {
+		t.Fatalf("cgroupIDFromHandleBytes() = (%#x, %v), want (%#x, nil)", got, err, want)
+	}
+
+	if _, err := cgroupIDFromHandleBytes(handle[:cgroupV2HandleSize-1]); err == nil {
+		t.Fatal("cgroupIDFromHandleBytes() error = nil, want non-nil for a short handle")
+	}
+}
+
+func TestBuildContainerCgroupKeys(t *testing.T) {
+	containers := map[string]*Container{
+		"v1": {ID: "v1", CgroupCss: map[string]uint64{subsystem.SubsystemMemory: 201}},
+		"v2": {ID: "v2", CgroupID: 102, CgroupCss: map[string]uint64{}},
+	}
+
+	keys := BuildContainerCgroupKeys(containers, subsystem.SubsystemMemory)
+	for key, want := range map[ContainerCgroupKey]string{
+		{CSS: 201}:      "v1",
+		{CgroupID: 102}: "v2",
+	} {
+		if got := keys[key]; got == nil || got.ID != want {
+			t.Fatalf("key %+v = %+v, want container %s", key, got, want)
+		}
+	}
+}
+
+func TestBuildContainerCgroupKeysDropsDuplicateKey(t *testing.T) {
+	containers := map[string]*Container{
+		"first":  {ID: "first", CgroupID: 101, CgroupCss: map[string]uint64{subsystem.SubsystemMemory: 301}},
+		"second": {ID: "second", CgroupID: 101, CgroupCss: map[string]uint64{subsystem.SubsystemMemory: 302}},
+		"third":  {ID: "third", CgroupID: 103, CgroupCss: map[string]uint64{subsystem.SubsystemMemory: 301}},
+	}
+
+	keys := BuildContainerCgroupKeys(containers, subsystem.SubsystemMemory)
+
+	for _, key := range []ContainerCgroupKey{
+		{CgroupID: 101}, // shared by first and second
+		{CSS: 301},      // shared by first and third
+	} {
+		if got := keys[key]; got != nil {
+			t.Fatalf("duplicate key %+v = %s, want it dropped", key, got.ID)
+		}
+	}
+	for key, want := range map[ContainerCgroupKey]string{
+		{CSS: 302}:      "second",
+		{CgroupID: 103}: "third", // third's CSS key was dropped, its ID key survives
+	} {
+		if got := keys[key]; got == nil || got.ID != want {
+			t.Fatalf("key %+v = %+v, want container %s", key, got, want)
+		}
+	}
+}
+
+func TestContainerCgroupKeyBinarySize(t *testing.T) {
+	if got, want := binary.Size(ContainerCgroupKey{}), 16; got != want {
+		t.Fatalf("ContainerCgroupKey size = %d, want %d", got, want)
 	}
 }

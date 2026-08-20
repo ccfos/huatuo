@@ -50,11 +50,45 @@ type Container struct {
 	NetNamespaceCookie uint64            `json:"net_namespace_cookie"`
 	InitPid            int               `json:"init_pid"`
 	CgroupPath         string            `json:"cgroup_path"`
+	CgroupID           uint64            `json:"cgroup_id"`
 	CgroupCss          map[string]uint64 `json:"cgroup_css"` // map for: subSysName -> structAddress
 	StartedAt          time.Time         `json:"started_at"`
 	SyncedAt           time.Time         `json:"synced_at"`
 	Labels             map[string]any    `json:"labels"` // custom labels
 	lifeResources      map[string]any
+}
+
+type ContainerCgroupKey struct {
+	CgroupID uint64
+	CSS      uint64
+}
+
+// BuildContainerCgroupKeys builds v1/v2 attribution keys.
+// Duplicate keys are dropped to avoid nondeterministic container attribution.
+func BuildContainerCgroupKeys(containers map[string]*Container, subsys string) map[ContainerCgroupKey]*Container {
+	keys := make(map[ContainerCgroupKey]*Container, len(containers))
+	dropped := make(map[ContainerCgroupKey]bool)
+	for _, container := range containers {
+		for _, key := range [...]ContainerCgroupKey{
+			{CgroupID: container.CgroupID},
+			{CSS: container.CgroupCss[subsys]},
+		} {
+			if key.CgroupID == 0 && key.CSS == 0 {
+				continue
+			}
+			if dropped[key] {
+				continue
+			}
+			if previous, exists := keys[key]; exists && previous.ID != container.ID {
+				log.Debugf("duplicate cgroup attribution key %+v shared by containers %s and %s, dropping it until next sync", key, previous.ID, container.ID)
+				dropped[key] = true
+				delete(keys, key)
+				continue
+			}
+			keys[key] = container
+		}
+	}
+	return keys
 }
 
 func (c *Container) String() string {

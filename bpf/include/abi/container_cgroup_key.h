@@ -12,25 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef __BPF_ABI_OOM_H__
-#define __BPF_ABI_OOM_H__
+#ifndef __BPF_ABI_CONTAINER_CGROUP_KEY_H__
+#define __BPF_ABI_CONTAINER_CGROUP_KEY_H__
 
-#include "bpf_abi.h"
-#include "container_cgroup_key.h"
-
-struct oom_event {
-	u8 trigger_comm[COMPAT_TASK_COMM_LEN];
-	u8 victim_comm[COMPAT_TASK_COMM_LEN];
-	u32 trigger_tgid;
-	u32 victim_tgid;
-	u64 trigger_memcg_css;
-	u64 victim_memcg_css;
-	u64 mem_limit_pages;
-	u64 mem_usage_pages;
-	struct container_cgroup_key trigger_cgroup_key;
-	struct container_cgroup_key victim_cgroup_key;
+struct container_cgroup_key {
+	u64 cgroup_id;
+	u64 css;
 };
 
-BPF_ABI_EXPORT(oom_event);
-
-#endif /* __BPF_ABI_OOM_H__ */
+#endif /* __BPF_ABI_CONTAINER_CGROUP_KEY_H__ */

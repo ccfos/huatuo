@@ -60,7 +60,11 @@ func newRunqlatCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *runqlatCollector) Start(ctx context.Context) (retErr error) {
-	object, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
+	consts, err := pod.CgroupBPFConstants(nil)
+	if err != nil {
+		return err
+	}
+	object, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), consts)
 	if err != nil {
 		return err
 	}
@@ -111,23 +115,23 @@ func aggregatePerCPUValue(raw []byte, dst *latencyBpfData) error {
 
 func (c *runqlatCollector) updateContainerDataCache(
 	object bpf.BPF,
-	cssContainers map[uint64]*pod.Container,
+	containerKeys map[pod.ContainerCgroupKey]*pod.Container,
 ) error {
 	items, err := object.DumpMapByName("cpu_tg_metric")
 	if err != nil {
 		return fmt.Errorf("dump bpf map, %w", err)
 	}
 
-	var css uint64
+	var key pod.ContainerCgroupKey
 
 	for _, v := range items {
 		buf := bytes.NewReader(v.Key)
 
-		if err := binary.Read(buf, binary.LittleEndian, &css); err != nil {
+		if err := binary.Read(buf, binary.LittleEndian, &key); err != nil {
 			return fmt.Errorf("read cpu_tg_metric key: %w", err)
 		}
 
-		container, ok := cssContainers[css]
+		container, ok := containerKeys[key]
 		if !ok {
 			continue
 		}
@@ -174,19 +178,17 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
-	cssContainer := pod.BuildCssContainers(containers, subsystem.SubsystemCPU)
+	containerKeys := pod.BuildContainerCgroupKeys(containers, subsystem.SubsystemCPU)
 
 	// update all containers cache data
-	if err := c.updateContainerDataCache(lease.BPF, cssContainer); err != nil {
+	if err := c.updateContainerDataCache(lease.BPF, containerKeys); err != nil {
 		log.Warnf("runqlat: update container cache: %v", err)
 	}
 
 	data := []*metric.Data{}
 	for _, container := range containers {
-		// Skip containers with no CPU cgroup address: they are absent from
-		// cssContainer and therefore never updated by updateContainerDataCache.
-		// Reporting their zero/stale cache would produce misleading metrics.
-		if _, ok := container.CgroupCss[subsystem.SubsystemCPU]; !ok {
+		// Skip containers that have neither a v2 leaf ID nor a v1 CPU CSS.
+		if container.CgroupID == 0 && container.CgroupCss[subsystem.SubsystemCPU] == 0 {
 			continue
 		}
 

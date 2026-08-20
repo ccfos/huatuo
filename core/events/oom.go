@@ -109,7 +109,11 @@ func (c *oomCollector) Update() ([]*metric.Data, error) {
 }
 
 func (c *oomCollector) Start(ctx context.Context) error {
-	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
+	consts, err := pod.CgroupBPFConstants(nil)
+	if err != nil {
+		return err
+	}
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), consts)
 	if err != nil {
 		return err
 	}
@@ -145,7 +149,7 @@ func (c *oomCollector) Start(ctx context.Context) error {
 				return fmt.Errorf("failed to fetch containers: %w", err)
 			}
 
-			oomData := buildTracingData(data, containers, c.cgroup)
+			oomData := buildTracingData(&data, containers, c.cgroup)
 
 			mutex.Lock()
 
@@ -169,42 +173,54 @@ func (c *oomCollector) Start(ctx context.Context) error {
 	}
 }
 
-func buildTracingData(data abi.OOMEvent, containers map[string]*pod.Container, cgroup cgroups.Cgroup) *OOMTracingData {
-	cssContainers := pod.BuildCssContainersID(containers, subsystem.SubsystemMemory)
+func buildTracingData(data *abi.OOMEvent, containers map[string]*pod.Container, cgroup cgroups.Cgroup) *OOMTracingData {
+	containerKeys := pod.BuildContainerCgroupKeys(containers, subsystem.SubsystemMemory)
 
-	triggerID := cssContainers[data.TriggerMemcgCSS]
-	victimID := cssContainers[data.VictimMemcgCSS]
+	triggerKey := pod.ContainerCgroupKey{
+		CgroupID: data.TriggerCgroupKey.CgroupID,
+		CSS:      data.TriggerCgroupKey.CSS,
+	}
+	victimKey := pod.ContainerCgroupKey{
+		CgroupID: data.VictimCgroupKey.CgroupID,
+		CSS:      data.VictimCgroupKey.CSS,
+	}
+	triggerContainer := containerKeys[triggerKey]
+	victimContainer := containerKeys[victimKey]
 
 	oomData := &OOMTracingData{
 		Trigger: OOMActor{
 			MemoryCgroupCSSAddr: kernaddr.Format(data.TriggerMemcgCSS),
-			ContainerID:         triggerID,
 			PID:                 data.TriggerTGID,
 			Comm:                bytesutil.ToStr(data.TriggerComm[:]),
 		},
 		Victim: OOMActor{
 			MemoryCgroupCSSAddr: kernaddr.Format(data.VictimMemcgCSS),
-			ContainerID:         victimID,
 			PID:                 data.VictimTGID,
 			Comm:                bytesutil.ToStr(data.VictimComm[:]),
 		},
 	}
 
-	if container, ok := containers[triggerID]; ok {
-		oomData.Trigger.ContainerHostname = container.Hostname
-		if snap, err := cgroupMemorySnapshot(cgroup, container); err != nil {
-			log.Warnf("trigger cgroup snapshot: %v", err)
-		} else {
-			oomData.Trigger.Cgroup = snap
+	if triggerContainer != nil {
+		oomData.Trigger.ContainerID = triggerContainer.ID
+		oomData.Trigger.ContainerHostname = triggerContainer.Hostname
+		if cgroup != nil {
+			if snap, err := cgroupMemorySnapshot(cgroup, triggerContainer); err != nil {
+				log.Warnf("trigger cgroup snapshot: %v", err)
+			} else {
+				oomData.Trigger.Cgroup = snap
+			}
 		}
 	}
 
-	if container, ok := containers[victimID]; ok {
-		oomData.Victim.ContainerHostname = container.Hostname
-		if snap, err := cgroupMemorySnapshot(cgroup, container); err != nil {
-			log.Warnf("victim cgroup snapshot: %v", err)
-		} else {
-			oomData.Victim.Cgroup = snap
+	if victimContainer != nil {
+		oomData.Victim.ContainerID = victimContainer.ID
+		oomData.Victim.ContainerHostname = victimContainer.Hostname
+		if cgroup != nil {
+			if snap, err := cgroupMemorySnapshot(cgroup, victimContainer); err != nil {
+				log.Warnf("victim cgroup snapshot: %v", err)
+			} else {
+				oomData.Victim.Cgroup = snap
+			}
 		}
 	}
 
