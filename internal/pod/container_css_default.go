@@ -279,6 +279,8 @@ func cgroupSubSysIDNameMap(values []btf.EnumValue) (map[int]string, error) {
 			continue
 		}
 
+		// Kernel BTF calls this controller io, while cgroup v1 paths and the
+		// project's canonical subsystem key use blkio.
 		if name == "io" {
 			name = subsystem.SubsystemBlkIO
 		}
