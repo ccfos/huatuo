@@ -82,14 +82,28 @@ jq -e '
 # Accuracy: a row attributed to dd holds a file under io_test_dir with non-zero
 # write bps. comm may be "dd" (BPF capture) or "dd if=/dev/zero ..."
 # (cmdline fallback when /proc still has the entry); match the leading
-# token. One check exercises pid attribution, comm capture, path
-# resolution, and bps accounting.
-jq -e --arg dir "${io_test_dir}/" '
-	.process_file_io_stats
-	| map(select(.comm | test("^dd( |$)")))
-	| map(.total_files[]?
+# token. Preserve the matched rows so a successful run shows which
+# attribution data satisfied the accuracy check.
+MATCHED_IO=$(jq -ce --arg dir "${io_test_dir}/" '
+	[
+		.process_file_io_stats[]
+		| select(.comm | test("^dd( |$)")) as $process
+		| $process.total_files[]?
+		| (.fs_write_bps + .disk_write_bps) as $write_bps
 		| select(.path | startswith($dir))
-		| .fs_write_bps + .disk_write_bps)
-	| any(. > 0)
-' "${TOOL_OUT}" > /dev/null \
+		| select($write_bps > 0)
+		| {
+			pid: $process.pid,
+			comm: $process.comm,
+			path: .path,
+			fs_write_bps: .fs_write_bps,
+			disk_write_bps: .disk_write_bps,
+			total_write_bps: $write_bps
+		}
+	]
+	| select(length > 0)
+' "${TOOL_OUT}") \
 	|| fatal "no dd-attributed write to ${io_test_dir} found"
+
+log_info "matched dd-attributed writes:"
+echo "${MATCHED_IO}" | jq '.'
