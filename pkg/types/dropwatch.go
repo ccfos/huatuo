@@ -50,3 +50,12 @@ type DropWatchTracing struct {
 	Layers              *packet.Packet `json:"layers,omitempty"`
 	Stack               string         `json:"stack"`
 }
+
+// DropwatchPerfStatus describes the dropwatch input drained before a
+// retransmission is classified as an observed no-match.
+type DropwatchPerfStatus struct {
+	DrainedThroughKtimeNS uint64 `json:"drained_through_ktime_ns"`
+	// PerfLost counts dropwatch events that could not reach the perf stream.
+	PerfLost    uint64 `json:"perf_lost"`
+	RateLimited uint64 `json:"rate_limited"`
+}

@@ -18,13 +18,8 @@ import (
 	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf/abi"
+	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/pkg/types"
-)
-
-const (
-	tcpFlagFIN uint8 = 0x01
-	tcpFlagSYN uint8 = 0x02
-	tcpFlagACK uint8 = 0x10
 )
 
 type tcpRetransmitClassification struct {
@@ -99,10 +94,10 @@ func classifySKBReason(
 }
 
 func phaseFromFlags(flags uint8) types.TCPRetransmitPhase {
-	if flags&tcpFlagSYN != 0 {
+	if flags&packet.TCPFlagSYN != 0 {
 		return types.TCPRetransmitPhaseConnect
 	}
-	if flags&tcpFlagFIN != 0 {
+	if flags&packet.TCPFlagFIN != 0 {
 		return types.TCPRetransmitPhaseClose
 	}
 	return types.TCPRetransmitPhaseData

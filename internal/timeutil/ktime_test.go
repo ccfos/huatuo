@@ -24,6 +24,18 @@ import (
 	"huatuo-bamai/internal/timeutil"
 )
 
+func TestMonotonicNowNS(t *testing.T) {
+	var before, after unix.Timespec
+	require.NoError(t, unix.ClockGettime(unix.CLOCK_MONOTONIC, &before))
+
+	got, err := timeutil.MonotonicNowNS()
+	require.NoError(t, err)
+
+	require.NoError(t, unix.ClockGettime(unix.CLOCK_MONOTONIC, &after))
+	require.GreaterOrEqual(t, got, uint64(unix.TimespecToNsec(before)))
+	require.LessOrEqual(t, got, uint64(unix.TimespecToNsec(after)))
+}
+
 func TestKtimeToTime(t *testing.T) {
 	var ts unix.Timespec
 	require.NoError(t, unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts))

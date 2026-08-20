@@ -18,6 +18,7 @@ package pcapfilter
 
 import (
 	"bytes"
+	"encoding/binary"
 	"flag"
 	"os"
 	"testing"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
+	cbpf "golang.org/x/net/bpf"
 	"golang.org/x/sys/unix"
 )
 
@@ -110,7 +112,7 @@ func TestApply(t *testing.T) {
 	}
 }
 
-func TestCompileL2L3L2OnlyFallback(t *testing.T) {
+func TestCompileL2L3L2Predicates(t *testing.T) {
 	l2Insts, l3Insts, err := buildL2L3FilterInsts("arp")
 	if err != nil {
 		t.Fatalf("compile L2/L3 filters: %v", err)
@@ -119,15 +121,177 @@ func TestCompileL2L3L2OnlyFallback(t *testing.T) {
 	if len(l2Insts) == 0 {
 		t.Fatalf("expected L2 instructions for arp filter")
 	}
+	if len(l3Insts) == 0 {
+		t.Fatalf("expected L3 instructions for arp filter")
+	}
+}
 
-	want := asm.Instructions{asm.Mov.Reg(asm.R4, asm.R5)}
-	if len(l3Insts) != len(want) {
-		t.Fatalf("unexpected L3 fallback length: got %d want %d", len(l3Insts), len(want))
+func TestRawIPFilterPreservesL2PredicateNegation(t *testing.T) {
+	packet := make([]byte, 40)
+	packet[0] = 4<<4 | 5
+	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
+	packet[8] = 64
+	packet[9] = unix.IPPROTO_TCP
+	packet[32] = 5 << 4
+
+	tests := []struct {
+		expr string
+		want bool
+	}{
+		{expr: "arp"},
+		{expr: "rarp"},
+		{expr: "not arp", want: true},
+		{expr: "not rarp", want: true},
+		{expr: "arp or tcp", want: true},
+		{expr: "arp and tcp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.expr, func(t *testing.T) {
+			insts, err := compileCBPF(tt.expr, true)
+			if err != nil {
+				t.Fatalf("compileCBPF: %v", err)
+			}
+			vm, err := cbpf.NewVM(insts)
+			if err != nil {
+				t.Fatalf("NewVM: %v", err)
+			}
+			verdict, err := vm.Run(packet)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if got := verdict != 0; got != tt.want {
+				t.Fatalf("filter accepted = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyPatchesEveryProgram(t *testing.T) {
+	t.Parallel()
+
+	const originalInstructionCount = 4
+	newProgram := func() *ebpf.ProgramSpec {
+		return &ebpf.ProgramSpec{
+			Instructions: asm.Instructions{
+				asm.Mov.Imm(asm.R0, 0).WithSymbol(L3StubSymbol),
+				asm.Return(),
+				asm.Mov.Imm(asm.R0, 0).WithSymbol(L2StubSymbol),
+				asm.Return(),
+			},
+		}
+	}
+	spec := &ebpf.CollectionSpec{Programs: map[string]*ebpf.ProgramSpec{
+		"retrans_skb":    newProgram(),
+		"retrans_synack": newProgram(),
+		"retrans_tlp":    newProgram(),
+	}}
+
+	l2Insts, l3Insts, err := buildL2L3FilterInsts("tcp and port 443")
+	if err != nil {
+		t.Fatalf("build filters: %v", err)
+	}
+	if err := Apply(spec, "tcp and port 443"); err != nil {
+		t.Fatalf("Apply: %v", err)
 	}
 
-	for i := range want {
-		if l3Insts[i].OpCode != want[i].OpCode || l3Insts[i].Dst != want[i].Dst || l3Insts[i].Src != want[i].Src {
-			t.Fatalf("unexpected L3 fallback instruction at %d: got %+v want %+v", i, l3Insts[i], want[i])
+	wantInstructions := originalInstructionCount + len(l2Insts) + len(l3Insts)
+	for name, prog := range spec.Programs {
+		if got := len(prog.Instructions); got != wantInstructions {
+			t.Errorf("program %q instruction count = %d, want %d", name, got, wantInstructions)
 		}
+	}
+}
+
+func TestRawIPFilterMatchesSyntheticTCPHeader(t *testing.T) {
+	const port = 19997
+	insts, err := compileCBPF("tcp and port 19997", true)
+	if err != nil {
+		t.Fatalf("compileCBPF: %v", err)
+	}
+	vm, err := cbpf.NewVM(insts)
+	if err != nil {
+		t.Fatalf("NewVM: %v", err)
+	}
+
+	ipv4 := make([]byte, 40)
+	ipv4[0] = 4<<4 | 5
+	binary.BigEndian.PutUint16(ipv4[2:4], uint16(len(ipv4)))
+	ipv4[8] = 64
+	ipv4[9] = unix.IPPROTO_TCP
+	binary.BigEndian.PutUint16(ipv4[20:22], port)
+	binary.BigEndian.PutUint16(ipv4[22:24], 40000)
+	ipv4[32] = 5 << 4
+	ipv4[33] = 0x10
+
+	ipv4Options := make([]byte, 44)
+	ipv4Options[0] = 4<<4 | 6
+	binary.BigEndian.PutUint16(ipv4Options[2:4], uint16(len(ipv4Options)))
+	ipv4Options[8] = 64
+	ipv4Options[9] = unix.IPPROTO_TCP
+	binary.BigEndian.PutUint16(ipv4Options[24:26], 40000)
+	binary.BigEndian.PutUint16(ipv4Options[26:28], port)
+	ipv4Options[36] = 5 << 4
+	ipv4Options[37] = 0x10
+
+	ipv6 := make([]byte, 60)
+	ipv6[0] = 6 << 4
+	binary.BigEndian.PutUint16(ipv6[4:6], 20)
+	ipv6[6] = unix.IPPROTO_TCP
+	ipv6[7] = 64
+	binary.BigEndian.PutUint16(ipv6[40:42], 40000)
+	binary.BigEndian.PutUint16(ipv6[42:44], port)
+	ipv6[52] = 5 << 4
+	ipv6[53] = 0x10
+
+	wrongPort := append([]byte(nil), ipv4...)
+	binary.BigEndian.PutUint16(wrongPort[20:22], 1234)
+
+	tests := []struct {
+		name   string
+		packet []byte
+		want   bool
+	}{
+		{name: "IPv4", packet: ipv4, want: true},
+		{name: "IPv4 options", packet: ipv4Options, want: true},
+		{name: "IPv6", packet: ipv6, want: true},
+		{name: "wrong port", packet: wrongPort},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verdict, err := vm.Run(tt.packet)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if got := verdict != 0; got != tt.want {
+				t.Fatalf("filter accepted = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRawIPFilterKeepsPortAndEthertypeComparisonsDistinct(t *testing.T) {
+	packet := make([]byte, 40)
+	packet[0] = 4<<4 | 5
+	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
+	packet[8] = 64
+	packet[9] = unix.IPPROTO_TCP
+	binary.BigEndian.PutUint16(packet[20:22], etherTypeIPv4)
+	binary.BigEndian.PutUint16(packet[22:24], 40000)
+	packet[32] = 5 << 4
+
+	insts, err := compileCBPF("tcp and port 2048", true)
+	if err != nil {
+		t.Fatalf("compileCBPF: %v", err)
+	}
+	vm, err := cbpf.NewVM(insts)
+	if err != nil {
+		t.Fatalf("NewVM: %v", err)
+	}
+	verdict, err := vm.Run(packet)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if verdict == 0 {
+		t.Fatal("port 2048 comparison was rewritten as an IPv4 version test")
 	}
 }

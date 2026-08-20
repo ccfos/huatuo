@@ -55,17 +55,20 @@ func main() {
 	})
 	app.Action = func(c *cli.Context) error {
 		return runRetransmit(c.Context, &retransmitOptions{
-			bpfPath:            c.String(cliFlagBpfPath),
-			filterExpression:   c.String(cliFlagFilter),
-			durationSeconds:    c.Int(cliFlagDuration),
-			outputFormat:       c.String(cliFlagOutput),
-			outputStorage:      c.String(cliFlagOutputStorage),
-			taskID:             c.String(cliFlagTaskID),
-			sourceType:         c.String(cliFlagSourceTypes),
-			maxEventsPerSecond: c.Uint64(cliFlagMaxEventsPerSecond),
-			isTLPEnabled:       c.Bool(cliFlagEnableTLP),
-			version:            versionInfo.Version,
-			output:             c.App.Writer,
+			bpfPath:                     c.String(cliFlagBpfPath),
+			filterExpression:            effectiveFilter(c),
+			durationSeconds:             c.Int(cliFlagDuration),
+			outputFormat:                c.String(cliFlagOutput),
+			outputStorage:               c.String(cliFlagOutputStorage),
+			taskID:                      c.String(cliFlagTaskID),
+			sourceType:                  c.String(cliFlagSourceTypes),
+			maxEventsPerSecond:          c.Uint64(cliFlagMaxEventsPerSecond),
+			isTLPEnabled:                c.Bool(cliFlagEnableTLP),
+			dropwatchCorrelation:        c.String(cliFlagDropwatchCorrelation),
+			dropwatchBPFPath:            c.String(cliFlagDropwatchBPFPath),
+			dropwatchMaxEventsPerSecond: c.Uint64(cliFlagDropwatchMaxEventsPerSecond),
+			version:                     versionInfo.Version,
+			output:                      c.App.Writer,
 		})
 	}
 

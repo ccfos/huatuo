@@ -19,9 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
-
-	"golang.org/x/sync/errgroup"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/bpf/abi"
@@ -29,17 +28,56 @@ import (
 )
 
 type retransmitOptions struct {
-	bpfPath            string
-	filterExpression   string
-	durationSeconds    int
-	outputFormat       string
-	outputStorage      string
-	taskID             string
-	sourceType         string
-	maxEventsPerSecond uint64
-	isTLPEnabled       bool
-	version            string
-	output             io.Writer
+	bpfPath                     string
+	filterExpression            string
+	durationSeconds             int
+	outputFormat                string
+	outputStorage               string
+	taskID                      string
+	sourceType                  string
+	maxEventsPerSecond          uint64
+	isTLPEnabled                bool
+	dropwatchCorrelation        string
+	dropwatchBPFPath            string
+	dropwatchMaxEventsPerSecond uint64
+	version                     string
+	output                      io.Writer
+}
+
+type allErrorGroup struct {
+	cancel context.CancelFunc
+
+	wg   sync.WaitGroup
+	mu   sync.Mutex
+	errs []error
+}
+
+func newAllErrorGroup(ctx context.Context) (*allErrorGroup, context.Context) {
+	groupCtx, cancel := context.WithCancel(ctx)
+	return &allErrorGroup{cancel: cancel}, groupCtx
+}
+
+func (g *allErrorGroup) Go(worker func() error) {
+	g.wg.Add(1)
+	go func() {
+		defer g.wg.Done()
+
+		if err := worker(); err != nil {
+			g.mu.Lock()
+			g.errs = append(g.errs, err)
+			g.mu.Unlock()
+			g.cancel()
+		}
+	}()
+}
+
+func (g *allErrorGroup) Wait() error {
+	g.wg.Wait()
+	g.cancel()
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return errors.Join(g.errs...)
 }
 
 func runRetransmit(ctx context.Context, options *retransmitOptions) (returnErr error) {
@@ -63,17 +101,19 @@ func runRetransmit(ctx context.Context, options *retransmitOptions) (returnErr e
 		}
 	}()
 
-	runCtx := ctx
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	if options.durationSeconds > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(
-			ctx,
+		var cancelDuration context.CancelFunc
+		runCtx, cancelDuration = context.WithTimeout(
+			runCtx,
 			time.Duration(options.durationSeconds)*time.Second,
 		)
-		defer cancel()
+		defer cancelDuration()
 	}
 
-	group, groupCtx := errgroup.WithContext(runCtx)
+	group, groupCtx := newAllErrorGroup(runCtx)
+	defer group.cancel()
 
 	if bpfLimiter.Enabled() {
 		if err := bpfLimiter.OpenEventPipe(groupCtx, bpfObj); err != nil {
@@ -114,28 +154,71 @@ func runRetransmit(ctx context.Context, options *retransmitOptions) (returnErr e
 		return err
 	}
 
-	if bpfLimiter.Enabled() {
-		group.Go(func() error {
-			return bpfLimiter.ReadEvents(groupCtx)
-		})
-	}
+	return runRetransmitOutputSession(
+		func() error {
+			var correlation *localCorrelation
+			if options.dropwatchCorrelation == dropwatchCorrelationLocal {
+				correlation, err = setupLocalCorrelation(
+					groupCtx,
+					cancelRun,
+					localCorrelationConfig{
+						bpfPath:            options.dropwatchBPFPath,
+						filter:             options.filterExpression,
+						maxEventsPerSecond: options.dropwatchMaxEventsPerSecond,
+					},
+					sink,
+				)
+				if err != nil {
+					return err
+				}
+			}
 
-	group.Go(func() error {
-		return streamRetransmitEvents(
-			groupCtx,
-			reader,
-			sink,
-			options.sourceType,
-		)
-	})
+			if bpfLimiter.Enabled() {
+				group.Go(func() error {
+					return bpfLimiter.ReadEvents(groupCtx)
+				})
+			}
 
-	streamErr := group.Wait()
+			if options.dropwatchCorrelation == dropwatchCorrelationLocal {
+				group.Go(func() error {
+					return streamLocalCorrelation(
+						groupCtx,
+						reader,
+						correlation,
+						options.sourceType,
+					)
+				})
+			} else {
+				group.Go(func() error {
+					return streamRetransmitEvents(
+						groupCtx,
+						reader,
+						sink,
+						options.sourceType,
+					)
+				})
+			}
 
-	cleanupErr := sinkCleanup()
-	if cleanupErr != nil {
-		cleanupErr = fmt.Errorf("close output: %w", cleanupErr)
-	}
-	return errors.Join(streamErr, cleanupErr)
+			return group.Wait()
+		},
+		sinkCleanup,
+	)
+}
+
+func runRetransmitOutputSession(
+	runWorkers func() error,
+	closeOutput func() error,
+) (returnErr error) {
+	defer func() {
+		if err := closeOutput(); err != nil {
+			returnErr = errors.Join(
+				returnErr,
+				fmt.Errorf("close output: %w", err),
+			)
+		}
+	}()
+
+	return runWorkers()
 }
 
 func streamRetransmitEvents(

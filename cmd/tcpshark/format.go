@@ -26,13 +26,14 @@ import (
 
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/packet"
+	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/types"
 )
 
-const tcpFlagsSynAck = tcpFlagSYN | tcpFlagACK
+const tcpFlagsSynAck = packet.TCPFlagSYN | packet.TCPFlagACK
 
 const textEventBufferSize = 512
 
@@ -70,6 +71,10 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 	line = append(line, ev.TCPState...)
 	line = append(line, " event_type="...)
 	line = append(line, ev.EventType...)
+	if ev.KtimeNS != 0 {
+		line = append(line, " ktime_ns="...)
+		line = strconv.AppendUint(line, ev.KtimeNS, 10)
+	}
 	if ev.EventType == "tcp_retransmit_synack" {
 		line = append(line, " [SYNACK]"...)
 	}
@@ -127,6 +132,23 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 		line = append(line, " drop_location="...)
 		line = append(line, ev.DropLocation...)
 	}
+	if len(ev.CorrelationReasons) != 0 {
+		line = append(line, " correlation_reasons="...)
+		for i, reason := range ev.CorrelationReasons {
+			if i != 0 {
+				line = append(line, ',')
+			}
+			line = append(line, reason...)
+		}
+	}
+	if status := ev.DropwatchPerfStatus; status != nil {
+		line = append(line, " dropwatch_drained_through_ktime_ns="...)
+		line = strconv.AppendUint(line, status.DrainedThroughKtimeNS, 10)
+		line = append(line, " dropwatch_perf_lost="...)
+		line = strconv.AppendUint(line, status.PerfLost, 10)
+		line = append(line, " dropwatch_rate_limited="...)
+		line = strconv.AppendUint(line, status.RateLimited, 10)
+	}
 	if ev.Source != "" {
 		line = append(line, " source="...)
 		line = append(line, ev.Source...)
@@ -134,10 +156,16 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 	line = append(line, '\n')
 
 	n, err := s.w.Write(line)
-	if err == nil && n != len(line) {
+	if err != nil {
+		return err
+	}
+	if n != len(line) {
 		return io.ErrShortWrite
 	}
-	return err
+	if ev.DropStack != "" {
+		return symbol.FormatStackLines(s.w, ev.DropStack)
+	}
+	return nil
 }
 
 type jsonWriter struct{ w io.Writer }
@@ -225,6 +253,7 @@ func formatEvent(
 
 	return &types.TCPRetransmitTracing{
 		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+		KtimeNS:             ev.KtimeNS,
 		TCPReason:           classification.reason.String(),
 		Source:              sourceType,
 		Comm:                bytesutil.ToStr(ev.Comm[:]),
@@ -241,6 +270,8 @@ func formatEvent(
 		TCPAckSeq:           ev.TCPAck,
 		TCPEndSeq:           ev.TCPEndSeq,
 		TCPFlags:            tcpFlags,
+		AddressFamily:       ev.Family,
+		TCPFlagsRaw:         tcpFlagsRaw,
 		Phase:               classification.phase.String(),
 		EventType:           eventType,
 		CaState:             ev.CaState,

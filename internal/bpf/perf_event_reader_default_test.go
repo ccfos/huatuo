@@ -66,6 +66,27 @@ func TestPerfEventReader_Close(t *testing.T) {
 	assert.ErrorIs(t, err, types.ErrExitByCancelCtx)
 }
 
+func TestPerfEventReader_PollTimeout(t *testing.T) {
+	reader := newTestPerfEventReader(t, t.Context())
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+
+	var data int32
+	read, err := reader.PollInto(&data, time.Millisecond)
+	require.NoError(t, err)
+	assert.False(t, read)
+}
+
+func TestPerfEventReader_Flush(t *testing.T) {
+	reader := newTestPerfEventReader(t, t.Context())
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+
+	require.NoError(t, reader.Flush())
+	var data int32
+	read, err := reader.PollInto(&data, time.Second)
+	assert.False(t, read)
+	assert.ErrorIs(t, err, ErrPerfFlushed)
+}
+
 func TestPerfEventReader_ReadInto_Closed(t *testing.T) {
 	reader := newTestPerfEventReader(t, t.Context())
 	errCh := make(chan error, 1)

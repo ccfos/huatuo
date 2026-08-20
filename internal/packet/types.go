@@ -104,6 +104,7 @@ type TCP struct {
 	AckSeq     uint32 `json:"ack_seq"`
 	DataOffset uint8  `json:"data_offset"`
 	Flags      string `json:"flags"`
+	RawFlags   uint8  `json:"-"`
 	Window     uint16 `json:"window"`
 	Checksum   uint16 `json:"checksum"`
 	Urgent     uint16 `json:"urgent,omitempty"`

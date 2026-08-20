@@ -43,7 +43,7 @@ func buildIPv4TCPSYNHdr() Hdr {
 	binary.BigEndian.PutUint16(pkt.Raw[22:], 80)     // dport
 	binary.BigEndian.PutUint32(pkt.Raw[24:], 1)      // seq
 	pkt.Raw[32] = 0x50                               // data offset=5 (20 bytes)
-	pkt.Raw[33] = 0x02                               // SYN
+	pkt.Raw[33] = TCPFlagSYN                         // SYN
 	binary.BigEndian.PutUint16(pkt.Raw[34:], 0x2000) // window
 
 	return pkt
@@ -109,6 +109,9 @@ func TestParseIPv4TCP(t *testing.T) {
 	if p.TCP.Flags != "SYN" {
 		t.Errorf("TCP.Flags: want SYN, got %s", p.TCP.Flags)
 	}
+	if p.TCP.RawFlags != 0x02 {
+		t.Errorf("TCP.RawFlags: want 0x02, got 0x%02x", p.TCP.RawFlags)
+	}
 	if p.TCP.Window != 0x2000 {
 		t.Errorf("TCP.Window: want 0x2000, got 0x%x", p.TCP.Window)
 	}
@@ -135,28 +138,29 @@ func TestTCPFlagStrings(t *testing.T) {
 		},
 		{
 			name:  "syn",
-			flags: 0x02,
+			flags: TCPFlagSYN,
 			want:  "SYN",
 		},
 		{
 			name:  "syn ack",
-			flags: 0x12,
+			flags: TCPFlagSYN | TCPFlagACK,
 			want:  "SYN|ACK",
 		},
 		{
 			name:  "ack psh",
-			flags: 0x18,
+			flags: TCPFlagACK | TCPFlagPSH,
 			want:  "ACK|PSH",
 		},
 		{
 			name:  "fin ack",
-			flags: 0x11,
+			flags: TCPFlagACK | TCPFlagFIN,
 			want:  "ACK|FIN",
 		},
 		{
-			name:  "all",
-			flags: 0xff,
-			want:  "SYN|ACK|FIN|RST|PSH|URG|ECE|CWR",
+			name: "all",
+			flags: TCPFlagSYN | TCPFlagACK | TCPFlagFIN | TCPFlagRST |
+				TCPFlagPSH | TCPFlagURG | TCPFlagECE | TCPFlagCWR,
+			want: "SYN|ACK|FIN|RST|PSH|URG|ECE|CWR",
 		},
 	}
 

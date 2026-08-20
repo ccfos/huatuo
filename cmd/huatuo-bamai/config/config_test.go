@@ -72,9 +72,12 @@ IssuesList = [["net_rx_latency", "kernel_sched_tick"]]
 [EventTracing.NetRxLatency]
 ExcludedContainerQos = ["bestEffort"]
 
-[EventTracing.TCPRetransmit]
+[EventTracing.Dropwatch]
 Filter = "dst port 443"
+
+[EventTracing.TCPRetransmit]
 EnableTLP = true
+EnableDropwatchCorrelation = true
 MaxEventsPerSecond = 42
 
 [MetricCollector.Vmstat]
@@ -140,17 +143,34 @@ ExcludedOnContainer = "writeback"
 	if len(Get().EventTracing.NetRxLatency.ExcludedContainerQos) != 1 {
 		t.Errorf("unexpected ExcludedContainerQos length: %d", len(Get().EventTracing.NetRxLatency.ExcludedContainerQos))
 	}
-	if Get().EventTracing.TCPRetransmit.Filter != "dst port 443" {
-		t.Errorf("unexpected TCPRetransmit.Filter: %q", Get().EventTracing.TCPRetransmit.Filter)
+	if Get().EventTracing.Dropwatch.Filter != "dst port 443" {
+		t.Errorf("unexpected Dropwatch.Filter: %q", Get().EventTracing.Dropwatch.Filter)
 	}
 	if !Get().EventTracing.TCPRetransmit.EnableTLP {
 		t.Errorf("TCPRetransmit.EnableTLP should be true")
+	}
+	if !Get().EventTracing.TCPRetransmit.EnableDropwatchCorrelation {
+		t.Errorf("TCPRetransmit.EnableDropwatchCorrelation should be true")
 	}
 	if Get().EventTracing.TCPRetransmit.MaxEventsPerSecond != 42 {
 		t.Errorf("unexpected TCPRetransmit.MaxEventsPerSecond: %d", Get().EventTracing.TCPRetransmit.MaxEventsPerSecond)
 	}
 	if Get().Storage.Elasticsearch.Enabled() {
 		t.Error("Elasticsearch is enabled without connection settings")
+	}
+}
+
+func TestLoadAcceptsTCPRetransmitFilter(t *testing.T) {
+	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
+[EventTracing.TCPRetransmit]
+Filter = "tcp port 8443"
+`)
+
+	if err := Load(path); err != nil {
+		t.Fatalf("Load() error = %v, want strict decoder to accept TCPRetransmit.Filter", err)
+	}
+	if got := Get().EventTracing.TCPRetransmit.Filter; got != "tcp port 8443" {
+		t.Fatalf("TCPRetransmit.Filter = %q, want %q", got, "tcp port 8443")
 	}
 }
 

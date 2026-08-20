@@ -16,7 +16,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/cmd/huatuo-bamai/handlers"
@@ -50,7 +52,15 @@ func startToolstream(_ *Daemon) (func(context.Context) error, error) {
 }
 
 func startTracing(d *Daemon) (func(context.Context) error, error) {
-	mgr, err := tracing.NewManager(config.Get().BlackList)
+	cfg := config.Get()
+	if err := validateTCPRetransmitCorrelation(
+		cfg.EventTracing.TCPRetransmit.EnableDropwatchCorrelation,
+		cfg.BlackList,
+	); err != nil {
+		return nil, err
+	}
+
+	mgr, err := tracing.NewManager(cfg.BlackList)
 	if err != nil {
 		return nil, fmt.Errorf("new tracing manager: %w", err)
 	}
@@ -70,6 +80,18 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 		}
 		return nil
 	}, nil
+}
+
+func validateTCPRetransmitCorrelation(enabled bool, blacklist []string) error {
+	if !enabled {
+		return nil
+	}
+	if slices.Contains(blacklist, "tcp_retransmit") {
+		return errors.New(
+			"enable dropwatch correlation: remove tcp_retransmit from blacklist",
+		)
+	}
+	return nil
 }
 
 func startHandlers(d *Daemon) (func(context.Context) error, error) {

@@ -26,6 +26,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf/abi"
+	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/types"
 )
@@ -319,6 +320,28 @@ func TestFormatEventAddresses(t *testing.T) {
 	}
 }
 
+func TestFormatEventKtime(t *testing.T) {
+	t.Parallel()
+
+	event := formatEvent(&abi.TCPRetransmitEvent{
+		KtimeNS:   42,
+		EventType: uint8(abi.TCPRetransmitEventSKB),
+		Family:    unix.AF_INET,
+		TCPFlags:  0x18,
+	}, toolstream.SourceTypeTool)
+	if event.KtimeNS != 42 {
+		t.Fatalf("KtimeNS = %d, want 42", event.KtimeNS)
+	}
+	if event.AddressFamily != unix.AF_INET || event.TCPFlagsRaw != 0x18 {
+		t.Fatalf(
+			"internal match fields = (family=%d, flags=0x%02x), want (%d, 0x18)",
+			event.AddressFamily,
+			event.TCPFlagsRaw,
+			unix.AF_INET,
+		)
+	}
+}
+
 func TestTextWriterFormatsTCPFlags(t *testing.T) {
 	t.Parallel()
 
@@ -363,6 +386,64 @@ func TestTextWriterFormatsTCPFlags(t *testing.T) {
 	}
 }
 
+func TestTextWriterFormatsCorrelation(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	event := &types.TCPRetransmitTracing{
+		ObservedTimestamp: "now",
+		KtimeNS:           8,
+		DropLocation:      "unknown",
+		CorrelationReasons: []types.CorrelationReason{
+			types.CorrelationReasonStartupHistoryIncomplete,
+			types.CorrelationReasonPerfEventsLost,
+		},
+		DropwatchPerfStatus: &types.DropwatchPerfStatus{
+			DrainedThroughKtimeNS: 9,
+			PerfLost:              2,
+			RateLimited:           3,
+		},
+	}
+	if err := (&textWriter{w: &output}).Write(event); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	for _, want := range []string{
+		"ktime_ns=8",
+		"drop_location=unknown",
+		"correlation_reasons=startup_history_incomplete,perf_events_lost",
+		"dropwatch_drained_through_ktime_ns=9",
+		"dropwatch_perf_lost=2",
+		"dropwatch_rate_limited=3",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("output = %q, want %q", output.String(), want)
+		}
+	}
+}
+
+func TestTextWriterFormatsMatchedDropStack(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	event := &types.TCPRetransmitTracing{
+		ObservedTimestamp: "now",
+		DropLocation:      "host_software",
+		DropStack:         "first\nsecond",
+	}
+	if err := (&textWriter{w: &output}).Write(event); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	for _, want := range []string{
+		"drop_location=host_software",
+		"\t#0   first\n",
+		"\t#1   second\n",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("output = %q, want %q", output.String(), want)
+		}
+	}
+}
+
 func TestTextWriterFormatsAllEventFields(t *testing.T) {
 	t.Parallel()
 
@@ -375,6 +456,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 			name: "full event",
 			ev: &types.TCPRetransmitTracing{
 				ObservedTimestamp:   "2026-07-23T02:14:40.304775546Z",
+				KtimeNS:             123456789,
 				TCPReason:           "RTO",
 				Source:              toolstream.SourceTypeTool,
 				Comm:                "worker thread",
@@ -404,7 +486,7 @@ func TestTextWriterFormatsAllEventFields(t *testing.T) {
 			},
 			want: "2026-07-23T02:14:40.304775546Z " +
 				"[data/RTO] 127.0.0.1:19996 > 127.0.0.1:42128 " +
-				"state=ESTABLISHED event_type=tcp_retransmit_skb " +
+				"state=ESTABLISHED event_type=tcp_retransmit_skb ktime_ns=123456789 " +
 				"skb=0xffff931c14fdf800 seq=3154974646 end=3154991030 " +
 				"ack=948393597 flags=ACK|PSH pid=1420 comm=worker thread " +
 				"ca=4 retrans=4 icsk_pending=1 reord_seen=2 dsack_dups=3 " +
@@ -649,7 +731,7 @@ func BenchmarkFormatEvent(b *testing.B) {
 	event := abi.TCPRetransmitEvent{
 		EventType: uint8(abi.TCPRetransmitEventSKB),
 		State:     unix.BPF_TCP_ESTABLISHED,
-		TCPFlags:  tcpFlagACK,
+		TCPFlags:  packet.TCPFlagACK,
 		CaState:   uint8(abi.TCPRetransmitCaRecovery),
 		Family:    unix.AF_INET,
 	}

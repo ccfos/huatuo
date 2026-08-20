@@ -259,7 +259,7 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'd
 | `netdev_linkstatus`      | []string | 网络设备链路标志                              |
 | `packet_skb_addr`        | string   | SKB 地址（十六进制，omitempty）              |
 | `packet_eth_proto`       | string   | 原始 EtherType（十六进制，如 `0x0800`）       |
-| `packet_len`             | uint32   | 数据包长度（字节）                            |
+| `packet_len`             | uint32   | 从 network header 到 SKB 逻辑末尾的规范化 L3 长度；无法安全计算时为 0 |
 | `layers`                 | object   | 分层协议解析结果，缺失的层会省略              |
 | `stack`                  | string   | 内核调用栈（换行分隔）                        |
 
@@ -300,14 +300,20 @@ dropwatch \
     IssuesList = []
 
 [EventTracing.Dropwatch]
-    # tcpdump 过滤表达式，转发给 dropwatch --filter。
+    # standalone dropwatch 与 tcpshark local 模式共用的 tcpdump filter。
     # 默认值: "tcp"
     Filter = "tcp"
 
     # 转发给 dropwatch --max-events-per-second。
     # 默认值: 100
     MaxEventsPerSecond = 100
+
+[EventTracing.TCPRetransmit]
+    # 使用 tcpshark 私有的 embedded dropwatch source。
+    EnableDropwatchCorrelation = false
 ```
+
+standalone dropwatch 始终输出 raw `DropWatchTracing`。TCP 重传 local 关联会加载另一份 `dropwatch.o`，使用完全相同的规范化 filter，并且只输出定型后的 `TCPRetransmitTracing` 结果。两种模式可以并行；embedded drop 不会重复保存成 raw event。同 namespace 严格匹配输出 `host_software`；所有 no-match 都保持 `unknown` 并携带 `correlation_reasons`，因为 source ready 不能覆盖更早的因果历史。
 
 #### 4.2 噪声过滤
 

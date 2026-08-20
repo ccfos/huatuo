@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestRateLimiterConstants(t *testing.T) {
@@ -192,6 +193,14 @@ func (r *rateLimitReaderStub) ReadInto(any) error {
 
 func (*rateLimitReaderStub) ReadBatch(func() any) ([]any, error) {
 	return []any{}, nil
+}
+
+func (*rateLimitReaderStub) PollInto(any, time.Duration) (bool, error) {
+	return false, nil
+}
+
+func (*rateLimitReaderStub) Flush() error {
+	return nil
 }
 
 func (r *rateLimitReaderStub) Close() error {

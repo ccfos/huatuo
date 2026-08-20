@@ -258,7 +258,7 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 | `netdev_linkstatus`      | []string | Network device link status flags                              |
 | `packet_skb_addr`        | string   | SKB address (hexadecimal, omitempty)                         |
 | `packet_eth_proto`       | string   | Raw EtherType (hexadecimal, e.g. `0x0800`)                   |
-| `packet_len`             | uint32   | Packet length in bytes                                        |
+| `packet_len`             | uint32   | Normalized L3 length from the network header to the SKB logical end; 0 when it cannot be derived safely |
 | `layers`                 | object   | Layered protocol parse result; missing layers are omitted      |
 | `stack`                  | string   | Kernel call stack (newline-separated)                         |
 
@@ -299,14 +299,20 @@ dropwatch \
     IssuesList = []
 
 [EventTracing.Dropwatch]
-    # tcpdump filter expression, forwarded to dropwatch --filter.
+    # Shared tcpdump filter for standalone dropwatch and tcpshark local mode.
     # Default: "tcp"
     Filter = "tcp"
 
     # Forwarded to dropwatch --max-events-per-second.
     # Default: 100
     MaxEventsPerSecond = 100
+
+[EventTracing.TCPRetransmit]
+    # Run tcpshark with a private embedded dropwatch source.
+    EnableDropwatchCorrelation = false
 ```
+
+Standalone dropwatch always emits raw `DropWatchTracing` events. Local TCP retransmission correlation loads a separate `dropwatch.o`, uses the exact same normalized filter, and emits only finalized `TCPRetransmitTracing` results. The two modes may run together; embedded drops are never stored as duplicate raw events. A strict same-namespace match reports `host_software`; every no-match remains `unknown` with `correlation_reasons` because source readiness does not cover earlier causal history.
 
 #### 4.2 Noise Filtering
 

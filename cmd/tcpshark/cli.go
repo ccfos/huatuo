@@ -16,10 +16,12 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/urfave/cli/v2"
 
+	"huatuo-bamai/internal/pcapfilter"
 	"huatuo-bamai/internal/toolstream"
 )
 
@@ -34,6 +36,12 @@ const (
 	cliFlagTaskID             = "task-id"
 	cliFlagMaxEventsPerSecond = "max-events-per-second"
 	cliFlagSourceTypes        = "source-types"
+	//nolint:gosec // CLI flag names, not credentials.
+	cliFlagDropwatchCorrelation = "dropwatch-correlation"
+	//nolint:gosec // CLI flag names, not credentials.
+	cliFlagDropwatchBPFPath = "dropwatch-bpf-path"
+	//nolint:gosec // CLI flag names, not credentials.
+	cliFlagDropwatchMaxEventsPerSecond = "dropwatch-max-events-per-second"
 )
 
 const (
@@ -41,6 +49,11 @@ const (
 
 	outputText = "text"
 	outputJSON = "json"
+
+	dropwatchCorrelationOff   = "off"
+	dropwatchCorrelationLocal = "local"
+
+	defaultDropwatchMaxEventsPerSecond = 100
 
 	maxDurationSeconds = int64(1<<63-1) / int64(time.Second)
 )
@@ -65,6 +78,20 @@ func appFlags() []cli.Flag {
 		&cli.StringFlag{
 			Name:  cliFlagFilter,
 			Usage: "pcap filter expression (tcpdump syntax); empty = all TCP retransmissions",
+		},
+		&cli.StringFlag{
+			Name:  cliFlagDropwatchCorrelation,
+			Value: dropwatchCorrelationOff,
+			Usage: "correlate retransmissions with kernel drops: off or local",
+		},
+		&cli.StringFlag{
+			Name:  cliFlagDropwatchBPFPath,
+			Usage: "path to dropwatch.o; required for local correlation",
+		},
+		&cli.Uint64Flag{
+			Name:  cliFlagDropwatchMaxEventsPerSecond,
+			Value: defaultDropwatchMaxEventsPerSecond,
+			Usage: "rate limit local drop events to N/sec (0 = unlimited)",
 		},
 		&cli.IntFlag{
 			Name:  cliFlagDuration,
@@ -111,6 +138,26 @@ func validateFlags(c *cli.Context) error {
 	if taskID := c.String(cliFlagTaskID); taskID != "" && c.String(cliFlagOutputStorage) == "" {
 		return fmt.Errorf("--task-id requires --output-storage")
 	}
+	switch correlation := c.String(cliFlagDropwatchCorrelation); correlation {
+	case dropwatchCorrelationOff:
+	case dropwatchCorrelationLocal:
+		if c.String(cliFlagDropwatchBPFPath) == "" {
+			return fmt.Errorf(
+				"--dropwatch-bpf-path is required when --dropwatch-correlation=local",
+			)
+		}
+		if err := pcapfilter.ValidateL3Compatible(effectiveFilter(c)); err != nil {
+			return fmt.Errorf(
+				"invalid --filter for --dropwatch-correlation=local: %w",
+				err,
+			)
+		}
+	default:
+		return fmt.Errorf(
+			"invalid --dropwatch-correlation %q; want off or local",
+			correlation,
+		)
+	}
 	switch sourceType := c.String(cliFlagSourceTypes); sourceType {
 	case toolstream.SourceTypeEvent, toolstream.SourceTypeTool:
 	default:
@@ -127,4 +174,14 @@ func validateFlags(c *cli.Context) error {
 		}
 	}
 	return nil
+}
+
+// Local correlation uses one normalized expression so both probes observe the
+// same traffic scope. An explicit TCP default avoids unrelated drop events.
+func effectiveFilter(c *cli.Context) string {
+	filter := strings.TrimSpace(c.String(cliFlagFilter))
+	if filter == "" && c.String(cliFlagDropwatchCorrelation) == dropwatchCorrelationLocal {
+		return "tcp"
+	}
+	return filter
 }

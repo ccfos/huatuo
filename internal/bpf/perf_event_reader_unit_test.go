@@ -35,6 +35,14 @@ func TestNormalizePerfReadError(t *testing.T) {
 		wantErr error
 	}{
 		{
+			name: "nil",
+		},
+		{
+			name:    "flushed reader",
+			err:     perf.ErrFlushed,
+			wantErr: ErrPerfFlushed,
+		},
+		{
 			name:    "closed reader",
 			err:     perf.ErrClosed,
 			wantErr: types.ErrExitByCancelCtx,
@@ -49,7 +57,12 @@ func TestNormalizePerfReadError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			require.ErrorIs(t, normalizePerfReadError(tt.err), tt.wantErr)
+			got := normalizePerfReadError(tt.err)
+			if tt.wantErr == nil {
+				require.NoError(t, got)
+				return
+			}
+			require.ErrorIs(t, got, tt.wantErr)
 		})
 	}
 }

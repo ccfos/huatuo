@@ -17,10 +17,15 @@ package bpf
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
-// ErrPerfEventSamplesLost indicates that the kernel dropped perf samples.
-var ErrPerfEventSamplesLost = errors.New("bpf: perf event samples lost")
+var (
+	// ErrPerfEventSamplesLost indicates that the kernel dropped perf samples.
+	ErrPerfEventSamplesLost = errors.New("bpf: perf event samples lost")
+	// ErrPerfFlushed marks the boundary requested by PerfEventReader.Flush.
+	ErrPerfFlushed = errors.New("bpf: perf event reader flushed")
+)
 
 // PerfEventSamplesLostError reports how many perf samples the kernel dropped.
 type PerfEventSamplesLostError struct {
@@ -44,6 +49,14 @@ type PerfEventReader interface {
 	// ReadBatch drains all per-CPU ring buffers currently available within a
 	// bounded deadline. newEvent must return a new event destination per call.
 	ReadBatch(newEvent func() any) ([]any, error)
+
+	// PollInto waits for at most timeout and decodes one event into dst. A
+	// deadline with no event is reported as (false, nil).
+	PollInto(dst any, timeout time.Duration) (bool, error)
+
+	// Flush makes the reader return records already queued in the perf rings,
+	// followed by ErrPerfFlushed.
+	Flush() error
 
 	// Close the PerfEventReader.
 	Close() error
