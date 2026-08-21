@@ -26,13 +26,16 @@ type Response[T any] struct {
 
 // CreateProfilingJobRequest represents a request to create a profiling job.
 type CreateProfilingJobRequest struct {
-	ProfilingType   string `json:"type"`              // cpu or memory
-	BinaryMatchPath string `json:"binary_match_path"` // executable path used to match target processes
-	Language        string `json:"language"`          // programming language of the target process
-	MemoryMode      string `json:"memory_mode"`       // memory profiling mode
-	DurationSeconds int    `json:"duration_seconds"`  // profiling duration in seconds
-	ContainerID     string `json:"container_id"`      // container ID
-	Hostname        string `json:"hostname"`          // host name
+	ProfilingType   string `json:"type"`                   // cpu or memory
+	BinaryMatchPath string `json:"binary_match_path"`      // executable path used to match target processes
+	Language        string `json:"language"`               // programming language of the target process
+	MemoryMode      string `json:"memory_mode"`            // memory profiling mode
+	DurationSeconds int    `json:"duration_seconds"`       // profiling duration in seconds
+	ContainerID     string `json:"container_id"`           // container ID
+	Hostname        string `json:"hostname"`               // host name
+	PID             int    `json:"pid,omitempty"`          // target process or thread ID
+	CPUIDs          []int  `json:"cpu_ids,omitempty"`      // CPU IDs selected for native CPU profiling
+	ThreadGroup     bool   `json:"thread_group,omitempty"` // include the PID's thread group
 }
 
 // CreateProfilingJobResponse represents a response to create a profiling job.
@@ -49,6 +52,9 @@ type ProfilingJob struct {
 	MemoryMode      string     `json:"memory_mode,omitempty"`       // memory profiling mode
 	Language        string     `json:"language"`                    // programming language of the target process
 	BinaryMatchPath string     `json:"binary_match_path,omitempty"` // executable path used to match target processes
+	PID             int        `json:"pid,omitempty"`               // target process or thread ID
+	CPUIDs          []int      `json:"cpu_ids,omitempty"`           // CPU IDs selected for native CPU profiling
+	ThreadGroup     bool       `json:"thread_group,omitempty"`      // include the PID's thread group
 	Status          string     `json:"status"`                      // job status
 	DurationSeconds int        `json:"duration_seconds"`            // profiling duration in seconds
 	CreatedAt       time.Time  `json:"created_at"`                  // job creation time
