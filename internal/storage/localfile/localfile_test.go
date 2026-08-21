@@ -17,13 +17,67 @@ package localfile
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
+	"time"
 
 	"huatuo-bamai/internal/storage/driver"
 )
+
+func TestWriterByNameSynchronizesCachedReads(t *testing.T) {
+	backend := NewBackend(t.TempDir(), 1024, 3)
+	backend.files["existing"] = io.Discard
+
+	backend.lock.Lock()
+	returned := make(chan struct{})
+	go func() {
+		_, _ = backend.writerByName("existing")
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+		backend.lock.Unlock()
+		t.Fatal("writerByName read the files map without acquiring the lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+	backend.lock.Unlock()
+
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("writerByName did not return after the lock was released")
+	}
+}
+
+func TestBackendConcurrentSave(t *testing.T) {
+	backend := NewBackend(t.TempDir(), 1024, 3)
+
+	const writers = 64
+	var wg sync.WaitGroup
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			name := fmt.Sprintf("concurrent-%d", i)
+			if err := backend.Save(t.Context(), driver.Record{
+				ID:   name,
+				Data: []byte(`{"ok":true}`),
+				Fields: map[string]any{
+					"tracer_name": name,
+				},
+			}); err != nil {
+				t.Errorf("Save(%q): %v", name, err)
+			}
+		}()
+	}
+	wg.Wait()
+}
 
 // TestBackendSave covers the localfile backend save behavior: verifies that fields.tracer_name is used as the filename and JSON content is pretty-printed before writing.
 func TestBackendSave(t *testing.T) {
