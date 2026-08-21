@@ -244,9 +244,36 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
   **说明**：超过数量后自动删除最早文件，控制磁盘空间使用。
 
+#### 6.3 Pyroscope Profile 存储
+
+```toml
+[Storage.Pyroscope]
+    Address = "https://profiles.example.com"
+    AppNamePrefix = "huatuo"
+    # Username = "profiles-user"
+    # Password = "change-me"
+    # BearerToken = "token"
+    TimeoutSeconds = 5
+```
+
+- **Address**：Pyroscope 服务的基础地址。留空时禁用该后端。后端会自动
+  追加 `/ingest`，且只接受 HTTP 或 HTTPS 地址。
+- **AppNamePrefix**：Pyroscope 应用名称前缀，默认值为 `huatuo`。
+- **Username / Password**：可选的 Basic Auth 凭据，必须同时配置。
+- **BearerToken**：可选的 Bearer Token，不能与 Basic Auth 同时配置。
+- **TimeoutSeconds**：单次写入请求的超时时间，默认值为 5 秒。
+
+Pyroscope 使用 pprof protobuf 保存 profiling 数据。可以同时启用
+Elasticsearch；Elasticsearch 会继续保存现有 JSON profiling 文档。凭据需要
+离开本机时应使用 HTTPS，并限制配置文件权限，避免认证信息泄露。
+
 ### 7. 自动追踪配置
 
 自动追踪模块是 HUATUO 的智能特性之一，可根据阈值自动触发特定性能追踪，减少人工干预。
+
+CPUIdle 和 CPUSys 会保留原有 JSON 事件，并使用相同的 tracer ID 额外写入
+CPU pprof。该 profile 以 99 Hz 采样，样本单位为 `cpu:nanoseconds`。
+profile 存储失败不会丢弃 JSON 事件。
 
 #### 7.1 CPUIdle 自动追踪 — 容器突发高 CPU 使用场景
 

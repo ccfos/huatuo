@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
@@ -80,8 +81,28 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
 	}
 
+	profileStores, err := newProfileStores(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
+	if len(profileStores) > 0 {
+		tracing.SetProfileStore(
+			profileStores,
+			tracing.DocumentOptions{Region: storageRegion},
+		)
+	}
+
+	return nil
+}
+
+func newProfileStores(
+	ctx context.Context,
+	cfg *config.BamaiConfig,
+) ([]*storage.Store[*tracing.Document], error) {
+	profileStores := make([]*storage.Store[*tracing.Document], 0, 2)
+
 	if cfg.Storage.Elasticsearch.Enabled() {
-		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
+		profileStore, err := storage.NewFromConfig[*tracing.Document](ctx, &driver.Config{
 			Driver:      "elasticsearch",
 			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
 			ESUsername:  cfg.Storage.Elasticsearch.Username,
@@ -89,13 +110,43 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 			ESIndex:     cfg.Storage.Elasticsearch.Index,
 		}, profiler.MetadataCollection, tracing.ProfileDocumentStoreMapper{})
 		if err != nil {
-			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)
+			return nil, fmt.Errorf("new profiling document store (elasticsearch): %w", err)
 		}
-		tracing.SetProfileStore(
-			[]*storage.Store[*tracing.Document]{profileStore},
-			tracing.DocumentOptions{Region: storageRegion},
-		)
+		profileStores = append(profileStores, profileStore)
 	}
 
-	return nil
+	if cfg.Storage.Pyroscope.Address != "" {
+		profileStore, err := storage.NewFromConfig[*tracing.Document](ctx, &driver.Config{
+			Driver:                  "pyroscope",
+			PyroscopeAddress:        cfg.Storage.Pyroscope.Address,
+			PyroscopeAppNamePrefix:  cfg.Storage.Pyroscope.AppNamePrefix,
+			PyroscopeUsername:       cfg.Storage.Pyroscope.Username,
+			PyroscopePassword:       cfg.Storage.Pyroscope.Password,
+			PyroscopeBearerToken:    cfg.Storage.Pyroscope.BearerToken,
+			PyroscopeTimeoutSeconds: cfg.Storage.Pyroscope.TimeoutSeconds,
+		}, profiler.MetadataCollection, tracing.PprofDocumentStoreMapper{})
+		if err != nil {
+			cleanupErr := closeProfileStores(ctx, profileStores)
+			return nil, errors.Join(
+				fmt.Errorf("new profiling document store (pyroscope): %w", err),
+				cleanupErr,
+			)
+		}
+		profileStores = append(profileStores, profileStore)
+	}
+
+	return profileStores, nil
+}
+
+func closeProfileStores(
+	ctx context.Context,
+	stores []*storage.Store[*tracing.Document],
+) error {
+	var errs []error
+	for _, store := range stores {
+		if err := store.Close(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("close profiling document store %s: %w", store.Name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
