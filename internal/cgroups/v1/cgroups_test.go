@@ -23,6 +23,28 @@ import (
 	"huatuo-bamai/internal/cgroups/subsystem"
 )
 
+func TestCpuUsageReadsCPUAcctSubsystem(t *testing.T) {
+	root := t.TempDir()
+	oldRoot := paths.RootfsDefaultPath
+	paths.RootfsDefaultPath = root
+	t.Cleanup(func() { paths.RootfsDefaultPath = oldRoot })
+
+	path := filepath.Join("test", "usage")
+	writeCgroupFile(t, paths.Path(subsystem.SubsystemCPUAcct, path, "cpuacct.stat"), "user 100\nsystem 50\n")
+	writeCgroupFile(t, paths.Path(subsystem.SubsystemCPUAcct, path, "cpuacct.usage"), "1500000\n")
+
+	usage, err := (&CgroupV1{}).CpuUsage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantUser := 100 * microsecondsInSecond / clockTicks
+	wantSystem := 50 * microsecondsInSecond / clockTicks
+	if usage.User != wantUser || usage.System != wantSystem || usage.Usage != 1500 {
+		t.Errorf("CpuUsage() = %+v, want User=%d System=%d Usage=1500", usage, wantUser, wantSystem)
+	}
+}
+
 func TestCpuQuotaAndPeriodEffectiveCPUCount(t *testing.T) {
 	root := t.TempDir()
 	oldRoot := paths.RootfsDefaultPath
