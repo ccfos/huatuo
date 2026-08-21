@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,26 +17,34 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/registry"
 	javaruntime "huatuo-bamai/internal/profiler/runtime/java"
+	"huatuo-bamai/pkg/profiling"
+)
+
+const (
+	javaAllocInterval    = "512k"
+	javaMemoryStackDepth = "256"
 )
 
 func init() {
 	impl := &javaMemoryProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "mem",
-		LangOrImpl:    "java",
-		Description:   "Java memory profiler using async-profiler",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeMemory,
+		Implementation: profiling.ImplementationJava,
+		Description:    "Java memory profiler using async-profiler",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 
 type javaMemoryProfiler struct {
 	profileOutFile map[int]string
+	samplingOpt    *javaruntime.AsprofSamplingOption
 }
 
 func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
@@ -44,66 +52,81 @@ func (p *javaMemoryProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggr
 }
 
 func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
-	pids, err := javaruntime.ResolveJavaPids(pctx.PID, pctx.ToolLimit, pctx.ExecPath, pctx.ServerAddress, pctx.ContainerID)
+	if err := validateJavaToolPath(pctx.ToolPath); err != nil {
+		return err
+	}
+
+	pids := pctx.PIDs
+	if len(pids) == 0 {
+		var err error
+		pids, err = javaruntime.ResolveJavaPids(
+			pctx.ExecPath,
+			pctx.ContainerID,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	if err := validateResolvedPIDs("Java", pids); err != nil {
+		return err
+	}
+	if len(pctx.PIDs) > 0 {
+		if err := validateProcessExecutables("Java", "java", pids); err != nil {
+			return err
+		}
+		if err := validateExpectedExecPath(pids, pctx.ExecPath); err != nil {
+			return err
+		}
+	}
+
+	if err := validateMaxProfilerProcesses("Java", pids, pctx.MaxProfilerProcesses); err != nil {
+		return err
+	}
+
+	extraArgs, err := validateJavaMemoryMode(pctx.MemoryMode)
 	if err != nil {
 		return err
 	}
 
-	mode := pctx.ExtraFlags["mode"]
-	event := "alloc"
-
-	var extraArgs []string
-
-	if mode == "" {
-		mode = "object_alloc"
-	}
-
-	if mode == "object_usage" {
-		javaVersion, err := javaruntime.GetJavaVersion(pids[0])
-		if err != nil {
-			return fmt.Errorf("failed to get Java version for PID %d: %w", pids[0], err)
+	for _, pid := range pids {
+		if err := javaruntime.PrepareJavaAgent(pid, pctx.ToolPath); err != nil {
+			return fmt.Errorf("prepare Java agent for PID %d: %w", pid, err)
 		}
-
-		if javaVersion < 11 {
-			return fmt.Errorf("object_usage mode only supports Java 11 or newer, current Java version is %d", javaVersion)
-		}
-
-		extraArgs = append(extraArgs, "--live")
-	}
-
-	if err := javaruntime.PrepareJavaAgent(pids[0], pctx.ToolPath); err != nil {
-		return err
 	}
 
 	baseArgs := []string{
 		"--libpath", "/tmp/libasyncProfiler.so",
-		"-e", event,
-		"--alloc", "512k",
-		"-j", "256",
-		"--loop", "9",
-		"-o", "collapsed",
+		"-e", "alloc",
+		"--alloc", javaAllocInterval,
+		"-j", javaMemoryStackDepth,
 	}
 	baseArgs = append(baseArgs, extraArgs...)
 
-	p.profileOutFile, err = javaruntime.StartAsprofSampling(pctx.Ctx, &javaruntime.AsprofSamplingOption{
+	opt := &javaruntime.AsprofSamplingOption{
 		Pids:          pids,
 		ToolPath:      pctx.ToolPath,
 		BaseArgs:      baseArgs,
 		OutFilePrefix: "mem",
-	})
-	return err
+		AggrInterval:  javaAggregationInterval(pctx),
+		Duration:      time.Duration(pctx.Duration) * time.Second,
+	}
+	profileOutFile, err := javaruntime.StartAsprofSampling(pctx.Ctx, opt)
+	if err != nil {
+		return err
+	}
+
+	p.profileOutFile = profileOutFile
+	p.samplingOpt = opt
+	return nil
 }
 
 func (p *javaMemoryProfiler) Stop(pctx *pcontext.ProfilerContext) error {
-	return javaruntime.StopJavaProfiler(pctx.Ctx, &javaruntime.AsprofSamplingOption{
-		PID:         pctx.PID,
-		ExecPath:    pctx.ExecPath,
-		ServerAddr:  pctx.ServerAddress,
-		ContainerID: pctx.ContainerID,
-		ToolPath:    pctx.ToolPath,
-	})
+	return javaruntime.StopJavaProfiler(pctx.Ctx, p.samplingOpt)
 }
 
 func (p *javaMemoryProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	return javaruntime.ReadCollapsedFilesLoop(ctx, p.profileOutFile, enqueue)
+	if p.samplingOpt == nil {
+		return fmt.Errorf("read Java memory profile: profiler is not started")
+	}
+	return javaruntime.ReadAsprofDataLoop(ctx, p.samplingOpt, p.profileOutFile, enqueue)
 }

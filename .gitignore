@@ -3,3 +3,4 @@
 _output/
 cmd/**/bin/
 **/mock_*_test.go
+internal/bpf/abi/*_types_generated.go

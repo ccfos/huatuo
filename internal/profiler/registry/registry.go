@@ -22,22 +22,15 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
+	"huatuo-bamai/pkg/profiling"
 )
-
-// Per-language fallback to an implementation key, consulted by Get when no
-// exact (lang, type) is registered.
-var defaultLangProfiler = map[string]string{
-	"go":  "native",
-	"c":   "native",
-	"c++": "native",
-}
 
 // ProfilerMeta groups identity fields (used as registry keys) and the
 // Profiler/Aggregator behavior pair driven by Profile.
 type ProfilerMeta struct {
-	Type        string
-	LangOrImpl  string
-	Description string
+	Type           profiling.Type
+	Implementation profiling.Implementation
+	Description    string
 
 	Impl          Profiler
 	NewAggregator func(*pcontext.ProfilerContext) (aggregator.Aggregator, error)
@@ -55,38 +48,28 @@ type Profiler interface {
 
 // Registration is init-time only; profilerRegistry is read without locking
 // after init() ordering finishes. Do not call Register from request paths.
-var profilerRegistry = map[string]map[string]ProfilerMeta{}
+var profilerRegistry = map[profiling.Implementation]map[profiling.Type]ProfilerMeta{}
 
-// Register adds meta to the registry keyed by (LangOrImpl, Type). Duplicate
-// (lang, type) pairs panic — registration is init-time and a duplicate almost
-// always indicates two providers fighting over the same slot.
+// Register adds meta to the registry keyed by implementation and profile type.
+// Duplicate pairs panic because registration happens only during init.
 func Register(meta ProfilerMeta) {
-	if profilerRegistry[meta.LangOrImpl] == nil {
-		profilerRegistry[meta.LangOrImpl] = make(map[string]ProfilerMeta)
+	if profilerRegistry[meta.Implementation] == nil {
+		profilerRegistry[meta.Implementation] = make(map[profiling.Type]ProfilerMeta)
 	}
 
-	if _, dup := profilerRegistry[meta.LangOrImpl][meta.Type]; dup {
-		panic(fmt.Sprintf("registry: duplicate profiler %s/%s", meta.LangOrImpl, meta.Type))
+	if _, dup := profilerRegistry[meta.Implementation][meta.Type]; dup {
+		panic(fmt.Sprintf("registry: duplicate profiler %s/%s", meta.Implementation, meta.Type))
 	}
 
-	profilerRegistry[meta.LangOrImpl][meta.Type] = meta
+	profilerRegistry[meta.Implementation][meta.Type] = meta
 }
 
-// Get resolves (lang, typ). If no exact match exists, the language is replaced
-// by its default implementation key — e.g. ("go", "cpu") falls back to
-// ("native", "cpu") — and the lookup is retried.
-func Get(langOrImpl, typ string) (ProfilerMeta, error) {
-	if meta, ok := profilerRegistry[langOrImpl][typ]; ok {
+func Get(implementation profiling.Implementation, typ profiling.Type) (ProfilerMeta, error) {
+	if meta, ok := profilerRegistry[implementation][typ]; ok {
 		return meta, nil
 	}
 
-	if impl, ok := defaultLangProfiler[langOrImpl]; ok {
-		if meta, ok := profilerRegistry[impl][typ]; ok {
-			return meta, nil
-		}
-	}
-
-	return ProfilerMeta{}, fmt.Errorf("no profiler for lang=%q type=%q", langOrImpl, typ)
+	return ProfilerMeta{}, fmt.Errorf("no profiler for implementation=%q type=%q", implementation, typ)
 }
 
 // Profile blocks until cleanup completes so resources are guaranteed released.
@@ -115,7 +98,8 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 
 	var deadline <-chan time.Time
 
-	if pctx.Duration > 0 {
+	_, managesDuration := p.Impl.(interface{ ManagesDuration() })
+	if pctx.Duration > 0 && !managesDuration {
 		t := time.NewTimer(time.Duration(pctx.Duration) * time.Second)
 		defer t.Stop()
 

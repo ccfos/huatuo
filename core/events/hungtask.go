@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kmsgutil"
@@ -35,14 +37,9 @@ import (
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/hungtask.c -o $BPF_DIR/hungtask.o
 
-type hungTaskPerfEventData struct {
-	Pid  int32
-	Comm [bpf.TaskCommLen]byte
-}
-
 // HungTaskTracerData is the full data structure.
 type HungTaskTracerData struct {
-	Pid                   int32  `json:"pid"`
+	TID                   uint32 `json:"tid"`
 	Comm                  string `json:"comm"`
 	CPUsStack             string `json:"cpus_stack"`
 	BlockedProcessesStack string `json:"blocked_processes_stack"`
@@ -88,7 +85,7 @@ func (c *hungTaskTracing) Update() ([]*metric.Data, error) {
 }
 
 func (c *hungTaskTracing) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
@@ -103,15 +100,19 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	b.DetachOnContextDone(childCtx, cancel)
 
 	for {
 		select {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var data hungTaskPerfEventData
+			var data abi.HungtaskEvent
 			if err := reader.ReadInto(&data); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return fmt.Errorf("hungtask ReadFromPerfEvent: %w", err)
 			}
 
@@ -138,7 +139,7 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 				TracerName: "hungtask",
 				TracerTime: time.Now(),
 				TracerData: &HungTaskTracerData{
-					Pid:                   data.Pid,
+					TID:                   data.TID,
 					Comm:                  bytesutil.ToStr(data.Comm[:]),
 					CPUsStack:             cpusBT,
 					BlockedProcessesStack: blockedProcessesBT,

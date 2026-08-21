@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,16 +20,14 @@ import (
 	"huatuo-bamai/internal/bpf"
 )
 
-// initBpfManager prepares the shared BPF manager for native profilers. The
+// initBpfManager prepares shared BPF resources for native profilers. The
 // returned cleanup must run on exit so map FDs and pinned objects are released.
 func initBpfManager(duration int) (func(), error) {
-	if err := bpf.NewManager(&bpf.Option{
+	if err := bpf.Init(&bpf.Option{
 		KeepaliveTimeout: duration,
 	}); err != nil {
-		return nil, fmt.Errorf("init bpf manager err: %w", err)
+		return nil, fmt.Errorf("init bpf: %w", err)
 	}
 
-	return func() {
-		bpf.Close()
-	}, nil
+	return bpf.Shutdown, nil
 }

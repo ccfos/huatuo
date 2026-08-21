@@ -36,6 +36,10 @@ skip() {
 
 # --------------------------------- utils ------------------------------------
 
+require_python3() {
+	command -v python3 > /dev/null 2>&1 || fatal "python3 not found"
+}
+
 assert_eq() {
 	local actual=$1 expect=$2 msg=${3:-""}
 	[[ "$actual" == "$expect" ]] && return 0
@@ -43,61 +47,173 @@ assert_eq() {
 	return 1
 }
 
-# wait_until <timeout> <interval> <desc> <func> [args...]
+assert_log_has_no_failure() {
+	local log_file=$1 component=$2
+	local failure_pattern='panic:|fatal|level=(error|panic|fatal)|"level":"(error|panic|fatal)"'
+
+	[[ -r "${log_file}" ]] || fatal "${component} log is not readable: ${log_file}"
+	! grep -qiE "${failure_pattern}" "${log_file}" \
+		|| fatal "${component} log contains an unexpected failure"
+}
+
+allocate_available_port() {
+	local attempt port
+	for ((attempt = 0; attempt < 20; attempt++)); do
+		port=$((20000 + RANDOM % 20001))
+		if ! ss -H -ltn | awk '{ print $4 }' | grep -Eq "[:.]${port}$"; then
+			echo "${port}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# kernel_version_le <major> <minor>
+# Returns 0 when the running kernel version is less than or equal to major.minor.
+kernel_version_le() {
+	local want_major=$1 want_minor=$2
+	local version major minor
+
+	version=$(uname -r)
+	major=${version%%.*}
+	version=${version#*.}
+	minor=${version%%.*}
+
+	[[ "${major}" =~ ^[0-9]+$ ]] || return 1
+	[[ "${minor}" =~ ^[0-9]+$ ]] || return 1
+
+	((major < want_major || (major == want_major && minor <= want_minor)))
+}
+
+# wait_until <timeout> <interval> <func> [args...]
 # Returns 0 on success, 1 on timeout.
 wait_until() {
-	local timeout=$1 interval=$2 desc=$3
-	shift 3
+	local timeout=$1 interval=$2
+	shift 2
 	local func=$1
 	shift
 
 	if ! type -t "$func" > /dev/null 2>&1; then
-		log_error "wait_until expects function or command: %q" "$func"
+		log_error "wait_until expects function or command: [${func}]"
 		return 1
 	fi
 
+	local invocation="${func}"
+	if (($# > 0)); then
+		invocation+=" $*"
+	fi
 	local end=$(($(date +%s) + timeout))
 	local attempt=0
 
 	while [ "$(date +%s)" -lt "$end" ]; do
 		attempt=$((attempt + 1))
-		log_info "wait attempt #${attempt}: ${desc}, func/cmd: [${func} ${*}]"
+		log_info "wait attempt #${attempt}: [${invocation}]"
 		if "$func" "$@"; then
 			return 0
 		fi
 		sleep "$interval"
 	done
 
-	log_error "wait_until timeout: ${desc}, func/cmd: [${func} ${*}]"
+	log_error "wait_until timeout: func/cmd: [${invocation}]"
 	return 1
+}
+
+profiler_ready() {
+	local stdout=$1
+	[[ -f "${stdout}" ]] && grep -q "data reading loop started" "${stdout}"
+}
+
+kprobe_available() {
+	local symbol=$1
+	local file
+	local files=(
+		"/sys/kernel/tracing/available_filter_functions"
+		"/sys/kernel/debug/tracing/available_filter_functions"
+	)
+
+	for file in "${files[@]}"; do
+		[[ -r "${file}" ]] || continue
+		awk -v sym="${symbol}" '$1 == sym { found = 1; exit } END { exit !found }' "${file}" && return 0
+	done
+
+	return 1
+}
+
+# Tracefs may be mounted independently or exposed through debugfs.
+tracepoint_available() {
+	local group=$1 name=$2 root
+
+	for root in \
+		/sys/kernel/tracing \
+		/sys/kernel/debug/tracing; do
+		[[ -e "${root}/events/${group}/${name}/id" ]] && return 0
+	done
+
+	return 1
+}
+
+# compile_user_fixture <source> <output> [compiler flags...]
+# Keep stack frames observable so profiler fixtures produce stable call chains.
+compile_user_fixture() {
+	local source=$1
+	local output=$2
+	shift 2
+	local compile_log="${output}.compile.log"
+
+	log_info "compiling fixture: $(basename "${source}")"
+	gcc -O0 -g -Wall -Wextra -fno-inline -fno-omit-frame-pointer "$@" \
+		-o "${output}" "${source}" \
+		2> "${compile_log}" \
+		|| fatal "gcc failed compiling ${source}:"$'\n'"$(< "${compile_log}")"
+}
+
+# compile_bpf_fixture <source> <output> [extra_cflags]
+compile_bpf_fixture() {
+	local source=$1
+	local output=$2
+	local extra_cflags=${3:-}
+	local compile_log="${output}.compile.log"
+
+	log_info "compiling BPF fixture: $(basename "${source}")"
+	BPF_EXTRA_CFLAGS="${extra_cflags}" "${ROOT_DIR}/build/clang.sh" \
+		-s "${source}" -o "${output}" -I "${ROOT_DIR}/bpf/include" \
+		> "${compile_log}" 2>&1 \
+		|| fatal "clang.sh failed compiling ${source}:"$'\n'"$(< "${compile_log}")"
 }
 
 # ------------------------- bpf tool test scaffolding -------------------------
 
+# bpf_tool_setup <binary-name> [bpf-name] [work-prefix]
 bpf_tool_setup() {
-	local name=$1
-	TOOL_BIN="${ROOT_DIR}/_output/bin/${name}"
-	TOOL_BPF="${ROOT_DIR}/_output/bpf/${name}.o"
-	TOOL_OUT="${HUATUO_BAMAI_TEST_TMPDIR}/${name}.out"
-	TOOL_ERR="${HUATUO_BAMAI_TEST_TMPDIR}/${name}.err"
+	[[ $# -ge 1 ]] || fatal "bpf_tool_setup requires a binary name"
+
+	local binary_name=$1
+	local bpf_name=${2:-${binary_name}}
+	local work_prefix=${3:-${binary_name}}
+	TOOL_BIN="${ROOT_DIR}/_output/bin/${binary_name}"
+	TOOL_BPF="${ROOT_DIR}/_output/bpf/${bpf_name}.o"
 
 	[[ $EUID -eq 0 ]] || fatal "requires root (BPF requires CAP_BPF/CAP_SYS_ADMIN)"
-	[[ -x ${TOOL_BIN} ]] || fatal "missing ${name} binary: ${TOOL_BIN}"
-	[[ -r ${TOOL_BPF} ]] || fatal "missing ${name} bpf object: ${TOOL_BPF}"
+	[[ -x ${TOOL_BIN} ]] || fatal "missing ${binary_name} binary: ${TOOL_BIN}"
+	[[ -r ${TOOL_BPF} ]] || fatal "missing ${bpf_name} bpf object: ${TOOL_BPF}"
+
+	TOOL_WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/${work_prefix}.XXXXXX")
+	TOOL_OUT="${TOOL_WORK_DIR}/${binary_name}.out"
+	TOOL_ERR="${TOOL_WORK_DIR}/${binary_name}.err"
 }
 
-# Print file to stderr with a label header; silent if file is absent.
-dump_file() {
-	local label=$1 path=$2
-	[[ -f "${path}" ]] || return 0
-	log_error "----- ${label} (${path}) -----"
-	cat "${path}" >&2
-}
+# Print non-empty text files; empty and binary files add no useful diagnostics.
+dump_text_files() {
+	local dir=$1
+	local file
 
-dump_tool_logs_and_fail() {
-	dump_file "OUT" "${TOOL_OUT}"
-	dump_file "ERR" "${TOOL_ERR}"
-	fatal "$*"
+	[[ -d "${dir}" ]] || return 0
+
+	while IFS= read -r -d '' file; do
+		grep -Iq '' "${file}" || continue
+		log_error "----- FILE (${file}) -----"
+		sed -n '1,160p' "${file}" >&2
+	done < <(find "${dir}" -type f -size +0c -print0)
 }
 
 # SIGTERM with graceful polling, then SIGKILL as fallback.
@@ -114,7 +230,7 @@ stop_by_pid() {
 	kill -KILL "${pid}" 2> /dev/null || true
 }
 
-# --------------------------- container detection ----------------------------
+# ------------------------- virtualization detection -------------------------
 
 # Returns 0 when running inside a container.
 # Method 1: overlay/btrfs rootfs — container runtimes mount an overlay or
@@ -135,6 +251,30 @@ is_container() {
 	return 1
 }
 
+# Returns 0 when running inside a virtual machine.
+is_virtual_machine() {
+	if command -v systemd-detect-virt > /dev/null 2>&1; then
+		systemd-detect-virt --vm --quiet
+		return $?
+	fi
+
+	[[ -r /sys/hypervisor/type ]] && return 0
+	grep -qiE '(^|[[:space:]])hypervisor([[:space:]]|$)' /proc/cpuinfo && return 0
+
+	local dmi="" path
+	for path in \
+		/sys/class/dmi/id/sys_vendor \
+		/sys/class/dmi/id/product_name \
+		/sys/class/dmi/id/board_vendor; do
+		[[ -r "${path}" ]] || continue
+		dmi+=" $(< "${path}")"
+	done
+
+	grep -qiE \
+		'kvm|qemu|vmware|virtualbox|virtual machine|xen|bochs|bhyve|parallels|amazon ec2|google compute engine|openstack|alibaba cloud|nutanix|digitalocean' \
+		<<< "${dmi}"
+}
+
 # ----------------------------- huatuo-bamai ----------------------------------
 
 huatuo_bamai_start() {
@@ -148,7 +288,7 @@ huatuo_bamai_start() {
 
 	sleep 0.5
 	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" "${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		"huatuo-bamai ready" huatuo_bamai_ready
+		huatuo_bamai_ready
 }
 
 huatuo_bamai_ready() {
@@ -157,8 +297,7 @@ huatuo_bamai_ready() {
 	[[ -n "$pid" ]] || return 1
 
 	if ! kill -0 "${pid}" 2> /dev/null; then
-		log_error "huatuo-bamai pid=${pid} exited, last log:"
-		tail -20 "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" >&2 || echo "empty"
+		log_error "huatuo-bamai pid=${pid} exited"
 		return 1
 	fi
 
@@ -166,41 +305,96 @@ huatuo_bamai_ready() {
 }
 
 huatuo_bamai_stop() {
-	local exit_code=${1:-0}
-
+	local test_workspace=${1:-${HUATUO_BAMAI_TEST_TMPDIR}}
 	local pid
-	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid" 2> /dev/null || echo "")
+	pid=$(cat "${test_workspace}/huatuo-bamai.pid" 2> /dev/null || echo "")
 	[[ -n "$pid" ]] && stop_by_pid "${pid}"
-	rm -f "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-bamai.pid"
+	rm -f "${test_workspace}/huatuo-bamai.pid"
+}
 
-	if [ "${exit_code}" -ne 0 ]; then
-		log_info "the exit code: ${exit_code}"
-		log_info "
-========== HUATUO INTEGRATION TEST FAILED ================
+# --------------------------- huatuo-apiserver -------------------------------
 
-Summary:
-  - One or more expected metrics are missing.
+huatuo_apiserver_start() {
+	[[ -x "${HUATUO_APISERVER_BIN}" ]] \
+		|| fatal "huatuo-apiserver binary not found: ${HUATUO_APISERVER_BIN}"
 
-Temporary artifacts preserved at:
-  ${HUATUO_BAMAI_TEST_TMPDIR}
+	log_info "starting huatuo-apiserver: $*"
+	"${HUATUO_APISERVER_BIN}" "$@" > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" 2>&1 &
+	local pid=$!
+	echo "$pid" > "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid"
+	log_info "huatuo-apiserver pid: ${pid}"
 
-Key files:
-  - metrics.txt
-  - huatuo.log
-  - bamai.conf
+	sleep 0.5
+	wait_until "${WAIT_HUATUO_APISERVER_TIMEOUT}" "${WAIT_HUATUO_APISERVER_INTERVAL}" \
+		huatuo_apiserver_ready
+}
 
-=========================================================
-"
+huatuo_apiserver_ready() {
+	local pid
+	pid=$(cat "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo-apiserver.pid" 2> /dev/null || echo "")
+	[[ -n "$pid" ]] || return 1
+
+	if ! kill -0 "${pid}" 2> /dev/null; then
+		log_error "huatuo-apiserver pid=${pid} exited"
+		return 1
 	fi
+
+	curl -sf "${CURL_TIMEOUT[@]}" "${APISERVER_ADDR}/healthz" > /dev/null
+}
+
+huatuo_apiserver_stop() {
+	local test_workspace=${1:-${HUATUO_BAMAI_TEST_TMPDIR}}
+	local pid
+	pid=$(cat "${test_workspace}/huatuo-apiserver.pid" 2> /dev/null || echo "")
+	[[ -n "$pid" ]] && stop_by_pid "${pid}"
+	rm -f "${test_workspace}/huatuo-apiserver.pid"
+}
+
+# integration_huatuo_apiserver_start [config_writer_func] [apiserver args...]
+# Builds config paths from the current test workspace before starting apiserver.
+integration_huatuo_apiserver_start() {
+	local config_writer=${1:-write_apiserver_apis_config}
+	if [[ $# -gt 0 ]]; then
+		shift
+	fi
+	local runtime_args=(
+		"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
+		"--config" "apiserver.conf"
+	)
+	runtime_args+=("$@")
+
+	"$config_writer"
+	huatuo_apiserver_start "${runtime_args[@]}"
+}
+
+# Stop shared services, then remove or report the runner-owned test workspace.
+integration_test_exit() {
+	local exit_code=$1
+	local test_workspace=$2
+
+	if [[ -z "${test_workspace}" || "${test_workspace}" != "${HUATUO_BAMAI_TEST_TMPDIR}/"* ]]; then
+		log_error "refusing to finalize test workspace outside ${HUATUO_BAMAI_TEST_TMPDIR}: ${test_workspace}"
+		return 1
+	fi
+
+	huatuo_apiserver_stop "${test_workspace}" || true
+	huatuo_bamai_stop "${test_workspace}" || true
+
+	if [[ ${exit_code} -eq 0 ]]; then
+		rm -rf -- "${test_workspace}"
+		return 0
+	fi
+
+	dump_text_files "${test_workspace}"
+	log_error "integration test failed with exit code ${exit_code}; artifacts preserved at ${test_workspace}"
 }
 
 huatuo_bamai_metrics() {
 	curl -sf "${CURL_TIMEOUT[@]}" "${HUATUO_BAMAI_METRICS_API}"
 }
 
-# highlight and reject error/panic keywords in the log
+# Reject error/panic keywords in the log.
 huatuo_bamai_log_check() {
-	sed -E "s/(${HUATUO_BAMAI_MATCH_KEYWORDS})/\x1b[31m\1\x1b[0m/gI" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 	! grep -qE "${HUATUO_BAMAI_MATCH_KEYWORDS}" "${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log"
 }
 
@@ -217,16 +411,32 @@ huatuo_bamai_pod_count() {
 
 # ----------------------------- metrics helpers --------------------------------
 
-# integration_test_start <config_writer_func>
-# Writes config via the named function, sets EXIT trap, and starts huatuo-bamai.
+# integration_huatuo_bamai_start [config_writer_func] [huatuo-bamai args...]
+# Builds config paths from the current test workspace before starting huatuo-bamai.
 integration_huatuo_bamai_start() {
 	local config_writer=${1:-write_default_config}
+	if [[ $# -gt 0 ]]; then
+		shift
+	fi
+	local runtime_args=(
+		"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
+		"--config" "bamai.conf"
+	)
 
-	[[ -z "${HUATUO_BAMAI_ARGS_INTEGRATION:-}" ]] && eval "HUATUO_BAMAI_ARGS_INTEGRATION=(${HUATUO_BAMAI_INTEGRATION_ARGS_STR})"
-	trap 'huatuo_bamai_stop $? || true' EXIT
+	if [[ $# -gt 0 ]]; then
+		runtime_args+=("$@")
+	else
+		runtime_args+=(
+			"--region" "dev"
+			"--procfs-prefix" "${HUATUO_BAMAI_TEST_FIXTURES}"
+			"--disable-storage"
+			"--disable-kubelet"
+			"--log-debug"
+		)
+	fi
 
 	"$config_writer"
-	huatuo_bamai_start "${HUATUO_BAMAI_ARGS_INTEGRATION[@]}"
+	huatuo_bamai_start "${runtime_args[@]}"
 }
 
 # huatuo_bamai_collect_metrics saves /metrics output to the temp metrics file.
@@ -238,13 +448,10 @@ huatuo_bamai_collect_metrics() {
 huatuo_bamai_await_metrics() {
 	wait_until "${WAIT_HUATUO_BAMAI_TIMEOUT}" \
 		"${WAIT_HUATUO_BAMAI_INTERVAL}" \
-		"metrics endpoint ready" \
 		huatuo_bamai_collect_metrics
 }
 
 # check_metrics <desc> <present_pattern>... [-- <absent_pattern>...]
-# Single-pass metric assertion: verifies present patterns exist and absent
-# patterns do not, using at most 2 grep invocations regardless of pattern count.
 check_metrics() {
 	local desc=$1
 	shift
@@ -271,16 +478,10 @@ check_metrics() {
 	fi
 
 	if [[ ${#present[@]} -gt 0 ]]; then
-		local present_re
-		present_re=$(
-			IFS='|'
-			echo "${present[*]}"
-		)
-		local matches
-		matches=$(grep -oE "${prefix}(${present_re})" "$metrics_file" || true)
 		local pat
 		for pat in "${present[@]}"; do
-			echo "$matches" | grep -q "$pat" || fatal "${desc}: expected present but not found: ${pat}"
+			grep -qE "${prefix}(${pat})" "$metrics_file" \
+				|| fatal "${desc}: expected present but not found: ${pat}"
 		done
 	fi
 }

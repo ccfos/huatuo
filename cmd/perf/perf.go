@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/urfave/cli/v2"
+	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/command/container"
@@ -50,26 +51,26 @@ func mainAction(ctx *cli.Context) error {
 
 	var targetCssAddr uint64
 	if containerID := ctx.String("container-id"); containerID != "" {
-		c, err := container.GetContainerByID(ctx.String("server-address"), containerID)
+		c, err := container.GetContainerByID(ctx.String("huatuo-api-address"), containerID)
 		if err != nil {
 			return err
 		}
 		targetCssAddr = c.CgroupCss["cpu"]
 	}
 
-	if err := bpf.NewManager(&bpf.Option{
+	if err := bpf.Init(&bpf.Option{
 		KeepaliveTimeout: optDuration,
 	}); err != nil {
 		return fmt.Errorf("init bpf err %w", err)
 	}
-	defer bpf.Close()
+	defer bpf.Shutdown()
 
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
 		return fmt.Errorf("read bpf object: %w", err)
 	}
 
-	b, err := bpf.LoadBpfFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
+	b, err := bpf.LoadBPFFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
@@ -79,6 +80,8 @@ func mainAction(ctx *cli.Context) error {
 		ProgramName: "perf_event_sw_cpu_clock",
 	}
 	opt.PerfEvent.SampleFreq = 99
+	opt.PerfEvent.Type = unix.PERF_TYPE_SOFTWARE
+	opt.PerfEvent.Config = unix.PERF_COUNT_SW_CPU_CLOCK
 	if err := b.AttachWithOptions([]bpf.AttachOption{opt}); err != nil {
 		return fmt.Errorf("attach err %w", err)
 	}
@@ -134,9 +137,9 @@ func main() {
 			Usage: "Tool duration(s)",
 		},
 		&cli.StringFlag{
-			Name:  "server-address",
+			Name:  "huatuo-api-address",
 			Value: "127.0.0.1:19704",
-			Usage: "huatuo-bamai server address",
+			Usage: "HuaTuo API address used to resolve container metadata",
 		},
 		&cli.BoolFlag{
 			Name:  "tui",

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,8 +15,6 @@
 package server
 
 import (
-	"net/http"
-
 	"huatuo-bamai/internal/server/response"
 
 	httpGin "github.com/gin-gonic/gin"
@@ -48,6 +46,11 @@ func (rg *routerGroup) Use(handlers ...HandlerContextFunc) {
 // Handle registers a route for the given HTTP method.
 func (rg *routerGroup) Handle(method, path string, h ErrHandlerContextFunc) {
 	rg.g.Handle(method, path, wrapErrHandler(h))
+}
+
+// Any registers a route for all HTTP methods.
+func (rg *routerGroup) Any(path string, h ErrHandlerContextFunc) {
+	rg.g.Any(path, wrapErrHandler(h))
 }
 
 // GET registers a GET route.
@@ -95,20 +98,5 @@ func wrapErrHandler(h ErrHandlerContextFunc) httpGin.HandlerFunc {
 
 // writeError is the internal error writer used by wrapErrHandler.
 func writeError(ctx *Context, err error) {
-	type apiErr interface {
-		GetHTTPStatus() int
-		GetCode() int
-		GetMessage() string
-	}
-	if ae, ok := err.(apiErr); ok {
-		ctx.JSON(ae.GetHTTPStatus(), response.Response{
-			Code:    ae.GetCode(),
-			Message: ae.GetMessage(),
-		})
-		return
-	}
-	ctx.JSON(http.StatusInternalServerError, response.Response{
-		Code:    response.ErrInternal.Code,
-		Message: err.Error(),
-	})
+	response.Error(ctx, err)
 }

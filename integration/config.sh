@@ -29,7 +29,7 @@ write_include_filter_config() {
 BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
 
 [MetricCollector.Vmstat]
-    IncludedOnHost = "thp_split_pmd|thp_split_pud"
+    IncludedOnHost = "pgfault"
     ExcludedOnHost = ""
     IncludedOnContainer = ""
     ExcludedOnContainer = ""
@@ -68,5 +68,159 @@ BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "
 
 [MetricCollector.MountPointStat]
     MountPointsIncluded = ""
+EOF
+}
+
+# Unquoted heredoc: ${HUATUO_BAMAI_TEST_TMPDIR} must expand into Path,
+# unlike the sibling write_*_config helpers which quote to prevent expansion.
+write_net_rx_latency_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "dropwatch"]
+
+[EventTracing.NetRxLatency]
+    Driver2NetRx = 1
+    Driver2TCP = 1
+    Driver2Userspace = 1
+    ExcludedHostNetnamespace = false
+
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}
+
+# Keep sched_tick tests isolated while allowing each scenario to set its threshold.
+write_sched_tick_config_with_threshold() {
+	local interval_threshold=$1
+
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras", "runqlat", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
+
+[EventTracing.SchedTick]
+    IntervalThreshold = ${interval_threshold}
+
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}
+
+# Keep the lifecycle test focused on load and attachment.
+write_sched_tick_config() {
+	write_sched_tick_config_with_threshold 60000000000
+}
+
+# Let normal ticks exercise the irqoff reporting path without disabling IRQs.
+write_sched_tick_irqoff_config() {
+	write_sched_tick_config_with_threshold 1
+}
+
+# The cpusys test controls proc/stat and perf through its isolated fixture root.
+write_cpusys_autotracing_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tracing_status"]
+
+[AutoTracing.CPUSys]
+    SysThreshold = 45
+    DeltaSysThreshold = 20
+    Interval = 1
+    RunTracingToolTimeout = 1
+
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}
+
+# The iotracing test controls proc/diskstats and the toolstream subprocess.
+write_iotracing_autotracing_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "dload", "dropwatch", "hungtask", "iolatency", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tracing_status"]
+
+[AutoTracing.IOTracing]
+    RbpsThreshold = 1000
+    WbpsThreshold = 1000
+    UtilThreshold = 1
+    AwaitThreshold = 1000
+    RunTracingToolTimeout = 1
+    MaxProcDump = 1
+    MaxFilesPerProcDump = 1
+
+[Storage.LocalFile]
+    Path = "${HUATUO_BAMAI_TEST_TMPDIR}/events"
+EOF
+}
+
+# The apiserver port and workspace paths are allocated by the caller.
+write_apiserver_apis_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
+[APIServer]
+    ListenAddress = "127.0.0.1:${APISERVER_PORT}"
+
+[Jobs]
+    StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
+
+[[Auth.Users]]
+    ID = "integration-admin-user"
+    BearerToken = "${API_TOKEN}"
+    Admin = true
+EOF
+}
+
+# The caller owns the API port and bearer token.
+write_apiserver_profile_disabled_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
+[APIServer]
+    ListenAddress = "127.0.0.1:${APISERVER_PORT}"
+
+[Jobs]
+    StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
+
+[[Auth.Users]]
+    ID = "integration-admin-user"
+    BearerToken = "${API_TOKEN}"
+    Admin = true
+EOF
+}
+
+# The storage address and credentials are initialized by the calling test.
+write_continuous_profiling_bamai_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
+BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "dropwatch"]
+
+[Storage.Elasticsearch]
+    Address = "${ELASTICSEARCH_ADDR}"
+    Username = "elastic"
+    Password = "${ES_PASSWORD}"
+    Index = "huatuo_continuous_profiling_test"
+
+[Storage.LocalFile]
+    Path = ""
+EOF
+}
+
+# The API port, users, profiling interval, and storage are owned by the test.
+write_continuous_profiling_apiserver_config() {
+	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
+[APIServer]
+    ListenAddress = "127.0.0.1:${APISERVER_PORT}"
+
+[Elasticsearch]
+    Address = "${ELASTICSEARCH_ADDR}"
+    Username = "elastic"
+    Password = "${ES_PASSWORD}"
+    Index = "huatuo_continuous_profiling_test"
+
+[[Auth.Users]]
+    ID = "integration-admin-user"
+    BearerToken = "${API_TOKEN}"
+    Admin = true
+
+[[Auth.Users]]
+    ID = "integration-readonly-user"
+    BearerToken = "${OTHER_API_TOKEN}"
+    Permissions = ["/v1/profiles", "/v1/profiles/**"]
+
+[Profiling]
+    AggregationIntervalSeconds = ${PROFILE_INTERVAL}
+    MaxConcurrentProfilerProcesses = 1
+    DashboardBaseURL = "http://grafana.invalid/d"
 EOF
 }

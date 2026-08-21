@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,31 +16,27 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/tracing"
 )
 
-type (
-	memoryReclaimTracing   struct{}
-	memoryReclaimPerfEvent struct {
-		Comm      [bpf.TaskCommLen]byte
-		Deltatime uint64
-		CSS       uint64
-		Pid       uint64
-	}
-)
+type memoryReclaimTracing struct{}
 
 // MemoryReclaimTracingData is the full data structure.
 type MemoryReclaimTracingData struct {
-	Pid       uint64 `json:"pid"`
-	Comm      string `json:"comm"`
-	Deltatime uint64 `json:"deltatime"`
+	PID               uint32 `json:"pid"`
+	TID               uint32 `json:"tid"`
+	Comm              string `json:"comm"`
+	ReclaimDurationNS uint64 `json:"reclaim_duration_ns"`
 }
 
 func init() {
@@ -61,8 +57,9 @@ const cssCacheTTL = 5 * time.Second
 //
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/memory_reclaim_events.c -o $BPF_DIR/memory_reclaim_events.o
 func (c *memoryReclaimTracing) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), map[string]any{
-		"deltath": cfg.MemoryReclaim.BlockedThreshold,
+	cfg := configSnapshot()
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), map[string]any{
+		"reclaim_duration_threshold_ns": cfg.MemoryReclaim.BlockedThreshold,
 	})
 	if err != nil {
 		return err
@@ -78,7 +75,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	b.DetachOnContextDone(childCtx, cancel)
 
 	var (
 		cssToContainer map[uint64]*pod.Container
@@ -90,7 +87,7 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		cssToContainer = pod.BuildCssContainers(containers, pod.SubSysCPU)
+		cssToContainer = pod.BuildCssContainers(containers, subsystem.SubsystemCPU)
 		cacheTime = time.Now()
 		return nil
 	}
@@ -100,8 +97,12 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var data memoryReclaimPerfEvent
+			var data abi.MemoryReclaimEvent
 			if err := reader.ReadInto(&data); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return fmt.Errorf("ReadFromPerfEvent fail: %w", err)
 			}
 
@@ -112,13 +113,13 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 				}
 			}
 
-			container := cssToContainer[data.CSS]
+			container := cssToContainer[data.CPUCSSAddr]
 			if container == nil {
 				if err := refreshContainerCache(); err != nil {
 					log.Errorf("refresh container cache: %v", err)
 					continue
 				}
-				container = cssToContainer[data.CSS]
+				container = cssToContainer[data.CPUCSSAddr]
 				if container == nil {
 					// We only care about the container and nothing else.
 					// Though it may be unfair, that's just how life is.
@@ -130,9 +131,10 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 
 			// save storage
 			tracingData := &MemoryReclaimTracingData{
-				Pid:       data.Pid,
-				Comm:      bytesutil.ToStr(data.Comm[:]),
-				Deltatime: data.Deltatime,
+				PID:               data.TGID,
+				TID:               data.TID,
+				Comm:              bytesutil.ToStr(data.Comm[:]),
+				ReclaimDurationNS: data.ReclaimDurationNS,
 			}
 
 			log.Infof("memory_reclaim saves storage: %+v", tracingData)

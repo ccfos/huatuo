@@ -15,7 +15,11 @@
 package v2
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+
+	"huatuo-bamai/internal/cgroups/paths"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -298,5 +302,54 @@ func TestUpdateRuntimeEmptySpecNoDbusCall(t *testing.T) {
 func TestPostfixConstant(t *testing.T) {
 	if Postfix != ".slice" {
 		t.Errorf("Postfix: got %q, want %q", Postfix, ".slice")
+	}
+}
+
+func TestCpuQuotaAndPeriodEffectiveCPUCount(t *testing.T) {
+	root := t.TempDir()
+	oldRoot := paths.RootfsDefaultPath
+	paths.RootfsDefaultPath = root
+	t.Cleanup(func() { paths.RootfsDefaultPath = oldRoot })
+
+	tests := []struct {
+		name      string
+		effective string
+		requested string
+		want      uint64
+	}{
+		{name: "effective", effective: "0-3", requested: "0-7", want: 4},
+		{name: "requested ignored", requested: "0-1", want: 0},
+		{name: "missing", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join("test", tt.name)
+			writeCgroupFile(t, paths.Path(path, "cpu.max"), "max 100000\n")
+			if tt.effective != "" {
+				writeCgroupFile(t, paths.Path(path, "cpuset.cpus.effective"), tt.effective+"\n")
+			}
+			if tt.requested != "" {
+				writeCgroupFile(t, paths.Path(path, "cpuset.cpus"), tt.requested+"\n")
+			}
+
+			quota, err := (&CgroupV2{}).CpuQuotaAndPeriod(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if quota.EffectiveCPUCount != tt.want {
+				t.Errorf("EffectiveCPUCount = %d, want %d", quota.EffectiveCPUCount, tt.want)
+			}
+		})
+	}
+}
+
+func writeCgroupFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

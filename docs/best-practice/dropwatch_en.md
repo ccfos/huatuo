@@ -1,5 +1,5 @@
 ---
-title: Network Drop Monitoring (dropwatch)
+title: Network Drop Monitoring
 type: docs
 description: ""
 author: HUATUO Team
@@ -15,7 +15,7 @@ HUATUO is an OS-level deep observability project open-sourced by DiDi and incuba
 
 ## Overview
 
-dropwatch is a kernel network drop observability tool provided by HUATUO. It attaches to the kernel tracepoint `tracepoint/skb/kfree_skb` to capture network drop events in real time, and outputs the full drop context: protocol type, IP five-tuple, process name, PID, network device, MAC address, and the complete kernel call stack that triggered the drop.
+dropwatch observes software drops through `tracepoint/skb/kfree_skb` and hardware drops reported by capable drivers through `raw_tracepoint/devlink_trap_report`. It outputs protocol fields, the IP tuple, network device, drop reason, and kernel stack.
 
 dropwatch supports kernel-side filtering based on tcpdump-style filter expressions. The filter logic is compiled into eBPF bytecode at load time by the built-in pure-Go pcap compiler `internal/pcapfilter`. Filtering is performed entirely in kernel mode — only matching packets are reported to user space, reducing performance impact on the host.
 
@@ -169,6 +169,35 @@ dropwatch [flags]
 
 `--filter` and device filtering are orthogonal; when both are specified, both apply (AND semantics). If neither `--device` nor `--device-excluded` is specified, all devices are collected. `--device` and `--device-excluded` are mutually exclusive; whitelist mode drops SKBs without a `net_device`, while blacklist mode passes them.
 
+At startup, dropwatch detects `devlink:devlink_trap_report`. When supported, it loads both software and hardware drop probes. Otherwise, it logs a warning and loads only the software drop probe. Hardware collection also requires a driver that registers devlink drop traps and a target trap whose action is `trap`. With action `drop`, hardware sends no packet copy to the CPU, so dropwatch cannot inspect it.
+
+#### devlink Hardware Drop Detection
+
+dropwatch requires no additional startup flags. Before using hardware drop detection, verify that the kernel, driver, and target trap meet the requirements:
+
+```bash
+# 1. Verify that the kernel provides the devlink trap tracepoint
+test -e /sys/kernel/tracing/events/devlink/devlink_trap_report/id || \
+  test -e /sys/kernel/debug/tracing/events/devlink/devlink_trap_report/id
+
+# 2. List devlink devices and traps registered by the driver
+sudo devlink dev show
+sudo devlink trap show <bus/device>
+
+# 3. Enable packet reporting for the target DROP trap
+sudo devlink trap set <bus/device> trap <trap-name> action trap
+
+# 4. Start dropwatch and display only hardware drops
+sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | \
+  jq -c 'select(.drop_source == "hardware")'
+```
+
+`<bus/device>` is the device identifier returned by `devlink dev show`, such as `pci/0000:03:00.0`. After diagnosis, restore the trap to its previous action.
+
+This capability collects only packets that the driver reports through `DEVLINK_TRAP_TYPE_DROP`. It does not capture all hardware packets and does not replace NIC hardware-drop counters. Drops such as hardware queue overflows are visible only when the driver implements and reports them as devlink drop traps. Traps of type `exception` or `control` are not reported as drop events.
+
+`--filter`, `--device`, `--device-excluded`, and `--max-events-per-second` apply to both software and hardware events. Text output formats a hardware reason as `reason=<group>/<trap> drop_source=hardware`. JSON output uses the separate `drop_reason_group`, `drop_reason`, and `drop_source` fields.
+
 #### Examples
 
 ```bash
@@ -188,7 +217,7 @@ sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --filter "tcp and port 4
 sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp and port 443" --duration 60 --output json
 
 # Forward events to a running huatuo-bamai instance
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo/events.sock
+sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
 
 # Use jq to filter and show only RST packets
 sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | jq 'select(.layers.tcp.flags == "RST")'
@@ -200,7 +229,7 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 's
 sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'del(.stack)'
 ```
 
-`jq -c` compresses each matching event into a single-line JSON, convenient for saving as NDJSON or further pipe processing. `test("ip_finish_output")` checks whether `stack` matches the regex; `not` negates the result, so the command above excludes stacks containing `ip_finish_output`. Remove `| not` to keep only those containing `ip_finish_output`. `del(.stack)` removes the `stack` field from the jq output, useful for viewing just the timestamp, device, process, `packet_*` metadata, and `layers` protocol fields. For kernel-side call-stack filtering, configure `EventTracing.IssuesList` in huatuo-bamai (see Section 4).
+`jq -c` compresses each matching event into a single-line JSON, convenient for saving as NDJSON or further pipe processing. `test("ip_finish_output")` checks whether `stack` matches the regex; `not` negates the result, so the command above excludes stacks containing `ip_finish_output`. Remove `| not` to keep only those containing `ip_finish_output`. `del(.stack)` removes the `stack` field from the jq output, useful for viewing just the timestamp, device, process, `packet_*` metadata, and `layers` protocol fields. For userspace call-stack filtering before storage, configure `EventTracing.IssuesList` in huatuo-bamai (see Section 4).
 
 ---
 
@@ -210,35 +239,40 @@ Each drop event is represented as an NDJSON object (`types.DropWatchTracing`).
 
 | Field                    | Type     | Description                                                   |
 | ------------------------ | -------- | ------------------------------------------------------------- |
-| `observed_timestamp`     | string   | UTC timestamp when the event was captured (RFC3339Nano)       |
-| `type`                   | string   | Event type reserved field; currently empty string             |
-| `drop_reason`            | string   | Drop reason reserved field; currently empty string            |
-| `source`                 | string   | Event source; when present, indicates `events` or `tools` (omitempty) |
+| `observed_timestamp`     | string   | UTC userspace receive/format time (RFC3339Nano), not the kernel hook timestamp |
+| `type`                   | string   | Reserved TCP type; currently unset (`1` common, `2` SYN flood, `3`/`4` listen overflow) |
+| `drop_source`            | string   | Drop source: `software` for the kernel network stack or `hardware` for a devlink DROP trap |
+| `drop_reason`            | string   | `SKB_DROP_REASON_*` for software drops; if kernel BTF resolution fails, dropwatch logs a warning and falls back to the numeric value. For hardware drops, this is the devlink trap name |
+| `drop_reason_group`      | string   | Devlink trap group used to classify hardware drops; omitted for software drops |
+| `drop_location`          | string   | Hexadecimal `kfree_skb` call address for software drops; omitted for hardware drops |
+| `source`                 | string   | Event source; `tools` for standalone dropwatch and `events` when launched by huatuo-bamai |
 | `comm`                   | string   | Process name at the time of the drop                          |
 | `pid`                    | uint64   | Process TGID                                                  |
 | `container_id`           | string   | Container ID (populated by huatuo-bamai resolution, omitempty) |
 | `memory_cgroup_css_addr` | string   | Memory cgroup CSS address, used for container resolution       |
 | `net_namespace_cookie`   | uint64   | Network namespace cookie, used for container resolution        |
-| `net_namespace_inode`    | uint32   | Network namespace inode, used for container resolution         |
+| `net_namespace_inum`    | uint32   | Network namespace inum, used for container resolution          |
 | `netdev_name`            | string   | Network device name (e.g. `eth0`)                             |
 | `netdev_ifindex`         | uint32   | Network interface index                                       |
 | `netdev_queue_mapping`   | uint32   | TX queue mapping                                              |
 | `netdev_linkstatus`      | []string | Network device link status flags                              |
 | `packet_skb_addr`        | string   | SKB address (hexadecimal, omitempty)                         |
 | `packet_eth_proto`       | string   | Raw EtherType (hexadecimal, e.g. `0x0800`)                   |
-| `packet_len`             | uint32   | Packet length in bytes                                        |
+| `packet_len_bytes`       | uint32   | Packet length in bytes                                        |
 | `layers`                 | object   | Layered protocol parse result; missing layers are omitted      |
 | `stack`                  | string   | Kernel call stack (newline-separated)                         |
+
+For hardware events, `stack` is the kernel call stack at which the driver reports the devlink trap. It does not identify the actual drop location inside the ASIC. Use `drop_reason_group`, `drop_reason`, device information, and driver documentation to diagnose hardware drops.
 
 `layers` uses fixed fields to express the protocol stack, without relying on a separate protocol enumeration:
 
 | Field          | Description                                                                                              |
 | -------------- | -------------------------------------------------------------------------------------------------------- |
 | `layers.label` | Protocol combination label, e.g. `IPv4/TCP`, `IPv6/UDP`, `ARP`, `unknown`                                |
-| `layers.ether` | L2 fields: `src`, `dst`, `type`, `len` (present only for 802.3 frames)                                   |
-| `layers.ipv4`  | IPv4 fields: `version`, `ihl`, `tos`, `len`, `id`, `flags`, `frag_offset`, `ttl`, `protocol`, `checksum`, `src`, `dst` |
-| `layers.ipv6`  | IPv6 fields: `version`, `traffic_class`, `flow_label`, `len`, `next_header`, `hop_limit`, `src`, `dst`  |
-| `layers.tcp`   | TCP fields: `sport`, `dport`, `seq`, `ack`, `data_offset`, `flags`, `window`, `checksum`, `urgent`, `sk_state` |
+| `layers.ether` | L2 fields when a real Ethernet header is present: `saddr`, `daddr`, `type`, `len`; `len` is non-zero only for IEEE 802.3 framing |
+| `layers.ipv4`  | IPv4 fields: `version`, `ihl`, `tos`, `len`, `id`, `flags`, `frag_offset`, `ttl`, `protocol`, `checksum`, `saddr`, `daddr` |
+| `layers.ipv6`  | IPv6 fields: `version`, `traffic_class`, `flow_label`, `len`, `next_header`, `hop_limit`, `saddr`, `daddr`  |
+| `layers.tcp`   | TCP fields: `sport`, `dport`, `seq`, `ack_seq`, `data_offset`, `flags`, `window`, `checksum`, `urgent`, `sk_state` |
 | `layers.udp`   | UDP fields: `sport`, `dport`, `len`, `checksum`                                                         |
 | `layers.icmp`  | ICMP/ICMPv6 fields: `type`, `code`, `checksum`, `id`, `seq`                                             |
 | `layers.arp`   | ARP fields: `addr_type`, `protocol`, `hw_address_size`, `prot_address_size`, `operation`, `sender_mac`, `sender_ip`, `target_mac`, `target_ip` |
@@ -252,7 +286,7 @@ huatuo-bamai launches `dropwatch` as a subprocess and uses `--output-storage` to
 ```bash
 dropwatch \
   --bpf-path <CoreBpfDir>/dropwatch.o \
-  --output-storage /var/run/huatuo/events.sock \
+  --output-storage /var/run/huatuo-toolstream.sock \
   --filter "tcp"
 ```
 
@@ -260,9 +294,9 @@ dropwatch \
 
 ```toml
 [EventTracing]
-    # Known noisy call-stack filters. dropwatch discards events whose stack matches these regexes.
-    # The default examples cover neighbor table cleanup and bnxt TX completion SKB frees.
-    IssuesList = [["neigh_invalidate", "neigh_invalidate"], ["bnxt_tx_int", "bnxt_tx_int"]]
+    # Optional call-stack filters. dropwatch discards events whose stack matches a configured regex.
+    # Default: []
+    IssuesList = []
 
 [EventTracing.Dropwatch]
     # tcpdump filter expression, forwarded to dropwatch --filter.
@@ -276,11 +310,10 @@ dropwatch \
 
 #### 4.2 Noise Filtering
 
-The following three categories of `kfree_skb` events are filtered by default because they are not real data-plane drops:
+No call-stack noise rule is enabled by default. When `EventTracing.IssuesList` is configured, huatuo-bamai discards matching events. The following patterns are possible operator-configured filters; validate them against the local kernel and workload before enabling them:
 
 | Pattern                                | Stack Frame Prefix                | Reason                                                                                                      |
 | -------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| TCP `CLOSE_WAIT` + `skb_rbtree_purge`  | `skb_rbtree_purge/`               | Normal socket teardown: the kernel releases in-flight SKBs when closing a socket in `CLOSE_WAIT` state.     |
 | ARP/neighbor table expiry              | `neigh_invalidate/`               | Neighbor table entry expiration cleanup; does not affect any active data flow. Remove the rule from `EventTracing.IssuesList` to disable this filter. |
 | bnxt NIC TX completion                 | `bnxt_tx_int/` or `__bnxt_tx_int/` | The Broadcom bnxt NIC driver calls `kfree_skb` to release SKBs after DMA transmit completion; this is normal behavior, not a drop. |
 

@@ -25,15 +25,20 @@ import (
 )
 
 const (
-	netdevFilterModeOff uint32 = iota
-	netdevFilterModeWhitelist
-	netdevFilterModeBlacklist
+	netdevFilterModeDisabled uint32 = iota
+	netdevFilterModeAllow
+	netdevFilterModeDeny
 )
 
 const netdevFilterModeMap = "skb_filter_dev_map"
 
-func applyDeviceFilter(b bpf.BPF, mode uint32, ifindexes []uint32) error {
-	if mode == netdevFilterModeOff {
+type netdevFilterOptions struct {
+	mode      uint32
+	ifindexes []uint32
+}
+
+func configureNetdevFilter(b bpf.BPF, options netdevFilterOptions) error {
+	if options.mode == netdevFilterModeDisabled {
 		return nil
 	}
 	mapID := b.MapIDByName(netdevFilterModeMap)
@@ -41,8 +46,8 @@ func applyDeviceFilter(b bpf.BPF, mode uint32, ifindexes []uint32) error {
 		return fmt.Errorf("bpf map %q not found", netdevFilterModeMap)
 	}
 
-	items := make([]bpf.MapItem, 0, len(ifindexes))
-	for _, idx := range ifindexes {
+	items := make([]bpf.MapItem, 0, len(options.ifindexes))
+	for _, idx := range options.ifindexes {
 		key := make([]byte, 4)
 		binary.NativeEndian.PutUint32(key, idx)
 		items = append(items, bpf.MapItem{Key: key, Value: []byte{1}})
@@ -50,18 +55,18 @@ func applyDeviceFilter(b bpf.BPF, mode uint32, ifindexes []uint32) error {
 	return b.WriteMapItems(mapID, items)
 }
 
-func parseNetdevFilterFlags(device, excluded string) (uint32, []uint32, error) {
+func parseNetdevFilterOptions(device, excluded string) (netdevFilterOptions, error) {
 	var (
 		list string
 		mode uint32
 	)
 	switch {
 	case device != "":
-		list, mode = device, netdevFilterModeWhitelist
+		list, mode = device, netdevFilterModeAllow
 	case excluded != "":
-		list, mode = excluded, netdevFilterModeBlacklist
+		list, mode = excluded, netdevFilterModeDeny
 	default:
-		return netdevFilterModeOff, nil, nil
+		return netdevFilterOptions{mode: netdevFilterModeDisabled}, nil
 	}
 
 	var ifindexes []uint32
@@ -72,12 +77,12 @@ func parseNetdevFilterFlags(device, excluded string) (uint32, []uint32, error) {
 		}
 		iface, err := net.InterfaceByName(name)
 		if err != nil {
-			return 0, nil, fmt.Errorf("device %q: %w", name, err)
+			return netdevFilterOptions{}, fmt.Errorf("device %q: %w", name, err)
 		}
 		ifindexes = append(ifindexes, uint32(iface.Index))
 	}
 	if len(ifindexes) == 0 {
-		return 0, nil, errors.New("no valid interfaces specified")
+		return netdevFilterOptions{}, errors.New("no valid interfaces specified")
 	}
-	return mode, ifindexes, nil
+	return netdevFilterOptions{mode: mode, ifindexes: ifindexes}, nil
 }

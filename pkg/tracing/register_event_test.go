@@ -25,7 +25,10 @@ import (
 func resetRegisterState() {
 	factories = make(map[string]func() (*EventTracingAttr, error))
 	tracingEventAttrCache = make(map[string]*EventTracingAttr)
-	tracingOnceCache = sync.Once{}
+	tracingStatusCache = make(map[string]string)
+	registrationOnce = sync.Once{}
+	errRegistration = nil
+	registrationBlacklist = nil
 }
 
 func TestNewRegister(t *testing.T) {
@@ -104,6 +107,38 @@ func TestNewRegister(t *testing.T) {
 			},
 		},
 		{
+			name:        "nil event",
+			blackListed: nil,
+			setup: func() {
+				RegisterEventTracing("trace-2026", func() (*EventTracingAttr, error) {
+					return nil, nil
+				})
+			},
+			validate: func(t *testing.T, got map[string]*EventTracingAttr, err error) {
+				if !errors.Is(err, ErrInvalidTracer) {
+					t.Errorf("NewRegister() error = %v, want ErrInvalidTracer", err)
+				}
+				if len(got) != 0 {
+					t.Errorf("len(NewRegister()) = %d, want 0", len(got))
+				}
+			},
+		},
+		{
+			name:        "nil factory",
+			blackListed: nil,
+			setup: func() {
+				RegisterEventTracing("trace-2026", nil)
+			},
+			validate: func(t *testing.T, got map[string]*EventTracingAttr, err error) {
+				if !errors.Is(err, ErrInvalidTracer) {
+					t.Errorf("NewRegister() error = %v, want ErrInvalidTracer", err)
+				}
+				if len(got) != 0 {
+					t.Errorf("len(NewRegister()) = %d, want 0", len(got))
+				}
+			},
+		},
+		{
 			name:        "invalid flag",
 			blackListed: nil,
 			setup: func() {
@@ -135,6 +170,7 @@ func TestNewRegister(t *testing.T) {
 
 func TestNewRegisterSyncOnce(t *testing.T) {
 	resetRegisterState()
+	t.Cleanup(resetRegisterState)
 
 	RegisterEventTracing("trace-2026", func() (*EventTracingAttr, error) {
 		return &EventTracingAttr{Flag: FlagTracing, Interval: 1, TracingData: nil}, nil
@@ -159,5 +195,55 @@ func TestNewRegisterSyncOnce(t *testing.T) {
 	}
 	if _, ok := second["trace-2027"]; ok {
 		t.Errorf("second NewRegister() should not include trace-2027 because map is initialized only once")
+	}
+}
+
+func TestNewRegisterCachesInitializationError(t *testing.T) {
+	resetRegisterState()
+	t.Cleanup(resetRegisterState)
+
+	callCount := 0
+	RegisterEventTracing("failed", func() (*EventTracingAttr, error) {
+		callCount++
+		return nil, errors.New("factory failed")
+	})
+
+	_, firstErr := NewRegister(nil)
+	_, secondErr := NewRegister(nil)
+	if firstErr == nil || secondErr == nil {
+		t.Fatalf(
+			"NewRegister() errors = (%v, %v), want both non-nil",
+			firstErr,
+			secondErr,
+		)
+	}
+	if firstErr.Error() != secondErr.Error() {
+		t.Errorf(
+			"NewRegister() second error = %q, want %q",
+			secondErr,
+			firstErr,
+		)
+	}
+	if callCount != 1 {
+		t.Errorf("registration factory calls = %d, want 1", callCount)
+	}
+}
+
+func TestNewRegisterRejectsDifferentBlacklist(t *testing.T) {
+	resetRegisterState()
+	t.Cleanup(resetRegisterState)
+
+	RegisterEventTracing("trace-2026", func() (*EventTracingAttr, error) {
+		return &EventTracingAttr{
+			Flag:        FlagMetric,
+			TracingData: struct{}{},
+		}, nil
+	})
+
+	if _, err := NewRegister(nil); err != nil {
+		t.Fatalf("first NewRegister() error = %v, want nil", err)
+	}
+	if _, err := NewRegister([]string{"trace-2026"}); !errors.Is(err, ErrInvalidTracer) {
+		t.Errorf("second NewRegister() error = %v, want ErrInvalidTracer", err)
 	}
 }

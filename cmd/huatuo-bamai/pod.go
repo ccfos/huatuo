@@ -36,12 +36,12 @@ func setupPodManager(d *Daemon) (func(context.Context) error, error) {
 		DockerAPIVersion:  config.Get().Pod.DockerAPIVersion,
 	}
 
-	if err := pod.ManagerInit(&mgrCtx); err != nil {
+	if err := pod.InitManager(&mgrCtx); err != nil {
 		return nil, fmt.Errorf("init podlist and sync module: %w", err)
 	}
 
 	return func(context.Context) error {
-		pod.ManagerRelease()
+		pod.ReleaseManager()
 		return nil
 	}, nil
 }

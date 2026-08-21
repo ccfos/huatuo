@@ -155,6 +155,7 @@ func ascendCollectMetrics(ctx context.Context, devices []deviceKey) ([]*metric.D
 // do not block other groups.
 func ascendCollectNpuMetrics(ctx context.Context, cardId, deviceId uint32) ([]*metric.Data, error) {
 	metrics := make([]*metric.Data, 0, 32)
+	cfg := configSnapshot()
 
 	npuLabels := map[string]string{
 		"card":   strconv.Itoa(int(cardId)),

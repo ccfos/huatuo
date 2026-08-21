@@ -9,7 +9,8 @@
 #include "bpf_pcap_stub.h"
 #include "bpf_ratelimit.h"
 #include "bpf_skb_filter.h"
-#include "vmlinux_net.h"
+#include "bpf_skbuff.h"
+#include "abi/dropwatch_types.h"
 
 #define TYPE_TCP_COMMON_DROP 1
 #define TYPE_TCP_SYN_FLOOD 2
@@ -21,40 +22,20 @@
 #define SK_FL_TYPE_SHIFT 16
 #define SK_FL_TYPE_MASK 0xffff0000
 
-#define PKT_RAW_LEN 120
+#define HARDWARE_DROP_DEDUP_WINDOW_NS 1000000000ULL
 
-struct packet_meta {
-	u64 ktime_ns;            /* 8  */
-	u64 tgid_pid;            /* 8  */
-	u64 net_cookie;          /* 8  */
-	u64 kfree_skb_addr;      /* 8  */
-	u64 memcg_css_addr;           /* 8  */
-	u32 ifindex;             /* 4  */
-	u32 dev_flags;           /* 4  */
-	u32 queue_mapping;       /* 4  */
-	u32 drop_reason;         /* 4  */
-	u32 net_inum;             /* 4  */
-	u8  dev_name[IFNAMSIZ];  /* 16 */
-	u8  comm[COMPAT_TASK_COMM_LEN]; /* 16 */
-};                           /* 92 bytes + 4 tail pad = 96 */
-
-struct packet_raw {
-	u16 eth_proto;    /* 2  */
-	u16 raw_len;      /* 2  */
-	u16 has_eth_hdr;  /* 2: raw[] starts with Ethernet header; 0: starts at L3 */
-	u16 pad;          /* 2  */
-	u32 pkt_len;      /* 4  */
-	u32 sk_state;     /* 4  */
-	u8  raw[PKT_RAW_LEN]; /* PKT_RAW_LEN */
-};                    /* total: 136 bytes */
-
-struct drop_packet_event {
-	struct packet_meta meta;
-	struct packet_raw pkt_hdr;
-	u64 stack_size;
-	u64 stack[PERF_MAX_STACK_DEPTH];
+enum devlink_trap_type___local {
+	DEVLINK_TRAP_TYPE_DROP___local,
+	DEVLINK_TRAP_TYPE_EXCEPTION___local,
+	DEVLINK_TRAP_TYPE_CONTROL___local,
 };
 
+struct devlink_trap_metadata___local {
+	const char *trap_name;
+	const char *trap_group_name;
+	struct net_device *input_dev;
+	enum devlink_trap_type___local trap_type;
+} __attribute__((preserve_access_index));
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -66,8 +47,15 @@ struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(max_entries, 1);
 	__uint(key_size, sizeof(u32));
-	__uint(value_size, sizeof(struct drop_packet_event));
+	__uint(value_size, sizeof(struct dropwatch_packet_event));
 } dropwatch_stackmap SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 4096);
+	__type(key, u64);
+	__type(value, u64);
+} dropwatch_hardware_skb SEC(".maps");
 
 /* Runtime-configurable rate limiter. Userspace patches the three
  * bpf_rlimit_*_dropwatch constants via RewriteConstants; interval == 0
@@ -77,7 +65,7 @@ BPF_RATELIMIT_IN_MAP_RC(dropwatch);
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-static const struct drop_packet_event zero_data = {};
+static const struct dropwatch_packet_event zero_data = {};
 static const u32 stackmap_key = 0;
 
 /* kfree_skb gained an skb drop reason field in v5.17, absent from the BTF this
@@ -85,16 +73,14 @@ static const u32 stackmap_key = 0;
  * the anonymous enum field matches the kernel's enum skb_drop_reason by the name
  * "reason". No reason constants are hardcoded (their values shift across kernels);
  * names are resolved at runtime from kernel BTF in userspace (loadDropReasonNames).
- *
- * SKB_DROP_REASON_UNSUPPORT = -1 satisfies C's "enum needs >=1 enumerator" rule
- * and is the out-of-band fallback for kernels predating the field: as (u32)-1 it
- * can never collide with real reasons (which grow from 0). */
+ * SKB_DROP_REASON_NOT_SUPPORTED is the out-of-band fallback for kernels
+ * predating the field. */
 struct trace_event_raw_kfree_skb___reason {
-	enum { SKB_DROP_REASON_UNSUPPORT = -1 } reason;
+	enum { SKB_DROP_REASON_NOT_SUPPORTED = -1 } reason;
 } __attribute__((preserve_access_index));
 
 /* Return the kernel skb drop reason when the running kernel supports it,
- * otherwise the out-of-band SKB_DROP_REASON_UNSUPPORT sentinel. */
+ * otherwise the out-of-band SKB_DROP_REASON_NOT_SUPPORTED sentinel. */
 static inline u32 skb_get_drop_reason(struct trace_event_raw_kfree_skb *ctx)
 {
 	struct trace_event_raw_kfree_skb___reason *ctx_reason = (void *)ctx;
@@ -102,7 +88,7 @@ static inline u32 skb_get_drop_reason(struct trace_event_raw_kfree_skb *ctx)
 	if (bpf_core_field_exists(ctx_reason->reason))
 		return BPF_CORE_READ(ctx_reason, reason);
 
-	return SKB_DROP_REASON_UNSUPPORT;
+	return SKB_DROP_REASON_NOT_SUPPORTED;
 }
 
 struct sock___5_10 {
@@ -160,7 +146,7 @@ static void sk_get_type_and_protocol(struct sock *sk, u16 *protocol, u16 *type)
 }
 
 static inline void skb_load_packet_raw(struct sk_buff *skb,
-					struct packet_raw *pkt_raw,
+					struct dropwatch_packet_raw *pkt_raw,
 					u16 skb_protocol)
 {
 	unsigned char *hdr;
@@ -178,43 +164,47 @@ static inline void skb_load_packet_raw(struct sk_buff *skb,
 		hdr = skb_network_header(skb);
 	}
 
-	if (bpf_probe_read(pkt_raw->raw, PKT_RAW_LEN, hdr) < 0)
+	if (bpf_probe_read(pkt_raw->raw, DROPWATCH_PACKET_RAW_LEN, hdr) < 0)
 		return;
 
-	pkt_raw->raw_len = PKT_RAW_LEN;
+	pkt_raw->raw_len = DROPWATCH_PACKET_RAW_LEN;
 }
 
-SEC("tracepoint/skb/kfree_skb")
-int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
+static __always_inline bool
+dropwatch_skip_hardware_duplicate(struct sk_buff *skb, u64 now)
 {
-	struct sk_buff *skb = ctx->skbaddr;
-	struct drop_packet_event *data = NULL;
-	struct net_device *dev;
-	u16 skb_protocol;
+	u64 skb_addr = (u64)(unsigned long)skb;
+	u64 timestamp;
+	u64 *reported_at;
 
-	/* skb->protocol is __be16 regardless of kernel version; ctx->protocol is
-	 * ntohs(skb->protocol) on kernels >=5.17 but raw __be16 on older ones.
-	 * Read directly from skb to avoid the ambiguity. */
+	reported_at = bpf_map_lookup_elem(&dropwatch_hardware_skb, &skb_addr);
+	if (!reported_at)
+		return false;
+
+	timestamp = *reported_at;
+	bpf_map_delete_elem(&dropwatch_hardware_skb, &skb_addr);
+	return now >= timestamp &&
+	       now - timestamp <= HARDWARE_DROP_DEDUP_WINDOW_NS;
+}
+
+static __always_inline int
+drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
+	       u32 source, u64 drop_location, u32 drop_reason,
+	       const char *trap_name, const char *trap_group_name)
+{
+	struct dropwatch_packet_event *data;
+	u16 skb_protocol;
+	long output_ret;
+
+	/* skb->protocol is __be16 on every supported kernel. */
 	skb_protocol = bpf_ntohs(BPF_CORE_READ(skb, protocol));
 
-	/* device filter: filter_dev_mode is rewritten at load time and
-	 * skb_filter_dev_map / skb_filter_dev_excluded_map are populated from
-	 * userspace. filter_dev_mode == 0 (default) means all devices pass;
-	 * cheap check, runs before the pcap bytecode below.
-	 */
-	if (!skb_filter_pass_dev(skb))
+	if (!skb_filter_pass_netdev(dev))
 		return 0;
 
-	/* pcap filter via bpf_pcap_stub.h: pass-through stub patched at load
-	 * time by internal/pcapfilter with the compiled tcpdump expression.
-	 */
 	if (!PCAP_STUB_PASS_SKB(skb))
 		return 0;
 
-	/* Cap emission rate after all filters have passed, so the budget is
-	 * spent on events the user actually asked for. Overflow notifications
-	 * are emitted via event_bpf_rlimit_dropwatch (first miss per window).
-	 */
 	if (bpf_ratelimited_in_map_rc(ctx, dropwatch))
 		return 0;
 
@@ -222,17 +212,25 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 	if (!data)
 		return 0;
 
-	/* meta */
 	data->meta.ktime_ns = bpf_ktime_get_ns();
 	data->meta.tgid_pid = bpf_get_current_pid_tgid();
 	bpf_get_current_comm(&data->meta.comm, sizeof(data->meta.comm));
-	data->meta.kfree_skb_addr = (u64)(unsigned long)ctx->location;
+	data->meta.skb_addr = (u64)(unsigned long)skb;
+	data->meta.drop_location = drop_location;
 	data->meta.queue_mapping = BPF_CORE_READ(skb, queue_mapping);
-	data->meta.drop_reason = skb_get_drop_reason(ctx);
+	data->meta.drop_reason = drop_reason;
+	data->meta.drop_source = source;
 
-	data->pkt_hdr.pkt_len = BPF_CORE_READ(skb, len);
+	if (trap_name)
+		bpf_probe_read_kernel_str(&data->meta.trap_name,
+					  sizeof(data->meta.trap_name), trap_name);
+	if (trap_group_name)
+		bpf_probe_read_kernel_str(&data->meta.trap_group_name,
+					  sizeof(data->meta.trap_group_name),
+					  trap_group_name);
 
-	/* sk state and memory cgroup CSS */
+	data->pkt_hdr.packet_len_bytes = BPF_CORE_READ(skb, len);
+
 	struct sock *sk = BPF_CORE_READ(skb, sk);
 	if (sk) {
 		u16 sk_protocol = 0, sk_type = 0;
@@ -240,35 +238,78 @@ int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 		sk_get_type_and_protocol(sk, &sk_protocol, &sk_type);
 		if ((u8)sk_protocol == IPPROTO_TCP && sk_type == SOCK_STREAM &&
 		    BPF_CORE_READ(sk, __sk_common.skc_family) == AF_INET)
-			data->pkt_hdr.sk_state = BPF_CORE_READ(sk, __sk_common.skc_state);
+			data->pkt_hdr.sk_state =
+				BPF_CORE_READ(sk, __sk_common.skc_state);
 	}
 	data->meta.memcg_css_addr = skb_memcg_css_addr(skb);
+	data->meta.netns_cookie = skb_netns_cookie(skb);
+	data->meta.netns_inum = skb_netns_inum(skb);
 
-	/* net cookie and net namespace inode from device or socket */
-	data->meta.net_cookie = skb_netns_cookie(skb);
-	data->meta.net_inum = skb_netns_inum(skb);
-
-	/* device info */
 	data->meta.dev_name[0] = '-';
-	dev = BPF_CORE_READ(skb, dev);
 	if (dev) {
 		data->meta.dev_flags = netif_get_flags(dev);
 		data->meta.ifindex = BPF_CORE_READ(dev, ifindex);
 		bpf_probe_read_kernel_str(&data->meta.dev_name,
-					  sizeof(data->meta.dev_name),
-					  dev->name);
+					  sizeof(data->meta.dev_name), dev->name);
 	}
 
-	/* raw packet bytes; includes Ethernet header when mac_len > 0 */
 	skb_load_packet_raw(skb, &data->pkt_hdr, skb_protocol);
-
-	/* kernel stack */
 	data->stack_size = bpf_get_stack(ctx, data->stack, sizeof(data->stack), 0);
 
-	bpf_perf_event_output(ctx, &perf_events, COMPAT_BPF_F_CURRENT_CPU, data,
-			      sizeof(*data));
+	output_ret = bpf_perf_event_output(ctx, &perf_events,
+					   COMPAT_BPF_F_CURRENT_CPU, data,
+					   sizeof(*data));
+	if (source == DROPWATCH_DROP_SOURCE_HARDWARE && output_ret == 0) {
+		u64 skb_addr = data->meta.skb_addr;
+		u64 reported_at = data->meta.ktime_ns;
+
+		bpf_map_update_elem(&dropwatch_hardware_skb, &skb_addr,
+				    &reported_at, COMPAT_BPF_ANY);
+	}
 
 	bpf_map_update_elem(&dropwatch_stackmap, &stackmap_key, &zero_data,
 			    COMPAT_BPF_EXIST);
 	return 0;
+}
+
+SEC("tracepoint/skb/kfree_skb")
+int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
+{
+	struct sk_buff *skb = ctx->skbaddr;
+	struct net_device *dev = BPF_CORE_READ(skb, dev);
+	u64 now = bpf_ktime_get_ns();
+
+	if (dropwatch_skip_hardware_duplicate(skb, now))
+		return 0;
+
+	return drop_event_commit(ctx, skb, dev, DROPWATCH_DROP_SOURCE_SOFTWARE,
+			      (u64)(unsigned long)ctx->location,
+			      skb_get_drop_reason(ctx), NULL, NULL);
+}
+
+SEC("raw_tracepoint/devlink_trap_report")
+int bpf_devlink_trap_report_prog(struct bpf_raw_tracepoint_args *ctx)
+{
+	struct sk_buff *skb = (void *)ctx->args[1];
+	struct devlink_trap_metadata___local *metadata =
+		(void *)ctx->args[2];
+	struct net_device *dev;
+	const char *trap_name;
+	const char *trap_group_name;
+
+	if (!skb || !metadata)
+		return 0;
+
+	if (BPF_CORE_READ(metadata, trap_type) !=
+	    DEVLINK_TRAP_TYPE_DROP___local)
+		return 0;
+
+	dev = BPF_CORE_READ(metadata, input_dev);
+	if (!dev)
+		dev = BPF_CORE_READ(skb, dev);
+	trap_name = BPF_CORE_READ(metadata, trap_name);
+	trap_group_name = BPF_CORE_READ(metadata, trap_group_name);
+
+	return drop_event_commit(ctx, skb, dev, DROPWATCH_DROP_SOURCE_HARDWARE, 0,
+			      0, trap_name, trap_group_name);
 }

@@ -7,22 +7,17 @@
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
 #include "linux_kernel.h"
+#include "abi/softlockup_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-BPF_RATELIMIT_IN_MAP(rate, 1, COMPAT_CPU_NUM * 10000, 0);
+BPF_RATELIMIT(rate, BPF_NSEC_PER_SEC, COMPAT_CPU_NUM * 10000);
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
 	__uint(key_size, sizeof(int));
 	__uint(value_size, sizeof(u32));
 } softlockup_perf_events SEC(".maps");
-
-struct softlockup_info {
-	u32 cpu;
-	u32 pid;
-	char comm[COMPAT_TASK_COMM_LEN];
-};
 
 SEC("kprobe/add_taint")
 int kprobe_softlockup(struct pt_regs *ctx)
@@ -31,12 +26,12 @@ int kprobe_softlockup(struct pt_regs *ctx)
 	if (PT_REGS_PARM1(ctx) != TAINT_SOFTLOCKUP)
 		return 0;
 
-	if (bpf_ratelimited_in_map(ctx, rate))
+	if (bpf_ratelimited(&rate))
 		return 0;
 
-	struct softlockup_info info = {
+	struct softlockup_event info = {
 		.cpu = bpf_get_smp_processor_id(),
-		.pid = bpf_get_current_pid_tgid() >> 32,
+		.tgid = bpf_get_current_pid_tgid() >> 32,
 	};
 
 	struct task_struct *task = (struct task_struct *)bpf_get_current_task();

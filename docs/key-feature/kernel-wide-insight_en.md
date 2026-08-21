@@ -136,21 +136,12 @@ Ref:
 - https://docs.kernel.org/scheduler/sched-bwc.html#statistics
 - https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#cpu-interface-files
 
-Future metrics (Didi kernel extensions – not yet public):
+The following metric is available when the kernel exports `wait_sum`:
 
 ```bash
-# HELP huatuo_bamai_cpu_stat_container_wait_rate wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_wait_rate gauge
-huatuo_bamai_cpu_stat_container_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_throttle_wait_rate throttle wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_throttle_wait_rate gauge
-huatuo_bamai_cpu_stat_container_throttle_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_inner_wait_rate inner wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_inner_wait_rate gauge
-huatuo_bamai_cpu_stat_container_inner_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_exter_wait_rate exter wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_exter_wait_rate gauge
-huatuo_bamai_cpu_stat_container_exter_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_cpu_stat_container_wait_sum_percent percentage of CFS cgroup schedulable time spent waiting on the parent runqueue (requires kernel.sched_schedstats=1)
+# TYPE huatuo_bamai_cpu_stat_container_wait_sum_percent gauge
+huatuo_bamai_cpu_stat_container_wait_sum_percent{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
 ```
 
 ### Burst Behavior
@@ -170,7 +161,7 @@ huatuo_bamai_cpu_stat_container_burst_time{container_host="coredns-855c4dd65d-mn
 
 |Metric|Description|Unit|Target|Labels|
 |---|---|---|---|---|
-|cpu_stat_container_burst_time|Cumulative wall-clock time spent above quota across all periods|count|Container|container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|cpu_stat_container_burst_time|Cumulative wall-clock time spent above quota across all periods|nanoseconds|Container|container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
 |cpu_stat_container_nr_bursts|Number of periods in which usage exceeded quota|count|Container|container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
 
 ### Load
@@ -225,6 +216,8 @@ huatuo_bamai_memory_reclaim_container_directstall{container_host="coredns-855c4d
 |memory_free_allocpages_stall|Time stalled waiting for page allocation| nanoseconds|Host| eBPF | host, region|
 |memory_free_compaction_stall|Time stalled in memory compaction| nanoseconds|Host| eBPF | host, region|
 |memory_reclaim_container_directstall|Number of direct reclaim events in container| count| Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+> **Note**: The `memory_others_container_directstall_time`, `memory_others_container_asyncreclaim_time`, and `memory_others_container_local_direct_reclaim_time` metrics read memory cgroup extension interfaces provided by the Didi Cloud custom kernel (`memory.directstall_stat`, `memory.asynreclaim_stat`, `memory.local_direct_reclaim_time`). Mainline and common distribution kernels do not expose these interfaces, so these metrics are simply not emitted there — this is expected, and no extra kernel module can provide them. To observe container direct reclaim behavior on standard kernels, use the eBPF-based `memory_reclaim_container_directstall` listed above.
 
 ### State
 
@@ -1155,6 +1148,54 @@ huatuo_bamai_iolatency_blkdisk_freeze{disk="253:1",host="hostname",region="dev"}
 |Metric|Description|Unit|Scope|Labels|
 |---|---|---|---|---|
 |iolatency_blkdisk_freeze|Host disk freeze event count|count|Host|host, region, disk|
+
+### Disk IO Statistics
+
+`diskio` collects per-device disk IO metrics and system-wide CPU iowait by reading `/proc/diskstats` and `/proc/stat`. Unlike `iolatency`, `diskio` is procfs-based rather than eBPF-based, providing cumulative counters that support rate-based latency calculations.
+
+The default configuration disables this collector through `BlackList`. Remove
+`diskio` from `BlackList` to enable these metrics.
+
+Counter metrics are cumulative; use Prometheus `rate()` for per-second values (IOPS, throughput). Gauge metrics are point-in-time values. Average latency is computed in PromQL by dividing the I/O time rate by the request rate.
+
+```bash
+# HELP huatuo_bamai_diskio_read_requests_total Total number of read requests completed successfully.
+# TYPE huatuo_bamai_diskio_read_requests_total counter
+huatuo_bamai_diskio_read_requests_total{device="sda",host="hostname",region="dev"} 1000
+# HELP huatuo_bamai_diskio_write_requests_total Total number of write requests completed successfully.
+# TYPE huatuo_bamai_diskio_write_requests_total counter
+huatuo_bamai_diskio_write_requests_total{device="sda",host="hostname",region="dev"} 2000
+# HELP huatuo_bamai_diskio_read_bytes_total Total number of bytes read from the device.
+# TYPE huatuo_bamai_diskio_read_bytes_total counter
+huatuo_bamai_diskio_read_bytes_total{device="sda",host="hostname",region="dev"} 2.56e+07
+# HELP huatuo_bamai_diskio_written_bytes_total Total number of bytes written to the device.
+# TYPE huatuo_bamai_diskio_written_bytes_total counter
+huatuo_bamai_diskio_written_bytes_total{device="sda",host="hostname",region="dev"} 4.096e+07
+# HELP huatuo_bamai_diskio_io_in_progress Number of I/O requests currently in flight (queue depth).
+# TYPE huatuo_bamai_diskio_io_in_progress gauge
+huatuo_bamai_diskio_io_in_progress{device="sda",host="hostname",region="dev"} 50
+# HELP huatuo_bamai_diskio_read_time_seconds_total Total seconds spent by completed read requests.
+# TYPE huatuo_bamai_diskio_read_time_seconds_total counter
+huatuo_bamai_diskio_read_time_seconds_total{device="sda",host="hostname",region="dev"} 3
+# HELP huatuo_bamai_diskio_write_time_seconds_total Total seconds spent by completed write requests.
+# TYPE huatuo_bamai_diskio_write_time_seconds_total counter
+huatuo_bamai_diskio_write_time_seconds_total{device="sda",host="hostname",region="dev"} 6
+# HELP huatuo_bamai_diskio_disk_iowait_percent CPU time spent waiting for I/O during the collection interval.
+# TYPE huatuo_bamai_diskio_disk_iowait_percent gauge
+huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
+```
+
+|Metric|Description|Unit|Scope|Labels|
+|---|---|---|---|---|
+|read_requests_total|Cumulative read requests completed (field 4). Use `rate()` for read IOPS|count|Host|host, region, device|
+|write_requests_total|Cumulative write requests completed (field 8). Use `rate()` for write IOPS|count|Host|host, region, device|
+|read_bytes_total|Cumulative bytes read (field 6 × 512). Use `rate()` for read throughput|bytes|Host|host, region, device|
+|written_bytes_total|Cumulative bytes written (field 10 × 512). Use `rate()` for write throughput|bytes|Host|host, region, device|
+|read_time_seconds_total|Cumulative seconds spent by completed reads (field 7)|seconds|Host|host, region, device|
+|write_time_seconds_total|Cumulative seconds spent by completed writes (field 11)|seconds|Host|host, region, device|
+|io_in_progress|Current number of I/O requests in flight, i.e. queue depth (field 12)|count|Host|host, region, device|
+|disk_iowait_percent|CPU time spent waiting for I/O during the collection interval|percent|Host|host, region|
+
 
 ## General System
 

@@ -36,9 +36,9 @@ const (
 	cliFlagBPFObjDir      = "bpf-dir"
 	cliFlagToolBinDir     = "tools-bin-dir"
 	cliFlagRegion         = "region"
+	cliFlagEnableCgroup   = "enable-cgroup"
 	cliFlagDisableKubelet = "disable-kubelet"
 	cliFlagDisableStorage = "disable-storage"
-	cliFlagDisableCgroup  = "disable-cgroup"
 	cliFlagDisableTracing = "disable-tracing"
 	cliFlagLogDebug       = "log-debug"
 	cliFlagDryRun         = "dry-run"
@@ -54,9 +54,9 @@ type Options struct {
 	BPFObjDir      string
 	ToolBinDir     string
 	Region         string
+	EnableCgroup   bool
 	DisableKubelet bool
 	DisableStorage bool
-	DisableCgroup  bool
 	DisableTracing []string
 	LogDebug       bool
 	DryRun         bool
@@ -128,9 +128,8 @@ func (o *Options) AddFlags(app *cli.App) {
 			Usage: "disable storage backends(testing only). Not recommended for production use.",
 		},
 		&cli.BoolFlag{
-			Name:  cliFlagDisableCgroup,
-			Value: false,
-			Usage: "disable self cgroup resource limit",
+			Name:  cliFlagEnableCgroup,
+			Usage: "enable self cgroup resource limit",
 		},
 		&cli.StringSliceFlag{
 			Name:  cliFlagDisableTracing,
@@ -157,7 +156,7 @@ func (o *Options) FromContext(ctx *cli.Context) error {
 	o.Region = ctx.String(cliFlagRegion)
 	o.DisableKubelet = ctx.Bool(cliFlagDisableKubelet)
 	o.DisableStorage = ctx.Bool(cliFlagDisableStorage)
-	o.DisableCgroup = ctx.Bool(cliFlagDisableCgroup)
+	o.EnableCgroup = ctx.Bool(cliFlagEnableCgroup)
 	o.DisableTracing = ctx.StringSlice(cliFlagDisableTracing)
 	o.LogDebug = ctx.Bool(cliFlagLogDebug)
 	o.DryRun = ctx.Bool(cliFlagDryRun)
@@ -239,7 +238,7 @@ func configureRuntime(opts *Options) error {
 		merged := make([]string, 0, len(bl)+len(opts.DisableTracing))
 		merged = append(merged, bl...)
 		merged = append(merged, opts.DisableTracing...)
-		if err := config.Set("BlackList", merged); err != nil {
+		if err := config.Update(map[string]any{"BlackList": merged}); err != nil {
 			return err
 		}
 		log.Infof("merged tracer blacklist from CLI: %v", config.Get().BlackList)

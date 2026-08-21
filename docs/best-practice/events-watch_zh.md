@@ -3,7 +3,7 @@ title: 内核事件订阅
 type: docs
 description: ""
 author: HUATUO Team
-date: 2026-05-18
+date: 2026-07-27
 weight: 3
 ---
 
@@ -112,7 +112,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
     "container_hostname": "app-pod",
     "container_host_namespace": "prod",
     "container_type": "docker",
-    "container_qos": "Guaranteed"
+    "container_qos": "guaranteed"
   }
 }
 ```
@@ -148,7 +148,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 | `netdev_txqueue_timeout` | 网络设备发送队列超时事件                        |
 | `netdev_bonding_lacp`    | Bond 设备 LACP 协议异常事件                    |
 | `net_rx_latency`         | 网络接收延迟异常事件                            |
-| `softirq_tracing`        | 软中断耗时异常追踪事件                          |
+| `sched_tick`             | 调度 tick 间隔异常追踪事件                     |
 | `memory_reclaim_events`  | 内存回收异常事件                               |
 | `cpuidle`                | CPU 空闲率异常（AutoTracing 自动触发）         |
 | `cpusys`                 | CPU 系统态占用率异常（AutoTracing 自动触发）   |
@@ -216,26 +216,26 @@ data: {"specversion":"1.0","id":"...","source":"/huatuo/node-1/oom",...}\n\n
 
 ---
 
-### 4. EventsWatch 配置说明
+### 4. HTTP 服务事件流配置
 
-在华佗配置文件（`huatuo-bamai.conf`）中通过 `[EventsWatch]` 段配置：
+在华佗配置文件的 `[HTTPServer]` 段配置事件流参数：
 
 ```toml
-[EventsWatch]
+[HTTPServer]
     # 最大并发客户端连接数，超出后新连接返回 HTTP 429
     # Default: 100
-    MaxClients = 100
+    MaxEventStreamClients = 100
 
     # SSE 心跳间隔（秒），防止代理/负载均衡因空闲而断开连接
     # 连续 3 次心跳写入失败则主动关闭该客户端连接
     # Default: 30
-    KeepAliveInterval = 30
+    EventStreamKeepAliveIntervalSeconds = 30
 ```
 
-| 配置项                | 默认值 | 说明                                                             |
-|---------------------|------|------------------------------------------------------------------|
-| `MaxClients`        | 100  | 同时允许的 `/v1/events/watch` 长连接上限，超出返回 HTTP 429      |
-| `KeepAliveInterval` | 30   | 心跳间隔（秒），建议不超过上游代理的 idle timeout，推荐 15–60 秒 |
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `MaxEventStreamClients` | 100 | `/v1/events/watch` 长连接上限，超出返回 HTTP 429 |
+| `EventStreamKeepAliveIntervalSeconds` | 30 | 心跳间隔，应小于上游代理的 idle timeout |
 
 ---
 
@@ -528,7 +528,7 @@ sequenceDiagram
         else 不匹配
             note over EW: 丢弃，不推送
         end
-        EW-->>C: : ping（心跳保活，间隔 KeepAliveInterval 秒）
+        EW-->>C: : ping（按配置间隔发送心跳）
     end
 ```
 

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,12 +24,17 @@ import (
 	"strings"
 
 	"huatuo-bamai/internal/cgroups"
-	"huatuo-bamai/internal/command/container"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
 
 	"github.com/shirou/gopsutil/process"
 )
+
+type procInfo struct {
+	pid  int
+	ppid int
+}
 
 // ContainerPathOnHost returns the host-visible path for a container-scoped path.
 func ContainerPathOnHost(pid int, containerPath string) string {
@@ -62,13 +67,13 @@ func IsProcessInContainer(pid int) (bool, error) {
 
 // GetPidsFromContainer returns the root PIDs of processes in containerID
 // that match langKeyword (e.g. "python", "java") and optionally execPath.
-func GetPidsFromContainer(bamaiSvr, execPath, langKeyword, containerID string) ([]int, error) {
-	c, err := container.GetContainerByID(bamaiSvr, containerID)
+func GetPidsFromContainer(execPath, langKeyword, containerID string) ([]int, error) {
+	cgroupPath, err := pod.ContainerCgroupPathByID(containerID)
 	if err != nil {
 		return nil, err
 	}
 
-	pidMap, err := findProcessesInCgroups(c.CgroupPath, langKeyword, execPath)
+	pidMap, err := findProcessesInCgroups(cgroupPath, langKeyword, execPath)
 	if err != nil {
 		return nil, err
 	}
@@ -97,13 +102,6 @@ func findProcessesInCgroups(cgroupSuffix, langKeyword, execPath string) (map[int
 		return nil, err
 	}
 
-	type procInfo struct {
-		pid  int
-		ppid int
-	}
-
-	validPids := make(map[int]bool)
-
 	var targetProcs []procInfo
 
 	for _, rawPid := range pids {
@@ -130,16 +128,38 @@ func findProcessesInCgroups(cgroupSuffix, langKeyword, execPath string) (map[int
 		}
 
 		targetProcs = append(targetProcs, procInfo{pid: pid, ppid: ppid})
-		validPids[pid] = true
+	}
+
+	return groupProcessesByRoot(targetProcs)
+}
+
+func groupProcessesByRoot(processes []procInfo) (map[int][]int, error) {
+	parents := make(map[int]int, len(processes))
+	for _, proc := range processes {
+		parents[proc.pid] = proc.ppid
 	}
 
 	result := make(map[int][]int)
-	for _, proc := range targetProcs {
-		if validPids[proc.ppid] {
-			result[proc.ppid] = append(result[proc.ppid], proc.pid)
-		} else {
-			result[proc.pid] = append(result[proc.pid], proc.pid)
+	for _, proc := range processes {
+		root := proc.pid
+		parent := proc.ppid
+		seen := map[int]struct{}{proc.pid: {}}
+
+		for {
+			next, ok := parents[parent]
+			if !ok {
+				break
+			}
+			if _, ok := seen[parent]; ok {
+				return nil, fmt.Errorf("process parent cycle at PID %d", parent)
+			}
+
+			seen[parent] = struct{}{}
+			root = parent
+			parent = next
 		}
+
+		result[root] = append(result[root], proc.pid)
 	}
 
 	return result, nil
@@ -196,6 +216,11 @@ func readPPid(pid int) (int, error) {
 	}
 
 	return 0, fmt.Errorf("PPid not found for pid %d", pid)
+}
+
+// ParentPID returns the current parent process ID from procfs.
+func ParentPID(pid int) (int, error) {
+	return readPPid(pid)
 }
 
 func isInDifferentMountNS(pid int) (bool, error) {

@@ -55,7 +55,10 @@ func waitTaskFinal(taskID string, timeout time.Duration) *TaskResult {
 }
 
 func TestAllocTaskID(t *testing.T) {
-	id := AllocTaskID()
+	id, err := AllocTaskID()
+	if err != nil {
+		t.Fatalf("AllocTaskID() error=%v", err)
+	}
 	if len(id) != 16 {
 		t.Errorf("AllocTaskID length=%d, want 16", len(id))
 		return
@@ -68,6 +71,48 @@ func TestAllocTaskID(t *testing.T) {
 			t.Errorf("AllocTaskID contains invalid char %q", ch)
 			return
 		}
+	}
+}
+
+func TestNewTaskWithIDIsIdempotent(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+
+	const taskID = "job-idempotent-2026"
+	if _, err := NewTaskWithID(taskID, "missing-profiler", time.Second, TaskStorageStdout, nil); err != nil {
+		t.Fatalf("first NewTaskWithID() error=%v", err)
+	}
+	first, ok := taskLifeTmpCache.Load(taskID)
+	if !ok {
+		t.Fatal("first NewTaskWithID() did not store task")
+	}
+	if _, err := NewTaskWithID(taskID, "different-profiler", time.Second, TaskStorageStdout, nil); err != nil {
+		t.Fatalf("second NewTaskWithID() error=%v", err)
+	}
+	second, ok := taskLifeTmpCache.Load(taskID)
+	if !ok || first != second {
+		t.Fatal("second NewTaskWithID() replaced the existing task")
+	}
+	if result := waitTaskFinal(taskID, time.Second); result.TaskStatus != StatusFailed {
+		t.Fatalf("idempotent task status=%s, want failed", result.TaskStatus)
+	}
+}
+
+func TestNewTaskWithIDLimitAllowsRetryButRejectsNewTask(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+	existing := &task{status: StatusPending}
+	taskLifeTmpCache.Store("existing-2026", existing)
+
+	if _, err := NewTaskWithIDLimit(
+		"existing-2026", "profiler", time.Second, TaskStorageStdout, nil, 1,
+	); err != nil {
+		t.Fatalf("retry existing task error=%v", err)
+	}
+	if _, err := NewTaskWithIDLimit(
+		"new-2026", "profiler", time.Second, TaskStorageStdout, nil, 1,
+	); !errors.Is(err, ErrTaskLimitExceeded) {
+		t.Fatalf("new task error=%v, want ErrTaskLimitExceeded", err)
 	}
 }
 
@@ -262,6 +307,23 @@ func TestListTasks(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("ListTasks()[%d]=%+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+func TestResultReturnsDataCopy(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+
+	taskLifeTmpCache.Store("task-copy", &task{
+		status:     StatusCompleted,
+		stdoutData: []byte("output"),
+	})
+
+	result := Result("task-copy")
+	result.TaskData[0] = 'X'
+
+	if got := string(Result("task-copy").TaskData); got != "output" {
+		t.Fatalf("Result().TaskData=%q, want %q", got, "output")
 	}
 }
 

@@ -23,18 +23,33 @@ import (
 	"huatuo-bamai/internal/pcapfilter"
 )
 
-func loadDropwatchBPFWithFilter(bpfPath, filterExpr string, devMode uint32, maxEventsPerSecond uint64) (bpf.BPF, error) {
+const hardwareDropSection = "raw_tracepoint/devlink_trap_report"
+
+func loadDropwatchBPF(
+	bpfPath string,
+	filterExpr string,
+	devMode uint32,
+	bpfLimiter *bpf.RateLimiter,
+	hardwareDropSupported bool,
+) (bpf.BPF, error) {
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
 		return nil, fmt.Errorf("read bpf object: %w", err)
 	}
 
-	bpfName := fmt.Sprintf("dropwatch_%d.o", time.Now().UnixNano())
+	var excludedSections []string
+	if !hardwareDropSupported {
+		excludedSections = append(excludedSections, hardwareDropSection)
+	}
 
+	bpfName := fmt.Sprintf("dropwatch_%d.o", time.Now().UnixNano())
 	return pcapfilter.Load(
 		bpfName,
 		bpfBytes,
 		filterExpr,
-		withRateLimitConstants(map[string]any{"filter_dev_mode": devMode}, maxEventsPerSecond),
+		bpfLimiter.Constants(map[string]any{
+			"filter_dev_mode": devMode,
+		}),
+		excludedSections...,
 	)
 }

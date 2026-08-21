@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -54,13 +55,21 @@ func readMetrics(ch chan prometheus.Metric) []prometheus.Metric {
 	return metrics
 }
 
-func hasSuccessMetric(metrics []prometheus.Metric) bool {
+func successMetricValue(t *testing.T, metrics []prometheus.Metric) float64 {
+	t.Helper()
+
 	for i := range metrics {
 		if strings.Contains(metrics[i].Desc().String(), "collector_success") {
-			return true
+			var data dto.Metric
+			if err := metrics[i].Write(&data); err != nil {
+				t.Fatalf("write collector_success metric: %v", err)
+			}
+			return data.GetGauge().GetValue()
 		}
 	}
-	return false
+
+	t.Fatal("collector_success metric not found")
+	return 0
 }
 
 func TestCollectorManagerDescribe(t *testing.T) {
@@ -86,6 +95,7 @@ func TestCollectorManagerDoCollect(t *testing.T) {
 		name            string
 		updateFunc      func() ([]*Data, error)
 		wantMetricCount int
+		wantSuccess     float64
 	}{
 		{
 			name: "success returns data metric and scrape metrics",
@@ -95,6 +105,7 @@ func TestCollectorManagerDoCollect(t *testing.T) {
 				}, nil
 			},
 			wantMetricCount: 3,
+			wantSuccess:     1,
 		},
 		{
 			name: "no data error returns scrape metrics only",
@@ -109,6 +120,15 @@ func TestCollectorManagerDoCollect(t *testing.T) {
 				return nil, errors.New("collector failed")
 			},
 			wantMetricCount: 2,
+		},
+		{
+			name: "partial failure returns data metric and scrape metrics",
+			updateFunc: func() ([]*Data, error) {
+				return []*Data{
+					NewGaugeData("cpu_usage", 1, "help", map[string]string{"k": "v"}),
+				}, errors.New("collector partially failed")
+			},
+			wantMetricCount: 3,
 		},
 	}
 
@@ -131,8 +151,8 @@ func TestCollectorManagerDoCollect(t *testing.T) {
 				t.Errorf("metric count=%d, want %d", len(metrics), tests[i].wantMetricCount)
 			}
 
-			if !hasSuccessMetric(metrics) {
-				t.Errorf("collector_success metric not found")
+			if got := successMetricValue(t, metrics); got != tests[i].wantSuccess {
+				t.Errorf("collector_success=%v, want %v", got, tests[i].wantSuccess)
 			}
 		})
 	}

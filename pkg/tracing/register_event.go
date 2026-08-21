@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package tracing
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 
@@ -46,60 +47,89 @@ var (
 	factories             = make(map[string]func() (*EventTracingAttr, error))
 	tracingEventAttrCache = make(map[string]*EventTracingAttr)
 	tracingStatusCache    = make(map[string]string)
-	tracingOnceCache      sync.Once
+	registrationOnce      sync.Once
+	errRegistration       error
+	registrationBlacklist []string
 )
 
 func RegisterEventTracing(name string, factory func() (*EventTracingAttr, error)) {
 	factories[name] = factory
 }
 
-func NewRegister(blackListed []string) (map[string]*EventTracingAttr, error) {
-	var err error
+func NewRegister(blacklist []string) (map[string]*EventTracingAttr, error) {
+	normalizedBlacklist := slices.Clone(blacklist)
+	slices.Sort(normalizedBlacklist)
+	normalizedBlacklist = slices.Compact(normalizedBlacklist)
 
-	tracingOnceCache.Do(func() {
-		tracingMap := make(map[string]*EventTracingAttr)
-		var attr *EventTracingAttr
-
+	registrationOnce.Do(func() {
+		registrationBlacklist = normalizedBlacklist
+		registrations := make(map[string]*EventTracingAttr)
 		for name, factory := range factories {
-			if slices.Contains(blackListed, name) {
+			if slices.Contains(normalizedBlacklist, name) {
 				tracingStatusCache[name] = statusDisabled
 				continue
 			}
 
-			attr, err = factory()
+			if factory == nil {
+				tracingStatusCache[name] = statusInitError
+				errRegistration = fmt.Errorf("%w: %q factory is nil", ErrInvalidTracer, name)
+				return
+			}
+
+			attr, err := factory()
 			if err != nil {
 				if errors.Is(err, types.ErrNotSupported) {
 					tracingStatusCache[name] = statusInactive
-					// reset the error for the last error in the loop.
-					err = nil
 					continue
 				}
 
 				tracingStatusCache[name] = statusInitError
-				err = fmt.Errorf("tracing name: %s, err: [%w]", name, err)
+				errRegistration = fmt.Errorf("initialize tracer %q: %w", name, err)
+				return
+			}
+			if attr == nil {
+				tracingStatusCache[name] = statusInitError
+				errRegistration = fmt.Errorf("%w: %q factory returned nil", ErrInvalidTracer, name)
 				return
 			}
 			if attr.Flag&(FlagTracing|FlagMetric) == 0 {
-				err = fmt.Errorf("tracing name: %s, invalid flag", name)
+				tracingStatusCache[name] = statusInitError
+				errRegistration = fmt.Errorf("%w: %q has no role", ErrInvalidTracer, name)
 				return
 			}
 
 			tracingStatusCache[name] = statusActive
-			tracingMap[name] = attr
+			registrations[name] = attr
 
-			log.Infof("register tracing or metric collector: %s", name)
+			log.WithField("tracer", name).Info("tracer registered")
 		}
 
-		tracingEventAttrCache = tracingMap
+		tracingEventAttrCache = registrations
 	})
 
-	if err != nil {
-		return nil, err
+	if errRegistration != nil {
+		return nil, errRegistration
+	}
+	if !slices.Equal(normalizedBlacklist, registrationBlacklist) {
+		return nil, fmt.Errorf(
+			"%w: blacklist differs from the initialized registry",
+			ErrInvalidTracer,
+		)
 	}
 
-	return tracingEventAttrCache, nil
+	return cloneEventTracingAttrs(tracingEventAttrCache), nil
 }
 
 func EventTracingStatus() map[string]string {
-	return tracingStatusCache
+	return maps.Clone(tracingStatusCache)
+}
+
+func cloneEventTracingAttrs(attrs map[string]*EventTracingAttr) map[string]*EventTracingAttr {
+	cloned := make(map[string]*EventTracingAttr, len(attrs))
+	for name, attr := range attrs {
+		attrCopy := *attr
+		cloned[name] = &attrCopy
+	}
+
+	return cloned
 }

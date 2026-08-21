@@ -17,7 +17,7 @@ package main
 import (
 	"strings"
 
-	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/utils/bytesutil"
 )
 
@@ -38,8 +38,8 @@ type bpfBlockLatency struct {
 // bpfFilesystemIO mirrors one io_source_map entry: per-file IO totals,
 // latency, comm and dentry path captured during the trace window.
 type bpfFilesystemIO struct {
-	Tgid            uint32
-	Pid             uint32
+	TGID            uint32
+	PathInitialized uint32
 	DevID           uint32
 	Flags           uint32
 	FsWriteBytes    uint64
@@ -53,19 +53,7 @@ type bpfFilesystemIO struct {
 	PathSegs        [8][32]byte
 }
 
-// bpfScheduleDelay mirrors one iodelay_perf_events ring-buffer record: a
-// task that stalled in io_schedule longer than the threshold, with
-// the kernel stack captured at the stall.
-type bpfScheduleDelay struct {
-	Stack      [symbol.KsymStackMinDepth]uint64
-	Timestamp  uint64
-	LatencyNs  uint64
-	StackDepth uint32
-	Pid        uint32
-	Tid        uint32
-	CPU        uint32
-	Comm       [16]byte
-}
+type bpfScheduleDelay = abi.IotracingScheduleDelayEvent
 
 // IsDirect reports whether the IO bypassed the page cache.
 func (r *bpfFilesystemIO) IsDirect() bool {
@@ -73,8 +61,7 @@ func (r *bpfFilesystemIO) IsDirect() bool {
 }
 
 // PathName reconstructs the absolute file path from the BPF dentry walk.
-// Empty when the BPF entry has no inode (typical for direct IO that
-// never reached an address_space).
+// Empty when the BPF entry has no inode or no dentry path was captured.
 func (r *bpfFilesystemIO) PathName() string {
 	if r.Ino == 0 {
 		return ""
@@ -88,6 +75,9 @@ func (r *bpfFilesystemIO) PathName() string {
 		}
 
 		names = append(names, s)
+	}
+	if len(names) == 0 {
+		return ""
 	}
 
 	return "/" + strings.Join(names, "/")

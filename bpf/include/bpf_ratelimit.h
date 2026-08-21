@@ -3,21 +3,44 @@
 
 #include <bpf/bpf_helpers.h>
 
-struct bpf_ratelimit {
-	uint64_t interval; // unit: second
-	uint64_t begin;
-	uint64_t burst;	    // max events/interval
-	uint64_t max_burst; // max burst
-	uint64_t events;    // current events/interval
-	uint64_t nmissed;   // missed events/interval
+#include "abi/bpf_ratelimit_types.h"
 
-	uint64_t total_events;	 // total events
-	uint64_t total_nmissed;	 // total missed events
-	uint64_t total_interval; // total interval
+#define BPF_NSEC_PER_SEC 1000000000ULL
+
+#define BPF_RATELIMIT(name, _interval_ns, _burst)                              \
+	struct bpf_ratelimit_event name = {                                     \
+		.interval_ns = (_interval_ns),                                    \
+		.burst = (_burst),                                                \
+	}
+
+struct bpf_percpu_ratelimit_state {
+	u64 window_start_ns;
+	u32 events_in_window;
 };
 
-#define BPF_RATELIMIT(name, interval, burst)                                   \
-	struct bpf_ratelimit name = {interval, 0, burst, 0, 0, 0, 0, 0, 0}
+/* State must reside in a per-CPU map because updates are lockless. */
+static __always_inline bool
+bpf_percpu_ratelimited_ns(struct bpf_percpu_ratelimit_state *state,
+			  u64 interval_ns, u32 burst)
+{
+	u64 now_ns;
+
+	if (!state || !interval_ns)
+		return false;
+
+	now_ns = bpf_ktime_get_ns();
+	if (!state->window_start_ns ||
+	    now_ns - state->window_start_ns >= interval_ns) {
+		state->window_start_ns = now_ns;
+		state->events_in_window = 0;
+	}
+
+	if (state->events_in_window >= burst)
+		return true;
+
+	state->events_in_window++;
+	return false;
+}
 
 // bpf_ratelimited: whether the threshold is exceeded
 //
@@ -25,39 +48,43 @@ struct bpf_ratelimit {
 // @return:
 //   true: the threshold is exceeded
 //   false: the threshold is not exceeded
-static __always_inline bool bpf_ratelimited(struct bpf_ratelimit *rate)
+static __always_inline bool bpf_ratelimited(struct bpf_ratelimit_event *rate)
 {
-	// validate
-	if (rate == NULL || rate->interval == 0)
+	u64 now_ns;
+	u64 elapsed_ns;
+
+	if (!rate || !rate->interval_ns)
 		return false;
 
-	u64 curr = bpf_ktime_get_ns() / 1000000000;
+	now_ns = bpf_ktime_get_ns();
 
-	if (rate->begin == 0)
-		rate->begin = curr;
+	if (!rate->window_start_ns)
+		rate->window_start_ns = now_ns;
 
-	if (curr > rate->begin + rate->interval) {
-		__sync_fetch_and_add(&rate->total_interval, curr - rate->begin);
-		rate->begin  = curr;
-		rate->events = rate->nmissed = 0;
+	elapsed_ns = now_ns - rate->window_start_ns;
+	if (elapsed_ns >= rate->interval_ns) {
+		__sync_fetch_and_add(&rate->total_elapsed_ns, elapsed_ns);
+		rate->window_start_ns = now_ns;
+		rate->events_in_window = 0;
+		rate->missed_in_window = 0;
 	}
 
-	if (rate->burst && rate->burst > rate->events) {
-		__sync_fetch_and_add(&rate->events, 1);
+	if (rate->events_in_window < rate->burst) {
+		__sync_fetch_and_add(&rate->events_in_window, 1);
 		__sync_fetch_and_add(&rate->total_events, 1);
 		return false;
 	}
 
-	__sync_fetch_and_add(&rate->nmissed, 1);
-	__sync_fetch_and_add(&rate->total_nmissed, 1);
+	__sync_fetch_and_add(&rate->missed_in_window, 1);
+	__sync_fetch_and_add(&rate->total_missed, 1);
 	return true;
 }
 
-#define BPF_RATELIMIT_IN_MAP(name, interval, burst, max_burst)                 \
+#define BPF_RATELIMIT_IN_MAP(name, _interval_ns, _burst, _max_burst)           \
 	struct {                                                               \
 		__uint(type, BPF_MAP_TYPE_ARRAY);                              \
 		__uint(key_size, sizeof(u32));                                 \
-		__uint(value_size, sizeof(struct bpf_ratelimit));              \
+		__uint(value_size, sizeof(struct bpf_ratelimit_event));        \
 		__uint(max_entries, 1);                                        \
 	} bpf_rlimit_##name SEC(".maps");                                      \
 	struct {                                                               \
@@ -65,8 +92,11 @@ static __always_inline bool bpf_ratelimited(struct bpf_ratelimit *rate)
 		__uint(key_size, sizeof(int));                                 \
 		__uint(value_size, sizeof(u32));                               \
 	} event_bpf_rlimit_##name SEC(".maps");                                \
-	volatile const struct bpf_ratelimit ___bpf_rlimit_cfg_##name = {       \
-		interval, 0, burst, max_burst, 0, 0, 0, 0, 0}
+	volatile const struct bpf_ratelimit_event ___bpf_rlimit_cfg_##name = { \
+		.interval_ns = (_interval_ns),                                    \
+		.burst = (_burst),                                                \
+		.max_burst = (_max_burst),                                       \
+	}
 
 // bpf_ratelimited_in_map: whether the threshold is exceeded
 //
@@ -89,7 +119,7 @@ static __always_inline bool bpf_ratelimited(struct bpf_ratelimit *rate)
 	struct {                                                               \
 		__uint(type, BPF_MAP_TYPE_ARRAY);                              \
 		__uint(key_size, sizeof(u32));                                 \
-		__uint(value_size, sizeof(struct bpf_ratelimit));              \
+		__uint(value_size, sizeof(struct bpf_ratelimit_event));        \
 		__uint(max_entries, 1);                                        \
 	} bpf_rlimit_##name SEC(".maps");                                      \
 	struct {                                                               \
@@ -97,19 +127,19 @@ static __always_inline bool bpf_ratelimited(struct bpf_ratelimit *rate)
 		__uint(key_size, sizeof(int));                                 \
 		__uint(value_size, sizeof(u32));                               \
 	} event_bpf_rlimit_##name SEC(".maps");                                \
-	volatile const __u64 bpf_rlimit_interval_##name	 = 0;                  \
+	volatile const __u64 bpf_rlimit_interval_ns_##name = 0;                 \
 	volatile const __u64 bpf_rlimit_burst_##name	 = 0;                  \
 	volatile const __u64 bpf_rlimit_max_burst_##name = 0
 
 // bpf_ratelimited_in_map_rc: same contract as bpf_ratelimited_in_map. Returns
-// false (admit) when the limiter is disabled (interval == 0), in a single
+// false (admit) when the limiter is disabled (interval_ns == 0), in a single
 // .rodata load + compare with no map lookup on the fast path.
 #define bpf_ratelimited_in_map_rc(ctx, name)                                   \
 	({                                                                     \
 		bool __ret = false;                                            \
-		if (bpf_rlimit_interval_##name != 0) {                         \
-			struct bpf_ratelimit __cfg = {                         \
-				.interval  = bpf_rlimit_interval_##name,       \
+		if (bpf_rlimit_interval_ns_##name != 0) {                      \
+			struct bpf_ratelimit_event __cfg = {                   \
+				.interval_ns = bpf_rlimit_interval_ns_##name,  \
 				.burst	   = bpf_rlimit_burst_##name,          \
 				.max_burst = bpf_rlimit_max_burst_##name,      \
 			};                                                     \
@@ -122,32 +152,32 @@ static __always_inline bool bpf_ratelimited(struct bpf_ratelimit *rate)
 
 static __always_inline bool
 bpf_ratelimited_core_in_map(void *ctx, void *map, void *perf_map,
-			    const volatile struct bpf_ratelimit *cfg)
+			    const volatile struct bpf_ratelimit_event *cfg)
 {
-	u32 key			   = 0;
-	struct bpf_ratelimit *rate = NULL;
+	struct bpf_ratelimit_event *rate;
+	u64 old_missed;
+	u32 key = 0;
 
 	rate = bpf_map_lookup_elem(map, &key);
-	if (rate == NULL)
+	if (!rate)
 		return false;
 
-	// init from cfg
-	if (rate->interval == 0) {
-		rate->interval	= cfg->interval;
-		rate->burst	= cfg->burst;
+	if (rate->interval_ns == 0) {
+		rate->interval_ns = cfg->interval_ns;
+		rate->burst = cfg->burst;
 		rate->max_burst = cfg->max_burst;
 	}
 
-	// the threshold is not exceeded, return false
-	u64 old_nmissed = rate->nmissed;
+	old_missed = rate->missed_in_window;
 	if (!bpf_ratelimited(rate))
 		return false;
 
-	// the threshold/max_burst is exceeded, notify once in a cycle
-	if (old_nmissed == 0 || (rate->max_burst > 0 &&
-				 rate->nmissed > rate->max_burst - rate->burst))
+	/* Report the first miss and configured overflow. */
+	if (old_missed == 0 || (rate->max_burst > 0 &&
+				 rate->missed_in_window >
+				     rate->max_burst - rate->burst))
 		bpf_perf_event_output(ctx, perf_map, COMPAT_BPF_F_CURRENT_CPU, rate,
-				      sizeof(struct bpf_ratelimit));
+				      sizeof(struct bpf_ratelimit_event));
 	return true;
 }
 

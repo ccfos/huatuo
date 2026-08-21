@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
 package handlers
 
 import (
-	"math"
+	"encoding/json"
+	"errors"
 	"net/http"
-	"reflect"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/log"
@@ -26,17 +26,17 @@ import (
 )
 
 type ConfigHandler struct {
-	Handlers []server.Handle
+	Handlers []server.Route
 }
 
 type ConfigRequest struct {
-	Config map[string]any `json:"config"`
+	Config map[string]json.RawMessage `json:"config"`
 }
 
 func NewConfigHandler() *ConfigHandler {
 	h := &ConfigHandler{}
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpPut, Uri: "/config", Handle: h.update},
+	h.Handlers = []server.Route{
+		{Method: http.MethodPut, Path: "/config", Handler: h.update},
 	}
 	return h
 }
@@ -47,22 +47,16 @@ func (h *ConfigHandler) update(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	for k, v := range req.Config {
-		if reflect.ValueOf(v).Kind() == reflect.Float64 {
-			f := v.(float64)
-			if f > math.MaxInt64 || f < math.MinInt64 {
-				return response.ErrInvalidRequest.WithMessage("integer value out of range")
-			}
-			v = int64(f)
-		}
-		if err := config.Set(k, v); err != nil {
+	values := make(map[string]any, len(req.Config))
+	for key, value := range req.Config {
+		values[key] = value
+	}
+	if err := config.UpdateAndSync(values); err != nil {
+		if errors.Is(err, config.ErrInvalidUpdate) {
 			return response.ErrInvalidRequest.WithMessage(err.Error())
 		}
-	}
-
-	if err := config.Sync(); err != nil {
-		log.Warnf("config sync error: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.Errorf("failed to persist config: %v", err)
+		return response.ErrInternal.WithMessage("failed to persist config")
 	}
 
 	ctx.Status(http.StatusNoContent)

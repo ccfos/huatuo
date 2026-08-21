@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@ package log
 import (
 	"bytes"
 	"errors"
+	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -139,9 +141,10 @@ func TestWithError(t *testing.T) {
 // Test AddHook related behaviors: (single, multiple, error)
 func TestAddHook(t *testing.T) {
 	tests := []struct {
-		name      string
-		hooks     []*testHook
-		wantCalls []int
+		name         string
+		hooks        []*testHook
+		wantCalls    []int
+		silentStderr bool
 	}{
 		{
 			name: "single hook",
@@ -175,12 +178,21 @@ func TestAddHook(t *testing.T) {
 					},
 				},
 			},
-			wantCalls: []int{0},
+			wantCalls:    []int{0},
+			silentStderr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			originalHooks := logger.ReplaceHooks(logrus.LevelHooks{})
+			defer logger.ReplaceHooks(originalHooks)
+
+			if tt.silentStderr {
+				restoreStderr := silenceStderr(t)
+				defer restoreStderr()
+			}
+
 			var called []int
 
 			for i, h := range tt.hooks {
@@ -388,4 +400,23 @@ func (h *testHook) Levels() []logrus.Level {
 
 func (h *testHook) Fire(entry *logrus.Entry) error {
 	return h.onFire(entry)
+}
+
+func silenceStderr(t *testing.T) func() {
+	t.Helper()
+
+	original := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stderr pipe: %v", err)
+	}
+
+	os.Stderr = w
+
+	return func() {
+		os.Stderr = original
+		_ = w.Close()
+		_, _ = io.Copy(io.Discard, r)
+		_ = r.Close()
+	}
 }

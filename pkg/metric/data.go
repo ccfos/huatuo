@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -77,6 +77,30 @@ type Data struct {
 	labelValue []string
 }
 
+// Name returns the metric name without namespace or collector prefixes.
+func (d *Data) Name() string {
+	return d.name
+}
+
+// Type returns the metric value type.
+func (d *Data) Type() int {
+	return d.valueType
+}
+
+// Help returns the metric help text.
+func (d *Data) Help() string {
+	return d.help
+}
+
+// Labels returns a copy of the metric labels.
+func (d *Data) Labels() map[string]string {
+	labels := make(map[string]string, len(d.labelKey))
+	for i, key := range d.labelKey {
+		labels[key] = d.labelValue[i]
+	}
+	return labels
+}
+
 // IsNoDataError is a function that checks whether the passed in error is the specific "NoData" error.
 func IsNoDataError(err error) bool {
 	return errors.Is(err, ErrNoData)
@@ -96,7 +120,9 @@ func newData(name string, value float64, typ int, help string, label map[string]
 	}
 
 	data.labelKey = append(data.labelKey, LabelRegion, LabelHost)
-	data.labelValue = append(data.labelValue, defaultRegion, hostname)
+	data.labelValue = append(data.labelValue,
+		labelValue(label, LabelRegion, defaultRegion),
+		labelValue(label, LabelHost, hostname))
 
 	// sort the labelKey
 	selfLabelKeys := make([]string, 0, len(label))
@@ -107,11 +133,21 @@ func newData(name string, value float64, typ int, help string, label map[string]
 
 	// add self label
 	for _, k := range selfLabelKeys {
+		if isDefaultHostLabel(k) {
+			continue
+		}
 		data.labelKey = append(data.labelKey, k)
 		data.labelValue = append(data.labelValue, label[k])
 	}
 
 	return data
+}
+
+func labelValue(label map[string]string, key, fallback string) string {
+	if value, ok := label[key]; ok {
+		return value
+	}
+	return fallback
 }
 
 // NewGaugeData creates a new instance of Data.
@@ -173,13 +209,13 @@ func newContainerData(container *pod.Container, name string, value float64, typ 
 		LabelContainerHostNamespace,
 		LabelHost)
 	data.labelValue = append(data.labelValue,
-		defaultRegion,
-		container.Hostname,
-		container.Name,
-		container.Type.String(),
-		container.Qos.String(),
-		container.LabelHostNamespace(),
-		hostname)
+		labelValue(label, LabelRegion, defaultRegion),
+		labelValue(label, LabelContainerHost, container.Hostname),
+		labelValue(label, LabelContainerName, container.Name),
+		labelValue(label, LabelContainerType, container.Type.String()),
+		labelValue(label, LabelContainerLevel, container.Qos.String()),
+		labelValue(label, LabelContainerHostNamespace, container.LabelHostNamespace()),
+		labelValue(label, LabelHost, hostname))
 
 	// sort the labelKey
 	selfLabelKeys := make([]string, 0, len(label))
@@ -190,11 +226,33 @@ func newContainerData(container *pod.Container, name string, value float64, typ 
 
 	// add self label
 	for _, k := range selfLabelKeys {
+		if isDefaultContainerLabel(k) {
+			continue
+		}
 		data.labelKey = append(data.labelKey, k)
 		data.labelValue = append(data.labelValue, label[k])
 	}
 
 	return data
+}
+
+func isDefaultHostLabel(key string) bool {
+	return key == LabelRegion || key == LabelHost
+}
+
+func isDefaultContainerLabel(key string) bool {
+	switch key {
+	case LabelRegion,
+		LabelContainerHost,
+		LabelContainerName,
+		LabelContainerType,
+		LabelContainerLevel,
+		LabelContainerHostNamespace,
+		LabelHost:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewContainerGaugeData creates a new instance of container Data.

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ type Permission string
 // User represents a user with permissions.
 type User struct {
 	ID          string
-	Name        string
 	Permissions []Permission
 	IsAdmin     bool
 }
@@ -37,19 +36,19 @@ type User struct {
 // UserConfig represents a user configuration for initialization.
 type UserConfig struct {
 	ID          string
-	Name        string
+	BearerToken string
 	Permissions []string
 	IsAdmin     bool
 }
 
 // authService handles authentication and authorization.
 type authService struct {
-	users sync.Map
+	usersByToken sync.Map
 }
 
 // NewService creates a new auth authService.
 func NewAuthService(users []UserConfig) *authService {
-	s := &authService{users: sync.Map{}}
+	s := &authService{usersByToken: sync.Map{}}
 
 	for _, cfgUser := range users {
 		permissions := make([]Permission, 0, len(cfgUser.Permissions))
@@ -57,9 +56,8 @@ func NewAuthService(users []UserConfig) *authService {
 			permissions = append(permissions, Permission(p))
 		}
 
-		s.users.Store(cfgUser.ID, User{
+		s.usersByToken.Store(cfgUser.BearerToken, User{
 			ID:          cfgUser.ID,
-			Name:        cfgUser.Name,
 			Permissions: permissions,
 			IsAdmin:     cfgUser.IsAdmin,
 		})
@@ -68,19 +66,9 @@ func NewAuthService(users []UserConfig) *authService {
 	return s
 }
 
-// Add adds a user to the authService.
-func (s *authService) Add(user User) {
-	s.users.Store(user.ID, user)
-}
-
-// Delete removes a user from the authService.
-func (s *authService) Delete(userID string) {
-	s.users.Delete(userID)
-}
-
-// GetUserById gets a user by ID.
-func (s *authService) GetUserById(userID string) (User, bool) {
-	value, exists := s.users.Load(userID)
+// Authenticate returns the principal associated with a bearer token.
+func (s *authService) Authenticate(token string) (User, bool) {
+	value, exists := s.usersByToken.Load(token)
 	if !exists {
 		return User{}, false
 	}
@@ -88,14 +76,13 @@ func (s *authService) GetUserById(userID string) (User, bool) {
 }
 
 // Validate validates if a user has access to a specific path.
-func (s *authService) Validate(userID, path string) error {
-	value, exists := s.users.Load(userID)
-	if !exists {
-		return fmt.Errorf("user %s not found", userID)
+func (s *authService) Validate(user User, request ...string) error {
+	method, path := "", ""
+	if len(request) == 1 {
+		path = request[0]
+	} else if len(request) >= 2 {
+		method, path = request[0], request[1]
 	}
-
-	user := value.(User)
-
 	// Admin has access to everything
 	if user.IsAdmin {
 		return nil
@@ -103,21 +90,21 @@ func (s *authService) Validate(userID, path string) error {
 
 	// Check if user has permission for this path
 	for _, perm := range user.Permissions {
-		if s.matchesPath(string(perm), path) {
+		permissionMethod, permissionPath := splitPermission(string(perm))
+		if (permissionMethod == "" || permissionMethod == method) && s.matchesPath(permissionPath, path) {
 			return nil
 		}
 	}
 
-	return fmt.Errorf("user %s does not have permission to access %s", userID, path)
+	return fmt.Errorf("user does not have permission to access %s %s", method, path)
 }
 
-// IsAdmin checks if a user is an admin.
-func (s *authService) IsAdmin(userID string) bool {
-	value, exists := s.users.Load(userID)
-	if !exists {
-		return false
+func splitPermission(permission string) (string, string) {
+	parts := strings.Fields(permission)
+	if len(parts) == 2 {
+		return strings.ToUpper(parts[0]), parts[1]
 	}
-	return value.(User).IsAdmin
+	return "", permission
 }
 
 // matchesPath performs simple path matching, supporting basic wildcards and path parameters.
@@ -167,21 +154,62 @@ func (s *authService) matchesSegments(permission, path string) bool {
 }
 
 // NewAuthMiddleware returns a HandlerContextFunc that validates requests using the given authService.
-func NewAuthMiddleware(svc *authService) HandlerContextFunc {
+func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFunc {
+	var publicPaths, adminPaths []string
+	if len(pathSets) > 0 {
+		publicPaths = pathSets[0]
+	}
+	if len(pathSets) > 1 {
+		adminPaths = pathSets[1]
+	}
 	return func(ctx *Context) {
-		userID := ctx.Request().Header.Get("Authorization")
-		if userID == "" {
-			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "missing user ID")
+		path := ctx.Request().URL.Path
+		if matchesAnyPath(svc, publicPaths, path) {
+			ctx.Next()
+			return
+		}
+
+		token := bearerToken(ctx.Request().Header.Get("Authorization"))
+		if token == "" {
+			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "missing bearer token")
 			ctx.Abort()
 			return
 		}
-		if err := svc.Validate(userID, ctx.Request().URL.Path); err != nil {
+		user, exists := svc.Authenticate(token)
+		if !exists {
+			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, "invalid bearer token")
+			ctx.Abort()
+			return
+		}
+		if matchesAnyPath(svc, adminPaths, path) && !user.IsAdmin {
+			response.ErrorWithCode(ctx, http.StatusForbidden, response.ErrForbidden.Code, "administrator permission required")
+			ctx.Abort()
+			return
+		}
+		if err := svc.Validate(user, ctx.Request().Method, path); err != nil {
 			response.ErrorWithCode(ctx, http.StatusForbidden, response.ErrForbidden.Code, err.Error())
 			ctx.Abort()
 			return
 		}
-		ctx.UserID = userID
-		ctx.IsAdmin = svc.IsAdmin(userID)
+		ctx.UserID = user.ID
+		ctx.IsAdmin = user.IsAdmin
 		ctx.Next()
 	}
+}
+
+func bearerToken(header string) string {
+	scheme, token, found := strings.Cut(strings.TrimSpace(header), " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}
+
+func matchesAnyPath(svc *authService, patterns []string, path string) bool {
+	for _, pattern := range patterns {
+		if svc.matchesPath(pattern, path) {
+			return true
+		}
+	}
+	return false
 }

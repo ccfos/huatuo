@@ -184,7 +184,7 @@ graph TB
             "dev": "MEM",
             "event": "EDAC",
             "type": "Corrected",
-            "timestamp": 537792166031,
+            "observed_timestamp": "2026-05-11T08:58:47.328548319Z",
             "info": "{\"err_count\":0,\"err_type\":\"Corrected\",\"err_msg\":\"memory read error\",\"label\":\"CPU_SrcID#0_Ha#0_Chan#0_DIMM#0\",\"mc_index\":0,\"top_layer\":0,\"mid_layer\":0,\"low_layer\":-1,\"addr\":7860269056,\"grain\":128,\"syndrome\":0,\"driver\":\" area:DRAM err_code:0000:009f socket:0 ha:0 channel_mask:1 rank:0\"}"
         }
     }
@@ -195,7 +195,7 @@ graph TB
     | `Device`    | 发生错误的硬件部件标识（如 `CPU/MEM`、`MEM`、`ACPI`、`PCIe 0000:01:00.0`） |
     | `Event`     | 事件子类型（`MCE`、`EDAC`、`APIC`、`AER`） |
     | `ErrType`   | 错误严重级别（见下表）                                       |
-    | `Timestamp` | 时间戳                                                       |
+    | `ObservedTimestamp` | 硬件错误发生时的 UTC 时间                              |
     | `Info`      | 具体事件的详细字段                                           |
 
     | 错误类型        | 含义                         | 典型来源                                              |

@@ -26,6 +26,7 @@ import (
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
+	"huatuo-bamai/pkg/profiling"
 )
 
 // Compile-time check: javaAggregator implements aggregator.Aggregator.
@@ -36,9 +37,12 @@ type javaAggregator struct {
 
 	formatter    output.Formatter
 	sampleOutput []profiler.SampleOutput
+	startedAt    time.Time
 }
 
 func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) {
+	pctx.IsOneShotAgg = true
+
 	f, err := aggregator.NewFormatterForOutput(pctx)
 	if err != nil {
 		return nil, err
@@ -46,6 +50,7 @@ func newJavaAggregator(pctx *pcontext.ProfilerContext) (*javaAggregator, error) 
 
 	return &javaAggregator{
 		formatter: f,
+		startedAt: time.Now(),
 	}, nil
 }
 
@@ -61,7 +66,6 @@ func (a *javaAggregator) Aggregate(rec any) {
 	defer a.mu.Unlock()
 
 	a.sampleOutput = append(a.sampleOutput, so)
-
 	if a.formatter == nil {
 		return
 	}
@@ -125,12 +129,12 @@ func (a *javaAggregator) snapshotPprof(pctx *pcontext.ProfilerContext) (any, err
 	pprofData, err := profiler.ParseCollapsedData(
 		pctx.Ctx,
 		&profiler.ParseInput{
-			StartTime:    time.Now(),
+			StartTime:    a.startedAt,
 			ProfileType:  sampleType,
 			ProfilerName: prName,
 			Data:         pprofFolded,
 			Opt:          opt,
-			PID:          pctx.PID,
+			PID:          pctx.PID(),
 		},
 	)
 	if err != nil {
@@ -146,6 +150,9 @@ func javaParseOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, st
 		return nil, "", "", err
 	}
 
-	prName := "java-" + pctx.Type
+	prName := "java-" + string(pctx.Type)
+	if pctx.Type == profiling.TypeMemory {
+		prName = "java-mem"
+	}
 	return opt, sampleType, prName, nil
 }

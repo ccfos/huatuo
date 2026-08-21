@@ -19,6 +19,8 @@ import (
 	"net/http"
 	"reflect"
 	"testing"
+
+	v1 "huatuo-bamai/apis/v1"
 )
 
 type testResponseWriter struct {
@@ -52,15 +54,9 @@ func TestSuccess(t *testing.T) {
 	if w.statusCode != http.StatusOK {
 		t.Errorf("statusCode = %d, want %d", w.statusCode, http.StatusOK)
 	}
-	resp, ok := w.body.(Response)
+	resp, ok := w.body.(v1.Response[any])
 	if !ok {
-		t.Fatalf("body is not Response: %T", w.body)
-	}
-	if resp.Code != 0 {
-		t.Errorf("resp.Code = %d, want 0", resp.Code)
-	}
-	if resp.Message != "success" {
-		t.Errorf("resp.Message = %q, want %q", resp.Message, "success")
+		t.Fatalf("body type = %T, want v1.Response[any]", w.body)
 	}
 	if !reflect.DeepEqual(resp.Data, data) {
 		t.Errorf("resp.Data = %v, want %v", resp.Data, data)
@@ -80,9 +76,9 @@ func TestCreated(t *testing.T) {
 	if w.headers["Location"] != location {
 		t.Errorf("Location header = %q, want %q", w.headers["Location"], location)
 	}
-	resp, ok := w.body.(Response)
+	resp, ok := w.body.(v1.Response[any])
 	if !ok {
-		t.Fatalf("body is not Response: %T", w.body)
+		t.Fatalf("body type = %T, want v1.Response[any]", w.body)
 	}
 	if !reflect.DeepEqual(resp.Data, data) {
 		t.Errorf("resp.Data = %v, want %v", resp.Data, data)
@@ -108,15 +104,15 @@ func TestErrorWithAPIError(t *testing.T) {
 	if w.statusCode != http.StatusNotFound {
 		t.Errorf("statusCode = %d, want %d", w.statusCode, http.StatusNotFound)
 	}
-	resp, ok := w.body.(Response)
+	resp, ok := w.body.(v1.ErrorResponse)
 	if !ok {
-		t.Fatalf("body is not Response: %T", w.body)
+		t.Fatalf("body type = %T, want v1.ErrorResponse", w.body)
 	}
-	if resp.Code != 404 {
-		t.Errorf("resp.Code = %d, want 404", resp.Code)
+	if resp.Error.Code != v1.ErrorCodeNotFound {
+		t.Errorf("error code = %q, want %q", resp.Error.Code, v1.ErrorCodeNotFound)
 	}
-	if resp.Message != "not found" {
-		t.Errorf("resp.Message = %q, want %q", resp.Message, "not found")
+	if resp.Error.Message != "not found" {
+		t.Errorf("error message = %q, want %q", resp.Error.Message, "not found")
 	}
 }
 
@@ -129,34 +125,34 @@ func TestErrorWithPlainError(t *testing.T) {
 	if w.statusCode != http.StatusInternalServerError {
 		t.Errorf("statusCode = %d, want %d", w.statusCode, http.StatusInternalServerError)
 	}
-	resp, ok := w.body.(Response)
+	resp, ok := w.body.(v1.ErrorResponse)
 	if !ok {
-		t.Fatalf("body is not Response: %T", w.body)
+		t.Fatalf("body type = %T, want v1.ErrorResponse", w.body)
 	}
-	if resp.Code != 500 {
-		t.Errorf("resp.Code = %d, want 500", resp.Code)
+	if resp.Error.Code != v1.ErrorCodeInternal {
+		t.Errorf("error code = %q, want %q", resp.Error.Code, v1.ErrorCodeInternal)
 	}
-	if resp.Message != "something went wrong" {
-		t.Errorf("resp.Message = %q, want %q", resp.Message, "something went wrong")
+	if resp.Error.Message != "internal error" {
+		t.Errorf("error message = %q, want %q", resp.Error.Message, "internal error")
 	}
 }
 
 func TestErrorWithCode(t *testing.T) {
 	w := &testResponseWriter{}
 
-	ErrorWithCode(w, http.StatusBadRequest, 40001, "missing required field")
+	ErrorWithCode(w, http.StatusBadRequest, v1.ErrorCodeInvalidRequest, "missing required field")
 
 	if w.statusCode != http.StatusBadRequest {
 		t.Errorf("statusCode = %d, want %d", w.statusCode, http.StatusBadRequest)
 	}
-	resp, ok := w.body.(Response)
+	resp, ok := w.body.(v1.ErrorResponse)
 	if !ok {
-		t.Fatalf("body is not Response: %T", w.body)
+		t.Fatalf("body type = %T, want v1.ErrorResponse", w.body)
 	}
-	if resp.Code != 40001 {
-		t.Errorf("resp.Code = %d, want 40001", resp.Code)
+	if resp.Error.Code != v1.ErrorCodeInvalidRequest {
+		t.Errorf("error code = %q, want %q", resp.Error.Code, v1.ErrorCodeInvalidRequest)
 	}
-	if resp.Message != "missing required field" {
-		t.Errorf("resp.Message = %q, want %q", resp.Message, "missing required field")
+	if resp.Error.Message != "missing required field" {
+		t.Errorf("error message = %q, want %q", resp.Error.Message, "missing required field")
 	}
 }

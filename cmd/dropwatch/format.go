@@ -18,10 +18,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/linkstatus"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/packet"
@@ -40,16 +41,47 @@ type writer interface {
 type textWriter struct{ w io.Writer }
 
 func (s *textWriter) Write(ev *types.DropWatchTracing) error {
-	if _, err := fmt.Fprintf(s.w, "%s %s len=%d dev=%s pid=%d[%s] addr=%s\n",
-		ev.ObservedTimestamp, ev.Layers,
-		ev.PacketLen, ev.NetdevName, ev.Pid, ev.Comm, ev.PacketSkbAddr); err != nil {
+	line := make([]byte, 0, 256)
+	line = append(line, ev.ObservedTimestamp...)
+	line = append(line, ' ')
+	line = append(line, ev.Layers.String()...)
+	line = append(line, " reason="...)
+	if ev.DropReasonGroup != "" {
+		line = append(line, ev.DropReasonGroup...)
+		line = append(line, '/')
+	}
+	line = append(line, ev.DropReason...)
+	if ev.DropSource != "" {
+		line = append(line, " drop_source="...)
+		line = append(line, ev.DropSource...)
+	}
+	if ev.DropLocation != "" {
+		line = append(line, " drop_location="...)
+		line = append(line, ev.DropLocation...)
+	}
+	line = append(line, " len="...)
+	line = strconv.AppendUint(line, uint64(ev.PacketLenBytes), 10)
+	line = append(line, " dev="...)
+	line = append(line, ev.NetdevName...)
+	line = append(line, " pid="...)
+	line = strconv.AppendUint(line, ev.PID, 10)
+	line = append(line, '[')
+	line = append(line, ev.Comm...)
+	line = append(line, "] addr="...)
+	line = append(line, ev.PacketSkbAddr...)
+	line = append(line, " source="...)
+	line = append(line, ev.Source...)
+	line = append(line, '\n')
+	n, err := s.w.Write(line)
+	if err != nil {
 		return err
 	}
+	if n != len(line) {
+		return io.ErrShortWrite
+	}
 
-	if ev.Stack != "" {
-		if err := symbol.FormatStackLines(s.w, ev.Stack); err != nil {
-			return err
-		}
+	if err := symbol.FormatStackLines(s.w, ev.Stack); err != nil {
+		return err
 	}
 
 	return nil
@@ -63,7 +95,10 @@ func (s *jsonWriter) Write(ev *types.DropWatchTracing) error {
 		return err
 	}
 	b = append(b, '\n')
-	_, err = s.w.Write(b)
+	n, err := s.w.Write(b)
+	if err == nil && n != len(b) {
+		return io.ErrShortWrite
+	}
 	return err
 }
 
@@ -73,68 +108,92 @@ func (s *socketWriter) Write(ev *types.DropWatchTracing) error {
 	return s.client.Send(ev)
 }
 
-type writerOption struct {
-	outputFmt string
-	sockPath  string
-	toolName  string
-	version   string
-	taskID    string
+type writerOptions struct {
+	outputFormat string
+	socketPath   string
+	toolName     string
+	version      string
+	taskID       string
 }
 
-func newWriter(opt *writerOption) (writer, func(), error) {
-	if opt.sockPath != "" {
+func newWriter(output io.Writer, options *writerOptions) (writer, func() error, error) {
+	if options.socketPath != "" {
 		client, err := toolstream.NewClient(toolstream.ClientOptions{
-			SockPath: opt.sockPath,
-			ToolName: opt.toolName,
-			Version:  opt.version,
-			TaskID:   opt.taskID,
+			SockPath: options.socketPath,
+			ToolName: options.toolName,
+			Version:  options.version,
+			TaskID:   options.taskID,
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("dropwatch: --output-storage: %w", err)
+			return nil, nil, fmt.Errorf("create event sink: %w", err)
 		}
 		return &socketWriter{client: client}, client.End, nil
 	}
 
-	switch opt.outputFmt {
+	switch options.outputFormat {
 	case "json":
-		return &jsonWriter{w: os.Stdout}, func() {}, nil
+		return &jsonWriter{w: output}, func() error { return nil }, nil
+	case "text":
+		return &textWriter{w: output}, func() error { return nil }, nil
 	default:
-		return &textWriter{w: os.Stdout}, func() {}, nil
+		return nil, nil, fmt.Errorf("unsupported output format %q", options.outputFormat)
 	}
 }
 
-func formatEvent(ev *dropPacketEvent) *types.DropWatchTracing {
+func formatEvent(ev *abi.DropwatchPacketEvent, names dropReason, sourceType string) *types.DropWatchTracing {
 	pkt := packet.Hdr{
-		EthProto:  ev.Raw.EthProto,
-		RawLen:    uint8(ev.Raw.RawLen),
-		HasEthHdr: uint8(ev.Raw.HasEthHdr),
-		SkState:   uint8(ev.Raw.SkState),
-		Raw:       ev.Raw.Raw,
+		EthProto:  ev.PktHdr.EthProto,
+		RawLen:    uint8(ev.PktHdr.RawLen),
+		HasEthHdr: uint8(ev.PktHdr.HasEthHdr),
+		SkState:   uint8(ev.PktHdr.SkState),
+		Raw:       ev.PktHdr.Raw,
 	}
 
 	p, err := packet.Parse(&pkt)
 	if err != nil {
-		log.Debugf("dropwatch: parse packet: %v", err)
+		log.WithError(err).Debug("parse dropwatch packet")
 	}
 
 	frames := symbol.KsymStackStrs(ev.Stack[:], symbol.KsymStackMaxDepth)
 	stackStr := strings.Join(frames, "\n")
+	dropSourceValue := abi.DropwatchDropSource(ev.Meta.DropSource)
+	dropSource := dropSourceName(dropSourceValue)
+	dropReason := names.Resolve(ev.Meta.DropReason)
+	if dropSourceValue == abi.DropwatchDropSourceHardware {
+		dropReason = bytesutil.ToStr(ev.Meta.TrapName[:])
+	}
 
 	return &types.DropWatchTracing{
 		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+		DropSource:          dropSource,
+		DropReason:          dropReason,
+		DropReasonGroup:     bytesutil.ToStr(ev.Meta.TrapGroupName[:]),
+		DropLocation:        kernaddr.Format(ev.Meta.DropLocation),
 		Comm:                bytesutil.ToStr(ev.Meta.Comm[:]),
-		Pid:                 ev.Meta.TgidPid >> 32,
-		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemoryCgroupCSSAddr),
-		NetNamespaceCookie:  ev.Meta.NetCookie,
-		NetNamespaceInode:   ev.Meta.NetInode,
-		NetdevName:          bytesutil.ToStr(ev.Meta.NetdevName[:]),
-		NetdevIfindex:       ev.Meta.NetdevIfindex,
-		NetdevQueueMapping:  ev.Meta.NetdevQueueMapping,
-		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.NetdevFlags),
-		PacketSkbAddr:       kernaddr.Format(ev.Meta.SkbAddr),
-		PacketEthProto:      fmt.Sprintf("0x%04x", ev.Raw.EthProto),
-		PacketLen:           ev.Raw.PktLen,
+		PID:                 ev.Meta.TGIDPID >> 32,
+		MemoryCgroupCSSAddr: kernaddr.Format(ev.Meta.MemcgCSSAddr),
+		NetNamespaceCookie:  ev.Meta.NetNamespaceCookie,
+		NetNamespaceInum:    ev.Meta.NetNamespaceInum,
+		NetdevName:          bytesutil.ToStr(ev.Meta.DevName[:]),
+		NetdevIfindex:       ev.Meta.Ifindex,
+		NetdevQueueMapping:  ev.Meta.QueueMapping,
+		NetdevLinkStatus:    linkstatus.FlagsRaw(ev.Meta.DevFlags),
+		PacketSkbAddr:       kernaddr.Format(ev.Meta.SKBAddr),
+		PacketEthProto:      "0x" + strconv.FormatUint(uint64(ev.PktHdr.EthProto), 16),
+		PacketLenBytes:      ev.PktHdr.PacketLenBytes,
 		Layers:              p,
 		Stack:               stackStr,
+		Source:              sourceType,
+	}
+}
+
+func dropSourceName(source abi.DropwatchDropSource) string {
+	switch source {
+	case abi.DropwatchDropSourceSoftware:
+		return dropSourceSoftware
+	case abi.DropwatchDropSourceHardware:
+		return dropSourceHardware
+	default:
+		return "unknown"
 	}
 }

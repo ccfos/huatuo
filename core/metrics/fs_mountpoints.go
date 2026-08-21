@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -47,6 +47,7 @@ func (c *mountPointCollector) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
+	cfg := configSnapshot()
 	f, err := matcher.NewValueMatcher(cfg.MountPointStat.MountPointsIncluded, "")
 	if err != nil {
 		return nil, fmt.Errorf("mount point filter: %w", err)

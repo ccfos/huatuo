@@ -15,6 +15,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -84,7 +85,7 @@ func main() {
 	}
 }
 
-func mainAction(c *cli.Context) error {
+func mainAction(c *cli.Context) (returnErr error) {
 	cfg, filters, err := loadConfig(c)
 	if err != nil {
 		return err
@@ -96,15 +97,22 @@ func mainAction(c *cli.Context) error {
 	}
 
 	if client != nil {
-		defer client.End()
+		defer func() {
+			if err := client.End(); err != nil {
+				returnErr = errors.Join(
+					returnErr,
+					fmt.Errorf("close toolstream: %w", err),
+				)
+			}
+		}()
 	}
 
-	if err := bpf.NewManager(&bpf.Option{
+	if err := bpf.Init(&bpf.Option{
 		KeepaliveTimeout: int(cfg.durationSecond),
 	}); err != nil {
 		return fmt.Errorf("init bpf: %w", err)
 	}
-	defer bpf.Close()
+	defer bpf.Shutdown()
 
 	result, err := runTrace(c.Context, c.String(cliFlagBpfPath), cfg, filters)
 	if err != nil {

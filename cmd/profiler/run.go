@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,19 +16,26 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 
 	"github.com/urfave/cli/v2"
 
 	"huatuo-bamai/internal/log"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/registry"
+	"huatuo-bamai/pkg/profiling"
 )
 
-func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
-	typ := cliCtx.String("type")
-	lang := cliCtx.String("language")
+func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) (returnErr error) {
+	typ := profiling.Type(cliCtx.String("type"))
+	lang := profiling.Language(cliCtx.String("language"))
 
-	if isNativeLang(lang) {
+	implementation, ok := profiling.ImplementationFor(lang)
+	if !ok {
+		return fmt.Errorf("no profiling implementation for language %q", lang)
+	}
+	if implementation == profiling.ImplementationNative {
 		cleanup, err := initBpfManager(cliCtx.Int("duration"))
 		if err != nil {
 			return err
@@ -42,24 +49,36 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) error {
 	}
 	defer pctx.Cancel()
 	if pctx.ToolstreamClient != nil {
-		defer pctx.ToolstreamClient.End()
+		defer func() {
+			if err := pctx.ToolstreamClient.End(); err != nil {
+				returnErr = errors.Join(
+					returnErr,
+					fmt.Errorf("close toolstream: %w", err),
+				)
+			}
+		}()
 	}
 
-	meta, err := registry.Get(lang, typ)
+	if cliCtx.Bool("enable-pprof") {
+		server, err := startPprofServer(pctx.Ctx, profilerPprofAddress)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := server.Close(); err != nil {
+				log.Errorf("close pprof server on %s: %v", profilerPprofAddress, err)
+			}
+		}()
+
+		log.Infof("pprof server started on %s", profilerPprofAddress)
+	}
+
+	meta, err := registry.Get(implementation, typ)
 	if err != nil {
 		return err
 	}
 
-	log.Infof("using profiler: %s-%s (%s)", meta.LangOrImpl, meta.Type, meta.Description)
+	log.Infof("using profiler: %s-%s (%s)", meta.Implementation, meta.Type, meta.Description)
 
 	return registry.Profile(pctx, meta)
-}
-
-func isNativeLang(lang string) bool {
-	switch lang {
-	case "go", "c", "c++":
-		return true
-	default:
-		return false
-	}
 }

@@ -14,6 +14,11 @@
 
 package collector
 
+import (
+	"slices"
+	"sync/atomic"
+)
+
 // Config holds metric collector configuration used by the package at runtime.
 type Config struct {
 	AscendNPU struct {
@@ -63,13 +68,29 @@ type Config struct {
 	}
 }
 
-var cfg = &Config{}
+var currentConfig atomic.Pointer[Config]
 
-// Set updates the package level config.
+func init() {
+	currentConfig.Store(&Config{})
+}
+
+// Set atomically publishes an immutable copy of the metric collector config.
 func Set(c *Config) {
+	currentConfig.Store(c.Clone())
+}
+
+func configSnapshot() *Config {
+	return currentConfig.Load()
+}
+
+// Clone returns a deep copy suitable for immutable publication.
+func (c *Config) Clone() *Config {
 	if c == nil {
-		cfg = &Config{}
-		return
+		return &Config{}
 	}
-	cfg = c
+
+	dst := *c
+	dst.NetdevDCB.DeviceList = slices.Clone(c.NetdevDCB.DeviceList)
+	dst.NetdevHW.DeviceList = slices.Clone(c.NetdevHW.DeviceList)
+	return &dst
 }

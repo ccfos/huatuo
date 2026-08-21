@@ -36,7 +36,7 @@ const (
 
 // EventsHandler handles kernel event streaming over SSE.
 type EventsHandler struct {
-	Handlers          []server.Handle
+	Handlers          []server.Route
 	maxClients        int
 	keepAliveInterval time.Duration
 	activeClients     atomic.Int32
@@ -60,8 +60,8 @@ func NewEventsHandler(maxClients, keepAliveIntervalSecs int) *EventsHandler {
 		maxClients:        maxClients,
 		keepAliveInterval: keepAlive,
 	}
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpPost, Uri: "/watch", Handle: h.watch},
+	h.Handlers = []server.Route{
+		{Method: http.MethodPost, Path: "/watch", Handler: h.watch},
 	}
 	return h
 }

@@ -1,3 +1,4 @@
+pgfault 123456
 thp_split_pmd 3902
 thp_split_pud 28
 thp_zero_page_alloc 0

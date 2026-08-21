@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
 package handlers
 
 import (
-	"time"
+	"context"
+	"errors"
 
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
 	"huatuo-bamai/internal/job"
@@ -29,49 +29,57 @@ import (
 
 // ServerOptions groups the dependencies required to start the API server.
 type ServerOptions struct {
-	Addr             string
-	PromReg          *prometheus.Registry
-	ProfilingManager *job.Manager
-	TracingManager   *job.Manager
-	VersionInfo      *version.Info
+	Addr            string
+	PromReg         *prometheus.Registry
+	JobManager      *job.Manager
+	ProfileService  profiling.ProfileQueryService
+	ProfilingConfig profiling.Config
+	AuthUsers       []server.UserConfig
+	EnablePProf     bool
+	VersionInfo     *version.Info
+	RateLimit       *server.RateLimitConfig
+	Ready           func(context.Context) error
 }
 
-// ServerStart starts the API service with the given configuration.
-func ServerStart(opts ServerOptions) error {
+// Start starts the API service with the given configuration.
+func Start(opts *ServerOptions) (*server.Server, error) {
+	if opts == nil {
+		return nil, errors.New("start API server: options are required")
+	}
+	if opts.JobManager == nil {
+		return nil, errors.New("start API server: job manager is required")
+	}
 	httpServer := server.NewServer(&server.Config{
-		EnablePProf:     false,
-		EnableRateLimit: false,
-		AuthUsers:       getUserConfigs(),
-		PromReg:         opts.PromReg,
-		VersionInfo:     opts.VersionInfo,
+		RequireAuth: true,
+		EnablePProf: opts.EnablePProf,
+		RateLimit:   opts.RateLimit,
+		AuthUsers:   opts.AuthUsers,
+		AdminPaths: []string{
+			"/v1/profiles/flamegraph/**",
+		},
+		PromReg:     opts.PromReg,
+		VersionInfo: opts.VersionInfo,
+		Ready:       opts.Ready,
 	})
 
 	// Register trace routes
-	httpServer.MustRegisterRoutes("/v1/traces", trace.NewHandler(opts.TracingManager).Handlers)
-	httpServer.MustRegisterRoutes("/v1/profiles", profiling.NewHandler(opts.ProfilingManager).Handlers)
+	httpServer.MustRegisterRoutes(
+		"/v1/traces",
+		trace.NewHandler(opts.JobManager).Handlers,
+	)
+	profileHandlers := profiling.DisabledHandlers()
+	if opts.ProfileService != nil {
+		profileHandlers = profiling.NewHandler(
+			opts.JobManager,
+			opts.ProfileService,
+			opts.ProfilingConfig,
+		).Handlers
+	}
+	httpServer.MustRegisterRoutes("/v1/profiles", profileHandlers)
 
-	_ = httpServer.Run(&server.Option{
-		Addr:          opts.Addr,
-		RetryMaxTime:  5 * time.Minute,
-		RetryInterval: 1 * time.Minute,
-	})
-
-	return nil
-}
-
-// getUserConfigs converts apiserver config users to server.UserConfig.
-func getUserConfigs() []server.UserConfig {
-	cfg := config.Get()
-	users := make([]server.UserConfig, 0, len(cfg.Auth.Users))
-
-	for _, u := range cfg.Auth.Users {
-		users = append(users, server.UserConfig{
-			ID:          u.ID,
-			Name:        u.Name,
-			Permissions: u.Permissions,
-			IsAdmin:     u.IsAdmin,
-		})
+	if err := httpServer.Start(opts.Addr); err != nil {
+		return nil, err
 	}
 
-	return users
+	return httpServer, nil
 }

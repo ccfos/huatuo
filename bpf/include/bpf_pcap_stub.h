@@ -5,7 +5,7 @@
 #include <bpf/bpf_core_read.h>
 
 #include "bpf_common.h"
-#include "vmlinux_net.h"
+#include "bpf_skbuff.h"
 
 /*
  * pcap_stub_l{2,3}: reserved-NOP stub functions patched at load time by

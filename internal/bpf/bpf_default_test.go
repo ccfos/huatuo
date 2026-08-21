@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !didi
-
 package bpf
 
 import (
@@ -28,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	testutils "huatuo-bamai/internal/testing"
 
@@ -45,23 +44,18 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestManager_InitAndClose(t *testing.T) {
-	// Just verify they don't panic.
-	if err := NewManager(nil); err != nil {
-		// It might fail on non-Linux or without permissions.
-		t.Fatalf("InitBpfManager returned: %v", err)
-	} else {
-		Close()
-	}
+func TestInitAndShutdown(t *testing.T) {
+	require.NoError(t, Init(nil))
+	Shutdown()
 }
 
-// TestLoad* tests the basic logic of LoadBpfFromBytes and LoadBpf.
-func TestLoadBpfFromBytes_InvalidELF(t *testing.T) {
-	_, err := LoadBpfFromBytes("invalid", []byte("not-an-elf"), nil)
+// TestLoad* tests the basic logic of LoadBPFFromBytes and LoadBPF.
+func TestLoadBPFFromBytes_InvalidELF(t *testing.T) {
+	_, err := LoadBPFFromBytes("invalid", []byte("not-an-elf"), nil)
 	require.Error(t, err)
 }
 
-// Empty names plus any cleaned form starting with ".." would let LoadBpf
+// Empty names plus any cleaned form starting with ".." would let LoadBPF
 // escape DefaultObjDir once joined.
 var rejectedNames = []string{
 	"",
@@ -104,56 +98,56 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
-func TestLoadBpfFromBytes_InvalidName(t *testing.T) {
+func TestLoadBPFFromBytes_InvalidName(t *testing.T) {
 	for _, name := range rejectedNames {
 		t.Run(name, func(t *testing.T) {
-			_, err := LoadBpfFromBytes(name, []byte("x"), nil)
+			_, err := LoadBPFFromBytes(name, []byte("x"), nil)
 			if !errors.Is(err, errInvalidName) {
-				t.Errorf("LoadBpfFromBytes(%q) = %v, want %v", name, err, errInvalidName)
+				t.Errorf("LoadBPFFromBytes(%q) = %v, want %v", name, err, errInvalidName)
 			}
 		})
 	}
 }
 
-func TestLoadBpf_InvalidName(t *testing.T) {
+func TestLoadBPF_InvalidName(t *testing.T) {
 	for _, name := range rejectedNames {
 		t.Run(name, func(t *testing.T) {
-			_, err := LoadBpf(name, nil)
+			_, err := LoadBPF(name, nil)
 			if !errors.Is(err, errInvalidName) {
-				t.Errorf("LoadBpf(%q) = %v, want %v", name, err, errInvalidName)
+				t.Errorf("LoadBPF(%q) = %v, want %v", name, err, errInvalidName)
 			}
 		})
 	}
 }
 
-func TestLoadBpf_FileNotFound(t *testing.T) {
+func TestLoadBPF_FileNotFound(t *testing.T) {
 	old := DefaultObjDir
 	DefaultObjDir = t.TempDir()
 	t.Cleanup(func() { DefaultObjDir = old })
 
-	_, err := LoadBpf("definitely_not_exists.o", nil)
+	_, err := LoadBPF("definitely_not_exists.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_DefaultObjDir_Empty(t *testing.T) {
+func TestLoadBPF_DefaultObjDir_Empty(t *testing.T) {
 	old := DefaultObjDir
 	DefaultObjDir = ""
 	t.Cleanup(func() { DefaultObjDir = old })
 
-	_, err := LoadBpf("definitely_not_exists.o", nil)
+	_, err := LoadBPF("definitely_not_exists.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_DefaultObjDir_Relative(t *testing.T) {
+func TestLoadBPF_DefaultObjDir_Relative(t *testing.T) {
 	old := DefaultObjDir
 	DefaultObjDir = "./definitely_not_exists_dir"
 	t.Cleanup(func() { DefaultObjDir = old })
 
-	_, err := LoadBpf("definitely_not_exists.o", nil)
+	_, err := LoadBPF("definitely_not_exists.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_DefaultObjDir_Unreadable(t *testing.T) {
+func TestLoadBPF_DefaultObjDir_Unreadable(t *testing.T) {
 	t.Helper()
 	old := DefaultObjDir
 	unreadableDir := filepath.Join(t.TempDir(), "nope")
@@ -164,11 +158,11 @@ func TestLoadBpf_DefaultObjDir_Unreadable(t *testing.T) {
 		_ = os.Chmod(unreadableDir, 0o700)
 	})
 
-	_, err := LoadBpf("anything.o", nil)
+	_, err := LoadBPF("anything.o", nil)
 	require.Error(t, err)
 }
 
-func TestLoadBpf_LoadsFromDir(t *testing.T) {
+func TestLoadBPF_LoadsFromDir(t *testing.T) {
 	t.Helper()
 	requireBPFPermission(t)
 
@@ -181,7 +175,7 @@ func TestLoadBpf_LoadsFromDir(t *testing.T) {
 	objPath := filepath.Join(DefaultObjDir, "test_minimal.elf")
 	require.NoError(t, os.WriteFile(objPath, objBytes, 0o600))
 
-	b, err := LoadBpf("test_minimal.elf", nil)
+	b, err := LoadBPF("test_minimal.elf", nil)
 	if errors.Is(err, ebpf.ErrNotSupported) {
 		t.Skipf("skipping: ebpf not supported: %v", err)
 	}
@@ -196,10 +190,10 @@ func TestLoadBpf_LoadsFromDir(t *testing.T) {
 // Covered functions:
 // - Name()
 // - MapIDByName(name string) uint32
-// - ProgIDByName(name string) uint32
+// - ProgramIDByName(name string) uint32
 // - String() string
 // - Info() (*Info, error)
-// - Loaded() (bool, error)
+// - IsLoaded() (bool, error)
 // - Close() error
 func TestDefaultBPF_Lifecycle_And_Accessors(t *testing.T) {
 	b := loadMinimalBpfFromBytes(t)
@@ -221,9 +215,9 @@ func TestDefaultBPF_Lifecycle_And_Accessors(t *testing.T) {
 			},
 		},
 		{
-			"ProgIDByName",
+			"ProgramIDByName",
 			func(t *testing.T) {
-				assert.Zero(t, b.ProgIDByName("non_existent_prog"))
+				assert.Zero(t, b.ProgramIDByName("non_existent_prog"))
 			},
 		},
 		{
@@ -244,9 +238,9 @@ func TestDefaultBPF_Lifecycle_And_Accessors(t *testing.T) {
 			},
 		},
 		{
-			"Loaded",
+			"IsLoaded",
 			func(t *testing.T) {
-				loaded, err := b.Loaded()
+				loaded, err := b.IsLoaded()
 				require.NoError(t, err)
 				assert.True(t, loaded)
 			},
@@ -348,9 +342,9 @@ func TestDefaultBPF_MapOperations(t *testing.T) {
 		{
 			name: "Error_InvalidMapID",
 			fn: func(t *testing.T) {
-				assert.Panics(t, func() {
-					_ = b.WriteMapItems(99999, []MapItem{{Key: key, Value: val}})
-				})
+				err := b.WriteMapItems(99999, []MapItem{{Key: key, Value: val}})
+				require.ErrorIs(t, err, ErrMapNotFound)
+				assert.EqualError(t, err, "bpf: map not found: id 99999")
 			},
 		},
 	}
@@ -360,13 +354,51 @@ func TestDefaultBPF_MapOperations(t *testing.T) {
 	}
 }
 
+func TestDefaultBPF_DumpPerCPUMap(t *testing.T) {
+	requireBPFPermission(t)
+
+	m, err := ebpf.NewMap(&ebpf.MapSpec{
+		Type:       ebpf.PerCPUArray,
+		KeySize:    4,
+		ValueSize:  8,
+		MaxEntries: 1,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, m.Close()) })
+
+	possibleCPUs, err := ebpf.PossibleCPU()
+	require.NoError(t, err)
+
+	want := make([]uint64, possibleCPUs)
+	for cpu := range want {
+		want[cpu] = uint64(cpu + 1)
+	}
+	require.NoError(t, m.Put(uint32(0), want))
+
+	const mapID = uint32(1)
+	b := &defaultBPF{
+		mapsByID: map[uint32]loadedMap{
+			mapID: {name: "per_cpu", handle: m},
+		},
+	}
+
+	items, err := b.DumpMap(mapID)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, []byte{0, 0, 0, 0}, items[0].Key)
+
+	got := make([]uint64, possibleCPUs)
+	require.NoError(t, binary.Read(bytes.NewReader(items[0].Value), binary.LittleEndian, &got))
+	assert.Equal(t, want, got)
+}
+
 // TestDefaultBPF_Attach_SpecTypes tests the Attach function with various program types.
 //
 // Covered functions:
 // - Attach() error
-// - attachTracepoint(progID uint32, system, symbol string) error
-// - attachKprobe(progID uint32, symbol string, isRetprobe bool) error
-// - attachRawTracepoint(progID uint32, symbol string) error
+// - attachTracepoint(opts tracepointAttachOptions) error
+// - attachKprobe(opts kprobeAttachOptions) error
+// - attachRawTracepoint(opts rawTracepointAttachOptions) error
 func TestDefaultBPF_Attach(t *testing.T) {
 	b := loadMinimalBpfFromBytes(t)
 
@@ -401,7 +433,9 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 		perfOpt  *struct {
 			SamplePeriod uint64
 			SampleFreq   uint64
-			CPUID        int
+			CPUIDs       []int
+			Type         uint32
+			Config       uint64
 		}
 		wantErr bool
 	}{
@@ -430,8 +464,14 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 			perfOpt: &struct {
 				SamplePeriod uint64
 				SampleFreq   uint64
-				CPUID        int
-			}{SampleFreq: 99},
+				CPUIDs       []int
+				Type         uint32
+				Config       uint64
+			}{
+				SampleFreq: 99,
+				Type:       unix.PERF_TYPE_SOFTWARE,
+				Config:     unix.PERF_COUNT_SW_CPU_CLOCK,
+			},
 			wantErr: false,
 		},
 		{
@@ -441,7 +481,9 @@ func TestDefaultBPF_AttachWithOptions_SpecTypes(t *testing.T) {
 			perfOpt: &struct {
 				SamplePeriod uint64
 				SampleFreq   uint64
-				CPUID        int
+				CPUIDs       []int
+				Type         uint32
+				Config       uint64
 			}{SampleFreq: 0},
 			wantErr: true,
 		},
@@ -540,11 +582,11 @@ func TestDefaultBPF_EventPipe_Flow(t *testing.T) {
 	}
 }
 
-func TestDefaultBPF_WaitDetachByBreaker(t *testing.T) {
+func TestDefaultBPF_DetachOnContextDone(t *testing.T) {
 	b := &defaultBPF{}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	b.WaitDetachByBreaker(ctx, cancel)
+	b.DetachOnContextDone(ctx, cancel)
 }
 
 func loadMinimalObjBytes(t *testing.T) []byte {
@@ -563,7 +605,7 @@ func loadMinimalBpfFromBytes(t *testing.T) *defaultBPF {
 	requireBPFPermission(t)
 
 	objBytes := loadMinimalObjBytes(t)
-	obj, err := LoadBpfFromBytes("test_minimal.elf", objBytes, nil)
+	obj, err := LoadBPFFromBytes("test_minimal.elf", objBytes, nil)
 	if errors.Is(err, ebpf.ErrNotSupported) {
 		t.Skipf("skipping: ebpf not supported: %v", err)
 	}
@@ -640,7 +682,7 @@ func TestDefaultBPF_CloseOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	hasLinks := false
-	for _, p := range b.programSpecs {
+	for _, p := range b.programsByID {
 		if len(p.links) > 0 {
 			hasLinks = true
 			break
@@ -664,7 +706,7 @@ func TestDefaultBPF_DetachOrder(t *testing.T) {
 	require.NoError(t, err)
 
 	hasLinks := false
-	for _, p := range b.programSpecs {
+	for _, p := range b.programsByID {
 		if len(p.links) > 0 {
 			hasLinks = true
 			break
@@ -676,7 +718,7 @@ func TestDefaultBPF_DetachOrder(t *testing.T) {
 	require.NoError(t, detachErr, "Detach should only close links and perf event, not programs or maps")
 
 	noLinks := true
-	for _, p := range b.programSpecs {
+	for _, p := range b.programsByID {
 		if len(p.links) > 0 {
 			noLinks = false
 			break
@@ -690,7 +732,10 @@ func TestDefaultBPF_Close_Idempotent(t *testing.T) {
 
 	require.NoError(t, b.Close())
 	require.NoError(t, b.Close())
-	require.True(t, b.closed.Load())
+
+	loaded, err := b.IsLoaded()
+	require.NoError(t, err)
+	require.False(t, loaded)
 }
 
 func TestDefaultBPF_Detach_AfterClose(t *testing.T) {
@@ -698,4 +743,132 @@ func TestDefaultBPF_Detach_AfterClose(t *testing.T) {
 
 	require.NoError(t, b.Close())
 	require.NoError(t, b.Detach())
+}
+
+func TestDefaultBPF_OperationsAfterClose(t *testing.T) {
+	b := loadMinimalBpfFromBytes(t)
+	mapID := b.MapIDByName("counter_map")
+	require.NotZero(t, mapID)
+	require.NoError(t, b.Close())
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "info",
+			run: func() error {
+				_, err := b.Info()
+				return err
+			},
+		},
+		{
+			name: "attach",
+			run:  b.Attach,
+		},
+		{
+			name: "attach with options",
+			run: func() error {
+				return b.AttachWithOptions(nil)
+			},
+		},
+		{
+			name: "event pipe",
+			run: func() error {
+				_, err := b.EventPipe(t.Context(), mapID, 1)
+				return err
+			},
+		},
+		{
+			name: "event pipe by name",
+			run: func() error {
+				_, err := b.EventPipeByName(t.Context(), "counter_map", 1)
+				return err
+			},
+		},
+		{
+			name: "attach and event pipe",
+			run: func() error {
+				_, err := b.AttachAndEventPipe(t.Context(), "counter_map", 1)
+				return err
+			},
+		},
+		{
+			name: "read map",
+			run: func() error {
+				_, err := b.ReadMap(mapID, make([]byte, 4))
+				return err
+			},
+		},
+		{
+			name: "write map",
+			run: func() error {
+				return b.WriteMapItems(mapID, nil)
+			},
+		},
+		{
+			name: "delete map",
+			run: func() error {
+				return b.DeleteMapItems(mapID, nil)
+			},
+		},
+		{
+			name: "dump map",
+			run: func() error {
+				_, err := b.DumpMap(mapID)
+				return err
+			},
+		},
+		{
+			name: "dump map by name",
+			run: func() error {
+				_, err := b.DumpMapByName("counter_map")
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.ErrorIs(t, tt.run(), ErrClosed)
+		})
+	}
+}
+
+func TestDefaultBPF_CloseWaitsForOperation(t *testing.T) {
+	b := &defaultBPF{}
+	b.mu.RLock()
+
+	closeStarted := make(chan struct{})
+	closeDone := make(chan error, 1)
+	go func() {
+		close(closeStarted)
+		closeDone <- b.Close()
+	}()
+	<-closeStarted
+
+	deadline := time.Now().Add(time.Second)
+	for b.mu.TryRLock() {
+		b.mu.RUnlock()
+		if time.Now().After(deadline) {
+			b.mu.RUnlock()
+			t.Fatal("Close() did not wait for the operation lock")
+		}
+		runtime.Gosched()
+	}
+
+	select {
+	case err := <-closeDone:
+		b.mu.RUnlock()
+		t.Fatalf("Close() returned before the operation completed: %v", err)
+	default:
+	}
+
+	b.mu.RUnlock()
+	select {
+	case err := <-closeDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Close() did not return after the operation completed")
+	}
 }

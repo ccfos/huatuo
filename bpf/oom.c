@@ -6,10 +6,11 @@
 
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
+#include "abi/oom_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-BPF_RATELIMIT_IN_MAP(rate, 1, COMPAT_CPU_NUM * 10000, 0);
+BPF_RATELIMIT(rate, BPF_NSEC_PER_SEC, COMPAT_CPU_NUM * 10000);
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -17,24 +18,14 @@ struct {
 	__uint(value_size, sizeof(u32));
 } oom_perf_events SEC(".maps");
 
-struct oom_info {
-	char trigger_comm[COMPAT_TASK_COMM_LEN];
-	char victim_comm[COMPAT_TASK_COMM_LEN];
-	u32 trigger_pid;
-	u32 victim_pid;
-	u64 trigger_memcg_css;
-	u64 victim_memcg_css;
-	u64 mem_limit_pages;
-	u64 mem_usage_pages;
-};
-
 SEC("kprobe/oom_kill_process")
 int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 {
-	struct oom_info info = {};
+	struct oom_event info = {};
 	struct task_struct *trigger_task, *victim_task;
+	u64 memory_cgrp_id_val;
 
-	if (bpf_ratelimited_in_map(ctx, rate))
+	if (bpf_ratelimited(&rate))
 		return 0;
 
 	if (!oc)
@@ -42,15 +33,17 @@ int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 
 	trigger_task	 = (struct task_struct *)bpf_get_current_task();
 	victim_task	 = BPF_CORE_READ(oc, chosen);
-	info.trigger_pid = BPF_CORE_READ(trigger_task, pid);
-	info.victim_pid	 = BPF_CORE_READ(victim_task, pid);
+	info.trigger_tgid = BPF_CORE_READ(trigger_task, tgid);
+	info.victim_tgid  = BPF_CORE_READ(victim_task, tgid);
 	BPF_CORE_READ_STR_INTO(&info.trigger_comm, trigger_task, comm);
 	BPF_CORE_READ_STR_INTO(&info.victim_comm, victim_task, comm);
 
+	memory_cgrp_id_val =
+		bpf_core_enum_value(enum cgroup_subsys_id, memory_cgrp_id);
 	info.victim_memcg_css =
-	    (u64)BPF_CORE_READ(victim_task, cgroups, subsys[memory_cgrp_id]);
+	    (u64)BPF_CORE_READ(victim_task, cgroups, subsys[memory_cgrp_id_val]);
 	info.trigger_memcg_css =
-	    (u64)BPF_CORE_READ(trigger_task, cgroups, subsys[memory_cgrp_id]);
+	    (u64)BPF_CORE_READ(trigger_task, cgroups, subsys[memory_cgrp_id_val]);
 
 	info.mem_limit_pages = BPF_CORE_READ(oc, totalpages);
 	struct mem_cgroup *memcg = BPF_CORE_READ(oc, memcg);

@@ -49,8 +49,41 @@ Log = { Level = "Info" }
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "invalid elem") {
-		t.Fatalf("body = %q, want invalid elem error", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "does not exist") {
+		t.Fatalf("body = %q, want invalid field error", rec.Body.String())
+	}
+}
+
+func TestConfigHandlerUpdatesTypedValues(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+
+	if err := config.Load(writeConfig(t, "")); err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	engine := httpGin.New()
+	server.NewRoot(engine, "").PUT("/config", NewConfigHandler().update)
+	req := httptest.NewRequest(http.MethodPut, "/config", bytes.NewBufferString(`{
+		"config": {
+			"BlackList": ["dropwatch", "netdev_hw"],
+			"Runtime.CPULimitCores": 1.5,
+			"Runtime.MemoryLimitMiB": 1024
+		}
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d, body: %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	snapshot := config.Get()
+	if snapshot.Runtime.CPULimitCores != 1.5 || snapshot.Runtime.MemoryLimitMiB != 1024 {
+		t.Fatalf("Runtime = %+v, want typed numeric updates", snapshot.Runtime)
+	}
+	if got := snapshot.BlackList; len(got) != 2 || got[0] != "dropwatch" || got[1] != "netdev_hw" {
+		t.Fatalf("BlackList = %v, want typed slice update", got)
 	}
 }
 

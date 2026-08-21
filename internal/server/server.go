@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,234 +15,284 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"syscall"
+	"sync"
 	"time"
 
-	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/version"
 
-	"github.com/cloudflare/backoff"
 	"github.com/gin-contrib/pprof"
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"golang.org/x/time/rate"
+)
+
+const (
+	defaultReadHeaderTimeout = 10 * time.Second
+	defaultReadTimeout       = 30 * time.Second
+	defaultWriteTimeout      = 60 * time.Second
+	defaultIdleTimeout       = 120 * time.Second
+	defaultMaxHeaderBytes    = 1 << 20
+	defaultMaxBodyBytes      = 4 << 20
 )
 
 // Config defines the configuration options for the HTTP server.
 type Config struct {
-	EnablePProf     bool
-	EnableRateLimit bool
-	RateLimit       rate.Limit
-	RateBurst       int
-	EnableRetry     bool
-	AuthUsers       []UserConfig
-	PromReg         *prometheus.Registry
-	Group           string
-	VersionInfo     *version.Info
+	EnablePProf       bool
+	RateLimit         *RateLimitConfig
+	EnableRetry       bool
+	RequireAuth       bool
+	AuthUsers         []UserConfig
+	PublicPaths       []string
+	AdminPaths        []string
+	PromReg           *prometheus.Registry
+	Group             string
+	VersionInfo       *version.Info
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
+	MaxBodyBytes      int64
+	Ready             func(context.Context) error
 }
 
-var defaultConfig = &Config{
-	EnablePProf:     false,
-	EnableRateLimit: false,
-	RateLimit:       200,
-	RateBurst:       200,
-	EnableRetry:     false,
-	PromReg:         nil,
-	Group:           "",
+// RateLimitConfig enables per-client rate limiting.
+type RateLimitConfig struct {
+	RequestsPerSecond int
+	Burst             int
+}
+
+// ErrServerStopping indicates that the server is already shutting down.
+var ErrServerStopping = errors.New("http server is stopping")
+
+type serverState uint8
+
+const (
+	serverStateStopped serverState = iota
+	serverStateRunning
+	serverStateStopping
+)
+
+type serveExecution struct {
+	httpServer *http.Server
+	listener   net.Listener
+	done       chan struct{}
+	result     error
+}
+
+func (e *serveExecution) shutdown(ctx context.Context) error {
+	return e.httpServer.Shutdown(ctx)
+}
+
+func (e *serveExecution) wait(ctx context.Context) error {
+	select {
+	case <-e.done:
+		return e.result
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Server is an HTTP server instance.
-type server struct {
-	engine       *httpGin.Engine
-	promRegistry *prometheus.Registry
-	rootGroup    *routerGroup
+type Server struct {
+	engine          *httpGin.Engine
+	promRegistry    *prometheus.Registry
+	rootGroup       *routerGroup
+	mu              sync.Mutex
+	state           serverState
+	activeExecution *serveExecution
+	config          Config
 }
 
-type Option struct {
-	RetryMaxTime  time.Duration
-	RetryInterval time.Duration
-	Addr          string
+// Start binds addr before returning and serves requests in the background.
+func (s *Server) Start(addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", addr, err)
+	}
+
+	httpServer := &http.Server{
+		Handler:           s.engine.Handler(),
+		ReadHeaderTimeout: s.config.ReadHeaderTimeout,
+		ReadTimeout:       s.config.ReadTimeout,
+		WriteTimeout:      s.config.WriteTimeout,
+		IdleTimeout:       s.config.IdleTimeout,
+		MaxHeaderBytes:    s.config.MaxHeaderBytes,
+	}
+	execution := &serveExecution{
+		httpServer: httpServer,
+		listener:   listener,
+		done:       make(chan struct{}),
+	}
+
+	s.mu.Lock()
+	switch s.state {
+	case serverStateStopping:
+		s.mu.Unlock()
+		_ = listener.Close()
+		return ErrServerStopping
+	case serverStateRunning:
+		s.mu.Unlock()
+		_ = listener.Close()
+		return errors.New("http server already started")
+	}
+	s.state = serverStateRunning
+	s.activeExecution = execution
+	s.mu.Unlock()
+
+	go func() {
+		err := execution.httpServer.Serve(execution.listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		execution.result = err
+		close(execution.done)
+	}()
+
+	return nil
+}
+
+// Shutdown stops accepting requests and waits for the serving goroutine.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	switch s.state {
+	case serverStateStopped:
+		s.mu.Unlock()
+		return nil
+	case serverStateStopping:
+		s.mu.Unlock()
+		return ErrServerStopping
+	}
+	execution := s.activeExecution
+	s.state = serverStateStopping
+	s.mu.Unlock()
+
+	shutdownErr := execution.shutdown(ctx)
+	serveResult := execution.wait(ctx)
+
+	s.mu.Lock()
+	s.activeExecution = nil
+	s.state = serverStateStopped
+	s.mu.Unlock()
+
+	return errors.Join(shutdownErr, serveResult)
+}
+
+// Done is closed when the serving goroutine exits.
+func (s *Server) Done() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeExecution == nil {
+		return nil
+	}
+	return s.activeExecution.done
+}
+
+// Wait returns the serving result or the context error.
+func (s *Server) Wait(ctx context.Context) error {
+	s.mu.Lock()
+	execution := s.activeExecution
+	s.mu.Unlock()
+
+	if execution == nil {
+		return nil
+	}
+	return execution.wait(ctx)
 }
 
 // NewServer creates a new HTTP server with the given configuration.
-func NewServer(cfg *Config) *server {
+func NewServer(cfg *Config) *Server {
 	httpGin.SetMode(httpGin.ReleaseMode)
 
-	if cfg == nil {
-		cfg = defaultConfig
+	var effectiveConfig Config
+	if cfg != nil {
+		effectiveConfig = *cfg
 	}
+	effectiveConfig.applyDefaults()
 
-	s := &server{
+	s := &Server{
 		engine:       httpGin.New(),
-		promRegistry: cfg.PromReg,
+		promRegistry: effectiveConfig.PromReg,
+		config:       effectiveConfig,
 	}
 
-	if cfg.EnablePProf {
+	s.engine.Use(buildMiddlewareChain(&effectiveConfig)...)
+	if effectiveConfig.EnablePProf {
 		pprof.Register(s.engine)
 	}
-
-	middleWares := []httpGin.HandlerFunc{
-		middlewareContext(),
-		httpGin.Logger(),
-		httpGin.Recovery(),
-	}
-
-	if len(cfg.AuthUsers) > 0 {
-		svc := NewAuthService(cfg.AuthUsers)
-		middleWares = append(middleWares, wrapHandler(NewAuthMiddleware(svc)))
-	}
-
-	if cfg.EnableRateLimit {
-		middleWares = append(middleWares, newRateLimitMiddleware(cfg.RateLimit, cfg.RateBurst))
-	}
-
-	s.engine.Use(middleWares...)
-	s.rootGroup = NewRoot(s.engine, cfg.Group)
-	s.MustRegisterRoutes("", []Handle{
-		{Typ: HttpGet, Uri: "/healthz", Handle: s.healthzHandler()},
-		{Typ: HttpGet, Uri: "/metrics", Handle: s.promServerHandler()},
+	s.rootGroup = NewRoot(s.engine, effectiveConfig.Group)
+	s.MustRegisterRoutes("", []Route{
+		{Method: http.MethodGet, Path: "/healthz", Handler: s.healthzHandler()},
+		{Method: http.MethodGet, Path: "/readyz", Handler: s.readyzHandler()},
+		{Method: http.MethodGet, Path: "/metrics", Handler: s.metricsHandler()},
 	})
-	if cfg.VersionInfo != nil {
-		s.MustRegisterRoutes("", []Handle{
-			{Typ: HttpGet, Uri: "/version", Handle: newVersionHandler(cfg.VersionInfo)},
+	if effectiveConfig.VersionInfo != nil {
+		s.MustRegisterRoutes("", []Route{
+			{
+				Method:  http.MethodGet,
+				Path:    "/version",
+				Handler: newVersionHandler(effectiveConfig.VersionInfo),
+			},
 		})
 	}
 	return s
 }
 
-func (s *server) healthzHandler() ErrHandlerContextFunc {
-	return func(ctx *Context) error {
-		ctx.Status(http.StatusNoContent)
-		return nil
+func (c *Config) applyDefaults() {
+	if c.ReadHeaderTimeout <= 0 {
+		c.ReadHeaderTimeout = defaultReadHeaderTimeout
 	}
-}
-
-func (s *server) promServerHandler() ErrHandlerContextFunc {
-	if s.promRegistry == nil {
-		return func(ctx *Context) error {
-			ctx.JSON(http.StatusNotImplemented, map[string]any{"status": "Prometheus registry not supported now"})
-			return nil
-		}
+	if c.ReadTimeout <= 0 {
+		c.ReadTimeout = defaultReadTimeout
 	}
-
-	h := promhttp.HandlerFor(s.promRegistry, promhttp.HandlerOpts{
-		ErrorHandling: promhttp.ContinueOnError,
-		Timeout:       30 * time.Second,
-	})
-	return func(ctx *Context) error {
-		h.ServeHTTP(ctx.Writer(), ctx.Request())
-		return nil
+	if c.WriteTimeout <= 0 {
+		c.WriteTimeout = defaultWriteTimeout
 	}
-}
-
-// a middleware for global rate limiting.
-func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
-	limiter := rate.NewLimiter(r, burst)
-	return func(c *httpGin.Context) {
-		if !limiter.Allow() {
-			ctx := internalContext(c)
-			ctx.JSON(http.StatusTooManyRequests, map[string]any{
-				"code":    429,
-				"message": "too many requests",
-				"data":    nil,
-			})
-			c.Abort()
-			return
-		}
-		c.Next()
+	if c.IdleTimeout <= 0 {
+		c.IdleTimeout = defaultIdleTimeout
+	}
+	if c.MaxHeaderBytes <= 0 {
+		c.MaxHeaderBytes = defaultMaxHeaderBytes
+	}
+	if c.MaxBodyBytes <= 0 {
+		c.MaxBodyBytes = defaultMaxBodyBytes
 	}
 }
 
 // Group return the cgroup for this httpserver
-func (s *server) Group() *routerGroup {
+func (s *Server) Group() *routerGroup {
 	return s.rootGroup
 }
 
-const (
-	HttpPost   = 1
-	HttpDelete = 2
-	HttpGet    = 3
-	HttpPut    = 4
-	HttpPatch  = 5
-)
+// MethodAny registers a route for all HTTP methods supported by Gin.
+const MethodAny = "*"
 
-type Handle struct {
-	Typ    int
-	Uri    string
-	Handle ErrHandlerContextFunc
+// Route defines an HTTP route.
+type Route struct {
+	Method  string
+	Path    string
+	Handler ErrHandlerContextFunc
 }
 
-func (s *server) MustRegisterRoutes(subGroup string, handlers []Handle) {
-	var g *routerGroup = s.rootGroup
+func (s *Server) MustRegisterRoutes(subGroup string, routes []Route) {
+	g := s.rootGroup
 
 	if subGroup != "" {
 		g = s.rootGroup.Group(subGroup)
 	}
 
-	for _, h := range handlers {
-		switch h.Typ {
-		case HttpPost:
-			g.POST(h.Uri, h.Handle)
-		case HttpDelete:
-			g.DELETE(h.Uri, h.Handle)
-		case HttpGet:
-			g.GET(h.Uri, h.Handle)
-		case HttpPut:
-			g.PUT(h.Uri, h.Handle)
-		case HttpPatch:
-			g.PATCH(h.Uri, h.Handle)
+	for _, route := range routes {
+		switch route.Method {
+		case "":
+			panic(fmt.Sprintf("route %q has no http method", route.Path))
+		case MethodAny:
+			g.Any(route.Path, route.Handler)
 		default:
-			panic("unknown type")
+			g.Handle(route.Method, route.Path, route.Handler)
 		}
 	}
-}
-
-func (s *server) run(addr string) error {
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("listen %w", err)
-	}
-
-	tcpListener := listener.(*net.TCPListener)
-	file, err := tcpListener.File()
-	if err != nil {
-		return fmt.Errorf("get listener fd %w", err)
-	}
-
-	if err := syscall.SetsockoptInt(int(file.Fd()), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); err != nil {
-		return fmt.Errorf("set sockopt addr reuse %w", err)
-	}
-
-	return s.engine.RunListener(tcpListener)
-}
-
-// Run starts the TCP server with retry mechanism.
-func (s *server) Run(option *Option) error {
-	if option.RetryMaxTime > 0 && option.RetryInterval > 0 {
-		go func() {
-			b := backoff.New(option.RetryMaxTime, option.RetryInterval)
-			for {
-				err := s.run(option.Addr)
-				if err == nil {
-					return
-				}
-
-				retryInterval := b.Duration()
-				if errors.Is(err, syscall.EADDRINUSE) {
-					log.Infof("tcp api server %v, retrying in %v ...", err, retryInterval)
-				} else if err != nil {
-					log.Warnf("tcp api server %v, retrying in %v ...", err, retryInterval)
-				}
-				time.Sleep(retryInterval)
-			}
-		}()
-		return fmt.Errorf("init err")
-	}
-
-	return s.run(option.Addr)
 }

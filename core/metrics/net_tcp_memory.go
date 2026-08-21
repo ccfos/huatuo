@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,11 +15,14 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/pkg/types"
 )
 
 type tcpMemory struct{}
@@ -29,6 +32,14 @@ func init() {
 }
 
 func newTcpMemory() (*tracing.EventTracingAttr, error) {
+	if err := procfs.RequireFile("sys/net/ipv4/tcp_mem"); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, types.ErrNotSupported
+		}
+
+		return nil, fmt.Errorf("check tcp memory statistics support: %w", err)
+	}
+
 	return &tracing.EventTracingAttr{
 		TracingData: &tcpMemory{},
 		Flag:        tracing.FlagMetric,
@@ -82,10 +93,15 @@ func (c *tcpMemory) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
+	usagePercent := float64(0)
+	if stats.memoryLimit > 0 {
+		usagePercent = stats.memoryPages / stats.memoryLimit
+	}
+
 	return []*metric.Data{
 		metric.NewGaugeData("usage_pages", stats.memoryPages, "tcp memory pages usage", nil),
 		metric.NewGaugeData("usage_bytes", stats.memoryBytes, "tcp memory bytes usage", nil),
 		metric.NewGaugeData("limit_pages", stats.memoryLimit, "tcp memory pages limit", nil),
-		metric.NewGaugeData("usage_percent", stats.memoryPages/stats.memoryLimit, "tcp memory usage percent", nil),
+		metric.NewGaugeData("usage_percent", usagePercent, "tcp memory usage percent", nil),
 	}, nil
 }

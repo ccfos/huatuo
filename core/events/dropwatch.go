@@ -16,18 +16,17 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os/exec"
 	"path"
 	"strconv"
-	"strings"
 	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
@@ -51,38 +50,23 @@ func newDropWatch() (*tracing.EventTracingAttr, error) {
 // Start launches dropwatch as a subprocess and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *dropWatchTracing) Start(ctx context.Context) error {
+	cfg := configSnapshot()
 	args := []string{
 		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "dropwatch.o"),
 		"--output-storage", toolstream.DefaultSockPath,
 		"--filter", cfg.Dropwatch.Filter,
 		"--max-events-per-second", strconv.FormatUint(cfg.Dropwatch.MaxEventsPerSecond, 10),
+		"--source-types", toolstream.SourceTypeEvent,
 	}
 
-	cmd := exec.Command(path.Join(internalconfig.CoreBinDir, "dropwatch"), args...)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start dropwatch: %w", err)
-	}
-
-	log.Infof("dropwatch started pid=%d", cmd.Process.Pid)
-
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case <-ctx.Done():
-		_ = cmd.Process.Kill()
-		<-done
-		log.Info("dropwatch stopped")
-		return nil
-	case werr := <-done:
-		if werr != nil {
-			return fmt.Errorf("dropwatch exited: %w", werr)
-		}
-		log.Info("dropwatch exited")
+	result := executil.ExecCmd(ctx, 0, path.Join(internalconfig.CoreBinDir, "dropwatch"), args...)
+	if errors.Is(result.CmdErr, context.Canceled) {
 		return nil
 	}
+	if result.CmdErr != nil {
+		return fmt.Errorf("run dropwatch: %w", executil.VerifyResults([]executil.CmdResult{result}))
+	}
+	return nil
 }
 
 func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) error {
@@ -91,8 +75,14 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 	}
 
 	if ev.ContainerID == "" {
-		ev.ContainerID = resolveContainerIDFromMeta(ev)
+		ev.ContainerID = pod.ContainerIDByCgroupNetNamespace(pod.ContainerCgroupNetNamespace{
+			MemoryCgroupCSSAddr: kernaddr.ParseOrZero(ev.MemoryCgroupCSSAddr),
+			NetNamespaceCookie:  ev.NetNamespaceCookie,
+			NetNamespaceInum:    uint64(ev.NetNamespaceInum),
+		})
 	}
+
+	globalDropwatchTCPRetransmitCache.add(ev)
 
 	return tracing.Save(&tracing.WriteRequest{
 		TracerName:  "dropwatch",
@@ -102,68 +92,15 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 	})
 }
 
-func resolveContainerIDFromMeta(ev *types.DropWatchTracing) string {
-	// 1. memcg CSS address — uniquely identifies a container.
-	if addr, ok := kernaddr.Parse(ev.MemoryCgroupCSSAddr); ok {
-		ct, err := pod.ContainerByCSS(addr, pod.SubSysMemory)
-		if err != nil {
-			log.Debugf("dropwatch: CSS lookup %s: %v", ev.MemoryCgroupCSSAddr, err)
-		} else if ct != nil {
-			return ct.ID
-		}
-	}
-
-	// 2. net namespace cookie — unique per netns; not available on kernels < 5.14.
-	// Returns one container sharing the namespace.
-	if ev.NetNamespaceCookie != 0 {
-		ct, err := pod.ContainerByNetCookie(ev.NetNamespaceCookie)
-		if err != nil {
-			log.Debugf("dropwatch: net_cookie lookup %d: %v", ev.NetNamespaceCookie, err)
-		} else if ct != nil {
-			return ct.ID
-		}
-	}
-
-	// 3. net namespace inode — always available, returns one container sharing the namespace.
-	if ev.NetNamespaceInode != 0 {
-		ct, err := pod.ContainerByNetInode(uint64(ev.NetNamespaceInode))
-		if err != nil {
-			log.Debugf("dropwatch: net_inum lookup %d: %v", ev.NetNamespaceInode, err)
-		} else if ct != nil {
-			return ct.ID
-		}
-	}
-
-	return ""
-}
-
-// ignoreDropwatch returns true for known-noisy events that should not be forwarded.
-// Stack frame matching uses the same patterns as the previous TCP-only tracer.
+// ignoreDropwatch returns true for configured noisy events that should not be forwarded.
 func ignoreDropwatch(data *types.DropWatchTracing) bool {
-	stack := strings.Split(data.Stack, "\n")
-
-	// state: CLOSE_WAIT
-	// stack:
-	// 1. kfree_skb/ffffffff963047b0
-	// 2. kfree_skb/ffffffff963047b0
-	// 3. skb_rbtree_purge/ffffffff963089e0
-	// 4. tcp_fin/ffffffff963ac200
-	// 5. ...
-	// CLOSE_WAIT + skb_rbtree_purge: normal socket teardown, not a drop.
-	if data.Layers != nil && data.Layers.TCP != nil && data.Layers.TCP.SkState == "CLOSE_WAIT" {
-		if len(stack) >= 3 && strings.HasPrefix(stack[2], "skb_rbtree_purge/") {
-			return true
-		}
-	}
-
 	// Operator-configured stack-frame noise rules (e.g. bnxt_tx_int,
 	// neigh_invalidate). Patterns live in events.IssuesList; see
 	// net_rx_latency.go for the same pattern. Match against data.Stack
 	// (frames joined by '\n').
-	if cfg != nil {
-		if _, found := matcher.Classify(cfg.IssuesList, data.Stack); found {
-			return true
-		}
+	cfg := configSnapshot()
+	if _, found := matcher.Classify(cfg.IssuesList, data.Stack); found {
+		return true
 	}
 
 	return false

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,13 +19,16 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sync/atomic"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/timeutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
@@ -83,27 +86,21 @@ const (
 //	trace_event_raw_non_standard_event: 60 − 4 = 56
 //	trace_event_raw_aer_event:          40 − 4 = 36
 const (
-	RAS_PERFEVENT_INFO_SIZE = 512
+	RAS_PERFEVENT_INFO_SIZE = len(abi.RASEvent{}.Info)
 	DETAIL_INFO_SIZE_EDAC   = RAS_PERFEVENT_INFO_SIZE - 60
 	DETAIL_INFO_SIZE_ACPI   = RAS_PERFEVENT_INFO_SIZE - 56
 	DETAIL_INFO_SIZE_AER    = RAS_PERFEVENT_INFO_SIZE - 36
 )
 
-// rasEvent mirrors the BPF-side struct event layout.
-type rasEvent struct {
-	Type      uint32
-	Pad0      uint32
-	Timestamp uint64
-	Info      [RAS_PERFEVENT_INFO_SIZE]byte
-}
+type rasEvent = abi.RASEvent
 
 // RasTracingData is the structured record persisted by tracing.Save.
 type RasTracingData struct {
-	Device    string `json:"dev"`
-	Event     string `json:"event"`
-	ErrType   string `json:"type"`
-	Timestamp uint64 `json:"timestamp"`
-	Info      string `json:"info"`
+	Device            string `json:"dev"`
+	Event             string `json:"event"`
+	ErrType           string `json:"type"`
+	ObservedTimestamp string `json:"observed_timestamp"`
+	Info              string `json:"info"`
 }
 
 const defaultThrEventBackoff = 30 * time.Minute
@@ -124,6 +121,7 @@ func newRasTracing() (*tracing.EventTracingAttr, error) {
 	}
 
 	backoffDur := defaultThrEventBackoff
+	cfg := configSnapshot()
 	if cfg.Ras.MceThrBackoff > 0 {
 		backoffDur = time.Duration(cfg.Ras.MceThrBackoff) * time.Second
 	}
@@ -359,12 +357,16 @@ func newRasTracingData[T any](ev *rasEvent, device, event, errType string, info 
 	if err != nil {
 		return nil, fmt.Errorf("marshal %s info: %w", event, err)
 	}
+	observedAt, err := timeutil.KtimeToTime(ev.KtimeNS)
+	if err != nil {
+		return nil, fmt.Errorf("convert %s event time: %w", event, err)
+	}
 	return &RasTracingData{
-		Timestamp: ev.Timestamp,
-		Device:    device,
-		Event:     event,
-		ErrType:   errType,
-		Info:      string(b),
+		Device:            device,
+		Event:             event,
+		ErrType:           errType,
+		ObservedTimestamp: observedAt.UTC().Format(time.RFC3339Nano),
+		Info:              string(b),
 	}, nil
 }
 
@@ -377,23 +379,23 @@ func buildRasMceTracerData(data *rasEvent) (*RasTracingData, error) {
 	// https://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git/tree/arch/x86/include/uapi/asm/mce.h
 	type tracepointMcePayload struct {
 		Pad       uint64 `json:"-"`
-		Mcgcap    uint64 `json:"mcg_cpu_cap"`
-		McgStatus uint64 `json:"mcg_msr_status"`
+		MCGCap    uint64 `json:"mcg_cpu_cap"`
+		MCGStatus uint64 `json:"mcg_msr_status"`
 		Status    uint64 `json:"banks_msr_status"`
 		Addr      uint64 `json:"banks_msr_addr"`
 		Misc      uint64 `json:"banks_msr_misc"`
 		Synd      uint64 `json:"mca_synd_msr"`
-		Ipid      uint64 `json:"mca_ipid_msr"`
-		Ip        uint64 `json:"instr_pointer"`
-		Tsc       uint64 `json:"tsc_timestamp"`
-		Walltime  uint64 `json:"walltime"`
-		Cpu       uint32 `json:"cpu"`
-		Cpuid     uint32 `json:"cpuid"`
-		Apicid    uint32 `json:"apicid"`
-		Socketid  uint32 `json:"socketid"`
-		Cs        uint8  `json:"code_seg"`
+		IPID      uint64 `json:"mca_ipid_msr"`
+		IP        uint64 `json:"instr_pointer"`
+		TSC       uint64 `json:"tsc_timestamp"`
+		WallTime  uint64 `json:"walltime"`
+		CPU       uint32 `json:"cpu"`
+		CPUID     uint32 `json:"cpuid"`
+		APICID    uint32 `json:"apicid"`
+		SocketID  uint32 `json:"socketid"`
+		CS        uint8  `json:"code_seg"`
 		Bank      uint8  `json:"bank"`
-		Cpuvendor uint8  `json:"cpuvendor"`
+		CPUVendor uint8  `json:"cpuvendor"`
 	}
 
 	payload, err := decodePayload[tracepointMcePayload](data.Info[:])
@@ -411,7 +413,7 @@ func buildRasEdacTracerData(data *rasEvent) (*RasTracingData, error) {
 		ErrorMsgOffset uint32
 		LabelOffset    uint32
 		ErrCount       uint16
-		McIndex        uint8
+		MCIndex        uint8
 		TopLayer       int8
 		MidLayer       int8
 		LowLayer       int8
@@ -438,7 +440,7 @@ func buildRasEdacTracerData(data *rasEvent) (*RasTracingData, error) {
 		ErrType  string `json:"err_type"`
 		Msg      string `json:"err_msg"`
 		Label    string `json:"label"`
-		McIndex  uint8  `json:"mc_index"`
+		MCIndex  uint8  `json:"mc_index"`
 		TopLayer int8   `json:"top_layer"`
 		MidLayer int8   `json:"mid_layer"`
 		LowLayer int8   `json:"low_layer"`
@@ -451,7 +453,7 @@ func buildRasEdacTracerData(data *rasEvent) (*RasTracingData, error) {
 		ErrType:  errType,
 		Msg:      cstring(dyn, payload.ErrorMsgOffset, edacBase),
 		Label:    cstring(dyn, payload.LabelOffset, edacBase),
-		McIndex:  payload.McIndex,
+		MCIndex:  payload.MCIndex,
 		TopLayer: payload.TopLayer,
 		MidLayer: payload.MidLayer,
 		LowLayer: payload.LowLayer,
@@ -468,8 +470,8 @@ func buildRasAcpiTracerData(data *rasEvent) (*RasTracingData, error) {
 	type tracepointAcpiNonStandardPayload struct {
 		Pad          uint64
 		SecType      [16]uint8
-		FruID        [16]uint8
-		FruTxtOffset uint32
+		FRUID        [16]uint8
+		FRUTxtOffset uint32
 		Sev          uint8
 		Pattern      [3]uint8
 		Len          uint32
@@ -483,26 +485,26 @@ func buildRasAcpiTracerData(data *rasEvent) (*RasTracingData, error) {
 	}
 
 	const nonStandardBase uint32 = 56
-	fru := cstring(payload.Msg[:], payload.FruTxtOffset, nonStandardBase)
+	fru := cstring(payload.Msg[:], payload.FRUTxtOffset, nonStandardBase)
 
 	// Extract raw bytes at the FRU text location for the hex dump.
 	var rawData []byte
-	if absOff := payload.FruTxtOffset & 0xffff; absOff >= nonStandardBase {
+	if absOff := payload.FRUTxtOffset & 0xffff; absOff >= nonStandardBase {
 		rawData = bytes.Clone(payload.Msg[absOff-nonStandardBase : absOff-nonStandardBase+payload.Len])
 	}
 
 	return newRasTracingData(data, "ACPI", "NON_STANDARD", acpiErrType(payload.Sev), struct {
 		Severity uint8  `json:"severity"`
 		SecType  string `json:"sec_type"`
-		FruID    string `json:"fru_id"`
-		FruText  string `json:"fru_text"`
+		FRUID    string `json:"fru_id"`
+		FRUText  string `json:"fru_text"`
 		DataLen  uint32 `json:"data_len"`
 		RawData  string `json:"raw_data"`
 	}{
 		Severity: payload.Sev,
 		SecType:  fmt.Sprintf("%x", payload.SecType),
-		FruID:    fmt.Sprintf("%x", payload.FruID),
-		FruText:  fru,
+		FRUID:    fmt.Sprintf("%x", payload.FRUID),
+		FRUText:  fru,
 		DataLen:  payload.Len,
 		RawData:  fmt.Sprintf("% x", rawData),
 	})
@@ -515,9 +517,9 @@ func buildRasAerTracerData(data *rasEvent) (*RasTracingData, error) {
 		DevNameOffset  uint32 // __data_loc_dev_name
 		Status         uint32
 		Severity       uint8
-		TlpHeaderValid uint8
+		TLPHeaderValid uint8
 		Pattern        [2]uint8
-		TlpHeader      [4]uint32
+		TLPHeader      [4]uint32
 		Msg            [DETAIL_INFO_SIZE_AER]byte
 	}
 
@@ -533,36 +535,37 @@ func buildRasAerTracerData(data *rasEvent) (*RasTracingData, error) {
 	errReason := pciErrReason(payload.Status, payload.Severity == 2)
 
 	tlpHeader := "not available"
-	if payload.TlpHeaderValid != 0 {
+	if payload.TLPHeaderValid != 0 {
 		tlpHeader = fmt.Sprintf("{%#x,%#x,%#x,%#x}",
-			payload.TlpHeader[0], payload.TlpHeader[1],
-			payload.TlpHeader[2], payload.TlpHeader[3])
+			payload.TLPHeader[0], payload.TLPHeader[1],
+			payload.TLPHeader[2], payload.TLPHeader[3])
 	}
 
 	return newRasTracingData(data, "PCIe "+dev, "AER", errType, struct {
 		DevName   string `json:"dev_name"`
 		ErrType   string `json:"err_type"`
 		ErrReason string `json:"err_reason"`
-		TlpHeader string `json:"tlp_header"`
+		TLPHeader string `json:"tlp_header"`
 	}{
 		DevName:   dev,
 		ErrType:   errType,
 		ErrReason: errReason,
-		TlpHeader: tlpHeader,
+		TLPHeader: tlpHeader,
 	})
 }
 
 func buildRasThrTracerData(data *rasEvent) (*RasTracingData, error) {
-	// tracepointThrPayload mirrors BPF-side struct thr_info stored in event->info.
-	type tracepointThrPayload struct {
-		Vector uint32 `json:"vector"`
-		CPU    uint32 `json:"cpu"`
-	}
-	payload, err := decodePayload[tracepointThrPayload](data.Info[:])
+	payload, err := decodePayload[abi.RASThrInfo](data.Info[:])
 	if err != nil {
 		return nil, fmt.Errorf("parse THR payload: %w", err)
 	}
-	return newRasTracingData(data, "CPU", "MCE_THRESHOLD", ErrTypeCorrected, payload)
+	return newRasTracingData(data, "CPU", "MCE_THRESHOLD", ErrTypeCorrected, struct {
+		Vector uint32 `json:"vector"`
+		CPU    uint32 `json:"cpu"`
+	}{
+		Vector: payload.Vector,
+		CPU:    payload.CPU,
+	})
 }
 
 func buildRasArmGhesTracerData(data *rasEvent) (*RasTracingData, error) {
@@ -570,30 +573,30 @@ func buildRasArmGhesTracerData(data *rasEvent) (*RasTracingData, error) {
 	// Layout: trace_entry(8) | mpidr(8) | midr(8) | running_state(4) | psci_state(4) | affinity(1)
 	type tracepointArmEventPayload struct {
 		Pad          uint64 `json:"-"`
-		Mpidr        uint64 `json:"mpidr"`
-		Midr         uint64 `json:"midr"`
+		MPIDR        uint64 `json:"mpidr"`
+		MIDR         uint64 `json:"midr"`
 		RunningState uint32 `json:"running_state"`
-		PsciState    uint32 `json:"psci_state"`
+		PSCIState    uint32 `json:"psci_state"`
 		Affinity     uint8  `json:"affinity"`
 	}
 	payload, err := decodePayload[tracepointArmEventPayload](data.Info[:])
 	if err != nil {
 		return nil, fmt.Errorf("parse ARM GHES payload: %w", err)
 	}
-	runState, psciState := armRunningState(payload.RunningState, payload.PsciState)
+	runState, psciState := armRunningState(payload.RunningState, payload.PSCIState)
 	return newRasTracingData(data, "CPU", "ARM_GHES", ErrTypeUnknown, struct {
-		Mpidr         string `json:"mpidr"`
-		Midr          string `json:"midr"`
+		MPIDR         string `json:"mpidr"`
+		MIDR          string `json:"midr"`
 		RunningState  string `json:"running_state"`
-		PsciState     string `json:"psci_state"`
+		PSCIState     string `json:"psci_state"`
 		AffinityLevel string `json:"affinity_level"`
 	}{
 		// MPIDR is 0x0 when CPER_ARM_VALID_MPIDR is absent (kernel fills 0ULL,
 		// not ~0), so 0x0 is ambiguous: it may mean "not present".
-		Mpidr:         fmt.Sprintf("%#x", payload.Mpidr),
-		Midr:          fmt.Sprintf("%#x", payload.Midr),
+		MPIDR:         fmt.Sprintf("%#x", payload.MPIDR),
+		MIDR:          fmt.Sprintf("%#x", payload.MIDR),
 		RunningState:  runState,
-		PsciState:     psciState,
+		PSCIState:     psciState,
 		AffinityLevel: armU8Field(payload.Affinity),
 	})
 }
@@ -639,7 +642,7 @@ func dispatchRasTracerData(data *rasEvent) (*RasTracingData, error) {
 }
 
 func (ras *rasTracing) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}
@@ -654,7 +657,7 @@ func (ras *rasTracing) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	b.DetachOnContextDone(childCtx, cancel)
 
 	return ras.rasEventLoop(childCtx, reader)
 }
@@ -669,6 +672,10 @@ func (ras *rasTracing) rasEventLoop(ctx context.Context, reader bpf.PerfEventRea
 		default:
 			var ev rasEvent
 			if err := reader.ReadInto(&ev); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return fmt.Errorf("read ras event: %w", err)
 			}
 

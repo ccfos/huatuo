@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,31 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !didi
-
 package bpf
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
-	"reflect"
 	"time"
 
 	"huatuo-bamai/pkg/types"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/perf"
-	"github.com/pkg/errors"
 )
+
+var errInvalidPerfEventFactory = errors.New("invalid perf event factory")
 
 // perfEventReader reads the eBPF perf_event_array.
 type perfEventReader struct {
-	ctx       context.Context
-	rd        *perf.Reader
-	cancelCtx context.CancelFunc
+	done   <-chan struct{}
+	rd     *perf.Reader
+	cancel context.CancelFunc
 }
 
 // _ is a type assertion
@@ -50,12 +48,12 @@ func newPerfEventReader(ctx context.Context, array *ebpf.Map, perCPUBufSize int)
 	}
 
 	readerCtx, cancel := context.WithCancel(ctx)
-	return &perfEventReader{ctx: readerCtx, rd: rd, cancelCtx: cancel}, nil
+	return &perfEventReader{done: readerCtx.Done(), rd: rd, cancel: cancel}, nil
 }
 
 // Close the perfEventReader.
 func (r *perfEventReader) Close() error {
-	r.cancelCtx()
+	r.cancel()
 	return r.rd.Close()
 }
 
@@ -65,55 +63,69 @@ func (r *perfEventReader) Close() error {
 const readBatchDeadline = 500 * time.Millisecond
 
 // ReadBatch drains all per-CPU ring buffers currently available and returns the
-// parsed events. It sets a deadline, then loops ReadInto until the deadline
-// fires (os.ErrDeadlineExceeded), which signals no more data is ready this
-// round. Each returned element is a newly allocated value of pdata's type.
-func (r *perfEventReader) ReadBatch(pdata any) ([]any, error) {
+// parsed events. It returns any decoded events with read, decode, or loss
+// errors so callers can preserve partial progress.
+func (r *perfEventReader) ReadBatch(newEvent func() any) ([]any, error) {
 	select {
-	case <-r.ctx.Done():
+	case <-r.done:
 		return nil, types.ErrExitByCancelCtx
 	default:
 	}
 
-	elemType := reflect.TypeOf(pdata)
-	if elemType.Kind() == reflect.Ptr {
-		elemType = elemType.Elem()
+	if newEvent == nil {
+		return nil, fmt.Errorf(
+			"%w: factory required", errInvalidPerfEventFactory,
+		)
 	}
 
 	r.rd.SetDeadline(time.Now().Add(readBatchDeadline))
 
 	var batch []any
 	var rec perf.Record
+	var lostSamples uint64
 
 	for {
 		if err := r.rd.ReadInto(&rec); err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				return batch, nil
+				return batch, newPerfEventSamplesLostError(lostSamples)
 			}
-			if errors.Is(err, perf.ErrClosed) {
-				return batch, fmt.Errorf("perf event reader closed: %w", types.ErrExitByCancelCtx)
-			}
-			return nil, fmt.Errorf("read event: %w", err)
+
+			return batch, errors.Join(
+				normalizePerfReadError(err),
+				newPerfEventSamplesLostError(lostSamples),
+			)
 		}
 
 		if rec.LostSamples != 0 {
+			lostSamples += rec.LostSamples
 			continue
 		}
 
-		dst := reflect.New(elemType).Interface()
-		if err := binary.Read(bytes.NewBuffer(rec.RawSample), binary.NativeEndian, dst); err != nil {
-			return nil, fmt.Errorf("parse event: %w", err)
+		dst := newEvent()
+		if dst == nil {
+			return batch, errors.Join(
+				fmt.Errorf(
+					"%w: factory returned nil", errInvalidPerfEventFactory,
+				),
+				newPerfEventSamplesLostError(lostSamples),
+			)
+		}
+		if err := decodePerfEvent(rec.RawSample, dst); err != nil {
+			return batch, errors.Join(
+				err,
+				newPerfEventSamplesLostError(lostSamples),
+			)
 		}
 
 		batch = append(batch, dst)
 	}
 }
 
-// ReadInto reads the eBPF perf_event into pdata.
-func (r *perfEventReader) ReadInto(pdata any) error {
+// ReadInto reads the next eBPF perf event into dst.
+func (r *perfEventReader) ReadInto(dst any) error {
 	for {
 		select {
-		case <-r.ctx.Done():
+		case <-r.done:
 			return types.ErrExitByCancelCtx
 		default:
 			// set the poll deadline 100ms
@@ -122,24 +134,46 @@ func (r *perfEventReader) ReadInto(pdata any) error {
 			// read the event
 			record, err := r.rd.Read()
 			if err != nil {
-				if errors.Is(err, perf.ErrClosed) { // Close
-					return fmt.Errorf("perf event reader closed: %w", types.ErrExitByCancelCtx)
-				} else if errors.Is(err, os.ErrDeadlineExceeded) { // poll deadline
+				if errors.Is(err, os.ErrDeadlineExceeded) { // poll deadline
 					continue
 				}
-				return fmt.Errorf("read event: %w", err)
+
+				return normalizePerfReadError(err)
 			}
 
 			if record.LostSamples != 0 {
-				continue
+				return newPerfEventSamplesLostError(record.LostSamples)
 			}
 
-			// parse the event
-			if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.NativeEndian, pdata); err != nil {
-				return fmt.Errorf("failed to parse the event: %w", err)
+			if err := decodePerfEvent(record.RawSample, dst); err != nil {
+				return err
 			}
 
 			return nil
 		}
 	}
+}
+
+func decodePerfEvent(sample []byte, dst any) error {
+	if _, err := binary.Decode(sample, binary.NativeEndian, dst); err != nil {
+		return fmt.Errorf("parse perf event: %w", err)
+	}
+
+	return nil
+}
+
+func newPerfEventSamplesLostError(count uint64) error {
+	if count == 0 {
+		return nil
+	}
+
+	return &PerfEventSamplesLostError{Count: count}
+}
+
+func normalizePerfReadError(err error) error {
+	if errors.Is(err, perf.ErrClosed) {
+		return types.ErrExitByCancelCtx
+	}
+
+	return fmt.Errorf("read perf event: %w", err)
 }

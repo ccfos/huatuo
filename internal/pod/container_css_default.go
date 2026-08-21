@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +17,6 @@
 package pod
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -31,11 +30,14 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/cgroups"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/types"
 
+	"github.com/cilium/ebpf/btf"
 	mapset "github.com/deckarep/golang-set"
 )
 
@@ -56,20 +58,13 @@ func parseContainerCSS(containerID string) (map[string]uint64, error) {
 }
 
 const (
-	cgroupSubsysCount                 = 13
-	kubeletContainerIDKnodeNameMaxlen = 85
 	kubeletContainerIDKnodeNameMinlen = 64
-	SubSysCPU                         = "cpu"
-	SubSysCPUAcct                     = "cpuacct"
-	SubSysCPUSet                      = "cpuset"
-	SubSysMemory                      = "memory"
-	SubSysBlkIO                       = "blkio"
 )
 
 var (
 	// used to extract container id from cgroup name
 	kubeletContainerIDRegexp  = regexp.MustCompile(`(?:cri-containerd-)?([0-9a-f]{64})(?:\.scope)?`)
-	cgroupv1SubSysName        = []string{SubSysCPU, SubSysCPUAcct, SubSysCPUSet, SubSysMemory, SubSysBlkIO}
+	cgroupv1SubSysName        = []string{subsystem.SubsystemCPU, subsystem.SubsystemCPUAcct, subsystem.SubsystemCPUSet, subsystem.SubsystemMemory, subsystem.SubsystemBlkIO}
 	cgroupv1NotifyFile        = "cgroup.clone_children"
 	cgroupv2NotifyFile        = "memory.current"
 	cgroupCssID2SubSysNameMap = map[int]string{}
@@ -90,14 +85,7 @@ type containerCssMetaData struct {
 	ContainerID string
 }
 
-type containerCssPerfEvent struct {
-	Cgroup      uint64
-	OpsType     uint64
-	CgroupRoot  int32
-	CgroupLevel int32
-	CSS         [cgroupSubsysCount]uint64
-	KnodeName   [kubeletContainerIDKnodeNameMaxlen + 2]byte
-}
+type containerCssPerfEvent = abi.CgroupCSSEvent
 
 func cgroupListCssDataByKnode(containerID string) []*containerCssMetaData {
 	res := []*containerCssMetaData{}
@@ -173,6 +161,10 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader) 
 			default:
 				var data containerCssPerfEvent
 				if err := reader.ReadInto(&data); err != nil {
+					if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+						log.WithError(err).Warn("lost BPF perf event samples")
+						continue
+					}
 					if !errors.Is(err, types.ErrExitByCancelCtx) {
 						log.Errorf("cgroup css sync read events: %v", err)
 					}
@@ -181,13 +173,13 @@ func cgroupCssEventSyncHandler(ctx context.Context, reader bpf.PerfEventReader) 
 
 				log.Debugf("sync container css data: %+v", data)
 
-				switch data.OpsType {
-				case 0: // mkdir cgroup, or cgroupv1/v2 read specific file to collect css
+				switch data.Operation {
+				case abi.CgroupCSSOperationUpdate:
 					_ = cgroupUpdateOrCreateCssData(&data)
-				case 1: // rmdir cgroup
+				case abi.CgroupCSSOperationRemove:
 					_ = cgroupDeleteCssData(&data)
 				default:
-					log.Errorf("css event opstype not supported: %+v", data)
+					log.Errorf("unsupported cgroup CSS operation: %+v", data)
 				}
 			}
 		}
@@ -256,32 +248,76 @@ func cgroupCssNotifyFile() {
 }
 
 func cgroupInitSubSysIDs() error {
-	file, err := os.Open("/proc/cgroups")
+	spec, err := btf.LoadSpec("/sys/kernel/btf/vmlinux")
+	if err != nil {
+		return fmt.Errorf("load kernel BTF: %w", err)
+	}
+
+	var subsystems *btf.Enum
+	if err := spec.TypeByName("cgroup_subsys_id", &subsystems); err != nil {
+		return fmt.Errorf("find cgroup_subsys_id in kernel BTF: %w", err)
+	}
+
+	ids, err := cgroupSubSysIDNameMap(subsystems.Values)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	scanner.Split(bufio.ScanLines)
-
-	// skip frst head
-	scanner.Scan()
-
-	ssid := 0
-	for scanner.Scan() {
-		arr := strings.SplitN(scanner.Text(), "\t", 2)
-		cgroupCssID2SubSysNameMap[ssid] = arr[0]
-		ssid++
-	}
-
+	cgroupCssID2SubSysNameMap = ids
 	return nil
 }
 
+func cgroupSubSysIDNameMap(values []btf.EnumValue) (map[int]string, error) {
+	ids := make(map[int]string, len(values))
+	nameIDs := make(map[string]int, len(values))
+	for _, value := range values {
+		name, ok := strings.CutSuffix(value.Name, "_cgrp_id")
+		if !ok {
+			continue
+		}
+		if value.Value >= uint64(len(containerCssPerfEvent{}.CSS)) {
+			continue
+		}
+
+		// Kernel BTF calls this controller io, while cgroup v1 paths and the
+		// project's canonical subsystem key use blkio.
+		if name == "io" {
+			name = subsystem.SubsystemBlkIO
+		}
+
+		id := int(value.Value)
+		if previous, ok := ids[id]; ok {
+			return nil, fmt.Errorf(
+				"cgroup subsystem id %d maps to both %q and %q",
+				id,
+				previous,
+				name,
+			)
+		}
+		if previous, ok := nameIDs[name]; ok {
+			return nil, fmt.Errorf(
+				"cgroup subsystem %q maps to both ids %d and %d",
+				name,
+				previous,
+				id,
+			)
+		}
+
+		ids[id] = name
+		nameIDs[name] = id
+	}
+
+	if len(ids) == 0 {
+		return nil, errors.New("cgroup_subsys_id has no subsystem values")
+	}
+
+	return ids, nil
+}
+
 func cgroupCssInitEventSync() error {
-	cssBpf, err := bpf.LoadBpf("cgroup_css_events.o", nil)
+	cssBpf, err := bpf.LoadBPF("cgroup_css_events.o", nil)
 	if err != nil {
-		return fmt.Errorf("LoadBpf: %w", err)
+		return fmt.Errorf("load bpf: %w", err)
 	}
 	cgroupCssBpfInternal = &cssBpf
 
@@ -300,9 +336,9 @@ func cgroupCssInitEventSync() error {
 }
 
 func cgroupCssExistedSync() error {
-	cssBpf, err := bpf.LoadBpf("cgroup_css_sync.o", nil)
+	cssBpf, err := bpf.LoadBPF("cgroup_css_sync.o", nil)
 	if err != nil {
-		return fmt.Errorf("LoadBpf: %w", err)
+		return fmt.Errorf("load bpf: %w", err)
 	}
 	defer cssBpf.Close()
 
@@ -374,4 +410,192 @@ func containerCgroupCssRelease() {
 		(*cgroupCssBpfInternal).Close()
 		cgroupCssBpfInternal = nil
 	}
+}
+
+// ContainerCSSBySubsys retrieves the cgroup subsystem state (CSS) address for a specific
+// container and subsystem. It first checks the local cache, and if not found, triggers
+// a one-time BPF-based collection for that specific container.
+// This function is compatible with the existing containerCgroupCssInit logic.
+func ContainerCSSBySubsys(containerID, subsysName string) (uint64, error) {
+	if containerID == "" {
+		return 0, nil
+	}
+
+	// Ensure subsystem IDs are initialized
+	if len(cgroupCssID2SubSysNameMap) == 0 {
+		if err := cgroupInitSubSysIDs(); err != nil {
+			return 0, fmt.Errorf("init subsystem IDs: %w", err)
+		}
+	}
+
+	// Check if CSS data already exists in cache
+	cssList := cgroupListCssDataByKnode(containerID)
+	for _, css := range cssList {
+		if css.SubSys == subsysName {
+			return css.CSS, nil
+		}
+	}
+
+	// CSS not found in cache, trigger one-time collection
+	if err := syncContainerCSS(containerID); err != nil {
+		return 0, fmt.Errorf("sync container CSS: %w", err)
+	}
+
+	// Retry lookup after sync
+	cssList = cgroupListCssDataByKnode(containerID)
+	for _, css := range cssList {
+		if css.SubSys == subsysName {
+			return css.CSS, nil
+		}
+	}
+
+	return 0, fmt.Errorf("container %q CSS for subsystem %q not found", containerID, subsysName)
+}
+
+// syncContainerCSS triggers a one-time BPF-based CSS collection for a specific container.
+// It finds the container's cgroup path, reads a notification file to trigger the BPF program,
+// and waits for the CSS data to be populated.
+func syncContainerCSS(containerID string) error {
+	// Find container cgroup path
+	cgroupPath, err := findContainerCgroupPath(containerID)
+	if err != nil {
+		return fmt.Errorf("find container cgroup path: %w", err)
+	}
+
+	if cgroupPath == "" {
+		return fmt.Errorf("container %q cgroup path not found", containerID)
+	}
+
+	// Load BPF for one-time sync (similar to cgroupCssExistedSync but targeted)
+	if err := triggerContainerCSSSync(cgroupPath); err != nil {
+		return fmt.Errorf("trigger CSS sync: %w", err)
+	}
+
+	return nil
+}
+
+// findContainerCgroupPath resolves the container's kernel cgroup membership on this host.
+func findContainerCgroupPath(containerID string) (string, error) {
+	paths, err := containerCgroupPathsByID(containerID)
+	if err != nil {
+		return "", err
+	}
+
+	switch cgroups.CgroupMode() {
+	case cgroups.Legacy, cgroups.Hybrid:
+		var resolveErrors []error
+		for _, subsys := range cgroupv1SubSysName {
+			membershipPath := paths.Controllers[subsys]
+			if membershipPath == "" {
+				continue
+			}
+
+			cgroupPath, err := resolveCgroupFilesystemPath(
+				cgroups.RootFsFilePath(subsys),
+				membershipPath,
+				cgroupv1NotifyFile,
+			)
+			if err == nil {
+				return cgroupPath, nil
+			}
+			resolveErrors = append(resolveErrors, fmt.Errorf("%s controller: %w", subsys, err))
+		}
+
+		if len(resolveErrors) == 0 {
+			return "", fmt.Errorf("container %q has no supported cgroup v1 membership", containerID)
+		}
+		return "", fmt.Errorf(
+			"container %q has no accessible cgroup v1 notification file: %w",
+			containerID,
+			errors.Join(resolveErrors...),
+		)
+	case cgroups.Unified:
+		if paths.Unified == "" {
+			return "", fmt.Errorf("container %q has no cgroup v2 membership", containerID)
+		}
+
+		return resolveCgroupFilesystemPath(
+			cgroups.RootfsDefaultPath(),
+			paths.Unified,
+			cgroupv2NotifyFile,
+		)
+	default:
+		return "", fmt.Errorf("unsupported cgroup mode %d", cgroups.CgroupMode())
+	}
+}
+
+func resolveCgroupFilesystemPath(root, membershipPath, notifyFile string) (string, error) {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve cgroup root %q: %w", root, err)
+	}
+
+	cgroupPath := filepath.Join(realRoot, strings.TrimPrefix(membershipPath, "/"))
+	notifyPath := filepath.Join(cgroupPath, notifyFile)
+	if _, err := os.Stat(notifyPath); err != nil {
+		return "", fmt.Errorf("access cgroup notification file %q: %w", notifyPath, err)
+	}
+
+	return cgroupPath, nil
+}
+
+// triggerContainerCSSSync loads BPF and triggers CSS collection for a specific cgroup path.
+func triggerContainerCSSSync(cgroupPath string) error {
+	// Load BPF for CSS collection
+	cssBpf, err := bpf.LoadBPF("cgroup_css_sync.o", nil)
+	if err != nil {
+		return fmt.Errorf("load BPF: %w", err)
+	}
+	defer cssBpf.Close()
+
+	childCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Attach BPF programs
+	if err := cssBpf.AttachWithOptions([]bpf.AttachOption{
+		{
+			ProgramName: "bpf_cgroup_subsys_state_prog",
+			Symbol:      "cgroup_clone_children_read",
+		},
+		{
+			ProgramName: "bpf_cgroup_subsys_state_prog",
+			Symbol:      "memory_current_read",
+		},
+	}); err != nil {
+		return fmt.Errorf("attach BPF: %w", err)
+	}
+
+	// Create event reader
+	reader, err := cssBpf.EventPipeByName(childCtx, "cgroup_perf_events", 8192)
+	if err != nil {
+		return fmt.Errorf("create event pipe: %w", err)
+	}
+	defer reader.Close()
+
+	// Start event handler
+	cgroupCssEventSyncHandler(childCtx, reader)
+
+	// Give BPF time to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Trigger notification by reading the file
+	var notifyFile string
+	switch cgroups.CgroupMode() {
+	case cgroups.Legacy, cgroups.Hybrid:
+		notifyFile = cgroupv1NotifyFile
+	case cgroups.Unified:
+		notifyFile = cgroupv2NotifyFile
+	}
+
+	notifyPath := filepath.Join(cgroupPath, notifyFile)
+	if _, err := os.ReadFile(notifyPath); err != nil {
+		return fmt.Errorf("read cgroup notification file %q: %w", notifyPath, err)
+	}
+
+	log.Debugf("triggered CSS sync for cgroup path: %s", cgroupPath)
+
+	// Wait for CSS data to be collected
+	time.Sleep(500 * time.Millisecond)
+
+	return nil
 }

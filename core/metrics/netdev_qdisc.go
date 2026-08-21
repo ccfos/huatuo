@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,110 +21,113 @@ import (
 	"fmt"
 
 	"huatuo-bamai/internal/matcher"
+	"huatuo-bamai/internal/qdisc"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
-
-	"github.com/ema/qdisc"
 )
 
-type qdiscStats struct {
-	ifaceName  string
-	kind       string
-	bytes      uint64
-	packets    uint32
-	drops      uint32
-	requeues   uint32
-	overlimits uint32
-	qlen       uint32
-	backlog    uint32
+type qdiscCollector struct {
+	deviceMatcher *matcher.ValueMatcher
+	// Keeping rtnetlink I/O replaceable makes Update independent of host qdisc state in tests.
+	readStats func() ([]qdisc.Stats, error)
 }
 
-const tcHMajMask = 0xFFFF0000
-
-type qdiscCollector struct{}
+const metricsPerQdisc = 7
 
 func init() {
 	tracing.RegisterEventTracing("netdev_qdisc", newQdiscCollector)
 }
 
 func newQdiscCollector() (*tracing.EventTracingAttr, error) {
-	return &tracing.EventTracingAttr{
-		TracingData: &qdiscCollector{},
-		Flag:        tracing.FlagMetric,
-	}, nil
-}
-
-// sum of same level(parent major) for a device, example:
-// <device0> (1+2, 3)
-// 1: qidsc <kind> handle0 parent0
-// 2: qidsc <kind> handle1 parent0
-// 3: qidsc <kind> handle2 parent1
-//
-// <device1> (1, 2+3)
-// 1: qidsc <kind> handle0 parent0
-// 2: qidsc <kind> handle1 parent1
-// 3: qidsc <kind> handle2 parent1
-func (c *qdiscCollector) Update() ([]*metric.Data, error) {
-	f, err := matcher.NewValueMatcher(cfg.Qdisc.DeviceIncluded, cfg.Qdisc.DeviceExcluded)
+	cfg := configSnapshot()
+	deviceMatcher, err := matcher.NewValueMatcher(
+		cfg.Qdisc.DeviceIncluded,
+		cfg.Qdisc.DeviceExcluded,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("qdisc device filter: %w", err)
 	}
 
-	allQdisc, err := qdisc.Get()
+	return &tracing.EventTracingAttr{
+		TracingData: &qdiscCollector{
+			deviceMatcher: deviceMatcher,
+			readStats:     qdisc.Read,
+		},
+		Flag: tracing.FlagMetric,
+	}, nil
+}
+
+func (c *qdiscCollector) Update() ([]*metric.Data, error) {
+	stats, err := c.readStats()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read qdisc statistics: %w", err)
 	}
 
-	allQdiscMap := make(map[string]map[uint32]*qdiscStats)
-	for _, q := range allQdisc {
-		if !f.Match(q.IfaceName) || q.Kind == "noqueue" {
+	metrics := make([]*metric.Data, 0, len(stats)*metricsPerQdisc)
+	labels := map[string]string{"device": "", "kind": ""}
+	for i := range stats {
+		stat := &stats[i]
+		if !c.deviceMatcher.Match(stat.Netdev) || stat.Kind == "noqueue" || !stat.IsRoot() {
 			continue
 		}
 
-		parentMaj := (q.Parent & tcHMajMask) >> 16
-		if _, ok := allQdiscMap[q.IfaceName]; !ok {
-			allQdiscMap[q.IfaceName] = make(map[uint32]*qdiscStats)
-		}
-		netQdisc, ok := allQdiscMap[q.IfaceName][parentMaj]
-		if !ok {
-			allQdiscMap[q.IfaceName][parentMaj] = &qdiscStats{
-				ifaceName:  q.IfaceName,
-				kind:       q.Kind,
-				bytes:      q.Bytes,
-				packets:    q.Packets,
-				drops:      q.Drops,
-				requeues:   q.Requeues,
-				overlimits: q.Overlimits,
-				qlen:       q.Qlen,
-				backlog:    q.Backlog,
-			}
-		} else {
-			netQdisc.bytes += q.Bytes
-			netQdisc.packets += q.Packets
-			netQdisc.drops += q.Drops
-			netQdisc.requeues += q.Requeues
-			netQdisc.overlimits += q.Overlimits
-			netQdisc.qlen += q.Qlen
-			netQdisc.backlog += q.Backlog
-		}
-	}
-
-	var metrics []*metric.Data
-	for _, netdevQdisc := range allQdiscMap {
-		for _, oneQdisc := range netdevQdisc {
-			tags := map[string]string{"device": oneQdisc.ifaceName, "kind": oneQdisc.kind}
-			metrics = append(
-				metrics,
-				metric.NewCounterData("bytes_total", float64(oneQdisc.bytes), "number of bytes sent.", tags),
-				metric.NewCounterData("packets_total", float64(oneQdisc.packets), "number of packets sent.", tags),
-				metric.NewCounterData("drops_total", float64(oneQdisc.drops), "number of packet drops.", tags),
-				metric.NewCounterData("requeues_total", float64(oneQdisc.requeues), "number of packets dequeued, not transmitted, and requeued.", tags),
-				metric.NewCounterData("overlimits_total", float64(oneQdisc.overlimits), "number of packet overlimits.", tags),
-				metric.NewGaugeData("current_queue_length", float64(oneQdisc.qlen), "number of packets currently in queue to be sent.", tags),
-				metric.NewGaugeData("backlog", float64(oneQdisc.backlog), "number of bytes currently in queue to be sent.", tags),
-			)
-		}
+		labels["device"] = stat.Netdev
+		labels["kind"] = stat.Kind
+		// Metric constructors copy labels, so one map serves the entire scrape.
+		metrics = appendQdiscMetrics(metrics, stat, labels)
 	}
 
 	return metrics, nil
+}
+
+func appendQdiscMetrics(
+	metrics []*metric.Data,
+	stat *qdisc.Stats,
+	labels map[string]string,
+) []*metric.Data {
+	return append(
+		metrics,
+		metric.NewCounterData(
+			"bytes_total",
+			float64(stat.Bytes),
+			"number of bytes sent.",
+			labels,
+		),
+		metric.NewCounterData(
+			"packets_total",
+			float64(stat.Packets),
+			"number of packets sent.",
+			labels,
+		),
+		metric.NewCounterData(
+			"drops_total",
+			float64(stat.Drops),
+			"number of packet drops.",
+			labels,
+		),
+		metric.NewCounterData(
+			"requeues_total",
+			float64(stat.Requeues),
+			"number of packets dequeued, not transmitted, and requeued.",
+			labels,
+		),
+		metric.NewCounterData(
+			"overlimits_total",
+			float64(stat.Overlimits),
+			"number of packet overlimits.",
+			labels,
+		),
+		metric.NewGaugeData(
+			"current_queue_length",
+			float64(stat.QueueLength),
+			"number of packets currently in queue to be sent.",
+			labels,
+		),
+		metric.NewGaugeData(
+			"backlog",
+			float64(stat.BacklogBytes),
+			"number of bytes currently in queue to be sent.",
+			labels,
+		),
+	)
 }

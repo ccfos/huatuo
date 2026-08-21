@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"errors"
 	"fmt"
 	"net"
 
@@ -118,10 +119,17 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-// End calls SendEnd then Close; errors are discarded, safe for defer.
-func (c *Client) End() {
-	_ = c.SendEnd()
-	_ = c.Close()
+// End sends the end marker and closes the connection.
+func (c *Client) End() error {
+	sendErr := c.SendEnd()
+	if sendErr != nil {
+		sendErr = fmt.Errorf("send end frame: %w", sendErr)
+	}
+	closeErr := c.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close connection: %w", closeErr)
+	}
+	return errors.Join(sendErr, closeErr)
 }
 
 // NewClient dials path, sends the handshake, and returns a ready Client.

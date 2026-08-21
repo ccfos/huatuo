@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,13 +17,14 @@ package handlers
 import (
 	"net/http"
 
+	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 )
 
 type ContainerHandler struct {
-	Handlers []server.Handle
+	Handlers []server.Route
 }
 
 type ContainersJSONReq struct {
@@ -32,8 +33,8 @@ type ContainersJSONReq struct {
 
 func NewContainerHandler() *ContainerHandler {
 	h := &ContainerHandler{}
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpGet, Uri: "/containers/json", Handle: h.list},
+	h.Handlers = []server.Route{
+		{Method: http.MethodGet, Path: "/containers/json", Handler: h.list},
 	}
 	return h
 }
@@ -46,7 +47,7 @@ func (h *ContainerHandler) list(ctx *server.Context) error {
 
 	all, err := pod.Containers()
 	if err != nil {
-		return response.NewAPIError(500, err.Error(), http.StatusInternalServerError)
+		return response.NewAPIError(v1.ErrorCodeInternal, err.Error(), http.StatusInternalServerError)
 	}
 
 	resp := make([]*pod.Container, 0, len(all))

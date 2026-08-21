@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/pkg/metric"
@@ -46,7 +46,6 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 
 	return &tracing.EventTracingAttr{
 		TracingData: &softirqLatency{
-			bpf:         nil,
 			cpuPossible: cpuPossible,
 			cpuOnline:   cpuOnline,
 		},
@@ -58,16 +57,15 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/system_softirq.c -o $BPF_DIR/system_softirq.o
 
 type softirqLatency struct {
-	bpf         bpf.BPF
-	running     atomic.Bool
+	bpf         bpf.Reference
 	cpuPossible int
 	cpuOnline   int
 }
 
 type softirqLatencyData struct {
-	Enable       uint64
-	Timestamp    uint64
-	TotalLatency [4]uint64
+	Enable        uint64
+	StartNS       uint64
+	LatencyCounts [4]uint64
 }
 
 const (
@@ -121,11 +119,13 @@ func irqAllowed(id int) bool {
 }
 
 func (s *softirqLatency) Update() ([]*metric.Data, error) {
-	if !s.running.Load() {
+	lease, ok := s.bpf.Acquire()
+	if !ok {
 		return nil, nil
 	}
+	defer lease.Release()
 
-	items, err := s.bpf.DumpMapByName("softirq_percpu_lats")
+	items, err := lease.DumpMapByName("softirq_percpu_lats")
 	if err != nil {
 		return nil, fmt.Errorf("dump map: %w", err)
 	}
@@ -157,9 +157,9 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 				break
 			}
 			labels["cpuid"] = strconv.Itoa(cpuid)
-			for zoneid, zone := range lat.TotalLatency {
+			for zoneid, zone := range lat.LatencyCounts {
 				labels["zone"] = strconv.Itoa(zoneid)
-				metricData = append(metricData, metric.NewGaugeData("latency", float64(zone), "softirq latency", labels))
+				metricData = append(metricData, metric.NewCounterData("latency", float64(zone), "softirq latency", labels))
 			}
 		}
 	}
@@ -167,27 +167,27 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 	return metricData, nil
 }
 
-func (s *softirqLatency) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+func (s *softirqLatency) Start(ctx context.Context) (retErr error) {
+	object, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
-	defer b.Close()
 
-	if err = b.Attach(); err != nil {
-		return err
+	if err = object.Attach(); err != nil {
+		return errors.Join(err, object.Close())
 	}
-
-	s.bpf = b
-	s.running.Store(true)
+	if err = s.bpf.Publish(object); err != nil {
+		return errors.Join(err, object.Close())
+	}
+	defer func() {
+		retErr = errors.Join(retErr, s.bpf.UnPublish())
+	}()
 
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	object.DetachOnContextDone(childCtx, cancel)
 
 	<-childCtx.Done()
-
-	s.running.Store(false)
 	return nil
 }

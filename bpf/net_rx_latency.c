@@ -10,36 +10,17 @@
 #include "bpf_common.h"
 #include "bpf_net_namespace.h"
 #include "bpf_ratelimit.h"
-#include "bpf_sock.h"
-#include "vmlinux_net.h"
+#include "bpf_skbuff.h"
+#include "abi/net_rx_latency_types.h"
 
 volatile const long long mono_wall_offset = 0;
 volatile const long long rxlat_thresh_netif = 5 * 1000 * 1000;	    // 5ms
 volatile const long long rxlat_thresh_tcpv4 = 10 * 1000 * 1000;	    // 10ms
 volatile const long long rxlat_thresh_usercopy = 115 * 1000 * 1000; // 115ms
 
-BPF_RATELIMIT(rate, 1, 100);
+BPF_RATELIMIT(rate, BPF_NSEC_PER_SEC, 100);
 
-struct perf_event_t {
-	char comm[COMPAT_TASK_COMM_LEN];
-	u64 latency;
-	u64 tgid_pid;
-	u64 pkt_len;
-	u16 tcp_sport;
-	u16 tcp_dport;
-	u32 tcp_saddr;
-	u32 tcp_daddr;
-	u32 tcp_seq;
-	u32 tcp_ack_seq;
-	u8 tcp_state;
-	u8 lat_stage;
-	u8 _pad[2];
-	char netdev_name[IFNAMSIZ];
-	u32 netns_inum;
-	u64 net_cookie;
-};
-
-enum rx_lat_stage {
+enum rx_latency_stage {
 	RX_STAGE_NETIF,
 	RX_STAGE_TCPV4,
 	RX_STAGE_USERCOPY,
@@ -133,9 +114,9 @@ static inline u64 skb_latency_check(struct sk_buff *skb, u64 threshold)
 }
 
 static inline void
-submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
+submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 latency_ns, u8 stage)
 {
-	struct perf_event_t event = {};
+	struct net_rx_latency_event event = {};
 	struct iphdr ip_hdr;
 	struct tcphdr tcp_hdr;
 	struct net_device *dev;
@@ -145,23 +126,23 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 
 	bpf_probe_read(&ip_hdr, sizeof(ip_hdr), skb_network_header(skb));
 	bpf_probe_read(&tcp_hdr, sizeof(tcp_hdr), skb_transport_header(skb));
-	event.latency = lat;
+	event.latency_ns = latency_ns;
 	event.tcp_saddr = ip_hdr.saddr;
 	event.tcp_daddr = ip_hdr.daddr;
 	event.tcp_sport = tcp_hdr.source;
 	event.tcp_dport = tcp_hdr.dest;
 	event.tcp_seq = tcp_hdr.seq;
 	event.tcp_ack_seq = tcp_hdr.ack_seq;
-	event.pkt_len = BPF_CORE_READ(skb, len);
-	event.tcp_state = (where == RX_STAGE_NETIF) ? 0 : skb_sk_state(skb);
-	event.lat_stage = where;
+	event.packet_len_bytes = BPF_CORE_READ(skb, len);
+	event.tcp_state = (stage == RX_STAGE_NETIF) ? 0 : skb_sk_state(skb);
+	event.latency_stage = stage;
 	event.netdev_name[0] = '-';
 	event.comm[0] = '-';
 	event.netns_inum = skb_netns_inum(skb);
-	event.net_cookie = skb_netns_cookie(skb);
+	event.netns_cookie = skb_netns_cookie(skb);
 	event.tgid_pid = 0;
 
-	if (likely(where == RX_STAGE_USERCOPY)) {
+	if (likely(stage == RX_STAGE_USERCOPY)) {
 		event.tgid_pid = bpf_get_current_pid_tgid();
 		bpf_get_current_comm(&event.comm, sizeof(event.comm));
 	}
@@ -173,7 +154,7 @@ submit_rxlat_event(void *ctx, struct sk_buff *skb, u64 lat, u8 where)
 
 	bpf_perf_event_output(ctx, &net_recv_lat_event_map,
 			      COMPAT_BPF_F_CURRENT_CPU, &event,
-			      sizeof(struct perf_event_t));
+			      sizeof(struct net_rx_latency_event));
 }
 
 SEC("tracepoint/net/netif_receive_skb")

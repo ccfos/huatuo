@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,49 +14,11 @@
 
 package bpf
 
-import (
-	"context"
-)
+import "context"
 
-type Option struct {
-	KeepaliveTimeout int
-}
-
-// AttachOption is an option for attaching a program.
-type AttachOption struct {
-	ProgramName string
-	Symbol      string   // symbol for kprobe/kretprobe/tracepoint/raw_tracepoint
-	PerfEvent   struct { // BPF_PROG_TYPE_PERF_EVENT
-		SamplePeriod, SampleFreq uint64
-		CPUID                    int
-	}
-}
-
-// Info holds loaded BPF object metadata.
-type Info struct {
-	MapsInfo     []MapInfo
-	ProgramsInfo []ProgramInfo
-}
-
-// MapInfo identifies a loaded BPF map.
-type MapInfo struct {
-	ID   uint32
-	Name string
-}
-
-// ProgramInfo identifies a loaded BPF program.
-type ProgramInfo struct {
-	ID          uint32
-	Name        string
-	SectionName string
-}
-
-// MapItem describes a map element with key-value.
-type MapItem struct {
-	Key   []byte
-	Value []byte
-}
-
+// BPF is safe for concurrent use. Close waits for in-flight operations.
+// Resource access and attach methods started after Close return ErrClosed;
+// Close and Detach remain idempotent.
 type BPF interface {
 	// Name returns the bpf name.
 	Name() string
@@ -64,8 +26,8 @@ type BPF interface {
 	// MapIDByName gets mapID by Name.
 	MapIDByName(name string) uint32
 
-	// ProgIDByName gets progID by Name.
-	ProgIDByName(name string) uint32
+	// ProgramIDByName returns the program ID for name.
+	ProgramIDByName(name string) uint32
 
 	// String returns the bpf string.
 	String() string
@@ -85,8 +47,8 @@ type BPF interface {
 	// Detach all programs.
 	Detach() error
 
-	// Loaded checks bpf is still loaded.
-	Loaded() (bool, error)
+	// IsLoaded reports whether the BPF object is still loaded.
+	IsLoaded() (bool, error)
 
 	// EventPipe gets event-pipe and returns a PerfEventReader.
 	EventPipe(ctx context.Context, mapID, perCPUBufSize uint32) (PerfEventReader, error)
@@ -116,6 +78,6 @@ type BPF interface {
 	// DumpMapByName dump all the context of the map.
 	DumpMapByName(mapName string) ([]MapItem, error)
 
-	// WaitDetachByBreaker check the bpf's status.
-	WaitDetachByBreaker(ctx context.Context, cancel context.CancelFunc)
+	// DetachOnContextDone is a hook for context-driven detach handling.
+	DetachOnContextDone(ctx context.Context, cancel context.CancelFunc)
 }

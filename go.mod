@@ -4,7 +4,6 @@ go 1.24.0
 
 require (
 	capnproto.org/go/capnp/v3 v3.1.0-alpha.2
-	github.com/Workiva/go-datastructures v1.1.7
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/cilium/ebpf v0.16.0
 	github.com/cloudflare/backoff v0.0.0-20240920015135-e46b80a3a7d0
@@ -15,7 +14,6 @@ require (
 	github.com/docker/docker v27.4.1+incompatible
 	github.com/ebitengine/purego v0.9.1
 	github.com/elastic/go-elasticsearch/v8 v8.17.1
-	github.com/ema/qdisc v1.0.0
 	github.com/gin-contrib/pprof v1.5.1
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-playground/validator/v10 v10.22.1
@@ -32,8 +30,8 @@ require (
 	github.com/opencontainers/runtime-spec v1.2.0
 	github.com/packetcap/go-pcap v0.0.0-20251215121130-f2cf9f991e7c
 	github.com/pelletier/go-toml v1.9.5
-	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.21.0-rc.0
+	github.com/prometheus/client_model v0.6.1
 	github.com/prometheus/procfs v0.19.2
 	github.com/prometheus/prometheus v0.302.1
 	github.com/rs/xid v1.6.0
@@ -50,6 +48,7 @@ require (
 	golang.org/x/time v0.9.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	k8s.io/api v0.31.3
+	k8s.io/apimachinery v0.31.3
 	k8s.io/cri-client v0.31.3
 	modernc.org/sqlite v1.44.0
 	sigs.k8s.io/yaml v1.5.0
@@ -156,9 +155,9 @@ require (
 	github.com/opentracing/opentracing-go v1.2.1-0.20220228012449-10b1cf09e00b // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
@@ -214,7 +213,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.1 // indirect
-	k8s.io/apimachinery v0.31.3 // indirect
 	k8s.io/client-go v0.31.3 // indirect
 	k8s.io/component-base v0.31.3 // indirect
 	k8s.io/cri-api v0.31.3 // indirect

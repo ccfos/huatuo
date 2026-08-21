@@ -29,6 +29,14 @@ Run the integration test from the project root:
 ```bash
 bash integration/run.sh
 ```
+
+Pass a file name to run one integration test. The optional second argument is
+the repeat count and defaults to 1:
+
+```bash
+bash integration/run.sh test_metrics_exclude_filter.sh 10
+```
+
 or
 ```bash
 make integration

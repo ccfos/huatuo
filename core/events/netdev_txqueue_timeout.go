@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,9 +16,11 @@ package events
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/pkg/tracing"
@@ -28,14 +30,6 @@ type txqueueTracingData struct {
 	QueueIndex uint32 `json:"queue_index"`
 	Name       string `json:"device_name"`
 	Driver     string `json:"driver_name"`
-}
-
-const deviceNameLen = 16
-
-type txqueuePerfEvent struct {
-	QueueIndex uint32
-	Name       [deviceNameLen]byte
-	Driver     [deviceNameLen]byte
 }
 
 type txqueueTimeout struct{}
@@ -55,7 +49,7 @@ func newTxqueueTimeout() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *txqueueTimeout) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
@@ -70,16 +64,20 @@ func (c *txqueueTimeout) Start(ctx context.Context) error {
 	}
 	defer reader.Close()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	b.DetachOnContextDone(childCtx, cancel)
 
 	for {
 		select {
 		case <-childCtx.Done():
 			return nil
 		default:
-			var event txqueuePerfEvent
+			var event abi.NetdevTxqueueTimeoutEvent
 
 			if err := reader.ReadInto(&event); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return err
 			}
 

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -65,6 +65,7 @@ func (c *memoryVmStat) Update() ([]*metric.Data, error) {
 }
 
 func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
+	cfg := configSnapshot()
 	f, err := matcher.NewValueMatcher(cfg.Vmstat.IncludedOnContainer, cfg.Vmstat.ExcludedOnContainer)
 	if err != nil {
 		return nil, fmt.Errorf("vmstat container filter: %w", err)
@@ -97,6 +98,7 @@ func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
 }
 
 func (c *memoryVmStat) hostVmstat() ([]*metric.Data, error) {
+	cfg := configSnapshot()
 	f, err := matcher.NewValueMatcher(cfg.Vmstat.IncludedOnHost, cfg.Vmstat.ExcludedOnHost)
 	if err != nil {
 		return nil, fmt.Errorf("vmstat host filter: %w", err)

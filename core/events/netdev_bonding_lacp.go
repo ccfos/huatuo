@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
@@ -54,7 +56,7 @@ func newLACPTracing() (*tracing.EventTracingAttr, error) {
 }
 
 func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+	b, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}
@@ -69,7 +71,7 @@ func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
 	}
 	defer reader.Close()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
+	b.DetachOnContextDone(childCtx, cancel)
 
 	for {
 		select {
@@ -77,8 +79,12 @@ func (lacp *lacpTracing) Start(ctx context.Context) (err error) {
 			log.Info("lacp tracing is stopped.")
 			return nil
 		default:
-			var tmp uint64
+			var tmp abi.NetdevBondingLACPEvent
 			if err := reader.ReadInto(&tmp); err != nil {
+				if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+					log.WithError(err).Warn("lost BPF perf event samples")
+					continue
+				}
 				return fmt.Errorf("read lacp perf event fail: %w", err)
 			}
 

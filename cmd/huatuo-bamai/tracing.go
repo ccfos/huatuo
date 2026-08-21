@@ -26,12 +26,12 @@ import (
 )
 
 func setupBPF(_ *Daemon) (func(context.Context) error, error) {
-	if err := bpf.NewManager(&bpf.Option{}); err != nil {
-		return nil, fmt.Errorf("init bpf manager: %w", err)
+	if err := bpf.Init(&bpf.Option{}); err != nil {
+		return nil, fmt.Errorf("init bpf: %w", err)
 	}
 
 	return func(context.Context) error {
-		bpf.Close()
+		bpf.Shutdown()
 		return nil
 	}, nil
 }
@@ -55,14 +55,14 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 		return nil, fmt.Errorf("new tracing manager: %w", err)
 	}
 
-	if err := mgr.Start(); err != nil {
+	if err := mgr.Start(context.Background()); err != nil {
 		return nil, fmt.Errorf("start tracing manager: %w", err)
 	}
 
 	d.tracer = mgr
 	// Stop collectors first, then drain bulk-buffered writes before BPF teardown.
 	return func(ctx context.Context) error {
-		if err := mgr.Stop(); err != nil {
+		if err := mgr.Close(ctx); err != nil {
 			return fmt.Errorf("stop: %w", err)
 		}
 		if err := tracing.CloseStores(ctx); err != nil {
@@ -73,11 +73,16 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 }
 
 func startHandlers(d *Daemon) (func(context.Context) error, error) {
-	handlers.Start(handlers.ServerOptions{
-		Addr:           config.Get().APIServer.TCPAddr,
+	runningServer, err := handlers.Start(handlers.ServerOptions{
+		Addr:           config.Get().HTTPServer.ListenAddress,
 		TracingManager: d.tracer,
 		PromReg:        d.metrics,
 		VersionInfo:    &d.opts.VersionInfo,
 	})
-	return nil, nil
+	if err != nil {
+		return nil, fmt.Errorf("start handlers: %w", err)
+	}
+	d.apiServer = runningServer
+
+	return runningServer.Shutdown, nil
 }

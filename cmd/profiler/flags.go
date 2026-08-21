@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,9 +18,78 @@ import "github.com/urfave/cli/v2"
 
 var appFlags = []cli.Flag{
 	&cli.StringFlag{
-		Name:  "server-address",
-		Usage: "Huatuo profiling server address",
-		Value: "127.0.0.1:19704",
+		Name:    "type",
+		Aliases: []string{"t"},
+		Usage:   "Profiling type: cpu|memory",
+	},
+	&cli.StringFlag{
+		Name:    "language",
+		Aliases: []string{"l"},
+		Usage:   "Target language: java|go|python|c|c++",
+	},
+	&cli.StringFlag{
+		Name:  "memory-mode",
+		Usage: "Memory mode; Java: object_alloc|object_usage; native: virtual_alloc|physical_alloc|physical_usage",
+	},
+	&cli.StringFlag{
+		Name:    "pid",
+		Aliases: []string{"p"},
+		Usage:   "Target PID(s), comma-separated for Java and Python; native supports one PID",
+	},
+	&cli.StringFlag{
+		Name:  "cpuid",
+		Usage: "CPU IDs to profile: comma-separated list and ranges (e.g., 1,3,5-10). Empty for all CPUs",
+	},
+	&cli.StringFlag{
+		Name:  "cpu-mode",
+		Usage: "Native CPU profiling mode: oncpu|offcpu",
+		Value: "oncpu",
+	},
+	&cli.StringFlag{
+		Name:  "offcpu-phase",
+		Usage: "Off-CPU phase to attribute: all|blocked|runqueue",
+		Value: "all",
+	},
+	&cli.Uint64Flag{
+		Name:  "offcpu-min-duration-us",
+		Usage: "Minimum off-CPU phase duration to record in microseconds",
+		Value: 1000,
+	},
+	&cli.BoolFlag{
+		Name:  "offcpu-stats",
+		Usage: "Enable off-CPU diagnostics",
+	},
+	&cli.StringFlag{
+		Name:  "container-id",
+		Usage: "Target container ID",
+	},
+	&cli.BoolFlag{
+		Name:  "thread-group",
+		Usage: "Profile the target thread group; supported only by native profiling",
+	},
+	&cli.IntFlag{
+		Name:    "freq",
+		Aliases: []string{"F"},
+		Usage:   "The number of samples to collect per second",
+		Value:   99,
+	},
+	&cli.BoolFlag{
+		Name:  "require-hardware-pmu",
+		Usage: "Require native on-CPU profiling to use the hardware PMU",
+	},
+	&cli.UintFlag{
+		Name:  "physical-memory-probability",
+		Usage: "Native physical-memory sampling probability, from 1 to 100 percent",
+		Value: 100,
+	},
+	&cli.IntFlag{
+		Name:  "max-concurrent-procs",
+		Usage: "Maximum concurrent profiler subprocesses; 0 means unlimited",
+	},
+	&cli.IntFlag{
+		Name:  "aggr-interval",
+		Usage: "interval for profiling of aggregate process",
+		Value: 10,
 	},
 	&cli.IntFlag{
 		Name:    "duration",
@@ -29,41 +98,24 @@ var appFlags = []cli.Flag{
 		Value:   10,
 	},
 	&cli.StringFlag{
-		Name:    "language",
-		Aliases: []string{"l"},
-		Usage:   "Target language: java|go|python|c|c++",
+		Name:  "output-path",
+		Usage: "Output path for profiling",
+		Value: ".",
 	},
 	&cli.StringFlag{
-		Name:    "type",
-		Aliases: []string{"t"},
-		Usage:   "Profiling type: cpu|mem",
-	},
-	&cli.Uint64Flag{
-		Name:    "pid",
-		Aliases: []string{"p"},
-		Usage:   "Target PID",
+		Name:  "output-format",
+		Usage: "Output format for profiling: collapsed|flamegraph|svg|remote",
+		Value: "collapsed",
 	},
 	&cli.StringFlag{
-		Name:  "container-id",
-		Usage: "Target container ID",
-	},
-	&cli.StringFlag{
-		Name:  "exec-path",
-		Usage: "Executable path of target process",
-	},
-	&cli.StringFlag{
-		Name:  "scope",
-		Value: "thread",
-		Usage: "Sampling dimension: thread|thread-group|process-group etc.",
-	},
-	&cli.BoolFlag{
-		Name:  "verbose",
-		Usage: "Shorthand for --log-level debug --log-file stdout; overrides explicit values of both flags",
+		Name:  "output-storage",
+		Usage: "Unix socket path for remote upload (used with --output-format=remote)",
+		Value: "/var/run/huatuo-toolstream.sock",
 	},
 	&cli.StringFlag{
 		Name:  "log-level",
 		Usage: "Log level: trace|debug|info|warn|error",
-		Value: "info",
+		Value: "error",
 	},
 	&cli.StringFlag{
 		Name:  "log-file",
@@ -72,71 +124,36 @@ var appFlags = []cli.Flag{
 	},
 	&cli.IntFlag{
 		Name:  "log-size",
-		Usage: "Default log size of profiling",
+		Usage: "Log rotation size in MB; 0 disables rotation",
 		Value: 100,
 	},
 	&cli.BoolFlag{
 		Name:  "log-bpf-debug",
 		Usage: "Log bpf_dbg events (native profiler only)",
 	},
+	&cli.BoolFlag{
+		Name:  "verbose",
+		Usage: "Shorthand for --log-level debug --log-file stdout; overrides explicit values of both flags",
+	},
+	&cli.BoolFlag{
+		Name:  "enable-pprof",
+		Usage: "Serve Go runtime profiles on port 6000",
+	},
 	&cli.StringFlag{
 		Name:  "tool-path",
-		Usage: "Path to the profiling tool (e.g. async-profiler, py-spy)",
-	},
-	&cli.IntFlag{
-		Name:  "tool-limit",
-		Usage: "Limit how many third-party tools can run in parallel (e.g. async-profiler, py-spy)",
-	},
-	&cli.IntFlag{
-		Name:    "freq",
-		Aliases: []string{"F"},
-		Usage:   "The number of samples to collect per second",
-		Value:   99,
-	},
-	&cli.IntFlag{
-		Name:  "cpuid",
-		Usage: "Collect samples only on the specified CPU ID (currently only native_cpu profiler is supported, -1 means all CPUs)",
-		Value: -1,
-	},
-	&cli.StringSliceFlag{
-		Name:    "flags",
-		Aliases: []string{"f"},
-		Usage:   "Extra cpu/memory profiler flags, e.g. -f '--core-id=10' -f '--title=AppName'",
+		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
 	},
 	&cli.StringFlag{
-		Name:  "output-path",
-		Usage: "Output path for profiling",
-		Value: ".",
+		Name:  "binary-match-path",
+		Usage: "Binary path used to match target processes",
 	},
 	&cli.StringFlag{
-		Name:  "output-format",
-		Usage: "Output format for profiling: collapsed|pprof|flamegraph|svg|remote",
-		Value: "collapsed",
-	},
-	&cli.IntFlag{
-		Name:  "aggr-interval",
-		Usage: "interval for profiling of aggregate process",
-		Value: 10,
+		Name:  "huatuo-api-address",
+		Usage: "HuaTuo API address used to resolve container metadata",
+		Value: "127.0.0.1:19704",
 	},
 	&cli.StringFlag{
-		Name:  "output-storage",
-		Usage: "Unix socket path for remote upload (used with --output-format=remote)",
-		Value: "/var/run/huatuo-toolstream.sock",
-	},
-	&cli.StringSliceFlag{
-		Name:  "metadata",
-		Usage: "Meta data for document data, e.g. --metadata '--tracer_id HHKKJGKIUOLNK' --metadata '--tracer_data=AppName'",
-	},
-	&cli.StringFlag{
-		Name:  "mock-container",
-		Usage: "Mock container metadata JSON for uploads (testing only), or 'random' to auto-generate",
-	},
-	&cli.StringSliceFlag{
-		Name:  "cpuidle-metadata",
-		Usage: "Meta data for cpuidle tracerData, e.g. --cpuidle-metadata '--user_threshold 54' --cpuidle-metadata '--user=AppName'",
-	},
-	&cli.StringSliceFlag{
-		Name:  "cpusys-metadata",
-		Usage: "Meta data for cpusys tracerData, e.g. --cpusys-metadata '--usage_threshold 33' --cpusys-metadata '--title=AppName'",
+		Name:  "tracer-id",
+		Usage: "Tracing task ID; generated automatically when empty",
 	},
 }

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,11 +18,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"reflect"
-	"sync/atomic"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/pkg/metric"
@@ -41,8 +42,7 @@ type latencyBpfData struct {
 }
 
 type runqlatCollector struct {
-	running     atomic.Bool
-	bpf         bpf.BPF
+	bpf         bpf.Reference
 	runqlatHost latencyBpfData
 }
 
@@ -59,28 +59,29 @@ func newRunqlatCollector() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func (c *runqlatCollector) Start(ctx context.Context) error {
-	b, err := bpf.LoadBpf(bpf.ThisBpfOBJ(), nil)
+func (c *runqlatCollector) Start(ctx context.Context) (retErr error) {
+	object, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
 	if err != nil {
 		return err
 	}
-	defer b.Close()
 
-	if err = b.Attach(); err != nil {
-		return err
+	if err = object.Attach(); err != nil {
+		return errors.Join(err, object.Close())
 	}
+	if err = c.bpf.Publish(object); err != nil {
+		return errors.Join(err, object.Close())
+	}
+	defer func() {
+		retErr = errors.Join(retErr, c.bpf.UnPublish())
+	}()
 
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	b.WaitDetachByBreaker(childCtx, cancel)
-
-	c.bpf = b
-	c.running.Store(true)
+	object.DetachOnContextDone(childCtx, cancel)
 
 	// wait stop
 	<-childCtx.Done()
-	c.running.Store(false)
 	return nil
 }
 
@@ -108,8 +109,11 @@ func aggregatePerCPUValue(raw []byte, dst *latencyBpfData) error {
 	return nil
 }
 
-func (c *runqlatCollector) updateContainerDataCache(cssContainers map[uint64]*pod.Container) error {
-	items, err := c.bpf.DumpMapByName("cpu_tg_metric")
+func (c *runqlatCollector) updateContainerDataCache(
+	object bpf.BPF,
+	cssContainers map[uint64]*pod.Container,
+) error {
+	items, err := object.DumpMapByName("cpu_tg_metric")
 	if err != nil {
 		return fmt.Errorf("dump bpf map, %w", err)
 	}
@@ -140,8 +144,8 @@ func (c *runqlatCollector) updateContainerDataCache(cssContainers map[uint64]*po
 	return nil
 }
 
-func (c *runqlatCollector) fetchHostRunqlat() []*metric.Data {
-	item, err := c.bpf.ReadMap(c.bpf.MapIDByName("cpu_host_metric"), []byte{0, 0, 0, 0})
+func (c *runqlatCollector) fetchHostRunqlat(object bpf.BPF) []*metric.Data {
+	item, err := object.ReadMap(object.MapIDByName("cpu_host_metric"), []byte{0, 0, 0, 0})
 	if err != nil || len(item) == 0 {
 		return nil
 	}
@@ -151,27 +155,29 @@ func (c *runqlatCollector) fetchHostRunqlat() []*metric.Data {
 	}
 
 	return []*metric.Data{
-		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone0), "cpu run queue latency for the host", map[string]string{"zone": "0"}),
-		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone1), "cpu run queue latency for the host", map[string]string{"zone": "1"}),
-		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone2), "cpu run queue latency for the host", map[string]string{"zone": "2"}),
-		metric.NewGaugeData("latency", float64(c.runqlatHost.NumLatencyZone3), "cpu run queue latency for the host", map[string]string{"zone": "3"}),
+		metric.NewCounterData("latency", float64(c.runqlatHost.NumLatencyZone0), "cpu run queue latency for the host", map[string]string{"zone": "0"}),
+		metric.NewCounterData("latency", float64(c.runqlatHost.NumLatencyZone1), "cpu run queue latency for the host", map[string]string{"zone": "1"}),
+		metric.NewCounterData("latency", float64(c.runqlatHost.NumLatencyZone2), "cpu run queue latency for the host", map[string]string{"zone": "2"}),
+		metric.NewCounterData("latency", float64(c.runqlatHost.NumLatencyZone3), "cpu run queue latency for the host", map[string]string{"zone": "3"}),
 	}
 }
 
 func (c *runqlatCollector) Update() ([]*metric.Data, error) {
-	if !c.running.Load() {
+	lease, ok := c.bpf.Acquire()
+	if !ok {
 		return nil, nil
 	}
+	defer lease.Release()
 
 	containers, err := pod.ContainersByType(pod.ContainerTypeNormal)
 	if err != nil {
 		return nil, err
 	}
 
-	cssContainer := pod.BuildCssContainers(containers, pod.SubSysCPU)
+	cssContainer := pod.BuildCssContainers(containers, subsystem.SubsystemCPU)
 
 	// update all containers cache data
-	if err := c.updateContainerDataCache(cssContainer); err != nil {
+	if err := c.updateContainerDataCache(lease.BPF, cssContainer); err != nil {
 		log.Warnf("runqlat: update container cache: %v", err)
 	}
 
@@ -180,7 +186,7 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 		// Skip containers with no CPU cgroup address: they are absent from
 		// cssContainer and therefore never updated by updateContainerDataCache.
 		// Reporting their zero/stale cache would produce misleading metrics.
-		if _, ok := container.CgroupCss[pod.SubSysCPU]; !ok {
+		if _, ok := container.CgroupCss[subsystem.SubsystemCPU]; !ok {
 			continue
 		}
 
@@ -190,11 +196,11 @@ func (c *runqlatCollector) Update() ([]*metric.Data, error) {
 		}
 
 		data = append(data,
-			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone0), "cpu run queue latency for the containers", map[string]string{"zone": "0"}),
-			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone1), "cpu run queue latency for the containers", map[string]string{"zone": "1"}),
-			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone2), "cpu run queue latency for the containers", map[string]string{"zone": "2"}),
-			metric.NewContainerGaugeData(container, "latency", float64(cache.NumLatencyZone3), "cpu run queue latency for the containers", map[string]string{"zone": "3"}))
+			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone0), "cpu run queue latency for the containers", map[string]string{"zone": "0"}),
+			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone1), "cpu run queue latency for the containers", map[string]string{"zone": "1"}),
+			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone2), "cpu run queue latency for the containers", map[string]string{"zone": "2"}),
+			metric.NewContainerCounterData(container, "latency", float64(cache.NumLatencyZone3), "cpu run queue latency for the containers", map[string]string{"zone": "3"}))
 	}
 
-	return append(data, c.fetchHostRunqlat()...), nil
+	return append(data, c.fetchHostRunqlat(lease.BPF)...), nil
 }

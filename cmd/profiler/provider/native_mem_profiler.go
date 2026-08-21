@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,69 +19,68 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/command/container"
+	"huatuo-bamai/internal/bpf/abi"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/aggregator"
-	"huatuo-bamai/internal/profiler/bpfmap"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/profiler/registry"
-	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/types"
 )
 
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/pm_retained2.c -o $BPF_DIR/pm_retained2.o
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/vm_accumulative2.c -o $BPF_DIR/vm_accumulative2.o
-//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/pm_accumulative2.c -o $BPF_DIR/pm_accumulative2.o
-
-const memDrainTick = 100 * time.Millisecond
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_physical_usage.c -o $BPF_DIR/native_physical_usage.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_virtual_alloc.c -o $BPF_DIR/native_virtual_alloc.o
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/native_physical_alloc.c -o $BPF_DIR/native_physical_alloc.o
 
 const (
-	modeVMAccu     = "vm_accumulative"
-	modePMRetained = "pm_retained"
-	modePMAccu     = "pm_accumulative"
+	programTracePageAlloc = "trace_page_alloc"
+	programTracePageFree  = "trace_page_free"
+
+	symbolPageAddNewAnonRmap  = "page_add_new_anon_rmap"
+	symbolPageRemoveRmap      = "page_remove_rmap"
+	symbolFolioAddNewAnonRmap = "folio_add_new_anon_rmap"
+	symbolFolioRemoveRmapPtes = "folio_remove_rmap_ptes"
 )
+
+type physicalUsageAttachConfig struct {
+	AttachOpts      []bpf.AttachOption
+	CountFolioPages bool
+}
 
 type memNativeProfiler struct {
 	bpf bpf.BPF
 
-	internalMode string
+	internalMode profiling.MemoryMode
 	probability  uint
 	pageSize     int64
 }
 
-type memEvent struct {
-	Pid       uint32
-	Comm      [bpf.TaskCommLen]byte
-	Kernstack int32
-	Userstack int32
-	// StackMapSel records which A/B stack_map the IDs came from. Required
-	// for retained free events whose alloc-time parity may differ from the
-	// current parity at free time; kept in the shared event layout.
-	StackMapSel uint32
-	Value       int64
-}
+var hasKprobeFunction = bpf.HasKprobeFunction
 
 func init() {
 	impl := &memNativeProfiler{}
 	registry.Register(registry.ProfilerMeta{
-		Type:          "mem",
-		LangOrImpl:    "native",
-		Description:   "Native memory profiler using ebpf (vm/pm accumulated & retained)",
-		Impl:          impl,
-		NewAggregator: impl.NewAggregator,
+		Type:           profiling.TypeMemory,
+		Implementation: profiling.ImplementationNative,
+		Description:    "Native memory profiler using eBPF (virtual_alloc, physical_alloc, physical_usage modes)",
+		Impl:           impl,
+		NewAggregator:  impl.NewAggregator,
 	})
 }
 
 // NewAggregator stamps OneShotAgg before construction for retained mode —
 // alloc/free deltas must collapse in a single shot, not stream every interval.
-func (n *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	if mode, err := resolveMemMode(pctx.ExtraFlags["mode"]); err == nil && mode == modePMRetained {
+func (p *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
+	mode, err := resolveMemMode(pctx.MemoryMode)
+	if err != nil {
+		return nil, err
+	}
+
+	if mode == profiling.MemoryModePhysicalUsage {
 		pctx.IsOneShotAgg = true
 	}
 
@@ -93,196 +92,185 @@ func (p *memNativeProfiler) Stop(_ *pcontext.ProfilerContext) error {
 }
 
 func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
+	if err := validateNativePIDs("memory", pctx.PIDs); err != nil {
+		return err
+	}
+	if err := requireRoot(); err != nil {
+		return err
+	}
+
 	p.pageSize = int64(os.Getpagesize())
 
-	internalMode, err := resolveMemMode(pctx.ExtraFlags["mode"])
+	internalMode, err := resolveMemMode(pctx.MemoryMode)
 	if err != nil {
 		return err
 	}
 
 	p.internalMode = internalMode
-
-	probability, err := resolveProbability(pctx.ExtraFlags["probability"], internalMode)
+	probability, err := resolveProbability(pctx.PhysicalMemoryProbability)
 	if err != nil {
 		return err
 	}
 
 	p.probability = probability
 
-	traceThreads, err := resolveScope(pctx.Scope)
+	log.Info("starting native memory profiler mode: ", p.internalMode)
+
+	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemMemory)
 	if err != nil {
 		return err
 	}
 
-	if os.Geteuid() != 0 {
-		return fmt.Errorf("eBPF features requires root privileges")
-	}
-
-	log.Infof("starting native mem profiler, mode=%s", p.internalMode)
-
-	cssAddr, err := resolveCgroupCSS(pctx)
-	if err != nil {
-		return err
-	}
-
-	bpfObjName, consts, opts, err := bpfPlanForMode(p.internalMode, pctx.PID, cssAddr, traceThreads, p.probability)
+	cfg, err := newNativeMemoryBPFLoadConfig(p.internalMode, pctx.PID(), cssAddr, pctx.ThreadGroup, p.probability)
 	if err != nil {
 		return err
 	}
 
 	dbg := bpf.NewDbg(pctx.LogBpfDebug)
 
-	b, err := bpf.LoadBpf(bpfObjName, dbg.WithBpfDbg(consts))
+	b, err := bpf.LoadBPF(cfg.ObjectFile, dbg.WithBpfDbg(cfg.Constants))
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}
 
-	if err := b.AttachWithOptions(opts); err != nil {
+	if err := b.AttachWithOptions(cfg.AttachOpts); err != nil {
 		if cerr := b.Close(); cerr != nil {
-			log.Warnf("closing eBPF after attach failure: %v", cerr)
+			log.Warn("closing eBPF after attach failure", "error", cerr)
 		}
 
 		return fmt.Errorf("failed to attach: %w", err)
 	}
 
 	p.bpf = b
-	log.Infof("eBPF attached")
+	log.Info("eBPF attached")
 
 	return nil
 }
 
-func resolveMemMode(mode string) (string, error) {
-	if mode == "" {
-		mode = "native_physical_alloc"
-	}
-
-	switch mode {
-	case "native_virtual_alloc":
-		return modeVMAccu, nil
-	case "native_physical_usage":
-		return modePMRetained, nil
-	case "native_physical_alloc":
-		return modePMAccu, nil
-	default:
-		return "", fmt.Errorf("invalid mode %q", mode)
-	}
+// nativeMemoryBPFLoadConfig holds the configuration needed to load and attach a BPF program.
+type nativeMemoryBPFLoadConfig struct {
+	// ObjectFile is the BPF object file name (e.g., "native_virtual_alloc.o").
+	ObjectFile string
+	// Constants are the constant values to be substituted in the BPF program.
+	Constants map[string]any
+	// AttachOpts specifies how to attach the BPF program to kernel hooks.
+	AttachOpts []bpf.AttachOption
 }
 
-func resolveProbability(probStr, internalMode string) (uint, error) {
-	probability := uint64(100)
+// newNativeMemoryBPFLoadConfig creates a BPF load configuration based on the profiler mode.
+// It returns the appropriate object file, constants, and attachment options for the given mode.
+func newNativeMemoryBPFLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64, threadGroup bool, probability uint) (*nativeMemoryBPFLoadConfig, error) {
+	constants := newNativeBPFConstants(pid, cssAddr, threadGroup)
 
-	if probStr != "" {
-		prob, err := strconv.ParseUint(probStr, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("invalid probability value %q: %w", probStr, err)
-		}
-
-		probability = prob
-	}
-
-	if (internalMode == modePMRetained || internalMode == modePMAccu) && (probability < 1 || probability > 100) {
-		return 0, fmt.Errorf("probability must be between 1 and 100")
-	}
-
-	return uint(probability), nil
-}
-
-func resolveScope(scope string) (bool, error) {
-	switch scope {
-	case "thread", "":
-		return false, nil
-	case "thread-group":
-		return true, nil
-	case "process-group":
-		return false, fmt.Errorf("scope 'process-group' is not supported by mem profiler")
-	default:
-		return false, fmt.Errorf("unsupported scope for mem profiler: %q", scope)
-	}
-}
-
-func resolveCgroupCSS(pctx *pcontext.ProfilerContext) (uint64, error) {
-	if pctx.ContainerID == "" {
-		return 0, nil
-	}
-
-	c, err := container.GetContainerByID(pctx.ServerAddress, pctx.ContainerID)
-	if err != nil {
-		return 0, err
-	}
-
-	if c == nil {
-		return 0, fmt.Errorf("container %q not found", pctx.ContainerID)
-	}
-
-	return c.CgroupCss["memory"], nil
-}
-
-func bpfPlanForMode(internalMode string, pid int, cssAddr uint64, traceThreads bool, probability uint) (string, map[string]any, []bpf.AttachOption, error) {
 	switch internalMode {
-	case modeVMAccu:
-		return "vm_accumulative2.o",
-			map[string]any{
-				"target_pid":    uint32(pid),
-				"target_css":    cssAddr,
-				"trace_threads": traceThreads,
-			},
-			[]bpf.AttachOption{
+	case profiling.MemoryModeVirtualAlloc:
+		return &nativeMemoryBPFLoadConfig{
+			ObjectFile: "native_virtual_alloc.o",
+			Constants:  constants,
+			AttachOpts: []bpf.AttachOption{
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
 			},
-			nil
-	case modePMRetained:
-		return "pm_retained2.o",
-			map[string]any{
-				"target_pid":           uint32(pid),
-				"target_css":           cssAddr,
-				"trace_threads":        traceThreads,
-				"sampling_probability": uint8(probability),
-			},
-			[]bpf.AttachOption{
-				{ProgramName: "trace_page_alloc", Symbol: "page_add_new_anon_rmap"},
-				{ProgramName: "trace_page_free", Symbol: "page_remove_rmap"},
-			},
-			nil
-	case modePMAccu:
-		return "pm_accumulative2.o",
-			map[string]any{
-				"target_pid":           uint32(pid),
-				"target_css":           cssAddr,
-				"trace_threads":        traceThreads,
-				"sampling_probability": uint8(probability),
-			},
-			[]bpf.AttachOption{
-				{ProgramName: "trace_page_alloc", Symbol: "page_add_new_anon_rmap"},
-			},
-			nil
+		}, nil
+	case profiling.MemoryModePhysicalUsage:
+		attachCfg, err := newPhysicalUsageAttachConfig()
+		if err != nil {
+			return nil, err
+		}
+
+		constants["profiler_sampling_prob"] = uint8(probability)
+		constants["profiler_folio_npages"] = attachCfg.CountFolioPages
+		return &nativeMemoryBPFLoadConfig{
+			ObjectFile: "native_physical_usage.o",
+			Constants:  constants,
+			AttachOpts: attachCfg.AttachOpts,
+		}, nil
+	case profiling.MemoryModePhysicalAlloc:
+		attachOpt, err := newPhysicalAllocAttachOption()
+		if err != nil {
+			return nil, err
+		}
+
+		constants["profiler_sampling_prob"] = uint8(probability)
+		return &nativeMemoryBPFLoadConfig{
+			ObjectFile: "native_physical_alloc.o",
+			Constants:  constants,
+			AttachOpts: []bpf.AttachOption{attachOpt},
+		}, nil
 	}
 
-	return "", nil, nil, fmt.Errorf("unsupported mem profiler mode: %q", internalMode)
+	return nil, fmt.Errorf("unsupported mem profiler mode: %q", internalMode)
+}
+
+func newPhysicalAllocAttachOption() (bpf.AttachOption, error) {
+	if hasKprobeFunction(symbolFolioAddNewAnonRmap) {
+		return bpf.AttachOption{
+			ProgramName: programTracePageAlloc,
+			Symbol:      symbolFolioAddNewAnonRmap,
+		}, nil
+	}
+
+	if hasKprobeFunction(symbolPageAddNewAnonRmap) {
+		return bpf.AttachOption{
+			ProgramName: programTracePageAlloc,
+			Symbol:      symbolPageAddNewAnonRmap,
+		}, nil
+	}
+
+	return bpf.AttachOption{}, fmt.Errorf("no supported physical alloc kprobe found: tried %s, %s",
+		symbolPageAddNewAnonRmap, symbolFolioAddNewAnonRmap)
+}
+
+func newPhysicalUsageAttachConfig() (physicalUsageAttachConfig, error) {
+	if hasKprobeFunction(symbolFolioAddNewAnonRmap) && hasKprobeFunction(symbolFolioRemoveRmapPtes) {
+		return physicalUsageAttachConfig{
+			AttachOpts: []bpf.AttachOption{
+				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+				{ProgramName: programTracePageFree, Symbol: symbolFolioRemoveRmapPtes},
+			},
+			CountFolioPages: true,
+		}, nil
+	}
+
+	if hasKprobeFunction(symbolFolioAddNewAnonRmap) && hasKprobeFunction(symbolPageRemoveRmap) {
+		return physicalUsageAttachConfig{
+			AttachOpts: []bpf.AttachOption{
+				{ProgramName: programTracePageAlloc, Symbol: symbolFolioAddNewAnonRmap},
+				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+			},
+		}, nil
+	}
+
+	if hasKprobeFunction(symbolPageAddNewAnonRmap) && hasKprobeFunction(symbolPageRemoveRmap) {
+		return physicalUsageAttachConfig{
+			AttachOpts: []bpf.AttachOption{
+				{ProgramName: programTracePageAlloc, Symbol: symbolPageAddNewAnonRmap},
+				{ProgramName: programTracePageFree, Symbol: symbolPageRemoveRmap},
+			},
+		}, nil
+	}
+
+	return physicalUsageAttachConfig{}, fmt.Errorf("no supported physical usage kprobe pair found: tried %s/%s, %s/%s, %s/%s",
+		symbolFolioAddNewAnonRmap, symbolFolioRemoveRmapPtes,
+		symbolFolioAddNewAnonRmap, symbolPageRemoveRmap,
+		symbolPageAddNewAnonRmap, symbolPageRemoveRmap)
 }
 
 func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any)) error {
-	log.Infof("data reading loop started")
-	defer log.Infof("data reading loop ended")
+	log.Info("data reading loop started")
+	defer log.Info("data reading loop ended")
 
-	readerA, err := p.bpf.EventPipeByName(ctx, "profiler_output_a", 4096*257)
+	// Determine if fallback is needed based on profiling mode
+	// Retained mode (physical_usage) needs fallback, others don't
+	needsFallback := p.internalMode == profiling.MemoryModePhysicalUsage
+
+	// Initialize ring buffer context once, reuse throughout the profiling loop
+	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257, needsFallback)
 	if err != nil {
-		return fmt.Errorf("create mem readerA: %w", err)
+		return err
 	}
-	defer readerA.Close()
+	defer ringCtx.Close()
 
-	readerB, err := p.bpf.EventPipeByName(ctx, "profiler_output_b", 4096*257)
-	if err != nil {
-		return fmt.Errorf("create mem readerB: %w", err)
-	}
-	defer readerB.Close()
-
-	stateMapID := p.bpf.MapIDByName("profiler_state_map")
-	stackMapAID := p.bpf.MapIDByName("stack_map_a")
-	stackMapBID := p.bpf.MapIDByName("stack_map_b")
-
-	usym := symbol.NewUsymResolver()
-
-	ticker := time.NewTicker(memDrainTick)
+	ticker := time.NewTicker(drainTick)
 	defer ticker.Stop()
 
 	for {
@@ -292,201 +280,35 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 		case <-ticker.C:
 		}
 
-		if err := p.drainActiveRing(readerA, readerB, stateMapID, stackMapAID, stackMapBID, usym, enqueue); err != nil {
+		// Use unified drainActiveRingBuffer with Memory event factory
+		stackCountsByProc, ring, err := ringCtx.drainActiveRingBuffer(
+			func() any { return &abi.ProfilerEventBase{} },
+			p.convertValueToBytes,
+		) // Convert pages to bytes
+		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
 			}
 
-			log.Warnf("drain: %v", err)
-		}
-	}
-}
-
-// memBatchKey groups events by (process, stack pair, stack-map selector) so
-// retained-mode frees that reference the alternate stack_map can be dispatched
-// per event without losing the alloc/free delta accumulation.
-type memBatchKey struct {
-	proc processIDName
-	ids  bpfmap.StackTraceID
-	sel  uint32
-}
-
-type memActiveRing struct {
-	reader      bpf.PerfEventReader
-	sampleCount uint64
-}
-
-func (p *memNativeProfiler) advanceSwapParity(readerA, readerB bpf.PerfEventReader, stateMapID uint32) (memActiveRing, error) {
-	val, err := bpfmap.ReadUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx)
-	if err != nil {
-		return memActiveRing{}, fmt.Errorf("read transferCnt: %w", err)
-	}
-
-	var (
-		ring           memActiveRing
-		sampleCountIdx uint32
-	)
-	if val%2 == 0 {
-		ring = memActiveRing{reader: readerA}
-		sampleCountIdx = bpfmap.SampleCountAIdx
-	} else {
-		ring = memActiveRing{reader: readerB}
-		sampleCountIdx = bpfmap.SampleCountBIdx
-	}
-
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, bpfmap.TransferCountIdx, val+1); err != nil {
-		return memActiveRing{}, fmt.Errorf("write transferCnt: %w", err)
-	}
-
-	ring.sampleCount, err = bpfmap.ReadUint64(p.bpf, stateMapID, sampleCountIdx)
-	if err != nil {
-		return memActiveRing{}, fmt.Errorf("read sampleCnt: %w", err)
-	}
-
-	if err := bpfmap.WriteUint64(p.bpf, stateMapID, sampleCountIdx, 0); err != nil {
-		return memActiveRing{}, fmt.Errorf("reset sampleCnt: %w", err)
-	}
-
-	return ring, nil
-}
-
-func (p *memNativeProfiler) drainActiveRing(
-	readerA, readerB bpf.PerfEventReader,
-	stateMapID, stackMapAID, stackMapBID uint32,
-	usym *symbol.UsymResolver,
-	enqueue func(any),
-) error {
-	ring, err := p.advanceSwapParity(readerA, readerB, stateMapID)
-	if err != nil {
-		return err
-	}
-
-	deltaByKey := make(map[memBatchKey]int64)
-	idsA := make(map[int32]bool)
-	idsB := make(map[int32]bool)
-
-	for i := uint64(0); i < ring.sampleCount; i++ {
-		var evt memEvent
-		if err := ring.reader.ReadInto(&evt); err != nil {
-			if errors.Is(err, types.ErrExitByCancelCtx) {
-				return err
-			}
-
-			log.Warnf("read after %d/%d events: %v", i, ring.sampleCount, err)
-			break
-		}
-
-		deltaBytes := p.convertValueToBytes(evt.Value)
-		if deltaBytes == 0 {
+			log.Warn("drain failed", "error", err)
 			continue
 		}
 
-		proc := processIDName{
-			Pid:  evt.Pid,
-			Name: procutil.CommToString(evt.Comm),
-		}
-		ids := bpfmap.StackTraceID{KernelID: evt.Kernstack, UserID: evt.Userstack}
-		key := memBatchKey{proc: proc, ids: ids, sel: evt.StackMapSel}
-		deltaByKey[key] += deltaBytes
-
-		// In accumulative modes, StackMapSel always matches current parity.
-		// In retained mode, alloc events do too, but free events carry
-		// alloc-time StackMapSel from page_to_stackid which may differ.
-		targetSet := idsA
-		if evt.StackMapSel%2 == 1 {
-			targetSet = idsB
-		}
-
-		if ids.KernelID > 0 {
-			targetSet[ids.KernelID] = true
-		}
-
-		if ids.UserID > 0 {
-			targetSet[ids.UserID] = true
-		}
-	}
-
-	stackDataA := bpfmap.BatchReadStackTraces(p.bpf, stackMapAID, idsA)
-	stackDataB := bpfmap.BatchReadStackTraces(p.bpf, stackMapBID, idsB)
-	emitDeltas(deltaByKey, stackDataA, stackDataB, usym, enqueue)
-
-	return nil
-}
-
-func emitDeltas(
-	deltaByKey map[memBatchKey]int64,
-	stackDataA, stackDataB map[int32][bpfmap.StackTraceLen]uint64,
-	usym *symbol.UsymResolver,
-	enqueue func(any),
-) {
-	ustackCacheA := make(map[int32]string)
-	kstackCacheA := make(map[int32]string)
-	ustackCacheB := make(map[int32]string)
-	kstackCacheB := make(map[int32]string)
-
-	for k, delta := range deltaByKey {
-		if delta == 0 {
-			continue
-		}
-
-		stackData := stackDataA
-		ustackCache := ustackCacheA
-		kstackCache := kstackCacheA
-
-		if k.sel%2 == 1 {
-			stackData = stackDataB
-			ustackCache = ustackCacheB
-			kstackCache = kstackCacheB
-		}
-
-		resolveStackStrs(k.ids, k.proc.Pid, stackData, usym, kstackCache, ustackCache)
-
-		rec := &stackEntry{
-			Proc:    &processIDName{Pid: k.proc.Pid, Name: k.proc.Name},
-			User:    ustackCache[k.ids.UserID],
-			Kernel:  kstackCache[k.ids.KernelID],
-			Samples: delta,
-		}
-
-		enqueue(rec)
-	}
-}
-
-func resolveStackStrs(
-	ids bpfmap.StackTraceID,
-	pid uint32,
-	stackData map[int32][bpfmap.StackTraceLen]uint64,
-	usym *symbol.UsymResolver,
-	kstackCache, ustackCache map[int32]string,
-) {
-	if ids.KernelID > 0 {
-		if _, ok := kstackCache[ids.KernelID]; !ok {
-			if trace, exists := stackData[ids.KernelID]; exists {
-				strs := symbol.KsymStackStrsReversed(trace[:], len(trace))
-				kstackCache[ids.KernelID] = strings.Join(strs, ";") + ";"
-			}
-		}
-	}
-
-	if ids.UserID > 0 {
-		if _, ok := ustackCache[ids.UserID]; !ok {
-			if trace, exists := stackData[ids.UserID]; exists {
-				strs := usym.UsymStackStrs(pid, trace[:], len(trace))
-				ustackCache[ids.UserID] = strings.Join(strs, ";") + ";"
-			}
+		if len(stackCountsByProc) > 0 {
+			ringCtx.aggregateStacksAndEnqueue(stackCountsByProc, ring, enqueue, p.convertValueToBytes)
 		}
 	}
 }
 
 func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 	switch p.internalMode {
-	case modeVMAccu:
+	case profiling.MemoryModeVirtualAlloc:
 		return v
-	case modePMAccu, modePMRetained:
+	case profiling.MemoryModePhysicalAlloc, profiling.MemoryModePhysicalUsage:
 		return v * p.pageSize * 100 / int64(p.probability)
 	}
 
-	log.Warnf("unknown mem mode %q, value treated as zero", p.internalMode)
+	log.Warn("unknown mem mode, value treated as zero", "mode", p.internalMode)
 
 	return 0
 }

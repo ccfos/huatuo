@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -46,7 +46,7 @@ type Container struct {
 	Type               ContainerType     `json:"type"`
 	Qos                ContainerQos      `json:"qos"`
 	IPAddress          string            `json:"net_ip_address"`
-	NetNamespaceInode  uint64            `json:"net_namespace_inode"`
+	NetNamespaceInum   uint64            `json:"net_namespace_inum"`
 	NetNamespaceCookie uint64            `json:"net_namespace_cookie"`
 	InitPid            int               `json:"init_pid"`
 	CgroupPath         string            `json:"cgroup_path"`
@@ -174,9 +174,9 @@ func containerBy[T comparable](selector func(*Container) T, val T) (*Container, 
 	return nil, nil
 }
 
-// ContainerByNetInode returns the container whose net namespace inode matches.
-func ContainerByNetInode(inode uint64) (*Container, error) {
-	return containerBy(func(c *Container) uint64 { return c.NetNamespaceInode }, inode)
+// ContainerByNetNamespaceInum returns the container whose network namespace inum matches.
+func ContainerByNetNamespaceInum(inum uint64) (*Container, error) {
+	return containerBy(func(c *Container) uint64 { return c.NetNamespaceInum }, inum)
 }
 
 // GetCSSToContainerID builds a mapping from cgroup subsystem address to container ID.
@@ -219,8 +219,8 @@ func ContainerByCSS(css uint64, subsys string) (*Container, error) {
 	return containerBy(func(c *Container) uint64 { return c.CgroupCss[subsys] }, css)
 }
 
-// ContainerByNetCookie returns the container whose net namespace cookie matches cookie.
-func ContainerByNetCookie(cookie uint64) (*Container, error) {
+// ContainerByNetNamespaceCookie returns the container whose network namespace cookie matches.
+func ContainerByNetNamespaceCookie(cookie uint64) (*Container, error) {
 	if cookie == 0 {
 		return nil, nil
 	}

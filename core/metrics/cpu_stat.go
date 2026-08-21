@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 package collector
 
 import (
+	"math"
 	"reflect"
 	"sync"
 	"time"
@@ -33,18 +34,19 @@ type cpuStat struct {
 	burstTime     uint64
 
 	// calculated values
-	hierarchyWaitSum uint64
-	innerWaitSum     uint64
-	waitSum          uint64
-	cpuTotal         uint64
-
-	waitrateHierarchy float64
-	waitrateInner     float64
-	waitrateExter     float64
-	waitrateThrottled float64
-	waitrateWaitSum   float64
+	waitSum     uint64
+	cpuTotal    uint64
+	waitPercent float64
 
 	lastUpdate time.Time
+}
+
+type cpuStatAvailability struct {
+	waitPercent   bool
+	nrThrottled   bool
+	throttledTime bool
+	nrBursts      bool
+	burstTime     bool
 }
 
 type cpuStatCollector struct {
@@ -71,95 +73,98 @@ func newCPUStat() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
-func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Container) error {
-	var (
-		deltaThrottledSum     uint64
-		deltaHierarchyWaitSum uint64
-		deltaInnerWaitSum     uint64
-		deltaExterWaitSum     uint64
-		deltaWaitSum          uint64
-		deltaCpuUsage         uint64
-	)
+func durationNanoseconds(raw map[string]uint64, nanosecondKey, microsecondKey string) (uint64, bool) {
+	if value, ok := raw[nanosecondKey]; ok {
+		return value, true
+	}
+
+	value, ok := raw[microsecondKey]
+	if !ok || value > math.MaxUint64/1000 {
+		return 0, false
+	}
+
+	return value * 1000, true
+}
+
+func calculateWaitPercent(current, previous *cpuStat) (float64, bool) {
+	// Live-cgroup counters are normally monotonic; guard rare resets or
+	// wraparound to prevent unsigned underflow.
+	if current.waitSum < previous.waitSum ||
+		current.cpuTotal < previous.cpuTotal {
+		return 0, false
+	}
+
+	deltaWait := current.waitSum - previous.waitSum
+	deltaCPU := current.cpuTotal - previous.cpuTotal
+	if deltaWait == 0 && deltaCPU == 0 {
+		return 0, true
+	}
+
+	return float64(deltaWait) * 100 / (float64(deltaWait) + float64(deltaCPU)), true
+}
+
+func newCPUStatSample(raw map[string]uint64, cpuTotal uint64, now time.Time) (cpuStat, cpuStatAvailability) {
+	nrThrottled, nrThrottledOK := raw["nr_throttled"]
+	throttledTime, throttledTimeOK := durationNanoseconds(raw, "throttled_time", "throttled_usec")
+	waitSum, waitSumOK := raw["wait_sum"]
+	nrBursts, nrBurstsOK := raw["nr_bursts"]
+	burstTime, burstTimeOK := durationNanoseconds(raw, "burst_time", "burst_usec")
+
+	return cpuStat{
+			nrThrottled:   nrThrottled,
+			throttledTime: throttledTime,
+			waitSum:       waitSum,
+			nrBursts:      nrBursts,
+			burstTime:     burstTime,
+			cpuTotal:      cpuTotal,
+			lastUpdate:    now,
+		}, cpuStatAvailability{
+			waitPercent:   waitSumOK,
+			nrThrottled:   nrThrottledOK,
+			throttledTime: throttledTimeOK,
+			nrBursts:      nrBurstsOK,
+			burstTime:     burstTimeOK,
+		}
+}
+
+func (c *cpuStatCollector) updateDataCache(cpu *cpuStat, container *pod.Container) (cpuStatAvailability, error) {
+	var availability cpuStatAvailability
 
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	now := time.Now()
-	if now.Sub(cpu.lastUpdate).Nanoseconds() < 1000000000 {
-		return nil
+	if now.Sub(cpu.lastUpdate) < time.Second {
+		return availability, nil
 	}
 
 	raw, err := c.cgroup.CpuStatRaw(container.CgroupPath)
 	if err != nil {
-		return err
+		return availability, err
 	}
 
 	usage, err := c.cgroup.CpuUsage(container.CgroupPath)
 	if err != nil {
-		return err
+		return availability, err
 	}
 
-	stat := cpuStat{
-		nrThrottled:      raw["nr_throttled"],
-		throttledTime:    raw["throttled_time"],
-		hierarchyWaitSum: raw["hierarchy_wait_sum"],
-		innerWaitSum:     raw["inner_wait_sum"],
-		waitSum:          raw["wait_sum"],
-		nrBursts:         raw["nr_bursts"],
-		burstTime:        raw["burst_time"],
-		cpuTotal:         usage.Usage * 1000,
-		lastUpdate:       now,
+	stat, availability := newCPUStatSample(raw, usage.Usage*1000, now)
+	if !availability.waitPercent {
+		stat.lastUpdate = time.Time{}
+		*cpu = stat
+		return availability, nil
 	}
 
-	if stat.hierarchyWaitSum <= cpu.hierarchyWaitSum {
-		deltaThrottledSum = 0
-		deltaHierarchyWaitSum = 0
-		deltaInnerWaitSum = 0
-		deltaExterWaitSum = 0
-	} else {
-		deltaHierarchyWaitSum = stat.hierarchyWaitSum - cpu.hierarchyWaitSum
-		deltaThrottledSum = stat.throttledTime - cpu.throttledTime
-		deltaInnerWaitSum = stat.innerWaitSum - cpu.innerWaitSum
-
-		if deltaHierarchyWaitSum < deltaThrottledSum+deltaInnerWaitSum {
-			deltaHierarchyWaitSum = deltaThrottledSum + deltaInnerWaitSum
-		}
-
-		deltaExterWaitSum = deltaHierarchyWaitSum - deltaThrottledSum - deltaInnerWaitSum
+	if cpu.lastUpdate.IsZero() {
+		availability.waitPercent = false
+		*cpu = stat
+		return availability, nil
 	}
 
-	if stat.waitSum <= cpu.waitSum {
-		deltaWaitSum = 0
-	} else {
-		deltaWaitSum = stat.waitSum - cpu.waitSum
-	}
-	if stat.cpuTotal <= cpu.cpuTotal {
-		deltaCpuUsage = 0
-	} else {
-		deltaCpuUsage = stat.cpuTotal - cpu.cpuTotal
-	}
-	waitSumDenom := deltaWaitSum + deltaCpuUsage
-	if waitSumDenom == 0 {
-		stat.waitrateWaitSum = 0
-	} else {
-		stat.waitrateWaitSum = float64(deltaWaitSum) * 100 / float64(waitSumDenom)
-	}
-
-	deltaWaitRunSum := deltaHierarchyWaitSum + stat.cpuTotal - cpu.cpuTotal
-	if deltaWaitRunSum == 0 {
-		stat.waitrateHierarchy = 0
-		stat.waitrateInner = 0
-		stat.waitrateExter = 0
-		stat.waitrateThrottled = 0
-	} else {
-		stat.waitrateHierarchy = float64(deltaHierarchyWaitSum) * 100 / float64(deltaWaitRunSum)
-		stat.waitrateInner = float64(deltaInnerWaitSum) * 100 / float64(deltaWaitRunSum)
-		stat.waitrateExter = float64(deltaExterWaitSum) * 100 / float64(deltaWaitRunSum)
-		stat.waitrateThrottled = float64(deltaThrottledSum) * 100 / float64(deltaWaitRunSum)
-	}
+	stat.waitPercent, availability.waitPercent = calculateWaitPercent(&stat, cpu)
 
 	*cpu = stat
-	return nil
+	return availability, nil
 }
 
 func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
@@ -171,23 +176,62 @@ func (c *cpuStatCollector) Update() ([]*metric.Data, error) {
 	}
 
 	for _, container := range containers {
-		containerDataCache := container.LifeResources("collector_cpu_stat").(*cpuStat)
-		if err := c.updateDataCache(containerDataCache, container); err != nil {
+		dataCache, ok := container.LifeResources("collector_cpu_stat").(*cpuStat)
+		if !ok || dataCache == nil {
+			log.Warnf("cpu_stat: LifeResources for container %s returned unexpected type or nil", container)
+			continue
+		}
+		available, err := c.updateDataCache(dataCache, container)
+		if err != nil {
 			log.Infof("failed to update cpu info of %s, %v", container, err)
 			continue
 		}
 
-		metrics = append(
-			metrics, metric.NewContainerGaugeData(container, "wait_rate", containerDataCache.waitrateHierarchy, "wait rate for the containers", nil),
-			metric.NewContainerGaugeData(container, "inner_wait_rate", containerDataCache.waitrateInner, "inner wait rate for the containers", nil),
-			metric.NewContainerGaugeData(container, "exter_wait_rate", containerDataCache.waitrateExter, "exter wait rate for the containers", nil),
-			metric.NewContainerGaugeData(container, "wait_sum_exter_wait_rate", containerDataCache.waitrateWaitSum, "exter wait rate base on wait_sum (requires kernel.sched_schedstats=1)", nil),
-			metric.NewContainerGaugeData(container, "throttle_wait_rate", containerDataCache.waitrateThrottled, "throttle wait rate for the containers", nil),
-			metric.NewContainerGaugeData(container, "nr_throttled", float64(containerDataCache.nrThrottled), "throttle nr for the containers", nil),
-			metric.NewContainerGaugeData(container, "throttled_time", float64(containerDataCache.throttledTime), "throttle time for the containers", nil),
-			metric.NewContainerGaugeData(container, "nr_bursts", float64(containerDataCache.nrBursts), "burst nr for the containers", nil),
-			metric.NewContainerGaugeData(container, "burst_time", float64(containerDataCache.burstTime), "burst time for the containers", nil),
-		)
+		if available.waitPercent {
+			metrics = append(metrics, metric.NewContainerGaugeData(
+				container,
+				"wait_sum_percent",
+				dataCache.waitPercent,
+				"CFS cgroup runqueue wait as a percentage of total schedulable time (requires kernel.sched_schedstats=1)",
+				nil,
+			))
+		}
+		if available.nrThrottled {
+			metrics = append(metrics, metric.NewContainerGaugeData(
+				container,
+				"nr_throttled",
+				float64(dataCache.nrThrottled),
+				"number of CFS periods in which the cgroup was throttled",
+				nil,
+			))
+		}
+		if available.throttledTime {
+			metrics = append(metrics, metric.NewContainerGaugeData(
+				container,
+				"throttled_time",
+				float64(dataCache.throttledTime),
+				"total CFS cgroup throttled time in nanoseconds",
+				nil,
+			))
+		}
+		if available.nrBursts {
+			metrics = append(metrics, metric.NewContainerGaugeData(
+				container,
+				"nr_bursts",
+				float64(dataCache.nrBursts),
+				"number of CFS periods in which the cgroup used burst capacity",
+				nil,
+			))
+		}
+		if available.burstTime {
+			metrics = append(metrics, metric.NewContainerGaugeData(
+				container,
+				"burst_time",
+				float64(dataCache.burstTime),
+				"total CFS cgroup burst time in nanoseconds",
+				nil,
+			))
+		}
 	}
 
 	return metrics, nil

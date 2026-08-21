@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,12 +15,16 @@
 package collector
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"strconv"
 
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/pkg/types"
 )
 
 type arpCollector struct{}
@@ -30,6 +34,14 @@ func init() {
 }
 
 func newArp() (*tracing.EventTracingAttr, error) {
+	if err := procfs.RequireFile("net/stat/arp_cache"); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, types.ErrNotSupported
+		}
+
+		return nil, fmt.Errorf("check arp cache statistics support: %w", err)
+	}
+
 	return &tracing.EventTracingAttr{
 		TracingData: &arpCollector{},
 		Flag:        tracing.FlagMetric,

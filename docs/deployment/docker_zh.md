@@ -1,5 +1,5 @@
 ---
-title: Docker Compose 容器部署
+title: 容器部署
 type: docs
 description: 
 author: HUATUO Team, hao022
@@ -13,10 +13,36 @@ weight: 1
 ### 使用 Docker 启动容器
 
 ```bash
-$ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+docker run --detach \
+  --name huatuo-bamai \
+  --restart unless-stopped \
+  --privileged \
+  --pid=host \
+  --cgroupns=host \
+  --network=host \
+  --cpus=2 \
+  --memory=2g \
+  --volume /sys:/sys \
+  --volume /proc:/proc \
+  --volume /run:/run \
+  huatuo/huatuo-bamai:latest
 ```
 
-> ⚠️：注意：此方式使用容器内置的默认配置文件，该配置不会连接 kubelet 与 Elasticsearch。
+> 注意：容器内置的默认配置不会连接 kubelet 和 Elasticsearch。
+
+生产环境应限制 CPU 和内存，避免异常采集任务影响宿主机业务。Docker 的容器 cgroup
+负责资源限制；Huatuo 默认不创建自身 cgroup，也不要在 Docker 部署中传入
+`--enable-cgroup`。
+
+通过以下命令确认限制已经生效，并观察实际使用量：
+
+```bash
+docker inspect huatuo-bamai \
+  --format 'NanoCPUs={{.HostConfig.NanoCpus}} Memory={{.HostConfig.Memory}}'
+docker stats huatuo-bamai
+```
+
+示例值为初始基线，应根据节点规格、采集任务和资源峰值调整。
 
 ### 使用 Docker Compose 启动容器
 

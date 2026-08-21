@@ -25,10 +25,34 @@ type (
 	Diskstats = blockdevice.Diskstats
 )
 
+// DiskstatsFS only exposes the procfs-backed diskstats operation.
+type DiskstatsFS struct {
+	fs blockdevice.FS
+}
+
 // NewDefaultFS returns a new proc FS using runtime-initialized mount points.
 func NewDefaultFS() (FS, error) {
 	return blockdevice.NewFS(
 		procfs.DefaultPathByType("proc"),
 		procfs.DefaultPathByType("sys"),
 	)
+}
+
+// NewDiskstatsFS returns a reader that only requires procfs.
+func NewDiskstatsFS() (DiskstatsFS, error) {
+	procPath := procfs.DefaultPathByType("proc")
+
+	// The upstream constructor requires sysfs even though ProcDiskstats does
+	// not access it. Reusing procPath keeps proc-only root prefixes valid.
+	fs, err := blockdevice.NewFS(procPath, procPath)
+	if err != nil {
+		return DiskstatsFS{}, err
+	}
+
+	return DiskstatsFS{fs: fs}, nil
+}
+
+// ProcDiskstats reads statistics for every block device.
+func (d DiskstatsFS) ProcDiskstats() ([]Diskstats, error) {
+	return d.fs.ProcDiskstats()
 }

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -34,7 +34,10 @@ func init() {
 }
 
 func newMemEvents() (*tracing.EventTracingAttr, error) {
-	cgroup, _ := cgroups.NewManager()
+	cgroup, err := cgroups.NewManager()
+	if err != nil {
+		return nil, fmt.Errorf("memory events: init cgroup manager: %w", err)
+	}
 
 	return &tracing.EventTracingAttr{
 		TracingData: &memEventsCollector{
@@ -44,6 +47,7 @@ func newMemEvents() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *memEventsCollector) Update() ([]*metric.Data, error) {
+	cfg := configSnapshot()
 	f, err := matcher.NewValueMatcher(cfg.MemoryEvents.Included, cfg.MemoryEvents.Excluded)
 	if err != nil {
 		return nil, fmt.Errorf("memory events filter: %w", err)

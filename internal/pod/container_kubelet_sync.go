@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -49,6 +49,7 @@ var (
 	kubeletDefaultConfigPath     = []string{
 		"/var/lib/kubelet/config.yaml",
 		"/var/lib/kubelet/ack-managed-config.yaml",
+		"/etc/kubernetes/kubelet/config.json",
 		"/host/etc/kubernetes/kubelet/config.json",
 	}
 )
@@ -143,7 +144,7 @@ func kubeletPodListPortCacheUpdate(ctx *ManagerCtx) error {
 	return nil
 }
 
-func ManagerInit(ctx *ManagerCtx) error {
+func InitManager(ctx *ManagerCtx) error {
 	dockerAPIVersion = ctx.DockerAPIVersion
 
 	if ctx.PodReadOnlyPort == 0 && ctx.PodAuthorizedPort == 0 {
@@ -171,7 +172,7 @@ func ManagerInit(ctx *ManagerCtx) error {
 		// success or other error codes except connect refused
 		// only init css metadata collect when kubelet available.
 		if err == nil {
-			_ = kubeletConfigCacheUpdate(ctx)
+			_ = kubeletConfigCacheMustUpdate(ctx)
 			return containerCgroupCssInit()
 		}
 
@@ -190,8 +191,10 @@ func ManagerInit(ctx *ManagerCtx) error {
 			case <-t.C:
 				if err := kubeletPodListPortCacheUpdate(ctx); err == nil {
 					log.Infof("kubelet is running now")
-					_ = kubeletConfigCacheUpdate(ctx)
-					_ = containerCgroupCssInit()
+					_ = kubeletConfigCacheMustUpdate(ctx)
+					if err := containerCgroupCssInit(); err != nil {
+						log.Errorf("initialize container cgroup CSS: %v", err)
+					}
 					t.Stop()
 					return
 				}
@@ -204,7 +207,7 @@ func ManagerInit(ctx *ManagerCtx) error {
 	return nil
 }
 
-func ManagerRelease() {
+func ReleaseManager() {
 	if kubeletTimeTicker != nil {
 		kubeletTimeTicker.Stop()
 		kubeletTimeTicker = nil
@@ -346,7 +349,13 @@ func httpDoRequest(client *http.Client, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		// Surface the read failure instead of returning a (possibly empty) body
+		// that silently breaks JSON decode downstream. Retain URL context so
+		// the operator can tell which kubelet endpoint failed.
+		return nil, fmt.Errorf("http: %s, read body: %w", url, err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http: %s, status: %d, body: %s", url, resp.StatusCode, string(body))
 	}
@@ -380,13 +389,13 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 	}
 
 	// net namespace
-	nsInode, err := netutil.NetNSInodeByPid(initPid)
+	nsInum, err := netutil.NetNamespaceInumByPID(initPid)
 	if err != nil {
-		return fmt.Errorf("failed to get net namespace inode by pid: %w", err)
+		return fmt.Errorf("failed to get net namespace inum by pid: %w", err)
 	}
 
 	// net namespace cookie (Linux 5.14+; falls back to 0 on older kernels)
-	netCookie, err := netutil.NetNSCookieByPid(initPid)
+	netNamespaceCookie, err := netutil.NetNamespaceCookieByPID(initPid)
 	if err != nil {
 		log.Debugf("failed to get net namespace cookie for pid %d: %v", initPid, err)
 	}
@@ -418,8 +427,8 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 		Type:               containerType,
 		Qos:                containerQos,
 		IPAddress:          parseContainerIPAddress(pod),
-		NetNamespaceInode:  nsInode,
-		NetNamespaceCookie: netCookie,
+		NetNamespaceInum:   nsInum,
+		NetNamespaceCookie: netNamespaceCookie,
 		InitPid:            initPid,
 		CgroupPath:         cgroupPath,
 		CgroupCss:          css,
@@ -501,11 +510,16 @@ func kubeletConfigFileDefault() (kubeletConfiguration, error) {
 	return empty, fmt.Errorf("not found kubelet config")
 }
 
-// kubeletConfigCacheUpdate try to update the cache var:
+// kubeletConfigCacheMustUpdate updates the kubelet configuration cache.
 //
-// CgroupDriver
-// ContainerRuntimeEndpoint
-func kubeletConfigCacheUpdate(ctx *ManagerCtx) error {
+// This function MUST succeed: if the kubelet configz endpoint and all
+// default config file paths are unavailable, it panics because downstream
+// services that depend on kubelet pod information would be broken.
+//
+// Updated cache vars:
+//   - CgroupDriver
+//   - ContainerRuntimeEndpoint
+func kubeletConfigCacheMustUpdate(ctx *ManagerCtx) error {
 	var (
 		config kubeletConfiguration
 		err    error

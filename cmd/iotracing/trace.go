@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/executil"
@@ -37,13 +38,13 @@ import (
 // seconds, then dumps and aggregates io_source_map. The duration timeout
 // and signal handler are scoped to this call so the BPF object is always
 // detached and closed before returning.
-func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[string]any) (*types.IOTracingReport, error) {
+func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[string]any) (*types.IOTracingSnapshot, error) {
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
 		return nil, fmt.Errorf("read bpf object: %w", err)
 	}
 
-	b, err := bpf.LoadBpfFromBytes(filepath.Base(bpfPath), bpfBytes, filters)
+	b, err := bpf.LoadBPFFromBytes(filepath.Base(bpfPath), bpfBytes, filters)
 	if err != nil {
 		return nil, fmt.Errorf("load bpf: %w", err)
 	}
@@ -75,7 +76,7 @@ func runTrace(ctx context.Context, bpfPath string, cfg ioConfig, filters map[str
 		return nil, err
 	}
 
-	return &types.IOTracingReport{Processes: processes, StallStacks: stalls}, nil
+	return &types.IOTracingSnapshot{Processes: processes, StallStacks: stalls}, nil
 }
 
 // collectStalls drains the iodelay perf reader until ctx cancellation
@@ -97,6 +98,10 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 
 	for {
 		if err := reader.ReadInto(&event); err != nil {
+			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+				log.WithError(err).Warn("lost BPF perf event samples")
+				continue
+			}
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				break
 			}
@@ -108,13 +113,15 @@ func collectStalls(reader bpf.PerfEventReader, maxStack uint64) ([]types.IOSched
 			continue
 		}
 
-		hostname, _ := executil.HostnameByPid(event.Pid)
+		hostname, _ := executil.HostnameByPid(event.TGID)
 
 		ring[head] = types.IOScheduleEvent{
 			Comm:              bytesutil.ToStr(event.Comm[:]),
 			ContainerHostname: hostname,
-			Pid:               event.Pid,
-			LatencyUs:         event.LatencyNs / 1000,
+			PID:               event.TGID,
+			TID:               event.TID,
+			CPU:               event.CPU,
+			ScheduleLatencyUS: event.DurationNS / 1000,
 			Stack:             symbol.KsymStackStrs(event.Stack[:], symbol.KsymStackMinDepth),
 		}
 
@@ -156,7 +163,7 @@ func dumpAndAggregate(b bpf.BPF, cfg ioConfig) ([]types.ProcessFileIOStats, erro
 		}
 
 		blkSize := record.BlockWriteBytes + record.BlockReadBytes
-		table.Add(record.Pid, &fileEntry{Record: &record, Size: blkSize})
+		table.Add(record.TGID, &fileEntry{Record: &record, Size: blkSize})
 	}
 
 	groups := table.TopN(int(cfg.maxProcess))

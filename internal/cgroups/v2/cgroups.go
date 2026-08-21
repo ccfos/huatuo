@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,13 +16,17 @@ package v2
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"strconv"
 
 	"huatuo-bamai/internal/cgroups/paths"
 	"huatuo-bamai/internal/cgroups/pids"
 	"huatuo-bamai/internal/cgroups/stats"
+	"huatuo-bamai/internal/cgroups/subsystem"
+	"huatuo-bamai/internal/utils/cpuutil"
 	"huatuo-bamai/internal/utils/parseutil"
 
 	extv2 "github.com/containerd/cgroups/v3/cgroup2"
@@ -56,7 +60,7 @@ func (c *CgroupV2) NewRuntime(path string, spec *specs.LinuxResources) error {
 	}
 
 	// enable cpu and memory cgroup controllers
-	if err := m.ToggleControllers([]string{"cpu", "memory"}, extv2.Enable); err != nil {
+	if err := m.ToggleControllers([]string{subsystem.SubsystemCPU, subsystem.SubsystemMemory}, extv2.Enable); err != nil {
 		_ = m.DeleteSystemd()
 		return fmt.Errorf("cgroup2 enabling cpu and memory controllers: %w", err)
 	}
@@ -168,8 +172,17 @@ func (c *CgroupV2) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 		return nil, err
 	}
 
+	effectiveCPUCount, err := readEffectiveCPUCount(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+
 	if maxQuota == "max" {
-		return &stats.CpuQuota{Quota: math.MaxUint64, Period: period}, nil
+		return &stats.CpuQuota{
+			Quota:             math.MaxUint64,
+			Period:            period,
+			EffectiveCPUCount: effectiveCPUCount,
+		}, nil
 	}
 
 	quota, err := strconv.ParseUint(maxQuota, 10, 64)
@@ -177,7 +190,15 @@ func (c *CgroupV2) CpuQuotaAndPeriod(path string) (*stats.CpuQuota, error) {
 		return nil, err
 	}
 
-	return &stats.CpuQuota{Quota: quota, Period: period}, nil
+	return &stats.CpuQuota{
+		Quota:             quota,
+		Period:            period,
+		EffectiveCPUCount: effectiveCPUCount,
+	}, nil
+}
+
+func readEffectiveCPUCount(path string) (uint64, error) {
+	return cpuutil.ParseOnlineCores(paths.Path(path, "cpuset.cpus.effective"))
 }
 
 func (c *CgroupV2) MemoryStatRaw(path string) (map[string]uint64, error) {

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"time"
 
+	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
@@ -28,21 +29,22 @@ import (
 )
 
 type TaskHandler struct {
-	Handlers []server.Handle
+	Handlers []server.Route
 }
 
 func NewTaskHandler() *TaskHandler {
 	h := &TaskHandler{}
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpPost, Uri: "", Handle: h.create},
-		{Typ: server.HttpGet, Uri: "", Handle: h.list},
-		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
-		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.stop},
+	h.Handlers = []server.Route{
+		{Method: http.MethodPost, Path: "", Handler: h.create},
+		{Method: http.MethodGet, Path: "", Handler: h.list},
+		{Method: http.MethodGet, Path: "/:id", Handler: h.get},
+		{Method: http.MethodDelete, Path: "/:id", Handler: h.stop},
 	}
 	return h
 }
 
 type NewTaskReq struct {
+	RequestID  string   `json:"request_id" binding:"omitempty,max=128"`
 	TracerName string   `json:"tracer_name" binding:"required"`
 	Timeout    int      `json:"timeout" binding:"required,number,lt=3600"`
 	DataType   string   `json:"data_type" binding:"required"`
@@ -52,10 +54,15 @@ type NewTaskReq struct {
 func handleBindError(ctx *server.Context, err error) {
 	var validationError *validator.ValidationErrors
 	if errors.As(err, &validationError) {
-		response.ErrorWithCode(ctx, http.StatusBadRequest, 400, (*validationError)[0].Namespace())
+		response.ErrorWithCode(
+			ctx,
+			http.StatusBadRequest,
+			v1.ErrorCodeInvalidRequest,
+			(*validationError)[0].Namespace(),
+		)
 		return
 	}
-	response.ErrorWithCode(ctx, http.StatusBadRequest, 400, err.Error())
+	response.ErrorWithCode(ctx, http.StatusBadRequest, v1.ErrorCodeInvalidRequest, err.Error())
 }
 
 func (h *TaskHandler) create(ctx *server.Context) error {
@@ -65,16 +72,33 @@ func (h *TaskHandler) create(ctx *server.Context) error {
 		return nil
 	}
 
-	if tracing.RunningTaskCount() > config.Get().Task.MaxRunningTask {
-		return response.ErrInvalidRequest.WithMessage("too many running tasks")
-	}
-
 	storageDefault := tracing.TaskStorageDB
 	if req.DataType == "json" {
 		storageDefault = tracing.TaskStorageStdout
 	}
 
-	id := tracing.NewTask(req.TracerName, time.Duration(req.Timeout)*time.Second, storageDefault, req.TracerArgs)
+	id := req.RequestID
+	if id == "" {
+		var err error
+		id, err = tracing.AllocTaskID()
+		if err != nil {
+			return response.ErrInternal.WithMessage("failed to allocate task id")
+		}
+	}
+	id, err := tracing.NewTaskWithIDLimit(
+		id,
+		req.TracerName,
+		time.Duration(req.Timeout)*time.Second,
+		storageDefault,
+		req.TracerArgs,
+		config.Get().Tasks.MaxConcurrent,
+	)
+	if err != nil {
+		if errors.Is(err, tracing.ErrTaskLimitExceeded) {
+			return response.ErrInvalidRequest.WithMessage(err.Error())
+		}
+		return response.ErrInvalidRequest.WithMessage(err.Error())
+	}
 	response.Success(ctx, map[string]any{"task_id": id})
 	return nil
 }

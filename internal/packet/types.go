@@ -57,8 +57,8 @@ type Packet struct {
 // packet_eth_proto so the two are complementary. Length is non-zero only for
 // 802.3 framing — Ethernet II frames carry an EtherType in that slot instead.
 type Ether struct {
-	Src    string `json:"src"` // "aa:bb:cc:dd:ee:ff"
-	Dst    string `json:"dst"` // "aa:bb:cc:dd:ee:ff"
+	Saddr  string `json:"saddr"` // "aa:bb:cc:dd:ee:ff"
+	Daddr  string `json:"daddr"` // "aa:bb:cc:dd:ee:ff"
 	Type   string `json:"type"`
 	Length uint16 `json:"len,omitempty"`
 }
@@ -77,8 +77,8 @@ type IPv4 struct {
 	TTL        uint8  `json:"ttl"`
 	Protocol   string `json:"protocol"`
 	Checksum   uint16 `json:"checksum"`
-	Src        net.IP `json:"src"`
-	Dst        net.IP `json:"dst"`
+	Saddr      net.IP `json:"saddr"`
+	Daddr      net.IP `json:"daddr"`
 }
 
 // IPv6 holds IPv6-layer fields. NextHeader is gopacket's name for the
@@ -91,17 +91,17 @@ type IPv6 struct {
 	Length       uint16 `json:"len"`
 	NextHeader   string `json:"next_header"`
 	HopLimit     uint8  `json:"hop_limit"`
-	Src          net.IP `json:"src"`
-	Dst          net.IP `json:"dst"`
+	Saddr        net.IP `json:"saddr"`
+	Daddr        net.IP `json:"daddr"`
 }
 
 // TCP holds L4 TCP fields. SkState originates from the BPF probe
 // (kernel sk_state) and is not part of the wire packet.
 type TCP struct {
-	SrcPort    uint16 `json:"sport"`
-	DstPort    uint16 `json:"dport"`
+	Sport      uint16 `json:"sport"`
+	Dport      uint16 `json:"dport"`
 	Seq        uint32 `json:"seq"`
-	Ack        uint32 `json:"ack"`
+	AckSeq     uint32 `json:"ack_seq"`
 	DataOffset uint8  `json:"data_offset"`
 	Flags      string `json:"flags"`
 	Window     uint16 `json:"window"`
@@ -112,8 +112,8 @@ type TCP struct {
 
 // UDP holds L4 UDP fields.
 type UDP struct {
-	SrcPort  uint16 `json:"sport"`
-	DstPort  uint16 `json:"dport"`
+	Sport    uint16 `json:"sport"`
+	Dport    uint16 `json:"dport"`
 	Length   uint16 `json:"len"`
 	Checksum uint16 `json:"checksum"`
 }
@@ -210,7 +210,7 @@ func (p *Packet) String() string {
 	b.WriteString(p.Label)
 
 	if p.Ether != nil {
-		fmt.Fprintf(&b, " smac=%s dmac=%s", p.Ether.Src, p.Ether.Dst)
+		fmt.Fprintf(&b, " smac=%s dmac=%s", p.Ether.Saddr, p.Ether.Daddr)
 	}
 
 	if p.ARP != nil {
@@ -223,11 +223,11 @@ func (p *Packet) String() string {
 		// and ICMP keep the bare IPs.
 		switch {
 		case p.TCP != nil:
-			saddr = net.JoinHostPort(saddr, strconv.Itoa(int(p.TCP.SrcPort)))
-			daddr = net.JoinHostPort(daddr, strconv.Itoa(int(p.TCP.DstPort)))
+			saddr = net.JoinHostPort(saddr, strconv.Itoa(int(p.TCP.Sport)))
+			daddr = net.JoinHostPort(daddr, strconv.Itoa(int(p.TCP.Dport)))
 		case p.UDP != nil:
-			saddr = net.JoinHostPort(saddr, strconv.Itoa(int(p.UDP.SrcPort)))
-			daddr = net.JoinHostPort(daddr, strconv.Itoa(int(p.UDP.DstPort)))
+			saddr = net.JoinHostPort(saddr, strconv.Itoa(int(p.UDP.Sport)))
+			daddr = net.JoinHostPort(daddr, strconv.Itoa(int(p.UDP.Dport)))
 		}
 
 		fmt.Fprintf(&b, " %s > %s", saddr, daddr)
@@ -235,7 +235,7 @@ func (p *Packet) String() string {
 		switch {
 		case p.TCP != nil:
 			fmt.Fprintf(&b, " [%s] seq=%d ack=%d win=%d",
-				p.TCP.Flags, p.TCP.Seq, p.TCP.Ack, p.TCP.Window)
+				p.TCP.Flags, p.TCP.Seq, p.TCP.AckSeq, p.TCP.Window)
 
 			if p.TCP.SkState != "" {
 				fmt.Fprintf(&b, " sk=%s", p.TCP.SkState)
@@ -257,9 +257,9 @@ func (p *Packet) String() string {
 func l3Addrs(v4 *IPv4, v6 *IPv6) (saddr, daddr string) {
 	switch {
 	case v4 != nil:
-		return v4.Src.String(), v4.Dst.String()
+		return v4.Saddr.String(), v4.Daddr.String()
 	case v6 != nil:
-		return v6.Src.String(), v6.Dst.String()
+		return v6.Saddr.String(), v6.Daddr.String()
 	}
 
 	return "", ""

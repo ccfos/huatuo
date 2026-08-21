@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025-2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import (
 	"io"
 	"sort"
 	"strconv"
-	"strings"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/flamegraph"
@@ -46,12 +45,6 @@ type eventdata struct {
 	KstackSize int64
 	Pid        uint32
 	Name       [16]byte
-}
-
-// CgDumpTrace is an interface for dump stacks in cgusage case
-func CgDumpTrace(addrs []uint64) string {
-	stacks := symbol.KsymStackStrsReversed(addrs, perfStackDepth)
-	return strings.Join(stacks, "\n")
 }
 
 func convertLevels(levels []*querierv1.Level) []*flamegraph.Level {
@@ -131,18 +124,17 @@ func buildFlameData(b bpf.BPF) ([]flamegraph.FrameData, error) {
 		sample.Value = int64(kv.Value)
 
 		if kv.Key.KstackSize > 0 {
-			kernelStack := CgDumpTrace(kv.Key.Kstack[:])
-			kstack := strings.Split(kernelStack, "\n")
-			for _, v := range kstack {
-				if v != "" {
-					index, functionNames = findOrAdd(v+"_[k]", functionNames)
+			frames := symbol.KsymStackStrs(kv.Key.Kstack[:], perfStackDepth)
+			for _, frame := range frames {
+				if frame != "" {
+					index, functionNames = findOrAdd(frame+"_[k]", functionNames)
 					sample.FunctionIds = append(sample.FunctionIds, int32(index))
 				}
 			}
 		}
 
 		if kv.Key.UstackSize > 0 {
-			frames := u.UsymStackStrsReversed(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
+			frames := u.UsymStackStrs(kv.Key.Pid, kv.Key.Ustack[:], int(kv.Key.UstackSize))
 			for _, frame := range frames {
 				if frame != "" {
 					index, functionNames = findOrAdd(frame, functionNames)

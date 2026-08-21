@@ -133,20 +133,11 @@ Ref:
 - https://docs.kernel.org/scheduler/sched-bwc.html#statistics
 - https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#cpu-interface-files
 
-此外，滴滴内核支持如下争抢指标，未来会开放：
+内核导出 `wait_sum` 时提供以下争抢指标：
 ```bash
-# HELP huatuo_bamai_cpu_stat_container_wait_rate wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_wait_rate gauge
-huatuo_bamai_cpu_stat_container_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_throttle_wait_rate throttle wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_throttle_wait_rate gauge
-huatuo_bamai_cpu_stat_container_throttle_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_inner_wait_rate inner wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_inner_wait_rate gauge
-huatuo_bamai_cpu_stat_container_inner_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
-# HELP huatuo_bamai_cpu_stat_container_exter_wait_rate exter wait rate for the containers
-# TYPE huatuo_bamai_cpu_stat_container_exter_wait_rate gauge
-huatuo_bamai_cpu_stat_container_exter_wait_rate{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
+# HELP huatuo_bamai_cpu_stat_container_wait_sum_percent percentage of CFS cgroup schedulable time spent waiting on the parent runqueue (requires kernel.sched_schedstats=1)
+# TYPE huatuo_bamai_cpu_stat_container_wait_sum_percent gauge
+huatuo_bamai_cpu_stat_container_wait_sum_percent{container_host="coredns-855c4dd65d-8v5kg",container_hostnamespace="kube-system",container_level="burstable",container_name="coredns",container_type="normal",host="hostname",region="dev"} 0
 ```
 
 ### 资源突发
@@ -218,6 +209,8 @@ huatuo_bamai_memory_reclaim_container_directstall{container_host="coredns-855c4d
 |memory_free_allocpages_stall|系统在分配内存页过程中的耗时计数| 纳秒|物理机| eBPF | host, region|
 |memory_free_compaction_stall|系统在规整内存页过程中的耗时计数| 纳秒|物理机| eBPF | host, region|
 |memory_reclaim_container_directstall|容器直接内存事件次数| 计数| 容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+> **注意**：`memory_others_container_directstall_time`、`memory_others_container_asyncreclaim_time`、`memory_others_container_local_direct_reclaim_time` 指标读取的是滴滴云定制内核提供的 memory cgroup 扩展接口（`memory.directstall_stat`、`memory.asynreclaim_stat`、`memory.local_direct_reclaim_time`）。主线内核及常见发行版内核不提供这些接口，因此这些指标不会输出，属预期行为，无需额外加载内核模块。在标准内核上观测容器直接回收（direct reclaim）行为，请使用上表基于 eBPF 实现的 `memory_reclaim_container_directstall`。
 
 ### 资源状态
 
@@ -612,7 +605,7 @@ huatuo_bamai_netdev_qdisc_requeues_total{device="ens2",host="hostname",kind="fq_
 
 |指标|意义|单位|对象| 标签 |
 |---|---|---|---|---|
-|qdisc_backlog|后备排队待发送的包数|字节|物理机| device, host, kind, region |
+|qdisc_backlog|后备排队待发送的字节数|字节|物理机| device, host, kind, region |
 |qdisc_current_queue_length|当前排队的包量|计数|物理机| device, host, kind, region |
 |qdisc_overlimits_total|超限次数|计数|物理机| device, host, kind, region |
 |qdisc_requeues_total|由于网卡/驱动暂时无法发送而被重新入队的次数|计数|物理机| device, host, kind, region |
@@ -1235,6 +1228,53 @@ huatuo_bamai_iolatency_blkdisk_freeze{disk="253:1",host="hostname",region="dev"}
 |指标|意义|单位|对象|标签|
 |---|---|---|---|---|
 |iolatency_blkdisk_freeze|宿主机磁盘 freeze 事件次数|计数|宿主|host, region, disk|
+
+### 磁盘 IO 统计
+
+`diskio` 通过读取 `/proc/diskstats` 和 `/proc/stat` 采集 per-device 磁盘 IO 指标和系统级 CPU iowait。与 `iolatency` 不同，`diskio` 基于 procfs 而非 eBPF，提供可通过 rate 计算延迟的累积计数器。
+
+默认配置通过 `BlackList` 禁用该 collector。需要启用这些指标时，从
+`BlackList` 中移除 `diskio`。
+
+Counter 指标为累积值，需使用 Prometheus `rate()` 计算 per-second 值（IOPS、吞吐量）。Gauge 指标为瞬时值。平均延迟通过 PromQL 中的 I/O 时间 rate 除以请求 rate 计算。
+
+```bash
+# HELP huatuo_bamai_diskio_read_requests_total Total number of read requests completed successfully.
+# TYPE huatuo_bamai_diskio_read_requests_total counter
+huatuo_bamai_diskio_read_requests_total{device="sda",host="hostname",region="dev"} 1000
+# HELP huatuo_bamai_diskio_write_requests_total Total number of write requests completed successfully.
+# TYPE huatuo_bamai_diskio_write_requests_total counter
+huatuo_bamai_diskio_write_requests_total{device="sda",host="hostname",region="dev"} 2000
+# HELP huatuo_bamai_diskio_read_bytes_total Total number of bytes read from the device.
+# TYPE huatuo_bamai_diskio_read_bytes_total counter
+huatuo_bamai_diskio_read_bytes_total{device="sda",host="hostname",region="dev"} 2.56e+07
+# HELP huatuo_bamai_diskio_written_bytes_total Total number of bytes written to the device.
+# TYPE huatuo_bamai_diskio_written_bytes_total counter
+huatuo_bamai_diskio_written_bytes_total{device="sda",host="hostname",region="dev"} 4.096e+07
+# HELP huatuo_bamai_diskio_io_in_progress Number of I/O requests currently in flight (queue depth).
+# TYPE huatuo_bamai_diskio_io_in_progress gauge
+huatuo_bamai_diskio_io_in_progress{device="sda",host="hostname",region="dev"} 50
+# HELP huatuo_bamai_diskio_read_time_seconds_total Total seconds spent by completed read requests.
+# TYPE huatuo_bamai_diskio_read_time_seconds_total counter
+huatuo_bamai_diskio_read_time_seconds_total{device="sda",host="hostname",region="dev"} 3
+# HELP huatuo_bamai_diskio_write_time_seconds_total Total seconds spent by completed write requests.
+# TYPE huatuo_bamai_diskio_write_time_seconds_total counter
+huatuo_bamai_diskio_write_time_seconds_total{device="sda",host="hostname",region="dev"} 6
+# HELP huatuo_bamai_diskio_disk_iowait_percent CPU time spent waiting for I/O during the collection interval.
+# TYPE huatuo_bamai_diskio_disk_iowait_percent gauge
+huatuo_bamai_diskio_disk_iowait_percent{host="hostname",region="dev"} 50
+```
+
+|指标|意义|单位|对象|标签|
+|---|---|---|---|---|
+|read_requests_total|累积读请求完成数（field 4），使用 `rate()` 计算读 IOPS|计数|宿主|host, region, device|
+|write_requests_total|累积写请求完成数（field 8），使用 `rate()` 计算写 IOPS|计数|宿主|host, region, device|
+|read_bytes_total|累积读取字节数（field 6 × 512），使用 `rate()` 计算读吞吐量|字节|宿主|host, region, device|
+|written_bytes_total|累积写入字节数（field 10 × 512），使用 `rate()` 计算写吞吐量|字节|宿主|host, region, device|
+|read_time_seconds_total|已完成读请求的累积耗时（field 7）|秒|宿主|host, region, device|
+|write_time_seconds_total|已完成写请求的累积耗时（field 11）|秒|宿主|host, region, device|
+|io_in_progress|当前正在进行的 I/O 请求数，即队列深度（field 12）|计数|宿主|host, region, device|
+|disk_iowait_percent|采集区间内 CPU 等待 I/O 完成的时间占比|百分比|宿主|host, region|
 
 
 ## 通用系统

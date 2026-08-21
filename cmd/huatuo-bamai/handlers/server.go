@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,8 +15,6 @@
 package handlers
 
 import (
-	"time"
-
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/version"
@@ -28,21 +26,22 @@ import (
 // ServerOptions groups the dependencies required to start the HTTP server.
 type ServerOptions struct {
 	Addr           string
-	TracingManager *tracing.TracingManager
+	TracingManager *tracing.Manager
 	PromReg        *prometheus.Registry
 	VersionInfo    *version.Info
 }
 
 // Start starts the HTTP server with all handlers registered.
-func Start(opts ServerOptions) {
+func Start(opts ServerOptions) (*server.Server, error) {
 	s := server.NewServer(&server.Config{
-		EnablePProf:     true,
-		EnableRateLimit: true,
-		RateLimit:       200,
-		RateBurst:       200,
-		EnableRetry:     true,
-		PromReg:         opts.PromReg,
-		VersionInfo:     opts.VersionInfo,
+		EnablePProf: true,
+		RateLimit: &server.RateLimitConfig{
+			RequestsPerSecond: 200,
+			Burst:             200,
+		},
+		EnableRetry: true,
+		PromReg:     opts.PromReg,
+		VersionInfo: opts.VersionInfo,
 	})
 
 	SetTracingManager(opts.TracingManager)
@@ -51,12 +50,18 @@ func Start(opts ServerOptions) {
 	s.MustRegisterRoutes("/tracers", NewTracerHandler(opts.TracingManager).Handlers)
 	s.MustRegisterRoutes("", NewContainerHandler().Handlers)
 	s.MustRegisterRoutes("", NewConfigHandler().Handlers)
-	evtCfg := config.Get().EventsWatch
-	s.MustRegisterRoutes("/v1/events", NewEventsHandler(evtCfg.MaxClients, evtCfg.KeepAliveInterval).Handlers)
+	httpConfig := config.Get().HTTPServer
+	s.MustRegisterRoutes(
+		"/v1/events",
+		NewEventsHandler(
+			httpConfig.MaxEventStreamClients,
+			httpConfig.EventStreamKeepAliveIntervalSeconds,
+		).Handlers,
+	)
 
-	_ = s.Run(&server.Option{
-		Addr:          opts.Addr,
-		RetryMaxTime:  5 * time.Minute,
-		RetryInterval: 1 * time.Minute,
-	})
+	if err := s.Start(opts.Addr); err != nil {
+		return nil, err
+	}
+
+	return s, nil
 }

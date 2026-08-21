@@ -17,14 +17,15 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler/strutil"
 	"huatuo-bamai/internal/profiler/timeutil"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
+	"huatuo-bamai/internal/strutil"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
@@ -79,16 +80,24 @@ type ProfileDocument struct {
 	} `json:"tracer_data,omitempty"`
 }
 
+// CapturedAt returns the profiling timestamp while tolerating legacy documents.
+func (d *ProfileDocument) CapturedAt() time.Time {
+	return parseProfileDocumentTime(d.TracerTime, d.UploadedTime)
+}
+
 // SearchFilter defines the search filter.
 type SearchFilter struct {
 	ID                string
+	Region            string
 	Hostname          string
+	ContainerID       string
 	ContainerHostname string
 	TracerID          string
 	StartTime         time.Time
 	EndTime           time.Time
 	ProfileType       string
 	Limit             int
+	Offset            int
 }
 
 // ProfileStorage implements profile document queries on top of the new storage backend.
@@ -100,13 +109,18 @@ type profileDocumentMapper struct{}
 
 // NewProfileStorage creates a profiling storage.
 func NewProfileStorage(address, username, password, index string) (*ProfileStorage, error) {
+	return NewProfileStorageContext(context.Background(), address, username, password, index)
+}
+
+// NewProfileStorageContext creates profiling storage with caller-owned cancellation.
+func NewProfileStorageContext(ctx context.Context, address, username, password, index string) (*ProfileStorage, error) {
 	if index == "" {
 		index = defaultESIndex
 	}
 
-	profileStore, err := storage.NewFromConfig[*ProfileDocument](context.Background(), &driver.Config{
+	profileStore, err := storage.NewFromConfig[*ProfileDocument](ctx, &driver.Config{
 		Driver:      "elasticsearch",
-		ESAddresses: splitProfileStorageAddresses(address),
+		ESAddresses: strutil.SplitCommaList(address),
 		ESUsername:  username,
 		ESPassword:  password,
 		ESIndex:     index,
@@ -115,17 +129,43 @@ func NewProfileStorage(address, username, password, index string) (*ProfileStora
 		return nil, err
 	}
 
-	log.Infof("Initialize profile storage successfully, driver: elasticsearch, index: %s", index)
+	log.WithField("driver", "elasticsearch").WithField("index", index).Info("initialized profile storage")
 	return &ProfileStorage{
 		store: profileStore,
 	}, nil
 }
 
+// Close releases the underlying storage client.
+func (s *ProfileStorage) Close(ctx context.Context) error {
+	if s == nil || s.store == nil {
+		return nil
+	}
+	return s.store.Close(ctx)
+}
+
+func (s *ProfileStorage) Ready(ctx context.Context) error {
+	if s == nil || s.store == nil {
+		return errors.New("profile storage is not initialized")
+	}
+	if _, err := s.store.Count(ctx, driver.Query{Limit: 1}); err != nil {
+		return fmt.Errorf("profile storage readiness: %w", err)
+	}
+	return nil
+}
+
 // SearchProfiles searches profiles by SearchFilter.
 func (s *ProfileStorage) SearchProfiles(filter *SearchFilter) ([]*ProfileDocument, error) {
+	return s.SearchProfilesContext(context.Background(), filter)
+}
+
+// SearchProfilesContext searches profiles with caller-owned cancellation.
+func (s *ProfileStorage) SearchProfilesContext(ctx context.Context, filter *SearchFilter) ([]*ProfileDocument, error) {
+	if s == nil || s.store == nil {
+		return nil, errors.New("profile storage is not initialized")
+	}
 	query := buildProfileSearchQuery(filter)
 
-	documents, err := s.store.Query(context.Background(), query)
+	documents, err := s.store.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -135,8 +175,13 @@ func (s *ProfileStorage) SearchProfiles(filter *SearchFilter) ([]*ProfileDocumen
 
 // AggregationsByField gets aggregations by field.
 func (s *ProfileStorage) AggregationsByField(filter *SearchFilter, field string) ([]string, error) {
+	return s.AggregationsByFieldContext(context.Background(), filter, field)
+}
+
+// AggregationsByFieldContext gets aggregations with caller-owned cancellation.
+func (s *ProfileStorage) AggregationsByFieldContext(ctx context.Context, filter *SearchFilter, field string) ([]string, error) {
 	if s == nil || s.store == nil {
-		return nil, fmt.Errorf("profile storage is nil")
+		return nil, errors.New("profile storage is not initialized")
 	}
 
 	normalizedField, err := normalizeProfileAggregationField(field)
@@ -145,7 +190,7 @@ func (s *ProfileStorage) AggregationsByField(filter *SearchFilter, field string)
 	}
 
 	terms, err := s.store.Values(
-		context.Background(),
+		ctx,
 		normalizedField,
 		buildProfileAggregationQuery(filter),
 		normalizeProfileSearchLimit(filter),
@@ -215,15 +260,18 @@ func (profileDocumentMapper) Indexes() []driver.Index {
 func buildProfileSearchQuery(filter *SearchFilter) driver.Query {
 	query := buildProfileAggregationQuery(filter)
 	query.Limit = normalizeProfileSearchLimit(filter)
+	if filter != nil && filter.Offset > 0 {
+		query.Offset = filter.Offset
+	}
 	query.Sorts = []driver.Sort{
-		{Field: profileFieldTime, Desc: true},
+		{Field: profileFieldUploadedTime, Desc: true},
 	}
 	return query
 }
 
 func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 	query := driver.Query{
-		Filters: make([]driver.Filter, 0, 6),
+		Filters: make([]driver.Filter, 0, 8),
 	}
 
 	if filter == nil {
@@ -232,35 +280,42 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 
 	if !filter.StartTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldTime,
+			Field: profileFieldUploadedTime,
 			Op:    driver.OpGte,
-			Value: filter.StartTime.UTC(),
+			Value: filter.StartTime.UTC().Format(time.RFC3339Nano),
 		})
 	}
 	if !filter.EndTime.IsZero() {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldTime,
+			Field: profileFieldUploadedTime,
 			Op:    driver.OpLte,
-			Value: filter.EndTime.UTC(),
+			Value: filter.EndTime.UTC().Format(time.RFC3339Nano),
 		})
 	}
 
-	switch {
-	case filter.TracerID != "" || filter.ID != "":
+	if filter.TracerID != "" || filter.ID != "" {
 		id := filter.TracerID
 		if id == "" {
 			id = filter.ID
 		}
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldTracerID,
+			Field: profileFieldTracerID + ".keyword",
 			Op:    driver.OpEq,
 			Value: id,
 		})
-	case filter.Hostname != "":
+	}
+	if filter.Region != "" {
+		query.Filters = append(query.Filters, driver.Filter{
+			Field: profileFieldRegion + ".keyword",
+			Op:    driver.OpEq,
+			Value: filter.Region,
+		})
+	}
+	if filter.Hostname != "" {
 		query.Filters = append(
 			query.Filters,
 			driver.Filter{
-				Field: profileFieldHostname,
+				Field: profileFieldHostname + ".keyword",
 				Op:    driver.OpEq,
 				Value: filter.Hostname,
 			},
@@ -270,9 +325,17 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 				Value: "",
 			},
 		)
-	case filter.ContainerHostname != "":
+	}
+	if filter.ContainerID != "" {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldContainerHostname,
+			Field: profileFieldContainerID + ".keyword",
+			Op:    driver.OpEq,
+			Value: filter.ContainerID,
+		})
+	}
+	if filter.ContainerHostname != "" {
+		query.Filters = append(query.Filters, driver.Filter{
+			Field: profileFieldContainerHostname + ".keyword",
 			Op:    driver.OpEq,
 			Value: filter.ContainerHostname,
 		})
@@ -280,17 +343,9 @@ func buildProfileAggregationQuery(filter *SearchFilter) driver.Query {
 
 	if filter.ProfileType != "" {
 		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldProfileType,
+			Field: profileFieldProfileType + ".keyword",
 			Op:    driver.OpEq,
 			Value: filter.ProfileType,
-		})
-	}
-
-	if filter.TracerID != "" {
-		query.Filters = append(query.Filters, driver.Filter{
-			Field: profileFieldTracerID,
-			Op:    driver.OpEq,
-			Value: filter.TracerID,
 		})
 	}
 
@@ -322,13 +377,12 @@ func normalizeProfileSearchLimit(filter *SearchFilter) int {
 	if filter == nil || filter.Limit <= 0 {
 		return 100
 	}
+	if filter.Limit > 1000 {
+		return 1000
+	}
 	return filter.Limit
 }
 
 func parseProfileDocumentTime(raw string, fallback time.Time) time.Time {
 	return timeutil.ParseWithFallback(raw, profileTimeLayout, fallback)
-}
-
-func splitProfileStorageAddresses(raw string) []string {
-	return strutil.SplitCommaList(raw)
 }

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,18 +18,22 @@ import (
 	"fmt"
 	"strconv"
 
+	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/pkg/metric"
 )
 
 func (c *iolatencyTracing) Update() ([]*metric.Data, error) {
-	if !c.running.Load() {
+	lease, ok := c.bpfObject.Acquire()
+	if !ok {
 		return nil, nil
 	}
+	defer lease.Release()
 
-	containers, _ := c.fetchContainerIOlatency()
+	containers, _ := c.fetchContainerIOlatency(lease.BPF)
 
-	blkio, err := c.fetchBlkDiskIOlatency()
+	blkio, err := c.fetchBlkDiskIOlatency(lease.BPF)
 	if err != nil {
 		return containers, err
 	}
@@ -37,7 +41,7 @@ func (c *iolatencyTracing) Update() ([]*metric.Data, error) {
 	return append(containers, blkio...), nil
 }
 
-func (c *iolatencyTracing) fetchContainerIOlatency() ([]*metric.Data, error) {
+func (c *iolatencyTracing) fetchContainerIOlatency(object bpf.BPF) ([]*metric.Data, error) {
 	var metrics []*metric.Data
 
 	containers, err := pod.Containers()
@@ -45,9 +49,9 @@ func (c *iolatencyTracing) fetchContainerIOlatency() ([]*metric.Data, error) {
 		return nil, err
 	}
 
-	cssContainers := pod.BuildCssContainers(containers, pod.SubSysBlkIO)
+	cssContainers := pod.BuildCssContainers(containers, subsystem.SubsystemBlkIO)
 
-	containersIOdata, err := c.dumpContainerLatency()
+	containersIOdata, err := c.dumpContainerLatency(object)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +69,7 @@ func (c *iolatencyTracing) fetchContainerIOlatency() ([]*metric.Data, error) {
 				continue
 			}
 
-			metrics = append(metrics, metric.NewContainerGaugeData(
+			metrics = append(metrics, metric.NewContainerCounterData(
 				container, "blkdisk_q2c", float64(cnt),
 				"container blkio q2c latency",
 				map[string]string{"disk": diskDev, "zone": strconv.Itoa(zone)},
@@ -82,7 +86,7 @@ func (c *iolatencyTracing) fetchContainerIOlatency() ([]*metric.Data, error) {
 				continue
 			}
 
-			metrics = append(metrics, metric.NewContainerGaugeData(
+			metrics = append(metrics, metric.NewContainerCounterData(
 				container, "blkdisk_d2c", float64(cnt),
 				"container blkio d2c latency",
 				map[string]string{"disk": diskDev, "zone": strconv.Itoa(zone)},
@@ -93,10 +97,10 @@ func (c *iolatencyTracing) fetchContainerIOlatency() ([]*metric.Data, error) {
 	return metrics, nil
 }
 
-func (c *iolatencyTracing) fetchBlkDiskIOlatency() ([]*metric.Data, error) {
+func (c *iolatencyTracing) fetchBlkDiskIOlatency(object bpf.BPF) ([]*metric.Data, error) {
 	var metrics []*metric.Data
 
-	blkIOdata, err := c.dumpBlkdiskLatency()
+	blkIOdata, err := c.dumpBlkdiskLatency(object)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +109,7 @@ func (c *iolatencyTracing) fetchBlkDiskIOlatency() ([]*metric.Data, error) {
 		diskDev := fmt.Sprintf("%d:%d", disk.Major, disk.Minor)
 
 		for zone, cnt := range disk.Q2CZone {
-			metrics = append(metrics, metric.NewGaugeData(
+			metrics = append(metrics, metric.NewCounterData(
 				"blkdisk_q2c", float64(cnt),
 				"the disk q2c latency",
 				map[string]string{"disk": diskDev, "zone": strconv.Itoa(zone)},
@@ -113,14 +117,14 @@ func (c *iolatencyTracing) fetchBlkDiskIOlatency() ([]*metric.Data, error) {
 		}
 
 		for zone, cnt := range disk.D2CZone {
-			metrics = append(metrics, metric.NewGaugeData(
+			metrics = append(metrics, metric.NewCounterData(
 				"blkdisk_d2c", float64(cnt),
 				"the disk d2c latency",
 				map[string]string{"disk": diskDev, "zone": strconv.Itoa(zone)},
 			))
 		}
 
-		metrics = append(metrics, metric.NewGaugeData(
+		metrics = append(metrics, metric.NewCounterData(
 			"blkdisk_freeze", float64(disk.FreezeNr),
 			"the disk freeze event count",
 			map[string]string{"disk": diskDev},

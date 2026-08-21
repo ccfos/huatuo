@@ -1,7 +1,7 @@
 ---
 title: 快速开始
 description: 
-date: 2025-12-03
+date: 2026-07-27
 type: docs
 weight: 1
 ---
@@ -34,7 +34,7 @@ weight: 1
 
 1. 启动容器：
 ```bash
-$ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+$ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
 ```
 
 2. 获取指标：打开另外一个终端，通过 curl 获取。
@@ -68,7 +68,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 
 运行容器：
 ```bash
-$ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+$ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
 ```
 
 或从容器 `/home/huatuo-bamai` 路径下拷贝出所有文件后本地手动运行：
@@ -92,7 +92,7 @@ $ ./huatuo-bamai --region example --config huatuo-bamai.conf
 
         ES 存储配置如下：
         ```yaml
-        [Storage.ES]
+        [Storage.Elasticsearch]
             Address = "http://127.0.0.1:9200"
             Username = "elastic"
             Password = "huatuo-bamai"
@@ -103,22 +103,22 @@ $ ./huatuo-bamai --region example --config huatuo-bamai.conf
         ```yaml
         # tracer's record data
         # Path: all but the last element of path for per tracer
-        # RotationSize: the maximum size in Megabytes of a record file before it gets rotated for per subsystem
-        # MaxRotation: the maximum number of old log files to retain for per subsystem
+        # RotationSizeMiB：单个记录文件轮转前的最大容量
+        # MaxRotatedFiles：保留的轮转文件数量上限
         [Storage.LocalFile]
             Path = "huatuo-local"
-            RotationSize = 100
-            MaxRotation = 10
+            RotationSizeMiB = 100
+            MaxRotatedFiles = 10
         ```
 
 3. 事件阈值
     所有的内核事件采集 Events 和 AutoTracing 都可以配置触发阈值。默认的阈值都是在实际生产环境反复验证后的经验数据，你可以根据自身需求，在 huatuo-bamai.conf 中修改阈值。
 
 4. 资源限制
-    为保障物理机稳定性，我们对采集器进行了资源限制，其中 LimitInitCPU 表示采集器启动阶段占用的 CPU 资源，LimitCPU/LimitMem 表示采集器启动成功后常态占用的资源限制：
-    ```yaml
-    [RuntimeCgroup]
-        LimitInitCPU = 0.5
-        LimitCPU = 2.0
-        LimitMem = 2048
+    Kubernetes 和 systemd 部署默认由 kubelet 或 systemd 管理 Huatuo 的 cgroup，Huatuo 不会迁移自身 PID。只有直接运行且没有外部管理器时，才使用 `--enable-cgroup` 并配置：
+    ```toml
+    [Runtime]
+        StartupCPULimitCores = 0.5
+        CPULimitCores = 2.0
+        MemoryLimitMiB = 2048
     ```

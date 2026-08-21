@@ -57,6 +57,22 @@ make build        # Build only Go binaries
 make docker-build # Build Docker image
 ```
 
+### Full Container Integration
+
+Build the development image from the current source and start the collector,
+API Server, Elasticsearch, Prometheus, and Grafana:
+
+```bash
+make compose-dev-up
+```
+
+Stop the environment and remove its containers, volumes, and local development
+image:
+
+```bash
+make compose-dev-down
+```
+
 ### Test
 
 ```bash

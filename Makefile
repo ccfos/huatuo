@@ -21,7 +21,7 @@ endif
 
 APP_COMMIT ?= $(shell git describe --dirty --long --always)
 APP_BUILD_TIME = $(shell date "+%Y%m%d%H%M%S")
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 APP_CMD_DIR := cmd
 APP_CMD_OUTPUT := _output
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
@@ -62,9 +62,14 @@ endif
 
 IMAGE := $(IMAGE_REPO):$(IMAGE_TAG)
 
+COMPOSE_DEV := docker compose \
+	--project-directory $(ROOT_DIR)/build/docker \
+	-f $(ROOT_DIR)/build/docker/docker-compose.yml \
+	-f $(ROOT_DIR)/build/docker/docker-compose.dev.yml
+
 BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
 
-all: bpf-build build sync
+all: build sync
 
 build-nostatic:
 	@$(MAKE) BUILD_MODE=nostatic all
@@ -83,13 +88,13 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			$(GO) generate {}'
 	@mkdir -p $(APP_CMD_OUTPUT) && touch $@
 
-sync:
+sync: bpf-build
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
 	@cp *.conf $(APP_CMD_OUTPUT)/conf/
 
-build: gen-build $(APP_CMD_BIN_TARGETS)
-$(APP_CMD_BIN_TARGETS): $(GO_SRCS)
+build: $(APP_CMD_BIN_TARGETS)
+$(APP_CMD_BIN_TARGETS): gen-build $(GO_SRCS)
 $(APP_CMD_OUTPUT)/bin/%:
 	@mkdir -p $(APP_CMD_OUTPUT)/bin
 	$(GO_BUILD_IMPL) -o $@ ./$(APP_CMD_DIR)/$*
@@ -126,6 +131,14 @@ docker-buildx-check:
 docker-clean:
 	@docker rmi $(IMAGE) || true
 
+compose-dev-up:
+	@$(COMPOSE_DEV) build huatuo-apiserver
+	@$(COMPOSE_DEV) up
+
+compose-dev-down:
+	@$(COMPOSE_DEV) down --remove-orphans --volumes
+	@docker image rm huatuo/huatuo-bamai:dev || true
+
 check: import-fmt golangci-lint
 	@git diff --exit-code
 
@@ -155,13 +168,14 @@ clean:
 		$(FIND_EXCLUDE_PATHS) \
 		-delete
 
-gen-build:
+gen-build: bpf-build
+	@go run ./build/bpfabi-tool
 	@go generate -run "mockery.*" -x ./...
 	@go generate -run "capnp.*" ./...
 
 test: unit integration e2e
 
-unit: bpf-build gen-build
+unit: gen-build
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
@@ -171,4 +185,4 @@ integration: all
 e2e: all
 	@bash e2e/run.sh
 
-.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-buildx docker-buildx-check docker-clean
+.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean docker-buildx docker-buildx-check compose-dev-up compose-dev-down

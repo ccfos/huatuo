@@ -27,6 +27,8 @@ export ROOT_DIR
 
 HUATUO_BAMAI_BIN="${ROOT_DIR}/_output/bin/huatuo-bamai"
 export HUATUO_BAMAI_BIN
+HUATUO_APISERVER_BIN="${ROOT_DIR}/_output/bin/huatuo-apiserver"
+export HUATUO_APISERVER_BIN
 HUATUO_BAMAI_TEST_TMPDIR=$(mktemp -d /tmp/huatuo-test.XXXXXX)
 export HUATUO_BAMAI_TEST_TMPDIR
 HUATUO_BAMAI_MATCH_KEYWORDS="\"error\"|panic"
@@ -35,16 +37,6 @@ HUATUO_BAMAI_TEST_FIXTURES="${ROOT_DIR}/integration/fixtures"
 export HUATUO_BAMAI_TEST_FIXTURES
 HUATUO_BAMAI_TEST_EXPECTED="${ROOT_DIR}/integration/fixtures/expected_metrics"
 export HUATUO_BAMAI_TEST_EXPECTED
-HUATUO_BAMAI_ARGS_INTEGRATION=(
-	"--config-dir" "${HUATUO_BAMAI_TEST_TMPDIR}"
-	"--config" "bamai.conf"
-	"--region" "dev"
-	"--procfs-prefix" "${HUATUO_BAMAI_TEST_FIXTURES}"
-	"--disable-storage"
-	"--disable-kubelet"
-	"--log-debug"
-)
-export HUATUO_BAMAI_ARGS_INTEGRATION
 HUATUO_BAMAI_ARGS_E2E=(
 	"--config-dir" "${ROOT_DIR}/_output/conf/"
 	"--config" "huatuo-bamai.conf"
@@ -62,11 +54,17 @@ WAIT_HUATUO_BAMAI_TIMEOUT=120 # second
 export WAIT_HUATUO_BAMAI_TIMEOUT
 WAIT_HUATUO_BAMAI_INTERVAL=2 # second
 export WAIT_HUATUO_BAMAI_INTERVAL
+WAIT_HUATUO_APISERVER_TIMEOUT=120 # second
+export WAIT_HUATUO_APISERVER_TIMEOUT
+WAIT_HUATUO_APISERVER_INTERVAL=2 # second
+export WAIT_HUATUO_APISERVER_INTERVAL
+JAVA_PROFILER_TOOL_PATH=${JAVA_PROFILER_TOOL_PATH:-/home/work/async-profiler}
+export JAVA_PROFILER_TOOL_PATH
+PYTHON_PROFILER_TOOL_PATH=${PYTHON_PROFILER_TOOL_PATH:-/home/didi/.local/bin}
+export PYTHON_PROFILER_TOOL_PATH
 
 # Arrays cannot be exported to child processes via environment variables.
-# Convert the array to a space-separated string that can be exported and later reconstructed.
-HUATUO_BAMAI_INTEGRATION_ARGS_STR="${HUATUO_BAMAI_ARGS_INTEGRATION[*]}"
-export HUATUO_BAMAI_INTEGRATION_ARGS_STR
+# Convert the E2E array to a string for reconstruction in child processes.
 HUATUO_BAMAI_E2E_ARGS_STR="${HUATUO_BAMAI_ARGS_E2E[*]}"
 export HUATUO_BAMAI_E2E_ARGS_STR
 

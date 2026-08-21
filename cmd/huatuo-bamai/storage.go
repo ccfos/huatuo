@@ -17,13 +17,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
+	"huatuo-bamai/internal/strutil"
 	"huatuo-bamai/pkg/tracing"
 )
 
@@ -36,19 +36,17 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	return nil, initStorage(d.opts.Region, config.Get())
 }
 
-func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
+func initStorage(storageRegion string, cfg *config.Config) error {
 	var esStore *storage.Store[*tracing.Document]
 
 	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)
-	if cfg.Storage.ES.Address != "" &&
-		cfg.Storage.ES.Username != "" &&
-		cfg.Storage.ES.Password != "" {
+	if cfg.Storage.Elasticsearch.Enabled() {
 		store, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
-			ESAddresses: splitStorageAddresses(cfg.Storage.ES.Address),
-			ESUsername:  cfg.Storage.ES.Username,
-			ESPassword:  cfg.Storage.ES.Password,
-			ESIndex:     cfg.Storage.ES.Index,
+			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
+			ESUsername:  cfg.Storage.Elasticsearch.Username,
+			ESPassword:  cfg.Storage.Elasticsearch.Password,
+			ESIndex:     cfg.Storage.Elasticsearch.Index,
 		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new tracing document store (elasticsearch): %w", err)
@@ -61,8 +59,8 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		localFileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:                "localfile",
 			LocalFilePath:         cfg.Storage.LocalFile.Path,
-			LocalFileMaxRotation:  cfg.Storage.LocalFile.MaxRotation,
-			LocalFileRotationSize: cfg.Storage.LocalFile.RotationSize,
+			LocalFileMaxRotation:  cfg.Storage.LocalFile.MaxRotatedFiles,
+			LocalFileRotationSize: cfg.Storage.LocalFile.RotationSizeMiB,
 		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new tracing document store (localfile): %w", err)
@@ -82,16 +80,14 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
 	}
 
-	if cfg.Storage.ES.Address != "" &&
-		cfg.Storage.ES.Username != "" &&
-		cfg.Storage.ES.Password != "" {
+	if cfg.Storage.Elasticsearch.Enabled() {
 		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
-			ESAddresses: splitStorageAddresses(cfg.Storage.ES.Address),
-			ESUsername:  cfg.Storage.ES.Username,
-			ESPassword:  cfg.Storage.ES.Password,
-			ESIndex:     profiler.MetadataCollection,
-		}, profiler.MetadataCollection, tracing.DocumentStoreMapper{})
+			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
+			ESUsername:  cfg.Storage.Elasticsearch.Username,
+			ESPassword:  cfg.Storage.Elasticsearch.Password,
+			ESIndex:     cfg.Storage.Elasticsearch.Index,
+		}, profiler.MetadataCollection, tracing.ProfileDocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)
 		}
@@ -102,17 +98,4 @@ func initStorage(storageRegion string, cfg *config.BamaiConfig) error {
 	}
 
 	return nil
-}
-
-func splitStorageAddresses(raw string) []string {
-	parts := strings.Split(raw, ",")
-	addresses := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		addresses = append(addresses, trimmed)
-	}
-	return addresses
 }

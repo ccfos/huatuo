@@ -2,7 +2,7 @@
 title: Getting started
 type: docs
 description: 
-date: 2026-01-11
+date: 2026-07-27
 weight: 1
 ---
 
@@ -30,7 +30,7 @@ If you want to understand the underlying principles and deploy HUATUO to your ow
 
 - **Direct Execution**：
     ```bash
-    $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+    $ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
     ```
 
 - **Metric Collection**：In another terminal, collect metrics
@@ -62,7 +62,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 #### 3.2 Execution
 - Run container:
     ```bash
-    $ docker run --privileged --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
+    $ docker run --privileged --pid=host --cgroupns=host --network=host -v /sys:/sys -v /proc:/proc -v /run:/run huatuo/huatuo-bamai:latest
     ```
 
 - Or copy all files from the container path `/home/huatuo-bamai` and run manually locally:
@@ -89,7 +89,7 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 
        ES storage configuration is as follows:
         ```yaml
-        [Storage.ES]
+        [Storage.Elasticsearch]
             Address = "http://127.0.0.1:9200"
             Username = "elastic"
             Password = "huatuo-bamai"
@@ -100,12 +100,12 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
         ```yaml
         # tracer's record data
         # Path: all but the last element of path for per tracer
-        # RotationSize: the maximum size in Megabytes of a record file before it gets rotated for per subsystem
-        # MaxRotation: the maximum number of old log files to retain for per subsystem
+        # RotationSizeMiB: maximum record file size before rotation
+        # MaxRotatedFiles: maximum number of rotated files to retain
         [Storage.LocalFile]
             Path = "huatuo-local"
-            RotationSize = 100
-            MaxRotation = 10
+            RotationSizeMiB = 100
+            MaxRotatedFiles = 10
         ```
 
 - Event Thresholds
@@ -114,11 +114,10 @@ $ docker build --network host -t huatuo/huatuo-bamai:latest .
 
 - Resource Limits
 
-    To ensure host machine stability, we have implemented resource limits for the collector. LimitInitCPU represents CPU resources occupied during collector startup, while LimitCPU/LimitMem represent resource limits for normal operation after successful startup:
-    ```yaml
-    [RuntimeCgroup]
-        LimitInitCPU = 0.5
-        LimitCPU = 2.0
-        # limit memory (MB)
-        LimitMem = 2048
+    Kubernetes and systemd deployments let kubelet or systemd manage Huatuo cgroups by default, so Huatuo does not migrate its own PID. For direct execution without an external manager, pass `--enable-cgroup` and configure:
+    ```toml
+    [Runtime]
+        StartupCPULimitCores = 0.5
+        CPULimitCores = 2.0
+        MemoryLimitMiB = 2048
     ```

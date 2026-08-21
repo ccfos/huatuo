@@ -51,6 +51,7 @@ All events provide default values and work without configuration:
 | `cpusys.sys_threshold` | `45` (%) | Host CPU sys utilization trigger threshold |
 | `cpusys.delta_sys_threshold` | `20` (%) | Host CPU sys utilization delta trigger threshold |
 | `cpusys.interval` | `10` (s) | Detection interval |
+| `cpusys.interval_tracing` | `1800` (s) | Global cooldown period between triggers |
 | `cpusys.run_tracing_tool_timeout` | `10` (s) | perf flame graph collection timeout |
 | `dload.threshold_load` | `5` | Container D-state process load EMA trigger threshold |
 | `dload.interval` | `10` (s) | Detection interval |
@@ -73,7 +74,7 @@ All events provide default values and work without configuration:
 
 | Event Name (tracer_name) | Target | Trigger Condition | Typical Scenario |
 | ------------------------ | ------ | ----------------- | ---------------- |
-| `cpusys` | Host | sys > 45% or delta_sys > 20% | Kernel-mode CPU spike, syscall hotspot |
+| `cpusys` | Host | sys > 45% and delta_sys > 20% | Kernel-mode CPU spike, syscall hotspot |
 | `cpuidle` | Container | (user>75% and delta_user>45%) or (sys>45% and delta_sys>20%) or (total>90% and delta_total>55%) | Container CPU spike, hotspot function analysis |
 | `dload` | Container | D-state process load EMA > 5 | D-state process accumulation, IO blocking |
 | `iotracing` | Host | Any IO metric exceeds threshold for two consecutive samples | Saturated disk IO, high IO wait latency |
@@ -99,7 +100,7 @@ All event records include the following common fields:
 
 ### 1. cpusys
 
-**Description** Periodically reads `/proc/stat` to calculate host CPU sys utilization and the delta between consecutive samples. When sys utilization exceeds the threshold (default 45%) or the delta exceeds its threshold (default 20%), a system-wide perf sampling run is triggered to generate a full-host CPU flame graph.
+**Description** Periodically reads `/proc/stat` to calculate host CPU sys utilization and the delta between consecutive samples. When sys utilization exceeds the threshold (default 45%) and the delta exceeds its threshold (default 20%), a system-wide perf sampling run is triggered to generate a full-host CPU flame graph. A 30-minute global cooldown prevents repeated triggers.
 
 **Storage** Event data is automatically stored in Elasticsearch or a local disk file.
 
@@ -109,10 +110,10 @@ All event records include the following common fields:
 {
     "tracer_name": "cpusys",
     "tracer_data": {
-        "now_sys": 52,
-        "sys_threshold": 45,
-        "deltasys": 25,
-        "deltasys_threshold": 20,
+        "system_percent": 52,
+        "system_percent_threshold": 45,
+        "system_percent_delta": 25,
+        "system_percent_delta_threshold": 20,
         "flamedata": [
             {"level": 0, "value": 1000, "self": 0, "label": "all"},
             {"level": 1, "value": 350, "self": 350, "label": "do_syscall_64"}
@@ -123,10 +124,10 @@ All event records include the following common fields:
 
 **Field Descriptions**
 
-- **now_sys**: Host CPU sys utilization at trigger time (%)
-- **sys_threshold**: sys utilization trigger threshold (%)
-- **deltasys**: sys utilization delta between consecutive samples (%)
-- **deltasys_threshold**: sys delta trigger threshold (%)
+- **system_percent**: Host CPU sys utilization at trigger time (%)
+- **system_percent_threshold**: sys utilization trigger threshold (%)
+- **system_percent_delta**: sys utilization delta between consecutive samples (%)
+- **system_percent_delta_threshold**: sys delta trigger threshold (%)
 - **flamedata**: Flame graph frame data from perf sampling. Each frame contains:
   - **level**: Call stack depth level
   - **value**: Sample count for this frame including descendant frames
@@ -145,18 +146,18 @@ All event records include the following common fields:
 {
     "tracer_name": "cpuidle",
     "tracer_data": {
-        "user": 80,
-        "user_threshold": 75,
-        "deltauser": 48,
-        "deltauser_threshold": 45,
-        "sys": 12,
-        "sys_threshold": 45,
-        "deltasys": 5,
-        "deltasys_threshold": 20,
-        "usage": 92,
-        "usage_threshold": 90,
-        "deltausage": 53,
-        "deltausage_threshold": 55,
+        "user_percent": 80,
+        "user_percent_threshold": 75,
+        "user_percent_delta": 48,
+        "user_percent_delta_threshold": 45,
+        "system_percent": 12,
+        "system_percent_threshold": 45,
+        "system_percent_delta": 5,
+        "system_percent_delta_threshold": 20,
+        "total_percent": 92,
+        "total_percent_threshold": 90,
+        "total_percent_delta": 53,
+        "total_percent_delta_threshold": 55,
         "flamedata": [
             {"level": 0, "value": 1000, "self": 0, "label": "all"},
             {"level": 1, "value": 800, "self": 800, "label": "java/com.example.App.main"}
@@ -167,12 +168,12 @@ All event records include the following common fields:
 
 **Field Descriptions**
 
-- **user / user_threshold**: Container CPU user utilization at trigger time (%) and its threshold
-- **deltauser / deltauser_threshold**: User utilization inter-sample delta (%) and its threshold
-- **sys / sys_threshold**: Container CPU sys utilization at trigger time (%) and its threshold
-- **deltasys / deltasys_threshold**: Sys utilization inter-sample delta (%) and its threshold
-- **usage / usage_threshold**: Container total CPU utilization at trigger time (%) and its threshold
-- **deltausage / deltausage_threshold**: Total utilization inter-sample delta (%) and its threshold
+- **user_percent / user_percent_threshold**: Container CPU user utilization at trigger time (%) and its threshold
+- **user_percent_delta / user_percent_delta_threshold**: User utilization inter-sample delta (%) and its threshold
+- **system_percent / system_percent_threshold**: Container CPU system utilization at trigger time (%) and its threshold
+- **system_percent_delta / system_percent_delta_threshold**: System utilization inter-sample delta (%) and its threshold
+- **total_percent / total_percent_threshold**: Container total CPU utilization at trigger time (%) and its threshold
+- **total_percent_delta / total_percent_delta_threshold**: Total utilization inter-sample delta (%) and its threshold
 - **flamedata**: Container-scoped perf flame graph frame data; field meanings same as `cpusys`
 
 ### 3. dload

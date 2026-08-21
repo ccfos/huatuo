@@ -18,58 +18,65 @@ import (
 	"sort"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
+	"huatuo-bamai/pkg/profiling"
 )
 
-// buildCapabilitiesResponse constructs the profiling capabilities response
-// from the package-level supported languages/modes and the current configuration.
-func buildCapabilitiesResponse(h *Handler) (v1.ProfilingCapabilitiesResponse, error) {
-	cpuLanguages := make([]string, 0, len(supportedLanguages)+1)
-	for lang := range supportedLanguages {
-		cpuLanguages = append(cpuLanguages, lang)
-	}
-	// python is supported for CPU profiling via special handling in fillCPUTracerArgs
-	cpuLanguages = append(cpuLanguages, "python")
+func buildCapabilities(h *Handler) v1.ProfilingCapabilities {
+	cpuLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeCPU))
 	sort.Strings(cpuLanguages)
-
-	memoryLanguages := make([]string, 0, len(supportedLanguages))
-	for lang := range supportedLanguages {
-		memoryLanguages = append(memoryLanguages, lang)
+	cpuModes := make(map[string][]string, len(cpuLanguages))
+	for _, language := range profiling.LanguagesFor(profiling.TypeCPU) {
+		modes := profiling.CPUModesFor(language)
+		values := make([]string, 0, len(modes))
+		for _, mode := range modes {
+			values = append(values, string(mode))
+		}
+		sort.Strings(values)
+		cpuModes[string(language)] = values
 	}
+
+	memoryLanguages := languageStrings(profiling.LanguagesFor(profiling.TypeMemory))
 	sort.Strings(memoryLanguages)
 
-	// Copy memory modes to avoid mutating the package-level map
-	memoryModes := make(map[string]string, len(supportedMemoryModes))
-	for k, v := range supportedMemoryModes {
-		memoryModes[k] = v
+	memoryModes := make(map[string][]string, len(memoryLanguages))
+	for _, language := range profiling.LanguagesFor(profiling.TypeMemory) {
+		modes := profiling.MemoryModesFor(language)
+		values := make([]string, 0, len(modes))
+		for _, mode := range modes {
+			values = append(values, string(mode))
+		}
+		sort.Strings(values)
+		memoryModes[string(language)] = values
 	}
 
-	cfg := config.Get().Profiling
+	cfg := h.profilingConfig
 
-	return v1.ProfilingCapabilitiesResponse{
-		ProfileTypes:                    []string{"cpu", "memory"},
-		CPUSupportedLanguages:           cpuLanguages,
-		MemorySupportedLanguages:        memoryLanguages,
-		MemoryModes:                     memoryModes,
-		DefaultCPUInterval:              cfg.CPUProfilingInterval,
-		DefaultMemoryInterval:           cfg.MemoryProfilingInterval,
-		DefaultCPUSingleTraceTimeout:    cfg.CPUSingleTraceTimeout,
-		DefaultMemorySingleTraceTimeout: cfg.MemorySingleTraceTimeout,
-		ThirdPartyToolLimit:             cfg.ThirdPartyToolLimit,
-	}, nil
+	return v1.ProfilingCapabilities{
+		Types:                      []string{string(profiling.TypeCPU), string(profiling.TypeMemory)},
+		CPULanguages:               cpuLanguages,
+		CPUModes:                   cpuModes,
+		MemoryLanguages:            memoryLanguages,
+		MemoryModes:                memoryModes,
+		AggregationIntervalSeconds: cfg.AggregationIntervalSeconds,
+		MaxConcurrentProfilers:     cfg.MaxConcurrentProfilerProcesses,
+	}
+}
+
+func languageStrings(languages []profiling.Language) []string {
+	values := make([]string, 0, len(languages))
+	for _, language := range languages {
+		values = append(values, string(language))
+	}
+	return values
 }
 
 // capabilities returns the profiling capabilities supported by the server.
 // This is a read-only endpoint that allows frontends, CLIs, and agents to
-// discover supported profiling types, languages, memory modes, and default
-// configuration values without hardcoding them.
+// discover supported profiling types, languages, CPU and memory modes, and
+// default configuration values without hardcoding them.
 func (h *Handler) capabilities(ctx *server.Context) error {
-	resp, err := buildCapabilitiesResponse(h)
-	if err != nil {
-		return response.ErrInternal.WithMessage(err.Error())
-	}
-	response.Success(ctx, resp)
+	response.Success(ctx, buildCapabilities(h))
 	return nil
 }

@@ -27,6 +27,7 @@ import (
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
+	"huatuo-bamai/internal/profiler/procutil"
 )
 
 type outType uint8
@@ -316,10 +317,51 @@ func initXfsMounts() error {
 	if err != nil {
 		return err
 	}
+
+	if selfInContainer, _ := procutil.IsProcessInContainer(os.Getpid()); selfInContainer {
+		hostMounts, err := xfsMountPointsFromHost()
+		if err == nil && len(hostMounts) > 0 {
+			xfsMounts = hostMounts
+			log.Infof("symbol: discovered %d host xfs mount(s): %v", len(xfsMounts), xfsMounts)
+		}
+	}
+
 	mounts = xfsMounts
 	mountsInited = true
 	log.Infof("symbol: discovered %d xfs mount(s): %v", len(mounts), mounts)
 	return nil
+}
+
+func xfsMountPointsFromHost() ([]string, error) {
+	fs, err := procfs.NewDefaultFS()
+	if err != nil {
+		return nil, err
+	}
+
+	mountInfo, err := fs.GetProcMounts(1)
+	if err != nil {
+		return nil, err
+	}
+
+	xfsMounts := make([]string, 0, len(mountInfo))
+	seen := make(map[string]struct{}, len(mountInfo))
+	for _, mount := range mountInfo {
+		if mount == nil || mount.FSType != "xfs" {
+			continue
+		}
+
+		mountPoint := filepath.Clean(mount.MountPoint)
+		if mountPoint == "" {
+			continue
+		}
+		if _, ok := seen[mountPoint]; ok {
+			continue
+		}
+
+		seen[mountPoint] = struct{}{}
+		xfsMounts = append(xfsMounts, mountPoint)
+	}
+	return xfsMounts, nil
 }
 
 func countXfsMounts() (int, error) {

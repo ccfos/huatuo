@@ -24,8 +24,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// NetNSInodeByPid returns the inode of the network namespace for the given pid.
-func NetNSInodeByPid(pid int) (uint64, error) {
+// NetNamespaceInumByPID returns the network namespace inum for pid.
+func NetNamespaceInumByPID(pid int) (uint64, error) {
 	netnsStat, err := os.Stat(fmt.Sprintf("/proc/%d/ns/net", pid))
 	if err != nil {
 		return 0, err
@@ -33,9 +33,9 @@ func NetNSInodeByPid(pid int) (uint64, error) {
 	return netnsStat.Sys().(*syscall.Stat_t).Ino, nil
 }
 
-// NetNSCookieByPid returns the network namespace cookie for the given pid.
+// NetNamespaceCookieByPID returns the network namespace cookie for pid.
 // Requires Linux 5.14+ (SO_NETNS_COOKIE). Returns 0, nil on older kernels.
-func NetNSCookieByPid(pid int) (uint64, error) {
+func NetNamespaceCookieByPID(pid int) (uint64, error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 

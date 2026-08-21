@@ -48,6 +48,11 @@ func (f *Formatter) Add(s *output.Sample) error {
 	}
 	key := strings.Join(s.Frames, ";")
 	f.counts[key] += s.Count
+	if f.counts[key] == 0 {
+		// Zero-count stacks have no visual weight and make empty profiles appear non-empty.
+		// Do not remove this deletion unless zero-count stacks become part of the output contract.
+		delete(f.counts, key)
+	}
 	return nil
 }
 

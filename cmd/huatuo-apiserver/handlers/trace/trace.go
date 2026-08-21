@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,10 +15,12 @@
 package trace
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"time"
 
 	v1 "huatuo-bamai/apis/v1"
-	"huatuo-bamai/cmd/huatuo-apiserver/handlers/listing"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/server"
@@ -28,66 +30,94 @@ import (
 // MaxTraceTimeout is the maximum allowed trace duration in seconds.
 const MaxTraceTimeout = 300
 
+const traceJobType = job.JobTypeTracing
+
 // Handler handles trace-related HTTP requests.
 type Handler struct {
-	jobManager *job.Manager
-	Handlers   []server.Handle
+	jobManager JobManager
+	Handlers   []server.Route
+}
+
+// JobManager defines the trace handler's job operations.
+type JobManager interface {
+	CreateContext(ctx context.Context, request *job.CreateJobRequest) (*job.Job, error)
+	ListPageContext(ctx context.Context, userID string, isAdmin bool, query *job.JobQuery) (*job.JobPage, error)
+	GetByTypesContext(ctx context.Context, jobID string, expectedTypes ...job.JobType) (*job.Job, error)
+	StopByTypesContext(ctx context.Context, jobID string, force bool, expectedTypes ...job.JobType) error
+	StopAllByTypesContext(ctx context.Context, expectedTypes ...job.JobType) error
+	DeleteByTypesContext(ctx context.Context, jobID string, expectedTypes ...job.JobType) error
 }
 
 // NewHandler creates a new trace handler.
-func NewHandler(jm *job.Manager) *Handler {
+func NewHandler(jm JobManager) *Handler {
 	h := &Handler{jobManager: jm}
 
-	h.Handlers = []server.Handle{
-		{Typ: server.HttpPost, Uri: "", Handle: h.start},
-		{Typ: server.HttpGet, Uri: "", Handle: h.list},
-		{Typ: server.HttpGet, Uri: "/:id", Handle: h.get},
-		{Typ: server.HttpPatch, Uri: "", Handle: h.patchBulk},
-		{Typ: server.HttpPatch, Uri: "/:id", Handle: h.patchOne},
-		{Typ: server.HttpDelete, Uri: "/:id", Handle: h.delete},
+	h.Handlers = []server.Route{
+		{Method: http.MethodPost, Path: "", Handler: h.start},
+		{Method: http.MethodGet, Path: "", Handler: h.list},
+		{Method: http.MethodGet, Path: "/:id", Handler: h.get},
+		{Method: http.MethodPatch, Path: "", Handler: h.patchBulk},
+		{Method: http.MethodPatch, Path: "/:id", Handler: h.patchOne},
+		{Method: http.MethodDelete, Path: "/:id", Handler: h.delete},
 	}
 	return h
 }
 
 // start starts a new trace job.
 func (h *Handler) start(ctx *server.Context) error {
-	var req v1.StartTraceRequest
+	var req v1.CreateTraceJobRequest
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return response.ErrInvalidRequest
+	}
+	if err := validateCreateTraceJobRequest(&req); err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
 
-	args := job.NewAgentTaskReq{
-		TracerName: "tracer",
-		DataType:   "db",
+	args := job.AgentTaskRequest{
+		TracerName:  "tracer",
+		DataType:    "db",
+		ContainerID: req.ContainerID,
 	}
 
 	if req.Type != "tracing" {
 		args.TracerName = req.Type
 	}
 
-	if req.Duration > MaxTraceTimeout {
-		args.TraceTimeout = MaxTraceTimeout
-	} else {
-		args.TraceTimeout = req.Duration
-	}
-	args.Duration = req.Duration
+	args.TraceTimeout = req.DurationSeconds
+	args.Duration = req.DurationSeconds
 
-	jobResult, err := h.jobManager.Create(job.CreateJobRequest{
-		UserID:    ctx.UserID,
-		Container: req.Container,
-		Host:      req.Hostname,
-		JobType:   "tracing",
-		Args:      &args,
+	jobResult, err := h.jobManager.CreateContext(ctx.Request().Context(), &job.CreateJobRequest{
+		UserID:      ctx.UserID,
+		ContainerID: req.ContainerID,
+		Hostname:    req.Hostname,
+		Type:        traceJobType,
+		AgentTask:   &args,
 	})
 	if err != nil {
-		log.Errorf("Failed to create trace job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		if errors.Is(err, job.ErrQuotaExceeded) {
+			return response.ErrConflict.WithMessage("trace job quota exceeded")
+		}
+		log.WithError(err).Error("failed to create trace job")
+		return response.ErrInternal
 	}
 
-	response.Created(ctx, "/v1/traces/"+jobResult.JobID, v1.StartTraceResponse{
-		ID: jobResult.JobID,
+	response.Created(ctx, "/v1/traces/"+jobResult.ID, v1.CreateTraceJobResponse{
+		ID: jobResult.ID,
 	})
+	return nil
+}
+
+func validateCreateTraceJobRequest(req *v1.CreateTraceJobRequest) error {
+	if req.Hostname == "" {
+		return errors.New("hostname is required")
+	}
+	if req.DurationSeconds <= 0 || req.DurationSeconds > MaxTraceTimeout {
+		return errors.New("duration_seconds must be between 1 and 300 seconds")
+	}
+	if req.Type == "" {
+		return errors.New("type is required")
+	}
 	return nil
 }
 
@@ -99,33 +129,32 @@ func (h *Handler) list(ctx *server.Context) error {
 	}
 
 	filter := job.JobQuery{
-		Container: ctx.Query("container"),
-		Host:      ctx.Query("host"),
-		Status:    ctx.Query("status"),
-		Type:      "tracing",
+		ContainerID: ctx.Query("container_id"),
+		Hostname:    ctx.Query("hostname"),
+		Status:      ctx.Query("status"),
+		Types:       []job.JobType{traceJobType},
+		Sort:        listParams.Sort,
+		Limit:       listParams.Limit,
+		Offset:      listParams.Offset,
 	}
 
-	jobs, err := h.jobManager.List(ctx.UserID, ctx.IsAdmin, &filter)
+	page, err := h.jobManager.ListPageContext(ctx.Request().Context(), ctx.UserID, ctx.IsAdmin, &filter)
 	if err != nil {
-		log.Errorf("Failed to list jobs: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		if errors.Is(err, job.ErrInvalidQuery) {
+			return response.ErrInvalidRequest.WithMessage(err.Error())
+		}
+		log.WithError(err).Error("failed to list trace jobs")
+		return response.ErrInternal
 	}
 
-	if err := listing.SortJobs(jobs, listParams.Sort); err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
+	items := make([]v1.TraceJob, len(page.Items))
+	for i, j := range page.Items {
+		items[i] = buildTraceJob(j)
 	}
 
-	total := len(jobs)
-	pageJobs := listing.Paginate(jobs, listParams.Offset, listParams.Limit)
-
-	items := make([]v1.TraceStatusResponse, len(pageJobs))
-	for i, j := range pageJobs {
-		items[i] = convertJobToTraceResponse(j)
-	}
-
-	response.Success(ctx, v1.TraceListResponse{
+	response.Success(ctx, v1.TraceJobListResponse{
 		Items:  items,
-		Total:  total,
+		Total:  int(page.Total),
 		Limit:  listParams.Limit,
 		Offset: listParams.Offset,
 	})
@@ -139,16 +168,20 @@ func (h *Handler) get(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage("id is required")
 	}
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, traceJobType)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get trace job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
 		return response.ErrForbidden
 	}
 
-	response.Success(ctx, convertJobToTraceResponse(jobResult))
+	response.Success(ctx, buildTraceJob(jobResult))
 	return nil
 }
 
@@ -163,13 +196,17 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
-	if req.Status != listing.StatusStopped {
+	if req.Status != string(job.JobStatusStopped) {
 		return response.ErrInvalidRequest.WithMessage(`status must be "stopped"`)
 	}
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, traceJobType)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get trace job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
@@ -180,9 +217,9 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage("job already completed")
 	}
 
-	if err := h.jobManager.Stop(taskID, false); err != nil {
-		log.Errorf("Failed to stop job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+	if err := h.jobManager.StopByTypesContext(ctx.Request().Context(), taskID, false, traceJobType); err != nil {
+		log.WithError(err).WithField("job_id", taskID).Error("failed to stop trace job")
+		return response.ErrInternal
 	}
 
 	response.Success(ctx, nil)
@@ -204,11 +241,14 @@ func (h *Handler) patchBulk(ctx *server.Context) error {
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	}
-	if req.Status != listing.StatusStopped {
+	if req.Status != string(job.JobStatusStopped) {
 		return response.ErrInvalidRequest.WithMessage(`status must be "stopped"`)
 	}
 
-	h.jobManager.StopAll()
+	if err := h.jobManager.StopAllByTypesContext(ctx.Request().Context(), traceJobType); err != nil {
+		log.WithError(err).Error("failed to stop all trace jobs")
+		return response.ErrInternal
+	}
 	response.Success(ctx, nil)
 	return nil
 }
@@ -220,39 +260,63 @@ func (h *Handler) delete(ctx *server.Context) error {
 		return response.ErrInvalidRequest.WithMessage("id is required")
 	}
 
-	jobResult, err := h.jobManager.Get(taskID)
+	jobResult, err := h.jobManager.GetByTypesContext(ctx.Request().Context(), taskID, traceJobType)
 	if err != nil {
-		return response.ErrNotFound.WithMessage(err.Error())
+		if errors.Is(err, job.ErrNotFound) {
+			return response.ErrNotFound
+		}
+		log.WithError(err).WithField("job_id", taskID).Error("failed to get trace job")
+		return response.ErrInternal
 	}
 
 	if !ctx.CanAccessTask(jobResult.UserID) {
 		return response.ErrForbidden
 	}
 
-	if err := h.jobManager.Delete(taskID); err != nil {
+	if err := h.jobManager.DeleteByTypesContext(ctx.Request().Context(), taskID, traceJobType); err != nil {
 		if errors.Is(err, job.ErrCannotDeleteRunning) {
 			return response.ErrConflict.WithMessage("cannot delete running job")
 		}
-		log.Errorf("Failed to delete job: %v", err)
-		return response.ErrInternal.WithMessage(err.Error())
+		log.WithError(err).WithField("job_id", taskID).Error("failed to delete trace job")
+		return response.ErrInternal
 	}
 
 	response.NoContent(ctx)
 	return nil
 }
 
-// convertJobToTraceResponse maps an internal *job.Job to the v1 wire type.
-func convertJobToTraceResponse(jobResult *job.Job) v1.TraceStatusResponse {
-	return v1.TraceStatusResponse{
-		ID:          jobResult.JobID,
-		AgentTaskID: jobResult.AgentTaskID,
-		Container:   jobResult.Container,
-		Hostname:    jobResult.Host,
-		Status:      string(jobResult.Status),
-		StartTime:   jobResult.StartTime.Format("2006-01-02T15:04:05Z07:00"),
-		EndTime:     jobResult.EndTime.Format("2006-01-02T15:04:05Z07:00"),
-		Results: v1.TraceResults{
-			URL: jobResult.Results.URL,
-		},
+func buildTraceJob(jobResult *job.Job) v1.TraceJob {
+	return v1.TraceJob{
+		ID:              jobResult.ID,
+		ContainerID:     jobResult.ContainerID,
+		Hostname:        jobResult.Hostname,
+		Type:            traceAPIType(jobResult.AgentTask.TracerName),
+		Status:          string(jobResult.Status),
+		DurationSeconds: jobResult.Duration,
+		CreatedAt:       jobResult.CreatedAt,
+		FinishedAt:      optionalTime(jobResult.FinishedAt),
+		ResultURL:       optionalString(jobResult.Result.URL),
+		StatusReason:    optionalString(jobResult.ErrorMessage),
 	}
+}
+
+func traceAPIType(tracerName string) string {
+	if tracerName == "tracer" {
+		return "tracing"
+	}
+	return tracerName
+}
+
+func optionalTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
