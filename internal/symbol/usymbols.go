@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025-2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,19 +19,28 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/utils/fileutil"
 )
 
 type elfCache struct {
-	secs sections
-	syms symbols
+	secs     sections
+	syms     symbols // used by synthetic tests; real caches resolve PCs lazily
+	state    *elfSymbolParseState
+	path     string
+	module   string
+	typ      elf.Type
+	resolved map[uint64]string
 }
 
 type libCache struct {
-	syms symbols
+	syms     symbols // used by synthetic tests; real caches resolve PCs lazily
+	state    *elfSymbolParseState
+	resolved map[uint64]string
 }
 
 type cacheKey struct {
@@ -41,22 +50,89 @@ type cacheKey struct {
 
 // UsymResolver resolves user-space stack addresses to symbol names across pids.
 type UsymResolver struct {
-	exeCache  map[cacheKey]*elfCache // inode+xfs → elfcache
-	exeKeys   map[uint32]cacheKey    // pid → cachekey
-	libcaches map[cacheKey]*libCache // inode+xfs → libcache
-	libKeys   map[string]cacheKey    // libpath → cachekey
-	procmaps  map[uint32]sections
+	exeCache        map[cacheKey]*elfCache // inode+xfs → elfcache
+	exeKeys         map[uint32]cacheKey    // pid → cachekey
+	libcaches       map[cacheKey]*libCache // inode+xfs → libcache
+	libKeys         map[string]cacheKey    // libpath → cachekey
+	procmaps        map[uint32]sections
+	processPaths    map[uint32]elfProcessPath
+	elfSymbolLimits ELFSymbolLimits
+}
+
+type elfProcessPath struct {
+	path   string
+	module string
+}
+
+// UsymResolverOption configures a UsymResolver.
+type UsymResolverOption func(*UsymResolver)
+
+// WithELFSymbolLimits configures per-ELF symbol parsing limits.
+func WithELFSymbolLimits(limits ELFSymbolLimits) UsymResolverOption {
+	return func(r *UsymResolver) {
+		r.elfSymbolLimits = limits
+	}
 }
 
 // NewUsymResolver creates a UsymResolver with shared caches across pids.
-func NewUsymResolver() *UsymResolver {
-	return &UsymResolver{
-		exeCache:  make(map[cacheKey]*elfCache),
-		exeKeys:   make(map[uint32]cacheKey),
-		libcaches: make(map[cacheKey]*libCache),
-		libKeys:   make(map[string]cacheKey),
-		procmaps:  make(map[uint32]sections),
+func NewUsymResolver(options ...UsymResolverOption) *UsymResolver {
+	r := &UsymResolver{
+		exeCache:        make(map[cacheKey]*elfCache),
+		exeKeys:         make(map[uint32]cacheKey),
+		libcaches:       make(map[cacheKey]*libCache),
+		libKeys:         make(map[string]cacheKey),
+		procmaps:        make(map[uint32]sections),
+		processPaths:    make(map[uint32]elfProcessPath),
+		elfSymbolLimits: DefaultELFSymbolLimits(),
 	}
+	for _, option := range options {
+		option(r)
+	}
+	return r
+}
+
+func (r *UsymResolver) resolveELFPCsWithState(path string, fallback symbols, resolved map[uint64]string, pcs []uint64, state *elfSymbolParseState) error {
+	unresolved := make([]uint64, 0, len(pcs))
+	seen := make(map[uint64]struct{}, len(pcs))
+	for _, pc := range pcs {
+		if _, ok := resolved[pc]; !ok {
+			if _, duplicate := seen[pc]; duplicate {
+				continue
+			}
+			seen[pc] = struct{}{}
+			unresolved = append(unresolved, pc)
+		}
+	}
+	if len(unresolved) == 0 {
+		return nil
+	}
+	if path == "" {
+		for _, pc := range unresolved {
+			resolved[pc] = fallback.resolve(pc)
+		}
+		return nil
+	}
+
+	f, err := elf.Open(path)
+	if err != nil {
+		return fmt.Errorf("elf.Open %q: %w", path, err)
+	}
+	defer f.Close()
+	if state == nil {
+		state = newELFSymbolParseState(r.elfSymbolLimits)
+	}
+	syms, err := elfSymbolsForPCsWithState(f, unresolved, state)
+	if err != nil {
+		log.Debugf("symbol: parse ELF PCs for %q: %v", path, err)
+	}
+	for _, pc := range unresolved {
+		name := syms.resolve(pc)
+		if name == "" {
+			name = fallback.resolve(pc)
+		}
+		resolved[pc] = name
+	}
+	return err
 }
 
 // UsymStackBytes resolves user-space stack addresses into byte frames (innermost first).
@@ -81,9 +157,23 @@ func (r *UsymResolver) UsymStackStrsReversed(pid uint32, ustack []uint64, ustack
 
 func (r *UsymResolver) resolveUserStack(pid uint32, stack []uint64, stackSize int, out outType, reversed bool) stackFrames {
 	limit := min(stackSize, len(stack))
-	frames := resolveStack(stack[:limit], func(addr uint64) string {
-		return r.resolveAddr(pid, addr)
-	}, out)
+	valid := limit
+	for index, addr := range stack[:limit] {
+		if addr == 0 {
+			valid = index
+			break
+		}
+	}
+	names := r.resolveAddrs(pid, stack[:valid])
+	frames := stackFrames{}
+	if out == outTypeBytes {
+		frames.bytes = make([][]byte, 0, len(names))
+		for _, name := range names {
+			frames.bytes = append(frames.bytes, []byte(name))
+		}
+	} else {
+		frames.strings = names
+	}
 
 	if reversed {
 		if out == outTypeBytes {
@@ -96,45 +186,130 @@ func (r *UsymResolver) resolveUserStack(pid uint32, stack []uint64, stackSize in
 }
 
 func (r *UsymResolver) resolveAddr(pid uint32, addr uint64) string {
+	return r.resolveAddrs(pid, []uint64{addr})[0]
+}
+
+type pendingELFPCs struct {
+	path     string
+	syms     symbols
+	state    *elfSymbolParseState
+	resolved map[uint64]string
+	pcs      []uint64
+	indices  []int
+	failures []string
+}
+
+type elfGroupKey struct {
+	path     string
+	module   string
+	loadBias uint64
+}
+
+func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {
+	result := slices.Repeat([]string{failFrame("elf-load-fail", "")}, len(addrs))
 	cache, err := r.loadElfCaches(pid)
 	if err != nil {
-		return failFrame("elf-load-fail", "")
+		return result
 	}
 
-	m := cache.secs.find(addr)
-	if m != nil {
-		if sym := cache.syms.resolve(addr); sym != "" {
-			return sym
+	groups := make(map[elfGroupKey]*pendingELFPCs)
+	for index, addr := range addrs {
+		module := cache.module
+		path := cache.path
+		if processPath, ok := r.processPaths[pid]; ok {
+			path = processPath.path
+			module = processPath.module
 		}
-		return failFrame("elf-no-sym", "")
+		if cache.typ == elf.ET_DYN && module != "" {
+			if err = r.loadProcMaps(pid); err == nil {
+				if m := r.procmaps[pid].find(addr); m != nil && m.Pathname == module {
+					baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
+					if cache.resolved == nil {
+						cache.resolved = make(map[uint64]string)
+					}
+					groupKey := elfGroupKey{path: path, module: module, loadBias: baseAddr}
+					group := groups[groupKey]
+					if group == nil {
+						group = &pendingELFPCs{path: path, syms: cache.syms, state: cache.state, resolved: cache.resolved}
+						groups[groupKey] = group
+					}
+					group.pcs = append(group.pcs, addr-baseAddr)
+					group.indices = append(group.indices, index)
+					group.failures = append(group.failures, failFrame("elf-no-sym", ""))
+					continue
+				}
+			}
+		}
+		if cache.secs.find(addr) != nil {
+			if cache.resolved == nil {
+				cache.resolved = make(map[uint64]string)
+			}
+			groupKey := elfGroupKey{path: path, module: module}
+			group := groups[groupKey]
+			if group == nil {
+				group = &pendingELFPCs{path: path, syms: cache.syms, state: cache.state, resolved: cache.resolved}
+				groups[groupKey] = group
+			}
+			group.pcs = append(group.pcs, addr)
+			group.indices = append(group.indices, index)
+			group.failures = append(group.failures, failFrame("elf-no-sym", ""))
+			continue
+		}
+
+		if err = r.loadProcMaps(pid); err != nil {
+			result[index] = failFrame("procmap-fail", "")
+			continue
+		}
+		m := r.procmaps[pid].find(addr)
+		if m == nil {
+			result[index] = failFrame("proc-unmapped", "")
+			continue
+		}
+		if !isLibPath(m.Pathname) {
+			result[index] = failFrame("non-lib", m.Pathname)
+			continue
+		}
+
+		rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
+		libPath := filepath.Join(rootDir, m.Pathname)
+
+		libCache, loadErr := r.loadLibCache(pid, libPath)
+		if loadErr != nil {
+			result[index] = failFrame("lib-load-fail", m.Pathname)
+			continue
+		}
+		baseAddr := uint64(m.StartAddr) - uint64(m.Offset)
+		if libCache.resolved == nil {
+			libCache.resolved = make(map[uint64]string)
+		}
+		groupKey := elfGroupKey{path: libPath, module: m.Pathname, loadBias: baseAddr}
+		group := groups[groupKey]
+		if group == nil {
+			group = &pendingELFPCs{path: libPath, syms: libCache.syms, state: libCache.state, resolved: libCache.resolved}
+			groups[groupKey] = group
+		}
+		group.pcs = append(group.pcs, addr-baseAddr)
+		group.indices = append(group.indices, index)
+		group.failures = append(group.failures, failFrame("lib-no-sym", m.Pathname))
 	}
 
-	if err = r.loadProcMaps(pid); err != nil {
-		return failFrame("procmap-fail", "")
+	for _, group := range groups {
+		if err := r.resolveELFPCsWithState(group.path, group.syms, group.resolved, group.pcs, group.state); err != nil {
+			log.Debugf("symbol: resolve ELF PCs for %q: %v", group.path, err)
+		}
+		for offset, pc := range group.pcs {
+			name := group.resolved[pc]
+			if name == "" {
+				name = group.failures[offset]
+			}
+			result[group.indices[offset]] = name
+		}
 	}
-	m = r.procmaps[pid].find(addr)
-	if m == nil {
-		return failFrame("proc-unmapped", "")
-	}
-	if !isLibPath(m.Pathname) {
-		return failFrame("non-lib", m.Pathname)
-	}
+	return result
+}
 
-	rootDir := procfs.Path(fmt.Sprintf("%d/root", pid))
-	libPath := filepath.Join(rootDir, m.Pathname)
-
-	libCache, err := r.loadLibCache(pid, libPath)
-	if err != nil {
-		return failFrame("lib-load-fail", m.Pathname)
-	}
-	baseAddr, ok := r.procmaps[pid].findBaseAddr(m.Pathname)
-	if !ok {
-		return failFrame("no-baseaddr", m.Pathname)
-	}
-	if sym := libCache.syms.resolve(addr - baseAddr); sym != "" {
-		return sym
-	}
-	return failFrame("lib-no-sym", m.Pathname)
+func (r *UsymResolver) resolveELFPCs(path string, fallback symbols, resolved map[uint64]string, pcs []uint64) error {
+	return r.resolveELFPCsWithState(path, fallback, resolved, pcs, nil)
 }
 
 func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
@@ -155,6 +330,10 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
 	}
 	cache, ok := r.exeCache[key]
 	if ok {
+		r.processPaths[pid] = elfProcessPath{
+			path:   path,
+			module: strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid))),
+		}
 		r.exeKeys[pid] = key
 		return cache, nil
 	}
@@ -176,11 +355,16 @@ func (r *UsymResolver) loadElfCaches(pid uint32) (*elfCache, error) {
 	secs.sort()
 
 	cache = &elfCache{
-		secs: secs,
-		syms: elfSymbols(f),
+		secs:     secs,
+		path:     path,
+		module:   strings.TrimPrefix(path, procfs.Path(fmt.Sprintf("%d/root", pid))),
+		typ:      f.Type,
+		resolved: make(map[uint64]string),
+		state:    newELFSymbolParseState(r.elfSymbolLimits),
 	}
 	r.exeCache[key] = cache
 	r.exeKeys[pid] = key
+	r.processPaths[pid] = elfProcessPath{path: path, module: cache.module}
 	return cache, nil
 }
 
@@ -220,9 +404,12 @@ func (r *UsymResolver) loadLibCache(pid uint32, libPath string) (*libCache, erro
 	if err != nil {
 		return nil, fmt.Errorf("elf.Open %q: %w", libPath, err)
 	}
-	defer f.Close()
+	_ = f.Close()
 
-	cache = &libCache{syms: elfSymbols(f)}
+	cache = &libCache{
+		resolved: make(map[uint64]string),
+		state:    newELFSymbolParseState(r.elfSymbolLimits),
+	}
 	r.libcaches[key] = cache
 	r.libKeys[libPath] = key
 	return cache, nil
