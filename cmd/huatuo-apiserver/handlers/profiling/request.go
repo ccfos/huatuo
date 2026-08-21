@@ -134,6 +134,16 @@ func buildProfilingTracerArgs(
 		if err != nil || !profiling.IsSupported(language, profiling.TypeMemory) {
 			return "", fmt.Errorf("memory profiling not supported for %q", req.Language)
 		}
+		if language == profiling.LanguagePython {
+			if req.MemoryMode != "" {
+				return "", errors.New("memory_mode is not used by Python memory profiling")
+			}
+			taskReq.TracerArgs = []string{
+				"-t", string(profiling.TypeMemory),
+				"-l", string(language),
+			}
+			return job.JobTypeProfilingMemory, nil
+		}
 		mode, err := profiling.ParseMemoryMode(strings.ToLower(req.MemoryMode))
 		if err != nil || !profiling.SupportsMemoryMode(language, mode) {
 			return "", fmt.Errorf("memory mode not supported: %q", req.MemoryMode)

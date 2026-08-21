@@ -64,6 +64,8 @@ type ProfilerContext struct {
 	OffCPUMinDurationUS       uint64
 	OffCPUStatsEnabled        bool
 	PhysicalMemoryProbability uint
+	PythonMemoryStackMode     string
+	PythonMemoryMergeThreads  bool
 
 	TracerID string
 
@@ -194,6 +196,8 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		OffCPUMinDurationUS:       cliCtx.Uint64("offcpu-min-duration-us"),
 		OffCPUStatsEnabled:        cliCtx.Bool("offcpu-stats"),
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
+		PythonMemoryStackMode:     cliCtx.String("python-memory-stack"),
+		PythonMemoryMergeThreads:  cliCtx.Bool("python-memory-merge-threads"),
 
 		TracerID: cliCtx.String("tracer-id"),
 

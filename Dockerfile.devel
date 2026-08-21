@@ -5,8 +5,10 @@ FROM golang:1.24-alpine3.22 AS base
 # To accelerate the build process, you may uncomment this section.
 # RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 #
-RUN apk add --no-cache make clang15 libbpf-dev curl git \
-    musl-dev capnproto-dev binutils-gold # for golangci-lint, capnp compile
+RUN apk add --no-cache make bash clang15 g++ libbpf-dev curl git \
+	musl-dev capnproto-dev binutils-gold python3 python3-dev py3-pip \
+	py3-setuptools py3-wheel py3-pkgconfig cython pkgconf lz4-dev \
+	libunwind-dev elfutils-dev # for golangci-lint, capnp compile, memray bundle
 
 ENV GOPATH="/go"
 ENV GOROOT="/usr/local/go"

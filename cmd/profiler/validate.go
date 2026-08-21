@@ -136,8 +136,10 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 		return validateExactlyOneTarget(ctx)
 
 	case profiling.LanguagePython:
-		if err := ensurePythonToolPath(ctx); err != nil {
-			return err
+		if typ == profiling.TypeCPU {
+			if err := ensurePythonToolPath(ctx); err != nil {
+				return err
+			}
 		}
 		return validateExactlyOneTarget(ctx)
 
@@ -153,8 +155,8 @@ func validatePythonProfileOptions(lang profiling.Language, typ profiling.Type, d
 	if lang != profiling.LanguagePython {
 		return nil
 	}
-	if typ != profiling.TypeCPU {
-		return fmt.Errorf("Python profiler supports only --type=cpu")
+	if typ == profiling.TypeMemory {
+		return nil
 	}
 	if interval != duration {
 		return fmt.Errorf(
@@ -270,6 +272,7 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	native := implementation == profiling.ImplementationNative
 	nativeCPU := native && typ == profiling.TypeCPU
 	nativeMemory := native && typ == profiling.TypeMemory
+	pythonMemory := lang == profiling.LanguagePython && typ == profiling.TypeMemory
 	cpuMode, err := profiling.ParseCPUMode(ctx.String("cpu-mode"))
 	if err != nil {
 		return err
@@ -329,6 +332,22 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 			return fmt.Errorf("physical memory probability must be between 1 and 100")
 		}
 	}
+	if ctx.IsSet("python-memory-stack") && !pythonMemory {
+		return fmt.Errorf("--python-memory-stack requires Python memory profiling")
+	}
+	if ctx.Bool("python-memory-merge-threads") && !pythonMemory {
+		return fmt.Errorf("--python-memory-merge-threads requires Python memory profiling")
+	}
+	if pythonMemory {
+		switch ctx.String("python-memory-stack") {
+		case "python", "hybrid", "native":
+		default:
+			return fmt.Errorf(
+				"invalid --python-memory-stack %q; allowed: python, hybrid, native",
+				ctx.String("python-memory-stack"),
+			)
+		}
+	}
 	return nil
 }
 
@@ -345,6 +364,12 @@ func validateMemoryMode(lang profiling.Language, typ profiling.Type, value strin
 	if typ != profiling.TypeMemory {
 		if value != "" {
 			return fmt.Errorf("--memory-mode is only valid when --type=memory")
+		}
+		return nil
+	}
+	if lang == profiling.LanguagePython {
+		if value != "" {
+			return fmt.Errorf("--memory-mode is not used by Python memory profiling")
 		}
 		return nil
 	}

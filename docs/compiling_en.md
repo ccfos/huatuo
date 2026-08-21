@@ -45,12 +45,15 @@ docker build --network host -t huatuo/huatuo-bamai:latest .
 
 Ubuntu 24.04:
 ```bash
-apt install make git clang libbpf-dev linux-tools-common curl capnproto
+apt install make git clang g++ libbpf-dev linux-tools-common curl capnproto \
+  libunwind-dev liblz4-dev libdebuginfod-dev python3-dev python3-pip pkg-config
 ```
 
 Fedora 40:
 ```bash
-dnf install make git clang libbpf-devel bpftool curl capnproto capnproto-devel glibc-static
+dnf install make git clang gcc-c++ libbpf-devel bpftool curl capnproto \
+  capnproto-devel glibc-static libunwind-devel lz4-devel \
+  elfutils-debuginfod-client-devel python3-devel python3-pip pkgconf-pkg-config
 ```
 
 ```bash
@@ -65,6 +68,26 @@ go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
 #### 3.2 Build
 ```bash
 $ make
+```
+
+The default build creates a Memray-Lite runtime for each usable Python
+interpreter it finds. Every interpreter included in the bundle needs these
+Python build modules:
+
+```bash
+python3 -m pip install pip setuptools wheel Cython pkgconfig
+```
+
+Select an explicit set of interpreters with `MEMRAY_PYTHON_BINS`:
+
+```bash
+MEMRAY_PYTHON_BINS="python3.8 python3.9" make
+```
+
+To rebuild only the Memray-Lite runtimes:
+
+```bash
+MEMRAY_PYTHON_BINS="python3.8 python3.9" make memray-bundle
 ```
 
 ### 4. BPF Debug Build

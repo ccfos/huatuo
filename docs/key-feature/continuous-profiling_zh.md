@@ -223,6 +223,7 @@ curl -sS \
 | `c`、`c++`、`go` | `physical_usage` | 当前物理页驻留 |
 | `java` | `object_alloc` | JVM 对象分配 |
 | `java` | `object_usage` | JVM 存活对象 |
+| `python` | 不传 `memory_mode` | 按 Python 调用栈归因的存活内存 |
 
 ### 3. 创建剖析任务
 
@@ -236,7 +237,7 @@ curl -sS \
 | `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
 | `container_id` | 否 | 目标容器 ID；不传表示对宿主机剖析 |
 | `binary_match_path` | 否 | Java/Python CPU 剖析的目标可执行文件路径匹配条件；原生剖析不支持 |
-| `memory_mode` | 内存剖析必需 | 内存剖析模式，必须与 `language` 匹配 |
+| `memory_mode` | 除 Python 外的内存剖析必需 | 内存剖析模式；Python 不传此字段 |
 
 `duration_seconds` 必须不小于两个 `aggregation_interval_seconds`，且二者之和必须小于 3600 秒。同一用户在同一节点上已有运行中的剖析任务时，服务端返回 `409 Conflict`。
 
@@ -267,6 +268,24 @@ curl -sS -i \
     "type": "memory",
     "language": "java",
     "memory_mode": "object_usage",
+    "duration_seconds": 60,
+    "container_id": "9f4c2f1a8b7d",
+    "hostname": "node-01"
+  }' \
+  "${API_BASE}/v1/profiles"
+```
+
+创建 Python 存活内存剖析任务。Python 不使用 `memory_mode`，通过 API
+创建的任务使用 Python 调用栈视图：
+
+```bash
+curl -sS -i \
+  -X POST \
+  -H "Authorization: Bearer ${API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "memory",
+    "language": "python",
     "duration_seconds": 60,
     "container_id": "9f4c2f1a8b7d",
     "hostname": "node-01"
@@ -402,7 +421,7 @@ curl -sS -i \
 
 `profiler` 是 HUATUO 提供的独立性能剖析命令行工具。它可以直接对宿主机进程或容器内进程采样，不依赖 huatuo-apiserver、Elasticsearch 或 Grafana。工具支持 C、C++、Go、Java 和 Python 进程，并将调用栈输出为折叠栈或 SVG 火焰图。
 
-C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU 阻塞与调度延迟、虚拟内存分配、物理内存分配和物理内存驻留。Java 通过 async-profiler 观测 CPU、对象分配和存活对象；Python 通过 py-spy 观测 CPU。采集结果适合用于热点函数定位、内存增长归因、容器内进程分析和性能问题现场留存。
+C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU 阻塞与调度延迟、虚拟内存分配、物理内存分配和物理内存驻留。Java 通过 async-profiler 观测 CPU、对象分配和存活对象；Python CPU 使用 py-spy，Python 存活内存使用随仓库构建的 Memray-Lite。采集结果适合用于热点函数定位、内存增长归因、容器内进程分析和性能问题现场留存。
 
 本节以下介绍 `_output/bin/profiler` 的独立使用方式。服务化的持续 Profiling 使用方式见上方 Profiles API。
 
@@ -420,7 +439,13 @@ C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU
 
 通过 async-profiler 采集 Java 对象分配或存活对象调用栈。对象分配适合定位高分配速率和 GC 压力来源；存活对象适合分析采集窗口内仍被引用的对象及其分配路径。
 
-### 4. 容器与多进程任务分析
+### 4. Python 存活内存归因
+
+将 Memray-Lite 注入运行中的 Python 进程，按分配调用栈归因采集结束时仍然
+存活的内存。可根据分配路径是否经过扩展模块或解释器原生代码，选择纯
+Python、纯原生或合并后的混合调用栈。
+
+### 5. 容器与多进程任务分析
 
 通过容器 ID 自动解析容器内目标进程，适合 Docker 和 containerd 工作负载。Java 和 Python 还支持逗号分隔的多个 PID，并可限制同时运行的采集子进程数量，适用于同一服务的多实例或父子进程分析。
 
@@ -434,7 +459,14 @@ C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU
 make all
 ```
 
-生成的命令位于 `_output/bin/profiler`。原生采集依赖 Linux eBPF、perf event 和仓库构建出的 BPF 对象，通常需要 root 权限，并要求 `kernel.perf_event_paranoid` 允许采样。Java 需要 async-profiler，`--tool-path` 指向包含 `bin/asprof` 和 `lib/libasyncProfiler.so` 的目录。Python 需要 py-spy，`--tool-path` 指向包含可执行文件 `py-spy` 的目录。
+生成的命令位于 `_output/bin/profiler`。默认构建还会在
+`_output/tools/memray-lite/runtimes` 下生成按 Python 版本区分的 Memray-Lite
+运行时。原生采集依赖 Linux eBPF、perf event 和仓库构建出的 BPF 对象，
+通常需要 root 权限，并要求 `kernel.perf_event_paranoid` 允许采样。Java
+需要 async-profiler，`--tool-path` 指向包含 `bin/asprof` 和
+`lib/libasyncProfiler.so` 的目录。Python CPU 需要 py-spy，并显式指定
+`--tool-path`；Python 内存默认使用随仓库构建的运行时，不需要
+`--tool-path`。
 
 查看当前版本的完整帮助：
 
@@ -472,7 +504,7 @@ sudo _output/bin/profiler \
 | `--output-format` | `collapsed` | 全部 | `collapsed`、`flamegraph`、`svg` 或 `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | 远端上传使用的 Unix socket |
 | `--max-concurrent-procs` | `0` | Java、Python | 并发采集子进程上限；`0` 表示不限制 |
-| `--tool-path` | 无 | Java、Python | 第三方采集工具根目录，必填 |
+| `--tool-path` | 无 | Java、Python CPU、可选的 Python 内存覆盖路径 | 第三方采集工具根目录 |
 | `--binary-match-path` | 无 | Java、Python | 按可执行文件路径匹配容器内目标进程 |
 | `--huatuo-api-address` | `127.0.0.1:19704` | 容器目标 | 用于解析容器元数据的 HUATUO API 地址 |
 | `--tracer-id` | 空；本地输出时内部生成 | 全部；`remote` 必填 | toolstream 和远端存储共用的稳定采集任务 ID |
@@ -485,7 +517,9 @@ sudo _output/bin/profiler \
 
 | 参数 | 默认值 | 适用范围 | 说明 |
 | --- | --- | --- | --- |
-| `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；使用 `--type memory` 时必填 |
+| `--memory-mode` | 无 | 原生内存、Java 内存 | 内存观测维度；Python 内存不使用 |
+| `--python-memory-stack` | `python` | Python 内存 | 调用栈视图：`python`、`hybrid` 或 `native` |
+| `--python-memory-merge-threads` | `false` | Python 内存 | 合并目标进程所有线程的分配数据 |
 | `--cpuid` | 全部 CPU | 原生 CPU | CPU 列表或范围；off-CPU 样本按任务切出时所在 CPU 过滤 |
 | `--cpu-mode` | `oncpu` | 原生 CPU | `oncpu` 按频率采样，`offcpu` 归因阻塞与可运行调度延迟 |
 | `--require-hardware-pmu` | `false` | 原生 on-CPU | 强制使用硬件 PMU 采样；不可用时失败，不回退软件 CPU clock |
@@ -621,7 +655,8 @@ _output/bin/profiler \
 
 ### 5. Python 观测
 
-Python 当前仅支持 CPU 观测。`--aggr-interval` 必须与 `--duration` 相等，即一次采集只生成一个聚合窗口。`--tool-path` 指向包含 `py-spy` 的目录。
+Python CPU 使用 py-spy。`--aggr-interval` 必须与 `--duration` 相等，即一次
+采集只生成一个聚合窗口。`--tool-path` 指向包含 py-spy 的目录。
 
 ```bash
 _output/bin/profiler \
@@ -637,7 +672,26 @@ _output/bin/profiler \
   --output-path ./profiles/python-cpu
 ```
 
-Python 不支持 `--type memory`。若需要 Python 内存分析，应使用独立的内存分析工具；当前 `profiler` 命令不会调用 memray 生成 Python 内存结果。
+Python 内存使用 `make all` 构建的 Memray-Lite 运行时，结果表示采集结束时
+仍然存活的内存，而不是采集期间的分配速率。正常使用内置运行时时，不要传
+`--memory-mode` 或 `--tool-path`：
+
+```bash
+sudo _output/bin/profiler \
+  --type memory \
+  --language python \
+  --pid 12345 \
+  --duration 30 \
+  --aggr-interval 10 \
+  --python-memory-stack hybrid \
+  --python-memory-merge-threads \
+  --output-format flamegraph \
+  --output-path ./profiles/python-memory
+```
+
+`--python-memory-stack=python` 只显示 Python 帧；`hybrid` 合并 Python 与
+原生帧；`native` 只显示原生调用路径。采集容器内进程时，可将 `--pid`
+替换为 `--container-id`。
 
 ### 6. 火焰图与输出格式选择
 
@@ -648,7 +702,7 @@ Python 不支持 `--type memory`。若需要 Python 内存分析，应使用独�
 | `svg` | 与 `flamegraph` 相同的交互式 SVG | 兼容显式要求 SVG 的调用方；当前实现与 `flamegraph` 等价 |
 | `remote` | 不生成本地火焰图，通过 Unix socket 上传 pprof 兼容数据 | 接入 HUATUO 存储链路时使用，不适合离线查看 |
 
-火焰图从下到上表示调用方向，矩形宽度表示该调用栈在当前观测维度中的累计值。不同类型的宽度含义不同：CPU 表示采样次数折算的 CPU 时间占比；内存模式表示相应的虚拟分配、物理分配、物理驻留、Java 对象分配或存活对象量。横向位置不表示时间先后。
+火焰图从下到上表示调用方向，矩形宽度表示该调用栈在当前观测维度中的累计值。不同类型的宽度含义不同：CPU 表示采样次数折算的 CPU 时间占比；内存模式表示相应的虚拟分配、物理分配、物理驻留、Java 对象分配、JVM 存活对象量或 Python 存活内存。横向位置不表示时间先后。
 
 折叠栈示例：
 
@@ -686,17 +740,19 @@ sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 
 ## ⚙️ 功能原理介绍
 
-`profiler` 先根据语言和观测类型选择采集器。原生 on-CPU 采集器将 eBPF 程序挂载到 perf event；off-CPU 模式挂载调度切换、唤醒、退出和任务释放 tracepoint；原生内存采集器通过内核事件记录分配与释放路径；Java 和 Python 采集器分别启动 async-profiler 和 py-spy 子进程。采集记录进入统一聚合流水线，按调用栈合并计数，最后写入本地文件或上传远端存储。
+`profiler` 先根据语言和观测类型选择采集器。原生 on-CPU 采集器将 eBPF 程序挂载到 perf event；off-CPU 模式挂载调度切换、唤醒、退出和任务释放 tracepoint；原生内存采集器通过内核事件记录分配与释放路径；Java 启动 async-profiler；Python CPU 启动 py-spy，Python 内存则注入随仓库构建的 Memray-Lite 并解码其 socket 数据流。采集记录进入统一聚合流水线，按调用栈合并计数，最后写入本地文件或上传远端存储。
 
 ```mermaid
 flowchart LR
     CLI[profiler 命令参数] --> Select{语言与观测类型}
     Select -->|C/C++/Go| Native[eBPF 原生采集器]
     Select -->|Java| Java[async-profiler]
-    Select -->|Python| Python[py-spy]
+    Select -->|Python CPU| PythonCPU[py-spy]
+    Select -->|Python 内存| PythonMemory[Memray-Lite]
     Native --> Queue[采样记录队列]
     Java --> Queue
-    Python --> Queue
+    PythonCPU --> Queue
+    PythonMemory --> Queue
     Queue --> Aggregate[按调用栈聚合]
     Aggregate --> Folded[collapsed 折叠栈]
     Aggregate --> SVG[交互式 SVG 火焰图]

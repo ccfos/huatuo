@@ -1,0 +1,19 @@
+exclude valgrind.supp
+
+recursive-exclude build *
+recursive-exclude dist *
+recursive-exclude docs *
+recursive-exclude tests *
+recursive-exclude news *
+recursive-exclude .pytest_cache *
+
+include README.md
+include LICENSE
+include MAINTAINERS.md
+include memray_deep_dive_lite.md
+include memray_deep_dive_orig.md
+include human-test-steps.md
+include Makefile
+include pyproject.toml
+include setup.py
+include src/memray/py.typed
