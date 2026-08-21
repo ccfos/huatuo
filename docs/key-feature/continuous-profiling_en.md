@@ -295,7 +295,7 @@ Build all artifacts from the repository root:
 make all
 ```
 
-The resulting executable is `_output/bin/profiler`. Native profiling depends on Linux eBPF, perf events, and the BPF objects built from this repository. It generally requires root privileges and a `kernel.perf_event_paranoid` setting that permits sampling. Java profiling requires async-profiler; `--tool-path` must point to a directory containing `bin/asprof` and `lib/libasyncProfiler.so`. Python profiling requires py-spy; `--tool-path` must point to a directory containing the `py-spy` executable.
+The resulting executable is `_output/bin/profiler`. Native profiling depends on Linux eBPF, perf events, and the BPF objects built from this repository. It generally requires root privileges and a `kernel.perf_event_paranoid` setting that permits sampling. Java profiling resolves `bin/asprof` and `lib/libasyncProfiler.so` under `--tool-path-dir`. Python profiling resolves `py-spy` under the same option. The deprecated `--tool-path` alias remains available for compatibility.
 
 Display the complete help for the current version:
 
@@ -333,7 +333,7 @@ sudo _output/bin/profiler \
 | `--output-format` | `collapsed` | All | `collapsed`, `flamegraph`, `svg`, or `remote` |
 | `--output-storage` | `/var/run/huatuo-toolstream.sock` | `remote` | Unix socket used for remote upload |
 | `--max-concurrent-procs` | `0` | Java, Python | Maximum concurrent collector subprocesses; `0` means unlimited |
-| `--tool-path` | None | Java, Python | Third-party profiler root directory; required |
+| `--tool-path-dir` | None | Java, Python | Third-party profiler root directory; required |
 | `--binary-match-path` | None | Java, Python | Executable path used to match target processes |
 | `--huatuo-api-address` | `127.0.0.1:19704` | Container targets | HUATUO API address used to resolve container metadata |
 | `--tracer-id` | Empty; generated internally for local output | All; required for `remote` | Stable profiling task ID used by toolstream and remote storage |
@@ -426,7 +426,7 @@ _output/bin/profiler \
   --type cpu \
   --language java \
   --pid 12345,12346 \
-  --tool-path /opt/async-profiler \
+  --tool-path-dir /opt/async-profiler \
   --max-concurrent-procs 2 \
   --duration 30 \
   --aggr-interval 10 \
@@ -448,7 +448,7 @@ _output/bin/profiler \
   --language java \
   --memory-mode object_usage \
   --pid 12345 \
-  --tool-path /opt/async-profiler \
+  --tool-path-dir /opt/async-profiler \
   --duration 30 \
   --aggr-interval 10 \
   --output-format flamegraph \
@@ -459,14 +459,14 @@ To target a container, replace `--pid` with `--container-id <container-id>`. If 
 
 ### 5. Observing Python
 
-Python currently supports CPU profiling only. `--aggr-interval` must equal `--duration`, so one collection produces one aggregation window. `--tool-path` must point to the directory containing `py-spy`.
+Python currently supports CPU profiling only. `--aggr-interval` must equal `--duration`, so one collection produces one aggregation window. The profiler runs `py-spy` from `--tool-path-dir/py-spy`.
 
 ```bash
 _output/bin/profiler \
   --type cpu \
   --language python \
   --pid 12345,12346 \
-  --tool-path /opt/py-spy \
+  --tool-path-dir /opt/py-spy \
   --max-concurrent-procs 2 \
   --duration 30 \
   --aggr-interval 30 \

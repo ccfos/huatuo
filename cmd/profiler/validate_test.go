@@ -104,6 +104,11 @@ func TestCLIProfileTypeAndRemovedFlags(t *testing.T) {
 			args:      []string{"--type", "cpu", "--language", "c", "--cpusys-metadata", "sys=1"},
 			wantError: "flag provided but not defined: -cpusys-metadata",
 		},
+		{
+			name:      "deprecated tool path alias",
+			args:      []string{"--type", "cpu", "--language", "c", "--tool-path", "/opt/profiler"},
+			wantError: "--tool-path-dir is supported only by Java and Python profiling",
+		},
 	}
 
 	for _, tt := range tests {
@@ -292,11 +297,11 @@ func TestValidateProfilerFlagCompatibility(t *testing.T) {
 			wantError: "--binary-match-path is not supported by native profilers",
 		},
 		{
-			name:      "native tool path",
+			name:      "native tool path directory",
 			language:  "go",
 			typ:       "cpu",
-			args:      []string{"--tool-path", "/opt/profiler"},
-			wantError: "--tool-path is supported only by Java and Python profiling",
+			args:      []string{"--tool-path-dir", "/opt/profiler"},
+			wantError: "--tool-path-dir is supported only by Java and Python profiling",
 		},
 		{
 			name:      "Python physical memory probability",

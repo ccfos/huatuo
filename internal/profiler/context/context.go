@@ -162,7 +162,7 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		ContainerID:               cliCtx.String("container-id"),
 		ExecPath:                  cliCtx.String("binary-match-path"),
 		ThreadGroup:               cliCtx.Bool("thread-group"),
-		ToolPath:                  cliCtx.String("tool-path"),
+		ToolPath:                  cliCtx.String("tool-path-dir"),
 		LogBpfDebug:               cliCtx.Bool("log-bpf-debug"),
 		OutputPath:                cliCtx.String("output-path"),
 		OutputFormat:              outputFormat,

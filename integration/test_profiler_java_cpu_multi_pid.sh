@@ -69,7 +69,7 @@ if ! "${TOOL_BIN}" \
 	--type cpu \
 	--language java \
 	--pid "${PROFILER_TARGET_PID0},${PROFILER_TARGET_PID1}" \
-	--tool-path "${JAVA_PROFILER_TOOL_PATH}" \
+	--tool-path-dir "${JAVA_PROFILER_TOOL_PATH}" \
 	--duration "${PROFILER_DURATION}" \
 	--freq "${PROFILER_FREQ}" \
 	--aggr-interval "${PROFILER_AGGR_INTERVAL}" \

@@ -65,7 +65,7 @@ run_profile_case() {
 		--language java \
 		--memory-mode "${mode}" \
 		--pid "${PROFILER_TARGET_PID}" \
-		--tool-path "${JAVA_PROFILER_TOOL_PATH}" \
+		--tool-path-dir "${JAVA_PROFILER_TOOL_PATH}" \
 		--duration "${PROFILER_DURATION}" \
 		--aggr-interval "${PROFILER_AGGR_INTERVAL}" \
 		--output-format collapsed \

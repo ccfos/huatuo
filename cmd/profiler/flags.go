@@ -117,8 +117,9 @@ var appFlags = []cli.Flag{
 		Usage: "Serve Go runtime profiles on port 6000",
 	},
 	&cli.StringFlag{
-		Name:  "tool-path",
-		Usage: "Profiling tool root; Java expects bin/asprof and lib/libasyncProfiler.so",
+		Name:    "tool-path-dir",
+		Aliases: []string{"tool-path"},
+		Usage:   "Profiling tool directory; Java expects bin/asprof and lib/libasyncProfiler.so, Python expects py-spy",
 	},
 	&cli.StringFlag{
 		Name:  "binary-match-path",

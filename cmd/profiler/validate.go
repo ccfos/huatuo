@@ -129,14 +129,14 @@ func validateLanguageOptions(ctx *cli.Context, lang profiling.Language, typ prof
 		return nil
 
 	case profiling.LanguageJava:
-		if ctx.String("tool-path") == "" {
-			return fmt.Errorf("language=%s requires --tool-path", lang)
+		if ctx.String("tool-path-dir") == "" {
+			return fmt.Errorf("language=%s requires --tool-path-dir", lang)
 		}
 
 		return validateExactlyOneTarget(ctx)
 
 	case profiling.LanguagePython:
-		if err := ensurePythonToolPath(ctx); err != nil {
+		if err := ensurePythonToolPathDir(ctx); err != nil {
 			return err
 		}
 		return validateExactlyOneTarget(ctx)
@@ -166,11 +166,11 @@ func validatePythonProfileOptions(lang profiling.Language, typ profiling.Type, d
 	return nil
 }
 
-func ensurePythonToolPath(ctx *cli.Context) error {
-	if ctx.String("tool-path") != "" {
+func ensurePythonToolPathDir(ctx *cli.Context) error {
+	if ctx.String("tool-path-dir") != "" {
 		return nil
 	}
-	return fmt.Errorf("language=python requires --tool-path")
+	return fmt.Errorf("language=python requires --tool-path-dir")
 }
 
 func validateExactlyOneTarget(ctx *cli.Context) error {
@@ -231,14 +231,14 @@ func validateCommonOptions(ctx *cli.Context) error {
 		return err
 	}
 
-	if toolPath := ctx.String("tool-path"); toolPath != "" {
-		info, err := os.Stat(toolPath)
+	if toolPathDir := ctx.String("tool-path-dir"); toolPathDir != "" {
+		info, err := os.Stat(toolPathDir)
 		if err != nil {
-			return fmt.Errorf("tool-path does not exist: %s", toolPath)
+			return fmt.Errorf("--tool-path-dir does not exist: %s", toolPathDir)
 		}
 
 		if !info.IsDir() {
-			return fmt.Errorf("tool-path must be a directory: %s", toolPath)
+			return fmt.Errorf("--tool-path-dir must be a directory: %s", toolPathDir)
 		}
 	}
 
@@ -286,8 +286,8 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.String("binary-match-path") != "" && native {
 		return fmt.Errorf("--binary-match-path is not supported by native profilers")
 	}
-	if ctx.String("tool-path") != "" && native {
-		return fmt.Errorf("--tool-path is supported only by Java and Python profiling")
+	if ctx.String("tool-path-dir") != "" && native {
+		return fmt.Errorf("--tool-path-dir is supported only by Java and Python profiling")
 	}
 	if ctx.IsSet("physical-memory-probability") {
 		physicalMemory := nativeMemory &&

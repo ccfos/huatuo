@@ -67,7 +67,7 @@ run_profile_case() {
 		--type cpu \
 		--language java \
 		--container-id "${target_id}" \
-		--tool-path "${JAVA_PROFILER_TOOL_PATH}" \
+		--tool-path-dir "${JAVA_PROFILER_TOOL_PATH}" \
 		--duration "${PROFILER_DURATION}" \
 		--aggr-interval "${PROFILER_DURATION}" \
 		--freq 99 \

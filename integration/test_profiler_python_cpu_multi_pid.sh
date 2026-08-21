@@ -63,7 +63,7 @@ if ! "${TOOL_BIN}" \
 	--type cpu \
 	--language python \
 	--pid "${PROFILER_PARENT_PID},${PROFILER_CHILD_PID},${PROFILER_INDEPENDENT_PID}" \
-	--tool-path "${PYTHON_PROFILER_TOOL_PATH}" \
+	--tool-path-dir "${PYTHON_PROFILER_TOOL_PATH}" \
 	--max-concurrent-procs 2 \
 	--duration "${PROFILER_DURATION}" \
 	--aggr-interval "${PROFILER_DURATION}" \

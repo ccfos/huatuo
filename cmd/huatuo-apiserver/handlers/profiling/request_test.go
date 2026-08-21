@@ -86,7 +86,7 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 				"-t", "memory",
 				"--memory-mode", "object_usage",
 				"-l", "java",
-				"--tool-path", "/opt/async-profiler",
+				"--tool-path-dir", "/opt/async-profiler",
 				"--duration", "30",
 				"--aggr-interval", "10",
 				"--max-concurrent-procs", "2",
@@ -106,7 +106,7 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 			wantTracerArgs: []string{
 				"-t", "cpu",
 				"-l", "python",
-				"--tool-path", "/opt/py-spy",
+				"--tool-path-dir", "/opt/py-spy",
 				"--duration", "30",
 				"--aggr-interval", "10",
 				"--max-concurrent-procs", "2",

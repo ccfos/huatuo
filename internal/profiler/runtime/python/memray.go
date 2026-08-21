@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -46,7 +46,7 @@ func (v PythonVersion) RuntimeKey() string {
 }
 
 // ResolveMemrayBundlePath returns the host-visible memray bundle directory.
-// When the caller does not provide --tool-path, profiler falls back to the
+// When the caller does not provide --tool-path-dir, profiler falls back to the
 // bundle that is laid out next to the built binary under _output/tools.
 func ResolveMemrayBundlePath(hostBundlePath string) (string, error) {
 	if hostBundlePath != "" {

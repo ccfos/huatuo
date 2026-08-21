@@ -176,7 +176,7 @@ func appendBinaryToolPath(
 		return fmt.Errorf("language %q requires binary_tool_path", language)
 	}
 
-	taskReq.TracerArgs = append(taskReq.TracerArgs, "--tool-path", binaryToolPath)
+	taskReq.TracerArgs = append(taskReq.TracerArgs, "--tool-path-dir", binaryToolPath)
 	return nil
 }
 
