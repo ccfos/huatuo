@@ -1199,6 +1199,9 @@ github.com/hashicorp/memberlist
 # github.com/hashicorp/serf v0.10.1
 ## explicit; go 1.12
 github.com/hashicorp/serf/coordinate
+# github.com/huatuo-ai/go-pcap v0.0.0-20260726161945-e26f972b65f4
+## explicit; go 1.23.0
+github.com/huatuo-ai/go-pcap/filter
 # github.com/josharian/native v1.1.0
 ## explicit; go 1.13
 github.com/josharian/native
@@ -1307,9 +1310,6 @@ github.com/opentracing-contrib/go-stdlib/nethttp
 github.com/opentracing/opentracing-go
 github.com/opentracing/opentracing-go/ext
 github.com/opentracing/opentracing-go/log
-# github.com/packetcap/go-pcap v0.0.0-20251215121130-f2cf9f991e7c
-## explicit; go 1.23.0
-github.com/packetcap/go-pcap/filter
 # github.com/pelletier/go-toml v1.9.5
 ## explicit; go 1.12
 github.com/pelletier/go-toml

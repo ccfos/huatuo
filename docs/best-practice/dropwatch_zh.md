@@ -17,7 +17,7 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 dropwatch 是 HUATUO 提供的网络丢包观测工具。它通过 `tracepoint/skb/kfree_skb` 采集软件丢包，并通过 `raw_tracepoint/devlink_trap_report` 采集支持 devlink trap 的硬件丢包，输出协议类型、IP 五元组、网络设备、丢包原因和内核调用栈。
 
-dropwatch 支持基于 tcpdump 风格过滤表达式的内核侧过滤，过滤逻辑由内置的纯 Go pcap 编译器 `internal/pcapfilter` 在加载时编译为 eBPF 字节码，过滤完全在内核态执行，只有匹配的数据包才会上报到用户空间，降低对宿主机的性能影响。
+dropwatch 支持 tcpdump 风格的内核侧过滤，仅将匹配的数据包上报到用户空间。
 
 此外，dropwatch 支持设备白名单/黑名单过滤、全局上报限速，并可与 huatuo-bamai 集成，将丢包事件存储至 Elasticsearch 进行长期分析。
 
@@ -32,15 +32,15 @@ dropwatch 支持基于 tcpdump 风格过滤表达式的内核侧过滤，过滤�
 
 ### 2. 网络性能毛刺分析
 
-针对间歇性网络延迟突增、吞吐下降等问题，通过 dropwatch 采集丢包事件，结合内核调用栈定位丢包发生的具体内核函数（如 `tcp_v4_rcv`、`ip_output` 等），辅助区分是防火墙丢弃、路由失败还是缓冲区溢出等原因。
+针对间歇性网络延迟突增或吞吐下降，可根据事件中的内核调用栈定位丢包位置（如 `tcp_v4_rcv`、`ip_output`），区分防火墙丢弃、路由失败、缓冲区溢出等原因。
 
 ### 3. 多租户环境网络隔离故障排查
 
-在共享网络命名空间或 veth 设备的容器环境中，通过 `--device` 过滤指定网络设备，结合 `--filter` 过滤特定协议，精确采集目标容器的丢包事件，避免其他租户流量干扰诊断结果。
+在共享网络命名空间或 veth 设备的容器环境中，组合使用 `--device` 和 `--filter`，只采集目标容器的丢包事件并排除其他租户流量。
 
 ### 4. 与可观测性平台集成
 
-通过 `--output-storage` 将丢包事件发送给 huatuo-bamai，存储至 Elasticsearch 后与指标、日志进行多维关联分析。将丢包事件叠加到 Grafana 时间线上，与应用错误率、延迟曲线对齐，实现内核丢包与应用异常的精确关联。
+通过 `--output-storage` 将丢包事件发送给 huatuo-bamai，在 Elasticsearch 中与指标和日志关联。将事件与 Grafana 中的应用错误率、延迟时间线对齐，可判断内核丢包是否与应用异常同时发生。
 
 ---
 
@@ -48,105 +48,104 @@ dropwatch 支持基于 tcpdump 风格过滤表达式的内核侧过滤，过滤�
 
 ### 1. 过滤表达式
 
-过滤表达式采用 tcpdump 语法，由内置的纯 Go pcap 编译器 `internal/pcapfilter` 在加载时编译为 eBPF 字节码，过滤完全在内核侧执行，降低对宿主机影响，只有匹配的数据包才会上报到用户空间。
+加载时，`internal/pcapfilter` 使用纯 Go 的 `huatuo-ai/go-pcap` fork，将 tcpdump 风格表达式编译为 eBPF 字节码。
 
 #### 1.1 支持的表达式
 
-`internal/pcapfilter` 支持 tcpdump 标准语法的一个子集，下列原语可以可靠使用：
+`huatuo-ai/go-pcap` 编译器支持以下 tcpdump 风格的表达式。
 
 **协议**
 
 ```text
-ip   ip6   tcp   udp   icmp   icmp6   igmp   pim   esp   ah   vrrp   arp   rarp
-ip proto tcp      ip6 proto udp        （仅协议名，不支持数字协议号）
+ip   ip6   tcp   udp   sctp   icmp   icmp6   igmp
+pim  esp   ah    vrrp  arp    rarp   stp
+ip proto tcp
+ip6 proto udp
 ```
 
-**主机地址**
+**主机与网段**
 
 ```text
 host 10.0.0.1
+host 2001:db8::1
+host api.example.com
 src host 10.0.0.1
-dst host 10.0.0.1
+dst host 2001:db8::1
+src net 192.168.1.0/24
+dst net 2001:db8::/32
 ```
 
-**端口**
+主机名在过滤器编译时解析一次，返回的全部 A 和 AAAA 地址都会参与匹配。
+
+**端口、端口范围与方向**
 
 ```text
 port 80
 src port 443
-dst port 8080
+dst portrange 8000-8080
+src or dst port 53
+src and dst portrange 1000-2000
 ```
 
-**网段（CIDR）**
+未指定传输层协议时，端口和端口范围匹配 TCP、UDP 和 SCTP。
 
-```text
-net 10.0.0.0/8
-src net 192.168.1.0/24
-dst net 172.16.0.0/12
-```
-
-**组播与以太地址**
+**组播与以太网**
 
 ```text
 ip multicast    ip6 multicast    multicast    ether multicast
 ether host 00:11:22:33:44:55
 ```
 
+**VLAN、QinQ 与 MPLS**
+
+```text
+vlan and tcp port 443
+vlan 100 and tcp port 443
+vlan 100 and vlan 200 and ip
+mpls 100 and ip
+mpls 100 and mpls 200 and ip6
+```
+
+每重复一次 `vlan` 或 `mpls`，报文解析游标就向内推进一层封装。
+
+**报文算术、TCP flags 与报文长度**
+
+```text
+ether[12:2] == 0x0800
+ip[0] & 0x0f > 5
+ip[12:4] == 0x0a000001
+tcp[tcpflags] == tcp-syn
+tcp[tcpflags] & (tcp-syn|tcp-ack) == (tcp-syn|tcp-ack)
+len >= 128
+```
+
+报文访问支持 `ether`、`ip`、`ip6`、`tcp` 和 `udp`，读取宽度可为 1、2 或 4 字节。比较运算支持 `=`、`==`、`!=`、`>`、`<`、`>=`、`<=`；算术运算支持 `+`、`-`、`*`、`/`、`%`、`&`、`|`、`^`、`<<`、`>>`。每次访问都会生成报文长度检查，截断报文会直接拒绝，不会越界读取。
+
 **布尔运算与分组**
 
 ```text
-tcp and port 80
-tcp or udp
-not arp
 tcp and (port 80 or port 443)
-ip and src net 192.168.1.0/24 and tcp dst port 3306
+tcp || udp
+! (arp or rarp)
 ```
+
+`and`/`&&`、`or`/`||`、`not`/`!` 分别等价。AND 的优先级高于 OR；分组不明确时应使用括号。
 
 #### 1.2 不支持的表达式
 
-下列表达式**不支持**，使用后会导致编译失败或产生错误的匹配结果：
+下列 tcpdump 功能不支持，使用时会编译失败：
 
-| 表达式                                              | 原因                                                        |
-| --------------------------------------------------- | ----------------------------------------------------------- |
-| `tcp[tcpflags] & tcp-syn != 0`、`ip[8]`、`tcp[0:4]` | 字节偏移表达式（`proto[offset:size]`）未实现                |
-| `ip proto 6`、`ip6 proto 17`                        | 不支持数字协议号，请改用协议名（如 `ip proto tcp`）         |
-| `ether proto 0x0800`                                | 不支持十六进制 EtherType，请改用名字（如 `ether proto ip`） |
-| `sctp`                                              | 关键字未识别                                                |
-| `portrange 80-90`、`tcp portrange 1-100`            | 不支持端口范围                                              |
-| `less N`、`greater N`                               | 不支持按报文长度过滤                                        |
-| `ip broadcast`、`ether broadcast`                   | 不支持广播匹配                                              |
-| `vlan`、`mpls`、`pppoes`                            | 不支持隧道/封装关键字                                       |
-| `gateway`                                           | 不支持                                                      |
+| 表达式 | 替代写法或限制 |
+| --- | --- |
+| `ip proto 6`、`ip6 proto 17` | 不支持数字协议号；使用 `ip proto tcp` 等协议名 |
+| `ip protochain tcp` | 不支持 `protochain` 和 IPv6 扩展头遍历 |
+| `less 128`、`greater 128` | 使用 `len < 128` 或 `len > 128` |
+| `ip broadcast`、`ether broadcast` | 广播判断依赖当前无法取得的接口掩码 |
+| `inbound`、`outbound`、`ifindex 2` | 无法使用抓包方向和接口元数据条件 |
+| `gateway`、`fddi`、`wlan` | 不支持这些链路层限定符 |
+| `pppoes` 及其他封装 | 仅实现以太网、VLAN/QinQ、MPLS 和 raw-IP 布局 |
 
-#### 1.3 推荐写法示例
-
-```bash
-# 监控所有 TCP 丢包（默认值——L2 和 L3 上下文均可靠）
---filter "tcp"
-
-# TCP 和 UDP
---filter "tcp or udp"
-
-# 指定目标主机（TCP 和 UDP 均适用）
---filter "dst host 10.0.0.1"
-
-# 指定端口
---filter "tcp and port 443"
-
-# 排除噪声主机
---filter "tcp and not host 169.254.169.254"
-
-# 指定子网 + 指定端口
---filter "src net 192.168.1.0/24 and tcp dst port 3306"
-
-# 监控非 TCP 的丢包（仅 UDP 和 ICMP——不要用 "not tcp"，会捕获到未知 L3 事件）
---filter "udp or icmp"
-
-# 仅监控 ARP 丢包（仅 L2 上下文有效，L3 永远不匹配）
---filter "arp"
-```
-
-> **`--filter "ip"` / `--filter "ip6"` 现可正确匹配对应 IP 协议族**（L2 按 EtherType、L3 按版本 nibble）。若只关心特定传输层或主机，仍建议用更精确的 `tcp`、`udp`、`host` 或 `ip proto <name>`。
+> 每个表达式都会分别针对以太网（L2）和 raw-IP（L3）编译。`arp`、`rarp`、`stp`、`ether`、`vlan`、`mpls`、`ether[...]` 等仅支持 L2 的条件在 L3 路径上不匹配。
 
 ---
 
@@ -202,23 +201,11 @@ sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | \
 #### 常用命令
 
 ```bash
-# 文本格式输出，监控所有设备的 TCP 丢包
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp"
-
-# 只监控 eth0 上的丢包
-sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --output json
-
-# 排除 loopback
-sudo dropwatch --bpf-path bpf/dropwatch.o --device-excluded lo --output json
-
-# 设备过滤与协议过滤组合
-sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --filter "tcp and port 443" --output json
+# 只监控 eth0 上的 TCP 丢包
+sudo dropwatch --bpf-path bpf/dropwatch.o --device eth0 --filter "tcp" --output json
 
 # 抓取 60 秒后退出
 sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp and port 443" --duration 60 --output json
-
-# 将事件转发给正在运行的 huatuo-bamai 实例
-sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
 
 # 通过 jq 过滤仅显示 RST 包
 sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | jq 'select(.layers.tcp.flags == "RST")'
