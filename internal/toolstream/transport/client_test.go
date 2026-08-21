@@ -41,6 +41,25 @@ func TestClientEndReturnsSendAndCloseErrors(t *testing.T) {
 	}
 }
 
+func TestNewClientClosesConnectionWhenHandshakeFails(t *testing.T) {
+	t.Parallel()
+
+	writeErr := errors.New("write failed")
+	closeErr := errors.New("close failed")
+	conn := &failingConn{writeErr: writeErr, closeErr: closeErr}
+
+	client, err := newClient(conn, "dropwatch", "1.0", "task-1")
+	if client != nil {
+		t.Fatalf("newClient() client = %#v, want nil", client)
+	}
+	if !errors.Is(err, writeErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("newClient() error = %v, want write and close errors", err)
+	}
+	if conn.closeCalls != 1 {
+		t.Fatalf("Close() calls = %d, want 1", conn.closeCalls)
+	}
+}
+
 type failingConn struct {
 	writeErr   error
 	closeErr   error

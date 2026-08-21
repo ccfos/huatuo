@@ -139,8 +139,18 @@ func NewClient(path, toolName, version, taskID string) (*Client, error) {
 		return nil, err
 	}
 
+	return newClient(conn, toolName, version, taskID)
+}
+
+func newClient(conn net.Conn, toolName, version, taskID string) (*Client, error) {
 	c := &Client{encoder: capnp.NewEncoder(conn), conn: conn}
 	if err := c.handshake(toolName, version, taskID); err != nil {
+		if closeErr := conn.Close(); closeErr != nil {
+			return nil, errors.Join(
+				fmt.Errorf("transport: send connect: %w", err),
+				fmt.Errorf("transport: close failed connection: %w", closeErr),
+			)
+		}
 		return nil, fmt.Errorf("transport: send connect: %w", err)
 	}
 
