@@ -100,6 +100,8 @@ function install_golang() {
 function prapre_test_env() {
 	case $OS_DISTRO in
 	ubuntu*)
+		# dpkg uses POSIX locks, so let apt wait for the lock itself.
+		local -a apt_get=(sudo apt-get -o DPkg::Lock::Timeout=300)
 		packages=(
 			# basic
 			"make" "libbpf-dev" "clang" "git" "gcc" "jq" "capnproto"
@@ -119,13 +121,14 @@ function prapre_test_env() {
 
 		if [ "${#missing_packages[@]}" -gt 0 ]; then
 			echo "installing missing packages: ${missing_packages[*]}"
-			sudo apt-get update
-			# wait for unattended-upgrades to release /var/lib/dpkg/lock-frontend
-			sudo flock --wait 300 /var/lib/dpkg/lock-frontend true || true
-			sudo apt-get install -y "${missing_packages[@]}"
+			"${apt_get[@]}" update
+			"${apt_get[@]}" install -y "${missing_packages[@]}"
 		fi
 		# Ubuntu 20.04 Default clang-10 Has a CO-RE Relocation Bug (Fixed in LLVM 12 / D87153) — Use clang-12 Instead
-		[[ "$OS_DISTRO" != "ubuntu20.04" ]] || { sudo apt-get install -y clang-12 && sudo ln -sf /usr/bin/clang-12 /usr/local/bin/clang; }
+		if [[ "$OS_DISTRO" == "ubuntu20.04" ]]; then
+			"${apt_get[@]}" install -y clang-12
+			sudo ln -sf /usr/bin/clang-12 /usr/local/bin/clang
+		fi
 		;;
 	esac
 
