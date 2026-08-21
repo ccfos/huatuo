@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,13 +29,15 @@ import (
 	"huatuo-bamai/internal/process"
 	"huatuo-bamai/internal/profiler"
 	profilerexec "huatuo-bamai/internal/profiler/exec"
-	"huatuo-bamai/internal/profiler/fileutil"
 	profilerprocess "huatuo-bamai/internal/profiler/process"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/tracing"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
+	agentCopySpaceHeadroom   = 16 * 1024 * 1024
 	asprofCommandTimeout     = 5 * time.Second
 	asprofOutputFileHeadroom = 2
 )
@@ -311,22 +314,6 @@ func PrepareJavaAgent(pid int, toolPath string) error {
 		WithField("path", targetTmp).
 		Debug("using Java agent directory")
 
-	if _, err := os.Stat(targetTmp); err != nil {
-		return fmt.Errorf("stat Java agent directory %q: %w", targetTmp, err)
-	}
-
-	agentPath := filepath.Join(targetTmp, "libasyncProfiler.so")
-	_, err = os.Stat(agentPath)
-	if err == nil {
-		return nil
-	}
-	if !os.IsNotExist(err) {
-		return fmt.Errorf("stat Java agent %q: %w", agentPath, err)
-	}
-
-	if err := fileutil.CheckDirSpace(targetTmp); err != nil {
-		return err
-	}
 	return copyAgentLib(toolPath, targetTmp)
 }
 
@@ -343,13 +330,10 @@ func CleanupJavaAgent(pid int) error {
 	}
 
 	agentPath := filepath.Join(targetTmp, "libasyncProfiler.so")
-	if _, err := os.Stat(agentPath); err != nil {
-		if os.IsNotExist(err) {
+	if err := os.Remove(agentPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("stat Java agent %q: %w", agentPath, err)
-	}
-	if err := os.Remove(agentPath); err != nil {
 		return fmt.Errorf("remove Java agent %q: %w", agentPath, err)
 	}
 	log.WithField("pid", pid).
@@ -359,8 +343,65 @@ func CleanupJavaAgent(pid int) error {
 	return nil
 }
 
-func copyAgentLib(toolPath, toTmpPath string) error {
-	src := agentLibraryPath(toolPath)
-	dst := filepath.Join(toTmpPath, "libasyncProfiler.so")
-	return fileutil.CopyFile(src, dst)
+func copyAgentLib(toolPath, targetDir string) error {
+	sourcePath := agentLibraryPath(toolPath)
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open Java agent source %q: %w", sourcePath, err)
+	}
+	defer func() {
+		_ = source.Close()
+	}()
+
+	sourceInfo, err := source.Stat()
+	if err != nil {
+		return fmt.Errorf("stat Java agent source %q: %w", sourcePath, err)
+	}
+	requiredSpace := uint64(sourceInfo.Size()) + agentCopySpaceHeadroom
+	if err := checkAgentDirSpace(targetDir, requiredSpace); err != nil {
+		return err
+	}
+
+	targetPath := filepath.Join(targetDir, "libasyncProfiler.so")
+	temp, err := os.CreateTemp(targetDir, ".libasyncProfiler.so-*")
+	if err != nil {
+		return fmt.Errorf("create temporary Java agent in %q: %w", targetDir, err)
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}()
+
+	if _, err := io.Copy(temp, source); err != nil {
+		return fmt.Errorf("copy Java agent to temporary file %q: %w", tempPath, err)
+	}
+	if err := temp.Chmod(sourceInfo.Mode()); err != nil {
+		return fmt.Errorf("chmod temporary Java agent %q: %w", tempPath, err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close temporary Java agent %q: %w", tempPath, err)
+	}
+
+	if err := os.Rename(tempPath, targetPath); err != nil {
+		return fmt.Errorf("install Java agent %q: %w", targetPath, err)
+	}
+	return nil
+}
+
+func checkAgentDirSpace(dirPath string, minRequired uint64) error {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(dirPath, &stat); err != nil {
+		return fmt.Errorf("statfs Java agent directory %q: %w", dirPath, err)
+	}
+	availableSpace := stat.Bavail * uint64(stat.Bsize)
+	if availableSpace < minRequired {
+		return fmt.Errorf(
+			"Java agent directory %q has %d bytes available, need %d",
+			dirPath,
+			availableSpace,
+			minRequired,
+		)
+	}
+	return nil
 }
