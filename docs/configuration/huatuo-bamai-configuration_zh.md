@@ -170,7 +170,10 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
         # Index = "huatuo_bamai"
         # Username = "elastic"
         # Password = "REPLACE_WITH_PASSWORD"
+        # ILMRetentionDays = 0
 ```
+
+将 `ILMRetentionDays` 设为正数后，Elasticsearch 会创建生命周期策略，每日滚动写入别名，并删除超过保留天数的索引。默认值 `0` 表示禁用。该选项使用 Elasticsearch ILM API，OpenSearch 必须保持禁用；已有部署启用前还应确认配置的 `Index` 名称尚未被同名实体索引占用。
 
 - **Address**：ElasticSearch/OpenSearch 存储服务地址。 
 

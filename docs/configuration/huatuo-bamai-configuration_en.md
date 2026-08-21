@@ -170,7 +170,10 @@ idle timeout; 15–60 seconds is typical.
         # Index = "huatuo_bamai"
         # Username = "elastic"
         # Password = "REPLACE_WITH_PASSWORD"
+        # ILMRetentionDays = 0
 ```
+
+Set `ILMRetentionDays` to a positive number to let Elasticsearch create a lifecycle policy, roll the write alias over every day, and delete expired indices. The default `0` leaves index lifecycle management disabled. This option uses Elasticsearch ILM APIs and must remain disabled for OpenSearch; existing installations should also ensure that the configured `Index` name is not already a concrete index before enabling its rollover alias.
 
 - **Address**: ElasticSearch/OpenSearch service address.
 
