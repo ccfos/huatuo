@@ -172,9 +172,20 @@ func parseSession(msg *capnp.Message) (*Session, error) {
 		return nil, fmt.Errorf("transport: decode connect: %w", err)
 	}
 
-	toolName, _ := connect.ToolName()
-	version, _ := connect.Version()
-	taskID, _ := connect.TaskID()
+	toolName, err := connect.ToolName()
+	if err != nil {
+		return nil, fmt.Errorf("transport: decode toolName: %w", err)
+	}
+
+	version, err := connect.Version()
+	if err != nil {
+		return nil, fmt.Errorf("transport: decode version: %w", err)
+	}
+
+	taskID, err := connect.TaskID()
+	if err != nil {
+		return nil, fmt.Errorf("transport: decode taskID: %w", err)
+	}
 
 	return &Session{
 		ToolName: toolName,

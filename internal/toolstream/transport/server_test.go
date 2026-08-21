@@ -15,8 +15,10 @@
 package transport
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -396,4 +398,146 @@ func TestClientRoundTrip(t *testing.T) {
 	if !got[1].End {
 		t.Errorf("second chunk End=false want true")
 	}
+}
+
+func TestParseSessionValidMetadata(t *testing.T) {
+	msg := newConnectMessage(t, "dropwatch", "1.0", "task-1")
+
+	sess, err := parseSession(msg)
+	if err != nil {
+		t.Fatalf("parseSession: %v", err)
+	}
+	if sess.ToolName != "dropwatch" {
+		t.Errorf("ToolName=%q want %q", sess.ToolName, "dropwatch")
+	}
+	if sess.Version != "1.0" {
+		t.Errorf("Version=%q want %q", sess.Version, "1.0")
+	}
+	if sess.TaskID != "task-1" {
+		t.Errorf("TaskID=%q want %q", sess.TaskID, "task-1")
+	}
+}
+
+func TestParseSessionEmptyOptionalFields(t *testing.T) {
+	msg := newConnectMessage(t, "dropwatch", "", "")
+
+	sess, err := parseSession(msg)
+	if err != nil {
+		t.Fatalf("parseSession: %v", err)
+	}
+	if sess.ToolName != "dropwatch" {
+		t.Errorf("ToolName=%q want %q", sess.ToolName, "dropwatch")
+	}
+	if sess.Version != "" {
+		t.Errorf("Version=%q want empty", sess.Version)
+	}
+	if sess.TaskID != "" {
+		t.Errorf("TaskID=%q want empty", sess.TaskID)
+	}
+}
+
+func TestParseSessionMalformedTextPointers(t *testing.T) {
+	tests := []struct {
+		field string
+		read  func(ConnectRequest) (string, error)
+	}{
+		{"toolName", ConnectRequest.ToolName},
+		{"version", ConnectRequest.Version},
+		{"taskID", ConnectRequest.TaskID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			msg := newConnectMessage(t, "dropwatch", "1.0", "task-1")
+			corruptConnectTextPointer(t, msg, tt.read)
+
+			sess, err := parseSession(msg)
+			if err == nil {
+				t.Fatalf("parseSession() = %+v, want %s error", sess, tt.field)
+			}
+			if !strings.Contains(err.Error(), tt.field) {
+				t.Fatalf("parseSession() error = %q, want %s", err, tt.field)
+			}
+		})
+	}
+}
+
+func newConnectMessage(t *testing.T, toolName, version, taskID string) *capnp.Message {
+	t.Helper()
+
+	msg, seg, err := capnp.NewMessage(capnp.SingleSegment(nil))
+	if err != nil {
+		t.Fatalf("NewMessage: %v", err)
+	}
+
+	root, err := NewRootMessage(seg)
+	if err != nil {
+		t.Fatalf("NewRootMessage: %v", err)
+	}
+
+	connect, err := root.NewConnect()
+	if err != nil {
+		t.Fatalf("NewConnect: %v", err)
+	}
+
+	if err := connect.SetToolName(toolName); err != nil {
+		t.Fatalf("SetToolName: %v", err)
+	}
+	if err := connect.SetVersion(version); err != nil {
+		t.Fatalf("SetVersion: %v", err)
+	}
+	if err := connect.SetTaskID(taskID); err != nil {
+		t.Fatalf("SetTaskID: %v", err)
+	}
+
+	connect.SetProtoVersion(1)
+
+	return msg
+}
+
+// corruptConnectTextPointer overwrites the Cap'n Proto pointer for the given
+// connect field with a far pointer into a missing segment. That makes Ptr()
+// fail instead of collapsing a truncated pointer into an empty string.
+func corruptConnectTextPointer(t *testing.T, msg *capnp.Message, read func(ConnectRequest) (string, error)) {
+	t.Helper()
+
+	root, err := ReadRootMessage(msg)
+	if err != nil {
+		t.Fatalf("ReadRootMessage: %v", err)
+	}
+
+	connect, err := root.Connect()
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	if _, err := read(connect); err != nil {
+		t.Fatalf("field readable before corruption: %v", err)
+	}
+
+	seg, err := msg.Segment(0)
+	if err != nil {
+		t.Fatalf("Segment: %v", err)
+	}
+
+	data := seg.Data()
+
+	const missingSegmentFarPointer = 2 | (99 << 32)
+
+	var malformed [8]byte
+	binary.LittleEndian.PutUint64(malformed[:], missingSegmentFarPointer)
+
+	for off := 0; off+8 <= len(data); off += 8 {
+		var orig [8]byte
+		copy(orig[:], data[off:off+8])
+		copy(data[off:off+8], malformed[:])
+
+		if _, err := read(connect); err != nil {
+			return
+		}
+
+		copy(data[off:off+8], orig[:])
+	}
+
+	t.Fatal("could not locate text pointer to corrupt")
 }
