@@ -67,6 +67,8 @@ fi
 tracepoint_available timer tick_stop \
 	|| skip "timer/tick_stop tracepoint is not available"
 
+# Kernel symbol resolution is covered by internal/symbol tests. This test verifies
+# that a captured BPF stack reaches persistent event storage.
 sched_tick_event_is_valid() {
 	[[ -s "${SCHED_TICK_EVENT}" ]] || return 1
 	jq -s -e '
@@ -88,6 +90,8 @@ sched_tick_event_is_valid() {
 			and (.tracer_data | has("now") | not)
 			and (.tracer_data | has("ktime_ns") | not)
 			and (.tracer_data.stack | type == "string")
+			and (.tracer_data.stack | startswith("stack:\n"))
+			and ((.tracer_data.stack | ltrimstr("stack:\n") | length) > 0)
 		))
 	' "${SCHED_TICK_EVENT}" > "${VALID_SCHED_TICK_EVENT}" 2> /dev/null
 }
