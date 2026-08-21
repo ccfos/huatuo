@@ -200,9 +200,9 @@ type pendingELFPCs struct {
 }
 
 type elfGroupKey struct {
-	path     string
-	module   string
-	loadBias uint64
+	path     string //nolint:unused // used implicitly via map key equality; never accessed by name
+	module   string //nolint:unused // used implicitly via map key equality; never accessed by name
+	loadBias uint64 //nolint:unused // used implicitly via map key equality; never accessed by name
 }
 
 func (r *UsymResolver) resolveAddrs(pid uint32, addrs []uint64) []string {

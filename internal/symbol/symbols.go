@@ -270,9 +270,9 @@ type elfSymbolParseState struct {
 }
 
 type elfSectionKey struct {
-	typ    elf.SectionType
-	offset uint64
-	size   uint64
+	typ    elf.SectionType //nolint:unused // used implicitly via map key equality; never accessed by name
+	offset uint64          //nolint:unused // used implicitly via map key equality; never accessed by name
+	size   uint64          //nolint:unused // used implicitly via map key equality; never accessed by name
 }
 
 type elfSymbolCandidate struct {
