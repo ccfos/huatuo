@@ -38,6 +38,14 @@ func newNativeBPFConstants(pid int, cssAddr uint64, threadGroup bool) map[string
 	}
 }
 
+func taskCommString(comm [bpf.TaskCommLen]byte) string {
+	length := bytes.IndexByte(comm[:], 0)
+	if length == -1 {
+		length = len(comm)
+	}
+	return string(comm[:length])
+}
+
 // resolveContainerCgroupCss retrieves the cgroup subsystem state (CSS) address for a container.
 // It first attempts to get CSS via huatuo-bamai API, and falls back to local BPF-based
 // method if the API is unavailable. The subsysName parameter specifies the cgroup subsystem

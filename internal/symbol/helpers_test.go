@@ -75,9 +75,8 @@ func setTestXfsMounts(t *testing.T, xfsMounts []string) {
 	})
 }
 
-// setupHostProcessProcFS makes utils.IsProcessInContainer(pid) return false by
-// pointing /proc/1/ns/mnt and /proc/<pid>/ns/mnt at the same namespace id and
-// writing a non-container /proc/<pid>/cgroup.
+// setupHostProcessProcFS keeps symbol tests on the host path while supporting
+// callers that inspect the mount namespace independently.
 func setupHostProcessProcFS(t *testing.T, tmpRoot string, pid uint32) {
 	t.Helper()
 	const sharedMountNS = "mnt:[4026531840]"

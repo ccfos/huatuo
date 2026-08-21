@@ -19,11 +19,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	hostprocess "huatuo-bamai/internal/process"
 
 	ptree "github.com/grafana/pyroscope/pkg/og/storage/tree"
 	"github.com/shirou/gopsutil/process"
@@ -364,8 +365,7 @@ func extractJavaMainClassFromPid(pid int) (string, error) {
 }
 
 func extractPythonThreadNameFromPid(pid int) (string, error) {
-	exePath := fmt.Sprintf("/proc/%d/exe", pid)
-	resolvedExe, err := os.Readlink(exePath)
+	resolvedExe, err := hostprocess.Executable(pid)
 	if err != nil {
 		return "", err
 	}

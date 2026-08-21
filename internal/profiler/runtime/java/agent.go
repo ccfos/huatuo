@@ -25,10 +25,11 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/process"
 	"huatuo-bamai/internal/profiler"
 	profilerexec "huatuo-bamai/internal/profiler/exec"
 	"huatuo-bamai/internal/profiler/fileutil"
-	"huatuo-bamai/internal/profiler/procutil"
+	profilerprocess "huatuo-bamai/internal/profiler/process"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/tracing"
 )
@@ -39,19 +40,23 @@ const (
 )
 
 func ResolveJavaPids(execPath, containerID string) ([]int, error) {
-	pids, err := procutil.GetPidsFromContainer(execPath, "java", containerID)
+	pids, err := profilerprocess.ContainerRootPIDs(containerID, profilerprocess.ExecutableFilter{
+		ExecutableName: "java",
+		ExecutablePath: execPath,
+	})
 	if err != nil {
 		return nil, err
 	}
 	if len(pids) == 0 {
-		return nil, fmt.Errorf("sampling failed: no target Java processes found in container: %q", containerID)
+		return nil, fmt.Errorf("no Java process in container %q", containerID)
 	}
 	return pids, nil
 }
 
+// HostViewPath prefixes paths hidden by a different target mount namespace.
 func HostViewPath(pid int, pathInTarget string) string {
-	inContainer, err := procutil.IsProcessInContainer(pid)
-	if err == nil && inContainer {
+	inTargetNamespace, err := process.HasDifferentMountNamespace(pid)
+	if err == nil && inTargetNamespace {
 		return fmt.Sprintf("/proc/%d/root%s", pid, pathInTarget)
 	}
 	return pathInTarget
@@ -291,30 +296,32 @@ func (opt *AsprofSamplingOption) markStopped(results []executil.CmdResult) {
 	}
 }
 
-// Copies the java agent to container's /tmp if needed.
+// PrepareJavaAgent places the agent where the target JVM can load it.
 func PrepareJavaAgent(pid int, toolPath string) error {
-	inContainer, err := procutil.IsProcessInContainer(pid)
+	hasDifferentMountNamespace, err := process.HasDifferentMountNamespace(pid)
 	if err != nil {
 		return err
 	}
 
 	targetTmp := "/tmp"
-	if inContainer {
-		log.Infof("This process is in container")
+	if hasDifferentMountNamespace {
 		targetTmp = fmt.Sprintf("/proc/%d/root/tmp", pid)
-	} else {
-		log.Infof("This process is not in container")
 	}
+	log.WithField("pid", pid).
+		WithField("path", targetTmp).
+		Debug("using Java agent directory")
 
 	if _, err := os.Stat(targetTmp); err != nil {
-		return fmt.Errorf("tmp path not accessible: %w", err)
+		return fmt.Errorf("stat Java agent directory %q: %w", targetTmp, err)
 	}
 
 	agentPath := filepath.Join(targetTmp, "libasyncProfiler.so")
-	if _, err := os.Stat(agentPath); err == nil {
+	_, err = os.Stat(agentPath)
+	if err == nil {
 		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to stat agent path %q: %w", agentPath, err)
+	}
+	if !os.IsNotExist(err) {
+		return fmt.Errorf("stat Java agent %q: %w", agentPath, err)
 	}
 
 	if err := fileutil.CheckDirSpace(targetTmp); err != nil {
@@ -323,36 +330,35 @@ func PrepareJavaAgent(pid int, toolPath string) error {
 	return copyAgentLib(toolPath, targetTmp)
 }
 
+// CleanupJavaAgent removes the copied agent to avoid artifacts in the target.
 func CleanupJavaAgent(pid int) error {
-	inContainer, err := procutil.IsProcessInContainer(pid)
+	hasDifferentMountNamespace, err := process.HasDifferentMountNamespace(pid)
 	if err != nil {
 		return err
 	}
 
 	targetTmp := "/tmp"
-	if inContainer {
-		log.Infof("Cleaning up Java agent for PID %d in container", pid)
+	if hasDifferentMountNamespace {
 		targetTmp = fmt.Sprintf("/proc/%d/root/tmp", pid)
-	} else {
-		log.Infof("Cleaning up Java agent for PID %d on host", pid)
 	}
 
 	agentPath := filepath.Join(targetTmp, "libasyncProfiler.so")
-	if _, err := os.Stat(agentPath); err == nil {
-		if err := os.Remove(agentPath); err != nil {
-			return fmt.Errorf("failed to remove agent %q: %w", agentPath, err)
+	if _, err := os.Stat(agentPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
 		}
-		log.Infof("Removed agent %s successfully", agentPath)
-	} else if os.IsNotExist(err) {
-		log.Infof("Agent %s does not exist, nothing to clean up", agentPath)
-	} else {
-		return fmt.Errorf("failed to stat agent path %q: %w", agentPath, err)
+		return fmt.Errorf("stat Java agent %q: %w", agentPath, err)
 	}
+	if err := os.Remove(agentPath); err != nil {
+		return fmt.Errorf("remove Java agent %q: %w", agentPath, err)
+	}
+	log.WithField("pid", pid).
+		WithField("path", agentPath).
+		Debug("removed Java agent")
 
 	return nil
 }
 
-// copyAgentLib copies the async profiler .so library into tmp directory.
 func copyAgentLib(toolPath, toTmpPath string) error {
 	src := agentLibraryPath(toolPath)
 	dst := filepath.Join(toTmpPath, "libasyncProfiler.so")

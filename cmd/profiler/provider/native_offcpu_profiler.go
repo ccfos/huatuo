@@ -26,7 +26,6 @@ import (
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	pcontext "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/pkg/profiling"
 	"huatuo-bamai/pkg/types"
 )
@@ -185,7 +184,7 @@ func (r *ringBufferContext) aggregateOffCPUBatch(batch []any, enqueue func(any))
 
 		process := processKey{
 			PID:  uint32(event.Base.PIDTGID >> 32),
-			Comm: procutil.CommToString(event.Base.Comm),
+			Comm: taskCommString(event.Base.Comm),
 		}
 		stack := offCPUStackKey{
 			Category: offCPUCategory(event.Kind),

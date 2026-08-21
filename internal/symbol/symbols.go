@@ -26,8 +26,8 @@ import (
 	"strings"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/process"
 	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/profiler/procutil"
 )
 
 type outType uint8
@@ -318,7 +318,7 @@ func initXfsMounts() error {
 		return err
 	}
 
-	if selfInContainer, _ := procutil.IsProcessInContainer(os.Getpid()); selfInContainer {
+	if selfInContainer, _ := process.IsInContainer(os.Getpid()); selfInContainer {
 		hostMounts, err := xfsMountPointsFromHost()
 		if err == nil && len(hostMounts) > 0 {
 			xfsMounts = hostMounts

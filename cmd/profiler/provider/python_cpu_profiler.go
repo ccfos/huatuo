@@ -21,11 +21,12 @@ import (
 	"strconv"
 	"strings"
 
+	"huatuo-bamai/internal/process"
 	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/aggregator"
 	pcontext "huatuo-bamai/internal/profiler/context"
 	profilerexec "huatuo-bamai/internal/profiler/exec"
-	"huatuo-bamai/internal/profiler/procutil"
+	profilerprocess "huatuo-bamai/internal/profiler/process"
 	"huatuo-bamai/internal/profiler/registry"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/pkg/profiling"
@@ -83,7 +84,7 @@ func (p *pythonCPUProfiler) Start(pctx *pcontext.ProfilerContext) error {
 			return err
 		}
 	}
-	pids, err = pythonRootPids(pids, procutil.ParentPID)
+	pids, err = pythonRootPids(pids, process.PPID)
 	if err != nil {
 		return err
 	}
@@ -109,7 +110,10 @@ func resolvePythonPids(pctx *pcontext.ProfilerContext) ([]int, error) {
 		return pctx.PIDs, nil
 	}
 
-	pids, err := procutil.GetPidsFromContainer(pctx.ExecPath, "python", pctx.ContainerID)
+	pids, err := profilerprocess.ContainerRootPIDs(pctx.ContainerID, profilerprocess.ExecutableFilter{
+		ExecutablePrefix: "python",
+		ExecutablePath:   pctx.ExecPath,
+	})
 	if err != nil {
 		return nil, err
 	}

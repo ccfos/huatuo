@@ -25,7 +25,6 @@ import (
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/bpfmap"
-	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/symbol"
 	"huatuo-bamai/pkg/types"
 )
@@ -228,7 +227,7 @@ func (r *ringBufferContext) drainActiveRingBuffer(
 			stackIDs := stackIDPair{KernelStackID: base.Kernstack, UserStackID: base.Userstack}
 			// Extract tgid (process ID) from upper 32 bits of pid_tgid
 			tgid := uint32(base.PIDTGID >> 32)
-			process := processKey{PID: tgid, Comm: procutil.CommToString(base.Comm)}
+			process := processKey{PID: tgid, Comm: taskCommString(base.Comm)}
 
 			if sampleCountsByProcess[process] == nil {
 				sampleCountsByProcess[process] = make(map[stackIDPair]int64)

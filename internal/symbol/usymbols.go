@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@ import (
 	"path/filepath"
 	"slices"
 
+	"huatuo-bamai/internal/process"
 	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/internal/profiler/procutil"
 	"huatuo-bamai/internal/utils/fileutil"
 )
 
@@ -278,7 +278,7 @@ func (r *UsymResolver) mountKeyForPID(pid uint32, hostPath string) (string, erro
 		return "", nil
 	}
 
-	inContainer, err := procutil.IsProcessInContainer(int(pid))
+	inContainer, err := process.IsInContainer(int(pid))
 	if err != nil {
 		return "", err
 	}

@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"huatuo-bamai/internal/profiler/procutil"
+	"huatuo-bamai/internal/process"
 )
 
 func validateResolvedPIDs(profilerName string, pids []int) error {
@@ -35,8 +35,12 @@ func validateExpectedExecPath(pids []int, execPath string) error {
 		return nil
 	}
 	for _, pid := range pids {
-		if err := procutil.CheckExecPath(pid, execPath); err != nil {
+		actualPath, err := process.Executable(pid)
+		if err != nil {
 			return err
+		}
+		if actualPath != execPath {
+			return fmt.Errorf("PID %d executable %q, want %q", pid, actualPath, execPath)
 		}
 	}
 	return nil
@@ -77,13 +81,13 @@ func validateToolFile(profilerName, toolPath, relativePath string, executable bo
 
 func validateProcessExecutables(profilerName, executablePrefix string, pids []int) error {
 	for _, pid := range pids {
-		path, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+		path, err := process.Executable(pid)
 		if err != nil {
-			return fmt.Errorf("validate %s target PID %d executable: %w", profilerName, pid, err)
+			return err
 		}
 		if !strings.HasPrefix(filepath.Base(path), executablePrefix) {
 			return fmt.Errorf(
-				"validate %s target PID %d: executable %q does not match %s",
+				"%s PID %d executable %q, want prefix %q",
 				profilerName,
 				pid,
 				path,
