@@ -203,6 +203,7 @@ func buildProfilingJob(jobResult *job.Job, flameGraphBaseURL string) (v1.Profili
 		StatusReason:    optionalString(jobResult.ErrorMessage),
 		MemoryMode:      privateData.MemoryMode,
 		BinaryMatchPath: privateData.BinaryMatchPath,
+		BinaryToolPath:  privateData.BinaryToolPath,
 		Language:        privateData.Language,
 	}
 

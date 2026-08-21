@@ -318,6 +318,9 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	if ctx.String("binary-match-path") != "" && native {
 		return fmt.Errorf("--binary-match-path is not supported by native profilers")
 	}
+	if ctx.String("tool-path") != "" && native {
+		return fmt.Errorf("--tool-path is supported only by Java and Python profiling")
+	}
 	if ctx.IsSet("physical-memory-probability") {
 		physicalMemory := nativeMemory &&
 			profiling.MemoryMode(ctx.String("memory-mode")) != profiling.MemoryModeVirtualAlloc

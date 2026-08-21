@@ -236,9 +236,14 @@ curl -sS \
 | `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
 | `container_id` | 否 | 目标容器 ID；不传表示对宿主机剖析 |
 | `binary_match_path` | 否 | Java/Python CPU 剖析的目标可执行文件路径匹配条件；原生剖析不支持 |
+| `binary_tool_path` | Java/Python 必需 | 目标 Agent 上的 Profiler 安装目录；原生剖析不接受此参数 |
 | `memory_mode` | 内存剖析必需 | 内存剖析模式，必须与 `language` 匹配 |
 
 `duration_seconds` 必须不小于两个 `aggregation_interval_seconds`，且二者之和必须小于 3600 秒。同一用户在同一节点上已有运行中的剖析任务时，服务端返回 `409 Conflict`。
+
+Java 的 `binary_tool_path` 是 async-profiler 安装根目录，其中应包含
+`bin/asprof` 和 `lib/libasyncProfiler.so`。Python 的该字段是包含
+`py-spy` 的目录。
 
 创建宿主机 Go CPU 剖析任务：
 
@@ -267,6 +272,7 @@ curl -sS -i \
     "type": "memory",
     "language": "java",
     "memory_mode": "object_usage",
+    "binary_tool_path": "/opt/async-profiler",
     "duration_seconds": 60,
     "container_id": "9f4c2f1a8b7d",
     "hostname": "node-01"
@@ -337,6 +343,7 @@ curl -sS \
 | `language` | 目标进程语言 |
 | `memory_mode` | 内存剖析模式；CPU 任务不返回该字段 |
 | `binary_match_path` | 可执行文件匹配路径；未使用时不返回该字段 |
+| `binary_tool_path` | Java/Python Profiler 安装目录；未使用时不返回该字段 |
 | `status` | 当前任务状态 |
 | `duration_seconds` | 请求的剖析时长，单位为秒 |
 | `created_at` | 任务创建时间 |
