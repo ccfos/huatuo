@@ -1,0 +1,39 @@
+# https://grafana.com/docs/grafana/latest/datasources/mysql/
+#
+# Doris speaks the MySQL protocol on the FE query port, so Grafana's built-in
+# MySQL data source can read it directly. This one backs the sample-count
+# panels; flame graphs still go through huatuo-apiserver, which merges the
+# stored pprof profiles before Grafana renders them.
+#
+# Only used when huatuo-bamai is configured with [Storage.Doris]. The compose
+# quickstart defaults to Elasticsearch, so this data source stays idle unless
+# a Doris instance is reachable at the URL below.
+
+apiVersion: 1
+
+# List of data sources to delete from the database.
+deleteDatasources:
+  - name: huatuo-bamai-doris
+
+# Mark provisioned data sources for deletion if they are no longer in a provisioning file.
+prune: true
+
+datasources:
+  - name: huatuo-bamai-doris
+    type: mysql
+    access: proxy
+    orgId: 1
+    uid: huatuo-bamai-doris
+    # FE query port. Not the FE HTTP port used for Stream Load writes.
+    url: localhost:9030
+    user: root
+    database: huatuo_bamai
+    jsonData:
+      maxOpenConns: 4
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+    secureJsonData:
+      # Doris root has no password by default.
+      password: ''
+    version: 1
+    editable: false

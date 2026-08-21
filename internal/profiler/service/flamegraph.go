@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/storage/driver"
 
 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
@@ -32,24 +33,14 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
-type ElasticSearchConfig struct {
-	Address, Username, Password, Index string
-}
-
 // Service provides profile query operations.
 type Service struct {
 	profileStorage *ProfileStorage
 }
 
-// NewService initializes a profile query service.
-func NewService(ctx context.Context, esConfig *ElasticSearchConfig) (*Service, error) {
-	profileStorage, err := NewProfileStorageContext(
-		ctx,
-		esConfig.Address,
-		esConfig.Username,
-		esConfig.Password,
-		esConfig.Index,
-	)
+// NewService initializes a profile query service against the configured backend.
+func NewService(ctx context.Context, cfg *driver.Config) (*Service, error) {
+	profileStorage, err := NewProfileStorageContext(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}

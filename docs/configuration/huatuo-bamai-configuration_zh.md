@@ -244,6 +244,98 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
   **说明**：超过数量后自动删除最早文件，控制磁盘空间使用。
 
+#### 6.3 Doris 存储
+
+```bash
+[Storage.Doris]
+    # MySQLAddr = "127.0.0.1:9030"
+    # HTTPAddr = "127.0.0.1:8030"
+    # Database = "huatuo_bamai"
+    # Username = "root"
+    # Password = "REPLACE_WITH_PASSWORD"
+    # PartitionField = "uploaded_time"
+    # RetentionDays = 30
+    # Buckets = 4
+    # Replicas = 1
+    # GroupCommit = "off_mode"
+    # BatchMaxRows = 16
+    # FlushIntervalSeconds = 5
+    # MaxRetries = 3
+```
+
+Doris 后端与 ES/OS 存储用途相同：持久化内核追踪、事件与性能剖析数据。两者可以同时配置，此时数据会同时写入。
+
+查询走 MySQL 协议（FE 查询端口），写入走 Stream Load（FE HTTP 端口），因此两个地址都必须配置。表由 huatuo-bamai 首次启动时自动创建，无需手工建表。
+
+- **MySQLAddr**：FE 查询端口地址，格式为 `host:port`。
+
+  无默认值。
+
+  **说明**：用于建表与查询。与 HTTPAddr 必须同时配置，二者全为空时禁用 Doris 存储，只配置其中一个会导致进程启动失败。
+
+- **HTTPAddr**：FE HTTP 端口地址，格式为 `host:port`。
+
+  无默认值。
+
+  **说明**：用于 Stream Load 写入。FE 会以 307 重定向到具体 BE，因此该地址所在网络需能连通 BE 的 HTTP 端口。
+
+- **Database**：数据库名。
+
+  默认值为 huatuo_bamai。
+
+  **说明**：不存在时自动创建。
+
+- **Username** / **Password**：认证账号与密码。
+
+  无默认值。
+
+- **PartitionField**：分区字段名。
+
+  默认值为 uploaded_time。
+
+  **说明**：表按该字段做天级 RANGE 分区。**必须是时间类型的可索引字段**，填写其他字段会导致启动失败。留空则不分区，此时单分区会无限增长且无法按时间裁剪查询、无法按时间淘汰数据，仅建议在测试环境使用。
+
+- **RetentionDays**：数据保留天数。
+
+  默认值为 30。
+
+  **说明**：超过该天数的分区由 Doris 动态分区机制自动删除。
+
+- **Buckets**：每个分区的分桶数。
+
+  默认值为 4。
+
+- **Replicas**：每个分桶的副本数。
+
+  默认值为 1。
+
+  **说明**：不得超过集群 BE 节点数，否则建表失败。
+
+- **GroupCommit**：组提交模式，可选 `off_mode`、`sync_mode`、`async_mode`。
+
+  默认值为 off_mode。
+
+  **说明**：开启后由 BE 侧合并多次写入到同一事务，用于控制 version 数量。**当多个节点的 Agent 同时写入同一张表时应开启**（例如对一个应用的上百个实例同时发起性能剖析）——客户端攒批只能合并单个 Agent 自己的数据，跨节点的合并只能由 BE 完成，version 增长过快会触发 Doris 的 `-235 TOO_MANY_VERSIONS` 错误。`sync_mode` 会阻塞等待整个组提交周期（默认 10 秒），因此推荐使用 `async_mode`。
+
+- **BatchMaxRows**：触发一次写入的行数阈值。
+
+  默认值为 16。
+
+  **说明**：与 FlushIntervalSeconds 是「或」的关系，谁先达到谁触发。另有 8 MB 的内部字节上限用于约束内存占用，不可配置。
+
+- **FlushIntervalSeconds**：周期性写入间隔，单位为秒。
+
+  默认值为 5。
+
+  **说明**：用于让未达到行数阈值的数据也能及时落库。
+
+- **MaxRetries**：写入失败的重试次数。
+
+  默认值为 3，配置为 0 表示不重试。
+
+  **说明**：仅对可恢复的失败重试，采用 1 秒起始、上限 30 秒的指数退避。数据质量错误、参数错误、认证失败等不会重试。重试次数耗尽后该批数据被丢弃并记录日志。
+
+
 ### 7. 自动追踪配置
 
 自动追踪模块是 HUATUO 的智能特性之一，可根据阈值自动触发特定性能追踪，减少人工干预。
