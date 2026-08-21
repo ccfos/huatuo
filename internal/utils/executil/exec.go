@@ -173,21 +173,113 @@ func RunningDir() (string, error) {
 	return filepath.Dir(exePath), nil
 }
 
+const currentThreadUTSNamespace = "/proc/thread-self/ns/uts"
+
+type namespaceHandle interface {
+	Fd() uintptr
+	Close() error
+}
+
+type utsNamespaceOperations struct {
+	open     func(string) (namespaceHandle, error)
+	setns    func(int, int) error
+	hostname func() (string, error)
+}
+
+type utsHostnameResult struct {
+	hostname      string
+	err           error
+	discardThread bool
+}
+
 func HostnameByPid(pid uint32) (string, error) {
-	var empty string
-	fd, err := os.Open(procfs.Path(fmt.Sprintf("%d", pid), "ns/uts"))
+	targetPath := procfs.Path(fmt.Sprintf("%d", pid), "ns/uts")
+	return hostnameByUTSNamespace(targetPath, utsNamespaceOperations{
+		open: func(path string) (namespaceHandle, error) {
+			return os.Open(path)
+		},
+		setns:    unix.Setns,
+		hostname: os.Hostname,
+	})
+}
+
+func hostnameByUTSNamespace(
+	targetPath string,
+	operations utsNamespaceOperations,
+) (string, error) {
+	resultCh := make(chan utsHostnameResult, 1)
+	go func() {
+		runtime.LockOSThread()
+		result := readHostnameInUTSNamespace(targetPath, operations)
+		resultCh <- result
+		if !result.discardThread {
+			runtime.UnlockOSThread()
+		}
+		// Exiting while still locked makes the runtime terminate a thread
+		// whose original namespace could not be restored.
+	}()
+
+	result := <-resultCh
+	return result.hostname, result.err
+}
+
+func readHostnameInUTSNamespace(
+	targetPath string,
+	operations utsNamespaceOperations,
+) utsHostnameResult {
+	current, err := operations.open(currentThreadUTSNamespace)
 	if err != nil {
-		return empty, err
+		return utsHostnameResult{
+			err: fmt.Errorf("open current thread UTS namespace: %w", err),
+		}
 	}
-	defer fd.Close()
 
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	if err := unix.Setns(int(fd.Fd()), unix.CLONE_NEWUTS); err != nil {
-		return empty, err
+	target, err := operations.open(targetPath)
+	if err != nil {
+		return utsHostnameResult{
+			err: errors.Join(
+				fmt.Errorf("open target UTS namespace %q: %w", targetPath, err),
+				closeNamespaceHandle(current, "current thread UTS namespace"),
+			),
+		}
 	}
-	return os.Hostname()
+
+	if err := operations.setns(int(target.Fd()), unix.CLONE_NEWUTS); err != nil {
+		return utsHostnameResult{
+			err: errors.Join(
+				fmt.Errorf("enter target UTS namespace %q: %w", targetPath, err),
+				closeNamespaceHandle(target, "target UTS namespace"),
+				closeNamespaceHandle(current, "current thread UTS namespace"),
+			),
+		}
+	}
+
+	hostname, hostnameErr := operations.hostname()
+	restoreErr := operations.setns(int(current.Fd()), unix.CLONE_NEWUTS)
+	if hostnameErr != nil {
+		hostnameErr = fmt.Errorf("read hostname in target UTS namespace %q: %w", targetPath, hostnameErr)
+	}
+	if restoreErr != nil {
+		restoreErr = fmt.Errorf("restore current thread UTS namespace: %w", restoreErr)
+	}
+
+	return utsHostnameResult{
+		hostname: hostname,
+		err: errors.Join(
+			hostnameErr,
+			restoreErr,
+			closeNamespaceHandle(target, "target UTS namespace"),
+			closeNamespaceHandle(current, "current thread UTS namespace"),
+		),
+		discardThread: restoreErr != nil,
+	}
+}
+
+func closeNamespaceHandle(handle namespaceHandle, description string) error {
+	if err := handle.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", description, err)
+	}
+	return nil
 }
 
 func ProcNameByPid(pid uint32) (string, error) {

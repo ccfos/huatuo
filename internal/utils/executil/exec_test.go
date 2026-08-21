@@ -28,6 +28,8 @@ import (
 	"huatuo-bamai/internal/procfs"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
 func withProcRoot(t *testing.T, root string) {
@@ -266,4 +268,203 @@ func TestHostnameByPid(t *testing.T) {
 			tt.validate(t, got, currentHost, err)
 		})
 	}
+}
+
+type fakeNamespaceHandle struct {
+	fd       uintptr
+	closed   bool
+	closeErr error
+}
+
+func (h *fakeNamespaceHandle) Fd() uintptr {
+	return h.fd
+}
+
+func (h *fakeNamespaceHandle) Close() error {
+	h.closed = true
+	return h.closeErr
+}
+
+func TestHostnameByUTSNamespaceRestoresCallingThread(t *testing.T) {
+	const targetPath = "/proc/4242/ns/uts"
+	current := &fakeNamespaceHandle{fd: 10}
+	target := &fakeNamespaceHandle{fd: 20}
+	var entered []int
+
+	hostname, err := hostnameByUTSNamespace(targetPath, utsNamespaceOperations{
+		open: func(path string) (namespaceHandle, error) {
+			switch path {
+			case currentThreadUTSNamespace:
+				return current, nil
+			case targetPath:
+				return target, nil
+			default:
+				return nil, fmt.Errorf("unexpected namespace path %q", path)
+			}
+		},
+		setns: func(fd, namespaceType int) error {
+			assert.Equal(t, unix.CLONE_NEWUTS, namespaceType)
+			entered = append(entered, fd)
+			return nil
+		},
+		hostname: func() (string, error) {
+			return "container-host", nil
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "container-host", hostname)
+	assert.Equal(t, []int{int(target.fd), int(current.fd)}, entered)
+	assert.True(t, target.closed)
+	assert.True(t, current.closed)
+}
+
+func TestHostnameByUTSNamespaceRestoresAfterHostnameFailure(t *testing.T) {
+	const targetPath = "/proc/4242/ns/uts"
+	current := &fakeNamespaceHandle{fd: 10}
+	target := &fakeNamespaceHandle{fd: 20}
+	hostnameErr := errors.New("uname failed")
+	var entered []int
+
+	hostname, err := hostnameByUTSNamespace(targetPath, utsNamespaceOperations{
+		open: func(path string) (namespaceHandle, error) {
+			if path == currentThreadUTSNamespace {
+				return current, nil
+			}
+			return target, nil
+		},
+		setns: func(fd, _ int) error {
+			entered = append(entered, fd)
+			return nil
+		},
+		hostname: func() (string, error) {
+			return "", hostnameErr
+		},
+	})
+
+	assert.Empty(t, hostname)
+	require.ErrorIs(t, err, hostnameErr)
+	assert.Contains(t, err.Error(), "read hostname in target UTS namespace")
+	assert.Equal(t, []int{int(target.fd), int(current.fd)}, entered)
+	assert.True(t, target.closed)
+	assert.True(t, current.closed)
+}
+
+func TestHostnameByUTSNamespaceReportsRestoreFailure(t *testing.T) {
+	const targetPath = "/proc/4242/ns/uts"
+	current := &fakeNamespaceHandle{fd: 10}
+	target := &fakeNamespaceHandle{fd: 20}
+	restoreErr := errors.New("setns restore failed")
+
+	hostname, err := hostnameByUTSNamespace(targetPath, utsNamespaceOperations{
+		open: func(path string) (namespaceHandle, error) {
+			if path == currentThreadUTSNamespace {
+				return current, nil
+			}
+			return target, nil
+		},
+		setns: func(fd, _ int) error {
+			if fd == int(current.fd) {
+				return restoreErr
+			}
+			return nil
+		},
+		hostname: func() (string, error) {
+			return "container-host", nil
+		},
+	})
+
+	assert.Equal(t, "container-host", hostname)
+	require.ErrorIs(t, err, restoreErr)
+	assert.Contains(t, err.Error(), "restore current thread UTS namespace")
+	assert.True(t, target.closed)
+	assert.True(t, current.closed)
+}
+
+func TestHostnameByUTSNamespaceCleansUpTargetEntryFailure(t *testing.T) {
+	const targetPath = "/proc/4242/ns/uts"
+	current := &fakeNamespaceHandle{fd: 10}
+	target := &fakeNamespaceHandle{fd: 20}
+	enterErr := errors.New("setns target failed")
+	hostnameCalled := false
+
+	hostname, err := hostnameByUTSNamespace(targetPath, utsNamespaceOperations{
+		open: func(path string) (namespaceHandle, error) {
+			if path == currentThreadUTSNamespace {
+				return current, nil
+			}
+			return target, nil
+		},
+		setns: func(int, int) error {
+			return enterErr
+		},
+		hostname: func() (string, error) {
+			hostnameCalled = true
+			return "unexpected", nil
+		},
+	})
+
+	assert.Empty(t, hostname)
+	require.ErrorIs(t, err, enterErr)
+	assert.Contains(t, err.Error(), "enter target UTS namespace")
+	assert.False(t, hostnameCalled)
+	assert.True(t, target.closed)
+	assert.True(t, current.closed)
+}
+
+func TestHostnameByUTSNamespaceClosesCurrentWhenTargetOpenFails(t *testing.T) {
+	const targetPath = "/proc/4242/ns/uts"
+	current := &fakeNamespaceHandle{fd: 10}
+	targetOpenErr := errors.New("target disappeared")
+
+	hostname, err := hostnameByUTSNamespace(targetPath, utsNamespaceOperations{
+		open: func(path string) (namespaceHandle, error) {
+			if path == currentThreadUTSNamespace {
+				return current, nil
+			}
+			return nil, targetOpenErr
+		},
+		setns: func(int, int) error {
+			return errors.New("setns must not be called")
+		},
+		hostname: func() (string, error) {
+			return "unexpected", errors.New("hostname must not be called")
+		},
+	})
+
+	assert.Empty(t, hostname)
+	require.ErrorIs(t, err, targetOpenErr)
+	assert.Contains(t, err.Error(), targetPath)
+	assert.True(t, current.closed)
+}
+
+func TestHostnameByUTSNamespacePreservesCloseErrors(t *testing.T) {
+	const targetPath = "/proc/4242/ns/uts"
+	currentCloseErr := errors.New("close current failed")
+	targetCloseErr := errors.New("close target failed")
+	current := &fakeNamespaceHandle{fd: 10, closeErr: currentCloseErr}
+	target := &fakeNamespaceHandle{fd: 20, closeErr: targetCloseErr}
+
+	hostname, err := hostnameByUTSNamespace(targetPath, utsNamespaceOperations{
+		open: func(path string) (namespaceHandle, error) {
+			if path == currentThreadUTSNamespace {
+				return current, nil
+			}
+			return target, nil
+		},
+		setns: func(int, int) error {
+			return nil
+		},
+		hostname: func() (string, error) {
+			return "container-host", nil
+		},
+	})
+
+	assert.Equal(t, "container-host", hostname)
+	require.ErrorIs(t, err, currentCloseErr)
+	require.ErrorIs(t, err, targetCloseErr)
+	assert.Contains(t, err.Error(), "close target UTS namespace")
+	assert.Contains(t, err.Error(), "close current thread UTS namespace")
+	assert.True(t, target.closed)
+	assert.True(t, current.closed)
 }
