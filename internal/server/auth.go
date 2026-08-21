@@ -109,18 +109,9 @@ func splitPermission(permission string) (string, string) {
 
 // matchesPath performs simple path matching, supporting basic wildcards and path parameters.
 func (s *authService) matchesPath(permission, path string) bool {
-	// 1. Exact match
 	if permission == path {
 		return true
 	}
-
-	// 2. Handle wildcard ** (matches all sub-paths)
-	if strings.Contains(permission, "**") {
-		prefix := strings.Split(permission, "**")[0]
-		return strings.HasPrefix(path, prefix)
-	}
-
-	// 3. Handle single-level wildcard * and path parameter :param
 	return s.matchesSegments(permission, path)
 }
 
@@ -129,28 +120,41 @@ func (s *authService) matchesSegments(permission, path string) bool {
 	permSegments := strings.Split(strings.Trim(permission, "/"), "/")
 	pathSegments := strings.Split(strings.Trim(path, "/"), "/")
 
-	// Segments must be the same length (unless there's a wildcard)
-	if len(permSegments) != len(pathSegments) {
-		return false
+	memo := make(map[[2]int]bool)
+	visited := make(map[[2]int]bool)
+
+	var match func(int, int) bool
+	match = func(permissionIndex, pathIndex int) bool {
+		pos := [2]int{permissionIndex, pathIndex}
+		if visited[pos] {
+			return memo[pos]
+		}
+		visited[pos] = true
+
+		matched := false
+		switch {
+		case permissionIndex == len(permSegments):
+			matched = pathIndex == len(pathSegments)
+		case permSegments[permissionIndex] == "**":
+			// Recursive wildcards represent descendants, so they consume at
+			// least one complete segment. This preserves the documented need
+			// for a separate permission for the collection path itself.
+			matched = pathIndex < len(pathSegments) &&
+				(match(permissionIndex+1, pathIndex+1) ||
+					match(permissionIndex, pathIndex+1))
+		case pathIndex < len(pathSegments):
+			permissionSegment := permSegments[permissionIndex]
+			matched = (permissionSegment == pathSegments[pathIndex] ||
+				permissionSegment == "*" ||
+				strings.HasPrefix(permissionSegment, ":")) &&
+				match(permissionIndex+1, pathIndex+1)
+		}
+
+		memo[pos] = matched
+		return matched
 	}
 
-	// Compare each segment
-	for i, permSeg := range permSegments {
-		pathSeg := pathSegments[i]
-
-		if permSeg == pathSeg {
-			continue
-		}
-		if strings.HasPrefix(permSeg, ":") {
-			continue
-		}
-		if permSeg == "*" {
-			continue
-		}
-		return false
-	}
-
-	return true
+	return match(0, 0)
 }
 
 // NewAuthMiddleware returns a HandlerContextFunc that validates requests using the given authService.
