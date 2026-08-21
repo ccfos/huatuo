@@ -98,7 +98,16 @@ func (c *cpuUtilCollector) updateDataCache(cache *cpuUtilStat, container *pod.Co
 		return err
 	}
 
-	// allow statistics 0
+	// Usage, User, and System should increase monotonically. This defensive
+	// check prevents an unexpected reset from causing uint64 underflow.
+	if stat.Usage < cache.lastUsage.Usage ||
+		stat.User < cache.lastUsage.User ||
+		stat.System < cache.lastUsage.System {
+		cache.lastUsage = *stat
+		cache.lastTimestamp = now
+		return nil
+	}
+
 	deltaTotalTime := stat.Usage - cache.lastUsage.Usage
 	deltaUsrTime := stat.User - cache.lastUsage.User
 	deltaSysTime := stat.System - cache.lastUsage.System
