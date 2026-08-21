@@ -23,12 +23,12 @@ The configuration file uses **TOML** format and includes multiple sections such 
 # - BlackList
 # Global blacklist for tracing and metrics.
 #
-BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
+BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]
 ```
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
-  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]`, which disables tracing and metrics for the network device hardware layer, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, and TCP retransmission tracing. Remove `diskio` to enable disk I/O metrics or `tcp_retransmit` to enable TCP retransmission tracing and its drop-correlation cache. Supports arrays; extend as needed.
+  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, and Moore Threads GPU. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing and its drop-correlation cache, or `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs. Supports arrays; extend as needed.
 
 ### 3. Logging
 
@@ -1011,6 +1011,52 @@ This section defines collection rules for various system and network metrics. Al
 - **Included / Excluded**: Same as above.
 
 - **MountPointsIncluded**: Regex for mount points to collect. Default includes /, /home, /boot.
+
+#### 9.7 Moore Threads GPU Metrics
+
+```bash
+# MetricCollector.Mthreads
+#
+# Moore Threads GPU metric collection via the MTML (Moore Threads Management
+# Library) shared library. The library is discovered automatically at startup
+# using SONAME search (libmtml.so.2, then libmtml.so) through the system
+# dynamic linker; no hardcoded path is required.
+#
+# Remove "mthreads_gpu" from BlackList to enable this collector.
+#
+# - EnableHealth
+# Enable health metrics: temperature, power, utilization, clocks, fans, pstate, VPU.
+# Default: true
+#
+# - EnablePCIe
+# Enable PCIe link metrics: current speed/width and replay counter.
+# Default: false
+#
+# - EnableMTLink
+# Enable MtLink interconnect metrics: per-link state and bandwidth.
+# Default: false
+#
+[MetricCollector.Mthreads]
+    # EnableHealth = true
+    # EnablePCIe = false
+    # EnableMTLink = false
+```
+
+- **EnableHealth**: Controls collection of health-related metrics.
+
+  Default: true. When enabled, collects: GPU/memory temperature (`gpu_temperature_celsius`, `memory_temperature_celsius`), power usage and limits (`device_power_watts`, `gpu_power_limit_watts`, `gpu_power_default_limit_watts`), GPU/memory utilization (`gpu_utilization_percent`, `memory_utilization_percent`), clock frequencies (`gpu_clock_mhz`, `gpu_max_clock_mhz`, `memory_clock_mhz`, `memory_max_clock_mhz`), voltage (`gpu_voltage_volts`), memory capacity (`memory_total_bytes`, `memory_used_bytes`), fan speed (`fan_rpm`, `fan_speed_percent`), performance state (`gpu_pstate`), and VPU metrics (`vpu_utilization_percent`, `vpu_encoder_utilization_percent`, `vpu_decoder_utilization_percent`, `vpu_clock_mhz`).
+
+- **EnablePCIe**: Controls collection of PCIe link metrics.
+
+  Default: false. When enabled, collects: current PCIe link speed and width (`pcie_link_speed_gt_per_sec`, `pcie_link_width_lanes`), max capability (`pcie_link_max_speed_gt_per_sec`, `pcie_link_max_width_lanes`), and replay counter (`pcie_replay_total`).
+
+- **EnableMTLink**: Controls collection of MtLink interconnect metrics.
+
+  Default: false. When enabled, collects: per-link state (`mtlink_state`) and bandwidth (`mtlink_bandwidth_gbps`).
+
+**Library discovery**: At startup, the collector searches for `libmtml.so.2` then `libmtml.so` via the system dynamic linker (respecting `LD_LIBRARY_PATH` and `/etc/ld.so.cache`). If no library is found, the collector logs a warning and is disabled for the lifetime of the process.
+
+**Restart semantics**: Configuration changes in `[MetricCollector.Mthreads]` take effect after restarting `huatuo-bamai`. Library path discovery is performed only at startup; changing `LD_LIBRARY_PATH` or installing a new MTML version also requires a restart.
 
 ### 10. Pod
 
