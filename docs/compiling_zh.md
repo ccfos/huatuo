@@ -39,6 +39,49 @@ $ make
 docker build --network host -t huatuo/huatuo-bamai:latest .
 ```
 
+#### 2.1 多架构支持（linux/amd64 + linux/arm64）
+
+**1. 环境准备**
+
+```bash
+# 注册 QEMU 用户态模拟器
+docker run --rm --privileged tonistiigi/binfmt --install all
+
+# 创建多架构 builder
+docker buildx create --name multiarch \
+    --driver docker-container \
+    --driver-opt network=host \
+    --use
+
+# 验证（同时触发 bootstrap）
+docker buildx inspect multiarch --bootstrap
+```
+
+**2. 构建并推送**
+
+```bash
+docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    --network=host \
+    -t <your-registry>/huatuo-bamai:latest \
+    -f Dockerfile \
+    --push .
+```
+
+**3. 验证多架构 Manifest**
+
+```bash
+docker buildx imagetools inspect <your-registry>/huatuo-bamai:latest
+```
+
+期望输出包含 `linux/amd64` 和 `linux/arm64` 两个 platform 条目：
+
+```
+Manifests:
+  Platform:  linux/amd64
+  Platform:  linux/arm64
+```
+
 ### 3. 物理机编译
 
 #### 3.1 安装依赖
@@ -75,4 +118,5 @@ $ make
 $ make BPF_DEBUG=1            # 或单独编译 BPF：make BPF_DEBUG=1 bpf-build
 ```
 
+> 注意：两级开关需同时满足才会有输出——`BPF_DEBUG=1` 编译 **且** 运行时带 `--log-bpf-debug`。
 埋点、运行时开关和日志说明参见[调试](development/debugging_zh.md)。
