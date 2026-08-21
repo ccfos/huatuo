@@ -90,6 +90,27 @@ func TestFindProcessesMatchesExactExecutableName(t *testing.T) {
 	}
 }
 
+func TestFindProcessesMatchesUnlinkedExecutable(t *testing.T) {
+	root, procFS := newTestProcFS(t)
+	writeTestProcess(t, root, testProcess{pid: 100, executable: "/usr/bin/java (deleted)", ppid: 1})
+
+	got, err := findProcesses(
+		[]int32{100},
+		procFS,
+		ExecutableFilter{
+			ExecutableName: "java",
+			ExecutablePath: "/usr/bin/java",
+		},
+	)
+	if err != nil {
+		t.Fatalf("findProcesses() error = %v", err)
+	}
+	want := map[int][]int{100: {100}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("findProcesses() = %v, want %v", got, want)
+	}
+}
+
 func TestFindProcessesMatchesExactCommandLineArgument(t *testing.T) {
 	root, procFS := newTestProcFS(t)
 	writeTestProcess(t, root, testProcess{

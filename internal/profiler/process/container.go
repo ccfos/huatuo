@@ -129,6 +129,8 @@ func findProcesses(pids []int32, procFS procfs.FS, filter ExecutableFilter) (map
 		if resolvedExecutable == "" {
 			continue
 		}
+		// The kernel's unlinked-file marker does not change executable identity.
+		resolvedExecutable = strings.TrimSuffix(resolvedExecutable, " (deleted)")
 
 		if !filter.matchesName(filepath.Base(resolvedExecutable)) {
 			continue
