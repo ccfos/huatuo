@@ -18,7 +18,9 @@ import (
 	"debug/elf"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -481,6 +483,35 @@ func TestElfSymbols(t *testing.T) {
 			t.Errorf("elfSymbols sort order: got[%d]=0x%x > got[%d]=0x%x", index-1, got[index-1].Addr, index, got[index].Addr)
 		}
 	}
+}
+
+func TestElfSymbolsFromGoPCLNTAB(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("stripped Go ELF fixture requires Linux")
+	}
+
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "main.go")
+	outputPath := filepath.Join(dir, "fixture")
+	mustWriteFile(t, sourcePath, "package main\n\n//go:noinline\nfunc target() int { return 42 }\nfunc main() { _ = target() }\n")
+	cmd := exec.Command("go", "build", "-ldflags=-s -w", "-o", outputPath, sourcePath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build stripped Go ELF: %v\n%s", err, output)
+	}
+
+	elfFile, err := elf.Open(outputPath)
+	if err != nil {
+		t.Fatalf("elf.Open(%q): %v", outputPath, err)
+	}
+	defer elfFile.Close()
+
+	got := elfSymbols(elfFile)
+	for _, sym := range got {
+		if sym.Name == "main.target" {
+			return
+		}
+	}
+	t.Fatalf("elfSymbols(%q): did not recover main.target from .gopclntab", outputPath)
 }
 
 func TestIsLibPath(t *testing.T) {
