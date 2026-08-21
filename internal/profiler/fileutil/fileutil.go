@@ -57,8 +57,7 @@ func CopyDir(src, dst string) error {
 	})
 }
 
-// CopyFile copies a regular file from src to dst, preserving the source mode
-// and finally forcing 0o644 on the destination.
+// CopyFile copies a regular file from src to dst, preserving the source mode.
 func CopyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -82,7 +81,7 @@ func CopyFile(src, dst string) error {
 	}
 
 	if _, err := in.Stat(); err == nil {
-		if err = os.Chmod(dst, 0o644); err != nil {
+		if err = os.Chmod(dst, inInfo.Mode()); err != nil {
 			return fmt.Errorf("chmod destination file: %w", err)
 		}
 	} else {
