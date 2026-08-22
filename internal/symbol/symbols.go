@@ -25,6 +25,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ianlancetaylor/demangle"
+
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/process"
 	"huatuo-bamai/internal/procfs"
@@ -243,6 +245,11 @@ func elfSymbols(f *elf.File) symbols {
 	}
 	syms.sort()
 	return syms
+}
+
+// demangleSymbolName returns name unchanged when it is not a mangled C++/Rust symbol.
+func demangleSymbolName(name string) string {
+	return demangle.Filter(name, demangle.NoRust)
 }
 
 // backedPaths is the set of pseudo-paths in /proc/<pid>/maps with no ELF symbols.
