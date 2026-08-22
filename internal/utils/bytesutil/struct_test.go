@@ -48,3 +48,11 @@ func TestToBytesUsesLittleEndianLayout(t *testing.T) {
 		})
 	}
 }
+
+func TestToBytesEncodesFixedArrays(t *testing.T) {
+	value := [2]uint32{1, 0x01020304}
+	want := []byte{1, 0, 0, 0, 4, 3, 2, 1}
+	if got := ToBytes(value); !bytes.Equal(got, want) {
+		t.Errorf("ToBytes(%#v) = %x, want %x", value, got, want)
+	}
+}
