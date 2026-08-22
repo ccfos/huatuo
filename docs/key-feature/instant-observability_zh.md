@@ -19,7 +19,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 相比传统的基于内核日志（dmesg/syslog）采集方案，eBPF 事件观测具备更低的数据丢失风险——不会因内核日志缓冲区满溢而丢失关键事件；同时可捕获不会写入内核日志的短暂性异常（如调度 tick 间隔过长）；并提供容器级别的事件关联信息，满足云原生场景下的精准定位需求。
 
-当前支持 12 类事件的持续观测，覆盖 CPU 调度健康状态（sched_tick、softlockup、hungtask）、内存压力（oom、memory_reclaim_events）、网络协议栈（dropwatch、tcp_retransmit、net_rx_latency、netdev_events、netdev_bonding_lacp、netdev_txqueue_timeout）以及硬件可靠性（ras）等方面。
+当前支持 13 类事件的持续观测，覆盖 CPU 调度健康状态（sched_tick、softlockup、hungtask）、内存压力（oom、memory_reclaim_events）、网络协议栈（dropwatch、tcp_retransmit、net_rx_latency、net_tx_latency、netdev_events、netdev_bonding_lacp、netdev_txqueue_timeout）以及硬件可靠性（ras）等方面。
 
 ## 🎯 场景
 
@@ -27,7 +27,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 
 **AI 训练集群硬件故障感知**：在 GPU 训练服务器上，ras 事件持续采集 MCE（Machine Check Exception）、EDAC 内存控制器错误和 PCIe AER（Advanced Error Reporting）错误，对错误进行严重程度分级（Corrected / UncorrectedRecoverable / UncorrectedFatal），在训练任务中断前提前感知硬件老化或单点故障，减少因硬件故障导致的训练任务损失。
 
-**网络性能毛刺分析**：dropwatch 观测内核网络协议栈丢包行为，tcp_retransmit 观测 TCP 重传活动，net_rx_latency 检测单个数据包从网卡驱动到用户态的完整接收路径延迟，按阶段（网卡到内核、内核到 TCP、TCP 到用户态）分别设置阈值（默认 5ms / 10ms / 115ms），精准定位造成业务超时的网络层位置，提升网络问题根因定位效率。
+**网络性能毛刺分析**：dropwatch 观测内核网络协议栈丢包行为，tcp_retransmit 观测 TCP 重传活动，net_rx_latency 检测接收路径延迟，net_tx_latency 检测 TCP、qdisc、设备发送与网卡驱动各阶段的发送路径延迟，按阶段定位造成业务超时的网络层位置。
 
 **主机调度健康观测**：sched_tick（调度 tick 间隔，默认阈值 10ms）、softlockup（CPU 无法调度，约 1 秒）、hungtask（D 状态进程任务挂起）三类事件联合覆盖 CPU 调度路径的异常状态，当系统出现卡顿、响应超时等现象时，自动保留内核调用栈等诊断信息，支持在故障消失后的离线分析。
 
@@ -46,6 +46,11 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 | `net_rx_latency.driver2userspace` | `115`（ms） | 从网卡驱动到用户态拷贝（`skb_copy_datagram_iovec`）的延迟阈值 |
 | `net_rx_latency.excluded_host_netnamespace` | `true` | 是否过滤宿主机网络命名空间（默认仅观测容器） |
 | `net_rx_latency.excluded_container_qos` | `[]` | 需要排除的容器 QoS 级别列表 |
+| `net_tx_latency.sendmsg2qdisc` | `50`（ms） | 从 `tcp_sendmsg` 到 `net_dev_queue` 的延迟阈值 |
+| `net_tx_latency.qdisc2dev_xmit` | `10`（ms） | 从 `net_dev_queue` 到 `net_dev_start_xmit` 的 qdisc 排队阈值 |
+| `net_tx_latency.dev_xmit2nic` | `1`（ms） | 从 `net_dev_start_xmit` 到 `net_dev_xmit` 的驱动发送阈值 |
+| `net_tx_latency.excluded_host_netnamespace` | `true` | 是否过滤宿主机网络命名空间 |
+| `net_tx_latency.excluded_container_qos` | `[]` | 需要排除的容器 QoS 级别列表 |
 | `dropwatch.filter` | `tcp` | 在 dropwatch 事件输出前执行的 tcpdump 风格报文过滤表达式 |
 | `dropwatch.max_events_per_second` | `100` | 每秒最多输出的 dropwatch 事件数；`0` 表示不限速 |
 | `dropwatch.exclude_containers` | `[]` | 预留字段；当前 dropwatch 事件链路不会应用该配置 |
@@ -66,6 +71,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 | `dropwatch` | tracepoint | 内核网络协议栈丢包 | 协议栈丢包导致业务毛刺 |
 | `tcp_retransmit` | tracepoint；TLP 使用可选 kprobe | TCP 重传或 Tail Loss Probe | TCP 丢包、乱序、拥塞及延迟诊断 |
 | `net_rx_latency` | kprobe | 协议栈接收延迟超分段阈值 | 接收延迟引起业务超时 |
+| `net_tx_latency` | kprobe 与 tracepoint | 协议栈发送延迟超分段阈值 | qdisc 或网卡发送延迟引起业务超时 |
 | `netdev_events` | netlink | 网卡链路状态变化 | 网卡物理链路故障 |
 | `netdev_bonding_lacp` | kprobe | LACP 协议状态变化（仅 802.3ad 模式环境） | 物理机与交换机故障边界界定 |
 | `netdev_txqueue_timeout` | kprobe | 网卡发送队列超时 | 网卡发送队列硬件故障 |

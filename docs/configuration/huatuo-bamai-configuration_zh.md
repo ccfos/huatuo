@@ -747,7 +747,36 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
   **说明**：聚焦容器网络流量，减少无关宿主机数据干扰。
 
-#### 8.4 网卡事件监控
+#### 8.4 网络发送延迟追踪
+
+```bash
+# TCP 发送路径的延迟阈值，单位均为毫秒。
+[EventTracing.NetTxLatency]
+	# Sendmsg2Qdisc = 50
+	# Qdisc2DevXmit = 10
+	# DevXmit2Nic = 1
+	# ExcludedContainerQos = []
+	ExcludedContainerQos = ["besteffort"]
+	# ExcludedHostNetnamespace = true
+```
+
+- **Sendmsg2Qdisc**：从 `tcp_sendmsg` 入口到数据包到达
+  `net_dev_queue` 的延迟阈值，默认 50ms。
+- **Qdisc2DevXmit**：数据包在 `net_dev_queue` 与
+  `net_dev_start_xmit` 之间排队的延迟阈值，默认 10ms。
+- **DevXmit2Nic**：网卡驱动在 `net_dev_start_xmit` 与
+  `net_dev_xmit` 之间执行发送的延迟阈值，默认 1ms。
+- **ExcludedContainerQos**：需要排除的容器 QoS 级别，取值与接收延迟
+  追踪相同且不区分大小写，默认为 `[]`。
+- **ExcludedHostNetnamespace**：是否排除宿主机网络命名空间，默认为
+  `true`。
+
+该追踪器通过 `stage` 标签暴露
+`huatuo_bamai_net_tx_latency_events_total`、
+`huatuo_bamai_net_tx_latency_seconds_total` 和
+`huatuo_bamai_net_tx_latency_last_seconds` 三组 Prometheus 指标。
+
+#### 8.5 网卡事件监控
 
 ```bash
 # netdev events
@@ -768,7 +797,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
   **说明**：精确指定感兴趣的网络接口，支持 bond、lo 等。
 
-#### 8.5 丢包监控（[EventTracing.Dropwatch]）
+#### 8.6 丢包监控（[EventTracing.Dropwatch]）
 
 ```toml
 [EventTracing.Dropwatch]
@@ -798,7 +827,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
   默认值：`[]`。该字段存在于配置结构中，但当前 dropwatch 事件链路既不读取也不转发它，因此配置后不会生效。运维侧如需按调用栈抑制 dropwatch 噪声，应使用 `EventTracing.IssuesList`。
 
-#### 8.6 TCP 重传追踪（[EventTracing.TCPRetransmit]）
+#### 8.7 TCP 重传追踪（[EventTracing.TCPRetransmit]）
 
 ```bash
 [EventTracing.TCPRetransmit]
@@ -827,7 +856,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
   默认 100，设置为 0 表示不限速。超限时 `tcpshark` 会输出 `rate limit hit` 日志。
 
-#### 8.7 硬件错误事件追踪（EventTracing.Ras）
+#### 8.8 硬件错误事件追踪（EventTracing.Ras）
 
 ```bash
 # ras
@@ -851,7 +880,7 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 
   **说明**：THR 事件由 CPU 本地 APIC 阈值中断触发，在硬件出现纠正性错误时可能以极高频率产生。该冷却时间用于防止存储系统被大量重复记录淹没，同时保证关键事件仍能被捕获。调低该值可获得更实时的事件记录，但需注意存储压力；在错误频发的环境中建议适当调高。
 
-#### 8.8 已知问题过滤（IssuesList）
+#### 8.9 已知问题过滤（IssuesList）
 
 ```bash
 # Linux kernel event tracing configuration.
