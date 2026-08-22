@@ -180,7 +180,43 @@ API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监
 配置。`Index` 默认为 `huatuo_bamai`，并且应与采集端索引一致。禁用存储
 时，不注册原始 profile 和火焰图查询路由。
 
-### 6. 认证与授权
+### 6. Doris
+
+```toml
+# Optional Apache Doris backend for querying profiling data.
+[Doris]
+    # MySQLAddr = "127.0.0.1:9030"
+    # HTTPAddr = "127.0.0.1:8030"
+    # Database = "huatuo_bamai"
+    # Username = "root"
+    # Password = "REPLACE_WITH_PASSWORD"
+    # PartitionField = "uploaded_time"
+    # RetentionDays = 30
+    # Buckets = 4
+    # Replicas = 1
+```
+
+huatuo-apiserver 从该后端读取性能剖析数据并生成火焰图。**同时配置 Doris 与 Elasticsearch 时优先使用 Doris**，因此从 ES 迁移到 Doris 时可以保留原有的 `[Elasticsearch]` 配置，只新增 `[Doris]` 段即可切换读取端。
+
+- **MySQLAddr**：FE 查询端口地址，格式为 `host:port`。
+
+  无默认值。与 HTTPAddr 必须同时配置。
+
+- **HTTPAddr**：FE HTTP 端口地址，格式为 `host:port`。
+
+  无默认值。
+
+  **说明**：apiserver 本身只做查询，但建表逻辑与 Agent 共用同一份实现，因此仍需该地址。
+
+- **Database**：数据库名。默认值为 huatuo_bamai。
+
+- **Username** / **Password**：认证账号与密码。无默认值。
+
+- **PartitionField** / **RetentionDays** / **Buckets** / **Replicas**：表结构参数，含义与 huatuo-bamai 的同名配置一致。
+
+  **说明**：这几项**必须与 huatuo-bamai 的配置保持一致**。两端都会在启动时执行建表语句（`CREATE TABLE IF NOT EXISTS`），配置不一致时先启动的一方决定实际表结构，容易造成困惑。
+
+### 7. 认证与授权
 
 ```toml
 # Authentication configuration.
@@ -227,7 +263,7 @@ API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监
 `/healthz`、`/readyz`、`/metrics` 和 `/version` 为公开路由。
 `/debug/pprof/**` 和 `/v1/profiles/flamegraph/**` 仅管理员可访问。
 
-### 7. 性能剖析
+### 8. 性能剖析
 
 ```toml
 # Profiling subprocess configuration.

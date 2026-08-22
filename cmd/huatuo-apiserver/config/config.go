@@ -99,6 +99,7 @@ type Config struct {
 	Jobs          JobsConfig
 	Agent         AgentConfig
 	Elasticsearch internalconfig.ElasticsearchConfig
+	Doris         internalconfig.DorisConfig
 	Profiling     ProfilingConfig
 }
 
@@ -167,6 +168,9 @@ func (c *Config) Validate() error {
 	}
 	if err := c.Profiling.Validate(); err != nil {
 		return fmt.Errorf("validating profiling config: %w", err)
+	}
+	if err := c.Doris.Validate(); err != nil {
+		return fmt.Errorf("validating Doris config: %w", err)
 	}
 	if err := c.Elasticsearch.Validate(); err != nil {
 		return fmt.Errorf("validating Elasticsearch config: %w", err)
