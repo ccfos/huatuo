@@ -14,12 +14,8 @@
 package autotracing
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"huatuo-bamai/internal/log"
@@ -44,39 +40,6 @@ type (
 		TopMemoryUsage []*processMemInfo `json:"top_memory_usage"`
 	}
 )
-
-// pass required keys and readMemInfo will return their values according to /proc/meminfo
-func readMemInfo(requiredKeys map[string]bool) (map[string]int, error) {
-	file, err := os.Open("/proc/meminfo")
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	results := make(map[string]int)
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		key := strings.Trim(fields[0], ":")
-		if _, ok := requiredKeys[key]; ok {
-			value, err := strconv.Atoi(strings.Trim(fields[1], " kB"))
-			if err != nil {
-				return nil, err
-			}
-			results[key] = value
-			if len(results) == len(requiredKeys) {
-				break
-			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return results, nil
-}
 
 func checkAndRecordMemoryUsage(currentIndex *int, isHistoryFull *bool,
 	memTotal int, history []int, historyWindowLength, topNProcesses int,
