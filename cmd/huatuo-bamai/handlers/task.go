@@ -46,7 +46,7 @@ func NewTaskHandler() *TaskHandler {
 type NewTaskReq struct {
 	RequestID  string   `json:"request_id" binding:"omitempty,max=128"`
 	TracerName string   `json:"tracer_name" binding:"required"`
-	Timeout    int      `json:"timeout" binding:"required,number,lt=3600"`
+	Timeout    int      `json:"timeout" binding:"required,number,gt=0,lt=3600"`
 	DataType   string   `json:"data_type" binding:"required"`
 	TracerArgs []string `json:"trace_args" binding:"omitempty"`
 }
