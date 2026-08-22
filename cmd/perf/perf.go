@@ -26,9 +26,11 @@ import (
 	"golang.org/x/sys/unix"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/command/container"
 	flamegraphtui "huatuo-bamai/internal/flamegraph/tui"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/version"
 )
 
@@ -44,18 +46,33 @@ var (
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/perf.c -o $BPF_DIR/perf.o
 
+func cgroupTarget(c *pod.Container) (css, cgroupID uint64, err error) {
+	css = c.CgroupCss["cpu"]
+	cgroupID = c.CgroupID
+	if cgroupID == 0 && cgroups.CgroupMode() == cgroups.Unified {
+		return 0, 0, fmt.Errorf("container %s has no cgroup v2 leaf id", c.ID)
+	}
+	if css == 0 && cgroupID == 0 {
+		return 0, 0, fmt.Errorf("container %s has no cpu cgroup key", c.ID)
+	}
+	return css, cgroupID, nil
+}
+
 func mainAction(ctx *cli.Context) error {
 	bpfPath := ctx.String("bpf-path")
 	optPid := ctx.Uint64("pid")
 	optDuration := ctx.Int("duration")
 
-	var targetCssAddr uint64
+	var targetCssAddr, targetCgroupID uint64
 	if containerID := ctx.String("container-id"); containerID != "" {
 		c, err := container.GetContainerByID(ctx.String("huatuo-api-address"), containerID)
 		if err != nil {
 			return err
 		}
-		targetCssAddr = c.CgroupCss["cpu"]
+		targetCssAddr, targetCgroupID, err = cgroupTarget(c)
+		if err != nil {
+			return err
+		}
 	}
 
 	if err := bpf.Init(&bpf.Option{
@@ -70,7 +87,16 @@ func mainAction(ctx *cli.Context) error {
 		return fmt.Errorf("read bpf object: %w", err)
 	}
 
-	b, err := bpf.LoadBPFFromBytes(bpfPath, bpfBytes, map[string]any{"css": targetCssAddr, "pid": optPid})
+	consts, err := pod.CgroupBPFConstants(map[string]any{
+		"cgroup_id": targetCgroupID,
+		"css":       targetCssAddr,
+		"pid":       optPid,
+	})
+	if err != nil {
+		return err
+	}
+
+	b, err := bpf.LoadBPFFromBytes(bpfPath, bpfBytes, consts)
 	if err != nil {
 		return fmt.Errorf("failed to load bpf: %w", err)
 	}

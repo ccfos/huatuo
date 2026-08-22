@@ -15,18 +15,24 @@
 package pod
 
 import (
+	"encoding/binary"
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 
 	"huatuo-bamai/internal/cgroups"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
 	defaultSystemdSuffix  = ".slice"
 	defaultNodeCgroupName = "kubepods"
+	cgroupV2HandleSize    = 8
 )
 
 // slices: {"kubepods", "burstable", "pod1234-abcd-5678-efgh"}
@@ -77,6 +83,102 @@ func (p cgroupPath) ToSystemd() string {
 
 func (p cgroupPath) ToCgroupfs() string {
 	return "/" + path.Join(p.slices...)
+}
+
+func defaultCgroupIDByPID(pid int) (uint64, error) {
+	paths, err := cgroups.PathsForPID(pid)
+	if err != nil {
+		return 0, err
+	}
+	if paths.Unified == "" {
+		return 0, nil
+	}
+
+	mountInfo, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return 0, err
+	}
+
+	path, err := cgroup2PathOnMount(string(mountInfo), paths.Unified)
+	if err != nil {
+		return 0, fmt.Errorf("resolve cgroup v2 path %q: %w", paths.Unified, err)
+	}
+
+	cgroupID, err := cgroupIDFromFileHandle(path)
+	if err != nil {
+		return 0, fmt.Errorf("get cgroup v2 id for %q: %w", path, err)
+	}
+	return cgroupID, nil
+}
+
+func cgroupIDFromFileHandle(cgroupPath string) (uint64, error) {
+	handle, _, err := unix.NameToHandleAt(unix.AT_FDCWD, cgroupPath, 0)
+	if err != nil {
+		return 0, fmt.Errorf("get cgroup file handle %q: %w", cgroupPath, err)
+	}
+	return cgroupIDFromHandleBytes(handle.Bytes())
+}
+
+func cgroupIDFromHandleBytes(handle []byte) (uint64, error) {
+	if len(handle) != cgroupV2HandleSize {
+		return 0, fmt.Errorf("unexpected cgroup file handle size %d", len(handle))
+	}
+	return binary.NativeEndian.Uint64(handle), nil
+}
+
+func cgroup2PathOnMount(mountInfo, cgroupPath string) (string, error) {
+	cgroupPath = filepath.Clean(cgroupPath)
+	if !strings.HasPrefix(cgroupPath, "/") {
+		return "", fmt.Errorf("invalid cgroup2 path %q", cgroupPath)
+	}
+
+	for _, line := range strings.Split(mountInfo, "\n") {
+		before, after, found := strings.Cut(line, " - ")
+		if !found {
+			continue
+		}
+		post := strings.Fields(after)
+		if len(post) == 0 || post[0] != "cgroup2" {
+			continue
+		}
+		pre := strings.Fields(before)
+		if len(pre) < 5 {
+			continue
+		}
+
+		root := unescapeMountInfoPath(pre[3])
+		mountPoint := unescapeMountInfoPath(pre[4])
+		relative, ok := cgroupPathRelativeToMountRoot(cgroupPath, root)
+		if !ok {
+			continue
+		}
+		return filepath.Join(mountPoint, relative), nil
+	}
+
+	return "", fmt.Errorf("cgroup2 mount for %q not found", cgroupPath)
+}
+
+func cgroupPathRelativeToMountRoot(cgroupPath, root string) (string, bool) {
+	root = filepath.Clean(root)
+	if root == "/" {
+		return strings.TrimPrefix(cgroupPath, "/"), true
+	}
+	if cgroupPath == root {
+		return "", true
+	}
+	if strings.HasPrefix(cgroupPath, root+"/") {
+		return strings.TrimPrefix(cgroupPath, root+"/"), true
+	}
+	return "", false
+}
+
+func unescapeMountInfoPath(value string) string {
+	return strings.NewReplacer(
+		`\040`, " ",
+		`\011`, "\t",
+		`\012`, "\n",
+		`\134`, `\`,
+	).Replace(value)
 }
 
 func containerCgroupPathsByID(containerID string) (*cgroups.ProcessPaths, error) {

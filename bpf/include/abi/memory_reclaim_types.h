@@ -16,11 +16,12 @@
 #define __BPF_ABI_MEMORY_RECLAIM_H__
 
 #include "bpf_abi.h"
+#include "container_cgroup_key.h"
 
 struct memory_reclaim_event {
 	u8 comm[COMPAT_TASK_COMM_LEN];
 	u64 reclaim_duration_ns;
-	u64 cpu_css_addr;
+	struct container_cgroup_key key;
 	u32 tgid;
 	u32 tid;
 };
