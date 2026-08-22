@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"sync"
@@ -106,6 +107,7 @@ type Server struct {
 	state           serverState
 	activeExecution *serveExecution
 	config          Config
+	authSvc         *authService
 }
 
 // Start binds addr before returning and serves requests in the background.
@@ -219,8 +221,11 @@ func NewServer(cfg *Config) *Server {
 		promRegistry: effectiveConfig.PromReg,
 		config:       effectiveConfig,
 	}
+	if effectiveConfig.RequireAuth || len(effectiveConfig.AuthUsers) > 0 {
+		s.authSvc = NewAuthService(effectiveConfig.AuthUsers)
+	}
 
-	s.engine.Use(buildMiddlewareChain(&effectiveConfig)...)
+	s.engine.Use(buildMiddlewareChain(&effectiveConfig, s.authSvc)...)
 	if effectiveConfig.EnablePProf {
 		pprof.Register(s.engine)
 	}
@@ -270,6 +275,36 @@ func (s *Server) Group() *routerGroup {
 
 // MethodAny registers a route for all HTTP methods supported by Gin.
 const MethodAny = "*"
+
+// UserManager returns the user/API-key registry used for authentication, or
+// nil when authentication is disabled. Callers may type-assert against the
+// UserManager interface to administer users and API keys.
+func (s *Server) UserManager() UserManager {
+	if s.authSvc == nil {
+		return nil
+	}
+	return s.authSvc
+}
+
+// StaticFS serves files from fsys at the given URL path using gin's StaticFS.
+// relativePath must not contain URL parameters. The handler is registered on
+// the root engine so it participates in the normal routing/middleware chain.
+func (s *Server) StaticFS(relativePath string, fsys fs.FS) {
+	s.engine.StaticFS(relativePath, http.FS(fsys))
+}
+
+// Redirect registers a route that performs an HTTP redirect to targetPath.
+func (s *Server) Redirect(relativePath, targetPath string, code int) {
+	s.engine.GET(relativePath, func(c *httpGin.Context) {
+		c.Redirect(code, targetPath)
+	})
+}
+
+// HTTPHandler returns the underlying http.Handler. Useful for embedding the
+// server in another process and for in-process testing with httptest.
+func (s *Server) HTTPHandler() http.Handler {
+	return s.engine
+}
 
 // Route defines an HTTP route.
 type Route struct {
