@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -63,21 +63,23 @@ func GetSysrqMsg(command string) (string, error) {
 		return "", err
 	}
 
-	fd := kmsgFile.Fd()
-	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFL, 0)
-	if errno != 0 {
+	fd := int(kmsgFile.Fd())
+	kmsgs, err := readKmsgs(fd)
+	if err != nil {
 		return "", err
 	}
+	return formatKmsgs(kmsgs), nil
+}
 
-	_, _, errno = syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_SETFL, flags|syscall.O_NONBLOCK)
-	if errno != 0 {
-		return "", err
+func readKmsgs(fd int) (string, error) {
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		return "", fmt.Errorf("set kmsg nonblocking: %w", err)
 	}
 
 	var buffer strings.Builder
 	buf := make([]byte, 1024)
 	for {
-		n, err := syscall.Read(int(fd), buf)
+		n, err := syscall.Read(fd, buf)
 		if n > 0 {
 			buffer.Write(buf[:n])
 		}
@@ -89,7 +91,7 @@ func GetSysrqMsg(command string) (string, error) {
 		}
 	}
 
-	return formatKmsgs(buffer.String()), nil
+	return buffer.String(), nil
 }
 
 // format kmsg to human-readable format
