@@ -64,6 +64,10 @@ type ProfilerContext struct {
 	OffCPUMinDurationUS       uint64
 	OffCPUStatsEnabled        bool
 	PhysicalMemoryProbability uint
+	FollowForks               bool
+	ForkMaxProcesses          uint
+	ForkRate                  uint
+	ForkBurst                 uint
 
 	TracerID string
 
@@ -194,6 +198,10 @@ func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerCon
 		OffCPUMinDurationUS:       cliCtx.Uint64("offcpu-min-duration-us"),
 		OffCPUStatsEnabled:        cliCtx.Bool("offcpu-stats"),
 		PhysicalMemoryProbability: cliCtx.Uint("physical-memory-probability"),
+		FollowForks:               cliCtx.Bool("follow-forks"),
+		ForkMaxProcesses:          cliCtx.Uint("fork-max-procs"),
+		ForkRate:                  cliCtx.Uint("fork-rate"),
+		ForkBurst:                 cliCtx.Uint("fork-burst"),
 
 		TracerID: cliCtx.String("tracer-id"),
 
