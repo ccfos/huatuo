@@ -90,4 +90,14 @@ func TestDocumentStoreMapperFieldsNormalizesTimes(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Fields() mismatch (-want +got):\n%s", diff)
 	}
+
+	for _, field := range []string{"time", "tracer_time"} {
+		value, ok := got[field].(time.Time)
+		if !ok {
+			t.Fatalf("Fields()[%q] = %T, want time.Time", field, got[field])
+		}
+		if value.Location() != time.UTC {
+			t.Errorf("Fields()[%q] location = %v, want UTC", field, value.Location())
+		}
+	}
 }
