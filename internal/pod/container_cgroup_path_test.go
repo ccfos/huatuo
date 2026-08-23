@@ -18,21 +18,21 @@ import "testing"
 
 func TestCgroupPathRenderers(t *testing.T) {
 	tests := []struct {
-		name string
-		path cgroupPath
-		wantSystemd string
+		name         string
+		path         cgroupPath
+		wantSystemd  string
 		wantCgroupfs string
 	}{
 		{
-			name: "pod path with systemd scope",
-			path: cgroupPath{slices: []string{"kubepods", "burstable", "pod1234-abcd"}, scope: "cri-containerd-a.scope"},
-			wantSystemd: "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod1234_abcd.slice/cri-containerd-a.scope",
+			name:         "pod path with systemd scope",
+			path:         cgroupPath{slices: []string{"kubepods", "burstable", "pod1234-abcd"}, scope: "cri-containerd-a.scope"},
+			wantSystemd:  "/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod1234_abcd.slice/cri-containerd-a.scope",
 			wantCgroupfs: "/kubepods/burstable/pod1234-abcd",
 		},
 		{
-			name: "single slice without scope",
-			path: cgroupPath{slices: []string{"kubepods"}},
-			wantSystemd: "/kubepods.slice",
+			name:         "single slice without scope",
+			path:         cgroupPath{slices: []string{"kubepods"}},
+			wantSystemd:  "/kubepods.slice",
 			wantCgroupfs: "/kubepods",
 		},
 	}
