@@ -36,8 +36,11 @@ func TestPatchStubSplicesFilterBeforeStub(t *testing.T) {
 	if got, want := len(program.Instructions), 4; got != want {
 		t.Fatalf("instruction count = %d, want %d", got, want)
 	}
-	if got := program.Instructions[2].Symbol(); got != L2StubSymbol {
-		t.Errorf("stub symbol = %q, want %q", got, L2StubSymbol)
+	if got := program.Instructions[0].Symbol(); got != L2StubSymbol {
+		t.Errorf("first injected instruction symbol = %q, want %q", got, L2StubSymbol)
+	}
+	if got := program.Instructions[2].Symbol(); got != "" {
+		t.Errorf("original stub symbol = %q, want empty", got)
 	}
 }
 
