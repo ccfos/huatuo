@@ -21,10 +21,10 @@ import (
 
 func TestPredefinedAPIErrorsExposeTheirContract(t *testing.T) {
 	tests := []struct {
-		name string
-		err  *APIError
-		code int
-		status int
+		name    string
+		err     *APIError
+		code    int
+		status  int
 		message string
 	}{
 		{name: "invalid request", err: ErrInvalidRequest, code: 400, status: http.StatusBadRequest, message: "invalid request"},
