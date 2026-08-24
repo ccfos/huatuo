@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	httpGin "github.com/gin-gonic/gin"
+
+	authn "huatuo-bamai/internal/auth"
 )
 
 func TestAuthServiceAuthenticate(t *testing.T) {
@@ -346,6 +348,38 @@ func TestNewAuthMiddlewarePublicRecursiveWildcardBoundary(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestNewAuthMiddlewareStoresPrincipalInRequestContext(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+	service := newTestAuthService()
+	engine := httpGin.New()
+
+	var got authn.Principal
+	var found bool
+	engine.GET(
+		"/v1/tasks/:taskID",
+		wrapHandler(NewAuthMiddleware(service)),
+		wrapHandler(func(ctx *Context) {
+			got, found = authn.PrincipalFromContext(ctx.Request().Context())
+			ctx.Status(http.StatusNoContent)
+		}),
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/tasks/task-2026", http.NoBody)
+	request.Header.Set("Authorization", "Bearer viewer-secret")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if !found {
+		t.Fatal("request context has no authenticated principal")
+	}
+	if got.ID != "viewer-2026" {
+		t.Errorf("principal ID = %q, want %q", got.ID, "viewer-2026")
 	}
 }
 
