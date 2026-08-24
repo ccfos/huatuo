@@ -454,7 +454,7 @@ func metaxCollectDieMetrics(ctx context.Context, gpuId, dieId uint32, series gpu
 				return nil, fmt.Errorf("failed to %s: %w", operationListClocks, err)
 			}
 			log.Debugf("operation %s not supported on gpu %d die %d", operationListClocks, gpuId, dieId)
-		} else {
+		} else if len(values) > 0 {
 			metrics = append(
 				metrics,
 				metric.NewGaugeData("clock_mhz", float64(values[0]), "GPU clock.", map[string]string{
