@@ -177,6 +177,41 @@ type ioControlWaitSnapshot map[ioControlWaitKey][]ioControlWaitCounters
 
 var errIOControlSnapshotUnstable = errors.New("IO counter snapshot changed during traversal")
 
+func captureIOControlWaitSnapshot(
+	object bpf.BPF, reader *ioControlHashReader, mapName string, possibleCPUs int,
+) (ioControlWaitSnapshot, error) {
+	mapID := object.MapIDByName(mapName)
+	if mapID == 0 {
+		return nil, fmt.Errorf("%w: map %s is unavailable", types.ErrTracingStopped, mapName)
+	}
+	items, err := reader.dump(object, mapID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := make(ioControlWaitSnapshot, len(items))
+	for _, item := range items {
+		var key ioControlWaitKey
+		if err := decodeBPFMapData(item.Key, &key); err != nil {
+			return nil, fmt.Errorf("%w: decode %s key: %w", types.ErrTracingStopped, mapName, err)
+		}
+		if _, exists := snapshot[key]; exists {
+			return nil, fmt.Errorf("%w: duplicate %s key: %+v", errIOControlSnapshotUnstable, mapName, key)
+		}
+		if key.CSS == 0 || key.CSSSerial == 0 || key.Reserved != 0 {
+			return nil, fmt.Errorf("%w: invalid %s identity: %+v", types.ErrTracingStopped, mapName, key)
+		}
+		if _, ok := ioOperationName(key.Operation); !ok {
+			return nil, fmt.Errorf("%w: invalid IO operation: %d", types.ErrTracingStopped, key.Operation)
+		}
+		counters, err := decodeIOControlWaitCounters(item.Value, possibleCPUs)
+		if err != nil {
+			return nil, fmt.Errorf("%w: decode %s value: %w", types.ErrTracingStopped, mapName, err)
+		}
+		snapshot[key] = counters
+	}
+	return snapshot, nil
+}
+
 func buildIOControlWaitMetrics(
 	previous, current ioControlWaitSnapshot,
 	containers map[uint64]*pod.Container,
@@ -276,6 +311,45 @@ func decodeIOControlWaitCounters(data []byte, possibleCPUs int) ([]ioControlWait
 		}
 	}
 	return counters, nil
+}
+
+// Only for non-preallocated HASH/PERCPU_HASH maps. Batch copies protect a row
+// from deletion and immediate reuse; older allocators provide that protection
+// through RCU, allowing single lookups when the batch API is absent.
+type ioControlHashReader struct {
+	// The owning collector serializes reads, including cleanup traversals.
+	singleLookup bool
+}
+
+func (r *ioControlHashReader) dump(object bpf.BPF, mapID uint32) ([]bpf.MapItem, error) {
+	if !r.singleLookup {
+		items, err := object.DumpMapBatch(mapID)
+		if !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.EOPNOTSUPP) {
+			return items, err
+		}
+		// Check the actual interface first; BTF is needed only for fallback.
+		spec, loadErr := btf.LoadKernelSpec()
+		if loadErr != nil {
+			return nil, fmt.Errorf("check IO single lookup after %w: %w", err, loadErr)
+		}
+		if err := checkIOControlSingleLookup(spec); err != nil {
+			return nil, err
+		}
+		r.singleLookup = true
+	}
+	return object.DumpMap(mapID)
+}
+
+func checkIOControlSingleLookup(spec *btf.Spec) error {
+	member, err := ioControlHashAllocatorMember(spec)
+	if err != nil {
+		return fmt.Errorf("%w: IO single lookup: %w", types.ErrTracingStopped, err)
+	}
+	if member != nil {
+		return fmt.Errorf("%w: IO requires batch map lookup: bpf_htab.%s uses bpf_mem_alloc with immediate node reuse",
+			types.ErrTracingStopped, member.Name)
+	}
+	return nil
 }
 
 // The ordinary HASH layout also backs PERCPU_HASH. A bpf_mem_alloc member
