@@ -24,7 +24,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"runtime"
 	"time"
+	"unsafe"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/log"
@@ -34,6 +36,7 @@ import (
 	"github.com/ccfos/huatuo/pkg/metric"
 	"github.com/ccfos/huatuo/pkg/types"
 
+	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/btf"
 	"golang.org/x/sys/unix"
 )
@@ -177,6 +180,58 @@ type ioControlWaitSnapshot map[ioControlWaitKey][]ioControlWaitCounters
 
 var errIOControlSnapshotUnstable = errors.New("IO counter snapshot changed during traversal")
 
+const ioControlSnapshotAttempts = 3
+
+func captureIOControlWaitSnapshot(
+	object bpf.BPF, reader *ioControlHashReader, mapName string, possibleCPUs int,
+) (ioControlWaitSnapshot, error) {
+	var err error
+	for range ioControlSnapshotAttempts {
+		var snapshot ioControlWaitSnapshot
+		snapshot, err = readIOControlWaitSnapshot(object, reader, mapName, possibleCPUs)
+		if !errors.Is(err, errIOControlSnapshotUnstable) {
+			return snapshot, err
+		}
+	}
+	return nil, fmt.Errorf("capture %s snapshot after %d attempts: %w",
+		mapName, ioControlSnapshotAttempts, err)
+}
+
+func readIOControlWaitSnapshot(
+	object bpf.BPF, reader *ioControlHashReader, mapName string, possibleCPUs int,
+) (ioControlWaitSnapshot, error) {
+	mapID := object.MapIDByName(mapName)
+	if mapID == 0 {
+		return nil, fmt.Errorf("%w: map %s is unavailable", types.ErrTracingStopped, mapName)
+	}
+	items, err := reader.dump(object, mapID)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := make(ioControlWaitSnapshot, len(items))
+	for _, item := range items {
+		var key ioControlWaitKey
+		if err := decodeBPFMapData(item.Key, &key); err != nil {
+			return nil, fmt.Errorf("%w: decode %s key: %w", types.ErrTracingStopped, mapName, err)
+		}
+		if _, exists := snapshot[key]; exists {
+			return nil, fmt.Errorf("%w: duplicate %s key: %+v", errIOControlSnapshotUnstable, mapName, key)
+		}
+		if key.CSS == 0 || key.CSSSerial == 0 || key.Reserved != 0 {
+			return nil, fmt.Errorf("%w: invalid %s identity: %+v", types.ErrTracingStopped, mapName, key)
+		}
+		if _, ok := ioOperationName(key.Operation); !ok {
+			return nil, fmt.Errorf("%w: invalid IO operation: %d", types.ErrTracingStopped, key.Operation)
+		}
+		counters, err := decodeIOControlWaitCounters(item.Value, possibleCPUs)
+		if err != nil {
+			return nil, fmt.Errorf("%w: decode %s value: %w", types.ErrTracingStopped, mapName, err)
+		}
+		snapshot[key] = counters
+	}
+	return snapshot, nil
+}
+
 func buildIOControlWaitMetrics(
 	previous, current ioControlWaitSnapshot,
 	containers map[uint64]*pod.Container,
@@ -276,6 +331,157 @@ func decodeIOControlWaitCounters(data []byte, possibleCPUs int) ([]ioControlWait
 		}
 	}
 	return counters, nil
+}
+
+// Only for non-preallocated HASH/PERCPU_HASH maps. Batch copies protect a row
+// from deletion and immediate reuse; older allocators provide that protection
+// through RCU, allowing single lookups when the batch API is absent.
+type ioControlHashReader struct {
+	// The owning collector serializes reads, including cleanup traversals.
+	singleLookup bool
+	lookupBatch  func(uint32) ([]bpf.MapItem, error)
+}
+
+func (r *ioControlHashReader) dump(object bpf.BPF, mapID uint32) ([]bpf.MapItem, error) {
+	if !r.singleLookup {
+		lookup := r.lookupBatch
+		if lookup == nil {
+			lookup = dumpIOControlHashBatch
+		}
+		items, err := lookup(mapID)
+		if !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.EOPNOTSUPP) {
+			return items, err
+		}
+		// Check the actual interface first; BTF is needed only for fallback.
+		spec, loadErr := btf.LoadKernelSpec()
+		if loadErr != nil {
+			return nil, fmt.Errorf("check IO single lookup after %w: %w", err, loadErr)
+		}
+		if err := checkIOControlSingleLookup(spec); err != nil {
+			return nil, err
+		}
+		r.singleLookup = true
+	}
+	return object.DumpMap(mapID)
+}
+
+// The collector lock keeps the owning object alive while opening a temporary
+// map reference. Batch copying holds the HASH bucket lock against node reuse.
+func dumpIOControlHashBatch(mapID uint32) ([]bpf.MapItem, error) {
+	m, err := ebpf.NewMapFromID(ebpf.MapID(mapID))
+	if err != nil {
+		return nil, fmt.Errorf("open IO counter map %d: %w", mapID, err)
+	}
+	defer m.Close()
+	return dumpHashMapBatch(m)
+}
+
+func dumpHashMapBatch(m *ebpf.Map) ([]bpf.MapItem, error) {
+	if m.Type() != ebpf.Hash && m.Type() != ebpf.PerCPUHash {
+		return nil, unix.EOPNOTSUPP
+	}
+	keySize, valueSize := int(m.KeySize()), int(m.ValueSize())
+	if m.Type() == ebpf.PerCPUHash {
+		cpus, err := ebpf.PossibleCPU()
+		if err != nil {
+			return nil, err
+		}
+		valueSize = (valueSize + 7) / 8 * 8 * cpus
+	}
+	maxEntries := int(m.MaxEntries())
+	batchSize := min(128, maxEntries)
+	keys := make([]byte, batchSize*keySize)
+	values := make([]byte, batchSize*valueSize)
+	var items []bpf.MapItem
+	var cursor uint32
+	var previous *uint32
+	for {
+		count, err := lookupHashMapBatch(m.FD(), previous, &cursor,
+			keys, values, uint32(batchSize))
+		if errors.Is(err, unix.ENOSPC) && batchSize < maxEntries {
+			// A bucket must fit in one batch. Grow only when a collision chain
+			// exceeds the bounded initial buffer, retaining the same cursor.
+			batchSize = min(batchSize*2, maxEntries)
+			keys = make([]byte, batchSize*keySize)
+			values = make([]byte, batchSize*valueSize)
+			continue
+		}
+		if err != nil && !errors.Is(err, unix.ENOENT) {
+			return nil, err
+		}
+		if count > uint32(batchSize) || len(items)+int(count) > maxEntries {
+			return nil, ebpf.ErrIterationAborted
+		}
+		for index := range int(count) {
+			items = append(items, bpf.MapItem{
+				Key:   append([]byte(nil), keys[index*keySize:(index+1)*keySize]...),
+				Value: append([]byte(nil), values[index*valueSize:(index+1)*valueSize]...),
+			})
+		}
+		// ENOENT may accompany a populated final batch.
+		if errors.Is(err, unix.ENOENT) {
+			return items, nil
+		}
+		if count == 0 {
+			return nil, fmt.Errorf("batch map lookup made no progress: %w", ebpf.ErrIterationAborted)
+		}
+		previous = &cursor
+	}
+}
+
+// These fields mirror union bpf_attr.batch. Raw buffers retain kernel errno so
+// absence of batch support stays distinct from permission and resource errors.
+type mapLookupBatchAttr struct {
+	InBatch   uint64
+	OutBatch  uint64
+	Keys      uint64
+	Values    uint64
+	Count     uint32
+	MapFD     uint32
+	ElemFlags uint64
+	Flags     uint64
+}
+
+func lookupHashMapBatch(fd int, previous, cursor *uint32,
+	keys, values []byte, count uint32,
+) (uint32, error) {
+	var pinned runtime.Pinner
+	pinned.Pin(cursor)
+	pinned.Pin(&keys[0])
+	pinned.Pin(&values[0])
+	defer pinned.Unpin()
+	attr := mapLookupBatchAttr{
+		OutBatch: uint64(uintptr(unsafe.Pointer(cursor))),
+		Keys:     uint64(uintptr(unsafe.Pointer(&keys[0]))),
+		Values:   uint64(uintptr(unsafe.Pointer(&values[0]))),
+		Count:    count,
+		MapFD:    uint32(fd),
+	}
+	if previous != nil {
+		pinned.Pin(previous)
+		attr.InBatch = uint64(uintptr(unsafe.Pointer(previous)))
+	}
+	// Attribute pointers are integer fields: pin their storage across the
+	// syscall so stack movement or collection cannot invalidate them.
+	pinned.Pin(&attr)
+	_, _, errno := unix.Syscall(unix.SYS_BPF, unix.BPF_MAP_LOOKUP_BATCH,
+		uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr))
+	if errno != 0 {
+		return attr.Count, errno
+	}
+	return attr.Count, nil
+}
+
+func checkIOControlSingleLookup(spec *btf.Spec) error {
+	member, err := ioControlHashAllocatorMember(spec)
+	if err != nil {
+		return fmt.Errorf("%w: IO single lookup: %w", types.ErrTracingStopped, err)
+	}
+	if member != nil {
+		return fmt.Errorf("%w: IO requires batch map lookup: bpf_htab.%s uses bpf_mem_alloc with immediate node reuse",
+			types.ErrTracingStopped, member.Name)
+	}
+	return nil
 }
 
 // The ordinary HASH layout also backs PERCPU_HASH. A bpf_mem_alloc member
