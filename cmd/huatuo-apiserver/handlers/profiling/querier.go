@@ -34,7 +34,7 @@ func handleProto[Request, Response any](
 ) error {
 	req := new(Request)
 	if err := ctx.ShouldBindBodyWith(req, binding.ProtoBuf); err != nil {
-		return response.ErrInvalidRequest.WithMessage("invalid protobuf request")
+		return response.BindingErrorWithMessage(err, "invalid protobuf request")
 	}
 
 	resp, err := invoke(ctx.Request().Context(), req)

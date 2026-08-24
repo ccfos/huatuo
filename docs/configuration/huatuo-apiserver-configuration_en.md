@@ -77,7 +77,9 @@ All resource limits must be greater than zero. `--log-debug` overrides
 `ListenAddress` uses `host:port` form. An empty host listens on all
 interfaces. `RateLimit` is a process-wide token bucket; both values must be
 positive. HTTP timeouts and request-size limits are fixed service safeguards
-and are not user configurable.
+and are not user configurable. Requests that exceed the fixed body-size limit
+return HTTP 413 with the standard `invalid_request` error and the limit in
+bytes; malformed requests below the limit continue to return HTTP 400.
 
 ### 4. Jobs and Agent Communication
 

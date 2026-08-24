@@ -131,6 +131,9 @@ BlackList = ["netdev_hw", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit"]
 - **ListenAddress** 使用 `host:port` 格式，主机为空时监听所有接口。
 - **MaxConcurrent** 限制本机同时运行的追踪任务数量。
 
+请求体超过固定 HTTP 大小上限时返回 HTTP 413，响应使用标准
+`invalid_request` 错误并包含字节上限；未超过上限的格式错误仍返回 HTTP 400。
+
 事件流配置控制 `POST /v1/events/watch`。达到
 `MaxEventStreamClients` 后，新连接返回 HTTP 429。
 `EventStreamKeepAliveIntervalSeconds` 控制 SSE 心跳注释间隔，用于避免

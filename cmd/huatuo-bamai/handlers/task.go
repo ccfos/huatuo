@@ -19,13 +19,10 @@ import (
 	"net/http"
 	"time"
 
-	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/tracing"
-
-	"github.com/go-playground/validator/v10"
 )
 
 type TaskHandler struct {
@@ -51,25 +48,10 @@ type NewTaskReq struct {
 	TracerArgs []string `json:"trace_args" binding:"omitempty"`
 }
 
-func handleBindError(ctx *server.Context, err error) {
-	var validationError *validator.ValidationErrors
-	if errors.As(err, &validationError) {
-		response.ErrorWithCode(
-			ctx,
-			http.StatusBadRequest,
-			v1.ErrorCodeInvalidRequest,
-			(*validationError)[0].Namespace(),
-		)
-		return
-	}
-	response.ErrorWithCode(ctx, http.StatusBadRequest, v1.ErrorCodeInvalidRequest, err.Error())
-}
-
 func (h *TaskHandler) create(ctx *server.Context) error {
 	var req NewTaskReq
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		handleBindError(ctx, err)
-		return nil
+		return response.BindingError(err)
 	}
 
 	storageDefault := tracing.TaskStorageDB

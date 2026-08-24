@@ -150,8 +150,7 @@ func (h *EventsHandler) watch(ctx *server.Context) error {
 
 	var req WatchRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		handleBindError(ctx, err)
-		return nil
+		return response.BindingError(err)
 	}
 
 	matcher, err := req.Filters.matcher()

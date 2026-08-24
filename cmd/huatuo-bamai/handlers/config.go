@@ -44,7 +44,7 @@ func NewConfigHandler() *ConfigHandler {
 func (h *ConfigHandler) update(ctx *server.Context) error {
 	req := ConfigRequest{}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
+		return response.BindingError(err)
 	}
 
 	values := make(map[string]any, len(req.Config))
