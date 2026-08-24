@@ -35,6 +35,35 @@ func TestErrorResponseJSON(t *testing.T) {
 	}
 }
 
+func TestHTTPStatusForErrorCode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		code       ErrorCode
+		wantStatus int
+		wantOK     bool
+	}{
+		{code: ErrorCodeInvalidRequest, wantStatus: 400, wantOK: true},
+		{code: ErrorCodeRequestTooLarge, wantStatus: 413, wantOK: true},
+		{code: ErrorCodeServiceUnavailable, wantStatus: 503, wantOK: true},
+		{code: ErrorCode("future_error")},
+	}
+
+	for _, tt := range tests {
+		status, ok := HTTPStatusForErrorCode(tt.code)
+		if status != tt.wantStatus || ok != tt.wantOK {
+			t.Errorf(
+				"HTTPStatusForErrorCode(%q) = (%d, %t), want (%d, %t)",
+				tt.code,
+				status,
+				ok,
+				tt.wantStatus,
+				tt.wantOK,
+			)
+		}
+	}
+}
+
 func TestResponseJSON(t *testing.T) {
 	response := Response[map[string]string]{Data: map[string]string{"id": "profile-2026"}}
 

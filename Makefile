@@ -68,6 +68,28 @@ COMPOSE_DEV := docker compose \
 
 BPF_BUILD_STAMP := $(APP_CMD_OUTPUT)/.bpf-build-stamp
 
+OPENAPI_COMMON_SPEC := apis/v1/components.yaml
+OPENAPI_SERVER_SPEC := apis/v1/server/openapi.yaml
+OPENAPI_NODE_SPEC := apis/v1/node/openapi.yaml
+OPENAPI_GENERATED_FILES := \
+	apis/v1/types.gen.go \
+	apis/v1/error_codes.gen.go \
+	apis/v1/http_status.gen.go \
+	apis/v1/server/types.gen.go \
+	apis/v1/server/client.gen.go \
+	apis/v1/server/server.gen.go \
+	apis/v1/server/error_codes.gen.go \
+	apis/v1/server/http_status.gen.go \
+	apis/v1/server/openapi.gen.json \
+	apis/v1/node/types.gen.go \
+	apis/v1/node/client.gen.go \
+	apis/v1/node/server.gen.go \
+	apis/v1/node/error_codes.gen.go \
+	apis/v1/node/http_status.gen.go \
+	apis/v1/node/openapi.gen.json
+
+.NOTPARALLEL: check
+
 all: build sync
 
 build-nostatic:
@@ -112,12 +134,13 @@ compose-dev-down:
 	@$(COMPOSE_DEV) down --remove-orphans --volumes
 	@docker image rm huatuo/huatuo-bamai:dev || true
 
-check: import-fmt golangci-lint
+check: api-check import-fmt golangci-lint
 	@git diff --exit-code
 
 import-fmt:
 	$(eval GO_FILES := $(shell find . -name '*.go' \
 		! -name '*.capnp.go' \
+		! -name '*.gen.go' \
 		! -name 'mock_*_test.go' \
 		$(FIND_EXCLUDE_PATHS)))
 	@goimports -w -local huatuo-bamai $(GO_FILES)
@@ -135,13 +158,63 @@ golangci-lint: gen-build
 vendor:
 	@go mod tidy; go mod verify; go mod vendor
 
-clean:
+clean: api-clean
 	@rm -rf _output
 	@find . \( -name "*.o" -o -name "mock_*.go" -o -name "*.capnp.go" \) \
 		$(FIND_EXCLUDE_PATHS) \
 		-delete
 
-gen-build: bpf-build
+api-gen:
+	@go tool oapi-codegen -config apis/v1/types.cfg.yaml \
+		-o apis/v1/types.gen.go $(OPENAPI_COMMON_SPEC)
+	@go tool oapi-codegen -config apis/v1/server/types.cfg.yaml \
+		-o apis/v1/server/types.gen.go $(OPENAPI_SERVER_SPEC)
+	@go tool oapi-codegen -config apis/v1/server/client.cfg.yaml \
+		-o apis/v1/server/client.gen.go $(OPENAPI_SERVER_SPEC)
+	@go tool oapi-codegen -config apis/v1/server/server.cfg.yaml \
+		-o apis/v1/server/server.gen.go $(OPENAPI_SERVER_SPEC)
+	@go tool oapi-codegen -config apis/v1/node/types.cfg.yaml \
+		-o apis/v1/node/types.gen.go $(OPENAPI_NODE_SPEC)
+	@go tool oapi-codegen -config apis/v1/node/client.cfg.yaml \
+		-o apis/v1/node/client.gen.go $(OPENAPI_NODE_SPEC)
+	@go tool oapi-codegen -config apis/v1/node/server.cfg.yaml \
+		-o apis/v1/node/server.gen.go $(OPENAPI_NODE_SPEC)
+	@go run ./build/openapi/errorcodes -spec-root . -output-root .
+	@go run ./build/openapi/bundle -spec-root . -output-root .
+
+api-check:
+	@set -eu; \
+		api_tmp=$$(mktemp -d); \
+		trap 'rm -rf "$$api_tmp"' EXIT; \
+		mkdir -p "$$api_tmp/apis/v1/server" "$$api_tmp/apis/v1/node"; \
+		go tool oapi-codegen -config apis/v1/types.cfg.yaml \
+			-o "$$api_tmp/apis/v1/types.gen.go" $(OPENAPI_COMMON_SPEC); \
+		go tool oapi-codegen -config apis/v1/server/types.cfg.yaml \
+			-o "$$api_tmp/apis/v1/server/types.gen.go" $(OPENAPI_SERVER_SPEC); \
+		go tool oapi-codegen -config apis/v1/server/client.cfg.yaml \
+			-o "$$api_tmp/apis/v1/server/client.gen.go" $(OPENAPI_SERVER_SPEC); \
+		go tool oapi-codegen -config apis/v1/server/server.cfg.yaml \
+			-o "$$api_tmp/apis/v1/server/server.gen.go" $(OPENAPI_SERVER_SPEC); \
+		go tool oapi-codegen -config apis/v1/node/types.cfg.yaml \
+			-o "$$api_tmp/apis/v1/node/types.gen.go" $(OPENAPI_NODE_SPEC); \
+		go tool oapi-codegen -config apis/v1/node/client.cfg.yaml \
+			-o "$$api_tmp/apis/v1/node/client.gen.go" $(OPENAPI_NODE_SPEC); \
+		go tool oapi-codegen -config apis/v1/node/server.cfg.yaml \
+			-o "$$api_tmp/apis/v1/node/server.gen.go" $(OPENAPI_NODE_SPEC); \
+		go run ./build/openapi/errorcodes -spec-root . -output-root "$$api_tmp"; \
+		go run ./build/openapi/bundle -spec-root . -output-root "$$api_tmp"; \
+		for api_file in $(OPENAPI_GENERATED_FILES); do \
+			if ! cmp -s "$$api_file" "$$api_tmp/$$api_file"; then \
+				diff -u "$$api_file" "$$api_tmp/$$api_file" || true; \
+				echo "generated OpenAPI file is stale: $$api_file" >&2; \
+				exit 1; \
+			fi; \
+		done
+
+api-clean:
+	@rm -f $(OPENAPI_GENERATED_FILES)
+
+gen-build: bpf-build api-gen
 	@go run ./build/bpfabi-tool
 	@go generate -run "mockery.*" -x ./...
 	@go generate -run "capnp.*" ./...
@@ -158,4 +231,4 @@ integration: all
 e2e: all
 	@bash e2e/run.sh
 
-.PHONY: all build-nostatic bpf-build gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: all build-nostatic bpf-build api-gen api-check api-clean gen-build sync build check import-fmt golangci-lint vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down

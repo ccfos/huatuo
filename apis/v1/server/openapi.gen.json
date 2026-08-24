@@ -1,0 +1,1381 @@
+{
+  "components": {
+    "parameters": {
+      "Limit": {
+        "in": "query",
+        "name": "limit",
+        "schema": {
+          "default": 100,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "Offset": {
+        "in": "query",
+        "name": "offset",
+        "schema": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "RequestID": {
+        "in": "path",
+        "name": "request_id",
+        "required": true,
+        "schema": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Invalid request."
+      },
+      "Conflict": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Request conflicts with current resource state."
+      },
+      "InternalError": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Internal request processing failed."
+      },
+      "NotFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Resource not found."
+      },
+      "PermissionDenied": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Permission denied."
+      },
+      "RequestTooLarge": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Request body is too large."
+      },
+      "ServiceUnavailable": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Service is unavailable."
+      },
+      "TooManyRequests": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Request exceeds an admission limit."
+      },
+      "Unauthenticated": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Authentication failed.",
+        "headers": {
+          "WWW-Authenticate": {
+            "required": true,
+            "schema": {
+              "example": "Bearer",
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Request content type is unsupported."
+      }
+    },
+    "schemas": {
+      "CreateProfilingJobRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "binary_match_path": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "container_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "duration_seconds": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "hostname": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "language": {
+            "$ref": "#/components/schemas/ProfilingLanguage"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ProfilingMode"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ProfilingType"
+          }
+        },
+        "required": [
+          "hostname",
+          "duration_seconds",
+          "scope",
+          "type",
+          "language",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "CreateTracingJobRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "container_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "duration_seconds": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "hostname": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TracingType"
+          }
+        },
+        "required": [
+          "hostname",
+          "duration_seconds",
+          "scope",
+          "type"
+        ],
+        "type": "object"
+      },
+      "Job": {
+        "additionalProperties": false,
+        "properties": {
+          "container_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "ended_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "failure": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobFailure"
+              }
+            ],
+            "nullable": true
+          },
+          "hostname": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "request_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "result_url": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
+          },
+          "started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "hostname",
+          "duration_seconds",
+          "scope",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "JobFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/apis_v1_components_ErrorCode"
+          },
+          "message": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "JobStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "stopping",
+          "completed",
+          "failed",
+          "stopped",
+          "outcome_unknown"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "JobStatusPending",
+          "JobStatusRunning",
+          "JobStatusStopping",
+          "JobStatusCompleted",
+          "JobStatusFailed",
+          "JobStatusStopped",
+          "JobStatusOutcomeUnknown"
+        ]
+      },
+      "ProfilingCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProfilingCapability"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "ProfilingCapabilitiesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ProfilingCapabilities"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ProfilingCapability": {
+        "additionalProperties": false,
+        "properties": {
+          "language": {
+            "$ref": "#/components/schemas/ProfilingLanguage"
+          },
+          "modes": {
+            "items": {
+              "$ref": "#/components/schemas/ProfilingMode"
+            },
+            "type": "array"
+          },
+          "supported_scopes": {
+            "items": {
+              "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
+            },
+            "type": "array"
+          },
+          "supports_binary_match": {
+            "type": "boolean"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ProfilingType"
+          }
+        },
+        "required": [
+          "type",
+          "language",
+          "modes",
+          "supports_binary_match",
+          "supported_scopes"
+        ],
+        "type": "object"
+      },
+      "ProfilingJob": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Job"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "binary_match_path": {
+                "type": "string"
+              },
+              "language": {
+                "$ref": "#/components/schemas/ProfilingLanguage"
+              },
+              "mode": {
+                "$ref": "#/components/schemas/ProfilingMode"
+              },
+              "type": {
+                "$ref": "#/components/schemas/ProfilingType"
+              }
+            },
+            "required": [
+              "type",
+              "language",
+              "mode"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ProfilingJobListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/ProfilingJob"
+                },
+                "type": "array"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "offset": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "items",
+              "total",
+              "limit",
+              "offset"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ProfilingJobResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ProfilingJob"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "ProfilingLanguage": {
+        "enum": [
+          "c",
+          "c++",
+          "go",
+          "java",
+          "python"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ProfilingLanguageC",
+          "ProfilingLanguageCPP",
+          "ProfilingLanguageGo",
+          "ProfilingLanguageJava",
+          "ProfilingLanguagePython"
+        ]
+      },
+      "ProfilingMode": {
+        "enum": [
+          "oncpu",
+          "offcpu",
+          "object_alloc",
+          "object_usage",
+          "virtual_alloc",
+          "physical_alloc",
+          "physical_usage"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ProfilingModeOnCPU",
+          "ProfilingModeOffCPU",
+          "ProfilingModeObjectAlloc",
+          "ProfilingModeObjectUsage",
+          "ProfilingModeVirtualAlloc",
+          "ProfilingModePhysicalAlloc",
+          "ProfilingModePhysicalUsage"
+        ]
+      },
+      "ProfilingType": {
+        "enum": [
+          "cpu",
+          "memory"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ProfilingTypeCPU",
+          "ProfilingTypeMemory"
+        ]
+      },
+      "RawProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "captured_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "container_hostname": {
+            "type": "string"
+          },
+          "container_id": {
+            "type": "string"
+          },
+          "container_qos": {
+            "type": "string"
+          },
+          "container_type": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "profile": {},
+          "profile_type": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "uploaded_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hostname",
+          "region",
+          "uploaded_at",
+          "captured_at",
+          "profile_type",
+          "profile"
+        ],
+        "type": "object"
+      },
+      "RawProfilePage": {
+        "additionalProperties": false,
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RawProfile"
+            },
+            "type": "array"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "limit",
+          "offset",
+          "has_more"
+        ],
+        "type": "object"
+      },
+      "RawProfilePageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RawProfilePage"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "TracingCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TracingCapability"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "TracingCapabilitiesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TracingCapabilities"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "TracingCapability": {
+        "additionalProperties": false,
+        "properties": {
+          "supported_scopes": {
+            "items": {
+              "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
+            },
+            "type": "array"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TracingType"
+          }
+        },
+        "required": [
+          "type",
+          "supported_scopes"
+        ],
+        "type": "object"
+      },
+      "TracingJob": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Job"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "$ref": "#/components/schemas/TracingType"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TracingJobListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/TracingJob"
+                },
+                "type": "array"
+              },
+              "limit": {
+                "type": "integer"
+              },
+              "offset": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "items",
+              "total",
+              "limit",
+              "offset"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "TracingJobResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TracingJob"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "TracingType": {
+        "enum": [
+          "networking_drop",
+          "io_tracing",
+          "tcp_retransmit"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "TracingTypeNetworkingDrop",
+          "TracingTypeIO",
+          "TracingTypeTCPRetransmit"
+        ]
+      },
+      "apis_v1_components_Error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/apis_v1_components_ErrorCode"
+          },
+          "message": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "apis_v1_components_ErrorCode": {
+        "description": "Stable machine-readable error code.",
+        "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "apis_v1_components_ErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/apis_v1_components_Error"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "apis_v1_components_ObservationScope": {
+        "description": "Boundary observed by an on-demand operation.",
+        "enum": [
+          "host",
+          "container"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ObservationScopeHost",
+          "ObservationScopeContainer"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "$ref": "#/components/securitySchemes/apis_v1_components_BearerAuth"
+      },
+      "apis_v1_components_BearerAuth": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Huatuo Apiserver API",
+    "version": "v1"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenAPI",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bundled OpenAPI document."
+          }
+        },
+        "security": [],
+        "summary": "Return the bundled Apiserver OpenAPI document."
+      }
+    },
+    "/v1/profiling": {
+      "get": {
+        "operationId": "listProfilingJobs",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilingJobListResponse"
+                }
+              }
+            },
+            "description": "Profiling Jobs."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      },
+      "post": {
+        "operationId": "createProfilingJob",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProfilingJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilingJobResponse"
+                }
+              }
+            },
+            "description": "Profiling Job created."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      }
+    },
+    "/v1/profiling/capabilities": {
+      "get": {
+        "operationId": "getProfilingCapabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilingCapabilitiesResponse"
+                }
+              }
+            },
+            "description": "Static profiling capabilities."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      }
+    },
+    "/v1/profiling/{request_id}": {
+      "get": {
+        "operationId": "getProfilingJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilingJobResponse"
+                }
+              }
+            },
+            "description": "Profiling Job."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ]
+    },
+    "/v1/profiling/{request_id}/raw": {
+      "get": {
+        "operationId": "getRawProfiles",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RawProfilePageResponse"
+                }
+              }
+            },
+            "description": "Raw profile page."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ]
+    },
+    "/v1/profiling/{request_id}/stop": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ],
+      "post": {
+        "operationId": "stopProfilingJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfilingJobResponse"
+                }
+              }
+            },
+            "description": "Current Profiling Job after applying the stop intent."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      }
+    },
+    "/v1/tracing": {
+      "get": {
+        "operationId": "listTracingJobs",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracingJobListResponse"
+                }
+              }
+            },
+            "description": "Tracing Jobs."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "tracing"
+        ]
+      },
+      "post": {
+        "operationId": "createTracingJob",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTracingJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracingJobResponse"
+                }
+              }
+            },
+            "description": "Tracing Job created."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "tracing"
+        ]
+      }
+    },
+    "/v1/tracing/capabilities": {
+      "get": {
+        "operationId": "getTracingCapabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracingCapabilitiesResponse"
+                }
+              }
+            },
+            "description": "Static tracing capabilities."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "tracing"
+        ]
+      }
+    },
+    "/v1/tracing/{request_id}": {
+      "get": {
+        "operationId": "getTracingJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracingJobResponse"
+                }
+              }
+            },
+            "description": "Tracing Job."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "tracing"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ]
+    },
+    "/v1/tracing/{request_id}/stop": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ],
+      "post": {
+        "operationId": "stopTracingJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TracingJobResponse"
+                }
+              }
+            },
+            "description": "Current Tracing Job after applying the stop intent."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "tracing"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "profiling"
+    },
+    {
+      "name": "tracing"
+    }
+  ],
+  "x-error-codes": {
+    "execution_capacity_exceeded": {
+      "description": "The target node has no execution capacity for this Job.",
+      "httpStatus": 429
+    },
+    "execution_failed": {
+      "description": "The execution failed.",
+      "httpStatus": 500
+    },
+    "execution_start_failed": {
+      "description": "The execution could not be started.",
+      "httpStatus": 500
+    },
+    "execution_timed_out": {
+      "description": "The Job exceeded its execution deadline and was stopped.",
+      "httpStatus": 500
+    },
+    "job_conflict": {
+      "description": "The requested Job transition conflicts with its current state.",
+      "httpStatus": 409
+    },
+    "job_not_found": {
+      "description": "The requested Job does not exist.",
+      "httpStatus": 404
+    },
+    "node_unavailable": {
+      "description": "The target node is unavailable.",
+      "httpStatus": 503
+    },
+    "operation_lost": {
+      "description": "The node can no longer verify an observed Operation.",
+      "httpStatus": 500
+    },
+    "protocol_error": {
+      "description": "The node response does not satisfy the execution protocol.",
+      "httpStatus": 502
+    },
+    "quota_exceeded": {
+      "description": "The request exceeds the caller's Job quota.",
+      "httpStatus": 429
+    },
+    "result_not_found": {
+      "description": "The committed result no longer exists.",
+      "httpStatus": 404
+    },
+    "result_not_ready": {
+      "description": "The Job state does not permit result access.",
+      "httpStatus": 409
+    },
+    "result_unavailable": {
+      "description": "The Job terminal state does not guarantee a complete result.",
+      "httpStatus": 409
+    },
+    "start_timeout": {
+      "description": "The Job did not start before its pending deadline.",
+      "httpStatus": 500
+    },
+    "stop_timeout": {
+      "description": "The Job did not stop before its stop deadline.",
+      "httpStatus": 500
+    }
+  }
+}

@@ -1,0 +1,469 @@
+openapi: 3.0.3
+info:
+  title: Huatuo Node Agent API
+  version: v1
+tags:
+  - name: health
+  - name: profiling
+  - name: tracing
+paths:
+  /openapi.json:
+    get:
+      operationId: getOpenAPI
+      summary: Return the bundled Node Agent OpenAPI document.
+      security: []
+      responses:
+        '200':
+          description: Bundled OpenAPI document.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [health]
+      security: []
+      responses:
+        '204':
+          description: The Node Agent HTTP server is alive.
+  /v1/profiling:
+    post:
+      operationId: startProfiling
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartProfilingRequest'
+      responses:
+        '200':
+          description: Existing idempotent Profiling Operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '202':
+          description: New Profiling Operation accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ExecutionEnvironmentUnsupported'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/profiling/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    get:
+      operationId: getProfiling
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profiling Operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/profiling/{request_id}/stop:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    post:
+      operationId: stopProfiling
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profiling Operation already stopping or terminal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '202':
+          description: Profiling Operation stop accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/tracing:
+    post:
+      operationId: startTracing
+      tags: [tracing]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartTracingRequest'
+      responses:
+        '200':
+          description: Existing idempotent Tracing Operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '202':
+          description: New Tracing Operation accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ExecutionEnvironmentUnsupported'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/tracing/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    get:
+      operationId: getTracing
+      tags: [tracing]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Tracing Operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/tracing/{request_id}/stop:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    post:
+      operationId: stopTracing
+      tags: [tracing]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Tracing Operation already stopping or terminal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '202':
+          description: Tracing Operation stop accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+x-error-codes:
+  execution_environment_unsupported:
+    httpStatus: 422
+    description: The node environment cannot execute the valid request.
+  execution_failed:
+    httpStatus: 500
+    description: The execution failed.
+  execution_start_failed:
+    httpStatus: 500
+    description: The execution could not be started.
+  execution_stop_failed:
+    httpStatus: 500
+    description: The Operation executor could not be stopped.
+  finalization_failed:
+    httpStatus: 500
+    description: The Operation result finalization failed.
+  finalization_timeout:
+    httpStatus: 500
+    description: The Operation result finalization exceeded its deadline.
+  launch_timeout:
+    httpStatus: 500
+    description: The Operation executor did not launch before its deadline.
+  operation_limit_exceeded:
+    httpStatus: 429
+    description: The node has no capacity for another Operation.
+  operation_not_found:
+    httpStatus: 404
+    description: The requested Operation does not exist.
+  request_id_conflict:
+    httpStatus: 409
+    description: The request ID belongs to another Operation kind.
+  service_not_implemented:
+    httpStatus: 501
+    description: The service protocol exists but has no executor.
+components:
+  securitySchemes:
+    BearerAuth:
+      $ref: '../components.yaml#/components/securitySchemes/BearerAuth'
+  parameters:
+    RequestID:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    Unauthenticated:
+      description: Authentication failed.
+      headers:
+        WWW-Authenticate:
+          required: true
+          schema:
+            type: string
+            example: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Operation not found.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Request ID conflicts with another Operation kind.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    RequestTooLarge:
+      description: Request body is too large.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    UnsupportedMediaType:
+      description: Request content type is unsupported.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    ExecutionEnvironmentUnsupported:
+      description: Node environment cannot execute the request.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Operation capacity exceeded.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal request processing failed.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    NotImplemented:
+      description: Service executor is not implemented.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: Service is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+  schemas:
+    ProfilingType:
+      type: string
+      enum: [cpu, memory]
+      x-enum-varnames: [ProfilingTypeCPU, ProfilingTypeMemory]
+    ProfilingLanguage:
+      type: string
+      enum: [c, c++, go, java, python]
+      x-enum-varnames:
+        - ProfilingLanguageC
+        - ProfilingLanguageCPP
+        - ProfilingLanguageGo
+        - ProfilingLanguageJava
+        - ProfilingLanguagePython
+    ProfilingMode:
+      type: string
+      enum:
+        - oncpu
+        - offcpu
+        - object_alloc
+        - object_usage
+        - virtual_alloc
+        - physical_alloc
+        - physical_usage
+      x-enum-varnames:
+        - ProfilingModeOnCPU
+        - ProfilingModeOffCPU
+        - ProfilingModeObjectAlloc
+        - ProfilingModeObjectUsage
+        - ProfilingModeVirtualAlloc
+        - ProfilingModePhysicalAlloc
+        - ProfilingModePhysicalUsage
+    TracingType:
+      type: string
+      enum: [networking_drop, io_tracing, tcp_retransmit]
+      x-enum-varnames:
+        - TracingTypeNetworkingDrop
+        - TracingTypeIO
+        - TracingTypeTCPRetransmit
+    OperationStatus:
+      type: string
+      enum: [pending, running, stopping, completed, failed, stopped]
+      x-enum-varnames:
+        - OperationStatusPending
+        - OperationStatusRunning
+        - OperationStatusStopping
+        - OperationStatusCompleted
+        - OperationStatusFailed
+        - OperationStatusStopped
+    OperationFailure:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          $ref: '../components.yaml#/components/schemas/ErrorCode'
+        message:
+          type: string
+          minLength: 1
+    Operation:
+      type: object
+      additionalProperties: false
+      required: [request_id, status, created_at]
+      properties:
+        request_id:
+          type: string
+          minLength: 1
+        status:
+          $ref: '#/components/schemas/OperationStatus'
+        failure:
+          allOf:
+            - $ref: '#/components/schemas/OperationFailure'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+    StartProfilingRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, duration_seconds, scope, type, language, mode]
+      properties:
+        request_id:
+          type: string
+          minLength: 1
+        duration_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        scope:
+          $ref: '../components.yaml#/components/schemas/ObservationScope'
+        container_id:
+          type: string
+          minLength: 1
+        type:
+          $ref: '#/components/schemas/ProfilingType'
+        language:
+          $ref: '#/components/schemas/ProfilingLanguage'
+        mode:
+          $ref: '#/components/schemas/ProfilingMode'
+        binary_match_path:
+          type: string
+          minLength: 1
+    StartTracingRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, duration_seconds, scope, type]
+      properties:
+        request_id:
+          type: string
+          minLength: 1
+        duration_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        scope:
+          $ref: '../components.yaml#/components/schemas/ObservationScope'
+        container_id:
+          type: string
+          minLength: 1
+        type:
+          $ref: '#/components/schemas/TracingType'
+    OperationResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/Operation'

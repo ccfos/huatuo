@@ -1,0 +1,838 @@
+{
+  "components": {
+    "parameters": {
+      "RequestID": {
+        "in": "path",
+        "name": "request_id",
+        "required": true,
+        "schema": {
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Invalid request."
+      },
+      "Conflict": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Request ID conflicts with another Operation kind."
+      },
+      "ExecutionEnvironmentUnsupported": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Node environment cannot execute the request."
+      },
+      "InternalError": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Internal request processing failed."
+      },
+      "NotFound": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Operation not found."
+      },
+      "NotImplemented": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Service executor is not implemented."
+      },
+      "RequestTooLarge": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Request body is too large."
+      },
+      "ServiceUnavailable": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Service is unavailable."
+      },
+      "TooManyRequests": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Operation capacity exceeded."
+      },
+      "Unauthenticated": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Authentication failed.",
+        "headers": {
+          "WWW-Authenticate": {
+            "required": true,
+            "schema": {
+              "example": "Bearer",
+              "type": "string"
+            }
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/apis_v1_components_ErrorResponse"
+            }
+          }
+        },
+        "description": "Request content type is unsupported."
+      }
+    },
+    "schemas": {
+      "Operation": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "failure": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OperationFailure"
+              }
+            ],
+            "nullable": true
+          },
+          "finished_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "request_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OperationStatus"
+          }
+        },
+        "required": [
+          "request_id",
+          "status",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "OperationFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/apis_v1_components_ErrorCode"
+          },
+          "message": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "OperationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Operation"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "OperationStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "stopping",
+          "completed",
+          "failed",
+          "stopped"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "OperationStatusPending",
+          "OperationStatusRunning",
+          "OperationStatusStopping",
+          "OperationStatusCompleted",
+          "OperationStatusFailed",
+          "OperationStatusStopped"
+        ]
+      },
+      "ProfilingLanguage": {
+        "enum": [
+          "c",
+          "c++",
+          "go",
+          "java",
+          "python"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ProfilingLanguageC",
+          "ProfilingLanguageCPP",
+          "ProfilingLanguageGo",
+          "ProfilingLanguageJava",
+          "ProfilingLanguagePython"
+        ]
+      },
+      "ProfilingMode": {
+        "enum": [
+          "oncpu",
+          "offcpu",
+          "object_alloc",
+          "object_usage",
+          "virtual_alloc",
+          "physical_alloc",
+          "physical_usage"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ProfilingModeOnCPU",
+          "ProfilingModeOffCPU",
+          "ProfilingModeObjectAlloc",
+          "ProfilingModeObjectUsage",
+          "ProfilingModeVirtualAlloc",
+          "ProfilingModePhysicalAlloc",
+          "ProfilingModePhysicalUsage"
+        ]
+      },
+      "ProfilingType": {
+        "enum": [
+          "cpu",
+          "memory"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ProfilingTypeCPU",
+          "ProfilingTypeMemory"
+        ]
+      },
+      "StartProfilingRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "binary_match_path": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "container_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "duration_seconds": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "language": {
+            "$ref": "#/components/schemas/ProfilingLanguage"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ProfilingMode"
+          },
+          "request_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ProfilingType"
+          }
+        },
+        "required": [
+          "request_id",
+          "duration_seconds",
+          "scope",
+          "type",
+          "language",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "StartTracingRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "container_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "duration_seconds": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "request_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TracingType"
+          }
+        },
+        "required": [
+          "request_id",
+          "duration_seconds",
+          "scope",
+          "type"
+        ],
+        "type": "object"
+      },
+      "TracingType": {
+        "enum": [
+          "networking_drop",
+          "io_tracing",
+          "tcp_retransmit"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "TracingTypeNetworkingDrop",
+          "TracingTypeIO",
+          "TracingTypeTCPRetransmit"
+        ]
+      },
+      "apis_v1_components_Error": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/apis_v1_components_ErrorCode"
+          },
+          "message": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "apis_v1_components_ErrorCode": {
+        "description": "Stable machine-readable error code.",
+        "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "apis_v1_components_ErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/apis_v1_components_Error"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "apis_v1_components_ObservationScope": {
+        "description": "Boundary observed by an on-demand operation.",
+        "enum": [
+          "host",
+          "container"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "ObservationScopeHost",
+          "ObservationScopeContainer"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "$ref": "#/components/securitySchemes/apis_v1_components_BearerAuth"
+      },
+      "apis_v1_components_BearerAuth": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Huatuo Node Agent API",
+    "version": "v1"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "getHealth",
+        "responses": {
+          "204": {
+            "description": "The Node Agent HTTP server is alive."
+          }
+        },
+        "security": [],
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenAPI",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bundled OpenAPI document."
+          }
+        },
+        "security": [],
+        "summary": "Return the bundled Node Agent OpenAPI document."
+      }
+    },
+    "/v1/profiling": {
+      "post": {
+        "operationId": "startProfiling",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartProfilingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Existing idempotent Profiling Operation."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "New Profiling Operation accepted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/ExecutionEnvironmentUnsupported"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      }
+    },
+    "/v1/profiling/{request_id}": {
+      "get": {
+        "operationId": "getProfiling",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Profiling Operation."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ]
+    },
+    "/v1/profiling/{request_id}/stop": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ],
+      "post": {
+        "operationId": "stopProfiling",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Profiling Operation already stopping or terminal."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Profiling Operation stop accepted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      }
+    },
+    "/v1/tracing": {
+      "post": {
+        "operationId": "startTracing",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartTracingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Existing idempotent Tracing Operation."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "New Tracing Operation accepted."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/ExecutionEnvironmentUnsupported"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "tracing"
+        ]
+      }
+    },
+    "/v1/tracing/{request_id}": {
+      "get": {
+        "operationId": "getTracing",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Tracing Operation."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "tracing"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ]
+    },
+    "/v1/tracing/{request_id}/stop": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RequestID"
+        }
+      ],
+      "post": {
+        "operationId": "stopTracing",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Tracing Operation already stopping or terminal."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationResponse"
+                }
+              }
+            },
+            "description": "Tracing Operation stop accepted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "tracing"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "health"
+    },
+    {
+      "name": "profiling"
+    },
+    {
+      "name": "tracing"
+    }
+  ],
+  "x-error-codes": {
+    "execution_environment_unsupported": {
+      "description": "The node environment cannot execute the valid request.",
+      "httpStatus": 422
+    },
+    "execution_failed": {
+      "description": "The execution failed.",
+      "httpStatus": 500
+    },
+    "execution_start_failed": {
+      "description": "The execution could not be started.",
+      "httpStatus": 500
+    },
+    "execution_stop_failed": {
+      "description": "The Operation executor could not be stopped.",
+      "httpStatus": 500
+    },
+    "finalization_failed": {
+      "description": "The Operation result finalization failed.",
+      "httpStatus": 500
+    },
+    "finalization_timeout": {
+      "description": "The Operation result finalization exceeded its deadline.",
+      "httpStatus": 500
+    },
+    "launch_timeout": {
+      "description": "The Operation executor did not launch before its deadline.",
+      "httpStatus": 500
+    },
+    "operation_limit_exceeded": {
+      "description": "The node has no capacity for another Operation.",
+      "httpStatus": 429
+    },
+    "operation_not_found": {
+      "description": "The requested Operation does not exist.",
+      "httpStatus": 404
+    },
+    "request_id_conflict": {
+      "description": "The request ID belongs to another Operation kind.",
+      "httpStatus": 409
+    },
+    "service_not_implemented": {
+      "description": "The service protocol exists but has no executor.",
+      "httpStatus": 501
+    }
+  }
+}

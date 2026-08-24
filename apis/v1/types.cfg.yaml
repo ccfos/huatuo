@@ -1,0 +1,18 @@
+package: v1
+generate:
+  models: true
+output-options:
+  skip-prune: true
+  exclude-schemas:
+    - ErrorCode
+  name-normalizer: ToCamelCaseWithInitialisms
+  additional-initialisms:
+    - API
+    - CPU
+    - HTTP
+    - ID
+    - IO
+    - TCP
+    - URL
+  user-templates:
+    imports.tmpl: build/openapi/templates/imports.tmpl

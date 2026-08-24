@@ -1,0 +1,130 @@
+// Copyright 2026 The HuaTuo Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package node
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"testing"
+
+	"github.com/getkin/kin-openapi/openapi3"
+
+	apiv1 "huatuo-bamai/apis/v1"
+)
+
+func TestOpenAPIJSON(t *testing.T) {
+	t.Parallel()
+
+	first := OpenAPIJSON()
+	if len(first) == 0 {
+		t.Fatal("OpenAPIJSON() returned an empty document")
+	}
+	first[0] = 0
+	if OpenAPIJSON()[0] == 0 {
+		t.Fatal("OpenAPIJSON() returned mutable package state")
+	}
+
+	loader := openapi3.NewLoader()
+	document, err := loader.LoadFromData(OpenAPIJSON())
+	if err != nil {
+		t.Fatalf("LoadFromData(OpenAPIJSON()) error = %v", err)
+	}
+	if err := document.Validate(t.Context()); err != nil {
+		t.Errorf("Validate(OpenAPIJSON()) error = %v", err)
+	}
+}
+
+func TestGeneratedContractsCompile(t *testing.T) {
+	t.Parallel()
+
+	if _, err := NewClient("http://127.0.0.1:8080"); err != nil {
+		t.Errorf("NewClient() error = %v, want nil", err)
+	}
+	var _ StrictServerInterface = (*unimplementedStrictServer)(nil)
+}
+
+func TestNodeHTTPStatusForErrorCode(t *testing.T) {
+	t.Parallel()
+
+	status, ok := HTTPStatusForErrorCode(ErrorCodeOperationNotFound)
+	if status != http.StatusNotFound || !ok {
+		t.Errorf("HTTPStatusForErrorCode(operation_not_found) = (%d, %t), want (404, true)", status, ok)
+	}
+	status, ok = HTTPStatusForErrorCode(apiv1.ErrorCodeInvalidRequest)
+	if status != http.StatusBadRequest || !ok {
+		t.Errorf("HTTPStatusForErrorCode(invalid_request) = (%d, %t), want (400, true)", status, ok)
+	}
+}
+
+type unimplementedStrictServer struct{}
+
+var errNotImplemented = errors.New("test handler is not implemented")
+
+func (*unimplementedStrictServer) GetHealth(
+	context.Context,
+	GetHealthRequestObject,
+) (GetHealthResponseObject, error) {
+	return nil, errNotImplemented
+}
+
+func (*unimplementedStrictServer) GetOpenAPI(
+	context.Context,
+	GetOpenAPIRequestObject,
+) (GetOpenAPIResponseObject, error) {
+	return nil, errNotImplemented
+}
+
+func (*unimplementedStrictServer) StartProfiling(
+	context.Context,
+	StartProfilingRequestObject,
+) (StartProfilingResponseObject, error) {
+	return nil, errNotImplemented
+}
+
+func (*unimplementedStrictServer) GetProfiling(
+	context.Context,
+	GetProfilingRequestObject,
+) (GetProfilingResponseObject, error) {
+	return nil, errNotImplemented
+}
+
+func (*unimplementedStrictServer) StopProfiling(
+	context.Context,
+	StopProfilingRequestObject,
+) (StopProfilingResponseObject, error) {
+	return nil, errNotImplemented
+}
+
+func (*unimplementedStrictServer) StartTracing(
+	context.Context,
+	StartTracingRequestObject,
+) (StartTracingResponseObject, error) {
+	return nil, errNotImplemented
+}
+
+func (*unimplementedStrictServer) GetTracing(
+	context.Context,
+	GetTracingRequestObject,
+) (GetTracingResponseObject, error) {
+	return nil, errNotImplemented
+}
+
+func (*unimplementedStrictServer) StopTracing(
+	context.Context,
+	StopTracingRequestObject,
+) (StopTracingResponseObject, error) {
+	return nil, errNotImplemented
+}

@@ -1,0 +1,66 @@
+openapi: 3.0.3
+info:
+  title: Huatuo shared API components
+  version: v1
+paths: {}
+x-error-codes:
+  internal_error:
+    httpStatus: 500
+    description: The server failed to process the request.
+  invalid_request:
+    httpStatus: 400
+    description: The request does not satisfy the API contract.
+  permission_denied:
+    httpStatus: 403
+    description: The authenticated principal cannot perform the request.
+  request_too_large:
+    httpStatus: 413
+    description: The request body exceeds the configured limit.
+  service_unavailable:
+    httpStatus: 503
+    description: The requested service is temporarily unavailable.
+  unauthenticated:
+    httpStatus: 401
+    description: The request has no valid authentication credentials.
+  unsupported_media_type:
+    httpStatus: 415
+    description: The request content type is not supported.
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    ObservationScope:
+      type: string
+      description: Boundary observed by an on-demand operation.
+      enum:
+        - host
+        - container
+      x-enum-varnames:
+        - ObservationScopeHost
+        - ObservationScopeContainer
+    ErrorCode:
+      type: string
+      description: Stable machine-readable error code.
+      pattern: '^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$'
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          minLength: 1
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'

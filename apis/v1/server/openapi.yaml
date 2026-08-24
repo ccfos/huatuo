@@ -1,0 +1,793 @@
+openapi: 3.0.3
+info:
+  title: Huatuo Apiserver API
+  version: v1
+tags:
+  - name: profiling
+  - name: tracing
+paths:
+  /openapi.json:
+    get:
+      operationId: getOpenAPI
+      summary: Return the bundled Apiserver OpenAPI document.
+      security: []
+      responses:
+        '200':
+          description: Bundled OpenAPI document.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/profiling:
+    post:
+      operationId: createProfilingJob
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProfilingJobRequest'
+      responses:
+        '201':
+          description: Profiling Job created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfilingJobResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      operationId: listProfilingJobs
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Profiling Jobs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfilingJobListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/profiling/capabilities:
+    get:
+      operationId: getProfilingCapabilities
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Static profiling capabilities.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfilingCapabilitiesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/profiling/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    get:
+      operationId: getProfilingJob
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profiling Job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfilingJobResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/profiling/{request_id}/stop:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    post:
+      operationId: stopProfilingJob
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current Profiling Job after applying the stop intent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfilingJobResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/profiling/{request_id}/raw:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    get:
+      operationId: getRawProfiles
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Raw profile page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RawProfilePageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /v1/tracing:
+    post:
+      operationId: createTracingJob
+      tags: [tracing]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTracingJobRequest'
+      responses:
+        '201':
+          description: Tracing Job created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TracingJobResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      operationId: listTracingJobs
+      tags: [tracing]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Tracing Jobs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TracingJobListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/tracing/capabilities:
+    get:
+      operationId: getTracingCapabilities
+      tags: [tracing]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Static tracing capabilities.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TracingCapabilitiesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/tracing/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    get:
+      operationId: getTracingJob
+      tags: [tracing]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Tracing Job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TracingJobResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/tracing/{request_id}/stop:
+    parameters:
+      - $ref: '#/components/parameters/RequestID'
+    post:
+      operationId: stopTracingJob
+      tags: [tracing]
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current Tracing Job after applying the stop intent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TracingJobResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+x-error-codes:
+  execution_capacity_exceeded:
+    httpStatus: 429
+    description: The target node has no execution capacity for this Job.
+  execution_failed:
+    httpStatus: 500
+    description: The execution failed.
+  execution_start_failed:
+    httpStatus: 500
+    description: The execution could not be started.
+  execution_timed_out:
+    httpStatus: 500
+    description: The Job exceeded its execution deadline and was stopped.
+  job_conflict:
+    httpStatus: 409
+    description: The requested Job transition conflicts with its current state.
+  job_not_found:
+    httpStatus: 404
+    description: The requested Job does not exist.
+  node_unavailable:
+    httpStatus: 503
+    description: The target node is unavailable.
+  operation_lost:
+    httpStatus: 500
+    description: The node can no longer verify an observed Operation.
+  protocol_error:
+    httpStatus: 502
+    description: The node response does not satisfy the execution protocol.
+  quota_exceeded:
+    httpStatus: 429
+    description: The request exceeds the caller's Job quota.
+  result_not_found:
+    httpStatus: 404
+    description: The committed result no longer exists.
+  result_not_ready:
+    httpStatus: 409
+    description: The Job state does not permit result access.
+  result_unavailable:
+    httpStatus: 409
+    description: The Job terminal state does not guarantee a complete result.
+  start_timeout:
+    httpStatus: 500
+    description: The Job did not start before its pending deadline.
+  stop_timeout:
+    httpStatus: 500
+    description: The Job did not stop before its stop deadline.
+components:
+  securitySchemes:
+    BearerAuth:
+      $ref: '../components.yaml#/components/securitySchemes/BearerAuth'
+  parameters:
+    RequestID:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    Unauthenticated:
+      description: Authentication failed.
+      headers:
+        WWW-Authenticate:
+          required: true
+          schema:
+            type: string
+            example: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    PermissionDenied:
+      description: Permission denied.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Request conflicts with current resource state.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    RequestTooLarge:
+      description: Request body is too large.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    UnsupportedMediaType:
+      description: Request content type is unsupported.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Request exceeds an admission limit.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal request processing failed.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: Service is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '../components.yaml#/components/schemas/ErrorResponse'
+  schemas:
+    ProfilingType:
+      type: string
+      enum: [cpu, memory]
+      x-enum-varnames: [ProfilingTypeCPU, ProfilingTypeMemory]
+    ProfilingLanguage:
+      type: string
+      enum: [c, c++, go, java, python]
+      x-enum-varnames:
+        - ProfilingLanguageC
+        - ProfilingLanguageCPP
+        - ProfilingLanguageGo
+        - ProfilingLanguageJava
+        - ProfilingLanguagePython
+    ProfilingMode:
+      type: string
+      enum:
+        - oncpu
+        - offcpu
+        - object_alloc
+        - object_usage
+        - virtual_alloc
+        - physical_alloc
+        - physical_usage
+      x-enum-varnames:
+        - ProfilingModeOnCPU
+        - ProfilingModeOffCPU
+        - ProfilingModeObjectAlloc
+        - ProfilingModeObjectUsage
+        - ProfilingModeVirtualAlloc
+        - ProfilingModePhysicalAlloc
+        - ProfilingModePhysicalUsage
+    TracingType:
+      type: string
+      enum: [networking_drop, io_tracing, tcp_retransmit]
+      x-enum-varnames:
+        - TracingTypeNetworkingDrop
+        - TracingTypeIO
+        - TracingTypeTCPRetransmit
+    JobStatus:
+      type: string
+      enum:
+        - pending
+        - running
+        - stopping
+        - completed
+        - failed
+        - stopped
+        - outcome_unknown
+      x-enum-varnames:
+        - JobStatusPending
+        - JobStatusRunning
+        - JobStatusStopping
+        - JobStatusCompleted
+        - JobStatusFailed
+        - JobStatusStopped
+        - JobStatusOutcomeUnknown
+    JobFailure:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          $ref: '../components.yaml#/components/schemas/ErrorCode'
+        message:
+          type: string
+          minLength: 1
+    CreateProfilingJobRequest:
+      type: object
+      additionalProperties: false
+      required: [hostname, duration_seconds, scope, type, language, mode]
+      properties:
+        hostname:
+          type: string
+          minLength: 1
+        duration_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        scope:
+          $ref: '../components.yaml#/components/schemas/ObservationScope'
+        container_id:
+          type: string
+          minLength: 1
+        type:
+          $ref: '#/components/schemas/ProfilingType'
+        language:
+          $ref: '#/components/schemas/ProfilingLanguage'
+        mode:
+          $ref: '#/components/schemas/ProfilingMode'
+        binary_match_path:
+          type: string
+          minLength: 1
+    ProfilingJob:
+      allOf:
+        - $ref: '#/components/schemas/Job'
+        - type: object
+          additionalProperties: false
+          required: [type, language, mode]
+          properties:
+            type:
+              $ref: '#/components/schemas/ProfilingType'
+            language:
+              $ref: '#/components/schemas/ProfilingLanguage'
+            mode:
+              $ref: '#/components/schemas/ProfilingMode'
+            binary_match_path:
+              type: string
+    CreateTracingJobRequest:
+      type: object
+      additionalProperties: false
+      required: [hostname, duration_seconds, scope, type]
+      properties:
+        hostname:
+          type: string
+          minLength: 1
+        duration_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        scope:
+          $ref: '../components.yaml#/components/schemas/ObservationScope'
+        container_id:
+          type: string
+          minLength: 1
+        type:
+          $ref: '#/components/schemas/TracingType'
+    TracingJob:
+      allOf:
+        - $ref: '#/components/schemas/Job'
+        - type: object
+          additionalProperties: false
+          required: [type]
+          properties:
+            type:
+              $ref: '#/components/schemas/TracingType'
+    Job:
+      type: object
+      additionalProperties: false
+      required:
+        - request_id
+        - hostname
+        - duration_seconds
+        - scope
+        - status
+        - created_at
+        - updated_at
+      properties:
+        request_id:
+          type: string
+          minLength: 1
+        hostname:
+          type: string
+          minLength: 1
+        duration_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+        scope:
+          $ref: '../components.yaml#/components/schemas/ObservationScope'
+        container_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        failure:
+          allOf:
+            - $ref: '#/components/schemas/JobFailure'
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        ended_at:
+          type: string
+          format: date-time
+          nullable: true
+        result_url:
+          type: string
+          format: uri
+          nullable: true
+    ProfilingCapability:
+      type: object
+      additionalProperties: false
+      required: [type, language, modes, supports_binary_match, supported_scopes]
+      properties:
+        type:
+          $ref: '#/components/schemas/ProfilingType'
+        language:
+          $ref: '#/components/schemas/ProfilingLanguage'
+        modes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfilingMode'
+        supports_binary_match:
+          type: boolean
+        supported_scopes:
+          type: array
+          items:
+            $ref: '../components.yaml#/components/schemas/ObservationScope'
+    ProfilingCapabilities:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfilingCapability'
+    TracingCapability:
+      type: object
+      additionalProperties: false
+      required: [type, supported_scopes]
+      properties:
+        type:
+          $ref: '#/components/schemas/TracingType'
+        supported_scopes:
+          type: array
+          items:
+            $ref: '../components.yaml#/components/schemas/ObservationScope'
+    TracingCapabilities:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TracingCapability'
+    RawProfile:
+      type: object
+      additionalProperties: false
+      required: [hostname, region, uploaded_at, captured_at, profile_type, profile]
+      properties:
+        hostname:
+          type: string
+        region:
+          type: string
+        uploaded_at:
+          type: string
+          format: date-time
+        captured_at:
+          type: string
+          format: date-time
+        container_id:
+          type: string
+        container_hostname:
+          type: string
+        container_type:
+          type: string
+        container_qos:
+          type: string
+        profile_type:
+          type: string
+        profile: {}
+    RawProfilePage:
+      type: object
+      additionalProperties: false
+      required: [items, limit, offset, has_more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RawProfile'
+        limit:
+          type: integer
+        offset:
+          type: integer
+        has_more:
+          type: boolean
+    ProfilingJobResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/ProfilingJob'
+    ProfilingJobListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [items, total, limit, offset]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProfilingJob'
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+    ProfilingCapabilitiesResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/ProfilingCapabilities'
+    TracingJobResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/TracingJob'
+    TracingJobListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [items, total, limit, offset]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/TracingJob'
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+    TracingCapabilitiesResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/TracingCapabilities'
+    RawProfilePageResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/RawProfilePage'

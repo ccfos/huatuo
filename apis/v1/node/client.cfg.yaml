@@ -1,0 +1,10 @@
+package: node
+generate:
+  client: true
+import-mapping:
+  ../components.yaml: huatuo-bamai/apis/v1
+output-options:
+  name-normalizer: ToCamelCaseWithInitialisms
+  additional-initialisms: [API, CPU, HTTP, ID, IO, TCP, URL]
+  user-templates:
+    imports.tmpl: build/openapi/templates/imports.tmpl
