@@ -16,6 +16,8 @@ package registry
 
 import (
 	"context"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -27,19 +29,25 @@ import (
 
 // fakeProfiler satisfies Profiler with no behavior. Registry tests exercise
 // the lookup tables, not sampling, so a stub is enough.
-type fakeProfiler struct{}
+type fakeProfiler struct {
+	readErr error
+}
 
-func (fakeProfiler) Start(*pcontext.ProfilerContext) error         { return nil }
-func (fakeProfiler) ReadDataLoop(context.Context, func(any)) error { return nil }
-func (fakeProfiler) Stop(*pcontext.ProfilerContext) error          { return nil }
+func (fakeProfiler) Start(*pcontext.ProfilerContext) error { return nil }
+func (p fakeProfiler) ReadDataLoop(context.Context, func(any)) error {
+	return p.readErr
+}
+func (fakeProfiler) Stop(*pcontext.ProfilerContext) error { return nil }
 
 // fakeAggregator satisfies aggregator.Aggregator with no behavior.
-type fakeAggregator struct{}
+type fakeAggregator struct {
+	formatter output.Formatter
+}
 
 func (fakeAggregator) Aggregate(any)                                   {}
 func (fakeAggregator) Snapshot(*pcontext.ProfilerContext) (any, error) { return nil, nil }
 func (fakeAggregator) Reset()                                          {}
-func (fakeAggregator) OutputFormatter() output.Formatter               { return nil }
+func (a fakeAggregator) OutputFormatter() output.Formatter             { return a.formatter }
 
 func resetRegistry(t *testing.T) {
 	t.Helper()
@@ -111,3 +119,84 @@ func TestGetUnknownImplementation(t *testing.T) {
 		t.Fatal(`Get("unknown", "cpu") error = nil, want non-nil`)
 	}
 }
+
+func TestProfile_ReturnsFinalOutputError(t *testing.T) {
+	exportErr := errors.New("formatter export failed")
+	pctx := newProfileTestContext(t)
+	meta := profileTestMeta(fakeProfiler{}, failingFormatter{err: exportErr})
+
+	err := Profile(pctx, meta)
+	if !errors.Is(err, exportErr) {
+		t.Fatalf("Profile error = %v, want %v", err, exportErr)
+	}
+	if !strings.Contains(err.Error(), "finalize profiler output") {
+		t.Fatalf("Profile error = %q, want pipeline context", err)
+	}
+}
+
+func TestProfile_PreservesReadAndFinalOutputErrors(t *testing.T) {
+	readErr := errors.New("read loop failed")
+	exportErr := errors.New("formatter export failed")
+	pctx := newProfileTestContext(t)
+	meta := profileTestMeta(fakeProfiler{readErr: readErr}, failingFormatter{err: exportErr})
+
+	err := Profile(pctx, meta)
+	if !errors.Is(err, readErr) {
+		t.Fatalf("Profile error = %v, want read error %v", err, readErr)
+	}
+	if !errors.Is(err, exportErr) {
+		t.Fatalf("Profile error = %v, want export error %v", err, exportErr)
+	}
+}
+
+func TestProfile_SuccessfulFinalOutputReturnsNil(t *testing.T) {
+	pctx := newProfileTestContext(t)
+	meta := profileTestMeta(fakeProfiler{}, failingFormatter{})
+
+	if err := Profile(pctx, meta); err != nil {
+		t.Fatalf("Profile returned error: %v", err)
+	}
+}
+
+func newProfileTestContext(t *testing.T) *pcontext.ProfilerContext {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	return &pcontext.ProfilerContext{
+		Ctx:          ctx,
+		Cancel:       cancel,
+		IsOneShotAgg: true,
+		OutputFormat: output.FormatCollapsed,
+		OutputPath:   t.TempDir(),
+	}
+}
+
+func profileTestMeta(profiler Profiler, formatter output.Formatter) ProfilerMeta {
+	return ProfilerMeta{
+		Impl: profiler,
+		NewAggregator: func(*pcontext.ProfilerContext) (aggregator.Aggregator, error) {
+			return fakeAggregator{formatter: formatter}, nil
+		},
+	}
+}
+
+type failingFormatter struct {
+	err error
+}
+
+func (failingFormatter) Name() string { return "test" }
+
+func (failingFormatter) Add(*output.Sample) error { return nil }
+
+func (f failingFormatter) Write(w io.Writer) error {
+	if _, err := io.WriteString(w, "profile\n"); err != nil {
+		return err
+	}
+	return f.err
+}
+
+func (failingFormatter) Reset() {}
+
+func (failingFormatter) IsEmpty() bool { return false }

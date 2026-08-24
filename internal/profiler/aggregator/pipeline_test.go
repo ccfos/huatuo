@@ -17,11 +17,14 @@ package aggregator
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 
 	profctx "huatuo-bamai/internal/profiler/context"
 	"huatuo-bamai/internal/profiler/output"
+
+	"github.com/stretchr/testify/mock"
 )
 
 func TestNewPipeline_DoesNotMutateContext(t *testing.T) {
@@ -90,7 +93,7 @@ func TestResolveTracerID(t *testing.T) {
 
 func TestPipelineStart_IsIdempotent(t *testing.T) {
 	aggr := NewMockAggregator(t)
-	aggr.On("OutputFormatter").Return(nil).Once()
+	aggr.On("OutputFormatter").Return(emptyFormatter{}).Once()
 
 	p := NewPipeline(&profctx.ProfilerContext{
 		Ctx:          context.Background(),
@@ -99,7 +102,9 @@ func TestPipelineStart_IsIdempotent(t *testing.T) {
 
 	p.Start()
 	p.Start()
-	p.Stop()
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
 }
 
 func TestPipelineStart_AfterStop(t *testing.T) {
@@ -110,7 +115,9 @@ func TestPipelineStart_AfterStop(t *testing.T) {
 		OutputFormat: output.FormatCollapsed,
 	}, aggr)
 
-	p.Stop()
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
 	p.Start()
 	p.Enqueue("ignored")
 
@@ -126,7 +133,9 @@ func TestPipelineEnqueue_AfterStop(t *testing.T) {
 		OutputFormat: output.FormatCollapsed,
 	}, aggr)
 
-	p.Stop()
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
 	p.Enqueue("ignored")
 
 	aggr.AssertNotCalled(t, "Aggregate")
@@ -136,7 +145,7 @@ func TestPipelineStop_DrainsAcceptedRecords(t *testing.T) {
 	aggr := NewMockAggregator(t)
 	aggr.On("Aggregate", "first").Once()
 	aggr.On("Aggregate", "second").Once()
-	aggr.On("OutputFormatter").Return(nil).Once()
+	aggr.On("OutputFormatter").Return(emptyFormatter{}).Once()
 
 	p := NewPipeline(&profctx.ProfilerContext{
 		Ctx:          t.Context(),
@@ -146,7 +155,9 @@ func TestPipelineStop_DrainsAcceptedRecords(t *testing.T) {
 	p.Enqueue("second")
 
 	p.Start()
-	p.Stop()
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
 }
 
 func TestPipelineEnqueue_CountsOverflow(t *testing.T) {
@@ -201,3 +212,184 @@ func TestPipelineAggregateAndExport_EmptyFormatter(t *testing.T) {
 
 	aggr.AssertNotCalled(t, "Reset")
 }
+
+func TestPipelineStop_ReturnsFinalExportError(t *testing.T) {
+	exportErr := errors.New("formatter write failed")
+	formatter := NewFormatter(t)
+	formatter.On("IsEmpty").Return(false).Once()
+	formatter.On("Write", mock.Anything).Return(exportErr).Once()
+
+	aggr := NewMockAggregator(t)
+	aggr.On("OutputFormatter").Return(formatter).Once()
+
+	p := NewPipeline(&profctx.ProfilerContext{
+		Ctx:          context.Background(),
+		IsOneShotAgg: true,
+		OutputFormat: output.FormatCollapsed,
+		OutputPath:   t.TempDir(),
+	}, aggr)
+	p.Start()
+
+	err := p.Stop()
+	if !errors.Is(err, exportErr) {
+		t.Fatalf("Stop error = %v, want %v", err, exportErr)
+	}
+	aggr.AssertNotCalled(t, "Reset")
+}
+
+func TestPipelineStop_RepeatedCallsReturnFinalExportError(t *testing.T) {
+	exportErr := errors.New("final export failed")
+	formatter := &blockingFormatter{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		err:     exportErr,
+	}
+	aggr := &formatterAggregator{formatter: formatter}
+
+	p := NewPipeline(&profctx.ProfilerContext{
+		Ctx:          context.Background(),
+		IsOneShotAgg: true,
+		OutputFormat: output.FormatCollapsed,
+		OutputPath:   t.TempDir(),
+	}, aggr)
+	p.Start()
+
+	firstResult := make(chan error, 1)
+	go func() {
+		firstResult <- p.Stop()
+	}()
+	<-formatter.started
+
+	secondResult := make(chan error, 1)
+	go func() {
+		secondResult <- p.Stop()
+	}()
+
+	select {
+	case err := <-secondResult:
+		t.Fatalf("concurrent Stop returned before final export: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(formatter.release)
+	for i, result := range []<-chan error{firstResult, secondResult} {
+		select {
+		case err := <-result:
+			if !errors.Is(err, exportErr) {
+				t.Fatalf("Stop result %d = %v, want %v", i, err, exportErr)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("Stop result %d did not wait for final export", i)
+		}
+	}
+
+	if err := p.Stop(); !errors.Is(err, exportErr) {
+		t.Fatalf("repeated Stop error = %v, want %v", err, exportErr)
+	}
+}
+
+func TestPipelineStop_SuccessfulExportReturnsNil(t *testing.T) {
+	formatter := NewFormatter(t)
+	formatter.On("IsEmpty").Return(false).Once()
+	formatter.On("Write", mock.Anything).Return(nil).Once()
+
+	aggr := NewMockAggregator(t)
+	aggr.On("OutputFormatter").Return(formatter).Once()
+	aggr.On("Reset").Once()
+
+	p := NewPipeline(&profctx.ProfilerContext{
+		Ctx:          context.Background(),
+		IsOneShotAgg: true,
+		OutputFormat: output.FormatCollapsed,
+		OutputPath:   t.TempDir(),
+	}, aggr)
+	p.Start()
+
+	if err := p.Stop(); err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
+}
+
+func TestPipelineStartAndStop_ConcurrentLifecycleIsSafe(t *testing.T) {
+	for range 100 {
+		p := NewPipeline(&profctx.ProfilerContext{
+			Ctx:          context.Background(),
+			IsOneShotAgg: true,
+			OutputFormat: output.FormatCollapsed,
+			OutputPath:   t.TempDir(),
+		}, &formatterAggregator{formatter: emptyFormatter{}})
+
+		startDone := make(chan struct{})
+		go func() {
+			p.Start()
+			close(startDone)
+		}()
+
+		stopDone := make(chan error, 1)
+		go func() {
+			stopDone <- p.Stop()
+		}()
+
+		select {
+		case <-startDone:
+		case <-time.After(time.Second):
+			t.Fatal("Start blocked during concurrent Stop")
+		}
+		select {
+		case err := <-stopDone:
+			if err != nil {
+				t.Fatalf("Stop returned error: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Stop blocked during concurrent Start")
+		}
+	}
+}
+
+type formatterAggregator struct {
+	formatter output.Formatter
+}
+
+func (*formatterAggregator) Aggregate(any) {}
+
+func (*formatterAggregator) Snapshot(*profctx.ProfilerContext) (any, error) {
+	return nil, nil
+}
+
+func (*formatterAggregator) Reset() {}
+
+func (a *formatterAggregator) OutputFormatter() output.Formatter {
+	return a.formatter
+}
+
+type blockingFormatter struct {
+	started chan struct{}
+	release chan struct{}
+	err     error
+}
+
+func (*blockingFormatter) Name() string { return "blocking" }
+
+func (*blockingFormatter) Add(*output.Sample) error { return nil }
+
+func (f *blockingFormatter) Write(io.Writer) error {
+	close(f.started)
+	<-f.release
+	return f.err
+}
+
+func (*blockingFormatter) Reset() {}
+
+func (*blockingFormatter) IsEmpty() bool { return false }
+
+type emptyFormatter struct{}
+
+func (emptyFormatter) Name() string { return "empty" }
+
+func (emptyFormatter) Add(*output.Sample) error { return nil }
+
+func (emptyFormatter) Write(io.Writer) error { return nil }
+
+func (emptyFormatter) Reset() {}
+
+func (emptyFormatter) IsEmpty() bool { return true }
