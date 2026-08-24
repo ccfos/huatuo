@@ -29,6 +29,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	cebpf "github.com/cilium/ebpf"
@@ -38,6 +39,7 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/throtl_tracing.c -o $BPF_DIR/throtl_tracing.o
 
 const (
+	throtlTracingName      = "blk_throtl"
 	throtlWaitAggregateMap = "throtl_wait_agg_map"
 	throtlPendingMap       = "throtl_pending_map"
 
@@ -52,6 +54,18 @@ const (
 	throtlLegacyTrackedCaller = "blk_throtl_bio"
 	throtlIgnoredCaller       = "tg_dispatch_one_bio"
 )
+
+func init() {
+	tracing.RegisterEventTracing(throtlTracingName, newThrotl)
+}
+
+func newThrotl() (*tracing.EventTracingAttr, error) {
+	return &tracing.EventTracingAttr{
+		TracingData: &throtlTracing{},
+		Interval:    10,
+		Flag:        tracing.FlagTracing | tracing.FlagMetric,
+	}, nil
+}
 
 var errThrotlSessionUnhealthy = fmt.Errorf("%w: blk_throtl BPF session is unhealthy",
 	types.ErrTracingStopped)
