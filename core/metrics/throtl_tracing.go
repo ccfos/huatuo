@@ -27,6 +27,7 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	cebpf "github.com/cilium/ebpf"
@@ -36,6 +37,7 @@ import (
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/throtl_tracing.c -o $BPF_DIR/throtl_tracing.o
 
 const (
+	throtlTracingName      = "blk_throtl"
 	throtlWaitAggregateMap = "throtl_wait_agg_map"
 	throtlTDMap            = "throtl_td_map"
 	throtlPendingMap       = "throtl_pending_map"
@@ -55,6 +57,18 @@ const (
 	throtlLegacyExitMarker    = "blkcg_exit_queue"
 	throtlMainlineExitMarker  = "blkcg_exit_disk"
 )
+
+func init() {
+	tracing.RegisterEventTracing(throtlTracingName, newThrotl)
+}
+
+func newThrotl() (*tracing.EventTracingAttr, error) {
+	return &tracing.EventTracingAttr{
+		TracingData: &throtlTracing{},
+		Interval:    10,
+		Flag:        tracing.FlagTracing | tracing.FlagMetric,
+	}, nil
+}
 
 var (
 	errThrotlSessionInvalid = fmt.Errorf("%w: blk_throtl BPF session is invalid",
