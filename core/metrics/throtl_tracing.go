@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This file resolves and validates kernel-specific blk-throttle hooks.
+// This file resolves blk-throttle hooks and owns the BPF session.
+// Missing or inconsistent hook state fails the whole session closed.
 
 package collector
 
@@ -20,12 +21,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/types"
 
+	cebpf "github.com/cilium/ebpf"
 	"golang.org/x/sys/unix"
 )
 
@@ -135,6 +139,100 @@ type throtlSession struct {
 type throtlTracing struct {
 	mu      sync.Mutex
 	session *throtlSession
+}
+
+type throtlBPFLoader func(string, map[string]any) (bpf.BPF, error)
+
+func (c *throtlTracing) Start(ctx context.Context) error {
+	if runtime.GOARCH != "amd64" {
+		return fmt.Errorf("%w: blk_throtl requires amd64", types.ErrNotSupported)
+	}
+	hooks, err := loadThrotlHooks()
+	if err != nil {
+		return err
+	}
+	possibleCPUs, err := cebpf.PossibleCPU()
+	if err != nil {
+		return fmt.Errorf("read possible CPU count: %w", err)
+	}
+	return c.startWithAttribution(
+		ctx,
+		bpf.LoadBPF,
+		hooks,
+		possibleCPUs,
+		pod.SynchronizedContainers,
+	)
+}
+
+func (c *throtlTracing) startWithAttribution(
+	ctx context.Context,
+	loadBPF throtlBPFLoader,
+	hooks *throtlHooks,
+	possibleCPUs int,
+	containerSource ioControlContainerSource,
+) (retErr error) {
+	if possibleCPUs <= 0 {
+		return fmt.Errorf("invalid possible CPU count: %d", possibleCPUs)
+	}
+	childCtx, cancel := context.WithCancelCause(ctx)
+	session := &throtlSession{
+		possibleCPUs:    possibleCPUs,
+		previous:        make(throtlWaitSnapshot),
+		breaker:         childCtx,
+		cancel:          cancel,
+		containerSource: containerSource,
+	}
+	var object bpf.BPF
+	published := false
+	defer func() {
+		// Stop new collections before waiting for an in-flight collection to
+		// release the shared session lock.
+		cancel(retErr)
+		if published {
+			c.withdrawSession()
+		}
+		if cause := context.Cause(childCtx); errors.Is(cause, types.ErrTracingStopped) {
+			retErr = cause
+		}
+		if object != nil {
+			if closeErr := object.Close(); closeErr != nil {
+				retErr = errors.Join(retErr, closeErr)
+			}
+		}
+	}()
+
+	if containerSource == nil {
+		return errors.New("blk_throtl container source is unavailable")
+	}
+	var err error
+	object, err = loadBPF(bpf.ThisBpfOBJ(), hooks.constants())
+	if err != nil {
+		return fmt.Errorf("load blk_throtl BPF: %w", err)
+	}
+	session.object = object
+	if err := attachThrotlHooks(object, hooks); err != nil {
+		return err
+	}
+	c.publishSession(session)
+	published = true
+
+	object.DetachOnContextDone(childCtx, func() { cancel(nil) })
+	<-childCtx.Done()
+	return nil
+}
+
+func (c *throtlTracing) publishSession(session *throtlSession) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.session = session
+}
+
+// withdrawSession removes a session under the same lock used by collection.
+// The caller closes the BPF object only after this function returns.
+func (c *throtlTracing) withdrawSession() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.session = nil
 }
 
 func (s *throtlSession) readStatus() (throtlStatus, error) {
