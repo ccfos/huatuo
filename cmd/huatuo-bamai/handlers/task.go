@@ -56,13 +56,18 @@ func handleBindError(ctx *server.Context, err error) {
 	if errors.As(err, &validationError) {
 		response.ErrorWithCode(
 			ctx,
-			http.StatusBadRequest,
+			ctx.ErrorStatusMapper(),
 			v1.ErrorCodeInvalidRequest,
 			(*validationError)[0].Namespace(),
 		)
 		return
 	}
-	response.ErrorWithCode(ctx, http.StatusBadRequest, v1.ErrorCodeInvalidRequest, err.Error())
+	response.ErrorWithCode(
+		ctx,
+		ctx.ErrorStatusMapper(),
+		v1.ErrorCodeInvalidRequest,
+		err.Error(),
+	)
 }
 
 func (h *TaskHandler) create(ctx *server.Context) error {

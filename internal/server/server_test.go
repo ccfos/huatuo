@@ -24,6 +24,8 @@ import (
 	"testing"
 	"time"
 
+	v1 "huatuo-bamai/apis/v1"
+	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
 
 	httpGin "github.com/gin-gonic/gin"
@@ -94,6 +96,35 @@ func TestNewServerDoesNotModifyConfig(t *testing.T) {
 	}
 	if s.config.ReadTimeout != time.Second {
 		t.Errorf("effective ReadTimeout = %s, want %s", s.config.ReadTimeout, time.Second)
+	}
+}
+
+func TestNewServerUsesConfiguredErrorStatusMapper(t *testing.T) {
+	const customCode v1.ErrorCode = "custom_conflict"
+	mapper := func(code v1.ErrorCode) (int, bool) {
+		return http.StatusConflict, code == customCode
+	}
+	s := NewServer(&Config{ErrorStatusMapper: mapper})
+	s.MustRegisterRoutes("", []Route{{
+		Method: http.MethodGet,
+		Path:   "/custom-error",
+		Handler: func(*Context) error {
+			return response.NewAPIError(customCode, "custom conflict")
+		},
+	}})
+
+	request := httptest.NewRequest(http.MethodGet, "/custom-error", http.NoBody)
+	recorder := httptest.NewRecorder()
+	s.engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusConflict {
+		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusConflict)
+	}
+	if !strings.Contains(
+		recorder.Body.String(),
+		`"error":{"code":"custom_conflict","message":"custom conflict"}`,
+	) {
+		t.Errorf("response body = %q, want custom error", recorder.Body.String())
 	}
 }
 

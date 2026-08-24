@@ -71,11 +71,12 @@ func TestDisabledHandlersRejectAllProfilePaths(t *testing.T) {
 		if !errors.As(err, &apiErr) {
 			t.Fatalf("route %q error type = %T, want *response.APIError", route.Path, err)
 		}
-		if apiErr.HTTPStatus != http.StatusServiceUnavailable || apiErr.Code != v1.ErrorCodeProfilingDisabled {
+		status, ok := response.LegacyHTTPStatusForErrorCode(apiErr.Code)
+		if !ok || status != http.StatusServiceUnavailable || apiErr.Code != v1.ErrorCodeProfilingDisabled {
 			t.Errorf(
 				"route %q status/code = %d/%q, want 503/%q",
 				route.Path,
-				apiErr.HTTPStatus,
+				status,
 				apiErr.Code,
 				v1.ErrorCodeProfilingDisabled,
 			)

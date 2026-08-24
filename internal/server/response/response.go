@@ -21,6 +21,9 @@ import (
 	v1 "huatuo-bamai/apis/v1"
 )
 
+// HTTPStatusMapper resolves an API error code to its request-level status.
+type HTTPStatusMapper func(code v1.ErrorCode) (int, bool)
+
 // JSONWriter is the minimal interface required for writing JSON responses.
 // *server.Context implements this interface.
 type JSONWriter interface {
@@ -52,16 +55,20 @@ func NoContent(w interface{ Status(code int) }) {
 }
 
 // Error sends an error response.
-// If err is an APIError, it uses the error's HTTP status code.
+// If err exposes an API code, the generated directory determines its status.
 // Otherwise, it returns HTTP 500 Internal Server Error.
-func Error(w JSONWriter, err error) {
+func Error(w JSONWriter, err error, statusForCode HTTPStatusMapper) {
 	var apiErr interface {
-		GetHTTPStatus() int
 		GetCode() v1.ErrorCode
 		GetMessage() string
 	}
 	if errors.As(err, &apiErr) {
-		w.JSON(apiErr.GetHTTPStatus(), v1.ErrorResponse{
+		status, ok := statusForErrorCode(statusForCode, apiErr.GetCode())
+		if !ok {
+			writeInternalError(w)
+			return
+		}
+		w.JSON(status, v1.ErrorResponse{
 			Error: v1.Error{
 				Code:    apiErr.GetCode(),
 				Message: apiErr.GetMessage(),
@@ -70,20 +77,66 @@ func Error(w JSONWriter, err error) {
 		return
 	}
 
+	writeInternalError(w)
+}
+
+// ErrorWithCode sends an API error using the status assigned to its code.
+func ErrorWithCode(
+	w JSONWriter,
+	statusForCode HTTPStatusMapper,
+	code v1.ErrorCode,
+	message string,
+) {
+	Error(w, NewAPIError(code, message), statusForCode)
+}
+
+// LegacyHTTPStatusForErrorCode resolves shared codes and compatibility codes.
+func LegacyHTTPStatusForErrorCode(code v1.ErrorCode) (int, bool) {
+	if status, ok := v1.HTTPStatusForErrorCode(code); ok {
+		return status, true
+	}
+
+	switch code {
+	case v1.ErrorCodeNotFound:
+		return http.StatusNotFound, true
+	case v1.ErrorCodeConflict:
+		return http.StatusConflict, true
+	case v1.ErrorCodeRateLimited:
+		return http.StatusTooManyRequests, true
+	case v1.ErrorCodeProfilingDisabled:
+		return http.StatusServiceUnavailable, true
+	default:
+		return 0, false
+	}
+}
+
+// ChainHTTPStatusMappers returns the first successful mapper result.
+func ChainHTTPStatusMappers(mappers ...HTTPStatusMapper) HTTPStatusMapper {
+	return func(code v1.ErrorCode) (int, bool) {
+		for _, mapper := range mappers {
+			if mapper == nil {
+				continue
+			}
+			if status, ok := mapper(code); ok {
+				return status, true
+			}
+		}
+		return 0, false
+	}
+}
+
+func statusForErrorCode(mapper HTTPStatusMapper, code v1.ErrorCode) (int, bool) {
+	if mapper == nil {
+		return 0, false
+	}
+	return mapper(code)
+}
+
+func writeInternalError(w JSONWriter) {
 	w.JSON(http.StatusInternalServerError, v1.ErrorResponse{
 		Error: v1.Error{
 			Code:    ErrInternal.Code,
 			Message: ErrInternal.Message,
-		},
-	})
-}
-
-// ErrorWithCode sends an error response with a custom HTTP status code and error code.
-func ErrorWithCode(w JSONWriter, status int, code v1.ErrorCode, message string) {
-	w.JSON(status, v1.ErrorResponse{
-		Error: v1.Error{
-			Code:    code,
-			Message: message,
 		},
 	})
 }

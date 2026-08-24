@@ -98,5 +98,5 @@ func wrapErrHandler(h ErrHandlerContextFunc) httpGin.HandlerFunc {
 
 // writeError is the internal error writer used by wrapErrHandler.
 func writeError(ctx *Context, err error) {
-	response.Error(ctx, err)
+	response.Error(ctx, err, ctx.ErrorStatusMapper())
 }

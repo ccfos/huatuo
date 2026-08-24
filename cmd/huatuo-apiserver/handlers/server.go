@@ -18,10 +18,12 @@ import (
 	"context"
 	"errors"
 
+	serverapi "huatuo-bamai/apis/v1/server"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/server"
+	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -60,6 +62,10 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 		PromReg:     opts.PromReg,
 		VersionInfo: opts.VersionInfo,
 		Ready:       opts.Ready,
+		ErrorStatusMapper: response.ChainHTTPStatusMappers(
+			serverapi.HTTPStatusForErrorCode,
+			response.LegacyHTTPStatusForErrorCode,
+		),
 	})
 
 	// Register trace routes

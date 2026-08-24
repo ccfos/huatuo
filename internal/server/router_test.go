@@ -27,17 +27,12 @@ import (
 )
 
 type stubAPIError struct {
-	httpStatus int
-	code       v1.ErrorCode
-	message    string
+	code    v1.ErrorCode
+	message string
 }
 
 func (e stubAPIError) Error() string {
 	return e.message
-}
-
-func (e stubAPIError) GetHTTPStatus() int {
-	return e.httpStatus
 }
 
 func (e stubAPIError) GetCode() v1.ErrorCode {
@@ -200,7 +195,7 @@ func TestWrapErrHandlerWritesErrors(t *testing.T) {
 	}{
 		{
 			name:         "api-style-error",
-			err:          stubAPIError{httpStatus: http.StatusBadRequest, code: v1.ErrorCodeInvalidRequest, message: "invalid payload"},
+			err:          stubAPIError{code: v1.ErrorCodeInvalidRequest, message: "invalid payload"},
 			wantStatus:   http.StatusBadRequest,
 			wantBodyPart: `"error":{"code":"invalid_request","message":"invalid payload"}`,
 		},

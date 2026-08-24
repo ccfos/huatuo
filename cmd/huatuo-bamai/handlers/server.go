@@ -15,8 +15,10 @@
 package handlers
 
 import (
+	nodeapi "huatuo-bamai/apis/v1/node"
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/server"
+	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
 	"huatuo-bamai/pkg/tracing"
 
@@ -42,6 +44,10 @@ func Start(opts ServerOptions) (*server.Server, error) {
 		EnableRetry: true,
 		PromReg:     opts.PromReg,
 		VersionInfo: opts.VersionInfo,
+		ErrorStatusMapper: response.ChainHTTPStatusMappers(
+			nodeapi.HTTPStatusForErrorCode,
+			response.LegacyHTTPStatusForErrorCode,
+		),
 	})
 
 	SetTracingManager(opts.TracingManager)

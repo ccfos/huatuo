@@ -47,7 +47,7 @@ func (h *ContainerHandler) list(ctx *server.Context) error {
 
 	all, err := pod.Containers()
 	if err != nil {
-		return response.NewAPIError(v1.ErrorCodeInternal, err.Error(), http.StatusInternalServerError)
+		return response.NewAPIError(v1.ErrorCodeInternal, err.Error())
 	}
 
 	resp := make([]*pod.Container, 0, len(all))

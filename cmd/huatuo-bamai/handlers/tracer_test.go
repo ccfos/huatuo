@@ -65,10 +65,14 @@ func TestTracerAPIError(t *testing.T) {
 			if !errors.As(got, &apiErr) {
 				t.Fatalf("tracerAPIError() type = %T, want *response.APIError", got)
 			}
-			if apiErr.HTTPStatus != tt.httpStatus {
+			status, ok := response.LegacyHTTPStatusForErrorCode(apiErr.Code)
+			if !ok {
+				t.Fatalf("tracerAPIError() code %q has no HTTP status", apiErr.Code)
+			}
+			if status != tt.httpStatus {
 				t.Errorf(
-					"tracerAPIError().HTTPStatus = %d, want %d",
-					apiErr.HTTPStatus,
+					"tracerAPIError() status = %d, want %d",
+					status,
 					tt.httpStatus,
 				)
 			}

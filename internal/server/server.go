@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
 
 	"github.com/gin-contrib/pprof"
@@ -58,6 +59,7 @@ type Config struct {
 	MaxHeaderBytes    int
 	MaxBodyBytes      int64
 	Ready             func(context.Context) error
+	ErrorStatusMapper response.HTTPStatusMapper
 }
 
 // RateLimitConfig enables per-client rate limiting.
@@ -260,6 +262,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.MaxBodyBytes <= 0 {
 		c.MaxBodyBytes = defaultMaxBodyBytes
+	}
+	if c.ErrorStatusMapper == nil {
+		c.ErrorStatusMapper = response.LegacyHTTPStatusForErrorCode
 	}
 }
 

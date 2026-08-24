@@ -16,7 +16,6 @@ package server
 
 import (
 	"errors"
-	"net/http"
 
 	authn "huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/server/response"
@@ -80,14 +79,19 @@ func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFun
 			if errors.Is(err, authn.ErrMissingBearerToken) {
 				message = authn.ErrMissingBearerToken.Error()
 			}
-			response.ErrorWithCode(ctx, http.StatusUnauthorized, response.ErrUnauthorized.Code, message)
+			response.ErrorWithCode(
+				ctx,
+				ctx.ErrorStatusMapper(),
+				response.ErrUnauthorized.Code,
+				message,
+			)
 			ctx.Abort()
 			return
 		}
 		if matchesAnyPath(svc, adminPaths, path) && !user.IsAdmin {
 			response.ErrorWithCode(
 				ctx,
-				http.StatusForbidden,
+				ctx.ErrorStatusMapper(),
 				response.ErrForbidden.Code,
 				authn.ErrAdministratorRequired.Error(),
 			)
@@ -95,7 +99,12 @@ func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFun
 			return
 		}
 		if err := svc.Validate(user, ctx.Request().Method, path); err != nil {
-			response.ErrorWithCode(ctx, http.StatusForbidden, response.ErrForbidden.Code, err.Error())
+			response.ErrorWithCode(
+				ctx,
+				ctx.ErrorStatusMapper(),
+				response.ErrForbidden.Code,
+				err.Error(),
+			)
 			ctx.Abort()
 			return
 		}

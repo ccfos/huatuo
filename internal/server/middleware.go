@@ -32,7 +32,7 @@ import (
 
 func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 	chain := []httpGin.HandlerFunc{
-		middlewareContext(),
+		middlewareContext(cfg.ErrorStatusMapper),
 		maxBodyBytesMiddleware(cfg.MaxBodyBytes),
 		requestLogMiddleware(),
 		httpGin.Recovery(),
@@ -153,7 +153,7 @@ func newRateLimitMiddleware(r rate.Limit, burst int) httpGin.HandlerFunc {
 			ctx := internalContext(c)
 			response.ErrorWithCode(
 				ctx,
-				http.StatusTooManyRequests,
+				ctx.ErrorStatusMapper(),
 				v1.ErrorCodeRateLimited,
 				"too many requests",
 			)

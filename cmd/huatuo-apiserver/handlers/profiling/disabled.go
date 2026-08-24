@@ -15,8 +15,6 @@
 package profiling
 
 import (
-	"net/http"
-
 	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
@@ -25,7 +23,6 @@ import (
 var errProfilingDisabled = response.NewAPIError(
 	v1.ErrorCodeProfilingDisabled,
 	"profiling is disabled: configure profile storage to enable it",
-	http.StatusServiceUnavailable,
 )
 
 // DisabledHandlers rejects all profiling requests when profile storage is disabled.
