@@ -17,6 +17,7 @@ package symbol
 import (
 	"bufio"
 	"debug/elf"
+	"debug/gosym"
 	"fmt"
 	"io"
 	"os"
@@ -242,7 +243,46 @@ func elfSymbols(f *elf.File) symbols {
 		log.Infof("symbol: %s extracted %d func symbols", s.name, len(syms)-before)
 	}
 	syms.sort()
+	if len(syms) == 0 {
+		goSyms, err := elfGoPCLNTABSymbols(f)
+		if err != nil {
+			log.Infof("symbol: gopclntab not available in %s: %v", f.FileHeader.Type, err)
+		} else {
+			syms = goSyms
+			log.Infof("symbol: gopclntab extracted %d func symbols", len(syms))
+		}
+	}
 	return syms
+}
+
+// elfGoPCLNTABSymbols extracts function metadata from a stripped Go ELF.
+// Go binaries retain .gopclntab after -s -w, while the ELF symbol tables are
+// removed. The text section address anchors gosym's PC ranges to ELF VAs.
+func elfGoPCLNTABSymbols(f *elf.File) (symbols, error) {
+	pclntabSection := f.Section(".gopclntab")
+	textSection := f.Section(".text")
+	if pclntabSection == nil || textSection == nil {
+		return nil, fmt.Errorf("missing .gopclntab or .text section")
+	}
+	pclntab, err := pclntabSection.Data()
+	if err != nil {
+		return nil, fmt.Errorf("read .gopclntab: %w", err)
+	}
+	lineTable := gosym.NewLineTable(pclntab, textSection.Addr)
+	table, err := gosym.NewTable(nil, lineTable)
+	if err != nil {
+		return nil, fmt.Errorf("decode .gopclntab: %w", err)
+	}
+
+	syms := make(symbols, 0, len(table.Funcs))
+	for _, fn := range table.Funcs {
+		if fn.Name == "" || fn.End <= fn.Entry {
+			continue
+		}
+		syms = append(syms, &symbol{Addr: fn.Entry, Size: fn.End - fn.Entry, Name: fn.Name})
+	}
+	syms.sort()
+	return syms, nil
 }
 
 // backedPaths is the set of pseudo-paths in /proc/<pid>/maps with no ELF symbols.
