@@ -200,6 +200,13 @@ func TestInjectedHTTPStatusMapper(t *testing.T) {
 			wantOK:     true,
 		},
 		{
+			name:       "shared route",
+			mapper:     serverapi.HTTPStatusForErrorCode,
+			code:       v1.ErrorCodeRouteNotFound,
+			wantStatus: http.StatusNotFound,
+			wantOK:     true,
+		},
+		{
 			name:       "server",
 			mapper:     serverapi.HTTPStatusForErrorCode,
 			code:       serverapi.ErrorCodeJobNotFound,

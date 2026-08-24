@@ -987,6 +987,10 @@ github.com/gabriel-vasile/mimetype/internal/magic
 # github.com/getkin/kin-openapi v0.135.0
 ## explicit; go 1.22.5
 github.com/getkin/kin-openapi/openapi3
+github.com/getkin/kin-openapi/openapi3filter
+github.com/getkin/kin-openapi/routers
+github.com/getkin/kin-openapi/routers/legacy
+github.com/getkin/kin-openapi/routers/legacy/pathpattern
 # github.com/gin-contrib/pprof v1.5.1
 ## explicit; go 1.21.0
 github.com/gin-contrib/pprof

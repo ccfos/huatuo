@@ -35,7 +35,7 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 		middlewareContext(cfg.ErrorStatusMapper),
 		maxBodyBytesMiddleware(cfg.MaxBodyBytes),
 		requestLogMiddleware(),
-		httpGin.Recovery(),
+		newRecoveryMiddleware(cfg.ErrorStatusMapper),
 	}
 	if cfg.PromReg != nil {
 		chain = append(chain, newHTTPMetricsMiddleware(cfg.PromReg))
@@ -62,6 +62,12 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 		))
 	}
 	return chain
+}
+
+func newRecoveryMiddleware(statusMapper response.HTTPStatusMapper) httpGin.HandlerFunc {
+	return httpGin.CustomRecovery(func(ctx *httpGin.Context, _ any) {
+		writeGinError(ctx, response.ErrInternal, statusMapper)
+	})
 }
 
 func maxBodyBytesMiddleware(limit int64) httpGin.HandlerFunc {

@@ -223,6 +223,13 @@ func NewServer(cfg *Config) *Server {
 	}
 
 	s.engine.Use(buildMiddlewareChain(&effectiveConfig)...)
+	s.engine.HandleMethodNotAllowed = true
+	s.engine.NoRoute(func(ctx *httpGin.Context) {
+		writeGinError(ctx, response.ErrRouteNotFound, effectiveConfig.ErrorStatusMapper)
+	})
+	s.engine.NoMethod(func(ctx *httpGin.Context) {
+		writeGinError(ctx, response.ErrMethodNotAllowed, effectiveConfig.ErrorStatusMapper)
+	})
 	if effectiveConfig.EnablePProf {
 		pprof.Register(s.engine)
 	}

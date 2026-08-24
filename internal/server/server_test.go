@@ -144,6 +144,80 @@ func TestNewServerRegistersHealthzRoute(t *testing.T) {
 	}
 }
 
+func TestNewServerWritesRoutingErrors(t *testing.T) {
+	s := NewServer(nil)
+	tests := []struct {
+		name       string
+		method     string
+		target     string
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "route not found",
+			method:     http.MethodGet,
+			target:     "/missing",
+			wantStatus: http.StatusNotFound,
+			wantCode:   "route_not_found",
+		},
+		{
+			name:       "method not allowed",
+			method:     http.MethodPost,
+			target:     "/healthz",
+			wantStatus: http.StatusMethodNotAllowed,
+			wantCode:   "method_not_allowed",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, test.target, http.NoBody)
+			recorder := httptest.NewRecorder()
+			s.engine.ServeHTTP(recorder, request)
+
+			if recorder.Code != test.wantStatus {
+				t.Errorf("response status = %d, want %d", recorder.Code, test.wantStatus)
+			}
+			if !strings.Contains(recorder.Body.String(), `"code":"`+test.wantCode+`"`) {
+				t.Errorf("response body = %q, want code %q", recorder.Body.String(), test.wantCode)
+			}
+			if test.wantStatus == http.StatusMethodNotAllowed {
+				if got := recorder.Header().Get("Allow"); got != http.MethodGet {
+					t.Errorf("Allow header = %q, want %q", got, http.MethodGet)
+				}
+			}
+		})
+	}
+}
+
+func TestNewServerRecoversPanicAsJSONError(t *testing.T) {
+	s := NewServer(nil)
+	s.MustRegisterRoutes("", []Route{{
+		Method: http.MethodGet,
+		Path:   "/panic",
+		Handler: func(*Context) error {
+			panic("private panic detail")
+		},
+	}})
+
+	request := httptest.NewRequest(http.MethodGet, "/panic", http.NoBody)
+	recorder := httptest.NewRecorder()
+	s.engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(
+		recorder.Body.String(),
+		`"error":{"code":"internal_error","message":"internal error"}`,
+	) {
+		t.Errorf("response body = %q, want internal error", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "private panic detail") {
+		t.Errorf("response body = %q, exposed panic detail", recorder.Body.String())
+	}
+}
+
 func TestNewServerReadinessRoute(t *testing.T) {
 	tests := []struct {
 		name       string

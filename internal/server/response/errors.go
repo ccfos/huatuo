@@ -39,6 +39,18 @@ var (
 		Message: "invalid request",
 	}
 
+	// ErrRouteNotFound indicates that the request path has no API route.
+	ErrRouteNotFound = &APIError{
+		Code:    v1.ErrorCodeRouteNotFound,
+		Message: "route not found",
+	}
+
+	// ErrMethodNotAllowed indicates that the route rejects the HTTP method.
+	ErrMethodNotAllowed = &APIError{
+		Code:    v1.ErrorCodeMethodNotAllowed,
+		Message: "method not allowed",
+	}
+
 	// ErrUnauthorized represents an authentication error.
 	ErrUnauthorized = &APIError{
 		Code:    v1.ErrorCodeUnauthorized,
@@ -67,6 +79,18 @@ var (
 	ErrInternal = &APIError{
 		Code:    v1.ErrorCodeInternal,
 		Message: "internal error",
+	}
+
+	// ErrRequestTooLarge indicates that the request body exceeds the limit.
+	ErrRequestTooLarge = &APIError{
+		Code:    v1.ErrorCodeRequestTooLarge,
+		Message: "request body is too large",
+	}
+
+	// ErrUnsupportedMediaType indicates an unsupported request content type.
+	ErrUnsupportedMediaType = &APIError{
+		Code:    v1.ErrorCodeUnsupportedMediaType,
+		Message: "request content type is not supported",
 	}
 
 	// ErrTooManyRequests represents a rate limit exceeded error.
