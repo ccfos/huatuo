@@ -17,12 +17,16 @@
 package collector
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/types"
+
+	"golang.org/x/sys/unix"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/throtl_tracing.c -o $BPF_DIR/throtl_tracing.o
@@ -48,6 +52,13 @@ const (
 	throtlMainlineExitMarker  = "blkcg_exit_disk"
 )
 
+var (
+	errThrotlSessionInvalid = fmt.Errorf("%w: blk_throtl BPF session is invalid",
+		types.ErrTracingStopped)
+	errThrotlSessionUnhealthy = fmt.Errorf("%w: blk_throtl BPF session is unhealthy",
+		types.ErrTracingStopped)
+)
+
 // Keep reason numbers in sync with enum throtl_failure in the BPF object.
 const (
 	throtlFailurePendingCollision uint32 = iota + 1
@@ -67,6 +78,43 @@ type throtlStatus struct {
 	Reason uint32
 }
 
+func (status *throtlStatus) failure() error {
+	if status.Reason == 0 {
+		return nil
+	}
+	var reason string
+	switch status.Reason {
+	case throtlFailurePendingCollision:
+		reason = "bio already has pending state; duplicate admission"
+	case throtlFailurePendingInsert:
+		reason = "pending insertion failed"
+		if status.Errno == -int32(unix.E2BIG) {
+			reason = "throtl_pending_map capacity exhausted (10240 entries)"
+		}
+	case throtlFailurePendingDelete:
+		reason = "pending deletion failed"
+	case throtlFailureOwner:
+		reason = "blkg owner lookup, creation, validation or deletion failed"
+	case throtlFailureAggregate:
+		reason = "aggregate creation, lookup or deletion failed"
+	case throtlFailureUnknownCaller:
+		reason = "unrecognized throtl_add_bio_tg caller"
+	case throtlFailureTimeRollback:
+		reason = "wait end precedes its recorded start"
+	case throtlFailurePopState:
+		reason = "pop entry/return state violates the hook contract"
+	case throtlFailureLifecycle:
+		reason = "td state could not be read, created or validated"
+	default:
+		reason = fmt.Sprintf("unknown BPF stop reason %d", status.Reason)
+	}
+	if status.Errno != 0 {
+		reason += fmt.Sprintf(": helper returned %d (%s)",
+			status.Errno, unix.Errno(-status.Errno))
+	}
+	return fmt.Errorf("%w: %s", errThrotlSessionUnhealthy, reason)
+}
+
 type throtlHooks struct {
 	diskProfile  bool
 	trackedRange symbol.KsymbolRange
@@ -75,13 +123,25 @@ type throtlHooks struct {
 
 type throtlSession struct {
 	object          bpf.BPF
+	possibleCPUs    int
+	previous        throtlWaitSnapshot
+	needsRebaseline bool
+	singleLookup    bool
+	breaker         context.Context
+	cancel          context.CancelCauseFunc
 	containerSource ioControlContainerSource
+}
+
+type throtlTracing struct {
+	mu      sync.Mutex
+	session *throtlSession
 }
 
 func (s *throtlSession) readStatus() (throtlStatus, error) {
 	mapID := s.object.MapIDByName(throtlStatusMap)
 	if mapID == 0 {
-		return throtlStatus{}, fmt.Errorf("map %s is unavailable",
+		return throtlStatus{}, fmt.Errorf("%w: map %s is unavailable",
+			errThrotlSessionInvalid,
 			throtlStatusMap)
 	}
 	value, err := s.object.ReadMap(mapID, []byte{0, 0, 0, 0})
@@ -91,8 +151,8 @@ func (s *throtlSession) readStatus() (throtlStatus, error) {
 
 	var packed uint64
 	if err := decodeBPFMapData(value, &packed); err != nil {
-		return throtlStatus{}, fmt.Errorf("decode %s: %w",
-			throtlStatusMap, err)
+		return throtlStatus{}, fmt.Errorf("%w: decode %s: %w",
+			errThrotlSessionInvalid, throtlStatusMap, err)
 	}
 	return throtlStatus{Errno: int32(packed), Reason: uint32(packed >> 32)}, nil
 }
