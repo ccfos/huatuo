@@ -26,6 +26,7 @@ import (
 	"huatuo-bamai/core/autotracing"
 	"huatuo-bamai/core/events"
 	collector "huatuo-bamai/core/metrics"
+	"huatuo-bamai/internal/bpf"
 	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/matcher"
 )
@@ -155,6 +156,15 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("validating event tracing config: %w", err)
 	}
 	return nil
+}
+
+func (c *Config) BPFProgRuntimeOptions() bpf.ProgRuntimeOptions {
+	profiler := c.MetricCollector.BPFProgRuntime
+	inBlacklist := slices.Contains(c.BlackList, bpf.ProgRuntimeProfilerName)
+	return bpf.ProgRuntimeOptions{
+		Enabled: profiler.Enabled && !inBlacklist,
+		Targets: profiler.Targets,
+	}
 }
 
 // Validate rejects unsupported log levels.

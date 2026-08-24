@@ -29,6 +29,13 @@ var (
 
 type Option struct {
 	KeepaliveTimeout int
+	ProgRuntime      ProgRuntimeOptions
+}
+
+// ProgRuntimeOptions selects loaded BPF programs for profiling.
+type ProgRuntimeOptions struct {
+	Enabled bool
+	Targets []string
 }
 
 // AttachOption is an option for attaching a program.

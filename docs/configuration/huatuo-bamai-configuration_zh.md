@@ -1070,6 +1070,29 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
 
 注意：在进程已经启动且因 `libmtml.so` 缺失导致采集器被禁用的情况下，要启用该采集器（即把 `mthreads_gpu` 从 `BlackList` 中移除）需要重启进程。采集器工厂只在初始化时运行，运行时即使库被加载成功也不会注册新的采集器。
 
+#### 9.8 BPF 程序运行时 Profiler
+
+```bash
+# Metric Collector
+[MetricCollector]
+    # Targeted BPF program runtime profiler
+    #
+    # Attaches fentry/fexit probes to managed BPF programs as they are loaded
+    # and exports cumulative run count and runtime per program.
+    # An empty Targets list profiles every managed program; otherwise only the
+    # named programs are profiled. Default: disabled.
+    #
+    [MetricCollector.BPFProgRuntime]
+        # Enabled = false
+        # Targets = ["bpf_anyfs_file_read_iter"]
+```
+
+- **Enabled**：总开关。默认 `false`，不支持配置热变更。
+- **Targets**：空列表表示剖析全部托管 BPF 程序；否则仅剖析列出的程序，不支持配置热变更。指标包括 `up`、`runs_total`、`runtime_seconds_total`、`attach_failures_total`，以及宿主机 `online_cores`。
+
+  **说明**：仅托管 BPF 加载器加载的程序可被剖析。尾调用进入的程序不会单独生成指标；同名程序聚合为同一条指标序列。统计值是 fentry 到 fexit 之间的单调时钟经过时间，期间发生的硬中断、软中断或 NMI 处理时间可能包含在运行时中。
+  单个 per-CPU 起始槽假设同一目标不会在同一 CPU 上嵌套执行。嵌套或入口不匹配的样本会被跳过而非误计。对累计监控预计影响很小，但不承诺严格的误差上界。目标程序必须带 BTF 函数元数据，且内核支持 BPF-to-BPF fentry/fexit 的tracing link。不支持的目标以 `up=0` 和 `attach_failures_total` 暴露，不阻止真实目标程序加载。
+
 ### 10. Pod 配置
 
 该 section 用于从 kubelet 获取 Pod 信息，实现容器与 Pod 级别的标签关联和指标隔离。

@@ -72,6 +72,11 @@ type Config struct {
 	MountPointStat struct {
 		MountPointsIncluded string
 	}
+
+	BPFProgRuntime struct {
+		Enabled bool `default:"false"`
+		Targets []string
+	}
 }
 
 var currentConfig atomic.Pointer[Config]
@@ -98,5 +103,6 @@ func (c *Config) Clone() *Config {
 	dst := *c
 	dst.NetdevDCB.DeviceList = slices.Clone(c.NetdevDCB.DeviceList)
 	dst.NetdevHW.DeviceList = slices.Clone(c.NetdevHW.DeviceList)
+	dst.BPFProgRuntime.Targets = slices.Clone(c.BPFProgRuntime.Targets)
 	return &dst
 }

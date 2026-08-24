@@ -1060,6 +1060,28 @@ This section defines collection rules for various system and network metrics. Al
 
 Note: enabling the collector itself (i.e. removing `mthreads_gpu` from `BlackList` after the process has already started with the collector disabled because `libmtml.so` was missing at startup) requires a restart. The collector factory runs only during initialization, so a successful late library load will not register a new collector.
 
+#### 9.8 BPF Program Runtime Profiler
+
+```bash
+# Metric Collector
+[MetricCollector]
+    # Targeted BPF program runtime profiler
+    #
+    # Attaches fentry/fexit probes to managed BPF programs as they are loaded
+    # and exports cumulative run count and runtime per program.
+    # An empty Targets list profiles every managed program; otherwise only the
+    # named programs are profiled. Default: disabled.
+    #
+    [MetricCollector.BPFProgRuntime]
+        # Enabled = false
+        # Targets = ["bpf_anyfs_file_read_iter"]
+```
+
+- **Enabled**: Master switch. Default false. No hot reload.
+- **Targets**: Empty profiles all managed BPF programs; otherwise only the named programs are profiled. No hot reload. Metrics: `up`, `runs_total`, `runtime_seconds_total`, `attach_failures_total`, and a host `online_cores` gauge.
+
+  **Description**: Only managed BPF programs are profiled. Tail-called programs are not profiled separately; same-name programs share one metric series. Runtime is measured from fentry to fexit and may include interrupt, softirq, or NMI time. Nested or unmatched samples are skipped. Targets require BTF metadata and BPF-to-BPF fentry/fexit support. Unsupported targets report `up=0` and `attach_failures_total` without blocking program loading.
+
 ### 10. Pod
 
 This section configures how to fetch Pod information from kubelet to enable container/Pod-level labeling and metric isolation.
