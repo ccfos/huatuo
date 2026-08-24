@@ -22,8 +22,10 @@ type ErrorCode string
 const (
 	ErrorCodeInternal             ErrorCode = "internal_error"
 	ErrorCodeInvalidRequest       ErrorCode = "invalid_request"
+	ErrorCodeMethodNotAllowed     ErrorCode = "method_not_allowed"
 	ErrorCodePermissionDenied     ErrorCode = "permission_denied"
 	ErrorCodeRequestTooLarge      ErrorCode = "request_too_large"
+	ErrorCodeRouteNotFound        ErrorCode = "route_not_found"
 	ErrorCodeServiceUnavailable   ErrorCode = "service_unavailable"
 	ErrorCodeUnauthenticated      ErrorCode = "unauthenticated"
 	ErrorCodeUnsupportedMediaType ErrorCode = "unsupported_media_type"

@@ -10,12 +10,18 @@ x-error-codes:
   invalid_request:
     httpStatus: 400
     description: The request does not satisfy the API contract.
+  method_not_allowed:
+    httpStatus: 405
+    description: The request method is not supported by the matched route.
   permission_denied:
     httpStatus: 403
     description: The authenticated principal cannot perform the request.
   request_too_large:
     httpStatus: 413
     description: The request body exceeds the configured limit.
+  route_not_found:
+    httpStatus: 404
+    description: The request path does not match an API route.
   service_unavailable:
     httpStatus: 503
     description: The requested service is temporarily unavailable.

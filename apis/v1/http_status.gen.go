@@ -23,10 +23,14 @@ func HTTPStatusForErrorCode(code ErrorCode) (int, bool) {
 		return 500, true
 	case ErrorCodeInvalidRequest:
 		return 400, true
+	case ErrorCodeMethodNotAllowed:
+		return 405, true
 	case ErrorCodePermissionDenied:
 		return 403, true
 	case ErrorCodeRequestTooLarge:
 		return 413, true
+	case ErrorCodeRouteNotFound:
+		return 404, true
 	case ErrorCodeServiceUnavailable:
 		return 503, true
 	case ErrorCodeUnauthenticated:
