@@ -82,6 +82,11 @@ type BPF interface {
 	// DumpMap dump all the context of the map
 	DumpMap(mapID uint32) ([]MapItem, error)
 
+	// DumpMapBatch copies HASH/PERCPU_HASH rows under the kernel bucket lock.
+	// Values may still advance; this is not an atomic whole-map snapshot.
+	// Unsupported kernels return an error without falling back to single lookups.
+	DumpMapBatch(mapID uint32) ([]MapItem, error)
+
 	// DumpMapByName dump all the context of the map.
 	DumpMapByName(mapName string) ([]MapItem, error)
 
