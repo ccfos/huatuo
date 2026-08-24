@@ -27,6 +27,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"github.com/ccfos/huatuo/internal/log"
 
@@ -548,6 +549,121 @@ func (b *defaultBPF) dumpMap(m *ebpf.Map) ([]MapItem, error) {
 	}
 
 	return items, nil
+}
+
+// DumpMapBatch keeps each hash row linked while the kernel copies its key and
+// values under the bucket lock. Other map operations retain their usual reader.
+func (b *defaultBPF) DumpMapBatch(mapID uint32) ([]MapItem, error) {
+	if err := b.acquireReadLock(); err != nil {
+		return nil, err
+	}
+	defer b.mu.RUnlock()
+
+	m, err := b.mapByID(mapID)
+	if err != nil {
+		return nil, err
+	}
+	items, err := dumpHashMapBatch(m)
+	if err != nil {
+		return nil, fmt.Errorf("batch dump map %d: %w", mapID, err)
+	}
+	return items, nil
+}
+
+func dumpHashMapBatch(m *ebpf.Map) ([]MapItem, error) {
+	if m.Type() != ebpf.Hash && m.Type() != ebpf.PerCPUHash {
+		return nil, unix.EOPNOTSUPP
+	}
+	keySize, valueSize := int(m.KeySize()), int(m.ValueSize())
+	if m.Type() == ebpf.PerCPUHash {
+		cpus, err := ebpf.PossibleCPU()
+		if err != nil {
+			return nil, err
+		}
+		valueSize = (valueSize + 7) / 8 * 8 * cpus
+	}
+	maxEntries := int(m.MaxEntries())
+	batchSize := min(128, maxEntries)
+	keys := make([]byte, batchSize*keySize)
+	values := make([]byte, batchSize*valueSize)
+	var items []MapItem
+	var cursor uint32
+	var previous *uint32
+	for {
+		count, err := lookupHashMapBatch(m.FD(), previous, &cursor,
+			keys, values, uint32(batchSize))
+		if errors.Is(err, unix.ENOSPC) && batchSize < maxEntries {
+			// A bucket must fit in one batch. Grow only when a collision chain
+			// exceeds the bounded initial buffer, retaining the same cursor.
+			batchSize = min(batchSize*2, maxEntries)
+			keys = make([]byte, batchSize*keySize)
+			values = make([]byte, batchSize*valueSize)
+			continue
+		}
+		if err != nil && !errors.Is(err, unix.ENOENT) {
+			return nil, err
+		}
+		if count > uint32(batchSize) || len(items)+int(count) > maxEntries {
+			return nil, ebpf.ErrIterationAborted
+		}
+		for index := range int(count) {
+			items = append(items, MapItem{
+				Key:   append([]byte(nil), keys[index*keySize:(index+1)*keySize]...),
+				Value: append([]byte(nil), values[index*valueSize:(index+1)*valueSize]...),
+			})
+		}
+		// ENOENT may accompany a populated final batch.
+		if errors.Is(err, unix.ENOENT) {
+			return items, nil
+		}
+		if count == 0 {
+			return nil, fmt.Errorf("batch map lookup made no progress: %w", ebpf.ErrIterationAborted)
+		}
+		previous = &cursor
+	}
+}
+
+// These fields mirror union bpf_attr.batch. Raw buffers retain kernel errno so
+// absence of batch support stays distinct from permission and resource errors.
+type mapLookupBatchAttr struct {
+	InBatch   uint64
+	OutBatch  uint64
+	Keys      uint64
+	Values    uint64
+	Count     uint32
+	MapFD     uint32
+	ElemFlags uint64
+	Flags     uint64
+}
+
+func lookupHashMapBatch(fd int, previous, cursor *uint32,
+	keys, values []byte, count uint32,
+) (uint32, error) {
+	var pinned runtime.Pinner
+	pinned.Pin(cursor)
+	pinned.Pin(&keys[0])
+	pinned.Pin(&values[0])
+	defer pinned.Unpin()
+	attr := mapLookupBatchAttr{
+		OutBatch: uint64(uintptr(unsafe.Pointer(cursor))),
+		Keys:     uint64(uintptr(unsafe.Pointer(&keys[0]))),
+		Values:   uint64(uintptr(unsafe.Pointer(&values[0]))),
+		Count:    count,
+		MapFD:    uint32(fd),
+	}
+	if previous != nil {
+		pinned.Pin(previous)
+		attr.InBatch = uint64(uintptr(unsafe.Pointer(previous)))
+	}
+	// Attribute pointers are integer fields: pin their storage across the
+	// syscall so stack movement or collection cannot invalidate them.
+	pinned.Pin(&attr)
+	_, _, errno := unix.Syscall(unix.SYS_BPF, unix.BPF_MAP_LOOKUP_BATCH,
+		uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr))
+	if errno != 0 {
+		return attr.Count, errno
+	}
+	return attr.Count, nil
 }
 
 func dumpPerCPUMap(m *ebpf.Map) ([]MapItem, error) {

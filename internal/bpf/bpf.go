@@ -17,6 +17,8 @@ package bpf
 import (
 	"context"
 	"fmt"
+
+	"golang.org/x/sys/unix"
 )
 
 // BPF is safe for concurrent use. Close waits for in-flight operations.
@@ -91,6 +93,22 @@ type independentAttacher interface {
 
 type programDetacher interface {
 	DetachProgram(name string) error
+}
+
+type mapBatchDumper interface {
+	DumpMapBatch(mapID uint32) ([]MapItem, error)
+}
+
+// DumpMapBatch copies HASH/PERCPU_HASH rows through BPF_MAP_LOOKUP_BATCH.
+// Each bucket is protected against insertion and deletion while its rows are
+// copied. Values may still advance; this is not an atomic whole-map snapshot.
+// Unsupported backends return EOPNOTSUPP without falling back to single lookups.
+func DumpMapBatch(b BPF, mapID uint32) ([]MapItem, error) {
+	dumper, ok := b.(mapBatchDumper)
+	if !ok {
+		return nil, fmt.Errorf("batch map lookup: %w", unix.EOPNOTSUPP)
+	}
+	return dumper.DumpMapBatch(mapID)
 }
 
 // AttachIndependently asks a BPF implementation to attach one program without
