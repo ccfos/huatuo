@@ -90,6 +90,12 @@ func IsAvailable(typ Type) bool {
 	return ok && definition.available
 }
 
+// SupportsScope reports whether a tracing type defines the requested scope.
+func SupportsScope(typ Type, scope observation.Scope) bool {
+	definition, ok := capabilityFor(typ)
+	return ok && slices.Contains(definition.SupportedScopes, scope)
+}
+
 func capabilityFor(typ Type) (*capabilityDefinition, bool) {
 	for i := range capabilityDefinitions {
 		if capabilityDefinitions[i].Type == typ {

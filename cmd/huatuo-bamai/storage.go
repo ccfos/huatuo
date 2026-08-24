@@ -33,7 +33,15 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 		return nil, nil
 	}
 
-	return nil, initStorage(d.opts.Region, config.Get())
+	if err := initStorage(d.opts.Region, config.Get()); err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) error {
+		if err := tracing.CloseStores(ctx); err != nil {
+			return fmt.Errorf("close tracing stores: %w", err)
+		}
+		return nil
+	}, nil
 }
 
 func initStorage(storageRegion string, cfg *config.Config) error {

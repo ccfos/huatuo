@@ -15,33 +15,57 @@
 package handlers
 
 import (
+	"fmt"
+
 	nodeapi "huatuo-bamai/apis/v1/node"
 	"huatuo-bamai/cmd/huatuo-bamai/config"
+	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
+	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
 	"huatuo-bamai/pkg/tracing"
 
+	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ServerOptions groups the dependencies required to start the HTTP server.
 type ServerOptions struct {
-	Addr           string
-	TracingManager *tracing.Manager
-	PromReg        *prometheus.Registry
-	VersionInfo    *version.Info
+	Addr             string
+	BearerToken      string
+	TracingManager   *tracing.Manager
+	ProfilingService *nodeprofiling.Service
+	TracingService   *nodetracing.Service
+	PromReg          *prometheus.Registry
+	VersionInfo      *version.Info
 }
 
 // Start starts the HTTP server with all handlers registered.
 func Start(opts ServerOptions) (*server.Server, error) {
+	nodeHandler, err := NewNodeAPIHandler(opts.ProfilingService, opts.TracingService)
+	if err != nil {
+		return nil, err
+	}
 	s := server.NewServer(&server.Config{
-		EnablePProf: true,
+		EnablePProf:         true,
+		DisableHealthRoutes: true,
 		RateLimit: &server.RateLimitConfig{
 			RequestsPerSecond: 200,
 			Burst:             200,
 		},
 		EnableRetry: true,
+		RequireAuth: true,
+		AuthUsers: []server.UserConfig{{
+			ID:          nodePrincipalID,
+			BearerToken: opts.BearerToken,
+			Permissions: []string{"/**"},
+		}},
+		PublicPaths: []string{
+			"/openapi.json",
+			// Profiler subprocesses still use this legacy local metadata route.
+			"/containers/json",
+		},
 		PromReg:     opts.PromReg,
 		VersionInfo: opts.VersionInfo,
 		ErrorStatusMapper: response.ChainHTTPStatusMappers(
@@ -64,6 +88,22 @@ func Start(opts ServerOptions) (*server.Server, error) {
 			httpConfig.EventStreamKeepAliveIntervalSeconds,
 		).Handlers,
 	)
+
+	errorHandlers := s.StrictErrorHandlers()
+	strictHandler := nodeapi.NewStrictHandlerWithOptions(
+		nodeHandler,
+		nil,
+		nodeapi.StrictGinServerOptions{
+			RequestErrorHandlerFunc:  errorHandlers.RequestError,
+			HandlerErrorFunc:         errorHandlers.HandlerError,
+			ResponseErrorHandlerFunc: errorHandlers.ResponseError,
+		},
+	)
+	if err := s.RegisterOpenAPIHandlers(nodeapi.OpenAPIJSON(), func(router httpGin.IRouter) {
+		nodeapi.RegisterHandlers(router, strictHandler)
+	}); err != nil {
+		return nil, fmt.Errorf("register Node API handlers: %w", err)
+	}
 
 	if err := s.Start(opts.Addr); err != nil {
 		return nil, err

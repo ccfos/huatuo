@@ -75,6 +75,7 @@ func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFun
 
 		user, err := svc.service.AuthenticateBearer(ctx.Request().Header.Get("Authorization"))
 		if err != nil {
+			ctx.Header("WWW-Authenticate", "Bearer")
 			message := authn.ErrInvalidBearerToken.Error()
 			if errors.Is(err, authn.ErrMissingBearerToken) {
 				message = authn.ErrMissingBearerToken.Error()

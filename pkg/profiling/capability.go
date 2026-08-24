@@ -151,6 +151,12 @@ func SupportsMemoryMode(language Language, mode MemoryMode) bool {
 	return ok && slices.Contains(capability.Modes, Mode(mode))
 }
 
+// SupportsScope reports whether a profiling combination can observe a scope.
+func SupportsScope(language Language, typ Type, scope observation.Scope) bool {
+	capability, ok := capabilityFor(language, typ)
+	return ok && slices.Contains(capability.SupportedScopes, scope)
+}
+
 func LanguagesFor(typ Type) []Language {
 	languages := make([]Language, 0, len(capabilities))
 	seen := make(map[Language]struct{}, len(capabilities))

@@ -25,6 +25,9 @@ import (
 
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/nodeagent/operation"
+	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
+	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
 	"huatuo-bamai/internal/pidfile"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/version"
@@ -41,7 +44,7 @@ const (
 	appName  = "huatuo-bamai"
 	appUsage = "Node agent for Linux kernel observability"
 
-	shutdownTimeout = 10 * time.Second
+	defaultShutdownTimeout = 60 * time.Second
 )
 
 var (
@@ -76,10 +79,13 @@ func mainAction(opts *Options) error {
 type Daemon struct {
 	opts *Options
 
-	cgr       cgroups.Cgroup
-	metrics   *prometheus.Registry
-	tracer    *tracing.Manager
-	apiServer *server.Server
+	cgr              cgroups.Cgroup
+	metrics          *prometheus.Registry
+	tracer           *tracing.Manager
+	operationManager *operation.Manager
+	profilingService *nodeprofiling.Service
+	tracingService   *nodetracing.Service
+	apiServer        *server.Server
 }
 
 func NewDaemon(opts *Options) *Daemon {
@@ -94,11 +100,19 @@ func (d *Daemon) Run(ctx context.Context) error {
 	var cleanups []func(context.Context) error
 
 	shutdown := func() error {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), defaultShutdownTimeout)
 		defer cancel()
 
 		var errs []error
 		for i := len(cleanups) - 1; i >= 0; i-- {
+			if err := shutdownCtx.Err(); err != nil {
+				errs = append(errs, fmt.Errorf(
+					"shutdown deadline reached with %d cleanup stages remaining: %w",
+					i+1,
+					err,
+				))
+				break
+			}
 			if err := cleanups[i](shutdownCtx); err != nil {
 				errs = append(errs, err)
 			}
@@ -126,12 +140,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}{
 		{"pidfile", lockPidfile},
 		{"cgroup", setupCgroup},
-		{"storage", setupStorage},
 		{"bpf", setupBPF},
+		{"storage", setupStorage},
 		{"pod", setupPodManager},
 		{"metrics", setupMetrics},
 		{"toolstream", startToolstream},
 		{"tracing", startTracing},
+		{"operations", startOperations},
 		{"handlers", startHandlers},
 		{"cgroup-cpu-quota", applyCgroupCPUQuota},
 	}

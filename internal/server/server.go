@@ -42,24 +42,25 @@ const (
 
 // Config defines the configuration options for the HTTP server.
 type Config struct {
-	EnablePProf       bool
-	RateLimit         *RateLimitConfig
-	EnableRetry       bool
-	RequireAuth       bool
-	AuthUsers         []UserConfig
-	PublicPaths       []string
-	AdminPaths        []string
-	PromReg           *prometheus.Registry
-	Group             string
-	VersionInfo       *version.Info
-	ReadHeaderTimeout time.Duration
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
-	MaxHeaderBytes    int
-	MaxBodyBytes      int64
-	Ready             func(context.Context) error
-	ErrorStatusMapper response.HTTPStatusMapper
+	EnablePProf         bool
+	DisableHealthRoutes bool
+	RateLimit           *RateLimitConfig
+	EnableRetry         bool
+	RequireAuth         bool
+	AuthUsers           []UserConfig
+	PublicPaths         []string
+	AdminPaths          []string
+	PromReg             *prometheus.Registry
+	Group               string
+	VersionInfo         *version.Info
+	ReadHeaderTimeout   time.Duration
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	IdleTimeout         time.Duration
+	MaxHeaderBytes      int
+	MaxBodyBytes        int64
+	Ready               func(context.Context) error
+	ErrorStatusMapper   response.HTTPStatusMapper
 }
 
 // RateLimitConfig enables per-client rate limiting.
@@ -175,13 +176,38 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	shutdownErr := execution.shutdown(ctx)
 	serveResult := execution.wait(ctx)
+	if shutdownErr != nil && ctx.Err() != nil {
+		return errors.Join(shutdownErr, serveResult)
+	}
 
+	s.finishExecution(execution)
+	return errors.Join(shutdownErr, serveResult)
+}
+
+// Close forcefully closes active HTTP connections after graceful draining fails.
+func (s *Server) Close() error {
 	s.mu.Lock()
-	s.activeExecution = nil
-	s.state = serverStateStopped
+	execution := s.activeExecution
+	if execution == nil {
+		s.mu.Unlock()
+		return nil
+	}
+	s.state = serverStateStopping
 	s.mu.Unlock()
 
-	return errors.Join(shutdownErr, serveResult)
+	closeErr := execution.httpServer.Close()
+	<-execution.done
+	s.finishExecution(execution)
+	return errors.Join(closeErr, execution.result)
+}
+
+func (s *Server) finishExecution(execution *serveExecution) {
+	s.mu.Lock()
+	if s.activeExecution == execution {
+		s.activeExecution = nil
+		s.state = serverStateStopped
+	}
+	s.mu.Unlock()
 }
 
 // Done is closed when the serving goroutine exits.
@@ -234,9 +260,13 @@ func NewServer(cfg *Config) *Server {
 		pprof.Register(s.engine)
 	}
 	s.rootGroup = NewRoot(s.engine, effectiveConfig.Group)
+	if !effectiveConfig.DisableHealthRoutes {
+		s.MustRegisterRoutes("", []Route{
+			{Method: http.MethodGet, Path: "/healthz", Handler: s.healthzHandler()},
+			{Method: http.MethodGet, Path: "/readyz", Handler: s.readyzHandler()},
+		})
+	}
 	s.MustRegisterRoutes("", []Route{
-		{Method: http.MethodGet, Path: "/healthz", Handler: s.healthzHandler()},
-		{Method: http.MethodGet, Path: "/readyz", Handler: s.readyzHandler()},
 		{Method: http.MethodGet, Path: "/metrics", Handler: s.metricsHandler()},
 	})
 	if effectiveConfig.VersionInfo != nil {

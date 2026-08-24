@@ -92,7 +92,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
 
 配置始终以文档标明的单位保存，仅在应用 cgroup 限制时将内存转换为字节。
 
-### 5. HTTP 服务与任务
+### 5. HTTP 服务与按需 Operation
 
 ```toml
 # HTTP server configuration.
@@ -119,7 +119,27 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
     # MaxEventStreamClients = 100
     # EventStreamKeepAliveIntervalSeconds = 30
 
-# Locally running tracing tasks.
+[HTTPServer.Auth]
+    # huatuo-apiserver 调用 Node API 时使用的必填服务凭证。
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
+
+# Profiling 和 Tracing 共用的生命周期策略。
+[Operations]
+    # MaxConcurrent = 10
+    # LaunchTimeoutSeconds = 10
+    # StopGracePeriodSeconds = 5
+    # FinalizationTimeoutSeconds = 30
+    # TerminalRetentionPeriodSeconds = 600
+
+# Node 本地 Profiling 执行配置。
+[Profiling]
+    # AggregationIntervalSeconds = 10
+    # MaxConcurrentProcesses = 10
+    # CommandOutputLimitBytes = 65536
+    # JavaToolPath = "/opt/async-profiler"
+    # PythonToolPath = "/opt/py-spy"
+
+# 旧 Task API 使用的本地追踪任务配置。
 [Tasks]
     # - MaxConcurrent
     # Maximum number of concurrent tasks.
@@ -129,7 +149,19 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
 ```
 
 - **ListenAddress** 使用 `host:port` 格式，主机为空时监听所有接口。
-- **MaxConcurrent** 限制本机同时运行的追踪任务数量。
+- **HTTPServer.Auth.BearerToken** 必填，并且必须与 huatuo-apiserver 独立配置的
+  Node 凭证一致；部署前必须替换示例值。
+- **Operations.MaxConcurrent** 是 Profiling、Tracing 共用的进程级上限；容量用尽时
+  直接拒绝新 Operation，不在 Node 排队。
+- 四个 Operation 时间参数分别限制进程启动、优雅停止、结果收尾和终态保留，不能
+  合并为一个通用 timeout。
+- **Profiling.JavaToolPath** 和 **Profiling.PythonToolPath** 只在请求相应语言时需要；
+  Node 环境不满足要求时拒绝请求且不创建 Operation。
+- **Tasks.MaxConcurrent** 仅作用于待删除的旧 Task API。
+
+生成的 Node API 通过 `GET /openapi.json` 提供协议文档。Profiling 和 Tracing 的
+Start、Get、Stop 路由必须携带服务 Bearer Token；健康、指标、版本和 OpenAPI 文档
+保持公开。
 
 事件流配置控制 `POST /v1/events/watch`。达到
 `MaxEventStreamClients` 后，新连接返回 HTTP 429。

@@ -90,7 +90,7 @@ Huatuo does not create its own cgroup by default. This section applies only when
 The configured values remain in their documented units. Memory is converted
 to bytes only when the cgroup limit is applied.
 
-### 5. HTTP Server and Tasks
+### 5. HTTP Server and On-demand Operations
 
 ```toml
 # HTTP server configuration.
@@ -117,7 +117,27 @@ to bytes only when the cgroup limit is applied.
     # MaxEventStreamClients = 100
     # EventStreamKeepAliveIntervalSeconds = 30
 
-# Locally running tracing tasks.
+[HTTPServer.Auth]
+    # Required service credential used by huatuo-apiserver.
+    BearerToken = "REPLACE_WITH_RANDOM_HEX"
+
+# Shared lifecycle policy for Profiling and Tracing operations.
+[Operations]
+    # MaxConcurrent = 10
+    # LaunchTimeoutSeconds = 10
+    # StopGracePeriodSeconds = 5
+    # FinalizationTimeoutSeconds = 30
+    # TerminalRetentionPeriodSeconds = 600
+
+# Node-local profiler execution settings.
+[Profiling]
+    # AggregationIntervalSeconds = 10
+    # MaxConcurrentProcesses = 10
+    # CommandOutputLimitBytes = 65536
+    # JavaToolPath = "/opt/async-profiler"
+    # PythonToolPath = "/opt/py-spy"
+
+# Legacy locally running tracing tasks.
 [Tasks]
     # - MaxConcurrent
     # Maximum number of concurrent tasks.
@@ -128,7 +148,21 @@ to bytes only when the cgroup limit is applied.
 
 - **ListenAddress** uses `host:port` form. An empty host listens on all
   interfaces.
-- **MaxConcurrent** limits locally running tracing tasks.
+- **HTTPServer.Auth.BearerToken** is required and must match the independent
+  Node credential configured for huatuo-apiserver. Replace the example value
+  before deployment.
+- **Operations.MaxConcurrent** is one process-wide limit shared by Profiling
+  and Tracing. New operations are rejected instead of queued when it is full.
+- The four operation time settings independently limit process launch,
+  graceful stop, result finalization, and terminal-state retention.
+- **Profiling.JavaToolPath** and **Profiling.PythonToolPath** are optional until
+  their corresponding language is requested. Unsupported node environments
+  reject that request without creating an operation.
+- **Tasks.MaxConcurrent** applies only to the legacy Task API.
+
+The generated Node API exposes its contract at `GET /openapi.json`. Profiling
+and Tracing Start, Get, and Stop routes require the service bearer token.
+Health, metrics, version, and the OpenAPI document remain public.
 
 The event stream settings control `POST /v1/events/watch`. When
 `MaxEventStreamClients` is reached, new streams receive HTTP 429.

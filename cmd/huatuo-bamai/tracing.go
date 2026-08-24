@@ -16,7 +16,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/cmd/huatuo-bamai/handlers"
@@ -24,6 +26,8 @@ import (
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
 )
+
+const defaultHTTPDrainTimeout = 5 * time.Second
 
 func setupBPF(_ *Daemon) (func(context.Context) error, error) {
 	if err := bpf.Init(&bpf.Option{}); err != nil {
@@ -60,29 +64,43 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 	}
 
 	d.tracer = mgr
-	// Stop collectors first, then drain bulk-buffered writes before BPF teardown.
 	return func(ctx context.Context) error {
 		if err := mgr.Close(ctx); err != nil {
 			return fmt.Errorf("stop: %w", err)
-		}
-		if err := tracing.CloseStores(ctx); err != nil {
-			return fmt.Errorf("close stores: %w", err)
 		}
 		return nil
 	}, nil
 }
 
 func startHandlers(d *Daemon) (func(context.Context) error, error) {
+	httpConfig := config.Get().HTTPServer
 	runningServer, err := handlers.Start(handlers.ServerOptions{
-		Addr:           config.Get().HTTPServer.ListenAddress,
-		TracingManager: d.tracer,
-		PromReg:        d.metrics,
-		VersionInfo:    &d.opts.VersionInfo,
+		Addr:             httpConfig.ListenAddress,
+		BearerToken:      httpConfig.Auth.BearerToken,
+		TracingManager:   d.tracer,
+		ProfilingService: d.profilingService,
+		TracingService:   d.tracingService,
+		PromReg:          d.metrics,
+		VersionInfo:      &d.opts.VersionInfo,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start handlers: %w", err)
 	}
 	d.apiServer = runningServer
 
-	return runningServer.Shutdown, nil
+	return func(ctx context.Context) error {
+		// Admission closes before the listener so in-flight Start requests cannot
+		// register work after shutdown begins.
+		d.operationManager.BeginShutdown()
+		drainCtx, cancel := context.WithTimeout(ctx, defaultHTTPDrainTimeout)
+		drainErr := runningServer.Shutdown(drainCtx)
+		cancel()
+		if drainErr == nil {
+			return nil
+		}
+		return errors.Join(
+			fmt.Errorf("drain HTTP server: %w", drainErr),
+			runningServer.Close(),
+		)
+	}, nil
 }
