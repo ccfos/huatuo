@@ -19,6 +19,20 @@ import (
 	"slices"
 )
 
+// Mode selects the profiling strategy for a type and language combination.
+type Mode string
+
+const (
+	ModeUnknown       Mode = ""
+	ModeObjectAlloc   Mode = "object_alloc"
+	ModeObjectUsage   Mode = "object_usage"
+	ModeVirtualAlloc  Mode = "virtual_alloc"
+	ModePhysicalAlloc Mode = "physical_alloc"
+	ModePhysicalUsage Mode = "physical_usage"
+	ModeOnCPU         Mode = "oncpu"
+	ModeOffCPU        Mode = "offcpu"
+)
+
 type MemoryMode string
 
 const (
@@ -53,11 +67,22 @@ const (
 func ParseMemoryMode(value string) (MemoryMode, error) {
 	mode := MemoryMode(value)
 	for _, capability := range capabilities {
-		if slices.Contains(capability.MemoryModes, mode) {
+		if capability.Type == TypeMemory && slices.Contains(capability.Modes, Mode(mode)) {
 			return mode, nil
 		}
 	}
 	return MemoryModeUnknown, fmt.Errorf("unsupported memory mode %q", value)
+}
+
+// ParseMode parses a public profiling mode value.
+func ParseMode(value string) (Mode, error) {
+	mode := Mode(value)
+	for _, capability := range capabilities {
+		if slices.Contains(capability.Modes, mode) {
+			return mode, nil
+		}
+	}
+	return ModeUnknown, fmt.Errorf("unsupported profiling mode %q", value)
 }
 
 func ParseCPUMode(value string) (CPUMode, error) {

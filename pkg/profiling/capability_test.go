@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"huatuo-bamai/pkg/observation"
 )
 
 func TestCapabilities(t *testing.T) {
@@ -120,15 +122,60 @@ func TestCPUModesForReturnsCopy(t *testing.T) {
 }
 
 func TestCapabilityDefinitionsAreUnique(t *testing.T) {
-	languages := map[Language]bool{}
+	keys := map[struct {
+		typ      Type
+		language Language
+	}]bool{}
 	for _, capability := range capabilities {
+		key := struct {
+			typ      Type
+			language Language
+		}{typ: capability.Type, language: capability.Language}
+
+		require.NotEqual(t, TypeUnknown, capability.Type)
 		require.NotEqual(t, LanguageUnknown, capability.Language)
-		require.NotEqual(t, ImplementationUnknown, capability.Implementation)
-		require.False(t, languages[capability.Language], "duplicate language %q", capability.Language)
-		languages[capability.Language] = true
-		require.Equal(t, len(capability.Types), len(unique(capability.Types)))
-		require.Equal(t, len(capability.CPUModes), len(unique(capability.CPUModes)))
-		require.Equal(t, len(capability.MemoryModes), len(unique(capability.MemoryModes)))
+		require.NotEqual(t, ImplementationUnknown, capability.implementation)
+		require.False(t, keys[key], "duplicate capability %q/%q", capability.Type, capability.Language)
+		keys[key] = true
+		require.NotEmpty(t, capability.Modes)
+		require.NotEmpty(t, capability.SupportedScopes)
+		require.Equal(t, len(capability.Modes), len(unique(capability.Modes)))
+		require.Equal(t, len(capability.SupportedScopes), len(unique(capability.SupportedScopes)))
+	}
+}
+
+func TestCapabilitiesReturnsDeepCopy(t *testing.T) {
+	got := Capabilities()
+	require.NotEmpty(t, got)
+
+	got[0].Type = TypeMemory
+	got[0].Modes[0] = Mode("changed")
+	got[0].SupportedScopes[0] = "changed"
+
+	fresh := Capabilities()
+	require.Equal(t, TypeCPU, fresh[0].Type)
+	require.Equal(t, ModeOnCPU, fresh[0].Modes[0])
+	require.Equal(t, "host", string(fresh[0].SupportedScopes[0]))
+}
+
+func TestCapabilitiesExposeSupportedScopeAndBinaryMatch(t *testing.T) {
+	containerOnly := []observation.Scope{observation.ScopeContainer}
+	hostAndContainer := []observation.Scope{observation.ScopeHost, observation.ScopeContainer}
+
+	for _, capability := range Capabilities() {
+		switch {
+		case capability.Type == TypeCPU && capability.implementation == ImplementationNative:
+			require.Equal(t, hostAndContainer, capability.SupportedScopes)
+			require.False(t, capability.SupportsBinaryMatch)
+		case capability.Type == TypeCPU:
+			require.Equal(t, containerOnly, capability.SupportedScopes)
+			require.True(t, capability.SupportsBinaryMatch)
+		case capability.Type == TypeMemory:
+			require.Equal(t, containerOnly, capability.SupportedScopes)
+			require.False(t, capability.SupportsBinaryMatch)
+		default:
+			t.Fatalf("unexpected capability type %q", capability.Type)
+		}
 	}
 }
 
@@ -151,6 +198,22 @@ func TestParsers(t *testing.T) {
 	}
 	_, err := ParseLanguage("rust")
 	require.EqualError(t, err, `unsupported language "rust"`)
+
+	for _, mode := range []Mode{
+		ModeOnCPU,
+		ModeOffCPU,
+		ModeObjectAlloc,
+		ModeObjectUsage,
+		ModeVirtualAlloc,
+		ModePhysicalAlloc,
+		ModePhysicalUsage,
+	} {
+		parsed, err := ParseMode(string(mode))
+		require.NoError(t, err)
+		require.Equal(t, mode, parsed)
+	}
+	_, err = ParseMode("wall_clock")
+	require.EqualError(t, err, `unsupported profiling mode "wall_clock"`)
 }
 
 func TestParseTypeRejectsLegacyMemoryValue(t *testing.T) {

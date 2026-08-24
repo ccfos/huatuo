@@ -17,6 +17,8 @@ package profiling
 import (
 	"fmt"
 	"slices"
+
+	"huatuo-bamai/pkg/observation"
 )
 
 type Type string
@@ -48,46 +50,77 @@ const (
 	ImplementationPython  Implementation = "python"
 )
 
-type capability struct {
-	Language       Language
-	Implementation Implementation
-	Types          []Type
-	CPUModes       []CPUMode
-	MemoryModes    []MemoryMode
+// Capability describes one supported profiling type and language combination.
+type Capability struct {
+	Type                Type
+	Language            Language
+	Modes               []Mode
+	SupportsBinaryMatch bool
+	SupportedScopes     []observation.Scope
+
+	implementation Implementation
 }
 
-var capabilities = []capability{
-	newNativeCapability(LanguageC),
-	newNativeCapability(LanguageCPP),
-	newNativeCapability(LanguageGo),
+var capabilities = []Capability{
+	newNativeCapability(LanguageC, TypeCPU),
+	newNativeCapability(LanguageCPP, TypeCPU),
+	newNativeCapability(LanguageGo, TypeCPU),
 	{
-		Language:       LanguageJava,
-		Implementation: ImplementationJava,
-		Types:          []Type{TypeCPU, TypeMemory},
-		CPUModes:       []CPUMode{CPUModeOnCPU},
-		MemoryModes:    []MemoryMode{MemoryModeObjectAlloc, MemoryModeObjectUsage},
+		Type:                TypeCPU,
+		Language:            LanguageJava,
+		Modes:               []Mode{ModeOnCPU},
+		SupportsBinaryMatch: true,
+		SupportedScopes:     []observation.Scope{observation.ScopeContainer},
+		implementation:      ImplementationJava,
 	},
 	{
-		Language:       LanguagePython,
-		Implementation: ImplementationPython,
-		Types:          []Type{TypeCPU},
-		CPUModes:       []CPUMode{CPUModeOnCPU},
-		MemoryModes:    []MemoryMode{},
+		Type:                TypeCPU,
+		Language:            LanguagePython,
+		Modes:               []Mode{ModeOnCPU},
+		SupportsBinaryMatch: true,
+		SupportedScopes:     []observation.Scope{observation.ScopeContainer},
+		implementation:      ImplementationPython,
+	},
+	newNativeCapability(LanguageC, TypeMemory),
+	newNativeCapability(LanguageCPP, TypeMemory),
+	newNativeCapability(LanguageGo, TypeMemory),
+	{
+		Type:            TypeMemory,
+		Language:        LanguageJava,
+		Modes:           []Mode{ModeObjectAlloc, ModeObjectUsage},
+		SupportedScopes: []observation.Scope{observation.ScopeContainer},
+		implementation:  ImplementationJava,
 	},
 }
 
-func newNativeCapability(language Language) capability {
-	return capability{
-		Language:       language,
-		Implementation: ImplementationNative,
-		Types:          []Type{TypeCPU, TypeMemory},
-		CPUModes:       []CPUMode{CPUModeOnCPU, CPUModeOffCPU},
-		MemoryModes: []MemoryMode{
-			MemoryModeVirtualAlloc,
-			MemoryModePhysicalAlloc,
-			MemoryModePhysicalUsage,
-		},
+func newNativeCapability(language Language, typ Type) Capability {
+	modes := []Mode{ModeOnCPU, ModeOffCPU}
+	scopes := []observation.Scope{observation.ScopeHost, observation.ScopeContainer}
+	if typ == TypeMemory {
+		modes = []Mode{
+			ModeVirtualAlloc,
+			ModePhysicalAlloc,
+			ModePhysicalUsage,
+		}
+		scopes = []observation.Scope{observation.ScopeContainer}
 	}
+
+	return Capability{
+		Type:            typ,
+		Language:        language,
+		Modes:           modes,
+		SupportedScopes: scopes,
+		implementation:  ImplementationNative,
+	}
+}
+
+// Capabilities returns the static product capabilities in stable order.
+func Capabilities() []Capability {
+	result := make([]Capability, len(capabilities))
+	for i := range capabilities {
+		result[i] = cloneCapability(&capabilities[i])
+	}
+	return result
 }
 
 func ParseType(value string) (Type, error) {
@@ -109,19 +142,24 @@ func ParseLanguage(value string) (Language, error) {
 }
 
 func IsSupported(language Language, typ Type) bool {
-	capability, ok := capabilityFor(language)
-	return ok && slices.Contains(capability.Types, typ)
+	_, ok := capabilityFor(language, typ)
+	return ok
 }
 
 func SupportsMemoryMode(language Language, mode MemoryMode) bool {
-	capability, ok := capabilityFor(language)
-	return ok && slices.Contains(capability.MemoryModes, mode)
+	capability, ok := capabilityFor(language, TypeMemory)
+	return ok && slices.Contains(capability.Modes, Mode(mode))
 }
 
 func LanguagesFor(typ Type) []Language {
 	languages := make([]Language, 0, len(capabilities))
+	seen := make(map[Language]struct{}, len(capabilities))
 	for _, capability := range capabilities {
-		if slices.Contains(capability.Types, typ) {
+		if capability.Type == typ {
+			if _, ok := seen[capability.Language]; ok {
+				continue
+			}
+			seen[capability.Language] = struct{}{}
 			languages = append(languages, capability.Language)
 		}
 	}
@@ -129,34 +167,50 @@ func LanguagesFor(typ Type) []Language {
 }
 
 func MemoryModesFor(language Language) []MemoryMode {
-	capability, ok := capabilityFor(language)
+	capability, ok := capabilityFor(language, TypeMemory)
 	if !ok {
 		return []MemoryMode{}
 	}
-	return slices.Clone(capability.MemoryModes)
+	modes := make([]MemoryMode, len(capability.Modes))
+	for i := range capability.Modes {
+		modes[i] = MemoryMode(capability.Modes[i])
+	}
+	return modes
 }
 
 func CPUModesFor(language Language) []CPUMode {
-	capability, ok := capabilityFor(language)
+	capability, ok := capabilityFor(language, TypeCPU)
 	if !ok {
 		return []CPUMode{}
 	}
-	return slices.Clone(capability.CPUModes)
+	modes := make([]CPUMode, len(capability.Modes))
+	for i := range capability.Modes {
+		modes[i] = CPUMode(capability.Modes[i])
+	}
+	return modes
 }
 
 func ImplementationFor(language Language) (Implementation, bool) {
-	capability, ok := capabilityFor(language)
-	if !ok {
-		return ImplementationUnknown, false
-	}
-	return capability.Implementation, true
-}
-
-func capabilityFor(language Language) (capability, bool) {
 	for _, capability := range capabilities {
 		if capability.Language == language {
+			return capability.implementation, true
+		}
+	}
+	return ImplementationUnknown, false
+}
+
+func capabilityFor(language Language, typ Type) (Capability, bool) {
+	for _, capability := range capabilities {
+		if capability.Language == language && capability.Type == typ {
 			return capability, true
 		}
 	}
-	return capability{}, false
+	return Capability{}, false
+}
+
+func cloneCapability(capability *Capability) Capability {
+	result := *capability
+	result.Modes = slices.Clone(capability.Modes)
+	result.SupportedScopes = slices.Clone(capability.SupportedScopes)
+	return result
 }
