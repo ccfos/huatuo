@@ -28,7 +28,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
-  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, and Moore Threads GPU. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, or `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
+  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, and Moore Threads GPU. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, or `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs. Local correlation does not require the standalone `dropwatch` tracer. Restart `huatuo-bamai` after changing the blacklist. Supports arrays; extend as needed.
 
 ### 3. Logging
 
@@ -929,6 +929,60 @@ This section captures key kernel events and latency, including scheduler tick in
 
   Example: `IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
 
+#### 8.9 Before-OOM Runtime Memory Snapshots
+
+```toml
+[EventTracing.BeforeOOMMemsnap]
+    Enabled = false
+    # ThresholdPercent = 90
+    # CooldownSeconds = 300
+    # GoTimeoutMS = 100
+    # JavaTimeoutMS = 2000
+    # PythonTimeoutMS = 2000
+    # TopK = 10
+```
+
+The `before_oom_memsnap` tracer is disabled by default. Set `Enabled`
+to `true` and restart huatuo-bamai to enable it. The global `BlackList` can
+still be used to force-disable the event.
+When enabled, huatuo-bamai watches container memory cgroups without periodic
+tree polling and saves a bounded Go, HotSpot, or CPython runtime snapshot before
+the selected container reaches OOM. It selects the OOM-killable process with the
+highest approximate kernel OOM score.
+
+- **Enabled**: Enables before-OOM snapshots. The default is `false`.
+- **ThresholdPercent**: Required current-to-limit ratio after a pressure event,
+  in `[1, 100]`. Cgroup v1 registers this exact threshold with
+  `cgroup.event_control`. Cgroup v2 has no non-polling arbitrary ratio event, so
+  it listens only for increases of the `high` counter in `memory.events.local`
+  (falling back to `memory.events` when `.local` is unavailable), then verifies
+  `memory.current / memory.max`. If `memory.high` is `max`, no high event is
+  generated; `memory.max` is not used as a notification fallback. Initial
+  discovery records a baseline; only subsequent counter increases are eligible.
+- **CooldownSeconds**: Global delay after either a successful or failed capture.
+- **Go/Java/PythonTimeoutMS**: Runtime detection has a separate,
+  fixed one-second soft time budget. After detection succeeds, the soft budget
+  for the selected language covers provider collection only. The two stages do
+  not share a budget, and persistence is not included. These values are
+  cooperative stop budgets, not wall-clock upper bounds. A synchronous read
+  already in the kernel cannot be interrupted and may block without a time
+  bound. While blocked, the serial before-OOM runner cannot consume later
+  pressure events, advance cooldown, or finish shutdown, and the single-slot
+  event path may apply backpressure. After that read returns, cancellation
+  prevents subsequent reads.
+- **TopK**: Maximum ranked entries requested from a provider, from 1 through
+  100. The final snapshot also limits individual strings and stacks and is at
+  most 512 KiB of encoded JSON; lower-ranked entries are removed when needed.
+
+Each discovery scan examines at most 65,536 directory entries and 8,192 queued
+directories, with a maximum depth of 64. The watcher retains at most 8,192
+directory watches and 4,096 container watches across incremental scans.
+Reaching these safety limits logs a warning and stops expansion; an incomplete
+scan does not delete unseen existing watches. Containers beyond the limits may
+not produce snapshots. Before capture and persistence, the container ID must
+resolve to the discovered cgroup path; mismatches or unavailable container
+metadata prevent capture/persistence.
+
 ### 9. Metric Collector
 
 This section defines collection rules for various system and network metrics. All `Included`/`Excluded` fields share the same filter logic (regex):
@@ -1218,3 +1272,109 @@ Specific rules:
 By properly configuring huatuo-bamai.conf, you can fully leverage HUATUO’s capabilities in kernel-level anomaly detection and intelligent tracing, significantly improving observability and troubleshooting efficiency in cloud-native systems.
 
 If you need deeper customization for a specific scenario, feel free to provide more details about your environment.
+
+### 14. Before-OOM Snapshot Deployment and Troubleshooting
+
+#### 14.1 Prerequisites and Permissions
+
+- Linux is required, with the memory controller mounted in cgroup v1 or cgroup
+  v2. huatuo-bamai must see the host PID, procfs, and cgroup views and obtain
+  container metadata from kubelet.
+- The process must traverse and read memory cgroup files and create
+  epoll/inotify/eventfd objects. Cgroup v1 also requires permission to register
+  thresholds through `cgroup.event_control`.
+- Reading `/proc/<pid>/stat`, `maps`, `exe`, `root`, and `map_files`, and reading
+  process memory through `process_vm_readv`, must pass the kernel ptrace access
+  checks. Container deployments typically need the host PID namespace, the
+  corresponding host mounts, and `CAP_SYS_PTRACE` or equivalent permission.
+  Yama, SELinux, and AppArmor policies can still deny access.
+- Reserve approximately one inotify watch per traversed cgroup directory and,
+  on v1, one eventfd per finite-limit container. FD or inotify exhaustion stops
+  only this event until huatuo-bamai restarts; see section 14.4 for quota checks.
+
+#### 14.2 Validation Status and Experimental Coverage
+
+Recorded manual validation: x86-64 Linux, cgroup v1 memory controller (legacy
+and hybrid), Go 1.24.0. No production validation is claimed for Java, Python,
+pure cgroup v2, or other Go versions. The table below is an experimental
+implementation inventory, not a supported-version or release-certification matrix.
+
+| Component | Experimental implementation coverage | Main limitations |
+|-----------|-----------------|------------------|
+| Cgroup watcher | Linux cgroup v1 and v2 | Trigger requirements are described in section 8.9 |
+| Go | Go 1.18–1.26, 64-bit ELF | Instruction recovery for stripped executables is currently x86-64 only; unresolved runtime metadata produces an `unavailable` snapshot |
+| Java | Java 8+, little-endian 64-bit ELF HotSpot with G1 GC | Requires VMStruct/VMType metadata from the target JVM; non-G1 or unrecognized metadata layouts are `unavailable` |
+| Python | CPython 3.8–3.14, little-endian 64-bit ELF | `_PyRuntime` must be discoverable in the executable or a shared library; version discovery uses `Py_Version` or falls back to a versioned `libpython3.x` mapping; other Python implementations are unsupported |
+
+Before enabling this event, validate the exact runtime build and cgroup mode
+with a real pressure-triggered capture and a non-empty `complete`/`partial`
+snapshot. Missing prerequisites, skipped tests, and `unavailable` results are
+not compatibility evidence; no required runtime-version CI matrix is provided.
+
+Victim selection reads only `cgroup.procs` from the memory cgroup that produced
+the event; it does not recursively read child cgroups. If an application moves
+its processes into a private child cgroup, an event on the parent may fire but
+those processes are not candidates. Keep application processes directly in the
+watched container memory cgroup, or ensure the child that contains them is
+recognized as a container cgroup.
+
+
+Victim enumeration is limited to 4096 process IDs, 64 KiB of `cgroup.procs`,
+and a one-second cooperative budget. Exceeding a limit rejects the selection;
+a prefix winner is never treated as the complete cgroup winner. Identity and
+direct memory-cgroup membership are rechecked before dispatch and persistence.
+
+#### 14.3 Output and Status
+
+Snapshots use the existing event-tracing storage configuration and are written
+to `tracing_documents`. Query with
+`tracer_name = before_oom_memsnap` and `tracer_type = event`. The actual
+LocalFile or Elasticsearch/OpenSearch location is controlled by
+`[Storage]`; LocalFile uses `before_oom_memsnap` as the filename.
+
+`tracer_data.snapshot.status` is one of `complete`, `partial`, `unavailable`, or
+`failed`. Inspect `reason`, `runtime_version`, `duration_ms`, and
+`output_truncated` together. `unavailable` means the runtime or layout is not
+supported; `failed` means the runtime was identified but external inspection
+failed.
+
+#### 14.4 Common Problems
+
+- **No watcher or output**: Verify `Enabled = true`, ensure the global
+  `BlackList` does not contain `before_oom_memsnap`, and restart
+  huatuo-bamai after changing the configuration.
+- **Cgroup v2 never triggers**: Check the `high` counter and ratio requirements
+  for `ThresholdPercent` in section 8.9.
+- **The event stops after a resource-exhaustion log**: Check `RLIMIT_NOFILE`,
+  `fs.inotify.max_user_watches`, and `fs.inotify.max_user_instances`; raise the
+  limits and restart the process.
+- **Snapshot is `unavailable` or `failed`**: Check the runtime, GC, and ELF
+  restrictions above, then verify procfs visibility, ptrace/Yama,
+  SELinux/AppArmor, and whether the target exited during capture.
+- **An event fires but no victim is selected**: Verify that the application is
+  directly in the cgroup that fired the event and that its `oom_score_adj` is
+  greater than -1000.
+
+#### 14.5 Complete Enablement Example
+
+The following minimal configuration enables the event and persists snapshots
+to local files. Keep `before_oom_memsnap` out of `BlackList`, write the
+configuration to the huatuo-bamai config file, and restart huatuo-bamai.
+
+```toml
+BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]
+
+[EventTracing.BeforeOOMMemsnap]
+    Enabled = true
+    ThresholdPercent = 90
+    CooldownSeconds = 300
+    GoTimeoutMS = 100
+    JavaTimeoutMS = 2000
+    PythonTimeoutMS = 2000
+    TopK = 10
+
+[Storage.LocalFile]
+    Path = "/var/log/huatuo-bamai"
+    RotationSizeMiB = 100
+    MaxRotatedFiles = 10
+```

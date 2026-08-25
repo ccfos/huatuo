@@ -28,7 +28,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
 
 - **BlackList**：全局追踪与指标黑名单。
 
-  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`，即全局禁用网络设备硬件层（netdev_hw）、队列调度统计（netdev_qdisc）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标、TCP 重传追踪和摩尔线程 GPU 监控。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪时移除 `tcp_retransmit`；需要启用摩尔线程 GPU 指标采集时移除 `mthreads_gpu`（要求已安装 MTML 库）。local 关联不依赖 standalone `dropwatch` tracer。
+  用于排除特定模块的追踪和指标采集，避免无关噪声或高开销探针。默认值为 `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`，即全局禁用网络设备硬件层（netdev_hw）、队列调度统计（netdev_qdisc）、Metax GPU、Ascend NPU、基于 procfs 的磁盘 I/O 指标、TCP 重传追踪和摩尔线程 GPU 监控。需要启用磁盘 I/O 指标时从黑名单中移除 `diskio`；需要启用 TCP 重传追踪时移除 `tcp_retransmit`；需要启用摩尔线程 GPU 指标采集时移除 `mthreads_gpu`（要求已安装 MTML 库）。local 关联不依赖 standalone `dropwatch` tracer。修改黑名单后需重启 `huatuo-bamai`。
 
   **说明**：添加黑名单项可有效降低资源消耗，尤其在特定硬件环境中；支持数组格式，可根据实际业务扩展。
 
@@ -921,6 +921,50 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
   示例：`IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
 
+#### 8.9 OOM 前运行时内存快照
+
+```toml
+[EventTracing.BeforeOOMMemsnap]
+    Enabled = false
+    # ThresholdPercent = 90
+    # CooldownSeconds = 300
+    # GoTimeoutMS = 100
+    # JavaTimeoutMS = 2000
+    # PythonTimeoutMS = 2000
+    # TopK = 10
+```
+
+`before_oom_memsnap` 默认关闭。将 `Enabled` 设置为 `true` 并重启
+huatuo-bamai 后启用；全局 `BlackList` 仍可用于强制禁用该事件。启用后，huatuo-bamai
+不轮询 cgroup 树，而是监听容器 memory cgroup
+节点变化和内存压力事件，在容器 OOM 前保存有界的 Go、HotSpot 或 CPython
+运行时快照。候选进程按近似的内核 OOM 分数选择，且必须允许被 OOM kill。
+
+- **Enabled**：是否启用 OOM 前快照，默认值为 `false`。
+- **ThresholdPercent**：压力事件发生后要求的
+  `memory.current / memory.max` 比例，范围为 `[1, 100]`。cgroup v1 通过
+  `cgroup.event_control` 注册精确阈值；cgroup v2 没有任意比例的非轮询
+  通知，因此只监听 `memory.events.local` 中 `high` 计数的增长（文件不
+  存在时使用 `memory.events`），再校验实际比例。`memory.high=max` 时不会
+  产生 high 事件，也不会回退到 `memory.max` 作为通知源。初次发现只记录
+  计数基线，之后的计数增长才进入触发判断。
+- **CooldownSeconds**：一次成功或失败采集后的全局冷却时间。
+- **Go/Java/PythonTimeoutMS**：运行时识别有独立且固定的
+  1 秒软时间预算；识别成功后，对应语言的软时间预算仅覆盖 provider 采集。
+  两个阶段不共享预算，持久化时间不计入其中。这些值是协作式停止预算，并非
+  墙钟时间上界。已进入内核的同步读取无法被中断，理论上可能无限期阻塞；
+  阻塞期间，串行 before-OOM runner 无法处理后续压力事件、推进冷却状态或
+  完成退出，单槽事件路径也可能反压。读取返回后，取消会阻止后续读取。
+- **TopK**：provider 最多生成的排序条目数，范围为 1–100。最终快照还会
+  限制单个字符串和栈长度，编码后的 JSON 不超过 512 KiB；必要时删除
+  排名靠后的条目。
+
+单次目录扫描最多检查 65,536 个目录项、8,192 个待访问目录，深度最多
+64 层；累计最多保留 8,192 个目录 watch 和 4,096 个容器 watch。
+触及这些安全上限会告警并停止扩展，不会因扫描不完整而删除未遍历到的
+已有 watch；上限之外的容器可能没有快照。采集与落盘前还会核对容器 ID
+对应的已知 cgroup 路径，不匹配或容器元数据不可用时拒绝采集/保存。
+
 ### 9. 指标采集器配置
 
 该 section 定义各类系统与网络指标的采集规则。所有 `Included`/`Excluded` 字段底层共用同一套过滤逻辑（正则表达式）：
@@ -1223,3 +1267,102 @@ huatuo-bamai --region <region> [选项]
 - **兼容性**：配置参数受内核版本、硬件环境影响，建议结合 HUATUO 官方文档验证。
 
 通过合理配置 huatuo-bamai.conf，可充分发挥 HUATUO 在内核级异常检测与智能追踪方面的优势，有效提升云原生系统的可观测性和故障诊断效率。如需针对特定场景的深度定制，欢迎提供更多环境细节进一步讨论。
+
+### 14. OOM 前内存快照部署与排障
+
+#### 14.1 前置条件与权限
+
+- 仅支持 Linux，并要求 memory controller 已挂载且容器使用 cgroup v1
+  或 cgroup v2。huatuo-bamai 必须能看到宿主机的 PID、procfs 和 cgroup
+  视图，并能从 kubelet 获取容器信息。
+- 进程需要遍历和读取 memory cgroup 文件、创建 epoll/inotify/eventfd；
+  cgroup v1 还需要向 `cgroup.event_control` 注册阈值事件。
+- 读取目标进程的 `/proc/<pid>/stat`、`maps`、`exe`、`root`、`map_files`
+  以及通过 `process_vm_readv` 读取进程内存时，必须满足内核 ptrace 权限
+  检查。容器化部署通常需要宿主机 PID 命名空间、对应宿主机挂载，以及
+  `CAP_SYS_PTRACE` 或等效权限。Yama、SELinux、AppArmor 等策略仍可能拒绝
+  访问。
+- 大致为每个经过的 cgroup 目录预留一个 inotify watch；v1 还需为每个
+  有限内存上限的容器预留一个 eventfd。FD 或 inotify 配额耗尽只停止该
+  事件，重启 huatuo-bamai 后才能恢复；配额检查项见 14.4 节。
+
+#### 14.2 验证状态与实验性覆盖范围
+
+已记录的人工验证环境：x86-64 Linux、cgroup v1 memory controller
+（legacy 和 hybrid）、Go 1.24.0。Java、Python、纯 cgroup v2 和其他
+Go 版本均不声明已通过生产验证。下表仅列出实验性实现覆盖范围，
+不是受支持版本或上线认证矩阵。
+
+| 模块 | 实验性实现覆盖范围 | 主要限制 |
+|------|----------|----------|
+| cgroup 监听 | Linux cgroup v1、v2 | 触发条件见 8.9 节 |
+| Go | Go 1.18–1.26，64 位 ELF | 去符号二进制的指令恢复目前仅支持 x86-64；无法解析运行时元数据时快照标记为 `unavailable` |
+| Java | Java 8+，64 位小端 ELF HotSpot，G1 GC | 依赖目标 JVM 暴露的 VMStruct/VMType 元数据；非 G1 或元数据布局不可识别时标记为 `unavailable` |
+| Python | CPython 3.8–3.14，64 位小端 ELF | 必须能从可执行文件或共享库定位 `_PyRuntime`；版本优先从 `Py_Version` 获取，缺失时回退到带版本的 `libpython3.x` 映射路径；其他 Python 实现不支持 |
+
+启用前应针对实际部署的运行时构建和 cgroup 模式，验证真实内存压力
+触发采集，并得到非空的 `complete`/`partial` 快照。缺少依赖、跳过测试
+或返回 `unavailable` 均不构成兼容性验证证据；当前不提供必跑的运行时
+版本 CI 矩阵。
+
+候选进程只从触发事件的 memory cgroup 自身 `cgroup.procs` 中选择，不递归
+读取其子 cgroup。如果业务进程被放入容器 cgroup 下的自建子 cgroup，父
+cgroup 事件可能触发，但该进程不会成为采集候选；应让业务进程直接加入
+被监听的容器 memory cgroup，或确保实际承载进程的子 cgroup 能被识别为
+容器 cgroup。
+
+
+进程枚举限制为 4096 个 PID、64 KiB 的 `cgroup.procs` 和 1 秒协作式预算。
+超限时拒绝本次选择，不会把截断列表中的胜出者当作整个 cgroup 的胜出者。
+采集前和落盘前重新检查进程身份及直接所属的 memory cgroup。
+
+#### 14.3 输出与状态
+
+快照沿用事件 tracing 的存储配置写入 `tracing_documents`，可通过
+`tracer_name = before_oom_memsnap` 和 `tracer_type = event` 查询。
+LocalFile 和 Elasticsearch/OpenSearch 的实际位置由 `[Storage]`
+配置决定；LocalFile 使用 `before_oom_memsnap` 作为文件名。
+
+`tracer_data.snapshot.status` 可能为 `complete`、`partial`、`unavailable`
+或 `failed`。排障时同时查看 `reason`、`runtime_version`、`duration_ms` 和
+`output_truncated`；`unavailable` 表示运行时或布局不受支持，`failed`
+表示已识别运行时但外部读取失败。
+
+#### 14.4 常见问题
+
+- **没有任何监听或输出**：确认 `Enabled = true`，全局 `BlackList` 未包含
+  `before_oom_memsnap`，并且修改配置后已经重启 huatuo-bamai。
+- **cgroup v2 始终不触发**：按 8.9 节 `ThresholdPercent` 的说明，核对
+  `high` 计数和实际内存比例。
+- **日志提示资源耗尽后事件停止**：检查 `RLIMIT_NOFILE`、
+  `fs.inotify.max_user_watches` 和 `fs.inotify.max_user_instances`，提高配额
+  后重启进程。
+- **快照为 `unavailable` 或 `failed`**：先核对上表中的版本、GC 和 ELF
+  限制，再检查 procfs 可见性、ptrace/Yama、SELinux/AppArmor 以及目标
+  进程是否在采集期间退出。
+- **触发了事件但没有候选进程**：检查业务进程是否直接属于触发事件的
+  cgroup，以及其 `oom_score_adj` 是否大于 -1000。
+
+#### 14.5 完整启用示例
+
+下面的最小配置会启用该事件，并将快照写入本地文件。确保 `BlackList`
+中没有 `before_oom_memsnap`，将配置写入 huatuo-bamai 配置文件后
+重启 huatuo-bamai。
+
+```toml
+BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]
+
+[EventTracing.BeforeOOMMemsnap]
+    Enabled = true
+    ThresholdPercent = 90
+    CooldownSeconds = 300
+    GoTimeoutMS = 100
+    JavaTimeoutMS = 2000
+    PythonTimeoutMS = 2000
+    TopK = 10
+
+[Storage.LocalFile]
+    Path = "/var/log/huatuo-bamai"
+    RotationSizeMiB = 100
+    MaxRotatedFiles = 10
+```
