@@ -21,18 +21,41 @@ import (
 
 	"huatuo-bamai/internal/nodeagent/command"
 	"huatuo-bamai/internal/nodeagent/operation"
+	"huatuo-bamai/internal/toolstream"
 )
 
+const profilerToolName = "profiler"
+
 type executor struct {
-	process *command.Process
+	process   *command.Process
+	stream    *toolstream.Server
+	publisher ResultPublisher
+	requestID string
 }
 
-func newExecutor(process *command.Process) *executor {
-	return &executor{process: process}
+func newExecutor(
+	process *command.Process,
+	stream *toolstream.Server,
+	publisher ResultPublisher,
+	requestID string,
+) *executor {
+	return &executor{
+		process:   process,
+		stream:    stream,
+		publisher: publisher,
+		requestID: requestID,
+	}
 }
 
 func (e *executor) Start(ctx context.Context) error {
+	if err := e.publisher.Prepare(ctx, e.requestID); err != nil {
+		return fmt.Errorf("prepare profiler result: %w", err)
+	}
+	if err := e.stream.ExpectSession(profilerToolName, e.requestID); err != nil {
+		return fmt.Errorf("expect profiler result stream: %w", err)
+	}
 	if err := e.process.Start(ctx); err != nil {
+		e.stream.CancelSession(profilerToolName, e.requestID)
 		return e.withOutput("start profiler", err)
 	}
 	return nil
@@ -56,12 +79,24 @@ func (e *executor) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (*executor) Finalize(ctx context.Context, mode operation.FinalizeMode) error {
+func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("finalize profiler: %w", err)
 	}
 	switch mode {
-	case operation.FinalizePublish, operation.FinalizeDiscard:
+	case operation.FinalizePublish:
+		if err := e.stream.AwaitSession(ctx, profilerToolName, e.requestID); err != nil {
+			return fmt.Errorf("finalize profiler result stream: %w", err)
+		}
+		if err := e.publisher.Publish(ctx, e.requestID); err != nil {
+			return fmt.Errorf("finalize profiler publication: %w", err)
+		}
+		return nil
+	case operation.FinalizeDiscard:
+		e.stream.CancelSession(profilerToolName, e.requestID)
+		if err := e.publisher.Discard(ctx, e.requestID); err != nil {
+			return fmt.Errorf("discard profiler publication: %w", err)
+		}
 		return nil
 	default:
 		return fmt.Errorf("finalize profiler: unsupported mode %d", mode)

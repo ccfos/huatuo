@@ -21,11 +21,11 @@ import (
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/bpf"
+	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/internal/version"
-	"huatuo-bamai/pkg/tracing"
 
 	"github.com/urfave/cli/v2"
 )
@@ -203,7 +203,7 @@ func resolveOptionDir(ctx *cli.Context, name string) (string, error) {
 // Runs once from app.Before so subsequent code can read config.Get() freely.
 func configureRuntime(opts *Options) error {
 	bpf.DefaultObjDir = opts.BPFObjDir
-	tracing.TaskBinDir = opts.ToolBinDir
+	internalconfig.CoreBinDir = opts.ToolBinDir
 
 	if err := config.Load(filepath.Join(opts.ConfigDir, opts.ConfigFile)); err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -250,7 +250,7 @@ func configureRuntime(opts *Options) error {
 
 	log.Debugf("resolved dirs: %s=%q %s=%q %s=%q",
 		cliFlagBPFObjDir, bpf.DefaultObjDir,
-		cliFlagToolBinDir, tracing.TaskBinDir,
+		cliFlagToolBinDir, internalconfig.CoreBinDir,
 		cliFlagConfigDir, opts.ConfigDir)
 
 	return nil

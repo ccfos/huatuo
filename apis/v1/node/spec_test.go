@@ -18,9 +18,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/gin-gonic/gin"
 
 	apiv1 "huatuo-bamai/apis/v1"
 )
@@ -66,6 +68,22 @@ func TestNodeHTTPStatusForErrorCode(t *testing.T) {
 	status, ok = HTTPStatusForErrorCode(apiv1.ErrorCodeInvalidRequest)
 	if status != http.StatusBadRequest || !ok {
 		t.Errorf("HTTPStatusForErrorCode(invalid_request) = (%d, %t), want (400, true)", status, ok)
+	}
+}
+
+func TestRemovedNodeRoutesAreNotRegistered(t *testing.T) {
+	t.Parallel()
+
+	router := gin.New()
+	RegisterHandlers(router, NewStrictHandler(&unimplementedStrictServer{}, nil))
+
+	for _, path := range []string{"/tasks", "/tasks/job-1", "/tracers", "/tracers/dropwatch"} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want 404", path, recorder.Code)
+		}
 	}
 }
 

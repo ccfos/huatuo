@@ -15,54 +15,91 @@
 package job
 
 import (
-	"encoding/json"
+	"strings"
 	"testing"
+	"time"
+
+	"huatuo-bamai/pkg/observation"
+	"huatuo-bamai/pkg/profiling"
 )
 
-func TestStandardizedJobJSONFields(t *testing.T) {
+func TestJobValidateRequiresFailureOnlyForFailedStatus(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name   string
-		value  any
-		fields []string
+		name    string
+		mutate  func(*Job)
+		wantErr string
 	}{
 		{
-			name:   "agent task request",
-			value:  AgentTaskRequest{},
-			fields: []string{"tracer_args"},
+			name: "completed without failure",
 		},
 		{
-			name:  "job",
-			value: Job{ErrorMessage: "failed"},
-			fields: []string{
-				"id",
-				"username",
-				"container_id",
-				"hostname",
-				"agent_task_id",
-				"error_message",
-				"trace_timeout",
-				"agent_task",
-				"result",
+			name: "failed without reason",
+			mutate: func(jobEntity *Job) {
+				jobEntity.Status = StatusFailed
 			},
+			wantErr: "failure must be present",
+		},
+		{
+			name: "outcome unknown with failure",
+			mutate: func(jobEntity *Job) {
+				jobEntity.Status = StatusOutcomeUnknown
+				jobEntity.Failure = &TerminalFailure{
+					Reason:  FailureReasonOperationLost,
+					Message: "lost",
+				}
+			},
+			wantErr: "failure must be present exactly when status is failed",
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			payload, err := json.Marshal(tt.value)
-			if err != nil {
-				t.Fatalf("json.Marshal() error=%v", err)
+			jobEntity := &Job{
+				ID:       "job-1",
+				Kind:     KindProfiling,
+				UserID:   "user-1",
+				Hostname: "node-1",
+				Duration: time.Minute,
+				Scope:    observation.ScopeHost,
+				Spec: Spec{Profiling: &profiling.Spec{
+					Type:     profiling.TypeCPU,
+					Language: profiling.LanguageGo,
+					Mode:     profiling.ModeOnCPU,
+				}},
+				Status:    StatusCompleted,
+				CreatedAt: now,
+				UpdatedAt: now,
+				EndedAt:   now,
 			}
-
-			var decoded map[string]any
-			if err := json.Unmarshal(payload, &decoded); err != nil {
-				t.Fatalf("json.Unmarshal() error=%v", err)
+			if tt.mutate != nil {
+				tt.mutate(jobEntity)
 			}
-			for _, field := range tt.fields {
-				if _, ok := decoded[field]; !ok {
-					t.Errorf("JSON field %q is missing", field)
-				}
+			err := jobEntity.validate()
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("validate() error = %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("validate() error = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestCloneJobDoesNotAliasNestedState(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	source := testJob("job-1", StatusFailed, now)
+	source.Failure = &TerminalFailure{
+		Reason:  FailureReasonExecutionFailed,
+		Message: "failed",
+	}
+	cloned := cloneJob(source)
+	cloned.Spec.Profiling.Mode = profiling.ModeOffCPU
+	cloned.Failure.Message = "changed"
+
+	if source.Spec.Profiling.Mode != profiling.ModeOnCPU {
+		t.Fatalf("source profiling mode = %q", source.Spec.Profiling.Mode)
+	}
+	if source.Failure.Message != "failed" {
+		t.Fatalf("source failure message = %q", source.Failure.Message)
 	}
 }

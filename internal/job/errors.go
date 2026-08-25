@@ -20,12 +20,24 @@ import (
 	"huatuo-bamai/internal/storage/driver"
 )
 
-var ErrNotFound = driver.ErrNotFound
-
 var (
-	ErrQuotaExceeded          = errors.New("job quota exceeded")
-	ErrUnsupportedJobType     = errors.New("unsupported job type")
-	ErrPersistence            = errors.New("job persistence failed")
-	ErrInvalidQuery           = errors.New("invalid job query")
-	ErrAgentDispatchUncertain = errors.New("agent dispatch result is uncertain")
+	// ErrNotFound indicates that a requested Job does not exist.
+	ErrNotFound = driver.ErrNotFound
+	// ErrAlreadyExists indicates that a Job ID is already persisted.
+	ErrAlreadyExists = driver.ErrAlreadyExists
+
+	// ErrQuotaExceeded indicates that active Job capacity is exhausted.
+	ErrQuotaExceeded = errors.New("job quota exceeded")
+	// ErrUnsupportedKind indicates that no typed Node service owns the Job.
+	ErrUnsupportedKind = errors.New("unsupported job kind")
+	// ErrPersistence indicates that a durable Job transition failed.
+	ErrPersistence = errors.New("job persistence failed")
+	// ErrConflict indicates that the persisted Job state changed concurrently.
+	ErrConflict = errors.New("job state conflict")
+	// ErrInvalidQuery indicates invalid Job query or creation parameters.
+	ErrInvalidQuery = errors.New("invalid job query")
+	// ErrShuttingDown indicates that the Manager no longer accepts new Jobs.
+	ErrShuttingDown = errors.New("job manager is shutting down")
+	// ErrJobTerminal indicates that a command cannot change a terminal Job.
+	ErrJobTerminal = errors.New("job is already terminal")
 )

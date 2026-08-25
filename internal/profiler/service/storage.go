@@ -47,6 +47,7 @@ const (
 	profileFieldTracerTime        = "tracer_time"
 	profileFieldTracerType        = "tracer_type"
 	profileFieldProfileType       = "tracer_data.flamedata.profile_type"
+	maxProfileSearchLimit         = 1001
 
 	profileTimeLayout = "2006-01-02 15:04:05.000 -0700"
 )
@@ -377,8 +378,8 @@ func normalizeProfileSearchLimit(filter *SearchFilter) int {
 	if filter == nil || filter.Limit <= 0 {
 		return 100
 	}
-	if filter.Limit > 1000 {
-		return 1000
+	if filter.Limit > maxProfileSearchLimit {
+		return maxProfileSearchLimit
 	}
 	return filter.Limit
 }

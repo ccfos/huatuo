@@ -15,6 +15,9 @@
 package autotracing
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"huatuo-bamai/internal/toolstream"
@@ -37,15 +40,29 @@ func init() {
 	toolstream.RegisterDefault[*ProfilerEvent]("profiler", handleProfilerEvent)
 }
 
-func handleProfilerEvent(_ *toolstream.Session, ev *ProfilerEvent) error {
-	return tracing.SaveProfile(&tracing.WriteRequest{
+func handleProfilerEvent(sess *toolstream.Session, ev *ProfilerEvent) error {
+	if ev == nil {
+		return errors.New("profiler event is required")
+	}
+	request := &tracing.WriteRequest{
 		TracerName:    ev.TracerName,
 		TracerID:      ev.TracerID,
 		ContainerID:   ev.ContainerID,
 		TracerTime:    parseProfilerEventTime(ev.TracerTime),
 		TracerData:    ev.TracerData,
 		TracerRunType: ev.TracerRunType,
-	})
+	}
+	if sess == nil || sess.Session == nil || !sess.IsExpected {
+		return tracing.SaveProfile(request)
+	}
+	if sess.TaskID == "" || sess.TaskID != ev.TracerID {
+		return fmt.Errorf(
+			"profiler result tracer ID %q does not match session task ID %q",
+			ev.TracerID,
+			sess.TaskID,
+		)
+	}
+	return tracing.SaveProfileSync(context.Background(), request)
 }
 
 // parseProfilerEventTime parses the wire-format tracer time, falling back to

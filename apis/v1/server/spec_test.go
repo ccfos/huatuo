@@ -93,6 +93,26 @@ func TestServerHTTPStatusForErrorCode(t *testing.T) {
 	}
 }
 
+func TestRemovedServerRoutesAreNotRegistered(t *testing.T) {
+	t.Parallel()
+
+	router := gin.New()
+	RegisterHandlers(router, NewStrictHandler(&unimplementedStrictServer{}, nil))
+	for _, path := range []string{
+		"/v1/profiles",
+		"/v1/profiles/job-1",
+		"/v1/traces",
+		"/v1/traces/job-1",
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want 404", path, recorder.Code)
+		}
+	}
+}
+
 type unimplementedStrictServer struct{}
 
 var errNotImplemented = errors.New("test handler is not implemented")

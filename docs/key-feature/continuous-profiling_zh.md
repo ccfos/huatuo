@@ -23,6 +23,9 @@ HUATUO（华佗）是由滴滴开源并依托 CCF（中国计算机学会）孵�
 
 huatuo-bamai.conf 中配置：
 ```toml
+[HTTPServer.Auth]
+    BearerToken = "REPLACE_WITH_NODE_TOKEN"
+
 [Storage]
     [Storage.Elasticsearch]
         Address = "http://127.0.0.1:9200"
@@ -33,6 +36,9 @@ huatuo-bamai.conf 中配置：
 
 huatuo-apiserver.conf 中配置：
 ```toml
+[Agent.Auth]
+    BearerToken = "REPLACE_WITH_NODE_TOKEN"
+
 [Elasticsearch]
     Address = "http://127.0.0.1:9200"
     Username = "elastic"
@@ -107,10 +113,12 @@ JOB_ID=$(curl -s -X POST \
   -d "{
     \"type\": \"cpu\",
     \"language\": \"c\",
+    \"mode\": \"oncpu\",
+    \"scope\": \"host\",
     \"duration_seconds\": 30,
     \"hostname\": \"${HOSTNAME}\"
   }" \
-  "${API_BASE}/v1/profiles" | jq -r .data.id)
+  "${API_BASE}/v1/profiling" | jq -r .data.request_id)
 
 echo "Job ID: $JOB_ID"
 ```
@@ -143,16 +151,17 @@ $ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
 
 ![continuous-profiling-grafana-host.png](/docs/img/continuous-profiling-grafana-host.png)
 
-其他更多丰富维度的剖析任务参考 Profiles API。
+其他更多丰富维度的剖析任务参考 Profiling API。
 
 
-## 🌐 Profiles API
+## 🌐 Profiling API
 
-huatuo-apiserver 通过 `/v1/profiles` 提供服务化的持续性能剖析能力。客户端可以创建 CPU 或内存剖析任务，查询任务状态和结果，或者停止、删除任务。任务由 huatuo-apiserver 调度到指定节点的 HUATUO Agent，采集结果可通过返回的 Grafana 链接或原始数据接口查看。
+huatuo-apiserver 通过 `/v1/profiling` 创建、监督和停止 Profiling Job。每次 HTTP
+创建请求都是一次独立执行。Job 持久化在 huatuo-apiserver，Node 只维护内存中的
+Operation 和 profiler 进程。
 
-持续性能剖析使用 Elasticsearch 存储剖析数据。仅在配置 Elasticsearch profile
-存储后，huatuo-apiserver 才启用该能力。未配置时，所有 `/v1/profiles` 请求
-均返回 HTTP 503，错误码为 `profiling_disabled`。
+Job 控制不依赖 Elasticsearch；查询原始结果和生成 Dashboard 链接时才要求配置
+Elasticsearch。Node 和 Apiserver 必须使用同一索引。
 
 ### 1. 请求约定
 
@@ -169,8 +178,8 @@ API_TOKEN="REPLACE_WITH_RANDOM_HEX"
 Authorization: Bearer REPLACE_WITH_RANDOM_HEX
 ```
 
-非管理员用户需要配置 `/v1/profiles` 和 `/v1/profiles/**` 权限。权限可带
-HTTP 方法前缀，例如 `GET /v1/profiles/**`。成功响应仅包含 `data`：
+非管理员用户需要配置 `/v1/profiling` 和 `/v1/profiling/**` 权限。权限可带
+HTTP 方法前缀，例如 `GET /v1/profiling/**`。成功响应仅包含 `data`：
 
 ```json
 {
@@ -183,8 +192,8 @@ HTTP 方法前缀，例如 `GET /v1/profiles/**`。成功响应仅包含 `data`�
 ```json
 {
   "error": {
-    "code": "profiling_disabled",
-    "message": "profiling is disabled: configure profile storage to enable it"
+    "code": "result_unavailable",
+    "message": "Job state does not provide a complete Profiling result"
   }
 }
 ```
@@ -198,25 +207,23 @@ HTTP 方法前缀，例如 `GET /v1/profiles/**`。成功响应仅包含 `data`�
 ```bash
 curl -sS \
   -H "Authorization: Bearer ${API_TOKEN}" \
-  "${API_BASE}/v1/profiles/capabilities"
+  "${API_BASE}/v1/profiling/capabilities"
 ```
 
-`data` 包含以下字段：
+`data.items` 是随版本发布的静态能力表，每项包含：
 
 | 字段 | 说明 |
 | --- | --- |
-| `types` | 支持的剖析类型：`cpu`、`memory` |
-| `cpu_languages` | CPU 剖析支持的语言 |
-| `cpu_modes` | 按语言分组的 CPU 剖析模式 |
-| `memory_languages` | 内存剖析支持的语言 |
-| `memory_modes` | 按语言分组的内存剖析模式；列表值可直接用于创建任务 |
-| `aggregation_interval_seconds` | 服务端采集数据的聚合周期 |
-| `max_concurrent_profilers` | profiler 进程的最大并发数；`0` 表示不限制 |
+| `type` | 剖析类型：`cpu` 或 `memory` |
+| `language` | 目标语言 |
+| `modes` | 此类型与语言组合允许的 `mode` |
+| `supports_binary_match` | 是否允许 `binary_match_path` |
+| `supported_scopes` | 允许的 `scope` |
 
 当前 `c`、`c++` 和 `go` CPU 剖析支持 `oncpu`、`offcpu`，`java` 和
 `python` 仅支持 `oncpu`。内存剖析支持以下组合：
 
-| 语言 | `memory_mode` | 说明 |
+| 语言 | `mode` | 说明 |
 | --- | --- | --- |
 | `c`、`c++`、`go` | `virtual_alloc` | 虚拟地址空间分配 |
 | `c`、`c++`、`go` | `physical_alloc` | 物理页分配 |
@@ -226,19 +233,21 @@ curl -sS \
 
 ### 3. 创建剖析任务
 
-`POST /v1/profiles` 的 JSON 参数如下：
+`POST /v1/profiling` 的 JSON 参数如下：
 
 | 参数 | 是否必需 | 说明 |
 | --- | --- | --- |
 | `type` | 是 | 剖析类型：`cpu` 或 `memory` |
 | `language` | 是 | 目标进程语言，必须与剖析类型匹配 |
+| `mode` | 是 | 能力表为对应类型和语言声明的模式 |
 | `duration_seconds` | 是 | 采集时长，单位为秒 |
 | `hostname` | 是 | 运行目标进程的节点主机名，用于任务调度 |
-| `container_id` | 否 | 目标容器 ID；不传表示对宿主机剖析 |
-| `binary_match_path` | 否 | Java/Python CPU 剖析的目标可执行文件路径匹配条件；原生剖析不支持 |
-| `memory_mode` | 内存剖析必需 | 内存剖析模式，必须与 `language` 匹配 |
+| `scope` | 是 | 能力表允许的 `host` 或 `container` |
+| `container_id` | container 范围必需 | 目标容器 ID |
+| `binary_match_path` | 否 | 能力表允许时使用的可执行文件路径匹配条件 |
 
-`duration_seconds` 必须不小于两个 `aggregation_interval_seconds`，且二者之和必须小于 3600 秒。同一用户在同一节点上已有运行中的剖析任务时，服务端返回 `409 Conflict`。
+即使请求内容相同，每次请求也会创建一个新 Job。超过每节点或进程级活动 Job
+配额时返回 HTTP 429。
 
 创建宿主机 Go CPU 剖析任务：
 
@@ -250,10 +259,12 @@ curl -sS -i \
   -d '{
     "type": "cpu",
     "language": "go",
+    "mode": "oncpu",
+    "scope": "host",
     "duration_seconds": 60,
     "hostname": "node-01"
   }' \
-  "${API_BASE}/v1/profiles"
+  "${API_BASE}/v1/profiling"
 ```
 
 创建容器内 Java 存活对象剖析任务：
@@ -266,12 +277,13 @@ curl -sS -i \
   -d '{
     "type": "memory",
     "language": "java",
-    "memory_mode": "object_usage",
+    "mode": "object_usage",
+    "scope": "container",
     "duration_seconds": 60,
     "container_id": "9f4c2f1a8b7d",
     "hostname": "node-01"
   }' \
-  "${API_BASE}/v1/profiles"
+  "${API_BASE}/v1/profiling"
 ```
 
 创建成功返回 `201 Created`，`Location` 响应头指向新任务，响应体包含后续查询所需的任务 ID：
@@ -279,7 +291,16 @@ curl -sS -i \
 ```json
 {
   "data": {
-    "id": "<profile-job-id>"
+    "request_id": "<profile-job-id>",
+    "hostname": "node-01",
+    "duration_seconds": 60,
+    "scope": "host",
+    "type": "cpu",
+    "language": "go",
+    "mode": "oncpu",
+    "status": "pending",
+    "created_at": "2026-08-24T10:00:00Z",
+    "updated_at": "2026-08-24T10:00:00Z"
   }
 }
 ```
@@ -290,59 +311,55 @@ JOB_ID="<profile-job-id>"
 
 ### 4. 查询任务列表
 
-`GET /v1/profiles` 支持以下查询参数：
+`GET /v1/profiling` 支持以下查询参数：
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `container_id` | 无 | 按容器 ID 精确过滤（兼容旧参数 `containerID`） |
-| `hostname` | 无 | 按节点主机名精确过滤 |
-| `status` | 无 | `pending`、`running`、`completed`、`failed`、`stopped` 或 `timeout` |
-| `type` | 无 | `cpu` 或 `memory`；不传时返回两种类型 |
-| `limit` | `50` | 每页数量，必须大于 0，最大为 500 |
+| `limit` | `100` | 每页数量，取值范围为 1 到 1000 |
 | `offset` | `0` | 起始偏移量，必须大于或等于 0 |
-| `sort` | `-created_at` | `created_at`、`finished_at`、`hostname`、`container_id`、`id`、`status` 或 `type`；前置 `-` 表示降序 |
 
-查询 `node-01` 上最新的 20 个运行中 CPU 剖析任务：
+查询最新的 20 个 Profiling Job：
 
 ```bash
 curl -sS -G \
   -H "Authorization: Bearer ${API_TOKEN}" \
-  --data-urlencode "hostname=node-01" \
-  --data-urlencode "status=running" \
-  --data-urlencode "type=cpu" \
   --data-urlencode "limit=20" \
   --data-urlencode "offset=0" \
-  --data-urlencode "sort=-created_at" \
-  "${API_BASE}/v1/profiles"
+  "${API_BASE}/v1/profiling"
 ```
 
-`data.items` 是任务数组，`data.total` 是分页前的匹配总数，`data.limit` 和 `data.offset` 是实际使用的分页参数。非管理员只能查看自己创建的任务。
+服务端固定只返回 Profiling Job，并按 `created_at` 倒序排列。`data.items`
+是任务数组，`data.total` 是分页前有权访问的任务总数，`data.limit` 和
+`data.offset` 是实际使用的分页参数。非管理员只能查看自己创建的任务。
 
 ### 5. 查询单个任务
 
 ```bash
 curl -sS \
   -H "Authorization: Bearer ${API_TOKEN}" \
-  "${API_BASE}/v1/profiles/${JOB_ID}"
+  "${API_BASE}/v1/profiling/${JOB_ID}"
 ```
 
 任务信息位于 `data` 字段：
 
 | 字段 | 说明 |
 | --- | --- |
-| `id` | Profiles API 任务 ID |
+| `request_id` | 后续所有请求使用的 Profiling Job ID |
 | `container_id` | 目标容器 ID；宿主机任务不返回该字段 |
 | `hostname` | 目标节点主机名 |
+| `duration_seconds` | 请求的剖析时长，单位为秒 |
+| `scope` | `host` 或 `container` |
 | `type` | `cpu` 或 `memory` |
 | `language` | 目标进程语言 |
-| `memory_mode` | 内存剖析模式；CPU 任务不返回该字段 |
+| `mode` | 从能力表中选择的剖析模式 |
 | `binary_match_path` | 可执行文件匹配路径；未使用时不返回该字段 |
 | `status` | 当前任务状态 |
-| `duration_seconds` | 请求的剖析时长，单位为秒 |
+| `failure` | 仅 `failed` 状态返回的 `{code, message}`；其他状态不返回 |
 | `created_at` | 任务创建时间 |
-| `finished_at` | 任务进入终态的时间；运行期间为 `null` |
-| `result_url` | 剖析结果的 Grafana 链接；结果尚未生成时为 `null` |
-| `status_reason` | 终态说明；无需说明时为 `null` |
+| `updated_at` | Job 状态最后更新时间 |
+| `started_at` | 实际开始执行时间；尚未观察到运行时不返回 |
+| `ended_at` | 进入终态的时间；运行期间不返回 |
+| `result_url` | 完整结果可用时，由单任务详情接口返回的 Dashboard 链接 |
 
 任务状态流转如下：
 
@@ -350,53 +367,50 @@ curl -sS \
 | --- | --- |
 | `pending` | 任务已创建，正在等待 Agent 执行 |
 | `running` | Agent 正在采集剖析数据 |
+| `stopping` | 停止意图已持久化，正在异步执行停止操作 |
 | `completed` | 任务正常完成 |
-| `stopped` | 任务被用户或任务管理器停止 |
-| `failed` | 任务执行失败，查看 `status_reason` 定位原因 |
-| `timeout` | 任务超过允许的执行时间 |
+| `failed` | 任务执行失败，通过 `failure.code` 和 `failure.message` 定位原因 |
+| `stopped` | 用户主动停止任务，不允许查询可能不完整的结果 |
+| `outcome_unknown` | Apiserver 无法确认 Operation 最终状态，但持久发布的结果仍可能可用 |
+
+`operation_lost` 和 `execution_timed_out` 是 `failed` 的原因码，不是 Job
+状态。其他失败原因包括等待启动或停止超时、Node 不可用、执行容量超过上限、
+启动或执行失败，以及协议错误。
 
 ### 6. 获取原始剖析数据
 
-`GET /v1/profiles/:id/raw` 返回该任务关联的原始剖析窗口。数据量可能较大，可以直接保存到文件：
+`GET /v1/profiling/:request_id/raw` 返回 `completed` Job 关联的原始剖析窗口。
+只有 Node 已持久发布结果标记时，`outcome_unknown` Job 也允许查询。活动状态返回
+`result_not_ready`；`failed`、`stopped` 和未发布的 `outcome_unknown` 返回
+`result_unavailable`。
+
+数据量可能较大，可以直接保存到文件：
 
 ```bash
 curl -sS \
   -H "Authorization: Bearer ${API_TOKEN}" \
   -o profile-raw.json \
-  "${API_BASE}/v1/profiles/${JOB_ID}/raw?limit=100&offset=0"
+  "${API_BASE}/v1/profiling/${JOB_ID}/raw?limit=100&offset=0"
 ```
 
 剖析窗口位于响应体的 `data.items` 字段；`data.limit`、`data.offset`
 和 `data.has_more` 描述分页。每条记录包含 `uploaded_at`、`captured_at`、
 `profile_type` 和兼容 pprof 的 `profile` 数据。
+已持久发布但内容为空的结果仍返回成功，`items` 为空数组。
 
 ### 7. 停止任务
 
-只有 `pending` 或 `running` 状态的任务可以停止。`PATCH` 请求的 `status` 只接受 `stopped`：
+停止是异步意图，`pending`、`running` 或已经处于 `stopping` 的 Job 均可接收：
 
 ```bash
 curl -sS \
-  -X PATCH \
+  -X POST \
   -H "Authorization: Bearer ${API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"status":"stopped"}' \
-  "${API_BASE}/v1/profiles/${JOB_ID}"
+  "${API_BASE}/v1/profiling/${JOB_ID}/stop"
 ```
 
-停止成功返回 `200 OK`。已结束的任务返回 `400 Bad Request`。
-
-### 8. 删除任务
-
-删除操作只移除任务记录。`pending` 或 `running` 状态的任务不能直接删除，需要先停止任务：
-
-```bash
-curl -sS -i \
-  -X DELETE \
-  -H "Authorization: Bearer ${API_TOKEN}" \
-  "${API_BASE}/v1/profiles/${JOB_ID}"
-```
-
-删除成功返回 `204 No Content`，不包含响应体。任务仍在运行时返回 `409 Conflict`。
+成功返回 `200 OK` 和当前 Job 快照。终态 Job 返回 `409 Conflict`。由于结果可能
+不完整，`stopped` Job 不提供结果查询。
 
 ## 📖 profiler 命令行功能概述
 
@@ -404,7 +418,7 @@ curl -sS -i \
 
 C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU 阻塞与调度延迟、虚拟内存分配、物理内存分配和物理内存驻留。Java 通过 async-profiler 观测 CPU、对象分配和存活对象；Python 通过 py-spy 观测 CPU。采集结果适合用于热点函数定位、内存增长归因、容器内进程分析和性能问题现场留存。
 
-本节以下介绍 `_output/bin/profiler` 的独立使用方式。服务化的持续 Profiling 使用方式见上方 Profiles API。
+本节以下介绍 `_output/bin/profiler` 的独立使用方式。服务化的持续 Profiling 使用方式见上方 Profiling API。
 
 ## 🎯 应用场景
 

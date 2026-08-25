@@ -867,7 +867,15 @@
                 }
               }
             },
-            "description": "Profiling Job created."
+            "description": "Profiling Job created.",
+            "headers": {
+              "Location": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -1149,7 +1157,15 @@
                 }
               }
             },
-            "description": "Tracing Job created."
+            "description": "Tracing Job created.",
+            "headers": {
+              "Location": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -1356,10 +1372,6 @@
     "quota_exceeded": {
       "description": "The request exceeds the caller's Job quota.",
       "httpStatus": 429
-    },
-    "result_not_found": {
-      "description": "The committed result no longer exists.",
-      "httpStatus": 404
     },
     "result_not_ready": {
       "description": "The Job state does not permit result access.",

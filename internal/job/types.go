@@ -15,116 +15,311 @@
 package job
 
 import (
-	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
+
+	"huatuo-bamai/pkg/observation"
+	"huatuo-bamai/pkg/profiling"
+	"huatuo-bamai/pkg/tracing"
 )
 
-type JobStatus string
-
-// JobType identifies the operation executed by an agent job.
-type JobType string
+// Kind identifies the service that owns a persistent Job.
+type Kind string
 
 const (
-	AgentStatusCompleted = "completed"
-	AgentStatusFailed    = "failed"
-	AgentStatusPending   = "pending"
-	AgentStatusRunning   = "running"
-	AgentStatusNotExist  = "not_exist"
+	KindProfiling Kind = "profiling"
+	KindTracing   Kind = "tracing"
 )
+
+// Status identifies a user-facing persistent Job state.
+type Status string
 
 const (
-	// JobTypeProfilingCPU identifies CPU profiling jobs.
-	JobTypeProfilingCPU JobType = "profiling_cpu"
-	// JobTypeProfilingMemory identifies memory profiling jobs.
-	JobTypeProfilingMemory JobType = "profiling_memory"
-	// JobTypeTracing identifies tracing jobs.
-	JobTypeTracing JobType = "tracing"
+	StatusPending        Status = "pending"
+	StatusRunning        Status = "running"
+	StatusStopping       Status = "stopping"
+	StatusCompleted      Status = "completed"
+	StatusFailed         Status = "failed"
+	StatusStopped        Status = "stopped"
+	StatusOutcomeUnknown Status = "outcome_unknown"
 )
+
+// FailureReason classifies a failed Job independently of Node errors.
+type FailureReason string
 
 const (
-	JobStatusPending   JobStatus = "pending"
-	JobStatusRunning   JobStatus = "running"
-	JobStatusCompleted JobStatus = "completed"
-	JobStatusFailed    JobStatus = "failed"
-	JobStatusStopped   JobStatus = "stopped"
-	JobStatusTimeout   JobStatus = "timeout"
+	FailureReasonExecutionStartFailed      FailureReason = "execution_start_failed"
+	FailureReasonExecutionCapacityExceeded FailureReason = "execution_capacity_exceeded"
+	FailureReasonStartTimeout              FailureReason = "start_timeout"
+	FailureReasonExecutionFailed           FailureReason = "execution_failed"
+	FailureReasonExecutionTimedOut         FailureReason = "execution_timed_out"
+	FailureReasonStopTimeout               FailureReason = "stop_timeout"
+	FailureReasonNodeUnavailable           FailureReason = "node_unavailable"
+	FailureReasonOperationLost             FailureReason = "operation_lost"
+	FailureReasonProtocolError             FailureReason = "protocol_error"
 )
 
-// Result represents the result of a job
-type Result struct {
-	URL   string `json:"url"`
-	Error string `json:"error"`
+// StopReason records why Apiserver requested asynchronous Node termination.
+type StopReason string
+
+const (
+	StopReasonUser             StopReason = "user_requested"
+	StopReasonStartTimeout     StopReason = "start_timeout"
+	StopReasonExecutionTimeout StopReason = "execution_timeout"
+)
+
+// TerminalFailure is the stable reason attached to a failed Job.
+type TerminalFailure struct {
+	Reason  FailureReason `json:"reason"`
+	Message string        `json:"message"`
 }
 
-// AgentTaskRequest represents the request body for creating an agent task.
-type AgentTaskRequest struct {
-	RequestID         string   `json:"request_id,omitempty" binding:"omitempty"`        // Idempotency key assigned by the control plane
-	TracerName        string   `json:"tracer_name" binding:"required"`                  // Name of the tracer, required field
-	TraceTimeout      int      `json:"trace_timeout" binding:"required,number,lt=3600"` // Timeout in seconds, must be less than 3600s(1 hours)
-	Interval          int      `json:"interval" binding:"omitempty,number,lt=3600"`     // Interval in seconds, must be less than 3600s(1 hours)
-	Duration          int      `json:"duration" binding:"omitempty,number,lt=86400"`    // Duration in seconds, must be less than 86400s(24 hours)
-	DataType          string   `json:"data_type" binding:"required"`                    // Type of data to be handled, required field
-	ContainerID       string   `json:"container_id" binding:"omitempty"`                // ID of the container, optional field
-	ContainerHostname string   `json:"container_hostname" binding:"omitempty"`          // Hostname of the container, optional field
-	TracerArgs        []string `json:"tracer_args" binding:"omitempty"`                 // Additional arguments for the tracer, optional field
+// Spec is a small discriminated union of service-owned Job parameters.
+type Spec struct {
+	Profiling *profiling.Spec `json:"profiling,omitempty"`
+	Tracing   *tracing.Spec   `json:"tracing,omitempty"`
 }
 
-// CreateJobRequest holds parameters for creating a new job
-type CreateJobRequest struct {
-	UserID      string
-	ContainerID string
-	Hostname    string
-	Type        JobType
-	AgentTask   *AgentTaskRequest
-	PrivateData json.RawMessage
-}
-
-// Job represents a job
+// Job is the persistent Apiserver lifecycle for one Node request ID.
 type Job struct {
-	Type         JobType          `json:"type"`
-	ID           string           `json:"id"`
-	Username     string           `json:"username"`
-	UserID       string           `json:"user_id"`
-	ContainerID  string           `json:"container_id"`
-	Hostname     string           `json:"hostname"`
-	AgentTaskID  string           `json:"agent_task_id"`
-	Status       JobStatus        `json:"status"`
-	ErrorMessage string           `json:"error_message,omitempty"`
-	Duration     int              `json:"duration"`
-	TraceTimeout int              `json:"trace_timeout"`
-	CreatedAt    time.Time        `json:"created_at"`
-	FinishedAt   time.Time        `json:"finished_at"`
-	AgentTask    AgentTaskRequest `json:"agent_task"`
-	Result       Result           `json:"result,omitempty"`
+	ID          string
+	Kind        Kind
+	UserID      string
+	Hostname    string
+	Duration    time.Duration
+	Scope       observation.Scope
+	ContainerID string
+	Spec        Spec
 
-	UpdatedAt time.Time `json:"-"`
-	stopCh    chan struct{}
+	Status    Status
+	Failure   *TerminalFailure
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	StartedAt time.Time
+	EndedAt   time.Time
 
-	PrivateData json.RawMessage `json:"-"`
+	StartAttemptedAt        time.Time
+	PendingDeadline         time.Time
+	ExecutionDeadline       time.Time
+	NodeUnavailableSince    time.Time
+	NodeUnavailableDeadline time.Time
+	StopRequestedAt         time.Time
+	StopDeadline            time.Time
+	StopReason              StopReason
 }
 
-// JobQuery defines filters for searching jobs
-type JobQuery struct {
+// CreateRequest contains one independently created user request.
+type CreateRequest struct {
+	UserID      string
+	Hostname    string
+	Duration    time.Duration
+	Scope       observation.Scope
+	ContainerID string
+	Spec        Spec
+}
+
+// Query filters persistent Jobs through derived storage indexes.
+type Query struct {
 	ID          string
 	UserID      string
 	IsAdmin     bool
 	ContainerID string
 	Hostname    string
-	Status      string
-	Statuses    []JobStatus
-	Types       []JobType
+	Statuses    []Status
+	Kinds       []Kind
+	Subtypes    []string
 	Sort        string
 	Limit       int
 	Offset      int
 }
 
-// JobPage contains one page of jobs and the total number of matching records.
-type JobPage struct {
+// Page contains one stable Job page and its total matching count.
+type Page struct {
 	Items []*Job
 	Total int64
 }
 
-// JobCleanupQuery defines parameters for cleaning up old jobs
-type JobCleanupQuery struct {
-	BeforeTime time.Time
+func (s Spec) kind() Kind {
+	switch {
+	case s.Profiling != nil && s.Tracing == nil:
+		return KindProfiling
+	case s.Tracing != nil && s.Profiling == nil:
+		return KindTracing
+	default:
+		return ""
+	}
+}
+
+func (j *Job) validate() error {
+	if j == nil {
+		return errors.New("job is nil")
+	}
+	if j.ID == "" {
+		return errors.New("job ID is required")
+	}
+	if j.UserID == "" {
+		return errors.New("job user ID is required")
+	}
+	if j.Hostname == "" {
+		return errors.New("job hostname is required")
+	}
+	if j.Duration <= 0 || j.Duration%time.Second != 0 {
+		return errors.New("job duration must be a whole positive number of seconds")
+	}
+	if err := observation.ValidateScope(j.Scope, j.ContainerID); err != nil {
+		return fmt.Errorf("validate job scope: %w", err)
+	}
+	if err := j.Spec.validate(j.Kind, j.Scope); err != nil {
+		return err
+	}
+	if !isValidStatus(j.Status) {
+		return fmt.Errorf("unsupported job status %q", j.Status)
+	}
+	if (j.Status == StatusFailed) != (j.Failure != nil) {
+		return errors.New("job failure must be present exactly when status is failed")
+	}
+	if j.Failure != nil {
+		if !isValidFailureReason(j.Failure.Reason) {
+			return fmt.Errorf("unsupported job failure reason %q", j.Failure.Reason)
+		}
+		if j.Failure.Message == "" {
+			return errors.New("job failure message is required")
+		}
+	}
+	if j.CreatedAt.IsZero() || j.UpdatedAt.IsZero() {
+		return errors.New("job created and updated timestamps are required")
+	}
+	if !isTerminal(j.Status) && !j.EndedAt.IsZero() {
+		return errors.New("non-terminal job must not have an ended timestamp")
+	}
+	if !isValidStopReason(j.StopReason) {
+		return fmt.Errorf("unsupported job stop reason %q", j.StopReason)
+	}
+	if j.StartAttemptedAt.IsZero() != j.PendingDeadline.IsZero() {
+		return errors.New("job dispatch timestamp and pending deadline must be set together")
+	}
+	if j.NodeUnavailableSince.IsZero() != j.NodeUnavailableDeadline.IsZero() {
+		return errors.New("job Node unavailable timestamps must be set together")
+	}
+	if j.Status == StatusRunning && (j.StartedAt.IsZero() || j.ExecutionDeadline.IsZero()) {
+		return errors.New("running job requires started and execution deadline timestamps")
+	}
+	if j.Status == StatusStopping &&
+		(j.StopReason == "" || j.StopRequestedAt.IsZero() || j.StopDeadline.IsZero()) {
+		return errors.New("stopping job requires a persisted stop intent and deadline")
+	}
+	return nil
+}
+
+func (s Spec) validate(kind Kind, scope observation.Scope) error {
+	switch kind {
+	case KindProfiling:
+		if s.Profiling == nil || s.Tracing != nil {
+			return errors.New("profiling job must contain only a profiling spec")
+		}
+		if err := s.Profiling.Validate(); err != nil {
+			return fmt.Errorf("validate profiling job spec: %w", err)
+		}
+		if !profiling.SupportsScope(s.Profiling.Language, s.Profiling.Type, scope) {
+			return fmt.Errorf("profiling job does not support scope %q", scope)
+		}
+	case KindTracing:
+		if s.Tracing == nil || s.Profiling != nil {
+			return errors.New("tracing job must contain only a tracing spec")
+		}
+		if err := s.Tracing.Validate(); err != nil {
+			return fmt.Errorf("validate tracing job spec: %w", err)
+		}
+		if !tracing.SupportsScope(s.Tracing.Type, scope) {
+			return fmt.Errorf("tracing job does not support scope %q", scope)
+		}
+	default:
+		return fmt.Errorf("unsupported job kind %q", kind)
+	}
+	return nil
+}
+
+func (s Spec) subtype(kind Kind) string {
+	switch kind {
+	case KindProfiling:
+		if s.Profiling != nil {
+			return string(s.Profiling.Type)
+		}
+	case KindTracing:
+		if s.Tracing != nil {
+			return string(s.Tracing.Type)
+		}
+	}
+	return ""
+}
+
+func cloneJob(source *Job) *Job {
+	if source == nil {
+		return nil
+	}
+	cloned := *source
+	if source.Spec.Profiling != nil {
+		profilingSpec := *source.Spec.Profiling
+		cloned.Spec.Profiling = &profilingSpec
+	}
+	if source.Spec.Tracing != nil {
+		tracingSpec := *source.Spec.Tracing
+		cloned.Spec.Tracing = &tracingSpec
+	}
+	if source.Failure != nil {
+		failure := *source.Failure
+		cloned.Failure = &failure
+	}
+	return &cloned
+}
+
+func isValidStatus(status Status) bool {
+	switch status {
+	case StatusPending,
+		StatusRunning,
+		StatusStopping,
+		StatusCompleted,
+		StatusFailed,
+		StatusStopped,
+		StatusOutcomeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminal(status Status) bool {
+	switch status {
+	case StatusCompleted, StatusFailed, StatusStopped, StatusOutcomeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidFailureReason(reason FailureReason) bool {
+	switch reason {
+	case FailureReasonExecutionStartFailed,
+		FailureReasonExecutionCapacityExceeded,
+		FailureReasonStartTimeout,
+		FailureReasonExecutionFailed,
+		FailureReasonExecutionTimedOut,
+		FailureReasonStopTimeout,
+		FailureReasonNodeUnavailable,
+		FailureReasonOperationLost,
+		FailureReasonProtocolError:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidStopReason(reason StopReason) bool {
+	switch reason {
+	case "", StopReasonUser, StopReasonStartTimeout, StopReasonExecutionTimeout:
+		return true
+	default:
+		return false
+	}
 }

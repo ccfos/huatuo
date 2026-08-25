@@ -16,10 +16,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler/service"
+	"huatuo-bamai/internal/profiling/publication"
+	"huatuo-bamai/internal/storage/driver"
+	"huatuo-bamai/internal/strutil"
 )
 
 func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
@@ -39,6 +43,20 @@ func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Cont
 		return nil, fmt.Errorf("initialize profile query service: %w", err)
 	}
 	d.profileQueryService = profileQueryService
+	publicationStore, err := publication.NewStore(ctx, &driver.Config{
+		Driver:      "elasticsearch",
+		ESAddresses: strutil.SplitCommaList(d.opts.Config.Elasticsearch.Address),
+		ESUsername:  d.opts.Config.Elasticsearch.Username,
+		ESPassword:  d.opts.Config.Elasticsearch.Password,
+		ESIndex:     d.opts.Config.Elasticsearch.Index,
+	})
+	if err != nil {
+		_ = profileQueryService.Close(ctx)
+		return nil, fmt.Errorf("initialize profiling publication Store: %w", err)
+	}
+	d.publications = publicationStore
 
-	return profileQueryService.Close, nil
+	return func(ctx context.Context) error {
+		return errors.Join(profileQueryService.Close(ctx), publicationStore.Close(ctx))
+	}, nil
 }

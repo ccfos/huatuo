@@ -29,6 +29,7 @@ import (
 	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs/blockdevice"
+	"huatuo-bamai/internal/randomid"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
@@ -419,7 +420,7 @@ func (i *ioTracing) Start(ctx context.Context) error {
 	log.WithField("reason_snapshot", reasonSnapshot).
 		Debug("detected disk io event")
 
-	taskID, err := tracing.AllocTaskID()
+	taskID, err := randomid.New()
 	if err != nil {
 		return fmt.Errorf("allocate iotracing task id: %w", err)
 	}

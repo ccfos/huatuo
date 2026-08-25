@@ -59,7 +59,6 @@ type jobManagerCollector struct {
 	quotaRejections     *prometheus.Desc
 	persistenceFailures *prometheus.Desc
 	recoveredJobs       *prometheus.Desc
-	shutdownIncomplete  *prometheus.Desc
 }
 
 func newJobManagerCollector(manager *job.Manager) *jobManagerCollector {
@@ -67,8 +66,8 @@ func newJobManagerCollector(manager *job.Manager) *jobManagerCollector {
 		manager: manager,
 		active: prometheus.NewDesc(
 			promNamespace+"_jobs_active",
-			"Active jobs by type and status.",
-			[]string{"type", "status"}, nil,
+			"Active Jobs by kind and status.",
+			[]string{"kind", "status"}, nil,
 		),
 		quotaRejections: prometheus.NewDesc(
 			promNamespace+"_job_quota_rejections_total",
@@ -82,10 +81,6 @@ func newJobManagerCollector(manager *job.Manager) *jobManagerCollector {
 			promNamespace+"_jobs_recovered_total",
 			"Total active jobs recovered at startup.", nil, nil,
 		),
-		shutdownIncomplete: prometheus.NewDesc(
-			promNamespace+"_job_shutdown_incomplete_total",
-			"Total job shutdowns that exceeded their deadline.", nil, nil,
-		),
 	}
 }
 
@@ -94,18 +89,16 @@ func (c *jobManagerCollector) Describe(out chan<- *prometheus.Desc) {
 	out <- c.quotaRejections
 	out <- c.persistenceFailures
 	out <- c.recoveredJobs
-	out <- c.shutdownIncomplete
 }
 
 func (c *jobManagerCollector) Collect(out chan<- prometheus.Metric) {
 	stats := c.manager.Stats()
 	for _, active := range stats.Active {
 		out <- prometheus.MustNewConstMetric(
-			c.active, prometheus.GaugeValue, float64(active.Count), string(active.Type), string(active.Status),
+			c.active, prometheus.GaugeValue, float64(active.Count), string(active.Kind), string(active.Status),
 		)
 	}
 	out <- prometheus.MustNewConstMetric(c.quotaRejections, prometheus.CounterValue, float64(stats.QuotaRejections))
 	out <- prometheus.MustNewConstMetric(c.persistenceFailures, prometheus.CounterValue, float64(stats.PersistenceFailures))
 	out <- prometheus.MustNewConstMetric(c.recoveredJobs, prometheus.CounterValue, float64(stats.RecoveredJobs))
-	out <- prometheus.MustNewConstMetric(c.shutdownIncomplete, prometheus.CounterValue, float64(stats.ShutdownIncomplete))
 }

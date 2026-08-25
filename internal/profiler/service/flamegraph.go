@@ -360,11 +360,9 @@ func (s *Service) GetProfilesByTracerID(ctx context.Context, tracerID string) ([
 // GetProfilesByTracerIDPage gets one stable page of profiles by tracer ID.
 func (s *Service) GetProfilesByTracerIDPage(ctx context.Context, tracerID string, limit, offset int) ([]*ProfileDocument, error) {
 	filter := &SearchFilter{
-		TracerID:  tracerID,
-		StartTime: time.Now().Add(-90 * 24 * time.Hour),
-		EndTime:   time.Now(),
-		Limit:     limit,
-		Offset:    offset,
+		TracerID: tracerID,
+		Limit:    limit,
+		Offset:   offset,
 	}
 
 	return s.profileStorage.SearchProfilesContext(ctx, filter)

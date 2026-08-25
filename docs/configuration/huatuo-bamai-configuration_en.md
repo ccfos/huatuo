@@ -137,13 +137,6 @@ to bytes only when the cgroup limit is applied.
     # JavaToolPath = "/opt/async-profiler"
     # PythonToolPath = "/opt/py-spy"
 
-# Legacy locally running tracing tasks.
-[Tasks]
-    # - MaxConcurrent
-    # Maximum number of concurrent tasks.
-    # Default: 10
-    #
-    # MaxConcurrent = 10
 ```
 
 - **ListenAddress** uses `host:port` form. An empty host listens on all
@@ -158,7 +151,6 @@ to bytes only when the cgroup limit is applied.
 - **Profiling.JavaToolPath** and **Profiling.PythonToolPath** are optional until
   their corresponding language is requested. Unsupported node environments
   reject that request without creating an operation.
-- **Tasks.MaxConcurrent** applies only to the legacy Task API.
 
 The generated Node API exposes its contract at `GET /openapi.json`. Profiling
 and Tracing Start, Get, and Stop routes require the service bearer token.

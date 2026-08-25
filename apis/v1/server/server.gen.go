@@ -556,15 +556,23 @@ type CreateProfilingJobResponseObject interface {
 	VisitCreateProfilingJobResponse(w http.ResponseWriter) error
 }
 
-type CreateProfilingJob201JSONResponse ProfilingJobResponse
+type CreateProfilingJob201ResponseHeaders struct {
+	Location string
+}
+
+type CreateProfilingJob201JSONResponse struct {
+	Body    ProfilingJobResponse
+	Headers CreateProfilingJob201ResponseHeaders
+}
 
 func (response CreateProfilingJob201JSONResponse) VisitCreateProfilingJobResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Location", fmt.Sprint(response.Headers.Location))
 	w.WriteHeader(201)
 	_, err := buf.WriteTo(w)
 	return err
@@ -1130,15 +1138,23 @@ type CreateTracingJobResponseObject interface {
 	VisitCreateTracingJobResponse(w http.ResponseWriter) error
 }
 
-type CreateTracingJob201JSONResponse TracingJobResponse
+type CreateTracingJob201ResponseHeaders struct {
+	Location string
+}
+
+type CreateTracingJob201JSONResponse struct {
+	Body    TracingJobResponse
+	Headers CreateTracingJob201ResponseHeaders
+}
 
 func (response CreateTracingJob201JSONResponse) VisitCreateTracingJobResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Location", fmt.Sprint(response.Headers.Location))
 	w.WriteHeader(201)
 	_, err := buf.WriteTo(w)
 	return err

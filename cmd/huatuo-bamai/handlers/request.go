@@ -15,18 +15,30 @@
 package handlers
 
 import (
-	"net/http"
-	"testing"
+	"errors"
+
+	v1 "huatuo-bamai/apis/v1"
+	"huatuo-bamai/internal/server"
+	"huatuo-bamai/internal/server/response"
+
+	"github.com/go-playground/validator/v10"
 )
 
-func TestTaskHandlerRegistersListRoute(t *testing.T) {
-	h := NewTaskHandler()
-
-	for _, route := range h.Handlers {
-		if route.Method == http.MethodGet && route.Path == "" {
-			return
-		}
+func handleBindError(ctx *server.Context, err error) {
+	var validationError *validator.ValidationErrors
+	if errors.As(err, &validationError) {
+		response.ErrorWithCode(
+			ctx,
+			ctx.ErrorStatusMapper(),
+			v1.ErrorCodeInvalidRequest,
+			(*validationError)[0].Namespace(),
+		)
+		return
 	}
-
-	t.Fatal("NewTaskHandler() should register GET /tasks list route")
+	response.ErrorWithCode(
+		ctx,
+		ctx.ErrorStatusMapper(),
+		v1.ErrorCodeInvalidRequest,
+		err.Error(),
+	)
 }

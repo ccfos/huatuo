@@ -247,6 +247,9 @@ func NewServer(cfg *Config) *Server {
 		promRegistry: effectiveConfig.PromReg,
 		config:       effectiveConfig,
 	}
+	// Generated strict handlers pass gin.Context as context.Context. Fallback
+	// preserves authentication and cancellation stored on the HTTP request.
+	s.engine.ContextWithFallback = true
 
 	s.engine.Use(buildMiddlewareChain(&effectiveConfig)...)
 	s.engine.HandleMethodNotAllowed = true

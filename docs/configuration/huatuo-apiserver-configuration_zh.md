@@ -113,28 +113,25 @@ weight: 5
         # MaxConcurrentPerHost = 5
         # MaxConcurrent = 1000
 
+    # Apiserver 独立维护的 Job 生命周期策略。
+    [Jobs.Controller]
+        # StatusPollIntervalSeconds = 5
+        # PendingTimeoutSeconds = 30
+        # CompletionGracePeriodSeconds = 60
+        # NodeUnavailableGracePeriodSeconds = 30
+        # JobRetentionPeriodHours = 720
+
 # huatuo-bamai Agent HTTP client configuration.
 [Agent]
     # - HTTPPort
     # Agent HTTP server port.
     # Default: 19704
     #
-    # - RequestTimeoutSeconds
-    # Timeout in seconds for one Agent HTTP request.
-    # Default: 10
-    #
-    # - StatusPollingIntervalSeconds
-    # Interval in seconds between job status requests.
-    # Default: 5
-    #
-    # - MaxConsecutiveStatusPollingErrors
-    # Maximum consecutive status request errors before a job fails.
-    # Default: 3
-    #
     # HTTPPort = 19704
-    # RequestTimeoutSeconds = 10
-    # StatusPollingIntervalSeconds = 5
-    # MaxConsecutiveStatusPollingErrors = 3
+
+    [Agent.Auth]
+        # 必须与各 Node 的 HTTPServer.Auth.BearerToken 一致。
+        BearerToken = "REPLACE_WITH_RANDOM_HEX"
 ```
 
 `StoreDSN` 是持久化任务状态的 SQLite 数据源。相对路径基于配置文件目录
@@ -143,11 +140,11 @@ weight: 5
 Profiling 和 tracing 复用相同的配额结构，但保留独立配置值。两类任务的
 资源开销和预期并发不同，统一限额会导致一类任务挤占另一类任务。
 
-Agent 请求重试使用客户端内部默认值。公共配置仅保留 Agent 端口、单次请求
-超时、状态轮询周期和连续失败阈值。
+Agent 请求传输保护使用客户端内部默认值。Job 轮询、各阶段 deadline、Node
+不可用宽限期和保留期由 `Jobs.Controller` 独立维护，不与 Node 运行时协商。
 
-服务退出时不会停止 Agent 上的活动任务，而是打印任务标识和目标信息。新的
-API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监控。
+服务退出时不停止 Node 上的活动 Operation。新的 API 服务实例从持久化状态
+恢复活动 Job 并继续监督，不重放 Start。
 
 ### 5. Elasticsearch/OpenSearch
 
@@ -208,10 +205,10 @@ API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监
     #     ID = "huatuo-front"
     #     BearerToken = "REPLACE_WITH_ANOTHER_RANDOM_HEX"
     #     Permissions = [
-    #         "GET /v1/traces",
-    #         "GET /v1/traces/**",
-    #         "GET /v1/profiles",
-    #         "GET /v1/profiles/**",
+    #         "GET /v1/tracing",
+    #         "GET /v1/tracing/**",
+    #         "GET /v1/profiling",
+    #         "GET /v1/profiling/**",
     #     ]
 ```
 
@@ -225,36 +222,21 @@ API 服务实例会恢复持久化的 `pending` 或 `running` 状态并继续监
 因为 Token 不再作为用户 ID 使用或写入任务存储。
 
 `/healthz`、`/readyz`、`/metrics` 和 `/version` 为公开路由。
-`/debug/pprof/**` 和 `/v1/profiles/flamegraph/**` 仅管理员可访问。
+`/debug/pprof/**` 和 `/v1/profiling/flamegraph/**` 仅管理员可访问。
 
 ### 7. 性能剖析
 
 ```toml
-# Profiling subprocess configuration.
+# Profiling 结果链接配置。
 [Profiling]
-    # - AggregationIntervalSeconds
-    # Aggregation interval in seconds. Must be greater than 0 and less than
-    # 1200.
-    # Default: 10
-    #
-    # - MaxConcurrentProfilerProcesses
-    # Maximum concurrent third-party profiler processes. A value of 0 disables
-    # this process limit.
-    # Default: 10
-    #
     # - DashboardBaseURL
     # Optional dashboard base URL. Result URLs are omitted when empty.
     # Default: empty
     #
-    # AggregationIntervalSeconds = 10
-    # MaxConcurrentProfilerProcesses = 10
     # DashboardBaseURL = "https://grafana.example.com/d"
 ```
 
-- `AggregationIntervalSeconds` 必须大于零且小于 1200。
-- `MaxConcurrentProfilerProcesses` 限制第三方 profiler 子进程并发数。
-  配置为零表示禁用该进程数限制，负数无效。
 - `DashboardBaseURL` 可选；配置时必须使用 HTTP 或 HTTPS。为空时，已完成
-  任务不生成结果 URL。
+  或结果未知的任务不生成 Dashboard URL。
 
-Agent 任务超时由请求的剖析持续时间加一个聚合周期自动计算，不再单独配置。
+Profiler 执行和聚合参数只在 Node 本地配置中维护。

@@ -48,7 +48,6 @@ type WriteRequest struct {
 
 var (
 	tracingDataWriter *documentWriter
-	taskDataWriter    *documentWriter
 	profileDataWriter *documentWriter
 )
 
@@ -75,16 +74,6 @@ func Save(req *WriteRequest) error {
 	return tracingDataWriter.saveRaw(req)
 }
 
-// SetTaskStore configures stores for task output.
-func SetTaskStore(stores []*storage.Store[*Document], options DocumentOptions) {
-	if len(stores) == 0 {
-		taskDataWriter = nil
-		return
-	}
-
-	taskDataWriter = newDocumentWriter(stores, options)
-}
-
 // SetProfileStore configures stores for profiling documents.
 func SetProfileStore(stores []*storage.Store[*Document], options DocumentOptions) {
 	if len(stores) == 0 {
@@ -108,27 +97,19 @@ func SaveProfile(req *WriteRequest) error {
 	return profileDataWriter.saveRaw(req)
 }
 
-// SaveTaskOutputText stores task output as plain text.
-func SaveTaskOutputText(req *WriteRequest) error {
-	if taskDataWriter == nil {
-		return nil
+// SaveProfileSync stores one lifecycle-bound profile and waits until queries
+// can observe it.
+func SaveProfileSync(ctx context.Context, req *WriteRequest) error {
+	if profileDataWriter == nil {
+		return errors.New("profiling Store is not configured")
 	}
-
-	req.TracerRunType = TracerRunTypeTask
-	return taskDataWriter.saveText(req)
+	if req.TracerRunType == "" {
+		req.TracerRunType = TracerRunTypeAutotracing
+	}
+	return profileDataWriter.saveRawSync(ctx, req)
 }
 
-// SaveTaskOutputJSON stores task output as JSON.
-func SaveTaskOutputJSON(req *WriteRequest) error {
-	if taskDataWriter == nil {
-		return nil
-	}
-
-	req.TracerRunType = TracerRunTypeTask
-	return taskDataWriter.saveJSON(req)
-}
-
-// CloseStores flushes and releases every configured tracing/task store. The
+// CloseStores flushes and releases every configured tracing store. The
 // same Store may be registered under both writers; close it only once. All
 // close errors are joined and returned so the caller can observe every
 // failure.
@@ -153,9 +134,6 @@ func CloseStores(ctx context.Context) error {
 
 	if tracingDataWriter != nil {
 		closeAll(tracingDataWriter.stores)
-	}
-	if taskDataWriter != nil {
-		closeAll(taskDataWriter.stores)
 	}
 	if profileDataWriter != nil {
 		closeAll(profileDataWriter.stores)

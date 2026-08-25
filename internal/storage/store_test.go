@@ -174,6 +174,23 @@ func mustEncodeEntity(entity testEntity) []byte {
 	return data
 }
 
+func TestSaveSyncRejectsBackendWithoutVisibilityBarrier(t *testing.T) {
+	store, err := NewStore[testEntity](
+		t.Context(),
+		"sqlite",
+		&testBackend{},
+		"jobs",
+		newTestMapper(),
+	)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	err = store.SaveSync(t.Context(), testEntity{ID: "job-1"})
+	if !errors.Is(err, driver.ErrUnsupportedOp) {
+		t.Fatalf("SaveSync() error = %v, want ErrUnsupportedOp", err)
+	}
+}
+
 // TestNewStore covers NewStore initialization: verifies successful init, nil backend, nil mapper, empty collection, and backend Init error.
 func TestNewStore(t *testing.T) {
 	backendInitErr := errors.New("backend init failed")

@@ -24,7 +24,6 @@ import (
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
-	"huatuo-bamai/pkg/tracing"
 
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -34,7 +33,6 @@ import (
 type ServerOptions struct {
 	Addr             string
 	BearerToken      string
-	TracingManager   *tracing.Manager
 	ProfilingService *nodeprofiling.Service
 	TracingService   *nodetracing.Service
 	PromReg          *prometheus.Registry
@@ -74,10 +72,6 @@ func Start(opts ServerOptions) (*server.Server, error) {
 		),
 	})
 
-	SetTracingManager(opts.TracingManager)
-
-	s.MustRegisterRoutes("/tasks", NewTaskHandler().Handlers)
-	s.MustRegisterRoutes("/tracers", NewTracerHandler(opts.TracingManager).Handlers)
 	s.MustRegisterRoutes("", NewContainerHandler().Handlers)
 	s.MustRegisterRoutes("", NewConfigHandler().Handlers)
 	httpConfig := config.Get().HTTPServer

@@ -30,8 +30,8 @@ import (
 	"huatuo-bamai/internal/profiler"
 	profilerexec "huatuo-bamai/internal/profiler/exec"
 	profilerprocess "huatuo-bamai/internal/profiler/process"
+	"huatuo-bamai/internal/randomid"
 	"huatuo-bamai/internal/utils/executil"
-	"huatuo-bamai/pkg/tracing"
 
 	"golang.org/x/sys/unix"
 )
@@ -116,7 +116,7 @@ func StartAsprofSampling(ctx context.Context, opt *AsprofSamplingOption) (map[in
 		return nil, fmt.Errorf("start async-profiler: duration must be positive")
 	}
 
-	sessionID, err := tracing.AllocTaskID()
+	sessionID, err := randomid.New()
 	if err != nil {
 		return nil, fmt.Errorf("start async-profiler: allocate session ID: %w", err)
 	}

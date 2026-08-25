@@ -21,10 +21,10 @@ import (
 
 // Spec contains stable profiling service parameters.
 type Spec struct {
-	Type            Type
-	Language        Language
-	Mode            Mode
-	BinaryMatchPath string
+	Type            Type     `json:"type"`
+	Language        Language `json:"language"`
+	Mode            Mode     `json:"mode"`
+	BinaryMatchPath string   `json:"binary_match_path,omitempty"`
 }
 
 // Validate checks the profiling parameter combination against static capabilities.

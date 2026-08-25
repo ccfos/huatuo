@@ -17,14 +17,14 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
 )
-
-const maxAggregationIntervalSeconds = 1200
 
 // LogConfig controls process logging.
 type LogConfig struct {
@@ -33,9 +33,7 @@ type LogConfig struct {
 
 // ProfilingConfig controls profiler subprocess execution.
 type ProfilingConfig struct {
-	AggregationIntervalSeconds     int
-	MaxConcurrentProfilerProcesses int
-	DashboardBaseURL               string
+	DashboardBaseURL string
 }
 
 // RuntimeConfig controls resource limits for the API server process.
@@ -77,17 +75,30 @@ type JobQuotaConfig struct {
 
 // JobsConfig controls job persistence and quotas.
 type JobsConfig struct {
-	Profiling JobQuotaConfig
-	Tracing   JobQuotaConfig
-	StoreDSN  string
+	Profiling  JobQuotaConfig
+	Tracing    JobQuotaConfig
+	Controller JobControllerConfig
+	StoreDSN   string
+}
+
+// JobControllerConfig controls Apiserver-owned Job lifecycle policy.
+type JobControllerConfig struct {
+	StatusPollIntervalSeconds         int
+	PendingTimeoutSeconds             int
+	CompletionGracePeriodSeconds      int
+	NodeUnavailableGracePeriodSeconds int
+	JobRetentionPeriodHours           int
+}
+
+// AgentAuthConfig authenticates Apiserver to the Node API.
+type AgentAuthConfig struct {
+	BearerToken string
 }
 
 // AgentConfig controls communication with huatuo-bamai Agents.
 type AgentConfig struct {
-	HTTPPort                          int
-	RequestTimeoutSeconds             int
-	StatusPollingIntervalSeconds      int
-	MaxConsecutiveStatusPollingErrors int
+	HTTPPort int
+	Auth     AgentAuthConfig
 }
 
 // Config contains API server configuration.
@@ -127,21 +138,22 @@ func defaultConfig() Config {
 				MaxConcurrentPerHost: 5,
 				MaxConcurrent:        1000,
 			},
+			Controller: JobControllerConfig{
+				StatusPollIntervalSeconds:         5,
+				PendingTimeoutSeconds:             30,
+				CompletionGracePeriodSeconds:      60,
+				NodeUnavailableGracePeriodSeconds: 30,
+				JobRetentionPeriodHours:           30 * 24,
+			},
 			StoreDSN: "jobs.db",
 		},
 		Agent: AgentConfig{
-			HTTPPort:                          19704,
-			RequestTimeoutSeconds:             10,
-			StatusPollingIntervalSeconds:      5,
-			MaxConsecutiveStatusPollingErrors: 3,
+			HTTPPort: 19704,
 		},
 		Elasticsearch: internalconfig.ElasticsearchConfig{
 			Index: "huatuo_bamai",
 		},
-		Profiling: ProfilingConfig{
-			AggregationIntervalSeconds:     10,
-			MaxConcurrentProfilerProcesses: 10,
-		},
+		Profiling: ProfilingConfig{},
 	}
 }
 
@@ -176,18 +188,6 @@ func (c *Config) Validate() error {
 
 // Validate rejects profiling settings that cannot produce a valid job.
 func (c ProfilingConfig) Validate() error {
-	if c.AggregationIntervalSeconds <= 0 {
-		return errors.New("aggregation interval must be greater than zero seconds")
-	}
-	if c.AggregationIntervalSeconds >= maxAggregationIntervalSeconds {
-		return fmt.Errorf(
-			"aggregation interval must be less than %d seconds",
-			maxAggregationIntervalSeconds,
-		)
-	}
-	if c.MaxConcurrentProfilerProcesses < 0 {
-		return errors.New("maximum concurrent profiler processes must not be negative")
-	}
 	if c.DashboardBaseURL == "" {
 		return nil
 	}
@@ -283,7 +283,7 @@ func (c AuthConfig) Validate() error {
 }
 
 // Validate rejects invalid job quotas or persistence settings.
-func (c JobsConfig) Validate() error {
+func (c *JobsConfig) Validate() error {
 	if err := c.Profiling.validate("profiling"); err != nil {
 		return err
 	}
@@ -292,6 +292,32 @@ func (c JobsConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.StoreDSN) == "" {
 		return errors.New("store DSN is required")
+	}
+	if err := c.Controller.Validate(); err != nil {
+		return fmt.Errorf("invalid Job Controller config: %w", err)
+	}
+	return nil
+}
+
+// Validate rejects invalid Job lifecycle policy.
+func (c JobControllerConfig) Validate() error {
+	values := []struct {
+		name  string
+		value int
+	}{
+		{name: "status poll interval seconds", value: c.StatusPollIntervalSeconds},
+		{name: "pending timeout seconds", value: c.PendingTimeoutSeconds},
+		{name: "completion grace period seconds", value: c.CompletionGracePeriodSeconds},
+		{name: "Node unavailable grace period seconds", value: c.NodeUnavailableGracePeriodSeconds},
+		{name: "Job retention period hours", value: c.JobRetentionPeriodHours},
+	}
+	for _, item := range values {
+		if item.value <= 0 {
+			return fmt.Errorf("%s must be greater than zero", item.name)
+		}
+	}
+	if int64(c.JobRetentionPeriodHours) > math.MaxInt64/int64(time.Hour) {
+		return errors.New("Job retention period is outside the supported range")
 	}
 	return nil
 }
@@ -314,22 +340,17 @@ func (c JobQuotaConfig) validate(category string) error {
 
 // Validate rejects invalid Agent communication settings.
 func (c AgentConfig) Validate() error {
-	values := []struct {
-		name  string
-		value int
-	}{
-		{name: "http port", value: c.HTTPPort},
-		{name: "request timeout", value: c.RequestTimeoutSeconds},
-		{name: "status polling interval", value: c.StatusPollingIntervalSeconds},
-		{name: "maximum consecutive status polling errors", value: c.MaxConsecutiveStatusPollingErrors},
-	}
-	for _, item := range values {
-		if item.value <= 0 {
-			return fmt.Errorf("%s must be greater than zero", item.name)
-		}
+	if c.HTTPPort <= 0 {
+		return errors.New("http port must be greater than zero")
 	}
 	if c.HTTPPort > 65535 {
 		return errors.New("http port must not exceed 65535")
+	}
+	if strings.TrimSpace(c.Auth.BearerToken) == "" {
+		return errors.New("Agent Auth BearerToken is required")
+	}
+	if strings.ContainsAny(c.Auth.BearerToken, " \t\r\n") {
+		return errors.New("Agent Auth BearerToken must not contain whitespace")
 	}
 	return nil
 }

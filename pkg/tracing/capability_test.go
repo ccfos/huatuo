@@ -56,16 +56,17 @@ func TestParseType(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesExcludeTypesWithoutExecutors(t *testing.T) {
+func TestCapabilitiesRemainStaticWithoutExecutors(t *testing.T) {
 	t.Parallel()
 
 	capabilities := Capabilities()
-	require.NotNil(t, capabilities)
-	require.Empty(t, capabilities)
-
-	capabilities = append(capabilities, Capability{Type: TypeIO})
-	require.Len(t, capabilities, 1)
-	require.Empty(t, Capabilities())
+	require.Len(t, capabilities, 3)
+	capabilities[0].SupportedScopes[0] = observation.ScopeContainer
+	require.Equal(
+		t,
+		observation.ScopeHost,
+		Capabilities()[0].SupportedScopes[0],
+	)
 	for _, typ := range []Type{TypeNetworkingDrop, TypeIO, TypeTCPRetransmit} {
 		require.False(t, IsAvailable(typ))
 	}

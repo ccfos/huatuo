@@ -383,6 +383,36 @@ func TestNewAuthMiddlewareStoresPrincipalInRequestContext(t *testing.T) {
 	}
 }
 
+func TestNewAuthMiddlewareExposesPrincipalThroughGinContext(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+	service := newTestAuthService()
+	engine := httpGin.New()
+	engine.ContextWithFallback = true
+
+	var got authn.Principal
+	var found bool
+	engine.GET(
+		"/v1/tasks/:taskID",
+		wrapHandler(NewAuthMiddleware(service)),
+		func(ctx *httpGin.Context) {
+			got, found = authn.PrincipalFromContext(ctx)
+			ctx.Status(http.StatusNoContent)
+		},
+	)
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/tasks/task-2026", http.NoBody)
+	request.Header.Set("Authorization", "Bearer viewer-secret")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if !found || got.ID != "viewer-2026" {
+		t.Fatalf("principal = %+v, found = %t", got, found)
+	}
+}
+
 func newTestAuthService() *authService {
 	return NewAuthService([]UserConfig{
 		{

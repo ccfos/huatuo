@@ -15,7 +15,7 @@
 # limitations under the License.
 
 # Verify that apiserver can run multiple continuous CPU profiles concurrently
-# against one host and keep each task's lifecycle and stored windows isolated.
+# against one host and keep each Job's lifecycle and stored windows isolated.
 
 set -euo pipefail
 
@@ -66,16 +66,16 @@ create_native_cpu_profiles() {
 
 	local profile_id
 	for ((index = 0; index < PROFILE_COUNT; index++)); do
-		profile_id=$(jq -er '.data.id' \
+		profile_id=$(jq -er '.data.request_id' \
 			"${HUATUO_BAMAI_TEST_TMPDIR}/create-profile-${index}.json") \
-			|| fatal "profile creation response ${index} has no task ID"
+			|| fatal "profile creation response ${index} has no Job request ID"
 		PROFILE_IDS+=("${profile_id}")
 	done
 
 	local unique_count
 	unique_count=$(printf '%s\n' "${PROFILE_IDS[@]}" | jq -R . | jq -s 'unique | length')
-	assert_eq "${unique_count}" "${PROFILE_COUNT}" "unique profile task IDs" \
-		|| fatal "concurrent profile creation returned duplicate task IDs"
+	assert_eq "${unique_count}" "${PROFILE_COUNT}" "unique profile Job IDs" \
+		|| fatal "concurrent profile creation returned duplicate Job IDs"
 }
 
 all_profiles_have_status() {
@@ -98,9 +98,9 @@ assert_completed_profiles() {
 		jq -e --argjson duration "${PROFILE_DURATION}" \
 			'.data.duration_seconds == $duration
 				and .data.created_at != null
-				and .data.finished_at != null
+				and .data.ended_at != null
 				and .data.result_url != null
-				and .data.status_reason == null' \
+				and .data.failure == null' \
 			"${HUATUO_BAMAI_TEST_TMPDIR}/profile-status-${profile_id}.json" > /dev/null \
 			|| fatal "completed profile ${profile_id} metadata is incomplete"
 		wait_until 90 2 continuous_profile_windows_are_stored \
@@ -113,25 +113,14 @@ assert_completed_profiles() {
 assert_profiles_are_listed() {
 	local response_file="${HUATUO_BAMAI_TEST_TMPDIR}/profiles-list.json"
 	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiles?type=cpu&hostname=127.0.0.1&status=completed&limit=100&offset=0&sort=-created_at" \
+		"${APISERVER_ADDR}/v1/profiling?limit=100&offset=0" \
 		> "${response_file}" || fatal "failed to list completed profiles"
 
 	local profile_id
 	for profile_id in "${PROFILE_IDS[@]}"; do
 		jq -e --arg id "${profile_id}" \
-			'any(.data.items[]; .id == $id)' "${response_file}" > /dev/null \
-			|| fatal "profile list did not contain concurrent task ${profile_id}"
-	done
-}
-
-delete_profiles() {
-	local profile_id status
-	for profile_id in "${PROFILE_IDS[@]}"; do
-		status=$(curl -sS "${CURL_TIMEOUT[@]}" -o /dev/null -w '%{http_code}' -X DELETE \
-			-H "Authorization: Bearer ${API_TOKEN}" \
-			"${APISERVER_ADDR}/v1/profiles/${profile_id}")
-		assert_eq "${status}" "204" "delete completed profile" \
-			|| fatal "completed profile ${profile_id} deletion failed"
+			'any(.data.items[]; .request_id == $id)' "${response_file}" > /dev/null \
+			|| fatal "profile list did not contain concurrent Job ${profile_id}"
 	done
 }
 
@@ -143,7 +132,6 @@ wait_until 10 1 all_profiles_have_status running \
 	|| fatal "profiles were not running concurrently on the same host"
 assert_completed_profiles
 assert_profiles_are_listed
-delete_profiles
 
 assert_log_has_no_failure \
 	"${HUATUO_BAMAI_TEST_TMPDIR}/huatuo.log" "huatuo-bamai"

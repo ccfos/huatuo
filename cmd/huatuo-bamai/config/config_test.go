@@ -30,6 +30,11 @@ func writeConfigFile(t *testing.T, dir, name, content string) string {
 	t.Helper()
 
 	path := filepath.Join(dir, name)
+	content += `
+
+[HTTPServer.Auth]
+BearerToken = "test-node-secret"
+`
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config file %s: %v", path, err)
 	}
@@ -55,7 +60,7 @@ ListenAddress = "127.0.0.1:29704"
 MaxEventStreamClients = 25
 EventStreamKeepAliveIntervalSeconds = 15
 
-[Tasks]
+[Operations]
 MaxConcurrent = 7
 
 [Storage.LocalFile]
@@ -112,8 +117,8 @@ ExcludedOnContainer = "writeback"
 		Get().HTTPServer.EventStreamKeepAliveIntervalSeconds != 15 {
 		t.Errorf("HTTPServer = %+v, want overrides", Get().HTTPServer)
 	}
-	if Get().Tasks.MaxConcurrent != 7 {
-		t.Errorf("Tasks.MaxConcurrent = %d, want 7", Get().Tasks.MaxConcurrent)
+	if Get().Operations.MaxConcurrent != 7 {
+		t.Errorf("Operations.MaxConcurrent = %d, want 7", Get().Operations.MaxConcurrent)
 	}
 	if Get().Storage.LocalFile != (LocalFileConfig{
 		Path:            "records",
@@ -265,11 +270,11 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: "maximum event stream clients",
 		},
 		{
-			name: "invalid task concurrency",
+			name: "invalid operation concurrency",
 			mutate: func(cfg *Config) {
-				cfg.Tasks.MaxConcurrent = 0
+				cfg.Operations.MaxConcurrent = 0
 			},
-			wantErr: "maximum concurrent tasks",
+			wantErr: "maximum concurrent operations",
 		},
 		{
 			name: "invalid local rotation size",

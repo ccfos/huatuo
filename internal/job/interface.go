@@ -14,21 +14,38 @@
 
 package job
 
-import "context"
+import (
+	"context"
+	"time"
 
+	nodeapi "huatuo-bamai/apis/v1/node"
+)
+
+// Store persists Job snapshots and atomic state transitions.
 type Store interface {
 	Get(ctx context.Context, jobID string) (*Job, error)
 	Create(ctx context.Context, job *Job) error
-	Save(ctx context.Context, job *Job) error
-	Delete(ctx context.Context, jobID string) error
-	List(ctx context.Context, query *JobQuery) ([]*Job, error)
-	Count(ctx context.Context, query *JobQuery) (int64, error)
+	Save(ctx context.Context, job *Job, expectedStatuses ...Status) error
+	List(ctx context.Context, query *Query) ([]*Job, error)
+	Count(ctx context.Context, query *Query) (int64, error)
+	DeleteTerminalBefore(ctx context.Context, endedBefore time.Time, limit int) (int64, error)
 	Close(ctx context.Context) error
 }
 
-// NodeAgent interface for communicating with the huatuo-bamai agent
-type NodeAgent interface {
-	StartTaskContext(ctx context.Context, host, container string, request *AgentTaskRequest) (string, error)
-	StopTaskContext(ctx context.Context, host, taskID string, force bool) error
-	GetTaskStatusContext(ctx context.Context, host, taskID string) (string, *Result, error)
+// NodeClient controls typed Node Operations without owning Job state.
+type NodeClient interface {
+	StartProfiling(
+		ctx context.Context,
+		host string,
+		request *nodeapi.StartProfilingRequest,
+	) (*nodeapi.Operation, error)
+	GetProfiling(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
+	StopProfiling(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
+	StartTracing(
+		ctx context.Context,
+		host string,
+		request *nodeapi.StartTracingRequest,
+	) (*nodeapi.Operation, error)
+	GetTracing(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
+	StopTracing(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
 }

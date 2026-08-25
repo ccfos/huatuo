@@ -16,7 +16,6 @@ package tracing
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -45,34 +44,6 @@ func newDocumentWriter(
 	}
 }
 
-func (s *documentWriter) saveText(req *WriteRequest) error {
-	req.TracerData = map[string]any{"output": req.TracerData}
-	document, err := newBaseDocument(s.options, req)
-	if err != nil {
-		return err
-	}
-	return s.saveDocument(document)
-}
-
-func (s *documentWriter) saveJSON(req *WriteRequest) error {
-	raw, ok := req.TracerData.(string)
-	if !ok {
-		return fmt.Errorf("task output store: tracerData must be a string for JSON output")
-	}
-
-	var tracerDataMap map[string]any
-	if err := json.Unmarshal([]byte(raw), &tracerDataMap); err != nil {
-		return fmt.Errorf("task output store: unmarshal tracer data: %w", err)
-	}
-
-	req.TracerData = tracerDataMap
-	document, err := newBaseDocument(s.options, req)
-	if err != nil {
-		return err
-	}
-	return s.saveDocument(document)
-}
-
 func (s *documentWriter) saveRaw(req *WriteRequest) error {
 	document, err := newBaseDocument(s.options, req)
 	if err != nil {
@@ -80,6 +51,25 @@ func (s *documentWriter) saveRaw(req *WriteRequest) error {
 	}
 
 	return s.saveDocument(document)
+}
+
+func (s *documentWriter) saveRawSync(ctx context.Context, req *WriteRequest) error {
+	document, err := newBaseDocument(s.options, req)
+	if err != nil {
+		return err
+	}
+
+	NotifySubscribers(document)
+	var errs []error
+	for _, store := range s.stores {
+		if store == nil {
+			continue
+		}
+		if err := store.SaveSync(ctx, document); err != nil {
+			errs = append(errs, fmt.Errorf("[storage backend: %s, err: %w]", store.Name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (s *documentWriter) saveDocument(document *Document) error {

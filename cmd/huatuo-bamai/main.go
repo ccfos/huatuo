@@ -29,9 +29,10 @@ import (
 	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
 	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
 	"huatuo-bamai/internal/pidfile"
+	"huatuo-bamai/internal/profiling/publication"
 	"huatuo-bamai/internal/server"
+	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/version"
-	"huatuo-bamai/pkg/tracing"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -81,10 +82,11 @@ type Daemon struct {
 
 	cgr              cgroups.Cgroup
 	metrics          *prometheus.Registry
-	tracer           *tracing.Manager
 	operationManager *operation.Manager
 	profilingService *nodeprofiling.Service
 	tracingService   *nodetracing.Service
+	toolstreamServer *toolstream.Server
+	publications     *publication.Store
 	apiServer        *server.Server
 }
 

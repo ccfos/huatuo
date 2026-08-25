@@ -29,7 +29,6 @@ const (
 	ErrorCodeOperationLost             apiv1.ErrorCode = "operation_lost"
 	ErrorCodeProtocolError             apiv1.ErrorCode = "protocol_error"
 	ErrorCodeQuotaExceeded             apiv1.ErrorCode = "quota_exceeded"
-	ErrorCodeResultNotFound            apiv1.ErrorCode = "result_not_found"
 	ErrorCodeResultNotReady            apiv1.ErrorCode = "result_not_ready"
 	ErrorCodeResultUnavailable         apiv1.ErrorCode = "result_unavailable"
 	ErrorCodeStartTimeout              apiv1.ErrorCode = "start_timeout"

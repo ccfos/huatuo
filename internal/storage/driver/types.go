@@ -143,3 +143,8 @@ type Backend interface {
 type Creator interface {
 	Create(ctx context.Context, rec Record) error
 }
+
+// SyncSaver persists one record only after it is visible to subsequent reads.
+type SyncSaver interface {
+	SaveSync(ctx context.Context, rec Record) error
+}

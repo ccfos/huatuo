@@ -116,12 +116,9 @@ tcpshark 与 dropwatch 使用相同的 `--output-storage` 和 toolstream 流程�
     MaxEventsPerSecond = 100
 ```
 
-`tcp_retransmit` tracer 默认位于全局 `BlackList` 中。需要启用时，从名单中移除 `tcp_retransmit` 并重启 huatuo-bamai。丢包关联缓存仅在 tracer 运行期间启用，tracer 停止时会关闭并清空。启用后可通过 HTTP API 启停追踪：
-
-```bash
-curl -X PUT http://localhost:19704/tracers/tcp_retransmit/start
-curl -X PUT http://localhost:19704/tracers/tcp_retransmit/stop
-```
+`tcp_retransmit` tracer 默认位于全局 `BlackList` 中。需要启用时，从名单中
+移除 `tcp_retransmit` 并重启 huatuo-bamai。丢包关联缓存仅在 tracer 运行期间
+启用，tracer 停止时会关闭并清空。
 
 ---
 

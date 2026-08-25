@@ -21,15 +21,15 @@ import (
 
 func TestErrorResponseJSON(t *testing.T) {
 	response := ErrorResponse{Error: Error{
-		Code:    ErrorCodeProfilingDisabled,
-		Message: "profiling is disabled",
+		Code:    ErrorCodeInvalidRequest,
+		Message: "request is invalid",
 	}}
 
 	got, err := json.Marshal(response)
 	if err != nil {
 		t.Fatalf("marshal error response: %v", err)
 	}
-	want := `{"error":{"code":"profiling_disabled","message":"profiling is disabled"}}`
+	want := `{"error":{"code":"invalid_request","message":"request is invalid"}}`
 	if string(got) != want {
 		t.Errorf("error response = %s, want %s", got, want)
 	}

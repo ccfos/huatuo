@@ -25,8 +25,10 @@ import (
 
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/nodeclient"
 	"huatuo-bamai/internal/pidfile"
 	profileService "huatuo-bamai/internal/profiler/service"
+	"huatuo-bamai/internal/profiling/publication"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/version"
 
@@ -80,7 +82,8 @@ type Daemon struct {
 	metrics             *prometheus.Registry
 	jobManager          *job.Manager
 	profileQueryService *profileService.Service
-	agentObserver       job.AgentRequestObserver
+	publications        *publication.Store
+	agentObserver       nodeclient.RequestObserver
 	apiServer           *server.Server
 	steps               []daemonStep
 }
@@ -112,20 +115,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 		var errs []error
 		for i := len(cleanups) - 1; i >= 0; i-- {
-			remainingSteps := i + 1
-			shutdownDeadline, _ := shutdownCtx.Deadline()
-			remaining := time.Until(shutdownDeadline)
-			if remaining <= 0 {
-				remaining = time.Nanosecond
+			if err := shutdownCtx.Err(); err != nil {
+				errs = append(errs, fmt.Errorf(
+					"shutdown deadline reached with %d cleanup stages remaining: %w",
+					i+1,
+					err,
+				))
+				break
 			}
-			stepCtx, stepCancel := context.WithTimeout(
-				context.WithoutCancel(shutdownCtx),
-				remaining/time.Duration(remainingSteps),
-			)
-			if err := cleanups[i](stepCtx); err != nil {
+			if err := cleanups[i](shutdownCtx); err != nil {
 				errs = append(errs, err)
 			}
-			stepCancel()
 		}
 
 		return errors.Join(errs...)

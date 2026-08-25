@@ -25,7 +25,6 @@ import (
 	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
-	"huatuo-bamai/pkg/tracing"
 )
 
 const (
@@ -61,7 +60,7 @@ func runPerfCommand(parent context.Context, request perfRequest) ([]byte, error)
 
 	cmd := exec.CommandContext(
 		ctx,
-		filepath.Join(tracing.TaskBinDir, "perf"),
+		filepath.Join(internalconfig.CoreBinDir, "perf"),
 		args...,
 	)
 	output, err := cmd.CombinedOutput()

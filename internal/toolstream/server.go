@@ -28,6 +28,8 @@ import (
 // Session carries per-connection metadata from the Connect handshake.
 type Session struct {
 	*transport.Session
+	// IsExpected identifies a stream registered as part of an Operation result.
+	IsExpected bool
 }
 
 // untypedHandler is the codec-erased internal dispatch signature.
@@ -56,6 +58,8 @@ type Server struct {
 	// Handler registry:
 	handlersMu sync.RWMutex
 	handlers   map[string]untypedHandler
+	sessionsMu sync.Mutex
+	sessions   map[sessionKey]*expectedSession
 
 	// Lifecycle of the underlying transport:
 	innerMu sync.Mutex
@@ -71,6 +75,7 @@ func NewServer(sockPath string) (*Server, error) {
 	return &Server{
 		sockPath: sockPath,
 		handlers: make(map[string]untypedHandler),
+		sessions: make(map[sessionKey]*expectedSession),
 	}, nil
 }
 
@@ -166,26 +171,31 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) dispatch(tsess *transport.Session, chunk transport.ChunkMsg) {
+	sess := &Session{Session: tsess, IsExpected: s.isExpectedSession(tsess)}
 	if chunk.Err != "" {
+		s.recordSessionError(sess, errors.New(chunk.Err))
 		log.Warnf("%s: tool error: %s", tsess.ToolName, chunk.Err)
+		if chunk.End {
+			s.finishSession(sess)
+		}
 		return
 	}
 
-	if chunk.End || len(chunk.Data) == 0 {
-		return
+	if len(chunk.Data) != 0 {
+		s.handlersMu.RLock()
+		handler := s.handlers[tsess.ToolName]
+		s.handlersMu.RUnlock()
+
+		if handler == nil {
+			s.recordSessionError(sess, errors.New("no handler registered"))
+			log.Warnf("%s: no handler", tsess.ToolName)
+		} else if err := handler(sess, chunk.Data); err != nil {
+			s.recordSessionError(sess, err)
+			log.Warnf("%s: handler: %v", tsess.ToolName, err)
+		}
 	}
 
-	s.handlersMu.RLock()
-	handler := s.handlers[tsess.ToolName]
-	s.handlersMu.RUnlock()
-
-	if handler == nil {
-		log.Warnf("%s: no handler", tsess.ToolName)
-		return
-	}
-
-	sess := &Session{Session: tsess}
-	if err := handler(sess, chunk.Data); err != nil {
-		log.Warnf("%s: handler: %v", tsess.ToolName, err)
+	if chunk.End {
+		s.finishSession(sess)
 	}
 }

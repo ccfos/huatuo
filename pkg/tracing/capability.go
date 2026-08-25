@@ -72,14 +72,12 @@ func ParseType(value string) (Type, error) {
 	return TypeUnknown, fmt.Errorf("unsupported tracing type %q", value)
 }
 
-// Capabilities returns tracing capabilities backed by executors in this build.
+// Capabilities returns the versioned static tracing capability table.
 func Capabilities() []Capability {
 	result := make([]Capability, 0, len(capabilityDefinitions))
 	for i := range capabilityDefinitions {
 		definition := &capabilityDefinitions[i]
-		if definition.available {
-			result = append(result, cloneCapability(&definition.Capability))
-		}
+		result = append(result, cloneCapability(&definition.Capability))
 	}
 	return result
 }

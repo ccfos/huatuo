@@ -82,6 +82,22 @@ func (s *Store[T]) Save(ctx context.Context, v T) error {
 	return s.backend.Save(driver.WithContext(ctx), rec)
 }
 
+// SaveSync persists v and waits until it is visible to subsequent reads.
+func (s *Store[T]) SaveSync(ctx context.Context, v T) error {
+	rec, err := s.record(v)
+	if err != nil {
+		return err
+	}
+	if saver, ok := s.backend.(driver.SyncSaver); ok {
+		return saver.SaveSync(driver.WithContext(ctx), rec)
+	}
+	return fmt.Errorf(
+		"%w: storage backend %q does not support synchronous saves",
+		driver.ErrUnsupportedOp,
+		s.Name,
+	)
+}
+
 // Create persists v only when its ID does not already exist.
 func (s *Store[T]) Create(ctx context.Context, v T) error {
 	creator, ok := s.backend.(driver.Creator)

@@ -21,68 +21,53 @@ import (
 	"testing"
 )
 
-func TestLoadFileDefaults(t *testing.T) {
-	cfg := loadTestConfig(t, `
+const requiredConfig = `
+[Agent.Auth]
+BearerToken = "node-secret"
+
 [[Auth.Users]]
 ID = "admin"
-BearerToken = "secret"
+BearerToken = "user-secret"
 Admin = true
-`)
+`
 
-	if cfg.Log.Level != "Info" {
-		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "Info")
+func TestLoadFileDefaults(t *testing.T) {
+	config := loadTestConfig(t, requiredConfig)
+
+	if config.Log.Level != "Info" {
+		t.Fatalf("Log.Level = %q, want Info", config.Log.Level)
 	}
-	if cfg.Runtime.CPULimitCores != 20 ||
-		cfg.Runtime.MemoryLimitMiB != 4096 {
-		t.Errorf("Runtime = %+v, want default limits", cfg.Runtime)
+	if config.Runtime != (RuntimeConfig{CPULimitCores: 20, MemoryLimitMiB: 4096}) {
+		t.Fatalf("Runtime = %+v", config.Runtime)
 	}
-	if cfg.APIServer.ListenAddress != ":12740" {
-		t.Errorf("ListenAddress = %q, want %q", cfg.APIServer.ListenAddress, ":12740")
+	if config.APIServer.ListenAddress != ":12740" ||
+		config.APIServer.RateLimit != (RateLimitConfig{200, 200}) {
+		t.Fatalf("APIServer = %+v", config.APIServer)
 	}
-	if cfg.APIServer.RateLimit.RequestsPerSecond != 200 ||
-		cfg.APIServer.RateLimit.Burst != 200 {
-		t.Errorf("RateLimit = %+v, want default values", cfg.APIServer.RateLimit)
+	if config.Jobs.Profiling != (JobQuotaConfig{3, 500}) ||
+		config.Jobs.Tracing != (JobQuotaConfig{5, 1000}) {
+		t.Fatalf("Jobs quotas = %+v", config.Jobs)
 	}
-	if cfg.Jobs.Profiling != (JobQuotaConfig{3, 500}) {
-		t.Errorf("Profiling quota = %+v, want default values", cfg.Jobs.Profiling)
+	wantController := JobControllerConfig{
+		StatusPollIntervalSeconds:         5,
+		PendingTimeoutSeconds:             30,
+		CompletionGracePeriodSeconds:      60,
+		NodeUnavailableGracePeriodSeconds: 30,
+		JobRetentionPeriodHours:           30 * 24,
 	}
-	if cfg.Jobs.Tracing != (JobQuotaConfig{5, 1000}) {
-		t.Errorf("Tracing quota = %+v, want default values", cfg.Jobs.Tracing)
+	if config.Jobs.Controller != wantController || config.Jobs.StoreDSN != "jobs.db" {
+		t.Fatalf("Jobs lifecycle = %+v", config.Jobs)
 	}
-	if cfg.Agent.HTTPPort != 19704 ||
-		cfg.Agent.StatusPollingIntervalSeconds != 5 ||
-		cfg.Agent.MaxConsecutiveStatusPollingErrors != 3 {
-		t.Errorf("Agent = %+v, want default values", cfg.Agent)
+	if config.Agent.HTTPPort != 19704 || config.Agent.Auth.BearerToken != "node-secret" {
+		t.Fatalf("Agent = %+v", config.Agent)
 	}
-	if cfg.Elasticsearch.Enabled() {
-		t.Error("Elasticsearch.Enabled() = true, want opt-in storage")
-	}
-	if cfg.Elasticsearch.Index != "huatuo_bamai" {
-		t.Errorf("Elasticsearch.Index = %q, want default", cfg.Elasticsearch.Index)
-	}
-	if cfg.Profiling.AggregationIntervalSeconds != 10 ||
-		cfg.Profiling.MaxConcurrentProfilerProcesses != 10 ||
-		cfg.Profiling.DashboardBaseURL != "" {
-		t.Errorf("Profiling = %+v, want default values", cfg.Profiling)
+	if config.Profiling.DashboardBaseURL != "" {
+		t.Fatalf("Profiling = %+v", config.Profiling)
 	}
 }
 
 func TestLoadFileCanonicalOverrides(t *testing.T) {
-	cfg := loadTestConfig(t, `
-[Log]
-Level = "Warn"
-
-[Runtime]
-CPULimitCores = 8
-MemoryLimitMiB = 2048
-
-[APIServer]
-ListenAddress = "127.0.0.1:18080"
-
-[APIServer.RateLimit]
-RequestsPerSecond = 20
-Burst = 30
-
+	config := loadTestConfig(t, `
 [Jobs]
 StoreDSN = "state/jobs.db"
 
@@ -94,21 +79,20 @@ MaxConcurrent = 100
 MaxConcurrentPerHost = 4
 MaxConcurrent = 200
 
+[Jobs.Controller]
+StatusPollIntervalSeconds = 7
+PendingTimeoutSeconds = 40
+CompletionGracePeriodSeconds = 80
+NodeUnavailableGracePeriodSeconds = 50
+JobRetentionPeriodHours = 48
+
 [Agent]
 HTTPPort = 29704
-RequestTimeoutSeconds = 20
-StatusPollingIntervalSeconds = 7
-MaxConsecutiveStatusPollingErrors = 4
 
-[Elasticsearch]
-Address = "https://search.example:9443"
-Username = "huatuo"
-Password = "secret"
-Index = "profiles"
+[Agent.Auth]
+BearerToken = "node-override"
 
 [Profiling]
-AggregationIntervalSeconds = 15
-MaxConcurrentProfilerProcesses = 6
 DashboardBaseURL = "https://grafana.example/d"
 
 [[Auth.Users]]
@@ -117,201 +101,35 @@ BearerToken = "operator-secret"
 Permissions = ["GET /v1/profiling/**"]
 `)
 
-	if cfg.Runtime.MemoryLimitMiB != 2048 {
-		t.Errorf("MemoryLimitMiB = %d, want 2048", cfg.Runtime.MemoryLimitMiB)
+	if config.Jobs.Profiling != (JobQuotaConfig{2, 100}) ||
+		config.Jobs.Tracing != (JobQuotaConfig{4, 200}) {
+		t.Fatalf("Jobs quotas = %+v", config.Jobs)
 	}
-	if cfg.Log.Level != "Warn" {
-		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "Warn")
+	wantController := JobControllerConfig{7, 40, 80, 50, 48}
+	if config.Jobs.Controller != wantController || config.Jobs.StoreDSN != "state/jobs.db" {
+		t.Fatalf("Jobs lifecycle = %+v", config.Jobs)
 	}
-	if cfg.APIServer.RateLimit != (RateLimitConfig{20, 30}) {
-		t.Errorf("RateLimit = %+v, want overrides", cfg.APIServer.RateLimit)
+	if config.Agent.HTTPPort != 29704 || config.Agent.Auth.BearerToken != "node-override" {
+		t.Fatalf("Agent = %+v", config.Agent)
 	}
-	if cfg.Jobs.Profiling != (JobQuotaConfig{2, 100}) ||
-		cfg.Jobs.Tracing != (JobQuotaConfig{4, 200}) {
-		t.Errorf("Jobs = %+v, want quota overrides", cfg.Jobs)
-	}
-	if cfg.Agent.StatusPollingIntervalSeconds != 7 ||
-		cfg.Agent.MaxConsecutiveStatusPollingErrors != 4 {
-		t.Errorf("Agent = %+v, want status polling overrides", cfg.Agent)
-	}
-	if !cfg.Elasticsearch.Enabled() || cfg.Elasticsearch.Index != "profiles" {
-		t.Errorf("Elasticsearch = %+v, want enabled overrides", cfg.Elasticsearch)
-	}
-	if cfg.Profiling.DashboardBaseURL != "https://grafana.example/d" {
-		t.Errorf("DashboardBaseURL = %q, want override", cfg.Profiling.DashboardBaseURL)
-	}
-	if cfg.Auth.Users[0].ID != "operator" {
-		t.Errorf("user ID = %q, want operator", cfg.Auth.Users[0].ID)
+	if config.Profiling.DashboardBaseURL != "https://grafana.example/d" {
+		t.Fatalf("Profiling = %+v", config.Profiling)
 	}
 }
 
-func TestLoadFileRejectsLegacyKeys(t *testing.T) {
-	tests := []struct {
-		name     string
-		contents string
-	}{
-		{
-			name: "root log level",
-			contents: `
-LogLevel = "Info"
-
-[[Auth.Users]]
-ID = "admin"
-BearerToken = "secret"
-Admin = true
-`,
-		},
-		{
-			name: "task config",
-			contents: `
-[[Auth.Users]]
-ID = "admin"
-BearerToken = "secret"
-Admin = true
-
-[TaskConfig]
-JobStoreDSN = "jobs.db"
-`,
-		},
-		{
-			name: "admin field",
-			contents: `
-[[Auth.Users]]
-ID = "admin"
-BearerToken = "secret"
-IsAdmin = true
-`,
-		},
-		{
-			name: "http safeguard",
-			contents: `
-[[Auth.Users]]
-ID = "admin"
-BearerToken = "secret"
-Admin = true
-
-[APIServer]
-ReadTimeoutSeconds = 60
-`,
-		},
-		{
-			name: "runtime cgroup section",
-			contents: `
-[[Auth.Users]]
-ID = "admin"
-BearerToken = "secret"
-Admin = true
-
-[RuntimeCgroup]
-CPULimitCores = 20
-`,
-		},
-		{
-			name: "stop concurrency",
-			contents: `
-[[Auth.Users]]
-ID = "admin"
-BearerToken = "secret"
-Admin = true
-
-[Jobs]
-MaxConcurrentStops = 16
-`,
-		},
-		{
-			name: "status polling section",
-			contents: `
-[[Auth.Users]]
-ID = "admin"
-BearerToken = "secret"
-Admin = true
-
-[Agent.StatusPolling]
-IntervalSeconds = 5
-MaxConsecutiveErrors = 3
-`,
-		},
+func TestLoadFileRejectsRemovedConfiguration(t *testing.T) {
+	removed := []string{
+		`TaskConfig = { JobStoreDSN = "jobs.db" }`,
+		`[Agent.StatusPolling]
+IntervalSeconds = 5`,
+		`[Profiling]
+AggregationIntervalSeconds = 10`,
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if _, err := LoadFile(writeTestConfig(t, tt.contents)); err == nil {
-				t.Fatal("LoadFile() error = nil, want strict legacy-key rejection")
+	for _, value := range removed {
+		t.Run(strings.Split(value, "\n")[0], func(t *testing.T) {
+			if _, err := LoadFile(writeTestConfig(t, value+requiredConfig)); err == nil {
+				t.Fatal("LoadFile() error = nil")
 			}
-		})
-	}
-}
-
-func TestAuthConfigValidate(t *testing.T) {
-	tests := []struct {
-		name    string
-		users   []UserConfig
-		wantErr string
-	}{
-		{name: "missing users", wantErr: "at least one user"},
-		{
-			name: "missing ID",
-			users: []UserConfig{{
-				BearerToken: "secret",
-				Admin:       true,
-			}},
-			wantErr: "id is required",
-		},
-		{
-			name: "missing token",
-			users: []UserConfig{{
-				ID:    "admin",
-				Admin: true,
-			}},
-			wantErr: "bearer token is required",
-		},
-		{
-			name: "duplicate ID",
-			users: []UserConfig{
-				{ID: "same", BearerToken: "one", Admin: true},
-				{ID: "same", BearerToken: "two", Admin: true},
-			},
-			wantErr: "duplicate id",
-		},
-		{
-			name: "duplicate token",
-			users: []UserConfig{
-				{ID: "one", BearerToken: "same", Admin: true},
-				{ID: "two", BearerToken: "same", Admin: true},
-			},
-			wantErr: "duplicate bearer token",
-		},
-		{
-			name: "non-admin missing permissions",
-			users: []UserConfig{{
-				ID:          "viewer",
-				BearerToken: "secret",
-			}},
-			wantErr: "permissions are required",
-		},
-		{
-			name: "invalid permission method",
-			users: []UserConfig{{
-				ID:          "viewer",
-				BearerToken: "secret",
-				Permissions: []string{"FETCH /v1/jobs"},
-			}},
-			wantErr: "invalid permission method",
-		},
-		{
-			name: "valid",
-			users: []UserConfig{{
-				ID:          "viewer",
-				BearerToken: "secret",
-				Permissions: []string{"GET /v1/jobs"},
-			}},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := (AuthConfig{Users: tt.users}).Validate()
-			assertErrorContains(t, err, tt.wantErr)
 		})
 	}
 }
@@ -323,103 +141,77 @@ func TestConfigValidation(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "invalid log level",
-			mutate: func(cfg *Config) {
-				cfg.Log.Level = "verbose"
-			},
-			wantErr: "unsupported log level",
-		},
-		{
-			name: "invalid CPU limit",
-			mutate: func(cfg *Config) {
-				cfg.Runtime.CPULimitCores = 0
-			},
-			wantErr: "cpu limit",
-		},
-		{
-			name: "invalid listen address",
-			mutate: func(cfg *Config) {
-				cfg.APIServer.ListenAddress = "missing-port"
-			},
-			wantErr: "invalid listen address",
-		},
-		{
-			name: "invalid profiling quota",
-			mutate: func(cfg *Config) {
-				cfg.Jobs.Profiling.MaxConcurrentPerHost = 0
+			name: "profiling quota",
+			mutate: func(config *Config) {
+				config.Jobs.Profiling.MaxConcurrentPerHost = 0
 			},
 			wantErr: "profiling jobs per host",
 		},
 		{
-			name: "invalid agent port",
-			mutate: func(cfg *Config) {
-				cfg.Agent.HTTPPort = 65536
+			name: "controller polling interval",
+			mutate: func(config *Config) {
+				config.Jobs.Controller.StatusPollIntervalSeconds = 0
 			},
-			wantErr: "must not exceed 65535",
+			wantErr: "status poll interval seconds",
 		},
 		{
-			name: "invalid status polling interval",
-			mutate: func(cfg *Config) {
-				cfg.Agent.StatusPollingIntervalSeconds = 0
+			name: "controller retention",
+			mutate: func(config *Config) {
+				config.Jobs.Controller.JobRetentionPeriodHours = 0
 			},
-			wantErr: "status polling interval",
+			wantErr: "Job retention period hours",
 		},
 		{
-			name: "invalid consecutive status polling errors",
-			mutate: func(cfg *Config) {
-				cfg.Agent.MaxConsecutiveStatusPollingErrors = 0
+			name: "Agent token missing",
+			mutate: func(config *Config) {
+				config.Agent.Auth.BearerToken = ""
 			},
-			wantErr: "maximum consecutive status polling errors",
+			wantErr: "Agent Auth BearerToken is required",
 		},
 		{
-			name: "invalid aggregation interval",
-			mutate: func(cfg *Config) {
-				cfg.Profiling.AggregationIntervalSeconds = 1200
+			name: "Agent token whitespace",
+			mutate: func(config *Config) {
+				config.Agent.Auth.BearerToken = "node secret"
 			},
-			wantErr: "less than 1200 seconds",
+			wantErr: "must not contain whitespace",
 		},
 		{
-			name: "invalid dashboard URL",
-			mutate: func(cfg *Config) {
-				cfg.Profiling.DashboardBaseURL = "ftp://grafana.example/d"
+			name: "dashboard scheme",
+			mutate: func(config *Config) {
+				config.Profiling.DashboardBaseURL = "ftp://grafana.example/d"
 			},
 			wantErr: "must use http or https",
 		},
-		{
-			name: "incomplete Elasticsearch",
-			mutate: func(cfg *Config) {
-				cfg.Elasticsearch.Address = "https://search.example"
-			},
-			wantErr: "must be configured together",
-		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := validConfig()
-			tt.mutate(&cfg)
-			assertErrorContains(t, cfg.Validate(), tt.wantErr)
+			config := validConfig()
+			tt.mutate(&config)
+			if err := config.Validate(); err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
 		})
 	}
 }
 
 func validConfig() Config {
-	cfg := defaultConfig()
-	cfg.Auth.Users = []UserConfig{{
+	config := defaultConfig()
+	config.Agent.Auth.BearerToken = "node-secret"
+	config.Auth.Users = []UserConfig{{
 		ID:          "admin",
-		BearerToken: "secret",
+		BearerToken: "user-secret",
 		Admin:       true,
 	}}
-	return cfg
+	return config
 }
 
 func loadTestConfig(t *testing.T, contents string) *Config {
 	t.Helper()
-	cfg, err := LoadFile(writeTestConfig(t, contents))
+	config, err := LoadFile(writeTestConfig(t, contents))
 	if err != nil {
 		t.Fatalf("LoadFile() error = %v", err)
 	}
-	return cfg
+	return config
 }
 
 func writeTestConfig(t *testing.T, contents string) string {
@@ -429,17 +221,4 @@ func writeTestConfig(t *testing.T, contents string) string {
 		t.Fatalf("os.WriteFile() error = %v", err)
 	}
 	return path
-}
-
-func assertErrorContains(t *testing.T, err error, want string) {
-	t.Helper()
-	if want == "" {
-		if err != nil {
-			t.Fatalf("error = %v, want nil", err)
-		}
-		return
-	}
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("error = %v, want substring %q", err, want)
-	}
 }

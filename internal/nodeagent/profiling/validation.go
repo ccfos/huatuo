@@ -43,6 +43,8 @@ func validateConfig(config *Config) error {
 		return errors.New("create node profiling service: maximum concurrent processes must not be negative")
 	case config.CommandOutputLimitBytes <= 0:
 		return errors.New("create node profiling service: command output limit must be positive")
+	case config.ToolstreamServer == nil:
+		return errors.New("create node profiling service: Toolstream server is required")
 	default:
 		return nil
 	}
@@ -82,6 +84,9 @@ func validateRequest(request *StartRequest) error {
 }
 
 func validateEnvironment(request *StartRequest, config *Config) error {
+	if config.ResultPublisher == nil {
+		return fmt.Errorf("%w: profiling result storage is not configured", ErrEnvironmentUnsupported)
+	}
 	if err := validateExecutable(config.ProfilerPath); err != nil {
 		return fmt.Errorf("%w: %w", ErrEnvironmentUnsupported, err)
 	}

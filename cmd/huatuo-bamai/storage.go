@@ -16,11 +16,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
+	"huatuo-bamai/internal/profiling/publication"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/internal/strutil"
@@ -33,21 +35,47 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 		return nil, nil
 	}
 
-	if err := initStorage(d.opts.Region, config.Get()); err != nil {
+	publicationStore, err := initStorage(d.opts.Region, config.Get())
+	if err != nil {
 		return nil, err
 	}
+	d.publications = publicationStore
 	return func(ctx context.Context) error {
-		if err := tracing.CloseStores(ctx); err != nil {
-			return fmt.Errorf("close tracing stores: %w", err)
-		}
-		return nil
+		return errors.Join(
+			wrapCloseError("tracing stores", tracing.CloseStores(ctx)),
+			wrapCloseError("profiling publication Store", publicationStore.Close(ctx)),
+		)
 	}, nil
 }
 
-func initStorage(storageRegion string, cfg *config.Config) error {
-	var esStore *storage.Store[*tracing.Document]
-
+func initStorage(
+	storageRegion string,
+	cfg *config.Config,
+) (publicationStore *publication.Store, returnedErr error) {
 	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)
+	profileMetadataStores := make([]*storage.Store[*tracing.Document], 0, 1)
+	defer func() {
+		if returnedErr == nil {
+			return
+		}
+		allStores := make(
+			[]*storage.Store[*tracing.Document],
+			0,
+			len(tracingMetadataStores)+len(profileMetadataStores),
+		)
+		allStores = append(allStores, tracingMetadataStores...)
+		allStores = append(allStores, profileMetadataStores...)
+		for _, store := range allStores {
+			returnedErr = errors.Join(returnedErr, store.Close(context.Background()))
+		}
+		if publicationStore != nil {
+			returnedErr = errors.Join(
+				returnedErr,
+				publicationStore.Close(context.Background()),
+			)
+		}
+	}()
+
 	if cfg.Storage.Elasticsearch.Enabled() {
 		store, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
 			Driver:      "elasticsearch",
@@ -57,10 +85,9 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 			ESIndex:     cfg.Storage.Elasticsearch.Index,
 		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
-			return fmt.Errorf("new tracing document store (elasticsearch): %w", err)
+			return nil, fmt.Errorf("new tracing document store (elasticsearch): %w", err)
 		}
-		esStore = store
-		tracingMetadataStores = append(tracingMetadataStores, esStore)
+		tracingMetadataStores = append(tracingMetadataStores, store)
 	}
 
 	if cfg.Storage.LocalFile.Path != "" {
@@ -71,39 +98,50 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 			LocalFileRotationSize: cfg.Storage.LocalFile.RotationSizeMiB,
 		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
-			return fmt.Errorf("new tracing document store (localfile): %w", err)
+			return nil, fmt.Errorf("new tracing document store (localfile): %w", err)
 		}
 		tracingMetadataStores = append(tracingMetadataStores, localFileStore)
 	}
 
-	if len(tracingMetadataStores) > 0 {
-		tracing.SetTracingStore(
-			tracingMetadataStores,
-			tracing.DocumentOptions{
-				Region: storageRegion,
-			},
-		)
-	}
-	if esStore != nil {
-		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
-	}
-
 	if cfg.Storage.Elasticsearch.Enabled() {
-		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
+		storeConfig := &driver.Config{
 			Driver:      "elasticsearch",
 			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
 			ESUsername:  cfg.Storage.Elasticsearch.Username,
 			ESPassword:  cfg.Storage.Elasticsearch.Password,
 			ESIndex:     cfg.Storage.Elasticsearch.Index,
-		}, profiler.MetadataCollection, tracing.ProfileDocumentStoreMapper{})
-		if err != nil {
-			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)
 		}
-		tracing.SetProfileStore(
-			[]*storage.Store[*tracing.Document]{profileStore},
-			tracing.DocumentOptions{Region: storageRegion},
+		profileStore, err := storage.NewFromConfig[*tracing.Document](
+			context.Background(),
+			storeConfig,
+			profiler.MetadataCollection,
+			tracing.ProfileDocumentStoreMapper{},
 		)
+		if err != nil {
+			return nil, fmt.Errorf("new profiling document store (elasticsearch): %w", err)
+		}
+		profileMetadataStores = append(profileMetadataStores, profileStore)
+		publicationStore, err = publication.NewStore(context.Background(), storeConfig)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return nil
+	tracing.SetTracingStore(
+		tracingMetadataStores,
+		tracing.DocumentOptions{Region: storageRegion},
+	)
+	tracing.SetProfileStore(
+		profileMetadataStores,
+		tracing.DocumentOptions{Region: storageRegion},
+	)
+
+	return publicationStore, nil
+}
+
+func wrapCloseError(name string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("close %s: %w", name, err)
 }

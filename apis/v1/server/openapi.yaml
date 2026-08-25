@@ -34,6 +34,11 @@ paths:
       responses:
         '201':
           description: Profiling Job created.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -191,6 +196,11 @@ paths:
       responses:
         '201':
           description: Tracing Job created.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
           content:
             application/json:
               schema:
@@ -332,9 +342,6 @@ x-error-codes:
   quota_exceeded:
     httpStatus: 429
     description: The request exceeds the caller's Job quota.
-  result_not_found:
-    httpStatus: 404
-    description: The committed result no longer exists.
   result_not_ready:
     httpStatus: 409
     description: The Job state does not permit result access.

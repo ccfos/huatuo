@@ -16,7 +16,7 @@ package tracing
 
 // Spec contains stable on-demand tracing service parameters.
 type Spec struct {
-	Type Type
+	Type Type `json:"type"`
 }
 
 // Validate checks whether the tracing type is defined by the protocol.

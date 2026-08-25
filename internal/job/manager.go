@@ -18,989 +18,523 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/storage/driver"
 
 	"github.com/google/uuid"
-	"golang.org/x/sync/errgroup"
 )
 
-// ErrJobCompleted is returned when a job is already completed.
-var ErrJobCompleted = errors.New("job already completed")
+const (
+	defaultStatusPollInterval         = 5 * time.Second
+	defaultPendingTimeout             = 30 * time.Second
+	defaultCompletionGracePeriod      = 60 * time.Second
+	defaultNodeUnavailableGracePeriod = 30 * time.Second
+	defaultJobRetentionPeriod         = 30 * 24 * time.Hour
+	jobCleanupInterval                = time.Hour
+	jobCleanupBatchSize               = 1000
+)
 
-// ErrCannotDeleteRunning is returned when trying to delete a running job.
-var ErrCannotDeleteRunning = errors.New("cannot delete running job")
-
-// ManagerConfig holds configuration for the job manager.
-type ManagerConfig struct {
-	TypePolicies map[JobType]TypePolicy
-	// StoreDSN is the SQLite data source name for the job store.
-	// Defaults to "jobs.db" when empty.
-	StoreDSN                 string
-	StopAllConcurrency       int
-	StatusPollInterval       time.Duration
-	MaxConsecutivePollErrors int
-}
-
-// TypePolicy assigns a job type to a quota group.
-type TypePolicy struct {
-	Group          string
+// Policy limits active Jobs for one service Kind.
+type Policy struct {
 	MaxJobsPerHost int
 	MaxTotalJobs   int
 }
 
-// Manager tracks running jobs in memory and persists terminal states to storage.
+// ManagerConfig contains Apiserver-owned persistence, quota, and lifecycle policy.
+type ManagerConfig struct {
+	StoreDSN string
+	Policies map[Kind]Policy
+
+	StatusPollInterval         time.Duration
+	PendingTimeout             time.Duration
+	CompletionGracePeriod      time.Duration
+	NodeUnavailableGracePeriod time.Duration
+	JobRetentionPeriod         time.Duration
+}
+
+type managedJob struct {
+	mu sync.Mutex
+
+	id                string
+	kind              Kind
+	hostname          string
+	job               *Job
+	operationObserved bool
+	wake              chan struct{}
+	recovered         bool
+}
+
+// Manager owns all active Job state transitions for one Apiserver process.
 type Manager struct {
-	jobs                map[string]*Job
-	jobsByHost          map[string]int
-	mu                  sync.RWMutex
-	stopping            map[string]struct{}
-	finishing           map[string]chan struct{}
-	shutdownMu          sync.Mutex
-	shuttingDown        bool
-	shutdownDone        chan struct{}
-	shutdownErr         error
-	monitorWG           sync.WaitGroup
-	storage             Store
-	nodeAgent           NodeAgent
-	stopChan            chan struct{}
-	config              ManagerConfig
+	mu sync.RWMutex
+
+	active      map[string]*managedJob
+	activeTotal map[Kind]int
+	activeHosts map[string]int
+	accepting   bool
+
+	store      Store
+	nodeClient NodeClient
+	config     ManagerConfig
+	now        func() time.Time
+
+	stopCh    chan struct{}
+	closeOnce sync.Once
+	closeDone chan struct{}
+	closeErr  error
+	wg        sync.WaitGroup
+
 	quotaRejections     atomic.Uint64
 	persistenceFailures atomic.Uint64
 	recoveredJobs       atomic.Uint64
-	shutdownIncomplete  atomic.Uint64
 }
 
-// ActiveJobStat contains one active job metric bucket.
+// ActiveJobStat contains one active Job metric bucket.
 type ActiveJobStat struct {
-	Type   JobType
-	Status JobStatus
+	Kind   Kind
+	Status Status
 	Count  int
 }
 
-// ManagerStats is a point-in-time snapshot of manager metrics.
+// ManagerStats is a point-in-time Job Manager metrics snapshot.
 type ManagerStats struct {
 	Active              []ActiveJobStat
 	QuotaRejections     uint64
 	PersistenceFailures uint64
 	RecoveredJobs       uint64
-	ShutdownIncomplete  uint64
 }
 
-func NewManager(ctx context.Context, nodeAgent NodeAgent, config ManagerConfig) (*Manager, error) {
-	if nodeAgent == nil {
-		return nil, errors.New("node agent is required")
+// NewManager initializes storage, migrates records, and recovers active Jobs.
+func NewManager(
+	ctx context.Context,
+	nodeClient NodeClient,
+	config ManagerConfig,
+) (*Manager, error) {
+	if nodeClient == nil {
+		return nil, errors.New("create job manager: Node client is required")
 	}
-	if err := validateManagerConfig(config); err != nil {
-		return nil, err
-	}
-	storage, err := newStore(ctx, config.StoreDSN)
+	normalized, err := normalizeManagerConfig(config)
 	if err != nil {
 		return nil, err
 	}
-
-	manager := newManagerWithStore(storage, nodeAgent, config)
-	if err := manager.recoverJobs(ctx); err != nil {
-		_ = storage.Close(ctx)
+	store, err := newStore(ctx, normalized.StoreDSN)
+	if err != nil {
+		return nil, err
+	}
+	manager := newManagerWithStore(store, nodeClient, normalized)
+	if err := manager.recover(ctx); err != nil {
+		_ = store.Close(ctx)
 		return nil, fmt.Errorf("recover jobs: %w", err)
 	}
+	manager.startCleanup()
 	return manager, nil
 }
 
-func validateManagerConfig(config ManagerConfig) error {
-	if len(config.TypePolicies) == 0 {
-		return errors.New("job type policies are required")
+func newManagerWithStore(
+	store Store,
+	nodeClient NodeClient,
+	config ManagerConfig,
+) *Manager {
+	return &Manager{
+		active:      make(map[string]*managedJob),
+		activeTotal: make(map[Kind]int),
+		activeHosts: make(map[string]int),
+		accepting:   true,
+		store:       store,
+		nodeClient:  nodeClient,
+		config:      config,
+		now: func() time.Time {
+			return time.Now().UTC()
+		},
+		stopCh:    make(chan struct{}),
+		closeDone: make(chan struct{}),
 	}
-	groups := make(map[string]TypePolicy)
-	for jobType, policy := range config.TypePolicies {
-		if jobType == "" {
-			return errors.New("job type policy has an empty type")
+}
+
+func normalizeManagerConfig(config ManagerConfig) (ManagerConfig, error) {
+	if len(config.Policies) == 0 {
+		return ManagerConfig{}, errors.New("create job manager: Job policies are required")
+	}
+	policies := make(map[Kind]Policy, len(config.Policies))
+	for kind, policy := range config.Policies {
+		if kind != KindProfiling && kind != KindTracing {
+			return ManagerConfig{}, fmt.Errorf(
+				"create job manager: unsupported policy kind %q",
+				kind,
+			)
 		}
 		if policy.MaxJobsPerHost <= 0 || policy.MaxTotalJobs <= 0 {
-			return fmt.Errorf("job type %q quotas must be greater than zero", jobType)
+			return ManagerConfig{}, fmt.Errorf(
+				"create job manager: %s quotas must be greater than zero",
+				kind,
+			)
 		}
-		group := policy.Group
-		if group == "" {
-			group = string(jobType)
-		}
-		if existing, ok := groups[group]; ok &&
-			(existing.MaxJobsPerHost != policy.MaxJobsPerHost || existing.MaxTotalJobs != policy.MaxTotalJobs) {
-			return fmt.Errorf("job quota group %q has inconsistent limits", group)
-		}
-		groups[group] = policy
+		policies[kind] = policy
 	}
-	return nil
+	for _, kind := range []Kind{KindProfiling, KindTracing} {
+		if _, ok := policies[kind]; !ok {
+			return ManagerConfig{}, fmt.Errorf(
+				"create job manager: policy for %s is required",
+				kind,
+			)
+		}
+	}
+	config.Policies = policies
+	if config.StatusPollInterval == 0 {
+		config.StatusPollInterval = defaultStatusPollInterval
+	}
+	if config.PendingTimeout == 0 {
+		config.PendingTimeout = defaultPendingTimeout
+	}
+	if config.CompletionGracePeriod == 0 {
+		config.CompletionGracePeriod = defaultCompletionGracePeriod
+	}
+	if config.NodeUnavailableGracePeriod == 0 {
+		config.NodeUnavailableGracePeriod = defaultNodeUnavailableGracePeriod
+	}
+	if config.JobRetentionPeriod == 0 {
+		config.JobRetentionPeriod = defaultJobRetentionPeriod
+	}
+	for name, value := range map[string]time.Duration{
+		"status poll interval":          config.StatusPollInterval,
+		"pending timeout":               config.PendingTimeout,
+		"completion grace period":       config.CompletionGracePeriod,
+		"Node unavailable grace period": config.NodeUnavailableGracePeriod,
+		"Job retention period":          config.JobRetentionPeriod,
+	} {
+		if value <= 0 {
+			return ManagerConfig{}, fmt.Errorf("create job manager: %s must be positive", name)
+		}
+	}
+	return config, nil
 }
 
-func newManagerWithStore(storage Store, nodeAgent NodeAgent, config ManagerConfig) *Manager {
-	if config.StopAllConcurrency <= 0 {
-		config.StopAllConcurrency = 16
+// Create persists one independent Job and starts its supervisor.
+func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, error) {
+	if request == nil {
+		return nil, errors.New("create job: request is required")
 	}
-	if config.StatusPollInterval <= 0 {
-		config.StatusPollInterval = 5 * time.Second
+	now := m.now()
+	jobEntity := &Job{
+		ID:          "id-" + uuid.NewString(),
+		Kind:        request.Spec.kind(),
+		UserID:      request.UserID,
+		Hostname:    request.Hostname,
+		Duration:    request.Duration,
+		Scope:       request.Scope,
+		ContainerID: request.ContainerID,
+		Spec:        request.Spec,
+		Status:      StatusPending,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
-	if config.MaxConsecutivePollErrors <= 0 {
-		config.MaxConsecutivePollErrors = 3
+	if err := jobEntity.validate(); err != nil {
+		return nil, fmt.Errorf("create job: %w", err)
 	}
-	policies := make(map[JobType]TypePolicy, len(config.TypePolicies))
-	for jobType, policy := range config.TypePolicies {
-		policies[jobType] = policy
+	runtime := newManagedJob(jobEntity, false)
+
+	m.mu.Lock()
+	if !m.accepting {
+		m.mu.Unlock()
+		return nil, ErrShuttingDown
 	}
-	config.TypePolicies = policies
-	return &Manager{
-		storage:      storage,
-		nodeAgent:    nodeAgent,
-		jobs:         make(map[string]*Job),
-		jobsByHost:   make(map[string]int),
-		stopChan:     make(chan struct{}),
-		stopping:     make(map[string]struct{}),
-		finishing:    make(map[string]chan struct{}),
-		shutdownDone: make(chan struct{}),
-		config:       config,
+	policy := m.config.Policies[jobEntity.Kind]
+	if m.activeTotal[jobEntity.Kind] >= policy.MaxTotalJobs ||
+		m.activeHosts[activeHostKey(jobEntity.Hostname, jobEntity.Kind)] >= policy.MaxJobsPerHost {
+		m.quotaRejections.Add(1)
+		m.mu.Unlock()
+		return nil, fmt.Errorf("%w: %s Job capacity is exhausted", ErrQuotaExceeded, jobEntity.Kind)
 	}
+	m.registerLocked(runtime)
+	// Register before persistence so Shutdown cannot close the Store under Create.
+	m.wg.Add(1)
+	m.mu.Unlock()
+
+	if err := m.store.Create(ctx, jobEntity); err != nil {
+		m.persistenceFailures.Add(1)
+		m.mu.Lock()
+		m.unregisterLocked(runtime)
+		m.mu.Unlock()
+		m.wg.Done()
+		return nil, fmt.Errorf("%w: create job %q: %w", ErrPersistence, jobEntity.ID, err)
+	}
+	go m.runSupervisor(runtime)
+	return cloneJob(jobEntity), nil
 }
 
-func (m *Manager) recoverJobs(ctx context.Context) error {
-	jobs, err := m.storage.List(ctx, &JobQuery{
-		Statuses: []JobStatus{JobStatusPending, JobStatusRunning},
-	})
+// Get returns one durable Job snapshot.
+func (m *Manager) Get(ctx context.Context, jobID string) (*Job, error) {
+	return m.store.Get(ctx, jobID)
+}
+
+// ListPage returns one durable page and the total matching Job count.
+func (m *Manager) ListPage(ctx context.Context, query *Query) (*Page, error) {
+	items, err := m.store.List(ctx, query)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	total, err := m.store.Count(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return &Page{Items: items, Total: total}, nil
+}
+
+// Stop persists a user stop intent before allowing any Node Stop request.
+func (m *Manager) Stop(ctx context.Context, jobID string) error {
+	runtime := m.activeRuntime(jobID)
+	if runtime == nil {
+		jobEntity, err := m.store.Get(ctx, jobID)
+		if err != nil {
+			return err
+		}
+		if isTerminal(jobEntity.Status) {
+			return ErrJobTerminal
+		}
+		return fmt.Errorf("%w: active Job %q is not supervised", ErrPersistence, jobID)
 	}
 
-	m.mu.Lock()
-	for _, recoveredJob := range jobs {
-		policy, policyErr := m.policyFor(recoveredJob.Type)
-		if policyErr != nil {
-			m.mu.Unlock()
-			return fmt.Errorf("job %s: %w", recoveredJob.ID, policyErr)
-		}
-		if recoveredJob.AgentTaskID == "" {
-			recoveredJob.AgentTaskID = recoveredJob.ID
-		}
-		recoveredJob.AgentTask.RequestID = recoveredJob.ID
-		recoveredJob.stopCh = make(chan struct{})
-		m.jobs[recoveredJob.ID] = recoveredJob
-		hostKey := quotaHostKey(recoveredJob.Hostname, policy.Group)
-		m.jobsByHost[hostKey]++
-		m.monitorWG.Add(1)
-		go func(jobToMonitor *Job) {
-			defer m.monitorWG.Done()
-			m.monitorJob(context.WithoutCancel(ctx), jobToMonitor)
-		}(recoveredJob)
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	current := runtime.job
+	if isTerminal(current.Status) {
+		return ErrJobTerminal
 	}
-	m.recoveredJobs.Add(uint64(len(jobs)))
-	m.mu.Unlock()
+	if current.Status == StatusStopping {
+		return nil
+	}
+
+	now := m.now()
+	updated := cloneJob(current)
+	if current.Status == StatusPending && current.StartAttemptedAt.IsZero() {
+		updated.StopReason = StopReasonUser
+		updated.StopRequestedAt = now
+		setTerminal(updated, StatusStopped, nil, now)
+	} else {
+		setStopping(updated, StopReasonUser, now, m.config.CompletionGracePeriod)
+	}
+	if err := m.store.Save(ctx, updated, current.Status); err != nil {
+		m.persistenceFailures.Add(1)
+		return fmt.Errorf("%w: persist stop for Job %q: %w", ErrPersistence, jobID, err)
+	}
+	runtime.job = updated
+	wakeSupervisor(runtime)
 	return nil
 }
 
-// ShutdownContext stops monitors without interrupting Agent tasks, then closes
-// the job store so a replacement manager can recover active jobs.
-func (m *Manager) ShutdownContext(ctx context.Context) error {
-	m.shutdownMu.Lock()
-	if m.shuttingDown {
-		done := m.shutdownDone
-		m.shutdownMu.Unlock()
-		select {
-		case <-done:
-			m.shutdownMu.Lock()
-			defer m.shutdownMu.Unlock()
-			return m.shutdownErr
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+// Ready verifies that the durable Job Store can answer queries.
+func (m *Manager) Ready(ctx context.Context) error {
+	if _, err := m.store.Count(ctx, &Query{}); err != nil {
+		return fmt.Errorf("Job Store readiness: %w", err)
 	}
-	m.shuttingDown = true
-	m.shutdownMu.Unlock()
-
-	m.mu.Lock()
-	activeJobs := make([]*Job, 0, len(m.jobs))
-	for _, activeJob := range m.jobs {
-		if activeJob.Status == JobStatusPending ||
-			activeJob.Status == JobStatusRunning {
-			activeJobs = append(activeJobs, cloneJob(activeJob))
-		}
-	}
-	close(m.stopChan)
-	m.mu.Unlock()
-	for _, activeJob := range activeJobs {
-		log.WithField("job_id", activeJob.ID).
-			WithField("job_type", activeJob.Type).
-			WithField("job_status", activeJob.Status).
-			WithField("user_id", activeJob.UserID).
-			WithField("hostname", activeJob.Hostname).
-			WithField("container_id", activeJob.ContainerID).
-			WithField("agent_task_id", activeJob.AgentTaskID).
-			Info("leaving active job running during manager shutdown")
-	}
-	if len(activeJobs) > 0 {
-		log.WithField("active_jobs", len(activeJobs)).
-			Info("active jobs will be recovered by the next manager")
-	}
-
-	closeCtx := context.WithoutCancel(ctx)
-	go func() {
-		m.monitorWG.Wait()
-		closeErr := m.storage.Close(closeCtx)
-		m.shutdownMu.Lock()
-		m.shutdownErr = closeErr
-		close(m.shutdownDone)
-		m.shutdownMu.Unlock()
-	}()
-
-	select {
-	case <-m.shutdownDone:
-		m.shutdownMu.Lock()
-		defer m.shutdownMu.Unlock()
-		return m.shutdownErr
-	case <-ctx.Done():
-		m.shutdownIncomplete.Add(1)
-		return ctx.Err()
-	}
+	return nil
 }
 
-// Stats returns current active job counts and cumulative failure counters.
+// Stats returns active Job and error counters without storage or network calls.
 func (m *Manager) Stats() ManagerStats {
-	type bucket struct {
-		jobType JobType
-		status  JobStatus
-	}
 	m.mu.RLock()
-	counts := make(map[bucket]int)
-	for _, activeJob := range m.jobs {
-		counts[bucket{jobType: activeJob.Type, status: activeJob.Status}]++
+	runtimes := make([]*managedJob, 0, len(m.active))
+	for _, runtime := range m.active {
+		runtimes = append(runtimes, runtime)
 	}
 	m.mu.RUnlock()
+
+	counts := make(map[[2]string]int)
+	for _, runtime := range runtimes {
+		runtime.mu.Lock()
+		key := [2]string{string(runtime.job.Kind), string(runtime.job.Status)}
+		counts[key]++
+		runtime.mu.Unlock()
+	}
 	active := make([]ActiveJobStat, 0, len(counts))
 	for key, count := range counts {
-		active = append(active, ActiveJobStat{Type: key.jobType, Status: key.status, Count: count})
+		active = append(active, ActiveJobStat{Kind: Kind(key[0]), Status: Status(key[1]), Count: count})
 	}
 	return ManagerStats{
 		Active:              active,
 		QuotaRejections:     m.quotaRejections.Load(),
 		PersistenceFailures: m.persistenceFailures.Load(),
 		RecoveredJobs:       m.recoveredJobs.Load(),
-		ShutdownIncomplete:  m.shutdownIncomplete.Load(),
 	}
 }
 
-// Ready verifies that the durable job store is available.
-func (m *Manager) Ready(ctx context.Context) error {
-	if _, err := m.storage.Count(ctx, &JobQuery{}); err != nil {
-		return fmt.Errorf("job store readiness: %w", err)
+// ShutdownContext stops local supervisors without stopping Node Operations.
+func (m *Manager) ShutdownContext(ctx context.Context) error {
+	m.closeOnce.Do(func() {
+		m.mu.Lock()
+		m.accepting = false
+		close(m.stopCh)
+		m.mu.Unlock()
+
+		go func() {
+			m.wg.Wait()
+			m.closeErr = m.store.Close(context.Background())
+			close(m.closeDone)
+		}()
+	})
+	select {
+	case <-m.closeDone:
+		return m.closeErr
+	case <-contextOrBackground(ctx).Done():
+		return contextOrBackground(ctx).Err()
 	}
+}
+
+func (m *Manager) recover(ctx context.Context) error {
+	jobs, err := m.store.List(ctx, &Query{Statuses: []Status{
+		StatusPending,
+		StatusRunning,
+		StatusStopping,
+	}})
+	if err != nil {
+		return err
+	}
+	for _, jobEntity := range jobs {
+		if _, ok := m.config.Policies[jobEntity.Kind]; !ok {
+			return fmt.Errorf("Job %q has no policy for kind %q", jobEntity.ID, jobEntity.Kind)
+		}
+		runtime := newManagedJob(jobEntity, true)
+		m.mu.Lock()
+		m.registerLocked(runtime)
+		m.wg.Add(1)
+		m.mu.Unlock()
+		go m.runSupervisor(runtime)
+	}
+	m.recoveredJobs.Add(uint64(len(jobs)))
 	return nil
 }
 
-// CreateContext creates a job and propagates cancellation to the node agent.
-func (m *Manager) CreateContext(ctx context.Context, req *CreateJobRequest) (*Job, error) {
-	return m.createContext(ctx, req, 3)
-}
-
-func (m *Manager) createContext(ctx context.Context, req *CreateJobRequest, idAttempts int) (*Job, error) {
-	if req == nil {
-		return nil, errors.New("job request is required")
-	}
-	if req.AgentTask == nil {
-		return nil, errors.New("job arguments are required")
-	}
-	if req.AgentTask.TraceTimeout == 0 && req.AgentTask.Duration == 0 {
-		return nil, errors.New("trace timeout or duration is required")
-	}
-
-	jobID := "id-" + uuid.NewString()
-	now := time.Now()
-	job := &Job{
-		Type:         req.Type,
-		ID:           jobID,
-		Username:     req.UserID, // Username mirrors UserID until identity names are distinct.
-		UserID:       req.UserID,
-		ContainerID:  req.ContainerID,
-		Hostname:     req.Hostname,
-		Status:       JobStatusPending,
-		CreatedAt:    now,
-		Duration:     req.AgentTask.Duration,
-		TraceTimeout: req.AgentTask.TraceTimeout,
-		AgentTask:    *req.AgentTask,
-		UpdatedAt:    now,
-		stopCh:       make(chan struct{}),
-		PrivateData:  cloneJobPrivateData(req.PrivateData),
-	}
-	job.AgentTaskID = job.ID
-	job.AgentTask.RequestID = job.ID
-	if job.Type == JobTypeProfilingCPU || job.Type == JobTypeProfilingMemory {
-		job.AgentTask.TracerArgs = append(
-			append([]string(nil), job.AgentTask.TracerArgs...),
-			"--tracer-id", job.ID,
-		)
-	}
-
+func (m *Manager) startCleanup() {
 	m.mu.Lock()
-	select {
-	case <-m.stopChan:
-		m.mu.Unlock()
-		return nil, errors.New("job manager is shutting down")
-	default:
-	}
-	policy, err := m.policyFor(req.Type)
-	if err != nil {
-		m.mu.Unlock()
-		return nil, err
-	}
-	if m.hostJobCount(req.Hostname, policy.Group) >= policy.MaxJobsPerHost {
-		m.mu.Unlock()
-		m.quotaRejections.Add(1)
-		if policy.Group == "" {
-			return nil, fmt.Errorf("%w: maximum number of jobs reached for host %s", ErrQuotaExceeded, req.Hostname)
-		}
-		return nil, fmt.Errorf("%w: maximum number of %s jobs reached for host %s", ErrQuotaExceeded, policy.Group, req.Hostname)
-	}
-	if m.jobCount(policy.Group) >= policy.MaxTotalJobs {
-		m.mu.Unlock()
-		m.quotaRejections.Add(1)
-		if policy.Group == "" {
-			return nil, fmt.Errorf("%w: maximum number of total jobs reached", ErrQuotaExceeded)
-		}
-		return nil, fmt.Errorf("%w: maximum number of total %s jobs reached", ErrQuotaExceeded, policy.Group)
-	}
-	m.jobs[jobID] = job
-	hostKey := quotaHostKey(req.Hostname, policy.Group)
-	m.jobsByHost[hostKey] = m.hostJobCount(req.Hostname, policy.Group) + 1
-	m.monitorWG.Add(1)
+	m.wg.Add(1)
 	m.mu.Unlock()
-
-	if err := m.storage.Create(ctx, cloneJob(job)); err != nil {
-		m.persistenceFailures.Add(1)
-		m.rollbackJob(job)
-		m.monitorWG.Done()
-		if errors.Is(err, driver.ErrAlreadyExists) && idAttempts > 1 {
-			return m.createContext(ctx, req, idAttempts-1)
-		}
-		return nil, fmt.Errorf("persist pending job %s: %w", job.ID, err)
-	}
-
-	agentTask := job.AgentTask
-	agentTaskID, err := m.startTask(ctx, job.Hostname, job.ContainerID, &agentTask)
-	if err != nil {
-		if errors.Is(err, ErrAgentDispatchUncertain) {
-			log.WithError(err).WithField("job_id", job.ID).
-				Warn("agent task dispatch result is uncertain")
-			go func() {
-				defer m.monitorWG.Done()
-				m.monitorJob(context.WithoutCancel(ctx), job)
-			}()
-			return cloneJob(job), nil
-		}
-		finishErr := m.finishJob(ctx, job, JobStatusFailed, err.Error(), nil)
-		if finishErr == nil {
-			m.monitorWG.Done()
-		} else {
-			go m.monitorCreationFailure(context.WithoutCancel(ctx), job)
-		}
-		return nil, errors.Join(fmt.Errorf("start task %s: %w", job.ID, err), finishErr)
-	}
-
-	m.mu.Lock()
-	job.AgentTaskID = agentTaskID
-	job.Status = JobStatusRunning
-	job.UpdatedAt = time.Now()
-	runningSnapshot := cloneJob(job)
-	m.mu.Unlock()
-	if err := m.storage.Save(ctx, runningSnapshot); err != nil {
-		m.persistenceFailures.Add(1)
-		stopErr := m.stopTask(ctx, job.Hostname, agentTaskID, true)
-		finishErr := m.finishJob(ctx, job, JobStatusFailed, "failed to persist running job", nil)
-		if finishErr == nil {
-			m.monitorWG.Done()
-		} else {
-			go m.monitorCreationFailure(context.WithoutCancel(ctx), job)
-		}
-		return nil, errors.Join(fmt.Errorf("persist running job %s: %w", job.ID, err), stopErr, finishErr)
-	}
-
-	log.WithField("job_id", job.ID).WithField("host", job.Hostname).
-		Info("started agent task")
 	go func() {
-		defer m.monitorWG.Done()
-		m.monitorJob(context.WithoutCancel(ctx), job)
-	}()
-
-	return cloneJob(job), nil
-}
-
-func (m *Manager) monitorCreationFailure(ctx context.Context, job *Job) {
-	defer m.monitorWG.Done()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-job.stopCh:
-			return
-		case <-m.stopChan:
-			return
-		case <-ticker.C:
-			if err := m.finishJob(ctx, job, JobStatusFailed, "job creation failed", nil); err == nil {
+		defer m.wg.Done()
+		ticker := time.NewTicker(jobCleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				endedBefore := m.now().Add(-m.config.JobRetentionPeriod)
+				if _, err := m.store.DeleteTerminalBefore(
+					context.Background(),
+					endedBefore,
+					jobCleanupBatchSize,
+				); err != nil {
+					log.WithError(err).Error("failed to clean up terminal Jobs")
+				}
+			case <-m.stopCh:
 				return
 			}
 		}
-	}
-}
-
-// Stop stops a job
-// StopContext stops a job and propagates cancellation to the node agent.
-func (m *Manager) StopContext(ctx context.Context, jobID string, force bool) error {
-	m.mu.Lock()
-	job, exists := m.jobs[jobID]
-	if !exists {
-		m.mu.Unlock()
-		storedJob, err := m.storage.Get(ctx, jobID)
-		if errors.Is(err, ErrNotFound) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if storedJob == nil {
-			return nil
-		}
-		if storedJob.Status == JobStatusPending || storedJob.Status == JobStatusRunning {
-			return errors.New("active job is not loaded")
-		}
-		return nil
-	}
-	if _, exists := m.stopping[jobID]; exists {
-		m.mu.Unlock()
-		return nil
-	}
-	m.stopping[jobID] = struct{}{}
-	host, agentTaskID := job.Hostname, job.AgentTaskID
-	m.mu.Unlock()
-
-	err := m.stopTask(ctx, host, agentTaskID, force)
-	if err != nil {
-		m.mu.Lock()
-		delete(m.stopping, jobID)
-		m.mu.Unlock()
-		return fmt.Errorf("stop task %s: %w", jobID, err)
-	}
-
-	if err := m.finishJob(ctx, job, JobStatusStopped, "job stopped by user", nil); err != nil {
-		m.mu.Lock()
-		delete(m.stopping, jobID)
-		m.mu.Unlock()
-		return err
-	}
-	log.WithField("job_id", jobID).Info("stopped job by user")
-	return nil
-}
-
-// GetContext gets a job while propagating cancellation to storage.
-func (m *Manager) GetContext(ctx context.Context, jobID string) (*Job, error) {
-	m.mu.RLock()
-	job, exists := m.jobs[jobID]
-	if exists {
-		job := cloneJob(job)
-		m.mu.RUnlock()
-		return job, nil
-	}
-	m.mu.RUnlock()
-
-	return m.storage.Get(ctx, jobID)
-}
-
-// GetByTypesContext gets an expected job type while propagating cancellation.
-func (m *Manager) GetByTypesContext(ctx context.Context, jobID string, expectedTypes ...JobType) (*Job, error) {
-	jobResult, err := m.GetContext(ctx, jobID)
-	if err != nil {
-		return nil, err
-	}
-	if !hasJobType(jobResult.Type, expectedTypes) {
-		return nil, ErrNotFound
-	}
-	return jobResult, nil
-}
-
-// ListContext lists jobs while propagating cancellation to storage.
-func (m *Manager) ListContext(ctx context.Context, userID string, isAdmin bool, filter *JobQuery) ([]*Job, error) {
-	query := JobQuery{}
-	if filter != nil {
-		query = *filter
-	}
-	query.UserID = userID
-	query.IsAdmin = isAdmin
-	return m.storage.List(ctx, &query)
-}
-
-// ListPageContext lists a stable storage-backed page of jobs.
-func (m *Manager) ListPageContext(ctx context.Context, userID string, isAdmin bool, query *JobQuery) (*JobPage, error) {
-	filter := JobQuery{}
-	if query != nil {
-		filter = *query
-	}
-	filter.UserID = userID
-	filter.IsAdmin = isAdmin
-	items, err := m.storage.List(ctx, &filter)
-	if err != nil {
-		return nil, err
-	}
-	filter.Limit = 0
-	filter.Offset = 0
-	total, err := m.storage.Count(ctx, &filter)
-	if err != nil {
-		return nil, err
-	}
-	return &JobPage{Items: items, Total: total}, nil
-}
-
-// StopAllByTypesContext stops expected active jobs and returns all stop failures.
-func (m *Manager) StopAllByTypesContext(ctx context.Context, expectedTypes ...JobType) error {
-	return m.stopAllByTypes(ctx, expectedTypes)
-}
-
-func (m *Manager) stopAllByTypes(ctx context.Context, expectedTypes []JobType) error {
-	var jobIDs []string
-	var errs []error
-
-	m.mu.RLock()
-	for _, job := range m.jobs {
-		if len(expectedTypes) > 0 && !hasJobType(job.Type, expectedTypes) {
-			continue
-		}
-		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
-			jobIDs = append(jobIDs, job.ID)
-		}
-	}
-	m.mu.RUnlock()
-
-	var errsMu sync.Mutex
-	var group errgroup.Group
-	group.SetLimit(m.config.StopAllConcurrency)
-	for _, id := range jobIDs {
-		jobID := id
-		group.Go(func() error {
-			if err := m.StopContext(ctx, jobID, true); err != nil {
-				errsMu.Lock()
-				errs = append(errs, fmt.Errorf("stop job %s: %w", jobID, err))
-				errsMu.Unlock()
-			}
-			return nil
-		})
-	}
-	_ = group.Wait()
-	log.WithField("count", len(jobIDs)).Info("stopped all jobs")
-	return errors.Join(errs...)
-}
-
-// StopByTypesContext stops an expected job type while propagating cancellation.
-func (m *Manager) StopByTypesContext(ctx context.Context, jobID string, force bool, expectedTypes ...JobType) error {
-	if _, err := m.GetByTypesContext(ctx, jobID, expectedTypes...); err != nil {
-		return err
-	}
-	return m.StopContext(ctx, jobID, force)
-}
-
-func (m *Manager) finishJob(ctx context.Context, job *Job, status JobStatus, errMessage string, result *Result) error {
-	for {
-		m.mu.Lock()
-		wait, inProgress := m.finishing[job.ID]
-		if !inProgress {
-			m.finishing[job.ID] = make(chan struct{})
-			m.mu.Unlock()
-			break
-		}
-		m.mu.Unlock()
-		select {
-		case <-wait:
-			if !m.jobIsActive(job.ID) {
-				return nil
-			}
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	defer func() {
-		m.mu.Lock()
-		close(m.finishing[job.ID])
-		delete(m.finishing, job.ID)
-		m.mu.Unlock()
 	}()
-
-	m.mu.Lock()
-	if _, exists := m.jobs[job.ID]; !exists {
-		m.mu.Unlock()
-		return nil
-	}
-	now := time.Now()
-	snapshot := cloneJob(job)
-	snapshot.Status = status
-	snapshot.UpdatedAt = now
-	snapshot.FinishedAt = now
-	snapshot.ErrorMessage = errMessage
-	if result != nil {
-		snapshot.Result = *result
-	}
-	m.mu.Unlock()
-
-	if err := m.storage.Save(ctx, snapshot); err != nil {
-		m.persistenceFailures.Add(1)
-		return errors.Join(ErrPersistence, fmt.Errorf("persist terminal job %s: %w", job.ID, err))
-	}
-
-	m.mu.Lock()
-	current, exists := m.jobs[job.ID]
-	if !exists {
-		m.mu.Unlock()
-		return nil
-	}
-	current.Status = snapshot.Status
-	current.UpdatedAt = snapshot.UpdatedAt
-	current.FinishedAt = snapshot.FinishedAt
-	current.ErrorMessage = snapshot.ErrorMessage
-	current.Result = snapshot.Result
-	select {
-	case <-current.stopCh:
-	default:
-		close(current.stopCh)
-	}
-	delete(m.jobs, job.ID)
-	delete(m.stopping, job.ID)
-	policy, policyErr := m.policyFor(current.Type)
-	if policyErr != nil {
-		m.mu.Unlock()
-		return fmt.Errorf("release job quota: %w", policyErr)
-	}
-	hostKey := quotaHostKey(job.Hostname, policy.Group)
-	count := m.hostJobCount(job.Hostname, policy.Group)
-	if count <= 1 {
-		delete(m.jobsByHost, hostKey)
-	} else {
-		m.jobsByHost[hostKey] = count - 1
-	}
-	m.mu.Unlock()
-	return nil
 }
 
-func (m *Manager) jobCount(group string) int {
-	count := 0
-	for _, job := range m.jobs {
-		policy, err := m.policyFor(job.Type)
-		if err == nil && (group == "" || policy.Group == group) {
-			count++
-		}
-	}
-	return count
+func (m *Manager) registerLocked(runtime *managedJob) {
+	m.active[runtime.id] = runtime
+	m.activeTotal[runtime.kind]++
+	m.activeHosts[activeHostKey(runtime.hostname, runtime.kind)]++
 }
 
-func (m *Manager) hostJobCount(host, group string) int {
-	count, exists := m.jobsByHost[quotaHostKey(host, group)]
-	if !exists {
-		return 0
-	}
-	return count
-}
-
-func (m *Manager) policyFor(jobType JobType) (TypePolicy, error) {
-	policy, ok := m.config.TypePolicies[jobType]
-	if !ok {
-		return TypePolicy{}, fmt.Errorf("%w: %q", ErrUnsupportedJobType, jobType)
-	}
-	if policy.Group == "" {
-		policy.Group = string(jobType)
-	}
-	return policy, nil
-}
-
-func quotaHostKey(host, group string) string {
-	if group == "" {
-		return host
-	}
-	return group + "\x00" + host
-}
-
-func (m *Manager) rollbackJob(job *Job) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	delete(m.jobs, job.ID)
-	policy, err := m.policyFor(job.Type)
-	if err != nil {
-		log.WithError(err).WithField("job_id", job.ID).Error("failed to release job quota")
+func (m *Manager) unregisterLocked(runtime *managedJob) {
+	current, ok := m.active[runtime.id]
+	if !ok || current != runtime {
 		return
 	}
-	hostKey := quotaHostKey(job.Hostname, policy.Group)
-	count := m.hostJobCount(job.Hostname, policy.Group)
-	if count <= 1 {
-		delete(m.jobsByHost, hostKey)
-		return
-	}
-	m.jobsByHost[hostKey] = count - 1
+	delete(m.active, runtime.id)
+	m.activeTotal[runtime.kind]--
+	m.activeHosts[activeHostKey(runtime.hostname, runtime.kind)]--
 }
 
-func (m *Manager) jobIsActive(jobID string) bool {
+func (m *Manager) activeRuntime(jobID string) *managedJob {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-
-	_, exists := m.jobs[jobID]
-	return exists
+	return m.active[jobID]
 }
 
-func (m *Manager) stopAgent(ctx context.Context, job *Job, force bool) error {
-	if err := m.stopTask(ctx, job.Hostname, job.AgentTaskID, force); err != nil {
-		return fmt.Errorf("stop task %s: %w", job.ID, err)
-	}
-	return nil
-}
-
-// checkAndUpdateJobStatus polls the agent for the task's current status and transitions the local job accordingly.
-func (m *Manager) checkAndUpdateJobStatus(ctx context.Context, job *Job) (string, error) {
-	m.mu.RLock()
-	jobSnapshot := cloneJob(job)
-	m.mu.RUnlock()
-	agentStatus, results, err := m.getTaskStatus(ctx, jobSnapshot.Hostname, jobSnapshot.AgentTaskID)
-	if err != nil {
-		return agentStatus, err
-	}
-
-	switch agentStatus {
-	case AgentStatusCompleted:
-		if results == nil {
-			return agentStatus, errors.New("agent returned completed status without results")
-		}
-		return agentStatus, m.finishJob(ctx, job, JobStatusCompleted, "", results)
-	case AgentStatusFailed:
-		if results == nil {
-			return agentStatus, errors.New("agent returned failed status without results")
-		}
-		if err := m.finishJob(ctx, job, JobStatusFailed, "job failed: "+results.Error, results); err != nil {
-			return agentStatus, err
-		}
-		log.WithField("job_id", job.ID).WithField("agent_error", results.Error).
-			Error("job failed")
-		return agentStatus, nil
-	case AgentStatusNotExist:
-		if jobSnapshot.Status == JobStatusPending {
-			return m.restartPendingJob(ctx, job)
-		}
-		return agentStatus, m.finishJob(ctx, job, JobStatusFailed, "job does not exist on agent", nil)
-	case AgentStatusRunning, AgentStatusPending:
-		if jobSnapshot.Status == JobStatusPending && agentStatus == AgentStatusRunning {
-			if err := m.markJobRunning(ctx, job); err != nil {
-				return agentStatus, err
-			}
-		}
-		return agentStatus, nil
-	default:
-		return agentStatus, fmt.Errorf("agent returned unknown task status %q", agentStatus)
-	}
-}
-
-func (m *Manager) restartPendingJob(ctx context.Context, job *Job) (string, error) {
-	task := job.AgentTask
-	task.RequestID = job.ID
-	taskID, err := m.startTask(ctx, job.Hostname, job.ContainerID, &task)
-	if err != nil {
-		return AgentStatusNotExist, fmt.Errorf("restart pending task: %w", err)
-	}
-	m.mu.Lock()
-	job.AgentTaskID = taskID
-	m.mu.Unlock()
-	if err := m.markJobRunning(ctx, job); err != nil {
-		return AgentStatusRunning, err
-	}
-	return AgentStatusRunning, nil
-}
-
-func (m *Manager) markJobRunning(ctx context.Context, job *Job) error {
-	m.mu.Lock()
-	if _, exists := m.jobs[job.ID]; !exists {
+func (m *Manager) runSupervisor(runtime *managedJob) {
+	defer m.wg.Done()
+	defer func() {
+		m.mu.Lock()
+		m.unregisterLocked(runtime)
 		m.mu.Unlock()
-		return nil
+	}()
+
+	if runtime.recovered {
+		if !waitForSupervisor(m.stopCh, runtime.wake, recoveredPollJitter(
+			runtime.id,
+			m.config.StatusPollInterval,
+		)) {
+			return
+		}
 	}
-	job.Status = JobStatusRunning
-	job.UpdatedAt = time.Now()
-	snapshot := cloneJob(job)
-	m.mu.Unlock()
-	if err := m.storage.Save(ctx, snapshot); err != nil {
-		m.persistenceFailures.Add(1)
-		return errors.Join(ErrPersistence, fmt.Errorf("persist running job %s: %w", job.ID, err))
-	}
-	return nil
-}
-
-func (m *Manager) monitorJob(ctx context.Context, job *Job) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	var timeoutTime, durationEndTime time.Time
-	if job.Duration == 0 {
-		timeoutTime = job.CreatedAt.Add(time.Duration(job.TraceTimeout) * time.Second)
-	} else {
-		durationEndTime = job.CreatedAt.Add(time.Duration(job.Duration) * time.Second)
-	}
-
-	// Counter for status check (every 5 seconds)
-	statusCheckCounter := 0
-	statusCheckTicks := max(1, int(m.config.StatusPollInterval/time.Second))
-	consecutivePollErrors := 0
-
 	for {
 		select {
-		case <-job.stopCh:
+		case <-m.stopCh:
 			return
-		case <-m.stopChan:
+		default:
+		}
+		terminal, err := m.superviseOnce(runtime)
+		if err != nil {
+			log.WithError(err).WithField("job_id", runtime.id).
+				Error("failed to supervise Job")
+		}
+		if terminal {
 			return
-		case <-ticker.C:
-			now := time.Now()
-
-			if !timeoutTime.IsZero() && now.After(timeoutTime) {
-				status, err := m.checkAndUpdateJobStatus(ctx, job)
-				if err != nil {
-					if errors.Is(err, ErrPersistence) {
-						log.WithError(err).WithField("job_id", job.ID).Error("failed to persist job state")
-						continue
-					}
-					m.failMonitoredJob(ctx, job, err)
-					return
-				}
-				if status != AgentStatusRunning {
-					return
-				}
-
-				if err := m.stopAgent(ctx, job, true); err != nil {
-					m.failMonitoredJob(ctx, job, err)
-					return
-				}
-				if err := m.finishJob(ctx, job, JobStatusTimeout, "job timed out", nil); err != nil {
-					log.WithError(err).WithField("job_id", job.ID).Error("failed to persist timed out job")
-				}
-				return
-			}
-
-			if !durationEndTime.IsZero() && now.After(durationEndTime) {
-				status, err := m.checkAndUpdateJobStatus(ctx, job)
-				if err != nil {
-					if errors.Is(err, ErrPersistence) {
-						log.WithError(err).WithField("job_id", job.ID).Error("failed to persist job state")
-						continue
-					}
-					m.failMonitoredJob(ctx, job, err)
-					return
-				}
-				if status != AgentStatusRunning {
-					return
-				}
-
-				if err := m.stopAgent(ctx, job, false); err != nil {
-					m.failMonitoredJob(ctx, job, err)
-					return
-				}
-				status, err = m.checkAndUpdateJobStatus(ctx, job)
-				if err != nil {
-					m.failMonitoredJob(ctx, job, err)
-					return
-				}
-				if status == AgentStatusRunning {
-					if err := m.finishJob(ctx, job, JobStatusStopped, "job stopped after duration completed", nil); err != nil {
-						log.WithError(err).WithField("job_id", job.ID).Error("failed to persist stopped job")
-					}
-				}
-				return
-			}
-
-			// Poll agent status every 5 ticks (5 s).
-			statusCheckCounter++
-			if statusCheckCounter < statusCheckTicks {
-				continue
-			}
-			statusCheckCounter = 0
-
-			status, err := m.checkAndUpdateJobStatus(ctx, job)
-			if err != nil {
-				if errors.Is(err, ErrPersistence) {
-					log.WithError(err).WithField("job_id", job.ID).Error("failed to persist job state")
-					continue
-				}
-				consecutivePollErrors++
-				if consecutivePollErrors < m.config.MaxConsecutivePollErrors {
-					log.WithError(err).WithField("job_id", job.ID).Warn("agent status check failed")
-					continue
-				}
-				m.failMonitoredJob(ctx, job, err)
-				return
-			}
-			consecutivePollErrors = 0
-			if status != AgentStatusRunning && status != AgentStatusPending {
-				return
-			}
+		}
+		if !waitForSupervisor(m.stopCh, runtime.wake, m.nextWake(runtime)) {
+			return
 		}
 	}
 }
 
-func (m *Manager) failMonitoredJob(ctx context.Context, job *Job, cause error) {
-	if !m.jobIsActive(job.ID) {
-		return
-	}
-	if err := m.stopAgent(ctx, job, true); err != nil {
-		log.WithError(err).WithField("job_id", job.ID).
-			Error("failed to stop job after monitor error")
-	}
-	if err := m.finishJob(ctx, job, JobStatusFailed, cause.Error(), nil); err != nil {
-		log.WithError(err).WithField("job_id", job.ID).Error("failed to persist failed job")
+func newManagedJob(jobEntity *Job, recovered bool) *managedJob {
+	return &managedJob{
+		id:        jobEntity.ID,
+		kind:      jobEntity.Kind,
+		hostname:  jobEntity.Hostname,
+		job:       cloneJob(jobEntity),
+		wake:      make(chan struct{}, 1),
+		recovered: recovered,
 	}
 }
 
-// DeleteContext deletes a completed job while propagating cancellation to storage.
-func (m *Manager) DeleteContext(ctx context.Context, jobID string) error {
-	m.mu.RLock()
-	if job, exists := m.jobs[jobID]; exists {
-		if job.Status == JobStatusPending || job.Status == JobStatusRunning {
-			m.mu.RUnlock()
-			return ErrCannotDeleteRunning
-		}
+func waitForSupervisor(stopCh, wake <-chan struct{}, delay time.Duration) bool {
+	if delay < 0 {
+		delay = 0
 	}
-	m.mu.RUnlock()
-
-	storedJob, err := m.storage.Get(ctx, jobID)
-	if err != nil {
-		return err
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-wake:
+		return true
+	case <-stopCh:
+		return false
 	}
-
-	if storedJob.Status == JobStatusPending || storedJob.Status == JobStatusRunning {
-		return ErrCannotDeleteRunning
-	}
-
-	return m.storage.Delete(ctx, jobID)
 }
 
-// DeleteByTypesContext deletes an expected job type while propagating cancellation.
-func (m *Manager) DeleteByTypesContext(ctx context.Context, jobID string, expectedTypes ...JobType) error {
-	if _, err := m.GetByTypesContext(ctx, jobID, expectedTypes...); err != nil {
-		return err
+func wakeSupervisor(runtime *managedJob) {
+	select {
+	case runtime.wake <- struct{}{}:
+	default:
 	}
-	return m.DeleteContext(ctx, jobID)
 }
 
-func hasJobType(jobType JobType, expectedTypes []JobType) bool {
-	for _, expectedType := range expectedTypes {
-		if jobType == expectedType {
-			return true
-		}
+func recoveredPollJitter(jobID string, interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return 0
 	}
-	return false
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(jobID))
+	return time.Duration(hasher.Sum64() % uint64(interval))
 }
 
-func (m *Manager) startTask(ctx context.Context, host, container string, req *AgentTaskRequest) (string, error) {
-	return m.nodeAgent.StartTaskContext(ctx, host, container, req)
-}
-
-func (m *Manager) stopTask(ctx context.Context, host, taskID string, force bool) error {
-	return m.nodeAgent.StopTaskContext(ctx, host, taskID, force)
-}
-
-func (m *Manager) getTaskStatus(ctx context.Context, host, taskID string) (string, *Result, error) {
-	return m.nodeAgent.GetTaskStatusContext(ctx, host, taskID)
+func activeHostKey(hostname string, kind Kind) string {
+	return string(kind) + "\x00" + hostname
 }

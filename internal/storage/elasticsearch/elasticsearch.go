@@ -69,7 +69,10 @@ type Storage struct {
 	index     string
 }
 
-var _ driver.Backend = (*Storage)(nil)
+var (
+	_ driver.Backend   = (*Storage)(nil)
+	_ driver.SyncSaver = (*Storage)(nil)
+)
 
 func init() {
 	factory := func(cfg *driver.Config) (driver.Backend, error) {
@@ -152,6 +155,31 @@ func (s *Storage) Save(ctx context.Context, rec driver.Record) error {
 		return fmt.Errorf("elasticsearch backend save %s: %w", s.index, err)
 	}
 	log.Debugf("elasticsearch bulk queued index=%s id=%s data=%s", s.index, rec.ID, rec.Data)
+	return nil
+}
+
+// SaveSync indexes one record and waits for an index refresh. It is reserved
+// for lifecycle commit barriers; high-volume event writes use Save.
+func (s *Storage) SaveSync(ctx context.Context, rec driver.Record) error {
+	req := esapi.IndexRequest{
+		Index:      s.index,
+		DocumentID: rec.ID,
+		Body:       bytes.NewReader(rec.Data),
+		Refresh:    "wait_for",
+	}
+	res, err := req.Do(driver.WithContext(ctx), s.transport)
+	if err != nil {
+		return fmt.Errorf(
+			"elasticsearch backend synchronous save %s/%s: %w",
+			s.index,
+			rec.ID,
+			err,
+		)
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return responseError("synchronously save document", s.index, res)
+	}
 	return nil
 }
 

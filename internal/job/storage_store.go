@@ -16,147 +16,464 @@ package job
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
-	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
+	"huatuo-bamai/pkg/observation"
+
+	_ "modernc.org/sqlite"
 )
 
+const (
+	defaultJobsDBPath           = "jobs.db"
+	currentStorageSchemaVersion = 1
+)
+
+var storageFieldExpressions = map[string]string{
+	"id":           "id",
+	"user_id":      "json_extract(fields, '$.user_id')",
+	"container_id": "json_extract(fields, '$.container_id')",
+	"hostname":     "json_extract(fields, '$.hostname')",
+	"status":       "json_extract(fields, '$.status')",
+	"kind":         "json_extract(fields, '$.kind')",
+	"subtype":      "json_extract(fields, '$.subtype')",
+	"created_at":   "json_extract(fields, '$.created_at')",
+	"ended_at":     "json_extract(fields, '$.ended_at')",
+}
+
 type storageStore struct {
-	store *storage.Store[*Job]
+	db *sql.DB
 }
 
 type storagePayload struct {
-	Type         JobType          `json:"type"`
-	ID           string           `json:"id"`
-	Username     string           `json:"username"`
-	UserID       string           `json:"user_id"`
-	ContainerID  string           `json:"container_id"`
-	Hostname     string           `json:"hostname"`
-	AgentTaskID  string           `json:"agent_task_id"`
-	Status       JobStatus        `json:"status"`
-	ErrorMessage string           `json:"error_message,omitempty"`
-	Duration     int              `json:"duration"`
-	TraceTimeout int              `json:"trace_timeout"`
-	CreatedAt    time.Time        `json:"created_at"`
-	FinishedAt   time.Time        `json:"finished_at"`
-	AgentTask    AgentTaskRequest `json:"agent_task"`
-	Result       Result           `json:"result,omitempty"`
-	UpdatedAt    time.Time        `json:"updated_at"`
-	PrivateData  json.RawMessage  `json:"private_data,omitempty"`
+	SchemaVersion int `json:"schema_version"`
+
+	ID              string `json:"id"`
+	Kind            Kind   `json:"kind"`
+	UserID          string `json:"user_id"`
+	Hostname        string `json:"hostname"`
+	DurationSeconds int64  `json:"duration_seconds"`
+	Scope           string `json:"scope"`
+	ContainerID     string `json:"container_id,omitempty"`
+	Spec            Spec   `json:"spec"`
+
+	Status    Status           `json:"status"`
+	Failure   *TerminalFailure `json:"failure,omitempty"`
+	CreatedAt time.Time        `json:"created_at"`
+	UpdatedAt time.Time        `json:"updated_at"`
+	StartedAt time.Time        `json:"started_at,omitempty"`
+	EndedAt   time.Time        `json:"ended_at,omitempty"`
+
+	StartAttemptedAt        time.Time  `json:"start_attempted_at,omitempty"`
+	PendingDeadline         time.Time  `json:"pending_deadline,omitempty"`
+	ExecutionDeadline       time.Time  `json:"execution_deadline,omitempty"`
+	NodeUnavailableSince    time.Time  `json:"node_unavailable_since,omitempty"`
+	NodeUnavailableDeadline time.Time  `json:"node_unavailable_deadline,omitempty"`
+	StopRequestedAt         time.Time  `json:"stop_requested_at,omitempty"`
+	StopDeadline            time.Time  `json:"stop_deadline,omitempty"`
+	StopReason              StopReason `json:"stop_reason,omitempty"`
 }
 
-type storeMapper struct{}
-
-func storageCollection() string {
-	return "jobs"
+type storageRecord struct {
+	id     string
+	data   []byte
+	fields string
 }
-
-func storageFields(entity *Job) map[string]any {
-	return map[string]any{
-		"id":           entity.ID,
-		"user_id":      entity.UserID,
-		"container_id": entity.ContainerID,
-		"hostname":     entity.Hostname,
-		"status":       string(entity.Status),
-		"type":         entity.Type,
-		"created_at":   entity.CreatedAt,
-		"finished_at":  entity.FinishedAt,
-	}
-}
-
-func storageIndexes() []string {
-	return []string{
-		"user_id",
-		"id",
-		"container_id",
-		"hostname",
-		"status",
-		"type",
-		"created_at",
-		"finished_at",
-	}
-}
-
-// defaultJobsDBPath is the SQLite file used when no DSN is provided via ManagerConfig.
-const defaultJobsDBPath = "jobs.db"
 
 func newStore(ctx context.Context, dsn string) (Store, error) {
 	if dsn == "" {
 		dsn = defaultJobsDBPath
 	}
-	store, err := storage.NewFromConfig(
-		ctx,
-		&driver.Config{
-			Driver:    "sqlite",
-			SQLiteDSN: dsn,
-		},
-		storageCollection(),
-		storeMapper{},
-	)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize job backend: %w", err)
+		return nil, fmt.Errorf("open job database: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(time.Hour)
+	db.SetConnMaxIdleTime(30 * time.Minute)
 
-	return &storageStore{store: store}, nil
+	store := &storageStore{db: db}
+	if err := store.migrate(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return store, nil
 }
 
 func (s *storageStore) Get(ctx context.Context, jobID string) (*Job, error) {
-	entity, err := s.store.Get(ctx, jobID)
+	if jobID == "" {
+		return nil, fmt.Errorf("%w: job ID is required", ErrInvalidQuery)
+	}
+
+	var data []byte
+	err := s.db.QueryRowContext(contextOrBackground(ctx),
+		`SELECT data FROM jobs WHERE id = ?`, jobID).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get job %q: %w", jobID, err)
 	}
-
-	return cloneJob(entity), nil
-}
-
-func (s *storageStore) Save(ctx context.Context, jobEntity *Job) error {
-	if jobEntity == nil {
-		return fmt.Errorf("job store: job is nil")
+	jobEntity, err := decodeCurrentJob(jobID, data)
+	if err != nil {
+		return nil, fmt.Errorf("decode job %q: %w", jobID, err)
 	}
-
-	return s.store.Save(ctx, jobEntity)
+	return cloneJob(jobEntity), nil
 }
 
 func (s *storageStore) Create(ctx context.Context, jobEntity *Job) error {
-	if jobEntity == nil {
-		return errors.New("job store: job is nil")
+	record, err := encodeStorageRecord(jobEntity)
+	if err != nil {
+		return err
 	}
-	return s.store.Create(ctx, jobEntity)
+	result, err := s.db.ExecContext(
+		contextOrBackground(ctx),
+		`INSERT INTO jobs (id, data, fields) VALUES (?, ?, ?)
+		 ON CONFLICT(id) DO NOTHING`,
+		record.id,
+		record.data,
+		record.fields,
+	)
+	if err != nil {
+		return fmt.Errorf("create job %q: %w", record.id, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("create job %q: determine rows affected: %w", record.id, err)
+	}
+	if rows == 0 {
+		return ErrAlreadyExists
+	}
+	return nil
 }
 
-func (s *storageStore) Delete(ctx context.Context, jobID string) error {
-	return s.store.Delete(ctx, jobID)
+func (s *storageStore) Save(
+	ctx context.Context,
+	jobEntity *Job,
+	expectedStatuses ...Status,
+) error {
+	record, err := encodeStorageRecord(jobEntity)
+	if err != nil {
+		return err
+	}
+
+	query := `UPDATE jobs SET data = ?, fields = ? WHERE id = ?`
+	args := []any{record.data, record.fields, record.id}
+	if len(expectedStatuses) > 0 {
+		placeholders := make([]string, len(expectedStatuses))
+		for i, status := range expectedStatuses {
+			if !isValidStatus(status) {
+				return fmt.Errorf("%w: unsupported expected status %q", ErrInvalidQuery, status)
+			}
+			placeholders[i] = "?"
+			args = append(args, string(status))
+		}
+		query += " AND json_extract(fields, '$.status') IN (" +
+			strings.Join(placeholders, ", ") + ")"
+	}
+
+	result, err := s.db.ExecContext(contextOrBackground(ctx), query, args...)
+	if err != nil {
+		return fmt.Errorf("save job %q: %w", record.id, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("save job %q: determine rows affected: %w", record.id, err)
+	}
+	if rows != 0 {
+		return nil
+	}
+	if len(expectedStatuses) > 0 {
+		return ErrConflict
+	}
+	return ErrNotFound
 }
 
-func (s *storageStore) List(ctx context.Context, query *JobQuery) ([]*Job, error) {
-	if err := validateJobQuery(query); err != nil {
-		return nil, err
-	}
-	result, err := s.store.Query(ctx, toStorageQuery(query))
+func (s *storageStore) List(ctx context.Context, query *Query) ([]*Job, error) {
+	querySQL, args, err := buildListSQL(query)
 	if err != nil {
 		return nil, err
 	}
-
-	jobs := make([]*Job, 0, len(result))
-	for _, item := range result {
-		jobs = append(jobs, cloneJob(item))
+	rows, err := s.db.QueryContext(contextOrBackground(ctx), querySQL, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs: %w", err)
 	}
+	defer rows.Close()
 
+	jobs := make([]*Job, 0)
+	for rows.Next() {
+		var (
+			id   string
+			data []byte
+		)
+		if err := rows.Scan(&id, &data); err != nil {
+			return nil, fmt.Errorf("scan job list: %w", err)
+		}
+		jobEntity, err := decodeCurrentJob(id, data)
+		if err != nil {
+			return nil, fmt.Errorf("decode job %q: %w", id, err)
+		}
+		jobs = append(jobs, jobEntity)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate jobs: %w", err)
+	}
 	return jobs, nil
 }
 
-func (s *storageStore) Count(ctx context.Context, query *JobQuery) (int64, error) {
-	if err := validateJobQuery(query); err != nil {
+func (s *storageStore) Count(ctx context.Context, query *Query) (int64, error) {
+	whereSQL, args, err := buildWhereSQL(query)
+	if err != nil {
 		return 0, err
 	}
-	return s.store.Count(ctx, toStorageQuery(query))
+	querySQL := `SELECT COUNT(*) FROM jobs`
+	if whereSQL != "" {
+		querySQL += " WHERE " + whereSQL
+	}
+
+	var count int64
+	if err := s.db.QueryRowContext(contextOrBackground(ctx), querySQL, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count jobs: %w", err)
+	}
+	return count, nil
 }
 
-func validateJobQuery(query *JobQuery) error {
+func (s *storageStore) DeleteTerminalBefore(
+	ctx context.Context,
+	endedBefore time.Time,
+	limit int,
+) (int64, error) {
+	if endedBefore.IsZero() {
+		return 0, fmt.Errorf("%w: cleanup boundary is required", ErrInvalidQuery)
+	}
+	if limit <= 0 || limit > 1000 {
+		return 0, fmt.Errorf("%w: cleanup limit must be between 1 and 1000", ErrInvalidQuery)
+	}
+
+	result, err := s.db.ExecContext(
+		contextOrBackground(ctx),
+		`DELETE FROM jobs WHERE id IN (
+			SELECT id FROM jobs
+			WHERE json_extract(fields, '$.status') IN (?, ?, ?, ?)
+			  AND json_extract(fields, '$.ended_at') != ''
+			  AND json_extract(fields, '$.ended_at') <= ?
+			ORDER BY json_extract(fields, '$.ended_at') ASC, id ASC
+			LIMIT ?
+		)`,
+		string(StatusCompleted),
+		string(StatusFailed),
+		string(StatusStopped),
+		string(StatusOutcomeUnknown),
+		driver.NormalizeValue(endedBefore),
+		limit,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete terminal jobs: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete terminal jobs: determine rows affected: %w", err)
+	}
+	return deleted, nil
+}
+
+func (s *storageStore) Close(_ context.Context) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
+
+func encodeStorageRecord(jobEntity *Job) (storageRecord, error) {
+	if err := jobEntity.validate(); err != nil {
+		return storageRecord{}, fmt.Errorf("encode job: %w", err)
+	}
+	payload := storagePayload{
+		SchemaVersion:           currentStorageSchemaVersion,
+		ID:                      jobEntity.ID,
+		Kind:                    jobEntity.Kind,
+		UserID:                  jobEntity.UserID,
+		Hostname:                jobEntity.Hostname,
+		DurationSeconds:         int64(jobEntity.Duration / time.Second),
+		Scope:                   string(jobEntity.Scope),
+		ContainerID:             jobEntity.ContainerID,
+		Spec:                    jobEntity.Spec,
+		Status:                  jobEntity.Status,
+		Failure:                 jobEntity.Failure,
+		CreatedAt:               jobEntity.CreatedAt,
+		UpdatedAt:               jobEntity.UpdatedAt,
+		StartedAt:               jobEntity.StartedAt,
+		EndedAt:                 jobEntity.EndedAt,
+		StartAttemptedAt:        jobEntity.StartAttemptedAt,
+		PendingDeadline:         jobEntity.PendingDeadline,
+		ExecutionDeadline:       jobEntity.ExecutionDeadline,
+		NodeUnavailableSince:    jobEntity.NodeUnavailableSince,
+		NodeUnavailableDeadline: jobEntity.NodeUnavailableDeadline,
+		StopRequestedAt:         jobEntity.StopRequestedAt,
+		StopDeadline:            jobEntity.StopDeadline,
+		StopReason:              jobEntity.StopReason,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return storageRecord{}, fmt.Errorf("encode job %q payload: %w", jobEntity.ID, err)
+	}
+	fields, err := json.Marshal(map[string]any{
+		"id":           jobEntity.ID,
+		"user_id":      jobEntity.UserID,
+		"container_id": jobEntity.ContainerID,
+		"hostname":     jobEntity.Hostname,
+		"status":       string(jobEntity.Status),
+		"kind":         string(jobEntity.Kind),
+		"subtype":      jobEntity.Spec.subtype(jobEntity.Kind),
+		"created_at":   driver.NormalizeValue(jobEntity.CreatedAt),
+		"ended_at":     normalizedOptionalTime(jobEntity.EndedAt),
+	})
+	if err != nil {
+		return storageRecord{}, fmt.Errorf("encode job %q indexes: %w", jobEntity.ID, err)
+	}
+	return storageRecord{id: jobEntity.ID, data: data, fields: string(fields)}, nil
+}
+
+func decodeCurrentJob(rowID string, data []byte) (*Job, error) {
+	var payload storagePayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("decode payload: %w", err)
+	}
+	if payload.SchemaVersion != currentStorageSchemaVersion {
+		return nil, fmt.Errorf("unsupported schema version %d", payload.SchemaVersion)
+	}
+	if payload.ID != rowID {
+		return nil, fmt.Errorf("payload ID %q does not match row ID", payload.ID)
+	}
+	jobEntity := &Job{
+		ID:                      payload.ID,
+		Kind:                    payload.Kind,
+		UserID:                  payload.UserID,
+		Hostname:                payload.Hostname,
+		Duration:                time.Duration(payload.DurationSeconds) * time.Second,
+		Scope:                   observation.Scope(payload.Scope),
+		ContainerID:             payload.ContainerID,
+		Spec:                    payload.Spec,
+		Status:                  payload.Status,
+		Failure:                 payload.Failure,
+		CreatedAt:               payload.CreatedAt,
+		UpdatedAt:               payload.UpdatedAt,
+		StartedAt:               payload.StartedAt,
+		EndedAt:                 payload.EndedAt,
+		StartAttemptedAt:        payload.StartAttemptedAt,
+		PendingDeadline:         payload.PendingDeadline,
+		ExecutionDeadline:       payload.ExecutionDeadline,
+		NodeUnavailableSince:    payload.NodeUnavailableSince,
+		NodeUnavailableDeadline: payload.NodeUnavailableDeadline,
+		StopRequestedAt:         payload.StopRequestedAt,
+		StopDeadline:            payload.StopDeadline,
+		StopReason:              payload.StopReason,
+	}
+	if err := jobEntity.validate(); err != nil {
+		return nil, err
+	}
+	return jobEntity, nil
+}
+
+func buildListSQL(query *Query) (string, []any, error) {
+	if err := validateQuery(query); err != nil {
+		return "", nil, err
+	}
+	whereSQL, args, err := buildWhereSQL(query)
+	if err != nil {
+		return "", nil, err
+	}
+	querySQL := `SELECT id, data FROM jobs`
+	if whereSQL != "" {
+		querySQL += " WHERE " + whereSQL
+	}
+
+	sortField, descending := querySort(query)
+	querySQL += " ORDER BY " + storageFieldExpressions[sortField]
+	if descending {
+		querySQL += " DESC"
+	} else {
+		querySQL += " ASC"
+	}
+	if sortField != "id" {
+		querySQL += ", id"
+		if descending {
+			querySQL += " DESC"
+		} else {
+			querySQL += " ASC"
+		}
+	}
+	if query != nil && query.Limit > 0 {
+		querySQL += " LIMIT ?"
+		args = append(args, query.Limit)
+	}
+	if query != nil && query.Offset > 0 {
+		if query.Limit == 0 {
+			querySQL += " LIMIT -1"
+		}
+		querySQL += " OFFSET ?"
+		args = append(args, query.Offset)
+	}
+	return querySQL, args, nil
+}
+
+func buildWhereSQL(query *Query) (string, []any, error) {
+	if err := validateQuery(query); err != nil {
+		return "", nil, err
+	}
+	if query == nil {
+		return "", nil, nil
+	}
+
+	clauses := make([]string, 0, 8)
+	args := make([]any, 0, 8)
+	appendEqual := func(field, value string) {
+		if value == "" {
+			return
+		}
+		clauses = append(clauses, storageFieldExpressions[field]+" = ?")
+		args = append(args, value)
+	}
+	appendEqual("id", query.ID)
+	if !query.IsAdmin {
+		appendEqual("user_id", query.UserID)
+	}
+	appendEqual("container_id", query.ContainerID)
+	appendEqual("hostname", query.Hostname)
+
+	appendIn := func(field string, values []string) {
+		if len(values) == 0 {
+			return
+		}
+		placeholders := make([]string, len(values))
+		for i, value := range values {
+			placeholders[i] = "?"
+			args = append(args, value)
+		}
+		clauses = append(clauses, storageFieldExpressions[field]+" IN ("+
+			strings.Join(placeholders, ", ")+")")
+	}
+	statuses := make([]string, len(query.Statuses))
+	for i, status := range query.Statuses {
+		statuses[i] = string(status)
+	}
+	appendIn("status", statuses)
+	kinds := make([]string, len(query.Kinds))
+	for i, kind := range query.Kinds {
+		kinds[i] = string(kind)
+	}
+	appendIn("kind", kinds)
+	appendIn("subtype", query.Subtypes)
+	return strings.Join(clauses, " AND "), args, nil
+}
+
+func validateQuery(query *Query) error {
 	if query == nil {
 		return nil
 	}
@@ -166,155 +483,43 @@ func validateJobQuery(query *JobQuery) error {
 	if query.Offset < 0 {
 		return fmt.Errorf("%w: offset must not be negative", ErrInvalidQuery)
 	}
-	field := query.Sort
-	if field != "" && field[0] == '-' {
-		field = field[1:]
+	for _, status := range query.Statuses {
+		if !isValidStatus(status) {
+			return fmt.Errorf("%w: unsupported status %q", ErrInvalidQuery, status)
+		}
 	}
-	switch field {
-	case "", "id", "created_at", "finished_at", "hostname", "container_id", "status", "type":
-		return nil
-	default:
+	for _, kind := range query.Kinds {
+		if kind != KindProfiling && kind != KindTracing {
+			return fmt.Errorf("%w: unsupported kind %q", ErrInvalidQuery, kind)
+		}
+	}
+	field, _ := querySort(query)
+	if _, ok := storageFieldExpressions[field]; !ok {
 		return fmt.Errorf("%w: unsupported sort field %q", ErrInvalidQuery, field)
 	}
+	return nil
 }
 
-func (s *storageStore) Close(ctx context.Context) error {
-	return s.store.Close(ctx)
+func querySort(query *Query) (string, bool) {
+	if query == nil || query.Sort == "" {
+		return "created_at", true
+	}
+	field := query.Sort
+	descending := strings.HasPrefix(field, "-")
+	field = strings.TrimPrefix(field, "-")
+	return field, descending
 }
 
-func (storeMapper) ID(entity *Job) string {
-	return entity.ID
+func normalizedOptionalTime(value time.Time) any {
+	if value.IsZero() {
+		return ""
+	}
+	return driver.NormalizeValue(value)
 }
 
-func (storeMapper) Encode(entity *Job) ([]byte, error) {
-	payload := storagePayload{
-		Type:         entity.Type,
-		ID:           entity.ID,
-		Username:     entity.Username,
-		UserID:       entity.UserID,
-		ContainerID:  entity.ContainerID,
-		Hostname:     entity.Hostname,
-		AgentTaskID:  entity.AgentTaskID,
-		Status:       entity.Status,
-		ErrorMessage: entity.ErrorMessage,
-		Duration:     entity.Duration,
-		TraceTimeout: entity.TraceTimeout,
-		CreatedAt:    entity.CreatedAt,
-		FinishedAt:   entity.FinishedAt,
-		AgentTask:    entity.AgentTask,
-		Result:       entity.Result,
-		UpdatedAt:    entity.UpdatedAt,
-		PrivateData:  entity.PrivateData,
+func contextOrBackground(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
 	}
-
-	return json.Marshal(payload)
-}
-
-func (storeMapper) Decode(data []byte) (*Job, error) {
-	var payload storagePayload
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, err
-	}
-
-	return &Job{
-		Type:         payload.Type,
-		ID:           payload.ID,
-		Username:     payload.Username,
-		UserID:       payload.UserID,
-		ContainerID:  payload.ContainerID,
-		Hostname:     payload.Hostname,
-		AgentTaskID:  payload.AgentTaskID,
-		Status:       payload.Status,
-		ErrorMessage: payload.ErrorMessage,
-		Duration:     payload.Duration,
-		TraceTimeout: payload.TraceTimeout,
-		CreatedAt:    payload.CreatedAt,
-		FinishedAt:   payload.FinishedAt,
-		AgentTask:    payload.AgentTask,
-		Result:       payload.Result,
-		UpdatedAt:    payload.UpdatedAt,
-		PrivateData:  payload.PrivateData,
-	}, nil
-}
-
-func (storeMapper) Fields(entity *Job) (map[string]any, error) {
-	return storageFields(entity), nil
-}
-
-func (storeMapper) Indexes() []driver.Index {
-	names := storageIndexes()
-	indexes := make([]driver.Index, 0, len(names))
-	for _, name := range names {
-		indexes = append(indexes, driver.Index{Field: name})
-	}
-	return indexes
-}
-
-func toStorageQuery(q *JobQuery) driver.Query {
-	if q == nil {
-		q = &JobQuery{}
-	}
-	filters := make([]driver.Filter, 0, 6)
-	if q.UserID != "" && !q.IsAdmin {
-		filters = append(filters, driver.Filter{Field: "user_id", Op: driver.OpEq, Value: q.UserID})
-	}
-	if q.ContainerID != "" {
-		filters = append(filters, driver.Filter{Field: "container_id", Op: driver.OpEq, Value: q.ContainerID})
-	}
-	if q.Hostname != "" {
-		filters = append(filters, driver.Filter{Field: "hostname", Op: driver.OpEq, Value: q.Hostname})
-	}
-	if len(q.Statuses) > 0 {
-		values := make([]string, len(q.Statuses))
-		for i := range q.Statuses {
-			values[i] = string(q.Statuses[i])
-		}
-		filters = append(filters, driver.Filter{Field: "status", Op: driver.OpIn, Value: values})
-	} else if q.Status != "" {
-		filters = append(filters, driver.Filter{Field: "status", Op: driver.OpEq, Value: q.Status})
-	}
-	if len(q.Types) == 1 {
-		filters = append(filters, driver.Filter{Field: "type", Op: driver.OpEq, Value: string(q.Types[0])})
-	} else if len(q.Types) > 1 {
-		values := make([]string, len(q.Types))
-		for i := range q.Types {
-			values[i] = string(q.Types[i])
-		}
-		filters = append(filters, driver.Filter{Field: "type", Op: driver.OpIn, Value: values})
-	}
-
-	query := driver.Query{
-		Filters: filters,
-		Limit:   q.Limit,
-		Offset:  q.Offset,
-	}
-	field := q.Sort
-	desc := false
-	if field == "" {
-		field = "-created_at"
-	}
-	if field[0] == '-' {
-		desc = true
-		field = field[1:]
-	}
-	query.Sorts = []driver.Sort{{Field: field, Desc: desc}, {Field: "id", Desc: desc}}
-	return query
-}
-
-func cloneJob(entity *Job) *Job {
-	if entity == nil {
-		return nil
-	}
-	cloned := *entity
-	cloned.PrivateData = cloneJobPrivateData(entity.PrivateData)
-	cloned.AgentTask.TracerArgs = append([]string(nil), entity.AgentTask.TracerArgs...)
-	cloned.stopCh = entity.stopCh
-	return &cloned
-}
-
-func cloneJobPrivateData(input json.RawMessage) json.RawMessage {
-	if len(input) == 0 {
-		return nil
-	}
-	return append(json.RawMessage(nil), input...)
+	return ctx
 }

@@ -23,6 +23,7 @@ import (
 
 	"huatuo-bamai/internal/nodeagent/command"
 	"huatuo-bamai/internal/nodeagent/operation"
+	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
 )
@@ -44,6 +45,15 @@ type Config struct {
 	AggregationInterval     time.Duration
 	MaxConcurrentProcesses  int
 	CommandOutputLimitBytes int
+	ToolstreamServer        *toolstream.Server
+	ResultPublisher         ResultPublisher
+}
+
+// ResultPublisher owns the durable result commit marker.
+type ResultPublisher interface {
+	Prepare(ctx context.Context, requestID string) error
+	Publish(ctx context.Context, requestID string) error
+	Discard(ctx context.Context, requestID string) error
 }
 
 // StartRequest contains one validated profiling operation request.
@@ -106,7 +116,12 @@ func (s *Service) Start(
 	return s.manager.Start(ctx, operation.StartRequest{
 		RequestID: request.RequestID,
 		Kind:      operation.KindProfiling,
-		Executor:  newExecutor(process),
+		Executor: newExecutor(
+			process,
+			s.config.ToolstreamServer,
+			s.config.ResultPublisher,
+			request.RequestID,
+		),
 	})
 }
 

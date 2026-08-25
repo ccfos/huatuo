@@ -116,12 +116,10 @@ tcpshark uses the same `--output-storage` and toolstream flow as dropwatch. For 
     MaxEventsPerSecond = 100
 ```
 
-The `tcp_retransmit` tracer is in the global `BlackList` by default. Remove it from the list and restart huatuo-bamai to enable the tracer. Its drop-correlation cache is enabled only while the tracer is running and is cleared when the tracer stops. After enabling it, use the HTTP API to start or stop tracing:
-
-```bash
-curl -X PUT http://localhost:19704/tracers/tcp_retransmit/start
-curl -X PUT http://localhost:19704/tracers/tcp_retransmit/stop
-```
+The `tcp_retransmit` tracer is in the global `BlackList` by default. Remove it
+from the list and restart huatuo-bamai to enable the tracer. Its
+drop-correlation cache is enabled only while the tracer is running and is
+cleared when the tracer stops.
 
 ---
 

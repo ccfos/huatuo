@@ -84,8 +84,8 @@ continuous_profile_create_cpu() {
 		-w '%{http_code}' -X POST \
 		-H "Authorization: Bearer ${API_TOKEN}" \
 		-H 'Content-Type: application/json' \
-		"${APISERVER_ADDR}/v1/profiles" \
-		-d "{\"type\":\"cpu\",\"language\":\"c\",\"duration_seconds\":${duration},\"hostname\":\"127.0.0.1\"}") \
+		"${APISERVER_ADDR}/v1/profiling" \
+		-d "{\"hostname\":\"127.0.0.1\",\"duration_seconds\":${duration},\"scope\":\"host\",\"type\":\"cpu\",\"language\":\"c\",\"mode\":\"oncpu\"}") \
 		|| curl_status=$?
 	if [[ -r "${response_file}" ]]; then
 		log_info "${description} response: $(< "${response_file}")"
@@ -102,7 +102,7 @@ continuous_profile_status_is() {
 	local profile_id=$1 expected_status=$2 response_file=$3
 
 	curl -sf "${CURL_TIMEOUT[@]}" -H "Authorization: Bearer ${API_TOKEN}" \
-		"${APISERVER_ADDR}/v1/profiles/${profile_id}" \
+		"${APISERVER_ADDR}/v1/profiling/${profile_id}" \
 		> "${response_file}" \
 		|| return 1
 	jq -e --arg expected_status "${expected_status}" \
@@ -116,7 +116,7 @@ continuous_profile_windows_are_stored() {
 	status=$(
 		curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
 			-H "Authorization: Bearer ${API_TOKEN}" \
-			"${APISERVER_ADDR}/v1/profiles/${profile_id}/raw"
+			"${APISERVER_ADDR}/v1/profiling/${profile_id}/raw"
 	) || {
 		CONTINUOUS_PROFILE_DIAGNOSTIC="raw profile request failed before receiving an HTTP response"
 		return 1

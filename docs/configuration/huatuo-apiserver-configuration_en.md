@@ -116,28 +116,25 @@ and are not user configurable.
         # MaxConcurrentPerHost = 5
         # MaxConcurrent = 1000
 
+    # Apiserver-owned Job lifecycle policy.
+    [Jobs.Controller]
+        # StatusPollIntervalSeconds = 5
+        # PendingTimeoutSeconds = 30
+        # CompletionGracePeriodSeconds = 60
+        # NodeUnavailableGracePeriodSeconds = 30
+        # JobRetentionPeriodHours = 720
+
 # huatuo-bamai Agent HTTP client configuration.
 [Agent]
     # - HTTPPort
     # Agent HTTP server port.
     # Default: 19704
     #
-    # - RequestTimeoutSeconds
-    # Timeout in seconds for one Agent HTTP request.
-    # Default: 10
-    #
-    # - StatusPollingIntervalSeconds
-    # Interval in seconds between job status requests.
-    # Default: 5
-    #
-    # - MaxConsecutiveStatusPollingErrors
-    # Maximum consecutive status request errors before a job fails.
-    # Default: 3
-    #
     # HTTPPort = 19704
-    # RequestTimeoutSeconds = 10
-    # StatusPollingIntervalSeconds = 5
-    # MaxConsecutiveStatusPollingErrors = 3
+
+    [Agent.Auth]
+        # Must match HTTPServer.Auth.BearerToken on every Node.
+        BearerToken = "REPLACE_WITH_RANDOM_HEX"
 ```
 
 `StoreDSN` is the SQLite data source for durable job state. Relative paths are
@@ -147,13 +144,13 @@ Profiling and tracing use the same quota model but retain independent values.
 Their resource cost and expected concurrency differ, so a shared limit would
 allow one workload to starve the other.
 
-Agent request retries use internal client defaults. Public configuration only
-exposes the Agent port, request timeout, polling interval, and failure
-threshold.
+Agent request transport safeguards use internal client defaults. Job polling,
+deadlines, unavailable grace, and retention are owned independently by
+`Jobs.Controller`; no runtime negotiation with the Node is performed.
 
-During shutdown, the API server leaves active Agent tasks running and logs
-their identifiers and target information. A replacement API server recovers
-their persisted `pending` or `running` state and resumes monitoring.
+During shutdown, the API server leaves active Node operations running. A
+replacement API server recovers active Jobs from durable state and resumes
+monitoring without replaying Start.
 
 ### 5. Elasticsearch/OpenSearch
 
@@ -215,10 +212,10 @@ routes are not registered.
     #     ID = "huatuo-front"
     #     BearerToken = "REPLACE_WITH_ANOTHER_RANDOM_HEX"
     #     Permissions = [
-    #         "GET /v1/traces",
-    #         "GET /v1/traces/**",
-    #         "GET /v1/profiles",
-    #         "GET /v1/profiles/**",
+    #         "GET /v1/tracing",
+    #         "GET /v1/tracing/**",
+    #         "GET /v1/profiling",
+    #         "GET /v1/profiling/**",
     #     ]
 ```
 
@@ -233,37 +230,21 @@ IDs and bearer tokens must each be unique. Rotating a bearer token does not
 change job ownership because tokens are never used as principal IDs.
 
 `/healthz`, `/readyz`, `/metrics`, and `/version` are public.
-`/debug/pprof/**` and `/v1/profiles/flamegraph/**` require an administrator.
+`/debug/pprof/**` and `/v1/profiling/flamegraph/**` require an administrator.
 
 ### 7. Profiling
 
 ```toml
-# Profiling subprocess configuration.
+# Profiling result-link configuration.
 [Profiling]
-    # - AggregationIntervalSeconds
-    # Aggregation interval in seconds. Must be greater than 0 and less than
-    # 1200.
-    # Default: 10
-    #
-    # - MaxConcurrentProfilerProcesses
-    # Maximum concurrent third-party profiler processes. A value of 0 disables
-    # this process limit.
-    # Default: 10
-    #
     # - DashboardBaseURL
     # Optional dashboard base URL. Result URLs are omitted when empty.
     # Default: empty
     #
-    # AggregationIntervalSeconds = 10
-    # MaxConcurrentProfilerProcesses = 10
     # DashboardBaseURL = "https://grafana.example.com/d"
 ```
 
-- `AggregationIntervalSeconds` must be greater than zero and less than 1200.
-- `MaxConcurrentProfilerProcesses` limits third-party profiler subprocesses.
-  Zero disables this process limit; negative values are invalid.
 - `DashboardBaseURL` is optional and must use HTTP or HTTPS when configured.
-  Completed jobs omit a result URL when it is empty.
+  Result-capable jobs omit a dashboard URL when it is empty.
 
-The Agent task timeout is derived from the requested profiling duration plus
-one aggregation interval. It is not separately configurable.
+Profiler execution and aggregation settings are Node-local configuration.

@@ -23,6 +23,9 @@ First, configure Elasticsearch credentials so that huatuo-bamai and huatuo-apise
 
 In `huatuo-bamai.conf`:
 ```toml
+[HTTPServer.Auth]
+    BearerToken = "REPLACE_WITH_NODE_TOKEN"
+
 [Storage]
     [Storage.Elasticsearch]
         Address = "http://127.0.0.1:9200"
@@ -33,6 +36,9 @@ In `huatuo-bamai.conf`:
 
 In `huatuo-apiserver.conf`:
 ```toml
+[Agent.Auth]
+    BearerToken = "REPLACE_WITH_NODE_TOKEN"
+
 [Elasticsearch]
     Address = "http://127.0.0.1:9200"
     Username = "elastic"
@@ -104,10 +110,12 @@ JOB_ID=$(curl -s -X POST \
   -d "{
     \"type\": \"cpu\",
     \"language\": \"c\",
+    \"mode\": \"oncpu\",
+    \"scope\": \"host\",
     \"duration_seconds\": 30,
     \"hostname\": \"${HOSTNAME}\"
   }" \
-  "${API_BASE}/v1/profiles" | jq -r .data.id)
+  "${API_BASE}/v1/profiling" | jq -r .data.request_id)
 
 echo "Job ID: $JOB_ID"
 ```
@@ -140,16 +148,17 @@ Steps:
 
 ![continuous-profiling-grafana-host.png](/docs/img/continuous-profiling-grafana-host.png)
 
-For more profiling dimensions, see the Profiles API section below.
+For more profiling dimensions, see the Profiling API section below.
 
-## 🌐 Profiles API
+## 🌐 Profiling API
 
-huatuo-apiserver exposes `/v1/profiles` for service-based continuous profiling. Clients can create CPU or memory profiling jobs, query job status and results, and stop or delete jobs. huatuo-apiserver schedules each job on the HUATUO Agent running on the specified node. Profiling results are available through the returned Grafana URL or the raw data endpoint.
+huatuo-apiserver exposes `/v1/profiling` for creating, observing, and stopping
+Profiling Jobs. Each create request is an independent execution. The Job is
+durable in huatuo-apiserver while the Node owns only the in-memory Operation
+and profiler process.
 
-Continuous profiling requires Elasticsearch to store profile data.
-huatuo-apiserver enables profiling only when Elasticsearch profile storage is
-configured. Otherwise, it rejects all `/v1/profiles` requests with HTTP 503 and
-the `profiling_disabled` error code.
+Elasticsearch is optional for Job control but required for raw results and
+Dashboard links. Node and Apiserver must use the same Elasticsearch index.
 
 ### 1. Request Conventions
 
@@ -166,9 +175,9 @@ Every request must pass the configured bearer token:
 Authorization: Bearer REPLACE_WITH_RANDOM_HEX
 ```
 
-A non-administrator user requires both `/v1/profiles` and
-`/v1/profiles/**` permissions. Permissions may include an HTTP method, such as
-`GET /v1/profiles/**`. Successful responses contain only `data`:
+A non-administrator user requires both `/v1/profiling` and
+`/v1/profiling/**` permissions. Permissions may include an HTTP method, such as
+`GET /v1/profiling/**`. Successful responses contain only `data`:
 
 ```json
 {
@@ -181,8 +190,8 @@ Error responses contain a stable code and a human-readable message:
 ```json
 {
   "error": {
-    "code": "profiling_disabled",
-    "message": "profiling is disabled: configure profile storage to enable it"
+    "code": "result_unavailable",
+    "message": "Job state does not provide a complete Profiling result"
   }
 }
 ```
@@ -196,25 +205,23 @@ Before creating a job, query the profiling types, languages, CPU modes, memory m
 ```bash
 curl -sS \
   -H "Authorization: Bearer ${API_TOKEN}" \
-  "${API_BASE}/v1/profiles/capabilities"
+  "${API_BASE}/v1/profiling/capabilities"
 ```
 
-The `data` object contains these fields:
+`data.items` is a static versioned capability table. Each item contains:
 
 | Field | Description |
 | --- | --- |
-| `types` | Supported profiling types: `cpu` and `memory` |
-| `cpu_languages` | Languages supported by CPU profiling |
-| `cpu_modes` | CPU profiling modes grouped by language |
-| `memory_languages` | Languages supported by memory profiling |
-| `memory_modes` | Memory profiling modes grouped by language; values are accepted by job creation |
-| `aggregation_interval_seconds` | Server-side data aggregation interval |
-| `max_concurrent_profilers` | Maximum number of concurrent profiler processes; `0` disables the limit |
+| `type` | Profiling type: `cpu` or `memory` |
+| `language` | Target language |
+| `modes` | Valid `mode` values for this type/language pair |
+| `supports_binary_match` | Whether `binary_match_path` is accepted |
+| `supported_scopes` | Valid values for `scope` |
 
 CPU profiling supports `oncpu` and `offcpu` for `c`, `c++`, and `go`;
 `java` and `python` support only `oncpu`. Memory profiling supports these combinations:
 
-| Language | `memory_mode` | Description |
+| Language | `mode` | Description |
 | --- | --- | --- |
 | `c`, `c++`, `go` | `virtual_alloc` | Virtual address-space allocation |
 | `c`, `c++`, `go` | `physical_alloc` | Physical page allocation |
@@ -224,19 +231,21 @@ CPU profiling supports `oncpu` and `offcpu` for `c`, `c++`, and `go`;
 
 ### 3. Create a Profiling Job
 
-`POST /v1/profiles` accepts the following JSON fields:
+`POST /v1/profiling` accepts the following JSON fields:
 
 | Field | Required | Description |
 | --- | --- | --- |
 | `type` | Yes | Profiling type: `cpu` or `memory` |
 | `language` | Yes | Target process language; it must support the selected profiling type |
+| `mode` | Yes | One mode advertised for the selected type/language pair |
 | `duration_seconds` | Yes | Profiling duration in seconds |
 | `hostname` | Yes | Hostname of the node running the target process; used for job scheduling |
-| `container_id` | No | Target container ID; omit it to profile the host |
-| `binary_match_path` | No | Executable path matcher for Java/Python CPU profiling; native profiling does not support it |
-| `memory_mode` | For memory profiling | Memory profiling mode; it must be supported by `language` |
+| `scope` | Yes | `host` or `container`, as advertised by capabilities |
+| `container_id` | For container scope | Target container ID |
+| `binary_match_path` | No | Executable path matcher when the capability permits it |
 
-`duration_seconds` must cover at least two `aggregation_interval_seconds` periods, and their sum must be less than 3600 seconds. If the same user already has a running profiling job on the same node, the server returns `409 Conflict`.
+Each request creates a new Job, even when its content matches an earlier request.
+Per-host and process-wide quotas reject excess active Jobs with HTTP 429.
 
 Create a Go CPU profiling job on a host:
 
@@ -248,10 +257,12 @@ curl -sS -i \
   -d '{
     "type": "cpu",
     "language": "go",
+    "mode": "oncpu",
+    "scope": "host",
     "duration_seconds": 60,
     "hostname": "node-01"
   }' \
-  "${API_BASE}/v1/profiles"
+  "${API_BASE}/v1/profiling"
 ```
 
 Create a Java live-object profiling job in a container:
@@ -264,12 +275,13 @@ curl -sS -i \
   -d '{
     "type": "memory",
     "language": "java",
-    "memory_mode": "object_usage",
+    "mode": "object_usage",
+    "scope": "container",
     "duration_seconds": 60,
     "container_id": "9f4c2f1a8b7d",
     "hostname": "node-01"
   }' \
-  "${API_BASE}/v1/profiles"
+  "${API_BASE}/v1/profiling"
 ```
 
 A successful request returns `201 Created`. The `Location` response header identifies the new job, and the response body contains the job ID used by subsequent requests:
@@ -277,7 +289,16 @@ A successful request returns `201 Created`. The `Location` response header ident
 ```json
 {
   "data": {
-    "id": "<profile-job-id>"
+    "request_id": "<profile-job-id>",
+    "hostname": "node-01",
+    "duration_seconds": 60,
+    "scope": "host",
+    "type": "cpu",
+    "language": "go",
+    "mode": "oncpu",
+    "status": "pending",
+    "created_at": "2026-08-24T10:00:00Z",
+    "updated_at": "2026-08-24T10:00:00Z"
   }
 }
 ```
@@ -288,59 +309,57 @@ JOB_ID="<profile-job-id>"
 
 ### 4. List Profiling Jobs
 
-`GET /v1/profiles` supports these query parameters:
+`GET /v1/profiling` supports these query parameters:
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `container_id` | None | Exact container ID filter (`containerID` remains accepted for compatibility) |
-| `hostname` | None | Exact node hostname filter |
-| `status` | None | `pending`, `running`, `completed`, `failed`, `stopped`, or `timeout` |
-| `type` | None | `cpu` or `memory`; omit it to return both types |
-| `limit` | `50` | Page size; must be greater than 0 and is capped at 500 |
+| `limit` | `100` | Page size; must be between 1 and 1000 |
 | `offset` | `0` | Starting offset; must be greater than or equal to 0 |
-| `sort` | `-created_at` | `created_at`, `finished_at`, `hostname`, `container_id`, `id`, `status`, or `type`; prefix with `-` for descending order |
 
-List the 20 most recent running CPU profiling jobs on `node-01`:
+List the 20 most recent Profiling Jobs:
 
 ```bash
 curl -sS -G \
   -H "Authorization: Bearer ${API_TOKEN}" \
-  --data-urlencode "hostname=node-01" \
-  --data-urlencode "status=running" \
-  --data-urlencode "type=cpu" \
   --data-urlencode "limit=20" \
   --data-urlencode "offset=0" \
-  --data-urlencode "sort=-created_at" \
-  "${API_BASE}/v1/profiles"
+  "${API_BASE}/v1/profiling"
 ```
 
-`data.items` contains the job array. `data.total` is the number of matching jobs before pagination, while `data.limit` and `data.offset` are the effective pagination parameters. Non-administrator users can list only jobs they created.
+The server always limits the result to Profiling Jobs and orders them by
+`created_at` descending. `data.items` contains the job array. `data.total` is
+the number of authorized Profiling Jobs before pagination, while `data.limit`
+and `data.offset` are the effective pagination parameters. Non-administrator
+users can list only jobs they created.
 
 ### 5. Get a Profiling Job
 
 ```bash
 curl -sS \
   -H "Authorization: Bearer ${API_TOKEN}" \
-  "${API_BASE}/v1/profiles/${JOB_ID}"
+  "${API_BASE}/v1/profiling/${JOB_ID}"
 ```
 
 The `data` object contains the job details:
 
 | Field | Description |
 | --- | --- |
-| `id` | Profiles API job ID |
+| `request_id` | Profiling Job ID used by all follow-up requests |
 | `container_id` | Target container ID; omitted for host jobs |
 | `hostname` | Target node hostname |
+| `duration_seconds` | Requested profiling duration in seconds |
+| `scope` | `host` or `container` |
 | `type` | `cpu` or `memory` |
 | `language` | Target process language |
-| `memory_mode` | Memory profiling mode; omitted for CPU jobs |
+| `mode` | Profiling mode selected from the capability table |
 | `binary_match_path` | Executable path matcher; omitted when unused |
 | `status` | Current job status |
-| `duration_seconds` | Requested profiling duration in seconds |
+| `failure` | `{code, message}` for `failed`; omitted for every other status |
 | `created_at` | Job creation time |
-| `finished_at` | Terminal status time; `null` while the job is active |
-| `result_url` | Grafana URL for the result; `null` until available |
-| `status_reason` | Terminal status details; `null` when no explanation is needed |
+| `updated_at` | Last Job state update time |
+| `started_at` | Time execution started; omitted until observed running |
+| `ended_at` | Terminal status time; omitted while the job is active |
+| `result_url` | Dashboard URL returned by the detail endpoint when a complete result is available |
 
 Profiling jobs use these statuses:
 
@@ -348,53 +367,55 @@ Profiling jobs use these statuses:
 | --- | --- |
 | `pending` | The job has been created and is waiting for the Agent |
 | `running` | The Agent is collecting profiling data |
+| `stopping` | A stop request has been persisted and is being applied asynchronously |
 | `completed` | The job completed successfully |
-| `stopped` | The user or job manager stopped the job |
-| `failed` | The job failed; inspect `status_reason` for the cause |
-| `timeout` | The job exceeded its allowed execution time |
+| `failed` | Execution failed; inspect `failure.code` and `failure.message` |
+| `stopped` | The user stopped the job; its partial result is not queryable |
+| `outcome_unknown` | Apiserver cannot verify the final Operation status, but a durably published result may still be available |
+
+`operation_lost` and `execution_timed_out` are failure codes, not Job
+statuses. Other failure codes include pending or stop deadline expiry, Node
+unavailability, execution-capacity exhaustion, start or execution failure, and
+protocol errors.
 
 ### 6. Get Raw Profiling Data
 
-`GET /v1/profiles/:id/raw` returns the raw profiling windows associated with the job. The response can be large, so it can be written directly to a file:
+`GET /v1/profiling/:request_id/raw` returns the raw profiling windows associated
+with a `completed` Job. An `outcome_unknown` Job is also queryable only when the
+Node durably published its result marker. Active Jobs return
+`result_not_ready`; `failed`, `stopped`, and unpublished `outcome_unknown` Jobs
+return `result_unavailable`.
+
+The response can be large, so it can be written directly to a file:
 
 ```bash
 curl -sS \
   -H "Authorization: Bearer ${API_TOKEN}" \
   -o profile-raw.json \
-  "${API_BASE}/v1/profiles/${JOB_ID}/raw?limit=100&offset=0"
+  "${API_BASE}/v1/profiling/${JOB_ID}/raw?limit=100&offset=0"
 ```
 
 The profiling windows are in `data.items`; `data.limit`, `data.offset`, and
 `data.has_more` describe the page. Each item contains `uploaded_at`,
 `captured_at`, `profile_type`, and the pprof-compatible `profile` payload.
+An empty, durably published result is a successful response with an empty
+`items` array.
 
 ### 7. Stop a Profiling Job
 
-Only jobs in `pending` or `running` status can be stopped. The `PATCH` request accepts only `stopped` as the `status` value:
+Stop is an asynchronous intent. It is accepted for `pending`, `running`, or
+already `stopping` Jobs:
 
 ```bash
 curl -sS \
-  -X PATCH \
+  -X POST \
   -H "Authorization: Bearer ${API_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"status":"stopped"}' \
-  "${API_BASE}/v1/profiles/${JOB_ID}"
+  "${API_BASE}/v1/profiling/${JOB_ID}/stop"
 ```
 
-A successful stop returns `200 OK`. A job that has already ended returns `400 Bad Request`.
-
-### 8. Delete a Profiling Job
-
-Deletion removes only the job record. Jobs in `pending` or `running` status cannot be deleted directly and must be stopped first:
-
-```bash
-curl -sS -i \
-  -X DELETE \
-  -H "Authorization: Bearer ${API_TOKEN}" \
-  "${API_BASE}/v1/profiles/${JOB_ID}"
-```
-
-A successful deletion returns `204 No Content` with no response body. If the job is still active, the endpoint returns `409 Conflict`.
+A successful request returns `200 OK` with the current Job snapshot. A terminal
+Job returns `409 Conflict`. Stopped Jobs do not expose results because their
+final data may be incomplete.
 
 ## 📖 profiler CLI Overview
 
@@ -402,7 +423,7 @@ A successful deletion returns `204 No Content` with no response body. If the job
 
 C, C++, and Go use the eBPF-based native collector to observe on-CPU usage, off-CPU blocking and scheduling delay, virtual memory allocation, physical memory allocation, and physical memory residency. Java uses async-profiler to observe CPU usage, object allocation, and live objects. Python uses py-spy to observe CPU usage. The results can be used to locate hot functions, attribute memory growth, analyze processes inside containers, and preserve performance data for later diagnosis.
 
-The remainder of this section covers standalone use of `_output/bin/profiler`. For service-based continuous profiling, see the Profiles API section above.
+The remainder of this section covers standalone use of `_output/bin/profiler`. For service-based continuous profiling, see the Profiling API section above.
 
 ## 🎯 Use Cases
 

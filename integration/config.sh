@@ -20,6 +20,9 @@ set -euo pipefail
 write_default_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << 'EOF'
 BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
+
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
 EOF
 }
 
@@ -27,6 +30,9 @@ EOF
 write_include_filter_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << 'EOF'
 BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
+
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
 
 [MetricCollector.Vmstat]
     IncludedOnHost = "pgfault"
@@ -51,6 +57,9 @@ EOF
 write_exclude_filter_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << 'EOF'
 BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
+
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
 
 [MetricCollector.Vmstat]
     IncludedOnHost = ""
@@ -77,6 +86,9 @@ write_net_rx_latency_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "dropwatch"]
 
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
 [EventTracing.NetRxLatency]
     Driver2NetRx = 1
     Driver2TCP = 1
@@ -94,6 +106,9 @@ write_sched_tick_config_with_threshold() {
 
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "diskio", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras", "runqlat", "sockstat", "softirq", "softlockup", "tcp_memory", "tcp_retransmit"]
+
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
 
 [EventTracing.SchedTick]
     IntervalThreshold = ${interval_threshold}
@@ -118,6 +133,9 @@ write_cpusys_autotracing_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "dload", "dropwatch", "hungtask", "iolatency", "iotracing", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tracing_status"]
 
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
 [AutoTracing.CPUSys]
     SysThreshold = 45
     DeltaSysThreshold = 20
@@ -133,6 +151,9 @@ EOF
 write_iotracing_autotracing_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["arp", "ascend_npu", "cpu_stat", "cpu_util", "cpuidle", "cpusys", "dload", "dropwatch", "hungtask", "iolatency", "loadavg", "memburst", "memory_buddyinfo", "memory_events", "memory_free", "memory_others", "memory_reclaim", "memory_reclaim_events", "memory_vmstat", "metax_gpu", "mountpoint_perm", "net_rx_latency", "netdev", "netdev_bonding_lacp", "netdev_dcb", "netdev_events", "netdev_hw", "netdev_qdisc", "netdev_rdma_link", "netdev_txqueue_timeout", "netstat", "oom", "ras", "runqlat", "sched_tick", "sockstat", "softirq", "softlockup", "tcp_memory", "tracing_status"]
+
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
 
 [AutoTracing.IOTracing]
     RbpsThreshold = 1000
@@ -157,6 +178,9 @@ write_apiserver_apis_config() {
 [Jobs]
     StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
 
+[Agent.Auth]
+    BearerToken = "integration-node-token"
+
 [[Auth.Users]]
     ID = "integration-admin-user"
     BearerToken = "${API_TOKEN}"
@@ -165,13 +189,16 @@ EOF
 }
 
 # The caller owns the API port and bearer token.
-write_apiserver_profile_disabled_config() {
+write_apiserver_without_profile_storage_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.conf" << EOF
 [APIServer]
     ListenAddress = "127.0.0.1:${APISERVER_PORT}"
 
 [Jobs]
     StoreDSN = "${HUATUO_BAMAI_TEST_TMPDIR}/jobs.db"
+
+[Agent.Auth]
+    BearerToken = "integration-node-token"
 
 [[Auth.Users]]
     ID = "integration-admin-user"
@@ -184,6 +211,13 @@ EOF
 write_continuous_profiling_bamai_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
 BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing", "dropwatch"]
+
+[HTTPServer.Auth]
+    BearerToken = "integration-node-token"
+
+[Profiling]
+    AggregationIntervalSeconds = ${PROFILE_INTERVAL}
+    MaxConcurrentProcesses = 10
 
 [Storage.Elasticsearch]
     Address = "${ELASTICSEARCH_ADDR}"
@@ -216,11 +250,12 @@ write_continuous_profiling_apiserver_config() {
 [[Auth.Users]]
     ID = "integration-readonly-user"
     BearerToken = "${OTHER_API_TOKEN}"
-    Permissions = ["/v1/profiles", "/v1/profiles/**"]
+    Permissions = ["/v1/profiling", "/v1/profiling/**"]
+
+[Agent.Auth]
+    BearerToken = "integration-node-token"
 
 [Profiling]
-    AggregationIntervalSeconds = ${PROFILE_INTERVAL}
-    MaxConcurrentProfilerProcesses = 1
     DashboardBaseURL = "http://grafana.invalid/d"
 EOF
 }

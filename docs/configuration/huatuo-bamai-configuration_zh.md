@@ -139,13 +139,6 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
     # JavaToolPath = "/opt/async-profiler"
     # PythonToolPath = "/opt/py-spy"
 
-# 旧 Task API 使用的本地追踪任务配置。
-[Tasks]
-    # - MaxConcurrent
-    # Maximum number of concurrent tasks.
-    # Default: 10
-    #
-    # MaxConcurrent = 10
 ```
 
 - **ListenAddress** 使用 `host:port` 格式，主机为空时监听所有接口。
@@ -157,7 +150,6 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
   合并为一个通用 timeout。
 - **Profiling.JavaToolPath** 和 **Profiling.PythonToolPath** 只在请求相应语言时需要；
   Node 环境不满足要求时拒绝请求且不创建 Operation。
-- **Tasks.MaxConcurrent** 仅作用于待删除的旧 Task API。
 
 生成的 Node API 通过 `GET /openapi.json` 提供协议文档。Profiling 和 Tracing 的
 Start、Get、Stop 路由必须携带服务 Bearer Token；健康、指标、版本和 OpenAPI 文档

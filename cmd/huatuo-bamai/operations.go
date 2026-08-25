@@ -68,6 +68,8 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 			time.Second,
 		MaxConcurrentProcesses:  cfg.Profiling.MaxConcurrentProcesses,
 		CommandOutputLimitBytes: cfg.Profiling.CommandOutputLimitBytes,
+		ToolstreamServer:        d.toolstreamServer,
+		ResultPublisher:         d.publications,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create profiling operation service: %w", err)

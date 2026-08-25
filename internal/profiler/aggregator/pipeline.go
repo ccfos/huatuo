@@ -23,7 +23,7 @@ import (
 
 	"huatuo-bamai/internal/log"
 	profctx "huatuo-bamai/internal/profiler/context"
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/internal/randomid"
 )
 
 const pipelineQueueCapacity = 65536
@@ -67,7 +67,7 @@ func NewPipeline(pctx *profctx.ProfilerContext, aggr Aggregator) *Pipeline {
 		pctx:         pctx,
 		aggr:         aggr,
 		queue:        make(chan any, pipelineQueueCapacity),
-		tracerID:     resolveTracerID(pctx.TracerID, tracing.AllocTaskID),
+		tracerID:     resolveTracerID(pctx.TracerID, randomid.New),
 		aggrInterval: aggrInterval,
 		stopCh:       make(chan struct{}),
 		doneCh:       make(chan struct{}),

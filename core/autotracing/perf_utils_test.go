@@ -21,13 +21,13 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/pkg/tracing"
+	internalconfig "huatuo-bamai/internal/config"
 )
 
 func TestRunPerfCommand(t *testing.T) {
-	originalTaskBinDir := tracing.TaskBinDir
+	originalCoreBinDir := internalconfig.CoreBinDir
 	t.Cleanup(func() {
-		tracing.TaskBinDir = originalTaskBinDir
+		internalconfig.CoreBinDir = originalCoreBinDir
 	})
 
 	tests := []struct {
@@ -87,16 +87,16 @@ exit 2
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			taskBinDir := t.TempDir()
-			tracing.TaskBinDir = taskBinDir
+			coreBinDir := t.TempDir()
+			internalconfig.CoreBinDir = coreBinDir
 			if err := os.WriteFile(
-				filepath.Join(taskBinDir, "perf"),
+				filepath.Join(coreBinDir, "perf"),
 				[]byte(tt.script),
 				0o600,
 			); err != nil {
 				t.Fatalf("os.WriteFile() error = %v", err)
 			}
-			if err := os.Chmod(filepath.Join(taskBinDir, "perf"), 0o700); err != nil {
+			if err := os.Chmod(filepath.Join(coreBinDir, "perf"), 0o700); err != nil {
 				t.Fatalf("os.Chmod() error = %v", err)
 			}
 

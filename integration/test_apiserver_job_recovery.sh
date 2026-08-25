@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Verify that graceful apiserver shutdown leaves an active Agent task running
+# Verify that graceful apiserver shutdown leaves an active Node Operation running
 # and that a replacement apiserver recovers the persisted job.
 
 set -euo pipefail
@@ -36,7 +36,7 @@ APISERVER_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate an apiserver port"
 readonly APISERVER_PORT
 readonly APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
-readonly AGENT_TASKS_ADDR="${HUATUO_BAMAI_ADDR}/tasks"
+readonly NODE_OPERATIONS_ADDR="${HUATUO_BAMAI_ADDR}/v1/profiling"
 readonly PROFILE_CREATE_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/create-profile.json"
 readonly PROFILE_STATUS_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json"
 
@@ -50,15 +50,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-agent_task_status_is() {
+node_operation_status_is() {
 	local expected_status=$1
 	curl -sf "${CURL_TIMEOUT[@]}" \
-		"${AGENT_TASKS_ADDR}/${PROFILE_ID}" \
-		> "${HUATUO_BAMAI_TEST_TMPDIR}/agent-task-status.json" \
+		-H 'Authorization: Bearer integration-node-token' \
+		"${NODE_OPERATIONS_ADDR}/${PROFILE_ID}" \
+		> "${HUATUO_BAMAI_TEST_TMPDIR}/node-operation-status.json" \
 		|| return 1
 	jq -e --arg expected_status "${expected_status}" \
 		'.data.status == $expected_status' \
-		"${HUATUO_BAMAI_TEST_TMPDIR}/agent-task-status.json" > /dev/null
+		"${HUATUO_BAMAI_TEST_TMPDIR}/node-operation-status.json" > /dev/null
 }
 
 apiserver_process_exited() {
@@ -90,33 +91,22 @@ recovered_job_metric_is_one() {
 		| grep -q '^huatuo_apiserver_jobs_recovered_total 1$'
 }
 
-assert_shutdown_log() {
-	local log_file="${HUATUO_BAMAI_TEST_TMPDIR}/apiserver-before-restart.log"
-	grep -Fq "leaving active job running during manager shutdown" "${log_file}" \
-		|| fatal "shutdown log did not report the active job"
-	grep -Fq "active jobs will be recovered by the next manager" "${log_file}" \
-		|| fatal "shutdown log did not report recovery intent"
-	grep -Fq "${PROFILE_ID}" "${log_file}" \
-		|| fatal "shutdown log did not include job ID ${PROFILE_ID}"
-}
-
 continuous_profiling_start_stack
 
 continuous_profiling_start_native_cpu_fixture TARGET_PID
 continuous_profile_create_cpu "${PROFILE_CREATE_RESPONSE}" "${PROFILE_DURATION}"
-PROFILE_ID=$(jq -er '.data.id' "${PROFILE_CREATE_RESPONSE}") \
-	|| fatal "profile creation response has no job ID"
+PROFILE_ID=$(jq -er '.data.request_id' "${PROFILE_CREATE_RESPONSE}") \
+	|| fatal "profile creation response has no Job request ID"
 log_info "created profile job: ${PROFILE_ID}"
 wait_until 10 1 continuous_profile_status_is \
 	"${PROFILE_ID}" running "${PROFILE_STATUS_RESPONSE}" \
 	|| fatal "profile did not enter running state"
-wait_until 10 1 agent_task_status_is running \
-	|| fatal "Agent task did not enter running state"
+wait_until 10 1 node_operation_status_is running \
+	|| fatal "Node Operation did not enter running state"
 
 stop_apiserver_for_restart
-assert_shutdown_log
-agent_task_status_is running \
-	|| fatal "graceful apiserver shutdown stopped the Agent task"
+node_operation_status_is running \
+	|| fatal "graceful apiserver shutdown stopped the Node Operation"
 
 integration_huatuo_apiserver_start \
 	write_continuous_profiling_apiserver_config

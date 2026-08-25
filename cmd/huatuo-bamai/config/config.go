@@ -69,11 +69,6 @@ type StorageConfig struct {
 	LocalFile     LocalFileConfig
 }
 
-// TasksConfig controls locally running tracing tasks.
-type TasksConfig struct {
-	MaxConcurrent int `default:"10"`
-}
-
 // OperationsConfig controls the shared Node operation lifecycle.
 type OperationsConfig struct {
 	MaxConcurrent                  int `default:"10"`
@@ -108,7 +103,6 @@ type Config struct {
 	Runtime    RuntimeConfig
 	HTTPServer HTTPServerConfig
 	Storage    StorageConfig
-	Tasks      TasksConfig
 	Operations OperationsConfig
 	Profiling  ProfilingConfig
 
@@ -164,9 +158,6 @@ func (c *Config) Validate() error {
 	}
 	if err := c.HTTPServer.Validate(); err != nil {
 		return fmt.Errorf("validating HTTP server config: %w", err)
-	}
-	if err := c.Tasks.Validate(); err != nil {
-		return fmt.Errorf("validating tasks config: %w", err)
 	}
 	if err := c.Operations.Validate(); err != nil {
 		return fmt.Errorf("validating operations config: %w", err)
@@ -227,13 +218,8 @@ func (c HTTPServerConfig) Validate() error {
 	if strings.TrimSpace(c.Auth.BearerToken) == "" {
 		return errors.New("auth bearer token is required")
 	}
-	return nil
-}
-
-// Validate rejects invalid task concurrency.
-func (c TasksConfig) Validate() error {
-	if c.MaxConcurrent <= 0 {
-		return errors.New("maximum concurrent tasks must be greater than zero")
+	if strings.ContainsAny(c.Auth.BearerToken, " \t\r\n") {
+		return errors.New("auth bearer token must not contain whitespace")
 	}
 	return nil
 }

@@ -26,20 +26,14 @@ import (
 )
 
 func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {
-	var profileQueryService profiling.ProfileQueryService
-	if d.profileQueryService != nil {
-		profileQueryService = d.profileQueryService
-	}
-
 	runningServer, err := handlers.Start(&handlers.ServerOptions{
 		Addr:           d.opts.Config.APIServer.ListenAddress,
 		PromReg:        d.metrics,
 		JobManager:     d.jobManager,
-		ProfileService: profileQueryService,
+		ProfileService: d.profileQueryService,
+		Publications:   d.publications,
 		ProfilingConfig: profiling.Config{
-			AggregationIntervalSeconds:     d.opts.Config.Profiling.AggregationIntervalSeconds,
-			MaxConcurrentProfilerProcesses: d.opts.Config.Profiling.MaxConcurrentProfilerProcesses,
-			DashboardBaseURL:               d.opts.Config.Profiling.DashboardBaseURL,
+			DashboardBaseURL: d.opts.Config.Profiling.DashboardBaseURL,
 		},
 		AuthUsers:   authUsers(d.opts.Config.Auth.Users),
 		EnablePProf: d.opts.EnablePProf,
@@ -53,7 +47,11 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 			if d.profileQueryService == nil {
 				return err
 			}
-			return errors.Join(err, d.profileQueryService.Ready(ctx))
+			return errors.Join(
+				err,
+				d.profileQueryService.Ready(ctx),
+				d.publications.Ready(ctx),
+			)
 		},
 	})
 	if err != nil {
