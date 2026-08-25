@@ -30,6 +30,7 @@ import (
 	"github.com/ccfos/huatuo/internal/memsnap"
 	gomemsnap "github.com/ccfos/huatuo/internal/memsnap/providers/golang"
 	"github.com/ccfos/huatuo/internal/memsnap/providers/java"
+	"github.com/ccfos/huatuo/internal/memsnap/providers/python"
 )
 
 // Options uses the before-OOM budgets as defaults for zero-valued fields.
@@ -306,6 +307,8 @@ func newProvider(language memsnap.Language) memsnap.Provider {
 		return gomemsnap.NewProvider()
 	case memsnap.LanguageJava:
 		return java.NewProvider()
+	case memsnap.LanguagePython:
+		return python.NewProvider()
 	default:
 		return nil
 	}
