@@ -129,6 +129,22 @@ func ContainerCgroupPathByID(containerID string) (string, error) {
 	return cgroupPath, nil
 }
 
+// ContainerMemoryCgroupPathByID resolves the memory hierarchy without a kubelet refresh.
+func ContainerMemoryCgroupPathByID(containerID string) (string, error) {
+	paths, err := containerCgroupPathsByID(containerID)
+	if err != nil {
+		return "", err
+	}
+	path := paths.Controllers["memory"]
+	if cgroups.CgroupMode() == cgroups.Unified {
+		path = paths.Unified
+	}
+	if path == "" {
+		return "", fmt.Errorf("container %q has no memory cgroup path", containerID)
+	}
+	return path, nil
+}
+
 // https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/cm/cgroup_manager_linux.go#L81
 func containerCgroupPath(containerID string, pod *corev1.Pod) (cgroupPath, error) {
 	paths := []string{defaultNodeCgroupName}
