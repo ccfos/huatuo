@@ -29,6 +29,7 @@ import (
 	"github.com/elastic/go-elasticsearch/v8/esapi"
 	"github.com/elastic/go-elasticsearch/v8/esutil"
 	escount "github.com/elastic/go-elasticsearch/v8/typedapi/core/count"
+	esdeletebyquery "github.com/elastic/go-elasticsearch/v8/typedapi/core/deletebyquery"
 	esget "github.com/elastic/go-elasticsearch/v8/typedapi/core/get"
 	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
 
@@ -70,8 +71,9 @@ type Storage struct {
 }
 
 var (
-	_ driver.Backend   = (*Storage)(nil)
-	_ driver.SyncSaver = (*Storage)(nil)
+	_ driver.Backend      = (*Storage)(nil)
+	_ driver.SyncSaver    = (*Storage)(nil)
+	_ driver.QueryDeleter = (*Storage)(nil)
 )
 
 func init() {
@@ -227,6 +229,56 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 		return responseError("delete document", s.index, res)
 	}
 	return nil
+}
+
+// DeleteByQuery synchronously removes all matching records and refreshes the
+// index before returning.
+func (s *Storage) DeleteByQuery(ctx context.Context, query driver.Query) (int64, error) {
+	body, err := buildDeleteByQueryRequest(query)
+	if err != nil {
+		return 0, err
+	}
+
+	refresh := true
+	waitForCompletion := true
+	req := esapi.DeleteByQueryRequest{
+		Index:             []string{s.index},
+		Body:              bytes.NewReader(body),
+		Refresh:           &refresh,
+		WaitForCompletion: &waitForCompletion,
+	}
+	res, err := req.Do(driver.WithContext(ctx), s.transport)
+	if err != nil {
+		return 0, fmt.Errorf("elasticsearch backend delete by query %s: %w", s.index, err)
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		return 0, responseError("delete documents by query", s.index, res)
+	}
+
+	var payload esdeletebyquery.Response
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		return 0, fmt.Errorf(
+			"elasticsearch backend delete by query %s: decode: %w",
+			s.index,
+			err,
+		)
+	}
+	if payload.TimedOut != nil && *payload.TimedOut {
+		return 0, fmt.Errorf("elasticsearch backend delete by query %s timed out", s.index)
+	}
+	if len(payload.Failures) != 0 {
+		return 0, fmt.Errorf(
+			"elasticsearch backend delete by query %s returned %d failures",
+			s.index,
+			len(payload.Failures),
+		)
+	}
+	if payload.Deleted == nil {
+		return 0, nil
+	}
+	return *payload.Deleted, nil
 }
 
 func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, error) {

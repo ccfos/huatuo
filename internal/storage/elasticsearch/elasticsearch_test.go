@@ -81,6 +81,8 @@ func newMockElasticsearchServer() *mockElasticsearchServer {
 			mockServer.handleSearch(w, r, parts[0])
 		case len(parts) == 2 && parts[1] == "_count":
 			mockServer.handleCount(w, r, parts[0])
+		case len(parts) == 2 && parts[1] == "_delete_by_query":
+			mockServer.handleDeleteByQuery(w, r, parts[0])
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"route not found"}`))
@@ -369,6 +371,29 @@ func (m *mockElasticsearchServer) handleCount(w http.ResponseWriter, r *http.Req
 
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{"count": len(docs)})
+}
+
+func (m *mockElasticsearchServer) handleDeleteByQuery(
+	w http.ResponseWriter,
+	r *http.Request,
+	index string,
+) {
+	var body map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	documents := m.matchDocumentsLocked(index, body["query"])
+	for _, document := range documents {
+		delete(m.indexes[index], document.ID)
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"deleted":   len(documents),
+		"failures":  []any{},
+		"timed_out": false,
+	})
 }
 
 func (m *mockElasticsearchServer) queryDocumentsLocked(index string, body map[string]any) []mockElasticsearchDocument {
@@ -801,6 +826,32 @@ func TestBuildSearchRequest(t *testing.T) {
 	}
 }
 
+func TestBuildDeleteByQueryRequest(t *testing.T) {
+	if _, err := buildDeleteByQueryRequest(driver.Query{}); !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("buildDeleteByQueryRequest(empty) error = %v, want ErrInvalidQuery", err)
+	}
+
+	body, err := buildDeleteByQueryRequest(driver.Query{Filters: []driver.Filter{
+		{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"},
+	}})
+	if err != nil {
+		t.Fatalf("buildDeleteByQueryRequest() error = %v", err)
+	}
+	query, _ := decodeJSONMap(t, body)["query"].(map[string]any)
+	boolQuery, _ := query["bool"].(map[string]any)
+	if len(toAnySlice(boolQuery["filter"])) != 1 {
+		t.Fatalf("delete filter = %#v, want one clause", boolQuery["filter"])
+	}
+
+	_, err = buildDeleteByQueryRequest(driver.Query{
+		Filters: []driver.Filter{{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"}},
+		Limit:   1,
+	})
+	if !errors.Is(err, driver.ErrUnsupportedOp) {
+		t.Fatalf("buildDeleteByQueryRequest(paginated) error = %v, want ErrUnsupportedOp", err)
+	}
+}
+
 // TestElasticsearchBackendCRUD covers ES backend initialization and basic CRUD: verifies index creation, document save, lookup by ID, delete of existing and missing documents match the unified storage layer contract.
 func TestElasticsearchBackendCRUD(t *testing.T) {
 	server := newMockElasticsearchServer()
@@ -858,6 +909,39 @@ func TestElasticsearchBackendCRUD(t *testing.T) {
 
 	if err := backend.Delete(t.Context(), "job-es-missing"); err != nil {
 		t.Errorf("Delete() for missing id returned error: %v", err)
+	}
+}
+
+func TestElasticsearchBackendDeleteByQuery(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+	for _, record := range []driver.Record{
+		{ID: "profile-1", Data: []byte(`{"tracer_id":"job-1"}`)},
+		{ID: "profile-2", Data: []byte(`{"tracer_id":"job-1"}`)},
+		{ID: "profile-3", Data: []byte(`{"tracer_id":"job-2"}`)},
+	} {
+		if err := backend.SaveSync(t.Context(), record); err != nil {
+			t.Fatalf("SaveSync(%q) error = %v", record.ID, err)
+		}
+	}
+
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.Query{Filters: []driver.Filter{
+		{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"},
+	}})
+	if err != nil {
+		t.Fatalf("DeleteByQuery() error = %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("DeleteByQuery() deleted = %d, want 2", deleted)
+	}
+	if _, err := backend.Get(t.Context(), "profile-1"); !errors.Is(err, driver.ErrNotFound) {
+		t.Fatalf("Get(deleted) error = %v, want ErrNotFound", err)
+	}
+	if _, err := backend.Get(t.Context(), "profile-3"); err != nil {
+		t.Fatalf("Get(retained) error = %v", err)
 	}
 }
 

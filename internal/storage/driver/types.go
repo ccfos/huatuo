@@ -148,3 +148,9 @@ type Creator interface {
 type SyncSaver interface {
 	SaveSync(ctx context.Context, rec Record) error
 }
+
+// QueryDeleter is implemented by backends that can synchronously delete every
+// record matching a query.
+type QueryDeleter interface {
+	DeleteByQuery(ctx context.Context, query Query) (int64, error)
+}

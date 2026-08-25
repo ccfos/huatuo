@@ -148,6 +148,28 @@ func (s *Store[T]) Delete(ctx context.Context, id string) error {
 	return s.backend.Delete(driver.WithContext(ctx), id)
 }
 
+// DeleteByQuery synchronously deletes every record matching q.
+func (s *Store[T]) DeleteByQuery(ctx context.Context, q driver.Query) (int64, error) {
+	if err := s.validateQuery(q); err != nil {
+		return 0, err
+	}
+	if len(q.Filters) == 0 {
+		return 0, fmt.Errorf(
+			"%w: query deletion requires at least one filter",
+			driver.ErrInvalidQuery,
+		)
+	}
+	deleter, ok := s.backend.(driver.QueryDeleter)
+	if !ok {
+		return 0, fmt.Errorf(
+			"%w: storage backend %q does not support query deletion",
+			driver.ErrUnsupportedOp,
+			s.Name,
+		)
+	}
+	return deleter.DeleteByQuery(driver.WithContext(ctx), q)
+}
+
 // Close releases backend resources and flushes any pending writes. The store
 // must not be used after Close returns.
 func (s *Store[T]) Close(ctx context.Context) error {

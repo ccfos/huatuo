@@ -51,6 +51,9 @@ type (
 			} `json:"terms"`
 		} `json:"aggregations"`
 	}
+	deleteByQueryBody struct {
+		Query *types.Query `json:"query"`
+	}
 )
 
 func validateFieldName(field string) error {
@@ -102,6 +105,27 @@ func buildCountRequest(q driver.Query) ([]byte, error) {
 		return nil, err
 	}
 	return json.Marshal(escount.Request{Query: query})
+}
+
+func buildDeleteByQueryRequest(q driver.Query) ([]byte, error) {
+	if len(q.Filters) == 0 {
+		return nil, fmt.Errorf(
+			"%w: query deletion requires at least one filter",
+			driver.ErrInvalidQuery,
+		)
+	}
+	if q.Limit != 0 || q.Offset != 0 || len(q.Sorts) != 0 {
+		return nil, fmt.Errorf(
+			"%w: query deletion does not support pagination or sorting",
+			driver.ErrUnsupportedOp,
+		)
+	}
+
+	query, err := buildQuery(q.Filters)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(deleteByQueryBody{Query: query})
 }
 
 func buildValuesRequest(field string, q driver.Query, size int) ([]byte, error) {

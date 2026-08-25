@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"huatuo-bamai/internal/storage/driver"
@@ -106,6 +107,22 @@ type testBackend struct {
 	lastQuery    driver.Query
 	valuesField  string
 	valuesSize   int
+}
+
+type queryDeleteBackend struct {
+	*testBackend
+	deleteByQueryErr   error
+	deleteByQueryCount int64
+	deleteByQueryCalls int
+}
+
+func (b *queryDeleteBackend) DeleteByQuery(
+	_ context.Context,
+	query driver.Query,
+) (int64, error) {
+	b.deleteByQueryCalls++
+	b.lastQuery = query
+	return b.deleteByQueryCount, b.deleteByQueryErr
 }
 
 func (b *testBackend) Init(_ context.Context, collection string, indexes []driver.Index) error {
@@ -560,6 +577,64 @@ func TestStoreDelete(t *testing.T) {
 			err = store.Delete(t.Context(), "job-20260409")
 			tc.validate(t, err, tc.backend)
 		})
+	}
+}
+
+func TestStoreDeleteByQuery(t *testing.T) {
+	query := driver.Query{Filters: []driver.Filter{
+		{Field: "status", Op: driver.OpEq, Value: "staging"},
+	}}
+	backend := &queryDeleteBackend{
+		testBackend:        &testBackend{},
+		deleteByQueryCount: 3,
+	}
+	store, err := NewStore[testEntity](
+		t.Context(),
+		"query-deleter",
+		backend,
+		"jobs",
+		newTestMapper(),
+	)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	deleted, err := store.DeleteByQuery(t.Context(), query)
+	if err != nil {
+		t.Fatalf("DeleteByQuery() error = %v", err)
+	}
+	if deleted != 3 || backend.deleteByQueryCalls != 1 {
+		t.Fatalf(
+			"DeleteByQuery() = (%d, calls=%d), want (3, 1)",
+			deleted,
+			backend.deleteByQueryCalls,
+		)
+	}
+	if !reflect.DeepEqual(backend.lastQuery, query) {
+		t.Fatalf("DeleteByQuery() query = %#v, want %#v", backend.lastQuery, query)
+	}
+}
+
+func TestStoreDeleteByQueryRejectsUnsafeOrUnsupportedQueries(t *testing.T) {
+	store, err := NewStore[testEntity](
+		t.Context(),
+		"unsupported",
+		&testBackend{},
+		"jobs",
+		newTestMapper(),
+	)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	if _, err := store.DeleteByQuery(t.Context(), driver.Query{}); !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("DeleteByQuery(empty) error = %v, want ErrInvalidQuery", err)
+	}
+	_, err = store.DeleteByQuery(t.Context(), driver.Query{Filters: []driver.Filter{
+		{Field: "status", Op: driver.OpEq, Value: "staging"},
+	}})
+	if !errors.Is(err, driver.ErrUnsupportedOp) {
+		t.Fatalf("DeleteByQuery(unsupported) error = %v, want ErrUnsupportedOp", err)
 	}
 }
 

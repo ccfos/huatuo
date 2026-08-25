@@ -39,6 +39,8 @@ func validateConfig(config *Config) error {
 		return errors.New("create node profiling service: node API address is required")
 	case config.AggregationInterval <= 0:
 		return errors.New("create node profiling service: aggregation interval must be positive")
+	case config.ResultCleanupTimeout <= 0:
+		return errors.New("create node profiling service: result cleanup timeout must be positive")
 	case config.MaxConcurrentProcesses < 0:
 		return errors.New("create node profiling service: maximum concurrent processes must not be negative")
 	case config.CommandOutputLimitBytes <= 0:

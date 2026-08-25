@@ -43,6 +43,7 @@ type Config struct {
 	JavaToolPath            string
 	PythonToolPath          string
 	AggregationInterval     time.Duration
+	ResultCleanupTimeout    time.Duration
 	MaxConcurrentProcesses  int
 	CommandOutputLimitBytes int
 	ToolstreamServer        *toolstream.Server
@@ -121,6 +122,7 @@ func (s *Service) Start(
 			s.config.ToolstreamServer,
 			s.config.ResultPublisher,
 			request.RequestID,
+			s.config.ResultCleanupTimeout,
 		),
 	})
 }
