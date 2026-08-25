@@ -1300,6 +1300,13 @@ Go 版本均不声明已通过生产验证。下表仅列出实验性实现覆�
 | Java | Java 8+，64 位小端 ELF HotSpot，G1 GC | 依赖目标 JVM 暴露的 VMStruct/VMType 元数据；非 G1 或元数据布局不可识别时标记为 `unavailable` |
 | Python | CPython 3.8–3.14，64 位小端 ELF | 必须能从可执行文件或共享库定位 `_PyRuntime`；版本优先从 `Py_Version` 获取，缺失时回退到带版本的 `libpython3.x` 映射路径；其他 Python 实现不支持 |
 
+Java 通过 `/proc/<pid>/root` 下的映射路径读取 `libjvm.so`，
+不要求访问 `map_files`。JDK release 读取仍有大小限制，并拒绝符号链接
+和特殊文件。文件缺失、无权限或被读取限制拒绝均不使快照失败：继续尝试
+上级目录，仍取不到版本时回退到进程内的 VM release 信息；两者均不可用
+时省略版本信息，不阻断采集。取消和超时通过读取之间的检查协作生效，
+不能保证中断已经进入内核的文件 I/O。
+
 启用前应针对实际部署的运行时构建和 cgroup 模式，验证真实内存压力
 触发采集，并得到非空的 `complete`/`partial` 快照。缺少依赖、跳过测试
 或返回 `unavailable` 均不构成兼容性验证证据；当前不提供必跑的运行时

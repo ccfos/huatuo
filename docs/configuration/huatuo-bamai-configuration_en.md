@@ -1306,6 +1306,15 @@ implementation inventory, not a supported-version or release-certification matri
 | Java | Java 8+, little-endian 64-bit ELF HotSpot with G1 GC | Requires VMStruct/VMType metadata from the target JVM; non-G1 or unrecognized metadata layouts are `unavailable` |
 | Python | CPython 3.8–3.14, little-endian 64-bit ELF | `_PyRuntime` must be discoverable in the executable or a shared library; version discovery uses `Py_Version` or falls back to a versioned `libpython3.x` mapping; other Python implementations are unsupported |
 
+Java reads `libjvm.so` through its mapped pathname under `/proc/<pid>/root`,
+without requiring `map_files` access. JDK release reads remain bounded and reject
+symlinks and special files. Missing, unreadable, or rejected release files do not
+fail the snapshot: lookup continues in parent directories, then falls back to
+in-process VM release metadata. If neither source is available, the version is
+omitted without blocking capture. Cancellation and timeout are checked
+cooperatively between reads; they cannot guarantee interruption of file I/O
+already executing in the kernel.
+
 Before enabling this event, validate the exact runtime build and cgroup mode
 with a real pressure-triggered capture and a non-empty `complete`/`partial`
 snapshot. Missing prerequisites, skipped tests, and `unavailable` results are
