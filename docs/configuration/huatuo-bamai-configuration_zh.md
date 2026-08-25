@@ -921,6 +921,52 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
   示例：`IssuesList = [["ignored_process", "comm=ignored_process"], ["neighbor_cleanup", "neigh_invalidate/"]]`
 
+#### 8.9 OOM 前运行时内存快照
+
+`before_oom_memsnap` 默认开启；设置 `Enabled = false` 并重启
+huatuo-bamai，或将该事件加入全局 `BlackList`，即可关闭。
+该功能在容器内存压力通知后尝试采集 Go、HotSpot 或 CPython
+运行时快照，不保证在 OOM 前完成。候选进程按近似内核 OOM 分数选择。
+
+```toml
+[EventTracing.BeforeOOMMemsnap]
+    Enabled = true
+    # ThresholdPercent = 90
+    # CooldownSeconds = 300
+    # GoTimeoutMS = 100
+    # JavaTimeoutMS = 2000
+    # PythonTimeoutMS = 2000
+    # TopK = 10
+```
+
+注释中的数值为默认值。
+
+| 参数 | 含义 |
+|------|------|
+| Enabled | 是否启用，默认 `true`；修改后需重启 |
+| ThresholdPercent | 采集要求的内存使用量与限额比例，范围 1–100 |
+| CooldownSeconds | 成功或失败采集后的全局冷却时间，必须为正数 |
+| GoTimeoutMS / JavaTimeoutMS / PythonTimeoutMS | 对应语言 provider 的协作式采集预算，单位毫秒，必须为正数 |
+| TopK | 最多请求的排序条目数，范围 1–100；最终 JSON 上限为 512 KiB，超限会裁剪 |
+
+运行时识别另有固定的 1 秒预算，保存时间不计入采集预算。
+超时不能中断正在执行的同步读取，因此不是整个操作的耗时上限。
+
+**触发条件：**
+
+- **cgroup v1**：通过 `cgroup.event_control` 注册 `ThresholdPercent` 对应的内存阈值。
+- **cgroup v2**：监听 `memory.events.local` 的 `high` 计数增长
+  （文件不存在时使用 `memory.events`），再检查
+  `memory.current / memory.max` 是否达到配置比例。初次发现只建立计数基线。
+  本功能不设置 `memory.high`；为 `max` 时不会触发，也不会改用
+  `memory.max` 通知。
+
+容器增删复用共享 CSS 通知，不携带完整路径。OOM 在自己的处理线程中通过
+InitPid 读取实际 memory cgroup 路径并保存；路径暂不可用或通知丢失时，
+复用延迟目录扫描恢复监听。恢复前可能漏掉内存压力触发。
+
+部署限制和结果查询见第 14 节。
+
 ### 9. 指标采集器配置
 
 该 section 定义各类系统与网络指标的采集规则。所有 `Included`/`Excluded` 字段底层共用同一套过滤逻辑（正则表达式）：
@@ -1223,3 +1269,69 @@ huatuo-bamai --region <region> [选项]
 - **兼容性**：配置参数受内核版本、硬件环境影响，建议结合 HUATUO 官方文档验证。
 
 通过合理配置 huatuo-bamai.conf，可充分发挥 HUATUO 在内核级异常检测与智能追踪方面的优势，有效提升云原生系统的可观测性和故障诊断效率。如需针对特定场景的深度定制，欢迎提供更多环境细节进一步讨论。
+
+### 14. OOM 前内存快照部署与排障
+
+#### 14.1 部署条件与限制
+
+- 要求 Linux、memory cgroup v1/v2、宿主机 PID/procfs/cgroup 视图、
+  kubelet 元数据、内核 BTF 及加载和挂载 BPF 的权限。
+- 需读取目标进程内存（通常为 `CAP_SYS_PTRACE`）、访问 procfs/cgroup；
+  v1 还需写入 `cgroup.event_control`。安全策略可能阻止访问。
+- 仅选择该 cgroup 的直接成员，排除 `oom_score_adj = -1000` 的进程。
+  超过 4096 个 PID、64 KiB PID 数据或 1 秒预算时跳过选择。
+- 最多扫描 8192 个目录、监听 4096 个容器。通知丢失或注册失败时，
+  延迟约 1 秒补扫描，每轮最多三次；正常不周期扫描。
+  告警可能意味着部分容器未被覆盖，补扫描不能找回已遗漏的压力事件。
+- 身份校验失败或容器元数据缺失时，不采集或不保存。
+
+下表为实验性实现范围，不代表所有版本均已验证：
+
+| 运行时 | 实验性范围 | 主要限制 |
+|--------|------------|----------|
+| Go | Go 1.18–1.26，64 位 ELF | 去符号二进制的指令恢复仅支持 x86-64 |
+| Java | Java 8+，64 位小端 ELF HotSpot，G1 GC | 依赖可识别的 VMStruct/VMType 元数据 |
+| Python | CPython 3.8–3.14，64 位小端 ELF | 需能定位 `_PyRuntime` 并识别版本和布局 |
+
+已记录的人工验证：x86-64 Linux、cgroup v1（legacy/hybrid）、Go 1.24.0。
+请在实际环境验证压力触发与非空快照；跳过测试或返回 `unavailable` 不代表兼容。
+
+#### 14.2 输出与排障
+
+Info 日志记录监听状态，以及采集各阶段的开始、结束、耗时和结果。
+按容器/PID 找到采集记录，用 `capture_id` 关联各阶段。
+若只有开始而没有结束，使用 bamai 的 `/debug/pprof/goroutine?debug=2`
+（需相应权限）确认阻塞栈；没有日志不代表监听已停止。
+
+`tracer_data.process_memory` 每次触发读取一次 `/proc/<pid>/status`，
+也适用于 C/C++。运行时快照失败不影响已取得的摘要；
+身份变化或任务取消时丢弃结果。不提供 PSS、映射排名或分配调用栈。
+
+| 字段（字节） | 来源 / 含义 |
+|------|--------|
+| `virtual_bytes` | VmSize，虚拟地址空间，不是实际物理内存占用 |
+| `rss_bytes` | VmRSS，常驻内存 |
+| `rss_anon_bytes` | RssAnon，匿名常驻内存 |
+| `rss_file_bytes` | RssFile，文件映射常驻内存 |
+| `rss_shmem_bytes` | RssShmem，共享内存常驻量 |
+| `swap_bytes` | VmSwap，私有匿名内存换出量，不含 shmem 换出 |
+| `page_table_bytes` | VmPTE，页表内存 |
+
+缺失或无效字段省略，不填 0；状态为 `partial`，完全无法读取时为
+`unavailable`，附带 `reason`。这些近似值不是 OOM 瞬间快照，也不能直接证明泄漏；
+候选进程不保证是最终 OOM victim。
+
+结果沿用现有 `[Storage]` 配置，见第 6 节，无需另配存储。
+LocalFile 文件名为 `before_oom_memsnap`；在 `tracing_documents` 中可按
+`tracer_name = before_oom_memsnap`、`tracer_type = event` 查询。
+
+查看 `tracer_data.snapshot.status`（`complete`、`partial`、
+`unavailable`、`failed`），结合 `reason`、`runtime_version`、
+`duration_ms` 和 `output_truncated` 判断结果。
+
+| 问题 | 检查项 |
+|------|--------|
+| 没有输出 | 是否启用并重启、是否被 BlackList 禁用；v2 触发条件见 8.9 |
+| 有事件但没有候选进程 | 进程是否直接属于该 cgroup、是否允许 OOM kill、是否超过枚举限制 |
+| `unavailable` / `failed` | 运行时与布局限制、访问权限、容器元数据，以及目标是否已退出；具体见 `reason` |
+| 资源耗尽后事件停止 | 检查 `RLIMIT_NOFILE`、`fs.inotify.max_user_watches`、`fs.inotify.max_user_instances`，调整后重启；其他事件不受此停止影响 |

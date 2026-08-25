@@ -63,10 +63,8 @@ func TestCgroupSubsysIDIntegration(t *testing.T) {
 	t.Cleanup(bpf.Shutdown)
 
 	previousBPFDir := bpf.DefaultObjDir
-	previousIDs := cgroupCssID2SubSysNameMap
 	t.Cleanup(func() {
 		bpf.DefaultObjDir = previousBPFDir
-		cgroupCssID2SubSysNameMap = previousIDs
 	})
 
 	if err := cgroupInitSubSysIDs(); err != nil {

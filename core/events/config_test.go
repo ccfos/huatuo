@@ -18,11 +18,14 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
+	"github.com/ccfos/huatuo/internal/memsnap"
 	testutils "github.com/ccfos/huatuo/internal/testing"
 )
 
@@ -55,7 +58,13 @@ func TestConfigValidate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &Config{}
+			cfg := &Config{BeforeOOMMemsnap: BeforeOOMConfig{
+				ThresholdPercent: 90, CooldownSeconds: 300,
+				GoTimeoutMS:     100,
+				JavaTimeoutMS:   2000,
+				PythonTimeoutMS: 2000,
+				TopK:            10,
+			}}
 			cfg.SchedTick.IntervalThreshold = 1
 			if tt.configure != nil {
 				tt.configure(cfg)
@@ -92,6 +101,38 @@ func TestSetPublishesIndependentConfig(t *testing.T) {
 	snapshot := configSnapshot()
 	if snapshot.IssuesList[0][0] != "dropwatch" || snapshot.Netdev.DeviceList[0] != "eth0" {
 		t.Fatalf("published config aliases caller data: %+v", snapshot)
+	}
+}
+
+func TestBeforeOOMConfigRejectsOverflowAndUnboundedTopK(t *testing.T) {
+	for _, field := range []string{"seconds", "milliseconds", "top-K"} {
+		t.Run(field, func(t *testing.T) {
+			cfg := BeforeOOMConfig{
+				ThresholdPercent: 90, CooldownSeconds: 300,
+				GoTimeoutMS:     100,
+				JavaTimeoutMS:   2000,
+				PythonTimeoutMS: 2000, TopK: 10,
+			}
+			if err := validateBeforeOOMConfig(&cfg); err != nil {
+				t.Fatal(err)
+			}
+			if field != "top-K" && strconv.IntSize != 64 {
+				t.Skip("duration overflow requires 64-bit int")
+			}
+			switch field {
+			case "seconds":
+				maximum := int64(1<<63-1) / int64(time.Second)
+				cfg.CooldownSeconds = int(maximum + 1)
+			case "milliseconds":
+				maximum := int64(1<<63-1) / int64(time.Millisecond)
+				cfg.GoTimeoutMS = int(maximum + 1)
+			case "top-K":
+				cfg.TopK = memsnap.MaxTopK + 1
+			}
+			if err := validateBeforeOOMConfig(&cfg); err == nil {
+				t.Fatalf("unbounded %s accepted", field)
+			}
+		})
 	}
 }
 
