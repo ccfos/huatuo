@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,6 +32,13 @@ import (
 )
 
 type sockstatCollector struct{}
+
+func scaleSockstatValue(value, scale int) float64 {
+	if scale == 0 {
+		scale = 1
+	}
+	return float64(value) * float64(scale)
+}
 
 func init() {
 	tracing.RegisterEventTracing("sockstat", newSockstatCollector)
@@ -110,8 +117,9 @@ func (c *sockstatCollector) procStatMetrics(container *pod.Container) ([]*metric
 
 	// A name and optional value for a sockstat metric.
 	type ssPair struct {
-		name string
-		v    *int
+		name  string
+		v     *int
+		scale int
 	}
 
 	// Previously these metric names were generated directly from the file output.
@@ -149,10 +157,10 @@ func (c *sockstatCollector) procStatMetrics(container *pod.Container) ([]*metric
 		// Also export mem_bytes values for sockets which have a mem value
 		// stored in pages.
 		if p.Mem != nil {
-			v := *p.Mem * 4096
 			pairs = append(pairs, ssPair{
-				name: "mem_bytes",
-				v:    &v,
+				name:  "mem_bytes",
+				v:     p.Mem,
+				scale: os.Getpagesize(),
 			})
 		}
 
@@ -169,11 +177,11 @@ func (c *sockstatCollector) procStatMetrics(container *pod.Container) ([]*metric
 
 			if container != nil {
 				metrics = append(metrics,
-					metric.NewContainerGaugeData(container, fmt.Sprintf("%s_%s", p.Protocol, pair.name), float64(*pair.v),
+					metric.NewContainerGaugeData(container, fmt.Sprintf("%s_%s", p.Protocol, pair.name), scaleSockstatValue(*pair.v, pair.scale),
 						fmt.Sprintf("Number of %s sockets in state %s.", p.Protocol, pair.name), nil))
 			} else {
 				metrics = append(metrics,
-					metric.NewGaugeData(fmt.Sprintf("%s_%s", p.Protocol, pair.name), float64(*pair.v),
+					metric.NewGaugeData(fmt.Sprintf("%s_%s", p.Protocol, pair.name), scaleSockstatValue(*pair.v, pair.scale),
 						fmt.Sprintf("Number of %s sockets in state %s.", p.Protocol, pair.name), nil))
 			}
 		}
