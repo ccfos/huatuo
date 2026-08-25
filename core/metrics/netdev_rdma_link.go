@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -29,26 +29,30 @@ func init() {
 }
 
 type rdmaLink struct {
-	rdmaList []*netlink.RdmaLink
+	listLinks  func() ([]*netlink.RdmaLink, error)
+	statistics func(*netlink.RdmaLink) (*netlink.RdmaDeviceStatistic, error)
 }
 
 func newRdmaLink() (*tracing.EventTracingAttr, error) {
-	lists, err := netlink.RdmaLinkList()
-	if err != nil {
-		return nil, err
-	}
-
 	return &tracing.EventTracingAttr{
-		TracingData: &rdmaLink{rdmaList: lists},
-		Flag:        tracing.FlagMetric,
+		TracingData: &rdmaLink{
+			listLinks:  netlink.RdmaLinkList,
+			statistics: netlink.RdmaStatistic,
+		},
+		Flag: tracing.FlagMetric,
 	}, nil
 }
 
 func (r *rdmaLink) Update() ([]*metric.Data, error) {
+	rdmaList, err := r.listLinks()
+	if err != nil {
+		return nil, fmt.Errorf("list RDMA links: %w", err)
+	}
+
 	var data []*metric.Data
 
-	for _, rdma := range r.rdmaList {
-		stats, err := netlink.RdmaStatistic(rdma)
+	for _, rdma := range rdmaList {
+		stats, err := r.statistics(rdma)
 		if err != nil {
 			continue
 		}
