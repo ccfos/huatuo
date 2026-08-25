@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 
 	escount "github.com/elastic/go-elasticsearch/v8/typedapi/core/count"
 	essearch "github.com/elastic/go-elasticsearch/v8/typedapi/core/search"
@@ -196,11 +197,9 @@ func buildClause(filter driver.Filter) (types.Query, bool, error) {
 			}
 			return q, true, nil
 		}
-		q := types.Query{Term: map[string]types.TermQuery{filter.Field: {Value: driver.NormalizeValue(filter.Value)}}}
-		return q, false, nil
+		return buildExactTermClause(filter.Field, filter.Value), false, nil
 	case driver.OpNe:
-		q := types.Query{Term: map[string]types.TermQuery{filter.Field: {Value: driver.NormalizeValue(filter.Value)}}}
-		return q, true, nil
+		return buildExactTermClause(filter.Field, filter.Value), true, nil
 	case driver.OpGt, driver.OpGte, driver.OpLt, driver.OpLte:
 		rangeQ, err := buildRangeClause(filter)
 		if err != nil {
@@ -212,12 +211,53 @@ func buildClause(filter driver.Filter) (types.Query, bool, error) {
 		if err != nil {
 			return types.Query{}, false, err
 		}
-		termsQ := types.NewTermsQuery()
-		termsQ.TermsQuery[filter.Field] = values
-		return types.Query{Terms: termsQ}, false, nil
+		return buildExactTermsClause(filter.Field, values), false, nil
 	default:
 		return types.Query{}, false, fmt.Errorf("%w: %s", driver.ErrUnsupportedOp, filter.Op)
 	}
+}
+
+func buildExactTermClause(field string, value any) types.Query {
+	value = driver.NormalizeValue(value)
+	primary := types.Query{
+		Term: map[string]types.TermQuery{field: {Value: value}},
+	}
+	if _, ok := value.(string); !ok || strings.HasSuffix(field, ".keyword") {
+		return primary
+	}
+	keyword := types.Query{
+		Term: map[string]types.TermQuery{field + ".keyword": {Value: value}},
+	}
+	return exactFieldFallback(&primary, &keyword)
+}
+
+func buildExactTermsClause(field string, values []any) types.Query {
+	primary := types.NewTermsQuery()
+	primary.TermsQuery[field] = values
+	primaryQuery := types.Query{Terms: primary}
+	if !containsString(values) || strings.HasSuffix(field, ".keyword") {
+		return primaryQuery
+	}
+	keyword := types.NewTermsQuery()
+	keyword.TermsQuery[field+".keyword"] = values
+	keywordQuery := types.Query{Terms: keyword}
+	return exactFieldFallback(&primaryQuery, &keywordQuery)
+}
+
+func exactFieldFallback(primary, keyword *types.Query) types.Query {
+	return types.Query{Bool: &types.BoolQuery{
+		Should:             []types.Query{*primary, *keyword},
+		MinimumShouldMatch: 1,
+	}}
+}
+
+func containsString(values []any) bool {
+	for _, value := range values {
+		if _, ok := value.(string); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func buildRangeClause(filter driver.Filter) (types.RangeQuery, error) {

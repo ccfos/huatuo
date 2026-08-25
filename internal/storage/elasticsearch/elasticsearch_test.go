@@ -472,7 +472,10 @@ func matchesQuery(doc mockElasticsearchDocument, rawQuery any) bool {
 	if !ok {
 		return true
 	}
+	return matchesBoolQuery(doc, boolQuery)
+}
 
+func matchesBoolQuery(doc mockElasticsearchDocument, boolQuery map[string]any) bool {
 	for _, clause := range toAnySlice(boolQuery["filter"]) {
 		if !matchesClause(doc, clause) {
 			return false
@@ -483,14 +486,28 @@ func matchesQuery(doc mockElasticsearchDocument, rawQuery any) bool {
 			return false
 		}
 	}
+	shouldClauses := toAnySlice(boolQuery["should"])
+	minimumShouldMatch := intFromAny(boolQuery["minimum_should_match"])
+	if minimumShouldMatch == 0 && len(shouldClauses) > 0 {
+		minimumShouldMatch = 1
+	}
+	matchedShould := 0
+	for _, clause := range shouldClauses {
+		if matchesClause(doc, clause) {
+			matchedShould++
+		}
+	}
 
-	return true
+	return matchedShould >= minimumShouldMatch
 }
 
 func matchesClause(doc mockElasticsearchDocument, rawClause any) bool {
 	clause, ok := rawClause.(map[string]any)
 	if !ok {
 		return false
+	}
+	if boolQuery, ok := clause["bool"].(map[string]any); ok {
+		return matchesBoolQuery(doc, boolQuery)
 	}
 
 	if rawTerm, ok := clause["term"].(map[string]any); ok {
@@ -595,6 +612,9 @@ func applySorts(docs []mockElasticsearchDocument, rawSort any) {
 }
 
 func fieldValue(doc mockElasticsearchDocument, path string) any {
+	if basePath, ok := strings.CutSuffix(path, ".keyword"); ok {
+		return doc.Fields[basePath]
+	}
 	return doc.Fields[path]
 }
 
@@ -845,6 +865,79 @@ func TestBuildSearchRequest(t *testing.T) {
 			rawBody, err := buildSearchRequest(tc.query)
 			body := decodeJSONMap(t, rawBody)
 			tc.validate(t, body, err)
+		})
+	}
+}
+
+func TestBuildExactStringClauseUsesKeywordFallback(t *testing.T) {
+	tests := []struct {
+		name       string
+		filter     driver.Filter
+		queryType  string
+		wantNegate bool
+	}{
+		{
+			name: "equal",
+			filter: driver.Filter{
+				Field: "tracer_id",
+				Op:    driver.OpEq,
+				Value: "id-profile-1",
+			},
+			queryType: "term",
+		},
+		{
+			name: "not equal",
+			filter: driver.Filter{
+				Field: "tracer_id",
+				Op:    driver.OpNe,
+				Value: "id-profile-1",
+			},
+			queryType:  "term",
+			wantNegate: true,
+		},
+		{
+			name: "in",
+			filter: driver.Filter{
+				Field: "tracer_id",
+				Op:    driver.OpIn,
+				Value: []string{"id-profile-1", "id-profile-2"},
+			},
+			queryType: "terms",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clause, negate, err := buildClause(test.filter)
+			if err != nil {
+				t.Fatalf("buildClause() error = %v", err)
+			}
+			if negate != test.wantNegate {
+				t.Fatalf("buildClause() negate = %t, want %t", negate, test.wantNegate)
+			}
+
+			raw, err := json.Marshal(clause)
+			if err != nil {
+				t.Fatalf("json.Marshal() error = %v", err)
+			}
+			body := decodeJSONMap(t, raw)
+			boolQuery, _ := body["bool"].(map[string]any)
+			shouldClauses := toAnySlice(boolQuery["should"])
+			if intFromAny(boolQuery["minimum_should_match"]) != 1 || len(shouldClauses) != 2 {
+				t.Fatalf("exact fallback bool = %#v, want two required alternatives", boolQuery)
+			}
+
+			fields := make(map[string]bool, len(shouldClauses))
+			for _, rawClause := range shouldClauses {
+				query, _ := rawClause.(map[string]any)
+				fieldQuery, _ := query[test.queryType].(map[string]any)
+				for field := range fieldQuery {
+					fields[field] = true
+				}
+			}
+			if !fields["tracer_id"] || !fields["tracer_id.keyword"] {
+				t.Fatalf("exact fallback fields = %v, want raw and keyword", fields)
+			}
 		})
 	}
 }
