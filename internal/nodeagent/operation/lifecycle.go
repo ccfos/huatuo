@@ -144,15 +144,10 @@ func (m *Manager) finishStartFailure(
 
 func classifyExecution(stopRequested bool, waitErr, stopErr error) (*lifecycleFailure, Status) {
 	if stopRequested {
-		if waitErr != nil && !errors.Is(waitErr, ErrStopped) {
-			return &lifecycleFailure{
-				reason:  FailureReasonExecutionFailed,
-				message: messageExecutionFailed,
-				phase:   "wait",
-				err:     waitErr,
-			}, StatusFailed
-		}
 		if stopErr != nil {
+			if waitErr != nil && !errors.Is(waitErr, ErrStopped) {
+				stopErr = errors.Join(stopErr, waitErr)
+			}
 			return &lifecycleFailure{
 				reason:  FailureReasonExecutionStopFailed,
 				message: messageExecutionStopFailed,
@@ -160,6 +155,8 @@ func classifyExecution(stopRequested bool, waitErr, stopErr error) (*lifecycleFa
 				err:     stopErr,
 			}, StatusFailed
 		}
+		// Tools may translate SIGTERM into their own non-zero exit code. Once
+		// Stop succeeds, that code cannot make the discarded result meaningful.
 		return nil, StatusStopped
 	}
 	if waitErr != nil {

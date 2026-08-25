@@ -212,6 +212,40 @@ func TestManagerStopsLaunchThatWinsCancellationRace(t *testing.T) {
 	}
 }
 
+func TestManagerSuccessfulStopOverridesWaitExitError(t *testing.T) {
+	manager := newTestManager(t, testConfig())
+	stopCalled := make(chan struct{})
+	executor := &fakeExecutor{
+		waitFn: func() error {
+			<-stopCalled
+			return errors.New("tool handled termination with a non-zero exit")
+		},
+		stopFn: func(context.Context) error {
+			close(stopCalled)
+			return nil
+		},
+	}
+	_, _, err := manager.Start(context.Background(), StartRequest{
+		RequestID: "request",
+		Kind:      KindProfiling,
+		Executor:  executor,
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForStatus(t, manager, KindProfiling, "request", StatusRunning)
+	if _, initiated, err := manager.Stop(KindProfiling, "request"); err != nil || !initiated {
+		t.Fatalf("Stop() = (_, %t, %v), want initiated", initiated, err)
+	}
+	operation := waitForStatus(t, manager, KindProfiling, "request", StatusStopped)
+	if operation.Failure != nil {
+		t.Fatalf("stopped operation failure = %+v, want nil", operation.Failure)
+	}
+	if modes := executor.modes(); len(modes) != 1 || modes[0] != FinalizeDiscard {
+		t.Fatalf("finalize modes = %v, want discard", modes)
+	}
+}
+
 func TestManagerMergesConcurrentStops(t *testing.T) {
 	manager := newTestManager(t, testConfig())
 	stopCalled := make(chan struct{})
