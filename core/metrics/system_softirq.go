@@ -20,9 +20,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
+	"strings"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/utils/cpuutil"
 	"huatuo-bamai/pkg/metric"
 	"huatuo-bamai/pkg/tracing"
 
@@ -39,15 +42,12 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 		return nil, fmt.Errorf("fetch possible cpu num")
 	}
 
-	cpuOnline, err := numcpus.GetOnline()
-	if err != nil {
-		return nil, fmt.Errorf("fetch possible cpu num")
-	}
-
 	return &tracing.EventTracingAttr{
 		TracingData: &softirqLatency{
 			cpuPossible: cpuPossible,
-			cpuOnline:   cpuOnline,
+			onlineCPUs: func() (map[int]struct{}, error) {
+				return readOnlineCPUs(cpuutil.SystemCPUOnlinePath, cpuPossible)
+			},
 		},
 		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
@@ -59,7 +59,7 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 type softirqLatency struct {
 	bpf         bpf.Reference
 	cpuPossible int
-	cpuOnline   int
+	onlineCPUs  func() (map[int]struct{}, error)
 }
 
 type softirqLatencyData struct {
@@ -118,6 +118,77 @@ func irqAllowed(id int) bool {
 	}
 }
 
+func readOnlineCPUs(path string, possible int) (map[int]struct{}, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if possible <= 0 {
+		return nil, fmt.Errorf("possible CPU count must be positive")
+	}
+
+	online := make(map[int]struct{})
+	list := strings.TrimSpace(string(data))
+	for _, item := range strings.Split(list, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			return nil, fmt.Errorf("invalid online CPU list %q", list)
+		}
+
+		firstText, lastText, isRange := strings.Cut(item, "-")
+		first, err := strconv.Atoi(firstText)
+		if err != nil {
+			return nil, fmt.Errorf("parse online CPU %q: %w", item, err)
+		}
+		last := first
+		if isRange {
+			last, err = strconv.Atoi(lastText)
+			if err != nil {
+				return nil, fmt.Errorf("parse online CPU range %q: %w", item, err)
+			}
+		}
+		if first < 0 || last < first || last >= possible {
+			return nil, fmt.Errorf(
+				"online CPU range %q is outside possible CPUs 0-%d",
+				item,
+				possible-1,
+			)
+		}
+		for cpu := first; cpu <= last; cpu++ {
+			online[cpu] = struct{}{}
+		}
+	}
+	if len(online) == 0 {
+		return nil, fmt.Errorf("online CPU list is empty")
+	}
+	return online, nil
+}
+
+func appendSoftirqMetrics(
+	metrics []*metric.Data,
+	irqVector uint32,
+	latencies []softirqLatencyData,
+	online map[int]struct{},
+) []*metric.Data {
+	labels := map[string]string{"type": irqTypeName(int(irqVector))}
+	for cpuid, latency := range latencies {
+		if _, ok := online[cpuid]; !ok {
+			continue
+		}
+		labels["cpuid"] = strconv.Itoa(cpuid)
+		for zoneid, zone := range latency.LatencyCounts {
+			labels["zone"] = strconv.Itoa(zoneid)
+			metrics = append(metrics, metric.NewCounterData(
+				"latency",
+				float64(zone),
+				"softirq latency",
+				labels,
+			))
+		}
+	}
+	return metrics
+}
+
 func (s *softirqLatency) Update() ([]*metric.Data, error) {
 	lease, ok := s.bpf.Acquire()
 	if !ok {
@@ -129,8 +200,11 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dump map: %w", err)
 	}
+	online, err := s.onlineCPUs()
+	if err != nil {
+		return nil, fmt.Errorf("read online CPUs: %w", err)
+	}
 
-	labels := make(map[string]string)
 	metricData := []*metric.Data{}
 
 	// IRQ: 0 ... NR_SOFTIRQS_MAX
@@ -150,18 +224,7 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 			return nil, fmt.Errorf("read map value: %w", err)
 		}
 
-		labels["type"] = irqTypeName(int(irqVector))
-
-		for cpuid, lat := range latencyOnAllCPU {
-			if cpuid >= s.cpuOnline {
-				break
-			}
-			labels["cpuid"] = strconv.Itoa(cpuid)
-			for zoneid, zone := range lat.LatencyCounts {
-				labels["zone"] = strconv.Itoa(zoneid)
-				metricData = append(metricData, metric.NewCounterData("latency", float64(zone), "softirq latency", labels))
-			}
-		}
+		metricData = appendSoftirqMetrics(metricData, irqVector, latencyOnAllCPU, online)
 	}
 
 	return metricData, nil
