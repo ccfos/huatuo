@@ -273,6 +273,10 @@ func (m *mockElasticsearchServer) handleSearch(w http.ResponseWriter, r *http.Re
 	defer m.mu.Unlock()
 
 	m.searchBodies = append(m.searchBodies, body)
+	if _, ok := m.indexes[index]; !ok {
+		writeMissingIndex(w, index)
+		return
+	}
 	if body["aggs"] != nil {
 		docs := m.matchDocumentsLocked(index, body["query"])
 		m.handleTermsSearch(w, body, docs)
@@ -367,6 +371,10 @@ func (m *mockElasticsearchServer) handleCount(w http.ResponseWriter, r *http.Req
 	defer m.mu.Unlock()
 
 	m.countBodies = append(m.countBodies, body)
+	if _, ok := m.indexes[index]; !ok {
+		writeMissingIndex(w, index)
+		return
+	}
 	docs := m.queryDocumentsLocked(index, body)
 
 	w.WriteHeader(http.StatusOK)
@@ -384,6 +392,10 @@ func (m *mockElasticsearchServer) handleDeleteByQuery(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if _, ok := m.indexes[index]; !ok {
+		writeMissingIndex(w, index)
+		return
+	}
 	documents := m.matchDocumentsLocked(index, body["query"])
 	for _, document := range documents {
 		delete(m.indexes[index], document.ID)
@@ -393,6 +405,17 @@ func (m *mockElasticsearchServer) handleDeleteByQuery(
 		"deleted":   len(documents),
 		"failures":  []any{},
 		"timed_out": false,
+	})
+}
+
+func writeMissingIndex(w http.ResponseWriter, index string) {
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{
+			"type":  "index_not_found_exception",
+			"index": index,
+		},
+		"status": http.StatusNotFound,
 	})
 }
 
@@ -942,6 +965,33 @@ func TestElasticsearchBackendDeleteByQuery(t *testing.T) {
 	}
 	if _, err := backend.Get(t.Context(), "profile-3"); err != nil {
 		t.Fatalf("Get(retained) error = %v", err)
+	}
+}
+
+func TestElasticsearchBackendMissingIndexIsEmpty(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+
+	records, err := backend.Query(t.Context(), driver.Query{})
+	if err != nil || len(records) != 0 {
+		t.Fatalf("Query() = (%v, %v), want empty result", records, err)
+	}
+	count, err := backend.Count(t.Context(), driver.Query{})
+	if err != nil || count != 0 {
+		t.Fatalf("Count() = (%d, %v), want (0, nil)", count, err)
+	}
+	values, err := backend.Values(t.Context(), "status", driver.Query{}, 10)
+	if err != nil || len(values) != 0 {
+		t.Fatalf("Values() = (%v, %v), want empty result", values, err)
+	}
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.Query{
+		Filters: []driver.Filter{{Field: "status", Op: driver.OpEq, Value: "staging"}},
+	})
+	if err != nil || deleted != 0 {
+		t.Fatalf("DeleteByQuery() = (%d, %v), want (0, nil)", deleted, err)
 	}
 }
 

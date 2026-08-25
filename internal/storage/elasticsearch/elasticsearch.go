@@ -253,6 +253,9 @@ func (s *Storage) DeleteByQuery(ctx context.Context, query driver.Query) (int64,
 	}
 	defer res.Body.Close()
 
+	if res.StatusCode == http.StatusNotFound {
+		return 0, nil
+	}
 	if res.IsError() {
 		return 0, responseError("delete documents by query", s.index, res)
 	}
@@ -294,6 +297,9 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 	}
 	defer res.Body.Close()
 
+	if res.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
 	if res.IsError() {
 		return nil, responseError("query documents", s.index, res)
 	}
@@ -327,6 +333,9 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	}
 	defer res.Body.Close()
 
+	if res.StatusCode == http.StatusNotFound {
+		return 0, nil
+	}
 	if res.IsError() {
 		return 0, responseError("count documents", s.index, res)
 	}
@@ -351,6 +360,9 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	}
 	defer res.Body.Close()
 
+	if res.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
 	if res.IsError() {
 		return nil, responseError("terms aggregation", s.index, res)
 	}
