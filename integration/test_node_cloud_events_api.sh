@@ -55,7 +55,7 @@ stop_event_stream() {
 
 write_event_api_config() {
 	cat > "${HUATUO_BAMAI_TEST_TMPDIR}/bamai.conf" << EOF
-BlackList = ["metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
+BlackList = ["before_oom_memsnap", "metax_gpu", "ascend_npu", "softlockup", "ethtool", "netstat_hw", "iolatency", "memory_free", "memory_reclaim", "reschedipi", "softirq", "iotracing"]
 
 [HTTPServer]
     ListenAddress = "127.0.0.1:${EVENT_API_PORT}"
