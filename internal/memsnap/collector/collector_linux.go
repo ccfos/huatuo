@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/memsnap"
+	gomemsnap "github.com/ccfos/huatuo/internal/memsnap/providers/golang"
 )
 
 // Options uses the before-OOM budgets as defaults for zero-valued fields.
@@ -203,8 +204,13 @@ func (o *Options) captureTimeout(language memsnap.Language) time.Duration {
 	}
 }
 
-func newProvider(_ memsnap.Language) memsnap.Provider {
-	return nil
+func newProvider(language memsnap.Language) memsnap.Provider {
+	switch language {
+	case memsnap.LanguageGo:
+		return gomemsnap.NewProvider()
+	default:
+		return nil
+	}
 }
 
 // Capture remains synchronous: cancellation stops subsequent work but cannot
