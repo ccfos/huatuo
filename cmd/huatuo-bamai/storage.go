@@ -125,9 +125,6 @@ func initStorage(
 		if err != nil {
 			return nil, err
 		}
-		if err := publicationStore.RecoverStaging(context.Background()); err != nil {
-			return nil, fmt.Errorf("recover staged profiling results: %w", err)
-		}
 	}
 
 	tracing.SetTracingStore(

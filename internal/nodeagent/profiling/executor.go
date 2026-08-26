@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"huatuo-bamai/internal/nodeagent/command"
 	"huatuo-bamai/internal/nodeagent/operation"
@@ -28,11 +27,10 @@ import (
 const profilerToolName = "profiler"
 
 type executor struct {
-	process        *command.Process
-	stream         *toolstream.Server
-	publisher      ResultPublisher
-	requestID      string
-	cleanupTimeout time.Duration
+	process   *command.Process
+	stream    *toolstream.Server
+	publisher ResultPublisher
+	requestID string
 }
 
 func newExecutor(
@@ -40,44 +38,24 @@ func newExecutor(
 	stream *toolstream.Server,
 	publisher ResultPublisher,
 	requestID string,
-	cleanupTimeout time.Duration,
 ) *executor {
 	return &executor{
-		process:        process,
-		stream:         stream,
-		publisher:      publisher,
-		requestID:      requestID,
-		cleanupTimeout: cleanupTimeout,
+		process:   process,
+		stream:    stream,
+		publisher: publisher,
+		requestID: requestID,
 	}
 }
 
 func (e *executor) Start(ctx context.Context) error {
-	if err := e.publisher.Prepare(ctx, e.requestID); err != nil {
-		return e.rollbackStart(ctx, fmt.Errorf("prepare profiler result: %w", err))
-	}
 	if err := e.stream.ExpectSession(profilerToolName, e.requestID); err != nil {
-		return e.rollbackStart(
-			ctx,
-			fmt.Errorf("expect profiler result stream: %w", err),
-		)
+		return fmt.Errorf("expect profiler result stream: %w", err)
 	}
 	if err := e.process.Start(ctx); err != nil {
-		return e.rollbackStart(ctx, e.withOutput("start profiler", err))
+		e.stream.CancelSession(profilerToolName, e.requestID)
+		return e.withOutput("start profiler", err)
 	}
 	return nil
-}
-
-func (e *executor) rollbackStart(ctx context.Context, startErr error) error {
-	e.stream.CancelSession(profilerToolName, e.requestID)
-	cleanupCtx, cancel := context.WithTimeout(
-		context.WithoutCancel(ctx),
-		e.cleanupTimeout,
-	)
-	defer cancel()
-	if err := e.publisher.Discard(cleanupCtx, e.requestID); err != nil {
-		return errors.Join(startErr, fmt.Errorf("rollback profiler result: %w", err))
-	}
-	return startErr
 }
 
 func (e *executor) Wait() error {
@@ -113,9 +91,6 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) er
 		return nil
 	case operation.FinalizeDiscard:
 		e.stream.CancelSession(profilerToolName, e.requestID)
-		if err := e.publisher.Discard(ctx, e.requestID); err != nil {
-			return fmt.Errorf("discard profiler publication: %w", err)
-		}
 		return nil
 	default:
 		return fmt.Errorf("finalize profiler: unsupported mode %d", mode)

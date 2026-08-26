@@ -66,8 +66,6 @@ func startOperations(d *Daemon) (func(context.Context) error, error) {
 		PythonToolPath:       cfg.Profiling.PythonToolPath,
 		AggregationInterval: time.Duration(cfg.Profiling.AggregationIntervalSeconds) *
 			time.Second,
-		ResultCleanupTimeout: time.Duration(cfg.Operations.FinalizationTimeoutSeconds) *
-			time.Second,
 		MaxConcurrentProcesses:  cfg.Profiling.MaxConcurrentProcesses,
 		CommandOutputLimitBytes: cfg.Profiling.CommandOutputLimitBytes,
 		ToolstreamServer:        d.toolstreamServer,

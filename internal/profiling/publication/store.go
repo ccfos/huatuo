@@ -27,30 +27,15 @@ import (
 )
 
 const (
-	Collection            = "profiling_publications"
-	markerIDPrefix        = "profiling-publication:"
-	markerRecordType      = "profiling_publication"
-	markerRecordTypeField = "record_type"
-	markerStateField      = "state"
-	profileRequestIDField = "tracer_id"
-	stagingRecoveryBatch  = 100
-)
-
-type markerState string
-
-const (
-	markerStateStaging   markerState = "staging"
-	markerStatePublished markerState = "published"
+	Collection     = "profiling_publications"
+	markerIDPrefix = "profiling-publication:"
 )
 
 // Marker proves that all profiling windows for a request are query-visible.
 // A marker is also written when a successful profiling run has no samples.
 type Marker struct {
-	RecordType  string      `json:"record_type,omitempty"`
-	RequestID   string      `json:"request_id"`
-	State       markerState `json:"state,omitempty"`
-	PreparedAt  time.Time   `json:"prepared_at,omitzero"`
-	PublishedAt time.Time   `json:"published_at,omitzero"`
+	RequestID   string    `json:"request_id"`
+	PublishedAt time.Time `json:"published_at"`
 }
 
 type markerMapper struct{}
@@ -80,56 +65,14 @@ func NewStore(ctx context.Context, config *driver.Config) (*Store, error) {
 	}, nil
 }
 
-// Prepare hides any previous result, removes stale artifacts, and records a
-// recoverable staging boundary before a newly admitted execution starts.
-func (s *Store) Prepare(ctx context.Context, requestID string) error {
-	if err := validateRequestID(requestID); err != nil {
-		return err
-	}
-	if err := s.saveStaging(ctx, requestID); err != nil {
-		return fmt.Errorf("stage profiling result %q: %w", requestID, err)
-	}
-	if err := s.deleteArtifacts(ctx, requestID); err != nil {
-		return fmt.Errorf("remove stale profiling result %q: %w", requestID, err)
-	}
-	return nil
-}
-
 // Publish writes the final commit marker synchronously.
 func (s *Store) Publish(ctx context.Context, requestID string) error {
 	if err := validateRequestID(requestID); err != nil {
 		return err
 	}
-	marker, err := s.store.Get(ctx, markerID(requestID))
-	if err != nil {
-		return fmt.Errorf("read staged profiling result %q: %w", requestID, err)
-	}
-	if marker == nil || marker.RequestID != requestID || marker.State != markerStateStaging {
-		return fmt.Errorf("profiling result %q is not staged", requestID)
-	}
-	marker.RecordType = markerRecordType
-	marker.State = markerStatePublished
-	marker.PublishedAt = s.now()
+	marker := &Marker{RequestID: requestID, PublishedAt: s.now()}
 	if err := s.store.SaveSync(ctx, marker); err != nil {
 		return fmt.Errorf("publish profiling result %q: %w", requestID, err)
-	}
-	return nil
-}
-
-// Discard hides an unsuccessful execution before deleting its partial data.
-// The staging marker remains recoverable if cleanup fails.
-func (s *Store) Discard(ctx context.Context, requestID string) error {
-	if err := validateRequestID(requestID); err != nil {
-		return err
-	}
-	if err := s.saveStaging(ctx, requestID); err != nil {
-		return fmt.Errorf("hide profiling publication %q: %w", requestID, err)
-	}
-	if err := s.deleteArtifacts(ctx, requestID); err != nil {
-		return fmt.Errorf("discard profiling artifacts %q: %w", requestID, err)
-	}
-	if err := s.store.Delete(ctx, markerID(requestID)); err != nil {
-		return fmt.Errorf("discard profiling publication %q: %w", requestID, err)
 	}
 	return nil
 }
@@ -149,49 +92,11 @@ func (s *Store) IsPublished(ctx context.Context, requestID string) (bool, error)
 	if marker == nil || marker.RequestID != requestID {
 		return false, fmt.Errorf("profiling publication %q is invalid", requestID)
 	}
-	if marker.State == markerStateStaging {
+	if marker.PublishedAt.IsZero() {
+		// Older versions used a zero timestamp for an unpublished staging marker.
 		return false, nil
 	}
-	if marker.State == markerStatePublished && !marker.PublishedAt.IsZero() {
-		return true, nil
-	}
-	// Markers written before staging support only carried PublishedAt.
-	if marker.State == "" && !marker.PublishedAt.IsZero() {
-		return true, nil
-	}
-	return false, fmt.Errorf("profiling publication %q is invalid", requestID)
-}
-
-// RecoverStaging removes partial results left by a previous Node process.
-// Recovery must complete before the HTTP server accepts new Operations.
-func (s *Store) RecoverStaging(ctx context.Context) error {
-	for {
-		markers, err := s.store.Query(ctx, driver.Query{
-			Filters: []driver.Filter{
-				{Field: markerRecordTypeField, Op: driver.OpEq, Value: markerRecordType},
-				{Field: markerStateField, Op: driver.OpEq, Value: markerStateStaging},
-			},
-			Limit: stagingRecoveryBatch,
-		})
-		if err != nil {
-			return fmt.Errorf("query staged profiling results: %w", err)
-		}
-		if len(markers) == 0 {
-			return nil
-		}
-		for _, marker := range markers {
-			if marker == nil || marker.RequestID == "" {
-				return errors.New("recover staged profiling results: invalid marker")
-			}
-			if err := s.Discard(ctx, marker.RequestID); err != nil {
-				return fmt.Errorf(
-					"recover staged profiling result %q: %w",
-					marker.RequestID,
-					err,
-				)
-			}
-		}
-	}
+	return true, nil
 }
 
 // Ready verifies that the publication backend can serve reads.
@@ -211,22 +116,6 @@ func (s *Store) Close(ctx context.Context) error {
 		return nil
 	}
 	return s.store.Close(ctx)
-}
-
-func (s *Store) saveStaging(ctx context.Context, requestID string) error {
-	return s.store.SaveSync(ctx, &Marker{
-		RecordType: markerRecordType,
-		RequestID:  requestID,
-		State:      markerStateStaging,
-		PreparedAt: s.now(),
-	})
-}
-
-func (s *Store) deleteArtifacts(ctx context.Context, requestID string) error {
-	_, err := s.store.DeleteByQuery(ctx, driver.Query{Filters: []driver.Filter{
-		{Field: profileRequestIDField, Op: driver.OpEq, Value: requestID},
-	}})
-	return err
 }
 
 func validateRequestID(requestID string) error {
@@ -259,19 +148,10 @@ func (markerMapper) Decode(data []byte) (*Marker, error) {
 	return &marker, nil
 }
 
-func (markerMapper) Fields(marker *Marker) (map[string]any, error) {
-	if marker == nil {
-		return nil, nil
-	}
-	return map[string]any{
-		markerRecordTypeField: marker.RecordType,
-		markerStateField:      marker.State,
-	}, nil
+func (markerMapper) Fields(*Marker) (map[string]any, error) {
+	return nil, nil
 }
 
 func (markerMapper) Indexes() []driver.Index {
-	return []driver.Index{
-		{Field: markerRecordTypeField},
-		{Field: markerStateField},
-	}
+	return nil
 }

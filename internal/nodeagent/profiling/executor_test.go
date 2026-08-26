@@ -16,37 +16,24 @@ package profiling
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"huatuo-bamai/internal/nodeagent/command"
+	"huatuo-bamai/internal/nodeagent/operation"
 	"huatuo-bamai/internal/toolstream"
 )
 
 type fakeResultPublisher struct {
-	prepareErr    error
-	discardErr    error
-	prepareCalls  int
-	discardCalls  int
-	discardCtxErr error
+	publishCalls int
 }
 
-func (p *fakeResultPublisher) Prepare(context.Context, string) error {
-	p.prepareCalls++
-	return p.prepareErr
+func (p *fakeResultPublisher) Publish(context.Context, string) error {
+	p.publishCalls++
+	return nil
 }
 
-func (*fakeResultPublisher) Publish(context.Context, string) error { return nil }
-
-func (p *fakeResultPublisher) Discard(ctx context.Context, _ string) error {
-	p.discardCalls++
-	p.discardCtxErr = ctx.Err()
-	return p.discardErr
-}
-
-func TestExecutorRollsBackResultWhenProcessStartFails(t *testing.T) {
+func TestExecutorClearsExpectedSessionWhenProcessStartFails(t *testing.T) {
 	stream, err := toolstream.NewServer(filepath.Join(t.TempDir(), "toolstream.sock"))
 	if err != nil {
 		t.Fatalf("toolstream.NewServer() error = %v", err)
@@ -59,32 +46,21 @@ func TestExecutorRollsBackResultWhenProcessStartFails(t *testing.T) {
 		t.Fatalf("command.New() error = %v", err)
 	}
 	publisher := &fakeResultPublisher{}
-	executor := newExecutor(process, stream, publisher, "job-1", time.Second)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+	executor := newExecutor(process, stream, publisher, "job-1")
 
-	if err := executor.Start(ctx); err == nil {
+	if err := executor.Start(t.Context()); err == nil {
 		t.Fatal("Start() error = nil")
 	}
-	if publisher.prepareCalls != 1 || publisher.discardCalls != 1 {
-		t.Fatalf(
-			"publisher calls = (prepare=%d, discard=%d), want (1, 1)",
-			publisher.prepareCalls,
-			publisher.discardCalls,
-		)
-	}
-	if publisher.discardCtxErr != nil {
-		t.Fatalf("Discard() context error = %v, want nil", publisher.discardCtxErr)
+	if publisher.publishCalls != 0 {
+		t.Fatalf("Publish() calls = %d, want 0", publisher.publishCalls)
 	}
 	if err := stream.ExpectSession(profilerToolName, "job-1"); err != nil {
-		t.Fatalf("ExpectSession() after rollback error = %v", err)
+		t.Fatalf("ExpectSession() after failed Start error = %v", err)
 	}
 	stream.CancelSession(profilerToolName, "job-1")
 }
 
-func TestExecutorReturnsStartAndRollbackFailures(t *testing.T) {
-	prepareErr := errors.New("prepare failed")
-	discardErr := errors.New("discard failed")
+func TestExecutorFinalizeDiscardCancelsSessionWithoutPublishing(t *testing.T) {
 	stream, err := toolstream.NewServer(filepath.Join(t.TempDir(), "toolstream.sock"))
 	if err != nil {
 		t.Fatalf("toolstream.NewServer() error = %v", err)
@@ -93,11 +69,20 @@ func TestExecutorReturnsStartAndRollbackFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("command.New() error = %v", err)
 	}
-	publisher := &fakeResultPublisher{prepareErr: prepareErr, discardErr: discardErr}
-	executor := newExecutor(process, stream, publisher, "job-1", time.Second)
-
-	err = executor.Start(t.Context())
-	if !errors.Is(err, prepareErr) || !errors.Is(err, discardErr) {
-		t.Fatalf("Start() error = %v, want joined prepare and discard errors", err)
+	publisher := &fakeResultPublisher{}
+	executor := newExecutor(process, stream, publisher, "job-1")
+	if err := stream.ExpectSession(profilerToolName, "job-1"); err != nil {
+		t.Fatalf("ExpectSession() error = %v", err)
 	}
+
+	if err := executor.Finalize(t.Context(), operation.FinalizeDiscard); err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	if publisher.publishCalls != 0 {
+		t.Fatalf("Publish() calls = %d, want 0", publisher.publishCalls)
+	}
+	if err := stream.ExpectSession(profilerToolName, "job-1"); err != nil {
+		t.Fatalf("ExpectSession() after Finalize error = %v", err)
+	}
+	stream.CancelSession(profilerToolName, "job-1")
 }

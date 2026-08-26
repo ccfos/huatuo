@@ -43,7 +43,6 @@ type Config struct {
 	JavaToolPath            string
 	PythonToolPath          string
 	AggregationInterval     time.Duration
-	ResultCleanupTimeout    time.Duration
 	MaxConcurrentProcesses  int
 	CommandOutputLimitBytes int
 	ToolstreamServer        *toolstream.Server
@@ -52,9 +51,7 @@ type Config struct {
 
 // ResultPublisher owns the durable result commit marker.
 type ResultPublisher interface {
-	Prepare(ctx context.Context, requestID string) error
 	Publish(ctx context.Context, requestID string) error
-	Discard(ctx context.Context, requestID string) error
 }
 
 // StartRequest contains one validated profiling operation request.
@@ -122,7 +119,6 @@ func (s *Service) Start(
 			s.config.ToolstreamServer,
 			s.config.ResultPublisher,
 			request.RequestID,
-			s.config.ResultCleanupTimeout,
 		),
 	})
 }
