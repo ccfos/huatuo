@@ -35,11 +35,11 @@ WORK_DIR=$(mktemp -d "${HUATUO_BAMAI_TEST_TMPDIR}/bpf-debug.XXXXXX")
 
 # expect_marker <obj> <"has"|"missing"> <marker>: single source of truth
 # for the strings(1)-based assertion. `strings -a` scans the whole file
-# (section layout varies by binutils version); `grep -Fq` makes the match
-# literal and silent.
+# (section layout varies by binutils version); `grep -F` consumes the full
+# stream so `pipefail` does not turn grep's early match into SIGPIPE.
 expect_marker() {
 	local obj=$1 mode=$2 marker=$3
-	if strings -a "${obj}" | grep -Fq -- "${marker}"; then
+	if strings -a "${obj}" | grep -F -- "${marker}" > /dev/null; then
 		[[ "${mode}" == "has" ]] && return 0
 		fatal "marker '${marker}' must NOT appear in $(basename "${obj}")"
 	fi

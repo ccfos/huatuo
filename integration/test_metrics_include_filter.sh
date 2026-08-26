@@ -29,7 +29,7 @@ check_metrics "include filter" \
 	"memory_vmstat_pgfault" \
 	"netstat_Tcp_RetransSegs" "netstat_TcpExt_TCPLostRetransmit" \
 	'netdev_.*device="eth0"' \
-	'mountpoint_perm_ro{.*mountpoint="/boot"' \
+	'mountpoint_perm_ro\{.*mountpoint="/boot"' \
 	-- \
 	"memory_vmstat_thp_zero_page_alloc" "memory_vmstat_thp_swpout" \
 	"memory_vmstat_balloon_inflate" "memory_vmstat_balloon_deflate" \
@@ -37,5 +37,5 @@ check_metrics "include filter" \
 	"netstat_Tcp_ActiveOpens" "netstat_TcpExt_TCPAutoCorking" \
 	"netstat_TcpExt_TCPTimeouts" "netstat_Tcp_CurrEstab" \
 	'netdev_.*device="eth1"' 'netdev_.*device="docker0"' \
-	'mountpoint_perm_ro{.*mountpoint="/sys/fs/cgroup"' \
-	'mountpoint_perm_ro{.*mountpoint="/home/root/containers'
+	'mountpoint_perm_ro\{.*mountpoint="/sys/fs/cgroup"' \
+	'mountpoint_perm_ro\{.*mountpoint="/home/root/containers'
