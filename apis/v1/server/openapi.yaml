@@ -158,7 +158,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/RawProfileLimit'
         - $ref: '#/components/parameters/Offset'
       responses:
         '200':
@@ -177,10 +177,120 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/profiling/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces:
+    post:
+      operationId: selectMergeStacktraces
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/proto:
+            schema:
+              $ref: '#/components/schemas/ProtobufPayload'
+      responses:
+        '200':
+          $ref: '#/components/responses/ProtobufResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/profiling/flamegraph/querier.v1.QuerierService/ProfileTypes:
+    post:
+      operationId: getProfileTypes
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/proto:
+            schema:
+              $ref: '#/components/schemas/ProtobufPayload'
+      responses:
+        '200':
+          $ref: '#/components/responses/ProtobufResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/profiling/flamegraph/querier.v1.QuerierService/LabelNames:
+    post:
+      operationId: getProfileLabelNames
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/proto:
+            schema:
+              $ref: '#/components/schemas/ProtobufPayload'
+      responses:
+        '200':
+          $ref: '#/components/responses/ProtobufResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/profiling/flamegraph/querier.v1.QuerierService/LabelValues:
+    post:
+      operationId: getProfileLabelValues
+      tags: [profiling]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/proto:
+            schema:
+              $ref: '#/components/schemas/ProtobufPayload'
+      responses:
+        '200':
+          $ref: '#/components/responses/ProtobufResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/PermissionDenied'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /v1/tracing:
     post:
       operationId: createTracingJob
@@ -345,6 +455,12 @@ x-error-codes:
   result_not_ready:
     httpStatus: 409
     description: The Job state does not permit result access.
+  result_not_found:
+    httpStatus: 404
+    description: The published Profiling result does not exist or has expired.
+  result_too_large:
+    httpStatus: 413
+    description: The requested raw Profiling result page exceeds the response limit.
   result_unavailable:
     httpStatus: 409
     description: The Job terminal state does not guarantee a complete result.
@@ -374,6 +490,14 @@ components:
         minimum: 1
         maximum: 1000
         default: 100
+    RawProfileLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
     Offset:
       name: offset
       in: query
@@ -448,7 +572,16 @@ components:
         application/json:
           schema:
             $ref: '../components.yaml#/components/schemas/ErrorResponse'
+    ProtobufResponse:
+      description: Pyroscope-compatible protobuf response.
+      content:
+        application/proto:
+          schema:
+            $ref: '#/components/schemas/ProtobufPayload'
   schemas:
+    ProtobufPayload:
+      type: string
+      format: binary
     ProfilingType:
       type: string
       enum: [cpu, memory]

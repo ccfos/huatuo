@@ -21,6 +21,8 @@ import (
 	"time"
 
 	externalRef0 "huatuo-bamai/apis/v1"
+
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 const (
@@ -277,6 +279,9 @@ type ProfilingMode string
 // ProfilingType defines model for ProfilingType.
 type ProfilingType string
 
+// ProtobufPayload defines model for ProtobufPayload.
+type ProtobufPayload = openapi_types.File
+
 // RawProfile defines model for RawProfile.
 type RawProfile struct {
 	CapturedAt        time.Time   `json:"captured_at"`
@@ -363,6 +368,9 @@ type Limit = int
 // Offset defines model for Offset.
 type Offset = int
 
+// RawProfileLimit defines model for RawProfileLimit.
+type RawProfileLimit = int
+
 // RequestID defines model for RequestID.
 type RequestID = string
 
@@ -407,8 +415,8 @@ type ListProfilingJobsParams struct {
 
 // GetRawProfilesParams defines parameters for GetRawProfiles.
 type GetRawProfilesParams struct {
-	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit  *RawProfileLimit `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *Offset          `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
 // ListTracingJobsParams defines parameters for ListTracingJobs.

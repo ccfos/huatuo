@@ -135,10 +135,7 @@ func (s *Service) Stop(
 	if _, err := s.Get(ctx, principal, requestID); err != nil {
 		return nil, err
 	}
-	if err := s.jobs.Stop(ctx, requestID); err != nil {
-		return nil, err
-	}
-	return s.jobs.Get(ctx, requestID)
+	return s.jobs.Stop(ctx, requestID)
 }
 
 // RawProfiles returns an authorized page of published result records.
@@ -170,29 +167,21 @@ func (*Service) Capabilities() []profilingdomain.Capability {
 // ResultURL returns a Job-scoped dashboard URL only for published results.
 func (s *Service) ResultURL(
 	ctx context.Context,
-	principal auth.Principal,
 	jobEntity *job.Job,
 ) (*string, error) {
 	if s.dashboardURL == "" || jobEntity == nil || jobEntity.EndedAt.IsZero() ||
 		(jobEntity.Status != job.StatusCompleted && jobEntity.Status != job.StatusOutcomeUnknown) {
 		return nil, nil
 	}
-	if jobEntity.Status == job.StatusOutcomeUnknown {
-		if s.results == nil {
-			return nil, nil
-		}
-		published, err := s.results.IsPublished(
-			ctx,
-			jobEntity.ID,
-			principal.ID,
-			principal.IsAdmin,
-		)
-		if err != nil {
-			return nil, err
-		}
-		if !published {
-			return nil, nil
-		}
+	if s.results == nil {
+		return nil, nil
+	}
+	published, err := s.results.IsPublished(ctx, jobEntity)
+	if err != nil {
+		return nil, err
+	}
+	if !published {
+		return nil, nil
 	}
 	var dashboardUID, dashboardSlug, scopeKey, scopeValue string
 	if jobEntity.Scope == observation.ScopeContainer {

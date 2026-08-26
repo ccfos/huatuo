@@ -160,17 +160,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	log.Infof("huatuo-bamai started successfully")
 	s, serveErr := d.waitForSignal(ctx)
-	if serveErr != nil {
-		log.WithError(serveErr).Error("api server stopped unexpectedly")
-	} else {
+	if serveErr == nil && s != nil {
 		log.Infof("huatuo-bamai received signal %v, shutting down", s)
 	}
-
-	if err := shutdown(); err != nil {
-		log.Warnf("shutdown completed with errors: %v", err)
-	}
-
-	return nil
+	return errors.Join(serveErr, shutdown())
 }
 
 func (d *Daemon) waitForSignal(ctx context.Context) (os.Signal, error) {

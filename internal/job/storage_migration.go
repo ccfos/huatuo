@@ -365,6 +365,10 @@ func migrateLegacyStatus(jobEntity *Job, legacy *legacyStoragePayload) error {
 	default:
 		return fmt.Errorf("field status: unsupported value %q", legacy.Status)
 	}
+	if jobEntity.EndedAt.IsZero() {
+		// Legacy active records become terminal during migration and have no finish time.
+		jobEntity.EndedAt = jobEntity.UpdatedAt
+	}
 	return nil
 }
 

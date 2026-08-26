@@ -122,10 +122,7 @@ func (s *Service) Stop(
 	if _, err := s.Get(ctx, principal, requestID); err != nil {
 		return nil, err
 	}
-	if err := s.jobs.Stop(ctx, requestID); err != nil {
-		return nil, err
-	}
-	return s.jobs.Get(ctx, requestID)
+	return s.jobs.Stop(ctx, requestID)
 }
 
 // Capabilities returns the versioned static Tracing capability table.

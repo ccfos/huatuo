@@ -29,7 +29,6 @@ type executionRuntime struct {
 	launchCancel  context.CancelFunc
 	stopResultCh  chan error
 	isStopStarted bool
-	doneCh        chan struct{}
 }
 
 type managedOperation struct {
@@ -119,7 +118,6 @@ func (m *Manager) Start(
 	runtime := &executionRuntime{
 		executor:     request.Executor,
 		stopResultCh: make(chan error, 1),
-		doneCh:       make(chan struct{}),
 	}
 	managed := &managedOperation{
 		state: Operation{

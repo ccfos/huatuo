@@ -169,16 +169,16 @@ func TestNodeClientKeepsNoResponseTransportErrorDistinct(t *testing.T) {
 
 func TestParseResponseRejectsProtocolViolations(t *testing.T) {
 	tests := []struct {
-		name          string
-		statusCode    int
-		body          string
-		allowAccepted bool
+		name        string
+		statusCode  int
+		body        string
+		successMode successResponseMode
 	}{
 		{
-			name:          "accepted get response",
-			statusCode:    http.StatusAccepted,
-			body:          operationJSON("job-1", "pending"),
-			allowAccepted: false,
+			name:        "accepted get response",
+			statusCode:  http.StatusAccepted,
+			body:        operationJSON("job-1", "pending"),
+			successMode: successResponseOK,
 		},
 		{
 			name:       "mismatched response ID",
@@ -195,7 +195,7 @@ func TestParseResponseRejectsProtocolViolations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			response := jsonResponse(tt.statusCode, tt.body)
 			defer response.Body.Close()
-			_, err := parseResponse(response, "job-1", tt.allowAccepted)
+			_, err := parseResponse(response, "job-1", tt.successMode)
 			if !errors.Is(err, ErrProtocol) {
 				t.Fatalf("parseResponse() error = %v, want ErrProtocol", err)
 			}

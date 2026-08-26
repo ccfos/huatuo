@@ -26,6 +26,8 @@ import (
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/observation"
 	tracingdomain "huatuo-bamai/pkg/tracing"
+
+	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
 func TestCommonJobMapsFailureReasonWithoutAddingJobState(t *testing.T) {
@@ -84,7 +86,9 @@ func TestServerAPIErrorMapsStableResultErrors(t *testing.T) {
 		wantCode apiv1.ErrorCode
 	}{
 		{err: profilingresult.ErrNotReady, wantCode: serverapi.ErrorCodeResultNotReady},
+		{err: profilingresult.ErrNotFound, wantCode: serverapi.ErrorCodeResultNotFound},
 		{err: profilingresult.ErrUnavailable, wantCode: serverapi.ErrorCodeResultUnavailable},
+		{err: profilingresult.ErrResponseTooLarge, wantCode: serverapi.ErrorCodeResultTooLarge},
 		{err: job.ErrQuotaExceeded, wantCode: serverapi.ErrorCodeQuotaExceeded},
 		{err: job.ErrNotFound, wantCode: serverapi.ErrorCodeJobNotFound},
 	}
@@ -94,5 +98,14 @@ func TestServerAPIErrorMapsStableResultErrors(t *testing.T) {
 		if !errors.As(mapped, &apiErr) || apiErr.Code != tt.wantCode {
 			t.Fatalf("serverAPIError(%v) = %v, want code %q", tt.err, mapped, tt.wantCode)
 		}
+	}
+}
+
+func TestRawProfilesRejectsOversizedEncodedPage(t *testing.T) {
+	_, err := rawProfiles([]profilingresult.Profile{{
+		Profile: &profilev1.Profile{StringTable: []string{"profile payload"}},
+	}}, 1)
+	if !errors.Is(err, profilingresult.ErrResponseTooLarge) {
+		t.Fatalf("rawProfiles() error = %v, want ErrResponseTooLarge", err)
 	}
 }

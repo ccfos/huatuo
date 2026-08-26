@@ -62,9 +62,15 @@ func TestServiceAllowsResultsOnlyForCertainTerminalStates(t *testing.T) {
 		wantList  bool
 	}{
 		{
-			name:     "completed",
-			status:   job.StatusCompleted,
-			wantList: true,
+			name:      "completed with publication",
+			status:    job.StatusCompleted,
+			published: true,
+			wantList:  true,
+		},
+		{
+			name:    "completed without publication",
+			status:  job.StatusCompleted,
+			wantErr: ErrNotFound,
 		},
 		{
 			name:      "outcome unknown with publication",
@@ -75,7 +81,7 @@ func TestServiceAllowsResultsOnlyForCertainTerminalStates(t *testing.T) {
 		{
 			name:    "outcome unknown without publication",
 			status:  job.StatusOutcomeUnknown,
-			wantErr: ErrUnavailable,
+			wantErr: ErrNotFound,
 		},
 		{
 			name:    "failed",
@@ -156,7 +162,7 @@ func TestServiceEnforcesOwnershipAndKind(t *testing.T) {
 				Kind:   tt.kind,
 				UserID: "user-1",
 				Status: job.StatusCompleted,
-			}}, &stubRepository{})
+			}}, &stubRepository{published: true})
 			if err != nil {
 				t.Fatalf("NewService() error = %v", err)
 			}
@@ -169,8 +175,8 @@ func TestServiceEnforcesOwnershipAndKind(t *testing.T) {
 }
 
 func TestServiceFetchesOneExtraProfileForHasMore(t *testing.T) {
-	profiles := make([]Profile, maxPageSize+1)
-	repository := &stubRepository{profiles: profiles}
+	profiles := make([]Profile, maxRawProfilePageSize+1)
+	repository := &stubRepository{published: true, profiles: profiles}
 	service, err := NewService(&stubJobReader{job: &job.Job{
 		ID:     "job-1",
 		Kind:   job.KindProfiling,
@@ -181,14 +187,25 @@ func TestServiceFetchesOneExtraProfileForHasMore(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 
-	page, err := service.List(t.Context(), "job-1", "user-1", false, maxPageSize, 0)
+	page, err := service.List(
+		t.Context(),
+		"job-1",
+		"user-1",
+		false,
+		maxRawProfilePageSize,
+		0,
+	)
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if repository.listLimit != maxPageSize+1 {
-		t.Fatalf("repository limit = %d, want %d", repository.listLimit, maxPageSize+1)
+	if repository.listLimit != maxRawProfilePageSize+1 {
+		t.Fatalf(
+			"repository limit = %d, want %d",
+			repository.listLimit,
+			maxRawProfilePageSize+1,
+		)
 	}
-	if len(page.Items) != maxPageSize || !page.HasMore {
+	if len(page.Items) != maxRawProfilePageSize || !page.HasMore {
 		t.Fatalf("page = (items=%d, has_more=%t)", len(page.Items), page.HasMore)
 	}
 }

@@ -66,6 +66,13 @@ type managedJob struct {
 	operationObserved bool
 	wake              chan struct{}
 	recovered         bool
+	cancel            context.CancelFunc
+}
+
+type activeHostKey [2]string
+
+func newActiveHostKey(hostname string, kind Kind) activeHostKey {
+	return activeHostKey{hostname, string(kind)}
 }
 
 // Manager owns all active Job state transitions for one Apiserver process.
@@ -74,7 +81,7 @@ type Manager struct {
 
 	active      map[string]*managedJob
 	activeTotal map[Kind]int
-	activeHosts map[string]int
+	activeHosts map[activeHostKey]int
 	accepting   bool
 
 	store      Store
@@ -82,11 +89,11 @@ type Manager struct {
 	config     ManagerConfig
 	now        func() time.Time
 
-	stopCh    chan struct{}
-	closeOnce sync.Once
-	closeDone chan struct{}
-	closeErr  error
-	wg        sync.WaitGroup
+	cleanupCancel context.CancelFunc
+	closeOnce     sync.Once
+	closeDone     chan struct{}
+	closeErr      error
+	wg            sync.WaitGroup
 
 	quotaRejections     atomic.Uint64
 	persistenceFailures atomic.Uint64
@@ -142,7 +149,7 @@ func newManagerWithStore(
 	return &Manager{
 		active:      make(map[string]*managedJob),
 		activeTotal: make(map[Kind]int),
-		activeHosts: make(map[string]int),
+		activeHosts: make(map[activeHostKey]int),
 		accepting:   true,
 		store:       store,
 		nodeClient:  nodeClient,
@@ -150,7 +157,6 @@ func newManagerWithStore(
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
-		stopCh:    make(chan struct{}),
 		closeDone: make(chan struct{}),
 	}
 }
@@ -235,7 +241,8 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 	if err := jobEntity.validate(); err != nil {
 		return nil, fmt.Errorf("create job: %w", err)
 	}
-	runtime := newManagedJob(jobEntity, false)
+	supervisorCtx, cancel := context.WithCancel(context.Background())
+	runtime := newManagedJob(jobEntity, false, cancel)
 
 	m.mu.Lock()
 	if !m.accepting {
@@ -244,7 +251,8 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 	}
 	policy := m.config.Policies[jobEntity.Kind]
 	if m.activeTotal[jobEntity.Kind] >= policy.MaxTotalJobs ||
-		m.activeHosts[activeHostKey(jobEntity.Hostname, jobEntity.Kind)] >= policy.MaxJobsPerHost {
+		m.activeHosts[newActiveHostKey(jobEntity.Hostname, jobEntity.Kind)] >=
+			policy.MaxJobsPerHost {
 		m.quotaRejections.Add(1)
 		m.mu.Unlock()
 		return nil, fmt.Errorf("%w: %s Job capacity is exhausted", ErrQuotaExceeded, jobEntity.Kind)
@@ -255,6 +263,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 	m.mu.Unlock()
 
 	if err := m.store.Create(ctx, jobEntity); err != nil {
+		cancel()
 		m.persistenceFailures.Add(1)
 		m.mu.Lock()
 		m.unregisterLocked(runtime)
@@ -262,7 +271,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		m.wg.Done()
 		return nil, fmt.Errorf("%w: create job %q: %w", ErrPersistence, jobEntity.ID, err)
 	}
-	go m.runSupervisor(runtime)
+	go m.runSupervisor(supervisorCtx, runtime)
 	return cloneJob(jobEntity), nil
 }
 
@@ -285,27 +294,27 @@ func (m *Manager) ListPage(ctx context.Context, query *Query) (*Page, error) {
 }
 
 // Stop persists a user stop intent before allowing any Node Stop request.
-func (m *Manager) Stop(ctx context.Context, jobID string) error {
+func (m *Manager) Stop(ctx context.Context, jobID string) (*Job, error) {
 	runtime := m.activeRuntime(jobID)
 	if runtime == nil {
 		jobEntity, err := m.store.Get(ctx, jobID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if isTerminal(jobEntity.Status) {
-			return ErrJobTerminal
+			return nil, ErrJobTerminal
 		}
-		return fmt.Errorf("%w: active Job %q is not supervised", ErrPersistence, jobID)
+		return nil, fmt.Errorf("%w: active Job %q is not supervised", ErrPersistence, jobID)
 	}
 
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	current := runtime.job
 	if isTerminal(current.Status) {
-		return ErrJobTerminal
+		return nil, ErrJobTerminal
 	}
 	if current.Status == StatusStopping {
-		return nil
+		return cloneJob(current), nil
 	}
 
 	now := m.now()
@@ -319,11 +328,11 @@ func (m *Manager) Stop(ctx context.Context, jobID string) error {
 	}
 	if err := m.store.Save(ctx, updated, current.Status); err != nil {
 		m.persistenceFailures.Add(1)
-		return fmt.Errorf("%w: persist stop for Job %q: %w", ErrPersistence, jobID, err)
+		return nil, fmt.Errorf("%w: persist stop for Job %q: %w", ErrPersistence, jobID, err)
 	}
 	runtime.job = updated
 	wakeSupervisor(runtime)
-	return nil
+	return cloneJob(updated), nil
 }
 
 // Ready verifies that the durable Job Store can answer queries.
@@ -362,25 +371,31 @@ func (m *Manager) Stats() ManagerStats {
 	}
 }
 
-// ShutdownContext stops local supervisors without stopping Node Operations.
-func (m *Manager) ShutdownContext(ctx context.Context) error {
+// Shutdown stops local supervisors without stopping Node Operations.
+func (m *Manager) Shutdown(ctx context.Context) error {
+	shutdownCtx := contextOrBackground(ctx)
 	m.closeOnce.Do(func() {
 		m.mu.Lock()
 		m.accepting = false
-		close(m.stopCh)
+		if m.cleanupCancel != nil {
+			m.cleanupCancel()
+		}
+		for _, runtime := range m.active {
+			runtime.cancel()
+		}
 		m.mu.Unlock()
 
 		go func() {
 			m.wg.Wait()
-			m.closeErr = m.store.Close(context.Background())
+			m.closeErr = m.store.Close(shutdownCtx)
 			close(m.closeDone)
 		}()
 	})
 	select {
 	case <-m.closeDone:
 		return m.closeErr
-	case <-contextOrBackground(ctx).Done():
-		return contextOrBackground(ctx).Err()
+	case <-shutdownCtx.Done():
+		return shutdownCtx.Err()
 	}
 }
 
@@ -397,22 +412,25 @@ func (m *Manager) recover(ctx context.Context) error {
 		if _, ok := m.config.Policies[jobEntity.Kind]; !ok {
 			return fmt.Errorf("Job %q has no policy for kind %q", jobEntity.ID, jobEntity.Kind)
 		}
-		runtime := newManagedJob(jobEntity, true)
+		supervisorCtx, cancel := context.WithCancel(context.Background())
+		runtime := newManagedJob(jobEntity, true, cancel)
 		m.mu.Lock()
 		m.registerLocked(runtime)
 		m.wg.Add(1)
 		m.mu.Unlock()
-		go m.runSupervisor(runtime)
+		go m.runSupervisor(supervisorCtx, runtime)
 	}
 	m.recoveredJobs.Add(uint64(len(jobs)))
 	return nil
 }
 
 func (m *Manager) startCleanup() {
+	cleanupCtx, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()
+	m.cleanupCancel = cancel
 	m.wg.Add(1)
 	m.mu.Unlock()
-	go func() {
+	go func(ctx context.Context) {
 		defer m.wg.Done()
 		ticker := time.NewTicker(jobCleanupInterval)
 		defer ticker.Stop()
@@ -421,23 +439,23 @@ func (m *Manager) startCleanup() {
 			case <-ticker.C:
 				endedBefore := m.now().Add(-m.config.JobRetentionPeriod)
 				if _, err := m.store.DeleteTerminalBefore(
-					context.Background(),
+					ctx,
 					endedBefore,
 					jobCleanupBatchSize,
 				); err != nil {
 					log.WithError(err).Error("failed to clean up terminal Jobs")
 				}
-			case <-m.stopCh:
+			case <-ctx.Done():
 				return
 			}
 		}
-	}()
+	}(cleanupCtx)
 }
 
 func (m *Manager) registerLocked(runtime *managedJob) {
 	m.active[runtime.id] = runtime
 	m.activeTotal[runtime.kind]++
-	m.activeHosts[activeHostKey(runtime.hostname, runtime.kind)]++
+	m.activeHosts[newActiveHostKey(runtime.hostname, runtime.kind)]++
 }
 
 func (m *Manager) unregisterLocked(runtime *managedJob) {
@@ -447,7 +465,7 @@ func (m *Manager) unregisterLocked(runtime *managedJob) {
 	}
 	delete(m.active, runtime.id)
 	m.activeTotal[runtime.kind]--
-	m.activeHosts[activeHostKey(runtime.hostname, runtime.kind)]--
+	m.activeHosts[newActiveHostKey(runtime.hostname, runtime.kind)]--
 }
 
 func (m *Manager) activeRuntime(jobID string) *managedJob {
@@ -456,7 +474,7 @@ func (m *Manager) activeRuntime(jobID string) *managedJob {
 	return m.active[jobID]
 }
 
-func (m *Manager) runSupervisor(runtime *managedJob) {
+func (m *Manager) runSupervisor(ctx context.Context, runtime *managedJob) {
 	defer m.wg.Done()
 	defer func() {
 		m.mu.Lock()
@@ -465,7 +483,7 @@ func (m *Manager) runSupervisor(runtime *managedJob) {
 	}()
 
 	if runtime.recovered {
-		if !waitForSupervisor(m.stopCh, runtime.wake, recoveredPollJitter(
+		if !waitForSupervisor(ctx, runtime.wake, recoveredPollJitter(
 			runtime.id,
 			m.config.StatusPollInterval,
 		)) {
@@ -474,25 +492,29 @@ func (m *Manager) runSupervisor(runtime *managedJob) {
 	}
 	for {
 		select {
-		case <-m.stopCh:
+		case <-ctx.Done():
 			return
 		default:
 		}
-		terminal, err := m.superviseOnce(runtime)
-		if err != nil {
+		terminal, err := m.superviseOnce(ctx, runtime)
+		if err != nil && ctx.Err() == nil {
 			log.WithError(err).WithField("job_id", runtime.id).
 				Error("failed to supervise Job")
 		}
 		if terminal {
 			return
 		}
-		if !waitForSupervisor(m.stopCh, runtime.wake, m.nextWake(runtime)) {
+		if !waitForSupervisor(ctx, runtime.wake, m.nextWake(runtime)) {
 			return
 		}
 	}
 }
 
-func newManagedJob(jobEntity *Job, recovered bool) *managedJob {
+func newManagedJob(
+	jobEntity *Job,
+	recovered bool,
+	cancel context.CancelFunc,
+) *managedJob {
 	return &managedJob{
 		id:        jobEntity.ID,
 		kind:      jobEntity.Kind,
@@ -500,10 +522,11 @@ func newManagedJob(jobEntity *Job, recovered bool) *managedJob {
 		job:       cloneJob(jobEntity),
 		wake:      make(chan struct{}, 1),
 		recovered: recovered,
+		cancel:    cancel,
 	}
 }
 
-func waitForSupervisor(stopCh, wake <-chan struct{}, delay time.Duration) bool {
+func waitForSupervisor(ctx context.Context, wake <-chan struct{}, delay time.Duration) bool {
 	if delay < 0 {
 		delay = 0
 	}
@@ -514,7 +537,7 @@ func waitForSupervisor(stopCh, wake <-chan struct{}, delay time.Duration) bool {
 		return true
 	case <-wake:
 		return true
-	case <-stopCh:
+	case <-ctx.Done():
 		return false
 	}
 }
@@ -533,8 +556,4 @@ func recoveredPollJitter(jobID string, interval time.Duration) time.Duration {
 	hasher := fnv.New64a()
 	_, _ = hasher.Write([]byte(jobID))
 	return time.Duration(hasher.Sum64() % uint64(interval))
-}
-
-func activeHostKey(hostname string, kind Kind) string {
-	return string(kind) + "\x00" + hostname
 }

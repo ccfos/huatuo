@@ -18,11 +18,15 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
 var (
 	ErrNotReady              = errors.New("profiling result is not ready")
+	ErrNotFound              = errors.New("profiling result is not found")
 	ErrUnavailable           = errors.New("profiling result is unavailable")
+	ErrResponseTooLarge      = errors.New("profiling result response is too large")
 	ErrForbidden             = errors.New("profiling result access is forbidden")
 	ErrWrongKind             = errors.New("job is not a profiling job")
 	ErrRepositoryUnavailable = errors.New("profiling result repository is unavailable")
@@ -37,9 +41,9 @@ type Profile struct {
 	ContainerID       string
 	ContainerHostname string
 	ContainerType     string
-	ContainerQOS      string
+	ContainerQoS      string
 	ProfileType       string
-	Profile           any
+	Profile           *profilev1.Profile
 }
 
 // Page is one stable page of published Profiles.

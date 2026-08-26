@@ -379,9 +379,9 @@ curl -sS \
 
 ### 6. 获取原始剖析数据
 
-`GET /v1/profiling/:request_id/raw` 返回 `completed` Job 关联的原始剖析窗口。
-只有 Node 已持久发布结果标记时，`outcome_unknown` Job 也允许查询。活动状态返回
-`result_not_ready`；`failed`、`stopped` 和未发布的 `outcome_unknown` 返回
+`GET /v1/profiling/:request_id/raw` 仅在持久发布标记仍存在时返回 `completed` 或
+`outcome_unknown` Job 的原始剖析窗口。发布标记不存在或已经过期时返回
+`result_not_found`。活动状态返回 `result_not_ready`；`failed` 和 `stopped` 返回
 `result_unavailable`。
 
 数据量可能较大，可以直接保存到文件：
@@ -396,7 +396,9 @@ curl -sS \
 剖析窗口位于响应体的 `data.items` 字段；`data.limit`、`data.offset`
 和 `data.has_more` 描述分页。每条记录包含 `uploaded_at`、`captured_at`、
 `profile_type` 和兼容 pprof 的 `profile` 数据。
-已持久发布但内容为空的结果仍返回成功，`items` 为空数组。
+已持久发布但内容为空的结果仍返回成功，`items` 为空数组。`limit` 默认值为 20，
+最大值为 100。编码后的 Profile 数据超过 64 MiB 时返回
+`413 result_too_large`，调用方应减小 `limit` 后重试。
 
 ### 7. 停止任务
 
@@ -445,7 +447,7 @@ C、C++ 和 Go 使用基于 eBPF 的原生采集器，可观测 on-CPU、off-CPU
 在仓库根目录构建完整产物：
 
 ```bash
-make all
+make build
 ```
 
 生成的命令位于 `_output/bin/profiler`。原生采集依赖 Linux eBPF、perf event 和仓库构建出的 BPF 对象，通常需要 root 权限，并要求 `kernel.perf_event_paranoid` 允许采样。Java 需要 async-profiler，`--tool-path` 指向包含 `bin/asprof` 和 `lib/libasyncProfiler.so` 的目录。Python 需要 py-spy，`--tool-path` 指向包含可执行文件 `py-spy` 的目录。
@@ -696,7 +698,7 @@ sudo ./integration/run.sh test_profiler_java_memory_usage_alloc.sh
 sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 ```
 
-容器、线程组和指定 CPU 的示例分别位于 `test_profiler_native_cpu_container.sh`、`test_profiler_native_cpu_thread_group.sh` 和 `test_profiler_native_cpu_cpuid.sh`。运行前需完成 `make all`，并根据 `integration/env.sh` 配置 Java 或 Python 采集工具路径。
+容器、线程组和指定 CPU 的示例分别位于 `test_profiler_native_cpu_container.sh`、`test_profiler_native_cpu_thread_group.sh` 和 `test_profiler_native_cpu_cpuid.sh`。运行前需完成 `make build`，并根据 `integration/env.sh` 配置 Java 或 Python 采集工具路径。
 
 ## ⚙️ 功能原理介绍
 

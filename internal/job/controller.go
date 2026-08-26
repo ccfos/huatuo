@@ -26,7 +26,7 @@ import (
 	"huatuo-bamai/internal/nodeclient"
 )
 
-func (m *Manager) superviseOnce(runtime *managedJob) (bool, error) {
+func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool, error) {
 	runtime.mu.Lock()
 	if isTerminal(runtime.job.Status) {
 		runtime.mu.Unlock()
@@ -37,7 +37,7 @@ func (m *Manager) superviseOnce(runtime *managedJob) (bool, error) {
 	runtime.mu.Unlock()
 
 	if shouldStart {
-		operation, err := m.start(runtime)
+		operation, err := m.start(ctx, runtime)
 		if errors.Is(err, ErrShuttingDown) {
 			return false, nil
 		}
@@ -45,22 +45,25 @@ func (m *Manager) superviseOnce(runtime *managedJob) (bool, error) {
 			if errors.Is(err, ErrPersistence) || errors.Is(err, ErrConflict) {
 				return false, err
 			}
-			return m.handleNodeError(runtime, err, true)
+			return m.handleNodeError(ctx, runtime, err, true)
 		}
-		return m.reconcileAndStop(runtime, operation)
+		return m.reconcileAndStop(ctx, runtime, operation)
 	}
 
 	jobEntity := runtimeSnapshot(runtime)
-	operation, err := m.getOperation(context.Background(), jobEntity)
+	operation, err := m.getOperation(ctx, jobEntity)
 	if err != nil {
-		return m.handleNodeError(runtime, err, false)
+		return m.handleNodeError(ctx, runtime, err, false)
 	}
-	return m.reconcileAndStop(runtime, operation)
+	return m.reconcileAndStop(ctx, runtime, operation)
 }
 
-func (m *Manager) start(runtime *managedJob) (*nodeapi.Operation, error) {
+func (m *Manager) start(
+	ctx context.Context,
+	runtime *managedJob,
+) (*nodeapi.Operation, error) {
 	select {
-	case <-m.stopCh:
+	case <-ctx.Done():
 		return nil, ErrShuttingDown
 	default:
 	}
@@ -76,7 +79,7 @@ func (m *Manager) start(runtime *managedJob) (*nodeapi.Operation, error) {
 	updated.StartAttemptedAt = now
 	updated.PendingDeadline = now.Add(m.config.PendingTimeout)
 	updated.UpdatedAt = now
-	if err := m.store.Save(context.Background(), updated, StatusPending); err != nil {
+	if err := m.store.Save(ctx, updated, StatusPending); err != nil {
 		m.persistenceFailures.Add(1)
 		runtime.mu.Unlock()
 		return nil, fmt.Errorf(
@@ -88,28 +91,30 @@ func (m *Manager) start(runtime *managedJob) (*nodeapi.Operation, error) {
 	}
 	runtime.job = updated
 	runtime.mu.Unlock()
-	return m.startOperation(context.Background(), updated)
+	return m.startOperation(ctx, updated)
 }
 
 func (m *Manager) reconcileAndStop(
+	ctx context.Context,
 	runtime *managedJob,
 	operation *nodeapi.Operation,
 ) (bool, error) {
-	terminal, shouldStop, err := m.reconcileOperation(runtime, operation)
+	terminal, shouldStop, err := m.reconcileOperation(ctx, runtime, operation)
 	if err != nil || terminal || !shouldStop {
 		return terminal, err
 	}
 
 	jobEntity := runtimeSnapshot(runtime)
-	stoppedOperation, err := m.stopOperation(context.Background(), jobEntity)
+	stoppedOperation, err := m.stopOperation(ctx, jobEntity)
 	if err != nil {
-		return m.handleNodeError(runtime, err, false)
+		return m.handleNodeError(ctx, runtime, err, false)
 	}
-	terminal, _, err = m.reconcileOperation(runtime, stoppedOperation)
+	terminal, _, err = m.reconcileOperation(ctx, runtime, stoppedOperation)
 	return terminal, err
 }
 
 func (m *Manager) reconcileOperation(
+	ctx context.Context,
 	runtime *managedJob,
 	operation *nodeapi.Operation,
 ) (terminal, shouldStop bool, err error) {
@@ -204,7 +209,7 @@ func (m *Manager) reconcileOperation(
 	}
 
 	if changed {
-		if err := m.store.Save(context.Background(), updated, current.Status); err != nil {
+		if err := m.store.Save(ctx, updated, current.Status); err != nil {
 			m.persistenceFailures.Add(1)
 			return false, false, fmt.Errorf(
 				"%w: reconcile Job %q: %w",
@@ -219,12 +224,16 @@ func (m *Manager) reconcileOperation(
 }
 
 func (m *Manager) handleNodeError(
+	ctx context.Context,
 	runtime *managedJob,
 	err error,
 	duringStart bool,
 ) (bool, error) {
 	if err == nil {
 		return false, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, ctxErr
 	}
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
@@ -266,7 +275,7 @@ func (m *Manager) handleNodeError(
 		}, now)
 	}
 
-	if err := m.store.Save(context.Background(), updated, current.Status); err != nil {
+	if err := m.store.Save(ctx, updated, current.Status); err != nil {
 		m.persistenceFailures.Add(1)
 		return false, fmt.Errorf(
 			"%w: persist Node error for Job %q: %w",

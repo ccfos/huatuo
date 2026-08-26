@@ -103,3 +103,20 @@ func TestCloneJobDoesNotAliasNestedState(t *testing.T) {
 		t.Fatalf("source failure message = %q", source.Failure.Message)
 	}
 }
+
+func TestJobValidateRequiresEndedAtExactlyForTerminalStatus(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	terminal := testJob("terminal", StatusCompleted, now)
+	terminal.EndedAt = time.Time{}
+	if err := terminal.validate(); err == nil || !strings.Contains(err.Error(), "ended timestamp") {
+		t.Fatalf("terminal validate() error = %v", err)
+	}
+
+	nonTerminal := testJob("running", StatusRunning, now)
+	nonTerminal.StartedAt = now
+	nonTerminal.ExecutionDeadline = now.Add(time.Minute)
+	nonTerminal.EndedAt = now
+	if err := nonTerminal.validate(); err == nil || !strings.Contains(err.Error(), "ended timestamp") {
+		t.Fatalf("non-terminal validate() error = %v", err)
+	}
+}

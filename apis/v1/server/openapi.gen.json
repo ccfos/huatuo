@@ -20,6 +20,16 @@
           "type": "integer"
         }
       },
+      "RawProfileLimit": {
+        "in": "query",
+        "name": "limit",
+        "schema": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
       "RequestID": {
         "in": "path",
         "name": "request_id",
@@ -80,6 +90,16 @@
           }
         },
         "description": "Permission denied."
+      },
+      "ProtobufResponse": {
+        "content": {
+          "application/proto": {
+            "schema": {
+              "$ref": "#/components/schemas/ProtobufPayload"
+            }
+          }
+        },
+        "description": "Pyroscope-compatible protobuf response."
       },
       "RequestTooLarge": {
         "content": {
@@ -509,6 +529,10 @@
           "ProfilingTypeCPU",
           "ProfilingTypeMemory"
         ]
+      },
+      "ProtobufPayload": {
+        "format": "binary",
+        "type": "string"
       },
       "RawProfile": {
         "additionalProperties": false,
@@ -946,6 +970,190 @@
         ]
       }
     },
+    "/v1/profiling/flamegraph/querier.v1.QuerierService/LabelNames": {
+      "post": {
+        "operationId": "getProfileLabelNames",
+        "requestBody": {
+          "content": {
+            "application/proto": {
+              "schema": {
+                "$ref": "#/components/schemas/ProtobufPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ProtobufResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      }
+    },
+    "/v1/profiling/flamegraph/querier.v1.QuerierService/LabelValues": {
+      "post": {
+        "operationId": "getProfileLabelValues",
+        "requestBody": {
+          "content": {
+            "application/proto": {
+              "schema": {
+                "$ref": "#/components/schemas/ProtobufPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ProtobufResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      }
+    },
+    "/v1/profiling/flamegraph/querier.v1.QuerierService/ProfileTypes": {
+      "post": {
+        "operationId": "getProfileTypes",
+        "requestBody": {
+          "content": {
+            "application/proto": {
+              "schema": {
+                "$ref": "#/components/schemas/ProtobufPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ProtobufResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      }
+    },
+    "/v1/profiling/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces": {
+      "post": {
+        "operationId": "selectMergeStacktraces",
+        "requestBody": {
+          "content": {
+            "application/proto": {
+              "schema": {
+                "$ref": "#/components/schemas/ProtobufPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ProtobufResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "tags": [
+          "profiling"
+        ]
+      }
+    },
     "/v1/profiling/{request_id}": {
       "get": {
         "operationId": "getProfilingJob",
@@ -993,7 +1201,7 @@
         "operationId": "getRawProfiles",
         "parameters": [
           {
-            "$ref": "#/components/parameters/Limit"
+            "$ref": "#/components/parameters/RawProfileLimit"
           },
           {
             "$ref": "#/components/parameters/Offset"
@@ -1024,6 +1232,9 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLarge"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -1373,9 +1584,17 @@
       "description": "The request exceeds the caller's Job quota.",
       "httpStatus": 429
     },
+    "result_not_found": {
+      "description": "The published Profiling result does not exist or has expired.",
+      "httpStatus": 404
+    },
     "result_not_ready": {
       "description": "The Job state does not permit result access.",
       "httpStatus": 409
+    },
+    "result_too_large": {
+      "description": "The requested raw Profiling result page exceeds the response limit.",
+      "httpStatus": 413
     },
     "result_unavailable": {
       "description": "The Job terminal state does not guarantee a complete result.",

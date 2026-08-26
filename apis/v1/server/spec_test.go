@@ -145,6 +145,34 @@ func (*unimplementedStrictServer) GetProfilingCapabilities(
 	return nil, errNotImplemented
 }
 
+func (*unimplementedStrictServer) SelectMergeStacktraces(
+	context.Context,
+	SelectMergeStacktracesRequestObject,
+) (SelectMergeStacktracesResponseObject, error) {
+	return nil, errNotImplemented
+}
+
+func (*unimplementedStrictServer) GetProfileTypes(
+	context.Context,
+	GetProfileTypesRequestObject,
+) (GetProfileTypesResponseObject, error) {
+	return nil, errNotImplemented
+}
+
+func (*unimplementedStrictServer) GetProfileLabelNames(
+	context.Context,
+	GetProfileLabelNamesRequestObject,
+) (GetProfileLabelNamesResponseObject, error) {
+	return nil, errNotImplemented
+}
+
+func (*unimplementedStrictServer) GetProfileLabelValues(
+	context.Context,
+	GetProfileLabelValuesRequestObject,
+) (GetProfileLabelValuesResponseObject, error) {
+	return nil, errNotImplemented
+}
+
 func (*unimplementedStrictServer) GetProfilingJob(
 	context.Context,
 	GetProfilingJobRequestObject,

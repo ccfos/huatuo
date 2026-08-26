@@ -228,7 +228,6 @@ func (m *Manager) commitTerminalLocked(
 	managed.expiresAt = finishedAt.Add(m.lifecycle.TerminalRetentionPeriod)
 	managed.execution = nil
 	m.activeCount--
-	close(runtime.doneCh)
 }
 
 func (m *Manager) logFailure(requestID string, kind Kind, failure *lifecycleFailure) {

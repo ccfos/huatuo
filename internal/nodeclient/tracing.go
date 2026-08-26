@@ -36,7 +36,7 @@ func (c *Client) StartTracing(
 		host,
 		"tracing.start",
 		request.RequestID,
-		true,
+		successResponseOKOrAccepted,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.StartTracing(ctx, *request)
 		},
@@ -54,7 +54,7 @@ func (c *Client) GetTracing(
 		host,
 		"tracing.get",
 		requestID,
-		false,
+		successResponseOK,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.GetTracing(ctx, requestID)
 		},
@@ -72,7 +72,7 @@ func (c *Client) StopTracing(
 		host,
 		"tracing.stop",
 		requestID,
-		true,
+		successResponseOKOrAccepted,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.StopTracing(ctx, requestID)
 		},

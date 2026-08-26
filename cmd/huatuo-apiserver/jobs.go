@@ -66,6 +66,6 @@ func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) err
 	d.jobManager = manager
 	d.metrics.MustRegister(newJobManagerCollector(manager))
 	return func(ctx context.Context) error {
-		return manager.ShutdownContext(ctx)
+		return manager.Shutdown(ctx)
 	}, nil
 }

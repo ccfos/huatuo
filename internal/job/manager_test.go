@@ -200,6 +200,10 @@ func testManager(store Store, client NodeClient) *Manager {
 	})
 }
 
+func testManagedJob(jobEntity *Job) *managedJob {
+	return newManagedJob(jobEntity, false, func() {})
+}
+
 func testJob(id string, status Status, now time.Time) *Job {
 	jobEntity := &Job{
 		ID:       id,
@@ -282,8 +286,37 @@ func TestManagerCreateTreatsEachRequestAsIndependent(t *testing.T) {
 	}
 
 	close(release)
-	if err := manager.ShutdownContext(t.Context()); err != nil {
-		t.Fatalf("ShutdownContext() error = %v", err)
+	if err := manager.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+}
+
+func TestManagerShutdownCancelsBlockedSupervisor(t *testing.T) {
+	started := make(chan struct{})
+	client := &stubNodeClient{startProfiling: func(
+		ctx context.Context,
+		_ string,
+		_ *nodeapi.StartProfilingRequest,
+	) (*nodeapi.Operation, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	manager := testManager(newMemoryStore(), client)
+
+	if _, err := manager.Create(t.Context(), testCreateRequest()); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not start the Node request")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := manager.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
 	}
 }
 
@@ -302,7 +335,6 @@ func TestManagerStartPersistsDispatchMarkerBeforeNodeCall(t *testing.T) {
 			t.Fatal("Save() did not contain the dispatch marker")
 		}
 		markerPersisted.Store(true)
-		close(manager.stopCh)
 		return nil
 	}
 	manager.nodeClient = &stubNodeClient{startProfiling: func(
@@ -316,7 +348,7 @@ func TestManagerStartPersistsDispatchMarkerBeforeNodeCall(t *testing.T) {
 		return operation(request.RequestID, nodeapi.OperationStatusPending), nil
 	}}
 
-	got, err := manager.start(newManagedJob(jobEntity, false))
+	got, err := manager.start(t.Context(), testManagedJob(jobEntity))
 	if err != nil {
 		t.Fatalf("start() error = %v", err)
 	}
@@ -331,13 +363,17 @@ func TestManagerStopBeforeDispatchPersistsUserIntent(t *testing.T) {
 	store := newMemoryStore(jobEntity)
 	manager := testManager(store, &stubNodeClient{})
 	manager.now = func() time.Time { return now.Add(time.Second) }
-	runtime := newManagedJob(jobEntity, false)
+	runtime := testManagedJob(jobEntity)
 	manager.mu.Lock()
 	manager.registerLocked(runtime)
 	manager.mu.Unlock()
 
-	if err := manager.Stop(t.Context(), jobEntity.ID); err != nil {
+	stopped, err := manager.Stop(t.Context(), jobEntity.ID)
+	if err != nil {
 		t.Fatalf("Stop() error = %v", err)
+	}
+	if stopped.Status != StatusStopped {
+		t.Fatalf("Stop() status = %q, want %q", stopped.Status, StatusStopped)
 	}
 	got, err := store.Get(t.Context(), jobEntity.ID)
 	if err != nil {
@@ -376,7 +412,7 @@ func TestManagerDistinguishesUnknownAndLostOperations(t *testing.T) {
 			store := newMemoryStore(jobEntity)
 			manager := testManager(store, &stubNodeClient{})
 			manager.now = func() time.Time { return now.Add(time.Second) }
-			runtime := newManagedJob(jobEntity, false)
+			runtime := testManagedJob(jobEntity)
 			runtime.operationObserved = tt.operationObserved
 			nodeErr := &nodeclient.Error{
 				StatusCode: 404,
@@ -384,7 +420,7 @@ func TestManagerDistinguishesUnknownAndLostOperations(t *testing.T) {
 				Message:    "operation not found",
 			}
 
-			terminal, err := manager.handleNodeError(runtime, nodeErr, false)
+			terminal, err := manager.handleNodeError(t.Context(), runtime, nodeErr, false)
 			if err != nil || !terminal {
 				t.Fatalf("handleNodeError() = (%t, %v)", terminal, err)
 			}
@@ -422,9 +458,10 @@ func TestManagerExecutionTimeoutStopsThenFailsJob(t *testing.T) {
 	}}
 	manager := testManager(store, client)
 	manager.now = func() time.Time { return now }
-	runtime := newManagedJob(jobEntity, false)
+	runtime := testManagedJob(jobEntity)
 
 	terminal, err := manager.reconcileAndStop(
+		t.Context(),
 		runtime,
 		operation(jobEntity.ID, nodeapi.OperationStatusRunning),
 	)
@@ -452,7 +489,7 @@ func TestManagerNodeUnavailableDoesNotSpinOnBusinessDeadline(t *testing.T) {
 	manager.config.StatusPollInterval = 5 * time.Second
 	manager.now = func() time.Time { return now }
 
-	if got := manager.nextWake(newManagedJob(jobEntity, false)); got != 5*time.Second {
+	if got := manager.nextWake(testManagedJob(jobEntity)); got != 5*time.Second {
 		t.Fatalf("nextWake() = %s, want 5s", got)
 	}
 }

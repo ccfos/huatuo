@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 
 	externalRef0 "huatuo-bamai/apis/v1"
@@ -44,6 +45,18 @@ type ServerInterface interface {
 
 	// (GET /v1/profiling/capabilities)
 	GetProfilingCapabilities(c *gin.Context)
+
+	// (POST /v1/profiling/flamegraph/querier.v1.QuerierService/LabelNames)
+	GetProfileLabelNames(c *gin.Context)
+
+	// (POST /v1/profiling/flamegraph/querier.v1.QuerierService/LabelValues)
+	GetProfileLabelValues(c *gin.Context)
+
+	// (POST /v1/profiling/flamegraph/querier.v1.QuerierService/ProfileTypes)
+	GetProfileTypes(c *gin.Context)
+
+	// (POST /v1/profiling/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces)
+	SelectMergeStacktraces(c *gin.Context)
 
 	// (GET /v1/profiling/{request_id})
 	GetProfilingJob(c *gin.Context, requestID RequestID)
@@ -157,6 +170,66 @@ func (siw *ServerInterfaceWrapper) GetProfilingCapabilities(c *gin.Context) {
 	}
 
 	siw.Handler.GetProfilingCapabilities(c)
+}
+
+// GetProfileLabelNames operation middleware
+func (siw *ServerInterfaceWrapper) GetProfileLabelNames(c *gin.Context) {
+
+	c.Set(string(BearerAuthScopes), []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetProfileLabelNames(c)
+}
+
+// GetProfileLabelValues operation middleware
+func (siw *ServerInterfaceWrapper) GetProfileLabelValues(c *gin.Context) {
+
+	c.Set(string(BearerAuthScopes), []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetProfileLabelValues(c)
+}
+
+// GetProfileTypes operation middleware
+func (siw *ServerInterfaceWrapper) GetProfileTypes(c *gin.Context) {
+
+	c.Set(string(BearerAuthScopes), []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetProfileTypes(c)
+}
+
+// SelectMergeStacktraces operation middleware
+func (siw *ServerInterfaceWrapper) SelectMergeStacktraces(c *gin.Context) {
+
+	c.Set(string(BearerAuthScopes), []string{})
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.SelectMergeStacktraces(c)
 }
 
 // GetProfilingJob operation middleware
@@ -411,6 +484,10 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/v1/profiling", wrapper.ListProfilingJobs)
 	router.POST(options.BaseURL+"/v1/profiling", wrapper.CreateProfilingJob)
 	router.GET(options.BaseURL+"/v1/profiling/capabilities", wrapper.GetProfilingCapabilities)
+	router.POST(options.BaseURL+"/v1/profiling/flamegraph/querier.v1.QuerierService/LabelNames", wrapper.GetProfileLabelNames)
+	router.POST(options.BaseURL+"/v1/profiling/flamegraph/querier.v1.QuerierService/LabelValues", wrapper.GetProfileLabelValues)
+	router.POST(options.BaseURL+"/v1/profiling/flamegraph/querier.v1.QuerierService/ProfileTypes", wrapper.GetProfileTypes)
+	router.POST(options.BaseURL+"/v1/profiling/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces", wrapper.SelectMergeStacktraces)
 	router.GET(options.BaseURL+"/v1/profiling/:request_id", wrapper.GetProfilingJob)
 	router.GET(options.BaseURL+"/v1/profiling/:request_id/raw", wrapper.GetRawProfiles)
 	router.POST(options.BaseURL+"/v1/profiling/:request_id/stop", wrapper.StopProfilingJob)
@@ -430,6 +507,12 @@ type InternalErrorJSONResponse externalRef0.ErrorResponse
 type NotFoundJSONResponse externalRef0.ErrorResponse
 
 type PermissionDeniedJSONResponse externalRef0.ErrorResponse
+
+type ProtobufResponseApplicationProtoResponse struct {
+	Body io.Reader
+
+	ContentLength int64
+}
 
 type RequestTooLargeJSONResponse externalRef0.ErrorResponse
 
@@ -757,6 +840,462 @@ func (response GetProfilingCapabilities500JSONResponse) VisitGetProfilingCapabil
 	return err
 }
 
+type GetProfileLabelNamesRequestObject struct {
+	Body io.Reader
+}
+
+type GetProfileLabelNamesResponseObject interface {
+	VisitGetProfileLabelNamesResponse(w http.ResponseWriter) error
+}
+
+type GetProfileLabelNames200ApplicationProtoResponse struct {
+	ProtobufResponseApplicationProtoResponse
+}
+
+func (response GetProfileLabelNames200ApplicationProtoResponse) VisitGetProfileLabelNamesResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/proto")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetProfileLabelNames400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetProfileLabelNames400JSONResponse) VisitGetProfileLabelNamesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelNames401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response GetProfileLabelNames401JSONResponse) VisitGetProfileLabelNamesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelNames403JSONResponse struct{ PermissionDeniedJSONResponse }
+
+func (response GetProfileLabelNames403JSONResponse) VisitGetProfileLabelNamesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelNames413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response GetProfileLabelNames413JSONResponse) VisitGetProfileLabelNamesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelNames415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response GetProfileLabelNames415JSONResponse) VisitGetProfileLabelNamesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelNames500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetProfileLabelNames500JSONResponse) VisitGetProfileLabelNamesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelValuesRequestObject struct {
+	Body io.Reader
+}
+
+type GetProfileLabelValuesResponseObject interface {
+	VisitGetProfileLabelValuesResponse(w http.ResponseWriter) error
+}
+
+type GetProfileLabelValues200ApplicationProtoResponse struct {
+	ProtobufResponseApplicationProtoResponse
+}
+
+func (response GetProfileLabelValues200ApplicationProtoResponse) VisitGetProfileLabelValuesResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/proto")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetProfileLabelValues400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetProfileLabelValues400JSONResponse) VisitGetProfileLabelValuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelValues401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response GetProfileLabelValues401JSONResponse) VisitGetProfileLabelValuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelValues403JSONResponse struct{ PermissionDeniedJSONResponse }
+
+func (response GetProfileLabelValues403JSONResponse) VisitGetProfileLabelValuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelValues413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response GetProfileLabelValues413JSONResponse) VisitGetProfileLabelValuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelValues415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response GetProfileLabelValues415JSONResponse) VisitGetProfileLabelValuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileLabelValues500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetProfileLabelValues500JSONResponse) VisitGetProfileLabelValuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileTypesRequestObject struct {
+	Body io.Reader
+}
+
+type GetProfileTypesResponseObject interface {
+	VisitGetProfileTypesResponse(w http.ResponseWriter) error
+}
+
+type GetProfileTypes200ApplicationProtoResponse struct {
+	ProtobufResponseApplicationProtoResponse
+}
+
+func (response GetProfileTypes200ApplicationProtoResponse) VisitGetProfileTypesResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/proto")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetProfileTypes400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response GetProfileTypes400JSONResponse) VisitGetProfileTypesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileTypes401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response GetProfileTypes401JSONResponse) VisitGetProfileTypesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileTypes403JSONResponse struct{ PermissionDeniedJSONResponse }
+
+func (response GetProfileTypes403JSONResponse) VisitGetProfileTypesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileTypes413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response GetProfileTypes413JSONResponse) VisitGetProfileTypesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileTypes415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response GetProfileTypes415JSONResponse) VisitGetProfileTypesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProfileTypes500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response GetProfileTypes500JSONResponse) VisitGetProfileTypesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectMergeStacktracesRequestObject struct {
+	Body io.Reader
+}
+
+type SelectMergeStacktracesResponseObject interface {
+	VisitSelectMergeStacktracesResponse(w http.ResponseWriter) error
+}
+
+type SelectMergeStacktraces200ApplicationProtoResponse struct {
+	ProtobufResponseApplicationProtoResponse
+}
+
+func (response SelectMergeStacktraces200ApplicationProtoResponse) VisitSelectMergeStacktracesResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/proto")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type SelectMergeStacktraces400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response SelectMergeStacktraces400JSONResponse) VisitSelectMergeStacktracesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectMergeStacktraces401JSONResponse struct{ UnauthenticatedJSONResponse }
+
+func (response SelectMergeStacktraces401JSONResponse) VisitSelectMergeStacktracesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectMergeStacktraces403JSONResponse struct{ PermissionDeniedJSONResponse }
+
+func (response SelectMergeStacktraces403JSONResponse) VisitSelectMergeStacktracesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectMergeStacktraces413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response SelectMergeStacktraces413JSONResponse) VisitSelectMergeStacktracesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectMergeStacktraces415JSONResponse struct {
+	UnsupportedMediaTypeJSONResponse
+}
+
+func (response SelectMergeStacktraces415JSONResponse) VisitSelectMergeStacktracesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectMergeStacktraces500JSONResponse struct{ InternalErrorJSONResponse }
+
+func (response SelectMergeStacktraces500JSONResponse) VisitSelectMergeStacktracesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetProfilingJobRequestObject struct {
 	RequestID RequestID `json:"request_id"`
 }
@@ -926,6 +1465,20 @@ func (response GetRawProfiles409JSONResponse) VisitGetRawProfilesResponse(w http
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetRawProfiles413JSONResponse struct{ RequestTooLargeJSONResponse }
+
+func (response GetRawProfiles413JSONResponse) VisitGetRawProfilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1526,6 +2079,18 @@ type StrictServerInterface interface {
 	// (GET /v1/profiling/capabilities)
 	GetProfilingCapabilities(ctx context.Context, request GetProfilingCapabilitiesRequestObject) (GetProfilingCapabilitiesResponseObject, error)
 
+	// (POST /v1/profiling/flamegraph/querier.v1.QuerierService/LabelNames)
+	GetProfileLabelNames(ctx context.Context, request GetProfileLabelNamesRequestObject) (GetProfileLabelNamesResponseObject, error)
+
+	// (POST /v1/profiling/flamegraph/querier.v1.QuerierService/LabelValues)
+	GetProfileLabelValues(ctx context.Context, request GetProfileLabelValuesRequestObject) (GetProfileLabelValuesResponseObject, error)
+
+	// (POST /v1/profiling/flamegraph/querier.v1.QuerierService/ProfileTypes)
+	GetProfileTypes(ctx context.Context, request GetProfileTypesRequestObject) (GetProfileTypesResponseObject, error)
+
+	// (POST /v1/profiling/flamegraph/querier.v1.QuerierService/SelectMergeStacktraces)
+	SelectMergeStacktraces(ctx context.Context, request SelectMergeStacktracesRequestObject) (SelectMergeStacktracesResponseObject, error)
+
 	// (GET /v1/profiling/{request_id})
 	GetProfilingJob(ctx context.Context, request GetProfilingJobRequestObject) (GetProfilingJobResponseObject, error)
 
@@ -1706,6 +2271,110 @@ func (sh *strictHandler) GetProfilingCapabilities(ctx *gin.Context) {
 		sh.options.HandlerErrorFunc(ctx, err)
 	} else if validResponse, ok := response.(GetProfilingCapabilitiesResponseObject); ok {
 		if err := validResponse.VisitGetProfilingCapabilitiesResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetProfileLabelNames operation middleware
+func (sh *strictHandler) GetProfileLabelNames(ctx *gin.Context) {
+	var request GetProfileLabelNamesRequestObject
+
+	request.Body = ctx.Request.Body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetProfileLabelNames(ctx, request.(GetProfileLabelNamesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetProfileLabelNames")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetProfileLabelNamesResponseObject); ok {
+		if err := validResponse.VisitGetProfileLabelNamesResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetProfileLabelValues operation middleware
+func (sh *strictHandler) GetProfileLabelValues(ctx *gin.Context) {
+	var request GetProfileLabelValuesRequestObject
+
+	request.Body = ctx.Request.Body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetProfileLabelValues(ctx, request.(GetProfileLabelValuesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetProfileLabelValues")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetProfileLabelValuesResponseObject); ok {
+		if err := validResponse.VisitGetProfileLabelValuesResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetProfileTypes operation middleware
+func (sh *strictHandler) GetProfileTypes(ctx *gin.Context) {
+	var request GetProfileTypesRequestObject
+
+	request.Body = ctx.Request.Body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetProfileTypes(ctx, request.(GetProfileTypesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetProfileTypes")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetProfileTypesResponseObject); ok {
+		if err := validResponse.VisitGetProfileTypesResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SelectMergeStacktraces operation middleware
+func (sh *strictHandler) SelectMergeStacktraces(ctx *gin.Context) {
+	var request SelectMergeStacktracesRequestObject
+
+	request.Body = ctx.Request.Body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.SelectMergeStacktraces(ctx, request.(SelectMergeStacktracesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SelectMergeStacktraces")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(SelectMergeStacktracesResponseObject); ok {
+		if err := validResponse.VisitSelectMergeStacktracesResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {

@@ -36,7 +36,7 @@ func (c *Client) StartProfiling(
 		host,
 		"profiling.start",
 		request.RequestID,
-		true,
+		successResponseOKOrAccepted,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.StartProfiling(ctx, *request)
 		},
@@ -54,7 +54,7 @@ func (c *Client) GetProfiling(
 		host,
 		"profiling.get",
 		requestID,
-		false,
+		successResponseOK,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.GetProfiling(ctx, requestID)
 		},
@@ -72,7 +72,7 @@ func (c *Client) StopProfiling(
 		host,
 		"profiling.stop",
 		requestID,
-		true,
+		successResponseOKOrAccepted,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
 			return generated.StopProfiling(ctx, requestID)
 		},

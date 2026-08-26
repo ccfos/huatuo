@@ -45,6 +45,18 @@ func Start(opts ServerOptions) (*server.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	s, err := newHTTPServer(opts, nodeHandler)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Start(opts.Addr); err != nil {
+		return nil, err
+	}
+
+	return s, nil
+}
+
+func newHTTPServer(opts ServerOptions, nodeHandler *NodeAPIHandler) (*server.Server, error) {
 	s := server.NewServer(&server.Config{
 		EnablePProf:         true,
 		DisableHealthRoutes: true,
@@ -61,6 +73,7 @@ func Start(opts ServerOptions) (*server.Server, error) {
 		}},
 		PublicPaths: []string{
 			"/openapi.json",
+			"/healthz",
 			// Profiler subprocesses still use this legacy local metadata route.
 			"/containers/json",
 		},
@@ -97,10 +110,6 @@ func Start(opts ServerOptions) (*server.Server, error) {
 		nodeapi.RegisterHandlers(router, strictHandler)
 	}); err != nil {
 		return nil, fmt.Errorf("register Node API handlers: %w", err)
-	}
-
-	if err := s.Start(opts.Addr); err != nil {
-		return nil, err
 	}
 
 	return s, nil

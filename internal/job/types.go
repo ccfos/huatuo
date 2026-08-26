@@ -190,8 +190,8 @@ func (j *Job) validate() error {
 	if j.CreatedAt.IsZero() || j.UpdatedAt.IsZero() {
 		return errors.New("job created and updated timestamps are required")
 	}
-	if !isTerminal(j.Status) && !j.EndedAt.IsZero() {
-		return errors.New("non-terminal job must not have an ended timestamp")
+	if isTerminal(j.Status) != !j.EndedAt.IsZero() {
+		return errors.New("job ended timestamp must be present exactly when status is terminal")
 	}
 	if !isValidStopReason(j.StopReason) {
 		return fmt.Errorf("unsupported job stop reason %q", j.StopReason)

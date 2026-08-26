@@ -15,10 +15,12 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	apiv1 "huatuo-bamai/apis/v1"
@@ -27,18 +29,45 @@ import (
 	tracehandler "huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
 	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/job"
+	profileservice "huatuo-bamai/internal/profiler/service"
 	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
 	tracingdomain "huatuo-bamai/pkg/tracing"
+
+	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
+	typesv1 "github.com/grafana/pyroscope/api/gen/proto/go/types/v1"
+	"google.golang.org/protobuf/proto"
 )
+
+const maxRawProfileResponseBytes = 64 << 20
 
 // APIHandler implements the generated Apiserver Strict Server.
 type APIHandler struct {
-	profiling *profilinghandler.Service
-	tracing   *tracehandler.Service
-	openAPI   serverapi.GetOpenAPI200JSONResponse
+	profiling    *profilinghandler.Service
+	tracing      *tracehandler.Service
+	profileQuery profileQueryService
+	openAPI      serverapi.GetOpenAPI200JSONResponse
+}
+
+type profileQueryService interface {
+	SelectMergeStacktraces(
+		ctx context.Context,
+		request *querierv1.SelectMergeStacktracesRequest,
+	) (*querierv1.SelectMergeStacktracesResponse, error)
+	ProfileTypes(
+		ctx context.Context,
+		request *querierv1.ProfileTypesRequest,
+	) (*querierv1.ProfileTypesResponse, error)
+	LabelNames(
+		ctx context.Context,
+		request *typesv1.LabelNamesRequest,
+	) (*typesv1.LabelNamesResponse, error)
+	LabelValues(
+		ctx context.Context,
+		request *typesv1.LabelValuesRequest,
+	) (*typesv1.LabelValuesResponse, error)
 }
 
 var _ serverapi.StrictServerInterface = (*APIHandler)(nil)
@@ -47,6 +76,7 @@ var _ serverapi.StrictServerInterface = (*APIHandler)(nil)
 func NewAPIHandler(
 	profilingService *profilinghandler.Service,
 	tracingService *tracehandler.Service,
+	profileQuery profileQueryService,
 ) (*APIHandler, error) {
 	if profilingService == nil {
 		return nil, errors.New("create Server API handler: Profiling service is required")
@@ -59,9 +89,10 @@ func NewAPIHandler(
 		return nil, fmt.Errorf("create Server API handler: decode bundled OpenAPI: %w", err)
 	}
 	return &APIHandler{
-		profiling: profilingService,
-		tracing:   tracingService,
-		openAPI:   specification,
+		profiling:    profilingService,
+		tracing:      tracingService,
+		profileQuery: profileQuery,
+		openAPI:      specification,
 	}, nil
 }
 
@@ -162,6 +193,94 @@ func (h *APIHandler) GetProfilingCapabilities(
 	), nil
 }
 
+// SelectMergeStacktraces serves the Pyroscope-compatible flamegraph query.
+func (h *APIHandler) SelectMergeStacktraces(
+	ctx context.Context,
+	request serverapi.SelectMergeStacktracesRequestObject,
+) (serverapi.SelectMergeStacktracesResponseObject, error) {
+	if err := h.authorizeProfileQuery(ctx); err != nil {
+		return nil, err
+	}
+	data, err := invokeProfileQuery(
+		ctx,
+		request.Body,
+		&querierv1.SelectMergeStacktracesRequest{},
+		h.profileQuery.SelectMergeStacktraces,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return serverapi.SelectMergeStacktraces200ApplicationProtoResponse{
+		ProtobufResponseApplicationProtoResponse: protobufResponse(data),
+	}, nil
+}
+
+// GetProfileTypes serves the Pyroscope-compatible profile type query.
+func (h *APIHandler) GetProfileTypes(
+	ctx context.Context,
+	request serverapi.GetProfileTypesRequestObject,
+) (serverapi.GetProfileTypesResponseObject, error) {
+	if err := h.authorizeProfileQuery(ctx); err != nil {
+		return nil, err
+	}
+	data, err := invokeProfileQuery(
+		ctx,
+		request.Body,
+		&querierv1.ProfileTypesRequest{},
+		h.profileQuery.ProfileTypes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return serverapi.GetProfileTypes200ApplicationProtoResponse{
+		ProtobufResponseApplicationProtoResponse: protobufResponse(data),
+	}, nil
+}
+
+// GetProfileLabelNames serves the Pyroscope-compatible label-name query.
+func (h *APIHandler) GetProfileLabelNames(
+	ctx context.Context,
+	request serverapi.GetProfileLabelNamesRequestObject,
+) (serverapi.GetProfileLabelNamesResponseObject, error) {
+	if err := h.authorizeProfileQuery(ctx); err != nil {
+		return nil, err
+	}
+	data, err := invokeProfileQuery(
+		ctx,
+		request.Body,
+		&typesv1.LabelNamesRequest{},
+		h.profileQuery.LabelNames,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return serverapi.GetProfileLabelNames200ApplicationProtoResponse{
+		ProtobufResponseApplicationProtoResponse: protobufResponse(data),
+	}, nil
+}
+
+// GetProfileLabelValues serves the Pyroscope-compatible label-value query.
+func (h *APIHandler) GetProfileLabelValues(
+	ctx context.Context,
+	request serverapi.GetProfileLabelValuesRequestObject,
+) (serverapi.GetProfileLabelValuesResponseObject, error) {
+	if err := h.authorizeProfileQuery(ctx); err != nil {
+		return nil, err
+	}
+	data, err := invokeProfileQuery(
+		ctx,
+		request.Body,
+		&typesv1.LabelValuesRequest{},
+		h.profileQuery.LabelValues,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return serverapi.GetProfileLabelValues200ApplicationProtoResponse{
+		ProtobufResponseApplicationProtoResponse: protobufResponse(data),
+	}, nil
+}
+
 // GetProfilingJob returns one authorized Profiling Job.
 func (h *APIHandler) GetProfilingJob(
 	ctx context.Context,
@@ -226,12 +345,9 @@ func (h *APIHandler) GetRawProfiles(
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	items := make([]serverapi.RawProfile, len(page.Items))
-	for i := range page.Items {
-		items[i], err = rawProfile(&page.Items[i])
-		if err != nil {
-			return nil, err
-		}
+	items, err := rawProfiles(page.Items, maxRawProfileResponseBytes)
+	if err != nil {
+		return nil, serverAPIError(err)
 	}
 	return serverapi.GetRawProfiles200JSONResponse(serverapi.RawProfilePageResponse{
 		Data: serverapi.RawProfilePage{
@@ -384,7 +500,7 @@ func (h *APIHandler) profilingJob(
 	var resultURL *string
 	if includeResultURL {
 		var err error
-		resultURL, err = h.profiling.ResultURL(ctx, principal, jobEntity)
+		resultURL, err = h.profiling.ResultURL(ctx, jobEntity)
 		if err != nil {
 			return serverapi.ProfilingJob{}, serverAPIError(err)
 		}
@@ -481,10 +597,10 @@ func tracingCapability(capability *tracingdomain.Capability) serverapi.TracingCa
 	}
 }
 
-func rawProfile(profile *profilingresult.Profile) (serverapi.RawProfile, error) {
+func rawProfile(profile *profilingresult.Profile) (serverapi.RawProfile, int, error) {
 	data, err := json.Marshal(profile.Profile)
 	if err != nil {
-		return serverapi.RawProfile{}, fmt.Errorf("map raw Profile: encode payload: %w", err)
+		return serverapi.RawProfile{}, 0, fmt.Errorf("map raw Profile: encode payload: %w", err)
 	}
 	return serverapi.RawProfile{
 		Hostname:          profile.Hostname,
@@ -494,10 +610,100 @@ func rawProfile(profile *profilingresult.Profile) (serverapi.RawProfile, error) 
 		ContainerID:       optionalString(profile.ContainerID),
 		ContainerHostname: optionalString(profile.ContainerHostname),
 		ContainerType:     optionalString(profile.ContainerType),
-		ContainerQos:      optionalString(profile.ContainerQOS),
+		ContainerQos:      optionalString(profile.ContainerQoS),
 		ProfileType:       profile.ProfileType,
 		Profile:           json.RawMessage(data),
-	}, nil
+	}, len(data), nil
+}
+
+func rawProfiles(
+	profiles []profilingresult.Profile,
+	maxResponseBytes int,
+) ([]serverapi.RawProfile, error) {
+	items := make([]serverapi.RawProfile, len(profiles))
+	responseBytes := 0
+	for i := range profiles {
+		var profileBytes int
+		var err error
+		items[i], profileBytes, err = rawProfile(&profiles[i])
+		if err != nil {
+			return nil, err
+		}
+		responseBytes += profileBytes
+		if responseBytes > maxResponseBytes {
+			return nil, fmt.Errorf(
+				"%w: encoded payload exceeds %d bytes; reduce limit",
+				profilingresult.ErrResponseTooLarge,
+				maxResponseBytes,
+			)
+		}
+	}
+	return items, nil
+}
+
+func (h *APIHandler) authorizeProfileQuery(ctx context.Context) error {
+	principal, err := requestPrincipal(ctx)
+	if err != nil {
+		return err
+	}
+	if !principal.IsAdmin {
+		return response.NewAPIError(
+			apiv1.ErrorCodePermissionDenied,
+			"Profiling query access requires administrator permission",
+		)
+	}
+	if h.profileQuery == nil {
+		return response.NewAPIError(
+			apiv1.ErrorCodeServiceUnavailable,
+			"Profiling query service is unavailable",
+		)
+	}
+	return nil
+}
+
+func invokeProfileQuery[Request, Result proto.Message](
+	ctx context.Context,
+	body io.Reader,
+	request Request,
+	invoke func(context.Context, Request) (Result, error),
+) ([]byte, error) {
+	if body == nil {
+		return nil, response.ErrInvalidRequest.WithMessage("request body is required")
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, response.ErrInvalidRequest.WithMessage("read protobuf request: " + err.Error())
+	}
+	if err := proto.Unmarshal(data, request); err != nil {
+		return nil, response.ErrInvalidRequest.WithMessage("invalid protobuf request")
+	}
+	result, err := invoke(ctx, request)
+	if err != nil {
+		return nil, profileQueryError(err)
+	}
+	data, err = proto.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("encode protobuf response: %w", err)
+	}
+	return data, nil
+}
+
+func profileQueryError(err error) error {
+	switch {
+	case errors.Is(err, profileservice.ErrInvalidQuery):
+		return response.ErrInvalidRequest.WithMessage(err.Error())
+	case errors.Is(err, profileservice.ErrProfilesAbsent):
+		return response.ErrNotFound.WithMessage("profiles not found")
+	default:
+		return err
+	}
+}
+
+func protobufResponse(data []byte) serverapi.ProtobufResponseApplicationProtoResponse {
+	return serverapi.ProtobufResponseApplicationProtoResponse{
+		Body:          bytes.NewReader(data),
+		ContentLength: int64(len(data)),
+	}
 }
 
 func requestPrincipal(ctx context.Context) (auth.Principal, error) {
@@ -527,10 +733,17 @@ func serverAPIError(err error) error {
 		return response.NewAPIError(apiv1.ErrorCodeServiceUnavailable, "Job service is shutting down")
 	case errors.Is(err, profilingresult.ErrNotReady):
 		return response.NewAPIError(serverapi.ErrorCodeResultNotReady, "Profiling result is not ready")
+	case errors.Is(err, profilingresult.ErrNotFound):
+		return response.NewAPIError(serverapi.ErrorCodeResultNotFound, "Profiling result not found")
 	case errors.Is(err, profilingresult.ErrUnavailable):
 		return response.NewAPIError(
 			serverapi.ErrorCodeResultUnavailable,
 			"Job state does not provide a complete Profiling result",
+		)
+	case errors.Is(err, profilingresult.ErrResponseTooLarge):
+		return response.NewAPIError(
+			serverapi.ErrorCodeResultTooLarge,
+			"Profiling result response is too large; reduce limit",
 		)
 	case errors.Is(err, profilingresult.ErrRepositoryUnavailable):
 		return response.NewAPIError(

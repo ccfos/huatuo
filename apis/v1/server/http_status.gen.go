@@ -45,8 +45,12 @@ func HTTPStatusForErrorCode(code apiv1.ErrorCode) (int, bool) {
 		return 502, true
 	case ErrorCodeQuotaExceeded:
 		return 429, true
+	case ErrorCodeResultNotFound:
+		return 404, true
 	case ErrorCodeResultNotReady:
 		return 409, true
+	case ErrorCodeResultTooLarge:
+		return 413, true
 	case ErrorCodeResultUnavailable:
 		return 409, true
 	case ErrorCodeStartTimeout:

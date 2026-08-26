@@ -380,11 +380,11 @@ protocol errors.
 
 ### 6. Get Raw Profiling Data
 
-`GET /v1/profiling/:request_id/raw` returns the raw profiling windows associated
-with a `completed` Job. An `outcome_unknown` Job is also queryable only when the
-Node durably published its result marker. Active Jobs return
-`result_not_ready`; `failed`, `stopped`, and unpublished `outcome_unknown` Jobs
-return `result_unavailable`.
+`GET /v1/profiling/:request_id/raw` returns raw profiling windows for a
+`completed` or `outcome_unknown` Job only while its durable publication marker
+exists. A missing or expired marker returns `result_not_found`. Active Jobs
+return `result_not_ready`; `failed` and `stopped` Jobs return
+`result_unavailable`.
 
 The response can be large, so it can be written directly to a file:
 
@@ -399,7 +399,9 @@ The profiling windows are in `data.items`; `data.limit`, `data.offset`, and
 `data.has_more` describe the page. Each item contains `uploaded_at`,
 `captured_at`, `profile_type`, and the pprof-compatible `profile` payload.
 An empty, durably published result is a successful response with an empty
-`items` array.
+`items` array. `limit` defaults to 20 and cannot exceed 100. If the encoded
+profile data exceeds 64 MiB, the server returns `413 result_too_large`; retry
+with a smaller `limit`.
 
 ### 7. Stop a Profiling Job
 
@@ -450,7 +452,7 @@ Use a container ID to resolve and profile target processes inside Docker or cont
 Build all artifacts from the repository root:
 
 ```bash
-make all
+make build
 ```
 
 The resulting executable is `_output/bin/profiler`. Native profiling depends on Linux eBPF, perf events, and the BPF objects built from this repository. It generally requires root privileges and a `kernel.perf_event_paranoid` setting that permits sampling. Java profiling requires async-profiler; `--tool-path` must point to a directory containing `bin/asprof` and `lib/libasyncProfiler.so`. Python profiling requires py-spy; `--tool-path` must point to a directory containing the `py-spy` executable.
@@ -702,7 +704,7 @@ sudo ./integration/run.sh test_profiler_java_memory_usage_alloc.sh
 sudo ./integration/run.sh test_profiler_python_cpu_multi_pid.sh
 ```
 
-Container, thread-group, and CPU-selection examples are available in `test_profiler_native_cpu_container.sh`, `test_profiler_native_cpu_thread_group.sh`, and `test_profiler_native_cpu_cpuid.sh`, respectively. Run `make all` first and configure the Java or Python profiler path in `integration/env.sh` as needed.
+Container, thread-group, and CPU-selection examples are available in `test_profiler_native_cpu_container.sh`, `test_profiler_native_cpu_thread_group.sh`, and `test_profiler_native_cpu_cpuid.sh`, respectively. Run `make build` first and configure the Java or Python profiler path in `integration/env.sh` as needed.
 
 ## ⚙️ How It Works
 

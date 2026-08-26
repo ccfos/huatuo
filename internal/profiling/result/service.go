@@ -22,7 +22,7 @@ import (
 	"huatuo-bamai/internal/job"
 )
 
-const maxPageSize = 1000
+const maxRawProfilePageSize = 100
 
 type jobReader interface {
 	Get(ctx context.Context, jobID string) (*job.Job, error)
@@ -34,20 +34,21 @@ type Service struct {
 	repository Repository
 }
 
-// IsPublished verifies result access and its durable commit marker.
+// IsPublished checks the durable commit marker for an already authorized Job.
 func (s *Service) IsPublished(
 	ctx context.Context,
-	requestID string,
-	userID string,
-	isAdmin bool,
+	jobEntity *job.Job,
 ) (bool, error) {
-	if requestID == "" {
-		return false, fmt.Errorf("%w: request ID is required", job.ErrInvalidQuery)
+	if jobEntity == nil || jobEntity.ID == "" {
+		return false, fmt.Errorf("%w: Job is required", job.ErrInvalidQuery)
 	}
-	if _, err := s.authorizeResult(ctx, requestID, userID, isAdmin); err != nil {
-		return false, err
+	if jobEntity.Kind != job.KindProfiling {
+		return false, ErrWrongKind
 	}
-	return s.repository.IsPublished(ctx, requestID)
+	if jobEntity.Status != job.StatusCompleted && jobEntity.Status != job.StatusOutcomeUnknown {
+		return false, ErrUnavailable
+	}
+	return s.repository.IsPublished(ctx, jobEntity.ID)
 }
 
 // NewService constructs a Profiling result query boundary.
@@ -73,8 +74,12 @@ func (s *Service) List(
 	if requestID == "" {
 		return nil, fmt.Errorf("%w: request ID is required", job.ErrInvalidQuery)
 	}
-	if limit <= 0 || limit > maxPageSize {
-		return nil, fmt.Errorf("%w: limit must be between 1 and %d", job.ErrInvalidQuery, maxPageSize)
+	if limit <= 0 || limit > maxRawProfilePageSize {
+		return nil, fmt.Errorf(
+			"%w: limit must be between 1 and %d",
+			job.ErrInvalidQuery,
+			maxRawProfilePageSize,
+		)
 	}
 	if offset < 0 {
 		return nil, fmt.Errorf("%w: offset must not be negative", job.ErrInvalidQuery)
@@ -83,18 +88,16 @@ func (s *Service) List(
 	if err != nil {
 		return nil, err
 	}
-	if jobEntity.Status == job.StatusOutcomeUnknown {
-		published, err := s.repository.IsPublished(ctx, requestID)
-		if err != nil {
-			return nil, err
-		}
-		if !published {
-			return nil, fmt.Errorf(
-				"%w: profiling result %q is not published",
-				ErrUnavailable,
-				requestID,
-			)
-		}
+	published, err := s.IsPublished(ctx, jobEntity)
+	if err != nil {
+		return nil, err
+	}
+	if !published {
+		return nil, fmt.Errorf(
+			"%w: profiling result %q has no publication marker",
+			ErrNotFound,
+			requestID,
+		)
 	}
 
 	profiles, err := s.repository.List(ctx, requestID, limit+1, offset)

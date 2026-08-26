@@ -130,12 +130,19 @@ func New(config *Config) (*Client, error) {
 
 type sendRequest func(context.Context, *nodeapi.Client) (*http.Response, error)
 
+type successResponseMode uint8
+
+const (
+	successResponseOK successResponseMode = iota
+	successResponseOKOrAccepted
+)
+
 func (c *Client) execute(
 	ctx context.Context,
 	host string,
 	operationName string,
 	requestID string,
-	allowAccepted bool,
+	successMode successResponseMode,
 	send sendRequest,
 ) (result *nodeapi.Operation, returnedErr error) {
 	startedAt := time.Now()
@@ -162,7 +169,7 @@ func (c *Client) execute(
 	if err != nil {
 		return nil, fmt.Errorf("%s Node API request: %w", operationName, err)
 	}
-	return parseResponse(response, requestID, allowAccepted)
+	return parseResponse(response, requestID, successMode)
 }
 
 func (c *Client) generatedClient(host string) (*nodeapi.Client, error) {
@@ -186,7 +193,7 @@ func (c *Client) generatedClient(host string) (*nodeapi.Client, error) {
 func parseResponse(
 	response *http.Response,
 	requestID string,
-	allowAccepted bool,
+	successMode successResponseMode,
 ) (*nodeapi.Operation, error) {
 	if response == nil {
 		return nil, fmt.Errorf("%w: Node API returned a nil response", ErrProtocol)
@@ -197,7 +204,7 @@ func parseResponse(
 
 	limit := int64(maxErrorBodyBytes)
 	if response.StatusCode == http.StatusOK ||
-		allowAccepted && response.StatusCode == http.StatusAccepted {
+		successMode == successResponseOKOrAccepted && response.StatusCode == http.StatusAccepted {
 		limit = maxSuccessBodyBytes
 	}
 	body, readErr := readBody(response.Body, limit)
@@ -222,7 +229,7 @@ func parseResponse(
 	case http.StatusOK:
 		return parseOperation(body, requestID)
 	case http.StatusAccepted:
-		if allowAccepted {
+		if successMode == successResponseOKOrAccepted {
 			return parseOperation(body, requestID)
 		}
 		return nil, fmt.Errorf("%w: unexpected HTTP 202 success response", ErrProtocol)

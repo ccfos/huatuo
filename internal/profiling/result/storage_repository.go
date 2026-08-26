@@ -98,7 +98,7 @@ func (r *StorageRepository) List(
 			ContainerID:       document.ContainerID,
 			ContainerHostname: document.ContainerHostname,
 			ContainerType:     document.ContainerType,
-			ContainerQOS:      document.ContainerQOS,
+			ContainerQoS:      document.ContainerQOS,
 			ProfileType:       document.TracerData.Flamedata.ProfileType,
 			Profile:           &document.TracerData.Flamedata.Profile,
 		})

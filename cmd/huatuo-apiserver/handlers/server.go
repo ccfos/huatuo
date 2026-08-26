@@ -87,7 +87,7 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	apiHandler, err := NewAPIHandler(profilingService, tracingService)
+	apiHandler, err := NewAPIHandler(profilingService, tracingService, opts.ProfileService)
 	if err != nil {
 		return nil, err
 	}
@@ -110,12 +110,6 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 		),
 	})
 
-	if opts.ProfileService != nil {
-		httpServer.MustRegisterRoutes(
-			"/v1/profiling",
-			profiling.QueryRoutes(opts.ProfileService),
-		)
-	}
 	errorHandlers := httpServer.StrictErrorHandlers()
 	strictHandler := serverapi.NewStrictHandlerWithOptions(
 		apiHandler,

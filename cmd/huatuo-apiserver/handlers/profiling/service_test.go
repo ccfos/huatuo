@@ -15,16 +15,39 @@
 package profiling
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/job"
-	profileservice "huatuo-bamai/internal/profiler/service"
+	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
 )
+
+type resultJobReader struct{}
+
+func (resultJobReader) Get(context.Context, string) (*job.Job, error) {
+	return nil, errors.New("unexpected Job read")
+}
+
+type publishedResultRepository struct{}
+
+func (publishedResultRepository) IsPublished(context.Context, string) (bool, error) {
+	return true, nil
+}
+
+func (publishedResultRepository) List(
+	context.Context,
+	string,
+	int,
+	int,
+) ([]profilingresult.Profile, error) {
+	return nil, errors.New("unexpected result list")
+}
 
 func TestValidateCreateInput(t *testing.T) {
 	valid := CreateInput{
@@ -90,9 +113,13 @@ func TestValidateCreateInput(t *testing.T) {
 }
 
 func TestResultURLIsAvailableOnlyForCompleteResults(t *testing.T) {
+	results, err := profilingresult.NewService(resultJobReader{}, publishedResultRepository{})
+	if err != nil {
+		t.Fatalf("NewService(result) error = %v", err)
+	}
 	service, err := NewService(
 		&job.Manager{},
-		nil,
+		results,
 		Config{DashboardBaseURL: "https://grafana.example/d"},
 	)
 	if err != nil {
@@ -112,7 +139,7 @@ func TestResultURLIsAvailableOnlyForCompleteResults(t *testing.T) {
 		}},
 	}
 
-	resultURL, err := service.ResultURL(t.Context(), auth.Principal{ID: "user-1"}, completed)
+	resultURL, err := service.ResultURL(t.Context(), completed)
 	if err != nil {
 		t.Fatalf("ResultURL() error = %v", err)
 	}
@@ -123,16 +150,12 @@ func TestResultURLIsAvailableOnlyForCompleteResults(t *testing.T) {
 
 	failed := *completed
 	failed.Status = job.StatusFailed
-	if resultURL, err := service.ResultURL(
-		t.Context(),
-		auth.Principal{ID: "user-1"},
-		&failed,
-	); err != nil || resultURL != nil {
+	if resultURL, err := service.ResultURL(t.Context(), &failed); err != nil || resultURL != nil {
 		t.Fatalf("failed ResultURL() = (%v, %v)", resultURL, err)
 	}
 }
 
-func TestNormalizePageAndQueryRoutes(t *testing.T) {
+func TestNormalizePage(t *testing.T) {
 	limit, offset := NormalizePage(nil, nil)
 	if limit != 100 || offset != 0 {
 		t.Fatalf("NormalizePage(nil, nil) = (%d, %d)", limit, offset)
@@ -141,17 +164,6 @@ func TestNormalizePageAndQueryRoutes(t *testing.T) {
 	limit, offset = NormalizePage(&customLimit, &customOffset)
 	if limit != customLimit || offset != customOffset {
 		t.Fatalf("NormalizePage(custom) = (%d, %d)", limit, offset)
-	}
-
-	var profileService *profileservice.Service
-	routes := QueryRoutes(profileService)
-	if len(routes) != 4 {
-		t.Fatalf("QueryRoutes() count = %d, want 4", len(routes))
-	}
-	for _, route := range routes {
-		if !strings.HasPrefix(route.Path, "/flamegraph/") {
-			t.Fatalf("QueryRoutes() path = %q", route.Path)
-		}
 	}
 }
 
