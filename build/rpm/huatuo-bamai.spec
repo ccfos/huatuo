@@ -45,7 +45,7 @@ network behavior, and resource utilization using eBPF technology.
 
 %build
 # Build from source
-make
+make build
 
 %check
 # Basic checks for compiled binaries

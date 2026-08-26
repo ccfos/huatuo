@@ -28,7 +28,7 @@ volatile const u32 bpf_dbg_enabled = 0;
  *      calls, bpf_ktime_get_ns, and bpf_perf_event_output are *not emitted
  *      at all*. Verifier never sees them, .o size shrinks, no fd is consumed
  *      at load. (bpf_dbg_enabled itself stays defined; see note above.)
- *      Enable with: BPF_DEBUG=1 make bpf-build  (passes -DDEBUG_BPF)
+ *      Enable with: BPF_DEBUG=1 make gen-build  (passes -DDEBUG_BPF)
  *
  *   2. Run-time (bpf_dbg_enabled volatile const):
  *      Even when compiled in, output is suppressed until the Go side loads

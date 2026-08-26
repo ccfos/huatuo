@@ -62,10 +62,10 @@ int prog(void *ctx)
 make BPF_DEBUG=1
 ```
 
-只重新编译 BPF 对象：
+只重新生成构建产物而不重新编译二进制：
 
 ```bash
-make BPF_DEBUG=1 bpf-build
+make BPF_DEBUG=1 gen-build
 ```
 
 `BPF_DEBUG=0` 是默认值。此时宏展开为空操作，调试 perf event array、事件结构、

@@ -20,7 +20,7 @@ RUN set -x; \
     go install capnproto.org/go/capnp/v3/capnpc-go@latest
 
 RUN set -x; \
-    make BUILD_MODE=${BUILD_MODE} &&\
+    make build BUILD_MODE=${BUILD_MODE} &&\
     mkdir -p ${RUN_PATH} &&\
     cp -rf ${BUILD_PATH}/_output/* ${RUN_PATH}/ &&\
     sed -i -e 's/# Address.*/Address=""/g' \

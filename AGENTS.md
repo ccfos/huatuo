@@ -28,17 +28,18 @@
 ## Commands
 
 ```
-make all                    # BPF compile + Go build + sync artifacts
-make check                  # goimports + gofumpt + golangci-lint + git diff --exit-code
-make import-fmt             # Format Go (goimports/gofumpt) and Shell (shfmt)
-make golangci-lint          # Static analysis (requires gen-build first)
+make build                  # BPF compile + Go build + sync artifacts
+make check                  # Generated files + format + lint + git diff check
 make unit                   # Unit tests with coverage
 make integration            # Integration tests (requires full build)
 make e2e                    # End-to-end tests (requires full build)
-make gen-build              # Generate mocks (mockery) and Cap'n Proto files
-make bpf-build              # Compile all BPF C sources in parallel
+make gen-build              # Generate BPF, OpenAPI, mocks, and Cap'n Proto files
 make vendor                 # go mod tidy + verify + vendor
 make clean                  # Remove _output/, .o, mock, capnp generated files
+make docker-build           # Build the selected release image
+make docker-clean           # Remove the selected release image
+make compose-dev-up         # Build and start the development stack
+make compose-dev-down       # Stop and remove the development stack
 ```
 
 Run `make check` before every commit.
