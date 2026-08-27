@@ -51,9 +51,9 @@ type CreateInput struct {
 
 // Service owns Profiling authorization, validation, and Job commands.
 type Service struct {
-	jobs         *job.Manager
-	results      *profilingresult.Service
-	dashboardURL string
+	jobs             *job.Manager
+	results          *profilingresult.Service
+	dashboardBaseURL string
 }
 
 // NewService constructs the Profiling application service.
@@ -65,7 +65,11 @@ func NewService(
 	if jobs == nil {
 		return nil, errors.New("create Profiling service: Job Manager is required")
 	}
-	return &Service{jobs: jobs, results: results, dashboardURL: config.DashboardBaseURL}, nil
+	return &Service{
+		jobs:             jobs,
+		results:          results,
+		dashboardBaseURL: config.DashboardBaseURL,
+	}, nil
 }
 
 // Create validates and persists one independent Profiling Job.
@@ -169,8 +173,12 @@ func (s *Service) ResultURL(
 	ctx context.Context,
 	jobEntity *job.Job,
 ) (*string, error) {
-	if s.dashboardURL == "" || jobEntity == nil || jobEntity.EndedAt.IsZero() ||
-		(jobEntity.Status != job.StatusCompleted && jobEntity.Status != job.StatusOutcomeUnknown) {
+	if s.dashboardBaseURL == "" || jobEntity == nil || jobEntity.EndedAt.IsZero() {
+		return nil, nil
+	}
+	switch jobEntity.Status {
+	case job.StatusCompleted, job.StatusOutcomeUnknown:
+	default:
 		return nil, nil
 	}
 	if s.results == nil {
@@ -183,8 +191,17 @@ func (s *Service) ResultURL(
 	if !published {
 		return nil, nil
 	}
+	return buildDashboardURL(s.dashboardBaseURL, jobEntity), nil
+}
+
+func buildDashboardURL(baseURL string, jobEntity *job.Job) *string {
+	if baseURL == "" || jobEntity == nil || jobEntity.Spec.Profiling == nil {
+		return nil
+	}
+
 	var dashboardUID, dashboardSlug, scopeKey, scopeValue string
-	if jobEntity.Scope == observation.ScopeContainer {
+	switch jobEntity.Scope {
+	case observation.ScopeContainer:
 		scopeKey = "var-container_id"
 		scopeValue = jobEntity.ContainerID
 		switch jobEntity.Spec.Profiling.Type {
@@ -195,7 +212,7 @@ func (s *Service) ResultURL(
 			dashboardUID = "container-cpu-profiling"
 			dashboardSlug = "e5aeb9-e599a8-cpu-profiling"
 		}
-	} else {
+	case observation.ScopeHost:
 		scopeKey = "var-hostname"
 		scopeValue = jobEntity.Hostname
 		switch jobEntity.Spec.Profiling.Type {
@@ -206,9 +223,11 @@ func (s *Service) ResultURL(
 			dashboardUID = "host-cpu-profiling"
 			dashboardSlug = "e5aebf-e4b8bb-e69cba-cpu-profiling"
 		}
+	default:
+		return nil
 	}
 	if dashboardUID == "" {
-		return nil, nil
+		return nil
 	}
 	query := url.Values{}
 	query.Set("orgId", "1")
@@ -219,12 +238,12 @@ func (s *Service) ResultURL(
 	query.Set("var-tracer_id", jobEntity.ID)
 	result := fmt.Sprintf(
 		"%s/%s/%s?%s",
-		strings.TrimRight(s.dashboardURL, "/"),
+		strings.TrimRight(baseURL, "/"),
 		dashboardUID,
 		dashboardSlug,
 		query.Encode(),
 	)
-	return &result, nil
+	return &result
 }
 
 // NormalizePage applies the public pagination defaults.

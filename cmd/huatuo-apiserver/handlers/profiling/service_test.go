@@ -17,6 +17,7 @@ package profiling
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -152,6 +153,106 @@ func TestResultURLIsAvailableOnlyForCompleteResults(t *testing.T) {
 	failed.Status = job.StatusFailed
 	if resultURL, err := service.ResultURL(t.Context(), &failed); err != nil || resultURL != nil {
 		t.Fatalf("failed ResultURL() = (%v, %v)", resultURL, err)
+	}
+}
+
+func TestBuildDashboardURL(t *testing.T) {
+	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	newJob := func(scope observation.Scope, profileType profilingdomain.Type) *job.Job {
+		return &job.Job{
+			ID:          "job-1",
+			Hostname:    "node+1&debug",
+			Scope:       scope,
+			ContainerID: "container+1&debug",
+			CreatedAt:   base,
+			EndedAt:     base.Add(time.Minute),
+			Spec: job.Spec{Profiling: &profilingdomain.Spec{
+				Type: profileType,
+			}},
+		}
+	}
+	tests := []struct {
+		name           string
+		baseURL        string
+		input          *job.Job
+		wantPath       string
+		wantScopeKey   string
+		wantScopeValue string
+	}{
+		{
+			name:           "host cpu",
+			baseURL:        "https://grafana.example/d/",
+			input:          newJob(observation.ScopeHost, profilingdomain.TypeCPU),
+			wantPath:       "/d/host-cpu-profiling/e5aebf-e4b8bb-e69cba-cpu-profiling",
+			wantScopeKey:   "var-hostname",
+			wantScopeValue: "node+1&debug",
+		},
+		{
+			name:           "container memory",
+			baseURL:        "https://grafana.example/d/",
+			input:          newJob(observation.ScopeContainer, profilingdomain.TypeMemory),
+			wantPath:       "/d/container-memory-profiling/e5aeb9-e599a8-memory-profiling",
+			wantScopeKey:   "var-container_id",
+			wantScopeValue: "container+1&debug",
+		},
+		{
+			name:    "missing base url",
+			input:   newJob(observation.ScopeHost, profilingdomain.TypeCPU),
+			baseURL: "",
+		},
+		{
+			name:    "missing job",
+			baseURL: "https://grafana.example/d",
+		},
+		{
+			name:    "missing profiling spec",
+			baseURL: "https://grafana.example/d",
+			input:   &job.Job{},
+		},
+		{
+			name:    "unsupported scope",
+			baseURL: "https://grafana.example/d",
+			input:   newJob(observation.ScopeUnknown, profilingdomain.TypeCPU),
+		},
+		{
+			name:    "unsupported profile type",
+			baseURL: "https://grafana.example/d",
+			input:   newJob(observation.ScopeHost, profilingdomain.TypeLock),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildDashboardURL(tt.baseURL, tt.input)
+			if tt.wantPath == "" {
+				if got != nil {
+					t.Fatalf("buildDashboardURL() = %q, want nil", *got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("buildDashboardURL() = nil, want URL")
+			}
+			parsed, err := url.Parse(*got)
+			if err != nil {
+				t.Fatalf("url.Parse(%q) error = %v", *got, err)
+			}
+			if parsed.Path != tt.wantPath {
+				t.Fatalf("buildDashboardURL() path = %q, want %q", parsed.Path, tt.wantPath)
+			}
+			query := parsed.Query()
+			if got := query.Get(tt.wantScopeKey); got != tt.wantScopeValue {
+				t.Errorf("buildDashboardURL() scope = %q, want %q", got, tt.wantScopeValue)
+			}
+			if got := query.Get("var-tracer_id"); got != "job-1" {
+				t.Errorf("buildDashboardURL() tracer ID = %q, want %q", got, "job-1")
+			}
+			if got := query.Get("from"); got != "2026-08-24T12:00:00.000Z" {
+				t.Errorf("buildDashboardURL() from = %q", got)
+			}
+			if got := query.Get("to"); got != "2026-08-24T12:01:00.000Z" {
+				t.Errorf("buildDashboardURL() to = %q", got)
+			}
+		})
 	}
 }
 
