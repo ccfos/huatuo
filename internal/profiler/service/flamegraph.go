@@ -32,48 +32,24 @@ import (
 	"github.com/prometheus/prometheus/promql/parser"
 )
 
-type ElasticSearchConfig struct {
-	Address, Username, Password, Index string
-}
-
-// Service provides profile query operations.
-type Service struct {
+// ProfileQueryService provides Pyroscope-compatible profile queries.
+type ProfileQueryService struct {
 	profileStorage *ProfileStorage
 }
 
-// NewService initializes a profile query service.
-func NewService(ctx context.Context, esConfig *ElasticSearchConfig) (*Service, error) {
-	profileStorage, err := NewProfileStorageContext(
-		ctx,
-		esConfig.Address,
-		esConfig.Username,
-		esConfig.Password,
-		esConfig.Index,
-	)
-	if err != nil {
-		return nil, err
+// NewProfileQueryService initializes a profile query service.
+func NewProfileQueryService(profileStorage *ProfileStorage) (*ProfileQueryService, error) {
+	if profileStorage == nil {
+		return nil, errors.New("create profile query service: profile storage is required")
 	}
-	return &Service{profileStorage: profileStorage}, nil
-}
-
-// Close releases profile query resources.
-func (s *Service) Close(ctx context.Context) error {
-	return s.profileStorage.Close(ctx)
-}
-
-// Ready verifies that profile storage can serve queries.
-func (s *Service) Ready(ctx context.Context) error {
-	if s == nil || s.profileStorage == nil {
-		return errors.New("profile service is not initialized")
-	}
-	return s.profileStorage.Ready(ctx)
+	return &ProfileQueryService{profileStorage: profileStorage}, nil
 }
 
 // SelectMergeStacktraces selects merge stacktraces by request.
 //
 //	request: querierv1.SelectMergeStacktracesRequest
 //	response: querierv1.SelectMergeStacktracesResponse
-func (s *Service) SelectMergeStacktraces(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error) {
+func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *querierv1.SelectMergeStacktracesRequest) (*querierv1.SelectMergeStacktracesResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("%w: request is required", ErrInvalidQuery)
 	}
@@ -260,7 +236,7 @@ func profileString(table []string, index int64) (string, bool) {
 //
 //	request: querierv1.ProfileTypesRequest
 //	response: querierv1.ProfileTypesResponse
-func (s *Service) ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error) {
+func (s *ProfileQueryService) ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error) {
 	filter := &SearchFilter{
 		StartTime: time.UnixMilli(req.Start),
 		EndTime:   time.UnixMilli(req.End),
@@ -301,7 +277,7 @@ func (s *Service) ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesR
 //
 //	request: typesv1.LabelNamesRequest
 //	response: typesv1.LabelNamesResponse
-func (s *Service) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
+func (s *ProfileQueryService) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*typesv1.LabelNamesResponse, error) {
 	response := &typesv1.LabelNamesResponse{
 		Names: []string{"region", "hostname", "container_id", "container_hostname", "container_host_namespace"},
 	}
@@ -312,7 +288,7 @@ func (s *Service) LabelNames(context.Context, *typesv1.LabelNamesRequest) (*type
 //
 //	request: typesv1.LabelValuesRequest
 //	response: typesv1.LabelValuesResponse
-func (s *Service) LabelValues(ctx context.Context, req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse, error) {
+func (s *ProfileQueryService) LabelValues(ctx context.Context, req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse, error) {
 	filter := &SearchFilter{
 		StartTime: time.UnixMilli(req.Start),
 		EndTime:   time.UnixMilli(req.End),
@@ -350,20 +326,4 @@ func (s *Service) LabelValues(ctx context.Context, req *typesv1.LabelValuesReque
 	}
 
 	return &typesv1.LabelValuesResponse{Names: names}, nil
-}
-
-// GetProfilesByTracerID gets all profiles by tracer_id from ES
-func (s *Service) GetProfilesByTracerID(ctx context.Context, tracerID string) ([]*ProfileDocument, error) {
-	return s.GetProfilesByTracerIDPage(ctx, tracerID, 1000, 0)
-}
-
-// GetProfilesByTracerIDPage gets one stable page of profiles by tracer ID.
-func (s *Service) GetProfilesByTracerIDPage(ctx context.Context, tracerID string, limit, offset int) ([]*ProfileDocument, error) {
-	filter := &SearchFilter{
-		TracerID: tracerID,
-		Limit:    limit,
-		Offset:   offset,
-	}
-
-	return s.profileStorage.SearchProfilesContext(ctx, filter)
 }

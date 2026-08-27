@@ -27,11 +27,12 @@ import (
 
 func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, error) {
 	runningServer, err := handlers.Start(&handlers.ServerOptions{
-		Addr:           d.opts.Config.APIServer.ListenAddress,
-		PromReg:        d.metrics,
-		JobManager:     d.jobManager,
-		ProfileService: d.profileQueryService,
-		Publications:   d.publications,
+		Addr:                d.opts.Config.APIServer.ListenAddress,
+		PromReg:             d.metrics,
+		JobManager:          d.jobManager,
+		ProfileStorage:      d.profileStorage,
+		ProfileQueryService: d.profileQueryService,
+		Publications:        d.publications,
 		ProfilingConfig: profiling.Config{
 			DashboardBaseURL: d.opts.Config.Profiling.DashboardBaseURL,
 		},
@@ -44,12 +45,12 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 		},
 		Ready: func(ctx context.Context) error {
 			err := d.jobManager.Ready(ctx)
-			if d.profileQueryService == nil {
+			if d.profileStorage == nil {
 				return err
 			}
 			return errors.Join(
 				err,
-				d.profileQueryService.Ready(ctx),
+				d.profileStorage.Ready(ctx),
 				d.publications.Ready(ctx),
 			)
 		},

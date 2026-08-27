@@ -21,8 +21,8 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 )
 
-func TestServiceReadyRejectsUninitializedStorage(t *testing.T) {
-	err := (*Service)(nil).Ready(t.Context())
+func TestProfileStorageReadyRejectsUninitializedStorage(t *testing.T) {
+	err := (*ProfileStorage)(nil).Ready(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "not initialized") {
 		t.Fatalf("Ready() error = %v, want initialization error", err)
 	}

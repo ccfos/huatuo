@@ -25,17 +25,32 @@ import (
 
 	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/job"
-	profilingresult "huatuo-bamai/internal/profiling/result"
+	profileservice "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
+
+	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
 const (
-	defaultPageSize = 100
-	maxPageSize     = 1000
+	defaultPageSize           = 100
+	maxPageSize               = 1000
+	defaultRawProfilePageSize = 20
+	maxRawProfilePageSize     = 100
 )
 
-// Config contains Profiling response and legacy query-proxy configuration.
+var (
+	// ErrResultNotReady indicates that the Profiling Job is still active.
+	ErrResultNotReady = errors.New("profiling result is not ready")
+	// ErrResultNotFound indicates that no durable publication marker exists.
+	ErrResultNotFound = errors.New("profiling result is not found")
+	// ErrResultUnavailable indicates that the Job cannot provide a complete result.
+	ErrResultUnavailable = errors.New("profiling result is unavailable")
+	// ErrResultStoreUnavailable indicates that result storage could not serve a query.
+	ErrResultStoreUnavailable = errors.New("profiling result store is unavailable")
+)
+
+// Config contains Profiling response configuration.
 type Config struct {
 	DashboardBaseURL string
 }
@@ -49,25 +64,70 @@ type CreateInput struct {
 	Spec            profilingdomain.Spec
 }
 
-// Service owns Profiling authorization, validation, and Job commands.
+// RawProfile is one stored profiling window without storage implementation fields.
+type RawProfile struct {
+	Hostname          string
+	Region            string
+	UploadedAt        time.Time
+	CapturedAt        time.Time
+	ContainerID       string
+	ContainerHostname string
+	ContainerType     string
+	ContainerQoS      string
+	ProfileType       string
+	Profile           *profilev1.Profile
+}
+
+// RawProfilePage contains one page of published profiling windows.
+type RawProfilePage struct {
+	Items   []*RawProfile
+	Limit   int
+	Offset  int
+	HasMore bool
+}
+
+// RawProfileReader reads stored profiling windows by task identifier.
+type RawProfileReader interface {
+	ListByTracerID(
+		ctx context.Context,
+		tracerID string,
+		limit int,
+		offset int,
+	) ([]*profileservice.ProfileDocument, error)
+}
+
+// PublicationReader checks the durable result commit marker.
+type PublicationReader interface {
+	IsPublished(ctx context.Context, requestID string) (bool, error)
+}
+
+// Service owns Profiling authorization, validation, Job commands, and result access.
 type Service struct {
 	jobs             *job.Manager
-	results          *profilingresult.Service
+	profiles         RawProfileReader
+	publications     PublicationReader
 	dashboardBaseURL string
 }
 
 // NewService constructs the Profiling application service.
 func NewService(
 	jobs *job.Manager,
-	results *profilingresult.Service,
+	profiles RawProfileReader,
+	publications PublicationReader,
 	config Config,
 ) (*Service, error) {
 	if jobs == nil {
-		return nil, errors.New("create Profiling service: Job Manager is required")
+		return nil, errors.New("create profiling service: job manager is required")
+	}
+	if (profiles == nil) != (publications == nil) {
+		return nil, errors.New(
+			"create profiling service: profile storage and publication store must be configured together",
+		)
 	}
 	return &Service{
 		jobs:             jobs,
-		results:          results,
+		profiles:         profiles,
+		publications:     publications,
 		dashboardBaseURL: config.DashboardBaseURL,
 	}, nil
 }
@@ -149,18 +209,81 @@ func (s *Service) RawProfiles(
 	requestID string,
 	limit int,
 	offset int,
-) (*profilingresult.Page, error) {
-	if s.results == nil {
-		return nil, profilingresult.ErrUnavailable
+) (*RawProfilePage, error) {
+	if requestID == "" {
+		return nil, fmt.Errorf("%w: request ID is required", job.ErrInvalidQuery)
 	}
-	return s.results.List(
-		ctx,
-		requestID,
-		principal.ID,
-		principal.IsAdmin,
-		limit,
-		offset,
-	)
+	if err := validateRawProfilePage(limit, offset); err != nil {
+		return nil, err
+	}
+	jobEntity, err := s.Get(ctx, principal, requestID)
+	if err != nil {
+		return nil, err
+	}
+	switch jobEntity.Status {
+	case job.StatusPending, job.StatusRunning, job.StatusStopping:
+		return nil, ErrResultNotReady
+	case job.StatusStopped, job.StatusFailed:
+		return nil, ErrResultUnavailable
+	case job.StatusCompleted, job.StatusOutcomeUnknown:
+	default:
+		return nil, fmt.Errorf("unsupported Job status %q", jobEntity.Status)
+	}
+	if s.profiles == nil || s.publications == nil {
+		return nil, ErrResultUnavailable
+	}
+	published, err := s.isPublished(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if !published {
+		return nil, fmt.Errorf(
+			"%w: profiling result %q has no publication marker",
+			ErrResultNotFound,
+			requestID,
+		)
+	}
+
+	documents, err := s.profiles.ListByTracerID(ctx, requestID, limit+1, offset)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: query profiles for request %q: %w",
+			ErrResultStoreUnavailable,
+			requestID,
+			err,
+		)
+	}
+	hasMore := len(documents) > limit
+	if hasMore {
+		documents = documents[:limit]
+	}
+	items := make([]*RawProfile, 0, len(documents))
+	for _, document := range documents {
+		if document == nil {
+			return nil, fmt.Errorf(
+				"%w: profile storage returned a nil document",
+				ErrResultStoreUnavailable,
+			)
+		}
+		items = append(items, &RawProfile{
+			Hostname:          document.Hostname,
+			Region:            document.Region,
+			UploadedAt:        document.UploadedTime,
+			CapturedAt:        document.CapturedAt(),
+			ContainerID:       document.ContainerID,
+			ContainerHostname: document.ContainerHostname,
+			ContainerType:     document.ContainerType,
+			ContainerQoS:      document.ContainerQOS,
+			ProfileType:       document.TracerData.Flamedata.ProfileType,
+			Profile:           &document.TracerData.Flamedata.Profile,
+		})
+	}
+	return &RawProfilePage{
+		Items:   items,
+		Limit:   limit,
+		Offset:  offset,
+		HasMore: hasMore,
+	}, nil
 }
 
 // Capabilities returns the versioned static Profiling capability table.
@@ -181,10 +304,10 @@ func (s *Service) ResultURL(
 	default:
 		return nil, nil
 	}
-	if s.results == nil {
+	if s.publications == nil {
 		return nil, nil
 	}
-	published, err := s.results.IsPublished(ctx, jobEntity)
+	published, err := s.isPublished(ctx, jobEntity.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -192,6 +315,19 @@ func (s *Service) ResultURL(
 		return nil, nil
 	}
 	return buildDashboardURL(s.dashboardBaseURL, jobEntity), nil
+}
+
+func (s *Service) isPublished(ctx context.Context, requestID string) (bool, error) {
+	published, err := s.publications.IsPublished(ctx, requestID)
+	if err != nil {
+		return false, fmt.Errorf(
+			"%w: query publication for request %q: %w",
+			ErrResultStoreUnavailable,
+			requestID,
+			err,
+		)
+	}
+	return published, nil
 }
 
 func buildDashboardURL(baseURL string, jobEntity *job.Job) *string {
@@ -259,6 +395,19 @@ func NormalizePage(limit, offset *int) (int, int) {
 	return normalizedLimit, normalizedOffset
 }
 
+// NormalizeRawProfilePage applies the raw Profile pagination defaults.
+func NormalizeRawProfilePage(limit, offset *int) (int, int) {
+	normalizedLimit := defaultRawProfilePageSize
+	if limit != nil {
+		normalizedLimit = *limit
+	}
+	normalizedOffset := 0
+	if offset != nil {
+		normalizedOffset = *offset
+	}
+	return normalizedLimit, normalizedOffset
+}
+
 func validateCreateInput(principal auth.Principal, input *CreateInput) error {
 	if principal.ID == "" {
 		return errors.New("authenticated user ID is required")
@@ -287,6 +436,20 @@ func validateCreateInput(principal auth.Principal, input *CreateInput) error {
 func validatePage(limit, offset int) error {
 	if limit <= 0 || limit > maxPageSize {
 		return fmt.Errorf("%w: limit must be between 1 and %d", job.ErrInvalidQuery, maxPageSize)
+	}
+	if offset < 0 {
+		return fmt.Errorf("%w: offset must not be negative", job.ErrInvalidQuery)
+	}
+	return nil
+}
+
+func validateRawProfilePage(limit, offset int) error {
+	if limit <= 0 || limit > maxRawProfilePageSize {
+		return fmt.Errorf(
+			"%w: limit must be between 1 and %d",
+			job.ErrInvalidQuery,
+			maxRawProfilePageSize,
+		)
 	}
 	if offset < 0 {
 		return fmt.Errorf("%w: offset must not be negative", job.ErrInvalidQuery)

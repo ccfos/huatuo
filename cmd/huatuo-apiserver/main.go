@@ -81,7 +81,8 @@ type Daemon struct {
 
 	metrics             *prometheus.Registry
 	jobManager          *job.Manager
-	profileQueryService *profileService.Service
+	profileStorage      *profileService.ProfileStorage
+	profileQueryService *profileService.ProfileQueryService
 	publications        *publication.Store
 	agentObserver       nodeclient.RequestObserver
 	apiServer           *server.Server

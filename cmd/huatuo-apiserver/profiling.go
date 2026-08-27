@@ -32,17 +32,21 @@ func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Cont
 		return nil, nil
 	}
 
-	esConfig := &service.ElasticSearchConfig{
-		Address:  d.opts.Config.Elasticsearch.Address,
-		Username: d.opts.Config.Elasticsearch.Username,
-		Password: d.opts.Config.Elasticsearch.Password,
-		Index:    d.opts.Config.Elasticsearch.Index,
-	}
-	profileQueryService, err := service.NewService(ctx, esConfig)
+	profileStorage, err := service.NewProfileStorageContext(
+		ctx,
+		d.opts.Config.Elasticsearch.Address,
+		d.opts.Config.Elasticsearch.Username,
+		d.opts.Config.Elasticsearch.Password,
+		d.opts.Config.Elasticsearch.Index,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("initialize profile query service: %w", err)
+		return nil, fmt.Errorf("initialize profile storage: %w", err)
 	}
-	d.profileQueryService = profileQueryService
+	profileQueryService, err := service.NewProfileQueryService(profileStorage)
+	if err != nil {
+		_ = profileStorage.Close(ctx)
+		return nil, err
+	}
 	publicationStore, err := publication.NewStore(ctx, &driver.Config{
 		Driver:      "elasticsearch",
 		ESAddresses: strutil.SplitCommaList(d.opts.Config.Elasticsearch.Address),
@@ -51,12 +55,14 @@ func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Cont
 		ESIndex:     d.opts.Config.Elasticsearch.Index,
 	})
 	if err != nil {
-		_ = profileQueryService.Close(ctx)
+		_ = profileStorage.Close(ctx)
 		return nil, fmt.Errorf("initialize profiling publication Store: %w", err)
 	}
+	d.profileStorage = profileStorage
+	d.profileQueryService = profileQueryService
 	d.publications = publicationStore
 
 	return func(ctx context.Context) error {
-		return errors.Join(profileQueryService.Close(ctx), publicationStore.Close(ctx))
+		return errors.Join(profileStorage.Close(ctx), publicationStore.Close(ctx))
 	}, nil
 }

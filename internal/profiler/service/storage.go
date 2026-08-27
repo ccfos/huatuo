@@ -174,6 +174,20 @@ func (s *ProfileStorage) SearchProfilesContext(ctx context.Context, filter *Sear
 	return documents, nil
 }
 
+// ListByTracerID returns one page of profiling windows for a task.
+func (s *ProfileStorage) ListByTracerID(
+	ctx context.Context,
+	tracerID string,
+	limit int,
+	offset int,
+) ([]*ProfileDocument, error) {
+	return s.SearchProfilesContext(ctx, &SearchFilter{
+		TracerID: tracerID,
+		Limit:    limit,
+		Offset:   offset,
+	})
+}
+
 // AggregationsByField gets aggregations by field.
 func (s *ProfileStorage) AggregationsByField(filter *SearchFilter, field string) ([]string, error) {
 	return s.AggregationsByFieldContext(context.Background(), filter, field)

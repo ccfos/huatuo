@@ -25,7 +25,6 @@ import (
 	"huatuo-bamai/internal/job"
 	profileservice "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/profiling/publication"
-	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
@@ -36,17 +35,18 @@ import (
 
 // ServerOptions groups the dependencies required to start the API server.
 type ServerOptions struct {
-	Addr            string
-	PromReg         *prometheus.Registry
-	JobManager      *job.Manager
-	ProfileService  *profileservice.Service
-	Publications    *publication.Store
-	ProfilingConfig profiling.Config
-	AuthUsers       []server.UserConfig
-	EnablePProf     bool
-	VersionInfo     *version.Info
-	RateLimit       *server.RateLimitConfig
-	Ready           func(context.Context) error
+	Addr                string
+	PromReg             *prometheus.Registry
+	JobManager          *job.Manager
+	ProfileStorage      *profileservice.ProfileStorage
+	ProfileQueryService *profileservice.ProfileQueryService
+	Publications        *publication.Store
+	ProfilingConfig     profiling.Config
+	AuthUsers           []server.UserConfig
+	EnablePProf         bool
+	VersionInfo         *version.Info
+	RateLimit           *server.RateLimitConfig
+	Ready               func(context.Context) error
 }
 
 // Start starts the API service with generated business routes.
@@ -58,26 +58,21 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 		return nil, errors.New("start API server: Job Manager is required")
 	}
 
-	var resultService *profilingresult.Service
-	if opts.ProfileService != nil {
-		if opts.Publications == nil {
-			return nil, errors.New("start API server: Profiling publication Store is required")
-		}
-		repository, err := profilingresult.NewStorageRepository(
-			opts.ProfileService,
-			opts.Publications,
+	if (opts.ProfileStorage == nil) != (opts.Publications == nil) {
+		return nil, errors.New(
+			"start API server: profile storage and publication store must be configured together",
 		)
-		if err != nil {
-			return nil, err
-		}
-		resultService, err = profilingresult.NewService(opts.JobManager, repository)
-		if err != nil {
-			return nil, err
-		}
+	}
+	var rawProfiles profiling.RawProfileReader
+	var publications profiling.PublicationReader
+	if opts.ProfileStorage != nil {
+		rawProfiles = opts.ProfileStorage
+		publications = opts.Publications
 	}
 	profilingService, err := profiling.NewService(
 		opts.JobManager,
-		resultService,
+		rawProfiles,
+		publications,
 		opts.ProfilingConfig,
 	)
 	if err != nil {
@@ -87,7 +82,11 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	apiHandler, err := NewAPIHandler(profilingService, tracingService, opts.ProfileService)
+	apiHandler, err := NewAPIHandler(
+		profilingService,
+		tracingService,
+		opts.ProfileQueryService,
+	)
 	if err != nil {
 		return nil, err
 	}

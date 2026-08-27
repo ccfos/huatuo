@@ -30,7 +30,6 @@ import (
 	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/job"
 	profileservice "huatuo-bamai/internal/profiler/service"
-	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
@@ -42,6 +41,8 @@ import (
 )
 
 const maxRawProfileResponseBytes = 64 << 20
+
+var errRawProfileResponseTooLarge = errors.New("profiling result response is too large")
 
 // APIHandler implements the generated Apiserver Strict Server.
 type APIHandler struct {
@@ -334,7 +335,10 @@ func (h *APIHandler) GetRawProfiles(
 	if err != nil {
 		return nil, err
 	}
-	limit, offset := profilinghandler.NormalizePage(request.Params.Limit, request.Params.Offset)
+	limit, offset := profilinghandler.NormalizeRawProfilePage(
+		request.Params.Limit,
+		request.Params.Offset,
+	)
 	page, err := h.profiling.RawProfiles(
 		ctx,
 		principal,
@@ -597,7 +601,7 @@ func tracingCapability(capability *tracingdomain.Capability) serverapi.TracingCa
 	}
 }
 
-func rawProfile(profile *profilingresult.Profile) (serverapi.RawProfile, int, error) {
+func rawProfile(profile *profilinghandler.RawProfile) (serverapi.RawProfile, int, error) {
 	data, err := json.Marshal(profile.Profile)
 	if err != nil {
 		return serverapi.RawProfile{}, 0, fmt.Errorf("map raw Profile: encode payload: %w", err)
@@ -617,7 +621,7 @@ func rawProfile(profile *profilingresult.Profile) (serverapi.RawProfile, int, er
 }
 
 func rawProfiles(
-	profiles []profilingresult.Profile,
+	profiles []*profilinghandler.RawProfile,
 	maxResponseBytes int,
 ) ([]serverapi.RawProfile, error) {
 	items := make([]serverapi.RawProfile, len(profiles))
@@ -625,7 +629,7 @@ func rawProfiles(
 	for i := range profiles {
 		var profileBytes int
 		var err error
-		items[i], profileBytes, err = rawProfile(&profiles[i])
+		items[i], profileBytes, err = rawProfile(profiles[i])
 		if err != nil {
 			return nil, err
 		}
@@ -633,7 +637,7 @@ func rawProfiles(
 		if responseBytes > maxResponseBytes {
 			return nil, fmt.Errorf(
 				"%w: encoded payload exceeds %d bytes; reduce limit",
-				profilingresult.ErrResponseTooLarge,
+				errRawProfileResponseTooLarge,
 				maxResponseBytes,
 			)
 		}
@@ -719,9 +723,9 @@ func requestPrincipal(ctx context.Context) (auth.Principal, error) {
 
 func serverAPIError(err error) error {
 	switch {
-	case errors.Is(err, job.ErrNotFound), errors.Is(err, profilingresult.ErrWrongKind):
+	case errors.Is(err, job.ErrNotFound):
 		return response.NewAPIError(serverapi.ErrorCodeJobNotFound, "Job not found")
-	case errors.Is(err, auth.ErrPermissionDenied), errors.Is(err, profilingresult.ErrForbidden):
+	case errors.Is(err, auth.ErrPermissionDenied):
 		return response.NewAPIError(apiv1.ErrorCodePermissionDenied, "Job access is forbidden")
 	case errors.Is(err, job.ErrQuotaExceeded):
 		return response.NewAPIError(serverapi.ErrorCodeQuotaExceeded, "Job quota exceeded")
@@ -731,21 +735,21 @@ func serverAPIError(err error) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	case errors.Is(err, job.ErrShuttingDown):
 		return response.NewAPIError(apiv1.ErrorCodeServiceUnavailable, "Job service is shutting down")
-	case errors.Is(err, profilingresult.ErrNotReady):
+	case errors.Is(err, profilinghandler.ErrResultNotReady):
 		return response.NewAPIError(serverapi.ErrorCodeResultNotReady, "Profiling result is not ready")
-	case errors.Is(err, profilingresult.ErrNotFound):
+	case errors.Is(err, profilinghandler.ErrResultNotFound):
 		return response.NewAPIError(serverapi.ErrorCodeResultNotFound, "Profiling result not found")
-	case errors.Is(err, profilingresult.ErrUnavailable):
+	case errors.Is(err, profilinghandler.ErrResultUnavailable):
 		return response.NewAPIError(
 			serverapi.ErrorCodeResultUnavailable,
 			"Job state does not provide a complete Profiling result",
 		)
-	case errors.Is(err, profilingresult.ErrResponseTooLarge):
+	case errors.Is(err, errRawProfileResponseTooLarge):
 		return response.NewAPIError(
 			serverapi.ErrorCodeResultTooLarge,
 			"Profiling result response is too large; reduce limit",
 		)
-	case errors.Is(err, profilingresult.ErrRepositoryUnavailable):
+	case errors.Is(err, profilinghandler.ErrResultStoreUnavailable):
 		return response.NewAPIError(
 			apiv1.ErrorCodeServiceUnavailable,
 			"Profiling result Store is unavailable",

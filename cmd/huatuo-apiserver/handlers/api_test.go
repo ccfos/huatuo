@@ -21,8 +21,8 @@ import (
 
 	apiv1 "huatuo-bamai/apis/v1"
 	serverapi "huatuo-bamai/apis/v1/server"
+	profilinghandler "huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
 	"huatuo-bamai/internal/job"
-	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/observation"
 	tracingdomain "huatuo-bamai/pkg/tracing"
@@ -85,10 +85,10 @@ func TestServerAPIErrorMapsStableResultErrors(t *testing.T) {
 		err      error
 		wantCode apiv1.ErrorCode
 	}{
-		{err: profilingresult.ErrNotReady, wantCode: serverapi.ErrorCodeResultNotReady},
-		{err: profilingresult.ErrNotFound, wantCode: serverapi.ErrorCodeResultNotFound},
-		{err: profilingresult.ErrUnavailable, wantCode: serverapi.ErrorCodeResultUnavailable},
-		{err: profilingresult.ErrResponseTooLarge, wantCode: serverapi.ErrorCodeResultTooLarge},
+		{err: profilinghandler.ErrResultNotReady, wantCode: serverapi.ErrorCodeResultNotReady},
+		{err: profilinghandler.ErrResultNotFound, wantCode: serverapi.ErrorCodeResultNotFound},
+		{err: profilinghandler.ErrResultUnavailable, wantCode: serverapi.ErrorCodeResultUnavailable},
+		{err: errRawProfileResponseTooLarge, wantCode: serverapi.ErrorCodeResultTooLarge},
 		{err: job.ErrQuotaExceeded, wantCode: serverapi.ErrorCodeQuotaExceeded},
 		{err: job.ErrNotFound, wantCode: serverapi.ErrorCodeJobNotFound},
 	}
@@ -102,10 +102,10 @@ func TestServerAPIErrorMapsStableResultErrors(t *testing.T) {
 }
 
 func TestRawProfilesRejectsOversizedEncodedPage(t *testing.T) {
-	_, err := rawProfiles([]profilingresult.Profile{{
+	_, err := rawProfiles([]*profilinghandler.RawProfile{{
 		Profile: &profilev1.Profile{StringTable: []string{"profile payload"}},
 	}}, 1)
-	if !errors.Is(err, profilingresult.ErrResponseTooLarge) {
+	if !errors.Is(err, errRawProfileResponseTooLarge) {
 		t.Fatalf("rawProfiles() error = %v, want ErrResponseTooLarge", err)
 	}
 }

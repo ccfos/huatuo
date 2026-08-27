@@ -24,30 +24,26 @@ import (
 
 	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/job"
-	profilingresult "huatuo-bamai/internal/profiling/result"
+	profileservice "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
 )
 
-type resultJobReader struct{}
+type rawProfileReader struct{}
 
-func (resultJobReader) Get(context.Context, string) (*job.Job, error) {
-	return nil, errors.New("unexpected Job read")
-}
-
-type publishedResultRepository struct{}
-
-func (publishedResultRepository) IsPublished(context.Context, string) (bool, error) {
-	return true, nil
-}
-
-func (publishedResultRepository) List(
+func (rawProfileReader) ListByTracerID(
 	context.Context,
 	string,
 	int,
 	int,
-) ([]profilingresult.Profile, error) {
-	return nil, errors.New("unexpected result list")
+) ([]*profileservice.ProfileDocument, error) {
+	return nil, errors.New("unexpected profile read")
+}
+
+type publishedResultStore struct{}
+
+func (publishedResultStore) IsPublished(context.Context, string) (bool, error) {
+	return true, nil
 }
 
 func TestValidateCreateInput(t *testing.T) {
@@ -114,13 +110,10 @@ func TestValidateCreateInput(t *testing.T) {
 }
 
 func TestResultURLIsAvailableOnlyForCompleteResults(t *testing.T) {
-	results, err := profilingresult.NewService(resultJobReader{}, publishedResultRepository{})
-	if err != nil {
-		t.Fatalf("NewService(result) error = %v", err)
-	}
 	service, err := NewService(
 		&job.Manager{},
-		results,
+		rawProfileReader{},
+		publishedResultStore{},
 		Config{DashboardBaseURL: "https://grafana.example/d"},
 	)
 	if err != nil {
@@ -269,8 +262,8 @@ func TestNormalizePage(t *testing.T) {
 }
 
 func TestNewServiceRequiresJobManager(t *testing.T) {
-	_, err := NewService(nil, nil, Config{})
-	if err == nil || !strings.Contains(err.Error(), "Job Manager is required") {
+	_, err := NewService(nil, nil, nil, Config{})
+	if err == nil || !strings.Contains(err.Error(), "job manager is required") {
 		t.Fatalf("NewService() error = %v", err)
 	}
 }
