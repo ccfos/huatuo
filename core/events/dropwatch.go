@@ -23,6 +23,7 @@ import (
 	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
+	"huatuo-bamai/internal/dropcorrelation"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/toolstream"
@@ -81,13 +82,25 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 			NetNamespaceInum:    uint64(ev.NetNamespaceInum),
 		})
 	}
+	now := time.Now()
+	dropcorrelation.Default().ObserveKernel(dropcorrelation.KernelDrop{
+		Timestamp:   now,
+		Device:      ev.NetdevName,
+		IfIndex:     ev.NetdevIfindex,
+		Direction:   dropcorrelation.InferDirection(ev.Type, ev.DropReason, ev.Stack),
+		Reason:      ev.DropReason,
+		Stack:       ev.Stack,
+		ContainerID: ev.ContainerID,
+		Protocol:    ev.PacketEthProto,
+		PacketLen:   ev.PacketLen,
+	})
 
 	globalDropwatchTCPRetransmitCache.add(ev)
 
 	return tracing.Save(&tracing.WriteRequest{
 		TracerName:  "dropwatch",
 		ContainerID: ev.ContainerID,
-		TracerTime:  time.Now(),
+		TracerTime:  now,
 		TracerData:  ev,
 	})
 }
