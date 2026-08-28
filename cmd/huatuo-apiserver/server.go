@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 
+	v1 "huatuo-bamai/apis/v1"
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
@@ -36,6 +37,12 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 		PromReg:        d.metrics,
 		JobManager:     d.jobManager,
 		ProfileService: profileQueryService,
+		SystemLimits: v1.SystemLimits{
+			MaxProfilingTasksPerHost: d.opts.Config.Jobs.Profiling.MaxConcurrentPerHost,
+			MaxTracingTasksPerHost:   d.opts.Config.Jobs.Tracing.MaxConcurrentPerHost,
+			MaxTotalProfilingTasks:   d.opts.Config.Jobs.Profiling.MaxConcurrent,
+			MaxTotalTracingTasks:     d.opts.Config.Jobs.Tracing.MaxConcurrent,
+		},
 		ProfilingConfig: profiling.Config{
 			AggregationIntervalSeconds:     d.opts.Config.Profiling.AggregationIntervalSeconds,
 			MaxConcurrentProfilerProcesses: d.opts.Config.Profiling.MaxConcurrentProfilerProcesses,

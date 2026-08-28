@@ -30,7 +30,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
+func buildMiddlewareChain(cfg *Config, authService *authService) []httpGin.HandlerFunc {
 	chain := []httpGin.HandlerFunc{
 		middlewareContext(),
 		maxBodyBytesMiddleware(cfg.MaxBodyBytes),
@@ -41,7 +41,6 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 		chain = append(chain, newHTTPMetricsMiddleware(cfg.PromReg))
 	}
 	if cfg.RequireAuth || len(cfg.AuthUsers) > 0 {
-		authService := NewAuthService(cfg.AuthUsers)
 		publicPaths := append(
 			[]string{"/healthz", "/readyz", "/metrics", "/version"},
 			cfg.PublicPaths...,

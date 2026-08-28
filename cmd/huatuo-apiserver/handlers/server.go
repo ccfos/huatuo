@@ -17,7 +17,10 @@ package handlers
 import (
 	"context"
 	"errors"
+	"net/http"
 
+	v1 "huatuo-bamai/apis/v1"
+	"huatuo-bamai/cmd/huatuo-apiserver/handlers/console"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
 	"huatuo-bamai/internal/job"
@@ -39,6 +42,7 @@ type ServerOptions struct {
 	VersionInfo     *version.Info
 	RateLimit       *server.RateLimitConfig
 	Ready           func(context.Context) error
+	SystemLimits    v1.SystemLimits
 }
 
 // Start starts the API service with the given configuration.
@@ -54,6 +58,7 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 		EnablePProf: opts.EnablePProf,
 		RateLimit:   opts.RateLimit,
 		AuthUsers:   opts.AuthUsers,
+		PublicPaths: []string{"/", "/console", "/console/**"},
 		AdminPaths: []string{
 			"/v1/profiles/flamegraph/**",
 		},
@@ -61,6 +66,10 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 		VersionInfo: opts.VersionInfo,
 		Ready:       opts.Ready,
 	})
+
+	// Register the console routes (RBAC, system info, API-key management).
+	consoleHandler := console.NewHandler(httpServer.UserManager(), opts.VersionInfo, opts.SystemLimits)
+	httpServer.MustRegisterRoutes("/v1", consoleHandler.Handlers)
 
 	// Register trace routes
 	httpServer.MustRegisterRoutes(
@@ -76,6 +85,9 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 		).Handlers
 	}
 	httpServer.MustRegisterRoutes("/v1/profiles", profileHandlers)
+
+	httpServer.StaticFS("/console", console.WebFS())
+	httpServer.Redirect("/", "/console/", http.StatusFound)
 
 	if err := httpServer.Start(opts.Addr); err != nil {
 		return nil, err
