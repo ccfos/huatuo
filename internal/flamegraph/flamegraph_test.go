@@ -14,72 +14,43 @@
 
 package flamegraph
 
-import (
-	"testing"
-)
+import "testing"
 
-func TestLevelsToTreeBasic(t *testing.T) {
-	// A simple two-level flamebearer:
-	// Level 0: root bar [0, 100, 0, 0] → name index 0, value 100, self 0
-	// Level 1: child bar [0, 100, 50, 1] → name index 1, value 100, self 50
+func TestLevelsToTree(t *testing.T) {
 	levels := []*Level{
-		{Values: []int64{0, 100, 0, 0}},
-		{Values: []int64{0, 100, 50, 1}},
+		{Values: []int64{0, 100, 10, 0}},
+		{Values: []int64{0, 60, 5, 1, 0, 40, 7, 2}},
 	}
-	names := []string{"root", "child"}
+	names := []string{"root", "child-a", "child-b"}
 
 	tree := LevelsToTree(levels, names)
 	if tree == nil {
-		t.Fatal("LevelsToTree() = nil, want non-nil")
+		t.Fatalf("LevelsToTree() = nil, want tree")
 	}
-	if tree.Name != "root" {
-		t.Errorf("root.Name = %q, want %q", tree.Name, "root")
+	if tree.Name != "root" || tree.Value != 100 || tree.Self != 10 {
+		t.Fatalf("root = %+v, want root value=100 self=10", tree)
 	}
-	if tree.Value != 100 {
-		t.Errorf("root.Value = %d, want 100", tree.Value)
+	if len(tree.Nodes) != 2 {
+		t.Fatalf("root children = %d, want 2", len(tree.Nodes))
 	}
-	if tree.Start != 0 {
-		t.Errorf("root.Start = %d, want 0", tree.Start)
+	if tree.Nodes[0].Name != "child-a" || tree.Nodes[0].Start != 0 || tree.Nodes[0].Value != 60 {
+		t.Fatalf("first child = %+v, want child-a start=0 value=60", tree.Nodes[0])
 	}
-	if tree.Level != 0 {
-		t.Errorf("root.Level = %d, want 0", tree.Level)
-	}
-	if len(tree.Nodes) != 1 {
-		t.Fatalf("len(tree.Nodes) = %d, want 1", len(tree.Nodes))
-	}
-	child := tree.Nodes[0]
-	if child.Name != "child" {
-		t.Errorf("child.Name = %q, want %q", child.Name, "child")
-	}
-	if child.Value != 100 {
-		t.Errorf("child.Value = %d, want 100", child.Value)
-	}
-	if child.Self != 50 {
-		t.Errorf("child.Self = %d, want 50", child.Self)
-	}
-	if child.Level != 1 {
-		t.Errorf("child.Level = %d, want 1", child.Level)
+	if tree.Nodes[1].Name != "child-b" || tree.Nodes[1].Start != 60 || tree.Nodes[1].Value != 40 {
+		t.Fatalf("second child = %+v, want child-b start=60 value=40", tree.Nodes[1])
 	}
 }
 
 func TestLevelsToTreeEmpty(t *testing.T) {
-	tree := LevelsToTree(nil, nil)
-	if tree != nil {
-		t.Errorf("LevelsToTree(nil, nil) = %v, want nil", tree)
+	if tree := LevelsToTree(nil, nil); tree != nil {
+		t.Fatalf("LevelsToTree(nil, nil) = %+v, want nil", tree)
 	}
-
-	tree = LevelsToTree([]*Level{}, []string{})
-	if tree != nil {
-		t.Errorf("LevelsToTree(empty) = %v, want nil", tree)
+	if tree := LevelsToTree([]*Level{}, []string{}); tree != nil {
+		t.Fatalf("LevelsToTree(empty) = %+v, want nil", tree)
 	}
 }
 
 func TestLevelsToTreeMultiLevel(t *testing.T) {
-	// Three-level flamebearer with adjacent siblings.
-	// Flamebearer start offsets are relative to previous item's end.
-	// Level 0: root [0, 100, 0, 0]
-	// Level 1: child-0 [0, 60, 10, 1], child-1 [0, 40, 5, 2] (offset=0 = adjacent)
-	// Level 2: grandchild-0 [0, 30, 15, 3] (under child-0)
 	levels := []*Level{
 		{Values: []int64{0, 100, 0, 0}},
 		{Values: []int64{0, 60, 10, 1, 0, 40, 5, 2}},
@@ -89,89 +60,84 @@ func TestLevelsToTreeMultiLevel(t *testing.T) {
 
 	tree := LevelsToTree(levels, names)
 	if tree == nil {
-		t.Fatal("LevelsToTree() = nil, want non-nil")
+		t.Fatal("LevelsToTree() = nil, want tree")
 	}
 	if len(tree.Nodes) != 2 {
-		t.Fatalf("len(root.Nodes) = %d, want 2", len(tree.Nodes))
+		t.Fatalf("root children = %d, want 2", len(tree.Nodes))
 	}
 
 	child0 := tree.Nodes[0]
 	if child0.Name != "child-0" {
-		t.Errorf("child0.Name = %q, want %q", child0.Name, "child-0")
+		t.Fatalf("first child name = %q, want child-0", child0.Name)
 	}
 	if len(child0.Nodes) != 1 {
-		t.Fatalf("len(child0.Nodes) = %d, want 1", len(child0.Nodes))
+		t.Fatalf("child-0 children = %d, want 1", len(child0.Nodes))
 	}
 
 	grandchild := child0.Nodes[0]
-	if grandchild.Name != "grandchild-0" {
-		t.Errorf("grandchild.Name = %q, want %q", grandchild.Name, "grandchild-0")
-	}
-	if grandchild.Self != 15 {
-		t.Errorf("grandchild.Self = %d, want 15", grandchild.Self)
+	if grandchild.Name != "grandchild-0" || grandchild.Self != 15 {
+		t.Fatalf("grandchild = %+v, want grandchild-0 self=15", grandchild)
 	}
 }
 
 func TestTreeToNestedSetDataFrame(t *testing.T) {
 	tree := &ProfileTree{
-		Start: 0,
 		Value: 100,
-		Self:  20,
-		Level: 0,
+		Self:  10,
 		Name:  "root",
 		Nodes: []*ProfileTree{
-			{Start: 0, Value: 80, Self: 30, Level: 1, Name: "child"},
+			{Level: 1, Value: 60, Self: 5, Name: "child"},
 		},
 	}
 
-	frame, labelField := TreeToNestedSetDataFrame(tree, "bytes")
+	frame, labels := TreeToNestedSetDataFrame(tree, "samples")
 	if frame == nil {
-		t.Fatal("TreeToNestedSetDataFrame() returned nil frame")
+		t.Fatalf("TreeToNestedSetDataFrame() frame is nil")
 	}
-	if labelField == nil {
-		t.Fatal("TreeToNestedSetDataFrame() returned nil labelField")
-	}
-
-	// frame should have 4 fields: level, value, self, label
 	if len(frame.Fields) != 4 {
-		t.Fatalf("len(frame.Fields) = %d, want 4", len(frame.Fields))
+		t.Fatalf("fields = %d, want 4", len(frame.Fields))
 	}
-
-	// Each field should have 2 rows (root + child)
-	for i, f := range frame.Fields {
-		if f.Len() != 2 {
-			t.Errorf("field[%d] (%s).Len() = %d, want 2", i, f.Name, f.Len())
+	for i, field := range frame.Fields {
+		if field.Len() != 2 {
+			t.Fatalf("field[%d].Len() = %d, want 2", i, field.Len())
 		}
+	}
+	if len(labels.GetValuesMap()) != 2 {
+		t.Fatalf("labels = %v, want root and child", labels.GetValuesMap())
 	}
 }
 
 func TestTreeToNestedSetDataFrameNilTree(t *testing.T) {
-	frame, _ := TreeToNestedSetDataFrame(nil, "bytes")
+	frame, labels := TreeToNestedSetDataFrame(nil, "samples")
 	if frame == nil {
-		t.Fatal("TreeToNestedSetDataFrame(nil) = nil, want non-nil frame")
+		t.Fatal("TreeToNestedSetDataFrame(nil) frame is nil")
 	}
-	if len(frame.Fields) < 3 {
-		t.Errorf("len(frame.Fields) = %d, want at least 3", len(frame.Fields))
+	if len(frame.Fields) != 4 {
+		t.Fatalf("fields = %d, want 4", len(frame.Fields))
+	}
+	for i, field := range frame.Fields {
+		if field.Len() != 0 {
+			t.Fatalf("field[%d].Len() = %d, want 0", i, field.Len())
+		}
+	}
+	if len(labels.GetValuesMap()) != 0 {
+		t.Fatalf("labels = %v, want empty map", labels.GetValuesMap())
 	}
 }
 
 func TestEnumField(t *testing.T) {
 	ef := NewEnumField("test", nil)
-	if ef == nil {
-		t.Fatal("NewEnumField() = nil")
-	}
-
 	ef.Append("alpha")
 	ef.Append("beta")
-	ef.Append("alpha") // duplicate, should reuse index
+	ef.Append("alpha")
 
-	m := ef.GetValuesMap()
-	if len(m) != 2 {
-		t.Errorf("len(valuesMap) = %d, want 2", len(m))
+	values := ef.GetValuesMap()
+	if len(values) != 2 {
+		t.Fatalf("values = %v, want two unique labels", values)
 	}
 
-	f := ef.GetField()
-	if f.Len() != 3 {
-		t.Errorf("field.Len() = %d, want 3", f.Len())
+	field := ef.GetField()
+	if field.Len() != 3 {
+		t.Fatalf("field.Len() = %d, want 3", field.Len())
 	}
 }
