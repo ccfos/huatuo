@@ -15,30 +15,8 @@
 package collector
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
-
-func TestReadOnlineCPUsPreservesSparseIDs(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "online")
-	if err := os.WriteFile(path, []byte("0,2-3\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := readOnlineCPUs(path, 4)
-	if err != nil {
-		t.Fatalf("readOnlineCPUs() error = %v", err)
-	}
-	for _, cpu := range []int{0, 2, 3} {
-		if _, ok := got[cpu]; !ok {
-			t.Errorf("online CPUs %v missing %d", got, cpu)
-		}
-	}
-	if _, ok := got[1]; ok {
-		t.Errorf("online CPUs %v unexpectedly contains offline CPU 1", got)
-	}
-}
 
 func TestAppendSoftirqMetricsSkipsOfflineCPUs(t *testing.T) {
 	latencies := make([]softirqLatencyData, 3)

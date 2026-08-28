@@ -20,9 +20,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/utils/cpuutil"
@@ -46,7 +44,7 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 		TracingData: &softirqLatency{
 			cpuPossible: cpuPossible,
 			onlineCPUs: func() (map[int]struct{}, error) {
-				return readOnlineCPUs(cpuutil.SystemCPUOnlinePath, cpuPossible)
+				return cpuutil.ParseOnlineCPUSet(cpuutil.SystemCPUOnlinePath, cpuPossible)
 			},
 		},
 		Interval: 10,
@@ -116,52 +114,6 @@ func irqAllowed(id int) bool {
 	default:
 		return false
 	}
-}
-
-func readOnlineCPUs(path string, possible int) (map[int]struct{}, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	if possible <= 0 {
-		return nil, fmt.Errorf("possible CPU count must be positive")
-	}
-
-	online := make(map[int]struct{})
-	list := strings.TrimSpace(string(data))
-	for _, item := range strings.Split(list, ",") {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			return nil, fmt.Errorf("invalid online CPU list %q", list)
-		}
-
-		firstText, lastText, isRange := strings.Cut(item, "-")
-		first, err := strconv.Atoi(firstText)
-		if err != nil {
-			return nil, fmt.Errorf("parse online CPU %q: %w", item, err)
-		}
-		last := first
-		if isRange {
-			last, err = strconv.Atoi(lastText)
-			if err != nil {
-				return nil, fmt.Errorf("parse online CPU range %q: %w", item, err)
-			}
-		}
-		if first < 0 || last < first || last >= possible {
-			return nil, fmt.Errorf(
-				"online CPU range %q is outside possible CPUs 0-%d",
-				item,
-				possible-1,
-			)
-		}
-		for cpu := first; cpu <= last; cpu++ {
-			online[cpu] = struct{}{}
-		}
-	}
-	if len(online) == 0 {
-		return nil, fmt.Errorf("online CPU list is empty")
-	}
-	return online, nil
 }
 
 func appendSoftirqMetrics(

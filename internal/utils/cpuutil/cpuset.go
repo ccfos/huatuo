@@ -26,45 +26,64 @@ import (
 // SystemCPUOnlinePath is the Linux sysfs path for online CPUs.
 const SystemCPUOnlinePath = "/sys/devices/system/cpu/online"
 
-// ParseOnlineCores returns the number of CPUs described by a Linux CPU list file.
-func ParseOnlineCores(path string) (uint64, error) {
+type cpuRange struct {
+	first uint64
+	last  uint64
+}
+
+func parseCPURanges(path string) ([]cpuRange, error) {
 	v, err := os.ReadFile(path)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	list := strings.TrimSpace(string(v))
 	if list == "" {
-		return 0, nil
+		return nil, nil
 	}
 
-	var count uint64
+	ranges := make([]cpuRange, 0, strings.Count(list, ",")+1)
 	for _, item := range strings.Split(list, ",") {
 		if item == "" {
-			return 0, fmt.Errorf("invalid CPU list %q", list)
+			return nil, fmt.Errorf("invalid CPU list %q", list)
 		}
 
 		firstText, lastText, isRange := strings.Cut(item, "-")
 		first, err := strconv.ParseUint(firstText, 10, 64)
 		if err != nil {
-			return 0, fmt.Errorf("parse CPU %q: %w", item, err)
+			return nil, fmt.Errorf("parse CPU %q: %w", item, err)
 		}
 
-		size := uint64(1)
+		last := first
 		if isRange {
-			last, err := strconv.ParseUint(lastText, 10, 64)
+			last, err = strconv.ParseUint(lastText, 10, 64)
 			if err != nil {
-				return 0, fmt.Errorf("parse CPU range %q: %w", item, err)
+				return nil, fmt.Errorf("parse CPU range %q: %w", item, err)
 			}
 			if last < first {
-				return 0, fmt.Errorf("invalid CPU range %q", item)
+				return nil, fmt.Errorf("invalid CPU range %q", item)
 			}
-			width := last - first
-			if width == math.MaxUint64 {
-				return 0, errors.New("cpu count overflow")
-			}
-			size = width + 1
 		}
+		ranges = append(ranges, cpuRange{first: first, last: last})
+	}
+
+	return ranges, nil
+}
+
+// ParseOnlineCores returns the number of CPUs described by a Linux CPU list file.
+func ParseOnlineCores(path string) (uint64, error) {
+	ranges, err := parseCPURanges(path)
+	if err != nil {
+		return 0, err
+	}
+
+	var count uint64
+	for _, r := range ranges {
+		width := r.last - r.first
+		if width == math.MaxUint64 {
+			return 0, errors.New("cpu count overflow")
+		}
+		size := width + 1
 		if count > math.MaxUint64-size {
 			return 0, errors.New("cpu count overflow")
 		}
@@ -72,6 +91,38 @@ func ParseOnlineCores(path string) (uint64, error) {
 	}
 
 	return count, nil
+}
+
+// ParseOnlineCPUSet returns the CPU IDs described by a Linux online CPU list.
+func ParseOnlineCPUSet(path string, possible int) (map[int]struct{}, error) {
+	if possible <= 0 {
+		return nil, errors.New("possible CPU count must be positive")
+	}
+
+	ranges, err := parseCPURanges(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(ranges) == 0 {
+		return nil, errors.New("online CPU list is empty")
+	}
+
+	online := make(map[int]struct{})
+	for _, r := range ranges {
+		if r.last >= uint64(possible) {
+			return nil, fmt.Errorf(
+				"online CPU range %d-%d exceeds possible CPU IDs 0-%d",
+				r.first,
+				r.last,
+				possible-1,
+			)
+		}
+		for cpu := r.first; cpu <= r.last; cpu++ {
+			online[int(cpu)] = struct{}{}
+		}
+	}
+
+	return online, nil
 }
 
 // BoundCores returns the effective CPU capacity after applying quota and cpuset.

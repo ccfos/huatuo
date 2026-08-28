@@ -19,6 +19,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"testing"
 )
@@ -64,6 +65,49 @@ func TestParseOnlineCores(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("ParseOnlineCores() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseOnlineCPUSet(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		possible int
+		want     map[int]struct{}
+		wantErr  bool
+	}{
+		{
+			name:     "sparse",
+			content:  "0,2-3\n",
+			possible: 4,
+			want:     map[int]struct{}{0: {}, 2: {}, 3: {}},
+		},
+		{name: "empty", content: "\n", possible: 4, wantErr: true},
+		{name: "invalid possible", content: "0\n", wantErr: true},
+		{name: "outside possible", content: "0,4\n", possible: 4, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "online")
+			if err := os.WriteFile(path, []byte(tt.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := ParseOnlineCPUSet(path, tt.possible)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("ParseOnlineCPUSet() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseOnlineCPUSet() error = %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseOnlineCPUSet() = %v, want %v", got, tt.want)
 			}
 		})
 	}
