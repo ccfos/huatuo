@@ -33,6 +33,8 @@ import (
 
 type sockstatCollector struct{}
 
+var defaultHostPageSize = os.Getpagesize()
+
 func scaleSockstatValue(value, scale int) float64 {
 	if scale == 0 {
 		scale = 1
@@ -160,7 +162,7 @@ func (c *sockstatCollector) procStatMetrics(container *pod.Container) ([]*metric
 			pairs = append(pairs, ssPair{
 				name:  "mem_bytes",
 				v:     p.Mem,
-				scale: os.Getpagesize(),
+				scale: defaultHostPageSize,
 			})
 		}
 
