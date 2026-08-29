@@ -15,6 +15,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"math"
@@ -60,6 +61,98 @@ type stackLookupMissBPF struct {
 
 func (stackLookupMissBPF) ReadMap(uint32, []byte) ([]byte, error) {
 	return nil, ebpf.ErrKeyNotExist
+}
+
+type offCPUReaderStub struct {
+	readBatch func() ([]any, error)
+}
+
+func (*offCPUReaderStub) ReadInto(any) error {
+	return nil
+}
+
+func (r *offCPUReaderStub) ReadBatch(func() any) ([]any, error) {
+	return r.readBatch()
+}
+
+func (*offCPUReaderStub) Close() error {
+	return nil
+}
+
+type offCPUReaderBPFStub struct {
+	bpf.BPF
+	reader bpf.PerfEventReader
+}
+
+func (*offCPUReaderBPFStub) MapIDByName(name string) uint32 {
+	if name == "stack_map_a" {
+		return 1
+	}
+	return 0
+}
+
+func (b *offCPUReaderBPFStub) EventPipeByName(
+	context.Context,
+	string,
+	uint32,
+) (bpf.PerfEventReader, error) {
+	return b.reader, nil
+}
+
+func TestReadOffCPUDataLoopReturnsReaderErrors(t *testing.T) {
+	readErr := errors.New("read failed")
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "read error", err: readErr},
+		{
+			name: "read error with lost samples",
+			err: errors.Join(
+				readErr,
+				&bpf.PerfEventSamplesLostError{Count: 7},
+			),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			calls := 0
+			reader := &offCPUReaderStub{readBatch: func() ([]any, error) {
+				calls++
+				if calls == 2 {
+					cancel()
+				}
+				return nil, tt.err
+			}}
+			profiler := &cpuNativeProfiler{bpf: &offCPUReaderBPFStub{reader: reader}}
+
+			err := profiler.readOffCPUDataLoop(ctx, func(any) {})
+			require.ErrorIs(t, err, readErr)
+			require.Equal(t, 1, calls)
+		})
+	}
+}
+
+func TestReadOffCPUDataLoopContinuesAfterSamplesLost(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	calls := 0
+	reader := &offCPUReaderStub{readBatch: func() ([]any, error) {
+		calls++
+		if calls == 2 {
+			cancel()
+		}
+		return nil, &bpf.PerfEventSamplesLostError{Count: 7}
+	}}
+	profiler := &cpuNativeProfiler{bpf: &offCPUReaderBPFStub{reader: reader}}
+
+	require.NoError(t, profiler.readOffCPUDataLoop(ctx, func(any) {}))
+	require.Equal(t, 2, calls)
 }
 
 func TestAggregateOffCPUBatch(t *testing.T) {
