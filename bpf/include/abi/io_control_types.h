@@ -59,6 +59,7 @@ enum io_control_iocost_failure {
 	IOCOST_FAILURE_OWNER_INSERT,
 	IOCOST_FAILURE_AGGREGATE_DELETE,
 	IOCOST_FAILURE_OWNER_DELETE,
+	IOCOST_FAILURE_RETIRE,
 };
 
 enum io_control_blk_throtl_failure {
