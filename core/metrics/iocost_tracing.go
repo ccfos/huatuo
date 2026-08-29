@@ -12,15 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This file freezes the userspace side of the IOCOST BPF object ABI. Session
-// ownership, hook attachment and metric collection are implemented separately.
+// This file freezes the userspace side of the IOCOST BPF object ABI and owns
+// the IOCOST BPF session. Metric collection is implemented separately.
 package collector
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"sync"
 
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/pkg/types"
+
+	cebpf "github.com/cilium/ebpf"
+	"golang.org/x/sys/unix"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iocost_tracing.c -o $BPF_DIR/iocost_tracing.o
@@ -74,6 +82,21 @@ var (
 	errIOCostSessionUnhealthy = fmt.Errorf("%w: iocost BPF session is unhealthy",
 		types.ErrTracingStopped)
 )
+
+type ioCostBPFLoader func(string, map[string]any) (bpf.BPF, error)
+
+type ioCostSession struct {
+	object          bpf.BPF
+	possibleCPUs    int
+	breaker         context.Context
+	cancel          context.CancelCauseFunc
+	containerSource ioControlContainerSource
+}
+
+type iocostTracing struct {
+	mu      sync.Mutex
+	session *ioCostSession
+}
 
 // ioCostIOCState is the value of iocost_ioc_state_map.
 type ioCostIOCState struct {
@@ -129,6 +152,190 @@ func (profile *ioCostKernelProfile) constants() map[string]any {
 	}
 }
 
+func (c *iocostTracing) Start(ctx context.Context) error {
+	profile, err := loadIOCostKernelProfile()
+	if err != nil {
+		return err
+	}
+	possibleCPUs, err := cebpf.PossibleCPU()
+	if err != nil {
+		return fmt.Errorf("read possible CPU count: %w", err)
+	}
+	return c.startWithProfile(
+		ctx,
+		bpf.LoadBPF,
+		profile,
+		possibleCPUs,
+		pod.SynchronizedContainers,
+	)
+}
+
+func (c *iocostTracing) startWithProfile(
+	ctx context.Context,
+	loadBPF ioCostBPFLoader,
+	profile *ioCostKernelProfile,
+	possibleCPUs int,
+	containerSource ioControlContainerSource,
+) (retErr error) {
+	if ctx == nil {
+		return errors.New("nil iocost context")
+	}
+	if loadBPF == nil {
+		return errors.New("nil iocost BPF loader")
+	}
+	if profile == nil {
+		return errors.New("iocost kernel profile is unavailable")
+	}
+	if possibleCPUs <= 0 {
+		return fmt.Errorf("invalid possible CPU count: %d", possibleCPUs)
+	}
+	if uint64(possibleCPUs) > ioCostMaxPossibleCPUs {
+		return fmt.Errorf("possible CPU count cannot be encoded: %d", possibleCPUs)
+	}
+	childCtx, cancel := context.WithCancelCause(ctx)
+	session := &ioCostSession{
+		possibleCPUs:    possibleCPUs,
+		breaker:         childCtx,
+		cancel:          cancel,
+		containerSource: containerSource,
+	}
+	var object bpf.BPF
+	published := false
+	defer func() {
+		// Stop new reads before waiting for one already holding the session
+		// mutex. The object remains alive until the session is no longer
+		// visible to readers.
+		cancel(retErr)
+		if published {
+			c.withdrawSession()
+		}
+		if cause := context.Cause(childCtx); errors.Is(cause, types.ErrTracingStopped) {
+			retErr = cause
+		}
+		if object == nil {
+			return
+		}
+		closeErr := object.Close()
+		if closeErr != nil {
+			closeErr = fmt.Errorf("close iocost BPF: %w", closeErr)
+		}
+		retErr = errors.Join(retErr, closeErr)
+	}()
+
+	select {
+	case <-childCtx.Done():
+		return nil
+	default:
+	}
+	if containerSource == nil {
+		return errors.New("iocost container source is unavailable")
+	}
+
+	var err error
+	object, err = loadBPF(ioCostObjectName, profile.constants())
+	if err != nil {
+		return fmt.Errorf("load iocost BPF: %w", err)
+	}
+	if object == nil {
+		return errors.New("load iocost BPF returned a nil object")
+	}
+	session.object = object
+	select {
+	case <-childCtx.Done():
+		return nil
+	default:
+	}
+
+	if err := attachIOCostPrograms(object); err != nil {
+		return err
+	}
+
+	select {
+	case <-childCtx.Done():
+		return nil
+	default:
+	}
+	c.publishSession(session)
+	published = true
+
+	object.DetachOnContextDone(childCtx, func() { cancel(nil) })
+
+	<-childCtx.Done()
+	return nil
+}
+
+func (c *iocostTracing) publishSession(session *ioCostSession) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.session = session
+}
+
+// withdrawSession waits for an in-flight reader under the same lock used by
+// collection before closing the BPF object.
+func (c *iocostTracing) withdrawSession() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.session = nil
+}
+
+func (session *ioCostSession) readStatus() (ioCostStatus, error) {
+	if session.object == nil {
+		return ioCostStatus{}, fmt.Errorf("%w: object is unavailable",
+			errIOCostSessionInvalid)
+	}
+	mapID := session.object.MapIDByName(ioCostStatusMap)
+	if mapID == 0 {
+		return ioCostStatus{}, fmt.Errorf("%w: map %s is unavailable",
+			errIOCostSessionInvalid, ioCostStatusMap)
+	}
+	key := make([]byte, ioCostUint32Size)
+	value, err := session.object.ReadMap(mapID, key)
+	if err != nil {
+		return ioCostStatus{}, err
+	}
+	status, err := decodeIOCostStatus(value)
+	if err != nil {
+		return ioCostStatus{}, fmt.Errorf("%w: decode %s: %w",
+			errIOCostSessionInvalid, ioCostStatusMap, err)
+	}
+	return status, nil
+}
+
+func attachIOCostPrograms(object bpf.BPF) error {
+	if object == nil {
+		return errors.New("iocost BPF object is unavailable")
+	}
+	options := []bpf.AttachOption{
+		{
+			ProgramName: ioCostWakeReturnProgram,
+			Symbol:      ioCostWakeSymbol,
+		},
+		{
+			ProgramName: ioCostWakeEntryProgram,
+			Symbol:      ioCostWakeSymbol,
+		},
+		{
+			ProgramName: ioCostPDFreeProgram,
+			Symbol:      ioCostPDFreeSymbol,
+		},
+		{
+			ProgramName: ioCostExitProgram,
+			Symbol:      ioCostExitSymbol,
+		},
+		{
+			// Attach admission last so every observed waiter has its
+			// release and lifecycle hooks available.
+			ProgramName: ioCostKickProgram,
+			Symbol:      ioCostKickSymbol,
+		},
+	}
+
+	if err := object.AttachWithOptions(options); err != nil {
+		return fmt.Errorf("attach iocost programs: %w", err)
+	}
+	return nil
+}
+
 func decodeIOCostUint64(data []byte) (uint64, error) {
 	if err := requireIOCostDataSize(data, ioCostUint64Size); err != nil {
 		return 0, err
@@ -180,6 +387,51 @@ func decodeIOCostStatus(data []byte) (ioCostStatus, error) {
 	}
 	packed := binary.LittleEndian.Uint64(data)
 	return ioCostStatus{Errno: int32(packed), Reason: uint32(packed >> 32)}, nil
+}
+
+// failure reports the violated contract together with the map helper's errno.
+// Capacity is diagnosed only from E2BIG, not from every failed insertion.
+func (status *ioCostStatus) failure() error {
+	if status.Reason == 0 {
+		return nil
+	}
+	var reason string
+	switch status.Reason {
+	case ioCostFailureIdentity:
+		reason = "kernel identity could not be read, created or validated"
+	case ioCostFailurePendingCollision:
+		reason = "pending already exists while restoring an uncommitted waiter"
+	case ioCostFailurePendingInsert:
+		reason = "insert pending"
+		if status.Errno == -int32(unix.E2BIG) {
+			reason = "iocost_pending_map capacity exhausted (10240 entries)"
+		}
+	case ioCostFailurePendingDelete:
+		reason = "pending missing or deletion failed"
+	case ioCostFailureAggregateInsert:
+		reason = "aggregate creation or lookup failed"
+	case ioCostFailureWakeFrame:
+		reason = "wake entry/return state or return value violates the hook contract"
+	case ioCostFailureTimeRollback:
+		reason = "wait end precedes its recorded start"
+	case ioCostFailureIOCInsert:
+		reason = "iocost_ioc_state_map insert failed (capacity 4096)"
+	case ioCostFailureOwnerInsert:
+		reason = "iocost_owner_state_map insert failed (capacity 4096)"
+	case ioCostFailureAggregateDelete:
+		reason = "aggregate deletion failed"
+	case ioCostFailureOwnerDelete:
+		reason = "owner deletion failed"
+	case ioCostFailureIOCDelete:
+		reason = "IOC deletion failed"
+	default:
+		reason = fmt.Sprintf("unknown BPF stop reason %d", status.Reason)
+	}
+	if status.Errno != 0 {
+		reason = fmt.Sprintf("%s: helper returned %d (%s)",
+			reason, status.Errno, unix.Errno(-status.Errno))
+	}
+	return fmt.Errorf("%w: %s", errIOCostSessionUnhealthy, reason)
 }
 
 func decodeIOCostWaitCounters(
