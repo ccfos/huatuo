@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@
 package container
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -47,11 +47,18 @@ func getContainers(serverAddr, containerID string) ([]*pod.Container, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
+		body, truncated, err := readBoundedBody(resp.Body, maxContainerErrorBytes)
 		if err != nil {
 			return nil, fmt.Errorf("get container failed, status code: %d, read body: %w", resp.StatusCode, err)
 		}
-		return nil, fmt.Errorf("get container failed, status code: %d, body: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		detail := strings.TrimSpace(string(body))
+		if truncated {
+			detail += " [truncated]"
+		}
+		return nil, fmt.Errorf("get container failed, status code: %d, body: %s", resp.StatusCode, detail)
+	}
+	if resp.ContentLength > maxContainerResponseBytes {
+		return nil, fmt.Errorf("get container failed: response exceeds %d bytes", maxContainerResponseBytes)
 	}
 
 	type containersResp struct {
@@ -60,8 +67,16 @@ func getContainers(serverAddr, containerID string) ([]*pod.Container, error) {
 		Data    []pod.Container `json:"data"`
 	}
 
+	body, truncated, err := readBoundedBody(resp.Body, maxContainerResponseBytes)
+	if err != nil {
+		return nil, fmt.Errorf("containersResp read failed: %w", err)
+	}
+	if truncated {
+		return nil, fmt.Errorf("get container failed: response exceeds %d bytes", maxContainerResponseBytes)
+	}
+
 	var ctResp containersResp
-	if err := json.NewDecoder(resp.Body).Decode(&ctResp); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&ctResp); err != nil {
 		return nil, fmt.Errorf("containersResp decode failed: %w", err)
 	}
 

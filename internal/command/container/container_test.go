@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -37,6 +38,38 @@ func TestGetContainersIncludesErrorBody(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "backend unavailable") {
 		t.Fatalf("getContainers() error = %q, want response body", err)
+	}
+}
+
+func TestGetContainersTruncatesErrorBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = fmt.Fprint(w, strings.Repeat("x", maxContainerErrorBytes+1024))
+	}))
+	defer server.Close()
+
+	_, err := getContainers(strings.TrimPrefix(server.URL, "http://"), "")
+	if err == nil {
+		t.Fatal("getContainers() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), "[truncated]") {
+		t.Fatalf("getContainers() error = %q, want truncation marker", err)
+	}
+	if len(err.Error()) > maxContainerErrorBytes+256 {
+		t.Fatalf("getContainers() error length = %d, want bounded preview", len(err.Error()))
+	}
+}
+
+func TestGetContainersRejectsDeclaredOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.FormatInt(maxContainerResponseBytes+1, 10))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	_, err := getContainers(strings.TrimPrefix(server.URL, "http://"), "")
+	if err == nil || !strings.Contains(err.Error(), "response exceeds") {
+		t.Fatalf("getContainers() error = %v, want response limit error", err)
 	}
 }
 
