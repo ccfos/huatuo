@@ -91,6 +91,8 @@ type ioCostSession struct {
 	breaker         context.Context
 	cancel          context.CancelCauseFunc
 	containerSource ioControlContainerSource
+	previous        *ioCostRawSnapshot
+	needsRebaseline bool
 }
 
 type iocostTracing struct {
@@ -198,6 +200,7 @@ func (c *iocostTracing) startWithProfile(
 		breaker:         childCtx,
 		cancel:          cancel,
 		containerSource: containerSource,
+		previous:        newIOCostRawSnapshot(),
 	}
 	var object bpf.BPF
 	published := false

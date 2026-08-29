@@ -12,22 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This file captures IOCOST raw snapshots. Interval calculation,
-// attribution and metric publication use the complete candidate separately.
+// This file captures IOCOST raw snapshots and publishes attributed
+// interval metrics through one candidate-then-commit transaction.
 
 package collector
 
 import (
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/pkg/metric"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-const ioCostSnapshotAttempts = 3
+const (
+	ioCostSnapshotAttempts = 3
+
+	ioCostWaitCountName   = "waitq_io_count"
+	ioCostAverageWaitName = "average_wait_milliseconds"
+	ioCostHostScope       = "host"
+	ioCostOtherScope      = "other"
+	ioCostWaitCountHelp   = "Number of READ/WRITE I/O requests whose departure " +
+		"from the IOCOST wait queue was observed by the paired probes between " +
+		"consecutive successful iocost collections."
+	ioCostAverageWaitHelp = "Average IOCOST wait-queue residence time in " +
+		"milliseconds for the READ/WRITE I/O requests counted by waitq_io_count."
+)
 
 var errIOCostSnapshotUnstable = errors.New("iocost snapshot is unstable")
+
+var _ metric.Collector = (*iocostTracing)(nil)
 
 // An owner is one blkcg attached to one IOC. IOCID and CSSSerial identify
 // their respective lifetimes even when kernel addresses are reused.
@@ -76,6 +94,358 @@ type ioCostAggregateSample struct {
 type ioCostIOCIndexes struct {
 	byPointer map[uint64]ioCostIOCState
 	live      map[uint64]string
+}
+
+type ioCostInterval struct {
+	css       uint64
+	device    string
+	operation string
+	counters  ioCostCumulative
+}
+
+type ioCostHostKey struct {
+	device    string
+	operation string
+}
+
+type ioCostContainerKey struct {
+	labels    ioControlContainerLabels
+	device    string
+	operation string
+}
+
+type ioCostContainerInterval struct {
+	container *pod.Container
+	counters  ioCostCumulative
+}
+
+type ioCostAttributedIntervals struct {
+	host       map[ioCostHostKey]ioCostCumulative
+	other      map[ioCostHostKey]ioCostCumulative
+	containers map[ioCostContainerKey]ioCostContainerInterval
+}
+
+func (collector *iocostTracing) Update() (metrics []*metric.Data, retErr error) {
+	collector.mu.Lock()
+	defer collector.mu.Unlock()
+
+	session := collector.session
+	if session == nil ||
+		(session.breaker != nil && session.breaker.Err() != nil) {
+		return nil, metric.ErrNoData
+	}
+	committed := false
+	defer func() {
+		if !committed && session.checkBreaker() == nil &&
+			!errors.Is(retErr, types.ErrTracingStopped) {
+			session.needsRebaseline = true
+		}
+	}()
+
+	current, err := session.captureRawSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	containers, _ := ioControlQueryContainers(session.containerSource)
+	cssContainers := pod.BuildCssContainers(containers, subsystem.SubsystemBlkIO)
+	if !session.needsRebaseline {
+		metrics, err = buildIOCostWaitMetrics(
+			session.previous,
+			current,
+			cssContainers,
+		)
+		if err != nil {
+			if errors.Is(err, types.ErrTracingStopped) {
+				session.stop(err)
+			}
+			return nil, err
+		}
+	}
+	if err := session.checkBreaker(); err != nil {
+		return nil, err
+	}
+
+	session.previous = current
+	committed = true
+	if session.needsRebaseline {
+		// A failed interval is not reliable enough to subtract or publish as
+		// zero. This is the one no-data boundary that commits a fresh baseline.
+		session.needsRebaseline = false
+		return nil, fmt.Errorf("%w: iocost baseline recovered", metric.ErrNoData)
+	}
+	return metrics, nil
+}
+
+func buildIOCostWaitMetrics(
+	previous *ioCostRawSnapshot,
+	current *ioCostRawSnapshot,
+	containers map[uint64]*pod.Container,
+) ([]*metric.Data, error) {
+	raw, err := deltaIOCostWaitIntervals(previous, current)
+	if err != nil {
+		return nil, err
+	}
+	attributed, err := aggregateIOCostAttributedIntervals(raw, containers)
+	if err != nil {
+		return nil, err
+	}
+	return appendIOCostAttributedMetrics(nil, attributed), nil
+}
+
+func deltaIOCostWaitIntervals(
+	previous *ioCostRawSnapshot,
+	current *ioCostRawSnapshot,
+) (map[ioCostWaitKey]ioCostInterval, error) {
+	if previous == nil || current == nil {
+		return nil, errors.New("missing iocost interval snapshot")
+	}
+
+	// Retired identities may lose their cumulative rows. Missing rows for live
+	// identities invalidate the interval and require a fresh recovery baseline.
+	for key := range previous.Samples {
+		if _, exists := current.Samples[key]; exists {
+			continue
+		}
+		identity := ioCostOwnerIdentity{
+			IOCID:     key.IOCID,
+			CSSSerial: key.CSSSerial,
+		}
+		_, ownerLive := current.LiveOwners[identity]
+		_, iocLive := current.LiveIOCs[key.IOCID]
+		if ownerLive && iocLive {
+			return nil, fmt.Errorf(
+				"live aggregate disappeared for key %+v",
+				key,
+			)
+		}
+	}
+
+	raw := make(map[ioCostWaitKey]ioCostInterval, len(current.Samples))
+	for key, sample := range current.Samples {
+		if device, existed := previous.LiveIOCs[key.IOCID]; existed &&
+			device != current.LiveIOCs[key.IOCID] {
+			// The IOC still owns its counters, but this interval straddles
+			// display labels. Commit its new baseline without publishing it;
+			// every series resumes once the device label is stable.
+			continue
+		}
+		old, exists := previous.Samples[key]
+		var oldCounters []ioCostCumulative
+		if exists {
+			oldCounters = old.Counters
+		}
+		delta, err := deltaIOCostWaitCounters(oldCounters, sample.Counters)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"delta iocost raw series %+v: %w",
+				key,
+				err,
+			)
+		}
+		raw[key] = ioCostInterval{
+			css:       sample.CSS,
+			device:    sample.Device,
+			operation: sample.Operation,
+			counters:  delta,
+		}
+	}
+	return raw, nil
+}
+
+func deltaIOCostWaitCounters(
+	previous []ioCostCumulative,
+	current []ioCostCumulative,
+) (ioCostCumulative, error) {
+	if len(current) == 0 {
+		return ioCostCumulative{}, errors.New("empty per-CPU counters")
+	}
+	if previous != nil && len(previous) != len(current) {
+		return ioCostCumulative{}, fmt.Errorf(
+			"per-CPU counter count changed from %d to %d",
+			len(previous),
+			len(current),
+		)
+	}
+
+	var total ioCostCumulative
+	for index, value := range current {
+		old := ioCostCumulative{}
+		if previous != nil {
+			old = previous[index]
+		}
+		// Mask each field separately: borrowing across the packed word would
+		// turn a wait wrap into a change in the IO count.
+		delta := ioCostCumulative{
+			IOCount:  (value.IOCount - old.IOCount) & ioCostWaitCountMask,
+			Wait10US: (value.Wait10US - old.Wait10US) & ioCostWait10USMask,
+		}
+		var err error
+		total, err = addIOCostCumulative(total, delta)
+		if err != nil {
+			return ioCostCumulative{}, fmt.Errorf("CPU %d: %w", index, err)
+		}
+	}
+	if total.IOCount == 0 && total.Wait10US != 0 {
+		return ioCostCumulative{}, fmt.Errorf(
+			"raw interval has %d wait_10us with no IO", total.Wait10US)
+	}
+	return total, nil
+}
+
+func addIOCostCumulative(
+	left ioCostCumulative,
+	right ioCostCumulative,
+) (ioCostCumulative, error) {
+	if right.IOCount > math.MaxUint64-left.IOCount {
+		return ioCostCumulative{}, fmt.Errorf(
+			"%w: IO count overflow", errIOCostSessionInvalid)
+	}
+	if right.Wait10US > math.MaxUint64-left.Wait10US {
+		return ioCostCumulative{}, fmt.Errorf(
+			"%w: wait_10us overflow", errIOCostSessionInvalid)
+	}
+	return ioCostCumulative{
+		IOCount:  left.IOCount + right.IOCount,
+		Wait10US: left.Wait10US + right.Wait10US,
+	}, nil
+}
+
+func aggregateIOCostAttributedIntervals(
+	raw map[ioCostWaitKey]ioCostInterval,
+	containers map[uint64]*pod.Container,
+) (*ioCostAttributedIntervals, error) {
+	result := &ioCostAttributedIntervals{
+		host:       make(map[ioCostHostKey]ioCostCumulative),
+		other:      make(map[ioCostHostKey]ioCostCumulative),
+		containers: make(map[ioCostContainerKey]ioCostContainerInterval),
+	}
+	for _, interval := range raw {
+		hostKey := ioCostHostKey{
+			device:    interval.device,
+			operation: interval.operation,
+		}
+		container, labels := ioControlContainerAttribution(containers, interval.css)
+		if container == nil {
+			combined, err := addIOCostCumulative(
+				result.other[hostKey],
+				interval.counters,
+			)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"aggregate iocost other %+v: %w", hostKey, err)
+			}
+			result.other[hostKey] = combined
+		} else {
+			containerKey := ioCostContainerKey{
+				labels:    labels,
+				device:    interval.device,
+				operation: interval.operation,
+			}
+			combined, err := addIOCostCumulative(
+				result.containers[containerKey].counters,
+				interval.counters,
+			)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"aggregate iocost container %+v: %w",
+					containerKey,
+					err,
+				)
+			}
+			result.containers[containerKey] = ioCostContainerInterval{
+				container: container,
+				counters:  combined,
+			}
+		}
+
+		hostCounters, err := addIOCostCumulative(
+			result.host[hostKey],
+			interval.counters,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"aggregate iocost host %+v: %w", hostKey, err)
+		}
+		result.host[hostKey] = hostCounters
+	}
+	return result, nil
+}
+
+func appendIOCostAttributedMetrics(
+	metrics []*metric.Data,
+	intervals *ioCostAttributedIntervals,
+) []*metric.Data {
+	metrics = appendIOCostScopeMetrics(
+		metrics,
+		intervals.host,
+		ioCostHostScope,
+	)
+	metrics = appendIOCostScopeMetrics(
+		metrics,
+		intervals.other,
+		ioCostOtherScope,
+	)
+
+	for key, interval := range intervals.containers {
+		averageMS := ioCostAverageWaitMilliseconds(interval.counters)
+		labels := map[string]string{
+			"device":    key.device,
+			"operation": key.operation,
+		}
+		metrics = append(metrics,
+			metric.NewContainerGaugeData(
+				interval.container,
+				ioCostWaitCountName,
+				float64(interval.counters.IOCount),
+				ioCostWaitCountHelp,
+				labels,
+			),
+			metric.NewContainerGaugeData(
+				interval.container,
+				ioCostAverageWaitName,
+				averageMS,
+				ioCostAverageWaitHelp,
+				labels,
+			),
+		)
+	}
+	return metrics
+}
+
+func appendIOCostScopeMetrics(
+	metrics []*metric.Data,
+	intervals map[ioCostHostKey]ioCostCumulative,
+	scope string,
+) []*metric.Data {
+	for key, counters := range intervals {
+		labels := map[string]string{
+			"device":    key.device,
+			"operation": key.operation,
+			"scope":     scope,
+		}
+		metrics = append(metrics,
+			metric.NewGaugeData(
+				ioCostWaitCountName,
+				float64(counters.IOCount),
+				ioCostWaitCountHelp,
+				labels,
+			),
+			metric.NewGaugeData(
+				ioCostAverageWaitName,
+				ioCostAverageWaitMilliseconds(counters),
+				ioCostAverageWaitHelp,
+				labels,
+			),
+		)
+	}
+	return metrics
+}
+
+func ioCostAverageWaitMilliseconds(counters ioCostCumulative) float64 {
+	if counters.IOCount == 0 {
+		return 0
+	}
+	return float64(counters.Wait10US) * ioCostWait10USToMS / float64(counters.IOCount)
 }
 
 // captureRawSnapshot returns a complete candidate and never changes the
