@@ -12,20 +12,71 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This file resolves the IOCOST hooks and enqueue caller ranges needed by
-// the probes. CO-RE selects structure fields when the BPF object is loaded.
+// IOCOST resolves kernel hooks and defines BPF object constants.
+// Business-map layouts and decoding are implemented in iocost_collector.go.
 package collector
 
 import (
 	"errors"
 	"fmt"
 
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	"github.com/cilium/ebpf/btf"
 )
+
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/iocost_tracing.c -o $BPF_DIR/iocost_tracing.o
+
+const (
+	ioCostTracingName = "iocost"
+	ioCostObjectName  = "iocost_tracing.o"
+
+	ioCostWaitAggregateMap = "iocost_wait_agg_map"
+
+	ioCostKickProgram       = "kprobe_iocg_kick_waitq"
+	ioCostWakeEntryProgram  = "kprobe_iocg_wake_fn"
+	ioCostWakeReturnProgram = "kretprobe_iocg_wake_fn"
+	ioCostPDFreeProgram     = "kprobe_ioc_pd_free"
+
+	ioCostThrottleCallerStartConstant   = "iocost_throttle_caller_start"
+	ioCostThrottleCallerEndConstant     = "iocost_throttle_caller_end"
+	ioCostOverBudgetCallerStartConstant = "iocost_over_budget_caller_start"
+	ioCostOverBudgetCallerEndConstant   = "iocost_over_budget_caller_end"
+)
+
+const (
+	ioCostUint32Size = 4
+)
+
+var (
+	errIOCostSessionInvalid = fmt.Errorf("%w: iocost BPF session is invalid",
+		types.ErrTracingStopped)
+	errIOCostSessionUnhealthy = fmt.Errorf("%w: iocost BPF session is unhealthy",
+		types.ErrTracingStopped)
+)
+
+const (
+	ioCostFailureIdentity         = uint32(abi.IocostFailureIdentity)
+	ioCostFailurePendingCollision = uint32(abi.IocostFailurePendingCollision)
+	ioCostFailurePendingInsert    = uint32(abi.IocostFailurePendingInsert)
+	ioCostFailurePendingDelete    = uint32(abi.IocostFailurePendingDelete)
+	ioCostFailureAggregateInsert  = uint32(abi.IocostFailureAggregateInsert)
+	ioCostFailureWakeFrame        = uint32(abi.IocostFailureWakeFrame)
+	ioCostFailureTimeRollback     = uint32(abi.IocostFailureTimeRollback)
+	ioCostFailureOwnerInsert      = uint32(abi.IocostFailureOwnerInsert)
+	ioCostFailureAggregateDelete  = uint32(abi.IocostFailureAggregateDelete)
+	ioCostFailureOwnerDelete      = uint32(abi.IocostFailureOwnerDelete)
+)
+
+// A nonzero reason stops this BPF object. Reason and errno share one word.
+type ioCostStatus struct {
+	Errno          int32
+	Reason         uint32
+	DevicesChanged uint64
+}
 
 // Kprobes read argument 1 of kick/pd-free and arguments 1/4 of wake.
 // These slots are stable since IOCOST was introduced; kernel commit
@@ -125,4 +176,13 @@ func resolveIOCostKallsyms(
 		throttleRange:   throttle,
 		overBudgetRange: profile.Ranges[ioCostOverBudgetCaller],
 	}, nil
+}
+
+func (profile *ioCostKernelProfile) constants() map[string]any {
+	return map[string]any{
+		ioCostThrottleCallerStartConstant:   profile.throttleRange.Start,
+		ioCostThrottleCallerEndConstant:     profile.throttleRange.End,
+		ioCostOverBudgetCallerStartConstant: profile.overBudgetRange.Start,
+		ioCostOverBudgetCallerEndConstant:   profile.overBudgetRange.End,
+	}
 }
