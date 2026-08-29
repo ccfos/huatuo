@@ -657,6 +657,11 @@ int kprobe_iocg_kick_waitq(struct pt_regs *ctx)
 		iocost_fail(IOCOST_FAILURE_IDENTITY, 0);
 		return 0;
 	}
+#ifdef IOCOST_TEST
+	iocost_diag_mark_start_guard_pass(identity.iocg_ptr,
+					  identity.css_serial, major,
+					  first_minor);
+#endif
 
 	ioc_id = iocost_ensure_ioc(identity.ioc_ptr, major, first_minor);
 	if (!ioc_id)
@@ -672,6 +677,12 @@ int kprobe_iocg_kick_waitq(struct pt_regs *ctx)
 
 	pending.operation = operation;
 	/* A new admission owns this bio, including any missed-wake residue. */
+#ifdef IOCOST_TEST
+	/* Inject a helper result; the production consumer below owns the error. */
+	if (!iocost_diag_inject_start_fault(
+		    identity.iocg_ptr, identity.css_serial, major, first_minor,
+		    (u64)bio, &pending, &ret))
+#endif
 	ret = bpf_map_update_elem(&iocost_pending_map, &bio, &pending,
 				  COMPAT_BPF_ANY);
 	iocost_classify_pending_update_ret(ret);
@@ -747,6 +758,9 @@ int kprobe_iocg_wake_fn(struct pt_regs *ctx)
 		iocost_fail(IOCOST_FAILURE_IDENTITY, 0);
 		return 0;
 	}
+#ifdef IOCOST_TEST
+	iocost_diag_mark_wake_entry_hit((u64)iocg);
+#endif
 	wait_offset = compat_bpf_core_field_offset(
 		((struct iocg_wait___iocost *)0)->wait);
 	if ((u64)wq_entry < wait_offset) {
@@ -794,6 +808,11 @@ int kprobe_iocg_wake_fn(struct pt_regs *ctx)
 	frame->iocg_ptr = identity.iocg_ptr;
 	frame->end_ns = end_ns;
 	frame->pending = *pending;
+#ifdef IOCOST_TEST
+	iocost_diag_inject_delete_failure(
+		(u64)bio, identity.iocg_ptr, identity.css_serial,
+		(u32)(ioc_state->device >> 32), (u32)ioc_state->device);
+#endif
 	/*
 	 * Own the sample before the callback wakes its issuer. That task may
 	 * finish_wait() and reuse the bio on another CPU before our return probe.
@@ -836,6 +855,9 @@ int kretprobe_iocg_wake_fn(struct pt_regs *ctx)
 	if (ret == -1) {
 		int update_ret;
 
+#ifdef IOCOST_TEST
+		iocost_diag_mark_wake_return_minus_one(frame->iocg_ptr);
+#endif
 		/* No wake or unlink occurred; the same bio is still waiting. */
 		update_ret = bpf_map_update_elem(&iocost_pending_map,
 						 &frame->bio_ptr, &frame->pending,
@@ -849,6 +871,9 @@ int kretprobe_iocg_wake_fn(struct pt_regs *ctx)
 		iocost_clear_wake_frame(frame);
 		return 0;
 	}
+#ifdef IOCOST_TEST
+	iocost_diag_mark_wake_return_zero(frame->iocg_ptr);
+#endif
 
 	pending = frame->pending;
 	stored_owner = bpf_map_lookup_elem(&iocost_owner_state_map,
@@ -915,6 +940,11 @@ int kretprobe_iocg_wake_fn(struct pt_regs *ctx)
 	 * time together with one aligned store.
 	 */
 	*counter = packed;
+#ifdef IOCOST_TEST
+	iocost_diag_mark_settled(frame->iocg_ptr, owner.css_serial,
+				 (u32)(ioc_state->device >> 32),
+				 (u32)ioc_state->device);
+#endif
 	iocost_clear_wake_frame(frame);
 	return 0;
 }

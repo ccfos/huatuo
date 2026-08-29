@@ -29,6 +29,8 @@ APP_CMD_OUTPUT := _output
 APP_CMD_SUBDIRS := $(shell find $(APP_CMD_DIR) -mindepth 1 -maxdepth 1 -type d)
 APP_CMD_BIN_TARGETS := $(patsubst %,$(APP_CMD_OUTPUT)/bin/%,$(notdir $(APP_CMD_SUBDIRS)))
 
+IOCOST_TEST_BPF := $(APP_CMD_OUTPUT)/test-bpf/iocost_tracing_test.o
+
 GO_BUILD_FLAGS := CGO_ENABLED=1 go build -tags "netgo osusergo" -gcflags=all="-N -l"
 GO_BUILD_LDFLAGS := \
 	-s -w \
@@ -159,6 +161,12 @@ $(BPF_BUILD_STAMP): $(BPF_SRCS) $(BPF_COMPILE) # parallel
 			go generate -run BPF_COMPILE {}'
 	@touch $@
 
+iocost-test-build:
+	@mkdir -p $(ROOT_DIR)/$(dir $(IOCOST_TEST_BPF))
+	BPF_EXTRA_CFLAGS="$(BPF_EXTRA_CFLAGS)" $(BPF_COMPILE) $(BPF_INCLUDE) \
+		-s $(BPF_DIR)/iocost_tracing_test.c \
+		-o $(ROOT_DIR)/$(IOCOST_TEST_BPF)
+
 build: $(APP_CMD_BIN_TARGETS)
 	@mkdir -p $(APP_CMD_OUTPUT)/conf $(APP_CMD_OUTPUT)/bpf
 	@cp $(BPF_DIR)/*.o $(APP_CMD_OUTPUT)/bpf/
@@ -208,7 +216,7 @@ gen-build: $(BPF_BUILD_STAMP)
 
 test: unit integration e2e
 
-unit: gen-build
+unit: gen-build iocost-test-build
 	@go test -v ./... -coverprofile=$(APP_CMD_OUTPUT)/unit-coverage.txt -timeout=5m
 	@go tool cover -html=$(APP_CMD_OUTPUT)/unit-coverage.txt -o $(APP_CMD_OUTPUT)/unit-coverage.html
 
@@ -218,4 +226,4 @@ integration: build
 e2e: build
 	@bash e2e/run.sh
 
-.PHONY: build install-tools gen-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
+.PHONY: build install-tools gen-build iocost-test-build check vendor clean test unit integration e2e docker-build docker-clean compose-dev-up compose-dev-down
