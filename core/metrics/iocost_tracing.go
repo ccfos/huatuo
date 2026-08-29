@@ -25,6 +25,7 @@ import (
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	cebpf "github.com/cilium/ebpf"
@@ -54,6 +55,19 @@ const (
 	ioCostOverBudgetCallerStartConstant = "iocost_over_budget_caller_start"
 	ioCostOverBudgetCallerEndConstant   = "iocost_over_budget_caller_end"
 )
+
+func init() {
+	tracing.RegisterEventTracing(ioCostTracingName, newIOCost)
+}
+
+func newIOCost() (*tracing.EventTracingAttr, error) {
+	data := &iocostTracing{}
+	return &tracing.EventTracingAttr{
+		TracingData: data,
+		Interval:    10,
+		Flag:        tracing.FlagTracing | tracing.FlagMetric,
+	}, nil
+}
 
 // IOC IDs reserve the high 32 bits for cpu_id + 1.
 const ioCostMaxPossibleCPUs uint64 = 1<<32 - 1
