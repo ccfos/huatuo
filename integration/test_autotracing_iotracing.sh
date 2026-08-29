@@ -78,7 +78,7 @@ integration_huatuo_bamai_start \
 	--region dev \
 	--procfs-prefix "${IOTRACING_FIXTURE_ROOT}" \
 	--disable-kubelet \
-	--disable-tracing blk_throtl,io_health,irqtracing,tcp_retransmit \
+	--disable-tracing io_health,irqtracing,tcp_retransmit \
 	--log-debug
 
 # Hold each counter value across a five-second sampling tick. Two consecutive
