@@ -27,6 +27,7 @@ import (
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/symbol"
+	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/types"
 
 	cebpf "github.com/cilium/ebpf"
@@ -52,6 +53,19 @@ const (
 	ioCostOverBudgetCallerStartConstant = "iocost_over_budget_caller_start"
 	ioCostOverBudgetCallerEndConstant   = "iocost_over_budget_caller_end"
 )
+
+func init() {
+	tracing.RegisterEventTracing(ioCostTracingName, newIOCost)
+}
+
+func newIOCost() (*tracing.EventTracingAttr, error) {
+	data := &iocostTracing{}
+	return &tracing.EventTracingAttr{
+		TracingData: data,
+		Interval:    10,
+		Flag:        tracing.FlagTracing | tracing.FlagMetric,
+	}, nil
+}
 
 var errIOCostSessionUnhealthy = fmt.Errorf("%w: iocost BPF session is unhealthy",
 	types.ErrTracingStopped)
