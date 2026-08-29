@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -248,7 +249,7 @@ func cgroupCssNotifyFile() {
 }
 
 func cgroupInitSubSysIDs() error {
-	spec, err := btf.LoadSpec("/sys/kernel/btf/vmlinux")
+	spec, err := btf.LoadKernelSpec()
 	if err != nil {
 		return fmt.Errorf("load kernel BTF: %w", err)
 	}
@@ -267,11 +268,83 @@ func cgroupInitSubSysIDs() error {
 	return nil
 }
 
+// CgroupBPFConstants adds the target kernel's kernfs cgroup ID offset.
+func CgroupBPFConstants(extra map[string]any) (map[string]any, error) {
+	spec, err := btf.LoadKernelSpec()
+	if err != nil {
+		return nil, fmt.Errorf("load kernel BTF: %w", err)
+	}
+
+	types, err := spec.AnyTypesByName("kernfs_node")
+	if err != nil {
+		return nil, fmt.Errorf("find kernfs_node in kernel BTF: %w", err)
+	}
+	offset, err := kernfsNodeIDOffsetFromTypes(types)
+	if err != nil {
+		return nil, err
+	}
+
+	consts := maps.Clone(extra)
+	if consts == nil {
+		consts = make(map[string]any, 1)
+	}
+	consts["kernfs_node_id_offset"] = offset
+	return consts, nil
+}
+
+// BTF can contain same-named structs from multiple compilation units.
+func kernfsNodeIDOffsetFromTypes(types []btf.Type) (uint64, error) {
+	var (
+		offset uint64
+		found  bool
+	)
+	for _, typ := range types {
+		kernfsNode, ok := typ.(*btf.Struct)
+		if !ok {
+			continue
+		}
+
+		candidate, err := kernfsNodeIDOffset(kernfsNode)
+		if err != nil {
+			continue
+		}
+		if found && offset != candidate {
+			return 0, fmt.Errorf("kernfs_node.id has conflicting offsets %d and %d", offset, candidate)
+		}
+		offset = candidate
+		found = true
+	}
+	if found {
+		return offset, nil
+	}
+	return 0, errors.New("compatible kernfs_node struct not found")
+}
+
+func kernfsNodeIDOffset(kernfsNode *btf.Struct) (uint64, error) {
+	for _, member := range kernfsNode.Members {
+		if member.Name != "id" {
+			continue
+		}
+		if member.Offset%8 != 0 {
+			return 0, fmt.Errorf("kernfs_node.id has unaligned offset %d", member.Offset)
+		}
+		size, err := btf.Sizeof(member.Type)
+		if err != nil {
+			return 0, fmt.Errorf("size kernfs_node.id: %w", err)
+		}
+		if size != 8 {
+			return 0, fmt.Errorf("kernfs_node.id has size %d, want 8", size)
+		}
+		return uint64(member.Offset.Bytes()), nil
+	}
+	return 0, errors.New("kernfs_node has no id field")
+}
+
 func cgroupSubSysIDNameMap(values []btf.EnumValue) (map[int]string, error) {
 	ids := make(map[int]string, len(values))
 	nameIDs := make(map[string]int, len(values))
 	for _, value := range values {
-		name, ok := strings.CutSuffix(value.Name, "_cgrp_id")
+		name, ok := containerCSSSubsysName(value.Name)
 		if !ok {
 			continue
 		}
@@ -312,6 +385,19 @@ func cgroupSubSysIDNameMap(values []btf.EnumValue) (map[int]string, error) {
 	}
 
 	return ids, nil
+}
+
+// containerCSSSubsysName returns the stable Container.CgroupCss key.
+// The kernel calls the v2 controller io, while the legacy key is blkio.
+func containerCSSSubsysName(enumName string) (string, bool) {
+	name, ok := strings.CutSuffix(enumName, "_cgrp_id")
+	if !ok {
+		return "", false
+	}
+	if name == "io" {
+		return subsystem.SubsystemBlkIO, true
+	}
+	return name, true
 }
 
 func cgroupCssInitEventSync() error {

@@ -61,40 +61,49 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
-	containersCssMem := pod.BuildCssContainers(containers, subsystem.SubsystemMemory)
+	containerKeys := pod.BuildContainerCgroupKeys(containers, subsystem.SubsystemMemory)
 
 	items, err := lease.DumpMapByName("memory_cgroup_allocpages_stall")
 	if err != nil {
 		return nil, err
 	}
 
+	return buildDirectstallMetrics(containerKeys, items)
+}
+
+func buildDirectstallMetrics(containerKeys map[pod.ContainerCgroupKey]*pod.Container, items []bpf.MapItem) ([]*metric.Data, error) {
 	var (
 		reclaimVal memoryBpfStruct
-		cssAddr    uint64
-		data       []*metric.Data
+		key        pod.ContainerCgroupKey
 	)
-	for _, v := range items {
-		keyBuf := bytes.NewReader(v.Key)
-		if err := binary.Read(keyBuf, binary.LittleEndian, &cssAddr); err != nil {
+
+	data := make([]*metric.Data, 0, len(containerKeys))
+	dataByKey := make(map[pod.ContainerCgroupKey]*metric.Data, len(containerKeys))
+	dataByContainerID := make(map[string]*metric.Data, len(containerKeys))
+	for key, container := range containerKeys {
+		directstall := dataByContainerID[container.ID]
+		if directstall == nil {
+			directstall = metric.NewContainerGaugeData(container, "directstall", 0,
+				"counter of cgroup reclaim when try_charge", nil)
+			data = append(data, directstall)
+			dataByContainerID[container.ID] = directstall
+		}
+		dataByKey[key] = directstall
+	}
+
+	for _, item := range items {
+		keyBuf := bytes.NewReader(item.Key)
+		if err := binary.Read(keyBuf, binary.LittleEndian, &key); err != nil {
 			return nil, err
 		}
 
-		valBuf := bytes.NewReader(v.Value)
+		valBuf := bytes.NewReader(item.Value)
 		if err := binary.Read(valBuf, binary.LittleEndian, &reclaimVal); err != nil {
 			return nil, err
 		}
 
-		if container, exist := containersCssMem[cssAddr]; exist {
-			data = append(data, metric.NewContainerGaugeData(container, "directstall",
-				float64(reclaimVal.DirectstallCount), "counter of cgroup reclaim when try_charge", nil))
-		}
-	}
-
-	// if events haven't happened, upload zero for all containers.
-	if len(items) == 0 {
-		for _, container := range containersCssMem {
-			data = append(data, metric.NewContainerGaugeData(container, "directstall",
-				float64(0), "counter of cgroup reclaim when try_charge", nil))
+		if directstall, exists := dataByKey[key]; exists {
+			directstall.Value = float64(reclaimVal.DirectstallCount)
 		}
 	}
 
@@ -102,7 +111,11 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 }
 
 func (c *memoryCgroupReclaim) Start(ctx context.Context) (retErr error) {
-	obj, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), nil)
+	consts, err := pod.CgroupBPFConstants(nil)
+	if err != nil {
+		return err
+	}
+	obj, err := bpf.LoadBPF(bpf.ThisBpfOBJ(), consts)
 	if err != nil {
 		return err
 	}

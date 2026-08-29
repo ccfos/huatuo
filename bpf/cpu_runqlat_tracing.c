@@ -4,6 +4,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
+#include "bpf_cgroup.h"
 #include "bpf_common.h"
 #include "bpf_sched.h"
 
@@ -53,7 +54,7 @@ struct stat_t;
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_HASH);
 #ifdef TG_ADDR_KEY
-	__type(key, u64);
+	__type(key, struct container_cgroup_key);
 #else
 	__type(key, u32);
 #endif
@@ -115,6 +116,11 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 	long state;
 	struct stat_t *entry;
 	struct g_stat_t *g_entry;
+#ifdef TG_ADDR_KEY
+	struct container_cgroup_key key;
+#else
+	u32 key;
+#endif
 
 	// TP_PROTO(bool preempt, struct task_struct *prev, struct task_struct
 	// *next)
@@ -123,11 +129,11 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 
 	u64 now = bpf_ktime_get_ns();
 #ifdef TG_ADDR_KEY
-	// get task_group addr: task_struct->sched_task_group
-	u64 key = (u64)BPF_CORE_READ(prev, sched_task_group);
+	// get task cgroup key
+	key = cpu_cgroup_key_for_task(prev);
 #else
 	// get pid ns id: task_struct->nsproxy->pid_ns_for_children->ns.inum
-	u32 key = BPF_CORE_READ(prev, nsproxy, pid_ns_for_children, ns.inum);
+	key = BPF_CORE_READ(prev, nsproxy, pid_ns_for_children, ns.inum);
 #endif
 
 	state = task_state(prev);
@@ -152,7 +158,11 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 	// When use pid namespace id as key, sometimes we would encounter
 	// null id because task->nsproxy is freed, usually means that this
 	// task is almost dead (zombie), so ignore it.
+#ifdef TG_ADDR_KEY
+	if (container_cgroup_key_valid(&key) && prev_pid) {
+#else
 	if (key && prev_pid) {
+#endif
 		entry = bpf_map_lookup_elem(&cpu_tg_metric, &key);
 		if (!entry) {
 			struct stat_t new_stat = {};
@@ -190,12 +200,16 @@ int sched_switch_entry(struct bpf_raw_tracepoint_args *ctx)
 	bpf_map_delete_elem(&latency, &next_pid);
 
 #ifdef TG_ADDR_KEY
-	key = (u64)BPF_CORE_READ(next, sched_task_group);
+	key = cpu_cgroup_key_for_task(next);
 #else
 	key = BPF_CORE_READ(next, nsproxy, pid_ns_for_children, ns.inum);
 #endif
 
+#ifdef TG_ADDR_KEY
+	if (container_cgroup_key_valid(&key)) {
+#else
 	if (key) {
+#endif
 		entry = bpf_map_lookup_elem(&cpu_tg_metric, &key);
 		if (!entry) {
 			struct stat_t new_stat = {};
@@ -255,11 +269,22 @@ SEC("kprobe/free_fair_sched_group")
 int free_fair_sched_group_entry(struct pt_regs *ctx)
 {
 	struct task_group *tg = (void *)PT_REGS_PARM1(ctx);
-	struct stat_t *entry;
+	struct container_cgroup_key key = {
+		.css = (u64)tg + compat_bpf_core_field_offset(tg->css),
+	};
 
-	entry = bpf_map_lookup_elem(&cpu_tg_metric, &tg);
-	if (entry)
-		bpf_map_delete_elem(&cpu_tg_metric, &tg);
+	bpf_map_delete_elem(&cpu_tg_metric, &key);
+	return 0;
+}
+
+SEC("raw_tracepoint/cgroup_rmdir")
+int cgroup_rmdir_entry(struct bpf_raw_tracepoint_args *ctx)
+{
+	struct cgroup *cgroup = (void *)ctx->args[0];
+	struct container_cgroup_key key =
+		container_cgroup_key_for_default_cgroup(cgroup);
+
+	bpf_map_delete_elem(&cpu_tg_metric, &key);
 
 	return 0;
 }

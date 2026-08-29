@@ -388,6 +388,11 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 		return fmt.Errorf("failed to get InitPid: %w", err)
 	}
 
+	cgroupID, err := defaultCgroupIDByPID(initPid)
+	if err != nil {
+		log.Warnf("failed to get dfl cgroup id for container %s: %v", containerID, err)
+	}
+
 	// net namespace
 	nsInum, err := netutil.NetNamespaceInumByPID(initPid)
 	if err != nil {
@@ -431,6 +436,7 @@ func kubeletUpdateContainer(containerID string, container *corev1.Container, con
 		NetNamespaceCookie: netNamespaceCookie,
 		InitPid:            initPid,
 		CgroupPath:         cgroupPath,
+		CgroupID:           cgroupID,
 		CgroupCss:          css,
 		StartedAt:          startedAt,
 		SyncedAt:           time.Now(),

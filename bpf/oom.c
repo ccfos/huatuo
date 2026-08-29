@@ -4,6 +4,7 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
+#include "bpf_cgroup.h"
 #include "bpf_common.h"
 #include "bpf_ratelimit.h"
 #include "abi/oom_types.h"
@@ -44,6 +45,8 @@ int BPF_KPROBE(oom_kill_process, struct oom_control *oc, const char *message)
 	    (u64)BPF_CORE_READ(victim_task, cgroups, subsys[memory_cgrp_id_val]);
 	info.trigger_memcg_css =
 	    (u64)BPF_CORE_READ(trigger_task, cgroups, subsys[memory_cgrp_id_val]);
+	info.victim_cgroup_key = memory_cgroup_key_for_task(victim_task);
+	info.trigger_cgroup_key = memory_cgroup_key_for_task(trigger_task);
 
 	info.mem_limit_pages = BPF_CORE_READ(oc, totalpages);
 	struct mem_cgroup *memcg = BPF_CORE_READ(oc, memcg);
