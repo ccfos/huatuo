@@ -348,6 +348,10 @@ int kprobe_iocg_kick_waitq(struct pt_regs *ctx)
 	}
 	pending.operation = operation;
 	/* A new admission owns this bio, including any missed-wake residue. */
+#ifdef IOCOST_TEST
+	/* Inject a helper result; the production consumer below owns the error. */
+	if (!iocost_diag_inject_start_fault(iocg, bio, &pending, &ret))
+#endif
 	ret = bpf_map_update_elem(&iocost_pending_map, &bio, &pending,
 				  COMPAT_BPF_ANY);
 	iocost_classify_pending_update_ret(ret);
@@ -443,6 +447,10 @@ int kprobe_iocg_wake_fn(struct pt_regs *ctx)
 	};
 	if (!iocost_ensure_aggregate(&frame->key))
 		return 0;
+#ifdef IOCOST_TEST
+	iocost_diag_mark_wake_entry_hit((u64)iocg);
+	iocost_diag_inject_delete_failure((u64)bio, (u64)iocg);
+#endif
 	/*
 	 * Own the sample before the callback wakes its issuer. That task may
 	 * finish_wait() and reuse the bio on another CPU before our return probe.
@@ -479,6 +487,11 @@ int kretprobe_iocg_wake_fn(struct pt_regs *ctx)
 	if (ret == -1) {
 		int update_ret;
 
+#ifdef IOCOST_TEST
+		iocost_diag_mark_wake_return_minus_one(frame->key.css_serial,
+						       frame->key.major,
+						       frame->key.minor);
+#endif
 		/* No wake or unlink occurred; the same bio is still waiting. */
 		update_ret = bpf_map_update_elem(&iocost_pending_map,
 						 &frame->bio_ptr, &frame->pending,
@@ -492,6 +505,10 @@ int kretprobe_iocg_wake_fn(struct pt_regs *ctx)
 		iocost_clear_wake_frame(frame);
 		return 0;
 	}
+#ifdef IOCOST_TEST
+	iocost_diag_mark_wake_return_zero(frame->key.css_serial,
+					  frame->key.major, frame->key.minor);
+#endif
 
 	pending = frame->pending;
 	counter = bpf_map_lookup_elem(&iocost_wait_agg_map, &frame->key);
@@ -513,6 +530,10 @@ int kretprobe_iocg_wake_fn(struct pt_regs *ctx)
 	 * time together with one aligned store.
 	 */
 	*counter = packed;
+#ifdef IOCOST_TEST
+	iocost_diag_mark_settled(frame->key.css_serial,
+				 frame->key.major, frame->key.minor);
+#endif
 	iocost_clear_wake_frame(frame);
 	return 0;
 }
