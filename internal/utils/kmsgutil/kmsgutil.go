@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -112,7 +112,7 @@ func formatKmsgs(kmsgs string) string {
 
 // convert timestamp to human-readable format
 func formatKmsgEntry(entry string) (string, error) {
-	parts := strings.Split(entry, ";")
+	parts := strings.SplitN(entry, ";", 2)
 	if len(parts) < 2 {
 		return "", fmt.Errorf("invalid entry format")
 	}

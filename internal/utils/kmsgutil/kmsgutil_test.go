@@ -73,6 +73,23 @@ func TestFormatKmsgEntry(t *testing.T) {
 			},
 		},
 		{
+			name:  "message containing semicolons",
+			entry: "6,1001,2026000;device reset; retry scheduled",
+			validate: func(t *testing.T, got string, err error) {
+				if err != nil {
+					t.Fatalf("formatKmsgEntry() error=%v, want nil", err)
+				}
+
+				_, msg, parseErr := parseFormattedKmsgLine(got)
+				if parseErr != nil {
+					t.Fatalf("parseFormattedKmsgLine(%q) error=%v", got, parseErr)
+				}
+				if msg != "device reset; retry scheduled" {
+					t.Errorf("message=%q, want complete message", msg)
+				}
+			},
+		},
+		{
 			name:  "invalid format missing semicolon",
 			entry: "6,1001",
 			validate: func(t *testing.T, got string, err error) {
