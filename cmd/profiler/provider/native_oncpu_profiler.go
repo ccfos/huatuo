@@ -227,8 +227,7 @@ func (p *cpuNativeProfiler) readOnCPUDataLoop(ctx context.Context, enqueue func(
 		// Use unified drainFrozenRingBuffer with CPU event factory
 		sampleCountsByProcess, ring, err := ringCtx.drainFrozenRingBuffer(
 			func() any { return &abi.ProfilerOnCPUEvent{} },
-			nil,
-		) // No value conversion needed for CPU profiler
+		)
 		if err != nil {
 			if errors.Is(err, types.ErrExitByCancelCtx) {
 				return nil
