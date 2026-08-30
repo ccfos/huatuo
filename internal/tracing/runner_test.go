@@ -17,6 +17,7 @@ package tracing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -214,5 +215,41 @@ func TestEventRunnerNotSupportedStops(t *testing.T) {
 	}
 	if got.RunCount != 1 {
 		t.Errorf("eventRunner.snapshot().RunCount = %d, want 1", got.RunCount)
+	}
+}
+
+// Terminal accounting errors stop the shared runner without another Start.
+func TestEventRunnerTerminalFailureStops(t *testing.T) {
+	for _, err := range []error{
+		pkgtypes.ErrTracingStopped,
+		fmt.Errorf("%w: pending capacity exhausted", pkgtypes.ErrTracingStopped),
+	} {
+		t.Run(err.Error(), func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			starter := &starterStub{startFunc: func(context.Context) error {
+				close(started)
+				<-release
+				return err
+			}}
+			runner := newEventRunner("terminal", starter, time.Hour, FlagTracing)
+			if err := runner.start(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			<-started
+			runner.mu.RLock()
+			done := runner.done
+			runner.mu.RUnlock()
+			close(release)
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				_ = runner.stop(t.Context())
+				t.Fatal("terminal failure did not stop the runner")
+			}
+			if got := runner.snapshot(); got.IsRunning || got.RunCount != 1 {
+				t.Fatalf("terminal runner snapshot = %+v", got)
+			}
+		})
 	}
 }
