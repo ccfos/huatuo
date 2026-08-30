@@ -24,26 +24,10 @@
 #ifndef __BPF_IOCONTROL_H__
 #define __BPF_IOCONTROL_H__
 
-#define IO_CONTROL_WAIT_COUNT_BITS 26
-#define IO_CONTROL_WAIT_10US_BITS 38
-#define IO_CONTROL_WAIT_UNIT_NS 10000ULL
+#include "abi/io_control_types.h"
+
 #define IO_CONTROL_WAIT_COUNT_MASK ((1ULL << IO_CONTROL_WAIT_COUNT_BITS) - 1)
 #define IO_CONTROL_WAIT_10US_MASK ((1ULL << IO_CONTROL_WAIT_10US_BITS) - 1)
-
-/* Kernel CSS serial identifies a counter lifetime; userspace owns its delta. */
-struct io_control_wait_key {
-	u64 css;
-	u64 css_serial;
-	u32 major;
-	u32 minor;
-	u32 operation;
-	u32 reserved;
-};
-
-struct io_control_status {
-	u64 failure;
-	u64 devices_changed;
-};
 
 _Static_assert(sizeof(struct io_control_wait_key) == 32,
 	       "IO wait key ABI");

@@ -24,9 +24,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
@@ -34,6 +36,7 @@ import (
 	"github.com/ccfos/huatuo/pkg/metric"
 	"github.com/ccfos/huatuo/pkg/types"
 
+	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/btf"
 	"golang.org/x/sys/unix"
 )
@@ -42,10 +45,7 @@ const ioControlAttachRetryInterval = 10 * time.Second
 
 const ioControlStatusMap = "io_control_status_map"
 
-type ioControlStatus struct {
-	Failure        uint64
-	DevicesChanged uint64
-}
+type ioControlStatus = abi.IOControlStatus
 
 var errIOControlDevicesChanged = fmt.Errorf("%w: block devices changed; restarting IO collection", metric.ErrNoData)
 
@@ -151,12 +151,12 @@ const (
 // A CPU publishes count and wait together. Read that word once and subtract
 // its modulo fields independently before combining CPUs or public series.
 const (
-	ioControlWaitCounterSize = 8
-	ioControlWaitCountBits   = 26
-	ioControlWait10USBits    = 38
+	ioControlWaitCounterSize = int(abi.IOControlWaitCounterSize)
+	ioControlWaitCountBits   = abi.IOControlWaitCountBits
+	ioControlWait10USBits    = abi.IOControlWait10usBits
 	ioControlWaitCountMask   = uint64(1<<ioControlWaitCountBits) - 1
 	ioControlWait10USMask    = uint64(1<<ioControlWait10USBits) - 1
-	ioControlWait10USToMS    = 0.01
+	ioControlWait10USToMS    = float64(abi.IOControlWaitUnitNS) / float64(time.Millisecond)
 )
 
 type ioControlWaitCounters struct {
@@ -164,14 +164,7 @@ type ioControlWaitCounters struct {
 	Wait10US uint64
 }
 
-type ioControlWaitKey struct {
-	CSS       uint64
-	CSSSerial uint64
-	Major     uint32
-	Minor     uint32
-	Operation uint32
-	Reserved  uint32
-}
+type ioControlWaitKey = abi.IOControlWaitKey
 
 type ioControlWaitSnapshot map[ioControlWaitKey][]ioControlWaitCounters
 
@@ -330,9 +323,9 @@ func decodeIOControlWaitCounters(data []byte, possibleCPUs int) ([]ioControlWait
 	return counters, nil
 }
 
-// Only for non-preallocated HASH/PERCPU_HASH maps. Batch copies protect a row
-// from deletion and immediate reuse; older allocators provide that protection
-// through RCU, allowing single lookups when the batch API is absent.
+// Batch copies protect a row from deletion and immediate reuse. On older
+// allocators the wait maps stay non-preallocated, so RCU also permits single
+// lookups when the batch API is absent.
 type ioControlHashReader struct {
 	// The owning collector serializes reads, including cleanup traversals.
 	singleLookup bool
@@ -408,6 +401,43 @@ func ioControlHashAllocatorMember(spec *btf.Spec) (*btf.Member, error) {
 		return nil, fmt.Errorf("resolve ordinary HASH bpf_htab: %w", btf.ErrNotFound)
 	}
 	return nil, nil
+}
+
+func loadIOControlBPF(name string, constants map[string]any) (bpf.BPF, error) {
+	spec, err := ebpf.LoadCollectionSpec(filepath.Join(bpf.DefaultObjDir, name))
+	if err != nil {
+		return nil, err
+	}
+	return loadIOControlBPFSpec(name, spec, constants)
+}
+
+func loadIOControlBPFSpec(name string, spec *ebpf.CollectionSpec, constants map[string]any) (bpf.BPF, error) {
+	kernel, err := btf.LoadKernelSpec()
+	if err != nil {
+		return nil, fmt.Errorf("read IO map allocator BTF: %w", err)
+	}
+	if err := prepareIOControlMaps(spec, kernel); err != nil {
+		return nil, err
+	}
+	return bpf.LoadBPFFromCollectionSpec(name, spec, constants)
+}
+
+func prepareIOControlMaps(spec *ebpf.CollectionSpec, kernel *btf.Spec) error {
+	allocator, err := ioControlHashAllocatorMember(kernel)
+	if err != nil {
+		return fmt.Errorf("select IO wait map allocation: %w", err)
+	}
+	if allocator != nil {
+		// IRQ-off wake/dispatch loops can create several cgroup rows before
+		// bpf_mem_alloc's per-CPU cache can refill. Preallocate those values.
+		// Legacy maps keep delayed RCU reclamation for single-lookup readers.
+		for _, m := range spec.Maps {
+			if m.Type == ebpf.PerCPUHash {
+				m.Flags &^= unix.BPF_F_NO_PREALLOC
+			}
+		}
+	}
+	return nil
 }
 
 type ioControlContainerSource func() (map[string]*pod.Container, error)
