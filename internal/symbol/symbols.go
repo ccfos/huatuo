@@ -217,26 +217,50 @@ func (syms symbols) floorSym(key uint64) *symbol {
 	return syms[idx]
 }
 
-// parseKallsymsLine parses one /proc/kallsyms line into a symbol.
-// It returns a zero symbol and false if the line is not a text symbol.
-func parseKallsymsLine(line string) (*symbol, bool) {
+type kallsymsEntry struct {
+	addr       uint64
+	symbolType byte
+	name       string
+	module     string
+}
+
+func parseKallsymsEntry(line string) (kallsymsEntry, error) {
 	words := strings.Fields(line)
 	if len(words) != 3 && len(words) != 4 {
-		return &symbol{}, false
+		return kallsymsEntry{}, fmt.Errorf("expected 3 or 4 fields")
 	}
-	if words[1] != "T" && words[1] != "t" && words[1] != "R" {
-		return &symbol{}, false
+	if len(words[1]) != 1 {
+		return kallsymsEntry{}, fmt.Errorf("invalid symbol type %q", words[1])
 	}
 
 	addr, err := strconv.ParseUint(words[0], 16, 64)
 	if err != nil {
+		return kallsymsEntry{}, fmt.Errorf("parse address: %w", err)
+	}
+	entry := kallsymsEntry{
+		addr:       addr,
+		symbolType: words[1][0],
+		name:       words[2],
+	}
+	if len(words) == 4 {
+		entry.module = words[3]
+	}
+	return entry, nil
+}
+
+// parseKallsymsLine parses one /proc/kallsyms line for stack resolution.
+func parseKallsymsLine(line string) (*symbol, bool) {
+	entry, err := parseKallsymsEntry(line)
+	if err != nil || (entry.symbolType != 'T' && entry.symbolType != 't' &&
+		entry.symbolType != 'R') {
 		return &symbol{}, false
 	}
-	module := "[kernel]"
-	if len(words) == 4 {
-		module = words[3]
+
+	module := entry.module
+	if module == "" {
+		module = "[kernel]"
 	}
-	return &symbol{Addr: addr, Name: words[2], Module: module}, true
+	return &symbol{Addr: entry.addr, Name: entry.name, Module: module}, true
 }
 
 // scanKallsyms reads path and returns all text symbols as an unsorted symbols.
