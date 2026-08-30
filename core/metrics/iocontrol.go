@@ -12,14 +12,83 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// IO collectors share operation labels and hash-allocator evidence without
-// depending on another collector.
+// This file shares IO operation labels and optional container attribution.
+// Each collector owns its BPF session and cumulative counter baseline.
+
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"github.com/cilium/ebpf/btf"
+
+	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/internal/pod"
 )
+
+const ioControlHostNamespaceKey = "HostNamespace"
+
+type ioControlContainerSource func() (map[string]*pod.Container, error)
+
+type ioControlContainerLabels struct {
+	hostname      string
+	name          string
+	containerType string
+	qos           string
+	hostNamespace string
+}
+
+// A failed catalog is unavailable, not empty: capture may continue without
+// attribution, but registration refresh must retain its existing mappings.
+func ioControlQueryContainers(source ioControlContainerSource) (map[string]*pod.Container, bool) {
+	containers, err := source()
+	if err != nil {
+		log.Warnf("IO container attribution unavailable: %v", err)
+		return nil, false
+	}
+	return containers, true
+}
+
+// Missing CSS associations and invalid public labels only suppress container
+// attribution. They cannot invalidate host counters or hold back the baseline.
+func ioControlContainerAttribution(
+	containers map[uint64]*pod.Container,
+	css uint64,
+) (*pod.Container, ioControlContainerLabels) {
+	container := containers[css]
+	if css == 0 || container == nil {
+		return nil, ioControlContainerLabels{}
+	}
+	labels, err := ioControlPublicContainerLabels(container)
+	if err != nil {
+		log.Warnf("IO container attribution unavailable: %v", err)
+		return nil, ioControlContainerLabels{}
+	}
+	return container, labels
+}
+
+func ioControlPublicContainerLabels(
+	container *pod.Container,
+) (ioControlContainerLabels, error) {
+	if container == nil {
+		return ioControlContainerLabels{}, errors.New("nil iocontrol container")
+	}
+	hostNamespace, ok := container.Labels[ioControlHostNamespaceKey].(string)
+	if !ok {
+		return ioControlContainerLabels{}, fmt.Errorf(
+			"container %q has no string %s label",
+			container.ID,
+			ioControlHostNamespaceKey,
+		)
+	}
+	return ioControlContainerLabels{
+		hostname:      container.Hostname,
+		name:          container.Name,
+		containerType: container.Type.String(),
+		qos:           container.Qos.String(),
+		hostNamespace: hostNamespace,
+	}, nil
+}
 
 func ioOperationName(operation uint32) (string, bool) {
 	switch operation {

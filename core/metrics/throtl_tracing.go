@@ -74,7 +74,8 @@ type throtlHooks struct {
 }
 
 type throtlSession struct {
-	object bpf.BPF
+	object          bpf.BPF
+	containerSource ioControlContainerSource
 }
 
 func (s *throtlSession) readStatus() (throtlStatus, error) {
