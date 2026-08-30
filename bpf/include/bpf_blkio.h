@@ -8,7 +8,8 @@
 
 #define TIMESTAMP_MASK (((u64)1 << 51) - 1)
 
-static __always_inline u64 ktime_ns_mask()
+/* Legacy __always_inline omits inline; keep optional helpers inline. */
+static inline __attribute__((always_inline)) u64 ktime_ns_mask()
 {
 	return bpf_ktime_get_ns() & TIMESTAMP_MASK;
 }
@@ -67,7 +68,7 @@ static __always_inline u8 bio_partno(struct bio *bio)
 	return partno;
 }
 
-static __always_inline void
+static inline __attribute__((always_inline)) void
 bio_major_minor_numbers(struct bio *bio, u32 *disk_dev)
 {
 	struct gendisk *disk = bio_disk(bio);
