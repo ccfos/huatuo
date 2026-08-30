@@ -18,12 +18,17 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 
+	internalconfig "github.com/ccfos/huatuo/internal/config"
 	testutils "github.com/ccfos/huatuo/internal/testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func writeConfigFile(t *testing.T, dir, name, content string) string {
@@ -659,4 +664,33 @@ func TestUpdatePublishesConsistentSnapshots(t *testing.T) {
 	for err := range errCh {
 		t.Fatal(err)
 	}
+}
+
+// IOCOST qualification configuration.
+
+func TestIOCostDaemonGeneratedConfigPassesNativeValidation(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	repository := filepath.Join(filepath.Dir(file), "..", "..", "..")
+	script := filepath.Join(repository, "integration", "iocost", "lib.sh")
+	path := filepath.Join(t.TempDir(), "bamai.conf")
+	command := exec.CommandContext(t.Context(), "bash", "-c", `
+set -euo pipefail
+source "$1"
+iocost_write_daemon_config "$2" 18091
+`, "iocost-native-daemon-config", script, path)
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	var config Config
+	require.NoError(t, internalconfig.Load(path, &config))
+	require.NoError(t, config.Validate())
+	require.Equal(t, "127.0.0.1:18091", config.HTTPServer.ListenAddress)
+	require.Equal(t, "iocost-oetest-local-token", config.HTTPServer.Auth.BearerToken)
+	require.Equal(t, 1.0, config.Runtime.StartupCPULimitCores)
+	require.Equal(t, 2.0, config.Runtime.CPULimitCores)
+	require.Equal(t, int64(2048), config.Runtime.MemoryLimitMiB)
+	require.NotContains(t, config.BlackList, "iocost")
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }

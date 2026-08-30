@@ -48,7 +48,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// BPF accounting.
+// BPF accounting helpers and lifecycle guards.
+
+// IOCOST BPF helper tests use deterministic kernel reads and map operations.
 
 // Packed wait accounting and device layout.
 
@@ -804,7 +806,10 @@ int main(int argc, char **argv)
 	require.NoError(t, err, "%s", output)
 }
 
-// Raw snapshots.
+// Raw capture, decoding, and session shutdown.
+
+// This file covers IOCOST raw capture, exact decoding, live identity joins,
+// and session shutdown before interval or metric publication.
 
 const (
 	ioCostCaptureTestIOCPtr    = uint64(0x100)
@@ -1990,7 +1995,9 @@ func TestIOCostCancelAtEachCaptureStageStopsLaterReads(t *testing.T) {
 	}
 }
 
-// Hook compatibility.
+// Hook compatibility and diagnostic map ABI.
+
+// IOCOST hook profiles and diagnostic map ABI share relocation fixtures.
 
 // Hook resolution and structural profiles.
 
@@ -2462,13 +2469,15 @@ func decodeIOCostWakeFrames(
 	return values, nil
 }
 
-// Interval metrics and attribution.
+// Interval attribution and exported metric contracts.
+
+// IOCOST metric tests cover interval accounting, attribution, and collector registration.
 
 // Interval deltas, scope attribution, and public metric contracts.
 
 // This file freezes IOCOST interval transactions, attribution boundaries and
-// the public metric schema. The BPF capture/ABI contract is covered separately
-// by iocost_test.go and iocost_test.go.
+// the public metric schema. The capture and compiled-object sections retain
+// the BPF capture/ABI contract.
 
 type ioCostIntervalTestRow struct {
 	iocPtr    uint64
@@ -4308,7 +4317,10 @@ func TestIOCostIsolationFromThrotlFailureDomain(t *testing.T) {
 	}
 }
 
-// Session lifecycle and object contracts.
+// Compiled object, userspace ABI, and session lifecycle.
+
+// This file freezes the compiled IOCOST object, userspace ABI, and session
+// lifecycle contracts.
 
 const (
 	ioCostIOCStateMapMaxEntries      uint32 = 4096
@@ -5683,3 +5695,5 @@ func ioCostSourceSection(t *testing.T, source, startMarker, endMarker string) st
 	require.Greater(t, end, start)
 	return source[start:end]
 }
+
+// Exercise the public runner, including checks before its namespace dispatcher.
