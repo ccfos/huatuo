@@ -2,7 +2,8 @@
 
 IO 监测包含磁盘性能指标、blk-throttle 排队等待，以及事件驱动的设备健康
 监测。`iotracing` 从 `/proc/diskstats` 计算磁盘指标；`blk_throtl` 统计
-throttle 等待；`io_health` 记录设备异常并采集健康证据。
+throttle 等待；
+`iocost` 统计预算不足造成的等待；`io_health` 记录设备异常并采集健康证据。
 
 ## 配置
 
@@ -11,6 +12,8 @@ throttle 等待；`io_health` 记录设备异常并采集健康证据。
 
 `blk_throtl` 默认启用并采集 blk-throttle 被限速的 IO 数量和平均等待时间。
 仅可通过将 `blk_throtl` 加入全局 `BlackList` 并重启来关闭。
+
+`iocost` 默认启用，采集因 IOCOST 预算不足而等待的 IO 数量和平均等待时间。将 `iocost` 加入全局 `BlackList` 并重启可关闭。
 
 磁盘指标的统计周期由 Prometheus scrape 周期决定，不需要配置 iotracing
 采样周期。将 `iotracing` 加入 `BlackList` 会同时关闭磁盘指标和自动诊断。
@@ -55,6 +58,29 @@ throttle 等待；`io_health` 记录设备异常并采集健康证据。
 
 容器发现不影响启动或宿主机采集，无需运行 kubelet。容器查询失败或标签无效时，
 未归属的数据进入 `other`，统计基线正常推进；关联恢复后只统计当前区间，不补发之前的数据。
+
+## IOCOST 等待统计
+
+等待时间从 IO 开始等待算到最终被唤醒，计入等待结束所在的采集区间。
+
+| 指标 | 含义 |
+| --- | --- |
+| `huatuo_bamai_iocost_waitq_io_count` | 本轮完成等待的读写 IO 数量 |
+| `huatuo_bamai_iocost_average_wait_milliseconds` | 这些 IO 的平均等待时间，单位毫秒 |
+| `huatuo_bamai_iocost_container_waitq_io_count` | 容器本轮完成等待的读写 IO 数量 |
+| `huatuo_bamai_iocost_container_average_wait_milliseconds` | 容器 IO 的平均等待时间，单位毫秒 |
+
+指标按 `device`（设备号 `major:minor`）和 `operation`（`read`、`write`）分组。`scope=host` 表示设备总量，包含所有容器；`scope=other` 表示未归属到容器的部分。
+
+容器发现不影响 IOCOST 启动或宿主机采集，无需运行 kubelet。容器查询失败或标签无效时，未归属的数据进入 `other`，统计基线正常推进；容器关联恢复后只统计当前区间，不补发之前的数据。
+
+使用时注意：
+
+- 采集失败后，首次成功采集只恢复统计起点，下一次成功采集恢复输出。
+- cgroup 或设备释放时，尚未上报的数据可能丢失；设备号变化时，该设备可能缺少一轮数据。
+- 单个 CPU 上的同一统计项在两次成功采集间完成不少于 67,108,864 次等待，或累计等待达到约 274.9 万秒时，结果可能偏小。例如 10,240 个 IO 均等待 270 秒后在同一区间结束，会超过等待时间的容量。
+
+需要提供 IOCOST 函数及 BPF/BTF、kprobe 能力的非 PREEMPT_RT Linux x86_64 内核。
 
 ## 健康事件
 
