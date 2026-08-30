@@ -1,13 +1,16 @@
 # IO 监测
 
-IO 监测包含磁盘性能指标和事件驱动的设备健康监测。`iotracing` 从
-`/proc/diskstats` 计算磁盘指标；`io_health` 记录 block、NVMe、SCSI 和
-MD 异常，并在能够唯一定位设备时采集健康证据。
+IO 监测包含磁盘性能指标、blk-throttle 排队等待，以及事件驱动的设备健康
+监测。`iotracing` 从 `/proc/diskstats` 计算磁盘指标；`blk_throtl` 统计
+throttle 等待；`io_health` 记录设备异常并采集健康证据。
 
 ## 配置
 
 `io_health` 默认启用。关闭时向现有 `BlackList` 添加 `io_health` 并重启，
 即可关闭健康事件、取证及对应指标，不影响 `iotracing`。
+
+`blk_throtl` 默认启用并采集 blk-throttle 被限速的 IO 数量和平均等待时间。
+仅可通过将 `blk_throtl` 加入全局 `BlackList` 并重启来关闭。
 
 磁盘指标的统计周期由 Prometheus scrape 周期决定，不需要配置 iotracing
 采样周期。将 `iotracing` 加入 `BlackList` 会同时关闭磁盘指标和自动诊断。
@@ -30,6 +33,28 @@ MD 异常，并在能够唯一定位设备时采集健康证据。
 
 指标只覆盖整盘和支持的逻辑设备，不包含分区及 loop、ram、zram、fd 等伪
 设备。
+
+## blk-throttle 排队等待
+
+`blk_throtl` 统计 IO 因 blk-throttle 限速而排队的数量和平均等待时间，
+用于观察限速对磁盘及容器 IO 的影响。每个 IO 结束排队后计数一次，
+等待时间从首次排队算起。
+
+| 指标 | 含义 |
+| --- | --- |
+| `huatuo_bamai_blk_throtl_delayed_io_count` | 相邻两次成功采集间完成等待的 IO 数量 |
+| `huatuo_bamai_blk_throtl_average_wait_milliseconds` | 这些 IO 的平均排队时间，单位毫秒 |
+
+指标按 `device` 和 `operation`（`read` 或 `write`）区分，`scope=host`
+表示宿主机总量，`scope=other` 表示其中无法归属容器的部分。
+
+两项均为区间 Gauge，查询时直接使用指标值。
+
+`blk_throtl` 因错误停止采集时，请查看日志排查原因，解决后重启 Huatuo。
+临时采集失败会自动重试，缺失的数据不会补发。
+
+容器发现不影响启动或宿主机采集，无需运行 kubelet。容器查询失败或标签无效时，
+未归属的数据进入 `other`，统计基线正常推进；关联恢复后只统计当前区间，不补发之前的数据。
 
 ## 健康事件
 
