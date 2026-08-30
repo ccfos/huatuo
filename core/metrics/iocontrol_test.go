@@ -17,15 +17,20 @@
 package collector
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -39,8 +44,11 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/btf"
+	"github.com/pelletier/go-toml"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
+	"google.golang.org/protobuf/encoding/protodelim"
 )
 
 func TestIOControlAttachRetries(t *testing.T) {
@@ -880,6 +888,109 @@ func (source *ioControlAttributionTestSource) read() (
 	error,
 ) {
 	return source.containers, source.err
+}
+
+// Start the real daemon with one IO collector; use its native protobuf response
+// so metric decoding reuses the project's existing direct dependencies.
+func startIOControlKernelDaemon(t *testing.T, parent context.Context, collector string) func() ([]*metric.Data, bool) {
+	t.Helper()
+	root := filepath.Join("..", "..")
+	directory := t.TempDir()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	address := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	var defaults struct{ BlackList []string }
+	data, err := os.ReadFile(filepath.Join(root, "huatuo-bamai.conf"))
+	require.NoError(t, err)
+	require.NoError(t, toml.Unmarshal(data, &defaults))
+	// Preserve normal defaults, excluding sibling IO features and the snapshot
+	// tracer whose container subscription requires the disabled kubelet.
+	defaults.BlackList = append(defaults.BlackList, "io_health", "blk_throtl", "iolatency", "iocost", "iotracing", "memory_threshold_snapshot")
+	blacklist := slices.DeleteFunc(defaults.BlackList, func(name string) bool { return name == collector })
+	config := fmt.Sprintf("BlackList = [%s]\n[HTTPServer]\nListenAddress = %q\n[HTTPServer.Auth]\nBearerToken = %q\n",
+		`"`+strings.Join(blacklist, `", "`)+`"`, address, "io-kernel-test-token")
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "bamai.conf"), []byte(config), 0o600))
+	ctx, cancel := context.WithCancel(parent)
+	command := exec.CommandContext(ctx, filepath.Join(root, "_output/bin/huatuo-bamai"),
+		"--config-dir", directory, "--config", "bamai.conf", "--bpf-dir", filepath.Join(root, "bpf"),
+		"--disable-storage", "--disable-kubelet", "--region", "io-kernel-test")
+	command.Cancel = func() error { return command.Process.Signal(unix.SIGTERM) }
+	command.WaitDelay = 10 * time.Second
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, &output
+	require.NoError(t, command.Start())
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+			t.Logf("%s daemon output:\n%s", collector, output.String())
+		case <-time.After(15 * time.Second):
+			t.Errorf("%s daemon did not exit", collector)
+		}
+	})
+	client := &http.Client{Timeout: 2 * time.Second}
+	scrape := func() ([]*metric.Data, bool) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+"/metrics", http.NoBody)
+		require.NoError(t, err)
+		request.Header.Set("Authorization", "Bearer io-kernel-test-token")
+		request.Header.Set("Accept", "application/vnd.google.protobuf; proto=io.prometheus.client.MetricFamily; encoding=delimited")
+		response, err := client.Do(request)
+		if err != nil {
+			return nil, false
+		}
+		defer response.Body.Close()
+		require.Equal(t, http.StatusOK, response.StatusCode)
+		require.Contains(t, response.Header.Get("Content-Type"), "application/vnd.google.protobuf")
+		reader := bufio.NewReader(response.Body)
+		prefix := "huatuo_bamai_" + collector + "_"
+		healthy := false
+		var metrics []*metric.Data
+		for {
+			var family dto.MetricFamily
+			if err := protodelim.UnmarshalFrom(reader, &family); errors.Is(err, io.EOF) {
+				break
+			} else {
+				require.NoError(t, err)
+			}
+			if family.GetName() == "huatuo_bamai_scrape_collector_success" {
+				for _, sample := range family.Metric {
+					for _, label := range sample.Label {
+						if label.GetName() == "collector" && label.GetValue() == collector {
+							healthy = sample.GetGauge().GetValue() == 1
+						}
+					}
+				}
+			}
+			if !strings.HasPrefix(family.GetName(), prefix) {
+				continue
+			}
+			require.False(t, strings.HasPrefix(family.GetName(), prefix+"container_"))
+			require.Equal(t, dto.MetricType_GAUGE, family.GetType())
+			for _, sample := range family.Metric {
+				labels := make(map[string]string)
+				for _, label := range sample.Label {
+					labels[label.GetName()] = label.GetValue()
+				}
+				require.Equal(t, "io-kernel-test", labels["region"])
+				require.NotEmpty(t, labels["host"])
+				metrics = append(metrics, metric.NewGaugeData(strings.TrimPrefix(family.GetName(), prefix),
+					sample.GetGauge().GetValue(), family.GetHelp(), labels))
+			}
+		}
+		return metrics, healthy
+	}
+	require.Eventually(t, func() bool {
+		if ctx.Err() != nil {
+			return true
+		}
+		_, healthy := scrape()
+		return healthy
+	}, 30*time.Second, 100*time.Millisecond, "IO HTTP collector readiness")
+	require.NoError(t, ctx.Err())
+	return scrape
 }
 
 // Body operations must return before the hard timeout so owned cleanup can
