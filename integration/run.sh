@@ -75,14 +75,30 @@ else
 	test_scripts=("${TEST_DIR}"/test_*.sh)
 fi
 
+# TEST_<case>_REQUIRED=1 makes missing suite prerequisites fatal.
+required_test_env=""
+for test_script in "${test_scripts[@]}"; do
+	required_case=${test_script##*/}
+	required_case=${required_case#test_}
+	required_case=${required_case%.sh}
+	required_case=${required_case//[^[:alnum:]_]/_}
+	required_env="TEST_${required_case^^}_REQUIRED"
+	if [[ ${!required_env:-} == 1 ]]; then
+		required_test_env=${required_env}
+		break
+	fi
+done
+
 # The runner creates UTS and mount namespaces before executing any case.
 if [[ ${EUID} -ne 0 ]]; then
+	[[ -z ${required_test_env} ]] || fatal "${required_test_env}=1 requires root (EUID=${EUID})"
 	log_info "SKIP: requires root (EUID=${EUID})"
 	test_skipped=$((${#test_scripts[@]} * REQUESTED_REPEAT_COUNT))
 	test_results_summary
 	exit 0
 fi
 if ! (require_commands unshare mount); then
+	[[ -z ${required_test_env} ]] || fatal "${required_test_env}=1 requires unshare and mount"
 	test_skipped=$((${#test_scripts[@]} * REQUESTED_REPEAT_COUNT))
 	test_results_summary
 	exit 0
