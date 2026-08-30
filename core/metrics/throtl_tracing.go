@@ -20,11 +20,19 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/throtl_tracing.c -o $BPF_DIR/throtl_tracing.o
+
 const (
+	throtlWaitAggregateMap = "throtl_wait_agg_map"
+	throtlTDMap            = "throtl_td_map"
+	throtlPendingMap       = "throtl_pending_map"
+	throtlStatusMap        = "throtl_stat_map"
+
 	throtlTrackedCallerStart  = "throtl_tracked_caller_start"
 	throtlTrackedCallerEnd    = "throtl_tracked_caller_end"
 	throtlIgnoredCallerStart  = "throtl_ignored_caller_start"
@@ -40,10 +48,90 @@ const (
 	throtlMainlineExitMarker  = "blkcg_exit_disk"
 )
 
+// Keep reason numbers in sync with enum throtl_failure in the BPF object.
+const (
+	throtlFailurePendingCollision uint32 = iota + 1
+	throtlFailurePendingInsert
+	throtlFailurePendingDelete
+	throtlFailureOwner
+	throtlFailureAggregate
+	throtlFailureUnknownCaller
+	throtlFailureTimeRollback
+	throtlFailurePopState
+	throtlFailureLifecycle
+)
+
+// A nonzero reason stops this BPF object. Reason and errno share one word.
+type throtlStatus struct {
+	Errno  int32
+	Reason uint32
+}
+
 type throtlHooks struct {
 	diskProfile  bool
 	trackedRange symbol.KsymbolRange
 	ignoredRange symbol.KsymbolRange
+}
+
+type throtlSession struct {
+	object bpf.BPF
+}
+
+func (s *throtlSession) readStatus() (throtlStatus, error) {
+	mapID := s.object.MapIDByName(throtlStatusMap)
+	if mapID == 0 {
+		return throtlStatus{}, fmt.Errorf("map %s is unavailable",
+			throtlStatusMap)
+	}
+	value, err := s.object.ReadMap(mapID, []byte{0, 0, 0, 0})
+	if err != nil {
+		return throtlStatus{}, err
+	}
+
+	var packed uint64
+	if err := decodeBPFMapData(value, &packed); err != nil {
+		return throtlStatus{}, fmt.Errorf("decode %s: %w",
+			throtlStatusMap, err)
+	}
+	return throtlStatus{Errno: int32(packed), Reason: uint32(packed >> 32)}, nil
+}
+
+func attachThrotlHooks(
+	object bpf.BPF,
+	hooks *throtlHooks,
+) error {
+	exitProgram := "kprobe_blk_throtl_exit_legacy"
+	if hooks.diskProfile {
+		exitProgram = "kprobe_blk_throtl_exit_mainline"
+	}
+	options := []bpf.AttachOption{
+		{
+			ProgramName: exitProgram,
+			Symbol:      throtlExitSymbol,
+		},
+		{
+			ProgramName: "kprobe_throtl_pd_free",
+			Symbol:      throtlPDFreeSymbol,
+		},
+		{
+			ProgramName: "kretprobe_throtl_pop_queued",
+			Symbol:      throtlPopQueuedSymbol,
+		},
+		{
+			ProgramName: "kprobe_throtl_pop_queued",
+			Symbol:      throtlPopQueuedSymbol,
+		},
+		{
+			// Attach start last so every observed episode has an exit hook.
+			ProgramName: "kprobe_throtl_add_bio_tg",
+			Symbol:      throtlAddBioSymbol,
+		},
+	}
+
+	if err := object.AttachWithOptions(options); err != nil {
+		return fmt.Errorf("attach blk-throttle hooks: %w", err)
+	}
+	return nil
 }
 
 func (hooks *throtlHooks) constants() map[string]any {
