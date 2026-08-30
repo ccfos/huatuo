@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/procfs/blockdevice"
@@ -42,10 +43,7 @@ const ioControlAttachRetryInterval = 10 * time.Second
 
 const ioControlStatusMap = "io_control_status_map"
 
-type ioControlStatus struct {
-	Failure        uint64
-	DevicesChanged uint64
-}
+type ioControlStatus = abi.IOControlStatus
 
 var errIOControlDevicesChanged = fmt.Errorf("%w: block devices changed; restarting IO collection", metric.ErrNoData)
 
@@ -151,12 +149,12 @@ const (
 // A CPU publishes count and wait together. Read that word once and subtract
 // its modulo fields independently before combining CPUs or public series.
 const (
-	ioControlWaitCounterSize = 8
-	ioControlWaitCountBits   = 26
-	ioControlWait10USBits    = 38
+	ioControlWaitCounterSize = int(abi.IOControlWaitCounterSize)
+	ioControlWaitCountBits   = abi.IOControlWaitCountBits
+	ioControlWait10USBits    = abi.IOControlWait10usBits
 	ioControlWaitCountMask   = uint64(1<<ioControlWaitCountBits) - 1
 	ioControlWait10USMask    = uint64(1<<ioControlWait10USBits) - 1
-	ioControlWait10USToMS    = 0.01
+	ioControlWait10USToMS    = float64(abi.IOControlWaitUnitNS) / float64(time.Millisecond)
 )
 
 type ioControlWaitCounters struct {
@@ -164,14 +162,7 @@ type ioControlWaitCounters struct {
 	Wait10US uint64
 }
 
-type ioControlWaitKey struct {
-	CSS       uint64
-	CSSSerial uint64
-	Major     uint32
-	Minor     uint32
-	Operation uint32
-	Reserved  uint32
-}
+type ioControlWaitKey = abi.IOControlWaitKey
 
 type ioControlWaitSnapshot map[ioControlWaitKey][]ioControlWaitCounters
 

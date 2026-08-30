@@ -12,19 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This file resolves and validates kernel-specific blk-throttle hooks.
+// This file resolves blk-throttle hooks and owns the BPF session.
+// Missing or inconsistent hook state fails the whole session closed.
 
 package collector
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sync"
 
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/pkg/types"
+
+	"golang.org/x/sys/unix"
 )
 
+//go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/throtl_tracing.c -o $BPF_DIR/throtl_tracing.o
+
 const (
+	throtlWaitAggregateMap = "throtl_wait_agg_map"
+	throtlPendingMap       = "throtl_pending_map"
+
 	throtlTrackedCallerStart  = "throtl_tracked_caller_start"
 	throtlTrackedCallerEnd    = "throtl_tracked_caller_end"
 	throtlIgnoredCallerStart  = "throtl_ignored_caller_start"
@@ -37,9 +49,103 @@ const (
 	throtlIgnoredCaller       = "tg_dispatch_one_bio"
 )
 
+var errThrotlSessionUnhealthy = fmt.Errorf("%w: blk_throtl BPF session is unhealthy",
+	types.ErrTracingStopped)
+
+const (
+	throtlFailurePendingCollision = uint32(abi.ThrotlFailurePendingCollision)
+	throtlFailurePendingInsert    = uint32(abi.ThrotlFailurePendingInsert)
+	throtlFailurePendingDelete    = uint32(abi.ThrotlFailurePendingDelete)
+	throtlFailureOwner            = uint32(abi.ThrotlFailureOwner)
+	throtlFailureAggregate        = uint32(abi.ThrotlFailureAggregate)
+	throtlFailureUnknownCaller    = uint32(abi.ThrotlFailureUnknownCaller)
+	throtlFailureTimeRollback     = uint32(abi.ThrotlFailureTimeRollback)
+	throtlFailurePopState         = uint32(abi.ThrotlFailurePopState)
+)
+
+// A nonzero reason stops this BPF object. Reason and errno share one word.
+func throtlFailure(failure uint64) error {
+	reasonID := uint32(failure >> 32)
+	errno := int32(failure)
+	if reasonID == 0 {
+		return nil
+	}
+	var reason string
+	switch reasonID {
+	case throtlFailurePendingCollision:
+		reason = "bio already has pending state; duplicate admission"
+	case throtlFailurePendingInsert:
+		reason = "pending insertion failed"
+		if errno == -int32(unix.E2BIG) {
+			reason = "throtl_pending_map capacity exhausted (10240 entries)"
+		}
+	case throtlFailurePendingDelete:
+		reason = "pending deletion failed"
+	case throtlFailureOwner:
+		reason = "blkg owner lookup, creation or deletion failed"
+	case throtlFailureAggregate:
+		reason = "aggregate creation, lookup or deletion failed"
+	case throtlFailureUnknownCaller:
+		reason = "unrecognized throtl_add_bio_tg caller"
+	case throtlFailureTimeRollback:
+		reason = "wait end precedes its recorded start"
+	case throtlFailurePopState:
+		reason = "pop entry/return state violates the hook contract"
+	default:
+		reason = fmt.Sprintf("unknown BPF stop reason %d", reasonID)
+	}
+	if errno != 0 {
+		reason += fmt.Sprintf(": helper returned %d (%s)",
+			errno, unix.Errno(-errno))
+	}
+	return fmt.Errorf("%w: %s", errThrotlSessionUnhealthy, reason)
+}
+
 type throtlHooks struct {
 	trackedRange symbol.KsymbolRange
 	ignoredRange symbol.KsymbolRange
+}
+
+type throtlSession struct {
+	object          bpf.BPF
+	possibleCPUs    int
+	previous        ioControlWaitSnapshot
+	hashReader      ioControlHashReader
+	breaker         context.Context
+	cancel          context.CancelCauseFunc
+	containerSource ioControlContainerSource
+}
+
+type throtlTracing struct {
+	mu      sync.Mutex
+	session *throtlSession
+}
+
+func attachThrotlHooks(object bpf.BPF) error {
+	options := append(ioControlDeviceHooks(), []bpf.AttachOption{
+		{
+			ProgramName: "kprobe_throtl_pd_free",
+			Symbol:      throtlPDFreeSymbol,
+		},
+		{
+			ProgramName: "kretprobe_throtl_pop_queued",
+			Symbol:      throtlPopQueuedSymbol,
+		},
+		{
+			ProgramName: "kprobe_throtl_pop_queued",
+			Symbol:      throtlPopQueuedSymbol,
+		},
+		{
+			// Attach start last so every observed episode has an exit hook.
+			ProgramName: "kprobe_throtl_add_bio_tg",
+			Symbol:      throtlAddBioSymbol,
+		},
+	}...)
+
+	if err := object.AttachWithOptions(options); err != nil {
+		return fmt.Errorf("attach blk-throttle hooks: %w", err)
+	}
+	return nil
 }
 
 func (hooks *throtlHooks) constants() map[string]any {
