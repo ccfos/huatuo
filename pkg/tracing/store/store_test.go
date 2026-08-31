@@ -21,6 +21,7 @@ import (
 
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
+	"huatuo-bamai/internal/watch"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -60,12 +61,15 @@ func TestStoreSavesAndPublishesTracingDocument(t *testing.T) {
 		"memory",
 		backend,
 		Collection,
-		Mapper{},
+		mapper{},
 	)
 	if err != nil {
 		t.Fatalf("storage.NewStore() error = %v", err)
 	}
-	store := New([]*storage.Store[*Document]{persistence})
+	store := &Store{
+		backends: []*storage.Store[*Document]{persistence},
+		hub:      watch.NewHub[*Document](),
+	}
 	documents, cancel := store.Subscribe()
 	defer cancel()
 	observedTimestamp := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
@@ -110,11 +114,11 @@ func TestMapperKeepsCommonFieldsFlat(t *testing.T) {
 		},
 		TracerData: map[string]any{"kind": "drop"},
 	}
-	encoded, err := (Mapper{}).Encode(document)
+	encoded, err := (mapper{}).Encode(document)
 	if err != nil {
 		t.Fatalf("Mapper.Encode() error = %v", err)
 	}
-	decoded, err := (Mapper{}).Decode(encoded)
+	decoded, err := (mapper{}).Decode(encoded)
 	if err != nil {
 		t.Fatalf("Mapper.Decode() error = %v", err)
 	}

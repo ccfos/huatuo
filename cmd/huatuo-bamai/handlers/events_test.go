@@ -26,7 +26,9 @@ import (
 )
 
 func TestEventsHandler_AcquireClientConcurrent(t *testing.T) {
-	h := NewEventsHandler(tracingstore.New(nil), 1, 0)
+	store, err := tracingstore.NewFromConfig(t.Context(), tracingstore.Config{})
+	require.NoError(t, err)
+	h := NewEventsHandler(store, 1, 0)
 	start := make(chan struct{})
 	var acquired atomic.Int32
 	var wg sync.WaitGroup

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/storage"
+	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/internal/watch"
 )
 
@@ -30,12 +31,108 @@ type Store struct {
 	hub      *watch.Hub[*Document]
 }
 
-// New creates a tracing store over the supplied persistence backends.
-func New(backends []*storage.Store[*Document]) *Store {
+// Config contains optional persistence backend settings.
+type Config struct {
+	Elasticsearch *ElasticsearchConfig
+	LocalFile     *LocalFileConfig
+}
+
+// ElasticsearchConfig contains Elasticsearch backend settings.
+type ElasticsearchConfig struct {
+	Addresses []string
+	Username  string
+	Password  string
+	Index     string
+}
+
+// LocalFileConfig contains local file backend settings.
+type LocalFileConfig struct {
+	Path            string
+	RotationSizeMiB int
+	MaxRotatedFiles int
+}
+
+func (c Config) validate() error {
+	if c.Elasticsearch != nil && len(c.Elasticsearch.Addresses) == 0 {
+		return errors.New("tracing store: Elasticsearch addresses are required")
+	}
+	if c.LocalFile == nil {
+		return nil
+	}
+	if c.LocalFile.Path == "" {
+		return errors.New("tracing store: local file path is required")
+	}
+	if c.LocalFile.RotationSizeMiB <= 0 {
+		return errors.New("tracing store: local file rotation size must be greater than zero MiB")
+	}
+	if c.LocalFile.MaxRotatedFiles <= 0 {
+		return errors.New("tracing store: maximum rotated local files must be greater than zero")
+	}
+	return nil
+}
+
+// NewFromConfig creates a tracing store and its configured persistence backends.
+func NewFromConfig(
+	ctx context.Context,
+	config Config,
+) (_ *Store, returnedErr error) {
+	if err := config.validate(); err != nil {
+		return nil, err
+	}
+
+	backends := make([]*storage.Store[*Document], 0, 2)
+	defer func() {
+		if returnedErr != nil {
+			returnedErr = errors.Join(returnedErr, closeBackends(context.Background(), backends))
+		}
+	}()
+
+	if config.Elasticsearch != nil {
+		backendConfig := config.Elasticsearch
+		backend, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
+			Driver:      "elasticsearch",
+			ESAddresses: backendConfig.Addresses,
+			ESUsername:  backendConfig.Username,
+			ESPassword:  backendConfig.Password,
+			ESIndex:     backendConfig.Index,
+		}, Collection, mapper{})
+		if err != nil {
+			return nil, fmt.Errorf("new tracing document store (elasticsearch): %w", err)
+		}
+		backends = append(backends, backend)
+	}
+
+	if config.LocalFile != nil {
+		backendConfig := config.LocalFile
+		backend, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
+			Driver:                "localfile",
+			LocalFilePath:         backendConfig.Path,
+			LocalFileRotationSize: backendConfig.RotationSizeMiB,
+			LocalFileMaxRotation:  backendConfig.MaxRotatedFiles,
+		}, Collection, mapper{})
+		if err != nil {
+			return nil, fmt.Errorf("new tracing document store (localfile): %w", err)
+		}
+		backends = append(backends, backend)
+	}
+
 	return &Store{
 		backends: backends,
 		hub:      watch.NewHub[*Document](),
+	}, nil
+}
+
+func closeBackends(ctx context.Context, backends []*storage.Store[*Document]) error {
+	var errs []error
+	for _, backend := range backends {
+		if backend == nil {
+			continue
+		}
+		if err := backend.Close(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("close tracing store %q: %w", backend.Name, err))
+		}
 	}
+	return errors.Join(errs...)
 }
 
 // Save publishes and asynchronously persists one tracing document.
@@ -73,14 +170,5 @@ func (s *Store) Close(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
-	var errs []error
-	for _, backend := range s.backends {
-		if backend == nil {
-			continue
-		}
-		if err := backend.Close(ctx); err != nil {
-			errs = append(errs, fmt.Errorf("close tracing store %q: %w", backend.Name, err))
-		}
-	}
-	return errors.Join(errs...)
+	return closeBackends(ctx, s.backends)
 }

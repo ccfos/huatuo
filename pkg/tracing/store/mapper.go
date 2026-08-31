@@ -29,21 +29,20 @@ const (
 	fieldRecordID = "record_id"
 )
 
-// Mapper maps tracing documents to backend records.
-type Mapper struct{}
+type mapper struct{}
 
-func (Mapper) ID(document *Document) string {
+func (mapper) ID(document *Document) string {
 	return document.TracerID
 }
 
-func (Mapper) Encode(document *Document) ([]byte, error) {
+func (mapper) Encode(document *Document) ([]byte, error) {
 	if err := document.validate(); err != nil {
 		return nil, err
 	}
 	return json.Marshal(document)
 }
 
-func (Mapper) Decode(data []byte) (*Document, error) {
+func (mapper) Decode(data []byte) (*Document, error) {
 	var document Document
 	if err := json.Unmarshal(data, &document); err != nil {
 		return nil, err
@@ -54,7 +53,7 @@ func (Mapper) Decode(data []byte) (*Document, error) {
 	return &document, nil
 }
 
-func (Mapper) Fields(document *Document) (map[string]any, error) {
+func (mapper) Fields(document *Document) (map[string]any, error) {
 	if err := document.validate(); err != nil {
 		return nil, err
 	}
@@ -81,7 +80,7 @@ func (Mapper) Fields(document *Document) (map[string]any, error) {
 	return fields, nil
 }
 
-func (Mapper) Indexes() []driver.Index {
+func (mapper) Indexes() []driver.Index {
 	return []driver.Index{
 		{Field: fieldRecordID},
 		{Field: types.DocumentFieldHostname},

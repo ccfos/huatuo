@@ -59,8 +59,8 @@ type Store struct {
 	store *storage.Store[*Document]
 }
 
-// New creates profiling storage backed by Elasticsearch.
-func New(ctx context.Context, config Config) (*Store, error) {
+// NewFromConfig creates profiling storage backed by Elasticsearch.
+func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
 	index := config.Index
 	if index == "" {
 		index = defaultIndex

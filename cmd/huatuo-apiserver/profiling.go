@@ -33,7 +33,7 @@ func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Cont
 		return nil, nil
 	}
 
-	profileStorage, err := profilingstore.New(
+	profileStorage, err := profilingstore.NewFromConfig(
 		ctx,
 		profilingstore.Config{
 			Addresses: strutil.SplitCommaList(d.opts.Config.Elasticsearch.Address),
