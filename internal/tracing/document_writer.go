@@ -37,12 +37,12 @@ type WriteRequest struct {
 	TracerRunType     string
 }
 
-type writer struct {
+type documentWriter struct {
 	store     *tracingstore.Store
 	documents *nodeagent.DocumentBuilder
 }
 
-var configuredWriter atomic.Pointer[writer]
+var configuredWriter atomic.Pointer[documentWriter]
 
 // ConfigureWriter installs the process-wide writer used by registered tracers.
 func ConfigureWriter(store *tracingstore.Store, documents *nodeagent.DocumentBuilder) error {
@@ -53,11 +53,11 @@ func ConfigureWriter(store *tracingstore.Store, documents *nodeagent.DocumentBui
 	if documents == nil {
 		return errors.New("configure tracing writer: document builder is required")
 	}
-	configuredWriter.Store(&writer{store: store, documents: documents})
+	configuredWriter.Store(&documentWriter{store: store, documents: documents})
 	return nil
 }
 
-// Save writes tracing data when storage is configured.
+// Save enriches and publishes tracing data when the process-wide writer is enabled.
 func Save(request *WriteRequest) error {
 	current := configuredWriter.Load()
 	if current == nil {
