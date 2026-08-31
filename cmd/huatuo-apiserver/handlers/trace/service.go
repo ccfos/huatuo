@@ -80,17 +80,17 @@ func (s *Service) Get(
 	principal auth.Principal,
 	requestID string,
 ) (*job.Job, error) {
-	jobEntity, err := s.jobs.Get(ctx, requestID)
+	currentJob, err := s.jobs.Get(ctx, requestID)
 	if err != nil {
 		return nil, err
 	}
-	if jobEntity.Kind != job.KindTracing {
+	if currentJob.Kind != job.KindTracing {
 		return nil, job.ErrNotFound
 	}
-	if !principal.IsAdmin && jobEntity.UserID != principal.ID {
+	if !principal.IsAdmin && currentJob.UserID != principal.ID {
 		return nil, auth.ErrPermissionDenied
 	}
-	return jobEntity, nil
+	return currentJob, nil
 }
 
 // List returns one authorized Tracing Job page.

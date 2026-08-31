@@ -38,8 +38,8 @@ type memoryStore struct {
 
 func newMemoryStore(jobs ...*Job) *memoryStore {
 	store := &memoryStore{jobs: make(map[string]*Job)}
-	for _, jobEntity := range jobs {
-		store.jobs[jobEntity.ID] = cloneJob(jobEntity)
+	for _, job := range jobs {
+		store.jobs[job.ID] = cloneJob(job)
 	}
 	return store
 }
@@ -47,27 +47,27 @@ func newMemoryStore(jobs ...*Job) *memoryStore {
 func (s *memoryStore) Get(_ context.Context, jobID string) (*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	jobEntity, ok := s.jobs[jobID]
+	storedJob, ok := s.jobs[jobID]
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return cloneJob(jobEntity), nil
+	return cloneJob(storedJob), nil
 }
 
-func (s *memoryStore) Create(_ context.Context, jobEntity *Job) error {
+func (s *memoryStore) Create(_ context.Context, job *Job) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.jobs[jobEntity.ID]; ok {
+	if _, ok := s.jobs[job.ID]; ok {
 		return ErrAlreadyExists
 	}
-	s.jobs[jobEntity.ID] = cloneJob(jobEntity)
+	s.jobs[job.ID] = cloneJob(job)
 	return nil
 }
 
-func (s *memoryStore) Save(_ context.Context, jobEntity *Job, expected ...Status) error {
+func (s *memoryStore) Save(_ context.Context, job *Job, expected ...Status) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	current, ok := s.jobs[jobEntity.ID]
+	current, ok := s.jobs[job.ID]
 	if !ok {
 		return ErrNotFound
 	}
@@ -81,12 +81,12 @@ func (s *memoryStore) Save(_ context.Context, jobEntity *Job, expected ...Status
 		}
 	}
 	if s.saveHook != nil {
-		if err := s.saveHook(cloneJob(jobEntity), append([]Status(nil), expected...)); err != nil {
+		if err := s.saveHook(cloneJob(job), append([]Status(nil), expected...)); err != nil {
 			return err
 		}
 	}
-	s.jobs[jobEntity.ID] = cloneJob(jobEntity)
-	s.saves = append(s.saves, cloneJob(jobEntity))
+	s.jobs[job.ID] = cloneJob(job)
+	s.saves = append(s.saves, cloneJob(job))
 	return nil
 }
 
@@ -94,29 +94,35 @@ func (s *memoryStore) List(_ context.Context, query *Query) ([]*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	jobs := make([]*Job, 0, len(s.jobs))
-	for _, jobEntity := range s.jobs {
+	for _, storedJob := range s.jobs {
 		if query != nil && len(query.Statuses) != 0 {
 			matched := false
 			for _, status := range query.Statuses {
-				matched = matched || jobEntity.Status == status
+				matched = matched || storedJob.Status == status
 			}
 			if !matched {
 				continue
 			}
 		}
-		jobs = append(jobs, cloneJob(jobEntity))
+		jobs = append(jobs, cloneJob(storedJob))
 	}
-	return jobs, nil
-}
-
-func (s *memoryStore) Count(context.Context, *Query) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return int64(len(s.jobs)), nil
+	if query == nil {
+		return jobs, nil
+	}
+	start := min(query.Offset, len(jobs))
+	end := len(jobs)
+	if query.Limit > 0 {
+		end = min(start+query.Limit, end)
+	}
+	return jobs[start:end], nil
 }
 
 func (s *memoryStore) DeleteTerminalBefore(context.Context, time.Time, int) (int64, error) {
 	return 0, nil
+}
+
+func (s *memoryStore) Ping(context.Context) error {
+	return nil
 }
 
 func (s *memoryStore) Close(context.Context) error {
@@ -200,12 +206,12 @@ func testManager(store Store, client NodeClient) *Manager {
 	})
 }
 
-func testManagedJob(jobEntity *Job) *managedJob {
-	return newManagedJob(jobEntity, false, func() {})
+func testManagedJob(job *Job) *managedJob {
+	return newManagedJob(job, false, func() {})
 }
 
 func testJob(id string, status Status, now time.Time) *Job {
-	jobEntity := &Job{
+	job := &Job{
 		ID:       id,
 		Kind:     KindProfiling,
 		UserID:   "user-1",
@@ -222,9 +228,9 @@ func testJob(id string, status Status, now time.Time) *Job {
 		UpdatedAt: now,
 	}
 	if isTerminal(status) {
-		jobEntity.EndedAt = now
+		job.EndedAt = now
 	}
-	return jobEntity
+	return job
 }
 
 func testCreateRequest() *CreateRequest {
@@ -291,6 +297,30 @@ func TestManagerCreateTreatsEachRequestAsIndependent(t *testing.T) {
 	}
 }
 
+func TestManagerListPageUsesLookahead(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	manager := testManager(newMemoryStore(
+		testJob("job-1", StatusCompleted, now),
+		testJob("job-2", StatusCompleted, now),
+	), &stubNodeClient{})
+
+	first, err := manager.ListPage(t.Context(), &Query{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListPage() first page error = %v", err)
+	}
+	if len(first.Items) != 1 || !first.HasMore {
+		t.Fatalf("ListPage() first page = (%d items, has_more=%t)", len(first.Items), first.HasMore)
+	}
+
+	last, err := manager.ListPage(t.Context(), &Query{Limit: 1, Offset: 1})
+	if err != nil {
+		t.Fatalf("ListPage() last page error = %v", err)
+	}
+	if len(last.Items) != 1 || last.HasMore {
+		t.Fatalf("ListPage() last page = (%d items, has_more=%t)", len(last.Items), last.HasMore)
+	}
+}
+
 func TestManagerShutdownCancelsBlockedSupervisor(t *testing.T) {
 	started := make(chan struct{})
 	client := &stubNodeClient{startProfiling: func(
@@ -322,8 +352,8 @@ func TestManagerShutdownCancelsBlockedSupervisor(t *testing.T) {
 
 func TestManagerStartPersistsDispatchMarkerBeforeNodeCall(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	jobEntity := testJob("job-1", StatusPending, now)
-	store := newMemoryStore(jobEntity)
+	pendingJob := testJob("job-1", StatusPending, now)
+	store := newMemoryStore(pendingJob)
 	manager := testManager(store, nil)
 	manager.now = func() time.Time { return now }
 	var markerPersisted atomic.Bool
@@ -348,34 +378,34 @@ func TestManagerStartPersistsDispatchMarkerBeforeNodeCall(t *testing.T) {
 		return operation(request.RequestID, nodeapi.OperationStatusPending), nil
 	}}
 
-	got, err := manager.start(t.Context(), testManagedJob(jobEntity))
+	got, err := manager.start(t.Context(), testManagedJob(pendingJob))
 	if err != nil {
 		t.Fatalf("start() error = %v", err)
 	}
-	if got.RequestID != jobEntity.ID {
-		t.Fatalf("start() request ID = %q, want %q", got.RequestID, jobEntity.ID)
+	if got.RequestID != pendingJob.ID {
+		t.Fatalf("start() request ID = %q, want %q", got.RequestID, pendingJob.ID)
 	}
 }
 
 func TestManagerStopBeforeDispatchPersistsUserIntent(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	jobEntity := testJob("job-1", StatusPending, now)
-	store := newMemoryStore(jobEntity)
+	pendingJob := testJob("job-1", StatusPending, now)
+	store := newMemoryStore(pendingJob)
 	manager := testManager(store, &stubNodeClient{})
 	manager.now = func() time.Time { return now.Add(time.Second) }
-	runtime := testManagedJob(jobEntity)
+	runtime := testManagedJob(pendingJob)
 	manager.mu.Lock()
 	manager.registerLocked(runtime)
 	manager.mu.Unlock()
 
-	stopped, err := manager.Stop(t.Context(), jobEntity.ID)
+	stopped, err := manager.Stop(t.Context(), pendingJob.ID)
 	if err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
 	if stopped.Status != StatusStopped {
 		t.Fatalf("Stop() status = %q, want %q", stopped.Status, StatusStopped)
 	}
-	got, err := store.Get(t.Context(), jobEntity.ID)
+	got, err := store.Get(t.Context(), pendingJob.ID)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -408,11 +438,11 @@ func TestManagerDistinguishesUnknownAndLostOperations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-			jobEntity := testJob("job-1", StatusPending, now)
-			store := newMemoryStore(jobEntity)
+			pendingJob := testJob("job-1", StatusPending, now)
+			store := newMemoryStore(pendingJob)
 			manager := testManager(store, &stubNodeClient{})
 			manager.now = func() time.Time { return now.Add(time.Second) }
-			runtime := testManagedJob(jobEntity)
+			runtime := testManagedJob(pendingJob)
 			runtime.operationObserved = tt.operationObserved
 			nodeErr := &nodeclient.Error{
 				StatusCode: 404,
@@ -441,12 +471,12 @@ func TestManagerDistinguishesUnknownAndLostOperations(t *testing.T) {
 
 func TestManagerExecutionTimeoutStopsThenFailsJob(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	jobEntity := testJob("job-1", StatusRunning, now.Add(-2*time.Minute))
-	jobEntity.StartAttemptedAt = now.Add(-2 * time.Minute)
-	jobEntity.PendingDeadline = now.Add(-90 * time.Second)
-	jobEntity.StartedAt = now.Add(-time.Minute)
-	jobEntity.ExecutionDeadline = now
-	store := newMemoryStore(jobEntity)
+	runningJob := testJob("job-1", StatusRunning, now.Add(-2*time.Minute))
+	runningJob.StartAttemptedAt = now.Add(-2 * time.Minute)
+	runningJob.PendingDeadline = now.Add(-90 * time.Second)
+	runningJob.StartedAt = now.Add(-time.Minute)
+	runningJob.ExecutionDeadline = now
+	store := newMemoryStore(runningJob)
 	var stopCalls atomic.Int32
 	client := &stubNodeClient{stopProfiling: func(
 		_ context.Context,
@@ -458,12 +488,12 @@ func TestManagerExecutionTimeoutStopsThenFailsJob(t *testing.T) {
 	}}
 	manager := testManager(store, client)
 	manager.now = func() time.Time { return now }
-	runtime := testManagedJob(jobEntity)
+	runtime := testManagedJob(runningJob)
 
 	terminal, err := manager.reconcileAndStop(
 		t.Context(),
 		runtime,
-		operation(jobEntity.ID, nodeapi.OperationStatusRunning),
+		operation(runningJob.ID, nodeapi.OperationStatusRunning),
 	)
 	if err != nil || !terminal {
 		t.Fatalf("reconcileAndStop() = (%t, %v)", terminal, err)
@@ -480,16 +510,16 @@ func TestManagerExecutionTimeoutStopsThenFailsJob(t *testing.T) {
 
 func TestManagerNodeUnavailableDoesNotSpinOnBusinessDeadline(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	jobEntity := testJob("job-1", StatusRunning, now.Add(-time.Minute))
-	jobEntity.StartedAt = now.Add(-time.Minute)
-	jobEntity.ExecutionDeadline = now.Add(-time.Second)
-	jobEntity.NodeUnavailableSince = now.Add(-time.Second)
-	jobEntity.NodeUnavailableDeadline = now.Add(time.Minute)
-	manager := testManager(newMemoryStore(jobEntity), &stubNodeClient{})
+	runningJob := testJob("job-1", StatusRunning, now.Add(-time.Minute))
+	runningJob.StartedAt = now.Add(-time.Minute)
+	runningJob.ExecutionDeadline = now.Add(-time.Second)
+	runningJob.NodeUnavailableSince = now.Add(-time.Second)
+	runningJob.NodeUnavailableDeadline = now.Add(time.Minute)
+	manager := testManager(newMemoryStore(runningJob), &stubNodeClient{})
 	manager.config.StatusPollInterval = 5 * time.Second
 	manager.now = func() time.Time { return now }
 
-	if got := manager.nextWake(testManagedJob(jobEntity)); got != 5*time.Second {
+	if got := manager.nextWake(testManagedJob(runningJob)); got != 5*time.Second {
 		t.Fatalf("nextWake() = %s, want 5s", got)
 	}
 }

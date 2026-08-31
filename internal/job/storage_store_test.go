@@ -41,7 +41,7 @@ func openTestStore(t *testing.T) Store {
 }
 
 func storedTestJob(id, userID, host string, status Status, createdAt time.Time) *Job {
-	jobEntity := &Job{
+	job := &Job{
 		ID:       id,
 		Kind:     KindProfiling,
 		UserID:   userID,
@@ -58,15 +58,15 @@ func storedTestJob(id, userID, host string, status Status, createdAt time.Time) 
 		UpdatedAt: createdAt,
 	}
 	if isTerminal(status) {
-		jobEntity.EndedAt = createdAt.Add(time.Minute)
+		job.EndedAt = createdAt.Add(time.Minute)
 	}
 	if status == StatusFailed {
-		jobEntity.Failure = &TerminalFailure{
+		job.Failure = &TerminalFailure{
 			Reason:  FailureReasonExecutionFailed,
 			Message: "profiler exited",
 		}
 	}
-	return jobEntity
+	return job
 }
 
 func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
@@ -74,9 +74,9 @@ func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
 	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	first := storedTestJob("job-1", "user-1", "node-1", StatusPending, base)
 	second := storedTestJob("job-2", "user-2", "node-1", StatusCompleted, base.Add(time.Minute))
-	for _, jobEntity := range []*Job{first, second} {
-		if err := store.Create(t.Context(), jobEntity); err != nil {
-			t.Fatalf("Create(%q) error = %v", jobEntity.ID, err)
+	for _, job := range []*Job{first, second} {
+		if err := store.Create(t.Context(), job); err != nil {
+			t.Fatalf("Create(%q) error = %v", job.ID, err)
 		}
 	}
 	if err := store.Create(t.Context(), first); !errors.Is(err, ErrAlreadyExists) {
@@ -118,10 +118,6 @@ func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
 	if len(listed) != 1 || listed[0].ID != first.ID {
 		t.Fatalf("List() IDs = %v, want [%s]", jobIDs(listed), first.ID)
 	}
-	count, err := store.Count(t.Context(), &Query{IsAdmin: true, Hostname: "node-1"})
-	if err != nil || count != 2 {
-		t.Fatalf("Count() = (%d, %v), want (2, nil)", count, err)
-	}
 }
 
 func TestStorageStoreDeletesOnlyExpiredTerminalJobs(t *testing.T) {
@@ -130,9 +126,9 @@ func TestStorageStoreDeletesOnlyExpiredTerminalJobs(t *testing.T) {
 	oldTerminal := storedTestJob("old", "user-1", "node-1", StatusCompleted, base)
 	recentTerminal := storedTestJob("recent", "user-1", "node-1", StatusStopped, base.Add(2*time.Hour))
 	active := storedTestJob("active", "user-1", "node-1", StatusPending, base)
-	for _, jobEntity := range []*Job{oldTerminal, recentTerminal, active} {
-		if err := store.Create(t.Context(), jobEntity); err != nil {
-			t.Fatalf("Create(%q) error = %v", jobEntity.ID, err)
+	for _, job := range []*Job{oldTerminal, recentTerminal, active} {
+		if err := store.Create(t.Context(), job); err != nil {
+			t.Fatalf("Create(%q) error = %v", job.ID, err)
 		}
 	}
 
@@ -220,8 +216,8 @@ func TestValidateQueryRejectsUnsafeSort(t *testing.T) {
 
 func jobIDs(jobs []*Job) []string {
 	ids := make([]string, len(jobs))
-	for i, jobEntity := range jobs {
-		ids[i] = jobEntity.ID
+	for i, job := range jobs {
+		ids[i] = job.ID
 	}
 	return ids
 }

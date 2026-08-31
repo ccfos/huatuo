@@ -120,15 +120,15 @@ func (s *storageStore) Get(ctx context.Context, jobID string) (*Job, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get job %q: %w", jobID, err)
 	}
-	jobEntity, err := decodeCurrentJob(jobID, data)
+	decodedJob, err := decodeCurrentJob(jobID, data)
 	if err != nil {
 		return nil, fmt.Errorf("decode job %q: %w", jobID, err)
 	}
-	return cloneJob(jobEntity), nil
+	return cloneJob(decodedJob), nil
 }
 
-func (s *storageStore) Create(ctx context.Context, jobEntity *Job) error {
-	record, err := encodeStorageRecord(jobEntity)
+func (s *storageStore) Create(ctx context.Context, job *Job) error {
+	record, err := encodeStorageRecord(job)
 	if err != nil {
 		return err
 	}
@@ -155,10 +155,10 @@ func (s *storageStore) Create(ctx context.Context, jobEntity *Job) error {
 
 func (s *storageStore) Save(
 	ctx context.Context,
-	jobEntity *Job,
+	job *Job,
 	expectedStatuses ...Status,
 ) error {
-	record, err := encodeStorageRecord(jobEntity)
+	record, err := encodeStorageRecord(job)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,11 @@ func (s *storageStore) List(ctx context.Context, query *Query) ([]*Job, error) {
 	}
 	defer rows.Close()
 
-	jobs := make([]*Job, 0)
+	capacity := 0
+	if query != nil && query.Limit > 0 {
+		capacity = query.Limit
+	}
+	jobs := make([]*Job, 0, capacity)
 	for rows.Next() {
 		var (
 			id   string
@@ -215,33 +219,16 @@ func (s *storageStore) List(ctx context.Context, query *Query) ([]*Job, error) {
 		if err := rows.Scan(&id, &data); err != nil {
 			return nil, fmt.Errorf("scan job list: %w", err)
 		}
-		jobEntity, err := decodeCurrentJob(id, data)
+		decodedJob, err := decodeCurrentJob(id, data)
 		if err != nil {
 			return nil, fmt.Errorf("decode job %q: %w", id, err)
 		}
-		jobs = append(jobs, jobEntity)
+		jobs = append(jobs, decodedJob)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate jobs: %w", err)
 	}
 	return jobs, nil
-}
-
-func (s *storageStore) Count(ctx context.Context, query *Query) (int64, error) {
-	whereSQL, args, err := buildWhereSQL(query)
-	if err != nil {
-		return 0, err
-	}
-	querySQL := `SELECT COUNT(*) FROM jobs`
-	if whereSQL != "" {
-		querySQL += " WHERE " + whereSQL
-	}
-
-	var count int64
-	if err := s.db.QueryRowContext(contextOrBackground(ctx), querySQL, args...).Scan(&count); err != nil {
-		return 0, fmt.Errorf("count jobs: %w", err)
-	}
-	return count, nil
 }
 
 func (s *storageStore) DeleteTerminalBefore(
@@ -283,6 +270,13 @@ func (s *storageStore) DeleteTerminalBefore(
 	return deleted, nil
 }
 
+func (s *storageStore) Ping(ctx context.Context) error {
+	if err := s.db.PingContext(contextOrBackground(ctx)); err != nil {
+		return fmt.Errorf("ping job database: %w", err)
+	}
+	return nil
+}
+
 func (s *storageStore) Close(_ context.Context) error {
 	if s == nil || s.db == nil {
 		return nil
@@ -290,54 +284,54 @@ func (s *storageStore) Close(_ context.Context) error {
 	return s.db.Close()
 }
 
-func encodeStorageRecord(jobEntity *Job) (storageRecord, error) {
-	if err := jobEntity.validate(); err != nil {
+func encodeStorageRecord(job *Job) (storageRecord, error) {
+	if err := job.validate(); err != nil {
 		return storageRecord{}, fmt.Errorf("encode job: %w", err)
 	}
 	payload := storagePayload{
 		SchemaVersion:           currentStorageSchemaVersion,
-		ID:                      jobEntity.ID,
-		Kind:                    jobEntity.Kind,
-		UserID:                  jobEntity.UserID,
-		Hostname:                jobEntity.Hostname,
-		DurationSeconds:         int64(jobEntity.Duration / time.Second),
-		Scope:                   string(jobEntity.Scope),
-		ContainerID:             jobEntity.ContainerID,
-		Spec:                    jobEntity.Spec,
-		Status:                  jobEntity.Status,
-		Failure:                 jobEntity.Failure,
-		CreatedAt:               jobEntity.CreatedAt,
-		UpdatedAt:               jobEntity.UpdatedAt,
-		StartedAt:               jobEntity.StartedAt,
-		EndedAt:                 jobEntity.EndedAt,
-		StartAttemptedAt:        jobEntity.StartAttemptedAt,
-		PendingDeadline:         jobEntity.PendingDeadline,
-		ExecutionDeadline:       jobEntity.ExecutionDeadline,
-		NodeUnavailableSince:    jobEntity.NodeUnavailableSince,
-		NodeUnavailableDeadline: jobEntity.NodeUnavailableDeadline,
-		StopRequestedAt:         jobEntity.StopRequestedAt,
-		StopDeadline:            jobEntity.StopDeadline,
-		StopReason:              jobEntity.StopReason,
+		ID:                      job.ID,
+		Kind:                    job.Kind,
+		UserID:                  job.UserID,
+		Hostname:                job.Hostname,
+		DurationSeconds:         int64(job.Duration / time.Second),
+		Scope:                   string(job.Scope),
+		ContainerID:             job.ContainerID,
+		Spec:                    job.Spec,
+		Status:                  job.Status,
+		Failure:                 job.Failure,
+		CreatedAt:               job.CreatedAt,
+		UpdatedAt:               job.UpdatedAt,
+		StartedAt:               job.StartedAt,
+		EndedAt:                 job.EndedAt,
+		StartAttemptedAt:        job.StartAttemptedAt,
+		PendingDeadline:         job.PendingDeadline,
+		ExecutionDeadline:       job.ExecutionDeadline,
+		NodeUnavailableSince:    job.NodeUnavailableSince,
+		NodeUnavailableDeadline: job.NodeUnavailableDeadline,
+		StopRequestedAt:         job.StopRequestedAt,
+		StopDeadline:            job.StopDeadline,
+		StopReason:              job.StopReason,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return storageRecord{}, fmt.Errorf("encode job %q payload: %w", jobEntity.ID, err)
+		return storageRecord{}, fmt.Errorf("encode job %q payload: %w", job.ID, err)
 	}
 	fields, err := json.Marshal(map[string]any{
-		"id":           jobEntity.ID,
-		"user_id":      jobEntity.UserID,
-		"container_id": jobEntity.ContainerID,
-		"hostname":     jobEntity.Hostname,
-		"status":       string(jobEntity.Status),
-		"kind":         string(jobEntity.Kind),
-		"subtype":      jobEntity.Spec.subtype(jobEntity.Kind),
-		"created_at":   driver.NormalizeValue(jobEntity.CreatedAt),
-		"ended_at":     normalizedOptionalTime(jobEntity.EndedAt),
+		"id":           job.ID,
+		"user_id":      job.UserID,
+		"container_id": job.ContainerID,
+		"hostname":     job.Hostname,
+		"status":       string(job.Status),
+		"kind":         string(job.Kind),
+		"subtype":      job.Spec.subtype(job.Kind),
+		"created_at":   driver.NormalizeValue(job.CreatedAt),
+		"ended_at":     normalizedOptionalTime(job.EndedAt),
 	})
 	if err != nil {
-		return storageRecord{}, fmt.Errorf("encode job %q indexes: %w", jobEntity.ID, err)
+		return storageRecord{}, fmt.Errorf("encode job %q indexes: %w", job.ID, err)
 	}
-	return storageRecord{id: jobEntity.ID, data: data, fields: string(fields)}, nil
+	return storageRecord{id: job.ID, data: data, fields: string(fields)}, nil
 }
 
 func decodeCurrentJob(rowID string, data []byte) (*Job, error) {
@@ -351,7 +345,7 @@ func decodeCurrentJob(rowID string, data []byte) (*Job, error) {
 	if payload.ID != rowID {
 		return nil, fmt.Errorf("payload ID %q does not match row ID", payload.ID)
 	}
-	jobEntity := &Job{
+	decodedJob := &Job{
 		ID:                      payload.ID,
 		Kind:                    payload.Kind,
 		UserID:                  payload.UserID,
@@ -375,10 +369,10 @@ func decodeCurrentJob(rowID string, data []byte) (*Job, error) {
 		StopDeadline:            payload.StopDeadline,
 		StopReason:              payload.StopReason,
 	}
-	if err := jobEntity.validate(); err != nil {
+	if err := decodedJob.validate(); err != nil {
 		return nil, err
 	}
-	return jobEntity, nil
+	return decodedJob, nil
 }
 
 func buildListSQL(query *Query) (string, []any, error) {
@@ -477,8 +471,12 @@ func validateQuery(query *Query) error {
 	if query == nil {
 		return nil
 	}
-	if query.Limit < 0 || query.Limit > 1000 {
-		return fmt.Errorf("%w: limit must be between 0 and 1000", ErrInvalidQuery)
+	if query.Limit < 0 || query.Limit > maxJobPageSize+1 {
+		return fmt.Errorf(
+			"%w: storage limit must be between 0 and %d",
+			ErrInvalidQuery,
+			maxJobPageSize+1,
+		)
 	}
 	if query.Offset < 0 {
 		return fmt.Errorf("%w: offset must not be negative", ErrInvalidQuery)

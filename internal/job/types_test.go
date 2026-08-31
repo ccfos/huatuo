@@ -35,16 +35,16 @@ func TestJobValidateRequiresFailureOnlyForFailedStatus(t *testing.T) {
 		},
 		{
 			name: "failed without reason",
-			mutate: func(jobEntity *Job) {
-				jobEntity.Status = StatusFailed
+			mutate: func(job *Job) {
+				job.Status = StatusFailed
 			},
 			wantErr: "failure must be present",
 		},
 		{
 			name: "outcome unknown with failure",
-			mutate: func(jobEntity *Job) {
-				jobEntity.Status = StatusOutcomeUnknown
-				jobEntity.Failure = &TerminalFailure{
+			mutate: func(job *Job) {
+				job.Status = StatusOutcomeUnknown
+				job.Failure = &TerminalFailure{
 					Reason:  FailureReasonOperationLost,
 					Message: "lost",
 				}
@@ -54,7 +54,7 @@ func TestJobValidateRequiresFailureOnlyForFailedStatus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			jobEntity := &Job{
+			input := &Job{
 				ID:       "job-1",
 				Kind:     KindProfiling,
 				UserID:   "user-1",
@@ -72,9 +72,9 @@ func TestJobValidateRequiresFailureOnlyForFailedStatus(t *testing.T) {
 				EndedAt:   now,
 			}
 			if tt.mutate != nil {
-				tt.mutate(jobEntity)
+				tt.mutate(input)
 			}
-			err := jobEntity.validate()
+			err := input.validate()
 			if tt.wantErr == "" && err != nil {
 				t.Fatalf("validate() error = %v", err)
 			}

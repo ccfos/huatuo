@@ -21,7 +21,7 @@ import (
 
 	"huatuo-bamai/pkg/observation"
 	"huatuo-bamai/pkg/profiling"
-	"huatuo-bamai/pkg/tracing"
+	tracingdomain "huatuo-bamai/pkg/tracing"
 )
 
 // Kind identifies the service that owns a persistent Job.
@@ -77,8 +77,8 @@ type TerminalFailure struct {
 
 // Spec is a small discriminated union of service-owned Job parameters.
 type Spec struct {
-	Profiling *profiling.Spec `json:"profiling,omitempty"`
-	Tracing   *tracing.Spec   `json:"tracing,omitempty"`
+	Profiling *profiling.Spec     `json:"profiling,omitempty"`
+	Tracing   *tracingdomain.Spec `json:"tracing,omitempty"`
 }
 
 // Job is the persistent Apiserver lifecycle for one Node request ID.
@@ -134,10 +134,10 @@ type Query struct {
 	Offset      int
 }
 
-// Page contains one stable Job page and its total matching count.
+// Page contains one Job page and whether another page is available.
 type Page struct {
-	Items []*Job
-	Total int64
+	Items   []*Job
+	HasMore bool
 }
 
 func (s Spec) kind() Kind {
@@ -231,7 +231,7 @@ func (s Spec) validate(kind Kind, scope observation.Scope) error {
 		if err := s.Tracing.Validate(); err != nil {
 			return fmt.Errorf("validate tracing job spec: %w", err)
 		}
-		if !tracing.SupportsScope(s.Tracing.Type, scope) {
+		if !tracingdomain.SupportsScope(s.Tracing.Type, scope) {
 			return fmt.Errorf("tracing job does not support scope %q", scope)
 		}
 	default:

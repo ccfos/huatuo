@@ -125,31 +125,29 @@ func (h *APIHandler) CreateProfilingJob(
 	if request.Body == nil {
 		return nil, response.ErrInvalidRequest.WithMessage("request body is required")
 	}
-	containerID := optionalValue(request.Body.ContainerID)
-	binaryMatchPath := optionalValue(request.Body.BinaryMatchPath)
-	jobEntity, err := h.profiling.Create(ctx, principal, &profilinghandler.CreateInput{
+	createdJob, err := h.profiling.Create(ctx, principal, &profilinghandler.CreateInput{
 		Hostname:        request.Body.Hostname,
 		DurationSeconds: request.Body.DurationSeconds,
 		Scope:           observation.Scope(request.Body.Scope),
-		ContainerID:     containerID,
+		ContainerID:     optionalValue(request.Body.ContainerID),
 		Spec: profilingdomain.Spec{
 			Type:            profilingdomain.Type(request.Body.Type),
 			Language:        profilingdomain.Language(request.Body.Language),
 			Mode:            profilingdomain.Mode(request.Body.Mode),
-			BinaryMatchPath: binaryMatchPath,
+			BinaryMatchPath: optionalValue(request.Body.BinaryMatchPath),
 		},
 	})
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := h.profilingJob(ctx, principal, jobEntity, false)
+	payload, err := mapProfilingJob(createdJob)
 	if err != nil {
 		return nil, err
 	}
 	return serverapi.CreateProfilingJob201JSONResponse{
 		Body: serverapi.ProfilingJobResponse{Data: payload},
 		Headers: serverapi.CreateProfilingJob201ResponseHeaders{
-			Location: "/v1/profiling/" + jobEntity.ID,
+			Location: "/v1/profiling/" + createdJob.ID,
 		},
 	}, nil
 }
@@ -170,13 +168,13 @@ func (h *APIHandler) ListProfilingJobs(
 	}
 	result := serverapi.ProfilingJobListResponse{}
 	result.Data.Items = make([]serverapi.ProfilingJob, len(page.Items))
-	for i, jobEntity := range page.Items {
-		result.Data.Items[i], err = h.profilingJob(ctx, principal, jobEntity, false)
+	for i, item := range page.Items {
+		result.Data.Items[i], err = mapProfilingJob(item)
 		if err != nil {
 			return nil, err
 		}
 	}
-	result.Data.Total = int(page.Total)
+	result.Data.HasMore = page.HasMore
 	result.Data.Limit = limit
 	result.Data.Offset = offset
 	return serverapi.ListProfilingJobs200JSONResponse(result), nil
@@ -299,13 +297,17 @@ func (h *APIHandler) GetProfilingJob(
 	if err != nil {
 		return nil, err
 	}
-	jobEntity, err := h.profiling.Get(ctx, principal, request.RequestID)
+	currentJob, err := h.profiling.Get(ctx, principal, request.RequestID)
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := h.profilingJob(ctx, principal, jobEntity, true)
+	payload, err := mapProfilingJob(currentJob)
 	if err != nil {
 		return nil, err
+	}
+	payload.ResultURL, err = h.profiling.ResultURL(ctx, currentJob)
+	if err != nil {
+		return nil, serverAPIError(err)
 	}
 	return serverapi.GetProfilingJob200JSONResponse(
 		serverapi.ProfilingJobResponse{Data: payload},
@@ -321,11 +323,11 @@ func (h *APIHandler) StopProfilingJob(
 	if err != nil {
 		return nil, err
 	}
-	jobEntity, err := h.profiling.Stop(ctx, principal, request.RequestID)
+	updatedJob, err := h.profiling.Stop(ctx, principal, request.RequestID)
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := h.profilingJob(ctx, principal, jobEntity, false)
+	payload, err := mapProfilingJob(updatedJob)
 	if err != nil {
 		return nil, err
 	}
@@ -383,7 +385,7 @@ func (h *APIHandler) CreateTracingJob(
 	if request.Body == nil {
 		return nil, response.ErrInvalidRequest.WithMessage("request body is required")
 	}
-	jobEntity, err := h.tracing.Create(ctx, principal, tracehandler.CreateInput{
+	createdJob, err := h.tracing.Create(ctx, principal, tracehandler.CreateInput{
 		Hostname:        request.Body.Hostname,
 		DurationSeconds: request.Body.DurationSeconds,
 		Scope:           observation.Scope(request.Body.Scope),
@@ -395,14 +397,14 @@ func (h *APIHandler) CreateTracingJob(
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := tracingJob(jobEntity)
+	payload, err := mapTracingJob(createdJob)
 	if err != nil {
 		return nil, err
 	}
 	return serverapi.CreateTracingJob201JSONResponse{
 		Body: serverapi.TracingJobResponse{Data: payload},
 		Headers: serverapi.CreateTracingJob201ResponseHeaders{
-			Location: "/v1/tracing/" + jobEntity.ID,
+			Location: "/v1/tracing/" + createdJob.ID,
 		},
 	}, nil
 }
@@ -423,13 +425,13 @@ func (h *APIHandler) ListTracingJobs(
 	}
 	result := serverapi.TracingJobListResponse{}
 	result.Data.Items = make([]serverapi.TracingJob, len(page.Items))
-	for i, jobEntity := range page.Items {
-		result.Data.Items[i], err = tracingJob(jobEntity)
+	for i, item := range page.Items {
+		result.Data.Items[i], err = mapTracingJob(item)
 		if err != nil {
 			return nil, err
 		}
 	}
-	result.Data.Total = int(page.Total)
+	result.Data.HasMore = page.HasMore
 	result.Data.Limit = limit
 	result.Data.Offset = offset
 	return serverapi.ListTracingJobs200JSONResponse(result), nil
@@ -464,11 +466,11 @@ func (h *APIHandler) GetTracingJob(
 	if err != nil {
 		return nil, err
 	}
-	jobEntity, err := h.tracing.Get(ctx, principal, request.RequestID)
+	currentJob, err := h.tracing.Get(ctx, principal, request.RequestID)
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := tracingJob(jobEntity)
+	payload, err := mapTracingJob(currentJob)
 	if err != nil {
 		return nil, err
 	}
@@ -486,11 +488,11 @@ func (h *APIHandler) StopTracingJob(
 	if err != nil {
 		return nil, err
 	}
-	jobEntity, err := h.tracing.Stop(ctx, principal, request.RequestID)
+	updatedJob, err := h.tracing.Stop(ctx, principal, request.RequestID)
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := tracingJob(jobEntity)
+	payload, err := mapTracingJob(updatedJob)
 	if err != nil {
 		return nil, err
 	}
@@ -499,24 +501,11 @@ func (h *APIHandler) StopTracingJob(
 	), nil
 }
 
-func (h *APIHandler) profilingJob(
-	ctx context.Context,
-	principal auth.Principal,
-	jobEntity *job.Job,
-	includeResultURL bool,
-) (serverapi.ProfilingJob, error) {
-	if jobEntity == nil || jobEntity.Kind != job.KindProfiling || jobEntity.Spec.Profiling == nil {
+func mapProfilingJob(source *job.Job) (serverapi.ProfilingJob, error) {
+	if source == nil || source.Kind != job.KindProfiling || source.Spec.Profiling == nil {
 		return serverapi.ProfilingJob{}, errors.New("map Profiling Job: invalid domain Job")
 	}
-	common := commonJob(jobEntity)
-	var resultURL *string
-	if includeResultURL {
-		var err error
-		resultURL, err = h.profiling.ResultURL(ctx, jobEntity)
-		if err != nil {
-			return serverapi.ProfilingJob{}, serverAPIError(err)
-		}
-	}
+	common := mapCommonJob(source)
 	return serverapi.ProfilingJob{
 		RequestID:       common.RequestID,
 		Hostname:        common.Hostname,
@@ -529,19 +518,18 @@ func (h *APIHandler) profilingJob(
 		UpdatedAt:       common.UpdatedAt,
 		StartedAt:       common.StartedAt,
 		EndedAt:         common.EndedAt,
-		ResultURL:       resultURL,
-		Type:            serverapi.ProfilingType(jobEntity.Spec.Profiling.Type),
-		Language:        serverapi.ProfilingLanguage(jobEntity.Spec.Profiling.Language),
-		Mode:            serverapi.ProfilingMode(jobEntity.Spec.Profiling.Mode),
-		BinaryMatchPath: optionalString(jobEntity.Spec.Profiling.BinaryMatchPath),
+		Type:            serverapi.ProfilingType(source.Spec.Profiling.Type),
+		Language:        serverapi.ProfilingLanguage(source.Spec.Profiling.Language),
+		Mode:            serverapi.ProfilingMode(source.Spec.Profiling.Mode),
+		BinaryMatchPath: optionalString(source.Spec.Profiling.BinaryMatchPath),
 	}, nil
 }
 
-func tracingJob(jobEntity *job.Job) (serverapi.TracingJob, error) {
-	if jobEntity == nil || jobEntity.Kind != job.KindTracing || jobEntity.Spec.Tracing == nil {
+func mapTracingJob(source *job.Job) (serverapi.TracingJob, error) {
+	if source == nil || source.Kind != job.KindTracing || source.Spec.Tracing == nil {
 		return serverapi.TracingJob{}, errors.New("map Tracing Job: invalid domain Job")
 	}
-	common := commonJob(jobEntity)
+	common := mapCommonJob(source)
 	return serverapi.TracingJob{
 		RequestID:       common.RequestID,
 		Hostname:        common.Hostname,
@@ -554,27 +542,27 @@ func tracingJob(jobEntity *job.Job) (serverapi.TracingJob, error) {
 		UpdatedAt:       common.UpdatedAt,
 		StartedAt:       common.StartedAt,
 		EndedAt:         common.EndedAt,
-		Type:            serverapi.TracingType(jobEntity.Spec.Tracing.Type),
+		Type:            serverapi.TracingType(source.Spec.Tracing.Type),
 	}, nil
 }
 
-func commonJob(jobEntity *job.Job) serverapi.Job {
+func mapCommonJob(source *job.Job) serverapi.Job {
 	result := serverapi.Job{
-		RequestID:       jobEntity.ID,
-		Hostname:        jobEntity.Hostname,
-		DurationSeconds: int64(jobEntity.Duration.Seconds()),
-		Scope:           apiv1.ObservationScope(jobEntity.Scope),
-		ContainerID:     optionalString(jobEntity.ContainerID),
-		Status:          serverapi.JobStatus(jobEntity.Status),
-		CreatedAt:       jobEntity.CreatedAt,
-		UpdatedAt:       jobEntity.UpdatedAt,
-		StartedAt:       optionalTime(jobEntity.StartedAt),
-		EndedAt:         optionalTime(jobEntity.EndedAt),
+		RequestID:       source.ID,
+		Hostname:        source.Hostname,
+		DurationSeconds: int64(source.Duration.Seconds()),
+		Scope:           apiv1.ObservationScope(source.Scope),
+		ContainerID:     optionalString(source.ContainerID),
+		Status:          serverapi.JobStatus(source.Status),
+		CreatedAt:       source.CreatedAt,
+		UpdatedAt:       source.UpdatedAt,
+		StartedAt:       optionalTime(source.StartedAt),
+		EndedAt:         optionalTime(source.EndedAt),
 	}
-	if jobEntity.Failure != nil {
+	if source.Failure != nil {
 		result.Failure = &serverapi.JobFailure{
-			Code:    apiv1.ErrorCode(jobEntity.Failure.Reason),
-			Message: jobEntity.Failure.Message,
+			Code:    apiv1.ErrorCode(source.Failure.Reason),
+			Message: source.Failure.Message,
 		}
 	}
 	return result

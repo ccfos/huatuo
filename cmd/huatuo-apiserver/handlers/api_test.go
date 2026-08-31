@@ -16,6 +16,7 @@ package handlers
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,9 +44,16 @@ func TestGetReadiness(t *testing.T) {
 	}
 }
 
-func TestCommonJobMapsFailureReasonWithoutAddingJobState(t *testing.T) {
+func TestStartRejectsMissingAuthUsers(t *testing.T) {
+	_, err := Start(&ServerOptions{JobManager: &job.Manager{}})
+	if err == nil || !strings.Contains(err.Error(), "at least one auth user is required") {
+		t.Fatalf("Start() error = %v, want missing auth user error", err)
+	}
+}
+
+func TestMapCommonJobMapsFailureReasonWithoutAddingJobState(t *testing.T) {
 	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	jobEntity := &job.Job{
+	input := &job.Job{
 		ID:        "job-1",
 		Hostname:  "node-1",
 		Duration:  time.Minute,
@@ -60,20 +68,20 @@ func TestCommonJobMapsFailureReasonWithoutAddingJobState(t *testing.T) {
 		},
 	}
 
-	got := commonJob(jobEntity)
+	got := mapCommonJob(input)
 	if got.Status != serverapi.JobStatusFailed || got.Failure == nil {
-		t.Fatalf("commonJob() = %+v", got)
+		t.Fatalf("mapCommonJob() = %+v", got)
 	}
 	if got.Failure.Code != apiv1.ErrorCode(job.FailureReasonOperationLost) {
 		t.Fatalf("failure code = %q", got.Failure.Code)
 	}
-	if got.EndedAt == nil || !got.EndedAt.Equal(jobEntity.EndedAt) {
+	if got.EndedAt == nil || !got.EndedAt.Equal(input.EndedAt) {
 		t.Fatalf("ended_at = %v", got.EndedAt)
 	}
 }
 
-func TestTracingJobUsesIndependentDomainState(t *testing.T) {
-	jobEntity := &job.Job{
+func TestMapTracingJobUsesIndependentDomainState(t *testing.T) {
+	input := &job.Job{
 		ID:       "job-1",
 		Kind:     job.KindTracing,
 		Hostname: "node-1",
@@ -84,12 +92,12 @@ func TestTracingJobUsesIndependentDomainState(t *testing.T) {
 			Type: tracingdomain.TypeNetworkingDrop,
 		}},
 	}
-	got, err := tracingJob(jobEntity)
+	got, err := mapTracingJob(input)
 	if err != nil {
-		t.Fatalf("tracingJob() error = %v", err)
+		t.Fatalf("mapTracingJob() error = %v", err)
 	}
 	if got.Status != serverapi.JobStatusOutcomeUnknown || got.Failure != nil {
-		t.Fatalf("tracingJob() = %+v", got)
+		t.Fatalf("mapTracingJob() = %+v", got)
 	}
 }
 

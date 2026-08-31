@@ -880,18 +880,18 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [items, total, limit, offset]
+          required: [items, limit, offset, has_more]
           properties:
             items:
               type: array
               items:
                 $ref: '#/components/schemas/ProfilingJob'
-            total:
-              type: integer
             limit:
               type: integer
             offset:
               type: integer
+            has_more:
+              type: boolean
     ProfilingCapabilitiesResponse:
       type: object
       additionalProperties: false
@@ -914,18 +914,18 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [items, total, limit, offset]
+          required: [items, limit, offset, has_more]
           properties:
             items:
               type: array
               items:
                 $ref: '#/components/schemas/TracingJob'
-            total:
-              type: integer
             limit:
               type: integer
             offset:
               type: integer
+            has_more:
+              type: boolean
     TracingCapabilitiesResponse:
       type: object
       additionalProperties: false

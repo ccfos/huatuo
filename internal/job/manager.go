@@ -36,6 +36,7 @@ const (
 	defaultJobRetentionPeriod         = 30 * 24 * time.Hour
 	jobCleanupInterval                = time.Hour
 	jobCleanupBatchSize               = 1000
+	maxJobPageSize                    = 1000
 )
 
 // Policy limits active Jobs for one service Kind.
@@ -225,7 +226,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		return nil, errors.New("create job: request is required")
 	}
 	now := m.now()
-	jobEntity := &Job{
+	newJob := &Job{
 		ID:          "id-" + uuid.NewString(),
 		Kind:        request.Spec.kind(),
 		UserID:      request.UserID,
@@ -238,41 +239,41 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	if err := jobEntity.validate(); err != nil {
+	if err := newJob.validate(); err != nil {
 		return nil, fmt.Errorf("create job: %w", err)
 	}
 	supervisorCtx, cancel := context.WithCancel(context.Background())
-	runtime := newManagedJob(jobEntity, false, cancel)
+	runtime := newManagedJob(newJob, false, cancel)
 
 	m.mu.Lock()
 	if !m.accepting {
 		m.mu.Unlock()
 		return nil, ErrShuttingDown
 	}
-	policy := m.config.Policies[jobEntity.Kind]
-	if m.activeTotal[jobEntity.Kind] >= policy.MaxTotalJobs ||
-		m.activeHosts[newActiveHostKey(jobEntity.Hostname, jobEntity.Kind)] >=
+	policy := m.config.Policies[newJob.Kind]
+	if m.activeTotal[newJob.Kind] >= policy.MaxTotalJobs ||
+		m.activeHosts[newActiveHostKey(newJob.Hostname, newJob.Kind)] >=
 			policy.MaxJobsPerHost {
 		m.quotaRejections.Add(1)
 		m.mu.Unlock()
-		return nil, fmt.Errorf("%w: %s Job capacity is exhausted", ErrQuotaExceeded, jobEntity.Kind)
+		return nil, fmt.Errorf("%w: %s Job capacity is exhausted", ErrQuotaExceeded, newJob.Kind)
 	}
 	m.registerLocked(runtime)
 	// Register before persistence so Shutdown cannot close the Store under Create.
 	m.wg.Add(1)
 	m.mu.Unlock()
 
-	if err := m.store.Create(ctx, jobEntity); err != nil {
+	if err := m.store.Create(ctx, newJob); err != nil {
 		cancel()
 		m.persistenceFailures.Add(1)
 		m.mu.Lock()
 		m.unregisterLocked(runtime)
 		m.mu.Unlock()
 		m.wg.Done()
-		return nil, fmt.Errorf("%w: create job %q: %w", ErrPersistence, jobEntity.ID, err)
+		return nil, fmt.Errorf("%w: create job %q: %w", ErrPersistence, newJob.ID, err)
 	}
 	go m.runSupervisor(supervisorCtx, runtime)
-	return cloneJob(jobEntity), nil
+	return cloneJob(newJob), nil
 }
 
 // Get returns one durable Job snapshot.
@@ -280,28 +281,37 @@ func (m *Manager) Get(ctx context.Context, jobID string) (*Job, error) {
 	return m.store.Get(ctx, jobID)
 }
 
-// ListPage returns one durable page and the total matching Job count.
+// ListPage returns one durable page and whether another page is available.
 func (m *Manager) ListPage(ctx context.Context, query *Query) (*Page, error) {
-	items, err := m.store.List(ctx, query)
+	if query == nil || query.Limit <= 0 || query.Limit > maxJobPageSize {
+		return nil, fmt.Errorf(
+			"%w: page limit must be between 1 and %d",
+			ErrInvalidQuery,
+			maxJobPageSize,
+		)
+	}
+	pageQuery := *query
+	pageQuery.Limit++
+	items, err := m.store.List(ctx, &pageQuery)
 	if err != nil {
 		return nil, err
 	}
-	total, err := m.store.Count(ctx, query)
-	if err != nil {
-		return nil, err
+	hasMore := len(items) > query.Limit
+	if hasMore {
+		items = items[:query.Limit]
 	}
-	return &Page{Items: items, Total: total}, nil
+	return &Page{Items: items, HasMore: hasMore}, nil
 }
 
 // Stop persists a user stop intent before allowing any Node Stop request.
 func (m *Manager) Stop(ctx context.Context, jobID string) (*Job, error) {
 	runtime := m.activeRuntime(jobID)
 	if runtime == nil {
-		jobEntity, err := m.store.Get(ctx, jobID)
+		storedJob, err := m.store.Get(ctx, jobID)
 		if err != nil {
 			return nil, err
 		}
-		if isTerminal(jobEntity.Status) {
+		if isTerminal(storedJob.Status) {
 			return nil, ErrJobTerminal
 		}
 		return nil, fmt.Errorf("%w: active Job %q is not supervised", ErrPersistence, jobID)
@@ -337,7 +347,7 @@ func (m *Manager) Stop(ctx context.Context, jobID string) (*Job, error) {
 
 // Ready verifies that the durable Job Store can answer queries.
 func (m *Manager) Ready(ctx context.Context) error {
-	if _, err := m.store.Count(ctx, &Query{}); err != nil {
+	if err := m.store.Ping(ctx); err != nil {
 		return fmt.Errorf("Job Store readiness: %w", err)
 	}
 	return nil
@@ -408,12 +418,12 @@ func (m *Manager) recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, jobEntity := range jobs {
-		if _, ok := m.config.Policies[jobEntity.Kind]; !ok {
-			return fmt.Errorf("Job %q has no policy for kind %q", jobEntity.ID, jobEntity.Kind)
+	for _, storedJob := range jobs {
+		if _, ok := m.config.Policies[storedJob.Kind]; !ok {
+			return fmt.Errorf("Job %q has no policy for kind %q", storedJob.ID, storedJob.Kind)
 		}
 		supervisorCtx, cancel := context.WithCancel(context.Background())
-		runtime := newManagedJob(jobEntity, true, cancel)
+		runtime := newManagedJob(storedJob, true, cancel)
 		m.mu.Lock()
 		m.registerLocked(runtime)
 		m.wg.Add(1)
@@ -511,15 +521,15 @@ func (m *Manager) runSupervisor(ctx context.Context, runtime *managedJob) {
 }
 
 func newManagedJob(
-	jobEntity *Job,
+	job *Job,
 	recovered bool,
 	cancel context.CancelFunc,
 ) *managedJob {
 	return &managedJob{
-		id:        jobEntity.ID,
-		kind:      jobEntity.Kind,
-		hostname:  jobEntity.Hostname,
-		job:       cloneJob(jobEntity),
+		id:        job.ID,
+		kind:      job.Kind,
+		hostname:  job.Hostname,
+		job:       cloneJob(job),
 		wake:      make(chan struct{}, 1),
 		recovered: recovered,
 		cancel:    cancel,

@@ -258,10 +258,10 @@ type ProfilingJob struct {
 // ProfilingJobListResponse defines model for ProfilingJobListResponse.
 type ProfilingJobListResponse struct {
 	Data struct {
-		Items  []ProfilingJob `json:"items"`
-		Limit  int            `json:"limit"`
-		Offset int            `json:"offset"`
-		Total  int            `json:"total"`
+		HasMore bool           `json:"has_more"`
+		Items   []ProfilingJob `json:"items"`
+		Limit   int            `json:"limit"`
+		Offset  int            `json:"offset"`
 	} `json:"data"`
 }
 
@@ -347,10 +347,10 @@ type TracingJob struct {
 // TracingJobListResponse defines model for TracingJobListResponse.
 type TracingJobListResponse struct {
 	Data struct {
-		Items  []TracingJob `json:"items"`
-		Limit  int          `json:"limit"`
-		Offset int          `json:"offset"`
-		Total  int          `json:"total"`
+		HasMore bool         `json:"has_more"`
+		Items   []TracingJob `json:"items"`
+		Limit   int          `json:"limit"`
+		Offset  int          `json:"offset"`
 	} `json:"data"`
 }
 

@@ -50,8 +50,8 @@ func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool,
 		return m.reconcileAndStop(ctx, runtime, operation)
 	}
 
-	jobEntity := runtimeSnapshot(runtime)
-	operation, err := m.getOperation(ctx, jobEntity)
+	snapshot := runtimeSnapshot(runtime)
+	operation, err := m.getOperation(ctx, snapshot)
 	if err != nil {
 		return m.handleNodeError(ctx, runtime, err, false)
 	}
@@ -104,8 +104,8 @@ func (m *Manager) reconcileAndStop(
 		return terminal, err
 	}
 
-	jobEntity := runtimeSnapshot(runtime)
-	stoppedOperation, err := m.stopOperation(ctx, jobEntity)
+	snapshot := runtimeSnapshot(runtime)
+	stoppedOperation, err := m.stopOperation(ctx, snapshot)
 	if err != nil {
 		return m.handleNodeError(ctx, runtime, err, false)
 	}
@@ -291,21 +291,21 @@ func (m *Manager) handleNodeError(
 func (m *Manager) nextWake(runtime *managedJob) time.Duration {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
-	jobEntity := runtime.job
-	if isTerminal(jobEntity.Status) {
+	current := runtime.job
+	if isTerminal(current.Status) {
 		return 0
 	}
 	now := m.now()
 	next := now.Add(m.config.StatusPollInterval)
-	deadlines := []time.Time{jobEntity.NodeUnavailableDeadline}
-	if jobEntity.NodeUnavailableSince.IsZero() {
-		switch jobEntity.Status {
+	deadlines := []time.Time{current.NodeUnavailableDeadline}
+	if current.NodeUnavailableSince.IsZero() {
+		switch current.Status {
 		case StatusPending:
-			deadlines = append(deadlines, jobEntity.PendingDeadline)
+			deadlines = append(deadlines, current.PendingDeadline)
 		case StatusRunning:
-			deadlines = append(deadlines, jobEntity.ExecutionDeadline)
+			deadlines = append(deadlines, current.ExecutionDeadline)
 		case StatusStopping:
-			deadlines = append(deadlines, jobEntity.StopDeadline)
+			deadlines = append(deadlines, current.StopDeadline)
 		}
 	}
 	for _, deadline := range deadlines {
@@ -318,58 +318,58 @@ func (m *Manager) nextWake(runtime *managedJob) time.Duration {
 
 func (m *Manager) startOperation(
 	ctx context.Context,
-	jobEntity *Job,
+	job *Job,
 ) (*nodeapi.Operation, error) {
-	switch jobEntity.Kind {
+	switch job.Kind {
 	case KindProfiling:
-		return m.nodeClient.StartProfiling(ctx, jobEntity.Hostname, profilingStartRequest(jobEntity))
+		return m.nodeClient.StartProfiling(ctx, job.Hostname, profilingStartRequest(job))
 	case KindTracing:
-		return m.nodeClient.StartTracing(ctx, jobEntity.Hostname, tracingStartRequest(jobEntity))
+		return m.nodeClient.StartTracing(ctx, job.Hostname, tracingStartRequest(job))
 	default:
-		return nil, fmt.Errorf("%w: unsupported Job kind %q", ErrUnsupportedKind, jobEntity.Kind)
+		return nil, fmt.Errorf("%w: unsupported Job kind %q", ErrUnsupportedKind, job.Kind)
 	}
 }
 
 func (m *Manager) getOperation(
 	ctx context.Context,
-	jobEntity *Job,
+	job *Job,
 ) (*nodeapi.Operation, error) {
-	switch jobEntity.Kind {
+	switch job.Kind {
 	case KindProfiling:
-		return m.nodeClient.GetProfiling(ctx, jobEntity.Hostname, jobEntity.ID)
+		return m.nodeClient.GetProfiling(ctx, job.Hostname, job.ID)
 	case KindTracing:
-		return m.nodeClient.GetTracing(ctx, jobEntity.Hostname, jobEntity.ID)
+		return m.nodeClient.GetTracing(ctx, job.Hostname, job.ID)
 	default:
-		return nil, fmt.Errorf("%w: unsupported Job kind %q", ErrUnsupportedKind, jobEntity.Kind)
+		return nil, fmt.Errorf("%w: unsupported Job kind %q", ErrUnsupportedKind, job.Kind)
 	}
 }
 
 func (m *Manager) stopOperation(
 	ctx context.Context,
-	jobEntity *Job,
+	job *Job,
 ) (*nodeapi.Operation, error) {
-	switch jobEntity.Kind {
+	switch job.Kind {
 	case KindProfiling:
-		return m.nodeClient.StopProfiling(ctx, jobEntity.Hostname, jobEntity.ID)
+		return m.nodeClient.StopProfiling(ctx, job.Hostname, job.ID)
 	case KindTracing:
-		return m.nodeClient.StopTracing(ctx, jobEntity.Hostname, jobEntity.ID)
+		return m.nodeClient.StopTracing(ctx, job.Hostname, job.ID)
 	default:
-		return nil, fmt.Errorf("%w: unsupported Job kind %q", ErrUnsupportedKind, jobEntity.Kind)
+		return nil, fmt.Errorf("%w: unsupported Job kind %q", ErrUnsupportedKind, job.Kind)
 	}
 }
 
-func profilingStartRequest(jobEntity *Job) *nodeapi.StartProfilingRequest {
-	spec := jobEntity.Spec.Profiling
+func profilingStartRequest(job *Job) *nodeapi.StartProfilingRequest {
+	spec := job.Spec.Profiling
 	request := &nodeapi.StartProfilingRequest{
-		RequestID:       jobEntity.ID,
-		DurationSeconds: int64(jobEntity.Duration / time.Second),
-		Scope:           apiv1.ObservationScope(jobEntity.Scope),
+		RequestID:       job.ID,
+		DurationSeconds: int64(job.Duration / time.Second),
+		Scope:           apiv1.ObservationScope(job.Scope),
 		Type:            nodeapi.ProfilingType(spec.Type),
 		Language:        nodeapi.ProfilingLanguage(spec.Language),
 		Mode:            nodeapi.ProfilingMode(spec.Mode),
 	}
-	if jobEntity.ContainerID != "" {
-		request.ContainerID = &jobEntity.ContainerID
+	if job.ContainerID != "" {
+		request.ContainerID = &job.ContainerID
 	}
 	if spec.BinaryMatchPath != "" {
 		request.BinaryMatchPath = &spec.BinaryMatchPath
@@ -377,15 +377,15 @@ func profilingStartRequest(jobEntity *Job) *nodeapi.StartProfilingRequest {
 	return request
 }
 
-func tracingStartRequest(jobEntity *Job) *nodeapi.StartTracingRequest {
+func tracingStartRequest(job *Job) *nodeapi.StartTracingRequest {
 	request := &nodeapi.StartTracingRequest{
-		RequestID:       jobEntity.ID,
-		DurationSeconds: int64(jobEntity.Duration / time.Second),
-		Scope:           apiv1.ObservationScope(jobEntity.Scope),
-		Type:            nodeapi.TracingType(jobEntity.Spec.Tracing.Type),
+		RequestID:       job.ID,
+		DurationSeconds: int64(job.Duration / time.Second),
+		Scope:           apiv1.ObservationScope(job.Scope),
+		Type:            nodeapi.TracingType(job.Spec.Tracing.Type),
 	}
-	if jobEntity.ContainerID != "" {
-		request.ContainerID = &jobEntity.ContainerID
+	if job.ContainerID != "" {
+		request.ContainerID = &job.ContainerID
 	}
 	return request
 }
@@ -484,34 +484,34 @@ func stoppedJobOutcome(reason StopReason) (Status, *TerminalFailure) {
 	}
 }
 
-func setStopping(jobEntity *Job, reason StopReason, now time.Time, gracePeriod time.Duration) {
-	jobEntity.Status = StatusStopping
-	jobEntity.StopReason = reason
-	jobEntity.StopRequestedAt = now
-	jobEntity.StopDeadline = now.Add(gracePeriod)
-	jobEntity.UpdatedAt = now
+func setStopping(job *Job, reason StopReason, now time.Time, gracePeriod time.Duration) {
+	job.Status = StatusStopping
+	job.StopReason = reason
+	job.StopRequestedAt = now
+	job.StopDeadline = now.Add(gracePeriod)
+	job.UpdatedAt = now
 }
 
 func setTerminal(
-	jobEntity *Job,
+	job *Job,
 	status Status,
 	failure *TerminalFailure,
 	now time.Time,
 ) {
-	jobEntity.Status = status
-	jobEntity.Failure = failure
-	jobEntity.UpdatedAt = now
-	if jobEntity.EndedAt.IsZero() {
-		jobEntity.EndedAt = now
+	job.Status = status
+	job.Failure = failure
+	job.UpdatedAt = now
+	if job.EndedAt.IsZero() {
+		job.EndedAt = now
 	}
 }
 
-func clearNodeUnavailable(jobEntity *Job) bool {
-	if jobEntity.NodeUnavailableSince.IsZero() && jobEntity.NodeUnavailableDeadline.IsZero() {
+func clearNodeUnavailable(job *Job) bool {
+	if job.NodeUnavailableSince.IsZero() && job.NodeUnavailableDeadline.IsZero() {
 		return false
 	}
-	jobEntity.NodeUnavailableSince = time.Time{}
-	jobEntity.NodeUnavailableDeadline = time.Time{}
+	job.NodeUnavailableSince = time.Time{}
+	job.NodeUnavailableDeadline = time.Time{}
 	return true
 }
 

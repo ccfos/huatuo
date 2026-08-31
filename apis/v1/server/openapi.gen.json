@@ -439,6 +439,9 @@
           "data": {
             "additionalProperties": false,
             "properties": {
+              "has_more": {
+                "type": "boolean"
+              },
               "items": {
                 "items": {
                   "$ref": "#/components/schemas/ProfilingJob"
@@ -450,16 +453,13 @@
               },
               "offset": {
                 "type": "integer"
-              },
-              "total": {
-                "type": "integer"
               }
             },
             "required": [
               "items",
-              "total",
               "limit",
-              "offset"
+              "offset",
+              "has_more"
             ],
             "type": "object"
           }
@@ -688,6 +688,9 @@
           "data": {
             "additionalProperties": false,
             "properties": {
+              "has_more": {
+                "type": "boolean"
+              },
               "items": {
                 "items": {
                   "$ref": "#/components/schemas/TracingJob"
@@ -699,16 +702,13 @@
               },
               "offset": {
                 "type": "integer"
-              },
-              "total": {
-                "type": "integer"
               }
             },
             "required": [
               "items",
-              "total",
               "limit",
-              "offset"
+              "offset",
+              "has_more"
             ],
             "type": "object"
           }

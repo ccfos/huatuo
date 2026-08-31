@@ -27,8 +27,8 @@ type Store interface {
 	Create(ctx context.Context, job *Job) error
 	Save(ctx context.Context, job *Job, expectedStatuses ...Status) error
 	List(ctx context.Context, query *Query) ([]*Job, error)
-	Count(ctx context.Context, query *Query) (int64, error)
 	DeleteTerminalBefore(ctx context.Context, endedBefore time.Time, limit int) (int64, error)
+	Ping(ctx context.Context) error
 	Close(ctx context.Context) error
 }
 

@@ -25,7 +25,7 @@ import (
 
 	"huatuo-bamai/pkg/observation"
 	"huatuo-bamai/pkg/profiling"
-	"huatuo-bamai/pkg/tracing"
+	tracingdomain "huatuo-bamai/pkg/tracing"
 )
 
 type legacyStoragePayload struct {
@@ -117,11 +117,11 @@ func (s *storageStore) migrate(ctx context.Context) (err error) {
 		}
 		switch version {
 		case 0:
-			jobEntity, migrationErr := migrateLegacyJob(row.id, row.data)
+			migratedJob, migrationErr := migrateLegacyJob(row.id, row.data)
 			if migrationErr != nil {
 				return fmt.Errorf("migrate job %q: %w", row.id, migrationErr)
 			}
-			record, encodeErr := encodeStorageRecord(jobEntity)
+			record, encodeErr := encodeStorageRecord(migratedJob)
 			if encodeErr != nil {
 				return fmt.Errorf("migrate job %q: %w", row.id, encodeErr)
 			}
@@ -194,7 +194,7 @@ func migrateLegacyJob(rowID string, data []byte) (*Job, error) {
 		legacy.UpdatedAt = legacy.CreatedAt
 	}
 
-	jobEntity := &Job{
+	migratedJob := &Job{
 		ID:          rowID,
 		UserID:      userID,
 		Hostname:    legacy.Hostname,
@@ -204,29 +204,29 @@ func migrateLegacyJob(rowID string, data []byte) (*Job, error) {
 		UpdatedAt:   legacy.UpdatedAt,
 		EndedAt:     legacy.FinishedAt,
 	}
-	if jobEntity.ContainerID == "" {
-		jobEntity.Scope = observation.ScopeHost
+	if migratedJob.ContainerID == "" {
+		migratedJob.Scope = observation.ScopeHost
 	} else {
-		jobEntity.Scope = observation.ScopeContainer
+		migratedJob.Scope = observation.ScopeContainer
 	}
 
 	var err error
 	switch legacy.Type {
 	case "profiling_cpu":
-		jobEntity.Kind = KindProfiling
-		jobEntity.Duration, jobEntity.Spec, err = migrateLegacyProfiling(
+		migratedJob.Kind = KindProfiling
+		migratedJob.Duration, migratedJob.Spec, err = migrateLegacyProfiling(
 			profiling.TypeCPU,
 			&legacy,
 		)
 	case "profiling_memory":
-		jobEntity.Kind = KindProfiling
-		jobEntity.Duration, jobEntity.Spec, err = migrateLegacyProfiling(
+		migratedJob.Kind = KindProfiling
+		migratedJob.Duration, migratedJob.Spec, err = migrateLegacyProfiling(
 			profiling.TypeMemory,
 			&legacy,
 		)
 	case "tracing":
-		jobEntity.Kind = KindTracing
-		jobEntity.Duration, jobEntity.Spec, err = migrateLegacyTracing(&legacy)
+		migratedJob.Kind = KindTracing
+		migratedJob.Duration, migratedJob.Spec, err = migrateLegacyTracing(&legacy)
 	default:
 		err = fmt.Errorf("field type: unsupported value %q", legacy.Type)
 	}
@@ -234,13 +234,13 @@ func migrateLegacyJob(rowID string, data []byte) (*Job, error) {
 		return nil, err
 	}
 
-	if err := migrateLegacyStatus(jobEntity, &legacy); err != nil {
+	if err := migrateLegacyStatus(migratedJob, &legacy); err != nil {
 		return nil, err
 	}
-	if err := jobEntity.validate(); err != nil {
+	if err := migratedJob.validate(); err != nil {
 		return nil, fmt.Errorf("validate converted record: %w", err)
 	}
-	return jobEntity, nil
+	return migratedJob, nil
 }
 
 func migrateLegacyProfiling(
@@ -328,60 +328,60 @@ func migrateLegacyTracing(legacy *legacyStoragePayload) (time.Duration, Spec, er
 		return 0, Spec{}, errors.New("field duration: tracing duration is required")
 	}
 	return time.Duration(durationSeconds) * time.Second,
-		Spec{Tracing: &tracing.Spec{Type: tracingType}}, nil
+		Spec{Tracing: &tracingdomain.Spec{Type: tracingType}}, nil
 }
 
-func migrateLegacyStatus(jobEntity *Job, legacy *legacyStoragePayload) error {
+func migrateLegacyStatus(job *Job, legacy *legacyStoragePayload) error {
 	message := strings.TrimSpace(legacy.ErrorMessage)
 	switch legacy.Status {
 	case "completed":
-		jobEntity.Status = StatusCompleted
+		job.Status = StatusCompleted
 	case "failed":
 		if message == "" {
 			message = "legacy job execution failed"
 		}
-		jobEntity.Status = StatusFailed
-		jobEntity.Failure = &TerminalFailure{
+		job.Status = StatusFailed
+		job.Failure = &TerminalFailure{
 			Reason:  FailureReasonExecutionFailed,
 			Message: message,
 		}
 	case "stopped":
-		jobEntity.Status = StatusStopped
+		job.Status = StatusStopped
 	case "timeout":
 		if message == "" {
 			message = "job exceeded its execution deadline"
 		}
-		jobEntity.Status = StatusFailed
-		jobEntity.Failure = &TerminalFailure{
+		job.Status = StatusFailed
+		job.Failure = &TerminalFailure{
 			Reason:  FailureReasonExecutionTimedOut,
 			Message: message,
 		}
 	case "pending", "running":
-		jobEntity.Status = StatusFailed
-		jobEntity.Failure = &TerminalFailure{
+		job.Status = StatusFailed
+		job.Failure = &TerminalFailure{
 			Reason:  FailureReasonOperationLost,
 			Message: "operation state was lost during Task API migration",
 		}
 	default:
 		return fmt.Errorf("field status: unsupported value %q", legacy.Status)
 	}
-	if jobEntity.EndedAt.IsZero() {
+	if job.EndedAt.IsZero() {
 		// Legacy active records become terminal during migration and have no finish time.
-		jobEntity.EndedAt = jobEntity.UpdatedAt
+		job.EndedAt = job.UpdatedAt
 	}
 	return nil
 }
 
-func legacyTracingType(value string) (tracing.Type, error) {
+func legacyTracingType(value string) (tracingdomain.Type, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "dropwatch", "networking_drop":
-		return tracing.TypeNetworkingDrop, nil
+		return tracingdomain.TypeNetworkingDrop, nil
 	case "iotracing", "io_tracing":
-		return tracing.TypeIO, nil
+		return tracingdomain.TypeIO, nil
 	case "tcpshark", "tcp_retransmit", "tcp_retransmission":
-		return tracing.TypeTCPRetransmit, nil
+		return tracingdomain.TypeTCPRetransmit, nil
 	default:
-		return tracing.TypeUnknown, fmt.Errorf("unsupported value %q", value)
+		return tracingdomain.TypeUnknown, fmt.Errorf("unsupported value %q", value)
 	}
 }
 
