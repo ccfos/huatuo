@@ -46,7 +46,7 @@ func NewResultWriter(
 	return &ResultWriter{store: store, documents: documents}, nil
 }
 
-// Write validates and persists one profiling result.
+// Write persists Operation results synchronously and standalone results asynchronously.
 func (w *ResultWriter) Write(
 	session *toolstream.Session,
 	event *profilingresult.Event,
@@ -54,8 +54,8 @@ func (w *ResultWriter) Write(
 	if event == nil {
 		return errors.New("profiling result event is required")
 	}
-	if session == nil || session.Session == nil || !session.IsExpected {
-		return errors.New("profiling result session was not expected")
+	if session == nil || session.Session == nil {
+		return errors.New("profiling result session is required")
 	}
 	if event.TracerID == "" {
 		return errors.New("profiling result tracer id is required")
@@ -86,8 +86,12 @@ func (w *ResultWriter) Write(
 	if err != nil {
 		return err
 	}
-	return w.store.Save(context.Background(), &profilingstore.Document{
+	document := &profilingstore.Document{
 		Document:    metadata,
 		ProfileData: event.ProfileData,
-	})
+	}
+	if session.IsExpected {
+		return w.store.SaveSync(context.Background(), document)
+	}
+	return w.store.Save(context.Background(), document)
 }

@@ -29,14 +29,31 @@ import (
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
-func TestStoreSaveUsesVisibilityBarrier(t *testing.T) {
+func TestStoreSaveUsesAsynchronousWrite(t *testing.T) {
 	store, backend := newTestStore(t)
 
 	if err := store.Save(t.Context(), validDocument()); err != nil {
 		t.Fatalf("Store.Save() error = %v", err)
 	}
-	if backend.saves != 1 {
-		t.Fatalf("synchronous saves = %d, want 1", backend.saves)
+	if backend.asyncSaves != 1 {
+		t.Fatalf("asynchronous saves = %d, want 1", backend.asyncSaves)
+	}
+	if backend.syncSaves != 0 {
+		t.Fatalf("synchronous saves = %d, want 0", backend.syncSaves)
+	}
+}
+
+func TestStoreSaveSyncUsesVisibilityBarrier(t *testing.T) {
+	store, backend := newTestStore(t)
+
+	if err := store.SaveSync(t.Context(), validDocument()); err != nil {
+		t.Fatalf("Store.SaveSync() error = %v", err)
+	}
+	if backend.asyncSaves != 0 {
+		t.Fatalf("asynchronous saves = %d, want 0", backend.asyncSaves)
+	}
+	if backend.syncSaves != 1 {
+		t.Fatalf("synchronous saves = %d, want 1", backend.syncSaves)
 	}
 }
 
@@ -46,8 +63,11 @@ func TestStoreSaveRejectsIncompleteDocument(t *testing.T) {
 	if err := store.Save(t.Context(), &Document{}); err == nil {
 		t.Fatal("Store.Save() error = nil, want validation error")
 	}
-	if backend.saves != 0 {
-		t.Fatalf("synchronous saves = %d, want 0", backend.saves)
+	if backend.asyncSaves != 0 {
+		t.Fatalf("asynchronous saves = %d, want 0", backend.asyncSaves)
+	}
+	if backend.syncSaves != 0 {
+		t.Fatalf("synchronous saves = %d, want 0", backend.syncSaves)
 	}
 }
 
@@ -140,40 +160,44 @@ func TestBuildProfileAggregationQueryFiltersByRegion(t *testing.T) {
 	}
 }
 
-type syncBackend struct {
-	saves int
+type recordingBackend struct {
+	asyncSaves int
+	syncSaves  int
 }
 
-func (*syncBackend) Init(context.Context, string, []driver.Index) error { return nil }
+func (*recordingBackend) Init(context.Context, string, []driver.Index) error { return nil }
 
-func (*syncBackend) Save(context.Context, driver.Record) error { return nil }
-
-func (b *syncBackend) SaveSync(context.Context, driver.Record) error {
-	b.saves++
+func (b *recordingBackend) Save(context.Context, driver.Record) error {
+	b.asyncSaves++
 	return nil
 }
 
-func (*syncBackend) Get(context.Context, string) (driver.Record, error) {
+func (b *recordingBackend) SaveSync(context.Context, driver.Record) error {
+	b.syncSaves++
+	return nil
+}
+
+func (*recordingBackend) Get(context.Context, string) (driver.Record, error) {
 	return driver.Record{}, driver.ErrNotFound
 }
 
-func (*syncBackend) Delete(context.Context, string) error { return nil }
+func (*recordingBackend) Delete(context.Context, string) error { return nil }
 
-func (*syncBackend) Query(context.Context, driver.Query) ([]driver.Record, error) {
+func (*recordingBackend) Query(context.Context, driver.Query) ([]driver.Record, error) {
 	return nil, nil
 }
 
-func (*syncBackend) Count(context.Context, driver.Query) (int64, error) { return 0, nil }
+func (*recordingBackend) Count(context.Context, driver.Query) (int64, error) { return 0, nil }
 
-func (*syncBackend) Values(context.Context, string, driver.Query, int) ([]string, error) {
+func (*recordingBackend) Values(context.Context, string, driver.Query, int) ([]string, error) {
 	return nil, nil
 }
 
-func (*syncBackend) Close(context.Context) error { return nil }
+func (*recordingBackend) Close(context.Context) error { return nil }
 
-func newTestStore(t *testing.T) (*Store, *syncBackend) {
+func newTestStore(t *testing.T) (*Store, *recordingBackend) {
 	t.Helper()
-	backend := &syncBackend{}
+	backend := &recordingBackend{}
 	persistence, err := storage.NewStore[*Document](
 		t.Context(),
 		"memory",

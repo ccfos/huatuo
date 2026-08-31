@@ -81,13 +81,18 @@ func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
 	return &Store{store: profileStore}, nil
 }
 
-// Save persists a profiling window and waits until subsequent queries can see it.
+// Save queues a profiling window for asynchronous persistence.
 func (s *Store) Save(ctx context.Context, document *Document) error {
-	if s == nil || s.store == nil {
-		return errors.New("profile storage is not initialized")
+	if err := s.prepareDocument(document); err != nil {
+		return err
 	}
-	if document != nil {
-		document.UploadedTimestamp = time.Now().UTC()
+	return s.store.Save(ctx, document)
+}
+
+// SaveSync persists a profiling window and waits until subsequent queries can see it.
+func (s *Store) SaveSync(ctx context.Context, document *Document) error {
+	if err := s.prepareDocument(document); err != nil {
+		return err
 	}
 	return s.store.SaveSync(ctx, document)
 }
@@ -246,4 +251,14 @@ func normalizeSearchLimit(filter *Filter) int {
 		return 100
 	}
 	return min(filter.Limit, maxSearchLimit)
+}
+
+func (s *Store) prepareDocument(document *Document) error {
+	if s == nil || s.store == nil {
+		return errors.New("profile storage is not initialized")
+	}
+	if document != nil {
+		document.UploadedTimestamp = time.Now().UTC()
+	}
+	return nil
 }
