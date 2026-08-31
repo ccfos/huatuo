@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nodeagent
+package document
 
 import (
 	"testing"
@@ -21,17 +21,17 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-func TestDocumentBuilderBuildsSharedMetadata(t *testing.T) {
+func TestBuilderBuildsSharedMetadata(t *testing.T) {
 	startedTimestamp := time.Date(2026, 8, 28, 10, 30, 0, 0, time.FixedZone("CST", 8*60*60))
-	builder := NewDocumentBuilder("cn-north", "node-1")
-	document, err := builder.Build(&DocumentInput{
+	builder := New("cn-north", "node-1")
+	document, err := builder.Build(&Input{
 		TracerName:       "profiler",
 		TracerID:         "job-1",
 		StartedTimestamp: startedTimestamp,
 		TracerRunType:    types.TracerRunTypeProfiling,
 	})
 	if err != nil {
-		t.Fatalf("DocumentBuilder.Build() error = %v", err)
+		t.Fatalf("Builder.Build() error = %v", err)
 	}
 	if document.Hostname != "node-1" || document.Region != "cn-north" {
 		t.Fatalf("node metadata = (%q, %q)", document.Hostname, document.Region)
@@ -50,8 +50,8 @@ func TestDocumentBuilderBuildsSharedMetadata(t *testing.T) {
 	}
 }
 
-func TestNilDocumentBuilderIsRejected(t *testing.T) {
-	if _, err := (*DocumentBuilder)(nil).Build(&DocumentInput{}); err == nil {
-		t.Fatal("DocumentBuilder.Build() error = nil")
+func TestNilBuilderIsRejected(t *testing.T) {
+	if _, err := (*Builder)(nil).Build(&Input{}); err == nil {
+		t.Fatal("Builder.Build() error = nil")
 	}
 }

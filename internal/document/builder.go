@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package nodeagent contains Node-local services shared across observation kinds.
-package nodeagent
+// Package document constructs metadata shared by persisted observations.
+package document
 
 import (
 	"errors"
@@ -25,12 +25,10 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-const (
-	defaultHostname = "huatuo-dev"
-)
+const defaultHostname = "huatuo-dev"
 
-// DocumentInput contains fields supplied by an observation producer.
-type DocumentInput struct {
+// Input contains fields supplied by an observation producer.
+type Input struct {
 	TracerName        string
 	TracerID          string
 	ContainerID       string
@@ -39,14 +37,14 @@ type DocumentInput struct {
 	TracerRunType     string
 }
 
-// DocumentBuilder enriches observation metadata with Node and container fields.
-type DocumentBuilder struct {
+// Builder enriches observation metadata with Node and container fields.
+type Builder struct {
 	region   string
 	hostname string
 }
 
-// NewDocumentBuilder binds Node-local metadata used by every generated document.
-func NewDocumentBuilder(region, hostname string) *DocumentBuilder {
+// New binds Node-local metadata used by every generated document.
+func New(region, hostname string) *Builder {
 	if hostname == "" {
 		detected, err := os.Hostname()
 		if err == nil {
@@ -55,18 +53,18 @@ func NewDocumentBuilder(region, hostname string) *DocumentBuilder {
 			hostname = defaultHostname
 		}
 	}
-	return &DocumentBuilder{region: region, hostname: hostname}
+	return &Builder{region: region, hostname: hostname}
 }
 
 // Build creates shared document metadata and resolves optional container fields.
-func (b *DocumentBuilder) Build(input *DocumentInput) (types.Document, error) {
+func (b *Builder) Build(input *Input) (types.Document, error) {
 	if b == nil {
 		return types.Document{}, errors.New("document builder is required")
 	}
 	if input == nil {
 		return types.Document{}, errors.New("document input is required")
 	}
-	document := types.Document{
+	metadata := types.Document{
 		Hostname:      b.hostname,
 		Region:        b.region,
 		TracerName:    input.TracerName,
@@ -75,14 +73,14 @@ func (b *DocumentBuilder) Build(input *DocumentInput) (types.Document, error) {
 	}
 	if !input.StartedTimestamp.IsZero() {
 		startedTimestamp := input.StartedTimestamp.UTC()
-		document.StartedTimestamp = &startedTimestamp
+		metadata.StartedTimestamp = &startedTimestamp
 	}
 	if !input.ObservedTimestamp.IsZero() {
 		observedTimestamp := input.ObservedTimestamp.UTC()
-		document.ObservedTimestamp = &observedTimestamp
+		metadata.ObservedTimestamp = &observedTimestamp
 	}
 	if input.ContainerID == "" {
-		return document, nil
+		return metadata, nil
 	}
 	container, err := pod.ContainerByID(input.ContainerID)
 	if err != nil {
@@ -91,10 +89,10 @@ func (b *DocumentBuilder) Build(input *DocumentInput) (types.Document, error) {
 	if container == nil {
 		return types.Document{}, fmt.Errorf("container %q not found", input.ContainerID)
 	}
-	document.ContainerID = container.ID
-	document.ContainerHostname = container.Hostname
-	document.ContainerHostNamespace = container.LabelHostNamespace()
-	document.ContainerType = container.Type.String()
-	document.ContainerQoS = container.Qos.String()
-	return document, nil
+	metadata.ContainerID = container.ID
+	metadata.ContainerHostname = container.Hostname
+	metadata.ContainerHostNamespace = container.LabelHostNamespace()
+	metadata.ContainerType = container.Type.String()
+	metadata.ContainerQoS = container.Qos.String()
+	return metadata, nil
 }

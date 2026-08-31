@@ -21,7 +21,7 @@ import (
 
 	"github.com/rs/xid"
 
-	"huatuo-bamai/internal/nodeagent"
+	"huatuo-bamai/internal/document"
 	tracingstore "huatuo-bamai/pkg/tracing/store"
 	"huatuo-bamai/pkg/types"
 )
@@ -39,13 +39,13 @@ type WriteRequest struct {
 
 type documentWriter struct {
 	store     *tracingstore.Store
-	documents *nodeagent.DocumentBuilder
+	documents *document.Builder
 }
 
 var configuredWriter atomic.Pointer[documentWriter]
 
 // ConfigureWriter installs the process-wide writer used by registered tracers.
-func ConfigureWriter(store *tracingstore.Store, documents *nodeagent.DocumentBuilder) error {
+func ConfigureWriter(store *tracingstore.Store, documents *document.Builder) error {
 	if store == nil {
 		configuredWriter.Store(nil)
 		return nil
@@ -74,7 +74,7 @@ func Save(request *WriteRequest) error {
 	if runType == "" {
 		runType = types.TracerRunTypeEvent
 	}
-	metadata, err := current.documents.Build(&nodeagent.DocumentInput{
+	metadata, err := current.documents.Build(&document.Input{
 		TracerName:        request.TracerName,
 		TracerID:          tracerID,
 		ContainerID:       request.ContainerID,

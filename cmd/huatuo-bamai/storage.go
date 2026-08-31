@@ -20,8 +20,8 @@ import (
 	"fmt"
 
 	"huatuo-bamai/cmd/huatuo-bamai/config"
+	"huatuo-bamai/internal/document"
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/nodeagent"
 	"huatuo-bamai/internal/profiling/publication"
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/internal/strutil"
@@ -53,7 +53,7 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	}
 	if err := tracing.ConfigureWriter(
 		tracingStore,
-		nodeagent.NewDocumentBuilder(d.opts.Region, ""),
+		document.New(d.opts.Region, ""),
 	); err != nil {
 		return nil, errors.Join(
 			err,

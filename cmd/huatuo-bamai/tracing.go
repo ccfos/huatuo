@@ -23,7 +23,7 @@ import (
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/cmd/huatuo-bamai/handlers"
 	"huatuo-bamai/internal/bpf"
-	"huatuo-bamai/internal/nodeagent"
+	"huatuo-bamai/internal/document"
 	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
 	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/toolstream"
@@ -51,7 +51,7 @@ func startToolstream(d *Daemon) (func(context.Context) error, error) {
 	if d.profileStore != nil {
 		resultWriter, err := nodeprofiling.NewResultWriter(
 			d.profileStore,
-			nodeagent.NewDocumentBuilder(d.opts.Region, ""),
+			document.New(d.opts.Region, ""),
 		)
 		if err != nil {
 			return nil, err

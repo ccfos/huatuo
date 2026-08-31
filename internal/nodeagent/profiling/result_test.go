@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/nodeagent"
+	"huatuo-bamai/internal/document"
 	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/internal/toolstream"
@@ -40,7 +40,7 @@ func TestNewResultWriterRequiresConcreteDependencies(t *testing.T) {
 func TestResultWriterRequiresSession(t *testing.T) {
 	writer, err := NewResultWriter(
 		&profilingstore.Store{},
-		nodeagent.NewDocumentBuilder("test", "test-host"),
+		document.New("test", "test-host"),
 	)
 	if err != nil {
 		t.Fatalf("NewResultWriter() error = %v", err)
@@ -127,7 +127,7 @@ func TestResultWriterRejectsIncompleteProfile(t *testing.T) {
 func TestResultWriterRejectsMismatchedTask(t *testing.T) {
 	writer, err := NewResultWriter(
 		&profilingstore.Store{},
-		nodeagent.NewDocumentBuilder("test", "test-host"),
+		document.New("test", "test-host"),
 	)
 	if err != nil {
 		t.Fatalf("NewResultWriter() error = %v", err)
@@ -149,7 +149,7 @@ func TestResultWriterRejectsMismatchedTask(t *testing.T) {
 func TestResultWriterRejectsNonProfilingResult(t *testing.T) {
 	writer, err := NewResultWriter(
 		&profilingstore.Store{},
-		nodeagent.NewDocumentBuilder("test", "test-host"),
+		document.New("test", "test-host"),
 	)
 	if err != nil {
 		t.Fatalf("NewResultWriter() error = %v", err)
@@ -233,7 +233,7 @@ func newPersistentResultWriter(t *testing.T) (*ResultWriter, *profileBackend) {
 	}
 	writer, err := NewResultWriter(
 		store,
-		nodeagent.NewDocumentBuilder("test", "test-host"),
+		document.New("test", "test-host"),
 	)
 	if err != nil {
 		t.Fatalf("NewResultWriter() error = %v", err)

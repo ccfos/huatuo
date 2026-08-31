@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 
-	"huatuo-bamai/internal/nodeagent"
+	"huatuo-bamai/internal/document"
 	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/toolstream"
 	profilingstore "huatuo-bamai/pkg/profiling/store"
@@ -29,13 +29,13 @@ import (
 // ResultWriter persists typed profiling results received over Toolstream.
 type ResultWriter struct {
 	store     *profilingstore.Store
-	documents *nodeagent.DocumentBuilder
+	documents *document.Builder
 }
 
 // NewResultWriter creates a profiling result writer.
 func NewResultWriter(
 	store *profilingstore.Store,
-	documents *nodeagent.DocumentBuilder,
+	documents *document.Builder,
 ) (*ResultWriter, error) {
 	if store == nil {
 		return nil, errors.New("create profiling result writer: store is required")
@@ -76,7 +76,7 @@ func (w *ResultWriter) Write(
 			event.TracerRunType,
 		)
 	}
-	metadata, err := w.documents.Build(&nodeagent.DocumentInput{
+	metadata, err := w.documents.Build(&document.Input{
 		TracerName:       event.TracerName,
 		TracerID:         event.TracerID,
 		ContainerID:      event.ContainerID,
