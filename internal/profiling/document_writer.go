@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package profiling constructs and persists profiling results.
 package profiling
 
 import (
@@ -26,28 +27,28 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-// ResultWriter persists typed profiling results received over Toolstream.
-type ResultWriter struct {
+// DocumentWriter persists profiling documents received over Toolstream.
+type DocumentWriter struct {
 	store     *profilingstore.Store
 	documents *document.Builder
 }
 
-// NewResultWriter creates a profiling result writer.
-func NewResultWriter(
+// NewDocumentWriter creates a profiling document writer.
+func NewDocumentWriter(
 	store *profilingstore.Store,
 	documents *document.Builder,
-) (*ResultWriter, error) {
+) (*DocumentWriter, error) {
 	if store == nil {
-		return nil, errors.New("create profiling result writer: store is required")
+		return nil, errors.New("create profiling document writer: store is required")
 	}
 	if documents == nil {
-		return nil, errors.New("create profiling result writer: document builder is required")
+		return nil, errors.New("create profiling document writer: document builder is required")
 	}
-	return &ResultWriter{store: store, documents: documents}, nil
+	return &DocumentWriter{store: store, documents: documents}, nil
 }
 
 // Write persists Operation results synchronously and standalone results asynchronously.
-func (w *ResultWriter) Write(
+func (w *DocumentWriter) Write(
 	session *toolstream.Session,
 	event *profilingresult.Event,
 ) error {

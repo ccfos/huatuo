@@ -31,43 +31,43 @@ import (
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
-func TestNewResultWriterRequiresConcreteDependencies(t *testing.T) {
-	if _, err := NewResultWriter(nil, nil); err == nil {
-		t.Fatal("NewResultWriter() error = nil")
+func TestNewDocumentWriterRequiresConcreteDependencies(t *testing.T) {
+	if _, err := NewDocumentWriter(nil, nil); err == nil {
+		t.Fatal("NewDocumentWriter(nil, nil) error = nil")
 	}
 }
 
-func TestResultWriterRequiresSession(t *testing.T) {
-	writer, err := NewResultWriter(
+func TestDocumentWriterRequiresSession(t *testing.T) {
+	writer, err := NewDocumentWriter(
 		&profilingstore.Store{},
 		document.New("test", "test-host"),
 	)
 	if err != nil {
-		t.Fatalf("NewResultWriter() error = %v", err)
+		t.Fatalf("NewDocumentWriter() error = %v", err)
 	}
 	event := validResultEvent()
 
 	if err := writer.Write(nil, event); err == nil {
-		t.Fatal("ResultWriter.Write() error = nil")
+		t.Fatal("DocumentWriter.Write() error = nil")
 	} else if !strings.Contains(err.Error(), "session is required") {
-		t.Fatalf("ResultWriter.Write() error = %q", err)
+		t.Fatalf("DocumentWriter.Write() error = %q", err)
 	}
 	if err := writer.Write(&toolstream.Session{}, event); err == nil {
-		t.Fatal("ResultWriter.Write() error = nil")
+		t.Fatal("DocumentWriter.Write() error = nil")
 	} else if !strings.Contains(err.Error(), "session is required") {
-		t.Fatalf("ResultWriter.Write() error = %q", err)
+		t.Fatalf("DocumentWriter.Write() error = %q", err)
 	}
 }
 
-func TestResultWriterPersistsJobSessionSynchronously(t *testing.T) {
-	writer, backend := newPersistentResultWriter(t)
+func TestDocumentWriterPersistsJobSessionSynchronously(t *testing.T) {
+	writer, backend := newPersistentDocumentWriter(t)
 	session := &toolstream.Session{
 		Session:    &transport.Session{TaskID: "profile-task-1"},
 		IsExpected: true,
 	}
 
 	if err := writer.Write(session, validResultEvent()); err != nil {
-		t.Fatalf("ResultWriter.Write() error = %v", err)
+		t.Fatalf("DocumentWriter.Write() error = %v", err)
 	}
 	if backend.syncWrites != 1 || backend.asyncWrites != 0 {
 		t.Fatalf(
@@ -78,8 +78,8 @@ func TestResultWriterPersistsJobSessionSynchronously(t *testing.T) {
 	}
 }
 
-func TestResultWriterPersistsNonJobSessionAsynchronously(t *testing.T) {
-	writer, backend := newPersistentResultWriter(t)
+func TestDocumentWriterPersistsNonJobSessionAsynchronously(t *testing.T) {
+	writer, backend := newPersistentDocumentWriter(t)
 	session := &toolstream.Session{
 		Session: &transport.Session{TaskID: "profile-task-1"},
 	}
@@ -88,7 +88,7 @@ func TestResultWriterPersistsNonJobSessionAsynchronously(t *testing.T) {
 		event := validResultEvent()
 		event.StartedTimestamp = event.StartedTimestamp.Add(time.Duration(i) * time.Minute)
 		if err := writer.Write(session, event); err != nil {
-			t.Fatalf("ResultWriter.Write() error = %v", err)
+			t.Fatalf("DocumentWriter.Write() error = %v", err)
 		}
 	}
 	if backend.syncWrites != 0 || backend.asyncWrites != 2 {
@@ -100,8 +100,8 @@ func TestResultWriterPersistsNonJobSessionAsynchronously(t *testing.T) {
 	}
 }
 
-func TestResultWriterRejectsIncompleteProfile(t *testing.T) {
-	writer, backend := newPersistentResultWriter(t)
+func TestDocumentWriterRejectsIncompleteProfile(t *testing.T) {
+	writer, backend := newPersistentDocumentWriter(t)
 	session := &toolstream.Session{
 		Session: &transport.Session{TaskID: "profile-task-1"},
 	}
@@ -110,10 +110,10 @@ func TestResultWriterRejectsIncompleteProfile(t *testing.T) {
 
 	err := writer.Write(session, event)
 	if err == nil {
-		t.Fatal("ResultWriter.Write() error = nil")
+		t.Fatal("DocumentWriter.Write() error = nil")
 	}
 	if !strings.Contains(err.Error(), "profile data is required") {
-		t.Fatalf("ResultWriter.Write() error = %q", err)
+		t.Fatalf("DocumentWriter.Write() error = %q", err)
 	}
 	if backend.syncWrites != 0 || backend.asyncWrites != 0 {
 		t.Fatalf(
@@ -124,13 +124,13 @@ func TestResultWriterRejectsIncompleteProfile(t *testing.T) {
 	}
 }
 
-func TestResultWriterRejectsMismatchedTask(t *testing.T) {
-	writer, err := NewResultWriter(
+func TestDocumentWriterRejectsMismatchedTask(t *testing.T) {
+	writer, err := NewDocumentWriter(
 		&profilingstore.Store{},
 		document.New("test", "test-host"),
 	)
 	if err != nil {
-		t.Fatalf("NewResultWriter() error = %v", err)
+		t.Fatalf("NewDocumentWriter() error = %v", err)
 	}
 	session := &toolstream.Session{
 		Session:    &transport.Session{TaskID: "another-task"},
@@ -139,20 +139,20 @@ func TestResultWriterRejectsMismatchedTask(t *testing.T) {
 
 	err = writer.Write(session, validResultEvent())
 	if err == nil {
-		t.Fatal("ResultWriter.Write() error = nil")
+		t.Fatal("DocumentWriter.Write() error = nil")
 	}
 	if !strings.Contains(err.Error(), "does not match session task id") {
-		t.Fatalf("ResultWriter.Write() error = %q", err)
+		t.Fatalf("DocumentWriter.Write() error = %q", err)
 	}
 }
 
-func TestResultWriterRejectsNonProfilingResult(t *testing.T) {
-	writer, err := NewResultWriter(
+func TestDocumentWriterRejectsNonProfilingResult(t *testing.T) {
+	writer, err := NewDocumentWriter(
 		&profilingstore.Store{},
 		document.New("test", "test-host"),
 	)
 	if err != nil {
-		t.Fatalf("NewResultWriter() error = %v", err)
+		t.Fatalf("NewDocumentWriter() error = %v", err)
 	}
 	session := &toolstream.Session{
 		Session:    &transport.Session{TaskID: "profile-task-1"},
@@ -163,10 +163,10 @@ func TestResultWriterRejectsNonProfilingResult(t *testing.T) {
 
 	err = writer.Write(session, event)
 	if err == nil {
-		t.Fatal("ResultWriter.Write() error = nil")
+		t.Fatal("DocumentWriter.Write() error = nil")
 	}
 	if !strings.Contains(err.Error(), "tracer type") {
-		t.Fatalf("ResultWriter.Write() error = %q", err)
+		t.Fatalf("DocumentWriter.Write() error = %q", err)
 	}
 }
 
@@ -218,7 +218,7 @@ func (*profileBackend) Values(context.Context, string, driver.Query, int) ([]str
 
 func (*profileBackend) Close(context.Context) error { return nil }
 
-func newPersistentResultWriter(t *testing.T) (*ResultWriter, *profileBackend) {
+func newPersistentDocumentWriter(t *testing.T) (*DocumentWriter, *profileBackend) {
 	t.Helper()
 	backend := &profileBackend{}
 	driver.RegisterBackend("elasticsearch", func(*driver.Config) (driver.Backend, error) {
@@ -231,12 +231,12 @@ func newPersistentResultWriter(t *testing.T) (*ResultWriter, *profileBackend) {
 	if err != nil {
 		t.Fatalf("profilingstore.NewFromConfig() error = %v", err)
 	}
-	writer, err := NewResultWriter(
+	writer, err := NewDocumentWriter(
 		store,
 		document.New("test", "test-host"),
 	)
 	if err != nil {
-		t.Fatalf("NewResultWriter() error = %v", err)
+		t.Fatalf("NewDocumentWriter() error = %v", err)
 	}
 
 	return writer, backend
