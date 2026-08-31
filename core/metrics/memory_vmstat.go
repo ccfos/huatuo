@@ -23,9 +23,9 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/parseutil"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 type memoryVmStat struct {

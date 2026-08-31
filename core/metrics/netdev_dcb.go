@@ -23,8 +23,8 @@ import (
 
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/procfs/sysfs"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 
 	"github.com/vishvananda/netlink/nl"
 	"golang.org/x/sys/unix"

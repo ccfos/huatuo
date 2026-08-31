@@ -28,7 +28,7 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/types"
 
 	cadvisorV1 "github.com/google/cadvisor/info/v1"
@@ -202,6 +202,7 @@ func (d *dloadTracing) buildAndSave(
 	container *containerDloadInfo,
 	loadStats cadvisorV1.LoadStats,
 ) error {
+	startedTimestamp := time.Now().UTC()
 	cgroupPath := container.cgroupName
 	containerID := container.container.ID
 
@@ -241,11 +242,11 @@ func (d *dloadTracing) buildAndSave(
 	data.KnownIssue = knownIssue
 
 	if err := tracing.Save(&tracing.WriteRequest{
-		TracerName:    "dload",
-		ContainerID:   containerID,
-		TracerTime:    time.Now(),
-		TracerData:    data,
-		TracerRunType: tracing.TracerRunTypeAutotracing,
+		TracerName:       "dload",
+		ContainerID:      containerID,
+		StartedTimestamp: startedTimestamp,
+		TracerData:       data,
+		TracerRunType:    types.TracerRunTypeAutotracing,
 	}); err != nil {
 		return fmt.Errorf("save dload trace: %w", err)
 	}

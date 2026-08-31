@@ -26,8 +26,8 @@ import (
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/symbol"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -150,8 +150,8 @@ func (*schedTickTracing) Start(ctx context.Context) error {
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: schedTickTracerName,
-				TracerTime: time.Now(),
+				TracerName:        schedTickTracerName,
+				ObservedTimestamp: time.Now().UTC(),
 				TracerData: &SchedTickTracingData{
 					TickIntervalNS:          data.TickIntervalNS,
 					TickIntervalThresholdNS: tickIntervalThresholdNS,

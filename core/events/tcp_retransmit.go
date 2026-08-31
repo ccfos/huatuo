@@ -20,14 +20,14 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/timeutil"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/internal/utils/kernaddr"
-	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -96,11 +96,17 @@ func handleTCPRetransmitEvent(_ *toolstream.Session, ev *types.TCPRetransmitTrac
 		causal, _ := globalDropwatchTCPRetransmitCache.correlate(ev)
 		ev.DropLocation = causalToDropLocation(causal)
 	}
+	observedTimestamp, err := timeutil.Parse(ev.ObservedTimestamp)
+	if err != nil {
+		return fmt.Errorf("parse tcp retransmit observed timestamp: %w", err)
+	}
+	tracerData := *ev
+	tracerData.ObservedTimestamp = ""
 
 	return tracing.Save(&tracing.WriteRequest{
-		TracerName:  tcpRetransmitTracerName,
-		ContainerID: ev.ContainerID,
-		TracerTime:  time.Now(),
-		TracerData:  ev,
+		TracerName:        tcpRetransmitTracerName,
+		ContainerID:       ev.ContainerID,
+		ObservedTimestamp: observedTimestamp,
+		TracerData:        &tracerData,
 	})
 }

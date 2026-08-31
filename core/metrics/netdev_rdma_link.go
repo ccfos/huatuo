@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strconv"
 
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 
 	"github.com/vishvananda/netlink"
 )

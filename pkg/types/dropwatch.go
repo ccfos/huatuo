@@ -27,7 +27,7 @@ import (
 // terminology and keeps the field distinct from the `Packet*` BPF-metadata
 // prefix family above.
 type DropWatchTracing struct {
-	ObservedTimestamp   string         `json:"observed_timestamp"`
+	ObservedTimestamp   string         `json:"observed_timestamp,omitempty"`
 	Type                string         `json:"type,omitempty"`
 	DropSource          string         `json:"drop_source"`
 	DropReason          string         `json:"drop_reason"`

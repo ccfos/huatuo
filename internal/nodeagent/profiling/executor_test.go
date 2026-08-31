@@ -21,6 +21,7 @@ import (
 
 	"huatuo-bamai/internal/nodeagent/command"
 	"huatuo-bamai/internal/nodeagent/operation"
+	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/toolstream"
 )
 
@@ -54,10 +55,10 @@ func TestExecutorClearsExpectedSessionWhenProcessStartFails(t *testing.T) {
 	if publisher.publishCalls != 0 {
 		t.Fatalf("Publish() calls = %d, want 0", publisher.publishCalls)
 	}
-	if err := stream.ExpectSession(profilerToolName, "job-1"); err != nil {
+	if err := stream.ExpectSession(profilingresult.ToolName, "job-1"); err != nil {
 		t.Fatalf("ExpectSession() after failed Start error = %v", err)
 	}
-	stream.CancelSession(profilerToolName, "job-1")
+	stream.CancelSession(profilingresult.ToolName, "job-1")
 }
 
 func TestExecutorFinalizeDiscardCancelsSessionWithoutPublishing(t *testing.T) {
@@ -71,7 +72,7 @@ func TestExecutorFinalizeDiscardCancelsSessionWithoutPublishing(t *testing.T) {
 	}
 	publisher := &fakeResultPublisher{}
 	executor := newExecutor(process, stream, publisher, "job-1")
-	if err := stream.ExpectSession(profilerToolName, "job-1"); err != nil {
+	if err := stream.ExpectSession(profilingresult.ToolName, "job-1"); err != nil {
 		t.Fatalf("ExpectSession() error = %v", err)
 	}
 
@@ -81,8 +82,8 @@ func TestExecutorFinalizeDiscardCancelsSessionWithoutPublishing(t *testing.T) {
 	if publisher.publishCalls != 0 {
 		t.Fatalf("Publish() calls = %d, want 0", publisher.publishCalls)
 	}
-	if err := stream.ExpectSession(profilerToolName, "job-1"); err != nil {
+	if err := stream.ExpectSession(profilingresult.ToolName, "job-1"); err != nil {
 		t.Fatalf("ExpectSession() after Finalize error = %v", err)
 	}
-	stream.CancelSession(profilerToolName, "job-1")
+	stream.CancelSession(profilingresult.ToolName, "job-1")
 }

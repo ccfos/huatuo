@@ -22,7 +22,7 @@ import (
 
 	serverapi "huatuo-bamai/apis/v1/server"
 	"huatuo-bamai/internal/auth"
-	profileservice "huatuo-bamai/internal/profiler/service"
+	profilequery "huatuo-bamai/internal/profiling/query"
 	"huatuo-bamai/internal/server/response"
 
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
@@ -109,7 +109,7 @@ func TestSelectMergeStacktracesRequiresAdmin(t *testing.T) {
 
 func TestSelectMergeStacktracesMapsProfileAbsence(t *testing.T) {
 	handler := &APIHandler{profileQuery: &stubProfileQueryService{
-		err: profileservice.ErrProfilesAbsent,
+		err: profilequery.ErrProfilesAbsent,
 	}}
 	_, err := handler.SelectMergeStacktraces(
 		profileQueryContext(t, true),

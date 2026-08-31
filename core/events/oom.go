@@ -27,10 +27,10 @@ import (
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kernaddr"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/oom.c -o $BPF_DIR/oom.o
@@ -158,10 +158,10 @@ func (c *oomCollector) Start(ctx context.Context) error {
 			mutex.Unlock()
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:  "oom",
-				TracerTime:  time.Now(),
-				TracerData:  oomData,
-				ContainerID: oomData.Victim.ContainerID,
+				TracerName:        "oom",
+				ObservedTimestamp: time.Now().UTC(),
+				TracerData:        oomData,
+				ContainerID:       oomData.Victim.ContainerID,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

@@ -127,7 +127,7 @@ Each aggregation window is 10 seconds. A 30-second job produces approximately 3 
 ```bash
 $ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
   -H "Content-Type: application/json" \
-  -d '{"query":{"exists":{"field":"tracer_data.flamedata"}}}' | jq .count
+  -d '{"query":{"exists":{"field":"profile_data.profile"}}}' | jq .count
 
 3
 ```
@@ -327,10 +327,10 @@ curl -sS -G \
 ```
 
 The server always limits the result to Profiling Jobs and orders them by
-`created_at` descending. `data.items` contains the job array. `data.total` is
-the number of authorized Profiling Jobs before pagination, while `data.limit`
-and `data.offset` are the effective pagination parameters. Non-administrator
-users can list only jobs they created.
+`created_at` descending. `data.items` contains the job array. `data.limit` and
+`data.offset` are the effective pagination parameters, and `data.has_more`
+indicates whether another page is available. Non-administrator users can list
+only jobs they created.
 
 ### 5. Get a Profiling Job
 
@@ -396,8 +396,8 @@ curl -sS \
 ```
 
 The profiling windows are in `data.items`; `data.limit`, `data.offset`, and
-`data.has_more` describe the page. Each item contains `uploaded_at`,
-`captured_at`, `profile_type`, and the pprof-compatible `profile` payload.
+`data.has_more` describe the page. Each item contains `uploaded_timestamp`,
+`started_timestamp`, `profile_type`, and the pprof-compatible `profile` payload.
 An empty, durably published result is a successful response with an empty
 `items` array. `limit` defaults to 20 and cannot exceed 100. If the encoded
 profile data exceeds 64 MiB, the server returns `413 result_too_large`; retry

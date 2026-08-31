@@ -22,8 +22,8 @@ import (
 
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/qdisc"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 type qdiscCollector struct {

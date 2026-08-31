@@ -24,10 +24,8 @@ import (
 
 func TestCapabilityDefinitions(t *testing.T) {
 	t.Parallel()
-
 	wantTypes := []Type{TypeNetworkingDrop, TypeIO, TypeTCPRetransmit}
 	require.Len(t, capabilityDefinitions, len(wantTypes))
-
 	seen := make(map[Type]struct{}, len(capabilityDefinitions))
 	for i, definition := range capabilityDefinitions {
 		require.Equal(t, wantTypes[i], definition.Type)
@@ -42,13 +40,11 @@ func TestCapabilityDefinitions(t *testing.T) {
 
 func TestParseType(t *testing.T) {
 	t.Parallel()
-
 	for _, typ := range []Type{TypeNetworkingDrop, TypeIO, TypeTCPRetransmit} {
 		got, err := ParseType(string(typ))
 		require.NoError(t, err)
 		require.Equal(t, typ, got)
 	}
-
 	for _, value := range []string{"", "dropwatch", "iotracing", "tcpshark"} {
 		got, err := ParseType(value)
 		require.Equal(t, TypeUnknown, got)
@@ -58,15 +54,10 @@ func TestParseType(t *testing.T) {
 
 func TestCapabilitiesRemainStaticWithoutExecutors(t *testing.T) {
 	t.Parallel()
-
 	capabilities := Capabilities()
 	require.Len(t, capabilities, 3)
 	capabilities[0].SupportedScopes[0] = observation.ScopeContainer
-	require.Equal(
-		t,
-		observation.ScopeHost,
-		Capabilities()[0].SupportedScopes[0],
-	)
+	require.Equal(t, observation.ScopeHost, Capabilities()[0].SupportedScopes[0])
 	for _, typ := range []Type{TypeNetworkingDrop, TypeIO, TypeTCPRetransmit} {
 		require.False(t, IsAvailable(typ))
 	}
@@ -74,11 +65,9 @@ func TestCapabilitiesRemainStaticWithoutExecutors(t *testing.T) {
 
 func TestCloneCapabilityReturnsDeepCopy(t *testing.T) {
 	t.Parallel()
-
 	got := cloneCapability(&capabilityDefinitions[0].Capability)
 	got.Type = TypeIO
 	got.SupportedScopes[0] = observation.ScopeContainer
-
 	require.Equal(t, TypeNetworkingDrop, capabilityDefinitions[0].Type)
 	require.Equal(
 		t,

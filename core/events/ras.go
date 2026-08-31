@@ -29,8 +29,8 @@ import (
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/timeutil"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 
 	"github.com/cloudflare/backoff"
@@ -99,8 +99,8 @@ type RasTracingData struct {
 	Device            string `json:"dev"`
 	Event             string `json:"event"`
 	ErrType           string `json:"type"`
-	ObservedTimestamp string `json:"observed_timestamp"`
 	Info              string `json:"info"`
+	observedTimestamp time.Time
 }
 
 const defaultThrEventBackoff = 30 * time.Minute
@@ -365,8 +365,8 @@ func newRasTracingData[T any](ev *rasEvent, device, event, errType string, info 
 		Device:            device,
 		Event:             event,
 		ErrType:           errType,
-		ObservedTimestamp: observedAt.UTC().Format(time.RFC3339Nano),
 		Info:              string(b),
+		observedTimestamp: observedAt.UTC(),
 	}, nil
 }
 
@@ -698,9 +698,9 @@ func (ras *rasTracing) rasEventLoop(ctx context.Context, reader bpf.PerfEventRea
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: "ras",
-				TracerTime: time.Now(),
-				TracerData: tracerData,
+				TracerName:        "ras",
+				ObservedTimestamp: tracerData.observedTimestamp,
+				TracerData:        tracerData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

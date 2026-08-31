@@ -284,7 +284,6 @@ type ProtobufPayload = openapi_types.File
 
 // RawProfile defines model for RawProfile.
 type RawProfile struct {
-	CapturedAt        time.Time   `json:"captured_at"`
 	ContainerHostname *string     `json:"container_hostname,omitempty"`
 	ContainerID       *string     `json:"container_id,omitempty"`
 	ContainerQos      *string     `json:"container_qos,omitempty"`
@@ -293,7 +292,8 @@ type RawProfile struct {
 	Profile           interface{} `json:"profile"`
 	ProfileType       string      `json:"profile_type"`
 	Region            string      `json:"region"`
-	UploadedAt        time.Time   `json:"uploaded_at"`
+	StartedTimestamp  time.Time   `json:"started_timestamp"`
+	UploadedTimestamp time.Time   `json:"uploaded_timestamp"`
 }
 
 // RawProfilePage defines model for RawProfilePage.

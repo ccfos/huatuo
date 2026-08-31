@@ -30,9 +30,9 @@ import (
 	"huatuo-bamai/internal/packet"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/timeutil"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/netutil"
-	"huatuo-bamai/pkg/tracing"
 
 	"golang.org/x/sys/unix"
 )
@@ -206,10 +206,10 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 
 			// save storage
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:  "net_rx_latency",
-				ContainerID: containerID,
-				TracerTime:  time.Now(),
-				TracerData:  tracerData,
+				TracerName:        "net_rx_latency",
+				ContainerID:       containerID,
+				ObservedTimestamp: time.Now().UTC(),
+				TracerData:        tracerData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

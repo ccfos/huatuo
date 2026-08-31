@@ -15,8 +15,6 @@
 package profiling
 
 import (
-	"context"
-	"errors"
 	"net/url"
 	"strings"
 	"testing"
@@ -24,27 +22,9 @@ import (
 
 	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/job"
-	profileservice "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
 )
-
-type rawProfileReader struct{}
-
-func (rawProfileReader) ListByTracerID(
-	context.Context,
-	string,
-	int,
-	int,
-) ([]*profileservice.ProfileDocument, error) {
-	return nil, errors.New("unexpected profile read")
-}
-
-type publishedResultStore struct{}
-
-func (publishedResultStore) IsPublished(context.Context, string) (bool, error) {
-	return true, nil
-}
 
 func TestValidateCreateInput(t *testing.T) {
 	valid := CreateInput{
@@ -109,11 +89,11 @@ func TestValidateCreateInput(t *testing.T) {
 	}
 }
 
-func TestResultURLIsAvailableOnlyForCompleteResults(t *testing.T) {
+func TestResultURLRequiresPublishedCompleteResult(t *testing.T) {
 	service, err := NewService(
 		&job.Manager{},
-		rawProfileReader{},
-		publishedResultStore{},
+		nil,
+		nil,
 		Config{DashboardBaseURL: "https://grafana.example/d"},
 	)
 	if err != nil {
@@ -137,9 +117,8 @@ func TestResultURLIsAvailableOnlyForCompleteResults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResultURL() error = %v", err)
 	}
-	if resultURL == nil || !strings.Contains(*resultURL, "var-hostname=node%2B1%26debug") ||
-		!strings.Contains(*resultURL, "var-tracer_id=job-1") {
-		t.Fatalf("ResultURL() = %v", resultURL)
+	if resultURL != nil {
+		t.Fatalf("ResultURL() = %q without publication store, want nil", *resultURL)
 	}
 
 	failed := *completed

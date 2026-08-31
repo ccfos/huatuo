@@ -29,7 +29,7 @@ import (
 	"huatuo-bamai/internal/flamegraph"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/procfs"
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -251,10 +251,10 @@ func (c *cpuSysTracing) saveCPUSysTrace(
 	}
 
 	if err := tracing.Save(&tracing.WriteRequest{
-		TracerName:    cpuSysTracerName,
-		TracerTime:    traceTime,
-		TracerData:    &tracerData,
-		TracerRunType: tracing.TracerRunTypeAutotracing,
+		TracerName:       cpuSysTracerName,
+		StartedTimestamp: traceTime,
+		TracerData:       &tracerData,
+		TracerRunType:    types.TracerRunTypeAutotracing,
 	}); err != nil {
 		return fmt.Errorf("save cpu system trace: %w", err)
 	}

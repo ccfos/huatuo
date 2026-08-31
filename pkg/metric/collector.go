@@ -28,7 +28,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/internal/tracing"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

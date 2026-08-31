@@ -31,7 +31,7 @@ import (
 	"huatuo-bamai/internal/procfs/blockdevice"
 	"huatuo-bamai/internal/randomid"
 	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -48,9 +48,10 @@ const (
 var pendingReasons sync.Map
 
 type pendingIOTracingReason struct {
-	reason   *reasonSnapshot
-	received chan struct{}
-	result   chan error
+	reason           *reasonSnapshot
+	startedTimestamp time.Time
+	received         chan struct{}
+	result           chan error
 }
 
 func init() {
@@ -65,27 +66,25 @@ func handleIotracingEvent(sess *toolstream.Session, ev *types.IOTracingSnapshot)
 		close(pending.received)
 	}
 
-	var reason *reasonSnapshot
-	if pending != nil {
-		reason = pending.reason
+	if pending == nil {
+		return errors.New("iotracing snapshot has no pending request")
 	}
+	reason := pending.reason
 
 	err := tracing.Save(&tracing.WriteRequest{
-		TracerName: iotracingToolName,
-		TracerTime: time.Now(),
+		TracerName:       iotracingToolName,
+		StartedTimestamp: pending.startedTimestamp,
 		TracerData: &ioStatusData{
 			Reason:      reason,
 			Processes:   ev.Processes,
 			StallStacks: ev.StallStacks,
 		},
-		TracerRunType: tracing.TracerRunTypeAutotracing,
+		TracerRunType: types.TracerRunTypeAutotracing,
 	})
 	if err != nil {
 		err = fmt.Errorf("save iotracing snapshot: %w", err)
 	}
-	if pending != nil {
-		pending.result <- err
-	}
+	pending.result <- err
 
 	return err
 }
@@ -426,9 +425,10 @@ func (i *ioTracing) Start(ctx context.Context) error {
 	}
 
 	pending := &pendingIOTracingReason{
-		reason:   reasonSnapshot,
-		received: make(chan struct{}),
-		result:   make(chan error, 1),
+		reason:           reasonSnapshot,
+		startedTimestamp: time.Now().UTC(),
+		received:         make(chan struct{}),
+		result:           make(chan error, 1),
 	}
 	pendingReasons.Store(taskID, pending)
 

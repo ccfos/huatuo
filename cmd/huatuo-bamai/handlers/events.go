@@ -25,7 +25,8 @@ import (
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
-	"huatuo-bamai/pkg/tracing"
+	tracingstore "huatuo-bamai/pkg/tracing/store"
+	"huatuo-bamai/pkg/types"
 )
 
 const (
@@ -37,6 +38,7 @@ const (
 // EventsHandler handles kernel event streaming over SSE.
 type EventsHandler struct {
 	Handlers          []server.Route
+	store             *tracingstore.Store
 	maxClients        int
 	keepAliveInterval time.Duration
 	activeClients     atomic.Int32
@@ -47,7 +49,10 @@ type EventsHandler struct {
 // zero or negative values fall back to defaultMaxClients.
 // keepAliveIntervalSecs is the SSE heartbeat interval in seconds;
 // zero or negative values fall back to defaultKeepAliveInterval.
-func NewEventsHandler(maxClients, keepAliveIntervalSecs int) *EventsHandler {
+func NewEventsHandler(
+	store *tracingstore.Store,
+	maxClients, keepAliveIntervalSecs int,
+) *EventsHandler {
 	if maxClients <= 0 {
 		maxClients = defaultMaxClients
 	}
@@ -57,6 +62,7 @@ func NewEventsHandler(maxClients, keepAliveIntervalSecs int) *EventsHandler {
 	}
 
 	h := &EventsHandler{
+		store:             store,
 		maxClients:        maxClients,
 		keepAliveInterval: keepAlive,
 	}
@@ -101,38 +107,38 @@ type WatchFilters struct {
 	Region                 string `json:"region,omitempty"`
 }
 
-// matcher builds a matcher.FieldMatcher[*tracing.Document] from the filter's regex patterns.
-func (wf *WatchFilters) matcher() (*matcher.FieldMatcher[*tracing.Document], error) {
-	return matcher.NewFieldMatcher([]matcher.FieldSpec[*tracing.Document]{
+// matcher builds a matcher.FieldMatcher for tracing documents.
+func (wf *WatchFilters) matcher() (*matcher.FieldMatcher[*tracingstore.Document], error) {
+	return matcher.NewFieldMatcher([]matcher.FieldSpec[*tracingstore.Document]{
 		{
 			Name:    "tracer_name",
 			Pattern: wf.TracerName,
-			Extract: func(d *tracing.Document) string { return d.TracerName },
+			Extract: func(d *tracingstore.Document) string { return d.TracerName },
 		},
 		{
 			Name:    "hostname",
 			Pattern: wf.Hostname,
-			Extract: func(d *tracing.Document) string { return d.Hostname },
+			Extract: func(d *tracingstore.Document) string { return d.Hostname },
 		},
 		{
 			Name:    "container_hostname",
 			Pattern: wf.ContainerHostname,
-			Extract: func(d *tracing.Document) string { return d.ContainerHostname },
+			Extract: func(d *tracingstore.Document) string { return d.ContainerHostname },
 		},
 		{
 			Name:    "container_host_namespace",
 			Pattern: wf.ContainerHostNamespace,
-			Extract: func(d *tracing.Document) string { return d.ContainerHostNamespace },
+			Extract: func(d *tracingstore.Document) string { return d.ContainerHostNamespace },
 		},
 		{
 			Name:    "container_qos",
 			Pattern: wf.ContainerQos,
-			Extract: func(d *tracing.Document) string { return d.ContainerQoS },
+			Extract: func(d *tracingstore.Document) string { return d.ContainerQoS },
 		},
 		{
 			Name:    "region",
 			Pattern: wf.Region,
-			Extract: func(d *tracing.Document) string { return d.Region },
+			Extract: func(d *tracingstore.Document) string { return d.Region },
 		},
 	})
 }
@@ -171,7 +177,7 @@ func (h *EventsHandler) watch(ctx *server.Context) error {
 	ctx.Header("Connection", "keep-alive")
 	ctx.Header("X-Accel-Buffering", "no")
 
-	docCh, cancel := tracing.Subscribe()
+	docCh, cancel := h.store.Subscribe()
 	defer cancel()
 
 	ticker := time.NewTicker(h.keepAliveInterval)
@@ -208,6 +214,9 @@ func (h *EventsHandler) watch(ctx *server.Context) error {
 		case doc, ok := <-docCh:
 			if !ok {
 				return nil
+			}
+			if doc.TracerRunType != types.TracerRunTypeEvent {
+				continue
 			}
 			if !matcher.Match(doc) {
 				continue

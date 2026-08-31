@@ -22,14 +22,14 @@ import (
 
 func TestSpecValidate(t *testing.T) {
 	t.Parallel()
-
 	for _, typ := range []Type{TypeNetworkingDrop, TypeIO, TypeTCPRetransmit} {
-		spec := Spec{Type: typ}
-		require.NoError(t, spec.Validate())
+		require.NoError(t, (Spec{Type: typ}).Validate())
 	}
-
 	for _, typ := range []Type{TypeUnknown, "dropwatch"} {
-		spec := Spec{Type: typ}
-		require.EqualError(t, spec.Validate(), `unsupported tracing type "`+string(typ)+`"`)
+		require.EqualError(
+			t,
+			(Spec{Type: typ}).Validate(),
+			`unsupported tracing type "`+string(typ)+`"`,
+		)
 	}
 }

@@ -20,10 +20,11 @@ import (
 	"fmt"
 
 	"huatuo-bamai/internal/log"
-	"huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/profiling/publication"
+	profilequery "huatuo-bamai/internal/profiling/query"
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/internal/strutil"
+	profilingstore "huatuo-bamai/pkg/profiling/store"
 )
 
 func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Context) error, error) {
@@ -32,17 +33,19 @@ func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Cont
 		return nil, nil
 	}
 
-	profileStorage, err := service.NewProfileStorageContext(
+	profileStorage, err := profilingstore.New(
 		ctx,
-		d.opts.Config.Elasticsearch.Address,
-		d.opts.Config.Elasticsearch.Username,
-		d.opts.Config.Elasticsearch.Password,
-		d.opts.Config.Elasticsearch.Index,
+		profilingstore.Config{
+			Addresses: strutil.SplitCommaList(d.opts.Config.Elasticsearch.Address),
+			Username:  d.opts.Config.Elasticsearch.Username,
+			Password:  d.opts.Config.Elasticsearch.Password,
+			Index:     d.opts.Config.Elasticsearch.Index,
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("initialize profile storage: %w", err)
 	}
-	profileQueryService, err := service.NewProfileQueryService(profileStorage)
+	profileQueryService, err := profilequery.NewProfileQueryService(profileStorage)
 	if err != nil {
 		_ = profileStorage.Close(ctx)
 		return nil, err

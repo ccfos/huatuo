@@ -86,7 +86,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 - **hostname**：物理机 hostname
 - **region**：物理机所在可用区
-- **uploaded_time**：数据上传时间
+- **uploaded_timestamp**：数据上传时间
 - **container_id**：如果事件关联容器，则记录的容器 ID
 - **container_hostname**：如果事件关联容器，则记录的容器 hostname
 - **container_host_namespace**：如果事件关联容器，则记录容器的 K8s 命名空间
@@ -94,8 +94,8 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 - **container_qos**：容器 QoS 级别
 - **tracer_name**：事件名称（如 `cpusys`、`memburst` 等）
 - **tracer_id**：此次的 tracing ID
-- **tracer_time**：触发 tracing 时间
-- **tracer_type**：触发类型（手动触发或自动触发）
+- **started_timestamp**：触发 tracing 时间
+- **tracer_type**：观测类型，自动追踪记录固定为 `autotracing`
 - **tracer_data**：特定事件私有数据（详见各事件说明）
 
 ### 1. cpusys

@@ -22,9 +22,9 @@ import (
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/parseutil"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
 

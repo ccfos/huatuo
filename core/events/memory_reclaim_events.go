@@ -25,8 +25,8 @@ import (
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/pkg/tracing"
 )
 
 type memoryReclaimTracing struct{}
@@ -139,10 +139,10 @@ func (c *memoryReclaimTracing) Start(ctx context.Context) error {
 
 			log.Infof("memory_reclaim saves storage: %+v", tracingData)
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName:  "memory_reclaim",
-				ContainerID: container.ID,
-				TracerTime:  time.Now(),
-				TracerData:  tracingData,
+				TracerName:        "memory_reclaim",
+				ContainerID:       container.ID,
+				ObservedTimestamp: time.Now().UTC(),
+				TracerData:        tracingData,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

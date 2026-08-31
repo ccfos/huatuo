@@ -19,20 +19,22 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/internal/timeutil"
+	tracingstore "huatuo-bamai/pkg/tracing/store"
 	pkgtypes "huatuo-bamai/pkg/types"
 
 	"github.com/stretchr/testify/require"
 )
 
-func newTestDocument() *tracing.Document {
-	return &tracing.Document{
-		Hostname:      "node-1",
-		Region:        "cn",
-		UploadedTime:  time.Unix(1_700_000_000, 0).UTC(),
-		TracerName:    "cpu",
-		TracerRunType: "auto",
-	}
+func newTestDocument() *tracingstore.Document {
+	observedTimestamp := time.Unix(1_700_000_000, 0).UTC()
+	return &tracingstore.Document{Document: pkgtypes.Document{
+		Hostname:          "node-1",
+		Region:            "cn",
+		ObservedTimestamp: &observedTimestamp,
+		TracerName:        "cpu",
+		TracerRunType:     pkgtypes.TracerRunTypeEvent,
+	}}
 }
 
 func TestDocumentToWatchEvent_CloudEventsFields(t *testing.T) {
@@ -44,7 +46,7 @@ func TestDocumentToWatchEvent_CloudEventsFields(t *testing.T) {
 	require.Equal(t, "application/json", ev.DataContentType)
 	require.NotEmpty(t, ev.ID)
 	require.True(t, strings.HasPrefix(ev.Source, "/huatuo/node-1/cpu"))
-	require.Equal(t, doc.UploadedTime.UTC().Format(time.RFC3339Nano), ev.Time)
+	require.Equal(t, timeutil.FormatUTC(*doc.ObservedTimestamp), ev.Time)
 }
 
 func TestDocumentToWatchEvent_UniqueIDs(t *testing.T) {
@@ -59,7 +61,7 @@ func TestDocumentToWatchEvent_Data(t *testing.T) {
 	want := pkgtypes.WatchEventData{
 		Hostname:          doc.Hostname,
 		Region:            doc.Region,
-		ObservedTimestamp: doc.TracerTime,
+		ObservedTimestamp: timeutil.FormatUTC(*doc.ObservedTimestamp),
 		TracerName:        doc.TracerName,
 		TracerRunType:     doc.TracerRunType,
 	}

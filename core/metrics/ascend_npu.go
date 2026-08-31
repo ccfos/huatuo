@@ -30,8 +30,8 @@ import (
 	"huatuo-bamai/core/metrics/ascend/hccn"
 	"huatuo-bamai/core/metrics/ascend/pcie"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
 

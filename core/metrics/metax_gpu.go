@@ -28,8 +28,8 @@ import (
 	"huatuo-bamai/core/metrics/metax/sml/device"
 	"huatuo-bamai/core/metrics/metax/sml/gpu"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
 

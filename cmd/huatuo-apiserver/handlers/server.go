@@ -22,11 +22,12 @@ import (
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/profiling"
 	"huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
 	"huatuo-bamai/internal/job"
-	profileservice "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/profiling/publication"
+	profilequery "huatuo-bamai/internal/profiling/query"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
+	profilingstore "huatuo-bamai/pkg/profiling/store"
 
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -37,9 +38,9 @@ type ServerOptions struct {
 	Addr                string
 	PromReg             *prometheus.Registry
 	JobManager          *job.Manager
-	ProfileStorage      *profileservice.ProfileStorage
-	ProfileQueryService *profileservice.ProfileQueryService
-	Publications        *publication.Store
+	ProfileStorage      *profilingstore.Store
+	ProfileQueryService *profilequery.ProfileQueryService
+	ProfilePublications *publication.Store
 	ProfilingConfig     profiling.Config
 	AuthUsers           []server.UserConfig
 	EnablePProf         bool
@@ -59,21 +60,10 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 		return nil, errors.New("start API server: at least one auth user is required")
 	}
 
-	if (opts.ProfileStorage == nil) != (opts.Publications == nil) {
-		return nil, errors.New(
-			"start API server: profile storage and publication store must be configured together",
-		)
-	}
-	var rawProfiles profiling.RawProfileReader
-	var publications profiling.PublicationReader
-	if opts.ProfileStorage != nil {
-		rawProfiles = opts.ProfileStorage
-		publications = opts.Publications
-	}
 	profilingService, err := profiling.NewService(
 		opts.JobManager,
-		rawProfiles,
-		publications,
+		opts.ProfileStorage,
+		opts.ProfilePublications,
 		opts.ProfilingConfig,
 	)
 	if err != nil {

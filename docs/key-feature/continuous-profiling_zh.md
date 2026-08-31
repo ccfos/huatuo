@@ -130,7 +130,7 @@ echo "Job ID: $JOB_ID"
 ```bash
 $ curl -s -u elastic:huatuo-bamai "http://localhost:9200/huatuo_bamai/_count" \
   -H "Content-Type: application/json" \
-  -d '{"query":{"exists":{"field":"tracer_data.flamedata"}}}' | jq .count
+  -d '{"query":{"exists":{"field":"profile_data.profile"}}}' | jq .count
 
 3
 ```
@@ -329,8 +329,8 @@ curl -sS -G \
 ```
 
 服务端固定只返回 Profiling Job，并按 `created_at` 倒序排列。`data.items`
-是任务数组，`data.total` 是分页前有权访问的任务总数，`data.limit` 和
-`data.offset` 是实际使用的分页参数。非管理员只能查看自己创建的任务。
+是任务数组，`data.limit` 和 `data.offset` 是实际使用的分页参数；
+`data.has_more` 表示是否还有下一页。非管理员只能查看自己创建的任务。
 
 ### 5. 查询单个任务
 
@@ -394,7 +394,7 @@ curl -sS \
 ```
 
 剖析窗口位于响应体的 `data.items` 字段；`data.limit`、`data.offset`
-和 `data.has_more` 描述分页。每条记录包含 `uploaded_at`、`captured_at`、
+和 `data.has_more` 描述分页。每条记录包含 `uploaded_timestamp`、`started_timestamp`、
 `profile_type` 和兼容 pprof 的 `profile` 数据。
 已持久发布但内容为空的结果仍返回成功，`items` 为空数组。`limit` 默认值为 20，
 最大值为 100。编码后的 Profile 数据超过 64 MiB 时返回

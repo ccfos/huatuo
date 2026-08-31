@@ -23,9 +23,9 @@ import (
 	"strconv"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/cpuutil"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 
 	"github.com/tklauser/numcpus"
 )

@@ -25,9 +25,10 @@ import (
 
 	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/job"
-	profileservice "huatuo-bamai/internal/profiler/service"
+	"huatuo-bamai/internal/profiling/publication"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
+	profilingstore "huatuo-bamai/pkg/profiling/store"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
@@ -68,8 +69,8 @@ type CreateInput struct {
 type RawProfile struct {
 	Hostname          string
 	Region            string
-	UploadedAt        time.Time
-	CapturedAt        time.Time
+	UploadedTimestamp time.Time
+	StartedTimestamp  time.Time
 	ContainerID       string
 	ContainerHostname string
 	ContainerType     string
@@ -86,34 +87,19 @@ type RawProfilePage struct {
 	HasMore bool
 }
 
-// RawProfileReader reads stored profiling windows by task identifier.
-type RawProfileReader interface {
-	ListByTracerID(
-		ctx context.Context,
-		tracerID string,
-		limit int,
-		offset int,
-	) ([]*profileservice.ProfileDocument, error)
-}
-
-// PublicationReader checks the durable result commit marker.
-type PublicationReader interface {
-	IsPublished(ctx context.Context, requestID string) (bool, error)
-}
-
 // Service owns Profiling authorization, validation, Job commands, and result access.
 type Service struct {
 	jobs             *job.Manager
-	profiles         RawProfileReader
-	publications     PublicationReader
+	profiles         *profilingstore.Store
+	publications     *publication.Store
 	dashboardBaseURL string
 }
 
 // NewService constructs the Profiling application service.
 func NewService(
 	jobs *job.Manager,
-	profiles RawProfileReader,
-	publications PublicationReader,
+	profiles *profilingstore.Store,
+	publications *publication.Store,
 	config Config,
 ) (*Service, error) {
 	if jobs == nil {
@@ -157,17 +143,17 @@ func (s *Service) Get(
 	principal auth.Principal,
 	requestID string,
 ) (*job.Job, error) {
-	jobEntity, err := s.jobs.Get(ctx, requestID)
+	currentJob, err := s.jobs.Get(ctx, requestID)
 	if err != nil {
 		return nil, err
 	}
-	if jobEntity.Kind != job.KindProfiling {
+	if currentJob.Kind != job.KindProfiling {
 		return nil, job.ErrNotFound
 	}
-	if !principal.IsAdmin && jobEntity.UserID != principal.ID {
+	if !principal.IsAdmin && currentJob.UserID != principal.ID {
 		return nil, auth.ErrPermissionDenied
 	}
-	return jobEntity, nil
+	return currentJob, nil
 }
 
 // List returns one authorized Profiling Job page.
@@ -216,18 +202,18 @@ func (s *Service) RawProfiles(
 	if err := validateRawProfilePage(limit, offset); err != nil {
 		return nil, err
 	}
-	jobEntity, err := s.Get(ctx, principal, requestID)
+	currentJob, err := s.Get(ctx, principal, requestID)
 	if err != nil {
 		return nil, err
 	}
-	switch jobEntity.Status {
+	switch currentJob.Status {
 	case job.StatusPending, job.StatusRunning, job.StatusStopping:
 		return nil, ErrResultNotReady
 	case job.StatusStopped, job.StatusFailed:
 		return nil, ErrResultUnavailable
 	case job.StatusCompleted, job.StatusOutcomeUnknown:
 	default:
-		return nil, fmt.Errorf("unsupported Job status %q", jobEntity.Status)
+		return nil, fmt.Errorf("unsupported Job status %q", currentJob.Status)
 	}
 	if s.profiles == nil || s.publications == nil {
 		return nil, ErrResultUnavailable
@@ -259,23 +245,24 @@ func (s *Service) RawProfiles(
 	}
 	items := make([]*RawProfile, 0, len(documents))
 	for _, document := range documents {
-		if document == nil {
+		if document == nil || document.ProfileData == nil ||
+			document.ProfileData.Profile == nil {
 			return nil, fmt.Errorf(
-				"%w: profile storage returned a nil document",
+				"%w: profile storage returned an incomplete document",
 				ErrResultStoreUnavailable,
 			)
 		}
 		items = append(items, &RawProfile{
 			Hostname:          document.Hostname,
 			Region:            document.Region,
-			UploadedAt:        document.UploadedTime,
-			CapturedAt:        document.CapturedAt(),
+			UploadedTimestamp: document.UploadedTimestamp,
+			StartedTimestamp:  *document.StartedTimestamp,
 			ContainerID:       document.ContainerID,
 			ContainerHostname: document.ContainerHostname,
 			ContainerType:     document.ContainerType,
-			ContainerQoS:      document.ContainerQOS,
-			ProfileType:       document.TracerData.Flamedata.ProfileType,
-			Profile:           &document.TracerData.Flamedata.Profile,
+			ContainerQoS:      document.ContainerQoS,
+			ProfileType:       document.ProfileData.ProfileType,
+			Profile:           document.ProfileData.Profile,
 		})
 	}
 	return &RawProfilePage{
@@ -294,12 +281,12 @@ func (*Service) Capabilities() []profilingdomain.Capability {
 // ResultURL returns a Job-scoped dashboard URL only for published results.
 func (s *Service) ResultURL(
 	ctx context.Context,
-	jobEntity *job.Job,
+	resultJob *job.Job,
 ) (*string, error) {
-	if s.dashboardBaseURL == "" || jobEntity == nil || jobEntity.EndedAt.IsZero() {
+	if s.dashboardBaseURL == "" || resultJob == nil || resultJob.EndedAt.IsZero() {
 		return nil, nil
 	}
-	switch jobEntity.Status {
+	switch resultJob.Status {
 	case job.StatusCompleted, job.StatusOutcomeUnknown:
 	default:
 		return nil, nil
@@ -307,14 +294,14 @@ func (s *Service) ResultURL(
 	if s.publications == nil {
 		return nil, nil
 	}
-	published, err := s.isPublished(ctx, jobEntity.ID)
+	published, err := s.isPublished(ctx, resultJob.ID)
 	if err != nil {
 		return nil, err
 	}
 	if !published {
 		return nil, nil
 	}
-	return buildDashboardURL(s.dashboardBaseURL, jobEntity), nil
+	return buildDashboardURL(s.dashboardBaseURL, resultJob), nil
 }
 
 func (s *Service) isPublished(ctx context.Context, requestID string) (bool, error) {
@@ -330,17 +317,17 @@ func (s *Service) isPublished(ctx context.Context, requestID string) (bool, erro
 	return published, nil
 }
 
-func buildDashboardURL(baseURL string, jobEntity *job.Job) *string {
-	if baseURL == "" || jobEntity == nil || jobEntity.Spec.Profiling == nil {
+func buildDashboardURL(baseURL string, resultJob *job.Job) *string {
+	if baseURL == "" || resultJob == nil || resultJob.Spec.Profiling == nil {
 		return nil
 	}
 
 	var dashboardUID, dashboardSlug, scopeKey, scopeValue string
-	switch jobEntity.Scope {
+	switch resultJob.Scope {
 	case observation.ScopeContainer:
 		scopeKey = "var-container_id"
-		scopeValue = jobEntity.ContainerID
-		switch jobEntity.Spec.Profiling.Type {
+		scopeValue = resultJob.ContainerID
+		switch resultJob.Spec.Profiling.Type {
 		case profilingdomain.TypeMemory:
 			dashboardUID = "container-memory-profiling"
 			dashboardSlug = "e5aeb9-e599a8-memory-profiling"
@@ -350,8 +337,8 @@ func buildDashboardURL(baseURL string, jobEntity *job.Job) *string {
 		}
 	case observation.ScopeHost:
 		scopeKey = "var-hostname"
-		scopeValue = jobEntity.Hostname
-		switch jobEntity.Spec.Profiling.Type {
+		scopeValue = resultJob.Hostname
+		switch resultJob.Spec.Profiling.Type {
 		case profilingdomain.TypeMemory:
 			dashboardUID = "host-memory-profiling"
 			dashboardSlug = "e5aebf-e4b8bb-e69cba-memory-profiling"
@@ -367,11 +354,11 @@ func buildDashboardURL(baseURL string, jobEntity *job.Job) *string {
 	}
 	query := url.Values{}
 	query.Set("orgId", "1")
-	query.Set("from", jobEntity.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"))
-	query.Set("to", jobEntity.EndedAt.UTC().Format("2006-01-02T15:04:05.000Z"))
+	query.Set("from", resultJob.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"))
+	query.Set("to", resultJob.EndedAt.UTC().Format("2006-01-02T15:04:05.000Z"))
 	query.Set("timezone", "browser")
 	query.Set(scopeKey, scopeValue)
-	query.Set("var-tracer_id", jobEntity.ID)
+	query.Set("var-tracer_id", resultJob.ID)
 	result := fmt.Sprintf(
 		"%s/%s/%s?%s",
 		strings.TrimRight(baseURL, "/"),

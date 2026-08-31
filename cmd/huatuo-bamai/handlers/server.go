@@ -24,6 +24,7 @@ import (
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/internal/version"
+	tracingstore "huatuo-bamai/pkg/tracing/store"
 
 	httpGin "github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
@@ -35,6 +36,7 @@ type ServerOptions struct {
 	BearerToken      string
 	ProfilingService *nodeprofiling.Service
 	TracingService   *nodetracing.Service
+	TracingStore     *tracingstore.Store
 	PromReg          *prometheus.Registry
 	VersionInfo      *version.Info
 }
@@ -85,14 +87,17 @@ func newHTTPServer(opts ServerOptions, nodeHandler *NodeAPIHandler) (*server.Ser
 
 	s.MustRegisterRoutes("", NewContainerHandler().Handlers)
 	s.MustRegisterRoutes("", NewConfigHandler().Handlers)
-	httpConfig := config.Get().HTTPServer
-	s.MustRegisterRoutes(
-		"/v1/events",
-		NewEventsHandler(
-			httpConfig.MaxEventStreamClients,
-			httpConfig.EventStreamKeepAliveIntervalSeconds,
-		).Handlers,
-	)
+	if opts.TracingStore != nil {
+		httpConfig := config.Get().HTTPServer
+		s.MustRegisterRoutes(
+			"/v1/events",
+			NewEventsHandler(
+				opts.TracingStore,
+				httpConfig.MaxEventStreamClients,
+				httpConfig.EventStreamKeepAliveIntervalSeconds,
+			).Handlers,
+		)
+	}
 
 	errorHandlers := s.StrictErrorHandlers()
 	strictHandler := nodeapi.NewStrictHandlerWithOptions(

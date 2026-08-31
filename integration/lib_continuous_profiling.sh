@@ -124,12 +124,12 @@ continuous_profile_windows_are_stored() {
 	count=$(jq -er '
 		.data.items
 		| map(
-			has("uploaded_at")
-			and has("captured_at")
+			has("uploaded_timestamp")
+			and has("started_timestamp")
 			and has("profile_type")
 			and has("profile")
 			and (has("tracer_id") | not)
-			and (has("tracer_data") | not)
+			and (has("profile_data") | not)
 		)
 		| if all then length else error("invalid raw profile contract") end
 	' "${response_file}" 2> /dev/null) || {

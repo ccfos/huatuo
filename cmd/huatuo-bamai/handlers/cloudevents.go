@@ -16,27 +16,28 @@ package handlers
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/internal/timeutil"
+	tracingstore "huatuo-bamai/pkg/tracing/store"
 	pkgtypes "huatuo-bamai/pkg/types"
 )
 
-// DocumentToWatchEvent converts a tracing Document into a CloudEvents 1.0 WatchEvent.
-func DocumentToWatchEvent(doc *tracing.Document) pkgtypes.WatchEvent {
+// DocumentToWatchEvent converts a validated event document into CloudEvents 1.0.
+func DocumentToWatchEvent(doc *tracingstore.Document) pkgtypes.WatchEvent {
+	observedTimestamp := timeutil.FormatUTC(*doc.ObservedTimestamp)
 	return pkgtypes.WatchEvent{
 		SpecVersion:     "1.0",
 		ID:              uuid.New().String(),
 		Source:          fmt.Sprintf("/huatuo/%s/%s", doc.Hostname, doc.TracerName),
 		Type:            "tech.huatuo.kernel.event",
 		DataContentType: "application/json",
-		Time:            doc.UploadedTime.UTC().Format(time.RFC3339Nano),
+		Time:            observedTimestamp,
 		Data: pkgtypes.WatchEventData{
 			Hostname:               doc.Hostname,
 			Region:                 doc.Region,
-			ObservedTimestamp:      doc.TracerTime,
+			ObservedTimestamp:      observedTimestamp,
 			ContainerID:            doc.ContainerID,
 			ContainerHostname:      doc.ContainerHostname,
 			ContainerHostNamespace: doc.ContainerHostNamespace,

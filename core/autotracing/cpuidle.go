@@ -28,8 +28,8 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/cpuutil"
-	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -417,11 +417,11 @@ func (c *cpuIdleTracing) saveCPUIdleTrace(
 	}
 
 	if err := tracing.Save(&tracing.WriteRequest{
-		TracerName:    cpuIdleTracerName,
-		ContainerID:   state.containerID,
-		TracerTime:    traceTime,
-		TracerData:    &tracerData,
-		TracerRunType: tracing.TracerRunTypeAutotracing,
+		TracerName:       cpuIdleTracerName,
+		ContainerID:      state.containerID,
+		StartedTimestamp: traceTime,
+		TracerData:       &tracerData,
+		TracerRunType:    types.TracerRunTypeAutotracing,
 	}); err != nil {
 		return fmt.Errorf("save container cpu trace: %w", err)
 	}

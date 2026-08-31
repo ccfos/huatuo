@@ -69,20 +69,17 @@ func NewRegister(blacklist []string) (map[string]*EventTracingAttr, error) {
 				tracingStatusCache[name] = statusDisabled
 				continue
 			}
-
 			if factory == nil {
 				tracingStatusCache[name] = statusInitError
 				errRegistration = fmt.Errorf("%w: %q factory is nil", ErrInvalidTracer, name)
 				return
 			}
-
 			attr, err := factory()
 			if err != nil {
 				if errors.Is(err, types.ErrNotSupported) {
 					tracingStatusCache[name] = statusInactive
 					continue
 				}
-
 				tracingStatusCache[name] = statusInitError
 				errRegistration = fmt.Errorf("initialize tracer %q: %w", name, err)
 				return
@@ -97,13 +94,10 @@ func NewRegister(blacklist []string) (map[string]*EventTracingAttr, error) {
 				errRegistration = fmt.Errorf("%w: %q has no role", ErrInvalidTracer, name)
 				return
 			}
-
 			tracingStatusCache[name] = statusActive
 			registrations[name] = attr
-
 			log.WithField("tracer", name).Info("tracer registered")
 		}
-
 		tracingEventAttrCache = registrations
 	})
 
@@ -111,12 +105,8 @@ func NewRegister(blacklist []string) (map[string]*EventTracingAttr, error) {
 		return nil, errRegistration
 	}
 	if !slices.Equal(normalizedBlacklist, registrationBlacklist) {
-		return nil, fmt.Errorf(
-			"%w: blacklist differs from the initialized registry",
-			ErrInvalidTracer,
-		)
+		return nil, fmt.Errorf("%w: blacklist differs from the initialized registry", ErrInvalidTracer)
 	}
-
 	return cloneEventTracingAttrs(tracingEventAttrCache), nil
 }
 
@@ -130,6 +120,5 @@ func cloneEventTracingAttrs(attrs map[string]*EventTracingAttr) map[string]*Even
 		attrCopy := *attr
 		cloned[name] = &attrCopy
 	}
-
 	return cloned
 }

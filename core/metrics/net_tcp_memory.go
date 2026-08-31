@@ -20,8 +20,8 @@ import (
 	"io/fs"
 
 	"huatuo-bamai/internal/procfs"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
 

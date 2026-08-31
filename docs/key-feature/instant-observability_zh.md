@@ -78,7 +78,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 - **hostname**：物理机 hostname
 - **region**：物理机所在可用区
-- **uploaded_time**：数据上传时间
+- **uploaded_timestamp**：数据上传时间
 - **container_id**：如果事件关联容器，则记录的容器 ID
 - **container_hostname**：如果事件关联容器，则记录的容器 hostname
 - **container_host_namespace**：如果事件关联容器，则记录容器的 K8s 命名空间
@@ -86,8 +86,8 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 - **container_qos**：容器 QoS 级别
 - **tracer_name**：事件名称（如 `sched_tick`、`oom` 等）
 - **tracer_id**：此次的 tracing ID
-- **tracer_time**：触发 tracing 时间
-- **tracer_type**：触发类型（手动触发或自动触发）
+- **observed_timestamp**：触发 tracing 时间
+- **tracer_type**：观测类型，即时事件记录固定为 `event`
 - **tracer_data**：特定事件私有数据（详见各事件说明）
 
 ### 1. sched_tick 调度 tick 间隔
@@ -108,7 +108,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 ```json
 {
-    "uploaded_time": "2025-06-11T16:05:16.251152703+08:00",
+    "uploaded_timestamp": "2025-06-11T16:05:16.251152703+08:00",
     "hostname": "***",
     "tracer_data": {
         "tick_interval_ns": 237328905,
@@ -118,9 +118,8 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
         "cpu": 1,
         "stack": "scheduler_tick/..."
     },
-    "tracer_time": "2025-06-11 16:05:16.251 +0800",
-    "tracer_type": "auto",
-    "time": "2025-06-11 16:05:16.251 +0800",
+    "observed_timestamp": "2025-06-11T16:05:16.251+08:00",
+    "tracer_type": "event",
     "region": "***",
     "tracer_name": "sched_tick"
 }
@@ -145,8 +144,8 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 ```json
 {
+    "observed_timestamp": "2026-07-23T02:14:40.304775546Z",
     "tracer_data": {
-        "observed_timestamp": "2026-07-23T02:14:40.304775546Z",
         "drop_reason": "SKB_DROP_REASON_NOT_SPECIFIED",
         "source": "events",
         "comm": "kubelet",
@@ -209,6 +208,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 ```json
 {
+    "observed_timestamp": "2025-06-11T00:00:00Z",
     "tracer_data": {
         "comm": "nginx",
         "pid": 2921092,
@@ -409,7 +409,6 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
         "dev": "CPU/MEM",
         "event": "MCE",
         "type": "UncorrectedRecoverable",
-        "observed_timestamp": "2025-06-11T00:00:00Z",
         "info": "{\"mcg_cpu_cap\":4096,\"banks_msr_status\":9295429630892703744,\"cpu\":2,\"socketid\":0,\"bank\":5}"
     }
 }
@@ -419,11 +418,11 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 ```json
 {
+    "observed_timestamp": "2025-06-11T00:00:00Z",
     "tracer_data": {
         "dev": "PCIe 0000:3b:00.0",
         "event": "AER",
         "type": "UncorrectedRecoverable",
-        "observed_timestamp": "2025-06-11T00:00:00Z",
         "info": "{\"dev_name\":\"0000:3b:00.0\",\"err_type\":\"UncorrectedRecoverable\",\"err_reason\":\"Completion Timeout\",\"tlp_header\":\"not available\"}"
     }
 }
@@ -434,7 +433,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 - **dev**：发生错误的硬件设备（如 `CPU/MEM`、`PCIe 0000:3b:00.0`）
 - **event**：错误类型（`MCE` / `EDAC` / `NON_STANDARD` / `AER` / `MCE_THRESHOLD`）
 - **type**：错误严重程度（`Corrected` / `UncorrectedRecoverable` / `UncorrectedDeferred` / `UncorrectedFatal` / `Info`）
-- **observed_timestamp**：硬件错误发生时的 UTC 时间
+- **observed_timestamp**：顶层字段，表示硬件错误发生时的 UTC 时间
 - **info**：JSON 格式的详细错误信息，内容因 event 类型不同而不同
 
 ### 9. netdev_events 网络设备

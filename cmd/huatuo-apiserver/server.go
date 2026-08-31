@@ -31,7 +31,7 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 		JobManager:          d.jobManager,
 		ProfileStorage:      d.profileStorage,
 		ProfileQueryService: d.profileQueryService,
-		Publications:        d.publications,
+		ProfilePublications: d.publications,
 		ProfilingConfig: profiling.Config{
 			DashboardBaseURL: d.opts.Config.Profiling.DashboardBaseURL,
 		},

@@ -27,10 +27,11 @@ import (
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/nodeclient"
 	"huatuo-bamai/internal/pidfile"
-	profileService "huatuo-bamai/internal/profiler/service"
 	"huatuo-bamai/internal/profiling/publication"
+	profilequery "huatuo-bamai/internal/profiling/query"
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/version"
+	profilingstore "huatuo-bamai/pkg/profiling/store"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -81,8 +82,8 @@ type Daemon struct {
 
 	metrics             *prometheus.Registry
 	jobManager          *job.Manager
-	profileStorage      *profileService.ProfileStorage
-	profileQueryService *profileService.ProfileQueryService
+	profileStorage      *profilingstore.Store
+	profileQueryService *profilequery.ProfileQueryService
 	publications        *publication.Store
 	agentObserver       nodeclient.RequestObserver
 	apiServer           *server.Server

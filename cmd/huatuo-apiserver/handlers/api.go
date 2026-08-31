@@ -29,7 +29,7 @@ import (
 	tracehandler "huatuo-bamai/cmd/huatuo-apiserver/handlers/trace"
 	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/job"
-	profileservice "huatuo-bamai/internal/profiler/service"
+	profilequery "huatuo-bamai/internal/profiling/query"
 	"huatuo-bamai/internal/server/response"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
@@ -605,8 +605,8 @@ func rawProfile(profile *profilinghandler.RawProfile) (serverapi.RawProfile, int
 	return serverapi.RawProfile{
 		Hostname:          profile.Hostname,
 		Region:            profile.Region,
-		UploadedAt:        profile.UploadedAt,
-		CapturedAt:        profile.CapturedAt,
+		UploadedTimestamp: profile.UploadedTimestamp,
+		StartedTimestamp:  profile.StartedTimestamp,
 		ContainerID:       optionalString(profile.ContainerID),
 		ContainerHostname: optionalString(profile.ContainerHostname),
 		ContainerType:     optionalString(profile.ContainerType),
@@ -690,9 +690,9 @@ func invokeProfileQuery[Request, Result proto.Message](
 
 func profileQueryError(err error) error {
 	switch {
-	case errors.Is(err, profileservice.ErrInvalidQuery):
+	case errors.Is(err, profilequery.ErrInvalidQuery):
 		return response.ErrInvalidRequest.WithMessage(err.Error())
-	case errors.Is(err, profileservice.ErrProfilesAbsent):
+	case errors.Is(err, profilequery.ErrProfilesAbsent):
 		return response.ErrNotFound.WithMessage("profiles not found")
 	default:
 		return err

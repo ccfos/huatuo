@@ -27,10 +27,10 @@ import (
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/bytesutil"
 	"huatuo-bamai/internal/utils/kmsgutil"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 
 	"github.com/cloudflare/backoff"
 )
@@ -136,8 +136,8 @@ func (c *hungTaskTracing) Start(ctx context.Context) error {
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: "hungtask",
-				TracerTime: time.Now(),
+				TracerName:        "hungtask",
+				ObservedTimestamp: time.Now().UTC(),
 				TracerData: &HungTaskTracerData{
 					TID:                   data.TID,
 					Comm:                  bytesutil.ToStr(data.Comm[:]),

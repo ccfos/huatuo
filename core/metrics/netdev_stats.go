@@ -27,8 +27,8 @@ import (
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/internal/procfs"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 
 	"github.com/jsimonetti/rtnetlink"
 	"github.com/mdlayher/netlink"

@@ -23,8 +23,8 @@ import (
 	"huatuo-bamai/internal/linkstatus"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/matcher"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 
 	"github.com/safchain/ethtool"
@@ -216,9 +216,9 @@ func (netdev *netdevTracing) updateAndSaveEvent(data *netdevEventData) {
 	if !data.IsAtStart && data.LinkStatus != "" {
 		log.Infof("%s %+v", data.LinkStatus, data)
 		if err := tracing.Save(&tracing.WriteRequest{
-			TracerName: netdev.name,
-			TracerTime: time.Now(),
-			TracerData: data,
+			TracerName:        netdev.name,
+			ObservedTimestamp: time.Now().UTC(),
+			TracerData:        data,
 		}); err != nil {
 			log.Warnf("failed to save tracing data: %v", err)
 		}

@@ -23,7 +23,6 @@ import (
 	"strings"
 	"sync"
 
-	"huatuo-bamai/internal/profiler"
 	"huatuo-bamai/internal/profiler/output"
 	_ "huatuo-bamai/internal/profiler/output/flamegraph"
 	_ "huatuo-bamai/internal/profiler/output/raw"
@@ -68,11 +67,6 @@ type ProfilerContext struct {
 	TracerID string
 
 	ToolstreamClient *toolstream.Client
-}
-
-type TracerData struct {
-	MetricData any                   `json:"metric_data,omitempty"`
-	FlameData  *profiler.ProfileData `json:"flamedata"`
 }
 
 func NewProfilerContext(cliCtx *cli.Context, logBuf *bytes.Buffer) (*ProfilerContext, error) {

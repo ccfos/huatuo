@@ -23,8 +23,8 @@ import (
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 func init() {

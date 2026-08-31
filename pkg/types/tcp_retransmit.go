@@ -67,7 +67,7 @@ func (r TCPRetransmitReason) String() string {
 
 // TCPRetransmitTracing is the canonical JSON schema for a TCP retransmission event.
 type TCPRetransmitTracing struct {
-	ObservedTimestamp   string `json:"observed_timestamp"`
+	ObservedTimestamp   string `json:"observed_timestamp,omitempty"`
 	TCPReason           string `json:"tcp_reason"` // "RTO", "fast_retransmit", "reorder_prone_fast", "TLP", "spurious", "unknown"
 	Source              string `json:"source,omitempty"`
 	Comm                string `json:"comm"`

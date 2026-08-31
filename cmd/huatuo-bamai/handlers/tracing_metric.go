@@ -15,8 +15,8 @@
 package handlers
 
 import (
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 var tracingStatusCollector = &tracingHitCollector{}

@@ -141,11 +141,10 @@ curl -k -u admin:admin \
     "_source" : {
       "hostname" : "hostname",
       "region" : "dev",
-      "uploaded_time" : "2026-05-07T00:11:49.753166222Z",
-      "time" : "2026-05-07 00:11:49.753 +0000",
+      "uploaded_timestamp" : "2026-05-07T00:11:49.753166222Z",
       "tracer_name" : "net_rx_latency",
-      "tracer_time" : "2026-05-07 00:11:49.753 +0000",
-      "tracer_type" : "auto",
+      "observed_timestamp" : "2026-05-07T00:11:49.753166222Z",
+      "tracer_type" : "event",
       "tracer_data" : {
         "comm" : "<nil>",
         "pid" : 0,
@@ -264,11 +263,10 @@ curl -k -u elastic:123456 \
     "_source" : {
       "hostname" : "hostname",
       "region" : "dev",
-      "uploaded_time" : "2026-05-07T02:51:37.696263325Z",
-      "time" : "2026-05-07 02:51:37.696 +0000",
+      "uploaded_timestamp" : "2026-05-07T02:51:37.696263325Z",
       "tracer_name" : "net_rx_latency",
-      "tracer_time" : "2026-05-07 02:51:37.696 +0000",
-      "tracer_type" : "auto",
+      "observed_timestamp" : "2026-05-07T02:51:37.696263325Z",
+      "tracer_type" : "event",
       "tracer_data" : {
         "comm" : "<nil>",
         "pid" : 0,

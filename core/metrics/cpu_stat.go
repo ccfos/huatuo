@@ -23,8 +23,8 @@ import (
 	"huatuo-bamai/internal/cgroups"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 type cpuStat struct {

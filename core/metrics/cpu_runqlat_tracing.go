@@ -26,8 +26,8 @@ import (
 	"huatuo-bamai/internal/cgroups/subsystem"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/cpu_runqlat_tracing.c -o $BPF_DIR/cpu_runqlat_tracing.o

@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,11 +28,6 @@ const (
 	ProfileTypeLockCountSample = "process_lock:lock:count:lock:count"
 	ProfileTypeLockTimeSample  = "process_lock:lock:nanoseconds:lock:nanoseconds"
 )
-
-// MetadataCollection is the storage collection name for profiling metadata documents.
-// Profiling metadata reuses tracing.DocumentStoreMapper; profile_type is queried in-place
-// via the nested path tracer_data.flamedata.profile_type.
-const MetadataCollection = "profiling_metadata"
 
 // ProfileData is the data saved by the profiler.
 type ProfileData struct {

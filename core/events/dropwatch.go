@@ -20,15 +20,15 @@ import (
 	"fmt"
 	"path"
 	"strconv"
-	"time"
 
 	internalconfig "huatuo-bamai/internal/config"
 	"huatuo-bamai/internal/matcher"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/timeutil"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/executil"
 	"huatuo-bamai/internal/utils/kernaddr"
-	"huatuo-bamai/pkg/tracing"
 	"huatuo-bamai/pkg/types"
 )
 
@@ -83,12 +83,18 @@ func handleDropwatchEvent(_ *toolstream.Session, ev *types.DropWatchTracing) err
 	}
 
 	globalDropwatchTCPRetransmitCache.add(ev)
+	observedTimestamp, err := timeutil.Parse(ev.ObservedTimestamp)
+	if err != nil {
+		return fmt.Errorf("parse dropwatch observed timestamp: %w", err)
+	}
+	tracerData := *ev
+	tracerData.ObservedTimestamp = ""
 
 	return tracing.Save(&tracing.WriteRequest{
-		TracerName:  "dropwatch",
-		ContainerID: ev.ContainerID,
-		TracerTime:  time.Now(),
-		TracerData:  ev,
+		TracerName:        "dropwatch",
+		ContainerID:       ev.ContainerID,
+		ObservedTimestamp: observedTimestamp,
+		TracerData:        &tracerData,
 	})
 }
 

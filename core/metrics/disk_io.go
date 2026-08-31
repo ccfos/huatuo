@@ -21,8 +21,8 @@ import (
 
 	"huatuo-bamai/internal/procfs"
 	"huatuo-bamai/internal/procfs/blockdevice"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 const (

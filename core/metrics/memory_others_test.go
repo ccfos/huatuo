@@ -22,7 +22,7 @@ import (
 
 	"huatuo-bamai/internal/cgroups/paths"
 	"huatuo-bamai/internal/cgroups/subsystem"
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/types"
 )
 

@@ -12,23 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tracing
+// Package store defines tracing documents and their persistence behavior.
+package store
 
-import "testing"
+import (
+	"errors"
 
-func TestProfileDocumentStoreMapperUsesUniqueIDs(t *testing.T) {
-	mapper := ProfileDocumentStoreMapper{}
-	document := &Document{TracerID: "profile-task-2026"}
+	"huatuo-bamai/pkg/types"
+)
 
-	first := mapper.ID(document)
-	second := mapper.ID(document)
-	if first == "" || second == "" {
-		t.Fatal("ProfileDocumentStoreMapper.ID() returned an empty ID")
+// Document is one heterogeneous tracing event persisted by the Node agent.
+type Document struct {
+	types.Document
+	TracerData any `json:"tracer_data,omitempty"`
+}
+
+func (d *Document) validate() error {
+	if d == nil {
+		return errors.New("tracing document is required")
 	}
-	if first == second {
-		t.Fatalf("ProfileDocumentStoreMapper.ID() returned duplicate ID %q", first)
-	}
-	if document.TracerID != "profile-task-2026" {
-		t.Fatalf("ProfileDocumentStoreMapper.ID() changed tracer ID to %q", document.TracerID)
-	}
+	return d.Document.Validate()
 }

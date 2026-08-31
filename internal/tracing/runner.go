@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tracing schedules tracers and manages their lifecycle.
+// Package tracing schedules Node tracers and manages their lifecycle.
 package tracing
 
 import (
@@ -59,49 +59,38 @@ func (r *eventRunner) start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return newTracerContextError("start", r.name, err)
 	}
-
 	r.mu.Lock()
 	if r.done != nil {
 		r.mu.Unlock()
 		return newTracerStateError(ErrTracerAlreadyRunning, r.name)
 	}
-
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	r.cancel = cancel
 	r.done = done
 	r.mu.Unlock()
-
 	go r.run(runCtx, done)
-
 	return nil
 }
 
 func (r *eventRunner) run(ctx context.Context, done chan<- struct{}) {
 	log.WithField("tracer", r.name).Info("tracer started")
 	defer r.finish(done)
-
 	for {
 		err := r.starter.Start(ctx)
 		r.incrementRunCount()
-
 		if ctx.Err() != nil || errors.Is(err, types.ErrNotSupported) {
 			return
 		}
-
 		if err != nil &&
 			!errors.Is(err, types.ErrExitByCancelCtx) &&
 			!errors.Is(err, types.ErrDisconnectedHuatuo) {
-			log.WithError(err).
-				WithField("tracer", r.name).
-				Error("tracer failed")
+			log.WithError(err).WithField("tracer", r.name).Error("tracer failed")
 		}
-
 		timer := time.NewTimer(r.restartInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-
 			return
 		case <-timer.C:
 		}
@@ -114,7 +103,6 @@ func (r *eventRunner) finish(done chan<- struct{}) {
 	r.cancel = nil
 	r.done = nil
 	r.mu.Unlock()
-
 	log.WithField("tracer", r.name).Info("tracer stopped")
 }
 
@@ -129,7 +117,6 @@ func (r *eventRunner) stop(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
 	return waitForRunner(ctx, r.name, done)
 }
 
@@ -139,13 +126,10 @@ func (r *eventRunner) cancelRun() (<-chan struct{}, error) {
 		r.mu.RUnlock()
 		return nil, newTracerStateError(ErrTracerNotRunning, r.name)
 	}
-
 	cancel := r.cancel
 	done := r.done
 	r.mu.RUnlock()
-
 	cancel()
-
 	return done, nil
 }
 
@@ -175,7 +159,6 @@ type LifecycleSnapshot struct {
 func (r *eventRunner) snapshot() LifecycleSnapshot {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-
 	return LifecycleSnapshot{
 		Name:            r.name,
 		IsRunning:       r.done != nil,

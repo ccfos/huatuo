@@ -25,9 +25,9 @@ import (
 	"huatuo-bamai/internal/cgroups/stats"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/cpuutil"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 type cpuUtilStat struct {

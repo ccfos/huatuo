@@ -12,24 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package service
+package query
 
 import (
-	"strings"
 	"testing"
+
+	profilingstore "huatuo-bamai/pkg/profiling/store"
 
 	"github.com/prometheus/prometheus/model/labels"
 )
 
-func TestProfileStorageReadyRejectsUninitializedStorage(t *testing.T) {
-	err := (*ProfileStorage)(nil).Ready(t.Context())
-	if err == nil || !strings.Contains(err.Error(), "not initialized") {
-		t.Fatalf("Ready() error = %v, want initialization error", err)
-	}
-}
-
 func TestApplyProfileMatcherRegion(t *testing.T) {
-	filter := &SearchFilter{}
+	filter := &profilingstore.Filter{}
 	matcher := &labels.Matcher{Name: "region", Value: "cn-beijing", Type: labels.MatchEqual}
 
 	if err := applyProfileMatcher(filter, matcher); err != nil {
@@ -41,7 +35,7 @@ func TestApplyProfileMatcherRegion(t *testing.T) {
 }
 
 func TestApplyProfileMatcherRejectsUnknownLabel(t *testing.T) {
-	filter := &SearchFilter{}
+	filter := &profilingstore.Filter{}
 	matcher := &labels.Matcher{Name: "unknown", Value: "x", Type: labels.MatchEqual}
 
 	if err := applyProfileMatcher(filter, matcher); err == nil {
@@ -58,12 +52,5 @@ func TestProfileStringRejectsInvalidIndex(t *testing.T) {
 		if got, ok := profileString(table, index); ok || got != "" {
 			t.Errorf("profileString(%d)=(%q,%t), want empty,false", index, got, ok)
 		}
-	}
-}
-
-func TestBuildProfileSearchQueryIncludesPage(t *testing.T) {
-	query := buildProfileSearchQuery(&SearchFilter{TracerID: "task-2026", Limit: 25, Offset: 50})
-	if query.Limit != 25 || query.Offset != 50 {
-		t.Fatalf("query page=(%d,%d), want (25,50)", query.Limit, query.Offset)
 	}
 }

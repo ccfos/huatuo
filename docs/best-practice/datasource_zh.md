@@ -198,7 +198,7 @@ kubectl apply -f huatuo-servicemonitor.yaml
 - Username：`elastic`
 - Password：`<password>`
 - Index name：`huatuo_bamai*`
-- Time field name：`uploaded_time`
+- Time field name：`uploaded_timestamp`
 - UID：`huatuo-bamai-es`
 
 Provisioning 配置示例见 `build/docker/grafana/datasources/`。

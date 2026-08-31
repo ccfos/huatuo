@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package service
+package query
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/log"
+	profilingstore "huatuo-bamai/pkg/profiling/store"
 
 	googlev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	querierv1 "github.com/grafana/pyroscope/api/gen/proto/go/querier/v1"
@@ -34,11 +35,11 @@ import (
 
 // ProfileQueryService provides Pyroscope-compatible profile queries.
 type ProfileQueryService struct {
-	profileStorage *ProfileStorage
+	profileStorage *profilingstore.Store
 }
 
 // NewProfileQueryService initializes a profile query service.
-func NewProfileQueryService(profileStorage *ProfileStorage) (*ProfileQueryService, error) {
+func NewProfileQueryService(profileStorage *profilingstore.Store) (*ProfileQueryService, error) {
 	if profileStorage == nil {
 		return nil, errors.New("create profile query service: profile storage is required")
 	}
@@ -56,7 +57,7 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	if req.End < req.Start {
 		return nil, fmt.Errorf("%w: end time precedes start time", ErrInvalidQuery)
 	}
-	filter := &SearchFilter{
+	filter := &profilingstore.Filter{
 		StartTime:   time.UnixMilli(req.Start),
 		EndTime:     time.UnixMilli(req.End),
 		ProfileType: req.ProfileTypeID,
@@ -92,7 +93,7 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	}
 
 	// search
-	profileDocs, err := s.profileStorage.SearchProfilesContext(ctx, filter)
+	profileDocs, err := s.profileStorage.Search(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("search profiles: %w", err)
 	}
@@ -103,7 +104,11 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	// merge profileDocs
 	var profilesMerge pprof.ProfileMerge
 	for _, profileDoc := range profileDocs {
-		profile := &profileDoc.TracerData.Flamedata.Profile
+		if profileDoc == nil || profileDoc.ProfileData == nil ||
+			profileDoc.ProfileData.Profile == nil {
+			return nil, fmt.Errorf("%w: incomplete profile document", ErrInvalidQuery)
+		}
+		profile := profileDoc.ProfileData.Profile
 		if err := profilesMerge.Merge(profile); err != nil {
 			return nil, fmt.Errorf("merge profile: %w", err)
 		}
@@ -202,7 +207,7 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	}, nil
 }
 
-func applyProfileMatcher(filter *SearchFilter, matcher *labels.Matcher) error {
+func applyProfileMatcher(filter *profilingstore.Filter, matcher *labels.Matcher) error {
 	if matcher.Type != labels.MatchEqual {
 		return fmt.Errorf("%w: label %q only supports equality", ErrInvalidQuery, matcher.Name)
 	}
@@ -237,13 +242,13 @@ func profileString(table []string, index int64) (string, bool) {
 //	request: querierv1.ProfileTypesRequest
 //	response: querierv1.ProfileTypesResponse
 func (s *ProfileQueryService) ProfileTypes(ctx context.Context, req *querierv1.ProfileTypesRequest) (*querierv1.ProfileTypesResponse, error) {
-	filter := &SearchFilter{
+	filter := &profilingstore.Filter{
 		StartTime: time.UnixMilli(req.Start),
 		EndTime:   time.UnixMilli(req.End),
 		Limit:     500,
 	}
 
-	types, err := s.profileStorage.AggregationsByFieldContext(ctx, filter, "tracer_data.flamedata.profile_type")
+	types, err := s.profileStorage.Values(ctx, filter, "profile_type")
 	if err != nil {
 		return nil, fmt.Errorf("get profile types: %w", err)
 	}
@@ -289,7 +294,7 @@ func (s *ProfileQueryService) LabelNames(context.Context, *typesv1.LabelNamesReq
 //	request: typesv1.LabelValuesRequest
 //	response: typesv1.LabelValuesResponse
 func (s *ProfileQueryService) LabelValues(ctx context.Context, req *typesv1.LabelValuesRequest) (*typesv1.LabelValuesResponse, error) {
-	filter := &SearchFilter{
+	filter := &profilingstore.Filter{
 		StartTime: time.UnixMilli(req.Start),
 		EndTime:   time.UnixMilli(req.End),
 		Limit:     100,
@@ -320,7 +325,7 @@ func (s *ProfileQueryService) LabelValues(ctx context.Context, req *typesv1.Labe
 		return nil, fmt.Errorf("%w: no __profile_type__ matcher present", ErrInvalidQuery)
 	}
 
-	names, err := s.profileStorage.AggregationsByFieldContext(ctx, filter, req.Name)
+	names, err := s.profileStorage.Values(ctx, filter, req.Name)
 	if err != nil {
 		return nil, fmt.Errorf("get profile types: %w", err)
 	}

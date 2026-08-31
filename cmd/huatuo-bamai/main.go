@@ -33,6 +33,8 @@ import (
 	"huatuo-bamai/internal/server"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/version"
+	profilingstore "huatuo-bamai/pkg/profiling/store"
+	tracingstore "huatuo-bamai/pkg/tracing/store"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -86,6 +88,8 @@ type Daemon struct {
 	profilingService *nodeprofiling.Service
 	tracingService   *nodetracing.Service
 	toolstreamServer *toolstream.Server
+	tracingStore     *tracingstore.Store
+	profileStore     *profilingstore.Store
 	publications     *publication.Store
 	apiServer        *server.Server
 }

@@ -22,8 +22,8 @@ import (
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/bpf/abi"
 	"huatuo-bamai/internal/log"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/internal/utils/bytesutil"
-	"huatuo-bamai/pkg/tracing"
 )
 
 type txqueueTracingData struct {
@@ -88,9 +88,9 @@ func (c *txqueueTimeout) Start(ctx context.Context) error {
 			}
 
 			if err := tracing.Save(&tracing.WriteRequest{
-				TracerName: "netdev_txqueue_timeout",
-				TracerTime: time.Now(),
-				TracerData: data,
+				TracerName:        "netdev_txqueue_timeout",
+				ObservedTimestamp: time.Now().UTC(),
+				TracerData:        data,
 			}); err != nil {
 				log.Warnf("failed to save tracing data: %v", err)
 			}

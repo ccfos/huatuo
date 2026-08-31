@@ -21,8 +21,8 @@ import (
 	"huatuo-bamai/internal/matcher"
 
 	"huatuo-bamai/internal/pod"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 type memEventsCollector struct {

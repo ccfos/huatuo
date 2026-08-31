@@ -23,8 +23,11 @@ import (
 	"huatuo-bamai/cmd/huatuo-bamai/config"
 	"huatuo-bamai/cmd/huatuo-bamai/handlers"
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/nodeagent"
+	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
+	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/toolstream"
-	"huatuo-bamai/pkg/tracing"
+	"huatuo-bamai/internal/tracing"
 )
 
 const defaultHTTPDrainTimeout = 5 * time.Second
@@ -44,6 +47,16 @@ func startToolstream(d *Daemon) (func(context.Context) error, error) {
 	srv, err := toolstream.NewServerDefault()
 	if err != nil {
 		return nil, fmt.Errorf("start: %w", err)
+	}
+	if d.profileStore != nil {
+		resultWriter, err := nodeprofiling.NewResultWriter(
+			d.profileStore,
+			nodeagent.NewDocumentBuilder(d.opts.Region, ""),
+		)
+		if err != nil {
+			return nil, err
+		}
+		toolstream.Register(srv, profilingresult.ToolName, resultWriter.Write)
 	}
 
 	if err := srv.Start(); err != nil {
@@ -80,6 +93,7 @@ func startHandlers(d *Daemon) (func(context.Context) error, error) {
 		BearerToken:      httpConfig.Auth.BearerToken,
 		ProfilingService: d.profilingService,
 		TracingService:   d.tracingService,
+		TracingStore:     d.tracingStore,
 		PromReg:          d.metrics,
 		VersionInfo:      &d.opts.VersionInfo,
 	})

@@ -20,16 +20,11 @@ import (
 )
 
 var (
-	// ErrTracerNotFound indicates that no tracer is registered under a name.
-	ErrTracerNotFound = errors.New("tracer not found")
-	// ErrTracerAlreadyRunning indicates that a tracer is already active.
+	ErrTracerNotFound       = errors.New("tracer not found")
 	ErrTracerAlreadyRunning = errors.New("tracer already running")
-	// ErrTracerNotRunning indicates that a tracer is inactive.
-	ErrTracerNotRunning = errors.New("tracer not running")
-	// ErrInvalidTracer indicates that a tracing registration is invalid.
-	ErrInvalidTracer = errors.New("invalid tracer")
-	// ErrManagerClosed indicates that the manager no longer accepts starts.
-	ErrManagerClosed = errors.New("manager closed")
+	ErrTracerNotRunning     = errors.New("tracer not running")
+	ErrInvalidTracer        = errors.New("invalid tracer")
+	ErrManagerClosed        = errors.New("manager closed")
 )
 
 func newTracerStateError(err error, name string) error {

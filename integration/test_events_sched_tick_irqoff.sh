@@ -75,11 +75,11 @@ sched_tick_event_is_valid() {
 		first(.[] | select(
 			(.hostname | type == "string")
 			and .region == "dev"
-			and (.uploaded_time | type == "string")
+			and (.uploaded_timestamp | type == "string")
 			and (.time | type == "string")
 			and .tracer_name == "sched_tick"
 			and (.tracer_id | type == "string")
-			and (.tracer_time | type == "string")
+			and (.observed_timestamp | type == "string")
 			and .tracer_type == "event"
 			and .tracer_data.tick_interval_threshold_ns == 1
 			and (.tracer_data.tick_interval_ns | type == "number")

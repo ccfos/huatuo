@@ -22,8 +22,8 @@ import (
 	"fmt"
 
 	"huatuo-bamai/internal/bpf"
+	"huatuo-bamai/internal/tracing"
 	"huatuo-bamai/pkg/metric"
-	"huatuo-bamai/pkg/tracing"
 )
 
 func init() {

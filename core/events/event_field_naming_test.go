@@ -80,8 +80,8 @@ func TestEventJSONFieldNames(t *testing.T) {
 		},
 		{
 			name:     "ras",
-			value:    RasTracingData{ObservedTimestamp: "2026-08-20T00:00:00Z"},
-			expected: []string{"observed_timestamp"},
+			value:    RasTracingData{Device: "cpu"},
+			expected: []string{"dev"},
 		},
 	}
 

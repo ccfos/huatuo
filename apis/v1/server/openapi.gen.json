@@ -537,10 +537,6 @@
       "RawProfile": {
         "additionalProperties": false,
         "properties": {
-          "captured_at": {
-            "format": "date-time",
-            "type": "string"
-          },
           "container_hostname": {
             "type": "string"
           },
@@ -563,7 +559,11 @@
           "region": {
             "type": "string"
           },
-          "uploaded_at": {
+          "started_timestamp": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "uploaded_timestamp": {
             "format": "date-time",
             "type": "string"
           }
@@ -571,8 +571,8 @@
         "required": [
           "hostname",
           "region",
-          "uploaded_at",
-          "captured_at",
+          "uploaded_timestamp",
+          "started_timestamp",
           "profile_type",
           "profile"
         ],
