@@ -103,11 +103,11 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
-	// GetHealth request
-	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// GetOpenAPI request
 	GetOpenAPI(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReadiness request
+	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartProfilingWithBody request with any body
 	StartProfilingWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -132,8 +132,8 @@ type ClientInterface interface {
 	StopTracing(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetHealthRequest(c.Server)
+func (c *Client) GetOpenAPI(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOpenAPIRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -144,8 +144,8 @@ func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetOpenAPI(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetOpenAPIRequest(c.Server)
+func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReadinessRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -252,8 +252,8 @@ func (c *Client) StopTracing(ctx context.Context, requestID RequestID, reqEditor
 	return c.Client.Do(req)
 }
 
-// NewGetHealthRequest generates requests for GetHealth
-func NewGetHealthRequest(server string) (*http.Request, error) {
+// NewGetOpenAPIRequest generates requests for GetOpenAPI
+func NewGetOpenAPIRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -261,7 +261,7 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/healthz")
+	operationPath := fmt.Sprintf("/openapi.json")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -279,8 +279,8 @@ func NewGetHealthRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewGetOpenAPIRequest generates requests for GetOpenAPI
-func NewGetOpenAPIRequest(server string) (*http.Request, error) {
+// NewGetReadinessRequest generates requests for GetReadiness
+func NewGetReadinessRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -288,7 +288,7 @@ func NewGetOpenAPIRequest(server string) (*http.Request, error) {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/openapi.json")
+	operationPath := fmt.Sprintf("/readyz")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -565,11 +565,11 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
-	// GetHealthWithResponse request
-	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
-
 	// GetOpenAPIWithResponse request
 	GetOpenAPIWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOpenAPIResponse, error)
+
+	// GetReadinessWithResponse request
+	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
 
 	// StartProfilingWithBodyWithResponse request with any body
 	StartProfilingWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartProfilingResponse, error)
@@ -592,35 +592,6 @@ type ClientWithResponsesInterface interface {
 
 	// StopTracingWithResponse request
 	StopTracingWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*StopTracingResponse, error)
-}
-
-type GetHealthResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r GetHealthResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetHealthResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetHealthResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
 }
 
 type GetOpenAPIResponse struct {
@@ -647,6 +618,35 @@ func (r GetOpenAPIResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetOpenAPIResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetReadinessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReadinessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReadinessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetReadinessResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -868,15 +868,6 @@ func (r StopTracingResponse) ContentType() string {
 	return ""
 }
 
-// GetHealthWithResponse request returning *GetHealthResponse
-func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error) {
-	rsp, err := c.GetHealth(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetHealthResponse(rsp)
-}
-
 // GetOpenAPIWithResponse request returning *GetOpenAPIResponse
 func (c *ClientWithResponses) GetOpenAPIWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOpenAPIResponse, error) {
 	rsp, err := c.GetOpenAPI(ctx, reqEditors...)
@@ -884,6 +875,15 @@ func (c *ClientWithResponses) GetOpenAPIWithResponse(ctx context.Context, reqEdi
 		return nil, err
 	}
 	return ParseGetOpenAPIResponse(rsp)
+}
+
+// GetReadinessWithResponse request returning *GetReadinessResponse
+func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error) {
+	rsp, err := c.GetReadiness(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReadinessResponse(rsp)
 }
 
 // StartProfilingWithBodyWithResponse request with arbitrary body returning *StartProfilingResponse
@@ -956,22 +956,6 @@ func (c *ClientWithResponses) StopTracingWithResponse(ctx context.Context, reque
 	return ParseStopTracingResponse(rsp)
 }
 
-// ParseGetHealthResponse parses an HTTP response from a GetHealthWithResponse call
-func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetHealthResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	return response, nil
-}
-
 // ParseGetOpenAPIResponse parses an HTTP response from a GetOpenAPIWithResponse call
 func ParseGetOpenAPIResponse(rsp *http.Response) (*GetOpenAPIResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -993,6 +977,22 @@ func ParseGetOpenAPIResponse(rsp *http.Response) (*GetOpenAPIResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseGetReadinessResponse parses an HTTP response from a GetReadinessWithResponse call
+func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReadinessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil

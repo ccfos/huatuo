@@ -87,12 +87,12 @@ func NewNodeAPIHandler(
 	}, nil
 }
 
-// GetHealth reports only whether the HTTP process can serve a request.
-func (*NodeAPIHandler) GetHealth(
+// GetReadiness reports whether the HTTP server is ready to accept requests.
+func (*NodeAPIHandler) GetReadiness(
 	context.Context,
-	nodeapi.GetHealthRequestObject,
-) (nodeapi.GetHealthResponseObject, error) {
-	return nodeapi.GetHealth204Response{}, nil
+	nodeapi.GetReadinessRequestObject,
+) (nodeapi.GetReadinessResponseObject, error) {
+	return nodeapi.GetReadiness204Response{}, nil
 }
 
 // GetOpenAPI returns the bundled protocol document.

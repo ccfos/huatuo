@@ -105,6 +105,14 @@ func (h *APIHandler) GetOpenAPI(
 	return h.openAPI, nil
 }
 
+// GetReadiness reports whether the HTTP server is ready to accept requests.
+func (*APIHandler) GetReadiness(
+	context.Context,
+	serverapi.GetReadinessRequestObject,
+) (serverapi.GetReadinessResponseObject, error) {
+	return serverapi.GetReadiness204Response{}, nil
+}
+
 // CreateProfilingJob creates one independent Profiling Job.
 func (h *APIHandler) CreateProfilingJob(
 	ctx context.Context,

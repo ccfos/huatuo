@@ -15,9 +15,7 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,19 +126,16 @@ func TestNewServerUsesConfiguredErrorStatusMapper(t *testing.T) {
 	}
 }
 
-func TestNewServerRegistersHealthzRoute(t *testing.T) {
+func TestNewServerDoesNotRegisterProbeRoutes(t *testing.T) {
 	s := NewServer(nil)
 
-	request := httptest.NewRequest(http.MethodGet, "/healthz", http.NoBody)
-	recorder := httptest.NewRecorder()
-
-	s.engine.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusNoContent {
-		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
-	}
-	if recorder.Body.Len() != 0 {
-		t.Errorf("response body = %q, want empty body", recorder.Body.String())
+	for _, path := range []string{"/healthz", "/readyz"} {
+		request := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		recorder := httptest.NewRecorder()
+		s.engine.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want %d", path, recorder.Code, http.StatusNotFound)
+		}
 	}
 }
 
@@ -163,7 +158,7 @@ func TestNewServerWritesRoutingErrors(t *testing.T) {
 		{
 			name:       "method not allowed",
 			method:     http.MethodPost,
-			target:     "/healthz",
+			target:     "/metrics",
 			wantStatus: http.StatusMethodNotAllowed,
 			wantCode:   "method_not_allowed",
 		},
@@ -218,28 +213,6 @@ func TestNewServerRecoversPanicAsJSONError(t *testing.T) {
 	}
 }
 
-func TestNewServerReadinessRoute(t *testing.T) {
-	tests := []struct {
-		name       string
-		ready      func(context.Context) error
-		wantStatus int
-	}{
-		{name: "ready", ready: func(context.Context) error { return nil }, wantStatus: http.StatusNoContent},
-		{name: "not ready", ready: func(context.Context) error { return errors.New("store unavailable") }, wantStatus: http.StatusServiceUnavailable},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			s := NewServer(&Config{Ready: test.ready})
-			request := httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody)
-			recorder := httptest.NewRecorder()
-			s.engine.ServeHTTP(recorder, request)
-			if recorder.Code != test.wantStatus {
-				t.Errorf("response status = %d, want %d", recorder.Code, test.wantStatus)
-			}
-		})
-	}
-}
-
 func TestNewServerRegistersVersionRoute(t *testing.T) {
 	info := version.Info{
 		Name:         "huatuo-apiserver",
@@ -275,7 +248,6 @@ func TestNewServerRegistersVersionRoute(t *testing.T) {
 
 func TestServerAuthPolicyKeepsMetricsPublicAndPProfAdminOnly(t *testing.T) {
 	srv := NewServer(&Config{
-		RequireAuth: true,
 		EnablePProf: true,
 		AdminPaths:  []string{"/v1/profiles/flamegraph/**"},
 		AuthUsers: []UserConfig{
@@ -425,26 +397,8 @@ func TestNewServerRateLimit(t *testing.T) {
 	}
 }
 
-func TestServerGroupReturnsConfiguredRootGroup(t *testing.T) {
-	s := NewServer(&Config{Group: "/v1"})
-
-	s.Group().GET("/status", func(ctx *Context) error {
-		ctx.Status(http.StatusNoContent)
-		return nil
-	})
-
-	request := httptest.NewRequest(http.MethodGet, "/v1/status", http.NoBody)
-	recorder := httptest.NewRecorder()
-
-	s.engine.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusNoContent {
-		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusNoContent)
-	}
-}
-
 func TestServerMustRegisterRoutes(t *testing.T) {
-	s := NewServer(&Config{Group: "/api"})
+	s := NewServer(nil)
 	s.MustRegisterRoutes("/tasks", []Route{
 		{
 			Method: MethodAny,
@@ -514,47 +468,47 @@ func TestServerMustRegisterRoutes(t *testing.T) {
 		{
 			name:         "any-route",
 			method:       http.MethodOptions,
-			target:       "/api/tasks/disabled",
+			target:       "/tasks/disabled",
 			wantStatus:   http.StatusServiceUnavailable,
 			wantBodyPart: `"method":"OPTIONS"`,
 		},
 		{
 			name:       "extension-method-route",
 			method:     "PROPFIND",
-			target:     "/api/tasks/extended",
+			target:     "/tasks/extended",
 			wantStatus: http.StatusNoContent,
 		},
 		{
 			name:         "get-route",
 			method:       http.MethodGet,
-			target:       "/api/tasks/status",
+			target:       "/tasks/status",
 			wantStatus:   http.StatusOK,
 			wantBodyPart: `"method":"GET"`,
 		},
 		{
 			name:         "post-route",
 			method:       http.MethodPost,
-			target:       "/api/tasks",
+			target:       "/tasks",
 			wantStatus:   http.StatusCreated,
 			wantBodyPart: `"method":"POST"`,
 		},
 		{
 			name:       "delete-route",
 			method:     http.MethodDelete,
-			target:     "/api/tasks/task-20250226",
+			target:     "/tasks/task-20250226",
 			wantStatus: http.StatusNoContent,
 		},
 		{
 			name:         "put-route",
 			method:       http.MethodPut,
-			target:       "/api/tasks/task-20250226",
+			target:       "/tasks/task-20250226",
 			wantStatus:   http.StatusAccepted,
 			wantBodyPart: `"method":"PUT"`,
 		},
 		{
 			name:         "patch-route",
 			method:       http.MethodPatch,
-			target:       "/api/tasks/task-20250226",
+			target:       "/tasks/task-20250226",
 			wantStatus:   http.StatusOK,
 			wantBodyPart: `"method":"PATCH"`,
 		},

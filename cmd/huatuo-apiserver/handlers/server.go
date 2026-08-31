@@ -15,7 +15,6 @@
 package handlers
 
 import (
-	"context"
 	"errors"
 	"fmt"
 
@@ -46,7 +45,6 @@ type ServerOptions struct {
 	EnablePProf         bool
 	VersionInfo         *version.Info
 	RateLimit           *server.RateLimitConfig
-	Ready               func(context.Context) error
 }
 
 // Start starts the API service with generated business routes.
@@ -56,6 +54,9 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 	}
 	if opts.JobManager == nil {
 		return nil, errors.New("start API server: Job Manager is required")
+	}
+	if len(opts.AuthUsers) == 0 {
+		return nil, errors.New("start API server: at least one auth user is required")
 	}
 
 	if (opts.ProfileStorage == nil) != (opts.Publications == nil) {
@@ -92,17 +93,15 @@ func Start(opts *ServerOptions) (*server.Server, error) {
 	}
 
 	httpServer := server.NewServer(&server.Config{
-		RequireAuth: true,
 		EnablePProf: opts.EnablePProf,
 		RateLimit:   opts.RateLimit,
 		AuthUsers:   opts.AuthUsers,
-		PublicPaths: []string{"/openapi.json"},
+		PublicPaths: []string{"/openapi.json", "/readyz"},
 		AdminPaths: []string{
 			"/v1/profiling/flamegraph/**",
 		},
 		PromReg:     opts.PromReg,
 		VersionInfo: opts.VersionInfo,
-		Ready:       opts.Ready,
 		ErrorStatusMapper: response.ChainHTTPStatusMappers(
 			serverapi.HTTPStatusForErrorCode,
 			response.LegacyHTTPStatusForErrorCode,

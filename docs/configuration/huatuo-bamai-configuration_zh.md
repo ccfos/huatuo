@@ -152,7 +152,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
   Node 环境不满足要求时拒绝请求且不创建 Operation。
 
 生成的 Node API 通过 `GET /openapi.json` 提供协议文档。Profiling 和 Tracing 的
-Start、Get、Stop 路由必须携带服务 Bearer Token；健康、指标、版本和 OpenAPI 文档
+Start、Get、Stop 路由必须携带服务 Bearer Token；`/readyz`、指标、版本和 OpenAPI 文档
 保持公开。
 
 事件流配置控制 `POST /v1/events/watch`。达到

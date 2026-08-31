@@ -229,7 +229,7 @@ routes are not registered.
 IDs and bearer tokens must each be unique. Rotating a bearer token does not
 change job ownership because tokens are never used as principal IDs.
 
-`/healthz`, `/readyz`, `/metrics`, and `/version` are public.
+`/readyz`, `/metrics`, and `/version` are public.
 `/debug/pprof/**` and `/v1/profiling/flamegraph/**` require an administrator.
 
 ### 7. Profiling

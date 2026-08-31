@@ -58,14 +58,12 @@ func Start(opts ServerOptions) (*server.Server, error) {
 
 func newHTTPServer(opts ServerOptions, nodeHandler *NodeAPIHandler) (*server.Server, error) {
 	s := server.NewServer(&server.Config{
-		EnablePProf:         true,
-		DisableHealthRoutes: true,
+		EnablePProf: true,
 		RateLimit: &server.RateLimitConfig{
 			RequestsPerSecond: 200,
 			Burst:             200,
 		},
 		EnableRetry: true,
-		RequireAuth: true,
 		AuthUsers: []server.UserConfig{{
 			ID:          nodePrincipalID,
 			BearerToken: opts.BearerToken,
@@ -73,7 +71,7 @@ func newHTTPServer(opts ServerOptions, nodeHandler *NodeAPIHandler) (*server.Ser
 		}},
 		PublicPaths: []string{
 			"/openapi.json",
-			"/healthz",
+			"/readyz",
 			// Profiler subprocesses still use this legacy local metadata route.
 			"/containers/json",
 		},

@@ -3,7 +3,7 @@ info:
   title: Huatuo Node Agent API
   version: v1
 tags:
-  - name: health
+  - name: readiness
   - name: profiling
   - name: tracing
 paths:
@@ -20,14 +20,14 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-  /healthz:
+  /readyz:
     get:
-      operationId: getHealth
-      tags: [health]
+      operationId: getReadiness
+      tags: [readiness]
       security: []
       responses:
         '204':
-          description: The Node Agent HTTP server is alive.
+          description: The Node Agent HTTP server is ready to accept requests.
   /v1/profiling:
     post:
       operationId: startProfiling

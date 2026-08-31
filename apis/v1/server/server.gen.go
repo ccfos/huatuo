@@ -37,6 +37,9 @@ type ServerInterface interface {
 	// (GET /openapi.json)
 	GetOpenAPI(c *gin.Context)
 
+	// (GET /readyz)
+	GetReadiness(c *gin.Context)
+
 	// (GET /v1/profiling)
 	ListProfilingJobs(c *gin.Context, params ListProfilingJobsParams)
 
@@ -103,6 +106,19 @@ func (siw *ServerInterfaceWrapper) GetOpenAPI(c *gin.Context) {
 	}
 
 	siw.Handler.GetOpenAPI(c)
+}
+
+// GetReadiness operation middleware
+func (siw *ServerInterfaceWrapper) GetReadiness(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetReadiness(c)
 }
 
 // ListProfilingJobs operation middleware
@@ -481,6 +497,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	}
 
 	router.GET(options.BaseURL+"/openapi.json", wrapper.GetOpenAPI)
+	router.GET(options.BaseURL+"/readyz", wrapper.GetReadiness)
 	router.GET(options.BaseURL+"/v1/profiling", wrapper.ListProfilingJobs)
 	router.POST(options.BaseURL+"/v1/profiling", wrapper.CreateProfilingJob)
 	router.GET(options.BaseURL+"/v1/profiling/capabilities", wrapper.GetProfilingCapabilities)
@@ -550,6 +567,21 @@ func (response GetOpenAPI200JSONResponse) VisitGetOpenAPIResponse(w http.Respons
 	w.WriteHeader(200)
 	_, err := buf.WriteTo(w)
 	return err
+}
+
+type GetReadinessRequestObject struct {
+}
+
+type GetReadinessResponseObject interface {
+	VisitGetReadinessResponse(w http.ResponseWriter) error
+}
+
+type GetReadiness204Response struct {
+}
+
+func (response GetReadiness204Response) VisitGetReadinessResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
 }
 
 type ListProfilingJobsRequestObject struct {
@@ -2070,6 +2102,9 @@ type StrictServerInterface interface {
 	// (GET /openapi.json)
 	GetOpenAPI(ctx context.Context, request GetOpenAPIRequestObject) (GetOpenAPIResponseObject, error)
 
+	// (GET /readyz)
+	GetReadiness(ctx context.Context, request GetReadinessRequestObject) (GetReadinessResponseObject, error)
+
 	// (GET /v1/profiling)
 	ListProfilingJobs(ctx context.Context, request ListProfilingJobsRequestObject) (ListProfilingJobsResponseObject, error)
 
@@ -2190,6 +2225,30 @@ func (sh *strictHandler) GetOpenAPI(ctx *gin.Context) {
 		sh.options.HandlerErrorFunc(ctx, err)
 	} else if validResponse, ok := response.(GetOpenAPIResponseObject); ok {
 		if err := validResponse.VisitGetOpenAPIResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetReadiness operation middleware
+func (sh *strictHandler) GetReadiness(ctx *gin.Context) {
+	var request GetReadinessRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetReadiness(ctx, request.(GetReadinessRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetReadiness")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetReadinessResponseObject); ok {
+		if err := validResponse.VisitGetReadinessResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {

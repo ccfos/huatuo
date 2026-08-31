@@ -30,6 +30,19 @@ import (
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
 
+func TestGetReadiness(t *testing.T) {
+	response, err := (&APIHandler{}).GetReadiness(
+		t.Context(),
+		serverapi.GetReadinessRequestObject{},
+	)
+	if err != nil {
+		t.Fatalf("GetReadiness() error = %v", err)
+	}
+	if _, ok := response.(serverapi.GetReadiness204Response); !ok {
+		t.Fatalf("GetReadiness() response = %T, want GetReadiness204Response", response)
+	}
+}
+
 func TestCommonJobMapsFailureReasonWithoutAddingJobState(t *testing.T) {
 	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	jobEntity := &job.Job{

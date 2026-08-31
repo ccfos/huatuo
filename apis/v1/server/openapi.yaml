@@ -3,6 +3,7 @@ info:
   title: Huatuo Apiserver API
   version: v1
 tags:
+  - name: readiness
   - name: profiling
   - name: tracing
 paths:
@@ -19,6 +20,14 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+  /readyz:
+    get:
+      operationId: getReadiness
+      tags: [readiness]
+      security: []
+      responses:
+        '204':
+          description: The Apiserver HTTP server is ready to accept requests.
   /v1/profiling:
     post:
       operationId: createProfilingJob

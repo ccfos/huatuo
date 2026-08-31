@@ -42,25 +42,21 @@ const (
 
 // Config defines the configuration options for the HTTP server.
 type Config struct {
-	EnablePProf         bool
-	DisableHealthRoutes bool
-	RateLimit           *RateLimitConfig
-	EnableRetry         bool
-	RequireAuth         bool
-	AuthUsers           []UserConfig
-	PublicPaths         []string
-	AdminPaths          []string
-	PromReg             *prometheus.Registry
-	Group               string
-	VersionInfo         *version.Info
-	ReadHeaderTimeout   time.Duration
-	ReadTimeout         time.Duration
-	WriteTimeout        time.Duration
-	IdleTimeout         time.Duration
-	MaxHeaderBytes      int
-	MaxBodyBytes        int64
-	Ready               func(context.Context) error
-	ErrorStatusMapper   response.HTTPStatusMapper
+	EnablePProf       bool
+	RateLimit         *RateLimitConfig
+	EnableRetry       bool
+	AuthUsers         []UserConfig
+	PublicPaths       []string
+	AdminPaths        []string
+	PromReg           *prometheus.Registry
+	VersionInfo       *version.Info
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
+	MaxBodyBytes      int64
+	ErrorStatusMapper response.HTTPStatusMapper
 }
 
 // RateLimitConfig enables per-client rate limiting.
@@ -262,13 +258,7 @@ func NewServer(cfg *Config) *Server {
 	if effectiveConfig.EnablePProf {
 		pprof.Register(s.engine)
 	}
-	s.rootGroup = NewRoot(s.engine, effectiveConfig.Group)
-	if !effectiveConfig.DisableHealthRoutes {
-		s.MustRegisterRoutes("", []Route{
-			{Method: http.MethodGet, Path: "/healthz", Handler: s.healthzHandler()},
-			{Method: http.MethodGet, Path: "/readyz", Handler: s.readyzHandler()},
-		})
-	}
+	s.rootGroup = NewRoot(s.engine, "")
 	s.MustRegisterRoutes("", []Route{
 		{Method: http.MethodGet, Path: "/metrics", Handler: s.metricsHandler()},
 	})

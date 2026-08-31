@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Verify huatuo-apiserver exposes its public health, readiness, and metrics APIs.
+# Verify huatuo-apiserver exposes its public readiness and metrics APIs.
 
 set -euo pipefail
 
@@ -50,26 +50,17 @@ assert_curl_succeeded() {
 	fatal "${label}: curl exited ${curl_status}"
 }
 
-assert_endpoints() {
-	local paths=(
-		"/healthz"
-		"/readyz"
-	)
-	local path response_file status
-	local curl_status
-
-	for path in "${paths[@]}"; do
-		response_file="${HUATUO_BAMAI_TEST_TMPDIR}/${path#/}.body"
-		curl_status=0
-		status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" -w '%{http_code}' \
-			"${APISERVER_ADDR}${path}") || curl_status=$?
-		assert_curl_succeeded "GET ${path}" "${response_file}" "${curl_status}"
-		assert_eq "${status}" "204" "GET ${path} status" \
-			|| fatal "GET ${path} returned status ${status}, expected 204"
-		if [[ -s "${response_file}" ]]; then
-			fatal "GET ${path} returned a non-empty response body"
-		fi
-	done
+assert_readiness_endpoint() {
+	local body="${HUATUO_BAMAI_TEST_TMPDIR}/readyz.body"
+	local curl_status=0 status
+	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${body}" -w '%{http_code}' \
+		"${APISERVER_ADDR}/readyz") || curl_status=$?
+	assert_curl_succeeded "GET /readyz" "${body}" "${curl_status}"
+	assert_eq "${status}" "204" "GET /readyz status" \
+		|| fatal "GET /readyz returned status ${status}, expected 204"
+	if [[ -s "${body}" ]]; then
+		fatal "GET /readyz returned a non-empty response body"
+	fi
 }
 
 assert_metrics_endpoint() {
@@ -86,12 +77,12 @@ assert_metrics_endpoint() {
 		|| fatal "/metrics did not return a Prometheus text content type"
 	grep -q '^huatuo_apiserver_go_goroutines[{ ]' "${body}" \
 		|| fatal "/metrics omitted huatuo-apiserver runtime metrics"
-	grep -q '^huatuo_http_server_requests_total{method="GET",route="/healthz",status="204"} ' "${body}" \
-		|| fatal "/metrics omitted the /healthz HTTP request counter"
+	grep -q '^huatuo_http_server_requests_total{method="GET",route="/readyz",status="204"} ' "${body}" \
+		|| fatal "/metrics omitted the /readyz HTTP request counter"
 }
 
 integration_huatuo_apiserver_start write_apiserver_apis_config \
 	--log-debug
-assert_endpoints
+assert_readiness_endpoint
 assert_metrics_endpoint
 assert_log_has_no_failure "${HUATUO_BAMAI_TEST_TMPDIR}/apiserver.log" huatuo-apiserver

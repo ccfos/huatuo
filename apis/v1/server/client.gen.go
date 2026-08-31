@@ -106,6 +106,9 @@ type ClientInterface interface {
 	// GetOpenAPI request
 	GetOpenAPI(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetReadiness request
+	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListProfilingJobs request
 	ListProfilingJobs(ctx context.Context, params *ListProfilingJobsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -158,6 +161,18 @@ type ClientInterface interface {
 
 func (c *Client) GetOpenAPI(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetOpenAPIRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReadinessRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -382,6 +397,33 @@ func NewGetOpenAPIRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/openapi.json")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetReadinessRequest generates requests for GetReadiness
+func NewGetReadinessRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/readyz")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1036,6 +1078,9 @@ type ClientWithResponsesInterface interface {
 	// GetOpenAPIWithResponse request
 	GetOpenAPIWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOpenAPIResponse, error)
 
+	// GetReadinessWithResponse request
+	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
+
 	// ListProfilingJobsWithResponse request
 	ListProfilingJobsWithResponse(ctx context.Context, params *ListProfilingJobsParams, reqEditors ...RequestEditorFn) (*ListProfilingJobsResponse, error)
 
@@ -1110,6 +1155,35 @@ func (r GetOpenAPIResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetOpenAPIResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetReadinessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReadinessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReadinessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetReadinessResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1651,6 +1725,15 @@ func (c *ClientWithResponses) GetOpenAPIWithResponse(ctx context.Context, reqEdi
 	return ParseGetOpenAPIResponse(rsp)
 }
 
+// GetReadinessWithResponse request returning *GetReadinessResponse
+func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error) {
+	rsp, err := c.GetReadiness(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReadinessResponse(rsp)
+}
+
 // ListProfilingJobsWithResponse request returning *ListProfilingJobsResponse
 func (c *ClientWithResponses) ListProfilingJobsWithResponse(ctx context.Context, params *ListProfilingJobsParams, reqEditors ...RequestEditorFn) (*ListProfilingJobsResponse, error) {
 	rsp, err := c.ListProfilingJobs(ctx, params, reqEditors...)
@@ -1823,6 +1906,22 @@ func ParseGetOpenAPIResponse(rsp *http.Response) (*GetOpenAPIResponse, error) {
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseGetReadinessResponse parses an HTTP response from a GetReadinessWithResponse call
+func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReadinessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil

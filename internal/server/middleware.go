@@ -40,10 +40,10 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 	if cfg.PromReg != nil {
 		chain = append(chain, newHTTPMetricsMiddleware(cfg.PromReg))
 	}
-	if cfg.RequireAuth || len(cfg.AuthUsers) > 0 {
+	if len(cfg.AuthUsers) > 0 {
 		authService := NewAuthService(cfg.AuthUsers)
 		publicPaths := append(
-			[]string{"/healthz", "/readyz", "/metrics", "/version"},
+			[]string{"/metrics", "/version"},
 			cfg.PublicPaths...,
 		)
 		adminPaths := append(

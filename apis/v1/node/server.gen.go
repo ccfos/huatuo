@@ -32,12 +32,12 @@ import (
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-
-	// (GET /healthz)
-	GetHealth(c *gin.Context)
 	// Return the bundled Node Agent OpenAPI document.
 	// (GET /openapi.json)
 	GetOpenAPI(c *gin.Context)
+
+	// (GET /readyz)
+	GetReadiness(c *gin.Context)
 
 	// (POST /v1/profiling)
 	StartProfiling(c *gin.Context)
@@ -67,19 +67,6 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(c *gin.Context)
 
-// GetHealth operation middleware
-func (siw *ServerInterfaceWrapper) GetHealth(c *gin.Context) {
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.GetHealth(c)
-}
-
 // GetOpenAPI operation middleware
 func (siw *ServerInterfaceWrapper) GetOpenAPI(c *gin.Context) {
 
@@ -91,6 +78,19 @@ func (siw *ServerInterfaceWrapper) GetOpenAPI(c *gin.Context) {
 	}
 
 	siw.Handler.GetOpenAPI(c)
+}
+
+// GetReadiness operation middleware
+func (siw *ServerInterfaceWrapper) GetReadiness(c *gin.Context) {
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetReadiness(c)
 }
 
 // StartProfiling operation middleware
@@ -258,8 +258,8 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 		ErrorHandler:       errorHandler,
 	}
 
-	router.GET(options.BaseURL+"/healthz", wrapper.GetHealth)
 	router.GET(options.BaseURL+"/openapi.json", wrapper.GetOpenAPI)
+	router.GET(options.BaseURL+"/readyz", wrapper.GetReadiness)
 	router.POST(options.BaseURL+"/v1/profiling", wrapper.StartProfiling)
 	router.GET(options.BaseURL+"/v1/profiling/:request_id", wrapper.GetProfiling)
 	router.POST(options.BaseURL+"/v1/profiling/:request_id/stop", wrapper.StopProfiling)
@@ -297,21 +297,6 @@ type UnauthenticatedJSONResponse struct {
 
 type UnsupportedMediaTypeJSONResponse externalRef0.ErrorResponse
 
-type GetHealthRequestObject struct {
-}
-
-type GetHealthResponseObject interface {
-	VisitGetHealthResponse(w http.ResponseWriter) error
-}
-
-type GetHealth204Response struct {
-}
-
-func (response GetHealth204Response) VisitGetHealthResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
 type GetOpenAPIRequestObject struct {
 }
 
@@ -331,6 +316,21 @@ func (response GetOpenAPI200JSONResponse) VisitGetOpenAPIResponse(w http.Respons
 	w.WriteHeader(200)
 	_, err := buf.WriteTo(w)
 	return err
+}
+
+type GetReadinessRequestObject struct {
+}
+
+type GetReadinessResponseObject interface {
+	VisitGetReadinessResponse(w http.ResponseWriter) error
+}
+
+type GetReadiness204Response struct {
+}
+
+func (response GetReadiness204Response) VisitGetReadinessResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
 }
 
 type StartProfilingRequestObject struct {
@@ -971,12 +971,12 @@ func (response StopTracing500JSONResponse) VisitStopTracingResponse(w http.Respo
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-
-	// (GET /healthz)
-	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
 	// Return the bundled Node Agent OpenAPI document.
 	// (GET /openapi.json)
 	GetOpenAPI(ctx context.Context, request GetOpenAPIRequestObject) (GetOpenAPIResponseObject, error)
+
+	// (GET /readyz)
+	GetReadiness(ctx context.Context, request GetReadinessRequestObject) (GetReadinessResponseObject, error)
 
 	// (POST /v1/profiling)
 	StartProfiling(ctx context.Context, request StartProfilingRequestObject) (StartProfilingResponseObject, error)
@@ -1054,30 +1054,6 @@ type strictHandler struct {
 	options     StrictGinServerOptions
 }
 
-// GetHealth operation middleware
-func (sh *strictHandler) GetHealth(ctx *gin.Context) {
-	var request GetHealthRequestObject
-
-	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.GetHealth(ctx, request.(GetHealthRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetHealth")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		sh.options.HandlerErrorFunc(ctx, err)
-	} else if validResponse, ok := response.(GetHealthResponseObject); ok {
-		if err := validResponse.VisitGetHealthResponse(ctx.Writer); err != nil {
-			sh.options.ResponseErrorHandlerFunc(ctx, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // GetOpenAPI operation middleware
 func (sh *strictHandler) GetOpenAPI(ctx *gin.Context) {
 	var request GetOpenAPIRequestObject
@@ -1095,6 +1071,30 @@ func (sh *strictHandler) GetOpenAPI(ctx *gin.Context) {
 		sh.options.HandlerErrorFunc(ctx, err)
 	} else if validResponse, ok := response.(GetOpenAPIResponseObject); ok {
 		if err := validResponse.VisitGetOpenAPIResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetReadiness operation middleware
+func (sh *strictHandler) GetReadiness(ctx *gin.Context) {
+	var request GetReadinessRequestObject
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetReadiness(ctx, request.(GetReadinessRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetReadiness")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetReadinessResponseObject); ok {
+		if err := validResponse.VisitGetReadinessResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {

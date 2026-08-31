@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"huatuo-bamai/cmd/huatuo-apiserver/config"
@@ -42,17 +41,6 @@ func startHandlers(_ context.Context, d *Daemon) (func(context.Context) error, e
 		RateLimit: &server.RateLimitConfig{
 			RequestsPerSecond: d.opts.Config.APIServer.RateLimit.RequestsPerSecond,
 			Burst:             d.opts.Config.APIServer.RateLimit.Burst,
-		},
-		Ready: func(ctx context.Context) error {
-			err := d.jobManager.Ready(ctx)
-			if d.profileStorage == nil {
-				return err
-			}
-			return errors.Join(
-				err,
-				d.profileStorage.Ready(ctx),
-				d.publications.Ready(ctx),
-			)
 		},
 	})
 	if err != nil {

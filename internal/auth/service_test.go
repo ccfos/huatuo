@@ -121,8 +121,8 @@ func TestMatchesPath(t *testing.T) {
 		})
 	}
 
-	require.True(t, MatchesAnyPath([]string{"/healthz", "/v1/tracing/**"}, "/healthz"))
-	require.False(t, MatchesAnyPath([]string{"/healthz", "/v1/tracing/**"}, "/readyz"))
+	require.True(t, MatchesAnyPath([]string{"/readyz", "/v1/tracing/**"}, "/readyz"))
+	require.False(t, MatchesAnyPath([]string{"/readyz", "/v1/tracing/**"}, "/healthz"))
 }
 
 func newTestService() *Service {

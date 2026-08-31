@@ -99,6 +99,7 @@ func TestRemovedServerRoutesAreNotRegistered(t *testing.T) {
 	router := gin.New()
 	RegisterHandlers(router, NewStrictHandler(&unimplementedStrictServer{}, nil))
 	for _, path := range []string{
+		"/healthz",
 		"/v1/profiles",
 		"/v1/profiles/job-1",
 		"/v1/traces",
@@ -116,6 +117,13 @@ func TestRemovedServerRoutesAreNotRegistered(t *testing.T) {
 type unimplementedStrictServer struct{}
 
 var errNotImplemented = errors.New("test handler is not implemented")
+
+func (*unimplementedStrictServer) GetReadiness(
+	context.Context,
+	GetReadinessRequestObject,
+) (GetReadinessResponseObject, error) {
+	return nil, errNotImplemented
+}
 
 func (*unimplementedStrictServer) GetOpenAPI(
 	context.Context,

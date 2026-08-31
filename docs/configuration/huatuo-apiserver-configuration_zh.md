@@ -221,7 +221,7 @@ Agent 请求传输保护使用客户端内部默认值。Job 轮询、各阶段 
 用户 ID 和 BearerToken 都必须唯一。轮换 BearerToken 不会改变任务归属，
 因为 Token 不再作为用户 ID 使用或写入任务存储。
 
-`/healthz`、`/readyz`、`/metrics` 和 `/version` 为公开路由。
+`/readyz`、`/metrics` 和 `/version` 为公开路由。
 `/debug/pprof/**` 和 `/v1/profiling/flamegraph/**` 仅管理员可访问。
 
 ### 7. 性能剖析

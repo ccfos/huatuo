@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-func TestHealthRouteIsPublicOnNodeRouter(t *testing.T) {
+func TestReadinessRouteIsPublicOnNodeRouter(t *testing.T) {
 	nodeHandler, err := NewNodeAPIHandler(
 		&stubProfilingOperations{},
 		&stubTracingOperations{},
@@ -57,7 +57,7 @@ func TestHealthRouteIsPublicOnNodeRouter(t *testing.T) {
 	request, err := http.NewRequestWithContext(
 		t.Context(),
 		http.MethodGet,
-		"http://"+addr+"/healthz",
+		"http://"+addr+"/readyz",
 		http.NoBody,
 	)
 	if err != nil {
@@ -65,10 +65,10 @@ func TestHealthRouteIsPublicOnNodeRouter(t *testing.T) {
 	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		t.Fatalf("GET /healthz error = %v", err)
+		t.Fatalf("GET /readyz error = %v", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
-		t.Fatalf("GET /healthz status = %d, want %d", response.StatusCode, http.StatusNoContent)
+		t.Fatalf("GET /readyz status = %d, want %d", response.StatusCode, http.StatusNoContent)
 	}
 }

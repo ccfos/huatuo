@@ -339,7 +339,7 @@ huatuo_apiserver_ready() {
 		return 1
 	fi
 
-	curl -sf "${CURL_TIMEOUT[@]}" "${APISERVER_ADDR}/healthz" > /dev/null
+	curl -sf "${CURL_TIMEOUT[@]}" "${APISERVER_ADDR}/readyz" > /dev/null
 }
 
 huatuo_apiserver_stop() {

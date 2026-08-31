@@ -77,7 +77,13 @@ func TestRemovedNodeRoutesAreNotRegistered(t *testing.T) {
 	router := gin.New()
 	RegisterHandlers(router, NewStrictHandler(&unimplementedStrictServer{}, nil))
 
-	for _, path := range []string{"/tasks", "/tasks/job-1", "/tracers", "/tracers/dropwatch"} {
+	for _, path := range []string{
+		"/healthz",
+		"/tasks",
+		"/tasks/job-1",
+		"/tracers",
+		"/tracers/dropwatch",
+	} {
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodGet, path, http.NoBody)
 		router.ServeHTTP(recorder, request)
@@ -91,10 +97,10 @@ type unimplementedStrictServer struct{}
 
 var errNotImplemented = errors.New("test handler is not implemented")
 
-func (*unimplementedStrictServer) GetHealth(
+func (*unimplementedStrictServer) GetReadiness(
 	context.Context,
-	GetHealthRequestObject,
-) (GetHealthResponseObject, error) {
+	GetReadinessRequestObject,
+) (GetReadinessResponseObject, error) {
 	return nil, errNotImplemented
 }
 

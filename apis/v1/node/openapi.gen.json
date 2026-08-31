@@ -420,20 +420,6 @@
   },
   "openapi": "3.0.3",
   "paths": {
-    "/healthz": {
-      "get": {
-        "operationId": "getHealth",
-        "responses": {
-          "204": {
-            "description": "The Node Agent HTTP server is alive."
-          }
-        },
-        "security": [],
-        "tags": [
-          "health"
-        ]
-      }
-    },
     "/openapi.json": {
       "get": {
         "operationId": "getOpenAPI",
@@ -452,6 +438,20 @@
         },
         "security": [],
         "summary": "Return the bundled Node Agent OpenAPI document."
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "getReadiness",
+        "responses": {
+          "204": {
+            "description": "The Node Agent HTTP server is ready to accept requests."
+          }
+        },
+        "security": [],
+        "tags": [
+          "readiness"
+        ]
       }
     },
     "/v1/profiling": {
@@ -780,7 +780,7 @@
   },
   "tags": [
     {
-      "name": "health"
+      "name": "readiness"
     },
     {
       "name": "profiling"

@@ -826,6 +826,20 @@
         "summary": "Return the bundled Apiserver OpenAPI document."
       }
     },
+    "/readyz": {
+      "get": {
+        "operationId": "getReadiness",
+        "responses": {
+          "204": {
+            "description": "The Apiserver HTTP server is ready to accept requests."
+          }
+        },
+        "security": [],
+        "tags": [
+          "readiness"
+        ]
+      }
+    },
     "/v1/profiling": {
       "get": {
         "operationId": "listProfilingJobs",
@@ -1536,6 +1550,9 @@
     }
   },
   "tags": [
+    {
+      "name": "readiness"
+    },
     {
       "name": "profiling"
     },
