@@ -180,7 +180,7 @@ func (a *nativeAggregator) snapshotCpuMemProfile(pctx *pcontext.ProfilerContext)
 	}
 
 	skipNegForPprof := pctx.Type == profiling.TypeMemory &&
-		pctx.MemoryMode == profiling.MemoryModePhysicalUsage
+		pctx.Mode == profiling.ModePhysicalUsage
 
 	tree := make([]*profiler.TreeItem, 0, len(a.stackSamples))
 
@@ -330,7 +330,7 @@ func lockPrefixFrames(rec *lockSample) ([]string, uint64) {
 func profileTypeOptions(pctx *pcontext.ProfilerContext) (*profiler.ParseOption, string, error) {
 	switch pctx.Type {
 	case profiling.TypeCPU:
-		if pctx.CPUMode == profiling.CPUModeOffCPU {
+		if pctx.Mode == profiling.ModeOffCPU {
 			return &profiler.ParseOption{SampleRate: profiler.NoSampleRate}, profiler.ProfileTypeOffCpuSample, nil
 		}
 		return &profiler.ParseOption{SampleRate: int64(pctx.Freq)}, profiler.ProfileTypeCpuSample, nil

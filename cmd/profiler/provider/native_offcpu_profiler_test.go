@@ -371,7 +371,7 @@ func TestNativeCPUOffCPUAttachOptions(t *testing.T) {
 }
 
 func TestOffCPUProfileTypeUsesNanosecondsWithoutSampleRate(t *testing.T) {
-	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, CPUMode: profiling.CPUModeOffCPU, Freq: 99}
+	pctx := &pcontext.ProfilerContext{Type: profiling.TypeCPU, Mode: profiling.ModeOffCPU, Freq: 99}
 	opt, profileType, err := profileTypeOptions(pctx)
 	require.NoError(t, err)
 	require.Zero(t, opt.SampleRate)

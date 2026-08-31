@@ -136,7 +136,7 @@ func TestMemoryValueConvertedOnceAfterAggregation(t *testing.T) {
 func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 	tests := []struct {
 		name            string
-		mode            profiling.MemoryMode
+		mode            profiling.Mode
 		available       map[string]bool
 		wantObject      string
 		wantAttach      []bpf.AttachOption
@@ -145,7 +145,7 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 	}{
 		{
 			name:       "virtual alloc",
-			mode:       profiling.MemoryModeVirtualAlloc,
+			mode:       profiling.ModeVirtualAlloc,
 			wantObject: "native_virtual_alloc.o",
 			wantAttach: []bpf.AttachOption{
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
@@ -153,7 +153,7 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 		},
 		{
 			name: "physical usage",
-			mode: profiling.MemoryModePhysicalUsage,
+			mode: profiling.ModePhysicalUsage,
 			available: map[string]bool{
 				symbolPageAddNewAnonRmap: true,
 				symbolPageRemoveRmap:     true,
@@ -170,7 +170,7 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 		},
 		{
 			name: "physical usage folio",
-			mode: profiling.MemoryModePhysicalUsage,
+			mode: profiling.ModePhysicalUsage,
 			available: map[string]bool{
 				symbolFolioAddNewAnonRmap: true,
 				symbolFolioRemoveRmapPtes: true,
@@ -187,7 +187,7 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 		},
 		{
 			name: "physical alloc",
-			mode: profiling.MemoryModePhysicalAlloc,
+			mode: profiling.ModePhysicalAlloc,
 			available: map[string]bool{
 				symbolPageAddNewAnonRmap: true,
 			},
@@ -232,7 +232,7 @@ func TestNewBpfLoadConfigAttachOpts(t *testing.T) {
 					t.Fatalf("Constants[%q] = %#v, want %#v", key, got, want)
 				}
 			}
-			if tc.mode == profiling.MemoryModePhysicalUsage {
+			if tc.mode == profiling.ModePhysicalUsage {
 				for _, key := range []string{
 					"profiler_alloc_reads_folio_nr_pages",
 					"profiler_free_has_nr_pages",
@@ -257,7 +257,7 @@ func TestNewBpfLoadConfigThreadFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := newNativeMemoryBPFLoadConfig(profiling.MemoryModeVirtualAlloc, 123, 0, tt.threadGroup, 100)
+			cfg, err := newNativeMemoryBPFLoadConfig(profiling.ModeVirtualAlloc, 123, 0, tt.threadGroup, 100)
 			if err != nil {
 				t.Fatalf("newNativeMemoryBPFLoadConfig() error = %v", err)
 			}

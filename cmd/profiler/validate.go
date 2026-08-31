@@ -266,20 +266,20 @@ func validateNumericOptions(profileType profiling.Type, freq, maxProfilerProcess
 }
 
 func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language, typ profiling.Type) error {
-	implementation, _ := profiling.ImplementationFor(lang)
+	implementation, _ := profiling.ImplementationFor(lang, typ)
 	native := implementation == profiling.ImplementationNative
 	nativeCPU := native && typ == profiling.TypeCPU
 	nativeMemory := native && typ == profiling.TypeMemory
-	cpuMode, err := profiling.ParseCPUMode(ctx.String("cpu-mode"))
-	if err != nil {
-		return err
+	cpuMode := profiling.Mode(ctx.String("cpu-mode"))
+	if cpuMode != profiling.ModeOnCPU && cpuMode != profiling.ModeOffCPU {
+		return fmt.Errorf("unsupported CPU mode %q", cpuMode)
 	}
 	if _, err := profiling.ParseOffCPUPhase(ctx.String("offcpu-phase")); err != nil {
 		return err
 	}
-	offCPU := nativeCPU && cpuMode == profiling.CPUModeOffCPU
+	offCPU := nativeCPU && cpuMode == profiling.ModeOffCPU
 
-	if cpuMode == profiling.CPUModeOffCPU && !nativeCPU {
+	if cpuMode == profiling.ModeOffCPU && !nativeCPU {
 		return fmt.Errorf("--cpu-mode=offcpu is supported only by native CPU profiling")
 	}
 	if ctx.IsSet("cpu-mode") && typ != profiling.TypeCPU {
@@ -320,7 +320,7 @@ func validateProfilerFlagCompatibility(ctx *cli.Context, lang profiling.Language
 	}
 	if ctx.IsSet("physical-memory-probability") {
 		physicalMemory := nativeMemory &&
-			profiling.MemoryMode(ctx.String("memory-mode")) != profiling.MemoryModeVirtualAlloc
+			profiling.Mode(ctx.String("memory-mode")) != profiling.ModeVirtualAlloc
 		if !physicalMemory {
 			return fmt.Errorf("--physical-memory-probability is supported only by native physical memory profiling")
 		}
@@ -351,14 +351,11 @@ func validateMemoryMode(lang profiling.Language, typ profiling.Type, value strin
 	if value == "" {
 		return fmt.Errorf("--memory-mode is required when --type=memory")
 	}
-	mode, err := profiling.ParseMemoryMode(value)
-	if err != nil {
-		return err
-	}
-	if profiling.SupportsMemoryMode(lang, mode) {
+	mode := profiling.Mode(value)
+	if profiling.SupportsMode(lang, typ, mode) {
 		return nil
 	}
-	supported := profiling.MemoryModesFor(lang)
+	supported := profiling.ModesFor(lang, typ)
 	values := make([]string, 0, len(supported))
 	for _, candidate := range supported {
 		values = append(values, string(candidate))

@@ -24,101 +24,86 @@ import (
 )
 
 func TestCapabilities(t *testing.T) {
-	nativeModes := []MemoryMode{
-		MemoryModeVirtualAlloc,
-		MemoryModePhysicalAlloc,
-		MemoryModePhysicalUsage,
+	nativeModes := []Mode{
+		ModeVirtualAlloc,
+		ModePhysicalAlloc,
+		ModePhysicalUsage,
 	}
 	tests := []struct {
 		language       Language
 		implementation Implementation
 		types          []Type
-		cpuModes       []CPUMode
-		memoryModes    []MemoryMode
+		cpuModes       []Mode
+		memoryModes    []Mode
 	}{
 		{
 			LanguageC,
 			ImplementationNative,
 			[]Type{TypeCPU, TypeMemory},
-			[]CPUMode{CPUModeOnCPU, CPUModeOffCPU},
+			[]Mode{ModeOnCPU, ModeOffCPU},
 			nativeModes,
 		},
 		{
 			LanguageCPP,
 			ImplementationNative,
 			[]Type{TypeCPU, TypeMemory},
-			[]CPUMode{CPUModeOnCPU, CPUModeOffCPU},
+			[]Mode{ModeOnCPU, ModeOffCPU},
 			nativeModes,
 		},
 		{
 			LanguageGo,
 			ImplementationNative,
 			[]Type{TypeCPU, TypeMemory},
-			[]CPUMode{CPUModeOnCPU, CPUModeOffCPU},
+			[]Mode{ModeOnCPU, ModeOffCPU},
 			nativeModes,
 		},
 		{
 			LanguageJava,
 			ImplementationJava,
 			[]Type{TypeCPU, TypeMemory},
-			[]CPUMode{CPUModeOnCPU},
-			[]MemoryMode{MemoryModeObjectAlloc, MemoryModeObjectUsage},
+			[]Mode{ModeOnCPU},
+			[]Mode{ModeObjectAlloc, ModeObjectUsage},
 		},
 		{
 			LanguagePython,
 			ImplementationPython,
 			[]Type{TypeCPU},
-			[]CPUMode{CPUModeOnCPU},
-			[]MemoryMode{},
+			[]Mode{ModeOnCPU},
+			nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.language), func(t *testing.T) {
-			implementation, ok := ImplementationFor(tt.language)
-			require.True(t, ok)
-			require.Equal(t, tt.implementation, implementation)
-
 			for _, typ := range []Type{TypeCPU, TypeMemory, TypeLock} {
-				require.Equal(t, slices.Contains(tt.types, typ), IsSupported(tt.language, typ))
+				supported := slices.Contains(tt.types, typ)
+				require.Equal(t, supported, IsSupported(tt.language, typ))
+
+				implementation, ok := ImplementationFor(tt.language, typ)
+				require.Equal(t, supported, ok)
+				if supported {
+					require.Equal(t, tt.implementation, implementation)
+				}
 			}
-			require.Equal(t, tt.cpuModes, CPUModesFor(tt.language))
-			require.Equal(t, tt.memoryModes, MemoryModesFor(tt.language))
+			require.Equal(t, tt.cpuModes, ModesFor(tt.language, TypeCPU))
+			memoryModes := ModesFor(tt.language, TypeMemory)
+			require.Equal(t, tt.memoryModes, memoryModes)
 			for _, mode := range allMemoryModes() {
 				require.Equal(
 					t,
 					slices.Contains(tt.memoryModes, mode),
-					SupportsMemoryMode(tt.language, mode),
+					SupportsMode(tt.language, TypeMemory, mode),
 				)
 			}
 		})
 	}
-
-	require.Equal(
-		t,
-		[]Language{LanguageC, LanguageCPP, LanguageGo, LanguageJava, LanguagePython},
-		LanguagesFor(TypeCPU),
-	)
-	require.Equal(
-		t,
-		[]Language{LanguageC, LanguageCPP, LanguageGo, LanguageJava},
-		LanguagesFor(TypeMemory),
-	)
-	require.Empty(t, LanguagesFor(TypeLock))
 }
 
-func TestMemoryModesForReturnsCopy(t *testing.T) {
-	modes := MemoryModesFor(LanguageJava)
-	modes[0] = MemoryModePhysicalUsage
+func TestModesForReturnsCopy(t *testing.T) {
+	modes := ModesFor(LanguageJava, TypeMemory)
+	modes[0] = ModePhysicalUsage
 
-	require.Equal(t, MemoryModeObjectAlloc, MemoryModesFor(LanguageJava)[0])
-}
-
-func TestCPUModesForReturnsCopy(t *testing.T) {
-	modes := CPUModesFor(LanguageGo)
-	modes[0] = CPUModeUnknown
-
-	require.Equal(t, CPUModeOnCPU, CPUModesFor(LanguageGo)[0])
+	require.Equal(t, ModeObjectAlloc, ModesFor(LanguageJava, TypeMemory)[0])
 }
 
 func TestCapabilityDefinitionsAreUnique(t *testing.T) {
@@ -126,7 +111,8 @@ func TestCapabilityDefinitionsAreUnique(t *testing.T) {
 		typ      Type
 		language Language
 	}]bool{}
-	for _, capability := range capabilities {
+	for i := range capabilities {
+		capability := &capabilities[i]
 		key := struct {
 			typ      Type
 			language Language

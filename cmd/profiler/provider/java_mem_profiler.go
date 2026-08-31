@@ -83,7 +83,7 @@ func (p *javaMemoryProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		return err
 	}
 
-	extraArgs, err := validateJavaMemoryMode(pctx.MemoryMode)
+	extraArgs, err := validateJavaMemoryMode(pctx.Mode)
 	if err != nil {
 		return err
 	}

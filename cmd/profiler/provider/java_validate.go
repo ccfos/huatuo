@@ -34,11 +34,11 @@ func validateJavaToolPath(toolPath string) error {
 	return validateToolFile("Java", toolPath, "lib/libasyncProfiler.so", false)
 }
 
-func validateJavaMemoryMode(mode profiling.MemoryMode) ([]string, error) {
+func validateJavaMemoryMode(mode profiling.Mode) ([]string, error) {
 	switch mode {
-	case profiling.MemoryModeObjectAlloc:
+	case profiling.ModeObjectAlloc:
 		return []string{}, nil
-	case profiling.MemoryModeObjectUsage:
+	case profiling.ModeObjectUsage:
 		return []string{"--live"}, nil
 	default:
 		return nil, fmt.Errorf("unsupported Java memory mode %q", mode)

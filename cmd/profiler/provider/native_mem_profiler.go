@@ -54,7 +54,7 @@ type physicalUsageAttachConfig struct {
 type memNativeProfiler struct {
 	bpf bpf.BPF
 
-	internalMode profiling.MemoryMode
+	internalMode profiling.Mode
 	probability  uint
 	pageSize     int64
 }
@@ -75,12 +75,12 @@ func init() {
 // NewAggregator stamps OneShotAgg before construction for retained mode —
 // alloc/free deltas must collapse in a single shot, not stream every interval.
 func (p *memNativeProfiler) NewAggregator(pctx *pcontext.ProfilerContext) (aggregator.Aggregator, error) {
-	mode, err := resolveMemMode(pctx.MemoryMode)
+	mode, err := resolveMemMode(pctx.Mode)
 	if err != nil {
 		return nil, err
 	}
 
-	if mode == profiling.MemoryModePhysicalUsage {
+	if mode == profiling.ModePhysicalUsage {
 		pctx.IsOneShotAgg = true
 	}
 
@@ -101,7 +101,7 @@ func (p *memNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 
 	p.pageSize = int64(os.Getpagesize())
 
-	internalMode, err := resolveMemMode(pctx.MemoryMode)
+	internalMode, err := resolveMemMode(pctx.Mode)
 	if err != nil {
 		return err
 	}
@@ -159,11 +159,11 @@ type nativeMemoryBPFLoadConfig struct {
 
 // newNativeMemoryBPFLoadConfig creates a BPF load configuration based on the profiler mode.
 // It returns the appropriate object file, constants, and attachment options for the given mode.
-func newNativeMemoryBPFLoadConfig(internalMode profiling.MemoryMode, pid int, cssAddr uint64, threadGroup bool, probability uint) (*nativeMemoryBPFLoadConfig, error) {
+func newNativeMemoryBPFLoadConfig(internalMode profiling.Mode, pid int, cssAddr uint64, threadGroup bool, probability uint) (*nativeMemoryBPFLoadConfig, error) {
 	constants := newNativeBPFConstants(pid, cssAddr, threadGroup)
 
 	switch internalMode {
-	case profiling.MemoryModeVirtualAlloc:
+	case profiling.ModeVirtualAlloc:
 		return &nativeMemoryBPFLoadConfig{
 			ObjectFile: "native_virtual_alloc.o",
 			Constants:  constants,
@@ -171,7 +171,7 @@ func newNativeMemoryBPFLoadConfig(internalMode profiling.MemoryMode, pid int, cs
 				{ProgramName: "trace_mmap", Symbol: "do_mmap"},
 			},
 		}, nil
-	case profiling.MemoryModePhysicalUsage:
+	case profiling.ModePhysicalUsage:
 		attachCfg, err := newPhysicalUsageAttachConfig()
 		if err != nil {
 			return nil, err
@@ -184,7 +184,7 @@ func newNativeMemoryBPFLoadConfig(internalMode profiling.MemoryMode, pid int, cs
 			Constants:  constants,
 			AttachOpts: attachCfg.AttachOpts,
 		}, nil
-	case profiling.MemoryModePhysicalAlloc:
+	case profiling.ModePhysicalAlloc:
 		attachOpt, err := newPhysicalAllocAttachOption()
 		if err != nil {
 			return nil, err
@@ -261,7 +261,7 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 	// Determine if fallback is needed based on profiling mode
 	// Retained mode (physical_usage) needs fallback, others don't
-	needsFallback := p.internalMode == profiling.MemoryModePhysicalUsage
+	needsFallback := p.internalMode == profiling.ModePhysicalUsage
 
 	// Initialize ring buffer context once, reuse throughout the profiling loop
 	ringCtx, err := newRingBufferContext(p.bpf, ctx, 4096*257, needsFallback)
@@ -301,9 +301,9 @@ func (p *memNativeProfiler) ReadDataLoop(ctx context.Context, enqueue func(any))
 
 func (p *memNativeProfiler) convertValueToBytes(v int64) int64 {
 	switch p.internalMode {
-	case profiling.MemoryModeVirtualAlloc:
+	case profiling.ModeVirtualAlloc:
 		return v
-	case profiling.MemoryModePhysicalAlloc, profiling.MemoryModePhysicalUsage:
+	case profiling.ModePhysicalAlloc, profiling.ModePhysicalUsage:
 		return v * p.pageSize * 100 / int64(p.probability)
 	}
 

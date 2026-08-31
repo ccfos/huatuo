@@ -133,7 +133,8 @@ func ParseType(value string) (Type, error) {
 
 func ParseLanguage(value string) (Language, error) {
 	language := Language(value)
-	for _, capability := range capabilities {
+	for i := range capabilities {
+		capability := &capabilities[i]
 		if capability.Language == language {
 			return language, nil
 		}
@@ -146,9 +147,10 @@ func IsSupported(language Language, typ Type) bool {
 	return ok
 }
 
-func SupportsMemoryMode(language Language, mode MemoryMode) bool {
-	capability, ok := capabilityFor(language, TypeMemory)
-	return ok && slices.Contains(capability.Modes, Mode(mode))
+// SupportsMode reports whether a profiling capability supports a mode.
+func SupportsMode(language Language, typ Type, mode Mode) bool {
+	capability, ok := capabilityFor(language, typ)
+	return ok && slices.Contains(capability.Modes, mode)
 }
 
 // SupportsScope reports whether a profiling combination can observe a scope.
@@ -157,61 +159,32 @@ func SupportsScope(language Language, typ Type, scope observation.Scope) bool {
 	return ok && slices.Contains(capability.SupportedScopes, scope)
 }
 
-func LanguagesFor(typ Type) []Language {
-	languages := make([]Language, 0, len(capabilities))
-	seen := make(map[Language]struct{}, len(capabilities))
-	for _, capability := range capabilities {
-		if capability.Type == typ {
-			if _, ok := seen[capability.Language]; ok {
-				continue
-			}
-			seen[capability.Language] = struct{}{}
-			languages = append(languages, capability.Language)
-		}
-	}
-	return languages
-}
-
-func MemoryModesFor(language Language) []MemoryMode {
-	capability, ok := capabilityFor(language, TypeMemory)
+// ModesFor returns the modes supported by one profiling capability.
+func ModesFor(language Language, typ Type) []Mode {
+	capability, ok := capabilityFor(language, typ)
 	if !ok {
-		return []MemoryMode{}
+		return nil
 	}
-	modes := make([]MemoryMode, len(capability.Modes))
-	for i := range capability.Modes {
-		modes[i] = MemoryMode(capability.Modes[i])
-	}
-	return modes
+	return slices.Clone(capability.Modes)
 }
 
-func CPUModesFor(language Language) []CPUMode {
-	capability, ok := capabilityFor(language, TypeCPU)
+// ImplementationFor returns the implementation for one supported capability.
+func ImplementationFor(language Language, typ Type) (Implementation, bool) {
+	capability, ok := capabilityFor(language, typ)
 	if !ok {
-		return []CPUMode{}
+		return ImplementationUnknown, false
 	}
-	modes := make([]CPUMode, len(capability.Modes))
-	for i := range capability.Modes {
-		modes[i] = CPUMode(capability.Modes[i])
-	}
-	return modes
+	return capability.implementation, true
 }
 
-func ImplementationFor(language Language) (Implementation, bool) {
-	for _, capability := range capabilities {
-		if capability.Language == language {
-			return capability.implementation, true
-		}
-	}
-	return ImplementationUnknown, false
-}
-
-func capabilityFor(language Language, typ Type) (Capability, bool) {
-	for _, capability := range capabilities {
+func capabilityFor(language Language, typ Type) (*Capability, bool) {
+	for i := range capabilities {
+		capability := &capabilities[i]
 		if capability.Language == language && capability.Type == typ {
 			return capability, true
 		}
 	}
-	return Capability{}, false
+	return nil, false
 }
 
 func cloneCapability(capability *Capability) Capability {

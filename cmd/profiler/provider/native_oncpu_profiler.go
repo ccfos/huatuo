@@ -70,19 +70,19 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	}
 
 	var offCPU bool
-	switch pctx.CPUMode {
-	case profiling.CPUModeOnCPU:
-	case profiling.CPUModeOffCPU:
+	switch pctx.Mode {
+	case profiling.ModeOnCPU:
+	case profiling.ModeOffCPU:
 		offCPU = true
 	default:
-		return fmt.Errorf("start native CPU profiler: unsupported mode %q", pctx.CPUMode)
+		return fmt.Errorf("start native CPU profiler: unsupported mode %q", pctx.Mode)
 	}
 
 	if err := requireRoot(); err != nil {
 		return err
 	}
 
-	log.Infof("starting native CPU profiler: mode=%s", pctx.CPUMode)
+	log.Infof("starting native CPU profiler: mode=%s", pctx.Mode)
 
 	cssAddr, err := resolveContainerCgroupCss(pctx, subsystem.SubsystemCPU)
 	if err != nil {
@@ -102,7 +102,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 	dbg := bpf.NewDbg(pctx.LogBpfDebug)
 	b, err := bpf.LoadBPF(objectName, dbg.WithBpfDbg(constants))
 	if err != nil {
-		return fmt.Errorf("load native CPU %s BPF object %q: %w", pctx.CPUMode, objectName, err)
+		return fmt.Errorf("load native CPU %s BPF object %q: %w", pctx.Mode, objectName, err)
 	}
 	if offCPU {
 		if err := configureOffCPUSet(b, pctx.CPUIDs); err != nil {
@@ -124,7 +124,7 @@ func (p *cpuNativeProfiler) Start(pctx *pcontext.ProfilerContext) error {
 		attachErr = attachNativeOnCPU(b.AttachWithOptions, pctx)
 	}
 	if attachErr != nil {
-		attachErr = fmt.Errorf("attach native CPU %s probes: %w", pctx.CPUMode, attachErr)
+		attachErr = fmt.Errorf("attach native CPU %s probes: %w", pctx.Mode, attachErr)
 		if closeErr := b.Close(); closeErr != nil {
 			return errors.Join(
 				attachErr,

@@ -31,7 +31,7 @@ func runAction(cliCtx *cli.Context, signalLog *bytes.Buffer) (returnErr error) {
 	typ := profiling.Type(cliCtx.String("type"))
 	lang := profiling.Language(cliCtx.String("language"))
 
-	implementation, ok := profiling.ImplementationFor(lang)
+	implementation, ok := profiling.ImplementationFor(lang, typ)
 	if !ok {
 		return fmt.Errorf("no profiling implementation for language %q", lang)
 	}

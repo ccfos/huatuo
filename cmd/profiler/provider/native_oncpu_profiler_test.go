@@ -28,8 +28,8 @@ import (
 
 func TestNativeCPUStartRejectsUnsupportedMode(t *testing.T) {
 	pctx := &pcontext.ProfilerContext{
-		PIDs:    []int{123},
-		CPUMode: profiling.CPUMode("invalid"),
+		PIDs: []int{123},
+		Mode: profiling.Mode("invalid"),
 	}
 
 	err := (&cpuNativeProfiler{}).Start(pctx)

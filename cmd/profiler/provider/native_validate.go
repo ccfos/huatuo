@@ -27,14 +27,14 @@ func validateNativePIDs(profileType string, pids []int) error {
 	return nil
 }
 
-func resolveMemMode(mode profiling.MemoryMode) (profiling.MemoryMode, error) {
+func resolveMemMode(mode profiling.Mode) (profiling.Mode, error) {
 	switch mode {
-	case profiling.MemoryModeVirtualAlloc,
-		profiling.MemoryModePhysicalUsage,
-		profiling.MemoryModePhysicalAlloc:
+	case profiling.ModeVirtualAlloc,
+		profiling.ModePhysicalUsage,
+		profiling.ModePhysicalAlloc:
 		return mode, nil
 	default:
-		return profiling.MemoryModeUnknown, fmt.Errorf("invalid mode %q", mode)
+		return profiling.ModeUnknown, fmt.Errorf("invalid mode %q", mode)
 	}
 }
 
