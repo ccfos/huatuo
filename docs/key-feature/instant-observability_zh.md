@@ -170,7 +170,6 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
                 "dport": 49000,
                 "seq": 1009085774,
                 "ack_seq": 689410995,
-                "flags": "ACK",
                 "sk_state": "ESTABLISHED"
             }
         },

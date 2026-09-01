@@ -23,6 +23,7 @@ import (
 
 	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/exec"
+	"github.com/ccfos/huatuo/internal/pcapfilter"
 	"github.com/ccfos/huatuo/internal/pod"
 	"github.com/ccfos/huatuo/internal/timeutil"
 	"github.com/ccfos/huatuo/internal/toolstream"
@@ -44,6 +45,9 @@ func init() {
 }
 
 func newTCPRetransmit() (*tracing.EventTracingAttr, error) {
+	if err := validateTCPRetransmitFilter(configSnapshot()); err != nil {
+		return nil, err
+	}
 	return &tracing.EventTracingAttr{
 		TracingData: &tcpRetransmitTracing{},
 		Interval:    10,
@@ -51,31 +55,25 @@ func newTCPRetransmit() (*tracing.EventTracingAttr, error) {
 	}, nil
 }
 
+func validateTCPRetransmitFilter(config *Config) error {
+	if !config.TCPRetransmit.EnableDropwatchCorrelation {
+		return nil
+	}
+	if err := pcapfilter.ValidateL3Compatible(effectiveTCPRetransmitFilter(config)); err != nil {
+		return fmt.Errorf(
+			"EventTracing.TCPRetransmit.Filter is incompatible with local correlation: %w",
+			err,
+		)
+	}
+	return nil
+}
+
 // Start launches tcpshark in retransmit mode and waits for it to finish.
 // Events are received via the default toolstream server registered in init.
 func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
-	globalDropwatchTCPRetransmitCache.enable()
-	defer globalDropwatchTCPRetransmitCache.disable()
-
-	cfg := configSnapshot()
-	args := []string{
-		"--mode", "retransmit",
-		"--bpf-path", path.Join(internalconfig.CoreBpfDir, "tcp_retransmit.o"),
-		"--output-storage", toolstream.DefaultSockPath,
-		"--max-events-per-second", strconv.FormatUint(cfg.TCPRetransmit.MaxEventsPerSecond, 10),
-		"--source-types", toolstream.SourceTypeEvent,
-	}
-
-	if cfg.TCPRetransmit.Filter != "" {
-		args = append(args, "--filter", cfg.TCPRetransmit.Filter)
-	}
-	if cfg.TCPRetransmit.EnableTLP {
-		args = append(args, "--enable-tlp")
-	}
-
 	process, err := exec.New(exec.Spec{
 		Path: path.Join(internalconfig.CoreBinDir, tcpSharkToolName),
-		Args: args,
+		Args: tcpRetransmitArgs(configSnapshot()),
 	})
 	if err != nil {
 		return fmt.Errorf("create %s process: %w", tcpSharkToolName, err)
@@ -103,6 +101,34 @@ func (c *tcpRetransmitTracing) Start(ctx context.Context) error {
 	return nil
 }
 
+func tcpRetransmitArgs(config *Config) []string {
+	args := []string{
+		"--mode", "retransmit",
+		"--output-storage", toolstream.DefaultSockPath,
+		"--max-events-per-second", strconv.FormatUint(config.TCPRetransmit.MaxEventsPerSecond, 10),
+		"--source-types", toolstream.SourceTypeEvent,
+	}
+	if config.TCPRetransmit.EnableDropwatchCorrelation {
+		args = append(
+			args,
+			"--with-dropwatch",
+			"--bpf-path-dir", internalconfig.CoreBpfDir,
+		)
+	} else {
+		args = append(
+			args,
+			"--bpf-path", path.Join(internalconfig.CoreBpfDir, "tcp_retransmit.o"),
+		)
+	}
+	if filter := effectiveTCPRetransmitFilter(config); filter != "" {
+		args = append(args, "--filter", filter)
+	}
+	if config.TCPRetransmit.EnableTLP {
+		args = append(args, "--enable-tlp")
+	}
+	return args
+}
+
 func handleTCPRetransmitEvent(_ *toolstream.Session, ev *types.TCPRetransmitTracing) error {
 	if ev.ContainerID == "" {
 		ev.ContainerID = pod.ContainerIDByCgroupNetNamespace(pod.ContainerCgroupNetNamespace{
@@ -112,17 +138,12 @@ func handleTCPRetransmitEvent(_ *toolstream.Session, ev *types.TCPRetransmitTrac
 		})
 	}
 
-	if ev.DropLocation == "" {
-		causal, _ := globalDropwatchTCPRetransmitCache.correlate(ev)
-		ev.DropLocation = causalToDropLocation(causal)
-	}
 	observedTimestamp, err := timeutil.Parse(ev.ObservedTimestamp)
 	if err != nil {
 		return fmt.Errorf("parse tcp retransmit observed timestamp: %w", err)
 	}
 	tracerData := *ev
 	tracerData.ObservedTimestamp = ""
-
 	return tracing.Save(&tracing.WriteRequest{
 		TracerName:        tcpRetransmitTracerName,
 		ContainerID:       ev.ContainerID,
