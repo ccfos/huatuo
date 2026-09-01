@@ -42,7 +42,8 @@ DEFAULT_INCLUDES="-I include -I include/4.18.0-193.6.3.el8_2.x86_64"
 # __TARGET_ARCH_sparc
 # ...
 #
-ARCH=$(uname --machine | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/')
+ARCH=${CLANG_ARCH:-$(uname --machine)}
+ARCH=$(echo "${ARCH}" | sed 's/x86_64/x86/' | sed 's/aarch64/arm64/' | sed 's/amd64/x86/')
 
 COMPILE_OPTIONS=
 DEFAULT_COMPILE_OPTIONS="-Wall -O2 -g -target bpf -D__TARGET_ARCH_${ARCH} -mcpu=v1 -c"

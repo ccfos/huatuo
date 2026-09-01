@@ -33,10 +33,55 @@ $ make
 
 ### 2. Publishing the Image
 
+#### 2.1 Fast Build
+
 Use `docker build` to publish the latest binary container image.
 
 ```bash
 docker build --network host -t huatuo/huatuo-bamai:latest .
+```
+
+#### 2.2 Multi-arch Build (linux/amd64 + linux/arm64)
+
+**1. Environment Setup**
+
+```bash
+# Register QEMU user-mode emulation
+docker run --rm --privileged tonistiigi/binfmt --install all
+
+# Create multi-arch builder
+docker buildx create --name multiarch \
+    --driver docker-container \
+    --driver-opt network=host \
+    --use
+
+# Verify (also triggers bootstrap)
+docker buildx inspect multiarch --bootstrap
+```
+
+**2. Build and Push**
+
+```bash
+docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    --network=host \
+    -t <your-registry>/huatuo-bamai:latest \
+    -f Dockerfile \
+    --push .
+```
+
+**3. Verify Multi-arch Manifest**
+
+```bash
+docker buildx imagetools inspect <your-registry>/huatuo-bamai:latest
+```
+
+Expected output contains both platform entries:
+
+```
+Manifests:
+  Platform:  linux/amd64
+  Platform:  linux/arm64
 ```
 
 ### 3. Bare-Metal Build
