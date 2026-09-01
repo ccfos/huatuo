@@ -39,13 +39,18 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch possible cpu num")
 	}
+	maxOnlineCPUID, err := cpuutil.ParseMaxOnlineCPUID(cpuutil.SystemCPUOnlinePath)
+	if err != nil {
+		return nil, fmt.Errorf("fetch maximum online CPU ID: %w", err)
+	}
+	if maxOnlineCPUID >= uint64(cpuPossible) {
+		return nil, fmt.Errorf("maximum online CPU ID %d exceeds possible CPUs %d", maxOnlineCPUID, cpuPossible)
+	}
 
 	return &tracing.EventTracingAttr{
 		TracingData: &softirqLatency{
-			cpuPossible: cpuPossible,
-			onlineCPUs: func() (map[int]struct{}, error) {
-				return cpuutil.ParseOnlineCPUSet(cpuutil.SystemCPUOnlinePath, cpuPossible)
-			},
+			cpuPossible:    cpuPossible,
+			maxOnlineCPUID: int(maxOnlineCPUID),
 		},
 		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
@@ -55,9 +60,9 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 //go:generate $BPF_COMPILE $BPF_INCLUDE -s $BPF_DIR/system_softirq.c -o $BPF_DIR/system_softirq.o
 
 type softirqLatency struct {
-	bpf         bpf.Reference
-	cpuPossible int
-	onlineCPUs  func() (map[int]struct{}, error)
+	bpf            bpf.Reference
+	cpuPossible    int
+	maxOnlineCPUID int
 }
 
 type softirqLatencyData struct {
@@ -116,31 +121,6 @@ func irqAllowed(id int) bool {
 	}
 }
 
-func appendSoftirqMetrics(
-	metrics []*metric.Data,
-	irqVector uint32,
-	latencies []softirqLatencyData,
-	online map[int]struct{},
-) []*metric.Data {
-	labels := map[string]string{"type": irqTypeName(int(irqVector))}
-	for cpuid, latency := range latencies {
-		if _, ok := online[cpuid]; !ok {
-			continue
-		}
-		labels["cpuid"] = strconv.Itoa(cpuid)
-		for zoneid, zone := range latency.LatencyCounts {
-			labels["zone"] = strconv.Itoa(zoneid)
-			metrics = append(metrics, metric.NewCounterData(
-				"latency",
-				float64(zone),
-				"softirq latency",
-				labels,
-			))
-		}
-	}
-	return metrics
-}
-
 func (s *softirqLatency) Update() ([]*metric.Data, error) {
 	lease, ok := s.bpf.Acquire()
 	if !ok {
@@ -152,11 +132,8 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dump map: %w", err)
 	}
-	online, err := s.onlineCPUs()
-	if err != nil {
-		return nil, fmt.Errorf("read online CPUs: %w", err)
-	}
 
+	labels := make(map[string]string)
 	metricData := []*metric.Data{}
 
 	// IRQ: 0 ... NR_SOFTIRQS_MAX
@@ -176,7 +153,18 @@ func (s *softirqLatency) Update() ([]*metric.Data, error) {
 			return nil, fmt.Errorf("read map value: %w", err)
 		}
 
-		metricData = appendSoftirqMetrics(metricData, irqVector, latencyOnAllCPU, online)
+		labels["type"] = irqTypeName(int(irqVector))
+
+		for cpuid, lat := range latencyOnAllCPU {
+			if cpuid > s.maxOnlineCPUID {
+				break
+			}
+			labels["cpuid"] = strconv.Itoa(cpuid)
+			for zoneid, zone := range lat.LatencyCounts {
+				labels["zone"] = strconv.Itoa(zoneid)
+				metricData = append(metricData, metric.NewCounterData("latency", float64(zone), "softirq latency", labels))
+			}
+		}
 	}
 
 	return metricData, nil

@@ -19,7 +19,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"testing"
 )
@@ -70,23 +69,18 @@ func TestParseOnlineCores(t *testing.T) {
 	}
 }
 
-func TestParseOnlineCPUSet(t *testing.T) {
+func TestParseMaxOnlineCPUID(t *testing.T) {
 	tests := []struct {
-		name     string
-		content  string
-		possible int
-		want     map[int]struct{}
-		wantErr  bool
+		name    string
+		content string
+		want    uint64
+		wantErr bool
 	}{
-		{
-			name:     "sparse",
-			content:  "0,2-3\n",
-			possible: 4,
-			want:     map[int]struct{}{0: {}, 2: {}, 3: {}},
-		},
-		{name: "empty", content: "\n", possible: 4, wantErr: true},
-		{name: "invalid possible", content: "0\n", wantErr: true},
-		{name: "outside possible", content: "0,4\n", possible: 4, wantErr: true},
+		{name: "sparse", content: "0,2-3\n", want: 3},
+		{name: "single", content: "7\n", want: 7},
+		{name: "unsorted", content: "4-5,0-2\n", want: 5},
+		{name: "empty", content: "\n", wantErr: true},
+		{name: "invalid range", content: "3-1\n", wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -96,18 +90,18 @@ func TestParseOnlineCPUSet(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, err := ParseOnlineCPUSet(path, tt.possible)
+			got, err := ParseMaxOnlineCPUID(path)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatal("ParseOnlineCPUSet() error = nil, want error")
+					t.Fatal("ParseMaxOnlineCPUID() error = nil, want error")
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("ParseOnlineCPUSet() error = %v", err)
+				t.Fatalf("ParseMaxOnlineCPUID() error = %v", err)
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ParseOnlineCPUSet() = %v, want %v", got, tt.want)
+			if got != tt.want {
+				t.Errorf("ParseMaxOnlineCPUID() = %d, want %d", got, tt.want)
 			}
 		})
 	}
