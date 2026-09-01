@@ -220,9 +220,6 @@ sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp and port 443" --duration
 # 将事件转发给正在运行的 huatuo-bamai 实例
 sudo dropwatch --bpf-path bpf/dropwatch.o --filter "tcp" --output-storage /var/run/huatuo-toolstream.sock
 
-# 通过 jq 过滤仅显示 RST 包
-sudo dropwatch --bpf-path bpf/dropwatch.o --output json 2>/dev/null | jq 'select(.layers.tcp.flags == "RST")'
-
 # 采集 10 秒 JSON 输出，并排除调用栈包含 ip_finish_output 的事件
 sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'select(.stack | test("ip_finish_output") | not)'
 
@@ -259,7 +256,7 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'd
 | `netdev_linkstatus`      | []string | 网络设备链路标志                              |
 | `packet_skb_addr`        | string   | SKB 地址（十六进制，omitempty）              |
 | `packet_eth_proto`       | string   | 原始 EtherType（十六进制，如 `0x0800`）       |
-| `packet_len_bytes`       | uint32   | 数据包长度（字节）                            |
+| `packet_len_bytes`       | uint32   | 内核 `skb->len` 快照；表示 SKB 逻辑长度，可能与线上帧长度不同 |
 | `layers`                 | object   | 分层协议解析结果，缺失的层会省略              |
 | `stack`                  | string   | 内核调用栈（换行分隔）                        |
 
@@ -273,7 +270,7 @@ sudo dropwatch --output json --duration 10 --bpf-path bpf/dropwatch.o | jq -c 'd
 | `layers.ether` | 存在真实 Ethernet header 时输出二层字段：`saddr`、`daddr`、`type`、`len`；仅 IEEE 802.3 framing 的 `len` 非零 |
 | `layers.ipv4`  | IPv4 字段：`version`、`ihl`、`tos`、`len`、`id`、`flags`、`frag_offset`、`ttl`、`protocol`、`checksum`、`saddr`、`daddr` |
 | `layers.ipv6`  | IPv6 字段：`version`、`traffic_class`、`flow_label`、`len`、`next_header`、`hop_limit`、`saddr`、`daddr` |
-| `layers.tcp`   | TCP 字段：`sport`、`dport`、`seq`、`ack_seq`、`data_offset`、`flags`、`window`、`checksum`、`urgent`、`sk_state` |
+| `layers.tcp`   | TCP 字段：`sport`、`dport`、`seq`、`ack_seq`、`data_offset`、`window`、`checksum`、`urgent`、`sk_state` |
 | `layers.udp`   | UDP 字段：`sport`、`dport`、`len`、`checksum`                |
 | `layers.icmp`  | ICMP/ICMPv6 字段：`type`、`code`、`checksum`、`id`、`seq`    |
 | `layers.arp`   | ARP 字段：`addr_type`、`protocol`、`hw_address_size`、`prot_address_size`、`operation`、`sender_mac`、`sender_ip`、`target_mac`、`target_ip` |
@@ -300,14 +297,20 @@ dropwatch \
     IssuesList = []
 
 [EventTracing.Dropwatch]
-    # tcpdump 过滤表达式，转发给 dropwatch --filter。
+    # standalone dropwatch 使用的 tcpdump filter。
     # 默认值: "tcp"
     Filter = "tcp"
 
     # 转发给 dropwatch --max-events-per-second。
     # 默认值: 100
     MaxEventsPerSecond = 100
+
+[EventTracing.TCPRetransmit]
+    # 使用 tcpshark 私有的 embedded dropwatch source。
+    EnableDropwatchCorrelation = false
 ```
+
+standalone dropwatch 始终输出 raw `DropWatchTracing`。TCP 重传 local 关联会加载另一份 `dropwatch.o`，两个输入统一使用 `EventTracing.TCPRetransmit.Filter`，并且只输出定型后的 `TCPRetransmitTracing` 结果。两种模式可以并行；embedded drop 不会重复保存成 raw event。
 
 #### 4.2 噪声过滤
 

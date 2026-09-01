@@ -51,6 +51,13 @@ struct {
 } dropwatch_stackmap SEC(".maps");
 
 struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, struct dropwatch_perf_stats);
+} dropwatch_perf_stats SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__uint(max_entries, 4096);
 	__type(key, u64);
@@ -67,6 +74,7 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 
 static const struct dropwatch_packet_event zero_data = {};
 static const u32 stackmap_key = 0;
+static const u32 perf_stats_key = 0;
 
 /* kfree_skb gained an skb drop reason field in v5.17, absent from the BTF this
  * object is compiled against. Carry it in a CO-RE flavor relocated at load time:
@@ -171,9 +179,10 @@ static inline void skb_load_packet_raw(struct sk_buff *skb,
 }
 
 static __always_inline bool
-dropwatch_skip_hardware_duplicate(struct sk_buff *skb, u64 now)
+dropwatch_skip_hardware_duplicate(struct sk_buff *skb)
 {
 	u64 skb_addr = (u64)(unsigned long)skb;
+	u64 now;
 	u64 timestamp;
 	u64 *reported_at;
 
@@ -183,8 +192,15 @@ dropwatch_skip_hardware_duplicate(struct sk_buff *skb, u64 now)
 
 	timestamp = *reported_at;
 	bpf_map_delete_elem(&dropwatch_hardware_skb, &skb_addr);
+	now = bpf_ktime_get_ns();
 	return now >= timestamp &&
 	       now - timestamp <= HARDWARE_DROP_DEDUP_WINDOW_NS;
+}
+
+static __always_inline bool
+drop_event_filter_pass(struct sk_buff *skb, struct net_device *dev)
+{
+	return skb_filter_pass_netdev(dev) && PCAP_STUB_PASS_SKB(skb);
 }
 
 static __always_inline int
@@ -193,26 +209,28 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 	       const char *trap_name, const char *trap_group_name)
 {
 	struct dropwatch_packet_event *data;
+	struct dropwatch_perf_stats *perf_stats;
+	struct sock *sk;
 	u16 skb_protocol;
 	long output_ret;
 
+	perf_stats = bpf_map_lookup_elem(&dropwatch_perf_stats, &perf_stats_key);
+	if (!perf_stats)
+		return 0;
+	u64 event_ktime = bpf_ktime_get_ns();
 	/* skb->protocol is __be16 on every supported kernel. */
 	skb_protocol = bpf_ntohs(BPF_CORE_READ(skb, protocol));
 
-	if (!skb_filter_pass_netdev(dev))
+	if (bpf_ratelimited_in_map_rc(ctx, dropwatch)) {
+		__sync_fetch_and_add(&perf_stats->rate_limited, 1);
 		return 0;
-
-	if (!PCAP_STUB_PASS_SKB(skb))
-		return 0;
-
-	if (bpf_ratelimited_in_map_rc(ctx, dropwatch))
-		return 0;
+	}
 
 	data = bpf_map_lookup_elem(&dropwatch_stackmap, &stackmap_key);
 	if (!data)
 		return 0;
 
-	data->meta.ktime_ns = bpf_ktime_get_ns();
+	data->meta.ktime_ns = event_ktime;
 	data->meta.tgid_pid = bpf_get_current_pid_tgid();
 	bpf_get_current_comm(&data->meta.comm, sizeof(data->meta.comm));
 	data->meta.skb_addr = (u64)(unsigned long)skb;
@@ -231,7 +249,7 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 
 	data->pkt_hdr.packet_len_bytes = BPF_CORE_READ(skb, len);
 
-	struct sock *sk = BPF_CORE_READ(skb, sk);
+	sk = BPF_CORE_READ(skb, sk);
 	if (sk) {
 		u16 sk_protocol = 0, sk_type = 0;
 
@@ -259,7 +277,9 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 	output_ret = bpf_perf_event_output(ctx, &perf_events,
 					   COMPAT_BPF_F_CURRENT_CPU, data,
 					   sizeof(*data));
-	if (source == DROPWATCH_DROP_SOURCE_HARDWARE && output_ret == 0) {
+	if (output_ret < 0) {
+		__sync_fetch_and_add(&perf_stats->perf_lost, 1);
+	} else if (source == DROPWATCH_DROP_SOURCE_HARDWARE) {
 		u64 skb_addr = data->meta.skb_addr;
 		u64 reported_at = data->meta.ktime_ns;
 
@@ -276,10 +296,14 @@ SEC("tracepoint/skb/kfree_skb")
 int bpf_kfree_skb_prog(struct trace_event_raw_kfree_skb *ctx)
 {
 	struct sk_buff *skb = ctx->skbaddr;
-	struct net_device *dev = BPF_CORE_READ(skb, dev);
-	u64 now = bpf_ktime_get_ns();
+	struct net_device *dev;
 
-	if (dropwatch_skip_hardware_duplicate(skb, now))
+	/* A rejected software event must not leave a marker for a reused address. */
+	if (dropwatch_skip_hardware_duplicate(skb))
+		return 0;
+
+	dev = BPF_CORE_READ(skb, dev);
+	if (!drop_event_filter_pass(skb, dev))
 		return 0;
 
 	return drop_event_commit(ctx, skb, dev, DROPWATCH_DROP_SOURCE_SOFTWARE,
@@ -307,6 +331,9 @@ int bpf_devlink_trap_report_prog(struct bpf_raw_tracepoint_args *ctx)
 	dev = BPF_CORE_READ(metadata, input_dev);
 	if (!dev)
 		dev = BPF_CORE_READ(skb, dev);
+	if (!drop_event_filter_pass(skb, dev))
+		return 0;
+
 	trap_name = BPF_CORE_READ(metadata, trap_name);
 	trap_group_name = BPF_CORE_READ(metadata, trap_group_name);
 

@@ -45,20 +45,27 @@ func Apply(spec *ebpf.CollectionSpec, filterExpr string) error {
 }
 
 func patchStub(spec *ebpf.CollectionSpec, stubSymbol string, filterInsts asm.Instructions) error {
+	patched := false
 	for _, prog := range spec.Programs {
 		for i, inst := range prog.Instructions {
 			if inst.Symbol() != stubSymbol {
 				continue
 			}
-			filterInsts[0] = filterInsts[0].WithMetadata(inst.Metadata)
+			injected := make(asm.Instructions, len(filterInsts))
+			copy(injected, filterInsts)
+			injected[0] = injected[0].WithMetadata(inst.Metadata)
 			prog.Instructions[i] = inst.WithMetadata(asm.Metadata{})
-			result := make(asm.Instructions, 0, len(prog.Instructions)+len(filterInsts))
+			result := make(asm.Instructions, 0, len(prog.Instructions)+len(injected))
 			result = append(result, prog.Instructions[:i]...)
-			result = append(result, filterInsts...)
+			result = append(result, injected...)
 			result = append(result, prog.Instructions[i:]...)
 			prog.Instructions = result
-			return nil
+			patched = true
+			break
 		}
+	}
+	if patched {
+		return nil
 	}
 	return fmt.Errorf("%w: %q", ErrStubNotFound, stubSymbol)
 }
