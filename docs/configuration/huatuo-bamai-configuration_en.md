@@ -28,7 +28,7 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
 
 - **BlackList**: Global blacklist for tracing and metrics.
 
-  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, and Moore Threads GPU. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing and its drop-correlation cache, or `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs. Supports arrays; extend as needed.
+  Modules or hardware to exclude from tracing and metric collection. The default is `["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "tcp_retransmit", "mthreads_gpu"]`, which disables tracing and metrics for the network device hardware layer, qdisc statistics, Metax GPU, Ascend NPU, procfs-based disk I/O statistics, TCP retransmission tracing, and Moore Threads GPU. Remove `diskio` to enable disk I/O metrics, `tcp_retransmit` to enable TCP retransmission tracing, or `mthreads_gpu` to enable Moore Threads GPU metric collection on hosts with MT GPUs. Local correlation does not require the standalone `dropwatch` tracer. Supports arrays; extend as needed.
 
 ### 3. Logging
 
@@ -830,7 +830,7 @@ This section captures key kernel events and latency, including scheduler tick in
 
 ```toml
 [EventTracing.Dropwatch]
-    # tcpdump-style filter expression, forwarded to dropwatch --filter.
+    # Filter for standalone dropwatch.
     # Default: "tcp"
     Filter = "tcp"
 
@@ -844,7 +844,7 @@ This section captures key kernel events and latency, including scheduler tick in
     ExcludeContainers = []
 ```
 
-- **Filter**: tcpdump-style packet filter passed to `dropwatch --filter` and applied by the BPF program before events are emitted.
+- **Filter**: tcpdump-style packet filter passed only to standalone dropwatch. TCP retransmission correlation uses `TCPRetransmit.Filter` for both of its inputs.
 
   Default: `"tcp"`.
 
@@ -860,28 +860,30 @@ This section captures key kernel events and latency, including scheduler tick in
 
 ```bash
 [EventTracing.TCPRetransmit]
-    # Forwarded to tcpshark --filter.
-    # Applies only to tcp_retransmit_skb events.
-    # Default: ""
+    # Retransmission filter. Local correlation applies it to both inputs.
+    # Default: empty (no flag when disabled; "tcp" when enabled).
     Filter = ""
 
     # Forwarded as tcpshark --enable-tlp. Default: false.
     EnableTLP = false
+
+    # Run tcpshark with an embedded dropwatch source. Default: false.
+    EnableDropwatchCorrelation = false
 
     # Forwarded as tcpshark --max-events-per-second.
     # Default: 100; 0 disables rate limiting.
     MaxEventsPerSecond = 100
 ```
 
-- **Filter**: tcpdump-style filter expression passed to `tcpshark --filter`.
-
-  Default: empty string. It applies only to `tcp_retransmit_skb` events.
-
 - **EnableTLP**: Whether to collect `tcp_send_loss_probe` events.
 
   Default: false.
 
-- **MaxEventsPerSecond**: Maximum TCP retransmission events emitted by BPF per second.
+- **Filter**: Tcpdump-style retransmission filter used in both modes. Local correlation applies the normalized expression to both tcpshark inputs and defaults an empty value to `tcp`. When correlation is disabled, an empty value passes no `--filter` flag. `Dropwatch.Filter` independently controls standalone dropwatch.
+
+- **EnableDropwatchCorrelation**: Whether tcpshark should load a private dropwatch source and finalize retransmissions locally. The default is false. `tcp_retransmit` must be removed from `BlackList`; standalone `dropwatch` may remain blacklisted. Retransmissions wait up to 100 ms for delayed delivery, and candidate drops must precede them by no more than one second in kernel monotonic time. A strict same-namespace match reports `host_software`; every no-match reports `unknown` with stable `correlation_reasons`.
+
+- **MaxEventsPerSecond**: Maximum TCP retransmission events emitted by BPF per second. Correlation mode gives embedded dropwatch an independent limiter with the same value, so `100` permits up to 100 events/s on each input.
 
   Default: 100. Set to 0 for unlimited output. When the limit is exceeded, `tcpshark` logs `rate limit hit`.
 

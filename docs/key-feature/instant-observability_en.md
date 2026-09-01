@@ -170,7 +170,6 @@ All event records include the following common fields:
                 "dport": 49000,
                 "seq": 1009085774,
                 "ack_seq": 689410995,
-                "flags": "ACK",
                 "sk_state": "ESTABLISHED"
             }
         },
