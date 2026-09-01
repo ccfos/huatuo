@@ -242,6 +242,12 @@ stop_by_pid() {
 	kill -KILL "${pid}" 2> /dev/null || true
 }
 
+stop_and_wait_by_pid() {
+	local pid=$1 timeout=${2:-10}
+	stop_by_pid "${pid}" "${timeout}"
+	wait "${pid}"
+}
+
 # ------------------------- virtualization detection -------------------------
 
 # Returns 0 when running inside a container.

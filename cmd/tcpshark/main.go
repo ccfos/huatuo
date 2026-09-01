@@ -55,8 +55,9 @@ func main() {
 	})
 	app.Action = func(c *cli.Context) error {
 		return runRetransmit(c.Context, &retransmitOptions{
-			bpfPath:            c.String(cliFlagBpfPath),
-			filterExpression:   c.String(cliFlagFilter),
+			bpfPath:            c.String(cliFlagBPFPath),
+			bpfPathDir:         c.String(cliFlagBPFPathDir),
+			filterExpression:   effectiveFilter(c),
 			durationSeconds:    c.Int(cliFlagDuration),
 			outputFormat:       c.String(cliFlagOutput),
 			outputStorage:      c.String(cliFlagOutputStorage),
@@ -64,6 +65,7 @@ func main() {
 			sourceType:         c.String(cliFlagSourceTypes),
 			maxEventsPerSecond: c.Uint64(cliFlagMaxEventsPerSecond),
 			isTLPEnabled:       c.Bool(cliFlagEnableTLP),
+			isDropwatchEnabled: c.Bool(cliFlagWithDropwatch),
 			version:            versionInfo.Version,
 			output:             c.App.Writer,
 		})

@@ -18,29 +18,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"strconv"
-	"time"
 
-	"golang.org/x/sys/unix"
-
-	"github.com/ccfos/huatuo/internal/bpf/abi"
-	"github.com/ccfos/huatuo/internal/packet"
+	"github.com/ccfos/huatuo/internal/symbol"
 	"github.com/ccfos/huatuo/internal/toolstream"
-	"github.com/ccfos/huatuo/internal/utils/bytesutil"
-	"github.com/ccfos/huatuo/internal/utils/kernaddr"
 	"github.com/ccfos/huatuo/pkg/types"
 )
 
-const tcpFlagsSynAck = tcpFlagSYN | tcpFlagACK
-
 const textEventBufferSize = 512
-
-var retransmitEventTypeNames = map[abi.TCPRetransmitEventType]string{
-	abi.TCPRetransmitEventSKB:    "tcp_retransmit_skb",
-	abi.TCPRetransmitEventSynack: "tcp_retransmit_synack",
-	abi.TCPRetransmitEventTlp:    "tcp_send_loss_probe",
-}
 
 // writer is the single write destination for a tcpshark session.
 type writer interface {
@@ -70,6 +55,10 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 	line = append(line, ev.TCPState...)
 	line = append(line, " event_type="...)
 	line = append(line, ev.EventType...)
+	if ev.KtimeNS != 0 {
+		line = append(line, " ktime_ns="...)
+		line = strconv.AppendUint(line, ev.KtimeNS, 10)
+	}
 	if ev.EventType == "tcp_retransmit_synack" {
 		line = append(line, " [SYNACK]"...)
 	}
@@ -127,6 +116,21 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 		line = append(line, " drop_location="...)
 		line = append(line, ev.DropLocation...)
 	}
+	if len(ev.CorrelationReasons) != 0 {
+		line = append(line, " correlation_reasons="...)
+		for i, reason := range ev.CorrelationReasons {
+			if i != 0 {
+				line = append(line, ',')
+			}
+			line = append(line, reason...)
+		}
+	}
+	if status := ev.DropwatchPerfStatus; status != nil {
+		line = append(line, " dropwatch_perf_lost="...)
+		line = strconv.AppendUint(line, status.PerfLost, 10)
+		line = append(line, " dropwatch_rate_limited="...)
+		line = strconv.AppendUint(line, status.RateLimited, 10)
+	}
 	if ev.Source != "" {
 		line = append(line, " source="...)
 		line = append(line, ev.Source...)
@@ -134,10 +138,16 @@ func (s *textWriter) Write(ev *types.TCPRetransmitTracing) error {
 	line = append(line, '\n')
 
 	n, err := s.w.Write(line)
-	if err == nil && n != len(line) {
+	if err != nil {
+		return err
+	}
+	if n != len(line) {
 		return io.ErrShortWrite
 	}
-	return err
+	if ev.DropStack != "" {
+		return symbol.FormatStackLines(s.w, ev.DropStack)
+	}
+	return nil
 }
 
 type jsonWriter struct{ w io.Writer }
@@ -193,61 +203,5 @@ func newWriter(output io.Writer, options *writerOptions) (writer, func() error, 
 		return &textWriter{w: output}, func() error { return nil }, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported output %q", options.outputFormat)
-	}
-}
-
-func formatEvent(
-	ev *abi.TCPRetransmitEvent,
-	sourceType string,
-) *types.TCPRetransmitTracing {
-	rawEventType := abi.TCPRetransmitEventType(ev.EventType)
-	tcpFlagsRaw := ev.TCPFlags
-	if rawEventType == abi.TCPRetransmitEventSynack {
-		tcpFlagsRaw = tcpFlagsSynAck
-	}
-	tcpFlags := packet.TCPFlagStrings[tcpFlagsRaw]
-
-	classification := classifyRetransmit(ev)
-	eventType, ok := retransmitEventTypeNames[rawEventType]
-	if !ok {
-		eventType = "unknown"
-	}
-
-	var saddr, daddr string
-	switch ev.Family {
-	case unix.AF_INET:
-		saddr = net.IP(ev.Saddr[:net.IPv4len]).String()
-		daddr = net.IP(ev.Daddr[:net.IPv4len]).String()
-	case unix.AF_INET6:
-		saddr = net.IP(ev.Saddr[:]).String()
-		daddr = net.IP(ev.Daddr[:]).String()
-	}
-
-	return &types.TCPRetransmitTracing{
-		ObservedTimestamp:   time.Now().UTC().Format(time.RFC3339Nano),
-		TCPReason:           classification.reason.String(),
-		Source:              sourceType,
-		Comm:                bytesutil.ToStr(ev.Comm[:]),
-		PID:                 ev.TGIDPID >> 32,
-		MemoryCgroupCSSAddr: kernaddr.Format(ev.MemcgCSSAddr),
-		NetNamespaceCookie:  ev.NetNamespaceCookie,
-		NetNamespaceInum:    ev.NetNamespaceInum,
-		TCPState:            packet.TCPStateName(uint8(ev.State)),
-		TCPSaddr:            saddr,
-		TCPDaddr:            daddr,
-		TCPSport:            ev.Sport,
-		TCPDport:            ev.Dport,
-		TCPSeq:              ev.TCPSeq,
-		TCPAckSeq:           ev.TCPAck,
-		TCPEndSeq:           ev.TCPEndSeq,
-		TCPFlags:            tcpFlags,
-		Phase:               classification.phase.String(),
-		EventType:           eventType,
-		CaState:             ev.CaState,
-		IcskRetransmits:     ev.IcskRetransmits,
-		IcskPending:         ev.IcskPending,
-		ReordSeen:           ev.ReordSeen,
-		DsackDups:           ev.DsackDups,
-		SkbAddr:             kernaddr.Format(ev.SKBAddr),
 	}
 }
