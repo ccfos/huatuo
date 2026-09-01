@@ -15,18 +15,23 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/ccfos/huatuo/internal/pcapfilter"
 	"github.com/ccfos/huatuo/internal/toolstream"
 )
 
 const (
 	cliFlagMode               = "mode"
 	cliFlagEnableTLP          = "enable-tlp"
-	cliFlagBpfPath            = "bpf-path"
+	cliFlagBPFPath            = "bpf-path"
+	cliFlagBPFPathDir         = "bpf-path-dir"
+	cliFlagWithDropwatch      = "with-dropwatch"
 	cliFlagFilter             = "filter"
 	cliFlagDuration           = "duration"
 	cliFlagOutput             = "output"
@@ -58,21 +63,30 @@ func appFlags() []cli.Flag {
 			Usage:   "include Tail Loss Probe events in retransmit mode",
 		},
 		&cli.StringFlag{
-			Name:     cliFlagBpfPath,
-			Usage:    "path to the BPF object file for the selected mode",
-			Required: true,
+			Name:  cliFlagBPFPath,
+			Usage: "path to tcp_retransmit.o; required without --with-dropwatch",
 		},
 		&cli.StringFlag{
-			Name:  cliFlagFilter,
-			Usage: "pcap filter expression (tcpdump syntax); empty = all TCP retransmissions",
+			Name:  cliFlagBPFPathDir,
+			Usage: "directory containing tcp_retransmit.o and dropwatch.o",
+		},
+		&cli.BoolFlag{
+			Name:  cliFlagWithDropwatch,
+			Usage: "correlate retransmissions with embedded dropwatch",
+		},
+		&cli.StringFlag{
+			Name: cliFlagFilter,
+			Usage: "pcap filter expression; empty = all retransmissions, " +
+				"or tcp with --with-dropwatch",
 		},
 		&cli.IntFlag{
 			Name:  cliFlagDuration,
 			Usage: "run for N seconds then exit (0=forever)",
 		},
 		&cli.Uint64Flag{
-			Name:  cliFlagMaxEventsPerSecond,
-			Usage: "rate limit to N events/sec (0 = unlimited)",
+			Name: cliFlagMaxEventsPerSecond,
+			Usage: "rate limit each enabled BPF input to N events/sec " +
+				"(0 = unlimited)",
 		},
 		&cli.StringFlag{
 			Name:  cliFlagOutput,
@@ -111,6 +125,33 @@ func validateFlags(c *cli.Context) error {
 	if taskID := c.String(cliFlagTaskID); taskID != "" && c.String(cliFlagOutputStorage) == "" {
 		return fmt.Errorf("--task-id requires --output-storage")
 	}
+	bpfPath := strings.TrimSpace(c.String(cliFlagBPFPath))
+	bpfPathDir := strings.TrimSpace(c.String(cliFlagBPFPathDir))
+	if c.Bool(cliFlagWithDropwatch) {
+		if bpfPath != "" {
+			return fmt.Errorf("--bpf-path cannot be used with --with-dropwatch; use --bpf-path-dir")
+		}
+		if bpfPathDir == "" {
+			return fmt.Errorf("--bpf-path-dir is required with --with-dropwatch")
+		}
+	} else {
+		if bpfPathDir != "" {
+			return fmt.Errorf("--bpf-path-dir requires --with-dropwatch")
+		}
+		if bpfPath == "" {
+			return fmt.Errorf("--bpf-path is required without --with-dropwatch")
+		}
+	}
+	if filter := effectiveFilter(c); filter != "" {
+		if err := pcapfilter.ValidateL3Compatible(filter); err != nil {
+			if errors.Is(err, pcapfilter.ErrL3IncompatibleFilter) {
+				return errors.New(
+					"invalid --filter for synthetic retransmit packet: ethernet header fields are unavailable",
+				)
+			}
+			return fmt.Errorf("invalid --filter for synthetic retransmit packet: %w", err)
+		}
+	}
 	switch sourceType := c.String(cliFlagSourceTypes); sourceType {
 	case toolstream.SourceTypeEvent, toolstream.SourceTypeTool:
 	default:
@@ -127,4 +168,14 @@ func validateFlags(c *cli.Context) error {
 		}
 	}
 	return nil
+}
+
+// Embedded correlation uses one normalized expression so both probes observe the
+// same traffic scope. An explicit TCP default avoids unrelated drop events.
+func effectiveFilter(c *cli.Context) string {
+	filter := strings.TrimSpace(c.String(cliFlagFilter))
+	if filter == "" && c.Bool(cliFlagWithDropwatch) {
+		return "tcp"
+	}
+	return filter
 }

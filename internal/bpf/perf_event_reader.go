@@ -53,6 +53,6 @@ type PerfEventReader interface {
 	// The returned batch may contain events and sample loss when err is non-nil.
 	ReadBatch(newEvent func() any) (PerfEventBatch, error)
 
-	// Close the PerfEventReader.
+	// Close is idempotent and unblocks active reads before returning.
 	Close() error
 }

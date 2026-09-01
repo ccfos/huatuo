@@ -65,9 +65,32 @@ func (r TCPRetransmitReason) String() string {
 	}
 }
 
+// CorrelationReason explains why local dropwatch evidence cannot establish a
+// conclusive no-match for a TCP retransmission.
+type CorrelationReason string
+
+const (
+	CorrelationReasonNoMatchingDrop           CorrelationReason = "no_matching_drop"
+	CorrelationReasonCrossNetNSCandidate      CorrelationReason = "cross_netns_candidate"
+	CorrelationReasonStartupHistoryIncomplete CorrelationReason = "startup_history_incomplete"
+	// Deprecated: retained for source compatibility; tcpshark no longer emits it.
+	CorrelationReasonDropEvidenceUnusable CorrelationReason = "drop_evidence_unusable"
+	CorrelationReasonPerfEventsLost       CorrelationReason = "perf_events_lost"
+	CorrelationReasonDropRateLimited      CorrelationReason = "drop_rate_limited"
+	// Deprecated: retained for source compatibility; tcpshark no longer emits it.
+	CorrelationReasonDropEvidenceEvicted       CorrelationReason = "drop_evidence_evicted"
+	CorrelationReasonUnsupportedRetransmission CorrelationReason = "unsupported_retransmission"
+	// Deprecated: retained for source compatibility; tcpshark no longer emits it.
+	CorrelationReasonDropwatchInputInactive CorrelationReason = "dropwatch_input_inactive"
+	// #nosec G101 -- Public diagnostic, not a credential.
+	CorrelationReasonDropwatchPerfStatusUnavailable CorrelationReason = "dropwatch_perf_status_unavailable"
+	CorrelationReasonRetransmitWaitCapacityExceeded CorrelationReason = "retransmit_wait_capacity_exceeded"
+)
+
 // TCPRetransmitTracing is the canonical JSON schema for a TCP retransmission event.
 type TCPRetransmitTracing struct {
 	ObservedTimestamp   string `json:"observed_timestamp,omitempty"`
+	KtimeNS             uint64 `json:"ktime_ns,omitempty"`
 	TCPReason           string `json:"tcp_reason"` // "RTO", "fast_retransmit", "reorder_prone_fast", "TLP", "spurious", "unknown"
 	Source              string `json:"source,omitempty"`
 	Comm                string `json:"comm"`
@@ -94,6 +117,11 @@ type TCPRetransmitTracing struct {
 	TCPEndSeq uint32 `json:"tcp_end_seq,omitempty"`
 	TCPFlags  string `json:"tcp_flags,omitempty"`
 
+	// TCPFlagsRaw preserves the unrendered bitmask used by correlation matching;
+	// TCPFlags is presentation-only text and must not be parsed back into protocol
+	// state. The raw value is excluded from the public event schema.
+	TCPFlagsRaw uint8 `json:"-"`
+
 	// Phase classification.
 	Phase string `json:"phase"` // "connect", "data", "close"
 
@@ -114,6 +142,9 @@ type TCPRetransmitTracing struct {
 	// Kernel internals.
 	SkbAddr string `json:"skb_addr,omitempty"` // the sk_buff pointer being retransmitted
 
-	// Correlation with dropwatch / netdev_hw.
-	DropLocation string `json:"drop_location,omitempty"` // "host_software" or "network_or_host_hardware"
+	// Correlation with dropwatch.
+	DropLocation        string               `json:"drop_location,omitempty"`
+	CorrelationReasons  []CorrelationReason  `json:"correlation_reasons,omitempty"`
+	DropwatchPerfStatus *DropwatchPerfStatus `json:"dropwatch_perf_status,omitempty"`
+	DropStack           string               `json:"drop_stack,omitempty"`
 }

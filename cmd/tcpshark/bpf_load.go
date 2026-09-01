@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ccfos/huatuo/internal/bpf"
@@ -27,20 +29,36 @@ import (
 
 func loadRetransmitBPF(
 	bpfPath string,
-	filterExpr string,
+	filterExpression string,
 	bpfLimiter *bpf.RateLimiter,
+) (bpf.BPF, error) {
+	return loadFilteredBPFObject(
+		bpfPath,
+		filterExpression,
+		bpfLimiter.Constants(nil),
+	)
+}
+
+func loadFilteredBPFObject(
+	bpfPath string,
+	filterExpression string,
+	constants map[string]any,
+	excludedSections ...string,
 ) (bpf.BPF, error) {
 	bpfBytes, err := os.ReadFile(bpfPath)
 	if err != nil {
-		return nil, fmt.Errorf("read bpf: %w", err)
+		return nil, fmt.Errorf("read bpf object %q: %w", bpfPath, err)
 	}
 
-	bpfName := fmt.Sprintf("tcp_retransmit_%d.o", time.Now().UnixNano())
+	baseName := filepath.Base(bpfPath)
+	objectName := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+	instanceName := fmt.Sprintf("%s_%d.o", objectName, time.Now().UnixNano())
 	return pcapfilter.Load(
-		bpfName,
+		instanceName,
 		bpfBytes,
-		filterExpr,
-		bpfLimiter.Constants(nil),
+		filterExpression,
+		constants,
+		excludedSections...,
 	)
 }
 

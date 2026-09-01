@@ -30,6 +30,7 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 			name: "full event",
 			ev: &TCPRetransmitTracing{
 				ObservedTimestamp:   "2026-07-08T09:19:52.042035335Z",
+				KtimeNS:             123456789,
 				TCPReason:           "reorder_prone_fast",
 				Source:              "events",
 				Comm:                "kube-apiserver",
@@ -55,7 +56,16 @@ func TestTCPRetransmitTracingRoundTrip(t *testing.T) {
 				TCPEndSeq:           123999,
 				TCPFlags:            "ACK|FIN",
 				SkbAddr:             "0xffff888012345678",
-				DropLocation:        "network_or_host_hardware",
+				DropLocation:        "unknown",
+				CorrelationReasons: []CorrelationReason{
+					CorrelationReasonStartupHistoryIncomplete,
+					CorrelationReasonPerfEventsLost,
+				},
+				DropwatchPerfStatus: &DropwatchPerfStatus{
+					PerfLost:    1,
+					RateLimited: 2,
+				},
+				DropStack: "kfree_skb_reason+0x1",
 			},
 		},
 		{
@@ -176,9 +186,11 @@ func TestTCPRetransmitTracingOmitEmpty(t *testing.T) {
 	}
 
 	omitFields := []string{
+		"ktime_ns",
 		"container_id", "memory_cgroup_css_addr", "net_namespace_cookie", "net_namespace_inum",
 		"reord_seen", "dsack_dups", "tcp_end_seq", "tcp_flags",
-		"skb_addr", "drop_location", "source",
+		"skb_addr", "drop_location", "correlation_reasons",
+		"dropwatch_perf_status", "drop_stack", "source",
 	}
 	for _, f := range omitFields {
 		if _, ok := raw[f]; ok {

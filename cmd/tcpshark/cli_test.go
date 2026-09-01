@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -141,6 +142,139 @@ func TestAppRateLimitFlag(t *testing.T) {
 	}
 }
 
+func TestAppBPFPathAndFilterValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantError string
+	}{
+		{
+			name: "retransmit file without dropwatch",
+			args: []string{"--bpf-path", "tcp_retransmit.o"},
+		},
+		{
+			name: "dropwatch directory",
+			args: []string{
+				"--with-dropwatch",
+				"--bpf-path-dir", "bpf",
+			},
+		},
+		{
+			name: "dropwatch accepts ethertype",
+			args: []string{
+				"--with-dropwatch",
+				"--bpf-path-dir", "bpf",
+				"--filter", "ether proto ip and tcp",
+			},
+		},
+		{
+			name: "dropwatch rejects Ethernet addresses",
+			args: []string{
+				"--with-dropwatch",
+				"--bpf-path-dir", "bpf",
+				"--filter", "ether host 02:00:00:00:00:01",
+			},
+			wantError: "ethernet header fields are unavailable",
+		},
+		{
+			name: "retransmit rejects Ethernet addresses",
+			args: []string{
+				"--bpf-path", "tcp_retransmit.o",
+				"--filter", "ether host 02:00:00:00:00:01",
+			},
+			wantError: "invalid --filter for synthetic retransmit packet",
+		},
+		{
+			name:      "dropwatch requires directory",
+			args:      []string{"--with-dropwatch"},
+			wantError: "--bpf-path-dir is required with --with-dropwatch",
+		},
+		{
+			name: "dropwatch rejects file",
+			args: []string{
+				"--with-dropwatch",
+				"--bpf-path", "tcp_retransmit.o",
+				"--bpf-path-dir", "bpf",
+			},
+			wantError: "--bpf-path cannot be used with --with-dropwatch",
+		},
+		{
+			name:      "retransmit requires file",
+			wantError: "--bpf-path is required without --with-dropwatch",
+		},
+		{
+			name:      "directory requires dropwatch",
+			args:      []string{"--bpf-path-dir", "bpf"},
+			wantError: "--bpf-path-dir requires --with-dropwatch",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := []string{"tcpshark", "--mode", "retransmit"}
+			args = append(args, tt.args...)
+			err := newTestApp(func(_ *cli.Context) error { return nil }).Run(args)
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("Run() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("Run() error = %v, want containing %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestEffectiveFilter(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "off keeps empty filter"},
+		{
+			name: "dropwatch defaults to TCP",
+			args: []string{
+				"--with-dropwatch",
+				"--bpf-path-dir", "bpf",
+			},
+			want: "tcp",
+		},
+		{
+			name: "dropwatch normalizes shared filter",
+			args: []string{
+				"--with-dropwatch",
+				"--bpf-path-dir", "bpf",
+				"--filter", "  tcp and port 443  ",
+			},
+			want: "tcp and port 443",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			app := newTestApp(func(c *cli.Context) error {
+				got = effectiveFilter(c)
+				return nil
+			})
+			args := []string{"tcpshark", "--mode", "retransmit"}
+			if !slices.Contains(tt.args, "--with-dropwatch") {
+				args = append(args, "--bpf-path", "unused.o")
+			}
+			args = append(args, tt.args...)
+			if err := app.Run(args); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("effectiveFilter() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppSourceTypes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -218,6 +352,21 @@ func TestAppRejectsInvalidFlags(t *testing.T) {
 			name:      "positional argument",
 			args:      []string{"unexpected"},
 			wantError: "unexpected arguments",
+		},
+		{
+			name:      "removed correlation mode",
+			args:      []string{"--dropwatch-correlation", "local"},
+			wantError: "flag provided but not defined",
+		},
+		{
+			name:      "removed dropwatch path",
+			args:      []string{"--dropwatch-bpf-path", "dropwatch.o"},
+			wantError: "flag provided but not defined",
+		},
+		{
+			name:      "removed dropwatch rate limit",
+			args:      []string{"--dropwatch-max-events-per-second", "10"},
+			wantError: "flag provided but not defined",
 		},
 	}
 

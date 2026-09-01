@@ -47,17 +47,28 @@ func TestPerfEventReader_Lifecycle(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	reader := newTestPerfEventReader(t, ctx)
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	errCh := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		var data int32
+		errCh <- reader.ReadInto(&data)
+	}()
+
+	<-started
 	cancel()
-
-	var data int32
-	err := reader.ReadInto(&data)
-
-	assert.ErrorIs(t, err, types.ErrExitByCancelCtx)
+	select {
+	case err := <-errCh:
+		assert.ErrorIs(t, err, types.ErrExitByCancelCtx)
+	case <-time.After(time.Second):
+		t.Fatal("ReadInto() timed out waiting for context cancellation")
+	}
 }
 
 func TestPerfEventReader_Close(t *testing.T) {
 	reader := newTestPerfEventReader(t, t.Context())
 
+	require.NoError(t, reader.Close())
 	require.NoError(t, reader.Close())
 
 	var data int32

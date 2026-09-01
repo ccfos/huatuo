@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -26,10 +27,12 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 	"github.com/ccfos/huatuo/internal/log"
+	"github.com/ccfos/huatuo/pkg/types"
 )
 
 type retransmitOptions struct {
 	bpfPath            string
+	bpfPathDir         string
 	filterExpression   string
 	durationSeconds    int
 	outputFormat       string
@@ -38,6 +41,7 @@ type retransmitOptions struct {
 	sourceType         string
 	maxEventsPerSecond uint64
 	isTLPEnabled       bool
+	isDropwatchEnabled bool
 	version            string
 	output             io.Writer
 }
@@ -48,9 +52,17 @@ func runRetransmit(ctx context.Context, options *retransmitOptions) (returnErr e
 	}
 	defer bpf.Shutdown()
 
-	bpfLimiter := bpf.NewRateLimiter("tcp_retransmit", options.maxEventsPerSecond)
+	retransmitBPFPath := options.bpfPath
+	if options.isDropwatchEnabled {
+		retransmitBPFPath = filepath.Join(options.bpfPathDir, "tcp_retransmit.o")
+	}
 
-	bpfObj, err := loadRetransmitBPF(options.bpfPath, options.filterExpression, bpfLimiter)
+	bpfLimiter := bpf.NewRateLimiter("tcp_retransmit", options.maxEventsPerSecond)
+	bpfObj, err := loadRetransmitBPF(
+		retransmitBPFPath,
+		options.filterExpression,
+		bpfLimiter,
+	)
 	if err != nil {
 		return fmt.Errorf("load bpf: %w", err)
 	}
@@ -114,28 +126,90 @@ func runRetransmit(ctx context.Context, options *retransmitOptions) (returnErr e
 		return err
 	}
 
-	if bpfLimiter.Enabled() {
-		group.Go(func() error {
-			return bpfLimiter.ReadEvents(groupCtx)
-		})
-	}
+	return runRetransmitOutputSession(
+		func() error {
+			var dropSource *dropwatchSource
+			if options.isDropwatchEnabled {
+				dropSource, err = openDropwatchSource(
+					groupCtx,
+					filepath.Join(options.bpfPathDir, "dropwatch.o"),
+					options.filterExpression,
+					options.maxEventsPerSecond,
+				)
+				if err != nil {
+					return err
+				}
+			}
 
-	group.Go(func() error {
-		return streamRetransmitEvents(
-			groupCtx,
-			reader,
-			sink,
-			options.sourceType,
-		)
-	})
+			if bpfLimiter.Enabled() {
+				group.Go(func() error {
+					return bpfLimiter.ReadEvents(groupCtx)
+				})
+			}
 
-	streamErr := group.Wait()
+			if options.isDropwatchEnabled {
+				retransmitEvents := startRetransmitSource(
+					group,
+					groupCtx,
+					reader,
+					options.sourceType,
+				)
+				dropwatchEvents := startDropwatchSource(
+					group,
+					groupCtx,
+					dropSource,
+				)
+				group.Go(func() error {
+					return runRetransmitWithDrop(
+						groupCtx,
+						&retransmitDropSession{
+							retransmitEvents: retransmitEvents,
+							dropwatchEvents:  dropwatchEvents,
+							dropwatchSource:  dropSource,
+							sink:             sink,
+						},
+					)
+				})
+			} else {
+				group.Go(func() error {
+					return streamRetransmitEvents(
+						groupCtx,
+						reader,
+						sink,
+						options.sourceType,
+					)
+				})
+			}
 
-	cleanupErr := sinkCleanup()
-	if cleanupErr != nil {
-		cleanupErr = fmt.Errorf("close output: %w", cleanupErr)
-	}
-	return errors.Join(streamErr, cleanupErr)
+			workerErr := group.Wait()
+			if dropSource == nil {
+				return workerErr
+			}
+
+			closeErr := dropSource.close()
+			if closeErr != nil {
+				closeErr = fmt.Errorf("close embedded dropwatch source: %w", closeErr)
+			}
+			return errors.Join(workerErr, closeErr)
+		},
+		sinkCleanup,
+	)
+}
+
+func runRetransmitOutputSession(
+	runWorkers func() error,
+	closeOutput func() error,
+) (returnErr error) {
+	defer func() {
+		if err := closeOutput(); err != nil {
+			returnErr = errors.Join(
+				returnErr,
+				fmt.Errorf("close output: %w", err),
+			)
+		}
+	}()
+
+	return runWorkers()
 }
 
 func streamRetransmitEvents(
@@ -144,25 +218,62 @@ func streamRetransmitEvents(
 	sink writer,
 	sourceType string,
 ) error {
+	return readRetransmitEvents(
+		ctx,
+		reader,
+		sourceType,
+		func(event *types.TCPRetransmitTracing) error {
+			if err := sink.Write(event); err != nil {
+				return fmt.Errorf("write event: %w", err)
+			}
+			return nil
+		},
+	)
+}
+
+func readRetransmitEvents(
+	ctx context.Context,
+	reader bpf.PerfEventReader,
+	sourceType string,
+	consume func(*types.TCPRetransmitTracing) error,
+) error {
+	return readPerfEvents[abi.TCPRetransmitEvent](
+		ctx,
+		reader,
+		"TCP retransmit",
+		func(record *abi.TCPRetransmitEvent) error {
+			return consume(retransmitEventFromRecord(record, sourceType))
+		},
+	)
+}
+
+func readPerfEvents[T any](
+	ctx context.Context,
+	reader bpf.PerfEventReader,
+	eventName string,
+	consume func(*T) error,
+) error {
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
 
-		var ev abi.TCPRetransmitEvent
-		if err := reader.ReadInto(&ev); err != nil {
+		var record T
+		if err := reader.ReadInto(&record); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
 			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
-				log.WithError(err).Warn("perf event samples lost")
+				log.WithError(err).
+					WithField("event", eventName).
+					Warn("perf event samples lost")
 				continue
 			}
-			return fmt.Errorf("read event: %w", err)
+			return fmt.Errorf("read %s event: %w", eventName, err)
 		}
 
-		if err := sink.Write(formatEvent(&ev, sourceType)); err != nil {
-			return fmt.Errorf("write event: %w", err)
+		if err := consume(&record); err != nil {
+			return err
 		}
 	}
 }
