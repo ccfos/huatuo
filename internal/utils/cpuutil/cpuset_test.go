@@ -69,18 +69,16 @@ func TestParseOnlineCores(t *testing.T) {
 	}
 }
 
-func TestParseMaxOnlineCPUID(t *testing.T) {
+func TestMaxOnlineCPU(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
-		want    uint64
-		wantErr bool
+		want    int
 	}{
 		{name: "sparse", content: "0,2-3\n", want: 3},
 		{name: "single", content: "7\n", want: 7},
-		{name: "unsorted", content: "4-5,0-2\n", want: 5},
-		{name: "empty", content: "\n", wantErr: true},
-		{name: "invalid range", content: "3-1\n", wantErr: true},
+		{name: "empty", content: "\n", want: -1},
+		{name: "invalid last ID", content: "0,x\n", want: -1},
 	}
 
 	for _, tt := range tests {
@@ -90,18 +88,9 @@ func TestParseMaxOnlineCPUID(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got, err := ParseMaxOnlineCPUID(path)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("ParseMaxOnlineCPUID() error = nil, want error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("ParseMaxOnlineCPUID() error = %v", err)
-			}
+			got := MaxOnlineCPU(path)
 			if got != tt.want {
-				t.Errorf("ParseMaxOnlineCPUID() = %d, want %d", got, tt.want)
+				t.Errorf("MaxOnlineCPU() = %d, want %d", got, tt.want)
 			}
 		})
 	}

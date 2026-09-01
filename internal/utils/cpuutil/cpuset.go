@@ -74,46 +74,29 @@ func ParseOnlineCores(path string) (uint64, error) {
 	return count, nil
 }
 
-// ParseMaxOnlineCPUID returns the highest CPU ID in a Linux online CPU list.
-func ParseMaxOnlineCPUID(path string) (uint64, error) {
-	v, err := os.ReadFile(path)
+// MaxOnlineCPU returns the highest CPU ID in a Linux online CPU list.
+func MaxOnlineCPU(path string) int {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0, err
+		return -1
 	}
 
-	list := strings.TrimSpace(string(v))
+	list := strings.TrimSpace(string(data))
 	if list == "" {
-		return 0, errors.New("online CPU list is empty")
+		return -1
 	}
 
-	var maxID uint64
-	for _, item := range strings.Split(list, ",") {
-		if item == "" {
-			return 0, fmt.Errorf("invalid CPU list %q", list)
-		}
-
-		firstText, lastText, isRange := strings.Cut(item, "-")
-		first, err := strconv.ParseUint(firstText, 10, 64)
-		if err != nil {
-			return 0, fmt.Errorf("parse CPU %q: %w", item, err)
-		}
-
-		last := first
-		if isRange {
-			last, err = strconv.ParseUint(lastText, 10, 64)
-			if err != nil {
-				return 0, fmt.Errorf("parse CPU range %q: %w", item, err)
-			}
-			if last < first {
-				return 0, fmt.Errorf("invalid CPU range %q", item)
-			}
-		}
-		if last > maxID {
-			maxID = last
-		}
+	parts := strings.Split(list, ",")
+	last := parts[len(parts)-1]
+	if idx := strings.LastIndex(last, "-"); idx != -1 {
+		last = last[idx+1:]
 	}
 
-	return maxID, nil
+	maxID, err := strconv.Atoi(last)
+	if err != nil {
+		return -1
+	}
+	return maxID
 }
 
 // BoundCores returns the effective CPU capacity after applying quota and cpuset.

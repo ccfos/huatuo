@@ -39,18 +39,18 @@ func newSoftirq() (*tracing.EventTracingAttr, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fetch possible cpu num")
 	}
-	maxOnlineCPUID, err := cpuutil.ParseMaxOnlineCPUID(cpuutil.SystemCPUOnlinePath)
-	if err != nil {
-		return nil, fmt.Errorf("fetch maximum online CPU ID: %w", err)
+	maxOnlineCPUID := cpuutil.MaxOnlineCPU(cpuutil.SystemCPUOnlinePath)
+	if maxOnlineCPUID < 0 {
+		return nil, fmt.Errorf("fetch maximum online CPU ID")
 	}
-	if maxOnlineCPUID >= uint64(cpuPossible) {
+	if maxOnlineCPUID >= cpuPossible {
 		return nil, fmt.Errorf("maximum online CPU ID %d exceeds possible CPUs %d", maxOnlineCPUID, cpuPossible)
 	}
 
 	return &tracing.EventTracingAttr{
 		TracingData: &softirqLatency{
 			cpuPossible:    cpuPossible,
-			maxOnlineCPUID: int(maxOnlineCPUID),
+			maxOnlineCPUID: maxOnlineCPUID,
 		},
 		Interval: 10,
 		Flag:     tracing.FlagTracing | tracing.FlagMetric,
