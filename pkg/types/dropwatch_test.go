@@ -39,7 +39,7 @@ func TestDropWatchTracingRoundTrip(t *testing.T) {
 				IPv4:  &packet.IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
 				TCP: &packet.TCP{
 					Sport: 1234, Dport: 80, Seq: 1, AckSeq: 2, Window: 3,
-					Flags: "FIN|ACK", SkState: "CLOSE_WAIT",
+					SkState: "CLOSE_WAIT",
 				},
 			},
 		},

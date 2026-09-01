@@ -50,3 +50,11 @@ type DropWatchTracing struct {
 	Layers              *packet.Packet `json:"layers,omitempty"`
 	Stack               string         `json:"stack"`
 }
+
+// DropwatchPerfStatus reports cumulative diagnostic counters for the embedded
+// dropwatch source.
+type DropwatchPerfStatus struct {
+	// PerfLost counts dropwatch events that could not reach the perf stream.
+	PerfLost    uint64 `json:"perf_lost"`
+	RateLimited uint64 `json:"rate_limited"`
+}

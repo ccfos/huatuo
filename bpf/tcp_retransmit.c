@@ -14,6 +14,64 @@
 #include "bpf_tracepoint.h"
 #include "abi/tcp_retransmit_types.h"
 
+#define TCP_WIRE_FLAGS_SYNACK 0x12
+
+struct retransmit_filter_tcp_header {
+	__be16 source;
+	__be16 dest;
+	__be32 seq;
+	__be32 ack_seq;
+	u8 data_offset;
+	u8 flags;
+	__be16 window;
+	__sum16 check;
+	__be16 urg_ptr;
+};
+
+struct retransmit_filter_ipv4_header {
+	u8 version_ihl;
+	u8 tos;
+	__be16 total_len;
+	__be16 id;
+	__be16 frag_off;
+	u8 ttl;
+	u8 protocol;
+	__sum16 check;
+	__be32 saddr;
+	__be32 daddr;
+};
+
+struct retransmit_filter_ipv6_header {
+	__be32 version_class_flow;
+	__be16 payload_len;
+	u8 nexthdr;
+	u8 hop_limit;
+	struct in6_addr saddr;
+	struct in6_addr daddr;
+};
+
+struct retransmit_filter_ipv4_packet {
+	struct retransmit_filter_ipv4_header ip;
+	struct retransmit_filter_tcp_header tcp;
+};
+
+struct retransmit_filter_ipv6_packet {
+	struct retransmit_filter_ipv6_header ip;
+	struct retransmit_filter_tcp_header tcp;
+};
+
+union retransmit_filter_packet {
+	struct retransmit_filter_ipv4_packet v4;
+	struct retransmit_filter_ipv6_packet v6;
+};
+
+_Static_assert(sizeof(struct retransmit_filter_tcp_header) == 20,
+	       "synthetic TCP header must match the wire layout");
+_Static_assert(sizeof(struct retransmit_filter_ipv4_packet) == 40,
+	       "synthetic IPv4/TCP packet must contain two minimum headers");
+_Static_assert(sizeof(struct retransmit_filter_ipv6_packet) == 60,
+	       "synthetic IPv6/TCP packet must contain two minimum headers");
+
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
 	__uint(key_size, sizeof(int));
@@ -177,26 +235,137 @@ static __always_inline void read_retransmit_skb_tcp_fields(struct tcp_retransmit
 		ev->tcp_ack = BPF_CORE_READ((struct tcp_sock *)sk, rcv_nxt);
 }
 
+static __always_inline void
+read_retransmit_synack_tcp_fields(struct tcp_retransmit_event *ev,
+				   const struct request_sock *req)
+{
+	struct tcp_request_sock *treq = (struct tcp_request_sock *)req;
+
+	if (!req)
+		return;
+
+	if (bpf_core_field_exists(((struct tcp_request_sock *)0)->snt_isn)) {
+		ev->tcp_seq = BPF_CORE_READ(treq, snt_isn);
+		ev->tcp_end_seq = ev->tcp_seq + 1;
+	}
+	if (bpf_core_field_exists(((struct tcp_request_sock *)0)->rcv_nxt))
+		ev->tcp_ack = BPF_CORE_READ(treq, rcv_nxt);
+	ev->tcp_flags = TCP_WIRE_FLAGS_SYNACK;
+}
+
+static __always_inline void
+fill_retransmit_filter_tcp(struct retransmit_filter_tcp_header *tcp,
+			   const struct tcp_retransmit_event *ev)
+{
+	tcp->source = bpf_htons(ev->sport);
+	tcp->dest = bpf_htons(ev->dport);
+	tcp->seq = bpf_htonl(ev->tcp_seq);
+	tcp->ack_seq = bpf_htonl(ev->tcp_ack);
+	tcp->data_offset = 5 << 4;
+	tcp->flags = ev->tcp_flags;
+}
+
+static __always_inline bool
+retransmit_address_is_ipv4_mapped(const u8 address[16])
+{
+	return address[0] == 0 && address[1] == 0 && address[2] == 0 &&
+	       address[3] == 0 && address[4] == 0 && address[5] == 0 &&
+	       address[6] == 0 && address[7] == 0 && address[8] == 0 &&
+	       address[9] == 0 && address[10] == 0xff &&
+	       address[11] == 0xff;
+}
+
+/* Retransmission queue skbs may not contain network or transport headers.
+ * Build the same L3 view that dropwatch filters from the socket tuple and TCP
+ * control block instead of reading unreliable skb header offsets. */
+static __always_inline bool
+retransmit_filter_pass(void *ctx, const struct tcp_retransmit_event *ev)
+{
+	union retransmit_filter_packet packet = {};
+
+	if (ev->family == AF_INET) {
+		packet.v4.ip.version_ihl = (4 << 4) | 5;
+		packet.v4.ip.total_len = bpf_htons(sizeof(packet.v4));
+		packet.v4.ip.ttl = 64;
+		packet.v4.ip.protocol = IPPROTO_TCP;
+		__builtin_memcpy(&packet.v4.ip.saddr, ev->saddr,
+				 sizeof(packet.v4.ip.saddr));
+		__builtin_memcpy(&packet.v4.ip.daddr, ev->daddr,
+				 sizeof(packet.v4.ip.daddr));
+		fill_retransmit_filter_tcp(&packet.v4.tcp, ev);
+		return pcap_stub_pass_l3(
+			ctx, &packet.v4,
+			(void *)&packet.v4 + sizeof(packet.v4));
+	}
+
+	if (ev->family == AF_INET6) {
+		bool source_is_mapped =
+			retransmit_address_is_ipv4_mapped(ev->saddr);
+		bool destination_is_mapped =
+			retransmit_address_is_ipv4_mapped(ev->daddr);
+
+		if (source_is_mapped != destination_is_mapped) {
+			pcap_stub_pass_l2(ctx, &packet.v4, &packet.v4);
+			return false;
+		}
+
+		/* Keep the raw AF_INET6 event intact; only its filter view is IPv4. */
+		if (source_is_mapped) {
+			packet.v4.ip.version_ihl = (4 << 4) | 5;
+			packet.v4.ip.total_len = bpf_htons(sizeof(packet.v4));
+			packet.v4.ip.ttl = 64;
+			packet.v4.ip.protocol = IPPROTO_TCP;
+			__builtin_memcpy(&packet.v4.ip.saddr, &ev->saddr[12],
+					 sizeof(packet.v4.ip.saddr));
+			__builtin_memcpy(&packet.v4.ip.daddr, &ev->daddr[12],
+					 sizeof(packet.v4.ip.daddr));
+			fill_retransmit_filter_tcp(&packet.v4.tcp, ev);
+			return pcap_stub_pass_l3(
+				ctx, &packet.v4,
+				(void *)&packet.v4 + sizeof(packet.v4));
+		}
+
+		packet.v6.ip.version_class_flow = bpf_htonl(6U << 28);
+		packet.v6.ip.payload_len = bpf_htons(sizeof(packet.v6.tcp));
+		packet.v6.ip.nexthdr = IPPROTO_TCP;
+		packet.v6.ip.hop_limit = 64;
+		__builtin_memcpy(&packet.v6.ip.saddr, ev->saddr,
+				 sizeof(packet.v6.ip.saddr));
+		__builtin_memcpy(&packet.v6.ip.daddr, ev->daddr,
+				 sizeof(packet.v6.ip.daddr));
+		fill_retransmit_filter_tcp(&packet.v6.tcp, ev);
+		return pcap_stub_pass_l3(
+			ctx, &packet.v6,
+			(void *)&packet.v6 + sizeof(packet.v6));
+	}
+
+	/* Keep both stubs linked for the shared loader without exposing an
+	 * invalid packet view for an unsupported address family. */
+	pcap_stub_pass_l2(ctx, &packet.v4, &packet.v4);
+	return false;
+}
+
 SEC("tracepoint/tcp/tcp_retransmit_skb")
 int retrans_skb(struct trace_event_raw_tcp_event_sk_skb_compat *ctx)
 {
 	struct sk_buff *skb = (struct sk_buff *)ctx->skbaddr;
+	struct sock *sk = (struct sock *)ctx->skaddr;
 
-	if (skb && !PCAP_STUB_PASS_SKB(skb))
-		return 0;
-	if (bpf_ratelimited_in_map_rc(ctx, tcp_retransmit))
+	if (!skb || !sk)
 		return 0;
 
 	struct tcp_retransmit_event ev = {};
 
 	init_retransmit_event(&ev, TCP_RETRANSMIT_EVENT_SKB);
 
-	struct sock *sk = (struct sock *)ctx->skaddr;
-
 	ev.skb_addr = (u64)(unsigned long)skb;
 	fill_retransmit_event_from_sk(&ev, sk);
 
 	read_retransmit_skb_tcp_fields(&ev, sk, skb);
+	if (!retransmit_filter_pass(ctx, &ev))
+		return 0;
+	if (bpf_ratelimited_in_map_rc(ctx, tcp_retransmit))
+		return 0;
 
 	bpf_perf_event_output(ctx, &perf_events, COMPAT_BPF_F_CURRENT_CPU, &ev,
 			      sizeof(ev));
@@ -210,8 +379,6 @@ int retrans_synack(struct trace_event_raw_tcp_retransmit_synack *ctx)
 	struct request_sock *req = (struct request_sock *)ctx->req;
 
 	if (!sk && !req)
-		return 0;
-	if (bpf_ratelimited_in_map_rc(ctx, tcp_retransmit))
 		return 0;
 
 	struct tcp_retransmit_event ev = {};
@@ -239,6 +406,11 @@ int retrans_synack(struct trace_event_raw_tcp_retransmit_synack *ctx)
 	ev.ca_state = 0;
 
 	fill_addrs(&ev, (struct sock_common *)req);
+	read_retransmit_synack_tcp_fields(&ev, req);
+	if (!retransmit_filter_pass(ctx, &ev))
+		return 0;
+	if (bpf_ratelimited_in_map_rc(ctx, tcp_retransmit))
+		return 0;
 
 	bpf_perf_event_output(ctx, &perf_events, COMPAT_BPF_F_CURRENT_CPU, &ev,
 			      sizeof(ev));
@@ -251,13 +423,17 @@ int retrans_tlp(struct pt_regs *ctx)
 	struct tcp_retransmit_event ev = {};
 	struct sock *sk = (struct sock *)PT_REGS_PARM1_CORE(ctx);
 
-	if (!sk || bpf_ratelimited_in_map_rc(ctx, tcp_retransmit))
+	if (!sk)
 		return 0;
 
 	init_retransmit_event(&ev, TCP_RETRANSMIT_EVENT_TLP);
 
 	fill_retransmit_event_from_sk(&ev, sk);
 	read_tlp_tcp_info(&ev, sk);
+	if (!retransmit_filter_pass(ctx, &ev))
+		return 0;
+	if (bpf_ratelimited_in_map_rc(ctx, tcp_retransmit))
+		return 0;
 
 	bpf_perf_event_output(ctx, &perf_events, COMPAT_BPF_F_CURRENT_CPU, &ev,
 			      sizeof(ev));

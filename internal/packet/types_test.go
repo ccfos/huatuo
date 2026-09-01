@@ -38,7 +38,7 @@ func TestPacketJSONNested(t *testing.T) {
 			pkt: &Packet{
 				Ether: &Ether{Saddr: mac("aa:bb:cc:dd:ee:ff"), Daddr: mac("11:22:33:44:55:66"), Type: "IPv4"},
 				IPv4:  &IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
-				TCP:   &TCP{Sport: 1234, Dport: 80, Flags: "SYN", SkState: "ESTABLISHED"},
+				TCP:   &TCP{Sport: 1234, Dport: 80, SkState: "ESTABLISHED"},
 			},
 			wantKeys: []string{"ether", "ipv4", "label", "tcp"},
 		},
@@ -98,7 +98,7 @@ func TestPacketJSONRoundTrip(t *testing.T) {
 			IPv4:  &IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
 			TCP: &TCP{
 				Sport: 1234, Dport: 80, Seq: 1, AckSeq: 2, Window: 3,
-				Flags: "SYN|ACK", SkState: "ESTABLISHED",
+				SkState: "ESTABLISHED",
 			},
 		},
 		{
@@ -211,9 +211,9 @@ func TestLayerJSONFieldNames(t *testing.T) {
 		},
 		{
 			name:     "tcp",
-			layer:    &TCP{Sport: 1234, Dport: 80, AckSeq: 42},
-			want:     []string{"sport", "dport", "ack_seq"},
-			rejected: []string{"src_port", "dst_port", "ack"},
+			layer:    &TCP{Sport: 1234, Dport: 80, AckSeq: 42, Flags: "SYN", RawFlags: TCPFlagSYN},
+			want:     []string{"sport", "dport", "ack_seq", "flags"},
+			rejected: []string{"src_port", "dst_port", "ack", "raw_flags"},
 		},
 		{
 			name:     "udp",
@@ -291,7 +291,7 @@ func TestPacketString(t *testing.T) {
 				Label: "IPv4/TCP",
 				Ether: &Ether{Saddr: mac("aa:bb:cc:dd:ee:ff"), Daddr: mac("11:22:33:44:55:66"), Type: "IPv4"},
 				IPv4:  &IPv4{Saddr: net.IPv4(10, 0, 0, 1), Daddr: net.IPv4(10, 0, 0, 2)},
-				TCP:   &TCP{Sport: 1234, Dport: 80, Flags: "SYN", SkState: "ESTABLISHED"},
+				TCP:   &TCP{Sport: 1234, Dport: 80, RawFlags: TCPFlagSYN, SkState: "ESTABLISHED"},
 			},
 			wantParts: []string{
 				"IPv4/TCP", "10.0.0.1:1234", "10.0.0.2:80", "[SYN]",

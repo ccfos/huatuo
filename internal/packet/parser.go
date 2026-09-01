@@ -146,13 +146,15 @@ func Parse(pkt *Hdr) (*Packet, error) {
 				Daddr:        slices.Clone(dec.ipv6.DstIP),
 			}
 		case layers.LayerTypeTCP:
+			rawFlags := tcpFlagsRaw(&dec.tcp)
 			out.TCP = &TCP{
 				Sport:      uint16(dec.tcp.SrcPort),
 				Dport:      uint16(dec.tcp.DstPort),
 				Seq:        dec.tcp.Seq,
 				AckSeq:     dec.tcp.Ack,
 				DataOffset: dec.tcp.DataOffset,
-				Flags:      tcpFlags(&dec.tcp),
+				Flags:      TCPFlagStrings[rawFlags],
+				RawFlags:   rawFlags,
 				Window:     dec.tcp.Window,
 				Checksum:   dec.tcp.Checksum,
 				Urgent:     dec.tcp.Urgent,
@@ -207,16 +209,60 @@ func Parse(pkt *Hdr) (*Packet, error) {
 	return out, nil
 }
 
-// TCP flag bits as encoded in a TCP header and in TCP_SKB_CB(skb)->tcp_flags.
+// TCPSequenceSpan returns the sequence space consumed by a parsed TCP segment.
+func TCPSequenceSpan(packet *Packet) (uint32, bool) {
+	if packet == nil || packet.TCP == nil {
+		return 0, false
+	}
+
+	span, ok := tcpPayloadLength(packet)
+	if !ok {
+		return 0, false
+	}
+	if packet.TCP.RawFlags&TCPFlagSYN != 0 {
+		span++
+	}
+	if packet.TCP.RawFlags&TCPFlagFIN != 0 {
+		span++
+	}
+	return span, true
+}
+
+func tcpPayloadLength(packet *Packet) (uint32, bool) {
+	tcpHeaderLength := uint32(packet.TCP.DataOffset) * 4
+
+	switch {
+	case packet.IPv4 != nil:
+		ipHeaderLength := uint32(packet.IPv4.IHL) * 4
+		totalLength := uint32(packet.IPv4.Length)
+		if ipHeaderLength+tcpHeaderLength > totalLength {
+			return 0, false
+		}
+		return totalLength - ipHeaderLength - tcpHeaderLength, true
+	case packet.IPv6 != nil:
+		if packet.IPv6.NextHeader != "TCP" {
+			return 0, false
+		}
+		payloadLength := uint32(packet.IPv6.Length)
+		if tcpHeaderLength > payloadLength {
+			return 0, false
+		}
+		return payloadLength - tcpHeaderLength, true
+	default:
+		return 0, false
+	}
+}
+
+// TCP flag bits are encoded in a TCP header and in TCP_SKB_CB(skb)->tcp_flags.
 const (
-	tcpFlagFIN uint8 = 0x01
-	tcpFlagSYN uint8 = 0x02
-	tcpFlagRST uint8 = 0x04
-	tcpFlagPSH uint8 = 0x08
-	tcpFlagACK uint8 = 0x10
-	tcpFlagURG uint8 = 0x20
-	tcpFlagECE uint8 = 0x40
-	tcpFlagCWR uint8 = 0x80
+	TCPFlagFIN uint8 = 0x01
+	TCPFlagSYN uint8 = 0x02
+	TCPFlagRST uint8 = 0x04
+	TCPFlagPSH uint8 = 0x08
+	TCPFlagACK uint8 = 0x10
+	TCPFlagURG uint8 = 0x20
+	TCPFlagECE uint8 = 0x40
+	TCPFlagCWR uint8 = 0x80
 )
 
 // TCPFlagStrings is a 256-entry lookup table from a raw TCP flag byte to its
@@ -230,14 +276,14 @@ func init() {
 		bit  uint8
 		name string
 	}{
-		{tcpFlagSYN, "SYN"},
-		{tcpFlagACK, "ACK"},
-		{tcpFlagFIN, "FIN"},
-		{tcpFlagRST, "RST"},
-		{tcpFlagPSH, "PSH"},
-		{tcpFlagURG, "URG"},
-		{tcpFlagECE, "ECE"},
-		{tcpFlagCWR, "CWR"},
+		{TCPFlagSYN, "SYN"},
+		{TCPFlagACK, "ACK"},
+		{TCPFlagFIN, "FIN"},
+		{TCPFlagRST, "RST"},
+		{TCPFlagPSH, "PSH"},
+		{TCPFlagURG, "URG"},
+		{TCPFlagECE, "ECE"},
+		{TCPFlagCWR, "CWR"},
 	}
 
 	for i := 0; i < 256; i++ {
@@ -253,42 +299,42 @@ func init() {
 	}
 }
 
-func tcpFlags(tcp *layers.TCP) string {
+func tcpFlagsRaw(tcp *layers.TCP) uint8 {
 	var b uint8
 
 	if tcp.SYN {
-		b |= tcpFlagSYN
+		b |= TCPFlagSYN
 	}
 
 	if tcp.ACK {
-		b |= tcpFlagACK
+		b |= TCPFlagACK
 	}
 
 	if tcp.FIN {
-		b |= tcpFlagFIN
+		b |= TCPFlagFIN
 	}
 
 	if tcp.RST {
-		b |= tcpFlagRST
+		b |= TCPFlagRST
 	}
 
 	if tcp.PSH {
-		b |= tcpFlagPSH
+		b |= TCPFlagPSH
 	}
 
 	if tcp.URG {
-		b |= tcpFlagURG
+		b |= TCPFlagURG
 	}
 
 	if tcp.ECE {
-		b |= tcpFlagECE
+		b |= TCPFlagECE
 	}
 
 	if tcp.CWR {
-		b |= tcpFlagCWR
+		b |= TCPFlagCWR
 	}
 
-	return TCPFlagStrings[b]
+	return b
 }
 
 var tcpStateNames = []string{
