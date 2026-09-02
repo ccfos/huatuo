@@ -100,6 +100,38 @@ huatuo_bamai_cpu_util_container_usr{container_host="coredns-855c4dd65d-8v5kg",co
 |cpu_util_container_usr| Container CPU user time %|%|Container|container_host,container_hostnamespace,container_level,container_name,container_type,host,region |
 |cpu_util_container_total| Container CPU total %|%|Container|container_host,container_hostnamespace,container_level,container_name,container_type,host,region |
 
+### BPF Program Runtime
+
+Runtime and attachment status of selected managed BPF programs:
+
+```bash
+# HELP huatuo_bamai_bpf_prog_runtime_online_cores number of online logical cpus on the host.
+# TYPE huatuo_bamai_bpf_prog_runtime_online_cores gauge
+huatuo_bamai_bpf_prog_runtime_online_cores{host="hostname",region="dev"} 64
+# HELP huatuo_bamai_bpf_prog_runtime_up whether all current bpf program instances are profiled.
+# TYPE huatuo_bamai_bpf_prog_runtime_up gauge
+huatuo_bamai_bpf_prog_runtime_up{host="hostname",program="bpf_anyfs_file_read_iter",region="dev"} 1
+# HELP huatuo_bamai_bpf_prog_runtime_attach_failures_total target bpf program profiler attach failures.
+# TYPE huatuo_bamai_bpf_prog_runtime_attach_failures_total counter
+huatuo_bamai_bpf_prog_runtime_attach_failures_total{host="hostname",program="bpf_anyfs_file_read_iter",region="dev"} 0
+# HELP huatuo_bamai_bpf_prog_runtime_runs_total cumulative target bpf program executions.
+# TYPE huatuo_bamai_bpf_prog_runtime_runs_total counter
+huatuo_bamai_bpf_prog_runtime_runs_total{host="hostname",program="bpf_anyfs_file_read_iter",region="dev"} 18540
+# HELP huatuo_bamai_bpf_prog_runtime_runtime_seconds_total cumulative target bpf program runtime in seconds, excluding profiler overhead.
+# TYPE huatuo_bamai_bpf_prog_runtime_runtime_seconds_total counter
+huatuo_bamai_bpf_prog_runtime_runtime_seconds_total{host="hostname",program="bpf_anyfs_file_read_iter",region="dev"} 0.7314
+```
+
+|Metric|Description|Unit|Target|Labels|
+|---|---|---|---|---|
+|bpf_prog_runtime_online_cores|Online logical CPU count|cores|Host|host, region|
+|bpf_prog_runtime_up|Whether all active same-name instances are profiled|`0`/`1`|BPF program|host, program, region|
+|bpf_prog_runtime_attach_failures_total|Cumulative attachment failures|count|BPF program|host, program, region|
+|bpf_prog_runtime_runs_total|Cumulative executions|count|BPF program|host, program, region|
+|bpf_prog_runtime_runtime_seconds_total|Cumulative runtime|seconds|BPF program|host, program, region|
+
+> Requires managed programs with BTF and BPF-to-BPF fentry/fexit support. Configuration changes require an agent restart.
+
 ### Allocation
 
 Container CPU resource configuration:

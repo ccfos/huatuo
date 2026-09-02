@@ -320,6 +320,45 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
+func TestBPFProgRuntimeOptions(t *testing.T) {
+	tests := []struct {
+		name      string
+		enabled   bool
+		blacklist []string
+		want      bool
+	}{
+		{name: "disabled by config"},
+		{name: "enabled", enabled: true, want: true},
+		{
+			name:      "unrelated blacklist",
+			enabled:   true,
+			blacklist: []string{"netdev_hw"},
+			want:      true,
+		},
+		{
+			name:      "collector blacklisted",
+			enabled:   true,
+			blacklist: []string{"bpf_prog_runtime"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{BlackList: tt.blacklist}
+			cfg.MetricCollector.BPFProgRuntime.Enabled = tt.enabled
+			cfg.MetricCollector.BPFProgRuntime.Targets = []string{"target"}
+
+			got := cfg.BPFProgRuntimeOptions()
+			if got.Enabled != tt.want {
+				t.Fatalf("Enabled = %v, want %v", got.Enabled, tt.want)
+			}
+			if len(got.Targets) != 1 || got.Targets[0] != "target" {
+				t.Fatalf("options = %+v, want targets preserved", got)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsInvalidIssuesListExpression(t *testing.T) {
 	path := writeConfigFile(t, t.TempDir(), "huatuo-bamai.conf", `
 [EventTracing]

@@ -26,7 +26,9 @@ import (
 )
 
 func setupBPF(_ *Daemon) (func(context.Context) error, error) {
-	if err := bpf.Init(&bpf.Option{}); err != nil {
+	if err := bpf.Init(&bpf.Option{
+		ProgRuntime: config.Get().BPFProgRuntimeOptions(),
+	}); err != nil {
 		return nil, fmt.Errorf("init bpf: %w", err)
 	}
 

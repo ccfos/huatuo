@@ -99,6 +99,38 @@ huatuo_bamai_cpu_util_container_usr{container_host="coredns-855c4dd65d-8v5kg",co
 |cpu_util_container_usr| CPU 用户态利用率|%|容器|container_host,container_hostnamespace,container_level,container_name,container_type,host,region |
 |cpu_util_container_total| CPU 总利用率|%|容器|container_host,container_hostnamespace,container_level,container_name,container_type,host,region |
 
+### BPF 程序运行时
+
+选中托管 BPF 程序的运行时和附着状态：
+
+```bash
+# HELP huatuo_bamai_bpf_prog_runtime_online_cores number of online logical cpus on the host.
+# TYPE huatuo_bamai_bpf_prog_runtime_online_cores gauge
+huatuo_bamai_bpf_prog_runtime_online_cores{host="hostname",region="dev"} 64
+# HELP huatuo_bamai_bpf_prog_runtime_up whether all current bpf program instances are profiled.
+# TYPE huatuo_bamai_bpf_prog_runtime_up gauge
+huatuo_bamai_bpf_prog_runtime_up{host="hostname",program="bpf_anyfs_file_read_iter",region="dev"} 1
+# HELP huatuo_bamai_bpf_prog_runtime_attach_failures_total target bpf program profiler attach failures.
+# TYPE huatuo_bamai_bpf_prog_runtime_attach_failures_total counter
+huatuo_bamai_bpf_prog_runtime_attach_failures_total{host="hostname",program="bpf_anyfs_file_read_iter",region="dev"} 0
+# HELP huatuo_bamai_bpf_prog_runtime_runs_total cumulative target bpf program executions.
+# TYPE huatuo_bamai_bpf_prog_runtime_runs_total counter
+huatuo_bamai_bpf_prog_runtime_runs_total{host="hostname",program="bpf_anyfs_file_read_iter",region="dev"} 18540
+# HELP huatuo_bamai_bpf_prog_runtime_runtime_seconds_total cumulative target bpf program runtime in seconds, excluding profiler overhead.
+# TYPE huatuo_bamai_bpf_prog_runtime_runtime_seconds_total counter
+huatuo_bamai_bpf_prog_runtime_runtime_seconds_total{host="hostname",program="bpf_anyfs_file_read_iter",region="dev"} 0.7314
+```
+
+|指标|意义|单位|对象|标签|
+|---|---|---|---|---|
+|bpf_prog_runtime_online_cores|在线逻辑 CPU 数量|核|物理机|host, region|
+|bpf_prog_runtime_up|同名活跃实例是否均被剖析|`0`/`1`|BPF 程序|host, program, region|
+|bpf_prog_runtime_attach_failures_total|附着失败累计次数|计数|BPF 程序|host, program, region|
+|bpf_prog_runtime_runs_total|累计执行次数|计数|BPF 程序|host, program, region|
+|bpf_prog_runtime_runtime_seconds_total|累计运行时间|秒|BPF 程序|host, program, region|
+
+> 仅支持带 BTF 且内核支持 BPF-to-BPF fentry/fexit 的托管程序；配置修改后需要重启 Agent。
+
 ### 资源配置
 
 通过如下指标可以了解容器 CPU 资源配置情况，prometheus 指标格式：

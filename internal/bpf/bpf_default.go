@@ -36,11 +36,19 @@ import (
 var DefaultObjDir = "bpf"
 
 // Init initializes package-level BPF resources.
-func Init(_ *Option) error {
-	return unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
+func Init(opt *Option) error {
+	if err := unix.Setrlimit(unix.RLIMIT_MEMLOCK, &unix.Rlimit{
 		Cur: unix.RLIM_INFINITY,
 		Max: unix.RLIM_INFINITY,
-	})
+	}); err != nil {
+		return err
+	}
+
+	if opt == nil {
+		return nil
+	}
+
+	return setProgRuntimeProfiler(opt.ProgRuntime)
 }
 
 // Shutdown releases package-level BPF resources.
@@ -72,6 +80,7 @@ type defaultBPF struct {
 	mapIDsByName     map[string]uint32
 	programIDsByName map[string]uint32
 	perfEvent        *perfEventAttach
+	progProfiles     []*bpfProgRuntimeInstance
 	isClosed         bool
 }
 
@@ -209,10 +218,16 @@ func loadBPFFromCollectionSpec(bpfName string, specs *ebpf.CollectionSpec, const
 	}
 
 	b.programIDsByName = make(map[string]uint32, len(b.programsByID))
+	programsInfo := make([]ProgramInfo, 0, len(b.programsByID))
 	for id, p := range b.programsByID {
 		b.programIDsByName[p.name] = id
+		programsInfo = append(programsInfo, ProgramInfo{
+			ID:          id,
+			Name:        p.name,
+			SectionName: p.sectionName,
+		})
 	}
-
+	b.progProfiles = startBPFProgRuntimeProfiles(programsInfo)
 	log.WithField("bpf", b.name).
 		WithField("map_count", len(b.mapIDsByName)).
 		WithField("program_count", len(b.programIDsByName)).
@@ -332,6 +347,10 @@ func (b *defaultBPF) Close() error {
 				}
 			}
 		}
+	}
+
+	if err := stopBPFProgRuntimeProfiles(b.progProfiles); err != nil {
+		closeErrs = append(closeErrs, fmt.Errorf("stop BPF program runtime profiles: %w", err))
 	}
 
 	for _, p := range b.programsByID {
