@@ -244,6 +244,21 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
 
   **说明**：超过数量后自动删除最早文件，控制磁盘空间使用。
 
+#### 6.3 Kafka 事件导出
+
+```toml
+[Storage.Kafka]
+    # Brokers = "kafka-1.example:9092,kafka-2.example:9092"
+    # Topic = "huatuo-bamai"
+    # ClientID = "huatuo-bamai"
+```
+
+- **Brokers**：以逗号分隔的 Kafka 引导节点，格式为 `host:port`。为空时禁用 Kafka 导出。
+- **Topic**：目标 Topic，默认值为 `huatuo-bamai`。启动 HUATUO 前应先创建该 Topic。
+- **ClientID**：显示在 Kafka 服务端指标和日志中的客户端标识，默认值为 `huatuo-bamai`。
+
+每个追踪文档会同步写入一条 JSON 消息，文档 ID 作为消息键；HUATUO collection 名称及字符串元数据通过 `huatuo-` 前缀的消息头传递。Kafka 后端是导出型数据出口，不支持通过 HUATUO API 查询或删除 Kafka 消息。
+
 ### 7. 自动追踪配置
 
 自动追踪模块是 HUATUO 的智能特性之一，可根据阈值自动触发特定性能追踪，减少人工干预。
