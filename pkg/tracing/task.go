@@ -15,6 +15,7 @@
 package tracing
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -44,6 +45,8 @@ const (
 )
 
 var TaskBinDir = "bin"
+
+const maxTaskOutputBytes = 64 * 1024 * 1024
 
 type TaskStorageType int
 
@@ -93,7 +96,37 @@ var (
 	ErrTaskCanceled = errors.New("task canceled")
 	// ErrTaskLimitExceeded is returned when a new task would exceed the active limit.
 	ErrTaskLimitExceeded = errors.New("too many running tasks")
+	// ErrTaskOutputLimitExceeded is returned when a task produces too much output.
+	ErrTaskOutputLimitExceeded = errors.New("task output limit exceeded")
 )
+
+type boundedBuffer struct {
+	buffer   bytes.Buffer
+	limit    int
+	exceeded bool
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	remaining := b.limit - b.buffer.Len()
+	if remaining <= 0 {
+		b.exceeded = true
+		return 0, ErrTaskOutputLimitExceeded
+	}
+	if len(p) <= remaining {
+		return b.buffer.Write(p)
+	}
+	n, _ := b.buffer.Write(p[:remaining])
+	b.exceeded = true
+	return n, ErrTaskOutputLimitExceeded
+}
+
+func (b *boundedBuffer) Bytes() []byte {
+	return b.buffer.Bytes()
+}
+
+func (b *boundedBuffer) String() string {
+	return b.buffer.String()
+}
 
 func init() {
 	go tasksGarbageCollect()
@@ -229,8 +262,12 @@ func runTask(ctx context.Context, task *task) {
 	task.status = StatusRunning
 	task.mu.Unlock()
 
-	cmd := exec.CommandContext(ctx, path.Join(TaskBinDir, task.execBinary), task.execArgs...)
-	output, err := cmd.CombinedOutput()
+	output, err := runTaskCommand(
+		ctx,
+		path.Join(TaskBinDir, task.execBinary),
+		task.execArgs,
+		maxTaskOutputBytes,
+	)
 	if err != nil {
 		contextErr := ctx.Err()
 		var taskErr error
@@ -238,6 +275,8 @@ func runTask(ctx context.Context, task *task) {
 			taskErr = ErrTaskTimeout
 		} else if errors.Is(contextErr, context.Canceled) {
 			taskErr = ErrTaskCanceled
+		} else if errors.Is(err, ErrTaskOutputLimitExceeded) {
+			taskErr = ErrTaskOutputLimitExceeded
 		} else {
 			taskErr = fmt.Errorf("task error: %s| cmd error: %s", err.Error(), string(output))
 		}
@@ -256,6 +295,18 @@ func runTask(ctx context.Context, task *task) {
 	task.status = StatusCompleted
 	task.deadlineTime = time.Now().Add(10 * time.Minute)
 	task.mu.Unlock()
+}
+
+func runTaskCommand(ctx context.Context, binary string, args []string, limit int) ([]byte, error) {
+	output := &boundedBuffer{limit: limit}
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err := cmd.Run()
+	if output.exceeded {
+		err = ErrTaskOutputLimitExceeded
+	}
+	return output.Bytes(), err
 }
 
 func saveTaskOutputByType(task *task, startAt time.Time, output []byte) {

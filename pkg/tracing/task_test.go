@@ -16,6 +16,7 @@ package tracing
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,6 +72,38 @@ func TestAllocTaskID(t *testing.T) {
 			t.Errorf("AllocTaskID contains invalid char %q", ch)
 			return
 		}
+	}
+}
+
+func TestBoundedBuffer(t *testing.T) {
+	buffer := &boundedBuffer{limit: 5}
+	n, err := io.WriteString(buffer, "1234567")
+	if !errors.Is(err, ErrTaskOutputLimitExceeded) {
+		t.Fatalf("Write() error = %v, want ErrTaskOutputLimitExceeded", err)
+	}
+	if n != 5 {
+		t.Fatalf("Write() bytes = %d, want 5", n)
+	}
+	if got := buffer.String(); got != "12345" {
+		t.Fatalf("buffer = %q, want %q", got, "12345")
+	}
+
+	n, err = io.WriteString(buffer, "8")
+	if n != 0 || !errors.Is(err, ErrTaskOutputLimitExceeded) {
+		t.Fatalf("second Write() = (%d, %v), want (0, ErrTaskOutputLimitExceeded)", n, err)
+	}
+}
+
+func TestRunTaskCommandLimitsCombinedOutput(t *testing.T) {
+	tmp := t.TempDir()
+	script := createExecutableScript(t, tmp, "noisy.sh", "#!/bin/sh\nprintf 1234567\n")
+
+	output, err := runTaskCommand(t.Context(), script, nil, 5)
+	if !errors.Is(err, ErrTaskOutputLimitExceeded) {
+		t.Fatalf("runTaskCommand() error = %v, want ErrTaskOutputLimitExceeded", err)
+	}
+	if got := string(output); got != "12345" {
+		t.Fatalf("runTaskCommand() output = %q, want %q", got, "12345")
 	}
 }
 
