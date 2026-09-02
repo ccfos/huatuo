@@ -68,7 +68,7 @@ func (h *Handler) start(ctx *server.Context) error {
 	var req v1.CreateTraceJobRequest
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		return response.ErrInvalidRequest
+		return response.BindingErrorWithMessage(err, response.ErrInvalidRequest.Message)
 	}
 	if err := validateCreateTraceJobRequest(&req); err != nil {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
@@ -194,7 +194,7 @@ func (h *Handler) patchOne(ctx *server.Context) error {
 
 	var req v1.PatchStatusRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
+		return response.BindingError(err)
 	}
 	if req.Status != string(job.JobStatusStopped) {
 		return response.ErrInvalidRequest.WithMessage(`status must be "stopped"`)
@@ -239,7 +239,7 @@ func (h *Handler) patchBulk(ctx *server.Context) error {
 
 	var req v1.PatchStatusRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
+		return response.BindingError(err)
 	}
 	if req.Status != string(job.JobStatusStopped) {
 		return response.ErrInvalidRequest.WithMessage(`status must be "stopped"`)

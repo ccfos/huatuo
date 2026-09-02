@@ -130,6 +130,10 @@ to bytes only when the cgroup limit is applied.
   interfaces.
 - **MaxConcurrent** limits locally running tracing tasks.
 
+Requests that exceed the fixed HTTP body-size limit return HTTP 413 with the
+standard `invalid_request` error and the limit in bytes. Malformed requests
+below the limit continue to return HTTP 400.
+
 The event stream settings control `POST /v1/events/watch`. When
 `MaxEventStreamClients` is reached, new streams receive HTTP 429.
 `EventStreamKeepAliveIntervalSeconds` controls SSE heartbeat comments used to

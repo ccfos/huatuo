@@ -39,7 +39,7 @@ const (
 func (h *Handler) create(ctx *server.Context) error {
 	req, err := parseCreateProfilingJobRequest(ctx)
 	if err != nil {
-		return response.ErrInvalidRequest
+		return response.BindingErrorWithMessage(err, response.ErrInvalidRequest.Message)
 	}
 	if req.Hostname == "" {
 		return response.ErrInvalidRequest.WithMessage("hostname is required")
@@ -72,7 +72,7 @@ func (h *Handler) create(ctx *server.Context) error {
 func (h *Handler) patchOne(ctx *server.Context) error {
 	req, err := parsePatchProfilingJobRequest(ctx)
 	if err != nil {
-		return response.ErrInvalidRequest.WithMessage(err.Error())
+		return response.BindingError(err)
 	}
 	taskID := req.ID
 
