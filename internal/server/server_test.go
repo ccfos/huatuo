@@ -267,6 +267,43 @@ func TestNewRateLimitMiddleware(t *testing.T) {
 	}
 }
 
+// Rate limiting must run before authentication so that rejected
+// authentication attempts are throttled too.
+func TestRateLimitThrottlesFailedAuth(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+
+	chain := buildMiddlewareChain(&Config{
+		RequireAuth: true,
+		AuthUsers: []UserConfig{
+			{ID: "admin-2026", BearerToken: "admin-secret", IsAdmin: true},
+		},
+		RateLimit: &RateLimitConfig{RequestsPerSecond: 1, Burst: 2},
+	})
+
+	engine := httpGin.New()
+	engine.Use(chain...)
+	engine.GET("/v1/tasks", func(c *httpGin.Context) {
+		c.Status(http.StatusOK)
+	})
+
+	sawTooManyRequests := false
+	for i := 0; i < 4; i++ {
+		request := httptest.NewRequest(http.MethodGet, "/v1/tasks", http.NoBody)
+		request.Header.Set("Authorization", "Bearer wrong-token")
+		recorder := httptest.NewRecorder()
+		engine.ServeHTTP(recorder, request)
+
+		if recorder.Code == http.StatusTooManyRequests {
+			sawTooManyRequests = true
+		} else if recorder.Code != http.StatusUnauthorized {
+			t.Errorf("request %d status = %d, want 401 or 429", i+1, recorder.Code)
+		}
+	}
+	if !sawTooManyRequests {
+		t.Error("no 429 observed for repeated invalid bearer tokens; auth is not rate limited")
+	}
+}
+
 func TestNewServerRateLimit(t *testing.T) {
 	tests := []struct {
 		name                 string

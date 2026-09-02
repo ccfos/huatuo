@@ -40,6 +40,16 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 	if cfg.PromReg != nil {
 		chain = append(chain, newHTTPMetricsMiddleware(cfg.PromReg))
 	}
+	// Rate limiting must run before authentication, otherwise the 401/403
+	// responses abort the chain and leave token brute force unthrottled.
+	// Pre-authentication the user id is unknown, so clients are keyed by
+	// source address.
+	if cfg.RateLimit != nil {
+		chain = append(chain, newRateLimitMiddleware(
+			rate.Limit(cfg.RateLimit.RequestsPerSecond),
+			cfg.RateLimit.Burst,
+		))
+	}
 	if cfg.RequireAuth || len(cfg.AuthUsers) > 0 {
 		authService := NewAuthService(cfg.AuthUsers)
 		publicPaths := append(
@@ -54,12 +64,6 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 			chain,
 			wrapHandler(NewAuthMiddleware(authService, publicPaths, adminPaths)),
 		)
-	}
-	if cfg.RateLimit != nil {
-		chain = append(chain, newRateLimitMiddleware(
-			rate.Limit(cfg.RateLimit.RequestsPerSecond),
-			cfg.RateLimit.Burst,
-		))
 	}
 	return chain
 }
