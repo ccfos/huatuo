@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/elastic/go-elasticsearch/v8/esapi"
+
 	"huatuo-bamai/internal/storage/driver"
 )
 
@@ -1063,5 +1065,40 @@ func TestNewBackend_ServerError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "elasticsearch client info") {
 		t.Errorf("error = %q, want to contain \"elasticsearch client info\"", err.Error())
+	}
+}
+
+func TestDecodeResponseWithLimit(t *testing.T) {
+	var payload struct {
+		Value string `json:"value"`
+	}
+	if err := decodeResponseWithLimit(
+		strings.NewReader(`{"value":"ok"}`),
+		&payload,
+		32,
+	); err != nil {
+		t.Fatalf("decodeResponseWithLimit() error = %v", err)
+	}
+	if payload.Value != "ok" {
+		t.Fatalf("decoded value = %q, want %q", payload.Value, "ok")
+	}
+
+	err := decodeResponseWithLimit(strings.NewReader(`{"value":"too long"}`), &payload, 8)
+	if err == nil || !strings.Contains(err.Error(), "exceeds 8 bytes") {
+		t.Fatalf("oversized response error = %v", err)
+	}
+}
+
+func TestResponseErrorBoundsDiagnostic(t *testing.T) {
+	res := &esapi.Response{
+		StatusCode: http.StatusBadGateway,
+		Body:       io.NopCloser(strings.NewReader(strings.Repeat("x", maxErrorBytes+32))),
+	}
+	err := responseError("query", "index", res)
+	if err == nil || !strings.Contains(err.Error(), "(truncated)") {
+		t.Fatalf("responseError() = %v, want truncated marker", err)
+	}
+	if len(err.Error()) > maxErrorBytes+128 {
+		t.Fatalf("responseError() length = %d, want bounded diagnostic", len(err.Error()))
 	}
 }
