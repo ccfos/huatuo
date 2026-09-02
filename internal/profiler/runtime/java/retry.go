@@ -44,6 +44,16 @@ func RetrySampleProfiler(ctx context.Context, pid, dur, freq int, toolPath, outp
 	onePid := []int{pid}
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// A pre-canceled context must not reach the sampler.
+		if err := ctx.Err(); err != nil {
+			return executil.CmdResult{
+				Pid:     pid,
+				Success: false,
+				CmdErr:  err,
+				Stderr:  []byte("sampling canceled due to context done"),
+			}
+		}
+
 		// cancellable delay
 		if attempt > 1 {
 			select {
@@ -61,6 +71,15 @@ func RetrySampleProfiler(ctx context.Context, pid, dur, freq int, toolPath, outp
 		log.Infof("PID[%d] sampling attempt %d/%d (delay: %s)", pid, attempt, maxRetries, delay)
 
 		res := sampleFn(ctx, onePid, dur, freq, toolPath, outputFormat)
+		// A sampler that returns nothing must not panic on res[0]; treat it
+		// as a failed attempt so the retry loop keeps its contract.
+		if len(res) == 0 {
+			return executil.CmdResult{
+				Pid:     pid,
+				Success: false,
+				CmdErr:  errors.New("sampling returned no result"),
+			}
+		}
 		cmdRes := res[0]
 		if cmdRes.Success {
 			return cmdRes
