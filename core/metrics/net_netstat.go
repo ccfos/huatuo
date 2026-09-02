@@ -139,7 +139,19 @@ func parseNetStat(fileName string) (map[string]map[string]string, error) {
 	for scanner.Scan() {
 		nameParts := strings.Split(scanner.Text(), " ")
 
-		scanner.Scan()
+		// Guard against an empty or malformed header line (e.g. trailing
+		// empty line in /proc/net/netstat) to avoid a slice-bounds panic on
+		// nameParts[0][:len(nameParts[0])-1] when nameParts[0] is empty.
+		if len(nameParts) == 0 || nameParts[0] == "" {
+			continue
+		}
+
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("netstat: missing value line after header in %s", fileName)
+		}
 		valueParts := strings.Split(scanner.Text(), " ")
 
 		// remove trailing ":"
