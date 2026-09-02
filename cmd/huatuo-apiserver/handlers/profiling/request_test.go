@@ -15,6 +15,7 @@
 package profiling
 
 import (
+	"math"
 	"slices"
 	"testing"
 
@@ -88,6 +89,35 @@ func TestBuildCreateProfilingJobRequest(t *testing.T) {
 				DurationSeconds: 19,
 			},
 			wantErr: "duration_seconds must cover at least two profiling intervals",
+		},
+		{
+			// MaxInt64+interval overflows negative, which previously
+			// bypassed the 3600-second cap.
+			name: "duration at int64 max overflows the cap check",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:   "cpu",
+				Language:        "go",
+				DurationSeconds: math.MaxInt64,
+			},
+			wantErr: "duration_seconds must be between 1 and 3599 seconds",
+		},
+		{
+			name: "duration above the hard cap",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:   "cpu",
+				Language:        "go",
+				DurationSeconds: 3600,
+			},
+			wantErr: "duration_seconds must be between 1 and 3599 seconds",
+		},
+		{
+			name: "negative duration",
+			req: v1.CreateProfilingJobRequest{
+				ProfilingType:   "cpu",
+				Language:        "go",
+				DurationSeconds: -5,
+			},
+			wantErr: "duration_seconds must be between 1 and 3599 seconds",
 		},
 	}
 

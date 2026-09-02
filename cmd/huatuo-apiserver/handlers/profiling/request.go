@@ -75,6 +75,12 @@ func buildCreateProfilingJobRequest(
 	if err != nil {
 		return nil, err
 	}
+	// Bound the value itself before any arithmetic: at math.MaxInt64 the
+	// interval-sum comparison below overflows negative and bypasses the cap.
+	const maxDurationSeconds = 3599
+	if req.DurationSeconds <= 0 || req.DurationSeconds > maxDurationSeconds {
+		return nil, fmt.Errorf("duration_seconds must be between 1 and %d seconds", maxDurationSeconds)
+	}
 	if req.DurationSeconds < taskReq.Interval*2 {
 		return nil, errors.New("duration_seconds must cover at least two profiling intervals")
 	}
