@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -57,8 +59,43 @@ type LocalFileConfig struct {
 	MaxRotatedFiles int    `default:"10"`
 }
 
+var clickHouseIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// ClickHouseConfig controls the optional ClickHouse event store.
+type ClickHouseConfig struct {
+	Address  string
+	Username string
+	Password string
+	Database string `default:"default"`
+	Table    string `default:"huatuo_bamai"`
+}
+
+// Enabled reports whether an address opts in to ClickHouse storage.
+func (c *ClickHouseConfig) Enabled() bool {
+	return strings.TrimSpace(c.Address) != ""
+}
+
+// Validate rejects incomplete or unsafe ClickHouse HTTP configurations.
+func (c *ClickHouseConfig) Validate() error {
+	if !c.Enabled() {
+		return nil
+	}
+	u, err := url.Parse(c.Address)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("invalid ClickHouse HTTP address %q", c.Address)
+	}
+	if !clickHouseIdentifierPattern.MatchString(c.Database) {
+		return fmt.Errorf("invalid ClickHouse database %q", c.Database)
+	}
+	if !clickHouseIdentifierPattern.MatchString(c.Table) {
+		return fmt.Errorf("invalid ClickHouse table %q", c.Table)
+	}
+	return nil
+}
+
 // StorageConfig controls tracing data storage.
 type StorageConfig struct {
+	ClickHouse    ClickHouseConfig
 	Elasticsearch internalconfig.ElasticsearchConfig
 	LocalFile     LocalFileConfig
 }
@@ -205,6 +242,9 @@ func (c TasksConfig) Validate() error {
 
 // Validate rejects invalid storage settings.
 func (c *StorageConfig) Validate() error {
+	if err := c.ClickHouse.Validate(); err != nil {
+		return fmt.Errorf("validating ClickHouse config: %w", err)
+	}
 	if err := c.Elasticsearch.Validate(); err != nil {
 		return fmt.Errorf("validating Elasticsearch config: %w", err)
 	}
