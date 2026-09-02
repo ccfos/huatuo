@@ -57,6 +57,13 @@ type Config struct {
 	ESUsername  string
 	ESPassword  string
 	ESIndex     string
+
+	PyroscopeAddress        string
+	PyroscopeAppNamePrefix  string
+	PyroscopeUsername       string
+	PyroscopePassword       string
+	PyroscopeBearerToken    string
+	PyroscopeTimeoutSeconds int
 }
 
 // Op is a storage query operator.
