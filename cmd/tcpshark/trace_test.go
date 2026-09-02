@@ -51,8 +51,13 @@ func TestReadPerfEventsRetriesLostSamples(t *testing.T) {
 		return nil
 	}
 
+	var lostSamples []uint64
+	handleLost := func(count uint64) {
+		lostSamples = append(lostSamples, count)
+	}
+
 	var consumed []uint64
-	err := readPerfEvents[uint64](ctx, reader, "test", func(record *uint64) error {
+	err := readPerfEvents[uint64](ctx, reader, "test", handleLost, func(record *uint64) error {
 		consumed = append(consumed, *record)
 		cancel()
 		return nil
@@ -66,6 +71,9 @@ func TestReadPerfEventsRetriesLostSamples(t *testing.T) {
 	if len(consumed) != 1 || consumed[0] != 42 {
 		t.Fatalf("consumed records = %v, want [42]", consumed)
 	}
+	if len(lostSamples) != 1 || lostSamples[0] != 2 {
+		t.Fatalf("lost samples = %v, want [2]", lostSamples)
+	}
 }
 
 func TestReadPerfEventsStopsOnContextCancellation(t *testing.T) {
@@ -76,7 +84,7 @@ func TestReadPerfEventsStopsOnContextCancellation(t *testing.T) {
 		return readErr
 	}}
 
-	err := readPerfEvents[uint64](ctx, reader, "test", func(*uint64) error {
+	err := readPerfEvents[uint64](ctx, reader, "test", nil, func(*uint64) error {
 		t.Fatal("consume called after context cancellation")
 		return nil
 	})
@@ -94,7 +102,7 @@ func TestReadPerfEventsReturnsNamedReadError(t *testing.T) {
 		return readErr
 	}}
 
-	err := readPerfEvents[uint64](t.Context(), reader, "test event", func(*uint64) error {
+	err := readPerfEvents[uint64](t.Context(), reader, "test event", nil, func(*uint64) error {
 		t.Fatal("consume called after read failure")
 		return nil
 	})

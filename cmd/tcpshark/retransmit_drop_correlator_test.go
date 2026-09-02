@@ -222,7 +222,7 @@ func TestRetransmitDropCorrelatorReasons(t *testing.T) {
 	}
 }
 
-func TestRetransmitDropCorrelatorTakePendingRetransmits(t *testing.T) {
+func TestRetransmitDropCorrelatorSettleAllRetransmits(t *testing.T) {
 	correlator := newTestRetransmitDropCorrelator(t, 1)
 	correlator.waitingRetransmits.capacity = 2
 	now := time.Unix(30, 0)
@@ -251,18 +251,19 @@ func TestRetransmitDropCorrelatorTakePendingRetransmits(t *testing.T) {
 		t.Fatalf("capacity results = %+v, want first event with capacity reason", emitted)
 	}
 
-	pending := correlator.takePendingRetransmits()
-	if len(pending) != 2 || pending[0] != events[1] || pending[1] != events[2] {
-		t.Fatalf("pending events = %+v, want remaining events in deadline order", pending)
+	settled := correlator.settleAllRetransmits()
+	if len(settled) != 2 ||
+		settled[0].retransmit != events[1] || settled[1].retransmit != events[2] {
+		t.Fatalf("settled events = %+v, want remaining events in deadline order", settled)
 	}
-	for eventIndex, event := range pending {
-		if event.DropLocation != "" || event.CorrelationReasons != nil ||
-			event.DropwatchPerfStatus != nil || event.DropStack != "" {
-			t.Fatalf("pending event %d correlation fields = %+v, want empty", eventIndex, event)
+	for resultIndex, result := range settled {
+		if !hasResultCorrelationReason(result, types.CorrelationReasonNoMatchingDrop) {
+			t.Fatalf("settled result %d reasons = %v, want no_matching_drop",
+				resultIndex, result.correlationReasons)
 		}
 	}
-	if again := correlator.takePendingRetransmits(); len(again) != 0 {
-		t.Fatalf("second pending take returned %d events, want 0", len(again))
+	if again := correlator.settleAllRetransmits(); len(again) != 0 {
+		t.Fatalf("second settle returned %d events, want 0", len(again))
 	}
 	if correlator.waitingRetransmits.byDeadline.Len() != 0 ||
 		len(correlator.waitingRetransmits.byFlow) != 0 {
@@ -367,7 +368,7 @@ func TestRetransmitDropCorrelatorSettlesBeforeCurrentDrop(t *testing.T) {
 				!hasResultCorrelationReason(results[0], types.CorrelationReasonNoMatchingDrop)) {
 				t.Fatalf("result = %+v, want expired no-match", results[0])
 			}
-			if !test.wantMatch && len(correlator.takePendingRetransmits()) != 0 {
+			if !test.wantMatch && len(correlator.settleAllRetransmits()) != 0 {
 				t.Fatal("shutdown returned the expired retransmission again")
 			}
 		})

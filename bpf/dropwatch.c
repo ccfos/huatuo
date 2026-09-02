@@ -7,6 +7,7 @@
 #include "bpf_net_namespace.h"
 #include "bpf_netdevice.h"
 #include "bpf_pcap_stub.h"
+#include "bpf_perf_output.h"
 #include "bpf_ratelimit.h"
 #include "bpf_skb_filter.h"
 #include "bpf_skbuff.h"
@@ -50,12 +51,9 @@ struct {
 	__uint(value_size, sizeof(struct dropwatch_packet_event));
 } dropwatch_stackmap SEC(".maps");
 
-struct {
-	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(max_entries, 1);
-	__type(key, u32);
-	__type(value, struct dropwatch_perf_stats);
-} dropwatch_perf_stats SEC(".maps");
+/* Per-CPU count of events that bpf_perf_event_output failed to deliver;
+ * updated by bpf_perf_event_output_counted below. */
+BPF_PERF_OUTPUT_IN_MAP(dropwatch);
 
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -74,7 +72,6 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 
 static const struct dropwatch_packet_event zero_data = {};
 static const u32 stackmap_key = 0;
-static const u32 perf_stats_key = 0;
 
 /* kfree_skb gained an skb drop reason field in v5.17, absent from the BTF this
  * object is compiled against. Carry it in a CO-RE flavor relocated at load time:
@@ -209,20 +206,15 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 	       const char *trap_name, const char *trap_group_name)
 {
 	struct dropwatch_packet_event *data;
-	struct dropwatch_perf_stats *perf_stats;
 	struct sock *sk;
 	u16 skb_protocol;
 	long output_ret;
 
-	perf_stats = bpf_map_lookup_elem(&dropwatch_perf_stats, &perf_stats_key);
-	if (!perf_stats)
-		return 0;
 	u64 event_ktime = bpf_ktime_get_ns();
 	/* skb->protocol is __be16 on every supported kernel. */
 	skb_protocol = bpf_ntohs(BPF_CORE_READ(skb, protocol));
 
 	if (bpf_ratelimited_in_map_rc(ctx, dropwatch)) {
-		__sync_fetch_and_add(&perf_stats->rate_limited, 1);
 		return 0;
 	}
 
@@ -274,12 +266,11 @@ drop_event_commit(void *ctx, struct sk_buff *skb, struct net_device *dev,
 	skb_load_packet_raw(skb, &data->pkt_hdr, skb_protocol);
 	data->stack_size = bpf_get_stack(ctx, data->stack, sizeof(data->stack), 0);
 
-	output_ret = bpf_perf_event_output(ctx, &perf_events,
-					   COMPAT_BPF_F_CURRENT_CPU, data,
-					   sizeof(*data));
-	if (output_ret < 0) {
-		__sync_fetch_and_add(&perf_stats->perf_lost, 1);
-	} else if (source == DROPWATCH_DROP_SOURCE_HARDWARE) {
+	output_ret = bpf_perf_event_output_counted(ctx, &perf_events,
+						   &bpf_perf_out_dropwatch,
+						   COMPAT_BPF_F_CURRENT_CPU,
+						   data, sizeof(*data));
+	if (output_ret >= 0 && source == DROPWATCH_DROP_SOURCE_HARDWARE) {
 		u64 skb_addr = data->meta.skb_addr;
 		u64 reported_at = data->meta.ktime_ns;
 

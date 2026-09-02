@@ -241,6 +241,7 @@ func readRetransmitEvents(
 		ctx,
 		reader,
 		"TCP retransmit",
+		nil,
 		func(record *abi.TCPRetransmitEvent) error {
 			return consume(retransmitEventFromRecord(record, sourceType))
 		},
@@ -251,6 +252,7 @@ func readPerfEvents[T any](
 	ctx context.Context,
 	reader bpf.PerfEventReader,
 	eventName string,
+	handleLost func(count uint64),
 	consume func(*T) error,
 ) error {
 	for {
@@ -263,10 +265,14 @@ func readPerfEvents[T any](
 			if ctx.Err() != nil {
 				return nil
 			}
-			if errors.Is(err, bpf.ErrPerfEventSamplesLost) {
+			var lostErr *bpf.PerfEventSamplesLostError
+			if errors.As(err, &lostErr) {
 				log.WithError(err).
 					WithField("event", eventName).
 					Warn("perf event samples lost")
+				if handleLost != nil {
+					handleLost(lostErr.Count)
+				}
 				continue
 			}
 			return fmt.Errorf("read %s event: %w", eventName, err)

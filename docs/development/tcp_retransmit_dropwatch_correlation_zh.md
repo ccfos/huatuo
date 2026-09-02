@@ -121,7 +121,7 @@ SYN-ACK 使用各自更严格的 ACK/SYN 条件。
 | `no_matching_drop` | 100ms 到期时没有严格候选。 |
 | `startup_history_incomplete` | 重传距离 embedded source ready 不足 1s，或早于 ready。 |
 | `cross_netns_candidate` | tuple、时间和 sequence 匹配，但 namespace 不同。 |
-| `perf_events_lost` | embedded dropwatch 无法把部分事件写入 perf。 |
+| `perf_events_lost` | embedded dropwatch 无法把部分事件写入 perf（`perf_lost` 或 ring buffer 溢出）。 |
 | `drop_rate_limited` | embedded dropwatch limiter 拒绝了部分事件。 |
 | `retransmit_wait_capacity_exceeded` | 重传等待队列已满。 |
 | `unsupported_retransmission` | 重传缺少严格匹配所需字段或类型。 |
@@ -134,16 +134,18 @@ reason；没有找到严格匹配时仍以 `no_matching_drop` 输出 `unknown`�
 
 ## 7. Perf 状态
 
-BPF 只保留一个累计 per-CPU `dropwatch_perf_stats` map：
+状态由三个独立通道组成，各报各的、互不求和：
 
-```text
-perf_lost
-rate_limited
-```
+- `perf_lost`：累计 per-CPU `bpf_perf_out_dropwatch` map（公共 perf output
+  计数设施 `bpf_perf_output.h`），BPF 在 `bpf_perf_event_output` 负返回时
+  +1（如当前 CPU 未 attach reader）。
+- `lost_samples`：用户态从 `PERF_RECORD_LOST` 累计的 ring buffer 溢出数，只在
+  reader 运行期间可见，且随下一条成功事件滞后送达。
+- `rate_limited`：限流状态 map `bpf_rlimit_dropwatch` 的 `total_missed`。
 
-用户态汇总所有 CPU，并拒绝计数回退或加法溢出。该状态只说明证据完整性，
-不会把 no-match 提升为确定性网络分类。旧的 active epoch、双 slot、inflight、
-frontier 和 `DrainedThroughKtimeNS` 已删除。
+用户态汇总所有 CPU 的 perf_lost，并拒绝计数回退或加法溢出。该状态只说明
+证据完整性，不会把 no-match 提升为确定性网络分类。旧的 active epoch、
+双 slot、inflight、frontier 和 `DrainedThroughKtimeNS` 已删除。
 
 关联侧根据 IPv4 total length 或 IPv6 payload length 计算 TCP sequence span。
 GSO/offload 下 IP header 长度可能无法覆盖完整 skb；当前不据此扩大匹配范围。

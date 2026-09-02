@@ -51,9 +51,10 @@ func runRetransmitWithDrop(
 	defer func() {
 		returnErr = errors.Join(
 			returnErr,
-			writePendingRetransmits(
+			emitRetransmitDropResults(
+				session.dropwatchSource,
 				session.sink,
-				correlator.takePendingRetransmits(),
+				correlator.settleAllRetransmits(),
 			),
 		)
 	}()
@@ -169,18 +170,6 @@ func startEventSource[T any](
 	return events
 }
 
-func writePendingRetransmits(
-	sink writer,
-	events []*types.TCPRetransmitTracing,
-) error {
-	for _, event := range events {
-		if err := sink.Write(event); err != nil {
-			return fmt.Errorf("write pending TCP retransmit event: %w", err)
-		}
-	}
-	return nil
-}
-
 func resetRetransmitTimer(
 	timer *time.Timer,
 	correlator *retransmitDropCorrelator,
@@ -224,11 +213,7 @@ func emitRetransmitDropResults(
 	var status types.DropwatchPerfStatus
 	var statusErr error
 	if needsPerfStatus {
-		if source == nil {
-			statusErr = errors.New("read embedded dropwatch perf status: nil source")
-		} else {
-			status, statusErr = source.readPerfStatus()
-		}
+		status, statusErr = source.readPerfStatus()
 	}
 
 	for resultIndex := range results {
@@ -246,6 +231,7 @@ func emitRetransmitDropResults(
 				result.correlationReasons...,
 			)
 			result.retransmit.DropStack = ""
+			lostSamples := source.lostSamples.Load()
 			if statusErr != nil {
 				result.retransmit.DropwatchPerfStatus = nil
 				result.retransmit.CorrelationReasons = append(
@@ -255,13 +241,8 @@ func emitRetransmitDropResults(
 			} else {
 				result.retransmit.DropwatchPerfStatus = &types.DropwatchPerfStatus{
 					PerfLost:    status.PerfLost,
+					LostSamples: lostSamples,
 					RateLimited: status.RateLimited,
-				}
-				if status.PerfLost != 0 {
-					result.retransmit.CorrelationReasons = append(
-						result.retransmit.CorrelationReasons,
-						types.CorrelationReasonPerfEventsLost,
-					)
 				}
 				if status.RateLimited != 0 {
 					result.retransmit.CorrelationReasons = append(
@@ -269,6 +250,12 @@ func emitRetransmitDropResults(
 						types.CorrelationReasonDropRateLimited,
 					)
 				}
+			}
+			if status.PerfLost != 0 || lostSamples != 0 {
+				result.retransmit.CorrelationReasons = append(
+					result.retransmit.CorrelationReasons,
+					types.CorrelationReasonPerfEventsLost,
+				)
 			}
 		} else if result.drop.stackDepth != 0 {
 			frames := symbol.KsymStackStrs(

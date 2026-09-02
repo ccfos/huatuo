@@ -27,11 +27,15 @@ import (
 	"github.com/ccfos/huatuo/internal/bpf/abi"
 )
 
-const testDropwatchPerfStatusMapID uint32 = 7
+const (
+	testDropwatchPerfStatusMapID uint32 = 7
+	testDropwatchRateLimitMapID  uint32 = 8
+)
 
 type dropwatchSourceBPFStub struct {
 	bpf.BPF
-	raw        []byte
+	perfRaw    []byte
+	rateRaw    []byte
 	readErr    error
 	readCalls  int
 	detachErr  error
@@ -40,8 +44,11 @@ type dropwatchSourceBPFStub struct {
 }
 
 func (s *dropwatchSourceBPFStub) MapIDByName(name string) uint32 {
-	if name == embeddedPerfStatusMapName {
+	switch name {
+	case embeddedPerfStatusMapName:
 		return testDropwatchPerfStatusMapID
+	case embeddedRateLimitStateMapName:
+		return testDropwatchRateLimitMapID
 	}
 	return 0
 }
@@ -51,11 +58,16 @@ func (s *dropwatchSourceBPFStub) ReadMap(mapID uint32, key []byte) ([]byte, erro
 	if s.readErr != nil {
 		return nil, s.readErr
 	}
-	if mapID != testDropwatchPerfStatusMapID || len(key) != 4 ||
-		binary.NativeEndian.Uint32(key) != 0 {
+	if len(key) != 4 || binary.NativeEndian.Uint32(key) != 0 {
 		return nil, errors.New("unexpected map read")
 	}
-	return slices.Clone(s.raw), nil
+	switch mapID {
+	case testDropwatchPerfStatusMapID:
+		return slices.Clone(s.perfRaw), nil
+	case testDropwatchRateLimitMapID:
+		return slices.Clone(s.rateRaw), nil
+	}
+	return nil, errors.New("unexpected map read")
 }
 
 func (s *dropwatchSourceBPFStub) Detach() error {
@@ -109,14 +121,18 @@ func (s *dropwatchSourceReaderStub) Close() error {
 }
 
 func TestDropwatchSourceReadPerfStatus(t *testing.T) {
-	object := &dropwatchSourceBPFStub{raw: encodeDropwatchPerfStats(
-		t,
-		abi.DropwatchPerfStats{PerfLost: 1, RateLimited: 2},
-		abi.DropwatchPerfStats{PerfLost: 3, RateLimited: 4},
-	)}
+	object := &dropwatchSourceBPFStub{
+		perfRaw: encodeDropwatchPerfStats(
+			t,
+			abi.BPFPerfOutputStats{Lost: 1},
+			abi.BPFPerfOutputStats{Lost: 3},
+		),
+		rateRaw: encodeBPFRatelimitEvent(t, 6),
+	}
 	source := &dropwatchSource{
-		object:        object,
-		perfStatusMap: testDropwatchPerfStatusMapID,
+		object:            object,
+		perfStatusMap:     testDropwatchPerfStatusMapID,
+		rateLimitStateMap: testDropwatchRateLimitMapID,
 	}
 
 	status, err := source.readPerfStatus()
@@ -127,13 +143,23 @@ func TestDropwatchSourceReadPerfStatus(t *testing.T) {
 		t.Fatalf("status = %+v, want perf_lost=4 rate_limited=6", status)
 	}
 
-	object.raw = encodeDropwatchPerfStats(
+	object.perfRaw = encodeDropwatchPerfStats(
 		t,
-		abi.DropwatchPerfStats{PerfLost: 3, RateLimited: 6},
+		abi.BPFPerfOutputStats{Lost: 3},
 	)
 	if _, err := source.readPerfStatus(); err == nil ||
 		!containsErrorText(err, "perf_lost regressed") {
-		t.Fatalf("regression error = %v", err)
+		t.Fatalf("perf regression error = %v", err)
+	}
+
+	object.perfRaw = encodeDropwatchPerfStats(
+		t,
+		abi.BPFPerfOutputStats{Lost: 4},
+	)
+	object.rateRaw = encodeBPFRatelimitEvent(t, 5)
+	if _, err := source.readPerfStatus(); err == nil ||
+		!containsErrorText(err, "rate_limited regressed") {
+		t.Fatalf("rate regression error = %v", err)
 	}
 }
 
@@ -141,29 +167,25 @@ func TestDropwatchSourceRejectsInvalidPerfStatus(t *testing.T) {
 	readErr := errors.New("read failed")
 	tests := []struct {
 		name      string
-		raw       []byte
+		perfRaw   []byte
+		rateRaw   []byte
 		readErr   error
 		wantError string
 	}{
 		{name: "empty", wantError: "value size 0"},
-		{name: "partial value", raw: make([]byte, abi.DropwatchPerfStatsSize-1), wantError: "value size 15"},
 		{
-			name: "perf lost overflow",
-			raw: encodeDropwatchPerfStats(
-				t,
-				abi.DropwatchPerfStats{PerfLost: math.MaxUint64},
-				abi.DropwatchPerfStats{PerfLost: 1},
-			),
-			wantError: "perf_lost overflow",
+			name:      "partial value",
+			perfRaw:   make([]byte, abi.BPFPerfOutputStatsSize-1),
+			wantError: "value size 7",
 		},
 		{
-			name: "rate limited overflow",
-			raw: encodeDropwatchPerfStats(
+			name: "perf lost overflow",
+			perfRaw: encodeDropwatchPerfStats(
 				t,
-				abi.DropwatchPerfStats{RateLimited: math.MaxUint64},
-				abi.DropwatchPerfStats{RateLimited: 1},
+				abi.BPFPerfOutputStats{Lost: math.MaxUint64},
+				abi.BPFPerfOutputStats{Lost: 1},
 			),
-			wantError: "rate_limited overflow",
+			wantError: "perf_lost overflow",
 		},
 		{name: "map read", readErr: readErr, wantError: "read failed"},
 	}
@@ -172,10 +194,12 @@ func TestDropwatchSourceRejectsInvalidPerfStatus(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			source := &dropwatchSource{
 				object: &dropwatchSourceBPFStub{
-					raw:     test.raw,
+					perfRaw: test.perfRaw,
+					rateRaw: test.rateRaw,
 					readErr: test.readErr,
 				},
-				perfStatusMap: testDropwatchPerfStatusMapID,
+				perfStatusMap:     testDropwatchPerfStatusMapID,
+				rateLimitStateMap: testDropwatchRateLimitMapID,
 			}
 			_, err := source.readPerfStatus()
 			if err == nil || !containsErrorText(err, test.wantError) {
@@ -216,6 +240,9 @@ func TestDropwatchSourceReadEvents(t *testing.T) {
 	}
 	if reader.readCalls < 2 {
 		t.Fatalf("ReadInto() calls = %d, want at least 2", reader.readCalls)
+	}
+	if got := source.lostSamples.Load(); got != 2 {
+		t.Fatalf("lostSamples = %d, want 2", got)
 	}
 }
 
@@ -263,19 +290,32 @@ func TestDropwatchSourceClosePreservesErrorsAndOrder(t *testing.T) {
 
 func encodeDropwatchPerfStats(
 	t *testing.T,
-	values ...abi.DropwatchPerfStats,
+	values ...abi.BPFPerfOutputStats,
 ) []byte {
 	t.Helper()
-	raw := make([]byte, len(values)*abi.DropwatchPerfStatsSize)
+	raw := make([]byte, len(values)*abi.BPFPerfOutputStatsSize)
 	for valueIndex, value := range values {
-		offset := valueIndex * abi.DropwatchPerfStatsSize
+		offset := valueIndex * abi.BPFPerfOutputStatsSize
 		if _, err := binary.Encode(
-			raw[offset:offset+abi.DropwatchPerfStatsSize],
+			raw[offset:offset+abi.BPFPerfOutputStatsSize],
 			binary.NativeEndian,
 			value,
 		); err != nil {
 			t.Fatalf("encode perf status: %v", err)
 		}
+	}
+	return raw
+}
+
+func encodeBPFRatelimitEvent(t *testing.T, totalMissed uint64) []byte {
+	t.Helper()
+	raw := make([]byte, abi.BPFRatelimitEventSize)
+	if _, err := binary.Encode(
+		raw,
+		binary.NativeEndian,
+		abi.BPFRatelimitEvent{TotalMissed: totalMissed},
+	); err != nil {
+		t.Fatalf("encode rate limit state: %v", err)
 	}
 	return raw
 }

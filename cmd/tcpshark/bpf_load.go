@@ -29,19 +29,19 @@ import (
 
 func loadRetransmitBPF(
 	bpfPath string,
-	filterExpression string,
+	filterExpr string,
 	bpfLimiter *bpf.RateLimiter,
 ) (bpf.BPF, error) {
 	return loadFilteredBPFObject(
 		bpfPath,
-		filterExpression,
+		filterExpr,
 		bpfLimiter.Constants(nil),
 	)
 }
 
 func loadFilteredBPFObject(
 	bpfPath string,
-	filterExpression string,
+	filterExpr string,
 	constants map[string]any,
 	excludedSections ...string,
 ) (bpf.BPF, error) {
@@ -56,7 +56,7 @@ func loadFilteredBPFObject(
 	return pcapfilter.Load(
 		instanceName,
 		bpfBytes,
-		filterExpression,
+		filterExpr,
 		constants,
 		excludedSections...,
 	)
