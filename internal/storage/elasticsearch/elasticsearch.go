@@ -50,10 +50,11 @@ const (
 
 // Config contains Elasticsearch backend settings.
 type Config struct {
-	Addresses []string
-	Username  string
-	Password  string
-	Index     string
+	Addresses        []string
+	Username         string
+	Password         string
+	Index            string
+	ILMRetentionDays int
 }
 
 // Storage stores records in Elasticsearch, OpenSearch, or any compatible backend.
@@ -64,9 +65,10 @@ type Config struct {
 // whole-batch failures (429, 5xx, transport errors) are retried by the client.
 // Call Close on shutdown to flush any pending events.
 type Storage struct {
-	transport esapi.Transport
-	bulk      esutil.BulkIndexer
-	index     string
+	transport        esapi.Transport
+	bulk             esutil.BulkIndexer
+	index            string
+	ilmRetentionDays int
 }
 
 var _ driver.Backend = (*Storage)(nil)
@@ -74,10 +76,11 @@ var _ driver.Backend = (*Storage)(nil)
 func init() {
 	factory := func(cfg *driver.Config) (driver.Backend, error) {
 		return NewBackend(&Config{
-			Addresses: cfg.ESAddresses,
-			Username:  cfg.ESUsername,
-			Password:  cfg.ESPassword,
-			Index:     cfg.ESIndex,
+			Addresses:        cfg.ESAddresses,
+			Username:         cfg.ESUsername,
+			Password:         cfg.ESPassword,
+			Index:            cfg.ESIndex,
+			ILMRetentionDays: cfg.ESILMRetentionDays,
 		})
 	}
 	driver.RegisterBackend("elasticsearch", factory)
@@ -109,7 +112,7 @@ func NewBackend(cfg *Config) (*Storage, error) {
 		return nil, fmt.Errorf("elasticsearch bulk indexer: %w", err)
 	}
 
-	return &Storage{transport: client, bulk: bulk, index: prefix}, nil
+	return &Storage{transport: client, bulk: bulk, index: prefix, ilmRetentionDays: cfg.ILMRetentionDays}, nil
 }
 
 // Close flushes any pending bulk operations and stops the indexer workers.
@@ -121,11 +124,14 @@ func (s *Storage) Close(ctx context.Context) error {
 	return s.bulk.Close(ctx)
 }
 
-func (s *Storage) Init(_ context.Context, _ string, indexes []driver.Index) error {
+func (s *Storage) Init(ctx context.Context, _ string, indexes []driver.Index) error {
 	for _, idx := range indexes {
 		if err := validateFieldName(idx.Field); err != nil {
 			return err
 		}
+	}
+	if s.ilmRetentionDays > 0 {
+		return s.initIndexLifecycle(ctx)
 	}
 	return nil
 }

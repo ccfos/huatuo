@@ -42,11 +42,12 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)
 	if cfg.Storage.Elasticsearch.Enabled() {
 		store, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
-			Driver:      "elasticsearch",
-			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
-			ESUsername:  cfg.Storage.Elasticsearch.Username,
-			ESPassword:  cfg.Storage.Elasticsearch.Password,
-			ESIndex:     cfg.Storage.Elasticsearch.Index,
+			Driver:             "elasticsearch",
+			ESAddresses:        strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
+			ESUsername:         cfg.Storage.Elasticsearch.Username,
+			ESPassword:         cfg.Storage.Elasticsearch.Password,
+			ESIndex:            cfg.Storage.Elasticsearch.Index,
+			ESILMRetentionDays: cfg.Storage.Elasticsearch.ILMRetentionDays,
 		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new tracing document store (elasticsearch): %w", err)
@@ -82,11 +83,12 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 
 	if cfg.Storage.Elasticsearch.Enabled() {
 		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
-			Driver:      "elasticsearch",
-			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
-			ESUsername:  cfg.Storage.Elasticsearch.Username,
-			ESPassword:  cfg.Storage.Elasticsearch.Password,
-			ESIndex:     cfg.Storage.Elasticsearch.Index,
+			Driver:             "elasticsearch",
+			ESAddresses:        strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
+			ESUsername:         cfg.Storage.Elasticsearch.Username,
+			ESPassword:         cfg.Storage.Elasticsearch.Password,
+			ESIndex:            cfg.Storage.Elasticsearch.Index,
+			ESILMRetentionDays: cfg.Storage.Elasticsearch.ILMRetentionDays,
 		}, profiler.MetadataCollection, tracing.ProfileDocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)

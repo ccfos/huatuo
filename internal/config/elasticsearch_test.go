@@ -39,6 +39,26 @@ func TestElasticsearchConfigValidate(t *testing.T) {
 			wantEnabled: true,
 		},
 		{
+			name: "enabled with ILM retention",
+			config: ElasticsearchConfig{
+				Address:          "http://127.0.0.1:9200",
+				Username:         "elastic",
+				Password:         "secret",
+				ILMRetentionDays: 14,
+			},
+			wantEnabled: true,
+		},
+		{
+			name:      "ILM without connection",
+			config:    ElasticsearchConfig{ILMRetentionDays: 14},
+			wantError: "ILM retention requires an Elasticsearch connection",
+		},
+		{
+			name:      "negative ILM retention",
+			config:    ElasticsearchConfig{ILMRetentionDays: -1},
+			wantError: "ILM retention days must not be negative",
+		},
+		{
 			name: "multiple addresses",
 			config: ElasticsearchConfig{
 				Address:  "http://es-a:9200, https://es-b:9200",
