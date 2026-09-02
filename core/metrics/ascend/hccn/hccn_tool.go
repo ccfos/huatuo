@@ -27,6 +27,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"strconv"
@@ -87,16 +88,24 @@ func GetLinkStatus(phyID int32) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	replacedStr := strings.ReplaceAll(outStr, "\n", "")
-	// Handle boundary values: "Unknown!", "NA", etc.
-	if strings.Contains(replacedStr, "Unknown") || strings.Contains(replacedStr, "NA") {
-		return "", fmt.Errorf("link status unavailable for phy %d: %s", phyID, replacedStr)
+	status, err := parseLinkStatus(outStr)
+	if err != nil {
+		return "", fmt.Errorf("parse link status for phy %d: %w", phyID, err)
 	}
-	outArr := strings.Split(replacedStr, " ")
-	if len(outArr) != 3 {
-		return "", fmt.Errorf("unexpected link status output: %s", outStr)
+	return status, nil
+}
+
+func parseLinkStatus(out string) (string, error) {
+	fields := strings.Fields(out)
+	if len(fields) != 3 || fields[0] != "link" || fields[1] != "status:" {
+		return "", fmt.Errorf("unexpected output %q", strings.TrimSpace(out))
 	}
-	return outArr[2], nil
+
+	status := fields[2]
+	if status != "UP" && status != "DOWN" {
+		return "", fmt.Errorf("unsupported status %q", status)
+	}
+	return status, nil
 }
 
 // GetInterfaceTraffic returns TX and RX bandwidth in MB/sec.
@@ -106,21 +115,50 @@ func GetInterfaceTraffic(phyID int32) (tx, rx float64, err error) {
 	if err != nil {
 		return -1, -1, err
 	}
-	lines := strings.Split(outStr, "\n")
-	for _, line := range lines {
+	tx, rx, err = parseInterfaceTraffic(outStr)
+	if err != nil {
+		return -1, -1, fmt.Errorf("parse interface traffic for phy %d: %w", phyID, err)
+	}
+	return tx, rx, nil
+}
+
+func parseInterfaceTraffic(out string) (tx, rx float64, err error) {
+	var txSeen, rxSeen bool
+	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) != 4 {
+		if len(fields) == 0 {
 			continue
 		}
-		val, err := strconv.ParseFloat(fields[1], 64)
-		if err != nil {
-			continue
+		if len(fields) != 4 || fields[0] != "Bandwidth" || fields[3] != "MB/sec" {
+			return 0, 0, fmt.Errorf("unexpected bandwidth line %q", line)
 		}
-		if strings.Contains(line, "TX:") {
-			tx = val
-		} else if strings.Contains(line, "RX:") {
-			rx = val
+
+		value, parseErr := strconv.ParseFloat(fields[2], 64)
+		if parseErr != nil {
+			return 0, 0, fmt.Errorf("parse %s value %q: %w", fields[1], fields[2], parseErr)
 		}
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			return 0, 0, fmt.Errorf("invalid %s value %q", fields[1], fields[2])
+		}
+
+		switch fields[1] {
+		case "TX:":
+			if txSeen {
+				return 0, 0, fmt.Errorf("duplicate TX bandwidth")
+			}
+			tx, txSeen = value, true
+		case "RX:":
+			if rxSeen {
+				return 0, 0, fmt.Errorf("duplicate RX bandwidth")
+			}
+			rx, rxSeen = value, true
+		default:
+			return 0, 0, fmt.Errorf("unsupported bandwidth direction %q", fields[1])
+		}
+	}
+
+	if !txSeen || !rxSeen {
+		return 0, 0, fmt.Errorf("incomplete bandwidth output: TX present=%t, RX present=%t", txSeen, rxSeen)
 	}
 	return tx, rx, nil
 }
