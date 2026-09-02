@@ -395,6 +395,7 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 		},
 		DropwatchPerfStatus: &types.DropwatchPerfStatus{
 			PerfLost:    2,
+			LostSamples: 4,
 			RateLimited: 3,
 		},
 	}
@@ -406,6 +407,7 @@ func TestTextWriterFormatsCorrelation(t *testing.T) {
 		"drop_location=unknown",
 		"correlation_reasons=startup_history_incomplete,perf_events_lost",
 		"dropwatch_perf_lost=2",
+		"dropwatch_lost_samples=4",
 		"dropwatch_rate_limited=3",
 	} {
 		if !strings.Contains(output.String(), want) {

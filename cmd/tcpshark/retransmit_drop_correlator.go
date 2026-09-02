@@ -136,14 +136,20 @@ func (c *retransmitDropCorrelator) settleExpiredRetransmits(
 	}
 }
 
-func (c *retransmitDropCorrelator) takePendingRetransmits() []*types.TCPRetransmitTracing {
-	var retransmits []*types.TCPRetransmitTracing
+// settleAllRetransmits drains every waiting retransmit regardless of its
+// deadline, finalizing each through the standard no-match path so shutdown
+// persists the same correlation output as a normal timeout.
+func (c *retransmitDropCorrelator) settleAllRetransmits() []retransmitDropResult {
+	var results []retransmitDropResult
 	for {
 		waiting := c.waitingRetransmits.takeNextRetransmit()
 		if waiting == nil {
-			return retransmits
+			return results
 		}
-		retransmits = append(retransmits, waiting.event)
+		results = append(results, c.noMatchResult(
+			waiting.event,
+			waiting.hasCrossNetNSCandidate,
+		))
 	}
 }
 

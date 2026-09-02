@@ -54,7 +54,15 @@ type DropWatchTracing struct {
 // DropwatchPerfStatus reports cumulative diagnostic counters for the embedded
 // dropwatch source.
 type DropwatchPerfStatus struct {
-	// PerfLost counts dropwatch events that could not reach the perf stream.
-	PerfLost    uint64 `json:"perf_lost"`
+	// PerfLost counts dropwatch events that the kernel failed to write to the
+	// perf stream (bpf_perf_event_output returned a negative error, e.g. no
+	// reader attached for the current CPU).
+	PerfLost uint64 `json:"perf_lost"`
+	// LostSamples counts perf ring buffer overflows reported by the reader as
+	// PERF_RECORD_LOST records. It is only observable while the reader is
+	// running and is delivered with the next successful event.
+	LostSamples uint64 `json:"lost_samples,omitempty"`
+	// RateLimited counts dropwatch events rejected by the rate limiter, read
+	// from the limiter state map's total_missed counter.
 	RateLimited uint64 `json:"rate_limited"`
 }

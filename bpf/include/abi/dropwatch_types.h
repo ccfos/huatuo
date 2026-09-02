@@ -26,11 +26,6 @@ enum dropwatch_drop_source {
 	DROPWATCH_DROP_SOURCE_HARDWARE,
 };
 
-struct dropwatch_perf_stats {
-	u64 perf_lost;
-	u64 rate_limited;
-};
-
 struct dropwatch_packet_meta {
 	u64 ktime_ns;
 	u64 tgid_pid;
@@ -70,7 +65,6 @@ struct dropwatch_packet_event {
 BPF_ABI_EXPORT(dropwatch_packet_meta);
 BPF_ABI_EXPORT(dropwatch_packet_raw);
 BPF_ABI_EXPORT(dropwatch_packet_event);
-BPF_ABI_EXPORT(dropwatch_perf_stats);
 BPF_ABI_EXPORT_ENUM(dropwatch_drop_source);
 
 #endif /* __BPF_ABI_DROPWATCH_H__ */
