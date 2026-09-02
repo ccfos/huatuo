@@ -57,6 +57,10 @@ type Config struct {
 	ESUsername  string
 	ESPassword  string
 	ESIndex     string
+	// ESInsecureSkipVerify disables TLS certificate verification; ESCABundle
+	// optionally points at PEM-encoded CA certificates for server verification.
+	ESInsecureSkipVerify bool
+	ESCABundle           string
 }
 
 // Op is a storage query operator.

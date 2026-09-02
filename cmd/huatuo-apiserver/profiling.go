@@ -33,6 +33,9 @@ func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Cont
 		Username: d.opts.Config.Elasticsearch.Username,
 		Password: d.opts.Config.Elasticsearch.Password,
 		Index:    d.opts.Config.Elasticsearch.Index,
+
+		InsecureSkipVerify: d.opts.Config.Elasticsearch.InsecureSkipVerify,
+		CABundle:           d.opts.Config.Elasticsearch.CABundle,
 	}
 	profileQueryService, err := service.NewService(ctx, esConfig)
 	if err != nil {

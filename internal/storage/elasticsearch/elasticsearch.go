@@ -54,6 +54,11 @@ type Config struct {
 	Username  string
 	Password  string
 	Index     string
+	// InsecureSkipVerify disables TLS certificate verification (default off).
+	InsecureSkipVerify bool
+	// CABundle optionally points at PEM-encoded CA certificates used to
+	// verify the server when it does not chain to the system roots.
+	CABundle string
 }
 
 // Storage stores records in Elasticsearch, OpenSearch, or any compatible backend.
@@ -74,10 +79,12 @@ var _ driver.Backend = (*Storage)(nil)
 func init() {
 	factory := func(cfg *driver.Config) (driver.Backend, error) {
 		return NewBackend(&Config{
-			Addresses: cfg.ESAddresses,
-			Username:  cfg.ESUsername,
-			Password:  cfg.ESPassword,
-			Index:     cfg.ESIndex,
+			Addresses:          cfg.ESAddresses,
+			Username:           cfg.ESUsername,
+			Password:           cfg.ESPassword,
+			Index:              cfg.ESIndex,
+			InsecureSkipVerify: cfg.ESInsecureSkipVerify,
+			CABundle:           cfg.ESCABundle,
 		})
 	}
 	driver.RegisterBackend("elasticsearch", factory)
@@ -90,7 +97,10 @@ func NewBackend(cfg *Config) (*Storage, error) {
 	if prefix == "" {
 		prefix = defaultIndex
 	}
-	client, err := newCompatClient(cfg.Addresses, cfg.Username, cfg.Password)
+	client, err := newCompatClient(cfg.Addresses, cfg.Username, cfg.Password, tlsOptions{
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+		CABundle:           cfg.CABundle,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +161,9 @@ func (s *Storage) Save(ctx context.Context, rec driver.Record) error {
 	if err := s.bulk.Add(driver.WithContext(ctx), item); err != nil {
 		return fmt.Errorf("elasticsearch backend save %s: %w", s.index, err)
 	}
-	log.Debugf("elasticsearch bulk queued index=%s id=%s data=%s", s.index, rec.ID, rec.Data)
+	// Trace and profile documents may contain tenant-identifying content;
+	// log only the size, never the payload.
+	log.Debugf("elasticsearch bulk queued index=%s id=%s data_bytes=%d", s.index, rec.ID, len(rec.Data))
 	return nil
 }
 

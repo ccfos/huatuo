@@ -47,6 +47,9 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 			ESUsername:  cfg.Storage.Elasticsearch.Username,
 			ESPassword:  cfg.Storage.Elasticsearch.Password,
 			ESIndex:     cfg.Storage.Elasticsearch.Index,
+
+			ESInsecureSkipVerify: cfg.Storage.Elasticsearch.InsecureSkipVerify,
+			ESCABundle:           cfg.Storage.Elasticsearch.CABundle,
 		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new tracing document store (elasticsearch): %w", err)
@@ -87,6 +90,9 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 			ESUsername:  cfg.Storage.Elasticsearch.Username,
 			ESPassword:  cfg.Storage.Elasticsearch.Password,
 			ESIndex:     cfg.Storage.Elasticsearch.Index,
+
+			ESInsecureSkipVerify: cfg.Storage.Elasticsearch.InsecureSkipVerify,
+			ESCABundle:           cfg.Storage.Elasticsearch.CABundle,
 		}, profiler.MetadataCollection, tracing.ProfileDocumentStoreMapper{})
 		if err != nil {
 			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)

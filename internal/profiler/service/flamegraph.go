@@ -34,6 +34,10 @@ import (
 
 type ElasticSearchConfig struct {
 	Address, Username, Password, Index string
+	// InsecureSkipVerify disables TLS certificate verification (default off).
+	InsecureSkipVerify bool
+	// CABundle optionally points at PEM-encoded CA certificates.
+	CABundle string
 }
 
 // Service provides profile query operations.
@@ -49,6 +53,8 @@ func NewService(ctx context.Context, esConfig *ElasticSearchConfig) (*Service, e
 		esConfig.Username,
 		esConfig.Password,
 		esConfig.Index,
+		esConfig.InsecureSkipVerify,
+		esConfig.CABundle,
 	)
 	if err != nil {
 		return nil, err

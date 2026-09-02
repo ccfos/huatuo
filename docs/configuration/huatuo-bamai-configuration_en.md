@@ -166,10 +166,12 @@ idle timeout; 15–60 seconds is typical.
     # all configured (enabled). Partial connection settings are invalid.
     #
     [Storage.Elasticsearch]
-        # Address = "http://127.0.0.1:9200"
+        # Address = "https://127.0.0.1:9200"
         # Index = "huatuo_bamai"
         # Username = "elastic"
         # Password = "REPLACE_WITH_PASSWORD"
+        # InsecureSkipVerify = false
+        # CABundle = "/etc/huatuo/es-ca.pem"
 ```
 
 - **Address**: ElasticSearch/OpenSearch service address.
@@ -200,6 +202,24 @@ idle timeout; 15–60 seconds is typical.
   **Description**: Used together with the username. In production, use a strong password and enable TLS encryption.
 
 **Overall**: ES/OS storage persists kernel tracing and event data for later search and analysis.
+
+- **InsecureSkipVerify**: Disable TLS server certificate verification for
+  HTTPS addresses.
+
+  Default value is `false` (verification enabled).
+
+  **Description**: Basic-auth credentials are sent on every request, so a
+  man in the middle can capture them when verification is disabled. Opt out
+  only for self-signed deployments, preferably combined with **CABundle**.
+
+- **CABundle**: Path to PEM-encoded CA certificates used to verify the
+  Elasticsearch/OpenSearch server.
+
+  No default value.
+
+  **Description**: Use this when the server certificate does not chain to
+  the system roots, e.g. an internal CA. Ignored when
+  InsecureSkipVerify is true.
 
 #### 6.2 Local File Storage
 

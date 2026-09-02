@@ -166,10 +166,12 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
     # all configured (enabled). Partial connection settings are invalid.
     #
     [Storage.Elasticsearch]
-        # Address = "http://127.0.0.1:9200"
+        # Address = "https://127.0.0.1:9200"
         # Index = "huatuo_bamai"
         # Username = "elastic"
         # Password = "REPLACE_WITH_PASSWORD"
+        # InsecureSkipVerify = false
+        # CABundle = "/etc/huatuo/es-ca.pem"
 ```
 
 - **Address**：ElasticSearch/OpenSearch 存储服务地址。 
@@ -197,6 +199,21 @@ BlackList = ["netdev_hw", "netdev_qdisc", "metax_gpu", "ascend_npu", "diskio", "
   无默认值。
 
   **说明**：配合用户名进行安全认证。生产环境强烈建议使用强密码并结合 TLS 加密传输。
+
+- **InsecureSkipVerify**：关闭 HTTPS 地址的 TLS 服务端证书校验。
+
+  默认值为 false（开启校验）。
+
+  **说明**：Basic Auth 凭证会随每次请求发送，关闭校验后中间人可以截获
+  这些凭证。仅为自签名证书的部署关闭校验，并建议配合 **CABundle** 使用。
+
+- **CABundle**：用于校验 Elasticsearch/OpenSearch 服务端证书的 PEM 格式
+  CA 证书文件路径。
+
+  无默认值。
+
+  **说明**：当服务端证书无法链接到系统根证书时（例如内部 CA 签发），
+  通过该选项指定信任的 CA。InsecureSkipVerify 为 true 时忽略。
 
 **整体说明**：ES/OS 存储用于持久化内核追踪和事件数据，便于后续检索与分析。如果用户不关心 Linux 内核事件、Autotracing 数据则可以关闭该配置。
 

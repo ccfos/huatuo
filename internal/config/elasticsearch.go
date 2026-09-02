@@ -28,17 +28,25 @@ type ElasticsearchConfig struct {
 	Username string
 	Password string
 	Index    string `default:"huatuo_bamai"`
+	// InsecureSkipVerify disables TLS certificate verification. Verification
+	// is on by default; opt out only for self-signed deployments, because a
+	// man in the middle can otherwise capture the basic-auth credentials
+	// sent on every request.
+	InsecureSkipVerify bool `default:"false"`
+	// CABundle is an optional path to PEM-encoded CA certificates used to
+	// verify the server when it does not chain to the system roots.
+	CABundle string
 }
 
 // Enabled reports whether all connection fields opt in to Elasticsearch.
-func (c ElasticsearchConfig) Enabled() bool {
+func (c *ElasticsearchConfig) Enabled() bool {
 	return strings.TrimSpace(c.Address) != "" &&
 		strings.TrimSpace(c.Username) != "" &&
 		strings.TrimSpace(c.Password) != ""
 }
 
 // Validate accepts either a complete connection or no connection fields.
-func (c ElasticsearchConfig) Validate() error {
+func (c *ElasticsearchConfig) Validate() error {
 	fields := []string{c.Address, c.Username, c.Password}
 	configured := 0
 	for _, field := range fields {

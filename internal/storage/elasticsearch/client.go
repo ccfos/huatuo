@@ -16,16 +16,29 @@ package elasticsearch
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	elasticsearch "github.com/elastic/go-elasticsearch/v8"
 )
 
-// defaultTransport is sized to keep TLS handshake cost off the hot path.
+// tlsOptions controls server certificate verification for the ES transport.
+type tlsOptions struct {
+	// InsecureSkipVerify disables certificate verification. Verification is
+	// on by default: a man in the middle can otherwise capture the basic-auth
+	// credentials sent on every request.
+	InsecureSkipVerify bool
+	// CABundle optionally points at a file with PEM-encoded CA certificates
+	// used to verify servers that do not chain to the system roots.
+	CABundle string
+}
+
+// newTransport is sized to keep TLS handshake cost off the hot path.
 // Under FIPS, each fresh handshake spends several ms on RSA-PSS verification;
 // a small idle pool turned bursty writes into per-request handshakes and
 // dominated CPU. The idle/total caps below let concurrent writers reuse
@@ -34,23 +47,39 @@ import (
 // ClientSessionCache enables TLS 1.3 PSK resumption: when the server (or an
 // intermediate proxy) silently closes an idle connection, the next handshake
 // reuses a ticket instead of doing full RSA-PSS verification.
-var defaultTransport http.RoundTripper = &http.Transport{
-	MaxIdleConns:        200,
-	MaxIdleConnsPerHost: 100,
-	MaxConnsPerHost:     200,
-	// Keep below typical server-side idle timeouts (ES/nginx/LB ~60s) so the
-	// client closes first. If the server closes a connection we still hold,
-	// the next request races into a stale conn and triggers a fresh handshake.
-	IdleConnTimeout:       50 * time.Second,
-	ResponseHeaderTimeout: 10 * time.Second,
-	DialContext: (&net.Dialer{
-		Timeout:   10 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}).DialContext,
-	TLSClientConfig: &tls.Config{
-		InsecureSkipVerify: true, // #nosec G402
+func newTransport(opts tlsOptions) (http.RoundTripper, error) {
+	tlsCfg := &tls.Config{
+		InsecureSkipVerify: opts.InsecureSkipVerify, //nolint:gosec // opt-in via config
 		ClientSessionCache: tls.NewLRUClientSessionCache(64),
-	},
+	}
+
+	if opts.CABundle != "" {
+		pem, err := os.ReadFile(opts.CABundle)
+		if err != nil {
+			return nil, fmt.Errorf("read CA bundle %q: %w", opts.CABundle, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("CA bundle %q contains no certificates", opts.CABundle)
+		}
+		tlsCfg.RootCAs = pool
+	}
+
+	return &http.Transport{
+		MaxIdleConns:        200,
+		MaxIdleConnsPerHost: 100,
+		MaxConnsPerHost:     200,
+		// Keep below typical server-side idle timeouts (ES/nginx/LB ~60s) so the
+		// client closes first. If the server closes a connection we still hold,
+		// the next request races into a stale conn and triggers a fresh handshake.
+		IdleConnTimeout:       50 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSClientConfig: tlsCfg,
+	}, nil
 }
 
 // productHeaderTransport injects X-Elastic-Product: Elasticsearch into
@@ -88,13 +117,18 @@ func (t *productHeaderTransport) RoundTrip(req *http.Request) (*http.Response, e
 //   - ES v7 ≥ 7.14: CompatibilityMode headers + native product header.
 //   - ES v7 < 7.14: CompatibilityMode headers + injected product header.
 //   - OpenSearch:    returns X-Elastic-Product natively; no separate client needed.
-func newCompatClient(addresses []string, username, password string) (*elasticsearch.Client, error) {
+func newCompatClient(addresses []string, username, password string, opts tlsOptions) (*elasticsearch.Client, error) {
+	transport, err := newTransport(opts)
+	if err != nil {
+		return nil, err
+	}
+
 	client, err := elasticsearch.NewClient(elasticsearch.Config{
 		Addresses:               addresses,
 		Username:                username,
 		Password:                password,
 		EnableCompatibilityMode: true,
-		Transport:               &productHeaderTransport{inner: defaultTransport},
+		Transport:               &productHeaderTransport{inner: transport},
 		// Whole-batch retry: covers transport failures and 429/5xx returned for
 		// the entire bulk request. Per-item failures inside a 200 response are
 		// surfaced through BulkIndexerItem.OnFailure instead.

@@ -109,11 +109,11 @@ type profileDocumentMapper struct{}
 
 // NewProfileStorage creates a profiling storage.
 func NewProfileStorage(address, username, password, index string) (*ProfileStorage, error) {
-	return NewProfileStorageContext(context.Background(), address, username, password, index)
+	return NewProfileStorageContext(context.Background(), address, username, password, index, false, "")
 }
 
 // NewProfileStorageContext creates profiling storage with caller-owned cancellation.
-func NewProfileStorageContext(ctx context.Context, address, username, password, index string) (*ProfileStorage, error) {
+func NewProfileStorageContext(ctx context.Context, address, username, password, index string, insecureSkipVerify bool, caBundle string) (*ProfileStorage, error) {
 	if index == "" {
 		index = defaultESIndex
 	}
@@ -124,6 +124,9 @@ func NewProfileStorageContext(ctx context.Context, address, username, password, 
 		ESUsername:  username,
 		ESPassword:  password,
 		ESIndex:     index,
+
+		ESInsecureSkipVerify: insecureSkipVerify,
+		ESCABundle:           caBundle,
 	}, profileMetadataCollection, profileDocumentMapper{})
 	if err != nil {
 		return nil, err
