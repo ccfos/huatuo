@@ -33,10 +33,10 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 		return nil, nil
 	}
 
-	return nil, initStorage(d.opts.Region, config.Get())
+	return nil, initStorage(d.opts.Region, d.opts.VersionInfo.Version, config.Get())
 }
 
-func initStorage(storageRegion string, cfg *config.Config) error {
+func initStorage(storageRegion, agentVersion string, cfg *config.Config) error {
 	var esStore *storage.Store[*tracing.Document]
 
 	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)
@@ -72,12 +72,16 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 		tracing.SetTracingStore(
 			tracingMetadataStores,
 			tracing.DocumentOptions{
-				Region: storageRegion,
+				Region:  storageRegion,
+				Version: agentVersion,
 			},
 		)
 	}
 	if esStore != nil {
-		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
+		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{
+			Region:  storageRegion,
+			Version: agentVersion,
+		})
 	}
 
 	if cfg.Storage.Elasticsearch.Enabled() {
@@ -93,7 +97,7 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 		}
 		tracing.SetProfileStore(
 			[]*storage.Store[*tracing.Document]{profileStore},
-			tracing.DocumentOptions{Region: storageRegion},
+			tracing.DocumentOptions{Region: storageRegion, Version: agentVersion},
 		)
 	}
 

@@ -33,7 +33,7 @@ func setupMetrics(d *Daemon) (func(context.Context) error, error) {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(nc)
 
-	runtime.RegisterCollector(reg, metric.DefaultNamespace)
+	runtime.RegisterCollector(reg, metric.DefaultNamespace, d.opts.VersionInfo.Version)
 	d.metrics = reg
 
 	return nil, nil

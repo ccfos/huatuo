@@ -29,19 +29,23 @@ func TestRegisterCollector(t *testing.T) {
 		{
 			name:      "register with huatuo namespace",
 			namespace: "huatuo",
-			expected:  []string{"huatuo_go_goroutines", "huatuo_process_start_time_seconds"},
+			expected: []string{
+				"huatuo_build_info",
+				"huatuo_go_goroutines",
+				"huatuo_process_start_time_seconds",
+			},
 		},
 		{
 			name:      "register with null namespace",
 			namespace: "",
-			expected:  []string{"go_goroutines", "process_start_time_seconds"},
+			expected:  []string{"build_info", "go_goroutines", "process_start_time_seconds"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reg := prometheus.NewRegistry()
-			RegisterCollector(reg, tt.namespace)
+			RegisterCollector(reg, tt.namespace, "v1.2.3")
 			families, err := reg.Gather()
 			if err != nil {
 				t.Fatalf("Gather() returned error: %v", err)
@@ -59,9 +63,32 @@ func TestRegisterCollector(t *testing.T) {
 	}
 }
 
+func TestRegisterCollectorBuildInfo(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	RegisterCollector(reg, "huatuo", "v1.2.3")
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather() returned error: %v", err)
+	}
+	for _, family := range families {
+		if family.GetName() != "huatuo_build_info" {
+			continue
+		}
+		labels := family.GetMetric()[0].GetLabel()
+		for _, label := range labels {
+			if label.GetName() == "version" && label.GetValue() == "v1.2.3" {
+				return
+			}
+		}
+		t.Fatalf("build_info labels = %v, want version=v1.2.3", labels)
+	}
+	t.Fatal("huatuo_build_info metric not found")
+}
+
 func TestRegisterCollectorProcessMetrics(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	RegisterCollector(reg, "huatuo")
+	RegisterCollector(reg, "huatuo", "v1.2.3")
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -90,7 +117,7 @@ func TestRegisterCollectorProcessMetrics(t *testing.T) {
 
 func TestRegisterCollectorGoMetrics(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	RegisterCollector(reg, "huatuo")
+	RegisterCollector(reg, "huatuo", "v1.2.3")
 
 	families, err := reg.Gather()
 	if err != nil {
@@ -119,7 +146,7 @@ func TestRegisterCollectorGoMetrics(t *testing.T) {
 
 func TestRegisterCollectorNoDuplicate(t *testing.T) {
 	reg := prometheus.NewRegistry()
-	RegisterCollector(reg, "test")
+	RegisterCollector(reg, "test", "v1.2.3")
 
 	families, err := reg.Gather()
 	if err != nil {

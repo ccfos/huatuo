@@ -20,6 +20,7 @@ import "time"
 type Document struct {
 	Hostname     string    `json:"hostname"`
 	Region       string    `json:"region"`
+	Version      string    `json:"version"`
 	UploadedTime time.Time `json:"uploaded_time"`
 	Time         string    `json:"time"`
 
