@@ -86,7 +86,7 @@ func TestNewTaskWithIDIsIdempotent(t *testing.T) {
 	if !ok {
 		t.Fatal("first NewTaskWithID() did not store task")
 	}
-	if _, err := NewTaskWithID(taskID, "different-profiler", time.Second, TaskStorageStdout, nil); err != nil {
+	if _, err := NewTaskWithID(taskID, "../different-profiler", time.Second, TaskStorageStdout, nil); err != nil {
 		t.Fatalf("second NewTaskWithID() error=%v", err)
 	}
 	second, ok := taskLifeTmpCache.Load(taskID)
@@ -113,6 +113,30 @@ func TestNewTaskWithIDLimitAllowsRetryButRejectsNewTask(t *testing.T) {
 		"new-2026", "profiler", time.Second, TaskStorageStdout, nil, 1,
 	); !errors.Is(err, ErrTaskLimitExceeded) {
 		t.Fatalf("new task error=%v, want ErrTaskLimitExceeded", err)
+	}
+}
+
+func TestNewTaskWithIDRejectsExecutablePathTraversal(t *testing.T) {
+	clearTaskCache()
+	t.Cleanup(clearTaskCache)
+
+	for _, executable := range []string{
+		"",
+		".",
+		"..",
+		"../profiler",
+		"tools/profiler",
+		"/usr/bin/id",
+	} {
+		t.Run(executable, func(t *testing.T) {
+			taskID := "invalid-executable-" + strings.ReplaceAll(executable, "/", "-")
+			if _, err := NewTaskWithID(taskID, executable, time.Second, TaskStorageStdout, nil); !errors.Is(err, ErrInvalidTaskExecutable) {
+				t.Fatalf("NewTaskWithID() error=%v, want ErrInvalidTaskExecutable", err)
+			}
+			if _, ok := taskLifeTmpCache.Load(taskID); ok {
+				t.Fatal("invalid executable was stored as a task")
+			}
+		})
 	}
 }
 
