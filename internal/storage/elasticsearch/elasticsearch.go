@@ -39,6 +39,8 @@ import (
 const (
 	defaultIndex     = "huatuo_bamai"
 	defaultQuerySize = 10000
+	maxResponseBytes = 16 * 1024 * 1024
+	maxErrorBytes    = 4 * 1024
 
 	// Bulk indexer tuning. 5MB / 1s matches the upstream defaults and is a
 	// safe starting point for ES/OpenSearch single-node and small clusters.
@@ -171,7 +173,7 @@ func (s *Storage) Get(ctx context.Context, id string) (rec driver.Record, err er
 	}
 
 	var payload esget.Response
-	if err = json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	if err = decodeResponse(res.Body, &payload); err != nil {
 		return rec, fmt.Errorf("elasticsearch backend get %s/%s: decode: %w", s.index, id, err)
 	}
 	if !payload.Found {
@@ -219,7 +221,7 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 	}
 
 	var payload essearch.Response
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	if err := decodeResponse(res.Body, &payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend query %s: decode: %w", s.index, err)
 	}
 	records := make([]driver.Record, 0, len(payload.Hits.Hits))
@@ -252,7 +254,7 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	}
 
 	var payload escount.Response
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	if err := decodeResponse(res.Body, &payload); err != nil {
 		return 0, fmt.Errorf("elasticsearch backend count %s: decode: %w", s.index, err)
 	}
 	return payload.Count, nil
@@ -276,7 +278,7 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	}
 
 	var payload valuesResponse
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	if err := decodeResponse(res.Body, &payload); err != nil {
 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: decode: %w", s.index, field, err)
 	}
 	result := make([]string, 0, len(payload.Aggregations.Terms.Buckets))
@@ -287,9 +289,39 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 }
 
 func responseError(action, target string, res *esapi.Response) error {
-	body, err := io.ReadAll(res.Body)
+	body, truncated, err := readBoundedBody(res.Body, maxErrorBytes)
 	if err != nil {
 		return fmt.Errorf("elasticsearch %s %s: status %d: read body: %w", action, target, res.StatusCode, err)
 	}
-	return fmt.Errorf("elasticsearch %s %s: status %d: %s", action, target, res.StatusCode, strings.TrimSpace(string(body)))
+	diagnostic := strings.TrimSpace(string(body))
+	if truncated {
+		diagnostic += " (truncated)"
+	}
+	return fmt.Errorf("elasticsearch %s %s: status %d: %s", action, target, res.StatusCode, diagnostic)
+}
+
+func decodeResponse(body io.Reader, dst any) error {
+	return decodeResponseWithLimit(body, dst, maxResponseBytes)
+}
+
+func decodeResponseWithLimit(body io.Reader, dst any, limit int64) error {
+	data, truncated, err := readBoundedBody(body, limit)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		return fmt.Errorf("response body exceeds %d bytes", limit)
+	}
+	return json.NewDecoder(bytes.NewReader(data)).Decode(dst)
+}
+
+func readBoundedBody(body io.Reader, limit int64) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) <= limit {
+		return data, false, nil
+	}
+	return data[:limit], true, nil
 }
