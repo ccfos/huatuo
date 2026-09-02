@@ -51,24 +51,29 @@ func (c *sockstatCollector) Update() ([]*metric.Data, error) {
 
 	containers, err := pod.NormalContainers()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get normal containers: %w", err)
 	}
+	return c.collect(containers)
+}
 
-	// support the empty container
-	if containers == nil {
-		containers = make(map[string]*pod.Container)
-	}
-	// append host into containers
-	containers[""] = nil
-
+func (c *sockstatCollector) collect(containers map[string]*pod.Container) ([]*metric.Data, error) {
 	var metrics []*metric.Data
 	for _, container := range containers {
 		m, err := c.procStatMetrics(container)
 		if err != nil {
-			return nil, fmt.Errorf("couldn't get sockstat metrics for container %v: %w", container, err)
+			// Container state can disappear after discovery without invalidating
+			// metrics from targets that are still alive.
+			log.Errorf("sockstat metrics for container %q (PID %d): %v", container.Name, container.InitPid, err)
+			continue
 		}
 		metrics = append(metrics, m...)
 	}
+
+	hostMetrics, err := c.procStatMetrics(nil)
+	if err != nil {
+		return metrics, fmt.Errorf("get host sockstat metrics: %w", err)
+	}
+	metrics = append(metrics, hostMetrics...)
 
 	log.Debugf("Updated sockstat metrics: %v", metrics)
 	return metrics, nil

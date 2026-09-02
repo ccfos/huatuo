@@ -51,52 +51,61 @@ func newNetdevCollector() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *netdevCollector) Update() ([]*metric.Data, error) {
-	// normal containers
 	containers, err := pod.NormalContainers()
 	if err != nil {
-		return nil, fmt.Errorf("GetNormalContainers: %w", err)
+		return nil, fmt.Errorf("get normal containers: %w", err)
 	}
-
-	// support the empty container
-	if containers == nil {
-		containers = make(map[string]*pod.Container)
-	}
-
-	// append host into containers
-	containers[""] = nil
-
-	var metrics []*metric.Data
-	for _, container := range containers {
-		devStats, err := c.getStats(container)
-		if err != nil {
-			return nil, fmt.Errorf("couldn't get netdev statistic for container %v: %w", container, err)
-		}
-
-		for dev, stats := range devStats {
-			for key, val := range stats {
-				tags := map[string]string{"device": dev}
-				if container != nil {
-					metrics = append(metrics,
-						metric.NewContainerCounterData(container, key+"_total", float64(val), fmt.Sprintf("Network device statistic %s.", key), tags))
-				} else {
-					metrics = append(metrics,
-						metric.NewCounterData(key+"_total", float64(val), fmt.Sprintf("Network device statistic %s.", key), tags))
-				}
-			}
-		}
-	}
-
-	return metrics, nil
+	return c.collect(containers)
 }
 
-func (c *netdevCollector) getStats(container *pod.Container) (netdevStats, error) {
+func (c *netdevCollector) collect(containers map[string]*pod.Container) ([]*metric.Data, error) {
 	cfg := configSnapshot()
 	f, err := matcher.NewValueMatcher(cfg.NetdevStats.DeviceIncluded, cfg.NetdevStats.DeviceExcluded)
 	if err != nil {
 		return nil, fmt.Errorf("netdev device filter: %w", err)
 	}
 
-	if cfg.NetdevStats.EnableNetlink {
+	var metrics []*metric.Data
+	for _, container := range containers {
+		devStats, err := c.getStats(container, f, cfg.NetdevStats.EnableNetlink)
+		if err != nil {
+			// Container state can disappear after discovery without invalidating
+			// metrics from targets that are still alive.
+			log.Errorf("netdev statistics for container %q (PID %d): %v", container.Name, container.InitPid, err)
+			continue
+		}
+		metrics = appendNetdevMetrics(metrics, container, devStats)
+	}
+
+	hostStats, err := c.getStats(nil, f, cfg.NetdevStats.EnableNetlink)
+	if err != nil {
+		return metrics, fmt.Errorf("get host netdev statistics: %w", err)
+	}
+	return appendNetdevMetrics(metrics, nil, hostStats), nil
+}
+
+func appendNetdevMetrics(metrics []*metric.Data, container *pod.Container, devStats netdevStats) []*metric.Data {
+	for dev, stats := range devStats {
+		for key, val := range stats {
+			tags := map[string]string{"device": dev}
+			if container != nil {
+				metrics = append(metrics,
+					metric.NewContainerCounterData(container, key+"_total", float64(val), fmt.Sprintf("Network device statistic %s.", key), tags))
+			} else {
+				metrics = append(metrics,
+					metric.NewCounterData(key+"_total", float64(val), fmt.Sprintf("Network device statistic %s.", key), tags))
+			}
+		}
+	}
+	return metrics
+}
+
+func (c *netdevCollector) getStats(
+	container *pod.Container,
+	f *matcher.ValueMatcher,
+	enableNetlink bool,
+) (netdevStats, error) {
+	if enableNetlink {
 		return c.netlinkStats(container, f)
 	}
 	return c.procStats(container, f)
