@@ -171,6 +171,14 @@ func (h *EventsHandler) watch(ctx *server.Context) error {
 	ctx.Header("Connection", "keep-alive")
 	ctx.Header("X-Accel-Buffering", "no")
 
+	// The server-wide WriteTimeout applies to the whole response body, so
+	// every stream would die at the deadline regardless of keepalive
+	// traffic. Streaming responses manage their own liveness through the
+	// keepalive failure threshold below.
+	if err := http.NewResponseController(ctx.Writer()).SetWriteDeadline(time.Time{}); err != nil {
+		log.Debugf("[eventwatch] clearing write deadline: %v", err)
+	}
+
 	docCh, cancel := tracing.Subscribe()
 	defer cancel()
 
