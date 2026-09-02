@@ -15,6 +15,8 @@
 package matcher
 
 import (
+	"fmt"
+
 	"huatuo-bamai/internal/pod"
 )
 
@@ -45,7 +47,16 @@ func NewContainerMatcher(include, exclude []FieldSpec[*pod.Container]) (*Contain
 // NewContainerMatcherFromRules is a convenience wrapper that converts Rule slices
 // (each Rule carrying a Field name and a Pattern) into a ContainerMatcher.
 func NewContainerMatcherFromRules(include, exclude []*Rule) (*ContainerMatcher, error) {
-	return NewContainerMatcher(rulesAsContainerSpecs(include), rulesAsContainerSpecs(exclude))
+	includeSpecs, err := rulesAsContainerSpecs(include)
+	if err != nil {
+		return nil, fmt.Errorf("include container rules: %w", err)
+	}
+	excludeSpecs, err := rulesAsContainerSpecs(exclude)
+	if err != nil {
+		return nil, fmt.Errorf("exclude container rules: %w", err)
+	}
+
+	return NewContainerMatcher(includeSpecs, excludeSpecs)
 }
 
 // Match reports whether c passes the filter: present in the include set
@@ -59,19 +70,23 @@ func (cm *ContainerMatcher) Match(c *pod.Container) bool {
 }
 
 // rulesAsContainerSpecs converts rules with non-empty Field and Pattern into FieldSpecs.
-func rulesAsContainerSpecs(rules []*Rule) []FieldSpec[*pod.Container] {
+func rulesAsContainerSpecs(rules []*Rule) ([]FieldSpec[*pod.Container], error) {
 	specs := make([]FieldSpec[*pod.Container], 0, len(rules))
 	for _, r := range rules {
 		if r == nil || r.Field == "" || r.Pattern == "" {
 			continue
 		}
+		extract := containerFieldExtractor(r.Field)
+		if extract == nil {
+			return nil, fmt.Errorf("unsupported field %q", r.Field)
+		}
 		specs = append(specs, FieldSpec[*pod.Container]{
 			Name:    r.Field,
 			Pattern: r.Pattern,
-			Extract: containerFieldExtractor(r.Field),
+			Extract: extract,
 		})
 	}
-	return specs
+	return specs, nil
 }
 
 func containerFieldExtractor(field string) func(*pod.Container) string {
@@ -83,6 +98,6 @@ func containerFieldExtractor(field string) func(*pod.Container) string {
 	case FieldTypeContainerQos:
 		return func(c *pod.Container) string { return c.Qos.String() }
 	default:
-		return func(*pod.Container) string { return "" }
+		return nil
 	}
 }
