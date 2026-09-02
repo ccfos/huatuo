@@ -16,6 +16,7 @@ package executil
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -24,11 +25,35 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"huatuo-bamai/internal/procfs"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestExecCmdCancellationKillsTermIgnoringProcessGroup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("process-group signals require Linux")
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+
+	startedAt := time.Now()
+	result := ExecCmd(ctx, 0, "/bin/sh", "-c", "trap '' TERM; while :; do sleep 10; done")
+	elapsed := time.Since(startedAt)
+
+	if result.Success {
+		t.Fatal("ExecCmd() Success=true after context cancellation")
+	}
+	if !errors.Is(result.CmdErr, context.DeadlineExceeded) {
+		t.Fatalf("ExecCmd() error=%v, want context deadline exceeded", result.CmdErr)
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("ExecCmd() returned after %v, want forced termination within 3s", elapsed)
+	}
+}
 
 func withProcRoot(t *testing.T, root string) {
 	originalPrefix := filepath.Dir(procfs.DefaultPath())
