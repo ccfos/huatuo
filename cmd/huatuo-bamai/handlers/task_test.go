@@ -15,8 +15,11 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
+
+	"github.com/go-playground/validator/v10"
 )
 
 func TestTaskHandlerRegistersListRoute(t *testing.T) {
@@ -29,4 +32,36 @@ func TestTaskHandlerRegistersListRoute(t *testing.T) {
 	}
 
 	t.Fatal("NewTaskHandler() should register GET /tasks list route")
+}
+
+func TestNewTaskReqTimeoutValidation(t *testing.T) {
+	validate := validator.New()
+	validate.SetTagName("binding")
+
+	tests := []struct {
+		timeout int
+		valid   bool
+	}{
+		{timeout: -1, valid: false},
+		{timeout: 0, valid: false},
+		{timeout: 1, valid: true},
+		{timeout: 3599, valid: true},
+		{timeout: 3600, valid: false},
+	}
+
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("timeout=%d", test.timeout), func(t *testing.T) {
+			err := validate.Struct(NewTaskReq{
+				TracerName: "softirq",
+				Timeout:    test.timeout,
+				DataType:   "json",
+			})
+			if test.valid && err != nil {
+				t.Fatalf("validation error = %v, want nil", err)
+			}
+			if !test.valid && err == nil {
+				t.Fatal("validation error = nil, want error")
+			}
+		})
+	}
 }
