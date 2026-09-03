@@ -16,6 +16,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -85,10 +86,13 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 	log.Info("aggregator started")
 
 	if err := p.Impl.Start(pctx); err != nil {
-		pipe.Stop()
 		pctx.Cancel()
+		pipelineErr := pipe.Stop()
 
-		return fmt.Errorf("start profiler: %w", err)
+		return errors.Join(
+			fmt.Errorf("start profiler: %w", err),
+			wrapPipelineError(pipelineErr),
+		)
 	}
 
 	loopDone := make(chan error, 1)
@@ -135,11 +139,19 @@ func Profile(pctx *pcontext.ProfilerContext, p ProfilerMeta) error {
 		log.Errorf("profiler stop: %v", stopErr)
 	}
 
-	pipe.Stop()
+	pipelineErr := pipe.Stop()
 
 	if err == nil && loopErr != nil {
 		err = loopErr
 	}
 
-	return err
+	return errors.Join(err, wrapPipelineError(pipelineErr))
+}
+
+func wrapPipelineError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("finalize profiler output: %w", err)
 }

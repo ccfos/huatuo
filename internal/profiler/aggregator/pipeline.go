@@ -38,10 +38,13 @@ const (
 // aggregation via the embedded Aggregator, and routes output to the
 // configured backend (ES upload, file write, or SVG render).
 type Pipeline struct {
-	wg     sync.WaitGroup
-	stopCh chan struct{}
-	doneCh chan struct{}
-	state  atomic.Uint32
+	wg          sync.WaitGroup
+	stopCh      chan struct{}
+	doneCh      chan struct{}
+	state       atomic.Uint32
+	lifecycleMu sync.Mutex
+	stopOnce    sync.Once
+	finalErr    error
 
 	tracerID      string
 	aggrInterval  time.Duration
@@ -89,9 +92,13 @@ func resolveTracerID(configured string, allocate func() (string, error)) string 
 // Start launches the aggregation worker and periodic export schedule once.
 // It is a no-op after Stop starts; Pipeline instances are not restartable.
 func (p *Pipeline) Start() {
-	if !p.state.CompareAndSwap(pipelineStateIdle, pipelineStateRunning) {
+	p.lifecycleMu.Lock()
+	defer p.lifecycleMu.Unlock()
+
+	if p.state.Load() != pipelineStateIdle {
 		return
 	}
+	p.state.Store(pipelineStateRunning)
 
 	p.wg.Add(1)
 	go p.runDequeueAndAggregate()
@@ -113,9 +120,7 @@ func (p *Pipeline) runAggregateSnapshot() {
 		if snapshotCtx != nil {
 			snapshotCtx = context.WithoutCancel(snapshotCtx)
 		}
-		if err := p.aggregateAndSnapshot(snapshotCtx, true); err != nil {
-			p.logAggregateExportError(err)
-		}
+		p.finalErr = p.aggregateAndSnapshot(snapshotCtx, true)
 
 		return
 	}
@@ -130,11 +135,15 @@ func (p *Pipeline) runAggregateSnapshot() {
 			}
 		case <-p.stopCh:
 			// Stop scheduling periodic snapshots; the final snapshot must observe
-			// all records accepted before shutdown.
+			// all records accepted before shutdown. The profiler context is canceled
+			// before Pipeline.Stop so sampling loops terminate; final persistence
+			// still needs a live context to flush the records they produced.
 			<-p.doneCh
-			if err := p.aggregateAndSnapshot(p.pctx.Ctx, true); err != nil {
-				p.logAggregateExportError(err)
+			snapshotCtx := p.pctx.Ctx
+			if snapshotCtx != nil {
+				snapshotCtx = context.WithoutCancel(snapshotCtx)
 			}
+			p.finalErr = p.aggregateAndSnapshot(snapshotCtx, true)
 
 			return
 		}
@@ -164,23 +173,29 @@ func (p *Pipeline) runDequeueAndAggregate() {
 	}
 }
 
-// Stop signals the pipeline to terminate and waits for all goroutines to exit.
-// Calls after the first one are no-ops. A stopped Pipeline cannot be restarted.
-func (p *Pipeline) Stop() {
-	for {
+// Stop signals the pipeline to terminate, waits for the final export, and
+// returns its result. Every caller waits for the same shutdown operation.
+// A stopped Pipeline cannot be restarted.
+func (p *Pipeline) Stop() error {
+	p.stopOnce.Do(func() {
+		// Start must finish registering both workers before Stop can wait on the
+		// WaitGroup. Without this boundary, a concurrent Stop could return while
+		// Start is between publishing the running state and calling Add.
+		p.lifecycleMu.Lock()
 		state := p.state.Load()
-		if state == pipelineStateStopped {
-			return
-		}
+		p.state.Store(pipelineStateStopped)
 
-		if p.state.CompareAndSwap(state, pipelineStateStopped) {
-			p.enqueueMutex.Lock()
-			close(p.stopCh)
-			p.enqueueMutex.Unlock()
+		p.enqueueMutex.Lock()
+		close(p.stopCh)
+		p.enqueueMutex.Unlock()
+		p.lifecycleMu.Unlock()
+
+		if state == pipelineStateRunning {
 			p.wg.Wait()
-			return
 		}
-	}
+	})
+
+	return p.finalErr
 }
 
 // Enqueue offers a record into the aggregation queue for async processing.
