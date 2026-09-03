@@ -30,6 +30,7 @@ var (
 	// FIXME If you use this package to other project.
 	defaultHostname string
 	defaultRegion   string
+	defaultNodeIP   string
 )
 
 func DefaultHostname() string {
@@ -38,6 +39,10 @@ func DefaultHostname() string {
 
 func DefaultRegion() string {
 	return defaultRegion
+}
+
+func DefaultNodeIP() string {
+	return defaultNodeIP
 }
 
 const (
@@ -50,6 +55,8 @@ const (
 	LabelHost = "host"
 	// LabelRegion indicates the data collected from.
 	LabelRegion = "region"
+	// LabelNodeIP identifies the node without requiring hostname resolution.
+	LabelNodeIP = "node_ip"
 	// LabelContainerName indicates the container name.
 	LabelContainerName = "container_name"
 	// LabelContainerHost indicates the container host.
@@ -123,6 +130,10 @@ func newData(name string, value float64, typ int, help string, label map[string]
 	data.labelValue = append(data.labelValue,
 		labelValue(label, LabelRegion, defaultRegion),
 		labelValue(label, LabelHost, hostname))
+	if defaultNodeIP != "" {
+		data.labelKey = append(data.labelKey, LabelNodeIP)
+		data.labelValue = append(data.labelValue, labelValue(label, LabelNodeIP, defaultNodeIP))
+	}
 
 	// sort the labelKey
 	selfLabelKeys := make([]string, 0, len(label))
@@ -216,6 +227,10 @@ func newContainerData(container *pod.Container, name string, value float64, typ 
 		labelValue(label, LabelContainerLevel, container.Qos.String()),
 		labelValue(label, LabelContainerHostNamespace, container.LabelHostNamespace()),
 		labelValue(label, LabelHost, hostname))
+	if defaultNodeIP != "" {
+		data.labelKey = append(data.labelKey, LabelNodeIP)
+		data.labelValue = append(data.labelValue, labelValue(label, LabelNodeIP, defaultNodeIP))
+	}
 
 	// sort the labelKey
 	selfLabelKeys := make([]string, 0, len(label))
@@ -237,7 +252,7 @@ func newContainerData(container *pod.Container, name string, value float64, typ 
 }
 
 func isDefaultHostLabel(key string) bool {
-	return key == LabelRegion || key == LabelHost
+	return key == LabelRegion || key == LabelHost || key == LabelNodeIP
 }
 
 func isDefaultContainerLabel(key string) bool {
@@ -248,7 +263,8 @@ func isDefaultContainerLabel(key string) bool {
 		LabelContainerType,
 		LabelContainerLevel,
 		LabelContainerHostNamespace,
-		LabelHost:
+		LabelHost,
+		LabelNodeIP:
 		return true
 	default:
 		return false
