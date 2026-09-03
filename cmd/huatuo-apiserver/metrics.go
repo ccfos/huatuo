@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"huatuo-bamai/internal/job"
+	internalversion "huatuo-bamai/internal/version"
 	"huatuo-bamai/pkg/metric/runtime"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -29,7 +30,11 @@ const promNamespace = "huatuo_apiserver"
 
 func setupMetrics(_ context.Context, d *Daemon) (func(context.Context) error, error) {
 	registry := prometheus.NewRegistry()
-	runtime.RegisterCollector(registry, promNamespace)
+	version := internalversion.Devel
+	if d.opts != nil {
+		version = d.opts.VersionInfo.Version
+	}
+	runtime.RegisterCollector(registry, promNamespace, version)
 	agentRequests := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: promNamespace,
 		Subsystem: "agent",

@@ -29,7 +29,7 @@ import (
 // they share a consistent prefix with the rest of the HuaTuo metrics.
 // All registered metrics carry host and region labels for unified
 // dashboard variable filtering.
-func RegisterCollector(reg *prometheus.Registry, namespace string) {
+func RegisterCollector(reg *prometheus.Registry, namespace, version string) {
 	prefix := ""
 	if namespace != "" {
 		prefix = namespace + "_"
@@ -42,4 +42,13 @@ func RegisterCollector(reg *prometheus.Registry, namespace string) {
 
 	labeledReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	labeledReg.MustRegister(collectors.NewGoCollector())
+	buildInfo := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "build_info",
+		Help: "HuaTuo build information.",
+		ConstLabels: prometheus.Labels{
+			"version": version,
+		},
+	})
+	buildInfo.Set(1)
+	labeledReg.MustRegister(buildInfo)
 }
