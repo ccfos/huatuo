@@ -40,6 +40,48 @@ func (ProfileDocumentStoreMapper) ID(_ *Document) string {
 	return xid.New().String()
 }
 
+// profileTypeField is the path the profile query service filters on.
+const profileTypeField = "tracer_data.flamedata.profile_type"
+
+// Fields adds the profile type to the queryable set.
+//
+// Elasticsearch indexes the raw document, so this nested value is queryable
+// there without being declared; every other backend only ever sees the fields
+// named here, and would leave the column empty.
+func (m ProfileDocumentStoreMapper) Fields(document *Document) (map[string]any, error) {
+	fields, err := m.DocumentStoreMapper.Fields(document)
+	if err != nil {
+		return nil, err
+	}
+	if profileType := profileTypeOf(document.TracerData); profileType != "" {
+		fields[profileTypeField] = profileType
+	}
+
+	return fields, nil
+}
+
+// Indexes declares the profile type alongside the shared tracing fields.
+func (m ProfileDocumentStoreMapper) Indexes() []driver.Index {
+	return append(m.DocumentStoreMapper.Indexes(), driver.Index{Field: profileTypeField})
+}
+
+// profileTypeOf reads tracer_data.flamedata.profile_type. TracerData arrives as
+// decoded JSON, so it is a map here; anything else yields an empty type rather
+// than an error, matching how the field behaves when a tracer omits it.
+func profileTypeOf(tracerData any) string {
+	data, ok := tracerData.(map[string]any)
+	if !ok {
+		return ""
+	}
+	flamedata, ok := data["flamedata"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	profileType, _ := flamedata["profile_type"].(string)
+
+	return profileType
+}
+
 func tracingDocumentTimeValue(raw string, fallback time.Time) time.Time {
 	if raw == "" {
 		return fallback.UTC()
@@ -96,8 +138,8 @@ func (DocumentStoreMapper) Indexes() []driver.Index {
 		{Field: "record_id"},
 		{Field: "hostname"},
 		{Field: "region"},
-		{Field: "uploaded_time"},
-		{Field: "time"},
+		{Field: "uploaded_time", Kind: driver.KindTime},
+		{Field: "time", Kind: driver.KindTime},
 		{Field: "container_id"},
 		{Field: "container_hostname"},
 		{Field: "container_host_namespace"},
@@ -105,7 +147,7 @@ func (DocumentStoreMapper) Indexes() []driver.Index {
 		{Field: "container_qos"},
 		{Field: "tracer_name"},
 		{Field: "tracer_id"},
-		{Field: "tracer_time"},
+		{Field: "tracer_time", Kind: driver.KindTime},
 		{Field: "tracer_type"},
 	}
 }

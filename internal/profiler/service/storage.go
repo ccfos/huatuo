@@ -25,7 +25,6 @@ import (
 	"huatuo-bamai/internal/profiler/timeutil"
 	"huatuo-bamai/internal/storage"
 	"huatuo-bamai/internal/storage/driver"
-	"huatuo-bamai/internal/strutil"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 )
@@ -108,28 +107,28 @@ type ProfileStorage struct {
 type profileDocumentMapper struct{}
 
 // NewProfileStorage creates a profiling storage.
-func NewProfileStorage(address, username, password, index string) (*ProfileStorage, error) {
-	return NewProfileStorageContext(context.Background(), address, username, password, index)
+func NewProfileStorage(cfg *driver.Config) (*ProfileStorage, error) {
+	return NewProfileStorageContext(context.Background(), cfg)
 }
 
 // NewProfileStorageContext creates profiling storage with caller-owned cancellation.
-func NewProfileStorageContext(ctx context.Context, address, username, password, index string) (*ProfileStorage, error) {
-	if index == "" {
-		index = defaultESIndex
+// The backend is selected by cfg.Driver, so the query side stays symmetric with
+// whatever the agent was configured to write to.
+func NewProfileStorageContext(ctx context.Context, cfg *driver.Config) (*ProfileStorage, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("profile storage: config is nil")
+	}
+	if cfg.Driver == "elasticsearch" && cfg.ESIndex == "" {
+		cfg.ESIndex = defaultESIndex
 	}
 
-	profileStore, err := storage.NewFromConfig[*ProfileDocument](ctx, &driver.Config{
-		Driver:      "elasticsearch",
-		ESAddresses: strutil.SplitCommaList(address),
-		ESUsername:  username,
-		ESPassword:  password,
-		ESIndex:     index,
-	}, profileMetadataCollection, profileDocumentMapper{})
+	profileStore, err := storage.NewFromConfig[*ProfileDocument](ctx, cfg,
+		profileMetadataCollection, profileDocumentMapper{})
 	if err != nil {
 		return nil, err
 	}
 
-	log.WithField("driver", "elasticsearch").WithField("index", index).Info("initialized profile storage")
+	log.WithField("driver", cfg.Driver).Info("initialized profile storage")
 	return &ProfileStorage{
 		store: profileStore,
 	}, nil
@@ -243,15 +242,15 @@ func (profileDocumentMapper) Indexes() []driver.Index {
 		{Field: profileFieldTracerID},
 		{Field: profileFieldHostname},
 		{Field: profileFieldRegion},
-		{Field: profileFieldUploadedTime},
-		{Field: profileFieldTime},
+		{Field: profileFieldUploadedTime, Kind: driver.KindTime},
+		{Field: profileFieldTime, Kind: driver.KindTime},
 		{Field: profileFieldContainerID},
 		{Field: profileFieldContainerHostname},
 		{Field: profileFieldContainerHostNS},
 		{Field: profileFieldContainerType},
 		{Field: profileFieldContainerQOS},
 		{Field: profileFieldTracerName},
-		{Field: profileFieldTracerTime},
+		{Field: profileFieldTracerTime, Kind: driver.KindTime},
 		{Field: profileFieldTracerType},
 		{Field: profileFieldProfileType},
 	}

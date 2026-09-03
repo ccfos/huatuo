@@ -1,0 +1,221 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "mysql",
+        "uid": "huatuo-bamai-doris"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 1,
+            "barWidthFactor": 0.7,
+            "fillOpacity": 100,
+            "lineWidth": 0,
+            "pointSize": 5
+          },
+          "fieldMinMax": false,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "pluginVersion": "12.0.3",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "mysql",
+            "uid": "huatuo-bamai-doris"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  $__timeGroupAlias(f_uploaded_time, $__interval),\n  COUNT(*) AS samples\nFROM huatuo_bamai.profiling_metadata\nWHERE $__timeFilter(f_uploaded_time)\n  AND f_container_hostname = ${container_hostname:sqlstring}\n  AND f_tracer_data_flamedata_profile_type = ${type:sqlstring}\nGROUP BY 1\nORDER BY 1"
+        }
+      ],
+      "title": "profile samples",
+      "type": "timeseries",
+      "interval": "10s"
+    },
+    {
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "huatuo-apiserver-pyroscope"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 1,
+      "maxPerRow": 2,
+      "options": {},
+      "pluginVersion": "12.0.3",
+      "repeat": "hostname",
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "huatuo-apiserver-pyroscope"
+          },
+          "groupBy": [],
+          "labelSelector": "{container_hostname=\"$container_hostname\"}",
+          "profileTypeId": "$type",
+          "queryType": "profile",
+          "refId": "A",
+          "spanSelector": []
+        }
+      ],
+      "title": "$container_hostname",
+      "type": "flamegraph"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 41,
+  "tags": [
+    "profiling"
+  ],
+  "templating": {
+    "list": [
+      {
+        "datasource": {
+          "type": "mysql",
+          "uid": "huatuo-bamai-doris"
+        },
+        "definition": "SELECT DISTINCT f_container_hostname FROM huatuo_bamai.profiling_metadata WHERE f_container_hostname != '' ORDER BY 1",
+        "description": "Selects container-level profiles.",
+        "label": "container hostname",
+        "name": "container_hostname",
+        "query": "SELECT DISTINCT f_container_hostname FROM huatuo_bamai.profiling_metadata WHERE f_container_hostname != '' ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "type": "query",
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "allowCustomValue": false,
+        "datasource": {
+          "type": "mysql",
+          "uid": "huatuo-bamai-doris"
+        },
+        "definition": "SELECT DISTINCT f_hostname FROM huatuo_bamai.profiling_metadata WHERE f_container_hostname = ${container_hostname:sqlstring} AND f_hostname != '' AND f_tracer_data_flamedata_profile_type = ${type:sqlstring} ORDER BY 1",
+        "description": "Read-only. Displays the host where the selected container resides. Not used as a query filter; filtering is by container_hostname only.",
+        "label": "hostname(Read-only)",
+        "name": "hostname",
+        "query": "SELECT DISTINCT f_hostname FROM huatuo_bamai.profiling_metadata WHERE f_container_hostname = ${container_hostname:sqlstring} AND f_hostname != '' AND f_tracer_data_flamedata_profile_type = ${type:sqlstring} ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "type": "query",
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "description": "profiling type",
+        "label": "type",
+        "name": "type",
+        "options": [
+          {
+            "selected": true,
+            "text": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+            "value": "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+          },
+          {
+            "selected": false,
+            "text": "memory:alloc_space:bytes:space:bytes",
+            "value": "memory:alloc_space:bytes:space:bytes"
+          },
+          {
+            "selected": false,
+            "text": "process_lock:lock:count:lock:count",
+            "value": "process_lock:lock:count:lock:count"
+          },
+          {
+            "selected": false,
+            "text": "process_lock:lock:nanoseconds:lock:nanoseconds",
+            "value": "process_lock:lock:nanoseconds:lock:nanoseconds"
+          }
+        ],
+        "query": "process_cpu:cpu:nanoseconds:cpu:nanoseconds,memory:alloc_space:bytes:space:bytes,process_lock:lock:count:lock:count,process_lock:lock:nanoseconds:lock:nanoseconds",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1y",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Continuous Profiling(container, Doris)",
+  "uid": "continuous-profiling-container-doris",
+  "id": null,
+  "version": 1
+}

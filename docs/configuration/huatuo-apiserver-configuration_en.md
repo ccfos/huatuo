@@ -187,7 +187,43 @@ empty or all be configured. `Index` defaults to `huatuo_bamai` and must match
 the collector storage index. When disabled, raw-profile and flame graph query
 routes are not registered.
 
-### 6. Authentication and Authorization
+### 6. Doris
+
+```toml
+# Optional Apache Doris backend for querying profiling data.
+[Doris]
+    # MySQLAddr = "127.0.0.1:9030"
+    # HTTPAddr = "127.0.0.1:8030"
+    # Database = "huatuo_bamai"
+    # Username = "root"
+    # Password = "REPLACE_WITH_PASSWORD"
+    # PartitionField = "uploaded_time"
+    # RetentionDays = 30
+    # Buckets = 4
+    # Replicas = 1
+```
+
+huatuo-apiserver reads profiling data from this backend to render flame graphs. **Doris takes precedence when both Doris and Elasticsearch are configured**, so migrating off Elasticsearch only requires adding the `[Doris]` section; the existing `[Elasticsearch]` section can stay in place.
+
+- **MySQLAddr**: FE query port, as `host:port`.
+
+  No default. Must be set together with HTTPAddr.
+
+- **HTTPAddr**: FE HTTP port, as `host:port`.
+
+  No default.
+
+  **Note**: The API server only queries, but it shares the table creation code with the agent, so the address is still required.
+
+- **Database**: Database name. Default: huatuo_bamai.
+
+- **Username** / **Password**: Credentials. No default.
+
+- **PartitionField** / **RetentionDays** / **Buckets** / **Replicas**: Table layout, with the same meaning as the huatuo-bamai settings of the same name.
+
+  **Note**: These **must match the huatuo-bamai configuration**. Both sides run `CREATE TABLE IF NOT EXISTS` at startup, so whichever starts first decides the actual schema when the two disagree.
+
+### 7. Authentication and Authorization
 
 ```toml
 # Authentication configuration.
@@ -235,7 +271,7 @@ change job ownership because tokens are never used as principal IDs.
 `/healthz`, `/readyz`, `/metrics`, and `/version` are public.
 `/debug/pprof/**` and `/v1/profiles/flamegraph/**` require an administrator.
 
-### 7. Profiling
+### 8. Profiling
 
 ```toml
 # Profiling subprocess configuration.

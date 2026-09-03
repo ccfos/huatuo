@@ -247,6 +247,98 @@ idle timeout; 15–60 seconds is typical.
 
   **Description**: Oldest files are automatically deleted once the limit is reached, controlling disk usage.
 
+#### 6.3 Doris Storage
+
+```bash
+[Storage.Doris]
+    # MySQLAddr = "127.0.0.1:9030"
+    # HTTPAddr = "127.0.0.1:8030"
+    # Database = "huatuo_bamai"
+    # Username = "root"
+    # Password = "REPLACE_WITH_PASSWORD"
+    # PartitionField = "uploaded_time"
+    # RetentionDays = 30
+    # Buckets = 4
+    # Replicas = 1
+    # GroupCommit = "off_mode"
+    # BatchMaxRows = 16
+    # FlushIntervalSeconds = 5
+    # MaxRetries = 3
+```
+
+The Doris backend serves the same purpose as ES/OS storage: persisting kernel tracing, event and profiling data. Both may be configured at once, in which case data is written to both.
+
+Queries use the MySQL protocol (FE query port) and writes use Stream Load (FE HTTP port), so both addresses are required. Tables are created automatically on first start.
+
+- **MySQLAddr**: FE query port, as `host:port`.
+
+  No default.
+
+  **Note**: Used for DDL and queries. MySQLAddr and HTTPAddr must be set together; leaving both empty disables Doris storage, while setting only one fails startup.
+
+- **HTTPAddr**: FE HTTP port, as `host:port`.
+
+  No default.
+
+  **Note**: Used for Stream Load writes. The FE answers with a 307 redirect to a backend, so this host must be able to reach the BE HTTP port.
+
+- **Database**: Database name.
+
+  Default: huatuo_bamai.
+
+  **Note**: Created if it does not exist.
+
+- **Username** / **Password**: Credentials.
+
+  No default.
+
+- **PartitionField**: Field the table is partitioned on.
+
+  Default: uploaded_time.
+
+  **Note**: Tables are range-partitioned by day on this field, which **must be an indexed time field**; anything else fails startup. Leaving it empty disables partitioning, which lets a single partition grow without bound and forfeits both partition pruning and time-based retention. Only suitable for testing.
+
+- **RetentionDays**: Days of data kept.
+
+  Default: 30.
+
+  **Note**: Older partitions are dropped by the Doris dynamic partition mechanism.
+
+- **Buckets**: Tablets per partition.
+
+  Default: 4.
+
+- **Replicas**: Replicas per tablet.
+
+  Default: 1.
+
+  **Note**: Must not exceed the number of backends, or table creation fails.
+
+- **GroupCommit**: Group commit mode: `off_mode`, `sync_mode` or `async_mode`.
+
+  Default: off_mode.
+
+  **Note**: When enabled, the backend merges concurrent loads into shared transactions, which bounds the version count. **Enable it when agents on many nodes write the same table** — for example when profiling hundreds of instances of one application at once. Client-side batching can only merge the rows one agent holds; merging across nodes has to happen on the backend, and a version count that outruns compaction triggers Doris `-235 TOO_MANY_VERSIONS`. `sync_mode` blocks for a whole group commit interval (10 seconds by default), so `async_mode` is the practical choice.
+
+- **BatchMaxRows**: Rows that trigger a write.
+
+  Default: 16.
+
+  **Note**: Whichever of this and FlushIntervalSeconds is reached first triggers the write. An internal 8 MB cap also bounds buffered memory; it is not configurable.
+
+- **FlushIntervalSeconds**: Periodic write interval, in seconds.
+
+  Default: 5.
+
+  **Note**: Lands data that never reaches the row threshold.
+
+- **MaxRetries**: Retries for a failed write.
+
+  Default: 3; 0 disables retrying.
+
+  **Note**: Only transient failures are retried, with exponential backoff from 1 second capped at 30. Data quality errors, invalid arguments and authentication failures are not retried. The batch is dropped and logged once retries are exhausted.
+
+
 ### 7. Automatic Tracing
 
 The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.

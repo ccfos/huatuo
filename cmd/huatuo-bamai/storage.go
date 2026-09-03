@@ -37,22 +37,42 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 }
 
 func initStorage(storageRegion string, cfg *config.Config) error {
-	var esStore *storage.Store[*tracing.Document]
-
-	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, 2)
+	// Every queryable backend serves all three document roles; localfile is
+	// append-only and therefore receives tracing metadata only. Configuring
+	// more than one backend fans writes out to all of them.
+	backendConfigs := make([]*driver.Config, 0, 2)
 	if cfg.Storage.Elasticsearch.Enabled() {
-		store, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
+		backendConfigs = append(backendConfigs, &driver.Config{
 			Driver:      "elasticsearch",
 			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
 			ESUsername:  cfg.Storage.Elasticsearch.Username,
 			ESPassword:  cfg.Storage.Elasticsearch.Password,
 			ESIndex:     cfg.Storage.Elasticsearch.Index,
-		}, tracing.DocumentCollection, tracing.DocumentStoreMapper{})
+		})
+	}
+	if cfg.Storage.Doris.Enabled() {
+		backendConfigs = append(backendConfigs, cfg.Storage.Doris.DriverConfig())
+	}
+
+	tracingMetadataStores := make([]*storage.Store[*tracing.Document], 0, len(backendConfigs)+1)
+	taskStores := make([]*storage.Store[*tracing.Document], 0, len(backendConfigs))
+	profileStores := make([]*storage.Store[*tracing.Document], 0, len(backendConfigs))
+
+	for _, backendConfig := range backendConfigs {
+		documentStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), backendConfig,
+			tracing.DocumentCollection, tracing.DocumentStoreMapper{})
 		if err != nil {
-			return fmt.Errorf("new tracing document store (elasticsearch): %w", err)
+			return fmt.Errorf("new tracing document store (%s): %w", backendConfig.Driver, err)
 		}
-		esStore = store
-		tracingMetadataStores = append(tracingMetadataStores, esStore)
+		tracingMetadataStores = append(tracingMetadataStores, documentStore)
+		taskStores = append(taskStores, documentStore)
+
+		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), backendConfig,
+			profiler.MetadataCollection, tracing.ProfileDocumentStoreMapper{})
+		if err != nil {
+			return fmt.Errorf("new profiling document store (%s): %w", backendConfig.Driver, err)
+		}
+		profileStores = append(profileStores, profileStore)
 	}
 
 	if cfg.Storage.LocalFile.Path != "" {
@@ -68,33 +88,15 @@ func initStorage(storageRegion string, cfg *config.Config) error {
 		tracingMetadataStores = append(tracingMetadataStores, localFileStore)
 	}
 
+	options := tracing.DocumentOptions{Region: storageRegion}
 	if len(tracingMetadataStores) > 0 {
-		tracing.SetTracingStore(
-			tracingMetadataStores,
-			tracing.DocumentOptions{
-				Region: storageRegion,
-			},
-		)
+		tracing.SetTracingStore(tracingMetadataStores, options)
 	}
-	if esStore != nil {
-		tracing.SetTaskStore([]*storage.Store[*tracing.Document]{esStore}, tracing.DocumentOptions{Region: storageRegion})
+	if len(taskStores) > 0 {
+		tracing.SetTaskStore(taskStores, options)
 	}
-
-	if cfg.Storage.Elasticsearch.Enabled() {
-		profileStore, err := storage.NewFromConfig[*tracing.Document](context.Background(), &driver.Config{
-			Driver:      "elasticsearch",
-			ESAddresses: strutil.SplitCommaList(cfg.Storage.Elasticsearch.Address),
-			ESUsername:  cfg.Storage.Elasticsearch.Username,
-			ESPassword:  cfg.Storage.Elasticsearch.Password,
-			ESIndex:     cfg.Storage.Elasticsearch.Index,
-		}, profiler.MetadataCollection, tracing.ProfileDocumentStoreMapper{})
-		if err != nil {
-			return fmt.Errorf("new profiling document store (elasticsearch): %w", err)
-		}
-		tracing.SetProfileStore(
-			[]*storage.Store[*tracing.Document]{profileStore},
-			tracing.DocumentOptions{Region: storageRegion},
-		)
+	if len(profileStores) > 0 {
+		tracing.SetProfileStore(profileStores, options)
 	}
 
 	return nil
