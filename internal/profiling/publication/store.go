@@ -46,8 +46,8 @@ type Store struct {
 	now   func() time.Time
 }
 
-// NewStore creates a publication Store on the shared result backend.
-func NewStore(ctx context.Context, config *driver.Config) (*Store, error) {
+// NewFromConfig creates a publication Store on the shared result backend.
+func NewFromConfig(ctx context.Context, config *driver.Config) (*Store, error) {
 	markerStore, err := storage.NewFromConfig[*Marker](
 		ctx,
 		config,

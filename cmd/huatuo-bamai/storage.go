@@ -137,7 +137,7 @@ func initStorage(
 			return nil, nil, nil, fmt.Errorf("new profiling document store (elasticsearch): %w", err)
 		}
 		profileStore = initializedProfileStore
-		publicationStore, err = publication.NewStore(context.Background(), storeConfig)
+		publicationStore, err = publication.NewFromConfig(context.Background(), storeConfig)
 		if err != nil {
 			return nil, nil, nil, err
 		}

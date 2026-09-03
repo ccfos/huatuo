@@ -50,7 +50,7 @@ func setupProfileQueryService(ctx context.Context, d *Daemon) (func(context.Cont
 		_ = profileStorage.Close(ctx)
 		return nil, err
 	}
-	publicationStore, err := publication.NewStore(ctx, &driver.Config{
+	publicationStore, err := publication.NewFromConfig(ctx, &driver.Config{
 		Driver:      "elasticsearch",
 		ESAddresses: strutil.SplitCommaList(d.opts.Config.Elasticsearch.Address),
 		ESUsername:  d.opts.Config.Elasticsearch.Username,
