@@ -123,14 +123,9 @@ func (b *Storage) newFileWriter(filename string) io.Writer {
 }
 
 func (b *Storage) writerByName(name string) (io.Writer, error) {
-	if fileWriter, ok := b.files[name]; ok {
-		return fileWriter, nil
-	}
-
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
-	// Double-check after acquiring lock
 	if fileWriter, ok := b.files[name]; ok {
 		return fileWriter, nil
 	}
