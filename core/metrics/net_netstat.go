@@ -139,7 +139,9 @@ func parseNetStat(fileName string) (map[string]map[string]string, error) {
 	for scanner.Scan() {
 		nameParts := strings.Split(scanner.Text(), " ")
 
-		scanner.Scan()
+		if !scanner.Scan() {
+			break
+		}
 		valueParts := strings.Split(scanner.Text(), " ")
 
 		// remove trailing ":"
