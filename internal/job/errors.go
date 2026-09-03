@@ -27,5 +27,6 @@ var (
 	ErrUnsupportedJobType     = errors.New("unsupported job type")
 	ErrPersistence            = errors.New("job persistence failed")
 	ErrInvalidQuery           = errors.New("invalid job query")
+	ErrInvalidAgentRequest    = errors.New("invalid agent task request")
 	ErrAgentDispatchUncertain = errors.New("agent dispatch result is uncertain")
 )

@@ -147,6 +147,21 @@ func TestHTTPNodeAgentReturnsBodyReadError(t *testing.T) {
 
 // TestHTTPNodeAgentStartTask tests HTTPNodeAgent.StartTask request and response handling, including successful task dispatch, writing container name to request body, agent returning non-200, and error handling for unparseable response body.
 func TestHTTPNodeAgentStartTask(t *testing.T) {
+	t.Run("nil request", func(t *testing.T) {
+		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("HTTP request sent for a nil task request")
+			return nil, nil
+		}))
+
+		taskID, err := agent.StartTask("huatuo-dev", "payment-worker", nil)
+		if !errors.Is(err, ErrInvalidAgentRequest) {
+			t.Fatalf("StartTask() error=%v, want ErrInvalidAgentRequest", err)
+		}
+		if taskID != "" {
+			t.Fatalf("StartTask() taskID=%q, want empty", taskID)
+		}
+	})
+
 	t.Run("success", func(t *testing.T) {
 		var requestBody string
 		agent := newHTTPNodeAgentWithTransport(roundTripFunc(func(req *http.Request) (*http.Response, error) {

@@ -116,6 +116,9 @@ func (c *HTTPNodeAgent) StartTaskContext(
 ) (taskID string, returnedErr error) {
 	startedAt := time.Now()
 	defer func() { c.observeRequest("start", startedAt, returnedErr) }()
+	if args == nil {
+		return "", fmt.Errorf("%w: request must not be nil", ErrInvalidAgentRequest)
+	}
 	taskArgs := *args
 	taskArgs.ContainerID = container
 	if taskArgs.TracerName == "profiler" && !hasNonEmptyFlag(taskArgs.TracerArgs, "--tracer-id") {
