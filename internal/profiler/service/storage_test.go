@@ -59,6 +59,53 @@ func TestBuildProfileAggregationQueryAddsTracerIDOnce(t *testing.T) {
 	}
 }
 
+func TestProfileDocumentMapperUsesProfileStorageID(t *testing.T) {
+	mapper := profileDocumentMapper{}
+	document := &ProfileDocument{
+		ProfileStorageID: "window-1",
+		TracerID:         "trace-1",
+	}
+	if got := mapper.ID(document); got != "window-1" {
+		t.Fatalf("ID() = %q, want window-1", got)
+	}
+
+	document.ProfileStorageID = ""
+	if got := mapper.ID(document); got != "trace-1" {
+		t.Fatalf("legacy ID() = %q, want trace-1", got)
+	}
+}
+
+func TestNormalizeProfileAggregationFieldUsesKeywords(t *testing.T) {
+	tests := map[string]string{
+		"id":                    profileFieldTracerID + ".keyword",
+		"tracer":                profileFieldTracerID + ".keyword",
+		profileFieldContainerID: profileFieldContainerID + ".keyword",
+		profileFieldProfileType: profileFieldProfileType + ".keyword",
+	}
+	for input, want := range tests {
+		got, err := normalizeProfileAggregationField(input)
+		if err != nil {
+			t.Fatalf("normalizeProfileAggregationField(%q) error = %v", input, err)
+		}
+		if got != want {
+			t.Errorf("normalizeProfileAggregationField(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestBuildProfileSearchQueryUsesStablePaginationOrder(t *testing.T) {
+	query := buildProfileSearchQuery(&SearchFilter{Limit: 1000, Offset: 1000})
+	want := []driver.Sort{
+		{Field: profileFieldUploadedTime, Desc: true},
+		{Field: profileFieldTracerID + ".keyword"},
+		{Field: profileFieldStorageID + ".keyword"},
+	}
+
+	if !reflect.DeepEqual(query.Sorts, want) {
+		t.Fatalf("query sorts = %#v, want %#v", query.Sorts, want)
+	}
+}
+
 func TestBuildProfileAggregationQueryFiltersByRegion(t *testing.T) {
 	query := buildProfileAggregationQuery(&SearchFilter{
 		Region:   "cn-beijing",

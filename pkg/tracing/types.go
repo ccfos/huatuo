@@ -18,10 +18,11 @@ import "time"
 
 // Document is the tracing document persisted to and queried from storage backends.
 type Document struct {
-	Hostname     string    `json:"hostname"`
-	Region       string    `json:"region"`
-	UploadedTime time.Time `json:"uploaded_time"`
-	Time         string    `json:"time"`
+	Hostname         string    `json:"hostname"`
+	Region           string    `json:"region"`
+	UploadedTime     time.Time `json:"uploaded_time"`
+	Time             string    `json:"time"`
+	ProfileStorageID string    `json:"profile_storage_id,omitempty"`
 
 	ContainerID            string `json:"container_id,omitempty"`
 	ContainerHostname      string `json:"container_hostname,omitempty"`

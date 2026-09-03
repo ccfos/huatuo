@@ -247,6 +247,14 @@ func TestSQLiteBackendQuery(t *testing.T) {
 	if err == nil {
 		t.Errorf("backend Query() error = nil for negative limit, want error")
 	}
+
+	_, err = backend.Query(t.Context(), driver.Query{
+		Sorts:       []driver.Sort{{Field: "priority"}},
+		SearchAfter: []any{int64(3)},
+	})
+	if !errors.Is(err, driver.ErrUnsupportedOp) {
+		t.Errorf("backend Query() search_after error = %v, want ErrUnsupportedOp", err)
+	}
 }
 
 // TestSQLiteBackendTerms covers SQLite backend Terms aggregation: verifies it returns distinct field values matching the filter, skips missing fields, and respects the size limit.

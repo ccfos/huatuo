@@ -94,17 +94,19 @@ type Sort struct {
 
 // Query describes filters, ordering, and pagination.
 type Query struct {
-	Filters []Filter
-	Sorts   []Sort
-	Limit   int
-	Offset  int
+	Filters     []Filter
+	Sorts       []Sort
+	SearchAfter []any
+	Limit       int
+	Offset      int
 }
 
 // Record is the backend-neutral persisted representation.
 type Record struct {
-	ID     string
-	Data   []byte
-	Fields map[string]any
+	ID         string
+	Data       []byte
+	Fields     map[string]any
+	SortValues []any
 }
 
 // Index declares one queryable field.
