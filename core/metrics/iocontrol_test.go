@@ -1159,3 +1159,54 @@ func ioControlKernelContext(t *testing.T) context.Context {
 	}
 	return ctx
 }
+
+func waitIOControlKernelState(
+	t *testing.T,
+	ctx context.Context,
+	description string,
+	condition func() bool,
+) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		require.NoError(t, ctx.Err(), "waiting for %s", description)
+		if condition() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for %s", description)
+}
+
+func runIOControlKernelCommand(
+	t *testing.T,
+	parent context.Context,
+	timeout time.Duration,
+	name string,
+	arguments ...string,
+) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, name, arguments...)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("run %s %s: %v: %s", name,
+			strings.Join(arguments, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func cleanupIOControlKernelCommand(name string, arguments ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(),
+		15*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, name, arguments...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w: %s", name,
+			strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
