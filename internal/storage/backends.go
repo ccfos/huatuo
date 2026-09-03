@@ -18,5 +18,6 @@ import (
 	// Register all built-in storage backends.
 	_ "huatuo-bamai/internal/storage/elasticsearch"
 	_ "huatuo-bamai/internal/storage/localfile"
+	_ "huatuo-bamai/internal/storage/pyroscope"
 	_ "huatuo-bamai/internal/storage/sqlite"
 )

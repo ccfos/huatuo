@@ -250,12 +250,12 @@ func (c *cpuSysTracing) saveCPUSysTrace(
 		return fmt.Errorf("decode system-wide perf output: %w", err)
 	}
 
-	if err := tracing.Save(&tracing.WriteRequest{
+	if err := saveAutotracingCPUEvent(&tracing.WriteRequest{
 		TracerName:    cpuSysTracerName,
 		TracerTime:    traceTime,
 		TracerData:    &tracerData,
 		TracerRunType: tracing.TracerRunTypeAutotracing,
-	}); err != nil {
+	}, c.perfDuration, tracerData.FlameData); err != nil {
 		return fmt.Errorf("save cpu system trace: %w", err)
 	}
 	return nil

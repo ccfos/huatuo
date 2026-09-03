@@ -245,11 +245,43 @@ idle timeout; 15–60 seconds is typical.
 
   Default: 10.
 
-  **Description**: Oldest files are automatically deleted once the limit is reached, controlling disk usage.
+**Description**: Oldest files are automatically deleted once the limit is reached, controlling disk usage.
+
+#### 6.3 Pyroscope Profile Storage
+
+```toml
+[Storage.Pyroscope]
+    Address = "https://profiles.example.com"
+    AppNamePrefix = "huatuo"
+    # Username = "profiles-user"
+    # Password = "change-me"
+    # BearerToken = "token"
+    TimeoutSeconds = 5
+```
+
+- **Address**: Pyroscope server base URL. An empty value disables this
+  backend. The backend appends `/ingest` and accepts only HTTP or HTTPS URLs.
+- **AppNamePrefix**: Prefix for Pyroscope application names. The default is
+  `huatuo`.
+- **Username / Password**: Optional Basic Auth credentials. Both fields must
+  be set together.
+- **BearerToken**: Optional bearer token. It cannot be combined with Basic
+  Auth.
+- **TimeoutSeconds**: Timeout for each ingest request. The default is 5
+  seconds.
+
+Pyroscope stores profiling data as pprof protobuf. Elasticsearch can remain
+enabled at the same time and continues to store its existing JSON profiling
+documents. Use HTTPS when credentials leave the local host, and restrict
+configuration-file permissions because authentication fields contain secrets.
 
 ### 7. Automatic Tracing
 
 The automatic tracing module is one of HUATUO’s intelligent features. It triggers specific performance tracing based on thresholds, reducing manual intervention.
+
+CPUIdle and CPUSys traces keep their existing JSON event and also write a CPU
+pprof profile with the same tracer ID. The profile uses `cpu:nanoseconds`
+samples at 99 Hz. Profile storage failures do not discard the JSON event.
 
 #### 7.1 CPUIdle Automatic Tracing — Sudden High CPU Usage in Containers
 

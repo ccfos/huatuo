@@ -15,8 +15,14 @@
 package autotracing
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
+
+	"huatuo-bamai/internal/profiler"
+	profctx "huatuo-bamai/internal/profiler/context"
+
+	ptree "github.com/grafana/pyroscope/pkg/og/storage/tree"
 )
 
 func TestParseProfilerEventTime(t *testing.T) {
@@ -73,10 +79,40 @@ func TestHandleProfilerEventNoStore(t *testing.T) {
 		TracerName:    "profiler",
 		TracerRunType: "autotracing",
 		TracerTime:    "2026-07-06 12:30:45.123 +0800",
-		TracerData:    map[string]any{"flamedata": map[string]any{"profile_type": "cpu"}},
+		TracerData:    &profctx.TracerData{},
 	}
 
 	if err := handleProfilerEvent(nil, ev); err != nil {
 		t.Fatalf("handleProfilerEvent() error = %v, want nil", err)
+	}
+}
+
+func TestProfilerEventPreservesPprofPayload(t *testing.T) {
+	source := &ProfilerEvent{
+		TracerID: "tracer-123",
+		TracerData: &profctx.TracerData{
+			FlameData: &profiler.ProfileData{
+				ProfileType: profiler.ProfileTypeCpuSample,
+				Profile: ptree.Profile{
+					TimeNanos:     1700000000000000000,
+					DurationNanos: int64(10 * time.Second),
+				},
+			},
+		},
+	}
+
+	raw, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+	var decoded ProfilerEvent
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	if decoded.TracerData == nil || decoded.TracerData.FlameData == nil {
+		t.Fatal("decoded profiler event is missing flamedata")
+	}
+	if got := decoded.TracerData.FlameData.Profile.TimeNanos; got != 1700000000000000000 {
+		t.Errorf("decoded TimeNanos = %d, want 1700000000000000000", got)
 	}
 }

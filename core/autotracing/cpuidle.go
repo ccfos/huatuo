@@ -416,13 +416,13 @@ func (c *cpuIdleTracing) saveCPUIdleTrace(
 		return fmt.Errorf("decode container perf output: %w", err)
 	}
 
-	if err := tracing.Save(&tracing.WriteRequest{
+	if err := saveAutotracingCPUEvent(&tracing.WriteRequest{
 		TracerName:    cpuIdleTracerName,
 		ContainerID:   state.containerID,
 		TracerTime:    traceTime,
 		TracerData:    &tracerData,
 		TracerRunType: tracing.TracerRunTypeAutotracing,
-	}); err != nil {
+	}, c.perfDuration, tracerData.FlameData); err != nil {
 		return fmt.Errorf("save container cpu trace: %w", err)
 	}
 
