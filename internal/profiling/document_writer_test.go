@@ -76,6 +76,15 @@ func TestDocumentWriterPersistsJobSessionSynchronously(t *testing.T) {
 			backend.asyncWrites,
 		)
 	}
+	if got := backend.lastRecord.Fields[types.DocumentFieldTracerID]; got != "profile-task-1" {
+		t.Fatalf("document tracer ID = %q, want %q", got, "profile-task-1")
+	}
+	if got := backend.lastRecord.Fields[types.DocumentFieldTracerName]; got != profilingresult.ToolName {
+		t.Fatalf("document tracer name = %q, want %q", got, profilingresult.ToolName)
+	}
+	if got := backend.lastRecord.Fields[types.DocumentFieldTracerType]; got != types.TracerRunTypeProfiling {
+		t.Fatalf("document tracer type = %q, want %q", got, types.TracerRunTypeProfiling)
+	}
 }
 
 func TestDocumentWriterPersistsNonJobSessionAsynchronously(t *testing.T) {
@@ -124,57 +133,8 @@ func TestDocumentWriterRejectsIncompleteProfile(t *testing.T) {
 	}
 }
 
-func TestDocumentWriterRejectsMismatchedTask(t *testing.T) {
-	writer, err := NewDocumentWriter(
-		&profilingstore.Store{},
-		document.New("test"),
-	)
-	if err != nil {
-		t.Fatalf("NewDocumentWriter() error = %v", err)
-	}
-	session := &toolstream.Session{
-		Session:    &transport.Session{TaskID: "another-task"},
-		IsExpected: true,
-	}
-
-	err = writer.Write(session, validResultEvent())
-	if err == nil {
-		t.Fatal("DocumentWriter.Write() error = nil")
-	}
-	if !strings.Contains(err.Error(), "does not match session task id") {
-		t.Fatalf("DocumentWriter.Write() error = %q", err)
-	}
-}
-
-func TestDocumentWriterRejectsNonProfilingResult(t *testing.T) {
-	writer, err := NewDocumentWriter(
-		&profilingstore.Store{},
-		document.New("test"),
-	)
-	if err != nil {
-		t.Fatalf("NewDocumentWriter() error = %v", err)
-	}
-	session := &toolstream.Session{
-		Session:    &transport.Session{TaskID: "profile-task-1"},
-		IsExpected: true,
-	}
-	event := validResultEvent()
-	event.TracerRunType = types.TracerRunTypeAutotracing
-
-	err = writer.Write(session, event)
-	if err == nil {
-		t.Fatal("DocumentWriter.Write() error = nil")
-	}
-	if !strings.Contains(err.Error(), "tracer type") {
-		t.Fatalf("DocumentWriter.Write() error = %q", err)
-	}
-}
-
 func validResultEvent() *profilingresult.Event {
 	return &profilingresult.Event{
-		TracerID:         "profile-task-1",
-		TracerName:       "oncpu",
-		TracerRunType:    types.TracerRunTypeProfiling,
 		StartedTimestamp: time.Date(2026, 8, 28, 2, 30, 0, 0, time.UTC),
 		ProfileData: &profilingstore.ProfileData{
 			ProfileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
@@ -186,17 +146,20 @@ func validResultEvent() *profilingresult.Event {
 type profileBackend struct {
 	asyncWrites int
 	syncWrites  int
+	lastRecord  driver.Record
 }
 
 func (*profileBackend) Init(context.Context, string, []driver.Index) error { return nil }
 
-func (b *profileBackend) Save(context.Context, driver.Record) error {
+func (b *profileBackend) Save(_ context.Context, record driver.Record) error {
 	b.asyncWrites++
+	b.lastRecord = record
 	return nil
 }
 
-func (b *profileBackend) SaveSync(context.Context, driver.Record) error {
+func (b *profileBackend) SaveSync(_ context.Context, record driver.Record) error {
 	b.syncWrites++
+	b.lastRecord = record
 	return nil
 }
 

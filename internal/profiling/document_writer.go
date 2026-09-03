@@ -18,7 +18,6 @@ package profiling
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"huatuo-bamai/internal/document"
 	profilingresult "huatuo-bamai/internal/profiling/result"
@@ -58,31 +57,12 @@ func (w *DocumentWriter) Write(
 	if session == nil || session.Session == nil {
 		return errors.New("profiling result session is required")
 	}
-	if event.TracerID == "" {
-		return errors.New("profiling result tracer id is required")
-	}
-	if event.TracerName == "" {
-		return errors.New("profiling result tracer name is required")
-	}
-	if session.TaskID != event.TracerID {
-		return fmt.Errorf(
-			"profiling result tracer id %q does not match session task id %q",
-			event.TracerID,
-			session.TaskID,
-		)
-	}
-	if event.TracerRunType != types.TracerRunTypeProfiling {
-		return fmt.Errorf(
-			"profiling result tracer type %q is not supported",
-			event.TracerRunType,
-		)
-	}
 	metadata, err := w.documents.Build(&document.Input{
-		TracerName:       event.TracerName,
-		TracerID:         event.TracerID,
+		TracerName:       profilingresult.ToolName,
+		TracerID:         session.TaskID,
 		ContainerID:      event.ContainerID,
 		StartedTimestamp: event.StartedTimestamp,
-		TracerRunType:    event.TracerRunType,
+		TracerRunType:    types.TracerRunTypeProfiling,
 	})
 	if err != nil {
 		return err

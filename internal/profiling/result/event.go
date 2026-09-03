@@ -26,10 +26,7 @@ const ToolName = "profiler"
 
 // Event is one profiling aggregation window sent by the profiler subprocess.
 type Event struct {
-	TracerID         string                      `json:"tracer_id,omitempty"`
 	ContainerID      string                      `json:"container_id,omitempty"`
-	TracerName       string                      `json:"tracer_name,omitempty"`
-	TracerRunType    string                      `json:"tracer_type,omitempty"`
 	StartedTimestamp time.Time                   `json:"started_timestamp"`
 	ProfileData      *profilingstore.ProfileData `json:"profile_data,omitempty"`
 }

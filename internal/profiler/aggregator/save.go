@@ -23,13 +23,10 @@ import (
 	"huatuo-bamai/internal/profiler"
 	profilingresult "huatuo-bamai/internal/profiling/result"
 	profilingstore "huatuo-bamai/pkg/profiling/store"
-	"huatuo-bamai/pkg/types"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	ptree "github.com/grafana/pyroscope/pkg/og/storage/tree"
 )
-
-const profilerTracerName = "profiler"
 
 func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
 	if p.pctx.ToolstreamClient == nil {
@@ -55,10 +52,7 @@ func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
 	}
 
 	ev := &profilingresult.Event{
-		TracerID:         p.tracerID,
 		ContainerID:      p.pctx.ContainerID,
-		TracerName:       profilerTracerName,
-		TracerRunType:    types.TracerRunTypeProfiling,
 		StartedTimestamp: time.Unix(0, profile.TimeNanos).UTC(),
 		ProfileData:      profileData,
 	}
