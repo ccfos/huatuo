@@ -53,7 +53,7 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	}
 	if err := tracing.ConfigureWriter(
 		tracingStore,
-		document.New(d.opts.Region, ""),
+		document.New(d.opts.Region),
 	); err != nil {
 		return nil, errors.Join(
 			err,

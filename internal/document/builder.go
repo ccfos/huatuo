@@ -44,14 +44,10 @@ type Builder struct {
 }
 
 // New binds Node-local metadata used by every generated document.
-func New(region, hostname string) *Builder {
-	if hostname == "" {
-		detected, err := os.Hostname()
-		if err == nil {
-			hostname = detected
-		} else {
-			hostname = defaultHostname
-		}
+func New(region string) *Builder {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = defaultHostname
 	}
 	return &Builder{region: region, hostname: hostname}
 }

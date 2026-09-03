@@ -23,7 +23,7 @@ import (
 
 func TestBuilderBuildsSharedMetadata(t *testing.T) {
 	startedTimestamp := time.Date(2026, 8, 28, 10, 30, 0, 0, time.FixedZone("CST", 8*60*60))
-	builder := New("cn-north", "node-1")
+	builder := &Builder{region: "cn-north", hostname: "node-1"}
 	document, err := builder.Build(&Input{
 		TracerName:       "profiler",
 		TracerID:         "job-1",

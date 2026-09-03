@@ -40,7 +40,7 @@ func TestNewDocumentWriterRequiresConcreteDependencies(t *testing.T) {
 func TestDocumentWriterRequiresSession(t *testing.T) {
 	writer, err := NewDocumentWriter(
 		&profilingstore.Store{},
-		document.New("test", "test-host"),
+		document.New("test"),
 	)
 	if err != nil {
 		t.Fatalf("NewDocumentWriter() error = %v", err)
@@ -127,7 +127,7 @@ func TestDocumentWriterRejectsIncompleteProfile(t *testing.T) {
 func TestDocumentWriterRejectsMismatchedTask(t *testing.T) {
 	writer, err := NewDocumentWriter(
 		&profilingstore.Store{},
-		document.New("test", "test-host"),
+		document.New("test"),
 	)
 	if err != nil {
 		t.Fatalf("NewDocumentWriter() error = %v", err)
@@ -149,7 +149,7 @@ func TestDocumentWriterRejectsMismatchedTask(t *testing.T) {
 func TestDocumentWriterRejectsNonProfilingResult(t *testing.T) {
 	writer, err := NewDocumentWriter(
 		&profilingstore.Store{},
-		document.New("test", "test-host"),
+		document.New("test"),
 	)
 	if err != nil {
 		t.Fatalf("NewDocumentWriter() error = %v", err)
@@ -233,7 +233,7 @@ func newPersistentDocumentWriter(t *testing.T) (*DocumentWriter, *profileBackend
 	}
 	writer, err := NewDocumentWriter(
 		store,
-		document.New("test", "test-host"),
+		document.New("test"),
 	)
 	if err != nil {
 		t.Fatalf("NewDocumentWriter() error = %v", err)
