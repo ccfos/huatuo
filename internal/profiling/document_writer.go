@@ -18,9 +18,9 @@ package profiling
 import (
 	"context"
 	"errors"
+	"time"
 
 	"huatuo-bamai/internal/document"
-	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/toolstream"
 	profilingstore "huatuo-bamai/pkg/profiling/store"
 	"huatuo-bamai/pkg/types"
@@ -49,27 +49,45 @@ func NewDocumentWriter(
 // Write persists Operation results synchronously and standalone results asynchronously.
 func (w *DocumentWriter) Write(
 	session *toolstream.Session,
-	event *profilingresult.Event,
+	window *types.ProfilingWindow,
 ) error {
-	if event == nil {
-		return errors.New("profiling result event is required")
+	if window == nil {
+		return errors.New("profiling window is required")
 	}
 	if session == nil || session.Session == nil {
 		return errors.New("profiling result session is required")
 	}
+	if session.TaskID == "" {
+		return errors.New("profiling result session task id is required")
+	}
+	if window.ProfileType == "" {
+		return errors.New("profiling window profile type is required")
+	}
+	if window.Profile == nil {
+		return errors.New("profiling window profile is required")
+	}
+	if window.Profile.TimeNanos == 0 {
+		return errors.New("profiling window profile start timestamp is required")
+	}
 	metadata, err := w.documents.Build(&document.Input{
-		TracerName:       profilingresult.ToolName,
+		TracerName:       types.ProfilingToolName,
 		TracerID:         session.TaskID,
-		ContainerID:      event.ContainerID,
-		StartedTimestamp: event.StartedTimestamp,
+		ContainerID:      window.ContainerID,
+		StartedTimestamp: time.Unix(0, window.Profile.TimeNanos).UTC(),
 		TracerRunType:    types.TracerRunTypeProfiling,
 	})
 	if err != nil {
 		return err
 	}
 	document := &profilingstore.Document{
-		Document:    metadata,
-		ProfileData: event.ProfileData,
+		Document: metadata,
+		ProfileData: &profilingstore.ProfileData{
+			ProfileType: window.ProfileType,
+			Profile:     window.Profile,
+			Metrics: &profilingstore.Metrics{
+				AggrOverflowCount: window.AggregationOverflowCount,
+			},
+		},
 	}
 	if session.IsExpected {
 		return w.store.SaveSync(context.Background(), document)

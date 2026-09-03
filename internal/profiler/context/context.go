@@ -29,6 +29,7 @@ import (
 	psignal "huatuo-bamai/internal/profiler/signal"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/profiling"
+	"huatuo-bamai/pkg/types"
 
 	"github.com/urfave/cli/v2"
 )
@@ -202,7 +203,7 @@ func initToolstreamClient(cliCtx *cli.Context, format output.OutputFormat) (*too
 
 	client, err := toolstream.NewClient(toolstream.ClientOptions{
 		SockPath: sockPath,
-		ToolName: "profiler",
+		ToolName: types.ProfilingToolName,
 		Version:  "1",
 		TaskID:   cliCtx.String("tracer-id"),
 	})

@@ -25,9 +25,9 @@ import (
 	"huatuo-bamai/internal/bpf"
 	"huatuo-bamai/internal/document"
 	"huatuo-bamai/internal/profiling"
-	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/tracing"
+	"huatuo-bamai/pkg/types"
 )
 
 const defaultHTTPDrainTimeout = 5 * time.Second
@@ -56,7 +56,7 @@ func startToolstream(d *Daemon) (func(context.Context) error, error) {
 		if err != nil {
 			return nil, err
 		}
-		toolstream.Register(srv, profilingresult.ToolName, documentWriter.Write)
+		toolstream.Register(srv, types.ProfilingToolName, documentWriter.Write)
 	}
 
 	if err := srv.Start(); err != nil {

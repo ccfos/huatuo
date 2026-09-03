@@ -12,21 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package result defines the profiling result transferred over Toolstream.
-package result
+package types
 
-import (
-	"time"
+import profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 
-	profilingstore "huatuo-bamai/pkg/profiling/store"
-)
+// ProfilingToolName identifies profiler Toolstream sessions.
+const ProfilingToolName = "profiler"
 
-// ToolName identifies profiling result streams.
-const ToolName = "profiler"
-
-// Event is one profiling aggregation window sent by the profiler subprocess.
-type Event struct {
-	ContainerID      string                      `json:"container_id,omitempty"`
-	StartedTimestamp time.Time                   `json:"started_timestamp"`
-	ProfileData      *profilingstore.ProfileData `json:"profile_data,omitempty"`
+// ProfilingWindow contains one aggregation window emitted by the profiler.
+type ProfilingWindow struct {
+	ContainerID              string             `json:"container_id,omitempty"`
+	ProfileType              string             `json:"profile_type"`
+	Profile                  *profilev1.Profile `json:"profile"`
+	AggregationOverflowCount int                `json:"aggr_overflow_count,omitempty"`
 }

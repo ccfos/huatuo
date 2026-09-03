@@ -17,12 +17,10 @@ package aggregator
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/profiler"
-	profilingresult "huatuo-bamai/internal/profiling/result"
-	profilingstore "huatuo-bamai/pkg/profiling/store"
+	"huatuo-bamai/pkg/types"
 
 	profilev1 "github.com/grafana/pyroscope/api/gen/proto/go/google/v1"
 	ptree "github.com/grafana/pyroscope/pkg/og/storage/tree"
@@ -45,19 +43,14 @@ func (p *Pipeline) saveProfilingDocument(_ context.Context, data any) error {
 	if profile.TimeNanos == 0 {
 		return fmt.Errorf("profile start timestamp is required")
 	}
-	profileData := &profilingstore.ProfileData{
-		ProfileType: result.ProfileType,
-		Profile:     profile,
-		Metrics:     newMetrics(int(p.overflowCount.Load())),
+	window := &types.ProfilingWindow{
+		ContainerID:              p.pctx.ContainerID,
+		ProfileType:              result.ProfileType,
+		Profile:                  profile,
+		AggregationOverflowCount: int(p.overflowCount.Load()),
 	}
 
-	ev := &profilingresult.Event{
-		ContainerID:      p.pctx.ContainerID,
-		StartedTimestamp: time.Unix(0, profile.TimeNanos).UTC(),
-		ProfileData:      profileData,
-	}
-
-	if err := p.pctx.ToolstreamClient.Send(ev); err != nil {
+	if err := p.pctx.ToolstreamClient.Send(window); err != nil {
 		log.WithField("tracer_id", p.tracerID).Errorf("failed to send profiling event: %v", err)
 		return err
 	}

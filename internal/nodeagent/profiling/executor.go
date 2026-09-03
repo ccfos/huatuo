@@ -21,8 +21,8 @@ import (
 
 	"huatuo-bamai/internal/nodeagent/command"
 	"huatuo-bamai/internal/nodeagent/operation"
-	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/toolstream"
+	"huatuo-bamai/pkg/types"
 )
 
 type executor struct {
@@ -47,11 +47,11 @@ func newExecutor(
 }
 
 func (e *executor) Start(ctx context.Context) error {
-	if err := e.stream.ExpectSession(profilingresult.ToolName, e.requestID); err != nil {
+	if err := e.stream.ExpectSession(types.ProfilingToolName, e.requestID); err != nil {
 		return fmt.Errorf("expect profiler result stream: %w", err)
 	}
 	if err := e.process.Start(ctx); err != nil {
-		e.stream.CancelSession(profilingresult.ToolName, e.requestID)
+		e.stream.CancelSession(types.ProfilingToolName, e.requestID)
 		return e.withOutput("start profiler", err)
 	}
 	return nil
@@ -81,7 +81,7 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) er
 	}
 	switch mode {
 	case operation.FinalizePublish:
-		if err := e.stream.AwaitSession(ctx, profilingresult.ToolName, e.requestID); err != nil {
+		if err := e.stream.AwaitSession(ctx, types.ProfilingToolName, e.requestID); err != nil {
 			return fmt.Errorf("finalize profiler result stream: %w", err)
 		}
 		if err := e.publisher.Publish(ctx, e.requestID); err != nil {
@@ -89,7 +89,7 @@ func (e *executor) Finalize(ctx context.Context, mode operation.FinalizeMode) er
 		}
 		return nil
 	case operation.FinalizeDiscard:
-		e.stream.CancelSession(profilingresult.ToolName, e.requestID)
+		e.stream.CancelSession(types.ProfilingToolName, e.requestID)
 		return nil
 	default:
 		return fmt.Errorf("finalize profiler: unsupported mode %d", mode)

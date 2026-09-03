@@ -16,12 +16,12 @@ package profiling
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"huatuo-bamai/internal/document"
-	profilingresult "huatuo-bamai/internal/profiling/result"
 	"huatuo-bamai/internal/storage/driver"
 	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/internal/toolstream/transport"
@@ -45,16 +45,21 @@ func TestDocumentWriterRequiresSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDocumentWriter() error = %v", err)
 	}
-	event := validResultEvent()
+	window := validProfilingWindow()
 
-	if err := writer.Write(nil, event); err == nil {
+	if err := writer.Write(nil, window); err == nil {
 		t.Fatal("DocumentWriter.Write() error = nil")
 	} else if !strings.Contains(err.Error(), "session is required") {
 		t.Fatalf("DocumentWriter.Write() error = %q", err)
 	}
-	if err := writer.Write(&toolstream.Session{}, event); err == nil {
+	if err := writer.Write(&toolstream.Session{}, window); err == nil {
 		t.Fatal("DocumentWriter.Write() error = nil")
 	} else if !strings.Contains(err.Error(), "session is required") {
+		t.Fatalf("DocumentWriter.Write() error = %q", err)
+	}
+	if err := writer.Write(&toolstream.Session{Session: &transport.Session{}}, window); err == nil {
+		t.Fatal("DocumentWriter.Write() error = nil")
+	} else if !strings.Contains(err.Error(), "session task id is required") {
 		t.Fatalf("DocumentWriter.Write() error = %q", err)
 	}
 }
@@ -66,7 +71,7 @@ func TestDocumentWriterPersistsJobSessionSynchronously(t *testing.T) {
 		IsExpected: true,
 	}
 
-	if err := writer.Write(session, validResultEvent()); err != nil {
+	if err := writer.Write(session, validProfilingWindow()); err != nil {
 		t.Fatalf("DocumentWriter.Write() error = %v", err)
 	}
 	if backend.syncWrites != 1 || backend.asyncWrites != 0 {
@@ -79,11 +84,21 @@ func TestDocumentWriterPersistsJobSessionSynchronously(t *testing.T) {
 	if got := backend.lastRecord.Fields[types.DocumentFieldTracerID]; got != "profile-task-1" {
 		t.Fatalf("document tracer ID = %q, want %q", got, "profile-task-1")
 	}
-	if got := backend.lastRecord.Fields[types.DocumentFieldTracerName]; got != profilingresult.ToolName {
-		t.Fatalf("document tracer name = %q, want %q", got, profilingresult.ToolName)
+	if got := backend.lastRecord.Fields[types.DocumentFieldTracerName]; got != types.ProfilingToolName {
+		t.Fatalf("document tracer name = %q, want %q", got, types.ProfilingToolName)
 	}
 	if got := backend.lastRecord.Fields[types.DocumentFieldTracerType]; got != types.TracerRunTypeProfiling {
 		t.Fatalf("document tracer type = %q, want %q", got, types.TracerRunTypeProfiling)
+	}
+	var document profilingstore.Document
+	if err := json.Unmarshal(backend.lastRecord.Data, &document); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if got := document.ProfileData.ProfileType; got != "process_cpu:cpu:nanoseconds:cpu:nanoseconds" {
+		t.Fatalf("document profile type = %q", got)
+	}
+	if got := document.ProfileData.Metrics.AggrOverflowCount; got != 7 {
+		t.Fatalf("document aggregation overflow count = %d, want 7", got)
 	}
 }
 
@@ -94,9 +109,9 @@ func TestDocumentWriterPersistsNonJobSessionAsynchronously(t *testing.T) {
 	}
 
 	for i := range 2 {
-		event := validResultEvent()
-		event.StartedTimestamp = event.StartedTimestamp.Add(time.Duration(i) * time.Minute)
-		if err := writer.Write(session, event); err != nil {
+		window := validProfilingWindow()
+		window.Profile.TimeNanos += int64(time.Duration(i) * time.Minute)
+		if err := writer.Write(session, window); err != nil {
 			t.Fatalf("DocumentWriter.Write() error = %v", err)
 		}
 	}
@@ -109,37 +124,69 @@ func TestDocumentWriterPersistsNonJobSessionAsynchronously(t *testing.T) {
 	}
 }
 
-func TestDocumentWriterRejectsIncompleteProfile(t *testing.T) {
-	writer, backend := newPersistentDocumentWriter(t)
-	session := &toolstream.Session{
-		Session: &transport.Session{TaskID: "profile-task-1"},
+func TestDocumentWriterRejectsIncompleteWindow(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(*types.ProfilingWindow)
+		want   string
+	}{
+		{
+			name: "missing profile type",
+			modify: func(window *types.ProfilingWindow) {
+				window.ProfileType = ""
+			},
+			want: "profile type is required",
+		},
+		{
+			name: "missing profile",
+			modify: func(window *types.ProfilingWindow) {
+				window.Profile = nil
+			},
+			want: "profile is required",
+		},
+		{
+			name: "missing profile start timestamp",
+			modify: func(window *types.ProfilingWindow) {
+				window.Profile.TimeNanos = 0
+			},
+			want: "profile start timestamp is required",
+		},
 	}
-	event := validResultEvent()
-	event.ProfileData = nil
 
-	err := writer.Write(session, event)
-	if err == nil {
-		t.Fatal("DocumentWriter.Write() error = nil")
-	}
-	if !strings.Contains(err.Error(), "profile data is required") {
-		t.Fatalf("DocumentWriter.Write() error = %q", err)
-	}
-	if backend.syncWrites != 0 || backend.asyncWrites != 0 {
-		t.Fatalf(
-			"profile writes = (sync=%d, async=%d), want (0, 0)",
-			backend.syncWrites,
-			backend.asyncWrites,
-		)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			writer, backend := newPersistentDocumentWriter(t)
+			session := &toolstream.Session{
+				Session: &transport.Session{TaskID: "profile-task-1"},
+			}
+			window := validProfilingWindow()
+			test.modify(window)
+
+			err := writer.Write(session, window)
+			if err == nil {
+				t.Fatal("DocumentWriter.Write() error = nil")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("DocumentWriter.Write() error = %q, want containing %q", err, test.want)
+			}
+			if backend.syncWrites != 0 || backend.asyncWrites != 0 {
+				t.Fatalf(
+					"profile writes = (sync=%d, async=%d), want (0, 0)",
+					backend.syncWrites,
+					backend.asyncWrites,
+				)
+			}
+		})
 	}
 }
 
-func validResultEvent() *profilingresult.Event {
-	return &profilingresult.Event{
-		StartedTimestamp: time.Date(2026, 8, 28, 2, 30, 0, 0, time.UTC),
-		ProfileData: &profilingstore.ProfileData{
-			ProfileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-			Profile:     &profilev1.Profile{},
+func validProfilingWindow() *types.ProfilingWindow {
+	return &types.ProfilingWindow{
+		ProfileType: "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+		Profile: &profilev1.Profile{
+			TimeNanos: time.Date(2026, 8, 28, 2, 30, 0, 0, time.UTC).UnixNano(),
 		},
+		AggregationOverflowCount: 7,
 	}
 }
 
