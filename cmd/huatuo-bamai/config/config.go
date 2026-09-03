@@ -57,10 +57,21 @@ type LocalFileConfig struct {
 	MaxRotatedFiles int    `default:"10"`
 }
 
+// PyroscopeConfig controls pprof profile storage in Pyroscope.
+type PyroscopeConfig struct {
+	Address        string
+	AppNamePrefix  string
+	Username       string
+	Password       string
+	BearerToken    string
+	TimeoutSeconds int `default:"5"`
+}
+
 // StorageConfig controls tracing data storage.
 type StorageConfig struct {
 	Elasticsearch internalconfig.ElasticsearchConfig
 	LocalFile     LocalFileConfig
+	Pyroscope     PyroscopeConfig
 }
 
 // TasksConfig controls locally running tracing tasks.

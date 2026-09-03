@@ -72,9 +72,9 @@ HUATUO 已进入 [CNCF Landscape](https://landscape.cncf.io/?item=observability-
 
 - **快速搭建**
 
-  使用 Docker Compose 一键启动 Elasticsearch、Prometheus、Grafana 和 huatuo 全栈服务：
+  使用 Docker Compose 一键启动 Elasticsearch、Prometheus、Pyroscope、Grafana 和 huatuo 全栈服务：
     ```bash
-    $ docker compose --project-directory ./build/docker up
+    $ COMPOSE_PROFILES=full docker compose --project-directory ./build/docker up
     ```
   服务启动后，通过浏览器访问 http://localhost:3000 即可查看监控大盘。
 

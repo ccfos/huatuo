@@ -63,6 +63,12 @@ Path = "records"
 RotationSizeMiB = 64
 MaxRotatedFiles = 4
 
+[Storage.Pyroscope]
+Address = "https://profiles.example.com"
+AppNamePrefix = "production.huatuo"
+BearerToken = "token-1"
+TimeoutSeconds = 8
+
 [AutoTracing]
 IssuesList = [["dload", "jbd2"]]
 
@@ -121,6 +127,24 @@ ExcludedOnContainer = "writeback"
 		MaxRotatedFiles: 4,
 	}) {
 		t.Errorf("Storage.LocalFile = %+v, want overrides", Get().Storage.LocalFile)
+	}
+	if Get().Storage.Pyroscope.Address != "https://profiles.example.com" {
+		t.Errorf("unexpected Pyroscope address: %q", Get().Storage.Pyroscope.Address)
+	}
+	if Get().Storage.Pyroscope.AppNamePrefix != "production.huatuo" {
+		t.Errorf(
+			"unexpected Pyroscope app name prefix: %q",
+			Get().Storage.Pyroscope.AppNamePrefix,
+		)
+	}
+	if Get().Storage.Pyroscope.BearerToken != "token-1" {
+		t.Errorf("unexpected Pyroscope bearer token")
+	}
+	if Get().Storage.Pyroscope.TimeoutSeconds != 8 {
+		t.Errorf(
+			"unexpected Pyroscope timeout: %d",
+			Get().Storage.Pyroscope.TimeoutSeconds,
+		)
 	}
 	if len(Get().AutoTracing.IssuesList) != 1 {
 		t.Errorf("unexpected AutoTracing.IssuesList length: %d", len(Get().AutoTracing.IssuesList))

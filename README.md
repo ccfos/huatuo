@@ -70,9 +70,9 @@ HUATUO is now listed in the [CNCF Landscape](https://landscape.cncf.io/?item=obs
 
 - **Quick Setup**
 
-  To launch the full stack (Elasticsearch, Prometheus, Grafana, and huatuo) using Docker Compose:
+  To launch the full stack (Elasticsearch, Prometheus, Pyroscope, Grafana, and huatuo) using Docker Compose:
 
-        $ docker compose --project-directory ./build/docker up
+        $ COMPOSE_PROFILES=full docker compose --project-directory ./build/docker up
 
   Once running, access the monitoring dashboard at http://localhost:3000.
 

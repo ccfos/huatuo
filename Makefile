@@ -62,6 +62,7 @@ endif
 IMAGE := $(IMAGE_REPO):$(IMAGE_TAG)
 
 COMPOSE_DEV := docker compose \
+	--profile full \
 	--project-directory $(ROOT_DIR)/build/docker \
 	-f $(ROOT_DIR)/build/docker/docker-compose.yml \
 	-f $(ROOT_DIR)/build/docker/docker-compose.dev.yml
