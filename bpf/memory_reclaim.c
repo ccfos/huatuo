@@ -17,7 +17,7 @@ struct mem_cgroup_metric {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, unsigned long);
+	__type(key, struct container_cgroup_key);
 	__type(value, struct mem_cgroup_metric);
 	__uint(max_entries, 10240);
 } memory_cgroup_allocpages_stall SEC(".maps");
@@ -25,7 +25,7 @@ struct {
 SEC("tracepoint/vmscan/mm_vmscan_memcg_reclaim_begin")
 int tracepoint_vmscan_mm_vmscan_memcg_reclaim_begin(struct pt_regs *ctx)
 {
-	struct cgroup_subsys_state *css;
+	struct container_cgroup_key key;
 	struct mem_cgroup_metric *valp;
 	struct task_struct *task;
 
@@ -33,13 +33,16 @@ int tracepoint_vmscan_mm_vmscan_memcg_reclaim_begin(struct pt_regs *ctx)
 	if (BPF_CORE_READ(task, flags) & PF_KSWAPD)
 		return 0;
 
-	css = (struct cgroup_subsys_state *)current_task_memory_css_addr();
-	valp = bpf_map_lookup_elem(&memory_cgroup_allocpages_stall, &css);
+	key = memory_cgroup_key_for_task(task);
+	if (!container_cgroup_key_valid(&key))
+		return 0;
+
+	valp = bpf_map_lookup_elem(&memory_cgroup_allocpages_stall, &key);
 	if (!valp) {
 		struct mem_cgroup_metric new = {
 			.directstall_count = 1,
 		};
-		bpf_map_update_elem(&memory_cgroup_allocpages_stall, &css, &new,
+		bpf_map_update_elem(&memory_cgroup_allocpages_stall, &key, &new,
 				    COMPAT_BPF_ANY);
 		return 0;
 	}
@@ -51,7 +54,21 @@ int tracepoint_vmscan_mm_vmscan_memcg_reclaim_begin(struct pt_regs *ctx)
 SEC("kprobe/mem_cgroup_css_released")
 int kprobe_mem_cgroup_css_released(struct pt_regs *ctx)
 {
-	u64 css = PT_REGS_PARM1(ctx);
-	bpf_map_delete_elem(&memory_cgroup_allocpages_stall, &css);
+	struct container_cgroup_key key = {
+		.css = PT_REGS_PARM1(ctx),
+	};
+
+	bpf_map_delete_elem(&memory_cgroup_allocpages_stall, &key);
+	return 0;
+}
+
+SEC("raw_tracepoint/cgroup_rmdir")
+int cgroup_rmdir_entry(struct bpf_raw_tracepoint_args *ctx)
+{
+	struct cgroup *cgroup = (void *)ctx->args[0];
+	struct container_cgroup_key key =
+		container_cgroup_key_for_default_cgroup(cgroup);
+
+	bpf_map_delete_elem(&memory_cgroup_allocpages_stall, &key);
 	return 0;
 }

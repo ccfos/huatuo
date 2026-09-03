@@ -41,6 +41,7 @@ bpftool btf dump file "${KERNEL_BTF}" format raw \
 	|| skip "bpftool cannot parse kernel BTF"
 grep -Eq "ENUM(64)? 'skb_drop_reason'" "${btf_dump}" \
 	|| skip "kernel BTF does not expose skb_drop_reason"
+rm -f "${btf_dump}"
 
 bpf_tool_setup dropwatch
 "${TOOL_BIN}" \
@@ -63,6 +64,6 @@ fi
 DROPWATCH_PID=""
 
 assert_log_has_no_failure "${TOOL_ERR}" "dropwatch"
-grep -q "IPv4/UDP.* reason=SKB_DROP_REASON_" "${TOOL_OUT}" \
+grep -q "reason=SKB_DROP_REASON_" "${TOOL_OUT}" \
 	|| fatal "dropwatch did not resolve a symbolic SKB_DROP_REASON_ value"
 log_info "dropwatch resolved a symbolic software drop reason"

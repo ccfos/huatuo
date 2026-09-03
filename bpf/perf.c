@@ -11,6 +11,7 @@
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 volatile const u64 css = 0;
+volatile const u64 cgroup_id = 0;
 volatile const u64 pid = 0;
 
 #define PERF_STACK_DEPTH 20
@@ -34,9 +35,15 @@ struct {
 SEC("perf_event/software/cpu_clock")
 int perf_event_sw_cpu_clock(struct pt_regs *ctx)
 {
-	u64 cpu_css = current_task_cpu_css_addr();
-	if (css != 0 && css != cpu_css)
-		return 0;
+	struct task_struct *curr = (struct task_struct *)bpf_get_current_task();
+	struct container_cgroup_key cgroup_key = {};
+
+	if (css != 0 || cgroup_id != 0) {
+		cgroup_key = cpu_cgroup_key_for_task(curr);
+		if (!((cgroup_id && cgroup_key.cgroup_id == cgroup_id) ||
+		      (css && cgroup_key.css == css)))
+			return 0;
+	}
 
 	u64 tgid = bpf_get_current_pid_tgid() >> 32;
 	if (pid != 0 && pid != tgid)
