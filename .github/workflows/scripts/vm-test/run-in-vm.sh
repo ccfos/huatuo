@@ -120,9 +120,9 @@ configure_proxy() {
 
 install_test_dependencies() {
 	local os_id os_like package_manager package
-	local -a deb_packages=(curl gdb mdadm build-essential libelf-dev kmod "linux-headers-$(uname -r)")
+	local -a deb_packages=(curl gdb fio mdadm build-essential libelf-dev kmod "linux-headers-$(uname -r)")
 	local -a rpm_packages=(
-		curl gdb mdadm gcc make elfutils-libelf-devel kmod kernel-headers
+		curl gdb fio mdadm gcc make elfutils-libelf-devel kmod kernel-headers
 		"kernel-devel-$(uname -r)"
 	)
 	local -a missing_packages=()
