@@ -19,7 +19,7 @@ HUATUO uses eBPF technology to observe anomalous events in real time across core
 
 Compared to traditional kernel log (dmesg/syslog) collection, eBPF-based event observation reduces the risk of data loss from log buffer overflow; it can capture transient anomalies that never appear in kernel logs (such as excessive scheduler tick intervals); and it provides container-level event correlation for precise root-cause analysis in cloud-native environments.
 
-Twelve event types are continuously observed, covering CPU scheduling health (sched_tick, softlockup, hungtask), memory pressure (oom, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
+Thirteen event types are continuously observed, covering CPU scheduling health (sched_tick, softlockup, hungtask), memory pressure (oom, memory_reclaim_events), the network protocol stack (dropwatch, tcp_retransmit, net_rx_latency, net_tx_latency, netdev_events, netdev_bonding_lacp, netdev_txqueue_timeout), and hardware reliability (ras).
 
 ## 🎯 Use Cases
 
@@ -27,7 +27,7 @@ Twelve event types are continuously observed, covering CPU scheduling health (sc
 
 **AI Training Cluster Hardware Fault Detection**: On GPU training servers, the ras event continuously collects MCE (Machine Check Exception), EDAC memory controller errors, and PCIe AER (Advanced Error Reporting) errors, classifying them by severity (Corrected / UncorrectedRecoverable / UncorrectedFatal). This enables early detection of hardware aging or single-point failures before training jobs are interrupted, reducing training task losses caused by hardware faults.
 
-**Network Performance Jitter Analysis**: dropwatch observes packet drops in the kernel network stack, tcp_retransmit observes TCP retransmission activity, and net_rx_latency detects end-to-end receive-path latency for individual packets from the network card driver to user space. Separate thresholds are configured per stage (driver to kernel: 5ms, kernel to TCP: 10ms, TCP to user space: 115ms), precisely identifying which network layer causes business timeouts.
+**Network Performance Jitter Analysis**: dropwatch observes packet drops in the kernel network stack, tcp_retransmit observes TCP retransmission activity, net_rx_latency detects receive-path latency, and net_tx_latency detects send-path latency across TCP, qdisc, device, and NIC stages. Separate thresholds identify which network layer causes business timeouts.
 
 **Host Scheduling Health Observation**: The sched_tick (scheduler tick interval, default threshold 10ms), softlockup (CPU unable to schedule, ~1 second), and hungtask (D-state process hang) events jointly cover anomalies along the CPU scheduling path. When system stalls or response timeouts occur, kernel call stacks and other diagnostic data are automatically preserved, supporting offline analysis after the fault clears.
 
@@ -46,6 +46,11 @@ All events provide default values and are operational without any configuration.
 | `net_rx_latency.driver2userspace` | `115` (ms) | Latency threshold from NIC driver to user-space copy (`skb_copy_datagram_iovec`) |
 | `net_rx_latency.excluded_host_netnamespace` | `true` | Whether to exclude the host network namespace (observe containers only by default) |
 | `net_rx_latency.excluded_container_qos` | `[]` | List of container QoS levels to exclude |
+| `net_tx_latency.sendmsg2qdisc` | `50` (ms) | Latency threshold from `tcp_sendmsg` to `net_dev_queue` |
+| `net_tx_latency.qdisc2dev_xmit` | `10` (ms) | Qdisc queueing threshold from `net_dev_queue` to `net_dev_start_xmit` |
+| `net_tx_latency.dev_xmit2nic` | `1` (ms) | Device driver threshold from `net_dev_start_xmit` to `net_dev_xmit` |
+| `net_tx_latency.excluded_host_netnamespace` | `true` | Whether to exclude the host network namespace |
+| `net_tx_latency.excluded_container_qos` | `[]` | List of container QoS levels to exclude |
 | `dropwatch.filter` | `tcp` | tcpdump-style packet filter applied before dropwatch events are emitted |
 | `dropwatch.max_events_per_second` | `100` | Maximum dropwatch events emitted per second; `0` disables rate limiting |
 | `dropwatch.exclude_containers` | `[]` | Reserved field; the current dropwatch event path does not apply it |
@@ -66,6 +71,7 @@ All events provide default values and are operational without any configuration.
 | `dropwatch` | tracepoint | Kernel network stack packet drop | Business jitter caused by protocol stack drops |
 | `tcp_retransmit` | tracepoint; optional kprobe for TLP | TCP retransmission or Tail Loss Probe | TCP loss, reordering, congestion, and latency diagnosis |
 | `net_rx_latency` | kprobe | Protocol stack receive latency exceeds per-stage threshold | Business timeouts caused by receive latency |
+| `net_tx_latency` | kprobe and tracepoint | Protocol stack transmit latency exceeds per-stage threshold | Business timeouts caused by qdisc or NIC transmit latency |
 | `netdev_events` | netlink | NIC link state change | Physical NIC link failures |
 | `netdev_bonding_lacp` | kprobe | LACP protocol state change (IEEE 802.3ad mode only) | Fault boundary between physical machines and switches |
 | `netdev_txqueue_timeout` | kprobe | NIC transmit queue timeout | NIC transmit queue hardware failure |

@@ -75,6 +75,12 @@ IntervalThreshold = 20000000
 [EventTracing.NetRxLatency]
 ExcludedContainerQos = ["bestEffort"]
 
+[EventTracing.NetTxLatency]
+Sendmsg2Qdisc = 75
+Qdisc2DevXmit = 15
+DevXmit2Nic = 2
+ExcludedContainerQos = ["burstable"]
+
 [EventTracing.TCPRetransmit]
 Filter = "dst port 443"
 EnableTLP = true
@@ -148,6 +154,17 @@ ExcludedOnContainer = "writeback"
 	}
 	if len(Get().EventTracing.NetRxLatency.ExcludedContainerQos) != 1 {
 		t.Errorf("unexpected ExcludedContainerQos length: %d", len(Get().EventTracing.NetRxLatency.ExcludedContainerQos))
+	}
+	if Get().EventTracing.NetTxLatency.Sendmsg2Qdisc != 75 ||
+		Get().EventTracing.NetTxLatency.Qdisc2DevXmit != 15 ||
+		Get().EventTracing.NetTxLatency.DevXmit2Nic != 2 {
+		t.Errorf("unexpected NetTxLatency thresholds: %+v", Get().EventTracing.NetTxLatency)
+	}
+	if len(Get().EventTracing.NetTxLatency.ExcludedContainerQos) != 1 {
+		t.Errorf(
+			"unexpected NetTxLatency.ExcludedContainerQos length: %d",
+			len(Get().EventTracing.NetTxLatency.ExcludedContainerQos),
+		)
 	}
 	if Get().EventTracing.TCPRetransmit.Filter != "dst port 443" {
 		t.Errorf("unexpected TCPRetransmit.Filter: %q", Get().EventTracing.TCPRetransmit.Filter)

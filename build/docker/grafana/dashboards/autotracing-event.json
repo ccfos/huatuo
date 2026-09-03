@@ -369,6 +369,33 @@
           "timeField": "uploaded_time"
         },
         {
+          "alias": "net_tx_latency",
+          "bucketAggs": [
+            {
+              "field": "uploaded_time",
+              "id": "2",
+              "settings": {
+                "interval": "auto"
+              },
+              "type": "date_histogram"
+            }
+          ],
+          "datasource": {
+            "type": "elasticsearch",
+            "uid": "huatuo-bamai-es"
+          },
+          "hide": false,
+          "metrics": [
+            {
+              "id": "1",
+              "type": "count"
+            }
+          ],
+          "query": "tracer_name:net_tx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
+          "refId": "Q",
+          "timeField": "uploaded_time"
+        },
+        {
           "alias": "netdev down",
           "bucketAggs": [
             {
@@ -672,7 +699,7 @@
               "type": "count"
             }
           ],
-          "query": "region.keyword:$region AND hostname.keyword:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR tracer_name:oom \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch \nOR tracer_name:net_rx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:sched_tick \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
+          "query": "region.keyword:$region AND hostname.keyword:$hostname \nAND (\ntracer_name:cpusys \nOR tracer_name:cpuidle \nOR tracer_name:dload \nOR tracer_name:waitrate \nOR tracer_name:memory_reclaim_events \nOR tracer_name:oom \nOR tracer_name:memburst \nOR tracer_name:iotracing \nOR tracer_name:dropwatch \nOR tracer_name:net_rx_latency \nOR tracer_name:net_tx_latency \nOR (tracer_name:netdev AND tracer_data.linkstatus:*down*) \nOR tracer_name:netdev_bonding_lacp \nOR tracer_name:sched_tick \nOR tracer_name:softlockup \nOR tracer_name:hungtask \nOR tracer_name:ras\nOR tracer_name:netdev_txqueue_timeout\n)",
           "refId": "A",
           "timeField": "uploaded_time"
         }
@@ -2006,7 +2033,7 @@
         "type": "elasticsearch",
         "uid": "huatuo-bamai-es"
       },
-      "description": "",
+      "description": "Detects latency across the TCP transmit path (sendmsg -> qdisc -> device -> NIC).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2073,12 +2100,12 @@
               "type": "count"
             }
           ],
-          "query": "tracer_name:null AND region.keyword:$region AND hostname.keyword:$hostname",
+          "query": "tracer_name:net_tx_latency AND region.keyword:$region AND hostname.keyword:$hostname",
           "refId": "A",
           "timeField": "uploaded_time"
         }
       ],
-      "title": "null",
+      "title": "net tx latency",
       "transformations": [
         {
           "id": "organize",

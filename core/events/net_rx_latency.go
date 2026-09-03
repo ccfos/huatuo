@@ -153,10 +153,13 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 			}
 
 			eventConfig := configSnapshot()
-			containerID, ok := filterByConfigAndResolveContainerID(
-				&pd,
+			containerID, ok := filterNetLatencyEvent(
+				pd.NetNamespaceInum,
+				pd.NetNamespaceCookie,
 				hostNetNamespaceInum,
-				eventConfig,
+				eventConfig.NetRxLatency.ExcludedHostNetnamespace,
+				eventConfig.NetRxLatency.ExcludedContainerQos,
+				"net_rx_latency",
 			)
 			if !ok {
 				continue
@@ -217,8 +220,8 @@ func (c *netRecvLatTracing) Start(ctx context.Context) error {
 	}
 }
 
-func isQosExcluded(container *pod.Container, cfg *Config) bool {
-	for _, level := range cfg.NetRxLatency.ExcludedContainerQos {
+func isQosExcluded(container *pod.Container, excludedLevels []string) bool {
+	for _, level := range excludedLevels {
 		if strings.EqualFold(container.Qos.String(), level) {
 			return true
 		}
@@ -226,23 +229,26 @@ func isQosExcluded(container *pod.Container, cfg *Config) bool {
 	return false
 }
 
-func filterByConfigAndResolveContainerID(
-	pd *abi.NetRXLatencyEvent,
+func filterNetLatencyEvent(
+	netNamespaceInum uint32,
+	netNamespaceCookie uint64,
 	hostNetNamespaceInum uint64,
-	cfg *Config,
+	excludedHostNetnamespace bool,
+	excludedContainerQos []string,
+	tracerName string,
 ) (string, bool) {
-	inum := uint64(pd.NetNamespaceInum)
+	inum := uint64(netNamespaceInum)
 
-	if cfg.NetRxLatency.ExcludedHostNetnamespace && inum == hostNetNamespaceInum {
+	if excludedHostNetnamespace && inum == hostNetNamespaceInum {
 		return "", false
 	}
 
 	var container *pod.Container
 
-	if pd.NetNamespaceCookie != 0 {
-		ct, err := pod.ContainerByNetNamespaceCookie(pd.NetNamespaceCookie)
+	if netNamespaceCookie != 0 {
+		ct, err := pod.ContainerByNetNamespaceCookie(netNamespaceCookie)
 		if err != nil {
-			log.Debugf("net_rx_latency: netns_cookie lookup %d failed: %v", pd.NetNamespaceCookie, err)
+			log.Debugf("%s: netns_cookie lookup %d failed: %v", tracerName, netNamespaceCookie, err)
 		} else if ct != nil {
 			container = ct
 		}
@@ -251,7 +257,7 @@ func filterByConfigAndResolveContainerID(
 	if container == nil {
 		ct, err := pod.ContainerByNetNamespaceInum(inum)
 		if err != nil {
-			log.Warnf("net_rx_latency: get container by netns inum %d failed: %v", inum, err)
+			log.Warnf("%s: get container by netns inum %d failed: %v", tracerName, inum, err)
 			return "", true
 		}
 		if ct == nil {
@@ -260,7 +266,7 @@ func filterByConfigAndResolveContainerID(
 		container = ct
 	}
 
-	if isQosExcluded(container, cfg) {
+	if isQosExcluded(container, excludedContainerQos) {
 		return container.ID, false
 	}
 	return container.ID, true
