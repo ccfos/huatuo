@@ -51,7 +51,7 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := tracing.ConfigureWriter(
+	if err := tracing.EnableDocumentWriter(
 		tracingStore,
 		document.New(d.opts.Region),
 	); err != nil {
@@ -64,10 +64,8 @@ func setupStorage(d *Daemon) (func(context.Context) error, error) {
 	d.profileStore = profileStore
 	d.publications = publicationStore
 	return func(ctx context.Context) error {
-		return errors.Join(
-			tracing.ConfigureWriter(nil, nil),
-			closeStores(ctx, tracingStore, profileStore, publicationStore),
-		)
+		tracing.DisableDocumentWriter()
+		return closeStores(ctx, tracingStore, profileStore, publicationStore)
 	}, nil
 }
 

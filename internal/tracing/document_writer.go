@@ -44,17 +44,21 @@ type documentWriter struct {
 
 var configuredWriter atomic.Pointer[documentWriter]
 
-// ConfigureWriter installs the process-wide writer used by registered tracers.
-func ConfigureWriter(store *tracingstore.Store, documents *document.Builder) error {
+// EnableDocumentWriter installs the process-wide writer used by registered tracers.
+func EnableDocumentWriter(store *tracingstore.Store, documents *document.Builder) error {
 	if store == nil {
-		configuredWriter.Store(nil)
-		return nil
+		return errors.New("enable tracing document writer: store is required")
 	}
 	if documents == nil {
-		return errors.New("configure tracing writer: document builder is required")
+		return errors.New("enable tracing document writer: document builder is required")
 	}
 	configuredWriter.Store(&documentWriter{store: store, documents: documents})
 	return nil
+}
+
+// DisableDocumentWriter disables tracing document persistence.
+func DisableDocumentWriter() {
+	configuredWriter.Store(nil)
 }
 
 // Save enriches and publishes tracing data when the process-wide writer is enabled.
