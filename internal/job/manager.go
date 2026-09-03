@@ -172,30 +172,57 @@ func (m *Manager) recoverJobs(ctx context.Context) error {
 		return err
 	}
 
+	prepared, hostCounts, err := m.prepareRecoveredJobs(jobs)
+	if err != nil {
+		return err
+	}
+
 	m.mu.Lock()
-	for _, recoveredJob := range jobs {
-		policy, policyErr := m.policyFor(recoveredJob.Type)
-		if policyErr != nil {
-			m.mu.Unlock()
-			return fmt.Errorf("job %s: %w", recoveredJob.ID, policyErr)
+	for _, recoveredJob := range prepared {
+		m.jobs[recoveredJob.ID] = recoveredJob
+	}
+	for hostKey, count := range hostCounts {
+		m.jobsByHost[hostKey] += count
+	}
+	m.monitorWG.Add(len(prepared))
+	m.recoveredJobs.Add(uint64(len(prepared)))
+	m.mu.Unlock()
+
+	for _, recoveredJob := range prepared {
+		go func(jobToMonitor *Job) {
+			defer m.monitorWG.Done()
+			m.monitorJob(context.WithoutCancel(ctx), jobToMonitor)
+		}(recoveredJob)
+	}
+
+	return nil
+}
+
+func (m *Manager) prepareRecoveredJobs(jobs []*Job) ([]*Job, map[string]int, error) {
+	prepared := make([]*Job, 0, len(jobs))
+	hostCounts := make(map[string]int)
+
+	for index, storedJob := range jobs {
+		if storedJob == nil {
+			return nil, nil, fmt.Errorf("job recovery row %d is nil", index)
+		}
+
+		recoveredJob := cloneJob(storedJob)
+		policy, err := m.policyFor(recoveredJob.Type)
+		if err != nil {
+			return nil, nil, fmt.Errorf("job %s: %w", recoveredJob.ID, err)
 		}
 		if recoveredJob.AgentTaskID == "" {
 			recoveredJob.AgentTaskID = recoveredJob.ID
 		}
 		recoveredJob.AgentTask.RequestID = recoveredJob.ID
 		recoveredJob.stopCh = make(chan struct{})
-		m.jobs[recoveredJob.ID] = recoveredJob
-		hostKey := quotaHostKey(recoveredJob.Hostname, policy.Group)
-		m.jobsByHost[hostKey]++
-		m.monitorWG.Add(1)
-		go func(jobToMonitor *Job) {
-			defer m.monitorWG.Done()
-			m.monitorJob(context.WithoutCancel(ctx), jobToMonitor)
-		}(recoveredJob)
+
+		prepared = append(prepared, recoveredJob)
+		hostCounts[quotaHostKey(recoveredJob.Hostname, policy.Group)]++
 	}
-	m.recoveredJobs.Add(uint64(len(jobs)))
-	m.mu.Unlock()
-	return nil
+
+	return prepared, hostCounts, nil
 }
 
 // ShutdownContext stops monitors without interrupting Agent tasks, then closes

@@ -95,11 +95,12 @@ func (s *stubJobStore) List(_ context.Context, query *JobQuery) ([]*Job, error) 
 }
 
 type stubNodeAgent struct {
-	startTaskCalls    atomic.Int32
-	stopTaskCalls     atomic.Int32
-	startTaskFunc     func(host, container string, args *AgentTaskRequest) (string, error)
-	stopTaskFunc      func(host, taskID string, force bool) error
-	getTaskStatusFunc func(host, taskID string) (string, *Result, error)
+	startTaskCalls     atomic.Int32
+	stopTaskCalls      atomic.Int32
+	getTaskStatusCalls atomic.Int32
+	startTaskFunc      func(host, container string, args *AgentTaskRequest) (string, error)
+	stopTaskFunc       func(host, taskID string, force bool) error
+	getTaskStatusFunc  func(host, taskID string) (string, *Result, error)
 }
 
 func (s *stubNodeAgent) StartTask(host, container string, args *AgentTaskRequest) (string, error) {
@@ -119,6 +120,7 @@ func (s *stubNodeAgent) StopTask(host, taskID string, force bool) error {
 }
 
 func (s *stubNodeAgent) GetTaskStatus(host, taskID string) (string, *Result, error) {
+	s.getTaskStatusCalls.Add(1)
 	if s.getTaskStatusFunc != nil {
 		return s.getTaskStatusFunc(host, taskID)
 	}
@@ -448,6 +450,136 @@ func TestManagerRecoverJobsRestoresActiveQuota(t *testing.T) {
 	}
 	if err := manager.ShutdownContext(t.Context()); err != nil {
 		t.Fatalf("ShutdownContext() error=%v", err)
+	}
+}
+
+func TestManagerRecoverJobsValidatesBatchBeforePublishing(t *testing.T) {
+	valid := newRunningJob("job-valid-recovery-2026")
+	valid.AgentTaskID = ""
+	valid.AgentTask.RequestID = ""
+	valid.stopCh = nil
+
+	invalid := newRunningJob("job-invalid-recovery-2026")
+	invalid.Type = JobType("removed-job-type")
+
+	storage := &stubJobStore{listFunc: func(*JobQuery) ([]*Job, error) {
+		return []*Job{valid, invalid}, nil
+	}}
+	agent := &stubNodeAgent{}
+	manager := newTestManager(storage, agent)
+	manager.config.StatusPollInterval = time.Second
+	t.Cleanup(func() {
+		if err := manager.ShutdownContext(context.Background()); err != nil {
+			t.Errorf("ShutdownContext() error=%v", err)
+		}
+	})
+
+	err := manager.recoverJobs(context.Background())
+	if !errors.Is(err, ErrUnsupportedJobType) {
+		t.Fatalf("recoverJobs() error=%v, want ErrUnsupportedJobType", err)
+	}
+
+	manager.mu.RLock()
+	jobsCount := len(manager.jobs)
+	hostCounts := len(manager.jobsByHost)
+	manager.mu.RUnlock()
+	if jobsCount != 0 {
+		t.Fatalf("recovered jobs=%d, want 0 after validation failure", jobsCount)
+	}
+	if hostCounts != 0 {
+		t.Fatalf("recovered host quotas=%d, want 0 after validation failure", hostCounts)
+	}
+	if got := manager.recoveredJobs.Load(); got != 0 {
+		t.Fatalf("recoveredJobs=%d, want 0 after validation failure", got)
+	}
+
+	if valid.AgentTaskID != "" {
+		t.Fatalf("stored job AgentTaskID mutated to %q", valid.AgentTaskID)
+	}
+	if valid.AgentTask.RequestID != "" {
+		t.Fatalf("stored job RequestID mutated to %q", valid.AgentTask.RequestID)
+	}
+	if valid.stopCh != nil {
+		t.Fatal("stored job stop channel was initialized before validation completed")
+	}
+
+	// A monitor polls after one second with this test configuration. Waiting
+	// beyond that boundary proves failed recovery did not launch one.
+	time.Sleep(1200 * time.Millisecond)
+	if got := agent.getTaskStatusCalls.Load(); got != 0 {
+		t.Fatalf("GetTaskStatus() calls=%d, want 0 after validation failure", got)
+	}
+}
+
+func TestManagerRecoverJobsCommitsPreparedBatch(t *testing.T) {
+	cpuJob := newRunningJob("job-recovered-cpu-2026")
+	cpuJob.Type = JobTypeProfilingCPU
+	cpuJob.AgentTaskID = ""
+	cpuJob.AgentTask.RequestID = "stale-request"
+	cpuJob.stopCh = nil
+
+	memoryJob := newRunningJob("job-recovered-memory-2026")
+	memoryJob.Type = JobTypeProfilingMemory
+	memoryJob.AgentTaskID = "agent-memory-2026"
+	memoryJob.AgentTask.RequestID = "stale-request"
+	memoryJob.stopCh = nil
+
+	storage := &stubJobStore{listFunc: func(*JobQuery) ([]*Job, error) {
+		return []*Job{cpuJob, memoryJob}, nil
+	}}
+	policy := TypePolicy{Group: "profiling", MaxJobsPerHost: 4, MaxTotalJobs: 8}
+	manager := newManagerWithStore(storage, &stubNodeAgent{}, ManagerConfig{
+		TypePolicies: map[JobType]TypePolicy{
+			JobTypeProfilingCPU:    policy,
+			JobTypeProfilingMemory: policy,
+		},
+	})
+
+	if err := manager.recoverJobs(t.Context()); err != nil {
+		t.Fatalf("recoverJobs() error=%v", err)
+	}
+	t.Cleanup(func() {
+		if err := manager.ShutdownContext(context.Background()); err != nil {
+			t.Errorf("ShutdownContext() error=%v", err)
+		}
+	})
+
+	manager.mu.RLock()
+	recoveredCPU := manager.jobs[cpuJob.ID]
+	recoveredMemory := manager.jobs[memoryJob.ID]
+	hostQuota := manager.jobsByHost[quotaHostKey(cpuJob.Hostname, policy.Group)]
+	manager.mu.RUnlock()
+
+	if recoveredCPU == nil || recoveredMemory == nil {
+		t.Fatalf("recovered jobs=(%v,%v), want both jobs", recoveredCPU, recoveredMemory)
+	}
+	if recoveredCPU.AgentTaskID != cpuJob.ID {
+		t.Fatalf("CPU AgentTaskID=%q, want %q", recoveredCPU.AgentTaskID, cpuJob.ID)
+	}
+	if recoveredMemory.AgentTaskID != "agent-memory-2026" {
+		t.Fatalf("memory AgentTaskID=%q, want agent-memory-2026", recoveredMemory.AgentTaskID)
+	}
+	for _, recovered := range []*Job{recoveredCPU, recoveredMemory} {
+		if recovered.AgentTask.RequestID != recovered.ID {
+			t.Errorf("job %s RequestID=%q, want job ID", recovered.ID, recovered.AgentTask.RequestID)
+		}
+		if recovered.stopCh == nil {
+			t.Errorf("job %s stop channel is nil", recovered.ID)
+		}
+	}
+	if hostQuota != 2 {
+		t.Fatalf("profiling host quota=%d, want 2", hostQuota)
+	}
+	if got := manager.recoveredJobs.Load(); got != 2 {
+		t.Fatalf("recoveredJobs=%d, want 2", got)
+	}
+
+	// Preparation publishes clones, not partially normalized storage rows.
+	if cpuJob.AgentTaskID != "" || cpuJob.AgentTask.RequestID != "stale-request" || cpuJob.stopCh != nil {
+		t.Fatalf("CPU storage row mutated during recovery: %+v", cpuJob)
+	}
+	if memoryJob.AgentTask.RequestID != "stale-request" || memoryJob.stopCh != nil {
+		t.Fatalf("memory storage row mutated during recovery: %+v", memoryJob)
 	}
 }
 
