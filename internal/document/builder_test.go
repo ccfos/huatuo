@@ -24,7 +24,7 @@ import (
 
 func TestBuilderBuildsSharedMetadata(t *testing.T) {
 	startedTimestamp := time.Date(2026, 8, 28, 10, 30, 0, 0, time.FixedZone("CST", 8*60*60))
-	builder := &Builder{region: "cn-north", hostname: "node-1"}
+	builder := &Builder{region: "cn-north", hostname: "node-1", nodeIP: "192.0.2.10"}
 	document, err := builder.Build(&Input{
 		TracerName:       "profiler",
 		TracerID:         "job-1",
@@ -36,6 +36,9 @@ func TestBuilderBuildsSharedMetadata(t *testing.T) {
 	}
 	if document.Hostname != "node-1" || document.Region != "cn-north" {
 		t.Fatalf("node metadata = (%q, %q)", document.Hostname, document.Region)
+	}
+	if document.NodeIP != "192.0.2.10" {
+		t.Fatalf("document node IP = %q, want %q", document.NodeIP, "192.0.2.10")
 	}
 	if document.TracerID != "job-1" || document.TracerName != "profiler" {
 		t.Fatalf("tracer metadata = (%q, %q)", document.TracerID, document.TracerName)

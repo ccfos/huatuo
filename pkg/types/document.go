@@ -36,6 +36,7 @@ const (
 // serialized contract.
 const (
 	DocumentFieldHostname                = "hostname"
+	DocumentFieldNodeIP                  = "node_ip"
 	DocumentFieldRegion                  = "region"
 	DocumentFieldUploadedTimestamp       = "uploaded_timestamp"
 	DocumentFieldStartedTimestamp        = "started_timestamp"
@@ -65,6 +66,7 @@ const (
 // TracerRunType determines which producer-owned timestamp is required.
 type Document struct {
 	Hostname                string              `json:"hostname"`
+	NodeIP                  string              `json:"node_ip,omitempty"`
 	Region                  string              `json:"region"`
 	UploadedTimestamp       timeutil.Timestamp  `json:"uploaded_timestamp"`
 	StartedTimestamp        *timeutil.Timestamp `json:"started_timestamp,omitempty"`
