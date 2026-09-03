@@ -90,7 +90,7 @@ type RawProfilePage struct {
 // Service owns Profiling authorization, validation, Job commands, and result access.
 type Service struct {
 	jobs             *job.Manager
-	profiles         *profilingstore.Store
+	profileStore     *profilingstore.Store
 	publications     *publication.Store
 	dashboardBaseURL string
 }
@@ -98,21 +98,21 @@ type Service struct {
 // NewService constructs the Profiling application service.
 func NewService(
 	jobs *job.Manager,
-	profiles *profilingstore.Store,
+	profileStore *profilingstore.Store,
 	publications *publication.Store,
 	config Config,
 ) (*Service, error) {
 	if jobs == nil {
 		return nil, errors.New("create profiling service: job manager is required")
 	}
-	if (profiles == nil) != (publications == nil) {
+	if (profileStore == nil) != (publications == nil) {
 		return nil, errors.New(
 			"create profiling service: profile storage and publication store must be configured together",
 		)
 	}
 	return &Service{
 		jobs:             jobs,
-		profiles:         profiles,
+		profileStore:     profileStore,
 		publications:     publications,
 		dashboardBaseURL: config.DashboardBaseURL,
 	}, nil
@@ -215,7 +215,7 @@ func (s *Service) RawProfiles(
 	default:
 		return nil, fmt.Errorf("unsupported Job status %q", currentJob.Status)
 	}
-	if s.profiles == nil || s.publications == nil {
+	if s.profileStore == nil || s.publications == nil {
 		return nil, ErrResultUnavailable
 	}
 	published, err := s.isPublished(ctx, requestID)
@@ -230,7 +230,7 @@ func (s *Service) RawProfiles(
 		)
 	}
 
-	documents, err := s.profiles.ListByTracerID(ctx, requestID, limit+1, offset)
+	documents, err := s.profileStore.ListByTracerID(ctx, requestID, limit+1, offset)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"%w: query profiles for request %q: %w",
