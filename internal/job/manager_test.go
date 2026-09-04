@@ -26,6 +26,8 @@ import (
 	"huatuo-bamai/internal/nodeclient"
 	"huatuo-bamai/pkg/observation"
 	"huatuo-bamai/pkg/profiling"
+
+	"github.com/google/uuid"
 )
 
 type memoryStore struct {
@@ -271,6 +273,13 @@ func TestManagerCreateTreatsEachRequestAsIndependent(t *testing.T) {
 	first, err := manager.Create(t.Context(), testCreateRequest())
 	if err != nil {
 		t.Fatalf("first Create() error = %v", err)
+	}
+	parsedID, err := uuid.Parse(first.ID)
+	if err != nil {
+		t.Fatalf("parse first Create() ID %q: %v", first.ID, err)
+	}
+	if parsedID.String() != first.ID {
+		t.Fatalf("first Create() ID = %q, want canonical UUID", first.ID)
 	}
 	second, err := manager.Create(t.Context(), testCreateRequest())
 	if err != nil {

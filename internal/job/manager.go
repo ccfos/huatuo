@@ -225,7 +225,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 	}
 	now := m.now()
 	newJob := &Job{
-		ID:          "id-" + uuid.NewString(),
+		ID:          uuid.NewString(),
 		Kind:        request.Spec.kind(),
 		UserID:      request.UserID,
 		Hostname:    request.Hostname,
