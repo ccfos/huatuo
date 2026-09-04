@@ -28,6 +28,13 @@ import (
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+type closeErrorBody struct {
+	io.Reader
+	err error
+}
+
+func (b closeErrorBody) Close() error { return b.err }
+
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
 }
@@ -43,7 +50,7 @@ func jsonResponse(status int, body string) *http.Response {
 func operationJSON(requestID, status string) string {
 	return fmt.Sprintf(
 		`{"data":{"created_at":"2026-08-24T12:00:00Z",`+
-			`"request_id":%q,"status":%q}}`,
+			`"request_id":%q,"kind":"profiling","status":%q}}`,
 		requestID,
 		status,
 	)
@@ -69,7 +76,7 @@ func TestNewRejectsAmbiguousBearerToken(t *testing.T) {
 	}
 }
 
-func TestStartProfilingSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
+func TestStartOperationSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 	var observedName string
 	client, err := New(&Config{
 		BearerToken: "node-secret",
@@ -81,7 +88,7 @@ func TestStartProfilingSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 			observedName = name
 		},
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			if request.Method != http.MethodPost || request.URL.String() != "http://node-1:21970/v1/profiling" {
+			if request.Method != http.MethodPost || request.URL.String() != "http://node-1:21970/v1/operations" {
 				t.Fatalf("request = %s %s", request.Method, request.URL)
 			}
 			if got := request.Header.Get("Authorization"); got != "Bearer node-secret" {
@@ -101,26 +108,30 @@ func TestStartProfilingSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	got, err := client.StartProfiling(t.Context(), "node-1", &nodeapi.StartProfilingRequest{
+	request := &nodeapi.StartOperationRequest{
 		RequestID:       "job-1",
 		DurationSeconds: 60,
 		Scope:           "host",
-		Type:            "cpu",
-		Language:        "go",
-		Mode:            "oncpu",
-	})
+		Kind:            nodeapi.OperationKindProfiling,
+	}
+	if err := request.Spec.FromProfilingOperationSpec(nodeapi.ProfilingOperationSpec{
+		Type: "cpu", Language: "go", Mode: "oncpu",
+	}); err != nil {
+		t.Fatalf("set profiling spec: %v", err)
+	}
+	got, err := client.StartOperation(t.Context(), "node-1", request)
 	if err != nil {
-		t.Fatalf("StartProfiling() error = %v", err)
+		t.Fatalf("StartOperation() error = %v", err)
 	}
 	if got.RequestID != "job-1" || got.Status != nodeapi.OperationStatusPending {
-		t.Fatalf("StartProfiling() = %+v", got)
+		t.Fatalf("StartOperation() = %+v", got)
 	}
-	if observedName != "profiling.start" {
+	if observedName != "operation.start" {
 		t.Fatalf("observed operation = %q", observedName)
 	}
 }
 
-func TestGetProfilingReturnsStableNodeError(t *testing.T) {
+func TestGetOperationReturnsStableNodeError(t *testing.T) {
 	client, err := New(&Config{
 		BearerToken: "node-secret",
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
@@ -134,10 +145,10 @@ func TestGetProfilingReturnsStableNodeError(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	_, err = client.GetProfiling(t.Context(), "node-1", "job-1")
+	_, err = client.GetOperation(t.Context(), "node-1", "job-1")
 	var nodeErr *Error
 	if !errors.As(err, &nodeErr) {
-		t.Fatalf("GetProfiling() error = %v, want *Error", err)
+		t.Fatalf("GetOperation() error = %v, want *Error", err)
 	}
 	if nodeErr.Code != nodeapi.ErrorCodeOperationNotFound ||
 		nodeErr.StatusCode != http.StatusNotFound {
@@ -157,9 +168,9 @@ func TestNodeClientKeepsNoResponseTransportErrorDistinct(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	_, err = client.GetProfiling(t.Context(), "node-1", "job-1")
+	_, err = client.GetOperation(t.Context(), "node-1", "job-1")
 	if !errors.Is(err, transportErr) {
-		t.Fatalf("GetProfiling() error = %v, want transport error", err)
+		t.Fatalf("GetOperation() error = %v, want transport error", err)
 	}
 	var nodeErr *Error
 	if errors.As(err, &nodeErr) {
@@ -203,13 +214,33 @@ func TestParseResponseRejectsProtocolViolations(t *testing.T) {
 	}
 }
 
+func TestParseResponseClassifiesBodyCloseFailureAsTransportError(t *testing.T) {
+	closeErr := errors.New("close response body")
+	response := jsonResponse(http.StatusOK, operationJSON("job-1", "completed"))
+	response.Body = closeErrorBody{
+		Reader: response.Body,
+		err:    closeErr,
+	}
+
+	_, err := parseResponse(response, "job-1", successResponseOK)
+	if !errors.Is(err, ErrTransport) {
+		t.Fatalf("parseResponse() error = %v, want ErrTransport", err)
+	}
+	if errors.Is(err, ErrProtocol) {
+		t.Fatalf("parseResponse() error = %v, unexpectedly classified as ErrProtocol", err)
+	}
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("parseResponse() error = %v, want close error", err)
+	}
+}
+
 func TestExecuteRejectsNilContext(t *testing.T) {
 	client, err := New(&Config{BearerToken: "node-secret"})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	_, err = client.GetProfiling(nil, "node-1", "job-1") //nolint:staticcheck // Verify nil rejection.
+	_, err = client.GetOperation(nil, "node-1", "job-1") //nolint:staticcheck // Verify nil rejection.
 	if !errors.Is(err, ErrInvalidArgument) {
-		t.Fatalf("GetProfiling() error = %v, want ErrInvalidArgument", err)
+		t.Fatalf("GetOperation() error = %v, want ErrInvalidArgument", err)
 	}
 }

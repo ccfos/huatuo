@@ -45,6 +45,8 @@ var (
 	ErrInvalidArgument = errors.New("node client: invalid argument")
 	// ErrProtocol indicates that the Node response violates the API contract.
 	ErrProtocol = errors.New("node client: protocol error")
+	// ErrTransport indicates that the response could not be closed.
+	ErrTransport = errors.New("node client: transport error")
 )
 
 // RequestObserver records one completed Node API call.
@@ -145,6 +147,7 @@ func (c *Client) execute(
 	successMode successResponseMode,
 	send sendRequest,
 ) (result *nodeapi.Operation, returnedErr error) {
+	// Start and Stop are not safely retryable when the response is lost.
 	startedAt := time.Now()
 	defer func() {
 		if c.observe != nil {
@@ -213,7 +216,7 @@ func parseResponse(
 		return nil, fmt.Errorf("%w: read Node API response: %w", ErrProtocol, readErr)
 	}
 	if closeErr != nil {
-		return nil, fmt.Errorf("%w: close Node API response: %w", ErrProtocol, closeErr)
+		return nil, fmt.Errorf("%w: close Node API response: %w", ErrTransport, closeErr)
 	}
 	contentType := response.Header.Get("Content-Type")
 	mediaType, _, mediaTypeErr := mime.ParseMediaType(contentType)

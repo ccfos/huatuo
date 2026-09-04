@@ -22,29 +22,29 @@ import (
 	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
-// StartTracing sends one tracing Start request.
-func (c *Client) StartTracing(
+// StartOperation sends one unified Node Operation start request.
+func (c *Client) StartOperation(
 	ctx context.Context,
 	host string,
-	request *nodeapi.StartTracingRequest,
+	request *nodeapi.StartOperationRequest,
 ) (*nodeapi.Operation, error) {
 	if request == nil {
-		return nil, fmt.Errorf("%w: tracing request is required", ErrInvalidArgument)
+		return nil, fmt.Errorf("%w: operation request is required", ErrInvalidArgument)
 	}
 	return c.execute(
 		ctx,
 		host,
-		"tracing.start",
+		"operation.start",
 		request.RequestID,
 		successResponseOKOrAccepted,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
-			return generated.StartTracing(ctx, *request)
+			return generated.StartOperation(ctx, *request)
 		},
 	)
 }
 
-// GetTracing sends one tracing Get request.
-func (c *Client) GetTracing(
+// GetOperation sends one unified Node Operation get request.
+func (c *Client) GetOperation(
 	ctx context.Context,
 	host string,
 	requestID string,
@@ -52,17 +52,17 @@ func (c *Client) GetTracing(
 	return c.execute(
 		ctx,
 		host,
-		"tracing.get",
+		"operation.get",
 		requestID,
 		successResponseOK,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
-			return generated.GetTracing(ctx, requestID)
+			return generated.GetOperation(ctx, requestID)
 		},
 	)
 }
 
-// StopTracing sends one tracing Stop request.
-func (c *Client) StopTracing(
+// StopOperation sends one unified Node Operation stop request.
+func (c *Client) StopOperation(
 	ctx context.Context,
 	host string,
 	requestID string,
@@ -70,11 +70,11 @@ func (c *Client) StopTracing(
 	return c.execute(
 		ctx,
 		host,
-		"tracing.stop",
+		"operation.stop",
 		requestID,
 		successResponseOKOrAccepted,
 		func(ctx context.Context, generated *nodeapi.Client) (*http.Response, error) {
-			return generated.StopTracing(ctx, requestID)
+			return generated.StopOperation(ctx, requestID)
 		},
 	)
 }
