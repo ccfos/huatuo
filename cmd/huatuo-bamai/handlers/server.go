@@ -19,6 +19,7 @@ import (
 
 	nodeapi "huatuo-bamai/apis/v1/node"
 	"huatuo-bamai/cmd/huatuo-bamai/config"
+	"huatuo-bamai/internal/nodeagent/operation"
 	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
 	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
 	"huatuo-bamai/internal/server"
@@ -34,6 +35,7 @@ import (
 type ServerOptions struct {
 	Addr             string
 	BearerToken      string
+	OperationManager *operation.Manager
 	ProfilingService *nodeprofiling.Service
 	TracingService   *nodetracing.Service
 	TracingStore     *tracingstore.Store
@@ -43,7 +45,11 @@ type ServerOptions struct {
 
 // Start starts the HTTP server with all handlers registered.
 func Start(opts ServerOptions) (*server.Server, error) {
-	nodeHandler, err := NewNodeAPIHandler(opts.ProfilingService, opts.TracingService)
+	nodeHandler, err := NewNodeAPIHandler(
+		opts.OperationManager,
+		opts.ProfilingService,
+		opts.TracingService,
+	)
 	if err != nil {
 		return nil, err
 	}

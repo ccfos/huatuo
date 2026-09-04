@@ -24,6 +24,7 @@ import (
 
 func TestReadinessRouteIsPublicOnNodeRouter(t *testing.T) {
 	nodeHandler, err := NewNodeAPIHandler(
+		newTestOperationManager(t),
 		&stubProfilingOperations{},
 		&stubTracingOperations{},
 	)

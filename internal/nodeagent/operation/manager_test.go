@@ -219,6 +219,26 @@ func TestManagerValidatesRequests(t *testing.T) {
 	}
 }
 
+func TestManagerGetAndStopByID(t *testing.T) {
+	manager := newTestManager(t, testConfig())
+	if _, created, err := manager.Start(context.Background(), StartRequest{
+		RequestID: "request",
+		Kind:      KindTracing,
+		Executor:  &fakeExecutor{},
+	}); err != nil || !created {
+		t.Fatalf("Start() = (created=%t, err=%v), want created operation", created, err)
+	}
+
+	got, err := manager.GetByID("request")
+	if err != nil || got.Kind != KindTracing {
+		t.Fatalf("GetByID() = (%+v, %v), want tracing operation", got, err)
+	}
+	if _, initiated, err := manager.StopByID("request"); err != nil || !initiated {
+		t.Fatalf("StopByID() = (initiated=%t, err=%v), want initiated stop", initiated, err)
+	}
+	waitForStatus(t, manager, KindTracing, "request", StatusStopped)
+}
+
 func TestManagerAdmissionAndIdempotency(t *testing.T) {
 	config := testConfig()
 	config.MaxConcurrent = 1

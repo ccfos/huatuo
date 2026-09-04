@@ -91,6 +91,7 @@ func startHandlers(d *Daemon) (func(context.Context) error, error) {
 	runningServer, err := handlers.Start(handlers.ServerOptions{
 		Addr:             httpConfig.ListenAddress,
 		BearerToken:      httpConfig.Auth.BearerToken,
+		OperationManager: d.operationManager,
 		ProfilingService: d.profilingService,
 		TracingService:   d.tracingService,
 		TracingStore:     d.tracingStore,

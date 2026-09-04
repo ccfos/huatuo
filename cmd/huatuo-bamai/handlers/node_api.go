@@ -58,16 +58,12 @@ type tracingOperationService interface {
 	) (operationSnapshot *operation.Operation, initiated bool, err error)
 }
 
-type operationLookup interface {
-	Get(requestID string) (*operation.Operation, error)
-	Stop(requestID string) (*operation.Operation, bool, error)
-}
-
 // NodeAPIHandler implements the generated Node Agent Strict Server.
 type NodeAPIHandler struct {
-	profiling profilingOperationService
-	tracing   tracingOperationService
-	openAPI   nodeapi.GetOpenAPI200JSONResponse
+	operationManager *operation.Manager
+	profiling        profilingOperationService
+	tracing          tracingOperationService
+	openAPI          nodeapi.GetOpenAPI200JSONResponse
 }
 
 // StartOperation starts or resolves an idempotent Node Operation.
@@ -137,11 +133,7 @@ func (h *NodeAPIHandler) GetOperation(
 	if err := requireNodePrincipal(ctx); err != nil {
 		return nil, err
 	}
-	service, err := h.findOperationService(request.RequestID)
-	if err != nil {
-		return nil, nodeAPIError(fmt.Errorf("get operation: %w", err))
-	}
-	snapshot, err := service.Get(request.RequestID)
+	snapshot, err := h.operationManager.GetByID(request.RequestID)
 	if err != nil {
 		return nil, nodeAPIError(fmt.Errorf("get operation: %w", err))
 	}
@@ -160,11 +152,7 @@ func (h *NodeAPIHandler) StopOperation(
 	if err := requireNodePrincipal(ctx); err != nil {
 		return nil, err
 	}
-	service, err := h.findOperationService(request.RequestID)
-	if err != nil {
-		return nil, nodeAPIError(fmt.Errorf("stop operation: %w", err))
-	}
-	snapshot, initiated, err := service.Stop(request.RequestID)
+	snapshot, initiated, err := h.operationManager.StopByID(request.RequestID)
 	if err != nil {
 		return nil, nodeAPIError(fmt.Errorf("stop operation: %w", err))
 	}
@@ -178,24 +166,15 @@ func (h *NodeAPIHandler) StopOperation(
 	return nodeapi.StopOperation200JSONResponse(payload), nil
 }
 
-func (h *NodeAPIHandler) findOperationService(requestID string) (operationLookup, error) {
-	if _, err := h.profiling.Get(requestID); err == nil {
-		return h.profiling, nil
-	} else if !errors.Is(err, operation.ErrNotFound) {
-		return nil, err
-	}
-	if _, err := h.tracing.Get(requestID); err == nil {
-		return h.tracing, nil
-	} else {
-		return nil, err
-	}
-}
-
 // NewNodeAPIHandler constructs a generated-protocol adapter.
 func NewNodeAPIHandler(
+	operationManager *operation.Manager,
 	profilingService profilingOperationService,
 	tracingService tracingOperationService,
 ) (*NodeAPIHandler, error) {
+	if operationManager == nil {
+		return nil, errors.New("create Node API handler: operation manager is required")
+	}
 	if profilingService == nil {
 		return nil, errors.New("create Node API handler: profiling service is required")
 	}
@@ -207,9 +186,10 @@ func NewNodeAPIHandler(
 		return nil, fmt.Errorf("create Node API handler: decode bundled OpenAPI: %w", err)
 	}
 	return &NodeAPIHandler{
-		profiling: profilingService,
-		tracing:   tracingService,
-		openAPI:   specification,
+		operationManager: operationManager,
+		profiling:        profilingService,
+		tracing:          tracingService,
+		openAPI:          specification,
 	}, nil
 }
 

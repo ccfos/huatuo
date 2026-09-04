@@ -79,6 +79,28 @@ func nodeRequestContext(t *testing.T) context.Context {
 	return auth.WithPrincipal(t.Context(), auth.Principal{ID: nodePrincipalID})
 }
 
+func newTestOperationManager(t *testing.T) *operation.Manager {
+	t.Helper()
+	manager, err := operation.NewManager(operation.Config{
+		MaxConcurrent: 1,
+		Lifecycle: operation.LifecyclePolicy{
+			LaunchTimeout:           time.Second,
+			StopGracePeriod:         time.Second,
+			FinalizationTimeout:     time.Second,
+			TerminalRetentionPeriod: time.Minute,
+		},
+	})
+	if err != nil {
+		t.Fatalf("operation.NewManager() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := manager.Shutdown(context.Background()); err != nil {
+			t.Errorf("operation.Manager.Shutdown() error = %v", err)
+		}
+	})
+	return manager
+}
+
 func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	profiling := &stubProfilingOperations{
@@ -90,7 +112,9 @@ func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 		},
 		created: true,
 	}
-	handler, err := NewNodeAPIHandler(profiling, &stubTracingOperations{})
+	handler, err := NewNodeAPIHandler(
+		newTestOperationManager(t), profiling, &stubTracingOperations{},
+	)
 	if err != nil {
 		t.Fatalf("NewNodeAPIHandler() error = %v", err)
 	}
@@ -137,6 +161,7 @@ func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 
 func TestNodeAPIRequiresServicePrincipal(t *testing.T) {
 	handler, err := NewNodeAPIHandler(
+		newTestOperationManager(t),
 		&stubProfilingOperations{},
 		&stubTracingOperations{},
 	)
@@ -155,6 +180,7 @@ func TestNodeAPIRequiresServicePrincipal(t *testing.T) {
 
 func TestStartOperationTracingReportsNotImplemented(t *testing.T) {
 	handler, err := NewNodeAPIHandler(
+		newTestOperationManager(t),
 		&stubProfilingOperations{},
 		&stubTracingOperations{err: nodetracing.ErrNotImplemented},
 	)

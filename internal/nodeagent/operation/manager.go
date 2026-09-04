@@ -140,14 +140,26 @@ func (m *Manager) Start(
 
 // Get returns a detached snapshot for the requested service kind.
 func (m *Manager) Get(kind Kind, requestID string) (*Operation, error) {
-	if !isValidKind(kind) || requestID == "" {
+	if !isValidKind(kind) {
+		return nil, ErrInvalidRequest
+	}
+	return m.get(requestID, kind)
+}
+
+// GetByID returns a detached snapshot without requiring the operation kind.
+func (m *Manager) GetByID(requestID string) (*Operation, error) {
+	return m.get(requestID, "")
+}
+
+func (m *Manager) get(requestID string, kind Kind) (*Operation, error) {
+	if requestID == "" {
 		return nil, ErrInvalidRequest
 	}
 
 	m.mu.RLock()
 	now := m.now()
 	managed, ok := m.operations[requestID]
-	if !ok || managed.state.Kind != kind || m.isExpiredLocked(managed, now) {
+	if !ok || (kind != "" && managed.state.Kind != kind) || m.isExpiredLocked(managed, now) {
 		m.mu.RUnlock()
 		return nil, ErrNotFound
 	}
@@ -161,14 +173,31 @@ func (m *Manager) Stop(
 	kind Kind,
 	requestID string,
 ) (operation *Operation, initiated bool, err error) {
-	if !isValidKind(kind) || requestID == "" {
+	if !isValidKind(kind) {
+		return nil, false, ErrInvalidRequest
+	}
+	return m.stop(requestID, kind)
+}
+
+// StopByID records a stop intent without requiring the operation kind.
+func (m *Manager) StopByID(
+	requestID string,
+) (operation *Operation, initiated bool, err error) {
+	return m.stop(requestID, "")
+}
+
+func (m *Manager) stop(
+	requestID string,
+	kind Kind,
+) (operation *Operation, initiated bool, err error) {
+	if requestID == "" {
 		return nil, false, ErrInvalidRequest
 	}
 
 	m.mu.Lock()
 	now := m.now()
 	managed, ok := m.operations[requestID]
-	if !ok || managed.state.Kind != kind {
+	if !ok || (kind != "" && managed.state.Kind != kind) {
 		m.mu.Unlock()
 		return nil, false, ErrNotFound
 	}
