@@ -256,14 +256,6 @@
             "nullable": true,
             "type": "string"
           },
-          "failure": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/JobFailure"
-              }
-            ],
-            "nullable": true
-          },
           "hostname": {
             "minLength": 1,
             "type": "string"
@@ -288,6 +280,14 @@
           "status": {
             "$ref": "#/components/schemas/JobStatus"
           },
+          "terminal": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/JobTerminal"
+              }
+            ],
+            "nullable": true
+          },
           "updated_at": {
             "format": "date-time",
             "type": "string"
@@ -304,43 +304,53 @@
         ],
         "type": "object"
       },
-      "JobFailure": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "$ref": "#/components/schemas/apis_v1_components_ErrorCode"
-          },
-          "message": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message"
+      "JobOutcome": {
+        "enum": [
+          "completed",
+          "failed",
+          "stopped",
+          "unknown"
         ],
-        "type": "object"
+        "type": "string",
+        "x-enum-varnames": [
+          "JobOutcomeCompleted",
+          "JobOutcomeFailed",
+          "JobOutcomeStopped",
+          "JobOutcomeUnknown"
+        ]
       },
       "JobStatus": {
         "enum": [
           "pending",
           "running",
           "stopping",
-          "completed",
-          "failed",
-          "stopped",
-          "outcome_unknown"
+          "terminal"
         ],
         "type": "string",
         "x-enum-varnames": [
           "JobStatusPending",
           "JobStatusRunning",
           "JobStatusStopping",
-          "JobStatusCompleted",
-          "JobStatusFailed",
-          "JobStatusStopped",
-          "JobStatusOutcomeUnknown"
+          "JobStatusTerminal"
         ]
+      },
+      "JobTerminal": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/JobOutcome"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "type": "object"
       },
       "ProfilingCapabilities": {
         "additionalProperties": false,

@@ -631,32 +631,31 @@ components:
         - TracingTypeTCPRetransmit
     JobStatus:
       type: string
-      enum:
-        - pending
-        - running
-        - stopping
-        - completed
-        - failed
-        - stopped
-        - outcome_unknown
+      enum: [pending, running, stopping, terminal]
       x-enum-varnames:
         - JobStatusPending
         - JobStatusRunning
         - JobStatusStopping
-        - JobStatusCompleted
-        - JobStatusFailed
-        - JobStatusStopped
-        - JobStatusOutcomeUnknown
-    JobFailure:
+        - JobStatusTerminal
+    JobOutcome:
+      type: string
+      enum: [completed, failed, stopped, unknown]
+      x-enum-varnames:
+        - JobOutcomeCompleted
+        - JobOutcomeFailed
+        - JobOutcomeStopped
+        - JobOutcomeUnknown
+    JobTerminal:
       type: object
       additionalProperties: false
-      required: [code, message]
+      required: [outcome]
       properties:
-        code:
-          $ref: '../components.yaml#/components/schemas/ErrorCode'
+        outcome:
+          $ref: '#/components/schemas/JobOutcome'
+        reason:
+          type: string
         message:
           type: string
-          minLength: 1
     CreateProfilingJobRequest:
       type: object
       additionalProperties: false
@@ -754,9 +753,9 @@ components:
           type: string
         status:
           $ref: '#/components/schemas/JobStatus'
-        failure:
+        terminal:
           allOf:
-            - $ref: '#/components/schemas/JobFailure'
+            - $ref: '#/components/schemas/JobTerminal'
           nullable: true
         created_at:
           type: string

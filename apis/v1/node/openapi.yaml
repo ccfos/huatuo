@@ -284,24 +284,30 @@ components:
       x-enum-varnames: [OperationKindProfiling, OperationKindTracing]
     OperationStatus:
       type: string
-      enum: [pending, running, stopping, completed, failed, stopped]
+      enum: [pending, running, stopping, terminal]
       x-enum-varnames:
         - OperationStatusPending
         - OperationStatusRunning
         - OperationStatusStopping
-        - OperationStatusCompleted
-        - OperationStatusFailed
-        - OperationStatusStopped
-    OperationFailure:
+        - OperationStatusTerminal
+    OperationOutcome:
+      type: string
+      enum: [completed, failed, stopped]
+      x-enum-varnames:
+        - OperationOutcomeCompleted
+        - OperationOutcomeFailed
+        - OperationOutcomeStopped
+    OperationTerminal:
       type: object
       additionalProperties: false
-      required: [code, message]
+      required: [outcome]
       properties:
-        code:
-          $ref: '../components.yaml#/components/schemas/ErrorCode'
+        outcome:
+          $ref: '#/components/schemas/OperationOutcome'
+        reason:
+          type: string
         message:
           type: string
-          minLength: 1
     Operation:
       type: object
       additionalProperties: false
@@ -314,9 +320,9 @@ components:
           $ref: '#/components/schemas/OperationKind'
         status:
           $ref: '#/components/schemas/OperationStatus'
-        failure:
+        terminal:
           allOf:
-            - $ref: '#/components/schemas/OperationFailure'
+            - $ref: '#/components/schemas/OperationTerminal'
           nullable: true
         created_at:
           type: string

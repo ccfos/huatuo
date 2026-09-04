@@ -29,33 +29,48 @@ const (
 	BearerAuthScopes bearerAuthContextKey = "BearerAuth.Scopes"
 )
 
+// Defines values for JobOutcome.
+const (
+	JobOutcomeCompleted JobOutcome = "completed"
+	JobOutcomeFailed    JobOutcome = "failed"
+	JobOutcomeStopped   JobOutcome = "stopped"
+	JobOutcomeUnknown   JobOutcome = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the JobOutcome enum.
+func (e JobOutcome) Valid() bool {
+	switch e {
+	case JobOutcomeCompleted:
+		return true
+	case JobOutcomeFailed:
+		return true
+	case JobOutcomeStopped:
+		return true
+	case JobOutcomeUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for JobStatus.
 const (
-	JobStatusCompleted      JobStatus = "completed"
-	JobStatusFailed         JobStatus = "failed"
-	JobStatusOutcomeUnknown JobStatus = "outcome_unknown"
-	JobStatusPending        JobStatus = "pending"
-	JobStatusRunning        JobStatus = "running"
-	JobStatusStopped        JobStatus = "stopped"
-	JobStatusStopping       JobStatus = "stopping"
+	JobStatusPending  JobStatus = "pending"
+	JobStatusRunning  JobStatus = "running"
+	JobStatusStopping JobStatus = "stopping"
+	JobStatusTerminal JobStatus = "terminal"
 )
 
 // Valid indicates whether the value is a known member of the JobStatus enum.
 func (e JobStatus) Valid() bool {
 	switch e {
-	case JobStatusCompleted:
-		return true
-	case JobStatusFailed:
-		return true
-	case JobStatusOutcomeUnknown:
-		return true
 	case JobStatusPending:
 		return true
 	case JobStatusRunning:
 		return true
-	case JobStatusStopped:
-		return true
 	case JobStatusStopping:
+		return true
+	case JobStatusTerminal:
 		return true
 	default:
 		return false
@@ -188,31 +203,34 @@ type CreateTracingJobRequest struct {
 
 // Job defines model for Job.
 type Job struct {
-	ContainerID     *string     `json:"container_id,omitempty"`
-	CreatedAt       time.Time   `json:"created_at"`
-	DurationSeconds int64       `json:"duration_seconds"`
-	EndedAt         *time.Time  `json:"ended_at,omitempty"`
-	Failure         *JobFailure `json:"failure,omitempty"`
-	Hostname        string      `json:"hostname"`
-	RequestID       string      `json:"request_id"`
-	ResultURL       *string     `json:"result_url,omitempty"`
+	ContainerID     *string    `json:"container_id,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	DurationSeconds int64      `json:"duration_seconds"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
+	Hostname        string     `json:"hostname"`
+	RequestID       string     `json:"request_id"`
+	ResultURL       *string    `json:"result_url,omitempty"`
 
 	// Scope Boundary observed by an on-demand operation.
 	Scope     externalRef0.ObservationScope `json:"scope"`
 	StartedAt *time.Time                    `json:"started_at,omitempty"`
 	Status    JobStatus                     `json:"status"`
+	Terminal  *JobTerminal                  `json:"terminal,omitempty"`
 	UpdatedAt time.Time                     `json:"updated_at"`
 }
 
-// JobFailure defines model for JobFailure.
-type JobFailure struct {
-	// Code Stable machine-readable error code.
-	Code    externalRef0.ErrorCode `json:"code"`
-	Message string                 `json:"message"`
-}
+// JobOutcome defines model for JobOutcome.
+type JobOutcome string
 
 // JobStatus defines model for JobStatus.
 type JobStatus string
+
+// JobTerminal defines model for JobTerminal.
+type JobTerminal struct {
+	Message *string    `json:"message,omitempty"`
+	Outcome JobOutcome `json:"outcome"`
+	Reason  *string    `json:"reason,omitempty"`
+}
 
 // ProfilingCapabilities defines model for ProfilingCapabilities.
 type ProfilingCapabilities struct {
@@ -240,7 +258,6 @@ type ProfilingJob struct {
 	CreatedAt       time.Time         `json:"created_at"`
 	DurationSeconds int64             `json:"duration_seconds"`
 	EndedAt         *time.Time        `json:"ended_at,omitempty"`
-	Failure         *JobFailure       `json:"failure,omitempty"`
 	Hostname        string            `json:"hostname"`
 	Language        ProfilingLanguage `json:"language"`
 	Mode            ProfilingMode     `json:"mode"`
@@ -251,6 +268,7 @@ type ProfilingJob struct {
 	Scope     externalRef0.ObservationScope `json:"scope"`
 	StartedAt *time.Time                    `json:"started_at,omitempty"`
 	Status    JobStatus                     `json:"status"`
+	Terminal  *JobTerminal                  `json:"terminal,omitempty"`
 	Type      ProfilingType                 `json:"type"`
 	UpdatedAt time.Time                     `json:"updated_at"`
 }
@@ -327,19 +345,19 @@ type TracingCapability struct {
 
 // TracingJob defines model for TracingJob.
 type TracingJob struct {
-	ContainerID     *string     `json:"container_id,omitempty"`
-	CreatedAt       time.Time   `json:"created_at"`
-	DurationSeconds int64       `json:"duration_seconds"`
-	EndedAt         *time.Time  `json:"ended_at,omitempty"`
-	Failure         *JobFailure `json:"failure,omitempty"`
-	Hostname        string      `json:"hostname"`
-	RequestID       string      `json:"request_id"`
-	ResultURL       *string     `json:"result_url,omitempty"`
+	ContainerID     *string    `json:"container_id,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	DurationSeconds int64      `json:"duration_seconds"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
+	Hostname        string     `json:"hostname"`
+	RequestID       string     `json:"request_id"`
+	ResultURL       *string    `json:"result_url,omitempty"`
 
 	// Scope Boundary observed by an on-demand operation.
 	Scope     externalRef0.ObservationScope `json:"scope"`
 	StartedAt *time.Time                    `json:"started_at,omitempty"`
 	Status    JobStatus                     `json:"status"`
+	Terminal  *JobTerminal                  `json:"terminal,omitempty"`
 	Type      TracingType                   `json:"type"`
 	UpdatedAt time.Time                     `json:"updated_at"`
 }

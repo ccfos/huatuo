@@ -48,30 +48,45 @@ func (e OperationKind) Valid() bool {
 	}
 }
 
+// Defines values for OperationOutcome.
+const (
+	OperationOutcomeCompleted OperationOutcome = "completed"
+	OperationOutcomeFailed    OperationOutcome = "failed"
+	OperationOutcomeStopped   OperationOutcome = "stopped"
+)
+
+// Valid indicates whether the value is a known member of the OperationOutcome enum.
+func (e OperationOutcome) Valid() bool {
+	switch e {
+	case OperationOutcomeCompleted:
+		return true
+	case OperationOutcomeFailed:
+		return true
+	case OperationOutcomeStopped:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OperationStatus.
 const (
-	OperationStatusCompleted OperationStatus = "completed"
-	OperationStatusFailed    OperationStatus = "failed"
-	OperationStatusPending   OperationStatus = "pending"
-	OperationStatusRunning   OperationStatus = "running"
-	OperationStatusStopped   OperationStatus = "stopped"
-	OperationStatusStopping  OperationStatus = "stopping"
+	OperationStatusPending  OperationStatus = "pending"
+	OperationStatusRunning  OperationStatus = "running"
+	OperationStatusStopping OperationStatus = "stopping"
+	OperationStatusTerminal OperationStatus = "terminal"
 )
 
 // Valid indicates whether the value is a known member of the OperationStatus enum.
 func (e OperationStatus) Valid() bool {
 	switch e {
-	case OperationStatusCompleted:
-		return true
-	case OperationStatusFailed:
-		return true
 	case OperationStatusPending:
 		return true
 	case OperationStatusRunning:
 		return true
-	case OperationStatusStopped:
-		return true
 	case OperationStatusStopping:
+		return true
+	case OperationStatusTerminal:
 		return true
 	default:
 		return false
@@ -179,24 +194,20 @@ func (e TracingType) Valid() bool {
 
 // Operation defines model for Operation.
 type Operation struct {
-	CreatedAt  time.Time         `json:"created_at"`
-	Failure    *OperationFailure `json:"failure,omitempty"`
-	FinishedAt *time.Time        `json:"finished_at,omitempty"`
-	Kind       OperationKind     `json:"kind"`
-	RequestID  string            `json:"request_id"`
-	StartedAt  *time.Time        `json:"started_at,omitempty"`
-	Status     OperationStatus   `json:"status"`
-}
-
-// OperationFailure defines model for OperationFailure.
-type OperationFailure struct {
-	// Code Stable machine-readable error code.
-	Code    externalRef0.ErrorCode `json:"code"`
-	Message string                 `json:"message"`
+	CreatedAt  time.Time          `json:"created_at"`
+	FinishedAt *time.Time         `json:"finished_at,omitempty"`
+	Kind       OperationKind      `json:"kind"`
+	RequestID  string             `json:"request_id"`
+	StartedAt  *time.Time         `json:"started_at,omitempty"`
+	Status     OperationStatus    `json:"status"`
+	Terminal   *OperationTerminal `json:"terminal,omitempty"`
 }
 
 // OperationKind defines model for OperationKind.
 type OperationKind string
+
+// OperationOutcome defines model for OperationOutcome.
+type OperationOutcome string
 
 // OperationResponse defines model for OperationResponse.
 type OperationResponse struct {
@@ -205,6 +216,13 @@ type OperationResponse struct {
 
 // OperationStatus defines model for OperationStatus.
 type OperationStatus string
+
+// OperationTerminal defines model for OperationTerminal.
+type OperationTerminal struct {
+	Message *string          `json:"message,omitempty"`
+	Outcome OperationOutcome `json:"outcome"`
+	Reason  *string          `json:"reason,omitempty"`
+}
 
 // ProfilingLanguage defines model for ProfilingLanguage.
 type ProfilingLanguage string

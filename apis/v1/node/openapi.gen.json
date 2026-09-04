@@ -140,14 +140,6 @@
             "format": "date-time",
             "type": "string"
           },
-          "failure": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/OperationFailure"
-              }
-            ],
-            "nullable": true
-          },
           "finished_at": {
             "format": "date-time",
             "nullable": true,
@@ -167,6 +159,14 @@
           },
           "status": {
             "$ref": "#/components/schemas/OperationStatus"
+          },
+          "terminal": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OperationTerminal"
+              }
+            ],
+            "nullable": true
           }
         },
         "required": [
@@ -174,23 +174,6 @@
           "kind",
           "status",
           "created_at"
-        ],
-        "type": "object"
-      },
-      "OperationFailure": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "$ref": "#/components/schemas/apis_v1_components_ErrorCode"
-          },
-          "message": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message"
         ],
         "type": "object"
       },
@@ -203,6 +186,19 @@
         "x-enum-varnames": [
           "OperationKindProfiling",
           "OperationKindTracing"
+        ]
+      },
+      "OperationOutcome": {
+        "enum": [
+          "completed",
+          "failed",
+          "stopped"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "OperationOutcomeCompleted",
+          "OperationOutcomeFailed",
+          "OperationOutcomeStopped"
         ]
       },
       "OperationResponse": {
@@ -222,19 +218,33 @@
           "pending",
           "running",
           "stopping",
-          "completed",
-          "failed",
-          "stopped"
+          "terminal"
         ],
         "type": "string",
         "x-enum-varnames": [
           "OperationStatusPending",
           "OperationStatusRunning",
           "OperationStatusStopping",
-          "OperationStatusCompleted",
-          "OperationStatusFailed",
-          "OperationStatusStopped"
+          "OperationStatusTerminal"
         ]
+      },
+      "OperationTerminal": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/OperationOutcome"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "type": "object"
       },
       "ProfilingLanguage": {
         "enum": [
