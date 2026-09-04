@@ -37,11 +37,12 @@ type lifecycleFailure struct {
 	err     error
 }
 
-func (m *Manager) runOperation(ctx context.Context, managed *managedOperation) {
+func (m *Manager) runOperation(managed *managedOperation) {
 	defer m.wg.Done()
 
 	runtime := managed.execution
-	launchCtx, cancelLaunch := context.WithTimeout(ctx, m.lifecycle.LaunchTimeout)
+	lifecycleCtx := context.Background()
+	launchCtx, cancelLaunch := context.WithTimeout(lifecycleCtx, m.lifecycle.LaunchTimeout)
 	m.mu.Lock()
 	runtime.launchCancel = cancelLaunch
 	stopRequested := managed.state.Status == StatusStopping
@@ -88,7 +89,10 @@ func (m *Manager) runOperation(ctx context.Context, managed *managedOperation) {
 	if !stopRequested && waitErr == nil {
 		mode = FinalizePublish
 	}
-	finalizeCtx, cancelFinalize := context.WithTimeout(ctx, m.lifecycle.FinalizationTimeout)
+	finalizeCtx, cancelFinalize := context.WithTimeout(
+		lifecycleCtx,
+		m.lifecycle.FinalizationTimeout,
+	)
 	finalizeErr := runtime.executor.Finalize(finalizeCtx, mode)
 	finalizeContextErr := finalizeCtx.Err()
 	cancelFinalize()

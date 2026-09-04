@@ -31,7 +31,7 @@ func TestManagerCompletesNaturalLifecycle(t *testing.T) {
 		<-waitRelease
 		return nil
 	}}
-	created, _, err := manager.Start(context.Background(), StartRequest{
+	created, _, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindProfiling,
 		Executor:  executor,
@@ -94,7 +94,7 @@ func TestManagerClassifiesStartFailures(t *testing.T) {
 			config.Lifecycle.LaunchTimeout = 10 * time.Millisecond
 			manager := newTestManager(t, config)
 			executor := &fakeExecutor{startFn: test.start}
-			_, _, err := manager.Start(context.Background(), StartRequest{
+			_, _, err := manager.Start(StartRequest{
 				RequestID: "request",
 				Kind:      KindProfiling,
 				Executor:  executor,
@@ -122,7 +122,7 @@ func TestManagerStopsPendingLaunch(t *testing.T) {
 		<-ctx.Done()
 		return fmt.Errorf("start canceled: %w", ctx.Err())
 	}}
-	_, _, err := manager.Start(context.Background(), StartRequest{
+	_, _, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindProfiling,
 		Executor:  executor,
@@ -153,7 +153,7 @@ func TestManagerKeepsStartErrorAfterStopIntent(t *testing.T) {
 		<-ctx.Done()
 		return errors.New("independent start failure")
 	}}
-	_, _, err := manager.Start(context.Background(), StartRequest{
+	_, _, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindProfiling,
 		Executor:  executor,
@@ -190,7 +190,7 @@ func TestManagerStopsLaunchThatWinsCancellationRace(t *testing.T) {
 			return nil
 		},
 	}
-	_, _, err := manager.Start(context.Background(), StartRequest{
+	_, _, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindProfiling,
 		Executor:  executor,
@@ -225,7 +225,7 @@ func TestManagerSuccessfulStopOverridesWaitExitError(t *testing.T) {
 			return nil
 		},
 	}
-	_, _, err := manager.Start(context.Background(), StartRequest{
+	_, _, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindProfiling,
 		Executor:  executor,
@@ -260,7 +260,7 @@ func TestManagerMergesConcurrentStops(t *testing.T) {
 			return nil
 		},
 	}
-	_, _, err := manager.Start(context.Background(), StartRequest{
+	_, _, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindProfiling,
 		Executor:  executor,
@@ -308,7 +308,7 @@ func TestManagerRejectsStopDuringFinalization(t *testing.T) {
 		<-finalizeRelease
 		return nil
 	}}
-	_, _, err := manager.Start(context.Background(), StartRequest{
+	_, _, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindProfiling,
 		Executor:  executor,
@@ -407,7 +407,7 @@ func TestManagerClassifiesExecutionAndFinalizationFailures(t *testing.T) {
 			manager := newTestManager(t, config)
 			executor := &fakeExecutor{}
 			test.configure(executor)
-			_, _, err := manager.Start(context.Background(), StartRequest{
+			_, _, err := manager.Start(StartRequest{
 				RequestID: "request",
 				Kind:      KindProfiling,
 				Executor:  executor,
@@ -454,7 +454,7 @@ func TestManagerShutdownStopsOperationsOnce(t *testing.T) {
 			},
 		}
 		requestID := fmt.Sprintf("request-%d", index)
-		_, _, startErr := manager.Start(context.Background(), StartRequest{
+		_, _, startErr := manager.Start(StartRequest{
 			RequestID: requestID,
 			Kind:      KindProfiling,
 			Executor:  executors[index],
@@ -466,7 +466,7 @@ func TestManagerShutdownStopsOperationsOnce(t *testing.T) {
 	}
 
 	manager.BeginShutdown()
-	_, _, err = manager.Start(context.Background(), StartRequest{
+	_, _, err = manager.Start(StartRequest{
 		RequestID: "rejected",
 		Kind:      KindProfiling,
 		Executor:  &fakeExecutor{},
@@ -515,7 +515,7 @@ func TestManagerShutdownCallerTimeoutDoesNotCancelShutdown(t *testing.T) {
 			return nil
 		},
 	}
-	_, _, err = manager.Start(context.Background(), StartRequest{
+	_, _, err = manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindProfiling,
 		Executor:  executor,

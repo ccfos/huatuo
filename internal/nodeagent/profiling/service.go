@@ -82,7 +82,7 @@ func NewService(manager *operation.Manager, config *Config) (*Service, error) {
 
 // Start validates the node environment before registering an operation.
 func (s *Service) Start(
-	ctx context.Context,
+	_ context.Context,
 	request *StartRequest,
 ) (operationSnapshot *operation.Operation, created bool, err error) {
 	if err := validateRequest(request); err != nil {
@@ -109,7 +109,7 @@ func (s *Service) Start(
 		return nil, false, fmt.Errorf("%w: build profiler process: %w", ErrInvalidRequest, err)
 	}
 
-	return s.manager.Start(ctx, operation.StartRequest{
+	return s.manager.Start(operation.StartRequest{
 		RequestID: request.RequestID,
 		Kind:      operation.KindProfiling,
 		Executor: newExecutor(

@@ -170,30 +170,21 @@ func TestManagerValidatesRequests(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		ctx       context.Context
 		request   StartRequest
 		wantError error
 	}{
 		{
-			name:      "nil context",
-			request:   StartRequest{RequestID: "request", Kind: KindProfiling, Executor: executor},
-			wantError: ErrInvalidRequest,
-		},
-		{
 			name:      "missing request ID",
-			ctx:       context.Background(),
 			request:   StartRequest{Kind: KindProfiling, Executor: executor},
 			wantError: ErrInvalidRequest,
 		},
 		{
 			name:      "invalid kind",
-			ctx:       context.Background(),
 			request:   StartRequest{RequestID: "request", Kind: "unknown", Executor: executor},
 			wantError: ErrInvalidRequest,
 		},
 		{
 			name:      "missing executor",
-			ctx:       context.Background(),
 			request:   StartRequest{RequestID: "request", Kind: KindProfiling},
 			wantError: ErrInvalidRequest,
 		},
@@ -201,7 +192,7 @@ func TestManagerValidatesRequests(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, created, err := manager.Start(test.ctx, test.request)
+			_, created, err := manager.Start(test.request)
 			if !errors.Is(err, test.wantError) {
 				t.Fatalf("Start() error = %v, want %v", err, test.wantError)
 			}
@@ -221,7 +212,7 @@ func TestManagerValidatesRequests(t *testing.T) {
 
 func TestManagerGetAndStopByID(t *testing.T) {
 	manager := newTestManager(t, testConfig())
-	if _, created, err := manager.Start(context.Background(), StartRequest{
+	if _, created, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindTracing,
 		Executor:  &fakeExecutor{},
@@ -252,7 +243,7 @@ func TestManagerAdmissionAndIdempotency(t *testing.T) {
 		},
 	}
 
-	createdOperation, created, err := manager.Start(context.Background(), StartRequest{
+	createdOperation, created, err := manager.Start(StartRequest{
 		RequestID: "request-1",
 		Kind:      KindProfiling,
 		Executor:  executor,
@@ -266,7 +257,7 @@ func TestManagerAdmissionAndIdempotency(t *testing.T) {
 	waitClosed(t, startEntered, "executor Start")
 
 	duplicateExecutor := &fakeExecutor{}
-	duplicate, duplicateCreated, err := manager.Start(context.Background(), StartRequest{
+	duplicate, duplicateCreated, err := manager.Start(StartRequest{
 		RequestID: "request-1",
 		Kind:      KindProfiling,
 		Executor:  duplicateExecutor,
@@ -282,7 +273,7 @@ func TestManagerAdmissionAndIdempotency(t *testing.T) {
 		t.Fatalf("duplicate executor Start calls = %d, want 0", startCalls)
 	}
 
-	_, _, err = manager.Start(context.Background(), StartRequest{
+	_, _, err = manager.Start(StartRequest{
 		RequestID: "request-1",
 		Kind:      KindTracing,
 		Executor:  &fakeExecutor{},
@@ -290,7 +281,7 @@ func TestManagerAdmissionAndIdempotency(t *testing.T) {
 	if !errors.Is(err, ErrRequestIDConflict) {
 		t.Fatalf("conflicting Start() error = %v, want ErrRequestIDConflict", err)
 	}
-	_, _, err = manager.Start(context.Background(), StartRequest{
+	_, _, err = manager.Start(StartRequest{
 		RequestID: "request-2",
 		Kind:      KindProfiling,
 		Executor:  &fakeExecutor{},
@@ -300,14 +291,14 @@ func TestManagerAdmissionAndIdempotency(t *testing.T) {
 	}
 
 	manager.BeginShutdown()
-	if _, duplicateCreated, err = manager.Start(context.Background(), StartRequest{
+	if _, duplicateCreated, err = manager.Start(StartRequest{
 		RequestID: "request-1",
 		Kind:      KindProfiling,
 		Executor:  &fakeExecutor{},
 	}); err != nil || duplicateCreated {
 		t.Fatalf("shutdown duplicate Start() = (_, %t, %v), want existing operation", duplicateCreated, err)
 	}
-	_, _, err = manager.Start(context.Background(), StartRequest{
+	_, _, err = manager.Start(StartRequest{
 		RequestID: "request-3",
 		Kind:      KindProfiling,
 		Executor:  &fakeExecutor{},
@@ -322,7 +313,7 @@ func TestManagerReturnsDetachedSnapshots(t *testing.T) {
 	executor := &fakeExecutor{startFn: func(context.Context) error {
 		return errors.New("start failed with private detail")
 	}}
-	_, _, err := manager.Start(context.Background(), StartRequest{
+	_, _, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindProfiling,
 		Executor:  executor,
@@ -346,45 +337,11 @@ func TestManagerReturnsDetachedSnapshots(t *testing.T) {
 	}
 }
 
-func TestManagerDoesNotInheritRequestContext(t *testing.T) {
-	type contextKey struct{}
-
-	manager := newTestManager(t, testConfig())
-	startRelease := make(chan struct{})
-	contextChecked := make(chan struct{})
-	executor := &fakeExecutor{startFn: func(ctx context.Context) error {
-		if value := ctx.Value(contextKey{}); value != nil {
-			t.Errorf("executor context value = %v, want nil", value)
-		}
-		if err := ctx.Err(); err != nil {
-			t.Errorf("executor context error = %v, want nil", err)
-		}
-		close(contextChecked)
-		<-startRelease
-		return nil
-	}}
-	requestCtx, cancelRequest := context.WithCancel(
-		context.WithValue(context.Background(), contextKey{}, "request value"),
-	)
-	_, _, err := manager.Start(requestCtx, StartRequest{
-		RequestID: "request",
-		Kind:      KindProfiling,
-		Executor:  executor,
-	})
-	if err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	cancelRequest()
-	waitClosed(t, contextChecked, "executor context check")
-	close(startRelease)
-	waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
-}
-
 func TestManagerReusesExpiredRequestID(t *testing.T) {
 	config := testConfig()
 	config.Lifecycle.TerminalRetentionPeriod = 20 * time.Millisecond
 	manager := newTestManager(t, config)
-	_, _, err := manager.Start(context.Background(), StartRequest{
+	_, _, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindProfiling,
 		Executor:  &fakeExecutor{},
@@ -404,7 +361,7 @@ func TestManagerReusesExpiredRequestID(t *testing.T) {
 			return ctx.Err()
 		}
 	}}
-	operation, created, err := manager.Start(context.Background(), StartRequest{
+	operation, created, err := manager.Start(StartRequest{
 		RequestID: "request",
 		Kind:      KindTracing,
 		Executor:  replacement,
@@ -421,7 +378,7 @@ func TestManagerReusesExpiredRequestID(t *testing.T) {
 
 func TestManagerTerminalRetention(t *testing.T) {
 	manager := newTestManager(t, testConfig())
-	_, _, err := manager.Start(context.Background(), StartRequest{
+	_, _, err := manager.Start(StartRequest{
 		RequestID: "terminal",
 		Kind:      KindProfiling,
 		Executor:  &fakeExecutor{},
@@ -471,7 +428,7 @@ func TestManagerCleanupKeepsActiveOperation(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}}
-	_, _, err := manager.Start(context.Background(), StartRequest{
+	_, _, err := manager.Start(StartRequest{
 		RequestID: "active",
 		Kind:      KindProfiling,
 		Executor:  executor,
@@ -504,7 +461,7 @@ func TestManagerStartAndBeginShutdownAreSerialized(t *testing.T) {
 				<-ctx.Done()
 				return ctx.Err()
 			}}
-			_, _, err := manager.Start(context.Background(), StartRequest{
+			_, _, err := manager.Start(StartRequest{
 				RequestID: requestID,
 				Kind:      KindProfiling,
 				Executor:  executor,

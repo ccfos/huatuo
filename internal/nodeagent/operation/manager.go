@@ -82,13 +82,9 @@ func NewManager(config Config) (*Manager, error) {
 }
 
 // Start synchronously registers an operation and starts its lifecycle in the
-// background. The request Context is deliberately not inherited by that
-// lifecycle.
-func (m *Manager) Start(
-	ctx context.Context,
-	request StartRequest,
-) (operation *Operation, created bool, err error) {
-	if err := validateStartRequest(ctx, request); err != nil {
+// background.
+func (m *Manager) Start(request StartRequest) (operation *Operation, created bool, err error) {
+	if err := validateStartRequest(request); err != nil {
 		return nil, false, err
 	}
 
@@ -134,7 +130,7 @@ func (m *Manager) Start(
 	snapshot := cloneOperation(&managed.state)
 	m.mu.Unlock()
 
-	go m.runOperation(context.Background(), managed)
+	go m.runOperation(managed)
 	return snapshot, true, nil
 }
 
@@ -235,10 +231,7 @@ func validateConfig(config Config) error {
 	return nil
 }
 
-func validateStartRequest(ctx context.Context, request StartRequest) error {
-	if ctx == nil {
-		return fmt.Errorf("%w: context is required", ErrInvalidRequest)
-	}
+func validateStartRequest(request StartRequest) error {
 	if request.RequestID == "" {
 		return fmt.Errorf("%w: request ID is required", ErrInvalidRequest)
 	}
