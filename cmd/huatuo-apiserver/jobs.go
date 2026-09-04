@@ -33,7 +33,7 @@ func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) err
 		return nil, fmt.Errorf("initialize Node client: %w", err)
 	}
 	controller := d.opts.Config.Jobs.Controller
-	manager, err := job.NewManager(ctx, client, job.ManagerConfig{
+	manager, err := job.NewManager(ctx, client, &job.ManagerConfig{
 		StoreDSN: d.opts.Config.Jobs.StoreDSN,
 		ProfilingPolicy: job.Policy{
 			MaxJobsPerHost: d.opts.Config.Jobs.Profiling.MaxConcurrentPerHost,

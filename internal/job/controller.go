@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"time"
 
-	apiv1 "huatuo-bamai/apis/v1"
 	nodeapi "huatuo-bamai/apis/v1/node"
 	"huatuo-bamai/internal/nodeclient"
 )
@@ -47,7 +46,11 @@ func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool,
 			}
 			return m.handleNodeError(ctx, runtime, err, true)
 		}
-		return m.reconcileAndStop(ctx, runtime, operation)
+		terminal, reconcileErr := m.reconcileAndStop(ctx, runtime, operation)
+		if errors.Is(reconcileErr, nodeclient.ErrProtocol) {
+			return m.handleNodeError(ctx, runtime, reconcileErr, false)
+		}
+		return terminal, reconcileErr
 	}
 
 	snapshot := runtimeSnapshot(runtime)
@@ -55,7 +58,11 @@ func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool,
 	if err != nil {
 		return m.handleNodeError(ctx, runtime, err, false)
 	}
-	return m.reconcileAndStop(ctx, runtime, operation)
+	terminal, reconcileErr := m.reconcileAndStop(ctx, runtime, operation)
+	if errors.Is(reconcileErr, nodeclient.ErrProtocol) {
+		return m.handleNodeError(ctx, runtime, reconcileErr, false)
+	}
+	return terminal, reconcileErr
 }
 
 func (m *Manager) start(
@@ -79,9 +86,11 @@ func (m *Manager) start(
 	updated.StartAttemptedAt = now
 	updated.PendingDeadline = now.Add(m.config.PendingTimeout)
 	updated.UpdatedAt = now
-	if err := m.store.Save(ctx, updated, StatusPending); err != nil {
-		m.persistenceFailures.Add(1)
-		runtime.mu.Unlock()
+	runtime.mu.Unlock()
+	if err := m.persistRuntime(ctx, runtime, current, updated); err != nil {
+		if errors.Is(err, ErrConflict) {
+			return nil, fmt.Errorf("%w: persist dispatch marker for Job %q: %w", ErrConflict, current.ID, err)
+		}
 		return nil, fmt.Errorf(
 			"%w: persist dispatch marker for Job %q: %w",
 			ErrPersistence,
@@ -89,8 +98,6 @@ func (m *Manager) start(
 			err,
 		)
 	}
-	runtime.job = updated
-	runtime.mu.Unlock()
 	return m.startOperation(ctx, updated)
 }
 
@@ -123,9 +130,9 @@ func (m *Manager) reconcileOperation(
 	}
 
 	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
 	current := runtime.job
 	if isTerminal(current.Status) {
+		runtime.mu.Unlock()
 		return true, false, nil
 	}
 	runtime.operationObserved = true
@@ -208,9 +215,12 @@ func (m *Manager) reconcileOperation(
 		}
 	}
 
+	runtime.mu.Unlock()
 	if changed {
-		if err := m.store.Save(ctx, updated, current.Status); err != nil {
-			m.persistenceFailures.Add(1)
+		if err := m.persistRuntime(ctx, runtime, current, updated); err != nil {
+			if errors.Is(err, ErrConflict) {
+				return false, false, fmt.Errorf("%w: reconcile Job %q: %w", ErrConflict, current.ID, err)
+			}
 			return false, false, fmt.Errorf(
 				"%w: reconcile Job %q: %w",
 				ErrPersistence,
@@ -218,7 +228,6 @@ func (m *Manager) reconcileOperation(
 				err,
 			)
 		}
-		runtime.job = updated
 	}
 	return isTerminal(updated.Status), shouldStop, nil
 }
@@ -236,9 +245,9 @@ func (m *Manager) handleNodeError(
 		return false, ctxErr
 	}
 	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
 	current := runtime.job
 	if isTerminal(current.Status) {
+		runtime.mu.Unlock()
 		return true, nil
 	}
 	now := m.now()
@@ -266,6 +275,7 @@ func (m *Manager) handleNodeError(
 				Message: "Node remained unavailable beyond the recovery window",
 			}, now)
 		} else {
+			runtime.mu.Unlock()
 			return false, nil
 		}
 	} else {
@@ -275,8 +285,11 @@ func (m *Manager) handleNodeError(
 		}, now)
 	}
 
-	if err := m.store.Save(ctx, updated, current.Status); err != nil {
-		m.persistenceFailures.Add(1)
+	runtime.mu.Unlock()
+	if err := m.persistRuntime(ctx, runtime, current, updated); err != nil {
+		if errors.Is(err, ErrConflict) {
+			return false, fmt.Errorf("%w: persist Node error for Job %q: %w", ErrConflict, current.ID, err)
+		}
 		return false, fmt.Errorf(
 			"%w: persist Node error for Job %q: %w",
 			ErrPersistence,
@@ -284,8 +297,26 @@ func (m *Manager) handleNodeError(
 			err,
 		)
 	}
-	runtime.job = updated
 	return isTerminal(updated.Status), nil
+}
+
+func (m *Manager) persistRuntime(
+	ctx context.Context,
+	runtime *managedJob,
+	current *Job,
+	updated *Job,
+) error {
+	if err := m.store.Save(ctx, updated, current.Status); err != nil {
+		m.persistenceFailures.Add(1)
+		return err
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.job != current {
+		return ErrConflict
+	}
+	runtime.job = updated
+	return nil
 }
 
 func (m *Manager) nextWake(runtime *managedJob) time.Duration {
@@ -314,80 +345,6 @@ func (m *Manager) nextWake(runtime *managedJob) time.Duration {
 		}
 	}
 	return max(next.Sub(now), 0)
-}
-
-func (m *Manager) startOperation(
-	ctx context.Context,
-	job *Job,
-) (*nodeapi.Operation, error) {
-	switch job.Kind {
-	case KindProfiling:
-		return m.nodeClient.StartProfiling(ctx, job.Hostname, profilingStartRequest(job))
-	case KindTracing:
-		return m.nodeClient.StartTracing(ctx, job.Hostname, tracingStartRequest(job))
-	default:
-		return nil, fmt.Errorf("%w: unsupported Job kind %q", ErrUnsupportedKind, job.Kind)
-	}
-}
-
-func (m *Manager) getOperation(
-	ctx context.Context,
-	job *Job,
-) (*nodeapi.Operation, error) {
-	switch job.Kind {
-	case KindProfiling:
-		return m.nodeClient.GetProfiling(ctx, job.Hostname, job.ID)
-	case KindTracing:
-		return m.nodeClient.GetTracing(ctx, job.Hostname, job.ID)
-	default:
-		return nil, fmt.Errorf("%w: unsupported Job kind %q", ErrUnsupportedKind, job.Kind)
-	}
-}
-
-func (m *Manager) stopOperation(
-	ctx context.Context,
-	job *Job,
-) (*nodeapi.Operation, error) {
-	switch job.Kind {
-	case KindProfiling:
-		return m.nodeClient.StopProfiling(ctx, job.Hostname, job.ID)
-	case KindTracing:
-		return m.nodeClient.StopTracing(ctx, job.Hostname, job.ID)
-	default:
-		return nil, fmt.Errorf("%w: unsupported Job kind %q", ErrUnsupportedKind, job.Kind)
-	}
-}
-
-func profilingStartRequest(job *Job) *nodeapi.StartProfilingRequest {
-	spec := job.Spec.Profiling
-	request := &nodeapi.StartProfilingRequest{
-		RequestID:       job.ID,
-		DurationSeconds: int64(job.Duration / time.Second),
-		Scope:           apiv1.ObservationScope(job.Scope),
-		Type:            nodeapi.ProfilingType(spec.Type),
-		Language:        nodeapi.ProfilingLanguage(spec.Language),
-		Mode:            nodeapi.ProfilingMode(spec.Mode),
-	}
-	if job.ContainerID != "" {
-		request.ContainerID = &job.ContainerID
-	}
-	if spec.BinaryMatchPath != "" {
-		request.BinaryMatchPath = &spec.BinaryMatchPath
-	}
-	return request
-}
-
-func tracingStartRequest(job *Job) *nodeapi.StartTracingRequest {
-	request := &nodeapi.StartTracingRequest{
-		RequestID:       job.ID,
-		DurationSeconds: int64(job.Duration / time.Second),
-		Scope:           apiv1.ObservationScope(job.Scope),
-		Type:            nodeapi.TracingType(job.Spec.Tracing.Type),
-	}
-	if job.ContainerID != "" {
-		request.ContainerID = &job.ContainerID
-	}
-	return request
 }
 
 func explicitNodeFailure(err error, duringStart bool) *TerminalFailure {

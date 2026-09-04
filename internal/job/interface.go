@@ -25,7 +25,7 @@ import (
 type Store interface {
 	Get(ctx context.Context, jobID string) (*Job, error)
 	Create(ctx context.Context, job *Job) error
-	Save(ctx context.Context, job *Job, expectedStatuses ...Status) error
+	Save(ctx context.Context, job *Job, expectedStatus Status) error
 	List(ctx context.Context, query *Query) ([]*Job, error)
 	DeleteTerminalBefore(ctx context.Context, endedBefore time.Time, limit int) (int64, error)
 	Ping(ctx context.Context) error
@@ -34,18 +34,11 @@ type Store interface {
 
 // NodeClient controls typed Node Operations without owning Job state.
 type NodeClient interface {
-	StartProfiling(
+	StartOperation(
 		ctx context.Context,
 		host string,
-		request *nodeapi.StartProfilingRequest,
+		request *nodeapi.StartOperationRequest,
 	) (*nodeapi.Operation, error)
-	GetProfiling(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
-	StopProfiling(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
-	StartTracing(
-		ctx context.Context,
-		host string,
-		request *nodeapi.StartTracingRequest,
-	) (*nodeapi.Operation, error)
-	GetTracing(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
-	StopTracing(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
+	GetOperation(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
+	StopOperation(ctx context.Context, host, requestID string) (*nodeapi.Operation, error)
 }

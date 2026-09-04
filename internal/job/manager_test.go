@@ -33,7 +33,7 @@ type memoryStore struct {
 
 	jobs     map[string]*Job
 	saves    []*Job
-	saveHook func(*Job, []Status) error
+	saveHook func(*Job, Status) error
 }
 
 func newMemoryStore(jobs ...*Job) *memoryStore {
@@ -64,24 +64,18 @@ func (s *memoryStore) Create(_ context.Context, job *Job) error {
 	return nil
 }
 
-func (s *memoryStore) Save(_ context.Context, job *Job, expected ...Status) error {
+func (s *memoryStore) Save(_ context.Context, job *Job, expected Status) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, ok := s.jobs[job.ID]
 	if !ok {
 		return ErrNotFound
 	}
-	if len(expected) != 0 {
-		matched := false
-		for _, status := range expected {
-			matched = matched || current.Status == status
-		}
-		if !matched {
-			return ErrConflict
-		}
+	if current.Status != expected {
+		return ErrConflict
 	}
 	if s.saveHook != nil {
-		if err := s.saveHook(cloneJob(job), append([]Status(nil), expected...)); err != nil {
+		if err := s.saveHook(cloneJob(job), expected); err != nil {
 			return err
 		}
 	}
@@ -130,70 +124,46 @@ func (s *memoryStore) Close(context.Context) error {
 }
 
 type stubNodeClient struct {
-	startProfiling func(context.Context, string, *nodeapi.StartProfilingRequest) (*nodeapi.Operation, error)
-	getProfiling   func(context.Context, string, string) (*nodeapi.Operation, error)
-	stopProfiling  func(context.Context, string, string) (*nodeapi.Operation, error)
+	startOperation func(context.Context, string, *nodeapi.StartOperationRequest) (*nodeapi.Operation, error)
+	getOperation   func(context.Context, string, string) (*nodeapi.Operation, error)
+	stopOperation  func(context.Context, string, string) (*nodeapi.Operation, error)
 }
 
-func (s *stubNodeClient) StartProfiling(
+func (s *stubNodeClient) StartOperation(
 	ctx context.Context,
 	host string,
-	request *nodeapi.StartProfilingRequest,
+	request *nodeapi.StartOperationRequest,
 ) (*nodeapi.Operation, error) {
-	if s.startProfiling != nil {
-		return s.startProfiling(ctx, host, request)
+	if s.startOperation != nil {
+		return s.startOperation(ctx, host, request)
 	}
 	return operation(request.RequestID, nodeapi.OperationStatusPending), nil
 }
 
-func (s *stubNodeClient) GetProfiling(
+func (s *stubNodeClient) GetOperation(
 	ctx context.Context,
 	host string,
 	requestID string,
 ) (*nodeapi.Operation, error) {
-	if s.getProfiling != nil {
-		return s.getProfiling(ctx, host, requestID)
+	if s.getOperation != nil {
+		return s.getOperation(ctx, host, requestID)
 	}
 	return operation(requestID, nodeapi.OperationStatusPending), nil
 }
 
-func (s *stubNodeClient) StopProfiling(
+func (s *stubNodeClient) StopOperation(
 	ctx context.Context,
 	host string,
 	requestID string,
 ) (*nodeapi.Operation, error) {
-	if s.stopProfiling != nil {
-		return s.stopProfiling(ctx, host, requestID)
+	if s.stopOperation != nil {
+		return s.stopOperation(ctx, host, requestID)
 	}
 	return operation(requestID, nodeapi.OperationStatusStopped), nil
 }
 
-func (*stubNodeClient) StartTracing(
-	context.Context,
-	string,
-	*nodeapi.StartTracingRequest,
-) (*nodeapi.Operation, error) {
-	return nil, errors.New("unexpected tracing start")
-}
-
-func (*stubNodeClient) GetTracing(
-	context.Context,
-	string,
-	string,
-) (*nodeapi.Operation, error) {
-	return nil, errors.New("unexpected tracing get")
-}
-
-func (*stubNodeClient) StopTracing(
-	context.Context,
-	string,
-	string,
-) (*nodeapi.Operation, error) {
-	return nil, errors.New("unexpected tracing stop")
-}
-
 func testManager(store Store, client NodeClient) *Manager {
-	return newManagerWithStore(store, client, ManagerConfig{
+	return newManagerWithStore(store, client, &ManagerConfig{
 		ProfilingPolicy:            Policy{MaxJobsPerHost: 2, MaxTotalJobs: 2},
 		TracingPolicy:              Policy{MaxJobsPerHost: 2, MaxTotalJobs: 2},
 		StatusPollInterval:         time.Hour,
@@ -254,7 +224,7 @@ func operation(requestID string, status nodeapi.OperationStatus) *nodeapi.Operat
 }
 
 func TestNormalizeManagerConfigRequiresBothServicePolicies(t *testing.T) {
-	_, err := normalizeManagerConfig(ManagerConfig{
+	_, err := normalizeManagerConfig(&ManagerConfig{
 		ProfilingPolicy: Policy{MaxJobsPerHost: 1, MaxTotalJobs: 1},
 	})
 	if err == nil || err.Error() != "create job manager: policy for tracing is required" {
@@ -264,10 +234,10 @@ func TestNormalizeManagerConfigRequiresBothServicePolicies(t *testing.T) {
 
 func TestManagerCreateTreatsEachRequestAsIndependent(t *testing.T) {
 	release := make(chan struct{})
-	client := &stubNodeClient{startProfiling: func(
+	client := &stubNodeClient{startOperation: func(
 		context.Context,
 		string,
-		*nodeapi.StartProfilingRequest,
+		*nodeapi.StartOperationRequest,
 	) (*nodeapi.Operation, error) {
 		<-release
 		return nil, errors.New("Node unavailable")
@@ -321,10 +291,10 @@ func TestManagerListPageUsesLookahead(t *testing.T) {
 
 func TestManagerShutdownCancelsBlockedSupervisor(t *testing.T) {
 	started := make(chan struct{})
-	client := &stubNodeClient{startProfiling: func(
+	client := &stubNodeClient{startOperation: func(
 		ctx context.Context,
 		_ string,
-		_ *nodeapi.StartProfilingRequest,
+		_ *nodeapi.StartOperationRequest,
 	) (*nodeapi.Operation, error) {
 		close(started)
 		<-ctx.Done()
@@ -355,9 +325,9 @@ func TestManagerStartPersistsDispatchMarkerBeforeNodeCall(t *testing.T) {
 	manager := testManager(store, nil)
 	manager.now = func() time.Time { return now }
 	var markerPersisted atomic.Bool
-	store.saveHook = func(saved *Job, expected []Status) error {
-		if len(expected) != 1 || expected[0] != StatusPending {
-			t.Fatalf("Save() expected statuses = %v", expected)
+	store.saveHook = func(saved *Job, expected Status) error {
+		if expected != StatusPending {
+			t.Fatalf("Save() expected status = %q", expected)
 		}
 		if saved.StartAttemptedAt.IsZero() || saved.PendingDeadline.IsZero() {
 			t.Fatal("Save() did not contain the dispatch marker")
@@ -365,13 +335,13 @@ func TestManagerStartPersistsDispatchMarkerBeforeNodeCall(t *testing.T) {
 		markerPersisted.Store(true)
 		return nil
 	}
-	manager.nodeClient = &stubNodeClient{startProfiling: func(
+	manager.nodeClient = &stubNodeClient{startOperation: func(
 		_ context.Context,
 		_ string,
-		request *nodeapi.StartProfilingRequest,
+		request *nodeapi.StartOperationRequest,
 	) (*nodeapi.Operation, error) {
 		if !markerPersisted.Load() {
-			t.Fatal("StartProfiling() ran before the dispatch marker was durable")
+			t.Fatal("StartOperation() ran before the dispatch marker was durable")
 		}
 		return operation(request.RequestID, nodeapi.OperationStatusPending), nil
 	}}
@@ -476,7 +446,7 @@ func TestManagerExecutionTimeoutStopsThenFailsJob(t *testing.T) {
 	runningJob.ExecutionDeadline = now
 	store := newMemoryStore(runningJob)
 	var stopCalls atomic.Int32
-	client := &stubNodeClient{stopProfiling: func(
+	client := &stubNodeClient{stopOperation: func(
 		_ context.Context,
 		_ string,
 		requestID string,
@@ -502,7 +472,7 @@ func TestManagerExecutionTimeoutStopsThenFailsJob(t *testing.T) {
 		t.Fatalf("timed-out Job = (%q, %+v)", got.Status, got.Failure)
 	}
 	if stopCalls.Load() != 1 {
-		t.Fatalf("StopProfiling() calls = %d, want 1", stopCalls.Load())
+		t.Fatalf("StopOperation() calls = %d, want 1", stopCalls.Load())
 	}
 }
 

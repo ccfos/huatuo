@@ -88,7 +88,7 @@ type Manager struct {
 
 	store      Store
 	nodeClient NodeClient
-	config     ManagerConfig
+	config     *ManagerConfig
 	now        func() time.Time
 
 	cleanupCancel context.CancelFunc
@@ -121,7 +121,7 @@ type ManagerStats struct {
 func NewManager(
 	ctx context.Context,
 	nodeClient NodeClient,
-	config ManagerConfig,
+	config *ManagerConfig,
 ) (*Manager, error) {
 	if nodeClient == nil {
 		return nil, errors.New("create job manager: Node client is required")
@@ -146,7 +146,7 @@ func NewManager(
 func newManagerWithStore(
 	store Store,
 	nodeClient NodeClient,
-	config ManagerConfig,
+	config *ManagerConfig,
 ) *Manager {
 	return &Manager{
 		active:      make(map[string]*managedJob),
@@ -163,55 +163,59 @@ func newManagerWithStore(
 	}
 }
 
-func normalizeManagerConfig(config ManagerConfig) (ManagerConfig, error) {
+func normalizeManagerConfig(config *ManagerConfig) (*ManagerConfig, error) {
+	if config == nil {
+		return nil, errors.New("create job manager: config is required")
+	}
+	normalized := *config
 	for _, policyConfig := range []struct {
 		kind   Kind
 		policy Policy
 	}{
-		{kind: KindProfiling, policy: config.ProfilingPolicy},
-		{kind: KindTracing, policy: config.TracingPolicy},
+		{kind: KindProfiling, policy: normalized.ProfilingPolicy},
+		{kind: KindTracing, policy: normalized.TracingPolicy},
 	} {
 		kind, policy := policyConfig.kind, policyConfig.policy
 		if policy.MaxJobsPerHost == 0 && policy.MaxTotalJobs == 0 {
-			return ManagerConfig{}, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"create job manager: policy for %s is required",
 				kind,
 			)
 		}
 		if policy.MaxJobsPerHost <= 0 || policy.MaxTotalJobs <= 0 {
-			return ManagerConfig{}, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"create job manager: %s quotas must be greater than zero",
 				kind,
 			)
 		}
 	}
-	if config.StatusPollInterval == 0 {
-		config.StatusPollInterval = defaultStatusPollInterval
+	if normalized.StatusPollInterval == 0 {
+		normalized.StatusPollInterval = defaultStatusPollInterval
 	}
-	if config.PendingTimeout == 0 {
-		config.PendingTimeout = defaultPendingTimeout
+	if normalized.PendingTimeout == 0 {
+		normalized.PendingTimeout = defaultPendingTimeout
 	}
-	if config.CompletionGracePeriod == 0 {
-		config.CompletionGracePeriod = defaultCompletionGracePeriod
+	if normalized.CompletionGracePeriod == 0 {
+		normalized.CompletionGracePeriod = defaultCompletionGracePeriod
 	}
-	if config.NodeUnavailableGracePeriod == 0 {
-		config.NodeUnavailableGracePeriod = defaultNodeUnavailableGracePeriod
+	if normalized.NodeUnavailableGracePeriod == 0 {
+		normalized.NodeUnavailableGracePeriod = defaultNodeUnavailableGracePeriod
 	}
-	if config.JobRetentionPeriod == 0 {
-		config.JobRetentionPeriod = defaultJobRetentionPeriod
+	if normalized.JobRetentionPeriod == 0 {
+		normalized.JobRetentionPeriod = defaultJobRetentionPeriod
 	}
 	for name, value := range map[string]time.Duration{
-		"status poll interval":          config.StatusPollInterval,
-		"pending timeout":               config.PendingTimeout,
-		"completion grace period":       config.CompletionGracePeriod,
-		"Node unavailable grace period": config.NodeUnavailableGracePeriod,
-		"Job retention period":          config.JobRetentionPeriod,
+		"status poll interval":          normalized.StatusPollInterval,
+		"pending timeout":               normalized.PendingTimeout,
+		"completion grace period":       normalized.CompletionGracePeriod,
+		"Node unavailable grace period": normalized.NodeUnavailableGracePeriod,
+		"Job retention period":          normalized.JobRetentionPeriod,
 	} {
 		if value <= 0 {
-			return ManagerConfig{}, fmt.Errorf("create job manager: %s must be positive", name)
+			return nil, fmt.Errorf("create job manager: %s must be positive", name)
 		}
 	}
-	return config, nil
+	return &normalized, nil
 }
 
 // Create persists one independent Job and starts its supervisor.
@@ -274,7 +278,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 	return cloneJob(newJob), nil
 }
 
-func (c ManagerConfig) policy(kind Kind) (Policy, bool) {
+func (c *ManagerConfig) policy(kind Kind) (Policy, bool) {
 	switch kind {
 	case KindProfiling:
 		return c.ProfilingPolicy, true
@@ -327,13 +331,15 @@ func (m *Manager) Stop(ctx context.Context, jobID string) (*Job, error) {
 	}
 
 	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
 	current := runtime.job
 	if isTerminal(current.Status) {
+		runtime.mu.Unlock()
 		return nil, ErrJobTerminal
 	}
 	if current.Status == StatusStopping {
-		return cloneJob(current), nil
+		result := cloneJob(current)
+		runtime.mu.Unlock()
+		return result, nil
 	}
 
 	now := m.now()
@@ -345,11 +351,13 @@ func (m *Manager) Stop(ctx context.Context, jobID string) (*Job, error) {
 	} else {
 		setStopping(updated, StopReasonUser, now, m.config.CompletionGracePeriod)
 	}
-	if err := m.store.Save(ctx, updated, current.Status); err != nil {
-		m.persistenceFailures.Add(1)
+	runtime.mu.Unlock()
+	if err := m.persistRuntime(ctx, runtime, current, updated); err != nil {
+		if errors.Is(err, ErrConflict) {
+			return nil, fmt.Errorf("%w: persist stop for Job %q: %w", ErrConflict, jobID, err)
+		}
 		return nil, fmt.Errorf("%w: persist stop for Job %q: %w", ErrPersistence, jobID, err)
 	}
-	runtime.job = updated
 	wakeSupervisor(runtime)
 	return cloneJob(updated), nil
 }

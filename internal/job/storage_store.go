@@ -156,27 +156,19 @@ func (s *storageStore) Create(ctx context.Context, job *Job) error {
 func (s *storageStore) Save(
 	ctx context.Context,
 	job *Job,
-	expectedStatuses ...Status,
+	expectedStatus Status,
 ) error {
 	record, err := encodeStorageRecord(job)
 	if err != nil {
 		return err
 	}
 
-	query := `UPDATE jobs SET data = ?, fields = ? WHERE id = ?`
-	args := []any{record.data, record.fields, record.id}
-	if len(expectedStatuses) > 0 {
-		placeholders := make([]string, len(expectedStatuses))
-		for i, status := range expectedStatuses {
-			if !isValidStatus(status) {
-				return fmt.Errorf("%w: unsupported expected status %q", ErrInvalidQuery, status)
-			}
-			placeholders[i] = "?"
-			args = append(args, string(status))
-		}
-		query += " AND json_extract(fields, '$.status') IN (" +
-			strings.Join(placeholders, ", ") + ")"
+	if !isValidStatus(expectedStatus) {
+		return fmt.Errorf("%w: unsupported expected status %q", ErrInvalidQuery, expectedStatus)
 	}
+	query := `UPDATE jobs SET data = ?, fields = ? WHERE id = ?
+		AND json_extract(fields, '$.status') = ?`
+	args := []any{record.data, record.fields, record.id, string(expectedStatus)}
 
 	result, err := s.db.ExecContext(contextOrBackground(ctx), query, args...)
 	if err != nil {
@@ -189,10 +181,7 @@ func (s *storageStore) Save(
 	if rows != 0 {
 		return nil
 	}
-	if len(expectedStatuses) > 0 {
-		return ErrConflict
-	}
-	return ErrNotFound
+	return ErrConflict
 }
 
 func (s *storageStore) List(ctx context.Context, query *Query) ([]*Job, error) {
@@ -379,10 +368,7 @@ func buildListSQL(query *Query) (string, []any, error) {
 	if err := validateQuery(query); err != nil {
 		return "", nil, err
 	}
-	whereSQL, args, err := buildWhereSQL(query)
-	if err != nil {
-		return "", nil, err
-	}
+	whereSQL, args := buildWhereSQL(query)
 	querySQL := `SELECT id, data FROM jobs`
 	if whereSQL != "" {
 		querySQL += " WHERE " + whereSQL
@@ -417,12 +403,9 @@ func buildListSQL(query *Query) (string, []any, error) {
 	return querySQL, args, nil
 }
 
-func buildWhereSQL(query *Query) (string, []any, error) {
-	if err := validateQuery(query); err != nil {
-		return "", nil, err
-	}
+func buildWhereSQL(query *Query) (string, []any) {
 	if query == nil {
-		return "", nil, nil
+		return "", nil
 	}
 
 	clauses := make([]string, 0, 8)
@@ -464,7 +447,7 @@ func buildWhereSQL(query *Query) (string, []any, error) {
 	}
 	appendIn("kind", kinds)
 	appendIn("subtype", query.Subtypes)
-	return strings.Join(clauses, " AND "), args, nil
+	return strings.Join(clauses, " AND "), args
 }
 
 func validateQuery(query *Query) error {
