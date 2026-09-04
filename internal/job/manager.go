@@ -220,8 +220,8 @@ func normalizeManagerConfig(config *ManagerConfig) (*ManagerConfig, error) {
 
 // Create persists one independent Job and starts its supervisor.
 func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, error) {
-	if request == nil {
-		return nil, errors.New("create job: request is required")
+	if err := request.validate(); err != nil {
+		return nil, fmt.Errorf("create job: %w", err)
 	}
 	now := m.now()
 	newJob := &Job{
@@ -236,9 +236,6 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		Status:      StatusPending,
 		CreatedAt:   now,
 		UpdatedAt:   now,
-	}
-	if err := newJob.validate(); err != nil {
-		return nil, fmt.Errorf("create job: %w", err)
 	}
 	supervisorCtx, cancel := context.WithCancel(context.Background())
 	runtime := newManagedJob(newJob, false, cancel)

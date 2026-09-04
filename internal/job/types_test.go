@@ -23,7 +23,91 @@ import (
 	"huatuo-bamai/pkg/profiling"
 )
 
-func TestJobValidateRequiresTerminalResultForTerminalStatus(t *testing.T) {
+func TestCreateRequestValidate(t *testing.T) {
+	validRequest := func() *CreateRequest {
+		return &CreateRequest{
+			UserID:   "user-1",
+			Hostname: "node-1",
+			Duration: time.Minute,
+			Scope:    observation.ScopeHost,
+			Spec: Spec{Profiling: &profiling.Spec{
+				Type:     profiling.TypeCPU,
+				Language: profiling.LanguageGo,
+				Mode:     profiling.ModeOnCPU,
+			}},
+		}
+	}
+	tests := []struct {
+		name    string
+		input   func() *CreateRequest
+		wantErr string
+	}{
+		{name: "valid", input: validRequest},
+		{name: "nil", wantErr: "request is required"},
+		{
+			name: "missing user ID",
+			input: func() *CreateRequest {
+				request := validRequest()
+				request.UserID = ""
+				return request
+			},
+			wantErr: "user ID",
+		},
+		{
+			name: "missing hostname",
+			input: func() *CreateRequest {
+				request := validRequest()
+				request.Hostname = ""
+				return request
+			},
+			wantErr: "hostname",
+		},
+		{
+			name: "invalid duration",
+			input: func() *CreateRequest {
+				request := validRequest()
+				request.Duration = time.Millisecond
+				return request
+			},
+			wantErr: "duration",
+		},
+		{
+			name: "invalid scope",
+			input: func() *CreateRequest {
+				request := validRequest()
+				request.Scope = observation.ScopeUnknown
+				return request
+			},
+			wantErr: "scope",
+		},
+		{
+			name: "missing spec",
+			input: func() *CreateRequest {
+				request := validRequest()
+				request.Spec = Spec{}
+				return request
+			},
+			wantErr: "kind",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var input *CreateRequest
+			if tt.input != nil {
+				input = tt.input()
+			}
+			err := input.validate()
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("validate() error = %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestJobValidateStateRequiresTerminalResultForTerminalStatus(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name    string
@@ -58,12 +142,12 @@ func TestJobValidateRequiresTerminalResultForTerminalStatus(t *testing.T) {
 			if tt.mutate != nil {
 				tt.mutate(input)
 			}
-			err := input.validate()
+			err := input.validateState()
 			if tt.wantErr == "" && err != nil {
-				t.Fatalf("validate() error = %v", err)
+				t.Fatalf("validateState() error = %v", err)
 			}
 			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
-				t.Fatalf("validate() error = %v, want %q", err, tt.wantErr)
+				t.Fatalf("validateState() error = %v, want %q", err, tt.wantErr)
 			}
 		})
 	}
@@ -72,7 +156,8 @@ func TestJobValidateRequiresTerminalResultForTerminalStatus(t *testing.T) {
 func TestCloneJobDoesNotAliasNestedState(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	source := testJob("job-1", StatusTerminal, now)
-	source.Terminal = &TerminalResult{Outcome: OutcomeFailed,
+	source.Terminal = &TerminalResult{
+		Outcome: OutcomeFailed,
 		Reason:  FailureReasonExecutionFailed,
 		Message: "failed",
 	}
@@ -88,19 +173,56 @@ func TestCloneJobDoesNotAliasNestedState(t *testing.T) {
 	}
 }
 
-func TestJobValidateRequiresEndedAtExactlyForTerminalStatus(t *testing.T) {
+func TestJobValidateStateRequiresEndedAtExactlyForTerminalStatus(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	terminal := testJob("terminal", StatusTerminal, now)
 	terminal.EndedAt = time.Time{}
-	if err := terminal.validate(); err == nil || !strings.Contains(err.Error(), "ended timestamp") {
-		t.Fatalf("terminal validate() error = %v", err)
+	if err := terminal.validateState(); err == nil || !strings.Contains(err.Error(), "ended timestamp") {
+		t.Fatalf("terminal validateState() error = %v", err)
 	}
 
 	nonTerminal := testJob("running", StatusRunning, now)
 	nonTerminal.StartedAt = now
 	nonTerminal.ExecutionDeadline = now.Add(time.Minute)
 	nonTerminal.EndedAt = now
-	if err := nonTerminal.validate(); err == nil || !strings.Contains(err.Error(), "ended timestamp") {
-		t.Fatalf("non-terminal validate() error = %v", err)
+	if err := nonTerminal.validateState(); err == nil || !strings.Contains(err.Error(), "ended timestamp") {
+		t.Fatalf("non-terminal validateState() error = %v", err)
+	}
+}
+
+func TestJobValidateStoredRequiresPersistentFields(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		mutate  func(*Job)
+		wantErr string
+	}{
+		{name: "valid"},
+		{name: "missing ID", mutate: func(job *Job) { job.ID = "" }, wantErr: "ID"},
+		{
+			name:    "missing created timestamp",
+			mutate:  func(job *Job) { job.CreatedAt = time.Time{} },
+			wantErr: "created and updated timestamps",
+		},
+		{
+			name:    "missing updated timestamp",
+			mutate:  func(job *Job) { job.UpdatedAt = time.Time{} },
+			wantErr: "created and updated timestamps",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := testJob("job-1", StatusPending, now)
+			if tt.mutate != nil {
+				tt.mutate(input)
+			}
+			err := input.validateStored()
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("validateStored() error = %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("validateStored() error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }

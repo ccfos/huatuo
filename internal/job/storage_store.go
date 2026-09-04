@@ -271,7 +271,7 @@ func (s *storageStore) Close() error {
 }
 
 func encodeStorageRecord(job *Job) (storageRecord, error) {
-	if err := job.validate(); err != nil {
+	if err := job.validateStored(); err != nil {
 		return storageRecord{}, fmt.Errorf("encode job: %w", err)
 	}
 	payload := storagePayload{
@@ -355,7 +355,7 @@ func decodeCurrentJob(rowID string, data []byte) (*Job, error) {
 		StopDeadline:            payload.StopDeadline,
 		StopReason:              payload.StopReason,
 	}
-	if err := decodedJob.validate(); err != nil {
+	if err := decodedJob.validateStored(); err != nil {
 		return nil, err
 	}
 	return decodedJob, nil

@@ -159,7 +159,29 @@ func (s Spec) kind() Kind {
 	}
 }
 
-func (j *Job) validate() error {
+func (r *CreateRequest) validate() error {
+	if r == nil {
+		return errors.New("request is required")
+	}
+	if r.UserID == "" {
+		return errors.New("job user ID is required")
+	}
+	if r.Hostname == "" {
+		return errors.New("job hostname is required")
+	}
+	if r.Duration <= 0 || r.Duration%time.Second != 0 {
+		return errors.New("job duration must be a whole positive number of seconds")
+	}
+	if err := observation.ValidateScope(r.Scope, r.ContainerID); err != nil {
+		return fmt.Errorf("validate job scope: %w", err)
+	}
+	if err := r.Spec.validate(r.Spec.kind(), r.Scope); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (j *Job) validateStored() error {
 	if j == nil {
 		return errors.New("job is nil")
 	}
@@ -181,6 +203,13 @@ func (j *Job) validate() error {
 	if err := j.Spec.validate(j.Kind, j.Scope); err != nil {
 		return err
 	}
+	if j.CreatedAt.IsZero() || j.UpdatedAt.IsZero() {
+		return errors.New("job created and updated timestamps are required")
+	}
+	return j.validateState()
+}
+
+func (j *Job) validateState() error {
 	if !isValidStatus(j.Status) {
 		return fmt.Errorf("unsupported job status %q", j.Status)
 	}
@@ -194,9 +223,6 @@ func (j *Job) validate() error {
 		if j.Terminal.Outcome == OutcomeFailed && !isValidFailureReason(j.Terminal.Reason) {
 			return fmt.Errorf("unsupported job failure reason %q", j.Terminal.Reason)
 		}
-	}
-	if j.CreatedAt.IsZero() || j.UpdatedAt.IsZero() {
-		return errors.New("job created and updated timestamps are required")
 	}
 	if isTerminal(j.Status) != !j.EndedAt.IsZero() {
 		return errors.New("job ended timestamp must be present exactly when status is terminal")

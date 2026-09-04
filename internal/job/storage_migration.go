@@ -237,9 +237,6 @@ func migrateLegacyJob(rowID string, data []byte) (*Job, error) {
 	if err := migrateLegacyStatus(migratedJob, &legacy); err != nil {
 		return nil, err
 	}
-	if err := migratedJob.validate(); err != nil {
-		return nil, fmt.Errorf("validate converted record: %w", err)
-	}
 	return migratedJob, nil
 }
 
