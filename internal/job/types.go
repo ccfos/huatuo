@@ -36,13 +36,20 @@ const (
 type Status string
 
 const (
-	StatusPending        Status = "pending"
-	StatusRunning        Status = "running"
-	StatusStopping       Status = "stopping"
-	StatusCompleted      Status = "completed"
-	StatusFailed         Status = "failed"
-	StatusStopped        Status = "stopped"
-	StatusOutcomeUnknown Status = "outcome_unknown"
+	StatusPending  Status = "pending"
+	StatusRunning  Status = "running"
+	StatusStopping Status = "stopping"
+	StatusTerminal Status = "terminal"
+)
+
+// Outcome identifies the result of a terminal Job.
+type Outcome string
+
+const (
+	OutcomeCompleted Outcome = "completed"
+	OutcomeFailed    Outcome = "failed"
+	OutcomeStopped   Outcome = "stopped"
+	OutcomeUnknown   Outcome = "unknown"
 )
 
 // FailureReason classifies a failed Job independently of Node errors.
@@ -69,10 +76,11 @@ const (
 	StopReasonExecutionTimeout StopReason = "execution_timeout"
 )
 
-// TerminalFailure is the stable reason attached to a failed Job.
-type TerminalFailure struct {
-	Reason  FailureReason `json:"reason"`
-	Message string        `json:"message"`
+// TerminalResult is the stable result of a terminal Job.
+type TerminalResult struct {
+	Outcome Outcome       `json:"outcome"`
+	Reason  FailureReason `json:"reason,omitempty"`
+	Message string        `json:"message,omitempty"`
 }
 
 // Spec is a small discriminated union of service-owned Job parameters.
@@ -93,7 +101,7 @@ type Job struct {
 	Spec        Spec
 
 	Status    Status
-	Failure   *TerminalFailure
+	Terminal  *TerminalResult
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	StartedAt time.Time
@@ -176,15 +184,15 @@ func (j *Job) validate() error {
 	if !isValidStatus(j.Status) {
 		return fmt.Errorf("unsupported job status %q", j.Status)
 	}
-	if (j.Status == StatusFailed) != (j.Failure != nil) {
-		return errors.New("job failure must be present exactly when status is failed")
+	if (j.Status == StatusTerminal) != (j.Terminal != nil) {
+		return errors.New("job terminal result must be present exactly when status is terminal")
 	}
-	if j.Failure != nil {
-		if !isValidFailureReason(j.Failure.Reason) {
-			return fmt.Errorf("unsupported job failure reason %q", j.Failure.Reason)
+	if j.Terminal != nil {
+		if !isValidOutcome(j.Terminal.Outcome) {
+			return fmt.Errorf("unsupported job terminal outcome %q", j.Terminal.Outcome)
 		}
-		if j.Failure.Message == "" {
-			return errors.New("job failure message is required")
+		if j.Terminal.Outcome == OutcomeFailed && !isValidFailureReason(j.Terminal.Reason) {
+			return fmt.Errorf("unsupported job failure reason %q", j.Terminal.Reason)
 		}
 	}
 	if j.CreatedAt.IsZero() || j.UpdatedAt.IsZero() {
@@ -267,9 +275,9 @@ func cloneJob(source *Job) *Job {
 		tracingSpec := *source.Spec.Tracing
 		cloned.Spec.Tracing = &tracingSpec
 	}
-	if source.Failure != nil {
-		failure := *source.Failure
-		cloned.Failure = &failure
+	if source.Terminal != nil {
+		terminal := *source.Terminal
+		cloned.Terminal = &terminal
 	}
 	return &cloned
 }
@@ -279,10 +287,7 @@ func isValidStatus(status Status) bool {
 	case StatusPending,
 		StatusRunning,
 		StatusStopping,
-		StatusCompleted,
-		StatusFailed,
-		StatusStopped,
-		StatusOutcomeUnknown:
+		StatusTerminal:
 		return true
 	default:
 		return false
@@ -290,12 +295,12 @@ func isValidStatus(status Status) bool {
 }
 
 func isTerminal(status Status) bool {
-	switch status {
-	case StatusCompleted, StatusFailed, StatusStopped, StatusOutcomeUnknown:
-		return true
-	default:
-		return false
-	}
+	return status == StatusTerminal
+}
+
+func isValidOutcome(outcome Outcome) bool {
+	return outcome == OutcomeCompleted || outcome == OutcomeFailed ||
+		outcome == OutcomeStopped || outcome == OutcomeUnknown
 }
 
 func isValidFailureReason(reason FailureReason) bool {

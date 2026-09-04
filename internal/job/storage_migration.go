@@ -335,30 +335,35 @@ func migrateLegacyStatus(job *Job, legacy *legacyStoragePayload) error {
 	message := strings.TrimSpace(legacy.ErrorMessage)
 	switch legacy.Status {
 	case "completed":
-		job.Status = StatusCompleted
+		job.Status = StatusTerminal
+		job.Terminal = &TerminalResult{Outcome: OutcomeCompleted}
 	case "failed":
 		if message == "" {
 			message = "legacy job execution failed"
 		}
-		job.Status = StatusFailed
-		job.Failure = &TerminalFailure{
+		job.Status = StatusTerminal
+		job.Terminal = &TerminalResult{
+			Outcome: OutcomeFailed,
 			Reason:  FailureReasonExecutionFailed,
 			Message: message,
 		}
 	case "stopped":
-		job.Status = StatusStopped
+		job.Status = StatusTerminal
+		job.Terminal = &TerminalResult{Outcome: OutcomeStopped}
 	case "timeout":
 		if message == "" {
 			message = "job exceeded its execution deadline"
 		}
-		job.Status = StatusFailed
-		job.Failure = &TerminalFailure{
+		job.Status = StatusTerminal
+		job.Terminal = &TerminalResult{
+			Outcome: OutcomeFailed,
 			Reason:  FailureReasonExecutionTimedOut,
 			Message: message,
 		}
 	case "pending", "running":
-		job.Status = StatusFailed
-		job.Failure = &TerminalFailure{
+		job.Status = StatusTerminal
+		job.Terminal = &TerminalResult{
+			Outcome: OutcomeUnknown,
 			Reason:  FailureReasonOperationLost,
 			Message: "operation state was lost during Task API migration",
 		}

@@ -62,12 +62,12 @@ type storagePayload struct {
 	ContainerID     string `json:"container_id,omitempty"`
 	Spec            Spec   `json:"spec"`
 
-	Status    Status           `json:"status"`
-	Failure   *TerminalFailure `json:"failure,omitempty"`
-	CreatedAt time.Time        `json:"created_at"`
-	UpdatedAt time.Time        `json:"updated_at"`
-	StartedAt time.Time        `json:"started_at,omitempty"`
-	EndedAt   time.Time        `json:"ended_at,omitempty"`
+	Status    Status          `json:"status"`
+	Terminal  *TerminalResult `json:"terminal,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	StartedAt time.Time       `json:"started_at,omitempty"`
+	EndedAt   time.Time       `json:"ended_at,omitempty"`
 
 	StartAttemptedAt        time.Time  `json:"start_attempted_at,omitempty"`
 	PendingDeadline         time.Time  `json:"pending_deadline,omitempty"`
@@ -236,16 +236,13 @@ func (s *storageStore) DeleteTerminalBefore(
 		contextOrBackground(ctx),
 		`DELETE FROM jobs WHERE id IN (
 			SELECT id FROM jobs
-			WHERE json_extract(fields, '$.status') IN (?, ?, ?, ?)
+			WHERE json_extract(fields, '$.status') = ?
 			  AND json_extract(fields, '$.ended_at') != ''
 			  AND json_extract(fields, '$.ended_at') <= ?
 			ORDER BY json_extract(fields, '$.ended_at') ASC, id ASC
 			LIMIT ?
 		)`,
-		string(StatusCompleted),
-		string(StatusFailed),
-		string(StatusStopped),
-		string(StatusOutcomeUnknown),
+		string(StatusTerminal),
 		driver.NormalizeValue(endedBefore),
 		limit,
 	)
@@ -288,7 +285,7 @@ func encodeStorageRecord(job *Job) (storageRecord, error) {
 		ContainerID:             job.ContainerID,
 		Spec:                    job.Spec,
 		Status:                  job.Status,
-		Failure:                 job.Failure,
+		Terminal:                job.Terminal,
 		CreatedAt:               job.CreatedAt,
 		UpdatedAt:               job.UpdatedAt,
 		StartedAt:               job.StartedAt,
@@ -344,7 +341,7 @@ func decodeCurrentJob(rowID string, data []byte) (*Job, error) {
 		ContainerID:             payload.ContainerID,
 		Spec:                    payload.Spec,
 		Status:                  payload.Status,
-		Failure:                 payload.Failure,
+		Terminal:                payload.Terminal,
 		CreatedAt:               payload.CreatedAt,
 		UpdatedAt:               payload.UpdatedAt,
 		StartedAt:               payload.StartedAt,

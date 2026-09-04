@@ -283,16 +283,11 @@ func operationResponse(snapshot *operation.Operation) (nodeapi.OperationResponse
 		StartedAt:  snapshot.StartedAt,
 		FinishedAt: snapshot.FinishedAt,
 	}
-	if snapshot.Failure != nil {
-		code, err := operationFailureCode(snapshot.Failure.Reason)
-		if err != nil {
-			return nodeapi.OperationResponse{}, err
-		}
-		payload.Failure = &nodeapi.OperationFailure{
-			Code:    code,
-			Message: snapshot.Failure.Message,
-		}
+	terminal, err := operationTerminal(snapshot)
+	if err != nil {
+		return nodeapi.OperationResponse{}, err
 	}
+	payload.Terminal = terminal
 	return nodeapi.OperationResponse{Data: payload}, nil
 }
 
@@ -304,34 +299,34 @@ func operationStatus(status operation.Status) (nodeapi.OperationStatus, error) {
 		return nodeapi.OperationStatusRunning, nil
 	case operation.StatusStopping:
 		return nodeapi.OperationStatusStopping, nil
-	case operation.StatusCompleted:
-		return nodeapi.OperationStatusCompleted, nil
-	case operation.StatusFailed:
-		return nodeapi.OperationStatusFailed, nil
-	case operation.StatusStopped:
-		return nodeapi.OperationStatusStopped, nil
+	case operation.StatusTerminal:
+		return nodeapi.OperationStatusTerminal, nil
 	default:
 		return "", fmt.Errorf("unsupported operation status %q", status)
 	}
 }
 
-func operationFailureCode(reason operation.FailureReason) (apiv1.ErrorCode, error) {
-	switch reason {
-	case operation.FailureReasonExecutionStartFailed:
-		return nodeapi.ErrorCodeExecutionStartFailed, nil
-	case operation.FailureReasonLaunchTimeout:
-		return nodeapi.ErrorCodeLaunchTimeout, nil
-	case operation.FailureReasonExecutionFailed:
-		return nodeapi.ErrorCodeExecutionFailed, nil
-	case operation.FailureReasonExecutionStopFailed:
-		return nodeapi.ErrorCodeExecutionStopFailed, nil
-	case operation.FailureReasonFinalizationFailed:
-		return nodeapi.ErrorCodeFinalizationFailed, nil
-	case operation.FailureReasonFinalizationTimeout:
-		return nodeapi.ErrorCodeFinalizationTimeout, nil
-	default:
-		return "", fmt.Errorf("unsupported operation failure reason %q", reason)
+func operationTerminal(snapshot *operation.Operation) (*nodeapi.OperationTerminal, error) {
+	terminalResult := snapshot.Terminal
+	if snapshot.Status != operation.StatusTerminal {
+		return nil, nil
 	}
+	terminal := &nodeapi.OperationTerminal{}
+	switch terminalResult.Outcome {
+	case operation.OutcomeCompleted:
+		terminal.Outcome = nodeapi.OperationOutcomeCompleted
+	case operation.OutcomeFailed:
+		terminal.Outcome = nodeapi.OperationOutcomeFailed
+	case operation.OutcomeStopped:
+		terminal.Outcome = nodeapi.OperationOutcomeStopped
+	}
+	if terminalResult.Reason != "" {
+		reason := string(terminalResult.Reason)
+		message := terminalResult.Message
+		terminal.Reason = &reason
+		terminal.Message = &message
+	}
+	return terminal, nil
 }
 
 func nodeAPIError(err error) error {

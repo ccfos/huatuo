@@ -513,7 +513,7 @@ func mapProfilingJob(source *job.Job) (serverapi.ProfilingJob, error) {
 		Scope:           common.Scope,
 		ContainerID:     common.ContainerID,
 		Status:          common.Status,
-		Failure:         common.Failure,
+		Terminal:        common.Terminal,
 		CreatedAt:       common.CreatedAt,
 		UpdatedAt:       common.UpdatedAt,
 		StartedAt:       common.StartedAt,
@@ -537,7 +537,7 @@ func mapTracingJob(source *job.Job) (serverapi.TracingJob, error) {
 		Scope:           common.Scope,
 		ContainerID:     common.ContainerID,
 		Status:          common.Status,
-		Failure:         common.Failure,
+		Terminal:        common.Terminal,
 		CreatedAt:       common.CreatedAt,
 		UpdatedAt:       common.UpdatedAt,
 		StartedAt:       common.StartedAt,
@@ -559,13 +559,36 @@ func mapCommonJob(source *job.Job) serverapi.Job {
 		StartedAt:       optionalTime(source.StartedAt),
 		EndedAt:         optionalTime(source.EndedAt),
 	}
-	if source.Failure != nil {
-		result.Failure = &serverapi.JobFailure{
-			Code:    apiv1.ErrorCode(source.Failure.Reason),
-			Message: source.Failure.Message,
-		}
+	if source.Status == job.StatusTerminal {
+		result.Status = serverapi.JobStatusTerminal
+		result.Terminal = mapJobTerminal(source)
 	}
 	return result
+}
+
+func mapJobTerminal(source *job.Job) *serverapi.JobTerminal {
+	terminal := &serverapi.JobTerminal{}
+	terminalResult := source.Terminal
+	if terminalResult == nil {
+		return terminal
+	}
+	switch terminalResult.Outcome {
+	case job.OutcomeCompleted:
+		terminal.Outcome = serverapi.JobOutcomeCompleted
+	case job.OutcomeFailed:
+		terminal.Outcome = serverapi.JobOutcomeFailed
+	case job.OutcomeStopped:
+		terminal.Outcome = serverapi.JobOutcomeStopped
+	case job.OutcomeUnknown:
+		terminal.Outcome = serverapi.JobOutcomeUnknown
+	}
+	if terminalResult.Reason != "" {
+		reason := string(terminalResult.Reason)
+		message := terminalResult.Message
+		terminal.Reason = &reason
+		terminal.Message = &message
+	}
+	return terminal
 }
 
 func profilingCapability(capability *profilingdomain.Capability) serverapi.ProfilingCapability {

@@ -347,7 +347,7 @@ func (m *Manager) Stop(ctx context.Context, jobID string) (*Job, error) {
 	if current.Status == StatusPending && current.StartAttemptedAt.IsZero() {
 		updated.StopReason = StopReasonUser
 		updated.StopRequestedAt = now
-		setTerminal(updated, StatusStopped, nil, now)
+		setTerminal(updated, OutcomeStopped, nil, now)
 	} else {
 		setStopping(updated, StopReasonUser, now, m.config.CompletionGracePeriod)
 	}

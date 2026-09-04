@@ -209,9 +209,17 @@ func (s *Service) RawProfiles(
 	switch currentJob.Status {
 	case job.StatusPending, job.StatusRunning, job.StatusStopping:
 		return nil, ErrResultNotReady
-	case job.StatusStopped, job.StatusFailed:
-		return nil, ErrResultUnavailable
-	case job.StatusCompleted, job.StatusOutcomeUnknown:
+	case job.StatusTerminal:
+		if currentJob.Terminal == nil {
+			return nil, ErrResultUnavailable
+		}
+		switch currentJob.Terminal.Outcome {
+		case job.OutcomeStopped, job.OutcomeFailed:
+			return nil, ErrResultUnavailable
+		case job.OutcomeCompleted, job.OutcomeUnknown:
+		default:
+			return nil, fmt.Errorf("unsupported Job outcome %q", currentJob.Terminal.Outcome)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported Job status %q", currentJob.Status)
 	}
@@ -286,9 +294,9 @@ func (s *Service) ResultURL(
 	if s.dashboardBaseURL == "" || resultJob == nil || resultJob.EndedAt.IsZero() {
 		return nil, nil
 	}
-	switch resultJob.Status {
-	case job.StatusCompleted, job.StatusOutcomeUnknown:
-	default:
+	if resultJob.Status != job.StatusTerminal || resultJob.Terminal == nil ||
+		(resultJob.Terminal.Outcome != job.OutcomeCompleted &&
+			resultJob.Terminal.Outcome != job.OutcomeUnknown) {
 		return nil, nil
 	}
 	if s.publications == nil {

@@ -269,13 +269,17 @@ func parseOperation(body []byte, requestID string) (*nodeapi.Operation, error) {
 	if !operation.Status.Valid() {
 		return nil, fmt.Errorf("%w: unsupported operation status %q", ErrProtocol, operation.Status)
 	}
-	if operation.Status == nodeapi.OperationStatusFailed {
-		if operation.Failure == nil || !isOperationFailureCode(operation.Failure.Code) {
-			return nil, fmt.Errorf("%w: failed operation has an invalid failure", ErrProtocol)
+	if operation.Status == nodeapi.OperationStatusTerminal {
+		if operation.Terminal == nil || !operation.Terminal.Outcome.Valid() {
+			return nil, fmt.Errorf("%w: terminal operation has an invalid outcome", ErrProtocol)
 		}
-	} else if operation.Failure != nil {
+		if operation.Terminal.Outcome == nodeapi.OperationOutcomeFailed &&
+			(operation.Terminal.Reason == nil || *operation.Terminal.Reason == "") {
+			return nil, fmt.Errorf("%w: failed operation has no reason", ErrProtocol)
+		}
+	} else if operation.Terminal != nil {
 		return nil, fmt.Errorf(
-			"%w: operation status %q contains a failure",
+			"%w: operation status %q contains terminal details",
 			ErrProtocol,
 			operation.Status,
 		)
@@ -309,19 +313,5 @@ func parseError(statusCode int, body []byte) error {
 		StatusCode: statusCode,
 		Code:       code,
 		Message:    envelope.Error.Message,
-	}
-}
-
-func isOperationFailureCode(code apiv1.ErrorCode) bool {
-	switch code {
-	case nodeapi.ErrorCodeExecutionStartFailed,
-		nodeapi.ErrorCodeLaunchTimeout,
-		nodeapi.ErrorCodeExecutionFailed,
-		nodeapi.ErrorCodeExecutionStopFailed,
-		nodeapi.ErrorCodeFinalizationFailed,
-		nodeapi.ErrorCodeFinalizationTimeout:
-		return true
-	default:
-		return false
 	}
 }

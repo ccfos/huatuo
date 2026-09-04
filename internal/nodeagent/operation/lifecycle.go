@@ -93,7 +93,7 @@ func (m *Manager) runOperation(ctx context.Context, managed *managedOperation) {
 	finalizeContextErr := finalizeCtx.Err()
 	cancelFinalize()
 
-	failure, terminalStatus := classifyExecution(stopRequested, waitErr, stopErr)
+	failure, terminalOutcome := classifyExecution(stopRequested, waitErr, stopErr)
 	finalizeFailure := classifyFinalization(finalizeErr, finalizeContextErr)
 	if failure == nil {
 		failure = finalizeFailure
@@ -101,9 +101,9 @@ func (m *Manager) runOperation(ctx context.Context, managed *managedOperation) {
 		failure.err = errors.Join(failure.err, finalizeFailure.err)
 	}
 	if failure != nil {
-		terminalStatus = StatusFailed
+		terminalOutcome = OutcomeFailed
 	}
-	m.finishOperation(managed, runtime, terminalStatus, failure)
+	m.finishOperation(managed, runtime, terminalOutcome, failure)
 }
 
 func (m *Manager) finishStartFailure(
@@ -118,7 +118,7 @@ func (m *Manager) finishStartFailure(
 
 	if stopRequested && errors.Is(startErr, context.Canceled) &&
 		!errors.Is(launchContextErr, context.DeadlineExceeded) {
-		m.commitTerminalLocked(managed, runtime, StatusStopped, nil)
+		m.commitTerminalLocked(managed, runtime, OutcomeStopped, nil)
 		m.mu.Unlock()
 		return
 	}
@@ -135,14 +135,14 @@ func (m *Manager) finishStartFailure(
 		failure.message = messageLaunchTimeout
 		failure.phase = "launch"
 	}
-	m.commitTerminalLocked(managed, runtime, StatusFailed, failure)
+	m.commitTerminalLocked(managed, runtime, OutcomeFailed, failure)
 	requestID := managed.state.RequestID
 	kind := managed.state.Kind
 	m.mu.Unlock()
 	m.logFailure(requestID, kind, failure)
 }
 
-func classifyExecution(stopRequested bool, waitErr, stopErr error) (*lifecycleFailure, Status) {
+func classifyExecution(stopRequested bool, waitErr, stopErr error) (*lifecycleFailure, Outcome) {
 	if stopRequested {
 		if stopErr != nil {
 			if waitErr != nil && !errors.Is(waitErr, ErrStopped) {
@@ -153,11 +153,11 @@ func classifyExecution(stopRequested bool, waitErr, stopErr error) (*lifecycleFa
 				message: messageExecutionStopFailed,
 				phase:   "stop",
 				err:     stopErr,
-			}, StatusFailed
+			}, OutcomeFailed
 		}
 		// Tools may translate SIGTERM into their own non-zero exit code. Once
 		// Stop succeeds, that code cannot make the discarded result meaningful.
-		return nil, StatusStopped
+		return nil, OutcomeStopped
 	}
 	if waitErr != nil {
 		return &lifecycleFailure{
@@ -165,9 +165,9 @@ func classifyExecution(stopRequested bool, waitErr, stopErr error) (*lifecycleFa
 			message: messageExecutionFailed,
 			phase:   "wait",
 			err:     waitErr,
-		}, StatusFailed
+		}, OutcomeFailed
 	}
-	return nil, StatusCompleted
+	return nil, OutcomeCompleted
 }
 
 func classifyFinalization(finalizeErr, finalizeContextErr error) *lifecycleFailure {
@@ -191,11 +191,11 @@ func classifyFinalization(finalizeErr, finalizeContextErr error) *lifecycleFailu
 func (m *Manager) finishOperation(
 	managed *managedOperation,
 	runtime *executionRuntime,
-	status Status,
+	outcome Outcome,
 	failure *lifecycleFailure,
 ) {
 	m.mu.Lock()
-	m.commitTerminalLocked(managed, runtime, status, failure)
+	m.commitTerminalLocked(managed, runtime, outcome, failure)
 	requestID := managed.state.RequestID
 	kind := managed.state.Kind
 	m.mu.Unlock()
@@ -207,7 +207,7 @@ func (m *Manager) finishOperation(
 func (m *Manager) commitTerminalLocked(
 	managed *managedOperation,
 	runtime *executionRuntime,
-	status Status,
+	outcome Outcome,
 	failure *lifecycleFailure,
 ) {
 	if isTerminal(managed.state.Status) {
@@ -215,11 +215,12 @@ func (m *Manager) commitTerminalLocked(
 	}
 
 	finishedAt := m.now()
-	managed.state.Status = status
+	managed.state.Status = StatusTerminal
 	managed.state.FinishedAt = &finishedAt
-	managed.state.Failure = nil
+	managed.state.Terminal = &TerminalResult{Outcome: outcome}
 	if failure != nil {
-		managed.state.Failure = &TerminalFailure{
+		managed.state.Terminal = &TerminalResult{
+			Outcome: outcome,
 			Reason:  failure.reason,
 			Message: failure.message,
 		}

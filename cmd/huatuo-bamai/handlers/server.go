@@ -44,7 +44,7 @@ type ServerOptions struct {
 }
 
 // Start starts the HTTP server with all handlers registered.
-func Start(opts ServerOptions) (*server.Server, error) {
+func Start(opts *ServerOptions) (*server.Server, error) {
 	nodeHandler, err := NewNodeAPIHandler(
 		opts.OperationManager,
 		opts.ProfilingService,
@@ -64,7 +64,7 @@ func Start(opts ServerOptions) (*server.Server, error) {
 	return s, nil
 }
 
-func newHTTPServer(opts ServerOptions, nodeHandler *NodeAPIHandler) (*server.Server, error) {
+func newHTTPServer(opts *ServerOptions, nodeHandler *NodeAPIHandler) (*server.Server, error) {
 	s := server.NewServer(&server.Config{
 		EnablePProf: true,
 		RateLimit: &server.RateLimitConfig{

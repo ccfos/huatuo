@@ -49,12 +49,19 @@ const (
 type Status string
 
 const (
-	StatusPending   Status = "pending"
-	StatusRunning   Status = "running"
-	StatusStopping  Status = "stopping"
-	StatusCompleted Status = "completed"
-	StatusFailed    Status = "failed"
-	StatusStopped   Status = "stopped"
+	StatusPending  Status = "pending"
+	StatusRunning  Status = "running"
+	StatusStopping Status = "stopping"
+	StatusTerminal Status = "terminal"
+)
+
+// Outcome identifies the result of a terminal operation.
+type Outcome string
+
+const (
+	OutcomeCompleted Outcome = "completed"
+	OutcomeFailed    Outcome = "failed"
+	OutcomeStopped   Outcome = "stopped"
 )
 
 // FailureReason classifies a lifecycle failure independently of HTTP.
@@ -69,18 +76,20 @@ const (
 	FailureReasonFinalizationTimeout  FailureReason = "finalization_timeout"
 )
 
-// TerminalFailure is a stable, safe summary of a failed operation.
-type TerminalFailure struct {
+// TerminalResult is the stable result of a terminal operation.
+type TerminalResult struct {
+	Outcome Outcome
 	Reason  FailureReason
 	Message string
 }
+
 
 // Operation is an immutable snapshot returned by Manager.
 type Operation struct {
 	RequestID  string
 	Kind       Kind
 	Status     Status
-	Failure    *TerminalFailure
+	Terminal *TerminalResult
 	CreatedAt  time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time
@@ -124,12 +133,7 @@ type StartRequest struct {
 }
 
 func isTerminal(status Status) bool {
-	switch status {
-	case StatusCompleted, StatusFailed, StatusStopped:
-		return true
-	default:
-		return false
-	}
+	return status == StatusTerminal
 }
 
 func isValidKind(kind Kind) bool {
@@ -138,9 +142,9 @@ func isValidKind(kind Kind) bool {
 
 func cloneOperation(operation *Operation) *Operation {
 	clone := *operation
-	if operation.Failure != nil {
-		failure := *operation.Failure
-		clone.Failure = &failure
+	if operation.Terminal != nil {
+		terminal := *operation.Terminal
+		clone.Terminal = &terminal
 	}
 	if operation.StartedAt != nil {
 		startedAt := *operation.StartedAt

@@ -88,7 +88,7 @@ func startTracing(d *Daemon) (func(context.Context) error, error) {
 
 func startHandlers(d *Daemon) (func(context.Context) error, error) {
 	httpConfig := config.Get().HTTPServer
-	runningServer, err := handlers.Start(handlers.ServerOptions{
+	runningServer, err := handlers.Start(&handlers.ServerOptions{
 		Addr:             httpConfig.ListenAddress,
 		BearerToken:      httpConfig.Auth.BearerToken,
 		OperationManager: d.operationManager,
