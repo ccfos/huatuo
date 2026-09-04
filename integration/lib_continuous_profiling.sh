@@ -106,7 +106,13 @@ continuous_profile_status_is() {
 		> "${response_file}" \
 		|| return 1
 	jq -e --arg expected_status "${expected_status}" \
-		'.data.status == $expected_status' "${response_file}" > /dev/null
+		'if ($expected_status == "completed" or
+			$expected_status == "failed" or
+			$expected_status == "stopped")
+		 then .data.status == "terminal"
+			and .data.terminal.outcome == $expected_status
+		 else .data.status == $expected_status
+		 end' "${response_file}" > /dev/null
 }
 
 continuous_profile_windows_are_stored() {

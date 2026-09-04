@@ -193,8 +193,9 @@ func TestOperationResponseMapsFailureReason(t *testing.T) {
 	payload, err := operationResponse(&operation.Operation{
 		RequestID: "job-1",
 		Kind:      operation.KindProfiling,
-		Status:    operation.StatusFailed,
-		Failure: &operation.TerminalFailure{
+		Status:    operation.StatusTerminal,
+		Terminal: &operation.TerminalResult{
+			Outcome: operation.OutcomeFailed,
 			Reason:  operation.FailureReasonFinalizationTimeout,
 			Message: "result stream timed out",
 		},
@@ -203,8 +204,10 @@ func TestOperationResponseMapsFailureReason(t *testing.T) {
 	if err != nil {
 		t.Fatalf("operationResponse() error = %v", err)
 	}
-	if payload.Data.Status != nodeapi.OperationStatusFailed || payload.Data.Failure == nil ||
-		payload.Data.Failure.Code != nodeapi.ErrorCodeFinalizationTimeout {
+	if payload.Data.Status != nodeapi.OperationStatusTerminal || payload.Data.Terminal == nil ||
+		payload.Data.Terminal.Outcome != nodeapi.OperationOutcomeFailed ||
+		payload.Data.Terminal.Reason == nil ||
+		*payload.Data.Terminal.Reason != string(operation.FailureReasonFinalizationTimeout) {
 		t.Fatalf("operationResponse() = %+v", payload.Data)
 	}
 }

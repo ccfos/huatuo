@@ -58,7 +58,13 @@ node_operation_status_is() {
 		> "${HUATUO_BAMAI_TEST_TMPDIR}/node-operation-status.json" \
 		|| return 1
 	jq -e --arg expected_status "${expected_status}" \
-		'.data.status == $expected_status' \
+		'if ($expected_status == "completed" or
+			$expected_status == "failed" or
+			$expected_status == "stopped")
+		 then .data.status == "terminal"
+			and .data.terminal.outcome == $expected_status
+		 else .data.status == $expected_status
+		 end' \
 		"${HUATUO_BAMAI_TEST_TMPDIR}/node-operation-status.json" > /dev/null
 }
 

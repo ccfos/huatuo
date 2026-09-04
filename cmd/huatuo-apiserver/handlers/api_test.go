@@ -51,29 +51,30 @@ func TestStartRejectsMissingAuthUsers(t *testing.T) {
 	}
 }
 
-func TestMapCommonJobMapsFailureReasonWithoutAddingJobState(t *testing.T) {
+func TestMapCommonJobMapsTerminalFailure(t *testing.T) {
 	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	input := &job.Job{
 		ID:        "job-1",
 		Hostname:  "node-1",
 		Duration:  time.Minute,
 		Scope:     observation.ScopeHost,
-		Status:    job.StatusFailed,
+		Status:    job.StatusTerminal,
 		CreatedAt: base,
 		UpdatedAt: base.Add(time.Second),
 		EndedAt:   base.Add(time.Minute),
-		Failure: &job.TerminalFailure{
+		Terminal: &job.TerminalResult{Outcome: job.OutcomeFailed,
 			Reason:  job.FailureReasonOperationLost,
 			Message: "Node no longer has the Operation",
 		},
 	}
 
 	got := mapCommonJob(input)
-	if got.Status != serverapi.JobStatusFailed || got.Failure == nil {
+	if got.Status != serverapi.JobStatusTerminal || got.Terminal == nil {
 		t.Fatalf("mapCommonJob() = %+v", got)
 	}
-	if got.Failure.Code != apiv1.ErrorCode(job.FailureReasonOperationLost) {
-		t.Fatalf("failure code = %q", got.Failure.Code)
+	if got.Terminal.Outcome != serverapi.JobOutcomeFailed || got.Terminal.Reason == nil ||
+		*got.Terminal.Reason != string(job.FailureReasonOperationLost) {
+		t.Fatalf("terminal = %+v", got.Terminal)
 	}
 	if got.EndedAt == nil || !got.EndedAt.Equal(input.EndedAt) {
 		t.Fatalf("ended_at = %v", got.EndedAt)
@@ -87,7 +88,8 @@ func TestMapTracingJobUsesIndependentDomainState(t *testing.T) {
 		Hostname: "node-1",
 		Duration: time.Minute,
 		Scope:    observation.ScopeHost,
-		Status:   job.StatusOutcomeUnknown,
+		Status:   job.StatusTerminal,
+		Terminal: &job.TerminalResult{Outcome: job.OutcomeUnknown},
 		Spec: job.Spec{Tracing: &tracingdomain.Spec{
 			Type: tracingdomain.TypeNetworkingDrop,
 		}},
@@ -96,7 +98,8 @@ func TestMapTracingJobUsesIndependentDomainState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mapTracingJob() error = %v", err)
 	}
-	if got.Status != serverapi.JobStatusOutcomeUnknown || got.Failure != nil {
+	if got.Status != serverapi.JobStatusTerminal || got.Terminal == nil ||
+		got.Terminal.Outcome != serverapi.JobOutcomeUnknown {
 		t.Fatalf("mapTracingJob() = %+v", got)
 	}
 }

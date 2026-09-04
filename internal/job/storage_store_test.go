@@ -60,11 +60,8 @@ func storedTestJob(id, userID, host string, status Status, createdAt time.Time) 
 	if isTerminal(status) {
 		job.EndedAt = createdAt.Add(time.Minute)
 	}
-	if status == StatusFailed {
-		job.Failure = &TerminalFailure{
-			Reason:  FailureReasonExecutionFailed,
-			Message: "profiler exited",
-		}
+	if status == StatusTerminal {
+		job.Terminal = &TerminalResult{Outcome: OutcomeCompleted}
 	}
 	return job
 }
@@ -73,7 +70,7 @@ func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
 	store := openTestStore(t)
 	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	first := storedTestJob("job-1", "user-1", "node-1", StatusPending, base)
-	second := storedTestJob("job-2", "user-2", "node-1", StatusCompleted, base.Add(time.Minute))
+	second := storedTestJob("job-2", "user-2", "node-1", StatusTerminal, base.Add(time.Minute))
 	for _, job := range []*Job{first, second} {
 		if err := store.Create(t.Context(), job); err != nil {
 			t.Fatalf("Create(%q) error = %v", job.ID, err)
@@ -90,7 +87,7 @@ func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
 	updated.StartAttemptedAt = base
 	updated.PendingDeadline = base.Add(time.Minute)
 	updated.UpdatedAt = base.Add(time.Second)
-	if err := store.Save(t.Context(), updated, StatusCompleted); !errors.Is(err, ErrConflict) {
+	if err := store.Save(t.Context(), updated, StatusTerminal); !errors.Is(err, ErrConflict) {
 		t.Fatalf("Save() stale status error = %v, want ErrConflict", err)
 	}
 	if err := store.Save(t.Context(), updated, StatusPending); err != nil {
@@ -123,8 +120,8 @@ func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
 func TestStorageStoreDeletesOnlyExpiredTerminalJobs(t *testing.T) {
 	store := openTestStore(t)
 	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	oldTerminal := storedTestJob("old", "user-1", "node-1", StatusCompleted, base)
-	recentTerminal := storedTestJob("recent", "user-1", "node-1", StatusStopped, base.Add(2*time.Hour))
+	oldTerminal := storedTestJob("old", "user-1", "node-1", StatusTerminal, base)
+	recentTerminal := storedTestJob("recent", "user-1", "node-1", StatusTerminal, base.Add(2*time.Hour))
 	active := storedTestJob("active", "user-1", "node-1", StatusPending, base)
 	for _, job := range []*Job{oldTerminal, recentTerminal, active} {
 		if err := store.Create(t.Context(), job); err != nil {
@@ -198,9 +195,9 @@ func TestStorageMigrationConvertsLegacyActiveJobToOperationLost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if got.Status != StatusFailed || got.Failure == nil ||
-		got.Failure.Reason != FailureReasonOperationLost {
-		t.Fatalf("migrated Job = (%q, %+v)", got.Status, got.Failure)
+	if got.Status != StatusTerminal || got.Terminal == nil || got.Terminal.Outcome != OutcomeUnknown ||
+		got.Terminal.Reason != FailureReasonOperationLost {
+		t.Fatalf("migrated Job = (%q, %+v)", got.Status, got.Terminal)
 	}
 	if got.Kind != KindProfiling || got.Duration != time.Minute {
 		t.Fatalf("migrated Job kind/duration = (%q, %s)", got.Kind, got.Duration)

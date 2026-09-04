@@ -105,7 +105,8 @@ func TestResultURLRequiresPublishedCompleteResult(t *testing.T) {
 		Kind:      job.KindProfiling,
 		Hostname:  "node+1&debug",
 		Scope:     observation.ScopeHost,
-		Status:    job.StatusCompleted,
+		Status:    job.StatusTerminal,
+		Terminal:  &job.TerminalResult{Outcome: job.OutcomeCompleted},
 		CreatedAt: base,
 		EndedAt:   base.Add(time.Minute),
 		Spec: job.Spec{Profiling: &profilingdomain.Spec{
@@ -122,7 +123,9 @@ func TestResultURLRequiresPublishedCompleteResult(t *testing.T) {
 	}
 
 	failed := *completed
-	failed.Status = job.StatusFailed
+	failed.Status = job.StatusTerminal
+	failed.Terminal = &job.TerminalResult{Outcome: job.OutcomeFailed,
+		Reason: job.FailureReasonExecutionFailed, Message: "failed"}
 	if resultURL, err := service.ResultURL(t.Context(), &failed); err != nil || resultURL != nil {
 		t.Fatalf("failed ResultURL() = (%v, %v)", resultURL, err)
 	}

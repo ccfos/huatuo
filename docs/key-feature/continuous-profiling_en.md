@@ -354,7 +354,7 @@ The `data` object contains the job details:
 | `mode` | Profiling mode selected from the capability table |
 | `binary_match_path` | Executable path matcher; omitted when unused |
 | `status` | Current job status |
-| `failure` | `{code, message}` for `failed`; omitted for every other status |
+| `terminal` | Terminal details `{outcome, reason, message}`; omitted while active |
 | `created_at` | Job creation time |
 | `updated_at` | Last Job state update time |
 | `started_at` | Time execution started; omitted until observed running |
@@ -368,22 +368,26 @@ Profiling jobs use these statuses:
 | `pending` | The job has been created and is waiting for the Agent |
 | `running` | The Agent is collecting profiling data |
 | `stopping` | A stop request has been persisted and is being applied asynchronously |
-| `completed` | The job completed successfully |
-| `failed` | Execution failed; inspect `failure.code` and `failure.message` |
-| `stopped` | The user stopped the job; its partial result is not queryable |
-| `outcome_unknown` | Apiserver cannot verify the final Operation status, but a durably published result may still be available |
+| `terminal` | The job has ended; inspect `terminal.outcome` for the result |
 
-`operation_lost` and `execution_timed_out` are failure codes, not Job
+`terminal.outcome` is `completed`, `failed`, `stopped`, or `unknown`. For
+`failed`, inspect `terminal.reason` and `terminal.message`. `stopped` means the
+job was actively stopped and its result may be incomplete. `unknown` means the
+Apiserver cannot verify the final Operation status, but a durably published
+result may still be available.
+
+`operation_lost` and `execution_timed_out` are terminal reason codes, not Job
 statuses. Other failure codes include pending or stop deadline expiry, Node
 unavailability, execution-capacity exhaustion, start or execution failure, and
 protocol errors.
 
 ### 6. Get Raw Profiling Data
 
-`GET /v1/profiling/:request_id/raw` returns raw profiling windows for a
-`completed` or `outcome_unknown` Job only while its durable publication marker
-exists. A missing or expired marker returns `result_not_found`. Active Jobs
-return `result_not_ready`; `failed` and `stopped` Jobs return
+`GET /v1/profiling/:request_id/raw` returns raw profiling windows only for a
+Job whose `terminal.outcome` is `completed` or `unknown` and whose durable
+publication marker exists. A missing or expired marker returns
+`result_not_found`. Active Jobs return `result_not_ready`; `failed` and
+`stopped` Jobs return
 `result_unavailable`.
 
 The response can be large, so it can be written directly to a file:

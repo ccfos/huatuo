@@ -47,8 +47,8 @@ func TestManagerCompletesNaturalLifecycle(t *testing.T) {
 		t.Fatalf("running operation times = (%v, %v), want started only", running.StartedAt, running.FinishedAt)
 	}
 	close(waitRelease)
-	completed := waitForStatus(t, manager, KindProfiling, "request", StatusCompleted)
-	if completed.Failure != nil || completed.FinishedAt == nil {
+	completed := waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
+	if completed.Terminal == nil || completed.Terminal.Outcome != OutcomeCompleted || completed.FinishedAt == nil {
 		t.Fatalf("completed operation = %+v, want finish without failure", completed)
 	}
 
@@ -102,9 +102,9 @@ func TestManagerClassifiesStartFailures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Start() error = %v", err)
 			}
-			operation := waitForStatus(t, manager, KindProfiling, "request", StatusFailed)
-			if operation.Failure == nil || operation.Failure.Reason != test.wantReason {
-				t.Fatalf("failure = %+v, want reason %s", operation.Failure, test.wantReason)
+			operation := waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
+			if operation.Terminal == nil || operation.Terminal.Reason != test.wantReason {
+				t.Fatalf("terminal = %+v, want reason %s", operation.Terminal, test.wantReason)
 			}
 			_, waitCalls, stopCalls, finalizeCalls := executor.counts()
 			if waitCalls != 0 || stopCalls != 0 || finalizeCalls != 0 {
@@ -138,7 +138,7 @@ func TestManagerStopsPendingLaunch(t *testing.T) {
 		t.Fatalf("Stop() = (%+v, %t), want initiated stopping", stopping, initiated)
 	}
 	waitClosed(t, startEntered, "pending Start")
-	waitForStatus(t, manager, KindProfiling, "request", StatusStopped)
+	waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
 	_, waitCalls, stopCalls, finalizeCalls := executor.counts()
 	if waitCalls != 0 || stopCalls != 0 || finalizeCalls != 0 {
 		t.Errorf("pending stop calls = (wait %d, stop %d, finalize %d), want zero", waitCalls, stopCalls, finalizeCalls)
@@ -165,9 +165,9 @@ func TestManagerKeepsStartErrorAfterStopIntent(t *testing.T) {
 	if _, initiated, err := manager.StopByID("request"); err != nil || !initiated {
 		t.Fatalf("Stop() = (_, %t, %v), want initiated", initiated, err)
 	}
-	operation := waitForStatus(t, manager, KindProfiling, "request", StatusFailed)
-	if operation.Failure == nil || operation.Failure.Reason != FailureReasonExecutionStartFailed {
-		t.Fatalf("failure = %+v, want execution_start_failed", operation.Failure)
+	operation := waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
+	if operation.Terminal == nil || operation.Terminal.Reason != FailureReasonExecutionStartFailed {
+		t.Fatalf("terminal = %+v, want execution_start_failed", operation.Terminal)
 	}
 }
 
@@ -202,7 +202,7 @@ func TestManagerStopsLaunchThatWinsCancellationRace(t *testing.T) {
 	if _, initiated, err := manager.StopByID("request"); err != nil || !initiated {
 		t.Fatalf("Stop() = (_, %t, %v), want initiated", initiated, err)
 	}
-	waitForStatus(t, manager, KindProfiling, "request", StatusStopped)
+	waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
 	_, waitCalls, stopCalls, finalizeCalls := executor.counts()
 	if waitCalls != 1 || stopCalls != 1 || finalizeCalls != 1 {
 		t.Errorf("calls = (wait %d, stop %d, finalize %d), want one each", waitCalls, stopCalls, finalizeCalls)
@@ -237,9 +237,9 @@ func TestManagerSuccessfulStopOverridesWaitExitError(t *testing.T) {
 	if _, initiated, err := manager.StopByID("request"); err != nil || !initiated {
 		t.Fatalf("Stop() = (_, %t, %v), want initiated", initiated, err)
 	}
-	operation := waitForStatus(t, manager, KindProfiling, "request", StatusStopped)
-	if operation.Failure != nil {
-		t.Fatalf("stopped operation failure = %+v, want nil", operation.Failure)
+	operation := waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
+	if operation.Terminal == nil || operation.Terminal.Outcome != OutcomeStopped {
+		t.Fatalf("stopped operation terminal = %+v, want stopped", operation.Terminal)
 	}
 	if modes := executor.modes(); len(modes) != 1 || modes[0] != FinalizeDiscard {
 		t.Fatalf("finalize modes = %v, want discard", modes)
@@ -289,7 +289,7 @@ func TestManagerMergesConcurrentStops(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	waitForStatus(t, manager, KindProfiling, "request", StatusStopped)
+	waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
 	if got := initiatedCount.Load(); got != 1 {
 		t.Errorf("initiated Stop count = %d, want 1", got)
 	}
@@ -330,7 +330,7 @@ func TestManagerRejectsStopDuringFinalization(t *testing.T) {
 		t.Errorf("executor Stop calls = %d, want 0", stopCalls)
 	}
 	close(finalizeRelease)
-	waitForStatus(t, manager, KindProfiling, "request", StatusCompleted)
+	waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
 }
 
 func TestManagerClassifiesExecutionAndFinalizationFailures(t *testing.T) {
@@ -421,9 +421,9 @@ func TestManagerClassifiesExecutionAndFinalizationFailures(t *testing.T) {
 					t.Fatalf("Stop() = (_, %t, %v), want initiated", initiated, stopErr)
 				}
 			}
-			operation := waitForStatus(t, manager, KindProfiling, "request", StatusFailed)
-			if operation.Failure == nil || operation.Failure.Reason != test.wantReason {
-				t.Fatalf("failure = %+v, want reason %s", operation.Failure, test.wantReason)
+			operation := waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
+			if operation.Terminal == nil || operation.Terminal.Reason != test.wantReason {
+				t.Fatalf("terminal = %+v, want reason %s", operation.Terminal, test.wantReason)
 			}
 			modes := executor.modes()
 			if len(modes) != 1 || modes[0] != test.wantMode {
@@ -539,8 +539,8 @@ func TestManagerShutdownCallerTimeoutDoesNotCancelShutdown(t *testing.T) {
 		t.Fatalf("second Shutdown() error = %v", err)
 	}
 	operation, err := manager.GetByID("request")
-	if err != nil || operation.Status != StatusStopped {
-		t.Fatalf("operation after Shutdown() = (%+v, %v), want stopped", operation, err)
+	if err != nil || operation.Status != StatusTerminal || operation.Terminal == nil || operation.Terminal.Outcome != OutcomeStopped {
+		t.Fatalf("operation after Shutdown() = (%+v, %v), want stopped terminal", operation, err)
 	}
 }
 

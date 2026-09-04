@@ -40,7 +40,7 @@ func TestReadinessRouteIsPublicOnNodeRouter(t *testing.T) {
 		t.Fatalf("Close() listener error = %v", err)
 	}
 
-	server, err := newHTTPServer(ServerOptions{BearerToken: "node-secret"}, nodeHandler)
+	server, err := newHTTPServer(&ServerOptions{BearerToken: "node-secret"}, nodeHandler)
 	if err != nil {
 		t.Fatalf("newHTTPServer() error = %v", err)
 	}

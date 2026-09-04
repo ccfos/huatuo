@@ -159,7 +159,7 @@ func (s *stubNodeClient) StopOperation(
 	if s.stopOperation != nil {
 		return s.stopOperation(ctx, host, requestID)
 	}
-	return operation(requestID, nodeapi.OperationStatusStopped), nil
+	return terminalOperation(requestID, nodeapi.OperationOutcomeStopped), nil
 }
 
 func testManager(store Store, client NodeClient) *Manager {
@@ -197,6 +197,21 @@ func testJob(id string, status Status, now time.Time) *Job {
 	}
 	if isTerminal(status) {
 		job.EndedAt = now
+		switch status {
+		case Status("completed"):
+			job.Terminal = &TerminalResult{Outcome: OutcomeCompleted}
+		case StatusTerminal:
+			job.Terminal = &TerminalResult{Outcome: OutcomeCompleted}
+		case Status("failed"):
+			job.Terminal = &TerminalResult{
+				Outcome: OutcomeFailed,
+				Reason:  FailureReasonExecutionFailed, Message: "failed",
+			}
+		case Status("stopped"):
+			job.Terminal = &TerminalResult{Outcome: OutcomeStopped}
+		case Status("outcome_unknown"):
+			job.Terminal = &TerminalResult{Outcome: OutcomeUnknown}
+		}
 	}
 	return job
 }
@@ -219,6 +234,15 @@ func operation(requestID string, status nodeapi.OperationStatus) *nodeapi.Operat
 	return &nodeapi.Operation{
 		RequestID: requestID,
 		Status:    status,
+		CreatedAt: time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+func terminalOperation(requestID string, outcome nodeapi.OperationOutcome) *nodeapi.Operation {
+	return &nodeapi.Operation{
+		RequestID: requestID,
+		Status:    nodeapi.OperationStatusTerminal,
+		Terminal:  &nodeapi.OperationTerminal{Outcome: outcome},
 		CreatedAt: time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC),
 	}
 }
@@ -268,8 +292,8 @@ func TestManagerCreateTreatsEachRequestAsIndependent(t *testing.T) {
 func TestManagerListPageUsesLookahead(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	manager := testManager(newMemoryStore(
-		testJob("job-1", StatusCompleted, now),
-		testJob("job-2", StatusCompleted, now),
+		testJob("job-1", StatusTerminal, now),
+		testJob("job-2", StatusTerminal, now),
 	), &stubNodeClient{})
 
 	first, err := manager.ListPage(t.Context(), &Query{Limit: 1})
@@ -370,14 +394,14 @@ func TestManagerStopBeforeDispatchPersistsUserIntent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
-	if stopped.Status != StatusStopped {
-		t.Fatalf("Stop() status = %q, want %q", stopped.Status, StatusStopped)
+	if stopped.Status != StatusTerminal || stopped.Terminal == nil || stopped.Terminal.Outcome != OutcomeStopped {
+		t.Fatalf("Stop() status = %q, want terminal/stopped", stopped.Status)
 	}
 	got, err := store.Get(t.Context(), pendingJob.ID)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if got.Status != StatusStopped || got.StopReason != StopReasonUser {
+	if got.Status != StatusTerminal || got.Terminal == nil || got.Terminal.Outcome != OutcomeStopped || got.StopReason != StopReasonUser {
 		t.Fatalf("stopped Job = (%q, %q)", got.Status, got.StopReason)
 	}
 	if got.StopRequestedAt.IsZero() || got.EndedAt.IsZero() {
@@ -394,12 +418,12 @@ func TestManagerDistinguishesUnknownAndLostOperations(t *testing.T) {
 	}{
 		{
 			name:       "start response was never observed",
-			wantStatus: StatusOutcomeUnknown,
+			wantStatus: StatusTerminal,
 		},
 		{
 			name:              "previously observed operation disappeared",
 			operationObserved: true,
-			wantStatus:        StatusFailed,
+			wantStatus:        StatusTerminal,
 			wantReason:        FailureReasonOperationLost,
 		},
 	}
@@ -423,15 +447,18 @@ func TestManagerDistinguishesUnknownAndLostOperations(t *testing.T) {
 				t.Fatalf("handleNodeError() = (%t, %v)", terminal, err)
 			}
 			got := runtimeSnapshot(runtime)
-			if got.Status != tt.wantStatus {
+			if got.Status != StatusTerminal {
 				t.Fatalf("status = %q, want %q", got.Status, tt.wantStatus)
 			}
+			if !tt.operationObserved && got.Terminal.Outcome != OutcomeUnknown {
+				t.Fatalf("outcome = %q, want unknown", got.Terminal.Outcome)
+			}
+			if tt.operationObserved && got.Terminal.Outcome != OutcomeFailed {
+				t.Fatalf("outcome = %q, want failed", got.Terminal.Outcome)
+			}
 			if tt.wantReason == "" {
-				if got.Failure != nil {
-					t.Fatalf("failure = %+v, want nil", got.Failure)
-				}
-			} else if got.Failure == nil || got.Failure.Reason != tt.wantReason {
-				t.Fatalf("failure = %+v, want reason %q", got.Failure, tt.wantReason)
+			} else if got.Terminal == nil || got.Terminal.Reason != tt.wantReason {
+				t.Fatalf("terminal = %+v, want reason %q", got.Terminal, tt.wantReason)
 			}
 		})
 	}
@@ -452,7 +479,7 @@ func TestManagerExecutionTimeoutStopsThenFailsJob(t *testing.T) {
 		requestID string,
 	) (*nodeapi.Operation, error) {
 		stopCalls.Add(1)
-		return operation(requestID, nodeapi.OperationStatusStopped), nil
+		return terminalOperation(requestID, nodeapi.OperationOutcomeStopped), nil
 	}}
 	manager := testManager(store, client)
 	manager.now = func() time.Time { return now }
@@ -467,9 +494,9 @@ func TestManagerExecutionTimeoutStopsThenFailsJob(t *testing.T) {
 		t.Fatalf("reconcileAndStop() = (%t, %v)", terminal, err)
 	}
 	got := runtimeSnapshot(runtime)
-	if got.Status != StatusFailed || got.Failure == nil ||
-		got.Failure.Reason != FailureReasonExecutionTimedOut {
-		t.Fatalf("timed-out Job = (%q, %+v)", got.Status, got.Failure)
+	if got.Status != StatusTerminal || got.Terminal == nil || got.Terminal.Outcome != OutcomeFailed ||
+		got.Terminal.Reason != FailureReasonExecutionTimedOut {
+		t.Fatalf("timed-out Job = (%q, %+v)", got.Status, got.Terminal)
 	}
 	if stopCalls.Load() != 1 {
 		t.Fatalf("StopOperation() calls = %d, want 1", stopCalls.Load())

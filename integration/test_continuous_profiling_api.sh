@@ -70,7 +70,8 @@ assert_profile_lifecycle() {
 			and .data.created_at != null
 			and .data.ended_at != null
 			and .data.result_url != null
-			and .data.failure == null
+			and .data.terminal.outcome == "completed"
+			and .data.terminal.reason == null
 			and (.data | has("agent_task_id") | not)
 			and (.data | has("tracer_args") | not)' \
 		"${PROFILE_STATUS_RESPONSE}" > /dev/null \

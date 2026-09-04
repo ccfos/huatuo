@@ -236,7 +236,7 @@ func TestManagerGetAndStopByID(t *testing.T) {
 	if _, initiated, err := manager.StopByID("request"); err != nil || !initiated {
 		t.Fatalf("StopByID() = (initiated=%t, err=%v), want initiated stop", initiated, err)
 	}
-	waitForStatus(t, manager, KindTracing, "request", StatusStopped)
+	waitForStatus(t, manager, KindTracing, "request", StatusTerminal)
 }
 
 func TestManagerAdmissionAndIdempotency(t *testing.T) {
@@ -330,16 +330,16 @@ func TestManagerReturnsDetachedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	operation := waitForStatus(t, manager, KindProfiling, "request", StatusFailed)
-	operation.Failure.Message = "mutated"
+	operation := waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
+	operation.Terminal.Message = "mutated"
 	*operation.FinishedAt = time.Time{}
 
 	second, err := manager.GetByID("request")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if second.Failure.Message != messageExecutionStartFailed {
-		t.Errorf("failure message = %q, want %q", second.Failure.Message, messageExecutionStartFailed)
+	if second.Terminal.Message != messageExecutionStartFailed {
+		t.Errorf("terminal message = %q, want %q", second.Terminal.Message, messageExecutionStartFailed)
 	}
 	if second.FinishedAt.IsZero() {
 		t.Error("finished time was mutated through returned snapshot")
@@ -377,7 +377,7 @@ func TestManagerDoesNotInheritRequestContext(t *testing.T) {
 	cancelRequest()
 	waitClosed(t, contextChecked, "executor context check")
 	close(startRelease)
-	waitForStatus(t, manager, KindProfiling, "request", StatusCompleted)
+	waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
 }
 
 func TestManagerReusesExpiredRequestID(t *testing.T) {
@@ -392,7 +392,7 @@ func TestManagerReusesExpiredRequestID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	waitForStatus(t, manager, KindProfiling, "request", StatusCompleted)
+	waitForStatus(t, manager, KindProfiling, "request", StatusTerminal)
 	time.Sleep(25 * time.Millisecond)
 
 	startBlock := make(chan struct{})
@@ -416,7 +416,7 @@ func TestManagerReusesExpiredRequestID(t *testing.T) {
 		t.Fatalf("replacement Start() = (%+v, %t), want new tracing operation", operation, created)
 	}
 	close(startBlock)
-	waitForStatus(t, manager, KindTracing, "request", StatusCompleted)
+	waitForStatus(t, manager, KindTracing, "request", StatusTerminal)
 }
 
 func TestManagerTerminalRetention(t *testing.T) {
@@ -429,7 +429,7 @@ func TestManagerTerminalRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	waitForStatus(t, manager, KindProfiling, "terminal", StatusCompleted)
+	waitForStatus(t, manager, KindProfiling, "terminal", StatusTerminal)
 
 	manager.mu.RLock()
 	expiresAt := manager.operations["terminal"].expiresAt

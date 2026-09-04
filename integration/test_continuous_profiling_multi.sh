@@ -100,7 +100,8 @@ assert_completed_profiles() {
 				and .data.created_at != null
 				and .data.ended_at != null
 				and .data.result_url != null
-				and .data.failure == null' \
+				and .data.terminal.outcome == "completed"
+				and .data.terminal.reason == null' \
 			"${HUATUO_BAMAI_TEST_TMPDIR}/profile-status-${profile_id}.json" > /dev/null \
 			|| fatal "completed profile ${profile_id} metadata is incomplete"
 		wait_until 90 2 continuous_profile_windows_are_stored \

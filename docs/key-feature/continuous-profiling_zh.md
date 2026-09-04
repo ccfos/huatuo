@@ -354,7 +354,7 @@ curl -sS \
 | `mode` | 从能力表中选择的剖析模式 |
 | `binary_match_path` | 可执行文件匹配路径；未使用时不返回该字段 |
 | `status` | 当前任务状态 |
-| `failure` | 仅 `failed` 状态返回的 `{code, message}`；其他状态不返回 |
+| `terminal` | 终态详情 `{outcome, reason, message}`；非终态不返回 |
 | `created_at` | 任务创建时间 |
 | `updated_at` | Job 状态最后更新时间 |
 | `started_at` | 实际开始执行时间；尚未观察到运行时不返回 |
@@ -368,20 +368,23 @@ curl -sS \
 | `pending` | 任务已创建，正在等待 Agent 执行 |
 | `running` | Agent 正在采集剖析数据 |
 | `stopping` | 停止意图已持久化，正在异步执行停止操作 |
-| `completed` | 任务正常完成 |
-| `failed` | 任务执行失败，通过 `failure.code` 和 `failure.message` 定位原因 |
-| `stopped` | 用户主动停止任务，不允许查询可能不完整的结果 |
-| `outcome_unknown` | Apiserver 无法确认 Operation 最终状态，但持久发布的结果仍可能可用 |
+| `terminal` | 任务已结束，具体结果见 `terminal.outcome` |
 
-`operation_lost` 和 `execution_timed_out` 是 `failed` 的原因码，不是 Job
+`terminal.outcome` 可取 `completed`、`failed`、`stopped` 或
+`unknown`。`failed` 时通过 `terminal.reason` 和 `terminal.message` 定位原因；
+`stopped` 表示主动停止，结果可能不完整；`unknown` 表示 Apiserver 无法确认
+Operation 最终状态，但持久发布的结果仍可能可用。
+
+`operation_lost` 和 `execution_timed_out` 是 `terminal.reason` 的原因码，不是 Job
 状态。其他失败原因包括等待启动或停止超时、Node 不可用、执行容量超过上限、
 启动或执行失败，以及协议错误。
 
 ### 6. 获取原始剖析数据
 
-`GET /v1/profiling/:request_id/raw` 仅在持久发布标记仍存在时返回 `completed` 或
-`outcome_unknown` Job 的原始剖析窗口。发布标记不存在或已经过期时返回
-`result_not_found`。活动状态返回 `result_not_ready`；`failed` 和 `stopped` 返回
+`GET /v1/profiling/:request_id/raw` 仅在持久发布标记仍存在时返回
+`terminal.outcome` 为 `completed` 或 `unknown` 的 Job 原始剖析窗口。发布标记
+不存在或已经过期时返回 `result_not_found`。活动状态返回 `result_not_ready`；
+`failed` 和 `stopped` 返回
 `result_unavailable`。
 
 数据量可能较大，可以直接保存到文件：

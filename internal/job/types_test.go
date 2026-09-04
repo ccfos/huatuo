@@ -23,7 +23,7 @@ import (
 	"huatuo-bamai/pkg/profiling"
 )
 
-func TestJobValidateRequiresFailureOnlyForFailedStatus(t *testing.T) {
+func TestJobValidateRequiresTerminalResultForTerminalStatus(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name    string
@@ -33,24 +33,7 @@ func TestJobValidateRequiresFailureOnlyForFailedStatus(t *testing.T) {
 		{
 			name: "completed without failure",
 		},
-		{
-			name: "failed without reason",
-			mutate: func(job *Job) {
-				job.Status = StatusFailed
-			},
-			wantErr: "failure must be present",
-		},
-		{
-			name: "outcome unknown with failure",
-			mutate: func(job *Job) {
-				job.Status = StatusOutcomeUnknown
-				job.Failure = &TerminalFailure{
-					Reason:  FailureReasonOperationLost,
-					Message: "lost",
-				}
-			},
-			wantErr: "failure must be present exactly when status is failed",
-		},
+		{name: "terminal without result", mutate: func(job *Job) { job.Terminal = nil }, wantErr: "terminal result"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -66,7 +49,8 @@ func TestJobValidateRequiresFailureOnlyForFailedStatus(t *testing.T) {
 					Language: profiling.LanguageGo,
 					Mode:     profiling.ModeOnCPU,
 				}},
-				Status:    StatusCompleted,
+				Status:    StatusTerminal,
+				Terminal:  &TerminalResult{Outcome: OutcomeCompleted},
 				CreatedAt: now,
 				UpdatedAt: now,
 				EndedAt:   now,
@@ -87,26 +71,26 @@ func TestJobValidateRequiresFailureOnlyForFailedStatus(t *testing.T) {
 
 func TestCloneJobDoesNotAliasNestedState(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	source := testJob("job-1", StatusFailed, now)
-	source.Failure = &TerminalFailure{
+	source := testJob("job-1", StatusTerminal, now)
+	source.Terminal = &TerminalResult{Outcome: OutcomeFailed,
 		Reason:  FailureReasonExecutionFailed,
 		Message: "failed",
 	}
 	cloned := cloneJob(source)
 	cloned.Spec.Profiling.Mode = profiling.ModeOffCPU
-	cloned.Failure.Message = "changed"
+	cloned.Terminal.Message = "changed"
 
 	if source.Spec.Profiling.Mode != profiling.ModeOnCPU {
 		t.Fatalf("source profiling mode = %q", source.Spec.Profiling.Mode)
 	}
-	if source.Failure.Message != "failed" {
-		t.Fatalf("source failure message = %q", source.Failure.Message)
+	if source.Terminal.Message != "failed" {
+		t.Fatalf("source terminal message = %q", source.Terminal.Message)
 	}
 }
 
 func TestJobValidateRequiresEndedAtExactlyForTerminalStatus(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	terminal := testJob("terminal", StatusCompleted, now)
+	terminal := testJob("terminal", StatusTerminal, now)
 	terminal.EndedAt = time.Time{}
 	if err := terminal.validate(); err == nil || !strings.Contains(err.Error(), "ended timestamp") {
 		t.Fatalf("terminal validate() error = %v", err)

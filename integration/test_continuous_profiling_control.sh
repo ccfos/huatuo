@@ -133,7 +133,8 @@ assert_capacity_failure() {
 		"${CAPACITY_PROFILE_ID}" failed "${status_file}" \
 		|| fatal "capacity-limited profile did not fail"
 	jq -e '
-		.data.failure.code == "execution_capacity_exceeded"
+		.data.terminal.outcome == "failed"
+		and .data.terminal.reason == "execution_capacity_exceeded"
 		and .data.result_url == null
 	' "${status_file}" > /dev/null \
 		|| fatal "capacity-limited profile returned an invalid failure"
@@ -151,14 +152,14 @@ stop_running_profile() {
 		"${APISERVER_ADDR}/v1/profiling/${RUNNING_PROFILE_ID}/stop")
 	assert_eq "${status}" "200" "stop active profile" \
 		|| fatal "stop active profile status ${status}, want 200"
-	jq -e '.data.status == "stopping" and .data.failure == null' \
+	jq -e '.data.status == "stopping" and .data.terminal == null' \
 		"${stop_file}" > /dev/null \
 		|| fatal "stop response did not expose the asynchronous stopping state"
 
 	wait_until 20 1 continuous_profile_status_is \
 		"${RUNNING_PROFILE_ID}" stopped "${status_file}" \
 		|| fatal "stopped profile did not reach its terminal state"
-	jq -e '.data.failure == null and .data.result_url == null' \
+	jq -e '.data.terminal.outcome == "stopped" and .data.result_url == null' \
 		"${status_file}" > /dev/null \
 		|| fatal "stopped profile exposed a result or failure"
 	profile_documents_are_deleted "${RUNNING_PROFILE_ID}" \

@@ -48,6 +48,15 @@ func jsonResponse(status int, body string) *http.Response {
 }
 
 func operationJSON(requestID, status string) string {
+	if status == "completed" || status == "failed" || status == "stopped" {
+		return fmt.Sprintf(
+			`{"data":{"created_at":"2026-08-24T12:00:00Z",`+
+				`"request_id":%q,"kind":"profiling","status":"terminal",`+
+				`"terminal":{"outcome":%q}}}`,
+			requestID,
+			status,
+		)
+	}
 	return fmt.Sprintf(
 		`{"data":{"created_at":"2026-08-24T12:00:00Z",`+
 			`"request_id":%q,"kind":"profiling","status":%q}}`,
