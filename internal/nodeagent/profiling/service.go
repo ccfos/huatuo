@@ -88,12 +88,10 @@ func (s *Service) Start(
 	if err := validateRequest(request); err != nil {
 		return nil, false, err
 	}
-	if existing, err := s.manager.Get(operation.KindProfiling, request.RequestID); err == nil {
-		return existing, false, nil
-	} else if !errors.Is(err, operation.ErrNotFound) {
-		return nil, false, err
-	}
-	if _, err := s.manager.Get(operation.KindTracing, request.RequestID); err == nil {
+	if existing, err := s.manager.GetByID(request.RequestID); err == nil {
+		if existing.Kind == operation.KindProfiling {
+			return existing, false, nil
+		}
 		return nil, false, operation.ErrRequestIDConflict
 	} else if !errors.Is(err, operation.ErrNotFound) {
 		return nil, false, err
@@ -121,16 +119,4 @@ func (s *Service) Start(
 			request.RequestID,
 		),
 	})
-}
-
-// Get returns one profiling operation snapshot.
-func (s *Service) Get(requestID string) (*operation.Operation, error) {
-	return s.manager.Get(operation.KindProfiling, requestID)
-}
-
-// Stop records an asynchronous profiling stop intent.
-func (s *Service) Stop(
-	requestID string,
-) (operationSnapshot *operation.Operation, initiated bool, err error) {
-	return s.manager.Stop(operation.KindProfiling, requestID)
 }

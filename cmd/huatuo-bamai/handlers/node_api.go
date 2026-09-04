@@ -41,10 +41,6 @@ type profilingOperationService interface {
 		ctx context.Context,
 		request *nodeprofiling.StartRequest,
 	) (operationSnapshot *operation.Operation, created bool, err error)
-	Get(requestID string) (*operation.Operation, error)
-	Stop(
-		requestID string,
-	) (operationSnapshot *operation.Operation, initiated bool, err error)
 }
 
 type tracingOperationService interface {
@@ -52,10 +48,6 @@ type tracingOperationService interface {
 		ctx context.Context,
 		request nodetracing.StartRequest,
 	) (operationSnapshot *operation.Operation, created bool, err error)
-	Get(requestID string) (*operation.Operation, error)
-	Stop(
-		requestID string,
-	) (operationSnapshot *operation.Operation, initiated bool, err error)
 }
 
 // NodeAPIHandler implements the generated Node Agent Strict Server.

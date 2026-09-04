@@ -138,20 +138,8 @@ func (m *Manager) Start(
 	return snapshot, true, nil
 }
 
-// Get returns a detached snapshot for the requested service kind.
-func (m *Manager) Get(kind Kind, requestID string) (*Operation, error) {
-	if !isValidKind(kind) {
-		return nil, ErrInvalidRequest
-	}
-	return m.get(requestID, kind)
-}
-
-// GetByID returns a detached snapshot without requiring the operation kind.
+// GetByID returns a detached snapshot by request ID.
 func (m *Manager) GetByID(requestID string) (*Operation, error) {
-	return m.get(requestID, "")
-}
-
-func (m *Manager) get(requestID string, kind Kind) (*Operation, error) {
 	if requestID == "" {
 		return nil, ErrInvalidRequest
 	}
@@ -159,7 +147,7 @@ func (m *Manager) get(requestID string, kind Kind) (*Operation, error) {
 	m.mu.RLock()
 	now := m.now()
 	managed, ok := m.operations[requestID]
-	if !ok || (kind != "" && managed.state.Kind != kind) || m.isExpiredLocked(managed, now) {
+	if !ok || m.isExpiredLocked(managed, now) {
 		m.mu.RUnlock()
 		return nil, ErrNotFound
 	}
@@ -168,27 +156,10 @@ func (m *Manager) get(requestID string, kind Kind) (*Operation, error) {
 	return snapshot, nil
 }
 
-// Stop records one asynchronous stop intent. Repeated requests are idempotent.
-func (m *Manager) Stop(
-	kind Kind,
-	requestID string,
-) (operation *Operation, initiated bool, err error) {
-	if !isValidKind(kind) {
-		return nil, false, ErrInvalidRequest
-	}
-	return m.stop(requestID, kind)
-}
-
-// StopByID records a stop intent without requiring the operation kind.
+// StopByID records one asynchronous stop intent. Repeated requests are
+// idempotent.
 func (m *Manager) StopByID(
 	requestID string,
-) (operation *Operation, initiated bool, err error) {
-	return m.stop(requestID, "")
-}
-
-func (m *Manager) stop(
-	requestID string,
-	kind Kind,
 ) (operation *Operation, initiated bool, err error) {
 	if requestID == "" {
 		return nil, false, ErrInvalidRequest
@@ -197,7 +168,7 @@ func (m *Manager) stop(
 	m.mu.Lock()
 	now := m.now()
 	managed, ok := m.operations[requestID]
-	if !ok || (kind != "" && managed.state.Kind != kind) {
+	if !ok {
 		m.mu.Unlock()
 		return nil, false, ErrNotFound
 	}

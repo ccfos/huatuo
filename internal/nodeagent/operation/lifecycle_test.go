@@ -130,7 +130,7 @@ func TestManagerStopsPendingLaunch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	stopping, initiated, err := manager.Stop(KindProfiling, "request")
+	stopping, initiated, err := manager.StopByID("request")
 	if err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
@@ -162,7 +162,7 @@ func TestManagerKeepsStartErrorAfterStopIntent(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 	waitClosed(t, startEntered, "executor Start")
-	if _, initiated, err := manager.Stop(KindProfiling, "request"); err != nil || !initiated {
+	if _, initiated, err := manager.StopByID("request"); err != nil || !initiated {
 		t.Fatalf("Stop() = (_, %t, %v), want initiated", initiated, err)
 	}
 	operation := waitForStatus(t, manager, KindProfiling, "request", StatusFailed)
@@ -199,7 +199,7 @@ func TestManagerStopsLaunchThatWinsCancellationRace(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 	waitClosed(t, startEntered, "executor Start")
-	if _, initiated, err := manager.Stop(KindProfiling, "request"); err != nil || !initiated {
+	if _, initiated, err := manager.StopByID("request"); err != nil || !initiated {
 		t.Fatalf("Stop() = (_, %t, %v), want initiated", initiated, err)
 	}
 	waitForStatus(t, manager, KindProfiling, "request", StatusStopped)
@@ -234,7 +234,7 @@ func TestManagerSuccessfulStopOverridesWaitExitError(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 	waitForStatus(t, manager, KindProfiling, "request", StatusRunning)
-	if _, initiated, err := manager.Stop(KindProfiling, "request"); err != nil || !initiated {
+	if _, initiated, err := manager.StopByID("request"); err != nil || !initiated {
 		t.Fatalf("Stop() = (_, %t, %v), want initiated", initiated, err)
 	}
 	operation := waitForStatus(t, manager, KindProfiling, "request", StatusStopped)
@@ -279,7 +279,7 @@ func TestManagerMergesConcurrentStops(t *testing.T) {
 	for range stopCount {
 		go func() {
 			defer wg.Done()
-			_, initiated, stopErr := manager.Stop(KindProfiling, "request")
+			_, initiated, stopErr := manager.StopByID("request")
 			if stopErr != nil {
 				t.Errorf("Stop() error = %v", stopErr)
 			}
@@ -318,7 +318,7 @@ func TestManagerRejectsStopDuringFinalization(t *testing.T) {
 	}
 	waitClosed(t, finalizeEntered, "Finalize")
 	waitForFinalizing(t, manager, "request")
-	operation, initiated, err := manager.Stop(KindProfiling, "request")
+	operation, initiated, err := manager.StopByID("request")
 	if err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
@@ -417,7 +417,7 @@ func TestManagerClassifiesExecutionAndFinalizationFailures(t *testing.T) {
 			}
 			if test.stop {
 				waitForStatus(t, manager, KindProfiling, "request", StatusRunning)
-				if _, initiated, stopErr := manager.Stop(KindProfiling, "request"); stopErr != nil || !initiated {
+				if _, initiated, stopErr := manager.StopByID("request"); stopErr != nil || !initiated {
 					t.Fatalf("Stop() = (_, %t, %v), want initiated", initiated, stopErr)
 				}
 			}
@@ -538,7 +538,7 @@ func TestManagerShutdownCallerTimeoutDoesNotCancelShutdown(t *testing.T) {
 	if err := manager.Shutdown(ctx); err != nil {
 		t.Fatalf("second Shutdown() error = %v", err)
 	}
-	operation, err := manager.Get(KindProfiling, "request")
+	operation, err := manager.GetByID("request")
 	if err != nil || operation.Status != StatusStopped {
 		t.Fatalf("operation after Shutdown() = (%+v, %v), want stopped", operation, err)
 	}

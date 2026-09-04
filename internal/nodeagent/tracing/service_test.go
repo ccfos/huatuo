@@ -64,9 +64,6 @@ func TestStartValidatesThenReportsExecutorUnavailable(t *testing.T) {
 	if !errors.Is(err, ErrNotImplemented) || created || operationSnapshot != nil {
 		t.Fatalf("Start() = (%+v, %t, %v)", operationSnapshot, created, err)
 	}
-	if _, err := service.Get(request.RequestID); !errors.Is(err, operation.ErrNotFound) {
-		t.Fatalf("Get() error = %v, want ErrNotFound", err)
-	}
 }
 
 func TestStartRejectsUnsupportedScopeBeforeAvailability(t *testing.T) {

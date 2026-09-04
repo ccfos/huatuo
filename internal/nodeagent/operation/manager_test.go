@@ -211,10 +211,10 @@ func TestManagerValidatesRequests(t *testing.T) {
 		})
 	}
 
-	if _, err := manager.Get("unknown", "request"); !errors.Is(err, ErrInvalidRequest) {
-		t.Errorf("Get() error = %v, want ErrInvalidRequest", err)
+	if _, err := manager.GetByID(""); !errors.Is(err, ErrInvalidRequest) {
+		t.Errorf("GetByID() error = %v, want ErrInvalidRequest", err)
 	}
-	if _, _, err := manager.Stop(KindProfiling, ""); !errors.Is(err, ErrInvalidRequest) {
+	if _, _, err := manager.StopByID(""); !errors.Is(err, ErrInvalidRequest) {
 		t.Errorf("Stop() error = %v, want ErrInvalidRequest", err)
 	}
 }
@@ -334,7 +334,7 @@ func TestManagerReturnsDetachedSnapshots(t *testing.T) {
 	operation.Failure.Message = "mutated"
 	*operation.FinishedAt = time.Time{}
 
-	second, err := manager.Get(KindProfiling, "request")
+	second, err := manager.GetByID("request")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -343,9 +343,6 @@ func TestManagerReturnsDetachedSnapshots(t *testing.T) {
 	}
 	if second.FinishedAt.IsZero() {
 		t.Error("finished time was mutated through returned snapshot")
-	}
-	if _, err := manager.Get(KindTracing, "request"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("cross-kind Get() error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -437,7 +434,7 @@ func TestManagerTerminalRetention(t *testing.T) {
 	manager.mu.RLock()
 	expiresAt := manager.operations["terminal"].expiresAt
 	manager.mu.RUnlock()
-	if _, err := manager.Get(KindProfiling, "terminal"); err != nil {
+	if _, err := manager.GetByID("terminal"); err != nil {
 		t.Fatalf("retained Get() error = %v", err)
 	}
 	manager.mu.RLock()
@@ -447,7 +444,7 @@ func TestManagerTerminalRetention(t *testing.T) {
 		t.Fatalf("Get() extended expiry from %v to %v", expiresAt, retainedExpiry)
 	}
 	manager.now = func() time.Time { return expiresAt }
-	if _, err := manager.Get(KindProfiling, "terminal"); !errors.Is(err, ErrNotFound) {
+	if _, err := manager.GetByID("terminal"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expired Get() error = %v, want ErrNotFound", err)
 	}
 	manager.mu.RLock()
@@ -484,7 +481,7 @@ func TestManagerCleanupKeepsActiveOperation(t *testing.T) {
 	}
 	waitClosed(t, startEntered, "executor Start")
 	manager.cleanupExpired(time.Now().Add(24 * time.Hour))
-	if _, err := manager.Get(KindProfiling, "active"); err != nil {
+	if _, err := manager.GetByID("active"); err != nil {
 		t.Fatalf("Get() after cleanup error = %v", err)
 	}
 }
@@ -570,15 +567,16 @@ func waitForStatus(
 	want Status,
 ) *Operation {
 	t.Helper()
+	_ = kind
 	deadline := time.Now().Add(testWaitTimeout)
 	for time.Now().Before(deadline) {
-		operation, err := manager.Get(kind, requestID)
+		operation, err := manager.GetByID(requestID)
 		if err == nil && operation.Status == want {
 			return operation
 		}
 		time.Sleep(time.Millisecond)
 	}
-	operation, err := manager.Get(kind, requestID)
+	operation, err := manager.GetByID(requestID)
 	t.Fatalf("operation after wait = (%+v, %v), want status %s", operation, err, want)
 	return nil
 }

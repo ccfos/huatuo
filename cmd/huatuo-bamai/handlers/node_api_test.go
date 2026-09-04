@@ -45,14 +45,6 @@ func (s *stubProfilingOperations) Start(
 	return s.operation, s.created, s.err
 }
 
-func (s *stubProfilingOperations) Get(string) (*operation.Operation, error) {
-	return s.operation, s.err
-}
-
-func (s *stubProfilingOperations) Stop(string) (*operation.Operation, bool, error) {
-	return s.operation, s.created, s.err
-}
-
 type stubTracingOperations struct {
 	operation *operation.Operation
 	created   bool
@@ -63,14 +55,6 @@ func (s *stubTracingOperations) Start(
 	context.Context,
 	nodetracing.StartRequest,
 ) (*operation.Operation, bool, error) {
-	return s.operation, s.created, s.err
-}
-
-func (s *stubTracingOperations) Get(string) (*operation.Operation, error) {
-	return s.operation, s.err
-}
-
-func (s *stubTracingOperations) Stop(string) (*operation.Operation, bool, error) {
 	return s.operation, s.created, s.err
 }
 

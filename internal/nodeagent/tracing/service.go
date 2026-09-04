@@ -64,29 +64,15 @@ func (s *Service) Start(
 	if err := validateRequest(request); err != nil {
 		return nil, false, err
 	}
-	if existing, err := s.manager.Get(operation.KindTracing, request.RequestID); err == nil {
-		return existing, false, nil
-	} else if !errors.Is(err, operation.ErrNotFound) {
-		return nil, false, err
-	}
-	if _, err := s.manager.Get(operation.KindProfiling, request.RequestID); err == nil {
+	if existing, err := s.manager.GetByID(request.RequestID); err == nil {
+		if existing.Kind == operation.KindTracing {
+			return existing, false, nil
+		}
 		return nil, false, operation.ErrRequestIDConflict
 	} else if !errors.Is(err, operation.ErrNotFound) {
 		return nil, false, err
 	}
 	return nil, false, ErrNotImplemented
-}
-
-// Get returns a tracing operation if a future executor created one.
-func (s *Service) Get(requestID string) (*operation.Operation, error) {
-	return s.manager.Get(operation.KindTracing, requestID)
-}
-
-// Stop records an asynchronous stop for an existing tracing operation.
-func (s *Service) Stop(
-	requestID string,
-) (operationSnapshot *operation.Operation, initiated bool, err error) {
-	return s.manager.Stop(operation.KindTracing, requestID)
 }
 
 func validateRequest(request StartRequest) error {
