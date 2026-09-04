@@ -68,7 +68,7 @@ type migrationRow struct {
 }
 
 func (s *storageStore) migrate(ctx context.Context) (err error) {
-	tx, err := s.db.BeginTx(contextOrBackground(ctx), nil)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin job storage migration: %w", err)
 	}
@@ -78,7 +78,7 @@ func (s *storageStore) migrate(ctx context.Context) (err error) {
 		}
 	}()
 
-	if _, err = tx.ExecContext(contextOrBackground(ctx), `
+	if _, err = tx.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS jobs (
 			id TEXT PRIMARY KEY,
 			data BLOB NOT NULL,
@@ -87,7 +87,7 @@ func (s *storageStore) migrate(ctx context.Context) (err error) {
 		return fmt.Errorf("create job table: %w", err)
 	}
 
-	rows, err := tx.QueryContext(contextOrBackground(ctx),
+	rows, err := tx.QueryContext(ctx,
 		`SELECT id, data FROM jobs ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("read jobs for migration: %w", err)
@@ -126,7 +126,7 @@ func (s *storageStore) migrate(ctx context.Context) (err error) {
 				return fmt.Errorf("migrate job %q: %w", row.id, encodeErr)
 			}
 			if _, err = tx.ExecContext(
-				contextOrBackground(ctx),
+				ctx,
 				`UPDATE jobs SET data = ?, fields = ? WHERE id = ?`,
 				record.data,
 				record.fields,
@@ -148,7 +148,7 @@ func (s *storageStore) migrate(ctx context.Context) (err error) {
 	}
 
 	for _, statement := range migrationIndexStatements() {
-		if _, err = tx.ExecContext(contextOrBackground(ctx), statement); err != nil {
+		if _, err = tx.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("migrate job indexes: %w", err)
 		}
 	}

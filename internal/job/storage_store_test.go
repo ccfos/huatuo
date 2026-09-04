@@ -33,7 +33,7 @@ func openTestStore(t *testing.T) Store {
 		t.Fatalf("newStore() error = %v", err)
 	}
 	t.Cleanup(func() {
-		if err := store.Close(t.Context()); err != nil {
+		if err := store.Close(); err != nil {
 			t.Errorf("Close() error = %v", err)
 		}
 	})
@@ -190,7 +190,7 @@ func TestStorageMigrationConvertsLegacyActiveJobToOperationLost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newStore() migration error = %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close(t.Context()) })
+	t.Cleanup(func() { _ = store.Close() })
 	got, err := store.Get(t.Context(), legacy.ID)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)

@@ -54,7 +54,7 @@ func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool,
 	}
 
 	snapshot := runtimeSnapshot(runtime)
-	operation, err := m.getOperation(ctx, snapshot)
+	operation, err := m.nodeClient.GetOperation(ctx, snapshot.Hostname, snapshot.ID)
 	if err != nil {
 		return m.handleNodeError(ctx, runtime, err, false)
 	}
@@ -112,7 +112,7 @@ func (m *Manager) reconcileAndStop(
 	}
 
 	snapshot := runtimeSnapshot(runtime)
-	stoppedOperation, err := m.stopOperation(ctx, snapshot)
+	stoppedOperation, err := m.nodeClient.StopOperation(ctx, snapshot.Hostname, snapshot.ID)
 	if err != nil {
 		return m.handleNodeError(ctx, runtime, err, false)
 	}
@@ -146,7 +146,8 @@ func (m *Manager) reconcileOperation(
 	switch operation.Status {
 	case nodeapi.OperationStatusPending:
 		if current.Status == StatusRunning {
-			setTerminal(updated, OutcomeFailed, &TerminalResult{
+			setTerminal(updated, &TerminalResult{
+				Outcome: OutcomeFailed,
 				Reason:  FailureReasonProtocolError,
 				Message: "Node Operation regressed from running to pending",
 			}, now)
@@ -170,13 +171,15 @@ func (m *Manager) reconcileOperation(
 		}
 	case nodeapi.OperationStatusStopping:
 		if current.Status != StatusStopping {
-			setTerminal(updated, OutcomeFailed, &TerminalResult{
+			setTerminal(updated, &TerminalResult{
+				Outcome: OutcomeFailed,
 				Reason:  FailureReasonProtocolError,
 				Message: "Node Operation stopped without a persisted Job stop intent",
 			}, now)
 			changed = true
 		} else if !now.Before(current.StopDeadline) {
-			setTerminal(updated, OutcomeFailed, &TerminalResult{
+			setTerminal(updated, &TerminalResult{
+				Outcome: OutcomeFailed,
 				Reason:  FailureReasonStopTimeout,
 				Message: "Node Operation did not stop before the Job stop deadline",
 			}, now)
@@ -184,7 +187,8 @@ func (m *Manager) reconcileOperation(
 		}
 	case nodeapi.OperationStatusTerminal:
 		if operation.Terminal == nil {
-			setTerminal(updated, OutcomeFailed, &TerminalResult{
+			setTerminal(updated, &TerminalResult{
+				Outcome: OutcomeFailed,
 				Reason:  FailureReasonProtocolError,
 				Message: "terminal Node Operation did not include terminal details",
 			}, now)
@@ -193,21 +197,22 @@ func (m *Manager) reconcileOperation(
 		}
 		switch operation.Terminal.Outcome {
 		case nodeapi.OperationOutcomeCompleted:
-			setTerminal(updated, OutcomeCompleted, nil, now)
+			setTerminal(updated, &TerminalResult{Outcome: OutcomeCompleted}, now)
 		case nodeapi.OperationOutcomeFailed:
-			setTerminal(updated, OutcomeFailed, mapOperationFailure(operation.Terminal), now)
+			setTerminal(updated, mapOperationFailure(operation.Terminal), now)
 		case nodeapi.OperationOutcomeStopped:
-			status, failure := stoppedJobOutcome(current.StopReason)
-			setTerminal(updated, status, failure, now)
+			setTerminal(updated, stoppedJobOutcome(current.StopReason), now)
 		default:
-			setTerminal(updated, OutcomeFailed, &TerminalResult{
+			setTerminal(updated, &TerminalResult{
+				Outcome: OutcomeFailed,
 				Reason:  FailureReasonProtocolError,
 				Message: "Node returned an unsupported terminal outcome",
 			}, now)
 		}
 		changed = true
 	default:
-		setTerminal(updated, OutcomeFailed, &TerminalResult{
+		setTerminal(updated, &TerminalResult{
+			Outcome: OutcomeFailed,
 			Reason:  FailureReasonProtocolError,
 			Message: "Node returned an unsupported Operation status",
 		}, now)
@@ -218,7 +223,8 @@ func (m *Manager) reconcileOperation(
 		(operation.Status == nodeapi.OperationStatusPending ||
 			operation.Status == nodeapi.OperationStatusRunning) {
 		if !now.Before(updated.StopDeadline) {
-			setTerminal(updated, OutcomeFailed, &TerminalResult{
+			setTerminal(updated, &TerminalResult{
+				Outcome: OutcomeFailed,
 				Reason:  FailureReasonStopTimeout,
 				Message: "Node Operation did not stop before the Job stop deadline",
 			}, now)
@@ -268,22 +274,24 @@ func (m *Manager) handleNodeError(
 
 	if isOperationNotFound(err) {
 		if runtime.operationObserved {
-			setTerminal(updated, OutcomeFailed, &TerminalResult{
+			setTerminal(updated, &TerminalResult{
+				Outcome: OutcomeFailed,
 				Reason:  FailureReasonOperationLost,
 				Message: "Node no longer has the previously observed Operation",
 			}, now)
 		} else {
-			setTerminal(updated, OutcomeUnknown, nil, now)
+			setTerminal(updated, &TerminalResult{Outcome: OutcomeUnknown}, now)
 		}
 	} else if failure := explicitNodeFailure(err, duringStart); failure != nil {
-		setTerminal(updated, OutcomeFailed, failure, now)
+		setTerminal(updated, failure, now)
 	} else if isRecoverableNodeError(err) {
 		if current.NodeUnavailableSince.IsZero() {
 			updated.NodeUnavailableSince = now
 			updated.NodeUnavailableDeadline = now.Add(m.config.NodeUnavailableGracePeriod)
 			updated.UpdatedAt = now
 		} else if !now.Before(current.NodeUnavailableDeadline) {
-			setTerminal(updated, OutcomeFailed, &TerminalResult{
+			setTerminal(updated, &TerminalResult{
+				Outcome: OutcomeFailed,
 				Reason:  FailureReasonNodeUnavailable,
 				Message: "Node remained unavailable beyond the recovery window",
 			}, now)
@@ -292,7 +300,8 @@ func (m *Manager) handleNodeError(
 			return false, nil
 		}
 	} else {
-		setTerminal(updated, OutcomeFailed, &TerminalResult{
+		setTerminal(updated, &TerminalResult{
+			Outcome: OutcomeFailed,
 			Reason:  FailureReasonProtocolError,
 			Message: "Node response violated the Operation protocol",
 		}, now)
@@ -442,22 +451,25 @@ func mapOperationFailure(failure *nodeapi.OperationTerminal) *TerminalResult {
 	return &TerminalResult{Outcome: OutcomeFailed, Reason: reason, Message: message}
 }
 
-func stoppedJobOutcome(reason StopReason) (Outcome, *TerminalResult) {
+func stoppedJobOutcome(reason StopReason) *TerminalResult {
 	switch reason {
 	case StopReasonUser:
-		return OutcomeStopped, nil
+		return &TerminalResult{Outcome: OutcomeStopped}
 	case StopReasonStartTimeout:
-		return OutcomeFailed, &TerminalResult{
+		return &TerminalResult{
+			Outcome: OutcomeFailed,
 			Reason:  FailureReasonStartTimeout,
 			Message: "Node Operation did not start before the Job pending deadline",
 		}
 	case StopReasonExecutionTimeout:
-		return OutcomeFailed, &TerminalResult{
+		return &TerminalResult{
+			Outcome: OutcomeFailed,
 			Reason:  FailureReasonExecutionTimedOut,
 			Message: "Node Operation exceeded the Job execution deadline",
 		}
 	default:
-		return OutcomeFailed, &TerminalResult{
+		return &TerminalResult{
+			Outcome: OutcomeFailed,
 			Reason:  FailureReasonExecutionFailed,
 			Message: "Node Operation stopped without a persisted Job stop reason",
 		}
@@ -474,16 +486,10 @@ func setStopping(job *Job, reason StopReason, now time.Time, gracePeriod time.Du
 
 func setTerminal(
 	job *Job,
-	outcome Outcome,
 	terminal *TerminalResult,
 	now time.Time,
 ) {
 	job.Status = StatusTerminal
-	if terminal == nil {
-		terminal = &TerminalResult{Outcome: outcome}
-	} else {
-		terminal.Outcome = outcome
-	}
 	job.Terminal = terminal
 	job.UpdatedAt = now
 	if job.EndedAt.IsZero() {

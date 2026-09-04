@@ -31,14 +31,6 @@ func (m *Manager) startOperation(ctx context.Context, job *Job) (*nodeapi.Operat
 	return m.nodeClient.StartOperation(ctx, job.Hostname, request)
 }
 
-func (m *Manager) getOperation(ctx context.Context, job *Job) (*nodeapi.Operation, error) {
-	return m.nodeClient.GetOperation(ctx, job.Hostname, job.ID)
-}
-
-func (m *Manager) stopOperation(ctx context.Context, job *Job) (*nodeapi.Operation, error) {
-	return m.nodeClient.StopOperation(ctx, job.Hostname, job.ID)
-}
-
 func startOperationRequest(job *Job) (*nodeapi.StartOperationRequest, error) {
 	request := &nodeapi.StartOperationRequest{
 		RequestID:       job.ID,
@@ -50,35 +42,23 @@ func startOperationRequest(job *Job) (*nodeapi.StartOperationRequest, error) {
 	}
 	switch job.Kind {
 	case KindProfiling:
+		spec := job.Spec.Profiling
+		profilingSpec := nodeapi.ProfilingOperationSpec{
+			Type:     nodeapi.ProfilingType(spec.Type),
+			Language: nodeapi.ProfilingLanguage(spec.Language),
+			Mode:     nodeapi.ProfilingMode(spec.Mode),
+		}
+		if spec.BinaryMatchPath != "" {
+			profilingSpec.BinaryMatchPath = &spec.BinaryMatchPath
+		}
 		request.Kind = nodeapi.OperationKindProfiling
-		return request, request.Spec.FromProfilingOperationSpec(profilingOperationSpec(job))
+		return request, request.Spec.FromProfilingOperationSpec(profilingSpec)
 	case KindTracing:
 		request.Kind = nodeapi.OperationKindTracing
-		return request, request.Spec.FromTracingOperationSpec(tracingOperationSpec(job))
+		return request, request.Spec.FromTracingOperationSpec(nodeapi.TracingOperationSpec{
+			Type: nodeapi.TracingType(job.Spec.Tracing.Type),
+		})
 	default:
 		return nil, fmt.Errorf("%w: unsupported Job kind %q", ErrUnsupportedKind, job.Kind)
 	}
-}
-
-func profilingOperationSpec(job *Job) nodeapi.ProfilingOperationSpec {
-	spec := job.Spec.Profiling
-	return nodeapi.ProfilingOperationSpec{
-		Type:            nodeapi.ProfilingType(spec.Type),
-		Language:        nodeapi.ProfilingLanguage(spec.Language),
-		Mode:            nodeapi.ProfilingMode(spec.Mode),
-		BinaryMatchPath: optionalString(spec.BinaryMatchPath),
-	}
-}
-
-func tracingOperationSpec(job *Job) nodeapi.TracingOperationSpec {
-	return nodeapi.TracingOperationSpec{
-		Type: nodeapi.TracingType(job.Spec.Tracing.Type),
-	}
-}
-
-func optionalString(value string) *string {
-	if value == "" {
-		return nil
-	}
-	return &value
 }

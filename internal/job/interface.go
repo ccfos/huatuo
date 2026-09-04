@@ -29,7 +29,7 @@ type Store interface {
 	List(ctx context.Context, query *Query) ([]*Job, error)
 	DeleteTerminalBefore(ctx context.Context, endedBefore time.Time, limit int) (int64, error)
 	Ping(ctx context.Context) error
-	Close(ctx context.Context) error
+	Close() error
 }
 
 // NodeClient controls typed Node Operations without owning Job state.

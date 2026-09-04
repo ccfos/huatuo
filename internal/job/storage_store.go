@@ -112,7 +112,7 @@ func (s *storageStore) Get(ctx context.Context, jobID string) (*Job, error) {
 	}
 
 	var data []byte
-	err := s.db.QueryRowContext(contextOrBackground(ctx),
+	err := s.db.QueryRowContext(ctx,
 		`SELECT data FROM jobs WHERE id = ?`, jobID).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -133,7 +133,7 @@ func (s *storageStore) Create(ctx context.Context, job *Job) error {
 		return err
 	}
 	result, err := s.db.ExecContext(
-		contextOrBackground(ctx),
+		ctx,
 		`INSERT INTO jobs (id, data, fields) VALUES (?, ?, ?)
 		 ON CONFLICT(id) DO NOTHING`,
 		record.id,
@@ -170,7 +170,7 @@ func (s *storageStore) Save(
 		AND json_extract(fields, '$.status') = ?`
 	args := []any{record.data, record.fields, record.id, string(expectedStatus)}
 
-	result, err := s.db.ExecContext(contextOrBackground(ctx), query, args...)
+	result, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("save job %q: %w", record.id, err)
 	}
@@ -189,7 +189,7 @@ func (s *storageStore) List(ctx context.Context, query *Query) ([]*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(contextOrBackground(ctx), querySQL, args...)
+	rows, err := s.db.QueryContext(ctx, querySQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
@@ -233,7 +233,7 @@ func (s *storageStore) DeleteTerminalBefore(
 	}
 
 	result, err := s.db.ExecContext(
-		contextOrBackground(ctx),
+		ctx,
 		`DELETE FROM jobs WHERE id IN (
 			SELECT id FROM jobs
 			WHERE json_extract(fields, '$.status') = ?
@@ -257,13 +257,13 @@ func (s *storageStore) DeleteTerminalBefore(
 }
 
 func (s *storageStore) Ping(ctx context.Context) error {
-	if err := s.db.PingContext(contextOrBackground(ctx)); err != nil {
+	if err := s.db.PingContext(ctx); err != nil {
 		return fmt.Errorf("ping job database: %w", err)
 	}
 	return nil
 }
 
-func (s *storageStore) Close(_ context.Context) error {
+func (s *storageStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -493,11 +493,4 @@ func normalizedOptionalTime(value time.Time) any {
 		return ""
 	}
 	return driver.NormalizeValue(value)
-}
-
-func contextOrBackground(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return ctx
 }

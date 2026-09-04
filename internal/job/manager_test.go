@@ -119,7 +119,7 @@ func (s *memoryStore) Ping(context.Context) error {
 	return nil
 }
 
-func (s *memoryStore) Close(context.Context) error {
+func (s *memoryStore) Close() error {
 	return nil
 }
 

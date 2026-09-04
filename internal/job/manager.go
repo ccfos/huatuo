@@ -136,7 +136,7 @@ func NewManager(
 	}
 	manager := newManagerWithStore(store, nodeClient, normalized)
 	if err := manager.recover(ctx); err != nil {
-		_ = store.Close(ctx)
+		_ = store.Close()
 		return nil, fmt.Errorf("recover jobs: %w", err)
 	}
 	manager.startCleanup()
@@ -347,7 +347,7 @@ func (m *Manager) Stop(ctx context.Context, jobID string) (*Job, error) {
 	if current.Status == StatusPending && current.StartAttemptedAt.IsZero() {
 		updated.StopReason = StopReasonUser
 		updated.StopRequestedAt = now
-		setTerminal(updated, OutcomeStopped, nil, now)
+		setTerminal(updated, &TerminalResult{Outcome: OutcomeStopped}, now)
 	} else {
 		setStopping(updated, StopReasonUser, now, m.config.CompletionGracePeriod)
 	}
@@ -400,7 +400,6 @@ func (m *Manager) Stats() ManagerStats {
 
 // Shutdown stops local supervisors without stopping Node Operations.
 func (m *Manager) Shutdown(ctx context.Context) error {
-	shutdownCtx := contextOrBackground(ctx)
 	m.closeOnce.Do(func() {
 		m.mu.Lock()
 		m.accepting = false
@@ -414,15 +413,15 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 		go func() {
 			m.wg.Wait()
-			m.closeErr = m.store.Close(shutdownCtx)
+			m.closeErr = m.store.Close()
 			close(m.closeDone)
 		}()
 	})
 	select {
 	case <-m.closeDone:
 		return m.closeErr
-	case <-shutdownCtx.Done():
-		return shutdownCtx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
