@@ -36,7 +36,7 @@ APISERVER_PORT=$(allocate_available_port) \
 	|| fatal "failed to allocate an apiserver port"
 readonly APISERVER_PORT
 readonly APISERVER_ADDR="http://127.0.0.1:${APISERVER_PORT}"
-readonly NODE_OPERATIONS_ADDR="${HUATUO_BAMAI_ADDR}/v1/profiling"
+readonly NODE_OPERATIONS_ADDR="${HUATUO_BAMAI_ADDR}/v1/operations"
 readonly PROFILE_CREATE_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/create-profile.json"
 readonly PROFILE_STATUS_RESPONSE="${HUATUO_BAMAI_TEST_TMPDIR}/profile-status.json"
 

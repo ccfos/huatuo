@@ -104,8 +104,8 @@ assert_node_tracing_not_implemented() {
 		-w '%{http_code}' -X POST \
 		-H 'Authorization: Bearer integration-node-token' \
 		-H 'Content-Type: application/json' \
-		"${HUATUO_BAMAI_ADDR}/v1/tracing" \
-		-d '{"request_id":"tracing-not-implemented","duration_seconds":30,"scope":"host","type":"tcp_retransmit"}')
+		"${HUATUO_BAMAI_ADDR}/v1/operations" \
+		-d '{"request_id":"tracing-not-implemented","duration_seconds":30,"scope":"host","kind":"tracing","spec":{"type":"tcp_retransmit"}}')
 	assert_eq "${status}" "501" "Node Tracing without executor" \
 		|| fatal "Node Tracing status ${status}, want 501"
 	jq -e '.error.code == "service_not_implemented"' "${response_file}" \
@@ -114,7 +114,7 @@ assert_node_tracing_not_implemented() {
 	status=$(curl -sS "${CURL_TIMEOUT[@]}" -o "${response_file}" \
 		-w '%{http_code}' \
 		-H 'Authorization: Bearer integration-node-token' \
-		"${HUATUO_BAMAI_ADDR}/v1/tracing/tracing-not-implemented")
+		"${HUATUO_BAMAI_ADDR}/v1/operations/tracing-not-implemented")
 	assert_eq "${status}" "404" "unimplemented Tracing Operation lookup" \
 		|| fatal "unimplemented Tracing created an Operation"
 	jq -e '.error.code == "operation_not_found"' "${response_file}" \
