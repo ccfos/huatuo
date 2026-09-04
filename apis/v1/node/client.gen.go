@@ -109,27 +109,16 @@ type ClientInterface interface {
 	// GetReadiness request
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StartProfilingWithBody request with any body
-	StartProfilingWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// StartOperationWithBody request with any body
+	StartOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	StartProfiling(ctx context.Context, body StartProfilingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	StartOperation(ctx context.Context, body StartOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetProfiling request
-	GetProfiling(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// GetOperation request
+	GetOperation(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StopProfiling request
-	StopProfiling(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// StartTracingWithBody request with any body
-	StartTracingWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	StartTracing(ctx context.Context, body StartTracingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetTracing request
-	GetTracing(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// StopTracing request
-	StopTracing(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// StopOperation request
+	StopOperation(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) GetOpenAPI(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -156,8 +145,8 @@ func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn
 	return c.Client.Do(req)
 }
 
-func (c *Client) StartProfilingWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStartProfilingRequestWithBody(c.Server, contentType, body)
+func (c *Client) StartOperationWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartOperationRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -168,8 +157,8 @@ func (c *Client) StartProfilingWithBody(ctx context.Context, contentType string,
 	return c.Client.Do(req)
 }
 
-func (c *Client) StartProfiling(ctx context.Context, body StartProfilingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStartProfilingRequest(c.Server, body)
+func (c *Client) StartOperation(ctx context.Context, body StartOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartOperationRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -180,8 +169,8 @@ func (c *Client) StartProfiling(ctx context.Context, body StartProfilingJSONRequ
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetProfiling(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetProfilingRequest(c.Server, requestID)
+func (c *Client) GetOperation(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOperationRequest(c.Server, requestID)
 	if err != nil {
 		return nil, err
 	}
@@ -192,56 +181,8 @@ func (c *Client) GetProfiling(ctx context.Context, requestID RequestID, reqEdito
 	return c.Client.Do(req)
 }
 
-func (c *Client) StopProfiling(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStopProfilingRequest(c.Server, requestID)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) StartTracingWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStartTracingRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) StartTracing(ctx context.Context, body StartTracingJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStartTracingRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetTracing(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetTracingRequest(c.Server, requestID)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) StopTracing(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStopTracingRequest(c.Server, requestID)
+func (c *Client) StopOperation(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStopOperationRequest(c.Server, requestID)
 	if err != nil {
 		return nil, err
 	}
@@ -306,19 +247,19 @@ func NewGetReadinessRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewStartProfilingRequest calls the generic StartProfiling builder with application/json body
-func NewStartProfilingRequest(server string, body StartProfilingJSONRequestBody) (*http.Request, error) {
+// NewStartOperationRequest calls the generic StartOperation builder with application/json body
+func NewStartOperationRequest(server string, body StartOperationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewStartProfilingRequestWithBody(server, "application/json", bodyReader)
+	return NewStartOperationRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewStartProfilingRequestWithBody generates requests for StartProfiling with any type of body
-func NewStartProfilingRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewStartOperationRequestWithBody generates requests for StartOperation with any type of body
+func NewStartOperationRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -326,7 +267,7 @@ func NewStartProfilingRequestWithBody(server string, contentType string, body io
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/profiling")
+	operationPath := fmt.Sprintf("/v1/operations")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -346,8 +287,8 @@ func NewStartProfilingRequestWithBody(server string, contentType string, body io
 	return req, nil
 }
 
-// NewGetProfilingRequest generates requests for GetProfiling
-func NewGetProfilingRequest(server string, requestID RequestID) (*http.Request, error) {
+// NewGetOperationRequest generates requests for GetOperation
+func NewGetOperationRequest(server string, requestID RequestID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -362,7 +303,7 @@ func NewGetProfilingRequest(server string, requestID RequestID) (*http.Request, 
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/profiling/%s", pathParam0)
+	operationPath := fmt.Sprintf("/v1/operations/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -380,8 +321,8 @@ func NewGetProfilingRequest(server string, requestID RequestID) (*http.Request, 
 	return req, nil
 }
 
-// NewStopProfilingRequest generates requests for StopProfiling
-func NewStopProfilingRequest(server string, requestID RequestID) (*http.Request, error) {
+// NewStopOperationRequest generates requests for StopOperation
+func NewStopOperationRequest(server string, requestID RequestID) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -396,115 +337,7 @@ func NewStopProfilingRequest(server string, requestID RequestID) (*http.Request,
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/profiling/%s/stop", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewStartTracingRequest calls the generic StartTracing builder with application/json body
-func NewStartTracingRequest(server string, body StartTracingJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewStartTracingRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewStartTracingRequestWithBody generates requests for StartTracing with any type of body
-func NewStartTracingRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/tracing")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewGetTracingRequest generates requests for GetTracing
-func NewGetTracingRequest(server string, requestID RequestID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/tracing/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewStopTracingRequest generates requests for StopTracing
-func NewStopTracingRequest(server string, requestID RequestID) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/tracing/%s/stop", pathParam0)
+	operationPath := fmt.Sprintf("/v1/operations/%s/stop", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -571,27 +404,16 @@ type ClientWithResponsesInterface interface {
 	// GetReadinessWithResponse request
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
 
-	// StartProfilingWithBodyWithResponse request with any body
-	StartProfilingWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartProfilingResponse, error)
+	// StartOperationWithBodyWithResponse request with any body
+	StartOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartOperationResponse, error)
 
-	StartProfilingWithResponse(ctx context.Context, body StartProfilingJSONRequestBody, reqEditors ...RequestEditorFn) (*StartProfilingResponse, error)
+	StartOperationWithResponse(ctx context.Context, body StartOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*StartOperationResponse, error)
 
-	// GetProfilingWithResponse request
-	GetProfilingWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*GetProfilingResponse, error)
+	// GetOperationWithResponse request
+	GetOperationWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*GetOperationResponse, error)
 
-	// StopProfilingWithResponse request
-	StopProfilingWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*StopProfilingResponse, error)
-
-	// StartTracingWithBodyWithResponse request with any body
-	StartTracingWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartTracingResponse, error)
-
-	StartTracingWithResponse(ctx context.Context, body StartTracingJSONRequestBody, reqEditors ...RequestEditorFn) (*StartTracingResponse, error)
-
-	// GetTracingWithResponse request
-	GetTracingWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*GetTracingResponse, error)
-
-	// StopTracingWithResponse request
-	StopTracingWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*StopTracingResponse, error)
+	// StopOperationWithResponse request
+	StopOperationWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*StopOperationResponse, error)
 }
 
 type GetOpenAPIResponse struct {
@@ -653,114 +475,7 @@ func (r GetReadinessResponse) ContentType() string {
 	return ""
 }
 
-type StartProfilingResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *OperationResponse
-	JSON202      *OperationResponse
-	JSON400      *BadRequest
-	JSON401      *Unauthenticated
-	JSON409      *Conflict
-	JSON413      *RequestTooLarge
-	JSON415      *UnsupportedMediaType
-	JSON422      *ExecutionEnvironmentUnsupported
-	JSON429      *TooManyRequests
-	JSON500      *InternalError
-	JSON503      *ServiceUnavailable
-}
-
-// Status returns HTTPResponse.Status
-func (r StartProfilingResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r StartProfilingResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r StartProfilingResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetProfilingResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *OperationResponse
-	JSON401      *Unauthenticated
-	JSON404      *NotFound
-	JSON500      *InternalError
-}
-
-// Status returns HTTPResponse.Status
-func (r GetProfilingResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetProfilingResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetProfilingResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type StopProfilingResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *OperationResponse
-	JSON202      *OperationResponse
-	JSON401      *Unauthenticated
-	JSON404      *NotFound
-	JSON500      *InternalError
-}
-
-// Status returns HTTPResponse.Status
-func (r StopProfilingResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r StopProfilingResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r StopProfilingResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type StartTracingResponse struct {
+type StartOperationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *OperationResponse
@@ -778,7 +493,7 @@ type StartTracingResponse struct {
 }
 
 // Status returns HTTPResponse.Status
-func (r StartTracingResponse) Status() string {
+func (r StartOperationResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -786,7 +501,7 @@ func (r StartTracingResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r StartTracingResponse) StatusCode() int {
+func (r StartOperationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -794,14 +509,14 @@ func (r StartTracingResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r StartTracingResponse) ContentType() string {
+func (r StartOperationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type GetTracingResponse struct {
+type GetOperationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *OperationResponse
@@ -811,7 +526,7 @@ type GetTracingResponse struct {
 }
 
 // Status returns HTTPResponse.Status
-func (r GetTracingResponse) Status() string {
+func (r GetOperationResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -819,7 +534,7 @@ func (r GetTracingResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetTracingResponse) StatusCode() int {
+func (r GetOperationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -827,14 +542,14 @@ func (r GetTracingResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetTracingResponse) ContentType() string {
+func (r GetOperationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
 	return ""
 }
 
-type StopTracingResponse struct {
+type StopOperationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *OperationResponse
@@ -845,7 +560,7 @@ type StopTracingResponse struct {
 }
 
 // Status returns HTTPResponse.Status
-func (r StopTracingResponse) Status() string {
+func (r StopOperationResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -853,7 +568,7 @@ func (r StopTracingResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r StopTracingResponse) StatusCode() int {
+func (r StopOperationResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -861,7 +576,7 @@ func (r StopTracingResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r StopTracingResponse) ContentType() string {
+func (r StopOperationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -886,74 +601,39 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 	return ParseGetReadinessResponse(rsp)
 }
 
-// StartProfilingWithBodyWithResponse request with arbitrary body returning *StartProfilingResponse
-func (c *ClientWithResponses) StartProfilingWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartProfilingResponse, error) {
-	rsp, err := c.StartProfilingWithBody(ctx, contentType, body, reqEditors...)
+// StartOperationWithBodyWithResponse request with arbitrary body returning *StartOperationResponse
+func (c *ClientWithResponses) StartOperationWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartOperationResponse, error) {
+	rsp, err := c.StartOperationWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseStartProfilingResponse(rsp)
+	return ParseStartOperationResponse(rsp)
 }
 
-func (c *ClientWithResponses) StartProfilingWithResponse(ctx context.Context, body StartProfilingJSONRequestBody, reqEditors ...RequestEditorFn) (*StartProfilingResponse, error) {
-	rsp, err := c.StartProfiling(ctx, body, reqEditors...)
+func (c *ClientWithResponses) StartOperationWithResponse(ctx context.Context, body StartOperationJSONRequestBody, reqEditors ...RequestEditorFn) (*StartOperationResponse, error) {
+	rsp, err := c.StartOperation(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseStartProfilingResponse(rsp)
+	return ParseStartOperationResponse(rsp)
 }
 
-// GetProfilingWithResponse request returning *GetProfilingResponse
-func (c *ClientWithResponses) GetProfilingWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*GetProfilingResponse, error) {
-	rsp, err := c.GetProfiling(ctx, requestID, reqEditors...)
+// GetOperationWithResponse request returning *GetOperationResponse
+func (c *ClientWithResponses) GetOperationWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*GetOperationResponse, error) {
+	rsp, err := c.GetOperation(ctx, requestID, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetProfilingResponse(rsp)
+	return ParseGetOperationResponse(rsp)
 }
 
-// StopProfilingWithResponse request returning *StopProfilingResponse
-func (c *ClientWithResponses) StopProfilingWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*StopProfilingResponse, error) {
-	rsp, err := c.StopProfiling(ctx, requestID, reqEditors...)
+// StopOperationWithResponse request returning *StopOperationResponse
+func (c *ClientWithResponses) StopOperationWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*StopOperationResponse, error) {
+	rsp, err := c.StopOperation(ctx, requestID, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseStopProfilingResponse(rsp)
-}
-
-// StartTracingWithBodyWithResponse request with arbitrary body returning *StartTracingResponse
-func (c *ClientWithResponses) StartTracingWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartTracingResponse, error) {
-	rsp, err := c.StartTracingWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseStartTracingResponse(rsp)
-}
-
-func (c *ClientWithResponses) StartTracingWithResponse(ctx context.Context, body StartTracingJSONRequestBody, reqEditors ...RequestEditorFn) (*StartTracingResponse, error) {
-	rsp, err := c.StartTracing(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseStartTracingResponse(rsp)
-}
-
-// GetTracingWithResponse request returning *GetTracingResponse
-func (c *ClientWithResponses) GetTracingWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*GetTracingResponse, error) {
-	rsp, err := c.GetTracing(ctx, requestID, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetTracingResponse(rsp)
-}
-
-// StopTracingWithResponse request returning *StopTracingResponse
-func (c *ClientWithResponses) StopTracingWithResponse(ctx context.Context, requestID RequestID, reqEditors ...RequestEditorFn) (*StopTracingResponse, error) {
-	rsp, err := c.StopTracing(ctx, requestID, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseStopTracingResponse(rsp)
+	return ParseStopOperationResponse(rsp)
 }
 
 // ParseGetOpenAPIResponse parses an HTTP response from a GetOpenAPIWithResponse call
@@ -998,212 +678,15 @@ func ParseGetReadinessResponse(rsp *http.Response) (*GetReadinessResponse, error
 	return response, nil
 }
 
-// ParseStartProfilingResponse parses an HTTP response from a StartProfilingWithResponse call
-func ParseStartProfilingResponse(rsp *http.Response) (*StartProfilingResponse, error) {
+// ParseStartOperationResponse parses an HTTP response from a StartOperationWithResponse call
+func ParseStartOperationResponse(rsp *http.Response) (*StartOperationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &StartProfilingResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest OperationResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest OperationResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthenticated
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Conflict
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
-		var dest RequestTooLarge
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON413 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
-		var dest UnsupportedMediaType
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON415 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest ExecutionEnvironmentUnsupported
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest TooManyRequests
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON429 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ServiceUnavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetProfilingResponse parses an HTTP response from a GetProfilingWithResponse call
-func ParseGetProfilingResponse(rsp *http.Response) (*GetProfilingResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetProfilingResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest OperationResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthenticated
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseStopProfilingResponse parses an HTTP response from a StopProfilingWithResponse call
-func ParseStopProfilingResponse(rsp *http.Response) (*StopProfilingResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &StopProfilingResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest OperationResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
-		var dest OperationResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON202 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthenticated
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseStartTracingResponse parses an HTTP response from a StartTracingWithResponse call
-func ParseStartTracingResponse(rsp *http.Response) (*StartTracingResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &StartTracingResponse{
+	response := &StartOperationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -1298,15 +781,15 @@ func ParseStartTracingResponse(rsp *http.Response) (*StartTracingResponse, error
 	return response, nil
 }
 
-// ParseGetTracingResponse parses an HTTP response from a GetTracingWithResponse call
-func ParseGetTracingResponse(rsp *http.Response) (*GetTracingResponse, error) {
+// ParseGetOperationResponse parses an HTTP response from a GetOperationWithResponse call
+func ParseGetOperationResponse(rsp *http.Response) (*GetOperationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetTracingResponse{
+	response := &GetOperationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -1345,15 +828,15 @@ func ParseGetTracingResponse(rsp *http.Response) (*GetTracingResponse, error) {
 	return response, nil
 }
 
-// ParseStopTracingResponse parses an HTTP response from a StopTracingWithResponse call
-func ParseStopTracingResponse(rsp *http.Response) (*StopTracingResponse, error) {
+// ParseStopOperationResponse parses an HTTP response from a StopOperationWithResponse call
+func ParseStopOperationResponse(rsp *http.Response) (*StopOperationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &StopTracingResponse{
+	response := &StopOperationResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

@@ -47,8 +47,9 @@ type Policy struct {
 
 // ManagerConfig contains Apiserver-owned persistence, quota, and lifecycle policy.
 type ManagerConfig struct {
-	StoreDSN string
-	Policies map[Kind]Policy
+	StoreDSN        string
+	ProfilingPolicy Policy
+	TracingPolicy   Policy
 
 	StatusPollInterval         time.Duration
 	PendingTimeout             time.Duration
@@ -163,14 +164,17 @@ func newManagerWithStore(
 }
 
 func normalizeManagerConfig(config ManagerConfig) (ManagerConfig, error) {
-	if len(config.Policies) == 0 {
-		return ManagerConfig{}, errors.New("create job manager: Job policies are required")
-	}
-	policies := make(map[Kind]Policy, len(config.Policies))
-	for kind, policy := range config.Policies {
-		if kind != KindProfiling && kind != KindTracing {
+	for _, policyConfig := range []struct {
+		kind   Kind
+		policy Policy
+	}{
+		{kind: KindProfiling, policy: config.ProfilingPolicy},
+		{kind: KindTracing, policy: config.TracingPolicy},
+	} {
+		kind, policy := policyConfig.kind, policyConfig.policy
+		if policy.MaxJobsPerHost == 0 && policy.MaxTotalJobs == 0 {
 			return ManagerConfig{}, fmt.Errorf(
-				"create job manager: unsupported policy kind %q",
+				"create job manager: policy for %s is required",
 				kind,
 			)
 		}
@@ -180,17 +184,7 @@ func normalizeManagerConfig(config ManagerConfig) (ManagerConfig, error) {
 				kind,
 			)
 		}
-		policies[kind] = policy
 	}
-	for _, kind := range []Kind{KindProfiling, KindTracing} {
-		if _, ok := policies[kind]; !ok {
-			return ManagerConfig{}, fmt.Errorf(
-				"create job manager: policy for %s is required",
-				kind,
-			)
-		}
-	}
-	config.Policies = policies
 	if config.StatusPollInterval == 0 {
 		config.StatusPollInterval = defaultStatusPollInterval
 	}
@@ -250,7 +244,11 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		m.mu.Unlock()
 		return nil, ErrShuttingDown
 	}
-	policy := m.config.Policies[newJob.Kind]
+	policy, ok := m.config.policy(newJob.Kind)
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("create job manager: unsupported Job kind %q", newJob.Kind)
+	}
 	if m.activeTotal[newJob.Kind] >= policy.MaxTotalJobs ||
 		m.activeHosts[newActiveHostKey(newJob.Hostname, newJob.Kind)] >=
 			policy.MaxJobsPerHost {
@@ -274,6 +272,17 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 	}
 	go m.runSupervisor(supervisorCtx, runtime)
 	return cloneJob(newJob), nil
+}
+
+func (c ManagerConfig) policy(kind Kind) (Policy, bool) {
+	switch kind {
+	case KindProfiling:
+		return c.ProfilingPolicy, true
+	case KindTracing:
+		return c.TracingPolicy, true
+	default:
+		return Policy{}, false
+	}
 }
 
 // Get returns one durable Job snapshot.
@@ -419,7 +428,7 @@ func (m *Manager) recover(ctx context.Context) error {
 		return err
 	}
 	for _, storedJob := range jobs {
-		if _, ok := m.config.Policies[storedJob.Kind]; !ok {
+		if _, ok := m.config.policy(storedJob.Kind); !ok {
 			return fmt.Errorf("Job %q has no policy for kind %q", storedJob.ID, storedJob.Kind)
 		}
 		supervisorCtx, cancel := context.WithCancel(context.Background())

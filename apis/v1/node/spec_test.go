@@ -95,6 +95,27 @@ func TestRemovedNodeRoutesAreNotRegistered(t *testing.T) {
 
 type unimplementedStrictServer struct{}
 
+func (*unimplementedStrictServer) StartOperation(
+	context.Context,
+	StartOperationRequestObject,
+) (StartOperationResponseObject, error) {
+	return nil, nil
+}
+
+func (*unimplementedStrictServer) GetOperation(
+	context.Context,
+	GetOperationRequestObject,
+) (GetOperationResponseObject, error) {
+	return nil, nil
+}
+
+func (*unimplementedStrictServer) StopOperation(
+	context.Context,
+	StopOperationRequestObject,
+) (StopOperationResponseObject, error) {
+	return nil, nil
+}
+
 var errNotImplemented = errors.New("test handler is not implemented")
 
 func (*unimplementedStrictServer) GetReadiness(
@@ -108,47 +129,5 @@ func (*unimplementedStrictServer) GetOpenAPI(
 	context.Context,
 	GetOpenAPIRequestObject,
 ) (GetOpenAPIResponseObject, error) {
-	return nil, errNotImplemented
-}
-
-func (*unimplementedStrictServer) StartProfiling(
-	context.Context,
-	StartProfilingRequestObject,
-) (StartProfilingResponseObject, error) {
-	return nil, errNotImplemented
-}
-
-func (*unimplementedStrictServer) GetProfiling(
-	context.Context,
-	GetProfilingRequestObject,
-) (GetProfilingResponseObject, error) {
-	return nil, errNotImplemented
-}
-
-func (*unimplementedStrictServer) StopProfiling(
-	context.Context,
-	StopProfilingRequestObject,
-) (StopProfilingResponseObject, error) {
-	return nil, errNotImplemented
-}
-
-func (*unimplementedStrictServer) StartTracing(
-	context.Context,
-	StartTracingRequestObject,
-) (StartTracingResponseObject, error) {
-	return nil, errNotImplemented
-}
-
-func (*unimplementedStrictServer) GetTracing(
-	context.Context,
-	GetTracingRequestObject,
-) (GetTracingResponseObject, error) {
-	return nil, errNotImplemented
-}
-
-func (*unimplementedStrictServer) StopTracing(
-	context.Context,
-	StopTracingRequestObject,
-) (StopTracingResponseObject, error) {
 	return nil, errNotImplemented
 }

@@ -153,6 +153,9 @@
             "nullable": true,
             "type": "string"
           },
+          "kind": {
+            "$ref": "#/components/schemas/OperationKind"
+          },
           "request_id": {
             "minLength": 1,
             "type": "string"
@@ -168,6 +171,7 @@
         },
         "required": [
           "request_id",
+          "kind",
           "status",
           "created_at"
         ],
@@ -189,6 +193,17 @@
           "message"
         ],
         "type": "object"
+      },
+      "OperationKind": {
+        "enum": [
+          "profiling",
+          "tracing"
+        ],
+        "type": "string",
+        "x-enum-varnames": [
+          "OperationKindProfiling",
+          "OperationKindTracing"
+        ]
       },
       "OperationResponse": {
         "additionalProperties": false,
@@ -259,6 +274,30 @@
           "ProfilingModePhysicalUsage"
         ]
       },
+      "ProfilingOperationSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "binary_match_path": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "language": {
+            "$ref": "#/components/schemas/ProfilingLanguage"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ProfilingMode"
+          },
+          "type": {
+            "$ref": "#/components/schemas/ProfilingType"
+          }
+        },
+        "required": [
+          "type",
+          "language",
+          "mode"
+        ],
+        "type": "object"
+      },
       "ProfilingType": {
         "enum": [
           "cpu",
@@ -270,13 +309,9 @@
           "ProfilingTypeMemory"
         ]
       },
-      "StartProfilingRequest": {
+      "StartOperationRequest": {
         "additionalProperties": false,
         "properties": {
-          "binary_match_path": {
-            "minLength": 1,
-            "type": "string"
-          },
           "container_id": {
             "minLength": 1,
             "type": "string"
@@ -286,11 +321,8 @@
             "minimum": 1,
             "type": "integer"
           },
-          "language": {
-            "$ref": "#/components/schemas/ProfilingLanguage"
-          },
-          "mode": {
-            "$ref": "#/components/schemas/ProfilingMode"
+          "kind": {
+            "$ref": "#/components/schemas/OperationKind"
           },
           "request_id": {
             "minLength": 1,
@@ -299,47 +331,34 @@
           "scope": {
             "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
           },
-          "type": {
-            "$ref": "#/components/schemas/ProfilingType"
+          "spec": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProfilingOperationSpec"
+              },
+              {
+                "$ref": "#/components/schemas/TracingOperationSpec"
+              }
+            ]
           }
         },
         "required": [
           "request_id",
           "duration_seconds",
           "scope",
-          "type",
-          "language",
-          "mode"
+          "kind",
+          "spec"
         ],
         "type": "object"
       },
-      "StartTracingRequest": {
+      "TracingOperationSpec": {
         "additionalProperties": false,
         "properties": {
-          "container_id": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "duration_seconds": {
-            "format": "int64",
-            "minimum": 1,
-            "type": "integer"
-          },
-          "request_id": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/apis_v1_components_ObservationScope"
-          },
           "type": {
             "$ref": "#/components/schemas/TracingType"
           }
         },
         "required": [
-          "request_id",
-          "duration_seconds",
-          "scope",
           "type"
         ],
         "type": "object"
@@ -454,14 +473,14 @@
         ]
       }
     },
-    "/v1/profiling": {
+    "/v1/operations": {
       "post": {
-        "operationId": "startProfiling",
+        "operationId": "startOperation",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StartProfilingRequest"
+                "$ref": "#/components/schemas/StartOperationRequest"
               }
             }
           },
@@ -476,7 +495,7 @@
                 }
               }
             },
-            "description": "Existing idempotent Profiling Operation."
+            "description": "Existing idempotent Operation."
           },
           "202": {
             "content": {
@@ -486,167 +505,7 @@
                 }
               }
             },
-            "description": "New Profiling Operation accepted."
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthenticated"
-          },
-          "409": {
-            "$ref": "#/components/responses/Conflict"
-          },
-          "413": {
-            "$ref": "#/components/responses/RequestTooLarge"
-          },
-          "415": {
-            "$ref": "#/components/responses/UnsupportedMediaType"
-          },
-          "422": {
-            "$ref": "#/components/responses/ExecutionEnvironmentUnsupported"
-          },
-          "429": {
-            "$ref": "#/components/responses/TooManyRequests"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          },
-          "503": {
-            "$ref": "#/components/responses/ServiceUnavailable"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "tags": [
-          "profiling"
-        ]
-      }
-    },
-    "/v1/profiling/{request_id}": {
-      "get": {
-        "operationId": "getProfiling",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationResponse"
-                }
-              }
-            },
-            "description": "Profiling Operation."
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthenticated"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "tags": [
-          "profiling"
-        ]
-      },
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/RequestID"
-        }
-      ]
-    },
-    "/v1/profiling/{request_id}/stop": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/RequestID"
-        }
-      ],
-      "post": {
-        "operationId": "stopProfiling",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationResponse"
-                }
-              }
-            },
-            "description": "Profiling Operation already stopping or terminal."
-          },
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationResponse"
-                }
-              }
-            },
-            "description": "Profiling Operation stop accepted."
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthenticated"
-          },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "500": {
-            "$ref": "#/components/responses/InternalError"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "tags": [
-          "profiling"
-        ]
-      }
-    },
-    "/v1/tracing": {
-      "post": {
-        "operationId": "startTracing",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StartTracingRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationResponse"
-                }
-              }
-            },
-            "description": "Existing idempotent Tracing Operation."
-          },
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OperationResponse"
-                }
-              }
-            },
-            "description": "New Tracing Operation accepted."
+            "description": "New Operation accepted."
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -685,13 +544,13 @@
           }
         ],
         "tags": [
-          "tracing"
+          "operations"
         ]
       }
     },
-    "/v1/tracing/{request_id}": {
+    "/v1/operations/{request_id}": {
       "get": {
-        "operationId": "getTracing",
+        "operationId": "getOperation",
         "responses": {
           "200": {
             "content": {
@@ -701,7 +560,7 @@
                 }
               }
             },
-            "description": "Tracing Operation."
+            "description": "Operation."
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -719,7 +578,7 @@
           }
         ],
         "tags": [
-          "tracing"
+          "operations"
         ]
       },
       "parameters": [
@@ -728,14 +587,14 @@
         }
       ]
     },
-    "/v1/tracing/{request_id}/stop": {
+    "/v1/operations/{request_id}/stop": {
       "parameters": [
         {
           "$ref": "#/components/parameters/RequestID"
         }
       ],
       "post": {
-        "operationId": "stopTracing",
+        "operationId": "stopOperation",
         "responses": {
           "200": {
             "content": {
@@ -745,7 +604,7 @@
                 }
               }
             },
-            "description": "Tracing Operation already stopping or terminal."
+            "description": "Operation already stopping or terminal."
           },
           "202": {
             "content": {
@@ -755,7 +614,7 @@
                 }
               }
             },
-            "description": "Tracing Operation stop accepted."
+            "description": "Operation stop accepted."
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -773,7 +632,7 @@
           }
         ],
         "tags": [
-          "tracing"
+          "operations"
         ]
       }
     }
@@ -783,10 +642,7 @@
       "name": "readiness"
     },
     {
-      "name": "profiling"
-    },
-    {
-      "name": "tracing"
+      "name": "operations"
     }
   ],
   "x-error-codes": {

@@ -194,10 +194,8 @@ func (*stubNodeClient) StopTracing(
 
 func testManager(store Store, client NodeClient) *Manager {
 	return newManagerWithStore(store, client, ManagerConfig{
-		Policies: map[Kind]Policy{
-			KindProfiling: {MaxJobsPerHost: 2, MaxTotalJobs: 2},
-			KindTracing:   {MaxJobsPerHost: 2, MaxTotalJobs: 2},
-		},
+		ProfilingPolicy:            Policy{MaxJobsPerHost: 2, MaxTotalJobs: 2},
+		TracingPolicy:              Policy{MaxJobsPerHost: 2, MaxTotalJobs: 2},
 		StatusPollInterval:         time.Hour,
 		PendingTimeout:             time.Minute,
 		CompletionGracePeriod:      time.Minute,
@@ -256,9 +254,9 @@ func operation(requestID string, status nodeapi.OperationStatus) *nodeapi.Operat
 }
 
 func TestNormalizeManagerConfigRequiresBothServicePolicies(t *testing.T) {
-	_, err := normalizeManagerConfig(ManagerConfig{Policies: map[Kind]Policy{
-		KindProfiling: {MaxJobsPerHost: 1, MaxTotalJobs: 1},
-	}})
+	_, err := normalizeManagerConfig(ManagerConfig{
+		ProfilingPolicy: Policy{MaxJobsPerHost: 1, MaxTotalJobs: 1},
+	})
 	if err == nil || err.Error() != "create job manager: policy for tracing is required" {
 		t.Fatalf("normalizeManagerConfig() error = %v", err)
 	}

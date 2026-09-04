@@ -79,7 +79,7 @@ func nodeRequestContext(t *testing.T) context.Context {
 	return auth.WithPrincipal(t.Context(), auth.Principal{ID: nodePrincipalID})
 }
 
-func TestStartProfilingReturnsAcceptedOnlyForNewOperation(t *testing.T) {
+func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	profiling := &stubProfilingOperations{
 		operation: &operation.Operation{
@@ -94,40 +94,44 @@ func TestStartProfilingReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNodeAPIHandler() error = %v", err)
 	}
-	body := &nodeapi.StartProfilingJSONRequestBody{
+	body := &nodeapi.StartOperationJSONRequestBody{
 		RequestID:       "job-1",
 		DurationSeconds: 60,
 		Scope:           apiv1.ObservationScopeHost,
-		Type:            nodeapi.ProfilingTypeCPU,
-		Language:        nodeapi.ProfilingLanguageGo,
-		Mode:            nodeapi.ProfilingModeOnCPU,
+		Kind:            nodeapi.OperationKindProfiling,
+	}
+	if err := body.Spec.FromProfilingOperationSpec(nodeapi.ProfilingOperationSpec{
+		Type: nodeapi.ProfilingTypeCPU, Language: nodeapi.ProfilingLanguageGo,
+		Mode: nodeapi.ProfilingModeOnCPU,
+	}); err != nil {
+		t.Fatalf("set profiling spec: %v", err)
 	}
 
-	got, err := handler.StartProfiling(
+	got, err := handler.StartOperation(
 		nodeRequestContext(t),
-		nodeapi.StartProfilingRequestObject{Body: body},
+		nodeapi.StartOperationRequestObject{Body: body},
 	)
 	if err != nil {
-		t.Fatalf("StartProfiling() error = %v", err)
+		t.Fatalf("StartOperation() error = %v", err)
 	}
-	if _, ok := got.(nodeapi.StartProfiling202JSONResponse); !ok {
-		t.Fatalf("StartProfiling() response type = %T, want HTTP 202", got)
+	if _, ok := got.(nodeapi.StartOperation202JSONResponse); !ok {
+		t.Fatalf("StartOperation() response type = %T, want HTTP 202", got)
 	}
 	if profiling.startRequest == nil || profiling.startRequest.Duration != time.Minute ||
 		profiling.startRequest.Scope != observation.ScopeHost {
-		t.Fatalf("Start() request = %+v", profiling.startRequest)
+		t.Fatalf("StartOperation() request = %+v", profiling.startRequest)
 	}
 
 	profiling.created = false
-	got, err = handler.StartProfiling(
+	got, err = handler.StartOperation(
 		nodeRequestContext(t),
-		nodeapi.StartProfilingRequestObject{Body: body},
+		nodeapi.StartOperationRequestObject{Body: body},
 	)
 	if err != nil {
-		t.Fatalf("idempotent StartProfiling() error = %v", err)
+		t.Fatalf("idempotent StartOperation() error = %v", err)
 	}
-	if _, ok := got.(nodeapi.StartProfiling200JSONResponse); !ok {
-		t.Fatalf("idempotent StartProfiling() response type = %T, want HTTP 200", got)
+	if _, ok := got.(nodeapi.StartOperation200JSONResponse); !ok {
+		t.Fatalf("idempotent StartOperation() response type = %T, want HTTP 200", got)
 	}
 }
 
@@ -139,17 +143,17 @@ func TestNodeAPIRequiresServicePrincipal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNodeAPIHandler() error = %v", err)
 	}
-	_, err = handler.GetProfiling(
+	_, err = handler.GetOperation(
 		t.Context(),
-		nodeapi.GetProfilingRequestObject{RequestID: "job-1"},
+		nodeapi.GetOperationRequestObject{RequestID: "job-1"},
 	)
 	var apiErr *response.APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != apiv1.ErrorCodeUnauthenticated {
-		t.Fatalf("GetProfiling() error = %v", err)
+		t.Fatalf("GetOperation() error = %v", err)
 	}
 }
 
-func TestStartTracingReportsNotImplemented(t *testing.T) {
+func TestStartOperationTracingReportsNotImplemented(t *testing.T) {
 	handler, err := NewNodeAPIHandler(
 		&stubProfilingOperations{},
 		&stubTracingOperations{err: nodetracing.ErrNotImplemented},
@@ -157,17 +161,21 @@ func TestStartTracingReportsNotImplemented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNodeAPIHandler() error = %v", err)
 	}
-	_, err = handler.StartTracing(nodeRequestContext(t), nodeapi.StartTracingRequestObject{
-		Body: &nodeapi.StartTracingJSONRequestBody{
-			RequestID:       "job-1",
-			DurationSeconds: 60,
-			Scope:           apiv1.ObservationScopeHost,
-			Type:            nodeapi.TracingTypeNetworkingDrop,
-		},
-	})
+	body := &nodeapi.StartOperationJSONRequestBody{
+		RequestID:       "job-1",
+		DurationSeconds: 60,
+		Scope:           apiv1.ObservationScopeHost,
+		Kind:            nodeapi.OperationKindTracing,
+	}
+	if err := body.Spec.FromTracingOperationSpec(nodeapi.TracingOperationSpec{
+		Type: nodeapi.TracingTypeNetworkingDrop,
+	}); err != nil {
+		t.Fatalf("set tracing spec: %v", err)
+	}
+	_, err = handler.StartOperation(nodeRequestContext(t), nodeapi.StartOperationRequestObject{Body: body})
 	var apiErr *response.APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != nodeapi.ErrorCodeServiceNotImplemented {
-		t.Fatalf("StartTracing() error = %v", err)
+		t.Fatalf("StartOperation() error = %v", err)
 	}
 }
 

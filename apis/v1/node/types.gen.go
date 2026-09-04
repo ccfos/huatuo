@@ -18,14 +18,35 @@
 package node
 
 import (
+	"encoding/json"
 	"time"
 
 	externalRef0 "huatuo-bamai/apis/v1"
+
+	"github.com/oapi-codegen/runtime"
 )
 
 const (
 	BearerAuthScopes bearerAuthContextKey = "BearerAuth.Scopes"
 )
+
+// Defines values for OperationKind.
+const (
+	OperationKindProfiling OperationKind = "profiling"
+	OperationKindTracing   OperationKind = "tracing"
+)
+
+// Valid indicates whether the value is a known member of the OperationKind enum.
+func (e OperationKind) Valid() bool {
+	switch e {
+	case OperationKindProfiling:
+		return true
+	case OperationKindTracing:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for OperationStatus.
 const (
@@ -161,6 +182,7 @@ type Operation struct {
 	CreatedAt  time.Time         `json:"created_at"`
 	Failure    *OperationFailure `json:"failure,omitempty"`
 	FinishedAt *time.Time        `json:"finished_at,omitempty"`
+	Kind       OperationKind     `json:"kind"`
 	RequestID  string            `json:"request_id"`
 	StartedAt  *time.Time        `json:"started_at,omitempty"`
 	Status     OperationStatus   `json:"status"`
@@ -172,6 +194,9 @@ type OperationFailure struct {
 	Code    externalRef0.ErrorCode `json:"code"`
 	Message string                 `json:"message"`
 }
+
+// OperationKind defines model for OperationKind.
+type OperationKind string
 
 // OperationResponse defines model for OperationResponse.
 type OperationResponse struct {
@@ -187,32 +212,37 @@ type ProfilingLanguage string
 // ProfilingMode defines model for ProfilingMode.
 type ProfilingMode string
 
+// ProfilingOperationSpec defines model for ProfilingOperationSpec.
+type ProfilingOperationSpec struct {
+	BinaryMatchPath *string           `json:"binary_match_path,omitempty"`
+	Language        ProfilingLanguage `json:"language"`
+	Mode            ProfilingMode     `json:"mode"`
+	Type            ProfilingType     `json:"type"`
+}
+
 // ProfilingType defines model for ProfilingType.
 type ProfilingType string
 
-// StartProfilingRequest defines model for StartProfilingRequest.
-type StartProfilingRequest struct {
-	BinaryMatchPath *string           `json:"binary_match_path,omitempty"`
-	ContainerID     *string           `json:"container_id,omitempty"`
-	DurationSeconds int64             `json:"duration_seconds"`
-	Language        ProfilingLanguage `json:"language"`
-	Mode            ProfilingMode     `json:"mode"`
-	RequestID       string            `json:"request_id"`
+// StartOperationRequest defines model for StartOperationRequest.
+type StartOperationRequest struct {
+	ContainerID     *string       `json:"container_id,omitempty"`
+	DurationSeconds int64         `json:"duration_seconds"`
+	Kind            OperationKind `json:"kind"`
+	RequestID       string        `json:"request_id"`
 
 	// Scope Boundary observed by an on-demand operation.
 	Scope externalRef0.ObservationScope `json:"scope"`
-	Type  ProfilingType                 `json:"type"`
+	Spec  StartOperationRequest_Spec    `json:"spec"`
 }
 
-// StartTracingRequest defines model for StartTracingRequest.
-type StartTracingRequest struct {
-	ContainerID     *string `json:"container_id,omitempty"`
-	DurationSeconds int64   `json:"duration_seconds"`
-	RequestID       string  `json:"request_id"`
+// StartOperationRequest_Spec defines model for StartOperationRequest.Spec.
+type StartOperationRequest_Spec struct {
+	union json.RawMessage
+}
 
-	// Scope Boundary observed by an on-demand operation.
-	Scope externalRef0.ObservationScope `json:"scope"`
-	Type  TracingType                   `json:"type"`
+// TracingOperationSpec defines model for TracingOperationSpec.
+type TracingOperationSpec struct {
+	Type TracingType `json:"type"`
 }
 
 // TracingType defines model for TracingType.
@@ -257,8 +287,67 @@ type UnsupportedMediaType = externalRef0.ErrorResponse
 // bearerAuthContextKey is the context key for BearerAuth security scheme
 type bearerAuthContextKey string
 
-// StartProfilingJSONRequestBody defines body for StartProfiling for application/json ContentType.
-type StartProfilingJSONRequestBody = StartProfilingRequest
+// StartOperationJSONRequestBody defines body for StartOperation for application/json ContentType.
+type StartOperationJSONRequestBody = StartOperationRequest
 
-// StartTracingJSONRequestBody defines body for StartTracing for application/json ContentType.
-type StartTracingJSONRequestBody = StartTracingRequest
+// AsProfilingOperationSpec returns the union data inside the StartOperationRequest_Spec as a ProfilingOperationSpec
+func (t StartOperationRequest_Spec) AsProfilingOperationSpec() (ProfilingOperationSpec, error) {
+	var body ProfilingOperationSpec
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProfilingOperationSpec overwrites any union data inside the StartOperationRequest_Spec as the provided ProfilingOperationSpec
+func (t *StartOperationRequest_Spec) FromProfilingOperationSpec(v ProfilingOperationSpec) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProfilingOperationSpec performs a merge with any union data inside the StartOperationRequest_Spec, using the provided ProfilingOperationSpec
+func (t *StartOperationRequest_Spec) MergeProfilingOperationSpec(v ProfilingOperationSpec) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsTracingOperationSpec returns the union data inside the StartOperationRequest_Spec as a TracingOperationSpec
+func (t StartOperationRequest_Spec) AsTracingOperationSpec() (TracingOperationSpec, error) {
+	var body TracingOperationSpec
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromTracingOperationSpec overwrites any union data inside the StartOperationRequest_Spec as the provided TracingOperationSpec
+func (t *StartOperationRequest_Spec) FromTracingOperationSpec(v TracingOperationSpec) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeTracingOperationSpec performs a merge with any union data inside the StartOperationRequest_Spec, using the provided TracingOperationSpec
+func (t *StartOperationRequest_Spec) MergeTracingOperationSpec(v TracingOperationSpec) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t StartOperationRequest_Spec) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *StartOperationRequest_Spec) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}

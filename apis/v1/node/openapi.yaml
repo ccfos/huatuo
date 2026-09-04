@@ -4,8 +4,7 @@ info:
   version: v1
 tags:
   - name: readiness
-  - name: profiling
-  - name: tracing
+  - name: operations
 paths:
   /openapi.json:
     get:
@@ -28,10 +27,10 @@ paths:
       responses:
         '204':
           description: The Node Agent HTTP server is ready to accept requests.
-  /v1/profiling:
+  /v1/operations:
     post:
-      operationId: startProfiling
-      tags: [profiling]
+      operationId: startOperation
+      tags: [operations]
       security:
         - BearerAuth: []
       requestBody:
@@ -39,16 +38,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/StartProfilingRequest'
+              $ref: '#/components/schemas/StartOperationRequest'
       responses:
         '200':
-          description: Existing idempotent Profiling Operation.
+          description: Existing idempotent Operation.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperationResponse'
         '202':
-          description: New Profiling Operation accepted.
+          description: New Operation accepted.
           content:
             application/json:
               schema:
@@ -67,114 +66,23 @@ paths:
           $ref: '#/components/responses/ExecutionEnvironmentUnsupported'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-  /v1/profiling/{request_id}:
-    parameters:
-      - $ref: '#/components/parameters/RequestID'
-    get:
-      operationId: getProfiling
-      tags: [profiling]
-      security:
-        - BearerAuth: []
-      responses:
-        '200':
-          description: Profiling Operation.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OperationResponse'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
-  /v1/profiling/{request_id}/stop:
-    parameters:
-      - $ref: '#/components/parameters/RequestID'
-    post:
-      operationId: stopProfiling
-      tags: [profiling]
-      security:
-        - BearerAuth: []
-      responses:
-        '200':
-          description: Profiling Operation already stopping or terminal.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OperationResponse'
-        '202':
-          description: Profiling Operation stop accepted.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OperationResponse'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
-  /v1/tracing:
-    post:
-      operationId: startTracing
-      tags: [tracing]
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/StartTracingRequest'
-      responses:
-        '200':
-          description: Existing idempotent Tracing Operation.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OperationResponse'
-        '202':
-          description: New Tracing Operation accepted.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OperationResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '413':
-          $ref: '#/components/responses/RequestTooLarge'
-        '415':
-          $ref: '#/components/responses/UnsupportedMediaType'
-        '422':
-          $ref: '#/components/responses/ExecutionEnvironmentUnsupported'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalError'
         '501':
           $ref: '#/components/responses/NotImplemented'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /v1/tracing/{request_id}:
+  /v1/operations/{request_id}:
     parameters:
       - $ref: '#/components/parameters/RequestID'
     get:
-      operationId: getTracing
-      tags: [tracing]
+      operationId: getOperation
+      tags: [operations]
       security:
         - BearerAuth: []
       responses:
         '200':
-          description: Tracing Operation.
+          description: Operation.
           content:
             application/json:
               schema:
@@ -185,23 +93,23 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
-  /v1/tracing/{request_id}/stop:
+  /v1/operations/{request_id}/stop:
     parameters:
       - $ref: '#/components/parameters/RequestID'
     post:
-      operationId: stopTracing
-      tags: [tracing]
+      operationId: stopOperation
+      tags: [operations]
       security:
         - BearerAuth: []
       responses:
         '200':
-          description: Tracing Operation already stopping or terminal.
+          description: Operation already stopping or terminal.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/OperationResponse'
         '202':
-          description: Tracing Operation stop accepted.
+          description: Operation stop accepted.
           content:
             application/json:
               schema:
@@ -370,6 +278,10 @@ components:
         - TracingTypeNetworkingDrop
         - TracingTypeIO
         - TracingTypeTCPRetransmit
+    OperationKind:
+      type: string
+      enum: [profiling, tracing]
+      x-enum-varnames: [OperationKindProfiling, OperationKindTracing]
     OperationStatus:
       type: string
       enum: [pending, running, stopping, completed, failed, stopped]
@@ -393,11 +305,13 @@ components:
     Operation:
       type: object
       additionalProperties: false
-      required: [request_id, status, created_at]
+      required: [request_id, kind, status, created_at]
       properties:
         request_id:
           type: string
           minLength: 1
+        kind:
+          $ref: '#/components/schemas/OperationKind'
         status:
           $ref: '#/components/schemas/OperationStatus'
         failure:
@@ -415,23 +329,11 @@ components:
           type: string
           format: date-time
           nullable: true
-    StartProfilingRequest:
+    ProfilingOperationSpec:
       type: object
       additionalProperties: false
-      required: [request_id, duration_seconds, scope, type, language, mode]
+      required: [type, language, mode]
       properties:
-        request_id:
-          type: string
-          minLength: 1
-        duration_seconds:
-          type: integer
-          format: int64
-          minimum: 1
-        scope:
-          $ref: '../components.yaml#/components/schemas/ObservationScope'
-        container_id:
-          type: string
-          minLength: 1
         type:
           $ref: '#/components/schemas/ProfilingType'
         language:
@@ -441,10 +343,17 @@ components:
         binary_match_path:
           type: string
           minLength: 1
-    StartTracingRequest:
+    TracingOperationSpec:
       type: object
       additionalProperties: false
-      required: [request_id, duration_seconds, scope, type]
+      required: [type]
+      properties:
+        type:
+          $ref: '#/components/schemas/TracingType'
+    StartOperationRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, duration_seconds, scope, kind, spec]
       properties:
         request_id:
           type: string
@@ -458,8 +367,12 @@ components:
         container_id:
           type: string
           minLength: 1
-        type:
-          $ref: '#/components/schemas/TracingType'
+        kind:
+          $ref: '#/components/schemas/OperationKind'
+        spec:
+          oneOf:
+            - $ref: '#/components/schemas/ProfilingOperationSpec'
+            - $ref: '#/components/schemas/TracingOperationSpec'
     OperationResponse:
       type: object
       additionalProperties: false

@@ -39,23 +39,14 @@ type ServerInterface interface {
 	// (GET /readyz)
 	GetReadiness(c *gin.Context)
 
-	// (POST /v1/profiling)
-	StartProfiling(c *gin.Context)
+	// (POST /v1/operations)
+	StartOperation(c *gin.Context)
 
-	// (GET /v1/profiling/{request_id})
-	GetProfiling(c *gin.Context, requestID RequestID)
+	// (GET /v1/operations/{request_id})
+	GetOperation(c *gin.Context, requestID RequestID)
 
-	// (POST /v1/profiling/{request_id}/stop)
-	StopProfiling(c *gin.Context, requestID RequestID)
-
-	// (POST /v1/tracing)
-	StartTracing(c *gin.Context)
-
-	// (GET /v1/tracing/{request_id})
-	GetTracing(c *gin.Context, requestID RequestID)
-
-	// (POST /v1/tracing/{request_id}/stop)
-	StopTracing(c *gin.Context, requestID RequestID)
+	// (POST /v1/operations/{request_id}/stop)
+	StopOperation(c *gin.Context, requestID RequestID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -93,8 +84,8 @@ func (siw *ServerInterfaceWrapper) GetReadiness(c *gin.Context) {
 	siw.Handler.GetReadiness(c)
 }
 
-// StartProfiling operation middleware
-func (siw *ServerInterfaceWrapper) StartProfiling(c *gin.Context) {
+// StartOperation operation middleware
+func (siw *ServerInterfaceWrapper) StartOperation(c *gin.Context) {
 
 	c.Set(string(BearerAuthScopes), []string{})
 
@@ -105,11 +96,11 @@ func (siw *ServerInterfaceWrapper) StartProfiling(c *gin.Context) {
 		}
 	}
 
-	siw.Handler.StartProfiling(c)
+	siw.Handler.StartOperation(c)
 }
 
-// GetProfiling operation middleware
-func (siw *ServerInterfaceWrapper) GetProfiling(c *gin.Context) {
+// GetOperation operation middleware
+func (siw *ServerInterfaceWrapper) GetOperation(c *gin.Context) {
 
 	var err error
 	_ = err
@@ -132,11 +123,11 @@ func (siw *ServerInterfaceWrapper) GetProfiling(c *gin.Context) {
 		}
 	}
 
-	siw.Handler.GetProfiling(c, requestID)
+	siw.Handler.GetOperation(c, requestID)
 }
 
-// StopProfiling operation middleware
-func (siw *ServerInterfaceWrapper) StopProfiling(c *gin.Context) {
+// StopOperation operation middleware
+func (siw *ServerInterfaceWrapper) StopOperation(c *gin.Context) {
 
 	var err error
 	_ = err
@@ -159,76 +150,7 @@ func (siw *ServerInterfaceWrapper) StopProfiling(c *gin.Context) {
 		}
 	}
 
-	siw.Handler.StopProfiling(c, requestID)
-}
-
-// StartTracing operation middleware
-func (siw *ServerInterfaceWrapper) StartTracing(c *gin.Context) {
-
-	c.Set(string(BearerAuthScopes), []string{})
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.StartTracing(c)
-}
-
-// GetTracing operation middleware
-func (siw *ServerInterfaceWrapper) GetTracing(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "request_id" -------------
-	var requestID RequestID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "request_id", c.Param("request_id"), &requestID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter request_id: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	c.Set(string(BearerAuthScopes), []string{})
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.GetTracing(c, requestID)
-}
-
-// StopTracing operation middleware
-func (siw *ServerInterfaceWrapper) StopTracing(c *gin.Context) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "request_id" -------------
-	var requestID RequestID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "request_id", c.Param("request_id"), &requestID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter request_id: %w", err), http.StatusBadRequest)
-		return
-	}
-
-	c.Set(string(BearerAuthScopes), []string{})
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		middleware(c)
-		if c.IsAborted() {
-			return
-		}
-	}
-
-	siw.Handler.StopTracing(c, requestID)
+	siw.Handler.StopOperation(c, requestID)
 }
 
 // GinServerOptions provides options for the Gin server.
@@ -260,12 +182,9 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 
 	router.GET(options.BaseURL+"/openapi.json", wrapper.GetOpenAPI)
 	router.GET(options.BaseURL+"/readyz", wrapper.GetReadiness)
-	router.POST(options.BaseURL+"/v1/profiling", wrapper.StartProfiling)
-	router.GET(options.BaseURL+"/v1/profiling/:request_id", wrapper.GetProfiling)
-	router.POST(options.BaseURL+"/v1/profiling/:request_id/stop", wrapper.StopProfiling)
-	router.POST(options.BaseURL+"/v1/tracing", wrapper.StartTracing)
-	router.GET(options.BaseURL+"/v1/tracing/:request_id", wrapper.GetTracing)
-	router.POST(options.BaseURL+"/v1/tracing/:request_id/stop", wrapper.StopTracing)
+	router.POST(options.BaseURL+"/v1/operations", wrapper.StartOperation)
+	router.GET(options.BaseURL+"/v1/operations/:request_id", wrapper.GetOperation)
+	router.POST(options.BaseURL+"/v1/operations/:request_id/stop", wrapper.StopOperation)
 }
 
 type BadRequestJSONResponse externalRef0.ErrorResponse
@@ -333,17 +252,17 @@ func (response GetReadiness204Response) VisitGetReadinessResponse(w http.Respons
 	return nil
 }
 
-type StartProfilingRequestObject struct {
-	Body *StartProfilingJSONRequestBody
+type StartOperationRequestObject struct {
+	Body *StartOperationJSONRequestBody
 }
 
-type StartProfilingResponseObject interface {
-	VisitStartProfilingResponse(w http.ResponseWriter) error
+type StartOperationResponseObject interface {
+	VisitStartOperationResponse(w http.ResponseWriter) error
 }
 
-type StartProfiling200JSONResponse OperationResponse
+type StartOperation200JSONResponse OperationResponse
 
-func (response StartProfiling200JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
+func (response StartOperation200JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -355,9 +274,9 @@ func (response StartProfiling200JSONResponse) VisitStartProfilingResponse(w http
 	return err
 }
 
-type StartProfiling202JSONResponse OperationResponse
+type StartOperation202JSONResponse OperationResponse
 
-func (response StartProfiling202JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
+func (response StartOperation202JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -369,9 +288,9 @@ func (response StartProfiling202JSONResponse) VisitStartProfilingResponse(w http
 	return err
 }
 
-type StartProfiling400JSONResponse struct{ BadRequestJSONResponse }
+type StartOperation400JSONResponse struct{ BadRequestJSONResponse }
 
-func (response StartProfiling400JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
+func (response StartOperation400JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -383,9 +302,9 @@ func (response StartProfiling400JSONResponse) VisitStartProfilingResponse(w http
 	return err
 }
 
-type StartProfiling401JSONResponse struct{ UnauthenticatedJSONResponse }
+type StartOperation401JSONResponse struct{ UnauthenticatedJSONResponse }
 
-func (response StartProfiling401JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
+func (response StartOperation401JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -398,9 +317,9 @@ func (response StartProfiling401JSONResponse) VisitStartProfilingResponse(w http
 	return err
 }
 
-type StartProfiling409JSONResponse struct{ ConflictJSONResponse }
+type StartOperation409JSONResponse struct{ ConflictJSONResponse }
 
-func (response StartProfiling409JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
+func (response StartOperation409JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -412,9 +331,9 @@ func (response StartProfiling409JSONResponse) VisitStartProfilingResponse(w http
 	return err
 }
 
-type StartProfiling413JSONResponse struct{ RequestTooLargeJSONResponse }
+type StartOperation413JSONResponse struct{ RequestTooLargeJSONResponse }
 
-func (response StartProfiling413JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
+func (response StartOperation413JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -426,11 +345,11 @@ func (response StartProfiling413JSONResponse) VisitStartProfilingResponse(w http
 	return err
 }
 
-type StartProfiling415JSONResponse struct {
+type StartOperation415JSONResponse struct {
 	UnsupportedMediaTypeJSONResponse
 }
 
-func (response StartProfiling415JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
+func (response StartOperation415JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -442,11 +361,11 @@ func (response StartProfiling415JSONResponse) VisitStartProfilingResponse(w http
 	return err
 }
 
-type StartProfiling422JSONResponse struct {
+type StartOperation422JSONResponse struct {
 	ExecutionEnvironmentUnsupportedJSONResponse
 }
 
-func (response StartProfiling422JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
+func (response StartOperation422JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -458,9 +377,9 @@ func (response StartProfiling422JSONResponse) VisitStartProfilingResponse(w http
 	return err
 }
 
-type StartProfiling429JSONResponse struct{ TooManyRequestsJSONResponse }
+type StartOperation429JSONResponse struct{ TooManyRequestsJSONResponse }
 
-func (response StartProfiling429JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
+func (response StartOperation429JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -472,88 +391,9 @@ func (response StartProfiling429JSONResponse) VisitStartProfilingResponse(w http
 	return err
 }
 
-type StartProfiling500JSONResponse struct{ InternalErrorJSONResponse }
+type StartOperation500JSONResponse struct{ InternalErrorJSONResponse }
 
-func (response StartProfiling500JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartProfiling503JSONResponse struct{ ServiceUnavailableJSONResponse }
-
-func (response StartProfiling503JSONResponse) VisitStartProfilingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(503)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetProfilingRequestObject struct {
-	RequestID RequestID `json:"request_id"`
-}
-
-type GetProfilingResponseObject interface {
-	VisitGetProfilingResponse(w http.ResponseWriter) error
-}
-
-type GetProfiling200JSONResponse OperationResponse
-
-func (response GetProfiling200JSONResponse) VisitGetProfilingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetProfiling401JSONResponse struct{ UnauthenticatedJSONResponse }
-
-func (response GetProfiling401JSONResponse) VisitGetProfilingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetProfiling404JSONResponse struct{ NotFoundJSONResponse }
-
-func (response GetProfiling404JSONResponse) VisitGetProfilingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetProfiling500JSONResponse struct{ InternalErrorJSONResponse }
-
-func (response GetProfiling500JSONResponse) VisitGetProfilingResponse(w http.ResponseWriter) error {
+func (response StartOperation500JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -565,241 +405,9 @@ func (response GetProfiling500JSONResponse) VisitGetProfilingResponse(w http.Res
 	return err
 }
 
-type StopProfilingRequestObject struct {
-	RequestID RequestID `json:"request_id"`
-}
+type StartOperation501JSONResponse struct{ NotImplementedJSONResponse }
 
-type StopProfilingResponseObject interface {
-	VisitStopProfilingResponse(w http.ResponseWriter) error
-}
-
-type StopProfiling200JSONResponse OperationResponse
-
-func (response StopProfiling200JSONResponse) VisitStopProfilingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StopProfiling202JSONResponse OperationResponse
-
-func (response StopProfiling202JSONResponse) VisitStopProfilingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(202)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StopProfiling401JSONResponse struct{ UnauthenticatedJSONResponse }
-
-func (response StopProfiling401JSONResponse) VisitStopProfilingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StopProfiling404JSONResponse struct{ NotFoundJSONResponse }
-
-func (response StopProfiling404JSONResponse) VisitStopProfilingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StopProfiling500JSONResponse struct{ InternalErrorJSONResponse }
-
-func (response StopProfiling500JSONResponse) VisitStopProfilingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracingRequestObject struct {
-	Body *StartTracingJSONRequestBody
-}
-
-type StartTracingResponseObject interface {
-	VisitStartTracingResponse(w http.ResponseWriter) error
-}
-
-type StartTracing200JSONResponse OperationResponse
-
-func (response StartTracing200JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracing202JSONResponse OperationResponse
-
-func (response StartTracing202JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(202)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracing400JSONResponse struct{ BadRequestJSONResponse }
-
-func (response StartTracing400JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracing401JSONResponse struct{ UnauthenticatedJSONResponse }
-
-func (response StartTracing401JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("WWW-Authenticate", fmt.Sprint(response.Headers.WWWAuthenticate))
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracing409JSONResponse struct{ ConflictJSONResponse }
-
-func (response StartTracing409JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracing413JSONResponse struct{ RequestTooLargeJSONResponse }
-
-func (response StartTracing413JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(413)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracing415JSONResponse struct {
-	UnsupportedMediaTypeJSONResponse
-}
-
-func (response StartTracing415JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(415)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracing422JSONResponse struct {
-	ExecutionEnvironmentUnsupportedJSONResponse
-}
-
-func (response StartTracing422JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(422)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracing429JSONResponse struct{ TooManyRequestsJSONResponse }
-
-func (response StartTracing429JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracing500JSONResponse struct{ InternalErrorJSONResponse }
-
-func (response StartTracing500JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(500)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type StartTracing501JSONResponse struct{ NotImplementedJSONResponse }
-
-func (response StartTracing501JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
+func (response StartOperation501JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -811,9 +419,9 @@ func (response StartTracing501JSONResponse) VisitStartTracingResponse(w http.Res
 	return err
 }
 
-type StartTracing503JSONResponse struct{ ServiceUnavailableJSONResponse }
+type StartOperation503JSONResponse struct{ ServiceUnavailableJSONResponse }
 
-func (response StartTracing503JSONResponse) VisitStartTracingResponse(w http.ResponseWriter) error {
+func (response StartOperation503JSONResponse) VisitStartOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -825,17 +433,17 @@ func (response StartTracing503JSONResponse) VisitStartTracingResponse(w http.Res
 	return err
 }
 
-type GetTracingRequestObject struct {
+type GetOperationRequestObject struct {
 	RequestID RequestID `json:"request_id"`
 }
 
-type GetTracingResponseObject interface {
-	VisitGetTracingResponse(w http.ResponseWriter) error
+type GetOperationResponseObject interface {
+	VisitGetOperationResponse(w http.ResponseWriter) error
 }
 
-type GetTracing200JSONResponse OperationResponse
+type GetOperation200JSONResponse OperationResponse
 
-func (response GetTracing200JSONResponse) VisitGetTracingResponse(w http.ResponseWriter) error {
+func (response GetOperation200JSONResponse) VisitGetOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -847,9 +455,9 @@ func (response GetTracing200JSONResponse) VisitGetTracingResponse(w http.Respons
 	return err
 }
 
-type GetTracing401JSONResponse struct{ UnauthenticatedJSONResponse }
+type GetOperation401JSONResponse struct{ UnauthenticatedJSONResponse }
 
-func (response GetTracing401JSONResponse) VisitGetTracingResponse(w http.ResponseWriter) error {
+func (response GetOperation401JSONResponse) VisitGetOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -862,9 +470,9 @@ func (response GetTracing401JSONResponse) VisitGetTracingResponse(w http.Respons
 	return err
 }
 
-type GetTracing404JSONResponse struct{ NotFoundJSONResponse }
+type GetOperation404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response GetTracing404JSONResponse) VisitGetTracingResponse(w http.ResponseWriter) error {
+func (response GetOperation404JSONResponse) VisitGetOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -876,9 +484,9 @@ func (response GetTracing404JSONResponse) VisitGetTracingResponse(w http.Respons
 	return err
 }
 
-type GetTracing500JSONResponse struct{ InternalErrorJSONResponse }
+type GetOperation500JSONResponse struct{ InternalErrorJSONResponse }
 
-func (response GetTracing500JSONResponse) VisitGetTracingResponse(w http.ResponseWriter) error {
+func (response GetOperation500JSONResponse) VisitGetOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -890,17 +498,17 @@ func (response GetTracing500JSONResponse) VisitGetTracingResponse(w http.Respons
 	return err
 }
 
-type StopTracingRequestObject struct {
+type StopOperationRequestObject struct {
 	RequestID RequestID `json:"request_id"`
 }
 
-type StopTracingResponseObject interface {
-	VisitStopTracingResponse(w http.ResponseWriter) error
+type StopOperationResponseObject interface {
+	VisitStopOperationResponse(w http.ResponseWriter) error
 }
 
-type StopTracing200JSONResponse OperationResponse
+type StopOperation200JSONResponse OperationResponse
 
-func (response StopTracing200JSONResponse) VisitStopTracingResponse(w http.ResponseWriter) error {
+func (response StopOperation200JSONResponse) VisitStopOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -912,9 +520,9 @@ func (response StopTracing200JSONResponse) VisitStopTracingResponse(w http.Respo
 	return err
 }
 
-type StopTracing202JSONResponse OperationResponse
+type StopOperation202JSONResponse OperationResponse
 
-func (response StopTracing202JSONResponse) VisitStopTracingResponse(w http.ResponseWriter) error {
+func (response StopOperation202JSONResponse) VisitStopOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -926,9 +534,9 @@ func (response StopTracing202JSONResponse) VisitStopTracingResponse(w http.Respo
 	return err
 }
 
-type StopTracing401JSONResponse struct{ UnauthenticatedJSONResponse }
+type StopOperation401JSONResponse struct{ UnauthenticatedJSONResponse }
 
-func (response StopTracing401JSONResponse) VisitStopTracingResponse(w http.ResponseWriter) error {
+func (response StopOperation401JSONResponse) VisitStopOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -941,9 +549,9 @@ func (response StopTracing401JSONResponse) VisitStopTracingResponse(w http.Respo
 	return err
 }
 
-type StopTracing404JSONResponse struct{ NotFoundJSONResponse }
+type StopOperation404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response StopTracing404JSONResponse) VisitStopTracingResponse(w http.ResponseWriter) error {
+func (response StopOperation404JSONResponse) VisitStopOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -955,9 +563,9 @@ func (response StopTracing404JSONResponse) VisitStopTracingResponse(w http.Respo
 	return err
 }
 
-type StopTracing500JSONResponse struct{ InternalErrorJSONResponse }
+type StopOperation500JSONResponse struct{ InternalErrorJSONResponse }
 
-func (response StopTracing500JSONResponse) VisitStopTracingResponse(w http.ResponseWriter) error {
+func (response StopOperation500JSONResponse) VisitStopOperationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -978,23 +586,14 @@ type StrictServerInterface interface {
 	// (GET /readyz)
 	GetReadiness(ctx context.Context, request GetReadinessRequestObject) (GetReadinessResponseObject, error)
 
-	// (POST /v1/profiling)
-	StartProfiling(ctx context.Context, request StartProfilingRequestObject) (StartProfilingResponseObject, error)
+	// (POST /v1/operations)
+	StartOperation(ctx context.Context, request StartOperationRequestObject) (StartOperationResponseObject, error)
 
-	// (GET /v1/profiling/{request_id})
-	GetProfiling(ctx context.Context, request GetProfilingRequestObject) (GetProfilingResponseObject, error)
+	// (GET /v1/operations/{request_id})
+	GetOperation(ctx context.Context, request GetOperationRequestObject) (GetOperationResponseObject, error)
 
-	// (POST /v1/profiling/{request_id}/stop)
-	StopProfiling(ctx context.Context, request StopProfilingRequestObject) (StopProfilingResponseObject, error)
-
-	// (POST /v1/tracing)
-	StartTracing(ctx context.Context, request StartTracingRequestObject) (StartTracingResponseObject, error)
-
-	// (GET /v1/tracing/{request_id})
-	GetTracing(ctx context.Context, request GetTracingRequestObject) (GetTracingResponseObject, error)
-
-	// (POST /v1/tracing/{request_id}/stop)
-	StopTracing(ctx context.Context, request StopTracingRequestObject) (StopTracingResponseObject, error)
+	// (POST /v1/operations/{request_id}/stop)
+	StopOperation(ctx context.Context, request StopOperationRequestObject) (StopOperationResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx *gin.Context, request any) (any, error)
@@ -1102,11 +701,11 @@ func (sh *strictHandler) GetReadiness(ctx *gin.Context) {
 	}
 }
 
-// StartProfiling operation middleware
-func (sh *strictHandler) StartProfiling(ctx *gin.Context) {
-	var request StartProfilingRequestObject
+// StartOperation operation middleware
+func (sh *strictHandler) StartOperation(ctx *gin.Context) {
+	var request StartOperationRequestObject
 
-	var body StartProfilingJSONRequestBody
+	var body StartOperationJSONRequestBody
 	if err := ctx.ShouldBindJSON(&body); err != nil {
 		sh.options.RequestErrorHandlerFunc(ctx, err)
 		return
@@ -1114,18 +713,18 @@ func (sh *strictHandler) StartProfiling(ctx *gin.Context) {
 	request.Body = &body
 
 	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.StartProfiling(ctx, request.(StartProfilingRequestObject))
+		return sh.ssi.StartOperation(ctx, request.(StartOperationRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "StartProfiling")
+		handler = middleware(handler, "StartOperation")
 	}
 
 	response, err := handler(ctx, request)
 
 	if err != nil {
 		sh.options.HandlerErrorFunc(ctx, err)
-	} else if validResponse, ok := response.(StartProfilingResponseObject); ok {
-		if err := validResponse.VisitStartProfilingResponse(ctx.Writer); err != nil {
+	} else if validResponse, ok := response.(StartOperationResponseObject); ok {
+		if err := validResponse.VisitStartOperationResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {
@@ -1133,25 +732,25 @@ func (sh *strictHandler) StartProfiling(ctx *gin.Context) {
 	}
 }
 
-// GetProfiling operation middleware
-func (sh *strictHandler) GetProfiling(ctx *gin.Context, requestID RequestID) {
-	var request GetProfilingRequestObject
+// GetOperation operation middleware
+func (sh *strictHandler) GetOperation(ctx *gin.Context, requestID RequestID) {
+	var request GetOperationRequestObject
 
 	request.RequestID = requestID
 
 	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.GetProfiling(ctx, request.(GetProfilingRequestObject))
+		return sh.ssi.GetOperation(ctx, request.(GetOperationRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetProfiling")
+		handler = middleware(handler, "GetOperation")
 	}
 
 	response, err := handler(ctx, request)
 
 	if err != nil {
 		sh.options.HandlerErrorFunc(ctx, err)
-	} else if validResponse, ok := response.(GetProfilingResponseObject); ok {
-		if err := validResponse.VisitGetProfilingResponse(ctx.Writer); err != nil {
+	} else if validResponse, ok := response.(GetOperationResponseObject); ok {
+		if err := validResponse.VisitGetOperationResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {
@@ -1159,108 +758,25 @@ func (sh *strictHandler) GetProfiling(ctx *gin.Context, requestID RequestID) {
 	}
 }
 
-// StopProfiling operation middleware
-func (sh *strictHandler) StopProfiling(ctx *gin.Context, requestID RequestID) {
-	var request StopProfilingRequestObject
+// StopOperation operation middleware
+func (sh *strictHandler) StopOperation(ctx *gin.Context, requestID RequestID) {
+	var request StopOperationRequestObject
 
 	request.RequestID = requestID
 
 	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.StopProfiling(ctx, request.(StopProfilingRequestObject))
+		return sh.ssi.StopOperation(ctx, request.(StopOperationRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "StopProfiling")
+		handler = middleware(handler, "StopOperation")
 	}
 
 	response, err := handler(ctx, request)
 
 	if err != nil {
 		sh.options.HandlerErrorFunc(ctx, err)
-	} else if validResponse, ok := response.(StopProfilingResponseObject); ok {
-		if err := validResponse.VisitStopProfilingResponse(ctx.Writer); err != nil {
-			sh.options.ResponseErrorHandlerFunc(ctx, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// StartTracing operation middleware
-func (sh *strictHandler) StartTracing(ctx *gin.Context) {
-	var request StartTracingRequestObject
-
-	var body StartTracingJSONRequestBody
-	if err := ctx.ShouldBindJSON(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(ctx, err)
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.StartTracing(ctx, request.(StartTracingRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "StartTracing")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		sh.options.HandlerErrorFunc(ctx, err)
-	} else if validResponse, ok := response.(StartTracingResponseObject); ok {
-		if err := validResponse.VisitStartTracingResponse(ctx.Writer); err != nil {
-			sh.options.ResponseErrorHandlerFunc(ctx, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// GetTracing operation middleware
-func (sh *strictHandler) GetTracing(ctx *gin.Context, requestID RequestID) {
-	var request GetTracingRequestObject
-
-	request.RequestID = requestID
-
-	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.GetTracing(ctx, request.(GetTracingRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetTracing")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		sh.options.HandlerErrorFunc(ctx, err)
-	} else if validResponse, ok := response.(GetTracingResponseObject); ok {
-		if err := validResponse.VisitGetTracingResponse(ctx.Writer); err != nil {
-			sh.options.ResponseErrorHandlerFunc(ctx, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// StopTracing operation middleware
-func (sh *strictHandler) StopTracing(ctx *gin.Context, requestID RequestID) {
-	var request StopTracingRequestObject
-
-	request.RequestID = requestID
-
-	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
-		return sh.ssi.StopTracing(ctx, request.(StopTracingRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "StopTracing")
-	}
-
-	response, err := handler(ctx, request)
-
-	if err != nil {
-		sh.options.HandlerErrorFunc(ctx, err)
-	} else if validResponse, ok := response.(StopTracingResponseObject); ok {
-		if err := validResponse.VisitStopTracingResponse(ctx.Writer); err != nil {
+	} else if validResponse, ok := response.(StopOperationResponseObject); ok {
+		if err := validResponse.VisitStopOperationResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {

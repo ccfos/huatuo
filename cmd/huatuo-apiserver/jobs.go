@@ -32,20 +32,16 @@ func setupJobManagers(ctx context.Context, d *Daemon) (func(context.Context) err
 	if err != nil {
 		return nil, fmt.Errorf("initialize Node client: %w", err)
 	}
-	profilingPolicy := job.Policy{
-		MaxJobsPerHost: d.opts.Config.Jobs.Profiling.MaxConcurrentPerHost,
-		MaxTotalJobs:   d.opts.Config.Jobs.Profiling.MaxConcurrent,
-	}
-	tracingPolicy := job.Policy{
-		MaxJobsPerHost: d.opts.Config.Jobs.Tracing.MaxConcurrentPerHost,
-		MaxTotalJobs:   d.opts.Config.Jobs.Tracing.MaxConcurrent,
-	}
 	controller := d.opts.Config.Jobs.Controller
 	manager, err := job.NewManager(ctx, client, job.ManagerConfig{
 		StoreDSN: d.opts.Config.Jobs.StoreDSN,
-		Policies: map[job.Kind]job.Policy{
-			job.KindProfiling: profilingPolicy,
-			job.KindTracing:   tracingPolicy,
+		ProfilingPolicy: job.Policy{
+			MaxJobsPerHost: d.opts.Config.Jobs.Profiling.MaxConcurrentPerHost,
+			MaxTotalJobs:   d.opts.Config.Jobs.Profiling.MaxConcurrent,
+		},
+		TracingPolicy: job.Policy{
+			MaxJobsPerHost: d.opts.Config.Jobs.Tracing.MaxConcurrentPerHost,
+			MaxTotalJobs:   d.opts.Config.Jobs.Tracing.MaxConcurrent,
 		},
 		StatusPollInterval: time.Duration(
 			controller.StatusPollIntervalSeconds,

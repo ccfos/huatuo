@@ -58,11 +58,137 @@ type tracingOperationService interface {
 	) (operationSnapshot *operation.Operation, initiated bool, err error)
 }
 
+type operationLookup interface {
+	Get(requestID string) (*operation.Operation, error)
+	Stop(requestID string) (*operation.Operation, bool, error)
+}
+
 // NodeAPIHandler implements the generated Node Agent Strict Server.
 type NodeAPIHandler struct {
 	profiling profilingOperationService
 	tracing   tracingOperationService
 	openAPI   nodeapi.GetOpenAPI200JSONResponse
+}
+
+// StartOperation starts or resolves an idempotent Node Operation.
+func (h *NodeAPIHandler) StartOperation(
+	ctx context.Context,
+	request nodeapi.StartOperationRequestObject,
+) (nodeapi.StartOperationResponseObject, error) {
+	if err := requireNodePrincipal(ctx); err != nil {
+		return nil, err
+	}
+	if request.Body == nil {
+		return nil, nodeAPIError(errors.New("operation request body is required"))
+	}
+	switch request.Body.Kind {
+	case nodeapi.OperationKindProfiling:
+		spec, err := request.Body.Spec.AsProfilingOperationSpec()
+		if err != nil {
+			return nil, nodeAPIError(fmt.Errorf("decode profiling operation spec: %w", err))
+		}
+		profilingRequest, err := profilingOperationRequest(request.Body, spec)
+		if err != nil {
+			return nil, nodeAPIError(err)
+		}
+		snapshot, created, err := h.profiling.Start(ctx, &profilingRequest)
+		if err != nil {
+			return nil, nodeAPIError(fmt.Errorf("start profiling operation: %w", err))
+		}
+		payload, err := operationResponse(snapshot)
+		if err != nil {
+			return nil, fmt.Errorf("start profiling operation: %w", err)
+		}
+		if created {
+			return nodeapi.StartOperation202JSONResponse(payload), nil
+		}
+		return nodeapi.StartOperation200JSONResponse(payload), nil
+	case nodeapi.OperationKindTracing:
+		spec, err := request.Body.Spec.AsTracingOperationSpec()
+		if err != nil {
+			return nil, nodeAPIError(fmt.Errorf("decode tracing operation spec: %w", err))
+		}
+		tracingRequest, err := tracingOperationRequest(request.Body, spec)
+		if err != nil {
+			return nil, nodeAPIError(err)
+		}
+		snapshot, created, err := h.tracing.Start(ctx, tracingRequest)
+		if err != nil {
+			return nil, nodeAPIError(fmt.Errorf("start tracing operation: %w", err))
+		}
+		payload, err := operationResponse(snapshot)
+		if err != nil {
+			return nil, fmt.Errorf("start tracing operation: %w", err)
+		}
+		if created {
+			return nodeapi.StartOperation202JSONResponse(payload), nil
+		}
+		return nodeapi.StartOperation200JSONResponse(payload), nil
+	default:
+		return nil, nodeAPIError(fmt.Errorf("unsupported operation kind %q", request.Body.Kind))
+	}
+}
+
+// GetOperation returns a retained Node Operation of any supported kind.
+func (h *NodeAPIHandler) GetOperation(
+	ctx context.Context,
+	request nodeapi.GetOperationRequestObject,
+) (nodeapi.GetOperationResponseObject, error) {
+	if err := requireNodePrincipal(ctx); err != nil {
+		return nil, err
+	}
+	service, err := h.findOperationService(request.RequestID)
+	if err != nil {
+		return nil, nodeAPIError(fmt.Errorf("get operation: %w", err))
+	}
+	snapshot, err := service.Get(request.RequestID)
+	if err != nil {
+		return nil, nodeAPIError(fmt.Errorf("get operation: %w", err))
+	}
+	payload, err := operationResponse(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("get operation: %w", err)
+	}
+	return nodeapi.GetOperation200JSONResponse(payload), nil
+}
+
+// StopOperation records an asynchronous stop intent for any supported kind.
+func (h *NodeAPIHandler) StopOperation(
+	ctx context.Context,
+	request nodeapi.StopOperationRequestObject,
+) (nodeapi.StopOperationResponseObject, error) {
+	if err := requireNodePrincipal(ctx); err != nil {
+		return nil, err
+	}
+	service, err := h.findOperationService(request.RequestID)
+	if err != nil {
+		return nil, nodeAPIError(fmt.Errorf("stop operation: %w", err))
+	}
+	snapshot, initiated, err := service.Stop(request.RequestID)
+	if err != nil {
+		return nil, nodeAPIError(fmt.Errorf("stop operation: %w", err))
+	}
+	payload, err := operationResponse(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("stop operation: %w", err)
+	}
+	if initiated {
+		return nodeapi.StopOperation202JSONResponse(payload), nil
+	}
+	return nodeapi.StopOperation200JSONResponse(payload), nil
+}
+
+func (h *NodeAPIHandler) findOperationService(requestID string) (operationLookup, error) {
+	if _, err := h.profiling.Get(requestID); err == nil {
+		return h.profiling, nil
+	} else if !errors.Is(err, operation.ErrNotFound) {
+		return nil, err
+	}
+	if _, err := h.tracing.Get(requestID); err == nil {
+		return h.tracing, nil
+	} else {
+		return nil, err
+	}
 }
 
 // NewNodeAPIHandler constructs a generated-protocol adapter.
@@ -103,140 +229,6 @@ func (h *NodeAPIHandler) GetOpenAPI(
 	return h.openAPI, nil
 }
 
-// StartProfiling starts or resolves an idempotent profiling operation.
-func (h *NodeAPIHandler) StartProfiling(
-	ctx context.Context,
-	request nodeapi.StartProfilingRequestObject,
-) (nodeapi.StartProfilingResponseObject, error) {
-	if err := requireNodePrincipal(ctx); err != nil {
-		return nil, err
-	}
-	command, err := profilingStartRequest(request.Body)
-	if err != nil {
-		return nil, nodeAPIError(err)
-	}
-	operationSnapshot, created, err := h.profiling.Start(ctx, &command)
-	if err != nil {
-		return nil, nodeAPIError(fmt.Errorf("start profiling: %w", err))
-	}
-	payload, err := operationResponse(operationSnapshot)
-	if err != nil {
-		return nil, fmt.Errorf("start profiling: %w", err)
-	}
-	if created {
-		return nodeapi.StartProfiling202JSONResponse(payload), nil
-	}
-	return nodeapi.StartProfiling200JSONResponse(payload), nil
-}
-
-// GetProfiling returns a retained profiling operation.
-func (h *NodeAPIHandler) GetProfiling(
-	ctx context.Context,
-	request nodeapi.GetProfilingRequestObject,
-) (nodeapi.GetProfilingResponseObject, error) {
-	if err := requireNodePrincipal(ctx); err != nil {
-		return nil, err
-	}
-	operationSnapshot, err := h.profiling.Get(request.RequestID)
-	if err != nil {
-		return nil, nodeAPIError(fmt.Errorf("get profiling: %w", err))
-	}
-	payload, err := operationResponse(operationSnapshot)
-	if err != nil {
-		return nil, fmt.Errorf("get profiling: %w", err)
-	}
-	return nodeapi.GetProfiling200JSONResponse(payload), nil
-}
-
-// StopProfiling records an asynchronous profiling stop intent.
-func (h *NodeAPIHandler) StopProfiling(
-	ctx context.Context,
-	request nodeapi.StopProfilingRequestObject,
-) (nodeapi.StopProfilingResponseObject, error) {
-	if err := requireNodePrincipal(ctx); err != nil {
-		return nil, err
-	}
-	operationSnapshot, initiated, err := h.profiling.Stop(request.RequestID)
-	if err != nil {
-		return nil, nodeAPIError(fmt.Errorf("stop profiling: %w", err))
-	}
-	payload, err := operationResponse(operationSnapshot)
-	if err != nil {
-		return nil, fmt.Errorf("stop profiling: %w", err)
-	}
-	if initiated {
-		return nodeapi.StopProfiling202JSONResponse(payload), nil
-	}
-	return nodeapi.StopProfiling200JSONResponse(payload), nil
-}
-
-// StartTracing validates the protocol and reports executor availability.
-func (h *NodeAPIHandler) StartTracing(
-	ctx context.Context,
-	request nodeapi.StartTracingRequestObject,
-) (nodeapi.StartTracingResponseObject, error) {
-	if err := requireNodePrincipal(ctx); err != nil {
-		return nil, err
-	}
-	command, err := tracingStartRequest(request.Body)
-	if err != nil {
-		return nil, nodeAPIError(err)
-	}
-	operationSnapshot, created, err := h.tracing.Start(ctx, command)
-	if err != nil {
-		return nil, nodeAPIError(fmt.Errorf("start tracing: %w", err))
-	}
-	payload, err := operationResponse(operationSnapshot)
-	if err != nil {
-		return nil, fmt.Errorf("start tracing: %w", err)
-	}
-	if created {
-		return nodeapi.StartTracing202JSONResponse(payload), nil
-	}
-	return nodeapi.StartTracing200JSONResponse(payload), nil
-}
-
-// GetTracing returns a retained tracing operation.
-func (h *NodeAPIHandler) GetTracing(
-	ctx context.Context,
-	request nodeapi.GetTracingRequestObject,
-) (nodeapi.GetTracingResponseObject, error) {
-	if err := requireNodePrincipal(ctx); err != nil {
-		return nil, err
-	}
-	operationSnapshot, err := h.tracing.Get(request.RequestID)
-	if err != nil {
-		return nil, nodeAPIError(fmt.Errorf("get tracing: %w", err))
-	}
-	payload, err := operationResponse(operationSnapshot)
-	if err != nil {
-		return nil, fmt.Errorf("get tracing: %w", err)
-	}
-	return nodeapi.GetTracing200JSONResponse(payload), nil
-}
-
-// StopTracing records an asynchronous tracing stop intent.
-func (h *NodeAPIHandler) StopTracing(
-	ctx context.Context,
-	request nodeapi.StopTracingRequestObject,
-) (nodeapi.StopTracingResponseObject, error) {
-	if err := requireNodePrincipal(ctx); err != nil {
-		return nil, err
-	}
-	operationSnapshot, initiated, err := h.tracing.Stop(request.RequestID)
-	if err != nil {
-		return nil, nodeAPIError(fmt.Errorf("stop tracing: %w", err))
-	}
-	payload, err := operationResponse(operationSnapshot)
-	if err != nil {
-		return nil, fmt.Errorf("stop tracing: %w", err)
-	}
-	if initiated {
-		return nodeapi.StopTracing202JSONResponse(payload), nil
-	}
-	return nodeapi.StopTracing200JSONResponse(payload), nil
-}
-
 func requireNodePrincipal(ctx context.Context) error {
 	principal, ok := auth.PrincipalFromContext(ctx)
 	if !ok || principal.ID != nodePrincipalID {
@@ -245,10 +237,10 @@ func requireNodePrincipal(ctx context.Context) error {
 	return nil
 }
 
-func profilingStartRequest(body *nodeapi.StartProfilingJSONRequestBody) (nodeprofiling.StartRequest, error) {
-	if body == nil {
-		return nodeprofiling.StartRequest{}, fmt.Errorf("%w: request body is required", nodeprofiling.ErrInvalidRequest)
-	}
+func profilingOperationRequest(
+	body *nodeapi.StartOperationJSONRequestBody,
+	spec nodeapi.ProfilingOperationSpec,
+) (nodeprofiling.StartRequest, error) {
 	duration, err := secondsDuration(body.DurationSeconds)
 	if err != nil {
 		return nodeprofiling.StartRequest{}, fmt.Errorf("%w: %w", nodeprofiling.ErrInvalidRequest, err)
@@ -259,18 +251,18 @@ func profilingStartRequest(body *nodeapi.StartProfilingJSONRequestBody) (nodepro
 		Scope:       observation.Scope(body.Scope),
 		ContainerID: optionalString(body.ContainerID),
 		Spec: profilingdomain.Spec{
-			Type:            profilingdomain.Type(body.Type),
-			Language:        profilingdomain.Language(body.Language),
-			Mode:            profilingdomain.Mode(body.Mode),
-			BinaryMatchPath: optionalString(body.BinaryMatchPath),
+			Type:            profilingdomain.Type(spec.Type),
+			Language:        profilingdomain.Language(spec.Language),
+			Mode:            profilingdomain.Mode(spec.Mode),
+			BinaryMatchPath: optionalString(spec.BinaryMatchPath),
 		},
 	}, nil
 }
 
-func tracingStartRequest(body *nodeapi.StartTracingJSONRequestBody) (nodetracing.StartRequest, error) {
-	if body == nil {
-		return nodetracing.StartRequest{}, fmt.Errorf("%w: request body is required", nodetracing.ErrInvalidRequest)
-	}
+func tracingOperationRequest(
+	body *nodeapi.StartOperationJSONRequestBody,
+	spec nodeapi.TracingOperationSpec,
+) (nodetracing.StartRequest, error) {
 	duration, err := secondsDuration(body.DurationSeconds)
 	if err != nil {
 		return nodetracing.StartRequest{}, fmt.Errorf("%w: %w", nodetracing.ErrInvalidRequest, err)
@@ -281,7 +273,7 @@ func tracingStartRequest(body *nodeapi.StartTracingJSONRequestBody) (nodetracing
 		Scope:       observation.Scope(body.Scope),
 		ContainerID: optionalString(body.ContainerID),
 		Spec: tracingdomain.Spec{
-			Type: tracingdomain.Type(body.Type),
+			Type: tracingdomain.Type(spec.Type),
 		},
 	}, nil
 }
@@ -313,6 +305,7 @@ func operationResponse(snapshot *operation.Operation) (nodeapi.OperationResponse
 	}
 	payload := nodeapi.Operation{
 		RequestID:  snapshot.RequestID,
+		Kind:       nodeapi.OperationKind(snapshot.Kind),
 		Status:     status,
 		CreatedAt:  snapshot.CreatedAt,
 		StartedAt:  snapshot.StartedAt,
