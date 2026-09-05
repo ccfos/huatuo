@@ -18,12 +18,53 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"time"
 
 	nodeapi "huatuo-bamai/apis/v1/node"
+	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/nodeclient"
 )
+
+func (m *Manager) runSupervisor(ctx context.Context, runtime *managedJob) {
+	defer m.wg.Done()
+	defer func() {
+		m.mu.Lock()
+		m.unregisterLocked(runtime)
+		m.mu.Unlock()
+	}()
+
+	if runtime.recovered {
+		if !waitForSupervisor(ctx, runtime.wake, recoveredPollJitter(
+			runtime.id,
+			m.config.StatusPollInterval,
+		)) {
+			return
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		terminal, err := m.superviseOnce(ctx, runtime)
+		if errors.Is(err, ErrConflict) {
+			terminal, err = m.reloadRuntime(ctx, runtime)
+		}
+		if err != nil && ctx.Err() == nil {
+			log.WithError(err).WithField("job_id", runtime.id).
+				Error("failed to supervise Job")
+		}
+		if terminal {
+			return
+		}
+		if !waitForSupervisor(ctx, runtime.wake, m.nextSupervisorDelay(runtime, err)) {
+			return
+		}
+	}
+}
 
 func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool, error) {
 	runtime.mu.Lock()
@@ -63,6 +104,32 @@ func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool,
 		return m.handleNodeError(ctx, runtime, reconcileErr, false)
 	}
 	return terminal, reconcileErr
+}
+
+func (m *Manager) reloadRuntime(ctx context.Context, runtime *managedJob) (bool, error) {
+	runtime.mu.Lock()
+	current := runtime.job
+	runtime.mu.Unlock()
+
+	stored, err := m.store.Get(ctx, runtime.id)
+	if err != nil {
+		return false, fmt.Errorf("%w: reload Job %q: %w", ErrPersistence, runtime.id, err)
+	}
+	if stored.ID != runtime.id || stored.Kind != runtime.kind || stored.Hostname != runtime.hostname {
+		return false, fmt.Errorf(
+			"%w: reload Job %q: immutable identity changed",
+			ErrPersistence,
+			runtime.id,
+		)
+	}
+
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.job != current {
+		return isTerminal(runtime.job.Status), nil
+	}
+	runtime.job = stored
+	return isTerminal(stored.Status), nil
 }
 
 func (m *Manager) start(
@@ -369,6 +436,38 @@ func (m *Manager) nextSupervisorDelay(runtime *managedJob, superviseErr error) t
 		}
 	}
 	return max(next.Sub(now), 0)
+}
+
+func waitForSupervisor(ctx context.Context, wake <-chan struct{}, delay time.Duration) bool {
+	if delay < 0 {
+		delay = 0
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-wake:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func wakeSupervisor(runtime *managedJob) {
+	select {
+	case runtime.wake <- struct{}{}:
+	default:
+	}
+}
+
+func recoveredPollJitter(jobID string, interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return 0
+	}
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(jobID))
+	return time.Duration(hasher.Sum64() % uint64(interval))
 }
 
 func explicitNodeFailure(err error, duringStart bool) *TerminalResult {
