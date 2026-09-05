@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	nodeapi "huatuo-bamai/apis/v1/node"
@@ -27,18 +29,58 @@ import (
 	"huatuo-bamai/internal/nodeclient"
 )
 
-func (m *Manager) runSupervisor(ctx context.Context, runtime *managedJob) {
-	defer m.wg.Done()
-	defer func() {
-		m.mu.Lock()
-		m.unregisterLocked(runtime)
-		m.mu.Unlock()
-	}()
+type runtimePolicy struct {
+	statusPollInterval         time.Duration
+	pendingTimeout             time.Duration
+	completionGracePeriod      time.Duration
+	nodeUnavailableGracePeriod time.Duration
+}
 
-	if runtime.recovered {
-		if !waitForSupervisor(ctx, runtime.wake, recoveredPollJitter(
-			runtime.id,
-			m.config.StatusPollInterval,
+type runtimeDependencies struct {
+	store               Store
+	nodeClient          NodeClient
+	policy              runtimePolicy
+	now                 func() time.Time
+	persistenceFailures *atomic.Uint64
+}
+
+type runtime struct {
+	mu sync.Mutex
+
+	id                string
+	kind              Kind
+	hostname          string
+	job               *Job
+	operationObserved bool
+	wakeCh            chan struct{}
+	recovered         bool
+	cancel            context.CancelFunc
+	dependencies      *runtimeDependencies
+}
+
+func newRuntime(
+	job *Job,
+	recovered bool,
+	cancel context.CancelFunc,
+	dependencies *runtimeDependencies,
+) *runtime {
+	return &runtime{
+		id:           job.ID,
+		kind:         job.Kind,
+		hostname:     job.Hostname,
+		job:          cloneJob(job),
+		wakeCh:       make(chan struct{}, 1),
+		recovered:    recovered,
+		cancel:       cancel,
+		dependencies: dependencies,
+	}
+}
+
+func (r *runtime) run(ctx context.Context) {
+	if r.recovered {
+		if !r.wait(ctx, recoveryStartDelay(
+			r.id,
+			r.dependencies.policy.statusPollInterval,
 		)) {
 			return
 		}
@@ -49,106 +91,102 @@ func (m *Manager) runSupervisor(ctx context.Context, runtime *managedJob) {
 			return
 		default:
 		}
-		terminal, err := m.superviseOnce(ctx, runtime)
+		terminal, err := r.superviseOnce(ctx)
 		if errors.Is(err, ErrConflict) {
-			terminal, err = m.reloadRuntime(ctx, runtime)
+			terminal, err = r.reloadFromStore(ctx)
 		}
 		if err != nil && ctx.Err() == nil {
-			log.WithError(err).WithField("job_id", runtime.id).
+			log.WithError(err).WithField("job_id", r.id).
 				Error("failed to supervise Job")
 		}
 		if terminal {
 			return
 		}
-		if !waitForSupervisor(ctx, runtime.wake, m.nextSupervisorDelay(runtime, err)) {
+		if !r.wait(ctx, r.nextPollDelay(err)) {
 			return
 		}
 	}
 }
 
-func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool, error) {
-	runtime.mu.Lock()
-	if isTerminal(runtime.job.Status) {
-		runtime.mu.Unlock()
+func (r *runtime) superviseOnce(ctx context.Context) (bool, error) {
+	r.mu.Lock()
+	if isTerminal(r.job.Status) {
+		r.mu.Unlock()
 		return true, nil
 	}
-	shouldStart := runtime.job.Status == StatusPending &&
-		runtime.job.PendingDeadline.IsZero()
-	runtime.mu.Unlock()
+	shouldStart := r.job.Status == StatusPending && r.job.PendingDeadline.IsZero()
+	r.mu.Unlock()
 
 	var (
 		operation *nodeapi.Operation
 		err       error
 	)
 	if shouldStart {
-		operation, err = m.start(ctx, runtime)
+		operation, err = r.startOperation(ctx)
 		if err != nil {
 			if errors.Is(err, ErrPersistence) || errors.Is(err, ErrConflict) {
 				return false, err
 			}
-			return m.handleNodeError(ctx, runtime, err, true)
+			return r.handleNodeError(ctx, err, true)
 		}
 	} else {
-		snapshot := runtimeSnapshot(runtime)
-		operation, err = m.nodeClient.GetOperation(ctx, snapshot.Hostname, snapshot.ID)
+		snapshot := r.snapshot()
+		operation, err = r.dependencies.nodeClient.GetOperation(ctx, snapshot.Hostname, snapshot.ID)
 		if err != nil {
-			return m.handleNodeError(ctx, runtime, err, false)
+			return r.handleNodeError(ctx, err, false)
 		}
 	}
 
-	terminal, reconcileErr := m.reconcileAndStop(ctx, runtime, operation)
+	terminal, reconcileErr := r.reconcileOperation(ctx, operation)
 	if errors.Is(reconcileErr, nodeclient.ErrProtocol) {
-		return m.handleNodeError(ctx, runtime, reconcileErr, false)
+		return r.handleNodeError(ctx, reconcileErr, false)
 	}
 	return terminal, reconcileErr
 }
 
-func (m *Manager) reloadRuntime(ctx context.Context, runtime *managedJob) (bool, error) {
-	runtime.mu.Lock()
-	current := runtime.job
-	runtime.mu.Unlock()
+func (r *runtime) reloadFromStore(ctx context.Context) (bool, error) {
+	r.mu.Lock()
+	current := r.job
+	r.mu.Unlock()
 
-	stored, err := m.store.Get(ctx, runtime.id)
+	stored, err := r.dependencies.store.Get(ctx, r.id)
 	if err != nil {
-		return false, fmt.Errorf("%w: reload Job %q: %w", ErrPersistence, runtime.id, err)
+		return false, fmt.Errorf("%w: reload Job %q: %w", ErrPersistence, r.id, err)
 	}
-	if stored.ID != runtime.id || stored.Kind != runtime.kind || stored.Hostname != runtime.hostname {
+	if stored.ID != r.id || stored.Kind != r.kind || stored.Hostname != r.hostname {
 		return false, fmt.Errorf(
 			"%w: reload Job %q: immutable identity changed",
 			ErrPersistence,
-			runtime.id,
+			r.id,
 		)
 	}
 
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	if runtime.job != current {
-		return isTerminal(runtime.job.Status), nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.job != current {
+		return isTerminal(r.job.Status), nil
 	}
-	runtime.job = stored
+	r.job = stored
 	return isTerminal(stored.Status), nil
 }
 
-func (m *Manager) start(
-	ctx context.Context,
-	runtime *managedJob,
-) (*nodeapi.Operation, error) {
+func (r *runtime) startOperation(ctx context.Context) (*nodeapi.Operation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	runtime.mu.Lock()
-	current := runtime.job
+	r.mu.Lock()
+	current := r.job
 	if current.Status != StatusPending || !current.PendingDeadline.IsZero() {
-		runtime.mu.Unlock()
+		r.mu.Unlock()
 		return nil, fmt.Errorf("%w: Job %q cannot be dispatched", ErrConflict, current.ID)
 	}
-	now := m.now()
+	now := r.dependencies.now()
 	updated := cloneJob(current)
-	updated.PendingDeadline = now.Add(m.config.PendingTimeout)
+	updated.PendingDeadline = now.Add(r.dependencies.policy.pendingTimeout)
 	updated.UpdatedAt = now
-	runtime.mu.Unlock()
-	if err := m.persistRuntime(ctx, runtime, current, updated); err != nil {
+	r.mu.Unlock()
+	if err := r.saveTransition(ctx, current, updated); err != nil {
 		if errors.Is(err, ErrConflict) {
 			return nil, fmt.Errorf("%w: persist dispatch marker for Job %q: %w", ErrConflict, current.ID, err)
 		}
@@ -159,48 +197,50 @@ func (m *Manager) start(
 			err,
 		)
 	}
-	return m.startOperation(ctx, updated)
+	return r.startNodeOperation(ctx, updated)
 }
 
-func (m *Manager) reconcileAndStop(
+func (r *runtime) reconcileOperation(
 	ctx context.Context,
-	runtime *managedJob,
 	operation *nodeapi.Operation,
 ) (bool, error) {
-	terminal, shouldStop, err := m.reconcileOperation(ctx, runtime, operation)
+	terminal, shouldStop, err := r.applyOperation(ctx, operation)
 	if err != nil || terminal || !shouldStop {
 		return terminal, err
 	}
 
-	snapshot := runtimeSnapshot(runtime)
-	stoppedOperation, err := m.nodeClient.StopOperation(ctx, snapshot.Hostname, snapshot.ID)
+	snapshot := r.snapshot()
+	stoppedOperation, err := r.dependencies.nodeClient.StopOperation(
+		ctx,
+		snapshot.Hostname,
+		snapshot.ID,
+	)
 	if err != nil {
-		return m.handleNodeError(ctx, runtime, err, false)
+		return r.handleNodeError(ctx, err, false)
 	}
-	terminal, _, err = m.reconcileOperation(ctx, runtime, stoppedOperation)
+	terminal, _, err = r.applyOperation(ctx, stoppedOperation)
 	return terminal, err
 }
 
-func (m *Manager) reconcileOperation(
+func (r *runtime) applyOperation(
 	ctx context.Context,
-	runtime *managedJob,
 	operation *nodeapi.Operation,
 ) (terminal, shouldStop bool, err error) {
 	if operation == nil {
 		return false, false, fmt.Errorf("%w: Node returned a nil Operation", nodeclient.ErrProtocol)
 	}
 
-	runtime.mu.Lock()
-	current := runtime.job
+	r.mu.Lock()
+	current := r.job
 	if isTerminal(current.Status) {
-		runtime.mu.Unlock()
+		r.mu.Unlock()
 		return true, false, nil
 	}
-	runtime.operationObserved = true
+	r.operationObserved = true
 
-	now := m.now()
+	now := r.dependencies.now()
 	updated := cloneJob(current)
-	changed := clearNodeUnavailable(updated)
+	changed := clearNodeUnavailableDeadline(updated)
 	if changed {
 		updated.UpdatedAt = now
 	}
@@ -214,7 +254,12 @@ func (m *Manager) reconcileOperation(
 			}, now)
 			changed = true
 		} else if current.Status == StatusPending && !now.Before(current.PendingDeadline) {
-			setStopping(updated, StopReasonStartTimeout, now, m.config.CompletionGracePeriod)
+			setStopping(
+				updated,
+				StopReasonStartTimeout,
+				now,
+				r.dependencies.policy.completionGracePeriod,
+			)
 			changed = true
 		}
 	case nodeapi.OperationStatusRunning:
@@ -222,12 +267,17 @@ func (m *Manager) reconcileOperation(
 			updated.Status = StatusRunning
 			updated.StartedAt = now
 			updated.ExecutionDeadline = now.Add(current.Duration).Add(
-				m.config.CompletionGracePeriod,
+				r.dependencies.policy.completionGracePeriod,
 			)
 			updated.UpdatedAt = now
 			changed = true
 		} else if current.Status == StatusRunning && !now.Before(current.ExecutionDeadline) {
-			setStopping(updated, StopReasonExecutionTimeout, now, m.config.CompletionGracePeriod)
+			setStopping(
+				updated,
+				StopReasonExecutionTimeout,
+				now,
+				r.dependencies.policy.completionGracePeriod,
+			)
 			changed = true
 		}
 	case nodeapi.OperationStatusStopping:
@@ -262,7 +312,7 @@ func (m *Manager) reconcileOperation(
 		case nodeapi.OperationOutcomeFailed:
 			setTerminal(updated, mapOperationFailure(operation.Terminal), now)
 		case nodeapi.OperationOutcomeStopped:
-			setTerminal(updated, stoppedJobOutcome(current.StopReason), now)
+			setTerminal(updated, terminalResultForStop(current.StopReason), now)
 		default:
 			setTerminal(updated, &TerminalResult{
 				Outcome: OutcomeFailed,
@@ -295,9 +345,9 @@ func (m *Manager) reconcileOperation(
 		}
 	}
 
-	runtime.mu.Unlock()
+	r.mu.Unlock()
 	if changed {
-		if err := m.persistRuntime(ctx, runtime, current, updated); err != nil {
+		if err := r.saveTransition(ctx, current, updated); err != nil {
 			if errors.Is(err, ErrConflict) {
 				return false, false, fmt.Errorf("%w: reconcile Job %q: %w", ErrConflict, current.ID, err)
 			}
@@ -312,9 +362,8 @@ func (m *Manager) reconcileOperation(
 	return isTerminal(updated.Status), shouldStop, nil
 }
 
-func (m *Manager) handleNodeError(
+func (r *runtime) handleNodeError(
 	ctx context.Context,
-	runtime *managedJob,
 	err error,
 	duringStart bool,
 ) (bool, error) {
@@ -324,17 +373,17 @@ func (m *Manager) handleNodeError(
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return false, ctxErr
 	}
-	runtime.mu.Lock()
-	current := runtime.job
+	r.mu.Lock()
+	current := r.job
 	if isTerminal(current.Status) {
-		runtime.mu.Unlock()
+		r.mu.Unlock()
 		return true, nil
 	}
-	now := m.now()
+	now := r.dependencies.now()
 	updated := cloneJob(current)
 
-	if isOperationNotFound(err) {
-		if runtime.operationObserved {
+	if isNodeOperationNotFound(err) {
+		if r.operationObserved {
 			setTerminal(updated, &TerminalResult{
 				Outcome: OutcomeFailed,
 				Reason:  FailureReasonOperationLost,
@@ -343,11 +392,13 @@ func (m *Manager) handleNodeError(
 		} else {
 			setTerminal(updated, &TerminalResult{Outcome: OutcomeUnknown}, now)
 		}
-	} else if failure := explicitNodeFailure(err, duringStart); failure != nil {
+	} else if failure := terminalResultForNodeError(err, duringStart); failure != nil {
 		setTerminal(updated, failure, now)
 	} else if isRecoverableNodeError(err) {
 		if current.NodeUnavailableDeadline.IsZero() {
-			updated.NodeUnavailableDeadline = now.Add(m.config.NodeUnavailableGracePeriod)
+			updated.NodeUnavailableDeadline = now.Add(
+				r.dependencies.policy.nodeUnavailableGracePeriod,
+			)
 			updated.UpdatedAt = now
 		} else if !now.Before(current.NodeUnavailableDeadline) {
 			setTerminal(updated, &TerminalResult{
@@ -356,7 +407,7 @@ func (m *Manager) handleNodeError(
 				Message: "Node remained unavailable beyond the recovery window",
 			}, now)
 		} else {
-			runtime.mu.Unlock()
+			r.mu.Unlock()
 			return false, nil
 		}
 	} else {
@@ -367,8 +418,8 @@ func (m *Manager) handleNodeError(
 		}, now)
 	}
 
-	runtime.mu.Unlock()
-	if err := m.persistRuntime(ctx, runtime, current, updated); err != nil {
+	r.mu.Unlock()
+	if err := r.saveTransition(ctx, current, updated); err != nil {
 		if errors.Is(err, ErrConflict) {
 			return false, fmt.Errorf("%w: persist Node error for Job %q: %w", ErrConflict, current.ID, err)
 		}
@@ -382,38 +433,37 @@ func (m *Manager) handleNodeError(
 	return isTerminal(updated.Status), nil
 }
 
-func (m *Manager) persistRuntime(
+func (r *runtime) saveTransition(
 	ctx context.Context,
-	runtime *managedJob,
 	current *Job,
 	updated *Job,
 ) error {
-	if err := m.store.Save(ctx, updated, current.Status); err != nil {
-		m.persistenceFailures.Add(1)
+	if err := r.dependencies.store.Save(ctx, updated, current.Status); err != nil {
+		r.dependencies.persistenceFailures.Add(1)
 		return err
 	}
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	if runtime.job != current {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.job != current {
 		return ErrConflict
 	}
-	runtime.job = updated
+	r.job = updated
 	return nil
 }
 
-func (m *Manager) nextSupervisorDelay(runtime *managedJob, superviseErr error) time.Duration {
+func (r *runtime) nextPollDelay(superviseErr error) time.Duration {
 	if superviseErr != nil {
-		return m.config.StatusPollInterval
+		return r.dependencies.policy.statusPollInterval
 	}
 
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	current := runtime.job
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current := r.job
 	if isTerminal(current.Status) {
 		return 0
 	}
-	now := m.now()
-	next := now.Add(m.config.StatusPollInterval)
+	now := r.dependencies.now()
+	next := now.Add(r.dependencies.policy.statusPollInterval)
 	deadlines := []time.Time{current.NodeUnavailableDeadline}
 	if current.NodeUnavailableDeadline.IsZero() {
 		switch current.Status {
@@ -433,7 +483,7 @@ func (m *Manager) nextSupervisorDelay(runtime *managedJob, superviseErr error) t
 	return max(next.Sub(now), 0)
 }
 
-func waitForSupervisor(ctx context.Context, wake <-chan struct{}, delay time.Duration) bool {
+func (r *runtime) wait(ctx context.Context, delay time.Duration) bool {
 	if delay < 0 {
 		delay = 0
 	}
@@ -442,21 +492,21 @@ func waitForSupervisor(ctx context.Context, wake <-chan struct{}, delay time.Dur
 	select {
 	case <-timer.C:
 		return true
-	case <-wake:
+	case <-r.wakeCh:
 		return true
 	case <-ctx.Done():
 		return false
 	}
 }
 
-func wakeSupervisor(runtime *managedJob) {
+func (r *runtime) wake() {
 	select {
-	case runtime.wake <- struct{}{}:
+	case r.wakeCh <- struct{}{}:
 	default:
 	}
 }
 
-func recoveredPollJitter(jobID string, interval time.Duration) time.Duration {
+func recoveryStartDelay(jobID string, interval time.Duration) time.Duration {
 	if interval <= 0 {
 		return 0
 	}
@@ -465,7 +515,7 @@ func recoveredPollJitter(jobID string, interval time.Duration) time.Duration {
 	return time.Duration(hasher.Sum64() % uint64(interval))
 }
 
-func explicitNodeFailure(err error, duringStart bool) *TerminalResult {
+func terminalResultForNodeError(err error, duringStart bool) *TerminalResult {
 	var nodeErr *nodeclient.Error
 	if !errors.As(err, &nodeErr) {
 		if errors.Is(err, nodeclient.ErrProtocol) || errors.Is(err, nodeclient.ErrInvalidArgument) {
@@ -516,7 +566,7 @@ func isRecoverableNodeError(err error) bool {
 	return true
 }
 
-func isOperationNotFound(err error) bool {
+func isNodeOperationNotFound(err error) bool {
 	var nodeErr *nodeclient.Error
 	return errors.As(err, &nodeErr) && nodeErr.Code == nodeapi.ErrorCodeOperationNotFound
 }
@@ -547,7 +597,7 @@ func mapOperationFailure(failure *nodeapi.OperationTerminal) *TerminalResult {
 	return &TerminalResult{Outcome: OutcomeFailed, Reason: reason, Message: message}
 }
 
-func stoppedJobOutcome(reason StopReason) *TerminalResult {
+func terminalResultForStop(reason StopReason) *TerminalResult {
 	switch reason {
 	case StopReasonUser:
 		return &TerminalResult{Outcome: OutcomeStopped}
@@ -592,7 +642,7 @@ func setTerminal(
 	}
 }
 
-func clearNodeUnavailable(job *Job) bool {
+func clearNodeUnavailableDeadline(job *Job) bool {
 	if job.NodeUnavailableDeadline.IsZero() {
 		return false
 	}
@@ -600,8 +650,51 @@ func clearNodeUnavailable(job *Job) bool {
 	return true
 }
 
-func runtimeSnapshot(runtime *managedJob) *Job {
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	return cloneJob(runtime.job)
+func (r *runtime) snapshot() *Job {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return cloneJob(r.job)
+}
+
+func (r *runtime) status() Status {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.job.Status
+}
+
+func (r *runtime) stop(ctx context.Context) (*Job, error) {
+	r.mu.Lock()
+	current := r.job
+	if isTerminal(current.Status) {
+		r.mu.Unlock()
+		return nil, ErrJobTerminal
+	}
+	if current.Status == StatusStopping {
+		result := cloneJob(current)
+		r.mu.Unlock()
+		return result, nil
+	}
+
+	now := r.dependencies.now()
+	updated := cloneJob(current)
+	if current.Status == StatusPending && current.PendingDeadline.IsZero() {
+		updated.StopReason = StopReasonUser
+		setTerminal(updated, &TerminalResult{Outcome: OutcomeStopped}, now)
+	} else {
+		setStopping(
+			updated,
+			StopReasonUser,
+			now,
+			r.dependencies.policy.completionGracePeriod,
+		)
+	}
+	r.mu.Unlock()
+	if err := r.saveTransition(ctx, current, updated); err != nil {
+		if errors.Is(err, ErrConflict) {
+			return nil, fmt.Errorf("%w: persist stop for Job %q: %w", ErrConflict, r.id, err)
+		}
+		return nil, fmt.Errorf("%w: persist stop for Job %q: %w", ErrPersistence, r.id, err)
+	}
+	r.wake()
+	return cloneJob(updated), nil
 }

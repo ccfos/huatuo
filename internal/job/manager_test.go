@@ -174,8 +174,12 @@ func testManager(store Store, client NodeClient) *Manager {
 	})
 }
 
-func testManagedJob(job *Job) *managedJob {
-	return newManagedJob(job, false, func() {})
+func testRuntime(manager *Manager, job *Job) *runtime {
+	return newRuntime(job, false, func() {}, &manager.runtimeDeps)
+}
+
+func setManagerNow(manager *Manager, now func() time.Time) {
+	manager.runtimeDeps.now = now
 }
 
 func testJob(id string, status Status, now time.Time) *Job {
@@ -378,8 +382,8 @@ func TestManagerStopBeforeDispatchPersistsUserIntent(t *testing.T) {
 	pendingJob := testJob("job-1", StatusPending, now)
 	store := newMemoryStore(pendingJob)
 	manager := testManager(store, &stubNodeClient{})
-	manager.now = func() time.Time { return now.Add(time.Second) }
-	runtime := testManagedJob(pendingJob)
+	setManagerNow(manager, func() time.Time { return now.Add(time.Second) })
+	runtime := testRuntime(manager, pendingJob)
 	manager.mu.Lock()
 	manager.registerLocked(runtime)
 	manager.mu.Unlock()

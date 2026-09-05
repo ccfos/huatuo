@@ -23,15 +23,15 @@ import (
 	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
-func (m *Manager) startOperation(ctx context.Context, job *Job) (*nodeapi.Operation, error) {
-	request, err := startOperationRequest(job)
+func (r *runtime) startNodeOperation(ctx context.Context, job *Job) (*nodeapi.Operation, error) {
+	request, err := buildStartOperationRequest(job)
 	if err != nil {
 		return nil, err
 	}
-	return m.nodeClient.StartOperation(ctx, job.Hostname, request)
+	return r.dependencies.nodeClient.StartOperation(ctx, job.Hostname, request)
 }
 
-func startOperationRequest(job *Job) (*nodeapi.StartOperationRequest, error) {
+func buildStartOperationRequest(job *Job) (*nodeapi.StartOperationRequest, error) {
 	request := &nodeapi.StartOperationRequest{
 		RequestID:       job.ID,
 		DurationSeconds: int64(job.Duration / time.Second),

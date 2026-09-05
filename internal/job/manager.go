@@ -57,19 +57,6 @@ type ManagerConfig struct {
 	JobRetentionPeriod         time.Duration
 }
 
-type managedJob struct {
-	mu sync.Mutex
-
-	id                string
-	kind              Kind
-	hostname          string
-	job               *Job
-	operationObserved bool
-	wake              chan struct{}
-	recovered         bool
-	cancel            context.CancelFunc
-}
-
 type activeHostKey [2]string
 
 func newActiveHostKey(hostname string, kind Kind) activeHostKey {
@@ -80,15 +67,14 @@ func newActiveHostKey(hostname string, kind Kind) activeHostKey {
 type Manager struct {
 	mu sync.RWMutex
 
-	active      map[string]*managedJob
+	active      map[string]*runtime
 	activeTotal map[Kind]int
 	activeHosts map[activeHostKey]int
 	accepting   bool
 
-	store      Store
-	nodeClient NodeClient
-	config     *ManagerConfig
-	now        func() time.Time
+	store       Store
+	config      *ManagerConfig
+	runtimeDeps runtimeDependencies
 
 	cleanupCancel context.CancelFunc
 	closeOnce     sync.Once
@@ -147,19 +133,30 @@ func newManagerWithStore(
 	nodeClient NodeClient,
 	config *ManagerConfig,
 ) *Manager {
-	return &Manager{
-		active:      make(map[string]*managedJob),
+	manager := &Manager{
+		active:      make(map[string]*runtime),
 		activeTotal: make(map[Kind]int),
 		activeHosts: make(map[activeHostKey]int),
 		accepting:   true,
 		store:       store,
-		nodeClient:  nodeClient,
 		config:      config,
+		closeDone:   make(chan struct{}),
+	}
+	manager.runtimeDeps = runtimeDependencies{
+		store:      store,
+		nodeClient: nodeClient,
+		policy: runtimePolicy{
+			statusPollInterval:         config.StatusPollInterval,
+			pendingTimeout:             config.PendingTimeout,
+			completionGracePeriod:      config.CompletionGracePeriod,
+			nodeUnavailableGracePeriod: config.NodeUnavailableGracePeriod,
+		},
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
-		closeDone: make(chan struct{}),
+		persistenceFailures: &manager.persistenceFailures,
 	}
+	return manager
 }
 
 func normalizeManagerConfig(config *ManagerConfig) (*ManagerConfig, error) {
@@ -222,7 +219,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 	if err := request.validate(); err != nil {
 		return nil, fmt.Errorf("%w: create job: %w", ErrInvalidQuery, err)
 	}
-	now := m.now()
+	now := m.runtimeDeps.now()
 	newJob := &Job{
 		ID:          uuid.NewString(),
 		Kind:        request.Spec.kind(),
@@ -237,7 +234,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		UpdatedAt:   now,
 	}
 	supervisorCtx, cancel := context.WithCancel(context.Background())
-	runtime := newManagedJob(newJob, false, cancel)
+	runtime := newRuntime(newJob, false, cancel, &m.runtimeDeps)
 
 	m.mu.Lock()
 	if !m.accepting {
@@ -270,7 +267,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		m.wg.Done()
 		return nil, fmt.Errorf("%w: create job %q: %w", ErrPersistence, newJob.ID, err)
 	}
-	go m.runSupervisor(supervisorCtx, runtime)
+	go m.runRuntime(supervisorCtx, runtime)
 	return cloneJob(newJob), nil
 }
 
@@ -329,35 +326,7 @@ func (m *Manager) Stop(ctx context.Context, jobID string) (*Job, error) {
 		return nil, fmt.Errorf("%w: active Job %q is not supervised", ErrPersistence, jobID)
 	}
 
-	runtime.mu.Lock()
-	current := runtime.job
-	if isTerminal(current.Status) {
-		runtime.mu.Unlock()
-		return nil, ErrJobTerminal
-	}
-	if current.Status == StatusStopping {
-		result := cloneJob(current)
-		runtime.mu.Unlock()
-		return result, nil
-	}
-
-	now := m.now()
-	updated := cloneJob(current)
-	if current.Status == StatusPending && current.PendingDeadline.IsZero() {
-		updated.StopReason = StopReasonUser
-		setTerminal(updated, &TerminalResult{Outcome: OutcomeStopped}, now)
-	} else {
-		setStopping(updated, StopReasonUser, now, m.config.CompletionGracePeriod)
-	}
-	runtime.mu.Unlock()
-	if err := m.persistRuntime(ctx, runtime, current, updated); err != nil {
-		if errors.Is(err, ErrConflict) {
-			return nil, fmt.Errorf("%w: persist stop for Job %q: %w", ErrConflict, jobID, err)
-		}
-		return nil, fmt.Errorf("%w: persist stop for Job %q: %w", ErrPersistence, jobID, err)
-	}
-	wakeSupervisor(runtime)
-	return cloneJob(updated), nil
+	return runtime.stop(ctx)
 }
 
 // Ready verifies that the durable Job Store can answer queries.
@@ -371,7 +340,7 @@ func (m *Manager) Ready(ctx context.Context) error {
 // Stats returns active Job and error counters without storage or network calls.
 func (m *Manager) Stats() ManagerStats {
 	m.mu.RLock()
-	runtimes := make([]*managedJob, 0, len(m.active))
+	runtimes := make([]*runtime, 0, len(m.active))
 	for _, runtime := range m.active {
 		runtimes = append(runtimes, runtime)
 	}
@@ -379,10 +348,8 @@ func (m *Manager) Stats() ManagerStats {
 
 	counts := make(map[[2]string]int)
 	for _, runtime := range runtimes {
-		runtime.mu.Lock()
-		key := [2]string{string(runtime.job.Kind), string(runtime.job.Status)}
+		key := [2]string{string(runtime.kind), string(runtime.status())}
 		counts[key]++
-		runtime.mu.Unlock()
 	}
 	active := make([]ActiveJobStat, 0, len(counts))
 	for key, count := range counts {
@@ -437,12 +404,12 @@ func (m *Manager) recover(ctx context.Context) error {
 			return fmt.Errorf("Job %q has no policy for kind %q", storedJob.ID, storedJob.Kind)
 		}
 		supervisorCtx, cancel := context.WithCancel(context.Background())
-		runtime := newManagedJob(storedJob, true, cancel)
+		runtime := newRuntime(storedJob, true, cancel, &m.runtimeDeps)
 		m.mu.Lock()
 		m.registerLocked(runtime)
 		m.wg.Add(1)
 		m.mu.Unlock()
-		go m.runSupervisor(supervisorCtx, runtime)
+		go m.runRuntime(supervisorCtx, runtime)
 	}
 	m.recoveredJobs.Add(uint64(len(jobs)))
 	return nil
@@ -461,7 +428,7 @@ func (m *Manager) startCleanup() {
 		for {
 			select {
 			case <-ticker.C:
-				endedBefore := m.now().Add(-m.config.JobRetentionPeriod)
+				endedBefore := m.runtimeDeps.now().Add(-m.config.JobRetentionPeriod)
 				if _, err := m.store.DeleteTerminalBefore(
 					ctx,
 					endedBefore,
@@ -476,13 +443,13 @@ func (m *Manager) startCleanup() {
 	}(cleanupCtx)
 }
 
-func (m *Manager) registerLocked(runtime *managedJob) {
+func (m *Manager) registerLocked(runtime *runtime) {
 	m.active[runtime.id] = runtime
 	m.activeTotal[runtime.kind]++
 	m.activeHosts[newActiveHostKey(runtime.hostname, runtime.kind)]++
 }
 
-func (m *Manager) unregisterLocked(runtime *managedJob) {
+func (m *Manager) unregisterLocked(runtime *runtime) {
 	current, ok := m.active[runtime.id]
 	if !ok || current != runtime {
 		return
@@ -492,24 +459,18 @@ func (m *Manager) unregisterLocked(runtime *managedJob) {
 	m.activeHosts[newActiveHostKey(runtime.hostname, runtime.kind)]--
 }
 
-func (m *Manager) activeRuntime(jobID string) *managedJob {
+func (m *Manager) activeRuntime(jobID string) *runtime {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.active[jobID]
 }
 
-func newManagedJob(
-	job *Job,
-	recovered bool,
-	cancel context.CancelFunc,
-) *managedJob {
-	return &managedJob{
-		id:        job.ID,
-		kind:      job.Kind,
-		hostname:  job.Hostname,
-		job:       cloneJob(job),
-		wake:      make(chan struct{}, 1),
-		recovered: recovered,
-		cancel:    cancel,
-	}
+func (m *Manager) runRuntime(ctx context.Context, runtime *runtime) {
+	defer m.wg.Done()
+	defer func() {
+		m.mu.Lock()
+		m.unregisterLocked(runtime)
+		m.mu.Unlock()
+	}()
+	runtime.run(ctx)
 }
