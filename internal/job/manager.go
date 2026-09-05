@@ -522,6 +522,9 @@ func (m *Manager) runSupervisor(ctx context.Context, runtime *managedJob) {
 		default:
 		}
 		terminal, err := m.superviseOnce(ctx, runtime)
+		if errors.Is(err, ErrConflict) {
+			terminal, err = m.reloadRuntime(ctx, runtime)
+		}
 		if err != nil && ctx.Err() == nil {
 			log.WithError(err).WithField("job_id", runtime.id).
 				Error("failed to supervise Job")
@@ -529,10 +532,36 @@ func (m *Manager) runSupervisor(ctx context.Context, runtime *managedJob) {
 		if terminal {
 			return
 		}
-		if !waitForSupervisor(ctx, runtime.wake, m.nextWake(runtime)) {
+		if !waitForSupervisor(ctx, runtime.wake, m.nextSupervisorDelay(runtime, err)) {
 			return
 		}
 	}
+}
+
+func (m *Manager) reloadRuntime(ctx context.Context, runtime *managedJob) (bool, error) {
+	runtime.mu.Lock()
+	current := runtime.job
+	runtime.mu.Unlock()
+
+	stored, err := m.store.Get(ctx, runtime.id)
+	if err != nil {
+		return false, fmt.Errorf("%w: reload Job %q: %w", ErrPersistence, runtime.id, err)
+	}
+	if stored.ID != runtime.id || stored.Kind != runtime.kind || stored.Hostname != runtime.hostname {
+		return false, fmt.Errorf(
+			"%w: reload Job %q: immutable identity changed",
+			ErrPersistence,
+			runtime.id,
+		)
+	}
+
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.job != current {
+		return isTerminal(runtime.job.Status), nil
+	}
+	runtime.job = stored
+	return isTerminal(stored.Status), nil
 }
 
 func newManagedJob(

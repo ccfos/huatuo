@@ -533,8 +533,41 @@ func TestManagerNodeUnavailableDoesNotSpinOnBusinessDeadline(t *testing.T) {
 	manager.config.StatusPollInterval = 5 * time.Second
 	manager.now = func() time.Time { return now }
 
-	if got := manager.nextWake(testManagedJob(runningJob)); got != 5*time.Second {
-		t.Fatalf("nextWake() = %s, want 5s", got)
+	if got := manager.nextSupervisorDelay(testManagedJob(runningJob), nil); got != 5*time.Second {
+		t.Fatalf("nextSupervisorDelay() = %s, want 5s", got)
+	}
+}
+
+func TestManagerSupervisorErrorUsesPollInterval(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	runningJob := testJob("job-1", StatusRunning, now.Add(-time.Minute))
+	runningJob.ExecutionDeadline = now.Add(-time.Second)
+	manager := testManager(newMemoryStore(runningJob), &stubNodeClient{})
+	manager.config.StatusPollInterval = 5 * time.Second
+	manager.now = func() time.Time { return now }
+
+	got := manager.nextSupervisorDelay(testManagedJob(runningJob), ErrPersistence)
+	if got != 5*time.Second {
+		t.Fatalf("nextSupervisorDelay() = %s, want 5s", got)
+	}
+}
+
+func TestManagerReloadRuntimeUsesPersistedState(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	staleJob := testJob("job-1", StatusRunning, now.Add(-time.Minute))
+	persistedJob := cloneJob(staleJob)
+	setTerminal(persistedJob, &TerminalResult{Outcome: OutcomeCompleted}, now)
+	manager := testManager(newMemoryStore(persistedJob), &stubNodeClient{})
+	runtime := testManagedJob(staleJob)
+
+	terminal, err := manager.reloadRuntime(t.Context(), runtime)
+	if err != nil || !terminal {
+		t.Fatalf("reloadRuntime() = (%t, %v), want (true, nil)", terminal, err)
+	}
+	got := runtimeSnapshot(runtime)
+	if got.Status != StatusTerminal || got.Terminal == nil ||
+		got.Terminal.Outcome != OutcomeCompleted {
+		t.Fatalf("reloaded Job = (%q, %+v), want succeeded terminal Job", got.Status, got.Terminal)
 	}
 }
 

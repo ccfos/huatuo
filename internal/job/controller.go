@@ -35,8 +35,12 @@ func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool,
 		runtime.job.PendingDeadline.IsZero()
 	runtime.mu.Unlock()
 
+	var (
+		operation *nodeapi.Operation
+		err       error
+	)
 	if shouldStart {
-		operation, err := m.start(ctx, runtime)
+		operation, err = m.start(ctx, runtime)
 		if errors.Is(err, ErrShuttingDown) {
 			return false, nil
 		}
@@ -46,18 +50,14 @@ func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool,
 			}
 			return m.handleNodeError(ctx, runtime, err, true)
 		}
-		terminal, reconcileErr := m.reconcileAndStop(ctx, runtime, operation)
-		if errors.Is(reconcileErr, nodeclient.ErrProtocol) {
-			return m.handleNodeError(ctx, runtime, reconcileErr, false)
+	} else {
+		snapshot := runtimeSnapshot(runtime)
+		operation, err = m.nodeClient.GetOperation(ctx, snapshot.Hostname, snapshot.ID)
+		if err != nil {
+			return m.handleNodeError(ctx, runtime, err, false)
 		}
-		return terminal, reconcileErr
 	}
 
-	snapshot := runtimeSnapshot(runtime)
-	operation, err := m.nodeClient.GetOperation(ctx, snapshot.Hostname, snapshot.ID)
-	if err != nil {
-		return m.handleNodeError(ctx, runtime, err, false)
-	}
 	terminal, reconcileErr := m.reconcileAndStop(ctx, runtime, operation)
 	if errors.Is(reconcileErr, nodeclient.ErrProtocol) {
 		return m.handleNodeError(ctx, runtime, reconcileErr, false)
@@ -339,7 +339,11 @@ func (m *Manager) persistRuntime(
 	return nil
 }
 
-func (m *Manager) nextWake(runtime *managedJob) time.Duration {
+func (m *Manager) nextSupervisorDelay(runtime *managedJob, superviseErr error) time.Duration {
+	if superviseErr != nil {
+		return m.config.StatusPollInterval
+	}
+
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	current := runtime.job
