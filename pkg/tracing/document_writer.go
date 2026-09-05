@@ -98,6 +98,10 @@ func (s *documentWriter) saveDocument(document *Document) error {
 	return errors.Join(errs...)
 }
 
+// containerByID resolves a container for document attribution; overridable
+// in tests.
+var containerByID = pod.ContainerByID
+
 func newBaseDocument(options DocumentOptions, req *WriteRequest) (*Document, error) {
 	formattedTime := req.TracerTime.Format(tracingDocumentTimeLayout)
 	document := Document{
@@ -119,12 +123,14 @@ func newBaseDocument(options DocumentOptions, req *WriteRequest) (*Document, err
 		return &document, nil
 	}
 
-	container, err := pod.ContainerByID(req.ContainerID)
-	if err != nil {
-		return nil, fmt.Errorf("get container %s: %w", req.ContainerID, err)
-	}
-	if container == nil {
-		return nil, fmt.Errorf("container %s not found", req.ContainerID)
+	// The container can vanish between the event and this save - an OOM
+	// victim dies from the very OOM being reported, or a profiled container
+	// exits mid-run. Keep the document with host-level attribution instead
+	// of dropping it, matching how collectors treat unresolvable containers
+	// (e.g. oom.go counts them as host events).
+	container, err := containerByID(req.ContainerID)
+	if err != nil || container == nil {
+		return &document, nil
 	}
 
 	document.ContainerID = container.ID
