@@ -374,7 +374,7 @@ func TestManagerStartPersistsDispatchMarkerBeforeNodeCall(t *testing.T) {
 		if expected != StatusPending {
 			t.Fatalf("Save() expected status = %q", expected)
 		}
-		if saved.StartAttemptedAt.IsZero() || saved.PendingDeadline.IsZero() {
+		if saved.PendingDeadline.IsZero() {
 			t.Fatal("Save() did not contain the dispatch marker")
 		}
 		markerPersisted.Store(true)
@@ -425,8 +425,8 @@ func TestManagerStopBeforeDispatchPersistsUserIntent(t *testing.T) {
 	if got.Status != StatusTerminal || got.Terminal == nil || got.Terminal.Outcome != OutcomeStopped || got.StopReason != StopReasonUser {
 		t.Fatalf("stopped Job = (%q, %q)", got.Status, got.StopReason)
 	}
-	if got.StopRequestedAt.IsZero() || got.EndedAt.IsZero() {
-		t.Fatal("stopped Job did not retain stop and terminal timestamps")
+	if got.EndedAt.IsZero() {
+		t.Fatal("stopped Job did not retain the terminal timestamp")
 	}
 }
 
@@ -488,7 +488,6 @@ func TestManagerDistinguishesUnknownAndLostOperations(t *testing.T) {
 func TestManagerExecutionTimeoutStopsThenFailsJob(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	runningJob := testJob("job-1", StatusRunning, now.Add(-2*time.Minute))
-	runningJob.StartAttemptedAt = now.Add(-2 * time.Minute)
 	runningJob.PendingDeadline = now.Add(-90 * time.Second)
 	runningJob.StartedAt = now.Add(-time.Minute)
 	runningJob.ExecutionDeadline = now
@@ -529,7 +528,6 @@ func TestManagerNodeUnavailableDoesNotSpinOnBusinessDeadline(t *testing.T) {
 	runningJob := testJob("job-1", StatusRunning, now.Add(-time.Minute))
 	runningJob.StartedAt = now.Add(-time.Minute)
 	runningJob.ExecutionDeadline = now.Add(-time.Second)
-	runningJob.NodeUnavailableSince = now.Add(-time.Second)
 	runningJob.NodeUnavailableDeadline = now.Add(time.Minute)
 	manager := testManager(newMemoryStore(runningJob), &stubNodeClient{})
 	manager.config.StatusPollInterval = 5 * time.Second

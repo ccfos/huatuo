@@ -32,7 +32,7 @@ func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool,
 		return true, nil
 	}
 	shouldStart := runtime.job.Status == StatusPending &&
-		runtime.job.StartAttemptedAt.IsZero()
+		runtime.job.PendingDeadline.IsZero()
 	runtime.mu.Unlock()
 
 	if shouldStart {
@@ -77,13 +77,12 @@ func (m *Manager) start(
 
 	runtime.mu.Lock()
 	current := runtime.job
-	if current.Status != StatusPending || !current.StartAttemptedAt.IsZero() {
+	if current.Status != StatusPending || !current.PendingDeadline.IsZero() {
 		runtime.mu.Unlock()
 		return nil, fmt.Errorf("%w: Job %q cannot be dispatched", ErrConflict, current.ID)
 	}
 	now := m.now()
 	updated := cloneJob(current)
-	updated.StartAttemptedAt = now
 	updated.PendingDeadline = now.Add(m.config.PendingTimeout)
 	updated.UpdatedAt = now
 	runtime.mu.Unlock()
@@ -285,8 +284,7 @@ func (m *Manager) handleNodeError(
 	} else if failure := explicitNodeFailure(err, duringStart); failure != nil {
 		setTerminal(updated, failure, now)
 	} else if isRecoverableNodeError(err) {
-		if current.NodeUnavailableSince.IsZero() {
-			updated.NodeUnavailableSince = now
+		if current.NodeUnavailableDeadline.IsZero() {
 			updated.NodeUnavailableDeadline = now.Add(m.config.NodeUnavailableGracePeriod)
 			updated.UpdatedAt = now
 		} else if !now.Before(current.NodeUnavailableDeadline) {
@@ -351,7 +349,7 @@ func (m *Manager) nextWake(runtime *managedJob) time.Duration {
 	now := m.now()
 	next := now.Add(m.config.StatusPollInterval)
 	deadlines := []time.Time{current.NodeUnavailableDeadline}
-	if current.NodeUnavailableSince.IsZero() {
+	if current.NodeUnavailableDeadline.IsZero() {
 		switch current.Status {
 		case StatusPending:
 			deadlines = append(deadlines, current.PendingDeadline)
@@ -479,7 +477,6 @@ func stoppedJobOutcome(reason StopReason) *TerminalResult {
 func setStopping(job *Job, reason StopReason, now time.Time, gracePeriod time.Duration) {
 	job.Status = StatusStopping
 	job.StopReason = reason
-	job.StopRequestedAt = now
 	job.StopDeadline = now.Add(gracePeriod)
 	job.UpdatedAt = now
 }
@@ -498,10 +495,9 @@ func setTerminal(
 }
 
 func clearNodeUnavailable(job *Job) bool {
-	if job.NodeUnavailableSince.IsZero() && job.NodeUnavailableDeadline.IsZero() {
+	if job.NodeUnavailableDeadline.IsZero() {
 		return false
 	}
-	job.NodeUnavailableSince = time.Time{}
 	job.NodeUnavailableDeadline = time.Time{}
 	return true
 }

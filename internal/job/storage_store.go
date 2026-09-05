@@ -69,12 +69,9 @@ type storagePayload struct {
 	StartedAt time.Time       `json:"started_at,omitempty"`
 	EndedAt   time.Time       `json:"ended_at,omitempty"`
 
-	StartAttemptedAt        time.Time  `json:"start_attempted_at,omitempty"`
 	PendingDeadline         time.Time  `json:"pending_deadline,omitempty"`
 	ExecutionDeadline       time.Time  `json:"execution_deadline,omitempty"`
-	NodeUnavailableSince    time.Time  `json:"node_unavailable_since,omitempty"`
 	NodeUnavailableDeadline time.Time  `json:"node_unavailable_deadline,omitempty"`
-	StopRequestedAt         time.Time  `json:"stop_requested_at,omitempty"`
 	StopDeadline            time.Time  `json:"stop_deadline,omitempty"`
 	StopReason              StopReason `json:"stop_reason,omitempty"`
 }
@@ -286,12 +283,9 @@ func encodeStorageRecord(job *Job) (storageRecord, error) {
 		UpdatedAt:               job.UpdatedAt,
 		StartedAt:               job.StartedAt,
 		EndedAt:                 job.EndedAt,
-		StartAttemptedAt:        job.StartAttemptedAt,
 		PendingDeadline:         job.PendingDeadline,
 		ExecutionDeadline:       job.ExecutionDeadline,
-		NodeUnavailableSince:    job.NodeUnavailableSince,
 		NodeUnavailableDeadline: job.NodeUnavailableDeadline,
-		StopRequestedAt:         job.StopRequestedAt,
 		StopDeadline:            job.StopDeadline,
 		StopReason:              job.StopReason,
 	}
@@ -342,12 +336,9 @@ func decodeCurrentJob(rowID string, data []byte) (*Job, error) {
 		UpdatedAt:               payload.UpdatedAt,
 		StartedAt:               payload.StartedAt,
 		EndedAt:                 payload.EndedAt,
-		StartAttemptedAt:        payload.StartAttemptedAt,
 		PendingDeadline:         payload.PendingDeadline,
 		ExecutionDeadline:       payload.ExecutionDeadline,
-		NodeUnavailableSince:    payload.NodeUnavailableSince,
 		NodeUnavailableDeadline: payload.NodeUnavailableDeadline,
-		StopRequestedAt:         payload.StopRequestedAt,
 		StopDeadline:            payload.StopDeadline,
 		StopReason:              payload.StopReason,
 	}

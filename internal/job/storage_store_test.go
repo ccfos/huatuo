@@ -84,7 +84,6 @@ func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
 	updated.Status = StatusRunning
 	updated.StartedAt = base.Add(time.Second)
 	updated.ExecutionDeadline = base.Add(2 * time.Minute)
-	updated.StartAttemptedAt = base
 	updated.PendingDeadline = base.Add(time.Minute)
 	updated.UpdatedAt = base.Add(time.Second)
 	if err := store.Save(t.Context(), updated, StatusTerminal); !errors.Is(err, ErrConflict) {

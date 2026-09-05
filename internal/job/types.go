@@ -107,12 +107,9 @@ type Job struct {
 	StartedAt time.Time
 	EndedAt   time.Time
 
-	StartAttemptedAt        time.Time
 	PendingDeadline         time.Time
 	ExecutionDeadline       time.Time
-	NodeUnavailableSince    time.Time
 	NodeUnavailableDeadline time.Time
-	StopRequestedAt         time.Time
 	StopDeadline            time.Time
 	StopReason              StopReason
 }
@@ -230,17 +227,11 @@ func (j *Job) validateState() error {
 	if !isValidStopReason(j.StopReason) {
 		return fmt.Errorf("unsupported job stop reason %q", j.StopReason)
 	}
-	if j.StartAttemptedAt.IsZero() != j.PendingDeadline.IsZero() {
-		return errors.New("job dispatch timestamp and pending deadline must be set together")
-	}
-	if j.NodeUnavailableSince.IsZero() != j.NodeUnavailableDeadline.IsZero() {
-		return errors.New("job Node unavailable timestamps must be set together")
-	}
 	if j.Status == StatusRunning && (j.StartedAt.IsZero() || j.ExecutionDeadline.IsZero()) {
 		return errors.New("running job requires started and execution deadline timestamps")
 	}
 	if j.Status == StatusStopping &&
-		(j.StopReason == "" || j.StopRequestedAt.IsZero() || j.StopDeadline.IsZero()) {
+		(j.StopReason == "" || j.StopDeadline.IsZero()) {
 		return errors.New("stopping job requires a persisted stop intent and deadline")
 	}
 	return nil
