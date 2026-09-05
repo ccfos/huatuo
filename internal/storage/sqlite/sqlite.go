@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS %s (
 	data BLOB NOT NULL,
 	fields TEXT NOT NULL
 )`, quoteIdentifier(s.table))
-	if _, err := s.db.ExecContext(driver.WithContext(ctx), createTableSQL); err != nil {
+	if _, err := s.db.ExecContext(ctx, createTableSQL); err != nil {
 		return fmt.Errorf("sqlite backend init table %s: %w", s.table, err)
 	}
 
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS %s (
 			quoteIdentifier(s.table),
 			jsonPath(idx.Field),
 		)
-		if _, err := s.db.ExecContext(driver.WithContext(ctx), createIndexSQL); err != nil {
+		if _, err := s.db.ExecContext(ctx, createIndexSQL); err != nil {
 			return fmt.Errorf("sqlite backend init index %s.%s: %w", s.table, idx.Field, err)
 		}
 	}
@@ -107,7 +107,7 @@ func (s *Storage) Save(ctx context.Context, rec driver.Record) error {
 		`INSERT OR REPLACE INTO %s (id, data, fields) VALUES (?, ?, ?)`,
 		quoteIdentifier(s.table),
 	)
-	if _, err := s.db.ExecContext(driver.WithContext(ctx), saveSQL, rec.ID, rec.Data, fieldsJSON); err != nil {
+	if _, err := s.db.ExecContext(ctx, saveSQL, rec.ID, rec.Data, fieldsJSON); err != nil {
 		return fmt.Errorf("sqlite backend save into %s: %w", s.table, err)
 	}
 	return nil
@@ -124,7 +124,7 @@ func (s *Storage) Create(ctx context.Context, rec driver.Record) error {
 		`INSERT INTO %s (id, data, fields) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING`,
 		quoteIdentifier(s.table),
 	)
-	result, err := s.db.ExecContext(driver.WithContext(ctx), createSQL, rec.ID, rec.Data, fieldsJSON)
+	result, err := s.db.ExecContext(ctx, createSQL, rec.ID, rec.Data, fieldsJSON)
 	if err != nil {
 		return fmt.Errorf("sqlite backend create in %s: %w", s.table, err)
 	}
@@ -160,7 +160,7 @@ func (s *Storage) Get(ctx context.Context, id string) (driver.Record, error) {
 		rec        driver.Record
 		fieldsJSON []byte
 	)
-	err := s.db.QueryRowContext(driver.WithContext(ctx), querySQL, id).Scan(&rec.ID, &rec.Data, &fieldsJSON)
+	err := s.db.QueryRowContext(ctx, querySQL, id).Scan(&rec.ID, &rec.Data, &fieldsJSON)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return driver.Record{}, driver.ErrNotFound
@@ -177,7 +177,7 @@ func (s *Storage) Get(ctx context.Context, id string) (driver.Record, error) {
 
 func (s *Storage) Delete(ctx context.Context, id string) error {
 	deleteSQL := fmt.Sprintf(`DELETE FROM %s WHERE id = ?`, quoteIdentifier(s.table))
-	if _, err := s.db.ExecContext(driver.WithContext(ctx), deleteSQL, id); err != nil {
+	if _, err := s.db.ExecContext(ctx, deleteSQL, id); err != nil {
 		return fmt.Errorf("sqlite backend delete from %s: %w", s.table, err)
 	}
 	return nil
@@ -189,7 +189,7 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 		return nil, err
 	}
 
-	rows, err := s.db.QueryContext(driver.WithContext(ctx), querySQL, args...)
+	rows, err := s.db.QueryContext(ctx, querySQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite backend query %s: %w", s.table, err)
 	}
@@ -223,7 +223,7 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	}
 
 	var count int64
-	if err := s.db.QueryRowContext(driver.WithContext(ctx), countSQL, args...).Scan(&count); err != nil {
+	if err := s.db.QueryRowContext(ctx, countSQL, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("sqlite backend count %s: %w", s.table, err)
 	}
 	return count, nil
@@ -239,7 +239,7 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 		return nil, err
 	}
 
-	rows, err := s.db.QueryContext(driver.WithContext(ctx), valuesSQL, args...)
+	rows, err := s.db.QueryContext(ctx, valuesSQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite backend values %s.%s: %w", s.table, field, err)
 	}

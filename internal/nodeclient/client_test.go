@@ -223,6 +223,29 @@ func TestParseResponseRejectsProtocolViolations(t *testing.T) {
 	}
 }
 
+func TestParseResponseUsesBodyInsteadOfContentType(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		contentType string
+	}{
+		{name: "missing", contentType: ""},
+		{name: "inaccurate", contentType: "text/plain"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := jsonResponse(http.StatusOK, operationJSON("job-1", "pending"))
+			response.Header.Set("Content-Type", test.contentType)
+
+			operation, err := parseResponse(response, "job-1", successResponseOK)
+			if err != nil {
+				t.Fatalf("parseResponse() error = %v", err)
+			}
+			if operation.RequestID != "job-1" {
+				t.Fatalf("parseResponse() request ID = %q, want %q", operation.RequestID, "job-1")
+			}
+		})
+	}
+}
+
 func TestParseResponseClassifiesBodyCloseFailureAsTransportError(t *testing.T) {
 	closeErr := errors.New("close response body")
 	response := jsonResponse(http.StatusOK, operationJSON("job-1", "completed"))
@@ -240,16 +263,5 @@ func TestParseResponseClassifiesBodyCloseFailureAsTransportError(t *testing.T) {
 	}
 	if !errors.Is(err, closeErr) {
 		t.Fatalf("parseResponse() error = %v, want close error", err)
-	}
-}
-
-func TestExecuteRejectsNilContext(t *testing.T) {
-	client, err := New(&Config{BearerToken: "node-secret"})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	_, err = client.GetOperation(nil, "node-1", "job-1") //nolint:staticcheck // Verify nil rejection.
-	if !errors.Is(err, ErrInvalidArgument) {
-		t.Fatalf("GetOperation() error = %v, want ErrInvalidArgument", err)
 	}
 }

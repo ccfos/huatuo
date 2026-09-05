@@ -35,9 +35,7 @@ import (
 
 const (
 	defaultPageSize           = 100
-	maxPageSize               = 1000
 	defaultRawProfilePageSize = 20
-	maxRawProfilePageSize     = 100
 )
 
 var (
@@ -124,7 +122,7 @@ func (s *Service) Create(
 	principal auth.Principal,
 	input *CreateInput,
 ) (*job.Job, error) {
-	if err := validateCreateInput(principal, input); err != nil {
+	if err := validateCreateInput(input); err != nil {
 		return nil, fmt.Errorf("%w: %w", job.ErrInvalidQuery, err)
 	}
 	return s.jobs.Create(ctx, &job.CreateRequest{
@@ -163,9 +161,6 @@ func (s *Service) List(
 	limit int,
 	offset int,
 ) (*job.Page, error) {
-	if err := validatePage(limit, offset); err != nil {
-		return nil, err
-	}
 	return s.jobs.ListPage(ctx, &job.Query{
 		UserID:  principal.ID,
 		IsAdmin: principal.IsAdmin,
@@ -196,12 +191,6 @@ func (s *Service) RawProfiles(
 	limit int,
 	offset int,
 ) (*RawProfilePage, error) {
-	if requestID == "" {
-		return nil, fmt.Errorf("%w: request ID is required", job.ErrInvalidQuery)
-	}
-	if err := validateRawProfilePage(limit, offset); err != nil {
-		return nil, err
-	}
 	currentJob, err := s.Get(ctx, principal, requestID)
 	if err != nil {
 		return nil, err
@@ -253,13 +242,6 @@ func (s *Service) RawProfiles(
 	}
 	items := make([]*RawProfile, 0, len(documents))
 	for _, document := range documents {
-		if document == nil || document.ProfileData == nil ||
-			document.ProfileData.Profile == nil {
-			return nil, fmt.Errorf(
-				"%w: profile storage returned an incomplete document",
-				ErrResultStoreUnavailable,
-			)
-		}
 		items = append(items, &RawProfile{
 			Hostname:          document.Hostname,
 			Region:            document.Region,
@@ -403,51 +385,15 @@ func NormalizeRawProfilePage(limit, offset *int) (int, int) {
 	return normalizedLimit, normalizedOffset
 }
 
-func validateCreateInput(principal auth.Principal, input *CreateInput) error {
-	if principal.ID == "" {
-		return errors.New("authenticated user ID is required")
-	}
+func validateCreateInput(input *CreateInput) error {
 	if input == nil {
 		return errors.New("profiling input is required")
 	}
 	if input.Hostname == "" || strings.TrimSpace(input.Hostname) != input.Hostname {
 		return errors.New("hostname must be a non-empty trimmed value")
 	}
-	if input.DurationSeconds <= 0 || input.DurationSeconds > math.MaxInt64/int64(time.Second) {
+	if input.DurationSeconds > math.MaxInt64/int64(time.Second) {
 		return errors.New("duration_seconds is outside the supported range")
-	}
-	if err := observation.ValidateScope(input.Scope, input.ContainerID); err != nil {
-		return err
-	}
-	if err := input.Spec.Validate(); err != nil {
-		return err
-	}
-	if !profilingdomain.SupportsScope(input.Spec.Language, input.Spec.Type, input.Scope) {
-		return fmt.Errorf("profiling combination does not support scope %q", input.Scope)
-	}
-	return nil
-}
-
-func validatePage(limit, offset int) error {
-	if limit <= 0 || limit > maxPageSize {
-		return fmt.Errorf("%w: limit must be between 1 and %d", job.ErrInvalidQuery, maxPageSize)
-	}
-	if offset < 0 {
-		return fmt.Errorf("%w: offset must not be negative", job.ErrInvalidQuery)
-	}
-	return nil
-}
-
-func validateRawProfilePage(limit, offset int) error {
-	if limit <= 0 || limit > maxRawProfilePageSize {
-		return fmt.Errorf(
-			"%w: limit must be between 1 and %d",
-			job.ErrInvalidQuery,
-			maxRawProfilePageSize,
-		)
-	}
-	if offset < 0 {
-		return fmt.Errorf("%w: offset must not be negative", job.ErrInvalidQuery)
 	}
 	return nil
 }

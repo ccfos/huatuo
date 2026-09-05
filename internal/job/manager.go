@@ -221,7 +221,7 @@ func normalizeManagerConfig(config *ManagerConfig) (*ManagerConfig, error) {
 // Create persists one independent Job and starts its supervisor.
 func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, error) {
 	if err := request.validate(); err != nil {
-		return nil, fmt.Errorf("create job: %w", err)
+		return nil, fmt.Errorf("%w: create job: %w", ErrInvalidQuery, err)
 	}
 	now := m.now()
 	newJob := &Job{
@@ -299,6 +299,9 @@ func (m *Manager) ListPage(ctx context.Context, query *Query) (*Page, error) {
 			ErrInvalidQuery,
 			maxJobPageSize,
 		)
+	}
+	if query.Offset < 0 {
+		return nil, fmt.Errorf("%w: offset must not be negative", ErrInvalidQuery)
 	}
 	pageQuery := *query
 	pageQuery.Limit++

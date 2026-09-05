@@ -190,7 +190,7 @@ func TestStartOperationTracingReportsNotImplemented(t *testing.T) {
 }
 
 func TestOperationResponseMapsFailureReason(t *testing.T) {
-	payload, err := operationResponse(&operation.Operation{
+	payload := operationResponse(&operation.Operation{
 		RequestID: "job-1",
 		Kind:      operation.KindProfiling,
 		Status:    operation.StatusTerminal,
@@ -201,9 +201,6 @@ func TestOperationResponseMapsFailureReason(t *testing.T) {
 		},
 		CreatedAt: time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC),
 	})
-	if err != nil {
-		t.Fatalf("operationResponse() error = %v", err)
-	}
 	if payload.Data.Status != nodeapi.OperationStatusTerminal || payload.Data.Terminal == nil ||
 		payload.Data.Terminal.Outcome != nodeapi.OperationOutcomeFailed ||
 		payload.Data.Terminal.Reason == nil ||
@@ -213,9 +210,6 @@ func TestOperationResponseMapsFailureReason(t *testing.T) {
 }
 
 func TestSecondsDurationRejectsOverflow(t *testing.T) {
-	if _, err := secondsDuration(0); err == nil {
-		t.Fatal("secondsDuration(0) error = nil")
-	}
 	if _, err := secondsDuration(int64(^uint64(0) >> 1)); err == nil {
 		t.Fatal("secondsDuration(MaxInt64) error = nil")
 	}

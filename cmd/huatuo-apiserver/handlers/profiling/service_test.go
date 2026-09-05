@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/job"
 	"huatuo-bamai/pkg/observation"
 	profilingdomain "huatuo-bamai/pkg/profiling"
@@ -38,38 +37,17 @@ func TestValidateCreateInput(t *testing.T) {
 		},
 	}
 	tests := []struct {
-		name      string
-		principal auth.Principal
-		mutate    func(*CreateInput)
-		wantErr   string
+		name    string
+		mutate  func(*CreateInput)
+		wantErr string
 	}{
-		{name: "valid", principal: auth.Principal{ID: "user-1"}},
-		{name: "missing principal", wantErr: "authenticated user ID"},
+		{name: "valid"},
 		{
-			name:      "untrimmed hostname",
-			principal: auth.Principal{ID: "user-1"},
+			name: "untrimmed hostname",
 			mutate: func(input *CreateInput) {
 				input.Hostname = " node-1"
 			},
 			wantErr: "hostname",
-		},
-		{
-			name:      "container ID on host scope",
-			principal: auth.Principal{ID: "user-1"},
-			mutate: func(input *CreateInput) {
-				input.ContainerID = "container-1"
-			},
-			wantErr: "container id must be empty",
-		},
-		{
-			name:      "unsupported language and type",
-			principal: auth.Principal{ID: "user-1"},
-			mutate: func(input *CreateInput) {
-				input.Spec.Language = profilingdomain.LanguagePython
-				input.Spec.Type = profilingdomain.TypeMemory
-				input.Spec.Mode = profilingdomain.ModeObjectAlloc
-			},
-			wantErr: "not supported",
 		},
 	}
 	for _, tt := range tests {
@@ -78,7 +56,7 @@ func TestValidateCreateInput(t *testing.T) {
 			if tt.mutate != nil {
 				tt.mutate(&input)
 			}
-			err := validateCreateInput(tt.principal, &input)
+			err := validateCreateInput(&input)
 			if tt.wantErr == "" && err != nil {
 				t.Fatalf("validateCreateInput() error = %v", err)
 			}
@@ -124,8 +102,10 @@ func TestResultURLRequiresPublishedCompleteResult(t *testing.T) {
 
 	failed := *completed
 	failed.Status = job.StatusTerminal
-	failed.Terminal = &job.TerminalResult{Outcome: job.OutcomeFailed,
-		Reason: job.FailureReasonExecutionFailed, Message: "failed"}
+	failed.Terminal = &job.TerminalResult{
+		Outcome: job.OutcomeFailed,
+		Reason:  job.FailureReasonExecutionFailed, Message: "failed",
+	}
 	if resultURL, err := service.ResultURL(t.Context(), &failed); err != nil || resultURL != nil {
 		t.Fatalf("failed ResultURL() = (%v, %v)", resultURL, err)
 	}

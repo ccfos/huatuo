@@ -36,9 +36,6 @@ func (mapper) ID(document *Document) string {
 }
 
 func (mapper) Encode(document *Document) ([]byte, error) {
-	if err := document.validate(); err != nil {
-		return nil, err
-	}
 	return json.Marshal(document)
 }
 
@@ -54,9 +51,6 @@ func (mapper) Decode(data []byte) (*Document, error) {
 }
 
 func (mapper) Fields(document *Document) (map[string]any, error) {
-	if err := document.validate(); err != nil {
-		return nil, err
-	}
 	fields := map[string]any{
 		fieldRecordID:                             document.TracerID,
 		types.DocumentFieldHostname:               document.Hostname,

@@ -32,12 +32,13 @@ type testEntity struct {
 }
 
 type testMapper struct {
-	indexes   []driver.Index
-	fields    map[string]any
-	id        string
-	encodeErr error
-	decodeErr error
-	fieldsErr error
+	indexes      []driver.Index
+	fields       map[string]any
+	id           string
+	encodeErr    error
+	decodeErr    error
+	fieldsErr    error
+	indexesCalls int
 }
 
 func (m *testMapper) ID(v testEntity) string {
@@ -79,6 +80,7 @@ func (m *testMapper) Fields(v testEntity) (map[string]any, error) {
 }
 
 func (m *testMapper) Indexes() []driver.Index {
+	m.indexesCalls++
 	return m.indexes
 }
 
@@ -320,6 +322,17 @@ func TestNewStore(t *testing.T) {
 			typedBackend, _ := tc.backend.(*testBackend)
 			tc.validate(t, store, err, typedBackend)
 		})
+	}
+}
+
+func TestNewStoreReadsIndexesOnce(t *testing.T) {
+	mapper := newTestMapper()
+	_, err := NewStore[testEntity](t.Context(), "test", &testBackend{}, "jobs", mapper)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	if mapper.indexesCalls != 1 {
+		t.Fatalf("Mapper.Indexes() call count = %d, want 1", mapper.indexesCalls)
 	}
 }
 

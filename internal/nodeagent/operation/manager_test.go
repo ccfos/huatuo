@@ -201,13 +201,6 @@ func TestManagerValidatesRequests(t *testing.T) {
 			}
 		})
 	}
-
-	if _, err := manager.GetByID(""); !errors.Is(err, ErrInvalidRequest) {
-		t.Errorf("GetByID() error = %v, want ErrInvalidRequest", err)
-	}
-	if _, _, err := manager.StopByID(""); !errors.Is(err, ErrInvalidRequest) {
-		t.Errorf("Stop() error = %v, want ErrInvalidRequest", err)
-	}
 }
 
 func TestManagerGetAndStopByID(t *testing.T) {

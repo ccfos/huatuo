@@ -29,11 +29,7 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-const (
-	defaultMaxClients        = 100
-	defaultKeepAliveInterval = 30 * time.Second
-	maxKeepAliveFailures     = 3
-)
+const maxKeepAliveFailures = 3
 
 // EventsHandler handles kernel event streaming over SSE.
 type EventsHandler struct {
@@ -46,21 +42,12 @@ type EventsHandler struct {
 
 // NewEventsHandler constructs an EventsHandler.
 // maxClients is the maximum number of concurrent /v1/events/watch connections;
-// zero or negative values fall back to defaultMaxClients.
 // keepAliveIntervalSecs is the SSE heartbeat interval in seconds;
-// zero or negative values fall back to defaultKeepAliveInterval.
 func NewEventsHandler(
 	store *tracingstore.Store,
 	maxClients, keepAliveIntervalSecs int,
 ) *EventsHandler {
-	if maxClients <= 0 {
-		maxClients = defaultMaxClients
-	}
 	keepAlive := time.Duration(keepAliveIntervalSecs) * time.Second
-	if keepAlive <= 0 {
-		keepAlive = defaultKeepAliveInterval
-	}
-
 	h := &EventsHandler{
 		store:             store,
 		maxClients:        maxClients,

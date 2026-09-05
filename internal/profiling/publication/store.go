@@ -67,9 +67,6 @@ func NewFromConfig(ctx context.Context, config *driver.Config) (*Store, error) {
 
 // Publish writes the final commit marker synchronously.
 func (s *Store) Publish(ctx context.Context, requestID string) error {
-	if err := validateRequestID(requestID); err != nil {
-		return err
-	}
 	marker := &Marker{RequestID: requestID, PublishedAt: s.now()}
 	if err := s.store.SaveSync(ctx, marker); err != nil {
 		return fmt.Errorf("publish profiling result %q: %w", requestID, err)
@@ -79,9 +76,6 @@ func (s *Store) Publish(ctx context.Context, requestID string) error {
 
 // IsPublished reports whether a durable commit marker exists.
 func (s *Store) IsPublished(ctx context.Context, requestID string) (bool, error) {
-	if err := validateRequestID(requestID); err != nil {
-		return false, err
-	}
 	marker, err := s.store.Get(ctx, markerID(requestID))
 	if errors.Is(err, driver.ErrNotFound) {
 		return false, nil
@@ -116,13 +110,6 @@ func (s *Store) Close(ctx context.Context) error {
 		return nil
 	}
 	return s.store.Close(ctx)
-}
-
-func validateRequestID(requestID string) error {
-	if requestID == "" {
-		return errors.New("profiling publication request ID is required")
-	}
-	return nil
 }
 
 func markerID(requestID string) string {

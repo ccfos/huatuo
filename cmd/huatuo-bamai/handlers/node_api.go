@@ -66,9 +66,6 @@ func (h *NodeAPIHandler) StartOperation(
 	if err := requireNodePrincipal(ctx); err != nil {
 		return nil, err
 	}
-	if request.Body == nil {
-		return nil, nodeAPIError(errors.New("operation request body is required"))
-	}
 	switch request.Body.Kind {
 	case nodeapi.OperationKindProfiling:
 		spec, err := request.Body.Spec.AsProfilingOperationSpec()
@@ -83,10 +80,7 @@ func (h *NodeAPIHandler) StartOperation(
 		if err != nil {
 			return nil, nodeAPIError(fmt.Errorf("start profiling operation: %w", err))
 		}
-		payload, err := operationResponse(snapshot)
-		if err != nil {
-			return nil, fmt.Errorf("start profiling operation: %w", err)
-		}
+		payload := operationResponse(snapshot)
 		if created {
 			return nodeapi.StartOperation202JSONResponse(payload), nil
 		}
@@ -104,10 +98,7 @@ func (h *NodeAPIHandler) StartOperation(
 		if err != nil {
 			return nil, nodeAPIError(fmt.Errorf("start tracing operation: %w", err))
 		}
-		payload, err := operationResponse(snapshot)
-		if err != nil {
-			return nil, fmt.Errorf("start tracing operation: %w", err)
-		}
+		payload := operationResponse(snapshot)
 		if created {
 			return nodeapi.StartOperation202JSONResponse(payload), nil
 		}
@@ -129,10 +120,7 @@ func (h *NodeAPIHandler) GetOperation(
 	if err != nil {
 		return nil, nodeAPIError(fmt.Errorf("get operation: %w", err))
 	}
-	payload, err := operationResponse(snapshot)
-	if err != nil {
-		return nil, fmt.Errorf("get operation: %w", err)
-	}
+	payload := operationResponse(snapshot)
 	return nodeapi.GetOperation200JSONResponse(payload), nil
 }
 
@@ -148,10 +136,7 @@ func (h *NodeAPIHandler) StopOperation(
 	if err != nil {
 		return nil, nodeAPIError(fmt.Errorf("stop operation: %w", err))
 	}
-	payload, err := operationResponse(snapshot)
-	if err != nil {
-		return nil, fmt.Errorf("stop operation: %w", err)
-	}
+	payload := operationResponse(snapshot)
 	if initiated {
 		return nodeapi.StopOperation202JSONResponse(payload), nil
 	}
@@ -251,9 +236,6 @@ func tracingOperationRequest(
 }
 
 func secondsDuration(seconds int64) (time.Duration, error) {
-	if seconds <= 0 {
-		return 0, errors.New("duration seconds must be greater than zero")
-	}
 	if seconds > math.MaxInt64/int64(time.Second) {
 		return 0, errors.New("duration seconds exceed the supported range")
 	}
@@ -267,58 +249,26 @@ func optionalString(value *string) string {
 	return *value
 }
 
-func operationResponse(snapshot *operation.Operation) (nodeapi.OperationResponse, error) {
-	if snapshot == nil {
-		return nodeapi.OperationResponse{}, errors.New("operation snapshot is nil")
-	}
-	status, err := operationStatus(snapshot.Status)
-	if err != nil {
-		return nodeapi.OperationResponse{}, err
-	}
+func operationResponse(snapshot *operation.Operation) nodeapi.OperationResponse {
 	payload := nodeapi.Operation{
 		RequestID:  snapshot.RequestID,
 		Kind:       nodeapi.OperationKind(snapshot.Kind),
-		Status:     status,
+		Status:     nodeapi.OperationStatus(snapshot.Status),
 		CreatedAt:  snapshot.CreatedAt,
 		StartedAt:  snapshot.StartedAt,
 		FinishedAt: snapshot.FinishedAt,
 	}
-	terminal, err := operationTerminal(snapshot)
-	if err != nil {
-		return nodeapi.OperationResponse{}, err
-	}
-	payload.Terminal = terminal
-	return nodeapi.OperationResponse{Data: payload}, nil
+	payload.Terminal = operationTerminal(snapshot)
+	return nodeapi.OperationResponse{Data: payload}
 }
 
-func operationStatus(status operation.Status) (nodeapi.OperationStatus, error) {
-	switch status {
-	case operation.StatusPending:
-		return nodeapi.OperationStatusPending, nil
-	case operation.StatusRunning:
-		return nodeapi.OperationStatusRunning, nil
-	case operation.StatusStopping:
-		return nodeapi.OperationStatusStopping, nil
-	case operation.StatusTerminal:
-		return nodeapi.OperationStatusTerminal, nil
-	default:
-		return "", fmt.Errorf("unsupported operation status %q", status)
-	}
-}
-
-func operationTerminal(snapshot *operation.Operation) (*nodeapi.OperationTerminal, error) {
+func operationTerminal(snapshot *operation.Operation) *nodeapi.OperationTerminal {
 	terminalResult := snapshot.Terminal
 	if snapshot.Status != operation.StatusTerminal {
-		return nil, nil
+		return nil
 	}
-	terminal := &nodeapi.OperationTerminal{}
-	switch terminalResult.Outcome {
-	case operation.OutcomeCompleted:
-		terminal.Outcome = nodeapi.OperationOutcomeCompleted
-	case operation.OutcomeFailed:
-		terminal.Outcome = nodeapi.OperationOutcomeFailed
-	case operation.OutcomeStopped:
-		terminal.Outcome = nodeapi.OperationOutcomeStopped
+	terminal := &nodeapi.OperationTerminal{
+		Outcome: nodeapi.OperationOutcome(terminalResult.Outcome),
 	}
 	if terminalResult.Reason != "" {
 		reason := string(terminalResult.Reason)
@@ -326,7 +276,7 @@ func operationTerminal(snapshot *operation.Operation) (*nodeapi.OperationTermina
 		terminal.Reason = &reason
 		terminal.Message = &message
 	}
-	return terminal, nil
+	return terminal
 }
 
 func nodeAPIError(err error) error {

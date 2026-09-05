@@ -15,10 +15,10 @@
 package trace
 
 import (
+	"math"
 	"strings"
 	"testing"
 
-	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/pkg/observation"
 	tracingdomain "huatuo-bamai/pkg/tracing"
 )
@@ -31,29 +31,17 @@ func TestValidateCreateInput(t *testing.T) {
 		Spec:            tracingdomain.Spec{Type: tracingdomain.TypeNetworkingDrop},
 	}
 	tests := []struct {
-		name      string
-		principal auth.Principal
-		mutate    func(*CreateInput)
-		wantErr   string
+		name    string
+		mutate  func(*CreateInput)
+		wantErr string
 	}{
-		{name: "valid", principal: auth.Principal{ID: "user-1"}},
-		{name: "missing principal", wantErr: "authenticated user ID"},
+		{name: "valid"},
 		{
-			name:      "missing duration",
-			principal: auth.Principal{ID: "user-1"},
+			name: "overflowing duration",
 			mutate: func(input *CreateInput) {
-				input.DurationSeconds = 0
+				input.DurationSeconds = math.MaxInt64
 			},
 			wantErr: "duration_seconds",
-		},
-		{
-			name:      "unsupported container scope",
-			principal: auth.Principal{ID: "user-1"},
-			mutate: func(input *CreateInput) {
-				input.Scope = observation.ScopeContainer
-				input.ContainerID = "container-1"
-			},
-			wantErr: "does not support scope",
 		},
 	}
 	for _, tt := range tests {
@@ -62,7 +50,7 @@ func TestValidateCreateInput(t *testing.T) {
 			if tt.mutate != nil {
 				tt.mutate(&input)
 			}
-			err := validateCreateInput(tt.principal, input)
+			err := validateCreateInput(input)
 			if tt.wantErr == "" && err != nil {
 				t.Fatalf("validateCreateInput() error = %v", err)
 			}

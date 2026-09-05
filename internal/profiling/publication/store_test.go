@@ -165,15 +165,3 @@ func TestStoreReturnsPublishFailure(t *testing.T) {
 		t.Fatalf("Publish() error = %v, want %v", err, saveErr)
 	}
 }
-
-func TestStoreRejectsEmptyRequestID(t *testing.T) {
-	backend := &memoryBackend{}
-	store, _ := newTestStore(t, backend, func() time.Time { return time.Now().UTC() })
-
-	if err := store.Publish(t.Context(), ""); err == nil {
-		t.Fatal("Publish() error = nil")
-	}
-	if _, err := store.IsPublished(t.Context(), ""); err == nil {
-		t.Fatal("IsPublished() error = nil")
-	}
-}

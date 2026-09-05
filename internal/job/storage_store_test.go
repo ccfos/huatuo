@@ -204,10 +204,10 @@ func TestStorageMigrationConvertsLegacyActiveJobToOperationLost(t *testing.T) {
 	}
 }
 
-func TestValidateQueryRejectsUnsafeSort(t *testing.T) {
-	err := validateQuery(&Query{Sort: "created_at; DROP TABLE jobs"})
+func TestValidateQuerySortRejectsUnsafeSort(t *testing.T) {
+	err := validateQuerySort(&Query{Sort: "created_at; DROP TABLE jobs"})
 	if !errors.Is(err, ErrInvalidQuery) {
-		t.Fatalf("validateQuery() error = %v, want ErrInvalidQuery", err)
+		t.Fatalf("validateQuerySort() error = %v, want ErrInvalidQuery", err)
 	}
 }
 

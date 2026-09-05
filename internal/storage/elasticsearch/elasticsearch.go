@@ -153,7 +153,7 @@ func (s *Storage) Save(ctx context.Context, rec driver.Record) error {
 				s.index, rec.ID, res.Status, res.Error.Type, res.Error.Reason)
 		},
 	}
-	if err := s.bulk.Add(driver.WithContext(ctx), item); err != nil {
+	if err := s.bulk.Add(ctx, item); err != nil {
 		return fmt.Errorf("elasticsearch backend save %s: %w", s.index, err)
 	}
 	log.Debugf("elasticsearch bulk queued index=%s id=%s data=%s", s.index, rec.ID, rec.Data)
@@ -169,7 +169,7 @@ func (s *Storage) SaveSync(ctx context.Context, rec driver.Record) error {
 		Body:       bytes.NewReader(rec.Data),
 		Refresh:    "wait_for",
 	}
-	res, err := req.Do(driver.WithContext(ctx), s.transport)
+	res, err := req.Do(ctx, s.transport)
 	if err != nil {
 		return fmt.Errorf(
 			"elasticsearch backend synchronous save %s/%s: %w",
@@ -187,7 +187,7 @@ func (s *Storage) SaveSync(ctx context.Context, rec driver.Record) error {
 
 func (s *Storage) Get(ctx context.Context, id string) (rec driver.Record, err error) {
 	req := esapi.GetRequest{Index: s.index, DocumentID: id}
-	res, err := req.Do(driver.WithContext(ctx), s.transport)
+	res, err := req.Do(ctx, s.transport)
 	if err != nil {
 		return rec, fmt.Errorf("elasticsearch backend get %s/%s: %w", s.index, id, err)
 	}
@@ -216,7 +216,7 @@ func (s *Storage) Get(ctx context.Context, id string) (rec driver.Record, err er
 
 func (s *Storage) Delete(ctx context.Context, id string) error {
 	req := esapi.DeleteRequest{Index: s.index, DocumentID: id, Refresh: "true"}
-	res, err := req.Do(driver.WithContext(ctx), s.transport)
+	res, err := req.Do(ctx, s.transport)
 	if err != nil {
 		return fmt.Errorf("elasticsearch backend delete %s/%s: %w", s.index, id, err)
 	}
@@ -247,7 +247,7 @@ func (s *Storage) DeleteByQuery(ctx context.Context, query driver.Query) (int64,
 		Refresh:           &refresh,
 		WaitForCompletion: &waitForCompletion,
 	}
-	res, err := req.Do(driver.WithContext(ctx), s.transport)
+	res, err := req.Do(ctx, s.transport)
 	if err != nil {
 		return 0, fmt.Errorf("elasticsearch backend delete by query %s: %w", s.index, err)
 	}
@@ -291,7 +291,7 @@ func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, e
 	}
 
 	req := esapi.SearchRequest{Index: []string{s.index}, Body: bytes.NewReader(body)}
-	res, err := req.Do(driver.WithContext(ctx), s.transport)
+	res, err := req.Do(ctx, s.transport)
 	if err != nil {
 		return nil, fmt.Errorf("elasticsearch backend query %s: %w", s.index, err)
 	}
@@ -327,7 +327,7 @@ func (s *Storage) Count(ctx context.Context, q driver.Query) (int64, error) {
 	}
 
 	req := esapi.CountRequest{Index: []string{s.index}, Body: bytes.NewReader(body)}
-	res, err := req.Do(driver.WithContext(ctx), s.transport)
+	res, err := req.Do(ctx, s.transport)
 	if err != nil {
 		return 0, fmt.Errorf("elasticsearch backend count %s: %w", s.index, err)
 	}
@@ -354,7 +354,7 @@ func (s *Storage) Values(ctx context.Context, field string, q driver.Query, size
 	}
 
 	req := esapi.SearchRequest{Index: []string{s.index}, Body: bytes.NewReader(body)}
-	res, err := req.Do(driver.WithContext(ctx), s.transport)
+	res, err := req.Do(ctx, s.transport)
 	if err != nil {
 		return nil, fmt.Errorf("elasticsearch backend terms %s/%s: %w", s.index, field, err)
 	}

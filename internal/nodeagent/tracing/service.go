@@ -76,12 +76,6 @@ func (s *Service) Start(
 }
 
 func validateRequest(request StartRequest) error {
-	if request.RequestID == "" {
-		return fmt.Errorf("%w: request ID is required", ErrInvalidRequest)
-	}
-	if request.Duration < time.Second || request.Duration%time.Second != 0 {
-		return fmt.Errorf("%w: duration must be a whole positive number of seconds", ErrInvalidRequest)
-	}
 	if err := observation.ValidateScope(request.Scope, request.ContainerID); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}

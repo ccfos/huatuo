@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -155,12 +154,6 @@ func (c *Client) execute(
 		}
 	}()
 
-	if ctx == nil {
-		return nil, fmt.Errorf("%w: context is required", ErrInvalidArgument)
-	}
-	if requestID == "" {
-		return nil, fmt.Errorf("%w: request ID is required", ErrInvalidArgument)
-	}
 	generated, err := c.generatedClient(host)
 	if err != nil {
 		return nil, err
@@ -218,16 +211,6 @@ func parseResponse(
 	if closeErr != nil {
 		return nil, fmt.Errorf("%w: close Node API response: %w", ErrTransport, closeErr)
 	}
-	contentType := response.Header.Get("Content-Type")
-	mediaType, _, mediaTypeErr := mime.ParseMediaType(contentType)
-	if mediaTypeErr != nil || mediaType != "application/json" {
-		return nil, fmt.Errorf(
-			"%w: Node API returned content type %q",
-			ErrProtocol,
-			contentType,
-		)
-	}
-
 	switch response.StatusCode {
 	case http.StatusOK:
 		return parseOperation(body, requestID)

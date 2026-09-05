@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"huatuo-bamai/internal/pod"
 	"huatuo-bamai/pkg/observation"
@@ -53,12 +52,6 @@ func validateConfig(config *Config) error {
 func validateRequest(request *StartRequest) error {
 	if request == nil {
 		return fmt.Errorf("%w: request is required", ErrInvalidRequest)
-	}
-	if request.RequestID == "" {
-		return fmt.Errorf("%w: request ID is required", ErrInvalidRequest)
-	}
-	if request.Duration < time.Second || request.Duration%time.Second != 0 {
-		return fmt.Errorf("%w: duration must be a whole positive number of seconds", ErrInvalidRequest)
 	}
 	if err := observation.ValidateScope(request.Scope, request.ContainerID); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidRequest, err)

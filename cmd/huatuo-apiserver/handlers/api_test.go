@@ -62,7 +62,8 @@ func TestMapCommonJobMapsTerminalFailure(t *testing.T) {
 		CreatedAt: base,
 		UpdatedAt: base.Add(time.Second),
 		EndedAt:   base.Add(time.Minute),
-		Terminal: &job.TerminalResult{Outcome: job.OutcomeFailed,
+		Terminal: &job.TerminalResult{
+			Outcome: job.OutcomeFailed,
 			Reason:  job.FailureReasonOperationLost,
 			Message: "Node no longer has the Operation",
 		},
@@ -94,10 +95,7 @@ func TestMapTracingJobUsesIndependentDomainState(t *testing.T) {
 			Type: tracingdomain.TypeNetworkingDrop,
 		}},
 	}
-	got, err := mapTracingJob(input)
-	if err != nil {
-		t.Fatalf("mapTracingJob() error = %v", err)
-	}
+	got := mapTracingJob(input)
 	if got.Status != serverapi.JobStatusTerminal || got.Terminal == nil ||
 		got.Terminal.Outcome != serverapi.JobOutcomeUnknown {
 		t.Fatalf("mapTracingJob() = %+v", got)

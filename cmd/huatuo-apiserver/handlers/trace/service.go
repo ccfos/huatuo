@@ -28,10 +28,7 @@ import (
 	tracingdomain "huatuo-bamai/pkg/tracing"
 )
 
-const (
-	defaultPageSize = 100
-	maxPageSize     = 1000
-)
+const defaultPageSize = 100
 
 // CreateInput contains transport-independent Tracing Job parameters.
 type CreateInput struct {
@@ -61,7 +58,7 @@ func (s *Service) Create(
 	principal auth.Principal,
 	input CreateInput,
 ) (*job.Job, error) {
-	if err := validateCreateInput(principal, input); err != nil {
+	if err := validateCreateInput(input); err != nil {
 		return nil, fmt.Errorf("%w: %w", job.ErrInvalidQuery, err)
 	}
 	return s.jobs.Create(ctx, &job.CreateRequest{
@@ -100,9 +97,6 @@ func (s *Service) List(
 	limit int,
 	offset int,
 ) (*job.Page, error) {
-	if err := validatePage(limit, offset); err != nil {
-		return nil, err
-	}
 	return s.jobs.ListPage(ctx, &job.Query{
 		UserID:  principal.ID,
 		IsAdmin: principal.IsAdmin,
@@ -143,34 +137,12 @@ func NormalizePage(limit, offset *int) (int, int) {
 	return normalizedLimit, normalizedOffset
 }
 
-func validateCreateInput(principal auth.Principal, input CreateInput) error {
-	if principal.ID == "" {
-		return errors.New("authenticated user ID is required")
-	}
+func validateCreateInput(input CreateInput) error {
 	if input.Hostname == "" || strings.TrimSpace(input.Hostname) != input.Hostname {
 		return errors.New("hostname must be a non-empty trimmed value")
 	}
-	if input.DurationSeconds <= 0 || input.DurationSeconds > math.MaxInt64/int64(time.Second) {
+	if input.DurationSeconds > math.MaxInt64/int64(time.Second) {
 		return errors.New("duration_seconds is outside the supported range")
-	}
-	if err := observation.ValidateScope(input.Scope, input.ContainerID); err != nil {
-		return err
-	}
-	if err := input.Spec.Validate(); err != nil {
-		return err
-	}
-	if !tracingdomain.SupportsScope(input.Spec.Type, input.Scope) {
-		return fmt.Errorf("tracing type %q does not support scope %q", input.Spec.Type, input.Scope)
-	}
-	return nil
-}
-
-func validatePage(limit, offset int) error {
-	if limit <= 0 || limit > maxPageSize {
-		return fmt.Errorf("%w: limit must be between 1 and %d", job.ErrInvalidQuery, maxPageSize)
-	}
-	if offset < 0 {
-		return fmt.Errorf("%w: offset must not be negative", job.ErrInvalidQuery)
 	}
 	return nil
 }

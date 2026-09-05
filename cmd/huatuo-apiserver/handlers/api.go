@@ -118,13 +118,7 @@ func (h *APIHandler) CreateProfilingJob(
 	ctx context.Context,
 	request serverapi.CreateProfilingJobRequestObject,
 ) (serverapi.CreateProfilingJobResponseObject, error) {
-	principal, err := requestPrincipal(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if request.Body == nil {
-		return nil, response.ErrInvalidRequest.WithMessage("request body is required")
-	}
+	principal := requestPrincipal(ctx)
 	createdJob, err := h.profiling.Create(ctx, principal, &profilinghandler.CreateInput{
 		Hostname:        request.Body.Hostname,
 		DurationSeconds: request.Body.DurationSeconds,
@@ -140,10 +134,7 @@ func (h *APIHandler) CreateProfilingJob(
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := mapProfilingJob(createdJob)
-	if err != nil {
-		return nil, err
-	}
+	payload := mapProfilingJob(createdJob)
 	return serverapi.CreateProfilingJob201JSONResponse{
 		Body: serverapi.ProfilingJobResponse{Data: payload},
 		Headers: serverapi.CreateProfilingJob201ResponseHeaders{
@@ -157,10 +148,7 @@ func (h *APIHandler) ListProfilingJobs(
 	ctx context.Context,
 	request serverapi.ListProfilingJobsRequestObject,
 ) (serverapi.ListProfilingJobsResponseObject, error) {
-	principal, err := requestPrincipal(ctx)
-	if err != nil {
-		return nil, err
-	}
+	principal := requestPrincipal(ctx)
 	limit, offset := profilinghandler.NormalizePage(request.Params.Limit, request.Params.Offset)
 	page, err := h.profiling.List(ctx, principal, limit, offset)
 	if err != nil {
@@ -169,10 +157,7 @@ func (h *APIHandler) ListProfilingJobs(
 	result := serverapi.ProfilingJobListResponse{}
 	result.Data.Items = make([]serverapi.ProfilingJob, len(page.Items))
 	for i, item := range page.Items {
-		result.Data.Items[i], err = mapProfilingJob(item)
-		if err != nil {
-			return nil, err
-		}
+		result.Data.Items[i] = mapProfilingJob(item)
 	}
 	result.Data.HasMore = page.HasMore
 	result.Data.Limit = limit
@@ -182,12 +167,9 @@ func (h *APIHandler) ListProfilingJobs(
 
 // GetProfilingCapabilities returns static product capabilities.
 func (h *APIHandler) GetProfilingCapabilities(
-	ctx context.Context,
+	_ context.Context,
 	_ serverapi.GetProfilingCapabilitiesRequestObject,
 ) (serverapi.GetProfilingCapabilitiesResponseObject, error) {
-	if _, err := requestPrincipal(ctx); err != nil {
-		return nil, err
-	}
 	capabilities := h.profiling.Capabilities()
 	items := make([]serverapi.ProfilingCapability, len(capabilities))
 	for i := range capabilities {
@@ -293,18 +275,12 @@ func (h *APIHandler) GetProfilingJob(
 	ctx context.Context,
 	request serverapi.GetProfilingJobRequestObject,
 ) (serverapi.GetProfilingJobResponseObject, error) {
-	principal, err := requestPrincipal(ctx)
-	if err != nil {
-		return nil, err
-	}
+	principal := requestPrincipal(ctx)
 	currentJob, err := h.profiling.Get(ctx, principal, request.RequestID)
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := mapProfilingJob(currentJob)
-	if err != nil {
-		return nil, err
-	}
+	payload := mapProfilingJob(currentJob)
 	payload.ResultURL, err = h.profiling.ResultURL(ctx, currentJob)
 	if err != nil {
 		return nil, serverAPIError(err)
@@ -319,18 +295,12 @@ func (h *APIHandler) StopProfilingJob(
 	ctx context.Context,
 	request serverapi.StopProfilingJobRequestObject,
 ) (serverapi.StopProfilingJobResponseObject, error) {
-	principal, err := requestPrincipal(ctx)
-	if err != nil {
-		return nil, err
-	}
+	principal := requestPrincipal(ctx)
 	updatedJob, err := h.profiling.Stop(ctx, principal, request.RequestID)
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := mapProfilingJob(updatedJob)
-	if err != nil {
-		return nil, err
-	}
+	payload := mapProfilingJob(updatedJob)
 	return serverapi.StopProfilingJob200JSONResponse(
 		serverapi.ProfilingJobResponse{Data: payload},
 	), nil
@@ -341,10 +311,7 @@ func (h *APIHandler) GetRawProfiles(
 	ctx context.Context,
 	request serverapi.GetRawProfilesRequestObject,
 ) (serverapi.GetRawProfilesResponseObject, error) {
-	principal, err := requestPrincipal(ctx)
-	if err != nil {
-		return nil, err
-	}
+	principal := requestPrincipal(ctx)
 	limit, offset := profilinghandler.NormalizeRawProfilePage(
 		request.Params.Limit,
 		request.Params.Offset,
@@ -378,13 +345,7 @@ func (h *APIHandler) CreateTracingJob(
 	ctx context.Context,
 	request serverapi.CreateTracingJobRequestObject,
 ) (serverapi.CreateTracingJobResponseObject, error) {
-	principal, err := requestPrincipal(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if request.Body == nil {
-		return nil, response.ErrInvalidRequest.WithMessage("request body is required")
-	}
+	principal := requestPrincipal(ctx)
 	createdJob, err := h.tracing.Create(ctx, principal, tracehandler.CreateInput{
 		Hostname:        request.Body.Hostname,
 		DurationSeconds: request.Body.DurationSeconds,
@@ -397,10 +358,7 @@ func (h *APIHandler) CreateTracingJob(
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := mapTracingJob(createdJob)
-	if err != nil {
-		return nil, err
-	}
+	payload := mapTracingJob(createdJob)
 	return serverapi.CreateTracingJob201JSONResponse{
 		Body: serverapi.TracingJobResponse{Data: payload},
 		Headers: serverapi.CreateTracingJob201ResponseHeaders{
@@ -414,10 +372,7 @@ func (h *APIHandler) ListTracingJobs(
 	ctx context.Context,
 	request serverapi.ListTracingJobsRequestObject,
 ) (serverapi.ListTracingJobsResponseObject, error) {
-	principal, err := requestPrincipal(ctx)
-	if err != nil {
-		return nil, err
-	}
+	principal := requestPrincipal(ctx)
 	limit, offset := tracehandler.NormalizePage(request.Params.Limit, request.Params.Offset)
 	page, err := h.tracing.List(ctx, principal, limit, offset)
 	if err != nil {
@@ -426,10 +381,7 @@ func (h *APIHandler) ListTracingJobs(
 	result := serverapi.TracingJobListResponse{}
 	result.Data.Items = make([]serverapi.TracingJob, len(page.Items))
 	for i, item := range page.Items {
-		result.Data.Items[i], err = mapTracingJob(item)
-		if err != nil {
-			return nil, err
-		}
+		result.Data.Items[i] = mapTracingJob(item)
 	}
 	result.Data.HasMore = page.HasMore
 	result.Data.Limit = limit
@@ -439,12 +391,9 @@ func (h *APIHandler) ListTracingJobs(
 
 // GetTracingCapabilities returns static product capabilities.
 func (h *APIHandler) GetTracingCapabilities(
-	ctx context.Context,
+	_ context.Context,
 	_ serverapi.GetTracingCapabilitiesRequestObject,
 ) (serverapi.GetTracingCapabilitiesResponseObject, error) {
-	if _, err := requestPrincipal(ctx); err != nil {
-		return nil, err
-	}
 	capabilities := h.tracing.Capabilities()
 	items := make([]serverapi.TracingCapability, len(capabilities))
 	for i := range capabilities {
@@ -462,18 +411,12 @@ func (h *APIHandler) GetTracingJob(
 	ctx context.Context,
 	request serverapi.GetTracingJobRequestObject,
 ) (serverapi.GetTracingJobResponseObject, error) {
-	principal, err := requestPrincipal(ctx)
-	if err != nil {
-		return nil, err
-	}
+	principal := requestPrincipal(ctx)
 	currentJob, err := h.tracing.Get(ctx, principal, request.RequestID)
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := mapTracingJob(currentJob)
-	if err != nil {
-		return nil, err
-	}
+	payload := mapTracingJob(currentJob)
 	return serverapi.GetTracingJob200JSONResponse(
 		serverapi.TracingJobResponse{Data: payload},
 	), nil
@@ -484,27 +427,18 @@ func (h *APIHandler) StopTracingJob(
 	ctx context.Context,
 	request serverapi.StopTracingJobRequestObject,
 ) (serverapi.StopTracingJobResponseObject, error) {
-	principal, err := requestPrincipal(ctx)
-	if err != nil {
-		return nil, err
-	}
+	principal := requestPrincipal(ctx)
 	updatedJob, err := h.tracing.Stop(ctx, principal, request.RequestID)
 	if err != nil {
 		return nil, serverAPIError(err)
 	}
-	payload, err := mapTracingJob(updatedJob)
-	if err != nil {
-		return nil, err
-	}
+	payload := mapTracingJob(updatedJob)
 	return serverapi.StopTracingJob200JSONResponse(
 		serverapi.TracingJobResponse{Data: payload},
 	), nil
 }
 
-func mapProfilingJob(source *job.Job) (serverapi.ProfilingJob, error) {
-	if source == nil || source.Kind != job.KindProfiling || source.Spec.Profiling == nil {
-		return serverapi.ProfilingJob{}, errors.New("map Profiling Job: invalid domain Job")
-	}
+func mapProfilingJob(source *job.Job) serverapi.ProfilingJob {
 	common := mapCommonJob(source)
 	return serverapi.ProfilingJob{
 		RequestID:       common.RequestID,
@@ -522,13 +456,10 @@ func mapProfilingJob(source *job.Job) (serverapi.ProfilingJob, error) {
 		Language:        serverapi.ProfilingLanguage(source.Spec.Profiling.Language),
 		Mode:            serverapi.ProfilingMode(source.Spec.Profiling.Mode),
 		BinaryMatchPath: optionalString(source.Spec.Profiling.BinaryMatchPath),
-	}, nil
+	}
 }
 
-func mapTracingJob(source *job.Job) (serverapi.TracingJob, error) {
-	if source == nil || source.Kind != job.KindTracing || source.Spec.Tracing == nil {
-		return serverapi.TracingJob{}, errors.New("map Tracing Job: invalid domain Job")
-	}
+func mapTracingJob(source *job.Job) serverapi.TracingJob {
 	common := mapCommonJob(source)
 	return serverapi.TracingJob{
 		RequestID:       common.RequestID,
@@ -543,7 +474,7 @@ func mapTracingJob(source *job.Job) (serverapi.TracingJob, error) {
 		StartedAt:       common.StartedAt,
 		EndedAt:         common.EndedAt,
 		Type:            serverapi.TracingType(source.Spec.Tracing.Type),
-	}, nil
+	}
 }
 
 func mapCommonJob(source *job.Job) serverapi.Job {
@@ -569,9 +500,6 @@ func mapCommonJob(source *job.Job) serverapi.Job {
 func mapJobTerminal(source *job.Job) *serverapi.JobTerminal {
 	terminal := &serverapi.JobTerminal{}
 	terminalResult := source.Terminal
-	if terminalResult == nil {
-		return terminal
-	}
 	switch terminalResult.Outcome {
 	case job.OutcomeCompleted:
 		terminal.Outcome = serverapi.JobOutcomeCompleted
@@ -665,10 +593,7 @@ func rawProfiles(
 }
 
 func (h *APIHandler) authorizeProfileQuery(ctx context.Context) error {
-	principal, err := requestPrincipal(ctx)
-	if err != nil {
-		return err
-	}
+	principal := requestPrincipal(ctx)
 	if !principal.IsAdmin {
 		return response.NewAPIError(
 			apiv1.ErrorCodePermissionDenied,
@@ -690,9 +615,6 @@ func invokeProfileQuery[Request, Result proto.Message](
 	request Request,
 	invoke func(context.Context, Request) (Result, error),
 ) ([]byte, error) {
-	if body == nil {
-		return nil, response.ErrInvalidRequest.WithMessage("request body is required")
-	}
 	data, err := io.ReadAll(body)
 	if err != nil {
 		return nil, response.ErrInvalidRequest.WithMessage("read protobuf request: " + err.Error())
@@ -729,15 +651,9 @@ func protobufResponse(data []byte) serverapi.ProtobufResponseApplicationProtoRes
 	}
 }
 
-func requestPrincipal(ctx context.Context) (auth.Principal, error) {
-	principal, ok := auth.PrincipalFromContext(ctx)
-	if !ok || principal.ID == "" {
-		return auth.Principal{}, response.NewAPIError(
-			apiv1.ErrorCodeUnauthenticated,
-			"authentication is required",
-		)
-	}
-	return principal, nil
+func requestPrincipal(ctx context.Context) auth.Principal {
+	principal, _ := auth.PrincipalFromContext(ctx)
+	return principal
 }
 
 func serverAPIError(err error) error {

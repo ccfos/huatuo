@@ -107,10 +107,6 @@ func newStore(ctx context.Context, dsn string) (Store, error) {
 }
 
 func (s *storageStore) Get(ctx context.Context, jobID string) (*Job, error) {
-	if jobID == "" {
-		return nil, fmt.Errorf("%w: job ID is required", ErrInvalidQuery)
-	}
-
 	var data []byte
 	err := s.db.QueryRowContext(ctx,
 		`SELECT data FROM jobs WHERE id = ?`, jobID).Scan(&data)
@@ -362,7 +358,7 @@ func decodeCurrentJob(rowID string, data []byte) (*Job, error) {
 }
 
 func buildListSQL(query *Query) (string, []any, error) {
-	if err := validateQuery(query); err != nil {
+	if err := validateQuerySort(query); err != nil {
 		return "", nil, err
 	}
 	whereSQL, args := buildWhereSQL(query)
@@ -447,29 +443,9 @@ func buildWhereSQL(query *Query) (string, []any) {
 	return strings.Join(clauses, " AND "), args
 }
 
-func validateQuery(query *Query) error {
+func validateQuerySort(query *Query) error {
 	if query == nil {
 		return nil
-	}
-	if query.Limit < 0 || query.Limit > maxJobPageSize+1 {
-		return fmt.Errorf(
-			"%w: storage limit must be between 0 and %d",
-			ErrInvalidQuery,
-			maxJobPageSize+1,
-		)
-	}
-	if query.Offset < 0 {
-		return fmt.Errorf("%w: offset must not be negative", ErrInvalidQuery)
-	}
-	for _, status := range query.Statuses {
-		if !isValidStatus(status) {
-			return fmt.Errorf("%w: unsupported status %q", ErrInvalidQuery, status)
-		}
-	}
-	for _, kind := range query.Kinds {
-		if kind != KindProfiling && kind != KindTracing {
-			return fmt.Errorf("%w: unsupported kind %q", ErrInvalidQuery, kind)
-		}
 	}
 	field, _ := querySort(query)
 	if _, ok := storageFieldExpressions[field]; !ok {

@@ -94,6 +94,13 @@ func TestRegisterOpenAPIHandlersValidatesRequests(t *testing.T) {
 			wantCalls:   1,
 		},
 		{
+			name:        "missing required body",
+			contentType: "application/json",
+			wantStatus:  http.StatusBadRequest,
+			wantCode:    "invalid_request",
+			wantCalls:   1,
+		},
+		{
 			name:        "unsupported content type",
 			contentType: "text/plain",
 			body:        validBody,

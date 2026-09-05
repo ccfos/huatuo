@@ -104,10 +104,6 @@ func (s *ProfileQueryService) SelectMergeStacktraces(ctx context.Context, req *q
 	// merge profileDocs
 	var profilesMerge pprof.ProfileMerge
 	for _, profileDoc := range profileDocs {
-		if profileDoc == nil || profileDoc.ProfileData == nil ||
-			profileDoc.ProfileData.Profile == nil {
-			return nil, fmt.Errorf("%w: incomplete profile document", ErrInvalidQuery)
-		}
 		profile := profileDoc.ProfileData.Profile
 		if err := profilesMerge.Merge(profile); err != nil {
 			return nil, fmt.Errorf("merge profile: %w", err)

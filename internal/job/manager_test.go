@@ -258,6 +258,14 @@ func TestNormalizeManagerConfigRequiresBothServicePolicies(t *testing.T) {
 	}
 }
 
+func TestManagerCreateClassifiesInvalidRequest(t *testing.T) {
+	manager := testManager(newMemoryStore(), &stubNodeClient{})
+
+	if _, err := manager.Create(t.Context(), nil); !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("Create(nil) error = %v, want ErrInvalidQuery", err)
+	}
+}
+
 func TestManagerCreateTreatsEachRequestAsIndependent(t *testing.T) {
 	release := make(chan struct{})
 	client := &stubNodeClient{startOperation: func(
@@ -319,6 +327,10 @@ func TestManagerListPageUsesLookahead(t *testing.T) {
 	}
 	if len(last.Items) != 1 || last.HasMore {
 		t.Fatalf("ListPage() last page = (%d items, has_more=%t)", len(last.Items), last.HasMore)
+	}
+
+	if _, err := manager.ListPage(t.Context(), &Query{Limit: 1, Offset: -1}); !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("ListPage() negative offset error = %v, want ErrInvalidQuery", err)
 	}
 }
 

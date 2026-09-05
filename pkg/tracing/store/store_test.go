@@ -102,6 +102,31 @@ func TestStoreSavesAndPublishesTracingDocument(t *testing.T) {
 	}
 }
 
+func TestStoreRejectsInvalidDocumentBeforePersistence(t *testing.T) {
+	backend := &testBackend{}
+	persistence, err := storage.NewStore[*Document](
+		t.Context(),
+		"memory",
+		backend,
+		Collection,
+		mapper{},
+	)
+	if err != nil {
+		t.Fatalf("storage.NewStore() error = %v", err)
+	}
+	store := &Store{
+		backends: []*storage.Store[*Document]{persistence},
+		hub:      watch.NewHub[*Document](),
+	}
+
+	if err := store.Save(&Document{}); err == nil {
+		t.Fatal("Store.Save() error = nil, want invalid document error")
+	}
+	if len(backend.saved) != 0 {
+		t.Fatalf("backend saves = %d, want 0", len(backend.saved))
+	}
+}
+
 func TestMapperKeepsCommonFieldsFlat(t *testing.T) {
 	observedTimestamp := time.Date(2026, 8, 28, 2, 0, 0, 0, time.UTC)
 	document := &Document{

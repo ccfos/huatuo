@@ -125,9 +125,6 @@ func NewFromConfig(
 func closeBackends(ctx context.Context, backends []*storage.Store[*Document]) error {
 	var errs []error
 	for _, backend := range backends {
-		if backend == nil {
-			continue
-		}
 		if err := backend.Close(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("close tracing store %q: %w", backend.Name, err))
 		}
@@ -150,9 +147,6 @@ func (s *Store) Save(document *Document) error {
 	s.hub.Notify(document)
 	var errs []error
 	for _, backend := range s.backends {
-		if backend == nil {
-			continue
-		}
 		if err := backend.Save(context.Background(), document); err != nil {
 			errs = append(errs, fmt.Errorf("save tracing document to %q: %w", backend.Name, err))
 		}

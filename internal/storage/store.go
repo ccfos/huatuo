@@ -42,9 +42,6 @@ func NewFromConfig[T any](ctx context.Context, cfg *driver.Config, collection st
 // NewStore validates that backend and mapper are non-nil, verifies the collection
 // name, and calls backend.Init to create tables and indexes.
 func NewStore[T any](ctx context.Context, name string, backend driver.Backend, collection string, mapper driver.Mapper[T]) (*Store[T], error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	if backend == nil {
 		return nil, fmt.Errorf("storage: backend is nil")
 	}
@@ -56,13 +53,14 @@ func NewStore[T any](ctx context.Context, name string, backend driver.Backend, c
 		return nil, fmt.Errorf("storage: collection is empty")
 	}
 
-	for _, idx := range mapper.Indexes() {
+	indexes := mapper.Indexes()
+	for _, idx := range indexes {
 		if idx.Field == "" {
 			return nil, fmt.Errorf("%w: empty index field", driver.ErrInvalidField)
 		}
 	}
 
-	if err := backend.Init(ctx, collection, mapper.Indexes()); err != nil {
+	if err := backend.Init(ctx, collection, indexes); err != nil {
 		return nil, err
 	}
 
@@ -79,7 +77,7 @@ func (s *Store[T]) Save(ctx context.Context, v T) error {
 	if err != nil {
 		return err
 	}
-	return s.backend.Save(driver.WithContext(ctx), rec)
+	return s.backend.Save(ctx, rec)
 }
 
 // SaveSync persists v and waits until it is visible to subsequent reads.
@@ -89,7 +87,7 @@ func (s *Store[T]) SaveSync(ctx context.Context, v T) error {
 		return err
 	}
 	if saver, ok := s.backend.(driver.SyncSaver); ok {
-		return saver.SaveSync(driver.WithContext(ctx), rec)
+		return saver.SaveSync(ctx, rec)
 	}
 	return fmt.Errorf(
 		"%w: storage backend %q does not support synchronous saves",
@@ -108,7 +106,7 @@ func (s *Store[T]) Create(ctx context.Context, v T) error {
 	if err != nil {
 		return err
 	}
-	return creator.Create(driver.WithContext(ctx), rec)
+	return creator.Create(ctx, rec)
 }
 
 func (s *Store[T]) record(v T) (driver.Record, error) {
@@ -135,7 +133,7 @@ func (s *Store[T]) record(v T) (driver.Record, error) {
 
 // Get retrieves the object with the given id; returns ErrNotFound when not found.
 func (s *Store[T]) Get(ctx context.Context, id string) (T, error) {
-	rec, err := s.backend.Get(driver.WithContext(ctx), id)
+	rec, err := s.backend.Get(ctx, id)
 	if err != nil {
 		var zero T
 		return zero, err
@@ -145,7 +143,7 @@ func (s *Store[T]) Get(ctx context.Context, id string) (T, error) {
 
 // Delete removes an object from storage by ID.
 func (s *Store[T]) Delete(ctx context.Context, id string) error {
-	return s.backend.Delete(driver.WithContext(ctx), id)
+	return s.backend.Delete(ctx, id)
 }
 
 // DeleteByQuery synchronously deletes every record matching q.
@@ -167,13 +165,13 @@ func (s *Store[T]) DeleteByQuery(ctx context.Context, q driver.Query) (int64, er
 			s.Name,
 		)
 	}
-	return deleter.DeleteByQuery(driver.WithContext(ctx), q)
+	return deleter.DeleteByQuery(ctx, q)
 }
 
 // Close releases backend resources and flushes any pending writes. The store
 // must not be used after Close returns.
 func (s *Store[T]) Close(ctx context.Context) error {
-	return s.backend.Close(driver.WithContext(ctx))
+	return s.backend.Close(ctx)
 }
 
 // Query returns objects matching q; all filter and sort fields must be registered indexes.
@@ -182,7 +180,7 @@ func (s *Store[T]) Query(ctx context.Context, q driver.Query) ([]T, error) {
 		return nil, err
 	}
 
-	records, err := s.backend.Query(driver.WithContext(ctx), q)
+	records, err := s.backend.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +203,7 @@ func (s *Store[T]) Count(ctx context.Context, q driver.Query) (int64, error) {
 		return 0, err
 	}
 
-	return s.backend.Count(driver.WithContext(ctx), q)
+	return s.backend.Count(ctx, q)
 }
 
 // Values returns up to size distinct values for field, filtered by q.
@@ -217,7 +215,7 @@ func (s *Store[T]) Values(ctx context.Context, field string, q driver.Query, siz
 		return nil, err
 	}
 
-	return s.backend.Values(driver.WithContext(ctx), field, q, size)
+	return s.backend.Values(ctx, field, q, size)
 }
 
 // validateQuery checks that limit and offset are non-negative.

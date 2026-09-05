@@ -136,10 +136,6 @@ func (m *Manager) Start(request StartRequest) (operation *Operation, created boo
 
 // GetByID returns a detached snapshot by request ID.
 func (m *Manager) GetByID(requestID string) (*Operation, error) {
-	if requestID == "" {
-		return nil, ErrInvalidRequest
-	}
-
 	m.mu.RLock()
 	now := m.now()
 	managed, ok := m.operations[requestID]
@@ -157,10 +153,6 @@ func (m *Manager) GetByID(requestID string) (*Operation, error) {
 func (m *Manager) StopByID(
 	requestID string,
 ) (operation *Operation, initiated bool, err error) {
-	if requestID == "" {
-		return nil, false, ErrInvalidRequest
-	}
-
 	m.mu.Lock()
 	now := m.now()
 	managed, ok := m.operations[requestID]
