@@ -82,9 +82,6 @@ func (m *Manager) superviseOnce(ctx context.Context, runtime *managedJob) (bool,
 	)
 	if shouldStart {
 		operation, err = m.start(ctx, runtime)
-		if errors.Is(err, ErrShuttingDown) {
-			return false, nil
-		}
 		if err != nil {
 			if errors.Is(err, ErrPersistence) || errors.Is(err, ErrConflict) {
 				return false, err
@@ -136,10 +133,8 @@ func (m *Manager) start(
 	ctx context.Context,
 	runtime *managedJob,
 ) (*nodeapi.Operation, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ErrShuttingDown
-	default:
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	runtime.mu.Lock()

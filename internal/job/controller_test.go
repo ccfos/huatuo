@@ -16,6 +16,7 @@ package job
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,6 +24,22 @@ import (
 	nodeapi "huatuo-bamai/apis/v1/node"
 	"huatuo-bamai/internal/nodeclient"
 )
+
+func TestManagerStartReturnsContextCancellation(t *testing.T) {
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	pendingJob := testJob("job-1", StatusPending, now)
+	manager := testManager(newMemoryStore(pendingJob), &stubNodeClient{})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := manager.start(ctx, testManagedJob(pendingJob))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("start() error = %v, want context.Canceled", err)
+	}
+	if errors.Is(err, ErrShuttingDown) {
+		t.Fatalf("start() error = %v, must not be ErrShuttingDown", err)
+	}
+}
 
 func TestManagerStartPersistsDispatchMarkerBeforeNodeCall(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)

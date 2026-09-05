@@ -361,6 +361,18 @@ func TestManagerShutdownCancelsBlockedSupervisor(t *testing.T) {
 	}
 }
 
+func TestManagerCreateRejectsJobAfterShutdown(t *testing.T) {
+	manager := testManager(newMemoryStore(), &stubNodeClient{})
+	if err := manager.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	_, err := manager.Create(t.Context(), testCreateRequest())
+	if !errors.Is(err, ErrShuttingDown) {
+		t.Fatalf("Create() error = %v, want ErrShuttingDown", err)
+	}
+}
+
 func TestManagerStopBeforeDispatchPersistsUserIntent(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	pendingJob := testJob("job-1", StatusPending, now)
