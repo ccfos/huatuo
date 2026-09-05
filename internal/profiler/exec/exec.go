@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/utils/executil"
@@ -120,12 +122,28 @@ func execAsprofCmd(ctx context.Context, pid int, binPath string, args ...string)
 	}
 }
 
+// asprofStopTimeout bounds the nested "asprof stop" command: a frozen JVM
+// can block the profiler attach indefinitely, which would otherwise hang
+// the caller forever even after its own deadline fired.
+const asprofStopTimeout = 5 * time.Second
+
 func StopProfiler(asprofPath string, pid int) error {
 	args := []string{"--libpath", "/tmp/libasyncProfiler.so", "stop", strconv.Itoa(pid)}
 	log.Debugf("executing command: %s", formatCmd(asprofPath, args))
-	cmd := exec.Command(asprofPath, args...)
-	_, err := cmd.CombinedOutput()
-	return err
+
+	ctx, cancel := context.WithTimeout(context.Background(), asprofStopTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, asprofPath, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("asprof stop: %w after %s (output: %q)",
+				ctxErr, asprofStopTimeout, strings.TrimSpace(string(out)))
+		}
+		return err
+	}
+	return nil
 }
 
 func formatCmd(binPath string, args []string) string {

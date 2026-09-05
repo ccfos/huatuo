@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"huatuo-bamai/internal/utils/executil"
 )
 
 func TestFormatCmdIncludesExecutableAndArguments(t *testing.T) {
@@ -89,5 +91,51 @@ while :; do sleep 1; done
 				t.Errorf("ExecCmds() CmdErr=%v, want substring %q", result.CmdErr, tt.wantErr)
 			}
 		})
+	}
+}
+
+// Regression: after cancellation, execAsprofCmd runs a nested `asprof stop`
+// to detach the agent from the target. A frozen JVM blocks the attach
+// indefinitely, and without a deadline ExecCmds never returns, so the
+// surrounding asprofCommandTimeout cannot take effect.
+func TestExecCmdsReturnsWhenNestedStopProfilerHangs(t *testing.T) {
+	asprofPath := filepath.Join(t.TempDir(), "asprof")
+	script := `#!/bin/sh
+if [ "$1" = "--libpath" ]; then
+	exec sleep 60
+fi
+trap 'exit 0' TERM
+while :; do sleep 1; done
+`
+	if err := os.WriteFile(asprofPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("write fake asprof: %v", err)
+	}
+	if err := os.Chmod(asprofPath, 0o700); err != nil {
+		t.Fatalf("make fake asprof executable: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	done := make(chan []executil.CmdResult, 1)
+	go func() {
+		done <- ExecCmds(ctx, []int{164879}, asprofPath, func(int) []string {
+			return []string{"start"}
+		})
+	}()
+
+	select {
+	case results := <-done:
+		if len(results) != 1 {
+			t.Fatalf("ExecCmds() returned %d results, want 1", len(results))
+		}
+		if results[0].Success {
+			t.Errorf("ExecCmds() Success=true, want false when nested stop times out")
+		}
+		if results[0].CmdErr == nil || !strings.Contains(results[0].CmdErr.Error(), "context deadline exceeded") {
+			t.Errorf("ExecCmds() CmdErr=%v, want context deadline exceeded", results[0].CmdErr)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("ExecCmds() did not return after cancellation: nested asprof stop is unbounded")
 	}
 }
