@@ -67,7 +67,7 @@ func newCPUSys() (*tracing.EventTracingAttr, error) {
 			perfDuration:     time.Duration(perfDurationSeconds) * time.Second,
 			threshold:        threshold,
 		},
-		Interval: 20,
+		Interval: int(intervalSeconds),
 		Flag:     tracing.FlagTracing,
 	}, nil
 }
