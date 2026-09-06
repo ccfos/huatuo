@@ -141,6 +141,22 @@ func TestGetContainersCompatibility(t *testing.T) {
 	}
 }
 
+func TestGetContainersPreservesFirstJSONValue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"code":0,"message":"success","data":[]}trailing`)
+	}))
+	defer server.Close()
+
+	serverAddr := strings.TrimPrefix(server.URL, "http://")
+	containers, err := getContainers(serverAddr, "")
+	if err != nil {
+		t.Fatalf("getContainers() error = %v", err)
+	}
+	if len(containers) != 0 {
+		t.Fatalf("len(containers) = %d, want 0", len(containers))
+	}
+}
+
 // TestGetContainersURLEscaped verifies that containerID containing URL-special
 // characters (e.g. +, &) is properly URL-escaped in the query string.
 func TestGetContainersURLEscaped(t *testing.T) {
