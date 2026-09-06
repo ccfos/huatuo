@@ -21,13 +21,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"strings"
 	"syscall"
 	"time"
 
+	"huatuo-bamai/internal/httputil"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/utils/netutil"
 
@@ -39,8 +39,8 @@ import (
 const (
 	kubeletReqTimeout                       = 5 * time.Second
 	kubeletOversizedResponseWarningInterval = 30 * time.Minute
-	maxKubeletResponseBodyBytes             = 128 << 20
-	maxKubeletErrorBodyBytes                = 8 << 10
+	maxKubeletResponseBodyBytes             = httputil.DefaultResponseBodyLimit
+	maxKubeletErrorBodyBytes                = httputil.DefaultErrorBodyLimit
 )
 
 var (
@@ -424,31 +424,11 @@ func httpDoRequest(client *http.Client, url string) ([]byte, error) {
 }
 
 func requestLimitedBody(body io.Reader, limit int64) ([]byte, bool, error) {
-	if limit <= 0 || limit == math.MaxInt64 {
-		return nil, false, fmt.Errorf("invalid response byte limit %d", limit)
-	}
-	data, err := io.ReadAll(io.LimitReader(body, limit+1))
-	if err != nil {
-		return nil, false, err
-	}
-	if int64(len(data)) <= limit {
-		return data, false, nil
-	}
-	// Preserve the probe byte so error formatting can identify truncation without
-	// carrying separate state.
-	return data, true, nil
+	return httputil.ReadLimitedBody(body, limit)
 }
 
 func requestErrorBody(body []byte) string {
-	truncated := len(body) > maxKubeletErrorBodyBytes
-	if len(body) > maxKubeletErrorBodyBytes {
-		body = body[:maxKubeletErrorBodyBytes]
-	}
-	message := strings.TrimSpace(string(body))
-	if truncated {
-		message += fmt.Sprintf("... [truncated after %d bytes]", maxKubeletErrorBodyBytes)
-	}
-	return message
+	return httputil.ErrorPreview(body, maxKubeletErrorBodyBytes)
 }
 
 // func updateKubeletContainer(containerID string, container *corev1.Container, containerStatus *corev1.ContainerStatus, pod *corev1.Pod, css map[string]uint64) error {

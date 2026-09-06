@@ -40,6 +40,59 @@ func TestGetContainersIncludesErrorBody(t *testing.T) {
 	}
 }
 
+func TestGetContainersBoundsResponseBodies(t *testing.T) {
+	tests := []struct {
+		name          string
+		status        int
+		body          string
+		contentLength string
+		streamed      bool
+		want          string
+	}{
+		{
+			name:          "declared success response",
+			status:        http.StatusOK,
+			contentLength: "65",
+			want:          "declares 65 bytes, limit is 64 bytes",
+		},
+		{
+			name:     "streamed success response",
+			status:   http.StatusOK,
+			body:     strings.Repeat("x", 65),
+			streamed: true,
+			want:     "response body exceeds 64 bytes",
+		},
+		{
+			name:   "error preview",
+			status: http.StatusServiceUnavailable,
+			body:   "backend unavailable",
+			want:   "back... [truncated after 4 bytes]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tt.contentLength != "" {
+					w.Header().Set("Content-Length", tt.contentLength)
+				}
+				w.WriteHeader(tt.status)
+				if tt.streamed {
+					w.(http.Flusher).Flush()
+				}
+				_, _ = fmt.Fprint(w, tt.body)
+			}))
+			defer server.Close()
+
+			serverAddr := strings.TrimPrefix(server.URL, "http://")
+			_, err := getContainersWithLimits(serverAddr, "", 64, 4)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("getContainersWithLimits() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetContainersCompatibility(t *testing.T) {
 	var requestedPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +138,22 @@ func TestGetContainersCompatibility(t *testing.T) {
 	}
 	if len(allContainers) != 2 {
 		t.Errorf("len(allContainers) = %d, want %d", len(allContainers), 2)
+	}
+}
+
+func TestGetContainersPreservesFirstJSONValue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"code":0,"message":"success","data":[]}trailing`)
+	}))
+	defer server.Close()
+
+	serverAddr := strings.TrimPrefix(server.URL, "http://")
+	containers, err := getContainers(serverAddr, "")
+	if err != nil {
+		t.Fatalf("getContainers() error = %v", err)
+	}
+	if len(containers) != 0 {
+		t.Fatalf("len(containers) = %d, want 0", len(containers))
 	}
 }
 

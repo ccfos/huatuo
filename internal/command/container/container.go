@@ -1,4 +1,4 @@
-// Copyright 2025 The HuaTuo Authors
+// Copyright 2025, 2026 The HuaTuo Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,18 +15,30 @@
 package container
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
+	"huatuo-bamai/internal/httputil"
 	"huatuo-bamai/internal/pod"
 )
 
 func getContainers(serverAddr, containerID string) ([]*pod.Container, error) {
+	return getContainersWithLimits(
+		serverAddr,
+		containerID,
+		httputil.DefaultResponseBodyLimit,
+		httputil.DefaultErrorBodyLimit,
+	)
+}
+
+func getContainersWithLimits(
+	serverAddr, containerID string,
+	responseLimit, errorLimit int64,
+) ([]*pod.Container, error) {
 	client := &http.Client{
 		Timeout: 3 * time.Second,
 	}
@@ -47,11 +59,31 @@ func getContainers(serverAddr, containerID string) ([]*pod.Container, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
+		body, _, err := httputil.ReadLimitedBody(resp.Body, errorLimit)
 		if err != nil {
 			return nil, fmt.Errorf("get container failed, status code: %d, read body: %w", resp.StatusCode, err)
 		}
-		return nil, fmt.Errorf("get container failed, status code: %d, body: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf(
+			"get container failed, status code: %d, body: %s",
+			resp.StatusCode,
+			httputil.ErrorPreview(body, errorLimit),
+		)
+	}
+
+	if resp.ContentLength > responseLimit {
+		return nil, fmt.Errorf(
+			"get container failed: response body declares %d bytes, limit is %d bytes",
+			resp.ContentLength,
+			responseLimit,
+		)
+	}
+
+	body, truncated, err := httputil.ReadLimitedBody(resp.Body, responseLimit)
+	if err != nil {
+		return nil, fmt.Errorf("get container failed: read response body: %w", err)
+	}
+	if truncated {
+		return nil, fmt.Errorf("get container failed: response body exceeds %d bytes", responseLimit)
 	}
 
 	type containersResp struct {
@@ -61,7 +93,7 @@ func getContainers(serverAddr, containerID string) ([]*pod.Container, error) {
 	}
 
 	var ctResp containersResp
-	if err := json.NewDecoder(resp.Body).Decode(&ctResp); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&ctResp); err != nil {
 		return nil, fmt.Errorf("containersResp decode failed: %w", err)
 	}
 
