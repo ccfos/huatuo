@@ -68,10 +68,17 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 		return nil, err
 	}
 
+	return buildReclaimMetrics(items, containersCssMem)
+}
+
+// buildReclaimMetrics turns dumped BPF map items keyed by memory-cgroup css
+// address into per-container directstall metrics.
+func buildReclaimMetrics(items []bpf.MapItem, containersCssMem map[uint64]*pod.Container) ([]*metric.Data, error) {
 	var (
 		reclaimVal memoryBpfStruct
 		cssAddr    uint64
 		data       []*metric.Data
+		reported   = make(map[uint64]struct{}, len(items))
 	)
 	for _, v := range items {
 		keyBuf := bytes.NewReader(v.Key)
@@ -85,14 +92,16 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 		}
 
 		if container, exist := containersCssMem[cssAddr]; exist {
+			reported[cssAddr] = struct{}{}
 			data = append(data, metric.NewContainerGaugeData(container, "directstall",
 				float64(reclaimVal.DirectstallCount), "counter of cgroup reclaim when try_charge", nil))
 		}
 	}
 
-	// if events haven't happened, upload zero for all containers.
-	if len(items) == 0 {
-		for _, container := range containersCssMem {
+	// Upload zero for the containers whose events haven't happened, so their
+	// series stay present once any other container starts reclaiming.
+	for css, container := range containersCssMem {
+		if _, ok := reported[css]; !ok {
 			data = append(data, metric.NewContainerGaugeData(container, "directstall",
 				float64(0), "counter of cgroup reclaim when try_charge", nil))
 		}
