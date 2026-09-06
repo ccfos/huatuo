@@ -47,9 +47,15 @@ func TestMountPointMetrics(t *testing.T) {
 			t.Errorf("metric %d value = %v, want %v", i, got[i].Value, want[i])
 		}
 		labels := got[i].Labels()
-		if labels["mountpoint"] != "/data" || labels["device"] != "/dev/vdb1" ||
-			labels["fstype"] != "ext4" {
+		if labels["mountpoint"] != "/data" {
 			t.Errorf("metric %d labels = %v", i, labels)
+		}
+		if i < len(want)-1 &&
+			(labels["device"] != "/dev/vdb1" || labels["fstype"] != "ext4") {
+			t.Errorf("capacity metric %d labels = %v", i, labels)
+		}
+		if i == len(want)-1 && (labels["device"] != "" || labels["fstype"] != "") {
+			t.Errorf("read-only metric labels = %v, want no new filesystem labels", labels)
 		}
 	}
 }

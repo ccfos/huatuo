@@ -72,11 +72,12 @@ func (c *mountPointCollector) Update() ([]*metric.Data, error) {
 }
 
 func mountPointMetrics(mount *promprocfs.MountInfo, stat *unix.Statfs_t) []*metric.Data {
-	labels := map[string]string{
+	capacityLabels := map[string]string{
 		"device":     mount.Source,
 		"fstype":     mount.FSType,
 		"mountpoint": mount.MountPoint,
 	}
+	readonlyLabels := map[string]string{"mountpoint": mount.MountPoint}
 	readonly := 0
 	if _, ok := mount.Options["ro"]; ok {
 		readonly = 1
@@ -85,16 +86,16 @@ func mountPointMetrics(mount *promprocfs.MountInfo, stat *unix.Statfs_t) []*metr
 
 	return []*metric.Data{
 		metric.NewGaugeData("size_bytes", float64(stat.Blocks)*blockSize,
-			"Filesystem size in bytes.", labels),
+			"Filesystem size in bytes.", capacityLabels),
 		metric.NewGaugeData("free_bytes", float64(stat.Bfree)*blockSize,
-			"Filesystem free space in bytes.", labels),
+			"Filesystem free space in bytes.", capacityLabels),
 		metric.NewGaugeData("avail_bytes", float64(stat.Bavail)*blockSize,
-			"Filesystem space available to non-root users in bytes.", labels),
+			"Filesystem space available to non-root users in bytes.", capacityLabels),
 		metric.NewGaugeData("files", float64(stat.Files),
-			"Filesystem total file nodes.", labels),
+			"Filesystem total file nodes.", capacityLabels),
 		metric.NewGaugeData("files_free", float64(stat.Ffree),
-			"Filesystem free file nodes.", labels),
+			"Filesystem free file nodes.", capacityLabels),
 		metric.NewGaugeData("ro", float64(readonly),
-			"Whether the filesystem is read-only.", labels),
+			"whether mountpoint is readonly or not", readonlyLabels),
 	}
 }
