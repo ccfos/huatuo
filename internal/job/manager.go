@@ -268,7 +268,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		m.wg.Done()
 		return nil, fmt.Errorf("%w: create job %q: %w", ErrPersistence, newJob.ID, err)
 	}
-	go m.runRuntime(supervisorCtx, runtime)
+	go m.runJobRuntime(supervisorCtx, runtime)
 	return cloneJob(newJob), nil
 }
 
@@ -410,7 +410,7 @@ func (m *Manager) recover(ctx context.Context) error {
 		m.registerLocked(runtime)
 		m.wg.Add(1)
 		m.mu.Unlock()
-		go m.runRuntime(supervisorCtx, runtime)
+		go m.runJobRuntime(supervisorCtx, runtime)
 	}
 	m.recoveredJobs.Add(uint64(len(jobs)))
 	return nil
@@ -466,7 +466,7 @@ func (m *Manager) activeRuntime(jobID string) *runtime {
 	return m.active[jobID]
 }
 
-func (m *Manager) runRuntime(ctx context.Context, runtime *runtime) {
+func (m *Manager) runJobRuntime(ctx context.Context, runtime *runtime) {
 	defer m.wg.Done()
 	defer func() {
 		m.mu.Lock()
