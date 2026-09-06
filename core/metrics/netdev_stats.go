@@ -172,40 +172,70 @@ func (c *netdevCollector) netlinkStats(container *pod.Container, f *matcher.Valu
 		}
 
 		// https://github.com/torvalds/linux/blob/master/include/uapi/linux/if_link.h#L42-L246
-		metrics[name] = map[string]uint64{
-			"receive_packets":  stats.RXPackets,
-			"transmit_packets": stats.TXPackets,
-			"receive_bytes":    stats.RXBytes,
-			"transmit_bytes":   stats.TXBytes,
-			"receive_errors":   stats.RXErrors,
-			"transmit_errors":  stats.TXErrors,
-			"receive_dropped":  stats.RXDropped,
-			"transmit_dropped": stats.TXDropped,
-			"multicast":        stats.Multicast,
-			"collisions":       stats.Collisions,
-
-			// detailed rx_errors
-			"receive_length_errors": stats.RXLengthErrors,
-			"receive_over_errors":   stats.RXOverErrors,
-			"receive_crc_errors":    stats.RXCRCErrors,
-			"receive_frame_errors":  stats.RXFrameErrors,
-			"receive_fifo_errors":   stats.RXFIFOErrors,
-			"receive_missed_errors": stats.RXMissedErrors,
-
-			// detailed tx_errors
-			"transmit_aborted_errors":   stats.TXAbortedErrors,
-			"transmit_carrier_errors":   stats.TXCarrierErrors,
-			"transmit_fifo_errors":      stats.TXFIFOErrors,
-			"transmit_heartbeat_errors": stats.TXHeartbeatErrors,
-			"transmit_window_errors":    stats.TXWindowErrors,
-
-			// for cslip etc
-			"receive_compressed":  stats.RXCompressed,
-			"transmit_compressed": stats.TXCompressed,
-			"receive_nohandler":   stats.RXNoHandler,
-		}
+		metrics[name] = netlinkDeviceStats(stats)
 	}
 	return metrics, nil
+}
+
+// netlinkDeviceStats maps rtnetlink link statistics to metric names.
+func netlinkDeviceStats(stats *rtnetlink.LinkStats64) map[string]uint64 {
+	return map[string]uint64{
+		"receive_packets":  stats.RXPackets,
+		"transmit_packets": stats.TXPackets,
+		"receive_bytes":    stats.RXBytes,
+		"transmit_bytes":   stats.TXBytes,
+		"receive_errors":   stats.RXErrors,
+		"transmit_errors":  stats.TXErrors,
+		"receive_dropped":  stats.RXDropped,
+		"transmit_dropped": stats.TXDropped,
+
+		// Names shared with the proc backend, which follows the
+		// node_exporter conventions.
+		"receive_multicast": stats.Multicast,
+		"transmit_colls":    stats.Collisions,
+		"receive_frame":     stats.RXFrameErrors,
+		"receive_fifo":      stats.RXFIFOErrors,
+		"transmit_carrier":  stats.TXCarrierErrors,
+		"transmit_fifo":     stats.TXFIFOErrors,
+
+		// detailed rx_errors
+		"receive_length_errors": stats.RXLengthErrors,
+		"receive_over_errors":   stats.RXOverErrors,
+		"receive_crc_errors":    stats.RXCRCErrors,
+		"receive_missed_errors": stats.RXMissedErrors,
+
+		// detailed tx_errors
+		"transmit_aborted_errors":   stats.TXAbortedErrors,
+		"transmit_heartbeat_errors": stats.TXHeartbeatErrors,
+		"transmit_window_errors":    stats.TXWindowErrors,
+
+		// for cslip etc
+		"receive_compressed":  stats.RXCompressed,
+		"transmit_compressed": stats.TXCompressed,
+		"receive_nohandler":   stats.RXNoHandler,
+	}
+}
+
+// procDeviceStats maps /proc/net/dev statistics to metric names.
+func procDeviceStats(stats *procfs.NetDevLine) map[string]uint64 {
+	return map[string]uint64{
+		"receive_bytes":       stats.RxBytes,
+		"receive_packets":     stats.RxPackets,
+		"receive_errors":      stats.RxErrors,
+		"receive_dropped":     stats.RxDropped,
+		"receive_fifo":        stats.RxFIFO,
+		"receive_frame":       stats.RxFrame,
+		"receive_compressed":  stats.RxCompressed,
+		"receive_multicast":   stats.RxMulticast,
+		"transmit_bytes":      stats.TxBytes,
+		"transmit_packets":    stats.TxPackets,
+		"transmit_errors":     stats.TxErrors,
+		"transmit_dropped":    stats.TxDropped,
+		"transmit_fifo":       stats.TxFIFO,
+		"transmit_colls":      stats.TxCollisions,
+		"transmit_carrier":    stats.TxCarrier,
+		"transmit_compressed": stats.TxCompressed,
+	}
 }
 
 func (c *netdevCollector) procStats(container *pod.Container, f *matcher.ValueMatcher) (netdevStats, error) {
@@ -229,24 +259,7 @@ func (c *netdevCollector) procStats(container *pod.Container, f *matcher.ValueMa
 			continue
 		}
 
-		metrics[name] = map[string]uint64{
-			"receive_bytes":       stats.RxBytes,
-			"receive_packets":     stats.RxPackets,
-			"receive_errors":      stats.RxErrors,
-			"receive_dropped":     stats.RxDropped,
-			"receive_fifo":        stats.RxFIFO,
-			"receive_frame":       stats.RxFrame,
-			"receive_compressed":  stats.RxCompressed,
-			"receive_multicast":   stats.RxMulticast,
-			"transmit_bytes":      stats.TxBytes,
-			"transmit_packets":    stats.TxPackets,
-			"transmit_errors":     stats.TxErrors,
-			"transmit_dropped":    stats.TxDropped,
-			"transmit_fifo":       stats.TxFIFO,
-			"transmit_colls":      stats.TxCollisions,
-			"transmit_carrier":    stats.TxCarrier,
-			"transmit_compressed": stats.TxCompressed,
-		}
+		metrics[name] = procDeviceStats(&stats)
 	}
 
 	return metrics, nil
