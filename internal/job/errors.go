@@ -40,4 +40,6 @@ var (
 	ErrShuttingDown = errors.New("job manager is shutting down")
 	// ErrJobTerminal indicates that a command cannot change a terminal Job.
 	ErrJobTerminal = errors.New("job is already terminal")
+	// ErrJobNotSupervised indicates that an active Job has no local supervisor.
+	ErrJobNotSupervised = errors.New("job is not supervised")
 )

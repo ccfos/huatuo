@@ -113,6 +113,7 @@ func TestServerAPIErrorMapsStableResultErrors(t *testing.T) {
 		{err: errRawProfileResponseTooLarge, wantCode: serverapi.ErrorCodeResultTooLarge},
 		{err: job.ErrQuotaExceeded, wantCode: serverapi.ErrorCodeQuotaExceeded},
 		{err: job.ErrNotFound, wantCode: serverapi.ErrorCodeJobNotFound},
+		{err: job.ErrJobNotSupervised, wantCode: apiv1.ErrorCodeServiceUnavailable},
 	}
 	for _, tt := range tests {
 		mapped := serverAPIError(tt.err)

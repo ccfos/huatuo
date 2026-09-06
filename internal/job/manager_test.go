@@ -410,3 +410,17 @@ func TestManagerStopBeforeDispatchPersistsUserIntent(t *testing.T) {
 		t.Fatal("stopped Job did not retain the terminal timestamp")
 	}
 }
+
+func TestManagerStopRejectsActiveJobWithoutRuntime(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	activeJob := testJob("job-1", StatusPending, now)
+	manager := testManager(newMemoryStore(activeJob), &stubNodeClient{})
+
+	_, err := manager.Stop(t.Context(), activeJob.ID)
+	if !errors.Is(err, ErrJobNotSupervised) {
+		t.Fatalf("Stop() error = %v, want ErrJobNotSupervised", err)
+	}
+	if errors.Is(err, ErrPersistence) {
+		t.Fatalf("Stop() error = %v, must not be ErrPersistence", err)
+	}
+}

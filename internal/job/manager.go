@@ -324,7 +324,7 @@ func (m *Manager) Stop(ctx context.Context, jobID string) (*Job, error) {
 		if isTerminal(storedJob.Status) {
 			return nil, ErrJobTerminal
 		}
-		return nil, fmt.Errorf("%w: active Job %q is not supervised", ErrPersistence, jobID)
+		return nil, fmt.Errorf("%w: active Job %q has no runtime", ErrJobNotSupervised, jobID)
 	}
 
 	return runtime.stop(ctx)

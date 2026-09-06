@@ -670,6 +670,8 @@ func serverAPIError(err error) error {
 		return response.ErrInvalidRequest.WithMessage(err.Error())
 	case errors.Is(err, job.ErrShuttingDown):
 		return response.NewAPIError(apiv1.ErrorCodeServiceUnavailable, "Job service is shutting down")
+	case errors.Is(err, job.ErrJobNotSupervised):
+		return response.NewAPIError(apiv1.ErrorCodeServiceUnavailable, "Job is temporarily unavailable")
 	case errors.Is(err, profilinghandler.ErrResultNotReady):
 		return response.NewAPIError(serverapi.ErrorCodeResultNotReady, "Profiling result is not ready")
 	case errors.Is(err, profilinghandler.ErrResultNotFound):
