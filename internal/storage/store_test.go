@@ -165,7 +165,8 @@ func (b *testBackend) Close(context.Context) error {
 }
 
 func TestNewFromConfigClosesBackendOnInitializationFailure(t *testing.T) {
-	backend := &testBackend{}
+	closeErr := errors.New("backend close failed")
+	backend := &testBackend{closeErr: closeErr}
 	driverName := "test-init-cleanup"
 	driver.RegisterBackend(driverName, func(*driver.Config) (driver.Backend, error) {
 		return backend, nil
@@ -185,6 +186,12 @@ func TestNewFromConfigClosesBackendOnInitializationFailure(t *testing.T) {
 	}
 	if backend.closeCalls != 1 {
 		t.Fatalf("backend Close() calls = %d, want 1", backend.closeCalls)
+	}
+	if !errors.Is(err, driver.ErrInvalidField) {
+		t.Errorf("NewFromConfig() error = %v, want ErrInvalidField", err)
+	}
+	if !errors.Is(err, closeErr) {
+		t.Errorf("NewFromConfig() error = %v, want close error", err)
 	}
 }
 
