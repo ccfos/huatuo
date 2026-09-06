@@ -15,21 +15,12 @@
 package job
 
 import (
-	"context"
 	"fmt"
 	"time"
 
 	apiv1 "huatuo-bamai/apis/v1"
 	nodeapi "huatuo-bamai/apis/v1/node"
 )
-
-func (r *runtime) startNodeOperation(ctx context.Context, job *Job) (*nodeapi.Operation, error) {
-	request, err := buildStartOperationRequest(job)
-	if err != nil {
-		return nil, err
-	}
-	return r.dependencies.nodeClient.StartOperation(ctx, job.Hostname, request)
-}
 
 func buildStartOperationRequest(job *Job) (*nodeapi.StartOperationRequest, error) {
 	request := &nodeapi.StartOperationRequest{

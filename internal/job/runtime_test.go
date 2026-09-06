@@ -42,13 +42,13 @@ func TestRuntimeStartOperationReturnsContextCancellation(t *testing.T) {
 	}
 }
 
-func TestRuntimeStartOperationPersistsMarkerBeforeNodeCall(t *testing.T) {
+func TestRuntimeStartOperationPersistsDeadlineBeforeNodeCall(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	pendingJob := testJob("job-1", StatusPending, now)
 	store := newMemoryStore(pendingJob)
 	manager := testManager(store, nil)
 	setManagerNow(manager, func() time.Time { return now })
-	var markerPersisted atomic.Bool
+	var deadlinePersisted atomic.Bool
 	store.saveHook = func(saved *Job, expectedRevision int64) error {
 		if expectedRevision != 1 {
 			t.Fatalf("Save() expected revision = %d, want 1", expectedRevision)
@@ -57,9 +57,9 @@ func TestRuntimeStartOperationPersistsMarkerBeforeNodeCall(t *testing.T) {
 			t.Fatalf("Save() revision = %d, want 2", saved.revision)
 		}
 		if saved.PendingDeadline.IsZero() {
-			t.Fatal("Save() did not contain the dispatch marker")
+			t.Fatal("Save() did not contain the Operation start deadline")
 		}
-		markerPersisted.Store(true)
+		deadlinePersisted.Store(true)
 		return nil
 	}
 	manager.runtimeDeps.nodeClient = &stubNodeClient{startOperation: func(
@@ -67,8 +67,8 @@ func TestRuntimeStartOperationPersistsMarkerBeforeNodeCall(t *testing.T) {
 		_ string,
 		request *nodeapi.StartOperationRequest,
 	) (*nodeapi.Operation, error) {
-		if !markerPersisted.Load() {
-			t.Fatal("StartOperation() ran before the dispatch marker was durable")
+		if !deadlinePersisted.Load() {
+			t.Fatal("StartOperation() ran before the Operation start deadline was durable")
 		}
 		return operation(request.RequestID, nodeapi.OperationStatusPending), nil
 	}}

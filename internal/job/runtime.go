@@ -125,18 +125,15 @@ func (r *runtime) superviseOnce(ctx context.Context) (bool, error) {
 	)
 	if shouldStart {
 		operation, err = r.startOperation(ctx)
-		if err != nil {
-			if errors.Is(err, ErrPersistence) || errors.Is(err, ErrConflict) {
-				return false, err
-			}
-			return r.handleNodeError(ctx, err, true)
+		if errors.Is(err, ErrPersistence) || errors.Is(err, ErrConflict) {
+			return false, err
 		}
 	} else {
 		snapshot := r.snapshot()
 		operation, err = r.dependencies.nodeClient.GetOperation(ctx, snapshot.Hostname, snapshot.ID)
-		if err != nil {
-			return r.handleNodeError(ctx, err, false)
-		}
+	}
+	if err != nil {
+		return r.handleNodeError(ctx, err, shouldStart)
 	}
 
 	terminal, reconcileErr := r.reconcileOperation(ctx, operation)
@@ -171,14 +168,18 @@ func (r *runtime) reloadFromStore(ctx context.Context) (bool, error) {
 }
 
 func (r *runtime) startOperation(ctx context.Context) (*nodeapi.Operation, error) {
-	updated, err := r.saveDispatchMarker(ctx)
+	job, err := r.saveOperationStartDeadline(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return r.startNodeOperation(ctx, updated)
+	request, err := buildStartOperationRequest(job)
+	if err != nil {
+		return nil, err
+	}
+	return r.dependencies.nodeClient.StartOperation(ctx, job.Hostname, request)
 }
 
-func (r *runtime) saveDispatchMarker(ctx context.Context) (*Job, error) {
+func (r *runtime) saveOperationStartDeadline(ctx context.Context) (*Job, error) {
 	if err := r.acquireTransition(ctx); err != nil {
 		return nil, err
 	}
@@ -188,7 +189,7 @@ func (r *runtime) saveDispatchMarker(ctx context.Context) (*Job, error) {
 	current := r.job
 	if current.Status != StatusPending || !current.PendingDeadline.IsZero() {
 		r.mu.Unlock()
-		return nil, fmt.Errorf("%w: Job %q cannot be dispatched", ErrConflict, current.ID)
+		return nil, fmt.Errorf("%w: Job %q cannot start an Operation", ErrConflict, current.ID)
 	}
 	now := r.dependencies.now()
 	updated := cloneJob(current)
@@ -198,14 +199,14 @@ func (r *runtime) saveDispatchMarker(ctx context.Context) (*Job, error) {
 	if err := r.saveTransition(ctx, current, updated); err != nil {
 		if errors.Is(err, ErrConflict) {
 			return nil, fmt.Errorf(
-				"%w: persist dispatch marker for Job %q: %w",
+				"%w: persist Operation start deadline for Job %q: %w",
 				ErrConflict,
 				current.ID,
 				err,
 			)
 		}
 		return nil, fmt.Errorf(
-			"%w: persist dispatch marker for Job %q: %w",
+			"%w: persist Operation start deadline for Job %q: %w",
 			ErrPersistence,
 			current.ID,
 			err,
@@ -218,7 +219,7 @@ func (r *runtime) reconcileOperation(
 	ctx context.Context,
 	operation *nodeapi.Operation,
 ) (bool, error) {
-	terminal, shouldStop, err := r.applyOperation(ctx, operation)
+	terminal, shouldStop, err := r.reconcileJobWithOperation(ctx, operation)
 	if err != nil || terminal || !shouldStop {
 		return terminal, err
 	}
@@ -232,11 +233,11 @@ func (r *runtime) reconcileOperation(
 	if err != nil {
 		return r.handleNodeError(ctx, err, false)
 	}
-	terminal, _, err = r.applyOperation(ctx, stoppedOperation)
+	terminal, _, err = r.reconcileJobWithOperation(ctx, stoppedOperation)
 	return terminal, err
 }
 
-func (r *runtime) applyOperation(
+func (r *runtime) reconcileJobWithOperation(
 	ctx context.Context,
 	operation *nodeapi.Operation,
 ) (terminal, shouldStop bool, err error) {
