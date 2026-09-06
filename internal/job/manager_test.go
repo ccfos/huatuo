@@ -255,12 +255,35 @@ func terminalOperation(requestID string, outcome nodeapi.OperationOutcome) *node
 	}
 }
 
-func TestNormalizeManagerConfigRequiresBothServicePolicies(t *testing.T) {
-	_, err := normalizeManagerConfig(&ManagerConfig{
+func TestValidateManagerConfigRequiresBothServicePolicies(t *testing.T) {
+	err := validateManagerConfig(&ManagerConfig{
+		StoreDSN:        "jobs.db",
 		ProfilingPolicy: Policy{MaxJobsPerHost: 1, MaxTotalJobs: 1},
 	})
 	if err == nil || err.Error() != "create job manager: policy for tracing is required" {
-		t.Fatalf("normalizeManagerConfig() error = %v", err)
+		t.Fatalf("validateManagerConfig() error = %v", err)
+	}
+}
+
+func TestValidateManagerConfigRequiresLifecyclePolicy(t *testing.T) {
+	err := validateManagerConfig(&ManagerConfig{
+		StoreDSN:                   "jobs.db",
+		ProfilingPolicy:            Policy{MaxJobsPerHost: 1, MaxTotalJobs: 1},
+		TracingPolicy:              Policy{MaxJobsPerHost: 1, MaxTotalJobs: 1},
+		StatusPollInterval:         time.Second,
+		CompletionGracePeriod:      time.Second,
+		NodeUnavailableGracePeriod: time.Second,
+		JobRetentionPeriod:         time.Second,
+	})
+	if err == nil || err.Error() != "create job manager: pending timeout must be positive" {
+		t.Fatalf("validateManagerConfig() error = %v", err)
+	}
+}
+
+func TestValidateManagerConfigRequiresStoreDSN(t *testing.T) {
+	err := validateManagerConfig(&ManagerConfig{})
+	if err == nil || err.Error() != "create job manager: store dsn is required" {
+		t.Fatalf("validateManagerConfig() error = %v", err)
 	}
 }
 

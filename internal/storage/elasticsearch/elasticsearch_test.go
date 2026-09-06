@@ -161,7 +161,7 @@ func (m *mockElasticsearchServer) handleSaveDocument(w http.ResponseWriter, r *h
 // handleBulk consumes NDJSON bulk requests. Only `index` actions are supported
 // since that is all the production Save path emits. Each accepted item is
 // stored under the index from either the action line or the URL path.
-func (m *mockElasticsearchServer) handleBulk(w http.ResponseWriter, r *http.Request, defaultIndex string) {
+func (m *mockElasticsearchServer) handleBulk(w http.ResponseWriter, r *http.Request, requestIndex string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -189,7 +189,7 @@ func (m *mockElasticsearchServer) handleBulk(w http.ResponseWriter, r *http.Requ
 		}
 		idx := act.Index.Index
 		if idx == "" {
-			idx = defaultIndex
+			idx = requestIndex
 		}
 		id := act.Index.ID
 
@@ -1266,7 +1266,10 @@ func TestNewBackend_WithoutProductHeader(t *testing.T) {
 	server := newMockServerWithoutProductHeader()
 	defer server.Close()
 
-	backend, err := NewBackend(&Config{Addresses: []string{server.URL}})
+	backend, err := NewBackend(&Config{
+		Addresses: []string{server.URL},
+		Index:     "huatuo_bamai",
+	})
 	if err != nil {
 		t.Fatalf("NewBackend() returned error: %v", err)
 	}
@@ -1284,11 +1287,21 @@ func TestNewBackend_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := NewBackend(&Config{Addresses: []string{server.URL}})
+	_, err := NewBackend(&Config{
+		Addresses: []string{server.URL},
+		Index:     "huatuo_bamai",
+	})
 	if err == nil {
 		t.Fatal("NewBackend() expected error, got nil")
 	}
 	if !strings.Contains(err.Error(), "elasticsearch client info") {
 		t.Errorf("error = %q, want to contain \"elasticsearch client info\"", err.Error())
+	}
+}
+
+func TestNewBackendRequiresIndex(t *testing.T) {
+	_, err := NewBackend(&Config{})
+	if err == nil || err.Error() != "elasticsearch backend: index is required" {
+		t.Fatalf("NewBackend() error = %v", err)
 	}
 }

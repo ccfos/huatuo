@@ -30,7 +30,6 @@ import (
 )
 
 const (
-	defaultJobsDBPath           = "jobs.db"
 	currentStorageSchemaVersion = 1
 )
 
@@ -83,9 +82,6 @@ type storageRecord struct {
 }
 
 func newStore(ctx context.Context, dsn string) (Store, error) {
-	if dsn == "" {
-		dsn = defaultJobsDBPath
-	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open job database: %w", err)

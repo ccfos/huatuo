@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,14 +29,9 @@ import (
 )
 
 const (
-	defaultStatusPollInterval         = 5 * time.Second
-	defaultPendingTimeout             = 30 * time.Second
-	defaultCompletionGracePeriod      = 60 * time.Second
-	defaultNodeUnavailableGracePeriod = 30 * time.Second
-	defaultJobRetentionPeriod         = 30 * 24 * time.Hour
-	jobCleanupInterval                = time.Hour
-	jobCleanupBatchSize               = 1000
-	maxJobPageSize                    = 1000
+	jobCleanupInterval  = time.Hour
+	jobCleanupBatchSize = 1000
+	maxJobPageSize      = 1000
 )
 
 // Policy limits active Jobs for one service Kind.
@@ -44,7 +40,7 @@ type Policy struct {
 	MaxTotalJobs   int
 }
 
-// ManagerConfig contains Apiserver-owned persistence, quota, and lifecycle policy.
+// ManagerConfig contains resolved Apiserver persistence, quota, and lifecycle policy.
 type ManagerConfig struct {
 	StoreDSN        string
 	ProfilingPolicy Policy
@@ -111,15 +107,15 @@ func NewManager(
 	if nodeClient == nil {
 		return nil, errors.New("create job manager: Node client is required")
 	}
-	normalized, err := normalizeManagerConfig(config)
+	if err := validateManagerConfig(config); err != nil {
+		return nil, err
+	}
+	managerConfig := *config
+	store, err := newStore(ctx, managerConfig.StoreDSN)
 	if err != nil {
 		return nil, err
 	}
-	store, err := newStore(ctx, normalized.StoreDSN)
-	if err != nil {
-		return nil, err
-	}
-	manager := newManagerWithStore(store, nodeClient, normalized)
+	manager := newManagerWithStore(store, nodeClient, &managerConfig)
 	if err := manager.recover(ctx); err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("recover jobs: %w", err)
@@ -159,59 +155,55 @@ func newManagerWithStore(
 	return manager
 }
 
-func normalizeManagerConfig(config *ManagerConfig) (*ManagerConfig, error) {
+func validateManagerConfig(config *ManagerConfig) error {
 	if config == nil {
-		return nil, errors.New("create job manager: config is required")
+		return errors.New("create job manager: config is required")
 	}
-	normalized := *config
+	if strings.TrimSpace(config.StoreDSN) == "" {
+		return errors.New("create job manager: store dsn is required")
+	}
 	for _, policyConfig := range []struct {
 		kind   Kind
 		policy Policy
 	}{
-		{kind: KindProfiling, policy: normalized.ProfilingPolicy},
-		{kind: KindTracing, policy: normalized.TracingPolicy},
+		{kind: KindProfiling, policy: config.ProfilingPolicy},
+		{kind: KindTracing, policy: config.TracingPolicy},
 	} {
 		kind, policy := policyConfig.kind, policyConfig.policy
 		if policy.MaxJobsPerHost == 0 && policy.MaxTotalJobs == 0 {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"create job manager: policy for %s is required",
 				kind,
 			)
 		}
 		if policy.MaxJobsPerHost <= 0 || policy.MaxTotalJobs <= 0 {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"create job manager: %s quotas must be greater than zero",
 				kind,
 			)
 		}
 	}
-	if normalized.StatusPollInterval == 0 {
-		normalized.StatusPollInterval = defaultStatusPollInterval
-	}
-	if normalized.PendingTimeout == 0 {
-		normalized.PendingTimeout = defaultPendingTimeout
-	}
-	if normalized.CompletionGracePeriod == 0 {
-		normalized.CompletionGracePeriod = defaultCompletionGracePeriod
-	}
-	if normalized.NodeUnavailableGracePeriod == 0 {
-		normalized.NodeUnavailableGracePeriod = defaultNodeUnavailableGracePeriod
-	}
-	if normalized.JobRetentionPeriod == 0 {
-		normalized.JobRetentionPeriod = defaultJobRetentionPeriod
-	}
-	for name, value := range map[string]time.Duration{
-		"status poll interval":          normalized.StatusPollInterval,
-		"pending timeout":               normalized.PendingTimeout,
-		"completion grace period":       normalized.CompletionGracePeriod,
-		"Node unavailable grace period": normalized.NodeUnavailableGracePeriod,
-		"Job retention period":          normalized.JobRetentionPeriod,
+	for _, lifecycleConfig := range []struct {
+		name  string
+		value time.Duration
+	}{
+		{name: "status poll interval", value: config.StatusPollInterval},
+		{name: "pending timeout", value: config.PendingTimeout},
+		{name: "completion grace period", value: config.CompletionGracePeriod},
+		{
+			name:  "Node unavailable grace period",
+			value: config.NodeUnavailableGracePeriod,
+		},
+		{name: "Job retention period", value: config.JobRetentionPeriod},
 	} {
-		if value <= 0 {
-			return nil, fmt.Errorf("create job manager: %s must be positive", name)
+		if lifecycleConfig.value <= 0 {
+			return fmt.Errorf(
+				"create job manager: %s must be positive",
+				lifecycleConfig.name,
+			)
 		}
 	}
-	return &normalized, nil
+	return nil
 }
 
 // Create persists one independent Job and starts its supervisor.

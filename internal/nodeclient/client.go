@@ -33,7 +33,6 @@ import (
 )
 
 const (
-	defaultPort           = 19704
 	defaultRequestTimeout = 10 * time.Second
 	maxSuccessBodyBytes   = 1 << 20
 	maxErrorBodyBytes     = 8 << 10
@@ -96,9 +95,6 @@ func New(config *Config) (*Client, error) {
 		return nil, errors.New("create Node client: bearer token must not contain whitespace")
 	}
 	port := config.Port
-	if port == 0 {
-		port = defaultPort
-	}
 	if port < 1 || port > 65535 {
 		return nil, fmt.Errorf("create Node client: port %d is outside 1..65535", port)
 	}

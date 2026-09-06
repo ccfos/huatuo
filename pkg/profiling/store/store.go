@@ -27,7 +27,6 @@ import (
 )
 
 const (
-	defaultIndex   = "huatuo-bamai"
 	maxSearchLimit = 1001
 )
 
@@ -61,21 +60,17 @@ type Store struct {
 
 // NewFromConfig creates profiling storage backed by Elasticsearch.
 func NewFromConfig(ctx context.Context, config Config) (*Store, error) {
-	index := config.Index
-	if index == "" {
-		index = defaultIndex
-	}
 	profileStore, err := storage.NewFromConfig[*Document](ctx, &driver.Config{
 		Driver:      "elasticsearch",
 		ESAddresses: config.Addresses,
 		ESUsername:  config.Username,
 		ESPassword:  config.Password,
-		ESIndex:     index,
+		ESIndex:     config.Index,
 	}, Collection, mapper{})
 	if err != nil {
 		return nil, err
 	}
-	log.WithField("driver", "elasticsearch").WithField("index", index).Info(
+	log.WithField("driver", "elasticsearch").WithField("index", config.Index).Info(
 		"initialized profile storage",
 	)
 	return &Store{store: profileStore}, nil

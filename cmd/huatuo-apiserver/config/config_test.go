@@ -61,6 +61,9 @@ func TestLoadFileDefaults(t *testing.T) {
 	if config.Agent.HTTPPort != 19704 || config.Agent.Auth.BearerToken != "node-secret" {
 		t.Fatalf("Agent = %+v", config.Agent)
 	}
+	if config.Elasticsearch.Index != "huatuo_bamai" {
+		t.Fatalf("Elasticsearch.Index = %q, want huatuo_bamai", config.Elasticsearch.Index)
+	}
 	if config.Profiling.DashboardBaseURL != "" {
 		t.Fatalf("Profiling = %+v", config.Profiling)
 	}

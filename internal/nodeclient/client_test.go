@@ -65,7 +65,7 @@ func operationJSON(requestID, status string) string {
 	)
 }
 
-func TestNewRejectsAmbiguousBearerToken(t *testing.T) {
+func TestNewRejectsInvalidConfig(t *testing.T) {
 	tests := []struct {
 		name   string
 		config *Config
@@ -73,8 +73,16 @@ func TestNewRejectsAmbiguousBearerToken(t *testing.T) {
 		{name: "nil config"},
 		{name: "empty token", config: &Config{}},
 		{name: "token whitespace", config: &Config{BearerToken: "secret token"}},
+		{name: "missing port", config: &Config{BearerToken: "secret"}},
 		{name: "invalid port", config: &Config{BearerToken: "secret", Port: 70000}},
-		{name: "negative timeout", config: &Config{BearerToken: "secret", RequestTimeout: -time.Second}},
+		{
+			name: "negative timeout",
+			config: &Config{
+				BearerToken:    "secret",
+				Port:           19704,
+				RequestTimeout: -time.Second,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -143,6 +151,7 @@ func TestStartOperationSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 func TestGetOperationReturnsStableNodeError(t *testing.T) {
 	client, err := New(&Config{
 		BearerToken: "node-secret",
+		Port:        19704,
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 			return jsonResponse(
 				http.StatusNotFound,
@@ -169,6 +178,7 @@ func TestNodeClientKeepsNoResponseTransportErrorDistinct(t *testing.T) {
 	transportErr := errors.New("connection reset before response")
 	client, err := New(&Config{
 		BearerToken: "node-secret",
+		Port:        19704,
 		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 			return nil, transportErr
 		})},

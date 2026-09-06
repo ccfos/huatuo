@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,7 +39,6 @@ import (
 )
 
 const (
-	defaultIndex     = "huatuo_bamai"
 	defaultQuerySize = 10000
 
 	// Bulk indexer tuning. 5MB / 1s matches the upstream defaults and is a
@@ -91,9 +91,8 @@ func init() {
 
 // NewBackend creates a backend that connects to Elasticsearch v7/v8 or OpenSearch.
 func NewBackend(cfg *Config) (*Storage, error) {
-	prefix := cfg.Index
-	if prefix == "" {
-		prefix = defaultIndex
+	if strings.TrimSpace(cfg.Index) == "" {
+		return nil, errors.New("elasticsearch backend: index is required")
 	}
 	client, err := newCompatClient(cfg.Addresses, cfg.Username, cfg.Password)
 	if err != nil {
@@ -102,7 +101,7 @@ func NewBackend(cfg *Config) (*Storage, error) {
 
 	bulk, err := esutil.NewBulkIndexer(esutil.BulkIndexerConfig{
 		Client:        client,
-		Index:         prefix,
+		Index:         cfg.Index,
 		NumWorkers:    bulkNumWorkers,
 		FlushBytes:    bulkFlushBytes,
 		FlushInterval: bulkFlushInterval,
@@ -114,7 +113,7 @@ func NewBackend(cfg *Config) (*Storage, error) {
 		return nil, fmt.Errorf("elasticsearch bulk indexer: %w", err)
 	}
 
-	return &Storage{transport: client, bulk: bulk, index: prefix}, nil
+	return &Storage{transport: client, bulk: bulk, index: cfg.Index}, nil
 }
 
 // Close flushes any pending bulk operations and stops the indexer workers.

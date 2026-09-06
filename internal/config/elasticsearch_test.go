@@ -35,6 +35,7 @@ func TestElasticsearchConfigValidate(t *testing.T) {
 				Address:  "http://127.0.0.1:9200",
 				Username: "elastic",
 				Password: "secret",
+				Index:    "huatuo_bamai",
 			},
 			wantEnabled: true,
 		},
@@ -44,6 +45,7 @@ func TestElasticsearchConfigValidate(t *testing.T) {
 				Address:  "http://es-a:9200, https://es-b:9200",
 				Username: "elastic",
 				Password: "secret",
+				Index:    "huatuo_bamai",
 			},
 			wantEnabled: true,
 		},
@@ -53,11 +55,22 @@ func TestElasticsearchConfigValidate(t *testing.T) {
 			wantError: "address, username, and password must be configured together",
 		},
 		{
+			name: "missing index",
+			config: ElasticsearchConfig{
+				Address:  "http://127.0.0.1:9200",
+				Username: "elastic",
+				Password: "secret",
+			},
+			wantEnabled: true,
+			wantError:   "index is required",
+		},
+		{
 			name: "invalid address",
 			config: ElasticsearchConfig{
 				Address:  "127.0.0.1:9200",
 				Username: "elastic",
 				Password: "secret",
+				Index:    "huatuo_bamai",
 			},
 			wantEnabled: true,
 			wantError:   `invalid address "127.0.0.1:9200"`,

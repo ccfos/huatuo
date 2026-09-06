@@ -150,9 +150,6 @@ func defaultConfig() Config {
 		Agent: AgentConfig{
 			HTTPPort: 19704,
 		},
-		Elasticsearch: internalconfig.ElasticsearchConfig{
-			Index: "huatuo_bamai",
-		},
 		Profiling: ProfilingConfig{},
 	}
 }
