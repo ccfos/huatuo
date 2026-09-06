@@ -25,7 +25,9 @@ import (
 	"huatuo-bamai/pkg/types"
 )
 
-type tcpMemory struct{}
+type tcpMemory struct {
+	parseStats func() (*tcpMemoryStat, error)
+}
 
 func init() {
 	tracing.RegisterEventTracing("tcp_memory", newTcpMemory)
@@ -41,8 +43,10 @@ func newTcpMemory() (*tracing.EventTracingAttr, error) {
 	}
 
 	return &tracing.EventTracingAttr{
-		TracingData: &tcpMemory{},
-		Flag:        tracing.FlagMetric,
+		TracingData: &tcpMemory{
+			parseStats: parseTcpMemory,
+		},
+		Flag: tracing.FlagMetric,
 	}, nil
 }
 
@@ -88,14 +92,14 @@ func parseTcpMemory() (*tcpMemoryStat, error) {
 }
 
 func (c *tcpMemory) Update() ([]*metric.Data, error) {
-	stats, err := parseTcpMemory()
+	stats, err := c.parseStats()
 	if err != nil {
 		return nil, err
 	}
 
 	usagePercent := float64(0)
 	if stats.memoryLimit > 0 {
-		usagePercent = stats.memoryPages / stats.memoryLimit
+		usagePercent = stats.memoryPages / stats.memoryLimit * 100
 	}
 
 	return []*metric.Data{
