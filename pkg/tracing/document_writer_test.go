@@ -40,3 +40,13 @@ func TestNewBaseDocumentIncludesNodeIP(t *testing.T) {
 		t.Fatalf("stored node IP = %v, want %q", fields["node_ip"], "192.0.2.10")
 	}
 }
+
+func TestDocumentFieldsOmitEmptyNodeIP(t *testing.T) {
+	fields, err := (DocumentStoreMapper{}).Fields(&Document{})
+	if err != nil {
+		t.Fatalf("DocumentStoreMapper.Fields() error = %v", err)
+	}
+	if _, ok := fields["node_ip"]; ok {
+		t.Fatal("stored fields include node_ip, want it omitted")
+	}
+}

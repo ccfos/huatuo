@@ -252,7 +252,8 @@ func newContainerData(container *pod.Container, name string, value float64, typ 
 }
 
 func isDefaultHostLabel(key string) bool {
-	return key == LabelRegion || key == LabelHost || key == LabelNodeIP
+	return key == LabelRegion || key == LabelHost ||
+		(key == LabelNodeIP && defaultNodeIP != "")
 }
 
 func isDefaultContainerLabel(key string) bool {
@@ -263,11 +264,10 @@ func isDefaultContainerLabel(key string) bool {
 		LabelContainerType,
 		LabelContainerLevel,
 		LabelContainerHostNamespace,
-		LabelHost,
-		LabelNodeIP:
+		LabelHost:
 		return true
 	default:
-		return false
+		return key == LabelNodeIP && defaultNodeIP != ""
 	}
 }
 

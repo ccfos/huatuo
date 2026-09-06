@@ -72,12 +72,11 @@ func (DocumentStoreMapper) Decode(data []byte) (*Document, error) {
 }
 
 func (DocumentStoreMapper) Fields(document *Document) (map[string]any, error) {
-	return map[string]any{
+	fields := map[string]any{
 		// record_id mirrors tracer_id for backward compatibility with legacy index queries.
 		"record_id":                document.TracerID,
 		"hostname":                 document.Hostname,
 		"region":                   document.Region,
-		"node_ip":                  document.NodeIP,
 		"uploaded_time":            document.UploadedTime,
 		"time":                     tracingDocumentTimeValue(document.Time, document.UploadedTime),
 		"container_id":             document.ContainerID,
@@ -89,7 +88,12 @@ func (DocumentStoreMapper) Fields(document *Document) (map[string]any, error) {
 		"tracer_id":                document.TracerID,
 		"tracer_time":              tracingDocumentTimeValue(document.TracerTime, document.UploadedTime),
 		"tracer_type":              document.TracerRunType,
-	}, nil
+	}
+	if document.NodeIP != "" {
+		fields["node_ip"] = document.NodeIP
+	}
+
+	return fields, nil
 }
 
 func (DocumentStoreMapper) Indexes() []driver.Index {
