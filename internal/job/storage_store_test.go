@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +57,7 @@ func storedTestJob(id, userID, host string, status Status, createdAt time.Time) 
 		Status:    status,
 		CreatedAt: createdAt,
 		UpdatedAt: createdAt,
+		revision:  1,
 	}
 	if isTerminal(status) {
 		job.EndedAt = createdAt.Add(time.Minute)
@@ -86,10 +88,13 @@ func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
 	updated.ExecutionDeadline = base.Add(2 * time.Minute)
 	updated.PendingDeadline = base.Add(time.Minute)
 	updated.UpdatedAt = base.Add(time.Second)
-	if err := store.Save(t.Context(), updated, StatusTerminal); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Save() stale status error = %v, want ErrConflict", err)
+	updated.revision = 2
+	stale := cloneJob(updated)
+	stale.revision = 3
+	if err := store.Save(t.Context(), stale, 2); !errors.Is(err, ErrConflict) {
+		t.Fatalf("Save() stale revision error = %v, want ErrConflict", err)
 	}
-	if err := store.Save(t.Context(), updated, StatusPending); err != nil {
+	if err := store.Save(t.Context(), updated, 1); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -97,8 +102,8 @@ func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
-	if got.Status != StatusRunning || !got.StartedAt.Equal(updated.StartedAt) {
-		t.Fatalf("Get() = (%q, %s)", got.Status, got.StartedAt)
+	if got.Status != StatusRunning || !got.StartedAt.Equal(updated.StartedAt) || got.revision != 2 {
+		t.Fatalf("Get() = (%q, %s, revision %d)", got.Status, got.StartedAt, got.revision)
 	}
 	listed, err := store.List(t.Context(), &Query{
 		UserID:   "user-1",
@@ -111,8 +116,43 @@ func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(listed) != 1 || listed[0].ID != first.ID {
+	if len(listed) != 1 || listed[0].ID != first.ID || listed[0].revision != 2 {
 		t.Fatalf("List() IDs = %v, want [%s]", jobIDs(listed), first.ID)
+	}
+}
+
+func TestStorageStoreRevisionConflictsForSameStatusUpdates(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	job := storedTestJob("job-1", "user-1", "node-1", StatusPending, now)
+	if err := store.Create(t.Context(), job); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	first := cloneJob(job)
+	first.PendingDeadline = now.Add(time.Minute)
+	first.UpdatedAt = now.Add(time.Second)
+	first.revision = 2
+	second := cloneJob(first)
+	second.NodeUnavailableDeadline = now.Add(2 * time.Minute)
+	if err := store.Save(t.Context(), first, 1); err != nil {
+		t.Fatalf("first Save() error = %v", err)
+	}
+	if err := store.Save(t.Context(), second, 1); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second Save() error = %v, want ErrConflict", err)
+	}
+}
+
+func TestStorageStoreRejectsNonSequentialRevision(t *testing.T) {
+	store := openTestStore(t)
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	job := storedTestJob("job-1", "user-1", "node-1", StatusPending, now)
+	if err := store.Create(t.Context(), job); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	job.revision = 3
+	if err := store.Save(t.Context(), job, 1); !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("Save() error = %v, want ErrInvalidQuery", err)
 	}
 }
 
@@ -200,6 +240,46 @@ func TestStorageMigrationConvertsLegacyActiveJobToOperationLost(t *testing.T) {
 	}
 	if got.Kind != KindProfiling || got.Duration != time.Minute {
 		t.Fatalf("migrated Job kind/duration = (%q, %s)", got.Kind, got.Duration)
+	}
+	if got.revision != 1 {
+		t.Fatalf("migrated Job revision = %d, want 1", got.revision)
+	}
+}
+
+func TestStorageStoreRejectsCurrentRecordWithoutRevision(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "jobs.db")
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE jobs (
+		id TEXT PRIMARY KEY,
+		data BLOB NOT NULL,
+		fields TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("create jobs table: %v", err)
+	}
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	job := storedTestJob("job-1", "user-1", "node-1", StatusPending, now)
+	record, err := encodeStorageRecord(job)
+	if err != nil {
+		t.Fatalf("encodeStorageRecord() error = %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO jobs (id, data, fields) VALUES (?, ?, ?)`,
+		record.id,
+		record.data,
+		`{"status":"pending"}`,
+	); err != nil {
+		t.Fatalf("insert Job: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close database: %v", err)
+	}
+
+	_, err = newStore(t.Context(), dsn)
+	if err == nil || !strings.Contains(err.Error(), "field revision: value is required") {
+		t.Fatalf("newStore() error = %v, want missing revision error", err)
 	}
 }
 

@@ -104,16 +104,19 @@ func newStore(ctx context.Context, dsn string) (Store, error) {
 }
 
 func (s *storageStore) Get(ctx context.Context, jobID string) (*Job, error) {
-	var data []byte
+	var (
+		data   []byte
+		fields string
+	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT data FROM jobs WHERE id = ?`, jobID).Scan(&data)
+		`SELECT data, fields FROM jobs WHERE id = ?`, jobID).Scan(&data, &fields)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get job %q: %w", jobID, err)
 	}
-	decodedJob, err := decodeCurrentJob(jobID, data)
+	decodedJob, err := decodeStoredJob(jobID, data, fields)
 	if err != nil {
 		return nil, fmt.Errorf("decode job %q: %w", jobID, err)
 	}
@@ -124,6 +127,9 @@ func (s *storageStore) Create(ctx context.Context, job *Job) error {
 	record, err := encodeStorageRecord(job)
 	if err != nil {
 		return err
+	}
+	if job.revision != 1 {
+		return fmt.Errorf("%w: created job revision must be 1", ErrInvalidQuery)
 	}
 	result, err := s.db.ExecContext(
 		ctx,
@@ -149,19 +155,25 @@ func (s *storageStore) Create(ctx context.Context, job *Job) error {
 func (s *storageStore) Save(
 	ctx context.Context,
 	job *Job,
-	expectedStatus Status,
+	expectedRevision int64,
 ) error {
+	if expectedRevision <= 0 {
+		return fmt.Errorf("%w: expected revision must be positive", ErrInvalidQuery)
+	}
 	record, err := encodeStorageRecord(job)
 	if err != nil {
 		return err
 	}
-
-	if !isValidStatus(expectedStatus) {
-		return fmt.Errorf("%w: unsupported expected status %q", ErrInvalidQuery, expectedStatus)
+	if job.revision != expectedRevision+1 {
+		return fmt.Errorf(
+			"%w: saved revision must follow expected revision",
+			ErrInvalidQuery,
+		)
 	}
+
 	query := `UPDATE jobs SET data = ?, fields = ? WHERE id = ?
-		AND json_extract(fields, '$.status') = ?`
-	args := []any{record.data, record.fields, record.id, string(expectedStatus)}
+		AND json_extract(fields, '$.revision') = ?`
+	args := []any{record.data, record.fields, record.id, expectedRevision}
 
 	result, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -195,13 +207,14 @@ func (s *storageStore) List(ctx context.Context, query *Query) ([]*Job, error) {
 	jobs := make([]*Job, 0, capacity)
 	for rows.Next() {
 		var (
-			id   string
-			data []byte
+			id     string
+			data   []byte
+			fields string
 		)
-		if err := rows.Scan(&id, &data); err != nil {
+		if err := rows.Scan(&id, &data, &fields); err != nil {
 			return nil, fmt.Errorf("scan job list: %w", err)
 		}
-		decodedJob, err := decodeCurrentJob(id, data)
+		decodedJob, err := decodeStoredJob(id, data, fields)
 		if err != nil {
 			return nil, fmt.Errorf("decode job %q: %w", id, err)
 		}
@@ -303,6 +316,7 @@ func encodeStorageRecord(job *Job) (storageRecord, error) {
 		"subtype":      job.Spec.subtype(job.Kind),
 		"created_at":   driver.NormalizeValue(job.CreatedAt),
 		"ended_at":     normalizedOptionalTime(job.EndedAt),
+		"revision":     job.revision,
 	})
 	if err != nil {
 		return storageRecord{}, fmt.Errorf("encode job %q indexes: %w", job.ID, err)
@@ -310,7 +324,7 @@ func encodeStorageRecord(job *Job) (storageRecord, error) {
 	return storageRecord{id: job.ID, data: data, fields: string(fields)}, nil
 }
 
-func decodeCurrentJob(rowID string, data []byte) (*Job, error) {
+func decodeJobPayload(rowID string, data []byte) (*Job, error) {
 	var payload storagePayload
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("decode payload: %w", err)
@@ -342,10 +356,36 @@ func decodeCurrentJob(rowID string, data []byte) (*Job, error) {
 		StopDeadline:            payload.StopDeadline,
 		StopReason:              payload.StopReason,
 	}
+	return decodedJob, nil
+}
+
+func decodeStoredJob(rowID string, data []byte, fields string) (*Job, error) {
+	decodedJob, err := decodeJobPayload(rowID, data)
+	if err != nil {
+		return nil, err
+	}
+	revision, err := decodeStorageRevision(fields)
+	if err != nil {
+		return nil, fmt.Errorf("field revision: %w", err)
+	}
+	decodedJob.revision = revision
 	if err := decodedJob.validateStored(); err != nil {
 		return nil, err
 	}
 	return decodedJob, nil
+}
+
+func decodeStorageRevision(fields string) (int64, error) {
+	var metadata struct {
+		Revision *int64 `json:"revision"`
+	}
+	if err := json.Unmarshal([]byte(fields), &metadata); err != nil {
+		return 0, fmt.Errorf("decode storage fields: %w", err)
+	}
+	if metadata.Revision == nil || *metadata.Revision <= 0 {
+		return 0, errors.New("value is required")
+	}
+	return *metadata.Revision, nil
 }
 
 func buildListSQL(query *Query) (string, []any, error) {
@@ -353,7 +393,7 @@ func buildListSQL(query *Query) (string, []any, error) {
 		return "", nil, err
 	}
 	whereSQL, args := buildWhereSQL(query)
-	querySQL := `SELECT id, data FROM jobs`
+	querySQL := `SELECT id, data, fields FROM jobs`
 	if whereSQL != "" {
 		querySQL += " WHERE " + whereSQL
 	}

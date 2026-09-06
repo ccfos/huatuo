@@ -112,6 +112,8 @@ type Job struct {
 	NodeUnavailableDeadline time.Time
 	StopDeadline            time.Time
 	StopReason              StopReason
+
+	revision int64
 }
 
 // CreateRequest contains one independently created user request.
@@ -184,6 +186,9 @@ func (j *Job) validateStored() error {
 	}
 	if j.ID == "" {
 		return errors.New("job ID is required")
+	}
+	if j.revision <= 0 {
+		return errors.New("job storage revision is required")
 	}
 	if j.UserID == "" {
 		return errors.New("job user ID is required")

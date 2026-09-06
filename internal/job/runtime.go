@@ -461,7 +461,8 @@ func (r *runtime) saveTransition(
 	current *Job,
 	updated *Job,
 ) error {
-	if err := r.dependencies.store.Save(ctx, updated, current.Status); err != nil {
+	updated.revision = current.revision + 1
+	if err := r.dependencies.store.Save(ctx, updated, current.revision); err != nil {
 		r.dependencies.persistenceFailures.Add(1)
 		return err
 	}

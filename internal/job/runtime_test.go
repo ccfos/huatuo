@@ -49,9 +49,12 @@ func TestRuntimeStartOperationPersistsMarkerBeforeNodeCall(t *testing.T) {
 	manager := testManager(store, nil)
 	setManagerNow(manager, func() time.Time { return now })
 	var markerPersisted atomic.Bool
-	store.saveHook = func(saved *Job, expected Status) error {
-		if expected != StatusPending {
-			t.Fatalf("Save() expected status = %q", expected)
+	store.saveHook = func(saved *Job, expectedRevision int64) error {
+		if expectedRevision != 1 {
+			t.Fatalf("Save() expected revision = %d, want 1", expectedRevision)
+		}
+		if saved.revision != 2 {
+			t.Fatalf("Save() revision = %d, want 2", saved.revision)
 		}
 		if saved.PendingDeadline.IsZero() {
 			t.Fatal("Save() did not contain the dispatch marker")

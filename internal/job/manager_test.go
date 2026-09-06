@@ -33,7 +33,7 @@ type memoryStore struct {
 
 	jobs     map[string]*Job
 	saves    []*Job
-	saveHook func(*Job, Status) error
+	saveHook func(*Job, int64) error
 }
 
 func newMemoryStore(jobs ...*Job) *memoryStore {
@@ -64,18 +64,21 @@ func (s *memoryStore) Create(_ context.Context, job *Job) error {
 	return nil
 }
 
-func (s *memoryStore) Save(_ context.Context, job *Job, expected Status) error {
+func (s *memoryStore) Save(_ context.Context, job *Job, expectedRevision int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, ok := s.jobs[job.ID]
 	if !ok {
 		return ErrNotFound
 	}
-	if current.Status != expected {
+	if current.revision != expectedRevision {
 		return ErrConflict
 	}
+	if job.revision != expectedRevision+1 {
+		return ErrInvalidQuery
+	}
 	if s.saveHook != nil {
-		if err := s.saveHook(cloneJob(job), expected); err != nil {
+		if err := s.saveHook(cloneJob(job), expectedRevision); err != nil {
 			return err
 		}
 	}
@@ -198,6 +201,7 @@ func testJob(id string, status Status, now time.Time) *Job {
 		Status:    status,
 		CreatedAt: now,
 		UpdatedAt: now,
+		revision:  1,
 	}
 	if isTerminal(status) {
 		job.EndedAt = now

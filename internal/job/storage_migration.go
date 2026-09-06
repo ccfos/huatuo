@@ -63,8 +63,9 @@ type legacyProfilingPrivateData struct {
 }
 
 type migrationRow struct {
-	id   string
-	data []byte
+	id     string
+	data   []byte
+	fields string
 }
 
 func (s *storageStore) migrate(ctx context.Context) (err error) {
@@ -88,14 +89,14 @@ func (s *storageStore) migrate(ctx context.Context) (err error) {
 	}
 
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, data FROM jobs ORDER BY id`)
+		`SELECT id, data, fields FROM jobs ORDER BY id`)
 	if err != nil {
 		return fmt.Errorf("read jobs for migration: %w", err)
 	}
 	migrationRows := make([]migrationRow, 0)
 	for rows.Next() {
 		var row migrationRow
-		if err = rows.Scan(&row.id, &row.data); err != nil {
+		if err = rows.Scan(&row.id, &row.data, &row.fields); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("scan job for migration: %w", err)
 		}
@@ -135,7 +136,7 @@ func (s *storageStore) migrate(ctx context.Context) (err error) {
 				return fmt.Errorf("migrate job %q: persist converted record: %w", row.id, err)
 			}
 		case currentStorageSchemaVersion:
-			if _, decodeErr := decodeCurrentJob(row.id, row.data); decodeErr != nil {
+			if _, decodeErr := decodeStoredJob(row.id, row.data, row.fields); decodeErr != nil {
 				return fmt.Errorf("migrate job %q: %w", row.id, decodeErr)
 			}
 		default:
@@ -203,6 +204,7 @@ func migrateLegacyJob(rowID string, data []byte) (*Job, error) {
 		CreatedAt:   legacy.CreatedAt,
 		UpdatedAt:   legacy.UpdatedAt,
 		EndedAt:     legacy.FinishedAt,
+		revision:    1,
 	}
 	if migratedJob.ContainerID == "" {
 		migratedJob.Scope = observation.ScopeHost

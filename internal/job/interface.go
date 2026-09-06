@@ -25,7 +25,7 @@ import (
 type Store interface {
 	Get(ctx context.Context, jobID string) (*Job, error)
 	Create(ctx context.Context, job *Job) error
-	Save(ctx context.Context, job *Job, expectedStatus Status) error
+	Save(ctx context.Context, job *Job, expectedRevision int64) error
 	List(ctx context.Context, query *Query) ([]*Job, error)
 	DeleteTerminalBefore(ctx context.Context, endedBefore time.Time, limit int) (int64, error)
 	Ping(ctx context.Context) error

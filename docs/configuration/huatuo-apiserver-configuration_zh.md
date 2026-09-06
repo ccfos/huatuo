@@ -87,6 +87,9 @@ weight: 5
     #
     # StoreDSN = "jobs.db"
 
+    # Job 记录使用内部修订号进行并发更新。本版本不会迁移缺少修订号的
+    # schema version 1 记录；升级前需要停止服务并删除或替换旧数据库。
+
     # Profiling and tracing retain independent quotas because their resource
     # costs and expected concurrency differ.
     [Jobs.Profiling]

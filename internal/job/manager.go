@@ -232,6 +232,7 @@ func (m *Manager) Create(ctx context.Context, request *CreateRequest) (*Job, err
 		Status:      StatusPending,
 		CreatedAt:   now,
 		UpdatedAt:   now,
+		revision:    1,
 	}
 	supervisorCtx, cancel := context.WithCancel(context.Background())
 	runtime := newRuntime(newJob, false, cancel, &m.runtimeDeps)
