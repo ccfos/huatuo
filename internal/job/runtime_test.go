@@ -80,6 +80,68 @@ func TestRuntimeStartOperationPersistsMarkerBeforeNodeCall(t *testing.T) {
 	}
 }
 
+func TestRuntimeStopReadsStateAfterCurrentTransition(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	pendingJob := testJob("job-1", StatusPending, now)
+	manager := testManager(newMemoryStore(pendingJob), &stubNodeClient{})
+	setManagerNow(manager, func() time.Time { return now.Add(time.Second) })
+	runtime := testRuntime(manager, pendingJob)
+
+	if err := runtime.acquireTransition(t.Context()); err != nil {
+		t.Fatalf("acquireTransition() error = %v", err)
+	}
+	result := make(chan struct {
+		job *Job
+		err error
+	}, 1)
+	go func() {
+		job, err := runtime.stop(t.Context())
+		result <- struct {
+			job *Job
+			err error
+		}{job: job, err: err}
+	}()
+
+	runtime.mu.Lock()
+	current := runtime.job
+	updated := cloneJob(current)
+	updated.PendingDeadline = now.Add(time.Minute)
+	runtime.mu.Unlock()
+	if err := runtime.saveTransition(t.Context(), current, updated); err != nil {
+		runtime.releaseTransition()
+		t.Fatalf("saveTransition() error = %v", err)
+	}
+	runtime.releaseTransition()
+
+	got := <-result
+	if got.err != nil {
+		t.Fatalf("stop() error = %v", got.err)
+	}
+	if got.job.Status != StatusStopping {
+		t.Fatalf("stop() status = %q, want %q", got.job.Status, StatusStopping)
+	}
+}
+
+func TestRuntimeStopHonorsCancellationWhileWaitingForTransition(t *testing.T) {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	pendingJob := testJob("job-1", StatusPending, now)
+	runtime := testRuntime(
+		testManager(newMemoryStore(pendingJob), &stubNodeClient{}),
+		pendingJob,
+	)
+	if err := runtime.acquireTransition(t.Context()); err != nil {
+		t.Fatalf("acquireTransition() error = %v", err)
+	}
+	defer runtime.releaseTransition()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := runtime.stop(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("stop() error = %v, want context.Canceled", err)
+	}
+}
+
 func TestRuntimeDistinguishesUnknownAndLostOperations(t *testing.T) {
 	tests := []struct {
 		name              string

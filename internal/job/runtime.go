@@ -52,6 +52,7 @@ type runtime struct {
 	hostname          string
 	job               *Job
 	operationObserved bool
+	transitionGate    chan struct{}
 	wakeCh            chan struct{}
 	recovered         bool
 	cancel            context.CancelFunc
@@ -65,14 +66,15 @@ func newRuntime(
 	dependencies *runtimeDependencies,
 ) *runtime {
 	return &runtime{
-		id:           job.ID,
-		kind:         job.Kind,
-		hostname:     job.Hostname,
-		job:          cloneJob(job),
-		wakeCh:       make(chan struct{}, 1),
-		recovered:    recovered,
-		cancel:       cancel,
-		dependencies: dependencies,
+		id:             job.ID,
+		kind:           job.Kind,
+		hostname:       job.Hostname,
+		job:            cloneJob(job),
+		transitionGate: make(chan struct{}, 1),
+		wakeCh:         make(chan struct{}, 1),
+		recovered:      recovered,
+		cancel:         cancel,
+		dependencies:   dependencies,
 	}
 }
 
@@ -145,9 +147,10 @@ func (r *runtime) superviseOnce(ctx context.Context) (bool, error) {
 }
 
 func (r *runtime) reloadFromStore(ctx context.Context) (bool, error) {
-	r.mu.Lock()
-	current := r.job
-	r.mu.Unlock()
+	if err := r.acquireTransition(ctx); err != nil {
+		return false, err
+	}
+	defer r.releaseTransition()
 
 	stored, err := r.dependencies.store.Get(ctx, r.id)
 	if err != nil {
@@ -163,17 +166,23 @@ func (r *runtime) reloadFromStore(ctx context.Context) (bool, error) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.job != current {
-		return isTerminal(r.job.Status), nil
-	}
 	r.job = stored
 	return isTerminal(stored.Status), nil
 }
 
 func (r *runtime) startOperation(ctx context.Context) (*nodeapi.Operation, error) {
-	if err := ctx.Err(); err != nil {
+	updated, err := r.saveDispatchMarker(ctx)
+	if err != nil {
 		return nil, err
 	}
+	return r.startNodeOperation(ctx, updated)
+}
+
+func (r *runtime) saveDispatchMarker(ctx context.Context) (*Job, error) {
+	if err := r.acquireTransition(ctx); err != nil {
+		return nil, err
+	}
+	defer r.releaseTransition()
 
 	r.mu.Lock()
 	current := r.job
@@ -188,7 +197,12 @@ func (r *runtime) startOperation(ctx context.Context) (*nodeapi.Operation, error
 	r.mu.Unlock()
 	if err := r.saveTransition(ctx, current, updated); err != nil {
 		if errors.Is(err, ErrConflict) {
-			return nil, fmt.Errorf("%w: persist dispatch marker for Job %q: %w", ErrConflict, current.ID, err)
+			return nil, fmt.Errorf(
+				"%w: persist dispatch marker for Job %q: %w",
+				ErrConflict,
+				current.ID,
+				err,
+			)
 		}
 		return nil, fmt.Errorf(
 			"%w: persist dispatch marker for Job %q: %w",
@@ -197,7 +211,7 @@ func (r *runtime) startOperation(ctx context.Context) (*nodeapi.Operation, error
 			err,
 		)
 	}
-	return r.startNodeOperation(ctx, updated)
+	return updated, nil
 }
 
 func (r *runtime) reconcileOperation(
@@ -229,6 +243,10 @@ func (r *runtime) applyOperation(
 	if operation == nil {
 		return false, false, fmt.Errorf("%w: Node returned a nil Operation", nodeclient.ErrProtocol)
 	}
+	if err := r.acquireTransition(ctx); err != nil {
+		return false, false, err
+	}
+	defer r.releaseTransition()
 
 	r.mu.Lock()
 	current := r.job
@@ -373,6 +391,11 @@ func (r *runtime) handleNodeError(
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return false, ctxErr
 	}
+	if transitionErr := r.acquireTransition(ctx); transitionErr != nil {
+		return false, transitionErr
+	}
+	defer r.releaseTransition()
+
 	r.mu.Lock()
 	current := r.job
 	if isTerminal(current.Status) {
@@ -444,11 +467,24 @@ func (r *runtime) saveTransition(
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.job != current {
-		return ErrConflict
-	}
 	r.job = updated
 	return nil
+}
+
+func (r *runtime) acquireTransition(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case r.transitionGate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (r *runtime) releaseTransition() {
+	<-r.transitionGate
 }
 
 func (r *runtime) nextPollDelay(superviseErr error) time.Duration {
@@ -663,6 +699,11 @@ func (r *runtime) status() Status {
 }
 
 func (r *runtime) stop(ctx context.Context) (*Job, error) {
+	if err := r.acquireTransition(ctx); err != nil {
+		return nil, err
+	}
+	defer r.releaseTransition()
+
 	r.mu.Lock()
 	current := r.job
 	if isTerminal(current.Status) {
