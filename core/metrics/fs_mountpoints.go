@@ -64,6 +64,9 @@ func (c *mountPointCollector) Update() ([]*metric.Data, error) {
 
 		var stat unix.Statfs_t
 		if err := unix.Statfs(v.MountPoint, &stat); err != nil {
+			// The mount vanished between mountinfo discovery and statfs.
+			// The read-only flag comes from mountinfo, so keep reporting it.
+			metrics = append(metrics, mountPointMetrics(v, nil)...)
 			continue
 		}
 		metrics = append(metrics, mountPointMetrics(v, &stat)...)
@@ -72,29 +75,35 @@ func (c *mountPointCollector) Update() ([]*metric.Data, error) {
 }
 
 func mountPointMetrics(mount *promprocfs.MountInfo, stat *unix.Statfs_t) []*metric.Data {
-	labels := map[string]string{
-		"device":     mount.Source,
-		"fstype":     mount.FSType,
-		"mountpoint": mount.MountPoint,
-	}
+	readonlyLabels := map[string]string{"mountpoint": mount.MountPoint}
 	readonly := 0
 	if _, ok := mount.Options["ro"]; ok {
 		readonly = 1
+	}
+	roData := metric.NewGaugeData("ro", float64(readonly),
+		"whether mountpoint is readonly or not", readonlyLabels)
+	if stat == nil {
+		return []*metric.Data{roData}
+	}
+
+	capacityLabels := map[string]string{
+		"device":     mount.Source,
+		"fstype":     mount.FSType,
+		"mountpoint": mount.MountPoint,
 	}
 	blockSize := float64(stat.Bsize)
 
 	return []*metric.Data{
 		metric.NewGaugeData("size_bytes", float64(stat.Blocks)*blockSize,
-			"Filesystem size in bytes.", labels),
+			"Filesystem size in bytes.", capacityLabels),
 		metric.NewGaugeData("free_bytes", float64(stat.Bfree)*blockSize,
-			"Filesystem free space in bytes.", labels),
+			"Filesystem free space in bytes.", capacityLabels),
 		metric.NewGaugeData("avail_bytes", float64(stat.Bavail)*blockSize,
-			"Filesystem space available to non-root users in bytes.", labels),
+			"Filesystem space available to non-root users in bytes.", capacityLabels),
 		metric.NewGaugeData("files", float64(stat.Files),
-			"Filesystem total file nodes.", labels),
+			"Filesystem total file nodes.", capacityLabels),
 		metric.NewGaugeData("files_free", float64(stat.Ffree),
-			"Filesystem free file nodes.", labels),
-		metric.NewGaugeData("ro", float64(readonly),
-			"Whether the filesystem is read-only.", labels),
+			"Filesystem free file nodes.", capacityLabels),
+		roData,
 	}
 }

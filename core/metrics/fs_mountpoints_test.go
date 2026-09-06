@@ -47,9 +47,39 @@ func TestMountPointMetrics(t *testing.T) {
 			t.Errorf("metric %d value = %v, want %v", i, got[i].Value, want[i])
 		}
 		labels := got[i].Labels()
-		if labels["mountpoint"] != "/data" || labels["device"] != "/dev/vdb1" ||
-			labels["fstype"] != "ext4" {
+		if labels["mountpoint"] != "/data" {
 			t.Errorf("metric %d labels = %v", i, labels)
 		}
+		if i < len(want)-1 &&
+			(labels["device"] != "/dev/vdb1" || labels["fstype"] != "ext4") {
+			t.Errorf("capacity metric %d labels = %v", i, labels)
+		}
+		if i == len(want)-1 && (labels["device"] != "" || labels["fstype"] != "") {
+			t.Errorf("read-only metric labels = %v, want no new filesystem labels", labels)
+		}
+	}
+}
+
+func TestMountPointMetricsVanishedMount(t *testing.T) {
+	mount := &procfs.MountInfo{
+		MountPoint: "/gone",
+		Source:     "/dev/vdc1",
+		FSType:     "ext4",
+		Options:    map[string]string{"ro": ""},
+	}
+
+	got := mountPointMetrics(mount, nil)
+	if len(got) != 1 {
+		t.Fatalf("metric count = %d, want 1 (read-only only)", len(got))
+	}
+	if got[0].Value != 1 {
+		t.Errorf("read-only value = %v, want 1", got[0].Value)
+	}
+	labels := got[0].Labels()
+	if labels["mountpoint"] != "/gone" {
+		t.Errorf("read-only labels = %v", labels)
+	}
+	if labels["device"] != "" || labels["fstype"] != "" {
+		t.Errorf("read-only labels = %v, want no filesystem labels", labels)
 	}
 }
