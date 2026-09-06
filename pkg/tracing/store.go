@@ -34,6 +34,7 @@ const (
 type DocumentOptions struct {
 	Region   string
 	Hostname string
+	NodeIP   string
 }
 
 // WriteRequest carries the parameters for a single document write operation.

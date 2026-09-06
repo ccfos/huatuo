@@ -35,10 +35,14 @@ func RegisterCollector(reg *prometheus.Registry, namespace string) {
 		prefix = namespace + "_"
 	}
 
-	labeledReg := prometheus.WrapRegistererWith(prometheus.Labels{
+	labels := prometheus.Labels{
 		metric.LabelHost:   metric.DefaultHostname(),
 		metric.LabelRegion: metric.DefaultRegion(),
-	}, prometheus.WrapRegistererWithPrefix(prefix, reg))
+	}
+	if nodeIP := metric.DefaultNodeIP(); nodeIP != "" {
+		labels[metric.LabelNodeIP] = nodeIP
+	}
+	labeledReg := prometheus.WrapRegistererWith(labels, prometheus.WrapRegistererWithPrefix(prefix, reg))
 
 	labeledReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	labeledReg.MustRegister(collectors.NewGoCollector())

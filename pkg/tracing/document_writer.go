@@ -103,6 +103,7 @@ func newBaseDocument(options DocumentOptions, req *WriteRequest) (*Document, err
 	document := Document{
 		Hostname:      setDocumentHostnameWithDefault(options.Hostname),
 		Region:        options.Region,
+		NodeIP:        options.NodeIP,
 		UploadedTime:  time.Now(),
 		Time:          formattedTime,
 		TracerName:    req.TracerName,

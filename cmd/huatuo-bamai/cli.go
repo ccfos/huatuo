@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -36,6 +37,7 @@ const (
 	cliFlagBPFObjDir      = "bpf-dir"
 	cliFlagToolBinDir     = "tools-bin-dir"
 	cliFlagRegion         = "region"
+	cliFlagNodeIP         = "node-ip"
 	cliFlagEnableCgroup   = "enable-cgroup"
 	cliFlagDisableKubelet = "disable-kubelet"
 	cliFlagDisableStorage = "disable-storage"
@@ -54,6 +56,7 @@ type Options struct {
 	BPFObjDir      string
 	ToolBinDir     string
 	Region         string
+	NodeIP         string
 	EnableCgroup   bool
 	DisableKubelet bool
 	DisableStorage bool
@@ -117,6 +120,11 @@ func (o *Options) AddFlags(app *cli.App) {
 			Required: true,
 			Usage:    "the host and containers are in this region",
 		},
+		&cli.StringFlag{
+			Name:    cliFlagNodeIP,
+			Usage:   "node IP attached to exported metrics and tracing documents",
+			EnvVars: []string{"HUATUO_NODE_IP"},
+		},
 		&cli.BoolFlag{
 			Name:  cliFlagDisableKubelet,
 			Value: false,
@@ -154,6 +162,14 @@ func (o *Options) AddFlags(app *cli.App) {
 func (o *Options) FromContext(ctx *cli.Context) error {
 	o.ConfigFile = ctx.String(cliFlagConfig)
 	o.Region = ctx.String(cliFlagRegion)
+	o.NodeIP = ctx.String(cliFlagNodeIP)
+	if o.NodeIP != "" {
+		ip := net.ParseIP(o.NodeIP)
+		if ip == nil {
+			return fmt.Errorf("invalid node IP %q", o.NodeIP)
+		}
+		o.NodeIP = ip.String()
+	}
 	o.DisableKubelet = ctx.Bool(cliFlagDisableKubelet)
 	o.DisableStorage = ctx.Bool(cliFlagDisableStorage)
 	o.EnableCgroup = ctx.Bool(cliFlagEnableCgroup)

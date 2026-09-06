@@ -1121,6 +1121,7 @@ huatuo-bamai --region <region> [options]
 | `--bpf-dir` | BPF object file directory | `bpf` |
 | `--tools-bin-dir` | Tracing tool binary directory | `bin` |
 | `--region` | Deployment region (required) | - |
+| `--node-ip` | Node IP exported as a Prometheus label and tracing field; also supports `HUATUO_NODE_IP` | - |
 | `--disable-kubelet` | Disable kubelet Pod fetching | `false` |
 | `--disable-storage` | Disable storage backends | `false` |
 | `--enable-cgroup` | Enable self cgroup resource limits (disabled by default) | `false` |

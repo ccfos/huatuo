@@ -1137,6 +1137,7 @@ huatuo-bamai --region <region> [选项]
 | `--bpf-dir` | BPF 对象文件目录 | `bpf` |
 | `--tools-bin-dir` | 追踪工具二进制目录 | `bin` |
 | `--region` | 部署区域（必填） | - |
+| `--node-ip` | 作为 Prometheus 标签和追踪字段导出的节点 IP；也支持 `HUATUO_NODE_IP` | - |
 | `--disable-kubelet` | 禁用 kubelet Pod 获取 | `false` |
 | `--disable-storage` | 禁用存储后端 | `false` |
 | `--enable-cgroup` | 启用自身 cgroup 资源限制（默认关闭） | `false` |

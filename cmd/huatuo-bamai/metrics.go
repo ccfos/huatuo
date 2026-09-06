@@ -25,7 +25,7 @@ import (
 )
 
 func setupMetrics(d *Daemon) (func(context.Context) error, error) {
-	nc, err := metric.NewCollectorManager(config.Get().BlackList, d.opts.Region)
+	nc, err := metric.NewCollectorManager(config.Get().BlackList, d.opts.Region, d.opts.NodeIP)
 	if err != nil {
 		return nil, err
 	}
