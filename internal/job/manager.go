@@ -285,6 +285,7 @@ func (c *ManagerConfig) policy(kind Kind) (Policy, bool) {
 
 // Get returns one durable Job snapshot.
 func (m *Manager) Get(ctx context.Context, jobID string) (*Job, error) {
+	// Store is authoritative for all Jobs; active only tracks local supervisors.
 	return m.store.Get(ctx, jobID)
 }
 
