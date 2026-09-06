@@ -112,6 +112,16 @@ func TestStoreSavesAndPublishesTracingDocument(t *testing.T) {
 	}
 }
 
+func TestMapperOmitsEmptyNodeIP(t *testing.T) {
+	fields, err := (mapper{}).Fields(&Document{})
+	if err != nil {
+		t.Fatalf("mapper.Fields() error = %v", err)
+	}
+	if _, ok := fields[types.DocumentFieldNodeIP]; ok {
+		t.Fatal("mapper fields include an empty node IP")
+	}
+}
+
 func TestStoreRejectsInvalidDocumentBeforePersistence(t *testing.T) {
 	backend := &testBackend{}
 	persistence, err := storage.NewStore[*Document](
