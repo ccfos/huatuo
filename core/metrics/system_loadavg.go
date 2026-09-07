@@ -37,17 +37,20 @@ import (
 	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
+
+	"github.com/ccfos/huatuo/internal/cgroups/stats"
 )
 
 type loadavgCollector struct {
-	sampleInterval time.Duration
-	unsupportedV2  sync.Once
-	mu             sync.Mutex
-	sampling       bool
-	sampledAt      time.Time
-	sampledData    []*metric.Data
-	sampledErr     error
-	averages       map[containerLoadKey]containerLoadAverage
+	sampleInterval  time.Duration
+	unsupportedHost sync.Once
+	unsupportedV2   sync.Once
+	mu              sync.Mutex
+	sampling        bool
+	sampledAt       time.Time
+	sampledData     []*metric.Data
+	sampledErr      error
+	averages        map[containerLoadKey]containerLoadAverage
 }
 
 func init() {
@@ -315,12 +318,12 @@ func instantaneousContainerLoad(samples []containerLoadSample) []*metric.Data {
 // The tracing manager owns cancellation and restart; no detached goroutine lives
 // beyond the collector lifecycle.
 func (c *loadavgCollector) Start(ctx context.Context) error {
-	return c.sampleLoad(ctx, func() ([]containerLoadSample, error) {
-		return c.readContainerLoad(cgroups.CgroupMode(), readContainerLoadV1, readContainerLoadV2)
+	return c.sampleLoad(ctx, func() ([]containerLoadSample, *stats.LoadStats, error) {
+		return c.readLoadSample(cgroups.CgroupMode(), readContainerLoadV1, readTaskLoadWithHost)
 	})
 }
 
-func (c *loadavgCollector) sampleLoad(ctx context.Context, read func() ([]containerLoadSample, error)) error {
+func (c *loadavgCollector) sampleLoad(ctx context.Context, read func() ([]containerLoadSample, *stats.LoadStats, error)) error {
 	c.mu.Lock()
 	c.sampling = true
 	c.mu.Unlock()
@@ -339,8 +342,8 @@ func (c *loadavgCollector) sampleLoad(ctx context.Context, read func() ([]contai
 			return nil
 		}
 		at := time.Now()
-		samples, err := read()
-		c.publishContainerLoad(at, samples, err)
+		samples, host, err := read()
+		c.publishContainerLoad(at, samples, err, host)
 		select {
 		case <-ctx.Done():
 			return nil
@@ -349,11 +352,18 @@ func (c *loadavgCollector) sampleLoad(ctx context.Context, read func() ([]contai
 	}
 }
 
-func (c *loadavgCollector) publishContainerLoad(at time.Time, samples []containerLoadSample, err error) {
+func (c *loadavgCollector) publishContainerLoad(at time.Time, samples []containerLoadSample, err error, host *stats.LoadStats) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	data := instantaneousContainerLoad(samples)
-	next := make(map[containerLoadKey]containerLoadAverage, len(samples))
+	if host != nil {
+		data = append(data, metric.NewGaugeData("nr_uninterruptible", float64(host.NrUninterruptible),
+			"number of host uninterruptible tasks contributing to load", nil))
+	}
+	var next map[containerLoadKey]containerLoadAverage
+	if len(samples) > 0 {
+		next = make(map[containerLoadKey]containerLoadAverage, len(samples))
+	}
 	for _, sample := range samples {
 		container := sample.container
 		key := containerLoadKey{ID: container.ID, Path: container.CgroupPath, StartedAt: container.StartedAt}
@@ -393,4 +403,45 @@ func (c *loadavgCollector) cachedContainerLoad(now time.Time) ([]*metric.Data, e
 		return nil, errors.New("container load sample expired; check loadavg sampler"), true
 	}
 	return c.sampledData, c.sampledErr, true
+}
+
+func (c *loadavgCollector) readLoadSample(
+	mode cgroups.Mode,
+	readV1 func() ([]containerLoadSample, error),
+	readWithHost func(bool) ([]containerLoadSample, *stats.LoadStats, error),
+) ([]containerLoadSample, *stats.LoadStats, error) {
+	includeContainers := mode == cgroups.Unified
+	samples, host, err := readWithHost(includeContainers)
+	if errors.Is(err, cgroupV2.ErrTaskIteratorNotSupported) {
+		c.unsupportedHost.Do(func() {
+			log.WithError(err).Warn("BPF task load metrics unavailable; procfs host load and v1 container load remain enabled")
+		})
+		samples, host, err = nil, nil, nil
+	}
+	if mode == cgroups.Legacy || mode == cgroups.Hybrid {
+		var containerErr error
+		samples, containerErr = readV1()
+		err = errors.Join(err, containerErr)
+	}
+	return samples, host, err
+}
+
+func readTaskLoadWithHost(includeContainers bool) ([]containerLoadSample, *stats.LoadStats, error) {
+	var containers map[string]*pod.Container
+	var containerErr error
+	if includeContainers {
+		containers, containerErr = pod.ContainersByType(pod.ContainerTypeNormal | pod.ContainerTypeSidecar)
+	}
+	paths := make([]string, 0, len(containers))
+	for _, container := range containers {
+		paths = append(paths, container.CgroupPath)
+	}
+	byPath, host, err := cgroupV2.SharedLoadStatsWithHost(cgroupV2.LoadStatsConsumerLoadavg, paths)
+	samples := make([]containerLoadSample, 0, len(containers))
+	for _, container := range containers {
+		if load, ok := byPath[container.CgroupPath]; ok {
+			samples = append(samples, containerLoadSample{container, load.NrRunning, load.NrUninterruptible})
+		}
+	}
+	return samples, host, errors.Join(containerErr, err)
 }

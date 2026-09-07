@@ -974,6 +974,10 @@ This section defines collection rules for various system and network metrics. Al
 		# Controls container load and host D-state sampling, not
 		# host /proc/loadavg scrapes or AutoTracing.Dload.Interval (default: 10).
 		# Interval = 15
+		# Host D-state tasks contributing to load are sampled every
+		# Interval seconds. Requires host PID visibility, kernel BTF and the BPF
+		# task iterator; works on cgroup v1/v2. Shares the v2 traversal.
+		# Unsupported systems omit this metric without a procfs fallback.
 
 	# Netdev statistic
 	#
