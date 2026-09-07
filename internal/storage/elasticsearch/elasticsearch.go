@@ -72,7 +72,6 @@ type Storage struct {
 
 var (
 	_ driver.Backend      = (*Storage)(nil)
-	_ driver.SyncSaver    = (*Storage)(nil)
 	_ driver.QueryDeleter = (*Storage)(nil)
 )
 
@@ -134,7 +133,20 @@ func (s *Storage) Init(_ context.Context, _ string, indexes []driver.Index) erro
 	return nil
 }
 
-func (s *Storage) Save(ctx context.Context, rec driver.Record) error {
+func (s *Storage) Save(
+	ctx context.Context,
+	rec driver.Record,
+	options driver.SaveOptions,
+) error {
+	if options.Mode == driver.SaveModeConditional {
+		return driver.ErrUnsupportedOp
+	}
+	if options.Mode == driver.SaveModeCreateOnly || options.WaitForVisibility {
+		return s.saveDirect(ctx, rec, options)
+	}
+	if options.Mode != driver.SaveModeUpsert || len(options.Conditions) != 0 {
+		return driver.ErrInvalidQuery
+	}
 	item := esutil.BulkIndexerItem{
 		Index:      s.index,
 		Action:     "index",
@@ -159,27 +171,32 @@ func (s *Storage) Save(ctx context.Context, rec driver.Record) error {
 	return nil
 }
 
-// SaveSync indexes one record and waits for an index refresh. It is reserved
-// for lifecycle commit barriers; high-volume event writes use Save.
-func (s *Storage) SaveSync(ctx context.Context, rec driver.Record) error {
+func (s *Storage) saveDirect(
+	ctx context.Context,
+	rec driver.Record,
+	options driver.SaveOptions,
+) error {
 	req := esapi.IndexRequest{
 		Index:      s.index,
 		DocumentID: rec.ID,
 		Body:       bytes.NewReader(rec.Data),
-		Refresh:    "wait_for",
+	}
+	if options.Mode == driver.SaveModeCreateOnly {
+		req.OpType = "create"
+	}
+	if options.WaitForVisibility {
+		req.Refresh = "wait_for"
 	}
 	res, err := req.Do(ctx, s.transport)
 	if err != nil {
-		return fmt.Errorf(
-			"elasticsearch backend synchronous save %s/%s: %w",
-			s.index,
-			rec.ID,
-			err,
-		)
+		return fmt.Errorf("elasticsearch backend save %s/%s: %w", s.index, rec.ID, err)
 	}
 	defer res.Body.Close()
+	if options.Mode == driver.SaveModeCreateOnly && res.StatusCode == http.StatusConflict {
+		return driver.ErrAlreadyExists
+	}
 	if res.IsError() {
-		return responseError("synchronously save document", s.index, res)
+		return responseError("save document", s.index, res)
 	}
 	return nil
 }

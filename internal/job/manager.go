@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,7 +30,6 @@ import (
 const (
 	jobCleanupInterval  = time.Hour
 	jobCleanupBatchSize = 1000
-	maxJobPageSize      = 1000
 )
 
 // Policy limits active Jobs for one service Kind.
@@ -98,7 +96,7 @@ type ManagerStats struct {
 	RecoveredJobs       uint64
 }
 
-// NewManager initializes storage, migrates records, and recovers active Jobs.
+// NewManager initializes storage and recovers active Jobs.
 func NewManager(
 	ctx context.Context,
 	nodeClient NodeClient,
@@ -153,57 +151,6 @@ func newManagerWithStore(
 		persistenceFailures: &manager.persistenceFailures,
 	}
 	return manager
-}
-
-func validateManagerConfig(config *ManagerConfig) error {
-	if config == nil {
-		return errors.New("create job manager: config is required")
-	}
-	if strings.TrimSpace(config.StoreDSN) == "" {
-		return errors.New("create job manager: store dsn is required")
-	}
-	for _, policyConfig := range []struct {
-		kind   Kind
-		policy Policy
-	}{
-		{kind: KindProfiling, policy: config.ProfilingPolicy},
-		{kind: KindTracing, policy: config.TracingPolicy},
-	} {
-		kind, policy := policyConfig.kind, policyConfig.policy
-		if policy.MaxJobsPerHost == 0 && policy.MaxTotalJobs == 0 {
-			return fmt.Errorf(
-				"create job manager: policy for %s is required",
-				kind,
-			)
-		}
-		if policy.MaxJobsPerHost <= 0 || policy.MaxTotalJobs <= 0 {
-			return fmt.Errorf(
-				"create job manager: %s quotas must be greater than zero",
-				kind,
-			)
-		}
-	}
-	for _, lifecycleConfig := range []struct {
-		name  string
-		value time.Duration
-	}{
-		{name: "status poll interval", value: config.StatusPollInterval},
-		{name: "pending timeout", value: config.PendingTimeout},
-		{name: "completion grace period", value: config.CompletionGracePeriod},
-		{
-			name:  "Node unavailable grace period",
-			value: config.NodeUnavailableGracePeriod,
-		},
-		{name: "Job retention period", value: config.JobRetentionPeriod},
-	} {
-		if lifecycleConfig.value <= 0 {
-			return fmt.Errorf(
-				"create job manager: %s must be positive",
-				lifecycleConfig.name,
-			)
-		}
-	}
-	return nil
 }
 
 // Create persists one independent Job and starts its supervisor.
@@ -283,15 +230,8 @@ func (m *Manager) Get(ctx context.Context, jobID string) (*Job, error) {
 
 // ListPage returns one durable page and whether another page is available.
 func (m *Manager) ListPage(ctx context.Context, query *Query) (*Page, error) {
-	if query == nil || query.Limit <= 0 || query.Limit > maxJobPageSize {
-		return nil, fmt.Errorf(
-			"%w: page limit must be between 1 and %d",
-			ErrInvalidQuery,
-			maxJobPageSize,
-		)
-	}
-	if query.Offset < 0 {
-		return nil, fmt.Errorf("%w: offset must not be negative", ErrInvalidQuery)
+	if err := validateListPageQuery(query); err != nil {
+		return nil, err
 	}
 	pageQuery := *query
 	pageQuery.Limit++

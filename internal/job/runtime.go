@@ -196,7 +196,7 @@ func (r *runtime) saveOperationStartDeadline(ctx context.Context) (*Job, error) 
 	updated.PendingDeadline = now.Add(r.dependencies.policy.pendingTimeout)
 	updated.UpdatedAt = now
 	r.mu.Unlock()
-	if err := r.saveTransition(ctx, current, updated); err != nil {
+	if err := r.saveTransition(ctx, updated); err != nil {
 		if errors.Is(err, ErrConflict) {
 			return nil, fmt.Errorf(
 				"%w: persist Operation start deadline for Job %q: %w",
@@ -366,7 +366,7 @@ func (r *runtime) reconcileJobWithOperation(
 
 	r.mu.Unlock()
 	if changed {
-		if err := r.saveTransition(ctx, current, updated); err != nil {
+		if err := r.saveTransition(ctx, updated); err != nil {
 			if errors.Is(err, ErrConflict) {
 				return false, false, fmt.Errorf("%w: reconcile Job %q: %w", ErrConflict, current.ID, err)
 			}
@@ -443,7 +443,7 @@ func (r *runtime) handleNodeError(
 	}
 
 	r.mu.Unlock()
-	if err := r.saveTransition(ctx, current, updated); err != nil {
+	if err := r.saveTransition(ctx, updated); err != nil {
 		if errors.Is(err, ErrConflict) {
 			return false, fmt.Errorf("%w: persist Node error for Job %q: %w", ErrConflict, current.ID, err)
 		}
@@ -459,17 +459,16 @@ func (r *runtime) handleNodeError(
 
 func (r *runtime) saveTransition(
 	ctx context.Context,
-	current *Job,
 	updated *Job,
 ) error {
-	updated.revision = current.revision + 1
-	if err := r.dependencies.store.Save(ctx, updated, current.revision); err != nil {
+	persisted, err := r.dependencies.store.Save(ctx, updated)
+	if err != nil {
 		r.dependencies.persistenceFailures.Add(1)
 		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.job = updated
+	r.job = persisted
 	return nil
 }
 
@@ -732,7 +731,7 @@ func (r *runtime) stop(ctx context.Context) (*Job, error) {
 		)
 	}
 	r.mu.Unlock()
-	if err := r.saveTransition(ctx, current, updated); err != nil {
+	if err := r.saveTransition(ctx, updated); err != nil {
 		if errors.Is(err, ErrConflict) {
 			return nil, fmt.Errorf("%w: persist stop for Job %q: %w", ErrConflict, r.id, err)
 		}

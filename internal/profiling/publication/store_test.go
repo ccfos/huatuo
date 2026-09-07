@@ -25,9 +25,9 @@ import (
 )
 
 type memoryBackend struct {
-	records     map[string]driver.Record
-	syncSaveErr error
-	syncSaves   int
+	records           map[string]driver.Record
+	visibilitySaveErr error
+	visibilitySaves   int
 }
 
 func (b *memoryBackend) Init(context.Context, string, []driver.Index) error {
@@ -37,17 +37,19 @@ func (b *memoryBackend) Init(context.Context, string, []driver.Index) error {
 	return nil
 }
 
-func (b *memoryBackend) Save(_ context.Context, record driver.Record) error {
+func (b *memoryBackend) Save(
+	_ context.Context,
+	record driver.Record,
+	options driver.SaveOptions,
+) error {
+	if options.WaitForVisibility {
+		b.visibilitySaves++
+		if b.visibilitySaveErr != nil {
+			return b.visibilitySaveErr
+		}
+	}
 	b.records[record.ID] = record
 	return nil
-}
-
-func (b *memoryBackend) SaveSync(ctx context.Context, record driver.Record) error {
-	b.syncSaves++
-	if b.syncSaveErr != nil {
-		return b.syncSaveErr
-	}
-	return b.Save(ctx, record)
 }
 
 func (b *memoryBackend) Get(_ context.Context, id string) (driver.Record, error) {
@@ -96,7 +98,7 @@ func newTestStore(
 	return &Store{store: markerStore, now: now}, markerStore
 }
 
-func TestStorePublishesSynchronousCommitMarker(t *testing.T) {
+func TestStorePublishesQueryVisibleCommitMarker(t *testing.T) {
 	backend := &memoryBackend{}
 	publishedAt := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	store, markerStore := newTestStore(t, backend, func() time.Time { return publishedAt })
@@ -108,8 +110,8 @@ func TestStorePublishesSynchronousCommitMarker(t *testing.T) {
 	if err := store.Publish(t.Context(), "job-1"); err != nil {
 		t.Fatalf("Publish() error = %v", err)
 	}
-	if backend.syncSaves != 1 {
-		t.Fatalf("SaveSync() calls = %d, want 1", backend.syncSaves)
+	if backend.visibilitySaves != 1 {
+		t.Fatalf("visibility saves = %d, want 1", backend.visibilitySaves)
 	}
 	published, err = store.IsPublished(t.Context(), "job-1")
 	if err != nil || !published {
@@ -134,10 +136,10 @@ func TestStorePublishIsIdempotentByRequestID(t *testing.T) {
 	if err := store.Publish(t.Context(), "job-1"); err != nil {
 		t.Fatalf("second Publish() error = %v", err)
 	}
-	if backend.syncSaves != 2 || len(backend.records) != 1 {
+	if backend.visibilitySaves != 2 || len(backend.records) != 1 {
 		t.Fatalf(
-			"Publish() result = (sync saves=%d, records=%d), want (2, 1)",
-			backend.syncSaves,
+			"Publish() result = (visibility saves=%d, records=%d), want (2, 1)",
+			backend.visibilitySaves,
 			len(backend.records),
 		)
 	}
@@ -146,8 +148,12 @@ func TestStorePublishIsIdempotentByRequestID(t *testing.T) {
 func TestStoreTreatsLegacyStagingMarkerAsUnpublished(t *testing.T) {
 	backend := &memoryBackend{}
 	store, markerStore := newTestStore(t, backend, func() time.Time { return time.Now().UTC() })
-	if err := markerStore.SaveSync(t.Context(), &Marker{RequestID: "job-legacy"}); err != nil {
-		t.Fatalf("SaveSync(legacy marker) error = %v", err)
+	if err := markerStore.Save(
+		t.Context(),
+		&Marker{RequestID: "job-legacy"},
+		driver.SaveOptions{WaitForVisibility: true},
+	); err != nil {
+		t.Fatalf("Save(legacy marker) error = %v", err)
 	}
 
 	published, err := store.IsPublished(t.Context(), "job-legacy")
@@ -158,7 +164,7 @@ func TestStoreTreatsLegacyStagingMarkerAsUnpublished(t *testing.T) {
 
 func TestStoreReturnsPublishFailure(t *testing.T) {
 	saveErr := errors.New("save failed")
-	backend := &memoryBackend{syncSaveErr: saveErr}
+	backend := &memoryBackend{visibilitySaveErr: saveErr}
 	store, _ := newTestStore(t, backend, func() time.Time { return time.Now().UTC() })
 
 	if err := store.Publish(t.Context(), "job-1"); !errors.Is(err, saveErr) {

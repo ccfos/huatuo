@@ -81,7 +81,7 @@ func (s *Store) Save(ctx context.Context, document *Document) error {
 	if err := s.prepareDocument(document); err != nil {
 		return err
 	}
-	return s.store.Save(ctx, document)
+	return s.store.Save(ctx, document, driver.SaveOptions{})
 }
 
 // SaveSync persists a profiling window and waits until subsequent queries can see it.
@@ -89,7 +89,7 @@ func (s *Store) SaveSync(ctx context.Context, document *Document) error {
 	if err := s.prepareDocument(document); err != nil {
 		return err
 	}
-	return s.store.SaveSync(ctx, document)
+	return s.store.Save(ctx, document, driver.SaveOptions{WaitForVisibility: true})
 }
 
 // Close releases the underlying storage client.

@@ -39,6 +39,7 @@ type testMapper struct {
 	decodeErr    error
 	fieldsErr    error
 	indexesCalls int
+	decoded      []driver.Record
 }
 
 func (m *testMapper) ID(v testEntity) string {
@@ -55,13 +56,14 @@ func (m *testMapper) Encode(v testEntity) ([]byte, error) {
 	return json.Marshal(v)
 }
 
-func (m *testMapper) Decode(data []byte) (testEntity, error) {
+func (m *testMapper) Decode(record driver.Record) (testEntity, error) {
+	m.decoded = append(m.decoded, record)
 	if m.decodeErr != nil {
 		return testEntity{}, m.decodeErr
 	}
 
 	var entity testEntity
-	err := json.Unmarshal(data, &entity)
+	err := json.Unmarshal(record.Data, &entity)
 	return entity, err
 }
 
@@ -86,6 +88,7 @@ func (m *testMapper) Indexes() []driver.Index {
 
 type testBackend struct {
 	initErr      error
+	closeErr     error
 	saveErr      error
 	getErr       error
 	deleteErr    error
@@ -97,6 +100,8 @@ type testBackend struct {
 	countValue   int64
 	valuesValue  []string
 	initCalls    int
+	closeCalls   int
+	closeContext context.Context
 	saveCalls    int
 	deleteCalls  int
 	queryCalls   int
@@ -105,6 +110,7 @@ type testBackend struct {
 	collection   string
 	indexes      []driver.Index
 	savedRecord  driver.Record
+	saveOptions  driver.SaveOptions
 	deletedID    string
 	lastQuery    driver.Query
 	valuesField  string
@@ -134,9 +140,14 @@ func (b *testBackend) Init(_ context.Context, collection string, indexes []drive
 	return b.initErr
 }
 
-func (b *testBackend) Save(_ context.Context, rec driver.Record) error {
+func (b *testBackend) Save(
+	_ context.Context,
+	rec driver.Record,
+	options driver.SaveOptions,
+) error {
 	b.saveCalls++
 	b.savedRecord = rec
+	b.saveOptions = options
 	return b.saveErr
 }
 
@@ -176,7 +187,11 @@ func (b *testBackend) Values(_ context.Context, field string, q driver.Query, si
 	return b.valuesValue, b.valuesErr
 }
 
-func (b *testBackend) Close(context.Context) error { return nil }
+func (b *testBackend) Close(ctx context.Context) error {
+	b.closeCalls++
+	b.closeContext = ctx
+	return b.closeErr
+}
 
 func newTestMapper() *testMapper {
 	return &testMapper{
@@ -193,20 +208,61 @@ func mustEncodeEntity(entity testEntity) []byte {
 	return data
 }
 
-func TestSaveSyncRejectsBackendWithoutVisibilityBarrier(t *testing.T) {
+func TestSaveForwardsOptions(t *testing.T) {
+	backend := &testBackend{}
 	store, err := NewStore[testEntity](
 		t.Context(),
 		"sqlite",
-		&testBackend{},
+		backend,
 		"jobs",
 		newTestMapper(),
 	)
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
-	err = store.SaveSync(t.Context(), testEntity{ID: "job-1"})
-	if !errors.Is(err, driver.ErrUnsupportedOp) {
-		t.Fatalf("SaveSync() error = %v, want ErrUnsupportedOp", err)
+	options := driver.SaveOptions{WaitForVisibility: true}
+	if err := store.Save(t.Context(), testEntity{ID: "job-1"}, options); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if !reflect.DeepEqual(backend.saveOptions, options) {
+		t.Fatalf("Save() options = %#v, want %#v", backend.saveOptions, options)
+	}
+}
+
+func TestSaveRejectsInvalidOptions(t *testing.T) {
+	backend := &testBackend{}
+	store, err := NewStore[testEntity](
+		t.Context(),
+		"sqlite",
+		backend,
+		"jobs",
+		newTestMapper(),
+	)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	tests := []driver.SaveOptions{
+		{
+			Mode: driver.SaveModeUpsert,
+			Conditions: []driver.Filter{
+				{Field: "status", Op: driver.OpEq, Value: "pending"},
+			},
+		},
+		{Mode: driver.SaveModeConditional},
+		{Mode: driver.SaveMode(255)},
+	}
+	for _, options := range tests {
+		if err := store.Save(
+			t.Context(),
+			testEntity{ID: "job-1"},
+			options,
+		); !errors.Is(err, driver.ErrInvalidQuery) {
+			t.Errorf("Save(%#v) error = %v, want ErrInvalidQuery", options, err)
+		}
+	}
+	if backend.saveCalls != 0 {
+		t.Fatalf("backend Save() call count = %d, want 0", backend.saveCalls)
 	}
 }
 
@@ -322,6 +378,40 @@ func TestNewStore(t *testing.T) {
 			typedBackend, _ := tc.backend.(*testBackend)
 			tc.validate(t, store, err, typedBackend)
 		})
+	}
+}
+
+func TestNewFromConfigClosesBackendAfterInitializationFailure(t *testing.T) {
+	const backendName = "new-from-config-close-test"
+	initErr := errors.New("backend init failed")
+	closeErr := errors.New("backend close failed")
+	backend := &testBackend{initErr: initErr, closeErr: closeErr}
+	driver.RegisterBackend(backendName, func(*driver.Config) (driver.Backend, error) {
+		return backend, nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	store, err := NewFromConfig[testEntity](
+		ctx,
+		&driver.Config{Driver: backendName},
+		"jobs",
+		newTestMapper(),
+	)
+	if store != nil {
+		t.Fatalf("NewFromConfig() store = %#v, want nil", store)
+	}
+	if !errors.Is(err, initErr) || !errors.Is(err, closeErr) {
+		t.Fatalf("NewFromConfig() error = %v, want init and close errors", err)
+	}
+	if backend.closeCalls != 1 {
+		t.Fatalf("backend Close() call count = %d, want 1", backend.closeCalls)
+	}
+	if backend.closeContext == nil {
+		t.Fatal("backend Close() context = nil")
+	}
+	if err := backend.closeContext.Err(); err != nil {
+		t.Fatalf("backend Close() context error = %v, want nil", err)
 	}
 }
 
@@ -445,7 +535,7 @@ func TestStoreSave(t *testing.T) {
 				return
 			}
 
-			err = store.Save(t.Context(), tc.entity)
+			err = store.Save(t.Context(), tc.entity, driver.SaveOptions{})
 			tc.validate(t, err, tc.backend)
 		})
 	}
@@ -538,6 +628,34 @@ func TestStoreGet(t *testing.T) {
 			entity, getErr := store.Get(t.Context(), "job-20260409")
 			tc.validate(t, entity, getErr)
 		})
+	}
+}
+
+func TestStoreGetPassesFullRecordToMapper(t *testing.T) {
+	record := driver.Record{
+		ID:   "job-20260409",
+		Data: mustEncodeEntity(testEntity{ID: "job-20260409"}),
+		Fields: map[string]any{
+			"revision": int64(3),
+		},
+	}
+	mapper := newTestMapper()
+	store, err := NewStore[testEntity](
+		t.Context(),
+		"record-mapper",
+		&testBackend{getRecord: record},
+		"jobs",
+		mapper,
+	)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+
+	if _, err := store.Get(t.Context(), record.ID); err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if !reflect.DeepEqual(mapper.decoded, []driver.Record{record}) {
+		t.Fatalf("Decode() records = %#v, want %#v", mapper.decoded, []driver.Record{record})
 	}
 }
 

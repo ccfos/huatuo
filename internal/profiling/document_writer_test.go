@@ -198,14 +198,16 @@ type profileBackend struct {
 
 func (*profileBackend) Init(context.Context, string, []driver.Index) error { return nil }
 
-func (b *profileBackend) Save(_ context.Context, record driver.Record) error {
-	b.asyncWrites++
-	b.lastRecord = record
-	return nil
-}
-
-func (b *profileBackend) SaveSync(_ context.Context, record driver.Record) error {
-	b.syncWrites++
+func (b *profileBackend) Save(
+	_ context.Context,
+	record driver.Record,
+	options driver.SaveOptions,
+) error {
+	if options.WaitForVisibility {
+		b.syncWrites++
+	} else {
+		b.asyncWrites++
+	}
 	b.lastRecord = record
 	return nil
 }

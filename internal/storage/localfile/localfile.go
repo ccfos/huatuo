@@ -64,7 +64,14 @@ func (b *Storage) Init(_ context.Context, _ string, _ []driver.Index) error {
 	return nil
 }
 
-func (b *Storage) Save(_ context.Context, rec driver.Record) error {
+func (b *Storage) Save(
+	_ context.Context,
+	rec driver.Record,
+	options driver.SaveOptions,
+) error {
+	if options.Mode != driver.SaveModeUpsert || len(options.Conditions) != 0 {
+		return driver.ErrUnsupportedOp
+	}
 	filename := tracerFilename(rec)
 	if filename == "" {
 		return driver.ErrInvalidField

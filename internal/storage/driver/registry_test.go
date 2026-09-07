@@ -26,7 +26,7 @@ func (b *testBackend) Init(context.Context, string, []Index) error {
 	return nil
 }
 
-func (b *testBackend) Save(context.Context, Record) error {
+func (b *testBackend) Save(context.Context, Record, SaveOptions) error {
 	return nil
 }
 

@@ -15,8 +15,6 @@
 package job
 
 import (
-	"errors"
-	"fmt"
 	"time"
 
 	"huatuo-bamai/pkg/observation"
@@ -158,118 +156,6 @@ func (s Spec) kind() Kind {
 	}
 }
 
-func (r *CreateRequest) validate() error {
-	if r == nil {
-		return errors.New("request is required")
-	}
-	if r.UserID == "" {
-		return errors.New("job user ID is required")
-	}
-	if r.Hostname == "" {
-		return errors.New("job hostname is required")
-	}
-	if r.Duration <= 0 || r.Duration%time.Second != 0 {
-		return errors.New("job duration must be a whole positive number of seconds")
-	}
-	if err := observation.ValidateScope(r.Scope, r.ContainerID); err != nil {
-		return fmt.Errorf("validate job scope: %w", err)
-	}
-	if err := r.Spec.validate(r.Spec.kind(), r.Scope); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (j *Job) validateStored() error {
-	if j == nil {
-		return errors.New("job is nil")
-	}
-	if j.ID == "" {
-		return errors.New("job ID is required")
-	}
-	if j.revision <= 0 {
-		return errors.New("job storage revision is required")
-	}
-	if j.UserID == "" {
-		return errors.New("job user ID is required")
-	}
-	if j.Hostname == "" {
-		return errors.New("job hostname is required")
-	}
-	if j.Duration <= 0 || j.Duration%time.Second != 0 {
-		return errors.New("job duration must be a whole positive number of seconds")
-	}
-	if err := observation.ValidateScope(j.Scope, j.ContainerID); err != nil {
-		return fmt.Errorf("validate job scope: %w", err)
-	}
-	if err := j.Spec.validate(j.Kind, j.Scope); err != nil {
-		return err
-	}
-	if j.CreatedAt.IsZero() || j.UpdatedAt.IsZero() {
-		return errors.New("job created and updated timestamps are required")
-	}
-	return j.validateState()
-}
-
-func (j *Job) validateState() error {
-	if !isValidStatus(j.Status) {
-		return fmt.Errorf("unsupported job status %q", j.Status)
-	}
-	if (j.Status == StatusTerminal) != (j.Terminal != nil) {
-		return errors.New("job terminal result must be present exactly when status is terminal")
-	}
-	if j.Terminal != nil {
-		if !isValidOutcome(j.Terminal.Outcome) {
-			return fmt.Errorf("unsupported job terminal outcome %q", j.Terminal.Outcome)
-		}
-		if j.Terminal.Outcome == OutcomeFailed && !isValidFailureReason(j.Terminal.Reason) {
-			return fmt.Errorf("unsupported job failure reason %q", j.Terminal.Reason)
-		}
-	}
-	if isTerminal(j.Status) != !j.EndedAt.IsZero() {
-		return errors.New("job ended timestamp must be present exactly when status is terminal")
-	}
-	if !isValidStopReason(j.StopReason) {
-		return fmt.Errorf("unsupported job stop reason %q", j.StopReason)
-	}
-	if j.Status == StatusRunning && (j.StartedAt.IsZero() || j.ExecutionDeadline.IsZero()) {
-		return errors.New("running job requires started and execution deadline timestamps")
-	}
-	if j.Status == StatusStopping &&
-		(j.StopReason == "" || j.StopDeadline.IsZero()) {
-		return errors.New("stopping job requires a persisted stop intent and deadline")
-	}
-	return nil
-}
-
-func (s Spec) validate(kind Kind, scope observation.Scope) error {
-	switch kind {
-	case KindProfiling:
-		if s.Profiling == nil || s.Tracing != nil {
-			return errors.New("profiling job must contain only a profiling spec")
-		}
-		if err := s.Profiling.Validate(); err != nil {
-			return fmt.Errorf("validate profiling job spec: %w", err)
-		}
-		if !profiling.SupportsScope(s.Profiling.Language, s.Profiling.Type, scope) {
-			return fmt.Errorf("profiling job does not support scope %q", scope)
-		}
-	case KindTracing:
-		if s.Tracing == nil || s.Profiling != nil {
-			return errors.New("tracing job must contain only a tracing spec")
-		}
-		if err := s.Tracing.Validate(); err != nil {
-			return fmt.Errorf("validate tracing job spec: %w", err)
-		}
-		if !tracingdomain.SupportsScope(s.Tracing.Type, scope) {
-			return fmt.Errorf("tracing job does not support scope %q", scope)
-		}
-	default:
-		return fmt.Errorf("unsupported job kind %q", kind)
-	}
-	return nil
-}
-
 func (s Spec) subtype(kind Kind) string {
 	switch kind {
 	case KindProfiling:
@@ -304,49 +190,6 @@ func cloneJob(source *Job) *Job {
 	return &cloned
 }
 
-func isValidStatus(status Status) bool {
-	switch status {
-	case StatusPending,
-		StatusRunning,
-		StatusStopping,
-		StatusTerminal:
-		return true
-	default:
-		return false
-	}
-}
-
 func isTerminal(status Status) bool {
 	return status == StatusTerminal
-}
-
-func isValidOutcome(outcome Outcome) bool {
-	return outcome == OutcomeCompleted || outcome == OutcomeFailed ||
-		outcome == OutcomeStopped || outcome == OutcomeUnknown
-}
-
-func isValidFailureReason(reason FailureReason) bool {
-	switch reason {
-	case FailureReasonExecutionStartFailed,
-		FailureReasonExecutionCapacityExceeded,
-		FailureReasonStartTimeout,
-		FailureReasonExecutionFailed,
-		FailureReasonExecutionTimedOut,
-		FailureReasonStopTimeout,
-		FailureReasonNodeUnavailable,
-		FailureReasonOperationLost,
-		FailureReasonProtocolError:
-		return true
-	default:
-		return false
-	}
-}
-
-func isValidStopReason(reason StopReason) bool {
-	switch reason {
-	case "", StopReasonUser, StopReasonStartTimeout, StopReasonExecutionTimeout:
-		return true
-	default:
-		return false
-	}
 }

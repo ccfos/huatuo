@@ -33,7 +33,7 @@ var (
 	// ErrPersistence indicates that a durable Job transition failed.
 	ErrPersistence = errors.New("job persistence failed")
 	// ErrConflict indicates that the persisted Job state changed concurrently.
-	ErrConflict = errors.New("job state conflict")
+	ErrConflict = driver.ErrConflict
 	// ErrInvalidQuery indicates invalid Job query or creation parameters.
 	ErrInvalidQuery = errors.New("invalid job query")
 	// ErrShuttingDown indicates that the Manager no longer accepts new Jobs.

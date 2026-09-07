@@ -31,7 +31,11 @@ type testBackend struct {
 
 func (*testBackend) Init(context.Context, string, []driver.Index) error { return nil }
 
-func (b *testBackend) Save(_ context.Context, record driver.Record) error {
+func (b *testBackend) Save(
+	_ context.Context,
+	record driver.Record,
+	_ driver.SaveOptions,
+) error {
 	b.saved = append(b.saved, record)
 	return nil
 }
@@ -143,7 +147,7 @@ func TestMapperKeepsCommonFieldsFlat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mapper.Encode() error = %v", err)
 	}
-	decoded, err := (mapper{}).Decode(encoded)
+	decoded, err := (mapper{}).Decode(driver.Record{Data: encoded})
 	if err != nil {
 		t.Fatalf("Mapper.Decode() error = %v", err)
 	}

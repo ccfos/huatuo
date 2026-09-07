@@ -110,7 +110,7 @@ func TestRuntimeStopReadsStateAfterCurrentTransition(t *testing.T) {
 	updated := cloneJob(current)
 	updated.PendingDeadline = now.Add(time.Minute)
 	runtime.mu.Unlock()
-	if err := runtime.saveTransition(t.Context(), current, updated); err != nil {
+	if err := runtime.saveTransition(t.Context(), updated); err != nil {
 		runtime.releaseTransition()
 		t.Fatalf("saveTransition() error = %v", err)
 	}

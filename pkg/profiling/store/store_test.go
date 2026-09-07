@@ -95,7 +95,7 @@ func TestMapperDecodeRejectsIncompleteDocument(t *testing.T) {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
 
-	_, err = (mapper{}).Decode(encoded)
+	_, err = (mapper{}).Decode(driver.Record{Data: encoded})
 	if err == nil {
 		t.Fatal("mapper.Decode() error = nil")
 	}
@@ -167,13 +167,16 @@ type recordingBackend struct {
 
 func (*recordingBackend) Init(context.Context, string, []driver.Index) error { return nil }
 
-func (b *recordingBackend) Save(context.Context, driver.Record) error {
-	b.asyncSaves++
-	return nil
-}
-
-func (b *recordingBackend) SaveSync(context.Context, driver.Record) error {
-	b.syncSaves++
+func (b *recordingBackend) Save(
+	_ context.Context,
+	_ driver.Record,
+	options driver.SaveOptions,
+) error {
+	if options.WaitForVisibility {
+		b.syncSaves++
+	} else {
+		b.asyncSaves++
+	}
 	return nil
 }
 

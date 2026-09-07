@@ -147,7 +147,7 @@ func (s *Store) Save(document *Document) error {
 	s.hub.Notify(document)
 	var errs []error
 	for _, backend := range s.backends {
-		if err := backend.Save(context.Background(), document); err != nil {
+		if err := backend.Save(context.Background(), document, driver.SaveOptions{}); err != nil {
 			errs = append(errs, fmt.Errorf("save tracing document to %q: %w", backend.Name, err))
 		}
 	}

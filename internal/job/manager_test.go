@@ -64,27 +64,27 @@ func (s *memoryStore) Create(_ context.Context, job *Job) error {
 	return nil
 }
 
-func (s *memoryStore) Save(_ context.Context, job *Job, expectedRevision int64) error {
+func (s *memoryStore) Save(_ context.Context, job *Job) (*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current, ok := s.jobs[job.ID]
 	if !ok {
-		return ErrNotFound
+		return nil, ErrNotFound
 	}
+	expectedRevision := job.revision
 	if current.revision != expectedRevision {
-		return ErrConflict
+		return nil, ErrConflict
 	}
-	if job.revision != expectedRevision+1 {
-		return ErrInvalidQuery
-	}
+	persisted := cloneJob(job)
+	persisted.revision++
 	if s.saveHook != nil {
-		if err := s.saveHook(cloneJob(job), expectedRevision); err != nil {
-			return err
+		if err := s.saveHook(cloneJob(persisted), expectedRevision); err != nil {
+			return nil, err
 		}
 	}
-	s.jobs[job.ID] = cloneJob(job)
-	s.saves = append(s.saves, cloneJob(job))
-	return nil
+	s.jobs[job.ID] = cloneJob(persisted)
+	s.saves = append(s.saves, cloneJob(persisted))
+	return cloneJob(persisted), nil
 }
 
 func (s *memoryStore) List(_ context.Context, query *Query) ([]*Job, error) {
@@ -255,38 +255,6 @@ func terminalOperation(requestID string, outcome nodeapi.OperationOutcome) *node
 	}
 }
 
-func TestValidateManagerConfigRequiresBothServicePolicies(t *testing.T) {
-	err := validateManagerConfig(&ManagerConfig{
-		StoreDSN:        "jobs.db",
-		ProfilingPolicy: Policy{MaxJobsPerHost: 1, MaxTotalJobs: 1},
-	})
-	if err == nil || err.Error() != "create job manager: policy for tracing is required" {
-		t.Fatalf("validateManagerConfig() error = %v", err)
-	}
-}
-
-func TestValidateManagerConfigRequiresLifecyclePolicy(t *testing.T) {
-	err := validateManagerConfig(&ManagerConfig{
-		StoreDSN:                   "jobs.db",
-		ProfilingPolicy:            Policy{MaxJobsPerHost: 1, MaxTotalJobs: 1},
-		TracingPolicy:              Policy{MaxJobsPerHost: 1, MaxTotalJobs: 1},
-		StatusPollInterval:         time.Second,
-		CompletionGracePeriod:      time.Second,
-		NodeUnavailableGracePeriod: time.Second,
-		JobRetentionPeriod:         time.Second,
-	})
-	if err == nil || err.Error() != "create job manager: pending timeout must be positive" {
-		t.Fatalf("validateManagerConfig() error = %v", err)
-	}
-}
-
-func TestValidateManagerConfigRequiresStoreDSN(t *testing.T) {
-	err := validateManagerConfig(&ManagerConfig{})
-	if err == nil || err.Error() != "create job manager: store dsn is required" {
-		t.Fatalf("validateManagerConfig() error = %v", err)
-	}
-}
-
 func TestManagerCreateClassifiesInvalidRequest(t *testing.T) {
 	manager := testManager(newMemoryStore(), &stubNodeClient{})
 
@@ -356,10 +324,6 @@ func TestManagerListPageUsesLookahead(t *testing.T) {
 	}
 	if len(last.Items) != 1 || last.HasMore {
 		t.Fatalf("ListPage() last page = (%d items, has_more=%t)", len(last.Items), last.HasMore)
-	}
-
-	if _, err := manager.ListPage(t.Context(), &Query{Limit: 1, Offset: -1}); !errors.Is(err, ErrInvalidQuery) {
-		t.Fatalf("ListPage() negative offset error = %v, want ErrInvalidQuery", err)
 	}
 }
 

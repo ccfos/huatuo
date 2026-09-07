@@ -90,9 +90,9 @@ and are not user configurable.
     #
     # StoreDSN = "jobs.db"
 
-    # Job records use an internal revision for concurrent updates. This version
-    # does not migrate schema version 1 records without revisions; stop the
-    # service and remove or replace that database before upgrading.
+    # Job records use an internal revision for concurrent updates. Only records
+    # written by this server version are supported; stop the old service and
+    # remove or replace an incompatible database before starting this version.
 
     # Profiling and tracing retain independent quotas because their resource
     # costs and expected concurrency differ.

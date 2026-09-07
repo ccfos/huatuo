@@ -17,6 +17,7 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -33,6 +34,11 @@ type Storage struct {
 }
 
 var _ driver.Backend = (*Storage)(nil)
+
+var (
+	_ driver.Pinger       = (*Storage)(nil)
+	_ driver.QueryDeleter = (*Storage)(nil)
+)
 
 func init() {
 	driver.RegisterBackend("sqlite", func(cfg *driver.Config) (driver.Backend, error) {
@@ -61,6 +67,14 @@ func (s *Storage) Close(_ context.Context) error {
 	return s.db.Close()
 }
 
+// Ping verifies that the SQLite connection is usable.
+func (s *Storage) Ping(ctx context.Context) error {
+	if err := s.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("sqlite backend ping: %w", err)
+	}
+	return nil
+}
+
 func (s *Storage) Init(ctx context.Context, collection string, indexes []driver.Index) error {
 	if err := validateIdentifier(collection); err != nil {
 		return err
@@ -82,7 +96,6 @@ CREATE TABLE IF NOT EXISTS %s (
 	if _, err := s.db.ExecContext(ctx, createTableSQL); err != nil {
 		return fmt.Errorf("sqlite backend init table %s: %w", s.table, err)
 	}
-
 	for _, idx := range indexes {
 		createIndexSQL := fmt.Sprintf(
 			`CREATE INDEX IF NOT EXISTS %s ON %s(json_extract(fields, '%s'))`,
@@ -97,45 +110,84 @@ CREATE TABLE IF NOT EXISTS %s (
 	return nil
 }
 
-func (s *Storage) Save(ctx context.Context, rec driver.Record) error {
+func (s *Storage) Save(
+	ctx context.Context,
+	rec driver.Record,
+	options driver.SaveOptions,
+) error {
 	fieldsJSON, err := normalizedFieldsJSON(rec.Fields)
 	if err != nil {
 		return err
 	}
 
-	saveSQL := fmt.Sprintf(
-		`INSERT OR REPLACE INTO %s (id, data, fields) VALUES (?, ?, ?)`,
-		quoteIdentifier(s.table),
+	var (
+		statement string
+		args      []any
 	)
-	if _, err := s.db.ExecContext(ctx, saveSQL, rec.ID, rec.Data, fieldsJSON); err != nil {
+	switch options.Mode {
+	case driver.SaveModeUpsert:
+		statement = fmt.Sprintf(
+			`INSERT OR REPLACE INTO %s (id, data, fields) VALUES (?, ?, ?)`,
+			quoteIdentifier(s.table),
+		)
+		args = []any{rec.ID, rec.Data, fieldsJSON}
+	case driver.SaveModeCreateOnly:
+		statement = fmt.Sprintf(
+			`INSERT INTO %s (id, data, fields) VALUES (?, ?, ?)
+			 ON CONFLICT(id) DO NOTHING`,
+			quoteIdentifier(s.table),
+		)
+		args = []any{rec.ID, rec.Data, fieldsJSON}
+	case driver.SaveModeConditional:
+		whereSQL, conditionArgs, buildErr := buildWhereSQL(options.Conditions)
+		if buildErr != nil {
+			return buildErr
+		}
+		statement = fmt.Sprintf(
+			`UPDATE %s SET data = ?, fields = ? WHERE id = ? AND %s`,
+			quoteIdentifier(s.table),
+			whereSQL,
+		)
+		args = append([]any{rec.Data, fieldsJSON, rec.ID}, conditionArgs...)
+	default:
+		return fmt.Errorf("%w: unsupported save mode %d", driver.ErrInvalidQuery, options.Mode)
+	}
+
+	result, err := s.db.ExecContext(ctx, statement, args...)
+	if err != nil {
 		return fmt.Errorf("sqlite backend save into %s: %w", s.table, err)
 	}
-	return nil
-}
-
-// Create inserts rec without replacing an existing ID.
-func (s *Storage) Create(ctx context.Context, rec driver.Record) error {
-	fieldsJSON, err := normalizedFieldsJSON(rec.Fields)
-	if err != nil {
-		return err
-	}
-
-	createSQL := fmt.Sprintf(
-		`INSERT INTO %s (id, data, fields) VALUES (?, ?, ?) ON CONFLICT(id) DO NOTHING`,
-		quoteIdentifier(s.table),
-	)
-	result, err := s.db.ExecContext(ctx, createSQL, rec.ID, rec.Data, fieldsJSON)
-	if err != nil {
-		return fmt.Errorf("sqlite backend create in %s: %w", s.table, err)
+	if options.Mode == driver.SaveModeUpsert {
+		return nil
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("sqlite backend create rows affected: %w", err)
+		return fmt.Errorf("sqlite backend save rows affected: %w", err)
 	}
-	if rows == 0 {
+	if rows != 0 {
+		return nil
+	}
+	if options.Mode == driver.SaveModeCreateOnly {
 		return driver.ErrAlreadyExists
 	}
-	return nil
+	return driver.ErrConflict
+}
+
+// DeleteByQuery deletes records matching query and returns the affected count.
+func (s *Storage) DeleteByQuery(ctx context.Context, query driver.Query) (int64, error) {
+	statement, args, err := buildDeleteSQL(s.table, query)
+	if err != nil {
+		return 0, err
+	}
+	result, err := s.db.ExecContext(ctx, statement, args...)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite backend delete from %s by query: %w", s.table, err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("sqlite backend delete rows affected: %w", err)
+	}
+	return deleted, nil
 }
 
 func normalizedFieldsJSON(fields map[string]any) (string, error) {
@@ -264,7 +316,9 @@ func decodeFields(data []byte) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	fields := make(map[string]any)
-	if err := json.Unmarshal(data, &fields); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&fields); err != nil {
 		return nil, fmt.Errorf("sqlite backend decode fields: %w", err)
 	}
 	return fields, nil

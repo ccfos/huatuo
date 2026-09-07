@@ -68,7 +68,7 @@ func NewFromConfig(ctx context.Context, config *driver.Config) (*Store, error) {
 // Publish writes the final commit marker synchronously.
 func (s *Store) Publish(ctx context.Context, requestID string) error {
 	marker := &Marker{RequestID: requestID, PublishedAt: s.now()}
-	if err := s.store.SaveSync(ctx, marker); err != nil {
+	if err := s.store.Save(ctx, marker, driver.SaveOptions{WaitForVisibility: true}); err != nil {
 		return fmt.Errorf("publish profiling result %q: %w", requestID, err)
 	}
 	return nil
@@ -127,9 +127,9 @@ func (markerMapper) Encode(marker *Marker) ([]byte, error) {
 	return json.Marshal(marker)
 }
 
-func (markerMapper) Decode(data []byte) (*Marker, error) {
+func (markerMapper) Decode(record driver.Record) (*Marker, error) {
 	var marker Marker
-	if err := json.Unmarshal(data, &marker); err != nil {
+	if err := json.Unmarshal(record.Data, &marker); err != nil {
 		return nil, err
 	}
 	return &marker, nil

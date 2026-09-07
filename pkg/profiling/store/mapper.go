@@ -40,9 +40,9 @@ func (mapper) Encode(document *Document) ([]byte, error) {
 	return json.Marshal(document)
 }
 
-func (mapper) Decode(data []byte) (*Document, error) {
+func (mapper) Decode(record driver.Record) (*Document, error) {
 	var document Document
-	if err := json.Unmarshal(data, &document); err != nil {
+	if err := json.Unmarshal(record.Data, &document); err != nil {
 		return nil, err
 	}
 	if err := document.validate(); err != nil {

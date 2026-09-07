@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"huatuo-bamai/internal/storage/driver"
@@ -36,7 +37,19 @@ func NewFromConfig[T any](ctx context.Context, cfg *driver.Config, collection st
 		return nil, err
 	}
 
-	return NewStore(ctx, cfg.Driver, backend, collection, mapper)
+	store, err := NewStore(ctx, cfg.Driver, backend, collection, mapper)
+	if err == nil {
+		return store, nil
+	}
+	// This constructor owns backend, so cleanup must survive a canceled init.
+	cleanupCtx := context.WithoutCancel(ctx)
+	if closeErr := backend.Close(cleanupCtx); closeErr != nil {
+		return nil, errors.Join(
+			err,
+			fmt.Errorf("close storage backend %q: %w", cfg.Driver, closeErr),
+		)
+	}
+	return nil, err
 }
 
 // NewStore validates that backend and mapper are non-nil, verifies the collection
@@ -71,53 +84,27 @@ func NewStore[T any](ctx context.Context, name string, backend driver.Backend, c
 	}, nil
 }
 
-// Save persists v; returns ErrInvalidField if the ID is empty.
-func (s *Store[T]) Save(ctx context.Context, v T) error {
-	rec, err := s.record(v)
-	if err != nil {
+// Save persists v according to options; it returns ErrInvalidField if the ID is empty.
+func (s *Store[T]) Save(ctx context.Context, v T, options driver.SaveOptions) error {
+	if err := validateSaveOptions(options); err != nil {
 		return err
-	}
-	return s.backend.Save(ctx, rec)
-}
-
-// SaveSync persists v and waits until it is visible to subsequent reads.
-func (s *Store[T]) SaveSync(ctx context.Context, v T) error {
-	rec, err := s.record(v)
-	if err != nil {
-		return err
-	}
-	if saver, ok := s.backend.(driver.SyncSaver); ok {
-		return saver.SaveSync(ctx, rec)
-	}
-	return fmt.Errorf(
-		"%w: storage backend %q does not support synchronous saves",
-		driver.ErrUnsupportedOp,
-		s.Name,
-	)
-}
-
-// Create persists v only when its ID does not already exist.
-func (s *Store[T]) Create(ctx context.Context, v T) error {
-	creator, ok := s.backend.(driver.Creator)
-	if !ok {
-		return driver.ErrUnsupportedOp
 	}
 	rec, err := s.record(v)
 	if err != nil {
 		return err
 	}
-	return creator.Create(ctx, rec)
+	return s.backend.Save(ctx, rec, options)
 }
 
 func (s *Store[T]) record(v T) (driver.Record, error) {
-	fields, err := s.mapper.Fields(v)
-	if err != nil {
-		return driver.Record{}, err
-	}
-
 	data, err := s.mapper.Encode(v)
 	if err != nil {
 		return driver.Record{}, fmt.Errorf("%w: %w", driver.ErrEncodeFailed, err)
+	}
+
+	fields, err := s.mapper.Fields(v)
+	if err != nil {
+		return driver.Record{}, err
 	}
 
 	rec := driver.Record{
@@ -138,7 +125,7 @@ func (s *Store[T]) Get(ctx context.Context, id string) (T, error) {
 		var zero T
 		return zero, err
 	}
-	return s.mapper.Decode(rec.Data)
+	return s.mapper.Decode(rec)
 }
 
 // Delete removes an object from storage by ID.
@@ -174,6 +161,19 @@ func (s *Store[T]) Close(ctx context.Context) error {
 	return s.backend.Close(ctx)
 }
 
+// Ping verifies that the backend can serve requests.
+func (s *Store[T]) Ping(ctx context.Context) error {
+	pinger, ok := s.backend.(driver.Pinger)
+	if !ok {
+		return fmt.Errorf(
+			"%w: storage backend %q does not support ping",
+			driver.ErrUnsupportedOp,
+			s.Name,
+		)
+	}
+	return pinger.Ping(ctx)
+}
+
 // Query returns objects matching q; all filter and sort fields must be registered indexes.
 func (s *Store[T]) Query(ctx context.Context, q driver.Query) ([]T, error) {
 	if err := s.validateQuery(q); err != nil {
@@ -187,7 +187,7 @@ func (s *Store[T]) Query(ctx context.Context, q driver.Query) ([]T, error) {
 
 	values := make([]T, 0, len(records))
 	for _, rec := range records {
-		value, decodeErr := s.mapper.Decode(rec.Data)
+		value, decodeErr := s.mapper.Decode(rec)
 		if decodeErr != nil {
 			return nil, fmt.Errorf("%w: %w", driver.ErrDecodeFailed, decodeErr)
 		}
@@ -224,5 +224,27 @@ func (s *Store[T]) validateQuery(q driver.Query) error {
 		return driver.ErrNegativePagination
 	}
 
+	return nil
+}
+
+func validateSaveOptions(options driver.SaveOptions) error {
+	switch options.Mode {
+	case driver.SaveModeUpsert, driver.SaveModeCreateOnly:
+		if len(options.Conditions) != 0 {
+			return fmt.Errorf(
+				"%w: save conditions require conditional mode",
+				driver.ErrInvalidQuery,
+			)
+		}
+	case driver.SaveModeConditional:
+		if len(options.Conditions) == 0 {
+			return fmt.Errorf(
+				"%w: conditional save requires at least one condition",
+				driver.ErrInvalidQuery,
+			)
+		}
+	default:
+		return fmt.Errorf("%w: unsupported save mode %d", driver.ErrInvalidQuery, options.Mode)
+	}
 	return nil
 }

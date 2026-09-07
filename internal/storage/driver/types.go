@@ -32,6 +32,7 @@ var (
 	ErrEncodeFailed  = errors.New("storage: encode failed")
 	ErrDecodeFailed  = errors.New("storage: decode failed")
 	ErrAlreadyExists = errors.New("storage: already exists")
+	ErrConflict      = errors.New("storage: conflict")
 
 	// ErrNegativePagination is returned when Limit or Offset is negative.
 	ErrNegativePagination = fmt.Errorf("%w: limit and offset must be non-negative", ErrInvalidQuery)
@@ -107,6 +108,25 @@ type Record struct {
 	Fields map[string]any
 }
 
+// SaveMode selects the write precondition applied by a backend.
+type SaveMode uint8
+
+const (
+	// SaveModeUpsert creates or replaces a record without a precondition.
+	SaveModeUpsert SaveMode = iota
+	// SaveModeCreateOnly creates a record only when its ID does not exist.
+	SaveModeCreateOnly
+	// SaveModeConditional updates a record only when all Conditions match.
+	SaveModeConditional
+)
+
+// SaveOptions describes write preconditions and visibility requirements.
+type SaveOptions struct {
+	Mode              SaveMode
+	Conditions        []Filter
+	WaitForVisibility bool
+}
+
 // Index declares one queryable field.
 type Index struct {
 	Field string
@@ -116,7 +136,7 @@ type Index struct {
 type Mapper[T any] interface {
 	ID(entity T) string
 	Encode(entity T) ([]byte, error)
-	Decode(data []byte) (T, error)
+	Decode(record Record) (T, error)
 	Fields(entity T) (map[string]any, error)
 	Indexes() []Index
 }
@@ -130,7 +150,7 @@ type Mapper[T any] interface {
 // once and never reused; calling Save after Close is undefined.
 type Backend interface {
 	Init(ctx context.Context, collection string, indexes []Index) error
-	Save(ctx context.Context, rec Record) error
+	Save(ctx context.Context, rec Record, options SaveOptions) error
 	Get(ctx context.Context, id string) (Record, error)
 	Delete(ctx context.Context, id string) error
 	Query(ctx context.Context, q Query) ([]Record, error)
@@ -139,18 +159,13 @@ type Backend interface {
 	Close(ctx context.Context) error
 }
 
-// Creator is implemented by backends that support insert-only writes.
-type Creator interface {
-	Create(ctx context.Context, rec Record) error
-}
-
-// SyncSaver persists one record only after it is visible to subsequent reads.
-type SyncSaver interface {
-	SaveSync(ctx context.Context, rec Record) error
-}
-
 // QueryDeleter is implemented by backends that can synchronously delete every
 // record matching a query.
 type QueryDeleter interface {
 	DeleteByQuery(ctx context.Context, query Query) (int64, error)
+}
+
+// Pinger verifies that a backend can serve requests.
+type Pinger interface {
+	Ping(ctx context.Context) error
 }

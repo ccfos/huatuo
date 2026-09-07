@@ -16,7 +16,6 @@ package job
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -88,14 +87,12 @@ func TestStorageStoreRoundTripQueryAndCompareAndSwap(t *testing.T) {
 	updated.ExecutionDeadline = base.Add(2 * time.Minute)
 	updated.PendingDeadline = base.Add(time.Minute)
 	updated.UpdatedAt = base.Add(time.Second)
-	updated.revision = 2
 	stale := cloneJob(updated)
-	stale.revision = 3
-	if err := store.Save(t.Context(), stale, 2); !errors.Is(err, ErrConflict) {
-		t.Fatalf("Save() stale revision error = %v, want ErrConflict", err)
-	}
-	if err := store.Save(t.Context(), updated, 1); err != nil {
+	if _, err := store.Save(t.Context(), updated); err != nil {
 		t.Fatalf("Save() error = %v", err)
+	}
+	if _, err := store.Save(t.Context(), stale); !errors.Is(err, ErrConflict) {
+		t.Fatalf("Save() stale revision error = %v, want ErrConflict", err)
 	}
 
 	got, err := store.Get(t.Context(), first.ID)
@@ -132,26 +129,25 @@ func TestStorageStoreRevisionConflictsForSameStatusUpdates(t *testing.T) {
 	first := cloneJob(job)
 	first.PendingDeadline = now.Add(time.Minute)
 	first.UpdatedAt = now.Add(time.Second)
-	first.revision = 2
 	second := cloneJob(first)
 	second.NodeUnavailableDeadline = now.Add(2 * time.Minute)
-	if err := store.Save(t.Context(), first, 1); err != nil {
+	if _, err := store.Save(t.Context(), first); err != nil {
 		t.Fatalf("first Save() error = %v", err)
 	}
-	if err := store.Save(t.Context(), second, 1); !errors.Is(err, ErrConflict) {
+	if _, err := store.Save(t.Context(), second); !errors.Is(err, ErrConflict) {
 		t.Fatalf("second Save() error = %v, want ErrConflict", err)
 	}
 }
 
-func TestStorageStoreRejectsNonSequentialRevision(t *testing.T) {
+func TestStorageStoreRejectsInvalidRevision(t *testing.T) {
 	store := openTestStore(t)
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	job := storedTestJob("job-1", "user-1", "node-1", StatusPending, now)
 	if err := store.Create(t.Context(), job); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	job.revision = 3
-	if err := store.Save(t.Context(), job, 1); !errors.Is(err, ErrInvalidQuery) {
+	job.revision = 0
+	if _, err := store.Save(t.Context(), job); !errors.Is(err, ErrInvalidQuery) {
 		t.Fatalf("Save() error = %v, want ErrInvalidQuery", err)
 	}
 }
@@ -182,70 +178,6 @@ func TestStorageStoreDeletesOnlyExpiredTerminalJobs(t *testing.T) {
 	}
 }
 
-func TestStorageMigrationConvertsLegacyActiveJobToOperationLost(t *testing.T) {
-	dsn := filepath.Join(t.TempDir(), "jobs.db")
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatalf("sql.Open() error = %v", err)
-	}
-	if _, err := db.Exec(`CREATE TABLE jobs (
-		id TEXT PRIMARY KEY,
-		data BLOB NOT NULL,
-		fields TEXT NOT NULL
-	)`); err != nil {
-		t.Fatalf("create legacy jobs table: %v", err)
-	}
-	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	legacy := legacyStoragePayload{
-		Type:      "profiling_cpu",
-		ID:        "legacy-job",
-		Username:  "legacy-user",
-		Hostname:  "node-1",
-		Status:    "running",
-		Duration:  120,
-		CreatedAt: base,
-		UpdatedAt: base,
-		AgentTask: legacyAgentTaskRequest{TracerArgs: []string{
-			"--duration", "60", "--language", "go",
-		}},
-	}
-	payload, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
-	}
-	if _, err := db.Exec(
-		`INSERT INTO jobs (id, data, fields) VALUES (?, ?, ?)`,
-		legacy.ID,
-		payload,
-		`{"status":"running"}`,
-	); err != nil {
-		t.Fatalf("insert legacy Job: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close legacy database: %v", err)
-	}
-
-	store, err := newStore(t.Context(), dsn)
-	if err != nil {
-		t.Fatalf("newStore() migration error = %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	got, err := store.Get(t.Context(), legacy.ID)
-	if err != nil {
-		t.Fatalf("Get() error = %v", err)
-	}
-	if got.Status != StatusTerminal || got.Terminal == nil || got.Terminal.Outcome != OutcomeUnknown ||
-		got.Terminal.Reason != FailureReasonOperationLost {
-		t.Fatalf("migrated Job = (%q, %+v)", got.Status, got.Terminal)
-	}
-	if got.Kind != KindProfiling || got.Duration != time.Minute {
-		t.Fatalf("migrated Job kind/duration = (%q, %s)", got.Kind, got.Duration)
-	}
-	if got.revision != 1 {
-		t.Fatalf("migrated Job revision = %d, want 1", got.revision)
-	}
-}
-
 func TestStorageStoreRejectsCurrentRecordWithoutRevision(t *testing.T) {
 	dsn := filepath.Join(t.TempDir(), "jobs.db")
 	db, err := sql.Open("sqlite", dsn)
@@ -261,14 +193,14 @@ func TestStorageStoreRejectsCurrentRecordWithoutRevision(t *testing.T) {
 	}
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	job := storedTestJob("job-1", "user-1", "node-1", StatusPending, now)
-	record, err := encodeStorageRecord(job)
+	data, err := (recordMapper{}).Encode(job)
 	if err != nil {
-		t.Fatalf("encodeStorageRecord() error = %v", err)
+		t.Fatalf("Encode() error = %v", err)
 	}
 	if _, err := db.Exec(
 		`INSERT INTO jobs (id, data, fields) VALUES (?, ?, ?)`,
-		record.id,
-		record.data,
+		job.ID,
+		data,
 		`{"status":"pending"}`,
 	); err != nil {
 		t.Fatalf("insert Job: %v", err)
@@ -277,9 +209,14 @@ func TestStorageStoreRejectsCurrentRecordWithoutRevision(t *testing.T) {
 		t.Fatalf("close database: %v", err)
 	}
 
-	_, err = newStore(t.Context(), dsn)
+	store, err := newStore(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("newStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	_, err = store.Get(t.Context(), job.ID)
 	if err == nil || !strings.Contains(err.Error(), "field revision: value is required") {
-		t.Fatalf("newStore() error = %v, want missing revision error", err)
+		t.Fatalf("Get() error = %v, want missing revision error", err)
 	}
 }
 

@@ -148,6 +148,13 @@ func (m *mockElasticsearchServer) handleSaveDocument(w http.ResponseWriter, r *h
 	if _, ok := m.indexes[index]; !ok {
 		m.indexes[index] = make(map[string]mockElasticsearchDocument)
 	}
+	if r.URL.Query().Get("op_type") == "create" {
+		if _, ok := m.indexes[index][id]; ok {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"type":"version_conflict_engine_exception"}}`))
+			return
+		}
+	}
 	m.indexes[index][id] = mockElasticsearchDocument{
 		ID:     id,
 		Source: cloneRawMessage(raw),
@@ -1001,7 +1008,7 @@ func TestElasticsearchBackendCRUD(t *testing.T) {
 		},
 	}
 
-	if err := backend.Save(t.Context(), record); err != nil {
+	if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
 		t.Errorf("Save() returned error: %v", err)
 	}
 	flushBackend(t, backend)
@@ -1028,6 +1035,25 @@ func TestElasticsearchBackendCRUD(t *testing.T) {
 	}
 }
 
+func TestElasticsearchBackendSaveCreateOnlyRejectsDuplicateID(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+	record := driver.Record{ID: "job-1", Data: []byte(`{"status":"pending"}`)}
+	options := driver.SaveOptions{
+		Mode:              driver.SaveModeCreateOnly,
+		WaitForVisibility: true,
+	}
+	if err := backend.Save(t.Context(), record, options); err != nil {
+		t.Fatalf("first Save() error = %v", err)
+	}
+	if err := backend.Save(t.Context(), record, options); !errors.Is(err, driver.ErrAlreadyExists) {
+		t.Fatalf("second Save() error = %v, want ErrAlreadyExists", err)
+	}
+}
+
 func TestElasticsearchBackendDeleteByQuery(t *testing.T) {
 	server := newMockElasticsearchServer()
 	defer server.Close()
@@ -1039,8 +1065,12 @@ func TestElasticsearchBackendDeleteByQuery(t *testing.T) {
 		{ID: "profile-2", Data: []byte(`{"tracer_id":"job-1"}`)},
 		{ID: "profile-3", Data: []byte(`{"tracer_id":"job-2"}`)},
 	} {
-		if err := backend.SaveSync(t.Context(), record); err != nil {
-			t.Fatalf("SaveSync(%q) error = %v", record.ID, err)
+		if err := backend.Save(
+			t.Context(),
+			record,
+			driver.SaveOptions{WaitForVisibility: true},
+		); err != nil {
+			t.Fatalf("Save(%q) error = %v", record.ID, err)
 		}
 	}
 
@@ -1125,7 +1155,7 @@ func TestElasticsearchBackendQuery(t *testing.T) {
 	}
 
 	for _, record := range records {
-		if err := backend.Save(t.Context(), record); err != nil {
+		if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
 			t.Errorf("Save(%q) returned error: %v", record.ID, err)
 		}
 	}
@@ -1215,7 +1245,7 @@ func TestElasticsearchBackendTerms(t *testing.T) {
 	}
 
 	for _, record := range records {
-		if err := backend.Save(t.Context(), record); err != nil {
+		if err := backend.Save(t.Context(), record, driver.SaveOptions{}); err != nil {
 			t.Errorf("Save(%q) returned error: %v", record.ID, err)
 		}
 	}

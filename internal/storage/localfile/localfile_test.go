@@ -36,7 +36,7 @@ func TestBackendSave(t *testing.T) {
 		Fields: map[string]any{
 			"tracer_name": "kernel_sched_tick",
 		},
-	})
+	}, driver.SaveOptions{})
 	if err != nil {
 		t.Errorf("Backend.Save() returned error: %v", err)
 		return
@@ -86,7 +86,7 @@ func TestBackendSaveMkdirAllError(t *testing.T) {
 		Fields: map[string]any{
 			"tracer_name": "permtest",
 		},
-	})
+	}, driver.SaveOptions{})
 	if err == nil {
 		t.Errorf("Save() error=nil, want permission denied error")
 	}
@@ -107,7 +107,7 @@ func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 		Fields: map[string]any{
 			"tracer_name": tracerName,
 		},
-	})
+	}, driver.SaveOptions{})
 	if err != nil {
 		t.Fatalf("Save() = %v, want nil", err)
 	}
