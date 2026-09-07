@@ -189,14 +189,19 @@ huatuo_bamai_loadavg_container_nr_uninterruptible{container_host="coredns-855c4d
 |loadavg_load5|系统过去 5 分钟的平均负载|计数|物理机| host, region ||
 |loadavg_load15|系统过去 15 分钟的平均负载|计数|物理机| host, region ||
 |loadavg_nr_running|主机当前正在运行或等待 CPU 的任务数|计数|物理机| host, region |读取 `/proc/stat` 的 `procs_running`|
-|loadavg_container_nr_running|容器中运行或等待 CPU 的任务数量|计数|容器| host, region |支持 cgroup v1/v2|
-|loadavg_container_nr_uninterruptible|容器中不可中断任务的数量|计数|容器| host, region |支持 cgroup v1/v2|
+|loadavg_container_nr_running|容器中运行或等待 CPU 的任务数量|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |支持 cgroup v1/v2|
+|loadavg_container_nr_uninterruptible|容器中不可中断任务的数量|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |支持 cgroup v1/v2|
+|loadavg_container_load1|容器 1 分钟 R+D 平均负载估算|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2，可配置 EMA 采样间隔，默认 15 秒|
+|loadavg_container_load5|容器 5 分钟 R+D 平均负载估算|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2，可配置 EMA 采样间隔，默认 15 秒|
+|loadavg_container_load15|容器 15 分钟 R+D 平均负载估算|计数|容器| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2，可配置 EMA 采样间隔，默认 15 秒|
 
-`nr_running` 是瞬时 Gauge，不是 `load1/5/15` 平均负载，也不是 CPU 利用率。主机包含容器任务，不能与容器值相加；容器采用非递归采样，不包含子 cgroup。主机数据依赖采集器可见的宿主机 procfs，不要求启用 cgroup；读取失败或字段缺失时不补零，且不影响已有 load average 和容器采集。未新增容器 load average 估算。
+`nr_running` 是瞬时 Gauge，不是 `load1/5/15` 平均负载，也不是 CPU 利用率。主机包含容器任务，不能与容器值相加；容器采用非递归采样，不包含子 cgroup。主机数据依赖采集器可见的宿主机 procfs，不要求启用 cgroup；读取失败或字段缺失时不补零，且不影响已有 load average 和容器采集。
+
+容器 R/D 与平均负载由 `loadavg` 生命周期按 `MetricCollector.Loadavg.Interval` 秒采样（默认 15 秒，0 使用默认值），独立于 Prometheus 抓取和 dload 自动追踪。v1 复用 netlink，v2 复用共享 BPF task iterator。平均负载按实际采样间隔计算 `L += (R+D-L) * (1-exp(-dt/τ))`，τ 为 60/300/900 秒；首次采样只建立基线，之后从零预热。它是用户态估算，不等同于主机内核 loadavg，也不按 CPU 配额归一化。容器消失、采样缺失或间隔超过三倍采样周期（默认 45 秒）时清理/重置该容器历史，不以零填充失败；超过三倍采样周期的缓存不导出。暂停或重启 loadavg 会重置平均负载，已有主机 loadavg 不变。Dload 仍使用独立的 `AutoTracing.Dload.Interval`（默认 10 秒）；iterator 仅合并 100ms 内符合条件的请求，不保证每次采样都复用。
 
 未补主机 `nr_uninterruptible`：[`/proc/stat` 的 `procs_blocked`](https://www.kernel.org/doc/html/latest/filesystems/proc.html) 表示等待 IO 的任务数，不等价于全部不可中断任务；本轮不扩展 IO 指标。
 
-cgroup v2 容器负载指标需要通过 `MetricCollector.Loadavg.EnableCgroupV2=true` 显式开启，因为每次抓取都会遍历一次宿主机全部任务。它依赖可读的内核 BTF 和 BPF `task` iterator，统计仅包含直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。内核不支持时仍会输出上述物理机负载指标，静默省略容器负载指标且只记录一次告警，不会将宿主机采集判为失败；确定的不支持结果会被缓存，后续不会反复尝试加载 BPF 程序。
+cgroup v2 容器负载指标需要通过 `MetricCollector.Loadavg.EnableCgroupV2=true` 显式开启，因为每次采样都会遍历一次宿主机全部任务。它依赖可读的内核 BTF 和 BPF `task` iterator，统计仅包含直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。内核不支持时仍会输出上述物理机负载指标，静默省略容器负载指标且只记录一次告警，不会将宿主机采集判为失败；确定的不支持结果会被缓存，后续不会反复尝试加载 BPF 程序。
 
 Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机 PID namespace 时，cgroup v2 容器指标会作为不支持而省略，不会输出有误导性的全零数据。
 
