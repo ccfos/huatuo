@@ -59,7 +59,7 @@ All events provide default values and are operational without any configuration.
 | ------------------------ | ---------- | ----------------- | ----------------- |
 | `sched_tick` | kprobe | Scheduler tick interval >= threshold (default 10ms) | System stalls, network latency, scheduling delays |
 | `softlockup` | kprobe | CPU unable to schedule for extended time (~1 second) | Soft lockup, response anomalies |
-| `hungtask` | kprobe | D-state process task hang | Transient mass D-state processes, IO blocking |
+| `hungtask` | raw tracepoint; tracepoint fallback (host only) | D-state process task hang | Transient mass D-state processes, IO blocking |
 | `oom` | kprobe | OOM Killer triggered | Container/host memory exhaustion |
 | `memory_reclaim_events` | kprobe | Container process direct reclaim time > threshold (default 900ms) | Business stalls caused by memory pressure |
 | `ras` | tracepoint | CPU/MEM/PCIe hardware errors | Hardware fault detection |
@@ -344,6 +344,8 @@ All event records include the following common fields:
 
 ### 6. hungtask
 
+`hungtask_container_total` attributes events using the blocked task's cgroup identity captured at the raw tracepoint; matched traces carry `ContainerID`. It does not resolve a potentially reused TID later in userspace. Missing container metadata or unsupported identity capture leaves events in the host total only. Container counting is independent of trace-save backoff. CPU and blocked-task stack snapshots remain system-wide. See [HungTask metrics](kernel-wide-insight_en.md#hungtask) for hierarchy matching, fallback and accounting details.
+
 **Description** Detects hungtask events. Captures the kernel stacks of all processes in D state (uninterruptible sleep) and NMI backtrace for all CPUs to preserve the fault scene. A backoff strategy is applied: the reporting interval increases from 10 minutes up to a maximum of 3 hours during an event storm. A hungtask occurrence counter metric is also maintained. Note: some Linux distributions (e.g., Fedora 42) disable hungtask detection by default, in which case this observer will not start.
 
 **Data Storage** Automatically stored in Elasticsearch or as files on the physical machine disk.
@@ -523,8 +525,8 @@ HUATUO's anomalous event observation is built on eBPF technology. Event data is 
 graph TB
     subgraph "Linux Kernel"
         direction TB
-        K1["kprobe hooks\n(sched_tick / softlockup / hungtask\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
-        K2["tracepoint hooks\n(ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
+        K1["kprobe hooks\n(sched_tick / softlockup\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
+        K2["raw tracepoint / tracepoint hooks\n(hungtask: raw tracepoint,\n tracepoint fallback, host only\n ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
         K3["netlink subscription\n(netdev_events: RTM_NEWLINK)"]
         K4["kprobe hooks\n(netdev_bonding_lacp: 802.3ad)"]
         PEB["Perf Event Ring Buffer\n(8192 pages)"]

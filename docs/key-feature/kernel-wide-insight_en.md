@@ -1235,7 +1235,14 @@ huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
 
 |Metric|Description|Unit|Target|Source|Labels|
 |---|---|---|---|---|---|
-|hungtask_total|Count of hung task events|count|Host|BPF|
+|hungtask_total|Hung task events including container and unassigned tasks|count|Host|BPF|host, region|
+|hungtask_container_total|Events attributed to blocked container tasks|count|Container|BPF + cgroup file handles|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+Container attribution snapshots the blocked task's cgroup identity at the `sched_process_hang` raw tracepoint, rather than using the detecting `khungtaskd`. cgroup v1/Hybrid uses the CPU hierarchy; v2 uses the unified hierarchy. Up to 16 non-root ancestors carry full kernfs IDs including generations and are matched against discovered normal containers' cgroup file handles, choosing the nearest matching container. This supports descendant cgroups without a later `/proc/<tid>/cgroup` lookup, so task exit, TID reuse and subsequent migration do not change the recorded identity.
+
+Missing metadata, unreadable handles, failed identity reads or an unmatched container beyond the 16-level limit leave events in the host total only. If raw tracepoint loading or attachment fails, the collector retries the original tracepoint with host-only counting and a warning; it does not fall back to TID lookup. The host path still requires the original BPF/BTF and hungtask tracepoint support. Event-time identity does not guarantee successful container discovery.
+
+Both metrics are Counters updated before trace backoff. Tracing keeps host-wide backoff and system-wide stack snapshots; matched records carry `ContainerID`, without filtering stacks to that container. Container counts last for the observed container lifetime, are removed after successful discovery confirms exit, and reset on agent restart. Discovery failure retains the host metric and cached container counts. Do not add host and container counts; repeated reports for the same blocked task are separate events.
 
 
 ## GPU

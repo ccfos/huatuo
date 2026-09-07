@@ -59,7 +59,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 | ----------------------- | -------- | -------- | -------- |
 | `sched_tick` | kprobe | 调度 tick 间隔 >= 阈值（默认 10ms） | 系统卡顿、网络延迟、调度延迟 |
 | `softlockup` | kprobe | CPU 长时间无法调度（约 1 秒） | 系统软锁死、响应异常 |
-| `hungtask` | kprobe | D 状态进程任务挂起 | 瞬时批量 D 进程、IO 阻塞 |
+| `hungtask` | raw tracepoint；回退 tracepoint（仅主机） | D 状态进程任务挂起 | 瞬时批量 D 进程、IO 阻塞 |
 | `oom` | kprobe | OOM Killer 触发 | 容器/宿主机内存耗尽 |
 | `memory_reclaim_events` | kprobe | 容器进程直接回收时间 > 阈值（默认 900ms） | 内存压力导致业务卡顿 |
 | `ras` | tracepoint | CPU/MEM/PCIe 硬件错误 | 硬件故障感知 |
@@ -344,6 +344,8 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 ### 6. hungtask 任务挂起
 
+`hungtask_container_total` 使用 raw tracepoint 在事件时刻记录的阻塞任务 cgroup 身份匹配容器，已匹配追踪附带 `ContainerID`，不再事后通过 TID 查询归属。容器元数据缺失或不支持身份采集时，仅保留主机总计。容器计数不受追踪保存退避影响；CPU 与阻塞任务栈仍为全机快照。层级匹配、回退及计数语义见 [HungTask 指标](kernel-wide-insight_zh.md#hungtask)。
+
 **功能描述** 检测系统 hungtask 事件，捕获当前所有处于 D 状态（不可中断睡眠）的进程内核栈及所有 CPU 的回溯信息，用于保留故障现场。采用退避策略，同一轮事件风暴期间上报间隔从 10 分钟递增至最长 3 小时。同时维护 hungtask 发生次数的计数指标。注意：部分 Linux 发行版（如 Fedora 42）默认禁用 hungtask 检测，此时该观测器不会启动。
 
 **数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
@@ -523,8 +525,8 @@ HUATUO 的异常事件观测基于 eBPF 技术，在内核态以极低的性能�
 graph TB
     subgraph "Linux Kernel"
         direction TB
-        K1["kprobe 挂钩\n(sched_tick / softlockup / hungtask\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP，可选)"]
-        K2["tracepoint 挂钩\n(ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
+        K1["kprobe 挂钩\n(sched_tick / softlockup\n oom / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP，可选)"]
+        K2["raw tracepoint / tracepoint 挂钩\n(hungtask: raw tracepoint，\n 回退 tracepoint，仅主机\n ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
         K3["netlink 订阅\n(netdev_events: RTM_NEWLINK)"]
         K4["kprobe 挂钩\n(netdev_bonding_lacp: 802.3ad)"]
         PEB["Perf Event 环形缓冲区\n(8192 页)"]

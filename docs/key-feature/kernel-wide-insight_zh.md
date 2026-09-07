@@ -1315,7 +1315,14 @@ huatuo_bamai_hungtask_total{host="hostname",region="dev"} 0
 
 |指标|意义|单位|对象|取值| 标签 |
 |---|---|---|---|---|---|
-|hungtask_total|系统 hungtask 事件计数|计数|物理机|BPF|
+|hungtask_total|系统 hungtask 事件计数（包含容器与未归属任务）|计数|物理机|BPF|host, region|
+|hungtask_container_total|已归属容器的阻塞任务事件计数|计数|容器|BPF + cgroup 文件句柄|container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+
+容器归属通过 `sched_process_hang` raw tracepoint，在事件时刻读取目标阻塞任务（不是 `khungtaskd`）的 cgroup 身份。cgroup v1/Hybrid 使用 CPU 层级，v2 使用统一层级；携带最近的最多 16 层非根 cgroup 完整 kernfs ID（含代次），与已发现普通容器的 cgroup 文件句柄匹配，优先归属最近容器，支持容器子 cgroup。复用现有 cgroup ID 读取路径，不再事后查询 `/proc/<tid>/cgroup`，避免任务退出、TID 复用和后续迁移改变归属。
+
+容器元数据消失、文件句柄不可读、身份读取失败，或容器根超出 16 层范围且无法匹配时，只保留主机总计，缺失容器不补零。raw tracepoint 加载或挂载失败时，清理后重试原有普通 tracepoint，仅采集主机事件并告警；不回退到可能误归属的 TID 查询。主机路径本身仍需要原有 BPF/BTF 和 hungtask tracepoint 支持。事件身份更精确不代表容器元数据发现一定成功，诊断堆栈仍是主机范围。
+
+两项均保留 Counter 语义，计数发生在追踪退避之前；追踪仍沿用主机级退避和全机栈快照，已匹配的记录附带 `ContainerID`，不表示栈已按容器过滤。容器指标使用生命周期内累计计数，成功发现容器退出后清理，进程重启归零。发现故障不丢主机指标，也不清空已累计的容器状态。主机与容器计数不能相加，重复上报同一阻塞线程仍按多次事件计数。
 
 
 ## GPU
