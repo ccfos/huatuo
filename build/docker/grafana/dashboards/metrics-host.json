@@ -1234,6 +1234,54 @@
           ],
           "title": "Softirq Latency",
           "type": "timeseries"
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 92,
+          "title": "Host Runnable Tasks",
+          "description": "Instantaneous running or runnable tasks from /proc/stat procs_running, including container tasks. Not CPU utilization or load average.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_loadavg_nr_running{host=~\"$host\",region=~\"$region\"}",
+              "legendFormat": "Runnable {{host}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 101
+          }
         }
       ],
       "targets": [
