@@ -1005,6 +1005,9 @@ InitPid 读取实际 memory cgroup 路径并保存；路径暂不可用或通知
 		# 控制容器负载及主机 D 状态采样，不影响主机 /proc/loadavg 抓取，
 		# 也不影响 AutoTracing.Dload.Interval（默认 10 秒）。
 		# Interval = 15
+		# 开启主机参与负载计算的 D 状态任务计数，每 Interval 秒采样。
+		# 适用于 cgroup v1/v2，需要主机 PID 可见性、内核 BTF 和 BPF
+		# task iterator，与 v2 容器统计共用遍历；不支持时省略指标。
 
 	# Netdev statistic
 	#
