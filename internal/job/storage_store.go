@@ -255,6 +255,9 @@ func toStorageQuery(q *JobQuery) driver.Query {
 		q = &JobQuery{}
 	}
 	filters := make([]driver.Filter, 0, 6)
+	if q.ID != "" {
+		filters = append(filters, driver.Filter{Field: "id", Op: driver.OpEq, Value: q.ID})
+	}
 	if q.UserID != "" && !q.IsAdmin {
 		filters = append(filters, driver.Filter{Field: "user_id", Op: driver.OpEq, Value: q.UserID})
 	}

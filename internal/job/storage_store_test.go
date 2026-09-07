@@ -239,3 +239,13 @@ func TestToStorageQueryUsesJobFieldNames(t *testing.T) {
 		t.Errorf("default sorts=%v, want descending created_at", query.Sorts)
 	}
 }
+
+func TestToStorageQueryIncludesIDFilter(t *testing.T) {
+	query := toStorageQuery(&JobQuery{ID: "job-store-alpha"})
+	if len(query.Filters) != 1 {
+		t.Fatalf("filter count=%d, want 1", len(query.Filters))
+	}
+	if query.Filters[0].Field != "id" || query.Filters[0].Op != driver.OpEq {
+		t.Fatalf("filter=%+v, want id equality filter", query.Filters[0])
+	}
+}
