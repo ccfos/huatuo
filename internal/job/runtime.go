@@ -253,8 +253,9 @@ func (r *runtime) reconcileJobWithOperation(
 	}
 	now := r.dependencies.now()
 	updated := cloneJob(current)
-	changed := clearNodeUnavailableDeadline(updated)
+	changed := !updated.NodeUnavailableDeadline.IsZero()
 	if changed {
+		updated.NodeUnavailableDeadline = time.Time{}
 		updated.UpdatedAt = now
 	}
 	switch operation.Status {
@@ -668,14 +669,6 @@ func setTerminal(
 	if job.EndedAt.IsZero() {
 		job.EndedAt = now
 	}
-}
-
-func clearNodeUnavailableDeadline(job *Job) bool {
-	if job.NodeUnavailableDeadline.IsZero() {
-		return false
-	}
-	job.NodeUnavailableDeadline = time.Time{}
-	return true
 }
 
 func (r *runtime) snapshot() *Job {
