@@ -601,3 +601,20 @@ func TestSaveCPUIdleTraceRejectsInvalidPerfOutput(t *testing.T) {
 		t.Fatalf("saveCPUIdleTrace() error = %v, want decode error", err)
 	}
 }
+
+func TestContainerCPUStateUpdateZeroCapacityDoesNotDivide(t *testing.T) {
+	t.Parallel()
+
+	start := time.Unix(100, 0)
+	state := containerCPUState{hasPercent: true}
+	if state.update(cpuUsageBreakdown[uint64]{}, 0, start) {
+		t.Fatal("first update = true, want false")
+	}
+
+	if state.update(cpuUsageBreakdown[uint64]{user: 10, total: 10}, 0, start.Add(time.Second)) {
+		t.Fatal("zero-capacity update = true, want false")
+	}
+	if state.hasUsage || state.hasPercent {
+		t.Fatalf("state after zero-capacity update = %+v, want no usage/percent", state)
+	}
+}
