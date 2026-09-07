@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 
 	"github.com/ccfos/huatuo/internal/bpf"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
@@ -56,32 +57,48 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 	}
 	defer lease.Release()
 
-	containers, err := pod.NormalContainers()
+	return c.update(lease, pod.NormalContainers)
+}
+
+func (c *memoryCgroupReclaim) update(obj bpf.BPF, discover func() (map[string]*pod.Container, error)) ([]*metric.Data, error) {
+	items, hostErr := obj.DumpMapByName("memory_host_directstall")
+	var data []*metric.Data
+	if hostErr != nil {
+		hostErr = fmt.Errorf("dump host memcg reclaim count: %w", hostErr)
+	} else {
+		var count uint64
+		count, hostErr = hostMemcgReclaimCount(items)
+		if hostErr == nil {
+			data = append(data, metric.NewGaugeData("directstall", float64(count),
+				"cumulative host-wide memcg reclaim events, excluding kswapd", nil))
+		}
+	}
+
+	containers, err := discover()
 	if err != nil {
-		return nil, err
+		return data, errors.Join(hostErr, fmt.Errorf("discover memcg reclaim containers: %w", err))
 	}
 
 	containersCssMem := pod.BuildCssContainers(containers, subsystem.SubsystemMemory)
 
-	items, err := lease.DumpMapByName("memory_cgroup_allocpages_stall")
+	items, err = obj.DumpMapByName("memory_cgroup_allocpages_stall")
 	if err != nil {
-		return nil, err
+		return data, errors.Join(hostErr, fmt.Errorf("dump container memcg reclaim count: %w", err))
 	}
 
 	var (
 		reclaimVal memoryBpfStruct
 		cssAddr    uint64
-		data       []*metric.Data
 	)
 	for _, v := range items {
 		keyBuf := bytes.NewReader(v.Key)
 		if err := binary.Read(keyBuf, binary.LittleEndian, &cssAddr); err != nil {
-			return nil, err
+			return data, errors.Join(hostErr, err)
 		}
 
 		valBuf := bytes.NewReader(v.Value)
 		if err := binary.Read(valBuf, binary.LittleEndian, &reclaimVal); err != nil {
-			return nil, err
+			return data, errors.Join(hostErr, err)
 		}
 
 		if container, exist := containersCssMem[cssAddr]; exist {
@@ -98,7 +115,19 @@ func (c *memoryCgroupReclaim) Update() ([]*metric.Data, error) {
 		}
 	}
 
-	return data, nil
+	return data, hostErr
+}
+
+func hostMemcgReclaimCount(items []bpf.MapItem) (uint64, error) {
+	if len(items) != 1 || len(items[0].Key) != 4 || binary.LittleEndian.Uint32(items[0].Key) != 0 ||
+		len(items[0].Value) == 0 || len(items[0].Value)%8 != 0 {
+		return 0, fmt.Errorf("host memcg reclaim map: expected key zero and one uint64 per CPU")
+	}
+	var count uint64
+	for value := items[0].Value; len(value) > 0; value = value[8:] {
+		count += binary.LittleEndian.Uint64(value)
+	}
+	return count, nil
 }
 
 func (c *memoryCgroupReclaim) Start(ctx context.Context) (retErr error) {

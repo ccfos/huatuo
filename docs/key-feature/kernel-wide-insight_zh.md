@@ -214,7 +214,8 @@ huatuo_bamai_memory_reclaim_container_directstall{container_host="coredns-855c4d
 |memory_free_compaction_stall|直接内存规整累计耗时| 毫秒|物理机| eBPF | host, region|
 |memory_free_container_allocpages_stall|容器任务参与全局直接回收的累计耗时| 毫秒|容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 |memory_free_container_compaction_stall|容器任务参与直接内存规整的累计耗时| 毫秒|容器| eBPF | 同上|
-|memory_reclaim_container_directstall|容器直接内存事件次数| 计数| 容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_reclaim_directstall|整台主机 memcg 限额回收累计次数| 计数| 物理机| eBPF | host, region|
+|memory_reclaim_container_directstall|容器任务触发 memcg 限额回收累计次数| 计数| 容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 
 主机两项原本就导出毫秒，本次仅修正文档，不改名称、数值缩放或 Gauge 类型。容器两项在操作入口记录 memory CSS，复用现有 cgroup v1/v2 容器发现能力；表示任务承受的全局直接回收/规整耗时，不是为该容器回收了多少内存，也不是 memcg 限额回收次数 `memory_reclaim_container_directstall`。主机总量包含未归属容器的任务，不能和容器指标相加。
 
@@ -223,6 +224,8 @@ huatuo_bamai_memory_reclaim_container_directstall{container_host="coredns-855c4d
 启动时若完整 BPF 对象加载或挂载失败，释放原对象后仅重试一次主机模式：关闭容器 cgroup 读取与计数，移除 `cgroup_mkdir` 程序，保留原有两项主机耗时指标并记录降级告警；不导出容器零值，不调整默认过滤配置。主机模式仍要求可用的 BPF/BTF、回收 tracepoint 和规整 kprobe，不能绕过这些基础依赖；主机模式也失败则报告启动错误。
 
 > **注意**：`memory_others_container_directstall_time`、`memory_others_container_asyncreclaim_time`、`memory_others_container_local_direct_reclaim_time` 指标读取的是厂商定制内核提供的 memory cgroup 扩展接口（`memory.directstall_stat`、`memory.asynreclaim_stat`、`memory.local_direct_reclaim_time`）。主线内核及常见发行版内核不提供这些接口，因此这些指标不会输出，属预期行为，无需额外加载内核模块。在标准内核上观测容器直接回收（direct reclaim）行为，请使用上表基于 eBPF 实现的 `memory_reclaim_container_directstall`。
+
+`memory_reclaim_directstall` 与容器计数共用 `mm_vmscan_memcg_reclaim_begin`，均排除 kswapd；在容器 CSS 匹配前累加 per-CPU 主机计数，采集时求和。它覆盖整台主机上的 memcg 回收（包括未被发现为普通容器的 cgroup），不是容器指标求和，也不是全局直接回收次数或耗时；没有 memcg 回收时为零。主机计数不受容器删除或容器计数表容量影响，BPF 重载归零。沿用 Gauge 类型及现有挂点要求，不新增探针、不调整默认过滤配置；主机和容器采集失败相互隔离，失败的一侧不伪造零值。
 
 ### 资源状态
 
