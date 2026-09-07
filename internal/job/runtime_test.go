@@ -414,6 +414,51 @@ func TestRuntimeNodeUnavailableDoesNotSpinOnBusinessDeadline(t *testing.T) {
 	}
 }
 
+func TestRuntimeNextPollDelayUsesStatusDeadline(t *testing.T) {
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		status Status
+		set    func(*Job)
+	}{
+		{
+			name:   "pending",
+			status: StatusPending,
+			set:    func(job *Job) { job.PendingDeadline = now.Add(time.Second) },
+		},
+		{
+			name:   "running",
+			status: StatusRunning,
+			set: func(job *Job) {
+				job.StartedAt = now
+				job.ExecutionDeadline = now.Add(time.Second)
+			},
+		},
+		{
+			name:   "stopping",
+			status: StatusStopping,
+			set: func(job *Job) {
+				job.StopReason = StopReasonUser
+				job.StopDeadline = now.Add(time.Second)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := testJob("job-1", tt.status, now)
+			tt.set(job)
+			manager := testManager(newMemoryStore(job), &stubNodeClient{})
+			manager.runtimeDeps.policy.statusPollInterval = 5 * time.Second
+			setManagerNow(manager, func() time.Time { return now })
+			runtime := testRuntime(manager, job)
+
+			if got := runtime.nextPollDelay(nil); got != time.Second {
+				t.Fatalf("nextPollDelay() = %s, want 1s", got)
+			}
+		})
+	}
+}
+
 func TestRuntimeSupervisorErrorUsesPollInterval(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	runningJob := testJob("job-1", StatusRunning, now.Add(-time.Minute))

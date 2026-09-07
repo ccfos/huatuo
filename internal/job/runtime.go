@@ -549,24 +549,25 @@ func (r *runtime) nextPollDelay(superviseErr error) time.Duration {
 		return 0
 	}
 	now := r.dependencies.now()
-	next := now.Add(r.dependencies.policy.statusPollInterval)
-	deadlines := []time.Time{current.NodeUnavailableDeadline}
-	if current.NodeUnavailableDeadline.IsZero() {
-		switch current.Status {
-		case StatusPending:
-			deadlines = append(deadlines, current.PendingDeadline)
-		case StatusRunning:
-			deadlines = append(deadlines, current.ExecutionDeadline)
-		case StatusStopping:
-			deadlines = append(deadlines, current.StopDeadline)
-		}
+	var deadline time.Time
+	switch {
+	// Node unavailability takes precedence because business deadlines cannot be
+	// acted on until Node communication recovers.
+	case !current.NodeUnavailableDeadline.IsZero():
+		deadline = current.NodeUnavailableDeadline
+	case current.Status == StatusPending:
+		deadline = current.PendingDeadline
+	case current.Status == StatusRunning:
+		deadline = current.ExecutionDeadline
+	case current.Status == StatusStopping:
+		deadline = current.StopDeadline
 	}
-	for _, deadline := range deadlines {
-		if !deadline.IsZero() && deadline.Before(next) {
-			next = deadline
-		}
+
+	delay := r.dependencies.policy.statusPollInterval
+	if !deadline.IsZero() {
+		delay = min(delay, deadline.Sub(now))
 	}
-	return max(next.Sub(now), 0)
+	return max(delay, 0)
 }
 
 func (r *runtime) wait(ctx context.Context, delay time.Duration) bool {
