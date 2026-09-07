@@ -47,16 +47,15 @@ type runtimeDependencies struct {
 type runtime struct {
 	mu sync.Mutex
 
-	id                string
-	kind              Kind
-	hostname          string
-	job               *Job
-	operationObserved bool
-	transitionGate    chan struct{}
-	wakeCh            chan struct{}
-	recovered         bool
-	cancel            context.CancelFunc
-	dependencies      *runtimeDependencies
+	id             string
+	kind           Kind
+	hostname       string
+	job            *Job
+	transitionGate chan struct{}
+	wakeCh         chan struct{}
+	recovered      bool
+	cancel         context.CancelFunc
+	dependencies   *runtimeDependencies
 }
 
 func newRuntime(
@@ -253,8 +252,6 @@ func (r *runtime) reconcileJobWithOperation(
 		r.mu.Unlock()
 		return true, false, nil
 	}
-	r.operationObserved = true
-
 	now := r.dependencies.now()
 	updated := cloneJob(current)
 	changed := clearNodeUnavailableDeadline(updated)
@@ -416,7 +413,8 @@ func (r *runtime) reconcileJobWithNodeError(
 	nodeUnavailable := false
 	switch nodeErr.Code {
 	case nodeapi.ErrorCodeOperationNotFound:
-		if r.operationObserved {
+		// StartedAt is durable evidence that Node previously returned a running Operation.
+		if !current.StartedAt.IsZero() {
 			setTerminal(updated, &TerminalResult{
 				Outcome: OutcomeFailed,
 				Reason:  FailureReasonOperationLost,

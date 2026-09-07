@@ -164,31 +164,35 @@ func TestRuntimeStopHonorsCancellationWhileWaitingForTransition(t *testing.T) {
 
 func TestRuntimeDistinguishesUnknownAndLostOperations(t *testing.T) {
 	tests := []struct {
-		name              string
-		operationObserved bool
-		wantStatus        Status
-		wantReason        FailureReason
+		name       string
+		startedAt  time.Time
+		wantStatus Status
+		wantReason FailureReason
 	}{
 		{
-			name:       "start response was never observed",
+			name:       "operation was never observed running",
 			wantStatus: StatusTerminal,
 		},
 		{
-			name:              "previously observed operation disappeared",
-			operationObserved: true,
-			wantStatus:        StatusTerminal,
-			wantReason:        FailureReasonOperationLost,
+			name:       "previously running operation disappeared",
+			startedAt:  time.Date(2026, 8, 24, 11, 59, 0, 0, time.UTC),
+			wantStatus: StatusTerminal,
+			wantReason: FailureReasonOperationLost,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 			pendingJob := testJob("job-1", StatusPending, now)
+			pendingJob.StartedAt = tt.startedAt
+			if !tt.startedAt.IsZero() {
+				pendingJob.Status = StatusRunning
+				pendingJob.ExecutionDeadline = now.Add(time.Minute)
+			}
 			store := newMemoryStore(pendingJob)
 			manager := testManager(store, &stubNodeClient{})
 			setManagerNow(manager, func() time.Time { return now.Add(time.Second) })
 			runtime := testRuntime(manager, pendingJob)
-			runtime.operationObserved = tt.operationObserved
 			nodeErr := &nodeclient.Error{
 				StatusCode: 404,
 				Code:       nodeapi.ErrorCodeOperationNotFound,
@@ -203,10 +207,10 @@ func TestRuntimeDistinguishesUnknownAndLostOperations(t *testing.T) {
 			if got.Status != StatusTerminal {
 				t.Fatalf("status = %q, want %q", got.Status, tt.wantStatus)
 			}
-			if !tt.operationObserved && got.Terminal.Outcome != OutcomeUnknown {
+			if tt.startedAt.IsZero() && got.Terminal.Outcome != OutcomeUnknown {
 				t.Fatalf("outcome = %q, want unknown", got.Terminal.Outcome)
 			}
-			if tt.operationObserved && got.Terminal.Outcome != OutcomeFailed {
+			if !tt.startedAt.IsZero() && got.Terminal.Outcome != OutcomeFailed {
 				t.Fatalf("outcome = %q, want failed", got.Terminal.Outcome)
 			}
 			if tt.wantReason == "" {
