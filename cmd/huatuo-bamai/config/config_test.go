@@ -528,3 +528,19 @@ func TestUpdatePublishesConsistentSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestUpdateAndSyncRollsBackInvalidBatch(t *testing.T) {
+	loadConfigDefaults(t)
+	before := Get()
+
+	err := UpdateAndSync(map[string]any{
+		"BlackList": []string{"dropwatch"},
+		"NotExist":  1,
+	})
+	if !errors.Is(err, ErrInvalidUpdate) {
+		t.Fatalf("UpdateAndSync() error = %v, want ErrInvalidUpdate", err)
+	}
+	if Get() != before {
+		t.Fatal("UpdateAndSync() published a partial config")
+	}
+}
