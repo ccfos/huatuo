@@ -50,6 +50,25 @@ type Config struct {
 	Observe        RequestObserver
 }
 
+func (c *Config) validate() error {
+	if c == nil {
+		return errors.New("create Node client: config is required")
+	}
+	if c.BearerToken == "" {
+		return errors.New("create Node client: bearer token is required")
+	}
+	if strings.ContainsAny(c.BearerToken, " \t\r\n") {
+		return errors.New("create Node client: bearer token must not contain whitespace")
+	}
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("create Node client: port %d is outside 1..65535", c.Port)
+	}
+	if c.RequestTimeout < 0 {
+		return errors.New("create Node client: request timeout must not be negative")
+	}
+	return nil
+}
+
 // Client sends one generated Node API request per method call.
 type Client struct {
 	httpClient     *http.Client
@@ -61,25 +80,12 @@ type Client struct {
 
 // New validates and snapshots Node client configuration.
 func New(config *Config) (*Client, error) {
-	if config == nil {
-		return nil, errors.New("create Node client: config is required")
-	}
-	if config.BearerToken == "" {
-		return nil, errors.New("create Node client: bearer token is required")
-	}
-	if strings.ContainsAny(config.BearerToken, " \t\r\n") {
-		return nil, errors.New("create Node client: bearer token must not contain whitespace")
-	}
-	port := config.Port
-	if port < 1 || port > 65535 {
-		return nil, fmt.Errorf("create Node client: port %d is outside 1..65535", port)
+	if err := config.validate(); err != nil {
+		return nil, err
 	}
 	requestTimeout := config.RequestTimeout
 	if requestTimeout == 0 {
 		requestTimeout = defaultRequestTimeout
-	}
-	if requestTimeout < 0 {
-		return nil, errors.New("create Node client: request timeout must not be negative")
 	}
 	httpClient := config.HTTPClient
 	if httpClient == nil {
@@ -94,7 +100,7 @@ func New(config *Config) (*Client, error) {
 	}
 	return &Client{
 		httpClient:     httpClient,
-		port:           port,
+		port:           config.Port,
 		bearerToken:    config.BearerToken,
 		requestTimeout: requestTimeout,
 		observe:        config.Observe,
@@ -144,17 +150,11 @@ func (c *Client) execute(
 }
 
 func (c *Client) generatedClient(host string) (*nodeapi.Client, error) {
-	if host == "" || strings.TrimSpace(host) != host || strings.ContainsAny(host, "/?#") {
-		return nil, &Error{
-			Code:    ErrorCodeClientInvalidArgument,
-			Message: fmt.Sprintf("invalid Node host %q", host),
-		}
-	}
 	serverURL := (&url.URL{
 		Scheme: "http",
 		Host:   net.JoinHostPort(host, strconv.Itoa(c.port)),
 	}).String()
-	generated, err := nodeapi.NewClient(
+	return nodeapi.NewClient(
 		serverURL,
 		nodeapi.WithHTTPClient(c.httpClient),
 		nodeapi.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
@@ -162,13 +162,6 @@ func (c *Client) generatedClient(host string) (*nodeapi.Client, error) {
 			return nil
 		}),
 	)
-	if err != nil {
-		return nil, wrapError(&Error{
-			Code:    ErrorCodeClientInvalidArgument,
-			Message: "create generated Node API client",
-		}, err)
-	}
-	return generated, nil
 }
 
 func parseResponse(

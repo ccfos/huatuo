@@ -93,40 +93,19 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
-func TestOperationMethodsReturnClientInvalidArgument(t *testing.T) {
+func TestStartOperationRejectsNilRequest(t *testing.T) {
 	client, err := New(&Config{BearerToken: "secret", Port: 19704})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	tests := []struct {
-		name string
-		call func() error
-	}{
-		{
-			name: "nil operation request",
-			call: func() error {
-				_, err := client.StartOperation(t.Context(), "node-1", nil)
-				return err
-			},
-		},
-		{
-			name: "invalid node host",
-			call: func() error {
-				_, err := client.GetOperation(t.Context(), "node/1", "job-1")
-				return err
-			},
-		},
+
+	_, err = client.StartOperation(t.Context(), "node-1", nil)
+	var nodeErr *Error
+	if !errors.As(err, &nodeErr) {
+		t.Fatalf("StartOperation() error = %v, want *Error", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var nodeErr *Error
-			if err := tt.call(); !errors.As(err, &nodeErr) {
-				t.Fatalf("operation error = %v, want *Error", err)
-			}
-			if nodeErr.Code != ErrorCodeClientInvalidArgument || nodeErr.StatusCode != 0 {
-				t.Fatalf("Node client error = %+v", nodeErr)
-			}
-		})
+	if nodeErr.Code != ErrorCodeClientInvalidArgument || nodeErr.StatusCode != 0 {
+		t.Fatalf("Node client error = %+v", nodeErr)
 	}
 }
 
