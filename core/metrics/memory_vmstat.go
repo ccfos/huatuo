@@ -15,6 +15,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
@@ -51,27 +52,31 @@ func newMemoryVmStat() (*tracing.EventTracingAttr, error) {
 }
 
 func (c *memoryVmStat) Update() ([]*metric.Data, error) {
-	container, err := c.containerVmstat()
-	if err != nil {
-		return nil, err
-	}
-
-	host, err := c.hostVmstat()
-	if err != nil {
-		return container, nil
-	}
-
-	return append(container, host...), nil
+	return c.update(pod.NormalContainers)
 }
 
-func (c *memoryVmStat) containerVmstat() ([]*metric.Data, error) {
+func (c *memoryVmStat) update(discover func() (map[string]*pod.Container, error)) ([]*metric.Data, error) {
+	container, containerErr := c.containerVmstat(discover)
+	if containerErr != nil {
+		containerErr = fmt.Errorf("container vmstat: %w", containerErr)
+	}
+
+	host, hostErr := c.hostVmstat()
+	if hostErr != nil {
+		hostErr = fmt.Errorf("host vmstat: %w", hostErr)
+	}
+
+	return append(container, host...), errors.Join(containerErr, hostErr)
+}
+
+func (c *memoryVmStat) containerVmstat(discover func() (map[string]*pod.Container, error)) ([]*metric.Data, error) {
 	cfg := configSnapshot()
 	f, err := matcher.NewValueMatcher(cfg.Vmstat.IncludedOnContainer, cfg.Vmstat.ExcludedOnContainer)
 	if err != nil {
 		return nil, fmt.Errorf("vmstat container filter: %w", err)
 	}
 
-	containers, err := pod.NormalContainers()
+	containers, err := discover()
 	if err != nil {
 		return nil, err
 	}

@@ -110,7 +110,11 @@ huatuo_bamai_cpu_util_container_cores{container_host="coredns-855c4dd65d-8v5kg",
 
 |指标|意义|单位|对象| 标签 |
 |---|---|---|---|---|
-|cpu_util_container_cores| CPU 核心数|个| 容器 | container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+|cpu_util_container_cores| quota、有效 cpuset 和主机核数共同约束的 CPU 容量，可为小数|个| 容器 | container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+
+容器核数表示可用容量，不表示独占物理核心数；两端保留原有利用率口径和指标名。
+
+`cpu_util` 和 `memory_vmstat` 在采集期间分别保留主机与容器的可用数据：容器发现失败不阻断主机指标，主机读取失败不丢弃已采集的容器指标。失败会返回采集管理器，标记该采集器本次采集失败，同时输出可用的部分指标；不会将失败项伪造成零。此行为不改变采集器初始化依赖，也不改变单个容器读取失败时记录日志并跳过的既有策略。
 
 ### 资源争抢
 
