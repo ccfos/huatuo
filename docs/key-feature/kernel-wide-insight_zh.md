@@ -210,11 +210,19 @@ huatuo_bamai_memory_reclaim_container_directstall{container_host="coredns-855c4d
 
 |指标|意义|单位|对象|取值| 标签 |
 |---|---|---|---|---|---|
-|memory_free_allocpages_stall|系统在分配内存页过程中的耗时计数| 纳秒|物理机| eBPF | host, region|
-|memory_free_compaction_stall|系统在规整内存页过程中的耗时计数| 纳秒|物理机| eBPF | host, region|
+|memory_free_allocpages_stall|全局直接回收累计耗时| 毫秒|物理机| eBPF | host, region|
+|memory_free_compaction_stall|直接内存规整累计耗时| 毫秒|物理机| eBPF | host, region|
+|memory_free_container_allocpages_stall|容器任务参与全局直接回收的累计耗时| 毫秒|容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_compaction_stall|容器任务参与直接内存规整的累计耗时| 毫秒|容器| eBPF | 同上|
 |memory_reclaim_container_directstall|容器直接内存事件次数| 计数| 容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 
-> **注意**：`memory_others_container_directstall_time`、`memory_others_container_asyncreclaim_time`、`memory_others_container_local_direct_reclaim_time` 指标读取的是滴滴云定制内核提供的 memory cgroup 扩展接口（`memory.directstall_stat`、`memory.asynreclaim_stat`、`memory.local_direct_reclaim_time`）。主线内核及常见发行版内核不提供这些接口，因此这些指标不会输出，属预期行为，无需额外加载内核模块。在标准内核上观测容器直接回收（direct reclaim）行为，请使用上表基于 eBPF 实现的 `memory_reclaim_container_directstall`。
+主机两项原本就导出毫秒，本次仅修正文档，不改名称、数值缩放或 Gauge 类型。容器两项在操作入口记录 memory CSS，复用现有 cgroup v1/v2 容器发现能力；表示任务承受的全局直接回收/规整耗时，不是为该容器回收了多少内存，也不是 memcg 限额回收次数 `memory_reclaim_container_directstall`。主机总量包含未归属容器的任务，不能和容器指标相加。
+
+仅为存在 BPF 记录且能匹配已发现普通容器的 cgroup 导出，不为缺失容器补零；容器发现或容器 map 读取失败时仍导出主机值并报告错误。计时表与容器累计表各限制 10240 条 LRU 记录，压力下可能丢失计时或淘汰累计值，BPF 重载也会归零，分析增量需处理重置。除既有回收 tracepoint、规整 kprobe 外，容器采集使用 `cgroup_mkdir` raw tracepoint 清理复用的 CSS 地址。所有数值为采集期间累计值，并非机器启动以来的绝对累计。
+
+启动时若完整 BPF 对象加载或挂载失败，释放原对象后仅重试一次主机模式：关闭容器 cgroup 读取与计数，移除 `cgroup_mkdir` 程序，保留原有两项主机耗时指标并记录降级告警；不导出容器零值，不调整默认过滤配置。主机模式仍要求可用的 BPF/BTF、回收 tracepoint 和规整 kprobe，不能绕过这些基础依赖；主机模式也失败则报告启动错误。
+
+> **注意**：`memory_others_container_directstall_time`、`memory_others_container_asyncreclaim_time`、`memory_others_container_local_direct_reclaim_time` 指标读取的是厂商定制内核提供的 memory cgroup 扩展接口（`memory.directstall_stat`、`memory.asynreclaim_stat`、`memory.local_direct_reclaim_time`）。主线内核及常见发行版内核不提供这些接口，因此这些指标不会输出，属预期行为，无需额外加载内核模块。在标准内核上观测容器直接回收（direct reclaim）行为，请使用上表基于 eBPF 实现的 `memory_reclaim_container_directstall`。
 
 ### 资源状态
 

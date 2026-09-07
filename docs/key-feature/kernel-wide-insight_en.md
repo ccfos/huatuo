@@ -217,11 +217,19 @@ huatuo_bamai_memory_reclaim_container_directstall{container_host="coredns-855c4d
 
 |Metric|Description|Unit|Target|Source|Labels|
 |---|---|---|---|---|---|
-|memory_free_allocpages_stall|Time stalled waiting for page allocation| nanoseconds|Host| eBPF | host, region|
-|memory_free_compaction_stall|Time stalled in memory compaction| nanoseconds|Host| eBPF | host, region|
+|memory_free_allocpages_stall|Cumulative global direct reclaim stall time| milliseconds|Host| eBPF | host, region|
+|memory_free_compaction_stall|Cumulative direct memory compaction stall time| milliseconds|Host| eBPF | host, region|
+|memory_free_container_allocpages_stall|Container task time in global direct reclaim| milliseconds|Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_compaction_stall|Container task time in direct compaction| milliseconds|Container| eBPF | same container labels|
 |memory_reclaim_container_directstall|Number of direct reclaim events in container| count| Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
 
-> **Note**: The `memory_others_container_directstall_time`, `memory_others_container_asyncreclaim_time`, and `memory_others_container_local_direct_reclaim_time` metrics read memory cgroup extension interfaces provided by the Didi Cloud custom kernel (`memory.directstall_stat`, `memory.asynreclaim_stat`, `memory.local_direct_reclaim_time`). Mainline and common distribution kernels do not expose these interfaces, so these metrics are simply not emitted there — this is expected, and no extra kernel module can provide them. To observe container direct reclaim behavior on standard kernels, use the eBPF-based `memory_reclaim_container_directstall` listed above.
+Host values already used milliseconds; only the documented unit changes, not names, scaling or Gauge types. Container stalls are attributed to the task's memory CSS at operation entry using existing cgroup v1/v2 discovery. They measure time suffered by tasks in global reclaim/compaction, not memory reclaimed for that cgroup or memcg limit reclaim counts. Host totals include unassigned tasks; do not add host and container values.
+
+Only BPF records matching discovered normal containers are exported; absent records are not zero-filled. Container discovery/map failures retain host values and report an error. Timing and container aggregate LRU maps are each bounded to 10240 entries: pressure can lose timings or evict aggregates, and BPF reload resets values. Handle resets when computing deltas. In addition to the existing reclaim tracepoints and compaction kprobes, container collection uses the `cgroup_mkdir` raw tracepoint to clear reused CSS addresses. Values accumulate during collection, not necessarily from host boot.
+
+If loading or attaching the full BPF object fails at startup, Huatuo cleans it up and retries once in host-only mode: container cgroup reads and accounting are disabled, and the `cgroup_mkdir` program is removed. The original two host stall metrics remain available with a fallback warning; container zeros are not fabricated and default filters are unchanged. Host-only mode still requires BPF/BTF, reclaim tracepoints and compaction kprobes; it cannot bypass these prerequisites. Failure of the host-only retry is reported as a startup error.
+
+> **Note**: The `memory_others_container_directstall_time`, `memory_others_container_asyncreclaim_time`, and `memory_others_container_local_direct_reclaim_time` metrics read memory cgroup extension interfaces provided by a vendor-custom kernel (`memory.directstall_stat`, `memory.asynreclaim_stat`, `memory.local_direct_reclaim_time`). Mainline and common distribution kernels do not expose these interfaces, so these metrics are simply not emitted there — this is expected, and no extra kernel module can provide them. To observe container direct reclaim behavior on standard kernels, use the eBPF-based `memory_reclaim_container_directstall` listed above.
 
 ### State
 
