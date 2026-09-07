@@ -177,6 +177,9 @@ func (c *Config) Validate() error {
 	if err := c.EventTracing.Validate(); err != nil {
 		return fmt.Errorf("validating event tracing config: %w", err)
 	}
+	if err := c.MetricCollector.Validate(); err != nil {
+		return fmt.Errorf("validating metric collector config: %w", err)
+	}
 	return nil
 }
 
