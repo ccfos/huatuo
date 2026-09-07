@@ -786,3 +786,22 @@ NVMe 证据包括 `critical_warning`、`media_errors_total`，以及最多八条
 容器元数据消失、文件句柄不可读、身份读取失败，或容器根超出 16 层范围且无法匹配时，只保留主机总计，缺失容器不补零。raw tracepoint 加载或挂载失败时，清理后重试原有普通 tracepoint，仅采集主机事件并告警；不回退到可能误归属的 TID 查询。主机路径本身仍需要原有 BPF/BTF 和 hungtask tracepoint 支持。事件身份更精确不代表容器元数据发现一定成功，诊断堆栈仍是主机范围。
 
 两项均保留 Counter 语义，计数发生在追踪退避之前；追踪仍沿用主机级退避和全机栈快照，已匹配的记录附带 `ContainerID`，不表示栈已按容器过滤。容器指标使用生命周期内累计计数，成功发现容器退出后清理，进程重启归零。发现故障不丢主机指标，也不清空已累计的容器状态。主机与容器计数不能相加，重复上报同一阻塞线程仍按多次事件计数。
+
+### add the host runnable task count
+
+|指标|意义|单位|对象|标签|备注|
+|---|---|---|---|---|---|
+|loadavg_nr_running|主机当前正在运行或等待 CPU 的任务数|计数|物理机| host, region |读取 `/proc/stat` 的 `procs_running`|
+
+`nr_running` 是瞬时 Gauge，不是 `load1/5/15` 平均负载，也不是 CPU 利用率。主机包含容器任务，不能与容器值相加；容器沿用 taskstats 的非递归采样，不包含子 cgroup。主机数据依赖采集器可见的宿主机 procfs，不要求启用 cgroup；读取失败或字段缺失时不补零，且不影响已有 load average 和容器采集。容器路径仍仅支持 cgroup v1，未新增 v2 遍历任务或 load average 估算。
+
+未补主机 `nr_uninterruptible`：[`/proc/stat` 的 `procs_blocked`](https://www.kernel.org/doc/html/latest/filesystems/proc.html) 表示等待 IO 的任务数，不等价于全部不可中断任务；本轮不扩展 IO 指标。
+
+### collect cgroup v2 task states with a BPF iterator
+
+Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机 PID namespace 时，cgroup v2 容器指标会作为不支持而省略，不会输出有误导性的全零数据。
+
+### enable v2 load stats for metrics and dload
+
+`nr_running` 是瞬时 Gauge，不是 `load1/5/15` 平均负载，也不是 CPU 利用率。主机包含容器任务，不能与容器值相加；容器采用非递归采样，不包含子 cgroup。主机数据依赖采集器可见的宿主机 procfs，不要求启用 cgroup；读取失败或字段缺失时不补零，且不影响已有 load average 和容器采集。未新增容器 load average 估算。
+cgroup v2 容器负载指标需要通过 `MetricCollector.Loadavg.EnableCgroupV2=true` 显式开启，因为每次抓取都会遍历一次宿主机全部任务。它依赖可读的内核 BTF 和 BPF `task` iterator，统计仅包含直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。内核不支持时仍会输出上述物理机负载指标，静默省略容器负载指标且只记录一次告警，不会将宿主机采集判为失败；确定的不支持结果会被缓存，后续不会反复尝试加载 BPF 程序。

@@ -813,3 +813,22 @@ Container attribution snapshots the blocked task's cgroup identity at the `sched
 Missing metadata, unreadable handles, failed identity reads or an unmatched container beyond the 16-level limit leave events in the host total only. If raw tracepoint loading or attachment fails, the collector retries the original tracepoint with host-only counting and a warning; it does not fall back to TID lookup. The host path still requires the original BPF/BTF and hungtask tracepoint support. Event-time identity does not guarantee successful container discovery.
 
 Both metrics are Counters updated before trace backoff. Tracing keeps host-wide backoff and system-wide stack snapshots; matched records carry `ContainerID`, without filtering stacks to that container. Container counts last for the observed container lifetime, are removed after successful discovery confirms exit, and reset on agent restart. Discovery failure retains the host metric and cached container counts. Do not add host and container counts; repeated reports for the same blocked task are separate events.
+
+### add the host runnable task count
+
+|Metric|Description|Unit|Target|Labels|
+|---|---|---|---|---|---|
+|loadavg_nr_running|Instantaneous running or runnable host tasks|count|Host| host, region |`procs_running` from `/proc/stat`|
+
+`nr_running` is an instantaneous Gauge, not a `load1/5/15` average or CPU utilization. Host counts include container tasks; do not add the scopes. Container taskstats sampling remains non-recursive and excludes child cgroups. Host collection requires host procfs visibility, not cgroups. Read failures or missing fields emit no synthetic zero and do not suppress existing load averages or container data. Container support remains cgroup v1 only; no v2 task walk or estimated load averages are added.
+
+Host `nr_uninterruptible` is not added: [`procs_blocked` in `/proc/stat`](https://www.kernel.org/doc/html/latest/filesystems/proc.html) counts tasks waiting for IO, not all uninterruptible tasks. IO metrics remain outside this change.
+
+### collect cgroup v2 task states with a BPF iterator
+
+Kubernetes deployments must run Huatuo with `hostPID: true`. Without host PID namespace visibility, cgroup v2 container metrics are omitted as unsupported instead of exporting misleading zeros.
+
+### enable v2 load stats for metrics and dload
+
+`nr_running` is an instantaneous Gauge, not a `load1/5/15` average or CPU utilization. Host counts include container tasks; do not add the scopes. Container sampling is non-recursive and excludes child cgroups. Host collection requires host procfs visibility, not cgroups. Read failures or missing fields emit no synthetic zero and do not suppress existing load averages or container data. Container load averages are not added.
+Container load metrics on cgroup v2 are opt-in through `MetricCollector.Loadavg.EnableCgroupV2=true` because each scrape walks all host tasks. They require readable kernel BTF and the BPF `task` iterator and count only tasks directly attached to each requested cgroup, not descendants. On unsupported kernels, host load metrics remain available, container load metrics are omitted without failing the host collection, and one warning is logged. A conclusive unsupported result is cached so Huatuo does not repeatedly try to load the BPF program.

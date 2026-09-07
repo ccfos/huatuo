@@ -1311,3 +1311,27 @@ Explicit configuration assignments override built-in defaults; comments are not 
   container event, without a host duplicate. This does not trace kswapd or add an
   aggregate metric; it adds event output/storage for previously dropped
   events.
+
+### collect cgroup v2 task states with a BPF iterator
+
+# One-minute EMA threshold for the number of D-state tasks. Profiling triggers
+# when this value is exceeded.
+- **ThresholdLoad**: One-minute EMA threshold for the number of uninterruptible
+  (D-state) tasks in a container.
+  Default: 5. Profiling triggers when the D-state task EMA exceeds this value.
+
+### enable v2 load stats for metrics and dload
+
+# Cgroup v2 dload uses a BPF task iterator that walks all
+# host tasks once per sample. Kubernetes deployments require hostPID: true.
+#
+- **Cgroup v2**: Uses the shared BPF task iterator. Cgroup v1 keeps its netlink
+  path. The v2 implementation requires
+  readable kernel BTF and the BPF `task` iterator and counts only tasks directly
+  attached to each requested cgroup, not tasks in descendant cgroups.
+
+	# Opt in to container load metrics on cgroup v2. The BPF task iterator
+	# walks all host tasks once per scrape. Host loadavg and cgroup v1 container
+	# metrics remain available when this is false.
+	# Kubernetes deployments must run with hostPID: true.
+	[MetricCollector.Loadavg]

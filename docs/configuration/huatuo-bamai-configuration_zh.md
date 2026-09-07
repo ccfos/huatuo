@@ -1312,3 +1312,22 @@ huatuo-bamai --region <region> [选项]
   也可能是归属未解析的容器任务，不能认为已确认属于物理机服务。
   已知容器仍只输出一条容器事件，不重复输出主机事件。此路径不采集 kswapd，
   也不增加聚合指标；新增开销是原先丢弃事件的输出与存储。
+
+### collect cgroup v2 task states with a BPF iterator
+
+# 容器 D 状态任务数量的一分钟 EMA 阈值，超过该值时触发 dload 剖析。
+- **ThresholdLoad**：容器不可中断睡眠（D 状态）任务数量的一分钟 EMA 阈值。
+  默认 5。当 D 状态任务 EMA 超过该值时触发剖析。
+
+### enable v2 load stats for metrics and dload
+
+# cgroup v2 dload 使用 BPF task iterator，每次采样遍历宿主机全部任务。
+# Kubernetes 部署必须设置 hostPID: true。
+#
+- **Cgroup v2**：随 `dload` 启用，cgroup v1 保持 netlink 路径。v2 实现要求内核 BTF 可读并支持 BPF `task` iterator；统计仅包含
+  直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。
+
+	# 开启 cgroup v2 容器负载指标。BPF task iterator 每次抓取会遍历一次
+	# 宿主机全部任务。关闭时仍保留宿主机 loadavg 和 cgroup v1 容器指标。
+	# Kubernetes 部署必须设置 hostPID: true。
+	[MetricCollector.Loadavg]
