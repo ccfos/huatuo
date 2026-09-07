@@ -95,6 +95,7 @@ type testBackend struct {
 	valuesValue  []string
 	initCalls    int
 	saveCalls    int
+	getCalls     int
 	deleteCalls  int
 	queryCalls   int
 	countCalls   int
@@ -122,6 +123,7 @@ func (b *testBackend) Save(_ context.Context, rec driver.Record) error {
 }
 
 func (b *testBackend) Get(_ context.Context, _ string) (driver.Record, error) {
+	b.getCalls++
 	if b.getErr != nil {
 		return driver.Record{}, b.getErr
 	}
@@ -819,5 +821,35 @@ func TestStoreTerms(t *testing.T) {
 			terms, valuesErr := store.Values(t.Context(), tc.field, tc.query, tc.size)
 			tc.validate(t, terms, valuesErr, tc.backend)
 		})
+	}
+}
+
+func TestStoreRejectsEmptyIDAndFieldBeforeBackend(t *testing.T) {
+	backend := &testBackend{}
+	store := &Store[testEntity]{
+		Name:    "jobs",
+		backend: backend,
+		mapper:  newTestMapper(),
+	}
+
+	if _, err := store.Get(t.Context(), ""); !errors.Is(err, driver.ErrInvalidField) {
+		t.Fatalf("Get() error = %v, want ErrInvalidField", err)
+	}
+	if backend.getCalls != 0 {
+		t.Fatalf("Get() backend calls = %d, want 0", backend.getCalls)
+	}
+
+	if err := store.Delete(t.Context(), ""); !errors.Is(err, driver.ErrInvalidField) {
+		t.Fatalf("Delete() error = %v, want ErrInvalidField", err)
+	}
+	if backend.deleteCalls != 0 {
+		t.Fatalf("Delete() backend calls = %d, want 0", backend.deleteCalls)
+	}
+
+	if _, err := store.Values(t.Context(), "", driver.Query{}, 10); !errors.Is(err, driver.ErrInvalidField) {
+		t.Fatalf("Values() error = %v, want ErrInvalidField", err)
+	}
+	if backend.valuesCalls != 0 {
+		t.Fatalf("Values() backend calls = %d, want 0", backend.valuesCalls)
 	}
 }

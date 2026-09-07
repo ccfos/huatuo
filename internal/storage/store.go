@@ -119,6 +119,10 @@ func (s *Store[T]) record(v T) (driver.Record, error) {
 
 // Get retrieves the object with the given id; returns ErrNotFound when not found.
 func (s *Store[T]) Get(ctx context.Context, id string) (T, error) {
+	if id == "" {
+		var zero T
+		return zero, fmt.Errorf("%w: empty id", driver.ErrInvalidField)
+	}
 	rec, err := s.backend.Get(driver.WithContext(ctx), id)
 	if err != nil {
 		var zero T
@@ -129,6 +133,9 @@ func (s *Store[T]) Get(ctx context.Context, id string) (T, error) {
 
 // Delete removes an object from storage by ID.
 func (s *Store[T]) Delete(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("%w: empty id", driver.ErrInvalidField)
+	}
 	return s.backend.Delete(driver.WithContext(ctx), id)
 }
 
@@ -174,6 +181,9 @@ func (s *Store[T]) Count(ctx context.Context, q driver.Query) (int64, error) {
 func (s *Store[T]) Values(ctx context.Context, field string, q driver.Query, size int) ([]string, error) {
 	if size < 0 {
 		return nil, driver.ErrNegativeSize
+	}
+	if field == "" {
+		return nil, fmt.Errorf("%w: empty field", driver.ErrInvalidField)
 	}
 	if err := s.validateQuery(q); err != nil {
 		return nil, err
