@@ -144,11 +144,16 @@ func (c *cpuUtilCollector) updateHostDataCache() ([]*metric.Data, error) {
 }
 
 func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
+	return c.update(pod.NormalSidecarContainers)
+}
+
+func (c *cpuUtilCollector) update(discover func() (map[string]*pod.Container, error)) ([]*metric.Data, error) {
 	metrics := []*metric.Data{}
 
-	containers, err := pod.ContainersByType(pod.ContainerTypeNormal | pod.ContainerTypeSidecar)
-	if err != nil {
-		return nil, err
+	containers, containerErr := discover()
+	if containerErr != nil {
+		containerErr = fmt.Errorf("discover cpu containers: %w", containerErr)
+		containers = nil
 	}
 
 	for _, container := range containers {
@@ -186,10 +191,10 @@ func (c *cpuUtilCollector) Update() ([]*metric.Data, error) {
 		)
 	}
 
-	more, err := c.updateHostDataCache()
-	if err != nil {
-		log.Warnf("host cpu usage: %v", err)
+	more, hostErr := c.updateHostDataCache()
+	if hostErr != nil {
+		hostErr = fmt.Errorf("host cpu usage: %w", hostErr)
 	}
 
-	return append(metrics, more...), nil
+	return append(metrics, more...), errors.Join(containerErr, hostErr)
 }
