@@ -169,6 +169,9 @@ func validateJobQuery(query *JobQuery) error {
 	field := query.Sort
 	if field != "" && field[0] == '-' {
 		field = field[1:]
+		if field == "" {
+			return fmt.Errorf("%w: unsupported sort field %q", ErrInvalidQuery, query.Sort)
+		}
 	}
 	switch field {
 	case "", "id", "created_at", "finished_at", "hostname", "container_id", "status", "type":

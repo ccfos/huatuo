@@ -239,3 +239,10 @@ func TestToStorageQueryUsesJobFieldNames(t *testing.T) {
 		t.Errorf("default sorts=%v, want descending created_at", query.Sorts)
 	}
 }
+
+func TestValidateJobQueryRejectsLoneDescendingSort(t *testing.T) {
+	err := validateJobQuery(&JobQuery{Sort: "-"})
+	if !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("validateJobQuery(Sort: %q) error = %v, want ErrInvalidQuery", "-", err)
+	}
+}
