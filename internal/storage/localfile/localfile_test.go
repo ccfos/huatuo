@@ -146,3 +146,29 @@ func TestBackendUnsupportedOperations(t *testing.T) {
 		t.Errorf("Backend.Terms() error = %v, want ErrUnsupported", err)
 	}
 }
+
+func TestTracerFilenameRejectsUnsafeNames(t *testing.T) {
+	tests := []struct {
+		name   string
+		fields map[string]any
+		want   string
+	}{
+		{name: "simple", fields: map[string]any{"tracer_name": "kernel_sched_tick"}, want: "kernel_sched_tick"},
+		{name: "slash", fields: map[string]any{"tracer_name": "nested/file"}, want: ""},
+		{name: "parent", fields: map[string]any{"tracer_name": "../outside"}, want: ""},
+		{name: "dot", fields: map[string]any{"tracer_name": "."}, want: ""},
+		{name: "dotdot", fields: map[string]any{"tracer_name": ".."}, want: ""},
+		{name: "backslash", fields: map[string]any{"tracer_name": `..\outside`}, want: ""},
+		{name: "missing", fields: map[string]any{}, want: ""},
+		{name: "not string", fields: map[string]any{"tracer_name": 42}, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tracerFilename(driver.Record{Fields: tt.fields})
+			if got != tt.want {
+				t.Fatalf("tracerFilename() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
