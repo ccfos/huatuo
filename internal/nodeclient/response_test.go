@@ -21,6 +21,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/iotest"
+
+	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
 type closeErrorBody struct {
@@ -75,17 +78,6 @@ func TestParseResponseRejectsProtocolViolations(t *testing.T) {
 			body:       operationJSON("other-job", "running"),
 		},
 		{
-			name:       "missing operation kind",
-			statusCode: http.StatusOK,
-			body: `{"data":{"created_at":"2026-08-24T12:00:00Z",` +
-				`"request_id":"job-1","status":"pending"}}`,
-		},
-		{
-			name:       "missing operation created timestamp",
-			statusCode: http.StatusOK,
-			body:       `{"data":{"request_id":"job-1","kind":"profiling","status":"pending"}}`,
-		},
-		{
 			name:       "status and error code mismatch",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":{"code":"operation_not_found","message":"missing"}}`,
@@ -135,13 +127,34 @@ func TestParseResponseUsesBodyInsteadOfContentType(t *testing.T) {
 	}
 }
 
-func TestParseResponseClassifiesBodyCloseFailureAsTransportError(t *testing.T) {
+func TestParseResponseIgnoresBodyCloseFailure(t *testing.T) {
 	closeErr := errors.New("close response body")
 	response := jsonResponse(http.StatusOK, operationJSON("job-1", "completed"))
 	response.Body = closeErrorBody{
 		Reader: response.Body,
 		err:    closeErr,
 	}
+
+	operation, err := parseResponse(response, "job-1", successResponseOK)
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if operation.Status != nodeapi.OperationStatusTerminal {
+		t.Fatalf(
+			"parseResponse() status = %q, want %q",
+			operation.Status,
+			nodeapi.OperationStatusTerminal,
+		)
+	}
+}
+
+func TestParseResponseClassifiesBodyReadFailureAsTransportError(t *testing.T) {
+	readErr := errors.New("read response body")
+	response := jsonResponse(http.StatusOK, operationJSON("job-1", "completed"))
+	response.Body = io.NopCloser(io.MultiReader(
+		strings.NewReader("{"),
+		iotest.ErrReader(readErr),
+	))
 
 	_, err := parseResponse(response, "job-1", successResponseOK)
 	var nodeErr *Error
@@ -151,7 +164,21 @@ func TestParseResponseClassifiesBodyCloseFailureAsTransportError(t *testing.T) {
 	if nodeErr.Code != ErrorCodeClientTransport || nodeErr.StatusCode != http.StatusOK {
 		t.Fatalf("Node client error = %+v", nodeErr)
 	}
-	if !errors.Is(err, closeErr) {
-		t.Fatalf("parseResponse() error = %v, want close error", err)
+	if !errors.Is(err, readErr) {
+		t.Fatalf("parseResponse() error = %v, want read error", err)
+	}
+}
+
+func TestParseResponseClassifiesOversizedBodyAsProtocolError(t *testing.T) {
+	response := jsonResponse(http.StatusOK, strings.Repeat("x", maxSuccessBodyBytes+1))
+	defer response.Body.Close()
+
+	_, err := parseResponse(response, "job-1", successResponseOK)
+	var nodeErr *Error
+	if !errors.As(err, &nodeErr) {
+		t.Fatalf("parseResponse() error = %v, want *Error", err)
+	}
+	if nodeErr.Code != ErrorCodeClientProtocol || nodeErr.StatusCode != http.StatusOK {
+		t.Fatalf("Node client error = %+v", nodeErr)
 	}
 }

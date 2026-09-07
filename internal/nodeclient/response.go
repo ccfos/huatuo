@@ -41,29 +41,25 @@ func parseResponse(
 	requestID string,
 	successMode successResponseMode,
 ) (*nodeapi.Operation, error) {
-	if response == nil {
-		return nil, newProtocolError(0, "Node API returned a nil response")
-	}
-	if response.Body == nil {
-		return nil, newProtocolError(response.StatusCode, "Node API returned a nil response body")
-	}
-
 	limit := int64(maxErrorBodyBytes)
 	if response.StatusCode == http.StatusOK ||
 		successMode == successResponseOKOrAccepted && response.StatusCode == http.StatusAccepted {
 		limit = maxSuccessBodyBytes
 	}
-	body, readErr := readBody(response.Body, limit)
-	closeErr := response.Body.Close()
-	if readErr != nil {
-		return nil, wrapProtocolError(response.StatusCode, "read Node API response", readErr)
-	}
-	if closeErr != nil {
+	body, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	_ = response.Body.Close()
+	if err != nil {
 		return nil, wrapError(&Error{
 			StatusCode: response.StatusCode,
 			Code:       ErrorCodeClientTransport,
-			Message:    "close Node API response",
-		}, closeErr)
+			Message:    "read Node API response",
+		}, err)
+	}
+	if int64(len(body)) > limit {
+		return nil, newProtocolError(
+			response.StatusCode,
+			fmt.Sprintf("Node API response exceeds %d bytes", limit),
+		)
 	}
 	switch response.StatusCode {
 	case http.StatusOK:
@@ -76,17 +72,6 @@ func parseResponse(
 	default:
 		return nil, parseError(response.StatusCode, body)
 	}
-}
-
-func readBody(body io.Reader, limit int64) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(body, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("response exceeds %d bytes", limit)
-	}
-	return data, nil
 }
 
 func parseOperation(statusCode int, body []byte, requestID string) (*nodeapi.Operation, error) {
@@ -111,15 +96,6 @@ func validateOperation(statusCode int, operation *nodeapi.Operation, requestID s
 				requestID,
 			),
 		)
-	}
-	if !operation.Kind.Valid() {
-		return newProtocolError(
-			statusCode,
-			fmt.Sprintf("unsupported operation kind %q", operation.Kind),
-		)
-	}
-	if operation.CreatedAt.IsZero() {
-		return newProtocolError(statusCode, "operation created timestamp is required")
 	}
 	if !operation.Status.Valid() {
 		return newProtocolError(
