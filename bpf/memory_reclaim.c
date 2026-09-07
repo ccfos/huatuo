@@ -22,16 +22,31 @@ struct {
 	__uint(max_entries, 10240);
 } memory_cgroup_allocpages_stall SEC(".maps");
 
+/* Keep host totals independent of CSS lifetime and container map capacity. */
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__type(key, u32);
+	__type(value, u64);
+	__uint(max_entries, 1);
+} memory_host_directstall SEC(".maps");
+
 SEC("tracepoint/vmscan/mm_vmscan_memcg_reclaim_begin")
 int tracepoint_vmscan_mm_vmscan_memcg_reclaim_begin(struct pt_regs *ctx)
 {
 	struct cgroup_subsys_state *css;
 	struct mem_cgroup_metric *valp;
 	struct task_struct *task;
+	u64 *host_count;
+	u32 key = 0;
 
 	task = (struct task_struct *)bpf_get_current_task();
 	if (BPF_CORE_READ(task, flags) & PF_KSWAPD)
 		return 0;
+
+	/* Per-CPU storage avoids contention between reclaiming CPUs. */
+	host_count = bpf_map_lookup_elem(&memory_host_directstall, &key);
+	if (host_count)
+		__sync_fetch_and_add(host_count, 1);
 
 	css = (struct cgroup_subsys_state *)current_task_memory_css_addr();
 	valp = bpf_map_lookup_elem(&memory_cgroup_allocpages_stall, &css);
