@@ -42,17 +42,10 @@ func parseResponse(
 	successMode successResponseMode,
 ) (*nodeapi.Operation, error) {
 	if response == nil {
-		return nil, &Error{
-			Code:    ErrorCodeClientProtocol,
-			Message: "Node API returned a nil response",
-		}
+		return nil, newProtocolError(0, "Node API returned a nil response")
 	}
 	if response.Body == nil {
-		return nil, &Error{
-			StatusCode: response.StatusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    "Node API returned a nil response body",
-		}
+		return nil, newProtocolError(response.StatusCode, "Node API returned a nil response body")
 	}
 
 	limit := int64(maxErrorBodyBytes)
@@ -63,11 +56,7 @@ func parseResponse(
 	body, readErr := readBody(response.Body, limit)
 	closeErr := response.Body.Close()
 	if readErr != nil {
-		return nil, wrapError(&Error{
-			StatusCode: response.StatusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    "read Node API response",
-		}, readErr)
+		return nil, wrapProtocolError(response.StatusCode, "read Node API response", readErr)
 	}
 	if closeErr != nil {
 		return nil, wrapError(&Error{
@@ -83,11 +72,7 @@ func parseResponse(
 		if successMode == successResponseOKOrAccepted {
 			return parseOperation(response.StatusCode, body, requestID)
 		}
-		return nil, &Error{
-			StatusCode: response.StatusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    "unexpected HTTP 202 success response",
-		}
+		return nil, newProtocolError(response.StatusCode, "unexpected HTTP 202 success response")
 	default:
 		return nil, parseError(response.StatusCode, body)
 	}
@@ -107,96 +92,99 @@ func readBody(body io.Reader, limit int64) ([]byte, error) {
 func parseOperation(statusCode int, body []byte, requestID string) (*nodeapi.Operation, error) {
 	var envelope nodeapi.OperationResponse
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, wrapError(&Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    "decode operation response",
-		}, err)
+		return nil, wrapProtocolError(statusCode, "decode operation response", err)
 	}
 	operation := envelope.Data
+	if err := validateOperation(statusCode, &operation, requestID); err != nil {
+		return nil, err
+	}
+	return &operation, nil
+}
+
+func validateOperation(statusCode int, operation *nodeapi.Operation, requestID string) error {
 	if operation.RequestID != requestID {
-		return nil, &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message: fmt.Sprintf(
+		return newProtocolError(
+			statusCode,
+			fmt.Sprintf(
 				"response request ID %q does not match %q",
 				operation.RequestID,
 				requestID,
 			),
-		}
+		)
+	}
+	if !operation.Kind.Valid() {
+		return newProtocolError(
+			statusCode,
+			fmt.Sprintf("unsupported operation kind %q", operation.Kind),
+		)
+	}
+	if operation.CreatedAt.IsZero() {
+		return newProtocolError(statusCode, "operation created timestamp is required")
 	}
 	if !operation.Status.Valid() {
-		return nil, &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    fmt.Sprintf("unsupported operation status %q", operation.Status),
-		}
+		return newProtocolError(
+			statusCode,
+			fmt.Sprintf("unsupported operation status %q", operation.Status),
+		)
 	}
 	if operation.Status == nodeapi.OperationStatusTerminal {
 		if operation.Terminal == nil || !operation.Terminal.Outcome.Valid() {
-			return nil, &Error{
-				StatusCode: statusCode,
-				Code:       ErrorCodeClientProtocol,
-				Message:    "terminal operation has an invalid outcome",
-			}
+			return newProtocolError(statusCode, "terminal operation has an invalid outcome")
 		}
 		if operation.Terminal.Outcome == nodeapi.OperationOutcomeFailed &&
 			(operation.Terminal.Reason == nil || *operation.Terminal.Reason == "") {
-			return nil, &Error{
-				StatusCode: statusCode,
-				Code:       ErrorCodeClientProtocol,
-				Message:    "failed operation has no reason",
-			}
+			return newProtocolError(statusCode, "failed operation has no reason")
 		}
 	} else if operation.Terminal != nil {
-		return nil, &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    fmt.Sprintf("operation status %q contains terminal details", operation.Status),
-		}
+		return newProtocolError(
+			statusCode,
+			fmt.Sprintf("operation status %q contains terminal details", operation.Status),
+		)
 	}
-	return &operation, nil
+	return nil
 }
 
 func parseError(statusCode int, body []byte) error {
 	var envelope apiv1.ErrorResponse
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return wrapError(&Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    "decode Node API error response",
-		}, err)
+		return wrapProtocolError(statusCode, "decode Node API error response", err)
 	}
 	code := envelope.Error.Code
 	expectedStatus, ok := nodeapi.HTTPStatusForErrorCode(code)
 	if !ok {
-		return &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    fmt.Sprintf("unknown Node error code %q", code),
-		}
+		return newProtocolError(statusCode, fmt.Sprintf("unknown Node error code %q", code))
 	}
 	if expectedStatus != statusCode {
-		return &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message: fmt.Sprintf(
+		return newProtocolError(
+			statusCode,
+			fmt.Sprintf(
 				"Node error code %q requires HTTP %d",
 				code,
 				expectedStatus,
 			),
-		}
+		)
 	}
 	if envelope.Error.Message == "" {
-		return &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    fmt.Sprintf("Node error code %q has an empty message", code),
-		}
+		return newProtocolError(
+			statusCode,
+			fmt.Sprintf("Node error code %q has an empty message", code),
+		)
 	}
 	return &Error{
 		StatusCode: statusCode,
 		Code:       code,
 		Message:    envelope.Error.Message,
 	}
+}
+
+func newProtocolError(statusCode int, message string) *Error {
+	return &Error{
+		StatusCode: statusCode,
+		Code:       ErrorCodeClientProtocol,
+		Message:    message,
+	}
+}
+
+func wrapProtocolError(statusCode int, message string, cause error) error {
+	return wrapError(newProtocolError(statusCode, message), cause)
 }

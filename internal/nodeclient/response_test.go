@@ -75,6 +75,17 @@ func TestParseResponseRejectsProtocolViolations(t *testing.T) {
 			body:       operationJSON("other-job", "running"),
 		},
 		{
+			name:       "missing operation kind",
+			statusCode: http.StatusOK,
+			body: `{"data":{"created_at":"2026-08-24T12:00:00Z",` +
+				`"request_id":"job-1","status":"pending"}}`,
+		},
+		{
+			name:       "missing operation created timestamp",
+			statusCode: http.StatusOK,
+			body:       `{"data":{"request_id":"job-1","kind":"profiling","status":"pending"}}`,
+		},
+		{
 			name:       "status and error code mismatch",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":{"code":"operation_not_found","message":"missing"}}`,
