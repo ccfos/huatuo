@@ -98,9 +98,12 @@ func TestLoadStatsLiveTaskIterator(t *testing.T) {
 		}
 	}
 
-	result, err := cgroupV2.LoadStats(cgroupPaths)
+	result, host, err := cgroupV2.SharedLoadStatsWithHost(cgroupV2.LoadStatsConsumerLoadavg, cgroupPaths)
 	if err != nil {
 		t.Fatalf("LoadStats(%q) error = %v", cgroupPaths, err)
+	}
+	if host == nil || host.NrSleeping <= 6 {
+		t.Fatalf("host total must include tasks outside fixture cgroups: %+v", host)
 	}
 	for i, cgroupPath := range cgroupPaths {
 		load, ok := result[cgroupPath]
