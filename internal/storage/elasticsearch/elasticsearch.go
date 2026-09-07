@@ -70,10 +70,7 @@ type Storage struct {
 	index     string
 }
 
-var (
-	_ driver.Backend      = (*Storage)(nil)
-	_ driver.QueryDeleter = (*Storage)(nil)
-)
+var _ driver.Backend = (*Storage)(nil)
 
 func init() {
 	factory := func(cfg *driver.Config) (driver.Backend, error) {
@@ -249,7 +246,7 @@ func (s *Storage) Delete(ctx context.Context, id string) error {
 
 // DeleteByQuery synchronously removes all matching records and refreshes the
 // index before returning.
-func (s *Storage) DeleteByQuery(ctx context.Context, query driver.Query) (int64, error) {
+func (s *Storage) DeleteByQuery(ctx context.Context, query driver.DeleteQuery) (int64, error) {
 	body, err := buildDeleteByQueryRequest(query)
 	if err != nil {
 		return 0, err
@@ -262,6 +259,9 @@ func (s *Storage) DeleteByQuery(ctx context.Context, query driver.Query) (int64,
 		Body:              bytes.NewReader(body),
 		Refresh:           &refresh,
 		WaitForCompletion: &waitForCompletion,
+	}
+	if query.Limit > 0 {
+		req.MaxDocs = &query.Limit
 	}
 	res, err := req.Do(ctx, s.transport)
 	if err != nil {
@@ -284,20 +284,21 @@ func (s *Storage) DeleteByQuery(ctx context.Context, query driver.Query) (int64,
 			err,
 		)
 	}
+	var deleted int64
+	if payload.Deleted != nil {
+		deleted = *payload.Deleted
+	}
 	if payload.TimedOut != nil && *payload.TimedOut {
-		return 0, fmt.Errorf("elasticsearch backend delete by query %s timed out", s.index)
+		return deleted, fmt.Errorf("elasticsearch backend delete by query %s timed out", s.index)
 	}
 	if len(payload.Failures) != 0 {
-		return 0, fmt.Errorf(
+		return deleted, fmt.Errorf(
 			"elasticsearch backend delete by query %s returned %d failures",
 			s.index,
 			len(payload.Failures),
 		)
 	}
-	if payload.Deleted == nil {
-		return 0, nil
-	}
-	return *payload.Deleted, nil
+	return deleted, nil
 }
 
 func (s *Storage) Query(ctx context.Context, q driver.Query) ([]driver.Record, error) {

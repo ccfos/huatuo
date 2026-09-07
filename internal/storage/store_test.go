@@ -87,49 +87,46 @@ func (m *testMapper) Indexes() []driver.Index {
 }
 
 type testBackend struct {
-	initErr      error
-	closeErr     error
-	saveErr      error
-	getErr       error
-	deleteErr    error
-	queryErr     error
-	countErr     error
-	valuesErr    error
-	getRecord    driver.Record
-	queryRecords []driver.Record
-	countValue   int64
-	valuesValue  []string
-	initCalls    int
-	closeCalls   int
-	closeContext context.Context
-	saveCalls    int
-	deleteCalls  int
-	queryCalls   int
-	countCalls   int
-	valuesCalls  int
-	collection   string
-	indexes      []driver.Index
-	savedRecord  driver.Record
-	saveOptions  driver.SaveOptions
-	deletedID    string
-	lastQuery    driver.Query
-	valuesField  string
-	valuesSize   int
-}
-
-type queryDeleteBackend struct {
-	*testBackend
+	initErr            error
+	closeErr           error
+	saveErr            error
+	getErr             error
+	deleteErr          error
 	deleteByQueryErr   error
+	queryErr           error
+	countErr           error
+	valuesErr          error
+	getRecord          driver.Record
+	queryRecords       []driver.Record
+	countValue         int64
 	deleteByQueryCount int64
+	valuesValue        []string
+	initCalls          int
+	closeCalls         int
+	closeContext       context.Context
+	saveCalls          int
+	deleteCalls        int
 	deleteByQueryCalls int
+	queryCalls         int
+	countCalls         int
+	valuesCalls        int
+	collection         string
+	indexes            []driver.Index
+	savedRecord        driver.Record
+	saveOptions        driver.SaveOptions
+	deletedID          string
+	lastQuery          driver.Query
+	lastDeleteQuery    driver.DeleteQuery
+	valuesField        string
+	valuesSize         int
 }
 
-func (b *queryDeleteBackend) DeleteByQuery(
+func (b *testBackend) DeleteByQuery(
 	_ context.Context,
-	query driver.Query,
+	query driver.DeleteQuery,
 ) (int64, error) {
 	b.deleteByQueryCalls++
-	b.lastQuery = query
+	b.lastDeleteQuery = query
 	return b.deleteByQueryCount, b.deleteByQueryErr
 }
 
@@ -712,11 +709,10 @@ func TestStoreDelete(t *testing.T) {
 }
 
 func TestStoreDeleteByQuery(t *testing.T) {
-	query := driver.Query{Filters: []driver.Filter{
+	query := driver.DeleteQuery{Filters: []driver.Filter{
 		{Field: "status", Op: driver.OpEq, Value: "staging"},
-	}}
-	backend := &queryDeleteBackend{
-		testBackend:        &testBackend{},
+	}, Limit: 3}
+	backend := &testBackend{
 		deleteByQueryCount: 3,
 	}
 	store, err := NewStore[testEntity](
@@ -741,16 +737,17 @@ func TestStoreDeleteByQuery(t *testing.T) {
 			backend.deleteByQueryCalls,
 		)
 	}
-	if !reflect.DeepEqual(backend.lastQuery, query) {
-		t.Fatalf("DeleteByQuery() query = %#v, want %#v", backend.lastQuery, query)
+	if !reflect.DeepEqual(backend.lastDeleteQuery, query) {
+		t.Fatalf("DeleteByQuery() query = %#v, want %#v", backend.lastDeleteQuery, query)
 	}
 }
 
-func TestStoreDeleteByQueryRejectsUnsafeOrUnsupportedQueries(t *testing.T) {
+func TestStoreDeleteByQueryRejectsUnsafeQueries(t *testing.T) {
+	backend := &testBackend{}
 	store, err := NewStore[testEntity](
 		t.Context(),
-		"unsupported",
-		&testBackend{},
+		"unsafe-query",
+		backend,
 		"jobs",
 		newTestMapper(),
 	)
@@ -758,14 +755,17 @@ func TestStoreDeleteByQueryRejectsUnsafeOrUnsupportedQueries(t *testing.T) {
 		t.Fatalf("NewStore() error = %v", err)
 	}
 
-	if _, err := store.DeleteByQuery(t.Context(), driver.Query{}); !errors.Is(err, driver.ErrInvalidQuery) {
+	if _, err := store.DeleteByQuery(t.Context(), driver.DeleteQuery{}); !errors.Is(err, driver.ErrInvalidQuery) {
 		t.Fatalf("DeleteByQuery(empty) error = %v, want ErrInvalidQuery", err)
 	}
-	_, err = store.DeleteByQuery(t.Context(), driver.Query{Filters: []driver.Filter{
+	_, err = store.DeleteByQuery(t.Context(), driver.DeleteQuery{Filters: []driver.Filter{
 		{Field: "status", Op: driver.OpEq, Value: "staging"},
-	}})
-	if !errors.Is(err, driver.ErrUnsupportedOp) {
-		t.Fatalf("DeleteByQuery(unsupported) error = %v, want ErrUnsupportedOp", err)
+	}, Limit: -1})
+	if !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("DeleteByQuery(negative limit) error = %v, want ErrInvalidQuery", err)
+	}
+	if backend.deleteByQueryCalls != 0 {
+		t.Fatalf("backend DeleteByQuery() call count = %d, want 0", backend.deleteByQueryCalls)
 	}
 }
 

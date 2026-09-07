@@ -35,10 +35,7 @@ type Storage struct {
 
 var _ driver.Backend = (*Storage)(nil)
 
-var (
-	_ driver.Pinger       = (*Storage)(nil)
-	_ driver.QueryDeleter = (*Storage)(nil)
-)
+var _ driver.Pinger = (*Storage)(nil)
 
 func init() {
 	driver.RegisterBackend("sqlite", func(cfg *driver.Config) (driver.Backend, error) {
@@ -174,7 +171,7 @@ func (s *Storage) Save(
 }
 
 // DeleteByQuery deletes records matching query and returns the affected count.
-func (s *Storage) DeleteByQuery(ctx context.Context, query driver.Query) (int64, error) {
+func (s *Storage) DeleteByQuery(ctx context.Context, query driver.DeleteQuery) (int64, error) {
 	statement, args, err := buildDeleteSQL(s.table, query)
 	if err != nil {
 		return 0, err

@@ -38,6 +38,10 @@ func (b *testBackend) Delete(context.Context, string) error {
 	return nil
 }
 
+func (b *testBackend) DeleteByQuery(context.Context, DeleteQuery) (int64, error) {
+	return 0, nil
+}
+
 func (b *testBackend) Query(context.Context, Query) ([]Record, error) {
 	return nil, nil
 }

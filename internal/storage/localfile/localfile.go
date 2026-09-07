@@ -98,6 +98,10 @@ func (b *Storage) Delete(context.Context, string) error {
 	return driver.ErrUnsupported
 }
 
+func (b *Storage) DeleteByQuery(context.Context, driver.DeleteQuery) (int64, error) {
+	return 0, driver.ErrUnsupported
+}
+
 func (b *Storage) Query(context.Context, driver.Query) ([]driver.Record, error) {
 	return nil, driver.ErrUnsupported
 }

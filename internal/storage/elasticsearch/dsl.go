@@ -108,17 +108,17 @@ func buildCountRequest(q driver.Query) ([]byte, error) {
 	return json.Marshal(escount.Request{Query: query})
 }
 
-func buildDeleteByQueryRequest(q driver.Query) ([]byte, error) {
+func buildDeleteByQueryRequest(q driver.DeleteQuery) ([]byte, error) {
 	if len(q.Filters) == 0 {
 		return nil, fmt.Errorf(
 			"%w: query deletion requires at least one filter",
 			driver.ErrInvalidQuery,
 		)
 	}
-	if q.Limit != 0 || q.Offset != 0 || len(q.Sorts) != 0 {
+	if q.Limit < 0 {
 		return nil, fmt.Errorf(
-			"%w: query deletion does not support pagination or sorting",
-			driver.ErrUnsupportedOp,
+			"%w: delete limit must be non-negative",
+			driver.ErrInvalidQuery,
 		)
 	}
 

@@ -115,15 +115,11 @@ func (s *storageStore) DeleteTerminalBefore(
 	if limit <= 0 || limit > 1000 {
 		return 0, fmt.Errorf("%w: cleanup limit must be between 1 and 1000", ErrInvalidQuery)
 	}
-	return s.store.DeleteByQuery(ctx, driver.Query{
+	return s.store.DeleteByQuery(ctx, driver.DeleteQuery{
 		Filters: []driver.Filter{
 			{Field: "status", Op: driver.OpEq, Value: string(StatusTerminal)},
 			{Field: "ended_at", Op: driver.OpNe, Value: ""},
 			{Field: "ended_at", Op: driver.OpLte, Value: driver.NormalizeValue(endedBefore)},
-		},
-		Sorts: []driver.Sort{
-			{Field: "ended_at"},
-			{Field: "id"},
 		},
 		Limit: limit,
 	})

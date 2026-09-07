@@ -186,6 +186,10 @@ func (*recordingBackend) Get(context.Context, string) (driver.Record, error) {
 
 func (*recordingBackend) Delete(context.Context, string) error { return nil }
 
+func (*recordingBackend) DeleteByQuery(context.Context, driver.DeleteQuery) (int64, error) {
+	return 0, nil
+}
+
 func (*recordingBackend) Query(context.Context, driver.Query) ([]driver.Record, error) {
 	return nil, nil
 }

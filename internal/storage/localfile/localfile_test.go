@@ -122,7 +122,7 @@ func TestBackendSaveInvalidJSONFallback(t *testing.T) {
 	}
 }
 
-// TestBackendUnsupportedOperations covers operations not supported by the localfile backend: Get, Delete, Query, Count, and Terms all return ErrUnsupported.
+// TestBackendUnsupportedOperations covers operations not supported by the localfile backend: Get, Delete, DeleteByQuery, Query, Count, and Terms all return ErrUnsupported.
 func TestBackendUnsupportedOperations(t *testing.T) {
 	dir := t.TempDir()
 	backend := NewBackend(dir, 1024, 3)
@@ -132,6 +132,9 @@ func TestBackendUnsupportedOperations(t *testing.T) {
 	}
 	if err := backend.Delete(t.Context(), "trace-20260424"); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.Delete() error = %v, want ErrUnsupported", err)
+	}
+	if _, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{}); !errors.Is(err, driver.ErrUnsupported) {
+		t.Errorf("Backend.DeleteByQuery() error = %v, want ErrUnsupported", err)
 	}
 	if _, err := backend.Query(t.Context(), driver.Query{}); !errors.Is(err, driver.ErrUnsupported) {
 		t.Errorf("Backend.Query() error = %v, want ErrUnsupported", err)

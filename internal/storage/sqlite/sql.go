@@ -124,16 +124,16 @@ func buildValuesSQL(collection, field string, q driver.Query, size int) (string,
 	return sb.String(), args, nil
 }
 
-func buildDeleteSQL(collection string, q driver.Query) (string, []any, error) {
+func buildDeleteSQL(collection string, q driver.DeleteQuery) (string, []any, error) {
 	if len(q.Filters) == 0 {
 		return "", nil, fmt.Errorf(
 			"%w: query deletion requires at least one filter",
 			driver.ErrInvalidQuery,
 		)
 	}
-	if q.Limit < 0 || q.Offset != 0 {
+	if q.Limit < 0 {
 		return "", nil, fmt.Errorf(
-			"%w: query deletion requires a non-negative limit and zero offset",
+			"%w: delete limit must be non-negative",
 			driver.ErrInvalidQuery,
 		)
 	}
@@ -141,20 +141,11 @@ func buildDeleteSQL(collection string, q driver.Query) (string, []any, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	orderSQL, err := buildOrderSQL(q.Sorts)
-	if err != nil {
-		return "", nil, err
-	}
-
 	var selection strings.Builder
 	selection.WriteString("SELECT id FROM ")
 	selection.WriteString(quoteIdentifier(collection))
 	selection.WriteString(" WHERE ")
 	selection.WriteString(whereSQL)
-	if orderSQL != "" {
-		selection.WriteString(" ORDER BY ")
-		selection.WriteString(orderSQL)
-	}
 	if q.Limit > 0 {
 		selection.WriteString(" LIMIT ?")
 		args = append(args, q.Limit)

@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -42,6 +43,7 @@ type mockElasticsearchServer struct {
 	createIndexBodies []map[string]any
 	searchBodies      []map[string]any
 	countBodies       []map[string]any
+	deleteResponse    map[string]any
 	server            *httptest.Server
 }
 
@@ -404,15 +406,29 @@ func (m *mockElasticsearchServer) handleDeleteByQuery(
 		return
 	}
 	documents := m.matchDocumentsLocked(index, body["query"])
+	if value := r.URL.Query().Get("max_docs"); value != "" {
+		limit, err := strconv.Atoi(value)
+		if err != nil {
+			http.Error(w, "invalid max_docs", http.StatusBadRequest)
+			return
+		}
+		if limit < len(documents) {
+			documents = documents[:limit]
+		}
+	}
 	for _, document := range documents {
 		delete(m.indexes[index], document.ID)
 	}
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	response := map[string]any{
 		"deleted":   len(documents),
 		"failures":  []any{},
 		"timed_out": false,
-	})
+	}
+	if m.deleteResponse != nil {
+		response = m.deleteResponse
+	}
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func writeMissingIndex(w http.ResponseWriter, index string) {
@@ -950,11 +966,11 @@ func TestBuildExactStringClauseUsesKeywordFallback(t *testing.T) {
 }
 
 func TestBuildDeleteByQueryRequest(t *testing.T) {
-	if _, err := buildDeleteByQueryRequest(driver.Query{}); !errors.Is(err, driver.ErrInvalidQuery) {
+	if _, err := buildDeleteByQueryRequest(driver.DeleteQuery{}); !errors.Is(err, driver.ErrInvalidQuery) {
 		t.Fatalf("buildDeleteByQueryRequest(empty) error = %v, want ErrInvalidQuery", err)
 	}
 
-	body, err := buildDeleteByQueryRequest(driver.Query{Filters: []driver.Filter{
+	body, err := buildDeleteByQueryRequest(driver.DeleteQuery{Filters: []driver.Filter{
 		{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"},
 	}})
 	if err != nil {
@@ -966,12 +982,12 @@ func TestBuildDeleteByQueryRequest(t *testing.T) {
 		t.Fatalf("delete filter = %#v, want one clause", boolQuery["filter"])
 	}
 
-	_, err = buildDeleteByQueryRequest(driver.Query{
+	_, err = buildDeleteByQueryRequest(driver.DeleteQuery{
 		Filters: []driver.Filter{{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"}},
-		Limit:   1,
+		Limit:   -1,
 	})
-	if !errors.Is(err, driver.ErrUnsupportedOp) {
-		t.Fatalf("buildDeleteByQueryRequest(paginated) error = %v, want ErrUnsupportedOp", err)
+	if !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("buildDeleteByQueryRequest(negative limit) error = %v, want ErrInvalidQuery", err)
 	}
 }
 
@@ -1074,7 +1090,7 @@ func TestElasticsearchBackendDeleteByQuery(t *testing.T) {
 		}
 	}
 
-	deleted, err := backend.DeleteByQuery(t.Context(), driver.Query{Filters: []driver.Filter{
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{Filters: []driver.Filter{
 		{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"},
 	}})
 	if err != nil {
@@ -1088,6 +1104,63 @@ func TestElasticsearchBackendDeleteByQuery(t *testing.T) {
 	}
 	if _, err := backend.Get(t.Context(), "profile-3"); err != nil {
 		t.Fatalf("Get(retained) error = %v", err)
+	}
+}
+
+func TestElasticsearchBackendDeleteByQueryLimit(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+	for _, id := range []string{"profile-1", "profile-2", "profile-3"} {
+		if err := backend.Save(
+			t.Context(),
+			driver.Record{ID: id, Data: []byte(`{"tracer_id":"job-1"}`)},
+			driver.SaveOptions{WaitForVisibility: true},
+		); err != nil {
+			t.Fatalf("Save(%q) error = %v", id, err)
+		}
+	}
+
+	filter := driver.Filter{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"}
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{filter},
+		Limit:   1,
+	})
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteByQuery() = (%d, %v), want (1, nil)", deleted, err)
+	}
+	remaining, err := backend.Count(t.Context(), driver.Query{Filters: []driver.Filter{filter}})
+	if err != nil || remaining != 2 {
+		t.Fatalf("Count() = (%d, %v), want (2, nil)", remaining, err)
+	}
+}
+
+func TestElasticsearchBackendDeleteByQueryReportsPartialDeletion(t *testing.T) {
+	server := newMockElasticsearchServer()
+	defer server.Close()
+	server.deleteResponse = map[string]any{
+		"deleted":   2,
+		"failures":  []any{map[string]any{}},
+		"timed_out": false,
+	}
+
+	backend := newBackendForTest(t, server)
+	defer func() { _ = backend.Close(t.Context()) }()
+	if err := backend.Save(
+		t.Context(),
+		driver.Record{ID: "profile-1", Data: []byte(`{"tracer_id":"job-1"}`)},
+		driver.SaveOptions{WaitForVisibility: true},
+	); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{{Field: "tracer_id", Op: driver.OpEq, Value: "job-1"}},
+	})
+	if err == nil || deleted != 2 {
+		t.Fatalf("DeleteByQuery() = (%d, %v), want (2, non-nil error)", deleted, err)
 	}
 }
 
@@ -1110,7 +1183,7 @@ func TestElasticsearchBackendMissingIndexIsEmpty(t *testing.T) {
 	if err != nil || len(values) != 0 {
 		t.Fatalf("Values() = (%v, %v), want empty result", values, err)
 	}
-	deleted, err := backend.DeleteByQuery(t.Context(), driver.Query{
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
 		Filters: []driver.Filter{{Field: "status", Op: driver.OpEq, Value: "staging"}},
 	})
 	if err != nil || deleted != 0 {

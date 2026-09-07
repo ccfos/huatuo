@@ -46,6 +46,10 @@ func (*testBackend) Get(context.Context, string) (driver.Record, error) {
 
 func (*testBackend) Delete(context.Context, string) error { return nil }
 
+func (*testBackend) DeleteByQuery(context.Context, driver.DeleteQuery) (int64, error) {
+	return 0, nil
+}
+
 func (*testBackend) Query(context.Context, driver.Query) ([]driver.Record, error) {
 	return nil, nil
 }

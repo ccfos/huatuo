@@ -218,6 +218,10 @@ func (*profileBackend) Get(context.Context, string) (driver.Record, error) {
 
 func (*profileBackend) Delete(context.Context, string) error { return nil }
 
+func (*profileBackend) DeleteByQuery(context.Context, driver.DeleteQuery) (int64, error) {
+	return 0, nil
+}
+
 func (*profileBackend) Query(context.Context, driver.Query) ([]driver.Record, error) {
 	return nil, nil
 }

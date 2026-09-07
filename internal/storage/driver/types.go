@@ -101,6 +101,13 @@ type Query struct {
 	Offset  int
 }
 
+// DeleteQuery selects records for synchronous bulk deletion. Limit zero
+// deletes every matching record; a positive limit bounds the deleted count.
+type DeleteQuery struct {
+	Filters []Filter
+	Limit   int
+}
+
 // Record is the backend-neutral persisted representation.
 type Record struct {
 	ID     string
@@ -153,16 +160,11 @@ type Backend interface {
 	Save(ctx context.Context, rec Record, options SaveOptions) error
 	Get(ctx context.Context, id string) (Record, error)
 	Delete(ctx context.Context, id string) error
+	DeleteByQuery(ctx context.Context, query DeleteQuery) (int64, error)
 	Query(ctx context.Context, q Query) ([]Record, error)
 	Count(ctx context.Context, q Query) (int64, error)
 	Values(ctx context.Context, field string, q Query, size int) ([]string, error)
 	Close(ctx context.Context) error
-}
-
-// QueryDeleter is implemented by backends that can synchronously delete every
-// record matching a query.
-type QueryDeleter interface {
-	DeleteByQuery(ctx context.Context, query Query) (int64, error)
 }
 
 // Pinger verifies that a backend can serve requests.

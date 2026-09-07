@@ -136,6 +136,50 @@ func TestSQLiteBackendCRUD(t *testing.T) {
 	}
 }
 
+func TestSQLiteBackendDeleteByQuery(t *testing.T) {
+	backend := newSQLiteBackendForTest(t)
+	if backend == nil {
+		return
+	}
+	if err := backend.Init(t.Context(), "jobs", sqliteIndexes()); err != nil {
+		t.Fatalf("backend Init() error = %v", err)
+	}
+	seedSQLiteRecords(t, backend, []driver.Record{
+		{ID: "running-1", Data: []byte(`{}`), Fields: map[string]any{"status": "running"}},
+		{ID: "running-2", Data: []byte(`{}`), Fields: map[string]any{"status": "running"}},
+		{ID: "completed", Data: []byte(`{}`), Fields: map[string]any{"status": "completed"}},
+	})
+
+	filter := driver.Filter{Field: "status", Op: driver.OpEq, Value: "running"}
+	deleted, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{filter},
+		Limit:   1,
+	})
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteByQuery(limit 1) = (%d, %v), want (1, nil)", deleted, err)
+	}
+	remaining, err := backend.Count(t.Context(), driver.Query{Filters: []driver.Filter{filter}})
+	if err != nil || remaining != 1 {
+		t.Fatalf("Count() = (%d, %v), want (1, nil)", remaining, err)
+	}
+
+	deleted, err = backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{filter},
+	})
+	if err != nil || deleted != 1 {
+		t.Fatalf("DeleteByQuery(unbounded) = (%d, %v), want (1, nil)", deleted, err)
+	}
+	if _, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{}); !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("DeleteByQuery(empty) error = %v, want ErrInvalidQuery", err)
+	}
+	if _, err := backend.DeleteByQuery(t.Context(), driver.DeleteQuery{
+		Filters: []driver.Filter{filter},
+		Limit:   -1,
+	}); !errors.Is(err, driver.ErrInvalidQuery) {
+		t.Fatalf("DeleteByQuery(negative limit) error = %v, want ErrInvalidQuery", err)
+	}
+}
+
 func TestSQLiteBackendSaveCreateOnlyRejectsDuplicateID(t *testing.T) {
 	backend := newSQLiteBackendForTest(t)
 	if backend == nil {
