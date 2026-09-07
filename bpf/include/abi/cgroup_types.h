@@ -38,4 +38,29 @@ struct cgroup_css_event {
 BPF_ABI_EXPORT(cgroup_css_event);
 BPF_ABI_EXPORT_ENUM(cgroup_css_operation);
 
+
+struct cgroup_load_stats {
+ u64 nr_sleeping;
+ u64 nr_running;
+ u64 nr_stopped;
+ u64 nr_uninterruptible;
+ u64 nr_iowait;
+};
+
+enum cgroup_pid_namespace_status {
+ CGROUP_PID_NAMESPACE_UNCHECKED,
+ CGROUP_PID_NAMESPACE_HOST,
+ CGROUP_PID_NAMESPACE_NESTED,
+ CGROUP_PID_NAMESPACE_READ_ERROR,
+};
+
+struct cgroup_task_scan_state {
+ enum cgroup_pid_namespace_status pid_namespace_status;
+ u32 collect_containers;
+};
+
+BPF_ABI_EXPORT(cgroup_load_stats);
+BPF_ABI_EXPORT(cgroup_task_scan_state);
+BPF_ABI_EXPORT_ENUM(cgroup_pid_namespace_status);
+
 #endif /* __BPF_ABI_CGROUP_H__ */

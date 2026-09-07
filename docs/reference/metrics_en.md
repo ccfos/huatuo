@@ -106,8 +106,8 @@ Hosts report 1-, 5-, and 15-minute load averages. Containers report current runn
 | `loadavg_load1` | System load average over the past 1 minute | Tasks | Host | — | — |
 | `loadavg_load5` | System load average over the past 5 minutes | Tasks | Host | — | — |
 | `loadavg_load15` | System load average over the past 15 minutes | Tasks | Host | — | — |
-| `loadavg_container_nr_running` | Current runnable tasks, including running tasks and tasks waiting for CPU | Count | Container | — | cgroup v1 only |
-| `loadavg_container_nr_uninterruptible` | Uninterruptible tasks in the container | Count | Container | — | cgroup v1 only |
+| `loadavg_container_nr_running` | Current runnable tasks, including running tasks and tasks waiting for CPU | Count | Container | — | cgroup v1/v2; v2 requires BPF task iterator support |
+| `loadavg_container_nr_uninterruptible` | Uninterruptible tasks in the container | Count | Container | — | cgroup v1/v2; v2 requires BPF task iterator support |
 
 ## Memory
 
@@ -820,9 +820,9 @@ Both metrics are Counters updated before trace backoff. Tracing keeps host-wide 
 |---|---|---|---|---|---|
 |loadavg_nr_running|Instantaneous running or runnable host tasks|count|Host| host, region |`procs_running` from `/proc/stat`|
 
-`nr_running` is an instantaneous Gauge, not a `load1/5/15` average or CPU utilization. Host counts include container tasks; do not add the scopes. Container taskstats sampling remains non-recursive and excludes child cgroups. Host collection requires host procfs visibility, not cgroups. Read failures or missing fields emit no synthetic zero and do not suppress existing load averages or container data. Container support remains cgroup v1 only; no v2 task walk or estimated load averages are added.
+`nr_running` is an instantaneous Gauge, not a `load1/5/15` average or CPU utilization. Host counts include container tasks; do not add the scopes. Container taskstats sampling remains non-recursive and excludes child cgroups. Host collection requires host procfs visibility, not cgroups. Read failures or missing fields emit no synthetic zero and do not suppress existing load averages or container data.
 
-Host `nr_uninterruptible` is not added: [`procs_blocked` in `/proc/stat`](https://www.kernel.org/doc/html/latest/filesystems/proc.html) counts tasks waiting for IO, not all uninterruptible tasks. IO metrics remain outside this change.
+`nr_uninterruptible` uses the shared task iterator described below. [`procs_blocked` in `/proc/stat`](https://www.kernel.org/doc/html/latest/filesystems/proc.html) counts tasks waiting for IO and cannot substitute for that D-state count.
 
 ### collect cgroup v2 task states with a BPF iterator
 
@@ -830,5 +830,25 @@ Kubernetes deployments must run Huatuo with `hostPID: true`. Without host PID na
 
 ### enable v2 load stats for metrics and dload
 
-`nr_running` is an instantaneous Gauge, not a `load1/5/15` average or CPU utilization. Host counts include container tasks; do not add the scopes. Container sampling is non-recursive and excludes child cgroups. Host collection requires host procfs visibility, not cgroups. Read failures or missing fields emit no synthetic zero and do not suppress existing load averages or container data. Container load averages are not added.
-Container load metrics on cgroup v2 are opt-in through `MetricCollector.Loadavg.EnableCgroupV2=true` because each scrape walks all host tasks. They require readable kernel BTF and the BPF `task` iterator and count only tasks directly attached to each requested cgroup, not descendants. On unsupported kernels, host load metrics remain available, container load metrics are omitted without failing the host collection, and one warning is logged. A conclusive unsupported result is cached so Huatuo does not repeatedly try to load the BPF program.
+`nr_running` is an instantaneous Gauge, not a `load1/5/15` average or CPU utilization. Host counts include container tasks; do not add the scopes. Container sampling is non-recursive and excludes child cgroups. Host collection requires host procfs visibility, not cgroups. Read failures or missing fields emit no synthetic zero and do not suppress existing load averages or container data.
+Container load metrics on cgroup v2 run automatically with the `loadavg` component; there is no separate enable switch. Background sampling uses `MetricCollector.Loadavg.Interval` (default: 15 seconds), and Prometheus scrapes read the cached samples rather than starting task walks. Each sample shares a full-host task traversal with host D-state collection and counts only tasks directly attached to each requested cgroup. Readable kernel BTF, the BPF `task` iterator, and the host PID namespace are required. Unsupported systems omit iterator-dependent metrics while preserving procfs host load metrics and cgroup v1 netlink collection. One warning is logged per consumer, and conclusive unsupported results are cached. Dload retains its independent sampling interval and may reuse eligible snapshots within 100ms.
+
+### estimate container load averages on cgroup v1 and v2
+
+|Metric|Description|Unit|Target|Labels|Notes|
+|---|---|---|---|---|---|
+|loadavg_container_load1|Estimated 1-minute container R+D load average|count|Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2, configurable EMA sampling (default: 15 seconds)|
+|loadavg_container_load5|Estimated 5-minute container R+D load average|count|Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2, configurable EMA sampling (default: 15 seconds)|
+|loadavg_container_load15|Estimated 15-minute container R+D load average|count|Container| container_host, container_hostnamespace, container_level, container_name, container_type, host, region |cgroup v1/v2, configurable EMA sampling (default: 15 seconds)|
+
+`nr_running` is an instantaneous Gauge, not a `load1/5/15` average or CPU utilization. Host counts include container tasks; do not add the scopes. Container sampling is non-recursive and excludes child cgroups. Host collection requires host procfs visibility, not cgroups. Read failures or missing fields emit no synthetic zero and do not suppress existing load averages or container data.
+
+The `loadavg` lifecycle samples container R/D and averages every `MetricCollector.Loadavg.Interval` seconds (default: 15; 0 uses the default), independently of Prometheus scrapes and dload profiling. It reuses v1 netlink or the shared v2 BPF task iterator. Averages use actual elapsed time: `L += (R+D-L) * (1-exp(-dt/τ))`, with τ = 60/300/900 seconds. The first sample establishes a baseline; subsequent samples warm up from zero. These userspace estimates are not kernel host loadavg and are not normalized by CPU quota. Disappeared/failed containers lose their history; gaps over three sampling intervals (45 seconds by default) reset it. Failures are not sampled as zero, and caches older than three intervals are omitted. Stopping or restarting loadavg resets averages without changing host loadavg. Dload retains its independent `AutoTracing.Dload.Interval` (default: 10 seconds); the iterator only coalesces eligible requests within 100ms, not every sample.
+
+### add host D-state counts using the shared task iterator
+
+|Metric|Description|Unit|Target|Labels|Notes|
+|---|---|---|---|---|---|
+|loadavg_nr_uninterruptible|Host uninterruptible tasks contributing to load|count|Host| host, region |Shared BPF task iterator|
+
+Host `loadavg_nr_uninterruptible` is collected whenever the `loadavg` component is enabled. It reuses dload's shared BPF task iterator at the configured loadavg interval (default: 15 seconds) to count host D-state tasks contributing to load, excluding `TASK_NOLOAD`/`TASK_FROZEN`. It includes non-container tasks, is not a sum of container metrics, and does not use `/proc/stat`'s `procs_blocked`. On cgroup v2, container statistics share the same traversal. Host collection works independently of cgroup v1/v2 mode but requires kernel BTF, the BPF task iterator and the host PID namespace. Unsupported systems omit the metric without a procfs task-scan fallback; existing host loadavg and v1 container metrics remain available. Counts are sampled during traversal, not an atomic snapshot of all tasks.

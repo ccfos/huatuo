@@ -1330,8 +1330,24 @@ Explicit configuration assignments override built-in defaults; comments are not 
   readable kernel BTF and the BPF `task` iterator and counts only tasks directly
   attached to each requested cgroup, not tasks in descendant cgroups.
 
-	# Opt in to container load metrics on cgroup v2. The BPF task iterator
-	# walks all host tasks once per scrape. Host loadavg and cgroup v1 container
-	# metrics remain available when this is false.
-	# Kubernetes deployments must run with hostPID: true.
+	# Enabling loadavg starts background sampling automatically.
+	# Prometheus scrapes read cached container load and host D-state counts.
+	# Kubernetes deployments require hostPID: true for the BPF iterator.
 	[MetricCollector.Loadavg]
+
+### estimate container load averages on cgroup v1 and v2
+
+# Cgroup v2 container load and host D-state metrics share a BPF task iterator
+	# that walks all host tasks per background sample (default: 15 seconds).
+	# Unsupported kernels retain procfs host load and v1 container metrics.
+		# Sampling interval in seconds; 0 uses the default of 15.
+		# Controls container load and host D-state sampling, not
+		# host /proc/loadavg scrapes or AutoTracing.Dload.Interval (default: 10).
+		# Interval = 15
+
+### add host D-state counts using the shared task iterator
+
+# Host D-state tasks contributing to load are sampled every
+		# Interval seconds. Requires host PID visibility, kernel BTF and the BPF
+		# task iterator; works on cgroup v1/v2. Shares the v2 traversal.
+		# Unsupported systems omit this metric without a procfs fallback.

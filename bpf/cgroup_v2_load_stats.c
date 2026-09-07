@@ -19,6 +19,7 @@
 
 #include "bpf_common.h"
 #include "bpf_sched.h"
+#include "abi/cgroup_types.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
@@ -46,14 +47,6 @@ struct kernfs_node___legacy {
 	} id;
 } __attribute__((preserve_access_index));
 
-struct cgroup_load_stats {
-	u64 nr_sleeping;
-	u64 nr_running;
-	u64 nr_stopped;
-	u64 nr_uninterruptible;
-	u64 nr_iowait;
-};
-
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__type(key, u64);
@@ -61,42 +54,31 @@ struct {
 	__uint(max_entries, 65536);
 } cgroup_load_stats SEC(".maps");
 
-enum pid_namespace_status {
-	PID_NS_UNCHECKED,
-	PID_NS_HOST,
-	PID_NS_NESTED,
-	PID_NS_READ_ERROR,
-};
-
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__type(key, u32);
-	__type(value, u32);
+	__type(value, struct cgroup_task_scan_state);
 	__uint(max_entries, 1);
-} pid_namespace_status SEC(".maps");
+} task_scan_state SEC(".maps");
 
-static __always_inline bool collector_in_host_pid_namespace(void)
+static __always_inline bool collector_in_host_pid_namespace(struct cgroup_task_scan_state *scan)
 {
 	struct task_struct *current;
 	struct pid *pid = NULL;
-	u32 key = 0, level = 0;
-	u32 *status;
-
-	status = bpf_map_lookup_elem(&pid_namespace_status, &key);
-	if (!status)
-		return false;
-	if (*status != PID_NS_UNCHECKED)
-		return *status == PID_NS_HOST;
+	u32 level = 0;
+	enum cgroup_pid_namespace_status *status = &scan->pid_namespace_status;
+	if (*status != CGROUP_PID_NAMESPACE_UNCHECKED)
+		return *status == CGROUP_PID_NAMESPACE_HOST;
 
 	/* Check the reader, not the iterated task, which may be in a container. */
 	current = (struct task_struct *)bpf_get_current_task();
 	if (BPF_CORE_READ_INTO(&pid, current, thread_pid) || !pid ||
 	    BPF_CORE_READ_INTO(&level, pid, level)) {
-		*status = PID_NS_READ_ERROR;
+		*status = CGROUP_PID_NAMESPACE_READ_ERROR;
 		return false;
 	}
-	*status = level == 0 ? PID_NS_HOST : PID_NS_NESTED;
-	return *status == PID_NS_HOST;
+	*status = level == 0 ? CGROUP_PID_NAMESPACE_HOST : CGROUP_PID_NAMESPACE_NESTED;
+	return *status == CGROUP_PID_NAMESPACE_HOST;
 }
 
 static __always_inline u64 task_cgroup_id(struct task_struct *task)
@@ -127,32 +109,9 @@ static __always_inline u64 task_cgroup_id(struct task_struct *task)
 	return err ? 0 : id;
 }
 
-SEC("iter/task")
-int aggregate_cgroup_load(struct bpf_iter__task *ctx)
+static __always_inline void account_task(struct cgroup_load_stats *stats,
+					long state, bool in_iowait)
 {
-	struct cgroup_load_stats *stats;
-	struct task_struct *task;
-	u64 cgroup_id;
-	long state;
-
-	/* Also check the terminal callback so an empty traversal cannot pass. */
-	if (!collector_in_host_pid_namespace())
-		return 0;
-
-	task = ctx->task;
-	if (!task)
-		return 0;
-
-	cgroup_id = task_cgroup_id(task);
-	if (!cgroup_id)
-		return 0;
-
-	stats = bpf_map_lookup_elem(&cgroup_load_stats, &cgroup_id);
-	if (!stats)
-		return 0;
-
-	state = task_state(task);
-
 	/*
 	 * __state is a bitmask, so base sleep states can be combined with
 	 * modifier bits. Mirror the scheduler's load-contribution rules.
@@ -167,8 +126,45 @@ int aggregate_cgroup_load(struct bpf_iter__task *ctx)
 	else if (state & __TASK_STOPPED)
 		stats->nr_stopped++;
 
-	if (BPF_CORE_READ_BITFIELD_PROBED(task, in_iowait))
+	if (in_iowait)
 		stats->nr_iowait++;
+}
+
+SEC("iter/task")
+int aggregate_cgroup_load(struct bpf_iter__task *ctx)
+{
+	struct cgroup_load_stats *stats, *host_stats;
+	struct cgroup_task_scan_state *scan;
+	u32 key = 0;
+	struct task_struct *task;
+	u64 cgroup_id, host_id = 0;
+	long state;
+	bool in_iowait;
+
+	/* Also check the terminal callback so an empty traversal cannot pass. */
+	scan = bpf_map_lookup_elem(&task_scan_state, &key);
+	if (!scan)
+		return 0;
+	if (!collector_in_host_pid_namespace(scan))
+		return 0;
+	task = ctx->task;
+	if (!task)
+		return 0;
+
+	/* Host totals include root, non-container tasks and all descendants. */
+	host_stats = bpf_map_lookup_elem(&cgroup_load_stats, &host_id);
+	state = task_state(task);
+	in_iowait = BPF_CORE_READ_BITFIELD_PROBED(task, in_iowait);
+	/* Keep null checks separate: LLVM may OR pointers in a combined check. */
+	if (host_stats)
+		account_task(host_stats, state, in_iowait);
+	/* Host-only scans need no per-task cgroup reads or container lookup. */
+	if (!scan->collect_containers)
+		return 0;
+	cgroup_id = task_cgroup_id(task);
+	stats = cgroup_id ? bpf_map_lookup_elem(&cgroup_load_stats, &cgroup_id) : NULL;
+	if (stats)
+		account_task(stats, state, in_iowait);
 
 	return 0;
 }

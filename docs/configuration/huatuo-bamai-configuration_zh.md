@@ -1327,7 +1327,21 @@ huatuo-bamai --region <region> [选项]
 - **Cgroup v2**：随 `dload` 启用，cgroup v1 保持 netlink 路径。v2 实现要求内核 BTF 可读并支持 BPF `task` iterator；统计仅包含
   直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。
 
-	# 开启 cgroup v2 容器负载指标。BPF task iterator 每次抓取会遍历一次
-	# 宿主机全部任务。关闭时仍保留宿主机 loadavg 和 cgroup v1 容器指标。
-	# Kubernetes 部署必须设置 hostPID: true。
+	# loadavg 启用后自动后台采样，Prometheus 抓取读取缓存的
+	# 容器负载及主机 D 状态计数。BPF iterator 要求 Kubernetes 设置 hostPID: true。
 	[MetricCollector.Loadavg]
+
+### estimate container load averages on cgroup v1 and v2
+
+# cgroup v2 容器负载与主机 D 状态指标共用 BPF task iterator，默认每 15 秒
+	# 遍历宿主机全部任务。不支持时仍保留宿主机 loadavg 和 cgroup v1 容器指标。
+		# 后台采样间隔，单位秒；0 使用默认值 15。
+		# 控制容器负载及主机 D 状态采样，不影响主机 /proc/loadavg 抓取，
+		# 也不影响 AutoTracing.Dload.Interval（默认 10 秒）。
+		# Interval = 15
+
+### add host D-state counts using the shared task iterator
+
+# 开启主机参与负载计算的 D 状态任务计数，每 Interval 秒采样。
+		# 适用于 cgroup v1/v2，需要主机 PID 可见性、内核 BTF 和 BPF
+		# task iterator，与 v2 容器统计共用遍历；不支持时省略指标。
