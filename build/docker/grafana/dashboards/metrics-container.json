@@ -1402,6 +1402,64 @@
           ],
           "title": "Host kswapd Reclaim Volume (Cumulative)",
           "type": "timeseries"
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "ms"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 52,
+          "title": "Cumulative Reclaim and Compaction Stall Time",
+          "description": "Cumulative task stall time in global direct reclaim and compaction, exported as Gauges. Not memcg limit reclaim counts. BPF reload or LRU eviction can reset totals; missing records are omitted.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_memory_free_container_allocpages_stall{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}",
+              "legendFormat": "Direct reclaim {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "A",
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_memory_free_container_compaction_stall{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}",
+              "legendFormat": "Compaction {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "B",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 74
+          }
         }
       ],
       "targets": [
