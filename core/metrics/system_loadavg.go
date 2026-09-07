@@ -15,6 +15,12 @@
 package collector
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
@@ -90,19 +96,63 @@ func containerLoadavg() ([]*metric.Data, error) {
 }
 
 func (c *loadavgCollector) Update() ([]*metric.Data, error) {
-	var loadavgs []*metric.Data
+	return c.update(cgroups.CgroupMode(), containerLoadavg)
+}
 
-	if cgroups.CgroupMode() == cgroups.Legacy {
-		// continue for node loadavg if err
-		if containersLoads, err := containerLoadavg(); err == nil {
-			loadavgs = append(loadavgs, containersLoads...)
+func (c *loadavgCollector) update(mode cgroups.Mode, readContainers func() ([]*metric.Data, error)) ([]*metric.Data, error) {
+	var loadavgs []*metric.Data
+	var errs []error
+
+	if mode == cgroups.Legacy {
+		containersLoads, err := readContainers()
+		loadavgs = append(loadavgs, containersLoads...)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("read container load: %w", err))
 		}
 	}
 
 	data, err := nodeLoadAvg()
+	loadavgs = append(loadavgs, data...)
 	if err != nil {
-		return loadavgs, err
+		errs = append(errs, fmt.Errorf("read host load average: %w", err))
 	}
 
-	return append(loadavgs, data...), nil
+	raw, err := os.ReadFile(procfs.Path("stat"))
+	if err == nil {
+		var running uint64
+		running, err = parseHostRunnable(raw)
+		if err == nil {
+			loadavgs = append(loadavgs, metric.NewGaugeData("nr_running", float64(running),
+				"number of running or runnable host tasks", nil))
+		}
+	}
+	if err != nil {
+		errs = append(errs, fmt.Errorf("read host runnable tasks: %w", err))
+	}
+	return loadavgs, errors.Join(errs...)
+}
+
+func parseHostRunnable(raw []byte) (uint64, error) {
+	// Parse only this field: unrelated CPU/IRQ columns can be very large.
+	// A missing field must not become a synthetic zero.
+	for len(raw) > 0 {
+		var line []byte
+		line, raw, _ = bytes.Cut(raw, []byte{'\n'})
+		if !bytes.HasPrefix(line, []byte("procs_running")) {
+			continue
+		}
+		fields := bytes.Fields(line)
+		if len(fields) == 0 || !bytes.Equal(fields[0], []byte("procs_running")) {
+			continue
+		}
+		if len(fields) != 2 {
+			return 0, fmt.Errorf("invalid procs_running field: %q", line)
+		}
+		value, err := strconv.ParseUint(string(fields[1]), 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		return value, nil
+	}
+	return 0, errors.New("procs_running missing from proc stat")
 }
