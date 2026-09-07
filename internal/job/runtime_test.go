@@ -409,12 +409,12 @@ func TestRuntimeNodeUnavailableDoesNotSpinOnBusinessDeadline(t *testing.T) {
 	setManagerNow(manager, func() time.Time { return now })
 	runtime := testRuntime(manager, runningJob)
 
-	if got := runtime.nextPollDelay(nil); got != 5*time.Second {
-		t.Fatalf("nextPollDelay() = %s, want 5s", got)
+	if got := runtime.nextSupervisionDelay(nil); got != 5*time.Second {
+		t.Fatalf("nextSupervisionDelay() = %s, want 5s", got)
 	}
 }
 
-func TestRuntimeNextPollDelayUsesStatusDeadline(t *testing.T) {
+func TestRuntimeNextSupervisionDelayUsesStatusDeadline(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name   string
@@ -452,8 +452,8 @@ func TestRuntimeNextPollDelayUsesStatusDeadline(t *testing.T) {
 			setManagerNow(manager, func() time.Time { return now })
 			runtime := testRuntime(manager, job)
 
-			if got := runtime.nextPollDelay(nil); got != time.Second {
-				t.Fatalf("nextPollDelay() = %s, want 1s", got)
+			if got := runtime.nextSupervisionDelay(nil); got != time.Second {
+				t.Fatalf("nextSupervisionDelay() = %s, want 1s", got)
 			}
 		})
 	}
@@ -468,9 +468,25 @@ func TestRuntimeSupervisorErrorUsesPollInterval(t *testing.T) {
 	setManagerNow(manager, func() time.Time { return now })
 	runtime := testRuntime(manager, runningJob)
 
-	got := runtime.nextPollDelay(ErrPersistence)
+	got := runtime.nextSupervisionDelay(ErrPersistence)
 	if got != 5*time.Second {
-		t.Fatalf("nextPollDelay() = %s, want 5s", got)
+		t.Fatalf("nextSupervisionDelay() = %s, want 5s", got)
+	}
+}
+
+func TestRecoveryStartJitter(t *testing.T) {
+	const maxDelay = time.Second
+	for range 100 {
+		got := recoveryStartJitter(maxDelay)
+		if got < 0 || got >= maxDelay {
+			t.Fatalf("recoveryStartJitter() = %s, want [0, %s)", got, maxDelay)
+		}
+	}
+
+	for _, maxDelay := range []time.Duration{0, -time.Second} {
+		if got := recoveryStartJitter(maxDelay); got != 0 {
+			t.Fatalf("recoveryStartJitter(%s) = %s, want 0", maxDelay, got)
+		}
 	}
 }
 

@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -79,8 +79,7 @@ func newRuntime(
 
 func (r *runtime) run(ctx context.Context) {
 	if r.recovered {
-		if !r.wait(ctx, recoveryStartDelay(
-			r.id,
+		if !r.wait(ctx, recoveryStartJitter(
 			r.dependencies.policy.statusPollInterval,
 		)) {
 			return
@@ -103,7 +102,7 @@ func (r *runtime) run(ctx context.Context) {
 		if terminal {
 			return
 		}
-		if !r.wait(ctx, r.nextPollDelay(err)) {
+		if !r.wait(ctx, r.nextSupervisionDelay(err)) {
 			return
 		}
 	}
@@ -537,7 +536,7 @@ func (r *runtime) releaseTransition() {
 	<-r.transitionGate
 }
 
-func (r *runtime) nextPollDelay(superviseErr error) time.Duration {
+func (r *runtime) nextSupervisionDelay(superviseErr error) time.Duration {
 	if superviseErr != nil {
 		return r.dependencies.policy.statusPollInterval
 	}
@@ -593,13 +592,11 @@ func (r *runtime) wake() {
 	}
 }
 
-func recoveryStartDelay(jobID string, interval time.Duration) time.Duration {
-	if interval <= 0 {
+func recoveryStartJitter(maxDelay time.Duration) time.Duration {
+	if maxDelay <= 0 {
 		return 0
 	}
-	hasher := fnv.New64a()
-	_, _ = hasher.Write([]byte(jobID))
-	return time.Duration(hasher.Sum64() % uint64(interval))
+	return rand.N(maxDelay) //nolint:gosec // Startup jitter does not require cryptographic randomness.
 }
 
 func mapOperationFailure(failure *nodeapi.OperationTerminal) *TerminalResult {
