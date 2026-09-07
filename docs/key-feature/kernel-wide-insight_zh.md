@@ -188,8 +188,13 @@ huatuo_bamai_loadavg_container_nr_uninterruptible{container_host="coredns-855c4d
 |loadavg_load1|系统过去 1 分钟的平均负载|计数|物理机| host, region ||
 |loadavg_load5|系统过去 5 分钟的平均负载|计数|物理机| host, region ||
 |loadavg_load15|系统过去 15 分钟的平均负载|计数|物理机| host, region ||
-|loadavg_container_container_nr_running|容器中运行的任务数量|计数|容器| host, region | 只支持 cgroup v1|
-|loadavg_container_container_nr_uninterruptible|容器中不可中断任务的数量|计数|容器| host, region |只支持 cgroup v1|
+|loadavg_nr_running|主机当前正在运行或等待 CPU 的任务数|计数|物理机| host, region |读取 `/proc/stat` 的 `procs_running`|
+|loadavg_container_nr_running|容器中运行或等待 CPU 的任务数量|计数|容器| host, region |只支持 cgroup v1|
+|loadavg_container_nr_uninterruptible|容器中不可中断任务的数量|计数|容器| host, region |只支持 cgroup v1|
+
+`nr_running` 是瞬时 Gauge，不是 `load1/5/15` 平均负载，也不是 CPU 利用率。主机包含容器任务，不能与容器值相加；容器沿用 taskstats 的非递归采样，不包含子 cgroup。主机数据依赖采集器可见的宿主机 procfs，不要求启用 cgroup；读取失败或字段缺失时不补零，且不影响已有 load average 和容器采集。容器路径仍仅支持 cgroup v1，未新增 v2 遍历任务或 load average 估算。
+
+未补主机 `nr_uninterruptible`：[`/proc/stat` 的 `procs_blocked`](https://www.kernel.org/doc/html/latest/filesystems/proc.html) 表示等待 IO 的任务数，不等价于全部不可中断任务；本轮不扩展 IO 指标。
 
 ## 内存系统
 

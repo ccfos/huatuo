@@ -194,8 +194,13 @@ huatuo_bamai_loadavg_container_nr_uninterruptible{container_host="coredns-855c4d
 |loadavg_load1|1-minute system load average|count|Host| host, region ||
 |loadavg_load5|5-minute system load average|count|Host| host, region ||
 |loadavg_load15|15-minute system load average|count|Host| host, region ||
-|loadavg_container_container_nr_running|Number of running tasks in container|count|Container| host, region |cgroup v1 only|
-|loadavg_container_container_nr_uninterruptible|Number of uninterruptible tasks in container|count|Container| host, region |cgroup v1 only|
+|loadavg_nr_running|Instantaneous running or runnable host tasks|count|Host| host, region |`procs_running` from `/proc/stat`|
+|loadavg_container_nr_running|Running or runnable container tasks|count|Container| host, region |cgroup v1 only|
+|loadavg_container_nr_uninterruptible|Uninterruptible container tasks|count|Container| host, region |cgroup v1 only|
+
+`nr_running` is an instantaneous Gauge, not a `load1/5/15` average or CPU utilization. Host counts include container tasks; do not add the scopes. Container taskstats sampling remains non-recursive and excludes child cgroups. Host collection requires host procfs visibility, not cgroups. Read failures or missing fields emit no synthetic zero and do not suppress existing load averages or container data. Container support remains cgroup v1 only; no v2 task walk or estimated load averages are added.
+
+Host `nr_uninterruptible` is not added: [`procs_blocked` in `/proc/stat`](https://www.kernel.org/doc/html/latest/filesystems/proc.html) counts tasks waiting for IO, not all uninterruptible tasks. IO metrics remain outside this change.
 
 ## Memory System
 
