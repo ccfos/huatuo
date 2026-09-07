@@ -965,11 +965,15 @@ This section defines collection rules for various system and network metrics. Al
 ```bash
 # Metric Collector
 [MetricCollector]
-	# Opt in to container load metrics on cgroup v2. The BPF task iterator
-	# walks all host tasks once per scrape. Host loadavg and cgroup v1 container
-	# metrics remain available when this is false.
+	# Cgroup v2 container load and host D-state metrics share a BPF task iterator
+	# that walks all host tasks per background sample (default: 15 seconds).
+	# Unsupported kernels retain procfs host load and v1 container metrics.
 	# Kubernetes deployments must run with hostPID: true.
 	[MetricCollector.Loadavg]
+		# Sampling interval in seconds; 0 uses the default of 15.
+		# Controls container load and host D-state sampling, not
+		# host /proc/loadavg scrapes or AutoTracing.Dload.Interval (default: 10).
+		# Interval = 15
 
 	# Netdev statistic
 	#

@@ -16,11 +16,17 @@ package collector
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"sync"
+	"time"
+
+	cadvisorV1 "github.com/google/cadvisor/info/v1"
+	"github.com/google/cadvisor/utils/cpuload/netlink"
 
 	"github.com/ccfos/huatuo/internal/cgroups"
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
@@ -31,13 +37,17 @@ import (
 	"github.com/ccfos/huatuo/internal/procfs"
 	"github.com/ccfos/huatuo/internal/tracing"
 	"github.com/ccfos/huatuo/pkg/metric"
-
-	cadvisorV1 "github.com/google/cadvisor/info/v1"
-	"github.com/google/cadvisor/utils/cpuload/netlink"
 )
 
 type loadavgCollector struct {
-	unsupportedV2 sync.Once
+	sampleInterval time.Duration
+	unsupportedV2  sync.Once
+	mu             sync.Mutex
+	sampling       bool
+	sampledAt      time.Time
+	sampledData    []*metric.Data
+	sampledErr     error
+	averages       map[containerLoadKey]containerLoadAverage
 }
 
 func init() {
@@ -46,25 +56,17 @@ func init() {
 
 // newLoadavg returns a new Collector exposing load average stats.
 func newLoadavg() (*tracing.EventTracingAttr, error) {
-	return &tracing.EventTracingAttr{
-		TracingData: &loadavgCollector{},
-		Flag:        tracing.FlagMetric,
-	}, nil
-}
-
-func (c *loadavgCollector) collectContainerV2(
-	collect func() ([]*metric.Data, error),
-) ([]*metric.Data, error) {
-	loadavgs, err := collect()
-	if !errors.Is(err, cgroupV2.ErrTaskIteratorNotSupported) {
-		return loadavgs, err
+	cfg := configSnapshot()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
 	}
-
-	c.unsupportedV2.Do(func() {
-		log.WithError(err).Warn(
-			"cgroup v2 container load metrics are unavailable; host load metrics remain enabled")
-	})
-	return nil, nil
+	return &tracing.EventTracingAttr{
+		TracingData: &loadavgCollector{
+			sampleInterval: time.Duration(cfg.Loadavg.Interval) * time.Second,
+		},
+		Interval: 5,
+		Flag:     tracing.FlagMetric | tracing.FlagTracing,
+	}, nil
 }
 
 // Load average of last 1, 5, 15 minutes.
@@ -87,29 +89,33 @@ func nodeLoadAvg() ([]*metric.Data, error) {
 	}, nil
 }
 
-func containerLoadavg() ([]*metric.Data, error) {
+func readContainerLoadV1() ([]containerLoadSample, error) {
+	return readContainerLoadV1WithDiscovery(pod.NormalSidecarContainers)
+}
+
+func readContainerLoadV1WithDiscovery(discover func() (map[string]*pod.Container, error)) ([]containerLoadSample, error) {
+	containers, err := discover()
+	if err != nil || len(containers) == 0 {
+		return nil, err
+	}
+
 	n, err := netlink.New()
 	if err != nil {
 		return nil, err
 	}
 	defer n.Stop()
 
-	containers, err := pod.ContainersByType(pod.ContainerTypeNormal | pod.ContainerTypeSidecar)
-	if err != nil {
-		return nil, err
-	}
-
-	return collectContainerLoadavgV1(
+	return readContainerLoadSamplesV1(
 		containers,
 		n.GetCpuLoad,
 	)
 }
 
-func collectContainerLoadavgV1(
+func readContainerLoadSamplesV1(
 	containers map[string]*pod.Container,
 	getCpuLoad func(string, string) (cadvisorV1.LoadStats, error),
-) ([]*metric.Data, error) {
-	loadavgs := []*metric.Data{}
+) ([]containerLoadSample, error) {
+	samples := make([]containerLoadSample, 0, len(containers))
 	for _, container := range containers {
 		cgroupPath := paths.Path(subsystem.SubsystemCPU, container.CgroupPath)
 		stats, err := getCpuLoad(container.Hostname, cgroupPath)
@@ -117,14 +123,13 @@ func collectContainerLoadavgV1(
 			continue
 		}
 
-		loadavgs = append(loadavgs, containerLoadMetrics(
-			container, stats.NrRunning, stats.NrUninterruptible)...)
+		samples = append(samples, containerLoadSample{container, stats.NrRunning, stats.NrUninterruptible})
 	}
 
-	return loadavgs, nil
+	return samples, nil
 }
 
-func containerLoadavgV2() ([]*metric.Data, error) {
+func readContainerLoadV2() ([]containerLoadSample, error) {
 	containers, err := pod.ContainersByType(pod.ContainerTypeNormal | pod.ContainerTypeSidecar)
 	if err != nil {
 		return nil, err
@@ -137,18 +142,17 @@ func containerLoadavgV2() ([]*metric.Data, error) {
 	statsByPath, err := cgroupV2.SharedLoadStats(
 		cgroupV2.LoadStatsConsumerLoadavg, paths)
 
-	loadavgs := []*metric.Data{}
+	samples := make([]containerLoadSample, 0, len(containers))
 	for _, container := range containers {
 		stats, ok := statsByPath[container.CgroupPath]
 		if !ok {
 			continue
 		}
 
-		loadavgs = append(loadavgs, containerLoadMetrics(
-			container, stats.NrRunning, stats.NrUninterruptible)...)
+		samples = append(samples, containerLoadSample{container, stats.NrRunning, stats.NrUninterruptible})
 	}
 
-	return loadavgs, err
+	return samples, err
 }
 
 func containerLoadMetrics(
@@ -166,24 +170,43 @@ func containerLoadMetrics(
 }
 
 func (c *loadavgCollector) Update() ([]*metric.Data, error) {
-	return c.update(cgroups.CgroupMode(), containerLoadavg, containerLoadavgV2)
+	data, err, sampling := c.cachedContainerLoad(time.Now())
+	if sampling {
+		return collectLoadavg(func() ([]*metric.Data, error) { return data, err }, nodeLoadMetrics)
+	}
+	return c.update(cgroups.CgroupMode(), readContainerLoadV1, readContainerLoadV2)
 }
 
 func (c *loadavgCollector) update(
 	mode cgroups.Mode,
-	readV1 func() ([]*metric.Data, error),
-	readV2 func() ([]*metric.Data, error),
+	readV1, readV2 func() ([]containerLoadSample, error),
 ) ([]*metric.Data, error) {
-	var containerLoadavgFn func() ([]*metric.Data, error)
+	return collectLoadavg(func() ([]*metric.Data, error) {
+		samples, err := c.readContainerLoad(mode, readV1, readV2)
+		return instantaneousContainerLoad(samples), err
+	}, nodeLoadMetrics)
+}
+
+// Scrape fallback and background sampling share the same readers and policy.
+func (c *loadavgCollector) readContainerLoad(
+	mode cgroups.Mode,
+	readV1, readV2 func() ([]containerLoadSample, error),
+) ([]containerLoadSample, error) {
 	switch mode {
 	case cgroups.Legacy, cgroups.Hybrid:
-		containerLoadavgFn = readV1
+		return readV1()
 	case cgroups.Unified:
-		containerLoadavgFn = func() ([]*metric.Data, error) {
-			return c.collectContainerV2(readV2)
+		samples, err := readV2()
+		if errors.Is(err, cgroupV2.ErrTaskIteratorNotSupported) {
+			c.unsupportedV2.Do(func() {
+				log.WithError(err).Warn(
+					"cgroup v2 container load metrics are unavailable; host load metrics remain enabled")
+			})
+			return nil, nil
 		}
+		return samples, err
 	}
-	return collectLoadavg(containerLoadavgFn, nodeLoadMetrics)
+	return nil, nil
 }
 
 func nodeLoadMetrics() ([]*metric.Data, error) {
@@ -253,4 +276,121 @@ func parseHostRunnable(raw []byte) (uint64, error) {
 		return value, nil
 	}
 	return 0, errors.New("procs_running missing from proc stat")
+}
+
+const defaultLoadSampleInterval = 15 * time.Second
+
+func (c *loadavgCollector) samplingInterval() time.Duration {
+	if c.sampleInterval == 0 {
+		return defaultLoadSampleInterval
+	}
+	return c.sampleInterval
+}
+
+type containerLoadSample struct {
+	container                *pod.Container
+	running, uninterruptible uint64
+}
+
+// A new container or a reused cgroup must not inherit another task set's EMA.
+type containerLoadKey struct {
+	ID, Path  string
+	StartedAt time.Time
+}
+
+type containerLoadAverage struct {
+	last   time.Time
+	values [3]float64
+}
+
+func instantaneousContainerLoad(samples []containerLoadSample) []*metric.Data {
+	data := make([]*metric.Data, 0, len(samples)*2)
+	for _, sample := range samples {
+		data = append(data, containerLoadMetrics(sample.container, sample.running, sample.uninterruptible)...)
+	}
+	return data
+}
+
+// Start samples independently of Prometheus scrapes and dload profiling.
+// The tracing manager owns cancellation and restart; no detached goroutine lives
+// beyond the collector lifecycle.
+func (c *loadavgCollector) Start(ctx context.Context) error {
+	return c.sampleLoad(ctx, func() ([]containerLoadSample, error) {
+		return c.readContainerLoad(cgroups.CgroupMode(), readContainerLoadV1, readContainerLoadV2)
+	})
+}
+
+func (c *loadavgCollector) sampleLoad(ctx context.Context, read func() ([]containerLoadSample, error)) error {
+	c.mu.Lock()
+	c.sampling = true
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.sampling = false
+		c.sampledData, c.sampledErr, c.averages = nil, nil, nil
+		c.sampledAt = time.Time{}
+		c.mu.Unlock()
+		cgroupV2.ForgetSharedLoadStatsConsumer(cgroupV2.LoadStatsConsumerLoadavg)
+	}()
+	ticker := time.NewTicker(c.samplingInterval())
+	defer ticker.Stop()
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		at := time.Now()
+		samples, err := read()
+		c.publishContainerLoad(at, samples, err)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func (c *loadavgCollector) publishContainerLoad(at time.Time, samples []containerLoadSample, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	data := instantaneousContainerLoad(samples)
+	next := make(map[containerLoadKey]containerLoadAverage, len(samples))
+	for _, sample := range samples {
+		container := sample.container
+		key := containerLoadKey{ID: container.ID, Path: container.CgroupPath, StartedAt: container.StartedAt}
+		average := c.averages[key]
+		dt := at.Sub(average.last)
+		if average.last.IsZero() || dt <= 0 || dt > 3*c.samplingInterval() {
+			// Establish a baseline, then warm up from zero over observed time.
+			// Never extrapolate across a missing sample or a long suspension.
+			average = containerLoadAverage{last: at}
+		} else {
+			active := float64(sample.running) + float64(sample.uninterruptible)
+			for i, window := range [...]float64{60, 300, 900} {
+				weight := -math.Expm1(-dt.Seconds() / window)
+				average.values[i] += (active - average.values[i]) * weight
+				name := [...]string{"load1", "load5", "load15"}[i]
+				data = append(data, metric.NewContainerGaugeData(container, name, average.values[i],
+					"estimated container R+D load average, "+name, nil))
+			}
+			average.last = at
+		}
+		next[key] = average
+	}
+	// Missing/failed containers are omitted and pruned, never sampled as zero.
+	c.averages, c.sampledData, c.sampledErr, c.sampledAt = next, data, err, at
+}
+
+func (c *loadavgCollector) cachedContainerLoad(now time.Time) ([]*metric.Data, error, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.sampling {
+		return nil, nil, false
+	}
+	if c.sampledAt.IsZero() {
+		return nil, nil, true
+	}
+	if now.Sub(c.sampledAt) > 3*c.samplingInterval() {
+		return nil, errors.New("container load sample expired; check loadavg sampler"), true
+	}
+	return c.sampledData, c.sampledErr, true
 }

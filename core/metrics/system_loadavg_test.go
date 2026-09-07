@@ -15,8 +15,12 @@
 package collector
 
 import (
+	"math"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/ccfos/huatuo/internal/pod"
 )
 
 func TestHostRunnableLive(t *testing.T) {
@@ -26,5 +30,33 @@ func TestHostRunnableLive(t *testing.T) {
 	}
 	if _, err := parseHostRunnable(raw); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestContainerLoadAverage(t *testing.T) {
+	c := &loadavgCollector{sampling: true, sampleInterval: 15 * time.Second}
+	at := time.Unix(100, 0)
+	container := &pod.Container{ID: "test", Labels: map[string]any{"HostNamespace": "test"}}
+	samples := []containerLoadSample{{container, 2, 3}}
+	c.publishContainerLoad(at, samples, nil)
+	if data, _, _ := c.cachedContainerLoad(at); len(data) != 2 {
+		t.Fatal("baseline emitted averages")
+	}
+	at = at.Add(17 * time.Second)
+	c.publishContainerLoad(at, samples, nil)
+	data, err, active := c.cachedContainerLoad(at)
+	if err != nil || !active || len(data) != 5 {
+		t.Fatalf("cache: data=%v active=%v err=%v", data, active, err)
+	}
+	values := make(map[string]float64, len(data))
+	for _, m := range data {
+		values[m.Name()] = m.Value
+	}
+	for i, window := range []float64{60, 300, 900} {
+		name := []string{"container_load1", "container_load5", "container_load15"}[i]
+		want := 5 * (1 - math.Exp(-17/window))
+		if math.Abs(values[name]-want) > 1e-12 {
+			t.Fatalf("%s=%g, want %g", name, values[name], want)
+		}
 	}
 }

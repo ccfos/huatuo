@@ -949,10 +949,14 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 ```bash
 # Metric Collector
 [MetricCollector]
-	# 开启 cgroup v2 容器负载指标。BPF task iterator 每次抓取会遍历一次
-	# 宿主机全部任务。关闭时仍保留宿主机 loadavg 和 cgroup v1 容器指标。
+	# cgroup v2 容器负载与主机 D 状态指标共用 BPF task iterator，默认每 15 秒
+	# 遍历宿主机全部任务。不支持时仍保留宿主机 loadavg 和 cgroup v1 容器指标。
 	# Kubernetes 部署必须设置 hostPID: true。
 	[MetricCollector.Loadavg]
+		# 后台采样间隔，单位秒；0 使用默认值 15。
+		# 控制容器负载及主机 D 状态采样，不影响主机 /proc/loadavg 抓取，
+		# 也不影响 AutoTracing.Dload.Interval（默认 10 秒）。
+		# Interval = 15
 
 	# Netdev statistic
 	#
