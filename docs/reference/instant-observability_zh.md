@@ -432,3 +432,14 @@ OOM kill 追踪器现命名为 `memory_oom_kill`（此前为 `memory_oom`，更�
 指标前缀现为 `huatuo_bamai_memory_oom_kill_`，替代 `huatuo_bamai_memory_oom_` 及更早的 `huatuo_bamai_oom_`，需同步更新指标仪表盘和记录规则。
 
 历史事件保留原名称，跨版本查询需匹配这三个名称；内置事件仪表盘已覆盖三者。
+
+### attribute hungtask events and counts to containers
+
+| 事件名称（tracer_name） | 探针类型 | 触发条件 | 典型场景 |
+| ----------------------- | -------- | -------- | -------- |
+| `hungtask` | raw tracepoint；回退 tracepoint（仅主机） | D 状态进程任务挂起 | 瞬时批量 D 进程、IO 阻塞 |
+
+`hungtask_container_total` 使用 raw tracepoint 在事件时刻记录的阻塞任务 cgroup 身份匹配容器，已匹配追踪附带 `ContainerID`，不再事后通过 TID 查询归属。容器元数据缺失或不支持身份采集时，仅保留主机总计。容器计数不受追踪保存退避影响；CPU 与阻塞任务栈仍为全机快照。层级匹配、回退及计数语义见 [HungTask 指标](kernel-wide-insight_zh.md#hungtask)。
+
+        K1["kprobe 挂钩\n(sched_tick / softlockup\n memory_oom_kill / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP，可选)"]
+        K2["raw tracepoint / tracepoint 挂钩\n(hungtask: raw tracepoint，\n 回退 tracepoint，仅主机\n ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]

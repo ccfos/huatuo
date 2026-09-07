@@ -432,3 +432,14 @@ The OOM kill tracer is now `memory_oom_kill`, previously `memory_oom` and earlie
 The metric prefix is now `huatuo_bamai_memory_oom_kill_`, replacing `huatuo_bamai_memory_oom_` and the earlier `huatuo_bamai_oom_`. Update metric dashboards and recording rules accordingly.
 
 Historical events retain their original names. Cross-version queries must match all three; the built-in event dashboard already covers them.
+
+### attribute hungtask events and counts to containers
+
+| Event Name (tracer_name) | Probe Type | Trigger Condition | Typical Scenarios |
+| ------------------------ | ---------- | ----------------- | ----------------- |
+| `hungtask` | raw tracepoint; tracepoint fallback (host only) | D-state process task hang | Transient mass D-state processes, IO blocking |
+
+`hungtask_container_total` attributes events using the blocked task's cgroup identity captured at the raw tracepoint; matched traces carry `ContainerID`. It does not resolve a potentially reused TID later in userspace. Missing container metadata or unsupported identity capture leaves events in the host total only. Container counting is independent of trace-save backoff. CPU and blocked-task stack snapshots remain system-wide. See [HungTask metrics](kernel-wide-insight_en.md#hungtask) for hierarchy matching, fallback and accounting details.
+
+        K1["kprobe hooks\n(sched_tick / softlockup\n memory_oom_kill / memory_reclaim_events\n net_rx_latency / netdev_txqueue_timeout\n tcp_retransmit TLP, optional)"]
+        K2["raw tracepoint / tracepoint hooks\n(hungtask: raw tracepoint,\n tracepoint fallback, host only\n ras: MCE / EDAC / AER / ACPI\n dropwatch: skb/kfree_skb\n tcp_retransmit:\n tcp/tcp_retransmit_skb /\n tcp/tcp_retransmit_synack)"]
