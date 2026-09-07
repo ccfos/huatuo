@@ -378,8 +378,9 @@ result may still be available.
 
 `operation_lost` and `execution_timed_out` are terminal reason codes, not Job
 statuses. Other failure codes include pending or stop deadline expiry, Node
-unavailability, execution-capacity exhaustion, start or execution failure, and
-protocol errors.
+unavailability, execution-capacity exhaustion, start or execution failure,
+`invalid_node_request` for a Node request constructed incorrectly by the
+Apiserver, and protocol errors.
 
 ### 6. Get Raw Profiling Data
 

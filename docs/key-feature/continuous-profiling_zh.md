@@ -377,7 +377,8 @@ Operation 最终状态，但持久发布的结果仍可能可用。
 
 `operation_lost` 和 `execution_timed_out` 是 `terminal.reason` 的原因码，不是 Job
 状态。其他失败原因包括等待启动或停止超时、Node 不可用、执行容量超过上限、
-启动或执行失败，以及协议错误。
+启动或执行失败、表示 Apiserver 构造的 Node 请求无效的
+`invalid_node_request`，以及协议错误。
 
 ### 6. 获取原始剖析数据
 

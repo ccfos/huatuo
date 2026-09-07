@@ -22,6 +22,7 @@ import (
 	"time"
 
 	nodeapi "huatuo-bamai/apis/v1/node"
+	"huatuo-bamai/internal/nodeclient"
 	"huatuo-bamai/pkg/observation"
 	"huatuo-bamai/pkg/profiling"
 
@@ -271,7 +272,10 @@ func TestManagerCreateTreatsEachRequestAsIndependent(t *testing.T) {
 		*nodeapi.StartOperationRequest,
 	) (*nodeapi.Operation, error) {
 		<-release
-		return nil, errors.New("Node unavailable")
+		return nil, &nodeclient.Error{
+			Code:    nodeclient.ErrorCodeClientTransport,
+			Message: "Node unavailable",
+		}
 	}}
 	manager := testManager(newMemoryStore(), client)
 

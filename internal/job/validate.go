@@ -231,6 +231,7 @@ func isValidFailureReason(reason FailureReason) bool {
 		FailureReasonStopTimeout,
 		FailureReasonNodeUnavailable,
 		FailureReasonOperationLost,
+		FailureReasonInvalidNodeRequest,
 		FailureReasonProtocolError:
 		return true
 	default:

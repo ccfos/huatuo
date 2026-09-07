@@ -16,7 +16,6 @@ package nodeclient
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	nodeapi "huatuo-bamai/apis/v1/node"
@@ -29,7 +28,10 @@ func (c *Client) StartOperation(
 	request *nodeapi.StartOperationRequest,
 ) (*nodeapi.Operation, error) {
 	if request == nil {
-		return nil, fmt.Errorf("%w: operation request is required", ErrInvalidArgument)
+		return nil, &Error{
+			Code:    ErrorCodeClientInvalidArgument,
+			Message: "operation request is required",
+		}
 	}
 	return c.execute(
 		ctx,

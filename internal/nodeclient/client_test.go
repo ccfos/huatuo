@@ -93,6 +93,43 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestOperationMethodsReturnClientInvalidArgument(t *testing.T) {
+	client, err := New(&Config{BearerToken: "secret", Port: 19704})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "nil operation request",
+			call: func() error {
+				_, err := client.StartOperation(t.Context(), "node-1", nil)
+				return err
+			},
+		},
+		{
+			name: "invalid node host",
+			call: func() error {
+				_, err := client.GetOperation(t.Context(), "node/1", "job-1")
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var nodeErr *Error
+			if err := tt.call(); !errors.As(err, &nodeErr) {
+				t.Fatalf("operation error = %v, want *Error", err)
+			}
+			if nodeErr.Code != ErrorCodeClientInvalidArgument || nodeErr.StatusCode != 0 {
+				t.Fatalf("Node client error = %+v", nodeErr)
+			}
+		})
+	}
+}
+
 func TestStartOperationSendsGeneratedRequestAndAcceptsHTTP202(t *testing.T) {
 	var observedName string
 	client, err := New(&Config{
@@ -192,8 +229,11 @@ func TestNodeClientKeepsNoResponseTransportErrorDistinct(t *testing.T) {
 		t.Fatalf("GetOperation() error = %v, want transport error", err)
 	}
 	var nodeErr *Error
-	if errors.As(err, &nodeErr) {
-		t.Fatalf("transport failure was classified as Node response: %+v", nodeErr)
+	if !errors.As(err, &nodeErr) {
+		t.Fatalf("GetOperation() error = %v, want *Error", err)
+	}
+	if nodeErr.Code != ErrorCodeClientTransport || nodeErr.StatusCode != 0 {
+		t.Fatalf("Node client error = %+v", nodeErr)
 	}
 }
 
@@ -220,14 +260,23 @@ func TestParseResponseRejectsProtocolViolations(t *testing.T) {
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":{"code":"operation_not_found","message":"missing"}}`,
 		},
+		{
+			name:       "client error code in server response",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"error":{"code":"client_transport","message":"unavailable"}}`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			response := jsonResponse(tt.statusCode, tt.body)
 			defer response.Body.Close()
 			_, err := parseResponse(response, "job-1", tt.successMode)
-			if !errors.Is(err, ErrProtocol) {
-				t.Fatalf("parseResponse() error = %v, want ErrProtocol", err)
+			var nodeErr *Error
+			if !errors.As(err, &nodeErr) {
+				t.Fatalf("parseResponse() error = %v, want *Error", err)
+			}
+			if nodeErr.Code != ErrorCodeClientProtocol || nodeErr.StatusCode != tt.statusCode {
+				t.Fatalf("Node client error = %+v", nodeErr)
 			}
 		})
 	}
@@ -265,11 +314,12 @@ func TestParseResponseClassifiesBodyCloseFailureAsTransportError(t *testing.T) {
 	}
 
 	_, err := parseResponse(response, "job-1", successResponseOK)
-	if !errors.Is(err, ErrTransport) {
-		t.Fatalf("parseResponse() error = %v, want ErrTransport", err)
+	var nodeErr *Error
+	if !errors.As(err, &nodeErr) {
+		t.Fatalf("parseResponse() error = %v, want *Error", err)
 	}
-	if errors.Is(err, ErrProtocol) {
-		t.Fatalf("parseResponse() error = %v, unexpectedly classified as ErrProtocol", err)
+	if nodeErr.Code != ErrorCodeClientTransport || nodeErr.StatusCode != http.StatusOK {
+		t.Fatalf("Node client error = %+v", nodeErr)
 	}
 	if !errors.Is(err, closeErr) {
 		t.Fatalf("parseResponse() error = %v, want close error", err)

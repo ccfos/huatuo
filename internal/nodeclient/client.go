@@ -38,15 +38,6 @@ const (
 	maxErrorBodyBytes     = 8 << 10
 )
 
-var (
-	// ErrInvalidArgument indicates that a call cannot produce a valid request.
-	ErrInvalidArgument = errors.New("node client: invalid argument")
-	// ErrProtocol indicates that the Node response violates the API contract.
-	ErrProtocol = errors.New("node client: protocol error")
-	// ErrTransport indicates that the response could not be closed.
-	ErrTransport = errors.New("node client: transport error")
-)
-
 // RequestObserver records one completed Node API call.
 type RequestObserver func(operation string, duration time.Duration, err error)
 
@@ -57,21 +48,6 @@ type Config struct {
 	BearerToken    string
 	RequestTimeout time.Duration
 	Observe        RequestObserver
-}
-
-// Error is a stable error response returned by a Node API.
-type Error struct {
-	StatusCode int
-	Code       apiv1.ErrorCode
-	Message    string
-}
-
-// Error formats the stable response without exposing its raw body.
-func (e *Error) Error() string {
-	if e == nil {
-		return "node API error"
-	}
-	return fmt.Sprintf("node API returned HTTP %d %s: %s", e.StatusCode, e.Code, e.Message)
 }
 
 // Client sends one generated Node API request per method call.
@@ -159,20 +135,26 @@ func (c *Client) execute(
 
 	response, err := send(requestCtx, generated)
 	if err != nil {
-		return nil, fmt.Errorf("%s Node API request: %w", operationName, err)
+		return nil, wrapError(&Error{
+			Code:    ErrorCodeClientTransport,
+			Message: operationName + " Node API request",
+		}, err)
 	}
 	return parseResponse(response, requestID, successMode)
 }
 
 func (c *Client) generatedClient(host string) (*nodeapi.Client, error) {
 	if host == "" || strings.TrimSpace(host) != host || strings.ContainsAny(host, "/?#") {
-		return nil, fmt.Errorf("%w: invalid Node host %q", ErrInvalidArgument, host)
+		return nil, &Error{
+			Code:    ErrorCodeClientInvalidArgument,
+			Message: fmt.Sprintf("invalid Node host %q", host),
+		}
 	}
 	serverURL := (&url.URL{
 		Scheme: "http",
 		Host:   net.JoinHostPort(host, strconv.Itoa(c.port)),
 	}).String()
-	return nodeapi.NewClient(
+	generated, err := nodeapi.NewClient(
 		serverURL,
 		nodeapi.WithHTTPClient(c.httpClient),
 		nodeapi.WithRequestEditorFn(func(_ context.Context, request *http.Request) error {
@@ -180,6 +162,13 @@ func (c *Client) generatedClient(host string) (*nodeapi.Client, error) {
 			return nil
 		}),
 	)
+	if err != nil {
+		return nil, wrapError(&Error{
+			Code:    ErrorCodeClientInvalidArgument,
+			Message: "create generated Node API client",
+		}, err)
+	}
+	return generated, nil
 }
 
 func parseResponse(
@@ -188,10 +177,17 @@ func parseResponse(
 	successMode successResponseMode,
 ) (*nodeapi.Operation, error) {
 	if response == nil {
-		return nil, fmt.Errorf("%w: Node API returned a nil response", ErrProtocol)
+		return nil, &Error{
+			Code:    ErrorCodeClientProtocol,
+			Message: "Node API returned a nil response",
+		}
 	}
 	if response.Body == nil {
-		return nil, fmt.Errorf("%w: Node API returned a nil response body", ErrProtocol)
+		return nil, &Error{
+			StatusCode: response.StatusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message:    "Node API returned a nil response body",
+		}
 	}
 
 	limit := int64(maxErrorBodyBytes)
@@ -202,19 +198,31 @@ func parseResponse(
 	body, readErr := readBody(response.Body, limit)
 	closeErr := response.Body.Close()
 	if readErr != nil {
-		return nil, fmt.Errorf("%w: read Node API response: %w", ErrProtocol, readErr)
+		return nil, wrapError(&Error{
+			StatusCode: response.StatusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message:    "read Node API response",
+		}, readErr)
 	}
 	if closeErr != nil {
-		return nil, fmt.Errorf("%w: close Node API response: %w", ErrTransport, closeErr)
+		return nil, wrapError(&Error{
+			StatusCode: response.StatusCode,
+			Code:       ErrorCodeClientTransport,
+			Message:    "close Node API response",
+		}, closeErr)
 	}
 	switch response.StatusCode {
 	case http.StatusOK:
-		return parseOperation(body, requestID)
+		return parseOperation(response.StatusCode, body, requestID)
 	case http.StatusAccepted:
 		if successMode == successResponseOKOrAccepted {
-			return parseOperation(body, requestID)
+			return parseOperation(response.StatusCode, body, requestID)
 		}
-		return nil, fmt.Errorf("%w: unexpected HTTP 202 success response", ErrProtocol)
+		return nil, &Error{
+			StatusCode: response.StatusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message:    "unexpected HTTP 202 success response",
+		}
 	default:
 		return nil, parseError(response.StatusCode, body)
 	}
@@ -231,37 +239,56 @@ func readBody(body io.Reader, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-func parseOperation(body []byte, requestID string) (*nodeapi.Operation, error) {
+func parseOperation(statusCode int, body []byte, requestID string) (*nodeapi.Operation, error) {
 	var envelope nodeapi.OperationResponse
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, fmt.Errorf("%w: decode operation response: %w", ErrProtocol, err)
+		return nil, wrapError(&Error{
+			StatusCode: statusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message:    "decode operation response",
+		}, err)
 	}
 	operation := envelope.Data
 	if operation.RequestID != requestID {
-		return nil, fmt.Errorf(
-			"%w: response request ID %q does not match %q",
-			ErrProtocol,
-			operation.RequestID,
-			requestID,
-		)
+		return nil, &Error{
+			StatusCode: statusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message: fmt.Sprintf(
+				"response request ID %q does not match %q",
+				operation.RequestID,
+				requestID,
+			),
+		}
 	}
 	if !operation.Status.Valid() {
-		return nil, fmt.Errorf("%w: unsupported operation status %q", ErrProtocol, operation.Status)
+		return nil, &Error{
+			StatusCode: statusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message:    fmt.Sprintf("unsupported operation status %q", operation.Status),
+		}
 	}
 	if operation.Status == nodeapi.OperationStatusTerminal {
 		if operation.Terminal == nil || !operation.Terminal.Outcome.Valid() {
-			return nil, fmt.Errorf("%w: terminal operation has an invalid outcome", ErrProtocol)
+			return nil, &Error{
+				StatusCode: statusCode,
+				Code:       ErrorCodeClientProtocol,
+				Message:    "terminal operation has an invalid outcome",
+			}
 		}
 		if operation.Terminal.Outcome == nodeapi.OperationOutcomeFailed &&
 			(operation.Terminal.Reason == nil || *operation.Terminal.Reason == "") {
-			return nil, fmt.Errorf("%w: failed operation has no reason", ErrProtocol)
+			return nil, &Error{
+				StatusCode: statusCode,
+				Code:       ErrorCodeClientProtocol,
+				Message:    "failed operation has no reason",
+			}
 		}
 	} else if operation.Terminal != nil {
-		return nil, fmt.Errorf(
-			"%w: operation status %q contains terminal details",
-			ErrProtocol,
-			operation.Status,
-		)
+		return nil, &Error{
+			StatusCode: statusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message:    fmt.Sprintf("operation status %q contains terminal details", operation.Status),
+		}
 	}
 	return &operation, nil
 }
@@ -269,24 +296,38 @@ func parseOperation(body []byte, requestID string) (*nodeapi.Operation, error) {
 func parseError(statusCode int, body []byte) error {
 	var envelope apiv1.ErrorResponse
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return fmt.Errorf("%w: decode HTTP %d error response: %w", ErrProtocol, statusCode, err)
+		return wrapError(&Error{
+			StatusCode: statusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message:    "decode Node API error response",
+		}, err)
 	}
 	code := envelope.Error.Code
 	expectedStatus, ok := nodeapi.HTTPStatusForErrorCode(code)
 	if !ok {
-		return fmt.Errorf("%w: unknown Node error code %q", ErrProtocol, code)
+		return &Error{
+			StatusCode: statusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message:    fmt.Sprintf("unknown Node error code %q", code),
+		}
 	}
 	if expectedStatus != statusCode {
-		return fmt.Errorf(
-			"%w: Node error code %q requires HTTP %d, got HTTP %d",
-			ErrProtocol,
-			code,
-			expectedStatus,
-			statusCode,
-		)
+		return &Error{
+			StatusCode: statusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message: fmt.Sprintf(
+				"Node error code %q requires HTTP %d",
+				code,
+				expectedStatus,
+			),
+		}
 	}
 	if envelope.Error.Message == "" {
-		return fmt.Errorf("%w: Node error code %q has an empty message", ErrProtocol, code)
+		return &Error{
+			StatusCode: statusCode,
+			Code:       ErrorCodeClientProtocol,
+			Message:    fmt.Sprintf("Node error code %q has an empty message", code),
+		}
 	}
 	return &Error{
 		StatusCode: statusCode,

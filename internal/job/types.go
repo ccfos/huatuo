@@ -62,6 +62,7 @@ const (
 	FailureReasonStopTimeout               FailureReason = "stop_timeout"
 	FailureReasonNodeUnavailable           FailureReason = "node_unavailable"
 	FailureReasonOperationLost             FailureReason = "operation_lost"
+	FailureReasonInvalidNodeRequest        FailureReason = "invalid_node_request"
 	FailureReasonProtocolError             FailureReason = "protocol_error"
 )
 

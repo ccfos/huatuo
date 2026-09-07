@@ -226,6 +226,12 @@ func TestJobValidateStateRequiresEndedAtExactlyForTerminalStatus(t *testing.T) {
 	}
 }
 
+func TestInvalidNodeRequestIsValidFailureReason(t *testing.T) {
+	if !isValidFailureReason(FailureReasonInvalidNodeRequest) {
+		t.Fatal("invalid_node_request must be a valid Job failure reason")
+	}
+}
+
 func TestJobValidateStoredRequiresPersistentFields(t *testing.T) {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

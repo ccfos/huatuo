@@ -19,11 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	apiv1 "huatuo-bamai/apis/v1"
 	nodeapi "huatuo-bamai/apis/v1/node"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/nodeclient"
@@ -133,14 +133,10 @@ func (r *runtime) superviseOnce(ctx context.Context) (bool, error) {
 		operation, err = r.dependencies.nodeClient.GetOperation(ctx, snapshot.Hostname, snapshot.ID)
 	}
 	if err != nil {
-		return r.handleNodeError(ctx, err, shouldStart)
+		return r.reconcileJobWithNodeError(ctx, err)
 	}
 
-	terminal, reconcileErr := r.reconcileOperation(ctx, operation)
-	if errors.Is(reconcileErr, nodeclient.ErrProtocol) {
-		return r.handleNodeError(ctx, reconcileErr, false)
-	}
-	return terminal, reconcileErr
+	return r.reconcileOperation(ctx, operation)
 }
 
 func (r *runtime) reloadFromStore(ctx context.Context) (bool, error) {
@@ -174,7 +170,10 @@ func (r *runtime) startOperation(ctx context.Context) (*nodeapi.Operation, error
 	}
 	request, err := buildStartOperationRequest(job)
 	if err != nil {
-		return nil, err
+		return nil, &nodeclient.Error{
+			Code:    nodeclient.ErrorCodeClientInvalidArgument,
+			Message: fmt.Sprintf("build Node Operation start request: %v", err),
+		}
 	}
 	return r.dependencies.nodeClient.StartOperation(ctx, job.Hostname, request)
 }
@@ -231,19 +230,18 @@ func (r *runtime) reconcileOperation(
 		snapshot.ID,
 	)
 	if err != nil {
-		return r.handleNodeError(ctx, err, false)
+		return r.reconcileJobWithNodeError(ctx, err)
 	}
 	terminal, _, err = r.reconcileJobWithOperation(ctx, stoppedOperation)
 	return terminal, err
 }
 
+// reconcileJobWithOperation keeps successful Node snapshots as the only source
+// for normal Job lifecycle transitions.
 func (r *runtime) reconcileJobWithOperation(
 	ctx context.Context,
 	operation *nodeapi.Operation,
 ) (terminal, shouldStop bool, err error) {
-	if operation == nil {
-		return false, false, fmt.Errorf("%w: Node returned a nil Operation", nodeclient.ErrProtocol)
-	}
 	if err := r.acquireTransition(ctx); err != nil {
 		return false, false, err
 	}
@@ -381,16 +379,25 @@ func (r *runtime) reconcileJobWithOperation(
 	return isTerminal(updated.Status), shouldStop, nil
 }
 
-func (r *runtime) handleNodeError(
+// reconcileJobWithNodeError keeps failure transitions independent of the Node
+// method and HTTP status by relying on stable error codes.
+func (r *runtime) reconcileJobWithNodeError(
 	ctx context.Context,
 	err error,
-	duringStart bool,
 ) (bool, error) {
 	if err == nil {
 		return false, nil
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return false, ctxErr
+	}
+	var nodeErr *nodeclient.Error
+	if !errors.As(err, &nodeErr) || nodeErr == nil {
+		return false, fmt.Errorf(
+			"reconcile Node error for Job %q: expected *nodeclient.Error: %w",
+			r.id,
+			err,
+		)
 	}
 	if transitionErr := r.acquireTransition(ctx); transitionErr != nil {
 		return false, transitionErr
@@ -406,7 +413,9 @@ func (r *runtime) handleNodeError(
 	now := r.dependencies.now()
 	updated := cloneJob(current)
 
-	if isNodeOperationNotFound(err) {
+	nodeUnavailable := false
+	switch nodeErr.Code {
+	case nodeapi.ErrorCodeOperationNotFound:
 		if r.operationObserved {
 			setTerminal(updated, &TerminalResult{
 				Outcome: OutcomeFailed,
@@ -416,9 +425,57 @@ func (r *runtime) handleNodeError(
 		} else {
 			setTerminal(updated, &TerminalResult{Outcome: OutcomeUnknown}, now)
 		}
-	} else if failure := terminalResultForNodeError(err, duringStart); failure != nil {
-		setTerminal(updated, failure, now)
-	} else if isRecoverableNodeError(err) {
+	case nodeclient.ErrorCodeClientInvalidArgument,
+		apiv1.ErrorCodeInvalidRequest,
+		nodeapi.ErrorCodeRequestIDConflict:
+		setTerminal(updated, &TerminalResult{
+			Outcome: OutcomeFailed,
+			Reason:  FailureReasonInvalidNodeRequest,
+			Message: nodeErr.Message,
+		}, now)
+	case nodeclient.ErrorCodeClientProtocol:
+		setTerminal(updated, &TerminalResult{
+			Outcome: OutcomeFailed,
+			Reason:  FailureReasonProtocolError,
+			Message: "Node response violated the Operation protocol",
+		}, now)
+	case nodeclient.ErrorCodeClientTransport,
+		apiv1.ErrorCodeInternal,
+		apiv1.ErrorCodeServiceUnavailable:
+		nodeUnavailable = true
+	case nodeapi.ErrorCodeOperationLimitExceeded:
+		setTerminal(updated, &TerminalResult{
+			Outcome: OutcomeFailed,
+			Reason:  FailureReasonExecutionCapacityExceeded,
+			Message: nodeErr.Message,
+		}, now)
+	case nodeapi.ErrorCodeExecutionEnvironmentUnsupported,
+		nodeapi.ErrorCodeServiceNotImplemented,
+		nodeapi.ErrorCodeExecutionStartFailed,
+		nodeapi.ErrorCodeLaunchTimeout:
+		setTerminal(updated, &TerminalResult{
+			Outcome: OutcomeFailed,
+			Reason:  FailureReasonExecutionStartFailed,
+			Message: nodeErr.Message,
+		}, now)
+	case nodeapi.ErrorCodeExecutionFailed,
+		nodeapi.ErrorCodeExecutionStopFailed,
+		nodeapi.ErrorCodeFinalizationFailed,
+		nodeapi.ErrorCodeFinalizationTimeout:
+		setTerminal(updated, &TerminalResult{
+			Outcome: OutcomeFailed,
+			Reason:  FailureReasonExecutionFailed,
+			Message: nodeErr.Message,
+		}, now)
+	default:
+		setTerminal(updated, &TerminalResult{
+			Outcome: OutcomeFailed,
+			Reason:  FailureReasonProtocolError,
+			Message: "Node response violated the Operation protocol",
+		}, now)
+	}
+
+	if nodeUnavailable {
 		if current.NodeUnavailableDeadline.IsZero() {
 			updated.NodeUnavailableDeadline = now.Add(
 				r.dependencies.policy.nodeUnavailableGracePeriod,
@@ -434,12 +491,6 @@ func (r *runtime) handleNodeError(
 			r.mu.Unlock()
 			return false, nil
 		}
-	} else {
-		setTerminal(updated, &TerminalResult{
-			Outcome: OutcomeFailed,
-			Reason:  FailureReasonProtocolError,
-			Message: "Node response violated the Operation protocol",
-		}, now)
 	}
 
 	r.mu.Unlock()
@@ -550,62 +601,6 @@ func recoveryStartDelay(jobID string, interval time.Duration) time.Duration {
 	hasher := fnv.New64a()
 	_, _ = hasher.Write([]byte(jobID))
 	return time.Duration(hasher.Sum64() % uint64(interval))
-}
-
-func terminalResultForNodeError(err error, duringStart bool) *TerminalResult {
-	var nodeErr *nodeclient.Error
-	if !errors.As(err, &nodeErr) {
-		if errors.Is(err, nodeclient.ErrProtocol) || errors.Is(err, nodeclient.ErrInvalidArgument) {
-			return &TerminalResult{
-				Outcome: OutcomeFailed,
-				Reason:  FailureReasonProtocolError,
-				Message: "Node response violated the Operation protocol",
-			}
-		}
-		return nil
-	}
-	if !duringStart {
-		return nil
-	}
-	switch nodeErr.Code {
-	case nodeapi.ErrorCodeOperationLimitExceeded:
-		return &TerminalResult{
-			Outcome: OutcomeFailed,
-			Reason:  FailureReasonExecutionCapacityExceeded,
-			Message: nodeErr.Message,
-		}
-	case nodeapi.ErrorCodeExecutionEnvironmentUnsupported,
-		nodeapi.ErrorCodeServiceNotImplemented,
-		nodeapi.ErrorCodeExecutionStartFailed,
-		nodeapi.ErrorCodeLaunchTimeout:
-		return &TerminalResult{
-			Outcome: OutcomeFailed,
-			Reason:  FailureReasonExecutionStartFailed,
-			Message: nodeErr.Message,
-		}
-	default:
-		return &TerminalResult{
-			Outcome: OutcomeFailed,
-			Reason:  FailureReasonProtocolError,
-			Message: nodeErr.Message,
-		}
-	}
-}
-
-func isRecoverableNodeError(err error) bool {
-	var nodeErr *nodeclient.Error
-	if errors.As(err, &nodeErr) {
-		return nodeErr.StatusCode >= http.StatusInternalServerError
-	}
-	if errors.Is(err, nodeclient.ErrProtocol) || errors.Is(err, nodeclient.ErrInvalidArgument) {
-		return false
-	}
-	return true
-}
-
-func isNodeOperationNotFound(err error) bool {
-	var nodeErr *nodeclient.Error
-	return errors.As(err, &nodeErr) && nodeErr.Code == nodeapi.ErrorCodeOperationNotFound
 }
 
 func mapOperationFailure(failure *nodeapi.OperationTerminal) *TerminalResult {
