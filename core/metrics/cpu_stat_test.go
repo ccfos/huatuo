@@ -185,3 +185,16 @@ func TestNewCPUStatSample(t *testing.T) {
 		})
 	}
 }
+
+func TestCalculateWaitPercentCPUTotalUnderflow(t *testing.T) {
+	previous := cpuStat{waitSum: math.MaxUint64 - 100, cpuTotal: math.MaxUint64}
+	current := cpuStat{waitSum: 10, cpuTotal: 0}
+
+	value, valid := calculateWaitPercent(&current, &previous)
+	if valid {
+		t.Fatalf("calculateWaitPercent() = (%v, true), want invalid when cpu_total resets", value)
+	}
+	if value != 0 {
+		t.Fatalf("calculateWaitPercent() value = %v, want 0", value)
+	}
+}
