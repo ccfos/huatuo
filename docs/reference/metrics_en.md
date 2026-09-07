@@ -29,6 +29,10 @@ This example shows host and container scheduling-latency bucket counts. The `zon
 
 ## CPU
 
+Container cores represent available capacity, not exclusively assigned physical cores. Existing utilization semantics and metric names are unchanged.
+
+During collection, `cpu_util` and `memory_vmstat` retain available host and container data independently: container discovery failures do not block host metrics, and host read failures do not discard collected container metrics. Errors reach the collector manager, marking the scrape unsuccessful while still emitting partial data; failed metrics are not fabricated as zeros. Collector initialization dependencies and the existing log-and-skip policy for individual container read failures are unchanged.
+
 ### Scheduling Latency
 
 Scheduling latency is the wait from becoming runnable to actually receiving CPU time. These eBPF metrics are cumulative Counters bucketed by `zone`: `0` = [0, 10) ms, `1` = [10, 20) ms, `2` = [20, 50) ms, and `3` = >=50 ms.
