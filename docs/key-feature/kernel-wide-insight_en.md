@@ -112,7 +112,11 @@ huatuo_bamai_cpu_util_container_cores{container_host="coredns-855c4dd65d-8v5kg",
 
 |Metric|Description|Unit|Target|Labels|
 |---|---|---|---|---|
-|cpu_util_container_cores| Number of CPU cores|cores| Container | (same as above) |
+|cpu_util_container_cores| CPU capacity bounded by quota, effective cpuset, and host cores; may be fractional|cores| Container | container_host, container_hostnamespace, container_level, container_name, container_type, host, region |
+
+Container cores represent available capacity, not exclusively assigned physical cores. Existing utilization semantics and metric names are unchanged.
+
+During collection, `cpu_util` and `memory_vmstat` retain available host and container data independently: container discovery failures do not block host metrics, and host read failures do not discard collected container metrics. Errors reach the collector manager, marking the scrape unsuccessful while still emitting partial data; failed metrics are not fabricated as zeros. Collector initialization dependencies and the existing log-and-skip policy for individual container read failures are unchanged.
 
 ### Contention
 
