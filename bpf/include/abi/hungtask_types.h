@@ -20,6 +20,9 @@
 struct hungtask_event {
 	u32 tid;
 	u8 comm[COMPAT_TASK_COMM_LEN];
+	u32 cgroup_count;
+	/* Nearest first, excluding the hierarchy root; bounded event/stack size. */
+	u64 cgroup_ids[16];
 };
 
 BPF_ABI_EXPORT(hungtask_event);

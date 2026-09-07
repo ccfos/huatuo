@@ -667,6 +667,54 @@
           ],
           "title": "Container CPU Throttle",
           "type": "timeseries"
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "ops"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 53,
+          "title": "Container Hung Task Events",
+          "description": "Received hung task events attributed at event time, before trace backoff. Repeated reports count separately. Missing containers are omitted; counts reset on agent restart.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "rate(huatuo_bamai_hungtask_container_total{container_host=~\"$container_host\",container_hostnamespace=~\"$ns\",region=~\"$region\"}[5m])",
+              "legendFormat": "Events/s {{host}} / {{container_hostnamespace}} / {{container_host}} / {{container_name}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 55
+          }
         }
       ],
       "targets": [
