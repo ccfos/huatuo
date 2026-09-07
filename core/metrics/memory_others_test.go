@@ -15,10 +15,15 @@
 package collector
 
 import (
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ccfos/huatuo/internal/bpf"
+	"github.com/ccfos/huatuo/internal/pod"
+	"github.com/ccfos/huatuo/pkg/metric"
 
 	"github.com/ccfos/huatuo/internal/cgroups/paths"
 	"github.com/ccfos/huatuo/internal/cgroups/subsystem"
@@ -68,5 +73,61 @@ func TestNewMemOthersCollectorSupported(t *testing.T) {
 	}
 	if attr == nil || attr.Flag&tracing.FlagMetric == 0 {
 		t.Fatalf("newMemOthersCollector() attr = %+v, want metric collector", attr)
+	}
+}
+
+func TestContainerMemoryStallsConversion(t *testing.T) {
+	key := make([]byte, 8)
+	binary.LittleEndian.PutUint64(key, 42)
+	value := make([]byte, 16)
+	binary.LittleEndian.PutUint64(value, 2000000)
+	binary.LittleEndian.PutUint64(value[8:], 3000000)
+	// A bad item must report an error without discarding another valid target.
+	items := []bpf.MapItem{{Key: []byte{1}, Value: value}, {Key: key, Value: value}, {Key: make([]byte, 8), Value: value}}
+	data, err := containerMemoryStalls(items, map[uint64]*pod.Container{42: {Name: "stall-fixture", Labels: map[string]any{"HostNamespace": "default"}}})
+	if err == nil || len(data) != 2 {
+		t.Fatalf("data=%v error=%v", data, err)
+	}
+	for i, name := range []string{"container_compaction_stall", "container_allocpages_stall"} {
+		if data[i].Name() != name || data[i].Value != float64(i+2) || data[i].Type() != metric.MetricTypeGauge || data[i].Labels()[metric.LabelContainerName] != "stall-fixture" {
+			t.Fatalf("invalid container stall: name=%s value=%v labels=%v", data[i].Name(), data[i].Value, data[i].Labels())
+		}
+	}
+	data, err = containerMemoryStalls(items[1:], nil)
+	if err != nil || len(data) != 0 {
+		t.Fatalf("unknown targets exported: data=%v err=%v", data, err)
+	}
+}
+
+type memoryStallBPFStub struct {
+	bpf.BPF
+	containerErr error
+}
+
+func (s *memoryStallBPFStub) DumpMapByName(name string) ([]bpf.MapItem, error) {
+	if name == "mm_container_free_compact_map" {
+		return nil, s.containerErr
+	}
+	value := make([]byte, 16)
+	binary.LittleEndian.PutUint64(value, 10000000)
+	binary.LittleEndian.PutUint64(value[8:], 20000000)
+	return []bpf.MapItem{{Value: value}}, nil
+}
+
+func TestMemoryStallsPreserveHostOnContainerFailure(t *testing.T) {
+	failure := errors.New("container unavailable")
+	for _, stage := range []string{"discovery", "map"} {
+		t.Run(stage, func(t *testing.T) {
+			obj := &memoryStallObject{BPF: &memoryStallBPFStub{containerErr: failure}, containers: true}
+			data, err := (&reclaimCompact{}).update(obj, func() (map[string]*pod.Container, error) {
+				if stage == "discovery" {
+					return nil, failure
+				}
+				return map[string]*pod.Container{"fixture": {Name: "fixture"}}, nil
+			})
+			if !errors.Is(err, failure) || len(data) != 2 || data[0].Value != 10 || data[1].Value != 20 {
+				t.Fatalf("host output lost on %s failure: data=%v err=%v", stage, data, err)
+			}
+		})
 	}
 }

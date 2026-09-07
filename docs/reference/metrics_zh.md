@@ -750,3 +750,18 @@ NVMe 证据包括 `critical_warning`、`media_errors_total`，以及最多八条
 | `mthreads_gpu_mtlink_state` | GPU MtLink 状态（0=DOWN,1=UP,2=DOWNGRADE） | — | gpu, link |
 | `mthreads_gpu_mtlink_link_bandwidth_gb_s` | GPU MtLink 每链路最大带宽（设备静态规格，非实时吞吐） | GB/s | gpu |
 | `mthreads_gpu_mtlink_link_count` | GPU MtLink 最大支持链路数（设备静态规格） | 链路数 | gpu |
+
+### add container reclaim and compaction stall times
+
+|指标|意义|单位|对象|取值| 标签 |
+|---|---|---|---|---|---|
+|memory_free_container_allocpages_stall|容器任务参与全局直接回收的累计耗时| 毫秒|容器| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_compaction_stall|容器任务参与直接内存规整的累计耗时| 毫秒|容器| eBPF | 同上|
+
+主机两项原本就导出毫秒，本次仅修正文档，不改名称、数值缩放或 Gauge 类型。容器两项在操作入口记录任务实际生效的 memory cgroup 的完整 kernfs ID，与现有 cgroup v1/v2 容器发现结果匹配。该 ID 包含 cgroup 代际信息，避免 CSS 地址复用后将旧值归属到其他 cgroup；仅替换 memory CSS 而不重建 cgroup 目录时，保留同一 cgroup 的身份和累计值。这两项表示任务承受的全局直接回收/规整耗时，不是为该容器回收了多少内存，也不是 memcg 限额回收次数 `memory_reclaim_container_directstall`。主机总量包含未归属容器的任务，不能和容器指标相加。
+
+仅为存在 BPF 记录且能匹配已发现普通容器的 cgroup 导出，不为缺失容器补零；容器发现或容器 map 读取失败时仍导出主机值并报告错误。ID 解析时忽略采集中容器消失产生的 ENOENT；其他解析错误会上报，同时保留主机值与成功匹配的容器值。计时表与容器累计表各限制 10240 条 LRU 记录，压力下可能丢失计时或淘汰累计值，BPF 重载也会归零，分析增量需处理重置。容器采集仅使用既有回收 tracepoint 和规整 kprobe；kernfs ID 匹配不需要 `cgroup_mkdir` 清理探针。所有数值为采集期间累计值，并非机器启动以来的绝对累计。
+
+启动时若完整 BPF 对象加载或挂载失败，释放原对象后仅重试一次主机模式：将 BPF 常量 `enable_container_stalls` 设为 0，关闭容器 cgroup 读取与计数，沿用同一组探针，保留原有两项主机耗时指标并记录降级告警；不导出容器零值，不调整默认过滤配置。主机模式仍要求可用的 BPF/BTF、回收 tracepoint 和规整 kprobe，不能绕过这些基础依赖；主机模式也失败则报告启动错误。
+
+> **注意**：`memory_others_container_directstall_time`、`memory_others_container_asyncreclaim_time`、`memory_others_container_local_direct_reclaim_time` 指标读取的是厂商定制内核提供的 memory cgroup 扩展接口（`memory.directstall_stat`、`memory.asynreclaim_stat`、`memory.local_direct_reclaim_time`）。主线内核及常见发行版内核不提供这些接口，因此这些指标不会输出，属预期行为，无需额外加载内核模块。在标准内核上观测容器直接回收（direct reclaim）行为，请使用上表基于 eBPF 实现的 `memory_reclaim_container_directstall`。

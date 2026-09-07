@@ -777,3 +777,18 @@ Remove `mthreads_gpu` from `BlackList` and restart `huatuo-bamai` to enable it. 
 | `mthreads_gpu_mtlink_state` | GPU MtLink state (0=DOWN,1=UP,2=DOWNGRADE) | — | gpu, link |
 | `mthreads_gpu_mtlink_link_bandwidth_gb_s` | Maximum GPU MtLink bandwidth per link (static specification, not live throughput) | GB/s | gpu |
 | `mthreads_gpu_mtlink_link_count` | Maximum supported GPU MtLink links (static specification) | Links | gpu |
+
+### add container reclaim and compaction stall times
+
+|Metric|Description|Unit|Target|Source|Labels|
+|---|---|---|---|---|---|
+|memory_free_container_allocpages_stall|Container task time in global direct reclaim| milliseconds|Container| eBPF | container_host, container_hostnamespace, container_level, container_name, container_type, host, region|
+|memory_free_container_compaction_stall|Container task time in direct compaction| milliseconds|Container| eBPF | same container labels|
+
+Host values already used milliseconds; only the documented unit changes, not names, scaling or Gauge types. Container stalls record the full kernfs ID of the task's effective memory cgroup at operation entry and match it against existing cgroup v1/v2 discovery. The ID includes the cgroup generation, preventing attribution to a different cgroup after CSS address reuse. Replacing a memory CSS without recreating its cgroup directory preserves that cgroup's identity and cumulative values. They measure time suffered by tasks in global reclaim/compaction, not memory reclaimed for that cgroup or memcg limit reclaim counts. Host totals include unassigned tasks; do not add host and container values.
+
+Only BPF records matching discovered normal containers are exported; absent records are not zero-filled. Container discovery/map failures retain host values and report an error. ID resolution ignores containers that disappear during collection (ENOENT); other resolution failures are reported while retaining host values and successfully matched container values. Timing and container aggregate LRU maps are each bounded to 10240 entries: pressure can lose timings or evict aggregates, and BPF reload resets values. Handle resets when computing deltas. Container collection uses only the existing reclaim tracepoints and compaction kprobes; kernfs-ID matching needs no `cgroup_mkdir` cleanup probe. Values accumulate during collection, not necessarily from host boot.
+
+If loading or attaching the full BPF object fails at startup, Huatuo cleans it up and retries once in host-only mode: the BPF constant `enable_container_stalls` is set to 0 to disable container cgroup reads and accounting, using the same probes. The original two host stall metrics remain available with a fallback warning; container zeros are not fabricated and default filters are unchanged. Host-only mode still requires BPF/BTF, reclaim tracepoints and compaction kprobes; it cannot bypass these prerequisites. Failure of the host-only retry is reported as a startup error.
+
+> **Note**: The `memory_others_container_directstall_time`, `memory_others_container_asyncreclaim_time`, and `memory_others_container_local_direct_reclaim_time` metrics read memory cgroup extension interfaces provided by a vendor-custom kernel (`memory.directstall_stat`, `memory.asynreclaim_stat`, `memory.local_direct_reclaim_time`). Mainline and common distribution kernels do not expose these interfaces, so these metrics are simply not emitted there — this is expected, and no extra kernel module can provide them. To observe container direct reclaim behavior on standard kernels, use the eBPF-based `memory_reclaim_container_directstall` listed above.
