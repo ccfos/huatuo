@@ -17,10 +17,8 @@ package nodeclient
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -28,15 +26,10 @@ import (
 	"strings"
 	"time"
 
-	apiv1 "huatuo-bamai/apis/v1"
 	nodeapi "huatuo-bamai/apis/v1/node"
 )
 
-const (
-	defaultRequestTimeout = 10 * time.Second
-	maxSuccessBodyBytes   = 1 << 20
-	maxErrorBodyBytes     = 8 << 10
-)
+const defaultRequestTimeout = 10 * time.Second
 
 // RequestObserver records one completed Node API call.
 type RequestObserver func(operation string, duration time.Duration, err error)
@@ -109,13 +102,6 @@ func New(config *Config) (*Client, error) {
 
 type sendRequest func(context.Context, *nodeapi.Client) (*http.Response, error)
 
-type successResponseMode uint8
-
-const (
-	successResponseOK successResponseMode = iota
-	successResponseOKOrAccepted
-)
-
 func (c *Client) execute(
 	ctx context.Context,
 	host string,
@@ -162,169 +148,4 @@ func (c *Client) generatedClient(host string) (*nodeapi.Client, error) {
 			return nil
 		}),
 	)
-}
-
-func parseResponse(
-	response *http.Response,
-	requestID string,
-	successMode successResponseMode,
-) (*nodeapi.Operation, error) {
-	if response == nil {
-		return nil, &Error{
-			Code:    ErrorCodeClientProtocol,
-			Message: "Node API returned a nil response",
-		}
-	}
-	if response.Body == nil {
-		return nil, &Error{
-			StatusCode: response.StatusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    "Node API returned a nil response body",
-		}
-	}
-
-	limit := int64(maxErrorBodyBytes)
-	if response.StatusCode == http.StatusOK ||
-		successMode == successResponseOKOrAccepted && response.StatusCode == http.StatusAccepted {
-		limit = maxSuccessBodyBytes
-	}
-	body, readErr := readBody(response.Body, limit)
-	closeErr := response.Body.Close()
-	if readErr != nil {
-		return nil, wrapError(&Error{
-			StatusCode: response.StatusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    "read Node API response",
-		}, readErr)
-	}
-	if closeErr != nil {
-		return nil, wrapError(&Error{
-			StatusCode: response.StatusCode,
-			Code:       ErrorCodeClientTransport,
-			Message:    "close Node API response",
-		}, closeErr)
-	}
-	switch response.StatusCode {
-	case http.StatusOK:
-		return parseOperation(response.StatusCode, body, requestID)
-	case http.StatusAccepted:
-		if successMode == successResponseOKOrAccepted {
-			return parseOperation(response.StatusCode, body, requestID)
-		}
-		return nil, &Error{
-			StatusCode: response.StatusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    "unexpected HTTP 202 success response",
-		}
-	default:
-		return nil, parseError(response.StatusCode, body)
-	}
-}
-
-func readBody(body io.Reader, limit int64) ([]byte, error) {
-	data, err := io.ReadAll(io.LimitReader(body, limit+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("response exceeds %d bytes", limit)
-	}
-	return data, nil
-}
-
-func parseOperation(statusCode int, body []byte, requestID string) (*nodeapi.Operation, error) {
-	var envelope nodeapi.OperationResponse
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, wrapError(&Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    "decode operation response",
-		}, err)
-	}
-	operation := envelope.Data
-	if operation.RequestID != requestID {
-		return nil, &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message: fmt.Sprintf(
-				"response request ID %q does not match %q",
-				operation.RequestID,
-				requestID,
-			),
-		}
-	}
-	if !operation.Status.Valid() {
-		return nil, &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    fmt.Sprintf("unsupported operation status %q", operation.Status),
-		}
-	}
-	if operation.Status == nodeapi.OperationStatusTerminal {
-		if operation.Terminal == nil || !operation.Terminal.Outcome.Valid() {
-			return nil, &Error{
-				StatusCode: statusCode,
-				Code:       ErrorCodeClientProtocol,
-				Message:    "terminal operation has an invalid outcome",
-			}
-		}
-		if operation.Terminal.Outcome == nodeapi.OperationOutcomeFailed &&
-			(operation.Terminal.Reason == nil || *operation.Terminal.Reason == "") {
-			return nil, &Error{
-				StatusCode: statusCode,
-				Code:       ErrorCodeClientProtocol,
-				Message:    "failed operation has no reason",
-			}
-		}
-	} else if operation.Terminal != nil {
-		return nil, &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    fmt.Sprintf("operation status %q contains terminal details", operation.Status),
-		}
-	}
-	return &operation, nil
-}
-
-func parseError(statusCode int, body []byte) error {
-	var envelope apiv1.ErrorResponse
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return wrapError(&Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    "decode Node API error response",
-		}, err)
-	}
-	code := envelope.Error.Code
-	expectedStatus, ok := nodeapi.HTTPStatusForErrorCode(code)
-	if !ok {
-		return &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    fmt.Sprintf("unknown Node error code %q", code),
-		}
-	}
-	if expectedStatus != statusCode {
-		return &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message: fmt.Sprintf(
-				"Node error code %q requires HTTP %d",
-				code,
-				expectedStatus,
-			),
-		}
-	}
-	if envelope.Error.Message == "" {
-		return &Error{
-			StatusCode: statusCode,
-			Code:       ErrorCodeClientProtocol,
-			Message:    fmt.Sprintf("Node error code %q has an empty message", code),
-		}
-	}
-	return &Error{
-		StatusCode: statusCode,
-		Code:       code,
-		Message:    envelope.Error.Message,
-	}
 }
