@@ -35,9 +35,11 @@ import (
 )
 
 const (
-	loadStatsObject        = "cgroup_v2_load_stats.o"
-	minLoadStatsMapEntries = 128
-	maxLoadStatsMapEntries = 65536
+	// Zero is not a kernfs cgroup ID; reserve it for the entire host.
+	hostLoadStatsID        uint64 = 0
+	loadStatsObject               = "cgroup_v2_load_stats.o"
+	minLoadStatsMapEntries        = 128
+	maxLoadStatsMapEntries        = 65536
 	// Coalesce adjacent consumers without reusing samples across their
 	// seconds-scale sampling intervals.
 	sharedLoadSnapshotMaxAge = 100 * time.Millisecond
@@ -65,11 +67,17 @@ type taskLoadStats struct {
 	NrIoWait          uint64
 }
 
+// Keep in sync with struct task_scan_state in cgroup_v2_load_stats.c.
+type taskScanState struct {
+	PIDNamespaceStatus uint32
+	CollectContainers  uint32
+}
+
 type taskLoadCollector struct {
 	collection *ebpf.Collection
 	iterator   *link.Iter
 	stats      *ebpf.Map
-	pidNS      *ebpf.Map
+	scanState  *ebpf.Map
 	activeIDs  []uint64
 	capacity   uint32
 }
@@ -141,6 +149,37 @@ func SharedLoadStats(
 ) (map[string]stats.LoadStats, error) {
 	return sharedLoadStats(
 		consumer, cgroupPaths, defaultSharedLoadSnapshotter, cgroupID)
+}
+
+// SharedLoadStatsWithHost includes all host tasks, even those outside the
+// requested cgroups, in the same iterator traversal. With empty paths this
+// also works on cgroup v1 hosts. A nil host result is unavailable, not zero.
+func SharedLoadStatsWithHost(
+	consumer LoadStatsConsumer,
+	cgroupPaths []string,
+) (map[string]stats.LoadStats, *stats.LoadStats, error) {
+	return sharedLoadStatsWithHost(consumer, cgroupPaths,
+		defaultSharedLoadSnapshotter, cgroupID)
+}
+
+func sharedLoadStatsWithHost(
+	consumer LoadStatsConsumer,
+	cgroupPaths []string,
+	snapshotter *sharedTaskLoadSnapshotter,
+	resolveID func(string) (uint64, error),
+) (map[string]stats.LoadStats, *stats.LoadStats, error) {
+	pathIDs, ids, resolveErr := resolveLoadStatsTargets(cgroupPaths, resolveID)
+	ids = append(ids, hostLoadStatsID)
+	snapshot, err := snapshotter.Snapshot(consumer, ids)
+	if err != nil {
+		return nil, nil, errors.Join(resolveErr, err)
+	}
+	result := loadStatsByPath(pathIDs, snapshot)
+	host, ok := snapshot[hostLoadStatsID]
+	if !ok {
+		return result, nil, errors.Join(resolveErr, errors.New("host task counts missing from iterator snapshot"))
+	}
+	return result, &host, resolveErr
 }
 
 // ForgetSharedLoadStatsConsumer removes a stopped consumer's targets from
@@ -443,8 +482,8 @@ func newTaskLoadCollector(capacity uint32) (loadCollector, error) {
 
 	program := collection.Programs["aggregate_cgroup_load"]
 	statsMap := collection.Maps["cgroup_load_stats"]
-	pidNSMap := collection.Maps["pid_namespace_status"]
-	if program == nil || statsMap == nil || pidNSMap == nil {
+	scanStateMap := collection.Maps["task_scan_state"]
+	if program == nil || statsMap == nil || scanStateMap == nil {
 		collection.Close()
 		return nil, errors.New("load cgroup v2 task iterator: incomplete BPF object")
 	}
@@ -462,7 +501,7 @@ func newTaskLoadCollector(capacity uint32) (loadCollector, error) {
 		collection: collection,
 		iterator:   iterator,
 		stats:      statsMap,
-		pidNS:      pidNSMap,
+		scanState:  scanStateMap,
 		capacity:   capacity,
 	}, nil
 }
@@ -542,9 +581,16 @@ func (c *taskLoadCollector) Snapshot(
 	}
 
 	var key uint32
-	status := pidNamespaceUnchecked
-	if err := c.pidNS.Update(&key, &status, ebpf.UpdateAny); err != nil {
-		return nil, fmt.Errorf("reset collector PID namespace check: %w", err)
+	scan := taskScanState{PIDNamespaceStatus: pidNamespaceUnchecked}
+	// ids is the union of all active consumers for this actual traversal.
+	for _, id := range ids {
+		if id != hostLoadStatsID {
+			scan.CollectContainers = 1
+			break
+		}
+	}
+	if err := c.scanState.Update(&key, &scan, ebpf.UpdateAny); err != nil {
+		return nil, fmt.Errorf("prepare task iterator scan: %w", err)
 	}
 
 	// The iterator captures the opener's PID namespace. Keep opening and
@@ -562,10 +608,10 @@ func (c *taskLoadCollector) Snapshot(
 			"run cgroup v2 task iterator: %w", errors.Join(readErr, closeErr))
 	}
 
-	if err := c.pidNS.Lookup(&key, &status); err != nil {
+	if err := c.scanState.Lookup(&key, &scan); err != nil {
 		return nil, fmt.Errorf("read collector PID namespace check: %w", err)
 	}
-	if err := checkPIDNamespaceStatus(status); err != nil {
+	if err := checkPIDNamespaceStatus(scan.PIDNamespaceStatus); err != nil {
 		return nil, err
 	}
 
@@ -605,7 +651,7 @@ func (c *taskLoadCollector) Close() error {
 		c.collection = nil
 	}
 	c.stats = nil
-	c.pidNS = nil
+	c.scanState = nil
 	c.activeIDs = nil
 	return err
 }

@@ -38,12 +38,12 @@ func TestContainerLoadAverage(t *testing.T) {
 	at := time.Unix(100, 0)
 	container := &pod.Container{ID: "test", Labels: map[string]any{"HostNamespace": "test"}}
 	samples := []containerLoadSample{{container, 2, 3}}
-	c.publishContainerLoad(at, samples, nil)
+	c.publishContainerLoad(at, samples, nil, nil)
 	if data, _, _ := c.cachedContainerLoad(at); len(data) != 2 {
 		t.Fatal("baseline emitted averages")
 	}
 	at = at.Add(17 * time.Second)
-	c.publishContainerLoad(at, samples, nil)
+	c.publishContainerLoad(at, samples, nil, nil)
 	data, err, active := c.cachedContainerLoad(at)
 	if err != nil || !active || len(data) != 5 {
 		t.Fatalf("cache: data=%v active=%v err=%v", data, active, err)

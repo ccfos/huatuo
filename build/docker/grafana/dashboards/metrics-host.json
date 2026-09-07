@@ -1282,6 +1282,54 @@
             "x": 0,
             "y": 101
           }
+        },
+        {
+          "type": "timeseries",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "huatuo-bamai-prom"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "spanNulls": false
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "id": 93,
+          "title": "Host Uninterruptible Tasks",
+          "description": "Host tasks contributing to load, excluding TASK_NOLOAD and TASK_FROZEN, collected with the loadavg component. Requires host PID visibility, kernel BTF and the BPF task iterator; sampled at MetricCollector.Loadavg.Interval (seconds; default 15). Unsupported systems omit the metric.",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "huatuo-bamai-prom"
+              },
+              "expr": "huatuo_bamai_loadavg_nr_uninterruptible{host=~\"$host\",region=~\"$region\"}",
+              "legendFormat": "D state {{host}}",
+              "refId": "A",
+              "range": true
+            }
+          ],
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 109
+          }
         }
       ],
       "targets": [

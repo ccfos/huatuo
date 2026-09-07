@@ -97,9 +97,12 @@ func TestLoadStatsLiveTaskIterator(t *testing.T) {
 		}
 	}
 
-	result, err := LoadStats(cgroupPaths)
+	result, host, err := SharedLoadStatsWithHost(LoadStatsConsumerLoadavg, cgroupPaths)
 	if err != nil {
 		t.Fatalf("LoadStats(%q) error = %v", cgroupPaths, err)
+	}
+	if host == nil || host.NrSleeping <= 6 {
+		t.Fatalf("host total must include tasks outside fixture cgroups: %+v", host)
 	}
 	for i, cgroupPath := range cgroupPaths {
 		load, ok := result[cgroupPath]
@@ -109,6 +112,36 @@ func TestLoadStatsLiveTaskIterator(t *testing.T) {
 		if load.NrSleeping != wantSleeping[i] {
 			t.Fatalf("LoadStats(%q) = %+v, want %d sleeping tasks",
 				cgroupPath, load, wantSleeping[i])
+		}
+	}
+	ids := make([]uint64, len(cgroupDirs))
+	for i, dir := range cgroupDirs {
+		ids[i], err = paths.KernfsID(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Reuse the loaded collector across both directions of the fast path.
+	for _, targets := range [][]uint64{{hostLoadStatsID}, append([]uint64{hostLoadStatsID}, ids...), {hostLoadStatsID}, ids, {hostLoadStatsID}} {
+		snapshot, err := defaultTaskLoadSnapshotter.Snapshot(targets)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snapshot) != len(targets) {
+			t.Fatalf("unexpected targets: %v", snapshot)
+		}
+		for _, id := range targets {
+			if id == hostLoadStatsID {
+				if snapshot[id].NrSleeping <= 6 {
+					t.Fatalf("missing host tasks: %+v", snapshot[id])
+				}
+				continue
+			}
+			for i, target := range ids {
+				if id == target && snapshot[id].NrSleeping != wantSleeping[i] {
+					t.Fatalf("container %d: %+v", id, snapshot[id])
+				}
+			}
 		}
 	}
 }
