@@ -61,7 +61,7 @@ HUATUO 基于 eBPF 技术，对 Linux 内核中的 CPU 调度、内存子系统�
 | `softlockup` | kprobe | CPU 长时间无法调度（约 1 秒） | 系统软锁死、响应异常 |
 | `hungtask` | raw tracepoint；回退 tracepoint（仅主机） | D 状态进程任务挂起 | 瞬时批量 D 进程、IO 阻塞 |
 | `oom` | kprobe | OOM Killer 触发 | 容器/宿主机内存耗尽 |
-| `memory_reclaim_events` | kprobe | 容器进程直接回收时间 > 阈值（默认 900ms） | 内存压力导致业务卡顿 |
+| `memory_reclaim_events` | kprobe | 直接回收时间 > 阈值（默认 900ms）；已知容器输出容器事件，未解析归属的事件输出到主机事件流 | 内存压力导致业务卡顿 |
 | `ras` | tracepoint | CPU/MEM/PCIe 硬件错误 | 硬件故障感知 |
 | `dropwatch` | tracepoint | 内核网络协议栈丢包 | 协议栈丢包导致业务毛刺 |
 | `tcp_retransmit` | tracepoint；TLP 使用可选 kprobe | TCP 重传或 Tail Loss Probe | TCP 丢包、乱序、拥塞及延迟诊断 |
@@ -372,7 +372,15 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 
 ### 7. memory_reclaim_events 内存回收
 
-**功能描述** 检测容器进程发生直接内存回收（direct reclaim）的事件，当同一进程在 1 秒内直接回收时间超过阈值（默认 900ms）时触发，记录回收耗时、进程及容器信息。**注意：该观测器仅记录容器进程的内存回收事件，宿主机进程的事件会被过滤。**
+**功能描述** 检测主机和容器进程发生直接内存回收（direct reclaim）的事件，当同一进程在 1 秒内直接回收时间超过阈值（默认 900ms）时触发，记录回收耗时、进程及容器信息。未解析到容器的事件保留到主机事件流。
+
+启用 `memory_reclaim_events` 后，无法解析容器归属的慢直接回收事件保留到主机事件流。复用原有 `try_to_free_pages` 入口/返回探针、耗时阈值、事件名（`memory_reclaim`）及容器输出，不增加 BPF 探针或 map。
+
+容器 ID 为空**不代表**一定是主机服务：主机任务和未识别容器任务均标记 `container_attribution="unresolved"`。已识别容器仍只输出一条容器事件，不重复输出主机事件。这不是 kswapd 追踪，也不是汇总回收计数器。容器发现失败不应丢弃主机事件流。归属解析沿用缓存刷新策略：命中项 TTL 为 5 秒，未命中最多每秒重试一次；新容器在发现及缓存刷新成功前可能暂时无法归属，重复主机事件不会导致刷新风暴。
+
+额外开销仅为原先被丢弃事件的序列化与存储，继续使用已有耗时阈值。
+
+验证范围：5.10 测试虚拟机已验证当前源码构建的 BPF 对象加载及两个原有探针挂载；带标记的 fixture 验证主机事件流序列化与 SQLite 持久化。两者是独立检查，不等同于真实回收事件投递测试。未制造全局直接回收压力，仅限制单个 cgroup 并不等价于触发 `try_to_free_pages`。可选挂载测试需要 `HUATUO_TRIGGER_BPF_DIR`，持久化测试仅需 `integration` 构建标签。
 
 **数据存储** 自动存储至 Elasticsearch 或物理机磁盘文件。
 
@@ -395,6 +403,7 @@ tcp_retransmit 的使用方式、字段、分类和丢包关联请参考 [tcpsha
 - **pid**：触发进程的 PID
 - **tid**：触发线程的 TID
 - **reclaim_duration_ns**：直接回收耗时（纳秒）
+- **container_attribution**：可选字段；主机事件流中未解析到容器的事件标记为 `unresolved`
 
 ### 8. ras 硬件错误
 

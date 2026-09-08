@@ -742,6 +742,18 @@ This section captures key kernel events and latency, including scheduler tick in
 	# BlockedThreshold = 900000000
 ```
 
+- **Host output**: Retains slow direct-reclaim events without a resolved container
+  in the host stream. Requires the `memory_reclaim_events` collector
+  and its existing `try_to_free_pages` entry/return probes to be available and
+  attachable; no additional probe or cgroup-version-specific switch is needed.
+  Keeps the `memory_reclaim` event name and the same `BlockedThreshold`.
+  Empty container IDs are marked
+  `container_attribution="unresolved"`: this includes host tasks and unresolved
+  containers, not proven host-only attribution. Known containers still emit one
+  container event, without a host duplicate. This does not trace kswapd or add an
+  aggregate metric; it adds event output/storage for previously dropped
+  events.
+
 - **BlockedThreshold**: Memory reclaim blocking time threshold (nanoseconds).
 
   Default: 900,000,000 ns (900ms). When a process is blocked by memory reclaim for longer than this time, an event is reported to userspace with context.
