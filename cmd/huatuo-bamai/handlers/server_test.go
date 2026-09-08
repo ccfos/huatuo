@@ -23,10 +23,12 @@ import (
 )
 
 func TestNodeRouterTokenAuthentication(t *testing.T) {
+	manager := newTestOperationManager(t)
+	profilingService, tracingService := newTestNodeServices(t, manager)
 	nodeHandler, err := NewNodeAPIHandler(
-		newTestOperationManager(t),
-		&stubProfilingOperations{},
-		&stubTracingOperations{},
+		manager,
+		profilingService,
+		tracingService,
 	)
 	if err != nil {
 		t.Fatalf("NewNodeAPIHandler() error = %v", err)

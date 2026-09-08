@@ -33,25 +33,11 @@ import (
 	tracingdomain "huatuo-bamai/pkg/tracing"
 )
 
-type profilingOperationService interface {
-	Start(
-		ctx context.Context,
-		request *nodeprofiling.StartRequest,
-	) (operationSnapshot *operation.Operation, created bool, err error)
-}
-
-type tracingOperationService interface {
-	Start(
-		ctx context.Context,
-		request nodetracing.StartRequest,
-	) (operationSnapshot *operation.Operation, created bool, err error)
-}
-
 // NodeAPIHandler implements the generated Node Agent Strict Server.
 type NodeAPIHandler struct {
 	operationManager *operation.Manager
-	profiling        profilingOperationService
-	tracing          tracingOperationService
+	profiling        *nodeprofiling.Service
+	tracing          *nodetracing.Service
 	openAPI          nodeapi.GetOpenAPI200JSONResponse
 }
 
@@ -134,17 +120,15 @@ func (h *NodeAPIHandler) StopOperation(
 // NewNodeAPIHandler constructs a generated-protocol adapter.
 func NewNodeAPIHandler(
 	operationManager *operation.Manager,
-	profilingService profilingOperationService,
-	tracingService tracingOperationService,
+	profilingService *nodeprofiling.Service,
+	tracingService *nodetracing.Service,
 ) (*NodeAPIHandler, error) {
-	if operationManager == nil {
-		return nil, errors.New("create Node API handler: operation manager is required")
-	}
-	if profilingService == nil {
-		return nil, errors.New("create Node API handler: profiling service is required")
-	}
-	if tracingService == nil {
-		return nil, errors.New("create Node API handler: tracing service is required")
+	if err := validateNewNodeAPIHandlerArgs(
+		operationManager,
+		profilingService,
+		tracingService,
+	); err != nil {
+		return nil, err
 	}
 	var specification map[string]any
 	if err := json.Unmarshal(nodeapi.OpenAPIJSON(), &specification); err != nil {
@@ -156,6 +140,23 @@ func NewNodeAPIHandler(
 		tracing:          tracingService,
 		openAPI:          specification,
 	}, nil
+}
+
+func validateNewNodeAPIHandlerArgs(
+	operationManager *operation.Manager,
+	profilingService *nodeprofiling.Service,
+	tracingService *nodetracing.Service,
+) error {
+	if operationManager == nil {
+		return errors.New("create Node API handler: operation manager is required")
+	}
+	if profilingService == nil {
+		return errors.New("create Node API handler: profiling service is required")
+	}
+	if tracingService == nil {
+		return errors.New("create Node API handler: tracing service is required")
+	}
+	return nil
 }
 
 // GetReadiness reports whether the HTTP server is ready to accept requests.

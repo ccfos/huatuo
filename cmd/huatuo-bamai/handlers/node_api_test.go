@@ -17,6 +17,8 @@ package handlers
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,35 +28,15 @@ import (
 	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
 	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
 	"huatuo-bamai/internal/server/response"
+	"huatuo-bamai/internal/toolstream"
 	"huatuo-bamai/pkg/observation"
+	profilingdomain "huatuo-bamai/pkg/profiling"
 )
 
-type stubProfilingOperations struct {
-	startRequest *nodeprofiling.StartRequest
-	operation    *operation.Operation
-	created      bool
-	err          error
-}
+type testResultPublisher struct{}
 
-func (s *stubProfilingOperations) Start(
-	_ context.Context,
-	request *nodeprofiling.StartRequest,
-) (*operation.Operation, bool, error) {
-	s.startRequest = request
-	return s.operation, s.created, s.err
-}
-
-type stubTracingOperations struct {
-	operation *operation.Operation
-	created   bool
-	err       error
-}
-
-func (s *stubTracingOperations) Start(
-	context.Context,
-	nodetracing.StartRequest,
-) (*operation.Operation, bool, error) {
-	return s.operation, s.created, s.err
+func (testResultPublisher) Publish(context.Context, string) error {
+	return nil
 }
 
 func newTestOperationManager(t *testing.T) *operation.Manager {
@@ -79,19 +61,73 @@ func newTestOperationManager(t *testing.T) *operation.Manager {
 	return manager
 }
 
-func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
-	base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
-	profiling := &stubProfilingOperations{
-		operation: &operation.Operation{
-			RequestID: "job-1",
-			Kind:      operation.KindProfiling,
-			Status:    operation.StatusPending,
-			CreatedAt: base,
-		},
-		created: true,
+func newTestNodeServices(
+	t *testing.T,
+	manager *operation.Manager,
+) (*nodeprofiling.Service, *nodetracing.Service) {
+	t.Helper()
+	directory := t.TempDir()
+	profilerPath := filepath.Join(directory, "profiler")
+	if err := os.WriteFile(profilerPath, []byte("#!/bin/sh\nexit 0\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() profiler error = %v", err)
 	}
+	if err := os.Chmod(profilerPath, 0o700); err != nil {
+		t.Fatalf("Chmod() profiler error = %v", err)
+	}
+	socketPath := filepath.Join(directory, "toolstream.sock")
+	stream, err := toolstream.NewServer(socketPath)
+	if err != nil {
+		t.Fatalf("toolstream.NewServer() error = %v", err)
+	}
+	profilingService, err := nodeprofiling.NewService(manager, &nodeprofiling.Config{
+		ProfilerPath:            profilerPath,
+		ToolstreamSocketPath:    socketPath,
+		NodeAPIAddress:          "http://127.0.0.1",
+		AggregationInterval:     time.Second,
+		MaxConcurrentProcesses:  1,
+		CommandOutputLimitBytes: 1024,
+		ToolstreamServer:        stream,
+		ResultPublisher:         testResultPublisher{},
+	})
+	if err != nil {
+		t.Fatalf("profiling.NewService() error = %v", err)
+	}
+	tracingService, err := nodetracing.NewService(manager)
+	if err != nil {
+		t.Fatalf("tracing.NewService() error = %v", err)
+	}
+	return profilingService, tracingService
+}
+
+func TestNewNodeAPIHandlerRequiresDependencies(t *testing.T) {
+	manager := newTestOperationManager(t)
+	profilingService, tracingService := newTestNodeServices(t, manager)
+	tests := []struct {
+		name      string
+		manager   *operation.Manager
+		profiling *nodeprofiling.Service
+		tracing   *nodetracing.Service
+	}{
+		{name: "missing operation manager", profiling: profilingService, tracing: tracingService},
+		{name: "missing profiling service", manager: manager, tracing: tracingService},
+		{name: "missing tracing service", manager: manager, profiling: profilingService},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := NewNodeAPIHandler(tt.manager, tt.profiling, tt.tracing); err == nil {
+				t.Fatal("NewNodeAPIHandler() error = nil")
+			}
+		})
+	}
+}
+
+func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
+	manager := newTestOperationManager(t)
+	profilingService, tracingService := newTestNodeServices(t, manager)
 	handler, err := NewNodeAPIHandler(
-		newTestOperationManager(t), profiling, &stubTracingOperations{},
+		manager,
+		profilingService,
+		tracingService,
 	)
 	if err != nil {
 		t.Fatalf("NewNodeAPIHandler() error = %v", err)
@@ -102,10 +138,11 @@ func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 		Scope:           apiv1.ObservationScopeHost,
 		Kind:            nodeapi.OperationKindProfiling,
 	}
-	if err := body.Spec.FromProfilingOperationSpec(nodeapi.ProfilingOperationSpec{
+	spec := nodeapi.ProfilingOperationSpec{
 		Type: nodeapi.ProfilingTypeCPU, Language: nodeapi.ProfilingLanguageGo,
 		Mode: nodeapi.ProfilingModeOnCPU,
-	}); err != nil {
+	}
+	if err := body.Spec.FromProfilingOperationSpec(spec); err != nil {
 		t.Fatalf("set profiling spec: %v", err)
 	}
 
@@ -119,12 +156,16 @@ func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 	if _, ok := got.(nodeapi.StartOperation202JSONResponse); !ok {
 		t.Fatalf("StartOperation() response type = %T, want HTTP 202", got)
 	}
-	if profiling.startRequest == nil || profiling.startRequest.Duration != time.Minute ||
-		profiling.startRequest.Scope != observation.ScopeHost {
-		t.Fatalf("StartOperation() request = %+v", profiling.startRequest)
+	profilingRequest, err := profilingOperationRequest(body, spec)
+	if err != nil {
+		t.Fatalf("profilingOperationRequest() error = %v", err)
+	}
+	if profilingRequest.Duration != time.Minute ||
+		profilingRequest.Scope != observation.ScopeHost ||
+		profilingRequest.Spec.Type != profilingdomain.TypeCPU {
+		t.Fatalf("profilingOperationRequest() = %+v", profilingRequest)
 	}
 
-	profiling.created = false
 	got, err = handler.StartOperation(
 		t.Context(),
 		nodeapi.StartOperationRequestObject{Body: body},
@@ -138,10 +179,12 @@ func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 }
 
 func TestStartOperationTracingReportsNotImplemented(t *testing.T) {
+	manager := newTestOperationManager(t)
+	profilingService, tracingService := newTestNodeServices(t, manager)
 	handler, err := NewNodeAPIHandler(
-		newTestOperationManager(t),
-		&stubProfilingOperations{},
-		&stubTracingOperations{err: nodetracing.ErrNotImplemented},
+		manager,
+		profilingService,
+		tracingService,
 	)
 	if err != nil {
 		t.Fatalf("NewNodeAPIHandler() error = %v", err)
