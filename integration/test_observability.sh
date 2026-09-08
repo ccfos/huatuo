@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Attach real reclaim probes in a disposable VM.
+# Run real reclaim attachment and bounded host D-state triggering.
 set -euo pipefail
 
 source "${ROOT_DIR}/integration/lib.sh"
@@ -26,6 +26,7 @@ fi
 
 cd "${ROOT_DIR}"
 go test -mod=vendor -tags=integration \
+	./integration/testdata/autotracing_test.go \
 	./integration/testdata/memory_reclaim_test.go \
-	-run '^TestReclaimLiveAttach$' \
+	-run '^Test(DloadHostLiveTrigger|ReclaimLiveAttach)$' \
 	-count=1 -timeout=3m -v

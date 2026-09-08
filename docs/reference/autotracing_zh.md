@@ -337,3 +337,20 @@ Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机
 ### enable v2 load stats for metrics and dload
 
 **功能描述** cgroup v1 通过 netlink 读取容器内进程状态；cgroup v2 通过 BPF task iterator 批量读取。随后对不可中断（D 状态）进程的负载贡献进行指数加权移动平均（EMA）计算。当容器 D 状态负载 EMA 超过阈值（默认 5）时，采集容器内及宿主机中所有 D 状态进程的内核调用栈，支持已知问题过滤（`issues_list`）降低误报率。同一容器默认 30 分钟冷却。cgroup v2 路径每次采样都会遍历一次宿主机全部任务，它要求内核 BTF 可读并支持 BPF `task` iterator。统计为非层级统计，只包含直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。确认内核不支持 task iterator 时，首次采样会将 `dload` 标记为不支持并停止该检测项，不周期性重试加载。verifier 错误及其他普通加载错误不会被缓存为不支持，后续采样会重试并报告错误。
+
+### trigger host dload independently
+
+| 参数 | 默认值 | 说明 |
+| ---- | ------ | ---- |
+| `dload.host_threshold_load` | `5` | 物理机 D 状态任务数的一分钟 EMA 阈值 |
+| `dload.interval_tracing` | `1800`（秒） | 各容器与物理机触发分别独立冷却 |
+| `dload` | 容器；整机 | D 状态任务数的一分钟 EMA > 5，阈值与冷却独立 | D 状态进程堆积、IO 阻塞 |
+
+当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器及物理机 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（内存突发分配）。
+`dload` 启用后独立检测包含容器线程的整机 D 状态负载，不是仅统计非容器任务。`HostThresholdLoad` 默认 5，主机一分钟 D 状态 EMA 超过阈值后抓取堆栈，与容器触发分别维护阈值和冷却；事件名和数据结构不变。
+
+主机路径在 cgroup v1/v2 下均复用已有 BPF task iterator，需要内核 BTF、BPF 权限及宿主机 PID 可见性（上游 iterator 基础支持始于 Linux 5.8）。v2 的一次 iterator 快照同时提供主机和容器统计；不支持 iterator 的 v1 内核只停止主机触发，保留原 netlink 容器路径。D-load 是采样估计值，不是 `/proc/loadavg`；主机堆栈覆盖线程，不限于进程组长。主机与容器同时越线时分别输出事件。
+
+采样遵循 `AutoTracing.Dload.Interval`（默认 10 秒），不使用 `MetricCollector.Loadavg.Interval`。不增加 BPF 探针或 map；除可复用兼容的新鲜快照外，每次采样遍历一次主机任务。
+
+验证范围：5.10 测试虚拟机中，有界 `vfork` worker 在子进程退出前保持 D 状态。关闭 debug、采样间隔设为 1 秒、主机阈值设为 0 时，采集到 D=1、D-load=0.02，无需容器发现即可独立触发，并在 LocalFile 本地文件中确认包含 worker 内核堆栈的记录。debug 抓取测试也读取本地文件，不将未配置的 `Save` 当作持久化证据。实机测试需要 `HUATUO_TRIGGER_BPF_DIR`，正常触发测试另需 `HUATUO_DLOAD_WORKER_PID`。仅在可丢弃的虚拟机运行，fixture 必须自行退出，不创建无限期 D 状态任务。

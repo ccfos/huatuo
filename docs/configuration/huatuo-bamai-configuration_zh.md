@@ -1345,3 +1345,19 @@ huatuo-bamai --region <region> [选项]
 # 开启主机参与负载计算的 D 状态任务计数，每 Interval 秒采样。
 		# 适用于 cgroup v1/v2，需要主机 PID 可见性、内核 BTF 和 BPF
 		# task iterator，与 v2 容器统计共用遍历；不支持时省略指标。
+
+### trigger host dload independently
+
+#### 7.3 Dload 自动追踪 — 容器与主机 D 状态任务剖析
+# cgroup v2 与主机 dload 共用 BPF task iterator，每次采样遍历宿主机全部任务。
+	# HostThresholdLoad = 5
+- **主机触发**：随 `dload` 启用，独立检测整机 D 状态负载。包含容器线程，
+  不代表仅统计物理机服务。要求启用 `dload`、内核 BTF 可读、支持 BPF `task` iterator、
+  具备 BPF 权限及主机 PID 可见性（Kubernetes 设置 `hostPID: true`）。支持 cgroup v1/v2，
+  内核不支持 iterator 时无法提供主机触发，
+  原有 v1 容器 netlink 路径仍可使用。
+
+- **HostThresholdLoad**：整机 D 状态任务数量的一分钟 EMA 阈值，默认 `5`，
+  超过阈值触发主机堆栈采集，主机独立维护冷却状态，
+  冷却时长使用 `IntervalTracing`。复用 `Interval`（默认 10 秒）采样，
+  不是 `/proc/loadavg` 的 R+D 负载，也不受 `MetricCollector.Loadavg.Interval` 控制。

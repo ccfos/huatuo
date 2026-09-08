@@ -1351,3 +1351,21 @@ Explicit configuration assignments override built-in defaults; comments are not 
 		# Interval seconds. Requires host PID visibility, kernel BTF and the BPF
 		# task iterator; works on cgroup v1/v2. Shares the v2 traversal.
 		# Unsupported systems omit this metric without a procfs fallback.
+
+### trigger host dload independently
+
+#### 7.3 Dload AutoTracing — Container and Host D-State Profiling
+# Cgroup v2 and host dload use a shared BPF task iterator that walks all
+	# HostThresholdLoad = 5
+- **Host trigger**: Runs independently and includes container threads; it is
+  not a host-services-only count.
+  Requires `dload` to be enabled, readable kernel BTF, BPF `task` iterator support,
+  BPF privileges and host PID visibility (`hostPID: true` in Kubernetes).
+  Works on cgroup v1 and v2. Unsupported iterator kernels cannot provide
+  the host trigger; the existing v1 container netlink path remains available.
+
+- **HostThresholdLoad**: Host D-state task count's one-minute EMA threshold.
+  Default: `5`. A value above the threshold triggers
+  host stack capture, subject to a separate host cooldown using `IntervalTracing`.
+  Reuses `Interval` (default 10 seconds); it is not the R+D `/proc/loadavg` value
+  and is independent of `MetricCollector.Loadavg.Interval`.

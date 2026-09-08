@@ -337,3 +337,40 @@ Kubernetes deployments must run Huatuo with `hostPID: true`. Without host PID na
 ### enable v2 load stats for metrics and dload
 
 **Description** Reads container process states through netlink on cgroup v1 and through a batched BPF task iterator on cgroup v2. It computes an exponential weighted moving average (EMA) of the load contribution from uninterruptible (D-state) processes per container. When the EMA exceeds the threshold (default 5), kernel call stacks are collected for all D-state processes inside the container and on the host. Known-issue filtering (`issues_list`) reduces false positives. A 30-minute per-container cooldown applies. The cgroup v2 path walks all host tasks per sample; it requires readable kernel BTF and the BPF `task` iterator. Counts are non-hierarchical and include only tasks directly attached to each target cgroup. When task iterator support is definitively unavailable, the first sample marks `dload` as unsupported and stops this detector without periodic reload attempts. Verifier and other ordinary loading errors are not cached as unsupported; subsequent sampling attempts retry and report the error.
+
+### trigger host dload independently
+
+| Parameter | Default | Description |
+| --------- | ------- | ----------- |
+| `dload.host_threshold_load` | `5` | Host D-state task count's one-minute EMA threshold |
+| `dload.interval_tracing` | `1800` (s) | Independent cooldown for each container and the host trigger |
+| `dload` | Container; whole host | D-state task count's one-minute EMA > 5, with independent thresholds and cooldowns | D-state process accumulation, IO blocking |
+| Feature | Configuration | Implementation |
+| Host `dload` | `HostThresholdLoad=5` | Shared BPF task iterator counts whole-host D-state threads; reuse the existing interval-based EMA and stack capture. Threshold and cooldown state are independent of container triggers. |
+
+Five event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (memory burst allocation).
+
+Host and container triggers run whenever `dload` is enabled. Events retain their existing name and data layout.
+
+Host dload includes container threads; it is not a non-container-only count.
+It requires the same BPF task iterator/BTF/privileges and host PID visibility as
+the existing host D-state metric (upstream iterator foundation: Linux 5.8).
+It works with either cgroup version. On v2, a single iterator snapshot supplies
+both host and container scopes. On unsupported v1 kernels, only the new host trigger stops;
+the existing netlink container path remains. D-load is a sampled estimate,
+not `/proc/loadavg`. Host stacks include threads, not only process leaders.
+Simultaneous host/container threshold crossings produce separate events.
+
+Costs: no new BPF probes/maps. Host dload enables the existing full task walk
+once per sample unless a compatible fresh snapshot is already available.
+
+Validation on the 5.10 test VM: with debug off, a bounded `vfork` worker stays
+in D state until its child exits. A one-second sample and host threshold zero
+produce D=1 and D-load=0.02, trigger independently without container discovery,
+and persist a LocalFile record containing the worker's kernel stack. The existing
+debug capture test also reads the local file rather than accepting an unconfigured
+`Save` as proof. Live tests require `HUATUO_TRIGGER_BPF_DIR`; the normal trigger
+test additionally requires `HUATUO_DLOAD_WORKER_PID`. Use only a disposable VM;
+the fixture must exit on its own and the test never creates an unbounded D task.
+
+Sampling follows `AutoTracing.Dload.Interval` (default 10 seconds), not `MetricCollector.Loadavg.Interval`.
