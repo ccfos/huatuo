@@ -19,7 +19,7 @@ AutoTracing is an event-driven automatic diagnosis mechanism. When a host or con
 
 Collected artifacts include eBPF flame graphs (system-wide or container-scoped CPU call stack samples via `perf`), D-state process kernel call stacks, disk IO call stacks, and process memory usage rankings. Each event type has a built-in cooldown period (30 minutes by default) to prevent redundant data from continuous triggers.
 
-Five event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (memory burst allocation).
+Five event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (host and container memory bursts).
 
 ## 🎯 Use Cases
 
@@ -65,10 +65,10 @@ All events provide default values and work without configuration:
 | `iotracing.max_proc_dump` | `10` | Maximum number of high-IO processes to collect |
 | `iotracing.max_files_per_proc_dump` | `5` | Maximum open files to collect per process |
 | `memburst.delta_memory_burst` | `100` (%) | Anonymous memory growth rate threshold relative to the oldest sample in the sliding window (100% means ≥ 2× triggers) |
-| `memburst.delta_anon_threshold` | `70` (%) | Anonymous memory as a percentage of total host memory threshold |
+| `memburst.delta_anon_threshold` | `70` (%) | Anonymous memory as a percentage of host MemTotal or the effective container limit |
 | `memburst.interval` | `10` (s) | Detection interval |
-| `memburst.interval_tracing` | `1800` (s) | Cooldown period between triggers |
-| `memburst.sliding_window_length` | `60` | Sliding window sample count (corresponding to 600 seconds of history) |
+| `memburst.interval_tracing` | `1800` (s) | Independent host and per-container cooldown periods |
+| `memburst.sliding_window_length` | `60` | Sliding window sample count (590 seconds between the oldest and newest samples at the default interval) |
 | `memburst.dump_process_max_num` | `10` | Maximum number of top memory-consuming processes to collect |
 
 ### Event List
@@ -79,7 +79,7 @@ All events provide default values and work without configuration:
 | `cpuidle` | Container | (user>75% and delta_user>45%) or (sys>45% and delta_sys>20%) or (total>90% and delta_total>55%) | Container CPU spike, hotspot function analysis |
 | `dload` | Container; whole host | D-state task count's one-minute EMA > 5, with independent thresholds and cooldowns | D-state process accumulation, IO blocking |
 | `iotracing` | Host | Any IO metric exceeds threshold for two consecutive samples | Saturated disk IO, high IO wait latency |
-| `memburst` | Host | Anonymous memory ≥ 2× oldest window sample and ≥ 70% of total memory | Memory burst allocation, OOM precursor |
+| `memburst` | Host; container | Anonymous memory ≥ 2× oldest window sample and ≥ 70% of host MemTotal or effective container limit | Memory burst allocation, OOM precursor |
 
 ### Fields
 
@@ -325,7 +325,45 @@ Sampling follows `AutoTracing.Dload.Interval` (default 10 seconds), not `MetricC
 
 ### 5. memburst
 
-**Description** Periodically samples host anonymous memory usage and maintains a sliding window of 60 samples (corresponding to 600 seconds). A trigger fires when current anonymous memory is ≥ 2× the oldest sample in the window and anonymous memory accounts for ≥ 70% of total host memory. On trigger, the top N processes by memory consumption (default 10) are collected, recording their PID, process name, and RSS memory size. A 30-minute cooldown applies.
+**Description** Periodically samples host anonymous memory usage and maintains a sliding window of 60 samples (590 seconds between the oldest and newest samples at the default interval). A trigger fires when current anonymous memory is ≥ 2× the oldest sample in the window and anonymous memory accounts for ≥ 70% of total host memory. On trigger, the top N processes by memory consumption (default 10) are collected, recording their PID, process name, and RSS memory size. A 30-minute cooldown applies.
+
+`memburst` detects container anonymous-memory bursts independently alongside
+host bursts whenever the component is enabled. Reuse `DeltaMemoryBurst`, `DeltaAnonThreshold`,
+`SlidingWindowLength`, `Interval`, `IntervalTracing`, `DumpProcessMaxNum`,
+the window comparison and RSS process ranking. Events remain `memburst` with
+the same data layout and set the corresponding container ID.
+
+Read v1 `total_active_anon + total_inactive_anon`, or v2
+`active_anon + inactive_anon`. The denominator is the smaller of host MemTotal
+and the effective memory limit (v1 `hierarchical_memory_limit`; v2 minimum
+ancestor `memory.max`). Unlimited containers use MemTotal. Anonymous LRU usage,
+like the host baseline, is not total cgroup usage and can include shmem.
+
+Each container has its own history and cooldown. Cooldown starts before saving
+a nonempty snapshot, even if saving fails. Discovery or memory-read failure,
+path or limit change resets history but preserves the cooldown, so a new
+window cannot bypass `IntervalTracing`. State is removed
+when the container disappears from a successful discovery result.
+Snapshots read `cgroup.procs` recursively
+only after a trigger and outside cooldown; RSS ranking need not sum to charged
+cgroup memory. The existing ring compares newest vs oldest retained sample:
+60 samples at 10-second intervals span 590 seconds.
+
+No new BPF probes or maps. Per-interval cost is reading memory counters and
+ancestor limits, with one bounded history ring per live container. Process
+enumeration occurs on triggers. The shared window helper benchmark on the
+development host takes approximately 23 ns/sample with zero allocations;
+this excludes file reads and snapshots and is not an end-to-end overhead claim.
+
+Validation on the 5.10 hybrid test VM: a bounded worker in an isolated 128 MiB
+v1 memory cgroup grew from 8176 to 110596 KiB anonymous LRU. The real counters
+crossed the two-sample test window's doubling/70%-of-limit thresholds, and the
+RSS snapshot included the worker. `TestContainerBurstLiveGrowth` accepts its
+PID via `HUATUO_MEMBURST_WORKER_PID`; it does not create pressure itself.
+This checks counters, threshold logic and snapshots, not kubelet discovery or
+container-event persistence. The VM has no kubelet, so that end-to-end path
+and pure-v2 live memory coverage remain unverified. v2 ancestor-limit behavior
+is covered by fixtures. The live worker and its cgroup were removed afterward.
 
 **Storage** Event data is automatically stored in Elasticsearch or a local disk file.
 

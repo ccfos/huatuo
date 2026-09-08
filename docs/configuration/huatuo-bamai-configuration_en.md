@@ -658,8 +658,7 @@ This module detects sudden memory usage spikes on the host and automatically cap
 # Default: 100%
 #
 # - DeltaAnonThreshold
-# Growth percentage threshold for anonymous memory. 100% means, e.g.,
-# anon memory increased from 200MB to 400MB.
+# Anonymous LRU usage as a percentage of host MemTotal or the container limit.
 # Default: 70%
 #
 # - IntervalTracing
@@ -680,11 +679,26 @@ This module detects sudden memory usage spikes on the host and automatically cap
 	# DumpProcessMaxNum = 10
 ```
 
+- **Container detection**: Independently detects anonymous-memory bursts for
+  discovered normal containers alongside host detection.
+  Requires `memburst` to be enabled, container discovery, readable cgroup v1/v2
+  memory counters and limits, and access to `cgroup.procs` and process RSS for
+  snapshots. No new BPF probes are needed. Reads v1
+  `total_active_anon + total_inactive_anon` or v2 `active_anon + inactive_anon`,
+  not total cgroup usage.
+  Each container has its own window and cooldown, reusing the settings below.
+  At defaults, usage must at least double over the retained window and reach
+  70% of the effective memory limit capped at host MemTotal (unlimited containers
+  use MemTotal). Triggers capture the container's RSS-ranked processes and emit
+  `memburst` with its container ID; they do not require a host burst.
+
 - **DeltaMemoryBurst**: Memory usage burst growth percentage threshold.
 
   Default: 100%.
 
-- **DeltaAnonThreshold**: Anonymous memory burst growth percentage threshold.
+- **DeltaAnonThreshold**: Anonymous LRU usage threshold as a percentage of host
+  MemTotal, or of the effective limit described above for containers; not a
+  growth percentage.
 
   Default: 70%.
 
@@ -696,9 +710,9 @@ This module detects sudden memory usage spikes on the host and automatically cap
 
   Default: 1800s.
 
-- **SlidingWindowLength**: Sliding window length (seconds).
+- **SlidingWindowLength**: Number of retained samples, not seconds.
 
-  Default: 60s.
+  Default: 60. At `Interval = 10`, oldest and newest samples span 590 seconds.
 
 - **DumpProcessMaxNum**: Maximum processes to dump on trigger.
 
