@@ -19,7 +19,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 采集内容包括 eBPF 火焰图（`perf` 工具系统级或容器级 CPU 调用栈采样）、D 状态进程内核调用栈、磁盘 IO 调用栈、进程内存使用排行等。为避免持续触发导致的数据冗余，各事件均内置冷却策略（默认 30 分钟），确保在事件风暴期间仅保留关键快照。
 
-当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器及物理机 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（内存突发分配）。
+当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器及物理机 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（物理机及容器内存突增）。
 
 ## 🎯 场景
 
@@ -65,10 +65,10 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 | `iotracing.max_proc_dump` | `10` | 最多采集的高 IO 进程数 |
 | `iotracing.max_files_per_proc_dump` | `5` | 每个进程最多采集的打开文件数 |
 | `memburst.delta_memory_burst` | `100`（%） | 匿名内存相对滑动窗口最早采样的增长率阈值（100% 即 ≥ 2 倍时触发） |
-| `memburst.delta_anon_threshold` | `70`（%） | 匿名内存占物理机总内存的比例阈值 |
+| `memburst.delta_anon_threshold` | `70`（%） | 匿名内存占物理机 MemTotal 或容器有效内存限制的比例阈值 |
 | `memburst.interval` | `10`（秒） | 检测间隔 |
-| `memburst.interval_tracing` | `1800`（秒） | 触发冷却时间 |
-| `memburst.sliding_window_length` | `60` | 滑动窗口采样数（对应 600 秒历史数据） |
+| `memburst.interval_tracing` | `1800`（秒） | 物理机与各容器分别独立冷却 |
+| `memburst.sliding_window_length` | `60` | 滑动窗口采样数（默认间隔下首尾相隔 590 秒） |
 | `memburst.dump_process_max_num` | `10` | 最多采集的内存消耗进程数 |
 
 ### 事件列表
@@ -79,7 +79,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 | `cpuidle` | 容器 | (user>75% 且 delta_user>45%) 或 (sys>45% 且 delta_sys>20%) 或 (total>90% 且 delta_total>55%) | 容器 CPU 使用率突增、热点函数分析 |
 | `dload` | 容器；整机 | D 状态任务数的一分钟 EMA > 5，阈值与冷却独立 | D 状态进程堆积、IO 阻塞 |
 | `iotracing` | 物理机 | 磁盘 IO 指标连续两次超阈值 | 磁盘 IO 打满、IO 等待高延迟 |
-| `memburst` | 物理机 | 匿名内存 ≥ 窗口最早值 2 倍且占总内存 ≥ 70% | 内存突发分配、OOM 前兆 |
+| `memburst` | 物理机；容器 | 匿名内存 ≥ 窗口最早值 2 倍且占物理机 MemTotal 或容器有效内存限制 ≥ 70% | 内存突发分配、OOM 前兆 |
 
 ### 通用字段说明
 
@@ -304,7 +304,17 @@ Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机
 
 ### 5. memburst
 
-**功能描述** 周期性采样物理机匿名内存（anonymous memory）使用量，维护长度为 60 个采样点（对应 600 秒）的滑动窗口。当当前匿名内存 ≥ 窗口最早采样值的 2 倍，且匿名内存占物理机总内存 ≥ 70% 时触发，采集内存消耗最多的前 N 个进程（默认 10 个）的 PID、进程名和 RSS 内存值。默认 30 分钟冷却。
+**功能描述** 周期性采样物理机匿名内存（anonymous memory）使用量，维护长度为 60 个采样点（默认间隔下首尾相隔 590 秒）的滑动窗口。当当前匿名内存 ≥ 窗口最早采样值的 2 倍，且匿名内存占物理机总内存 ≥ 70% 时触发，采集内存消耗最多的前 N 个进程（默认 10 个）的 PID、进程名和 RSS 内存值。默认 30 分钟冷却。
+
+`memburst` 启用后独立检测主机和容器匿名内存突增，复用 `DeltaMemoryBurst`、`DeltaAnonThreshold`、`SlidingWindowLength`、`Interval`、`IntervalTracing`、`DumpProcessMaxNum`、窗口比较及 RSS 进程排行。事件仍为 `memburst`，数据结构不变，容器事件填写对应容器 ID，无需主机先触发。
+
+v1 读取 `total_active_anon + total_inactive_anon`，v2 读取 `active_anon + inactive_anon`。比例分母取主机 MemTotal 与有效内存限制的较小值：v1 使用 `hierarchical_memory_limit`，v2 使用各级祖先 `memory.max` 的最小值；无限制时使用 MemTotal。与主机口径一致，匿名 LRU 不是 cgroup 总内存用量，也可能包含 shmem。
+
+各容器独立维护历史窗口与冷却。生成非空快照后、写入存储前开始冷却，存储失败也不会绕过冷却。容器发现或内存读取失败、路径或限制变化时重置历史，但保留冷却；成功发现结果中已消失的容器会清理状态。仅在触发且不处于冷却时递归读取 `cgroup.procs`。RSS 排行之和不必等于 cgroup 计费内存。环形窗口比较最新与最旧保留样本：60 个样本、10 秒间隔，首尾相隔 590 秒。
+
+不增加 BPF 探针或 map。每轮读取内存计数器和祖先限制，每个存活容器保留一个有界历史环；仅触发时遍历进程。开发机共享窗口函数基准约 23 ns/样本、零分配，不包含文件读取和快照开销，不能作为端到端开销结论。
+
+验证范围：5.10 hybrid 测试虚拟机中，隔离的 128 MiB v1 内存 cgroup 内有界 worker 的匿名 LRU 从 8176 增至 110596 KiB，真实计数跨过两样本测试窗口的翻倍和限制占比 70% 阈值，RSS 快照包含该 worker。`TestContainerBurstLiveGrowth` 通过 `HUATUO_MEMBURST_WORKER_PID` 接收 PID，不自行制造压力。已验证计数器、阈值与快照，未验证 kubelet 发现及容器事件持久化；虚拟机无 kubelet，端到端路径及纯 v2 实机内存场景仍未验证。v2 祖先限制由 fixture 覆盖；测试 worker 和 cgroup 已清理。
 
 **数据存储** 事件数据自动存储至 Elasticsearch 或物理机磁盘文件。
 
