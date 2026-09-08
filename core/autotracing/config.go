@@ -85,6 +85,10 @@ type Config struct {
 	}
 
 	CPUSys struct {
+		UserThreshold         int64 `default:"0"`
+		UsageThreshold        int64 `default:"0"`
+		DeltaUserThreshold    int64 `default:"0"`
+		DeltaUsageThreshold   int64 `default:"0"`
 		SysThreshold          int64 `default:"45"`
 		DeltaSysThreshold     int64 `default:"20"`
 		Interval              int64 `default:"10"`
@@ -143,6 +147,9 @@ func configSnapshot() *Config {
 
 // Validate rejects invalid autotracing settings.
 func (c *Config) Validate() error {
+	if err := c.validateCPUSysAdditionalThresholds(); err != nil {
+		return err
+	}
 	if err := c.validateDloadHostThreshold(); err != nil {
 		return err
 	}
@@ -211,6 +218,23 @@ func (c *Config) Clone() *Config {
 func (c *Config) validateDloadHostThreshold() error {
 	if c.Dload.HostThresholdLoad < 0 {
 		return errors.New("dload host threshold must be non-negative")
+	}
+	return nil
+}
+
+func (c *Config) validateCPUSysAdditionalThresholds() error {
+	for _, threshold := range []struct {
+		name  string
+		value int64
+	}{
+		{"UserThreshold", c.CPUSys.UserThreshold},
+		{"DeltaUserThreshold", c.CPUSys.DeltaUserThreshold},
+		{"UsageThreshold", c.CPUSys.UsageThreshold},
+		{"DeltaUsageThreshold", c.CPUSys.DeltaUsageThreshold},
+	} {
+		if err := validateCPUPercentage(threshold.value); err != nil {
+			return fmt.Errorf("CPUSys.%s: %w", threshold.name, err)
+		}
 	}
 	return nil
 }

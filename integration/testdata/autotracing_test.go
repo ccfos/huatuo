@@ -22,7 +22,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,6 +33,7 @@ import (
 	"github.com/ccfos/huatuo/core/autotracing"
 	"github.com/ccfos/huatuo/internal/bpf"
 	cgroupV2 "github.com/ccfos/huatuo/internal/cgroups/v2"
+	internalconfig "github.com/ccfos/huatuo/internal/config"
 	"github.com/ccfos/huatuo/internal/document"
 	_ "github.com/ccfos/huatuo/internal/storage/localfile"
 	"github.com/ccfos/huatuo/internal/tracing"
@@ -44,10 +47,16 @@ func liveTracer(t *testing.T, name string) interface {
 } {
 	t.Helper()
 	cfg := &autotracing.Config{}
+	cfg.CPUSys.Interval = 1
+	cfg.CPUSys.IntervalTracing = 180
+	cfg.CPUSys.RunTracingToolTimeout = 1
+	cfg.CPUSys.SysThreshold, cfg.CPUSys.DeltaSysThreshold = 100, 100
+	cfg.CPUSys.UserThreshold, cfg.CPUSys.DeltaUserThreshold = 1, 1
+	cfg.CPUSys.UsageThreshold, cfg.CPUSys.DeltaUsageThreshold = 1, 1
 	cfg.Dload.Interval, cfg.Dload.IntervalTracing = 1, 180
 	cfg.Dload.HostThresholdLoad, cfg.Dload.ThresholdLoad = 1, 5
 	autotracing.Set(cfg)
-	registry, err := tracing.NewRegister([]string{"cpuidle", "cpusys", "iotracing", "memburst"})
+	registry, err := tracing.NewRegister([]string{"cpuidle", "iotracing", "memburst"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +132,68 @@ func initDloadLiveBPF(t *testing.T) {
 			t.Error(err)
 		}
 	})
+}
+
+func TestCPUHostLiveTrigger(t *testing.T) {
+	dir := os.Getenv("HUATUO_CPU_LIVE_DIR")
+	if dir == "" {
+		t.Skip("set HUATUO_CPU_LIVE_DIR to a test VM directory with perf and perf.o")
+	}
+	previousBin, previousBPF := internalconfig.CoreBinDir, internalconfig.CoreBpfDir
+	internalconfig.CoreBinDir, internalconfig.CoreBpfDir = dir, dir
+	defer func() { internalconfig.CoreBinDir, internalconfig.CoreBpfDir = previousBin, previousBPF }()
+	store := liveStore(t, "cpusys")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	raw, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range max(1, (strings.Count(string(raw), "\ncpu")+7)/8) {
+		worker := exec.CommandContext(ctx, "/bin/sh", "-c", "sleep 3; while :; do :; done")
+		if err := worker.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { cancel(); _ = worker.Wait() })
+	}
+	c := liveTracer(t, "cpusys")
+
+	done := make(chan struct{})
+	var runErr error
+	go func() { runErr = c.Start(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			t.Fatalf("CPU tracer stopped before persistence: %v", runErr)
+		case <-ctx.Done():
+			t.Fatal("no persisted CPU trigger before timeout")
+		case <-ticker.C:
+			docs, err := store()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(docs) == 0 {
+				continue
+			}
+			if len(docs) != 1 {
+				t.Fatalf("duplicate CPU captures: %d", len(docs))
+			}
+			doc := docs[0]
+			data := doc.TracerData.(map[string]any)
+			reasons := data["trigger_reasons"].([]any)
+			if doc.TracerName != "cpusys" || doc.ContainerID != "" ||
+				!slices.Contains(reasons, any("user")) || !slices.Contains(reasons, any("total")) ||
+				len(data["flamedata"].([]any)) == 0 {
+				t.Fatalf("unexpected live CPU trace: %+v", doc)
+			}
+			t.Logf("real /proc/stat -> user+total trigger -> perf -> local file: user=%v total=%v flame roots=%d",
+				data["user_percent"], data["total_percent"], len(data["flamedata"].([]any)))
+			return
+		}
+	}
 }
 
 // The caller supplies a bounded D-state worker in a disposable VM. Debug mode
