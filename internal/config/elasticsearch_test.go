@@ -75,6 +75,38 @@ func TestElasticsearchConfigValidate(t *testing.T) {
 			wantEnabled: true,
 			wantError:   `invalid address "127.0.0.1:9200"`,
 		},
+		{
+			name: "out of range port",
+			config: ElasticsearchConfig{
+				Address:  "http://127.0.0.1:99999",
+				Index:    "huatuo_bamai",
+				Username: "elastic",
+				Password: "secret",
+			},
+			wantEnabled: true,
+			wantError:   `invalid address "http://127.0.0.1:99999"`,
+		},
+		{
+			name: "non-numeric port",
+			config: ElasticsearchConfig{
+				Address:  "http://127.0.0.1:es",
+				Index:    "huatuo_bamai",
+				Username: "elastic",
+				Password: "secret",
+			},
+			wantEnabled: true,
+			wantError:   `invalid address "http://127.0.0.1:es"`,
+		},
+		{
+			name: "ipv6 without explicit port",
+			config: ElasticsearchConfig{
+				Address:  "http://[::1]",
+				Index:    "huatuo_bamai",
+				Username: "elastic",
+				Password: "secret",
+			},
+			wantEnabled: true,
+		},
 	}
 
 	for _, tt := range tests {
