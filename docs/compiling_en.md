@@ -63,8 +63,25 @@ go install capnproto.org/go/capnp/v3/capnpc-go@v3.1.0-alpha.2
 ```
 
 #### 3.2 Build
+
 ```bash
 $ make
+```
+
+The default build downloads the pinned Linux glibc Memray bundle for the build
+architecture. The bundle contains runtimes for CPython 3.7 through 3.14 and
+does not require a local Python interpreter or Memray build dependencies.
+
+To download and install only the Memray bundle, run:
+
+```bash
+make prep-memray-bundle
+```
+
+To use a previously downloaded release archive, set its path explicitly:
+
+```bash
+MEMRAY_BUNDLE_ARCHIVE=/path/to/memray-huatuo.tar.gz make prep-memray-bundle
 ```
 
 ### 4. BPF Debug Build
