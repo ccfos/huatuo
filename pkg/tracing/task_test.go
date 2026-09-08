@@ -107,6 +107,47 @@ func TestRunTaskCommandLimitsCombinedOutput(t *testing.T) {
 	}
 }
 
+func TestRunTaskCommandKillsOutputLimitedProcess(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable() error = %v", err)
+	}
+
+	type result struct {
+		output []byte
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		output, err := runTaskCommand(t.Context(), exe, []string{
+			"-test.run=^TestNoisySleepHelperProcess$",
+			"--",
+			"noisy-sleep-helper",
+		}, 1024)
+		resultCh <- result{output: output, err: err}
+	}()
+
+	select {
+	case res := <-resultCh:
+		if !errors.Is(res.err, ErrTaskOutputLimitExceeded) {
+			t.Fatalf("runTaskCommand() error = %v, want ErrTaskOutputLimitExceeded", res.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runTaskCommand() did not kill the output-limited process promptly")
+	}
+}
+
+func TestNoisySleepHelperProcess(t *testing.T) {
+	for _, arg := range os.Args {
+		if arg == "noisy-sleep-helper" {
+			_, _ = os.Stdout.WriteString(strings.Repeat("x", 8192))
+			time.Sleep(time.Hour)
+			return
+		}
+	}
+	t.Skip("helper process only")
+}
+
 func TestNewTaskWithIDIsIdempotent(t *testing.T) {
 	clearTaskCache()
 	t.Cleanup(clearTaskCache)

@@ -101,15 +101,26 @@ var (
 )
 
 type boundedBuffer struct {
-	buffer   bytes.Buffer
-	limit    int
-	exceeded bool
+	mu         sync.Mutex
+	buffer     bytes.Buffer
+	limit      int
+	exceeded   bool
+	onExceeded func()
 }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.exceeded {
+		return 0, ErrTaskOutputLimitExceeded
+	}
 	remaining := b.limit - b.buffer.Len()
 	if remaining <= 0 {
 		b.exceeded = true
+		if b.onExceeded != nil {
+			b.onExceeded()
+		}
 		return 0, ErrTaskOutputLimitExceeded
 	}
 	if len(p) <= remaining {
@@ -117,14 +128,21 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	}
 	n, _ := b.buffer.Write(p[:remaining])
 	b.exceeded = true
+	if b.onExceeded != nil {
+		b.onExceeded()
+	}
 	return n, ErrTaskOutputLimitExceeded
 }
 
 func (b *boundedBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.buffer.Bytes()
 }
 
 func (b *boundedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.buffer.String()
 }
 
@@ -298,8 +316,11 @@ func runTask(ctx context.Context, task *task) {
 }
 
 func runTaskCommand(ctx context.Context, binary string, args []string, limit int) ([]byte, error) {
-	output := &boundedBuffer{limit: limit}
-	cmd := exec.CommandContext(ctx, binary, args...)
+	outputCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	output := &boundedBuffer{limit: limit, onExceeded: cancel}
+	cmd := exec.CommandContext(outputCtx, binary, args...)
 	cmd.Stdout = output
 	cmd.Stderr = output
 	err := cmd.Run()
