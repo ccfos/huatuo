@@ -428,7 +428,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
   默认无规则，监控所有容器。
 
-#### 7.2 CPUSys 自动追踪 — 宿主机突发高系统 CPU 使用场景
+#### 7.2 CPUSys 自动追踪 — 宿主机 CPU 突增
 
 ```bash
 # cpusys
@@ -458,9 +458,13 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 #
 # NOTE:
 # Running this performance tool, when:
-# SysThreshold and DeltaSysThreshold are true.
+# Both thresholds of any trigger are exceeded (system, user or total).
 #
 [AutoTracing.CPUSys]
+	# UserThreshold = 0
+	# DeltaUserThreshold = 0
+	# UsageThreshold = 0
+	# DeltaUsageThreshold = 0
 	# SysThreshold = 45
 	# DeltaSysThreshold = 20
 	# Interval = 10
@@ -484,7 +488,19 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 
 - **RunTracingToolTimeout**：单次追踪执行超时时间（秒）。默认 10s。
 
-**触发逻辑**：当 SysThreshold 与 DeltaSysThreshold 同时满足时触发。
+| 可选配置项 | 默认值 | 范围与行为 |
+| --- | --- | --- |
+| `UserThreshold` | `0`（%） | 0 关闭 user 触发，正值启用；用户态使用率须超过此值。 |
+| `DeltaUserThreshold` | `0`（百分点） | 用户态使用率相较上一采样区间的增幅也须超过此值。 |
+| `UsageThreshold` | `0`（%） | 0 关闭 total 触发，正值启用；实际执行 CPU 使用率须超过此值。 |
+| `DeltaUsageThreshold` | `0`（百分点） | 实际执行 CPU 使用率相较上一采样区间的增幅也须超过此值。 |
+
+**触发逻辑与前提**：须启用 `cpusys`、可读取主机 `/proc/stat`，且现有整机 perf
+采集工具及其所需权限可用。每种触发条件都要求使用率与正向增幅同时超过对应阈值，
+任意一种命中即可触发。三种条件共用采集流程与 `IntervalTracing` 冷却时间，
+同时命中不会重复采集。使用率按整机 CPU 时间计算，包含容器工作量，不按容器配额归一化。
+未配置 user/total 时，保持原有仅 system 触发的行为。四个新增阈值均须在 [0, 100] 范围内。
+显式启用示例（使用率/增幅）：user 75/45，total 90/55。
 
 #### 7.3 Dload 自动追踪 — 容器与主机 D 状态任务剖析
 
