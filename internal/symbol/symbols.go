@@ -49,8 +49,8 @@ type stackFrames struct {
 var errELFSymbolLimit = errors.New("ELF symbol resource limit exceeded")
 
 // ELFSymbolLimits bounds resources used while parsing one ELF.
-// MaxMetadataBytes also bounds ELF opening and cumulative string decompression
-// independently. MaxSymbolCount also caps retained exact-PC results.
+// MaxMetadataBytes covers symbol metadata and cumulative string decompression.
+// MaxSymbolCount also caps retained exact-PC results.
 type ELFSymbolLimits struct {
 	MaxMetadataBytes uint64
 	MaxSymbolCount   uint64
@@ -270,14 +270,13 @@ var elfSymbolTables = [...]elfSymbolTable{
 }
 
 type elfSymbolParseState struct {
-	limits             ELFSymbolLimits
-	metadataBytes      uint64
-	symbolCount        uint64
-	nameBytes          uint64
-	decompressionBytes uint64
-	metadataSections   map[elfSectionKey]struct{}
-	indexes            map[elfSectionKey][]elfSymbolCandidate
-	names              map[elfSectionKey]map[uint32]string
+	limits           ELFSymbolLimits
+	metadataBytes    uint64
+	symbolCount      uint64
+	nameBytes        uint64
+	metadataSections map[elfSectionKey]struct{}
+	indexes          map[elfSectionKey][]elfSymbolCandidate
+	names            map[elfSectionKey]map[uint32]string
 }
 
 type elfSectionKey struct {
@@ -326,6 +325,8 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable
 		return nil, err
 	}
 
+	// Open updates legacy .zdebug sizes before budget checks and cache keys.
+	stringsSection.Open()
 	symbolSize, metadataBytes, symbolCount, err := state.checkSymbolLimits(f, section, stringsSection, len(pcs) == 0)
 	if err != nil {
 		return nil, err
@@ -353,8 +354,11 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable
 	if len(pcs) > 0 {
 		candidates = selectELFSymbolCandidates(index, pcs)
 	}
+	// Reserve pending metadata so decompression shares the same total budget.
+	state.metadataBytes += metadataBytes
 	result, nameBytes, pendingNamesByOffset, err := materializeELFSymbolCandidates(stringsSection, candidates, state)
 	if err != nil {
+		state.metadataBytes -= metadataBytes
 		return nil, err
 	}
 	// Publish the index only after names and resource accounting succeed. A
@@ -364,7 +368,6 @@ func (state *elfSymbolParseState) parseSource(f *elf.File, source elfSymbolTable
 	}
 	cachedNames := state.names[stringsID]
 
-	state.metadataBytes += metadataBytes
 	state.symbolCount += symbolCount
 	state.nameBytes += nameBytes
 	state.metadataSections[sectionID] = struct{}{}
@@ -480,63 +483,60 @@ func materializeELFSymbolCandidates(stringsSection *elf.Section, candidates []el
 	var nameBytes uint64
 	result := make(symbols, 0, len(candidates))
 	for _, matched := range candidates {
-		name, charged, err := resolveCandidateName(stringsSection, matched.nameOffset, cachedNames, pendingNamesByOffset, state, nameBytes)
-		if err != nil {
-			return nil, 0, nil, err
+		name, ok := cachedNames[matched.nameOffset]
+		if !ok {
+			name, ok = pendingNamesByOffset[matched.nameOffset]
 		}
-		nameBytes += charged
+		if !ok {
+			var err error
+			name, err = state.resolveCandidateName(stringsSection, matched.nameOffset, nameBytes)
+			if err != nil {
+				return nil, 0, nil, err
+			}
+			pendingNamesByOffset[matched.nameOffset] = name
+			nameBytes += uint64(len(name))
+		}
 		result = append(result, &symbol{Addr: matched.value, Size: matched.size, Name: name})
 	}
 	return result, nameBytes, pendingNamesByOffset, nil
 }
 
-func resolveCandidateName(stringsSection *elf.Section, nameOffset uint32, cachedNames, pendingNamesByOffset map[uint32]string, state *elfSymbolParseState, nameBytes uint64) (string, uint64, error) {
-	name, ok := cachedNames[nameOffset]
-	if !ok {
-		name, ok = pendingNamesByOffset[nameOffset]
+func (state *elfSymbolParseState) resolveCandidateName(
+	stringsSection *elf.Section, nameOffset uint32, nameBytes uint64,
+) (string, error) {
+	reader := stringsSection.Open()
+	if uint64(nameOffset) >= stringsSection.Size {
+		return "", fmt.Errorf("symbol name offset %d exceeds string table size %d", nameOffset, stringsSection.Size)
 	}
-	if !ok {
-		if uint64(nameOffset) >= stringsSection.Size {
-			return "", 0, fmt.Errorf("symbol name offset %d exceeds string table size %d", nameOffset, stringsSection.Size)
+	remainingNameBytes := state.limits.MaxNameBytes - state.nameBytes - nameBytes
+	if isCompressedELFSection(stringsSection) {
+		remainingWork := state.limits.MaxMetadataBytes - state.metadataBytes
+		if stringsSection.Size > remainingWork {
+			return "", fmt.Errorf("%w: expanded string table exceeds the remaining %d-byte metadata budget", errELFSymbolLimit, remainingWork)
 		}
-		remainingNameBytes := state.limits.MaxNameBytes - state.nameBytes - nameBytes
-		if isCompressedELFSection(stringsSection) {
-			remainingWork := state.limits.MaxMetadataBytes - state.decompressionBytes
-			if stringsSection.Size > remainingWork {
-				return "", 0, fmt.Errorf("%w: expanded string table exceeds the remaining %d-byte decompression budget", errELFSymbolLimit, remainingWork)
-			}
-			// Charge the entire expanded stream before opening it. Seek and
-			// decoder read-ahead consume work even if reading the name fails.
-			state.decompressionBytes += stringsSection.Size
-		}
-		maxNameLength := state.limits.MaxNameLength
-		if maxNameLength == 0 || maxNameLength > remainingNameBytes {
-			maxNameLength = remainingNameBytes
-		}
-		var err error
-		name, err = readELFSymbolName(stringsSection, nameOffset, maxNameLength)
-		if err != nil {
-			return "", 0, err
-		}
-		pendingNamesByOffset[nameOffset] = name
-		return name, uint64(len(name)), nil
+		// Charge before seeking: decoder read-ahead consumes work even when
+		// the name read fails, so this charge is not rolled back.
+		state.metadataBytes += stringsSection.Size
 	}
-	return name, 0, nil
+	maxNameLength := state.limits.MaxNameLength
+	if maxNameLength == 0 || maxNameLength > remainingNameBytes {
+		maxNameLength = remainingNameBytes
+	}
+	return readELFSymbolName(reader, stringsSection.Size, nameOffset, maxNameLength)
 }
 
 func isCompressedELFSection(section *elf.Section) bool {
 	return section.Flags&elf.SHF_COMPRESSED != 0 || strings.HasPrefix(section.Name, ".zdebug")
 }
 
-func readELFSymbolName(section *elf.Section, offset uint32, limit uint64) (string, error) {
+func readELFSymbolName(reader io.ReadSeeker, size uint64, offset uint32, limit uint64) (string, error) {
 	if limit >= math.MaxInt64 {
 		return "", fmt.Errorf("%w: symbol name limit is too large", errELFSymbolLimit)
 	}
-	reader := section.Open()
 	if _, err := reader.Seek(int64(offset), io.SeekStart); err != nil {
 		return "", fmt.Errorf("seek symbol name at offset %d: %w", offset, err)
 	}
-	available := section.Size - uint64(offset)
+	available := size - uint64(offset)
 	readLimit := min(available, limit+1)
 	bufferSize := int(min(readLimit, maxELFSymbolNameBufferSize))
 	name, err := bufio.NewReaderSize(io.LimitReader(reader, int64(readLimit)), bufferSize).ReadBytes(0)

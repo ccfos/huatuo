@@ -508,13 +508,14 @@ func TestElfSymbols(t *testing.T) {
 }
 
 type elf64SymbolTableFixture struct {
-	typ          elf.SectionType
-	stringTable  []byte
-	nameOffsets  []uint32
-	symbolTypes  []elf.SymType
-	symbolValues []uint64
-	symbolSizes  []uint64
-	compressed   bool
+	typ              elf.SectionType
+	stringTable      []byte
+	nameOffsets      []uint32
+	symbolTypes      []elf.SymType
+	symbolValues     []uint64
+	symbolSizes      []uint64
+	compressed       bool
+	legacyCompressed bool
 }
 
 func alignUp(value, alignment int) int {
@@ -564,7 +565,7 @@ func elf64SymbolImage(t *testing.T, tables ...elf64SymbolTableFixture) []byte {
 			t.Fatal("ELF fixture symbol types must match name offsets")
 		}
 		encodedStrings := table.stringTable
-		if table.compressed {
+		if table.compressed || table.legacyCompressed {
 			var compressed bytes.Buffer
 			writer := zlib.NewWriter(&compressed)
 			if _, err := writer.Write(table.stringTable); err != nil {
@@ -574,6 +575,10 @@ func elf64SymbolImage(t *testing.T, tables ...elf64SymbolTableFixture) []byte {
 				t.Fatal(err)
 			}
 			encodedStrings = append(encodeELFStruct(t, elf.Chdr64{Type: uint32(elf.COMPRESS_ZLIB), Size: uint64(len(table.stringTable)), Addralign: 1}), compressed.Bytes()...)
+			if table.legacyCompressed {
+				encodedStrings = append([]byte("ZLIB"), binary.BigEndian.AppendUint64(nil, uint64(len(table.stringTable)))...)
+				encodedStrings = append(encodedStrings, compressed.Bytes()...)
+			}
 		}
 		stringsOffset := offset
 		offset = alignUp(offset+len(encodedStrings), 8)
@@ -1000,7 +1005,7 @@ func TestELFCompressedStringWorkIsCumulative(t *testing.T) {
 		nameOffsets: []uint32{100, 106},
 	})
 	limits := DefaultELFSymbolLimits()
-	limits.MaxMetadataBytes = 150
+	limits.MaxMetadataBytes = 3*elf.Sym64Size + 113
 	tiny := limits
 	tiny.MaxMetadataBytes = 80
 	if _, err := newELFSymbolParseState(tiny).parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1011); !errors.Is(err, errELFSymbolLimit) {
@@ -1013,7 +1018,7 @@ func TestELFCompressedStringWorkIsCumulative(t *testing.T) {
 	if _, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1011); !errors.Is(err, errELFSymbolLimit) {
 		t.Fatalf("second decompression: got %v, want limit error", err)
 	}
-	if state.decompressionBytes > limits.MaxMetadataBytes {
+	if state.metadataBytes != limits.MaxMetadataBytes {
 		t.Fatal("decompression exceeded cumulative budget")
 	}
 	// A cached name does not require another decompression.
@@ -1022,48 +1027,55 @@ func TestELFCompressedStringWorkIsCumulative(t *testing.T) {
 	}
 }
 
-func TestELFPreflightRejectsHostileMetadata(t *testing.T) {
-	image := elf64SymbolImage(t, elf64SymbolTableFixture{typ: elf.SHT_SYMTAB, stringTable: []byte("\x00name\x00"), nameOffsets: []uint32{1}})
+func TestELFLegacyCompressedStringOffsetsAndBudget(t *testing.T) {
+	const nameOffset = 4096
+	stringsData := append(make([]byte, nameOffset), []byte("target\x00")...)
+	image := elf64SymbolImage(t,
+		elf64SymbolTableFixture{
+			typ: elf.SHT_SYMTAB, legacyCompressed: true,
+			stringTable: stringsData, nameOffsets: []uint32{nameOffset},
+		},
+		elf64SymbolTableFixture{
+			typ:         elf.SHT_DYNSYM,
+			stringTable: []byte("\x00.zdebug_str\x00"), nameOffsets: []uint32{1},
+		},
+	)
 	var header elf.Header64
 	if err := binary.Read(bytes.NewReader(image), binary.LittleEndian, &header); err != nil {
 		t.Fatal(err)
 	}
-	t.Run("header-count", func(t *testing.T) {
-		input := bytes.Clone(image)
-		h := header
-		h.Shnum = 60000
-		copy(input, encodeELFStruct(t, h))
-		if err := preflightELF(bytes.NewReader(input), uint64(len(input)), 4096); !errors.Is(err, errELFSymbolLimit) {
-			t.Fatalf("header count: %v", err)
+	header.Shstrndx = 3
+	copy(image, encodeELFStruct(t, header))
+	binary.LittleEndian.PutUint32(image[header.Shoff+uint64(header.Shentsize):], 1)
+	for _, budgetDelta := range []uint64{0, 1} {
+		f, err := elf.NewFile(bytes.NewReader(image))
+		if err != nil {
+			t.Fatal(err)
 		}
-	})
-	t.Run("compressed-section-names", func(t *testing.T) {
-		input := bytes.Clone(image)
-		h := header
-		h.Shstrndx = 1
-		copy(input, encodeELFStruct(t, h))
-		section := elf.Section64{Type: uint32(elf.SHT_STRTAB), Flags: uint64(elf.SHF_COMPRESSED), Off: uint64(len(input)), Size: uint64(binary.Size(elf.Chdr64{}))}
-		copy(input[h.Shoff+uint64(h.Shentsize):], encodeELFStruct(t, section))
-		input = append(input, encodeELFStruct(t, elf.Chdr64{Type: uint32(elf.COMPRESS_ZLIB), Size: 1 << 32})...)
-		if err := preflightELF(bytes.NewReader(input), uint64(len(input)), 4096); !errors.Is(err, errELFSymbolLimit) {
-			t.Fatalf("expanded section names: %v", err)
+		t.Cleanup(func() { f.Close() })
+		if f.Sections[1].Size >= nameOffset {
+			t.Fatal("fixture name offset must exceed compressed size")
 		}
-	})
-	t.Run("repeated-section-names", func(t *testing.T) {
-		input := bytes.Clone(image)
-		h := header
-		h.Shstrndx = 1
-		copy(input, encodeELFStruct(t, h))
-		names := append([]byte{0}, bytes.Repeat([]byte{'x'}, 1498)...)
-		names = append(names, 0)
-		section := elf.Section64{Name: 1, Type: uint32(elf.SHT_STRTAB), Off: uint64(len(input)), Size: uint64(len(names))}
-		copy(input[h.Shoff+uint64(h.Shentsize):], encodeELFStruct(t, section))
-		binary.LittleEndian.PutUint32(input[h.Shoff+2*uint64(h.Shentsize):], 1)
-		input = append(input, names...)
-		if err := preflightELF(bytes.NewReader(input), uint64(len(input)), 4096); !errors.Is(err, errELFSymbolLimit) {
-			t.Fatalf("repeated section-name copies: %v", err)
+		limits := DefaultELFSymbolLimits()
+		limits.MaxMetadataBytes = 2*elf.Sym64Size + uint64(len(stringsData)) - budgetDelta
+		state := newELFSymbolParseState(limits)
+		got, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1001)
+		if budgetDelta != 0 {
+			if !errors.Is(err, errELFSymbolLimit) || len(got) != 0 {
+				t.Fatalf("insufficient shared budget: got %v, err %v", got, err)
+			}
+			continue
 		}
-	})
+		if err != nil || len(got) != 1 || got[0].Name != "target" {
+			t.Fatalf("legacy expanded offset: got %v, err %v", got, err)
+		}
+		if state.metadataBytes != limits.MaxMetadataBytes {
+			t.Fatalf("shared budget: got %d, want %d", state.metadataBytes, limits.MaxMetadataBytes)
+		}
+		if _, err := state.parseSource(f, elfSymbolTable{typ: elf.SHT_SYMTAB}, 0x1002); err != nil {
+			t.Fatalf("cached legacy name: %v", err)
+		}
+	}
 }
 
 func TestELFPCResultCacheIsBoundedAcrossBatches(t *testing.T) {
