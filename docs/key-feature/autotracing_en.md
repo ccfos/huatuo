@@ -19,7 +19,7 @@ AutoTracing is an event-driven automatic diagnosis mechanism. When a host or con
 
 Collected artifacts include eBPF flame graphs (system-wide or container-scoped CPU call stack samples via `perf`), D-state process kernel call stacks, disk IO call stacks, and process memory usage rankings. Each event type has a built-in cooldown period (30 minutes by default) to prevent redundant data from continuous triggers.
 
-Five event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (host and container memory bursts).
+Five event types are supported: `cpusys` (host CPU sys spike, user/total CPU spikes), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (host and container memory bursts).
 
 ## 🎯 Use Cases
 
@@ -50,6 +50,10 @@ All events provide default values and work without configuration:
 | `cpuidle.run_tracing_tool_timeout` | `10` (s) | perf flame graph collection timeout |
 | `cpusys.sys_threshold` | `45` (%) | Host CPU sys utilization trigger threshold |
 | `cpusys.delta_sys_threshold` | `20` (%) | Host CPU sys utilization delta trigger threshold |
+| `cpusys.user_threshold` | `0` (%) | User utilization threshold; 0 disables the user trigger |
+| `cpusys.delta_user_threshold` | `0` (percentage points) | User utilization increase threshold |
+| `cpusys.usage_threshold` | `0` (%) | Total executing CPU utilization threshold; 0 disables the total trigger |
+| `cpusys.delta_usage_threshold` | `0` (percentage points) | Total executing CPU utilization increase threshold |
 | `cpusys.interval` | `10` (s) | Detection interval |
 | `cpusys.interval_tracing` | `1800` (s) | Global cooldown period between triggers |
 | `cpusys.run_tracing_tool_timeout` | `10` (s) | perf flame graph collection timeout |
@@ -73,9 +77,11 @@ All events provide default values and work without configuration:
 
 ### Event List
 
+Host dload and container memburst run whenever their corresponding tracer is enabled and prerequisites are met. The additional cpusys user/total triggers also require a positive `UserThreshold`/`UsageThreshold`, respectively; both default to disabled. Table parameter names are shorthand; use the TOML keys in the [configuration reference](../configuration/huatuo-bamai-configuration_en.md).
+
 | Event Name (tracer_name) | Target | Trigger Condition | Typical Scenario |
 | ------------------------ | ------ | ----------------- | ---------------- |
-| `cpusys` | Host | sys > 45% and delta_sys > 20% | Kernel-mode CPU spike, syscall hotspot |
+| `cpusys` | Host | Default: sys > 45% and delta_sys > 20%. Optional user/total triggers require both utilization and its increase to exceed their configured thresholds. | Host CPU spikes and hotspots |
 | `cpuidle` | Container | (user>75% and delta_user>45%) or (sys>45% and delta_sys>20%) or (total>90% and delta_total>55%) | Container CPU spike, hotspot function analysis |
 | `dload` | Container; whole host | D-state task count's one-minute EMA > 5, with independent thresholds and cooldowns | D-state process accumulation, IO blocking |
 | `iotracing` | Host | Any IO metric exceeds threshold for two consecutive samples | Saturated disk IO, high IO wait latency |
@@ -102,6 +108,52 @@ All event records include the following common fields:
 ### 1. cpusys
 
 **Description** Periodically reads `/proc/stat` to calculate host CPU sys utilization and the delta between consecutive samples. When sys utilization exceeds the threshold (default 45%) and the delta exceeds its threshold (default 20%), a system-wide perf sampling run is triggered to generate a full-host CPU flame graph. A 30-minute global cooldown prevents repeated triggers.
+
+`cpusys` can additionally trigger on host user CPU or total executing CPU.
+It reuses the existing `/proc/stat` sampling loop, system-wide `perf` capture
+and `cpusys` storage record. No new tracer, probe or periodic reader is added.
+
+```toml
+[AutoTracing.CPUSys]
+UserThreshold = 75
+DeltaUserThreshold = 45
+UsageThreshold = 90
+DeltaUsageThreshold = 55
+```
+
+Existing system thresholds, sampling interval, capture duration and cooldown
+remain unchanged. The four user/total thresholds default to 0; a positive
+`UserThreshold` or `UsageThreshold` enables the corresponding trigger, as in
+the example above. Omitted settings preserve system-only triggering.
+Each trigger requires both the percentage and its increase from the
+previous interval to **exceed** their thresholds. This detects bursts, not every
+case of sustained high usage. The first percentage sample establishes a baseline.
+
+All percentages use the delta of aggregate CPU time as their denominator:
+
+| Trigger | Numerator |
+| --- | --- |
+| Existing system | `system` |
+| User | `user + nice` |
+| Total executing | `user + nice + system + irq + softirq` |
+
+The denominator sums the first eight `/proc/stat` CPU counters. Guest time is
+already included in user/nice and is not counted twice. Idle, iowait and steal
+are excluded from total executing time: local on-CPU profiling cannot explain
+waiting or time stolen by a hypervisor. This is whole-machine utilization,
+including container work, not a container's quota-normalized utilization.
+
+All three triggers share one capture and cooldown. Simultaneous crossings do
+not run perf repeatedly. `container_id` stays empty. Existing system JSON fields
+are preserved. Records also include `user_percent*`, `total_percent*` and
+`trigger_reasons` (`user`, `total`, `system`); zero-valued additional fields are omitted.
+
+Verification: unit tests cover counter calculations, rollback, defaults,
+trigger combinations, threshold boundaries and cooldown. LocalFile integration
+tests check payload persistence. `TestCPUHostLiveTrigger`, enabled only by
+`HUATUO_CPU_LIVE_DIR`, runs a bounded one-process workload and checks the real
+sampling → perf → LocalFile path. That directory must contain this build's `perf`
+executable and `perf.o`; run only in a test VM with BPF/perf privileges.
 
 **Storage** Event data is automatically stored in Elasticsearch or a local disk file.
 

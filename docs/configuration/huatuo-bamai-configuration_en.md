@@ -440,7 +440,7 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
   Default: no rules, all containers monitored.
 
-#### 7.2 CPUSys Automatic Tracing — Sudden High System CPU on Host
+#### 7.2 CPUSys Automatic Tracing — Host CPU Bursts
 
 ```bash
 # cpusys
@@ -470,9 +470,13 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 #
 # NOTE:
 # Profiling triggers when:
-# SysThreshold AND DeltaSysThreshold are exceeded.
+# Both thresholds of any trigger are exceeded (system, user or total).
 #
 [AutoTracing.CPUSys]
+	# UserThreshold = 0
+	# DeltaUserThreshold = 0
+	# UsageThreshold = 0
+	# DeltaUsageThreshold = 0
 	# SysThreshold = 45
 	# DeltaSysThreshold = 20
 	# Interval = 10
@@ -498,7 +502,22 @@ The automatic tracing module is one of HUATUO’s intelligent features. It trigg
 
   Default: 10s.
 
-**Trigger Logic**: Tracing is triggered when both SysThreshold and DeltaSysThreshold are satisfied.
+| Optional key | Default | Scope and behavior |
+| --- | --- | --- |
+| `UserThreshold` | `0` (%) | Zero disables the user trigger; a positive value enables it. User CPU percentage must exceed this value. |
+| `DeltaUserThreshold` | `0` (percentage points) | User CPU increase over the previous interval must also exceed this value. |
+| `UsageThreshold` | `0` (%) | Zero disables the total trigger; a positive value enables it. Executing CPU percentage must exceed this value. |
+| `DeltaUsageThreshold` | `0` (percentage points) | Executing CPU increase over the previous interval must also exceed this value. |
+
+**Trigger logic and prerequisites**: `cpusys` must be enabled, host `/proc/stat`
+must be readable, and the existing system-wide perf capture must be available
+with the required privileges. Each trigger requires both its percentage
+and positive increase to exceed the corresponding thresholds. Any matching
+trigger can start the shared capture; all three share `IntervalTracing` and do
+not launch duplicate captures for simultaneous crossings. Percentages include
+container work and use aggregate host CPU time, not container quotas. Omitted
+user/total settings preserve system-only triggering. All four new thresholds
+must be in [0, 100]. Example opt-in pairs (usage/delta): user 75/45, total 90/55.
 
 #### 7.3 Dload AutoTracing — Container and Host D-State Profiling
 
