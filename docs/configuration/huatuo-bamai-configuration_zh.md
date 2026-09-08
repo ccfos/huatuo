@@ -641,8 +641,7 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 # Default: 100%
 #
 # - DeltaAnonThreshold
-# A certain percentage of anon memory burst used. 100% that means, e.g.,
-# anon memory used increased from 200MB to 400MB.
+# Anonymous LRU usage as a percentage of host MemTotal or the container limit.
 # Default: 70%
 #
 # - IntervalTracing
@@ -663,15 +662,26 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
 	# DumpProcessMaxNum = 10
 ```
 
+- **容器检测**：随 `memburst` 启用，对已发现的普通容器独立检测匿名内存突增。
+  保留原主机检测。要求启用 `memburst`、容器发现可用、可读取 cgroup v1/v2
+  内存统计与限制，以及快照所需的 `cgroup.procs` 和进程 RSS；不新增 BPF 探针。
+  v1 读取 `total_active_anon + total_inactive_anon`，v2 读取
+  `active_anon + inactive_anon`，不是 cgroup 总内存使用量。各容器独立维护窗口和
+  冷却状态，复用下列配置。默认要求窗口内用量至少翻倍，且达到有效内存上限的 70%；
+  有效上限不超过主机 MemTotal，无限制容器使用 MemTotal。
+  触发后采集容器内按 RSS 排序的进程快照，输出携带容器 ID 的 `memburst`，
+  不需要主机同时发生内存突增。
+
 - **DeltaMemoryBurst**：内存使用量突发增长百分比阈值。
 
   默认 100%。 表示内存使用量在采样窗口内增长的比例（例如从 200MB 增长到 400MB 即 100%）。达到该阈值时可能触发内存突发追踪。 
 
   **说明**：用于捕获整体内存使用量的急剧上升场景。
 
-- **DeltaAnonThreshold**：匿名页内存突发增长百分比阈值。
+- **DeltaAnonThreshold**：匿名 LRU 用量占主机 MemTotal 或上述容器有效上限的比例阈值，
+  不是增长比例。
 
-  默认 70%。 匿名内存（anonymous memory）增长比例阈值，匿名页是内存压力诊断的重要指标。 
+  默认 70%。与 `DeltaMemoryBurst` 增长条件同时满足时才触发。
 
   **说明**：重点监控易导致 OOM 或 swap 的匿名内存突发。
 
@@ -692,6 +702,9 @@ cgroup 设置等仅在启动阶段读取的配置会被持久化，但需重启 
   默认 10。 当内存突发事件触发时，最多转储多少个相关进程的详细信息（包括内存占用、调用栈等）。
 
   **说明**：控制输出数据量，避免单次事件产生过多诊断信息。
+
+- **SlidingWindowLength**：保留的采样点数，不是秒数，默认 `60`。
+  `Interval = 10` 时，最早与最新采样点相隔 590 秒。
 
 #### 7.6 已知问题过滤（IssuesList）
 
