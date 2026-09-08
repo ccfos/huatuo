@@ -15,6 +15,7 @@
 package autotracing
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"sync/atomic"
@@ -92,10 +93,11 @@ type Config struct {
 	}
 
 	Dload struct {
-		ThresholdLoad   int64 `default:"5"`
-		Interval        int64 `default:"10"`
-		IntervalTracing int64 `default:"1800"`
-		EnableDebug     bool  `default:"false"`
+		HostThresholdLoad int64 `default:"5"`
+		ThresholdLoad     int64 `default:"5"`
+		Interval          int64 `default:"10"`
+		IntervalTracing   int64 `default:"1800"`
+		EnableDebug       bool  `default:"false"`
 	}
 
 	IOTracing struct {
@@ -141,6 +143,9 @@ func configSnapshot() *Config {
 
 // Validate rejects invalid autotracing settings.
 func (c *Config) Validate() error {
+	if err := c.validateDloadHostThreshold(); err != nil {
+		return err
+	}
 	if err := matcher.ValidateClassifications(c.IssuesList); err != nil {
 		return fmt.Errorf("validating issues list: %w", err)
 	}
@@ -201,4 +206,11 @@ func (c *Config) Clone() *Config {
 		dst.CPUIdle.Filter = &filter
 	}
 	return &dst
+}
+
+func (c *Config) validateDloadHostThreshold() error {
+	if c.Dload.HostThresholdLoad < 0 {
+		return errors.New("dload host threshold must be non-negative")
+	}
+	return nil
 }

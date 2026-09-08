@@ -19,7 +19,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 
 采集内容包括 eBPF 火焰图（`perf` 工具系统级或容器级 CPU 调用栈采样）、D 状态进程内核调用栈、磁盘 IO 调用栈、进程内存使用排行等。为避免持续触发导致的数据冗余，各事件均内置冷却策略（默认 30 分钟），确保在事件风暴期间仅保留关键快照。
 
-当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（内存突发分配）。
+当前支持 5 类事件：`cpusys`（物理机 CPU sys 突增）、`cpuidle`（容器 CPU 使用率突增）、`dload`（容器及物理机 D 状态负载突增）、`iotracing`（磁盘 IO 异常）、`memburst`（内存突发分配）。
 
 ## 🎯 场景
 
@@ -54,8 +54,9 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 | `cpusys.interval_tracing` | `1800`（秒） | 全局触发冷却时间 |
 | `cpusys.run_tracing_tool_timeout` | `10`（秒） | perf 火焰图采集超时 |
 | `dload.threshold_load` | `5` | 容器不可中断进程负载 EMA 触发阈值 |
+| `dload.host_threshold_load` | `5` | 物理机 D 状态任务数的一分钟 EMA 阈值 |
 | `dload.interval` | `10`（秒） | 检测间隔 |
-| `dload.interval_tracing` | `1800`（秒） | 同一容器触发冷却时间 |
+| `dload.interval_tracing` | `1800`（秒） | 各容器与物理机触发分别独立冷却 |
 | `iotracing.rbps_threshold` | `2000`（MB/s） | 磁盘读吞吐率触发阈值 |
 | `iotracing.wbps_threshold` | `1500`（MB/s） | 磁盘写吞吐率触发阈值 |
 | `iotracing.util_threshold` | `90`（%） | 磁盘 IO 利用率触发阈值 |
@@ -76,7 +77,7 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 | ----------------------- | -------- | -------- | -------- |
 | `cpusys` | 物理机 | sys > 45% 且 delta_sys > 20% | 内核态 CPU 突增、系统调用热点 |
 | `cpuidle` | 容器 | (user>75% 且 delta_user>45%) 或 (sys>45% 且 delta_sys>20%) 或 (total>90% 且 delta_total>55%) | 容器 CPU 使用率突增、热点函数分析 |
-| `dload` | 容器 | 不可中断进程负载 EMA > 5 | D 状态进程堆积、IO 阻塞 |
+| `dload` | 容器；整机 | D 状态任务数的一分钟 EMA > 5，阈值与冷却独立 | D 状态进程堆积、IO 阻塞 |
 | `iotracing` | 物理机 | 磁盘 IO 指标连续两次超阈值 | 磁盘 IO 打满、IO 等待高延迟 |
 | `memburst` | 物理机 | 匿名内存 ≥ 窗口最早值 2 倍且占总内存 ≥ 70% | 内存突发分配、OOM 前兆 |
 
@@ -181,6 +182,14 @@ HUATUO AutoTracing（全自动化追踪）是一种事件驱动的自动诊断�
 **功能描述** cgroup v1 通过 netlink 读取容器内进程状态；cgroup v2 通过 BPF task iterator 批量读取。随后对不可中断（D 状态）进程的负载贡献进行指数加权移动平均（EMA）计算。当容器 D 状态负载 EMA 超过阈值（默认 5）时，采集容器内及宿主机中所有 D 状态进程的内核调用栈，支持已知问题过滤（`issues_list`）降低误报率。同一容器默认 30 分钟冷却。cgroup v2 路径每次采样都会遍历一次宿主机全部任务，它要求内核 BTF 可读并支持 BPF `task` iterator。统计为非层级统计，只包含直接挂在目标 cgroup 下的任务，不递归包含子 cgroup。内核不支持或 verifier 不兼容时，首次采样会将 `dload` 标记为不支持并停止该检测项，且不会周期性重试加载。
 
 Kubernetes 部署必须为 Huatuo 设置 `hostPID: true`。无法访问宿主机 PID namespace 时，cgroup v2 dload 会被标记为不支持，而不是返回有误导性的全零计数。
+
+`dload` 启用后独立检测包含容器线程的整机 D 状态负载，不是仅统计非容器任务。`HostThresholdLoad` 默认 5，主机一分钟 D 状态 EMA 超过阈值后抓取堆栈，与容器触发分别维护阈值和冷却；事件名和数据结构不变。
+
+主机路径在 cgroup v1/v2 下均复用已有 BPF task iterator，需要内核 BTF、BPF 权限及宿主机 PID 可见性（上游 iterator 基础支持始于 Linux 5.8）。v2 的一次 iterator 快照同时提供主机和容器统计；不支持 iterator 的 v1 内核只停止主机触发，保留原 netlink 容器路径。D-load 是采样估计值，不是 `/proc/loadavg`；主机堆栈覆盖线程，不限于进程组长。主机与容器同时越线时分别输出事件。
+
+采样遵循 `AutoTracing.Dload.Interval`（默认 10 秒），不使用 `MetricCollector.Loadavg.Interval`。不增加 BPF 探针或 map；除可复用兼容的新鲜快照外，每次采样遍历一次主机任务。
+
+验证范围：5.10 测试虚拟机中，有界 `vfork` worker 在子进程退出前保持 D 状态。关闭 debug、采样间隔设为 1 秒、主机阈值设为 0 时，采集到 D=1、D-load=0.02，无需容器发现即可独立触发，并在 LocalFile 本地文件中确认包含 worker 内核堆栈的记录。debug 抓取测试也读取本地文件，不将未配置的 `Save` 当作持久化证据。实机测试需要 `HUATUO_TRIGGER_BPF_DIR`，正常触发测试另需 `HUATUO_DLOAD_WORKER_PID`。仅在可丢弃的虚拟机运行，fixture 必须自行退出，不创建无限期 D 状态任务。
 
 **数据存储** 事件数据自动存储至 Elasticsearch 或物理机磁盘文件。
 

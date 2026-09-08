@@ -19,7 +19,7 @@ AutoTracing is an event-driven automatic diagnosis mechanism. When a host or con
 
 Collected artifacts include eBPF flame graphs (system-wide or container-scoped CPU call stack samples via `perf`), D-state process kernel call stacks, disk IO call stacks, and process memory usage rankings. Each event type has a built-in cooldown period (30 minutes by default) to prevent redundant data from continuous triggers.
 
-Five event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container D-state load spike), `iotracing` (disk IO anomaly), and `memburst` (memory burst allocation).
+Five event types are supported: `cpusys` (host CPU sys spike), `cpuidle` (container CPU usage spike), `dload` (container and host D-state load spikes), `iotracing` (disk IO anomaly), and `memburst` (memory burst allocation).
 
 ## 🎯 Use Cases
 
@@ -54,8 +54,9 @@ All events provide default values and work without configuration:
 | `cpusys.interval_tracing` | `1800` (s) | Global cooldown period between triggers |
 | `cpusys.run_tracing_tool_timeout` | `10` (s) | perf flame graph collection timeout |
 | `dload.threshold_load` | `5` | Container D-state process load EMA trigger threshold |
+| `dload.host_threshold_load` | `5` | Host D-state task count's one-minute EMA threshold |
 | `dload.interval` | `10` (s) | Detection interval |
-| `dload.interval_tracing` | `1800` (s) | Per-container cooldown period between triggers |
+| `dload.interval_tracing` | `1800` (s) | Independent cooldown for each container and the host trigger |
 | `iotracing.rbps_threshold` | `2000` (MB/s) | Disk read throughput trigger threshold |
 | `iotracing.wbps_threshold` | `1500` (MB/s) | Disk write throughput trigger threshold |
 | `iotracing.util_threshold` | `90` (%) | Disk IO utilization trigger threshold |
@@ -76,7 +77,7 @@ All events provide default values and work without configuration:
 | ------------------------ | ------ | ----------------- | ---------------- |
 | `cpusys` | Host | sys > 45% and delta_sys > 20% | Kernel-mode CPU spike, syscall hotspot |
 | `cpuidle` | Container | (user>75% and delta_user>45%) or (sys>45% and delta_sys>20%) or (total>90% and delta_total>55%) | Container CPU spike, hotspot function analysis |
-| `dload` | Container | D-state process load EMA > 5 | D-state process accumulation, IO blocking |
+| `dload` | Container; whole host | D-state task count's one-minute EMA > 5, with independent thresholds and cooldowns | D-state process accumulation, IO blocking |
 | `iotracing` | Host | Any IO metric exceeds threshold for two consecutive samples | Saturated disk IO, high IO wait latency |
 | `memburst` | Host | Anonymous memory ≥ 2× oldest window sample and ≥ 70% of total memory | Memory burst allocation, OOM precursor |
 
@@ -181,6 +182,35 @@ All event records include the following common fields:
 **Description** Reads container process states through netlink on cgroup v1 and through a batched BPF task iterator on cgroup v2. It computes an exponential weighted moving average (EMA) of the load contribution from uninterruptible (D-state) processes per container. When the EMA exceeds the threshold (default 5), kernel call stacks are collected for all D-state processes inside the container and on the host. Known-issue filtering (`issues_list`) reduces false positives. A 30-minute per-container cooldown applies. The cgroup v2 path walks all host tasks per sample; it requires readable kernel BTF and the BPF `task` iterator. Counts are non-hierarchical and include only tasks directly attached to each target cgroup. On unsupported or verifier-incompatible kernels, the first sample marks `dload` as unsupported and stops this detector without periodically retrying the BPF load.
 
 Kubernetes deployments must run Huatuo with `hostPID: true`. Without host PID namespace visibility, cgroup v2 dload is reported as unsupported instead of returning misleading zero counts.
+
+| Feature | Configuration | Implementation |
+| --- | --- | --- |
+| Host `dload` | `HostThresholdLoad=5` | Shared BPF task iterator counts whole-host D-state threads; reuse the existing interval-based EMA and stack capture. Threshold and cooldown state are independent of container triggers. |
+
+Host and container triggers run whenever `dload` is enabled. Events retain their existing name and data layout.
+
+Host dload includes container threads; it is not a non-container-only count.
+It requires the same BPF task iterator/BTF/privileges and host PID visibility as
+the existing host D-state metric (upstream iterator foundation: Linux 5.8).
+It works with either cgroup version. On v2, a single iterator snapshot supplies
+both host and container scopes. On unsupported v1 kernels, only the new host trigger stops;
+the existing netlink container path remains. D-load is a sampled estimate,
+not `/proc/loadavg`. Host stacks include threads, not only process leaders.
+Simultaneous host/container threshold crossings produce separate events.
+
+Costs: no new BPF probes/maps. Host dload enables the existing full task walk
+once per sample unless a compatible fresh snapshot is already available.
+
+Validation on the 5.10 test VM: with debug off, a bounded `vfork` worker stays
+in D state until its child exits. A one-second sample and host threshold zero
+produce D=1 and D-load=0.02, trigger independently without container discovery,
+and persist a LocalFile record containing the worker's kernel stack. The existing
+debug capture test also reads the local file rather than accepting an unconfigured
+`Save` as proof. Live tests require `HUATUO_TRIGGER_BPF_DIR`; the normal trigger
+test additionally requires `HUATUO_DLOAD_WORKER_PID`. Use only a disposable VM;
+the fixture must exit on its own and the test never creates an unbounded D task.
+
+Sampling follows `AutoTracing.Dload.Interval` (default 10 seconds), not `MetricCollector.Loadavg.Interval`.
 
 **Storage** Event data is automatically stored in Elasticsearch or a local disk file.
 
