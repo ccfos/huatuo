@@ -289,6 +289,79 @@ func TestNewAuthMiddleware(t *testing.T) {
 	}
 }
 
+func TestNewTokenAuthMiddleware(t *testing.T) {
+	httpGin.SetMode(httpGin.TestMode)
+	authenticator := authn.NewTokenAuthenticator([]string{"node-secret"})
+	tests := []struct {
+		name           string
+		path           string
+		authHeader     string
+		wantStatus     int
+		wantHandlerRun bool
+	}{
+		{
+			name:           "public path",
+			path:           "/readyz",
+			wantStatus:     http.StatusNoContent,
+			wantHandlerRun: true,
+		},
+		{
+			name:       "missing bearer token",
+			path:       "/v1/operations/job-1",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "invalid bearer token",
+			path:       "/v1/operations/job-1",
+			authHeader: "Bearer other-secret",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:           "valid bearer token",
+			path:           "/v1/operations/job-1",
+			authHeader:     "Bearer node-secret",
+			wantStatus:     http.StatusNoContent,
+			wantHandlerRun: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := httpGin.New()
+			var handlerRan bool
+			var principalFound bool
+			middleware := wrapHandler(newTokenAuthMiddleware(
+				authenticator,
+				[]string{"/readyz"},
+			))
+			handler := wrapHandler(func(ctx *Context) {
+				handlerRan = true
+				_, principalFound = authn.PrincipalFromContext(ctx.Request().Context())
+				ctx.Status(http.StatusNoContent)
+			})
+			engine.GET("/readyz", middleware, handler)
+			engine.GET("/v1/operations/:id", middleware, handler)
+
+			request := httptest.NewRequest(http.MethodGet, tt.path, http.NoBody)
+			if tt.authHeader != "" {
+				request.Header.Set("Authorization", tt.authHeader)
+			}
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, request)
+
+			if recorder.Code != tt.wantStatus {
+				t.Errorf("response status = %d, want %d", recorder.Code, tt.wantStatus)
+			}
+			if handlerRan != tt.wantHandlerRun {
+				t.Errorf("handler executed = %v, want %v", handlerRan, tt.wantHandlerRun)
+			}
+			if principalFound {
+				t.Error("token authentication stored a Principal")
+			}
+		})
+	}
+}
+
 func TestNewAuthMiddlewarePublicRecursiveWildcardBoundary(t *testing.T) {
 	httpGin.SetMode(httpGin.TestMode)
 	svc := newTestAuthService()

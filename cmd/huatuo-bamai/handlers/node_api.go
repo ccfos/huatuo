@@ -24,7 +24,6 @@ import (
 
 	apiv1 "huatuo-bamai/apis/v1"
 	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/nodeagent/operation"
 	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
 	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
@@ -33,8 +32,6 @@ import (
 	profilingdomain "huatuo-bamai/pkg/profiling"
 	tracingdomain "huatuo-bamai/pkg/tracing"
 )
-
-const nodePrincipalID = "apiserver"
 
 type profilingOperationService interface {
 	Start(
@@ -63,9 +60,6 @@ func (h *NodeAPIHandler) StartOperation(
 	ctx context.Context,
 	request nodeapi.StartOperationRequestObject,
 ) (nodeapi.StartOperationResponseObject, error) {
-	if err := requireNodePrincipal(ctx); err != nil {
-		return nil, err
-	}
 	switch request.Body.Kind {
 	case nodeapi.OperationKindProfiling:
 		spec, err := request.Body.Spec.AsProfilingOperationSpec()
@@ -113,9 +107,6 @@ func (h *NodeAPIHandler) GetOperation(
 	ctx context.Context,
 	request nodeapi.GetOperationRequestObject,
 ) (nodeapi.GetOperationResponseObject, error) {
-	if err := requireNodePrincipal(ctx); err != nil {
-		return nil, err
-	}
 	snapshot, err := h.operationManager.GetByID(request.RequestID)
 	if err != nil {
 		return nil, nodeAPIError(fmt.Errorf("get operation: %w", err))
@@ -129,9 +120,6 @@ func (h *NodeAPIHandler) StopOperation(
 	ctx context.Context,
 	request nodeapi.StopOperationRequestObject,
 ) (nodeapi.StopOperationResponseObject, error) {
-	if err := requireNodePrincipal(ctx); err != nil {
-		return nil, err
-	}
 	snapshot, initiated, err := h.operationManager.StopByID(request.RequestID)
 	if err != nil {
 		return nil, nodeAPIError(fmt.Errorf("stop operation: %w", err))
@@ -184,14 +172,6 @@ func (h *NodeAPIHandler) GetOpenAPI(
 	nodeapi.GetOpenAPIRequestObject,
 ) (nodeapi.GetOpenAPIResponseObject, error) {
 	return h.openAPI, nil
-}
-
-func requireNodePrincipal(ctx context.Context) error {
-	principal, ok := auth.PrincipalFromContext(ctx)
-	if !ok || principal.ID != nodePrincipalID {
-		return response.NewAPIError(apiv1.ErrorCodeUnauthenticated, "valid service credentials are required")
-	}
-	return nil
 }
 
 func profilingOperationRequest(

@@ -75,18 +75,7 @@ func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFun
 
 		user, err := svc.service.AuthenticateBearer(ctx.Request().Header.Get("Authorization"))
 		if err != nil {
-			ctx.Header("WWW-Authenticate", "Bearer")
-			message := authn.ErrInvalidBearerToken.Error()
-			if errors.Is(err, authn.ErrMissingBearerToken) {
-				message = authn.ErrMissingBearerToken.Error()
-			}
-			response.ErrorWithCode(
-				ctx,
-				ctx.ErrorStatusMapper(),
-				response.ErrUnauthorized.Code,
-				message,
-			)
-			ctx.Abort()
+			rejectBearerToken(ctx, err)
 			return
 		}
 		if matchesAnyPath(svc, adminPaths, path) && !user.IsAdmin {
@@ -114,6 +103,40 @@ func NewAuthMiddleware(svc *authService, pathSets ...[]string) HandlerContextFun
 		ctx.c.Request = ctx.c.Request.WithContext(authn.WithPrincipal(ctx.Request().Context(), user))
 		ctx.Next()
 	}
+}
+
+func newTokenAuthMiddleware(
+	authenticator *authn.TokenAuthenticator,
+	publicPaths []string,
+) HandlerContextFunc {
+	return func(ctx *Context) {
+		if authn.MatchesAnyPath(publicPaths, ctx.Request().URL.Path) {
+			ctx.Next()
+			return
+		}
+		if err := authenticator.AuthenticateBearer(
+			ctx.Request().Header.Get("Authorization"),
+		); err != nil {
+			rejectBearerToken(ctx, err)
+			return
+		}
+		ctx.Next()
+	}
+}
+
+func rejectBearerToken(ctx *Context, err error) {
+	ctx.Header("WWW-Authenticate", "Bearer")
+	message := authn.ErrInvalidBearerToken.Error()
+	if errors.Is(err, authn.ErrMissingBearerToken) {
+		message = authn.ErrMissingBearerToken.Error()
+	}
+	response.ErrorWithCode(
+		ctx,
+		ctx.ErrorStatusMapper(),
+		response.ErrUnauthorized.Code,
+		message,
+	)
+	ctx.Abort()
 }
 
 func matchesAnyPath(_ *authService, patterns []string, path string) bool {

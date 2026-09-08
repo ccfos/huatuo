@@ -22,7 +22,6 @@ import (
 
 	apiv1 "huatuo-bamai/apis/v1"
 	nodeapi "huatuo-bamai/apis/v1/node"
-	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/nodeagent/operation"
 	nodeprofiling "huatuo-bamai/internal/nodeagent/profiling"
 	nodetracing "huatuo-bamai/internal/nodeagent/tracing"
@@ -56,11 +55,6 @@ func (s *stubTracingOperations) Start(
 	nodetracing.StartRequest,
 ) (*operation.Operation, bool, error) {
 	return s.operation, s.created, s.err
-}
-
-func nodeRequestContext(t *testing.T) context.Context {
-	t.Helper()
-	return auth.WithPrincipal(t.Context(), auth.Principal{ID: nodePrincipalID})
 }
 
 func newTestOperationManager(t *testing.T) *operation.Manager {
@@ -116,7 +110,7 @@ func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 	}
 
 	got, err := handler.StartOperation(
-		nodeRequestContext(t),
+		t.Context(),
 		nodeapi.StartOperationRequestObject{Body: body},
 	)
 	if err != nil {
@@ -132,7 +126,7 @@ func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 
 	profiling.created = false
 	got, err = handler.StartOperation(
-		nodeRequestContext(t),
+		t.Context(),
 		nodeapi.StartOperationRequestObject{Body: body},
 	)
 	if err != nil {
@@ -140,25 +134,6 @@ func TestStartOperationReturnsAcceptedOnlyForNewOperation(t *testing.T) {
 	}
 	if _, ok := got.(nodeapi.StartOperation200JSONResponse); !ok {
 		t.Fatalf("idempotent StartOperation() response type = %T, want HTTP 200", got)
-	}
-}
-
-func TestNodeAPIRequiresServicePrincipal(t *testing.T) {
-	handler, err := NewNodeAPIHandler(
-		newTestOperationManager(t),
-		&stubProfilingOperations{},
-		&stubTracingOperations{},
-	)
-	if err != nil {
-		t.Fatalf("NewNodeAPIHandler() error = %v", err)
-	}
-	_, err = handler.GetOperation(
-		t.Context(),
-		nodeapi.GetOperationRequestObject{RequestID: "job-1"},
-	)
-	var apiErr *response.APIError
-	if !errors.As(err, &apiErr) || apiErr.Code != apiv1.ErrorCodeUnauthenticated {
-		t.Fatalf("GetOperation() error = %v", err)
 	}
 }
 
@@ -182,7 +157,7 @@ func TestStartOperationTracingReportsNotImplemented(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("set tracing spec: %v", err)
 	}
-	_, err = handler.StartOperation(nodeRequestContext(t), nodeapi.StartOperationRequestObject{Body: body})
+	_, err = handler.StartOperation(t.Context(), nodeapi.StartOperationRequestObject{Body: body})
 	var apiErr *response.APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != nodeapi.ErrorCodeServiceNotImplemented {
 		t.Fatalf("StartOperation() error = %v", err)

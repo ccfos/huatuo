@@ -83,13 +83,12 @@ type TerminalResult struct {
 	Message string
 }
 
-
 // Operation is an immutable snapshot returned by Manager.
 type Operation struct {
 	RequestID  string
 	Kind       Kind
 	Status     Status
-	Terminal *TerminalResult
+	Terminal   *TerminalResult
 	CreatedAt  time.Time
 	StartedAt  *time.Time
 	FinishedAt *time.Time

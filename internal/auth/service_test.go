@@ -54,6 +54,36 @@ func TestServiceAuthenticateBearer(t *testing.T) {
 	}
 }
 
+func TestTokenAuthenticatorAuthenticateBearer(t *testing.T) {
+	t.Parallel()
+
+	authenticator := NewTokenAuthenticator([]string{"node-secret"})
+	tests := []struct {
+		name    string
+		header  string
+		wantErr error
+	}{
+		{name: "valid", header: "Bearer node-secret"},
+		{name: "case insensitive scheme", header: "bearer node-secret"},
+		{name: "missing", wantErr: ErrMissingBearerToken},
+		{name: "wrong scheme", header: "Basic node-secret", wantErr: ErrMissingBearerToken},
+		{name: "empty token", header: "Bearer ", wantErr: ErrMissingBearerToken},
+		{name: "invalid", header: "Bearer other-secret", wantErr: ErrInvalidBearerToken},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := authenticator.AuthenticateBearer(tt.header)
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestServiceAuthenticateReturnsCopy(t *testing.T) {
 	t.Parallel()
 

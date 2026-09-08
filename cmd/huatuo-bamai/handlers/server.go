@@ -72,11 +72,7 @@ func newHTTPServer(opts *ServerOptions, nodeHandler *NodeAPIHandler) (*server.Se
 			Burst:             200,
 		},
 		EnableRetry: true,
-		AuthUsers: []server.UserConfig{{
-			ID:          nodePrincipalID,
-			BearerToken: opts.BearerToken,
-			Permissions: []string{"/**"},
-		}},
+		AuthTokens:  []string{opts.BearerToken},
 		PublicPaths: []string{
 			"/openapi.json",
 			"/readyz",

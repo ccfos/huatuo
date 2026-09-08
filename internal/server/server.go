@@ -45,6 +45,7 @@ type Config struct {
 	EnablePProf       bool
 	RateLimit         *RateLimitConfig
 	EnableRetry       bool
+	AuthTokens        []string
 	AuthUsers         []UserConfig
 	PublicPaths       []string
 	AdminPaths        []string

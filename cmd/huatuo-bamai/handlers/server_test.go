@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-func TestReadinessRouteIsPublicOnNodeRouter(t *testing.T) {
+func TestNodeRouterTokenAuthentication(t *testing.T) {
 	nodeHandler, err := NewNodeAPIHandler(
 		newTestOperationManager(t),
 		&stubProfilingOperations{},
@@ -55,21 +55,54 @@ func TestReadinessRouteIsPublicOnNodeRouter(t *testing.T) {
 		}
 	})
 
-	request, err := http.NewRequestWithContext(
-		t.Context(),
-		http.MethodGet,
-		"http://"+addr+"/readyz",
-		http.NoBody,
-	)
+	tests := []struct {
+		name       string
+		path       string
+		token      string
+		wantStatus int
+	}{
+		{name: "public readiness", path: "/readyz", wantStatus: http.StatusNoContent},
+		{
+			name:       "missing token",
+			path:       "/v1/operations/job-1",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "invalid token",
+			path:       "/v1/operations/job-1",
+			token:      "other-secret",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "valid token",
+			path:       "/v1/operations/job-1",
+			token:      "node-secret",
+			wantStatus: http.StatusNotFound,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status := nodeRequestStatus(t, "http://"+addr+tt.path, tt.token)
+			if status != tt.wantStatus {
+				t.Fatalf("GET %s status = %d, want %d", tt.path, status, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func nodeRequestStatus(t *testing.T, url, token string) int {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
 	if err != nil {
 		t.Fatalf("NewRequestWithContext() error = %v", err)
 	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
-		t.Fatalf("GET /readyz error = %v", err)
+		t.Fatalf("GET %s error = %v", url, err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusNoContent {
-		t.Fatalf("GET /readyz status = %d, want %d", response.StatusCode, http.StatusNoContent)
-	}
+	return response.StatusCode
 }

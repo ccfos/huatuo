@@ -22,6 +22,7 @@ import (
 	"time"
 
 	v1 "huatuo-bamai/apis/v1"
+	"huatuo-bamai/internal/auth"
 	"huatuo-bamai/internal/log"
 	"huatuo-bamai/internal/server/response"
 
@@ -40,12 +41,19 @@ func buildMiddlewareChain(cfg *Config) []httpGin.HandlerFunc {
 	if cfg.PromReg != nil {
 		chain = append(chain, newHTTPMetricsMiddleware(cfg.PromReg))
 	}
+	publicPaths := append(
+		[]string{"/metrics", "/version"},
+		cfg.PublicPaths...,
+	)
+	if len(cfg.AuthTokens) > 0 {
+		authenticator := auth.NewTokenAuthenticator(cfg.AuthTokens)
+		chain = append(
+			chain,
+			wrapHandler(newTokenAuthMiddleware(authenticator, publicPaths)),
+		)
+	}
 	if len(cfg.AuthUsers) > 0 {
 		authService := NewAuthService(cfg.AuthUsers)
-		publicPaths := append(
-			[]string{"/metrics", "/version"},
-			cfg.PublicPaths...,
-		)
 		adminPaths := append(
 			[]string{"/debug/pprof", "/debug/pprof/**"},
 			cfg.AdminPaths...,
