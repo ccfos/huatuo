@@ -128,7 +128,7 @@ func TestNewUsymResolver(t *testing.T) {
 	if resolver == nil {
 		t.Fatalf("NewUsymResolver(): got nil resolver")
 	}
-	if resolver.exeCache == nil || resolver.libcaches == nil || resolver.procmaps == nil || resolver.names == nil {
+	if resolver.exeCache == nil || resolver.libCaches == nil || resolver.procmaps == nil || resolver.names == nil {
 		t.Errorf("NewUsymResolver(): caches not initialized")
 	}
 	if resolver.elfSymbolLimits != DefaultELFSymbolLimits() {
@@ -149,13 +149,13 @@ func TestResolveELFPCsDoesNotLogLimitsAtInfo(t *testing.T) {
 		t.Fatalf("os.Executable: %v", err)
 	}
 	resolver := NewUsymResolver(WithELFSymbolLimits(ELFSymbolLimits{
-		MaxMetadataBytes: 1,
-		MaxSymbolCount:   ^uint64(0),
+		MaxMetadataBytes: 16 << 20,
+		MaxSymbolCount:   0,
 		MaxNameBytes:     1024,
 		MaxNameLength:    1024,
 	}))
 
-	if err := resolver.resolveELFPCs(executablePath, nil, make(map[uint64]string), []uint64{1}); !errors.Is(err, errELFSymbolLimit) {
+	if _, err := resolver.resolveELFPCs(executablePath, &elfSymbolCache{}, []uint64{1}); !errors.Is(err, errELFSymbolLimit) {
 		t.Fatalf("resolveELFPCs: got %v, want errELFSymbolLimit", err)
 	}
 	if strings.Contains(output.String(), "limits reached") {
@@ -298,8 +298,8 @@ func TestUsymResolverLoadElfCaches(t *testing.T) {
 		if len(resolver.exeCache) != 1 {
 			t.Errorf("loadElfCaches: got %d cache entries, want 1 (shared backing file on same xfs)", len(resolver.exeCache))
 		}
-		if len(resolver.processPaths) != 2 {
-			t.Errorf("loadElfCaches: cached %d per-pid paths, want 2", len(resolver.processPaths))
+		if len(resolver.processes) != 2 {
+			t.Errorf("loadElfCaches: cached %d per-pid paths, want 2", len(resolver.processes))
 		}
 	})
 }
@@ -357,8 +357,8 @@ func TestUsymResolverLoadLibCache(t *testing.T) {
 		if firstCache != secondCache {
 			t.Errorf("loadLibCache: expected same cache pointer for repeated loads")
 		}
-		if len(resolver.libcaches) != 1 {
-			t.Errorf("loadLibCache: got %d caches, want 1", len(resolver.libcaches))
+		if len(resolver.libCaches) != 1 {
+			t.Errorf("loadLibCache: got %d caches, want 1", len(resolver.libCaches))
 		}
 	})
 
@@ -402,8 +402,8 @@ func TestUsymResolverLoadLibCache(t *testing.T) {
 		if _, err := resolver.loadLibCache(processID, libPathLogs); err != nil {
 			t.Fatalf("loadLibCache(libPathLogs): %v", err)
 		}
-		if len(resolver.libcaches) != 2 {
-			t.Errorf("loadLibCache: got %d caches, want 2 (same inode, different xfs mounts)", len(resolver.libcaches))
+		if len(resolver.libCaches) != 2 {
+			t.Errorf("loadLibCache: got %d caches, want 2 (same inode, different xfs mounts)", len(resolver.libCaches))
 		}
 	})
 }
@@ -431,14 +431,12 @@ func TestUsymResolverBatchesAndRelocatesPIEAddresses(t *testing.T) {
 		module   = "/usr/bin/huatuo-pie"
 	)
 	key := cacheKey{inode: 1}
-	cache := &elfCache{
-		syms:     symbols{&symbol{Addr: 0x1000, Size: 0x20, Name: "pie_func"}},
-		module:   module,
-		typ:      elf.ET_DYN,
-		resolved: make(map[uint64]string),
+	cache := &executableCache{
+		symbols: elfSymbolCache{namesByELFPC: map[uint64]string{0x1001: "pie_func"}},
+		typ:     elf.ET_DYN,
 	}
 	resolver := NewUsymResolver()
-	resolver.exeKeys[pid] = key
+	resolver.processes[pid] = processELF{cacheKey: key, path: module}
 	resolver.exeCache[key] = cache
 	resolver.procmaps[pid] = sections{&procfs.ProcMap{
 		StartAddr: uintptr(baseAddr),
@@ -450,8 +448,8 @@ func TestUsymResolverBatchesAndRelocatesPIEAddresses(t *testing.T) {
 	if !slices.Equal(got, []string{"pie_func", "pie_func"}) {
 		t.Fatalf("resolveAddrs(PIE): got %v, want duplicate pie_func frames", got)
 	}
-	if len(cache.resolved) != 1 {
-		t.Fatalf("resolveAddrs(PIE): cached %d PCs, want one deduplicated PC", len(cache.resolved))
+	if len(cache.symbols.namesByELFPC) != 1 {
+		t.Fatalf("resolveAddrs(PIE): cached %d PCs, want one deduplicated PC", len(cache.symbols.namesByELFPC))
 	}
 }
 
@@ -510,16 +508,15 @@ func TestUsymResolveAddrFailFrames(t *testing.T) {
 	newResolver := func(pid uint32, inode uint64) *UsymResolver {
 		resolver := NewUsymResolver()
 		key := cacheKey{inode: inode}
-		resolver.exeKeys[pid] = key
-		resolver.exeCache[key] = &elfCache{
-			secs: sections{
+		resolver.processes[pid] = processELF{cacheKey: key}
+		resolver.exeCache[key] = &executableCache{
+			sections: sections{
 				&procfs.ProcMap{
 					StartAddr: uintptr(0x1000),
 					EndAddr:   uintptr(0x2000),
 					Pathname:  ".text",
 				},
 			},
-			syms: symbols{},
 		}
 		return resolver
 	}
@@ -613,7 +610,7 @@ func TestUsymResolveAddrFailFrames(t *testing.T) {
 				libPath := filepath.Join(procfs.Path(strconv.Itoa(int(pid))+"/root"), libPathname)
 				libKey := cacheKey{inode: 7}
 				resolver.libKeys[libPath] = libKey
-				resolver.libcaches[libKey] = &libCache{syms: symbols{}}
+				resolver.libCaches[libKey] = &elfSymbolCache{}
 			},
 			want: "unknown lib-no-sym/usr/lib/libhuatuo.so",
 		},
